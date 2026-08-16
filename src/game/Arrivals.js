@@ -581,10 +581,18 @@ export class ArrivalDirector {
    * Ask for one body. It is delivered later, by something you can watch.
    * Returns false if arrivals are off, in which case the caller spawns
    * directly — a level with no arrival for its terrain still has to work.
+   *
+   * `bearing` is a radian heading the caller wants the delivery to come in on,
+   * or null for the uniform draw every arrival has always used. It exists for
+   * `CONDITIONS.hammer` in Waves.js — a wave that arrives from one quarter, so
+   * the field has a front — and it is honoured for the SITE only: which ship
+   * comes, how it flies and how the squad spills out are unchanged. A flight is
+   * only reused for another body with the same bearing, or a bearing wave would
+   * pick up a ship already inbound from the far side.
    */
-  request(type, mod = null) {
+  request(type, mod = null, bearing = null, arc = Math.PI / 2) {
     if (!this.enabled) return false;
-    this.staging.push({ type, mod });
+    this.staging.push({ type, mod, bearing, arc });
     return true;
   }
 
@@ -617,12 +625,16 @@ export class ArrivalDirector {
    * 77.6 m against an 80.9 m floor — and those are exactly the ones that read
    * as popping in.
    */
-  _sitePoint(rMin, rMax, out) {
+  _sitePoint(rMin, rMax, out, bearing = null, arc = Math.PI / 2) {
     const t = this.world.terrain;
     this._anchor(out);
     const ax = out.x, az = out.z;
     for (let i = 0; i < 20; i++) {
-      const a = rng() * TAU;
+      /* A bearing narrows the draw to one quarter of the compass instead of
+       * replacing it, so every rejection test below still runs and a site that
+       * fails them all still falls back to the full circle. See `request`. */
+      const a = bearing === null ? rng() * TAU
+        : bearing + (rng() - 0.5) * arc;
       const r = lerp(rMin, rMax, rng());
       const x = ax + Math.cos(a) * r, z = az + Math.sin(a) * r;
       if (t && !t.inBounds(x, z, 10)) continue;
@@ -638,13 +650,14 @@ export class ArrivalDirector {
     return this._ground(out.set(ax + Math.cos(a) * rMin, 0, az + Math.sin(a) * rMin));
   }
 
-  _open(kind, A) {
+  _open(kind, A, bearing = null, arc = Math.PI / 2) {
     const anchor = this._anchor(new THREE.Vector3());
     const ring = this._ring();
     const at = kind === 'march'
-      ? this._sitePoint(ring * MARCH_RADIUS, ring * MARCH_RADIUS * 1.14, new THREE.Vector3())
-      : this._sitePoint(ring * 0.72, ring * 0.94, new THREE.Vector3());
+      ? this._sitePoint(ring * MARCH_RADIUS, ring * MARCH_RADIUS * 1.14, new THREE.Vector3(), bearing, arc)
+      : this._sitePoint(ring * 0.72, ring * 0.94, new THREE.Vector3(), bearing, arc);
     const f = new Arrival(this.world, kind, at, anchor, this.group);
+    f.bearing = bearing;
     this.flights.push(f);
     return f;
   }
@@ -657,8 +670,10 @@ export class ArrivalDirector {
       const kind = arrivalKindFor(this.world.level, A, rng);
       // an existing flight of the right kind with room takes it, so a squad
       // rides in together instead of one ship per droid
-      let f = this.flights.find(x => !x.done && x.kind === kind && !x.full && x.age < x.openAt * 0.6);
-      if (!f) f = this._open(kind, A);
+      const want = slot.bearing ?? null;
+      let f = this.flights.find(x => !x.done && x.kind === kind && !x.full && x.age < x.openAt * 0.6
+        && (x.bearing ?? null) === want);
+      if (!f) f = this._open(kind, A, want, slot.arc ?? Math.PI / 2);
       f.add(slot.type, slot.mod);
       this.staging.shift();
     }

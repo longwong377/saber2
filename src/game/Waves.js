@@ -74,7 +74,26 @@ export function seedWaves(seed, rung = 0) {
 export const MODES = {
   waves:   { name: 'Trial of Waves', blurb: 'Endless escalation. Survive as long as the Force allows.' },
   roguelite: { name: 'Path of the Blade', blurb: 'Waves, boons and a run that ends when you do.' },
-  duel:    { name: 'Duel', blurb: 'Acolytes only. No blasters, no crowd. Just blades.' },
+  /**
+   * THE BLURB IS A CLAIM, AND IT USED TO BE THE ONLY TRUE THING HERE.
+   *
+   * "Acolytes only" was accurate: `_compose`'s duel branch pushed
+   * `min(1 + floor(w/2), 6)` acolytes and nothing else, forever. Sixty waves
+   * over twelve seeds produced fifteen distinct compositions and one enemy
+   * type, while `Duel.js` sat there with five authored forms and a thousand
+   * lines of blade-lock nothing in the mode ever asked for. See
+   * `WaveDirector.duelRoster` for what replaced it and why the ladder is
+   * derived from the roster rather than typed.
+   *
+   * The sentence now names the SHAPE — a ladder, a new form every DUEL_RUNG,
+   * a boss at the top — because `tools/checks/claims.mjs` parses this string
+   * and holds the mode to it, and a claim about one archetype is not a claim
+   * anybody can keep once the mode has eight.
+   */
+  duel: {
+    name: 'Duel',
+    blurb: 'No blasters, no crowd. A ladder of duellists — a new form every 3 waves, and a master at the top.',
+  },
   // THE DESCENT IS GONE, and the reason is not that the ladder was broken —
   // it worked. Three of its four rungs were the three interiors the player
   // named as the worst rooms in the game, so the mode's whole content was the
@@ -412,6 +431,36 @@ export const DRAFT_MODES = ['roguelite'];
 export const BOSS_SHARE = 0.28;
 /** From here on, the set-piece arrives promoted. */
 export const CHAMPION_FROM = 15;
+
+/**
+ * The duel ladder's three numbers. See `WaveDirector.duelRoster`.
+ *
+ * `DUEL_RUNG` is the teaching rate: a new form every three waves, which gives a
+ * player two clears to learn what answers the one they just met before the next
+ * arrives. `DUEL_PAIR` is far slower because a second blade is a much bigger
+ * step than a new form — `DuelBrain` runs per body, so two duellists is two
+ * independent parry rhythms — and `DUEL_MAX` is four because past that it stops
+ * being a duel and becomes the horde with sabers.
+ */
+export const DUEL_RUNG = 3;
+export const DUEL_PAIR = 6;
+export const DUEL_MAX = 4;
+/** Where a duellist starts arriving promoted. */
+export const DUEL_ELITE_FROM = 8;
+
+/**
+ * How wide "one bearing" is, and how hard the director tries to hit it.
+ *
+ * A quarter of the compass (90°) rather than a line: a wave that arrives on a
+ * single ray is a queue, and the point of a front is that it is wide enough to
+ * be flanked around. Eight tries because `pickSpawn` draws uniformly, so the
+ * chance of missing a 90° window eight times running is (3/4)^8 ≈ 10%, and the
+ * best of what was seen is kept in that case rather than nothing.
+ */
+export const BEARING_ARC = Math.PI / 2;
+export const BEARING_TRIES = 8;
+/** How many bodies break per frame when a wave's leader falls. See `_rout`. */
+export const ROUT_PER_FRAME = 8;
 /** Where the body count stops being the escalation. See `bodyCap`. */
 export const BODY_MAX = 42;
 export const BODY_KNEE = 18;
@@ -553,6 +602,227 @@ function shuffledOrder(n) {
   for (let i = n - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
   return a;
 }
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  Wave conditions — the ladder that does not stop                       */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * WHAT A WAVE IS, AS OPPOSED TO HOW MUCH OF IT THERE IS.
+ *
+ * ── the hole, measured ─────────────────────────────────────────────────
+ *
+ * Everything above this block escalates by BUYING: a bigger budget buys more
+ * bodies, then better bodies, then bodies wearing modifiers. Every one of those
+ * ladders has a last rung and all three are climbed by wave 12:
+ *
+ *     last archetype introduced   wave 5 on six of ten levels, 11-12 on the rest
+ *     last elite modifier         wave 11 (`leader`)
+ *     body count saturates        wave 18 (`bodyCap`)
+ *
+ * Past there the only thing depth changes is the size of the crowd, and the
+ * crowd has a ceiling too. Composed through the shipped director on kamino,
+ * eight seeds a wave:
+ *
+ *     wave   bodies   threat/body   elite%   distinct entries   budget stranded
+ *       20     31.5       5.13        40%          37                  0%
+ *       40     76.0       6.56        67%          38                  0%
+ *       70    125.0      10.65       100%           7                  9%
+ *      100    173.0      10.65       100%           7                 41%
+ *      140    237.0      10.40       100%          30                 65%
+ *
+ * At wave 70 every body is an elite acolyte, because `_upgrade` trades every
+ * light body for the heaviest the level fields and then promotes all of them —
+ * so the composer CONVERGES. Threat-per-body is frozen from there on, and by
+ * wave 140 two thirds of the budget is thrown away because there is nothing in
+ * the roster left to spend it on. The endless mode stops escalating at about
+ * wave 55 and nobody could see it, because the body count keeps climbing.
+ *
+ * ── why a condition and not an eighth modifier ─────────────────────────
+ *
+ * A modifier makes ONE BODY worse. Seven of them exist, all unlocked by wave 11,
+ * and adding an eighth would buy one more rung on a ladder that has already been
+ * climbed — and it would land on the same wave-70 fixed point, because
+ * `_upgrade` would simply converge on the new one instead.
+ *
+ * A condition changes THE WAVE'S QUESTION, and it does it out of content that
+ * already exists: no archetype, no modifier, no art. "Everything in this wave
+ * closes to the blade" and "nothing in this wave will come near you" are the
+ * same roster asking two opposite things of the player, and neither of them is
+ * "there are more of them".
+ *
+ * ── and it is PAID FOR, which is the whole reason it is safe ───────────
+ *
+ * Exactly the argument `_promote` makes for modifiers: a condition costs
+ * `worth` of the wave's own budget, so a conditioned wave is a SMALLER wave
+ * asked differently rather than a wave that is secretly 30% over the ramp.
+ * `tools/checks/escalation.mjs` prices the total.
+ *
+ * That pricing is also what fixes the stranding above, and it is the part worth
+ * reading twice. The director keeps buying conditions while the budget it could
+ * not turn into bodies would pay for another one — so the surplus that used to
+ * be discarded at wave 100 is now the thing that makes wave 100 a different
+ * fight from wave 70. The escalation cannot flatten again while the roster has
+ * a ceiling, because the ceiling is now what funds the next condition.
+ */
+
+/** The first wave that can carry one — where the modifier ladder stopped. */
+export const CONDITION_FROM = 13;
+/** A conditioned wave every this many from there, so a plain wave still exists. */
+export const CONDITION_EVERY = 3;
+/** Never more than this at once: three questions is a wave, four is noise. */
+export const CONDITION_MAX = 3;
+
+/**
+ * Every condition, and what each one costs.
+ *
+ * `worth` is the share of the wave's budget the condition is charged. They are
+ * working figures in the same sense BOON_POWER is one, and each carries its
+ * reasoning rather than a number that felt right.
+ *
+ * The hooks are all optional and each one is read in exactly one place:
+ *
+ *   `types(list)`  narrows what the fill may draw from. Never allowed to empty
+ *                  the field — `_composeUnder` falls back to the full list.
+ *   `allow(mods)`  narrows which modifiers the fill may promote with.
+ *   `capScale`     multiplies `bodyCap`.
+ *   `heavyScale`   multiplies `heavyLimit` — a frame-rate number, so this is
+ *                  the one hook with a hard ceiling behind it (`HEAVY_CAP`).
+ *   `eliteScale`   multiplies `eliteChance`.
+ *   `aliveScale`   multiplies `maxAlive` — how much of the wave stands at once.
+ *   `paceScale`    multiplies the gap between spawns.
+ *   `bearing`      the whole wave arrives from one quarter of the compass.
+ *   `head`         one body is the wave's leader and killing it ends the wave.
+ *
+ * `needs(types)` is how a level vetoes one: the Ember Shelf has no heavy in its
+ * pool and can never field the Heavy Guard, and that is the pool being honest
+ * rather than a condition being broken.
+ */
+export const CONDITIONS = {
+  /**
+   * The wave has a head. Kill it and the rest break.
+   *
+   * The one condition that changes what WINNING a wave is: every other wave in
+   * this game is cleared by killing all of it. Priced low and positive rather
+   * than as a refund — the leader's own aura (see MODIFIERS.leader, which
+   * multiplies everything inside its ring) is a real tax while it lives, and it
+   * is deliberately placed deep in the queue so the shortcut has to be cut to.
+   */
+  vanguard: {
+    label: 'A HEAD TO CUT OFF',
+    tell: 'one of them is leading. Kill it and the rest will break.',
+    since: CONDITION_FROM, worth: 0.08,
+    head: true,
+    // Exactly one leader, or "the leader" is not a thing the player can find.
+    allow: (mods) => mods.filter((k) => k !== 'leader'),
+    needs: (types, d) => d.modifiersAt(d.wave).includes('leader'),
+  },
+
+  /**
+   * Nothing in it will shoot at you.
+   *
+   * A saber player's damage is half deflection: `deflectDamage` is the one
+   * defensive axis that scales, returned bolts are free kills, and a wave with
+   * no bolts in it takes both away at once. What is left is footwork.
+   */
+  silence: {
+    label: 'NO GUNS',
+    tell: 'every one of them means to reach you. Nothing to turn, nothing to send back.',
+    since: 14, worth: 0.18,
+    excludes: ['fusillade'],
+    types: (list) => list.filter((t) => !ARCHETYPES[t]?.ranged),
+    needs: (types) => types.filter((t) => !ARCHETYPES[t]?.ranged).length >= 1,
+  },
+
+  /**
+   * Nothing in it will come near you.
+   *
+   * The mirror, and the reason both exist: a roster of shooters that holds its
+   * preferred band is a wave you have to CLOSE, one bolt-line at a time, and
+   * the crowd-control half of the kit does nothing at all.
+   */
+  fusillade: {
+    label: 'NOTHING WITHIN REACH',
+    tell: 'they will hold their distance. Close it, or turn every bolt.',
+    since: 16, worth: 0.18,
+    excludes: ['silence'],
+    types: (list) => list.filter((t) => ARCHETYPES[t]?.ranged),
+    needs: (types) => types.filter((t) => ARCHETYPES[t]?.ranged).length >= 2,
+  },
+
+  /**
+   * All of it from one quarter.
+   *
+   * The field gets a FRONT, which it has never had: `pickSpawn` draws a uniform
+   * bearing and every wave in the game therefore surrounds you by construction.
+   * A wave with a front can be held at a doorway, backed away from, or flanked
+   * around — three plays that do not exist in any other wave.
+   */
+  hammer: {
+    label: 'ONE BEARING',
+    tell: 'they are all coming from the same quarter. The field has a front.',
+    since: 15, worth: 0.14,
+    bearing: true,
+  },
+
+  /**
+   * The whole wave at once, instead of fed in.
+   *
+   * `maxAlive` is 26 and the spawn gap is up to 0.85 s, so a hundred-body wave
+   * is normally a conveyor: twenty-six standing and a queue behind them. Lift
+   * both and the same hundred bodies are a single problem. The most expensive
+   * condition in the table because it is the largest multiplier on a crowd
+   * anything here can apply — and `capScale` pulls the count DOWN to pay for it,
+   * so it is a denser wave rather than a bigger one.
+   */
+  deluge: {
+    label: 'ALL AT ONCE',
+    tell: 'no second rank. They are all here already.',
+    since: 17, worth: 0.30,
+    aliveScale: 2.4, paceScale: 0.22, capScale: 0.8,
+  },
+
+  /**
+   * The enormous ones, and one kind of escort.
+   *
+   * `heavyLimit` exists because a walker is 66 meshes, so this hook is the one
+   * with a real ceiling behind it: `HEAVY_CAP` still clamps the answer.
+   *
+   * ── AND THAT CEILING IS WHY IT IS NOT "HEAVIES ONLY" ──────────────────
+   *
+   * The first version of this narrowed the fill to `isHeavy` alone, and it was
+   * the one condition in the table that could not spend its wave. Measured
+   * across forty waves and twenty-five rolls each, worst unspent budget by
+   * condition set: titans+vanguard+hammer 25%, titans+hammer 18%, titans alone
+   * 17% — and every other condition in the table under 2%. The cause is
+   * arithmetic and not tuning: ten walkers is 120 threat against a wave-40
+   * budget of 499, `HEAVY_CAP` will not allow an eleventh, and a wave that
+   * cannot spend its budget is the exact defect this whole file is about.
+   *
+   * So the heavies are the BULK and one light archetype — the heaviest the
+   * level fields — is the escort. `_pickType` gives a heavy zero weight the
+   * moment `bigLeft` hits zero, so the shape is "as many enormous bodies as the
+   * renderer will hold, and then their guard", which is what the Heavy Guard
+   * should have been in the first place.
+   */
+  titans: {
+    label: 'THE HEAVY GUARD',
+    tell: 'few, and enormous, and what walks with them.',
+    since: 18, worth: 0.22,
+    excludes: ['silence', 'fusillade'],
+    types: (list) => {
+      const heavy = list.filter((t) => isHeavy(t));
+      if (!heavy.length) return list;
+      const rest = [...new Set(list.filter((t) => !isHeavy(t)))]
+        .sort((a, b) => ARCHETYPES[b].threat - ARCHETYPES[a].threat);
+      return rest.length ? heavy.concat(rest[0]) : heavy;
+    },
+    heavyScale: 2.0, capScale: 0.75,
+    needs: (types) => types.some((t) => isHeavy(t)),
+  },
+};
+
+export const CONDITION_KEYS = Object.keys(CONDITIONS);
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  Spawn entries                                                         */
@@ -1096,10 +1366,11 @@ export class WaveDirector {
    * @returns the budget left after upgrading, which is stranded on purpose:
    *          it is what the wave could not turn into anything worth fighting.
    */
-  _upgrade(queue, budget, wave, allowed) {
+  _upgrade(queue, budget, wave, allowed, shape = null) {
     let guard = 0;
     while (budget > 0 && guard++ < 300) {
-      const spent = this._promoteOne(queue, budget, wave, allowed) || this._heavierOne(queue, budget, wave);
+      const spent = this._promoteOne(queue, budget, wave, allowed)
+        || this._heavierOne(queue, budget, wave, shape);
       if (!spent) break;
       budget -= spent;
     }
@@ -1117,10 +1388,17 @@ export class WaveDirector {
     return 0;
   }
 
-  _heavierOne(queue, budget, wave) {
-    const types = [...new Set(this.unlockedAt(wave))]
+  /**
+   * `shape` is the condition-scoped view of the roster — see `_composeUnder`.
+   * Without it this method would upgrade a No-Guns wave back into a wave with
+   * guns in it, which is the §2.4 defect exactly: the fill would honour the
+   * condition and the upgrade pass would quietly undo it.
+   */
+  _heavierOne(queue, budget, wave, shape = null) {
+    const types = [...new Set(shape?.types || this.unlockedAt(wave))]
       .sort((a, b) => ARCHETYPES[b].threat - ARCHETYPES[a].threat);
-    const bigLeft = this.heavyLimit(wave) - queue.filter(e => isHeavy(spawnType(e))).length;
+    const bigLeft = (shape?.heavy ?? this.heavyLimit(wave))
+      - queue.filter(e => isHeavy(spawnType(e))).length;
     for (const i of shuffledOrder(queue.length)) {
       const entry = queue[i];
       const t = spawnType(entry), mod = spawnMod(entry);
@@ -1164,6 +1442,22 @@ export class WaveDirector {
     this._compose();
     this.active = true;
     this.intermission = 0;
+    /**
+     * THE CONDITION IS SAID OUT LOUD, and that is not decoration.
+     *
+     * Every one of them changes what the player should DO — hold a doorway,
+     * stop waiting for bolts to return, go and find the leader — and a rule the
+     * player has to infer from being killed by it is a rule they will read as
+     * the game being inconsistent. Same argument as the watchdog's notification
+     * and `openness()`'s readout: a mechanic nothing announces is a mechanic the
+     * player is entitled to think is a bug.
+     *
+     * Through `world.notify`, which is the one channel this file already uses,
+     * so nothing outside it has to know conditions exist to ship them.
+     */
+    this._head = null;
+    this._routed = false;
+    for (const c of this.conditionCards) this.world?.notify?.(c.label, c.tell);
     // Per-wave boon charges come back here rather than on wave CLEAR, so a run
     // reloaded mid-ladder still starts its wave with them — see Second Wind.
     refreshWaveBoons(this.world);
@@ -1300,60 +1594,319 @@ export class WaveDirector {
     return out;
   }
 
-  _compose() {
-    const w = this.wave;
-    let budget = this.budgetFor(w);
-    const types = this.unlockedAt(w);
+  /* ── conditions ──────────────────────────────────────────────────── */
+
+  /** Which conditions this depth has earned. Mirrors `modifiersAt`. */
+  conditionsAt(wave) {
+    return CONDITION_KEYS.filter((k) => wave >= CONDITIONS[k].since);
+  }
+
+  /**
+   * Does the cadence put one on this wave at all?
+   *
+   * A wave every CONDITION_EVERY, so two thirds of them stay plain and a
+   * condition still reads as a change. Deep waves get theirs a second way —
+   * see the surplus loop in `_compose` — which is why this is only the FLOOR.
+   */
+  scheduledCondition(wave) {
+    return wave >= CONDITION_FROM && (wave - CONDITION_FROM) % CONDITION_EVERY === 0;
+  }
+
+  /** What a set of conditions is charged against this wave's budget. */
+  conditionCost(wave, keys) {
+    let s = 0;
+    for (const k of keys || []) s += (CONDITIONS[k]?.worth ?? 0);
+    return s * this.budgetFor(wave);
+  }
+
+  /**
+   * One more condition, or null.
+   *
+   * Weighted by DEPTH exactly as `_promote` weights modifiers, and for the same
+   * reason: a run that has earned the Heavy Guard should meet it rather than be
+   * handed the No-Guns it has been fighting since wave 14.
+   */
+  _pickCondition(wave, taken, types) {
+    const held = new Set(taken);
+    const options = this.conditionsAt(wave).filter((k) => {
+      if (held.has(k)) return false;
+      const C = CONDITIONS[k];
+      if (C.excludes && C.excludes.some((x) => held.has(x))) return false;
+      for (const h of held) if (CONDITIONS[h].excludes?.includes(k)) return false;
+      return !C.needs || C.needs(types, this);
+    });
+    if (!options.length) return null;
+    let total = 0;
+    for (const k of options) total += CONDITIONS[k].since;
+    let r = rng() * total;
+    for (const k of options) { r -= CONDITIONS[k].since; if (r <= 0) return k; }
+    return options[options.length - 1];
+  }
+
+  /**
+   * The roster and the caps AS THIS WAVE'S CONDITIONS LEAVE THEM.
+   *
+   * One place, because three consumers need the same answer — the fill loop,
+   * `_heavierOne` and the spawn cadence in `update` — and three copies of it is
+   * how a No-Guns wave ends up with guns in it.
+   */
+  _shapeUnder(wave, keys) {
+    const cs = (keys || []).map((k) => CONDITIONS[k]).filter(Boolean);
+    let types = this.unlockedAt(wave);
+    let allowed = this.modifiersAt(wave);
+    let cap = this.bodyCap(wave), heavy = this.heavyLimit(wave);
+    let chance = this.eliteChance(wave), alive = this.maxAlive, pace = 1;
+    for (const c of cs) {
+      if (c.types) {
+        const narrowed = c.types(types, this, wave);
+        // A condition never empties the field: a level whose pool cannot
+        // satisfy it keeps the wave it would otherwise have had.
+        if (narrowed.length) types = narrowed;
+      }
+      if (c.allow) allowed = c.allow(allowed, this, wave);
+      cap = cap * (c.capScale ?? 1);
+      heavy = heavy * (c.heavyScale ?? 1);
+      chance = chance * (c.eliteScale ?? 1);
+      alive = alive * (c.aliveScale ?? 1);
+      pace = pace * (c.paceScale ?? 1);
+    }
+    return {
+      types, allowed,
+      cap: Math.max(1, Math.round(cap)),
+      // Still `HEAVY_CAP` at the top, and it is still a frame-rate number.
+      heavy: Math.max(1, Math.min(Math.round(HEAVY_CAP * this.partyScale()), Math.round(heavy))),
+      chance: clamp(chance, 0, 1),
+      alive: Math.max(4, Math.round(alive)), pace,
+      bearing: cs.some((c) => c.bearing),
+      head: cs.some((c) => c.head),
+    };
+  }
+
+  /**
+   * Compose one wave under a stated set of conditions.
+   *
+   * Split out of `_compose` so the same arithmetic can be run more than once —
+   * see the surplus loop there — and so nothing has to PREDICT what the wave
+   * will strand. The stranding is measured by composing, which is the rule
+   * itself rather than a model of it.
+   *
+   * @returns {{queue: string[], left: number, shape: object}} `left` is the
+   *          budget the roster could not absorb, which is what buys the next
+   *          condition.
+   */
+  _composeUnder(wave, keys) {
+    const w = wave;
+    const shape = this._shapeUnder(w, keys);
+    // Charged up front and out of the same budget the bodies are bought with,
+    // exactly as `_promote` charges a modifier. See CONDITIONS.
+    let budget = this.budgetFor(w) - this.conditionCost(w, keys);
     const queue = [];
 
-    if (this.mode === 'duel') {
-      const n = Math.min(1 + Math.floor(w / 2), 6);
-      const allowed = this.modifiersAt(w);
-      for (let i = 0; i < n; i++) {
-        // A duel ladder has no budget to spend, so its elites are gated on
-        // depth alone — and only ever one of them, so the fight stays a duel.
-        const elite = i === 0 && w >= 8 && allowed.length
-          ? this._promote('acolyte', Infinity, w, allowed) : 0;
-        queue.push(elite ? `acolyte|${elite.mod}` : 'acolyte');
-      }
-      this.spawnQueue = queue;
-      this.pending = queue.length;
-      return;
-    }
-
-    const allowed = this.modifiersAt(w);
     if (this.isBossWave(w)) {
-      for (const entry of this._setPiece(w, budget, allowed)) {
+      for (const entry of this._setPiece(w, budget, shape.allowed)) {
         queue.push(entry);
         budget -= spawnCost(entry);
       }
     }
 
-    const chance = this.eliteChance(w);
-    const cap = this.bodyCap(w);
     let guard = 0;
-    while (budget > 0 && queue.length < cap && guard++ < 400) {
-      const bigLeft = this.heavyLimit(w) - queue.filter(e => isHeavy(spawnType(e))).length;
-      const t = this._pickType(types, w, bigLeft);
+    while (budget > 0 && queue.length < shape.cap && guard++ < 400) {
+      const bigLeft = shape.heavy - queue.filter(e => isHeavy(spawnType(e))).length;
+      const t = this._pickType(shape.types, w, bigLeft);
       if (!t) break;
       let cost = ARCHETYPES[t].threat;
       if (cost > budget && queue.length > 0) break;
       let entry = t;
-      if (allowed.length && rng() < chance) {
-        const p = this._promote(t, budget - cost, w, allowed);
+      if (shape.allowed.length && rng() < shape.chance) {
+        const p = this._promote(t, budget - cost, w, shape.allowed);
         if (p) { entry = `${t}|${p.mod}`; cost += p.extra; }
       }
       queue.push(entry);
       budget -= cost;
     }
     // Past the body cap the wave stops growing and starts improving.
-    budget = this._upgrade(queue, budget, w, allowed);
+    budget = this._upgrade(queue, budget, w, shape.allowed, shape);
 
     // shuffle so the dangerous ones aren't all last
     for (let i = queue.length - 1; i > 0; i--) {
       const j = Math.floor(rng() * (i + 1));
       [queue[i], queue[j]] = [queue[j], queue[i]];
     }
+
+    /**
+     * …AND THEN THE HEAD, if the wave has one.
+     *
+     * After the shuffle and deliberately deep in the queue: the whole value of
+     * "kill the leader and it ends" is that the leader is behind the wave, so
+     * the shortcut has to be cut to rather than sniped off the front rank. The
+     * `leader` modifier is taken out of `allowed` for the fill (see
+     * CONDITIONS.vanguard), so this is the only one in the wave and "the
+     * leader" is a thing the player can unambiguously find.
+     */
+    if (shape.head && queue.length) {
+      const at = Math.min(queue.length - 1, Math.floor(queue.length * 0.65));
+      // The heaviest chassis that can wear it, so the head is worth reaching.
+      let best = -1, bestT = null;
+      for (let i = 0; i < queue.length; i++) {
+        const t = spawnType(queue[i]);
+        if (spawnMod(queue[i]) || !modifiersFor(t).includes('leader')) continue;
+        if ((ARCHETYPES[t]?.threat ?? 0) > best) { best = ARCHETYPES[t].threat; bestT = i; }
+      }
+      if (bestT !== null) {
+        const t = spawnType(queue[bestT]);
+        const extra = modifierThreat(t, 'leader') - ARCHETYPES[t].threat;
+        if (extra <= budget) {
+          budget -= extra;
+          queue.splice(bestT, 1);
+          queue.splice(Math.min(at, queue.length), 0, `${t}|leader`);
+        }
+      }
+    }
+
+    return { queue, left: budget, shape };
+  }
+
+  _compose() {
+    const w = this.wave;
+
+    if (this.mode === 'duel') { this._composeDuel(w); return; }
+
+    /**
+     * THE CONDITIONS, BOUGHT THE WAY EVERYTHING ELSE IN THIS FILE IS BOUGHT.
+     *
+     * One from the cadence, and then as many more as the budget the ROSTER
+     * CANNOT ABSORB will pay for. That second clause is the load-bearing one:
+     * measured on kamino, wave 70 strands 9% of its budget, wave 100 strands
+     * 41% and wave 140 strands 65% — because `_upgrade` converges on the
+     * heaviest body the level fields and there is nothing else to buy. That
+     * surplus used to be discarded and the escalation flattened with it. It is
+     * now the thing that makes a deep wave a different question.
+     *
+     * The loop RE-COMPOSES rather than predicting the surplus, because the only
+     * honest statement of what a wave can absorb is composing one (HANDOFF
+     * §2.4: an instrument that restates a rule will eventually disagree with
+     * it). Composition is arithmetic over at most a few hundred entries, and
+     * this runs once per wave.
+     */
+    const conditions = [];
+    const types = this.unlockedAt(w);
+    if (this.scheduledCondition(w)) {
+      const k = this._pickCondition(w, conditions, types);
+      if (k) conditions.push(k);
+    }
+    let out = this._composeUnder(w, conditions);
+    while (conditions.length < CONDITION_MAX) {
+      const k = this._pickCondition(w, conditions, types);
+      if (!k || out.left < CONDITIONS[k].worth * this.budgetFor(w)) break;
+      conditions.push(k);
+      out = this._composeUnder(w, conditions);
+    }
+
+    this.conditions = conditions;
+    this.shape = out.shape;
+    // Drawn here rather than at the first spawn so the whole wave shares one
+    // quarter however it is delivered, and so it is part of the seeded stream:
+    // a seed is a run, and a run's fronts have to be the same fronts.
+    this._bearingAt = out.shape.bearing ? rng() * TAU : null;
+    this.spawnQueue = out.queue;
+    this.pending = out.queue.length;
+  }
+
+  /** What the banner and the checks read: this wave's conditions, as cards. */
+  get conditionCards() {
+    return (this.conditions || []).map((k) => ({ key: k, ...CONDITIONS[k] }));
+  }
+
+  /* ── the duel ladder ─────────────────────────────────────────────── */
+
+  /**
+   * THE DUEL FOUGHT ONE BODY, AND THE MACHINERY FOR SIX WAS ALREADY BUILT.
+   *
+   * The old composition was `min(1 + floor(w/2), 6)` acolytes and nothing else.
+   * Measured over sixty waves and twelve seeds: **fifteen distinct
+   * compositions, one enemy type**, saturating at six bodies by wave 10. So the
+   * mode called Duel escalated by adding a seventh identical opponent and then
+   * stopped.
+   *
+   * What makes that worth fixing rather than merely tuning is what it was
+   * refusing to use. `Duel.js` is a thousand lines of blade-lock, chambering,
+   * parry windows and five authored FORMS, and Enemy.js's own note says in as
+   * many words that the four Jedi were given declared forms so that a player
+   * could learn "that is Djem So, it commits hard, punish the recovery". Every
+   * one of them — Soresu, Ataru, Djem So, Juyo, Makashi — has a different
+   * ANSWER, written down beside it, and the duel mode fielded none of them.
+   *
+   * So the ladder is the roster, DERIVED rather than typed: every archetype
+   * that carries a saber, in threat order, one new one every DUEL_RUNG waves.
+   * A duellist added to the game joins the ladder on the day it is added, which
+   * is the property `SANDBOX_ORDER` had to be rewritten to get (§2.3), and the
+   * bosses — the Jedi Master and the Magnaguard captain, both `setPieceOnly` —
+   * are the top rung rather than a seventh acolyte.
+   *
+   * Lazy, like `sandboxKeys`: Levels.js registers seventeen more archetypes
+   * after this module finishes evaluating.
+   */
+  duelRoster() {
+    const all = Object.keys(ARCHETYPES)
+      .filter((k) => ARCHETYPES[k].saber && !ARCHETYPES[k].inert && (ARCHETYPES[k].threat ?? 0) > 0)
+      .sort((a, b) => (ARCHETYPES[a].threat - ARCHETYPES[b].threat) || (a < b ? -1 : 1));
+    return {
+      rungs: all.filter((k) => !ARCHETYPES[k].boss),
+      bosses: all.filter((k) => ARCHETYPES[k].boss),
+    };
+  }
+
+  /** How many rungs of the ladder this depth has opened. */
+  duelTier(wave) {
+    const { rungs } = this.duelRoster();
+    return clamp(1 + Math.floor(Math.max(0, wave - 1) / DUEL_RUNG), 1, Math.max(1, rungs.length));
+  }
+
+  /** How many blades stand against you. A duel stays a duel. */
+  duelSize(wave) {
+    return clamp(1 + Math.floor(Math.max(0, wave - 1) / DUEL_PAIR), 1, DUEL_MAX);
+  }
+
+  _composeDuel(w) {
+    const { rungs, bosses } = this.duelRoster();
+    const open = rungs.slice(0, this.duelTier(w));
+    const allowed = this.modifiersAt(w);
+    const queue = [];
+
+    /**
+     * THE BOSS RUNG. Every BOSS_EVERY waves the thing you meet is not on the
+     * ladder at all — and the two alternate, so the fifth wave and the tenth
+     * are different fights rather than the same body twice.
+     */
+    if (this.isBossWave(w) && bosses.length) {
+      const b = bosses[(Math.floor(w / BOSS_EVERY) - 1) % bosses.length];
+      const p = w >= CHAMPION_FROM && allowed.length ? this._promote(b, Infinity, w, allowed) : 0;
+      queue.push(p ? `${b}|${p.mod}` : b);
+    }
+
+    /**
+     * The rest, drawn from the open rungs with the same threat weighting the
+     * horde uses — so the newest rung is the one you meet most, and the acolyte
+     * you have been beating since wave 1 becomes the escort rather than the
+     * fight. `heavyBias` is deliberately reused rather than restated: it IS the
+     * "lean on the heavy end as depth grows" rule (§2.4).
+     */
+    const want = this.duelSize(w) - queue.length;
+    // A duel has no budget to spend, so the elites are gated on depth alone.
+    let elites = w < DUEL_ELITE_FROM ? 0 : 1 + Math.floor((w - DUEL_ELITE_FROM) / 20);
+    for (const e of queue) if (spawnMod(e)) elites--;
+    for (let i = 0; i < want; i++) {
+      const t = this._pickType(open, w, DUEL_MAX) || open[open.length - 1];
+      let entry = t;
+      if (elites > 0 && allowed.length) {
+        const p = this._promote(t, Infinity, w, allowed);
+        if (p) { entry = `${t}|${p.mod}`; elites--; }
+      }
+      queue.push(entry);
+    }
+
+    this.conditions = [];
+    this.shape = null;
     this.spawnQueue = queue;
     this.pending = queue.length;
   }
@@ -1711,6 +2264,97 @@ export class WaveDirector {
     return true;
   }
 
+  /* ── what a condition does once the wave is running ──────────────── */
+
+  /** The quarter this wave comes from, or null when it comes from everywhere. */
+  _bearing() { return this.shape?.bearing ? (this._bearingAt ?? null) : null; }
+
+  /**
+   * WHERE ONE BODY LANDS, UNDER A BEARING.
+   *
+   * By REJECTION SAMPLING `ctx.pickSpawn` rather than by rotating the point it
+   * returns, and the difference matters: `pickSpawn` tests terrain bounds,
+   * slope and the level's own `spawnClear` — 94.3% of one deleted level's naive
+   * picks were under its own water — and a rotated point has passed none of
+   * them. Asking again is the only way to get a bearing AND keep every validity
+   * test the level owns. Costs a handful of extra tries on one spawn per body,
+   * and falls back to the best of what it saw, so a level too narrow to satisfy
+   * the bearing still produces its wave.
+   */
+  _spawnPoint(ctx, type) {
+    const first = ctx.pickSpawn(type);
+    const b = this._bearing();
+    const a = this.world?.player?.position;
+    if (b === null || !first || !a) return first;
+    const off = (p) => Math.abs(((Math.atan2(p.z - a.z, p.x - a.x) - b + Math.PI * 3) % TAU) - Math.PI);
+    let best = first, bestOff = off(first);
+    for (let i = 0; i < BEARING_TRIES && bestOff > BEARING_ARC / 2; i++) {
+      const p = ctx.pickSpawn(type);
+      if (!p) break;
+      const o = off(p);
+      if (o < bestOff) { best = p; bestOff = o; }
+    }
+    return best;
+  }
+
+  /**
+   * THE ONE CONDITION THAT CHANGES WHAT CLEARING A WAVE IS.
+   *
+   * Found by scanning for the wave's only `leader` — `CONDITIONS.vanguard`
+   * takes that modifier out of the fill's allowance precisely so this scan is
+   * unambiguous, and `applyModifier` records the key on the body, so nothing
+   * here needs a second ledger of which enemy was the head. It also means the
+   * head is found whichever way it arrived: a gunship delivers asynchronously
+   * and hands the director no reference back.
+   */
+  _watchHead(ctx) {
+    if (this._routed) { this._break(ctx); return; }
+    if (!this._head) {
+      for (const e of ctx.enemies) {
+        if (e && !e.dead && e.mod === 'leader' && this.blocksWaveEnd(e)) { this._head = e; break; }
+      }
+      return;
+    }
+    if (this._head.dead) this._rout(ctx);
+  }
+
+  /**
+   * The leader is down, so the wave is over.
+   *
+   * Nothing further is delivered and what is standing breaks. `onEnemyKilled`
+   * with a null source, exactly as `_retire` does it, so the rout credits
+   * nobody with a kill it did not make — the player is paid for the wave, which
+   * is what they earned, and not for sixty bodies they did not fight.
+   *
+   * A FEW PER FRAME rather than all of them, and that is not only a frame-time
+   * argument (a rout of 125 bodies is 125 ragdolls on one tick). A line that
+   * collapses over two seconds is something you watch break; a line that all
+   * falls on the same frame is a bug that happens to be intentional.
+   */
+  _rout(ctx) {
+    this._routed = true;
+    const left = this.spawnQueue.length + this.arrivals.pending;
+    this.spawnQueue.length = 0;
+    // Nothing further is staged. Anything already in the air still lands and is
+    // broken by the sweep below on the frame it arrives.
+    if (Array.isArray(this.arrivals?.staging)) this.arrivals.staging.length = 0;
+    this.world?.notify?.('THEY BREAK', `the leader is down — ${left} more were called off`);
+    this._break(ctx);
+  }
+
+  _break(ctx) {
+    let n = 0;
+    for (const e of ctx.enemies) {
+      if (n >= ROUT_PER_FRAME) break;
+      if (!this.blocksWaveEnd(e)) continue;
+      e.dead = true;
+      e.dying = 0;
+      this.world?.onEnemyKilled?.(e, null, 'rout');
+      n++;
+    }
+    return n;
+  }
+
   update(dt, ctx) {
     if (this.sandbox) { this._sandboxUpdate(dt, ctx); return; }
     // Ships and gates keep flying through an intermission and a draft: a run
@@ -1745,23 +2389,33 @@ export class WaveDirector {
      * need it — this line, `remaining`, and the watchdog.
      */
     const alive = ctx.enemies.reduce((n, e) => n + (this.blocksWaveEnd(e) ? 1 : 0), 0);
+    // …and the head of the wave, if it has one. See `_rout`.
+    if (this.shape?.head) this._watchHead(ctx);
     // Bodies already on their way count against the cap. Without this the
     // director would keep calling for more the whole time a ship was inbound
     // and land six at once.
     const inbound = this.arrivals.pending;
-    if (this.spawnQueue.length && alive + inbound < this.maxAlive && this.spawnTimer <= 0) {
+    // How much of the wave stands at once, and how fast it is fed in — both
+    // are what ALL AT ONCE moves, and both belong to the shape rather than to
+    // this line, so a condition added tomorrow needs no edit here.
+    const maxAlive = this.shape?.alive ?? this.maxAlive;
+    if (this.spawnQueue.length && alive + inbound < maxAlive && this.spawnTimer <= 0) {
       const entry = this.spawnQueue.shift();
       const type = spawnType(entry);
       const mod = spawnMod(entry);
       // The arrival owns where and when. If it declines — arrivals off, or a
       // level with nothing that could bring anything — the old direct path is
       // still here, because a level must never fail to produce its wave.
-      if (!this.arrivals.request(type, mod)) {
-        const e = ctx.spawnEnemy(type, ctx.pickSpawn(type));
+      // The arc travels with the bearing so BEARING_ARC stays the one statement
+      // of how wide a front is — Arrivals.js cannot import it back (this file
+      // imports Arrivals), and two numbers for one idea is §2.3's defect.
+      if (!this.arrivals.request(type, mod, this._bearing(), BEARING_ARC)) {
+        const e = ctx.spawnEnemy(type, this._spawnPoint(ctx, type));
         if (e && mod) applyModifier(e, mod);
       }
       this.totalSpawned++;
-      this.spawnTimer = lerp(0.85, 0.16, clamp(this.wave / 16, 0, 1)) * (0.6 + rng() * 0.8);
+      this.spawnTimer = lerp(0.85, 0.16, clamp(this.wave / 16, 0, 1)) * (0.6 + rng() * 0.8)
+        * (this.shape?.pace ?? 1);
     }
 
     if (!this.spawnQueue.length && !this.arrivals.pending && alive === 0) {

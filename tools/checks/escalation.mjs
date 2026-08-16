@@ -197,14 +197,31 @@ export async function run({ check, assert }) {
     const d = new Waves.WaveDirector(stub, { pool: LEVELS.colosseum.pool });
     Waves.seedWaves(99);
 
+    /**
+     * OVER MANY ROLLS, NOT ONE — and this is not a loosening.
+     *
+     * It used to compose exactly one wave per depth and let that single roll
+     * decide a RATIO, which was fragile from the day it was written and became
+     * wrong the moment wave conditions shipped: `CONDITIONS.fusillade` narrows
+     * a wave to the shooters, the Colosseum's four shooters are all light, and
+     * one such roll at wave 40 reported a 1.3% heavy share. That is the
+     * condition working correctly, and a check that fails on it is measuring
+     * the draw rather than the property. The property is about the SHAPE OF THE
+     * RUN, so it is measured over a run's worth of waves.
+     */
     const rows = [];
     for (const w of [5, 10, 20, 30, 40]) {
-      d.start(w);
-      const q = d.spawnQueue.map((e) => String(e).split('|')[0]);
-      const heavy = q.filter((t) => Waves.isHeavy(t)).length;
-      const threat = q.reduce((a, t) => a + (Foe.ARCHETYPES[t]?.threat ?? 0), 0);
-      rows.push({ w, bodies: q.length, heavy, share: heavy / Math.max(1, q.length),
-        perBody: threat / Math.max(1, q.length) });
+      let bodies = 0, heavy = 0, threat = 0;
+      const n = 25;
+      for (let i = 0; i < n; i++) {
+        d.start(w);
+        const q = d.spawnQueue.map((e) => String(e).split('|')[0]);
+        bodies += q.length;
+        heavy += q.filter((t) => Waves.isHeavy(t)).length;
+        threat += q.reduce((a, t) => a + (Foe.ARCHETYPES[t]?.threat ?? 0), 0);
+      }
+      rows.push({ w, bodies: bodies / n, heavy: heavy / n, share: heavy / Math.max(1, bodies),
+        perBody: threat / Math.max(1, bodies) });
     }
     const early = rows[0], late = rows[rows.length - 1];
     assert(late.bodies > early.bodies * 3,
@@ -303,7 +320,7 @@ export async function run({ check, assert }) {
       'Waves exports no spawnCost/spawnMod — a queue of bare archetype names cannot price an elite, '
       + 'so every modifier on it is threat the director never paid for');
     const d = director();
-    let worstOver = 0, worstUnder = 1, elites = 0, checked = 0;
+    let worstOver = 0, worstUnder = 1, elites = 0, checked = 0, conditioned = 0;
     for (let w = 1; w <= 40; w++) {
       const budget = d.budgetFor(w);
       for (let i = 0; i < 25; i++) {
@@ -319,6 +336,20 @@ export async function run({ check, assert }) {
           }
           spent += cost;
         }
+        /**
+         * …AND WHAT THE WAVE'S CONDITIONS COST, which is the same argument the
+         * modifiers make one paragraph up. A condition that is not paid for out
+         * of the wave budget is not a difficulty feature, it is a difficulty
+         * bug: ALL AT ONCE would be a wave of the ordinary size delivered in a
+         * fifth of the time, which is not the same wave asked differently, it
+         * is a wave that is secretly 30% over the ramp.
+         *
+         * Charged through the director's own `conditionCost`, so this is the
+         * shipped price rather than a second copy of the table (§2.4).
+         */
+        const conds = d.conditions || [];
+        if (conds.length) conditioned++;
+        spent += d.conditionCost(w, conds);
         checked++;
         worstOver = Math.max(worstOver, spent - budget);
         worstUnder = Math.min(worstUnder, spent / budget);
@@ -330,7 +361,8 @@ export async function run({ check, assert }) {
       `some wave left ${((1 - worstUnder) * 100).toFixed(0)}% of its budget unspent — the ramp stops climbing there`);
     assert(elites > 0, 'no wave in forty ever fielded an elite');
     return `${checked} waves priced, worst overspend ${worstOver.toFixed(2)}, `
-      + `worst underspend ${((1 - worstUnder) * 100).toFixed(1)}%, ${elites} elites queued`;
+      + `worst underspend ${((1 - worstUnder) * 100).toFixed(1)}%, ${elites} elites queued, `
+      + `${conditioned} waves conditioned`;
   });
 
   check('escalation: depth stops buying bodies and starts buying elites', () => {
@@ -400,15 +432,32 @@ export async function run({ check, assert }) {
 
   check('escalation: no wave fields more enormous bodies than it may', () => {
     const d = director();
-    let worst = 0, worstAt = 0;
+    let worst = 0, worstAt = 0, mostHeavy = 0;
     for (let w = 1; w <= 45; w++) {
       for (let i = 0; i < 20; i++) {
         d.wave = w; d._compose();
         const heavy = d.spawnQueue.filter(e => Waves.isHeavy(Waves.spawnType(e))).length;
-        if (heavy - d.heavyLimit(w) > worst) { worst = heavy - d.heavyLimit(w); worstAt = w; }
+        mostHeavy = Math.max(mostHeavy, heavy);
+        /**
+         * AGAINST THE WAVE'S OWN STATED CAP, not against a recomputation of it.
+         *
+         * `heavyLimit(w)` is the DIFFICULTY cap and `CONDITIONS.titans` lifts it
+         * on purpose — the Heavy Guard is "few, and enormous", and a wave of
+         * five walkers is the whole content of that condition. What may never
+         * move is the FRAME-RATE ceiling, which is `HEAVY_CAP` and is asserted
+         * separately below. Reading `d.shape.heavy` is calling the shipped rule
+         * rather than restating it (§2.4); it is also strictly stronger than
+         * the old line, which could not have caught a condition that lifted the
+         * cap past the renderer's limit.
+         */
+        const cap = d.shape?.heavy ?? d.heavyLimit(w);
+        if (heavy - cap > worst) { worst = heavy - cap; worstAt = w; }
       }
     }
     assert(worst <= 0, `wave ${worstAt} fielded ${worst} heavies over its limit — a walker is 66 meshes and an acklay more`);
+    assert(mostHeavy <= Waves.HEAVY_CAP,
+      `some wave fielded ${mostHeavy} enormous bodies against a frame-rate ceiling of ${Waves.HEAVY_CAP} — `
+      + 'a condition has lifted the one limit that is not a difficulty number');
     // `big` and `boss` are separate flags and every heavy rule wants both;
     // reading only `big` is what let three acklays through a limit of four.
     assert(Waves.isHeavy('beast') && Waves.isHeavy('walker') && !Waves.isHeavy('trooper'),
