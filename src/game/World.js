@@ -2034,6 +2034,14 @@ export class World {
     bolt.vel.copy(res.dir).multiplyScalar(bolt.speed * (res.grade >= GRADE.RETURN ? 1.25 : 1));
     this._creditDeflect(owner, bolt, res, bladePoint);
     audio.deflect(bladePoint, res.grade);
+    /* A BOLT LANDING ON YOUR BLADE IS THE MOST TACTILE EVENT IN THE GAME and it
+     * reached the pad through nothing at all. Scaled by the grade so a lucky
+     * block and a perfect return are not the same in the hands — which is the
+     * whole argument of this pass, applied to the one mechanic that already had
+     * a four-step grade to spend on it. */
+    if (owner.isLocal && this.feelOn('shake')) {
+      this.engine?.rumble?.(0.20 + res.grade * 0.16, 0.34 + res.grade * 0.14, 45 + res.grade * 22);
+    }
     if (res.grade >= GRADE.RETURN) {
       this.notifyFloating(bladePoint, GRADE_NAME[res.grade], '#a8f0ff');
       if (res.grade === GRADE.PERFECT) { this.addHitstop(0.07); this.engine.flash(0.09); }

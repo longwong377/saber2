@@ -875,6 +875,37 @@ export class CameraRig {
     return this.shot;
   }
 
+  /**
+   * A LENS KICK THAT EXPIRES ON THE GAME'S CLOCK. See the caller in _jump.
+   *
+   * The rig damps `fov` toward `fovTarget` at 7/s every frame already, so all
+   * this owns is putting the target up and taking it down again — and taking it
+   * down `seconds` of GAME time later, not of wall time. Whoever else is
+   * writing `fovTarget` that frame (the speed FOV) wins the moment the kick
+   * expires, because the kick restores what it found rather than a constant.
+   */
+  kickFov(degrees = 6, seconds = 0.18) {
+    this.fovKick = { amp: degrees, left: clamp(seconds, 0.02, 3), dur: clamp(seconds, 0.02, 3) };
+    return this.fovKick;
+  }
+
+  /**
+   * How many degrees the kick is adding right now. Decays on the game clock.
+   *
+   * `k ** 0.6` starts at the full amplitude and eases out. It is applied on top
+   * of the SMOOTHED fov rather than to the target it damps toward, because the
+   * damp is 7/s and 6 degrees fed through it for 0.18 s reaches 1.97 — measured
+   * — so a kick written as a target could never be the kick it says it is. A
+   * lens kick is an impulse; the ease-out is its release.
+   */
+  _fovKickAmount(dt) {
+    const k = this.fovKick;
+    if (!k) return 0;
+    k.left -= Math.max(dt, 0);
+    if (k.left <= 0) { this.fovKick = null; return 0; }
+    return k.amp * Math.pow(k.left / k.dur, 0.6);
+  }
+
   /** Give the rig back. Idempotent — respawn and dispose may both call it. */
   endShot() {
     const s = this.shot;
@@ -1036,7 +1067,19 @@ export class CameraRig {
     else dampVec(this._smoothTarget, target, 16, dt);
 
     this.distance = damp(this.distance, this.targetDistance, 8, dt);
+    /* THE KICK IS AN IMPULSE ON TOP, and that is the fix rather than a refinement.
+     *
+     * `_jump` wrote `camera.fovTarget = camera.fov + 6` and armed a
+     * `setTimeout` to put it back 180 ms later. Two things wrong with it, and
+     * the second is fatal: the timer is on the WALL clock, so inside a hitstop
+     * or a Force Sense it expired before the jump had visibly started and
+     * behind a pause card it expired behind the pause card — and
+     * `Player._updateCamera` ASSIGNS `fovTarget` from the speed term on every
+     * single frame, so the six degrees were overwritten on the very next one
+     * and the kick the audit describes never reached the screen at all.
+     * Additive, and decayed on the dt the rig is already handed. */
     this.fov = damp(this.fov, this.fovTarget, 7, dt);
+    this.fovKickAt = this._fovKickAmount(dt);
     this.roll = damp(this.roll, this.rollTarget, 6, dt);
 
     const fwd = _v1.set(0, 0, -1).applyQuaternion(this.aimQuat);
@@ -1108,8 +1151,11 @@ export class CameraRig {
     // the base of the blade clip through it.
     const near = this.firstPerson ? 0.045 : 0.15;
     if (this.camera.near !== near) { this.camera.near = near; this.camera.updateProjectionMatrix(); }
-    if (Math.abs(this.camera.fov - this.fov) > 0.01) {
-      this.camera.fov = this.fov;
+    // `fov` is where the lens is settling; `fovKickAt` is the impulse riding on
+    // top of it. Only the sum is ever a real focal length.
+    const shown = this.fov + (this.fovKickAt || 0);
+    if (Math.abs(this.camera.fov - shown) > 0.01) {
+      this.camera.fov = shown;
       this.camera.updateProjectionMatrix();
     }
   }
@@ -2706,8 +2752,22 @@ export class Player {
     }
     audio.force(this.position, 'jump');
     if (ctx.particles) ctx.particles.sandPuff(this.position.clone(), 0.9, this.position.y, ctx.groundColor);
-    this.camera.fovTarget = this.camera.fov + 6;
-    setTimeout(() => { this.camera.fovTarget = this.world.settings.fov; }, 180);
+    /**
+     * THE LENS KICK, ON THE GAME'S CLOCK.
+     *
+     * This was `setTimeout(…, 180)`, which is the wall clock, and the wall
+     * clock is not what the game is running on. Force-jump inside a hitstop or
+     * a Force Sense and the world is at 0.06× or 0.42× while the timer counts
+     * real milliseconds — so the kick came back before the jump had visibly
+     * started. Pause the game and it came back behind the pause card. Alt-tab
+     * and the browser throttles the timer to one a minute, so it did not come
+     * back at all until you returned.
+     *
+     * `kickFov` is the same 6 degrees over the same 0.18 s, measured on the dt
+     * the rig is already being handed, which is the only clock the rest of the
+     * camera obeys.
+     */
+    this.camera.kickFov(6, 0.18);
   }
 
   _footstep(p, speed) {
@@ -5479,6 +5539,15 @@ export class Player {
     this.combo = 0;
     this.camera.addShake(clamp(dmg / 22, 0.12, 0.9));
     this.world.engine.hurt(clamp(dmg / 30, 0.2, 1));
+    /* AND THE PAD. `grep vibrationActuator|hapticActuators|playEffect` returned
+     * zero over the whole project, so a player on a controller took a blaster
+     * bolt to the chest and felt nothing at all. Gated on the same toggle the
+     * shake two lines up is gated on, and only for the body this machine is
+     * looking through — a peer being shot is not your hands. */
+    if (this.isLocal && this.world.feelOn?.('shake') !== false) {
+      this.world.engine.rumble?.(clamp(dmg / 26, 0.2, 1), clamp(dmg / 60, 0.1, 0.5),
+        Math.round(80 + clamp(dmg, 0, 60) * 3));
+    }
     audio.boltHit(point || this.chest);
     if (dmg > 14) this.staggerTimer = Math.max(this.staggerTimer, 0.28);
     if (this.hp <= 0) { this.hp = 0; this.die(source); return true; }

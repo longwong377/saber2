@@ -26,7 +26,7 @@ import { Saber } from '../../src/game/Saber.js';
 import { SaberController, READY_GUARD } from '../../src/game/SaberController.js';
 import { CatchWindow, CATCH, captureSnapshot } from '../../src/game/Combat.js';
 import { guardIntercept } from '../../src/game/Bolts.js';
-import { Player } from '../../src/game/Player.js';
+import { Player, CameraRig } from '../../src/game/Player.js';
 import { ACTIONS, ACTION_IDS, defaultBindings, findConflict } from '../../src/engine/Bindings.js';
 
 const DEG = 180 / Math.PI;
@@ -183,6 +183,55 @@ export async function run({ check, assert }) {
         `the last enemy dying did not move the world clock (${k.scale.join(',') || 'no calls'})`);
       return rows.join('; ');
     } finally { restoreShared(snap); }
+  });
+
+  check('feel: the jump lens kick reaches the screen, and on the game clock', () => {
+    const cam = new THREE.PerspectiveCamera(60, 16 / 9, 0.1, 900);
+    const rig = new CameraRig(cam);
+    const body = new THREE.Vector3(0, 0, 0);
+    const ctx = {};
+    const run = (frames, dt, write) => {
+      let peak = 0;
+      for (let i = 0; i < frames; i++) {
+        // `Player._updateCamera` ASSIGNS fovTarget from the speed term on every
+        // frame. That is the whole reason the old kick never arrived, so the
+        // probe has to do it too or it would measure a world that does not
+        // exist. Same expression, same place in the frame.
+        if (write) rig.fovTarget = 60;
+        rig.update(dt, body, ctx);
+        peak = Math.max(peak, cam.fov);
+      }
+      return peak;
+    };
+    run(30, 1 / 60, true);
+    const rest = cam.fov;
+    // A jump, with the per-frame assignment running exactly as the game does it.
+    rig.kickFov(6, 0.18);
+    const peak = run(14, 1 / 60, true);
+    assert(peak > rest + 4.5,
+      `the kick reached ${(peak - rest).toFixed(2)} deg of 6 — it is being overwritten by the speed term`);
+    // …and it goes away, without a timer.
+    run(90, 1 / 60, true);
+    assert(Math.abs(cam.fov - rest) < 0.15, `the kick never came back down (${cam.fov.toFixed(2)} vs ${rest.toFixed(2)})`);
+    assert(!rig.fovKick, 'the kick is still armed');
+
+    /* AND IT IS THE GAME'S CLOCK. The old one was a `setTimeout(…, 180)`, so
+     * inside a Force Sense at 0.42x it expired in 76 ms of game time — before
+     * the jump it decorates had visibly started — and behind a pause card it
+     * expired behind the pause card. Driven at 0.42x here, it has to last
+     * about 1/0.42 as many frames. */
+    const framesAt = (scale) => {
+      rig.fov = 60; rig.fovTarget = 60;
+      rig.kickFov(6, 0.18);
+      let n = 0;
+      while (rig.fovKick && n < 400) { rig.fovTarget = 60; rig.update((1 / 60) * scale, body, ctx); n++; }
+      return n;
+    };
+    const fast = framesAt(1), slow = framesAt(0.42);
+    assert(slow > fast * 2, `a 0.42x world spent ${slow} frames on the kick against ${fast} at full speed`);
+    return `+${(peak - rest).toFixed(2)} deg of 6 through the per-frame fovTarget write, back to `
+      + `${cam.fov.toFixed(1)} with no timer; ${fast} frames at 1x, ${slow} at 0.42x `
+      + `(a setTimeout would be ${fast} either way)`;
   });
 
   check('feel: dying is not the sound of a button you cannot afford', async () => {
