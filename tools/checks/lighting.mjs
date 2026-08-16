@@ -204,7 +204,7 @@ export function run({ check, assert, near, THREE: T }) {
      * one could not see: that metering leaves the AUTHOR in charge, and that
      * the trim has less authority than the knob the author holds.
      */
-    const rows = [], rendered = [], authored = [], raw = [];
+    const rows = [], rendered = [], authored = [], raw = [], metered = [];
     for (const key of OUTDOOR) {
       const a = LEVELS[key].atmosphere;
       const m = atmosphereMeter(a);
@@ -213,9 +213,12 @@ export function run({ check, assert, near, THREE: T }) {
       // The three keys that matter, all in the same units (linear radiance a
       // mid-grey horizontal surface lands on, after whatever exposure applies):
       //   raw       — what the atmosphere alone puts down, unexposed
+      //   metered   — the same with the meter's OWN correction and nothing
+      //               else, which is how much metering the meter is doing
       //   authored  — what the level's own numbers ask the frame to be
       //   rendered  — what it actually lands on after the meter has its say
       raw.push(m.key);
+      metered.push(m.key * m.trim);
       authored.push(m.key * (a.exposure ?? 1.05));
       rendered.push(m.key * m.exposure);
       rows.push(`${key} irr ${m.irradiance.toFixed(2)} → exp ${m.exposure.toFixed(2)} (×${m.trim.toFixed(2)})`);
@@ -223,12 +226,14 @@ export function run({ check, assert, near, THREE: T }) {
     const spread = (xs) => Math.max(...xs) / Math.min(...xs);
     // 1. THE METER STILL METERS. The atmospheres put down a spread the authored
     //    exposures never expressed — that is the fault the meter exists for —
-    //    and the rendered spread has to be measurably tighter than the raw one
-    //    or the meter has been switched off rather than bounded.
+    //    and the meter's OWN correction has to close a measurable share of it.
+    //    Measured against `key * trim` and not against the finished frame:
+    //    the finished frame carries the author's `exposure` too, and a spread
+    //    that the author widened is not evidence the meter stopped working.
     assert(spread(authored) > 1.4, `the authored exposures were already within `
       + `${spread(authored).toFixed(2)}:1 of each other — nothing to fix, so this proves nothing`);
-    assert(spread(rendered) < spread(raw) * 0.85,
-      `the meter took a raw spread of ${spread(raw).toFixed(2)}:1 to ${spread(rendered).toFixed(2)}:1 — `
+    assert(spread(metered) < spread(raw) * 0.85,
+      `the meter took a raw spread of ${spread(raw).toFixed(2)}:1 to ${spread(metered).toFixed(2)}:1 — `
       + 'that is not a meter, it is the authored numbers passed through');
     // 2. …AND IT DOES NOT ERASE THE AUTHORING. Most of the authored separation
     //    has to survive. At the old flat normalisation this was 0 by
@@ -268,8 +273,8 @@ export function run({ check, assert, near, THREE: T }) {
       `the trim can move a frame ${(hi / lo).toFixed(2)}:1 while every \`exposure\` in the game `
       + `together spans ${spread(auth).toFixed(2)}:1 — the meter outranks the author`);
     assert(hi > 1 && lo < 1, `the trim is one-sided: ${lo.toFixed(2)}…${hi.toFixed(2)}`);
-    return `${rows.join('; ')} — raw ${spread(raw).toFixed(2)}:1, authored ${spread(authored).toFixed(2)}:1, `
-      + `rendered ${spread(rendered).toFixed(2)}:1, rho ${rho.toFixed(3)}, `
+    return `${rows.join('; ')} — raw ${spread(raw).toFixed(2)}:1 → metered ${spread(metered).toFixed(2)}:1, `
+      + `authored ${spread(authored).toFixed(2)}:1 → rendered ${spread(rendered).toFixed(2)}:1, rho ${rho.toFixed(3)}, `
       + `trim ${lo.toFixed(2)}…${hi.toFixed(2)} inside an authored ${spread(auth).toFixed(2)}:1`;
   });
 

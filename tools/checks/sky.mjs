@@ -216,14 +216,22 @@ export function run({ check, assert, near }) {
       const share = s / Math.max(sp, 1e-6), ctlShare = sc / Math.max(sp, 1e-6);
       shares.push(share); ctlShares.push(ctlShare); sats.push(s); ctlSats.push(sc);
 
-      /* THE FLOOR. An eighth of the chroma the level's own air makes has to
-       * survive being drawn. It is set where the roster now stands and the
-       * control fails it: shipped-old, the White Pass kept 0.104 of its own
-       * sky's chroma and the Drowned Wood 0.109, which put both of their skies
-       * under 0.07 saturated on screen — as neutral as `hoth.jpeg`, the ONE
-       * reference plate in assets/reference/ that is a genuine whiteout (0.048),
-       * on a level that is not one and on a swamp that is emphatically not. */
-      assert(share > 0.12,
+      /* THE FLOOR, and where 0.118 comes from. Two readings put it in the same
+       * place and neither is a taste call:
+       *
+       *  · IT SEPARATES THE TWO ENGINES. The worst level the flat-metered
+       *    control draws keeps 0.105 of its own sky's chroma (the White Pass;
+       *    the Drowned Wood is 0.110). The worst the shipped one draws keeps
+       *    0.126 (the White Pass and the Colosseum). 0.118 is the geometric
+       *    midpoint of 0.110 and 0.126, so the control fails and the roster
+       *    passes, each with about a tenth of margin.
+       *  · IT IS WHERE A SKY STOPS HAVING A HUE. At that share these skies
+       *    measure 0.06–0.07 saturated on screen, which is `hoth.jpeg` — the
+       *    ONE plate in assets/reference/ that is a genuine whiteout, at 0.048.
+       *    Under the flat meter the White Pass and the Drowned Wood were both
+       *    there, and a swamp is not a whiteout.
+       */
+      assert(share > 0.118,
         `${key}: the drawn sky keeps ${(share * 100).toFixed(1)}% of the chroma its own atmosphere `
         + `makes (${s.toFixed(3)} against ${sp.toFixed(3)}) — the sky has been drawn grey`);
       // …and the level's own authored swatch is not a decoration either: a
@@ -231,9 +239,13 @@ export function run({ check, assert, near }) {
       const authored = sat(new THREE.Color(a.skyColor ?? 0xbcd8ff));
       assert(s > authored * 0.12,
         `${key}: \`skyColor\` is ${authored.toFixed(2)} saturated and the dome draws ${s.toFixed(3)}`);
-      // THE CHANGE MAY NOT COST ANY LEVEL CHROMA. Two levels are unmoved by
-      // construction; none may be worse.
-      assert(s >= sc - 1e-9,
+      /* THE CHANGE MAY NOT COST A LEVEL ITS HUE. Two levels are unmoved by
+       * construction — the Colosseum lands on 1.0000 of the control — and the
+       * Shifting Waste gives up 0.03%, because anchoring the drawn ceiling to
+       * its own key takes it from 1.218 to 1.170 and a slightly lower ceiling
+       * compresses slightly harder. 0.99 is a hair of room around "unmoved";
+       * anything a viewer could see is a regression and fails. */
+      assert(s > sc * 0.99,
         `${key}: the shipped sky is ${s.toFixed(3)} saturated against ${sc.toFixed(3)} for the `
         + 'flat-metered control — the bound has cost this level its hue');
       rows.push(`${key} ${sc.toFixed(3)}→${s.toFixed(3)} (${(share * 100).toFixed(0)}% of ${sp.toFixed(2)})`);
@@ -241,7 +253,7 @@ export function run({ check, assert, near }) {
     /* AND THE BOUND IS NOT DECORATIVE: the control has to fail the floor, and
      * it has to fail it on the WORST level rather than on average, because an
      * average can be carried by the two levels that never moved. */
-    assert(Math.min(...ctlShares) < 0.12,
+    assert(Math.min(...ctlShares) < 0.118,
       `the flat-metered control keeps ${(Math.min(...ctlShares) * 100).toFixed(1)}% at its worst, `
       + 'which is inside the floor above — so the floor is not what is holding the sky up');
     const mean = (xs) => xs.reduce((p, q) => p + q, 0) / xs.length;

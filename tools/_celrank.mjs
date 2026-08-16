@@ -74,7 +74,8 @@ for (const key of OUT) {
     indirect: usedSky / m.direct,
     floor: 1.2 + 4.6 * m.sunPos.y,
     cloudSun: L.sun, skyCeil: ceil, cloudBase: L.amb * 0.55,
-    exposure: m.exposure,
+    exposure: m.exposure, trim: m.trim, rawTrim: m.rawTrim, rawKey: m.key,
+    authored: a.exposure ?? 1.05, renderedKey: m.key * m.exposure,
   });
 }
 rows.sort((p, q) => p.sunY - q.sunY);
@@ -115,6 +116,24 @@ for (const r of rows) {
       + `cloud ${r.cloudSun.toFixed(2)}/${r.skyCeil.toFixed(2)} (x${(r.cloudSun / r.skyCeil).toFixed(2)}, `
       + `${(r.cloudSun / r.cloudBase).toFixed(1)}:1)  exposure ${r.exposure.toFixed(2)}`}`);
 }
+/* THE METER IS A TRIM, NOT A NORMALISER — and this is the column to read when
+ * a level renders brighter or darker than its author meant. `wanted` is how far
+ * the meter would move this level if it could (KEY / key); `trim` is how far
+ * METER_TRIM lets it. A level pinned on the bound is one whose atmosphere and
+ * whose `exposure` are pulling the same way, which is usually what was meant —
+ * what it is NOT any more is a level normalised onto everybody else's key.
+ * `rendered` is the mid-grey the frame actually lands on, and the ordering of
+ * that column against `authored` is what the art direction lives in. */
+console.log('\n  the meter, as a trim (rendered = key × exposure; a level authored dark must render dark):');
+console.log('    level        authored  wanted   trim   exposure   key      rendered');
+for (const r of [...rows].sort((p, q) => p.renderedKey - q.renderedKey)) {
+  console.log(`    ${r.key.padEnd(11)} ${r.authored.toFixed(2).padStart(8)} `
+    + `${('×' + r.rawTrim.toFixed(2)).padStart(7)} ${('×' + r.trim.toFixed(2)).padStart(6)}`
+    + `${r.rawTrim > r.trim * 1.005 ? ' (held)' : r.rawTrim < r.trim * 0.995 ? ' (held)' : '       '}`
+    + ` ${r.exposure.toFixed(3).padStart(7)} ${r.rawKey.toFixed(4).padStart(8)} `
+    + `${r.renderedKey.toFixed(4).padStart(8)}`);
+}
+
 const ind = [...rows].map((r) => [r.sunY, r.indirect, r.key]);
 for (let i = 1; i < ind.length; i++) {
   if (!(ind[i][1] < ind[i - 1][1])) {
