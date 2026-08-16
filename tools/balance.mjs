@@ -416,11 +416,33 @@ export function measureDuel(diffKey, formKey) {
  *  The real capsule set of a real body
  * ══════════════════════════════════════════════════════════════════════════ */
 
-const BUILDERS = {
-  b1: Bodies.buildB1, b2: Bodies.buildB2, trooper: Bodies.buildTrooper,
-  sniper: Bodies.buildTrooper, acolyte: Bodies.buildAcolyte,
-  droideka: Bodies.buildDroideka, walker: Bodies.buildWalker, beast: Bodies.buildBeast,
-};
+/**
+ * THERE IS NO BUILDERS TABLE ANY MORE, AND THAT WAS THE WHOLE PROBLEM.
+ *
+ * This file used to carry a hand-written map of eight `type → builder` pairs
+ * beside `ARCHETYPES`, which has thirty-one entries and already stores each
+ * body's builder on its own record. HANDOFF §2.3's signature defect, and the
+ * most expensive instance of it found so far, because of what the miss did
+ * rather than what it was:
+ *
+ * `capsulesFor` answered a missing builder with `[]`, `engagementFor` reads an
+ * empty capsule set as unreachable, and so **twenty-three of the thirty-one
+ * archetypes were modelled as INVULNERABLE.** Measured share of a wave-20 queue
+ * this harness could not kill: scoria — the shipped default level — **37.1%**,
+ * temple 67.6%, geonosis 51.1%.
+ *
+ * That is why the tuning report printed "median depth 0.00, survived-30 = 0"
+ * for all twelve tier×skill cells and "Δdepth 0.000, helped 0%, hurt 0%" for
+ * all forty boons, and it is why HANDOFF §6.2.4's question — is the whole kit
+ * worth using — was recorded as unanswerable. The instrument was not measuring
+ * a hard game; it was measuring a game a third of whose bodies could not be
+ * hit. Every tuning decision taken against this report was taken blind.
+ *
+ * The archetype's own `build` is now the single authority, so a body added
+ * tomorrow is modelled the day it is authored. And a missing one THROWS rather
+ * than returning empty: a harness that silently reports an enemy as
+ * unkillable is worse than one that refuses to start.
+ */
 
 /**
  * The archetype a queue entry actually spawns, elite included.
@@ -464,9 +486,16 @@ const _caps = new Map();
 export function capsulesFor(entry) {
   if (_caps.has(entry)) return _caps.get(entry);
   const { type, A } = archetypeOf(entry);
-  const build = BUILDERS[type];
+  const build = A?.build;
+  if (typeof build !== 'function') {
+    throw new Error(
+      `balance.mjs cannot build '${type}': ARCHETYPES.${type} has no \`build\`. `
+      + 'Refusing to model it as an empty capsule set, because engagementFor reads '
+      + 'that as unreachable and would report this body as INVULNERABLE — which is '
+      + 'exactly how 23 of 31 archetypes silently voided every tuning run.');
+  }
   let out = [];
-  if (build) {
+  {
     const built = build({ scale: A.scale });
     const rig = built.rig || (built.list ? built : null);
     rig?.root?.updateMatrixWorld?.(true);
