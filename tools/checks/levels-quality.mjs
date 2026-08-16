@@ -842,7 +842,26 @@ export async function run({ check, assert }) {
      * architecture in them are the ones that will fail it. */
     for (const level of LEVEL_ORDER) {
       const r = await walk(level);
-      assert(r.n >= 10, `only ${r.n} of ${N} bearings on ${level} were placeable — nothing measured`);
+      /**
+       * THE FLOOR IS A FRACTION OF `N`, BECAUSE A LITERAL HERE WENT STALE THE
+       * MOMENT `N` MOVED — and this is the first run that could ever have said so.
+       *
+       * It read `r.n >= 10`: correct while the check cast 16 bearings, and
+       * unsatisfiable once the note above took it to 6. The failure it produced
+       * says `only 6 of 6 bearings on scoria were placeable — nothing measured`,
+       * which is every bearing the check asked for and the healthiest possible
+       * result. Nobody had seen it because this suite has not completed a run
+       * since: it was the second of the two suites voiding the gate, and the
+       * check is the last one in the file.
+       *
+       * HANDOFF §2.3 in miniature — a hand-maintained number beside the thing it
+       * is derived from. The guard exists to refuse a sample too small to carry
+       * the 92% ratio, so it is written as the share of the cast it needs and
+       * cannot be outlived by the next change to `N`.
+       */
+      assert(r.n >= Math.ceil(N * 0.6),
+        `only ${r.n} of ${N} bearings on ${level} were placeable — fewer than the `
+        + `${Math.ceil(N * 0.6)} this needs to carry a ratio`);
       got += r.arrived; tot += r.n;
       rows.push(`${level} ${r.arrived}/${r.n}`);
     }
