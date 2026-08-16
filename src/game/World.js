@@ -16,7 +16,7 @@ import { BoltPool } from './Bolts.js';
 import { BladeContactSolver, captureSnapshot, gradeCaught, resolveBladeClash, GRADE, GRADE_NAME, DIFFICULTY, CatchWindow } from './Combat.js';
 import { assignSides, DuelMatch, Player, asTeam, bladeTargets, canHarm, hostileTo, pvpRules, sideTeam, TEAM } from './Player.js';
 import { ageDropped } from './Dropped.js';
-import { Enemy, ARCHETYPES, applyModifier } from './Enemy.js';
+import { Enemy, ARCHETYPES, applyModifier, ENEMY_POWERS } from './Enemy.js';
 import { WaveDirector, RankSet, boonTick, boonGuard, bondReceive, bondGuardIn, bondGive, BOND, boonById, MODES } from './Waves.js';
 import { Communion, FACETS, insightRate } from './LivingForce.js';
 /**
@@ -209,6 +209,14 @@ const GUARD_COST = 22;
  * changed, not a heartbeat.
  */
 const ARMY_INTERVAL = 0.5;
+/**
+ * How long the host keeps holding a body a peer said it was lifting, with
+ * nothing further heard. See `applyClaim`'s grip branch — the claim is re-sent
+ * on every one of the client's claim ticks (1/24 s), so this is fourteen of
+ * them: long enough that a bad connection cannot drop what a player is holding,
+ * short enough that a lid closing does not leave an acolyte in the air.
+ */
+const NET_GRIP_LEASE = 0.6;
 
 export class World {
   constructor(engine, settings) {
@@ -1216,7 +1224,14 @@ export class World {
       p.damage(damage * 0.4 * k, centre, null, 'explosion');
       _v1.subVectors(p.position, centre).setY(0.6).normalize().multiplyScalar(force * 0.35 * k);
       p.velocity.add(_v1);
-      p.camera.addShake(k);
+      /* `?.` — see the note over `_applyBladeEvent`. A RemoteAvatar is in
+       * `world.players` and has no camera, and this is the third site of that
+       * same crash the note describes: it throws out of `World.update()` on the
+       * HOST, which abandons the frame before the snapshot goes out. Reachable
+       * from any blast next to a joining player — a grenade, a wave clear, or
+       * the Unstable elite the co-op suite drives, which is where it surfaced
+       * the moment the pair harness started building avatars at all. */
+      p.camera?.addShake(k);
     }
     for (const b of this.physics.bodies) {
       if (b.invMass === 0) continue;
@@ -1536,7 +1551,7 @@ export class World {
 
     // 2 — enemies. On a client the body is placed from the wire FIRST, so the
     // pose that follows is solved against a velocity that is the host's own.
-    if (this.netMode === 'client') this._stepNetEnemies(dt);
+    if (this.netMode === 'client') this._stepNetEnemies(dt, ctx);
     for (let i = this.enemies.length - 1; i >= 0; i--) {
       const e = this.enemies[i];
       if (!e.update(dt, ctx)) { e.dispose(); this.enemies.splice(i, 1); }
@@ -1756,7 +1771,9 @@ export class World {
 
     owner.addFlow([0.03, 0.06, 0.13, 0.24][res.grade]);
     owner.score += [10, 25, 70, 160][res.grade];
-    owner.camera.addShake(0.03 + res.grade * 0.02);
+    // `?.` — `_bladeEntries` offers every lit blade in `world.players`, and a
+    // RemoteAvatar's is one of them. See the note over `_applyBladeEvent`.
+    owner.camera?.addShake(0.03 + res.grade * 0.02);
     if (res.grade === GRADE.PERFECT) owner.perfects++;
     else if (res.grade === GRADE.BLOCK) owner.stamina = Math.max(0, owner.stamina - 4);
     this.report({ type: 'deflect', grade: res.grade });
@@ -2120,7 +2137,9 @@ export class World {
     audio.clash(clash.point, clash.power);
     player.saber.strain(clash.power);
     enemy.saber.strain(clash.power);
-    player.camera.addShake(0.08 + clash.power * 0.12);
+    // `?.` — the same crash again: a clash is resolved for whichever blade in
+    // `world.players` met the enemy's, remote ones included.
+    player.camera?.addShake(0.08 + clash.power * 0.12);
 
     // ── CHAMBER: swung against the declared arc, inside the window
     if (duel && duel.chamberOpen && bladeSpeed > 5.5 && duel.chambersWith(_v4)) {
@@ -2799,7 +2818,7 @@ export class World {
     // A peer that stopped talking without closing its connection. PeerJS only
     // raises `close` on a clean teardown, so without this a lid closing left a
     // ghost in the roster and in every other player's world forever.
-    if (this.netMode === 'host') net.sweep?.();
+    if (this.netMode === 'host') { net.sweep?.(); this._netGripLeases(); }
     if (this.netMode === 'client') this._reconcileClaims();
 
     if (this.player) {
@@ -3397,6 +3416,10 @@ export class World {
     const net = this.net;
     if (!net?.connected || !this._netEnemyIndex) return;
     for (const [id, e] of this._netEnemyIndex) {
+      // The lift is a STATE and is reconciled on its own terms — see
+      // _netGripSync. It rides this loop because this is the tick that already
+      // walks every replicated body once, at the rate a claim is allowed to go.
+      this._netGripSync(e);
       const base = e._netHp;
       if (base === undefined) continue;
       const lost = base - e.hp;
@@ -3462,13 +3485,14 @@ export class World {
     if (this.netMode !== 'client' || !this.terrain) return;
     const seen = new Set();
     for (const rec of msg.e) {
-      const [id, type, x, y, z, f, hp, dead, vx, vz, tg, dl, md, tm] = rec;
+      const [id, type, x, y, z, f, hp, dead, vx, vz, tg, dl, md, tm, ck, cw, ch] = rec;
       seen.add(id);
       let e = this._netEnemyIndex.get(id);
       if (!e) {
         e = this.spawnEnemy(type, new THREE.Vector3(x, y, z));
         e.id = id;
         e.netDriven = true;
+        this._netClaimImpulse(e);
         this._netEnemyIndex.set(id, e);
       }
       /**
@@ -3565,6 +3589,7 @@ export class World {
        * the pose. See packDuel in Net.js.
        */
       e.netDuel = dl || null;
+      this._applyNetCast(e, ck || null, cw || 0, ch || 0);
       if (dead && !e.dead) e.die(e.position.clone(), null, 'net');
     }
     this._spawnNetBolts(msg.bf);
@@ -3638,6 +3663,164 @@ export class World {
     if (!applyModifier(e, key)) return false;
     if (e.mod === 'unstable') e._detonated = true;
     return true;
+  }
+
+  /**
+   * THE CAST A JOINING PLAYER COULD NOT SEE COMING.
+   *
+   * `_forceBrain` opens every enemy power with a 0.45 s wind-up and a floating
+   * call over the head — FORCE PUSH, LIGHTNING, CHOKE — and its own note says
+   * the tell is the whole fairness contract: "a power that arrives with no
+   * frame of warning is the 11.5 m sphere the beasts check has a note about".
+   * That brain does not run here, and none of `_castKey`, `_castTimer` or
+   * `casting` was on the wire, so off-host the contract did not exist. Driven,
+   * a Jedi Master casting at a peer for 40 s: six casts, six tells on the
+   * host's screen, and on the peer's — six anonymous numbers arriving over
+   * `hit`, zero telegraphs, zero metres of displacement.
+   *
+   * The call is raised on the EDGE, when the key changes, so the tell appears
+   * once per cast and not eighteen times a second. It reads its label and its
+   * colour out of `ENEMY_POWERS` — the table the host's own call is drawn from
+   * — rather than a second table here, because a floating word that says
+   * something different on two machines is worse than no word at all.
+   *
+   * The fields are written whole rather than as a flag, because things that a
+   * client DOES run read them: `Enemy.damage` refuses to reach `breakCast`
+   * unless `_castTimer > 0 || casting`, and the HUD and any counterplay prompt
+   * want to know how much of the window is left.
+   */
+  _applyNetCast(e, key, windup, hold) {
+    const was = e._castKey || e.casting || null;
+    e._castKey = windup > 0 ? key : null;
+    e._castTimer = windup;
+    e.casting = key && windup <= 0 ? key : null;
+    e.castLeft = hold;
+    if (!key || key === was) return;
+    const P = ENEMY_POWERS[key];
+    if (P) this.notifyFloating(e.aimPoint(_v1), P.label, P.color);
+  }
+
+  /**
+   * THE SHOVE THIS MACHINE JUST GAVE A BODY IT DOES NOT OWN.
+   *
+   * `_claim` sent `cut` and `dmg` and nothing else, so there was no impulse on
+   * this wire at all. Measured on a real host/client pair, the host body taken
+   * off its brain so nothing else could move it: a guest's point-blank push
+   * moved it 0.000 m on the guest's screen and 0.000 m on the host's, while the
+   * damage crossed and the hp came off. Push, pull, throw, the grip's lift, the
+   * ragdoll and stasis-on-enemies were all damage with no physics for everybody
+   * who was not the host.
+   *
+   * WRAPPED AT THE DOOR, NOT ADDED AT THE CALL SITES, and that is the same
+   * argument `_recordFires` makes about `BoltPool.fire` and `_reconcileClaims`
+   * makes about hp. Enemy.js's own note names the two doors every power in the
+   * game arrives through — "`damage()` and `applyKnockback` are the two doors
+   * … so one call each means a blow is answered exactly once however it was
+   * thrown" — and the second of those two is the one that carries a direction.
+   * A power written next month is replicated the day it is written; a list of
+   * call sites here would be a seventh one waiting to be forgotten, which is
+   * the exact defect `_reconcileClaims` exists to have already fixed.
+   *
+   * The RAW arguments are claimed, before this machine's copy has resisted
+   * anything, so the HOST runs the contest: `Enemy.applyKnockback` weighs the
+   * shove and the harm together against the pool it holds (which is not
+   * replicated), breaks whatever the body was casting, stuns it past 12 m/s and
+   * makes it scream. Every one of those is a consequence only the authority can
+   * decide, and every one of them is now reachable from a guest's hands.
+   *
+   * `_claim(msg, e)` resyncs the hp baseline, so the damage half is billed here
+   * and NOT a second time by `_reconcileClaims` on the next tick.
+   */
+  _netClaimImpulse(e) {
+    if (e._netKnock) return;
+    e._netKnock = true;
+    const inner = e.applyKnockback.bind(e);
+    e.applyKnockback = (impulse, damage, source, gentle) => {
+      /**
+       * APPLIED LOCALLY FIRST, and for the reason the blade is: each player is
+       * authoritative over their own hands because they cannot tolerate a frame
+       * of lag. A guest whose own push waited a round trip to move anything
+       * would be a guest whose Force feels broken — which is what the wire said
+       * about it for the whole life of this protocol. `_netOwn` below is what
+       * stops the next snapshot stomping the shove it just applied.
+       */
+      inner(impulse, damage, source, gentle);
+      if (!source?.isLocal || this.netMode !== 'client') return;
+      this._netOwn(e);
+      // A body you were holding and have now thrown is a body you have let go
+      // of, and the host has to hear that BEFORE the throw or it will hold the
+      // thing in place while it flies. One rule, two callers.
+      this._netGripSync(e);
+      this._claim({ t: 'claim', k: 'imp', id: e.id,
+        v: impulse ? [r2(impulse.x), r2(impulse.y), r2(impulse.z)] : null,
+        d: Math.round((damage || 0) * 10) / 10,
+        g: gentle ? 1 : 0 }, e);
+    };
+  }
+
+  /**
+   * THE AUTHORITY WINDOW, and it is the crux of the whole thing.
+   *
+   * `_stepNetEnemies` overwrites `e.velocity` from the wire and damps position
+   * toward the host's at 14/s at the top of EVERY frame. That is correct for
+   * ordinary motion — a body walking is the host's business and the client's
+   * drawing — and it is wrong for the frames after a shove, because it erased a
+   * locally-applied impulse before anything could integrate it. The guest did
+   * not even get the local illusion.
+   *
+   * So a body this machine has just shoved is OURS for a moment, and the moment
+   * is the game's own clock rather than a number picked here: `applyKnockback`
+   * writes `knockTimer` — 0.7 s for a real shove, 0.35 for a gentle one — and
+   * `Enemy._move` reads exactly that field to decide when a knocked body stops
+   * being ballistic and starts steering again. The window is that, plus one
+   * round trip, because the host's stream cannot possibly carry the shove any
+   * sooner than the claim can reach it and a snapshot can come back: the
+   * client's own claim tick (1/24 s), the host's snapshot tick (1/18 s) and
+   * whatever the ping says. Close it earlier and the body snaps back to where
+   * the host still thinks it is; leave it open longer and the guest is
+   * simulating a body it is not the authority for.
+   *
+   * The host stays authoritative throughout: it has the impulse, it ran its own
+   * resistance contest against it, and the instant the window closes the damp
+   * resumes from wherever this copy got to toward wherever the host says it is.
+   * Both machines integrated the same shove, so that gap is small — and it is
+   * reconciled by the mechanism that was already there, not a new one.
+   */
+  _netOwn(e) {
+    const trip = 1 / 24 + 1 / 18 + 2 * (this.net?.latency || 0) / 1000;
+    e._netOwnT = Math.max(e._netOwnT || 0, (e.knockTimer || 0) + trip);
+  }
+
+  /**
+   * THE GRIP, WHICH IS A STATE AND NOT A BLOW.
+   *
+   * Every other force power ends in one impulse and is over. Lifting a body
+   * does not: `Player.toggleGrip` sets `e.gripped` and `_updateGrip` walks
+   * `e.liftTarget` toward the hold point every frame for as long as the player
+   * holds it, and `Enemy._move` reads those two to suspend the ragdoll by the
+   * chest. Neither field is an event, so neither can ride the impulse claim.
+   *
+   * Reconciled as a DIFF against what this machine last told the host, exactly
+   * as the hp is, so it cannot be forgotten by a call site: whatever the local
+   * player's grip is doing to a replicated body is what the host is told, and
+   * releasing, hurling and dying all clear the same two fields and therefore
+   * all send the same release.
+   *
+   * Re-sent every tick while held rather than only when the point moves,
+   * because the host puts a LEASE on it — see applyClaim. A guest whose lid
+   * closes mid-lift must not leave an enemy hanging in the air for the rest of
+   * the session, and a silence is the only signal that can ever say so.
+   */
+  _netGripSync(e) {
+    const lift = e.gripped && e.liftTarget ? e.liftTarget : null;
+    if (lift) {
+      e._netGripAt = true;
+      this._claim({ t: 'claim', k: 'grip', id: e.id, g: 1,
+        p: [r2(lift.x), r2(lift.y), r2(lift.z)] });
+    } else if (e._netGripAt) {
+      e._netGripAt = false;
+      this._claim({ t: 'claim', k: 'grip', id: e.id, g: 0 });
+    }
   }
 
   /**
@@ -3739,10 +3922,36 @@ export class World {
    * velocity of 1.44× the truth to the gait solver; what happens here is the
    * body moves toward the host's position and reports the host's OWN velocity,
    * so the feet are planted for the ground the body actually covers.
+   *
+   * …EXCEPT FOR THE FRAMES AFTER THIS MACHINE SHOVED SOMETHING, which is the
+   * whole reason a guest's Force did nothing physical. See `_netOwn` for what
+   * opens that window and why it is as long as it is. Inside it the body runs
+   * `Enemy._move` — the shipped integrator, CALLED rather than restated, so the
+   * gravity, the ground it lands on, the arena bounds, the static geometry, the
+   * `knockTimer` that keeps a shoved body ballistic and the ragdoll suspension
+   * a lifted body hangs from are all the game's own and cannot drift from it.
+   * A net-driven body has no `wish` — `_think` never runs here — so `_move`
+   * steers it nowhere; it only carries it.
    */
-  _stepNetEnemies(dt) {
+  _stepNetEnemies(dt, ctx) {
     for (const e of this._netEnemyIndex.values()) {
       if (!e._netPos || e.dead) continue;
+      if (e._castTimer > 0) e._castTimer = Math.max(0, e._castTimer - dt);
+      const held = e.gripped && e.liftTarget;
+      if (e._netOwnT > 0) e._netOwnT = Math.max(0, e._netOwnT - dt);
+      if (ctx && (e._netOwnT > 0 || held)) {
+        /**
+         * …AND WHAT `_move` TAKES OFF IT IS NOT OURS TO BILL. `_reconcileClaims`
+         * measures a claim as the gap between the host's last hp and ours, and
+         * the host is integrating the same body off the same impulse — so a
+         * landing hard enough to hurt would be charged to it twice. Moving the
+         * baseline by the same amount is what says "this one is already yours".
+         */
+        const hp0 = e.hp;
+        e._move(dt, ctx);
+        if (e.hp < hp0 && e._netHp !== undefined) e._netHp -= hp0 - e.hp;
+        continue;
+      }
       _v5.copy(e.position);
       dampVec(e.position, e._netPos, 14, dt);
       // The host's own number when we have it. The fallback is what the body
@@ -3882,7 +4091,124 @@ export class World {
       }, by);
     } else if (msg.k === 'dmg') {
       e.damage(msg.d, new THREE.Vector3(...msg.p), by, 'remote');
+    } else if (msg.k === 'imp') {
+      /**
+       * A FRIEND'S SHOVE, ARRIVING AS A SHOVE.
+       *
+       * Through `applyKnockback` and not through a velocity write, because
+       * everything that makes a shove mean something lives inside it and none
+       * of it can be decided anywhere else: the resistance contest against the
+       * pool THIS machine holds (the guest cannot see it — `force` is not
+       * replicated), `breakCast`, the stun past 12 m/s, the scream past 10, and
+       * the damage weighed in the same currency as the impulse so the body is
+       * not billed twice for one blow. `by` is the peer's own RemoteAvatar, so
+       * a kill lands in their column exactly as `dmg` already made it.
+       */
+      e.applyKnockback(msg.v ? new THREE.Vector3(...msg.v) : null,
+        msg.d || 0, by, !!msg.g);
+    } else if (msg.k === 'grip') {
+      if (msg.g && msg.p) {
+        e.gripped = true;
+        e.liftTarget = (e._netLift ||= new THREE.Vector3()).set(msg.p[0], msg.p[1], msg.p[2]);
+        /**
+         * A LEASE, because a held body is the one state a lost connection can
+         * strand. Every other claim is an event that happened; this one is a
+         * standing instruction, and a guest whose lid closes mid-lift would
+         * otherwise leave an acolyte hanging in the air, out of its brain
+         * (`_think` returns on `gripped`), for the rest of the host's session.
+         * The guest re-sends it every claim tick, so a silence longer than a
+         * handful of them is the only thing it can mean.
+         */
+        e._netGripUntil = this.time + NET_GRIP_LEASE;
+      } else {
+        e.gripped = false; e.liftTarget = null; e.chokeT = 0;
+        e._netGripUntil = 0;
+      }
     }
+  }
+
+  /**
+   * DROP WHATEVER A PEER STOPPED ASKING US TO HOLD. See the lease above.
+   *
+   * Over `enemies` rather than over a list of held bodies, because a held body
+   * is one field on an ordinary enemy and a second index of them would be a
+   * second thing to keep in step. It runs at the host's snapshot rate over a
+   * wave, which is the same loop `packSnapshot` already pays for.
+   */
+  _netGripLeases() {
+    for (const e of this.enemies) {
+      if (!e._netGripUntil || this.time < e._netGripUntil) continue;
+      e._netGripUntil = 0;
+      e.gripped = false; e.liftTarget = null; e.chokeT = 0;
+    }
+  }
+
+  /**
+   * THE BODY BEHIND AN ID ON THE WIRE — the far end of `hitSourceId`.
+   *
+   * A `hit` used to be applied as `p.damage(d, null, null, kind)`, and the
+   * third null is the one that cost something: `Player.die` hands its source to
+   * `onPlayerDeath`, so a joining player killed by a Master's lightning died to
+   * nobody — no name on the card, no kill credit, nothing in the feed.
+   *
+   * `null` for an id this machine cannot place, which is exactly the state
+   * every one of these was in before, so an unknown attacker costs nothing.
+   *
+   * AND IT DOES NOT RE-JUDGE THE HIT. The host has already run `canHarm`, on
+   * the only machine that can see both fighters, and `Player.damage` runs it
+   * again at its own sink — so an attacker this machine's rulebook would refuse
+   * is dropped back to null rather than cancelling a blow the authority
+   * allowed. A duel's rules arrive in their own message and can be a packet
+   * behind; a hit that vanished because of it would be a hit nobody could
+   * explain.
+   */
+  netSource(id) {
+    if (!id) return null;
+    const src = this._netEnemyIndex?.get(id) || this.remotes?.get(id) || null;
+    if (!src || !this.player) return null;
+    return canHarm(src, this.player, this.rules) ? src : null;
+  }
+
+  /**
+   * THE HOST SAYS WE WERE HIT — the far end of `RemoteAvatar._tellHit`.
+   *
+   * It lived in main.js, which is the reason it could carry a defect for as
+   * long as it did: every other message on this wire is applied by a method on
+   * World (`applySnapshot`, `applyClaim`, `applyBond`, `applyMatch`,
+   * `applyArmy`, `applyMuster`, `applySeat`) and is therefore drivable by a
+   * check against two real endpoints, and this one alone was a closure inside a
+   * `net.on` in the entry point, where nothing could reach it. It was also the
+   * one that threw a direction and an attacker away.
+   *
+   * Applied through OUR OWN Player, so every boon that lives in the damage path
+   * is consulted where it actually exists: Second Wind, Steadfast, Encircled,
+   * the difficulty's damageTaken. Tutaminis is the exception — `absorb` is
+   * applied at the call site rather than inside `damage`, so it is repeated
+   * here or a peer would silently lose it.
+   *
+   * THROUGH `applyKnockback` WHEN A SHOVE CAME WITH IT, and that is not a
+   * detail. It is the door the host's own copy of this blow went through, and
+   * it weighs the impulse and the harm TOGETHER against the pool
+   * (`IMPULSE_AS_HP`) — so bracing against a shove means the same thing on both
+   * machines. Answering only the damage ran the contest, correctly and once,
+   * against a fraction of the weight: a Master's push is 9 hp and about 27 hp
+   * of impulse, and off-host the pool was only ever asked about the 9.
+   */
+  applyHit(msg) {
+    const p = this.player;
+    if (!p || !p.alive || !msg) return false;
+    const push = Array.isArray(msg.v)
+      ? _v1.set(msg.v[0] || 0, msg.v[1] || 0, msg.v[2] || 0) : null;
+    if (!(msg.d > 0) && !push) return false;
+    let d = msg.d > 0 ? msg.d : 0;
+    if (msg.k === 'bolt' && p.boonMods.absorb) {
+      p.force = Math.min(p.maxForce, p.force + d * 0.8);
+      d *= 0.45;
+    }
+    const by = this.netSource(msg.s);
+    if (push) p.applyKnockback(push, d, by, !!msg.g);
+    else p.damage(d, null, by, msg.k || 'bolt');
+    return true;
   }
 
   /**

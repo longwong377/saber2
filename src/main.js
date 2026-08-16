@@ -1285,22 +1285,6 @@ function wireNet() {
   /* The meeting's own state — rounds, clock, who took the field. Host → peers
    * only; `Net` refuses it on the host for the reason its own note gives. */
   net.on('match', (rec) => world?.applyMatch(rec));
-  /**
-   * The host says we were hit.
-   *
-   * Until this existed a joining player was INVULNERABLE, and not by half
-   * measures: a client's enemies are `netDriven`, which returns before
-   * `_think`, so they never fire a bolt and never run a duel strike — there was
-   * nothing on this machine that could hurt us. Meanwhile the host skipped
-   * remote avatars in its own blade loop and threw a TypeError when a bolt
-   * reached one. Co-op had two players and one of them could not lose.
-   *
-   * Applied through OUR OWN Player.damage, so every boon that lives in the
-   * damage path is consulted here where it actually exists: Second Wind,
-   * Steadfast, Encircled, the difficulty's damageTaken. Tutaminis is the one
-   * exception — `absorb` is applied at World's call site rather than inside
-   * `damage`, so it has to be repeated here or a peer would silently lose it.
-   */
   // A draft is open on the host. Draw OUR hand, from OUR taken-set.
   net.on('draft', (msg) => {
     if (!world || world.netMode !== 'client') return;
@@ -1320,16 +1304,26 @@ function wireNet() {
    * peer the sender cannot reach directly.
    */
   net.on('bond', (msg, peerId) => { world?.applyBond(msg, peerId); });
-  net.on('hit', (msg) => {
-    const p = world?.player;
-    if (!p || !p.alive || !(msg.d > 0)) return;
-    let d = msg.d;
-    if (msg.k === 'bolt' && p.boonMods.absorb) {
-      p.force = Math.min(p.maxForce, p.force + d * 0.8);
-      d *= 0.45;
-    }
-    p.damage(d, null, null, msg.k || 'bolt');
-  });
+  /**
+   * The host says we were hit.
+   *
+   * Until this existed a joining player was INVULNERABLE, and not by half
+   * measures: a client's enemies are `netDriven`, which returns before
+   * `_think`, so they never fire a bolt and never run a duel strike — there was
+   * nothing on this machine that could hurt us. Meanwhile the host skipped
+   * remote avatars in its own blade loop and threw a TypeError when a bolt
+   * reached one. Co-op had two players and one of them could not lose.
+   *
+   * THE RULE MOVED INTO `World.applyHit`, AND THE MOVE IS THE POINT. This was
+   * eight lines of policy — which boon answers a bolt, which door the blow goes
+   * through, whose name is on it — living in a closure inside the entry point,
+   * where no check in the repository could reach it. Every other message on
+   * this wire is applied by a method on World and is driven by `coop.mjs`
+   * against two real endpoints; this one was the exception, and it was the one
+   * that spent the whole life of the protocol applying a shove as a bare number
+   * from nobody. A handler in main.js should route and nothing else.
+   */
+  net.on('hit', (msg) => { world?.applyHit(msg); });
   /**
    * A PACKET FROM A PARTICULAR PERSON.
    *

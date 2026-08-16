@@ -732,16 +732,27 @@ export class RemoteAvatar {
    * Shoved. The call shape every force power ends in, so a duel's push reaches
    * a peer through the same line it reaches an acolyte through.
    *
-   * The impulse moves `velocity`, which `update()` overwrites from the next
-   * snapshot 42 ms later — and that is correct rather than a bug: the peer's
-   * own machine is running its own body, and this copy is a drawing of it. The
-   * DAMAGE is the part that has to travel, and it goes through `damage()`
-   * below, which is addressed to the one peer that owns the health.
+   * THE SHOVE TRAVELS NOW, AND UNTIL IT DID A DUEL'S FORCE WAS A NUMBER.
+   *
+   * This used to add the impulse to `velocity` and send nothing but `{d, k}` —
+   * a bare amount. `update()` overwrites `velocity` from the interpolation
+   * buffer on the very next frame, so the local add was inert (it still is, and
+   * it is kept only as the one frame of smoothing before the buffer speaks),
+   * and the packet had no room for a direction. Measured on a real host/client
+   * pair: a point-blank push on another player took hp off them and moved them
+   * 0.000 m on both machines. Push, pull, throw and the enemy kit's own shove
+   * were all damage with no physics for everybody who was not the host.
+   *
+   * So the impulse goes in the packet and the peer applies it to their OWN
+   * Player, which is the only body in the session that can move it — and it
+   * arrives through `Player.applyKnockback` rather than `damage`, so the shove
+   * and the harm are weighed together in one contest exactly as they are when
+   * the two fighters share a machine. See the note over `_tellHit`.
    */
   applyKnockback(impulse, damage = 0, source = null, gentle = false) {
     if (!this.alive) return false;
     if (impulse) this.velocity.add(impulse);
-    return damage > 0 ? this.damage(damage, this.chest, source, 'force') : false;
+    return this._tellHit(damage || 0, 'force', source, impulse, gentle);
   }
 
   /**
@@ -757,13 +768,27 @@ export class RemoteAvatar {
    * Returns false ("not killed") unconditionally for the same reason: whether
    * this was lethal is not knowable here, and callers use the return only to
    * decide local flourishes.
+   */
+  damage(amount, point, source, kind) {
+    if (!(amount > 0) || !this.alive) return false;
+    return this._tellHit(amount, kind, source, null, false);
+  }
+
+  /**
+   * ONE DOOR OUT, so a shove and a cut cannot end up on the wire under two
+   * different sets of rules — which is precisely what happened while
+   * `applyKnockback` reached the wire only by calling `damage`: a pull carries
+   * no damage at all (`Enemy._castPower` bills it at 0), so `amount > 0` threw
+   * the whole packet away and a peer being yanked across the field received
+   * nothing whatsoever.
    *
    * Silently does nothing on a client, so a peer cannot damage another peer —
    * the host is the only authority, and the alternative is four machines each
    * applying their own version of the same sword.
    */
-  damage(amount, point, source, kind) {
-    if (!(amount > 0) || !this.alive) return false;
+  _tellHit(amount, kind, source, impulse, gentle) {
+    const push = impulse && impulse.lengthSq() > 1e-8 ? impulse : null;
+    if (!this.alive || (!(amount > 0) && !push)) return false;
     /**
      * THE SAME GATE THE LOCAL PLAYER PASSES THROUGH, AND THE SAME FUNCTION.
      *
@@ -797,7 +822,24 @@ export class RemoteAvatar {
      * direction and no source.
      */
     if ((kind || 'bolt') === 'bolt') return false;
-    net.toPeer(this.id, { t: 'hit', d: amount, k: kind });
+    /**
+     * WHO DID IT — and it was nobody, all the way to the far end.
+     *
+     * `main.js` applied every one of these as `p.damage(d, null, null, k)`.
+     * `Player.die` hands `source` to `onPlayerDeath`, so a joining player
+     * killed by a Sith Master's lightning died to a null: no kill credit, no
+     * name on the death card, nothing in the feed. One field fixes it, and the
+     * only work is saying which id the far end knows this body by.
+     */
+    const msg = { t: 'hit', d: r3(amount || 0), k: kind, s: hitSourceId(source, net) };
+    if (push) {
+      msg.v = [r3(push.x), r3(push.y), r3(push.z)];
+      // `gentle` is what tells the far end whether this shove beats a guard —
+      // `applyKnockback` writes `staggerTimer` only when it does not — and a
+      // pull and a held power are both gentle. Absent means false.
+      if (gentle) msg.g = 1;
+    }
+    net.toPeer(this.id, msg);
     return false;
   }
 
@@ -898,6 +940,29 @@ function lerpAngle(a, b, t) {
   while (d > Math.PI) d -= TAU;
   while (d < -Math.PI) d += TAU;
   return a + d * t;
+}
+
+/**
+ * THE NAME THE FAR END KNOWS AN ATTACKER BY.
+ *
+ * An enemy is easy: `packSnapshot` sends `e.id` and `applySnapshot` writes the
+ * same string onto the replicated copy, so the two machines have agreed on it
+ * all along. A PLAYER is the awkward one, and it is the reason this is a
+ * function rather than `source.id` written at the call site: the host's own
+ * Player answers to `'local'` (Player.js: `this.id = opts.id ?? 'local'`) and
+ * is a `RemoteAvatar` keyed by the host's PEER id on every other machine in the
+ * session. Sending `'local'` would name a body that does not exist over there
+ * and resolve to nobody, which is the null this field exists to remove.
+ *
+ * `0` for an attacker with no id at all — the environment, a fall, a wave-clear
+ * blast — which is what `World.netSource` reads as "unattributed", and is
+ * exactly the state every `hit` was in before the field existed.
+ */
+export function hitSourceId(source, net) {
+  const id = source?.id;
+  if (id === undefined || id === null) return 0;
+  if (!source.isLocal) return id;
+  return net?.peer?.id ?? net?.roster?.find((r) => r.host)?.id ?? 0;
 }
 
 /* ── snapshot packing ────────────────────────────────────────────────── */
@@ -1018,6 +1083,30 @@ export function packAvatar(player) {
  *           from `SIDES`), one slot carries all five, and `asTeam` on the far
  *           end is what makes an illegible one the horde rather than a friend.
  *
+ *   ck      WHICH POWER THIS BODY IS THROWING, and off-host there was no such
+ *   cw      thing as a warning. `_forceBrain` opens every cast with a 0.45 s
+ *   ch      wind-up and a floating call over the head, and its own note says
+ *           why: "a power that arrives with no frame of warning is the 11.5 m
+ *           sphere the beasts check has a note about". None of `_castKey`,
+ *           `_castTimer` or `casting` was on the wire, so on a joining player's
+ *           screen the whole thing was invisible. Driven — a Jedi Master
+ *           targeting a peer for 40 s — the host drew six FORCE PUSH tells and
+ *           the peer received six anonymous numbers, 0 telegraphs, 0 metres.
+ *
+ *           THE COUNTERPLAY IS THE POINT, not the decoration. `breakCast` is
+ *           reached from everything that beats a guard and the window is
+ *           generous — measured 100% break at 400 ms into a 450 ms tell — and a
+ *           tell nobody can see is a window nobody can take. It is also the
+ *           only thing on this wire that tells a peer WHICH power is coming,
+ *           and a push and a choke want opposite answers.
+ *
+ *           Three slots because a cast has two stages and they are different
+ *           facts: `ck` is the key (a STRING, for the reason `md` is one — an
+ *           index decodes as a different power the day ENEMY_POWERS is
+ *           reordered), `cw` is the wind-up left, and `ch` is what remains of a
+ *           HELD power once the wind-up has landed. A body doing neither pays
+ *           `0, 0, 0`, which is most of every wave.
+ *
  * …and the snapshot carries `bf`, the bolts fired since the last one. A bolt is
  * an EVENT, not a state: it is gone by the next packet, so a state-only
  * protocol can never contain one.
@@ -1034,6 +1123,9 @@ export function packSnapshot(world) {
       packDuel(e.duel),
       e.mod || 0,
       e.team,
+      e._castKey || e.casting || 0,
+      r2(e._castTimer > 0 ? e._castTimer : 0),
+      r2(e.casting ? Math.max(0, e.castLeft || 0) : 0),
     ]);
   }
   const fires = world._netFires || [];

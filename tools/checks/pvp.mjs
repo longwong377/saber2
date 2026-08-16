@@ -145,6 +145,19 @@ export async function run({ check, assert }) {
      * Both halves are here on purpose. A duel where the blade lands is half the
      * feature; the other half is that turning friendly fire on for a duel did
      * not turn it on for the co-op session running in the next tab.
+     *
+     * WHAT THIS SCENE IS AND IS NOT. It is two `Player`s in ONE World, and a
+     * real duel never has that: the two fighters are on two machines and each
+     * one is a `RemoteAvatar` on the other's. Everything measured here is
+     * genuinely shared — `bladeTargets`, `canHarm`, `_foes`, the powers
+     * themselves — but "push 7.0 m/s" is a velocity written straight onto a
+     * body in the same address space, and for the whole life of this suite that
+     * number was read as though it said something about a duel. It did not:
+     * over the wire the same push moved the other player 0.000 m, because
+     * `RemoteAvatar.applyKnockback` added the impulse to a velocity the
+     * interpolation buffer overwrites and sent nothing but a bare number. The
+     * check below this one is the one that measures the wire, and this one is
+     * the one that measures the rule.
      */
     const P = await import('../../src/game/Player.js');
     const duel = P.pvpRules({ pvp: true, duelRounds: 3, duelHealth: 150 });
@@ -189,10 +202,131 @@ export async function run({ check, assert }) {
     assert(b.hp < before, `force lightning at ${a.chest.distanceTo(b.chest).toFixed(1)} m took `
       + `${before.toFixed(1)} hp to ${b.hp.toFixed(1)} — the power cannot see a player`);
 
-    const line = `blade ${hit.cut} cuts over ${hit.contact} contact frames on ${hit.bones.size} bones, `
+    const line = `one machine: blade ${hit.cut} cuts over ${hit.contact} contact frames on ${hit.bones.size} bones, `
       + `push ${shove.toFixed(1)} m/s, lightning −${(before - b.hp).toFixed(0)} hp`;
     world.unload();
     return line;
+  });
+
+  check('pvp: a Force push moves the player it was aimed at, on both machines', async () => {
+    /**
+     * THE HALF THE CHECK ABOVE CANNOT SEE, AND IT WAS THE BROKEN ONE.
+     *
+     * A duel is two machines. `RemoteAvatar.applyKnockback` — the call every
+     * force power ends in when the target is another player — added the impulse
+     * to a velocity `update()` overwrites from the interpolation buffer on the
+     * next frame, and the only packet it ever emitted was `{t:'hit', d, k}`: an
+     * amount and a word. There was no direction on that wire. Measured on a real
+     * host/client pair, host pushing the peer point blank, before the field
+     * existed:
+     *
+     *     guest's own body      0.000 m        host's drawing of them  0.000 m
+     *     guest's health        100.0 → 97.5   (the damage crossed on its own)
+     *
+     * A duel in which the Force is a damage-over-distance number and nothing
+     * else. Worse for a pull, which `Enemy._castPower` bills at zero damage:
+     * `damage()` opens with `amount > 0`, so a peer being dragged across the
+     * field received no packet at all.
+     *
+     * THE CONTROL IS THE SAME BODY, IN THE SAME PLACE, HIT BY THE SAME VECTOR.
+     * Two earlier versions of it were not, and each was wrong by more than the
+     * thing being measured. A second `forcePush` in a second world stood its
+     * bodies 2.22 m apart against the pair's 2.49 m, and the shove scales with
+     * range — 25% of the answer, from the scene. Replaying the captured impulse
+     * against a different rival in a different world removed that and left the
+     * ground: where a shoved body lands decides how far it travelled, and two
+     * worlds are two hillsides — 13%.
+     *
+     * So the guest is pushed over the wire, put back exactly as it was, and hit
+     * with the identical vector by a direct call. Same terrain, same pool, same
+     * body. Whatever is left between the two numbers is the wire, which is the
+     * only thing this check is about.
+     */
+    const P = await import('../../src/game/Player.js');
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const duel = P.pvpRules({ pvp: true, duelRounds: 3, duelHealth: 150 });
+
+    // ── over the wire: a real push, at a real RemoteAvatar
+    const { host, client, pump, seen } = await H.bootPair({ sides: [P.SIDES[0], P.SIDES[1]] });
+    host.rules = duel; client.rules = duel;
+    pump(0.6);
+    const hp = host.player, cp = client.player;
+    cp.position.copy(hp.position).setZ(hp.position.z + 2);
+    pump(0.4);
+    const drawn = host.remotes.get('PEER');
+    assert(drawn, 'the host has no body for the peer at all — no packet crossed');
+    /* What the power handed the avatar, before anything about it was put on a
+     * wire. The bar below is this vector, so the two measurements differ by the
+     * wire and by nothing else. */
+    let thrown = null, thrownD = 0;
+    const knock = drawn.applyKnockback.bind(drawn);
+    drawn.applyKnockback = (i, d, s, g) => {
+      thrown = i ? i.clone() : null; thrownD = d || 0;
+      return knock(i, d, s, g);
+    };
+    cp.invuln = 0;
+    const guestFrom = cp.position.clone(), drawnFrom = drawn.position.clone();
+    const hp0 = cp.hp;
+    /** Everything about the victim that the blow is about to move. */
+    const state = () => ({ p: cp.position.clone(), v: cp.velocity.clone(), hp: cp.hp,
+      force: cp.force, invuln: cp.invuln, stagger: cp.staggerTimer, grounded: cp.grounded });
+    const restore = (s) => {
+      cp.position.copy(s.p); cp.velocity.copy(s.v); cp.hp = s.hp;
+      cp.force = s.force; cp.invuln = s.invuln; cp.staggerTimer = s.stagger; cp.grounded = s.grounded;
+    };
+    const at0 = state();
+    hp.force = hp.maxForce; hp.cooldowns.push = 0;
+    hp.aimDir.subVectors(drawn.position, hp.chest).normalize();
+    hp.forcePush({ enemies: host.enemies, players: host.players, bolts: host.bolts,
+      physics: host.physics, terrain: host.terrain, particles: host.particles });
+    let guestPeak = 0, drawnPeak = 0;
+    for (let i = 0; i < 180; i++) {
+      pump(1 / 60);
+      guestPeak = Math.max(guestPeak, guestFrom.distanceTo(cp.position));
+      drawnPeak = Math.max(drawnPeak, drawnFrom.distanceTo(drawn.position));
+    }
+    assert(thrown, 'the push never reached the avatar at all — _foes does not see a remote player');
+    const packets = seen.toClient.filter((m) => m.t === 'hit');
+    assert(packets.length === 1, `${packets.length} hit packets for one push`);
+    assert(Array.isArray(packets[0].v),
+      'the hit packet carries no impulse — a duel\'s Force is a number with no direction again');
+    assert(packets[0].s, 'the hit packet names nobody as its source');
+    const carried = new THREE.Vector3(...packets[0].v);
+    assert(carried.distanceTo(thrown) < 0.01,
+      `the power threw ${thrown.toArray().map((v) => v.toFixed(2))} and the packet carries `
+      + `${packets[0].v} — the wire is not sending the shove that was thrown`);
+
+    // ── the control: put the same body back and hit it by hand
+    const wireHp = cp.hp;
+    restore(at0);
+    const soloFrom = cp.position.clone();
+    // The same attacker the wire named, so `canHarm` and `resistForce` are
+    // asked the identical question on both runs.
+    cp.applyKnockback(thrown.clone(), thrownD, client.remotes.get('HOST') || null, false);
+    let soloPeak = 0;
+    for (let i = 0; i < 180; i++) {
+      pump(1 / 60);
+      soloPeak = Math.max(soloPeak, soloFrom.distanceTo(cp.position));
+    }
+    assert(soloPeak > 0.2, `the same impulse moved the same body ${soloPeak.toFixed(3)} m by a direct `
+      + 'call — the control is wrong, not the wire');
+
+    assert(guestPeak > 0.2,
+      `the player who was pushed moved ${guestPeak.toFixed(3)} m on their OWN machine, where the same `
+      + `impulse moves the same body ${soloPeak.toFixed(3)} m by a direct call — the shove did not cross`);
+    assert(Math.abs(guestPeak - soloPeak) < soloPeak * 0.02,
+      `the wire's push moved them ${guestPeak.toFixed(3)} m against ${soloPeak.toFixed(3)} m for the `
+      + 'identical impulse on the identical body — the blow changes size when it crosses');
+    /* …and the machine that threw it SEES it, which is the other half of a duel
+     * being legible. The host's copy is drawn from the peer's own avatar
+     * stream, so it can only move if the peer's real body did. */
+    assert(drawnPeak > 0.2,
+      `the shover's own screen showed the body it pushed moving ${drawnPeak.toFixed(3)} m`);
+    assert(wireHp < hp0, 'the push did no damage at all');
+    return `push: the same impulse moves the same body ${soloPeak.toFixed(2)} m by hand and `
+      + `${guestPeak.toFixed(2)} m over the wire, ${drawnPeak.toFixed(2)} m on the shover's screen, `
+      + `\u2212${(hp0 - wireHp).toFixed(1)} hp, one packet carrying the impulse and a source`;
   });
 
   check('pvp: none of that happens to an ally, and it is one gate that says so', async () => {
@@ -842,53 +976,129 @@ export async function run({ check, assert }) {
 
   /* ══ what is not wired, stated rather than implied ═════════════════════ */
 
-  check('pvp: the seams this lane does not own are named, not silently missing', async () => {
+  check('pvp: the three seams in World.js are wired, and this drives them', async () => {
     /**
-     * THREE CALL SITES LIVE IN World.js, WHICH THIS LANE DOES NOT OWN. The
-     * mechanism each needs is built and driven by the checks above; the glue is
-     * three lines. This check exists so that "it is a handover" is a FACT ABOUT
-     * THE BUILD rather than a sentence in a report — the day somebody applies
-     * the handover, the assertions here flip and this check tells them to
-     * delete itself and write the real one.
+     * WAS "the seams this lane does not own are named, not silently missing",
+     * AND IT REPORTED TWO SEAMS OPEN THAT HAVE BEEN CLOSED ALL ALONG.
      *
-     * It is deliberately written as "either the seam is still open, or it is
-     * closed and here is what must then be true", so it can never be the thing
-     * that blocks the handover landing.
+     * The check was written as a handover: three call sites lived in World.js,
+     * the lane did not own that file, and it read the source to say whether the
+     * glue had landed. Its own last line said what to do when it had — "delete
+     * this check and assert the wired behaviour instead" — and instead it went
+     * on reporting `2 World.js seams still open` in a green suite for as long as
+     * the wording held. Both were the regex, not the build:
+     *
+     *   `_applyBladeEvent player branch` was hunted with `/ev\.target\.player|
+     *   target\.player/`. The branch has always read `const t = ev.target;` and
+     *   then `} else if (t.player) {` — ten occurrences of `t.player` in that
+     *   one function and not one of `target.player`. A source sweep looking for
+     *   a spelling rather than for a behaviour, which is the shape this whole
+     *   suite exists to replace.
+     *
+     *   `_boltHitTest bolt.team !== 0` was hunted with the comment stripper
+     *   turned OFF — deliberately, with a note giving a reason that had stopped
+     *   being true. The one match in the file is inside the comment recording
+     *   its own removal: *"This was `if (bolt.team !== 0)` wrapped around the
+     *   whole loop"*. So the better the fix was documented, the more certainly
+     *   the check called it missing.
+     *
+     * The replacement DRIVES all three. A source sweep cannot tell a rule that
+     * is present from one that is reachable, and both of those regexes were
+     * answering a question about spelling while claiming to answer one about
+     * behaviour.
      */
-    // NOT stripped: the anchors below are code, but the seam is identified by
-    // where `_resolveBlades` builds its list, and stripping comments moves
-    // every offset in the file for no gain here.
-    const world = await src('game/World.js');
     const P = await import('../../src/game/Player.js');
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const duel = P.pvpRules({ pvp: true, duelRounds: 3, duelHealth: 150 });
 
-    // 1 — the blade target list.
-    const i = world.indexOf('_resolveBlades(dt)');
-    assert(i > 0, 'World._resolveBlades has moved or been renamed');
-    const body = world.slice(i, world.indexOf('bladeSolver.solve', i));
-    assert(/for \(const e of this\.enemies\)/.test(body),
-      'the blade target assembly is not where this check thinks it is');
-    const wired = /bladeTargets\(/.test(body);
-    assert(typeof P.bladeTargets === 'function',
-      'bladeTargets is gone, and with it the only thing World needs to call');
-    if (!wired) {
-      assert(!/for \(const (p2|o) of this\.players\)/.test(body),
-        'World grew its own player-targeting loop instead of calling bladeTargets — two copies of a '
-        + 'rule that decides damage');
-    }
+    /* 1 & 2 — the target list and the cut branch, driven through World's own
+     * frame. `swing` above poses the blade and calls the solver directly; this
+     * one lets `world.update` do it, so `_resolveBlades` has to find the rival
+     * and `_applyBladeEvent` has to bill them. Nothing else in the suite covers
+     * the path from a frame to a player's health. */
+    /* Three metres apart, not the default 1.1: the blade is posed onto the
+     * rival's own chest capsule so the gap costs it nothing, and the bolt half
+     * below needs a muzzle that is outside the SHOOTER's capsule. `canHarm`
+     * answers `attacker === victim` with a deliberate `true` — a returned bolt
+     * has to be able to come back at you — so a shot that starts inside your
+     * own 0.36 m radius hits you, which is what the first version measured. */
+    const { world, a, b } = await twoPlayers({ rules: duel, sides: [P.SIDES[0], P.SIDES[1]], gap: 3 });
+    const q = new THREE.Quaternion(), axis = new THREE.Vector3(0, 0, 1), hilt = new THREE.Vector3();
+    let sawPlayerTarget = 0;
+    const applied = world._applyBladeEvent.bind(world);
+    world._applyBladeEvent = (pl, ev, dt) => {
+      if (ev.target?.player) sawPlayerTarget++;
+      return applied(pl, ev, dt);
+    };
+    /* POSED FROM INSIDE THE FRAME, between the player step and the blade step.
+     * `Player.update` hands the hilt to `SaberController` every frame, so a
+     * pose written before `world.update` is gone before `_resolveBlades` ever
+     * looks at it — which is what a first version of this check measured, and
+     * it read exactly like a missing target list. */
+    let frame = 0;
+    const resolve = world._resolveBlades.bind(world);
+    world._resolveBlades = (dt) => {
+      const chest = b.capsules().find((c) => c.name === 'chest');
+      if (chest) {
+        hilt.set(chest.p0.x - 0.75, chest.p0.y, chest.p0.z);
+        q.setFromAxisAngle(axis, Math.sin((frame / 60) * 12) * 1.35 - Math.PI / 2);
+        a.saber.setHiltPose(hilt, q);
+        a.saber.update(dt, world.time);
+      }
+      return resolve(dt);
+    };
+    const hp0 = b.hp;
+    for (; frame < 240 && b.hp === hp0; frame++) world.update(1 / 60, H.idleInput());
+    assert(sawPlayerTarget > 0,
+      '_resolveBlades never handed _applyBladeEvent a target that was a player — the duel\'s bodies '
+      + 'are not in the blade\'s target list');
+    assert(b.hp < hp0,
+      `a blade swept through a rival's chest for four seconds inside World.update and took `
+      + `${(hp0 - b.hp).toFixed(1)} hp — _applyBladeEvent has no player branch`);
+    const billed = hp0 - b.hp;
+    // …and the blade goes away before anything else is measured. Left in, it
+    // kept cutting through the bolt step and billed the sweep as the shot: the
+    // first version of this reported a 12-damage bolt taking 48.6 hp, which is
+    // exactly the blade's number and was the blade.
+    world._resolveBlades = resolve;
+    a.saber.retract();
 
-    // 2 — a cut event whose target is a player.
-    const applied = /ev\.target\.player|target\.player/.test(world);
+    /* 3 — the bolt hit test. `bolt.team !== 0` decided for every player in the
+     * room at once; the rule is per victim now and it is `canHarm`. Driven both
+     * ways round, because the defect was symmetrical: a duellist's returned
+     * bolt could not reach the person it was aimed at, and a horde bolt could
+     * not be made to spare an ally. */
+    b.hp = b.maxHp; b.invuln = 0;
+    const shot = (owner, victim) => {
+      victim.invuln = 0;
+      const before = victim.hp;
+      const from = _boltFrom(owner, victim);
+      world.bolts.fire(from.origin, from.dir,
+        { speed: 60, damage: 12, color: 0xff4030, owner, team: owner.team });
+      for (let i = 0; i < 40 && victim.hp === before; i++) world.update(1 / 60, H.idleInput());
+      return before - victim.hp;
+    };
+    const onRival = shot(a, b);
+    assert(onRival > 0, 'a duellist\'s bolt could not reach the player it was fired at');
+    world.rules = P.CO_OP_RULES;
+    a.team = P.SIDES[0]; b.team = P.SIDES[0];
+    const onAlly = shot(a, b);
+    assert(onAlly === 0, `the same bolt took ${onAlly.toFixed(1)} hp off an ALLY — the hit test is not `
+      + 'asking canHarm');
 
-    // 3 — the bolt hit test's hard-wired team.
-    const bolts = /if \(bolt\.team !== 0\)/.test(world);
-
-    const open = [!wired && '_resolveBlades target list', !applied && '_applyBladeEvent player branch',
-      bolts && '_boltHitTest bolt.team !== 0'].filter(Boolean);
-    // Whatever the state, the mechanism has to be present and callable.
     assert(typeof P.canHarm === 'function' && typeof P.hostileTo === 'function',
       'the gate World is meant to call is gone');
-    return open.length
-      ? `${open.length} World.js seams still open (${open.join('; ')}) — see the lane handover`
-      : 'every seam closed; delete this check and assert the wired behaviour instead';
+    world.unload();
+    return `blade → ${billed.toFixed(1)} hp through World.update on ${sawPlayerTarget} player target `
+      + `records; bolt → ${onRival.toFixed(1)} hp on a rival, ${onAlly.toFixed(1)} on an ally`;
   });
+}
+
+/** A muzzle clear of the shooter's own capsule, pointing at the victim. */
+function _boltFrom(owner, victim) {
+  const dir = victim.chest.clone().sub(owner.chest);
+  const d = dir.length() || 1;
+  dir.multiplyScalar(1 / d);
+  return { origin: owner.chest.clone().addScaledVector(dir, 0.9), dir };
 }

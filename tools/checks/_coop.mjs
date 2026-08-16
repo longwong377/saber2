@@ -252,22 +252,72 @@ export async function bootWorld({ level = null, settings = {}, spawn = true } = 
  * moves whatever the production code decided to send. Messages are round-tripped
  * through JSON because a DataConnection serialises, so neither side can be
  * handed the other's live objects.
+ *
+ * IT CARRIES AVATARS AND HITS TOO, and until it did there was no such thing
+ * here as one player reaching another. `_netTick` broadcasts `packAvatar` from
+ * both ends on every tick and the pair discarded both, so neither World held a
+ * `RemoteAvatar` and `world.players` was one body on each machine — which means
+ * every player-versus-player claim this repository makes was measured on two
+ * local Players in ONE world, the exact shape `force.mjs` is 26/26 for. Now the
+ * host has a body for the peer and the peer has one for the host, each fed by
+ * the other's real packets, and a push aimed at one of them travels the way it
+ * travels in a session.
+ *
+ * `hit` and `avatar` are routed to the SHIPPED readers — `World.applyHit` and
+ * `RemoteAvatar.push` — for the reason HANDOFF §2.4 gives: an instrument that
+ * restates a rule eventually disagrees with it, and it fails by manufacturing
+ * defects. `applyHit` used to live in a closure in main.js, which is why this
+ * could not have been done before.
  */
-export async function bootPair({ level = null, settings = {} } = {}) {
+export async function bootPair({ level = null, settings = {}, sides = null } = {}) {
   level = level || await defaultLevel();
+  const { RemoteAvatar } = await import('../../src/net/Net.js');
   const a = await bootWorld({ level, settings });
   const b = await bootWorld({ level, settings });
   const seen = { toClient: [], toHost: [] };
   const wire = { down: [], up: [] };
   const wrap = (m) => JSON.parse(JSON.stringify(m));
+  /* The roster is what `hitSourceId` reads to learn which id the far end knows
+   * the host's own Player by — on the host it is 'local', everywhere else it is
+   * the host's peer id. Two entries, the shape `Net._refreshRoster` builds. */
+  const roster = [{ id: 'HOST', name: 'HOST', host: true }, { id: 'PEER', name: 'ALPHA' }];
   a.world.attachNet({
-    connected: true, isHost: true, name: 'HOST', roster: [], sweep() {},
+    connected: true, isHost: true, name: 'HOST', roster, latency: 0, sweep() {},
     broadcast(m) { wire.down.push(wrap(m)); }, toPeer(id, m) { wire.down.push(wrap(m)); }, toHost() {},
   }, 'host');
   b.world.attachNet({
-    connected: true, isHost: false, name: 'PEER', roster: [],
+    connected: true, isHost: false, name: 'PEER', roster, latency: 0,
     broadcast(m) { wire.up.push(wrap(m)); }, toPeer() {}, toHost(m) { wire.up.push(wrap(m)); },
   }, 'client');
+  if (sides) { a.world.player.team = sides[0]; b.world.player.team = sides[1]; }
+
+  /**
+   * Each machine's drawing of the other player, built on the first packet.
+   *
+   * THE INTERPOLATION WINDOW IS SET TO ZERO, and that is a statement about this
+   * harness rather than about the game. `RemoteAvatar.delay` exists to cover the
+   * worst recent GAP between arrivals — its own note says so — and it measures
+   * that gap with `performance.now()`, a wall clock. This pair has no jitter at
+   * all (delivery is a function call) and no wall clock of its own: it steps
+   * 1/60 s of simulation per iteration in whatever real time that costs, which
+   * here is about an eighth of it. Left alone, `now - delay` lands 60 ms of REAL
+   * time back — several hundred milliseconds of SIMULATED time — and the drawing
+   * renders the oldest packet in the buffer. Measured: the peer standing 2.00 m
+   * from where the host drew them, with both bodies at rest.
+   *
+   * So the window that absorbs jitter is closed on a wire that has none, and the
+   * drawing is the newest packet received. `minDelay` too, because `push`
+   * recomputes `delay` against it on every arrival.
+   */
+  const avatarOn = (world, id, name, team) => {
+    let r = world.remotes.get(id);
+    if (r) return r;
+    r = new RemoteAvatar(world, { id, name, team });
+    r.delay = 0; r.minDelay = 0;
+    world.remotes.set(id, r);
+    world.players.push(r);
+    return r;
+  };
 
   const input = idleInput();
   const pump = (seconds) => {
@@ -278,16 +328,21 @@ export async function bootPair({ level = null, settings = {} } = {}) {
         const m = wire.down.shift();
         seen.toClient.push(m);
         if (m.t === 'snapshot') b.world.applySnapshot(m);
+        else if (m.t === 'hit') b.world.applyHit(m);
+        else if (m.t === 'avatar') avatarOn(b.world, 'HOST', 'HOST', sides ? sides[0] : undefined)
+          .push(m, performance.now() / 1000);
       }
       b.world.update(dt, input);
       while (wire.up.length) {
         const m = wire.up.shift();
         seen.toHost.push(m);
         if (m.t === 'claim') a.world.applyClaim('PEER', m);
+        else if (m.t === 'avatar') avatarOn(a.world, 'PEER', 'ALPHA', sides ? sides[1] : undefined)
+          .push(m, performance.now() / 1000);
       }
     }
   };
-  return { host: a.world, client: b.world, pump, seen, input };
+  return { host: a.world, client: b.world, pump, seen, input, roster };
 }
 
 /** Step a world for `seconds` of wall clock at 60 Hz. */
