@@ -1382,7 +1382,24 @@ export class Enemy {
     this.team = 1;
     this.dead = false;
     this.dying = 0;
-    this.grippable = !A.big && !A.boss;
+    /**
+     * Can the Force take hold of this at all?
+     *
+     * This was `!A.big && !A.boss` — a flat size limit that no setting could
+     * reach, written before the lift cap existed and left standing after the
+     * cap replaced it. It was WRITTEN AND NEVER READ for the whole of that
+     * time: the mass gate in `Player.toggleGrip` was the only thing deciding,
+     * so the field said "an Acklay can never be lifted" while the game happily
+     * lifted one at Force Power 4. Both halves of that were wrong — the rule
+     * had been overturned, and it was inert anyway.
+     *
+     * It is now the ARCHETYPE'S declaration, and it has a reader:
+     * `Player._grippableBody`. Default is yes; `Vehicles.js` says no on the
+     * AT-TE and the AAT and explains why there. Size does not come into it —
+     * the walker, the Acklay and the hailfire droid are all `big` and all
+     * liftable, at a price in Force Power.
+     */
+    this.grippable = A.grippable !== false;
     this.gripped = false;
     this.liftTarget = null;
     /** Seconds left of the "just dragged off my feet" window a Force pull

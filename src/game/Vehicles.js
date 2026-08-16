@@ -1490,6 +1490,33 @@ export function buildGunship(opts = {}) {
  *
  * Threat and score are priced against `walker` (620 hp, threat 12, score 1600),
  * which is the roster's existing heavy.
+ *
+ * `grippable: false` ON TWO OF THE FOUR, AND WHY IT IS NOT A SIZE RULE.
+ *
+ * The Force's lift cap is a mass gate and nothing else — deliberately, because
+ * the flat `!A.big && !A.boss` it replaced was a size limit no setting could
+ * reach and it was exactly the wall the player complained about. A spider
+ * walker at 900 kg, an Acklay at 1400 and a hailfire droid at 1500 all come off
+ * the ground at a high enough Force Power, and they should: picking a walker up
+ * and putting it down on its back is the payoff the slider is for.
+ *
+ * An AT-TE is a different kind of object. It is thirteen metres of six-legged
+ * siege armour at 3600 kg, and the AAT is a tank at 2400. Neither is a heavy
+ * enemy — they are terrain that shoots, the thing the encounter is built to
+ * make you move AROUND, and a Force grip that lifts one deletes the encounter
+ * rather than winning it. Raising the cap to 3600 kg to satisfy "the slider
+ * clears the heaviest body" would have made every other body in the game
+ * weightless on the way past.
+ *
+ * So it is authored rather than derived, and it is read: `Enemy.grippable`
+ * takes it, `Player._grippableBody` reads THAT, and the grip answers out loud
+ * (`Player.toggleGrip` → 'TOO BIG TO GRIP') instead of doing nothing. The
+ * counter-play the refusal names is the one these already have — `custom:
+ * 'walker'` drops the chassis at `legsLost >= 3`, so the legs are the answer.
+ *
+ * `force.mjs` holds the line that keeps this honest: every archetype excluded
+ * here must be HEAVIER than the top of the slider, so the flag can never become
+ * a way to hide a body the cap ought to have cleared.
  */
 Object.assign(ARCHETYPES, {
   dwarfspider: {
@@ -1506,7 +1533,7 @@ Object.assign(ARCHETYPES, {
     ranged: true, custom: 'walker', weapon: null,
     fireRate: 4.6, burst: 1, burstGap: 0.2, spread: 0.012, damage: 58, telegraph: 1.1,
     preferred: [20, 52], boltColor: BOLT_COLORS.blue,
-    score: 3400, threat: 17, big: true, armored: true, unlockAt: 8,
+    score: 3400, threat: 17, big: true, armored: true, grippable: false, unlockAt: 8,
   },
   aat: {
     label: 'Armoured Assault Tank', build: buildAAT, scale: 1.7,
@@ -1514,7 +1541,7 @@ Object.assign(ARCHETYPES, {
     ranged: true, custom: 'walker', weapon: null,
     fireRate: 3.0, burst: 2, burstGap: 0.44, spread: 0.022, damage: 52,
     preferred: [15, 40], boltColor: BOLT_COLORS.red,
-    score: 2400, threat: 13, big: true, armored: true, unlockAt: 7,
+    score: 2400, threat: 13, big: true, armored: true, grippable: false, unlockAt: 7,
   },
   hailfire: {
     label: 'Hailfire Droid', build: buildHailfire, scale: 1.7,

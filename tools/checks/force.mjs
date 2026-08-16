@@ -132,11 +132,113 @@ export async function run({ check, assert, near }) {
     assert(caps[0.25] < PROPS.barrel, `0.25x lifts a ${PROPS.barrel} kg barrel (cap ${caps[0.25].toFixed(0)})`);
     assert(caps[1] >= ARCHETYPES.droideka.mass && caps[1] < PROPS.spire,
       `1x cap ${caps[1].toFixed(0)} does not sit between a droideka and a spire`);
-    // The whole point of the complaint: the top of the slider must clear the
-    // heaviest body in the game.
-    const heaviest = Math.max(...Object.values(PROPS), ...Object.values(ARCHETYPES).map(a => a.mass));
-    assert(caps[4] > heaviest, `max cap ${caps[4].toFixed(0)} kg cannot lift the heaviest thing there is (${heaviest} kg)`);
-    return `0.25x ${caps[0.25].toFixed(0)} kg → 1x ${caps[1].toFixed(0)} → 4x ${caps[4].toFixed(0)}; heaviest body ${heaviest} kg`;
+    /* THE WHOLE POINT OF THE COMPLAINT, AND ONE WORD OF IT HAS CHANGED:
+     * the top of the slider must clear the heaviest LIFTABLE body in the game.
+     *
+     * This was written when every body on the roster was an animal or a droid
+     * and the heaviest was a 1650 kg Reek, and against that roster "the cap
+     * clears the heaviest body" is exactly the right invariant — a cap nothing
+     * can reach is the same as no cap. Then an AT-TE arrived: 3600 kg and
+     * thirteen metres of six-legged siege armour, with an AAT at 2400 behind
+     * it. The check failed, and its SUBJECT was what had gone wrong rather than
+     * its rule. Raising the cap past 3600 to satisfy the old wording would
+     * price every other body in the game at nothing on the way past — a
+     * droideka is 210 kg — and it would hand the player a power that deletes
+     * the encounter these two exist to be: a heavy you fight AROUND.
+     *
+     * So the exclusion is authored on the archetype (`grippable: false`, see
+     * Vehicles.js) and read by `Player._grippableBody`, and this line asks the
+     * narrowed question. Three guards keep the narrowing from becoming a way to
+     * dodge the bound, and they are the reason this is not simply a weaker
+     * check than the one it replaces:
+     *
+     *   · every excluded body must be HEAVIER than the top of the slider, so
+     *     nothing the cap ought to have cleared can hide behind the flag;
+     *   · the exclusion set must be non-empty, or this has quietly gone back to
+     *     being the old assert with extra words;
+     *   · at least one `big` body must still be liftable, which is the
+     *     player's original complaint and the thing that must not regress. */
+    const excluded = Object.entries(ARCHETYPES).filter(([, a]) => a.grippable === false);
+    const liftable = Object.entries(ARCHETYPES).filter(([, a]) => a.grippable !== false);
+    const heaviest = Math.max(...Object.values(PROPS), ...liftable.map(([, a]) => a.mass));
+    assert(caps[4] > heaviest,
+      `max cap ${caps[4].toFixed(0)} kg cannot lift the heaviest liftable thing there is (${heaviest} kg)`);
+    assert(excluded.length > 0,
+      'nothing on the roster declares grippable:false, so this is the old unrestricted assert');
+    for (const [name, a] of excluded) {
+      assert(a.mass > caps[4],
+        `${name} is marked ungrippable at ${a.mass} kg, which the 4x cap of ${caps[4].toFixed(0)} kg `
+        + 'already clears — an exclusion is not a way to duck the bound');
+    }
+    assert(liftable.some(([, a]) => a.big),
+      'every `big` body is now un-liftable — the size wall the player complained about is back');
+    return `0.25x ${caps[0.25].toFixed(0)} kg → 1x ${caps[1].toFixed(0)} → 4x ${caps[4].toFixed(0)}; `
+      + `heaviest liftable ${heaviest} kg; not liftable at any setting: `
+      + excluded.map(([n, a]) => `${n} ${a.mass} kg`).join(', ');
+  });
+
+  check('force: a walker you cannot lift is REFUSED, not ignored', () => {
+    /* THE OTHER HALF OF THE CHANGE ABOVE, and the half that is about the
+     * player rather than about the roster. Excluding the AT-TE from the lift is
+     * only correct if pointing at one and pressing grip produces an ANSWER. Two
+     * ways it could have failed silently and both are asserted here:
+     *
+     *   · dropping it from the pick entirely would let the aim ray pass through
+     *     thirteen metres of walker and grip whatever stood behind it;
+     *   · returning null would play no sound, print nothing, and read exactly
+     *     like a power that is broken.
+     *
+     * A liftable body in the same cone must still win, or the refusal has
+     * bought silence somewhere else. */
+    const w = physicsWorld();
+    const world = gameWorld(w);
+    world.settings.forcePower = 4;
+    const said = [];
+    world.notify = (title, sub) => said.push(`${title} — ${sub}`);
+
+    const atte = new Enemy(world, 'atte', V(0, 0, -14));
+    settle(atte, world);
+    w.step(1 / 60);
+    const p = player(world);
+    const ctx = { physics: w, enemies: [atte], particles: null };
+    p.toggleGrip(ctx);
+    assert(!p.gripEnemy, 'an AT-TE came off the ground on a Force grip');
+    assert(p.lastGripRefusal && p.lastGripRefusal.immovable,
+      'the grip returned nothing at all — a silent refusal is indistinguishable from a broken button');
+    assert(said.length === 1, `the refusal printed ${said.length} messages`);
+    assert(/AT-TE/i.test(said[0]), `the refusal does not name what it refused: ${said[0]}`);
+    assert(/leg/i.test(said[0]), `the refusal names no way in: ${said[0]}`);
+    // …and it does not claim legs on a body that has none. The AAT is a
+    // repulsorlift, built with `legs: 0`.
+    const w2 = physicsWorld();
+    const world2 = gameWorld(w2);
+    world2.settings.forcePower = 4;
+    const said2 = [];
+    world2.notify = (t, s) => said2.push(`${t} — ${s}`);
+    const aat = new Enemy(world2, 'aat', V(0, 0, -14));
+    settle(aat, world2);
+    w2.step(1 / 60);
+    const p2 = player(world2);
+    p2.toggleGrip({ physics: w2, enemies: [aat], particles: null });
+    assert(!p2.gripEnemy, 'an AAT came off the ground on a Force grip');
+    assert(said2.length === 1 && !/leg/i.test(said2[0]),
+      `the AAT hovers on repulsorlifts and was told to have its legs cut: ${said2[0]}`);
+
+    // A droid standing in the same cone still wins the pick — the walker must
+    // not eat grips that were meant for something else.
+    const w3 = physicsWorld();
+    const world3 = gameWorld(w3);
+    world3.settings.forcePower = 4;
+    const big = new Enemy(world3, 'atte', V(2.5, 0, -16));
+    const b1 = new Enemy(world3, 'b1', V(-0.6, 0, -7));
+    settle(big, world3); settle(b1, world3);
+    w3.step(1 / 60);
+    const p3 = player(world3);
+    p3.toggleGrip({ physics: w3, enemies: [big, b1], particles: null });
+    assert(p3.gripEnemy === b1,
+      `the AT-TE ate a grip aimed near a B1 (got ${p3.gripEnemy ? p3.gripEnemy.type : 'nothing'})`);
+
+    return `AT-TE refused with "${said[0]}"; AAT refused without claiming legs; a B1 in the same cone still wins`;
   });
 
   check('force: the biggest enemies are a setting away, not a permanent no', () => {

@@ -4164,7 +4164,16 @@ export class Player {
     // An enemy's movement proxy is KINEMATIC, so invMass is 0 and the old
     // filter could never see one. That is why gripping a droid only worked when
     // the ray hit nothing at all — a crate anywhere behind it won the pick.
-    if (b.layer === LAYER.ENEMY) return !!(b.userData.enemy && !b.userData.enemy.dead);
+    //
+    // `Enemy.grippable` is the second field in this method's history to have
+    // been written everywhere and read nowhere, and it now means what its
+    // archetype says: a siege walker is not a heavy enemy, it is terrain that
+    // shoots. See Vehicles.js. The refusal is NOT silent — `_forceSeen` keeps
+    // the thing pickable so `toggleGrip` can say no in words.
+    if (b.layer === LAYER.ENEMY) {
+      const e = b.userData.enemy;
+      return !!(e && !e.dead && e.grippable !== false);
+    }
     // `grippable` was WRITTEN AND NEVER READ. Props.js sets it false on exactly
     // two things — the pillar and the spire — and Destruction's proxy sets it
     // false too, and not one line in src/ or tools/ ever looked at it. The only
@@ -4175,6 +4184,30 @@ export class Player {
     if (b.userData && b.userData.prop && b.userData.prop.grippable === false) return false;
     return b.invMass > 0
       && (b.layer === LAYER.PROP || b.layer === LAYER.DEBRIS || b.layer === LAYER.RAGDOLL);
+  }
+
+  /**
+   * Everything the Force OWES THE PLAYER AN ANSWER ABOUT: what it can hold,
+   * plus the bodies it must refuse out loud.
+   *
+   * The two are not the same set, and collapsing them is how a power ends up
+   * appearing to do nothing. If the AT-TE were simply dropped from the pick,
+   * the aim ray would pass straight THROUGH thirteen metres of walker and grip
+   * whatever stood behind it — so pointing at the biggest thing in the game and
+   * pressing grip would either grab a battle droid forty metres away or return
+   * null and play no sound at all. Both read as a broken button.
+   *
+   * So the ray and the cone see it, `toggleGrip` refuses it by name, and the
+   * refusal carries the counter-play (its legs) rather than a number the player
+   * cannot act on.
+   */
+  _forceSeen(b) {
+    if (this._grippableBody(b)) return true;
+    if (b && b.layer === LAYER.ENEMY) {
+      const e = b.userData.enemy;
+      return !!(e && !e.dead && e.grippable === false);
+    }
+    return false;
   }
 
   /**
@@ -4201,10 +4234,13 @@ export class Player {
     const maxD = reach + lead;
 
     const hit = ctx.physics ? ctx.physics.raycast(this.camera.pos, this.aimDir, maxD,
-      (b) => this._grippableBody(b)) : null;
-    if (hit && hit.body && this._grippableBody(hit.body)) {
+      (b) => this._forceSeen(b)) : null;
+    if (hit && hit.body && this._forceSeen(hit.body)) {
       const e = hit.body.userData.enemy;
-      return e ? { enemy: e, mass: e.A ? e.A.mass : 80, distance: hit.distance }
+      // The crosshair was ON it, so it is the answer whether or not the answer
+      // is yes — see `_forceSeen`.
+      return e ? { enemy: e, mass: e.A ? e.A.mass : 80, distance: hit.distance,
+                   immovable: e.grippable === false }
                : { body: hit.body, mass: hit.body.mass, distance: hit.distance };
     }
 
@@ -4212,11 +4248,27 @@ export class Player {
     // through the wall the ray just stopped on.
     const wall = hit ? hit.distance : maxD;
     let best = null, bestDot = 0.965;              // ≈15° cone
-    const consider = (obj, point, mass, isEnemy) => {
+    /* TWO TIERS, NOT ONE SORT. A thing the Force cannot lift must never STEAL
+     * the pick from one it can: off the crosshair the player is not pointing at
+     * anything in particular, and an AT-TE filling half the sky behind a battle
+     * droid would win every cone it appeared in on angle alone. Ranking them
+     * together — even with a tie-break — gets that wrong whenever the immovable
+     * body is the better-aligned of the two, which for something thirteen
+     * metres wide is most of the time. So the liftable tier is resolved first
+     * and the immovable one only answers a cone that held nothing else, which
+     * is what keeps the refusal reachable without pixel-perfect aim. */
+    let refuse = null, refuseDot = 0.965;
+    const consider = (obj, point, mass, isEnemy, immovable = false) => {
       _g1.subVectors(point, this.camera.pos);
       const d = _g1.length();
       if (d > maxD || d < 0.6 || d > wall + 1.2) return;
       const dot = _g1.multiplyScalar(1 / d).dot(this.aimDir);
+      if (immovable) {
+        if (dot < refuseDot) return;
+        refuseDot = dot;
+        refuse = { enemy: obj, mass, distance: d, immovable: true };
+        return;
+      }
       if (dot < bestDot) return;
       bestDot = dot;
       best = isEnemy ? { enemy: obj, mass, distance: d } : { body: obj, mass, distance: d };
@@ -4227,9 +4279,9 @@ export class Player {
     }
     for (const e of ctx.enemies || []) {
       if (e.dead) continue;
-      consider(e, this._enemyPoint(e, _g2), e.A ? e.A.mass : 80, true);
+      consider(e, this._enemyPoint(e, _g2), e.A ? e.A.mass : 80, true, e.grippable === false);
     }
-    return best;
+    return best || refuse;
   }
 
   toggleGrip(ctx) {
@@ -4240,11 +4292,49 @@ export class Player {
     this.lastGripRefusal = null;
     if (!target) return;
 
-    // The mass gate. Note this replaces Enemy.grippable, which was a flat
-    // `!A.big && !A.boss` — a size limit no setting could reach, and precisely
+    const cap = this.liftCapacity;
+
+    /* THE ONE THING THE SLIDER DOES NOT ANSWER, and it is a REFUSAL rather
+     * than a silence.
+     *
+     * Everything else here is a mass gate: turn Force Power up far enough and a
+     * spider walker, an Acklay or a hailfire droid comes off the ground. Two
+     * bodies are outside that argument — the AT-TE at 3600 kg and the AAT at
+     * 2400 — because they are not heavy enemies, they are terrain that shoots,
+     * and Vehicles.js records why. A player who points at one and presses grip
+     * must be TOLD that, in the same beat and with the same strain the mass
+     * refusal plays; the alternative is a power that appears to do nothing,
+     * which is the complaint this whole path exists to answer.
+     *
+     * The message names the COUNTER-PLAY instead of a number, because unlike
+     * "too heavy" there is no setting that changes the answer, and a refusal
+     * with no next move in it is still a dead end.
+     *
+     * Which counter-play is READ OFF THE BODY rather than typed beside it. The
+     * AT-TE walks on six legs and `custom: 'walker'` drops the chassis at
+     * `legsLost >= 3`, so the legs are the way in — but the AAT is a
+     * repulsorlift built with `legs: 0`, and telling a player to cut the legs
+     * off a hovering tank is the hand-written-table defect wearing a sentence.
+     * `Enemy._loseLimbBehaviour` severs on bones matching thigh/shin/foot, so
+     * the rig itself is the authority on whether this one has any. */
+    if (target.immovable) {
+      const e = target.enemy;
+      const label = e && e.A ? e.A.label : 'it';
+      const legged = !!(e && e.rig && [...e.rig.bones.keys()]
+        .some((n) => /thigh|shin|foot|femur|tibia|tarsus/.test(n)));
+      this.lastGripRefusal = { mass: target.mass, cap, immovable: true, label, legged };
+      const why = this.lastGripRefusal;
+      this.world?.notify?.(`${String(why.label).toUpperCase()} WILL NOT LIFT`,
+        `${(why.mass / 1000).toFixed(1)} tonnes — no Force Power moves it. `
+        + (why.legged ? 'Cut its legs out from under it.' : 'Break its armour instead.'));
+      this._gripStrain(ctx, target);
+      return;
+    }
+
+    // The mass gate. Note this replaces the SIZE gate Enemy.grippable used to
+    // be — a flat `!A.big && !A.boss` that no setting could reach, and precisely
     // the cap the player hit. A walker or an Acklay is now a question of how
     // far the Force slider is turned up, not a permanent no.
-    const cap = this.liftCapacity;
     if (target.mass > cap) {
       // Say WHY. This recorded the two numbers and nothing ever read them, so a
       // refused lift was a groan and a shudder and no explanation — which reads
