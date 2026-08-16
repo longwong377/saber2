@@ -772,34 +772,25 @@ export const FORCE_KINDS = /^(force|lightning|choke|grip|rend)$/;
 
 /**
  * THE RULE ITSELF, AS ONE FUNCTION — and it is exported so that the other half
- * of this contest can be three lines rather than a second copy of it.
+ * of this contest is three lines rather than a second copy of it.
  *
- * **THE PLAYER CANNOT YET ANSWER A POWER WITH A POWER, AND THAT IS THE ONE
- * THING THIS FILE COULD NOT FIX.** `Player.applyKnockback` and `Player.damage`
- * are the two doors an enemy's push, pull, choke and lightning arrive through,
- * and both live in `src/game/Player.js`, which this work did not own. So a Sith
- * shoving into your shove still lands in full, and every enemy power delivers
- * the same amount whether your bar is empty or brimming. What it takes to close
- * that is exactly this, and nothing more:
- *
- *     // Player.js, beside applyKnockback
- *     resistForce(amount, kind, source) {
- *       const r = forceResistance(this.force, amount, kind, this.staggerTimer > 0);
- *       this.force -= r.spend;
- *       return r.blunt;
- *     }
- *     // Player.damage(amount, point, source, kind, preResisted = false), after
- *     // the canHarm gate:
- *     if (!preResisted) amount = Math.max(0, amount - this.resistForce(amount, kind, source));
- *     // Player.applyKnockback, before velocity.add — mirrors Enemy's exactly:
- *     const weight = damage + (impulse ? impulse.length() * IMPULSE_AS_HP : 0);
- *     const blunt = this.resistForce(weight, 'force', source);
- *     … scale both by (1 - blunt / weight), then damage(…, true)
+ * **BOTH HALVES ARE IN NOW.** This note used to end "the player cannot yet
+ * answer a power with a power, and that is the one thing this file could not
+ * fix", because `Player.applyKnockback` and `Player.damage` — the two doors an
+ * enemy's push, pull, choke and lightning arrive through — were in a file that
+ * work did not own. `Player.resistForce` calls THIS function through those two
+ * doors, so the contest is symmetric: measured on a Knight-difficulty player
+ * taking 50 hp of an authored power, force / lightning / choke land for 19.1 hp
+ * against a full pool and 42.5 against an empty one, and a blade or a bolt
+ * takes the bar not at all.
  *
  * Keeping the arithmetic here rather than writing it twice is the point: this
  * project has un-duplicated the same kind of table three times (`POWER_COST`,
  * the HUD price list, the announcer voice map) and the note over `Powers.js`
- * is about what happens when the two copies drift.
+ * is about what happens when the two copies drift. It is also why `RESIST_CAP`
+ * cannot quietly be re-tuned for one side: `1 - RESIST_CAP` is the factor a
+ * deep pool scales an incoming SHOVE by, so it sets how far the enemy's push
+ * carries a braced player, which is what `PUSH_SPEED` is sized against.
  *
  * @param pool    the defender's Force, whatever it is called on that class
  * @param beaten  is the guard already broken — stunned, staggered, gripped
@@ -950,16 +941,57 @@ export function guardFor(A) {
  *     20.4 / 7.8   1.95 m → peak 5.71 m      it opens
  *     23.8 / 9.1   1.95 m → peak 6.39 m
  *
- * So the shove is sized at the second row and the combo is readable: he shoves
- * you off him, and while you are still travelling he is already reaching. The
- * pull's band (3.2) and the choke's (2.5) both sit under that peak too, so what
- * comes next depends on which verbs the archetype was given rather than on
- * whether the geometry happened to work out.
+ * So the shove was sized at the second row and the combo was readable: he shoves
+ * you off him, and while you are still travelling he is already reaching.
  *
- * `unleash` rides the same pair at 1.55×, the ratio the two prices stand in.
+ * ── AND THEN THE PLAYER LEARNED TO BRACE, WHICH RE-OPENS ALL OF IT ─────
+ *
+ * Every row above was measured against a target that could not answer a power
+ * with a power. `Player.resistForce` exists now, it mirrors `Enemy`'s, and it
+ * blunts the SHOVE as well as the harm — one blow, weighed once, both halves
+ * scaled by what the pool bought back. So a shove no longer buys a distance; it
+ * buys a RANGE of distances, and which end of it you get is a thing the player
+ * decides by what is left in their bar. Re-measured, same fixture, the shoving
+ * body still pinned:
+ *
+ *                     braced (100 Force)      empty bar
+ *     20.4 / 7.8      peak 3.28 m             peak 5.71 m
+ *     26.0 / 10.0     peak 3.86 m             peak 6.84 m
+ *
+ * THE 45% IS STRUCTURAL AND NO SIZING GETS AROUND IT. `RESIST_CAP` is 0.55 of
+ * the blow, so a deep pool always scales a shove to 0.45 of itself — the factor
+ * does not depend on how big the shove is. Reaching `ranged` (5.4 m) through a
+ * full pool therefore needs 2.2× the impulse, and 45 / 17 throws an EMPTY-bar
+ * player 14 m: past the far edge of the push's own band, so the caster shoves
+ * its target out of its own next cast. Driven rather than reasoned — the
+ * Master's own brain, run on after the shove with `push` taken off it so the
+ * peak is one shove's and not two:
+ *
+ *                     braced                        empty bar
+ *     20.4 / 7.8      choke only                    lightning, pull, choke
+ *     26.0 / 10.0     pull @0.62s, choke @0.52s     lightning, pull, choke
+ *     40.0 / 15.0     pull, choke (peak 5.20 m)     all three, and a 10.4 m fly
+ *
+ * So the shove is re-sized to the middle row, and the two-beat is now a
+ * CONTEST rather than a certainty. Braced, you deny him the lightning and eat
+ * the pull or the choke instead — the shove clears the pull's 3.2 m band by
+ * 0.66 m where before it cleared it by 0.08, which was a coincidence and not a
+ * margin. Empty-bar, you fly 6.84 m and the whole kit opens on you. That is
+ * what spending 16.7 Force to brace is FOR, and it is a better two-beat than
+ * the deterministic one: which second beat arrives is now something the player
+ * bought.
+ *
+ * The ceiling on the other side is the push's own band, [0, 7.5]. 6.84 m sits
+ * inside it, so even an unbraced target lands somewhere the caster can still
+ * reach — the property `unleash`, at 1.55× this pair, deliberately gives up.
+ *
+ * The pair keeps its ANGLE. 17.0/6.5 and 20.4/7.8 are the same vector at two
+ * magnitudes (both 0.382 lift-to-speed), and this is the same vector again a
+ * shade over a quarter larger; a shove that changed the direction you were
+ * thrown would be a different move, not a re-tune.
  */
-export const PUSH_SPEED = 20.4;
-export const PUSH_LIFT = 7.8;
+export const PUSH_SPEED = 26.0;
+export const PUSH_LIFT = 10.0;
 
 export const ENEMY_POWERS = {
   push: {
