@@ -332,6 +332,32 @@ Two things that are NOT the cause, ruled out rather than assumed: suite order
 (above), and leftover Chromium from `fpview.mjs`/`shot.mjs` (killed before the
 reverse run; it hung anyway).
 
+### 2.7b verify.mjs is ALL-OR-NOTHING, and that is why nobody has a gate number
+
+`verify.mjs` emits one progress line per suite as it starts (`  … name.mjs`) and
+**holds every result to a summary printed at the end**. So a run that stalls on
+suite 42 throws away the evidence from the 41 that already passed — you get a
+list of filenames and nothing else.
+
+That is the whole reason this session never produced a full gate number despite
+several 50-minute runs. Two suites became unrunnable as the roster grew (see
+2.6): `cloth-cost` at 31 archetypes and `levels-quality` at ten levels — the
+latter measured CPU-bound at 100% with a stable 606 MB heap, so it is computing,
+not the 2.7 idle hang, and the ten-entry `WORLDS` cache is where to look. Either
+one is enough to void an entire run.
+
+**The fix worth making before the next big session** is incremental output: print
+each suite's pass/fail as it finishes. Then a stalled run still tells you about
+everything before the stall, and the two costly suites stop being able to hide
+forty other suites' results behind them. Until that exists, the ways to get a
+number are:
+
+- `SABER_CHECK_ORDER=reverse`, which reorders which suite blocks you (it puts
+  `cloth-cost` near the end — but `levels-quality` then lands late instead);
+- run suites individually with `tools/_one.mjs`, which is what every agent in
+  this session ended up doing and is why the per-suite evidence is good while
+  the aggregate is missing.
+
 ### 2.8 Bash has a 10-minute cap
 
 A full `verify` run takes ~12 min. Use `run_in_background: true`. Foreground
