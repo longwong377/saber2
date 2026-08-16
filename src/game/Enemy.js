@@ -716,6 +716,11 @@ export const ARCHETYPES = {
  */
 export const FORCE_REGEN = 3.0;
 
+/** How long a held power's drain accumulates before it is billed. Slightly
+ * longer than `Player.invuln` (0.18 s), so no tick is ever refused — see
+ * `_sustain`, where a per-frame bill was losing 55 of every 60 payments. */
+const SUSTAIN_TICK = 0.20;
+
 export const ENEMY_POWERS = {
   push: {
     cost: POWER_COST.push, cd: 6.5, band: [0, 7.5], want: 'pressed',
@@ -2763,8 +2768,45 @@ export class Enemy {
       || this.stunTimer > 0 || this.gripped;
     if (this.castLeft <= 0 || this.force < pay || lost) { this.casting = null; return; }
     this.force -= pay;
-    t.applyKnockback?.(null, P.dps * dt, this, true);
-    if (this.casting === 'choke' && t.velocity) t.velocity.multiplyScalar(0.86);
+
+    /**
+     * BILL ON A TICK CLOCK, NOT PER FRAME — the enemy's held powers were
+     * delivering 8% of their authored damage.
+     *
+     * `Player.damage` sets `invuln = 0.18` on every hit and refuses while it
+     * holds. A per-frame drain therefore offered 60 payments a second into a
+     * sink that accepts about five, and the other 55 were silently dropped.
+     * Measured on a real player: choke authored 7 dps × 2.4 s = 16.8 hp,
+     * delivered **1.39**; lightning authored 35.2 hp, delivered **2.81**.
+     *
+     * The asymmetry was total, because `Enemy.damage` has no such window: the
+     * player's own choke kills a Jedi Knight in 5.0 s while the Sith's does
+     * 1.4 hp over its whole duration. That is the largest single gap between
+     * what the archetype table promises and what the player feels, and it is
+     * why "the enemies that use the Force" never seemed to.
+     *
+     * So the drain accumulates and is spent in whole ticks slightly longer
+     * than the i-frame. No authored number changes — `dps` still means dps —
+     * the payments simply stop being thrown away.
+     */
+    this._sustainDebt = (this._sustainDebt ?? 0) + P.dps * dt;
+    if (this._sustainDebt >= P.dps * SUSTAIN_TICK) {
+      t.applyKnockback?.(null, this._sustainDebt, this, true);
+      this._sustainDebt = 0;
+    }
+
+    /**
+     * …AND THE SLOW THE FILE ALREADY CLAIMS. The choke's own note promises
+     * "35% movement speed (`Player.staggerTimer`)", but `_sustain` passes
+     * `gentle = true` and `applyKnockback` writes `staggerTimer` only when
+     * `!gentle` — measured through a full choke: 0.00 s. The velocity scale
+     * below is undone by the movement integrator on the very next frame, so
+     * the documented mechanic had no implementation at all.
+     */
+    if (this.casting === 'choke' && t.velocity) {
+      t.velocity.multiplyScalar(0.86);
+      if (t.staggerTimer !== undefined) t.staggerTimer = Math.max(t.staggerTimer, 0.12);
+    }
     if (rng() < 0.35) {
       this.world.particles?.sparkBurst?.(t.chest ?? t.position, 2,
         this.casting === 'lightning' ? 0x9fd8ff : 0xff6a6a);
