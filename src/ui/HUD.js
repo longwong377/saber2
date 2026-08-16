@@ -1134,6 +1134,7 @@ export class HUD {
    * squads)`, which is exactly what main.js was already calling into thin air.
    */
   setOrder(id, name, squads) {
+    const was = this._order;
     this._order = id || null;
     if (this.el.rpOrderName) this.el.rpOrderName.textContent = name || '—';
     if (this.el.rpOrderSub) {
@@ -1141,6 +1142,24 @@ export class HUD {
       this.el.rpOrderSub.textContent = n ? `${n} squad${n === 1 ? '' : 's'}` : '';
     }
     this._lightOrder();
+    /*
+     * AND THE ORDER IS SPOKEN, which it never was.
+     *
+     * `Voice.LINES.order` is a fully authored contour with three paragraphs
+     * over it — "it is the officer's line and it is what the player hears when
+     * they change formation, so it has to be legible under a firefight" — and
+     * it was the ONE kind of the fifteen that nothing ever emitted. Every other
+     * contour (effort, hurt, land, die, kill, streak, boss, low, alarm, panic,
+     * scream, chatter, flung, cheer) has a live caller; this path wrote two DOM
+     * strings and lit a chip in silence. The one mode where you give orders was
+     * the one where nothing answered you.
+     *
+     * Only on a CHANGE. `setOrder` is also called when the HUD is rebuilt — the
+     * note over `_buildPowers` says so in as many words — and an officer who
+     * repeats the standing order every time a panel is redrawn is worse than
+     * one who says nothing.
+     */
+    if (this._order && this._order !== was) this.announcer?.say(this._settings, 'order');
   }
 
   /** Light the chip for the current formation, and only that one. */
@@ -1197,6 +1216,12 @@ export class HUD {
      * no bars to move, no announcer, no room. See FreeCam for why the world is
      * paused rather than merely unwatched.
      */
+    // Kept so `setOrder` can pick a voice. It is called by the director, not by
+    // the frame, so it has no world of its own to ask — and everything else the
+    // announcer speaks is spoken from inside this method, where `world` is in
+    // hand. One field rather than threading a fifth argument through a seam the
+    // director owns the signature of.
+    this._settings = world?.settings ?? this._settings ?? null;
     const input = world ? world.liveInput : null;
     if (input && input.actHit('freecam') && camera) this.freecam.toggle(world, camera, this);
     if (this.freecam.on) {
