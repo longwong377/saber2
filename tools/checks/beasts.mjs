@@ -314,24 +314,55 @@ export async function run({ check, assert }) {
   });
 
   check('beasts: the charge is the answer to a runner, and still connects', () => {
-    /* Without this the previous check has a trivial solution — make every
+    /**
+     * Without this the previous check has a trivial solution — make every
      * attack miss — and the fix would have swapped an undodgeable beast for a
-     * harmless one. The charge commits its aim when its drive begins rather
+     * harmless one. The charge commits its aim when its DRIVE begins rather
      * than at the top of the wind-up, which is what lets it catch someone who
-     * has been running since the telegraph. */
+     * has been running since the telegraph.
+     *
+     * ── WHAT THIS USED TO ASK, AND WHY THAT WAS THE WRONG QUESTION.
+     *
+     * It asked for `> 0.6` against `strafe` — a player circling at 7.4 m/s for
+     * the WHOLE fight — and the charge scored 100%, because it re-aimed and
+     * resolved on the same frame: `aimUntil: 0.65` beside `hit: [0.65, …]` is a
+     * zero-second window, and no movement at any speed can be outside a
+     * remembered point that is fixed as the blow lands. Measured against a
+     * target breaking away on the first frame of the wind-up, the charge landed
+     * 100% at 0, 4.6, 7.45, 11, 15.5, 22 and 30 m/s. So this check was passing
+     * on the strength of a defect: the evidence it accepted for "the charge
+     * answers a runner" was that the charge answers EVERYTHING, which is the
+     * 11.5 m sphere the file above it exists to have removed.
+     *
+     * The move keeps its property and loses that. It resolves half a second
+     * after it commits now, so a player who breaks WHEN THE DRIVE BEGINS gets
+     * out — and a player who broke early and stopped, which is what `dodge`
+     * does (it moves only through the first 0.45 s of the attack), is caught
+     * exactly as before, because the re-aim followed them. That is the real
+     * statement of "it is the answer to a runner": it beats the habit that
+     * beats a claw. `tools/checks/dodgeable.mjs` holds the other half — that
+     * the window it now has is one a walking player can actually use.
+     */
     const rows = [];
     for (const type of BEASTS) {
       if (!movesOf(type).includes('charge')) continue;
-      const r = fight(type, 'strafe');
-      const got = r.rate('charge');
-      assert(got !== null, `${type} never charged`);
-      assert(got > 0.6,
-        `${ARCHETYPES[type].label}'s charge caught a sprinting player only ${pc(got)} of `
-        + 'the time — there is then no answer to running away');
-      rows.push(`${ARCHETYPES[type].label} ${pc(got)}`);
+      const early = fight(type, 'dodge').rate('charge');            // breaks, then stops
+      // …and one that is still going when the drive begins. The default window
+      // stops at 0.45 s, which is BEFORE the charge commits at 0.65 — so this
+      // one has to be told to keep moving, or both conditions are early breaks.
+      const late = fight(type, 'back', 90, [0, 9]).rate('charge');
+      assert(early !== null, `${type} never charged`);
+      assert(early > 0.6,
+        `${ARCHETYPES[type].label}'s charge caught a player who broke early and stopped only `
+        + `${pc(early)} of the time — the re-aim has stopped following, and there is then no `
+        + 'answer to running away');
+      assert(late === null || late < 0.35,
+        `${ARCHETYPES[type].label}'s charge landed ${pc(late)} on a player who was still moving when `
+        + 'it committed — it is unanswerable again, which is what the zero-second window was');
+      rows.push(`${ARCHETYPES[type].label} early ${pc(early)} / sustained ${pc(late)}`);
     }
     assert(rows.length >= 3, `only ${rows.length} creatures still carry the charge`);
-    return `charges landing on a sprinting player: ${rows.join(', ')}`;
+    return `charges: ${rows.join(', ')}`;
   });
 
   check('beasts: the slam is answered by DISTANCE and by nothing else', () => {
@@ -485,18 +516,48 @@ export async function run({ check, assert }) {
      * `damage()`, so cutting a leg off — the thing the winded comment says the
      * window exists FOR — accrued nothing on any of them.
      */
+    /**
+     * ── AND IT IS MEASURED NOW RATHER THAN GREPPED.
+     *
+     * This used to scan Enemy.js for the literal string `if (this.A.boss ||
+     * this.A.custom === 'beast') this.recentDamage` and count two of them —
+     * which is the mistake its neighbour four checks down already names in as
+     * many words ("THIS USED TO BE A GREP, and that was the wrong instrument
+     * twice over… it failed the moment the three curves were derived from one
+     * table instead of written out, which is a REFACTOR, not a regression").
+     * It failed exactly that way: the predicate was lifted into `keepsWind(A)`
+     * so that the three write sites and the reader cannot disagree about who
+     * keeps a tally, the behaviour was unchanged and strictly better organised,
+     * and the check went red over the spelling.
+     *
+     * What is measured is the property: a real body of every beast type, hit
+     * through `damage()` and then cut through `takeCut()`, has to accrue on
+     * both paths. That is true of any spelling and false of any regression.
+     */
+    const rows = [];
     for (const type of BEASTS) {
       const A = ARCHETYPES[type];
       assert(A.custom === 'beast', `${type} is not a beast any more`);
+      const { e } = bench(type);
+      e.recentDamage = 0;
+      e.damage(e.maxHp * 0.05, e.position.clone(), null, 'melee');
+      const byBlow = e.recentDamage;
+      assert(byBlow > 0,
+        `${A.label} took a blow worth 5% of its health and its winded meter did not move — `
+        + '`damage()` has stopped feeding it, so the window can never open');
+      e.recentDamage = 0;
+      e.guard = 0;                       // the hide is measured elsewhere
+      const caps = e.capsules();
+      const cap = caps.find((c) => /femur|tibia|thigh|hip/i.test(c.name)) || caps[0];
+      e.takeCut({ bone: cap.name, cap, cutT: 0.5, point: e.position.clone().setY(1),
+        impulse: new THREE.Vector3(0, 0, -1) }, null);
+      assert(e.recentDamage > 0,
+        `${A.label} lost a limb and its winded meter did not move — takeCut subtracts from hp `
+        + 'directly, and severing a limb is the thing the window exists for');
+      rows.push(`${type} blow ${byBlow.toFixed(0)} cut ${e.recentDamage.toFixed(0)}`);
+      e.dispose?.();
     }
-    const src = await import('node:fs/promises').then(({ readFile }) =>
-      readFile(new URL('../../src/game/Enemy.js', import.meta.url), 'utf8'));
-    const gate = /if \(this\.A\.boss \|\| this\.A\.custom === 'beast'\) this\.recentDamage/g;
-    const n = (src.match(gate) || []).length;
-    assert(n >= 2,
-      `only ${n} of the two damage paths accrue the winded meter for a beast — it is gated on `
-      + '`boss` again, which is one of the five, or `takeCut` has stopped feeding it');
-    return `all ${BEASTS.length} beasts accrue the winded meter from both damage and cuts`;
+    return `all ${BEASTS.length} beasts accrue the winded meter from both damage and cuts — ${rows.join(', ')}`;
   });
 
   check('beasts: the body reads the attack it is about to make', () => {
