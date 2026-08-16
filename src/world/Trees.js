@@ -454,10 +454,20 @@ export class Forest {
     // release the ones nobody is near, and the ones the blade has destroyed
     for (const [i, rec] of this.real) {
       if (rec.prop.dead) { this._release(i, true); continue; }
-      if (rec.moved || rec.prop.body.velocity.lengthSq() > 0.04) { rec.moved = true; continue; }
+      /* HAS IT ACTUALLY BEEN MOVED? On DISPLACEMENT and not on velocity, and
+       * the difference is the whole feature working or not: a log that has just
+       * been dropped by the solver has a velocity for a second or two, so
+       * latching on `velocity > 0` marked every log as moved, and a moved log
+       * is never given back — four fellings later the cap was full of logs
+       * nobody had touched and the fifth tree you cut was furniture again.
+       * Measured with `tools/_logprobe.mjs`: 3 of 4 latched on the velocity
+       * test having gone nowhere; 0 of 4 on this one. */
+      if (!rec.moved && rec.prop.body.position.distanceToSquared(rec.home) > 4) rec.moved = true;
+      const x = rec.moved ? rec.prop.body.position.x : D[i * F.N + F.X];
+      const z = rec.moved ? rec.prop.body.position.z : D[i * F.N + F.Z];
       let near = false;
       for (const p of players) {
-        const dx = p.position.x - D[i * F.N + F.X], dz = p.position.z - D[i * F.N + F.Z];
+        const dx = p.position.x - x, dz = p.position.z - z;
         if (dx * dx + dz * dz < (LIFT_RING + 6) * (LIFT_RING + 6)) { near = true; break; }
       }
       if (!near) this._release(i, false);
@@ -527,7 +537,7 @@ export class Forest {
     if (box) { this.world.physics?.removeStaticBox?.(box); this.logs.delete(i); }
     this.world.addProp?.(prop);
     this.real.set(i, {
-      prop, moved: false,
+      prop, moved: false, home: mid.clone(),
       // enough to lay the log's collider back down if the player walks away
       box: box ? { c: box.center.clone(), he: box.halfExtents.clone(), q: box.quat?.clone?.() } : null,
     });
@@ -539,6 +549,25 @@ export class Forest {
     if (!rec) return;
     this.real.delete(i);
     if (!destroyed) {
+      /* A LOG THE PLAYER MOVED GOES BACK WHERE IT NOW IS, not where the tree
+       * fell. The instance buffers are the authority for a down tree's pose, so
+       * handing one back without rewriting the record would teleport a log the
+       * player had just thrown twenty metres back to its stump — which is the
+       * single most obviously broken thing this could do. The record is
+       * rewritten from the body: the hinge is the log's own end, and the fall
+       * direction is its axis in plan. */
+      if (rec.moved) {
+        const D = this.data, k = i * F.N;
+        const len = Math.max(0.2, D[k + F.H] - D[k + F.CUT]);
+        const ax = _v1.set(0, 1, 0).applyQuaternion(rec.prop.body.quaternion);
+        const foot = _v2.copy(rec.prop.body.position).addScaledVector(ax, -len * 0.5);
+        D[k + F.X] = foot.x; D[k + F.Z] = foot.z;
+        D[k + F.Y] = foot.y - D[k + F.CUT];
+        const g = Math.hypot(ax.x, ax.z) || 1;
+        D[k + F.DX] = ax.x / g; D[k + F.DZ] = ax.z / g;
+        D[k + F.ANG] = Math.acos(clamp(ax.y, -1, 1));
+        rec.box = null;                      // its old collider is meaningless now
+      }
       rec.prop.destroy?.();
       if (rec.box) {
         const b = this.world.physics?.addStaticBox?.(rec.box.c, rec.box.he, rec.box.q,
