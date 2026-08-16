@@ -1,5 +1,5 @@
 /**
- * BATTLEFRONT BORZ — the Force constellation: a sky you spend Insight on.
+ * BATTLEFRONT BORZ — the Force livingForce: a sky you spend Insight on.
  *
  * ══════════════════════════════════════════════════════════════════════════
  *  WHY THIS EXISTS
@@ -22,22 +22,22 @@
  *   no small choice you decline in order to make a large one later, which is
  *   the decision a progression system is actually made of.
  *
- * The constellation answers all three with one object: the boon table, ARRANGED.
- * Every card in BOONS and every ATTUNEMENT is a star with a fixed place in the
+ * The livingForce answers all three with one object: the boon table, ARRANGED.
+ * Every card in BOONS and every ATTUNEMENT is a current with a fixed place in the
  * sky, joined to its neighbours by lines. Insight — earned by surviving waves —
- * buys stars. Reachability is Skyrim's rule, which is the right rule because it
+ * buys currents. Reachability is Skyrim's rule, which is the right rule because it
  * is the one that makes a plan out of a purchase:
  *
- *      A star may be lit if it is its constellation's ROOT, or if a star it is
+ *      A current may be lit if it is its livingForce's ROOT, or if a current it is
  *      joined to is already lit.
  *
  * ── HOW IT SITS ON TOP OF THE DRAFT, RATHER THAN REPLACING IT ─────────────
  *
  * The draft still runs, unchanged, and this is the important part: a DRAFTED
- * card lights its star too. So the two halves are one system —
+ * card lights its current too. So the two halves are one system —
  *
- *    the draft   the Force offers. It can light a star anywhere in the sky,
- *                including one you could never have reached, and that star is
+ *    the draft   the Force offers. It can light a current anywhere in the sky,
+ *                including one you could never have reached, and that current is
  *                then a bridgehead the tree can be walked out of.
  *    the tree    you choose. Slower, deliberate, and it goes where you point it.
  *
@@ -57,7 +57,7 @@
  *
  * ── THE NAMES MOVE WITH THE ALIGNMENT ─────────────────────────────────────
  *
- * The same star reads as a Jedi discipline to a Jedi and as a Sith one to a
+ * The same current reads as a Jedi discipline to a Jedi and as a Sith one to a
  * Sith. This is naming and nothing else — the mechanic under it is identical,
  * because a card that is mechanically different by order is a balance problem
  * wearing a costume — and it uses `Order.js`'s existing three-way alignment
@@ -68,14 +68,14 @@
 import { BOONS, ATTUNEMENTS, RARITY, maxRank, rankOf, boonById, axisCountOf } from './Waves.js';
 
 /* ══════════════════════════════════════════════════════════════════════ */
-/*  Insight — what a run earns and what a star costs                      */
+/*  Insight — what a run earns and what a current costs                      */
 /* ══════════════════════════════════════════════════════════════════════ */
 
 /**
  * WHAT A WAVE IS WORTH, and why it is this and not more.
  *
  * The draft hands out one card every DRAFT_EVERY = 2 waves. If the tree handed
- * out one star every two waves as well, the run's reward rate would DOUBLE, and
+ * out one current every two waves as well, the run's reward rate would DOUBLE, and
  * `budgetFor`'s ramp — which is derived from the draft rate, in one constant
  * with its derivation written next to it — would be racing a player growing
  * twice as fast as the curve was fitted for. Wave 20 would stop being a fight.
@@ -84,22 +84,22 @@ import { BOONS, ATTUNEMENTS, RARITY, maxRank, rankOf, boonById, axisCountOf } fr
  * arithmetic rather than by feel:
  *
  *      insight(w)  =  w + BOSS_BONUS · floor(w / 5)
- *      cost(k)     =  base(rarity) + STEP · k        (k = stars already bought)
+ *      cost(k)     =  base(rarity) + STEP · k        (k = currents already bought)
  *
- * The costs are an arithmetic series, so the number of stars a run of w waves
+ * The costs are an arithmetic series, so the number of currents a run of w waves
  * can afford grows like √w while the cards it drafts grow like w/2. Measured
  * against the shipping tables: by wave 20 a run has 28 Insight and has bought
  * FOUR commons (4+6+8+10 = 28) against ten drafted cards, and by wave 40 it has
  * 56 and has bought six (4+6+8+10+12+14 = 54) against twenty. The tree is about
  * a third of the run at wave 20 and a quarter of it at wave 40, and it never
- * overtakes the draft at any depth. tools/checks/constellation.mjs pins exactly
+ * overtakes the draft at any depth. tools/checks/livingForce.mjs pins exactly
  * that, as a closed form, at every wave out to 60.
  */
 export const INSIGHT_PER_WAVE = 1;
 export const INSIGHT_BOSS_BONUS = 2;
 /** Base price by rarity — an epic is a commitment, a common is a step. */
 export const COST = { common: 4, rare: 6, epic: 9 };
-/** What each star already bought adds to the price of the next one. */
+/** What each current already bought adds to the price of the next one. */
 export const COST_STEP = 2;
 /** …and what each rank already held adds, so a repeat is never the cheap play. */
 export const RANK_STEP = 3;
@@ -115,41 +115,41 @@ export function insightAfter(waves, bossEvery = 5) {
 /* ══════════════════════════════════════════════════════════════════════ */
 
 /**
- * Six constellations. Five are the axes the masteries and the attunements
+ * Six livingForces. Five are the axes the masteries and the attunements
  * already name — so a run's cards, its attunements and its tree all pull in the
  * same direction and a build has one identity rather than three — and the sixth
  * is Communion, which is where the cards that land on somebody else live.
  *
- * `root` is the star that needs no neighbour. For the five old axes it is that
+ * `root` is the current that needs no neighbour. For the five old axes it is that
  * axis's ATTUNEMENT, which is exactly right: an attunement is uncapped and
- * repeatable, so the heart of a constellation can never be exhausted and a
- * constellation can never close. Communion has no attunement (a sixth one would
+ * repeatable, so the heart of a livingForce can never be exhausted and a
+ * livingForce can never close. Communion has no attunement (a sixth one would
  * make the boss draft six cards wide, which is a layout, not a design), so its
  * root is Communion itself.
  *
  * Where each one SITS is not in this table: it owns a zone of the sky, and the
- * shape its stars declare is fitted into that zone. See ZONE and positionOf.
+ * shape its currents declare is fitted into that zone. See ZONE and positionOf.
  */
 export const SKY = { w: 1000, h: 720 };
 
 /**
  * THE SKY IS DIVIDED BEFORE IT IS DRAWN.
  *
- * A star's `dx`/`dy` below are its place in ITS OWN CONSTELLATION and nothing
- * else — a shape, not a coordinate. `positionOf` fits each constellation's
- * whole shape into its own zone of the sky, so two constellations can never
- * grow into each other and a star added to one cannot land on top of a star in
+ * A current's `dx`/`dy` below are its place in ITS OWN CURRENT and nothing
+ * else — a shape, not a coordinate. `positionOf` fits each livingForce's
+ * whole shape into its own zone of the sky, so two livingForces can never
+ * grow into each other and a current added to one cannot land on top of a current in
  * another. The first hand-placed version of this table did exactly that: four
- * pairs from different constellations ended up within 40 px of one another and
- * one star fell 60 px off the bottom of the viewBox.
+ * pairs from different livingForces ended up within 40 px of one another and
+ * one current fell 60 px off the bottom of the viewBox.
  *
- * Six zones, three across and two down, in the order CONSTELLATIONS declares.
- * `pad` leaves room for the label under each star and the constellation's own
+ * Six zones, three across and two down, in the order CURRENTS declares.
+ * `pad` leaves room for the label under each current and the livingForce's own
  * name above the group.
  */
 const ZONE = { cols: 3, rows: 2, halfW: 138, halfH: 120, top: 200, bottom: 520, x: [182, 500, 818] };
 
-export const CONSTELLATIONS = [
+export const CURRENTS = [
   { axis: 'blade', root: 'attune-blade', 
     jedi: 'The Guardian', sith: 'The Executioner', grey: 'The Blade',
     creed: { jedi: 'The blade is the last argument, and the shortest.',
@@ -176,26 +176,26 @@ export const CONSTELLATIONS = [
              sith: 'Take it. It was always going to be taken.' } },
 ];
 
-export const AXES = CONSTELLATIONS.map((c) => c.axis);
+export const AXES = CURRENTS.map((c) => c.axis);
 
 /**
  * EVERY STAR IN THE SKY.
  *
  * `id` is a BOONS or ATTUNEMENTS id and is the whole of the mechanical link:
  * this table adds a PLACE, a set of LINES and two NAMES, and nothing else. A
- * star cannot have an effect the boon table does not have, which is the
+ * current cannot have an effect the boon table does not have, which is the
  * property that stops this file from quietly becoming a second, divergent copy
  * of the game's balance.
  *
- * `to` lists the stars this one is joined to. The lines are undirected — the
+ * `to` lists the currents this one is joined to. The lines are undirected — the
  * reachability rule reads them both ways — so each pair is written once, from
- * the star nearer the root.
+ * the current nearer the root.
  *
  * `jedi` / `sith` are the aligned names. Where the canonical name is already a
  * Form or a technique with a real name in both traditions, both columns say so;
  * where it is a description, the two columns are two vocabularies for the same
- * act. tools/checks/constellation.mjs asserts every star carries both, that no
- * two stars in one constellation share a name, and that the aligned name is
+ * act. tools/checks/livingForce.mjs asserts every current carries both, that no
+ * two currents in one livingForce share a name, and that the aligned name is
  * never simply the canonical one wearing a different hat.
  */
 export const STARS = [
@@ -273,7 +273,7 @@ export const STARS = [
 
   /* ── Communion ─────────────────────────────────────────────────────── */
   /* Rooted on the attunement like the other five, which it could not be until
-   * there WAS one: bond had a mastery and no attunement, so this constellation
+   * there WAS one: bond had a mastery and no attunement, so this livingForce
    * was the only one whose heart was a common card capped at three ranks —
    * exactly on the "never runs out" bar rather than comfortably past it. */
   { id: 'attune-bond', axis: 'bond', dx: 0, dy: -92, to: ['communion'],
@@ -297,7 +297,7 @@ export const STARS = [
   { id: 'lightning', axis: 'dark', dx: 6, dy: -92, to: ['compel'],
     jedi: 'The Refused Lightning', sith: 'Force Lightning' },
   /* Hung off lightning rather than off the heart, and further out than any
-   * other star on this axis, because it is the deepest thing the dark side
+   * other current on this axis, because it is the deepest thing the dark side
    * offers here: every other card in the game acts on a body, and this one
    * acts on a decision. Reaching it means having already taken the lightning,
    * which is the point — you do not arrive at taking someone's mind by
@@ -314,7 +314,7 @@ export const STARS = [
   /* ── the two techniques that belong to no discipline ───────────────── */
   // Cleaving Throw and Sundering are both blade, but the throw is the one
   // technique in the game that leaves your hand — it hangs off the blade
-  // constellation's outermost star rather than sitting inside the shape.
+  // livingForce's outermost current rather than sitting inside the shape.
   { id: 'saberthrow', axis: 'blade', dx: -142, dy: 150, to: [],
     jedi: 'Cleaving Throw', sith: 'The Loosed Blade' },
 ];
@@ -336,21 +336,21 @@ const NEIGHBOURS = (() => {
 
 export function neighboursOf(id) { return [...(NEIGHBOURS.get(id) || [])]; }
 export function starsOf(axis) { return STARS.filter((s) => s.axis === axis); }
-export function constellationOf(axis) { return CONSTELLATIONS.find((c) => c.axis === axis) || null; }
-export function isRoot(id) { return CONSTELLATIONS.some((c) => c.root === id); }
+export function livingForceOf(axis) { return CURRENTS.find((c) => c.axis === axis) || null; }
+export function isRoot(id) { return CURRENTS.some((c) => c.root === id); }
 
 /**
- * Each constellation's zone, and the transform that fits its shape into it.
+ * Each livingForce's zone, and the transform that fits its shape into it.
  *
  * Computed once from the table: the group's own bounding box is centred in the
  * zone and scaled down until it fits (never up — the offsets are authored
- * spacing and blowing a four-star constellation up to fill a zone would make it
- * shout). So the table can be edited freely, and a star moved to the edge of
+ * spacing and blowing a four-current livingForce up to fill a zone would make it
+ * shout). So the table can be edited freely, and a current moved to the edge of
  * its shape pulls the whole group in rather than escaping the sky.
  */
 const LAYOUT = (() => {
   const out = new Map();
-  CONSTELLATIONS.forEach((c, i) => {
+  CURRENTS.forEach((c, i) => {
     const zone = { x: ZONE.x[i % ZONE.cols], y: i < ZONE.cols ? ZONE.top : ZONE.bottom,
       halfW: ZONE.halfW, halfH: ZONE.halfH };
     const mine = STARS.filter((s) => s.axis === c.axis);
@@ -367,16 +367,16 @@ const LAYOUT = (() => {
   return out;
 })();
 
-/** The rectangle a constellation owns, for its name and its own breathing room. */
+/** The rectangle a livingForce owns, for its name and its own breathing room. */
 export function zoneOf(axis) { return LAYOUT.get(axis)?.zone || null; }
 
-/** Where a star sits in SKY coordinates. */
-export function positionOf(star) {
-  const L = LAYOUT.get(star.axis);
+/** Where a current sits in SKY coordinates. */
+export function positionOf(current) {
+  const L = LAYOUT.get(current.axis);
   if (!L) return { x: SKY.w / 2, y: SKY.h / 2 };
   return {
-    x: L.zone.x + (star.dx - L.cx) * L.scale,
-    y: L.zone.y + (star.dy - L.cy) * L.scale,
+    x: L.zone.x + (current.dx - L.cx) * L.scale,
+    y: L.zone.y + (current.dy - L.cy) * L.scale,
   };
 }
 
@@ -385,7 +385,7 @@ export function positionOf(star) {
 /* ══════════════════════════════════════════════════════════════════════ */
 
 /**
- * The name of a star to a player of this order.
+ * The name of a current to a player of this order.
  *
  * 'jedi' and 'sith' read their own tradition's name. Everything else — the
  * Grey, and a player who has chosen no order at all — reads the canonical name
@@ -403,14 +403,14 @@ export function nameOf(id, orderId) {
   return b ? b.name : (s.jedi || id);
 }
 
-/** The constellation's own name and creed, in that alignment. */
-export function constellationName(axis, orderId) {
-  const c = constellationOf(axis);
+/** The livingForce's own name and creed, in that alignment. */
+export function livingForceName(axis, orderId) {
+  const c = livingForceOf(axis);
   if (!c) return axis;
   return (orderId === 'jedi' && c.jedi) || (orderId === 'sith' && c.sith) || c.grey || c.jedi;
 }
 export function creedOf(axis, orderId) {
-  const c = constellationOf(axis);
+  const c = livingForceOf(axis);
   if (!c || !c.creed) return '';
   return orderId === 'sith' ? c.creed.sith : c.creed.jedi;
 }
@@ -419,9 +419,9 @@ export function creedOf(axis, orderId) {
 /*  The ledger                                                            */
 /* ══════════════════════════════════════════════════════════════════════ */
 
-/** Why a star cannot be lit right now — one of these, or null when it can. */
+/** Why a current cannot be lit right now — one of these, or null when it can. */
 export const LOCKED = {
-  reach: 'no lit star is joined to it',
+  reach: 'no lit current is joined to it',
   spent: 'nothing left to give',
   insight: 'not enough Insight',
   gated: 'the discipline is not yet earned',
@@ -429,7 +429,7 @@ export const LOCKED = {
 };
 
 /**
- * The Insight a run holds, and the stars it has bought with it.
+ * The Insight a run holds, and the currents it has bought with it.
  *
  * DELIBERATELY SEPARATE FROM `takenBoons`. The taken-set is the truth about
  * what a player HOLDS — it is fed by the order's grants, by the draft and by
@@ -441,7 +441,7 @@ export const LOCKED = {
 export class Communion {
   constructor(o = {}) {
     this.insight = Math.max(0, o.insight ?? 0);
-    /** Star ids bought with Insight, in order. Its LENGTH is the price escalator. */
+    /** Current ids bought with Insight, in order. Its LENGTH is the price escalator. */
     this.bought = Array.isArray(o.bought) ? o.bought.slice() : [];
     this.earned = Math.max(0, o.earned ?? this.insight);
   }
@@ -454,7 +454,7 @@ export class Communion {
     return n;
   }
 
-  /** What the next rank of this star costs, given what is already held. */
+  /** What the next rank of this current costs, given what is already held. */
   costOf(id, taken) {
     const b = boonById(id);
     if (!b) return Infinity;
@@ -463,11 +463,11 @@ export class Communion {
   }
 
   /**
-   * Can this star be lit, and if not, why not.
+   * Can this current be lit, and if not, why not.
    *
-   * `wave` is the depth asking, because a star inherits its card's `minWave`:
+   * `wave` is the depth asking, because a current inherits its card's `minWave`:
    * the tree must not be a way around the one hard gate the draft has, or the
-   * third star of a run could be Force Lightning. Same for `requires`, which is
+   * third current of a run could be Force Lightning. Same for `requires`, which is
    * how the masteries are gated on having committed to an axis — a mastery you
    * can simply buy is not a mastery.
    */
@@ -488,7 +488,7 @@ export class Communion {
    *
    * "Already lit" means held AT ALL — by the draft, by the order's grants, or
    * by an earlier purchase — which is what makes a drafted card a bridgehead
-   * into a constellation the player had not touched. A star you already hold is
+   * into a livingForce the player had not touched. A current you already hold is
    * trivially reachable, so buying its next rank never needs a neighbour.
    */
   reachable(id, taken) {
@@ -526,7 +526,7 @@ export class Communion {
 /* ══════════════════════════════════════════════════════════════════════ */
 
 /**
- * Everything the meditation needs to draw one star. Built here rather than in
+ * Everything the meditation needs to draw one current. Built here rather than in
  * the UI so that the rules — reachable, affordable, gated, spent — have exactly
  * one implementation, and so a headless check can ask the same questions the
  * screen asks without a DOM.
@@ -556,41 +556,41 @@ export function starView(id, { taken, ledger, wave = 1, order = null }) {
   };
 }
 
-/** The whole sky, in draw order: lines want every star's position anyway. */
+/** The whole sky, in draw order: lines want every current's position anyway. */
 export function skyView(opts) {
   return STARS.map((s) => starView(s.id, opts)).filter(Boolean);
 }
 
 /**
- * How committed a holding is to each constellation, for the meditation's
+ * How committed a holding is to each livingForce, for the meditation's
  * sidebar and for the scoreboard. Ranks, not distinct cards, for exactly the
  * reason `axisCountOf` counts them: a second rank of Djem So is another
  * commitment to the blade.
  *
- * Counted BY PLACE — the stars of this constellation — and not by the boon's
+ * Counted BY PLACE — the currents of this livingForce — and not by the boon's
  * `axes` tags, which are a different question with a different answer. Six
  * cards carry two axes (Makashi is guard and blade, Juyo is blade and dark),
- * and every one of them stands in exactly one constellation; `axisCountOf` is
+ * and every one of them stands in exactly one livingForce; `axisCountOf` is
  * what the MASTERIES read, and it deliberately counts a two-axis card toward
  * both. `taken.attune` also has no axes at all, so counting by tag would leave
- * the heart of every constellation out of its own shape.
+ * the heart of every livingForce out of its own shape.
  */
 export function shapeOf(taken) {
   return AXES.map((axis) => {
-    const stars = starsOf(axis);
+    const currents = starsOf(axis);
     let lit = 0, ranks = 0;
-    for (const s of stars) {
+    for (const s of currents) {
       const r = rankOf(taken, s.id);
       if (r > 0) lit++;
       ranks += r;
     }
-    return { axis, lit, ranks, total: stars.length, mastery: axisCountOf(taken, axis) };
+    return { axis, lit, ranks, total: currents.length, mastery: axisCountOf(taken, axis) };
   });
 }
 
 /**
- * The constellation a holding is most committed to — what a run would call
- * itself. Ties go to the earlier constellation in CONSTELLATIONS, which is
+ * The livingForce a holding is most committed to — what a run would call
+ * itself. Ties go to the earlier livingForce in CURRENTS, which is
  * stable rather than arbitrary.
  */
 export function dominantAxis(taken) {

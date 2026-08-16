@@ -712,7 +712,7 @@ export class WaveDirector {
    * `wave` is therefore the wave number OF THE RUN — 1..16 down the Descent,
    * 1..∞ everywhere else — which is also the number every reader outside this
    * file already wanted: the HUD banner, the death card's "Wave reached", the
-   * pause card, the depth the constellation gates its stars on, and the number
+   * pause card, the depth the livingForce gates its stars on, and the number
    * a co-op host puts on the wire. What is rung-local is `onWaveClear`'s
    * argument (see the wave-clear block in `update`), because that is the one
    * consumer — World's `run.wave >= rung.waves` — asking about THIS rung.
@@ -826,7 +826,7 @@ export class WaveDirector {
    * built player and that ends in a crown, is `gauntlet`. It fell on the wrong
    * side of that equality for its whole life: measured over twenty-four waves a
    * roguelite drafted twelve times and a gauntlet drafted zero, so the flagship
-   * run mode's entire reward loop was the constellation and nothing else.
+   * run mode's entire reward loop was the livingForce and nothing else.
    *
    * A LIST, so the next mode that wants a run declares itself here rather than
    * being caught by an `===` somebody has to remember to widen. `waves` and
@@ -1973,7 +1973,7 @@ function cleaveAlong(p, from, to, dt) {
  * keep `_juyoStacks`, `_mendClock`, `_conduitKills` and `_bastionDeflects`
  * there. The rule that matters is unchanged and is the only one worth having:
  * the number must be READ, every frame, by the reader the card installed —
- * which is what tools/checks/constellation.mjs measures, on a real Player, by
+ * which is what tools/checks/livingForce.mjs measures, on a real Player, by
  * driving the fight and watching the difference rather than by reading a flag.
  */
 
@@ -2216,7 +2216,7 @@ const STAGGER_AT = 14;
  * defaultBoonMods` seeds it at 0, which is only sane the same way. The guard
  * then returned `amount * k`. Measured on a 40-point heavy blow: no card 40.00,
  * rank I 20.00, rank II 30.00 — rank two of a rare card cost the player a draft
- * slot (or 9+ Insight on the Guard constellation, where a second rank carries
+ * slot (or 9+ Insight on the Guard livingForce, where a second rank carries
  * an extra RANK_STEP) to take FIFTY PERCENT MORE damage from every heavy blow
  * than rank one, with nothing on screen to say so.
  *
@@ -2336,7 +2336,7 @@ function sunderThrough(enemy, bone, point) {
   } finally { this._sundering = false; }
 }
 
-/* ── the readers the constellation added ─────────────────────────────── */
+/* ── the readers the livingForce added ─────────────────────────────── */
 
 /**
  * Reflection — a share of every blow that lands goes back to whoever struck it.
@@ -2481,7 +2481,7 @@ function detonateBody(enemy) {
  *   thing co-op in this project has historically got wrong.
  *
  *   IT IS NEVER A DEAD CARD ALONE. Solo, the holder keeps half of their own
- *   aura. That is not charity: it is what makes the Communion constellation
+ *   aura. That is not charity: it is what makes the Communion livingForce
  *   draftable in a solo run without being a trap, and the mastery is what turns
  *   the half back into a whole.
  */
@@ -2564,7 +2564,7 @@ export function bondGuardIn(amount) {
 /**
  * The aura itself, installed by every Communion card.
  *
- * One tick for the whole constellation, because the descriptor is the SUM of
+ * One tick for the whole livingForce, because the descriptor is the SUM of
  * whatever bond parameters the holder has collected — so taking a second bond
  * card widens the same aura instead of installing a second one that fights it.
  * The self-share goes through its own boonFactor slot so that an ally's aura

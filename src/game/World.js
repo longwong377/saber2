@@ -18,7 +18,7 @@ import { Player, bladeTargets, canHarm, hostileTo, pvpRules, TEAM } from './Play
 import { ageDropped } from './Dropped.js';
 import { Enemy, ARCHETYPES, applyModifier } from './Enemy.js';
 import { WaveDirector, RankSet, boonTick, boonGuard, bondReceive, bondGuardIn, bondGive, BOND, boonById, MODES } from './Waves.js';
-import { Communion, STARS } from './Constellation.js';
+import { Communion, STARS } from './LivingForce.js';
 /**
  * What "open" is worth, in Insight. Every facet in the sky, at its first-
  * purchase price, plus the escalator — `Communion.price` adds COST_STEP per
@@ -98,7 +98,7 @@ export class World {
      *
      * Lives on the World because the wave director is what earns it and the
      * meditation is what spends it; carried across a landing by the Run, which
-     * is the only object that outlives a level. See Constellation.js.
+     * is the only object that outlives a level. See LivingForce.js.
      *
      * SURVIVING A WAVE IS THE ONLY THING THAT EARNS IT — not kills, not score,
      * not accuracy. A currency that pays out for anything other than the thing
@@ -2425,7 +2425,7 @@ export class World {
    * announcements, `score += 500 * w`, the 8 hp and 0.35 flow every player gets
    * for surviving one — and INSIGHT, whose single earning path is
    * `_earnInsight` installed on `onWaveClear`. So a joining player earned zero
-   * Insight for a whole session: the Constellation was a dead screen, the
+   * Insight for a whole session: the LivingForce was a dead screen, the
    * "kneel to connect to the Force" prompt always read 0, no star could ever be
    * lit, and they were 8 hp and 0.35 flow per wave weaker than the host for as
    * long as the session lasted.

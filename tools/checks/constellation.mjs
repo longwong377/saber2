@@ -1,5 +1,5 @@
 /**
- * BATTLEFRONT BORZ — the constellation: a skill tree that is not a lie.
+ * BATTLEFRONT BORZ — the livingForce: a skill tree that is not a lie.
  *
  * ══════════════════════════════════════════════════════════════════════════
  *  WHAT THIS SUITE IS DEFENDING AGAINST
@@ -34,7 +34,7 @@
  * that the meditation cannot strand the player (driven against the real
  * Screens, which is where that guarantee lives).
  *
- * Every check here fails on the tree before the constellation existed: the
+ * Every check here fails on the tree before the livingForce existed: the
  * module is imported by name in the first check and every later one asserts on
  * something that had no code at all.
  */
@@ -174,17 +174,17 @@ const NEW_STARS = [
 
 export async function run({ check, assert }) {
   await initPhysics();
-  Foe = await import('../../src/game/Enemy.js?constellation');
+  Foe = await import('../../src/game/Enemy.js?livingForce');
 
   let Tree = null, treeErr = null;
-  try { Tree = await import('../../src/game/Constellation.js'); } catch (e) { treeErr = e; }
+  try { Tree = await import('../../src/game/LivingForce.js'); } catch (e) { treeErr = e; }
 
   /* ══════════════════════════════════════════════════════════════════ */
   /*  1. The sky is the boon table, arranged                            */
   /* ══════════════════════════════════════════════════════════════════ */
 
-  check('constellation: the sky is the boon table and nothing else', () => {
-    assert(Tree, `there is no src/game/Constellation.js: ${treeErr?.message || 'missing'} — `
+  check('livingForce: the sky is the boon table and nothing else', () => {
+    assert(Tree, `there is no src/game/LivingForce.js: ${treeErr?.message || 'missing'} — `
       + 'the run has no spine but a flat list of cards');
     const all = [...Waves.BOONS, ...Waves.ATTUNEMENTS];
     const ids = new Set(all.map((b) => b.id));
@@ -204,16 +204,16 @@ export async function run({ check, assert }) {
     assert(!ghosts.length, `stars with no card behind them: ${ghosts.join(', ')}`);
     for (const s of stars) {
       for (const t of s.to) assert(starIds.has(t), `${s.id} is joined to "${t}", which is not a star`);
-      assert(Tree.constellationOf(s.axis), `${s.id} stands in "${s.axis}", which is not a constellation`);
+      assert(Tree.livingForceOf(s.axis), `${s.id} stands in "${s.axis}", which is not a livingForce`);
     }
-    return `${stars.length} stars over ${Tree.CONSTELLATIONS.length} constellations, `
+    return `${stars.length} stars over ${Tree.CURRENTS.length} livingForces, `
       + `one per card across ${Waves.BOONS.length} boons and ${Waves.ATTUNEMENTS.length} attunements`;
   });
 
-  check('constellation: every star can be walked to from its own heart', () => {
-    assert(Tree, 'no constellation module');
+  check('livingForce: every star can be walked to from its own heart', () => {
+    assert(Tree, 'no livingForce module');
     const rows = [];
-    for (const c of Tree.CONSTELLATIONS) {
+    for (const c of Tree.CURRENTS) {
       const mine = Tree.starsOf(c.axis).map((s) => s.id);
       assert(mine.includes(c.root), `${c.axis}'s root "${c.root}" does not stand in it`);
       assert(Tree.isRoot(c.root), `${c.root} is not marked a root`);
@@ -228,7 +228,7 @@ export async function run({ check, assert }) {
       const orphans = mine.filter((i) => !seen.has(i));
       assert(!orphans.length,
         `${orphans.join(', ')} cannot be reached from ${c.root} by any path — nothing but a draft can ever light them`);
-      // and the heart must be something that never runs out, or a constellation
+      // and the heart must be something that never runs out, or a livingForce
       // can be closed off by exhausting its only entrance
       const b = Waves.boonById(c.root);
       assert(Waves.maxRank(b) >= 3,
@@ -238,14 +238,14 @@ export async function run({ check, assert }) {
     return rows.join(' ');
   });
 
-  check('constellation: the map is readable — nothing overlaps and nothing falls off the sky', () => {
-    assert(Tree, 'no constellation module');
+  check('livingForce: the map is readable — nothing overlaps and nothing falls off the sky', () => {
+    assert(Tree, 'no livingForce module');
     /**
      * A STAR MAP IS A DRAWING, and a drawing has a correctness condition: two
      * stars on top of each other are one star you cannot click, and a star
      * outside the viewBox is a node that exists, is priced, and cannot be
      * reached by a mouse. The first hand-placed version of this table had four
-     * cross-constellation pairs within 40 px and put `darkside` sixty pixels
+     * cross-livingForce pairs within 40 px and put `darkside` sixty pixels
      * below the bottom edge — invisible, buyable by nothing, and impossible to
      * see in review because the table looked perfectly reasonable as source.
      *
@@ -267,7 +267,7 @@ export async function run({ check, assert }) {
     // 44 px is two 15 px discs with 14 px between them; below that the labels
     // collide and the map stops being a map.
     assert(worst >= 44, `${pair} are ${worst.toFixed(0)} px apart — they overlap on screen`);
-    // …and no constellation may wander into another's zone, which is the
+    // …and no livingForce may wander into another's zone, which is the
     // property that makes adding a star to one of them safe.
     for (const p of pts) {
       const z = Tree.zoneOf(p.axis);
@@ -277,17 +277,17 @@ export async function run({ check, assert }) {
     return `${pts.length} stars inside ${Tree.SKY.w}×${Tree.SKY.h}, closest pair ${worst.toFixed(0)} px (${pair})`;
   });
 
-  check('constellation: the page and the sky agree on how big the sky is', async () => {
-    assert(Tree, 'no constellation module');
+  check('livingForce: the page and the sky agree on how big the sky is', async () => {
+    assert(Tree, 'no livingForce module');
     // Two places, one truth. `SKY` is what positionOf lays out into and the
     // viewBox is what the browser scales — and they are in different files, so
     // a sky that grew in one of them would draw every star in the wrong place
     // (or off the edge) with nothing anywhere reporting an error.
     const html = await readFile(new URL('../../index.html', import.meta.url), 'utf8');
-    const m = /id="med-sky"[^>]*viewBox="0 0 (\d+) (\d+)"/.exec(html);
+    const m = /id="med-field"[^>]*viewBox="0 0 (\d+) (\d+)"/.exec(html);
     assert(m, 'the star map has no viewBox in index.html');
     assert(+m[1] === Tree.SKY.w && +m[2] === Tree.SKY.h,
-      `the page draws a ${m[1]}×${m[2]} sky and Constellation.js lays out a ${Tree.SKY.w}×${Tree.SKY.h} one`);
+      `the page draws a ${m[1]}×${m[2]} sky and LivingForce.js lays out a ${Tree.SKY.w}×${Tree.SKY.h} one`);
     return `viewBox and SKY agree at ${Tree.SKY.w}×${Tree.SKY.h}`;
   });
 
@@ -295,8 +295,8 @@ export async function run({ check, assert }) {
   /*  2. The names move with the alignment                              */
   /* ══════════════════════════════════════════════════════════════════ */
 
-  check('constellation: the same star reads as a Jedi name and a Sith name', () => {
-    assert(Tree, 'no constellation module');
+  check('livingForce: the same star reads as a Jedi name and a Sith name', () => {
+    assert(Tree, 'no livingForce module');
     // The alignment is Order.js's, not a second one invented here. If those
     // three ids ever stop being the orders, this fails rather than quietly
     // naming everything after a tradition that no longer exists.
@@ -321,9 +321,9 @@ export async function run({ check, assert }) {
       assert(Tree.nameOf(s.id, 'grey') === canon, `a Grey reads ${s.id} as something other than "${canon}"`);
       assert(Tree.nameOf(s.id, null) === canon, `with no order at all, ${s.id} is not the canonical name`);
     }
-    // and inside one constellation two stars may not share a name in any
+    // and inside one livingForce two stars may not share a name in any
     // alignment, or the map is unreadable in exactly one of the three
-    for (const c of Tree.CONSTELLATIONS) {
+    for (const c of Tree.CURRENTS) {
       for (const order of ['jedi', 'sith', 'grey']) {
         const names = Tree.starsOf(c.axis).map((s) => Tree.nameOf(s.id, order));
         assert(new Set(names).size === names.length,
@@ -339,14 +339,14 @@ export async function run({ check, assert }) {
   /*  3. The rule that makes it a tree                                  */
   /* ══════════════════════════════════════════════════════════════════ */
 
-  check('constellation: a star cannot be lit out of nowhere', () => {
-    assert(Tree, 'no constellation module');
+  check('livingForce: a star cannot be lit out of nowhere', () => {
+    assert(Tree, 'no livingForce module');
     const led = new Tree.Communion({ insight: 9999 });
     const empty = new Waves.RankSet();
     // With nothing held, only the six hearts are open. Anything else buyable
     // from an empty hand means the lines are decoration.
     const openNow = Tree.STARS.filter((s) => led.canBuy(s.id, empty, 40)).map((s) => s.id);
-    const roots = Tree.CONSTELLATIONS.map((c) => c.root);
+    const roots = Tree.CURRENTS.map((c) => c.root);
     assert(openNow.length === roots.length && roots.every((r) => openNow.includes(r)),
       `from an empty hand the sky offers ${openNow.join(', ')} — it must offer exactly the six hearts`);
 
@@ -384,8 +384,8 @@ export async function run({ check, assert }) {
   /*  4. The economy cannot outrun the draft                            */
   /* ══════════════════════════════════════════════════════════════════ */
 
-  check('constellation: the tree never outgrows the draft it sits beside', () => {
-    assert(Tree, 'no constellation module');
+  check('livingForce: the tree never outgrows the draft it sits beside', () => {
+    assert(Tree, 'no livingForce module');
     /**
      * THE BALANCE BOUND, AS ARITHMETIC.
      *
@@ -447,8 +447,8 @@ export async function run({ check, assert }) {
       + `prices ${first} → ${second} → ${again}`;
   });
 
-  check('constellation: Insight is a run currency and never a save file', async () => {
-    assert(Tree, 'no constellation module');
+  check('livingForce: Insight is a run currency and never a save file', async () => {
+    assert(Tree, 'no livingForce module');
     /**
      * Progress.js exists to say what a record is NOT: "no unlocks, no currency,
      * no cross-run power — the hundredth run starts exactly where the first
@@ -463,7 +463,7 @@ export async function run({ check, assert }) {
     // Nothing may read the record back INTO a run. The record is written in
     // Progress.js and drawn by the meditation; a third reader would be the
     // moment this became meta-progression.
-    for (const file of ['game/World.js', 'game/Waves.js', 'game/Constellation.js']) {
+    for (const file of ['game/World.js', 'game/Waves.js', 'game/LivingForce.js']) {
       const text = await read(file);
       assert(!/loadProgress\s*\(/.test(text),
         `${file} reads the saved record — a run must not start from a save file`);
@@ -486,7 +486,7 @@ export async function run({ check, assert }) {
    * here. If a mode with landings comes back, so does this check.
    */
 
-  check('constellation: Reflection sends a share of the blow back to whoever struck it', () => {
+  check('livingForce: Reflection sends a share of the blow back to whoever struck it', () => {
     // Driven through the REAL damage path on both sides: Player.prototype.damage
     // takes the hit, the guard chain answers, and the answer lands on a real
     // Enemy through its own `damage`. Nothing here reads a flag.
@@ -520,7 +520,7 @@ export async function run({ check, assert }) {
     return `20 damage taken → ${back.toFixed(1)} returned to the body that dealt it (${before} → ${foe2.hp.toFixed(1)} hp)`;
   });
 
-  check('constellation: the Aegis eats the blow and knits itself back together', () => {
+  check('livingForce: the Aegis eats the blow and knits itself back together', () => {
     const w = gameWorld();
     const plain = livePlayer(w);
     const ward = livePlayer(w);
@@ -554,7 +554,7 @@ export async function run({ check, assert }) {
       + `refilled to ${ward._aegis.toFixed(0)} after twelve quiet seconds`;
   });
 
-  check('constellation: Momentum is paid by killing and taken back by standing still', () => {
+  check('livingForce: Momentum is paid by killing and taken back by standing still', () => {
     const w = gameWorld();
     const p = livePlayer(w);
     take(p, 'momentum');
@@ -578,7 +578,7 @@ export async function run({ check, assert }) {
       + `back to ${p.boonMods.moveSpeed.toFixed(3)} after 30 s`;
   });
 
-  check('constellation: the Mercy Stroke finishes the broken and spares the whole', () => {
+  check('livingForce: the Mercy Stroke finishes the broken and spares the whole', () => {
     const w = gameWorld();
     const p = livePlayer(w);
     take(p, 'execute');
@@ -608,7 +608,7 @@ export async function run({ check, assert }) {
     return `threshold ${(at * 100).toFixed(0)}% — whole body survives, broken body dies and is credited`;
   });
 
-  check('constellation: a Detonation reaches the crowd once, not the whole crowd forever', () => {
+  check('livingForce: a Detonation reaches the crowd once, not the whole crowd forever', () => {
     const w = gameWorld();
     const p = livePlayer(w);
     take(p, 'detonate');
@@ -651,7 +651,7 @@ export async function run({ check, assert }) {
 
   /* ── the communion: buffs that land on somebody else ────────────────── */
 
-  check('constellation: a communion lands on the ally, and half of it on you alone', () => {
+  check('livingForce: a communion lands on the ally, and half of it on you alone', () => {
     const w = gameWorld();
     const giver = livePlayer(w);
     const ally = livePlayer(w, { position: V(3, 0, 0) });
@@ -683,7 +683,7 @@ export async function run({ check, assert }) {
       + `holder ×${self.toFixed(2)} alone and ×${giver.boonMods.cutPower.toFixed(2)} with the mastery`;
   });
 
-  check('constellation: Suffusion mends the person beside you, not you', () => {
+  check('livingForce: Suffusion mends the person beside you, not you', () => {
     const w = gameWorld();
     const healer = livePlayer(w, { hp: 60 });
     const ally = livePlayer(w, { hp: 40, position: V(4, 0, 0) });
@@ -705,7 +705,7 @@ export async function run({ check, assert }) {
     return `ally +${(ally.hp - 40).toFixed(1)} hp per limb, giver +0; alone +${(solo.hp - 60).toFixed(1)}`;
   });
 
-  check('constellation: the Vow puts the ward on both of you', () => {
+  check('livingForce: the Vow puts the ward on both of you', () => {
     const w = gameWorld();
     const keeper = livePlayer(w);
     const ally = livePlayer(w, { position: V(4, 0, 0) });
@@ -736,7 +736,7 @@ export async function run({ check, assert }) {
       + `${together.toFixed(1)} with somebody beside them`;
   });
 
-  check('constellation: a communion crosses the wire and lands on the receiver', async () => {
+  check('livingForce: a communion crosses the wire and lands on the receiver', async () => {
     /**
      * THE CO-OP HALF, and the failure it is written against is this project's
      * own history: `claim` existed at both ends and nothing ever sent one, so
@@ -791,7 +791,7 @@ export async function run({ check, assert }) {
   /*  6. The general rule: no star is a parameter nobody reads          */
   /* ══════════════════════════════════════════════════════════════════ */
 
-  check('constellation: every new star installs a seam and every parameter has a reader', async () => {
+  check('livingForce: every new star installs a seam and every parameter has a reader', async () => {
     /**
      * The structural companion to the behavioural checks above, and the exact
      * analogue of controls.mjs's "every boon changes the player and every
@@ -918,7 +918,7 @@ export async function run({ check, assert }) {
     assert(/screens\.card\('meditation'/.test(main), 'the meditation card is never registered with Screens');
     // Both doors: mid-run by kneeling, and from the Temple between runs.
     const html = await readFile(new URL('../../index.html', import.meta.url), 'utf8');
-    for (const id of ['meditation', 'med-sky', 'commune', 'btn-commune', 'btn-med-buy']) {
+    for (const id of ['meditation', 'med-field', 'commune', 'btn-commune', 'btn-med-buy']) {
       assert(html.includes(`id="${id}"`), `#${id} is missing from index.html`);
       assert(main.includes(`'${id}'`) || (await read('ui/SkillTree.js')).includes(`'${id}'`),
         `#${id} is in the page and nothing reads it`);
@@ -1005,10 +1005,10 @@ export async function run({ check, assert }) {
   /*  The sky, operated                                                 */
   /* ══════════════════════════════════════════════════════════════════ */
 
-  check('constellation: a star that says it is a button behaves like one', async () => {
+  check('livingForce: a star that says it is a button behaves like one', async () => {
     /**
      * SkillTree draws every star with `tabindex="0"` and `role="button"`, and
-     * styles.css carries a `#med-sky .star:focus` rule for it — so a star takes
+     * styles.css carries a `#med-field .current:focus` rule for it — so a star takes
      * focus and announces itself to a screen reader as a button. It registered
      * `click` and `dblclick` and nothing else, so Enter and Space did nothing
      * at all: the ONE place in the whole front end that had bothered to claim a
@@ -1028,15 +1028,15 @@ export async function run({ check, assert }) {
       const tree = new SkillTree(doc, { onBuy: (id) => bought.push(id) });
       const taken = new Waves.RankSet([]);
       tree.show({ taken, ledger: new Tree.Communion({ insight: 999 }), wave: 9, order: 'jedi', live: true });
-      const stars = doc.querySelectorAll('#med-sky .star');
-      assert(stars.length > 10, `${stars.length} stars drew`);
-      const deaf = stars.filter(g => g.listenerCount('keydown') === 0);
+      const nodes = doc.querySelectorAll('#med-field .current');
+      assert(nodes.length > 10, `${nodes.length} nodes drew`);
+      const deaf = nodes.filter(g => g.listenerCount('keydown') === 0);
       assert(!deaf.length,
-        `${deaf.length}/${stars.length} stars carry tabindex="0" role="button" and no key listener at all`);
-      const focusable = stars.filter(g => g.getAttribute('tabindex') === '0');
-      assert(focusable.length === stars.length, 'a star lost its place in the tab order');
+        `${deaf.length}/${nodes.length} nodes carry tabindex="0" role="button" and no key listener at all`);
+      const focusable = nodes.filter(g => g.getAttribute('tabindex') === '0');
+      assert(focusable.length === nodes.length, 'a star lost its place in the tab order');
       // Enter selects, exactly as a click does…
-      const root = stars.find(g => g.classList.contains('root')) || stars[0];
+      const root = nodes.find(g => g.classList.contains('root')) || nodes[0];
       root.dispatchEvent({ type: 'keydown', key: 'Enter' });
       assert(tree.selected, 'Enter on a star selected nothing');
       // …and Enter on the star already selected is the keyboard's double-click.
@@ -1045,7 +1045,7 @@ export async function run({ check, assert }) {
       assert(bought.length === before + 1,
         'Enter on the selected star did not buy it — the keyboard can look and never spend');
       assert(bought[0] === tree.selected, `it bought ${bought[0]} with ${tree.selected} selected`);
-      return `${stars.length} stars, all focusable and listening; Enter selects then buys (${bought[0]})`;
+      return `${nodes.length} stars, all focusable and listening; Enter selects then buys (${bought[0]})`;
     } finally { restore(); }
   });
 

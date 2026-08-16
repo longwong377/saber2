@@ -71,7 +71,7 @@ const {
 const { ARCHETYPES } = await import('../src/game/Enemy.js');
 const { POWER_COST, POWER_BOON } = await import('../src/game/Powers.js');
 const { LEVELS, LEVEL_ORDER } = await import('../src/game/Levels.js');
-const Tree = await import('../src/game/Constellation.js');
+const Tree = await import('../src/game/LivingForce.js');
 
 const level = LEVEL || LEVEL_ORDER[0];
 if (!LEVELS[level]) {
@@ -210,7 +210,7 @@ const powers = Object.entries(POWER_COST).map(([id, cost]) => ({
 
 const insight = Tree.insightAfter(WAVES, BOSS_EVERY);
 const stars = Tree.STARS?.length ?? 0;
-const constellation = (Tree.CONSTELLATIONS ?? []).map((c) => ({
+const livingForce = (Tree.CURRENTS ?? []).map((c) => ({
   axis: c.axis,
   root: c.root,
   stars: Tree.starsOf?.(c.axis)?.length ?? null,
@@ -236,7 +236,7 @@ const trace = {
   firstOffered,
   axisTally,
   powers,
-  economy: { insightAfter: insight, starsInSky: stars, constellation },
+  economy: { insightAfter: insight, starsInSky: stars, livingForce },
   levels,
 };
 
@@ -272,7 +272,7 @@ if (has('json')) {
   }
 
   console.log(`\n  ECONOMY  ${insight} Insight after ${WAVES} waves`);
-  for (const c of constellation) console.log(`  ${pad(c.axis, 10)}${c.stars} stars, root ${c.root}`);
+  for (const c of livingForce) console.log(`  ${pad(c.axis, 10)}${c.stars} stars, root ${c.root}`);
 
   console.log('\n  LEVELS');
   for (const l of levels) {

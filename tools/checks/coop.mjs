@@ -848,7 +848,7 @@ export async function run({ check, assert }) {
      * CLEAR announcements, `score += 500 * w`, the 8 hp and 0.35 flow every
      * player gets for surviving one — and Insight, whose single earning path is
      * `_earnInsight` installed on `onWaveClear`. So a client earned ZERO
-     * Insight for a whole session: the Constellation was a dead screen, no star
+     * Insight for a whole session: the LivingForce was a dead screen, no star
      * could ever be lit, and they were strictly weaker than the host by 8 hp
      * per wave for as long as they played.
      *
@@ -871,7 +871,7 @@ export async function run({ check, assert }) {
     assert(said.includes('WAVE CLEAR'), 'the client never hears a wave clear');
     assert(world.communion.insight > insight0,
       `the client earned ${world.communion.insight - insight0} Insight over a cleared wave — the whole `
-      + 'Constellation is unreachable for anybody who joins');
+      + 'LivingForce is unreachable for anybody who joins');
     assert(p.hp === hp0 + 8, `the client healed ${p.hp - hp0} of the 8 hp a survived wave pays`);
     assert(p.flow > flow0, 'the client got no flow for surviving the wave');
 

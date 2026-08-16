@@ -1412,6 +1412,14 @@ export class Enemy {
       this.group = built.group;
       this.world.scene.add(this.group);
       if (A.custom === 'remote') {
+        /* DRAW ORDER IS LOAD-BEARING. These two `rng()` calls were originally
+         * hover-then-orbit, and moving the hover draw out of this branch
+         * silently swapped them — same number of draws, different values, and
+         * every seeded remote in the dojo landed somewhere new. It surfaced as
+         * a training lesson placing its body in the wrong spot. The generic
+         * `float` initialiser below is written not to take a draw when this
+         * branch has already taken one. */
+        this.hoverPhase = rng() * TAU;
         this.orbitPhase = rng() * TAU;
       }
     }
@@ -1443,7 +1451,7 @@ export class Enemy {
      * builder it happened to use, which is the distinction the old gate got
      * wrong. `remote` keeps its own `orbitPhase` above because only it orbits.
      */
-    if (A.float) this.hoverPhase = rng() * TAU;
+    if (A.float && this.hoverPhase === undefined) this.hoverPhase = rng() * TAU;
 
     // weapon
     if (A.weapon) {

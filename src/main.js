@@ -24,7 +24,7 @@ import { guardZoneOf } from './game/Bolts.js';
 import { clamp } from './engine/MathUtil.js';
 import { Screens } from './ui/Screens.js';
 import { SkillTree } from './ui/SkillTree.js';
-import { Communion, shapeOf, constellationName, dominantAxis } from './game/Constellation.js';
+import { Communion, shapeOf, livingForceName, dominantAxis } from './game/LivingForce.js';
 
 const canvas = document.getElementById('view');
 
@@ -481,7 +481,7 @@ const pause = () => screens.pause();
 /**
  * CONNECT TO THE FORCE.
  *
- * The constellation is opened by KNEELING, and that is the whole design of the
+ * The livingForce is opened by KNEELING, and that is the whole design of the
  * entry point rather than a flourish on it. A key that opens a menu is a menu;
  * what this is meant to be is a thing you do in the world, at a moment when the
  * world allows it — so it asks for the three conditions a moment of quiet
@@ -618,7 +618,7 @@ function openMeditation() {
   }
   // Between runs there is no world to stop and no Insight to spend. The sky is
   // a chart you read and a plan you make — see the doctrine note in
-  // Constellation.js about why it is deliberately not a shop.
+  // LivingForce.js about why it is deliberately not a shop.
   tree.show(communeContext(false));
 }
 
@@ -945,7 +945,7 @@ function setScoreboard(open) {
   const p = world.player;
   /**
    * THE HOLDING, AS A SHAPE. `takenBoons` is a set and the chips below are a
-   * list, which is the flat readout the constellation exists to replace: seven
+   * list, which is the flat readout the livingForce exists to replace: seven
    * chips tell you what you have and nothing about what you ARE. The two rows
    * added here are read straight off the same tree the meditation draws, so
    * they cannot describe a build the sky does not show.
@@ -960,7 +960,7 @@ function setScoreboard(open) {
     ['Perfect returns', p?.perfects ?? 0],
     ['Limbs taken', p?.limbsRemoved ?? 0],
     ['Insight', Math.floor(world.communion?.insight ?? 0)],
-    ['Teaching', axis ? constellationName(axis, settings.order) : '—'],
+    ['Teaching', axis ? livingForceName(axis, settings.order) : '—'],
     ['Facets lit', shape.reduce((n, r) => n + r.lit, 0)],
   ].map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('');
 

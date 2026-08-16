@@ -630,10 +630,10 @@
 <!-- ══════════════════════════════════════════════════════════════════════
      THE MEDITATION — the Holocron.
 
-     IT WAS A CONSTELLATION, and it was renamed because the player asked what
+     IT WAS A CURRENT, and it was renamed because the player asked what
      stars had to do with any of it: "you're becoming more and more attuned to
      the force or good/evil side — wtf does that have to do with stars and
-     constellations". That is a fair question and the honest answer is that the
+     livingForces". That is a fair question and the honest answer is that the
      picture came first (a node graph reads as a star chart) and the fiction was
      bent to fit it. A holocron is the same picture with the right fiction under
      it — a crystal lattice you attune to and that teaches you — so the drawing
@@ -645,7 +645,7 @@
      drawn, and there is no blur over it: the whole reason this is reached by
      kneeling rather than by a menu key is that it happens in the place you were
      standing, and your own Jedi is knelt in the middle of it.
-     src/ui/SkillTree.js draws it; src/game/Constellation.js decides everything
+     src/ui/SkillTree.js draws it; src/game/LivingForce.js decides everything
      it is allowed to say.
      ═══════════════════════════════════════════════════════════════════════ -->
 <div id="meditation" class="screen hidden">
@@ -658,7 +658,7 @@
       <div class="med-insight"><b id="med-insight">0</b><span>Insight</span></div>
     </header>
     <div class="med-body">
-      <svg id="med-sky" viewBox="0 0 1000 720" preserveAspectRatio="xMidYMid meet" aria-label="the Holocron"></svg>
+      <svg id="med-field" viewBox="0 0 1000 720" preserveAspectRatio="xMidYMid meet" aria-label="the Holocron"></svg>
       <aside class="med-side">
         <div id="med-detail" class="med-detail"></div>
         <button id="btn-med-buy" class="primary" disabled>Commune</button>

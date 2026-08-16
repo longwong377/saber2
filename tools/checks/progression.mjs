@@ -17,7 +17,7 @@
 
 import * as Waves from '../../src/game/Waves.js';
 import { recordRun, loadProgress, clearProgress, progressLines } from '../../src/game/Progress.js';
-import * as Tree from '../../src/game/Constellation.js';
+import * as Tree from '../../src/game/LivingForce.js';
 
 /* ── driving a real director ─────────────────────────────────────────── */
 

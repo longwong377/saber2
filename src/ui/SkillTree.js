@@ -1,11 +1,11 @@
 /**
- * BATTLEFRONT BORZ — the meditation: the constellation, drawn.
+ * BATTLEFRONT BORZ — the meditation: the livingForce, drawn.
  *
  * THIS FILE DRAWS AND NOTHING ELSE. Every rule about what may be lit, what it
- * costs and what it is called lives in src/game/Constellation.js, which has no
+ * costs and what it is called lives in src/game/LivingForce.js, which has no
  * DOM in it and can therefore be driven by a check without a browser. What is
- * here is the sky, the lines, the stars and one button — and the discipline
- * that keeps it that way is `starView`: this file asks for a star's state and
+ * here is the sky, the lines, the currents and one button — and the discipline
+ * that keeps it that way is `starView`: this file asks for a current's state and
  * renders it, and never decides one.
  *
  * ── why it is not in Menu.js ──────────────────────────────────────────────
@@ -25,8 +25,8 @@
  * happens instead of it.
  */
 
-import { skyView, starView, shapeOf, constellationName, creedOf, CONSTELLATIONS, SKY, LOCKED, COST_STEP, zoneOf }
-  from '../game/Constellation.js';
+import { skyView, starView, shapeOf, livingForceName, creedOf, CURRENTS, SKY, LOCKED, COST_STEP, zoneOf }
+  from '../game/LivingForce.js';
 import { audio } from '../engine/Audio.js';
 
 const NS = 'http://www.w3.org/2000/svg';
@@ -52,7 +52,7 @@ export class SkillTree {
   /**
    * @param {Document} doc
    * @param {object} hooks
-   * @param {(id: string) => void} hooks.onBuy   the player spent on this star
+   * @param {(id: string) => void} hooks.onBuy   the player spent on this current
    * @param {() => void} hooks.onClose
    */
   constructor(doc, hooks = {}) {
@@ -60,7 +60,7 @@ export class SkillTree {
     this.hooks = hooks;
     this.el = {
       root: doc.getElementById('meditation'),
-      sky: doc.getElementById('med-sky'),
+      sky: doc.getElementById('med-field'),
       insight: doc.getElementById('med-insight'),
       title: doc.getElementById('med-title'),
       sub: doc.getElementById('med-sub'),
@@ -121,7 +121,7 @@ export class SkillTree {
     // or the chart you read between runs.
     if (this.el.title) this.el.title.textContent = live ? 'Commune with the Holocron' : 'The Holocron';
 
-    /* the field of far stars — atmosphere, and the reason it reads as a sky */
+    /* the field of far currents — atmosphere, and the reason it reads as a sky */
     const rnd = seeded(0x5ABE7);
     const field = svg('g', { class: 'med-field' });
     for (let i = 0; i < 190; i++) {
@@ -134,14 +134,14 @@ export class SkillTree {
     sky.appendChild(field);
 
     /* the teachings' names, behind their facets */
-    // At the TOP OF THE ZONE, not near the group's own centre: a constellation
-    // fills its zone, so anything drawn at the middle of it lands on a star.
+    // At the TOP OF THE ZONE, not near the group's own centre: a livingForce
+    // fills its zone, so anything drawn at the middle of it lands on a current.
     const labels = svg('g', { class: 'med-cnames' });
-    for (const c of CONSTELLATIONS) {
+    for (const c of CURRENTS) {
       const z = zoneOf(c.axis);
       if (!z) continue;
       const t = svg('text', { x: z.x, y: z.y - z.halfH - 18, 'text-anchor': 'middle', class: 'cname' });
-      t.textContent = constellationName(c.axis, order).toUpperCase();
+      t.textContent = livingForceName(c.axis, order).toUpperCase();
       labels.appendChild(t);
     }
     sky.appendChild(labels);
@@ -163,10 +163,10 @@ export class SkillTree {
     sky.appendChild(lines);
 
     /* and the facets themselves */
-    const stars = svg('g', { class: 'med-stars' });
+    const currents = svg('g', { class: 'med-currents' });
     for (const v of this.view) {
       const g = svg('g', {
-        class: ['star', v.held ? 'held' : '', v.can && live ? 'can' : '', v.root ? 'root' : '',
+        class: ['current', v.held ? 'held' : '', v.can && live ? 'can' : '', v.root ? 'root' : '',
           v.mastery ? 'mastery' : '', v.locked === LOCKED.spent ? 'spent' : '',
           history?.get(v.id) ? 'known' : ''].filter(Boolean).join(' '),
         transform: `translate(${v.x} ${v.y})`,
@@ -180,7 +180,7 @@ export class SkillTree {
       const label = svg('text', { class: 'label', y: (v.root ? 34 : 28), 'text-anchor': 'middle' });
       label.textContent = v.name.replace(/^Mastery — /, '');
       g.appendChild(label);
-      // rank pips: how many times this star has been lit, drawn rather than
+      // rank pips: how many times this current has been lit, drawn rather than
       // written, because "×3" in 9px type at this scale is unreadable.
       for (let i = 0; i < Math.min(v.rank, 5); i++) {
         g.appendChild(svg('circle', { class: 'pip', cx: (i - (Math.min(v.rank, 5) - 1) / 2) * 7, cy: -20, r: 2 }));
@@ -192,14 +192,14 @@ export class SkillTree {
       }
       /* A STAR ALREADY CLAIMED TO BE A BUTTON. NOW IT BEHAVES LIKE ONE.
        *
-       * `tabindex: '0', role: 'button'` above (and the `#med-sky .star:focus`
-       * rule in styles.css) make every star focusable and announce it to a
+       * `tabindex: '0', role: 'button'` above (and the `#med-field .current:focus`
+       * rule in styles.css) make every current focusable and announce it to a
        * screen reader as a button — and the only listeners were `click` and
        * `dblclick`, so Enter and Space did nothing at all. That is worse than
        * an unreachable control: it is the interface promising a keyboard path
        * it never built, and it was the ONE place in the whole front end that
        * had bothered to set tabindex. Enter selects, exactly as a click does;
-       * Enter on the star already selected buys it, which is the keyboard's
+       * Enter on the current already selected buys it, which is the keyboard's
        * version of the double-click. */
       const select = () => { audio.ui('hover'); this._select(v.id); };
       g.addEventListener('click', select);
@@ -209,10 +209,10 @@ export class SkillTree {
         e.preventDefault();
         if (this.selected === v.id) this._buy(v.id); else select();
       });
-      stars.appendChild(g);
+      currents.appendChild(g);
       this._nodes.set(v.id, g);
     }
-    sky.appendChild(stars);
+    sky.appendChild(currents);
 
     /* the ledger line */
     if (this.el.insight) this.el.insight.textContent = String(Math.floor(ledger?.insight ?? 0));
@@ -241,7 +241,7 @@ export class SkillTree {
     }
     host.innerHTML = rows.map((r) => `
       <div class="med-row">
-        <span>${constellationName(r.axis, order)}</span>
+        <span>${livingForceName(r.axis, order)}</span>
         <i><b style="width:${Math.round(100 * r.lit / r.total)}%"></b></i>
         <em>${r.lit}/${r.total}</em>
       </div>`).join('');
@@ -256,7 +256,7 @@ export class SkillTree {
     const { taken, ledger, wave = 1, order = null, live = true } = this.ctx || {};
     if (!host) return;
     if (!id) {
-      const axis = CONSTELLATIONS[0].axis;
+      const axis = CURRENTS[0].axis;
       host.innerHTML = `<h3>The sky</h3><p class="med-text">${creedOf(axis, order)}</p>`
         + '<p class="med-text">Pick a facet to read it.</p>';
       if (this.el.buy) { this.el.buy.disabled = true; this.el.buy.textContent = 'Commune'; }

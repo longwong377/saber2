@@ -355,7 +355,7 @@ h3::after{content:"";flex:1;height:2px;background:var(--panel-hi)}
 .bindrow .keys b:focus-visible,.slider input:focus-visible,.check input:focus-visible,
 .netname input:focus-visible,#join-code:focus-visible{
   outline:3px solid var(--accent-warm);outline-offset:3px;border-radius:0}
-#med-sky .star:focus-visible .halo{stroke:var(--accent-warm);stroke-width:2}
+#med-field .current:focus-visible .halo{stroke:var(--accent-warm);stroke-width:2}
 
 /* The Theatre column when the mode owns the theatre — see Menu._syncTheatre.
    Inert rather than hidden: the places are still worth looking at, they are
@@ -971,7 +971,7 @@ button{font-family:inherit}
   text-shadow:0 0 22px rgba(160,125,255,.6);font-variant-numeric:tabular-nums}
 .med-insight span{font:var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
 .med-body{flex:1;min-height:0;display:flex;gap:16px}
-#med-sky{flex:1;min-width:0;height:100%;display:block;
+#med-field{flex:1;min-width:0;height:100%;display:block;
   border:2px solid var(--stroke);clip-path:var(--cut);
   background:linear-gradient(170deg,rgba(22,18,46,.62),rgba(4,5,12,.78) 72%)}
 .med-side{width:284px;flex:none;display:flex;flex-direction:column;gap:10px}
@@ -997,37 +997,37 @@ button{font-family:inherit}
 .med-foot{display:flex;align-items:center;justify-content:space-between;gap:16px}
 
 /* the sky itself */
-#med-sky .med-field circle{fill:#cfe6ff}
-#med-sky .cname{font:600 10px/1 ui-sans-serif,system-ui,sans-serif;letter-spacing:.34em;
+#med-field .med-field circle{fill:#cfe6ff}
+#med-field .cname{font:600 10px/1 ui-sans-serif,system-ui,sans-serif;letter-spacing:.34em;
   fill:rgba(150,190,235,.30)}
-#med-sky .med-links line{stroke-width:1.2}
-#med-sky .med-links line.dim{stroke:rgba(140,175,215,.13)}
-#med-sky .med-links line.open{stroke:rgba(120,200,255,.42);stroke-dasharray:4 5}
-#med-sky .med-links line.lit{stroke:var(--force);stroke-width:2.4;
+#med-field .med-links line{stroke-width:1.2}
+#med-field .med-links line.dim{stroke:rgba(140,175,215,.13)}
+#med-field .med-links line.open{stroke:rgba(120,200,255,.42);stroke-dasharray:4 5}
+#med-field .med-links line.lit{stroke:var(--force);stroke-width:2.4;
   filter:drop-shadow(0 0 6px rgba(160,125,255,.7))}
-#med-sky .star{cursor:pointer}
-#med-sky .star .halo{fill:rgba(160,125,255,.06);stroke:none}
-#med-sky .star .disc{fill:#12142a;stroke:var(--stroke);stroke-width:2}
-#med-sky .star .glyph{font-size:13px;fill:rgba(190,210,235,.42)}
-#med-sky .star .label{font:500 10px/1 ui-sans-serif,system-ui,sans-serif;fill:rgba(160,185,215,.42);
+#med-field .current{cursor:pointer}
+#med-field .current .halo{fill:rgba(160,125,255,.06);stroke:none}
+#med-field .current .disc{fill:#12142a;stroke:var(--stroke);stroke-width:2}
+#med-field .current .glyph{font-size:13px;fill:rgba(190,210,235,.42)}
+#med-field .current .label{font:500 10px/1 ui-sans-serif,system-ui,sans-serif;fill:rgba(160,185,215,.42);
   letter-spacing:.02em}
-#med-sky .star .cost{font:600 10px/1 ui-monospace,monospace;fill:var(--accent-warm)}
-#med-sky .star .pip{fill:var(--force);filter:drop-shadow(0 0 4px rgba(160,125,255,.95))}
-#med-sky .star.root .disc{stroke-dasharray:3 3}
-#med-sky .star.mastery .disc{stroke:var(--stroke);stroke-dasharray:5 3}
-#med-sky .star.can .disc{stroke:var(--stroke);fill:#241f4a}
-#med-sky .star.can .glyph,#med-sky .star.can .label{fill:rgba(220,238,255,.9)}
-#med-sky .star.can .halo{fill:rgba(160,125,255,.12)}
-#med-sky .star.held .disc{fill:var(--force);stroke:var(--stroke);stroke-width:2;
+#med-field .current .cost{font:600 10px/1 ui-monospace,monospace;fill:var(--accent-warm)}
+#med-field .current .pip{fill:var(--force);filter:drop-shadow(0 0 4px rgba(160,125,255,.95))}
+#med-field .current.root .disc{stroke-dasharray:3 3}
+#med-field .current.mastery .disc{stroke:var(--stroke);stroke-dasharray:5 3}
+#med-field .current.can .disc{stroke:var(--stroke);fill:#241f4a}
+#med-field .current.can .glyph,#med-field .current.can .label{fill:rgba(220,238,255,.9)}
+#med-field .current.can .halo{fill:rgba(160,125,255,.12)}
+#med-field .current.held .disc{fill:var(--force);stroke:var(--stroke);stroke-width:2;
   filter:drop-shadow(0 0 10px rgba(160,125,255,.7))}
-#med-sky .star.held .glyph{fill:var(--stroke)}
-#med-sky .star.held .label{fill:rgba(215,236,255,.92)}
-#med-sky .star.held.mastery .disc{fill:var(--accent-warm);filter:drop-shadow(0 0 12px rgba(255,176,32,.7))}
-#med-sky .star.spent .disc{stroke-dasharray:2 3}
-#med-sky .star.sel .halo{fill:rgba(160,125,255,.24);stroke:var(--force);stroke-width:2}
-#med-sky .star:hover .halo{fill:rgba(160,125,255,.18)}
-#med-sky .star:focus{outline:none}
-#med-sky .star:focus .halo{stroke:var(--accent);stroke-width:1}
+#med-field .current.held .glyph{fill:var(--stroke)}
+#med-field .current.held .label{fill:rgba(215,236,255,.92)}
+#med-field .current.held.mastery .disc{fill:var(--accent-warm);filter:drop-shadow(0 0 12px rgba(255,176,32,.7))}
+#med-field .current.spent .disc{stroke-dasharray:2 3}
+#med-field .current.sel .halo{fill:rgba(160,125,255,.24);stroke:var(--force);stroke-width:2}
+#med-field .current:hover .halo{fill:rgba(160,125,255,.18)}
+#med-field .current:focus{outline:none}
+#med-field .current:focus .halo{stroke:var(--accent);stroke-width:1}
 
 /* ── the kneel ────────────────────────────────────────────────────────
    A prompt, not a button: it appears when a communion is actually possible
@@ -1071,6 +1071,6 @@ button{font-family:inherit}
 .commune-entry:hover{color:var(--stroke);background:var(--force);border-color:var(--stroke)}
 /* A star this player has carried in an earlier run — the record, drawn on the
    chart. Fainter than "can be lit", because it buys nothing: see Progress.js. */
-#med-sky .star.known .disc{stroke:rgba(190,170,120,.42)}
-#med-sky .star.known .label{fill:rgba(200,190,160,.55)}
+#med-field .current.known .disc{stroke:rgba(190,170,120,.42)}
+#med-field .current.known .label{fill:rgba(200,190,160,.55)}
 #commune em{font-style:normal;color:var(--accent-warm);letter-spacing:.1em;font-weight:800}
