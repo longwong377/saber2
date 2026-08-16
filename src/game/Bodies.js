@@ -1512,6 +1512,9 @@ export function dressHumanoid(rig, style) {
     const hm = mesh(hg, matFor('head', style.head || style.skin || style.body), head.obj);
     head.parts.push(hm); head.primary = hm; head.radius = (style.headRadius ?? 0.12) * S;
     if (style.buildHead) style.buildHead(head.obj, S, hg);
+    /* AFTER the hair and the species' own furniture, because a hood goes over
+     * both and `buildHead` returns early for a species that grows none. */
+    if (style.headKit) style.headKit(head.obj, S, hg);
   }
 
   // ── arms ───────────────────────────────────────────────────────────
@@ -3162,7 +3165,47 @@ function beardParts(s, hg, B) {
 
 /* ── Jedi ────────────────────────────────────────────────────────────── */
 
+/**
+ * FOUR JEDI, ONE BUILDER, ONE DRAW — and therefore one Jedi.
+ *
+ * `Enemy.ARCHETYPES` gives the Knight, the Sentinel, the Guardian and the
+ * Master four declared fighting forms, four blades and four hilts, and then
+ * builds all four from `buildJedi({ ...o, ...jediLook() })` — the same pool of
+ * species, robe, hair, age and build rolled for every one of them. Measured at
+ * LOD 1 in `tools/_roster.mjs`: sentinel/master 0.939 flank IoU, guardian/
+ * master 0.889, jedi/sentinel 0.883, and 0.000 apart in visible colour. The
+ * player cannot learn "that one is a Guardian, it fights Djem So and cannot be
+ * parried" from a body that is a Knight with three centimetres more hilt.
+ *
+ * A rank is worn, and each of these is the piece the source material is most
+ * consistent about — chosen so no two change the same part of the outline:
+ *
+ *   knight    nothing added, and the robe cut SHORT. Ataru is the acrobatic
+ *             form; a knight fighting it has taken the long robe off. The most
+ *             compact of the four and the only one whose leg line is bare.
+ *   sentinel  the hood, up, and the robe at full length. Soresu waits, and a
+ *             sentinel is read head-first: the cowl is 14 cm of outline in the
+ *             one place a Jedi has none.
+ *   guardian  the Temple Guard's masked helm with its vertical crest, and a
+ *             pauldron. The tallest head on the roster and the widest shoulder
+ *             — which is what Djem So's 34 damage ought to look like.
+ *   master    the shoulder mantle and the longest robe. Width at the top of
+ *             the figure and cloth to the ankle, where the knight has neither.
+ *
+ * Every field defaults to the identity, so `buildJedi()` with no rank emits the
+ * geometry it always did — which the player, the menu preview and Net depend
+ * on and which `preview`, `grooming` and `garments` pin.
+ */
+export const JEDI_RANKS = {
+  knight:   { hem: 0.74 },
+  sentinel: { hood: true, hem: 1.20 },
+  guardian: { helm: true, pauldron: true, hem: 1.06 },
+  master:   { mantle: true, hem: 1.26 },
+};
+
 export function buildJedi(opts = {}) {
+  /** The rank's kit, if this body is wearing one. See JEDI_RANKS. */
+  const RANK = { hem: 1, ...(JEDI_RANKS[opts.rank] || null) };
   /**
    * The creator's axes. `sp` is a row of SPECIES, `G` the character sheet (cut,
    * beard, years, muscle — see SHEET_KEYS), `F` the eight face numbers with the
@@ -3669,7 +3712,9 @@ export function buildJedi(opts = {}) {
         for (let i = before; i < headObj.children.length; i++) speciesMeshes.push(headObj.children[i]);
       }
       if (!sp.hair) return;
-      if (hairGeo) mesh(hairGeo, hair, headObj);
+      // The hair mass is the whole difference between a bare Jedi head and a
+      // helmet at range, and it is one mesh.
+      if (hairGeo) markSilhouette(mesh(hairGeo, hair, headObj));
 
       // The strands — a padawan's braid, a warrior's tail, a plaited beard.
       //
@@ -3709,6 +3754,44 @@ export function buildJedi(opts = {}) {
           hair, headObj, [pos.x, pos.y, pos.z], [rot.x, rot.y, rot.z]);
       }
     },
+
+    /**
+     * WHAT A RANK PUTS ON A HEAD. Runs after the hair and the species' own
+     * furniture, because a hood goes over both and a helm replaces neither.
+     */
+    headKit(headObj, s) {
+      if (RANK.hood) {
+        /* The cowl. Three's sphere puts phi = 0 at -X, so the shell starts at
+         * 0.80π for the 72° opening to land on the FACE rather than over one
+         * ear — the same construction the acolyte's uses, and deliberately so:
+         * these two are the roster's hooded bodies and they should be read
+         * against each other by colour and by what is under the hood, not by
+         * two different ideas of what a hood is. */
+        const cowl = new THREE.SphereGeometry(0.150 * s, 16, 12,
+          Math.PI * 0.80, Math.PI * 1.40, 0, Math.PI * 0.70);
+        cowl.scale(1.02, 1.12, 1.16);
+        cowl.translate(0, 0.050 * s, -0.026 * s);
+        markSilhouette(mesh(cowl, outer, headObj));
+        // the rim of the opening, thickened so it reads as cloth rather than
+        // as a shell you can see the inside of
+        markSilhouette(mesh(new THREE.TorusGeometry(0.118 * s, 0.019 * s, 5, 16), outer, headObj,
+          [0, 0.098 * s, 0.022 * s], [-0.34, 0, 0]));
+      }
+      if (RANK.helm) {
+        /* The Temple Guard's helm: a smooth mask with no face on it at all and
+         * a vertical crest running front to back over the crown. It is the
+         * tallest head on the roster by 11 cm, which is the point — a Guardian
+         * is the one Jedi you are meant to identify before it has moved. */
+        const kh = new Kit();
+        kh.add(trim, plateGeo(0.152 * s, 0.220 * s, 0.150 * s, 0.030 * s, 3), [0, 0.108 * s, 0.006 * s]);
+        kh.add(trim, plateGeo(0.104 * s, 0.086 * s, 0.086 * s, 0.018 * s, 2), [0, -0.004 * s, 0.030 * s], [0.26, 0, 0]);
+        // the crest, and the two blades of it that stand against the sky
+        kh.add(trim, plateGeo(0.030 * s, 0.180 * s, 0.132 * s, 0.010 * s, 1), [0, 0.244 * s, -0.010 * s], [0.10, 0, 0]);
+        kh.add(trim, plateGeo(0.026 * s, 0.110 * s, 0.088 * s, 0.008 * s, 1), [0, 0.300 * s, -0.086 * s], [0.72, 0, 0]);
+        markSilhouette(kh.bake(headObj));
+      }
+    },
+
     dress(r, s) {
       const chestB = r.get('chest'), chest = chestB.obj;
       const hipsB = r.get('hips'), hips = hipsB.obj;
@@ -3777,12 +3860,50 @@ export function buildJedi(opts = {}) {
         (x, y) => 1 - 0.30 * clamp((y / s - 0.10) / 0.09, 0, 1),
         (x, y) => 1 - 0.36 * clamp(1 - Math.abs(y / s + 0.165) / 0.075, 0, 1),
       );
+      /* THE TABARD IS THE TORSO'S SECOND SILHOUETTE and it was being culled.
+       * Its own note above says so — "without it the figure is one smooth
+       * barrel from the collar to the obi" — and one smooth barrel is exactly
+       * what a Jedi was past thirty metres, which is where a player decides
+       * whether the thing walking at them has a blade. Three panels, three
+       * draw calls, against four archetypes that shared 0.94 of a figure. */
       for (const sx of [-1, 1]) {
         const m = wrap(over, chestB, tabBot, tabTop, sx * 0.315, 0.255, 0.013, 0.017, 0.108 * KBELT);
         shadeAO(m.geometry, tabAO, { floor: 0.45 });
+        markSilhouette(m);
       }
       const back = wrap(over, chestB, tabBot, tabTop, Math.PI, 0.42, 0.012, 0.015, 0.104 * KBELT);
       shadeAO(back.geometry, tabAO, { floor: 0.45 });
+      markSilhouette(back);
+
+      /* ── what a rank wears on the shoulders ──
+       *
+       * Two pieces, and they are deliberately at opposite ends of the same
+       * axis: the Guardian's pauldron is HARD and one-sided, the Master's
+       * mantle is soft and goes all the way round. Both are one merged mesh
+       * and both are kept at range, because a shoulder is where a silhouette
+       * is widest and therefore where a rank is legible from furthest away. */
+      if (RANK.pauldron || RANK.mantle) {
+        const kr = new Kit();
+        if (RANK.pauldron) {
+          kr.pair((sx) => {
+            kr.add(trim, plateGeo(0.130 * KTOR * s, 0.056 * s, 0.180 * s, 0.020 * s, 2),
+              [sx * 0.158 * KTOR * s, 0.176 * s, -0.004 * s], [0, 0, sx * -0.36]);
+            kr.add(trim, plateGeo(0.100 * KTOR * s, 0.040 * s, 0.140 * s, 0.014 * s, 1),
+              [sx * 0.184 * KTOR * s, 0.132 * s, -0.002 * s], [0, 0, sx * -0.48]);
+          });
+        }
+        if (RANK.mantle) {
+          // a short shoulder cape: a bell off the trapezius that stops at the
+          // bottom of the ribcage, so it widens the top of the figure without
+          // touching the belt the tabard already reads against
+          kr.add(over, limbGeo(0.300 * s, 0.128 * KTOR * s, 0.232 * KTOR * s, 20, false,
+            { rings: 5, bulge: 0, section: (th, t) => 1 + Math.pow(t, 1.3) * 0.05 * Math.cos(6 * th) }),
+            [0, 0.212 * s, 0], [0, 0, Math.PI], [XK, 1, 1]);
+          kr.add(over, bandGeo(0.070 * s, 0.086 * s, 0.064 * s, 0.104 * s, 0.062 * s, 14),
+            [0, 0.196 * s, 0], [0.08, 0, 0], [XK, 1, 1]);
+        }
+        markSilhouette(kr.bake(chest));
+      }
       // the V of the crossed tunic, showing between the two front panels.
       // It stands off the FRONT of the ribcage, so it has to follow both the
       // chest's radius and its depth — the two multiply. Measured on the
@@ -3876,7 +3997,10 @@ export function buildJedi(opts = {}) {
       // any angle. It is tucked at r=0.142 up inside the obi and bells over the
       // hip with a swell, which is both what covers the thigh and what puts a
       // non-monotone bulge in the profile.
-      const skirtH = 0.44 * s;
+      /* `RANK.hem` is 1 for every body that is not one of the four Jedi
+       * archetypes, and 1 * x is exact in IEEE float, so the neutral figure
+       * emits the lathe it always did. See JEDI_RANKS. */
+      const skirtH = 0.44 * s * RANK.hem;
       const foldAmt = (th) => 0.055 * Math.cos(7 * th + 0.4)
         + 0.030 * Math.cos(3 * th - 1.1) + 0.014 * Math.cos(11 * th + 2.3);
       const foldT = (t) => Math.pow(clamp(t, 0, 1), 1.25);
@@ -3931,7 +4055,11 @@ export function buildJedi(opts = {}) {
        * range with no cloth and no lathe has a bare pelvis. `robeSkirt` is the
        * handle: pass it to attachSkirt as `rigid` and the LOD swap is one call.
        */
-      outerLayer.push(mesh(skirtGeo, skirtMat, hips, [0, 0.058 * s, 0], [0, 0, Math.PI]));
+      /* The robe below the belt is a third of the standing figure and all of
+       * it was culled at thirty metres, so a Jedi's legs were two bare tubes
+       * — the one thing the under-robe's own note says separates this body
+       * from an armoured trooper. Both hems are kept. */
+      outerLayer.push(markSilhouette(mesh(skirtGeo, skirtMat, hips, [0, 0.058 * s, 0], [0, 0, Math.PI])));
 
       // ── the under-robe ─────────────────────────────────────────────────
       // The long layer, in the mid tone, running from the belt to the ankle and
@@ -3946,7 +4074,7 @@ export function buildJedi(opts = {}) {
       // Its top 60% is inside the over-skirt and is never drawn against the
       // sky, so it is tessellated for the 26cm of it that shows: 24 segments
       // and 7 rings against the over-skirt's 28 and 9.
-      const underH = 0.72 * s;
+      const underH = 0.72 * s * RANK.hem;
       const underFold = (th) => 0.042 * Math.cos(5 * th - 0.7) + 0.020 * Math.cos(3 * th + 1.9);
       // The swell is centred at 0.45 and worth 20%, which is not a styling
       // choice: the over-skirt now ends ABOVE the knee, so this layer is the
@@ -3990,7 +4118,7 @@ export function buildJedi(opts = {}) {
        * It joins the outer layer now, so everything below the belt is either
        * simulated or hidden, and nothing under there is welded to the pelvis.
        */
-      outerLayer.push(mesh(underGeo, underMat, hips, [0, 0.020 * s, 0], [0, 0, Math.PI]));
+      outerLayer.push(markSilhouette(mesh(underGeo, underMat, hips, [0, 0.020 * s, 0], [0, 0, Math.PI])));
       // Two over-panels down the front in the darker cloth, so the layering
       // carries all the way down the figure instead of stopping at the belt.
 
@@ -4239,6 +4367,31 @@ function droidHandGeo(side, S, o = {}) {
 /* ── B1 battle droid ─────────────────────────────────────────────────── */
 
 /**
+ * FOUR ARCHETYPES RIDE THIS CHASSIS AND THREE OF THEM ARE A REPAINT.
+ *
+ * `b1`, `rocket`, `bx` and `dummy` are all `buildB1`, separated by `color`,
+ * `markColor` and `eyeColor` and by nothing else — and a colour is the one
+ * channel a dusty sky and a cel ramp take away first. Measured at LOD 1 in
+ * `tools/_roster.mjs`: b1/dummy 0.783 flank IoU, rocket/b1 0.712, bx/dummy
+ * 0.615. Each of the three has a piece of hardware it is DEFINED by in its
+ * own archetype note and none of them had it:
+ *
+ *   rocket    "a B1 with a tube" — the tube was never built.
+ *   bx        a vibrosword. Command.js's handover asked for `blade: 'vibro'`.
+ *   dummy     a range target that neither moves nor shoots.
+ *
+ * All three hang off the chest bone and all three are tagged silhouette,
+ * because a distinguishing feature that is culled at thirty metres has not
+ * distinguished anything.
+ */
+export const B1_KITS = {
+  line: {},
+  rocket: { pack: 'rocket' },
+  commando: { blade: 'vibro' },
+  target: { training: true },
+};
+
+/**
  * The B1 reads at range as three things: a snout, a backpack and a stick
  * figure. Everything below serves one of those. The limbs stay deliberately
  * thin — a B1 is a rack of struts, not a body — so the mechanical character
@@ -4248,6 +4401,8 @@ function droidHandGeo(side, S, o = {}) {
  * do the rest.
  */
 export function buildB1(opts = {}) {
+  /** See B1_KITS — `pack`, `blade` and `training` may also be passed directly. */
+  const K = { ...(B1_KITS[opts.kit] || B1_KITS.line), ...opts };
   const S = opts.scale ?? 1.02;
   const rig = new Rig(humanoidSkeleton(S, { armLen: 1.06 }), { scale: S });
   const shell = armorMat(opts.color ?? 0xb9a077, 0.25, 0.62, 5.0);
@@ -4355,23 +4510,64 @@ export function buildB1(opts = {}) {
       k.add(mark, plateGeo(0.150 * s, 0.014 * s, 0.074 * s, 0.004 * s, 1), [0, 0.192 * s, 0.026 * s]);
       // blaster scoring — one draw call for the whole unit's battle damage
       scorchBone(k, scorch, r.get('chest'), 4, 0.01 * s, 0.20 * s, 0.075 * s);
-      // Backpack — the other half of the B1 silhouette. Two power cells in a
-      // cradle, a comms fin and the harness that straps it on.
-      k.add(joint, plateGeo(0.150 * s, 0.230 * s, 0.062 * s, 0.012 * s, 2), [0, 0.108 * s, -0.094 * s]);
       k.pair((sx) => {
-        k.add(shell, new THREE.CylinderGeometry(0.030 * s, 0.030 * s, 0.200 * s, 8),
-          [sx * 0.042 * s, 0.108 * s, -0.136 * s]);
-        k.add(joint, new THREE.CylinderGeometry(0.033 * s, 0.033 * s, 0.016 * s, 8),
-          [sx * 0.042 * s, 0.206 * s, -0.136 * s]);
-        k.add(joint, new THREE.CylinderGeometry(0.033 * s, 0.033 * s, 0.016 * s, 8),
-          [sx * 0.042 * s, 0.010 * s, -0.136 * s]);
         // harness strap over the shoulder, laid along the ribcage's own flank
         k.add(joint, plateGeo(0.024 * s, 0.200 * s, 0.012 * s, 0.003 * s, 1),
           onLimb(r.get('chest'), 0.110 * s, [sx * 0.9, 0, 0.44], 0.004 * s), [0, sx * 0.5, sx * 0.06]);
       });
-      k.add(joint, plateGeo(0.012 * s, 0.120 * s, 0.052 * s, 0.004 * s, 1), [0, 0.245 * s, -0.104 * s], [-0.3, 0, 0]);
       k.add(mark, plateGeo(0.080 * s, 0.012 * s, 0.064 * s, 0.003 * s, 1), [0, 0.196 * s, -0.096 * s]);
       k.bake(chest);
+
+      /* ── the backpack: the other half of the B1 silhouette, and it was
+       * being culled at the range the whole point of a B1 is that there are
+       * forty of them. Two power cells in a cradle, a comms fin and the
+       * harness. Everything above is panel lines and rivets; this is shape. */
+      const ko = new Kit();
+      ko.add(joint, plateGeo(0.150 * s, 0.230 * s, 0.062 * s, 0.012 * s, 2), [0, 0.108 * s, -0.094 * s]);
+      ko.pair((sx) => {
+        ko.add(shell, new THREE.CylinderGeometry(0.030 * s, 0.030 * s, 0.200 * s, 8),
+          [sx * 0.042 * s, 0.108 * s, -0.136 * s]);
+        ko.add(joint, new THREE.CylinderGeometry(0.033 * s, 0.033 * s, 0.016 * s, 8),
+          [sx * 0.042 * s, 0.206 * s, -0.136 * s]);
+        ko.add(joint, new THREE.CylinderGeometry(0.033 * s, 0.033 * s, 0.016 * s, 8),
+          [sx * 0.042 * s, 0.010 * s, -0.136 * s]);
+      });
+      ko.add(joint, plateGeo(0.012 * s, 0.120 * s, 0.052 * s, 0.004 * s, 1), [0, 0.245 * s, -0.104 * s], [-0.3, 0, 0]);
+      /* THE ROCKET TUBE. `rocket` is "a B1 with a tube" by its own archetype
+       * note — "the silhouette is the B1's, that is the point" — except that
+       * the tube was never built, so it was a B1 with a repaint and the two
+       * measured 0.712 alike at LOD 1. A launcher over the right shoulder is
+       * the one shape that says which of them is about to fire 44 damage. */
+      if (K.pack === 'rocket') {
+        ko.add(joint, new THREE.CylinderGeometry(0.052 * s, 0.052 * s, 0.400 * s, 8),
+          [0.098 * s, 0.176 * s, -0.086 * s], [0.30, 0, -0.20]);
+        ko.add(mark, new THREE.CylinderGeometry(0.056 * s, 0.056 * s, 0.030 * s, 8),
+          [0.132 * s, 0.348 * s, -0.030 * s], [0.30, 0, -0.20]);
+        ko.add(joint, plateGeo(0.030 * s, 0.070 * s, 0.056 * s, 0.006 * s, 1),
+          [0.060 * s, 0.216 * s, -0.106 * s], [0, 0, -0.20]);
+      }
+      /* THE VIBROSWORD. Command.js's handover, verbatim: the BX is "melee:
+       * true, saber: true today, which puts a glowing blade in a commando
+       * droid's hand". The scabbard down the spine is what makes a BX a BX
+       * from behind, and it is the half of that note this file can answer —
+       * the blade in the hand is `Enemy._build`'s SaberController. */
+      if (K.blade === 'vibro') {
+        ko.add(joint, plateGeo(0.030 * s, 0.560 * s, 0.024 * s, 0.006 * s, 1),
+          [-0.020 * s, 0.150 * s, -0.150 * s], [0.16, 0, 0.42]);
+        ko.add(shell, plateGeo(0.044 * s, 0.070 * s, 0.036 * s, 0.010 * s, 1),
+          [-0.136 * s, 0.400 * s, -0.108 * s], [0.16, 0, 0.42]);
+      }
+      /* THE TARGET. A Training Droid is a B1 that never fires and never moves,
+       * and the only thing that said so was the absence of a carbine — which
+       * is why it and a live B1 measured 0.702 alike. A scoring plate bolted
+       * across the chest is what a range target looks like and it reads from
+       * the far end of the dojo. */
+      if (K.training) {
+        ko.add(mark, plateGeo(0.230 * s, 0.230 * s, 0.020 * s, 0.030 * s, 3), [0, 0.096 * s, 0.070 * s]);
+        ko.add(shell, plateGeo(0.130 * s, 0.130 * s, 0.014 * s, 0.030 * s, 3), [0, 0.096 * s, 0.084 * s]);
+        ko.add(mark, plateGeo(0.050 * s, 0.050 * s, 0.012 * s, 0.012 * s, 2), [0, 0.096 * s, 0.094 * s]);
+      }
+      markSilhouette(ko.bake(chest));
 
       /* ── exposed waist frame — the spine is a strut rack, not a barrel ── */
       const spineB = r.get('spine');
@@ -4574,18 +4770,26 @@ export function buildB2(opts = {}) {
       // to. From any angle but head-on it read as a board nailed to a drum.
       // These are arcs of the ribcage's own section, so the plate curves with
       // the chest and its edges land on it.
-      k.add(shell, arcGeo(0.218 * s, 0.196 * s, 0.250 * s, 2.55, 0.030 * s, 10), [0, 0.002 * s, 0], null, [1, 1, D]);
-      k.add(shell, arcGeo(0.212 * s, 0.192 * s, 0.150 * s, 0.80, 0.042 * s, 5), [0, 0.048 * s, 0], null, [1, 1, D]);
-      k.add(shell, arcGeo(0.214 * s, 0.206 * s, 0.062 * s, 2.75, 0.034 * s, 10), [0, 0.216 * s, 0], null, [1, 1, D]);
       k.pair((sx) => {
         k.add(dark, ventGeo(0.070 * s, 0.110 * s, 0.026 * s, 4), at(0.108, [sx * 0.62, 0, 1], -0.014), [0, sx * 0.85, 0]);
         k.row(3, (i) => k.add(dark, riv, at(0.030 + i * 0.070, [sx, 0, 0.15], -0.050), [0, 0, -sx * 1.5708]));
         k.add(dark, bolt, at(0.234, [sx * 0.44, 0.2, 1], -0.030), [1.5708, 0, 0]);
-        // flank plates, so the barrel does not read as a barrel from the side
-        k.add(shell, arcGeo(0.216 * s, 0.196 * s, 0.230 * s, 1.05, 0.026 * s, 6),
-          [0, 0.012 * s, 0], [0, sx * 1.5708, 0], [1, 1, D]);
       });
       scorchBone(k, scorch, chestB, 5, 0.02 * s, 0.24 * s, 0.115 * s);
+      /* ── the cuirass: the whole of what a B2 IS at range ──
+       * Its own comment says the flank plates exist "so the barrel does not
+       * read as a barrel from the side", and at thirty metres they were culled
+       * and it read as a barrel from the side — which is how a B2 came to
+       * share 0.845 of a silhouette with a MagnaGuard. */
+      const ko = new Kit();
+      ko.add(shell, arcGeo(0.218 * s, 0.196 * s, 0.250 * s, 2.55, 0.030 * s, 10), [0, 0.002 * s, 0], null, [1, 1, D]);
+      ko.add(shell, arcGeo(0.212 * s, 0.192 * s, 0.150 * s, 0.80, 0.042 * s, 5), [0, 0.048 * s, 0], null, [1, 1, D]);
+      ko.add(shell, arcGeo(0.214 * s, 0.206 * s, 0.062 * s, 2.75, 0.034 * s, 10), [0, 0.216 * s, 0], null, [1, 1, D]);
+      ko.pair((sx) => {
+        ko.add(shell, arcGeo(0.216 * s, 0.196 * s, 0.230 * s, 1.05, 0.026 * s, 6),
+          [0, 0.012 * s, 0], [0, sx * 1.5708, 0], [1, 1, D]);
+      });
+      markSilhouette(ko.bake(chest));
       // Back: a vented dorsal block and two exhaust stacks, seated on the
       // ribcage's real back surface (it is 15cm deep here, not 5.8).
       const back = at;
@@ -5180,6 +5384,24 @@ export function buildTrooper(opts = {}) {
 /* ── sith acolyte (saber duelist) ────────────────────────────────────── */
 
 /**
+ * A SPARRING PARTNER IS NOT A SITH, AND IT MEASURED 1.000 LIKE ONE.
+ *
+ * `acolyte` and `sparring` are the same call to this builder with the same
+ * arguments — same scale, same palette, same hood — so the dojo's 3-damage
+ * practice body and the roster's Sith duellist were byte-for-byte one figure
+ * and the flank IoU said exactly that: 1.000 at LOD 1. A player who has learnt
+ * to fear the black hood has learnt to fear the training dummy.
+ *
+ * The sparring kit takes the hood OFF (the one thing this head is read by) and
+ * puts a padded plastron on the chest, which is what a fencing partner wears
+ * and what nothing else on the roster wears.
+ */
+export const ACOLYTE_KITS = {
+  sith: {},
+  sparring: { hood: false, plastron: true },
+};
+
+/**
  * The one enemy the player fights face to face, so it gets the most work.
  *
  * Silhouette: a hood over a mask, a mantle, and a coat that breaks at the
@@ -5189,6 +5411,8 @@ export function buildTrooper(opts = {}) {
  * pauldrons, a studded belt with hanging tassets, and bracers.
  */
 export function buildAcolyte(opts = {}) {
+  /** See ACOLYTE_KITS. `hood` and `plastron` may also be passed directly. */
+  const K = { ...(ACOLYTE_KITS[opts.kit] || ACOLYTE_KITS.sith), ...opts };
   const S = opts.scale ?? 1.04;
   const rig = new Rig(humanoidSkeleton(S), { scale: S });
   const robe = clothMat(0x16171c, 0.94);
@@ -5281,23 +5505,29 @@ export function buildAcolyte(opts = {}) {
       // hemisphere pulled over the skull like a swim cap. Three's sphere puts
       // phi=0 at -X and phi=π/2 at +Z, so the shell has to start at 0.8π for
       // the 72° opening to land on the face rather than over one ear.
-      const cowl = new THREE.SphereGeometry(0.142 * s, 16, 12,
-        Math.PI * 0.80, Math.PI * 1.40, 0, Math.PI * 0.72);
-      cowl.scale(1.02, 1.10, 1.14);
-      cowl.translate(0, 0.052 * s, -0.024 * s);
-      mesh(cowl, hoodMat, headObj);
-      // folds gathered at the back of the cowl, which is what stops it
-      // reading as a moulded plastic shell
-      const kc = new Kit();
-      kc.row(3, (i, t) => {
-        const a = (t - 0.5) * 1.5 + Math.PI;
-        kc.add(hoodMat, limbGeo(0.145 * s, 0.020 * s, 0.008 * s, 5, true, { rings: 3, bulge: 0.2, capN: 2 }),
-          [Math.sin(a) * 0.116 * s, 0.170 * s, Math.cos(a) * 0.126 * s], [-2.6, a, 0]);
-      });
-      kc.bake(headObj);
-      // the rim of the opening, thickened so it reads as cloth
-      mesh(new THREE.TorusGeometry(0.112 * s, 0.018 * s, 5, 16), hoodMat, headObj,
-        [0, 0.100 * s, 0.020 * s], [-0.34, 0, 0]);
+      //
+      // KEPT AT RANGE. It is the single largest thing on this head and it was
+      // Kit-adjacent decoration, so past thirty metres the roster's hooded
+      // duellist was a bare 12 cm ball — the same ball a Jedi wears.
+      if (K.hood !== false) {
+        const cowl = new THREE.SphereGeometry(0.142 * s, 16, 12,
+          Math.PI * 0.80, Math.PI * 1.40, 0, Math.PI * 0.72);
+        cowl.scale(1.02, 1.10, 1.14);
+        cowl.translate(0, 0.052 * s, -0.024 * s);
+        markSilhouette(mesh(cowl, hoodMat, headObj));
+        // folds gathered at the back of the cowl, which is what stops it
+        // reading as a moulded plastic shell
+        const kc = new Kit();
+        kc.row(3, (i, t) => {
+          const a = (t - 0.5) * 1.5 + Math.PI;
+          kc.add(hoodMat, limbGeo(0.145 * s, 0.020 * s, 0.008 * s, 5, true, { rings: 3, bulge: 0.2, capN: 2 }),
+            [Math.sin(a) * 0.116 * s, 0.170 * s, Math.cos(a) * 0.126 * s], [-2.6, a, 0]);
+        });
+        kc.bake(headObj);
+        // the rim of the opening, thickened so it reads as cloth
+        markSilhouette(mesh(new THREE.TorusGeometry(0.112 * s, 0.018 * s, 5, 16), hoodMat, headObj,
+          [0, 0.100 * s, 0.020 * s], [-0.34, 0, 0]));
+      }
       k.bake(headObj);
     },
 
@@ -5309,9 +5539,6 @@ export function buildAcolyte(opts = {}) {
       k.add(robe, arcGeo(0.140 * s, 0.130 * s, 0.250 * s, 3.4, 0.016 * s, 9), [0, -0.020 * s, 0], null, [1, 1, 0.74]);
       k.add(robe, arcGeo(0.142 * s, 0.132 * s, 0.240 * s, 2.0, 0.020 * s, 7), [0, -0.014 * s, 0], [0, 0.42, 0], [1, 1, 0.74]);
       k.add(inner, arcGeo(0.136 * s, 0.128 * s, 0.180 * s, 1.1, 0.010 * s, 5), [0, 0.030 * s, 0], [0, -0.30, 0], [1, 1, 0.74]);
-      // Mantle across the shoulders — the cowl has to come from somewhere, and
-      // it is the one place the acolyte is allowed to be wide.
-      k.add(robe, bandGeo(0.112 * s, 0.196 * s, 0.082 * s, 0.120 * s, 0.170 * s, 18), [0, 0.084 * s, 0], null, [1, 1, 0.78]);
       k.add(leather, bandGeo(0.186 * s, 0.206 * s, 0.184 * s, 0.204 * s, 0.024 * s, 18), [0, 0.088 * s, 0], null, [1, 1, 0.78]);
       // studs on the collar band's own outer face — the band is 18.4cm across
       // and 14.7 deep after the torso squash, so a circle of 17.2 is inside it
@@ -5320,6 +5547,21 @@ export function buildAcolyte(opts = {}) {
         k.add(trim, stud, [Math.sin(a) * 0.210 * s, 0.100 * s, Math.cos(a) * 0.164 * s], [1.5708, a, 0]);
       });
       k.bake(chestB.obj);
+
+      /* ── the shoulders' OUTLINE ──
+       * "The one place the acolyte is allowed to be wide" — its own words for
+       * the mantle, and it was culled at thirty metres along with everything
+       * else, which is how a narrow-shouldered duellist in a bell-hemmed coat
+       * came to share 0.849 of a silhouette with a Jedi. */
+      const ko = new Kit();
+      ko.add(robe, bandGeo(0.112 * s, 0.196 * s, 0.082 * s, 0.120 * s, 0.170 * s, 18), [0, 0.084 * s, 0], null, [1, 1, 0.78]);
+      /* THE PLASTRON. Padded, square, and worn over everything — the shape a
+       * fencing partner has and a Sith does not. See ACOLYTE_KITS. */
+      if (K.plastron) {
+        ko.add(inner, plateGeo(0.320 * s, 0.360 * s, 0.150 * s, 0.040 * s, 3), [0, 0.020 * s, 0.020 * s]);
+        ko.add(inner, bandGeo(0.150 * s, 0.176 * s, 0.150 * s, 0.176 * s, 0.220 * s, 14), [0, -0.070 * s, 0], null, [1, 1, 0.80]);
+      }
+      markSilhouette(ko.bake(chestB.obj));
 
       /* ── sash across the ribs ── */
       const ks = new Kit();
@@ -6307,6 +6549,7 @@ export function buildBeast(opts = {}) {
  * draw calls on a body there are never more than a handful of.
  */
 function markSilhouette(meshes) {
+  if (meshes && meshes.isMesh) { meshes.userData.silhouette = true; return meshes; }
   for (const m of meshes) m.userData.silhouette = true;
   return meshes;
 }
@@ -6490,6 +6733,20 @@ function buildCreatureHead(rig, P, S, M) {
 /* ── bodyguard droid (boss) ──────────────────────────────────────────── */
 
 /**
+ * TWO ARCHETYPES, ONE CHASSIS, TWO SCALES AND NOTHING ELSE.
+ *
+ * `magna` (rung 5 of the CIS ladder, 260 hp) and `bodyguard` (the Foundry's
+ * 1050-hp set-piece general) are both this builder, at 1.18 and 1.3, and they
+ * measured 0.658 flank IoU at LOD 1 — close enough that a player who has just
+ * learnt to fight one meets the other and reads it as the first one standing
+ * further away. A set-piece must be legible AS a set-piece before it moves.
+ */
+export const BODYGUARD_KITS = {
+  guard: {},
+  general: { banner: true },
+};
+
+/**
  * THE THING AT THE END OF THE WARSHIP, and the one droid in the game that
  * meets your blade instead of shooting at you.
  *
@@ -6524,6 +6781,8 @@ function buildCreatureHead(rig, P, S, M) {
  * plate in this file already travels.
  */
 export function buildBodyguard(opts = {}) {
+  /** See BODYGUARD_KITS — `banner` may also be passed directly. */
+  const K = { ...(BODYGUARD_KITS[opts.kit] || BODYGUARD_KITS.guard), ...opts };
   const S = opts.scale ?? 1.3;
   const built = buildB2({ scale: S, color: opts.color ?? 0x4a4d52 });
   const rig = built.rig;
@@ -6552,7 +6811,10 @@ export function buildBodyguard(opts = {}) {
     // one vertical lit slot, standing proud of the mask
     k.add(slot, plateGeo(0.018 * S, 0.098 * S, 0.010 * S, 0.003 * S, 1), [0, 0.150 * S, 0.084 * S]);
     k.add(dark, plateGeo(0.048 * S, 0.126 * S, 0.008 * S, 0.003 * S, 1), [0, 0.150 * S, 0.079 * S]);
-    k.bake(head.obj);
+    /* The cowl and the horns are the whole read on this head — the lit slot is
+     * a 3 cm emissive strip and stays detail. Keeping the `dark` bucket alone
+     * is one extra draw call for the piece the body is named after. */
+    for (const m of k.bake(head.obj)) { if (m.material === dark) markSilhouette(m); }
   }
 
   const chest = rig.get('chest');
@@ -6570,7 +6832,20 @@ export function buildBodyguard(opts = {}) {
     });
     // a gorget, so the cowl has a collar to sit in rather than a neck
     k.add(dark, plateGeo(0.190 * S, 0.052 * S, 0.170 * S, 0.020 * S, 2), [0, 0.140 * S, -0.006 * S]);
-    k.bake(chest.obj);
+    /* THE GENERAL'S BANNER. `magna` and `bodyguard` are this same chassis at
+     * 1.18 and 1.3 and nothing else, and they measured 0.658 alike — the
+     * Foundry's 1050-hp set-piece and a rung-5 line unit reading as one droid
+     * at two different distances, which is worse than reading as two units.
+     * The masts above already exist to hang something from; this is the
+     * something. A rigid tabard across them, not a simulated cape: this body
+     * declines cloth on purpose (see the archetype's own note) and
+     * `cloth-cost` sizes the whole column on how many bodies wear one. */
+    if (K.banner) {
+      k.add(dark, plateGeo(0.240 * S, 0.030 * S, 0.026 * S, 0.008 * S, 1), [0, 0.244 * S, -0.104 * S], [0.26, 0, 0]);
+      k.add(trim, plateGeo(0.290 * S, 0.560 * S, 0.020 * S, 0.010 * S, 1), [0, -0.036 * S, -0.148 * S], [0.10, 0, 0]);
+      k.add(dark, plateGeo(0.310 * S, 0.048 * S, 0.024 * S, 0.010 * S, 1), [0, -0.310 * S, -0.116 * S], [0.10, 0, 0]);
+    }
+    for (const m of k.bake(chest.obj)) { if (m.material !== slot) markSilhouette(m); }
   }
 
   return { ...built, palette: { ...built.palette, dark, trim, slot }, scale: S };
@@ -6650,4 +6925,70 @@ export function buildBlaster(kind = 'e5') {
   for (const m of k.bake(g)) { if (m.material !== glow) markSilhouette([m]); }
   g.traverse(o => { o.castShadow = true; });
   return g;
+}
+
+
+/* ── who wears what ──────────────────────────────────────────────────── */
+
+/**
+ * THE ARCHETYPE → KIT TABLE, AND THE ONE LINE THAT IS STILL MISSING.
+ *
+ * Every knob above exists because a specific archetype needed it, and this is
+ * the single place that says which archetype needs which — so a kit cannot be
+ * declared twice, and a new humanoid on the roster that nobody outfitted is a
+ * check failure rather than a body that quietly looks like another one.
+ * `tools/checks/characters.mjs` walks `Enemy.ARCHETYPES` and asserts that
+ * every humanoid on it has a row here.
+ *
+ * WHAT IT IS NOT: a second copy of the roster. It carries no stats, no colour
+ * and no scale — those live in the archetype and are passed by the caller. It
+ * carries only what a body WEARS, which nothing else in the codebase declares.
+ *
+ * ── HOW IT REACHES THE BUILDERS, WHICH IS NOT YET. ─────────────────────
+ *
+ * `Enemy._build` builds every body with `const opts = { scale: A.scale }` and
+ * a one-line special case for the marksman's paint, so the archetype's own
+ * identity never reaches Bodies.js at all. The whole wiring is:
+ *
+ *     const opts = { scale: A.scale, ...(bodyOptsFor(this.type) || {}) };
+ *
+ * in place of `const opts = { scale: A.scale };` (src/game/Enemy.js, in
+ * `_build`), plus `bodyOptsFor` on the import from this file. Command.js's
+ * units need nothing at all — every one of them is `(o) => buildX({ ...o, … })`
+ * and spreads whatever it is handed.
+ *
+ * Until that line lands, the kits below are reachable (and measured) but no
+ * spawned body wears one. Measured either way in `tools/_roster.mjs`, which
+ * takes `--wired` to apply this table and prints the gap.
+ */
+export const BODY_KITS = {
+  /* the clone army — see TROOPER_KITS */
+  trooper: { kit: 'line' },
+  sniper: { kit: 'marksman' },
+  heavy: { kit: 'heavy' },
+  jet: { kit: 'jet' },
+  arc: { kit: 'arc' },
+  officer: { kit: 'commander' },
+  /* the order — see JEDI_RANKS */
+  jedi: { rank: 'knight' },
+  sentinel: { rank: 'sentinel' },
+  guardian: { rank: 'guardian' },
+  master: { rank: 'master' },
+  /* the separatist chassis — see B1_KITS */
+  b1: { kit: 'line' },
+  rocket: { kit: 'rocket' },
+  bx: { kit: 'commando' },
+  dummy: { kit: 'target' },
+  /* the duellists — see ACOLYTE_KITS */
+  acolyte: { kit: 'sith' },
+  sparring: { kit: 'sparring' },
+  /* the heavy droids — see BODYGUARD_KITS. `b2` has one chassis and one rung. */
+  b2: {},
+  magna: { kit: 'guard' },
+  bodyguard: { kit: 'general' },
+};
+
+/** What an archetype wears, or null if it is not a body this file dresses. */
+export function bodyOptsFor(type) {
+  return BODY_KITS[type] || null;
 }

@@ -47,6 +47,7 @@ import * as THREE from 'three';
 import { initPhysics } from '../src/physics/Rapier.js';
 import { RapierWorld } from '../src/physics/RapierWorld.js';
 import { Enemy, enemyRng, ARCHETYPES } from '../src/game/Enemy.js';
+import { bodyOptsFor } from '../src/game/Bodies.js';
 import '../src/game/Levels.js';          // registers the Command units and the IG general
 
 await initPhysics();
@@ -127,9 +128,24 @@ const triCount = (g) => (g.index ? g.index.count : g.attributes.position.count) 
  * @param lod    0 (close) or 1 (past thirty metres)
  * @returns everything a silhouette needs plus the census the tables print
  */
-export function poseOne(type, lod = 1, seed = 99) {
+export function poseOne(type, lod = 1, seed = 99, wired = false) {
   enemyRng.seed(seed);
+  /**
+   * `--wired` IS THE ONE LINE THAT IS NOT IN Enemy.js YET, AND NOTHING MORE.
+   *
+   * `Bodies.BODY_KITS` says what each archetype wears; `Enemy._build` builds
+   * every body with `{ scale: A.scale }` and never asks. This wraps the
+   * archetype's own `build` for the duration of one pose so the two numbers —
+   * what the game renders today, and what it renders once `_build` threads
+   * `bodyOptsFor(this.type)` — can be printed side by side instead of one of
+   * them being a claim. It is a PROBE doing this and not a check: a check that
+   * monkey-patched the roster would be measuring itself (HANDOFF 2.4).
+   */
+  const A = ARCHETYPES[type];
+  const restore = wired && bodyOptsFor(type) ? A.build : null;
+  if (restore) A.build = (o) => restore({ ...o, ...bodyOptsFor(type) });
   const e = new Enemy(world, type, new THREE.Vector3(0, 0, 0));
+  if (restore) A.build = restore;
   e.position.set(0, 0, 0);
   /* Facing +X, so a raster looking down -Z sees the FLANK. Head-on, every
    * humanoid in the game is "a vertical thing with a head on it" and the
@@ -197,21 +213,39 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const lod = process.argv.includes('--lod')
     ? Number(process.argv[process.argv.indexOf('--lod') + 1]) : 1;
 
+  const wired = process.argv.includes('--wired');
   const rows = [];
   for (const type of Object.keys(ARCHETYPES)) {
-    const u = poseOne(type, lod);
+    const u = poseOne(type, lod, 99, wired);
     const family = u.humanoid ? 'humanoid' : (ARCHETYPES[type].custom === 'beast' ? 'creature' : 'machine');
     rows.push({ type, family, u, colour: visibleColour(u.root) });
   }
 
   const FAMILIES = ['humanoid', 'machine', 'creature'];
+  /* Metres across, and pixels across, per family. Humanoids get 1.3 cm/px —
+   * fine enough that a 3 cm rangefinder stalk is three pixels and coarse
+   * enough that the raster is not measuring tessellation. */
+  const FRAME = { humanoid: 2.6, machine: 14, creature: 11 };
+  const RES = { humanoid: 200, machine: 160, creature: 160 };
   for (const fam of FAMILIES) {
     const mine = rows.filter((r) => r.family === fam && (!only || only === fam));
     if (!mine.length) continue;
-    // one absolute frame per family, sized off the family's own tallest body
-    const tall = Math.max(...mine.map((r) => r.u.size.y)) * 1.06;
-    const span = Math.max(tall, Math.max(...mine.map((r) => r.u.size.x)) * 1.06);
-    const N = 160, frame = [-span / 2, span / 2, 0, span];
+    /* THE FRAME IS A CONSTANT, and it has to be.
+     *
+     * The first version sized it off the family's own tallest member, which is
+     * a confound of exactly the kind HANDOFF 2.5 is about: adding a banner to
+     * one droid grew the frame 12%, dropped every body's pixel count, and
+     * raised EVERY pair's IoU — so a change that made two bodies more distinct
+     * printed as the whole roster getting more alike. Two runs are only
+     * comparable at the same metres per pixel. Asserted below rather than
+     * assumed, because a body that outgrows the frame is silently cropped. */
+    const span = FRAME[fam], N = RES[fam], frame = [-span / 2, span / 2, 0, span];
+    for (const r of mine) {
+      if (r.u.size.y > span || r.u.size.x > span) {
+        console.log(`  !! ${r.type} is ${r.u.size.y.toFixed(2)}×${r.u.size.x.toFixed(2)} m `
+          + `and the ${fam} frame is ${span} m — raise FRAME.${fam}`);
+      }
+    }
     for (const r of mine) r.bits = silhouette(r.u.root, N, N, frame);
 
     const pairs = [];
@@ -221,7 +255,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     pairs.sort((p, q) => q.v - p.v);
 
     console.log(`\n── ${fam.toUpperCase()} — ${mine.length} archetypes, `
-      + `${span.toFixed(2)} m frame at ${N}px, LOD ${lod} ──`);
+      + `${span.toFixed(2)} m frame at ${N}px, LOD ${lod}`
+      + `${wired ? ', KITS WIRED' : ', as shipped'} ──`);
     console.log('archetype    tris  mesh  kept   H     W    worstIoU   with');
     for (const r of mine) {
       let mx = 0, mxWith = '';
