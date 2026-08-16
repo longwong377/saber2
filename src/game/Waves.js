@@ -1589,7 +1589,7 @@ export class WaveDirector {
    * cheaper, and that is right — the cap is an allowance in threat, not a taste
    * about crowds.
    */
-  bodyCap(wave) {
+  bodyCap(wave, types = null) {
     const curve = (w) => BODY_MAX - (BODY_MAX - 6) * Math.exp(-w / 12);
     if (wave <= BODY_KNEE) return Math.round(curve(wave));
     /**
@@ -1624,9 +1624,9 @@ export class WaveDirector {
      */
     const scale = this.partyScale();
     const atKnee = Math.min(curve(BODY_KNEE),
-      this.budgetFor(BODY_KNEE) / scale / this.meanBodyThreat(BODY_KNEE));
+      this.budgetFor(BODY_KNEE) / scale / this.meanBodyThreat(BODY_KNEE, types));
     const added = (this.budgetFor(wave) - this.budgetFor(BODY_KNEE)) / scale;
-    return Math.max(1, Math.round(atKnee + BODY_COUNT_SHARE * added / this.meanBodyThreat(wave)));
+    return Math.max(1, Math.round(atKnee + BODY_COUNT_SHARE * added / this.meanBodyThreat(wave, types)));
   }
 
   /**
@@ -1637,8 +1637,21 @@ export class WaveDirector {
    * would eventually disagree with the draw it is meant to describe, and would
    * do it silently, in the direction that makes the cap wrong (§2.4).
    */
-  meanBodyThreat(wave) {
-    const types = this.unlockedAt(wave);
+  meanBodyThreat(wave, only = null) {
+    /**
+     * AT THE PRICE OF THE BODIES THE WAVE WILL ACTUALLY FIELD.
+     *
+     * `only` is the condition-narrowed roster (`_shapeUnder`'s `types`), and
+     * passing it is not a refinement — it is the difference between the cap
+     * meaning what it says and not. The cap is an allowance in THREAT converted
+     * to bodies at a price; priced off the whole roster, a wave narrowed to the
+     * cheap half gets the allowance of the expensive half and strands the rest.
+     * Measured on the Ember Shelf at wave 40, NOTHING WITHIN REACH — whose
+     * shooters are the cheapest bodies the level has — the field carried 64% of
+     * the threat the unnarrowed wave did, so the condition was silently a
+     * DISCOUNT on top of being a different question.
+     */
+    const types = only?.length ? only : this.unlockedAt(wave);
     const { w, total } = this._typeWeights(types, wave);
     if (!(total > 0)) return 1;
     /**
@@ -1767,7 +1780,21 @@ export class WaveDirector {
     while (budget > 0 && guard++ < 300) {
       const spent = this._promoteOne(queue, budget, wave, allowed)
         || this._heavierOne(queue, budget, wave, shape);
-      if (!spent) break;
+      /**
+       * A MOVE THAT DOES NOT COST ANYTHING IS NOT AN UPGRADE.
+       *
+       * `!spent` let a NEGATIVE through, and there are real negatives:
+       * `MODIFIERS.unstable` is priced `0.85 × threat + 1.8`, which is cheaper
+       * than the body it promotes for anything over 12 threat — a charger, a
+       * brute, a walker, an AT-TE. So this loop could "spend" −0.3, hand the
+       * budget back, and go round again. Measured on the Colosseum at wave 5:
+       * the fill stopped correctly with 2.80 left, the upgrade pass promoted a
+       * charger to `charger|unstable`, the budget came back up to 3.10 — over
+       * the 3.0 a B2 costs — and the wave ended two bodies long with a body it
+       * could still afford. `_heavierOne` has always refused a trade that
+       * refunds; this is the same rule for the other half of the pass.
+       */
+      if (!(spent > 0)) break;
       budget -= spent;
     }
     return budget;
@@ -1779,7 +1806,9 @@ export class WaveDirector {
       if (spawnMod(queue[i])) continue;
       const t = spawnType(queue[i]);
       const p = this._promote(t, budget, wave, allowed);
-      if (p) { queue[i] = `${t}|${p.mod}`; return p.extra; }
+      // …and the same rule one level down, so a refunding promotion does not
+      // stop the pass looking for one that is an upgrade.
+      if (p && p.extra > 0) { queue[i] = `${t}|${p.mod}`; return p.extra; }
     }
     return 0;
   }
@@ -1799,16 +1828,39 @@ export class WaveDirector {
       const entry = queue[i];
       const t = spawnType(entry), mod = spawnMod(entry);
       const now = spawnCost(entry);
-      for (const k of types) {
+      /**
+       * EVERY HEAVIER BODY THAT FITS, DRAWN THE WAY THE FILL DRAWS — not the
+       * single heaviest one.
+       *
+       * `break` on the first type that is not heavier, then take it: sorted
+       * descending, that is "always trade up to the top of the roster", and it
+       * is exactly why `_upgrade` CONVERGES. Every deep wave ended up as N
+       * copies of the heaviest thing the level fields, which is the complaint
+       * the conditions were built to answer — and once `bodyCap` began to bind
+       * there were fewer bodies for it to do that to, so it converged faster
+       * and a deep Colosseum wave composed FEWER distinct shapes than a shallow
+       * one over the same twelve seeds.
+       *
+       * The candidates are still only bodies that are heavier and that fit, so
+       * this cannot make a wave cheaper or lighter; which of them is taken is
+       * drawn through `_pickType`, whose `heavyBias` already leans harder on
+       * the heavy end as the run deepens. So depth still pulls upward — it just
+       * stops arriving at one answer.
+       */
+      const up = types.filter((k) => {
         const A = ARCHETYPES[k];
-        if (A.threat <= ARCHETYPES[t].threat) break;      // sorted: nothing lighter helps
-        if (isHeavy(k) && !isHeavy(t) && bigLeft <= 0) continue;
+        if (!A || A.threat <= ARCHETYPES[t].threat) return false;
+        if (isHeavy(k) && !isHeavy(t) && bigLeft <= 0) return false;
         // A modifier only survives a swap if the new chassis can wear it;
         // dropping one would REFUND threat, which is not an upgrade.
-        if (mod && !modifiersFor(k).includes(mod)) continue;
-        const next = mod ? modifierThreat(k, mod) : A.threat;
-        if (next - now <= budget) { queue[i] = mod ? `${k}|${mod}` : k; return next - now; }
-      }
+        if (mod && !modifiersFor(k).includes(mod)) return false;
+        return (mod ? modifierThreat(k, mod) : A.threat) - now <= budget;
+      });
+      if (!up.length) continue;
+      const k = this._pickType(up, wave, bigLeft) || up[0];
+      const next = mod ? modifierThreat(k, mod) : ARCHETYPES[k].threat;
+      queue[i] = mod ? `${k}|${mod}` : k;
+      return next - now;
     }
     return 0;
   }
@@ -2137,7 +2189,8 @@ export class WaveDirector {
     const cs = (keys || []).map((k) => CONDITIONS[k]).filter(Boolean);
     let types = this.unlockedAt(wave);
     let allowed = this.modifiersAt(wave);
-    let cap = this.bodyCap(wave), heavy = this.heavyLimit(wave);
+    let heavy = this.heavyLimit(wave);
+    let capScale = 1;
     let chance = this.eliteChance(wave), alive = this.maxAlive, pace = 1;
     for (const c of cs) {
       if (c.types) {
@@ -2147,12 +2200,16 @@ export class WaveDirector {
         if (narrowed.length) types = narrowed;
       }
       if (c.allow) allowed = c.allow(allowed, this, wave);
-      cap = cap * (c.capScale ?? 1);
+      capScale = capScale * (c.capScale ?? 1);
       heavy = heavy * (c.heavyScale ?? 1);
       chance = chance * (c.eliteScale ?? 1);
       alive = alive * (c.aliveScale ?? 1);
       pace = pace * (c.paceScale ?? 1);
     }
+    // AFTER the narrowing, not before it: the cap is an allowance in threat and
+    // `bodyCap` converts it at the price of the roster it is handed. Computed
+    // first, it would price a No-Guns wave off bodies that wave cannot field.
+    const cap = this.bodyCap(wave, types) * capScale;
     return {
       types, allowed,
       cap: Math.max(1, Math.round(cap)),
@@ -2237,16 +2294,34 @@ export class WaveDirector {
        * ended the wave. Nothing caught it because the checks composed on a
        * fixture pool of B1s.
        *
-       * The first body is exempt, as it always was: a wave has to have something
-       * in it even when the cheapest thing in the theatre is over budget.
+       * THE FIRST BODY IS EXEMPT, AND WHEN IT IS EXEMPT IT IS THE CHEAPEST ONE.
+       *
+       * A wave has to have something in it even when the cheapest thing the
+       * theatre still fields costs more than the whole budget — which never
+       * happened while conditions arrived no earlier than wave 13, and happens
+       * the moment a RUN RULE narrows the roster on wave 1. Measured: the
+       * Colosseum under NO GUNS at wave 1 drew a brute and spent 14 against a
+       * budget of 7, doubling the opening wave of the game. Drawing at random
+       * from the whole narrowed roster made the size of that overspend a matter
+       * of luck; taking the cheapest makes it the smallest it can possibly be,
+       * which is the only honest amount to be over by.
        */
-      const pickFrom = queue.length
-        ? shape.types.filter((t) => (ARCHETYPES[t]?.threat ?? Infinity) <= budget)
-        : shape.types;
-      const t = this._pickType(pickFrom.length ? pickFrom : shape.types, w, bigLeft);
+      /* EPS because `budget` is a running subtraction of fractional threats:
+       * measured on the Drowned Wood at wave 10, a wave with exactly 1.0 left
+       * and a B1 costing exactly 1 held 0.9999999999999964 and refused it. An
+       * exact `<=` on an accumulated float is a coin toss, not a rule. */
+      const EPS = 1e-9;
+      const affordable = shape.types.filter((t) => (ARCHETYPES[t]?.threat ?? Infinity) <= budget + EPS);
+      let t;
+      if (affordable.length) t = this._pickType(affordable, w, bigLeft);
+      else if (queue.length) break;
+      else {
+        t = shape.types.slice()
+          .sort((a, b) => (ARCHETYPES[a]?.threat ?? Infinity) - (ARCHETYPES[b]?.threat ?? Infinity))[0];
+      }
       if (!t) break;
       let cost = ARCHETYPES[t].threat;
-      if (cost > budget && queue.length > 0) break;
+      if (cost > budget + EPS && queue.length > 0) break;
       let entry = t;
       if (shape.allowed.length && rng() < shape.chance) {
         const p = this._promote(t, budget - cost, w, shape.allowed);

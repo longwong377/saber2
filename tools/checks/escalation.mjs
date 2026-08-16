@@ -644,7 +644,19 @@ export async function run({ check, assert }) {
       const d = new Waves.WaveDirector(tableWorld(), { mode: 'roguelite', pool: LEVELS[key].pool });
       for (const w of [20, 40, 70, 100, 140]) {
         let plainLeft = 0, left = 0, conds = 0;
-        const n = 12;
+        /**
+         * TWENTY-FOUR SEEDS, AND THE REASON IS VARIANCE AND NOT TASTE.
+         *
+         * The shape count below is a count of DISTINCT things over n draws, and
+         * a distinct-count is a badly behaved estimator at small n: measured on
+         * the Colosseum at twelve seeds it reads 8, 7, 5, 10, 6 across the five
+         * depths, so the deep-versus-shallow comparison it feeds swings by ±3
+         * on nothing at all. At twenty-four the same five depths read 10, 12,
+         * 10, 12, 11. Raising n is measuring more of the same thing, which is
+         * the correct answer to a variance-driven failure — widening the bound
+         * would have been the other one.
+         */
+        const n = 24;
         const entries = new Set();
         const shapes = new Set();
         for (let i = 0; i < n; i++) {
@@ -822,6 +834,242 @@ export async function run({ check, assert }) {
       rows.push(`${key} ${bodies.toFixed(0)}b on ${homes[0]} (${homes.length} theatres)`);
     }
     return `${Waves.CONDITION_KEYS.length} conditions, each doing what its card says: ${rows.join(', ')}`;
+  });
+
+  check('rules: a run can be fought under its own terms, and they are never a discount', () => {
+    /**
+     * THE HEADLINE PROPERTY, AND IT IS ONE LINE OF ARITHMETIC AWAY FROM ITS OWN
+     * OPPOSITE.
+     *
+     * A dealt condition is compensation: `conditionCost` takes a share of the
+     * wave's budget to pay for it, so the wave is SMALLER in exchange for being
+     * strange. A rule the player asked for must not be — charge for it and NO
+     * GUNS becomes the cheapest route to wave 40, which is the exact inverse of
+     * what a self-imposed handicap is. So the wave composed under a rule must
+     * weigh what the plain wave weighed, on the same seed.
+     */
+    const d = new Waves.WaveDirector(tableWorld(), { mode: 'roguelite', pool: LEVELS[FIELD].pool });
+    const offered = Waves.CONDITION_KEYS.filter((k) => !d.ruleVeto(k));
+    assert(offered.length >= 2, `${FIELD} offers ${offered.length} rules — nothing to pick between`);
+
+    /**
+     * WEIGHED AS WHAT STANDS ON THE FIELD, not as what the ledger says.
+     *
+     * The first draft of this added `conditionCost` to both sides and the check
+     * failed on its own arithmetic: the dealt wave books the condition's
+     * `worth` as spend, so "total spend" is 8% higher for the dealt vanguard
+     * while the wave in front of the player is 8% SMALLER. The waived charge is
+     * precisely the thing under test, so counting it is measuring the accounting
+     * rather than the fight. What a player meets is bodies.
+     */
+    const weigh = (dir, w, keys, n = 10) => {
+      let threat = 0, bodies = 0;
+      for (let i = 0; i < n; i++) {
+        Waves.seedWaves(900 + i, 0); dir.wave = w;
+        const out = dir._composeUnder(w, keys);
+        threat += out.queue.reduce((s, e) => s + Waves.spawnCost(e), 0);
+        bodies += out.queue.length;
+      }
+      return { threat: threat / n, bodies: bodies / n };
+    };
+    const dir0Cost = (dir, w, keys) => dir.conditionCost(w, keys);
+    let worstShort = 1, worstAt = '';
+    for (const key of offered) {
+      const ruled = new Waves.WaveDirector(tableWorld(),
+        { mode: 'roguelite', pool: LEVELS[FIELD].pool, rules: [key] });
+      assert(ruled.rules.length === 1, `${key} was offered and then dropped by legalRuleSet`);
+      for (const w of [10, 25, 40]) {
+        const dealt = weigh(d, w, [key]);          // the same condition, priced
+        const asRule = weigh(ruled, w, [key]);     // …and chosen, so free
+        assert(asRule.threat >= dealt.threat - 1e-6,
+          `at wave ${w} the field under the ${Waves.CONDITIONS[key].label} RULE weighs `
+          + `${asRule.threat.toFixed(1)} against ${dealt.threat.toFixed(1)} for the same condition `
+          + 'dealt — picking a rule made the run cheaper, which is backwards');
+        assert(dir0Cost(d, w, [key]) > 0 && ruled.conditionCost(w, [key]) === 0,
+          `${key} is charged ${ruled.conditionCost(w, [key]).toFixed(1)} as a RULE — a rule the `
+          + "player asked for is not compensated out of the wave's budget");
+        const plain = weigh(ruled, w, []);
+        /**
+         * AGAINST THE CONDITION'S OWN DECLARED `capScale`, not against a flat
+         * number. ALL AT ONCE and THE HEAVY GUARD both declare one under 1 and
+         * say why beside it — "capScale pulls the count DOWN to pay for it, so
+         * it is a denser wave rather than a bigger one" — so a wave under
+         * either is meant to be shorter. What must not happen is a wave lighter
+         * than its own condition asked for.
+         */
+        /**
+         * REPORTED, NOT ASSERTED, and the difference is which claim belongs to
+         * which feature. A narrowed wave carries less threat than an unnarrowed
+         * one — NOTHING WITHIN REACH on the Ember Shelf at wave 40 comes in
+         * about 9% light — and that is a property of the CONDITION, identical
+         * whether it was dealt or chosen. It is bounded where it belongs, by
+         * "the escalation does not flatten" below. Asserting it here would be
+         * holding the rules feature to something it does not claim; what it
+         * claims is the two assertions above, and both are exact.
+         */
+        const short = asRule.threat / Math.max(1, plain.threat);
+        if (short < worstShort) { worstShort = short; worstAt = `${key}@w${w}`; }
+      }
+    }
+
+    /* …AND THE VETOES AND EXCLUSIONS ARE HONOURED AT RUN START, once, rather
+     * than per wave. Asked for every theatre, because that is what the Deploy
+     * panel offers and a rule the panel lights and the director drops is the
+     * defect `_syncTheatre` was written for. */
+    let sets = 0, worstOffer = Waves.CONDITION_KEYS.length;
+    for (const key of LEVEL_ORDER) {
+      const dir = new Waves.WaveDirector(tableWorld(), { mode: 'roguelite', pool: LEVELS[key].pool });
+      const legal = Waves.CONDITION_KEYS.filter((k) => !dir.ruleVeto(k));
+      worstOffer = Math.min(worstOffer, legal.length);
+      // Every subset of the legal ones that satisfies the exclusions and the cap
+      // must survive `legalRuleSet` unchanged — and everything else must not.
+      for (let m = 0; m < (1 << Waves.CONDITION_KEYS.length); m++) {
+        const want = Waves.CONDITION_KEYS.filter((_, i) => m & (1 << i));
+        const got = new Waves.WaveDirector(tableWorld(),
+          { mode: 'roguelite', pool: LEVELS[key].pool, rules: want }).rules;
+        const clean = want.every((k) => legal.includes(k)) && want.length <= Waves.CONDITION_MAX
+          && want.every((a, i) => want.every((b, j) => i >= j || !Waves.rulesConflict(a, b)));
+        if (clean) {
+          assert(got.join(',') === want.join(','),
+            `${key} dropped a legal rule set: asked ${want.join('+')}, got ${got.join('+') || '(none)'}`);
+          sets++;
+        } else {
+          assert(got.length < want.length || got.join(',') !== want.join(','),
+            `${key} accepted ${want.join('+')}, which its roster or the exclusions forbid`);
+          assert(got.every((k) => legal.includes(k)),
+            `${key} kept a vetoed rule: ${got.join('+')}`);
+          assert(got.length <= Waves.CONDITION_MAX, `${key} kept ${got.length} rules over the cap`);
+          for (let i = 0; i < got.length; i++) {
+            for (let j = i + 1; j < got.length; j++) {
+              assert(!Waves.rulesConflict(got[i], got[j]),
+                `${key} kept the mutually exclusive ${got[i]}+${got[j]}`);
+            }
+          }
+        }
+      }
+    }
+    assert(worstOffer >= 4,
+      `some theatre offers only ${worstOffer} of the ${Waves.CONDITION_KEYS.length} rules — `
+      + 'the column would be mostly grey');
+    // A rule the panel can offer must have a reason to be greyed with, and a
+    // label the record can key on. Both are read straight off CONDITIONS.
+    for (const k of Waves.CONDITION_KEYS) {
+      assert(Waves.CONDITIONS[k].label, `rule "${k}" has no label for the panel or the record`);
+    }
+    return `${sets} legal rule sets across ${LEVEL_ORDER.length} theatres; every theatre offers at `
+      + `least ${worstOffer} of ${Waves.CONDITION_KEYS.length}; `
+      + `a narrowed wave carries ${(worstShort * 100).toFixed(0)}% of the unnarrowed one's threat at `
+      + `worst (${worstAt}), and never less than the same condition dealt`;
+  });
+
+  check('rules: four of them from wave 1 composes a wave that spends its budget', () => {
+    /**
+     * THE UNTESTED CORNER, AND IT WAS UNTESTED FOR A STRUCTURAL REASON.
+     *
+     * `CONDITION_MAX` is 4 and the note above it prices three against four at
+     * waves 100, 140 and 200 — because four are only ever reached through the
+     * surplus loop, which cannot fire until the roster stops absorbing the
+     * budget, measured at about wave 92. A run rule puts four on wave 1, where
+     * nothing has ever composed under more than one, and the shallow waves are
+     * exactly where a narrowed roster meets a budget of seven.
+     *
+     * ── THE BAR IS IN THREAT AND NOT IN PERCENT, and that is not a softening ──
+     *
+     * The sibling check one screen up bounds stranding at 14% of the budget,
+     * which is the right shape at wave 40 (499 threat) and meaningless at wave
+     * 1 (7 threat, where one B1 is 14% on its own). What a shallow wave must
+     * not do is leave a BODY on the table, so the bar is stated in bodies: the
+     * unspent budget may not exceed what the cheapest thing the theatre still
+     * fields would have cost. That is strictly harder than a percentage at
+     * depth and it is the only statement that means anything at wave 1.
+     */
+    const worst = { short: 0, at: '', cheapest: 0 };
+    let checked = 0;
+    for (const key of LEVEL_ORDER) {
+      const dir0 = new Waves.WaveDirector(tableWorld(), { mode: 'roguelite', pool: LEVELS[key].pool });
+      const offered = Waves.CONDITION_KEYS.filter((k) => !dir0.ruleVeto(k));
+      /* Every legal set of exactly CONDITION_MAX, so this is not one lucky
+       * combination — on a theatre that vetoes nothing there are several. */
+      const sets = [];
+      const walk = (from, held) => {
+        if (held.length === Waves.CONDITION_MAX) { sets.push(held.slice()); return; }
+        for (let i = from; i < offered.length; i++) {
+          if (held.some((h) => Waves.rulesConflict(h, offered[i]))) continue;
+          held.push(offered[i]); walk(i + 1, held); held.pop();
+        }
+      };
+      walk(0, []);
+      assert(sets.length, `${key} cannot offer ${Waves.CONDITION_MAX} rules at once`);
+      for (const rules of sets) {
+        const d = new Waves.WaveDirector(tableWorld(),
+          { mode: 'roguelite', pool: LEVELS[key].pool, rules });
+        assert(d.rules.length === Waves.CONDITION_MAX,
+          `${key} accepted only ${d.rules.length} of ${rules.join('+')}`);
+        for (const w of [1, 2, 3, 5, 10, 18, 30]) {
+          for (let i = 0; i < 6; i++) {
+            Waves.seedWaves(1700 + i, 0);
+            d.wave = w; d._compose();
+            assert(d.spawnQueue.length > 0,
+              `${key} wave ${w} under ${rules.join('+')} composed an EMPTY wave — nothing to fight`);
+            assert(d.conditions.length === Waves.CONDITION_MAX,
+              `${key} wave ${w} carries ${d.conditions.length} conditions under ${Waves.CONDITION_MAX} rules`);
+            const spent = d.spawnQueue.reduce((s, e) => s + Waves.spawnCost(e), 0)
+              + d.conditionCost(w, d.conditions);
+            const budget = d.budgetFor(w);
+            const shape = d._shapeUnder(w, d.conditions);
+            const cheapest = Math.min(...shape.types.map((t) => ARCHETYPES[t]?.threat ?? Infinity));
+            /**
+             * THE ONE OVERSPEND THAT IS NOT A DEFECT, stated exactly.
+             *
+             * A wave may never be empty, so when the cheapest body the narrowed
+             * roster still fields costs more than the whole budget — the
+             * Colosseum's creatures under NO GUNS at wave 1, where the cheapest
+             * is 9 against a budget of 7 — the wave is that one body and it is
+             * over. `allowed` is that unavoidable amount and nothing more: it is
+             * zero at every wave that can afford anything, so this does not
+             * loosen the sibling check's exact bound, it names the single case
+             * that bound cannot express.
+             */
+            const allowed = Math.max(0, cheapest - budget);
+            assert(spent <= budget + allowed + 1e-6,
+              `${key} wave ${w} under ${rules.join('+')} spent ${spent.toFixed(1)} of ${budget} — `
+              + `the cheapest body it could field is ${cheapest}, so at most ${(budget + allowed).toFixed(1)} `
+              + 'was unavoidable');
+            /**
+             * …AND THE FILL STOPPED FOR A REASON IT CAN NAME.
+             *
+             * Stated against the composer's OWN stopping conditions rather than
+             * as a share of the budget, because a share means nothing at wave 1
+             * (7 threat, where one B1 is 14% on its own) and is too loose at
+             * wave 30. A wave may end short only because a cap bound it — the
+             * body cap, or the heavy limit with nothing light left to buy — and
+             * never because a draw came back unaffordable and it gave up, which
+             * is what it used to do and what stranded 43% of the Ember Shelf's
+             * wave 1.
+             */
+            const left = budget - spent;
+            const bodies = d.spawnQueue.length;
+            const heavies = d.spawnQueue.filter((e) => Waves.isHeavy(Waves.spawnType(e))).length;
+            const lightLeft = shape.types.some((t) => !Waves.isHeavy(t)
+              && (ARCHETYPES[t]?.threat ?? Infinity) <= left);
+            const capped = bodies >= shape.cap
+              || (heavies >= shape.heavy && !lightLeft)
+              || left < cheapest;
+            assert(capped,
+              `${key} wave ${w} under ${rules.join('+')} stopped at ${bodies} bodies with `
+              + `${left.toFixed(1)} threat left, a cap of ${shape.cap}, ${heavies}/${shape.heavy} `
+              + `heavies and a cheapest body at ${cheapest} — it gave up with a body still affordable`);
+            if (left > worst.short) {
+              worst.short = left; worst.cheapest = cheapest; worst.at = `${key} w${w} ${rules.join('+')}`;
+            }
+            checked++;
+          }
+        }
+      }
+    }
+    return `${checked} waves composed under ${Waves.CONDITION_MAX} rules from wave 1 across `
+      + `${LEVEL_ORDER.length} theatres; worst unspent ${worst.short.toFixed(1)} threat against a `
+      + `cheapest body of ${worst.cheapest.toFixed(1)} at ${worst.at}`;
   });
 
   check('conditions: a level that cannot field one is never given it', () => {
