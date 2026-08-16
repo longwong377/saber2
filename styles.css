@@ -446,6 +446,10 @@ h3::after{content:"";flex:1;height:2px;background:var(--panel-hi)}
 .diff.rule.barred{opacity:.4;filter:saturate(.35);pointer-events:none;cursor:default;
   box-shadow:none;transform:none}
 .diff.rule.barred .txt span{color:var(--dimmer)}
+/* The seed field borrows the co-op name field's shape — same socket, same ink,
+   one size down because it holds a number and not a name. */
+.seedbox{margin-top:18px}
+.seedbox input{padding:9px 11px;font-size:13px}
 
 /* sliders & checks ────────────────────────────────────────────────────
    The track is a socket cut into the panel and the thumb is a block in it.

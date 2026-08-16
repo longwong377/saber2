@@ -75,6 +75,15 @@
           number, they are in force from the first wave, and none of them makes the run cheaper.</p>
         <div id="rule-list" class="difflist"></div>
         <p class="hint" id="rule-seed"></p>
+        <!-- THE RUN'S NUMBER. Empty draws a fresh one on every Ignite, which is
+             what an endless mode wants by default; type one in and the waves,
+             the elite rolls, the duel forms and the arrivals all replay. It
+             sits under the rules because the two are one thought: a seed makes
+             a rule set a thing you can hand somebody. -->
+        <label class="netname seedbox">Seed
+          <input id="opt-seed" placeholder="fresh each run" maxlength="10"
+                 spellcheck="false" autocomplete="off" inputmode="numeric">
+        </label>
       </div>
       <!-- THE LISTS SCROLL; THE BUTTON DOES NOT.
            Ignite used to be the last child of the scrolling column, held down

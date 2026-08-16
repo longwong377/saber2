@@ -1587,7 +1587,12 @@ export async function run({ check, assert }) {
       // The standing order, as six cards built straight from FORMATIONS — the
       // formation records ARE the card list, so the row cannot fall out of step
       // with the orders on the keyboard.
-      'commandFormation'];
+      'commandFormation',
+      // The run rules — a card per entry of Waves.CONDITIONS, on the Deploy
+      // panel, toggled rather than selected. Same shape as the mode list and
+      // held to the same standard: `_syncRules` writes `this.s.rules` by name,
+      // which is what the regex below is checking for.
+      'rules'];
     /**
      * The settings that are TYPED — a text box rather than a slider, a
      * checkbox or a row of cards. One so far: the co-op name, which is the
@@ -1596,7 +1601,7 @@ export async function run({ check, assert }) {
      * and the menu has to write the key by name — so this is a third shape of
      * control, not a third way to be excused from having one.
      */
-    const TYPED = { playerName: 'opt-name' };
+    const TYPED = { playerName: 'opt-name', seed: 'opt-seed' };
     const orphans = [], ghost = [];
     for (const key of Object.keys(DEFAULT_SETTINGS)) {
       if (TYPED[key]) {

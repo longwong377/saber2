@@ -284,7 +284,11 @@ async function buildWorld(levelKey, onProgress = null) {
    * by default. In a session the host's number wins, exactly as the level and
    * the difficulty do — a co-op run has to be ONE run.
    */
-  const asked = sessionOr('seed');
+  // Two statements rather than one `sessionOr`, for the reason the difficulty
+  // line below gives: `settings.seed` is the named reader Menu.SETTING_READERS
+  // points at, and a setting whose only reader is behind an indirection is a
+  // setting the "every control reaches the game" check can no longer see.
+  const asked = session && session.seed !== undefined ? session.seed : settings.seed;
   world.runSeed = Number.isFinite(Number(asked)) && asked !== null && asked !== ''
     ? (Number(asked) | 0) >>> 0
     : (Math.random() * 0xffffffff) >>> 0;

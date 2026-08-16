@@ -4618,6 +4618,27 @@ export class Menu {
         this.hooks.onName?.(this.s.playerName);
       });
     }
+    /**
+     * THE RUN'S NUMBER — typed, like the co-op name, and for the same reason:
+     * it is the other setting in this game whose value the player supplies
+     * rather than picks off a list.
+     *
+     * Empty is null and null means "draw one", so a player who never touches
+     * the box plays exactly the game they always played. Digits only, because
+     * `main.js` seeds a 32-bit stream with it and a word would silently become
+     * NaN and then a fresh seed — a control that quietly ignores what was typed
+     * into it is the same defect as one nothing reads.
+     */
+    const seedField = document.getElementById('opt-seed');
+    if (seedField) {
+      seedField.value = this.s.seed == null ? '' : String(this.s.seed);
+      seedField.addEventListener('input', () => {
+        const clean = String(seedField.value || '').replace(/[^0-9]/g, '').slice(0, 10);
+        if (seedField.value !== clean) seedField.value = clean;
+        this.s.seed = clean === '' ? null : (Number(clean) >>> 0);
+        saveSettings(this.s);
+      });
+    }
     bind('btn-host', () => this.hooks.onHost?.());
     bind('btn-join', () => {
       const code = document.getElementById('join-code').value.trim().toUpperCase();

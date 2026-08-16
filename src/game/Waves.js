@@ -1046,11 +1046,25 @@ export const CONDITION_KEYS = Object.keys(CONDITIONS);
  * rule" has to be asked at a depth where the answer is about the ROSTER rather
  * than about how shallow the question was asked. Derived from the two tables
  * rather than typed, so a condition or a modifier added later moves it.
+ *
+ * A FUNCTION AND NOT A CONSTANT, because `MODIFIER_KEYS` comes from Enemy.js
+ * and Enemy.js imports this file back. Evaluated at module scope it read the
+ * other half of that cycle while it was still initialising and threw
+ * `ReferenceError: Cannot access 'MODIFIER_KEYS' before initialization` for any
+ * entry point that reached Enemy.js first — which is most of them. Computed on
+ * the first call instead, by which time both halves are up, and memoised
+ * because it is asked once per rule per repaint of the Deploy panel.
  */
-export const RULE_DEPTH = Math.max(
-  ...CONDITION_KEYS.map((k) => CONDITIONS[k].since ?? 1),
-  ...MODIFIER_KEYS.map((k) => MODIFIERS[k].since ?? 1),
-);
+let _ruleDepth = 0;
+export function ruleDepth() {
+  if (!_ruleDepth) {
+    _ruleDepth = Math.max(
+      ...CONDITION_KEYS.map((k) => CONDITIONS[k].since ?? 1),
+      ...MODIFIER_KEYS.map((k) => MODIFIERS[k].since ?? 1),
+    );
+  }
+  return _ruleDepth;
+}
 
 /** Does either of these two conditions forbid the other? Both directions. */
 export function rulesConflict(a, b) {
@@ -2020,7 +2034,7 @@ export class WaveDirector {
    *
    * The veto is `needs`, which already exists and is already the authority —
    * this only asks it at a depth where the answer is about the theatre's
-   * roster and not about how shallow the question was (see RULE_DEPTH), and
+   * roster and not about how shallow the question was (see `ruleDepth`), and
    * turns the boolean into the line the Deploy panel prints.
    *
    * `needs(types, d)` reads `d.wave` — `vanguard`'s asks whether the standard
@@ -2031,10 +2045,11 @@ export class WaveDirector {
     const C = CONDITIONS[key];
     if (!C) return 'no such rule';
     if (!C.needs) return null;
+    const at = ruleDepth();
     const was = this.wave;
-    this.wave = RULE_DEPTH;
+    this.wave = at;
     let ok = false;
-    try { ok = !!C.needs(this.unlockedAt(RULE_DEPTH), this); } finally { this.wave = was; }
+    try { ok = !!C.needs(this.unlockedAt(at), this); } finally { this.wave = was; }
     return ok ? null : (C.unmet || 'this theatre cannot field it');
   }
 
