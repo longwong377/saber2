@@ -2843,14 +2843,46 @@ export class World {
     const list = (players || this.players).filter((p) => p && p.alive !== false);
     if (!list.length) return null;
 
-    const sides = list.map((_, i) => sideTeam(i));
-    /* The peer's order is not on the wire — `LOOK_KEYS` leaves it off
-     * deliberately, because it grants boons rather than describing a face — so
-     * a commander this machine cannot ask defaults to the game's own default
-     * order. With two armies and two commanders who both want the same one,
-     * somebody has to take the other; knowing the peer's choice would only
-     * change WHICH of the two is disappointed. */
-    const armies = assignArmies(list.map((p) => p.order || this.settings?.order || 'jedi'));
+    /**
+     * TWO SIDES, WHOEVER TURNS UP — and this is what makes a 2v2 a 2v2 rather
+     * than four private wars on one plain.
+     *
+     * It used to be `sideTeam(i)`: a side of its own for every commander, up to
+     * the four `SIDES` holds. That is right for a free-for-all and it is not
+     * what this mode can field. There are TWO armies on the roster — the
+     * Republic and the Confederacy — so a third side has no units, no colour
+     * and no enemy list, and `formUp` has always laid its anchors out
+     * ALTERNATING down one line, which is a 2v2's geometry and nothing else's.
+     * Driven at four commanders before this: four sides, four armies out of a
+     * list of two, two commanders sharing each end of the field in opposing
+     * colours, and a `DuelMatch` whose `sides` carried the same number twice —
+     * so `update`'s "one side left standing" test found two survivors when one
+     * side had been wiped out, and the battle could not end.
+     *
+     * So join order alternates: evens against odds, which is exactly the line
+     * `formUp` was already drawing. Identical for two commanders, which is
+     * every session that has ever run. An odd count is a 2v1 rather than a
+     * refusal — an uneven meeting is a real thing to want, and stranding the
+     * third player is not.
+     */
+    const sides = list.map((_, i) => sideTeam(i % 2));
+    /**
+     * …AND THE ARMY THEY CHOSE, now that it is on the wire.
+     *
+     * `LOOK_KEYS` used to leave `order` off, so a commander this machine could
+     * not ask defaulted to the HOST's settings and two Sith met as the Republic
+     * against the Confederacy. It crosses on the roster now (see Net.js), and
+     * `look` is where a RemoteAvatar keeps the sheet it arrived with — read
+     * from there rather than copied onto a second field, so there is one
+     * authority for what a peer said about itself. The fallback stays for a
+     * peer that sent none.
+     *
+     * `sides` goes in with it: an army belongs to a SIDE, so two allies lead
+     * one army and wear one colour rather than two commanders on the same
+     * anchor in opposing paint.
+     */
+    const armies = assignArmies(list.map((p) => p.look?.order || p.order
+      || this.settings?.order || 'jedi'), sides);
     d.formUp(sides, armies, list);
 
     for (let i = 0; i < list.length; i++) {
@@ -2917,10 +2949,39 @@ export class World {
      * finished battle. `beginVersus` is idempotent and runs again when that
      * body appears, which is where the match is really made.
      */
-    if (!this.match && sides.length >= 2) {
-      this.match = new DuelMatch(this.rules, sides);
+    /* The sides IN PLAY, each named once. `DuelMatch` keys its scores on the
+     * side and filters `sides` for who is still standing, so the same number
+     * twice — which is what a 2v2 hands it — makes a wiped-out side look like
+     * two survivors and the round never ends. */
+    const fielded = [...new Set(sides)];
+    if (!this.match && fielded.length >= 2) {
+      this.match = new DuelMatch(this.rules, fielded);
       this._matchSent = '';
     }
+    /**
+     * …AND A HOST WHO TURNED THIS ON AND IS STANDING HERE ALONE IS TOLD SO.
+     *
+     * The line above is why they are not simply handed the field three seconds
+     * in — a match needs two sides — and the cost of that fix was silence: an
+     * army deployed onto an empty plain, a countdown that never starts, no
+     * opponent, and nothing anywhere saying why. The player's own reading of
+     * that is that the mode is broken.
+     *
+     * Said ONCE per spell of being alone. `beginVersus` is idempotent and
+     * main.js calls it again on every roster change, so an unguarded notify
+     * would be a banner every time anybody's name moved; and clearing the flag
+     * when a second side does arrive is what makes it say so AGAIN if that
+     * opponent then leaves, which is the same fact arriving the other way
+     * round.
+     */
+    if (fielded.length < 2) {
+      if (!this._aloneAt) {
+        this._aloneAt = true;
+        this.notify('NO OPPONENT YET', this.net?.code
+          ? `a meeting needs a second commander — share the code ${this.net.code}`
+          : 'a meeting needs a second commander — this is a session for two');
+      }
+    } else this._aloneAt = false;
     if (!d.active) d.start(1);
     else d.deployAll();
     return d.commanders;
@@ -3084,7 +3145,130 @@ export class World {
    */
   applyOrder(peerId, msg) {
     if (this.netMode !== 'host' || !this.command) return false;
-    return this.command.order(msg?.f);
+    return this.command.order(msg?.f, this.commanderFor(peerId));
+  }
+
+  /**
+   * WHOSE ARMY A PEER IS ENTITLED TO MOVE.
+   *
+   * `applyOrder` used to call `this.command.order(f)`, which defaults to
+   * `commanders[0]` — the HOST's commander. In co-op that is right and is the
+   * whole point: one army, everybody in the session leading it, so a peer's
+   * order and the host's reach the same line. In a MEETING it is the defect the
+   * mode was built to remove: a joining commander pressing `wedge` re-formed the
+   * host's line, in the host's colours, against their own army — the two
+   * machines then disagreed about a formation neither player had ordered for
+   * the army they were watching.
+   *
+   * So a peer moves the army it is commanding, and falls back to the shared one
+   * when it is not commanding anything. The fallback is not defensive: in co-op
+   * a peer HAS no commander of its own, and `find` returning nothing is exactly
+   * the statement that there is one army here.
+   *
+   * The host's own Player is skipped by identity rather than by id: only a
+   * RemoteAvatar carries one, so a `undefined === undefined` match would hand
+   * the first peer to send anything the host's army.
+   */
+  commanderFor(peerId) {
+    const d = this.command;
+    if (!d) return null;
+    return d.commanders.find((c) => c.player && c.player !== this.player
+      && c.player.id === peerId) || d.commander;
+  }
+
+  /**
+   * A JOINING COMMANDER PRESSED BUY, OR DONE.
+   *
+   * The other direction from every Command message but `order`, and it exists
+   * for the identical reason: the screen is on this machine and the ROSTER —
+   * the purse, the shelf, the strength cap, the names — is on the host's.
+   *
+   * What crosses is the unit or the word "done", and deliberately nothing else.
+   * A cost, a balance or a strength on this wire would be a number the host has
+   * to either trust or re-derive, and re-deriving it is what `recruit` already
+   * does with the roster in its hands.
+   */
+  requestMuster(type, done = false) {
+    if (this.netMode !== 'client' || !this.net?.connected) return false;
+    this.net.toHost(done ? { t: 'muster', done: 1 } : { t: 'muster', u: type });
+    return true;
+  }
+
+  /**
+   * THE MUSTER, IN WHICHEVER DIRECTION THIS MACHINE IS FACING.
+   *
+   * One message type, one handler, and the branch is `netMode` — which is total
+   * and mutually exclusive, so an offer can only ever be read by a machine that
+   * does not hold the army and an intent can only ever be acted on by one that
+   * does. That split is the whole of the security story, and it is the reason
+   * Net.js does not guard this case by direction: a guard there could assert
+   * only one of the two.
+   *
+   * VALIDATION IS NOT REPEATED HERE, exactly as it is not in `applyOrder`.
+   * `CommandDirector.recruit` already refuses a unit that is not in this army's
+   * list, one the advance has not reached, one there are not the points for and
+   * one that would break the strength cap — and it does all four against the
+   * roster the host is holding. A second membership or affordability test on
+   * this side would be a rule restated, which is how the two come to disagree
+   * about what the player can afford. What this adds is the one thing the
+   * director cannot know: which commander is asking.
+   */
+  applyMuster(msg, peerId) {
+    const d = this.command;
+    if (!d || !msg) return false;
+    /* A client owns none of this and is told all of it. */
+    if (this.netMode === 'client') return d.applyMusterNet?.(msg.o ?? null, msg.no) ?? false;
+    if (this.netMode !== 'host') return false;
+    /* No muster is open, so there is nothing to spend and nothing to close. A
+     * peer whose card is stale — the host closed it a frame ago — gets its next
+     * `muster` message from `closeMuster`'s own publish and takes the card
+     * down; it does not get to reopen a purse. */
+    if (!d.mustering) return false;
+    const c = this.commanderFor(peerId);
+    if (msg.done) return d.closeMuster();
+    /* `recruit` publishes the new offer to everyone sharing this purse when it
+     * succeeds — the host's own screen buys through the same line. A REFUSAL
+     * publishes nothing and is nobody else's business, so it goes back to the
+     * one peer that asked, with the offer they still have. */
+    if (d.recruit(msg.u, c)) return true;
+    this.net?.toPeer?.(peerId, { t: 'muster', o: d.musterOffer(c), no: d.refused });
+    return false;
+  }
+
+  /**
+   * THE MUSTER OFFER, TO EVERY MACHINE THAT IS NOT HOLDING THE PURSE.
+   *
+   * SENT AT THE MOMENT IT MOVES, and not folded into `_armyTick`'s throttled
+   * on-change send, which is where this obviously belonged and would not have
+   * worked at all. A muster STOPS THE WORLD on the machine showing it —
+   * `Screens.take` is the whole point of that overlay — so on a host sitting on
+   * its own muster card `world.update` is not running, `_netTick` is not
+   * running, and a polled message is never sent. The one moment a client most
+   * needs to hear from the host is the one moment the host's frame loop is
+   * stopped. So the three moments publish for themselves: the muster opening
+   * (`_areaClear`), a purchase landing (`recruit`), and the card coming down
+   * (`closeMuster`).
+   *
+   * ADDRESSED IN A MEETING, BROADCAST IN A CAMPAIGN — the same split
+   * `_armyTick` makes and for the same reason. In co-op there is one army and
+   * one purse and everybody in the session is spending it, so one offer is the
+   * truth on every screen. In a meeting each commander has a roster and a purse
+   * of their own, and the Confederacy's shelf is not the Republic's.
+   */
+  publishMuster(cmdr = null) {
+    const net = this.net, d = this.command;
+    if (this.netMode !== 'host' || !net?.connected || !d) return false;
+    const offer = (c) => (d.mustering ? d.musterOffer(c) : null);
+    if (!d.versus || d.commanders.length < 2) {
+      net.broadcast({ t: 'muster', o: offer(d.commander) });
+      return true;
+    }
+    for (const c of (cmdr ? [cmdr] : d.commanders)) {
+      const id = c.player?.id;
+      if (!id || c.player === this.player) continue;
+      net.toPeer(id, { t: 'muster', o: offer(c) });
+    }
+    return true;
   }
 
   /**

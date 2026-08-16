@@ -986,6 +986,20 @@ export function commandConfig(settings) {
 export const VERSUS_SEPARATION = 120;
 
 /**
+ * HOW FAR APART TWO ALLIED COMMANDERS STAND ON THE SAME END OF THE FIELD.
+ *
+ * Only reached in a 2v2 and above, and DERIVED from the deployment ring rather
+ * than picked: `deploy` puts a roster at `4 + (i % 3) * 2.2` metres around its
+ * commander, so the widest body of an army sits 8.4 m out and two armies need
+ * more than 16.8 m between their anchors not to interleave. Two allied lines
+ * that deploy through one another are one crowd on the frame the battle starts,
+ * and an order given to either of them is unreadable. 20 m leaves them three
+ * metres clear and still reads as one line rather than two separate battles on
+ * the same plain.
+ */
+export const PAIR_SPACING = 20;
+
+/**
  * WHICH ARMY EACH COMMANDER LEADS, and this is the fix for two Jedi both
  * leading the Republic.
  *
@@ -1007,18 +1021,42 @@ export const VERSUS_SEPARATION = 120;
  * recomputes it must reach the same one or the two machines disagree about who
  * is wearing which colour.
  *
- * With more commanders than armies — a 2v2 — the extras share, which is
- * correct: the ARMY decides the units and the paint, the SIDE decides who may
- * hurt whom, and they are deliberately different questions.
+ * WITH MORE COMMANDERS THAN ARMIES — a 2v2 — THE EXTRAS SHARE, and `sides` is
+ * what makes that sharing mean something. This note used to end by saying the
+ * extras share "which is correct: the ARMY decides the units and the paint, the
+ * SIDE decides who may hurt whom, and they are deliberately different
+ * questions". Both halves of that are true and the conclusion did not follow.
+ * Driven at four commanders, before `sides` existed: `taken` is full after the
+ * second, so every commander past it fell to `ARMY_IDS[i % 2]` — which pairs
+ * with the JOIN ORDER and not with the side. Four Jedi came out
+ * republic/separatist/republic/separatist, which is right by luck; a Sith
+ * hosting three Jedi came out separatist/republic/republic/separatist, so the
+ * two allies on side 0 stood on one anchor in opposing colours, one of them
+ * fielding the enemy's units, and neither the player nor the enemy could read
+ * the field. Paint that does not track the side is worse than no paint.
+ *
+ * So an army belongs to a SIDE, not to a commander: the first commander on a
+ * side picks it (their order still choosing first, the conflict still resolved
+ * against what is already taken) and everybody who joins that side leads it
+ * with them. Omit `sides` and every commander is their own side, which is the
+ * one-army-each meeting and is byte for byte what this returned before.
+ *
+ * @param sides one side number per commander, in the same order — from
+ *              `World.beginVersus`, which is the only thing that hands them out.
  */
-export function assignArmies(orders = []) {
+export function assignArmies(orders = [], sides = null) {
   const out = [];
   const taken = new Set();
+  /** side → the army that side is fielding. The whole of "allies share". */
+  const bySide = new Map();
   for (let i = 0; i < orders.length; i++) {
+    const side = sides && sides[i] !== undefined ? sides[i] : `#${i}`;
+    if (bySide.has(side)) { out.push(ARMIES[bySide.get(side)]); continue; }
     const want = sideForOrder(orders[i]).id;
     const free = ARMY_IDS.find((k) => !taken.has(k));
     const id = !taken.has(want) ? want : (free ?? ARMY_IDS[i % ARMY_IDS.length]);
     taken.add(id);
+    bySide.set(side, id);
     out.push(ARMIES[id]);
   }
   return out;
@@ -1355,6 +1393,18 @@ export class CommandDirector extends WaveDirector {
     this.log = [];
     this.onRoster = null;         // (summary) => void      — the HUD's feed
     this.onMuster = null;         // (offer) => void        — the between-areas screen
+    /**
+     * THE MUSTER CARD COMES DOWN, and only a machine that is not holding the
+     * army needs telling.
+     *
+     * On the host the card is dismissed by the button that dismissed it. On
+     * every other machine the muster ends when the HOST's player presses Done,
+     * which is a fact that arrives over the wire and has nowhere else to land —
+     * without this a joining commander sits on an open card, with the world
+     * stopped behind it, through the whole of the next area. See
+     * `applyMusterNet`.
+     */
+    this.onMusterClose = null;    // () => void
     this.onOrder = null;          // (formation, squads) => void
     /* Its own stream off the run's number, exactly as the four in Waves.js. */
     if (this.seed !== null) seedCommand(this.seed ^ 0x6f4a1b3d);
@@ -1489,6 +1539,22 @@ export class CommandDirector extends WaveDirector {
    * never "what exists", it is "should this be my third heavy or my first ARC".
    */
   musterOffer(c = this.commander) {
+    /**
+     * A SHELL SAYS WHAT IT WAS TOLD, VERBATIM — the same rule `readout` states,
+     * and it is load-bearing for a different reason here.
+     *
+     * Every number a muster screen draws is a fact about a purse this machine
+     * does not hold: `points` is the balance, `afford` is the balance against a
+     * price, `have` is what is already on the field, and `roster` is the roll
+     * the reinforcements join. A client computing them from its own shell would
+     * offer every unit in the army at zero points and call none of them
+     * affordable. So the host's own `musterOffer()` crosses whole and comes back
+     * out of here unchanged — one authority, no twin.
+     *
+     * `null` until the host says the muster is open, which is exactly what
+     * `mustering` already means and what a screen must not open without.
+     */
+    if (this._netShell) return this._netOffer;
     const A = this.area;
     const have = new Map();
     for (const t of c.roster.living) have.set(t.type, (have.get(t.type) || 0) + 1);
@@ -1522,6 +1588,25 @@ export class CommandDirector extends WaveDirector {
    * over-spends is a mode whose roster screen lies.
    */
   recruit(type, c = this.commander) {
+    /**
+     * A COMMANDER WHO IS NOT HOLDING THE PURSE CAN ONLY ASK TO SPEND IT.
+     *
+     * The same shape as `order` below, for the same reason and with the same
+     * refusal to write anything locally: the request goes to the host, the host
+     * runs THIS method against the roster it is actually keeping, and the
+     * screen's numbers move when the host's answer arrives (see
+     * `World.applyMuster` and `applyMusterNet`). A client that decremented its
+     * own copy of the points would disagree with the host the first time it was
+     * told no — and a muster whose totals lie is worse than no muster at all,
+     * which is the same sentence main.js already writes about a screen keeping
+     * its own points.
+     *
+     * WHAT CROSSES IS THE UNIT, and nothing else. Not the cost, not the
+     * balance, not the strength: every one of those is derived below from the
+     * roster the host holds, so there is no claim a peer can make about its own
+     * purse that anything reads.
+     */
+    if (this._netShell) { this.refused = null; this.world?.requestMuster?.(type); return null; }
     const rung = c.army.tiers.find((t) => t.type === type);
     this.refused = null;
     if (!rung) { this.refused = `${type} is not one of ${c.army.name}'s units`; return null; }
@@ -1531,6 +1616,13 @@ export class CommandDirector extends WaveDirector {
     c.roster.points -= rung.cost;
     const t = c.roster.enlist(type, { joined: this.areaNumber });
     this.log.push({ t: 'enlist', name: t.name, unit: t.label, area: this.areaNumber });
+    /* THE PURSE MOVED, so anybody looking at a screen of it is now wrong. Here
+     * rather than at the two callers because this is the ONE place a
+     * reinforcement is bought — the host's own screen reaches it through
+     * main.js, a peer's through `World.applyMuster`, and the fallback through
+     * `autoMuster` above — and a publish per caller is three chances to forget
+     * one. No-op outside a session; `_bulk` is the fallback's own suppression. */
+    if (this.mustering && !this._bulk) this.world?.publishMuster?.(c);
     return t;
   }
 
@@ -1550,18 +1642,38 @@ export class CommandDirector extends WaveDirector {
    * the thing it was asked to add.
    */
   autoMuster(c = this.commander) {
+    /**
+     * A SHELL SPENDS NOTHING, and this is the refusal the whole muster wire was
+     * missing rather than a guard against a caller that will not come.
+     *
+     * `main.js` falls back to `autoMuster()` whenever the muster screen cannot
+     * be raised, and every client in a session runs that same main.js. Without
+     * this line a joining commander whose card failed to draw would walk the
+     * host's shelf and send one purchase intent per affordable rung — up to
+     * forty of them, spending a purse it cannot see, for a player who was never
+     * shown a choice. Which is the defect this method's own header describes
+     * ("the muster with nobody watching") arriving over the wire.
+     */
+    if (this._netShell) return 0;
     let bought = 0;
     const want = Math.max(0, OPENING_STRENGTH - c.roster.strength);
     const cheapest = c.army.tiers[0].type;
-    for (let i = 0; i < want; i++) if (this.recruit(cheapest, c)) bought++;
-    // Then the best thing on the shelf, until nothing on it is affordable.
-    for (let guard = 0; guard < 40; guard++) {
-      const affordable = this.musterOffer(c).units.filter((u) => u.afford);
-      if (!affordable.length) break;
-      affordable.sort((a, b) => b.cost - a.cost);
-      if (!this.recruit(affordable[0].type, c)) break;
-      bought++;
-    }
+    /* One message at the end rather than one per purchase: `recruit` publishes
+     * the new offer to the peers sharing this purse, and forty of them for a
+     * fallback nobody is watching would cost more than the roster does. */
+    this._bulk = true;
+    try {
+      for (let i = 0; i < want; i++) if (this.recruit(cheapest, c)) bought++;
+      // Then the best thing on the shelf, until nothing on it is affordable.
+      for (let guard = 0; guard < 40; guard++) {
+        const affordable = this.musterOffer(c).units.filter((u) => u.afford);
+        if (!affordable.length) break;
+        affordable.sort((a, b) => b.cost - a.cost);
+        if (!this.recruit(affordable[0].type, c)) break;
+        bought++;
+      }
+    } finally { this._bulk = false; }
+    if (bought) this.world?.publishMuster?.(c);
     return bought;
   }
 
@@ -2199,10 +2311,14 @@ export class CommandDirector extends WaveDirector {
         c.roster.army = c.army;
       }
       /* Alternating ends of one line through the origin. With two commanders
-       * that is exactly ±half; with four it is 2v2 sharing two anchors, which
-       * is what a side rather than an army means. */
+       * that is exactly ±half; with four it is 2v2, two commanders to an end,
+       * standing `PAIR_SPACING` apart along the line rather than on top of each
+       * other. The lateral step is `floor(i/2)` and not a table of four cases:
+       * the old `i < 2 ? 0 : (i % 2 ? 14 : -14)` gave the fifth and sixth
+       * commanders the SAME ground as the third and fourth, so a 3v3 deployed
+       * two armies inside one another. Identical for i < 4. */
       const z = (i % 2 === 0 ? -half : half);
-      const x = (i < 2 ? 0 : (i % 2 === 0 ? -14 : 14));
+      const x = Math.floor(i / 2) * PAIR_SPACING * (i % 2 === 0 ? -1 : 1);
       c.anchor = new THREE.Vector3(x, t ? t.height(x, z) : 0, z);
       // Facing the other end of the line. `_frame` uses this when there is no
       // body to read a heading off — which is every frame before the peer's
@@ -2386,6 +2502,12 @@ export class CommandDirector extends WaveDirector {
     const offer = this.musterOffer();
     this.world?.notify?.(`${AREAS[this.areaIndex - 1].name.toUpperCase()} — HELD`,
       `${this.roster.points} reinforcement points · ${this.roster.strength} standing`);
+    /* …AND ON EVERY OTHER MACHINE IN THE SESSION. `onMuster` raises the card on
+     * the machine holding the army; this raises it on the machines that are not,
+     * which is where the whole defect was — a joining commander was told
+     * `mustering: true` on the roster feed and given nothing to spend, so the
+     * only muster that ever happened was somebody else's. */
+    this.world?.publishMuster?.();
     if (this.onMuster) this.onMuster(offer);
     else {
       // No screen wired: muster for the player and press on, rather than
@@ -2461,8 +2583,19 @@ export class CommandDirector extends WaveDirector {
   /** The muster screen is done. Deploy the new roster and start the area. */
   closeMuster() {
     if (!this.mustering) return false;
+    /* A commander who is not holding the army cannot start the next area
+     * either — the same ask `recruit` and `order` make, through the same door.
+     * Nothing is written here: `mustering` goes false when the host's next
+     * `muster` message says the card is down, which is the only version of this
+     * that cannot leave a client playing an area the host has not begun. */
+    if (this._netShell) return this.world?.requestMuster?.(null, true) ?? false;
     this.mustering = false;
     this.deploy();
+    /* The card comes down on every OTHER machine too, and this is the half a
+     * client cannot do for itself: the host's player pressing Done is the only
+     * thing that ends the muster, so a peer sitting on an open card would sit
+     * there through the first wave of the next area. */
+    this.world?.publishMuster?.();
     this.world?.notify?.(this.area.name.toUpperCase(), this.area.brief);
     this.intermission = 4.0;
     return true;
@@ -2565,6 +2698,8 @@ export class CommandDirector extends WaveDirector {
   netShell() {
     this._netShell = true;
     this._netReadout = null;
+    /** The host's muster offer, or null for "no muster is open". See below. */
+    this._netOffer = null;
     for (const c of this.commanders) {
       c.roster.all.length = 0;
       c.roster.taken.clear();
@@ -2604,6 +2739,52 @@ export class CommandDirector extends WaveDirector {
     // Only on a change: `onOrder` is an ANNOUNCEMENT, and one that fired twice
     // a second would be an indicator flashing for a formation nobody ordered.
     if (r.formation !== was) this.onOrder?.(FORMATIONS[r.formation] || FORMATIONS[DEFAULT_FORMATION], r.squads | 0);
+    return true;
+  }
+
+  /**
+   * THE HOST'S MUSTER, AS THIS MACHINE NOW KNOWS IT — and the reason a client
+   * can spend its own reinforcement points at all.
+   *
+   * `applyNet` already carried `mustering` and `points`, so a joining commander
+   * knew perfectly well that a muster was open and how much was in the purse,
+   * and had no shelf to spend it on and no way to say what it wanted. The
+   * screen was raised on the host alone, so either the host's player chose that
+   * army's reinforcements for both of them or — with no screen wired at all —
+   * `autoMuster` did. Neither of those is the player deciding.
+   *
+   * @param o the host's `musterOffer()` for THIS machine's commander, verbatim
+   *          off the wire, or null when the muster has closed. Verbatim for the
+   *          reason `applyNet` takes a whole `readout()`: the offer is the
+   *          points, the shelf, what each rung costs, how many you already
+   *          field and whether you can afford one — all derived from a roster
+   *          this machine does not hold, and every one of them wrong if it
+   *          reassembled them.
+   *
+   * @param no the host's reason for refusing the last purchase, or nothing.
+   *           `recruit` guards five cases and puts the sentence on `refused`,
+   *           which is what the screen prints — and every one of those guards
+   *           runs on the machine holding the purse, so on a client the field
+   *           can only be filled from here. It rides the same message as the
+   *           fresh offer because they are one answer to one ask: this is what
+   *           you may not have, and this is what you still can.
+   *
+   * `mustering` is written from the message rather than left to the roster feed
+   * because the two arrive at different times and the card must not be able to
+   * be up while the flag says no muster is open. `_areaClear` publishes before
+   * it raises its own card, so this lands first on every other machine.
+   */
+  applyMusterNet(o, no = null) {
+    this._netShell = true;
+    const had = this._netOffer;
+    this._netOffer = o || null;
+    this.mustering = !!o;
+    this.refused = no || null;
+    if (o) this.onMuster?.(o);
+    /* Only on a transition, for the reason `applyNet` fires `onOrder` only on a
+     * change: a close is an ANNOUNCEMENT, and one raised every time the host
+     * mentions that no muster is open would tear down a card nobody opened. */
+    else if (had) this.onMusterClose?.();
     return true;
   }
 }

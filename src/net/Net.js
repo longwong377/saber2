@@ -53,13 +53,30 @@ export const PEER_TIMEOUT = 8;
  * Sent ONCE, on hello/welcome, and carried on the roster — it is identity, not
  * state, so putting it in the 24 Hz avatar packet would pay for it forever.
  *
- * The ten of the twelve that a RemoteAvatar can actually wear. `robeCut` and
- * `order` are deliberately absent: the first dresses a simulated cloak a remote
- * body does not have, and the second grants boons rather than describing a
- * face. Sending them would be two more fields on the wire with no reader.
+ * The ten of the twelve that a RemoteAvatar can actually wear, and `order`,
+ * which it does not wear at all.
+ *
+ * `robeCut` is still deliberately absent: it dresses a simulated cloak a remote
+ * body does not have, so it would be a field on the wire with no reader.
+ *
+ * `ORDER` WAS ABSENT FOR THE SAME STATED REASON AND THE REASON STOPPED BEING
+ * TRUE. The note here read "it grants boons rather than describing a face", and
+ * that is correct about what an order does to the body — and a meeting made it
+ * decide something else entirely. `assignArmies` derives the ARMY from the
+ * Jedi/Sith choice, so with the field off the wire `World.beginVersus` had to
+ * default every peer to the host's own settings: two Sith met as the Republic
+ * against the Confederacy, and the Sith who was handed the Republic was reading
+ * an army list they had not chosen. With two armies and two commanders who both
+ * want the same one somebody must still be disappointed — that is
+ * `assignArmies`' whole job — but knowing the real choice changes WHICH of
+ * them, and a Jedi facing a Sith stops being disappointed at all.
+ *
+ * It is identity for the length of a match exactly as `team` and the sheet are,
+ * so it rides the roster with them rather than the 24 Hz packet, and it is one
+ * short string.
  */
 export const LOOK_KEYS = ['colorIndex', 'bladeLength', 'coreWidth', 'hiltStyle', 'robeIndex',
-  'skinIndex', 'hairIndex', 'build', 'species', 'face'];
+  'skinIndex', 'hairIndex', 'build', 'species', 'face', 'order'];
 
 export function packLook(settings = {}) {
   const out = {};
@@ -402,6 +419,31 @@ export class Net {
        * once there is more than one — see the sides work in Player.js.
        */
       case 'order': if (this.isHost) this._emit('order', conn.peer, msg); break;
+      /**
+       * THE MUSTER, AND IT IS THE ONE MESSAGE THAT TRAVELS BOTH WAYS.
+       *
+       * Host → peers it is the OFFER: `musterOffer()` verbatim, or null when
+       * the card comes down. Peer → host it is an INTENT: a unit to buy, or
+       * "I am done". One type rather than two because it is one conversation
+       * with one subject, and every reply is the answer to an ask — the shape
+       * `ping`/`pong` has, without the second name.
+       *
+       * THE DIRECTION IS NOT DECIDED HERE, and that is deliberate rather than
+       * an omission. `army` and `order` each guard on `isHost` because each has
+       * exactly one direction and the guard IS the direction; this one has two,
+       * so a guard here could only ever assert half of it. It is resolved in
+       * `World.applyMuster`, which branches on `netMode` — a total split, so a
+       * message lands in exactly one branch and neither branch reads the
+       * other's fields. A client cannot hand the host an offer, because the
+       * host branch never looks for one; a host cannot be made to spend a
+       * client's claim about its own points, because no such claim is on the
+       * wire at all. The only thing a peer may say is which unit it wants.
+       *
+       * Stamped with the sender the way `order` and `claim` are, so the host
+       * can tell whose purse is being spent once there is more than one — a
+       * meeting gives every commander a roster and a purse of their own.
+       */
+      case 'muster': this._emit('muster', msg, this._sender(msg, conn)); break;
       // Host → this peer: you were hit. The reverse of `claim`, and it exists
       // for the same reason — the authority for a thing is not where the thing
       // is drawn. A peer owns its own health (its avatar packet carries `hp`,
