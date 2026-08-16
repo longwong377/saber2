@@ -205,7 +205,17 @@ b{font-weight:800}
   background:#12162b;border:2px solid var(--stroke);box-shadow:var(--stamp-lg)}
 .panel.active{display:flex;animation:stampIn .3s cubic-bezier(.22,1,.36,1) both}
 .col{flex:1;min-width:0;overflow-y:auto;overflow-x:hidden;padding-right:8px;scrollbar-width:thin;
-  scrollbar-color:var(--panel-hi) transparent}
+  scrollbar-color:var(--panel-hi) transparent;
+  /* A column scrolls, so its last line is reachable — but with nothing after it
+     the cut lands flush on the panel border and reads as truncated rather than
+     as scrollable. On the options screen that made the fidelity note end
+     "Both multiply the tier above rather than" against the frame, which looks
+     like a defect and was reported as one. A soft fade would be the usual
+     answer and is the wrong one here: this interface is drawn the way the game
+     is, flat bands and hard edges, and its own header rejects gradients by
+     name. Scroll room does the same job in the style — the last line can always
+     be brought clear of the edge. */
+  padding-bottom:18px}
 .col::-webkit-scrollbar{width:8px}
 .col::-webkit-scrollbar-thumb{background:var(--panel-hi);border:2px solid var(--stroke)}
 .col.narrow{flex:0 0 300px;display:flex;flex-direction:column}
@@ -425,7 +435,20 @@ h3::after{content:"";flex:1;height:2px;background:var(--panel-hi)}
   border:2px solid var(--stroke);border-radius:0;cursor:pointer;box-shadow:0 0 10px var(--accent)}
 .slider b{font:var(--mono);font-weight:800;color:var(--ink);min-width:40px;text-align:right;
   font-variant-numeric:tabular-nums}
-.slider.wide b{min-width:104px}
+/* A RANGE INPUT WILL NOT SHRINK UNLESS TOLD TO. Its `min-width:auto` as a flex
+   item floors it at its intrinsic ~129px, so in a 265px column the row runs out
+   of space and the VALUE is what gets pushed out — measured at 1280×820, the
+   voice name spilled 55px past the panel and read "The Ne", the soundtrack name
+   spilled 64px and read "Battle Sco". Nothing scrolled, because a column that
+   clips has nothing to scroll: the text was simply unreachable. */
+.slider input{min-width:0}
+/* …and a value like "The Negotiator" is wider than any row of this width can
+   spare, whatever the input does. So the wide variant is two lines — name and
+   value on the first, the slider across the second — which cannot clip at any
+   column width because nothing on either line competes for the same space. */
+.slider.wide{flex-wrap:wrap;row-gap:8px}
+.slider.wide b{min-width:0;margin-left:auto}
+.slider.wide input{order:3;flex:1 0 100%}
 .ret-preview{display:flex;align-items:center;justify-content:center;height:100px;margin:10px 0 4px;
   border:2px solid var(--stroke);background:var(--void);clip-path:var(--cut)}
 .ret-preview svg{filter:drop-shadow(0 0 2px rgba(0,0,0,.95))}
