@@ -1164,20 +1164,29 @@ button{font-family:inherit}
 /* ══════════════════════════════════════════════════════════════════════
    THE MEDITATION — the Holocron.
 
-   Deliberately LESS opaque than the other screens: `.screen`'s own backdrop
-   is a near-black wash, and the whole point of reaching this by kneeling is
-   that the place you knelt in is still there behind it. So `#meditation`
-   overrides the wash with a thin one and keeps the blur low.
+   THE BACKDROP IS NOT ONE CHOICE, because there are two ways in and what is
+   behind them is not the same thing.
+
+   Mid-run you KNEEL, and the place you knelt in should still be there behind
+   the lattice — that is the whole feeling of the screen, and `.over-world`
+   below is where it lives. From the Temple it is a button instead, and behind
+   it is the MENU. The thin wash was applied to both, and over the menu it does
+   not read as atmosphere: measured in a browser at 1200×760, thirty-eight menu
+   elements — the theatre cards, the difficulty list, Ignite — were legible
+   through the open Holocron and sat among the facets. Two interfaces at once
+   reads as a rendering fault, not as depth.
+
+   So the default is `.screen`'s own near-black wash, inherited by NOT being
+   overridden here, and the thin one is asked for by name.
    ══════════════════════════════════════════════════════════════════════ */
-#meditation{
-  /* Thinner than the other screens and NO BLUR — the whole point of reaching
-     this by kneeling is that the place you knelt in is still there behind it,
-     and a blur is the one operator that takes a place away. Two flat washes on
-     a diagonal instead, so what is behind reads as itself through them. */
+#meditation{ z-index:44; }
+#meditation.over-world{
+  /* Thin, and NO BLUR — a blur is the one operator that takes a place away,
+     and the place is the point. Two flat washes on a diagonal instead, so
+     what is behind reads as itself through them. */
   background:
     linear-gradient(200deg,rgba(160,125,255,.10) 0 30%,transparent 30.4%),
     linear-gradient(0deg,rgba(4,5,12,.80),rgba(4,5,12,.62));
-  z-index:44;
 }
 .med-wrap{display:flex;flex-direction:column;width:min(1180px,96vw);height:min(880px,94vh);
   padding:18px 20px 14px;gap:10px;animation:riseIn .6s cubic-bezier(.22,1,.36,1) both}
@@ -1230,7 +1239,12 @@ button{font-family:inherit}
 #med-field .facet .disc{fill:#12142a;stroke:var(--stroke);stroke-width:2}
 #med-field .facet .glyph{font-size:13px;fill:rgba(190,210,235,.42)}
 #med-field .facet .label{font:500 10px/1 ui-sans-serif,system-ui,sans-serif;fill:rgba(160,185,215,.42);
-  letter-spacing:.02em}
+  letter-spacing:.02em;
+  /* A ground under the type, drawn BEHIND it by paint-order, so a label that
+     still crosses a link or the edge of a disc stays readable. SkillTree.js
+     picks each label's side and clears the collisions it can; this is what
+     covers the ones it cannot, and it costs nothing when there are none. */
+  stroke:var(--void);stroke-width:3;paint-order:stroke fill}
 #med-field .facet .cost{font:600 10px/1 ui-monospace,monospace;fill:var(--accent-warm)}
 #med-field .facet .pip{fill:var(--force);filter:drop-shadow(0 0 4px rgba(160,125,255,.95))}
 #med-field .facet.root .disc{stroke-dasharray:3 3}
