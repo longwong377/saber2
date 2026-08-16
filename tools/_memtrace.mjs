@@ -13,27 +13,42 @@
  *
  *   node --import ./tools/register.mjs --expose-gc tools/_memtrace.mjs levels-quality 3
  *
- * ── STATUS: WRITTEN, NOT YET ANSWERED ──────────────────────────────────
+ * ── STATUS: ANSWERED, AND NOT BY THIS FILE ─────────────────────────────
  *
- * I ran it against `levels-quality` and it produced no output at all in over
- * ten minutes — not even the `start` line, which is printed before any suite
- * work begins. So it is the TOOL that is wrong here, not the finding, and the
- * next person should not take an empty run as evidence about the game.
+ * The question above is CLOSED and this tool is not what closed it. Keep the
+ * record, because the way it failed is the reusable part.
  *
- * The most likely cause, and where to look first: this harness calls the
- * suite's `run({ check, ... })` and then awaits `pending`, but `check` here
- * pushes a promise and returns immediately, while `verify.mjs`'s own runner
- * owns the concurrency. A suite whose checks assume the real runner's
- * sequencing can therefore have six worlds building at once instead of one,
- * which on this machine is exactly the condition being investigated — so the
- * tool may be reproducing the hang rather than measuring it. That is worth
- * knowing either way, but it is not what the header promises, so the header
- * says so.
+ * It produced no output at all in over ten minutes against `levels-quality` —
+ * not even the `start` line, which is printed before any suite work begins. So
+ * it was the TOOL that was wrong, not the finding, and an empty run from here
+ * is not evidence about the game. The cause was diagnosed in this header and
+ * the diagnosis was right: this harness calls the suite's `run({ check, ... })`
+ * and then awaits `pending`, but `check` here returns immediately while
+ * `verify.mjs`'s own runner owns the concurrency, so a suite written against
+ * the real runner's sequencing builds six worlds at once instead of one. The
+ * tool was reproducing the condition rather than measuring it.
  *
- * The cheaper next move is probably to instrument `verify.mjs` itself with a
- * `process.memoryUsage()` line per suite rather than to re-implement its
- * runner here — the second copy of a runner being the exact defect this
- * project keeps removing (HANDOFF 2.4).
+ * The next line of this header then named the right move — "instrument
+ * `verify.mjs` itself with a `process.memoryUsage()` line per suite rather than
+ * re-implement its runner here" — and that is what was done. `verify.mjs` now
+ * prints RSS beside every suite's tally as it settles, from the runner that
+ * actually runs, and it answers the peak-vs-leak question directly:
+ *
+ *     RSS climbs monotonically 366 MB → 1.8 GB across the whole run.
+ *
+ * Not a spike confined to two suites, so not the peak the cache was suspected
+ * of; a slow accumulation across eighty. And it was not why either suite
+ * stalled — that was one call site asking for 17.8 million particles a frame
+ * (HANDOFF §2.7b). Both suites now finish, `cloth-cost` in 12.7 s and
+ * `levels-quality` in 1 m 59 s, at unchanged memory.
+ *
+ * SO THE LESSON IS THE ONE THE FILE ALREADY GUESSED: a second copy of a runner
+ * is a second thing that can disagree with the first, which is the exact defect
+ * this project keeps removing (HANDOFF §2.4). It cost a tool and ten minutes to
+ * learn a second time. This file is kept only because reaching for it again is
+ * the natural mistake, and the header is where that gets stopped.
+ *
+ * If you want a per-suite memory reading, run the gate and read the RSS column.
  */
 import './dom-shim.mjs';
 

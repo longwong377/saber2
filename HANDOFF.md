@@ -19,7 +19,7 @@ to that branch; all recent runs green)
 
 | | |
 |---|---|
-| Suite | see below — run it, the number moved a lot this session |
+| Suite | **1260 passed, 8 failed, ~11 min** — it completes again; §2.7b, failures in §6.4 |
 | Smoke | 11/11 steps clean, ~2 min |
 | Levels | **7**, down from 13 — six deleted on the player's word |
 | Modes | **5** — the Descent is deleted, and `Run.js` with it |
@@ -27,7 +27,8 @@ to that branch; all recent runs green)
 Run things this way and no other way:
 
 ```bash
-npm run verify                                   # the gate — 1142 checks
+npm run verify                                   # the gate — ~1268 checks, ~11 min
+SABER_CHECK_ORDER=reverse npm run verify         # same suites backwards — §6.4
 node --import ./tools/register.mjs tools/_one.mjs <suite>
 node --import ./tools/register.mjs tools/trace.mjs --waves 20 --level colosseum
 node --import ./tools/register.mjs tools/combat-trace.mjs --waves 8
@@ -172,6 +173,24 @@ both directions at once. Use `window.__play(gameSeconds, …)`, not a frame coun
 
 Timing checks (`prefracture`, `frame-budget`) will blow if anything else is
 using the CPU. Don't run the suite next to a browser.
+
+> **SOLVED, AND THE HYPOTHESIS BELOW IS REFUTED BY MEASUREMENT — see §2.7b.**
+> The roster's growth to 31 archetypes is **not** why `cloth-cost` never
+> finished: the whole 31-archetype census World builds, spawns and steps in
+> **5.2 seconds**, and 4 frames costs 53 ms with 4 enemies against 50 ms with
+> 24. It was one call site — `Enemy._sustain` handing `sparkBurst` a colour
+> where the parameter is `count`, so a frame asked for 17.8 million particles
+> and took 71-134 seconds. `cloth-cost` runs in **12.7 s** now and
+> `levels-quality`, which had the same cause, in **1 m 59 s**.
+>
+> Keep the paragraph below anyway. It is a good record of a plausible story
+> built from real symptoms, and it names itself as a hypothesis — which is the
+> only reason the next person went and timed it instead of optimising against
+> it. **The lesson is the one §2.6 already draws about `ps`: a CPU profile of
+> 34 frames cost four minutes and named the function outright, after six
+> attempts across two callers had spent a session guessing.** Profile before
+> theorising about a CPU-bound thing, exactly as you read the process table
+> before theorising about a hang.
 
 > **LATER, AND IT CHANGES THE CONCLUSION BELOW.** Everything in this section is
 > still true about the *early* symptoms, but contention was not the whole story.
@@ -332,31 +351,106 @@ Two things that are NOT the cause, ruled out rather than assumed: suite order
 (above), and leftover Chromium from `fpview.mjs`/`shot.mjs` (killed before the
 reverse run; it hung anyway).
 
-### 2.7b verify.mjs is ALL-OR-NOTHING, and that is why nobody has a gate number
+### 2.7b THE GATE RUNS. **1260 passed, 8 failed, ~11 minutes.** — CLOSED
 
-`verify.mjs` emits one progress line per suite as it starts (`  … name.mjs`) and
-**holds every result to a summary printed at the end**. So a run that stalls on
-suite 42 throws away the evidence from the 41 that already passed — you get a
-list of filenames and nothing else.
+*Was "verify.mjs is ALL-OR-NOTHING, and that is why nobody has a gate number".
+All three of the problems it named are now measured and fixed, and one of the
+three diagnoses in it was wrong in a way worth keeping.*
 
-That is the whole reason this session never produced a full gate number despite
-several 50-minute runs. Two suites became unrunnable as the roster grew (see
-2.6): `cloth-cost` at 31 archetypes and `levels-quality` at ten levels — the
-latter measured CPU-bound at 100% with a stable 606 MB heap, so it is computing,
-not the 2.7 idle hang, and the ten-entry `WORLDS` cache is where to look. Either
-one is enough to void an entire run.
+**`npm run verify` completes and prints a number.** Forward and reverse agree.
+Run it, don't take this figure — the point of the section is that it is now
+cheap to get one.
 
-**The fix worth making before the next big session** is incremental output: print
-each suite's pass/fail as it finishes. Then a stalled run still tells you about
-everything before the stall, and the two costly suites stop being able to hide
-forty other suites' results behind them. Until that exists, the ways to get a
-number are:
+**1. verify.mjs reports as it goes.** It used to print one line per suite as it
+*started* and hold every result to the summary at the bottom, so a run that
+stalled on suite 42 discarded the evidence from the 41 that had passed: forty
+minutes of CPU bought a list of filenames. Each suite now prints its own tally
+the moment it settles — failures in full where they happen, elapsed seconds,
+RSS, and a running total — so a killed run still has a number attached to it.
+The stdout summary table is byte-identical; the new output is on stderr, for
+the reason the `… name` line always was.
 
-- `SABER_CHECK_ORDER=reverse`, which reorders which suite blocks you (it puts
-  `cloth-cost` near the end — but `levels-quality` then lands late instead);
-- run suites individually with `tools/_one.mjs`, which is what every agent in
-  this session ended up doing and is why the per-suite evidence is good while
-  the aggregate is missing.
+That also answers §2.7's standing peak-vs-leak question from the runner that
+actually runs, rather than from `_memtrace.mjs`'s second copy of one: **RSS
+climbs monotonically from 366 MB to 1.8 GB across the whole run** and is not
+confined to two suites. It is a slow accumulation across eighty suites, not a
+spike, and nothing on the list below is blocked by it.
+
+**The core block is drained before the suite loop now.** It was the one block
+exempt from the runner's own rule, so this file's ~700 checks ran concurrently
+with all eighty suites, and `snapshotShared()` was reading the baseline while
+they were still advancing `enemyRng`, `duelRng` and `wind.time`.
+
+**2. `cloth-cost`: 40+ minutes → 12.7 seconds. THE ROSTER WAS NEVER THE
+REASON**, and §2.6 said so as a hypothesis that nobody had measured. Measured:
+building the `ultra` census World, spawning all **31** archetypes and stepping
+it costs **5.2 seconds**. 4 frames with 4 enemies is 53 ms and with 24 enemies
+is 50 ms — flat, inside the noise. Archetype count is not on the curve at all.
+
+The cost was one call site, and a CPU profile named it in one pass where six
+attempts across two callers had guessed at it for a session. **96% of a 439 s
+run is `Enemy._sustain → sparkBurst → ParticlePool.spawn → SRGBToLinear`.**
+Frames 1-20 of that suite cost 10-15 ms each; from frame 30, once the first
+enemy holds lightning or choke, **they cost 71 to 134 SECONDS each.**
+
+`Enemy._sustain` calls
+
+```js
+sparkBurst(chest, 2, 0x9fd8ff)          // Enemy.js:3544
+```
+
+against a signature of `sparkBurst(pos, normal, count, opts)`. Three arguments
+into four slots: `2` lands in `normal`, and **the COLOUR lands in `count`**. The
+burst asks for 10 467 583 sparks — 17.8 million spawns after the recipe's own
+multiplier — on 35% of frames, per casting enemy, each paying a `THREE.Color`
+sRGB→linear conversion. Measured: **810 of 828 bursts over the pool's capacity,
+worst 10 475 775 against 4 200 slots, a factor of 2 494.**
+
+**This is a game defect and not a harness one.** It is a multi-second freeze on
+a player's machine every time an enemy uses a held power, and `normal = 2` also
+spreads every spark in the burst along a NaN direction. The call site is in
+`Enemy.js`, the other lane's file, and **has not been touched**.
+
+`Particles.sparkBurst` now bounds a burst by its own pool's capacity: a ring
+buffer cannot show more than it holds, so the surplus was provably invisible
+work, and removing it stops the whole gate being hostage to one call site. That
+bound is **not** the fix. `cloth-cost.mjs` carries the check that stays red
+until the call site is corrected, so bounding the damage can never silence it.
+
+**3. `levels-quality`: does not finish → 12/12 in 1 m 59 s.** Same root cause —
+it drives 24 000 frames of real fighting enemies and every one of them was
+paying the runaway. **The ten-entry `WORLDS` cache was not the reason**, which
+was the standing lead; it is a real 606 MB peak and it is not what stopped the
+suite. (`cloth-cost`'s 31-body `ultra` census World *was* being held for the
+whole rest of the run behind a promise nothing released — 276 MB, now given
+back — but that is a peak this file contributed to others, not its own stall.)
+
+Finishing exposed a failure nobody could have seen. The `nav` check is the last
+in the file and guarded its sample with `r.n >= 10` — correct while it cast 16
+bearings, unsatisfiable since the note above it took the cast to 6. It failed
+with `only 6 of 6 bearings on scoria were placeable`, which is every bearing it
+asked for and the healthiest possible result. §2.3 in miniature. The floor is a
+share of the cast now.
+
+**4. `smoke.mjs`'s deploy step waited 30 s of WALL CLOCK for the HUD** — about
+fifteen frames here, where §2.6 measures one frame at up to 4.1 s, and the
+frames just after a deploy are the most expensive in the run. It was not asking
+"did the game deploy", it was asking "is this box quiet". It waits in **rendered
+frames** now, on two conditions that are each a real regression when they fire:
+the render loop stopping, and the HUD still hidden after 24 frames.
+
+**What the run reports, and how to read it.** Individual re-runs on a quiet box
+are how you tell a real failure from contention — `training` and `prefracture`
+were red in the full run and are green alone, which is §2.6's timing-check
+warning doing exactly what it says. The live list is in §6.4.
+
+**`_memtrace.mjs` is answered and did not answer it.** Its header said "WRITTEN,
+NOT YET ANSWERED" and guessed both the reason it could not work — a second copy
+of `verify.mjs`'s runner, §2.4 — and the right move, "instrument `verify.mjs`
+itself with a `process.memoryUsage()` line per suite". That is what was done.
+The file is kept, and its header now says so, because reaching for it again is
+the natural mistake and the header is where that gets stopped. **For a per-suite
+memory reading, run the gate and read the RSS column.**
 
 ### 2.8 Bash has a 10-minute cap
 
@@ -865,6 +959,55 @@ bite in opposite directions: cutting a sun to soften a shadow drops the cloud
 deck under its own sky (`sky.mjs` calls that smoke), and raising the ambient to
 compensate walks into `lighting.mjs`'s cast-shadow floor. That is how a
 one-level tuning pass becomes a four-suite bisect.
+
+---
+
+## 6.4 The eight the gate is red on, and who owns each
+
+Three full runs, measured on this box, with the load recorded at the head of
+each. **Every one of them completed** — which is the change; the numbers below
+are ordinary work, not a blocked gate.
+
+```
+forward  (before the §2.7b stub fix)   1258 passed,  9 failed   10 m 57 s
+forward  (after)                       1250 passed,  8 failed    9 m 57 s
+reverse  (after)                       1260 passed,  8 failed   11 m 58 s
+```
+
+The forward/reverse totals differ by ten because a **shared-tree race**, not a
+defect, voided one suite in the middle run: `severance.mjs` imports
+`SEVER_LETHALITY` and the other lane committed the export (`7a4e36a`) while the
+run was in flight, so the suite failed to load and its checks did not run. If
+you see `does not provide an export named …` on a shared tree, check the log
+before believing it.
+
+**Seven failures are stable across both orders.** None of them is in this
+lane's files, and none blocks a run.
+
+| # | Check | Reads | Whose |
+|---|---|---|---|
+| 1 | `particles: no effect asks a pool for more sparks than the pool can hold` | 810 of 828 bursts over capacity, worst 10 475 775 against 4 200 | **`Enemy._sustain`, Enemy.js:3544** — §2.7b. The argument list is out of step; this is the loudest thing on the list and it is a shipped multi-second freeze |
+| 2 | `terrain: every preset stays finite, bounded and continuous everywhere` | `kamino reaches a gradient of 24.7 (88°)` against a bound of 20 | the Kamino platforms work (§6.1). **Steep, not discontinuous** — the check's fine/coarse clause passes, so it is a face too sheer for the bound, not a hole |
+| 3 | `audio: a NaN never leaks the voice pool dry` | `NaN reached an AudioParam` | `AudioEngine.noise` (Audio.js) does not sanitise `dur`/`gain`/`freq` at the door. The check's own summary line says it should |
+| 4-5 | `vitals: the duel strike passes the number, and it kills`, `vitals: a bad amount cannot make the player immortal` | `this.resistForce is not a function` | thrown from inside `Player.damage` (Player.js:5730), so `damage` is being invoked against something that is not a Player. The §6.1a lane |
+| 6 | `hilts: the hands still close on the grip, whichever one it is` | `Graflex: the FP hand grips at −75 mm, and the hilt runs −85…158 mm` | the first-person grip, §6.0 — the live one |
+| 7 | `training: the eleven lessons run in any theatre, not only the dojo` | a lesson placed a body away from the player | **order-dependent, not a defect: 23/23 alone.** §6.2.5 |
+
+**Two more are order-dependent and appear in exactly one direction**, which is
+what the reverse switch is for:
+
+- `escalation: depth stops buying bodies and starts buying elites` — red in
+  reverse, green forward, **27/27 alone**. §6.2.5 already names `escalation` as
+  the largest block of order-dependent residue (5 checks).
+- `prefracture: preparing a piece the player is walking towards never costs a
+  frame` — red in the first run under load 5.07, **3/3 alone**. §2.6's timing
+  warning doing exactly what it says.
+
+**Read this table the way it is built.** A red line in a full run is not a
+finding until it has been re-run alone on a quiet box — three of the nine in the
+first run evaporated that way, and one was a race with a peer's commit. That is
+now cheap to do, because the per-suite output tells you which line to re-run
+instead of handing you a filename.
 
 ---
 
