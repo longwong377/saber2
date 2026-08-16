@@ -483,10 +483,42 @@ export class EmoteWheel {
       // at different places, and the player would only find out by pressing.
       d.style.left = `${(50 + Math.cos(a) * 37).toFixed(3)}%`;
       d.style.top = `${(50 + Math.sin(a) * 37).toFixed(3)}%`;
+      /*
+       * THE WORDS, WHERE THERE ARE WORDS.
+       *
+       * `blurb` is a description of a NOISE — "come on, then", "one note,
+       * downward" — which is the right caption for a wordless larynx and the
+       * wrong one the moment the same slot says an actual sentence. So a slot
+       * prints the line it will really speak when spoken lines are on, and its
+       * description when they are not. `wordsFor(kind, i)` is deterministic on
+       * the slot index, so the caption and the line that follows it are the
+       * same line; the caption is refreshed by setSpeech() rather than being
+       * decided once at construction, because the mode is a live setting.
+       */
       d.innerHTML = `<b>${esc(e.name)}</b><span>${esc(e.blurb)}</span>`;
+      d._say = d.querySelector('span');
       this.host.appendChild(d);
       this.slots.push(d);
     }
+    this.setSpeech(this.spoken);
+  }
+
+  /**
+   * Print what each slot will SAY, or what it will sound like.
+   *
+   * Called from HUD.update off the live setting, and only when the answer has
+   * changed — eight innerHTML writes a frame for a wheel that is on screen for
+   * a second at a time would be a real cost for no change at all.
+   */
+  setSpeech(spoken) {
+    this.spoken = !!spoken;
+    for (let i = 0; i < this.slots.length; i++) {
+      const e = EMOTES[i], el = this.slots[i];
+      if (!el || !el._say) continue;
+      const words = this.spoken ? wordsFor(e.line, i) : '';
+      el._say.textContent = words ? `“${words}”` : e.blurb;
+    }
+    return this.spoken;
   }
 
   /**
