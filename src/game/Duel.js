@@ -857,6 +857,25 @@ export class DuelBrain {
     if (!(dist > 0) || this.phase === 'stagger') return 0;
     const t = this.e.target, to = this.e.toTarget;
     if (!t || !to || !t.velocity) return 0;
+    /**
+     * AND NOT A BODY THIS DUELLIST HAS JUST THROWN.
+     *
+     * A player flying backwards out of a shove is not walking away, and running
+     * them down while they are still in the air cancels the two-beat the shove
+     * exists to open. Measured: with this clause missing, the Temple Guardian
+     * reached `push` and never `pull` in a 25 s stand-up fight —
+     * tools/checks/powers.mjs's "a kit is not one verb repeated" — because
+     * `pull` wants a fleeing target at 3.2 m and the chase had already shut
+     * that gap before the 0.45 s cast telegraph finished. One verb of a
+     * two-verb kit, deleted by a footwork loop that could not tell a retreat
+     * from a body in mid-air.
+     *
+     * `staggerTimer` is what `Player.applyKnockback` sets, and it is what this
+     * game has instead of a stun on the player ("a player is never taken off
+     * the controls"); leaving the ground is the other half of the same event.
+     * Neither is a step.
+     */
+    if (t.staggerTimer > 0 || t.grounded === false) return 0;
     const flee = t.velocity.x * to.x + t.velocity.z * to.z;
     if (!(flee > FLEE_MIN)) return 0;
     const gap = dist - this.standOff;

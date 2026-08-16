@@ -48,6 +48,11 @@
  *     bodyguard  4.4   5.31 → 6.61   19
  *     acolyte    5.0  18.07 → 12.65  42        ← the only body this file drove
  *
+ * That table was taken with the player's blade LIT, which is what this fixture
+ * used to do; the runs below leave it unlit and the note on `duel()` says why.
+ * The hp/s are therefore not comparable line for line with the pass output —
+ * the ZEROES and the empty `declared` column are, and they are the defect.
+ *
  * So the roster is DERIVED here now, and from the same field the game uses to
  * decide who gets a DuelBrain at all: every archetype that is `melee` and
  * carries a `saber`. It imports Levels.js for the same reason — the Command
@@ -370,12 +375,13 @@ export async function run({ check, assert }) {
      * count of N carries a relative standard error of 1/√N, so at three hits
      * two runs of the same fixture differ by sixty per cent for no reason at
      * all — and the still-versus-walk difference this file is about is a good
-     * deal smaller than that on those bodies. Measured over four seeds each,
-     * walking away is worth 45% against an acolyte, 44% against a Sentinel and
-     * 44% against a Master, and reads 14% and 20% the WRONG way against the
-     * Temple Guardian and the IG general, which are the two slowest bodies on
-     * the roster and both of them fighting Djem So — the heavy form, whose
-     * whole answer to a retreat is a long arc timed for where you are going. A
+     * deal smaller than that on those bodies. Measured over the three seeds this
+     * fixture runs, walking away is worth 34% against an acolyte, 48% against a
+     * Master and 9% against a Jedi Knight, and reads the WRONG way against the
+     * Temple Guardian and the IG general — the two slowest bodies on the roster
+     * and both of them fighting Djem So, the heavy form, whose whole answer to a
+     * retreat is a long arc timed for where you are going, and the two whose
+     * counts swing hardest between seeds. A
      * per-body bound tight enough to call that would be a coin toss and one
      * loose enough not to flap would be a number picked to pass, so the strict
      * ordering is held in AGGREGATE above, where the counts are pooled over the
