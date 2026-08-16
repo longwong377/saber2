@@ -889,6 +889,17 @@ export class Score {
         this._drum(t + 0.42, 58, 1.0, 0.3 * g, S);
         return 2.2;
       }
+      /* SOMETHING LARGE. Not a boss — a heavy, and the difference matters,
+       * because four archetypes carry `big` from wave 1 and the announcer says
+       * its 'boss' line for every one of them. One low half-step, struck and
+       * gone: enough to say the shape of the field changed, and deliberately a
+       * third the length of the entrance below so the two cannot be confused. */
+      case 'heavy': {
+        this._drum(t, 50, 0.8, 0.44 * g, S);
+        this._brass(t, hz(0), 1.0, 0.26 * g, { bright: 3.4, attack: 0.05, dest: S });
+        this._brass(t + 0.05, hz(1), 0.9, 0.20 * g, { bright: 3.4, attack: 0.07, dest: S });
+        return 1.1;
+      }
       /* A BOSS. The half-step, played as a half-step: the tonic and its bII
        * struck together low, then a rip up to the tritone. Nothing else in the
        * score is allowed to do this. */

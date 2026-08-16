@@ -308,9 +308,9 @@ export const MUSIC_DUCK = {
  * something else — a refused death stinger is the most important half-second in
  * the run, silent, for a reason nobody could ever find.
  */
-const STINGER_GAP = { kill: 2.2, streak: 1.4 };
+const STINGER_GAP = { kill: 2.2, streak: 1.4, heavy: 7 };
 /** …and how far each one pushes the bed down, so it is not mud under itself. */
-const STINGER_DUCK = { wave: 0.5, clear: 0.55, boss: 0.42, triumph: 0.35, fall: 0.3 };
+const STINGER_DUCK = { wave: 0.5, clear: 0.55, boss: 0.42, heavy: 0.6, triumph: 0.35, fall: 0.3 };
 /**
  * How long a dragged control is given to settle before its line is auditioned.
  * The shortest line in the game is 0.35 s (The Chosen's 'streak'), so a slider
@@ -1257,30 +1257,37 @@ export class AudioEngine {
   /**
    * WHAT A VOICE LINE TELLS THE SCORE.
    *
-   * Three of the beats the score needs have exactly one announcement in the
-   * whole project and it is a line: `Announcer._enemies` says a 'boss' line the
-   * first frame a boss or a big body is on the field, and `Announcer._player`
-   * says 'kill' or 'streak' off the ladder it already keeps. Reading those is
-   * HANDOFF §2.4 — the rule for what a boss IS stays in one place and this
-   * file listens to the call it makes.
+   * Two of the beats the score needs have exactly one announcement in the whole
+   * project and it is a line: `Announcer._player` says 'kill' or 'streak' off
+   * the ladder it already keeps. Reading those is HANDOFF §2.4 — the rule for
+   * what a killstreak IS stays in one place and this file listens to the call.
+   *
+   * THE THIRD ONE IS A CAUTIONARY TALE and it is why 'boss' here is not the
+   * boss cue. `Announcer._enemies` says a 'boss' line for `e.A.boss || e.A.big`
+   * — and `big` is carried by four archetypes with `unlockAt: 1`, held at about
+   * 13% of every wave by `heavyLimit`. Deriving the boss STATE from that line
+   * was written, and then measured against a real World with a real director on
+   * the Colosseum: the score went to `boss` on wave 1 at t=0.5 s, and again on
+   * wave 2, and would have on every wave after. A state that is always on is
+   * not a state.
+   *
+   * So the line gets its own, smaller gesture — `heavy`, a third the length —
+   * which is the honest reading of what the announcer actually detected, and
+   * the boss cue belongs to the boss STATE, which only `setMusicState` can
+   * declare because only the director knows.
    *
    * Called BEFORE the voice pool is consulted and before `voiceLevel` is read,
-   * because the score's business is that the boss ARRIVED, not that a larynx
+   * because the score's business is that the thing ARRIVED, not that a larynx
    * was free to say so. It is still downstream of `settings.voiceLines`, which
-   * the announcer checks before it calls at all — a player who has turned voice
-   * lines off gets no derived boss cue, and `setMusicState` is the fix for that
-   * rather than a second boss detector living here.
+   * the announcer checks before it calls at all.
    *
    * `opts.audition` is the options screen dragging the voice slider. A player
    * comparing larynxes must not fire a killstreak stinger five times.
    */
   _scoreFromLine(kind, opts) {
     if (!this.score || opts.audition || !opts.self) return;
-    if (kind === 'boss') {
-      this.score.boss = true;
-      if (!this.score.driven) this.score.setState('boss');
-      this.stinger('boss');
-    } else if (kind === 'kill') this.stinger('kill');
+    if (kind === 'boss') this.stinger('heavy');
+    else if (kind === 'kill') this.stinger('kill');
     else if (kind === 'streak') this.stinger('streak');
   }
 
@@ -2107,33 +2114,54 @@ export class AudioEngine {
    * cannot know a campaign has been WON at all, because nothing in the game
    * makes a sound when it is.
    *
-   * So this exists, and one call from `World` supersedes the lot:
+   * So this exists, and it takes either of two things:
    *
-   *     audio.setMusicState({
-   *       state: this.over ? (won ? 'victory' : 'death')
-   *            : this.director.active ? (bossOnField ? 'boss' : 'combat')
-   *            : 'explore',
-   *       wave: this.director.wave,
-   *       boss: bossOnField,
-   *     });
+   *   FACTS — `{ active, boss, wave, dead, won }`. These are what the director
+   *     knows and the engine cannot work out, and they are all `Score._derive`
+   *     was missing. Passing them leaves the derivation running, which is what
+   *     you want: the facts settle explore/combat/boss/death/victory exactly,
+   *     and the smoothed combat intensity still covers the modes that have no
+   *     director at all (training, the dojo, a sandbox). This is the call
+   *     `World` should make, at the two director callbacks it already has:
    *
-   * The moment anything calls it, `driven` latches and the derived transitions
-   * stop — one authority, never two disagreeing (HANDOFF §2.3). Stingers keep
-   * firing from their existing call sites either way, because those are events
-   * with exactly one source each and there is nothing for them to disagree with.
+   *         this.director.onWaveStart = (w, n) => {
+   *           …
+   *           audio.setMusicState({ wave: w, active: true,
+   *             boss: this.director.isBossWave(this.director.wave) });
+   *         };
+   *         this.director.onWaveClear = (w) => {
+   *           …
+   *           audio.setMusicState({ active: false, boss: false });
+   *         };
+   *
+   *   A STATE — `{ state: 'boss' }`. This is the caller saying it knows better
+   *     than any derivation, so `driven` latches and the per-frame derivation
+   *     stops for good. One authority, never two disagreeing (HANDOFF §2.3).
+   *
+   * Stingers keep firing from their existing call sites either way, because
+   * those are events with exactly one source each and there is nothing for them
+   * to disagree with.
    */
   setMusicState(s = {}) {
     if (!this.score) return null;
     const sc = this.score;
-    sc.driven = true;
+    if (typeof s.state === 'string') sc.driven = true;
     if (Number.isFinite(s.wave)) sc.wave = s.wave;
     if (s.boss !== undefined) sc.boss = !!s.boss;
     if (s.dead !== undefined) sc.dead = !!s.dead;
     if (s.won !== undefined) sc.won = !!s.won;
     if (s.active !== undefined) sc.waveActive = !!s.active;
+    const was = sc._want;
     if (typeof s.state === 'string') sc.setState(s.state);
     else sc.setState(sc._derive(0));
-    return sc.state;
+    // ENTERING the boss state is the boss entrance, and this is the only place
+    // that knows it happened — the state can be reached by a fact (`boss:true`),
+    // by a name (`state:'boss'`) or by a latch that was already set, and one
+    // gesture at the transition covers all three without any caller having to
+    // remember to fire it. Nothing else in the game can raise it: see
+    // `_scoreFromLine` for the signal that looked like it could and could not.
+    if (sc._want === 'boss' && was !== 'boss') this.stinger('boss');
+    return sc._want;
   }
 
   /** What the score is playing, for a HUD, a check, or a caller deciding. */

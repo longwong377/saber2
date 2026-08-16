@@ -574,12 +574,13 @@ export async function run({ check, assert }) {
     const spec = { id: 'probe', f0: 130, cadence: 1 };
     const wave = fire('wave', a => a.ui('wave'));
     const clear = fire('clear', a => a.victory());
-    const boss = fire('boss', a => a.speak(spec, 'boss', { self: true }));
+    const boss = fire('boss', a => a.setMusicState({ boss: true, active: true }));
+    const heavy = fire('heavy', a => a.speak(spec, 'boss', { self: true }));
     const dead = fire('death', a => a.death());
     const won = fire('won', a => a.runWon(true));
 
     for (const [n, r] of [['wave', wave], ['clear', clear], ['boss', boss],
-      ['death', dead], ['victory', won]]) {
+      ['heavy', heavy], ['death', dead], ['victory', won]]) {
       assert(r.notes > 0, `${n} built no music at all`);
       assert(r.duck < 1, `${n} did not make room for itself — the bed plays over the top of it`);
       assert(r.span > 0.25, `${n} is ${r.span.toFixed(2)} s long, which is a blip`);
@@ -590,6 +591,16 @@ export async function run({ check, assert }) {
      * campaign won — are told apart by size. */
     assert(wave.want === 'combat', `a wave arriving put the score in '${wave.want}'`);
     assert(boss.want === 'boss', `a boss put the score in '${boss.want}'`);
+    /* A HEAVY IS NOT A BOSS, and the announcer cannot tell them apart — it says
+     * its 'boss' line for `e.A.boss || e.A.big`, and four archetypes carry
+     * `big` from wave 1. Measured against a real World on the Colosseum, taking
+     * that line as a boss put the score in `boss` on wave 1 and on every wave
+     * after. So the line gets a smaller gesture, and it may not change state. */
+    assert(heavy.want !== 'boss',
+      'a heavy walking on put the score in the boss state — that is most waves');
+    assert(heavy.span < boss.span * 0.6,
+      `a heavy (${heavy.span.toFixed(2)} s) is as big a gesture as a boss `
+      + `(${boss.span.toFixed(2)} s) — they would be indistinguishable`);
     assert(dead.want === 'death', `dying put the score in '${dead.want}'`);
     assert(won.want === 'victory', `winning the campaign put the score in '${won.want}'`);
     assert(clear.want === 'explore', `a wave cleared left the score in '${clear.want}'`);
@@ -611,9 +622,10 @@ export async function run({ check, assert }) {
     assert(clear.spent >= 6, `victory() spent ${clear.spent} voices — it is a four-note triad plus a swell`);
     assert(wave.spent >= 1, `a wave arriving spent ${wave.spent} voices — the sine under it is gone`);
     return `wave ${wave.notes}n/${wave.span.toFixed(1)}s→combat, clear ${clear.notes}n→explore, `
-      + `boss ${boss.notes}n/${boss.span.toFixed(1)}s→boss, death ${dead.notes}n/${dead.span.toFixed(1)}s→death, `
+      + `boss ${boss.notes}n/${boss.span.toFixed(1)}s→boss, heavy ${heavy.notes}n/${heavy.span.toFixed(1)}s→`
+      + `${heavy.want}, death ${dead.notes}n/${dead.span.toFixed(1)}s→death, `
       + `victory ${won.notes}n/${won.span.toFixed(1)}s→victory; ducks `
-      + [wave, clear, boss, dead, won].map(r => r.duck.toFixed(2)).join('/');
+      + [wave, clear, boss, heavy, dead, won].map(r => r.duck.toFixed(2)).join('/');
   });
 
   /**
@@ -757,6 +769,60 @@ export async function run({ check, assert }) {
       + `60 in 1 s → ${perSecond}; slider untouched, back to 1.00 after; `
       + `grunt ${grunt.held.toFixed(2)} s @${grunt.level} / cry ${cry.held.toFixed(2)} s / `
       + `room ${room.held.toFixed(2)} s @${room.level} / chatter none`;
+  });
+
+  /**
+   * THE SEAM, AND THE THING IT MUST NOT BECOME.
+   *
+   * The score's state has two possible sources — what `World` knows, and what
+   * the engine can derive from the calls the game already makes — and this
+   * project has a section of its handoff about what happens when a derived
+   * answer is allowed to sit beside an authoritative one (§2.3). So the rule is
+   * written down and measured rather than asserted in a comment:
+   *
+   *   FACTS (`{active, boss, wave}`) are what the director knows and the engine
+   *     cannot. They feed the derivation; they do not replace it, because the
+   *     modes with no director at all — training, the dojo, a sandbox — still
+   *     need a score and the only signal there is combat intensity.
+   *   A STATE (`{state:'boss'}`) is a caller saying it knows better. It latches,
+   *     and from then on nothing derived may contradict it.
+   */
+  check('audio: the game can tell the score what it is, and then it is the only voice', () => {
+    /* FACTS: the derivation keeps running underneath them. */
+    const { a, ctx } = engine();
+    a.setMusicState({ wave: 3, active: true, boss: false });
+    for (let f = 0; f < 120; f++) { a.updateScore(1 / 60, 1, 0); ctx.advance(1 / 60); }
+    assert(a.score._want === 'combat', `a live wave gave '${a.score._want}'`);
+    assert(a.score.driven === false, 'passing facts latched the state machine shut');
+    a.setMusicState({ active: false });
+    for (let f = 0; f < 600; f++) { a.updateScore(1 / 60, 0, 0); ctx.advance(1 / 60); }
+    assert(a.score._want === 'explore', `the wave ended and the score stayed in '${a.score._want}'`);
+    // …and with the director silent, intensity alone still moves it. This is
+    // the training/dojo/sandbox case, where there is no wave to be told about.
+    for (let f = 0; f < 180; f++) { a.updateScore(1 / 60, 1, 0); ctx.advance(1 / 60); }
+    assert(a.score._want === 'combat',
+      `nine bodies on a field with no director left the score in '${a.score._want}'`);
+
+    /* A STATE: it latches, and the derivation may not contradict it. */
+    const { a: b, ctx: c } = engine();
+    b.setMusicState({ state: 'boss' });
+    assert(b.score.driven, 'an explicit state did not take the wheel');
+    for (let f = 0; f < 600; f++) { b.updateScore(1 / 60, 0, 0); c.advance(1 / 60); }
+    assert(b.score._want === 'boss',
+      `ten seconds of an empty field overruled the boss the game declared ('${b.score._want}')`);
+    b.ui('wave');
+    b.victory();
+    for (let f = 0; f < 120; f++) { b.updateScore(1 / 60, 1, 0); c.advance(1 / 60); }
+    assert(b.score._want === 'boss',
+      `a derived call moved a state the game had set: '${b.score._want}'`);
+    // …but the stingers those calls fire are events with one source each, so
+    // they still play. Turning the derivation off must not mute the game.
+    assert(b.score.stats.stingers >= 2,
+      `${b.score.stats.stingers} stingers fired for a wave and a clear under an explicit state`);
+    b.setMusicState({ state: 'explore' });
+    assert(b.score._want === 'explore', 'the game could not take its own state back');
+    return `facts → combat/explore/combat with driven=false; state → boss held through `
+      + `10 s of nothing, a wave and a clear, ${b.score.stats.stingers} stingers still fired`;
   });
 
   /**
