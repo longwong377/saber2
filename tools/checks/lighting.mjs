@@ -184,27 +184,93 @@ export function run({ check, assert, near, THREE: T }) {
 
   /* ══ metering ═════════════════════════════════════════════════════════ */
 
-  check('exposure: every outdoor level is metered to the same key, not guessed', () => {
-    // The authored exposures span 5% while the actual ground irradiance spans
-    // 140%: the canyon shipped most of a stop under and the arena most of a
-    // stop over, and no grade fixes a frame that is metered wrong.
-    const rows = [], keys = [], authored = [];
+  check('exposure: the meter TRIMS the authored frame, and cannot overrule it', () => {
+    /* THE BOUND THIS REPLACES WAS `spread(metered keys) < 1.02`, AND IT WAS
+     * ASSERTING THE DEFECT.
+     *
+     * `metered key` was computed as `m.key * m.exposure / a.exposure`, and with
+     * `exposure = a.exposure * KEY / key` that expression is KEY exactly, on
+     * every level, by algebra. The bound could not fail, it measured nothing,
+     * and what it PINNED was the thing that was wrong: every outdoor level
+     * normalised onto one mid-grey however dark its atmosphere was authored.
+     * Measured on the shipped tree the correction ran kamino ×3.14, scoria
+     * ×2.36, wood ×1.75, geonosis ×1.80, alpine ×1.54, mustafar ×1.34 — the
+     * darker a level is authored the harder it was lifted, which inverts the
+     * art direction. See METER_TRIM in Engine.js for the derivation of the
+     * bound that replaced it and for the reference-plate measurements.
+     *
+     * So this asks the question the old one was trying to ask — is the frame
+     * metered, or guessed — in a form that can fail, and adds the two the old
+     * one could not see: that metering leaves the AUTHOR in charge, and that
+     * the trim has less authority than the knob the author holds.
+     */
+    const rows = [], rendered = [], authored = [], raw = [];
     for (const key of OUTDOOR) {
       const a = LEVELS[key].atmosphere;
       const m = atmosphereMeter(a);
       assert(m.key > 0 && isFinite(m.key), `${key} metered a non-finite key`);
       assert(m.exposure > 0.2 && m.exposure < 3, `${key} wants exposure ${m.exposure}`);
-      // the key AFTER exposure — that is what lands on the tone curve
-      keys.push(m.key * m.exposure / (a.exposure ?? 1.05));
+      // The three keys that matter, all in the same units (linear radiance a
+      // mid-grey horizontal surface lands on, after whatever exposure applies):
+      //   raw       — what the atmosphere alone puts down, unexposed
+      //   authored  — what the level's own numbers ask the frame to be
+      //   rendered  — what it actually lands on after the meter has its say
+      raw.push(m.key);
       authored.push(m.key * (a.exposure ?? 1.05));
-      rows.push(`${key} irr ${m.irradiance.toFixed(2)} → exp ${m.exposure.toFixed(2)}`);
+      rendered.push(m.key * m.exposure);
+      rows.push(`${key} irr ${m.irradiance.toFixed(2)} → exp ${m.exposure.toFixed(2)} (×${m.trim.toFixed(2)})`);
     }
     const spread = (xs) => Math.max(...xs) / Math.min(...xs);
-    assert(spread(keys) < 1.02, `metered keys still spread ${spread(keys).toFixed(3)}:1`);
+    // 1. THE METER STILL METERS. The atmospheres put down a spread the authored
+    //    exposures never expressed — that is the fault the meter exists for —
+    //    and the rendered spread has to be measurably tighter than the raw one
+    //    or the meter has been switched off rather than bounded.
     assert(spread(authored) > 1.4, `the authored exposures were already within `
       + `${spread(authored).toFixed(2)}:1 of each other — nothing to fix, so this proves nothing`);
-    return `${rows.join('; ')} — metered spread ${spread(keys).toFixed(3)}:1, `
-      + `authored spread was ${spread(authored).toFixed(2)}:1`;
+    assert(spread(rendered) < spread(raw) * 0.85,
+      `the meter took a raw spread of ${spread(raw).toFixed(2)}:1 to ${spread(rendered).toFixed(2)}:1 — `
+      + 'that is not a meter, it is the authored numbers passed through');
+    // 2. …AND IT DOES NOT ERASE THE AUTHORING. Most of the authored separation
+    //    has to survive. At the old flat normalisation this was 0 by
+    //    construction: every rendered key was `a.exposure * KEY`, so the
+    //    atmosphere contributed nothing at all.
+    assert(spread(rendered) > spread(authored) * 0.6,
+      `the authored frames span ${spread(authored).toFixed(2)}:1 and render at `
+      + `${spread(rendered).toFixed(2)}:1 — the meter has flattened them`);
+    // 3. THE ORDER IS THE AUTHOR'S. Spearman between the frame the level asks
+    //    for and the frame it gets. Under the flat normalisation the rendered
+    //    key was proportional to `a.exposure` alone, so this measured the
+    //    correlation between one knob and the whole atmosphere: rho 0.357.
+    const rank = (xs) => {
+      const s = [...xs].map((v, i) => [v, i]).sort((p, q) => p[0] - q[0]);
+      const r = new Array(xs.length);
+      s.forEach(([, i], k) => { r[i] = k; });
+      return r;
+    };
+    const ra = rank(authored), rr = rank(rendered);
+    const n = ra.length;
+    const d2 = ra.reduce((s, v, i) => s + (v - rr[i]) ** 2, 0);
+    const rho = 1 - (6 * d2) / (n * (n * n - 1));
+    assert(rho > 0.90,
+      `the frame that renders ranks ${rho.toFixed(3)} against the frame the level asks for — `
+      + 'the meter is deciding which levels are dark');
+    // 4. THE TRIM HAS LESS AUTHORITY THAN THE AUTHOR. Read off the engine
+    //    rather than restated: meter an atmosphere with almost no light in it
+    //    and one with far too much, and the trim sits on each of its bounds.
+    //    The rule METER_TRIM is derived from is that its full travel must not
+    //    exceed the full travel of `exposure` itself — a meter able to move a
+    //    frame further than the knob can is a meter that can overrule it.
+    const base = LEVELS[OUTDOOR[0]].atmosphere;
+    const hi = atmosphereMeter({ ...base, sunIntensity: 1e-3, ambient: 0, fillIntensity: 0 }).trim;
+    const lo = atmosphereMeter({ ...base, sunIntensity: 4e3 }).trim;
+    const auth = OUTDOOR.map((k) => LEVELS[k].atmosphere.exposure ?? 1.05);
+    assert(hi / lo <= spread(auth),
+      `the trim can move a frame ${(hi / lo).toFixed(2)}:1 while every \`exposure\` in the game `
+      + `together spans ${spread(auth).toFixed(2)}:1 — the meter outranks the author`);
+    assert(hi > 1 && lo < 1, `the trim is one-sided: ${lo.toFixed(2)}…${hi.toFixed(2)}`);
+    return `${rows.join('; ')} — raw ${spread(raw).toFixed(2)}:1, authored ${spread(authored).toFixed(2)}:1, `
+      + `rendered ${spread(rendered).toFixed(2)}:1, rho ${rho.toFixed(3)}, `
+      + `trim ${lo.toFixed(2)}…${hi.toFixed(2)} inside an authored ${spread(auth).toFixed(2)}:1`;
   });
 
   check('probe: the ground bounce is actually inside the bake', () => {

@@ -637,6 +637,11 @@ const WHITE = new THREE.Color(1, 1, 1);
  * and a quarter of real difference against a 5% nominal one — so the canyon
  * shipped nearly a stop underexposed and the arena nearly a stop over, and no
  * amount of grading fixes a frame that is simply metered wrong.
+ *
+ * That metering is BOUNDED — see METER_TRIM. Unbounded it did the mirror-image
+ * damage: a level authored dark was lifted to the same mid-grey as a level
+ * authored bright, so the two knobs an author has for "this place is dark"
+ * (the atmosphere, and `exposure`) were reduced to one.
  */
 const EXPOSURE = 0.92;
 
@@ -728,6 +733,66 @@ const BLOOM = {
 /** Radiance a mid-grey horizontal surface should land on. Calibrated so the
  *  dune sea, the one level that was correctly exposed, does not move. */
 const KEY = 0.191;
+
+/**
+ * …AND HOW FAR THE METER IS ALLOWED TO MOVE A LEVEL TOWARD IT.
+ *
+ * `KEY` on its own is not a target, it is a magnet: `exposure = authored ×
+ * KEY / key` lands EVERY outdoor level on exactly `authored × KEY` whatever its
+ * atmosphere says, so the only thing left with any say over how bright a level
+ * renders is the one scalar the meter multiplies through. Measured on the
+ * shipped roster, that correction ran:
+ *
+ *     kamino   ×3.14      geonosis ×1.80      wood     ×1.75
+ *     scoria   ×2.36      alpine   ×1.54      mustafar ×1.34
+ *
+ * — i.e. THE DARKER A LEVEL IS AUTHORED, THE HARDER IT IS LIFTED, which
+ * inverts the art direction: an author who cuts a sun to say "storm" gets the
+ * light handed straight back with interest. Kamino's own card says "at night,
+ * in the rain"; it authored the weakest key on the roster (3.4), the darkest
+ * `skyColor` (luminance 0.10) and 94% cloud, and rendered as bright overcast
+ * noon — sky luminance 0.786 and saturation 0.046 against its reference plate
+ * (assets/reference/maps/kamino/kamino outside.webp) at 0.129 and 0.667.
+ *
+ * So the meter becomes a TRIM on the authored exposure rather than a
+ * replacement for it, and this is the width of the trim. Three measurements
+ * set it, none of them a taste call:
+ *
+ *  1. THE TONE CURVE DOES NOT ASK FOR MORE. Exposure exists to keep the frame
+ *     off the ends of the ACES curve. Its log-log slope — how much display
+ *     contrast a stop of scene contrast buys — is ~1.5 in the toe, passes 1.0
+ *     near an exposed key of 0.3 and falls to 0.5 by 0.75. With the trim OFF,
+ *     every level on this roster lands between an exposed key of 0.045
+ *     (kamino) and 0.189 (colosseum): all eight sit in the toe, where the
+ *     curve is expanding contrast rather than losing it, and the brightest is
+ *     four stops clear of the shoulder. There is no level here the curve needs
+ *     rescued, so the trim's width cannot be derived from the curve — which is
+ *     the finding, because the flat normalisation was defended on curve
+ *     grounds.
+ *
+ *  2. THE REFERENCE PLATES WANT MORE SEPARATION, NOT LESS. Sky-band display
+ *     luminance across `assets/reference/`, per level: mustafar 0.18, wood
+ *     0.20, colosseum 0.23, kamino 0.13–0.28, geonosis 0.47, drifts 0.65,
+ *     alpine 0.80 — a 4.4:1 span. Authored and untrimmed, this roster spans
+ *     2.6:1 in display. The levels are ALREADY less separated than the images
+ *     they were built from, so any width spent flattening them further is
+ *     spent against the reference.
+ *
+ *  3. WHAT IS LEFT IS THE ONE THING THE AUTHOR HOLDS. `exposure` spans
+ *     0.74 … 1.20 across the outdoor roster, a factor of 1.62. A meter that
+ *     may move a frame further than the full travel of that knob can overrule
+ *     any decision an author is able to express with it, and did. So the trim
+ *     is capped at the authored travel and centred on 1 in log: √1.62 = 1.273,
+ *     pulled in a hair so a small re-author cannot silently push the meter
+ *     past the author. `tools/checks/lighting.mjs` asserts that relationship
+ *     rather than these two numbers, so it survives the roster changing.
+ *
+ * What this does NOT change is the semantics Levels.js was authored against —
+ * `exposure` is still a ± bias about a metered key and every block that says so
+ * is still right. What changes is that the bias is no longer the only surviving
+ * term: a level that authors a dark atmosphere now renders one.
+ */
+const METER_TRIM = [0.79, 1.27];
 
 /**
  * HOW MANY PLATEAUS THE DRAWN SKY IS CUT INTO.
@@ -955,8 +1020,45 @@ export const SKY_PHYSICAL = { knee: 2.4, ceil: 9.5 };
  * the 1.55 linear ceiling below and therefore under the bloom pass's 1.8, so
  * the dome still cannot become a bloom source — the drawn sky approaches its
  * ceiling asymptotically and tops out around three quarters of it.
+ *
+ * IT IS A CAP AND IT USED TO BE A TARGET, and that is the second half of the
+ * exposure fault METER_TRIM fixes. `ceil = SKY_CLIP / exposure` does not limit
+ * the sky, it PINS it: every level's dome asymptotes to the same 0.906 display
+ * whatever its atmosphere says, and a level metered darker gets a proportionally
+ * BRIGHTER linear sky to land on the same number. So trimming the meter alone
+ * would have darkened the ground and the cloud deck and left the sky exactly
+ * where it was — measured mid-change, Kamino's deck fell under its own dome and
+ * `sky.mjs` correctly called it smoke.
+ *
+ * Blown-sky share (pixels over 0.85 display in the top quarter of frame) is the
+ * same fault read off the pixels: the Shifting Waste 62.7% and Geonosis 59.5%
+ * against reference plates at 0–13%, and neither of those two levels is one the
+ * meter was moving at all. See skyDisplayShoulder for what the sky is anchored
+ * to instead.
  */
 const SKY_CLIP = 1.18;
+/**
+ * …and what the drawn sky reaches when the cap is NOT binding: a fixed number
+ * of stops over the frame's own mid-grey.
+ *
+ * Derived off the two levels the meter and the author already agree about.
+ * `drifts` and `colosseum` are the only outdoor levels whose metered correction
+ * falls inside METER_TRIM, i.e. the only two whose exposure the meter does not
+ * have to bend — so whatever relationship their sky already has to their own
+ * key is the relationship that was working. Measured on the shipped tree:
+ *
+ *     drifts     ceil 1.216 / key 0.1696 = 7.17
+ *     colosseum  ceil 1.372 / key 0.2053 = 6.68
+ *
+ * — geometric mean 6.92. At 6.9 those two frames move by 4% and 3%, which is
+ * the point: the levels the old rule got right are held still and every other
+ * level gets the same RELATIONSHIP instead of the same absolute display value.
+ *
+ * `key` is a linear radiance and so is `ceil`, so exposure cancels out of this
+ * term entirely: a level's drawn sky is now a property of its atmosphere, and
+ * the one thing that still reads the exposure is the cap.
+ */
+const SKY_OVER_KEY = 6.9;
 /**
  * …held inside this band in LINEAR radiance whatever the exposure asks for.
  * The ceiling is the load-bearing one: 1.55 is under the bloom pass's 1.8
@@ -967,14 +1069,30 @@ const SKY_CLIP = 1.18;
 const SKY_CLIP_RANGE = [0.45, 1.55];
 
 /**
- * The shoulder the DRAWN sky is compressed onto for a given atmosphere. It has
- * to move with the exposure: a single fixed pair put the arena's skyline at
- * 0.96 display and the canyon's at 1.002 — clipped — because the two levels
- * meter two and a half stops apart off the same authored numbers.
+ * The shoulder the DRAWN sky is compressed onto for a given atmosphere.
+ *
+ * TWO TERMS, AND ONLY ONE OF THEM IS THE EXPOSURE. The first is the level's own
+ * sky: SKY_OVER_KEY × the metered key, in linear radiance, with no exposure in
+ * it at all — a dark atmosphere draws a dark sky and a bright one draws a bright
+ * one, and the ordering between two levels is the ordering their authors wrote.
+ * The second is the cap: `SKY_CLIP / exposure` is the ceiling at which the drawn
+ * dome would reach 0.906 display, and no level is allowed past it whatever its
+ * key says. On the shipped roster the cap binds on the Colosseum alone, which is
+ * what a cap should look like.
+ *
+ * It used to be the cap alone, and that is the fault named at SKY_CLIP: a single
+ * fixed pair put the arena's skyline at 0.96 display and the canyon's at 1.002 —
+ * clipped — because the two levels metered two and a half stops apart, but
+ * dividing by the exposure over-corrected in the other direction and made every
+ * sky in the game land on the same number.
  */
 export function skyDisplayShoulder(a, meter = null) {
   const m = meter || atmosphereMeter(a);
-  const ceil = clamp(SKY_CLIP / Math.max(m.exposure, 1e-3), SKY_CLIP_RANGE[0], SKY_CLIP_RANGE[1]);
+  const cap = SKY_CLIP / Math.max(m.exposure, 1e-3);
+  // An interior has no key to anchor to — and no dome drawn either; it keeps
+  // the cap so `_linearSky`'s uniforms are always something sane.
+  const want = m.key != null ? Math.min(SKY_OVER_KEY * m.key, cap) : cap;
+  const ceil = clamp(want, SKY_CLIP_RANGE[0], SKY_CLIP_RANGE[1]);
   // The knee is where compression starts, and it has to be LOW. The drawn sky
   // spans about ten to one from zenith to skyline; put the knee where the
   // zenith is and everything above it lands inside the last 5% of the range.
@@ -1166,7 +1284,10 @@ export function sunDirection(a, out = new THREE.Vector3()) {
  *   • WHAT EXPOSURE PUTS A MID-GREY ON THE CURVE. The authored exposures span
  *     5% across three levels whose real ground irradiance spans 140%, so the
  *     canyon shipped the best part of a stop under and the arena a stop over.
- *     The authored number becomes a ± bias about the measured key.
+ *     The authored number becomes a ± bias about the measured key — TRIMMED,
+ *     not replaced: see METER_TRIM. Metering all the way to `KEY` made the
+ *     atmosphere block unable to say how bright its own level is, which is a
+ *     bigger fault than the one it was fixing.
  */
 export function atmosphereMeter(a) {
   const sunPos = sunDirection(a, new THREE.Vector3());
@@ -1182,8 +1303,10 @@ export function atmosphereMeter(a) {
 
   if (!outdoor) {
     // No atmosphere to meter — an interior is lit by lamps this cannot see.
+    // `trim` is 1 and not absent: there is nothing to trim here, and a reader
+    // that has to tell "not metered" from "field missing" gets it wrong.
     return { sunPos, outdoor, direct, skyFull: 0, envI: ENV_INTENSITY,
-      irradiance: direct + hemiIrr + fillIrr, key: null,
+      irradiance: direct + hemiIrr + fillIrr, key: null, trim: 1, rawTrim: 1,
       exposure: (a.exposure ?? 1.05) * EXPOSURE };
   }
 
@@ -1207,8 +1330,26 @@ export function atmosphereMeter(a) {
   const envI = ENV_INTENSITY * clamp(diffuseCap(sunPos.y) * direct / Math.max(skyFull, 1e-4), 0.16, 1);
   const irradiance = direct + skyFull * (envI / ENV_INTENSITY) + hemiIrr + fillIrr;
   const key = irradiance * 0.18 / Math.PI;
-  return { sunPos, outdoor, direct, skyFull, envI, irradiance, key,
-    exposure: clamp((a.exposure ?? 1.05) * KEY / Math.max(key, 1e-4), 0.2, 3.0) };
+  /* THE TRIM, AND WHY IT IS A CLAMP ON THE CORRECTION AND NOT ON THE RESULT.
+   *
+   * Clamping the finished exposure would bound how bright a frame can be and
+   * still let the meter erase the difference between two levels inside the
+   * bound — which is the actual defect. Clamping the CORRECTION makes
+   * `key → exposure × key` monotone by construction: below KEY/hi it is
+   * key × hi, above KEY/lo it is key × lo, and in between it is the flat
+   * KEY. So a level authored darker than another can never render brighter
+   * than it, and the only thing the trim's width buys is how much authored
+   * difference the flat middle is allowed to swallow.
+   *
+   * The outer clamp stays as a backstop against an atmosphere nobody has
+   * authored yet; with the trim in place no shipped level comes near it. */
+  // `rawTrim` is the correction BEFORE the bound — the whole of what the meter
+  // used to apply. Kept on the meter so a check can build the flattened frame
+  // as a control without a second copy of this arithmetic living in tools/.
+  const rawTrim = KEY / Math.max(key, 1e-4);
+  const trim = clamp(rawTrim, METER_TRIM[0], METER_TRIM[1]);
+  return { sunPos, outdoor, direct, skyFull, envI, irradiance, key, trim, rawTrim,
+    exposure: clamp((a.exposure ?? 1.05) * trim, 0.2, 3.0) };
 }
 
 /* ── composite shader ────────────────────────────────────────────────── */
