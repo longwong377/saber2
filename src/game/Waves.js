@@ -2896,11 +2896,22 @@ export function boonGuard(p, name, before, after) {
     p._boonGuards = new Map();
     p._boonAfterHit = new Map();
     const base = p.damage;
-    p.damage = function (amount, point, source, kind) {
+    /* `...rest` RATHER THAN THE FOUR NAMED ARGUMENTS, and it is not tidiness.
+     * A wrapper that restates its wrappee's signature silently drops whatever
+     * that signature grows next, and `Player.damage` grew a fifth argument the
+     * day the Force learned to answer the Force: `preResisted`, set by
+     * `applyKnockback` to say "this blow has already been weighed against the
+     * pool, do not charge it twice". Dropped here, a drafted player paid for
+     * every enemy shove twice over — measured through the checks' own copy of
+     * this mistake, lightning delivering 19% of its authored damage instead of
+     * 43%, and the pool spent twice for it. Forwarding everything cannot go
+     * stale. */
+    p.damage = function (amount, point, ...rest) {
       let a = amount;
+      const [source, kind] = rest;
       for (const g of this._boonGuards.values()) a = g.call(this, a, kind, source);
       if (!(a > 0)) return false;
-      const died = base.call(this, a, point, source, kind);
+      const died = base.call(this, a, point, ...rest);
       for (const g of this._boonAfterHit.values()) g.call(this, a, kind, source);
       return died;
     };

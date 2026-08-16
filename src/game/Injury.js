@@ -449,9 +449,15 @@ export function applyInjury(world, s = {}) {
     p.injury.setEnabled(s.injury !== false);
     if (!p._injuryGated) {
       const damage = p.damage.bind(p);
-      p.damage = (amount, point, source, kind) => {
+      /* VARIADIC, because this wrapper only wants to watch. Naming the four
+       * arguments it happened to know about is how it came to swallow the fifth
+       * — `preResisted`, which `Player.applyKnockback` sets to say the pool has
+       * already paid for this blow — and every enemy shove at a player with
+       * injuries armed (which is every player) was billed to the Force bar
+       * twice. See the same note in `Waves.js boonGuard`. */
+      p.damage = (amount, point, ...rest) => {
         const before = p.hp;
-        const died = damage(amount, point, source, kind);
+        const died = damage(amount, point, ...rest);
         const took = before - p.hp;
         if (took > 0 && p.injury && p.injury.enabled) {
           p.injury.hit(point, took / Math.max(1, p.maxHp));

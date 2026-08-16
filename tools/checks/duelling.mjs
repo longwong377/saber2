@@ -152,9 +152,15 @@ function duel(formKey, seconds, opts = {}) {
     worstHitsInOneStrike: 0, e, p, w,
   };
   const realDamage = p.damage.bind(p);
-  p.damage = (amt, pt, src, kind) => {
-    if (src === e && kind === 'saber') { s.hits++; s.hitsThisStrike++; }
-    return realDamage(amt, pt, src, kind);
+  /* `...rest` FORWARDED WHOLE. An instrument that names the arguments it knows
+   * about measures a different function the day the real one grows one —
+   * `Player.damage` took a fifth (`preResisted`) when the Force learned to
+   * answer the Force, and a wrapper that dropped it made every knockback pay
+   * the pool twice INSIDE THE HARNESS ONLY. Nothing here reads past `kind`, so
+   * there is no reason to name any of them. */
+  p.damage = (amt, pt, ...rest) => {
+    if (rest[0] === e && rest[1] === 'saber') { s.hits++; s.hitsThisStrike++; }
+    return realDamage(amt, pt, ...rest);
   };
   const c0 = new THREE.Vector3(), c1 = new THREE.Vector3();
   const a = new THREE.Vector3(), b = new THREE.Vector3();
