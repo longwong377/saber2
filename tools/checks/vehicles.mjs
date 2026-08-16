@@ -198,6 +198,8 @@ function fillAndMass(bits) {
   return { fill: n / area, mass: 1 - ((sy / n) - y0) / Math.max(1, y1 - y0) };
 }
 
+const clampN = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
+
 /** How far apart two boxes are in SHAPE, ignoring size. */
 function aspectGap(a, b) {
   const na = normalise(a), nb = normalise(b);
@@ -781,6 +783,76 @@ export async function run({ check, assert }) {
     m.rig.hipsBone.obj.position.z -= 62;
     m.rig.root.updateMatrixWorld(true);
     return `${want.toFixed(2)} rad per 2 m on a ${w.radius.toFixed(2)} m wheel; jumps discarded`;
+  });
+
+  /**
+   * WHERE THE GUN POINTS — and a defect that is NOT this workstream's.
+   *
+   * `_poseWalker` tracks the `head` bone onto the target with
+   *
+   *     const localYaw = Math.atan2(_v3.x, _v3.z) - this.facing - Math.PI;
+   *
+   * `atan2(dx, dz) - facing` is already the target's bearing relative to the
+   * hull — zero when the target is dead ahead. The `- Math.PI` then puts the
+   * turret 180° out, and because the result is clamped to ±0.7 rad BEFORE it is
+   * applied, what actually happens is that the yaw saturates at one limit or the
+   * other and flips sign as the target crosses the centreline.
+   *
+   * Measured, turret axis against the line to the target, chassis facing +Z:
+   *
+   *     target dead ahead     45° off, every chassis
+   *     target 45° left       94° off
+   *     target 45° right      94° off
+   *
+   * and — the part that says whose bug it is — the SHIPPED Spider Walker reads
+   * 43.8 / 87.7 / 87.8 on the same probe. It is not something these four
+   * introduced and it is not something they can fix from outside: the clamp is
+   * applied to the wrong value, so no rest orientation or authoring convention
+   * can absorb it. It is one sign in Enemy.js.
+   *
+   * WHAT IS ASSERTED HERE is therefore what these four DO own and what keeps it
+   * from being a gameplay bug as well as a visual one: the muzzle is a real
+   * point on the front of the machine, and `_shoot` aims the bolt at the target
+   * rather than down the muzzle — so the shells go where they should while the
+   * barrel looks wrong. The error itself is REPORTED, every run, next to the
+   * shipped walker's, so the day the sign is fixed the number moves on its own.
+   */
+  check('vehicles: the shells go where they are aimed, and the barrels do not', async () => {
+    const rows = [];
+    const q = new THREE.Quaternion(), fwd = new THREE.Vector3(), want = new THREE.Vector3();
+    // the shipped Spider Walker is measured alongside, because it is the
+    // evidence that the cause is upstream of this file
+    for (const t of [...VEHICLE_TYPES, 'walker']) {
+      const e = await spawn(t);
+      e.facing = 0;
+      const tgt = new THREE.Vector3(0, 1.6, 30);
+      e.target = { position: tgt, chest: tgt };
+      const ctx = { terrain: flat(), time: 0 };
+      for (let i = 0; i < 40; i++) { ctx.time += 1 / 60; e._poseWalker(1 / 60, ctx); }
+      e.rig.root.updateMatrixWorld(true);
+
+      const from = e._muzzleWorld(new THREE.Vector3());
+      assert(Number.isFinite(from.x) && Number.isFinite(from.y),
+        `${t}: _muzzleWorld returned ${from.toArray()} — a NaN here puts every bolt at the origin`);
+      assert(from.y > 0.6, `${t} fires from ${from.y.toFixed(2)} m, which is the floor`);
+      assert(from.distanceTo(e.position) < 12,
+        `${t}'s muzzle is ${from.distanceTo(e.position).toFixed(1)} m from the body it is bolted to`);
+
+      const head = e.rig.get('head');
+      if (!head) { rows.push(`${t} no turret`); e.dispose?.(); continue; }
+      head.obj.getWorldQuaternion(q);
+      fwd.set(0, 0, 1).applyQuaternion(q);
+      want.copy(tgt).sub(from).normalize();
+      const deg = THREE.MathUtils.radToDeg(Math.acos(clampN(fwd.dot(want), -1, 1)));
+      /* A loose sanity bound and not a bar: the turret may be 45° out — it is,
+       * on every chassis in the game — but it may never end up pointing at the
+       * back of its own hull, which would mean something worse than the sign. */
+      assert(deg < 110, `${t}'s turret is ${deg.toFixed(0)}° off a target dead ahead`);
+      rows.push(`${t} ${deg.toFixed(0)}°`);
+      e.dispose?.();
+    }
+    return `turret error on a target dead ahead: ${rows.join(', ')} — see the note above; `
+      + 'the sign is in Enemy._poseWalker and the shipped walker has it too';
   });
 
   /* ── the gunship ─────────────────────────────────────────────────────── */
