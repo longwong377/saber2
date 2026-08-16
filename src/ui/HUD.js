@@ -1792,6 +1792,27 @@ const esc = (s) => String(s == null ? '' : s).replace(/[<>&]/g, (c) => ({ '<': '
  * would silently start under-counting the moment the real fix landed.
  */
 export function hostilesLeft(world) {
+  /**
+   * COMPOSED, NOT DELEGATED — and it stays that way on purpose.
+   *
+   * `WaveDirector.remaining` has since been fixed at the source: `blocksWaveEnd`
+   * is now the single statement of the party predicate with three callers, two
+   * of which were wrong. So this function is, strictly, a second computation of
+   * a rule that is now right in one place — the twin this codebase keeps
+   * deleting (HANDOFF 2.3) — and collapsing it to `d.remaining` was tried.
+   *
+   * It was put back, because the check that guards this is written against a
+   * director whose `remaining` is deliberately a LIE (99, with six real
+   * hostiles). That fixture is the point: the HUD's job is to be right about
+   * what the player can see even when the thing it asks has been broken, and
+   * `remaining` has been broken twice already this session. Making the
+   * delegation pass would have meant editing that fixture to accept the
+   * delegation — relaxing a bound to fit a cleanup that buys no behaviour.
+   *
+   * Redundant and independently correct beats terse and jointly wrong. If this
+   * is ever collapsed, the check has to be rewritten to drive a REAL director
+   * first, not restubbed.
+   */
   const d = world?.director;
   if (!d) return 0;
   if (!world.command) return d.remaining;

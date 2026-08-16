@@ -130,6 +130,13 @@ export const LEGACY_KEYS = ['saber.settings.v5', 'saber.settings.v4', 'saber.set
  */
 export const DEATH_TITLE = 'You are one with the Force';
 
+/**
+ * …and the other ending. `showDeath` has taken a title since it was written and
+ * nothing ever passed one, so finishing the campaign printed the death line over
+ * a victory. The advance is the only thing in this game that can be WON.
+ */
+export const VICTORY_TITLE = 'The advance is yours';
+
 export const BLADE_CAP = 1.45;
 export const BLADE_MAX = 4.0;
 

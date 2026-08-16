@@ -14,7 +14,7 @@ import { sandMaps, rockMaps, metalMaps, clothMaps, armorMaps, duracreteMaps,
 import { World } from './game/World.js';
 import { DIFFICULTY } from './game/Combat.js';
 import { HUD } from './ui/HUD.js';
-import { Menu, loadSettings, saveSettings, applyFeelSettings } from './ui/Menu.js';
+import { Menu, loadSettings, saveSettings, applyFeelSettings, VICTORY_TITLE } from './ui/Menu.js';
 import { Net, RemoteAvatar, packLook } from './net/Net.js';
 import { boonById, drawBoons, BOSS_EVERY, MODES } from './game/Waves.js';
 // No `FORMATIONS` import any more: the orders reach this file as ordinary
@@ -861,14 +861,39 @@ function gameOver(stats) {
   // the only exit from a state to be in flight, and if the call throws the
   // player is watching their own corpse with nothing on screen. Escape puts it
   // back — see the keydown handler.
-  const card = () => menu.showDeath([
-    ['Wave reached', stats.wave],
-    ['Score', Math.floor(stats.score).toLocaleString()],
-    ['Kills', stats.kills],
-    ['Deflections', stats.deflects],
-    ['Perfect returns', stats.perfects],
-    ['Limbs taken', stats.limbs],
-  ]);
+  /**
+   * A WON RUN AND A LOST RUN ARE NOT THE SAME CARD.
+   *
+   * `showDeath` has always taken a title and nothing has ever passed one, so a
+   * player who finished the Geonosis campaign — the one completable thing in
+   * this game — was told "You are one with the Force" over a table of their own
+   * casualties. The campaign now sets `won` (Command.js raises it the moment the
+   * advance is over, and `world.onGameOver` carries it), so the discriminator
+   * exists and this is the one place that has to read it.
+   *
+   * The stat rows change with it. "Wave reached" is the right question for an
+   * endless mode and the wrong one for a campaign you have just finished; a
+   * won run reports the ground it took instead.
+   */
+  const won = !!stats.won;
+  const rows = won
+    ? [
+      ['Areas taken', stats.areas ?? 5],
+      ['Score', Math.floor(stats.score).toLocaleString()],
+      ['Kills', stats.kills],
+      ['Troops lost', stats.fallen ?? 0],
+      ['Deflections', stats.deflects],
+      ['Limbs taken', stats.limbs],
+    ]
+    : [
+      ['Wave reached', stats.wave],
+      ['Score', Math.floor(stats.score).toLocaleString()],
+      ['Kills', stats.kills],
+      ['Deflections', stats.deflects],
+      ['Perfect returns', stats.perfects],
+      ['Limbs taken', stats.limbs],
+    ];
+  const card = () => menu.showDeath(rows, won ? VICTORY_TITLE : undefined);
   // Remembered before it is shown: 2.6 seconds is a long time for the only exit
   // from a state to be in flight, and a throw in there used to leave the player
   // watching their own corpse with nothing on screen. Escape asks for it again.
