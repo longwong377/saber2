@@ -631,7 +631,39 @@ const GRIP_TWIST = 35 * Math.PI / 180;
 export const GRIP_ROLL_R = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -Math.PI / 2);
 export const GRIP_ROLL_L = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI / 2);
 
-export const GRIP_AT = { R: 0.050, L: -0.015 };
+/**
+ * WHERE ON THE SHAFT EACH FIST CLOSES — and why first person gets its own.
+ *
+ * `R`/`L` are the third-person grip and are unchanged: two fists straddling the
+ * middle of a shaft whose metal spans −0.092 … +0.158, which is correct for a
+ * two-handed sabre grip and invisible at 3.5 m from the lens.
+ *
+ * `FP` IS THE ONE-HANDED FIRST-PERSON GRIP, and it exists because at 0.5 m from
+ * a lens those same two fists are the entire picture. Measured with
+ * `tools/_fpgeom.mjs` before this:
+ *
+ *     hilt on screen        27.6% of frame height, 23 of 31 samples in frame
+ *     of what was in frame, behind the player's own fists        91%
+ *
+ * A hilt that is a quarter of the frame and nine tenths hidden is not a hilt,
+ * it is a pale smudge where the blade begins — which is what the player's
+ * screenshot shows and what `assets/reference/first-person/` does not: there ONE
+ * fist sits low on the grip with the entire emitter section standing clear above
+ * it.
+ *
+ * Sliding both fists down was tried first and is refuted: 91% → 40%, and then
+ * the raise needed to keep the OFF hand in frame brings elbowL inside the 100 mm
+ * the deltoid needs against a 45 mm near plane. Swept as a pair over grip
+ * −0.020 … −0.105 against rise +0 … +0.070, nothing satisfies both — the note in
+ * tools/_fpgeom.mjs has the sweep. The second hand is the constraint, so the
+ * second hand goes: see `twoHanded` in _updateBody.
+ *
+ * −0.062 rather than the −0.092 the metal bottoms out at, because the fist is
+ * ~90 mm across and a grip point at the very end of the shaft hangs half the
+ * hand off it. This puts the whole closed fist on metal with the pommel just
+ * clear below it, which is the reference's own framing.
+ */
+export const GRIP_AT = { R: 0.050, L: -0.015, FP: -0.062 };
 
 
 
@@ -1547,6 +1579,14 @@ export class Player {
     this.senseActive = false;
     this.senseTimer = 0;
     this.saberThrown = false;
+    /**
+     * THE HAND IS EMPTY. See `disarmed` and `_dropSaber`.
+     *
+     * Declared here rather than materialising on the first drop, because
+     * `disarmed` is read on every frame of `_updateBlade` and `_updateBody` and
+     * an undefined that happens to be falsey is not a state, it is a coincidence.
+     */
+    this.saberDown = false;
     this.throwState = 'held';
     this.throwPos = new THREE.Vector3();
     this.throwVel = new THREE.Vector3();
@@ -1664,6 +1704,13 @@ export class Player {
   get difficulty() { return this.world.difficulty; }
   aimPoint(out = new THREE.Vector3()) { return out.copy(this.chest); }
   get dead() { return !this.alive; }
+
+  /**
+   * NOTHING IN THE HAND. The same name Enemy uses for the same condition, so
+   * the two halves of note 61 read alike: a duellist that loses the sword arm
+   * and a player who puts theirs down are in one state, not two.
+   */
+  get disarmed() { return !!this.saberDown; }
 
   /**
    * THIS BODY, AS SOMETHING A BLADE CAN FIND.
@@ -1794,10 +1841,22 @@ export class Player {
     this.camera.addPitch(camDelta.pitch);
 
     // ignite / retract
+    //
+    // THE HOLE NOTE 39 CAME THROUGH. `toggle()` asks the Saber whether its
+    // blade is lit; it cannot ask whether anybody is holding it. So after a
+    // drop this one key lit a hilt lying six metres away, and the player was
+    // armed again — "you still have one like you never actually lose it".
+    // Measured: ignition 0.01 → 0.97 in half a second, from an empty hand.
     if (input.actHit('ignite')) {
-      this.saber.toggle();
-      if (this.saber.lit) { this.hum.ignite(); audio.tone({ freq: 180, freqEnd: 900, dur: 0.4, gain: 0.22, type: 'sawtooth', pos: this.saber.base }); }
-      else { this.hum.retract(); audio.tone({ freq: 900, freqEnd: 120, dur: 0.35, gain: 0.2, type: 'sawtooth', pos: this.saber.base }); }
+      // …and NOT `return`: this sits above the view toggle, the grip and all
+      // eleven powers, so an early exit here would make an empty hand cost the
+      // player the rest of their controls for that frame.
+      if (this.saberDown) this._refuse('ignite', 'your hands are empty');
+      else {
+        this.saber.toggle();
+        if (this.saber.lit) { this.hum.ignite(); audio.tone({ freq: 180, freqEnd: 900, dur: 0.4, gain: 0.22, type: 'sawtooth', pos: this.saber.base }); }
+        else { this.hum.retract(); audio.tone({ freq: 900, freqEnd: 120, dur: 0.35, gain: 0.2, type: 'sawtooth', pos: this.saber.base }); }
+      }
     }
     if (input.actHit('view')) {
       this.camera.firstPerson = !this.camera.firstPerson;
@@ -2465,8 +2524,14 @@ export class Player {
     });
 
     if (this.throwState === 'held') {
-      this.saber.setHiltPose(this.control.handPos, this.control.quat);
-      this.saber.setVisible(true);
+      /* THE UNCONDITIONAL `setVisible(true)` IS WHY A DROP DID NOTHING. It ran
+       * every frame, so `_dropSaber` hiding the hilt would have lasted exactly
+       * one frame. The hilt is drawn iff it is in the hand. */
+      if (this.saberDown) this.saber.setVisible(false);
+      else {
+        this.saber.setHiltPose(this.control.handPos, this.control.quat);
+        this.saber.setVisible(true);
+      }
     } else {
       this._updateThrow(dt, ctx);
     }
@@ -2742,15 +2807,41 @@ export class Player {
     // arms to the hilt
     // A gesture takes the off hand off the hilt without touching the blade's
     // grip model — see the note in _readInput on why those are separate.
-    const twoHanded = this.control.grip === 'two' && this.throwState === 'held' && !this.gesture.kind;
+    /**
+     * FIRST PERSON IS ONE-HANDED, AND THAT IS A DECISION ABOUT WHAT A
+     * FIRST-PERSON GRIP IS — not a tuning pass. It is the player's call and the
+     * player made it ("no half measures").
+     *
+     * Three separate reports of "the first person hand/hilt looks like jumbled
+     * garbage" were answered by moving the shoulders off the ribcage and by
+     * raising the blade anchor. Both were real faults, both are fixed, and the
+     * complaint survived them — because the fault was never the pose. It was
+     * OCCLUSION, and nothing had ever measured it: 91% of the on-screen hilt was
+     * behind a glove, with two fists on a 25 cm shaft at 0.5 m from the lens.
+     *
+     * Taking the off hand off the hilt removes BOTH halves of that in one move —
+     * the second occluder, and the folded left arm that the near plane was
+     * slicing whenever the fists were low enough for the first to matter. It is
+     * also what the reference the player supplied actually shows.
+     *
+     * Third person is untouched: at 3.5 m the second hand costs nothing and a
+     * two-handed guard is the form the whole controller is tuned around
+     * (`GRIPS.two` vs `GRIPS.one` move handExtend 0.29 → 0.36). This changes
+     * where the ARMS go, and nothing about the blade's grip model — `control.grip`
+     * is not touched, so first person keeps the two-handed guard's reach,
+     * stiffness and inertia and does not silently become a different weapon.
+     */
+    const twoHanded = this.control.grip === 'two' && this.throwState === 'held'
+      && !this.gesture.kind && !this.saberDown && !this.camera.firstPerson;
     // In first person the arms hang off the VIEW, not off the ribcage, and
     // `chest` — which is the frame every elbow pole below is built in — becomes
     // the point midway between the two viewmodel shoulders. See _anchorViewArms.
     const chest = this.camera.firstPerson
       ? this._anchorViewArms(_v1) : rig.worldPos('chest', _v1);
 
-    if (this.throwState === 'held') {
-      const gripR = this.saber.root.localToWorld(_v2.set(0, GRIP_AT.R, 0));
+    if (this.throwState === 'held' && !this.saberDown) {
+      const fp = this.camera.firstPerson;
+      const gripR = this.saber.root.localToWorld(_v2.set(0, fp ? GRIP_AT.FP : GRIP_AT.R, 0));
       const gripL = this.saber.root.localToWorld(_v3.set(0, GRIP_AT.L, 0));
       /**
        * THE WRIST IS NOT THE GRIP. See GRIP_BORE.
@@ -2795,9 +2886,36 @@ export class Player {
         // this used to be a single `gripBody ? 0.55 : -0.05` reach that only
         // applied while the one-hand key was ALSO held, so in practice no power
         // in the game had a visible arm.
-        const rest = _v6.copy(chest).addScaledVector(right, -0.34).addScaledVector(UP, -0.62)
-          .addScaledVector(fwd, -0.05);
-        const poleL = _v2.copy(chest).addScaledVector(right, -0.85).addScaledVector(UP, -0.7);
+        /**
+         * …EXCEPT IN FIRST PERSON, WHERE THE HIP IS BEHIND THE CAMERA.
+         *
+         * The third-person rest drops the hand along WORLD up, and in first
+         * person `chest` is the viewmodel anchor 0.115 m in front of the lens.
+         * At a level gaze that already puts the wrist only 65 mm in front of a
+         * 45 mm near plane; look UP 63 degrees and world-up acquires a −0.55 m
+         * component along the view axis, so the whole off arm goes BEHIND the
+         * eye and is sliced open by the camera. That is the elbowL failure the
+         * two-handed grip was hiding, and it arrives the moment the off hand
+         * stops being pinned to the hilt.
+         *
+         * So the off hand gets a rest expressed in the AIM frame, exactly like
+         * every other part of the viewmodel: fixed in view space at every pitch,
+         * low and to the left, and far enough forward that the whole chain
+         * clears the near plane. Measured after: nearest arm joint 197 mm at a
+         * level gaze and 174 mm looking up, against the 100 mm the deltoid
+         * needs. It hangs below the frame the way the reference's does — the
+         * off hand is not part of the picture, and that is the point.
+         */
+        const up = _v9.set(0, 1, 0).applyQuaternion(this.camera.aimQuat);
+        const rest = fp
+          ? _v6.copy(chest).addScaledVector(right, -0.20).addScaledVector(up, -0.30)
+            .addScaledVector(fwd, 0.20)
+          : _v6.copy(chest).addScaledVector(right, -0.34).addScaledVector(UP, -0.62)
+            .addScaledVector(fwd, -0.05);
+        const poleL = fp
+          ? _v2.copy(chest).addScaledVector(right, -0.62).addScaledVector(up, -0.34)
+            .addScaledVector(fwd, 0.10)
+          : _v2.copy(chest).addScaledVector(right, -0.85).addScaledVector(UP, -0.7);
         const palm = this._gesturePose(rest, poleL, chest, fwd, right);
         rig.solveIK('armL', 'foreL', rest, poleL);
         // Wrist AFTER the IK: solveIK writes armL and foreL, and the hand hangs
@@ -2871,11 +2989,26 @@ export class Player {
         b.obj.quaternion.copy(_q4.invert()).multiply(want);
       }
     } else {
-      // saber is in flight — the throwing hand stays extended, calling it back
+      // Either the saber is in flight — the throwing hand stays extended,
+      // calling it back — or the hand is EMPTY, in which case it must not:
+      // reaching out at nothing for as long as you are disarmed is the pose of
+      // a player permanently recalling a blade they no longer own. An empty
+      // sword hand rests where the off hand does, mirrored, and that is the
+      // whole visual difference between armed and disarmed on the third-person
+      // figure. See `disarmed`.
       const fwd = _v4.set(0, 0, -1).applyQuaternion(this.camera.aimQuat);
       const right = _v5.set(1, 0, 0).applyQuaternion(this.camera.aimQuat);
-      const reach = _v6.copy(chest).addScaledVector(fwd, 0.55).addScaledVector(right, 0.22).addScaledVector(UP, 0.05);
+      const reach = this.saberDown
+        ? _v6.copy(chest).addScaledVector(right, 0.32).addScaledVector(UP, -0.58).addScaledVector(fwd, 0.04)
+        : _v6.copy(chest).addScaledVector(fwd, 0.55).addScaledVector(right, 0.22).addScaledVector(UP, 0.05);
       rig.solveIK('armR', 'foreR', reach, _v2.copy(chest).addScaledVector(right, 0.8).addScaledVector(UP, -0.6));
+      if (this.saberDown) {
+        // and the wrist goes back to its own rest, or it keeps whatever roll
+        // the grip solve last forced on it — the same defect the one-hand
+        // branch above records for handL.
+        const hr = rig.get('handR');
+        if (hr) hr.obj.quaternion.copy(hr.restQuat);
+      }
       const rest = _v6.copy(chest).addScaledVector(right, -0.3).addScaledVector(UP, -0.6);
       const poleL = _v2.copy(chest).addScaledVector(right, -0.8).addScaledVector(UP, -0.7);
       // The off hand still answers to the Force with the blade away — and the
@@ -3881,6 +4014,10 @@ export class Player {
 
   throwOrRecall(ctx) {
     if (this.throwState === 'held') {
+      // An empty hand throws nothing. `!this.saber.lit` already caught this by
+      // accident — a dropped blade is out — but only by accident, and the
+      // silence was indistinguishable from a bug. Say so.
+      if (this.saberDown) return this._refuse('saber throw', 'your hands are empty');
       if (!this.saber.lit || this.cooldowns.throw > 0) return;
       /* Through `_spend`, not `this.force -= …`. The hand-rolled version
        * applied the boon multiplier and ignored the drain slider entirely, so
@@ -4274,6 +4411,24 @@ export class Player {
     if (this.throwState !== 'held') {
       return this._refuse('drop', 'your blade is not in your hand');
     }
+    /**
+     * YOU CANNOT DROP WHAT YOU ARE NOT HOLDING — note 39, and this is the half
+     * of it that made hilts out of nothing.
+     *
+     * Measured on the real Player before this line existed: drop, walk clear of
+     * the 1.6 m reach, press it again — and again. **Five presses made five
+     * hilts**, every one of them carrying the same crystal, the same style and
+     * the same order, all five of them pickable. `saberDown` was set on the
+     * first drop and read by exactly one line in `_takeSaber`, so nothing here
+     * ever asked whether there was still a weapon in the hand.
+     *
+     * That is the literal reading of "you still have one like you never
+     * actually lose it": the game agreed you had dropped it, drew it in your
+     * hand anyway, and would sell you another.
+     */
+    if (this.saberDown) {
+      return this._refuse('drop', 'your hands are empty — find a hilt');
+    }
     this._dropSaber(ctx);
     return true;
   }
@@ -4281,7 +4436,7 @@ export class Player {
   /** Let go of what is in the hand. */
   _dropSaber(ctx, opts = {}) {
     const s = this.saber;
-    if (!s) return null;
+    if (!s || this.saberDown) return null;
     const put = dropSaber(this.world, {
       position: _v1.copy(this.gripAnchor).addScaledVector(this.aimDir, 0.25),
       // Out of the hand and down, not thrown: a drop is a decision, and a hilt
@@ -4294,7 +4449,28 @@ export class Player {
       ...opts,
     });
     s.retract();
+    /**
+     * AND THE HILT LEAVES THE HAND — which it did not.
+     *
+     * `retract()` puts the blade out and nothing else: the Saber object, its
+     * root, and all nineteen machined pieces of the Graflex stayed parented to
+     * the scene and were re-shown by `_updateBlade`'s unconditional
+     * `setVisible(true)` on the very next frame. Measured on the bench: `lit`
+     * false, `ignition` 0.01 — and 19 hilt meshes still drawn, in your hand.
+     * Then one press of `ignite` lit them again (0.97 in half a second) and you
+     * were armed, standing over your own hilt, with nothing having happened.
+     *
+     * So the state is `saberDown`, and every reader of it is a place the game
+     * used to pretend the weapon was still there. It is not a `saber = null`
+     * because sixty call sites outside this file dereference `player.saber`
+     * without a guard — World's blade entries, the catch window, the HUD's heat
+     * bar, Net's wire record — and a null there is a crash per frame in five
+     * files I do not own. An empty hand is a STATE of the wielder, not the
+     * absence of an object.
+     */
+    s.setVisible(false);
     this.saberDown = true;
+    this.hum?.retract?.();
     this._gesture('cast');
     audio.thud?.(this.gripAnchor, 0.4);
     this.world?.notify?.('DROPPED', `${SABER_COLORS[s.colorIndex]?.name ?? 'your blade'} is on the ground`);
@@ -4320,8 +4496,22 @@ export class Player {
     s.setColor(id.colorIndex ?? 0);
     s.rebuildHilt?.();
     this.saberDown = false;
+    /**
+     * AND IT COMES UP LIT.
+     *
+     * The alternative — hand it back dark and let the player press ignite — was
+     * written first and is wrong for one reason: this is a thing you do inside a
+     * fight, one press, while something is swinging at you. A pick-up that hands
+     * you an unlit hilt costs a second key at the exact moment the game is least
+     * survivable, and reads as the pick-up having half-failed. `rebuildHilt`
+     * above has already re-machined the blade group, so `ignite` here lights THIS
+     * weapon's crystal and not the one you were carrying.
+     */
+    s.setVisible(true);
+    s.ignite();
     prop.destroy ? prop.destroy() : (prop.dead = true);
     this.hum?.setColor?.(s.color.getHex());
+    this.hum?.ignite?.();
     this._gesture('reach');
     audio.force(this.chest, 'pull');
     this.world?.notify?.('TAKEN', `${SABER_COLORS[s.colorIndex]?.name ?? 'a blade'}, ${s.hiltStyle}`);
@@ -4901,6 +5091,12 @@ export class Player {
     this.animator.onFootstep = (p, s) => this._footstep(p, s);
     this._makeCloak();
     this._applyViewMode();
+    /* YOU COME BACK ARMED. `saberDown` survives a respawn otherwise, and the
+     * hilt you dropped is on a floor two waves ago — so the revive would put a
+     * player back on their feet permanently unable to ignite anything, and the
+     * only tell would be a refusal message. A new body gets its weapon. */
+    this.saberDown = false;
+    this.saber.setVisible(true);
     this.saber.ignite();
     this.hum.ignite();
   }

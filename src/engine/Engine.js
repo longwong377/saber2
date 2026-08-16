@@ -99,6 +99,8 @@ import { clamp, damp } from './MathUtil.js';
  * (1.0x / 1.0x / 1.56x / 2.25x fragments) and msaa (0 / 2 / 4 / 4). Never quote
  * a frame rate for any of it.
  */
+export const LIGHT_POOL_SIZE = 8;
+
 export const QUALITY = {
   // `shadowDist` is the REACH of the outermost cascade, and `shadow` is the map
   // size of EACH of the three (see CASCADE_SPLIT / cascadeBoxes). It used to be
@@ -1491,6 +1493,33 @@ export class Engine {
     this.clock = new THREE.Clock();
     this.time = 0;
     this.heatSources = [];
+    /**
+     * THE FIXED POINT-LIGHT POOL. See `lightUp` for why it is fixed.
+     *
+     * EIGHT, and the number is derived rather than felt. `_crowd.mjs` measures
+     * an empty colosseum at 2 lights and thirty saber users at 64; the shading
+     * cost of a forward frame is linear in this number and the recompile
+     * hazard is the number CHANGING. Eight is the most a scene can carry
+     * without the per-fragment loop dominating at this project's material
+     * count (465 materials with thirty bodies on the field), and it is enough
+     * that the player's own blade, an opponent's, and half a dozen of the
+     * nearest others are all real lights. Everything past that still glows —
+     * the drawn blade does 88% of the visible work without its lights at all,
+     * which is measured in Saber.js.
+     *
+     * They live in the scene from construction and are never added or removed,
+     * so NUM_POINT_LIGHTS is a constant for the life of the renderer.
+     */
+    this.lightPool = [];
+    this._lightReq = [];
+    this._lightsWanted = 0;
+    this._lightsLit = 0;
+    for (let i = 0; i < LIGHT_POOL_SIZE; i++) {
+      const L = new THREE.PointLight(0xffffff, 0, 7, 1);
+      L.castShadow = false;
+      this.scene.add(L);
+      this.lightPool.push(L);
+    }
     this._flash = 0;
     this._hurt = 0;
     this._sense = 0;
@@ -2108,7 +2137,83 @@ export class Engine {
   setSense(v) { this._senseTarget = v; }
   setRadial(v) { this._radialTarget = v; }
 
+  /**
+   * THE LIGHT POOL — a FIXED number of point lights, whoever asks.
+   *
+   * Player note #15, and it is two complaints in one sentence: "any situation
+   * where multiple characters with sabers are on the screen it gets really
+   * really laggy AND FREEZES too", and "sometimes for fun I'll spawn like 30
+   * enemies and then it gets really really laggy, framerate probably <10".
+   *
+   * Measured with tools/_crowd.mjs, thirty acolytes on the colosseum:
+   *
+   *     empty            2 lights
+   *     30 alive        64 lights        ← two per lit saber, plus the sky pair
+   *
+   * Sixty-four dynamic point lights in a FORWARD renderer. Saber.js's own
+   * comment already saw half of this — "every enemy in a wave carries one of
+   * these, and NUM_POINT_LIGHTS is a per-fragment unrolled loop in every lit
+   * material in the game" — and capped it at two per blade. Nothing capped the
+   * number of BLADES.
+   *
+   * TWO SEPARATE COSTS, and the second is the one that explains "freezes":
+   *
+   *   · every lit fragment loops over every light, so the shading cost of the
+   *     whole frame scales with how many people are holding a sabre;
+   *   · three.js bakes NUM_POINT_LIGHTS into the shader SOURCE, so the count
+   *     changing recompiles every lit material in the scene. A blade igniting,
+   *     retracting, or a body dying mid-fight moves that count, and a compile
+   *     of four hundred materials is a stall you feel as a freeze rather than
+   *     as a frame rate.
+   *
+   * So the pool is FIXED SIZE and always in the scene. Nothing else may add a
+   * point light: callers ask for illumination once a frame with `lightUp()`,
+   * the best `POOL` requests win, and the losers still light the scene through
+   * their own emissive geometry and the bloom — which is where most of a
+   * lightsaber's apparent light comes from anyway (see the note over
+   * Saber.PROFILE: the drawn blade with its lights switched off does 88% of
+   * the work).
+   *
+   * The count therefore never changes, which means the recompile never
+   * happens, which is the freeze gone by construction rather than by tuning.
+   */
+  lightUp(pos, color, intensity, range = 7, priority = 0) {
+    if (!(intensity > 0)) return;
+    this._lightReq.push({ pos, color, intensity, range, priority });
+  }
+
+  /** Rank the frame's requests and drive the fixed pool from the winners. */
+  _syncLights() {
+    const req = this._lightReq;
+    const cam = this.camera.position;
+    /* IMPORTANCE, not distance. A blade behind you lighting the wall you are
+     * looking at matters more than a brighter one off screen, but the camera
+     * is the only cheap proxy for "is this on screen", so the rank is the
+     * request's own priority first (the local player's blade declares one) and
+     * then its brightness attenuated by how far away it is. */
+    for (const r of req) {
+      r._score = r.priority * 1e6 + r.intensity / (1 + cam.distanceToSquared(r.pos) * 0.02);
+    }
+    req.sort((a, b) => b._score - a._score);
+    for (let i = 0; i < this.lightPool.length; i++) {
+      const L = this.lightPool[i], r = req[i];
+      if (r) {
+        L.position.copy(r.pos);
+        L.color.set(r.color);
+        L.intensity = r.intensity;
+        L.distance = r.range;
+      } else {
+        // Parked, NOT removed: taking it out of the scene is the recompile.
+        L.intensity = 0;
+      }
+    }
+    this._lightsWanted = req.length;
+    this._lightsLit = Math.min(req.length, this.lightPool.length);
+    req.length = 0;
+  }
+
   render(dt) {
+    this._syncLights();
     const u = this.composite.uniforms;
     this.time += dt;
     u.uTime.value = this.time;
