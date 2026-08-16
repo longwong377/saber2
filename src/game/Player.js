@@ -5648,10 +5648,19 @@ export class Player {
       // so ~28 here is the 3 m/s of drift that makes a piece leave rather than
       // drop; the rest is what forcePower buys.
       _g4.normalize().multiplyScalar(18 + 14 * P);
-      e.takeCut({
+      /* `force: true` — this is a joint pulled apart, not a blade drawn through
+       * one, and `Enemy._turnCut` is the BLADE's guard. A heavy body turns a
+       * killing edge with a plate or a hide; the answer to a Force power is the
+       * Force pool (`resistForce`), which already runs on the enemy side. See
+       * the note at `_turnCut`. */
+      const outcome = e.takeCut({
         bone: c.name, cutT: 0.14, cap: c, point: _g3.clone(),
-        impulse: _g4.clone(), normal: UP.clone(), speed: 18,
+        impulse: _g4.clone(), normal: UP.clone(), speed: 18, force: true,
       }, this);
+      // …and a pass that took nothing off is not a limb. World._applyBladeEvent
+      // learnt this when the duellist guard landed and this site did not, so a
+      // rend that a guard caught still credited the counter on the death card.
+      if (outcome === 'turned') continue;
       this.limbsRemoved++;
       cut++;
     }

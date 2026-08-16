@@ -2272,6 +2272,20 @@ export class Enemy {
    */
   _turnCut(ev, bone, vital, source) {
     if (this.guard <= 0 || this.dead) return false;
+    /* THE FORCE IS A DIFFERENT CONTEST AND IT ALREADY HAS ONE. `ev.force` marks
+     * a joint torn off by Force Rend rather than a pass of a blade, and this is
+     * the blade's guard: a plate turns an EDGE, and nothing about a hide
+     * explains a limb being pulled out of its socket from the inside. The Force
+     * half is `resistForce`, which spends the body's own pool against the
+     * power, and charging a Force rend for both would be one act billed twice.
+     *
+     * It is also the difference between a heavy that is hard to cut and a power
+     * that appears to do nothing, which is the complaint this session has
+     * already answered once: with the walker's guard eating rend passes,
+     * `force: a droid comes apart, and how far scales with the setting` went
+     * red on a walker whose joints stopped coming off while the score, the
+     * shake and the sound all still fired. */
+    if (ev && ev.force) return false;
     if (this._guardOpen()) return false;
     if (!this._fightEnding(bone, vital)) return false;
 
