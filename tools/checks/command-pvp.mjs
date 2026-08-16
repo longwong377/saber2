@@ -563,4 +563,68 @@ export function run({ check, assert }) {
     return `${before.join(' v ')} → ${after.join(' v ')} standing, closed to ${closest.toFixed(1)} m, `
       + `${engaged} target picks across the line; side ${w} took the field, won=${ended[0].won}`;
   });
+
+  check('command/versus: the joining commander is told which side they are on and where it stands', async () => {
+    /**
+     * `assignSides` AND `Net.setSides` BOTH EXISTED, COMPLETE, WITH ZERO
+     * CALLERS — the same wire-built-at-one-end shape `claim` and `toHost` were,
+     * and it is worth stating that the code was not wrong, it was unreachable.
+     * Every remote body in every session was on side 0 whatever the host had
+     * decided, and a client's own local player was built with no team at all.
+     *
+     * The SEAT is the half that is easy to leave out and is fatal on its own. A
+     * client told it is the Confederacy but not where the Confederacy stands
+     * spawns at the level's home spot — in the middle of the Republic's line,
+     * with its own army forming up around it, because a formation is solved in
+     * its commander's frame. Two internally consistent machines and no two
+     * sides on the field.
+     *
+     * Driven through two REAL `Net` endpoints over the stub broker, so the
+     * roster that reaches the client is the one `_refreshRoster` actually
+     * broadcasts rather than an object this file wrote.
+     */
+    const H = await import('./_coop.mjs');
+    const { Net } = await import('../../src/net/Net.js');
+    const { SIDES, asTeam } = await import('../../src/game/Player.js');
+    const fake = H.installPeerStub();
+    const settle = async (n = 8) => {
+      for (let i = 0; i < n; i++) { await new Promise((r) => setTimeout(r, 0)); fake.flush(); }
+    };
+    const host = new Net();
+    const code = await (async () => { const p = host.host('HOST', {}, null); await settle(); return p; })();
+    const peer = new Net();
+    const joining = peer.join(code, 'RIVAL', null);
+    await settle();
+    await joining;
+    await settle();
+
+    const hostId = host.peer.id, peerId = peer.peer.id;
+    host.setSides(new Map([[hostId, SIDES[0]], [peerId, SIDES[1]]]));
+    host.setSeats(new Map([[peerId, { at: [0, 1.5, 60], facing: Math.PI }]]));
+    await settle();
+
+    const seen = peer.roster.find((r) => r.id === peerId);
+    assert(seen, 'the joining player is not on the roster it received');
+    assert(seen.team === SIDES[1],
+      `the joining player was told it is on side ${seen.team}, the host put it on ${SIDES[1]}`);
+    assert(Array.isArray(seen.at) && seen.at[2] === 60,
+      `the joining player was told to stand at ${JSON.stringify(seen.at)}`);
+
+    /* A client may not write either of them. Both refusals are the same rule:
+     * a peer that could choose its own side could choose yours, and a peer that
+     * could choose its own ground could choose the middle of yours. */
+    const before = JSON.stringify(peer.roster);
+    peer.setSides(new Map([[peerId, SIDES[0]]]));
+    peer.setSeats(new Map([[peerId, { at: [0, 0, -60], facing: 0 }]]));
+    assert(JSON.stringify(peer.roster) === before, 'a client can write its own side or its own ground');
+
+    /* …and a session with no meeting in it pays nothing for any of this. */
+    const plain = new Net();
+    const plainCode = await (async () => { const p = plain.host('SOLO', {}, null); await settle(); return p; })();
+    assert(plainCode && plain.roster[0].at === undefined,
+      'a co-op roster carries a seat nobody asked for');
+    fake.restore(); fake.restore(); fake.restore();
+    return `side ${asTeam(seen.team)} and ground ${seen.at.join('/')} reached the joining player; `
+      + 'a client cannot write either; a co-op roster carries neither';
+  });
 }

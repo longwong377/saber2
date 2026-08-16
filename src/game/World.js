@@ -2783,6 +2783,36 @@ export class World {
       }
     }
 
+    /**
+     * …AND TELL THE OTHER MACHINES, because a side and a seat are exactly the
+     * two things a client cannot work out for itself.
+     *
+     * `assignSides` and `Net.setSides` both existed, complete, with ZERO
+     * CALLERS anywhere in the repository — the same wire-built-at-one-end shape
+     * `claim` and `toHost` were. So every remote body in every session was on
+     * side 0 whatever the host had decided, and a client's own local player was
+     * built by `spawnPlayer` with no team at all.
+     *
+     * The SEAT goes with it, and without it the sides alone are not enough: a
+     * client told it was the Confederacy but not where the Confederacy stands
+     * spawns at the level's home spot, in the middle of the Republic's line,
+     * with its own army forming up around it — because a formation is solved in
+     * its commander's frame. Both machines internally consistent, and no two
+     * sides on the field.
+     */
+    if (this.netMode === 'host' && this.net?.setSides) {
+      const teams = new Map(), seats = new Map();
+      for (let i = 0; i < list.length; i++) {
+        const id = list[i].id;
+        if (!id) continue;
+        const a = d.commanders[i]?.anchor;
+        teams.set(id, sides[i]);
+        if (a) seats.set(id, { at: [r2(a.x), r2(a.y), r2(a.z)], facing: d.commanders[i].facing });
+      }
+      this.net.setSides(teams);
+      this.net.setSeats?.(seats);
+    }
+
     if (!this.match) {
       this.match = new DuelMatch(this.rules, sides);
       this._matchSent = '';
@@ -2790,6 +2820,45 @@ export class World {
     if (!d.active) d.start(1);
     else d.deployAll();
     return d.commanders;
+  }
+
+  /**
+   * THE HOST HAS TOLD US WHICH SIDE WE ARE ON AND WHERE WE STAND.
+   *
+   * Applied to the LOCAL player from this machine's own roster entry, so a
+   * joining commander is on their own side, standing on their own ground, with
+   * their own army's anchor under them. Everything downstream is already
+   * generic — `canHarm`, `partyTeam`, the HUD's hostile count — so this is the
+   * one write the whole client half of a meeting needs.
+   *
+   * Idempotent and order-free on purpose: the roster arrives more than once and
+   * may arrive before or after the world is built, so this is safe to call on
+   * every one of them and does nothing when there is nothing new to say.
+   */
+  applySeat(entry) {
+    const p = this.player;
+    if (!entry || !p || this.netMode !== 'client') return false;
+    let moved = false;
+    const team = asTeam(entry.team);
+    if (p.team !== team) {
+      p.team = team;
+      this.partyTeam = team;
+      const c = this.command?.commander;
+      if (c) c.side = team;
+      moved = true;
+    }
+    const at = entry.at;
+    if (Array.isArray(at) && at.length === 3 && this._seatAt !== at.join()) {
+      this._seatAt = at.join();
+      _v1.set(at[0], at[1], at[2]);
+      p.position.copy(_v1);
+      p.actor?.setPosition?.(_v1);
+      if (p.camera && entry.facing !== undefined) p.camera.yaw = entry.facing;
+      const c = this.command?.commander;
+      if (c) { c.anchor = _v1.clone(); c.facing = entry.facing ?? 0; }
+      moved = true;
+    }
+    return moved;
   }
 
   /**

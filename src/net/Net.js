@@ -251,12 +251,50 @@ export class Net {
   }
 
   _refreshRoster() {
-    this.roster = [{ id: this.peer?.id, name: this.name, host: true, look: this.look, team: this._sideOf(this.peer?.id) }];
+    this.roster = [{ id: this.peer?.id, name: this.name, host: true, look: this.look,
+      team: this._sideOf(this.peer?.id), ...this._seatOf(this.peer?.id) }];
     for (const [id, c] of this.conns) {
-      this.roster.push({ id, name: c.name, host: false, look: c.look || null, team: this._sideOf(id) });
+      this.roster.push({ id, name: c.name, host: false, look: c.look || null,
+        team: this._sideOf(id), ...this._seatOf(id) });
     }
     this._emit('roster', this.roster);
     if (this.isHost) this.broadcast({ t: 'roster', roster: this.roster });
+  }
+
+  /**
+   * WHERE A PLAYER STANDS AT THE START OF A MATCH — the other half of a side.
+   *
+   * `sides` answers who may hit whom and it is not enough on its own for two
+   * armies. A meeting engagement puts the two commanders 120 m apart, and a
+   * client that was told its SIDE but not its GROUND spawned at the level's own
+   * home spot — so the Confederacy's general stood in the middle of the
+   * Republic's line while their own army formed up around them, because a
+   * formation is solved in its commander's frame. Both machines were internally
+   * consistent and the battle had no two sides in it.
+   *
+   * A seat is identity for the length of a match, exactly as a side is, so it
+   * rides the same roster for the same reason and is written by the same
+   * authority. Empty for every session that is not a meeting, which is all of
+   * them so far — `...{}` spreads to nothing and the roster entry is byte for
+   * byte what it was.
+   */
+  _seatOf(id) {
+    const s = this.seats?.get(id);
+    if (!s || !Array.isArray(s.at)) return {};
+    return { at: s.at, facing: s.facing ?? 0 };
+  }
+
+  /**
+   * Host: hand out ground. `map` is peer id → `{ at: [x, y, z], facing }`.
+   *
+   * Refused on a client for the reason `setSides` is: a peer that could choose
+   * its own ground could choose the middle of yours.
+   */
+  setSeats(map) {
+    if (!this.isHost) return this.roster;
+    this.seats = map instanceof Map ? map : new Map(Object.entries(map || {}));
+    this._refreshRoster();
+    return this.roster;
   }
 
   /**

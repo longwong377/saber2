@@ -1093,7 +1093,15 @@ function setScoreboard(open) {
 /* ══════════════════════════════════════════════════════════════════════ */
 
 function wireNet() {
-  net.on('roster', (roster) => menu.netRoster(roster));
+  net.on('roster', (roster) => {
+    menu.netRoster(roster);
+    /* …AND OUR OWN SEAT AT IT. The host writes a side and, in a meeting, the
+     * ground that side forms up on; both ride the roster because both are
+     * identity for the length of a match. Nothing read either of them before
+     * this line — every remote body in every session was on side 0 whatever the
+     * host had decided. See World.applySeat. */
+    world?.applySeat?.(roster.find((r) => r.id === net.peer?.id));
+  });
   net.on('error', (err) => menu.netStatus(String(err.message || err), 'err'));
   net.on('peer-joined', (id, name) => menu.netStatus(`${name || 'a Jedi'} joined`, 'ok'));
   net.on('peer-left', (id) => {

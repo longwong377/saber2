@@ -447,6 +447,144 @@ export async function run({ check, assert }) {
       + `prices ${first} → ${second} → ${again}`;
   });
 
+  check('livingForce: a run lights a third of the sky, and two runs are not the same third', () => {
+    assert(Tree, 'no livingForce module');
+    /**
+     * THE CHECK THAT SAYS WHAT THE SIZE OF THE SKY IS FOR, because the obvious
+     * reading of the numbers is wrong and it was acted on once already.
+     *
+     * The obvious reading: a run earns `w + 2·floor(w/5)` Insight against an
+     * arithmetic price series, so it can afford about √w currents — four by
+     * wave 20, six by wave 40, ten by wave 100. Against 46 currents that is 13%,
+     * lighting the whole sky would take about 1690 waves, and the conclusion
+     * writes itself: the sky is 87% decoration, cut it to eighteen.
+     *
+     * IT IS WRONG BECAUSE THE PURSE IS NOT THE ONLY THING THAT LIGHTS A
+     * CURRENT. This file's own header says so in as many words — "a DRAFTED
+     * card lights its current too… the two halves are one system" — and
+     * `Communion.reachable` reads `rankOf(taken, …)`, which the draft feeds.
+     * Driven through the real `drawBoons` and the real ledger, 24 runs per
+     * style, counting DISTINCT currents held from both channels:
+     *
+     *     style           wave   drafts  bought   lit   share of sky
+     *     random            20     12.0     3.8   13.9      30%
+     *     random            40     24.0     5.9   23.9      52%
+     *     commit-blade      40     24.0     5.5   17.5      38%
+     *     commit-dark       60     36.0     7.0   24.6      53%
+     *
+     * and the overlap between two wave-40 runs of the same style is 42-47% —
+     * so more than half of each holding is currents the other one does not
+     * have. Every current in the table is reached by some run; the least-lit
+     * (`unity`, the bond mastery) is held by 8% of them.
+     *
+     * Cutting to eighteen would take a run that lights half the sky to one that
+     * lights all of it by wave 40, which is the end of two runs differing. It
+     * would also delete twenty-six cards from the DRAFT, and
+     * `tools/checks/escalation.mjs` pins the opposite property there — "a
+     * thirty-wave run draws half the table, not five eighths of it" — because
+     * a thin draft is the defect that widening the table was done to fix.
+     *
+     * So the size of the sky is load-bearing in two directions at once, and
+     * this check is what says so: enough currents that a run cannot hold them
+     * all, and few enough that a run holds a real share of them.
+     */
+    const styles = [{ kind: 'random' }, { kind: 'commit', axis: 'blade' }, { kind: 'commit', axis: 'dark' }];
+    const runOne = (toWave, style, seed) => {
+      Waves.seedWaves(seed, 0);
+      /**
+       * The PLAYER's own die, seeded and separate from the wave stream.
+       *
+       * The first draft of this walked the draft with `cards[drafts % n]`,
+       * which is deterministic and reproducible and produced a finding that was
+       * an artefact of the picker: three attunements were "never reached in 36
+       * runs" because the modulus never landed on them. A check must be
+       * deterministic, which is not the same as being a straight line — so the
+       * choice is random and the RANDOMNESS is seeded.
+       */
+      let st = (seed * 2654435761) >>> 0;
+      const die = (n) => { st = (Math.imul(st ^ (st >>> 15), 2246822507) + 0x9e3779b9) >>> 0; return st % n; };
+      const taken = new Waves.RankSet();
+      const led = new Tree.Communion();
+      let drafts = 0, bought = 0;
+      for (let w = 1; w <= toWave; w++) {
+        const boss = w % Waves.BOSS_EVERY === 0;
+        led.earn(w, boss);
+        if (w % Waves.DRAFT_EVERY === 0 || boss) {
+          const cards = Waves.drawBoons(boss ? 4 : 3, taken, w,
+            { floor: boss ? 'rare' : null, attune: boss });
+          if (cards.length) {
+            const pick = style.kind === 'commit'
+              ? (cards.find((c) => (c.axes || []).includes(style.axis)
+                  || c.id === `attune-${style.axis}`) || cards[0])
+              : cards[die(cards.length)];
+            taken.take(pick.id); drafts++;
+          }
+        }
+        for (;;) {
+          const open = Tree.STARS.filter((s) => led.canBuy(s.id, taken, w));
+          if (!open.length) break;
+          const pick = style.kind === 'commit'
+            ? (open.find((s) => s.axis === style.axis) || open[0]) : open[die(open.length)];
+          if (!led.buy(pick.id, taken, w)) break;
+          taken.take(pick.id); bought++;
+        }
+      }
+      return { drafts, bought, ids: new Set(Tree.STARS.filter((s) => Waves.rankOf(taken, s.id) > 0).map((s) => s.id)) };
+    };
+
+    const rows = [];
+    let worstShare = 1, worstAt = '', worstOverlap = 0, overlapAt = '';
+    for (const st of styles) {
+      const name = st.kind === 'commit' ? `commit-${st.axis}` : 'random';
+      const runs = [];
+      for (let s = 1; s <= 12; s++) runs.push(runOne(40, st, s * 7));
+      const lit = runs.reduce((a, r) => a + r.ids.size, 0) / runs.length;
+      const bought = runs.reduce((a, r) => a + r.bought, 0) / runs.length;
+      const share = lit / Tree.STARS.length;
+      if (share < worstShare) { worstShare = share; worstAt = name; }
+      let j = 0, n = 0;
+      for (let a = 0; a < runs.length; a++) {
+        for (let b = a + 1; b < runs.length; b++) {
+          const A = runs[a].ids, B = runs[b].ids;
+          const inter = [...A].filter((x) => B.has(x)).length;
+          j += inter / (A.size + B.size - inter); n++;
+        }
+      }
+      if (j / n > worstOverlap) { worstOverlap = j / n; overlapAt = name; }
+      rows.push(`${name} ${lit.toFixed(1)}/${Tree.STARS.length} lit (${bought.toFixed(1)} bought)`);
+    }
+    assert(worstShare >= 0.33,
+      `a ${worstAt} run reaches wave 40 holding ${(worstShare * 100).toFixed(0)}% of the sky — `
+      + 'most of the table is a picture of a system rather than a system, and the currents nobody '
+      + 'reaches should be cut or joined up');
+    assert(worstShare <= 0.85,
+      `a ${worstAt} run holds ${(worstShare * 100).toFixed(0)}% of the sky by wave 40 — `
+      + 'if a run can hold nearly all of it then there is nothing left for the next run to be');
+    assert(worstOverlap <= 0.7,
+      `two ${overlapAt} runs hold ${(worstOverlap * 100).toFixed(0)}% of the same currents at wave 40 — `
+      + 'the sky is not producing different builds, it is producing one build with noise on it');
+    /**
+     * …AND NO CURRENT MAY BE UNREACHABLE IN PRACTICE, which is the real test of
+     * whether a table entry is decoration — and the one the "87% of it is
+     * decoration" reading was reaching for.
+     *
+     * Swept over a player COMMITTED TO EACH AXIS in turn rather than over three
+     * styles, because that is the question: a run that goes for the bond has to
+     * be able to arrive at the bond's mastery. Twelve seeds each. (`unity` is
+     * held by about 8% of undirected runs, so three styles × twelve seeds
+     * finding none of them is luck rather than evidence.)
+     */
+    const ever = new Set();
+    const sweep = [{ kind: 'random' }, ...Tree.AXES.map((axis) => ({ kind: 'commit', axis }))];
+    for (const st of sweep) for (let s = 1; s <= 12; s++) for (const id of runOne(60, st, s * 13).ids) ever.add(id);
+    const dead = Tree.STARS.filter((s) => !ever.has(s.id)).map((s) => s.id);
+    assert(!dead.length,
+      `no run in ${sweep.length * 12} ever held: ${dead.join(', ')} — a current nothing reaches is decoration, `
+      + 'and cutting it or joining it up is the honest answer');
+    return `${rows.join('; ')}; two runs share ${(worstOverlap * 100).toFixed(0)}% at worst; `
+      + `all ${Tree.STARS.length} currents reached across ${sweep.length * 12} runs`;
+  });
+
   check('livingForce: Insight is a run currency and never a save file', async () => {
     assert(Tree, 'no livingForce module');
     /**
