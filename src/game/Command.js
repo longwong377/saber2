@@ -650,6 +650,17 @@ export const FORMATIONS = {
 
 export const FORMATION_IDS = Object.keys(FORMATIONS);
 export const DEFAULT_FORMATION = 'behind';
+/**
+ * …AND THE ONE A MEETING OPENS ON, which is a different question.
+ *
+ * `behind` is right for a campaign and wrong for two commanders at opposite
+ * ends of a plain: every formation but this one is solved in its commander's
+ * own frame, so two idle commanders hold two idle armies. `charge` is the only
+ * order with `leash: Infinity` and no slot — it sends a body to find something
+ * rather than to stand somewhere relative to a person. See `enlistCommander`
+ * for the measurement that put it here.
+ */
+export const MEETING_FORMATION = 'charge';
 
 /**
  * THE SHORTEST LEASH ANY BODY IS EVER GIVEN, in metres.
@@ -1469,6 +1480,38 @@ export class CommandDirector extends WaveDirector {
   enlistCommander(opts = {}) {
     const found = opts.player && this.commanders.find((c) => c.player === opts.player);
     if (found) return found;
+    /*
+     * A MEETING OPENS ON AN ORDER THAT ADVANCES, and it did not.
+     *
+     * `DEFAULT_FORMATION` is `behind`, which is the right opening for the
+     * CAMPAIGN — the army arrived with you, you are the point of the spear, and
+     * a column that walks where you walk is what a player expects to start
+     * with. A meeting is the opposite shape: two commanders 120 m apart, each
+     * with ten bodies leashed to a body that is standing still. Every formation
+     * but one is solved in its commander's own frame, so if neither commander
+     * walks, neither army does.
+     *
+     * Measured on a real host/client pair with the default order and both
+     * commanders idle: 124 seconds, `10 v 10 -> 10 v 10`, the lines closed from
+     * 120 m to 111 m, and the match ended a DRAW ON THE CLOCK. A meeting is one
+     * 120-second round, so that was the whole session. Nothing advances an army
+     * on its own and nothing tells the player to press the charge key — so the
+     * mode's first impression was that it does not work.
+     *
+     * `charge` is the one order with `leash: Infinity` and no slot: it sends
+     * bodies to find something rather than to stand somewhere relative to a
+     * commander. Ordered on both sides, the same pair reads `9v9 -> 0v7` with
+     * casualties off both name lists and a winner both machines agree on.
+     *
+     * Only if the host has not already given an order of their own — this is
+     * the opening state, not an override. And through `order()` rather than by
+     * assignment, so the planting, the log entry and the HUD indicator all
+     * happen the way they do for a key press.
+     */
+    const meeting = this.commanders.length === 1;
+    if (meeting && this.commander.formation === DEFAULT_FORMATION) {
+      this.order(MEETING_FORMATION, this.commander);
+    }
     const c = new Commander(this, { formation: this.commander.formation, ...opts });
     this.commanders.push(c);
     // The same ten strangers everybody starts with. Through the same call, so
@@ -2403,10 +2446,35 @@ export class CommandDirector extends WaveDirector {
    */
   census() {
     const standing = {}, health = {};
+    /*
+     * …BUT A COMMANDER WHO HAS LEFT THE SESSION IS NOT A SIDE AT ALL, and
+     * leaving used to WIN.
+     *
+     * The paragraph above is about a general who FALLS, and it is right: their
+     * army holds the ground it was on and the battle goes on without them.
+     * A player who closes the tab is a different event and was being treated as
+     * the same one. `main.js` disposes their avatar and takes it out of
+     * `world.players`, but nothing takes their Commander out of `commanders` —
+     * so their ten bodies kept their standing order, kept fighting, and kept
+     * counting. Measured on a real pair: the peer removed at 5 v 9, their
+     * leaderless army wiped the host's line and TOOK THE FIELD. `match-over`,
+     * winner = the side of the player who had quit, and the host was told
+     * `won: false`. Quitting a meeting was the strongest move in it.
+     *
+     * Presence in `world.players` is the signal, because it is exactly the
+     * difference between the two cases: a dead general is still in that list
+     * with `alive === false`, and a departed one is not in it at all. The
+     * side is kept in the census at zero rather than dropped from it, so the
+     * match sees a side that has been beaten rather than a side that was never
+     * there — those are different states to `DuelMatch` and only one of them
+     * ends the round.
+     */
+    const present = this.world?.players;
     for (const c of this.commanders) {
       const s = c.side;
       standing[s] = standing[s] || 0;
       health[s] = health[s] || 0;
+      if (c.player && Array.isArray(present) && !present.includes(c.player)) continue;
       for (const t of c.roster.living) {
         const b = t.body;
         if (!b || b.dead) continue;
