@@ -306,10 +306,85 @@ export function run({ check, assert }) {
       seen.add(sig);
     }
     /* NOTE #31, BY NAME: "there should be jet troopers." A jet trooper that does
-     * not leave the ground is a trooper. */
+     * not leave the ground is a trooper.
+     *
+     * THIS ASSERTION USED TO READ `ARCHETYPES.jet.float > 0.8` — the archetype
+     * TABLE — and it passed for the entire life of the feature while the jet
+     * trooper's y position was NaN from its first frame, it never fired a shot,
+     * and the liveness watchdog deleted it from every wave it spawned into.
+     * That is HANDOFF §2.4 in its purest form: the check restated the datum
+     * instead of measuring the game, so it could only ever confirm that
+     * somebody had typed a number into a table.
+     *
+     * The datum is still worth asserting — it is what makes the body hover —
+     * but it is now the SETUP, and the body itself is the measurement. See the
+     * flight check below, which spawns one and steps it.
+     */
     assert(ARCHETYPES.jet && ARCHETYPES.jet.float > 0.8,
-      'the jet trooper does not leave the ground — note #31 asks for a jet trooper');
+      'the jet trooper declares no float — note #31 asks for a jet trooper');
     return `${keys.length} bodies, ${seen.size} distinct engagement signatures`;
+  });
+
+  /**
+   * …AND THE BODY ACTUALLY LEAVES THE GROUND, which is the half the table
+   * cannot tell you.
+   *
+   * Every number here was a real symptom: NaN y from frame 0, because
+   * `hoverPhase` was initialised inside a branch a rigged humanoid never
+   * takes; zero shots in 45 s, because `distToTarget` is a 3-D length and NaN
+   * fails every range comparison in `_rangedBrain`; and retirement by the
+   * watchdog, because `positionIsValid` rejects a non-finite y.
+   *
+   * So this asserts the three things that were each individually false: the
+   * position is finite, it is genuinely off the ground, and the body still
+   * shoots. Any one of them regressing brings the whole archetype down again.
+   */
+  check('command: the jet trooper actually flies, and shoots while it does', async () => {
+    const { bootWorld, idleInput } = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const { world } = await bootWorld({ level: 'geonosis', settings: { mode: 'waves' } });
+    const p = world.player.position;
+    const e = world.spawnEnemy('jet', new THREE.Vector3(p.x + 14, world.terrain.height(p.x + 14, p.z), p.z));
+    assert(e, 'no jet trooper spawned');
+    let minClear = Infinity, shots = 0;
+    /**
+     * COUNT THE LIVE BOLTS, and this took two wrong answers to get right —
+     * both of which reported ZERO and both of which would have shipped a check
+     * whose own title was a claim it had not tested.
+     *
+     *   1. `.live` / `.count` — neither field exists, so the `?? 0` fallback
+     *      returned 0 every frame.
+     *   2. `.bolts.length` — `BoltPool` PREALLOCATES (Bolts.js:36-40, `max` is
+     *      460), so the array's length is a constant and can never move.
+     *
+     * A bolt is in flight when `active` is true (Bolts.js:108, cleared at 175).
+     * That is the only honest reading, and the fault in both earlier attempts
+     * is the one this whole check exists to punish: a number that was never
+     * measured, sitting next to an assertion that could not fail.
+     */
+    const bolts = () => (world.bolts?.bolts ?? []).reduce((n, b) => n + (b.active ? 1 : 0), 0);
+    let before = bolts();
+    for (let i = 0; i < 240; i++) {
+      world.update(1 / 60, idleInput());
+      assert(Number.isFinite(e.position.y),
+        `the jet trooper's y went non-finite on frame ${i} — hoverPhase is uninitialised again`);
+      const clear = e.position.y - world.terrain.height(e.position.x, e.position.z);
+      if (i > 30) minClear = Math.min(minClear, clear);
+      const now = bolts();
+      if (now > before) shots++;
+      before = now;
+    }
+    assert(minClear > 0.8,
+      `the jet trooper flew at ${minClear.toFixed(2)} m of clearance — it is walking`);
+    assert(!e.dead && !e.retired,
+      'the jet trooper was retired mid-flight — the watchdog is rejecting its position');
+    /* The third symptom, and the one the table could never see: NaN made every
+     * range test in `_rangedBrain` false, so the body flew and never fired. */
+    assert(shots > 0,
+      'the jet trooper never fired in 4 s — a NaN position fails every range '
+      + 'comparison in _rangedBrain, so it hovers and does nothing');
+    world.unload();
+    return `clearance ${minClear.toFixed(2)} m over 4 s, ${shots} bolts in flight, y finite throughout`;
   });
 
   /* ══════════════════════════════════════════════════════════════════ */

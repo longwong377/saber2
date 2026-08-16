@@ -1412,10 +1412,38 @@ export class Enemy {
       this.group = built.group;
       this.world.scene.add(this.group);
       if (A.custom === 'remote') {
-        this.hoverPhase = rng() * TAU;
         this.orbitPhase = rng() * TAU;
       }
     }
+
+    /**
+     * ANYTHING THAT HOVERS NEEDS A PHASE, and this used to be initialised in
+     * exactly one branch of the wrong `if`.
+     *
+     * `hoverPhase` lived inside the `else` above — the branch for bodies built
+     * as a bare `group` — and was gated further on `custom === 'remote'`. The
+     * Jet Trooper (note #31) is a RIGGED HUMANOID with `float: 1.35`, so it
+     * takes the `built.rig` branch and never got the field. Its first frame
+     * then ran `this.hoverPhase += dt` on `undefined`, which is NaN, and NaN
+     * propagates:
+     *
+     *   · the hover target is NaN, so `position.y` is NaN from frame 0;
+     *   · `distToTarget` is a 3-D length, so every range test in
+     *     `_rangedBrain` is false and the body NEVER FIRES — measured, 0 shots
+     *     in 45 s against a trooper's 33;
+     *   · `positionIsValid` (Waves.js) rejects non-finite y, so the liveness
+     *     watchdog rescues it twice and then RETIRES it.
+     *
+     * Every jet trooper ever spawned was teleported twice and deleted without
+     * taking a shot. It is in the geonosis pool and is a purchasable Command
+     * rung, so the player paid for it.
+     *
+     * It is set here, unconditionally, for anything that declares `float` —
+     * keyed off the DATUM that makes a body hover rather than off which
+     * builder it happened to use, which is the distinction the old gate got
+     * wrong. `remote` keeps its own `orbitPhase` above because only it orbits.
+     */
+    if (A.float) this.hoverPhase = rng() * TAU;
 
     // weapon
     if (A.weapon) {
