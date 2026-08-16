@@ -33,12 +33,43 @@
 // The DOM shim FIRST — hideMat reaches Textures.js, which bakes onto a canvas.
 import './dom-shim.mjs';
 import * as THREE from 'three';
-import { buildQuadruped, buildBeast, CREATURE_PLANS } from '../src/game/Bodies.js';
-import { ARCHETYPES } from '../src/game/Enemy.js';
+import { CREATURE_PLANS } from '../src/game/Bodies.js';
+import { initPhysics } from '../src/physics/Rapier.js';
+import { RapierWorld } from '../src/physics/RapierWorld.js';
+import { Enemy, enemyRng, ARCHETYPES, beastMoveSet } from '../src/game/Enemy.js';
 import '../src/game/Levels.js';          // registers the colosseum's creatures
+
+await initPhysics();
 
 /** Every archetype that runs the beast brain, found rather than listed. */
 const BEASTS = Object.keys(ARCHETYPES).filter((k) => ARCHETYPES[k].custom === 'beast');
+
+/**
+ * A real Enemy, posed by the real `_poseWalker` — NOT the bind pose.
+ *
+ * Measuring the rig as built is measuring something the player only ever sees
+ * past 62 m, where the solver stops running; every leg is then wherever its
+ * rest direction left it. It also flatters and punishes the wrong things: the
+ * first pass of this file called the reek and the gundark 59% the same figure
+ * because both are a mass with four limbs hanging off it in bind, and 27% once
+ * the gait had actually planted their feet.
+ */
+const physics = new RapierWorld({ gravity: -24, iterations: 4, maxBodies: 64 });
+const terrain = {
+  height: () => 0, normalAt: (x, z, o) => o.set(0, 1, 0), raycast: () => null,
+  size: 400, half: 200, inBounds: () => true, surfaceAt: () => 'sand',
+  crater() {}, flush() {}, slopeAt: () => 0,
+};
+physics.terrain = terrain;
+const particles = { sandPuff() {}, sparkBurst() {}, cutFlare() {}, slag() {}, plasma: { spawn() {} } };
+const world = {
+  scene: new THREE.Scene(), physics, terrain, statics: [], settings: { fov: 60 },
+  players: [], enemies: [], props: [], particles, time: 0, groundColor: 0xcfae82,
+  bolts: { fire() {} }, engine: { flash() {}, camera: new THREE.PerspectiveCamera() },
+  report() {}, notify() {}, notifyFloating() {}, addHitstop() {},
+};
+const ctx = { enemies: [], particles, terrain, physics, bolts: world.bolts, time: 0,
+  pickTarget: () => null, camera: world.engine.camera };
 
 const W = 128, H = 128, SPAN = 12;
 
@@ -85,23 +116,28 @@ const rows = [];
 const sils = {};
 for (const type of BEASTS) {
   const A = ARCHETYPES[type];
-  const built = A.build({ scale: A.scale });
-  const root = built.rig.root;
+  enemyRng.seed(99);
+  const e = new Enemy(world, type, new THREE.Vector3(0, 0, 0));
+  e.position.set(0, 0, 0);
+  /* Facing +X, so the raster below (which looks down −Z) sees the animal's
+   * FLANK. That is the view `more arena 1.jpg` is taken from and the one that
+   * carries leg count, stance height and mass distribution; head-on, a reek
+   * and a rancor are both "a wide thing" and the measurement says nothing.
+   * Left to itself an Enemy picks its own facing, and the first run of this
+   * file measured three creatures side-on and two head-on. */
+  e.facing = Math.PI / 2;
+  e.walkPhase = 0.12;                     // mid-stance, so no foot is airborne
+  e.state = 'approach';
+  e._poseWalker(1 / 60, ctx);
+  const root = e.rig.root;
   root.updateMatrixWorld(true);
 
-  // Stand it on the floor the way _poseWalker does: hips at the plan's own hip
-  // height. The stance the builder publishes IS the pose, so this is the shipped
-  // number rather than a second copy of it.
-  const st = built.stance;
-  if (st) built.rig.hipsBone.obj.position.y = st.hipHeight;
-  built.rig.updateMatrices();
-  root.updateMatrixWorld(true);
-
-  let tris = 0, meshes = 0;
+  let tris = 0, meshes = 0, lodMeshes = 0;
   const box = new THREE.Box3();
   root.traverse((o) => {
     if (!o.isMesh || !o.geometry) return;
     meshes++; box.expandByObject(o);
+    if (o.userData.silhouette || o === o.parent?.userData?.bone?.primary) lodMeshes++;
     const g = o.geometry;
     tris += g.index ? g.index.count / 3 : g.attributes.position.count / 3;
   });
@@ -119,11 +155,13 @@ for (const type of BEASTS) {
   }
   const hPx = (maxY - minY + 1), wPx = s.x * ((W - 1) / SPAN);
   rows.push({
-    type, label: A.label, tris: Math.round(tris), meshes,
-    L: s.z, Wd: s.x, Ht: s.y, lh: s.z / s.y,
+    type, label: A.label, tris: Math.round(tris), meshes, lodMeshes,
+    L: s.x, Wd: s.z, Ht: s.y, lh: s.x / s.y,
     fill: px / Math.max(1, hPx * wPx),
     mass: (sumY / Math.max(1, px)) / Math.max(1, H - 1 - minY),
+    moves: beastMoveSet(A, e.built).join('/'),
   });
+  e.dispose?.();
 }
 
 let worst = 0, worstPair = '';
@@ -133,15 +171,14 @@ for (const a of BEASTS) for (const b of BEASTS) {
   if (v > worst) { worst = v; worstPair = `${a}/${b}`; }
 }
 
-console.log('creature      tris  mesh     L     W     H   L/H  fill  mass@   worst IoU');
+console.log('creature      tris mesh/lod     L     W     H   L/H  fill  mass@  worstIoU  moves');
 for (const r of rows) {
   let mx = 0, mxWith = '';
   for (const o of BEASTS) if (o !== r.type) { const v = iou(sils[r.type], sils[o]); if (v > mx) { mx = v; mxWith = o; } }
   console.log(
-    `${r.label.padEnd(9)} ${String(r.tris).padStart(6)} ${String(r.meshes).padStart(4)}  `
+    `${r.label.padEnd(9)} ${String(r.tris).padStart(6)} ${String(r.meshes).padStart(3)}/${String(r.lodMeshes).padStart(2)}  `
     + `${r.L.toFixed(2).padStart(5)} ${r.Wd.toFixed(2).padStart(5)} ${r.Ht.toFixed(2).padStart(5)}  `
-    + `${r.lh.toFixed(2)}  ${r.fill.toFixed(2)}  ${r.mass.toFixed(2)}   ${mx.toFixed(2)} (${mxWith})`);
+    + `${r.lh.toFixed(2)}  ${r.fill.toFixed(2)}  ${r.mass.toFixed(2)}  ${mx.toFixed(2)} (${mxWith})  ${r.moves}`);
 }
 console.log(`\nworst pair overall: ${worstPair} ${worst.toFixed(3)}`);
 console.log(`body plans: ${Object.keys(CREATURE_PLANS).join(', ')}`);
-void buildQuadruped; void buildBeast;

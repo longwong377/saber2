@@ -415,7 +415,13 @@ export async function run({ check, assert }) {
     for (let i = 0; i < 25; i++) enemies.push(body(Math.cos(i) * 9, Math.sin(i) * 9));
     const world = { enemies, players: [] };
     const me = mapPlayer();
-    const s = { ...DEFAULT_SETTINGS, minimap: true };
+    /* `minimapSense: false` — this check is about what the map COSTS TO DRAW,
+     * and the always-on map is the one that draws on every eligible frame.
+     * With the shipped default the map is a Force reading (see
+     * Minimap.update): a stub player with no `senseActive` never asks for one,
+     * so every number below would be zero and the budget would go unmeasured.
+     * The gate itself is measured in tools/checks/hud-events.mjs. */
+    const s = { ...DEFAULT_SETTINGS, minimap: true, minimapSense: false };
 
     const SECONDS = 10, dt = 1 / 60;
     const frames = Math.round(SECONDS / dt);
@@ -486,7 +492,11 @@ export async function run({ check, assert }) {
         saber: { tipSpeed: 0 }, camera: { firstPerson: false, yaw: 0, aimQuat: new THREE.Quaternion() },
         control: { _grip: null, steering: 0, flourishT: -1, screenGuard: (a, b2, q, o) => o.set(0, 0) },
       };
-      const settings = { ...DEFAULT_SETTINGS };
+      // …and again the always-on map, for the same reason: this is the WIRING
+      // check — does the HUD's own frame drive the map at all — and the
+      // shipped Force-sense gate would answer "no" for a stub that never
+      // senses. The gate has its own check beside the reticle's.
+      const settings = { ...DEFAULT_SETTINGS, minimapSense: false };
       const world = {
         score: 0, enemies: [body(3, -4), body(-6, 2)], players: [], training: false, focus: null,
         settings, director: { wave: 1, remaining: 2, active: true, intermission: 0 },

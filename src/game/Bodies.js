@@ -5633,10 +5633,17 @@ function creatureSkeleton(S, P) {
       out.push({ name: `hipL${i}`, parent: arm ? 'body' : 'hips',
         offset: [L.x * s * side, L.y * s, L.z * s], length: socket,
         rest: [side, arm ? -0.35 : 0.2, 0] });
+      /* THE REST DIRECTIONS ARE THE ANIMAL'S TOO, and they are not cosmetic.
+       * `_poseWalker` solves femur→tibia every frame up to 62 m, but past that
+       * the solve stops and the body keeps whatever pose it last held — and on
+       * the first frame of a spawn there is no last pose, only these. A rest
+       * pair authored for an insect (femur up and OUT to a knee above the
+       * back, tibia straight down) was applied to a bull and a cat, which is
+       * the same defect as the shared pole vector one layer down. */
       out.push({ name: `femur${i}`, parent: `hipL${i}`, offset: [0, socket, 0],
-        length: L.femur * s, rest: [side * 0.35, arm ? -0.9 : L.knee, L.knee > 0 ? 0 : 0.3] });
+        length: L.femur * s, rest: L.femurRest.map((v, n) => (n === 0 ? v * side : v)) });
       out.push({ name: `tibia${i}`, parent: `femur${i}`, offset: [0, L.femur * s, 0],
-        length: L.tibia * s, rest: [side * 0.1, -1, 0] });
+        length: L.tibia * s, rest: L.tibiaRest.map((v, n) => (n === 0 ? v * side : v)) });
       out.push({ name: `tarsus${i}`, parent: `tibia${i}`, offset: [0, L.tibia * s, 0],
         length: L.tarsus * s, rest: arm ? [0, -0.9, 0.3] : [0, -0.4, 0.6] });
       i++;
@@ -5659,10 +5666,12 @@ function creatureSkeleton(S, P) {
  *   girth    trunk radius ×scale, and `swells` the two masses on it as
  *            [where along it, how much, how wide] — limbGeo's own gaussians.
  *   limbs    the pairs, each expanded left and right. `role` is 'leg' or
- *            'arm'; `knee` is the femur's rest pitch (+ is the insect knee
- *            that stands above the back, − the mammal stifle below it);
- *            `pole` is where the joint bends toward, ×scale, in the animal's
- *            own frame — the single number that most changes the outline.
+ *            'arm', `plant` is where the foot goes down (×scale, off the
+ *            centreline), `femurRest`/`tibiaRest` are the bind pose, and
+ *            `pole` is where the joint bends TOWARD — the single number that
+ *            most changes the outline. An acklay poles up and out to a knee
+ *            above its own back; a reek's foreleg poles forward to an elbow
+ *            and its hind leg backward to a hock.
  *   step/lift stride length and foot clearance, ×scale.
  *   rear     metres of hip travel per unit of an attack's `rise`, ×scale.
  *   moves    the verbs its anatomy affords. See the header.
@@ -5681,18 +5690,20 @@ export const CREATURE_PLANS = {
    */
   charger: {
     hide: 0x6a5f4e, plate: 0x9a8b6c, belly: 0x8d8168, eye: 0xffb03a,
-    hip: 0.88, trunk: [0.16, -0.22, 1.42], pitch: -0.13, girth: 0.47,
+    hip: 0.74, trunk: [0.16, -0.20, 1.24], pitch: -0.13, girth: 0.44,
     swells: [[0.74, 0.52, 0.24], [0.24, 0.24, 0.30]],
     section: { n0: 2.8, n1: 3.4, back: 0.02, keel: 0.05, waist: 0.06 },
-    headAt: [0.24, 1.30], neck: [2, 0.22, 0.30, -0.42, -0.12], head: 'horned',
-    back: 'scutes', tail: [3, 0.44, 0.13, 0.5, 0.2],
+    headAt: [0.20, 1.10], neck: [2, 0.20, 0.28, -0.44, -0.10], head: 'horned',
+    back: 'scutes', tail: [3, 0.46, 0.13, 0.18, -0.16],
     limbs: [
       // fore: thick, poled FORWARD so the elbow leads — a bull's column leg
-      { role: 'leg', x: 0.40, y: 0.06, z: 0.74, plant: 0.62, femur: 0.48, tibia: 0.52, tarsus: 0.15,
-        knee: 0.30, girth: 1.16, pole: [0.30, 0.55, 1.30], foot: 'hoof' },
+      { role: 'leg', x: 0.40, y: 0.06, z: 0.74, plant: 0.60, femur: 0.42, tibia: 0.46, tarsus: 0.15,
+        girth: 1.16, pole: [0.30, 0.55, 1.30], foot: 'hoof',
+        femurRest: [0.24, -0.86, 0.36], tibiaRest: [0.06, -0.96, -0.24] },
       // hind: the hock points back, which is the other half of a mammal's leg
-      { role: 'leg', x: 0.42, y: 0.04, z: -0.60, plant: 0.64, femur: 0.48, tibia: 0.52, tarsus: 0.15,
-        knee: 0.30, girth: 1.0, pole: [0.30, 0.55, -1.30], foot: 'hoof' },
+      { role: 'leg', x: 0.42, y: 0.04, z: -0.60, plant: 0.62, femur: 0.42, tibia: 0.46, tarsus: 0.15,
+        girth: 1.0, pole: [0.30, 0.55, -1.30], foot: 'hoof',
+        femurRest: [0.24, -0.86, -0.36], tibiaRest: [0.06, -0.96, 0.24] },
     ],
     step: 0.80, lift: 0.28, rear: 0.34,
     /* Its verbs, and both of the new ones come off the head. A metre of horn
@@ -5721,12 +5732,14 @@ export const CREATURE_PLANS = {
     swells: [[0.78, 0.34, 0.22], [0.26, 0.26, 0.28]],
     section: { n0: 2.4, n1: 2.8, back: 0.04, keel: 0.02, waist: 0.10 },
     headAt: [0.20, 1.18], neck: [3, 0.24, 0.20, 0.06, 0.02], head: 'fanged',
-    back: 'mane', tail: [7, 2.90, 0.085, 0.10, -0.05],
+    back: 'mane', tail: [7, 2.40, 0.085, 0.26, -0.10],
     limbs: [
       { role: 'leg', x: 0.26, y: 0.04, z: 0.86, plant: 0.34, femur: 0.50, tibia: 0.54, tarsus: 0.16,
-        knee: 0.35, girth: 0.92, pole: [0.22, 0.50, 1.15], foot: 'claw' },
+        girth: 0.92, pole: [0.22, 0.50, 1.15], foot: 'claw',
+        femurRest: [0.10, -0.88, 0.42], tibiaRest: [0.04, -0.94, -0.30] },
       { role: 'leg', x: 0.28, y: 0.02, z: -0.74, plant: 0.36, femur: 0.52, tibia: 0.56, tarsus: 0.16,
-        knee: 0.40, girth: 0.96, pole: [0.22, 0.60, -1.20], foot: 'claw' },
+        girth: 0.96, pole: [0.22, 0.60, -1.20], foot: 'claw',
+        femurRest: [0.10, -0.82, -0.50], tibiaRest: [0.04, -0.92, 0.36] },
     ],
     step: 1.20, lift: 0.44, rear: 0.42,
     /* A cat does not swing a claw once. The RAKE is the shortest attack in the
@@ -5755,24 +5768,26 @@ export const CREATURE_PLANS = {
    */
   brute: {
     hide: 0x6b6152, plate: 0x585044, belly: 0x8a7f6d, eye: 0xffd24a,
-    hip: 1.15, trunk: [0.10, -0.10, 1.24], pitch: 1.02, girth: 0.54,
+    hip: 0.92, trunk: [0.10, -0.10, 0.74], pitch: 1.02, girth: 0.54,
     swells: [[0.80, 0.44, 0.26], [0.30, 0.20, 0.34]],
     section: { n0: 2.6, n1: 3.2, back: 0.03, keel: 0.06, waist: 0.04 },
-    headAt: [1.06, 0.46], neck: [1, 0.16, 0.34, 0.30, 0], head: 'tusked',
-    back: 'ridge', tail: [5, 1.30, 0.16, 0.90, 0.16],
+    headAt: [0.64, 0.36], neck: [1, 0.14, 0.34, 0.34, 0], head: 'tusked',
+    back: 'ridge', tail: [5, 1.30, 0.16, 0.10, -0.14],
     limbs: [
       /* The hind legs, and they are plantigrade: the reference stands flat on
        * a broad foot rather than up on a hock, so the pole is FORWARD and low
        * and the tarsus is long enough to be a sole. */
-      { role: 'leg', x: 0.34, y: 0.02, z: -0.10, plant: 0.46, femur: 0.62, tibia: 0.64, tarsus: 0.26,
-        knee: 0.20, girth: 1.30, pole: [0.34, 0.60, 1.20], foot: 'paw' },
+      { role: 'leg', x: 0.34, y: 0.02, z: -0.10, plant: 0.46, femur: 0.52, tibia: 0.54, tarsus: 0.26,
+        girth: 1.30, pole: [0.34, 0.60, 1.20], foot: 'paw',
+        femurRest: [0.16, -0.90, 0.34], tibiaRest: [0.04, -0.96, -0.26] },
       /* The arms. Parented to `body`, mounted 0.66 up the trunk and 0.30
        * forward of it, and 1.40 of scale of reach between shoulder and claw —
        * long enough that the knuckles touch the sand when it hunches, which
        * is the pose every photograph of one is in. */
-      { role: 'arm', x: 0.46, y: 0.66, z: 0.30, femur: 0.66, tibia: 0.68, tarsus: 0.30,
-        knee: -0.9, girth: 1.05, pole: [1.30, -0.20, -0.90], foot: 'talon',
-        hand: [0.62, -0.42, 0.72] },
+      { role: 'arm', x: 0.46, y: 0.40, z: 0.24, femur: 0.46, tibia: 0.48, tarsus: 0.22,
+        girth: 1.05, pole: [0.55, -0.10, -0.90], foot: 'talon',
+        femurRest: [0.16, -0.96, 0.22], tibiaRest: [0.06, -0.98, 0.16],
+        hand: [0.62, -0.22, 0.66] },
     ],
     step: 0.72, lift: 0.34, rear: 0.30,
   },
@@ -5792,18 +5807,20 @@ export const CREATURE_PLANS = {
    */
   pouncer: {
     hide: 0x8a7b5c, plate: 0x6b4a2c, belly: 0xb0a084, eye: 0xff6a2a,
-    hip: 0.92, trunk: [0.08, -0.04, 1.00], pitch: 1.32, girth: 0.46,
+    hip: 0.88, trunk: [0.08, -0.04, 0.62], pitch: 1.32, girth: 0.46,
     swells: [[0.76, 0.40, 0.30], [0.28, 0.18, 0.30]],
     section: { n0: 2.4, n1: 3.0, back: 0.02, keel: 0.04, waist: 0.08 },
-    headAt: [0.94, 0.20], neck: [1, 0.14, 0.30, 0.10, 0], head: 'horned-ape',
+    headAt: [0.62, 0.16], neck: [1, 0.12, 0.30, 0.16, 0], head: 'horned-ape',
     back: 'shag', tail: [0, 0, 0, 0, 0],
     limbs: [
       { role: 'leg', x: 0.30, y: 0.02, z: 0.02, plant: 0.42, femur: 0.50, tibia: 0.52, tarsus: 0.20,
-        knee: 0.30, girth: 1.20, pole: [0.36, 0.70, 1.10], foot: 'paw' },
-      { role: 'arm', x: 0.44, y: 0.58, z: 0.16, femur: 0.54, tibia: 0.58, tarsus: 0.22,
-        knee: -0.9, girth: 1.00, pole: [1.30, 0.10, -1.00], foot: 'talon',
+        girth: 1.20, pole: [0.36, 0.70, 1.10], foot: 'paw',
+        femurRest: [0.18, -0.86, 0.40], tibiaRest: [0.04, -0.94, -0.30] },
+      { role: 'arm', x: 0.44, y: 0.36, z: 0.14, femur: 0.44, tibia: 0.46, tarsus: 0.20,
+        girth: 1.00, pole: [0.60, 0.10, -0.90], foot: 'talon',
+        femurRest: [0.20, -0.86, 0.42], tibiaRest: [0.06, -0.80, 0.58],
         // held UP and forward — the wampa's reaching pose, not the rancor's hang
-        hand: [0.60, 0.20, 0.72] },
+        hand: [0.66, 0.10, 0.78] },
     ],
     step: 0.66, lift: 0.42, rear: 0.44,
   },
@@ -5834,12 +5851,15 @@ export const CREATURE_PLANS = {
     headAt: [0.06, 0.86], neck: [3, 0.30, 0.22, -0.30, -0.10], head: 'mandibles',
     back: 'ridge', tail: [0, 0, 0, 0, 0],
     limbs: [
-      { role: 'leg', x: 0.50, y: 0.10, z: 0.78, plant: 1.62, femur: 1.10, tibia: 1.20, tarsus: 0.52,
-        knee: 0.95, girth: 0.62, pole: [1.40, 3.10, 0.50], foot: 'spike' },
-      { role: 'leg', x: 0.54, y: 0.06, z: 0.02, plant: 1.92, femur: 1.14, tibia: 1.24, tarsus: 0.52,
-        knee: 0.95, girth: 0.66, pole: [1.50, 3.20, 0], foot: 'spike' },
-      { role: 'leg', x: 0.50, y: 0.02, z: -0.72, plant: 1.62, femur: 1.10, tibia: 1.20, tarsus: 0.52,
-        knee: 0.95, girth: 0.62, pole: [1.40, 3.10, -0.50], foot: 'spike' },
+      { role: 'leg', x: 0.50, y: 0.10, z: 0.78, plant: 1.18, femur: 0.95, tibia: 1.05, tarsus: 0.52,
+        girth: 0.62, pole: [1.40, 3.10, 0.50], foot: 'spike',
+        femurRest: [0.62, 0.72, 0.30], tibiaRest: [0.34, -0.94, -0.10] },
+      { role: 'leg', x: 0.54, y: 0.06, z: 0.02, plant: 1.36, femur: 0.99, tibia: 1.09, tarsus: 0.52,
+        girth: 0.66, pole: [1.50, 3.20, 0], foot: 'spike',
+        femurRest: [0.70, 0.66, 0], tibiaRest: [0.38, -0.92, 0] },
+      { role: 'leg', x: 0.50, y: 0.02, z: -0.72, plant: 1.18, femur: 0.95, tibia: 1.05, tarsus: 0.52,
+        girth: 0.62, pole: [1.40, 3.10, -0.50], foot: 'spike',
+        femurRest: [0.62, 0.72, -0.30], tibiaRest: [0.34, -0.94, 0.10] },
     ],
     step: 1.40, lift: 0.52, rear: 0.26,
     /* The REACH problem, stated as two moves. The STAB is a foreleg driven
@@ -6034,7 +6054,7 @@ export function buildQuadruped(opts = {}) {
     const tarsus = rig.get(`tarsus${i}`);
     if (tarsus) {
       const k = new Kit(); const len = tarsus.length;
-      buildFootFor(k, L2.foot, plate, tooth, S * g, len);
+      buildFootFor(k, L2.foot, plate, tooth, S, g, len);
       markSilhouette(k.bake(tarsus.obj));
     }
   }
@@ -6064,29 +6084,37 @@ function markSilhouette(meshes) {
   return meshes;
 }
 
-/** What the end of a limb is: a hoof, a paw, a claw, a talon, or a point. */
-function buildFootFor(k, kind, plate, tooth, S, len) {
+/**
+ * What the end of a limb is: a hoof, a paw, a claw, a talon, or a point.
+ *
+ * Sized off the CREATURE's scale and only widened by the limb's girth. The
+ * first pass passed `S * girth` for everything, which on the rancor's 1.30
+ * legs made a sole 2.3 m deep and put 2.27 m of foot below the floor — a
+ * girth multiplier is a radius, and applying it to lengths grows the foot in
+ * the two directions it must not grow in.
+ */
+function buildFootFor(k, kind, plate, tooth, S, g, len) {
   if (kind === 'spike') return;              // an acklay's leg ends in the leg
   if (kind === 'hoof') {
-    k.add(plate, new THREE.CylinderGeometry(0.12 * S, 0.15 * S, 0.15 * S, 8), [0, len * 0.94, 0.02 * S]);
-    k.add(plate, plateGeo(0.22 * S, 0.10 * S, 0.26 * S, 0.04 * S, 1), [0, len * 0.98, 0.06 * S]);
+    k.add(plate, new THREE.CylinderGeometry(0.10 * S * g, 0.13 * S * g, 0.12 * S, 8), [0, len * 0.92, 0.02 * S]);
+    k.add(plate, plateGeo(0.20 * S * g, 0.08 * S, 0.22 * S, 0.03 * S, 1), [0, len * 0.96, 0.05 * S]);
     return;
   }
   if (kind === 'paw') {
     // a broad flat sole with short toes — plantigrade, so it reads as standing
-    k.add(plate, plateGeo(0.34 * S, 0.10 * S, 0.52 * S, 0.06 * S, 1), [0, len * 0.96, 0.14 * S]);
-    k.row(3, (j, t) => k.add(tooth, clawGeo(0.16 * S, 0.035 * S, 0.008 * S, 0.6, 5, 2),
-      [(t - 0.5) * 0.24 * S, len * 0.94, 0.36 * S], [1.2, (t - 0.5) * 0.5, 0]));
+    k.add(plate, plateGeo(0.24 * S * g, 0.07 * S, 0.34 * S, 0.04 * S, 1), [0, len * 0.94, 0.09 * S]);
+    k.row(3, (j, t) => k.add(tooth, clawGeo(0.12 * S, 0.028 * S, 0.006 * S, 0.6, 5, 2),
+      [(t - 0.5) * 0.17 * S * g, len * 0.92, 0.23 * S], [1.2, (t - 0.5) * 0.5, 0]));
     return;
   }
   if (kind === 'talon') {
-    // four long fingers with hooks — the rancor's hand, which reaches the sand
-    k.row(4, (j, t) => k.add(plate, clawGeo(0.46 * S, 0.045 * S, 0.010 * S, 1.35, 5, 3),
-      [(t - 0.5) * 0.26 * S, len * 0.86, 0.02 * S], [0.25, (t - 0.5) * 0.8, 0]));
+    // four long fingers with hooks — the rancor's hand, which reaches its knee
+    k.row(4, (j, t) => k.add(plate, clawGeo(0.30 * S, 0.036 * S, 0.008 * S, 1.35, 5, 3),
+      [(t - 0.5) * 0.18 * S, len * 0.84, 0.02 * S], [0.25, (t - 0.5) * 0.8, 0]));
     return;
   }
-  k.row(3, (j, t) => k.add(plate, clawGeo(0.32 * S, 0.036 * S, 0.008 * S, 1.05, 6, 3),
-    [(t - 0.5) * 0.14 * S, len * 0.92, 0], [0.15, (t - 0.5) * 0.7, 0]));
+  k.row(3, (j, t) => k.add(plate, clawGeo(0.26 * S, 0.030 * S, 0.007 * S, 1.05, 6, 3),
+    [(t - 0.5) * 0.12 * S, len * 0.90, 0], [0.15, (t - 0.5) * 0.7, 0]));
 }
 
 /**

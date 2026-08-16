@@ -57,6 +57,149 @@ const BAND = [0.34, 0.68, 0.88, 1];
 const REF_DIST = 1.8, ROLLOFF = 1.1;
 const attenuation = (d) => (d <= REF_DIST ? 1 : REF_DIST / (REF_DIST + ROLLOFF * (d - REF_DIST)));
 
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  THE SCORE — which one                                                 */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * THE SOUNDTRACK LIST, and it is DATA so that adding one is a row.
+ *
+ * "I want to have different options for the soundtrack, is that possible? like
+ * selecting one or the other?" — and there was no mechanism at all: one url,
+ * armed by main.js, with a volume slider over it.
+ *
+ * WHAT A ROW IS. `files` is a list of file NAMES, resolved at play time
+ * against the directory the caller armed (see _trackList), and a list because
+ * assets/music/README.md tells a maintainer to split a long score into
+ * `theme.mp3` + `theme2.mp3` to clear GitHub's 25 MB web-upload limit — the
+ * chaining that supports that already exists and this reuses it rather than
+ * inventing a second path.
+ *
+ * TWO SPECIAL ROWS, and neither of them is a fake track:
+ *
+ *   `files: null` means "whatever the game armed" — the shipped score, under
+ *   whatever name main.js gives it. It is row 0 so a fresh profile hears
+ *   exactly what it always heard, and so this file never has to know the
+ *   name of the one asset in the project that is not procedural.
+ *
+ *   `files: []` is SILENCE, and it is a legitimate thing to choose rather
+ *   than a placeholder: it builds no element, fetches nothing and is not the
+ *   same request as Music 0, which is a level. A player who wants the room and
+ *   the blade and no score can have exactly that.
+ *
+ * WHAT IS DELIBERATELY NOT HERE: a row for a file this repository does not
+ * ship. A list that offered three tracks and delivered one would be a menu of
+ * lies. Drop an mp3 into assets/music/, add a row, and it is an option; the
+ * engine reports a row whose file does not arrive (`musicMissing`) rather than
+ * playing nothing and saying nothing.
+ */
+export const MUSIC_TRACKS = [
+  { id: 'theme', name: 'Main Theme', files: null,
+    blurb: 'The score the game ships with.' },
+  { id: 'silence', name: 'No score', files: [],
+    blurb: 'The room, the blade and nothing else. Nothing is fetched at all.' },
+];
+
+/** The track at an index, clamped — never an invented row. */
+export function trackAt(i) {
+  const n = MUSIC_TRACKS.length;
+  const k = Math.max(0, Math.min(n - 1, Math.round(Number.isFinite(i) ? i : 0)));
+  return MUSIC_TRACKS[k];
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  WORDS — the same lines, said in a language                            */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * WHAT THE VOICE IS ACTUALLY SAYING.
+ *
+ * "I want to be able to say actual voice lines. Like the alien robotic speech
+ * is cool and all but we should be able to do actual voicelines."
+ *
+ * The synthesiser is not going anywhere — it is five larynxes of glottal
+ * source, formant filter and breath, it is expressive, and the player says so
+ * themselves. What it is not is INTELLIGIBLE, on purpose. So this is the same
+ * event, said in words, and the two are alternatives a player chooses between
+ * (see speechMode) rather than a replacement.
+ *
+ * IT IS `speechSynthesis` AND NOT RECORDED AUDIO, and that is a constraint
+ * rather than a preference: this project ships no binary art except one
+ * licensed music track, and README's pitch is that there is nothing to
+ * download. A folder of VO would be megabytes of the one thing this game does
+ * not have. The browser's own synthesiser is words, at zero bytes, with no
+ * build step — and on a browser that does not carry it, the feature simply
+ * does not arm and the synthesised voice plays as it always did.
+ *
+ * THE TABLE IS KEYED BY `kind`, which is Voice.js's LINE_KINDS — the same
+ * vocabulary the announcer and the emote wheel already speak, so a line here
+ * lands on exactly the event the wordless contour lands on and the emote wheel
+ * can print the words for the slot the player is about to pick. Several per
+ * kind, chosen at random, because a game that says the same four words on
+ * every kill is worse than one that grunts.
+ */
+export const SPOKEN_LINES = [
+  { id: 'kill.1', kind: 'kill', text: 'Done.' },
+  { id: 'kill.2', kind: 'kill', text: 'You chose this.' },
+  { id: 'kill.3', kind: 'kill', text: 'Stay down.' },
+  { id: 'kill.4', kind: 'kill', text: 'That was nothing.' },
+  { id: 'streak.1', kind: 'streak', text: 'Come on, then!' },
+  { id: 'streak.2', kind: 'streak', text: 'Who else?' },
+  { id: 'streak.3', kind: 'streak', text: 'Is that all of you?' },
+  { id: 'boss.1', kind: 'boss', text: 'So it is you.' },
+  { id: 'boss.2', kind: 'boss', text: 'I will not yield.' },
+  { id: 'boss.3', kind: 'boss', text: 'This ends here.' },
+  { id: 'low.1', kind: 'low', text: 'Enough!' },
+  { id: 'low.2', kind: 'low', text: 'I can hold.' },
+  { id: 'low.3', kind: 'low', text: 'Not yet.' },
+  { id: 'die.1', kind: 'die', text: 'For the ones who fell.' },
+  { id: 'die.2', kind: 'die', text: 'The Force is with me.' },
+  { id: 'hurt.1', kind: 'hurt', text: 'Argh!' },
+  { id: 'hurt.2', kind: 'hurt', text: 'Enough of that.' },
+  { id: 'land.1', kind: 'land', text: 'Hah!' },
+  { id: 'effort.1', kind: 'effort', text: 'Hyah!' },
+  { id: 'effort.2', kind: 'effort', text: 'Ha!' },
+];
+
+const LINES_BY_KIND = new Map();
+for (const l of SPOKEN_LINES) {
+  if (!LINES_BY_KIND.has(l.kind)) LINES_BY_KIND.set(l.kind, []);
+  LINES_BY_KIND.get(l.kind).push(l);
+}
+
+/** Every line written for a situation, or []. */
+export function linesFor(kind) { return LINES_BY_KIND.get(kind) || []; }
+
+/**
+ * The words a wheel slot or a quip would say, or '' if that situation has
+ * none. Deterministic on `pick` so a caption and the line that follows it
+ * cannot disagree; random when it is not given.
+ */
+export function wordsFor(kind, pick = null) {
+  const list = linesFor(kind);
+  if (!list.length) return '';
+  const i = pick === null ? Math.floor(rng() * list.length) : Math.abs(Math.round(pick)) % list.length;
+  return list[i].text;
+}
+
+/** Does this browser carry a speech synthesiser at all? */
+export function canSpeakWords() {
+  return typeof globalThis !== 'undefined'
+    && !!globalThis.speechSynthesis
+    && typeof globalThis.SpeechSynthesisUtterance === 'function';
+}
+
+/**
+ * How long a spoken line must be left alone before another may start.
+ *
+ * The announcer's own QUIP_GAP already spaces the LINES; this is the floor
+ * under it that stops two systems talking at once when a wordless effort and
+ * a quip land on adjacent frames — `speechSynthesis` has its own queue and
+ * will happily read four things in a row, half a minute after the fight they
+ * described.
+ */
+const WORD_GAP = 1.1;
+
 /**
  * Below this amplitude at the listener, a one-shot is not a sound, it is a
  * voice being spent. The room's own bed — wind, drone, one idle hum — measures
@@ -161,6 +304,24 @@ export class AudioEngine {
      */
     this.stats = { req: 0, alloc: 0, freed: 0, denied: 0, culled: 0, dropped: 0, threw: 0, peak: 0,
       spoke: 0, speechDenied: 0, ducked: 0 };
+    /**
+     * WHICH SCORE, as an index into MUSIC_TRACKS. See setMusicTrack.
+     *
+     * 0 is "whatever the game armed" — the shipped theme — so an engine
+     * nobody has ever spoken to about tracks behaves exactly as it did.
+     */
+    this.musicIndex = 0;
+    /** The id of a track whose files would not load. Read by the options screen. */
+    this.musicMissing = null;
+    /**
+     * SYNTHESISED, SPOKEN, OR BOTH. See sayWords().
+     *
+     * 'synth' is the game as it stands — five larynxes of oscillator, formant
+     * filter and breath, deliberately wordless — and it is the default so
+     * nothing changes for anyone who does not ask.
+     */
+    this.speechMode = 'synth';
+    this._spokeAt = 0;
   }
 
   /** How many lines are being spoken right now. */
@@ -359,11 +520,75 @@ export class AudioEngine {
     return this._startMusic();
   }
 
+  /**
+   * WHICH SCORE IS PLAYING — the selection, and the whole of its mechanism.
+   *
+   * "I want to have different options for the soundtrack, is that possible?
+   * like selecting one or the other?" There was one url, hard-armed by
+   * main.js, and no way to say anything about it but how loud.
+   *
+   * The list of tracks is DATA (MUSIC_TRACKS, above) rather than a switch
+   * statement, so a new score is one row and a file; and row 0 carries no
+   * files at all on purpose — it means "whatever the game armed", which is
+   * what keeps `playMusic(['one.mp3','two.mp3'])` chaining a split score
+   * exactly as it did and keeps a fresh profile on the shipped theme without
+   * this file having to know its name.
+   *
+   * The urls of a chosen track are resolved against the DIRECTORY the caller
+   * armed, which is the one piece of knowledge the engine genuinely does not
+   * have: main.js builds `new URL('../assets/music/x.mp3', import.meta.url)`,
+   * and a track named here as `theme2.mp3` has to land beside it.
+   */
+  _trackList() {
+    const armed = this._musicWanted ? this._musicWanted.list : [];
+    const t = trackAt(this.musicIndex);
+    if (!t || !t.files) return armed;                 // the shipped score
+    if (!t.files.length) return [];                   // silence, chosen
+    const base = (armed[0] || '').replace(/[^/]*$/, '');
+    return t.files.map(f => base + f);
+  }
+
+  /**
+   * Choose a score. Takes an index into MUSIC_TRACKS, clamped.
+   *
+   * Live: a track picked mid-run tears the old stream down and starts the new
+   * one, because the alternative is a control that only works from the front
+   * screen — and the pause card is where a player realises they have had
+   * enough of the track. At Music 0 it is remembered and nothing is fetched,
+   * which is the same rule the volume slider already obeys.
+   */
+  setMusicTrack(i) {
+    const want = Math.max(0, Math.min(MUSIC_TRACKS.length - 1, Math.round(num(i, 0))));
+    if (want === this.musicIndex) return trackAt(this.musicIndex);
+    this.musicIndex = want;
+    this.musicMissing = null;
+    this._stopMusic();
+    if (this.musicVolume > 0) this._startMusic();
+    return trackAt(this.musicIndex);
+  }
+
+  /** Tear the stream down so a different one can be built. */
+  _stopMusic() {
+    const m = this._music;
+    if (!m) return false;
+    this._music = null;
+    try { m.el.pause(); } catch {}
+    try { m.el.src = ''; } catch {}
+    try { m.gain.disconnect(); } catch {}
+    try { m.src.disconnect(); } catch {}
+    return true;
+  }
+
   /** Build the element for the armed url list and start it. */
   _startMusic() {
     if (this._music || !this._musicWanted || !this.ready) return this._music || null;
     if (typeof Audio === 'undefined' || typeof document === 'undefined') return null;
-    const { list, opts } = this._musicWanted;
+    const { opts } = this._musicWanted;
+    const list = this._trackList();
+    // A track with no files is a CHOICE — "no score" — and not a failure, so
+    // it builds no element and reports no error. Nothing to fetch, nothing to
+    // decode, nothing to pause.
+    if (!list.length) return null;
     try {
       const el = new Audio();
       el.src = list[0];
@@ -401,6 +626,28 @@ export class AudioEngine {
         };
         el.addEventListener('ended', () => advance(false));
         el.addEventListener('error', () => advance(true));
+      } else {
+        /*
+         * A CHOSEN TRACK WHOSE FILE IS NOT THERE says so, once, and gives the
+         * shipped score back.
+         *
+         * The list is data and the files are not in the repository — that is
+         * the whole point of a data-driven list, and it means a row can name
+         * an mp3 nobody has dropped in yet. Silence with no explanation is the
+         * worst of the three possible answers; inventing a track is the
+         * second worst. So the failure is recorded where the options screen
+         * can read it (`musicMissing`) and the engine falls back to row 0,
+         * which is whatever main.js armed and is the one file that ships.
+         */
+        el.addEventListener('error', () => {
+          const t = trackAt(this.musicIndex);
+          if (!t || !t.files || !t.files.length) return;      // the shipped score itself
+          this.musicMissing = t.id;
+          this._stopMusic();
+          this.musicIndex = 0;
+          this.onMusicMissing?.(t);
+          if (this.musicVolume > 0) this._startMusic();
+        });
       }
       go();
       // An autoplay block is not an error, it is a "not yet" — retry on the
@@ -708,9 +955,107 @@ export class AudioEngine {
    * @param opts  {pos, gain, vary, self, prio}
    * @returns the length of the line in seconds, or 0 if it was not spoken.
    */
+  /**
+   * SYNTHESISED, SPOKEN, OR BOTH.
+   *
+   * Three states and not a checkbox, because they are three different things a
+   * player might want and one of them is the game as it stands. 'synth' is the
+   * default so that nobody's game changes under them.
+   *
+   * An unknown value is 'synth' rather than an error: this arrives from a
+   * settings blob on disk.
+   */
+  setSpeechMode(mode) {
+    this.speechMode = (mode === 'spoken' || mode === 'both') ? mode : 'synth';
+    if (this.speechMode === 'synth') this.stopWords();
+    return this.speechMode;
+  }
+
+  /** Cancel anything the browser is part-way through saying. */
+  stopWords() {
+    if (!canSpeakWords()) return false;
+    try { globalThis.speechSynthesis.cancel(); } catch {}
+    return true;
+  }
+
+  /**
+   * SAY IT IN WORDS — the other half of `speak`.
+   *
+   * Called from inside speak() rather than from the announcer, and that is the
+   * whole design: `Announcer._say` already owns the budget that stops this
+   * game babbling (one quip per QUIP_GAP whatever happens, a shorter budget
+   * for the wordless efforts, one enemy line per ENEMY_GAP), and it spends
+   * that budget by calling `audio.speak` and reading back a duration. Hanging
+   * the words off the same call means every line the announcer decides to say
+   * is spoken under the same rate limits, with no second gate to keep in step
+   * and not one line of src/ui/Announcer.js changed.
+   *
+   * ONLY THE PLAYER'S OWN VOICE GETS WORDS (`opts.self`). The room is droids,
+   * beasts and troopers, and the report was explicit that the alien speech is
+   * the good part — a battle droid enunciating in the browser's default voice
+   * would be a different game and a worse joke.
+   *
+   * `pitch` and `rate` are biased by the chosen larynx, so the five voices in
+   * Options still mean something in spoken mode: The Mask speaks low and slow
+   * and The Sage high and halting, because those are the numbers their own
+   * specs carry — `f0` is the larynx's fundamental in Hz (88 to 208 across the
+   * five) and `cadence` is its pace (0.72 to 1.45). Read off the spec rather
+   * than written as a second table of five voices, which would be the same
+   * defect this project keeps a section of the handoff for.
+   *
+   * Everything is inside a try: `speechSynthesis` is present-but-broken on
+   * more platforms than it is absent from, and a voice line must never be able
+   * to take a frame with it.
+   */
+  sayWords(kind, spec, opts = {}) {
+    if (this.speechMode === 'synth' || !opts.self) return '';
+    if (!canSpeakWords() || this.voiceLevel <= 0.001) return '';
+    const text = wordsFor(kind, opts.pick ?? null);
+    if (!text) return '';
+    const now = (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
+    if (now - this._spokeAt < WORD_GAP) return '';
+    this._spokeAt = now;
+    try {
+      const u = new globalThis.SpeechSynthesisUtterance(text);
+      // 130 Hz sits in the middle of the five shipped larynxes (88…208), so
+      // the ratio either side of it maps the whole rack onto
+      // speechSynthesis's own 0.1–2 pitch scale — clamped well inside it, so
+      // no voice can come out as a chipmunk or a foghorn on a platform whose
+      // synthesiser takes those numbers more literally than most.
+      u.pitch = clamp(num(spec?.f0, 130) / 130, 0.55, 1.7);
+      u.rate = clamp(num(spec?.cadence, 1) * 0.98, 0.6, 1.5);
+      u.volume = clamp(this.voiceLevel * clamp(num(opts.gain, 1), 0, 2), 0, 1);
+      // The browser queues; the game does not want a queue. Anything still
+      // being said is a line about a fight that has moved on.
+      globalThis.speechSynthesis.cancel();
+      globalThis.speechSynthesis.speak(u);
+      this.stats.words = (this.stats.words || 0) + 1;
+      return text;
+    } catch { return ''; }
+  }
+
   speak(spec, kind = 'effort', opts = {}) {
     if (!this.ready || !spec || !this._live()) return 0;
     if (this.voiceLevel <= 0.001) return 0;
+    /*
+     * THE WORDS FIRST, and they do not depend on a voice being free.
+     *
+     * `speechSynthesis` is not on the WebAudio graph — it costs no voice, no
+     * panner and no bus — so gating it behind the pool would mean a player in
+     * spoken mode losing the line for a reason that has nothing to do with it.
+     * In 'spoken' the synthesised contour is then skipped entirely, which is
+     * what makes it a CHOICE rather than a layer: two versions of the same
+     * line at once is what 'both' is for, and only when it is asked for.
+     */
+    const said = this.sayWords(kind, spec, opts);
+    if (said && this.speechMode === 'spoken') {
+      this.stats.spoke++;
+      // The duration the announcer budgets against. Read off the words rather
+      // than off a synthesised contour that was never built: roughly 12
+      // characters a second, floored at half a second, which is what an
+      // ordinary rate says a short line takes.
+      return Math.max(0.5, said.length / 12);
+    }
     const u = utterance(spec, kind, num(opts.vary, rng()));
     const level = clamp(num(opts.gain, 1), 0, 4);
     const pos = opts.pos || null;

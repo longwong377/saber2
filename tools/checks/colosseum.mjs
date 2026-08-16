@@ -31,7 +31,7 @@
 import * as THREE from 'three';
 import { Terrain } from '../../src/world/Terrain.js';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
-import { ARCHETYPES, BEAST_MOVES, DEFAULT_BEAST_MOVES } from '../../src/game/Enemy.js';
+import { ARCHETYPES, BEAST_MOVES, beastMoveSet } from '../../src/game/Enemy.js';
 import { WaveDirector, seedWaves } from '../../src/game/Waves.js';
 import { saddleThreat } from '../../src/game/Riders.js';
 import { TAU } from '../../src/engine/MathUtil.js';
@@ -182,7 +182,18 @@ export function run({ check, assert }) {
       .filter((t) => ARCHETYPES[t]?.custom === 'beast');
     assert(kinds.length >= 5, `only ${kinds.length} creature archetypes in the colosseum's pool`);
 
-    const setOf = (t) => (ARCHETYPES[t].moves || DEFAULT_BEAST_MOVES).filter((k) => BEAST_MOVES[k]);
+    /* Through the shipped resolver, not through a copy of it. A creature that
+     * declares no move set takes the verbs its BODY PLAN affords (see
+     * `beastMoveSet` and CREATURE_PLANS in src/game/Bodies.js), and this line
+     * read `A.moves || DEFAULT_BEAST_MOVES` — which is HANDOFF §2.4's defect
+     * and would have reported the reek, the nexu and the acklay as still
+     * sharing one move set for as long as anybody believed it. The body is
+     * built once per creature because that is where the answer now lives. */
+    const _b = new Map();
+    const setOf = (t) => {
+      if (!_b.has(t)) _b.set(t, ARCHETYPES[t].build({ scale: ARCHETYPES[t].scale }));
+      return beastMoveSet(ARCHETYPES[t], _b.get(t)).filter((k) => BEAST_MOVES[k]);
+    };
     const sets = new Set(kinds.map((t) => setOf(t).slice().sort().join('+')));
     assert(sets.size >= 3,
       `${kinds.length} creatures share ${sets.size} move set(s) between them — `

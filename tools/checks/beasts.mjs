@@ -48,9 +48,9 @@
 import * as THREE from 'three';
 import { initPhysics } from '../../src/physics/Rapier.js';
 import { RapierWorld } from '../../src/physics/RapierWorld.js';
-import { Enemy, enemyRng, ARCHETYPES, BEAST_MOVES, DEFAULT_BEAST_MOVES } from '../../src/game/Enemy.js';
+import { Enemy, enemyRng, ARCHETYPES, BEAST_MOVES, beastMoveSet } from '../../src/game/Enemy.js';
 import { duelRng } from '../../src/game/Duel.js';
-import { buildQuadruped, QUADRUPED_KINDS } from '../../src/game/Bodies.js';
+import { buildQuadruped, CREATURE_PLANS } from '../../src/game/Bodies.js';
 import '../../src/game/Levels.js';        // registers the Colosseum's creatures
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
@@ -63,8 +63,24 @@ const flat = () => ({
 /** Every archetype that runs the beast brain, found rather than listed. */
 const BEASTS = Object.keys(ARCHETYPES).filter((k) => ARCHETYPES[k].custom === 'beast');
 
-/** The attacks a given creature can make, over its whole health bar. */
-const movesOf = (type) => (ARCHETYPES[type].moves || DEFAULT_BEAST_MOVES).filter((k) => BEAST_MOVES[k]);
+/**
+ * The attacks a given creature can make, over its whole health bar.
+ *
+ * THIS USED TO BE `(ARCHETYPES[type].moves || DEFAULT_BEAST_MOVES)`, which is
+ * HANDOFF §2.4 exactly: a rule restated inside the instrument that measures
+ * it. The shipped resolution now has a second source — a creature that
+ * declares no move set takes the verbs its BODY PLAN affords (see
+ * `beastMoveSet`, and CREATURE_PLANS in src/game/Bodies.js) — and this line
+ * would have gone on measuring the move sets the reek, the nexu and the
+ * acklay used to share, reporting them as unchanged while the game shipped
+ * something else. It calls the resolver now, against a real built body, which
+ * is the same answer `Enemy.beastMoves` gets.
+ */
+const _built = new Map();
+const movesOf = (type) => {
+  if (!_built.has(type)) _built.set(type, ARCHETYPES[type].build({ scale: ARCHETYPES[type].scale }));
+  return beastMoveSet(ARCHETYPES[type], _built.get(type)).filter((k) => BEAST_MOVES[k]);
+};
 
 /**
  * THE FOUR EVASIONS, and why each is a thing a real player does.
@@ -512,21 +528,23 @@ export async function run({ check, assert }) {
     return `${rows.join(', ')} attacks, each with its own readable wind-up`;
   });
 
-  check('beasts: four kinds out of one builder are four animals', () => {
+  check('beasts: five plans out of one builder are five animals', () => {
     /**
      * `buildQuadruped` was `const heavy = opts.kind !== 'stalker'` and
      * twenty-three `heavy ? a : b` expressions — a builder that could express
      * exactly two animals, where a third meant a third branch on every one of
      * those lines. It is a table now, and the risk a table carries is the
-     * opposite one: four rows that are the same animal with different numbers.
+     * opposite one: rows that are the same animal with different numbers,
+     * which is precisely what the player reported ("sphere with some legs").
      *
      * Measured off the built vertices rather than off the table: the bounding
-     * proportions of the four have to differ, and no two may share a
-     * fingerprint. `beast` is deliberately not here — the acklay has its own
-     * six-legged builder and is not a row of this table.
+     * proportions have to differ, and no two may share a fingerprint. The
+     * acklay IS a row now — it is the six-legged plan, built by the same
+     * function off the same table, which is what makes "no two share a body
+     * plan" a property of the table rather than of who wrote which builder.
      */
-    const kinds = Object.keys(QUADRUPED_KINDS);
-    assert(kinds.length >= 4, `only ${kinds.length} kinds in the table`);
+    const kinds = Object.keys(CREATURE_PLANS);
+    assert(kinds.length >= 5, `only ${kinds.length} plans in the table`);
     const seen = new Map();
     const rows = [];
     for (const kind of kinds) {

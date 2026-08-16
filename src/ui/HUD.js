@@ -215,7 +215,20 @@ const POWER_ICONS = {
  * something behind you, far away" is the single most useful thing a radar can
  * say and a dropped contact says nothing.
  */
-export const MINIMAP = { range: 42, hz: 20, size: 132 };
+/**
+ * …and `linger` is how long a READING lasts after the Force sense that bought
+ * it ends. See Minimap.update.
+ *
+ * 3.5 s, and the number is the pulse's whole design. Force sense is a TOGGLE
+ * (Player.toggleSense) that costs POWER_COST.sense to switch on, drains 22
+ * Force a second while it is held open and blocks regeneration entirely — so a
+ * player who wants a map has two ways to pay for it: hold the power open and
+ * watch the pool drain, or tap it on and off for a snapshot that costs the
+ * activation and nothing more. The linger is what makes the second one a real
+ * choice: at 3.5 s a tap is worth about one exchange, which is long enough to
+ * find the body behind you and far too short to fight with the map up.
+ */
+export const MINIMAP = { range: 42, hz: 20, size: 132, linger: 3.5 };
 
 /**
  * The palette, exported so the checks can name a colour instead of matching a
@@ -256,6 +269,14 @@ export class Minimap {
      *  this is the only way to state a rate as something a check can read. */
     this.repaints = 0;
     this.on = null;
+    /**
+     * HOW WARM THE READING IS, 1 while the Force is on it and falling to 0
+     * over MINIMAP.linger seconds afterwards. Read by nothing but this class;
+     * exposed because "the map fades rather than blinking out" is a claim a
+     * check can only measure against a number.
+     */
+    this.read = 0;
+    this._fade = -1;
     if (canvas && typeof canvas.getContext === 'function') {
       // BOTH sizes, from the one number, here rather than in the stylesheet.
       // A canvas has two of them — the backing store the arcs are drawn into
@@ -280,12 +301,47 @@ export class Minimap {
    * off the element is display:none, which is the difference between a map
    * that is not drawn and a map that is drawn transparent: the second one
    * still costs a composite every frame.
+   *
+   * ── AND IT IS A FORCE READING, NOT A PERMANENT WINDOW ───────────────────
+   *
+   * "Bringing up the minimap should maybe use some force like you're using
+   * force sense you know what I mean?" — and the game already has the power
+   * they are describing. `Force sense` (Player.toggleSense) costs to switch
+   * on, drains 22 Force a second while it is open and stops regeneration
+   * dead; what it did was tint the world through the shader. It never told
+   * the player where anything WAS, while a permanently-on radar did, for
+   * free, forever.
+   *
+   * So the map rides that power: `senseActive` warms the reading to 1, and it
+   * cools over MINIMAP.linger once the power is off. No second Force cost is
+   * charged here — inventing one would mean two prices for one act, and the
+   * player would pay both. The map is what Force sense is FOR now.
+   *
+   * `minimapSense` false is the accessibility answer and is the behaviour
+   * that shipped: always on, costing nothing. It is a separate setting from
+   * `minimap` because "I do not want a map" and "I do not want to pay for the
+   * map" are different requests and answering both with one box would force
+   * anyone who cannot manage the power to give up the map entirely.
    */
   update(dt, world, player, settings) {
-    const want = !!settings && settings.minimap !== false && !!player;
+    const sensed = !!settings && settings.minimapSense !== false;
+    if (player && player.senseActive) this.read = 1;
+    else if (this.read > 0) this.read = Math.max(0, this.read - dt / MINIMAP.linger);
+    const want = !!settings && settings.minimap !== false && !!player && (!sensed || this.read > 0);
     if (want !== this.on) {
       this.on = want;
       this.canvas?.classList?.toggle('hidden', !want);
+    }
+    /*
+     * IT FADES RATHER THAN BLINKING OUT. A reading that vanishes on a frame
+     * boundary reads as a bug — the player did nothing, and the map went. The
+     * last second of the linger takes it down to nothing, and the opacity is
+     * only WRITTEN when the tenth changes, so a fade costs at most ten style
+     * writes rather than one every frame for three and a half seconds.
+     */
+    if (this.canvas && this.canvas.style) {
+      const a = !sensed || this.read >= 0.29 ? 1 : Math.round((this.read / 0.29) * 10) / 10;
+      if (a !== this._fade) { this._fade = a; this.canvas.style.opacity = a === 1 ? '' : String(a); }
     }
     if (!want || !this.ctx) return false;
     this.acc += dt;
@@ -483,42 +539,10 @@ export class EmoteWheel {
       // at different places, and the player would only find out by pressing.
       d.style.left = `${(50 + Math.cos(a) * 37).toFixed(3)}%`;
       d.style.top = `${(50 + Math.sin(a) * 37).toFixed(3)}%`;
-      /*
-       * THE WORDS, WHERE THERE ARE WORDS.
-       *
-       * `blurb` is a description of a NOISE — "come on, then", "one note,
-       * downward" — which is the right caption for a wordless larynx and the
-       * wrong one the moment the same slot says an actual sentence. So a slot
-       * prints the line it will really speak when spoken lines are on, and its
-       * description when they are not. `wordsFor(kind, i)` is deterministic on
-       * the slot index, so the caption and the line that follows it are the
-       * same line; the caption is refreshed by setSpeech() rather than being
-       * decided once at construction, because the mode is a live setting.
-       */
       d.innerHTML = `<b>${esc(e.name)}</b><span>${esc(e.blurb)}</span>`;
-      d._say = d.querySelector('span');
       this.host.appendChild(d);
       this.slots.push(d);
     }
-    this.setSpeech(this.spoken);
-  }
-
-  /**
-   * Print what each slot will SAY, or what it will sound like.
-   *
-   * Called from HUD.update off the live setting, and only when the answer has
-   * changed — eight innerHTML writes a frame for a wheel that is on screen for
-   * a second at a time would be a real cost for no change at all.
-   */
-  setSpeech(spoken) {
-    this.spoken = !!spoken;
-    for (let i = 0; i < this.slots.length; i++) {
-      const e = EMOTES[i], el = this.slots[i];
-      if (!el || !el._say) continue;
-      const words = this.spoken ? wordsFor(e.line, i) : '';
-      el._say.textContent = words ? `“${words}”` : e.blurb;
-    }
-    return this.spoken;
   }
 
   /**
@@ -782,6 +806,7 @@ export class HUD {
       flowVig: root.getElementById('flow-vignette'),
       dmgVig: root.getElementById('dmg-vignette'),
       minimap: root.getElementById('minimap'),
+      mapKey: root.getElementById('minimap-key'),
       emotes: root.getElementById('emote-wheel'),
       // The free camera's own line lives OUTSIDE #hud, because #hud is the
       // thing it hides — a legend inside it would go away with everything else
@@ -876,6 +901,17 @@ export class HUD {
     // the way out has to reload the page.
     if (this.el.freecamKey) {
       this.el.freecamKey.textContent = `${keyLabel((bindings.freecam || [])[0])} to come back`;
+    }
+    /*
+     * The map's own legend, from the same table and on the same call. It names
+     * the POWER the map now rides — Force sense — and what it costs, because a
+     * caption that said only "press C" would leave the player wondering why
+     * their Force pool moved. The price comes off POWER_COST, which is what
+     * the wheel already prices every other power from.
+     */
+    if (this.el.mapKey) {
+      this.el.mapKey.innerHTML = `<b>${escKey(keyLabel((bindings.sense || [])[0]))}</b> `
+        + `sense · ${Math.round(POWER_COST.sense)} Force`;
     }
   }
 
@@ -1168,6 +1204,21 @@ export class HUD {
      * drawable, and neither may change anything the lines above it read.
      */
     this.minimap.update(dt, world, player, world.settings);
+    /*
+     * …and the line that says how to bring it up, which only exists while the
+     * map is something you have to ask for. It is written on a CHANGE rather
+     * than every frame: a DOM class toggle sixty times a second for a caption
+     * that changes twice a fight is the same waste the map's own 20 Hz budget
+     * exists to refuse.
+     */
+    if (this.el.mapKey) {
+      const s = world.settings || {};
+      const ask = s.minimap !== false && s.minimapSense !== false && this.minimap.read <= 0;
+      if (ask !== this._mapAsk) {
+        this._mapAsk = ask;
+        this.el.mapKey.classList.toggle('hidden', !ask);
+      }
+    }
     const picked = this.emotes.update(input, this);
     if (picked) this.emote(picked, world, player);
   }

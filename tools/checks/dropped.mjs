@@ -47,9 +47,19 @@ function bench() {
   const p = new Player(world, { isLocal: true, colorIndex: 0, hiltStyle: 'Graflex' });
   p.position.set(0, 0, 0);
   p.aimDir.set(0, 0, -1);
-  const ctx = { input: null, terrain: world.terrain, physics: world.physics, particles: null,
+  /* A real input device, because the disarm checks below have to press a KEY:
+   * "you still have one" was reachable through `ignite`, and a bench that
+   * cannot press it cannot see that. Nothing is held; `_hit` is the one-frame
+   * edge, exactly as Input.actHit reports it. */
+  const input = {
+    _hit: new Set(), keys: new Set(), buttons: [false, false, false],
+    mouse: { dx: 0, dy: 0, wheel: 0 }, accel: { x: 0, y: 0 }, bindings: null,
+    moveAxis: (o) => { o.x = 0; o.y = 0; return o; },
+    act: () => false, actHit(id) { return this._hit.has(id); },
+  };
+  const ctx = { input, terrain: world.terrain, physics: world.physics, particles: null,
     camera: world.engine.camera, time: 0, groundColor: 0, enemies: [] };
-  return { p, world, ctx };
+  return { p, world, ctx, input };
 }
 
 export async function run({ check, assert, THREE: T }) {
@@ -71,6 +81,102 @@ export async function run({ check, assert, THREE: T }) {
       'the blade is offered no contact on a hilt lying on the floor');
     assert(put.grippable !== false, 'a hilt on the ground cannot be pulled to you');
     return `${put.capsules().length} contacts, ${put.body.mass ?? '?'} kg, ${SABER_COLORS[put.saber.colorIndex].name}`;
+  });
+
+  check('dropped: dropping it DISARMS you — note 39', () => {
+    /**
+     * "When you drop your lightsaber you drop it but you still have one like you
+     * never actually lose it, therefore you can never really pick one up."
+     *
+     * He is describing three separate holes, and all three were measurable on
+     * the bench below before this check existed:
+     *
+     *   THE HILT STAYED IN YOUR HAND. `_dropSaber` called `saber.retract()`,
+     *   which puts the blade out and does nothing else — and `_updateBlade` ran
+     *   an unconditional `saber.setVisible(true)` on the very next frame.
+     *   Measured: lit false, ignition 0.01, and 19 machined hilt pieces still
+     *   drawn in the fist.
+     *
+     *   ONE KEY GAVE IT BACK. `ignite` reaches `saber.toggle()`, which asks the
+     *   Saber whether its blade is lit and cannot ask whether anybody is
+     *   holding it. Measured: ignition 0.01 → 0.97 in half a second, from an
+     *   empty hand, with the hilt lying on the floor six metres away.
+     *
+     *   AND IT MADE MORE OF THEM. `swapSaber` never read `saberDown`, so with
+     *   nothing in your hands it dropped again. FIVE PRESSES MADE FIVE HILTS,
+     *   each carrying the same crystal and style, all five pickable. That is
+     *   the literal "you never actually lose it": the game agreed you had
+     *   dropped it, drew it in your hand anyway, and would sell you another.
+     *
+     * `saber` is not nulled and that is deliberate — sixty call sites outside
+     * Player.js dereference `player.saber` without a guard. Being disarmed is a
+     * STATE of the wielder, and `Player.disarmed` is the name it goes under, the
+     * same one Enemy uses when a duellist loses its sword arm.
+     */
+    const b = bench();
+    b.p.saber.ignite(); b.p.saber.ignition = 1;
+    for (let i = 0; i < 30; i++) { b.ctx.time = i / 60; b.p.update(1 / 60, b.ctx); }
+    const drawn = () => { let n = 0; b.p.saber.root.traverse((o) => { if (o.isMesh && o.visible) n++; }); return b.p.saber.root.visible ? n : 0; };
+    assert(drawn() > 8, 'the hilt was not being drawn before the drop, so this proves nothing');
+
+    b.p.swapSaber(b.ctx);
+    for (let i = 0; i < 30; i++) { b.ctx.time = i / 60; b.p.update(1 / 60, b.ctx); ageDropped(b.world, 1 / 60); }
+    assert(b.p.disarmed, 'dropping the blade did not disarm the player');
+    assert(drawn() === 0,
+      `${drawn()} pieces of the hilt are still drawn in the hand of a player who put it down`);
+    assert(!b.p.saber.lit && b.p.saber.ignition < 0.05,
+      `the blade is still at ignition ${b.p.saber.ignition.toFixed(2)} after the drop`);
+
+    // …and the ignite key cannot conjure it back
+    b.input._hit.add('ignite');
+    b.p.update(1 / 60, b.ctx);
+    b.input._hit.clear();
+    for (let i = 0; i < 40; i++) b.p.update(1 / 60, b.ctx);
+    assert(!b.p.saber.lit && b.p.saber.ignition < 0.05,
+      `pressing ignite with empty hands lit a blade — ignition ${b.p.saber.ignition.toFixed(2)}`);
+    assert(b.world.notices.some((n) => n.t === 'IGNITE'),
+      'the refusal was silent, which reads as the key being broken rather than as having no weapon');
+
+    // …and pressing drop again does not manufacture a second one
+    const hilts = () => b.world.props.filter((q) => q.saber && !q.dead).length;
+    const had = hilts();
+    for (let k = 0; k < 4; k++) {
+      b.p.position.z += 10;                       // well clear of PICKUP_REACH
+      b.p.swapSaber(b.ctx);
+      for (let i = 0; i < 20; i++) { b.p.update(1 / 60, b.ctx); ageDropped(b.world, 1 / 60); }
+    }
+    assert(hilts() === had,
+      `five presses of drop left ${hilts()} hilts on the ground — the weapon is being duplicated`);
+    return `hilt out of the hand, blade dead, ignite refused, ${hilts()} hilt after five presses`;
+  });
+
+  check('dropped: and picking one up arms you again, lit', () => {
+    /* The other half of note 39 — "therefore you can never really pick one up".
+     * A pick-up only means something if the drop cost you something, so this is
+     * the same check from the other end.
+     *
+     * IT COMES UP LIT, which was a decision rather than an accident: taking a
+     * weapon off the floor is a thing you do inside a fight, one press, while
+     * something is swinging at you, and handing back a dark hilt costs a second
+     * key at the exact moment the game is least survivable. */
+    const b = bench();
+    b.p.saber.ignite(); b.p.saber.ignition = 1;
+    for (let i = 0; i < 30; i++) { b.ctx.time = i / 60; b.p.update(1 / 60, b.ctx); }
+    b.p.swapSaber(b.ctx);
+    const put = b.world.props[b.world.props.length - 1];
+    for (let i = 0; i < 60; i++) { b.p.update(1 / 60, b.ctx); ageDropped(b.world, 1 / 60); }
+    b.p.position.copy(put.body.position);
+    assert(hiltWithinReach(b.world, b.p) === put, 'standing on it, the hilt is not within reach');
+
+    b.p.swapSaber(b.ctx);
+    for (let i = 0; i < 40; i++) b.p.update(1 / 60, b.ctx);
+    assert(!b.p.disarmed, 'picking the hilt up left the player disarmed');
+    assert(b.p.saber.root.visible, 'the hilt is not drawn in the hand that just picked it up');
+    assert(b.p.saber.lit && b.p.saber.ignition > 0.8,
+      `the blade came back at ignition ${b.p.saber.ignition.toFixed(2)} — the pick-up half-failed`);
+    assert(b.world.props.filter((q) => q.saber && !q.dead).length === 0,
+      'the hilt is still on the ground as well as in your hand');
+    return `disarmed → armed, ignition ${b.p.saber.ignition.toFixed(2)}, nothing left on the floor`;
   });
 
   check('dropped: you cannot pick your own back up before you have seen it leave', () => {

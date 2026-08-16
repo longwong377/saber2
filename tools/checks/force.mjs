@@ -83,6 +83,12 @@ function player(world, over = {}) {
       bodies: new Set(), centre: new THREE.Vector3(), point: new THREE.Vector3(), vfx: 0,
     },
     chest: V(0, 1.35, 0), aimDir: V(0, 0, -1),
+    /* A real Player always has one, and `_readInput` reads it: the controller
+     * needs to be told whether the feet are under a lunge, because
+     * `Player._attackDrive` now moves the anchor the controller would otherwise
+     * infer that from. This bench builds a Player-shaped object by hand, so a
+     * field the real constructor always sets has to be set here too. */
+    velocity: new THREE.Vector3(),
     camera: { pos: V(0, 1.6, 3), addShake() {}, addYaw() {}, addPitch() {}, firstPerson: false },
     boonMods: { forceCost: 1, flowGain: 1 },
     cooldowns: { push: 0, pull: 0, throw: 0, sense: 0, dash: 0, lightning: 0, stasis: 0, rend: 0 },

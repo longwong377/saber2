@@ -293,12 +293,20 @@ export const BEAST_MOVES = {
   rake: {
     unlock: 1, aim: 'windup', plant: 0.18, hit: [0.32, 0.55], done: 0.75,
     reach: 0.72, damage: 0.62, lift: 0.35,
-    pose: { rise: 0.60, up: 0.32, fall: 0.12, pitch: -0.90 },
+    /* It DROPS rather than rears, which is a cat gathering its shoulders, and
+     * it has to: a rake that rose would be the charge's curve at 6/7 the
+     * height — measured 79 mm apart at their widest against the 80 the wind-up
+     * check requires, which is two attacks with one telegraph. */
+    pose: { rise: -0.45, up: 0.32, fall: 0.10, pitch: -0.33 },
   },
   stab: {
     unlock: 1, aim: 'windup', plant: 0.30, hit: [0.62, 0.85], done: 1.05,
     reach: 1.30, damage: 1.10, lift: 0.5, roar: 0.7, call: 'STAB', callColor: '#8affc4',
-    pose: { rise: 0.90, up: 0.62, fall: 0.10, pitch: -0.26 },
+    /* Short and early: the body gathers, drops back to rest, and THEN the leg
+     * goes out. Against the sweep's slow full rear over the same window the
+     * two were 75 mm apart, and a spear that looks like a claw is not a
+     * different attack. */
+    pose: { rise: 0.55, up: 0.40, fall: 0.10, pitch: -0.26 },
   },
   snatch: {
     unlock: 2, aim: 'windup', plant: 0.45, hit: [0.68, 0.92], done: 1.20,

@@ -313,6 +313,18 @@ h3::after{content:"";flex:1;height:2px;background:var(--panel-hi)}
    patch of #48d8ff on a dark panel with no outline is a div, and the same
    patch inside 2 px of near-black is a chip of paint. */
 .swatches{display:flex;flex-wrap:wrap;gap:10px}
+/* THE WARDROBE'S TONE ROWS. Nine of them stack under the cut cards, so they
+   run at two thirds the size of the robe palette above — a piece is a smaller
+   decision than the palette every piece is derived from, and the column has to
+   stay scrollable. Tighter margin for the same reason: these sit directly
+   under the row of cards they belong to and read as part of it. */
+.swatches.tone{gap:7px;margin-top:9px}
+.swatches.tone .sw{width:26px;height:26px}
+/* "As the robe" — the first swatch in every tone row, painted with the tone
+   the builder really derives from the chosen palette. Marked with a notch of
+   ink rather than a label, because the row has no room for words and the
+   TITLE says it on hover. */
+.sw.as-robe{outline:2px dashed var(--dimmer);outline-offset:-6px}
 .sw{width:40px;height:40px;border:2px solid var(--stroke);cursor:pointer;position:relative;
   clip-path:var(--cut-sm);box-shadow:var(--stamp);
   transition:transform .14s cubic-bezier(.22,1,.36,1)}
@@ -641,6 +653,16 @@ button{font-family:inherit}
 #minimap{border-radius:50%;border:2px solid var(--stroke);background:rgba(8,10,20,.72);
   box-shadow:0 0 0 2px rgba(72,216,255,.22)}
 #minimap.hidden{display:none}
+/* WHAT IT COSTS TO SEE THE MAP, under where the map would be. Only up while
+   the map is a Force reading and cold — HUD.update toggles it — so it is
+   never on screen at the same time as the thing it is telling you how to get.
+   The key itself is the one bright thing in it, because that is the part being
+   read at a glance. */
+.mapkey{font:var(--mono);font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--dimmer);
+  padding:3px 8px 4px;border:2px solid var(--stroke);background:rgba(8,10,20,.72);
+  clip-path:var(--cut-sm);white-space:nowrap;align-self:flex-end}
+.mapkey b{color:var(--accent);font-weight:800}
+.mapkey.hidden{display:none}
 /* THE POWER SLOTS, and the ready state is the whole job of this row. Three
    states have to be told apart at a glance while being shot at: cannot afford
    it (dim, no ink weight), can (inked and lit), casting (solid field of blade
@@ -866,6 +888,17 @@ button{font-family:inherit}
 .bindrow b.listening{background:var(--accent-warm);color:var(--stroke);animation:pulseLow .7s ease-in-out infinite}
 .bindrow b.conflict{background:var(--danger);color:var(--stroke)}
 #bind-hint{color:var(--accent-warm)}
+/* THE SAME LIST, ON THE PAUSE CARD. Menu._buildBindings paints every host it
+   finds, so this is the Options table's own markup in a 400px card — which is
+   the whole reason it is folded away behind a button and given a shorter
+   scroller: forty rows above Resume would push the button a player is reaching
+   for off the bottom of the screen. Left-aligned because a key table is a
+   table; everything else on this card is centred. */
+.pause-binds{text-align:left;margin:14px 0 4px;padding-top:14px;border-top:2px solid var(--stroke)}
+.pause-binds.hidden{display:none}
+.pause-binds .bindlist{max-height:38vh}
+.pause-binds .hint{margin-bottom:10px}
+.pause-binds .secondary{margin-top:12px;width:100%}
 
 /* Focus: the Force bar burns while time is bent */
 .bar.fc.focus i{background:var(--accent-warm);

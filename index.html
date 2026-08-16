@@ -247,7 +247,21 @@
         <h3 style="margin-top:22px">Audio</h3>
         <label class="slider">Master <input type="range" id="opt-vol" min="0" max="1" step="0.02" value="0.8"><b></b></label>
         <label class="slider">Music <input type="range" id="opt-music" min="0" max="1" step="0.02" value="0.45"><b></b></label>
+        <!-- The `max` is written by Menu._buildOptions from MUSIC_TRACKS.length,
+             not typed here: a number in this attribute is a second copy of how
+             many tracks there are, and the first thing it does when a score is
+             added is leave the new one unreachable. -->
+        <label class="slider wide">Soundtrack <input type="range" id="opt-music-track" min="0" max="1" step="1" value="0"><b></b></label>
+        <p class="hint" id="music-blurb"></p>
         <label class="slider">Voices <input type="range" id="opt-voicelevel" min="0" max="1.2" step="0.02" value="0.9"><b></b></label>
+        <!-- SYNTHESISED / SPOKEN / BOTH. Built by Menu._buildSpeechModes,
+             which disables the two spoken rows outright on a browser with no
+             speechSynthesis rather than offering a control that does nothing. -->
+        <h3 style="margin-top:22px">Voice lines</h3>
+        <div id="opt-speech" class="difflist"></div>
+        <p class="hint">Nothing here is a recording either way: <b>Spoken</b> is your browser's own
+          speech synthesiser saying the same lines the larynx says wordlessly, which is real words at
+          no download on a game that ships no audio but the score.</p>
         <label class="check"><input type="checkbox" id="opt-voicelines" checked> Your own voice</label>
         <label class="check"><input type="checkbox" id="opt-enemyvoices" checked> Enemy voices</label>
         <label class="check"><input type="checkbox" id="opt-enemybody" checked> Enemy footfall, servos &amp; breath</label>
@@ -280,6 +294,11 @@
         <p class="hint">Contacts around you, heading-up, out to 42&nbsp;m — bosses warm, allies green, and
           anything further away pinned to the rim so you still know it is there. Off, it costs nothing at
           all rather than being drawn invisible.</p>
+        <label class="check"><input type="checkbox" id="opt-minimap-sense" checked> Read the map with the Force</label>
+        <p class="hint">On, the map is what <b>Force sense</b> shows you: hold the power open and it stays
+          lit while the pool drains, or tap it for a reading that fades over a few seconds. It costs what
+          the power costs and not a Force more. Off, it is simply always there — which is what it was, and
+          is the answer if managing a power mid-fight is not something you want to do.</p>
       </div>
     </section>
 
@@ -460,6 +479,11 @@
       into and the budget that justifies them are the same number.
     -->
     <canvas id="minimap" aria-hidden="true"></canvas>
+    <!-- What it costs to bring the map up, and which key does it. Filled by
+         HUD.setBindings from the live `sense` binding — a typed key here could
+         not follow a rebind. Shown only while the map is a Force reading and
+         cold; the map itself is the readout once it is warm. -->
+    <div id="minimap-key" class="mapkey hidden"></div>
     <div id="power-wheel" class="powers"></div>
   </div>
 
@@ -520,12 +544,20 @@
 </div>
 
 <!-- ══════════════════════ OVERLAYS ══════════════════════ -->
+<!-- THE MENU NOBODY MEANT TO OPEN.
+     "Once I pressed a button and saw a menu mid game where I selected a power
+     up but idk how it happened or what button I pressed." Nothing was pressed:
+     this is the boon draft, and it opens by itself. Every line of it is
+     written by Menu.showDraft — the title, why it appeared and what the keys
+     are — because the WHY differs between a wave draft and a boss attunement
+     and a card that says the same thing in both cases is the thing that
+     confused a player in the first place. -->
 <div id="boon-draft" class="screen hidden">
   <div class="draft-wrap">
-    <h2>Attune</h2>
-    <p class="hint">The Force offers. Choose one — click it, press its number, or walk the row
-      with the arrows and take one with Enter.</p>
+    <h2 id="draft-title">The Force Offers</h2>
+    <p class="hint" id="draft-why"></p>
     <div id="draft-cards" class="draft-cards"></div>
+    <p class="hint draft-keys" id="draft-keys"></p>
   </div>
 </div>
 
@@ -559,6 +591,18 @@
     <button id="btn-restart" class="secondary">Restart wave</button>
     <button id="btn-quit" class="ghost">Abandon run</button>
     <button id="btn-perfcopy" class="ghost">Copy frame report</button>
+    <!-- KEY BINDINGS, MID-RUN. The list itself is filled by
+         Menu._buildBindings, which paints every host it finds rather than
+         keeping a second copy of the table for this card: same rows, same
+         rebind listener, same conflict resolver, same live `bindings` object,
+         so a key changed here is changed in Options too. Folded away by
+         default — see the note in _buildBindings. -->
+    <button id="btn-pause-bind" class="ghost" aria-expanded="false" aria-controls="pause-bind-box">Key bindings</button>
+    <div id="pause-bind-box" class="pause-binds hidden">
+      <p class="hint">Click a key to rebind. Mouse buttons and the wheel work too. Right-click a key to clear it.</p>
+      <div id="pause-bind-list" class="bindlist"></div>
+      <button id="btn-pause-bind-reset" class="secondary">Reset to defaults</button>
+    </div>
     <!-- Filled by Menu._buildKeyLegends. V and Tab are the `view` and
          `scoreboard` actions and are rebindable; Esc is not in ACTIONS at all
          (main.js pauses off a raw keydown so it survives a broken binding), so

@@ -34,8 +34,9 @@ import { FOCUS } from '../game/Focus.js';
 // list it starts. MODES.training's own blurb says "the eleven lessons" and it
 // is the same eleven.
 import { LESSONS } from '../game/Dojo.js';
-import { MODES, sandboxUnits, SANDBOX_MAX_ENEMIES, sandboxConfig } from '../game/Waves.js';
-import { audio } from '../engine/Audio.js';
+import { MODES, sandboxUnits, SANDBOX_MAX_ENEMIES, sandboxConfig,
+         DRAFT_EVERY, BOSS_EVERY } from '../game/Waves.js';
+import { audio, MUSIC_TRACKS, trackAt, SPOKEN_LINES, wordsFor, canSpeakWords } from '../engine/Audio.js';
 import { voiceAt, PLAYER_VOICES } from '../engine/Voice.js';
 // The reticle's shape table and its painter live with the HUD that draws it;
 // the options screen borrows both rather than keeping a second copy that could
@@ -305,6 +306,32 @@ export const DEFAULT_SETTINGS = {
    * next frame — see SETTING_READERS below for where each one lands.
    */
   voiceIndex: 0,
+  /**
+   * WORDS, OR THE WORDLESS VOICE, OR BOTH.
+   *
+   * "I want to be able to say actual voice lines. Like the alien robotic
+   * speech is cool and all but we should be able to do actual voicelines."
+   * The synthesiser stays — it is five larynxes built from an oscillator, two
+   * formant filters and a breath of noise, and the player says it is the cool
+   * part — and 'spoken' says the same line through the browser's own
+   * `speechSynthesis`, which is real words at zero bytes on a project whose
+   * whole claim is that there is nothing to download.
+   *
+   * 'synth' is the default because it is the game as it stands, and because a
+   * feature that changes how everyone's game sounds without being asked is not
+   * an option, it is a patch. Read live by engine/Audio.js.
+   */
+  speechMode: 'synth',
+  /**
+   * WHICH SCORE, as an index into MUSIC_TRACKS (engine/Audio.js).
+   *
+   * "I want to have different options for the soundtrack… like selecting one
+   * or the other?" An index rather than an id for the reason `voiceIndex` is
+   * one: it rides a slider, which is the only control this screen has that can
+   * carry a NAME and still be one input, and the table is the authority for
+   * how many there are.
+   */
+  musicIndex: 0,
   voiceLevel: 0.9,
   voiceLines: true,
   enemyVoices: true,
@@ -322,6 +349,24 @@ export const DEFAULT_SETTINGS = {
    * stops it costing anything at all — see MINIMAP for the budget.
    */
   minimap: true,
+  /**
+   * …AND WHETHER IT COSTS ANYTHING TO LOOK AT IT.
+   *
+   * "Bringing up the minimap should maybe use some force like you're using
+   * force sense you know what I mean?" On, so the map is a READING taken with
+   * Force sense — the power that already costs to switch on, drains while it
+   * is open and stops regeneration — and off, so it is the permanent window
+   * that shipped.
+   *
+   * The two boxes are separate on purpose. `minimap` answers "do I want a map
+   * at all" and this answers "am I willing to pay for it", and folding them
+   * into one control would mean a player who cannot manage a Force power
+   * mid-fight has to give up the map entirely to stop being charged for it.
+   * That is the accessibility case, and it is the whole reason this is a
+   * setting rather than a rule. Read live by HUD.Minimap, so it bites on the
+   * next frame.
+   */
+  minimapSense: true,
   /** The reticle, which was a hard-coded white ring for the whole project. */
   reticleShape: 0,
   reticleSize: 1,
@@ -444,12 +489,19 @@ export const SETTING_READERS = {
    * the line that actually consults the player's answer, once per frame.
    */
   voiceIndex:      ['ui/Announcer.js', 'settings?.voiceIndex ?? 0'],
+  // Both of these are read inside the engine that acts on them rather than at
+  // the control: `speechMode` decides whether a line is said in words at the
+  // moment the announcer spends its budget, and `musicIndex` decides which
+  // urls the score's element is handed when it is built.
+  speechMode:      ['engine/Audio.js', "this.speechMode === 'synth'"],
+  musicIndex:      ['engine/Audio.js', 'trackAt(this.musicIndex)'],
   voiceLevel:      ['ui/Announcer.js', 'Number.isFinite(settings.voiceLevel)'],
   voiceLines:      ['ui/Announcer.js', 'settings.voiceLines !== false'],
   enemyVoices:     ['ui/Announcer.js', 'settings.enemyVoices !== false'],
   enemyBody:       ['engine/Presence.js', 's.enemyBody !== false'],
   popups:          ['ui/HUD.js', 'world.settings.popups !== false'],
   minimap:         ['ui/HUD.js', 'settings.minimap !== false'],
+  minimapSense:    ['ui/HUD.js', 'settings.minimapSense !== false'],
   reticleShape:    ['ui/HUD.js', 'shapeAt(s.reticleShape)'],
   reticleSize:     ['ui/HUD.js', 'num(s.reticleSize, 1)'],
   reticleColor:    ['ui/HUD.js', 'colorAt(s.reticleColor)'],
@@ -3454,8 +3506,12 @@ export class Menu {
       window.addEventListener('wheel', onWheel, { capture: true, passive: false });
     };
 
-    const reset = document.getElementById('btn-bind-reset');
-    if (reset && !reset._wired) {
+    // Both reset buttons, for the same reason both lists exist: a player who
+    // has rebound something mid-fight and wants it back should not have to
+    // leave the run to get it.
+    for (const id of ['btn-bind-reset', 'btn-pause-bind-reset']) {
+      const reset = document.getElementById(id);
+      if (!reset || reset._wired) continue;
       reset._wired = true;
       reset.addEventListener('click', () => {
         audio.ui('click');
@@ -3463,6 +3519,26 @@ export class Menu {
         saveBindings(this.bindings);
         this.hooks.onBindings?.(this.bindings);
         render();
+      });
+    }
+    /**
+     * THE PAUSE CARD'S LIST IS FOLDED AWAY UNTIL IT IS ASKED FOR.
+     *
+     * `.pause-wrap` is a 400 px card with five buttons on it, and forty rows
+     * of key table dropped into that is a card you have to scroll past to
+     * reach Resume. So the pause copy is a disclosure: one button that says
+     * what is behind it, and the list underneath when it is open. It starts
+     * closed on every pause — a card that remembers being open is a card that
+     * hides Resume behind a list you opened once, twenty minutes ago.
+     */
+    const toggle = document.getElementById('btn-pause-bind');
+    const box = document.getElementById('pause-bind-box');
+    if (toggle && box && !toggle._wired) {
+      toggle._wired = true;
+      toggle.addEventListener('click', () => {
+        audio.ui('click');
+        const open = box.classList.toggle('hidden');
+        toggle.setAttribute('aria-expanded', open ? 'false' : 'true');
       });
     }
     render();
@@ -3491,6 +3567,74 @@ export class Menu {
       const el = document.querySelector(`#opt-scheme [data-scheme="${s.key}"] .txt span`);
       if (el) el.innerHTML = s.blurb(id => keyChips(this.bindings, id));
     }
+  }
+
+  /** Which track is really playing, and why it may not be the chosen one. */
+  _syncTrackBlurb() {
+    const el = document.getElementById('music-blurb');
+    if (!el) return;
+    const t = trackAt(this.s.musicIndex);
+    el.textContent = this._musicMissing
+      ? `${this._musicMissing} is not in this build — playing ${trackAt(audio.musicIndex).name}. `
+        + 'Drop the file into assets/music/ and it is an option.'
+      : t.blurb;
+  }
+
+  /**
+   * SYNTHESISED / SPOKEN / BOTH.
+   *
+   * Three cards rather than a checkbox because there are three answers and one
+   * of them is the game as it stands. The cards say what each costs a player:
+   * the synthesiser is wordless on purpose, the browser's speech is real words
+   * and sounds like the browser, and 'both' is the pair together for anyone
+   * who wants the alien cadence AND to know what was said.
+   *
+   * The third card is disabled outright where the browser has no synthesiser,
+   * rather than being offered and silently doing nothing — the dead-control
+   * shape this whole front end has a check against.
+   */
+  _buildSpeechModes() {
+    const host = document.getElementById('opt-speech');
+    if (!host) return;
+    const able = canSpeakWords();
+    const modes = [
+      ['synth', 'Synthesised', 'Wordless, and built from an oscillator and two formant filters at the '
+        + 'moment it is needed. Five larynxes, no recordings, nothing to download.'],
+      ['spoken', 'Spoken', 'The same lines in actual words, through your browser\'s own speech '
+        + 'synthesiser. Your chosen voice sets the pitch and the pace.'],
+      ['both', 'Both', 'The words over the larynx. Twice the voice, and it is a lot.'],
+    ];
+    host.innerHTML = '';
+    for (const [key, name, blurb] of modes) {
+      const d = document.createElement('div');
+      const dead = key !== 'synth' && !able;
+      d.className = 'diff' + (this.s.speechMode === key ? ' sel' : '') + (dead ? ' overruled' : '');
+      d.innerHTML = `<i class="dot"></i><div class="txt"><b>${name}</b><span>${blurb}`
+        + `${dead ? '<br><b>This browser has no speech synthesiser.</b>' : ''}</span></div>`;
+      if (dead) { d.setAttribute('aria-disabled', 'true'); host.appendChild(d); continue; }
+      this._activate(d, () => {
+        audio.ui('click');
+        this._pick('speechMode', key);
+        [...host.children].forEach(c => c.classList.toggle('sel', c === d));
+        audio.setSpeechMode(key);
+      });
+      host.appendChild(d);
+    }
+    audio.setSpeechMode(this.s.speechMode);
+  }
+
+  /**
+   * Write a PICKED setting by name, and save.
+   *
+   * The pickers each did this inline — `this.s.x = k; saveSettings(this.s)` —
+   * which is fine until a picker forgets the save, and tools/checks/controls.mjs
+   * matches the assignment by name to prove a picked setting really has a
+   * control. One helper keeps both true.
+   */
+  _pick(key, value) {
+    this.s[key] = value;
+    saveSettings(this.s);
+    return value;
   }
 
   _buildOptions() {
@@ -3583,6 +3727,31 @@ export class Menu {
       () => this.hooks.onQualityChange?.(this.s.quality));
     this._slider('opt-vol', 'volume', v => `${Math.round(v * 100)}%`, v => audio.setVolume(v));
     this._slider('opt-music', 'music', v => `${Math.round(v * 100)}%`, v => audio.setMusicVolume(v));
+    /*
+     * THE SCORE ITSELF, on the same shape as the voice picker: a slider that
+     * prints a NAME. The ceiling comes off MUSIC_TRACKS rather than out of the
+     * markup, so dropping an mp3 into assets/music/ and adding a row is the
+     * whole of adding a track — a `max` typed into index.html would leave the
+     * new one unreachable behind a stale attribute.
+     */
+    cap('opt-music-track', MUSIC_TRACKS.length);
+    this._slider('opt-music-track', 'musicIndex', v => trackAt(v).name, (v) => {
+      audio.setMusicTrack(v);
+      this._syncTrackBlurb();
+    });
+    /*
+     * …and the engine reports back. A row may name a file that is not in the
+     * build — that is what a data-driven list costs — so the one thing the
+     * screen must never do is offer it, play nothing and say nothing. Audio
+     * falls back to the shipped score and calls this; the blurb says which
+     * track is really playing.
+     */
+    audio.onMusicMissing = (t) => {
+      this._musicMissing = t?.name || null;
+      this._set('musicIndex', audio.musicIndex, true);
+      this._syncTrackBlurb();
+    };
+    this._syncTrackBlurb();
     this._check('opt-invert', 'invertY', v => this.hooks.onInvert?.(v));
     this._check('opt-firstperson', 'firstPerson');
     // Live on the same seam as shake and slowmo: applyFeelSettings pushes it
@@ -3629,6 +3798,7 @@ export class Menu {
       // audition is a slider you set once and never touch again.
       this._auditionVoice(v);
     });
+    this._buildSpeechModes();
     this._check('opt-voicelines', 'voiceLines');
     this._check('opt-enemyvoices', 'enemyVoices');
     this._check('opt-enemybody', 'enemyBody');
@@ -3637,6 +3807,9 @@ export class Menu {
     // the same object this menu is writing. A hook here would be a message to a
     // system that is already reading the answer.
     this._check('opt-minimap', 'minimap');
+    // Same shape and the same reason as the box above it: HUD.Minimap asks
+    // `world.settings` on the frame it draws, and that is this object.
+    this._check('opt-minimap-sense', 'minimapSense');
     const test = document.getElementById('btn-voice-test');
     if (test) test.addEventListener('click', () => this._auditionVoice(this.s.voiceIndex));
 
@@ -3833,8 +4006,58 @@ export class Menu {
    * focus ring, and the arrows walk the row while the number keys take a card
    * outright. The numbers are printed on the cards, because a shortcut nobody
    * is told about is not a shortcut.
+   *
+   * ── AND IT SAYS WHAT IT IS, WHY IT IS THERE, AND HOW TO ANSWER IT ───────
+   *
+   * The report: "once I pressed a button and saw a menu mid game where I
+   * selected a power up but idk how it happened or what button I pressed."
+   * They pressed nothing. This card opened itself, and it was headed
+   * "Attune" — a word for a thing that happens on boss waves — over an
+   * ordinary between-waves boon draft, with one line of copy that began "The
+   * Force offers" and never mentioned that the wave they had just cleared is
+   * what opened it. A modal that stops the world and does not say why is
+   * indistinguishable from a bug the player caused.
+   *
+   * So three sentences are written here rather than in the markup, because
+   * two of them differ per draft:
+   *
+   *   WHAT — an attunement is permanent, repeatable and only on a boss wave;
+   *          a boon is one card off this wave. The `attune` flag on the offer
+   *          is what says which, so the title follows the offer.
+   *   WHY  — the cadence, READ from Waves.js (DRAFT_EVERY, BOSS_EVERY) rather
+   *          than typed. Every number this front end has ever typed by hand
+   *          has eventually described a game that stopped existing, and this
+   *          one is load-bearing: it is the sentence that tells the player
+   *          nothing they pressed did this.
+   *   KEYS — the numbers, the arrows, Enter, and what Escape does. Escape is
+   *          worth a clause of its own because it does NOT skip the offer:
+   *          Screens.resume puts the draft straight back, deliberately, and a
+   *          player who does not know that will not press it.
    */
   showDraft(boons, onPick) {
+    const attune = boons.some(b => b.attune);
+    const title = document.getElementById('draft-title');
+    const why = document.getElementById('draft-why');
+    const keys = document.getElementById('draft-keys');
+    if (title) title.textContent = attune ? 'Attune' : 'The Force Offers';
+    if (why) {
+      why.innerHTML = attune
+        ? '<b>A master has fallen.</b> This is an <b>attunement</b> — a permanent change to how you '
+          + 'fight, and the only place the game hands one out is after a boss. It opened on its own: '
+          + `you pressed nothing. Bosses arrive every ${BOSS_EVERY} waves.`
+        : `<b>The wave is clear.</b> This is the <b>boon draft</b> — one card, taken now, that lasts `
+          + `the rest of the run. It opened on its own every ${DRAFT_EVERY === 1 ? 'wave' : `${DRAFT_EVERY} waves`} `
+          + 'and after every boss: you pressed nothing, and there is no key that opens it.';
+      // Written as innerHTML for the <b>s, and the two sentences above are the
+      // only strings on this card that are not either a boon's own text or a
+      // number read out of Waves.js.
+    }
+    if (keys) {
+      keys.innerHTML = `Click a card, press its <kbd>number</kbd>, or walk the row with the `
+        + `<kbd>arrows</kbd> and take one with <kbd>Enter</kbd>. `
+        + `<kbd>Esc</kbd> opens the pause card — the offer comes back when you resume, `
+        + 'because the wave paid for it.';
+    }
     this.el.draftCards.innerHTML = '';
     const cards = [];
     const take = (b) => {
@@ -3951,6 +4174,11 @@ export class Menu {
       box.style.display = live ? '' : 'none';
       if (this._pauseType) this._pauseType.value = sandboxConfig(this.s).type;
     }
+    // The key table folds itself away between pauses — see _buildBindings.
+    const binds = document.getElementById('pause-bind-box');
+    const toggle = document.getElementById('btn-pause-bind');
+    if (binds) binds.classList.add('hidden');
+    if (toggle) toggle.setAttribute('aria-expanded', 'false');
     this.el.pause.classList.remove('hidden');
   }
   hidePause() { this.el.pause.classList.add('hidden'); }

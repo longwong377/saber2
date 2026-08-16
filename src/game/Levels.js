@@ -32,6 +32,22 @@ import { buildBodyguard, buildQuadruped } from './Bodies.js';
 import { attachRiders, saddleThreat } from './Riders.js';
 import { attachForest } from '../world/Trees.js';
 import { attachHazard } from '../world/Hazard.js';
+import { addSmokeColumns, smokeSites } from '../world/Smoke.js';
+/**
+ * COMMAND'S SEVEN BODIES, registered from here for exactly the reason the
+ * warship's set-piece at the foot of this file is: "a level and the set-piece it
+ * ends with are one decision, and this is the module that decides what levels
+ * exist." Geonosis's pool is the only pool that names them, so the level and the
+ * roster arrive together or `roster.mjs` fails — which is the check doing its
+ * job rather than an inconvenience.
+ *
+ * THE IMPORT DIRECTION IS LOAD-BEARING and is written down in Command.js's own
+ * header. Command.js imports Waves.js (for `WaveDirector`, which it extends);
+ * Waves.js therefore may not import Command.js, and does not. This edge —
+ * Levels → Command → Waves — is safe because Levels already imports Waves two
+ * lines above, so Waves is fully evaluated before Command's class body runs.
+ */
+import { COMMAND_UNITS } from './Command.js';
 
 let rng = makeRng(20250805);
 
@@ -2677,6 +2693,222 @@ export const LEVELS = {
 
 };
 
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  GEONOSIS — the Command mode's ground                                  */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * THE ONE LEVEL IN THIS GAME BUILT FOR AN ARMY RATHER THAN FOR A DUEL.
+ *
+ * Player note #21 asks for a mode where you lead troops, and names the ground:
+ * "Imagine for instance the jedi leading the clone troopers on Geonosis … we
+ * start with a Geonosis map where you progress further and further on the map
+ * with your troops." Eleven reference images were read before any of it was
+ * designed, and amalgamated they say something that contradicts every level
+ * this project has shipped:
+ *
+ *   THE BATTLEFIELD IS A FLAT OPEN PLAIN AND THE SIGHTLINES ARE ENORMOUS.
+ *
+ * Every other level here is a bowl, a cirque, a wash, a shelf or a hall — a
+ * shape whose job is to give one Jedi somewhere to fall back to and something to
+ * fight around. A line of troops cannot form in a gully and cannot be commanded
+ * round a corner. So the whole design is inverted, and the terrain preset's own
+ * header carries the measurements: as flat as the arena's fighting floor, and it
+ * holds that flatness out to 180 m where the arena's runs into a wall at 60.
+ *
+ * WHAT MAKES IT A PLACE RATHER THAN A FIELD, since the ground cannot:
+ *
+ *   THE SMOKE. The single strongest read in every wide shot of this battle is
+ *     that the only strong VERTICALS in frame are burning wrecks. On ground with
+ *     no landmark they are also the only depth cue there is — see Smoke.js.
+ *   THE SPIRES. Geonosian needle stacks, which are a prop rather than terrain
+ *     because a 6 m spire on a 1.8 m grid is three vertices wide. They are the
+ *     one silhouette that says this is Geonosis and not any red desert.
+ *   THE HAZE. Everything past a hundred metres desaturates into an ochre sky.
+ *     That is not atmosphere for atmosphere's sake — it is what makes a 620 m
+ *     map read as a plain that continues, and it is the same argument the dune
+ *     sea's own note makes about painted ranges being a level's edge.
+ *
+ * ── THE POOL NAMES BOTH ARMIES, AND THAT IS DELIBERATE ──────────────────
+ *
+ * Every other level's pool is "the things that come for you". This one is "the
+ * things that are ON this battlefield", which is two armies, because that is
+ * what the images show and because Command lets you lead EITHER of them —
+ * `CommandDirector.unlockedAt` filters this list down to whichever side you are
+ * not. In an ordinary wave mode the filter does not run and you get both, which
+ * is the honest reading of a lone blade dropped into the middle of a war that
+ * does not care which side it is on. `roster.mjs` requires every archetype to be
+ * reachable from some pool, and this is the pool that reaches the seven bodies
+ * Command adds; a level that named only one army would leave the other's five
+ * rungs as content that shipped and cannot be met.
+ *
+ * The repeats are weights (see `WaveDirector.unlockedAt`): `b1` four times and
+ * `trooper` three, because line infantry is what a battlefield is mostly made
+ * of, and one each of the elites.
+ */
+Object.assign(ARCHETYPES, COMMAND_UNITS);
+
+LEVELS.geonosis = {
+  name: 'Geonosis',
+  blurb: 'A red plain under a dust sky, two armies on it, and nothing between them but the ground you have to cross.',
+  terrain: 'geonosis',
+  pool: [
+    // The Republic's five rungs, weighted toward the line.
+    'trooper', 'trooper', 'trooper', 'heavy', 'sniper', 'jet', 'arc', 'officer',
+    // The Confederacy's, weighted the same way.
+    'b1', 'b1', 'b1', 'b1', 'b2', 'rocket', 'droideka', 'bx', 'magna',
+    // …and the armour. `walker` is this game's Spider Walker and it is exactly
+    // the OG-9 homing spider droid of the reference plates: a sphere on four
+    // very tall thin legs with a single beam off the top. It is the silhouette
+    // that reads at any distance, which is what a heavy on this map is for.
+    'walker',
+  ],
+  /* The ochre the whole level is graded around: dust puffs, footfall grit, the
+   * hemisphere's lower half and the smoke's own tip all derive from it. */
+  groundColor: 0xa9764a,
+  /* THE WIDEST SPAWN RING IN THE GAME, and it is the level's premise stated as
+   * two numbers. Everywhere else this is 26-60 m, which is "they are already on
+   * top of you". Here you are meant to SEE them coming and have time to give an
+   * order about it: 58 m is beyond the range of everything in the roster except
+   * the marksman, and 96 m is the far end of what the haze lets you resolve. A
+   * march arrives at 1.45× the outer ring — 139 m — which is a real advance
+   * across open ground and is the thing the reference plates are full of. */
+  spawnRadius: [58, 96],
+  atmosphere: {
+    /* A sky that is mostly dust. Turbidity high and mie high — mie is forward
+     * scatter off big particles, which is what suspended grit is — and rayleigh
+     * DOWN but not off, for the reason the Ember Shelf records at length: under
+     * about 1.6 the physical model returns so little radiance that the exposure
+     * meter hits its clamp and stops metering the level at all. 2.0 keeps the
+     * model in range and the ORANGE comes from the sun, the cloud deck and the
+     * grade, which is where a colour that is not physics belongs. */
+    turbidity: 10.0, rayleigh: 2.0, mie: 0.016, mieG: 0.85,
+    /* The wind on this preset runs along (0.94, 0.34) — 20° — and the sun sits
+     * anti-parallel to it at 200°, which is the same rule the dune sea derives
+     * for its dune train: the windward faces of the stacks are lit and their lee
+     * faces are in shadow, so the one landform on the map has a light side and a
+     * dark side to be read by. 21° of elevation is a late-afternoon sun, which
+     * is what every plate of this battle is shot in — long shadows off infantry
+     * are how you read a crowd on flat ground. */
+    elevation: 21, azimuth: 200,
+    /* A dusty sun is a WEAK sun with a strong sky, and that ratio is the whole
+     * look. 5.4 against the dune sea's 7.6, with the ambience carrying more of
+     * the load, gives the flat shadowless light the wide shots have — but not
+     * so flat that the stacks lose their form, which is what the check that
+     * orders the indirect budget by sun height is protecting. */
+    sunColor: 0xffcf8e, sunIntensity: 5.4, ambient: 0.52,
+    skyColor: 0xd9a058, groundColor: 0x8f6238,
+    /* THE FILL IS WARM HERE, and that is the one thing about this level's light
+     * that is not the default. Everywhere else the brightest thing that is not
+     * the sun is a BLUE sky, so a fill placed opposite the key stands for the
+     * dome and is blue. Under this much dust the dome is orange — there is no
+     * blue anywhere in any of the eleven reference frames — and a blue fill
+     * would be a lamp nobody has switched on. The same argument the Ember Shelf
+     * makes about its lava sea, from the other direction. */
+    fillColor: 0xd6a06a, fillIntensity: 0.50,
+    /* THICK, AND THE THICKEST IN THE GAME. 0.0060 against the dune sea's 0.0044
+     * — this is the level whose whole subject is a distance you have to cross,
+     * and the haze is what turns 620 m of heightfield into a plain that
+     * continues past its own edge. Dimmer and less saturated than the drawn sky,
+     * because a surface seen THROUGH a medium cannot come out brighter than the
+     * medium; authoring this as a sand swatch is how a haze ends up above its
+     * own sky. `fogHeight` is deliberately tall: a LOW mist would reveal the far
+     * stacks rather than bury them (measured on the dune sea — a ray to a
+     * distant crest climbs out of shallow fog almost immediately), and on this
+     * level the far ground is meant to dissolve. */
+    fogColor: 0xd0a473, fogDensity: 0.0060, fogHeight: 70, fogBase: 0,
+    /* Warm tops and cooler undersides, and a heavy deck: the sky in these plates
+     * is banded brown-orange cloud with the sun burning through it rather than
+     * open air. */
+    cloudCover: 0.52, cloudLit: 0xffdda6, cloudDark: 0xa8825e,
+    cloudWindDir: 0.35, cloudWindSpeed: 0.9,
+    /* The painted ranges: distant mesas, which the terrain's own far rim rises
+     * into so they stand ON something instead of floating at the edge of a
+     * plane. Three layers out to 380 m — the deepest set in the game, because
+     * this is the level that is about looking a long way. */
+    horizonAmount: 1.0, horizonScale: 0.95, horizonColor: 0xa06a3e,
+    exposure: 0.88, saturation: 1.04,
+  },
+  /* A hot wind over open ground, and under it the low continuous rumble of a
+   * battle that is happening whether or not you are in this part of it. */
+  ambience: { wind: 0.26, windFreq: 520, drone: 0.09 },
+  dust: {
+    count: 2100, color: 0xc9a074, opacity: 0.46, size: 34,
+    fleckColor: 0xa87c4c,
+    wind: { from: 200, strength: 2.8, gustiness: 0.48, wander: 0.24 },
+  },
+  /* NO GRASS. Nothing grows on a deflation plain, and the one surface a battle
+   * like this cannot have is a lawn — the same finding that deleted the meadow
+   * and stripped the dune sea. What stands in for it is the deepest surface
+   * memory in the game (`loose.depth` 0.24, `refill` 240 s on the preset): the
+   * ground here is a record of where the two armies have already walked, and it
+   * keeps it for four minutes rather than the dune sea's minute and a half. */
+  grass: 0,
+  dress(world) {
+    const M = propMaterials();
+    beginDressing(world, 20250805 + 91);
+    /* THE FAR SIDE. Three layers, the outermost at 380 m — further than any
+     * other level, because the whole promise of this ground is that you can see
+     * across it. Low and long rather than tall and jagged: these are mesas and
+     * buttes, and the needle spires are placed separately below. */
+    addHorizon(world, {
+      seed: 9110,
+      layers: [
+        { radius: 208, low: 10, high: 30, shade: 0.60 },
+        { radius: 286, low: 20, high: 52, shade: 0.70 },
+        { radius: 380, low: 34, high: 84, shade: 0.80 },
+      ],
+    });
+
+    /* THE SPIRES. `makeSpire` builds a wasp-waisted eroded needle with a cap
+     * rock — which is exactly the Geonosian stack in `more geonosis
+     * landscape.jpeg` — and it is a prop rather than terrain because a 6 m
+     * spire on a 1.8 m heightfield grid is three vertices wide and comes out as
+     * a lump. Nine of them, out past 80 m so the fighting ground stays open,
+     * clustered in threes so they read as a group of stacks rather than as nine
+     * evenly spaced posts. */
+    for (let k = 0; k < 3; k++) {
+      const base = findSite(world, 84, 210, { angle: (k / 3) * TAU + rng() * 0.7, clearance: 22, maxSlope: 0.30 });
+      if (!base) continue;
+      for (let i = 0; i < 3; i++) {
+        const a = rng() * TAU, d = 4 + rng() * 16;
+        const p = base.pos.clone();
+        p.x += Math.cos(a) * d; p.z += Math.sin(a) * d;
+        p.y = world.terrain.height(p.x, p.z);
+        makeSpire(world, p, 16 + rng() * 26, { mat: M.stone });
+      }
+    }
+
+    /* THE WRECKS, and there are more of them here than anywhere else. This is
+     * the one level where the fiction is that a battle has ALREADY been going
+     * on — you are joining it — so the hulls are the level's own history and
+     * they are what every smoke column is standing on. */
+    strewWrecks(world, { seed: 9120, count: 9, rmin: 46, rmax: 220, mat: M.hull });
+
+    /* THE SMOKE. See src/world/Smoke.js: seven columns, one draw call, leaning
+     * downwind on the preset's own wind vector so they agree with the drifted
+     * sand and the shadows. The tip colour is the fog's, so a column dissolves
+     * into the haze at its top rather than ending in mid-air. */
+    addSmokeColumns(world, smokeSites(rng, 7, { rmin: 62, rmax: 244, phase: 1.1 }), {
+      wind: [0.94, 0.34], color: 0x33261f, tip: 0xd0a473, lean: 0.55, spread: 0.22,
+    });
+
+    /* Cover, such as it is. A deflation plain has boulder fields and low
+     * outcrops and nothing else, and the sparseness is the point: `take cover`
+     * is an order you can give on this map and it will not always find you
+     * anything. Kept OUT of the middle 40 m, so the ground you form up on is
+     * clear. */
+    for (let k = 0; k < 6; k++) {
+      const site = findSite(world, 40, 150, { angle: (k / 6) * TAU + rng() * 0.6, clearance: 13, maxSlope: 0.32 });
+      if (!site) continue;
+      addOutcrop(world, site.pos, { size: 4 + rng() * 5, height: 3.5 + rng() * 5, seed: 9130 + k, mat: M.stone });
+    }
+    strewGround(world, { seed: 9140, radius: 190, spread: 0.24, mat: M.stone,
+      landmarks: 0.9, boulders: 1.0, cobble: 1.2 });
+    return 12;
+  },
+};
+
 /**
  * The order the menu lists them in: the outdoor grounds first, because those
  * are the ones that read as PLACES, and the one interior last.
@@ -2688,7 +2920,7 @@ export const LEVELS = {
  * and a box is the one shape that cannot be anywhere. The survivors are led by
  * their strongest.
  */
-export const LEVEL_ORDER = ['scoria', 'kamino', 'colosseum', 'wood', 'drifts', 'alpine', 'foundry'];
+export const LEVEL_ORDER = ['scoria', 'kamino', 'colosseum', 'wood', 'drifts', 'alpine', 'geonosis', 'foundry'];
 
 /**
  * DELETED LEVELS.
@@ -2770,6 +3002,23 @@ Object.assign(ARRIVAL_BY_TERRAIN, {
   // A platform in the middle of an ocean. There is no edge to march in from
   // and nothing to walk out of: everything that arrives here flies.
   kamino: ['dropship'],
+  /**
+   * GEONOSIS IS THE ONE GROUND WHERE THE MARCH IS THE POINT.
+   *
+   * Every other open level weights two ships to one march, and the reason is
+   * stated in Arrivals.js: "a march is honest but it is also 80–100 m of walking
+   * before the body is in the fight, and a wave made mostly of them is a wave
+   * you spend watching."
+   *
+   * That argument inverts here, and it inverts for the same reason the terrain
+   * does. This level's whole subject is an army crossing open ground toward you,
+   * the reference plates are of nothing else, and Command is a mode about giving
+   * an order BEFORE the contact rather than reacting to one that has landed on
+   * top of you. A wave you watch advance is the wave this level is for. So it is
+   * two marches to one ship — and the ship is still there because a gunship
+   * flaring in over a flat plain is the other image these plates are full of.
+   */
+  geonosis: ['march', 'march', 'dropship'],
 });
 
 /**

@@ -36,25 +36,34 @@
  * leave a pommel cap at one end and a ring at the other. Correct and invisible
  * in third person; the whole object at 0.5 m from a lens.
  *
- * ── WHY IT IS NOT FIXED HERE ───────────────────────────────────────────
+ * ── AND THAT IS WHAT IT NOW READS ──────────────────────────────────────
  *
- * Sliding the fists down the shaft works — 91% occluded to 40%, and the render
- * shows the shroud and neck rings standing out of the hand for the first time.
- * It also fails two checks, and both of them exist because of earlier rounds of
- * THIS complaint:
+ *     hilt on screen        38.5% of frame height, 31 of 31 samples
+ *     behind the fists                                       32%
  *
- *   · viewmodel.mjs  the hilt rises with the grip, the arm folds, and looking
- *                    up brings elbowL inside the 100 mm the deltoid needs to
- *                    clear a 45 mm near plane;
- *   · first-person.mjs  without that rise the hands fall instead, and the off
- *                    hand leaves the bottom of the frame.
+ * The way out was the one the reference itself shows: ONE HAND on the hilt in
+ * first person. That is a design decision about what a first-person grip IS
+ * rather than a tuning pass, so it was the player's call, and the player made
+ * it — "no half measures".
  *
- * Swept as a pair (grip −0.020…−0.105 against rise +0…+0.070) there is no
- * setting that satisfies both. The grip is over-constrained, and the way out is
- * the one the reference itself shows: ONE HAND on the hilt in first person,
- * which removes the second occluder and the folded left arm together. That is a
- * design decision about what a first-person grip IS, not a tuning pass, so it
- * is the player's call rather than mine.
+ * Both halves were needed and the split is worth keeping, because either one
+ * alone looks like a failure. Taking the off hand off the hilt and changing
+ * nothing else is 91% → 71%: the remaining fist still straddles the middle.
+ * Sliding that fist to the pommel takes it to 32%, and it is only affordable
+ * BECAUSE the off hand has gone — the rise needed to keep a low grip in frame
+ * used to push elbowL inside the 100 mm the deltoid needs against a 45 mm near
+ * plane, and swept as a pair (grip −0.020…−0.105 against rise +0…+0.070) with
+ * two hands on the hilt, nothing satisfied both checks.
+ *
+ * WHAT IT COST is 1.5 cm of first-person reach — the anchor had to rise 0.26 →
+ * 0.32 to bring the pommel back inside the frame, and `armMax` measures the
+ * arm from the anchor, so the ratchet in tools/checks/first-person.mjs went
+ * 1.276 to 1.293 against its 1.30 bound. The bound was not moved. See the note
+ * over HILT in Player.js for the sweep.
+ *
+ * The bounds are now checked rather than merely printed here:
+ * tools/checks/first-person.mjs, "the hilt is ON SCREEN and not behind your own
+ * fist", at three pitches.
  */
 // The DOM shim FIRST, and before anything that reaches Textures.js: the
 // procedural texture foundry bakes onto a canvas, and there is no document

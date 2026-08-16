@@ -1608,6 +1608,180 @@ export const TERRAIN_PRESETS = {
     },
     rockAt() { return 1; },
   },
+
+  /**
+   * GEONOSIS — and this preset is the OPPOSITE of every other one in this file.
+   *
+   * Eleven reference images of this battle were read before a line of it was
+   * written, and amalgamated they agree on one thing before they agree on
+   * anything else: THE GROUND IS FLAT AND THE SIGHTLINES ARE ENORMOUS. Infantry
+   * are visible as specks to the horizon; two armies of hundreds advance in
+   * loose massed ranks across open ochre with nothing between them; the only
+   * things that break the line are vertical smoke columns off wrecks, a few
+   * isolated stacks, and the silhouettes of the machines themselves.
+   *
+   * Every level this game has shipped is a BOWL, a CIRQUE, a WASH or a DUNE
+   * TRAIN — landforms whose whole job is to give the player somewhere to fall
+   * back to and something to fight around. This is a mode about leading a line
+   * of troops, and a line cannot form in a gully. So the design constraint is
+   * inverted: the fighting ground must be flat enough to array an army on and
+   * open enough to see the other one coming a hundred and fifty metres out.
+   *
+   * WHAT THAT COSTS, AND HOW IT IS PAID. A flat plain fails the two properties
+   * every other preset gets for free from its landform — `terrain.mjs` holds
+   * every outdoor level to a luminance spread over 18% and a landform occlusion
+   * that varies by more than 0.05, and a plane has neither. It is paid for by
+   * the three things a real deflation plain has and a plane does not:
+   *
+   *   THE STACKS. Isolated flat-topped buttes, benched by `strata`, standing 20
+   *     to 46 m off the plain and placed by a ridged mask so they come in
+   *     groups with open ground between them — which is exactly what
+   *     `more geonosis landscape.jpeg` shows. They are suppressed inside 66 m of
+   *     the middle, so the ground you actually array an army on stays open, and
+   *     they are what carries the occlusion, the rock band and the skyline.
+   *   THE RILLS. Sheetwash on a plain does not cut a valley, it cuts a braided
+   *     web of shallow channels 30-60 cm deep. Underfoot they are nothing; to
+   *     the material channels they are the concavity that puts fines in the
+   *     hollows and lag on the interfluves, which is the whole 150 m patchwork.
+   *   THE SWELL. ±1.7 m over 200 m wavelengths. You cannot feel it and you
+   *     cannot see it, and it is the difference between ground and a table.
+   *
+   * MEASURED ON THE FIELD, inside the central 120 m — relief, then mean slope:
+   *
+   *     geonosis   1.62 m   2.58°
+   *     arena      1.77 m   2.20°     ← the flattest fighting floor in the game
+   *     meadow    13.69 m   6.58°
+   *     drifts    25.26 m  17.15°
+   *
+   * So it is level with the arena's dish, which is the flattest ground this
+   * project has, and it holds that out to 180 m where the arena's runs into a
+   * 27 m wall at 60. Of the disc inside 180 m, 17.6% stands over 6 m — that is
+   * the stacks, and it is the number that says this is a plain WITH buttes on it
+   * rather than butte country you can fight in the gaps of.
+   *
+   * THE SPIRES ARE NOT HERE, deliberately. Geonosian needle spires are 4-8 m
+   * across at the base and this heightfield is 1.8 m a cell, so a spire in the
+   * terrain is three vertices wide and comes out as a lump. They are PROPS —
+   * `makeSpire` already exists — and props can be as thin as they like.
+   *
+   * THE COLOUR is the one thing every image agrees on even more than the
+   * flatness: red-ochre rust, pale sand streaked over it, and a sky so full of
+   * dust that everything past a hundred metres desaturates into it. The two
+   * rock bands are the banded buttes — an iron-stained bed over a cooler
+   * grey-mauve one, which is the sandstone-over-shale pair the arena's rim
+   * already uses and the reason those cliffs read as rock rather than as sand.
+   */
+  geonosis: {
+    /* 620 m and 340 vertices — the largest field in the game, and it has to be:
+     * "you can see the other army coming" is a statement about metres. 1.82 m a
+     * cell, which is the coarsest here, and it is affordable precisely because
+     * there is no fine landform to lose — a plain is the one shape that does
+     * not need resolution. */
+    scale: 620, res: 340, waterLevel: -999,
+    sandColor: 0x9a5c34, rockColor: 0xa8613a,
+    maps: 'sand',
+    gritColor: 0x6e3f22, rockColor2: 0x6b5a55,
+    // Wind-blown fines are much paler than the dirt they came off, and the
+    // caliche crust on a deflation surface is paler still and nearly neutral.
+    dustColor: 0xc9a074, crustColor: 0xbfae8f,
+    /* Slope here is 1 − cos θ. 0.06 is 20° and 0.24 is 41°: the plain never
+     * reaches the band at all, and the butte faces are all of it. That is the
+     * point — this is the one level where the rock band is a LANDMARK rather
+     * than a texture, because there are exactly a dozen places on the map
+     * steep enough to trigger it. */
+    slopeBands: [0.06, 0.24, 0.045, 0.15],
+    stoneSlope: 0.22,
+    crust: 0.62, strataH: 6.5, cliffs: true,
+    /* The dust runs across the plain from the same bearing the level's sun
+     * comes from, so the smoke columns and the drifted sand agree with each
+     * other and with the shadows. */
+    wind: [0.94, 0.34],
+    /* Lag gain 0.72 — higher than the dune sea's 0.62 and near the arena's
+     * 0.75, for the same reason the arena needs it: on ground with almost no
+     * slope, the 150 m grain-sorting patchwork is the ONLY layer carrying
+     * variation, and a deflation plain is the landform that patchwork actually
+     * describes. This is the one preset where lag/sheet is not decoration. */
+    macro: [150, 0.72, 0.55, 1.05],
+    /* Rock by ELEVATION as well as slope, which is what makes the stacks read
+     * as stone all the way to their flat tops rather than as sand hats. 0.14
+     * slope, 6 m above the surrounding land, fully rock by 30. */
+    rockUpland: [0.14, 6, 30],
+    /* A deflation pavement is desert varnish on coarse gravel — grey-olive,
+     * never tan, and DARKER than the dirt it was winnowed out of. The sheet is
+     * the pale wind-blown fines that settle on top of it. The two bracket the
+     * base in value and sit either side of it in hue, which is what stops 150 m
+     * of patchwork reading as a brightness ramp. */
+    lagColor: 0x4e4a41, sheetColor: 0xd8b083,
+    /* THE MOST DEEPLY PRINTED GROUND IN THE GAME, and it is the mode that earns
+     * it: two armies of infantry cross this plain, and the record of where they
+     * went is the level's own subject. 0.24 m of loose over a hard pan, and a
+     * refill time of 240 s — four minutes, longer than any other preset, because
+     * the air here is dusty rather than windy. An area you fought through still
+     * shows it when you come back past. */
+    loose: { depth: 0.24, refill: 240, tilt: 1.0, tint: 0.52, soot: 1.0 },
+    packedColor: 0x6a3d20,
+    /* Aeolian ripples, but weakly: this is a deflation surface with the fines
+     * blown OFF it, not a dune field with them piling up. 0.7 puts a texture on
+     * the loose patches and leaves the pavement alone. */
+    ripple: 0.7,
+    detail: [1.0, 34],
+    height(x, z) {
+      const d = Math.hypot(x, z);
+
+      /* ── THE PLAIN. Three terms and none of them is a landform.
+       *
+       * The swell is two octaves at 200 m and 70 m, ±1.7 m total — under the
+       * eye's threshold at any distance and above the physics grid at every
+       * one, which is exactly what "flat but not a table" means.
+       *
+       * The rills are sheetwash: a braided web at 55 m, cut 0.55 m at most,
+       * with a second finer web inside it. `Math.max(0, ridged - k)` is the
+       * standard channel form in this file — it is zero over most of the ground
+       * and only cuts where the ridge function is high, so it produces separate
+       * channels with flat interfluves between them rather than corrugation. */
+      const swell = fbm2(x * 0.0050 + 3.1, z * 0.0050 - 1.4, 2) * 1.7;
+      const rill = -Math.max(0, ridged2(x * 0.0182, z * 0.0182, 3) - 0.44) * 1.25
+        - Math.max(0, ridged2(x * 0.049 + 6.3, z * 0.049 - 2.2, 2) - 0.52) * 0.55;
+      const micro = fbm2(x * 0.14, z * 0.14, 3) * 0.09;
+
+      /* ── THE STACKS.
+       *
+       * `mask` is a ridged field at 240 m thresholded hard, so buttes come in
+       * clusters with hundreds of metres of open plain between the clusters —
+       * which is what the landscape plate shows and what a uniform noise field
+       * cannot produce. `open` keeps them off the middle: nothing rises inside
+       * 66 m, and they come up over the next 40, so wherever the campaign puts
+       * you there is ground to array a line on.
+       *
+       * The profile is a PLATEAU, not a hill: `Math.pow(m, 0.42)` flattens the
+       * top of the mask and the strata band the sides, so what stands up is a
+       * flat-topped stack with benched walls. `strata` is the same quantiser the
+       * canyon's walls use, at 6.5 m a bed — several grid cells deep, which is
+       * what makes a bench survive a 1.8 m grid at all.
+       *
+       * A SECOND, SMALLER SET at three times the frequency and a fifth of the
+       * height gives the rubble stacks and boulder plinths the foreground plates
+       * are full of, without another octave of the expensive term. */
+      const open = smoothstep(66, 106, d);
+      const m = clamp((ridged2(x * 0.0042 - 4.7, z * 0.0042 + 2.9, 3) - 0.62) / 0.30, 0, 1);
+      const stack = strata(smoothstep(0, 0.62, m) * 44 * open, 7.5, 0.46, 21.3);
+      const m2 = clamp((ridged2(x * 0.0126 + 8.2, z * 0.0126 - 5.1, 2) - 0.66) / 0.26, 0, 1);
+      const rubble = smoothstep(0, 0.7, m2) * 8.0 * open;
+
+      /* ── THE FAR SIDE. The map is a hard-bounded box and the painted ranges
+       * (addHorizon) are what sell "endless" — see the note at the head of
+       * LEVELS. What this adds is the ground rising into them, so the drawn
+       * ranges stand ON something instead of floating at the edge of a plane.
+       * It starts at 236 m, which is beyond every sightline the fight uses. */
+      const far = smoothstep(236, 306, d) * 26
+        * (0.55 + Math.max(0, ridged2(x * 0.0072, z * 0.0072, 2)) * 0.9);
+
+      return swell + rill + micro + stack + rubble + far;
+    },
+    /* 0.06 → 0.24 is this preset's own rock band, i.e. stone starts at 20° and
+     * is all stone by 41°. The twin has to cross where the material does. */
+    rockAt(x, z, slope) { return clamp(slope * 5.55 - 0.33, 0, 1); },
+  },
 };
 
 /* ══════════════════════════════════════════════════════════════════════ */

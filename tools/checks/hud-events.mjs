@@ -23,8 +23,8 @@
 
 import { readFile } from 'node:fs/promises';
 import * as THREE from 'three';
-import { HUD, POWERS, POWER_COST, POWER_BOON, applyReticle, shapeAt, colorAt, RETICLE_SHAPES, RETICLE_COLORS, RETICLE_BASE }
-  from '../../src/ui/HUD.js';
+import { HUD, POWERS, POWER_COST, POWER_BOON, applyReticle, shapeAt, colorAt, RETICLE_SHAPES, RETICLE_COLORS, RETICLE_BASE,
+  Minimap, MINIMAP } from '../../src/ui/HUD.js';
 import { Player } from '../../src/game/Player.js';
 import { makeDocument } from './_page.mjs';
 import { DEFAULT_SETTINGS, SETTING_READERS } from '../../src/ui/Menu.js';
@@ -219,6 +219,106 @@ export async function run({ check, assert }) {
       assert(announced === 30 && roomed === 30, 'a frame with no player still ran them');
       return '30 frames → 30 announcer updates, 30 presence updates';
     } finally { restore(); }
+  });
+
+  /* ────────────────────────────────────────────────────────────────────
+   * THE MAP, WHICH IS NOW SOMETHING YOU SPEND FORCE ON
+   * ──────────────────────────────────────────────────────────────────── */
+
+  check('hud: the minimap is a Force reading, and always-on is the accessibility answer', async () => {
+    /**
+     * "Bringing up the minimap should maybe use some force like you're using
+     * force sense you know what I mean?" The map was permanently on and free.
+     * It rides Force sense now — the power that already costs to open, drains
+     * 22 Force a second while it is held and blocks regeneration — so this
+     * measures three things and nothing else: that the reading follows
+     * `senseActive`, that it LINGERS rather than blinking out, and that the
+     * always-on behaviour is still one box away.
+     *
+     * Driven through the shipped Minimap with a counting canvas, because "it
+     * costs nothing while it is cold" is a claim about operations issued.
+     */
+    const ops = { n: 0 };
+    const g = new Proxy({}, { get: () => (() => { ops.n++; }) });
+    const canvas = { width: 0, height: 0, style: {}, classes: new Set(),
+      classList: { toggle(c, on) { const w = on === undefined ? !canvas.classes.has(c) : !!on;
+        if (w) canvas.classes.add(c); else canvas.classes.delete(c); return w; },
+      contains: (c) => canvas.classes.has(c) },
+      getContext: () => g };
+    const map = new Minimap(canvas);
+    const me = player();
+    const world = { enemies: [{ position: new THREE.Vector3(4, 0, 4), dead: false }], players: [] };
+    const s = { ...DEFAULT_SETTINGS };
+    assert(s.minimapSense === true, 'the map ships free again — the note asks for it to cost something');
+
+    // COLD: the power is off, so there is no reading and nothing is drawn.
+    for (let i = 0; i < 60; i++) map.update(1 / 60, world, me, s);
+    assert(map.repaints === 0, `${map.repaints} repaints with Force sense off — the map is still free`);
+    assert(canvas.classes.has('hidden'), 'a map nobody is paying for is still in the layout');
+    assert(ops.n === 0, `${ops.n} canvas operations for a map that is not being read`);
+
+    // SENSING: it lights, and it is the same map it always was.
+    me.senseActive = true;
+    for (let i = 0; i < 60; i++) map.update(1 / 60, world, me, s);
+    const lit = map.repaints;
+    assert(lit >= 15, `${lit} repaints in a second of Force sense against a declared ${MINIMAP.hz} Hz`);
+    assert(!canvas.classes.has('hidden'), 'the map stayed hidden while the Force was on it');
+    assert(map.read === 1, `the reading is ${map.read} while the power is open`);
+
+    // A PULSE: let go, and the reading fades over MINIMAP.linger rather than
+    // vanishing on the frame boundary — a map that blinks out reads as a bug.
+    me.senseActive = false;
+    let mid = 0;
+    for (let i = 0; i < Math.round(MINIMAP.linger * 60) - 12; i++) {
+      map.update(1 / 60, world, me, s);
+      if (i === 30) mid = map.read;
+    }
+    assert(mid > 0.2 && mid < 0.95, `half a second after the power closed the reading is ${mid.toFixed(2)}`);
+    assert(map.repaints > lit, 'the map stopped repainting the moment the power closed — there is no linger');
+    assert(map.read > 0, 'the reading was already cold before the linger was up');
+    assert(canvas.style.opacity && Number(canvas.style.opacity) < 1,
+      `the map is at full opacity ${canvas.style.opacity || 1} while its reading is fading out`);
+    const cooled = map.repaints;
+    for (let i = 0; i < 60; i++) map.update(1 / 60, world, me, s);
+    assert(map.read === 0, `the reading never reached zero: ${map.read}`);
+    const after = map.repaints;
+    for (let i = 0; i < 60; i++) map.update(1 / 60, world, me, s);
+    assert(map.repaints === after, 'a cold map is still repainting');
+    assert(after > cooled, 'the linger drew nothing at all, so it is a delay rather than a reading');
+
+    // THE ACCESSIBILITY ANSWER: one box, and the map is the permanent window
+    // that shipped — with no Force spent and none required.
+    const free = { ...DEFAULT_SETTINGS, minimapSense: false };
+    const was = map.repaints;
+    for (let i = 0; i < 60; i++) map.update(1 / 60, world, me, free);
+    assert(map.repaints - was >= 15, 'unticking the Force gate did not give the always-on map back');
+    assert(!canvas.classes.has('hidden'), 'the always-on map is hidden');
+    // …and the master switch still wins over both.
+    const off = { ...DEFAULT_SETTINGS, minimap: false, minimapSense: false };
+    const held = map.repaints;
+    for (let i = 0; i < 60; i++) map.update(1 / 60, world, me, off);
+    assert(map.repaints === held, 'the Minimap box no longer switches the map off');
+
+    // The setting is real, declared and controlled — the same three
+    // requirements every other switch on this screen answers.
+    assert('minimapSense' in DEFAULT_SETTINGS, 'minimapSense cannot be remembered between runs');
+    assert(SETTING_READERS.minimapSense?.[0] === 'ui/HUD.js', 'minimapSense declares no reader in the HUD');
+    const menu = await read('src/ui/Menu.js');
+    assert(/_check\('opt-minimap-sense',\s*'minimapSense'/.test(menu), 'no control writes minimapSense');
+    assert(INDEX.includes('id="opt-minimap-sense"'), '#opt-minimap-sense is not on the options screen');
+    // and the HUD prints the key that is bound to the power, not a typed one
+    const { hud, restore } = hudOnPage(INDEX);
+    try {
+      const b = defaultBindings();
+      b.sense = ['F13'];
+      hud.setBindings(b);
+      const legend = hud.el.mapKey?.innerHTML || '';
+      assert(/F13/.test(legend), `the map's legend says "${legend}" with sense rebound to F13`);
+      assert(new RegExp(`${Math.round(POWER_COST.sense)}`).test(legend),
+        `the legend does not price the power: "${legend}"`);
+    } finally { restore(); }
+    return `cold 0 repaints · sensing ${lit} in a second · ${MINIMAP.linger}s linger fading to `
+      + `${canvas.style.opacity || 1} · always-on still one box away`;
   });
 
   /* ────────────────────────────────────────────────────────────────────
