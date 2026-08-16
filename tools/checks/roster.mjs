@@ -76,7 +76,25 @@ function sources(dir, out = []) {
  * line with it. That direction of error is safe: it can only hide a violation
  * from a line that also contains a URL, never invent one.
  */
-const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+/**
+ * Comments out, LINE NUMBERS INTACT.
+ *
+ * This collapsed each comment to a single space, which shifts every offset
+ * after it — and the failure message is built from `text.slice(0, m.index)`, so
+ * the line it printed was the line in the STRIPPED text, not in the file. The
+ * first real defect the sixth form below caught was reported at
+ * `src/toon/live.js:72`; it is at line 131, and line 72 is the middle of a
+ * comment block about something else entirely. A check that names the wrong
+ * line sends the next person somewhere there is nothing wrong, which is worse
+ * than naming no line at all.
+ *
+ * Replacing each comment with the same number of characters — newlines kept,
+ * everything else blanked — leaves every later index exactly where it was.
+ */
+const blank = (m) => m.replace(/[^\n]/g, ' ');
+const strip = (s) => s
+  .replace(/\/\*[\s\S]*?\*\//g, blank)
+  .replace(/(^|[^:])(\/\/[^\n]*)/g, (_, pre, c) => pre + blank(c));
 
 const FORMS = [
   [/\blevel:\s*'([a-z][a-z0-9_]*)'/g, "level: '…'"],
@@ -88,6 +106,28 @@ const FORMS = [
   // behind, which is a level name in every sense that matters and is not an
   // assignment.
   [/\.level\s*===\s*'([a-z][a-z0-9_]*)'/g, ".level === '…'"],
+  /**
+   * A SIXTH, and it is the one that cost the most to be missing.
+   *
+   * `level('deeps')` and `loadLevel('temple')` are the two ways a check ASKS
+   * FOR a world, and neither matched any form above — the file's own note two
+   * paragraphs up predicted exactly this ("the list of forms is itself a list
+   * kept by hand, and it will be short of one"). The consequence was not a
+   * missing warning, it was the §2.7 hang: `World.loadLevel` substitutes
+   * `LEVEL_ORDER[0]` for a key it does not know, which is right for a player
+   * with a stale profile and a trap in a check. So every dead name silently
+   * BUILT ANOTHER FULL WORLD, cached it under the dead key, and then measured a
+   * property of a room that no longer exists against a copy of the Ember Shelf.
+   * `levels-quality.mjs` alone carried nine of them across three checks — five
+   * extra Worlds in one check — which is why that suite was the one holding the
+   * most alive at once, and why adding an eighth real level took it from slow to
+   * never finishing.
+   *
+   * Two suites had it independently (`levels-quality`, `cloth-cost`), found by
+   * two people who were each sure they had found a one-off. That is what makes
+   * it a class rather than a pair, and a class belongs in this table.
+   */
+  [/\b(?:load)?[Ll]evel\(\s*'([a-z][a-z0-9_]*)'/g, "level('…') / loadLevel('…')"],
 ];
 
 export function run({ check, assert }) {
