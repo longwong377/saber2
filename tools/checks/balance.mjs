@@ -700,29 +700,56 @@ export async function run({ check, assert }) {
      * the assertion is not a depth, it is that a wave which spawns a body with
      * a 54-damage claw is not free. Zero is a claim about the instrument, not
      * about the game, and it is the exact reading that hid this for a session.
-     * The bound is 1 hp over twelve fixed seeds — three orders of magnitude
-     * under what it measures — so honest tuning cannot trip it.
+     *
+     * ── AND THE FIRST VERSION OF THIS CHECK FLAKED, WHICH IS WORTH THE SPACE ─
+     *
+     * It asserted a per-tier mean and that wave 1 cleared on EVERY seed, and it
+     * failed 3 runs in 8 — on the clear clause, at Master. The cause is written
+     * at the top of `tools/balance.mjs` in as many words: `Math.random` is
+     * pinned around the Waves.js import so a standalone run is reproducible,
+     * and *"under verify.mjs the module is already loaded and this does nothing
+     * — which is why nothing in tools/checks/balance.mjs may depend on a
+     * specific composition."* The Colosseum's wave-1 pool is 22/40 Nexu, 9/40
+     * Reek, 6/40 Gundark and 3/40 battle droids, so which twelve compositions
+     * twelve seeds draw moves between PROCESSES, and with it the mean, the
+     * worst case and whether the modelled player survives the Reek.
+     *
+     * So the property is stated in a way the composer cannot move:
+     *
+     *   · WORST > 0 at every tier. That is the defect exactly — before the fix
+     *     every seed at every tier cost 0.0, and it takes only one melee body
+     *     landing one claw to falsify that. A pool with no melee body in
+     *     twenty-four draws is not a thing this level composes.
+     *   · a POOLED mean over all four tiers, against 1 hp — two orders of
+     *     magnitude under what it measures, and averaged over 96 runs rather
+     *     than 12 so a droid-heavy pool cannot carry it.
+     *   · and the other half, so this cannot be satisfied by making wave 1 a
+     *     wall: it still clears on at least three quarters of seeds. Measured
+     *     24/24 on a quiet pool and 11/12 on the worst one observed.
      */
     const rows = [];
+    let pooled = 0, runs = 0;
     for (const difficulty of ['padawan', 'knight', 'master', 'grandmaster']) {
       let sum = 0, n = 0, worst = 0, cleared = 0;
-      for (let seed = 1; seed <= 12; seed++) {
+      for (let seed = 1; seed <= 24; seed++) {
         const r = B.simulateRun({ difficulty, level: 'colosseum', seed, maxWave: 1 });
         const w = r.waveLog[0];
         if (!w) continue;
         const cost = w.hpStart - w.hpEnd;
         sum += cost; n++; worst = Math.max(worst, cost); cleared += w.cleared >= 1 ? 1 : 0;
       }
-      assert(n === 12, `only ${n} of 12 seeds produced a wave 1`);
-      assert(sum / n > 1,
-        `the Colosseum's wave-1 opener costs a ${difficulty} player ${(sum / n).toFixed(1)} hp on `
-        + 'average — the largest body in the game is being killed before its own clock starts');
-      // …and it is an opener, not a wall: it still clears on every seed.
-      assert(cleared === n,
-        `wave 1 failed to clear on ${n - cleared} of ${n} seeds at ${difficulty}`);
-      rows.push(`${difficulty} ${(sum / n).toFixed(1)} hp (worst ${worst.toFixed(0)})`);
+      assert(n === 24, `only ${n} of 24 seeds produced a wave 1`);
+      assert(worst > 0,
+        `not one of ${n} seeds at ${difficulty} cost the player a single point — the Colosseum's `
+        + 'opener is being killed before its own clock starts');
+      assert(cleared >= n * 0.75,
+        `wave 1 cleared on only ${cleared} of ${n} seeds at ${difficulty} — the opener is a wall`);
+      pooled += sum; runs += n;
+      rows.push(`${difficulty} ${(sum / n).toFixed(1)} hp (worst ${worst.toFixed(0)}, cleared ${cleared}/${n})`);
     }
-    return rows.join(', ');
+    assert(pooled / runs > 1,
+      `the Colosseum's wave-1 opener costs ${(pooled / runs).toFixed(2)} hp averaged over ${runs} runs`);
+    return `${(pooled / runs).toFixed(1)} hp pooled over ${runs} runs — ` + rows.join(', ');
   });
 
   check('balance: a memo keyed on a moving number cannot grow without bound', async () => {
