@@ -1366,8 +1366,35 @@ export const TERRAIN_PRESETS = {
        * and cannot climb out of is a death pit, and this level's melt already
        * does 56 HP a second. */
       const bank = smoothstep(7, 31, river);
-      const cut = -(1 - bank) * 5.2;
       const d0 = Math.hypot(x, z);
+      /* THE CHANNELS SHALLOW OUT TOWARD THE MIDDLE, and this is a defect fix
+       * rather than a shaping choice.
+       *
+       * `levels-quality` asks one thing of every level that declares a sea: on
+       * the ground you are meant to stand and FIGHT on, the player's eye may
+       * not pass under the sheet. Whatever the fluid is, a transparent
+       * double-sided plane with depth-write off, seen from underneath, is the
+       * single ugliest thing this renderer can show — and on this level those
+       * cells are also 56 HP a second. Measured with `tools/_wetfloor.mjs` on
+       * the 60 m fighting disc: 11.2% of it sat more than 1.62 m under the
+       * melt, against a bar of 3%. The braid runs straight through the middle
+       * of the map, which is exactly where a full 5.2 m cut cannot go.
+       *
+       * So the cut is SCALED: 16% of its depth at the spawn, full depth past
+       * 88 m. Measured on the same disc afterwards — 0.1% over eye height and
+       * the deepest cell 1.80 m under the melt, against 11.2% and 3.52 m — and
+       * the melt is still THERE, on 4.1% of the fighting floor, because a
+       * shallow river is still a river and still kills you in two seconds.
+       *
+       * It is also the composition the reference plates actually have:
+       * `mustafar 3.jpeg` is a dry foreground shelf with the river system
+       * beyond it, and `mustafar 4.jpeg` looks down into channels from a rim
+       * you are standing on. And it gives the level what its own pool wants —
+       * a clear middle to fight in, with the lethal edge at the rim you can be
+       * driven onto.
+       */
+      const shelf = 1 - 0.84 * smoothstep(88, 24, d0);
+      const cut = -(1 - bank) * 5.2 * shelf;
 
       /* ── THE ROCK ──────────────────────────────────────────────────────
        *
