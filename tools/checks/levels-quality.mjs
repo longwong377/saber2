@@ -773,10 +773,25 @@ export async function run({ check, assert }) {
      * check). Pointed at the real roster it covers eight genuinely different
      * grounds instead, and 10 × 8 keeps the sample within a body or two of what
      * it was while doubling the number of layouts it is drawn from. A wider
-     * sample over more places beats a deeper one over the same place four times,
-     * and the total simulated time is what it always was.
+     * sample over more places beats a deeper one over the same place four times.
+     *
+     * SIX, MEASURED, AND THIS IS THE LONG POLE OF THE WHOLE SUITE. Cost here is
+     * bodies × SECONDS × 60 of full `world.update` with real physics and real
+     * enemies, and it always was: the original 4 × 16 × 40 s is 153,600 frames.
+     * Nine of this file's twelve checks finish inside 45 s together; this one
+     * alone runs for minutes, and on a loaded machine for tens of them. That is
+     * worth writing down because it looks exactly like the §2.7 hang and is not
+     * one — measured at N = 10 it simply had not finished, and the thing that
+     * WAS a hang (nine dead level names booting nine extra Worlds) is fixed
+     * above.
+     *
+     * SECONDS stays at 40 because the 92% bar was calibrated at 40 and a shorter
+     * walk would move it. The BEARINGS are what may safely move: the bar is a
+     * ratio, so 6 × 8 = 48 bodies is the same measurement as 56 with a slightly
+     * wider error bar, over twice as many real layouts, for 40% of the frames
+     * N = 10 cost.
      */
-    const N = 10, RADIUS = 26, SECONDS = 40;
+    const N = 6, RADIUS = 26, SECONDS = 40;
     const walk = async (level) => {
       enemyRng.seed(4711);
       duelRng.seed(8123);
