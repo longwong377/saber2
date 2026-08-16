@@ -627,6 +627,104 @@ export async function run({ check, assert }) {
       + `b1 ${bare.toFixed(2)}s vs ${rows.join(', ')}`;
   });
 
+  check('balance: a body with NO blade defends itself too, and its mass is the form it has', async () => {
+    /**
+     * The check above fixed duellists and this is the half it left behind. With
+     * the guard gated on `A.saber`, `engagementFor` still reported:
+     *
+     *     b1       28 hp    0.64 s   head (decap)
+     *     stalker 420 hp    0.64 s   head (decap)
+     *     beast   900 hp    0.64 s   head (decap)
+     *     charger 1250 hp   0.64 s   head (decap)
+     *     brute   2200 hp   1.28 s   tibia0
+     *
+     * — the player's "the large creatures all look the same" with a number
+     * against it. `Enemy.guardFor` derives a guard from MASS for anything
+     * without a blade and `engagementFor` models `_turnCut` itself.
+     *
+     * ORDERINGS, not numbers, for the reason this file's header gives. Three of
+     * them, and each was false before:
+     *   · a body over half a tonne costs strictly more than a battle droid;
+     *   · the heavies are ordered by their guard, so the mass derivation
+     *     actually reaches the answer instead of being decorative;
+     *   · and it is bounded — nothing is unkillable, at any cut power.
+     */
+    const { engagementFor } = B;
+    const { guardFor, TURNED_CUT } = await import('../../src/game/Enemy.js');
+    const mods = { cutPower: 1, bladeLength: 1.15, attackRate: 1, moveSpeed: 1 };
+    const bare = engagementFor('b1', mods, 0).tKill;
+    const heavies = Object.entries(ARCHETYPES)
+      .filter(([, A]) => !A.saber && !A.training && !A.inert && (A.mass ?? 0) >= 520)
+      .map(([t, A]) => ({ t, A, g: guardFor(A), tKill: engagementFor(t, mods, 0).tKill }));
+    assert(heavies.length >= 8, `only ${heavies.length} bodies over 520 kg to measure`);
+    for (const h of heavies) {
+      assert(h.tKill > bare,
+        `a ${h.t} (${h.A.hp} hp, ${h.A.mass} kg) goes down in ${h.tKill.toFixed(2)} s against a `
+        + `28 hp B1's ${bare.toFixed(2)} s — the model is still standing it still`);
+      assert(isFinite(h.tKill), `${h.t} cannot be killed at all — the hide has become a wall`);
+    }
+    // The guard is what buys the time, so a body that turns more passes than
+    // another of the same shape must not die faster. Compared within the beast
+    // family only, because a machine's capsules are a different problem.
+    const beasts = heavies.filter((h) => h.A.custom === 'beast').sort((a, b) => a.g - b.g);
+    for (let i = 1; i < beasts.length; i++) {
+      assert(beasts[i].tKill >= beasts[i - 1].tKill - 1e-9,
+        `${beasts[i].t} turns ${beasts[i].g} passes and dies in ${beasts[i].tKill.toFixed(2)} s, `
+        + `while ${beasts[i - 1].t} turns ${beasts[i - 1].g} and takes ${beasts[i - 1].tKill.toFixed(2)} s`);
+    }
+    // …and the ceiling the game itself imposes is respected: no engagement may
+    // charge more turns than `1 / TURNED_CUT`, whatever the guard says.
+    for (const h of heavies) {
+      const e = engagementFor(h.t, mods, 0);
+      assert((e.turns ?? 0) <= Math.ceil(1 / TURNED_CUT),
+        `${h.t} is billed ${e.turns} turned passes against a ceiling of ${Math.ceil(1 / TURNED_CUT)}`);
+    }
+    return `b1 ${bare.toFixed(2)}s vs ` + heavies.map((h) => `${h.t} ${h.tKill.toFixed(2)}s(g${h.g})`).join(', ');
+  });
+
+  check('balance: a melee opener gets to attack — wave 1 is not free', async () => {
+    /**
+     * TWO DEFECTS MET HERE AND THE SECOND WAS INVISIBLE BEHIND THE FIRST.
+     *
+     * `armTime` charges a melee body the whole walk in from the spawn ring and
+     * the travel phase is supposed to hold the player off until it arrives —
+     * the note at that line says so, and says it was written after the identical
+     * symptom on scoria. But `e.arm` is a COUNTDOWN the incoming loop
+     * decrements every tick, and it was compared against a `phaseT` counting
+     * UP, so the two met in the middle and the player began cutting at half the
+     * arm time. Measured on the Colosseum, whose wave 1 is a single creature on
+     * every seed: the Nexu's arm clock is 4.16 s, it died at 3.36 s, and wave 1
+     * cost the player 0.0 hp across 24 seeds at all four tiers.
+     *
+     * A SIMULATED number in a file whose header forbids them, and deliberately:
+     * the assertion is not a depth, it is that a wave which spawns a body with
+     * a 54-damage claw is not free. Zero is a claim about the instrument, not
+     * about the game, and it is the exact reading that hid this for a session.
+     * The bound is 1 hp over twelve fixed seeds — three orders of magnitude
+     * under what it measures — so honest tuning cannot trip it.
+     */
+    const rows = [];
+    for (const difficulty of ['padawan', 'knight', 'master', 'grandmaster']) {
+      let sum = 0, n = 0, worst = 0, cleared = 0;
+      for (let seed = 1; seed <= 12; seed++) {
+        const r = B.simulateRun({ difficulty, level: 'colosseum', seed, maxWave: 1 });
+        const w = r.waveLog[0];
+        if (!w) continue;
+        const cost = w.hpStart - w.hpEnd;
+        sum += cost; n++; worst = Math.max(worst, cost); cleared += w.cleared >= 1 ? 1 : 0;
+      }
+      assert(n === 12, `only ${n} of 12 seeds produced a wave 1`);
+      assert(sum / n > 1,
+        `the Colosseum's wave-1 opener costs a ${difficulty} player ${(sum / n).toFixed(1)} hp on `
+        + 'average — the largest body in the game is being killed before its own clock starts');
+      // …and it is an opener, not a wall: it still clears on every seed.
+      assert(cleared === n,
+        `wave 1 failed to clear on ${n - cleared} of ${n} seeds at ${difficulty}`);
+      rows.push(`${difficulty} ${(sum / n).toFixed(1)} hp (worst ${worst.toFixed(0)})`);
+    }
+    return rows.join(', ');
+  });
+
   check('balance: a memo keyed on a moving number cannot grow without bound', async () => {
     // The companion to the leak above: `engagementFor` keys on cutPower, which
     // Fury moves every tick with the player's health, so the key space is
