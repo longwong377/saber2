@@ -244,8 +244,10 @@ export function run({ check, assert, near, THREE: T }) {
       + `${spread(rendered).toFixed(2)}:1 — the meter has flattened them`);
     // 3. THE ORDER IS THE AUTHOR'S. Spearman between the frame the level asks
     //    for and the frame it gets. Under the flat normalisation the rendered
-    //    key was proportional to `a.exposure` alone, so this measured the
-    //    correlation between one knob and the whole atmosphere: rho 0.357.
+    //    key was `a.exposure * KEY` exactly, so the whole roster's brightness
+    //    spread WAS the spread of that one scalar — 1.62:1 against an authored
+    //    4.20:1 — and this correlation measured one knob against eight whole
+    //    atmospheres: rho 0.405. It is 0.929 and a 3.08:1 spread now.
     const rank = (xs) => {
       const s = [...xs].map((v, i) => [v, i]).sort((p, q) => p[0] - q[0]);
       const r = new Array(xs.length);
