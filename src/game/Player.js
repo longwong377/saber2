@@ -1732,6 +1732,19 @@ export function defaultBoonMods() {
     riposteWindow: 1, riposteCut: 1, forceRegen: 1, encircle: 0, ferocity: 0,
     conduit: 0, secondWind: 0, fury: 0, steadfast: 0, sunderShock: 0,
     guardRefund: 0, tempest: 0, sunderReach: 0, mend: 0, absorb: false,
+    /**
+     * The share of an incoming blow that gets through. A MULTIPLIER, so its
+     * identity is 1 and not 0 like the additive rows above it.
+     *
+     * `Waves.wardGuard` reads it as `?? 1`, so the guard attunement worked
+     * without this line — which is exactly why it needs one. Every other
+     * conditional field here declares its own identity, and the one that does
+     * not is the one that breaks the first time somebody iterates this table or
+     * serialises it instead of reading the field by name. The header two
+     * paragraphs up is about precisely that: a boon writing a key that is not
+     * declared here, and `undefined * 1.33` being NaN.
+     */
+    ward: 1,
     /** Domination. Force compel refuses by name without it — see forceCompel. */
     compel: false,
   };
