@@ -193,8 +193,30 @@ frames.
   level**, deliberately, with a comment explaining it as a safety net. It cannot
   hang. I very nearly committed this correction on the agent's word.
 
-**The real cause of the non-completion is still unknown.** It is written down as
-unknown rather than given a third story.
+**The cause was contention after all — and the process table is how you prove
+it, not the story's plausibility.** Measured on this box while the fleet ran:
+
+    $ ps -eo pid,etimes,args | grep -c "[c]loth-cost"
+    11                       ← eleven concurrent runs of this one suite
+    $ nproc
+    4
+    $ cat /proc/loadavg
+    9.74 11.41 10.98
+
+Eleven copies of a World-building suite on four cores, the oldest 43 minutes in.
+Nothing was deadlocked; nothing could finish. Killing the runs over 15 minutes
+old took it to four.
+
+So diagnosis 1 was **right and unearned** — I asserted it from "six agents are
+running, it is a slow suite", which is not evidence, and only went looking for
+the process table after being wrong a second time. Had the true cause been
+anything else, that reasoning would have produced the same confident sentence.
+The lesson is not "contention is usually it"; the lesson is that `ps` and
+`/proc/loadavg` take ten seconds and turn the guess into a measurement.
+
+**Two of these suites are also a trap for a probe that runs its own.** If you
+shell out to `_one.mjs` while agents are working, you are adding to the number
+above. Check it first.
 
 What the second wrong diagnosis *did* uncover is a real defect of its own, and
 the reason to keep the fix: after the cull, four checks were measuring a level
