@@ -403,6 +403,85 @@ export async function run({ check, assert }) {
       + `${(clear * 1000).toFixed(0)} mm of air at the fist`;
   });
 
+  check('preview: a small character holds its saber the way a big one does', () => {
+    /**
+     * PLAYER NOTE #2, ON THE SCREEN WHERE YOU PICK THE CHARACTER.
+     *
+     * "The yoda species character, the saber floats above their hands, and both
+     * arms are in the air. Also their clothes are oversized." All three were
+     * fixed in the GAME rig, and tools/checks/stature.mjs holds them there —
+     * and all three were still true in the creator, because `poseSaberArm`,
+     * `dressPreviewFigure` and the shot's blade allowance are a second copy of
+     * the model authored against a 1.78 m body. Nothing measured that copy: the
+     * framing check above passed throughout, because a figure can be perfectly
+     * framed and still be holding its sword a hand-span away from its palm.
+     *
+     * Every quantity is stature.mjs's, for stature.mjs's reason — a small
+     * character is supposed to have small numbers, so a defect is a DIVERGENCE
+     * between two frames and never a magnitude. Each is a ratio of two lengths
+     * belonging to the same figure, and the HUMAN's own reading is the bar.
+     *
+     *                      before        after      human
+     *      bore (hands)      4.86         0.72       0.72
+     *      hilt (hands)      5.99         2.39       2.39
+     *      demand (reach)    0.99         0.83       0.84
+     *      hem below floor   280 mm       0 mm       0 mm
+     *
+     * `demand` at 0.99 is the one that explains "both arms in the air": above 1
+     * the two-bone IK cannot arrive at all — it straightens the arm, points it
+     * at the target and stops short.
+     */
+    const ref = {};
+    const rows = [];
+    for (const sp of SPECIES) {
+      const b = bench({ species: sp.id });
+      const rig = b.rig;
+      const hand = rig.get('handR');
+      const gs = b.saber.gripScale ?? 1;
+
+      // where the fist closes on the hilt, against where the fist actually is
+      const gripPt = b.saber.root.localToWorld(new THREE.Vector3(0, GRIP_AT.R * gs, 0));
+      const wrist = new THREE.Vector3();
+      hand.obj.getWorldPosition(wrist);
+      const bore = gripPt.distanceTo(wrist) / hand.length;
+
+      // the hilt, in the hand that holds it — Saber.setGripScale's own measure
+      const hb = new THREE.Box3().setFromObject(b.saber.hilt);
+      const hilt = Math.max(hb.max.x - hb.min.x, hb.max.y - hb.min.y, hb.max.z - hb.min.z) / hand.length;
+
+      // how far the arm is asked to reach, in its own whole reach
+      const shoulder = new THREE.Vector3();
+      rig.get('armR').obj.getWorldPosition(shoulder);
+      const demand = shoulder.distanceTo(wrist) / (rig.get('armR').length + rig.get('foreR').length);
+
+      // and the clothes, which is the third claim in the same note
+      let hem = 0;
+      for (const c of [b.cloak, b.skirt]) {
+        if (!c) continue;
+        for (let i = 1; i < c.pos.length; i += 3) hem = Math.min(hem, c.pos[i]);
+      }
+
+      if (!sp.frame) { ref.bore = bore; ref.hilt = hilt; ref.demand = demand; }
+      rows.push(`${sp.id} ${bore.toFixed(2)}/${hilt.toFixed(2)}/${demand.toFixed(2)}`);
+      // The bore is a place inside the fist, so a correct grip is the human's
+      // number and not zero; a third of a hand of slack is well inside anything
+      // a viewer would call held.
+      assert(Math.abs(bore - ref.bore) < 0.35,
+        `${sp.id} holds its hilt ${bore.toFixed(2)} of its own hands from its wrist against a human's `
+        + `${ref.bore.toFixed(2)} — the saber is floating beside the hand, not in it`);
+      assert(hilt < ref.hilt * 1.5,
+        `${sp.id} carries a hilt ${hilt.toFixed(2)} of its own hands long against a human's `
+        + `${ref.hilt.toFixed(2)} — the hilt did not take the species scale`);
+      assert(demand < 0.95,
+        `${sp.id}'s guard is solved ${demand.toFixed(2)} of its own arm's reach from its shoulder `
+        + '— the arm cannot get there and the hilt hangs in the gap');
+      assert(hem > -0.02,
+        `${sp.id}'s garments settle ${(-hem * 1000).toFixed(0)} mm below the floor it stands on `
+        + '— the preview is dressing it in somebody else\'s clothes');
+    }
+    return `bore/hilt in the figure's own hands, reach in its own arm — ${rows.join(', ')}`;
+  });
+
   /* ══════════════════════════════════════════════════════════════════ */
   /*  3. the robe cut                                                   */
   /* ══════════════════════════════════════════════════════════════════ */

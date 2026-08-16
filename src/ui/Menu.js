@@ -9,7 +9,7 @@ import * as THREE from 'three';
 import { SABER_COLORS, HILT_STYLES, Saber } from '../game/Saber.js';
 import { ROBE_COLORS, buildJedi, SPECIES, FACE_PRESETS, speciesOf,
          HAIR_STYLES, BEARD_STYLES } from '../game/Bodies.js';
-import { BipedAnimator } from '../game/Rig.js';
+import { BipedAnimator, limbScale } from '../game/Rig.js';
 // Player.js imports SKIN_TONES and HAIR_COLORS from this file, so this edge
 // closes a cycle. It is safe and it is checked: nothing here reads a Player
 // binding at module scope — `handPoseOnHilt` is a hoisted function declaration
@@ -1516,13 +1516,41 @@ export function standPreviewFigure(rig) {
  */
 export function poseSaberArm(rig, saber, out = {}) {
   const chest = rig.worldPos('chest', new THREE.Vector3());
+  /**
+   * THE THREE SCALES, AND WHY THIS FUNCTION NEEDED ALL OF THEM.
+   *
+   * Player note #2 — "the saber floats above their hands" — was fixed in the
+   * game rig and stayed on the screen where you PICK the character, because
+   * this is a second copy of the grip model and it was authored against a
+   * 1.78 m body. Measured on the small frame before this: the fist held the
+   * hilt 4.86 of its own hands clear of its palm, on a hilt 5.99 of its own
+   * hands long, with the hand target 0.99 of the arm's whole reach from the
+   * shoulder — the point at which two-bone IK stops being able to arrive.
+   * A human read 0.72 / 2.39 / 0.84.
+   *
+   * Every constant below is one of `limbScale`'s three, named at the site the
+   * way Player.js names them, and each is 1 for every full-sized figure:
+   *
+   *   A = limbs.arm    chest-to-hand distances — the guard offsets and the
+   *                    elbow pole. A pole 0.75 m out from a chest whose arm is
+   *                    0.23 m long is not beside the shoulder, it is in the
+   *                    next postcode, and solveIK aims the whole limb at it.
+   *   hs = rig.scale   the BORE of the closed hand, which is a place inside
+   *                    the hand and therefore scales with the hand.
+   *   gs               the hilt's own size, from Saber.setGripScale — a grip
+   *                    is a contact between two objects and the smaller of
+   *                    them sets the scale. GRIP_AT is a point ON the hilt, so
+   *                    it moves with it.
+   */
+  const L = limbScale(rig);
+  const A = L.arm;
   // the figure faces +Z, so its own right hand is toward -X
   const right = new THREE.Vector3(-1, 0, 0), up = new THREE.Vector3(0, 1, 0), fwd = new THREE.Vector3(0, 0, 1);
   // The guard: hilt in front of the right hip, blade up and 21.7° forward. Far
   // enough forward that the fist clears the robe — measured, 445 mm of air
   // between the pommel and the nearest cloth particle — and low enough that the
   // tip of a capped 1.45 m blade still lands inside the frame.
-  const grip = chest.clone().addScaledVector(right, 0.28).addScaledVector(up, -0.16).addScaledVector(fwd, 0.26);
+  const grip = chest.clone().addScaledVector(right, 0.28 * A).addScaledVector(up, -0.16 * A).addScaledVector(fwd, 0.26 * A);
   const blade = new THREE.Vector3(0, 0.93, 0.37).normalize();
   // The hilt's frame: +Y up the blade, +Z as near the way the figure faces as
   // a blade at that angle allows. `x = y × ref` then `z = x × y` — the same
@@ -1531,12 +1559,16 @@ export function poseSaberArm(rig, saber, out = {}) {
   const bz = new THREE.Vector3().crossVectors(bx, blade).normalize();
   const hiltQ = new THREE.Quaternion().setFromRotationMatrix(
     new THREE.Matrix4().makeBasis(bx, blade, bz));
+  // The hilt is sized to the hand BEFORE the fist is asked where to close, so
+  // `gs` below is the size the metal actually is when GRIP_AT is read off it.
+  saber?.setGripScale?.(L.torso);
+  const gs = saber?.gripScale ?? 1;
   // …and the hand's, from the game's own grip model. `back` is the offset from
   // the point on the hilt to the WRIST JOINT, which is not the same place.
   const handQ = new THREE.Quaternion(), back = new THREE.Vector3();
-  handPoseOnHilt('R', hiltQ, null, handQ, back);
+  handPoseOnHilt('R', hiltQ, null, handQ, back, rig.scale ?? 1);
   const wrist = grip.clone().add(back);
-  const pole = chest.clone().addScaledVector(right, 0.75).addScaledVector(up, -0.75).addScaledVector(fwd, -0.2);
+  const pole = chest.clone().addScaledVector(right, 0.75 * A).addScaledVector(up, -0.75 * A).addScaledVector(fwd, -0.2 * A);
   rig.solveIK('armR', 'foreR', wrist, pole);
   const hand = rig.get('handR');
   if (hand && hand.obj.parent) {
@@ -1551,7 +1583,7 @@ export function poseSaberArm(rig, saber, out = {}) {
     // hilt used to be parented with a bare -90° about X and an offset typed in
     // centimetres, which put the blade out of the character's back.
     saber.root.quaternion.copy(hiltQ);
-    saber.root.position.copy(grip).sub(new THREE.Vector3(0, GRIP_AT.R, 0).applyQuaternion(hiltQ));
+    saber.root.position.copy(grip).sub(new THREE.Vector3(0, GRIP_AT.R * gs, 0).applyQuaternion(hiltQ));
     saber.root.updateMatrixWorld(true);
     hand.obj.attach(saber.root);
   }
@@ -1591,11 +1623,30 @@ export function dressPreviewFigure(host, built, cut, wardrobe) {
    * asked for nothing but a cut is exactly the preview that shipped.
    */
   const w = wardrobeOf(wardrobe);
+  /**
+   * `scale`, AND IT IS THE THIRD CLAIM OF PLAYER NOTE #2.
+   *
+   * "Their clothes are oversized." Player._makeCloak passes `this.rig.scale`
+   * and applyWardrobe passes it too; this — the copy that dresses the figure
+   * you are LOOKING at while you choose it — passed nothing, and Cloth.js
+   * reads `opts.scale ?? 1`. So the creator hung a human's 0.86 m cape on a
+   * 0.66 m body: measured, the hem settled 280 mm BELOW the floor the figure
+   * stands on, a garment that outreaches its wearer from crown to hem.
+   *
+   * It is also most of why the shot looked wrong. `previewContent` frames
+   * whatever is in the box, so 280 mm of cloth on the floor is 280 mm of dead
+   * air the camera has to include, under a figure only 677 mm tall.
+   *
+   * A human is `rig.scale === 1` and every length is multiplied by exactly 1,
+   * so nothing about any full-sized figure moves by a bit.
+   */
+  const S = rig.scale ?? 1;
   const mat = built.palette.outer.clone();
   mat.side = THREE.DoubleSide;
   const tmat = (built.palette.over || built.palette.outer).clone();
   tmat.side = THREE.DoubleSide;
   const cloak = attachCloak(host, rig, {
+    scale: S,
     material: mat, cut, cape: w.cape, tabard: w.tabard, tabardMaterial: tmat,
     seed: PREVIEW_SEED.cloak,
   });
@@ -1603,7 +1654,7 @@ export function dressPreviewFigure(host, built, cut, wardrobe) {
   if (built.robeSkirt) {
     const smat = (built.palette.over || built.palette.outer).clone();
     smat.side = THREE.DoubleSide;
-    skirt = attachSkirt(host, rig, { material: smat, rigid: built.robeSkirt, cut,
+    skirt = attachSkirt(host, rig, { scale: S, material: smat, rigid: built.robeSkirt, cut,
       seed: PREVIEW_SEED.skirt, sashMaterial: built.palette.trim, sash: w.sash });
     if (cloak) cloak.outer = skirt;
   }
@@ -1695,10 +1746,46 @@ export function assemblePreview(host, built, saber, s = {}) {
      * Measured: at the stock 1.15 m the tip lands 2.060 m up, 370 mm over the
      * crown, and the figure keeps 67.0% of the frame height; at the 1.45 m cap
      * 2.338 m and 59.2%; and 4 m is framed as 1.45 m, identically.
+     *
+     * ── AND THE CAP IS A LENGTH IN THE WIELDER'S OWN METRES ──────────────
+     *
+     * BLADE_CAP is 1.45 m, authored against the 1.69 m figure the paragraph
+     * above measures — 0.86 of its own height, which is the most blade this
+     * shot has ever been willing to frame. A `smallfolk` body stands 0.677 m
+     * and holds the same 1.15 m blade the slider ships with, which is 1.70 of
+     * ITS own height: proportionally a worse imposition than the 4 m blade
+     * this clamp already refuses to frame on a human (2.37), and the picture
+     * it produced was the one that refusal exists to prevent — measured, the
+     * figure fell to 39.5% of the frame height and its middle sat at NDC
+     * -0.364, in the bottom third of the box, under a metre of bar.
+     *
+     * So the SAME rule, stated in the wielder's units instead of a human's:
+     * `rig.scale` is `limbScale(rig).torso` — the figure's own metre — and it
+     * is exactly 1 for every full-sized species, so the human's shot, and
+     * every claim measured about it above, is unchanged to the bit. What
+     * changes is that a small wielder's blade now leaves the top of the frame
+     * the way a 4 m blade already does, and the CHARACTER — which is what this
+     * screen is for choosing — gets 66% of the box instead of 39%.
+     *
+     * The alternative was a proportionally short blade, and it is refused for
+     * the reason Saber.setGripScale states in its own note: `bladeLength` is a
+     * player setting and a combat reach, and a smaller wielder is not carrying
+     * a shorter sword. The hilt scales because a grip is a contact between two
+     * objects. The blade does not, and framing is not allowed to decide it.
      */
-    const len = Math.min(s.bladeLength ?? 1.15, BLADE_CAP);
+    const len = Math.min(s.bladeLength ?? 1.15, BLADE_CAP * (rig.scale ?? 1));
     pts.push(saber.root.localToWorld(new THREE.Vector3(0, len, 0)));
-    pts.push(saber.root.localToWorld(new THREE.Vector3(0, -0.16, 0)));
+    /* THE POMMEL IS ON THE HILT, so it is the HILT's scale and not 1.
+     *
+     * -0.16 is where the butt of a full-sized hilt sits below the saber root,
+     * and the shot's lowest point is whichever of that and the figure's soles
+     * is lower. On a small frame `setGripScale` takes the metal to 0.40 — its
+     * real butt is 64 mm down, not 160 — so an unscaled -0.16 put 96 mm of
+     * pommel that does not exist under a 0.66 m figure's feet, and the camera
+     * dutifully framed the empty air. Measured: it alone took the content box
+     * from -0.28 m to -0.18 and moved the figure 5% of the frame height back
+     * toward the middle of it. It is 1 for every full-sized wielder. */
+    pts.push(saber.root.localToWorld(new THREE.Vector3(0, -0.16 * (saber.gripScale ?? 1), 0)));
   }
   return { cloak, skirt, lekku, content: previewContent([rig.root], pts) };
 }
