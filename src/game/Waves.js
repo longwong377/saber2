@@ -20,9 +20,19 @@
  *               is secretly three times the threat. See `_promote`.
  *   A BODY CAP  `bodyCap` — the count saturates around wave 18 and everything
  *               the budget can still afford goes on quality instead. At wave 30
- *               the budget is fifty times wave 1's and the body count is eight.
+ *               the budget is twenty-eight times wave 2's and a wave is 15-43
+ *               bodies depending on what the theatre charges for one, against a
+ *               wave-18 count of 11-29 on the same ten theatres.
+ *               (This sentence used to say "the body count is eight", and the
+ *               shipped composer fielded 38-54. It was not a rounding error: the
+ *               cap it describes never bound at any depth a player reaches. See
+ *               BODY_COUNT_SHARE, which is the fix and the measurement.)
  *   A LADDER    `isBossWave` is a modulus, not a Set that ended at 30, and the
  *               set-piece is a share of the wave rather than one fixed unit.
+ *   RUN RULES   …and the player sets the terms. The six conditions below were
+ *               dealt to 27% of waves, one at a time, never in combination
+ *               before wave ~92. They are also a choice made before Ignite now,
+ *               in force from wave 1 and never charged. See the RUN RULES block.
  *
  * And the player grows with it: forty boons drafted every second wave, weighted
  * by rarity that moves with depth, with six masteries gated on already having
