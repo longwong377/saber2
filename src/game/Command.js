@@ -465,9 +465,26 @@ export function toNextRank(xp) {
  * protecting.
  *
  * The nicknames are one-syllable, blunt and drawn from what a soldier is called
- * by the people beside them rather than from a fantasy name generator. Droids do
- * not get nicknames — they get a COMMAND DESIGNATION, which is the same idea in
- * the other army's grammar: a numbered B1 that survives becomes OOM-9.
+ * by the people beside them rather than from a fantasy name generator.
+ *
+ * BOTH ARMIES EARN ONE, AND ONLY ONE OF THEM USED TO.
+ *
+ * This paragraph read "Droids do not get nicknames — they get a COMMAND
+ * DESIGNATION, which is the same idea in the other army's grammar: a numbered B1
+ * that survives becomes OOM-9", and `award()` implemented that as
+ * `this.army === 'republic'`. What it actually implemented was NOTHING for the
+ * other side: there was no second table, no designation change, no branch. A
+ * Sith's droids could not earn a name at any rank, ever — so the single most
+ * legible half of note #21 ("every ally has a unique name you can see … you can
+ * see who lived or who died") was missing from one of the two armies the same
+ * note names, and the mirror match was not a mirror.
+ *
+ * The idea in that paragraph was also wrong on its own terms: a promoted droid
+ * whose nickname is another serial prints as `OOM-42 "OOM-9"`, which is not a
+ * name you learn, it is a second number. What a battle droid that keeps coming
+ * back gets called is what the ones beside it call it, and they are machines, so
+ * the words are machine words. Same mechanic, same rung, same permanence, other
+ * army's grammar.
  */
 const NICKNAMES = [
   'Ladder', 'Boil', 'Waxer', 'Hardcase', 'Kix', 'Jesse', 'Tup', 'Dogma', 'Hevy',
@@ -475,6 +492,16 @@ const NICKNAMES = [
   'Crys', 'Longshot', 'Sketch', 'Chatterbox', 'Slick', 'Punch', 'Denal', 'Ringo',
   'Nub', 'Trap', 'Wooley', 'Attie', 'Switch', 'Charger', 'Coric', 'Vaughn',
 ];
+
+const DROID_NICKNAMES = [
+  'Clank', 'Rattle', 'Rivet', 'Sparks', 'Cog', 'Scrap', 'Static', 'Bolts',
+  'Ratchet', 'Crank', 'Pincer', 'Grind', 'Shear', 'Prong', 'Solder', 'Flux',
+  'Dent', 'Weld', 'Spool', 'Gasket', 'Vane', 'Piston', 'Torque', 'Shunt',
+  'Relay', 'Circuit', 'Ohm', 'Anvil', 'Tinny', 'Wedge', 'Slug', 'Ninety',
+];
+
+/** The nickname table this army's promotions draw from. One lookup, two armies. */
+const nicknamesFor = (armyId) => (armyId === 'separatist' ? DROID_NICKNAMES : NICKNAMES);
 
 const DROID_PREFIX = ['OOM', 'TC', 'PK', 'BX', 'DFS', 'OM'];
 
@@ -512,10 +539,8 @@ function designate(army, taken) {
  *                  frame whose +Z is the direction the commander is facing and
  *                  whose origin is the commander. Returning `null` means "no
  *                  slot" — the troop is free, which is what CHARGE is.
- *   leash          how far from that slot a trooper may stray to engage. This
- *                  is the number that makes a formation a TACTIC rather than a
- *                  parade: a tight leash is a wall that will not chase, a loose
- *                  one is a screen that will.
+ *   leash          how far from that slot a trooper may stray to engage, AS A
+ *                  MULTIPLE OF ITS OWN REACH. See `leashFor`.
  *   advance        whether the formation moves with you at all. COVER does not
  *                  — it plants where it was ordered, which is the only way "take
  *                  cover" can mean anything when the anchor is a moving player.
@@ -525,12 +550,34 @@ function designate(army, taken) {
  * Six of them, and the six are not a taste: they are the six things you can ask
  * a body near you to do that produce visibly different battles. Anything else is
  * one of these with a different radius.
+ *
+ * ── WHY THE LEASH IS A MULTIPLE AND NOT A DISTANCE ──────────────────────
+ *
+ * It used to be metres: 5 for cover, 6 for a circle, 7 for a column, 8 for a
+ * line, 10 for a vanguard. Every one of those numbers is INSIDE the band the
+ * bodies wearing them are built to fight from — a B1 wants 7-15 m, a clone
+ * trooper 9-19, a marksman 22-42 — and `targetFor` requires the target to be
+ * within the leash OF THE TROOPER'S SLOT. So the order "circle around me" told
+ * ten troopers to stand in a ring and refuse every target their rifles could
+ * actually reach. Driven, ten troopers over 70 s produced 0 kills and 72 damage;
+ * swept, the kill count tracked the leash number monotonically (5→0, 6→0, 7→1,
+ * 8→5, 10→8) and did not respond to the SHAPE at all. That is not a formation
+ * system, it is one slider with six labels on it.
+ *
+ * A body's own `preferred[1]` is the game's existing statement of how far it
+ * fights from — the liveness watchdog already reads exactly that field to decide
+ * whether a body can reach the fight from where it stands — so the leash is a
+ * multiplier on it. 1.0 means "engage anything your weapon was built to engage,
+ * and not one metre further"; 1.7 is a screen that will go and get it. The
+ * ordering of the six is preserved, so the tactic each name promises is the
+ * tactic it delivers, and the numbers now mean something in a roster where one
+ * body's reach is six times another's.
  */
 export const FORMATIONS = {
   circle: {
     id: 'circle', name: 'Circle', key: 'Digit6',
     blurb: 'Ring around you, facing out. Nothing reaches you first.',
-    leash: 6, advance: true, fire: 1,
+    leash: 1.0, advance: true, fire: 1,
     slot(i, n, k, out) {
       // Spread over the WHOLE roster rather than per squad, or two squads of
       // five make two arcs of five and leave two holes you can be shot through.
@@ -542,7 +589,7 @@ export const FORMATIONS = {
   behind: {
     id: 'behind', name: 'Column', key: 'Digit7',
     blurb: 'In column behind you. You are the point of the spear.',
-    leash: 7, advance: true, fire: 1,
+    leash: 1.2, advance: true, fire: 1,
     slot(i, n, k, out) {
       // Two files, so a column of twelve is six deep rather than twelve — a
       // twelve-deep file is 26 m long and the back half is in another fight.
@@ -554,7 +601,7 @@ export const FORMATIONS = {
   front: {
     id: 'front', name: 'Vanguard', key: 'Digit8',
     blurb: 'A screen in front of you. They take it first.',
-    leash: 10, advance: true, fire: 1,
+    leash: 1.7, advance: true, fire: 1,
     slot(i, n, k, out) {
       const across = (i % 4) - 1.5;
       const rank = Math.floor(i / 4);
@@ -564,7 +611,7 @@ export const FORMATIONS = {
   line: {
     id: 'line', name: 'Line abreast', key: 'Digit9',
     blurb: 'One rank either side of you. Everything fires at once.',
-    leash: 8, advance: true, fire: 1,
+    leash: 1.35, advance: true, fire: 1,
     slot(i, n, k, out) {
       // Centred on the commander: an odd roster puts one more man on the left,
       // which is what a line does rather than leaving a gap where you stand.
@@ -578,7 +625,7 @@ export const FORMATIONS = {
     // The one formation with no slot function at all: `advance: false` means the
     // anchor is FROZEN at the moment the order was given, and the slot is
     // computed against that frozen frame. See `_anchorFor`.
-    leash: 5, advance: false, fire: 1,
+    leash: 1.1, advance: false, fire: 1,
     slot(i, n, k, out) {
       // A loose scatter rather than a shape — troops going to ground spread out,
       // and a tight ring under fire is a grenade's dream. Deterministic in `i`
@@ -598,6 +645,38 @@ export const FORMATIONS = {
 
 export const FORMATION_IDS = Object.keys(FORMATIONS);
 export const DEFAULT_FORMATION = 'behind';
+
+/**
+ * THE SHORTEST LEASH ANY BODY IS EVER GIVEN, in metres.
+ *
+ * `preferred[1]` is 3.4 m for a BX commando droid and 3.6 for a MagnaGuard,
+ * because a duellist's engagement band is the length of its arm. Multiplying
+ * that by a formation's 1.0 would leash a melee trooper to a circle barely
+ * wider than the slot it is standing in, and an ally that cannot take one step
+ * toward the thing in front of it is not a soldier. The floor is what makes the
+ * leash a statement about the FORMATION for a body whose own reach is smaller
+ * than any formation's shape.
+ */
+export const LEASH_FLOOR = 10;
+
+/**
+ * The most a body may exceed its own `speed` while walking back into position.
+ *
+ * 1.8, because 4.1 × 1.8 = 7.4 m/s is exactly the commander's SPRINT (Player.js
+ * `4.6 × 1.62`) — a trooper at full effort can just hold a sprinting Jedi and
+ * cannot gain on one, which is the right answer, and a Clone Heavy Gunner at
+ * 2.9 lands on 5.2 and still cannot. See `followSpeed`.
+ */
+export const CATCH_UP = 1.8;
+
+/**
+ * How few of the horde may be left before every order becomes "finish it".
+ *
+ * Four, because that is under a fifth of the smallest wave this mode composes
+ * and it is the size at which a "battle line" is no longer describing anything.
+ * See `_updateClosing`.
+ */
+export const CLOSE_OUT = 4;
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  The campaign                                                          */
@@ -621,7 +700,24 @@ export const DEFAULT_FORMATION = 'behind';
  *              is what makes area 3 the Hailfire line and area 5 the walkers,
  *              out of the same pool.
  *   `muster`   the reinforcement points the area pays out on being cleared.
- *   `tier`     the highest rung of your own roster the muster will sell here.
+ *
+ * THERE USED TO BE A SIXTH FIELD, `tier`, AND IT WAS THE NINTH INSTANCE OF THE
+ * DEFECT THIS REPOSITORY KEEPS FINDING (HANDOFF §2.3).
+ *
+ * A rung declares the area it becomes available in — `rung('arc', 3)` is "you
+ * can buy an ARC from area three" and reads as exactly that. The muster then
+ * compared that number against `AREAS[i].tier`, a SECOND hand-written column
+ * that ran 1, 2, 2, 4, 4. So `at: 3` was not satisfied by area 3 (tier 2); it
+ * was satisfied by area 4. Every rung-4 and rung-5 body on both ladders — the
+ * ARC, the Clone Commander, the BX and the MagnaGuard — arrived one whole area
+ * later than the ladder said, and the two areas the campaign is longest in were
+ * the two you could not spend on. Nothing on screen prints a tier, so no player
+ * could have seen the off-by-one; it read as "the good units never show up".
+ *
+ * The fix is the one it always is: the hand-written thing stops being the
+ * authority. There is no second column. `at` IS the area number, `areaNumber`
+ * is what it is compared against, and the two tables cannot disagree because
+ * there is only one.
  *
  * The names are the ground, and the ground is the reference images: an open
  * ochre plain with enormous sightlines, dust, vertical smoke columns, distant
@@ -631,27 +727,27 @@ export const AREAS = [
   {
     id: 'landing', name: 'The Landing Zone',
     brief: 'The gunships put you down in the open. Form up before the first line reaches you.',
-    waves: 3, budget: 0.75, heavy: 0.0, muster: 11, tier: 1,
+    waves: 3, budget: 0.75, heavy: 0.0, muster: 11,
   },
   {
     id: 'plain', name: 'The Open Plain',
     brief: 'Two kilometres of flat ochre and nothing to hide behind. They can see you the whole way.',
-    waves: 4, budget: 0.95, heavy: 0.15, muster: 14, tier: 2,
+    waves: 4, budget: 0.95, heavy: 0.15, muster: 14,
   },
   {
     id: 'hailfire', name: 'The Hailfire Line',
     brief: 'Armour on the ridge. Your line will not survive standing in the open here.',
-    waves: 4, budget: 1.10, heavy: 0.35, muster: 17, tier: 2,
+    waves: 4, budget: 1.10, heavy: 0.35, muster: 17,
   },
   {
     id: 'spires', name: 'The Spire Approach',
     brief: 'Under the spires, in the smoke. Their elite are waiting where the sightlines close.',
-    waves: 5, budget: 1.25, heavy: 0.30, muster: 26, tier: 4,
+    waves: 5, budget: 1.25, heavy: 0.30, muster: 26,
   },
   {
     id: 'foundry', name: 'The Core Ship',
     brief: 'The last ground before the ship. Everything they have left is between you and it.',
-    waves: 5, budget: 1.45, heavy: 0.45, muster: 30, tier: 4,
+    waves: 5, budget: 1.45, heavy: 0.45, muster: 30,
   },
 ];
 
@@ -677,6 +773,9 @@ export class Trooper {
   constructor(army, type, name, opts = {}) {
     this.id = opts.id ?? ('t' + (Trooper._n = (Trooper._n | 0) + 1));
     this.army = army.id;
+    /** The roll this record belongs to, so a nickname can be unique across it.
+     *  Optional: a Trooper built loose in a check has none and still promotes. */
+    this.roster = opts.roster ?? null;
     this.type = type;
     this.designation = name;
     this.nickname = null;
@@ -711,11 +810,31 @@ export class Trooper {
     this.xp += n;
     const now = this.rank;
     if (now <= was) return null;
-    // A nickname is earned on the SECOND rung and never lost. See NICKNAMES.
-    if (!this.nickname && now >= 2 && this.army === 'republic') {
-      this.nickname = NICKNAMES[Math.floor(rng() * NICKNAMES.length)];
-    }
+    // A nickname is earned on the SECOND rung and never lost, on BOTH sides.
+    // See NICKNAMES.
+    if (!this.nickname && now >= 2) this.nickname = this._earnNickname();
     return RANKS[now];
+  }
+
+  /**
+   * A name nobody on this roll already answers to.
+   *
+   * UNIQUE, for the same reason `designate` loops: the promise is "every ally
+   * has a unique name you can SEE", and the whole point of a nickname is that
+   * the two or three of them in a casualty list are the bodies you have been
+   * protecting. Two Ladders in one list is one fewer body you can tell apart —
+   * and at the rate this ladder promotes, a 33-entry table drawn blind collides
+   * about a third of the time over a full campaign's promotions.
+   *
+   * Falls back to the blind draw when the table is exhausted or there is no
+   * roster to ask, because a duplicate name is worth more than no name.
+   */
+  _earnNickname() {
+    const pool = nicknamesFor(this.army);
+    const taken = new Set((this.roster?.all || []).map((t) => t.nickname).filter(Boolean));
+    const free = pool.filter((s) => !taken.has(s));
+    const from = free.length ? free : pool;
+    return from[Math.floor(rng() * from.length)];
   }
 }
 
@@ -748,7 +867,7 @@ export class CommandRoster {
   enlist(type, opts = {}) {
     const name = designate(this.army, this.taken);
     this.taken.add(name);
-    const t = new Trooper(this.army, type, name, opts);
+    const t = new Trooper(this.army, type, name, { ...opts, roster: this });
     this.all.push(t);
     return t;
   }
@@ -969,6 +1088,12 @@ export function enlistBody(e, trooper, opts = {}) {
  * acceleration ramp) applies to a formation move exactly as it applies to a
  * charge. A formation is not a different movement model; it is a different
  * destination for the same one.
+ *
+ * AND IT PUTS `speed` BACK. `_move` reads `this.speed` once per frame, so the
+ * catch-up pace a trooper walks home at (see `followSpeed`) is a write that
+ * lasts exactly the length of the call that wanted it. Leaving it on the body
+ * would compound with the rank multipliers `enlistBody` applies — a Commander is
+ * already ×1.10 — and a promotion would silently become a permanent sprint.
  */
 export function installCommand(e) {
   if (!e || e._cmdMove) return false;
@@ -977,8 +1102,10 @@ export function installCommand(e) {
   e._cmdMove = true;
   e._move = function (dt, ctx) {
     const d = this.commandOf;
+    const was = this.speed;
     if (d && !this.dead && !this.gripped && !this.toppled) d.steer(this, dt);
-    return base.call(this, dt, ctx);
+    try { return base.call(this, dt, ctx); }
+    finally { this.speed = was; }
   };
   return true;
 }
@@ -1055,8 +1182,13 @@ export class CommandDirector extends WaveDirector {
     this.formation = cfg.formation;
     /** The frame a non-advancing formation was planted in. See `_anchorFor`. */
     this._planted = null;
+    /** The commander's own pace, measured. See `_trackLeader`/`followSpeed`. */
+    this._leaderSpeed = 0;
+    this._leaderPos = null;
     this.areaIndex = 0;
     this.areaWaves = 0;
+    /** Raised once, when the last area is behind you. See `_endCampaign`. */
+    this.done = false;
     /** Raised while the muster is open, so no wave starts under the screen. */
     this.mustering = false;
     /** Every promotion, death and order — the campaign's own log. */
@@ -1170,7 +1302,8 @@ export class CommandDirector extends WaveDirector {
       max: MAX_STRENGTH,
       roster: this.roster.summary(),
       units: this.army.tiers
-        .filter((t) => t.at <= A.tier)
+        // The AREA NUMBER, not a second column beside it. See AREAS.
+        .filter((t) => t.at <= this.areaNumber)
         .map((t) => ({
           type: t.type, cost: t.cost,
           label: ARCHETYPES[t.type]?.label ?? t.type,
@@ -1192,7 +1325,7 @@ export class CommandDirector extends WaveDirector {
     const rung = this.army.tiers.find((t) => t.type === type);
     this.refused = null;
     if (!rung) { this.refused = `${type} is not one of ${this.army.name}'s units`; return null; }
-    if (rung.at > this.area.tier) { this.refused = `${ARCHETYPES[type]?.label ?? type} is not available until later in the advance`; return null; }
+    if (rung.at > this.areaNumber) { this.refused = `${ARCHETYPES[type]?.label ?? type} is not available until area ${rung.at} of the advance`; return null; }
     if (this.roster.points < rung.cost) { this.refused = `${rung.cost} points needed, you have ${this.roster.points}`; return null; }
     if (this.roster.strength >= MAX_STRENGTH) { this.refused = `you cannot field more than ${MAX_STRENGTH}`; return null; }
     this.roster.points -= rung.cost;
@@ -1274,12 +1407,48 @@ export class CommandDirector extends WaveDirector {
     return n;
   }
 
-  /** Take the army off the field between areas, keeping every record. */
+  /**
+   * TAKE THE ARMY OFF THE FIELD BETWEEN AREAS, KEEPING EVERY RECORD.
+   *
+   * The header of `Trooper` says "the Enemy is disposed at the end of every area
+   * and rebuilt at the start of the next one", and that sentence was a claim
+   * about a method WITH NO CALLER ANYWHERE IN THE TREE — `grep -rn 'recall'
+   * src/` found the definition and nothing else. So the army never came off the
+   * field: survivors stayed scattered wherever the last wave left them, up to
+   * eighty metres out, and the next area opened with your line already broken
+   * and no gunship having brought it in.
+   *
+   * It also could not have been called safely as it stood. It nulled `t.body`
+   * and left the BODY standing — a live, party-team Enemy with no name on it —
+   * and `deploy()` builds a fresh body for every record whose `body` is null. One
+   * call would have doubled the army, and the second copy would have been
+   * nameless, unpromotable and immortal to the roster.
+   *
+   * So the withdrawal is a real one. The trooper is detached FIRST, because
+   * `onDeath` reads `e.trooper` to decide whether a death is a casualty or a
+   * kill — a body coming off the field at an area boundary is neither, and the
+   * record it belonged to must stay alive. Then it leaves by the same door every
+   * other body leaves by (see `Waves._retire`), so the corpse ledger frees it.
+   *
+   * @returns how many bodies were withdrawn.
+   */
   recall() {
+    let n = 0;
     for (const t of this.roster.all) {
-      if (t.body && !t.body.dead) t.body.trooper = null;
+      const e = t.body;
       t.body = null;
+      if (!e) continue;
+      e.trooper = null;
+      if (e.dead) continue;
+      e.dead = true;
+      e.dying = 0;
+      // No score, no kill, no casualty: `World.onEnemyKilled` returns before it
+      // pays anything for a body that is not on team 1, and `onDeath` sees no
+      // trooper on it.
+      this.world?.onEnemyKilled?.(e, null, 'recall');
+      n++;
     }
+    return n;
   }
 
   /* ── orders ────────────────────────────────────────────────────────── */
@@ -1343,26 +1512,93 @@ export class CommandDirector extends WaveDirector {
   }
 
   /**
+   * HOW FAR FROM ITS SLOT THIS BODY MAY RANGE, in metres — the one statement of
+   * the leash, called by `steer` and by `targetFor` so the thing a trooper may
+   * SHOOT and the thing it may WALK TO cannot disagree.
+   *
+   * Three terms and each answers a different question:
+   *
+   *   the FORMATION's multiplier   how far past its own reach this order sends
+   *                                it. See the note above FORMATIONS.
+   *   the BODY's `preferred[1]`    how far it fights from at all. A marksman's
+   *                                42 m and a B1's 15 m are not the same leash
+   *                                and never were; one number for both is what
+   *                                made the formations a parade.
+   *   LEASH_FLOOR                  so a duellist whose band is 3.4 m is still
+   *                                allowed to take a step.
+   *
+   * AND THE LAST FEW BODIES OPEN IT COMPLETELY. See `_closing`.
+   */
+  leashFor(F, e) {
+    if (F.leash === Infinity || this._closing) return Infinity;
+    const reach = e?.A?.preferred?.[1] ?? ARCHETYPES[e?.trooper?.type]?.preferred?.[1] ?? 12;
+    return Math.max(LEASH_FLOOR, reach * F.leash);
+  }
+
+  /**
+   * CLOSING OUT: the wave is down to its last few and every order is off.
+   *
+   * A driven idle run stalled from t≈711 s to t=3535 s — FORTY-SEVEN
+   * game-minutes — with exactly two horde bodies alive that the army would not
+   * walk to. Neither side was wrong on its own terms: the droids were holding
+   * their own `preferred` band off the player, the troops were holding a
+   * formation, and the leash between them meant no trooper was ever handed a
+   * target. Nothing was stuck, so the liveness watchdog had nothing to say. The
+   * run simply could not end, and the only exit was Abandon.
+   *
+   * Two conditions, and both are needed. `delivered` — the director's own
+   * statement that nothing more is coming, which is the same state the watchdog
+   * treats as terminal — is true for most of a wave once the queue drains, so it
+   * cannot be the whole rule or a formation would only hold for the first twenty
+   * seconds of every fight. `CLOSE_OUT` is the other half: while there is a wave
+   * left to fight, an order is an order. When there are four bodies left it is
+   * not a battle any more, it is a wave that will not close, and the army goes
+   * and closes it — including a squad told to take cover, which breaks it, kills
+   * them and walks back.
+   *
+   * Computed once per frame rather than inside `leashFor`, which runs per troop
+   * per frame and would otherwise walk the whole enemy list twenty-four times.
+   */
+  _updateClosing(ctx) {
+    if (!this.active || !this.delivered) { this._closing = false; return false; }
+    const list = ctx?.enemies || this.world?.enemies || [];
+    let n = 0;
+    for (const e of list) if (this.blocksWaveEnd(e) && ++n > CLOSE_OUT) break;
+    this._closing = n <= CLOSE_OUT;
+    return this._closing;
+  }
+
+  /**
    * THE STEER — one troop, one frame, between the brain and the feet.
    *
-   * Two decisions and they are both about ONE number, the distance from the
+   * Three decisions, and they are all about ONE number, the distance from the
    * slot:
    *
-   *   inside the tolerance   leave the brain alone entirely. A trooper standing
-   *                          where it was told to stand fights exactly as the
-   *                          same body fights on the other team, which is the
-   *                          property this whole mode rests on.
-   *   outside it             overwrite `wish` with the direction home, and
+   *   inside the LEASH with a fight on   leave the brain alone entirely. A
+   *                          trooper standing where it was told to stand fights
+   *                          exactly as the same body fights on the other team,
+   *                          which is the property this whole mode rests on —
+   *                          and a trooper CLOSING on something it is allowed to
+   *                          engage is doing what the order said, not breaking
+   *                          it. This clause is new and it is the difference
+   *                          between a formation and a parade: the leash used to
+   *                          decide what a body could shoot while the tolerance
+   *                          held it 2.2 m from its slot, so an ally could be
+   *                          handed a target it was then physically prevented
+   *                          from walking to.
+   *   inside the tolerance   the same, with nothing to fight. A body idles on
+   *                          its mark.
+   *   outside               overwrite `wish` with the direction home, and
    *                          overwrite `toTarget` with the same — because
    *                          `_move`'s backpedal limiter scales the component
    *                          pointing away from `toTarget`, so a trooper walking
    *                          BACK to its slot with a stale forward target would
    *                          do it at 40% pace and never arrive.
    *
-   * The tolerance is not the leash. The leash decides what a trooper may SHOOT
-   * (see `targetFor`); the tolerance decides what it may STAND ON, and it is
-   * deliberately loose — 2.2 m — because a formation solved to the centimetre
-   * reads as a parade and this is a battle.
+   * The tolerance is not the leash. The leash is how far a trooper may RANGE to
+   * fight; the tolerance is how close it must get when it has nothing to do, and
+   * it is deliberately loose — 2.2 m — because a formation solved to the
+   * centimetre reads as a parade and this is a battle.
    */
   steer(e, dt) {
     if (!e.trooper) return;
@@ -1372,12 +1608,54 @@ export class CommandDirector extends WaveDirector {
     const dx = slot.x - e.position.x, dz = slot.z - e.position.z;
     const d = Math.hypot(dx, dz);
     e.cmdSlotDist = d;
-    if (d < FORM_TOLERANCE) return;                     // in position; fight on
+    /* A live target it is allowed to engage buys it the whole leash; otherwise
+     * it owes the mark. `e.target` is what `_think` set THIS frame off
+     * `pickTarget`, which for a trooper is `targetFor` below — so the two
+     * clauses are reading the same decision and cannot disagree about it. */
+    const fighting = e.target && !e.target.dead && e.target.alive !== false;
+    const limit = fighting ? this.leashFor(F, e) : FORM_TOLERANCE;
+    e.cmdOnStation = d <= limit;
+    if (e.cmdOnStation) return;
     const inv = 1 / (d || 1);
     if (!e.wish) e.wish = new THREE.Vector3();
     e.wish.set(dx * inv, 0, dz * inv);
     if (!e.toTarget) e.toTarget = new THREE.Vector3();
     e.toTarget.set(dx * inv, 0, dz * inv);
+    /* …AND FAST ENOUGH TO ARRIVE. See `followSpeed`. Written onto the body for
+     * exactly one `_move` call — `installCommand` puts it back afterwards — so
+     * the rank multipliers on `speed` are never compounded and a boost can never
+     * survive the frame that asked for it. */
+    const want = this.followSpeed(e, d);
+    if (want > e.speed) e.speed = want;
+  }
+
+  /**
+   * HOW FAST A TROOPER WALKING BACK TO ITS SLOT IS ALLOWED TO MOVE.
+   *
+   * A commander walks at 4.60 m/s and sprints at 7.45 (Player.js: `base = 4.6`,
+   * ×1.62). A Clone Trooper's `speed` is 4.1 and a Clone Heavy Gunner's is 2.9.
+   * So an army ordered to follow could not follow: driven, troops were out of
+   * position 98-100% of the time for as long as the player kept moving, and the
+   * whole formation system was a shape that only existed while you stood still.
+   *
+   * The archetype speed is NOT raised. A heavy that has picked a spot has
+   * committed to it, and making one as quick as an ARC would delete the
+   * distinction the roster is built out of. What is raised is the pace of the
+   * WALK HOME, which is a different act from fighting — it is the double a
+   * soldier moves at when they are out of position and know it.
+   *
+   *   the commander's own measured pace, so the follow tracks a sprint rather
+   *     than a constant somebody typed;
+   *   plus a term in the gap, so a body 30 m adrift closes rather than trailing
+   *     at exactly the speed of the thing it is chasing forever;
+   *   capped at CATCH_UP × its own speed, so the ladder still means something —
+   *     a heavy at 1.8× is 5.2 m/s and STILL cannot match a sprinting Jedi, and
+   *     that is the correct answer for a heavy.
+   */
+  followSpeed(e, gap) {
+    const own = e.speed || 1;
+    const want = this._leaderSpeed * 1.05 + Math.min(gap, 24) * 0.09;
+    return Math.min(own * CATCH_UP, Math.max(own, want));
   }
 
   /**
@@ -1398,10 +1676,11 @@ export class CommandDirector extends WaveDirector {
    */
   targetFor(e, candidates) {
     const F = FORMATIONS[this.formation] || FORMATIONS[DEFAULT_FORMATION];
-    const slot = F.leash === Infinity ? null : this.slotFor(e, _slot);
+    const leash = this.leashFor(F, e);
+    const slot = leash === Infinity ? null : this.slotFor(e, _slot);
     const ax = slot ? slot.x : e.position.x;
     const az = slot ? slot.z : e.position.z;
-    const leash2 = F.leash === Infinity ? Infinity : F.leash * F.leash;
+    const leash2 = leash === Infinity ? Infinity : leash * leash;
     let best = null, bestD = Infinity;
     for (const c of candidates) {
       if (!c || c.dead || c.alive === false) continue;
@@ -1596,9 +1875,33 @@ export class CommandDirector extends WaveDirector {
    */
   update(dt, ctx) {
     if (this._ffT > 0) this._ffT -= dt;
+    this._trackLeader(dt);
     if (this.mustering) { this.arrivals.update(dt, ctx); this._troops(dt, ctx); return; }
     super.update(dt, ctx);
+    this._updateClosing(ctx);
     this._troops(dt, ctx);
+  }
+
+  /**
+   * HOW FAST THE COMMANDER IS ACTUALLY MOVING, measured off their position.
+   *
+   * Off the POSITION rather than off `Player.velocity` or the four constants in
+   * `Player._updateMove`, because every one of those is a rule this file would
+   * then be restating (HANDOFF §2.4) and the quantity the follow needs is the
+   * one thing none of them is: the ground speed of the body the troops are
+   * chasing, after the crouch scale, the sprint multiplier, the walk axis, a
+   * slope and whatever a boon did to `moveSpeed`.
+   *
+   * Damped at 6/s, because a single physics frame is noisy and a follow speed
+   * that flickers is twenty-four bodies stuttering at once.
+   */
+  _trackLeader(dt) {
+    const p = this.world?.player?.position;
+    if (!p || !(dt > 0)) return;
+    if (!this._leaderPos) { this._leaderPos = new THREE.Vector3().copy(p); return; }
+    const v = Math.hypot(p.x - this._leaderPos.x, p.z - this._leaderPos.z) / dt;
+    this._leaderPos.set(p.x, p.y, p.z);
+    this._leaderSpeed += (v - this._leaderSpeed) * Math.min(1, dt * 6);
   }
 
   /**
@@ -1640,7 +1943,7 @@ export class CommandDirector extends WaveDirector {
    */
   payWave(wave) {
     const fresh = super.payWave(wave);
-    if (!fresh) return fresh;
+    if (!fresh || this.done) return fresh;
     this.areaWaves++;
     // Experience for living through it: a body that was on the field when the
     // wave cleared earned something even if it never fired.
@@ -1660,6 +1963,7 @@ export class CommandDirector extends WaveDirector {
    * it, living and dead.
    */
   _areaClear() {
+    if (this.done) return;
     for (const t of this.roster.living) {
       t.areas++;
       const p = t.award(2);
@@ -1669,15 +1973,15 @@ export class CommandDirector extends WaveDirector {
     this.log.push({ t: 'area', area: this.areaNumber, name: this.area.name,
                     strength: this.roster.strength, fallen: this.roster.fallen.length });
 
-    if (this.lastArea) {
-      this.world?.notify?.('THE ADVANCE IS OVER', `${this.roster.strength} of ${this.roster.all.length} walked off Geonosis`);
-      this.mustering = false;
-      return;
-    }
+    if (this.lastArea) { this._endCampaign(); return; }
 
     this.areaIndex++;
     this.areaWaves = 0;
     this.mustering = true;
+    // The army comes off the field and is put down again around you at the top
+    // of the next area — the gunships, which is what the first area's brief
+    // says happens. See `recall`.
+    this.recall();
     const offer = this.musterOffer();
     this.world?.notify?.(`${AREAS[this.areaIndex - 1].name.toUpperCase()} — HELD`,
       `${this.roster.points} reinforcement points · ${this.roster.strength} standing`);
@@ -1688,6 +1992,69 @@ export class CommandDirector extends WaveDirector {
       this.autoMuster();
       this.closeMuster();
     }
+  }
+
+  /**
+   * THE ADVANCE IS OVER — ONCE.
+   *
+   * This branch used to be three lines: notify, `mustering = false`, return. It
+   * did not raise a flag, did not stop the director, and — the part that turned
+   * a finished campaign into a broken one — DID NOT RESET `areaWaves`. `area` is
+   * `AREAS[min(areaIndex, 4)]`, so on the last area `areaWaves` stayed at or
+   * above `area.waves` forever and `payWave` re-entered `_areaClear` ON EVERY
+   * SUBSEQUENT WAVE CLEAR, for as long as the player kept playing: another
+   * "THE ADVANCE IS OVER", another +2 xp to every living body, another +30
+   * reinforcement points — uncapped — and another entry on `this.log`, which is
+   * an array nothing ever trims. A five-area campaign degenerated into an
+   * endless roguelite that announced its own ending every ninety seconds.
+   *
+   * So the campaign ends the way a run ends, through the door the game already
+   * has. `world.over` is the flag World reads to stop stepping the director
+   * (World.js: `if (netMode !== 'client' && !this.over) this.director.update`),
+   * and `onGameOver` is the one event that releases the pointer, shows the card
+   * and writes the record. Setting `over` first is also what stops `_checkWipe`
+   * firing a second one if the player is killed by the last bolt in the air:
+   * that method returns immediately on `this.over`.
+   *
+   * `won: true` IS THE ONLY ONE IN THE TREE. `Progress.recordRun` has always had
+   * `if (summary.won) p.wins++` and a `crowned` list beside it, and nothing
+   * anywhere ever passed the field — both were structurally dead storage. They
+   * are reachable now because this is the first mode with a WIN in it, which is
+   * also why `RECORDED` in Progress.js had to learn the word `command`.
+   *
+   * THE STATS BLOCK IS A TWIN OF `World._checkWipe`'s AND THAT IS A KNOWN COST.
+   * World assembles the same six fields when the party dies, and this file is
+   * not allowed to edit World.js. Rather than leave the twin to drift in
+   * silence, `tools/checks/command.mjs` drives a real World to a wipe AND a real
+   * campaign to a victory and asserts the two objects carry the identical set of
+   * keys — so adding a field over there fails here. The honest fix is a
+   * `World.runStats()` both call; it is in the handover at the foot of this file.
+   */
+  _endCampaign() {
+    this.done = true;
+    this.mustering = false;
+    this.active = false;
+    this.areaWaves = 0;
+    const strength = this.roster.strength, all = this.roster.all.length;
+    this.log.push({ t: 'won', area: this.areaNumber, strength, fallen: this.roster.fallen.length });
+    // The survivors walk off the field. Every record is kept — the roster IS the
+    // summary, and the fallen are most of what it is worth reading.
+    this.recall();
+    this.world?.notify?.('THE ADVANCE IS OVER', `${strength} of ${all} walked off Geonosis`);
+    const w = this.world;
+    if (!w) return true;
+    w.over = true;
+    const sum = (f) => (w.players || []).reduce((a, p) => a + (p[f] || 0), 0);
+    w.onGameOver?.({
+      won: true,
+      wave: this.wave,
+      score: w.score,
+      kills: sum('kills'),
+      deflects: sum('deflects'),
+      perfects: sum('perfects'),
+      limbs: sum('limbsRemoved'),
+    });
+    return true;
   }
 
   /** The muster screen is done. Deploy the new roster and start the area. */
@@ -1717,6 +2084,8 @@ export class CommandDirector extends WaveDirector {
       formation: F.id,
       formationName: F.name,
       mustering: this.mustering,
+      /** The advance is behind you. The HUD's cue that this is a finished run. */
+      done: this.done,
       teamDamage: this.teamDamage,
       ...this.roster.summary(),
     };
@@ -1750,6 +2119,19 @@ export const FORM_TOLERANCE = 2.2;
  *     `palette.accent` and `buildB1` in `palette.mark`. If Enemy stops keeping
  *     the palette, promotion stops being visible and nothing will say so.
  *
+ * src/game/World.js
+ *   · `runStats()`. `World._checkWipe` assembles the six numbers a finished
+ *     session is described by (wave, score, kills, deflects, perfects, limbs)
+ *     inline inside the `onGameOver` call, and `_endCampaign` above needs the
+ *     same six for a session that ended by being WON rather than lost. There is
+ *     now a twin, and it is only kept honest by a check that drives a real wipe
+ *     and a real victory and compares the key sets. One method on World that
+ *     both call deletes the twin outright.
+ *   · A VICTORY that is not a death. `_endCampaign` fires `onGameOver` with
+ *     `won: true` on it, because that is the one event in the tree that stops
+ *     the director, releases the pointer, shows a card and writes the record.
+ *     Everything about that is right except the card's title.
+ *
  * src/ui/HUD.js
  *   · THE ROSTER. `CommandDirector.readout()` is the whole feed: army, area,
  *     formation, and a `roll` of `{name, unit, rank, rankTitle, xp, kills,
@@ -1769,6 +2151,13 @@ export const FORM_TOLERANCE = 2.2;
  *     it.
  *
  * src/ui/Screens.js
+ *   · A VICTORY CARD. `readout().done` is raised the moment the last area is
+ *     behind you, and the stats object `onGameOver` hands over carries
+ *     `won: true`. `Menu.showDeath(stats, title)` already takes a title —
+ *     "THE ADVANCE IS OVER" over the roster is the whole card.
+ *   · `musterOffer().next` no longer carries a `tier` field, because AREAS no
+ *     longer has one: a rung's `at` IS the area number now. Nothing in src/ read
+ *     it, but a screen written against the old shape would find it undefined.
  *   · THE MUSTER. `director.onMuster = (offer) => screens.muster(offer)`, and
  *     the screen calls `director.recruit(type)` per purchase and
  *     `director.closeMuster()` when done. `musterOffer()` is already the exact

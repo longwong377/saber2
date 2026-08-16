@@ -98,8 +98,23 @@ const blank = () => ({
  * dojo can kill you and the sandbox is a room with a slider, so a "deepest 99
  * waves" earned by typing 99 into a box is worse than no record. Deciding it
  * HERE rather than at the call site is what lets the wiring be a blind call.
+ *
+ * COMMAND WAS MISSING, AND IT IS THE ONE MODE THAT CAN BE WON.
+ *
+ * The paragraph above is about a mode that leaves no trace; Command left none
+ * either, and it is the mode where that hurts most. A campaign is five areas,
+ * two dozen named bodies and a casualty list — the most a run in this game has
+ * ever been worth remembering — and none of it reached `saber.progress.v1`.
+ *
+ * It also makes `wins` and `crowned` REACHABLE. Both fields have been written by
+ * this function since it was first added, both are gated on `summary.won`, and
+ * NOTHING IN `src/` HAS EVER PASSED THAT FIELD: the Descent was the only mode
+ * with a top and it was deleted, so `p.wins` was structurally pinned at 0 and
+ * `p.crowned` at empty for every player who has ever run this game. Command's
+ * `_endCampaign` is the first and only writer of `won: true`, which is why it
+ * had to be admitted here on the same commit.
  */
-const RECORDED = new Set(['roguelite', 'waves', 'duel']);
+const RECORDED = new Set(['roguelite', 'waves', 'duel', 'command']);
 
 function read() {
   try {
@@ -218,7 +233,14 @@ export function recordRun(summary) {
 export function progressLines(p = read()) {
   if (!p.runs) return ['No runs yet.'];
   const out = [
-    `${p.runs} run${p.runs === 1 ? '' : 's'}, ${p.kills} felled`,
+    `${p.runs} run${p.runs === 1 ? '' : 's'}, ${p.kills} felled`
+      // WINS ARE SHOWN NOW THAT THEY CAN HAPPEN. `p.wins` was written by
+      // `recordRun` from the day this file was added and could never be
+      // anything but 0 — no mode in the game passed `won` — so no reader was
+      // ever missed. Command's five-area advance is the first thing here that
+      // can be finished, and a record that counts a finished campaign and does
+      // not print it is the write-only log this file's header refuses to be.
+      + (p.wins ? ` · ${p.wins} won` : ''),
     `deepest ${p.bestDepth} wave${p.bestDepth === 1 ? '' : 's'}`
       + (p.bestScore ? ` · best ${Math.floor(p.bestScore).toLocaleString()}` : ''),
   ];
@@ -226,6 +248,12 @@ export function progressLines(p = read()) {
   if (stars || p.communed) {
     out.push(`${stars} star${stars === 1 ? '' : 's'} of the sky walked`
       + (p.communed ? `, ${p.communed} lit by communion` : ''));
+  }
+  // …and what was in your hand when you finished one. Same rule as `lit`: a note
+  // about what has worked, not a gate — every card is in every draft from the
+  // first run.
+  if (p.crowned?.length) {
+    out.push(`${p.crowned.length} boon${p.crowned.length === 1 ? '' : 's'} carried to the end of an advance`);
   }
   // What has ever been carried to the crown. A note about what has worked, and
   // emphatically not a gate: every card is in every draft from the first run.
