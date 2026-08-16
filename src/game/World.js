@@ -14,7 +14,7 @@ import { Particles } from '../world/Particles.js';
 import { GrassField, Water, Atmosphere, weather } from '../world/Scenery.js';
 import { BoltPool } from './Bolts.js';
 import { BladeContactSolver, captureSnapshot, gradeCaught, resolveBladeClash, GRADE, GRADE_NAME, DIFFICULTY, CatchWindow } from './Combat.js';
-import { Player, bladeTargets, canHarm, hostileTo, pvpRules, TEAM } from './Player.js';
+import { Player, asTeam, bladeTargets, canHarm, hostileTo, pvpRules, TEAM } from './Player.js';
 import { ageDropped } from './Dropped.js';
 import { Enemy, ARCHETYPES, applyModifier } from './Enemy.js';
 import { WaveDirector, RankSet, boonTick, boonGuard, bondReceive, bondGuardIn, bondGive, BOND, boonById, MODES } from './Waves.js';
@@ -161,6 +161,12 @@ const r3 = (v) => Math.round(v * 1000) / 1000;
 const GRIND_LETHALITY = 0.55;
 /** Stamina a lost exchange costs, before the attack's tier scales it. */
 const GUARD_COST = 22;
+/**
+ * The most often the army's state is put on the wire, in seconds. See
+ * `_armyTick` — it is a ceiling on a message that is only sent when something
+ * changed, not a heartbeat.
+ */
+const ARMY_INTERVAL = 0.5;
 
 export class World {
   constructor(engine, settings) {
@@ -2571,6 +2577,12 @@ export class World {
    */
   _netDirector() {
     const d = this.director;
+    /* …AND THE ARMY THIS MACHINE INVENTED FOR ITSELF. `CommandDirector`'s
+     * constructor musters ten troopers on every machine in the session and a
+     * client deploys none of them, so a joining player's roster panel was ten
+     * names that could never fight, never fall and never appear on anybody
+     * else's screen. See `CommandDirector.netShell`. */
+    this.command?.netShell?.();
     if (!d || Object.prototype.hasOwnProperty.call(d, 'remaining')) return;
     Object.defineProperty(d, 'remaining', {
       configurable: true,
@@ -2606,7 +2618,88 @@ export class World {
       net.broadcast(packAvatar(this.player));
       if (this.netMode === 'host') net.broadcast(packSnapshot(this));
     }
+    if (this.netMode === 'host') this._armyTick(net);
     this._bondTick(net);
+  }
+
+  /**
+   * THE ARMY, AS A FACT ABOUT THE CAMPAIGN RATHER THAN ABOUT A FRAME.
+   *
+   * Nothing about the roster was on the wire at all: not a name, not a rank,
+   * not an experience total, not the area, not the formation, not who had
+   * fallen. A joining player's Command HUD was fed entirely by a director that
+   * had mustered its own ten strangers and never deployed one of them.
+   *
+   * SENT WHOLE, AND ONLY WHEN IT CHANGES.
+   *
+   * Whole, because a roster is a hundred small fields that move together — a
+   * promotion is a rank, a title, an experience total and a colour at once —
+   * and a diff of that is a second encoder with its own opinion about which
+   * fields go together, which is precisely the shape that produced a twelve-slot
+   * record against a thirteen-slot packer. `readout()` is already the single
+   * authority for what a campaign looks like from outside; this puts THAT
+   * object on the wire and the far end returns it verbatim.
+   *
+   * On change, because it is not a per-frame quantity. The comparison is over
+   * the serialised payload itself rather than over a list of fields somebody
+   * remembered to include — a hand-kept signature beside a generated payload is
+   * the twin defect again, and it fails silently in the direction where a
+   * promotion never reaches the other machine.
+   *
+   * `ARMY_INTERVAL` bounds the worst case rather than setting the pace. A
+   * twenty-four man roll is about 2.5 KB and every kill moves it, so an
+   * unbounded on-change send during a firefight would cost more than the
+   * snapshot does; half a second is imperceptible on a roster panel and caps it
+   * at 5 KB/s in the worst composition the mode can field. Zero the rest of the
+   * time, which is most of the time.
+   */
+  _armyTick(net) {
+    const d = this.command;
+    if (!d) return;
+    if (this.time - (this._armyAt ?? -ARMY_INTERVAL) < ARMY_INTERVAL) return;
+    this._armyAt = this.time;
+    const r = d.readout();
+    const s = JSON.stringify(r);
+    if (s === this._armyLast) return;
+    this._armyLast = s;
+    net.broadcast({ t: 'army', r });
+  }
+
+  /** Host → this client: the campaign as the host has it. */
+  applyArmy(msg) {
+    if (this.netMode !== 'client') return false;
+    return this.command?.applyNet?.(msg?.r) ?? false;
+  }
+
+  /**
+   * A JOINING PLAYER PRESSED AN ORDER KEY.
+   *
+   * The other direction from every other Command message, and the only one:
+   * `main.js` binds the six formation keys to `CommandDirector.order` on
+   * whichever machine pressed them, and the bodies only exist on the host. So
+   * this is the ask, and `applyOrder` below is the host deciding.
+   */
+  requestOrder(id) {
+    if (this.netMode !== 'client' || !this.net?.connected) return false;
+    this.net.toHost({ t: 'order', f: id });
+    return true;
+  }
+
+  /**
+   * …AND THE HOST DECIDING, through the same `order` every local key press
+   * goes through.
+   *
+   * Validation is NOT repeated here. `CommandDirector.order` already refuses an
+   * id that is not a formation and returns false, and writing a second
+   * membership test on this side is how the two come to disagree about what an
+   * order is — the rule is called, not restated. What this adds is the one
+   * thing the director cannot know: that only the host may move an army, so a
+   * peer cannot re-form somebody else's line by sending this to a machine that
+   * is not holding it.
+   */
+  applyOrder(peerId, msg) {
+    if (this.netMode !== 'host' || !this.command) return false;
+    return this.command.order(msg?.f);
   }
 
   /**
@@ -2701,7 +2794,7 @@ export class World {
     if (this.netMode !== 'client' || !this.terrain) return;
     const seen = new Set();
     for (const rec of msg.e) {
-      const [id, type, x, y, z, f, hp, dead, vx, vz, tg, dl, md] = rec;
+      const [id, type, x, y, z, f, hp, dead, vx, vz, tg, dl, md, tm] = rec;
       seen.add(id);
       let e = this._netEnemyIndex.get(id);
       if (!e) {
@@ -2710,6 +2803,29 @@ export class World {
         e.netDriven = true;
         this._netEnemyIndex.set(id, e);
       }
+      /**
+       * WHOSE BODY THIS IS — and until this line every one of them was the
+       * horde's, because `Enemy`'s constructor writes `team = 1` and nothing
+       * on the wire had ever said otherwise.
+       *
+       * That is right for every mode where `world.enemies` holds one army. It
+       * is wrong the moment Command puts YOUR army in the same list on the
+       * party's team: measured on a real host/client pair with a ten-man
+       * roster on the field, 10 of 10 named troopers arrived here as horde,
+       * `canHarm(this.player, yourTrooper)` returned true, and both directions
+       * of the resulting friendly fire were automatic — your troopers' own
+       * rifles found the joining player through `_boltHitTest`'s owner test,
+       * and every bolt that player deflected into the line hit somebody with a
+       * name on the roster.
+       *
+       * Written EVERY snapshot rather than only on the frame the body is
+       * created: `enlistBody` runs after `spawnEnemy` on the host, so the
+       * record that creates a trooper here is the one from before it was
+       * enlisted, and a body promoted onto a side later would otherwise stay
+       * on the wrong one for the rest of the session. `asTeam` is the gate —
+       * an illegible number is the horde, never a friend. See packSnapshot.
+       */
+      e.team = asTeam(tm);
       /**
        * THE ELITE, AND IT NEVER CROSSED.
        *
@@ -2920,8 +3036,24 @@ export class World {
       const owner = this._netEnemyIndex.get(oid) || null;
       _v1.set(x, y, z); _v2.set(dx, dy, dz);
       if (_v2.lengthSq() < 1e-8) continue;
+      /**
+       * THE BOLT'S OWN SIDE, WHICH USED TO BE THE LITERAL 1.
+       *
+       * Right for as long as everything that fires on this wire is the horde,
+       * and the other half of the trooper defect the moment it is not: the
+       * enemy branch of `_boltHitTest` sorts on `bolt.team === 1` BEFORE it
+       * reaches `canHarm`, so a trooper's replicated rifle round could not
+       * reach the droid it was aimed at on a joining player's screen — the
+       * shot flew through the body the host had just killed with it.
+       *
+       * Off the owner now that the owner carries a team (see applySnapshot).
+       * `TEAM.HORDE` when the owner has not arrived yet, which is what the
+       * literal said and what an unattributed bolt in this game has always
+       * been.
+       */
       this.bolts.fire(_v1, _v2, {
-        speed, damage, color, owner, team: 1, big: !!big, turned: !!turned,
+        speed, damage, color, owner, team: owner ? asTeam(owner.team) : TEAM.HORDE,
+        big: !!big, turned: !!turned,
         length: big ? 2.4 : 1.15, radius: big ? 0.1 : 0.05,
       });
       audio.blaster(_v1, !!big);

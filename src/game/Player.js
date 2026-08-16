@@ -1236,6 +1236,25 @@ export function asSide(v) {
 }
 
 /**
+ * THE SAME THING FOR A BODY RATHER THAN A PLAYER, AND IT FAILS THE OTHER WAY.
+ *
+ * `asSide` is for a PLAYER's side and lands a bad value in co-op, because the
+ * worst thing that can happen to a player who could not be identified is that
+ * they are on your team. A BODY off the wire is the opposite question: an enemy
+ * record that arrived without a legible team is the horde, because that is what
+ * every body on this wire was before the field existed, and answering it with
+ * the party's 0 would hand a joining player a level full of allies that shoot
+ * at nobody. So this accepts the horde's number as well as the four sides, and
+ * anything else — undefined, a string, a 7 — is the horde.
+ *
+ * Two functions rather than one with a flag: the two callers want opposite
+ * failure directions and a shared default would have to pick one of them.
+ */
+export function asTeam(v) {
+  return v === TEAM.HORDE || SIDES.includes(v) ? v : TEAM.HORDE;
+}
+
+/**
  * Which side a thing is on, or `undefined` if it never said.
  *
  * `undefined` rather than a default, and it is worth the extra branch in

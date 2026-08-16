@@ -341,6 +341,29 @@ export class Net {
       // host can know; this is how everybody else finds out. See _dropPeer.
       case 'left': if (!this.isHost) this._emit('peer-left', msg.id); break;
       case 'claim': this._emit('claim', conn.peer, msg); break;
+      /**
+       * Host → peers: the army, the area and the order in force.
+       *
+       * One direction only, and for the same reason `match` is: the roster is a
+       * ledger of promotions, casualties and reinforcement points that only the
+       * machine holding the bodies can keep. A client that kept its own version
+       * of it kept a DIFFERENT army — measured on a real pair, two disjoint
+       * lists of ten names, one of which had never been deployed.
+       *
+       * Not folded into the snapshot: it is 2.5 KB at a full roster and changes
+       * about twice a second at its very worst, so the 18 Hz record would spend
+       * 45 KB/s repeating a casualty list. Exactly the argument `match` makes.
+       */
+      case 'army': if (!this.isHost) this._emit('army', msg); break;
+      /**
+       * Peer → host: "form wedge."
+       *
+       * The one Command message that travels the other way, and the only thing
+       * a commander who is not holding the army can do. Stamped with the sender
+       * the way `claim` is, so the host can tell whose army is being asked for
+       * once there is more than one — see the sides work in Player.js.
+       */
+      case 'order': if (this.isHost) this._emit('order', conn.peer, msg); break;
       // Host → this peer: you were hit. The reverse of `claim`, and it exists
       // for the same reason — the authority for a thing is not where the thing
       // is drawn. A peer owns its own health (its avatar packet carries `hp`,
@@ -886,6 +909,35 @@ export function packAvatar(player) {
  *           at the host's 18 Hz. 1.5 KB/s is not worth a decoder that can be
  *           silently wrong.
  *
+ *   tm      WHOSE SIDE THIS BODY IS ON, and it is one number against the worst
+ *           defect co-op and Command had between them. Every record on this
+ *           wire described a body and never said whose it was, because for the
+ *           whole life of the protocol the answer was "the horde's" and a
+ *           constant does not need a slot. Command broke that: `enlistBody`
+ *           puts your named troopers in `world.enemies` on the PARTY's team,
+ *           and they crossed as team 1 like everything else.
+ *
+ *           Driven on two real Worlds with a ten-man roster deployed, before
+ *           the field existed: 10 of 10 of the host's named troopers arrived on
+ *           the joining player's machine on the horde's team, so
+ *           `canHarm(theirPlayer, yourSergeant)` was TRUE and every gate in the
+ *           game that asks it opened. The two that matter both fire without
+ *           anybody aiming at anything:
+ *
+ *             · `_boltHitTest` reads `bolt.owner.team`, and a replicated bolt's
+ *               owner is the body that fired it — so YOUR OWN ARMY'S RIFLES
+ *               shot the joining player in the back, all game, from a line they
+ *               were standing behind.
+ *             · a bolt that player deflected carried their own team 0 against
+ *               your trooper's wrongly-read 1, so every deflection they made
+ *               into the line was a friendly casualty they could not have
+ *               known about.
+ *
+ *           `e.team` raw, not an index and not a boolean: the numbers are the
+ *           game's own (`TEAM.PARTY` 0, the horde's 1, further player sides 2-4
+ *           from `SIDES`), one slot carries all five, and `asTeam` on the far
+ *           end is what makes an illegible one the horde rather than a friend.
+ *
  * …and the snapshot carries `bf`, the bolts fired since the last one. A bolt is
  * an EVENT, not a state: it is gone by the next packet, so a state-only
  * protocol can never contain one.
@@ -901,6 +953,7 @@ export function packSnapshot(world) {
       e.aimCharge > 0 ? 1 : 0,
       packDuel(e.duel),
       e.mod || 0,
+      e.team,
     ]);
   }
   const fires = world._netFires || [];

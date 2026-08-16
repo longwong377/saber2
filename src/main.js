@@ -417,9 +417,13 @@ async function buildWorld(levelKey, onProgress = null) {
      * (settings.commandFormation, through commandConfig) — so without this the
      * indicator would read '—' until the player pressed a key, which is exactly
      * the question it exists to answer. `readout()` is the authority for both
-     * the id and the name. */
+     * the id and the name — and for the squad count too, which used to be
+     * fetched separately off `roster.squads().length`. That was a second caller
+     * deriving a number the readout had everything for, and it is unanswerable
+     * on a joining player's machine, where the roster is a wire record rather
+     * than a list of Troopers. */
     const r = d.readout();
-    hud.setOrder?.(r.formation, r.formationName, d.roster.squads().length);
+    hud.setOrder?.(r.formation, r.formationName, r.squads);
     hud.setLevel(`${world.level.name} — ${d.area.name}`, world.difficulty.name);
   } else {
     // Every other mode. The panel is one flow with the bars, so leaving it up
@@ -1188,6 +1192,21 @@ function wireNet() {
   });
   net.on('snapshot', (msg) => world?.applySnapshot(msg));
   net.on('claim', (peerId, msg) => world?.applyClaim(peerId, msg));
+  /**
+   * COMMAND, WHICH HAD NO WIRE AT ALL.
+   *
+   * Nothing about the army crossed: not a name, not a rank, not the area, not
+   * the formation, not who had fallen. A joining player's roster panel was fed
+   * by a director that had mustered ten strangers of its own and deployed none
+   * of them. `army` is the host's `readout()` verbatim; `order` is the one
+   * message that travels the other way, because the six formation keys are
+   * bound on whichever machine pressed them and the bodies are on the host.
+   * Both are routed here for the reason every other message is — the world a
+   * packet applies to is the one standing when it arrives, not the one that was
+   * standing when the connection opened.
+   */
+  net.on('army', (msg) => world?.applyArmy(msg));
+  net.on('order', (peerId, msg) => world?.applyOrder(peerId, msg));
   /**
    * The host says we were hit.
    *

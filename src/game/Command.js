@@ -1464,6 +1464,22 @@ export class CommandDirector extends WaveDirector {
   order(id) {
     const F = FORMATIONS[id];
     if (!F) return false;
+    /**
+     * A COMMANDER WHO IS NOT HOLDING THE ARMY CAN ONLY ASK FOR IT.
+     *
+     * `main.js` binds the six order keys to this method on whichever machine
+     * pressed them, and the bodies exist on the host alone — so on a joining
+     * player's machine this used to re-pose ten troopers that were never
+     * deployed and the real line did not move a metre. There was no path from
+     * that key to a body anywhere in the tree.
+     *
+     * The request goes to the host and NOTHING is written here, deliberately:
+     * the indicator must not read `wedge` while the army is still in line. It
+     * updates when the host's next `army` message says the order was taken,
+     * which is the same round trip the roster and the casualty list already
+     * make, and it is the only version of this that cannot lie.
+     */
+    if (this._netShell) return this.world?.requestOrder?.(id) ?? false;
     this.formation = id;
     // A formation that does not advance is planted where the commander was
     // STANDING when the order was given — see `_anchorFor`.
@@ -2089,6 +2105,18 @@ export class CommandDirector extends WaveDirector {
    * summary's, derived so the two cannot disagree.
    */
   readout() {
+    /**
+     * A SHELL SAYS WHAT IT WAS TOLD, VERBATIM, AND INVENTS NOTHING.
+     *
+     * The received object IS a `readout()` — the host's own, off the same
+     * method — so there is exactly one authority for what a campaign looks
+     * like from outside and no second assembly of the same fields to drift
+     * from it. `null` until the first message arrives, which falls through to
+     * the honest local answer: an empty roster in area 1.
+     *
+     * See `netShell` and `applyNet` below for why a client holds nothing.
+     */
+    if (this._netShell && this._netReadout) return this._netReadout;
     const F = FORMATIONS[this.formation] || FORMATIONS[DEFAULT_FORMATION];
     return {
       /**
@@ -2122,11 +2150,87 @@ export class CommandDirector extends WaveDirector {
       areaWaves: this.area.waves,
       formation: F.id,
       formationName: F.name,
+      /* The formation indicator prints this beside the name, and main.js used
+       * to fetch it separately off `roster.squads().length` — which is a second
+       * caller deriving a number this object already had everything for, and it
+       * is unanswerable on a machine whose roster is a wire record rather than a
+       * list of Troopers. Derived here, once, from the same roll. */
+      squads: this.roster.squads().length,
       mustering: this.mustering,
       /** The advance is behind you. The HUD's cue that this is a finished run. */
       done: this.done,
       teamDamage: this.teamDamage,
     };
+  }
+
+  /* ── the joining player's copy ─────────────────────────────────────── */
+
+  /**
+   * THIS DIRECTOR IS NOT HOLDING THE ARMY — SO IT STOPS PRETENDING TO.
+   *
+   * `World.loadLevel` builds a `CommandDirector` off the mode string alone, on
+   * every machine in the session, and the constructor's last line is
+   * `_musterOpening()`. So a joining player's director enlisted TEN TROOPERS OF
+   * ITS OWN — ten designations off its own stream, ten records, thirty
+   * reinforcement points — and then never deployed one of them, because
+   * `main.js` only calls `director.start` when `netMode !== 'client'`.
+   *
+   * Measured on two real Worlds in Command mode: the host's opening ten were
+   * `CT-1500 CT-2794 CT-5111 …` and the joining player's were
+   * `CT-4213 CT-2321 CT-9050 …`. Two disjoint armies, one of which does not
+   * exist. The roster panel down the side of that player's screen was ten
+   * strangers who could never take a casualty, while the ten real names dying
+   * three metres in front of them were never named anywhere.
+   *
+   * A shell holds NOTHING it was not told. The roster is emptied rather than
+   * left half-true, because a stale name is worse than a blank panel: the panel
+   * fills the moment the first `army` message lands, and until then the honest
+   * answer is that this machine does not yet know who is on the field.
+   *
+   * The same shape as `World._netDirector`, which does this to `remaining` for
+   * the base director and for the same reason — and it is called from there.
+   */
+  netShell() {
+    this._netShell = true;
+    this._netReadout = null;
+    this.roster.all.length = 0;
+    this.roster.taken.clear();
+    this.roster.points = 0;
+    return true;
+  }
+
+  /**
+   * THE HOST'S CAMPAIGN, AS THIS MACHINE NOW KNOWS IT.
+   *
+   * @param r the host's `readout()`, verbatim off the wire. See World's `army`
+   *          message: the object is sent whole rather than as a diff, because a
+   *          roster is a hundred-odd small fields that change together and a
+   *          diff of it is a second encoder that can disagree with its decoder.
+   *
+   * The scalars are mirrored onto the instance as well as kept whole, because
+   * `area`, `areaNumber` and `lastArea` are GETTERS over `areaIndex` and there
+   * are readers of all three (main.js's level line, the HUD). Everything the
+   * roll carries is left in the received object alone — nothing here rebuilds a
+   * `Trooper`, and that is deliberate: a reconstruction would be a second
+   * implementation of the promotion ladder and the naming rules, which is the
+   * hand-maintained-twin defect this codebase has paid for eight times.
+   */
+  applyNet(r) {
+    if (!r || typeof r !== 'object') return false;
+    this._netShell = true;
+    const was = this._netReadout?.formation;
+    this._netReadout = r;
+    this.areaIndex = clamp((r.area | 0) - 1, 0, AREAS.length - 1);
+    this.areaWaves = r.waveInArea | 0;
+    if (FORMATIONS[r.formation]) this.formation = r.formation;
+    this.mustering = !!r.mustering;
+    this.done = !!r.done;
+    this.roster.points = r.points | 0;
+    this.onRoster?.(r);
+    // Only on a change: `onOrder` is an ANNOUNCEMENT, and one that fired twice
+    // a second would be an indicator flashing for a formation nobody ordered.
+    if (r.formation !== was) this.onOrder?.(FORMATIONS[r.formation] || FORMATIONS[DEFAULT_FORMATION], r.squads | 0);
+    return true;
   }
 }
 
