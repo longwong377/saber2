@@ -269,7 +269,14 @@ export async function bootWorld({ level = null, settings = {}, spawn = true } = 
  * defects. `applyHit` used to live in a closure in main.js, which is why this
  * could not have been done before.
  */
-export async function bootPair({ level = null, settings = {}, sides = null } = {}) {
+/**
+ * @param lag  one-way delivery delay in SIMULATED seconds. Zero by default,
+ *   which is what an in-process wire really is; give it a number and every
+ *   packet is held for that long, and `net.latency` is published in the
+ *   milliseconds `Net`'s own ping would report so anything deriving a window
+ *   from it (World._netOwn) sees the connection it is actually on.
+ */
+export async function bootPair({ level = null, settings = {}, sides = null, lag = 0 } = {}) {
   level = level || await defaultLevel();
   const { RemoteAvatar } = await import('../../src/net/Net.js');
   const a = await bootWorld({ level, settings });
@@ -277,17 +284,22 @@ export async function bootPair({ level = null, settings = {}, sides = null } = {
   const seen = { toClient: [], toHost: [] };
   const wire = { down: [], up: [] };
   const wrap = (m) => JSON.parse(JSON.stringify(m));
+  /* Simulated seconds since the pair was built. The pump owns it; the wire only
+   * stamps with it, so a delayed packet is delayed by GAME time and not by
+   * however long the box took to step two Worlds. */
+  const clock = { t: 0 };
+  const post = (q, m) => q.push([clock.t + lag, wrap(m)]);
   /* The roster is what `hitSourceId` reads to learn which id the far end knows
    * the host's own Player by — on the host it is 'local', everywhere else it is
    * the host's peer id. Two entries, the shape `Net._refreshRoster` builds. */
   const roster = [{ id: 'HOST', name: 'HOST', host: true }, { id: 'PEER', name: 'ALPHA' }];
   a.world.attachNet({
-    connected: true, isHost: true, name: 'HOST', roster, latency: 0, sweep() {},
-    broadcast(m) { wire.down.push(wrap(m)); }, toPeer(id, m) { wire.down.push(wrap(m)); }, toHost() {},
+    connected: true, isHost: true, name: 'HOST', roster, latency: lag * 1000, sweep() {},
+    broadcast(m) { post(wire.down, m); }, toPeer(id, m) { post(wire.down, m); }, toHost() {},
   }, 'host');
   b.world.attachNet({
-    connected: true, isHost: false, name: 'PEER', roster, latency: 0,
-    broadcast(m) { wire.up.push(wrap(m)); }, toPeer() {}, toHost(m) { wire.up.push(wrap(m)); },
+    connected: true, isHost: false, name: 'PEER', roster, latency: lag * 1000,
+    broadcast(m) { post(wire.up, m); }, toPeer() {}, toHost(m) { post(wire.up, m); },
   }, 'client');
   if (sides) { a.world.player.team = sides[0]; b.world.player.team = sides[1]; }
 
@@ -320,12 +332,18 @@ export async function bootPair({ level = null, settings = {}, sides = null } = {
   };
 
   const input = idleInput();
+  /** Everything on `q` whose delivery time has come, in order. */
+  const ready = (q) => {
+    const out = [];
+    while (q.length && q[0][0] <= clock.t + 1e-9) out.push(q.shift()[1]);
+    return out;
+  };
   const pump = (seconds) => {
     const dt = 1 / 60;
     for (let i = 0; i < Math.round(seconds / dt); i++) {
+      clock.t += dt;
       a.world.update(dt, input);
-      while (wire.down.length) {
-        const m = wire.down.shift();
+      for (const m of ready(wire.down)) {
         seen.toClient.push(m);
         if (m.t === 'snapshot') b.world.applySnapshot(m);
         else if (m.t === 'hit') b.world.applyHit(m);
@@ -333,8 +351,7 @@ export async function bootPair({ level = null, settings = {}, sides = null } = {
           .push(m, performance.now() / 1000);
       }
       b.world.update(dt, input);
-      while (wire.up.length) {
-        const m = wire.up.shift();
+      for (const m of ready(wire.up)) {
         seen.toHost.push(m);
         if (m.t === 'claim') a.world.applyClaim('PEER', m);
         else if (m.t === 'avatar') avatarOn(a.world, 'PEER', 'ALPHA', sides ? sides[1] : undefined)
@@ -342,7 +359,7 @@ export async function bootPair({ level = null, settings = {}, sides = null } = {
       }
     }
   };
-  return { host: a.world, client: b.world, pump, seen, input, roster };
+  return { host: a.world, client: b.world, pump, seen, input, roster, clock };
 }
 
 /** Step a world for `seconds` of wall clock at 60 Hz. */

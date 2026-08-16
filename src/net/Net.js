@@ -834,9 +834,10 @@ export class RemoteAvatar {
     const msg = { t: 'hit', d: r3(amount || 0), k: kind, s: hitSourceId(source, net) };
     if (push) {
       msg.v = [r3(push.x), r3(push.y), r3(push.z)];
-      // `gentle` is what tells the far end whether this shove beats a guard —
-      // `applyKnockback` writes `staggerTimer` only when it does not — and a
-      // pull and a held power are both gentle. Absent means false.
+      // `gentle` is what tells the far end whether this shove beats a guard:
+      // `Player.applyKnockback` writes `staggerTimer` only when it is NOT
+      // gentle, and a pull and a held power's tick both are. Absent means false,
+      // which is what a shove is.
       if (gentle) msg.g = 1;
     }
     net.toPeer(this.id, msg);

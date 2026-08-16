@@ -967,6 +967,79 @@ export async function run({ check, assert }) {
       + `, lift ${out.liftHost.toFixed(2)}/${out.liftClient.toFixed(2)} m (host/guest)`;
   });
 
+  check('co-op: a peer who goes silent mid-lift does not leave a body in the air', async () => {
+    /**
+     * EVERY OTHER CLAIM IS AN EVENT THAT HAPPENED. The lift is a standing
+     * instruction — `e.gripped` and `e.liftTarget`, held for as long as the
+     * player holds the key — and `_think` returns early on `gripped`, so a body
+     * abandoned in that state hangs in the air out of its own brain for the
+     * rest of the host's session. That is the one thing on this wire a closing
+     * lid can strand, and a silence is the only signal that can say so.
+     */
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const { host, client, pump } = await H.bootPair({ level: 'colosseum' });
+    const e = host.spawnEnemy('trooper', new THREE.Vector3(0, 0, 6));
+    e.id = 'stranded';
+    e._think = () => {};
+    pump(0.5);
+    const ce = client._netEnemyIndex.get('stranded');
+    const cp = client.player;
+    cp.position.set(0, 0, 3);
+    pump(0.3);
+    cp.force = cp.maxForce; cp.cooldowns.grip = 0;
+    cp.aimDir.subVectors(ce.position, cp.camera.pos).normalize();
+    cp.toggleGrip({ enemies: client.enemies, players: client.players, bolts: client.bolts,
+      physics: client.physics, terrain: client.terrain, particles: client.particles });
+    pump(1.0);
+    assert(e.gripped, 'the host never took the lift at all');
+    const heldY = e.position.y;
+
+    // the lid closes: the endpoint stops talking, everything else keeps running
+    client.net.toHost = () => {};
+    let released = -1;
+    for (let i = 0; i < 180 && released < 0; i++) { pump(1 / 60); if (!e.gripped) released = i / 60; }
+    assert(released >= 0,
+      'the host is still holding a body for a peer that stopped talking a full three seconds ago');
+    assert(released > 0.2,
+      `the host dropped the lift after ${released.toFixed(2)} s of silence — one late packet on a bad `
+      + 'connection would put down whatever a player is holding');
+    host.unload(); client.unload();
+    return `held at y ${heldY.toFixed(2)}, dropped ${released.toFixed(2)} s after the peer went quiet`;
+  });
+
+  check('co-op: the enemy record is read with as many slots as it is written with', async () => {
+    /**
+     * THE SIGNATURE DEFECT OF THIS REPOSITORY, and this record has already had
+     * it once: a hand-typed twelve-slot reader against a thirteen-slot packer.
+     * A positional record cannot fail loudly — the reader destructures by
+     * position, so a short list is not an error, it is a quiet `undefined` that
+     * every downstream `|| 0` turns into a plausible default. The record has
+     * grown four times now (velocity, the duel, the modifier, the side, the
+     * cast) and nothing in the suite has ever compared the two ends of it.
+     *
+     * Counted off the shipped packer and the shipped reader, so it cannot be
+     * satisfied by a third copy of the list written here.
+     */
+    const { packSnapshot } = await import('../../src/net/Net.js');
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const { world } = await H.bootWorld({ level: 'colosseum' });
+    world.spawnEnemy('trooper', new THREE.Vector3(0, 0, 6));
+    world.attachNet({ connected: true, isHost: true, broadcast() {}, toPeer() {}, toHost() {}, sweep() {} }, 'host');
+    const rec = packSnapshot(world).e[0];
+    const text = await src('game/World.js');
+    const m = text.match(/const \[([^\]]*)\] = rec;/);
+    assert(m, 'applySnapshot no longer destructures the enemy record — this check cannot see the reader');
+    const names = m[1].split(',').map((s) => s.trim()).filter(Boolean);
+    assert(rec.length === names.length,
+      `packSnapshot writes ${rec.length} slots per enemy and applySnapshot reads ${names.length} `
+      + `(${names.join(', ')}) — the ${Math.abs(rec.length - names.length)} on the end arrive as `
+      + 'undefined and every `|| 0` beside them turns that into a plausible default');
+    world.unload(); world.dispose?.();
+    return `${rec.length} slots written, ${names.length} read: ${names.join(' ')}`;
+  });
+
   check('co-op: the next snapshot does not stomp the shove the guest just applied', async () => {
     /**
      * THE CRUX, AND IT IS NOT THE CLAIM — IT IS THE FRAME AFTER IT.
@@ -1034,8 +1107,65 @@ export async function run({ check, assert }) {
       `the host moved its body and the guest's copy stayed ${followed.toFixed(2)} m away — the authority `
       + 'window never closes and the guest owns the horde now');
     host.unload(); client.unload();
+
+    /**
+     * …AND THE WHOLE THING AGAIN OVER A REAL ROUND TRIP, because a window whose
+     * length is derived from the latency is not tested at zero latency. 120 ms
+     * one way is a bad-but-ordinary connection, and `bootPair` publishes it as
+     * `net.latency` so `_netOwn` derives the window from the wire it is on.
+     *
+     * The number that matters here is the SNAP-BACK: how far the guest's copy
+     * ever travels back toward where it started, which is what a rubber-band
+     * is. Measured on this scene, an 11.5 m flight at a 240 ms round trip:
+     *
+     *     the shipped window            0.78 m in 50 ms, snap-back 0.74 m
+     *     window = knockTimer only      0.78 m in 50 ms, snap-back 2.31 m
+     *     no window (what shipped)      0.00 m in 50 ms, snap-back 0.00 m
+     *
+     * The last line is the defect and it is worth reading carefully: the guest's
+     * copy still ENDS UP flying, because the impulse claim alone gets the shove
+     * to the host and the host's position comes back — it simply does nothing
+     * for a quarter of a second and then teleports into a flight it never
+     * started. And the middle line is why the window carries the round trip
+     * rather than only the body's own knock clock: cut that term and the
+     * correction triples.
+     */
+    const far = await H.bootPair({ level: 'colosseum', lag: 0.12 });
+    const fe = far.host.spawnEnemy('trooper', new THREE.Vector3(0, 0, 6));
+    fe.id = 'lagged';
+    fe._think = () => {};
+    far.pump(0.6);
+    const fce = far.client._netEnemyIndex.get('lagged');
+    const fcp = far.client.player;
+    fcp.position.set(0, 0, 3);
+    far.pump(0.4);
+    fcp.force = fcp.maxForce; fcp.cooldowns.push = 0;
+    fcp.aimDir.subVectors(fce.position, fcp.chest).normalize();
+    const fFrom = fce.position.clone();
+    fcp.forcePush({ enemies: far.client.enemies, players: far.client.players, bolts: far.client.bolts,
+      physics: far.client.physics, terrain: far.client.terrain, particles: far.client.particles });
+    let fEarly = 0, back = 0, best = 0;
+    for (let i = 0; i < 180; i++) {
+      far.pump(1 / 60);
+      const d = fFrom.distanceTo(fce.position);
+      back = Math.max(back, best - d);
+      best = Math.max(best, d);
+      if (i < 3) fEarly = Math.max(fEarly, d);
+    }
+    const fApart = fe.position.distanceTo(fce.position);
+    assert(fEarly > 0.1,
+      `over a 240 ms round trip the guest's own copy moved ${fEarly.toFixed(3)} m in the first 50 ms`);
+    assert(fApart < 1.0,
+      `over a 240 ms round trip the two machines ended ${fApart.toFixed(2)} m apart`);
+    assert(back < best * 0.15,
+      `the guest's copy travelled ${back.toFixed(2)} m BACK toward where it started during an `
+      + `${best.toFixed(2)} m flight — the window closes before the host's stream carries the shove, `
+      + 'and a shove that rubber-bands is worse to look at than one that does not move at all');
+    far.host.unload(); far.client.unload();
     return `guest's own copy moved ${early.toFixed(2)} m inside 50 ms, landed ${apart.toFixed(2)} m from `
-      + `the host's, and came back to within ${followed.toFixed(2)} m when the host moved it`;
+      + `the host's, and came back to within ${followed.toFixed(2)} m when the host moved it; over a `
+      + `240 ms round trip ${fEarly.toFixed(2)} m / ${fApart.toFixed(2)} m apart / ${back.toFixed(2)} m `
+      + `of snap-back on an ${best.toFixed(1)} m flight`;
   });
 
   check('co-op: an enemy\'s cast reaches a joining player as a cast, and they can break it', async () => {
