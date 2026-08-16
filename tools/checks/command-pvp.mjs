@@ -469,9 +469,17 @@ export function run({ check, assert }) {
     const { canHarm, SIDES } = await import('../../src/game/Player.js');
     const { VERSUS_SEPARATION } = await import('../../src/game/Command.js');
     const { host } = await commandPair({ host: { commandVersus: true }, start: false });
+    /* Deployed ALONE first, which is what `main.js` does on Ignite: the peer's
+     * body does not exist until their first avatar packet. A match built with
+     * one side ends on the frame the countdown does, so there must not be one
+     * yet — this is the state that hands a host the field against nobody. */
+    host.beginVersus();
+    assert(!host.match, 'a meeting against nobody already has a match, and it is one this host wins');
     const rival = await joinAsCommander(host, { team: SIDES[1] });
     const cs = host.beginVersus();
     assert(cs && cs.length === 2, `beginVersus produced ${cs ? cs.length : 0} commanders, expected 2`);
+    assert(host.match && host.match.sides.length === 2,
+      'the match was not made when the second commander arrived');
 
     const [mine, theirs] = cs;
     assert(mine.side !== theirs.side, `both commanders are on side ${mine.side}`);
@@ -537,6 +545,9 @@ export function run({ check, assert }) {
     const ended = [];
     host.onGameOver = (s) => ended.push(s);
     assert(host.match, 'a meeting has no match at all');
+    assert(host.match.sides.length === 2,
+      `the match has ${host.match.sides.length} side(s) — a match with one ends on the frame the `
+      + 'countdown does, and hands the field to whoever deployed first');
     assert(host.rules.pvp === true && host.rules.friendlyFire === true,
       `a meeting is being fought under co-op's rules (pvp ${host.rules.pvp})`);
 

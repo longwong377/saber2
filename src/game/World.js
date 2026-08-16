@@ -2873,7 +2873,12 @@ export class World {
     if (this.netMode === 'host' && this.net?.setSides) {
       const teams = new Map(), seats = new Map();
       for (let i = 0; i < list.length; i++) {
-        const id = list[i].id;
+        /* The host's own id is the PEER's, not a field on the Player — only a
+         * RemoteAvatar carries one, because only a remote body needs to be
+         * addressed. Without this the host is absent from its own map and
+         * `_sideOf` falls back to the party's 0, which is right today only
+         * because the host happens to be first in the roster. */
+        const id = list[i] === this.player ? this.net.peer?.id : list[i].id;
         if (!id) continue;
         const a = d.commanders[i]?.anchor;
         teams.set(id, sides[i]);
@@ -2883,7 +2888,17 @@ export class World {
       this.net.setSeats?.(seats);
     }
 
-    if (!this.match) {
+    /**
+     * NO MATCH UNTIL THERE IS SOMEBODY TO HAVE ONE WITH.
+     *
+     * `DuelMatch` ends a round when one side is left standing, so a match built
+     * with ONE side ends on the frame the countdown does — a host who deploys
+     * into a meeting before their opponent's body has arrived would be handed
+     * the field against nobody, three seconds in, and the peer would join a
+     * finished battle. `beginVersus` is idempotent and runs again when that
+     * body appears, which is where the match is really made.
+     */
+    if (!this.match && sides.length >= 2) {
       this.match = new DuelMatch(this.rules, sides);
       this._matchSent = '';
     }
