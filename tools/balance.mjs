@@ -399,15 +399,21 @@ export function measureDuel(diffKey, formKey) {
   const e = stubDuelEnemy(DIFFICULTY[diffKey]);
   const b = new DuelBrain(e, { form: formKey });
   const dt = 1 / 120;
-  let strikes = 0, wasStrike = false, T = 0;
+  let strikes = 0, wasStrike = false, T = 0, guardT = 0;
   for (let i = 0; i < 120 * 240; i++) {
     b.update(dt, {}, (FORMS[formKey].spacing[0] + FORMS[formKey].spacing[1]) / 2);
     T += dt;
     const isStrike = b.phase === 'strike';
     if (isStrike && !wasStrike) strikes++;
     wasStrike = isStrike;
+    /* HOW MUCH OF THE FIGHT IT SPENDS WITH ITS BLADE UP, counted off the real
+     * brain rather than typed. `guardQuat` holds the blade between the body and
+     * its target through the whole `guard` phase, and it is what a player's
+     * pass runs into. See `guardShare` in engagementFor. */
+    if (b.phase === 'guard') guardT += dt;
   }
-  const r = { strikesPerSec: strikes / T, damageScale: ATTACK_DAMAGE_BY_FORM[formKey] };
+  const r = { strikesPerSec: strikes / T, guardShare: guardT / T,
+    damageScale: ATTACK_DAMAGE_BY_FORM[formKey] };
   _duel.set(key, r);
   return r;
 }
@@ -664,6 +670,38 @@ function memoGet(map, key, make) {
  */
 const q = (v) => (Math.round(v * 100) / 100).toFixed(2);
 
+/**
+ * @param guardShare how much of the fight this body spends with its blade
+ *        between you and it — MEASURED off the real DuelBrain, see
+ *        `measureDuel`. Zero for anything that does not carry a saber.
+ *
+ * ── WHY THIS PARAMETER HAD TO EXIST, and it is the largest single defect this
+ * instrument has had ─────────────────────────────────────────────────────
+ *
+ * Without it, `engagementFor` reported the SAME 0.64 seconds to put down a
+ * 28 hp B1, a 200 hp Jedi Sentinel, a 420 hp stalker, a 900 hp beast and a
+ * 460 hp Jedi Master — every one of them "head (decap)" or "hips (kill)" in one
+ * pass. That is not a bug in the cut arithmetic: a lightsaber DOES take a neck
+ * off in one pass and `takeCut` is right about it. The bug is that the model
+ * had no notion of the body DEFENDING ITSELF. It stood every archetype still
+ * and let the player choose its neck.
+ *
+ * The consequence reached all the way out to the headline question. Driven on
+ * the shipped default level, which opens on a single Jedi Sentinel on 13 of 24
+ * seeds, wave 1 measured as costing the player **0.0 hp** and clearing 100% of
+ * the time — so "does the wave-1 boss kill a new player" could not be asked,
+ * because the instrument could not see the boss.
+ *
+ * WHAT THIS MODELS, stated so it can be argued with: a pass that arrives while
+ * the body is in its `guard` phase does not reach the body, so the player's
+ * effective cadence against a duellist is `cadence × (1 − guardShare)`. That is
+ * Enemy.js's own stated answer to Soresu — "bait a swing, then take the
+ * recovery" — as arithmetic. It is the PESSIMISTIC end: `TIER.guardBreak` gives
+ * a player a real way through a raised guard and this does not model it, so a
+ * skilled player beats these numbers. The share itself is not a guess; it is
+ * counted off 240 s of the real brain per form (Soresu 87.9%, Makashi 48.9%,
+ * Djem So 40.2%, Juyo 38.3%, Ataru 24.3%).
+ */
 const _engage = new Map();
 /**
  * How long the blade needs to NEUTRALISE a body and how long to KILL it — two
@@ -671,8 +709,8 @@ const _engage = new Map();
  * arm disarms a shooter, and both stop it hurting you long before it is dead.
  * A model that only knows hp would miss the whole of that.
  */
-export function engagementFor(entry, mods) {
-  const key = `${entry}|${q(mods.cutPower)}|${q(mods.bladeLength)}|${q(mods.attackRate)}`;
+export function engagementFor(entry, mods, guardShare = 0) {
+  const key = `${entry}|${q(mods.cutPower)}|${q(mods.bladeLength)}|${q(mods.attackRate)}|${q(guardShare)}`;
   if (_engage.has(key)) return _engage.get(key);
   if (_engage.size >= MEMO_MAX) _engage.clear();
 
@@ -688,7 +726,9 @@ export function engagementFor(entry, mods) {
    * UNMODELLED is worse than one with a known gap, because the gap is invisible
    * in the ranking.
    */
-  const cadence = measureSwing().attacksPerSec * (mods.attackRate ?? 1);
+  const cadence = measureSwing().attacksPerSec * (mods.attackRate ?? 1)
+    // …and only the openings count against a body that is guarding. See above.
+    * Math.max(0.05, 1 - guardShare);
   const reach = mods.bladeLength;
   const passSpeed = measureSwing().passSpeed;
   // How high a standing player's blade goes, MEASURED off the real controller
@@ -1163,9 +1203,20 @@ export function simulateRun(opts) {
       if (qi < total && alive.length < maxAlive && spawnTimer <= 0) {
         const entry = queue[qi++];
         const { A } = archetypeOf(entry);
-        const form = A.saber ? FORM_KEYS[Math.floor(rng() * FORM_KEYS.length)] : null;
+        /**
+         * ITS OWN FORM WHEN IT DECLARES ONE, and a die only when it does not.
+         *
+         * Enemy.js's note is explicit that the four Jedi were given declared
+         * forms so a player could learn "that is Djem So, it commits hard,
+         * punish the recovery" — and rolling a die here made the harness blind
+         * to exactly that: a Sentinel measured as Ataru three times in five,
+         * and Soresu is the form that changes the answer most (87.9% guard
+         * against Ataru's 24.3%).
+         */
+        const form = A.saber ? (A.form || FORM_KEYS[Math.floor(rng() * FORM_KEYS.length)]) : null;
+        const guard = form ? measureDuel(difficulty, form).guardShare : 0;
         alive.push({
-          entry, A, form, hp: A.hp,
+          entry, A, form, guard, hp: A.hp,
           // A droideka's own 260, or the Shielded elite's SHIELD_HP share of hp.
           shield: A.shield ? 260 : (A.elite === 'shielded' ? A.hp * 2.2 : 0),
           neutral: false, arm: armTime(entry, diff, level), auto: 0,
@@ -1173,7 +1224,7 @@ export function simulateRun(opts) {
           // has to have one. Its distance is the band it actually holds.
           position: new THREE.Vector3((A.preferred[0] + A.preferred[1]) / 2, 0, 0),
           dead: false,
-          eng: engagementFor(entry, mods),
+          eng: engagementFor(entry, mods, guard),
           close: closeTime(entry, mods),
           // Cached on the body rather than looked up per step: the inner loop
           // runs a million times a run and a Map key built from three strings
@@ -1190,11 +1241,11 @@ export function simulateRun(opts) {
         // Fury and Juyo move cutPower and moveSpeed as the fight goes; re-read
         // them whenever a new body is picked rather than once at wave start.
         mods = modsOf(p);
-        for (const e of alive) { e.eng = engagementFor(e.entry, mods); e.close = closeTime(e.entry, mods); }
+        for (const e of alive) { e.eng = engagementFor(e.entry, mods, e.guard); e.close = closeTime(e.entry, mods); }
         let best = Infinity;
         for (const e of alive) {
           if (e.hp <= 0) continue;
-          const cost = e.close + e.eng.tKill;
+          const cost = (e.A.melee ? Math.max(e.close, e.arm) : e.close) + e.eng.tKill;
           if (cost < best) { best = cost; engaged = e; }
         }
         phase = 'travel'; phaseT = 0;
@@ -1205,7 +1256,27 @@ export function simulateRun(opts) {
       if (engaged) {
         phaseT += dt;
         if (phase === 'travel') {
-          if (phaseT >= engaged.close) { phase = 'cut'; phaseT = 0; }
+          /**
+           * A BODY YOU HAVE NOT REACHED HAS NOT REACHED YOU EITHER.
+           *
+           * `armTime` charges an enemy the whole walk in from the spawn ring —
+           * 7.6 s for a Sentinel on the shipped default level — while
+           * `closeTime` charges the player only the last couple of metres from
+           * the body's own preferred band. That is the same distance billed to
+           * one side and not the other, and against a MELEE opener it is the
+           * whole answer: the player was modelled as standing in the body's
+           * face from frame one and killing it before its clock had started.
+           * Measured on scoria, which opens on a single 200 hp Jedi Sentinel on
+           * 13 of 24 seeds, wave 1 cost the player 0.0 hp.
+           *
+           * Contact is ONE event. A melee body's own arm clock is therefore the
+           * floor on when the player can begin cutting it. This is the
+           * pessimistic reading — a player running at it meets it sooner than
+           * either clock alone says — and it is the one that removes the bias
+           * rather than the one that flatters the player.
+           */
+          const reach = engaged.A.melee ? Math.max(engaged.close, engaged.arm) : engaged.close;
+          if (phaseT >= reach) { phase = 'cut'; phaseT = 0; }
         } else if (canSwing) {
           if (phaseT >= engaged.eng.tNeutralise) engaged.neutral = true;
           if (phaseT >= engaged.eng.tKill) {

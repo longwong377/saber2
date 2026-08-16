@@ -563,6 +563,70 @@ export async function run({ check, assert }) {
     return `scene held at ${after} objects across 12 runs`;
   });
 
+  check('balance: a body that defends itself does not die as fast as one that cannot', async () => {
+    /**
+     * THE LARGEST SINGLE DEFECT THIS INSTRUMENT HAS HAD, and nothing could see
+     * it because every number it produced was internally consistent.
+     *
+     * `engagementFor` worked the real capsules against the real toughness
+     * tables with the real cut arithmetic — and stood every archetype PERFECTLY
+     * STILL while it did. Measured before the fix, time to put one down at
+     * stock cut power:
+     *
+     *     b1        28 hp    0.64 s   head (decap)
+     *     sentinel 200 hp    0.64 s   hips (kill)
+     *     stalker  420 hp    0.64 s   head (decap)
+     *     beast    900 hp    0.64 s   head (decap)
+     *     master   460 hp    0.64 s   hips (kill)
+     *
+     * The cut arithmetic is not wrong: a lightsaber does take a neck off in one
+     * pass. What was missing is that a Jedi Master does not let you have its
+     * neck. `measureDuel` now counts the share of a fight the real `DuelBrain`
+     * spends in its `guard` phase — Soresu 87.9%, Makashi 48.9%, Djem So 40.2%,
+     * Juyo 38.3%, Ataru 24.3% — and the player's cadence against a duellist is
+     * only its openings.
+     *
+     * This check pins the ORDERING that was false, not the numbers: a body with
+     * a blade in the way must cost more time than one without.
+     */
+    const { engagementFor, measureDuel } = B;
+    const { FORM_KEYS } = await import('../../src/game/Duel.js');
+    const mods = { cutPower: 1, bladeLength: 1.15, attackRate: 1, moveSpeed: 1 };
+    const shares = FORM_KEYS.map((k) => ({ k, g: measureDuel('knight', k).guardShare }));
+    for (const { k, g } of shares) {
+      assert(g > 0.05 && g < 0.99,
+        `${k} spends ${(g * 100).toFixed(0)}% of a fight guarding, which is not a fight`);
+    }
+    const defensive = shares.reduce((a, b) => (a.g > b.g ? a : b));
+    const aggressive = shares.reduce((a, b) => (a.g < b.g ? a : b));
+    assert(defensive.k === 'soresu',
+      `the most defensive form measures as ${defensive.k}; Duel.js authors Soresu as the one that `
+      + '"gives you nothing — it is waiting for you to swing first"');
+    assert(aggressive.k === 'ataru',
+      `the least defensive form measures as ${aggressive.k}; Duel.js authors Ataru as the flurry`);
+
+    // …and the ordering that was false. A B1 has no blade; a Sentinel does.
+    const bare = engagementFor('b1', mods, 0).tKill;
+    const rows = [];
+    for (const t of ['sentinel', 'guardian', 'master', 'acolyte']) {
+      const A = ARCHETYPES[t];
+      if (!A) continue;
+      const g = measureDuel('knight', A.form || 'ataru').guardShare;
+      const held = engagementFor(t, mods, g).tKill;
+      assert(held > bare,
+        `a ${t} (${A.hp} hp, a saber and ${(g * 100).toFixed(0)}% guard) goes down in ${held.toFixed(2)} s `
+        + `against a 28 hp B1's ${bare.toFixed(2)} s — the model is still standing it still`);
+      rows.push(`${t} ${held.toFixed(2)}s`);
+    }
+    const sen = engagementFor('sentinel', mods, measureDuel('knight', 'soresu').guardShare).tKill;
+    const jed = engagementFor('jedi', mods, measureDuel('knight', 'ataru').guardShare).tKill;
+    assert(sen > jed * 2,
+      `a Soresu Sentinel (${sen.toFixed(2)} s) is not meaningfully harder to reach than an Ataru Jedi `
+      + `(${jed.toFixed(2)} s) — the forms are not separating`);
+    return `guard share ${shares.map((x) => `${x.k} ${(x.g * 100).toFixed(0)}%`).join(', ')}; `
+      + `b1 ${bare.toFixed(2)}s vs ${rows.join(', ')}`;
+  });
+
   check('balance: a memo keyed on a moving number cannot grow without bound', async () => {
     // The companion to the leak above: `engagementFor` keys on cutPower, which
     // Fury moves every tick with the player's health, so the key space is
