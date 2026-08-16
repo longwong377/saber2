@@ -24,6 +24,7 @@ import { TOUGHNESS, bladesTouching } from './Combat.js';
 import { segmentSegment } from '../physics/Physics.js';
 import { BOLT_COLORS } from './Bolts.js';
 import { clamp, lerp, damp, smoothstep, makeRng, TAU, dampVec } from '../engine/MathUtil.js';
+import { POWER_COST } from './Powers.js';
 import { audio } from '../engine/Audio.js';
 
 /**
@@ -527,6 +528,13 @@ export const ARCHETYPES = {
     speed: 5.0, toughness: TOUGHNESS.flesh, melee: true, saber: true,
     saberColor: 4, damage: 26, preferred: [1.6, 3.4], score: 700, threat: 6,
     hipHeight: 0.97,
+    /* THE SITH TAKES WHAT THE JEDI WILL NOT. Lightning and the choke are the
+     * two powers `Powers.js` gates behind an attunement for the player and the
+     * two the source material is most consistent about being the dark side's;
+     * giving them to the roster's one Sith is what separates fighting him from
+     * fighting a Jedi at the same threat. 62 of pool buys the lightning twice
+     * or a choke and a push, and then he is a fencer again. */
+    force: 62, powers: ['lightning', 'choke', 'push'],
   },
 
   /* ── the order ──
@@ -551,6 +559,10 @@ export const ARCHETYPES = {
     scale: 1.0, hp: 140, mass: 78, speed: 5.4,
     saberColor: 1, hilt: 'Graflex', form: 'ataru',
     damage: 24, preferred: [1.5, 3.4], score: 800, threat: 6, unlockAt: 1,
+    /* Ataru is the acrobatic form and its danger is the flurry, so the knight
+     * gets the power that RESETS distance in its favour: 44 is two pulls, and
+     * a pull puts you back inside a chain-of-four it had already started. */
+    force: 44, powers: ['pull', 'push'],
   },
   sentinel: {
     ...JEDI_BASE,
@@ -558,6 +570,10 @@ export const ARCHETYPES = {
     scale: 1.02, hp: 200, mass: 84, speed: 4.6,
     saberColor: 0, hilt: 'Sentinel', form: 'soresu',
     damage: 22, preferred: [1.8, 3.0], score: 950, threat: 7, unlockAt: 1,
+    /* Soresu attacks at 0.42 aggression and wins by outlasting, so it gets the
+     * one power that buys it SPACE and nothing that buys it damage. One verb,
+     * and it is the defensive one. */
+    force: 40, powers: ['push'],
   },
   guardian: {
     ...JEDI_BASE,
@@ -567,6 +583,10 @@ export const ARCHETYPES = {
      * Temple Guard yellow". It was added for a body that did not exist. */
     saberColor: 10, hilt: 'Guardian', form: 'djemSo',
     damage: 34, preferred: [1.5, 3.2], score: 1300, threat: 9, unlockAt: 4,
+    /* Djem So hits hardest and recovers slowest, which is an opening you take
+     * by backing off. The pull is the answer to that habit and it is the whole
+     * kit: it drags you back into the 34-damage swing you just stepped out of. */
+    force: 48, powers: ['pull'],
   },
   master: {
     ...JEDI_BASE,
@@ -577,6 +597,12 @@ export const ARCHETYPES = {
     setPieceOnly: true,
     saberColor: 2, hilt: 'Duelist', form: 'makashi',
     damage: 30, preferred: [1.7, 3.4], score: 2800, threat: 12, boss: true,
+    /* The set-piece gets four of the five and the only UNLEASH on the roster,
+     * which fires once, below a third of its health, with a blade inside its
+     * guard — the same moment the player's own costs 52 for. 150 of pool is
+     * roughly three exchanges' worth; it is a boss, and it is meant to make you
+     * spend the whole fight reacting rather than trading. */
+    force: 150, powers: ['unleash', 'lightning', 'pull', 'push'],
   },
 
   droideka: {
@@ -614,6 +640,108 @@ export const ARCHETYPES = {
     label: 'Acklay', build: buildBeast, scale: 2.9, hp: 900, mass: 1400,
     speed: 4.6, toughness: TOUGHNESS.flesh, melee: true, custom: 'beast',
     damage: 42, preferred: [2.5, 5], score: 2400, threat: 16, boss: true,
+  },
+};
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  The other side's Force                                                */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * "PERHAPS THE ENEMY FORCE/SABER USERS SHOULD HAVE THE SAME FORCE POWERS YOU
+ * DO… I FEEL LIKE THEY DIE TOO EASILY AND ARE TOO INEFFECTIVE."
+ *
+ * They had none. `grep -n "force" src/game/Enemy.js` returned the word only in
+ * `forceScale` on incoming damage — every sabered body in the game (the
+ * acolyte, the four Jedi, the sparring partner, the IG bodyguard) was a fencer
+ * with exactly one verb, so a duel was one exchange repeated until somebody ran
+ * out of health. The player is right and it is not a numbers problem: raising
+ * their health makes the same fight longer, which is the opposite of the note.
+ *
+ * ── WHAT IS SHARED AND WHAT IS NOT.
+ *
+ * `POWER_COST` (src/game/Powers.js) is imported, not copied. That module exists
+ * precisely because its table had already been duplicated once and drifted —
+ * the HUD greyed out a power the player could afford — and an enemy paying a
+ * different price for the same power is the same defect with a new reader. So a
+ * Sith's push costs the twenty a player's push costs.
+ *
+ * The EFFECTS cannot be shared, and this is worth writing down rather than
+ * apologising for. `Player.forcePush` is 78 lines that reach `this.cooldowns`,
+ * `_spend`, `_refuse`, `_gesture`, `this.cloak`, `camera.addShake`,
+ * `world.destruction`, `ctx.bolts` and `forceScale`, and none of those exist on
+ * an Enemy. What IS shared is the thing that matters for consistency: the blow
+ * lands through `target.applyKnockback(impulse, damage, source)` — the exact
+ * call every one of the player's own powers ends in, and the reason Player.js
+ * grew that method in the first place — so being pushed by a Sith and being
+ * pushed by a player go through one path, one damage gate, one stagger rule.
+ *
+ * ── WHY THESE FIVE, AND WHY THEY ARE HANDED OUT UNEVENLY.
+ *
+ * A kit that every duellist carries is one duellist wearing five faces, which
+ * is the defect this same session fixed in the menagerie. Each power answers a
+ * different player HABIT, and an archetype gets the ones its form already
+ * argues for:
+ *
+ *   PUSH       answers standing inside their guard. Fired when the player is
+ *              close AND the enemy is losing the exchange, so it reads as "get
+ *              off me" rather than as an opener.
+ *   PULL       answers backing off to heal or to wait out a recovery. It drags
+ *              you to blade range and the swing is already coming.
+ *   CHOKE      answers nothing you can do while it is on: 35% movement speed
+ *              (`Player.staggerTimer`) and damage a second, held for as long as
+ *              they can pay. Its cost is 10 and its DRAIN is the balance — a
+ *              choke ends because the pool ran out.
+ *   LIGHTNING  answers hanging back at range, which is what the whole roster of
+ *              ranged enemies teaches you to do to a melee one.
+ *   UNLEASH    the 360 the player got last session, at the one moment it is
+ *              earned: a master below a third of its health, with a blade
+ *              inside its guard.
+ *
+ * Balanced by POOL rather than by damage. `force` is small — a knight can pay
+ * for two pushes and then it has to fight — and it regenerates at
+ * `FORCE_REGEN` a second, so a duellist that opens with everything is a
+ * duellist with nothing at the end. Nobody's health or damage moved.
+ */
+/**
+ * …and the regen is the whole balance, so it is measured rather than picked.
+ *
+ * At 5.5 a second the pool was never the limit: 4352 of the 4384 frames on
+ * which an acolyte was otherwise free to cast were refused by a COOLDOWN and
+ * none by the price, so a duellist pushed every 4.6 s forever and the kit read
+ * as a tic rather than as a resource. At 3.0 the push's 20 costs more than the
+ * 19.5 its cooldown regenerates, so the pool falls: the opening exchange buys
+ * two or three powers and everything after it is fought with the blade, which
+ * is the shape the note asks for ("more dangerous", not "unanswerable").
+ */
+export const FORCE_REGEN = 3.0;
+
+export const ENEMY_POWERS = {
+  push: {
+    cost: POWER_COST.push, cd: 6.5, band: [0, 7.5], want: 'pressed',
+    label: 'FORCE PUSH', color: '#8ad8ff', sound: 'push',
+  },
+  pull: {
+    cost: POWER_COST.pull, cd: 5.4, band: [6.5, 20], want: 'fleeing',
+    label: 'FORCE PULL', color: '#8affc4', sound: 'pull',
+  },
+  /* Held rather than fired: `hold` is the seconds it may run for and it is
+   * paid per second, so the pool is the real limit. `cost` is the price of
+   * opening it, exactly as `Player.forceGrip` charges to take hold and then
+   * bills per second while it lifts. */
+  choke: {
+    cost: POWER_COST.grip, cd: 9.0, band: [2.5, 16], want: 'fleeing',
+    hold: 2.4, drain: 9, dps: 7,
+    label: 'CHOKE', color: '#ff6a6a', sound: 'grip',
+  },
+  lightning: {
+    cost: POWER_COST.lightning, cd: 8.5, band: [4.5, 18], want: 'ranged',
+    hold: 1.6, drain: 6, dps: 22,
+    label: 'LIGHTNING', color: '#c8e8ff', sound: 'lightning',
+  },
+  unleash: {
+    cost: POWER_COST.unleash, cd: 22, band: [0, 9], want: 'cornered',
+    label: 'UNLEASH', color: '#ffd24a', sound: 'push',
   },
 };
 
@@ -1102,6 +1230,22 @@ export class Enemy {
     this.burstTimer = 0;
     this.aimCharge = 0;
     this.state = 'approach';
+
+    /* THE OTHER SIDE'S FORCE — see ENEMY_POWERS. `powers` is null for every
+     * body that is not a Force user, and `_meleeBrain` tests exactly that, so
+     * a droid pays nothing for the feature existing. The pool starts FULL:
+     * a duellist that had to stand around regenerating before it could do
+     * anything would spend the first exchange — the only one some of them get
+     * — being the fencer this is meant to stop them being. */
+    this.powers = A.powers && A.powers.length ? A.powers : null;
+    this.forceMax = A.force ?? 0;
+    this.force = this.forceMax;
+    this.powerCd = {};
+    if (this.powers) for (const k of this.powers) this.powerCd[k] = 0;
+    this._castTimer = 0;
+    this._castKey = null;
+    this.casting = null;
+    this.castLeft = 0;
     this.stateTime = 0;
     this.bossPhase = 1;
     this.recentDamage = 0;
@@ -2340,7 +2484,144 @@ export class Enemy {
     if (this.duel.lungeSpeed > 0.01 && this.toTarget) {
       this.velocity.addScaledVector(this.toTarget, this.duel.lungeSpeed * dt * 9);
     }
+    if (this.powers) this._forceBrain(dt, ctx, dist);
     if (this.offSaber && !this.offDisarmed) this._offhandStrike(dt, ctx);
+  }
+
+  /**
+   * WHEN A DUELLIST REACHES FOR THE FORCE — see ENEMY_POWERS for what and why.
+   *
+   * Three gates, in this order, and each is here to stop a different kind of
+   * bad fight:
+   *
+   *   AFFORDABILITY  the pool, off the same POWER_COST table the player pays.
+   *                  This is the balance: a knight can pay for two pulls, and
+   *                  a duellist that opens with everything is a fencer for the
+   *                  next eight seconds.
+   *   SITUATION      `want`. A push fired at nothing is not a threat, it is
+   *                  noise, and it teaches the player that the tell means
+   *                  nothing. `pressed` means a blade is inside its guard and
+   *                  the exchange is going against it; `fleeing` means the
+   *                  target is opening the distance; `ranged` means they have
+   *                  already opened it; `cornered` is the boss's last third.
+   *   TELEGRAPH      `_castTimer`. The cast is a 0.45 s wind-up with a floating
+   *                  call over the body, because everything else this game does
+   *                  to the player is readable and a power that arrives with no
+   *                  frame of warning is the 11.5 m sphere the beasts check has
+   *                  a note about.
+   *
+   * It never casts through its own strike — `phase === 'strike'` — so a power
+   * cannot arrive on the same frame as a blade and make an exchange
+   * unanswerable.
+   */
+  _forceBrain(dt, ctx, dist) {
+    const t = this.target;
+    this.force = Math.min(this.forceMax, this.force + FORCE_REGEN * dt);
+    for (const k in this.powerCd) this.powerCd[k] = Math.max(0, this.powerCd[k] - dt);
+
+    // a power already running — pay for it by the second, or it stops
+    if (this.casting) { this._sustain(dt, ctx, dist); return; }
+
+    if (this._castTimer > 0) {
+      this._castTimer -= dt;
+      this.wish = null;                       // it plants to cast
+      if (this._castTimer <= 0) this._castPower(this._castKey, ctx, dist);
+      return;
+    }
+    if (!t || !t.alive || this.duel.phase === 'strike' || this.duel.staggered) return;
+    if (this.stunTimer > 0 || this.gripped) return;
+
+    const closing = this.toTarget && t.velocity
+      ? t.velocity.x * this.toTarget.x + t.velocity.z * this.toTarget.z : 0;
+    const hpFrac = this.hp / this.maxHp;
+    const situation = {
+      // a blade inside the band it wants to fight at, and it is behind on health
+      pressed: dist < this.A.preferred[1] + 0.8 && hpFrac < 0.72,
+      // opening the distance: `closing` is positive when they move away from it
+      fleeing: closing > 1.6 || dist > this.A.preferred[1] + 3.5,
+      ranged: dist > this.A.preferred[1] + 2.0,
+      cornered: hpFrac < 0.34 && dist < 6,
+    };
+
+    for (const key of this.powers) {
+      const P = ENEMY_POWERS[key];
+      if (!P || this.powerCd[key] > 0 || this.force < P.cost) continue;
+      if (dist < P.band[0] || dist > P.band[1]) continue;
+      if (!situation[P.want]) continue;
+      if (!this._hasLineOfSight(ctx)) continue;
+      this._castKey = key;
+      this._castTimer = 0.45;
+      this.world.notifyFloating?.(this.aimPoint(_v1), P.label, P.color);
+      audio.tone({ freq: 180, freqEnd: 900, dur: 0.45, gain: 0.10, type: 'sine', pos: this.position });
+      return;
+    }
+  }
+
+  /** The cast lands. Everything that hits goes through `applyKnockback`. */
+  _castPower(key, ctx, dist) {
+    const P = ENEMY_POWERS[key];
+    const t = this.target;
+    this._castKey = null;
+    if (!P || !t || !t.alive) return;
+    if (this.force < P.cost) return;
+    this.force -= P.cost;
+    this.powerCd[key] = P.cd;
+    audio.force(this.position, P.sound);
+    this.world.engine?.setRadial?.(0.22);
+
+    if (P.hold) { this.casting = key; this.castLeft = P.hold; return; }
+
+    const dir = _v1.subVectors(t.position, this.position).setY(0);
+    const d = dir.length() || 1;
+    dir.multiplyScalar(1 / d);
+    if (key === 'push' || key === 'unleash') {
+      /* The 360 is the 360: `unleash` takes everything inside its band whatever
+       * side of the body it is on, which is the property that makes it the
+       * answer to being surrounded rather than a bigger push. Reach and
+       * impulse are the push's, times the ratio the two costs stand in. */
+      const k = key === 'unleash' ? 1.55 : 1.0;
+      _v2.copy(dir).multiplyScalar(17 * k).setY(6.5 * k);
+      t.applyKnockback?.(_v2, 9 * k, this);
+      this.world.particles?.sandPuff(this.position.clone().addScaledVector(dir, 1.2),
+        2.0 * k, this.world.terrain?.height(this.position.x, this.position.z), this.world.groundColor);
+      if (key === 'unleash') {
+        // …and it moves the furniture, which is what says "everything around me"
+        for (const b of (ctx.physics ? ctx.physics.bodies : [])) {
+          if (b.invMass === 0 || b === this.body) continue;
+          _v3.subVectors(b.position, this.position);
+          const bd = _v3.length();
+          if (bd > 9 || bd < 0.01) continue;
+          b.applyImpulse(_v3.multiplyScalar(b.mass * 9 * (1 - bd / 9) / bd).setY(b.mass * 4), b.position);
+        }
+      }
+    } else if (key === 'pull') {
+      /* A PULL ENDS IN FRONT OF THE PULLER, which is the note Player.forcePull
+       * carries: an impulse "toward me" overshoots at 4 m and falls short at
+       * 16, so the target is a DESTINATION — blade range — and the speed is
+       * whatever covers the gap against the damping the body already has. */
+      const want = Math.max(0, d - this.A.preferred[0]);
+      _v2.copy(dir).multiplyScalar(-Math.min(want * 6, 26)).setY(2.5);
+      t.applyKnockback?.(_v2, 0, this, true);
+    }
+  }
+
+  /** A held power, billed by the second. It ends when the pool does. */
+  _sustain(dt, ctx, dist) {
+    const P = ENEMY_POWERS[this.casting];
+    const t = this.target;
+    this.castLeft -= dt;
+    const pay = P.drain * dt;
+    const lost = !t || !t.alive || dist > P.band[1] + 2 || this.duel.staggered
+      || this.stunTimer > 0 || this.gripped;
+    if (this.castLeft <= 0 || this.force < pay || lost) { this.casting = null; return; }
+    this.force -= pay;
+    this.wish = null;                          // it holds still to hold you
+    t.applyKnockback?.(null, P.dps * dt, this, true);
+    if (this.casting === 'choke' && t.velocity) t.velocity.multiplyScalar(0.86);
+    if (rng() < 0.35) {
+      this.world.particles?.sparkBurst?.(t.chest ?? t.position, 2,
+        this.casting === 'lightning' ? 0x9fd8ff : 0xff6a6a);
+    }
   }
 
   /**
