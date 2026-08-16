@@ -27,6 +27,42 @@
 
 import * as THREE from 'three';
 import { clamp, lerp, makeRng } from '../engine/MathUtil.js';
+import { limbScale } from './Rig.js';
+
+/**
+ * THE SCALE A GARMENT'S *LENGTH* TAKES, WHICH IS NOT THE ONE ITS WIDTH TAKES.
+ *
+ * Every length in this file is authored in metres against the reference figure
+ * and multiplied by `opts.scale` on the way out, and that is right for
+ * everything measured ACROSS the body. It is wrong for a hem, because a hem is
+ * measured DOWN A LEG and a species frame scales the leg separately: `smallfolk`
+ * is `scale: 0.40` with `legLen: 0.80`, so its legs are 0.32 while its robe was
+ * 0.40 — a robe a fifth longer than the body it is on.
+ *
+ * Measured on the shipped small frame before this (tools/_stature.mjs), as the
+ * hem's clearance above the figure's OWN feet in units of its own height:
+ *
+ *     garment   human   smallfolk
+ *     cloak     25.9%     12.8%
+ *     skirt     13.0%      2.9%
+ *
+ * Three centimetres of a sixty-nine centimetre figure. The robe is standing on
+ * the floor, and "their clothes are oversized" is what that looks like. None of
+ * the fourteen reference plates in assets/reference/units/heroes has cloth on
+ * the ground — Yoda's robe pools a little and both feet are still clear of it.
+ *
+ * Derived from the rig's own bones rather than taken as an argument, so a
+ * garment ordered by Enemy.js, by the character preview or by a check gets the
+ * same answer without any of them being told about it; `opts.drop` overrides
+ * for a caller that genuinely means something else. A human reads exactly 1 —
+ * `limbScale` divides the reference figure's leg by itself — so every garment
+ * built at scale 1 is unchanged to the bit.
+ */
+function dropScale(rig, opts, S) {
+  if (opts.drop != null) return opts.drop;
+  const rs = rig?.scale ?? 1;
+  return S * (limbScale(rig).leg / (rs || 1));
+}
 
 /**
  * The garment stream. Every cloak draws its own seed from here, so two Jedi in
@@ -1725,6 +1761,7 @@ export function bareCape() {
  */
 export function attachTabard(scene, rig, opts = {}) {
   const S = opts.scale ?? 1;
+  const D = dropScale(rig, opts, S);   // lengths hang down a leg — see dropScale
   const chestB = rig.get('chest');
   if (!chestB || !opts.panels || !opts.panels.length) return null;
   const width = opts.width ?? 0.24;
@@ -1751,7 +1788,7 @@ export function attachTabard(scene, rig, opts = {}) {
     const panel = new Cloak(scene, {
       cols, rows,
       width: width * S,
-      length: length * S,
+      length: length * D,          // across the chest at S, down the thigh at D
       material: opts.material,
       color: opts.color ?? 0x5a4530,
       /*
@@ -1910,6 +1947,7 @@ export function attachCloak(scene, rig, opts = {}) {
   opts = withCape(withCut(opts, 'cloak'));
   const capeless = CAPE_BY_ID.get(opts.cape)?.none;
   const S = opts.scale ?? 1;
+  const D = dropScale(rig, opts, S);   // lengths hang down a leg — see dropScale
   const chest = rig.get('chest');
   if (!chest) return null;
   if (capeless) return dressCape(bareCape(), scene, rig, opts, S);
@@ -1921,7 +1959,7 @@ export function attachCloak(scene, rig, opts = {}) {
     cols: opts.cols ?? 9,
     rows: opts.rows ?? 11,
     width: (opts.width ?? 0.6) * S,
-    length: (opts.length ?? 1.0) * S,
+    length: (opts.length ?? 1.0) * D,  // collar at S, hem down the leg at D
     color: opts.color ?? 0x4c3a26,
     material: opts.material,
     flare: opts.flare,                 // was silently dropped on the floor
@@ -2057,6 +2095,7 @@ export function attachCloak(scene, rig, opts = {}) {
 export function attachSkirt(scene, rig, opts = {}) {
   opts = withCut(opts, 'skirt');
   const S = opts.scale ?? 1;
+  const D = dropScale(rig, opts, S);   // lengths hang down a leg — see dropScale
   const hipsB = rig.get('hips');
   if (!hipsB) return null;
 
@@ -2137,7 +2176,11 @@ export function attachSkirt(scene, rig, opts = {}) {
   const skirt = new Cloak(scene, {
     closed: true,
     cols, rows,
-    length: length * S,
+    /* THE HEM, and it is the one number in this call that is not `* S`. The
+     * waistband above it is a hip measurement and takes S; how far below the
+     * hip the cloth reaches is a leg measurement and takes D. See dropScale —
+     * at S this robe ended 2.9% of a small figure's height off the floor. */
+    length: length * D,
     // cut to the garment's own silhouette rather than to an exponent — see
     // `petticoat`. Divided by the waistband so the profile is a multiplier on
     // the anchor ring, which is what reset() wants.
@@ -2466,6 +2509,7 @@ export function attachSkirt(scene, rig, opts = {}) {
  */
 export function attachSash(scene, rig, opts = {}) {
   const S = opts.scale ?? 1;
+  const D = dropScale(rig, opts, S);   // lengths hang down a leg — see dropScale
   const hipsB = rig.get('hips');
   if (!hipsB) return null;
   const cols = opts.cols ?? 4;
@@ -2504,7 +2548,7 @@ export function attachSash(scene, rig, opts = {}) {
     const strap = new Cloak(scene, {
       closed: true,
       cols, rows,
-      length: e.len * S,
+      length: e.len * D,           // a belt end hangs down the thigh, like a hem
       /* Parallel-sided. `flare` defaults to 0.85 and a sash that bells out to
        * 1.85× its own width at the tip is a pennant. */
       flare: 0,

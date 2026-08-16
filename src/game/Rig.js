@@ -89,6 +89,80 @@ export function humanoidSkeleton(scale = 1, opts = {}) {
   ];
 }
 
+/**
+ * WHAT EVERY LENGTH TYPED IN METRES ELSEWHERE IN THE GAME IS AUTHORED AGAINST.
+ *
+ * A species frame carries THREE scales, not one — `smallfolk` is `scale: 0.40`
+ * with `armLen: 1.06` and `legLen: 0.80` — and a constant authored in metres
+ * against the reference figure is only correct on another figure if it is
+ * multiplied by the scale of the limb it belongs to. Multiplying by
+ * `rig.scale` alone is right for the torso and wrong for both limbs, and the
+ * error is not small: a robe scaled 0.40 hung down legs scaled 0.32 ends on the
+ * floor, and a guard point placed 0.29 m out from the chest is 1.35 times the
+ * whole reach of an arm scaled 0.42.
+ *
+ * These are DERIVED from `humanoidSkeleton` rather than typed beside it, so a
+ * change to a bone length cannot leave a stale copy behind (HANDOFF 2.3). The
+ * template is pure and takes no arguments here, so this is one call at load.
+ */
+const _REF = humanoidSkeleton(1);
+const _refLen = (n) => _refDef(n)?.length ?? 0;
+const _refDef = (n) => _REF.find((d) => d.name === n);
+export const REF_ARM = _refLen('armR') + _refLen('foreR');
+export const REF_LEG = _refLen('thighR') + _refLen('shinR');
+
+/**
+ * How high a named bone stands above the ANKLE, in the rest pose, from the
+ * skeleton's own numbers alone — no world matrices, so it is a property of the
+ * figure and not of whatever the gait happened to be doing this frame.
+ *
+ * A bone's `offset` is its position in its parent's local frame, and for the
+ * spine chain each one equals the parent's length, so summing `offset.y` up the
+ * parent chain is the height above the hips; the legs hang below.
+ */
+function standOf(get, name) {
+  let y = 0;
+  for (let b = get(name); b; b = b.parent) y += b.offset.y;
+  return y + (get('thighR')?.length ?? 0) + (get('shinR')?.length ?? 0);
+}
+const _refGet = (n) => {
+  const d = _refDef(n);
+  return d && { offset: { y: d.offset[1] }, length: d.length, parent: _refGet(d.parent) };
+};
+export const REF_CHEST = standOf(_refGet, 'chest');
+
+/**
+ * How this rig's limbs compare with the reference figure's — 1, 1 for a human.
+ *
+ * Read off the rig's OWN bones rather than off the species row, because the
+ * bones are the thing that got built: a caller that overrode `armLen` by hand,
+ * a droid frame, or a body whose arm has been cut short all answer correctly,
+ * and nothing has to know which species table a figure came from.
+ *
+ * `torso` is `rig.scale` under its proper name, so a caller can say which of
+ * the three it means at the call site instead of leaving `S` to be guessed at.
+ *
+ * `stand` is the fourth and it is not any of the other three: it is how high
+ * this figure's CHEST stands above its own feet. A frame with short legs and an
+ * ordinary torso — which is what `legLen: 0.80` is — carries its chest lower
+ * than its overall height suggests, and nothing that scales by total height can
+ * know that. It is the number for anything placed at a HEIGHT ON THE BODY.
+ */
+export function limbScale(rig) {
+  const get = (n) => rig?.get?.(n) ?? null;
+  const g = (n) => get(n)?.length ?? 0;
+  const arm = (g('armR') + g('foreR')) / REF_ARM;
+  const leg = (g('thighR') + g('shinR')) / REF_LEG;
+  const torso = rig?.scale ?? 1;
+  const chest = get('chest') ? standOf(get, 'chest') / REF_CHEST : 0;
+  return {
+    torso,
+    arm: arm > 0 ? arm : torso,
+    leg: leg > 0 ? leg : torso,
+    stand: chest > 0 ? chest : torso,
+  };
+}
+
 /** Four-legged / multi-legged frames for walkers and beasts. */
 export function walkerSkeleton(scale = 1, legs = 4) {
   const s = scale;

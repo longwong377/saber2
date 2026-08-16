@@ -347,6 +347,34 @@ export class SaberController {
     this.roll = 0;
     this.rollVel = 0;
 
+    /**
+     * HOW LONG THIS WIELDER'S ARM IS, against the one every number in `GRIPS`
+     * was authored for — 1 for a human, and set by the Player from its own rig
+     * (see `limbScale` in Rig.js).
+     *
+     * `guardR`, `handExtend`, `offset`, the lateral split and both reach clamps
+     * are all DISTANCES FROM THE CHEST TO THE HANDS. They are a body
+     * measurement wearing the name of a tuning constant, and on a body that is
+     * not 1.78 m they are simply the wrong body's. On the 0.66 m frame,
+     * measured before this (tools/_stature.mjs), the hand target sat 1.35 times
+     * the whole reach of the arm away from the shoulder — so the two-bone IK
+     * could not arrive at ALL. It did what an IK does when it cannot reach:
+     * straightened the arm, pointed it at the target, and stopped short. That
+     * is both of the note's first two claims in one line — the hilt hangs in
+     * the gap the hand could not close, and under a raised guard the target is
+     * above the figure's own head, so both arms go up to point at it (68° and
+     * 47° above their own shoulders, against a human's 40° and 19°).
+     *
+     * NOT `stature`. The chest these are measured FROM is already placed by
+     * stature; what is measured from it is arm, and a species frame scales the
+     * arm separately (`smallfolk` is `scale: 0.40` with `armLen: 1.06`).
+     *
+     * Everything the blade DOES is untouched — kP, kD, inertia and the two
+     * linear gains are a weapon's character, not a body's, and a smaller Jedi
+     * is not holding a lighter sword.
+     */
+    this.reachScale = opts.reachScale ?? 1;
+
     this.sensitivity = opts.sensitivity ?? 1;
     this.followStrength = opts.followStrength ?? 0;
     this.deadzone = 0.24;
@@ -956,12 +984,15 @@ export class SaberController {
     // across you (85 deg). 5 cm of forward gap is all that is kept, and only so
     // the blade still has a direction to point in.
     const sAbs = Math.abs(this.stance);
-    const guardR = lerp(g.guardR, g.handExtend + 0.05, sAbs) + reach * THRUST_REACH.guard;
+    // Every length from here down is chest-to-hand, i.e. arm — see reachScale.
+    const R = this.reachScale;
+    const guardR = (lerp(g.guardR, g.handExtend + 0.05, sAbs) + reach * THRUST_REACH.guard) * R;
     const guardWorld = _v2.copy(chest).addScaledVector(gd, guardR);
 
     // hands: partway along the guard direction, offset into the body
-    _v3.copy(g.offset).applyQuaternion(aimQuat);
-    const handTarget = _v4.copy(chest).add(_v3).addScaledVector(gd, g.handExtend + reach * THRUST_REACH.hand);
+    _v3.copy(g.offset).multiplyScalar(R).applyQuaternion(aimQuat);
+    const handTarget = _v4.copy(chest).add(_v3)
+      .addScaledVector(gd, (g.handExtend + reach * THRUST_REACH.hand) * R);
 
     // ── LATERAL GUARD. Split the hands off the guard ray in one direction and
     // the guard point in the other, about an axis perpendicular to both the
@@ -976,8 +1007,8 @@ export class SaberController {
       _v3.crossVectors(gd, UP);
       if (_v3.lengthSq() < 1e-6) _v3.set(1, 0, 0).applyQuaternion(aimQuat);
       _v3.normalize();
-      handTarget.addScaledVector(_v3, -this.stance * 0.30);
-      guardWorld.addScaledVector(_v3, this.stance * 0.34);
+      handTarget.addScaledVector(_v3, -this.stance * 0.30 * R);
+      guardWorld.addScaledVector(_v3, this.stance * 0.34 * R);
       // A guard across the body is carried level. Without this the hands' own
       // 20 cm drop below the guard point tilts the bar 17 deg, and the blade
       // rides up with whatever elevation the cursor happened to have.
@@ -988,7 +1019,7 @@ export class SaberController {
     // move where the shoulder and the torso add to the arm, so the ceiling
     // lifts with the thrust rather than clipping the one action that needs it.
     _v5.subVectors(handTarget, chest);
-    const armMax = 0.78 + this.thrust * 0.10;
+    const armMax = (0.78 + this.thrust * 0.10) * R;
     if (_v5.length() > armMax) { _v5.setLength(armMax); handTarget.copy(chest).add(_v5); }
 
     this._handTarget = this._handTarget || new THREE.Vector3();
@@ -1116,8 +1147,10 @@ export class SaberController {
     if (this.handVel.lengthSq() > 900) this.handVel.setLength(30);
     this.handLocal.addScaledVector(this.handVel, dt);
 
-    // keep the hands within reach of the chest no matter what hit them
-    const maxReach = 0.86, minReach = 0.16;
+    // keep the hands within reach of the chest no matter what hit them — and
+    // within THIS chest's reach: a parry impulse that flings a human's hands
+    // 0.86 m out would put a 0.66 m figure's fists past the end of its arms.
+    const maxReach = 0.86 * this.reachScale, minReach = 0.16 * this.reachScale;
     const rl = this.handLocal.length();
     if (rl > maxReach) { this.handLocal.setLength(maxReach); this.handVel.multiplyScalar(0.5); }
     else if (rl < minReach) this.handLocal.setLength(minReach);

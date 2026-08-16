@@ -974,7 +974,48 @@ export class Saber {
     this.hiltSpec = built.spec;
     this.hilt = built.group;
     this.root.add(built.group);
-    this.emitterY = built.emitter;
+    this._emitter0 = built.emitter;
+    this.setGripScale(this.gripScale ?? 1);
+  }
+
+  /**
+   * HOW BIG THIS WEAPON'S HILT IS, because a grip is a contact between two
+   * objects and the smaller of them sets the scale.
+   *
+   * The hilt is the ONE part of a figure that is not built by `Bodies.js` and
+   * therefore the one part that never took a species scale. Measured on the
+   * shipped small frame (tools/_stature.mjs), in units of the hand holding it:
+   *
+   *     hilt / hand      human 2.44        smallfolk 6.10
+   *
+   * A 0.24 m bar through a 0.04 m fist is a quarterstaff. It is also why the
+   * arms sat high after the guard itself was fixed: `GRIP_AT.R` is a HILT-local
+   * +0.050, so the fist is pushed 50 mm up a blade that points upward in a
+   * guard — a tenth of a human's arm and a fifth of this one's — and both fists
+   * straddle a 65 mm span of shaft on a hand only 40 mm wide, which cannot
+   * close on it and cannot look like it has.
+   *
+   * WHY IT SHRINKS AT ALL, since a lightsaber is a machined object and not a
+   * texture: because the reference says so. `assets/reference/units/heroes/
+   * yoda.jpg` is a SHOTO — the metal standing clear above the fist is about one
+   * fist, and below it about half of one, which is the same proportion Obi-Wan's
+   * Graflex has in his much bigger hand two plates over. Across all fourteen
+   * plates the constant is not the hilt's length in centimetres, it is the hilt
+   * against the hand. At the hand's own scale this hilt is 96 mm — a heavy
+   * torch, not "nothing" — and it lands at 2.44 hands, the human's figure
+   * exactly, without that number being typed anywhere.
+   *
+   * The BLADE is untouched. `bladeLength` is a player setting and a combat
+   * reach, and a smaller wielder is not carrying a shorter sword; only the
+   * emitter face comes down with the hilt it is machined into, which shortens
+   * the whole weapon by 9 cm on a 1.3 m one.
+   */
+  setGripScale(g = 1) {
+    this.gripScale = g;
+    if (this.hilt) this.hilt.scale.setScalar(g);
+    this.emitterY = (this._emitter0 ?? this.emitterY ?? 0) * g;
+    if (this.bladeGroup) this.bladeGroup.position.y = this.emitterY;
+    return this;
   }
 
   /**

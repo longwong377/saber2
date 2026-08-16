@@ -13,7 +13,7 @@ import { SaberController, THRUST_STANDING_SPEED } from './SaberController.js';
 import { buildJedi } from './Bodies.js';
 import { SKIN_TONES, HAIR_COLORS } from '../ui/Menu.js';
 import { speciesOf } from './Bodies.js';
-import { Rig, BipedAnimator, aimY } from './Rig.js';
+import { Rig, BipedAnimator, aimY, limbScale } from './Rig.js';
 import { dropSaber, hiltWithinReach, ageDropped } from './Dropped.js';
 import { attachCloak, attachSkirt } from './Cloth.js';
 import { Body, LAYER, capsuleSpheres, capsule } from '../physics/RapierWorld.js';
@@ -605,8 +605,28 @@ export const GRIP_BORE = new THREE.Vector3(0, 0.065, 0.030);
  * @param outWrist receives the offset from the grip point BACK to the wrist, in
  *                world space; add it to a point on the hilt's axis to get where
  *                the wrist joint belongs.
+ * @param handScale  how big this figure's hand is against the reference one —
+ *                `rig.scale`. See below; the default of 1 is a human.
+ *
+ * ── THE BORE IS A HAND-SPACE CONSTANT AND THE HAND IS NOT ALWAYS THAT SIZE ──
+ *
+ * `GRIP_BORE` says of itself that it is measured "at the scale buildHand is
+ * called with here", which is 1. `Rig` bakes a figure's scale into the bone
+ * lengths and leaves every bone Object3D at scale 1, so a hand-space offset
+ * does NOT shrink with the figure when it is pushed through the hand's matrix —
+ * it stays 72 mm on a fist that is 40 mm long.
+ *
+ * That is a fixed 43 mm error in exactly the direction reported: the arm is
+ * told to hold its wrist 72 mm back from the hilt's axis, the hand is only 40
+ * mm long, and the hilt ends up outside the fist. Measured on the shipped
+ * small frame before this, in units of that figure's OWN hand
+ * (tools/_stature.mjs): the metal sat 2.42 hands clear of the hole it is
+ * supposed to be inside, against 0.00 for a human.
+ *
+ * Scaled here rather than at the call site because every caller has the same
+ * problem and only one of them had noticed it.
  */
-export function handPoseOnHilt(side, hiltQuat, toward, outQuat, outWrist) {
+export function handPoseOnHilt(side, hiltQuat, toward, outQuat, outWrist, handScale = 1) {
   const L = side === 'L';
   const bore = _hp1.set(0, 1, 0).applyQuaternion(hiltQuat);      // the blade
   const x = _hp2.copy(bore).multiplyScalar(L ? 1 : -1);          // thumb to the emitter
@@ -624,7 +644,9 @@ export function handPoseOnHilt(side, hiltQuat, toward, outQuat, outWrist) {
     // no arm to ask: the hilt's own frame, turned a quarter
     outQuat.copy(hiltQuat).multiply(L ? GRIP_ROLL_L : GRIP_ROLL_R);
   }
-  if (outWrist) outWrist.copy(GRIP_BORE).applyQuaternion(outQuat).negate();
+  if (outWrist) {
+    outWrist.copy(GRIP_BORE).multiplyScalar(handScale).applyQuaternion(outQuat).negate();
+  }
   return outQuat;
 }
 
@@ -1569,7 +1591,22 @@ export class Player {
      * the FLOOR.
      */
     this.stature = (speciesOf(opts.species)?.frame?.stature ?? HUMAN_H) / HUMAN_H;
-    this.eyeHeight = EYE_H * this.stature;
+    /**
+     * …AND STATURE IS ONLY ONE OF THREE SCALES. See `limbScale` in Rig.js.
+     *
+     * `stature` places things measured off the FLOOR. It is the wrong number
+     * for anything measured off the CHEST — which is where the whole guard
+     * model is measured from — because a species frame scales the arm
+     * separately from the body, and it is the wrong number for a hem, which is
+     * measured down a leg scaled separately again. Three scales, three readers,
+     * each named at the point of use so the next one is not left guessing which
+     * `S` was meant.
+     */
+    this.limbs = limbScale(this.rig);
+    /* An eye is a height on a body, so it takes `stand` like the other three
+     * (see the note over `st` in _updateBlade). Exactly 1 for every human-framed
+     * species, so no camera in the game moves but the small one's. */
+    this.eyeHeight = EYE_H * this.limbs.stand;
     this._makeCloak();
 
     // ── saber
@@ -1595,10 +1632,18 @@ export class Player {
        */
       lightPriority: opts.isLocal ? 1 : 0,
     });
+    /* THE HILT IS SIZED BY THE HAND, not by the stature. It is an object held
+     * IN a fist, and `buildHand` is called with the body scale — see
+     * Saber.setGripScale for the measurement and for why it shrinks at all. */
+    this.saber.setGripScale?.(this.limbs.torso);
     this.control = new SaberController({
       sensitivity: opts.sensitivity ?? 1,
       followStrength: opts.followStrength ?? 0,
       scheme: opts.scheme ?? 'hold',
+      /* The guard is held at arm's length, and the arm is this one's. Every
+       * distance in GRIPS is chest-to-hand; see `reachScale` there for what
+       * leaving it at a human's did to the small frame. */
+      reachScale: this.limbs.arm,
     });
     this.hum = audio.createHum(this.saber.color.getHex());
 
@@ -2559,7 +2604,27 @@ export class Player {
     // it 0.20 m ABOVE the player's own eye, so every droid in the level would
     // have been shooting over the head of a player who looked at the sky.
     // They are two points and they are now two fields.
-    const st = this.stature ?? 1;
+    /**
+     * `stand`, NOT `stature` — and this is the second half of "both arms in
+     * the air".
+     *
+     * All four of these are heights on a body, and `stature` is a fraction of
+     * total HEIGHT. Those are the same thing only on a figure whose parts are
+     * all scaled alike, and `smallfolk` is deliberately not one: `legLen: 0.80`
+     * against a torso at 0.40 puts its chest lower than its overall height
+     * suggests. Measured (tools/_stature.mjs), stature reads 0.371 where the
+     * bones put the chest at 0.340 — so the guard, and with it the hilt and
+     * both arms, was solved from a point 4 cm too high on a figure whose whole
+     * arm is 23 cm long. In arm-lengths: the anchor sat 0.01 ABOVE the small
+     * frame's shoulder where a human's sits 0.11 BELOW it, and everything
+     * hanging off it rode up by the difference.
+     *
+     * `limbScale` reads it off the bones, so it is the height the body actually
+     * has rather than a second opinion about it (HANDOFF 2.3), and it is
+     * exactly 1 for every human-framed species in the table — nothing that
+     * ships today moves by a bit except the one this note is about.
+     */
+    const st = this.limbs?.stand ?? this.stature ?? 1;
     this.chest.copy(this.position).setY(this.position.y + lerp(CHEST_H, CHEST_H_CROUCH, this.crouch) * st);
     const chestH = lerp(CHEST_H, CHEST_H_CROUCH, this.crouch) * st,
           eyeH = lerp(EYE_H, EYE_H_CROUCH, this.crouch) * st;
@@ -2598,11 +2663,23 @@ export class Player {
       // so it lands where the same offset from the CHEST would, plus the eye's
       // own ride. Written this way rather than as a bare drop because it is the
       // form a unified anchor needs, and see HILT for how close that came.
+      /* `HILT` is the offset from the CHEST to the hands — the `- (eyeH -
+       * chestH)` term is there precisely to say so — so it is an arm length and
+       * takes the arm's scale like every other one. A human's is exactly 1
+       * (`limbScale` divides the reference figure's arm by itself), so the
+       * first-person reach ratchet in tools/checks/first-person.mjs sees the
+       * identical anchor it was swept against and none of its 0.7% of margin is
+       * spent here. Nothing below a human moves the human. */
+      const A = this.limbs.arm;
       this.gripAnchor.copy(eye)
-        .addScaledVector(_v4.set(0, 1, 0).applyQuaternion(this.camera.aimQuat), HILT.rise - (eyeH - chestH))
-        .addScaledVector(_v4.set(0, 0, -1).applyQuaternion(this.camera.aimQuat), HILT.fwd);
+        .addScaledVector(_v4.set(0, 1, 0).applyQuaternion(this.camera.aimQuat),
+          HILT.rise * A - (eyeH - chestH))
+        .addScaledVector(_v4.set(0, 0, -1).applyQuaternion(this.camera.aimQuat), HILT.fwd * A);
     }
-    this.headPos.copy(this.position).setY(this.position.y + lerp(1.62, 1.22, this.crouch));
+    // The same two heights EYE_H/EYE_H_CROUCH already name, and on the same
+    // body scale — they were typed again here, unscaled, which is the shape
+    // HANDOFF 2.4 is about even on a field nothing currently reads.
+    this.headPos.copy(this.position).setY(this.position.y + eyeH);
     this.camera.aimDirection(this.aimDir);
 
     /* THE BODY GOES WITH THE ATTACK — and it moves the anchor the blade is
@@ -3100,8 +3177,15 @@ export class Player {
 
     if (this.throwState === 'held' && !this.saberDown) {
       const fp = this.camera.firstPerson;
-      const gripR = this.saber.root.localToWorld(_v2.set(0, fp ? GRIP_AT.FP : GRIP_AT.R, 0));
-      const gripL = this.saber.root.localToWorld(_v3.set(0, GRIP_AT.L, 0));
+      /* GRIP_AT IS A PLACE ON THE HILT, so it moves with the hilt. The offsets
+       * are in the saber ROOT's frame and `setGripScale` scales the hilt group
+       * inside it, so an unscaled +0.050 on a hilt whose metal now ends at
+       * +0.063 puts the fist on the emitter face. One multiply keeps the two
+       * fists where the spec says they are — on the grip section — at any size,
+       * and it is 1 for every full-sized wielder in the game. */
+      const gs = this.saber.gripScale ?? 1;
+      const gripR = this.saber.root.localToWorld(_v2.set(0, (fp ? GRIP_AT.FP : GRIP_AT.R) * gs, 0));
+      const gripL = this.saber.root.localToWorld(_v3.set(0, GRIP_AT.L * gs, 0));
       /**
        * THE WRIST IS NOT THE GRIP. See GRIP_BORE.
        *
@@ -3113,9 +3197,12 @@ export class Player {
        * roll.
        */
       this.saber.root.getWorldQuaternion(_q1);
-      handPoseOnHilt('R', _q1, _v10.subVectors(gripR, rig.worldPos('armR', _v9)), _q2, _v9);
+      // `rig.scale` and not `stature`: the bore is a place inside the HAND, and
+      // buildHand is called with the body scale. See handPoseOnHilt.
+      const hs = rig.scale ?? 1;
+      handPoseOnHilt('R', _q1, _v10.subVectors(gripR, rig.worldPos('armR', _v9)), _q2, _v9, hs);
       const wristR = _v7.copy(gripR).add(_v9);
-      handPoseOnHilt('L', _q1, _v10.subVectors(gripL, rig.worldPos('armL', _v9)), _q3, _v9);
+      handPoseOnHilt('L', _q1, _v10.subVectors(gripL, rig.worldPos('armL', _v9)), _q3, _v9, hs);
       const wristL = _v8.copy(gripL).add(_v9);
       const fwd = _v4.set(0, 0, -1).applyQuaternion(this.camera.aimQuat);
       const right = _v5.set(1, 0, 0).applyQuaternion(this.camera.aimQuat);
@@ -3124,16 +3211,22 @@ export class Player {
       // pole pinned to the right of the chest folds the right elbow straight
       // through the ribs the moment the guard crosses to the left — which is
       // most of what read as the body overlapping itself.
-      const side = clamp(_v6.subVectors(this.control.handPos, chest).dot(right) * 1.3, -0.62, 0.62);
-      const lift = clamp(_v6.subVectors(this.control.handPos, chest).dot(UP) * 0.5, -0.1, 0.42);
+      /* AN ELBOW POLE IS AN ARM'S LENGTH FROM THE CHEST, so every constant from
+       * here to the end of this block is one of the three scales — this one —
+       * and not a free number. A pole 0.75 m out from a chest whose arm is
+       * 0.23 m long is not "to the side of the shoulder", it is a point in the
+       * next postcode, and solveIK aims the whole limb at it. See limbScale. */
+      const A = this.limbs.arm;
+      const side = clamp(_v6.subVectors(this.control.handPos, chest).dot(right) * 1.3, -0.62 * A, 0.62 * A);
+      const lift = clamp(_v6.subVectors(this.control.handPos, chest).dot(UP) * 0.5, -0.1 * A, 0.42 * A);
 
-      const poleR = _v6.copy(chest).addScaledVector(right, 0.75 + side)
-        .addScaledVector(UP, -0.75 + lift).addScaledVector(fwd, -0.2);
+      const poleR = _v6.copy(chest).addScaledVector(right, 0.75 * A + side)
+        .addScaledVector(UP, -0.75 * A + lift).addScaledVector(fwd, -0.2 * A);
       rig.solveIK('armR', 'foreR', wristR, poleR);
       this._rollForearm('foreR', 'handR', _q2);
       if (twoHanded) {
-        const poleL = _v6.copy(chest).addScaledVector(right, -0.62 + side)
-          .addScaledVector(UP, -0.8 + lift).addScaledVector(fwd, -0.2);
+        const poleL = _v6.copy(chest).addScaledVector(right, -0.62 * A + side)
+          .addScaledVector(UP, -0.8 * A + lift).addScaledVector(fwd, -0.2 * A);
         rig.solveIK('armL', 'foreL', wristL, poleL);
         this._rollForearm('foreL', 'handL', _q3);
       } else {
@@ -3166,15 +3259,22 @@ export class Player {
          * off hand is not part of the picture, and that is the point.
          */
         const up = _v9.set(0, 1, 0).applyQuaternion(this.camera.aimQuat);
+        /* THE OFF ARM IS HALF OF "BOTH ARMS IN THE AIR". Its rest is the hip,
+         * expressed as a reach from the chest — so on the small frame an
+         * unscaled 0.62 m drop is nearly three times the arm, the IK cannot get
+         * there either, and the idle off hand stands out from the body pointing
+         * at the floor instead of hanging by it. Scaled, it lands on the hip it
+         * names. First person is a viewmodel and is scaled for the same reason:
+         * `chest` is the view anchor and everything off it is this arm. */
         const rest = fp
-          ? _v6.copy(chest).addScaledVector(right, -0.20).addScaledVector(up, -0.30)
-            .addScaledVector(fwd, 0.20)
-          : _v6.copy(chest).addScaledVector(right, -0.34).addScaledVector(UP, -0.62)
-            .addScaledVector(fwd, -0.05);
+          ? _v6.copy(chest).addScaledVector(right, -0.20 * A).addScaledVector(up, -0.30 * A)
+            .addScaledVector(fwd, 0.20 * A)
+          : _v6.copy(chest).addScaledVector(right, -0.34 * A).addScaledVector(UP, -0.62 * A)
+            .addScaledVector(fwd, -0.05 * A);
         const poleL = fp
-          ? _v2.copy(chest).addScaledVector(right, -0.62).addScaledVector(up, -0.34)
-            .addScaledVector(fwd, 0.10)
-          : _v2.copy(chest).addScaledVector(right, -0.85).addScaledVector(UP, -0.7);
+          ? _v2.copy(chest).addScaledVector(right, -0.62 * A).addScaledVector(up, -0.34 * A)
+            .addScaledVector(fwd, 0.10 * A)
+          : _v2.copy(chest).addScaledVector(right, -0.85 * A).addScaledVector(UP, -0.7 * A);
         const palm = this._gesturePose(rest, poleL, chest, fwd, right);
         rig.solveIK('armL', 'foreL', rest, poleL);
         // Wrist AFTER the IK: solveIK writes armL and foreL, and the hand hangs
@@ -4707,6 +4807,14 @@ export class Player {
       owner: this,
       ...opts,
     });
+    /* A HILT THAT LEAVES YOUR HAND IS THE SAME OBJECT IT WAS IN IT. `dropSaber`
+     * machines a fresh group from the style alone, at full size, so a small
+     * wielder's shoto tripled in length the instant it hit the ground and shrank
+     * again when anyone picked it up. Scaled here rather than in Dropped.js
+     * because the size belongs to the WEAPON, and the weapon is the thing this
+     * method is holding. `put` is the prop; its mesh is the whole hilt. */
+    const gs = s.gripScale ?? 1;
+    if (put?.mesh && gs !== 1) put.mesh.scale.setScalar(gs);
     s.retract();
     /**
      * AND THE HILT LEAVES THE HAND — which it did not.

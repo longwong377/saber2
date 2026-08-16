@@ -141,7 +141,8 @@ function sample(p, out) {
   /* THE GRIP POINT, not the hilt's origin: a lit hilt is a metre-long object
    * whose origin is at the pommel, so a distance to the origin reports the
    * hilt's own length as a float on every frame. */
-  const gripPt = p.saber.root.localToWorld(_grip.set(0, GRIP_AT.R, 0));
+  const gs = p.saber.gripScale ?? 1;
+  const gripPt = p.saber.root.localToWorld(_grip.set(0, GRIP_AT.R * gs, 0));
 
   const boreGap = gripPt.distanceTo(bore);
   out.boreGap = Math.max(out.boreGap, boreGap / handLen);
@@ -150,6 +151,20 @@ function sample(p, out) {
    * published rather than recomputed here. Above 1.0 the arm cannot arrive. */
   const want = p.control?._handTarget;
   if (want) out.demand = Math.max(out.demand, want.distanceTo(shoulder) / armLen);
+
+  /* WHERE THE WHOLE GUARD IS SOLVED FROM, relative to the joint that has to
+   * reach it — in arm-lengths, because that is the only unit in which the two
+   * frames are comparable. `gripAnchor` is `CHEST_H * stature`, and stature is
+   * a THIRD scale again (0.371 where the body is 0.40 and the legs 0.32), so
+   * there is no reason to expect it to land the same distance below a shoulder
+   * placed by the bones. Every centimetre it sits high is an arm raised. */
+  if (p.gripAnchor) out.anchorUp = (p.gripAnchor.y - shoulder.y) / armLen;
+
+  /* HOW FAR UP THE BLADE THE FIST IS PUSHED. `GRIP_AT.R` is a HILT-local
+   * offset, so it does not scale with the wielder at all: the same 50 mm that
+   * is a tenth of a human's arm is a fifth of this one's, and in a raised guard
+   * the blade points up, so it is lift. */
+  out.gripUp = GRIP_AT.R * gs / armLen;
 
   const ang = (h, s) => {
     const d = h.clone().sub(s);
@@ -224,7 +239,8 @@ async function measure(species) {
   const poses = {};
   for (const [name, mk] of Object.entries(POSES)) {
     const input = poseInput(mk());
-    const out = { boreGap: 0, demand: 0, armR: -180, armL: -180, handLen: NaN, armLen: NaN };
+    const out = { boreGap: 0, demand: 0, armR: -180, armL: -180, handLen: NaN, armLen: NaN,
+      anchorUp: NaN, gripUp: NaN };
     /* Settle first, then sample. A spring-driven hand needs the pose to arrive
      * before the pose is a measurement of anything; 40 frames of settle against
      * 50 of sampling was chosen by watching `demand` stop moving. */
@@ -280,17 +296,21 @@ for (const [id, m] of rows) {
 
 console.log('\n  PER POSE — bore gap in hands, demand as a fraction of arm reach,');
 console.log('  arm/off-arm as the highest either hand got above its own shoulder.\n');
-console.log('  pose          ' + rows.map(([id]) => String(id).padEnd(26)).join(''));
-console.log('                ' + rows.map(() => 'bore  demand   armR   armL  ').join(''));
+console.log('  pose          ' + rows.map(([id]) => String(id).padEnd(34)).join(''));
+console.log('                ' + rows.map(() => 'bore  demand   armR   armL  anchor  ').join(''));
 for (const name of Object.keys(POSES)) {
   let line = '  ' + name.padEnd(14);
   for (const [, m] of rows) {
     const q = m.poses[name];
     line += pad(f(q.boreGap, 2), 4) + pad(f(q.demand, 2), 8)
-      + pad(f(q.armR, 0) + '°', 7) + pad(f(q.armL, 0) + '°', 7) + '  ';
+      + pad(f(q.armR, 0) + '°', 7) + pad(f(q.armL, 0) + '°', 7)
+      + pad(f(q.anchorUp, 2), 8) + '  ';
   }
   console.log(line);
 }
+console.log('\n  anchor = how far the guard is solved from ABOVE the shoulder, in arm-lengths.');
+console.log('  fist up the blade (GRIP_AT.R as the hilt actually carries it) = '
+  + rows.map(([id, m]) => `${id} ${f(m.poses.idle.gripUp, 2)}`).join('   '));
 
 console.log('\n  GARMENTS — authored length, then where the hem falls and how wide it gets,');
 console.log('  both in units of the wearer\'s own height.\n');
