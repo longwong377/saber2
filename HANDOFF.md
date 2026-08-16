@@ -506,43 +506,59 @@ The player asked for these to wait, and the folders are `assets/reference/`:
   `buildQuadruped` gives today. The second half — "they all attack the same
   way" — is `Enemy.js`'s move sets, and is a separate job from the meshes.
 
-### 6.1a The player half of the Force contest — BUILT, MEASURED, REVERTED
+### 6.1a The player half of the Force contest — LANDED, all three steps
 
-The enemy half shipped: a body spends its Force pool to blunt an incoming power,
-and beating its guard first is worth doing. The player half is four lines and
-`forceResistance` is exported from `Enemy.js` for exactly this. I wrote it, it
-worked, and I took it out again — read this before writing it a second time.
+*Was "BUILT, MEASURED, REVERTED". It is in now, as the balance pass this section
+said it had to be: `a057525` the four lines, `18c3cfe` the shove re-tuned against
+a bracing player, `8b81e82` the two checks whose premise expired. `powers` ends
+21/21, the number it started at.*
 
-Measured with it in, on a real player taking 50 damage:
+`Player.resistForce` CALLS `forceResistance` — one contest, one rulebook, both
+contestants reading it. `damage` takes `preResisted`; `applyKnockback` mirrors
+`Enemy.applyKnockback` line for line, weighing the shove and the damage once in
+the same currency (`IMPULSE_AS_HP`). Measured, Knight difficulty, 50 hp authored:
 
-    full pool   force / lightning   19.1 hp   pool 100 → 80.4
-    full pool   saber / blaster     42.5 hp   pool untouched
-    empty pool  everything          42.5 hp
+    full pool   force / lightning / choke   19.1 hp   pool 100 → 80.4
+    full pool   saber / blaster             42.5 hp   pool untouched
+    empty pool  everything                  42.5 hp
 
-That is exactly right and it mirrors the enemy side. It also turned `powers`
-from 21/21 to 17/21, and **the four failures are the feature working**, not a
-bug in it:
+**Step 2, and the thing that was not obvious.** The shove had been tuned UP
+(17.0/6.5 → 20.4/7.8) to peak at 5.71 m, clearing the 5.4 m at which a Master's
+lightning opens; braced, that peak is 3.28 m. **No sizing of the shove fixes
+it.** `RESIST_CAP` is 0.55 of the whole blow, so a deep pool always scales a
+shove to 0.45 of itself and the factor does not depend on the shove's size —
+reaching 5.4 m through a full pool needs 2.2× the impulse, and 45/17 throws an
+empty-bar player 14 m, past the far edge of the push's own [0, 7.5] band.
 
-- *"a shove buys the range the next beat of the kit needs"* — the enemy's shove
-  had just been tuned UP (17.0/6.5 → 20.4/7.8) so it peaks at 5.4 m, which is
-  the range its own lightning opens at. That tuning was measured against a
-  player who could not resist. My resist damps the impulse, the peak fell 5.00
-  → 3.28 m, and the two-beat combo it was built for stopped existing.
-- *"a held power delivers exactly what it is authored to"* — lightning fell to
-  19% of authored. The check is right about the old world and asks the wrong
-  question in the new one: an enemy power CANNOT deliver its authored damage to
-  a defended player, by design. It needs to name the target's pool state.
-- Two more of the same shape.
+So the shove went to **26.0/10.0** — the same vector as both earlier pairs, all
+three at 0.382 lift-to-speed — and the two-beat became a CONTEST rather than a
+certainty. Driven with the Master's own brain, `push` taken off it so the peak
+is one shove's:
 
-**So this is not a patch, it is a balance pass**, and it needs, in order: the
-four lines; then the enemy shove re-tuned against a resisting player so the
-two-beat survives; then `powers`' authored-delivery checks re-stated to specify
-the pool they measure against. Doing only the first — which is the tempting
-part, because it is the part that is written down — leaves the roster's only
-two-beat combo dead and four checks red.
+                braced (100 F)              empty bar
+    20.4/7.8    3.28 m · choke only         5.71 m · lightning, pull, choke
+    26.0/10.0   3.86 m · pull, choke        6.84 m · lightning, pull, choke
 
-I reverted rather than edit those checks to fit my own change, which is the rule
-this file exists to keep.
+Braced, you spend 16.7 Force and deny him the lightning; empty-bar you fly and
+the whole kit opens. The shove now clears the pull's 3.2 m band by 0.66 m where
+it cleared it by 0.08 — a coincidence, not a margin. **Shove→lightning against a
+full bar is gone and is not coming back without changing `RESIST_CAP`.** That is
+a design call, made deliberately, and it is the one thing here a reviewer might
+want reversed.
+
+**Step 3 re-stated exactly two checks**, both because their premise expired and
+each saying so in its own comment. The empty-bar half of the held-power bound is
+untouched and returns the same 95% / 100% it always did.
+
+**The trap this uncovered, and it is the reusable part.** `Player.damage` grew a
+fifth argument, and **four separate wrappers sitting in front of it named the
+four they knew about**: `Waves.js boonGuard`, `Injury.js armInjury` (both
+shipped, both a real double-bill on the pool), and the `p.damage` wrappers in
+`powers.mjs` and `duelling.mjs`. The harness one manufactured a finding —
+Sentinel 4.3 → 0.44 hp/s, which reads exactly like a body that had stopped
+fighting. All four are variadic now. **`Command.js:1251` has the same defect
+against `Enemy.damage` and is still open** — that file belonged to another lane.
+Grep `\.damage = (` before changing that signature again.
 
 ### 6.1b Diagnosed, scoped, not yet built
 
