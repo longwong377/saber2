@@ -57,27 +57,42 @@
  *
  *   NO TWO OF THEM MAY SHARE A SILHOUETTE OR A CADENCE.
  *
- *   AT-TE          six legs   long and low, 3.6:1     ONE slow telegraphed shell
- *   AAT            no legs    hovers, wide and flat    a two-shell ripple
- *   Hailfire       no legs    two hoops, tall and thin a seven-missile salvo
- *   Dwarf spider   four legs  low and very wide        a fast close-range pair
+ * As built and measured (`tools/_vehicle.mjs`), whole box then hull alone:
+ *
+ *                 legs   w × h × l (m)      hull L/H  clearance  volley  cycle
+ *   Dwarf spider    4    3.9 × 3.1 ×  2.8     1.16      1.00 m      34   1.18 s
+ *   AT-TE           6    7.9 × 5.7 × 13.5     4.14      2.34 m      58   5.90 s
+ *   AAT             0    6.2 × 3.4 ×  8.6     4.45      0.65 m     104   3.88 s
+ *   Hailfire        0    5.9 × 5.7 ×  5.7     1.20      1.89 m      77   4.69 s
+ *
+ * The hailfire's box is nearly cubical and that is not a failure of the rule —
+ * a five-metre hoop is as long as it is tall. What separates it is that almost
+ * none of that box is HULL: 1.1 × 1.1 × 1.3 of pod inside 5.9 × 5.7 × 5.7 of
+ * wheel, where the AAT is 6.1 × 1.9 × 8.3 of hull inside 6.2 × 3.4 × 8.6. Their
+ * flank outlines overlap by 0.22, against the 0.5 that `tools/_creature.mjs`
+ * records for two things that share a body plan.
  *
  * Leg count, box aspect, ground clearance and shot cadence all differ, and they
  * differ AT LOD 1 — past thirty metres `Enemy._applyLod` hides every mesh that
  * is not a bone's primary or tagged `userData.silhouette`, which is precisely
  * how the old menagerie became five identical trunks with legs. Everything that
- * makes one of these recognisable at sixty metres is one or the other.
+ * makes one of these recognisable at sixty metres is one or the other; measured,
+ * every machine keeps at least 95% of every dimension through the cull.
  *
  * ── WHAT THIS FILE DELIBERATELY DOES NOT DO ───────────────────────────────
  *
  * It does not give a vehicle a bigger collider than the game gives any heavy.
  * `Enemy` builds one movement proxy per body — `capsule(0.9, 1.1)` for anything
  * flagged `big` — and that number is in Enemy.js, which this workstream does
- * not own. So a 12-metre AT-TE is blocked across its middle and you can walk
- * under its belly, which is correct, and past its prow, which is not. The gap
- * is MEASURED rather than claimed: `vehicles.mjs` reports the fraction of each
- * hull the proxy covers, so the day somebody adds an `A.bodyRadius` to that
- * line the number moves on its own.
+ * not own. Measured as a fraction of hull length, a player meets 100% of a dwarf
+ * spider, 27% of an AAT and **0% of an AT-TE**: you walk under its belly, which
+ * is correct, and through its prow and its stern, which is not.
+ *
+ * Every builder therefore publishes `built.proxy` — a sphere chain GENERATED off
+ * the hull it just built, so it cannot drift from the geometry — and the gap is
+ * MEASURED rather than claimed: `vehicles.mjs` prints what the shipped proxy
+ * covers beside what the published one would (95/100/100/100%), every run. See
+ * `hullProxy` for the three lines in Enemy.js that would close it.
  */
 
 import * as THREE from 'three';
