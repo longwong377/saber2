@@ -562,33 +562,42 @@ Grep `\.damage = (` before changing that signature again.
 
 ### 6.1b Diagnosed, scoped, not yet built
 
-**`cel: a shadow is READABLE` has a SECOND clause nobody had reached.** The
-suite is 23/24 and the one red is a roster-wide invariant, not a level defect.
+**`cel: a shadow is READABLE` — CLOSED, 24/24, and it was TWO failures wearing
+one message.** Kept in full because the way it hid is the reusable part.
 
-The check asserts twice. First, pairwise: if one level's sun stands >10% higher
-than another's, more of its shadow must come from the key. `geonosis` failed
-that against `wood` at sunY 1.10075 — over by a whisker — because it claimed
-both the HIGHEST sun on the roster (21°) and the highest ambient (0.52), which
-is a contradiction: a dust-laden sky is a diffuse sky. Fixed by taking the
-elevation to 20°, which is still a late-afternoon sun throwing the long infantry
-shadows the plates are shot in. That is a real fix and it stands.
+The check asserts three clauses over the same data — a span, a Spearman rank
+correlation of key share against sun height, and a strict pairwise ordering
+wherever two suns differ by more than 10%. It used `assert` for each, so the
+first one to fail was the only one anybody ever saw. Fixing the pairwise
+(geonosis 21° → 20°) revealed the correlation at rho 0.810 against a 0.90
+bound; fixing the correlation revealed that the pairwise was **still red**,
+between geonosis and kamino, and had been the whole time. The 21→20 fix had
+been measured against ONE neighbour and the clause is over every pair.
 
-Doing so revealed the second clause, which had never been evaluated because the
-first assert fired ahead of it every time:
+All three clauses are now collected and raised together, and the correlation
+failure NAMES the levels that are out of order instead of quoting a roster-wide
+number with no subject in it. `tools/_celrank.mjs` (new) prints the table, the
+rank displacements and every neighbouring bound in about a second — use it
+before moving any level's light.
 
-    the key share and the sun's height rank-correlate at only 0.810
-    (Spearman rho over the outdoor levels; the bound is 0.90)
+Two levels moved, each because its own numbers contradicted its own prose:
 
-**This is pre-existing and roster-wide.** It says the levels, ranked by sun
-height, must rank the same way by how much of their shadow comes from the key —
-and at ten levels they no longer do. It cannot be fixed by moving one number:
-whoever takes it should print sun height against key share for all ten, find
-which two or three are out of order, and move THOSE, then re-run. Do not lower
-0.90 to meet the measurement; the whole point of the bound is that the roster
-grew and the invariant has to survive the growth.
+- **kamino** `sunIntensity` 5.4 → 3.4 and `ambient` 0.50 → 1.20. Its block said
+  "almost none of it reaches the deck, which is why `ambient` carries this
+  level" beside the fourth-strongest key in the game under a 0.94 cloud ceiling
+  and the SMALLEST indirect term on the roster (0.083). Both knobs move because
+  neither reaches alone: the ambient is nearly inert here (0.50 → 2.00 buys 2.5
+  points, because `skyColor` is almost black) and the sun runs into a good
+  bound before it is done — below ~2.9 a sunlit cloud top falls under its own
+  sky and `sky.mjs` correctly calls the deck smoke.
+- **geonosis** `elevation` 20 → 18. Turbidity 10.0 is optical depth by another
+  route, and a level whose look is "weak key, strong sky" cannot also hold the
+  roster's third-highest sun. 19 was measured and rejected: it ties the wood and
+  `lighting.mjs` orders the indirect budget strictly.
 
-Two levels were added and one re-solved this session, so the correlation was
-being eroded by legitimate work the entire time and nothing could see it.
+rho 0.810 → 0.976, pairwise clean, span 1.69x, the 0.90 bound untouched. Two
+stale comments beside their own numbers went with it (kamino claimed "6°, the
+lowest sun in the game" at `elevation: 16`; geonosis said "21°" twice).
 
 **The character creator still holds the saber wrong for a small species, and the
 three-line fix is NOT three lines.** `poseSaberArm` (Menu.js) is a second copy of
@@ -681,9 +690,18 @@ judge's say-so.
 | Tool | Answers |
 |---|---|
 | `tools/_fpgeom.mjs` | where the first-person arms and hilt are **in the frame**, and how much of the hilt is behind the fists — one second, against `fpview.mjs`'s twenty minutes |
+| `tools/_celrank.mjs` | every outdoor level's sun height against its shadow's key share, the rank displacements, and **every neighbouring bound in one table** — `cel`'s span/rho/pairwise, `lighting`'s indirect budget and cast-shadow floor, `sky`'s cloud-top-over-sky, and the exposure clamp. `--set=kamino.sunIntensity=3.4,geonosis.elevation=18` measures a candidate look without editing Levels.js |
 
-Both take `--import ./tools/register.mjs`; `_fpgeom` opens with `dom-shim.mjs`
-because it reaches Textures.js, which bakes onto a canvas.
+All take `--import ./tools/register.mjs`; `_fpgeom` and `_celrank` open with
+`dom-shim.mjs` because they reach Textures.js and Engine.js, which bake onto a
+canvas — and `_celrank` imports Engine.js DYNAMICALLY for §2.1.
+
+**Use `_celrank` before touching any level's light.** Six bounds in four suites
+read the same atmosphere block, they are not in the same file, and three of them
+bite in opposite directions: cutting a sun to soften a shadow drops the cloud
+deck under its own sky (`sky.mjs` calls that smoke), and raising the ambient to
+compensate walks into `lighting.mjs`'s cast-shadow floor. That is how a
+one-level tuning pass becomes a four-suite bisect.
 
 ---
 

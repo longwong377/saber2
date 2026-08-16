@@ -328,8 +328,27 @@ export async function run({ check, assert }) {
     // And the sinks consult it rather than each rolling their own.
     const player = strip(await src('game/Player.js'));
     const net = strip(await src('net/Net.js'));
-    const dmg = player.slice(player.indexOf('\n  damage(amount, point, source, kind)'));
-    assert(/canHarm\(source, this\)/.test(dmg.slice(0, 1200)),
+    /**
+     * FOUND BY THE FOUR PARAMETERS IT TAKES, not by the whole signature.
+     *
+     * This read `indexOf('\n  damage(amount, point, source, kind)')` — closing
+     * bracket included — so the day a lane added a FIFTH parameter the index
+     * came back −1, `slice(-1)` handed the test one character of the file, and
+     * the check reported that Player.damage "no longer opens with the gate":
+     * every source of harm in the game deciding friendly fire for itself, which
+     * was not happening and never had. An instrument that restates a rule fails
+     * in the direction nobody checks — it MANUFACTURES defects — and pinning an
+     * argument list is restating a rule about a signature this check has no
+     * opinion on. Four named parameters is the identity; what comes after them
+     * is the callee's business.
+     *
+     * The miss is an assertion now rather than a silent slice, because that is
+     * the half that cost the time: a check that cannot find its subject must
+     * say so instead of measuring the last byte of the file.
+     */
+    const at = player.search(/\n {2}damage\(amount, point, source, kind\b/);
+    assert(at > 0, 'Player.damage(amount, point, source, kind…) is not in Player.js under that name');
+    assert(/canHarm\(source, this\)/.test(player.slice(at, at + 1200)),
       'Player.damage no longer opens with the gate, so every source of harm decides for itself again');
     assert(/canHarm\(source, this\)/.test(net),
       'RemoteAvatar.damage does not consult the gate — the one machine that can see both fighters');

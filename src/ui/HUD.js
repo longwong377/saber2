@@ -9,7 +9,7 @@ import * as THREE from 'three';
 import { clamp, lerp } from '../engine/MathUtil.js';
 import { Announcer } from './Announcer.js';
 import { Presence } from '../engine/Presence.js';
-import { keyLabel, walkScale, ORDER_ACTIONS } from '../engine/Bindings.js';
+import { keyLabel, walkScale, ORDER_ACTIONS, codesFor } from '../engine/Bindings.js';
 /**
  * The two lookup tables the roster panel draws WITH, never a copy of them.
  *
@@ -980,7 +980,10 @@ export class HUD {
       cost.textContent = price > 0 ? String(Math.round(price)) : '';
       const label = document.createElement('span');
       label.className = 'key';
-      label.textContent = bindings ? keyLabel((bindings[action] || [])[0]) : '';
+      label.textContent = bindings
+        ? keyLabel(codesFor(bindings, action, this._pad?.device === 'pad' ? 'pad' : 'key')[0],
+          this._pad?.family || 'xbox')
+        : '';
       const tick = document.createElement('b');
       tick.className = 'tick';
       // Order matters: the shutter goes over the glyph and under everything
@@ -993,19 +996,33 @@ export class HUD {
     this._bindings = bindings;
   }
 
-  /** Repaint the wheel's key labels. Called on boot and after any rebind. */
-  setBindings(bindings) {
+  /**
+   * Repaint the wheel's key labels. Called on boot, after any rebind, and
+   * whenever the player swaps between a keyboard and a controller.
+   *
+   * `pad` is `{ device, family }` or nothing, and nothing means the keyboard —
+   * so every existing caller and every check keeps the markup it had. It is
+   * held rather than passed on, because the four surfaces below are repainted
+   * from other places too (`_buildPowers` on a HUD rebuild, `setOrder` on a
+   * formation change) and a device the HUD had forgotten would silently
+   * repaint half the screen back to keyboard letters.
+   */
+  setBindings(bindings, pad = this._pad) {
     this._bindings = bindings;
+    this._pad = pad || null;
+    const fam = (pad && pad.family) || 'xbox';
+    const dev = pad && pad.device === 'pad' ? 'pad' : 'key';
+    const chip = (id) => keyLabel(codesFor(bindings, id, dev)[0], fam);
     for (const [key, action] of POWERS) {
       const p = this.powerEls[key];
-      if (p && p.label) p.label.textContent = keyLabel((bindings[action] || [])[0]);
+      if (p && p.label) p.label.textContent = chip(action);
     }
     // The free camera's own legend, from the same table and on the same call.
     // It is the only text on screen while the HUD is hidden, so it is the one
     // place a stale key name would be unrecoverable: a player who cannot read
     // the way out has to reload the page.
     if (this.el.freecamKey) {
-      this.el.freecamKey.textContent = `${keyLabel((bindings.freecam || [])[0])} to come back`;
+      this.el.freecamKey.textContent = `${chip('freecam')} to come back`;
     }
     /*
      * The map's own legend, from the same table and on the same call. It names
@@ -1015,7 +1032,7 @@ export class HUD {
      * the wheel already prices every other power from.
      */
     if (this.el.mapKey) {
-      this.el.mapKey.innerHTML = `<b>${escKey(keyLabel((bindings.sense || [])[0]))}</b> `
+      this.el.mapKey.innerHTML = `<b>${escKey(chip('sense'))}</b> `
         + `sense · ${Math.round(POWER_COST.sense)} Force`;
     }
     // The order keycaps, on the same call and for the same reason. They were
@@ -1152,7 +1169,10 @@ export class HUD {
       chip.className = 'rp-key';
       chip.dataset.order = o.id;
       chip.title = `${o.name} — ${o.blurb}`;
-      chip.textContent = keyLabel((bindings?.[o.action] || [])[0]);
+      chip.textContent = bindings
+        ? keyLabel(codesFor(bindings, o.action, this._pad?.device === 'pad' ? 'pad' : 'key')[0],
+          this._pad?.family || 'xbox')
+        : '';
       host.appendChild(chip);
     }
     this._lightOrder();

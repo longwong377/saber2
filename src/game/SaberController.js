@@ -823,13 +823,18 @@ export class SaberController {
     // which had to steal the wheel back frame by frame to get a notch of its
     // own. The wheel is now `attackOver` / `attackStab` like any other control
     // and the roll is the two rebindable keys it always also had.
+    //
+    // …AND SO WAS `input.padDown(4)` / `padDown(5)`, WHICH SAT HERE UNTIL THE
+    // PAD JOINED THE TABLE. Two raw button INDICES, so the last two controls in
+    // the game that no binding could move: not listed, not rebindable, and
+    // invisible to findConflicts in exactly the way the wheel above was. They
+    // also became actively wrong the moment the pad had a default map — button
+    // 4 is LB, which is the Force modifier, so holding it to cast would have
+    // rolled the wrist left. `rollL`/`rollR` carry the D-pad now and this reads
+    // the actions, once, for every device.
     let rollInput = 0;
     if (input.act('rollL')) rollInput -= 1;
     if (input.act('rollR')) rollInput += 1;
-    if (input.padButtons) {
-      if (input.padDown(4)) rollInput -= 1;
-      if (input.padDown(5)) rollInput += 1;
-    }
     this.rollVel = damp(this.rollVel, rollInput * 5.4, 14, dt);
     this.roll += this.rollVel * dt;
 

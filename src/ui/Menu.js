@@ -45,7 +45,8 @@ import { applyReticle, shapeAt, colorAt, RETICLE_SHAPES, RETICLE_COLORS, EMOTES,
          rosterHtml } from './HUD.js';
 import { QUALITY } from '../engine/Engine.js';
 import { ACTIONS, MOUSE, WHEEL, keyLabel, loadBindings, saveBindings, defaultBindings, resolveConflicts,
-         WALK_SCALE, walkScale, registerOrders, ORDER_ACTIONS } from '../engine/Bindings.js';
+         WALK_SCALE, walkScale, registerOrders, ORDER_ACTIONS,
+         codesFor, isPadCode, PAD_MODIFIERS } from '../engine/Bindings.js';
 // The six formation orders, so they can be pushed through Bindings' seam below.
 import { FORMATIONS, TEAM_DAMAGE_DEFAULT, DEFAULT_FORMATION } from '../game/Command.js';
 
@@ -388,6 +389,28 @@ export const DEFAULT_SETTINGS = {
   injury: true,
   shake: true,
   slowmo: true,
+  /**
+   * HOW HARD THE PAD IS ALLOWED TO SHAKE, 0..1.
+   *
+   * `Engine.rumble` shipped with `this.rumbleLevel ?? 1` and a note saying, in
+   * as many words, that the field is deliberately uninitialised and "the day a
+   * strength slider exists it assigns this and every call scales". This is that
+   * day: `applyFeelSettings` writes it, so it lands on the very next kill from
+   * the pause card with no redeploy.
+   *
+   * A SLIDER AND NOT A CHECKBOX, because rumble is the one piece of feedback in
+   * this game with a physical intensity a player can be sensitive to. 0 is off
+   * — `rumble()` returns before it touches a pad — and 1 is what every call
+   * site was authored against, so a player who never moves it feels exactly
+   * what the game was tuned to give.
+   *
+   * It is NOT a second gate on `shake`. Every rumble call site already asks
+   * `world.feelOn('shake')` first, so unticking Camera shake still silences the
+   * pad; this scales what survives that. Two gates that mean different things —
+   * "no kinetic feedback at all" and "less of it" — and the slider would be a
+   * claim rather than a control if it duplicated the box.
+   */
+  rumble: 1,
   volume: 0.8,
   music: 0.45,
   /**
@@ -581,6 +604,10 @@ export const SETTING_READERS = {
   injury:          ['game/Injury.js', 's.injury !== false'],
   shake:           ['ui/Menu.js', 'if (rig._feelSettings.shake) addShake(v)'],
   slowmo:          ['ui/Menu.js', 'if (world._feelSettings.slowmo) addHitstop(t)'],
+  /* The seam Engine.rumble left open — `this.rumbleLevel ?? 1` — assigned on
+   * the same call the two feel gates are installed on, so a pad that is too
+   * strong is turned down mid-fight from the pause card. */
+  rumble:          ['ui/Menu.js', 'world.engine.rumbleLevel = clamp01(s.rumble)'],
   volume:          ['main.js', 'audio.setVolume(settings.volume)'],
   music:           ['main.js', 'audio.setMusicVolume(settings.music)'],
   grassScale:      ['game/World.js', 'this.settings.grassScale'],
@@ -641,6 +668,9 @@ export const SETTING_READERS = {
  *
  * @returns true once both gates are in place on this world.
  */
+/** 0..1, and a missing or corrupt value is the full-strength default. */
+const clamp01 = (v) => (Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 1);
+
 export function applyFeelSettings(world, s = DEFAULT_SETTINGS) {
   if (!world) return false;
   const rig = world.player?.camera;
@@ -663,6 +693,17 @@ export function applyFeelSettings(world, s = DEFAULT_SETTINGS) {
   // has damped out (about 0.4 s) or the hitstop already running has expired.
   if (!s.shake && rig) rig.shake = 0;
   if (!s.slowmo) world.hitstop = 0;
+  /**
+   * THE PAD'S STRENGTH, into the seam Engine.rumble left for it.
+   *
+   * Not a wrapper like the two above, because `rumble()` is already ONE
+   * function every call site goes through — the funnel exists — and it already
+   * reads `this.rumbleLevel ?? 1` on every call. So this is an assignment and
+   * not a gate, and the `?? 1` means an Engine nobody has spoken to still
+   * rumbles at full: every check and every headless harness measures the
+   * shipped behaviour, which is the same rule `feelOn` is written to.
+   */
+  if (world.engine) world.engine.rumbleLevel = clamp01(s.rumble);
   // "Blade holds position" is the same shape and rides the same seam.
   // SaberController reads `holdPosition` every frame, but the only line that
   // ever wrote it was World.spawnPlayer, so even once the setting existed the
@@ -1002,10 +1043,10 @@ export const CODEX = [
   { keys: ['blade'], hold: true,
     text: () => 'Raise the <b>guard</b>. Under Directional the camera keeps moving; under the '
       + 'other two schemes the mouse becomes the blade and the camera holds still.' },
-  { device: 'Mouse',
+  { device: 'Mouse', padDevice: 'Right stick',
     text: () => '<b>Flick</b> up, left, right or down to set the guard zone. It stays where you '
       + 'put it. Slow movement is pure aim.' },
-  { device: 'Mouse',
+  { device: 'Mouse', padDevice: 'Right stick',
     text: () => 'Flick into a zone as the bolt lands — inside 0.2 s — and it is a <b>parry</b>: '
       + 'the bolt goes back at whatever is under your reticle.' },
   { keys: ['attackOver'], text: () => 'Overhead attack — wind up over the head and cut down.' },
@@ -1046,7 +1087,7 @@ export const CODEX = [
   { keys: ['push'], text: () => 'Force push.' },
   { keys: ['pull'], text: () => 'Force pull.' },
   { keys: ['grip'],
-    text: k => `Grip an object — then move the mouse to swing it, ${k('hurl')} to hurl it.` },
+    text: k => `Grip an object — then aim to swing it, ${k('hurl')} to hurl it.` },
   { keys: ['throw'], text: () => 'Throw the saber. Press again to recall it.' },
   { keys: ['sense'], text: () => 'Force sense — see through walls.' },
   { keys: ['stasis'],
@@ -1071,7 +1112,7 @@ export const CODEX = [
   // The slot count is read off the table, so a ninth emote changes this line.
   { keys: ['emote'], hold: true,
     text: () => `Emote wheel — ${EMOTES.length} things to say, in your own voice. `
-      + 'Hold it, move the mouse to a slot, let go.' },
+      + 'Hold it, aim at a slot, let go.' },
   { keys: ['freecam'],
     text: () => '<b>Free camera</b> — the view comes off your body and the game '
       + 'STOPS while it is off. Fly it with the movement keys; press again to put it back.' },
@@ -1143,8 +1184,25 @@ const escKey = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
  * to anyone using the other one. `—` when an action has been cleared, which is
  * the honest answer and not a crash.
  */
-export function keyChips(bindings, id, hold = false) {
-  const list = (bindings[id] || []).map(keyLabel);
+/**
+ * ── THE DEVICE, and why it is an argument rather than a global ──────────
+ *
+ * "Show pad buttons when a pad is the active device" is one rule, and every
+ * surface that prints a binding has to obey the same one — the Codex, the power
+ * wheel, the coach panel, the scoreboard's own caption, the free camera's way
+ * back, the pause card and the three control-scheme cards. A module-level "the
+ * player is on a pad" flag would make all of them read a hidden input, which is
+ * exactly the shape this file spent a round removing from the bindings.
+ *
+ * So it travels as an argument, `{ device, family }`, and it has a default that
+ * is the keyboard — so every existing caller, every check and every headless
+ * render produces byte-identical markup to what it produced before the pad
+ * existed.
+ */
+export function keyChips(bindings, id, hold = false, pad = null) {
+  const dev = pad && pad.device === 'pad' ? 'pad' : 'key';
+  const family = (pad && pad.family) || 'xbox';
+  const list = codesFor(bindings, id, dev).map(c => keyLabel(c, family));
   if (!list.length) return '<kbd>—</kbd>';
   return list.map((label, i) => `<kbd>${escKey((hold && i === 0 ? 'Hold ' : '') + label)}</kbd>`).join(' / ');
 }
@@ -1156,16 +1214,21 @@ export function keyChips(bindings, id, hold = false) {
  * assert what a PLAYER would read, rather than re-deriving the answer with a
  * copy of this loop and agreeing with itself.
  */
-export function codexHtml(bindings) {
+export function codexHtml(bindings, pad = null) {
   return CODEX.map((row) => {
     // A SECTION TITLE, and it carries no key at all. It is an <h4> rather than
     // a <div> so that everything measuring this grid — the row parser in
     // tools/checks/controls.mjs included — goes on seeing exactly the rows a
     // player can press, and a heading can never be mistaken for one.
     if (row.head) return `<h4 class="codex-head">${escKey(row.head)}</h4>`;
-    const lead = row.device ? `<kbd>${escKey(row.device)}</kbd>`
-      : row.keys.map(id => keyChips(bindings, id, row.hold)).join(' ');
-    return `<div>${lead}<span>${row.text(id => keyChips(bindings, id))}</span></div>`;
+    // The one row that names a DEVICE and not an action — "flick the mouse" —
+    // is the one row a pad has to rename, because on a pad the blade is the
+    // right stick and a player told to flick a mouse they are not holding has
+    // been told nothing. See CODEX's `device` rows.
+    const lead = row.device
+      ? `<kbd>${escKey(pad && pad.device === 'pad' && row.padDevice ? row.padDevice : row.device)}</kbd>`
+      : row.keys.map(id => keyChips(bindings, id, row.hold, pad)).join(' ');
+    return `<div>${lead}<span>${row.text(id => keyChips(bindings, id, false, pad))}</span></div>`;
   }).join('');
 }
 
@@ -1177,11 +1240,18 @@ export function codexHtml(bindings) {
  * when a binding has gone wrong, so it is not in ACTIONS and there is nothing
  * to read. Declared here, once, instead of typed into index.html beside two
  * that ARE rebindable.
+ *
+ * ON A PAD IT IS THE OTHER DEVICE-LEVEL BUTTON, and it is the same claim: Start
+ * is the way out for exactly the reason Escape is, so it is not in ACTIONS
+ * either and it is named here rather than typed into the markup. `padLabel` is
+ * what decides whether that word is "Menu", "Options" or "+".
  */
-export function pauseHintsHtml(bindings) {
-  return ['<span><kbd>Esc</kbd> resume</span>']
+export function pauseHintsHtml(bindings, pad = null) {
+  const out = pad && pad.device === 'pad'
+    ? keyLabel('PadStart', pad.family || 'xbox') : 'Esc';
+  return [`<span><kbd>${escKey(out)}</kbd> resume</span>`]
     .concat([['view', 'camera'], ['scoreboard', 'boons']]
-      .map(([id, what]) => `<span>${keyChips(bindings, id)} ${what}</span>`))
+      .map(([id, what]) => `<span>${keyChips(bindings, id, false, pad)} ${what}</span>`))
     .join('');
 }
 
@@ -3674,7 +3744,7 @@ export class Menu {
           // always offer one empty slot so a second key can be added
           for (let i = 0; i < Math.min(bound.length + 1, 3); i++) {
             const b = document.createElement('b');
-            b.textContent = keyLabel(bound[i]);
+            b.textContent = keyLabel(bound[i], this.pad?.family || 'xbox');
             b.title = bound[i] ? 'Click to rebind, right-click to clear' : 'Click to add a key';
             // A key chip is a control, so it takes focus and answers Enter and
             // Space — rebinding the keyboard was itself mouse-only.
@@ -3710,6 +3780,7 @@ export class Menu {
         window.removeEventListener('mousedown', onMouse, true);
         window.removeEventListener('wheel', onWheel, true);
         this._listening = false;
+        this._padCapture = null;
         if (hint) hint.textContent = '';
         if (code) {
           // EVERY other action loses the key, not just the first one found.
@@ -3747,6 +3818,20 @@ export class Menu {
         e.preventDefault(); e.stopPropagation();
         finish(e.deltaY < 0 ? WHEEL.up : WHEEL.down);
       };
+      /**
+       * …AND SO IS A PAD BUTTON, for exactly the same reason.
+       *
+       * A pad code that can be bound by the game and not by the PLAYER is half
+       * a control, and the pad's own default map would then be the only map
+       * that exists. The press arrives through `Input.onPadCode` — main.js
+       * forwards it to `padCode()` below — rather than through a listener,
+       * because a gamepad raises no DOM events at all: it is polled, and Input
+       * is the one thing in the project polling it.
+       *
+       * It arrives AS THE CHORD it was pressed with, so binding "LB + A" is
+       * holding LB and pressing A, which is the same gesture that fires it.
+       */
+      this._padCapture = (code) => finish(code || null);
       window.addEventListener('keydown', onKey, true);
       window.addEventListener('mousedown', onMouse, true);
       window.addEventListener('wheel', onWheel, { capture: true, passive: false });
@@ -3803,17 +3888,42 @@ export class Menu {
    */
   _buildKeyLegends() {
     this.bindings = this.bindings || loadBindings();
+    const pad = this.pad;
     const grid = document.getElementById('codex-grid');
-    if (grid) grid.innerHTML = codexHtml(this.bindings);
+    if (grid) grid.innerHTML = codexHtml(this.bindings, pad);
     const hints = document.getElementById('pause-hints');
-    if (hints) hints.innerHTML = pauseHintsHtml(this.bindings);
+    if (hints) hints.innerHTML = pauseHintsHtml(this.bindings, pad);
 
     // The control-scheme cards name the key you hold to hand the camera back.
     for (const s of SCHEMES) {
       const el = document.querySelector(`#opt-scheme [data-scheme="${s.key}"] .txt span`);
-      if (el) el.innerHTML = s.blurb(id => keyChips(this.bindings, id));
+      if (el) el.innerHTML = s.blurb(id => keyChips(this.bindings, id, false, pad));
     }
   }
+
+  /**
+   * THE PLAYER PICKED UP A CONTROLLER — repaint everything that names a key.
+   *
+   * Called by main.js off `Input.onDevice`, which fires once on each change
+   * rather than every frame, so this is a handful of innerHTML writes when the
+   * player swaps hands and nothing at all while they play.
+   *
+   * `family` is which pad: the same button index is Y, △ or X depending on the
+   * shell, and a creator screen that says "Y" to somebody holding a DualSense
+   * is the typed-key-name defect wearing a controller.
+   */
+  setDevice(device, family = 'xbox') {
+    if (this.pad && this.pad.device === device && this.pad.family === family) return false;
+    this.pad = { device, family };
+    // `_buildBindings` repaints its own list AND calls _buildKeyLegends at the
+    // end of it, so this is one call and not two — the cycle that would be is
+    // why the legends do not reach back the other way.
+    this._buildBindings();
+    return true;
+  }
+
+  /** A pad button, for whichever binding chip is listening. See _buildBindings. */
+  padCode(code) { if (this._padCapture) this._padCapture(code); }
 
   /** Which track is really playing, and why it may not be the chosen one. */
   _syncTrackBlurb() {
@@ -4056,6 +4166,11 @@ export class Menu {
     this._check('opt-injury', 'injury', () => this.hooks.onFeel?.(this.s));
     this._check('opt-shake', 'shake', () => this.hooks.onFeel?.(this.s));
     this._check('opt-slowmo', 'slowmo', () => this.hooks.onFeel?.(this.s));
+    // The pad, on the same hook and for the same reason: applyFeelSettings is
+    // where the strength is pushed into Engine.rumbleLevel, so a player turning
+    // it down mid-fight feels the next kill at the new level.
+    this._slider('opt-rumble', 'rumble', v => (v <= 0 ? 'off' : `${Math.round(v * 100)}%`),
+      () => this.hooks.onFeel?.(this.s));
 
     /* ── voices ──────────────────────────────────────────────────────────
      *

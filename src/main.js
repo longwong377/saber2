@@ -20,7 +20,7 @@ import { boonById, drawBoons, BOSS_EVERY, MODES } from './game/Waves.js';
 // No `FORMATIONS` import any more: the orders reach this file as ordinary
 // bindings through `ORDER_ACTIONS` below, which is the point of the seam.
 import { recordRun, progressLines, loadProgress } from './game/Progress.js';
-import { keyLabel, ORDER_ACTIONS } from './engine/Bindings.js';
+import { keyLabel, ORDER_ACTIONS, codesFor } from './engine/Bindings.js';
 import { guardZoneOf } from './game/Bolts.js';
 import { clamp } from './engine/MathUtil.js';
 import { Screens } from './ui/Screens.js';
@@ -48,6 +48,19 @@ const net = new Net();
 
 input.sensitivity = 1;      // the blade controller applies the user's scaling
 input.invertY = settings.invertY;
+
+/**
+ * THE DEVICE, in one place, for every prompt this file paints.
+ *
+ * Three surfaces here print a live binding — the communion prompt, the
+ * scoreboard's caption and the coach panel's three lesson keys — and all three
+ * had `keyLabel((input.bindings.x || [])[0])` written out. A player on a
+ * controller was told to press Ctrl to kneel. One helper, so the answer cannot
+ * be right on two screens and wrong on the third; `padOf()` is the same
+ * descriptor the Menu and the HUD are handed.
+ */
+const padOf = () => ({ device: input.device, family: input.padFamily });
+const liveKey = (id) => keyLabel(codesFor(input.bindings, id, input.device)[0], input.padFamily);
 
 /**
  * WHAT THE PLAYER IS CALLED ON EVERY OTHER PLAYER'S SCREEN.
@@ -144,7 +157,7 @@ const menu = new Menu(settings, {
   // Both are live: switch the deflection model or a keybind mid-fight and the
   // very next bolt uses it, which is the only honest way to compare them.
   onDeflectAim: (v) => { settings.deflectAim = v; if (world) world.settings.deflectAim = v; },
-  onBindings: (b) => { input.setBindings(b); refreshCoachKeys(); hud.setBindings(b); },
+  onBindings: (b) => { input.setBindings(b); refreshCoachKeys(); hud.setBindings(b, padOf()); },
   // Force settings are read live off world.settings, so the sliders take effect
   // mid-fight without a reload.
   onForce: () => {
@@ -626,7 +639,7 @@ function communeTick(dt) {
     communePrompt.shown = true;
     // The label is read off the live binding, never typed in — the same rule
     // the coach panel and the scoreboard follow, and for the same reason.
-    if (communePrompt.key) communePrompt.key.textContent = keyLabel((input.bindings.crouch || [])[0]);
+    if (communePrompt.key) communePrompt.key.textContent = liveKey('crouch');
     // …and the purse, so the prompt is a reason and not just an instruction.
     // Written when the prompt is raised rather than every frame: it only moves
     // on a wave clear, and this runs sixty times a second.
@@ -1085,7 +1098,7 @@ function setScoreboard(open) {
 
   // The one label in the game that has to track a rebind, because it is the
   // label for the key you are holding to read it.
-  if (scoreEl.key) scoreEl.key.textContent = keyLabel((input.bindings.scoreboard || [])[0]);
+  if (scoreEl.key) scoreEl.key.textContent = liveKey('scoreboard');
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -1367,6 +1380,45 @@ input.onLockChange = (locked) => {
 };
 
 /**
+ * PICKING UP A CONTROLLER REPAINTS EVERY PROMPT IN THE GAME.
+ *
+ * Fired once per change rather than polled, so this is a handful of innerHTML
+ * writes when the player swaps hands and nothing at all while they play. Every
+ * surface that names a control is on this one line: the Codex grid, the pause
+ * card, the three scheme cards and the bindings list (Menu.setDevice), the
+ * power wheel, the map caption, the free camera's way back and the order
+ * keycaps (HUD.setBindings), and this file's own three.
+ */
+input.onDevice = () => {
+  menu.setDevice(input.device, input.padFamily);
+  hud.setBindings(input.bindings, padOf());
+  refreshCoachKeys();
+  // The scoreboard's caption is painted when the overlay is RAISED, so a
+  // device swapped while it is up would leave the one label whose whole job is
+  // to name the key you are holding naming the other device's key.
+  if (scoreEl.key) scoreEl.key.textContent = liveKey('scoreboard');
+};
+
+/**
+ * START IS ESCAPE, and it is the same handler and not a second one.
+ *
+ * Pausing is deliberately not an ACTION — see pauseHintsHtml — because the way
+ * out has to survive a binding that has gone wrong, and a pad player had NO way
+ * out at all: Escape is a key, and a controller has none. So Start lands on the
+ * same `screens.escape()` the keydown listener below calls, through the same
+ * star-map special case, and there is still exactly one rule for what the way
+ * out does from each state. Input only raises it when no modifier is held, so
+ * the Start chords in the pad map stay bindable.
+ */
+input.onMenu = () => {
+  if (tree.open) { closeMeditation(); return; }
+  screens.escape();
+};
+
+/** A pad button, for whichever binding chip in the options list is listening. */
+input.onPadCode = (code) => menu.padCode?.(code);
+
+/**
  * The dojo's lesson navigation, read as ACTIONS once a frame.
  *
  * It used to be a raw `e.code === 'KeyN'` listener sitting right here, beside
@@ -1463,7 +1515,7 @@ function orderKeys() {
 function refreshCoachKeys() {
   const host = document.querySelector('#coach .coach-keys');
   if (!host) return;
-  const k = (id) => keyLabel((input.bindings[id] || [])[0]);
+  const k = liveKey;
   host.innerHTML = [
     [k('lessonNext'), 'next'], [k('lessonBack'), 'back'], [k('lessonRepeat'), 'again'],
   ].map(([key, what]) => `<span><kbd>${key}</kbd> ${what}</span>`).join('');
@@ -1471,7 +1523,7 @@ function refreshCoachKeys() {
 refreshCoachKeys();
 // …and the power wheel, which carried five typed key letters before this, two
 // of them wrong on a fresh install. It is on screen for the whole fight.
-hud.setBindings(input.bindings);
+hud.setBindings(input.bindings, padOf());
 
 window.addEventListener('keydown', (e) => {
   if (e.code === 'Escape' && tree.open) {

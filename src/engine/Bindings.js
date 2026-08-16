@@ -36,17 +36,114 @@ export const MOUSE = { 0: 'Mouse1', 1: 'Mouse3', 2: 'Mouse2', 3: 'Mouse4', 4: 'M
 export const WHEEL = { up: 'WheelUp', down: 'WheelDown' };
 export const WHEEL_CODES = [WHEEL.up, WHEEL.down];
 
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  THE PAD, WHICH WAS NOT IN THIS TABLE AT ALL                           */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * A GAMEPAD WAS A STICK YOU COULD WAVE.
+ *
+ * Measured before this: `grep -rn "vibrationActuator\|playEffect" src/` was
+ * zero hits, and `Input._codeDown` resolved a binding as a wheel pseudo-key, a
+ * `Mouse*` button or `keys.has(code)` — there was NO code form a pad button
+ * could take, so not one of the 46 actions could be bound to one. What a pad
+ * reached was the right stick (look), the left stick (move) and buttons 4 and 5
+ * (wrist roll, read raw inside SaberController, past this table). A player
+ * holding a controller could not attack, guard, jump, dodge, dash, use a power,
+ * pause or open the emote wheel.
+ *
+ * So the pad joins the namespace the mouse and the wheel are already in, which
+ * is the whole point of this file: one table, one conflict finder, one Codex,
+ * and a control that is not in here cannot be rebound, listed, or seen to
+ * collide.
+ *
+ * ── THE NAMES ARE THE STANDARD MAPPING'S, and they are POSITIONS ───────
+ *
+ * The Gamepad API's `standard` mapping fixes what button 3 is, and nothing
+ * fixes what it is CALLED — it is Y on an Xbox pad, Triangle on a PlayStation
+ * one and X on a Nintendo one. The code is therefore the index's Xbox name
+ * (the mapping's own reference layout) and the LABEL is chosen at render time
+ * from the pad that is plugged in; see padLabel().
+ */
+export const PAD = {
+  0: 'PadA', 1: 'PadB', 2: 'PadX', 3: 'PadY',
+  4: 'PadLB', 5: 'PadRB', 6: 'PadLT', 7: 'PadRT',
+  8: 'PadBack', 9: 'PadStart', 10: 'PadL3', 11: 'PadR3',
+  12: 'PadUp', 13: 'PadDown', 14: 'PadLeft', 15: 'PadRight',
+};
+/** index → code, and back. Button 16 (Guide/Home) is left to the OS. */
+export const PAD_CODES = Object.values(PAD);
+export const PAD_INDEX = new Map(Object.entries(PAD).map(([i, c]) => [c, +i]));
+
+/**
+ * THE LEFT STICK, AS FOUR CODES — because it was a second set of movement
+ * bindings that no table knew about.
+ *
+ * `moveAxis` read `this.padLeft` directly and added it to whatever the table
+ * said. That is precisely the defect the four `|| this.down('ArrowUp')` were
+ * removed for one round ago, wearing a stick instead of an arrow key: the
+ * codes were invisible to `findConflicts`, unrebindable, and on no screen.
+ *
+ * They are ANALOG and they stay analog. `Input.actAxis` returns the magnitude
+ * rather than a boolean, so a stick pushed a third of the way still walks a
+ * third of the pace — a threshold here would have thrown the one thing a pad
+ * has that a keyboard does not. The deadzone is the boolean's threshold and
+ * the analog's zero at once, so `act('moveF')` and `actAxis('moveF')` can never
+ * disagree about whether the stick is being pushed.
+ */
+export const PAD_AXES = {
+  PadLUp:    { axis: 1, sign: -1 }, PadLDown:  { axis: 1, sign: 1 },
+  PadLLeft:  { axis: 0, sign: -1 }, PadLRight: { axis: 0, sign: 1 },
+};
+export const PAD_AXIS_CODES = Object.keys(PAD_AXES);
+
+/**
+ * A CHORD IS ONE CODE, JOINED BY '+'.
+ *
+ * The header of this file has promised chords since it was written — "a chord
+ * is one main key plus optional modifiers; the most specific chord wins" — and
+ * nothing implemented them, because a keyboard has 104 keys and never needed
+ * one. A pad has sixteen buttons and 42 actions that want a code, so it does.
+ *
+ * A chord is a CODE and not a new kind of binding: `findConflicts`,
+ * `resolveConflicts`, `conflicts`, `loadBindings` and the options list all go
+ * on comparing strings and none of them had to learn anything. What has to
+ * know is `Input`, which resolves it — and the "most specific wins" half, which
+ * is that a bare code is suppressed while a chord containing it is satisfied.
+ * Hold LB and press A and you push; you must not also jump.
+ */
+export const CHORD = '+';
+export const chordParts = (code) => String(code).split(CHORD);
+export const isChord = (code) => String(code).includes(CHORD);
+
+/**
+ * THE TWO MODIFIERS, AND WHY THEY HOLD NOTHING OF THEIR OWN.
+ *
+ * LB is the Force layer and Back/View is the interface-and-orders layer. Both
+ * are bound to no action at all, and that is a decision rather than an
+ * oversight: a modifier that also fires something means every cast drops
+ * whatever the modifier was holding for the frame the chord lands on, and the
+ * two obvious candidates for LB's own job — the lateral guard and the
+ * one-handed grip — are exactly the kind of HOLD you would be in the middle of
+ * when you cast. tools/checks/controls.mjs asserts they stay unbound.
+ *
+ * Start is not here and is not an action: it is the way OUT, and it is
+ * device-level for the same reason Escape is (see pauseHintsHtml). Chords on it
+ * are legal — bare Start only opens the menu when no modifier is held.
+ */
+export const PAD_MODIFIERS = ['PadLB', 'PadBack'];
+
 /**
  * Every rebindable action, in the order the options screen lists them.
  * `hold` marks an action read continuously rather than on the press edge.
  */
 export const ACTIONS = [
-  { id: 'moveF',      group: 'Movement', label: 'Move forward',      keys: ['KeyW'],       hold: true },
-  { id: 'moveB',      group: 'Movement', label: 'Move back',         keys: ['KeyS'],       hold: true },
-  { id: 'moveL',      group: 'Movement', label: 'Move left',         keys: ['KeyA'],       hold: true },
-  { id: 'moveR',      group: 'Movement', label: 'Move right',        keys: ['KeyD'],       hold: true },
-  { id: 'jump',       group: 'Movement', label: 'Force jump',        keys: ['Space'],      hold: true },
-  { id: 'sprint',     group: 'Movement', label: 'Sprint',            keys: ['ShiftLeft'],  hold: true },
+  { id: 'moveF',      group: 'Movement', label: 'Move forward',      keys: ['KeyW'],       hold: true, pad: 'PadLUp' },
+  { id: 'moveB',      group: 'Movement', label: 'Move back',         keys: ['KeyS'],       hold: true, pad: 'PadLDown' },
+  { id: 'moveL',      group: 'Movement', label: 'Move left',         keys: ['KeyA'],       hold: true, pad: 'PadLLeft' },
+  { id: 'moveR',      group: 'Movement', label: 'Move right',        keys: ['KeyD'],       hold: true, pad: 'PadLRight' },
+  { id: 'jump',       group: 'Movement', label: 'Force jump',        keys: ['Space'],      hold: true, pad: 'PadA' },
+  { id: 'sprint',     group: 'Movement', label: 'Sprint',            keys: ['ShiftLeft'],  hold: true, pad: 'PadL3' },
   // Backquote, and every other candidate was taken. A slow walk is a HOLD you
   // keep for tens of seconds while strafing on WASD, so it belongs under the
   // LEFT PINKY — the column that already carries Shift (sprint), Ctrl
@@ -60,24 +157,24 @@ export const ACTIONS = [
   // it is a THING YOU ARE DOING — you hold it to walk into a room, and the
   // moment you let go you are moving normally again. A toggled walk is a mode
   // you forget you are in, and the first time you forget is a bolt in the back.
-  { id: 'walk',       group: 'Movement', label: 'Slow walk',         keys: ['Backquote'],  hold: true },
-  { id: 'crouch',     group: 'Movement', label: 'Crouch',            keys: ['ControlLeft'], hold: true },
-  { id: 'dash',       group: 'Movement', label: 'Dash / evade',      keys: ['AltLeft', 'Mouse4'] },
+  { id: 'walk',       group: 'Movement', label: 'Slow walk',         keys: ['Backquote'],  hold: true, pad: 'PadBack+PadL3' },
+  { id: 'crouch',     group: 'Movement', label: 'Crouch',            keys: ['ControlLeft'], hold: true, pad: 'PadR3' },
+  { id: 'dash',       group: 'Movement', label: 'Dash / evade',      keys: ['AltLeft', 'Mouse4'], pad: 'PadB' },
 
-  { id: 'blade',      group: 'Blade',    label: 'Take the blade',    keys: ['Mouse1'],     hold: true },
-  { id: 'thrust',     group: 'Blade',    label: 'Thrust',            keys: ['Mouse2'] },
+  { id: 'blade',      group: 'Blade',    label: 'Take the blade',    keys: ['Mouse1'],     hold: true, pad: 'PadRT' },
+  { id: 'thrust',     group: 'Blade',    label: 'Thrust',            keys: ['Mouse2'], pad: 'PadRB' },
   // The two halves of the attack rose, mirroring the guard rose: wheel up is an
   // overhead, wheel down is a stab. They are ordinary rows here rather than a
   // raw `mouse.wheel` read for exactly the reason the four rows below this one
   // exist — a control that is not in this table cannot be rebound, cannot be
   // listed, and cannot be seen to collide with the Force grip, which is the
   // other thing that wants the wheel.
-  { id: 'attackOver', group: 'Blade',    label: 'Overhead attack',   keys: ['WheelUp'] },
-  { id: 'attackStab', group: 'Blade',    label: 'Stab',              keys: ['WheelDown'] },
-  { id: 'rollL',      group: 'Blade',    label: 'Roll wrist left',   keys: ['KeyQ'],       hold: true },
-  { id: 'rollR',      group: 'Blade',    label: 'Roll wrist right',  keys: ['KeyE'],       hold: true },
-  { id: 'ignite',     group: 'Blade',    label: 'Ignite / retract',  keys: ['KeyX'] },
-  { id: 'grip2',      group: 'Blade',    label: 'One-handed grip',   keys: ['CapsLock'],   hold: true },
+  { id: 'attackOver', group: 'Blade',    label: 'Overhead attack',   keys: ['WheelUp'], pad: 'PadUp' },
+  { id: 'attackStab', group: 'Blade',    label: 'Stab',              keys: ['WheelDown'], pad: 'PadDown' },
+  { id: 'rollL',      group: 'Blade',    label: 'Roll wrist left',   keys: ['KeyQ'],       hold: true, pad: 'PadLeft' },
+  { id: 'rollR',      group: 'Blade',    label: 'Roll wrist right',  keys: ['KeyE'],       hold: true, pad: 'PadRight' },
+  { id: 'ignite',     group: 'Blade',    label: 'Ignite / retract',  keys: ['KeyX'], pad: 'PadX' },
+  { id: 'grip2',      group: 'Blade',    label: 'One-handed grip',   keys: ['CapsLock'],   hold: true, pad: 'PadBack+PadRB' },
   // Digit1/Digit2, not KeyB/KeyN. These two were seeded onto B and N at runtime
   // by SaberController, which meant they were not in this table, so they never
   // reached the options screen, could not be rebound, and could not be seen to
@@ -87,8 +184,8 @@ export const ACTIONS = [
   // a HOLD you keep while strafing, so it has to stay under the left hand: the
   // digit row is the only thing left there that nothing else claims. Mouse5 is
   // the thumb button and is the nicer way to hold it if you have one.
-  { id: 'stance',     group: 'Blade',    label: 'Lateral guard',     keys: ['Digit1', 'Mouse5'], hold: true },
-  { id: 'flourish',   group: 'Blade',    label: 'Flourish',          keys: ['Digit2'] },
+  { id: 'stance',     group: 'Blade',    label: 'Lateral guard',     keys: ['Digit1', 'Mouse5'], hold: true, pad: 'PadY' },
+  { id: 'flourish',   group: 'Blade',    label: 'Flourish',          keys: ['Digit2'], pad: 'PadLB+PadBack' },
   // One key for both halves of note 61: over a fallen hilt it takes, otherwise
   // it puts yours down.
   //
@@ -99,12 +196,12 @@ export const ACTIONS = [
   // remember which. M is free, it is under the same hand, and picking a weapon
   // up off the ground is a deliberate act rather than a combat reflex, so it
   // does not need to be the nearest key left.
-  { id: 'swap',       group: 'Blade',    label: 'Drop / take a saber', keys: ['KeyM'] },
+  { id: 'swap',       group: 'Blade',    label: 'Drop / take a saber', keys: ['KeyM'], pad: 'PadBack+PadX' },
 
-  { id: 'focus',      group: 'Force',    label: 'Focus (slow time)', keys: ['Mouse3', 'KeyT'], hold: true },
-  { id: 'push',       group: 'Force',    label: 'Force push',        keys: ['KeyF'] },
-  { id: 'pull',       group: 'Force',    label: 'Force pull',        keys: ['KeyR'] },
-  { id: 'grip',       group: 'Force',    label: 'Force grip object', keys: ['KeyG'],       hold: true },
+  { id: 'focus',      group: 'Force',    label: 'Focus (slow time)', keys: ['Mouse3', 'KeyT'], hold: true, pad: 'PadLT' },
+  { id: 'push',       group: 'Force',    label: 'Force push',        keys: ['KeyF'], pad: 'PadLB+PadA' },
+  { id: 'pull',       group: 'Force',    label: 'Force pull',        keys: ['KeyR'], pad: 'PadLB+PadB' },
+  { id: 'grip',       group: 'Force',    label: 'Force grip object', keys: ['KeyG'],       hold: true, pad: 'PadLB+PadX' },
   // KeyY, not Mouse2. Mouse2 is `thrust`, and it was ALSO the shipped default
   // here — a clash inside the defaults themselves, so a fresh profile had one
   // button firing two things and no rebind could separate them until you found
@@ -112,31 +209,31 @@ export const ACTIONS = [
   // findConflict only ever looked at the key you were TYPING, never at what was
   // already in the table. Y is free, and it sits with the other Force verbs
   // that live off the movement cluster (T focus, H throw).
-  { id: 'hurl',       group: 'Force',    label: 'Hurl gripped',      keys: ['KeyY'] },
-  { id: 'throw',      group: 'Force',    label: 'Throw / recall saber', keys: ['KeyH'] },
-  { id: 'sense',      group: 'Force',    label: 'Force sense',       keys: ['KeyC'] },
-  { id: 'lightning',  group: 'Force',    label: 'Force lightning',   keys: ['KeyZ'] },
+  { id: 'hurl',       group: 'Force',    label: 'Hurl gripped',      keys: ['KeyY'], pad: 'PadLB+PadY' },
+  { id: 'throw',      group: 'Force',    label: 'Throw / recall saber', keys: ['KeyH'], pad: 'PadLB+PadRB' },
+  { id: 'sense',      group: 'Force',    label: 'Force sense',       keys: ['KeyC'], pad: 'PadLB+PadLeft' },
+  { id: 'lightning',  group: 'Force',    label: 'Force lightning',   keys: ['KeyZ'], pad: 'PadLB+PadUp' },
   /* KeyU, and the choice was made by ASKING rather than by guessing: KeyT is
    * `focus`, and the letters this table has not already spoken for are
    * I, J, K, L, O and U. U is the nearest of those to WASD, which matters for
    * a power whose entire use case is "I am surrounded and I have half a
    * second". A key typed here without checking is how two actions end up
    * sharing one — see the note on `hurl` above, which is that bug's scar. */
-  { id: 'unleash',    group: 'Force',    label: 'Unleash (360° repulse)', keys: ['KeyU'] },
+  { id: 'unleash',    group: 'Force',    label: 'Unleash (360° repulse)', keys: ['KeyU'], pad: 'PadLB+PadRT' },
   // Stasis and rend were read straight off KeyB and KeyN inside Player, past
   // this table, so they had the same disease: no menu row, no rebind, and no
   // way for findConflict to warn that something else wanted the key. Their
   // default keys are unchanged — what changes is that they are now sayable.
-  { id: 'stasis',     group: 'Force',    label: 'Stasis field',      keys: ['KeyB'] },
-  { id: 'heal',       group: 'Force',    label: 'Force heal',        keys: ['Digit3'] },
-  { id: 'rend',       group: 'Force',    label: 'Rend apart',        keys: ['KeyN'] },
+  { id: 'stasis',     group: 'Force',    label: 'Stasis field',      keys: ['KeyB'], pad: 'PadLB+PadRight' },
+  { id: 'heal',       group: 'Force',    label: 'Force heal',        keys: ['Digit3'], pad: 'PadLB+PadDown' },
+  { id: 'rend',       group: 'Force',    label: 'Rend apart',        keys: ['KeyN'], pad: 'PadLB+PadLT' },
   // Digit4 rather than a letter: it sits beside `heal` on Digit3, and the two
   // powers that act on a MIND — yours and someone else's — should be neighbours
   // under the same hand. Every letter within reach of WASD is already spoken
   // for, and findConflict is what proves it rather than anyone's memory.
-  { id: 'compel',     group: 'Force',    label: 'Force compel',      keys: ['Digit4'] },
-  { id: 'scoreboard', group: 'Interface', label: 'Scoreboard',       keys: ['Tab'],        hold: true },
-  { id: 'view',       group: 'Interface', label: 'First / third person', keys: ['KeyV'] },
+  { id: 'compel',     group: 'Force',    label: 'Force compel',      keys: ['Digit4'], pad: 'PadLB+PadL3' },
+  { id: 'scoreboard', group: 'Interface', label: 'Scoreboard',       keys: ['Tab'],        hold: true, pad: 'PadBack+PadY' },
+  { id: 'view',       group: 'Interface', label: 'First / third person', keys: ['KeyV'], pad: 'PadBack+PadA' },
   // Digit5 for the wheel, on the same argument the guard stance made for
   // Digit1: the digit row is what is left under the left hand once every
   // letter within reach of WASD is spoken for, and `stance` already proves a
@@ -144,11 +241,11 @@ export const ACTIONS = [
   // picks the slot while the key is down and the release is the commit — the
   // same gesture every radial wheel in every game uses, and the one that
   // cannot leave the player stuck in a menu they did not mean to open.
-  { id: 'emote',      group: 'Interface', label: 'Emote wheel',      keys: ['Digit5'],     hold: true },
+  { id: 'emote',      group: 'Interface', label: 'Emote wheel',      keys: ['Digit5'],     hold: true, pad: 'PadBack+PadLT' },
   // P for photo. This one may live under the right hand precisely BECAUSE it
   // is a press and not a hold: you take the mouse off the game the moment it
   // is on, and everything you do afterwards is flown with the movement keys.
-  { id: 'freecam',    group: 'Interface', label: 'Free camera',      keys: ['KeyP'] },
+  { id: 'freecam',    group: 'Interface', label: 'Free camera',      keys: ['KeyP'], pad: 'PadLB+PadR3' },
 
   // The dojo's lesson navigation. Last round moved stasis and rend into this
   // table so that B and N could be SEEN to collide — and then left main.js's
@@ -163,9 +260,9 @@ export const ACTIONS = [
   // game you do while NOT fighting: nothing wants those keys mid-swing, they
   // are nowhere near the movement cluster, and they read as "step through" on
   // any keyboard. The coach panel prints whatever they are actually bound to.
-  { id: 'lessonNext',   group: 'Training', label: 'Next lesson',     keys: ['BracketRight'] },
-  { id: 'lessonBack',   group: 'Training', label: 'Previous lesson', keys: ['BracketLeft'] },
-  { id: 'lessonRepeat', group: 'Training', label: 'Restart lesson',  keys: ['Backslash'] },
+  { id: 'lessonNext',   group: 'Training', label: 'Next lesson',     keys: ['BracketRight'], pad: 'PadBack+PadRight' },
+  { id: 'lessonBack',   group: 'Training', label: 'Previous lesson', keys: ['BracketLeft'], pad: 'PadBack+PadLeft' },
+  { id: 'lessonRepeat', group: 'Training', label: 'Restart lesson',  keys: ['Backslash'], pad: 'PadLB+PadStart' },
 ];
 
 export const ACTION_IDS = ACTIONS.map(a => a.id);
@@ -226,6 +323,23 @@ export const orderActionId = (formationId) => `form.${formationId}`;
 export const ORDER_ACTIONS = [];
 
 /**
+ * THE PAD CODES AN ORDER MAY HAVE, as a POOL and not as six typed rows.
+ *
+ * The orders are generated from `FORMATIONS`, so their pad bindings have to be
+ * generated too — six literal `{ 'form.circle': 'PadBack+PadA' }` entries beside
+ * the generated table is HANDOFF §2.3's signature defect, and the note above
+ * this seam already refuses it once for the keyboard.
+ *
+ * So a formation is DEALT the next code in this pool, in declaration order.
+ * `Back` is the interface-and-orders modifier and the four face buttons plus
+ * the two vertical D-pad presses are the six nearest things under the thumb;
+ * a seventh formation gets no pad code rather than a wrong one, and
+ * tools/checks/controls.mjs prints the shortfall instead of hiding it.
+ */
+export const ORDER_PAD_POOL = ['PadBack+PadB', 'PadBack+PadRT',
+  'PadBack+PadUp', 'PadBack+PadDown', 'PadBack+PadR3', 'PadBack+PadStart'];
+
+/**
  * Teach the bindings table about a set of orders.
  *
  * Idempotent and re-entrant BY DESIGN: called twice with a changed table, the
@@ -257,6 +371,11 @@ export function registerOrders(formations) {
       keys: [F.key],
       order: F.id, blurb: F.blurb || '',
     };
+    // Dealt, not typed. Re-entrant: a formation keeps the slot its position in
+    // the table gives it, so registering twice does not shuffle the pad map.
+    const slot = ORDER_ACTIONS.findIndex(o => o.action === action);
+    const nth = slot >= 0 ? slot : ORDER_ACTIONS.length;
+    if (ORDER_PAD_POOL[nth]) row.pad = ORDER_PAD_POOL[nth];
     const at = ACTIONS.findIndex(a => a.id === action);
     if (at >= 0) ACTIONS[at] = row; else { ACTIONS.push(row); ACTION_IDS.push(action); }
     const seen = ORDER_ACTIONS.findIndex(o => o.action === action);
@@ -315,9 +434,19 @@ export function walkScale(input) {
   return input.act('walk') ? WALK_SCALE : 1;
 }
 
+/**
+ * The shipped table, keyboard AND pad.
+ *
+ * The pad code is a THIRD entry on the same list rather than a second table,
+ * because "a binding is a list" is the one thing this file has always said and
+ * a parallel pad map would be the hand-maintained twin HANDOFF §2.3 is about:
+ * one conflict finder, one options row, one Codex line, whichever device the
+ * player is holding. Every row already had room — the longest shipped binding
+ * was two keys and `loadBindings` keeps three.
+ */
 export function defaultBindings() {
   const out = {};
-  for (const a of ACTIONS) out[a.id] = a.keys.slice();
+  for (const a of ACTIONS) out[a.id] = a.pad ? a.keys.concat(a.pad) : a.keys.slice();
   return out;
 }
 
@@ -342,9 +471,96 @@ export function saveBindings(b) {
   try { localStorage.setItem(STORE_KEY, JSON.stringify(b)); } catch {}
 }
 
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  GLYPHS — the same binding, named for the thing in the player's hands   */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * WHAT BUTTON 3 IS CALLED, and it depends on the pad.
+ *
+ * The standard mapping fixes the POSITION and nothing fixes the name: index 3
+ * is Y on an Xbox pad, △ on a PlayStation one and X on a Nintendo one — and
+ * Nintendo also swaps 0/1 and 2/3 relative to the letters printed on the shell.
+ * A creator screen that says "Y" to somebody holding a DualSense is the same
+ * lie as a Codex that says "M2 to hurl it" after the rebind, which is the
+ * defect this whole file's no-typed-key-names rule exists for.
+ *
+ * Three families, keyed off `Gamepad.id` — which is a free-form vendor string,
+ * so this matches on what is reliably IN it and falls back to the reference
+ * layout rather than guessing. `PAD_FAMILY` is what the options screen offers
+ * and what a check enumerates.
+ */
+export const PAD_FAMILY = ['xbox', 'playstation', 'nintendo'];
+const PAD_FACE = {
+  xbox:        { PadA: 'A', PadB: 'B', PadX: 'X', PadY: 'Y', PadBack: 'View', PadStart: 'Menu' },
+  playstation: { PadA: '✕', PadB: '○', PadX: '□', PadY: '△', PadBack: 'Create', PadStart: 'Options' },
+  nintendo:    { PadA: 'B', PadB: 'A', PadX: 'Y', PadY: 'X', PadBack: '−', PadStart: '+' },
+};
+const PAD_SHOULDER = {
+  xbox:        { PadLB: 'LB', PadRB: 'RB', PadLT: 'LT', PadRT: 'RT', PadL3: 'LS', PadR3: 'RS' },
+  playstation: { PadLB: 'L1', PadRB: 'R1', PadLT: 'L2', PadRT: 'R2', PadL3: 'L3', PadR3: 'R3' },
+  nintendo:    { PadLB: 'L', PadRB: 'R', PadLT: 'ZL', PadRT: 'ZR', PadL3: 'LS', PadR3: 'RS' },
+};
+const PAD_COMMON = {
+  PadUp: '↑', PadDown: '↓', PadLeft: '←', PadRight: '→',
+  PadLUp: 'Stick ↑', PadLDown: 'Stick ↓', PadLLeft: 'Stick ←', PadLRight: 'Stick →',
+};
+
+/**
+ * Which family a `Gamepad.id` belongs to. The reference layout when unsure.
+ *
+ * XBOX IS TESTED FIRST AND THAT IS NOT ARBITRARY. `Gamepad.id` is a free-form
+ * vendor string and the families' names overlap: Chromium calls a DualShock 4
+ * "Wireless Controller", and "Xbox Wireless Controller" contains that phrase
+ * word for word. A generic pattern that fires on the shared half reads the
+ * commonest pad on the platform as the other one, which is how this check
+ * failed the first time it was run. The specific vendor words win.
+ */
+export function padFamily(id) {
+  const s = String(id || '').toLowerCase();
+  if (/xbox|xinput|microsoft/.test(s)) return 'xbox';
+  if (/nintendo|switch|joy-?con|\bpro controller\b/.test(s)) return 'nintendo';
+  if (/dualsense|dualshock|playstation|\bps[345]\b|sony|wireless controller/.test(s)) return 'playstation';
+  return 'xbox';
+}
+
+/** Is this code a pad button, a pad stick direction, or neither. */
+export const isPadCode = (code) => typeof code === 'string'
+  && chordParts(code).every(p => PAD_INDEX.has(p) || p in PAD_AXES);
+
+/**
+ * The codes this action answers to ON A GIVEN DEVICE.
+ *
+ * "The Codex and every key prompt show pad buttons when a pad is the active
+ * device" is one rule and this is it, so it cannot be implemented twice and
+ * differently in the Codex, the power wheel, the coach panel, the scoreboard
+ * and the free camera's own legend.
+ *
+ * It never returns nothing: an action with no binding for the active device
+ * falls back to the whole list rather than printing a dash. A player on a pad
+ * who has cleared every pad code off Force Push still needs to be told what
+ * Force Push is on, and the honest answer is the keyboard one they left there.
+ */
+export function codesFor(bindings, id, device = 'key') {
+  const all = (bindings && bindings[id]) || [];
+  const want = device === 'pad';
+  const hit = all.filter(c => isPadCode(c) === want);
+  return hit.length ? hit : all;
+}
+
+/** The label for ONE pad code on ONE family of pad. */
+export function padLabel(code, family = 'xbox') {
+  const f = PAD_FACE[family] ? family : 'xbox';
+  return PAD_FACE[f][code] || PAD_SHOULDER[f][code] || PAD_COMMON[code] || code;
+}
+
 /** Human-readable name for a key code, for the options screen. */
-export function keyLabel(code) {
+export function keyLabel(code, family = 'xbox') {
   if (!code) return '—';
+  // A chord is its parts, joined the way it is written. The main code goes
+  // last, which is the order it is stored in and the order a hand does it in.
+  if (isChord(code)) return chordParts(code).map(p => keyLabel(p, family)).join('+');
+  if (isPadCode(code)) return padLabel(code, family);
   if (code === 'WheelUp') return 'Wheel ↑';
   if (code === 'WheelDown') return 'Wheel ↓';
   if (code.startsWith('Mouse')) return code.replace('Mouse', 'M');

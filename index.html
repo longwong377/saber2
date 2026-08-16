@@ -288,6 +288,11 @@
         <label class="check"><input type="checkbox" id="opt-injury" checked> Injuries show on the body</label>
         <label class="check"><input type="checkbox" id="opt-shake" checked> Camera shake</label>
         <label class="check"><input type="checkbox" id="opt-slowmo" checked> Cinematic slow-motion</label>
+        <label class="slider">Controller rumble <input type="range" id="opt-rumble" min="0" max="1" step="0.05" value="1"><b></b></label>
+        <p class="hint">A kill, a blow taken and a deflection each drive the pad. A slider rather than a
+          box because rumble is the one piece of feedback here with a physical strength — 0 is silent
+          and 1 is what the game was tuned to give. Camera shake off silences the pad as well; this
+          scales what survives it.</p>
         <h3 style="margin-top:22px">Audio</h3>
         <label class="slider">Master <input type="range" id="opt-vol" min="0" max="1" step="0.02" value="0.8"><b></b></label>
         <label class="slider">Music <input type="range" id="opt-music" min="0" max="1" step="0.02" value="0.45"><b></b></label>
