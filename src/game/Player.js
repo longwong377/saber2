@@ -26,7 +26,7 @@ import { parryScale, TOUGHNESS } from './Combat.js';
  * `forceResistance` in Enemy.js, and one contest read out of two rulebooks is
  * exactly the drift `Powers.js` exists to have ended (HANDOFF §2.3/§2.4).
  * Enemy.js imports nothing from this file, so the edge is one-way. */
-import { forceResistance, IMPULSE_AS_HP } from './Enemy.js';
+import { forceResistance, IMPULSE_AS_HP, limitBackpedal } from './Enemy.js';
 import { POWER_COST } from './Powers.js';
 import { bodyOf } from '../engine/Presence.js';
 import { clamp, lerp, damp, smoothstep, dampVec, makeRng, TAU } from '../engine/MathUtil.js';
@@ -193,6 +193,14 @@ const EYE_H = 1.62, EYE_H_CROUCH = 1.22;
  * multiplier. A species that declares no stature is this tall.
  */
 const HUMAN_H = 1.78;
+
+/**
+ * What is left of a pace that points behind you — see `_move`, and Enemy.js's
+ * `limitBackpedal`, which is the law and is shared. The bodies use 0.5; this is
+ * the player's share of the same rule and the number is argued where it is
+ * spent.
+ */
+const PLAYER_BACKPEDAL = 0.72;
 
 const CORE_BONE = /^(hips|spine|chest|body|core|pelvis)$/;
 
@@ -2484,6 +2492,34 @@ export class Player {
     const right = _v2.set(fwd.z, 0, -fwd.x).negate();
     const wish = _v3.set(0, 0, 0).addScaledVector(fwd, axis.y).addScaledVector(right, axis.x);
     if (wish.lengthSq() > 1) wish.normalize();
+    /**
+     * NOBODY BACKPEDALS AS FAST AS THEY RUN — INCLUDING THE PLAYER.
+     *
+     * `limitBackpedal` is Enemy.js's, it is exported for the reason its own
+     * note gives ("a numeric law, and numeric laws in this codebase get
+     * measured, not eyeballed"), tools/checks/movement.mjs asserts it, and
+     * every body in the game has obeyed it for as long as it has existed. The
+     * player never did. So the one fighter on the field who could give ground
+     * at a dead run, in the direction they are looking, for nothing, was the
+     * one holding the camera — and holding one movement key was the strongest
+     * answer in a duel because of it (see the FOOTWORK note in Duel.js).
+     *
+     * `fwd` is the body's own forward: `facing` is driven to `camera.yaw + PI`
+     * and a body facing `f` looks along `(sin f, 0, cos f)`, which is this
+     * vector exactly. So the law applied here is the one the enemies obey — the
+     * component pointing BEHIND you is slowed and everything across that line
+     * is untouched. A sidestep keeps its full pace, an advance is not touched
+     * at all, and a diagonal retreat loses only the part of it that is retreat.
+     *
+     * NOT the bodies' 0.5. A player who has committed to a direction cannot
+     * re-plant as freely as one who has not, but they are also the only fighter
+     * on the field with a camera to turn: 0.72 leaves a straight walk backwards
+     * at 3.31 m/s against a 4.60 m/s advance, which is a real retreat and no
+     * longer a free one. The DASH is untouched — `targetV` is overwritten
+     * wholesale below — because a dodge is the answer this is meant to leave
+     * standing, and it is the one that costs 18 stamina.
+     */
+    limitBackpedal(wish, fwd, PLAYER_BACKPEDAL);
 
     // acceleration: crisp on the ground, floaty in the air
     const accel = this.grounded ? 46 : 12;
