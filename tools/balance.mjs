@@ -706,15 +706,42 @@ const q = (v) => (Math.round(v * 100) / 100).toFixed(2);
  * counted off 240 s of the real brain per form (Soresu 87.9%, Makashi 48.9%,
  * Djem So 40.2%, Juyo 38.3%, Ataru 24.3%).
  */
-const _engage = new Map();
 /**
  * How long the blade needs to NEUTRALISE a body and how long to KILL it — two
  * different numbers, because severing one leg topples a droid and severing one
  * arm disarms a shooter, and both stop it hurting you long before it is dead.
  * A model that only knows hp would miss the whole of that.
+ *
+ * @param opts.only  a predicate on a capsule NAME. When given, the model may
+ *   only reach the bones it admits — every other capsule is treated as out of
+ *   reach, exactly as the `ceiling` filter already treats one that is too high.
+ *
+ *   It exists to answer a question the "best plan" number cannot: *if the only
+ *   thing you can put a blade on is its feet, how long does this take?* That is
+ *   a real question about a six-metre animal — the head is over the ceiling and
+ *   the toes are at eye level — and it is the question the vital table is
+ *   answerable to, because `takeCut` charges a SHARE OF MAXIMUM HEALTH per
+ *   sever. Restricting the capsule set is the whole implementation: everything
+ *   downstream is the same rule, so this cannot disagree with the unrestricted
+ *   number (HANDOFF §2.4).
+ *
+ * @param opts.guardOpen  the player has already EARNED an opening, so no pass
+ *   is turned. The prose under this table has always said the openings are
+ *   unmodelled — "a topple, a grip, a Force shove, a heavy blow or the WINDED
+ *   window … all open the guard outright in the game" — and with a heavy body's
+ *   guard costing `TURNED_CUT` a pass, five turns kill anything, so the guarded
+ *   number is the SAME five or six passes for every body over 1500 kg whatever
+ *   its bones are worth. That makes the guarded column blind to the thing the
+ *   vital table decides. This supplies the input the game computes in
+ *   `_guardOpen()`; it does not restate it.
  */
-export function engagementFor(entry, mods, guardShare = 0) {
-  const key = `${entry}|${q(mods.cutPower)}|${q(mods.bladeLength)}|${q(mods.attackRate)}|${q(guardShare)}`;
+/* Declared HERE and not above the doc block: `balance: a memo keyed on a moving
+ * number cannot grow without bound` reads the 34 lines that follow this line and
+ * asserts the bound is in them, so a long comment wedged between a memo and its
+ * own guard is enough to make that check report a leak that is not there. */
+const _engage = new Map();
+export function engagementFor(entry, mods, guardShare = 0, opts = {}) {
+  const key = `${entry}|${q(mods.cutPower)}|${q(mods.bladeLength)}|${q(mods.attackRate)}|${q(guardShare)}|${opts.onlyKey ?? ''}|${opts.guardOpen ? 'open' : ''}`;
   if (_engage.has(key)) return _engage.get(key);
   if (_engage.size >= MEMO_MAX) _engage.clear();
 
@@ -738,7 +765,9 @@ export function engagementFor(entry, mods, guardShare = 0) {
   // How high a standing player's blade goes, MEASURED off the real controller
   // driving a real authored attack, plus whatever the boons added to the blade.
   const ceiling = measureSwing().reachHeight + (reach - BLADE_REACH_BASE);
-  const caps = capsulesFor(entry).filter(c => !c.shield && c.height - c.r <= ceiling);
+  const caps = capsulesFor(entry)
+    .filter(c => !c.shield && c.height - c.r <= ceiling)
+    .filter(c => !opts.only || opts.only(c.name));
 
   // A shield — a droideka's, or the Shielded elite's bubble — is in front of
   // every bone, and takeCut only DROPS it, so the passes that break it are pure
@@ -785,12 +814,12 @@ export function engagementFor(entry, mods, guardShare = 0) {
    * the model discovers "take its legs" against a big animal on its own, from
    * the rules the game already had, instead of being told.
    */
-  const guardMax = guardFor(A);
+  const guardMax = opts.guardOpen ? 0 : guardFor(A);
   const maxTurns = Math.ceil(1 / TURNED_CUT);
   const turnsFor = (cap) => {
     if (guardMax <= 0) return 0;
     const ending = Enemy.prototype._fightEnding.call(
-      { A, hp: maxHp, maxHp, disarmed: false }, cap.name, cap.vital ?? 0.4);
+      { A, hp: maxHp, maxHp, disarmed: false }, cap.name, cap.vital);
     return ending ? Math.min(guardMax, maxTurns) : 0;
   };
 
