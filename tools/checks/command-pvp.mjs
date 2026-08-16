@@ -537,7 +537,7 @@ export function run({ check, assert }) {
      * a different census. That is asserted here by driving it to a real end.
      */
     const { SIDES } = await import('../../src/game/Player.js');
-    const { host, pump } = await commandPair({ host: { commandVersus: true }, start: false });
+    const { host, client, pump } = await commandPair({ host: { commandVersus: true }, start: false });
     await joinAsCommander(host, { team: SIDES[1] });
     const cs = host.beginVersus();
     const d = host.command;
@@ -590,6 +590,20 @@ export function run({ check, assert }) {
       + 'a battle that cannot end is worse than one that cannot start');
     assert(ended.length === 1, `onGameOver fired ${ended.length} times`);
     assert(typeof ended[0].won === 'boolean', 'the meeting did not report a winner');
+    /**
+     * …AND THE OTHER MACHINE HEARD ABOUT IT.
+     *
+     * `beginVersus` is the only thing that makes a match and it runs on the
+     * host, so a client had none — `applyMatch` returned on its first line
+     * every time, and a joining commander fought a whole battle and was told
+     * none of it: no countdown, no clock, no card. The record carries `sides`,
+     * which is the one thing the constructor needs.
+     */
+    assert(client.match, 'the joining commander never got a match at all');
+    assert(client.match.phase === 'match-over',
+      `the joining commander's copy is still in phase '${client.match.phase}'`);
+    assert(client.match.winner === host.match.winner,
+      `the two machines disagree about who took the field: ${host.match.winner} v ${client.match.winner}`);
     const w = host.match.winner;
     assert(w === null || cs.some((c) => c.side === w), `side ${w} took the field and is nobody's`);
     return `${before.join(' v ')} → ${after.join(' v ')} standing, closed to ${closest.toFixed(1)} m, `

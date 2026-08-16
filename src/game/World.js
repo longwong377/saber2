@@ -3029,7 +3029,22 @@ export class World {
 
   /** Host → this client: the state of the meeting. A client owns none of it. */
   applyMatch(rec) {
-    if (!this.match || this.netMode !== 'client') return false;
+    if (this.netMode !== 'client' || !rec) return false;
+    /**
+     * MADE FROM THE FIRST RECORD, because nothing on a client ever makes one.
+     *
+     * `beginVersus` is the only constructor of a match and it runs on the host
+     * — correctly, since the host is the only node that can see every body. So
+     * this used to return on `!this.match` at the first line, every time, and a
+     * joining commander received the whole match and was told none of it: no
+     * countdown, no clock, and no card at the end of a battle they had just
+     * fought. `DuelMatch.WIRE` carries `sides`, which is the one thing the
+     * constructor needs and the one thing a client cannot work out.
+     */
+    if (!this.match) {
+      this.match = new DuelMatch(this.rules, Array.isArray(rec.sides) && rec.sides.length
+        ? rec.sides : [TEAM.PARTY, sideTeam(1)]);
+    }
     this.match.apply(rec);
     if (this.match.phase === 'match-over') this._endMeeting(this.match.winner);
     return true;
