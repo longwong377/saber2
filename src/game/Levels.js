@@ -1964,11 +1964,20 @@ export const LEVELS = {
        * height. At 13° this level sat below the Ember Shelf's 15° by 15%, so it
        * had to come in UNDER the Ember Shelf's 30.1% — and under the 30% floor,
        * which is the same number. There is no pair of key and ambient that
-       * satisfies both; the elevation is what was wrong. At 17° it sits between
-       * the Ember Shelf's 15° and the Drowned Wood's 19° and has room to be a
-       * real value. It is still the third-lowest sun in the game and a smoke
-       * ceiling this thick is what makes the level dark, not the elevation. */
-      elevation: 18, azimuth: 148,
+       * satisfies both; the elevation is what was wrong.
+       *
+       * 19.5 AND NOT 17 OR 18, and the last move was forced by GEONOSIS
+       * arriving in the roster at 21°. The rule is strict wherever two levels
+       * differ by more than 10% of sun height, and at 18° this level was
+       * squeezed between Kamino below it (36.4%) and Geonosis above it (36.7%)
+       * — a window three tenths of a point wide, which is not a design, it is a
+       * coincidence waiting to break. At 19.5 the nearest levels in sun height
+       * are the Drowned Wood at 19 and Geonosis at 21, both inside the 10%
+       * band, so nothing is strict against them and the window is Kamino's
+       * 36.4% to the dune sea's 41.4%. It is still one of the lowest suns in
+       * the game and a smoke ceiling this thick is what makes the level dark,
+       * not the elevation. */
+      elevation: 19.5, azimuth: 148,
       /* 4.7 OVER 0.82, NOT 4.2 OVER 0.86. `cel.mjs` holds every level's shaded
        * ground to keeping at least 30% of its light from the KEY — the whole
        * reason a shadow on this project is a deeper version of the surface
@@ -1984,9 +1993,9 @@ export const LEVELS = {
        * measured on this level's own atmosphere, rayleigh 1.8→3.0 and turbidity
        * 9.0→6.2 move the share by 0.0 points, because `envI` scales with
        * `direct` and the two terms travel together. Only the key-to-ambient
-       * ratio moves it, and it moves it slowly — 4.9/0.80 gives 35.4%, 6.6/0.62
-       * gives 36.7%, and this pair gives 37.2%, which is the window between
-       * Kamino's 36.4% at 16° and the Drowned Wood's 37.7% at 19°.
+       * ratio moves it, and it moves it slowly — at this elevation 5.4/0.72
+       * gives 36.5% and 9.6/0.42 gives 40.8%. This pair gives 38.5%, in the
+       * middle of the window Kamino's 36.4% and the dune sea's 41.4% leave.
        *
        * The Ember Shelf's block argues at length for a very large hemisphere
        * term on a level like this, and it is still mostly right — a two-band
