@@ -3526,10 +3526,15 @@ export const LEVELS = {
        * because below about 1.6 `atmosphereMeter` hits its exposure clamp and
        * the frame stops being exposed by its own light. */
       turbidity: 7.0, rayleigh: 2.8, mie: 0.013, mieG: 0.84,
-      /* 6°, which is the lowest sun in the game — the wood's 9° was the
-       * previous floor. It is not a sun: it is the last of the daylight
-       * somewhere under a storm, and almost none of it reaches the deck, which
-       * is why `ambient` carries this level.
+      /* 16°. It is not a sun: it is the last of the daylight somewhere under a
+       * storm, and almost none of it reaches the deck.
+       *
+       * (This said "6°, which is the lowest sun in the game — the wood's 9° was
+       * the previous floor" beside an `elevation: 16`, against a wood that is
+       * at 19 and an Ember Shelf at 15. Every outdoor sun was lifted ten
+       * degrees at some point and the prose was not, which is HANDOFF §2.3 in
+       * its smallest form: a number kept by hand next to the number it
+       * describes. Both halves of the old sentence were false.)
        *
        * 128°, NOT the 302° first written, and the reason is the one the Ember Shelf's
        * block already records: the default pose looks down −z, and a sun 122°
@@ -3544,7 +3549,63 @@ export const LEVELS = {
        * its tint from `fogColor`, so the bearing is the knob and the swatch is
        * not. */
       elevation: 16, azimuth: 128,
-      sunColor: 0x9fb8d8, sunIntensity: 5.4, ambient: 0.50,
+      /* 3.4 OF KEY OVER 1.20 OF HEMISPHERE, NOT 5.4 OVER 0.50, AND THE COMMENT
+       * ABOVE IS WHAT ASKED FOR IT.
+       *
+       * "Almost none of it reaches the deck, which is why `ambient` carries
+       * this level" was written about a level that did neither. It authored the
+       * fourth-strongest key in the game — stronger than the Ember Shelf's 4.6
+       * under a permanent ash column — beneath a `cloudCover` of 0.94, the
+       * second-thickest ceiling on the roster. And the hemisphere carried
+       * nothing: measured, hemisphere plus fill put 0.083 on the ground against
+       * the sun's 1.042, the SMALLEST indirect term of any level in the game.
+       * The storm was described and never built.
+       *
+       * `cel: a shadow is READABLE` is where that surfaced, as a clause nobody
+       * had ever reached: the key's share of a shadowed surface's light has to
+       * rank-correlate with sun height across the roster, and at eight outdoor
+       * levels it measured rho 0.810 against a bound of 0.90. Kamino carried
+       * two ranks of that on its own — the second-lowest sun in the game
+       * delivering the THIRD-HARDEST shadow, harder than a snowfield under 66%
+       * cloud. An overcast sky is the most diffuse light there is; a storm
+       * cannot have a crisper key than a cirque.
+       *
+       * BOTH KNOBS, BECAUSE NEITHER REACHES ON ITS OWN, and that is a finding
+       * about this level rather than a compromise:
+       *
+       *   · the ambient is nearly inert here. `skyColor` is 0x46586e and
+       *     `fillColor` 0x6d86a4, both close to black, so `hemiIrr` scales a
+       *     luminance that is barely there — quadrupling `ambient` 0.50 → 2.00
+       *     alone moves the key share only 36.4% → 33.9%.
+       *   · the sun cannot finish the job either, and the thing that stops it
+       *     is a good bound: `sky.mjs` requires a sunlit cloud top to stay
+       *     within 5% of the top of its own sky, or the deck reads as smoke
+       *     instead of cloud. `cloudLight().sun` is linear in `sunIntensity`
+       *     while the display shoulder RISES as the meter re-exposes a dimmer
+       *     level, so the two close on each other twice over. At 2.8 the cloud
+       *     top lands at 0.424 against a 0.450 sky and the check fails — the
+       *     ceiling stops being lit from above. The sun alone runs out before
+       *     the shadow tone is right.
+       *
+       * So the key comes down to 3.4 (the weakest on the roster, which is what
+       * a permanent storm means) and the hemisphere goes up to 1.20 to make up
+       * the rest. 1.20 is the highest `ambient` in the game and it is the same
+       * argument the Ember Shelf's 0.90 already makes one level over — a dome
+       * this dark needs a big multiplier to put any light on anything — and
+       * even at 1.20 this level's total indirect term (0.113) is still smaller
+       * than the Ember Shelf's (0.195).
+       *
+       * Measured, this level alone: key share 36.4% → 32.7%, which puts it
+       * where it belongs, above the Ember Shelf's 30.1% and below the White
+       * Pass's 35.3%. Neighbouring bounds all keep room: lit-to-shade 1.85:1 →
+       * 1.76:1 inside cel's 1.3–2.2, `lighting.mjs`'s cast-shadow contrast 2.91
+       * → 2.62 against the 2.47 a 16° sun owes, cloud top 1.02× its own sky
+       * against a 0.95 floor, metered exposure 2.33 against the 3.0 clamp. The
+       * indirect BUDGET is untouched at 44%, because `envI` scales with
+       * `direct` and that ratio is a pure function of sun height. And the frame
+       * does not go dark: the meter re-exposes off the level's own light, which
+       * is what `exposure: 0.74` below is a bias on rather than an absolute. */
+      sunColor: 0x9fb8d8, sunIntensity: 3.4, ambient: 1.20,
       /* Both halves of the hemisphere are the storm. The upper is the cloud
        * base, the lower is the SEA — and the sea is the brighter of the two,
        * because on a platform in the middle of an ocean most of the light
@@ -4012,10 +4073,13 @@ LEVELS.geonosis = {
      * anti-parallel to it at 200°, which is the same rule the dune sea derives
      * for its dune train: the windward faces of the stacks are lit and their lee
      * faces are in shadow, so the one landform on the map has a light side and a
-     * dark side to be read by. 21° of elevation is a late-afternoon sun, which
+     * dark side to be read by. The elevation below is a late-afternoon sun, which
      * is what every plate of this battle is shot in — long shadows off infantry
-     * are how you read a crowd on flat ground. */
-    /* 20°, NOT 21°, AND THE REASON IS THE LINE DIRECTLY BELOW THIS ONE.
+     * are how you read a crowd on flat ground. (It said "21°" here and the
+     * elevation has been 20 and is now 18; the prose is left pointing AT the
+     * number instead of repeating it, which is the only version of this that
+     * cannot go stale.) */
+    /* 18°, AND THE HISTORY OF THIS NUMBER IS THE ARGUMENT FOR IT.
      *
      * `cel: a shadow is READABLE` compares levels pairwise: if one level's sun
      * stands more than 10% higher than another's, more of its shadow has to
@@ -4024,16 +4088,36 @@ LEVELS.geonosis = {
      * whisker — because it had the HIGHEST sun on the roster and, from the note
      * below, the highest ambient too (0.52). Those two together are a
      * contradiction: a dust-laden sky is a DIFFUSE sky, and a level cannot
-     * claim both the strongest sun and the weakest key share.
+     * claim both the strongest sun and the weakest key share. It went to 20°.
      *
-     * So the elevation comes down rather than the ambient, because the ambient
-     * is the thing the look is actually built on and the one the plates
-     * support. 20° is still a late-afternoon sun and still throws the long
-     * infantry shadows that let you read a crowd on flat ground; it is simply
-     * no longer claiming to be brighter than a forest at midday. Measured after:
-     * sunY ratio 1.05 against the wood, clear of the 1.10 gate with margin
-     * rather than by a hair. */
-    elevation: 20, azimuth: 200,
+     * THAT FIX WAS RIGHT AND HALF-DONE, and the half it missed is why this
+     * number moves a second time. It was measured against ONE neighbour — the
+     * wood — and the pairwise clause is over every pair. At 20° geonosis' sun
+     * still stood 24% above Kamino's and still took LESS of its shade from the
+     * key (35.8% against 36.4%), so the clause was still red; nobody saw it
+     * because the rank-correlation assert on the line above fires first and
+     * masked it. Two failures were hiding behind one message.
+     *
+     * The deeper reading is the same one, taken all the way. Sun height is this
+     * check's proxy for how much air the beam crosses, and turbidity 10.0 — the
+     * highest in the game, this level's defining knob — is that same optical
+     * depth arriving by another route. A sky choked with grit behaves like a
+     * lower sun, so a level whose whole look is "weak key, strong sky, flat
+     * shadowless light" cannot also hold the roster's third-highest sun. At 18°
+     * it sits between the White Pass's 17 and the Drowned Wood's 19, which is
+     * where its own light already was.
+     *
+     * It costs the look nothing and it pays it: the note above wants long
+     * infantry shadows off a flat plain to read a crowd by, and a LOWER sun
+     * throws longer ones. 18 rather than 19 because `lighting.mjs` orders the
+     * indirect budget by sun height STRICTLY, so a tie with the wood at 19 is a
+     * failure — measured, that is exactly what 19 produces.
+     *
+     * Measured after, this level alone: key share 35.8% → 34.0%, lit-to-shade
+     * 1.83:1 → 1.79:1 (cel's band is 1.3–2.2), cast-shadow contrast 2.86
+     * against the 2.62 an 18° sun owes, indirect budget 39% → 41% and still
+     * strictly between the wood's 40% and the White Pass's 43%. */
+    elevation: 18, azimuth: 200,
     /* A dusty sun is a WEAK sun with a strong sky, and that ratio is the whole
      * look. 5.4 against the dune sea's 7.6, with the ambience carrying more of
      * the load, gives the flat shadowless light the wide shots have — but not
