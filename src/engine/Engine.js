@@ -1065,6 +1065,13 @@ const SKY_OVER_KEY = 6.9;
  * threshold, so the dome cannot become a bloom source. The floor stops a level
  * metered for a dark gorge — the canyon meters at 1.71, two and a half stops
  * off the arena — from compressing its own sky into a flat grey card.
+ *
+ * THE FLOOR BINDS ON ONE LEVEL NOW and that is worth knowing before it is
+ * moved: Kamino's key asks for 0.419 through SKY_OVER_KEY and gets 0.45. It is
+ * the floor doing exactly what it says — at 0.419 the storm's skyline is only
+ * 1.49× its own zenith and `sky.mjs`'s flatness bound is at 1.35 — so the
+ * darkest sky in the game is held a hair above being one card. It is not a
+ * level to "fix" by widening the band; it is the band earning its keep.
  */
 const SKY_CLIP_RANGE = [0.45, 1.55];
 
