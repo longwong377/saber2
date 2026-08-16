@@ -68,7 +68,15 @@ function arena() {
   return { world, target, particles };
 }
 
-/** Where a duellist of `form` actually stands, over a real fight. */
+/**
+ * Where a duellist of `form` actually stands over a real fight, how often it
+ * commits, and where in its own authored band it spends its time.
+ *
+ * One run answers four questions because a run is the expensive thing in this
+ * file: three checks want the stand-off, the cadence and the band, and driving
+ * a real Enemy for a minute per form three times over is three minutes of CPU
+ * for one minute of measurement.
+ */
 function standOff(form, seconds = 60) {
   enemyRng.seed(4711);
   duelRng.seed(8123);
@@ -80,20 +88,33 @@ function standOff(form, seconds = 60) {
   const ctx = { enemies: world.enemies, particles, terrain: world.terrain, physics: world.physics,
     bolts: world.bolts, time: 0, pickTarget: () => target, camera: world.engine.camera };
   const dt = 1 / 60;
-  let sum = 0, n = 0, min = Infinity, max = 0;
+  let sum = 0, n = 0, min = Infinity, max = 0, declared = 0, was = 'guard';
+  const dists = [];
   for (let i = 0; i < seconds / dt; i++) {
     ctx.time = world.time += dt;
     e.update(dt, ctx);
     target.hp = 5000;
     world.physics.step(dt);
+    if (e.duel.phase === 'windup' && was !== 'windup') declared++;
+    was = e.duel.phase;
     if (i > 120) {                                  // let it close the gap first
       const d = e.position.distanceTo(target.position);
       sum += d; n++; min = Math.min(min, d); max = Math.max(max, d);
+      dists.push(d);
     }
   }
   for (const x of world.enemies) x.dispose?.();
-  return { mean: sum / n, min, max };
+  dists.sort((a, b) => a - b);
+  return { mean: sum / n, min, max, declared, perSec: declared / seconds,
+    p10: dists[Math.floor(dists.length * 0.1)], p90: dists[Math.floor(dists.length * 0.9)] };
 }
+
+/* One 60-second fight per form, shared by the three checks that want one. */
+const _stand = new Map();
+const stats = (k) => {
+  if (!_stand.has(k)) _stand.set(k, standOff(k));
+  return _stand.get(k);
+};
 
 /** A DuelBrain with just enough of an owner to phase and stagger. */
 function brain(formKey = 'makashi') {
@@ -158,7 +179,7 @@ export async function run({ check, assert }) {
      * within 3 cm, because footwork read the archetype's `preferred` band and
      * `FORMS[*].spacing[0]` had no reader in the game at all. */
     const got = {};
-    for (const k of FORM_KEYS) got[k] = standOff(k);
+    for (const k of FORM_KEYS) got[k] = stats(k);
 
     for (const k of FORM_KEYS) {
       const want = FORMS[k].spacing;
@@ -183,6 +204,84 @@ export async function run({ check, assert }) {
         + 'band — it is holding a line like everything else');
     }
     return FORM_KEYS.map((k) => `${k} ${got[k].mean.toFixed(2)}m`).join(', ');
+  });
+
+  check('forms: no two forms are one fight at two volumes', () => {
+    /**
+     * MAKASHI AND SORESU WERE THE SAME FIGHT AT TWO SETTINGS.
+     *
+     * A player does not experience a form as its wind-up times. They experience
+     * it as an ANSWER PROFILE: what share of what it throws must be met with
+     * the blade, what share can only be countered, what share must be got out
+     * of the way of, how far out it fights, and how fast it comes. Measured on
+     * that profile, makashi↔soresu was the closest pair on the roster and each
+     * was the other's nearest neighbour — 100% parryable both, 7 cm apart,
+     * three of the same five moves. Two forms that differ only in volume are
+     * one form, and these are the two the source material is most specific
+     * about being opposites.
+     *
+     * EVERY AXIS IS MEASURED THROUGH THE SHIPPED CODE. The tier shares come
+     * from driving `DuelBrain._pick` — the chooser the game uses, including its
+     * rhythm walk, so the share reported is the share thrown and not the share
+     * the move list implies. The stand-off and the cadence come from a real
+     * Enemy fighting for a minute.
+     *
+     * THE BOUND IS THE ROSTER'S OWN SPREAD, not a number. Each axis is
+     * normalised by the range the five forms cover on it, so the profile is in
+     * units of "as different as these forms get", and the failure is a pair
+     * that is closer than half the typical pair. A hand-picked distance would
+     * be a bound written from today's five, and adding a sixth form would move
+     * what "different" means without moving the number.
+     */
+    const rows = FORM_KEYS.map((k) => {
+      duelRng.seed(8123);
+      const b = brain(k);
+      const share = { light: 0, heavy: 0, unblockable: 0 };
+      const N = 20000;
+      for (let i = 0; i < N; i++) share[ATTACKS[b._pick()].tier]++;
+      const fight = stats(k);
+      return {
+        k,
+        parry: share.light / N,
+        chamberOnly: share.heavy / N,
+        evadeOnly: share.unblockable / N,
+        standOff: fight.mean,
+        tempo: fight.perSec,
+      };
+    });
+    const AXES = ['parry', 'chamberOnly', 'evadeOnly', 'standOff', 'tempo'];
+    const span = {};
+    for (const a of AXES) {
+      const xs = rows.map((r) => r[a]);
+      span[a] = Math.max(...xs) - Math.min(...xs) || 1;
+    }
+    const pairs = [];
+    for (let i = 0; i < rows.length; i++) {
+      for (let j = i + 1; j < rows.length; j++) {
+        let s = 0;
+        for (const a of AXES) s += ((rows[i][a] - rows[j][a]) / span[a]) ** 2;
+        pairs.push({ a: rows[i].k, b: rows[j].k, d: Math.sqrt(s) });
+      }
+    }
+    pairs.sort((x, y) => x.d - y.d);
+    const median = pairs[Math.floor(pairs.length / 2)].d;
+    const worst = pairs[0];
+    assert(worst.d > median * 0.5,
+      `${worst.a} and ${worst.b} are ${worst.d.toFixed(3)} apart on the answer profile against a `
+      + `median pair's ${median.toFixed(3)} — they are one fight at two volumes. Profiles: `
+      + rows.map((r) => `${r.k} parry ${(r.parry * 100) | 0}% / chamber ${(r.chamberOnly * 100) | 0}% `
+        + `/ evade ${(r.evadeOnly * 100) | 0}% / ${r.standOff.toFixed(2)} m / ${r.tempo.toFixed(2)}/s`).join('; '));
+    /* …and every form has to be SOMEBODY's opposite as well as nobody's twin:
+     * a roster where four forms are identical and one is strange would satisfy
+     * the clause above on the median alone. */
+    for (const r of rows) {
+      const mine = pairs.filter((p) => p.a === r.k || p.b === r.k);
+      assert(Math.min(...mine.map((p) => p.d)) > median * 0.5,
+        `${r.k}'s nearest neighbour is inside half the median pair`);
+    }
+    return `closest pair ${worst.a}/${worst.b} ${worst.d.toFixed(2)}, median ${median.toFixed(2)}; `
+      + rows.map((r) => `${r.k} ${(r.parry * 100) | 0}/${(r.chamberOnly * 100) | 0}/`
+        + `${(r.evadeOnly * 100) | 0}% ${r.standOff.toFixed(2)}m ${r.tempo.toFixed(2)}/s`).join(', ');
   });
 
   check('forms: interrupt cannot put a beaten guard back on line', () => {

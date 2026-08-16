@@ -448,13 +448,15 @@ export const FORMS = {
     name: 'Soresu', numeral: 'III',
     tell: 'gives you nothing — it is waiting for you to swing first',
     windup: 0.40, strike: 0.14, recover: 0.26, chamberWindow: 0.45,
-    /* IT STANDS CLOSER THAN ANYTHING ELSE ON THE ROSTER, and that is the form.
-     * Soresu smothers: it lives inside your reach, gives no ground, and dares
-     * you to start something. Authored at [1.8, 3.0] it was the FURTHEST-back
-     * form in the game and 7 cm from Makashi, which is neither the fiction nor
-     * a distinguishable fight. The price it pays for standing there is that it
-     * is the easiest form in the game to put a blade on. */
-    aggression: 0.42, spacing: [1.45, 2.6], standAt: 0.12, chain: [1, 2],
+    /* `standAt: 0` — IT WILL NOT BE DRAWN OUT. Soresu holds the one distance
+     * its form fights at and no other: run and it follows you to exactly that
+     * measure and stops, where Makashi at 0.82 refuses to let you inside the
+     * point and works the far edge of a band that is nearly as wide. The two
+     * were 7 cm apart in a stand-up fight and are 0.84 m apart the moment
+     * anybody moves. The band itself is untouched — where a form PARKS against
+     * a player who never moves is `Enemy._move`'s, and this lane does not own
+     * that file. */
+    aggression: 0.42, spacing: [1.8, 3.0], standAt: 0, chain: [1, 2],
     moves: ['slashR', 'riposteCut', 'slashL'],
     feint: 0.14, punishRecovery: 1.6, defensive: 2.4,
   },
