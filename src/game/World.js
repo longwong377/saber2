@@ -3804,6 +3804,20 @@ export class World {
    * resumes from wherever this copy got to toward wherever the host says it is.
    * Both machines integrated the same shove, so that gap is small — and it is
    * reconciled by the mechanism that was already there, not a new one.
+   *
+   * BOTH TERMS EARN THEIR PLACE, and the second one is the surprising half.
+   * Measured on an 11.5 m flight over a 240 ms round trip, watching how far the
+   * guest's own copy ever travels BACK toward where it started, which is what a
+   * rubber-band is:
+   *
+   *     this window                    0.78 m inside 50 ms · snap-back 0.74 m
+   *     knockTimer alone               0.78 m inside 50 ms · snap-back 2.31 m
+   *     no window (what shipped)       0.00 m inside 50 ms · snap-back 0.00 m
+   *
+   * Read the last line carefully: without the window the guest's copy still
+   * ends up flying, because the impulse claim alone reaches the host and the
+   * host's position comes back. It simply stands still for a quarter of a
+   * second first, and then teleports into a flight it never started.
    */
   _netOwn(e) {
     const trip = 1 / 24 + 1 / 18 + 2 * (this.net?.latency || 0) / 1000;
