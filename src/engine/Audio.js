@@ -343,6 +343,52 @@ export class AudioEngine {
   /** The live-voice ceiling for a band, so a caller can state what it expects. */
   bandCap(prio) { return Math.max(1, Math.round((BAND[prio] ?? 1) * this.maxVoices)); }
 
+  /**
+   * THE WORLD IS RUNNING AT THIS SPEED — SLOW MOTION, HEARD.
+   *
+   * Force Sense takes the world to 0.42× and a full Focus hold to 0.18×.
+   * Neither of them made a single sound in this file: the power that stops time
+   * had no acoustic response at all, which is the difference between a game
+   * that slows down and one that only looks like it has.
+   *
+   * TWO MECHANISMS, because slow motion is two things at once:
+   *
+   *   THE ROOM GOES DARK. Air absorbs the top end over distance and a listener
+   *     inside a dilated moment is, in effect, a long way from everything. One
+   *     lowpass on the effects bus, from wide open at 1× down to 700 Hz at a
+   *     standstill, on a curve (`s ** 0.55`) rather than linearly so that the
+   *     first third of the slowdown does most of the closing — that is where
+   *     the ear is most sensitive to the change.
+   *   NEW SOUNDS ARRIVE LOWER. Not a pitch shift of what is already playing,
+   *     which WebAudio cannot do to a live graph without a delay line: every
+   *     one-shot BUILT while the world is slow is built at a lower fundamental,
+   *     which is what an event happening more slowly actually sounds like. At
+   *     0.18× that is 0.63× — a little over eight semitones down.
+   *
+   * HITSTOP IS DELIBERATELY NOT PASSED HERE. It is a 30–120 ms freeze, and
+   * pitching the whole mix down for a twentieth of a second reads as a dropout,
+   * not as weight. The caller passes `timeScale * focus.scale`, which is the
+   * dilation the player is HOLDING.
+   *
+   * Rate-limited on 0.01 for the same reason `_bed` is: `setTargetAtTime` at
+   * 60 Hz is a ramp that never arrives anywhere.
+   */
+  setTimeScale(scale) {
+    if (!this.ready || !this.timeLP) return this._timeAt;
+    const s = clamp(num(scale, 1), 0.02, 2);
+    if (Math.abs(s - this._timeAt) < 0.01) return this._timeAt;
+    this._timeAt = s;
+    const t = this.ctx.currentTime;
+    try {
+      this.timeLP.frequency.setTargetAtTime(700 + 19300 * Math.pow(Math.min(s, 1), 0.55), t, 0.08);
+      // A little resonance on the way down, so the filter is heard closing
+      // rather than the mix simply getting quieter.
+      this.timeLP.Q.setTargetAtTime(0.7 + clamp(1 - s, 0, 1) * 0.9, t, 0.08);
+    } catch {}
+    this._timePitch = 0.55 + 0.45 * clamp(s, 0, 1);
+    return s;
+  }
+
   init() {
     if (this.ctx) { this.resume(); return; }
     const AC = window.AudioContext || window.webkitAudioContext;
@@ -382,8 +428,31 @@ export class AudioEngine {
     this.reverb.buffer = this._makeImpulse(2.4, 2.6);
     this.reverbSend = this.ctx.createGain(); this.reverbSend.gain.value = 0.16;
 
-    this.sfxBus.connect(this.comp);
-    this.sfxBus.connect(this.reverbSend);
+    /**
+     * THE ONE NODE THAT MAKES SLOW MOTION AUDIBLE. See setTimeScale().
+     *
+     * Force Sense drops the world to 0.42× and a full Focus hold to 0.18×, and
+     * `grep focus src/engine/Audio.js` returned nothing at all: the game's
+     * signature power bent time and the mix did not move by a decibel. It sits
+     * between the effects bus and everything downstream of it — the compressor
+     * AND the reverb send — because a slowed room is darker too, and a bright
+     * tail hanging off a dark dry signal is the one arrangement that sounds
+     * broken rather than slow.
+     *
+     * Wide open at 1× (20 kHz is above the material and above most listeners),
+     * so a game nobody has slowed measures byte-identical to one without it.
+     */
+    this.timeLP = this.ctx.createBiquadFilter();
+    this.timeLP.type = 'lowpass';
+    this.timeLP.frequency.value = 20000;
+    this.timeLP.Q.value = 0.7;
+    this._timeAt = 1;
+    /** What new one-shots are multiplied by while the world is slow. */
+    this._timePitch = 1;
+
+    this.sfxBus.connect(this.timeLP);
+    this.timeLP.connect(this.comp);
+    this.timeLP.connect(this.reverbSend);
     this.reverbSend.connect(this.reverb);
     this.reverb.connect(this.comp);
     this.ambBus.connect(this.comp);
@@ -857,6 +926,9 @@ export class AudioEngine {
     dur = num(dur, 0.2); gain = num(gain, 0.4); freq = num(freq, 1200); q = num(q, 1.2);
     attack = num(attack, 0.002); curve = num(curve, 2.2) || 2.2;
     if (freqEnd !== null) freqEnd = num(freqEnd, freq);
+    // …and DOWN with the world, if it is slow. See setTimeScale(): exactly 1
+    // at full speed, so nothing changes for a game nobody has dilated.
+    if (this._timePitch !== 1) { freq *= this._timePitch; if (freqEnd !== null) freqEnd *= this._timePitch; }
 
     // Decide, then allocate, and in that order. _out() used to build and
     // connect the panner and only then ask for a voice, so every refusal left a
@@ -903,6 +975,7 @@ export class AudioEngine {
     dur = num(dur, 0.2); gain = num(gain, 0.25); freq = num(freq, 440);
     attack = num(attack, 0.004); detune = num(detune, 0);
     if (freqEnd !== null) freqEnd = num(freqEnd, freq);
+    if (this._timePitch !== 1) { freq *= this._timePitch; if (freqEnd !== null) freqEnd *= this._timePitch; }
 
     const reach = this._reach(pos, gain);
     if (!reach) { this.stats.culled++; return; }
@@ -1264,6 +1337,9 @@ export class AudioEngine {
   createHum(color = 0x57c9ff) {
     if (!this.ready) return { set() {}, ignite() {}, retract() {}, move() {}, dispose() {} };
     const ctx = this.ctx;
+    // `this` inside the returned api is the api, not the engine. The hum has to
+    // be able to read the engine's live time scale on every frame it is set.
+    const eng = this;
     const base = 92;
     const oscs = [], gains = [];
     const bus = ctx.createGain(); bus.gain.value = 0;
@@ -1333,7 +1409,10 @@ export class AudioEngine {
         if (!lit) return;
         const t = ctx.currentTime;
         const s = clamp(speed / 26, 0, 1.6);
-        const pitch = 1 + s * 0.42 + strain * 0.25;
+        // The blade drops with the world too. It is the loudest continuous
+        // sound in the game and the one the player is holding, so a slow motion
+        // it did not answer would be the tell that the effect is a filter.
+        const pitch = (1 + s * 0.42 + strain * 0.25) * (eng._timePitch || 1);
         for (const { o, mult } of oscs) o.frequency.setTargetAtTime(base * mult * pitch, t, 0.05);
         // The oscillator gains already sum to ~1.03; a bus gain over 1 here put
         // a single hum at full scale and made the compressor duck everything
@@ -1701,7 +1780,49 @@ export class AudioEngine {
     this._windAt = 0; this._windFreqAt = 420; this._droneAt = 0;
   }
 
-  setAmbience({ wind = 0.1, windFreq = 420, drone = 0.1 } = {}) {
+  /**
+   * WHICH ROOM THE GAME IS IN, and the first time this file has had more than
+   * one.
+   *
+   * `init()` built one convolver from `_makeImpulse(2.4, 2.6)` behind a send of
+   * 0.16, and nothing in the project wrote `reverbSend` ever again. Every level
+   * — a stone bowl, an open dune sea, a sealed foundry, a rain-lashed platform
+   * over an ocean — was played through the same 2.4-second tail at the same
+   * level. `_makeImpulse` has taken both parameters since it was written; it
+   * had one caller and one pair of arguments.
+   *
+   * Three numbers, and all three have to move together or a level sounds like a
+   * setting rather than a place:
+   *
+   *   `seconds` is how long the tail is — the path length of the room;
+   *   `decay`   is how fast it dies inside that time — the absorption;
+   *   `send`    is how much of the dry signal ever reaches it — how enclosed.
+   *
+   * A tail is a BUFFER, so changing it means building one — 2 channels of
+   * `rate × seconds` floats, about 320 kB at the longest room, on a level load
+   * and never on a frame. `_roomAt` is what stops a re-entered level paying for
+   * it twice, and the send is ramped rather than set, because a convolver whose
+   * input jumps clicks the same way an oscillator does.
+   */
+  setRoom({ seconds = 2.4, decay = 2.6, send = 0.16 } = {}) {
+    if (!this.ready || !this.reverb) return null;
+    const s = clamp(num(seconds, 2.4), 0.15, 6);
+    const d = clamp(num(decay, 2.6), 0.5, 8);
+    const g = clamp(num(send, 0.16), 0, 0.6);
+    const t = this.ctx.currentTime;
+    // The impulse is what costs; the send is free. A level that only wants to
+    // be louder into the same room must not rebuild a 320 kB buffer for it.
+    const key = `${s.toFixed(3)}/${d.toFixed(3)}`;
+    if (key !== this._roomAt) {
+      try { this.reverb.buffer = this._makeImpulse(s, d); this._roomAt = key; }
+      catch { /* an impulse that will not build leaves the old room in place */ }
+    }
+    try { this.reverbSend.gain.setTargetAtTime(g, t, 0.5); } catch {}
+    this.room = { seconds: s, decay: d, send: g };
+    return this.room;
+  }
+
+  setAmbience({ wind = 0.1, windFreq = 420, drone = 0.1, room = null } = {}) {
     if (!this.ready) return;
     const t = this.ctx.currentTime;
     // These come out of level data. A throw here is thrown from World's
@@ -1713,6 +1834,9 @@ export class AudioEngine {
     this.windGain.gain.setTargetAtTime(this._bedWind, t, 1.2);
     this.windFilter.frequency.setTargetAtTime(this._bedWindFreq, t, 1.2);
     this.droneGain.gain.setTargetAtTime(this._bedDrone, t, 2.0);
+    // The room travels with the bed because they are the same fact about a
+    // level, arriving through the one call that already carries it.
+    if (room) this.setRoom(room);
   }
 
   /**

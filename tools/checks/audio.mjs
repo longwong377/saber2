@@ -359,9 +359,27 @@ export async function run({ check, assert }) {
     const bad = ctx.disconnected.filter(n => shared.has(n));
     assert(bad.length === 0, `${bad.length} shared buses were torn down (${bad.map(n => n.kind).join(', ')})`);
     assert(a.voices === 0, `${a.voices} voices leaked from non-positional sounds`);
-    assert(a.master.outs.has(ctx.destination) && a.sfxBus.outs.has(a.comp),
-      'the graph came apart: sfx no longer reaches the compressor');
-    return `${a.stats.alloc} bus-routed voices, 0 bus disconnects, graph intact`;
+    /* REACHABILITY, not one named edge. This used to assert
+     * `a.sfxBus.outs.has(a.comp)`, which is a statement about the shape of the
+     * graph rather than about the question — "can a sound still get out" — and
+     * it went red the day a filter was inserted between the two on a change
+     * that had made the game LOUDER. HANDOFF §2.4: an instrument that restates
+     * a rule eventually disagrees with it. */
+    const reaches = (from, to) => {
+      const seen = new Set(), q = [from];
+      while (q.length) {
+        const n = q.pop();
+        if (n === to) return true;
+        if (seen.has(n)) continue;
+        seen.add(n);
+        for (const o of n.outs) q.push(o);
+      }
+      return false;
+    };
+    assert(reaches(a.master, ctx.destination), 'the master no longer reaches the destination');
+    assert(reaches(a.sfxBus, a.comp), 'the graph came apart: sfx no longer reaches the compressor');
+    assert(reaches(a.sfxBus, ctx.destination), 'a sound on the effects bus cannot leave the machine');
+    return `${a.stats.alloc} bus-routed voices, 0 bus disconnects, sfx→comp→destination intact`;
   });
 
   check('audio: a hum is an instrument, not a voice, and disposes cleanly', () => {
@@ -504,5 +522,140 @@ export async function run({ check, assert }) {
     assert(Math.abs(a.windFilter.frequency.last('tgt') - f0) < 7,
       `the wind's band never came back down: ${a.windFilter.frequency.last('tgt').toFixed(0)} Hz`);
     return `wind ${w0} → ${w1.toFixed(3)} and ${f0} → ${f1.toFixed(0)} Hz at peak squall, both back after`;
+  });
+
+  /**
+   * SLOW MOTION WAS SILENT.
+   *
+   * Force Sense takes the world to 0.42× and a full Focus hold to 0.18×, and
+   * `grep focus src/engine/Audio.js` returned nothing at all — the signature
+   * power of the game bent time and the mix did not move.
+   */
+  check('audio: slow motion sounds slow', () => {
+    const { a, ctx } = engine();
+    const at = (s) => {
+      a.setTimeScale(s); ctx.advance(0.2);
+      return { f: a.timeLP.frequency.last('tgt') ?? a.timeLP.frequency.value,
+        q: a.timeLP.Q.last('tgt') ?? a.timeLP.Q.value, p: a._timePitch };
+    };
+    const full = at(1);
+    assert(full.f > 15000, `the bus is filtered at full speed (${full.f.toFixed(0)} Hz) — this must be free`);
+    assert(full.p === 1, `one-shots are detuned at full speed (${full.p})`);
+
+    const sense = at(0.42);          // Player.toggleSense
+    const focus = at(0.18);          // a full Focus hold
+    assert(sense.f < full.f * 0.72, `Force Sense moved the band from ${full.f.toFixed(0)} to ${sense.f.toFixed(0)} Hz`);
+    assert(focus.f < sense.f * 0.8, `a deeper hold did not go darker: ${sense.f.toFixed(0)} vs ${focus.f.toFixed(0)} Hz`);
+    assert(focus.q > full.q, `no resonance on the way down (${full.q} vs ${focus.q})`);
+    assert(focus.p < 0.7 && sense.p < 0.8 && focus.p < sense.p,
+      `pitch did not follow the clock: 1× ${full.p}, 0.42× ${sense.p}, 0.18× ${focus.p}`);
+
+    // …and it is a real fundamental on a real sound, not a field.
+    a.setTimeScale(1); ctx.advance(0.2);
+    const before = ctx.edges.length;
+    a.tone({ freq: 440, dur: 0.1, gain: 0.2, prio: PRIO.critical });
+    const dry = ctx.edges.slice(before).map(([f]) => f).find(n => n.kind === 'osc');
+    a.setTimeScale(0.18); ctx.advance(0.2);
+    const mark = ctx.edges.length;
+    a.tone({ freq: 440, dur: 0.1, gain: 0.2, prio: PRIO.critical });
+    const slow = ctx.edges.slice(mark).map(([f]) => f).find(n => n.kind === 'osc');
+    assert(dry && slow, 'the probe tones never built an oscillator');
+    assert(Math.abs(dry.frequency.value - 440) < 0.001,
+      `a tone at full speed came out at ${dry.frequency.value.toFixed(1)} Hz`);
+    assert(slow.frequency.value < 300,
+      `a tone in a 0.18× world came out at ${slow.frequency.value.toFixed(1)} Hz`);
+
+    // Back up, and back to free.
+    a.setTimeScale(1); ctx.advance(0.2);
+    assert((a.timeLP.frequency.last('tgt') ?? 0) > 15000, 'the band never reopened');
+    const semis = (12 * Math.log2(slow.frequency.value / 440)).toFixed(1);
+    return `bus band ${full.f.toFixed(0)} → ${sense.f.toFixed(0)} Hz at Sense → ${focus.f.toFixed(0)} Hz at a full hold; `
+      + `Q ${full.q.toFixed(2)} → ${focus.q.toFixed(2)}; a 440 Hz tone lands at `
+      + `${slow.frequency.value.toFixed(0)} Hz (${semis} semitones); all of it back at 1×`;
+  });
+
+  /**
+   * EVERY SPACE SOUNDED LIKE THE SAME ROOM.
+   *
+   * `init()` built one convolver from `_makeImpulse(2.4, 2.6)` behind a send of
+   * 0.16, and `grep reverbSend` found nothing after the line that created it. A
+   * 30,000-seat stone bowl, an open dune sea and a sealed foundry were all
+   * played through that one tail at that one level for the life of the project.
+   *
+   * The room is DERIVED (World.roomOf) rather than added as a tenth field to
+   * ten level records, so this measures the derivation over the whole roster —
+   * a spread, not a single number — and then measures that the derivation
+   * actually reaches the graph.
+   */
+  check('audio: each level is a different room, and the room reaches the graph', async () => {
+    const { LEVELS, LEVEL_ORDER } = await import('../../src/game/Levels.js');
+    // World.js is imported dynamically and inside the function body: it reaches
+    // Engine.js, whose module-level ShaderChunk rewrites sit behind once-only
+    // flags. See tools/verify.mjs.
+    const { roomOf } = await import('../../src/game/World.js');
+
+    /* The GROUND is `Terrain.surfaceAt`'s answer and this check does not build
+     * ten heightfields to ask it — that is the shape that made levels-quality
+     * unrunnable (HANDOFF §2.6). It sweeps the four surfaces that exist instead,
+     * which is a stronger statement than one sample each: the derivation has to
+     * be spread over the ROSTER whatever it is standing on. */
+    const rows = [], all = [];
+    for (const k of LEVEL_ORDER) {
+      const L = LEVELS[k];
+      const r = roomOf(L, 'sand');
+      all.push(r);
+      rows.push(`${k} ${r.seconds.toFixed(2)}s/${r.send.toFixed(3)}`);
+      for (const g of ['sand', 'stone', 'metal', 'water']) {
+        const q = roomOf(L, g);
+        assert(Number.isFinite(q.seconds) && Number.isFinite(q.decay) && Number.isFinite(q.send),
+          `${k}/${g} produced a non-finite room`);
+        assert(q.seconds >= 0.15 && q.seconds <= 6 && q.send >= 0 && q.send <= 0.6,
+          `${k}/${g} is out of the range setRoom will take: ${JSON.stringify(q)}`);
+      }
+    }
+    const span = (list, f) => { const v = list.map(f); return Math.max(...v) / Math.min(...v); };
+    /* The bar is "these are different places", not a tuning. One shared room is
+     * 1.00x on everything, which is what shipped.
+     *
+     * TWO POPULATIONS, because the three numbers have two different causes and
+     * measuring both against one would understate one of them. `seconds` and
+     * `send` are the LEVEL's — how enclosed it is and how far it spreads — so
+     * they are spread across the roster with the ground held still. `decay` is
+     * the GROUND's, so a sweep that holds the ground still measures almost
+     * nothing of it (1.55x, and every bit of that is grass and water); it is
+     * spread over the four surfaces `Terrain.surfaceAt` can actually report. */
+    const grid = [];
+    for (const k of LEVEL_ORDER) for (const g of ['sand', 'stone', 'metal', 'water']) grid.push(roomOf(LEVELS[k], g));
+    assert(span(all, r => r.seconds) > 3, `every level's tail is within ${span(all, r => r.seconds).toFixed(2)}x`);
+    assert(span(all, r => r.send) > 3, `every level's send is within ${span(all, r => r.send).toFixed(2)}x`);
+    assert(span(grid, r => r.decay) > 2.5,
+      `every ground decays the same: within ${span(grid, r => r.decay).toFixed(2)}x`);
+
+    // …and it lands. The impulse is a real buffer and the send is a real ramp.
+    const { a } = engine();
+    const open = roomOf(LEVELS[LEVEL_ORDER.find(k => LEVELS[k].ambience?.wind >= 0.3)] || {}, 'sand');
+    const hall = roomOf(LEVELS.foundry || LEVELS[LEVEL_ORDER[0]], 'metal');
+    a.setAmbience({ wind: 0.04, drone: 0.3, room: hall });
+    const long = a.reverb.buffer;
+    assert(long, 'setRoom left the convolver with no impulse at all');
+    assert(Math.abs(long.duration - hall.seconds) < 0.02,
+      `the impulse is ${long.duration.toFixed(2)}s for a ${hall.seconds.toFixed(2)}s room`);
+    const sendLong = a.reverbSend.gain.last('tgt');
+    a.setAmbience({ wind: 0.42, drone: 0.03, room: open });
+    const short = a.reverb.buffer;
+    assert(short !== long, 'the second level reused the first level\'s impulse');
+    assert(short.duration < long.duration * 0.6,
+      `an open ridge got ${short.duration.toFixed(2)}s against the hall's ${long.duration.toFixed(2)}s`);
+    assert(a.reverbSend.gain.last('tgt') < sendLong * 0.6,
+      `the send did not move between rooms: ${sendLong} → ${a.reverbSend.gain.last('tgt')}`);
+    // Re-entering the same room must not rebuild 320 kB of impulse.
+    const again = a.reverb.buffer;
+    a.setRoom(open);
+    assert(a.reverb.buffer === again, 'the same room built a second impulse');
+
+    return `${LEVEL_ORDER.length} levels: tail ${span(all, r => r.seconds).toFixed(1)}x, `
+      + `send ${span(all, r => r.send).toFixed(1)}x, decay ${span(grid, r => r.decay).toFixed(1)}x over 4 grounds `
+      + `(all were 2.40s / 2.6 / 0.16); graph ${long.duration.toFixed(2)}s@${sendLong.toFixed(3)} `
+      + `→ ${short.duration.toFixed(2)}s@${a.reverbSend.gain.last('tgt').toFixed(3)}, re-entry rebuilds nothing`;
   });
 }

@@ -28,6 +28,86 @@ import { Communion, STARS } from './LivingForce.js';
  * out" and a computed sum would be exactly enough and therefore tense.
  */
 const HOLOCRON_PURSE = 600;
+
+/**
+ * HOW HARD THE GROUND IS, as a reflection coefficient.
+ *
+ * The four keys are `Terrain.surfaceAt`'s own vocabulary — the same one
+ * `Audio.SURFACES` already keys a footstep off — so this is a second reading of
+ * an existing fact rather than a second table of levels. Sand is close to
+ * anechoic; a steel deck gives you almost all of it back.
+ */
+const GROUND_ECHO = { sand: 0.14, water: 0.52, stone: 0.86, metal: 1.0 };
+
+/**
+ * WHAT ROOM IS THIS, derived from what the level already says.
+ *
+ * `Audio.init` built ONE convolver — `_makeImpulse(2.4, 2.6)` at a send of
+ * 0.16 — and `grep reverbSend` found nothing after line 388. A 30,000-seat
+ * stone bowl, an open dune sea and a sealed foundry shared a 2.4 s tail
+ * forever, which is the one thing that makes seven distinct places sound like
+ * one place.
+ *
+ * A level may say only `ambience: {wind, windFreq, drone}` and NONE of them has
+ * a reverb field. Adding one to ten levels would be ten more hand-written
+ * numbers beside a generated twin, which is the defect HANDOFF §2.3 is a
+ * section about. So the room is DERIVED, from four facts every level already
+ * carries, and each term is a physical claim rather than a taste:
+ *
+ *   WIND is the tell of OPENNESS. A sealed room has none — the temple ships
+ *     0.05 and the foundry 0.04 — and an exposed ridge has all of it (alpine
+ *     0.34, kamino 0.42). Air moving past your ears means there is nothing
+ *     close enough to stop it, which is the same statement as "nothing close
+ *     enough to reflect".
+ *   THE GROUND decides how much of what does come back, comes back. Sand eats
+ *     it; a foundry's steel deck returns nearly all of it.
+ *   HOW FAR THE FIGHT SPREADS sets the path length, and `spawnRadius` is the
+ *     one number every level states about its own size — geonosis's 96 m plain
+ *     against the temple's 52 m hall.
+ *   GRASS AND WATER are absorption and brightness. A metre of cover is the best
+ *     broadband absorber outdoors; standing water is a mirror.
+ *
+ * @param level    a LEVELS entry
+ * @param surface  what `Terrain.surfaceAt` says is underfoot
+ * @returns {{seconds, decay, send}} straight into `audio.setRoom`
+ */
+export function roomOf(level, surface = 'sand') {
+  const A = level?.ambience || {};
+  // 0.26 is geonosis's open plain, and it is the point at which a level is
+  // fully outdoors as far as this is concerned rather than the windiest thing
+  // on the roster — alpine and kamino are ABOVE it because a ridge and an ocean
+  // platform are more open than a plain, not because they are louder.
+  const open = clamp(num(A.wind, 0.2) / 0.26, 0, 1);
+  const enclosed = 1 - open;
+  const echo = GROUND_ECHO[surface] ?? 0.4;
+  const far = clamp(num(level?.spawnRadius?.[1], 50) / 96, 0.25, 1);
+  const soft = clamp(num(level?.grass, 0) * 0.5, 0, 0.6);
+  const wet = level?.water ? 1 : 0;
+
+  /* THREE NUMBERS AND THREE SEPARATE CAUSES, which is the whole reason this is
+   * not one curve with three outputs:
+   *
+   *   LENGTH is geometry. How far the reflection has to travel, and nothing
+   *     else — a marble hall and a hay barn of the same size have the same
+   *     path length and sound nothing alike, and that difference is `decay`.
+   *   DECAY is material. How much survives each bounce.
+   *   SEND is enclosure. How much of the room reaches the ear at all.
+   *
+   * Mixing them is how the first version of this gave a 30,000-seat stone bowl
+   * a 1.13 s tail, because it multiplied the length by the SAND on its floor. */
+  const seconds = clamp(0.28 + 2.7 * enclosed * (0.5 + 0.8 * far), 0.28, 3.6);
+  // `decay` is the impulse's own exponent — bigger is a steeper die-away — so
+  // absorption RAISES it. Grass is the strongest broadband absorber outdoors.
+  const decay = clamp(3.4 - 1.9 * echo + 2.6 * soft - 0.4 * wet, 1.1, 5.2);
+  /* Half the reflectors in an enclosed space are its WALLS, and the level says
+   * nothing about those — only about the ground under your feet. So the surface
+   * gets half the vote and the fact of being enclosed at all gets the other
+   * half, which is what stops an arena with a sand floor reading as a field.
+   * `enclosed ** 1.3` rather than linear: a partly sheltered plain is a plain. */
+  const send = clamp(0.035 + 0.34 * Math.pow(enclosed, 1.3) * (0.5 + 0.5 * echo)
+    + 0.05 * wet - 0.06 * soft, 0.03, 0.38);
+  return { seconds, decay, send };
+}
 import { applyOrder } from './Order.js';
 import { LEVELS, LEVEL_ORDER, groundMight, spawnClear } from './Levels.js';
 import { CommandDirector, COMMAND_POWER_RULES } from './Command.js';
@@ -307,7 +387,15 @@ export class World {
     this.bolts.onImpact = (b, res) => this._onBoltImpact(b, res);
 
     this.engine.applyAtmosphere(L.atmosphere);
-    audio.setAmbience(L.ambience || {});
+    /**
+     * The bed AND the room, out of the one call, because they are the same fact
+     * about a place. `surfaceAt(0, 0)` is the level's own centre — the ground
+     * the fight is standing on — and it is the same reading `audio.step` takes
+     * for a footstep, so a level whose floor is steel gets a steel room without
+     * anybody writing "steel" down twice. See roomOf().
+     */
+    this.room = roomOf(L, this.terrain.surfaceAt(0, 0));
+    audio.setAmbience({ ...(L.ambience || {}), room: this.room });
 
     // The motes, windborne sheets, haze and heat shimmer are particles too, so
     // they ride the particle tier and not the terrain one.
@@ -1130,6 +1218,17 @@ export class World {
       if (Math.abs(this.targetTimeScale - kt.scale) < 1e-6) this.setTimeScale(kt.restore);
     }
     this.timeScale = damp(this.timeScale, this.targetTimeScale, 9, rawDt);
+    /**
+     * THE MIX HEARS THE CLOCK. The dilation the player is HOLDING — Sense at
+     * 0.42×, a full Focus hold at 0.18×, kill-time at 0.32–0.45 — and
+     * deliberately not the hitstop, which is a 30–120 ms freeze rather than a
+     * slowdown and reads as a dropout if the whole mix drops with it.
+     *
+     * Before this line, `grep focus src/engine/Audio.js` returned nothing: the
+     * signature power of the game slowed the world with no acoustic response
+     * whatsoever.
+     */
+    audio.setTimeScale?.(this.timeScale * this.focus.scale);
     dt *= this.timeScale * this.focus.scale;
     dt = Math.min(dt, 1 / 24);
     this.time += dt;
