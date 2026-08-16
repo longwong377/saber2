@@ -237,7 +237,33 @@ and wrong for a test, which should be told. `cloth-cost` now names its field onc
 as `FIELD` and asserts the level exists. **The three `meadow` callers have not
 been fixed** — `grep -rn "loadLevel('" tools/` is the list.
 
-### 2.7 A LATE full run can hang on a suite that passes alone
+### 2.7 A LATE full run can hang on a suite that passes alone — **SOLVED, see the top**
+
+> **RESOLVED.** The cause was DEAD LEVEL NAMES, not ordering and not CPU.
+> `levels-quality.mjs` named **nine deleted levels** across three checks
+> (`temple`, `arena`, `warship`, `intake`, `deeps`, `cut`). `World.loadLevel`
+> substitutes `LEVEL_ORDER[0]` for a key it does not know — right for a player
+> with a stale profile, a trap in a check — so **every dead name booted another
+> full World**, cached it under the dead key, and then measured a property of a
+> room that no longer exists against a copy of the Ember Shelf. Five extra
+> Worlds in one check, on top of that file's real six.
+>
+> That is *why* the diagnosis below correctly fingered "the two suites holding
+> the most Worlds alive at once": the observation was right and the cause was
+> one layer further down. Adding an eighth real level is what took it from slow
+> to never finishing. `cloth-cost.mjs` had the same defect independently.
+>
+> Fixed: `level()` throws on a dead key, the three checks enumerate over
+> `LEVEL_ORDER`, and `roster.mjs` gained a **sixth form** — `level('x')` /
+> `loadLevel('x')` — so the class cannot hide again. Nine of twelve checks now
+> finish in ~44 s. The sixth form caught a live one on its first run, in `src`
+> rather than `tools`.
+>
+> **Still worth doing:** `coop.mjs` is the other suite named below and has not
+> been audited for the same shape.
+
+The original observation, kept because the reasoning was sound and only the
+cause was missing:
 
 Observed twice at the end of a long session, on two different suites:
 `verify.mjs` stopped making progress on `levels-quality.mjs` once and on
