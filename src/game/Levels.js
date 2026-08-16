@@ -1197,11 +1197,36 @@ export const LEVELS = {
       for (let k = 0; k < 14; k++) {
         const site = findSite(world, 20, 100, { angle: (k / 6) * TAU + rng() * 0.6, clearance: 14, maxSlope: 0.40 });
         if (!site) continue;
-        addOutcrop(world, site.pos, { size: 4 + rng() * 5, height: 7 + rng() * 7, seed: 700 + k, mat: M.stone });
+        addOutcrop(world, site.pos, { size: 4 + rng() * 5, height: 7 + rng() * 7, seed: 700 + k,
+          mat: M.stoneSnow });
       }
-      // A cirque floor is talus: this is the one level where the loose rock IS
-      // the ground cover, so it runs heavier than anywhere else.
-      strewGround(world, { seed: 9932, radius: 130, spread: 0.42, mat: M.stone,
+      /**
+       * A cirque floor is talus, so this is the one level where the loose rock
+       * IS the ground cover and it runs heavier than anywhere else — but it is
+       * SNOW-COVERED rock, and that was the whole complaint: "the snow map
+       * shouldnt have the same stones/spires as the desert… sometimes it feels
+       * like the desert map but with the sand being white. The brown rocks
+       * just take you out of it."
+       *
+       * It was `M.stone`, which is the desert's stone and is deliberately warm
+       * (see its own note in Props.js — desert varnish). One level over, on
+       * white ground under a blue sky, that reads as a brown pebble field
+       * somebody dusted. `M.stoneSnow` is the same crack pattern at a cold,
+       * bright, barely-saturated tint, taken off the reference the player
+       * supplied: in it there is no bare rock anywhere, and an outcrop is
+       * separated from the drift beside it by VALUE and a blue shadow rather
+       * than by hue.
+       *
+       * THE COUNTS ARE UNTOUCHED, and that is deliberate. Thinning the field
+       * to match the reference's composition was tempting and is not what was
+       * reported — the complaint is that the stones are BROWN, not that there
+       * are too many. It is also not free: `ground-cover` measures the litter's
+       * Clark-Evans clustering against a Poisson control, and dropping
+       * landmarks 1.6 → 0.9 moved alpine's R to 0.706 against a 1.015 control
+       * and failed it. A composition change wants its own round and its own
+       * argument; this one is a tint.
+       */
+      strewGround(world, { seed: 9932, radius: 130, spread: 0.42, mat: M.stoneSnow,
         landmarks: 1.6, boulders: 1.4, cobble: 1.3 });
       return 9;
     },

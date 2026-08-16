@@ -191,6 +191,31 @@ export function propMaterials() {
      * darker — 0.105 luminance rather than 0.090, because a shadow is a
      * shadow and not a hole cut in the world. */
     stoneDark: mk(rock, lit(1.35, 1.15, 0.92), 0.94, 0.02),
+    /**
+     * SNOW-BLANKETED ROCK — for the one level where warm stone is wrong.
+     *
+     * Reported: "the snow map shouldnt have the same stones/spires as the
+     * desert, feels out of place… sometimes it feels like the desert map but
+     * with the sand being white. The brown rocks just take you out of it."
+     * Exactly right, and it was one line: the White Pass strewed `M.stone`,
+     * which is the DESERT's stone and whose own comment above explains at
+     * length why it is warm — desert varnish on a block that has sat in the
+     * sun for a few thousand years.
+     *
+     * The reference the player supplied (assets/reference/maps/alpine) settles
+     * what it should be instead, and the answer is not "grey": in it there is
+     * no bare rock at all. Every outcrop is under snow, and what separates one
+     * from the drift beside it is VALUE and a blue shadow, not hue. Rock on
+     * that planet reads as a cold shadow in a white field.
+     *
+     * So: bright, barely saturated, and tilted BLUE rather than neutral — a
+     * neutral grey against snow lit by a blue sky comes back looking brown by
+     * simultaneous contrast, which is the same trap `duracreteDark`'s comment
+     * records from the other direction. It keeps the rock map, because the
+     * crack network is still the right pattern for a snow-covered crag; it is
+     * the tint that was wrong.
+     */
+    stoneSnow: mk(rock, lit(2.45, 2.62, 2.95), 0.95, 0.0),
     /* Wind-blown sand banked against anything that has stood still in a desert
      * long enough to matter. It is built on the SAND map, and the reason is a
      * textbook case of a mean hiding a distribution.
