@@ -1548,6 +1548,118 @@ export class AudioEngine {
       type: map.type, prio: PRIO.critical });
   }
 
+  /* ── the two moments a run has ─────────────────────────────────────── */
+
+  /**
+   * YOU DIED, and it used to be `ui('bad')`.
+   *
+   * The identical 300 → 90 Hz sawtooth blip the menu plays when you click a
+   * skill node you cannot afford: 0.5 s, one oscillator, no position, no tail.
+   * The most important half-second in a run and the cheapest sound in the game
+   * were the same waveform.
+   *
+   * Four layers, and each one is doing a different job:
+   *
+   *   · the DROP — 96 Hz falling to 22 over two and a half seconds, which is
+   *     under the pitch of anything else in the mix and long enough that it is
+   *     still going when the death card lands 2.6 s later;
+   *   · the ROOM COLLAPSING — a wide pink band closing from 2.4 kHz to 90 Hz,
+   *     which is what makes it read as hearing going rather than as a note;
+   *   · the RING — 2.9 kHz sine, quiet, long. The one detail everybody
+   *     recognises and nobody can name;
+   *   · a HEARTBEAT of two thumps, because the body is the last thing left.
+   *
+   * Non-positional on purpose: this is not an event in the room, it is what is
+   * happening to the listener, and a panner would put your own death somewhere
+   * over your left shoulder. `critical`, so a full pool cannot refuse it.
+   */
+  death() {
+    if (!this.ready) return 0;
+    const P = PRIO.critical;
+    this.tone({ freq: 96, freqEnd: 22, dur: 2.5, gain: 0.42, type: 'sine', attack: 0.01, prio: P });
+    this.tone({ freq: 143, freqEnd: 33, dur: 2.2, gain: 0.16, type: 'triangle', attack: 0.02, prio: P });
+    this.noise({ dur: 2.4, gain: 0.30, type: 'lowpass', freq: 2400, freqEnd: 90, q: 0.6,
+      pink: true, attack: 0.02, curve: 3.4, prio: P });
+    this.tone({ freq: 2900, freqEnd: 2600, dur: 2.6, gain: 0.055, type: 'sine', attack: 0.35, prio: P });
+    // Two beats at about 46 bpm — the rate a body slows to, not a resting pulse.
+    this.tone({ freq: 58, freqEnd: 30, dur: 0.34, gain: 0.30, type: 'sine', attack: 0.006, prio: P });
+    this._beat = setTimeout(() => {
+      this.tone({ freq: 54, freqEnd: 27, dur: 0.4, gain: 0.24, type: 'sine', attack: 0.006, prio: P });
+    }, 1300);
+    this._beat?.unref?.();
+    // AND THE SCORE STOPS. A 49-minute orchestral track carrying on over your
+    // corpse is the single loudest thing wrong with the moment.
+    this.duckMusic(0.12, 0.9);
+    return 2.6;
+  }
+
+  /**
+   * YOU HELD THE FIELD, and it used to be `ui('good')` — the same 620 → 1240 Hz
+   * ping the menu plays when you buy an upgrade.
+   *
+   * A rising triad rather than a rising interval, arpeggiated over 160 ms so it
+   * arrives as a phrase, with a low swell under it that is the room letting go.
+   * Non-positional and `critical` for the same reasons death() is.
+   */
+  victory() {
+    if (!this.ready) return 0;
+    const P = PRIO.critical;
+    const t0 = this.ctx.currentTime;
+    // A, C#, E, A — the same chord the drone bed is built on a fifth up, so it
+    // resolves the room rather than arriving beside it.
+    const chord = [220, 277.2, 330, 440];
+    for (let i = 0; i < chord.length; i++) {
+      const f = chord[i];
+      // Scheduled by hand rather than with setTimeout: a timer is wall-clock,
+      // and everything else in this file that has ever used one for musical
+      // timing has been wrong under a hitstop or a background tab.
+      this._at(t0 + i * 0.055, () => this.tone({ freq: f, freqEnd: f * 1.001, dur: 1.1 - i * 0.1,
+        gain: 0.12, type: 'triangle', attack: 0.012, prio: P }));
+    }
+    this.tone({ freq: 110, freqEnd: 220, dur: 1.4, gain: 0.16, type: 'sine', attack: 0.09, prio: P });
+    this.noise({ dur: 0.9, gain: 0.07, type: 'bandpass', freq: 5200, freqEnd: 9000, q: 0.8,
+      attack: 0.02, prio: P });
+    return 1.4;
+  }
+
+  /**
+   * Run `fn` at an AUDIO-clock time. A one-node silent oscillator is the only
+   * thing in WebAudio that can raise a callback on that clock; a `setTimeout`
+   * runs on the wall clock, which a suspended context and a backgrounded tab
+   * both detach from the sound the callback is supposed to be part of.
+   */
+  _at(when, fn) {
+    try {
+      const o = this.ctx.createOscillator();
+      const g = this.ctx.createGain(); g.gain.value = 0;
+      o.connect(g); g.connect(this.master);
+      o.onended = () => { try { g.disconnect(); } catch {} fn(); };
+      o.start(this.ctx.currentTime);
+      o.stop(Math.max(when, this.ctx.currentTime + 0.001));
+    } catch { fn(); }
+  }
+
+  /**
+   * Pull the score down to `level` and leave it there for `seconds`, then bring
+   * it back to whatever the slider says.
+   *
+   * Separate from `setMusicVolume` on purpose: this must not move the player's
+   * setting, and a player at Music 0 must not have it turned on for them.
+   */
+  duckMusic(level = 0.2, seconds = 1.2) {
+    if (!this.ready || !this.musicBus || !(this.musicVolume > 0)) return false;
+    const t = this.ctx.currentTime;
+    const l = clamp(num(level, 0.2), 0, 1) * this.musicVolume;
+    const d = clamp(num(seconds, 1.2), 0.05, 30);
+    try {
+      this.musicBus.gain.cancelScheduledValues(t);
+      this.musicBus.gain.setTargetAtTime(l, t, 0.18);
+      this.musicBus.gain.setTargetAtTime(this.musicVolume, t + d, 0.9);
+    } catch { return false; }
+    this._musicDuckUntil = t + d;
+    return true;
+  }
+
   /* ── ambience & score ──────────────────────────────────────────────── */
 
   _startAmbience() {

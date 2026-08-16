@@ -185,6 +185,69 @@ export async function run({ check, assert }) {
     } finally { restoreShared(snap); }
   });
 
+  check('feel: dying is not the sound of a button you cannot afford', async () => {
+    const { bootWorld, idleInput } = await import('./_coop.mjs');
+    const { snapshotShared, restoreShared } = await import('./_shared.mjs');
+    const { Engine } = await import('../../src/engine/Engine.js');
+    const { audio } = await import('../../src/engine/Audio.js');
+    const snap = await snapshotShared();
+    try {
+      const { world, engine } = await bootWorld({ level: 'arena' });
+      let drain = 0, bars = 0;
+      engine.setDrain = (v) => { drain = v; };
+      engine.setBars = (v) => { bars = v; };
+      engine.rumble = () => { engine._rumbled = true; };
+      engine.punch = Engine.prototype.punch; engine._punch = 0;
+      const p = world.player;
+      const rig = p.camera;
+      const before = { yaw: rig.yaw, dist: rig.targetDistance, height: rig.height,
+        shoulder: rig.shoulderAt };
+      // What was actually played, and by name. `ui` is the menu blip the moment
+      // used to be; a death that still reaches it has not been fixed.
+      const said = [];
+      const undo = [];
+      for (const k of ['ui', 'death', 'tone', 'noise', 'duckMusic']) {
+        const f = audio[k];
+        undo.push(() => { audio[k] = f; });
+        audio[k] = (...a) => { said.push(k); return f.apply(audio, a); };
+      }
+      p.die('probe');
+      for (const u of undo) u();
+      assert(said.includes('death'), `nothing played death(): ${said.join(',') || 'silence'}`);
+      assert(!said.includes('ui'), 'the death still routes through the menu blip audio.ui()');
+      assert(drain > 0.4, `the colour did not leave the frame (drain ${drain})`);
+      assert(bars > 0, `no letterbox (${bars})`);
+      assert(world.targetTimeScale < 0.6,
+        `the world did not slow for the death (timeScale ${world.targetTimeScale})`);
+      assert(rig.shot, 'no death shot — the camera stayed over the shoulder of a corpse');
+
+      // …and it MOVES. Drive the real rig through the real update for two
+      // game-seconds and measure where the camera went, rather than asserting
+      // that a script exists.
+      const ctx = { physics: world.physics, terrain: world.terrain, time: 0 };
+      for (let i = 0; i < 120; i++) p._updateDead(1 / 60, ctx);
+      const moved = {
+        yaw: Math.abs(rig.yaw - before.yaw), dist: rig.targetDistance - before.dist,
+        height: rig.height - before.height, shoulder: Math.abs(rig.shoulderAt) };
+      assert(moved.yaw > 0.25, `the camera never came round the body (${moved.yaw.toFixed(3)} rad)`);
+      assert(moved.dist > 1, `the boom never pulled back (${moved.dist.toFixed(2)} m)`);
+      assert(moved.height > 0.35, `the camera never rose (${moved.height.toFixed(2)} m)`);
+      assert(moved.shoulder < before.shoulder * 0.5,
+        `still framed over the shoulder (${moved.shoulder.toFixed(3)} m of ${before.shoulder})`);
+
+      // Giving the rig back is the other half: co-op revives without any screen
+      // closing, and a revived player must not play on grey and letterboxed.
+      p.respawn(p.position.clone());
+      assert(!rig.shot && drain === 0 && bars === 0 && world.targetTimeScale === 1,
+        `respawn left the death on: shot ${!!rig.shot} drain ${drain} bars ${bars} scale ${world.targetTimeScale}`);
+      const out = `played ${[...new Set(said)].join('+')}; drain 0.72, bars 0.085, clock ${'0.34'}; `
+        + `camera +${moved.yaw.toFixed(2)} rad, +${moved.dist.toFixed(2)} m back, `
+        + `+${moved.height.toFixed(2)} m up, shoulder ${before.shoulder.toFixed(2)}→${moved.shoulder.toFixed(2)} m; respawn clears all four`;
+      world.unload?.();
+      return out;
+    } finally { restoreShared(snap); }
+  });
+
   check('feel: the two feel toggles reach every new channel', async () => {
     const { bootWorld } = await import('./_coop.mjs');
     const { snapshotShared, restoreShared } = await import('./_shared.mjs');

@@ -380,7 +380,9 @@ export class World {
     };
     this.director.onWaveClear = (w) => {
       this.notify('WAVE CLEAR', 'the Force is with you');
-      audio.ui('good');
+      // `audio.ui('good')` was the same 620 → 1240 Hz ping the menu plays when
+      // you buy an upgrade. Holding a field is not buying an upgrade.
+      audio.victory();
     };
     /**
      * INSIGHT hangs off the same signal — composed onto it rather than written
@@ -649,6 +651,16 @@ export class World {
     // The level's wind and drone are level state; without this they kept
     // playing under the main menu after quitting.
     audio.setAmbience?.({ wind: 0, drone: 0 });
+    /* …and so is everything a death left on the screen and on the clock. A
+     * player who quits from the death card and deploys again used to arrive on
+     * the next level grey, letterboxed and at a third speed, because the three
+     * states die() sets are held until something lets go of them and only
+     * `respawn` ever did. */
+    this.engine?.setDrain?.(0);
+    this.engine?.setBars?.(0);
+    this._killTime = null;
+    this.setTimeScale(1);
+    this.timeScale = 1;
     for (const e of this.enemies) e.dispose();
     this.enemies.length = 0;
     /* The corpse ledger holds references to bodies that have just been

@@ -769,6 +769,15 @@ const _m1 = new THREE.Vector3(), _m2 = new THREE.Vector3(), _m3 = new THREE.Vect
 const _m4 = new THREE.Vector3(), _m5 = new THREE.Vector3(), _m6 = new THREE.Vector3();
 const _m7 = new THREE.Vector3();
 
+/**
+ * Scratch for the camera rig's shoulder probe alone. It runs inside
+ * CameraRig.update, which is already holding _v1.._v5 (forward, right, anchor,
+ * the collision back-vector and the terrain probe), so it may borrow none of
+ * them — and the probe is a raycast, so a shared temp aliased into a physics
+ * call is a bug that only shows up against geometry.
+ */
+const _c1 = new THREE.Vector3(), _c2 = new THREE.Vector3();
+
 export class CameraRig {
   constructor(camera) {
     this.camera = camera;
@@ -815,6 +824,113 @@ export class CameraRig {
     this.eyeOffset = new THREE.Vector3();
     /** How much of the pelvis the cap had to refuse this frame, metres. */
     this.eyeCapped = 0;
+    /**
+     * WHICH SIDE THE CAMERA STANDS ON, as a sign rather than a distance.
+     *
+     * `shoulder` is the offset and it was written once in this constructor and
+     * never again by anything in the project, so the camera stood over the same
+     * shoulder into every corner in the game. Splitting the sign off the
+     * magnitude is what lets the swap be a smooth ease of one number rather
+     * than a teleport, and it is what `_resolveShoulder` moves.
+     */
+    this.shoulderSide = 1;
+    this.shoulderAt = this.shoulder;
+    /** The death shot, or null. See beginDeathShot. */
+    this.shot = null;
+  }
+
+  /**
+   * A DEATH CAMERA — the worst 2.6 seconds in the game, framed.
+   *
+   * What happened before this: `_updateDead` pulled the boom to 4.4 m and eased
+   * the pitch to -0.42, and that was the whole of it. The camera that had been
+   * over your shoulder stayed over the shoulder of a corpse, at the yaw the
+   * mouse happened to be at when you were hit, until the card arrived.
+   *
+   * The shot is a SCRIPT on the rig's own numbers rather than a second camera:
+   * the boom rises and pulls back, the pitch eases down onto the body, the
+   * shoulder offset unwinds to zero (there is nothing left to aim), and the
+   * whole thing drifts a fifth of a radian around the body so the frame is
+   * moving when the card lands. Written as targets and left to the rig's
+   * existing damping, so it costs no new integrator and it cannot fight the
+   * collision pull-in — a death against a wall still frames.
+   *
+   * It runs on the WORLD's clock, which by then is at a third speed, and that
+   * is the point: the drift is authored at the rate it should read at 1.0 and
+   * arrives slower because everything else has.
+   */
+  beginDeathShot(opts = {}) {
+    this.shot = {
+      t: 0,
+      dur: clamp(opts.seconds ?? 3.4, 0.5, 12),
+      // Away from whatever the body was facing, so the camera swings to look at
+      // the front of it rather than following it down from behind.
+      turn: (this.shoulderSide >= 0 ? 1 : -1) * (opts.turn ?? 0.62),
+      yaw0: this.yaw,
+      fov0: this.fovTarget,
+      // Everything the shot commandeers, so ending it is a restore and not a
+      // second table of defaults that can drift from the constructor's.
+      fp0: this.firstPerson, dist0: this.targetDistance, height0: this.height,
+    };
+    return this.shot;
+  }
+
+  /** Give the rig back. Idempotent — respawn and dispose may both call it. */
+  endShot() {
+    const s = this.shot;
+    if (!s) return false;
+    this.shot = null;
+    this.firstPerson = s.fp0;
+    this.targetDistance = s.dist0;
+    this.height = s.height0;
+    this.fovTarget = s.fov0;
+    return true;
+  }
+
+  /**
+   * Where the camera stands, and how far off the body's line it may be.
+   *
+   * TWO DEFECTS IN ONE NUMBER, and both of them are about a boom that has been
+   * pulled in. `dist` collapses to as little as 0.55 m against a wall, and the
+   * lateral offset did not collapse with it: at 0.55 m a fixed 0.46 m sideways
+   * is 40 degrees off axis, which puts the player's own head and shoulder
+   * across the middle of the frame — and screen centre is where the reticle is.
+   * Scaling the offset by how much of the boom survived keeps the body at a
+   * constant ANGLE instead of a constant distance, which is the thing the eye
+   * actually reads.
+   *
+   * And the side is now a decision rather than a constant. If the wall is on
+   * the right and not on the left, the camera steps to the left — the same
+   * thing a player would do with a manual swap and the same thing every
+   * third-person game has done for fifteen years. Hysteresis (the 0.6 m) stops
+   * it flapping in a doorway.
+   */
+  _resolveShoulder(dt, base, fwd, right, ctx) {
+    // The shot owns the frame; a corpse is not aiming past its own shoulder.
+    if (this.shot) {
+      this.shoulderAt = damp(this.shoulderAt, 0, 3.2, dt);
+      return this.shoulderAt;
+    }
+    // Two extra raycasts a frame to answer a question that changes on the scale
+    // of a doorway is waste; six frames is a tenth of a second and the ease
+    // below is slower than that anyway.
+    this._sideTick = (this._sideTick | 0) + 1;
+    if (ctx.physics && this.shoulder > 0.01 && (this._sideTick % 6) === 0) {
+      const reach = this.targetDistance + 0.42;
+      const filter = (b) => b.static || b.layer === LAYER.PROP;
+      _c2.copy(fwd).negate();
+      let r = reach, l = reach;
+      _c1.copy(base).addScaledVector(right, this.shoulder);
+      const hr = ctx.physics.raycast(_c1, _c2, reach, filter);
+      if (hr) r = hr.distance;
+      _c1.copy(base).addScaledVector(right, -this.shoulder);
+      const hl = ctx.physics.raycast(_c1, _c2, reach, filter);
+      if (hl) l = hl.distance;
+      if (this.shoulderSide > 0 && l > r + 0.6) this.shoulderSide = -1;
+      else if (this.shoulderSide < 0 && r > l + 0.6) this.shoulderSide = 1;
+    }
+    this.shoulderAt = damp(this.shoulderAt, this.shoulder * this.shoulderSide, 5, dt);
+    return this.shoulderAt;
   }
 
   /**
@@ -884,6 +1000,29 @@ export class CameraRig {
   }
 
   update(dt, target, ctx = {}) {
+    /**
+     * THE SHOT DRIVES THE RIG, and it does it here — before syncAim — so the
+     * yaw it writes is the yaw the aim quaternion, the boom and the collision
+     * probe all read on the SAME frame. Written as an else-if on `firstPerson`
+     * as well: a first-person death has to come out of the head, or the shot is
+     * three seconds of the inside of your own skull.
+     */
+    const shot = this.shot;
+    if (shot) {
+      shot.t = Math.min(shot.dur, shot.t + Math.max(dt, 0));
+      const k = shot.t / shot.dur;
+      // ease-out on everything, so the move is quick where it is informative
+      // (getting off the shoulder and onto the body) and slow where it is not.
+      const e = 1 - Math.pow(1 - k, 2.2);
+      this.firstPerson = false;
+      this.yaw = shot.yaw0 + shot.turn * e;
+      this.pitch = lerp(this.pitch, -0.52, Math.min(1, dt * 2.4));
+      this.targetDistance = lerp(3.05, 5.1, e);
+      this.height = lerp(1.52, 2.15, e);
+      // A wider lens as it settles: the frame opening up is what says the fight
+      // is over, and it is the one FOV move in the game that is not a speed cue.
+      this.fovTarget = shot.fov0 + 7 * e;
+    }
     this.syncAim();
 
     if (!this._init) { this._smoothTarget.copy(target); this._init = true; }
@@ -909,8 +1048,13 @@ export class CameraRig {
     } else {
       this.eyeOffset.set(0, 0, 0);
       this.eyeCapped = 0;
-      const anchor = _v3.copy(this._smoothTarget).addScaledVector(UP, this.height)
-        .addScaledVector(right, this.shoulder);
+      const anchor = _v3.copy(this._smoothTarget).addScaledVector(UP, this.height);
+      // THE OFFSET IS SCALED BY HOW MUCH OF THE BOOM SURVIVED. See
+      // _resolveShoulder: a pull-in to 0.55 m with a fixed 0.46 m sideways puts
+      // the player's own head 40 degrees off axis and across the reticle.
+      const side = this._resolveShoulder(dt, anchor, fwd, right, ctx)
+        * clamp(this.distance / Math.max(this.targetDistance, 0.6), 0.3, 1);
+      anchor.addScaledVector(right, side);
       let dist = this.distance;
       // pull in when the camera would clip geometry
       if (ctx.physics) {
@@ -5367,7 +5511,38 @@ export class Player {
     this.cloak?.dispose(); this.cloak = null;
     this.skirt?.dispose(); this.skirt = null;
     this.world.onPlayerDeath?.(this, source);
-    audio.ui('bad');
+    /**
+     * DYING HAS TO FEEL LIKE DYING, and it was `audio.ui('bad')` — the exact
+     * sound the menu plays when you click a skill node you cannot afford.
+     *
+     * Four channels, and every one of them is gated the way §the feel funnel
+     * gates the rest: `audio.death()` (a two-and-a-half-second drop, the room
+     * closing, a ring and two slowing heartbeats, and the score ducked out from
+     * under it), the colour draining out of the frame, the letterbox arriving,
+     * and the world going to a third speed so the last two seconds are watched
+     * rather than skipped.
+     *
+     * `isLocal` because a peer dying in co-op is their moment, not yours: their
+     * body ragdolls on your screen and your world keeps its speed and its
+     * colour.
+     */
+    if (this.isLocal) {
+      audio.death();
+      const w = this.world;
+      /* The drain and the bars are deliberately NOT behind the feel toggles.
+       * Everything else here is motion — the pad, the camera move, the clock —
+       * and a player who has turned motion off must still be told, in the
+       * frame, that the run has ended. Colour leaving and the frame narrowing
+       * are the two cues that cost no movement at all. */
+      w.engine?.setDrain?.(0.72);
+      w.engine?.setBars?.(0.085);
+      if (w.feelOn?.('shake') !== false) {
+        w.engine?.rumble?.(0.9, 0.5, 620);
+        // A death is the one moment the camera is allowed to take the frame over.
+        this.camera.beginDeathShot?.();
+      }
+      w.killTime?.(0.34, 2.4);
+    } else audio.ui('bad');
     /**
      * COLLAPSE — AND ONLY IF THIS BODY IS STILL THE ONE THAT DIED.
      *
@@ -5409,15 +5584,37 @@ export class Player {
 
   _updateDead(dt, ctx) {
     if (this.actor) this.actor.update(dt);
-    this.camera.targetDistance = 4.4;
-    this.camera.pitch = damp(this.camera.pitch, -0.42, 2, dt);
+    // While the shot is running it owns the boom and the pitch; these two lines
+    // are what the camera does for a death with the shot turned off (a peer's
+    // body, or a player who has motion feedback off), and they are the reason
+    // the shot is a script over the rig rather than a replacement for it.
+    if (!this.camera.shot) {
+      this.camera.targetDistance = 4.4;
+      this.camera.pitch = damp(this.camera.pitch, -0.42, 2, dt);
+    }
+    // FRAME THE BODY, not the ground under it. The old target sat 0.6 m BELOW
+    // the corpse's centre, which on a ragdoll lying flat is under the floor —
+    // so the one shot in the game that is only ever about one object pointed
+    // the camera past it. Half that, and only while the shot is not running.
     const t = this.actor ? this.actor.centre(_v1) : this.position;
-    this.camera.update(dt, _v2.copy(t).setY(t.y - 0.6), { physics: ctx.physics, terrain: ctx.terrain });
+    const drop = this.camera.shot ? 0.15 : 0.6;
+    this.camera.update(dt, _v2.copy(t).setY(t.y - drop), { physics: ctx.physics, terrain: ctx.terrain });
     this.saber.update(dt, ctx.time);
   }
 
   respawn(pos) {
     this.alive = true;
+    /* Everything die() took over comes back here, and it has to be here rather
+     * than on the death card: co-op's revive puts a player back on their feet
+     * without any screen ever closing, and a revived Jedi playing on through a
+     * grey letterboxed frame at a third speed is a worse bug than the one the
+     * effects fix. */
+    if (this.isLocal) {
+      this.camera.endShot();
+      this.world.engine?.setDrain?.(0);
+      this.world.engine?.setBars?.(0);
+      if (this.world._killTime) { this.world._killTime = null; this.world.setTimeScale(1); }
+    }
     this.hp = this.maxHp; this.force = this.maxForce; this.stamina = this.maxStamina;
     this.flow = 0; this.combo = 0;
     this.velocity.set(0, 0, 0);
