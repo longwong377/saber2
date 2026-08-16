@@ -763,7 +763,20 @@ export async function run({ check, assert }) {
       mouse: { dx: 0, dy: 0, wheel: 0, left: false, right: false },
       delta: { x: 0, y: 0 }, accel: { x: 0, y: 0 }, end() {} };
 
-    const N = 16, RADIUS = 26, SECONDS = 40;
+    /**
+     * TEN BEARINGS AND NOT SIXTEEN, because the level list doubled.
+     *
+     * This ran 16 bearings on four levels — 56 placeable bodies for 40 s each.
+     * Those four levels were `temple`, `warship`, `intake` and `cut`, ALL OF
+     * WHICH WERE DELETED, so it was really walking four copies of the Ember
+     * Shelf and calling the result four interiors (see the note in the spawns
+     * check). Pointed at the real roster it covers eight genuinely different
+     * grounds instead, and 10 × 8 keeps the sample within a body or two of what
+     * it was while doubling the number of layouts it is drawn from. A wider
+     * sample over more places beats a deeper one over the same place four times,
+     * and the total simulated time is what it always was.
+     */
+    const N = 10, RADIUS = 26, SECONDS = 40;
     const walk = async (level) => {
       enemyRng.seed(4711);
       duelRng.seed(8123);
