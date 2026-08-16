@@ -775,21 +775,29 @@ export async function run({ check, assert }) {
      * it was while doubling the number of layouts it is drawn from. A wider
      * sample over more places beats a deeper one over the same place four times.
      *
-     * SIX, MEASURED, AND THIS IS THE LONG POLE OF THE WHOLE SUITE. Cost here is
-     * bodies × SECONDS × 60 of full `world.update` with real physics and real
-     * enemies, and it always was: the original 4 × 16 × 40 s is 153,600 frames.
-     * Nine of this file's twelve checks finish inside 45 s together; this one
-     * alone runs for minutes, and on a loaded machine for tens of them. That is
-     * worth writing down because it looks exactly like the §2.7 hang and is not
-     * one — measured at N = 10 it simply had not finished, and the thing that
-     * WAS a hang (nine dead level names booting nine extra Worlds) is fixed
-     * above.
+     * SIX, AND THIS IS THE LONG POLE OF THE WHOLE SUITE — measured, because it
+     * looks exactly like the §2.7 hang and is not one.
+     *
+     * Cost here is bodies × SECONDS × 60 of full `world.update` with real
+     * physics and real enemies. Traced check by check on a ten-level roster:
+     * ELEVEN of this file's twelve finish together in 72 s, and this one alone
+     * was still running at 840 s. It is not stalled and it is not new — the
+     * original 4 levels × 16 bearings × 40 s is 134,400 frames and the present
+     * 10 × 6 × 40 is 144,000, so it has always been most of this suite's
+     * wall-clock. What WAS a hang — nine dead level names booting nine extra
+     * Worlds — is the fix above, and it is the reason eleven checks now finish
+     * in the time twelve used to fail to.
      *
      * SECONDS stays at 40 because the 92% bar was calibrated at 40 and a shorter
      * walk would move it. The BEARINGS are what may safely move: the bar is a
-     * ratio, so 6 × 8 = 48 bodies is the same measurement as 56 with a slightly
-     * wider error bar, over twice as many real layouts, for 40% of the frames
-     * N = 10 cost.
+     * RATIO, so fewer bearings is the same measurement with a slightly wider
+     * error bar. Six is chosen so that a roster which has grown from four
+     * levels to ten costs what it did when it was measuring four copies of one —
+     * a wider sample over ten real layouts for the frames that bought four fake
+     * ones.
+     *
+     * IF THIS EVER HAS TO GET CHEAPER, take it off the bearings and never off
+     * SECONDS, and re-run the two-sided table above rather than moving the bar.
      */
     const N = 6, RADIUS = 26, SECONDS = 40;
     const walk = async (level) => {
