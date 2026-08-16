@@ -2091,8 +2091,30 @@ export class CommandDirector extends WaveDirector {
   readout() {
     const F = FORMATIONS[this.formation] || FORMATIONS[DEFAULT_FORMATION];
     return {
+      /**
+       * THE ROLL FIRST, AND THE MODE'S OWN FIELDS OVER THE TOP OF IT.
+       *
+       * It used to be the other way round, and `roster.summary()` carries an
+       * `army` of its own — so `army: this.army.name` was written and then
+       * silently overwritten by `this.army.id`. The object promised
+       * "The Republic" beside a `foe` of "The Confederacy" and delivered
+       * "republic" beside "The Confederacy", which is the kind of defect that
+       * survives review because both halves look right on their own line. The
+       * Command HUD hit it and worked around it by looking the id back up in
+       * `ARMIES`; that workaround should not have had to exist.
+       *
+       * `roster.summary().army` stays the ID. That is right for what it is —
+       * a record the roster panel keys on, and HUD.js already indexes `ARMIES`
+       * with it — so the two objects say different things on purpose and both
+       * of them now say what their field names claim. `armyId` is here so a
+       * caller that wants the key off THIS object does not have to reach for
+       * the other one.
+       */
+      ...this.roster.summary(),
       army: this.army.name,
+      armyId: this.army.id,
       foe: this.foe.name,
+      foeId: this.foe.id,
       area: this.areaNumber,
       areas: AREAS.length,
       areaName: this.area.name,
@@ -2104,7 +2126,6 @@ export class CommandDirector extends WaveDirector {
       /** The advance is behind you. The HUD's cue that this is a finished run. */
       done: this.done,
       teamDamage: this.teamDamage,
-      ...this.roster.summary(),
     };
   }
 }

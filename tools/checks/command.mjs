@@ -1183,6 +1183,55 @@ export function run({ check, assert }) {
     return 'wrapped on _move; steers home outside the tolerance, silent inside it';
   });
 
+  check('command: the readout says what its field names say, and the wave count is the horde\'s', async () => {
+    /**
+     * TWO FIELDS THE COMMAND HUD HIT WHILE BEING BUILT, and both were the same
+     * mistake in different clothes: a number that describes one thing and is
+     * named after another.
+     *
+     *   `readout().army` — `readout` set `army: this.army.name` and then spread
+     *     `roster.summary()` over the top, which carries an `army` of its own
+     *     and it is the ID. So the object promised "The Republic" beside a `foe`
+     *     of "The Confederacy" and delivered "republic". The HUD worked around
+     *     it by looking the id back up in `ARMIES`.
+     *
+     *   `director.remaining` — the number the HUD prints as "N remaining" and
+     *     the number `Net.js` relays to co-op clients. It counted every live
+     *     body in `world.enemies`, and Command puts YOUR OWN ARMY in that array,
+     *     so a wave of six droids read as sixteen and could not reach zero while
+     *     a single trooper of yours was alive. A joining player saw the false
+     *     count too.
+     *
+     * Driven, because `remaining` is only wrong once there is an army standing
+     * in the array, which is a fact about a deployed world and not about a
+     * getter.
+     */
+    const { world, d, input } = await commandWorld({ trim: 2 });
+    drive(world, 3, input);
+    const r = d.readout();
+    assert(r.army === d.army.name,
+      `readout().army is "${r.army}" where the army is called "${d.army.name}" — it is the id, `
+      + 'overwritten by the roster summary spread over the top of it');
+    assert(r.foe === d.foe.name, `readout().foe is "${r.foe}"`);
+    assert(Cmd.ARMIES[r.armyId] === d.army, 'readout() carries no usable army key');
+    assert(Cmd.ARMIES[r.foeId] === d.foe, 'readout() carries no usable foe key');
+    /* …and the ROSTER summary keeps the id, because the HUD's roster panel
+     * indexes ARMIES with it. The two objects differ on purpose. */
+    assert(d.roster.summary().army === d.army.id,
+      'CommandRoster.summary().army stopped being the id, which the roster panel indexes ARMIES with');
+
+    const mine = world.enemies.filter((e) => e.trooper && !e.dead).length;
+    const horde = world.enemies.filter((e) => !e.trooper && !e.dead).length;
+    assert(mine >= 8, `only ${mine} troopers on the field, so this cannot see the defect`);
+    assert(d.remaining === d.spawnQueue.length + d.arrivals.pending + horde,
+      `the readout says ${d.remaining} remaining with ${horde} of the horde alive, `
+      + `${d.spawnQueue.length} queued, ${d.arrivals.pending} inbound and ${mine} troopers of YOURS `
+      + 'standing — it is counting your own army as something left to kill');
+    world.unload();
+    return `army "${r.army}" (${r.armyId}) vs "${r.foe}" (${r.foeId}); `
+      + `${d.remaining} remaining against ${horde} hostiles and ${mine} of your own`;
+  });
+
   /* ══════════════════════════════════════════════════════════════════ */
   /*  Note #29 — allies are as real as enemies                          */
   /* ══════════════════════════════════════════════════════════════════ */
