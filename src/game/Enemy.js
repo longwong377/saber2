@@ -11,7 +11,7 @@ import * as THREE from 'three';
 import { Actor } from './Ragdoll.js';
 import { Rig, BipedAnimator, aimY } from './Rig.js';
 import { buildB1, buildB2, buildTrooper, buildAcolyte, buildDroideka, buildWalker, buildBeast, buildBlaster, plateGeo,
-  buildJedi, SPECIES, HAIR_STYLES, BEARD_STYLES, ROBE_COLORS } from './Bodies.js';
+  buildJedi, bodyOptsFor, SPECIES, HAIR_STYLES, BEARD_STYLES, ROBE_COLORS } from './Bodies.js';
 import { Saber } from './Saber.js';
 import { dropSaber } from './Dropped.js';
 import { DuelBrain, Telegraph, FORMS, FORM_KEYS, TIER, ATTACKS, ATTACK_KEYS,
@@ -1582,7 +1582,16 @@ export class Enemy {
 
   _build() {
     const A = this.A;
-    const opts = { scale: A.scale };
+    /* THE ARCHETYPE'S OWN IDENTITY REACHES THE BUILDER. Without the spread this
+     * was `{ scale: A.scale }` and a one-line special case for the marksman's
+     * paint, so every kit table in Bodies.js — the trooper hardware, the Jedi
+     * ranks, the B1 and acolyte and bodyguard rungs — was reachable, measured,
+     * and worn by nothing that ever spawned. `BODY_KITS` is the authority and
+     * `bodyOptsFor` is its only reader; see the long note over it. Measured in
+     * the shipped roster: trooper/sniper and acolyte/sparring sat at 1.000
+     * flank IoU — identical silhouettes at 30 m — and the roster's worst pair
+     * drops to 0.895 with this line in. */
+    const opts = { scale: A.scale, ...(bodyOptsFor(this.type) || {}) };
     if (this.type === 'sniper') { opts.color = A.trooperColor; opts.accent = A.accent; }
     const built = A.build(opts);
     this.built = built;
