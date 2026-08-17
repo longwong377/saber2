@@ -571,6 +571,10 @@ corrected *me* more often than they corrected the finders.
 
 ## 5. What the LAST session changed
 
+*(The session after that one changed no source at all — it was a read-only
+comparison against a genre wishlist, and its output is `ROADMAP.md`. So the gate
+figure in §1 is this session's and is not stale.)*
+
 Two hostile audit rounds, five read-only lanes each, then ten fix lanes. The
 audits were briefed to assume the game was a shallow demo wearing a long coat of
 comments and to produce numbers rather than opinions. Everything below was
@@ -1155,6 +1159,20 @@ defect); and `hilts`, by deriving the grip per weapon.
 ---
 
 ## 6.5 If you pick this up cold, do these in this order
+
+**`ROADMAP.md` at the repo root is the other half of this section.** It holds
+nine gaps found by comparing the game against a genre wishlist, each with
+`file:line`, and a design for procedural levels the player progresses through.
+Four of the nine are defects — a thrown BODY does no damage to what it hits
+while a thrown crate does; releasing a gripped enemy leaves it permanently
+ragdolled and walking; `Destruction.explosion()` has no caller though a comment
+says it is wired; and contact dispatch was lost in the Rapier migration, which
+is why only the player's throws damage anything.
+
+Read its procedural-levels half before designing anything there. It records that
+this project has killed progression-through-levels **twice** — the Spire and the
+Descent — and that neither death was a code failure. That warning is worth more
+than its implementation notes.
 
 1. **Get it in front of the player, then read §7.** `node tools/pack.mjs
    /tmp/borz.html` and send them the file. Nothing in §6.4 is worth more than
