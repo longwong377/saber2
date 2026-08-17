@@ -1200,6 +1200,54 @@ second found real things, and a third would be measuring a game nobody has
 played since the first. §7 is not a platitude here — it is the specific reason
 this list is short.
 
+## 6.6 If you are handed a long list, ORDER IT FIRST — and show the order
+
+A long list arrives in the order it was thought of, which is never the order it
+should be done in. **Do not start at the top.** Rank it, say the ranking out
+loud before you begin, and say what you are doing last and why. The player can
+correct an ordering in one sentence; they cannot correct four hours of work.
+
+Rank on evidence from this repo, not on taste:
+
+**1. Three buckets, in this order.** A thing that EXISTS AND IS BROKEN beats a
+thing that exists and cannot be reached, which beats a thing that does not exist.
+The player already believes the first two work, so those are the ones costing
+them something today. Measured this session: of nine gaps found against a genre
+wishlist, four were defects and three were features with no way in — only two
+were genuinely missing. `ROADMAP.md` is sorted this way.
+
+**2. Then by player-visible value ÷ cost, and the ratio is often absurd.** The
+worst thing in the game — a creature whose opening attack could not be dodged at
+any speed, 18.73 hp/s against standing, retreating, strafing *and* dashing — was
+**three numbers**. The spark freeze that stopped the game for 71 to 134 seconds
+was **one argument in the wrong slot**. Look for those before anything expensive.
+
+**3. Find the item that kills other items.** Contact dispatch, lost in the Rapier
+migration, is the root cause of three separate entries on `ROADMAP.md`'s own
+list. An item that closes three is worth more than its rank. Ask of every
+expensive thing: what else does this unblock?
+
+**4. If you run lanes in parallel, batch by FILE, not by theme.** Ownership must
+be disjoint and stated per lane, because the tree is shared. §2.2b has the two
+occasions that rule was broken and what it cost. If a run cannot tolerate it,
+give each lane its own worktree.
+
+**5. Expect your own brief to be wrong, and let the measurement win.** Briefs
+written from this document were corrected by the lanes executing them more than
+once — an escalation brief blamed the wrong cause entirely, and the lane's own
+measurement found the real one was the denominator, with one level's bound
+arithmetically unsatisfiable. That is the system working. Write briefs with the
+numbers you have and an instruction to re-measure, not with conclusions.
+
+**6. Re-order after every batch.** A landed fix changes what is cheap. The list
+you ranked at the start is stale by the third item.
+
+**7. Put a build in front of the player before the list is finished, not after.**
+`node tools/pack.mjs /tmp/borz.html`. See §7 — it is not a platitude, it is the
+source of every note that has ever mattered here.
+
+---
+
 ---
 
 ## 7. The one thing worth more than any of this
