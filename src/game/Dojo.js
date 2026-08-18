@@ -24,6 +24,14 @@ import { audio } from '../engine/Audio.js';
 const _v1 = new THREE.Vector3();
 
 /**
+ * The walking pace an inert body is lent so it can cross to its post. `dummy`
+ * is authored `speed: 0` and that is a statement about a target standing still,
+ * not about a droid that cannot walk; `_post` hands it this for the crossing
+ * and takes it back on arrival. Named because `APPROACH` is measured in it.
+ */
+const CROSS_PACE = 3.2;
+
+/**
  * HOW FAR OUTSIDE ITS OWN POST A LESSON BODY ENTERS THE ROOM.
  *
  * This was a flat 34 m measured from the PLAYER, under a note claiming that was
@@ -49,15 +57,16 @@ const _v1 = new THREE.Vector3();
  *     longer reach, so the lesson cannot be completed and cannot be restarted
  *     except by leaving it.
  *
- * So the approach is measured off the POST rather than off the player, and it
- * is room-sized: every body walks the same 6 m in, whatever ring it is joining.
- * Measured against each archetype's own pace — remote 2.6 m/s × 1.35, dummy 0
- * m/s given the walking 3.2, partner 3.4 × 1.35 — that is 1.7 s, 1.9 s and
- * 1.3 s. Long enough to watch a body walk in, which is all player note #17 ever
- * asked for, and short enough that the room is standing before you have taken
- * four paces. `_steerRoom` covers the paces you do take.
+ * So the approach is measured off the POST rather than off the player, it is
+ * the same for every ring, and it is a DURATION rather than a taste: a second
+ * and a half at `CROSS_PACE`, the slowest thing that ever makes the trip. That
+ * is 4.8 m, which each body then covers at its own speed — 1.37 s for a remote
+ * (2.6 m/s × 1.35), 1.50 s for a dummy, 1.05 s for the partner (3.4 × 1.35).
+ * Long enough to watch a body walk in, which is all player note #17 ever asked
+ * for, and short enough that the room is standing before you have taken three
+ * paces. `_steerRoom` covers the paces you do take.
  */
-const APPROACH = 6.0;
+const APPROACH = CROSS_PACE * 1.5;
 
 /* ── the training remote ─────────────────────────────────────────────── */
 
@@ -410,7 +419,7 @@ export class DojoDirector {
      * the archetype means by `speed: 0`: a target that does not move once it is
      * standing where it was put. */
     const rest = e.speed;
-    if (!(e.speed > 0)) e.speed = 3.2;
+    if (!(e.speed > 0)) e.speed = CROSS_PACE;
     if (entry) {
       walkIn(e, post, { speed: rest > 0 ? 1.35 : 1.0, tolerance: 1.1, rest });
       this._crossing.push(e);

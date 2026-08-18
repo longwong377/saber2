@@ -280,6 +280,58 @@ export const TOUGHNESS = {
 };
 
 /**
+ * ══ WHAT A WEAK POINT IS MADE OF, AND WHY IT IS NOT A MULTIPLIER ══════════
+ *
+ * A big body's weak point — the bare hinge where a leg plate stops, the soft
+ * underside of an animal, the intake in the back of a hull — is a place where
+ * there is LESS MATERIAL BETWEEN THE EDGE AND THE INSIDE. That is a statement
+ * about the substance at that spot and nothing else, so the only honest thing
+ * for it to change is the substance: the capsule there is charged the NEXT
+ * MATERIAL DOWN this table, and every other term in the model is untouched.
+ *
+ * The alternative — a `weakMultiplier` on damage — was rejected, and it is
+ * worth saying why in the file that owns the cut model rather than in a commit
+ * message. `cutNeed` is a budget of work; `dWork` is work done. A multiplier on
+ * the OUTPUT would make the same hide part at the same rate and simply pay more
+ * for it, which is not what a thin place is; a body would take the same number
+ * of seconds to come apart and just die sooner, and the blade would feel
+ * identical in the hand at the spot and away from it. Charging the material
+ * instead means the blade goes THROUGH faster, which is the thing a player can
+ * feel without being told, and it composes with everything else for free —
+ * `rush`, `coverage`, `openness` and the grind's own `dWork / need` share all
+ * keep their meaning, and `Destruction` (which grades its kerf off `cutNeed`)
+ * never sees a term it does not know about.
+ *
+ * ── ONE RUNG, AND THE RUNG IS THE TABLE'S OWN ─────────────────────────────
+ *
+ * `thinner` takes the next value DOWN the sorted table rather than a fraction,
+ * so there is no new number anywhere in this feature: the spacing of the ladder
+ * above IS the game's existing statement about how far apart two materials are.
+ * Measured on the shipped table, one rung buys
+ *
+ *     durasteel → heavy    42 → 14     3.00×
+ *     heavy     → armour   14 → 4.5    3.11×
+ *     armour    → droid    4.5 → 2.0   2.25×
+ *     droid     → plastoid 2.0 → 1.5   1.33×
+ *     plastoid  → flesh    1.5 → 0.9   1.67×
+ *     flesh     → cloth    0.9 → 0.5   1.80×
+ *
+ * — a consistent 1.3–3.1×, which is the reward for aiming, and it is largest
+ * exactly where the body is most armoured. `cloth` is the bottom of the ladder
+ * and returns itself: there is nothing thinner than the thinnest thing.
+ *
+ * `Infinity` is filtered out for the obvious reason and one less obvious one: a
+ * gap in something UNBREAKABLE would be the only place in the game a blade
+ * could get through a wall, and `unbreakable` exists precisely to be the
+ * material that has no such place.
+ */
+const LADDER = [...new Set(Object.values(TOUGHNESS))].filter(Number.isFinite).sort((a, b) => a - b);
+export function thinner(tough) {
+  for (let i = LADDER.length - 1; i > 0; i--) if (LADDER[i] <= tough) return LADDER[i - 1];
+  return LADDER[0];
+}
+
+/**
  * A slash and a press are not the same act, and the old model could not tell
  * them apart.
  *
@@ -923,12 +975,37 @@ export class BladeContactSolver {
     if (saber.ignition < 0.7) return events;
 
     const SLICES = 4;
+    /**
+     * A GAP AND THE PLATE AROUND IT ARE ONE PIECE OF BODY, AND MUST BE BILLED
+     * ONCE.
+     *
+     * `Enemy.capsules()` publishes a weak point as its own capsule — its own
+     * progress budget, its own thinner material — sitting INSIDE the capsule of
+     * the bone it is a gap in. That is the only way it can have its own `need`
+     * (a moving goalpost inside one budget is not a budget), and it means a
+     * blade in the gap is geometrically inside both. Without this, one pass
+     * through an acklay's stifle would raise a grind event for the joint AND a
+     * grind event for the femur on the same frame and bill the same flesh
+     * twice — and, once both budgets filled, sever the same bone twice.
+     *
+     * So a weak point that is HIT claims the bone it covers for the rest of
+     * this target's loop. `capsules()` pushes the gaps ahead of the bones for
+     * exactly this reason, and `tools/checks/severance.mjs` asserts that order
+     * rather than trusting it.
+     *
+     * Reused across frames and cleared per target: allocation-free, and the
+     * list is at most a handful of names on the biggest body in the game, so
+     * `includes` beats a Set that has to be built to be asked once.
+     */
+    const taken = this._taken || (this._taken = []);
     for (const target of targets) {
       if (!target || target.dead) continue;
       const caps = target.capsules;
       if (!caps || !caps.length) continue;
+      taken.length = 0;
 
       for (const cap of caps) {
+        if (taken.length && taken.includes(cap.name)) continue;
         const key = target.id + ':' + cap.name;
         const cd = this.cooldown.get(key) || 0;
         if (cd > this.time) continue;
@@ -950,6 +1027,11 @@ export class BladeContactSolver {
           if (h) { touching++; if (!hit) hit = h; }
         }
         if (!hit) continue;
+        // The gap has the bone now — see `taken` above. Recorded on contact and
+        // not on a completed cut, because the double-bill this prevents is the
+        // GRIND's, which happens on every frame of contact and long before
+        // anything is severed.
+        if (cap.covers) taken.push(cap.covers);
         const coverage = touching / (SLICES + 1);
 
         const bladeT = clamp(hit.s, 0, 1);
@@ -1023,14 +1105,33 @@ export class BladeContactSolver {
         this.touched.delete(key);
 
         // where along the limb did the blade cross?
-        const cutT = clamp(hit.t, 0.06, 0.94);
+        //
+        // Two different questions once a capsule can be a GAP rather than a
+        // bone. `capT` is where along this capsule the blade crossed, which is
+        // where the flare and the molten cap go; `cutT` is where along the BONE
+        // that is, which is what `Actor.cut` splits at. For a bone capsule they
+        // are the same number and this costs nothing. For a gap they are not:
+        // an acklay's stifle occupies the top third of its femur, so a cut in
+        // the middle of the gap is a cut at 0.83 of the bone, and passing the
+        // gap's own 0.5 would take the leg off at the thigh.
+        const capT = clamp(hit.t, 0.06, 0.94);
         _v3.subVectors(cap.p1, cap.p0);
-        const cutPoint = _v4.copy(cap.p0).addScaledVector(_v3, cutT);
+        const cutPoint = _v4.copy(cap.p0).addScaledVector(_v3, capT);
+        const cutT = cap.covers && cap.at0 != null
+          ? clamp(lerp(cap.at0, cap.at1, capT), 0.06, 0.94) : capT;
 
         // the cut plane is the plane the blade swept
         const dirImpulse = _v5.lerpVectors(saber.baseVelocity, saber.tipVelocity, bladeT).clone();
+        /* `cap.covers` AND NOT `cap.name`, because a weak point is not a bone.
+         * A gap capsule is its own progress budget under its own name, and the
+         * thing that comes off when that budget fills is the BONE the gap is
+         * in. Everything downstream of this event — `Actor.cut`, the ragdoll
+         * joint, `_loseLimbBehaviour`, the topple count, `World.applyClaim`'s
+         * re-run on the host — is keyed on a bone the rig actually has, and
+         * handing any of them 'femur0.tip' is a silent no-op rather than an
+         * error (`Actor.cut` returns false for a name it cannot find). */
         events.push({
-          type: 'cut', target, cap, bone: cap.name, cutT, bladeT, speed,
+          type: 'cut', target, cap, bone: cap.covers ?? cap.name, cutT, bladeT, speed,
           point: cutPoint.clone(), impulse: dirImpulse, normal: saber.sweepNormal.clone(),
         });
         saber.strain(0.5);

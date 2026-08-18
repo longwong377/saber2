@@ -690,7 +690,128 @@ function limbPlate(bone, y0, y1, arc, opts = {}) {
   const gap = opts.gap ?? 0.004;
   const r0 = onLimb(bone, y0, [1, 0, 0], -gap)[0];
   const r1 = onLimb(bone, y1, [1, 0, 0], -gap)[0];
+  /* WHAT THE PLATE COVERS IS ALSO WHAT IT LEAVES BARE — see `weakSpotsOf`.
+   * Recorded here, at the one function in this file whose job is to put armour
+   * on a limb, so a joint is derived from the plate's own numbers and there is
+   * no second list of "which bones have a gap" to fall out of step with them
+   * (HANDOFF §2.3). A limb may be plated more than once — a trooper's thigh
+   * gets a cuisse and a tasset — so the record is the UNION of the spans. */
+  if (bone && bone.length > 0) {
+    bone.plateFrom = Math.min(bone.plateFrom ?? Infinity, y0);
+    bone.plateTo = Math.max(bone.plateTo ?? 0, y1);
+    bone._weakCache = undefined;
+  }
   return arcGeo(r0, r1, y1 - y0, arc, opts.thick ?? 0.012, opts.seg ?? 8);
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  Weak points — the places the cover does not reach                     */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ══ A BIG BODY HAS PLACES WORTH AIMING AT, AND THE BODY IS WHAT KNOWS THEM ══
+ *
+ * Player note #35: the roster's large targets — the acklay, the reek, the nexu,
+ * the spider walker — are the same act to fight as a B1 with more hit points,
+ * because the blade is uniform over all of them. Measured before any of this
+ * was written (`tools/_weakpoint.mjs`), that is exactly true and it is true in
+ * one number: **every `big` body on the roster carries exactly TWO distinct
+ * toughnesses across all of its bones**, one for the trunk and one for
+ * everything else. An acklay's twenty-five non-trunk bones are all `flesh`; a
+ * spider walker's seventeen are all `heavy`. Nothing distinguishes a bare hinge
+ * from the plate beside it, because nothing ever asked the body.
+ *
+ * ── WHY THE ANSWER LIVES IN THIS FILE ─────────────────────────────────────
+ *
+ * The obvious place to write a weak point down is beside the archetype, as a
+ * per-body list of bone names. That is HANDOFF §2.3's signature defect and this
+ * project has already paid for it twice in this exact area: `VITAL[name] ?? 0.4`
+ * (nineteen humanoid names over a roster of quadrupeds and machines) and
+ * `_boneToughness`'s `/^(chest|spine|hips|neck|head)$/`, which is still there
+ * and still cannot say anything about a body whose bones are called `femur3`.
+ *
+ * The body is what has the weak points. `limbPlate` is handed the exact span
+ * and arc of every plate strapped to a limb, so the span it does NOT cover is a
+ * derived fact, not an opinion — and the two ends it leaves bare are the two
+ * ends a limb has to bend at. The one spot that is not a plate's leftover, an
+ * animal's belly, is declared on the line that builds the belly mesh, out of
+ * the same four numbers that place it, so the capsule and the geometry cannot
+ * drift apart. `tools/checks/severance.mjs` measures that they have not.
+ *
+ * ── WHAT A SPOT IS ────────────────────────────────────────────────────────
+ *
+ * A capsule in the BONE'S OWN LOCAL FRAME, in metres, plus where its two ends
+ * sit along that bone as a fraction:
+ *
+ *   key    'root' | 'tip' | whatever a builder declares. Identity, for the
+ *          progress budget and for the check; not shown to anyone.
+ *   label  what the game says out loud when a pass lands there. It is the other
+ *          half of the sentence `Enemy._turnCut` already shouts when a pass
+ *          lands anywhere else ('HIDE TURNS IT', 'PLATE HOLDS'), which is how a
+ *          player is supposed to learn there is anywhere else at all.
+ *   p0,p1  the capsule's axis, bone-local metres.
+ *   r      its radius, bone-local metres, BEFORE the contact allowance that
+ *          `Enemy.capsules` adds to every capsule it emits.
+ *   at0,at1 where p0 and p1 sit along the bone, 0..1. A joint's are exact; a
+ *          belly's are the projection of its ends onto the bone axis, which is
+ *          all `Actor.cut` needs from a trunk (it decides where a core bone is
+ *          split, and a core sever is lethal wherever it lands).
+ */
+export function weakSpot(bone, spot) {
+  if (!bone) return null;
+  (bone.weak || (bone.weak = [])).push(spot);
+  bone._weakCache = undefined;
+  return spot;
+}
+
+/**
+ * Everything this bone is not covered at — declared and derived, one list.
+ *
+ * A plate leaves TWO gaps and both of them are joints. `limbPlate(femur, L*0.12,
+ * L*0.78, …)` on a spider walker's thigh is a plate that starts above the hip
+ * socket and stops below the knee, and the reason it does both is that a leg
+ * has to swing at both ends. Measured on the shipped builds: the walker's femur
+ * bares 0.18 m at the hip and 0.33 m at the knee, its tibia 0.18 m and 0.50 m,
+ * and a quadruped's femur 0.10 m and 0.34 m of its own length.
+ *
+ * The radius is the LIMB'S OWN TUBE at that height, not the bone's nominal
+ * radius, and that is the whole difficulty of hitting one: the plate stands off
+ * the tube by its gap and its thickness, so where the plate is the target is
+ * fatter than where it is not. `bone.primary.userData.limb` carries the two
+ * radii `limbGeo` was built with — the same record `Actor.cut` rebuilds a stub
+ * from — so the taper is the mesh's and not a guess.
+ *
+ * Cached on the bone. `Enemy.capsules()` calls this once per bone per frame on
+ * every body on the field, and the answer is a property of how the body was
+ * built, which does not change after it is built. `limbPlate` and `weakSpot`
+ * both clear it, so a builder that plates a limb after declaring a spot on it
+ * still gets both.
+ */
+export function weakSpotsOf(bone) {
+  if (!bone) return null;
+  if (bone._weakCache !== undefined) return bone._weakCache;
+  const len = bone.length || 0;
+  const out = bone.weak ? bone.weak.slice() : [];
+  if (len > 0 && bone.plateTo != null) {
+    const lim = bone.primary && bone.primary.userData && bone.primary.userData.limb;
+    const rr0 = lim ? lim.r0 : bone.radius;
+    const rr1 = lim ? lim.r1 : bone.radius * 0.85;
+    const rAt = (y) => rr0 + (rr1 - rr0) * clamp(y / len, 0, 1);
+    // The bare span BELOW the plate, and the bare span ABOVE it. A span shorter
+    // than a twentieth of the bone is the plate's own seating tolerance rather
+    // than a joint, and a capsule that thin is not something anyone can aim at.
+    const MIN = len * 0.05;
+    const from = bone.plateFrom ?? 0;
+    if (from > MIN) {
+      out.push({ key: 'root', label: 'JOINT', p0: [0, 0, 0], p1: [0, from, 0],
+        r: Math.max(rAt(0), rAt(from)), at0: 0, at1: from / len });
+    }
+    if (len - bone.plateTo > MIN) {
+      out.push({ key: 'tip', label: 'JOINT', p0: [0, bone.plateTo, 0], p1: [0, len, 0],
+        r: Math.max(rAt(bone.plateTo), rAt(len)), at0: bone.plateTo / len, at1: 1 });
+    }
+  }
+  return (bone._weakCache = out.length ? out : null);
 }
 
 /** One finger bone: a short tapered tube, optionally domed off at the tip. */
@@ -6171,7 +6292,32 @@ export function buildWalker(opts = {}) {
   kb.add(dark, plateGeo(0.10 * S, 0.10 * S, 1.10 * S, 0.02 * S, 1), [0, 0.36 * S, 0.10 * S]);
   kb.add(mark, plateGeo(0.24 * S, 0.02 * S, 0.30 * S, 0.006 * S, 1), [0, 0.425 * S, 0.30 * S]);
   kb.pair((sx) => kb.add(mark, plateGeo(0.02 * S, 0.18 * S, 0.28 * S, 0.006 * S, 1), [sx * 0.652 * S, 0.10 * S, 0.26 * S]));
+  /**
+   * THE ENGINE DECK'S INTAKE, and it is the one place a blade can be put into a
+   * durasteel hull.
+   *
+   * `_boneToughness` plates this machine's `body` and `hips` to
+   * `TOUGHNESS.durasteel`, which is 42 — three times the `heavy` its own legs
+   * are and the toughest thing on the roster short of a blast door. That is
+   * correct for a hull and it makes the whole front and both flanks a wall, so
+   * a player facing one has nothing to aim at and the fight is its legs or
+   * nothing. There is a louvred hole in the back of it, three quarters of a
+   * metre across, with the exhaust stacks either side; it is on the plate, it
+   * is on the model, and it was as tough as the glacis.
+   *
+   * Declared out of the vent's own numbers — 0.60 S across at 0.34 S up and
+   * 0.50 S back — so the capsule is the hole. One rung down the material ladder
+   * from durasteel is `heavy`, a measured 3.00×, and the spot is behind the
+   * machine: the reward is for getting round it, which is the one thing a
+   * four-legged gun platform with a fixed turret arc is bad at answering.
+   */
   kb.add(dark, ventGeo(0.60 * S, 0.28 * S, 0.06 * S, 5), [0, 0.34 * S, -0.50 * S], [0, Math.PI, 0]);
+  weakSpot(body, {
+    key: 'intake', label: 'INTAKE',
+    p0: [-0.30 * S, 0.34 * S, -0.50 * S], p1: [0.30 * S, 0.34 * S, -0.50 * S],
+    r: 0.16 * S,
+    at0: clamp(0.34 * S / (body.length || 1), 0, 1), at1: clamp(0.34 * S / (body.length || 1), 0, 1),
+  });
   // hull scoring: it has been shot at, and a boss should look like it
   for (let i = 0; i < 6; i++) {
     const sx = rng() < 0.5 ? -1 : 1;
@@ -6778,8 +6924,40 @@ export function buildQuadruped(opts = {}) {
   }));
   {
     const p = fwd(0.44);
-    ks.add(belly, limbGeo(L * 0.70, R * 0.52, R * 0.42, 10, true, { rings: 3, capN: 2 }),
-      [0, p[1] - R * 0.60, p[2] - L * 0.32], trunkRot);
+    const bLen = L * 0.70, bR0 = R * 0.52, bR1 = R * 0.42;
+    const at = [0, p[1] - R * 0.60, p[2] - L * 0.32];
+    ks.add(belly, limbGeo(bLen, bR0, bR1, 10, true, { rings: 3, capN: 2 }), at, trunkRot);
+    /**
+     * …AND THE LINE ABOVE HAS SAID SO SINCE IT WAS WRITTEN: "the one place a
+     * blade meets flesh". It was a colour and nothing else.
+     *
+     * The trunk is the only bone on any of these five animals that is not
+     * `flesh` — `Enemy._boneToughness` gives `body` on a beast `TOUGHNESS.heavy`
+     * — so the back, the flanks and the shoulder hump are the one hard thing on
+     * the creature and the belly hanging under them was charged at exactly the
+     * same rate. This makes the soft underside soft, out of the four numbers on
+     * the line above and nothing else: if the belly moves, its capsule moves
+     * with it, because there is only one copy of where it is.
+     *
+     * `trunkRot` is [π/2 − pitch, 0, 0] and a rotation about X takes +Y to
+     * (0, cos, sin), so the belly's own axis in the bone's frame is
+     * (0, sin(pitch), cos(pitch)) — the animal's spine direction, which is what
+     * the mesh is laid along.
+     *
+     * It is on a CORE bone, deliberately and consequentially: `Enemy.capsules`
+     * lets a weak point through the hide guard only on a LIMB (see the note
+     * there on `AXIAL_ROLES`), so the belly buys speed and not a shortcut to
+     * the kill. Two tonnes of animal is still what the blade has to get
+     * through; there is just less of it in the way at the start.
+     */
+    const ax = [0, Math.sin(P.pitch), Math.cos(P.pitch)];
+    weakSpot(body, {
+      key: 'belly', label: 'BELLY',
+      p0: at, p1: [at[0] + ax[0] * bLen, at[1] + ax[1] * bLen, at[2] + ax[2] * bLen],
+      r: (bR0 + bR1) / 2,
+      at0: clamp(at[1] / (body.length || 1), 0, 1),
+      at1: clamp((at[1] + ax[1] * bLen) / (body.length || 1), 0, 1),
+    });
   }
   markSilhouette(ks.bake(body.obj));
 

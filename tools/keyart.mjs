@@ -9,7 +9,7 @@
  * shipped file is the output of this file, and re-running it rebuilds it.
  *
  *   node tools/keyart.mjs --shot shelf --tag try1            # render + measure
- *   node tools/keyart.mjs --shot shelf --width 2520 --height 1080 --settle 44
+ *   node tools/keyart.mjs --shot shelf --width 2560 --height 1080 --settle 30
  *   node tools/keyart.mjs --pack .shots/keyart/try1.png      # re-encode only
  *
  * WHY THE PLATE IS 21:9 AND NOT 16:9 — this is the whole geometry argument and
@@ -20,15 +20,16 @@
  *
  *              source 16:9              source 21:9
  *   sides      130 screen px            130 screen px
- *   top/bot     26 screen px            155 screen px
+ *   top         20 screen px            155 screen px
+ *   bottom      20 screen px            155 screen px
  *
- * measured at 1920x1080 against viewports from 4:3 to 21:9. The side band is
- * the same either way — it is set by (viewport width − panel width) and the
- * 4:3 crop, neither of which the source can change. The top/bottom band is
- * not: a 21:9 source is never cropped vertically anywhere in that range, so
- * the whole 14.3% above and below the panel is guaranteed instead of 2.4%.
- * Same pixels, six times the usable band. See tools/checks/keyart.mjs, which
- * recomputes all of it from styles.css rather than trusting this paragraph.
+ * measured by tools/_menubands.mjs in Chromium at 1920x1080, over viewports
+ * from 4:3 to 21:9. The side band is the same either way — it is set by
+ * (viewport width − panel width) and the 4:3 crop, and neither of those knows
+ * what the source aspect is. The top and bottom bands are not: a 21:9 source
+ * is never cropped vertically anywhere in that range, so the whole 14.3% above
+ * and below the panel survives instead of 1.8%. Same pixel budget, SEVEN AND A
+ * HALF TIMES the usable band, for one number in the render size.
  *
  * WHY THE CAMERA IS OVERRIDDEN AND NOT DRIVEN. `Engine.render` is wrapped, the
  * same device tools/covershot.mjs uses, because the player camera is a spring
@@ -37,11 +38,14 @@
  * wrapper writes the matrix immediately before the draw, so the pose is exact
  * on the first frame and every frame after it.
  *
- * NB SwiftShader renders this at roughly one frame a second at 1280x720 and
- * about four at 2520x1080, so a final plate is ten minutes. Run it detached.
+ * NB SwiftShader renders this at roughly a frame every two seconds at 710x300
+ * and every twenty at 2560x1080, so a final plate is ten minutes and a scout
+ * sweep is two. Run the big one detached.
  */
 
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { decodePng, region } from './_png.mjs';
+import { bands, wordmarkBand } from './_bands.mjs';
 import { existsSync, statSync } from 'node:fs';
 import { resolve, join, extname, normalize, basename } from 'node:path';
 
@@ -96,6 +100,14 @@ const SHOTS = {
   },
 };
 
+/* `.menu-wrap`, read from styles.css rather than typed, because it is the one
+ * number the whole ring is measured against and it lives there. */
+const CSSTEXT = await readFile(join(ROOT, 'styles.css'), 'utf8');
+const wrapRule = /\.menu-wrap\{([^}]*)\}/.exec(CSSTEXT)?.[1] ?? '';
+const wrapDims = /width:\s*min\((\d+)px[^)]*\);height:\s*min\((\d+)px/.exec(wrapRule);
+if (!wrapDims) throw new Error('cannot read .menu-wrap width/height out of styles.css');
+const PANEL_W = Number(wrapDims[1]), PANEL_H = Number(wrapDims[2]);
+
 const SHOT = flag('shot', 'shelf');
 const spec = SHOTS[SHOT];
 if (!spec) { console.error(`unknown shot "${SHOT}" — have ${Object.keys(SHOTS).join(', ')}`); process.exit(1); }
@@ -117,6 +129,26 @@ const pose = {
 };
 
 const TAG = flag('tag', SHOT);
+
+/* `--yaws 0,60,120` / `--eyes 4,12` / `--fovs 34,46` turn one boot into a
+ * contact sheet. Anything not swept keeps the table's value. */
+const sweep = (n, v) => (flag(n, null) === null ? [v] : flag(n).split(',').map(Number));
+const variants = [];
+for (const yaw of sweep('yaws', pose.yaw)) {
+  for (const eye of sweep('eyes', pose.eye)) {
+    for (const fov of sweep('fovs', pose.fov)) {
+      for (const pitch of sweep('pitches', pose.pitch)) {
+        const parts = [TAG];
+        if (flag('yaws', null) !== null) parts.push('y' + yaw);
+        if (flag('eyes', null) !== null) parts.push('e' + eye);
+        if (flag('fovs', null) !== null) parts.push('f' + fov);
+        if (flag('pitches', null) !== null) parts.push('p' + pitch);
+        variants.push({ ...pose, yaw, eye, fov, pitch, tag: parts.join('-') });
+      }
+    }
+  }
+}
+
 const WIDTH = parseInt(flag('width', '1260'), 10);
 const HEIGHT = parseInt(flag('height', '540'), 10);
 const SETTLE = parseInt(flag('settle', '14'), 10);
@@ -179,10 +211,18 @@ if (!plate) {
   await page.click('#btn-deploy', { timeout: 240000, noWaitAfter: true });
   await page.waitForSelector('#hud:not(.hidden)', { timeout: 240000 });
 
-  const info = await page.evaluate(async ([P, settle]) => {
+  /* ── ONE BOOT, MANY POSES ────────────────────────────────────────────
+   *
+   * Building the world is the expensive half: on this box the Ember Shelf
+   * costs about 40 s to boot and a settled 840x360 frame about 8 s, so a
+   * six-bearing compass shot as six invocations pays the 40 s six times over
+   * for nothing. The render hook reads `window.__P`, so a pose is a write and
+   * a re-settle. Scouting a level went from ~6 min to ~2. */
+  await page.evaluate(async () => {
     const S = window.SABER, w = S.world, e = S.engine;
     const THREE = await import('/vendor/three/three.module.js');
     S.input.locked = true; S.input.enabled = true;
+    window.__THREE = THREE;
 
     /* THE WEATHER IS FROZEN, for tools/covershot.mjs's reason: the arena's
      * calm-air unrest alone moves its fog 36% between runs, so two renders of
@@ -200,78 +240,174 @@ if (!plate) {
      * is the boot screen and every overlay. Enumerating the ones known today is
      * the hand-maintained-list defect (HANDOFF §2.3) — the rule is "the plate
      * is the canvas", so everything that is not the canvas is hidden. */
-    for (const el of document.body.children) {
-      if (el.id !== 'view') el.style.display = 'none';
-    }
+    for (const el of document.body.children) if (el.id !== 'view') el.style.display = 'none';
 
     const rad = (d) => (d * Math.PI) / 180;
-    const ya = rad(P.yaw);
-    const fwd = { x: Math.sin(ya), z: Math.cos(ya) };
-    const rgt = { x: Math.cos(ya), z: -Math.sin(ya) };
-    const gy = w.terrain ? w.terrain.height(P.at[0], P.at[1]) : 0;
-    const place = (f, r) => {
-      const x = P.at[0] + fwd.x * f + rgt.x * r;
-      const z = P.at[1] + fwd.z * f + rgt.z * r;
-      return new THREE.Vector3(x, (w.terrain ? w.terrain.height(x, z) : 0) + 0.1, z);
-    };
-
     const p = w.player;
-    if (P.hero) {
-      const at = place(P.hero[1], P.hero[2]);
-      p.position.copy(at);
-      p.velocity.set(0, 0, 0);
-      p.saber?.ignite?.();
-    } else {
-      /* Out of shot rather than hidden: a hidden player still lights the
-       * ground under itself (the blade is a real point light) and the bright
-       * patch it leaves has no cause in the picture. */
-      p.position.copy(place(-40, 0));
-    }
-    const cast = [];
-    for (const [type, f, r] of (P.cast || [])) {
-      try { cast.push([type, w.spawnEnemy(type, place(f, r)) ? 'ok' : 'nil']); }
-      catch (err) { cast.push([type, String(err)]); }
-    }
 
+    /* ── THE POSE IS RE-ASSERTED EVERY FRAME, and it has to be ────────────
+     *
+     * `Player.facing` eases toward `camera.yaw + PI` at 13 e-folds a second
+     * and `SaberController` eases its guard point toward whatever the locked,
+     * silent input is asking for, which is neutral. Set either one once and
+     * the settle frames quietly undo it: the first attempt produced a Jedi
+     * facing the camera with the blade at rest, which is a photograph of the
+     * idle animation and not a pose. Written here, immediately before the
+     * draw, they are the pose in every frame that is captured. */
     const orig = e.render.bind(e);
     e.render = (dt) => {
-      const c = e.camera;
+      const P = window.__P;
+      if (!P) return orig(dt);
+      const c = e.camera, H = P.hero;
+      if (H) {
+        p.camera.yaw = rad(H.faceYaw);
+        p.facing = rad(H.faceYaw) + Math.PI;
+        if (p.control) { p.control.gx = H.gx; p.control.gy = H.gy; }
+        if (!p.saber?.lit) p.saber?.ignite?.();
+      }
       c.fov = P.fov; c.updateProjectionMatrix();
-      c.position.set(P.at[0], gy + P.eye, P.at[1]);
-      const pr = rad(P.pitch);
-      c.lookAt(P.at[0] + fwd.x * Math.cos(pr) * P.reach,
-        gy + P.eye - Math.sin(pr) * P.reach,
-        P.at[1] + fwd.z * Math.cos(pr) * P.reach);
+      const ya = rad(P.yaw), pr = rad(P.pitch);
+      const fx = Math.sin(ya), fz = Math.cos(ya);
+      const ey = P.groundY + P.eye;
+      c.position.set(P.at[0], ey, P.at[1]);
+      c.lookAt(P.at[0] + fx * Math.cos(pr) * P.reach, ey - Math.sin(pr) * P.reach,
+        P.at[1] + fz * Math.cos(pr) * P.reach);
       c.updateMatrixWorld(true);
       orig(dt);
     };
+  });
 
-    for (let i = 0; i < settle; i++) await new Promise((r) => requestAnimationFrame(r));
-    return {
-      ground: +gy.toFixed(2), cast,
-      calls: e.renderer.info.render.calls, tris: e.renderer.info.render.triangles,
-      sun: e.sun ? [+e.sun.intensity.toFixed(2), '#' + e.sun.color.getHexString()] : null,
-      fog: w.scene.fog ? +(w.scene.fog.density ?? 0).toFixed(5) : null,
-    };
-  }, [pose, SETTLE]);
+  const shots = [];
+  for (const P of variants) {
+    const info = await page.evaluate(async ([P, settle]) => {
+      const S = window.SABER, w = S.world, e = S.engine, p = w.player;
+      const THREE = window.__THREE;
+      const rad = (d) => (d * Math.PI) / 180;
+      const ya = rad(P.yaw);
+      const fwd = { x: Math.sin(ya), z: Math.cos(ya) };
+      const rgt = { x: Math.cos(ya), z: -Math.sin(ya) };
+      P.groundY = w.terrain ? w.terrain.height(P.at[0], P.at[1]) : 0;
+      const place = (f, r) => {
+        const x = P.at[0] + fwd.x * f + rgt.x * r;
+        const z = P.at[1] + fwd.z * f + rgt.z * r;
+        return new THREE.Vector3(x, (w.terrain ? w.terrain.height(x, z) : 0) + 0.05, z);
+      };
 
-  plate = join(OUT, `${TAG}.png`);
-  await page.screenshot({ path: plate, timeout: 600000 });
-  console.log(JSON.stringify({ plate, shot: SHOT, pose, ...info, errors: errors.slice(0, 4) }, null, 2));
+      /* Every body from the previous pose goes first. A sweep that kept them
+       * would be measuring an accumulating crowd, not a pose. */
+      for (const b of [...w.enemies]) b.remove?.() ?? b.dispose?.();
+      if (w.enemies.length) w.enemies.length = 0;
+
+      const H = P.hero;
+      if (H) { p.position.copy(place(H.fwd, H.right)); p.velocity.set(0, 0, 0); p.saber?.ignite?.(); }
+      else {
+        /* Out of shot rather than hidden: a hidden player still lights the
+         * ground under itself (the blade is a real point light) and the bright
+         * patch it leaves has no cause in the picture. */
+        p.position.copy(place(-60, 0));
+      }
+      const cast = [];
+      for (const c of (P.cast || [])) {
+        try {
+          const b = w.spawnEnemy(c.type, place(c.fwd, c.right));
+          if (b && c.face !== undefined) b.facing = rad(c.face);
+          cast.push([c.type, b ? 'ok' : 'nil']);
+        } catch (err) { cast.push([c.type, String(err)]); }
+      }
+
+      window.__P = P;
+      for (let i = 0; i < settle; i++) await new Promise((r) => requestAnimationFrame(r));
+
+      /* WHERE EVERYTHING LANDED, IN THE FRAME. Composing a ring by eye against
+       * a slow render is how a day goes; these are the numbers the ring is
+       * specified in, so a pose can be corrected arithmetically instead. `u` is
+       * the fraction across the plate, `v` the fraction down it. */
+      const uv = (v3) => {
+        const q = v3.clone().project(e.camera);
+        return [+(q.x * 0.5 + 0.5).toFixed(4), +(-q.y * 0.5 + 0.5).toFixed(4)];
+      };
+      const marks = {};
+      if (H) {
+        marks.feet = uv(p.position.clone());
+        marks.head = uv(p.position.clone().setY(p.position.y + (p.height || 1.8)));
+        if (p.saber?.tip) marks.tip = uv(p.saber.tip.clone());
+        if (p.saber?.base) marks.hilt = uv(p.saber.base.clone());
+      }
+      w.enemies.forEach((b, i) => { marks['cast' + i] = uv(b.position.clone()); });
+      return {
+        ground: +P.groundY.toFixed(2), cast, marks,
+        calls: e.renderer.info.render.calls, tris: e.renderer.info.render.triangles,
+        sun: e.sun ? [+e.sun.intensity.toFixed(2), '#' + e.sun.color.getHexString()] : null,
+      };
+    }, [P, SETTLE]);
+    const f = join(OUT, `${P.tag}.png`);
+    await page.screenshot({ path: f, timeout: 900000 });
+    shots.push(f);
+    console.log(JSON.stringify({ plate: f, yaw: P.yaw, at: P.at, eye: P.eye, pitch: P.pitch,
+      fov: P.fov, ...info, errors: errors.slice(0, 4) }));
+    console.log(measure(await readFile(f)));
+  }
+  plate = shots[shots.length - 1];
   await page.close();
 }
 
-/* ── ENCODE AND MEASURE ───────────────────────────────────────────────────
+/**
+ * THE RING, MEASURED OFF THE PLATE — printed after every shot in a sweep, so a
+ * pose is chosen by reading a table rather than by squinting at six pictures.
  *
- * Both happen in the browser's own codecs, for tools/pixels.mjs's reason: the
- * decoder that matters is the one the player's browser will use, and a second
- * implementation of it in Node is a second thing to be wrong.
+ * `lum` is what the band is worth to a wordmark sitting on it and `edge` is
+ * what it is worth to look at; the whole composition problem is that the ring
+ * wants `edge` high and the wordmark band wants both low. `panel` is the part
+ * the interface hides at 1920x1080 — a composition that scores highest there
+ * has put its picture behind a wall.
  */
-if (has('pack') || !has('no-pack')) {
-  const qs = (flag('q', '0.62,0.70,0.78,0.86')).split(',').map(Number);
+function measure(buf) {
+  const img = decodePng(buf);
+  const B = bands({ plateW: img.width, plateH: img.height, panelW: PANEL_W, panelH: PANEL_H });
+  const wm = wordmarkBand({ plateW: img.width, plateH: img.height, panelH: PANEL_H });
+  const step = Math.max(1, Math.round(img.width / 900));
+  const one = (n, r) => {
+    const s = region(img, r[0], r[1], r[2], r[3], step);
+    return `  ${n.padEnd(9)} lum ${s.lum.toFixed(3)}  sd ${s.sd.toFixed(3)}  edge ${s.edge.toFixed(4)}`
+      + `  max ${s.lmax.toFixed(2)}  rgb ${s.rgb.join('/')}`;
+  };
+  return [`  ${img.width}x${img.height}  ${(img.width / img.height).toFixed(3)}:1`,
+    one('left', B.ring.left), one('right', B.ring.right), one('top', B.ring.top),
+    one('bottom', B.ring.bottom), one('panel', B.covered), one('WORDMARK', wm)].join('\\n');
+}
+
+/* ── ENCODE, AND THE FORMAT ARGUMENT ──────────────────────────────────────
+ *
+ * The shipped plate is a POSTERISED PNG, and both halves of that were measured
+ * rather than assumed.
+ *
+ * PNG rather than WebP costs bytes and buys a check. tools/verify.mjs runs
+ * eighty suites in workers on four cores; launching Chromium inside the gate to
+ * decode one image is the shape HANDOFF §2.6 spends a page on. A WebP can only
+ * be measured by a browser, so a WebP plate would have to be asserted against a
+ * committed table of statistics somebody promised were true of it — §2.3's
+ * signature defect with a picture in it. tools/_png.mjs is ninety lines of
+ * zlib and unfiltering, and with it tools/checks/keyart.mjs measures the actual
+ * bytes the browser will load.
+ *
+ * POSTERISED because this renderer is cel-shaded and a PNG of a cel frame is
+ * mostly paying for the three things that are NOT flat: the sky's gradient, the
+ * bloom halo and the fog ramp. Rounding every channel to N levels turns those
+ * into bands — which is the house look, not a compromise: `styles.css`'s own
+ * header says fills are solid and a gradient is allowed only where it is
+ * depicting light. It is applied in linear-ish display space with no dither on
+ * purpose; dithering is per-pixel noise, and per-pixel noise is exactly what
+ * PNG cannot compress. The grain a cel frame wants is put back live by
+ * `.screen::after`, which is an SVG turbulence and costs nothing.
+ *
+ * `--levels 0` prints the whole size table instead of writing anything.
+ */
+const LEVELS = parseInt(flag('levels', '0'), 10);
+const SHIP = flag('ship', null);
+if (LEVELS || SHIP || has('pack')) {
   const b64 = (await readFile(plate)).toString('base64');
   const page = await browser.newPage({ viewport: { width: 64, height: 64 } });
-  const res = await page.evaluate(async ({ b64, qs }) => {
+  const res = await page.evaluate(async ({ b64, levels, want }) => {
     const img = new Image();
     img.src = 'data:image/png;base64,' + b64;
     await img.decode();
@@ -279,13 +415,46 @@ if (has('pack') || !has('no-pack')) {
     c.width = img.width; c.height = img.height;
     const ctx = c.getContext('2d', { willReadFrequently: true });
     ctx.drawImage(img, 0, 0);
+    const base = ctx.getImageData(0, 0, img.width, img.height);
     const bytes = (url) => Math.round((url.length - url.indexOf(',') - 1) * 3 / 4);
-    const out = { size: [img.width, img.height], png: bytes(c.toDataURL('image/png')), webp: {} };
-    for (const q of qs) out.webp[q] = bytes(c.toDataURL('image/webp', q));
-    if (window.__want) out.data = c.toDataURL('image/webp', window.__want).split(',')[1];
-    return out;
-  }, { b64, qs });
-  console.log(JSON.stringify({ plate, ...res }, null, 2));
+    const post = (n) => {
+      const d = new ImageData(new Uint8ClampedArray(base.data), img.width, img.height);
+      if (n) {
+        const q = 255 / (n - 1);
+        for (let i = 0; i < d.data.length; i += 4) {
+          d.data[i] = Math.round(Math.round(d.data[i] / q) * q);
+          d.data[i + 1] = Math.round(Math.round(d.data[i + 1] / q) * q);
+          d.data[i + 2] = Math.round(Math.round(d.data[i + 2] / q) * q);
+        }
+      }
+      ctx.putImageData(d, 0, 0);
+    };
+    const table = [];
+    for (const n of (levels ? [levels] : [0, 64, 48, 32, 24, 20, 16, 12])) {
+      post(n);
+      const row = { levels: n || 256, png: bytes(c.toDataURL('image/png')) };
+      if (!levels) row.webp70 = bytes(c.toDataURL('image/webp', 0.7));
+      table.push(row);
+    }
+    let data = null;
+    if (want) { post(levels); data = c.toDataURL('image/png').split(',')[1]; }
+    return { size: [img.width, img.height], table, data };
+  }, { b64, levels: LEVELS, want: !!SHIP });
+  const kb = (n) => (n / 1024).toFixed(0) + ' KB';
+  console.log(`  ${res.size[0]}x${res.size[1]}`);
+  for (const r of res.table) {
+    console.log(`  levels ${String(r.levels).padStart(3)}   png ${kb(r.png).padStart(8)}`
+      + (r.webp70 === undefined ? '' : `   webp q70 ${kb(r.webp70).padStart(8)}`));
+  }
+  if (SHIP) {
+    const out = resolve(ROOT, SHIP);
+    await mkdir(resolve(out, '..'), { recursive: true });
+    await writeFile(out, Buffer.from(res.data, 'base64'));
+    const n = (await readFile(out)).length;
+    console.log(`  wrote ${SHIP} — ${kb(n)} (${n} bytes) at ${LEVELS} levels`);
+    console.log(measure(await readFile(out)));
+  }
+  await page.close();
 }
 
 await browser.close();

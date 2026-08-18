@@ -412,7 +412,41 @@ export class Rig {
     const lower = this.bones.get(lowerName);
     if (!upper || !lower || !upper.obj.parent) return;
 
-    upper.obj.parent.updateMatrixWorld(true);
+    /**
+     * ANCESTORS, NOT DESCENDANTS — and the difference was most of the frame's
+     * matrix work.
+     *
+     * All three of these used to be `updateMatrixWorld(true)`, which walks
+     * DOWN: forced, it re-multiplies the world matrix of every object below
+     * the one it is called on. `upper.obj.parent` for a thigh is the hips,
+     * and the hips carry the entire skeleton — so solving ONE leg refreshed
+     * both arms, the head, the other leg and everything each of them wears,
+     * and then the second leg's solve did it again, and then the gait's
+     * closing `updateMatrices()` did it a third time.
+     *
+     * Nothing between here and the end of this method reads a descendant.
+     * What the three sites actually need is that THIS bone's own world matrix
+     * is current, which is what `updateWorldMatrix(true, false)` means: walk
+     * up to the root, then recompose this one node. Every caller that reads a
+     * bone further down the chain afterwards already goes through
+     * `getWorldQuaternion` or `updateMatrixWorld`, both of which pull their
+     * own ancestry, and the gait and both pose paths close with
+     * `rig.updateMatrices()` in any case.
+     *
+     * MEASURED, one traced frame of a Command battle with 16 bodies standing,
+     * counting node VISITS inside updateMatrixWorld rather than calls —
+     * because one call and nine hundred matrix multiplies look identical from
+     * the call site (tools/_framecost.mjs prints the table):
+     *
+     *     this line (48 calls)     2158 visits  ->  147
+     *     the upper placement       466        ->  144
+     *     the lower placement       254        ->  144
+     *     whole frame              6848        ->  4211   (-38%)
+     *
+     * The pose is bit-identical: `determinism`, `somersault`, `garments`,
+     * `animation` and `character-gait` all read the same numbers after.
+     */
+    upper.obj.updateWorldMatrix(true, false);
     const rootPos = _ikRoot.setFromMatrixPosition(upper.obj.matrixWorld);
     const l1 = upper.length * upper.cutT;
     const l2 = lower.length * lower.cutT;
@@ -447,7 +481,7 @@ export class Rig {
     upper.obj.parent.getWorldQuaternion(_q2);
     aimY(upperDir, poleDir, _q1);
     upper.obj.quaternion.copy(_q2.invert()).multiply(_q1);
-    upper.obj.updateMatrixWorld(true);
+    upper.obj.updateWorldMatrix(true, false);       // see the note above
 
     // the lower bone points from the elbow to the target
     const elbow = _ikElbow.copy(rootPos).addScaledVector(upperDir, l1);
@@ -457,7 +491,7 @@ export class Rig {
     upper.obj.getWorldQuaternion(_q2);
     aimY(lowerDir, poleDir, _q1);
     lower.obj.quaternion.copy(_q2.invert()).multiply(_q1);
-    lower.obj.updateMatrixWorld(true);
+    lower.obj.updateWorldMatrix(true, false);       // see the note above
   }
 
   dispose() {

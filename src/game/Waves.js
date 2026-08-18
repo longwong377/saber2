@@ -262,6 +262,47 @@ export const MODES = {
     blurb: 'One battle, fought over changing ground. You lead an army, they field one, '
       + 'and it ends in a victory or a defeat — not in a high score.',
     rotates: true,
+    /* THE MACHINE-READABLE HALF OF "IT ENDS". `World.update` opens a bounded
+     * battle on the first frame for any mode carrying this, so the mode is
+     * playable through a front end that has never heard of it — the same
+     * position `CommandDirector._areaClear` takes about its muster screen, and
+     * for the same reason. It is a field rather than a mode-name test because
+     * `campaign` below is the second mode with the property and there will be
+     * more; a list of mode names in World.js is the twin defect. */
+    battles: true,
+  },
+  /**
+   * CAMPAIGN — the same battle, in an order somebody chose.
+   *
+   * Player notes #21 and #47 ask for two campaigns, and the second sentence of
+   * each is the same question: what makes a sequence of fights a campaign
+   * rather than a playlist. `Levels.CAMPAIGNS` is the answer and its own note
+   * gives it in three parts — the order is authored, every ground carries a
+   * brief, and the shape of the battle is part of the mission rather than a
+   * multiplier over it.
+   *
+   * WHAT THIS MODE IS NOT is the more useful half. It is not Command: Command
+   * is FIVE AREAS ON ONE GROUND, declares `level: 'geonosis'`, and its whole
+   * subject is a roster of named people who die permanently across a crossing.
+   * A campaign is ONE BATTLE ON EACH OF SEVERAL GROUNDS, and its line is raised
+   * for each — because names that persist are Command's idea and a second copy
+   * of it here would make the two modes the same mode with different map
+   * lists. What DOES carry between missions is the RUN: the build, the Insight,
+   * the score and the wave the escalation has reached, all of it through
+   * `World.rotateTo`, which is the same door the skirmish rotation uses.
+   *
+   * NO `fixedTheatre` AND NO `level`, and that is load-bearing rather than an
+   * omission. The Theatre column IS the campaign picker: a campaign opens on a
+   * ground, the player already picks a ground, and `Levels.campaignAt` maps one
+   * to the other. Greying the column would leave the mode with two campaigns
+   * and no way to say which.
+   */
+  campaign: {
+    name: 'Campaign',
+    blurb: 'A named sequence of battles on chosen ground, with a brief on each and an ending. '
+      + 'The theatre you pick is the campaign you play.',
+    rotates: true,
+    battles: true,
   },
 };
 

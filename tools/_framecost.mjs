@@ -47,9 +47,29 @@ const M = { visits: 0, calls: 0, forced: 0 };
    * "one call" and "nine hundred matrix multiplies" that this probe exists to
    * show. Kept byte-faithful to three r169's own body; if that changes, the
    * counts move and the shape of the answer does not. */
+  M.stacks = new Map();
+  M.trace = false;
   proto.updateMatrixWorld = function (force) {
     M.calls++;
     if (force) M.forced++;
+    if (M.trace) {
+      const before = M.visits;
+      walk(this, force);
+      /* WHO ASKED, and how much of the graph it cost. A count with no call
+       * site in it is a finding nobody can act on — the same reason
+       * cloth-cost keeps the first offending stack for an over-capacity
+       * burst. Off by default: an Error per call is far more expensive than
+       * the walk it is measuring. */
+      const frames = (new Error().stack || '').split('\n')
+        .filter((l) => /src[\\/](game|world|engine|ui)/.test(l) && !/_framecost/.test(l))
+        .slice(0, 2)
+        .map((l) => l.trim().replace(/^at\s+/, '').replace(/.*\/src\//, '').replace(/\)$/, ''));
+      const key = frames.join('  <-  ') || 'unknown';
+      const rec = M.stacks.get(key) || { calls: 0, visits: 0 };
+      rec.calls++; rec.visits += M.visits - before;
+      M.stacks.set(key, rec);
+      return;
+    }
     walk(this, force);
   };
   function walk(o, force) {
@@ -84,8 +104,18 @@ const MODE = argv.get('mode') || 'command';
 const QUALITY = argv.get('quality') || 'high';
 const WAVES = Number(argv.get('waves') ?? 2);
 
+/**
+ * An input that can be told to press one action on one frame.
+ *
+ * Powers are driven through this and not called directly, for HANDOFF §2.4's
+ * reason: `Player.update` builds the `ctx` these effects read — the foe list,
+ * the rules, the particle system — and a probe that calls `forceLightning`
+ * with a hand-made ctx is measuring its own object. Through the input it is
+ * measuring the game.
+ */
+const press = new Set();
 const idleInput = () => ({
-  act: () => false, actHit: () => false, actDown: () => false,
+  act: (a) => press.has(a), actHit: (a) => press.has(a), actDown: (a) => press.has(a),
   moveAxis: (o) => { if (o) { o.x = 0; o.y = 0; return o; } return { x: 0, y: 0 }; },
   mouse: { dx: 0, dy: 0, wheel: 0, left: false, right: false },
   delta: { x: 0, y: 0 }, accel: { x: 0, y: 0 }, end() {},
@@ -141,6 +171,8 @@ function instancesDrawn() {
     const g = pool.mesh.geometry;
     n += (g.instanceCount === undefined || g.instanceCount === Infinity) ? pool.max : g.instanceCount;
   }
+  const d = P.decals?.mesh?.geometry;
+  if (d) n += (d.instanceCount === undefined || d.instanceCount === Infinity) ? P.decals.max : d.instanceCount;
   return n;
 }
 
@@ -213,6 +245,28 @@ function stepAndSample(label, n = 1) {
   return row;
 }
 
+/**
+ * A FIXED FIELD, FIRST — because the director's body count wanders by three or
+ * four between runs and a per-frame count compared against another run's has
+ * to be over the same bodies. Twelve of one archetype, hand-placed, no
+ * director: the same skeletons in the same places every time.
+ */
+if (argv.get('census') !== '0') {
+  const c = world.player.position;
+  for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * Math.PI * 2;
+    const x = c.x + Math.cos(a) * 9, z = c.z + Math.sin(a) * 9;
+    world.spawnEnemy(argv.get('type') || 'trooper', new THREE.Vector3(x, world.terrain.height(x, z), z));
+  }
+  for (let i = 0; i < 20; i++) world.update(1 / 60, input);
+  const cen = stepAndSample('CENSUS: 12 hand-placed bodies + player', 30);
+  console.log(`\nCENSUS  ${cen.visits.toFixed(0)} matrix node-visits/frame over `
+    + `${cen.enemies} bodies + the player = ${(cen.visits / (cen.enemies + 1)).toFixed(0)} each; `
+    + `${cen.calls.toFixed(0)} calls/frame\n`);
+  for (const e of [...world.enemies]) e.dead = true;
+  for (let i = 0; i < 90; i++) world.update(1 / 60, input);
+}
+
 // settle
 stepAndSample('boot', 8);
 
@@ -255,8 +309,8 @@ if (S) {
 let boltFrame = null;
 if (p.forceLightning) {
   p.boonMods.lightning = true;
-  p.force = 999; p.cooldowns.lightning = 0;
-  // point at the crowd
+  p.force = 999; p.maxForce = 999; p.cooldowns.lightning = 0;
+  // stand behind the thickest knot of bodies and point through it
   let best = null, bestN = -1;
   for (const e of world.enemies) {
     if (e.dead) continue;
@@ -265,11 +319,35 @@ if (p.forceLightning) {
     if (n > bestN) { bestN = n; best = e; }
   }
   if (best) {
-    p.aimDir.copy(best.position).sub(p.chest).normalize();
-    p.position.copy(best.position).addScaledVector(p.aimDir, -6);
-    p.forceLightning(world.ctx ?? world);
+    const back = new THREE.Vector3().subVectors(best.position, p.position).setY(0).normalize();
+    p.position.copy(best.position).addScaledVector(back, -6);
+    p.position.y = world.terrain.height(p.position.x, p.position.z);
+    p.aimDir.copy(back);
+    if (p.camera) { p.camera.yaw = Math.atan2(back.x, back.z); p.camera.pitch = 0; }
+    press.add('lightning');
+    boltFrame = stepAndSample('the frame force lightning chains', 1);
+    press.delete('lightning');
+    console.log(`  [lightning] aimed through a knot of ${bestN}; `
+      + `${boltFrame.spawn.sparks.toFixed(0)} sparks that frame`);
   }
-  boltFrame = stepAndSample('the frame force lightning chains', 1);
+}
+
+/* ── WHO IS WALKING THE GRAPH ────────────────────────────────────────── */
+
+/* One traced frame, at the end, with the whole field standing. Traced rather
+ * than sampled because the question is not "how long" but "how many times, and
+ * from where", and that is exact. */
+M.trace = true;
+M.stacks.clear();
+const t0 = M.visits;
+world.update(1 / 60, input);
+M.trace = false;
+const traced = [...M.stacks.entries()].sort((a, b) => b[1].visits - a[1].visits);
+console.log(`\nONE FRAME'S MATRIX WALK — ${M.visits - t0} node visits, `
+  + `${world.enemies.filter((e) => !e.dead).length} bodies standing\n`);
+console.log('  visits    calls   caller');
+for (const [k, v] of traced.slice(0, 14)) {
+  console.log(`  ${String(v.visits).padStart(6)}   ${String(v.calls).padStart(6)}   ${k}`);
 }
 
 /* ── report ──────────────────────────────────────────────────────────── */

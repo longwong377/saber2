@@ -234,13 +234,44 @@ export class ParticlePool {
     this.head = 0;
     this.time = 0;
     this.live = 0;
+    /**
+     * THE POOL DREW ITS WHOLE CAPACITY EVERY FRAME, ALIVE OR NOT.
+     *
+     * A dead particle is culled by the VERTEX shader — `gl_Position = vec4(2)`
+     * at the top of VERT, which is outside the clip volume — so it costs no
+     * fragments. It costs a vertex shader invocation, because that is the
+     * thing that decided to cull it, and `geo.instanceCount` was set to `max`
+     * in this constructor and never moved again. Measured on a Command battle
+     * with 18 bodies standing and NOTHING firing (tools/_framecost.mjs):
+     *
+     *     instances drawn per frame   19 800   (7 pools at capacity)
+     *     particles actually alive       122
+     *
+     * 19 800 quads is 79 200 vertex shader invocations a frame, permanently,
+     * on the tier the menu offers to integrated graphics. It is also 1.35 MB
+     * of `bufferSubData` on every frame anything spawns, because
+     * `needsUpdate` on a whole attribute re-uploads the whole attribute.
+     *
+     * `_hi` is the smallest prefix of the ring that can still hold a live
+     * particle: instancing draws 0..N-1 and cannot skip a hole, so a PREFIX is
+     * the only shape the answer can take. It grows at `spawn` and is retired
+     * from the top in `update`, which is amortised O(1) per slot — and when it
+     * reaches zero the ring restarts at 0, so a pool that idles between bursts
+     * draws exactly the burst and not the high-water mark of the whole level.
+     *
+     * `_exp` is absolute expiry per slot, which the shader already recomputes
+     * from `aParams`/`aExtra`; it is kept separately because the retire loop
+     * must not pay two array reads and a subtract per slot per frame.
+     */
+    this._exp = new Float32Array(this.max);
+    this._hi = 0;
 
     const geo = new THREE.InstancedBufferGeometry();
     const quad = new THREE.PlaneGeometry(1, 1);
     geo.index = quad.index;
     geo.attributes.position = quad.attributes.position;
     geo.attributes.uv = quad.attributes.uv;
-    geo.instanceCount = this.max;
+    geo.instanceCount = 0;
 
     this.aSpawn = new THREE.InstancedBufferAttribute(new Float32Array(this.max * 3), 3);
     this.aVel = new THREE.InstancedBufferAttribute(new Float32Array(this.max * 3), 3);
@@ -248,6 +279,8 @@ export class ParticlePool {
     this.aColor = new THREE.InstancedBufferAttribute(new Float32Array(this.max * 4), 4);
     this.aExtra = new THREE.InstancedBufferAttribute(new Float32Array(this.max * 3), 3);
     for (const a of [this.aSpawn, this.aVel, this.aParams, this.aColor, this.aExtra]) a.setUsage(THREE.DynamicDrawUsage);
+    /** attribute → itemSize, for the partial upload in `update`. */
+    this._attrs = [[this.aSpawn, 3], [this.aVel, 3], [this.aParams, 4], [this.aColor, 4], [this.aExtra, 3]];
     geo.setAttribute('aSpawn', this.aSpawn);
     geo.setAttribute('aVel', this.aVel);
     geo.setAttribute('aParams', this.aParams);
@@ -329,6 +362,8 @@ export class ParticlePool {
     const i = this.head;
     this.head = (this.head + 1) % this.max;
     if (this.live < this.max) this.live++;
+    this._exp[i] = this.time + life;
+    if (i >= this._hi) this._hi = i + 1;
     const i3 = i * 3, i4 = i * 4;
     this.aSpawn.array[i3] = pos.x; this.aSpawn.array[i3 + 1] = pos.y; this.aSpawn.array[i3 + 2] = pos.z;
     this.aVel.array[i3] = vel.x; this.aVel.array[i3 + 1] = vel.y; this.aVel.array[i3 + 2] = vel.z;
@@ -368,9 +403,34 @@ export class ParticlePool {
     this.time += dt;
     this.mat.uniforms.uTime.value = this.time;
     syncWind(this.mat.uniforms);
+
+    /* Retire the expired tail of the live prefix. The loop runs once per slot
+     * that dies, not once per slot in the pool, so a full 4200-slot spark pool
+     * emptying costs 4200 comparisons ONCE and nothing on the frames either
+     * side of it. */
+    const t = this.time, exp = this._exp;
+    let hi = this._hi;
+    while (hi > 0 && exp[hi - 1] <= t) hi--;
+    if (hi !== this._hi) {
+      this._hi = hi;
+      this._dirty = true;                 // the upload window shrinks with it
+      /* Empty: start the ring over, so the next burst draws its own size
+       * rather than wherever the head happened to have crawled to. */
+      if (hi === 0) { this.head = 0; this.live = 0; }
+    }
+    this.mesh.geometry.instanceCount = hi;
+
     if (this._dirty) {
-      this.aSpawn.needsUpdate = true; this.aVel.needsUpdate = true;
-      this.aParams.needsUpdate = true; this.aColor.needsUpdate = true; this.aExtra.needsUpdate = true;
+      /* ONE RANGE, ALWAYS FROM 0, because that is the only span the draw can
+       * read. three clears `updateRanges` when it uploads and merges them when
+       * it does not, so replacing the pending one here is safe: every range
+       * this pool ever asks for starts at 0, and a shorter one can only drop
+       * slots that `instanceCount` has already stopped drawing. */
+      for (const [a, item] of this._attrs) {
+        if (a.updateRanges.length) a.clearUpdateRanges();
+        if (hi > 0) a.addUpdateRange(0, hi * item);
+        a.needsUpdate = true;
+      }
       this._dirty = false;
     }
   }
@@ -779,18 +839,26 @@ export class DecalField {
     this.max = Math.max(8, Math.floor(opts.max ?? 96));
     this.head = 0;
     this.time = 0;
+    /* Same prefix as ParticlePool's, same reason, and it is here as well as
+     * there so that "a pool with nothing alive in it draws nothing" is a rule
+     * about the whole particle system rather than about most of it — which is
+     * what lets `vfx` assert it as one number. 110 slots at scale 1 is small
+     * beside the pools' 19 800; a rule with one exception in it is not. */
+    this._exp = new Float32Array(this.max);
+    this._hi = 0;
 
     const quad = new THREE.PlaneGeometry(1, 1);
     const geo = new THREE.InstancedBufferGeometry();
     geo.index = quad.index;
     geo.attributes.position = quad.attributes.position;
     geo.attributes.uv = quad.attributes.uv;
-    geo.instanceCount = this.max;
+    geo.instanceCount = 0;
 
     this.aPos = new THREE.InstancedBufferAttribute(new Float32Array(this.max * 4), 4);
     this.aNrm = new THREE.InstancedBufferAttribute(new Float32Array(this.max * 4), 4);
     this.aParams = new THREE.InstancedBufferAttribute(new Float32Array(this.max * 4), 4);
     for (const a of [this.aPos, this.aNrm, this.aParams]) a.setUsage(THREE.DynamicDrawUsage);
+    this._attrs = [[this.aPos, 4], [this.aNrm, 4], [this.aParams, 4]];
     geo.setAttribute('aPos', this.aPos);
     geo.setAttribute('aNrm', this.aNrm);
     geo.setAttribute('aParams', this.aParams);
@@ -833,6 +901,8 @@ export class DecalField {
     this.aParams.array[i4 + 1] = life;
     this.aParams.array[i4 + 2] = heat;
     this.aParams.array[i4 + 3] = alpha;
+    this._exp[i] = this.time + life;
+    if (i >= this._hi) this._hi = i + 1;
     this._dirty = true;
     return i;
   }
@@ -840,8 +910,21 @@ export class DecalField {
   update(dt) {
     this.time += dt;
     this.mat.uniforms.uTime.value = this.time;
+    const t = this.time, exp = this._exp;
+    let hi = this._hi;
+    while (hi > 0 && exp[hi - 1] <= t) hi--;
+    if (hi !== this._hi) {
+      this._hi = hi;
+      this._dirty = true;
+      if (hi === 0) this.head = 0;
+    }
+    this.mesh.geometry.instanceCount = hi;
     if (this._dirty) {
-      this.aPos.needsUpdate = true; this.aNrm.needsUpdate = true; this.aParams.needsUpdate = true;
+      for (const [a, item] of this._attrs) {
+        if (a.updateRanges.length) a.clearUpdateRanges();
+        if (hi > 0) a.addUpdateRange(0, hi * item);
+        a.needsUpdate = true;
+      }
       this._dirty = false;
     }
   }
@@ -996,10 +1079,22 @@ export class Particles {
     return best >= 0;
   }
 
-  /** Pool occupancy, for the HUD and for the tests. */
+  /**
+   * Pool occupancy, for the HUD and for the tests.
+   *
+   * `drawn` is the one the frame budget is made of and it did not used to
+   * exist: `pools` is CAPACITY, and capacity is what the draw cost was too,
+   * because every pool set `instanceCount = max` once and never moved it. The
+   * two numbers are now different — `drawn` is what the vertex shader is
+   * actually run over this frame — and `vfx` holds the gap.
+   */
   stats() {
+    let drawn = 0;
+    for (const p of this.pools) drawn += p.mesh.geometry.instanceCount;
+    drawn += this.decals.mesh.geometry.instanceCount;
     return {
       pools: this.pools.reduce((a, p) => a + p.max, 0),
+      drawn,
       chips: this.chips.liveCount,
       chipMax: this.chips.max,
       decals: this.decals.max,

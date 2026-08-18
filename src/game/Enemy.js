@@ -11,7 +11,7 @@ import * as THREE from 'three';
 import { Actor } from './Ragdoll.js';
 import { Rig, BipedAnimator, aimY } from './Rig.js';
 import { buildB1, buildB2, buildTrooper, buildAcolyte, buildDroideka, buildWalker, buildBeast, buildBlaster, plateGeo,
-  buildJedi, bodyOptsFor, SPECIES, HAIR_STYLES, BEARD_STYLES, ROBE_COLORS } from './Bodies.js';
+  buildJedi, bodyOptsFor, weakSpotsOf, SPECIES, HAIR_STYLES, BEARD_STYLES, ROBE_COLORS } from './Bodies.js';
 import { Saber } from './Saber.js';
 import { dropSaber } from './Dropped.js';
 import { DuelBrain, Telegraph, FORMS, FORM_KEYS, TIER, ATTACKS, ATTACK_KEYS,
@@ -20,7 +20,7 @@ import { buildRemote } from './Dojo.js';
 import { attachCloak, attachSkirt } from './Cloth.js';
 import { LAYER, Body, capsuleSpheres, capsule } from '../physics/RapierWorld.js';
 import { supportHeight, STEP_UP, GROUND_SNAP } from '../physics/Support.js';
-import { TOUGHNESS, bladesTouching } from './Combat.js';
+import { TOUGHNESS, thinner, bladesTouching } from './Combat.js';
 import { segmentSegment } from '../physics/Physics.js';
 import { BOLT_COLORS } from './Bolts.js';
 /* The one weather every system reads — see its own note in Scenery.js. Used by
@@ -66,6 +66,17 @@ const BACKPEDAL = 0.5;
  * the player presents.
  */
 const BLADE_BITE = 0.10;
+
+/**
+ * The same allowance as a MULTIPLE, for the capsules `capsules()` emits.
+ *
+ * It was the literal `1.12` sitting on one line, and it is now on two — the
+ * bone's capsule and a weak point's — so it is named rather than copied. A gap
+ * in a plate has to carry the same contact tolerance the plate does or it would
+ * be harder to hit than the geometry it is a hole in, which is precisely
+ * backwards.
+ */
+const CAP_BITE = 1.12;
 
 /**
  * HOW FAR FROM THE BODY THE SHORT LIST OF STATIC BOXES IS GUARANTEED TO ANSWER.
@@ -1165,6 +1176,37 @@ export function guardFor(A) {
   if (!A || A.training || A.inert) return 0;
   if (A.saber) return Math.max(1, Math.ceil((A.hp || 0) * GUARD_PER_HP));
   return Math.floor((A.mass || 0) * HIDE_PER_KG);
+}
+
+/**
+ * ── AND THE SAME BOUNDARY, ONE AXIS ROUND: WHICH BODIES HAVE A PLACE THE HIDE
+ *    IS NOT ────────────────────────────────────────────────────────────────
+ *
+ * Player note #35 — "big bodies need weak points" — is the spatial half of the
+ * note the guard above answers in time. The guard says a big body turns a
+ * killing pass aside until you EARN an opening; the note says there should also
+ * be a place on it worth AIMING at. Both are the same sentence about the same
+ * thing, said about two different axes, so they are gated on the same
+ * predicate rather than on a new one:
+ *
+ *   · `guardFor(A) > 0` — there has to be a hide before there can be a gap in
+ *     it. Everything under 300 kg turns nothing and needs nothing: measured on
+ *     the shipped bodies, a B1's neck, a trooper's hips and a B2's head are all
+ *     one pass already, and a soft spot on a body that dies to the first cut
+ *     anywhere is a mechanic with nothing on the other end.
+ *   · `!A.saber` — a duellist's guard is a BLADE, not bulk. `GUARD_PER_HP`
+ *     derives it from health and `_turnCut` plays a steel-on-steel clash for
+ *     it; a blade has no thin place, and the counter-play to one is the duel
+ *     game, which this file already has. The IG Bodyguard (240 kg, twelve
+ *     turns, an electrostaff) is on the wrong side of a mass test and the right
+ *     side of this one.
+ *
+ * That leaves exactly the ten `big` bodies on the roster, which is the list the
+ * note names. `tools/checks/severance.mjs` holds the two sets against each
+ * other so neither can drift.
+ */
+export function hasWeakPoints(A) {
+  return !!A && !A.saber && guardFor(A) > 0;
 }
 
 /**
@@ -2324,22 +2366,99 @@ export class Enemy {
     }
 
     if (this.rig) {
+      const gaps = hasWeakPoints(this.A);
       for (const b of this.rig.list) {
         if (b.severed || !b.parts.length) continue;
+        const live = b.length * b.cutT;
         if (this.actor?.ragdolled) {
           const body = this.actor.bodies.get(b.name);
           if (!body) continue;
-          const len = b.length * b.cutT;
-          _v1.set(0, -len / 2, 0).applyQuaternion(body.quaternion).add(body.position);
-          _v2.set(0, len / 2, 0).applyQuaternion(body.quaternion).add(body.position);
+          /* A ragdoll body is centred on its bone, so the bone's ORIGIN is half
+           * a length back along the body's own axis. `_q1` is set here as well
+           * as in the posed branch because the weak points below need a frame
+           * and not two endpoints — a gap round a hinge is a capsule in the
+           * bone's local space, and half of them do not lie on its axis. */
+          _q1.copy(body.quaternion);
+          _v1.set(0, -live / 2, 0).applyQuaternion(_q1).add(body.position);
+          _v2.set(0, live / 2, 0).applyQuaternion(_q1).add(body.position);
         } else {
           b.obj.updateMatrixWorld(false);
           _v1.setFromMatrixPosition(b.obj.matrixWorld);
           _q1.setFromRotationMatrix(b.obj.matrixWorld);
-          _v2.copy(_v1).add(_v3.set(0, b.length * b.cutT, 0).applyQuaternion(_q1));
+          _v2.copy(_v1).add(_v3.set(0, live, 0).applyQuaternion(_q1));
+        }
+        /**
+         * ── THE GAPS FIRST, AND THEY GO IN AHEAD OF THE BONE ON PURPOSE ────
+         *
+         * A weak point is a place the body's own cover does not reach — see the
+         * long note over `weakSpotsOf` in Bodies.js for how each one is derived
+         * from the plate that leaves it bare, and why it is derived there
+         * rather than typed beside the roster.
+         *
+         * Three things are decided here and nowhere else, because this is where
+         * a spot stops being geometry and becomes something a blade can meet:
+         *
+         *  1. WHICH BODIES HAVE ANY. `hasWeakPoints` — a hide guard and no
+         *     blade. That is not a taste boundary, it is the same predicate
+         *     that decides a body is big enough to turn a cut aside at all, so
+         *     the SPATIAL opening exists on exactly the bodies the TEMPORAL one
+         *     does. A B1 needs no soft spot; it comes apart on the first pass
+         *     anywhere, and `guardFor` already says so by giving it nothing.
+         *
+         *  2. WHAT IT IS MADE OF. `thinner()` — one rung down the TOUGHNESS
+         *     ladder from whatever the bone is charged, measured at 1.3–3.1×
+         *     depending on the material. Not a multiplier on damage: see the
+         *     note over `thinner` in Combat.js for the argument, which is that
+         *     a thin place has to make the blade go through FASTER or it is not
+         *     a thin place, it is a bonus.
+         *
+         *  3. WHETHER THE HIDE CAN STILL TURN IT. `AXIAL_ROLES` is CALLED, not
+         *     restated: the roles priced flat by `SEVERANCE` are exactly the
+         *     ones where "reaching them ends it wherever along them you reach",
+         *     which is the trunk and the head. `_turnCut`'s whole argument is
+         *     that the guard is the body's own bulk — "how much animal is
+         *     between the edge and the spine" — so a gap in a LIMB has nothing
+         *     behind it to turn a blade and a gap in a trunk has the entire
+         *     animal behind it. A belly makes the pass quicker; only a joint
+         *     makes it land. Without that split a single stifle pass would take
+         *     the acklay's neck, because a core capsule is `vital` 1.0 and
+         *     `takeCut` kills outright at 0.9.
+         */
+        const spots = gaps ? weakSpotsOf(b) : null;
+        if (spots) {
+          const opens = !AXIAL_ROLES.includes(b.role);
+          /* …AND NEVER TOUGHER THAN WHAT THE BODY IS MADE OF, which one rung
+           * on its own gets wrong on every creature in the menagerie.
+           *
+           * `_boneToughness` charges a beast's `body` bone `TOUGHNESS.heavy`
+           * for its shell — scutes, a bony frill, a chitin ridge — while the
+           * archetype's own material is `flesh`. One rung down from heavy is
+           * `armour`, so the belly the builder describes as "the one place a
+           * blade meets flesh" came out at 4.5: FIVE TIMES tougher than the
+           * animal's own leg, on the softest part of it. A gap in a cover
+           * exposes what is under the cover, and `A.toughness` is the game's
+           * statement about what this body is under everything. Measured, the
+           * floor bites on the five creatures (armour 4.5 → flesh 0.9) and on
+           * nothing else: every machine's `A.toughness` is `heavy` or above, so
+           * a walker's knee stays at `armour` and its intake at `heavy`. */
+          const tough = Math.min(thinner(this._boneToughness(b.name)),
+            this.A.toughness ?? TOUGHNESS.flesh);
+          const vital = severanceOf(b);
+          for (const s of spots) {
+            // A limb chopped short takes its own far joint with it: `cutT` is
+            // what is LEFT of the bone, and a knee past the stub is not there.
+            if (s.at0 * b.length > live) continue;
+            out.push({
+              name: b.name + '.' + s.key, covers: b.name, weak: s, opens,
+              p0: _v4.set(s.p0[0], s.p0[1], s.p0[2]).applyQuaternion(_q1).add(_v1).clone(),
+              p1: _v5.set(s.p1[0], s.p1[1], s.p1[2]).applyQuaternion(_q1).add(_v1).clone(),
+              r: s.r * CAP_BITE, at0: s.at0, at1: s.at1,
+              toughness: tough, enemy: this, vital,
+            });
+          }
         }
         out.push({
-          name: b.name, p0: _v1.clone(), p1: _v2.clone(), r: b.radius * 1.12,
+          name: b.name, p0: _v1.clone(), p1: _v2.clone(), r: b.radius * CAP_BITE,
           toughness: this._boneToughness(b.name), enemy: this, vital: severanceOf(b),
         });
       }
@@ -2509,7 +2628,16 @@ export class Enemy {
    */
   takeCut(ev, source) {
     if (this.dead && !this.actor) return;
-    const bone = ev.bone;
+    /* THE CAPSULE IS THE AUTHORITY ON WHICH BONE THIS WAS, not the event.
+     *
+     * `BladeContactSolver` already writes `cap.covers ?? cap.name` into
+     * `ev.bone`, so for the blade the two agree. This reads the capsule first
+     * anyway, because three other callers build a cut event out of a capsule
+     * they picked themselves — `Player.forceDisassemble`, the Sunder boon's
+     * `sunderThrough` and `World.applyClaim` — and every one of them writes
+     * `bone: cap.name`. A weak point's name is not a bone (`femur0.tip`), and
+     * routing one of those to `Actor.cut` would silently take nothing off. */
+    const bone = ev.cap?.covers ?? ev.bone;
     /* THE SHIELD FIRST, AND IT IS NOT A BONE. A bubble carries no `vital` on
      * purpose — nothing is severed and nothing is billed, the pass costs the
      * shield and stops — so it has to be answered before anything asks what
@@ -2531,6 +2659,35 @@ export class Enemy {
     // BEFORE anything is severed: a turned cut is a cut that did not land, and
     // a body that "turned" a pass while losing the limb would be nonsense.
     if (this._turnCut(ev, bone, vital, source)) return 'turned';
+
+    /**
+     * …AND IF IT WENT THROUGH THE GAP, THE GAME SAYS SO. Note #35's other half:
+     * "a spot nobody can find is not a mechanic."
+     *
+     * This is deliberately the SAME CHANNEL, in the same shape, as the three
+     * lines `_turnCut` already writes when a pass lands anywhere else on a big
+     * body — 'HIDE TURNS IT', 'PLATE HOLDS', 'TURNED'. Those are the game
+     * teaching a player that this body refuses cuts; without a sentence for the
+     * other outcome the lesson has no second half and the only way to learn a
+     * weak point is to notice a fight ending sooner. Now the pair reads:
+     *
+     *     cut the shoulder  →  HIDE TURNS IT   and nothing comes off
+     *     cut the stifle    →  JOINT           and the leg does
+     *
+     * The label is the spot's own, declared in Bodies.js beside the geometry it
+     * names, so it cannot describe a place that is not there. Both halves of
+     * the feedback go through `world.notifyFloating`, which HUD.js already
+     * anchors to a world point — a floating word at the impact is what makes
+     * this a property of a PLACE rather than a number in a corner.
+     *
+     * `notifyFloating` and not the audio bank, and one call and not a burst per
+     * frame: the grind that leads up to this fires on every frame of contact
+     * and the sever fires once. This is the once.
+     */
+    if (ev.cap.weak) {
+      this.world?.notifyFloating?.(ev.point ?? this.position, ev.cap.weak.label, '#ffd0a0');
+      audio.cut(ev.point ?? this.position, false);
+    }
 
     if (this.actor) {
       const impulse = _v1.copy(ev.impulse).multiplyScalar(0.35);
@@ -2658,6 +2815,32 @@ export class Enemy {
      * shake and the sound all still fired. */
     if (ev && ev.force) return false;
     if (this._guardOpen()) return false;
+    /**
+     * ── AND A SPATIAL OPENING SITS BESIDE THE TEMPORAL ONE, NOT INSTEAD OF IT
+     *
+     * The line above is every opening the player EARNS IN TIME — a parry, a
+     * chamber, a won lock, a shove, a topple, a grip, the winded window. This
+     * one is the opening they earn IN SPACE, and it is deliberately the very
+     * next line so that the two read as what they are: two ways of arriving at
+     * the same sentence, `return false`, and nothing about either that touches
+     * the other. A weak point does not open the guard for the next pass (only
+     * `_guardOpen`'s states do that, and none of them is set here), and an open
+     * guard does not make a plate thin. They compose because a player can have
+     * both, and a player with both is a player who took a leg off a spider
+     * walker while it was still down from the last one.
+     *
+     * WHY IT IS `cap.opens` AND NOT `cap.weak`. `capsules()` sets `opens` off
+     * `AXIAL_ROLES`, so a gap in a LIMB lets the pass through and a soft place
+     * on a TRUNK does not. This function's own argument is the reason: the
+     * guard is the body's own bulk, "how much animal is between the edge and
+     * the spine". Behind a bare hinge there is a hinge; behind an animal's
+     * belly there is the animal. Measured on the shipped bodies, dropping that
+     * distinction makes one stifle pass an instant kill on every creature in
+     * the menagerie, because a core capsule is `vital` 1.0 and `takeCut` kills
+     * outright at 0.9 — the guard would not have been composed with, it would
+     * have been deleted.
+     */
+    if (ev && ev.cap && ev.cap.opens) return false;
     if (!this._fightEnding(bone, vital)) return false;
 
     this.guard--;

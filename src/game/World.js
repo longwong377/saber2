@@ -110,7 +110,8 @@ export function roomOf(level, surface = 'sand') {
   return { seconds, decay, send };
 }
 import { applyOrder } from './Order.js';
-import { LEVELS, LEVEL_ORDER, groundMight, levelRotation, spawnClear } from './Levels.js';
+import { CAMPAIGNS, CAMPAIGN_IDS, LEVELS, LEVEL_ORDER, campaignAt, groundMight, levelRotation,
+  spawnClear } from './Levels.js';
 import { AREAS, ARMY_IDS, CommandDirector, COMMAND_POWER_RULES, MAX_STRENGTH, OPENING_STRENGTH,
   assignArmies } from './Command.js';
 import { Corpses, CORPSE_BUDGET } from './Corpses.js';
@@ -651,7 +652,13 @@ export class World {
      * right. The honest fix is in the handover.
      */
     const mode = this.settings.mode ?? 'roguelite';
-    const leadsArmy = mode === 'command' || mode === 'skirmish';
+    /* `MODES[mode].battles` and not a list of mode names: `skirmish` and
+     * `campaign` both fight bounded battles with an army, and a third will,
+     * and a roster of strings in this file is the twin defect. Command is
+     * named because it is the one mode with an army that is NOT a bounded
+     * battle — it is five areas and its own ending. */
+    const battles = !!MODES[mode]?.battles;
+    const leadsArmy = mode === 'command' || battles;
     this.director = leadsArmy
       ? new CommandDirector(this, { pool: L.pool })
       : new WaveDirector(this, { mode, pool: L.pool });
@@ -670,7 +677,16 @@ export class World {
      * that on the first frame if nothing else has. This line exists only to
      * make sure a world that has stopped being a skirmish stops carrying one.
      */
-    if (mode !== 'skirmish') this.skirmish = null;
+    if (!battles) this.skirmish = null;
+    /**
+     * THE CAMPAIGN, CARRIED FOR THE SAME REASON THE BATTLE IS.
+     *
+     * A campaign spans several loads by definition — that is the whole of what
+     * makes it one — so this line exists only to stop a world that has stopped
+     * being a campaign from carrying one. It is built by `beginCampaign`, off
+     * the ground the player picked; see `Levels.campaignAt`.
+     */
+    if (mode !== 'campaign') this.campaign = null;
     /**
      * A MEETING IS A FIGHT BETWEEN PLAYERS, SO IT IS FOUGHT UNDER A FIGHT'S
      * RULES — and this is where the mode-wide freeze retires.
@@ -1313,14 +1329,22 @@ export class World {
   _afterRotate(carry) {
     const p = this.spawnPlayer({ name: carry?.name || this.settings.playerName || 'Jedi', isLocal: true });
     this.applyCarry(carry);
-    if (this.skirmish) this._musterSkirmish();
+    /* THE MISSION'S TERMS BEFORE THE WAVE'S BUDGET. `beginMission` writes the
+     * pressure onto `areaIndex` and raises the line, and `budgetFor` reads both
+     * — so composing first would field the outgoing mission's wave on the
+     * incoming mission's ground. It starts the director itself, which is why
+     * the line below asks whether one is running rather than assuming not. */
+    if (this.campaign && !this.skirmish) this.beginMission((carry?.wave || 0) + 1);
+    else if (this.skirmish) this._musterSkirmish();
     /* THE ESCALATION CONTINUES. `start(1)` on a new ground would hand the
      * player wave 1's budget again on every engagement, which is the sawtooth
      * `WaveDirector.floor` was written for and which cost the Descent its whole
      * difficulty curve: 7,11,15 · 7,11,15,21 · 7,11,15,21 was a ladder that
      * DROPS 53% at the exact moment the fiction says you went further. */
-    if (!this.training && this.netMode !== 'client') this.director.start((carry?.wave || 0) + 1);
-    this._skirmishBanner();
+    if (!this.training && this.netMode !== 'client' && !this.director.active) {
+      this.director.start((carry?.wave || 0) + 1);
+      this._skirmishBanner();
+    }
     this.rotating = false;
     /* WE HAVE ARRIVED — a separate signal from `onRotate`, which is the
      * request. The handful of things a front end owns per player (the camera's
@@ -1378,8 +1402,6 @@ export class World {
       cleared: 0,
       /** Raised by `beginSkirmish`, once. */
       started: false,
-      /** The ground still to be moved to, set by `_skirmishCleared`. */
-      pending: null,
       done: false,
       /** true, false or null while it is still being fought. */
       won: null,
@@ -1422,19 +1444,136 @@ export class World {
    * body yet. `deploy` builds one for every record that has none and skips the
    * rest, so the two orderings converge.
    */
-  beginSkirmish(picks = null) {
+  beginSkirmish(picks = null, wave = null) {
     const d = this.command;
-    if (!d || this.settings?.mode !== 'skirmish') return null;
+    if (!d || !MODES[this.settings?.mode]?.battles) return null;
     const sk = (this.skirmish ||= this._planSkirmish(picks));
     if (sk.started || sk.done) return sk;
     sk.started = true;
     d.areaIndex = sk.pressure;
     d.areaWaves = 0;
     this._musterSkirmish();
-    if (!d.active) d.start(this.director.wave + 1);
+    if (!d.active) d.start(wave ?? (this.director.wave + 1));
     else d.deploy();
     this._skirmishBanner();
     return sk;
+  }
+
+  /* ── campaign ──────────────────────────────────────────────────────── */
+
+  /**
+   * A NAMED SEQUENCE OF BATTLES — player notes #21 and #47.
+   *
+   * The runner is thirty lines because the machinery is already here: a
+   * mission IS a skirmish with its picks authored instead of drawn, a mission
+   * boundary IS `rotateTo`, and the run that survives it is `runCarry`. What a
+   * campaign adds over a rotation is an ORDER somebody chose, a BRIEF on each
+   * ground, and an ENDING that is the last mission rather than a number of
+   * engagements — see `Levels.CAMPAIGNS`.
+   *
+   * WHICH CAMPAIGN IS THE GROUND THE PLAYER PICKED. `campaignAt` maps the
+   * theatre to the campaign that opens on it, which is why this mode declares
+   * neither `fixedTheatre` nor `level`: the Theatre column IS the picker. An
+   * explicit id wins over it, for a check and for a future card row; a ground
+   * that opens nothing falls to the first campaign and the run is walked to its
+   * opening ground through the ordinary door.
+   *
+   * IDEMPOTENT, and called by `update` on the first frame for the reason
+   * `beginSkirmish` is: a mode that needs front-end wiring to be playable is a
+   * mode that is not playable.
+   */
+  beginCampaign(id = null) {
+    if (!this.command || this.settings?.mode !== 'campaign') return null;
+    if (!this.campaign) {
+      const def = (id && CAMPAIGNS[id]) || campaignAt(this.levelKey) || CAMPAIGNS[CAMPAIGN_IDS[0]];
+      if (!def || !def.missions?.length) return null;
+      this.campaign = { id: def.id, def, index: 0, log: [], done: false, won: null };
+    }
+    const c = this.campaign;
+    if (c.done) return c;
+    const m = c.def.missions[c.index];
+    /* THE OPENING GROUND, if the player is not standing on it. Only reachable
+     * when the theatre they picked opens no campaign at all — `campaignAt`
+     * makes the ordinary path a no-op — and it goes through the same deferred
+     * rotation a mission boundary does rather than loading a level inside a
+     * frame. */
+    if (m && m.level !== this.levelKey && LEVELS[m.level]) { this._groundPending = m.level; return c; }
+    this.beginMission();
+    return c;
+  }
+
+  /**
+   * THE MISSION IN FRONT OF YOU, as a skirmish with its terms written down.
+   *
+   * The brief goes up BEFORE the engagement banner, because it is the reason
+   * the ground was chosen and the banner is a count. `rotate: false` is the
+   * line that separates a campaign from a playlist: within a mission the ground
+   * is fixed, between missions it is authored, and neither of those is the
+   * seeded shuffle `levelRotation` draws.
+   */
+  beginMission(wave = null) {
+    const c = this.campaign;
+    if (!c || c.done) return null;
+    const m = c.def.missions[c.index];
+    if (!m) return null;
+    this.skirmish = null;
+    if (m.name) this.notify(m.name, m.brief || '');
+    const sk = this.beginSkirmish({ ...m, rotate: false }, wave);
+    if (sk) c.started = true;
+    return sk;
+  }
+
+  /**
+   * THE MISSION IS BEHIND YOU — and this is what stops a campaign ending four
+   * missions early.
+   *
+   * `_endSkirmish` is the ending for a battle and a mission IS a battle, so
+   * every mission would have called `onGameOver` and shown the death card with
+   * `won: true` on it. This runs first and answers "was that a run or a leg of
+   * one": on a leg it advances the index, throws the finished plan away so the
+   * next `beginMission` builds a new one, and defers the ground change to the
+   * top of the next frame for the reason `_skirmishCleared` gives.
+   *
+   * @returns true when the run continues.
+   */
+  _advanceMission() {
+    const c = this.campaign;
+    if (!c || c.done) return false;
+    const m = c.def.missions[c.index];
+    c.log.push({
+      mission: c.index + 1, name: m?.name ?? null, level: this.levelKey,
+      wave: this.director?.wave ?? 0, standing: this.command?.roster?.strength ?? 0,
+    });
+    if (c.index >= c.def.missions.length - 1) return false;
+    c.index++;
+    this.skirmish = null;
+    const next = c.def.missions[c.index].level;
+    this._groundPending = LEVELS[next] ? next : this.levelKey;
+    return true;
+  }
+
+  /** What the campaign looks like from outside. Derived, so it cannot drift. */
+  campaignReadout() {
+    const c = this.campaign;
+    if (!c) return null;
+    const m = c.def.missions[c.index];
+    return {
+      id: c.id,
+      name: c.def.name,
+      mission: c.index + 1,
+      missions: c.def.missions.length,
+      missionName: m?.name ?? null,
+      brief: m?.brief ?? null,
+      level: this.levelKey,
+      levelName: this.level?.name ?? null,
+      next: c.def.missions[c.index + 1]
+        ? (LEVELS[c.def.missions[c.index + 1].level]?.name ?? null) : null,
+      grounds: c.def.missions.map((x) => LEVELS[x.level]?.name || x.level),
+      won: c.won,
+      done: c.done,
+      log: c.log,
+      battle: this.skirmishReadout(),
+    };
   }
 
   /**
@@ -1536,7 +1675,7 @@ export class World {
     });
     if (sk.cleared >= sk.engagements) { this._endSkirmish(true); return true; }
     const next = sk.rotation[sk.cleared % sk.rotation.length] || this.levelKey;
-    if (next !== this.levelKey) sk.pending = next;
+    if (next !== this.levelKey) this._groundPending = next;
     else {
       // Same ground, so there is nothing to tear down — but the line is still
       // brought back to strength, because reinforcement is a property of the
@@ -1568,12 +1707,23 @@ export class World {
     if (!sk || this.over) return false;
     sk.done = true;
     sk.won = !!won;
+    /* A MISSION IS NOT A RUN. `_advanceMission` answers "was that battle a leg
+     * of a campaign", and on a leg it takes the run to the next ground and this
+     * returns without ending anything — without it every mission of every
+     * campaign would raise the death card with `won: true` on it. */
+    if (won && this._advanceMission()) return false;
+    if (this.campaign && !this.campaign.done) { this.campaign.done = true; this.campaign.won = !!won; }
     if (this.command) this.command.done = true;
     this.over = true;
-    const rounds = sk.rotation.slice(0, sk.cleared).map((k) => LEVELS[k]?.name || k);
-    this.notify(won ? 'THE BATTLE IS WON' : 'THE BATTLE IS LOST',
-      rounds.length ? `${sk.cleared} of ${sk.engagements} — ${rounds.join(' · ')}`
-        : `${sk.cleared} of ${sk.engagements} engagements`);
+    const c = this.campaign;
+    const rounds = c
+      ? c.def.missions.slice(0, c.index + (won ? 1 : 0)).map((m) => LEVELS[m.level]?.name || m.level)
+      : sk.rotation.slice(0, sk.cleared).map((k) => LEVELS[k]?.name || k);
+    const what = c ? c.def.name.toUpperCase() : 'THE BATTLE';
+    this.notify(won ? `${what} IS WON` : `${what} IS LOST`,
+      c ? `${c.index + (won ? 1 : 0)} of ${c.def.missions.length} — ${rounds.join(' · ')}`
+        : rounds.length ? `${sk.cleared} of ${sk.engagements} — ${rounds.join(' · ')}`
+          : `${sk.cleared} of ${sk.engagements} engagements`);
     audio.runWon?.(!!won);
     this.onGameOver?.(this.runStats({ won: !!won }));
     return true;
@@ -2074,10 +2224,13 @@ export class World {
      * plan is built at load and the picks are applied here, so the mode is
      * playable through a front end that knows nothing about it. Guarded on a
      * body because `deploy` puts the line down around the commander. */
-    if (this.settings?.mode === 'skirmish' && !this.skirmish?.started && this.player) this.beginSkirmish();
-    if (this.skirmish?.pending) {
-      const key = this.skirmish.pending;
-      this.skirmish.pending = null;
+    if (MODES[this.settings?.mode]?.battles && !this.skirmish?.started && this.player) {
+      if (this.settings.mode === 'campaign') this.beginCampaign();
+      else this.beginSkirmish();
+    }
+    if (this._groundPending) {
+      const key = this._groundPending;
+      this._groundPending = null;
       /* THE RETURN VALUE IS THE CONTRACT. A front end that wants a progress bar
        * over the rebuild answers by calling `rotateToAsync`, which raises
        * `rotating` before its first await and returns a promise — truthy, so
@@ -3341,7 +3494,8 @@ export class World {
        * not through `_endSkirmish`, which returns on `this.over` on purpose —
        * there is exactly one ending and this is it. */
       if (this.skirmish && !this.skirmish.done) { this.skirmish.done = true; this.skirmish.won = false; }
-      this.onGameOver?.(this.runStats(this.skirmish ? { won: false } : null));
+      if (this.campaign && !this.campaign.done) { this.campaign.done = true; this.campaign.won = false; }
+      this.onGameOver?.(this.runStats(this.skirmish || this.campaign ? { won: false } : null));
       return true;
     }
     return false;

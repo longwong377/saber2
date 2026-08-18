@@ -4042,6 +4042,125 @@ export function levelRotation(seed, { pool = LEVEL_ORDER, length = 0, first = nu
 
 
 /**
+ * A CAMPAIGN IS A ROTATION SOMEBODY WROTE.
+ *
+ * `levelRotation` above is the unauthored case: a seeded playlist over the
+ * whole roster, which is the right answer when the question is "stop me
+ * fighting on the same ground forever" and nobody has an opinion about WHICH
+ * ground comes next. A campaign is the same object with the opinion supplied —
+ * an ordered list of grounds, each with a name, a brief and the shape of the
+ * battle fought on it — and it is the answer to the other question, which is
+ * "what makes a sequence of fights a campaign rather than a playlist".
+ *
+ * THREE THINGS SEPARATE THEM AND ALL THREE ARE HERE:
+ *
+ *   THE ORDER IS AUTHORED. A rotation is decided by the run's seed and is
+ *     different every time; a campaign is the same every time, because the
+ *     second mission is only worth anything if it follows the first.
+ *   EACH GROUND CARRIES A BRIEF. `World.beginMission` prints it. A playlist
+ *     announces a level name; a campaign says what you are being asked to do
+ *     on it, which is the whole of why the ground was chosen.
+ *   THE SHAPE OF THE FIGHT IS PART OF THE MISSION. `engagements`, `pressure`
+ *     and `strength` are `skirmishConfig` picks (see Waves.js), so a mission
+ *     can be a short brutal one at the top of Command's pressure ladder or a
+ *     long grinding one at the bottom, and the campaign's difficulty curve is
+ *     the sequence of them rather than a multiplier somebody typed.
+ *
+ * IT LIVES HERE FOR THE REASON `levelRotation` DOES: this is the module that
+ * decides what grounds exist, and a campaign is a statement about grounds. The
+ * MODE is in Waves.js (`MODES.campaign`), the RUNNER is in World.js, and
+ * neither of them names a level.
+ *
+ * WHICH CAMPAIGN YOU PLAY IS THE THEATRE COLUMN, and that is not a shortcut
+ * taken for want of a menu control. A campaign opens on a ground; the player
+ * already picks a ground; asking the same question twice on one panel is how
+ * you get a player who has selected the Petranaki Arena and been deployed onto
+ * a hangar deck. `campaignAt` is the derivation and `World.beginCampaign` is
+ * its only caller.
+ */
+export const CAMPAIGNS = {
+  /**
+   * PLAYER NOTE #47 — a Geonosis campaign, and it is TWO missions because
+   * Geonosis has two grounds.
+   *
+   * The note came with a suggestion attached: DESIGN.md §6 names an execution
+   * arena with pillars, sand and beasts, and `TERRAIN_PRESETS.arena` — a bowl
+   * of sand ringed by eroded stone — is sitting there with nothing built on it.
+   * That is not what this campaign uses, and the reasoning is worth writing
+   * down because it is the same reasoning that took the roster from thirteen
+   * levels to seven.
+   *
+   * THE COLOSSEUM IS ALREADY THAT LEVEL AND IS BETTER AT IT. Its own blurb is
+   * "raked sand under thirty thousand people"; its pool is charger, stalker,
+   * brute, pouncer and beast with the arena's droid staff behind them; it has a
+   * podium the player cannot climb, a cavea that puts a crowd above the fight,
+   * the longest surface memory of any ground in the game after the alpine
+   * snowpack, and a `party` multiplier no other level declares. The `arena`
+   * preset is a landform with no building on it. Shipping both would be two
+   * sand bowls where the player asked for one good one, and the note the whole
+   * roster was cut on — "a menu is judged by what a player can pick wrong" —
+   * applies to a campaign's mission list exactly as it applies to a menu.
+   *
+   * So the execution is fought in the Colosseum and the preset stays orphaned;
+   * the case for deleting it is in the handover.
+   *
+   * TWO MISSIONS AND NOT THREE. A third would have to be a second battle on
+   * ground already fought, which is precisely the thing note #48 asks the game
+   * to stop doing — and a campaign is the one place a repeat is least
+   * forgivable, because the order was chosen rather than drawn.
+   */
+  petranaki: {
+    id: 'petranaki',
+    name: 'The Execution',
+    blurb: 'Chained in the sand, then loose on the plain. Two grounds and one afternoon.',
+    missions: [
+      {
+        level: 'colosseum',
+        name: 'THE PETRANAKI ARENA',
+        brief: 'They did not bring you here to fight. Stay alive until somebody opens the gates.',
+        /* SHORT, AND AT THE BOTTOM OF THE PRESSURE LADDER. The opening of a
+         * campaign is where a player learns what the mode is; two engagements
+         * at `AREAS[0]` is the Landing Zone's budget on a floor with four very
+         * large problems on it, which is already the hardest opening in the
+         * game without any help from the ladder. */
+        engagements: 2, pressure: 0,
+      },
+      {
+        level: 'geonosis',
+        name: 'THE OPEN PLAIN',
+        brief: 'The gunships have found you. Everything the Confederacy has left is between you and the ships.',
+        /* Three engagements at the Hailfire Line's pressure, with a full line
+         * behind you: the arena is what you survive and the plain is what you
+         * win. `strength` is stated because this is the mission the mode's
+         * army exists for and the campaign's opening deliberately does not
+         * give you one bigger than the muster's own opening line. */
+        engagements: 3, pressure: 2, strength: 16,
+      },
+    ],
+  },
+};
+
+export const CAMPAIGN_IDS = Object.keys(CAMPAIGNS);
+
+/**
+ * The campaign that opens on this ground, or null.
+ *
+ * The Theatre column is the campaign picker (see the note over `CAMPAIGNS`),
+ * so this is the whole of that derivation. Only the FIRST mission counts: a
+ * ground that appears later in a campaign is a place you are taken to, not a
+ * place you may start from, and matching on it would let a player begin the
+ * Execution on the plain with the arena behind them.
+ */
+export function campaignAt(levelKey) {
+  if (!levelKey) return null;
+  for (const id of CAMPAIGN_IDS) {
+    if (CAMPAIGNS[id].missions[0]?.level === levelKey) return CAMPAIGNS[id];
+  }
+  return null;
+}
+
+
+/**
  * HOW EACH NEW GROUND BRINGS ENEMIES IN.
  *
  * `ARRIVAL_BY_TERRAIN` is keyed by a level's terrain string precisely so that

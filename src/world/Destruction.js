@@ -515,6 +515,11 @@ const SLICE_SAMPLES = 512;
 const SLICE_SITES = 4;
 const SLICE_TRIS = 512;
 const SLICE_CELLS = 2;
+/* The fifth, and it was missing — see the note in `splitVoidsPhase`. Cells and
+ * not iterations, like SLICE_SITES, because the unit here is one `findVoid`
+ * over one cell's samples: four of them is 0.13 ms on the worst piece on the
+ * colosseum where the whole sweep was 0.84. */
+const SLICE_VOIDS = 4;
 
 /**
  * THE SAME FRACTURE, HANDED BACK A SLICE AT A TIME.
@@ -858,9 +863,34 @@ function splitVoidsPhase(st, overBudget) {
   if (nrm && st.cnt) {
     const vs = st.voids || (st.voids = { nextSite: sites.length, seen: new Map(), guard: 0 });
     while (out.length < maxCells && vs.guard < maxCells) {
+      /* THE SURVEY IS THE EXPENSIVE HALF AND IT USED TO RUN WHOLE.
+       *
+       * `findVoid` reads every sample a cell holds, six times — three axes, a
+       * span pass and a histogram pass each — and this loop calls it for every
+       * cell that has not been surveyed yet before it looks at the clock once.
+       * On the first pass that is EVERY cell. Measured on the colosseum, the
+       * minimum over five repeats so a stalled box cannot flatter it: the
+       * pulvinar (s6, 12 848 samples) spends 0.84 ms in one unbroken run of 26
+       * `findVoid` calls, against a `prepareBudgetMs` of 1.2. That was the
+       * largest indivisible unit of work left anywhere in the approach-time
+       * build — bigger than any of the four sliced loops, bigger than
+       * `splitCell` (0.25 ms) which is the part that already had a stopping
+       * point after it — and it was the only loop in this file with no slice
+       * constant, which is exactly why it was the one left.
+       *
+       * `SLICE_VOIDS` cells between two looks now, like the other four. The
+       * survey is resumable for free because `vs.seen` already memoises it:
+       * stopping and coming back re-enters the loop and skips everything
+       * already surveyed, so no cell is ever measured twice and the pick is
+       * made over the same set of voids it always was. */
+      let surveyed = 0;
+      for (const c of out) {
+        if (vs.seen.has(c)) continue;
+        vs.seen.set(c, findVoid(c, samples, nrm));
+        if (++surveyed % SLICE_VOIDS === 0 && overBudget()) return false;
+      }
       let pick = null, pickV = null;
       for (const c of out) {
-        if (!vs.seen.has(c)) vs.seen.set(c, findVoid(c, samples, nrm));
         const v = vs.seen.get(c);
         if (v && (!pickV || v.width > pickV.width)) { pick = c; pickV = v; }
       }
