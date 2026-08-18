@@ -121,7 +121,9 @@ export function dropSaber(world, opts = {}) {
   // A hilt tumbles. It is a cylinder with a hook on it, not a ball.
   prop.body.angularVelocity.set(
     (Math.random() - 0.5) * 8, (Math.random() - 0.5) * 5, (Math.random() - 0.5) * 8);
-  world.addProp?.(prop);
+  /* NOT registered here: `Prop` puts itself in `world.props` from its own
+   * constructor now — see the note there — and a second push would put the
+   * same hilt on the ground twice. */
   return prop;
 }
 

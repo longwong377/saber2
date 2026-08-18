@@ -547,7 +547,8 @@ export class Forest {
     this.crownMesh.instanceMatrix.needsUpdate = true;
     const box = this.logs.get(i);
     if (box) { this.world.physics?.removeStaticBox?.(box); this.logs.delete(i); }
-    this.world.addProp?.(prop);
+    /* NOT registered here: `Prop` puts itself in `world.props` from its own
+     * constructor now, and a second push is a second copy. */
     this.real.set(i, {
       prop, moved: false, home: mid.clone(),
       // enough to lay the log's collider back down if the player walks away

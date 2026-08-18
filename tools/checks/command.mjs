@@ -946,6 +946,35 @@ export function run({ check, assert }) {
     assert(paid, 'the last wave of the area did not pay');
     assert(d.areaIndex === 1, 'the area did not advance');
 
+    /* AND THEY COME IN ON GUNSHIPS NOW, so the boundary is four seconds long.
+     * `closeMuster` asks `deploy` for ships — the mode's own first brief has
+     * always said "the gunships put you down in the open" and until now the
+     * army simply appeared. What that costs this check is a step: the state
+     * worth asserting is the one after the flight lands, not the one during
+     * it, and the clause below about nobody being deployed twice is exactly
+     * what would break if the in-air records were re-ordered every frame. */
+    const inAirNow = d.arrivals.pending;
+    assert(inAirNow > 0,
+      'the area boundary put the army down instantly — nothing was in the air, so the gunships '
+      + 'closeMuster asks for are not flying');
+    /* WHERE THEY LAND, not where they are fourteen seconds later. A trooper
+     * that has been on the ground for eight seconds has been following an
+     * order for eight seconds, so measuring at the end of the drive measures
+     * the formation solver, not the gunship. Recorded on the frame each body
+     * appears. */
+    let far = 0;
+    const seen = new Set();
+    drive(world, 14, input, () => {
+      for (const t of d.roster.living) {
+        if (!t.body || seen.has(t)) continue;
+        seen.add(t);
+        far = Math.max(far, Math.hypot(t.body.position.x - world.player.position.x,
+          t.body.position.z - world.player.position.z));
+      }
+      return false;
+    });
+    assert(d.arrivals.pending === 0, `${d.arrivals.pending} troopers still in the air after fourteen seconds`);
+
     const after = live();
     assert(after === d.roster.strength,
       `${after} bodies on the field for a roster of ${d.roster.strength} — recall left ghosts behind `
@@ -960,16 +989,14 @@ export function run({ check, assert }) {
     assert(names.split('|').every((n) => d.roster.all.some((t) => t.name === n)),
       'a name was lost across the area boundary');
     /* …and they came down AROUND THE COMMANDER rather than staying where the
-     * last wave left them. */
-    let far = 0;
-    for (const t of d.roster.living) {
-      far = Math.max(far, Math.hypot(t.body.position.x - world.player.position.x,
-        t.body.position.z - world.player.position.z));
-    }
-    assert(far < 30, `the furthest trooper deployed ${far.toFixed(0)} m from the commander`);
+     * last wave left them, or being set down at the far edge of the spawn
+     * ring — which is what the level's own arrival table would have done: on
+     * Geonosis it weights the MARCH, deliberately, and the first cut of this
+     * put your reinforcements 134 m away on foot. */
+    assert(far < 30, `the furthest trooper landed ${far.toFixed(0)} m from the commander`);
     world.unload();
     return `${before} → ${after} bodies for ${d.roster.strength} records across the boundary, `
-      + `furthest ${far.toFixed(1)} m from the commander`;
+      + `${inAirNow} flown in, furthest ${far.toFixed(1)} m from the commander`;
   });
 
   check('command: the six formations are six different shapes, and the leash bites', () => {

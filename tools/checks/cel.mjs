@@ -564,7 +564,12 @@ export function run({ check, assert, near }) {
      * quietly went red. `sunDirection` is all that is wanted here. */
     const { sunDirection } = await import('../../src/engine/Engine.js');
     const wet = LEVEL_ORDER.filter((k) => LEVELS[k] && LEVELS[k].water);
-    assert(wet.length >= 4, `only ${wet.length} levels carry a water sheet — re-derive this check`);
+    /* A COUNT, NOT A FLOOR. This read `>= 4` and the roster no longer has
+     * four: Kamino's ocean and the foundry's canal both went with their
+     * levels. The property — a liquid sheet is not a mirror — is about each
+     * sheet there is, so what the check needs is that it found them all and
+     * that there is at least one. */
+    assert(wet.length >= 1, 'no level in the game carries a water sheet at all');
     const rgb = (h) => { const c = new THREE.Color(h); return [c.r, c.g, c.b]; };
     const rows = [];
     let worst = 1, worstAt = '';

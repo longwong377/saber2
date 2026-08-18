@@ -576,11 +576,16 @@ export async function run({ check, assert }) {
         + 'contours is water on screen and dry rock underfoot');
       rows.push(`${key} ${a.toFixed(2)}`);
     }
-    /* Four: the Ember Shelf's sea, Kamino's ocean, the Drowned Wood's bog and
-     * the foundry's canal of melt. That is every level in the roster that has
-     * a liquid in it, so the check surveys all of them — the bar was 5 of 13
-     * and is 4 of 4. */
-    assert(rows.length >= 4, `only ${rows.length} levels with water were surveyed`);
+    /* EVERY LEVEL THAT HAS A LIQUID, and the count is DERIVED rather than
+     * typed — which is the third time that number has had to move. It was 5 of
+     * 13, then 4 of 4 (the Ember Shelf's sea, Kamino's ocean, the Drowned
+     * Wood's bog and the foundry's canal), and Kamino and the foundry are both
+     * deleted. A hand-typed floor beside a derived list is HANDOFF §2.3's
+     * signature defect; what the check actually needs is that it surveyed
+     * every one there is and that there is at least one. */
+    const declared = LEVEL_ORDER.filter((k) => LEVELS[k]?.water).length;
+    assert(rows.length === declared && rows.length >= 1,
+      `${rows.length} of ${declared} levels with water were surveyed`);
     return rows.join(', ');
   });
 

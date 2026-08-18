@@ -375,7 +375,7 @@ export function run({ check, assert, near }) {
      * is a colour decision about a level whose palette is being judged against
      * its own reference plate by the lighting workstream right now. Widening
      * the bound to 0.032 would delete the only measurement that says so. */
-    const lines = [];
+    const lines = [], fails = [];
     for (const name of OUTDOOR) {
       const s = surfaceOf(name);
       const u = terrainOf(name)._uniforms;
@@ -386,16 +386,27 @@ export function run({ check, assert, near }) {
       const sw = ['uBaseCol', 'uGritCol', 'uDustCol', 'uCrustCol', 'uLagCol', 'uSheetCol',
         'uRockCol', 'uRockCol2'].map((k) => chroma([u[k].value.r, u[k].value.g, u[k].value.b]));
       const P = spread(sw);
-      assert(L.sd / L.mean > 0.18,
-        `${name}: albedo luminance varies by only ${(L.sd / L.mean * 100).toFixed(1)}% over the whole map`);
-      assert(C.sd > 0.035,
-        `${name}: chroma varies by only ${C.sd.toFixed(3)} — one hue at several brightnesses `
-        + `(its eight authored swatches spread ±${P.sd.toFixed(3)}, ${Math.min(...sw).toFixed(2)}-${Math.max(...sw).toFixed(2)})`);
-      assert(bare < 0.22,
-        `${name}: ${(bare * 100).toFixed(0)}% of the ground is the bare base coat with nothing layered on it`);
+      /* COLLECTED AND RAISED TOGETHER, not asserted in the loop — HANDOFF
+       * §6.1b's lesson from `cel`, which was TWO failures wearing one message
+       * for a whole session. This loop used to throw on the first level that
+       * failed any clause, so Kamino's chroma was the only thing anybody ever
+       * saw; the bog has been 3 points under the luminance bound the whole
+       * time and became visible the day Kamino was deleted. Every level and
+       * every clause is measured before anything is raised. */
+      if (L.sd / L.mean <= 0.18) {
+        fails.push(`${name}: albedo luminance varies by only ${(L.sd / L.mean * 100).toFixed(1)}% over the whole map`);
+      }
+      if (C.sd <= 0.035) {
+        fails.push(`${name}: chroma varies by only ${C.sd.toFixed(3)} — one hue at several brightnesses `
+          + `(its eight authored swatches spread ±${P.sd.toFixed(3)}, ${Math.min(...sw).toFixed(2)}-${Math.max(...sw).toFixed(2)})`);
+      }
+      if (bare >= 0.22) {
+        fails.push(`${name}: ${(bare * 100).toFixed(0)}% of the ground is the bare base coat with nothing layered on it`);
+      }
       lines.push(`${name} ${(L.sd / L.mean * 100).toFixed(0)}%/±${C.sd.toFixed(3)} bare ${(bare * 100).toFixed(0)}% `
         + `(palette ±${P.sd.toFixed(3)})`);
     }
+    assert(fails.length === 0, fails.join('; '));
     return lines.join('  ');
   });
 
@@ -1814,15 +1825,25 @@ export function run({ check, assert, near }) {
      * ground may cost more than twice the median ground with a landform, which
      * is the same claim without a named neighbour to go stale. Measured: the
      * dearest is Kamino at 1.17× the median. */
+    /* AND THERE ARE NO POURED FLOORS LEFT. Every preset that declared `flat`
+     * belonged to an interior — the works, the foundry, the temple, Kamino's
+     * decks — and every interior is deleted, so this clause has no subject
+     * rather than a failing one. It is kept and gated instead of removed, and
+     * the count is REPORTED either way: the day a level with a deck arrives
+     * (the boarding action wants one) the comparison comes back without
+     * anybody having to rediscover that it existed. */
     const floors = PRESETS.filter((n) => TERRAIN_PRESETS[n].flat);
     const shaped = PRESETS.filter((n) => !TERRAIN_PRESETS[n].flat);
-    assert(floors.length && shaped.length,
-      'every shipped ground is on one side of the flat/shaped line — the cost comparison measured nothing');
-    const dearestFloor = Math.max(...floors.map((n) => cost[n]));
-    const cheapestShaped = Math.min(...shaped.map((n) => cost[n]));
-    assert(dearestFloor < cheapestShaped * 0.6,
-      `a poured floor costs ${dearestFloor.toFixed(0)} ns against ${cheapestShaped.toFixed(0)} ns for the cheapest `
-      + 'ground with a landform — there is landform in a landscape that does not have any');
+    assert(shaped.length >= 4, `only ${shaped.length} shaped grounds — nothing to compare`);
+    let floorNote = 'no poured floor on the roster';
+    if (floors.length) {
+      const dearestFloor = Math.max(...floors.map((n) => cost[n]));
+      const cheapestShaped = Math.min(...shaped.map((n) => cost[n]));
+      assert(dearestFloor < cheapestShaped * 0.6,
+        `a poured floor costs ${dearestFloor.toFixed(0)} ns against ${cheapestShaped.toFixed(0)} ns for the cheapest `
+        + 'ground with a landform — there is landform in a landscape that does not have any');
+      floorNote = `dearest floor ${dearestFloor.toFixed(0)} ns vs cheapest shaped ${cheapestShaped.toFixed(0)} ns`;
+    }
     const sorted = shaped.map((n) => cost[n]).sort((a, b) => a - b);
     const median = sorted[sorted.length >> 1];
     for (const n of shaped) {
@@ -1830,8 +1851,7 @@ export function run({ check, assert, near }) {
         `${n} costs ${(cost[n] / median).toFixed(2)}× the median shaped ground, and height() runs once per foot `
         + 'per character per frame');
     }
-    return rows.join('  ') + `  — floors ≤${dearestFloor.toFixed(0)}ns, shaped ≥${cheapestShaped.toFixed(0)}ns `
-      + `(${(dearestFloor / cheapestShaped).toFixed(2)}×), dearest ${(Math.max(...sorted) / median).toFixed(2)}× median`;
+    return `${rows.join('  ')}  — ${floorNote}, dearest ${(Math.max(...sorted) / median).toFixed(2)}× median`;
   });
 
   check('terrain: a Force landing still craters every ground that is not a deck', () => {

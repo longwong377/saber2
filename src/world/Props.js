@@ -5137,7 +5137,7 @@ export function addCrateStack(world, pos, opts = {}) {
      * average — so the live crate on top of a stack overlapped the static ones
      * beside it by up to 12 cm and stood on their lids instead of on the tier. */
     const p = new THREE.Vector3(x, yy, z).applyAxisAngle(UP, yaw).add(pos);
-    world.addProp(makeCrate(world, p, s, { exactSize: true, toughness: TOUGHNESS.plastoid }));
+    makeCrate(world, p, s, { exactSize: true, toughness: TOUGHNESS.plastoid });
   }
   return stats;
 }
@@ -5894,7 +5894,7 @@ export function addOutpost(world, pos, opts = {}) {
     const a = rr() * TAU, rad = R * (0.35 + rr() * 0.5);
     const p = at(Math.cos(a) * rad, Math.sin(a) * rad);
     p.y = groundY(world, p.x, p.z);          // the ground, not the ground plus a guess
-    world.addProp(rr() < 0.4 ? makeBarrel(world, p) : makeCrate(world, p, 0.8));
+    if (rr() < 0.4) makeBarrel(world, p); else makeCrate(world, p, 0.8);
   }
   return stats;
 }

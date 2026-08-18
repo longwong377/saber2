@@ -538,7 +538,12 @@ export function run({ check, assert }) {
 
     /* …AND CLOSES IT, which is the half that starts the next area. */
     client.command.closeMuster();
-    pump(0.6);
+    /* FOURTEEN SECONDS, because the army comes in on gunships now — the mode's
+     * own first brief has always said so and until this session `deploy` put
+     * them down out of nothing. `closeMuster` asks for ships; a flight is
+     * about four seconds in the air and a roster over six needs two of them.
+     * 0.6 s measured the sky. */
+    pump(14);
     assert(!d.mustering, 'the host is still mustering after the joining commander was done');
     assert(!client.command.mustering && client.command.musterOffer() === null,
       'the joining commander is still holding an offer for a muster that has closed');

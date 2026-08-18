@@ -247,7 +247,17 @@ export function run({ check, assert }) {
      * (how many levels have to agree before "props are sliceable" is a claim
      * about the game rather than about one level) and not the roster size. */
     assert(levels >= 4, `only ${levels} levels have enough reachable objects to measure`);
-    assert(objects > 200, `only ${objects} reachable objects across the whole game`);
+    /* PER LEVEL, for the same reason the capsule clause below already is:
+     * `objects > 200` was a sum over thirteen levels and therefore a roster
+     * count in disguise. Six levels are deleted and the survivors were left
+     * carrying three of the sparsest floors in the game — the Waste offered
+     * ONE liftable object, Geonosis one and the Drowned Wood none — which the
+     * sum could not distinguish from "the roster got smaller". Stated per
+     * level it says the thing it means: a level you can walk across is a level
+     * with things on it. 28 against a measured 34. */
+    assert(objects / LEVEL_ORDER.length > 28,
+      `${objects} reachable objects over ${LEVEL_ORDER.length} levels — `
+      + `${(objects / LEVEL_ORDER.length).toFixed(0)} each`);
     /* 400 was a sum over thirteen levels and is therefore a roster count in
      * disguise — the exact defect this project keeps removing. Six of those
      * levels are deleted and the survivors offer 309, which is MORE per level

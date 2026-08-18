@@ -782,7 +782,7 @@ export async function run({ check, assert, near }) {
     for (let i = 0; i < 30; i++) { p._updateStasis(1 / 60, ctx); w.step(1 / 60); }
     assert(flying.gravityScale === 1, 'a released body never got its gravity back');
     assert(flying.velocity.length() > 20, `the released barrel left at ${flying.velocity.length().toFixed(1)} m/s`);
-    assert(p.hurled.length === 1 && p.hurled[0].body === flying,
+    assert(p.hurled.length === 1 && p.hurled[0].thing === flying,
       'a stasis-launched body cannot hurt what it hits');
     pool.dispose();
     return 'a barrel in flight is caught, held to 0.000 m/s, then launched with its gravity restored';

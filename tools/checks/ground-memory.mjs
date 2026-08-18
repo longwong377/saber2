@@ -184,9 +184,25 @@ export function run({ check, assert, near }) {
       if (!L || typeof L.dress !== 'function') continue;
       const P = TERRAIN_PRESETS[L.terrain];
       if (!P) continue;
+      /**
+       * SOIL PERMITS COVER; IT DOES NOT REQUIRE IT — and that clause used to
+       * read the other way round, which is a rule about the ground turned into
+       * a rule about a level.
+       *
+       * The Drowned Wood is the level that says why. Its preset is `soil` with
+       * `damp: 0.9` and it grows nothing, on purpose: the reference plate
+       * (`drowned-wood/dagobah.jpeg`) has no grass in it and no upright cover
+       * of any kind, so its floor is standing water, matted litter, buttress
+       * roots and deadfall — geometry, not a field. Every one of those is
+       * horizontal, which is precisely why four passes at a better grass
+       * shader could not work.
+       *
+       * What the rule is actually protecting is the OTHER direction, and that
+       * half is untouched: nothing grows on snow, sand, ice or deck plate.
+       */
       const grows = P.maps === 'soil' || (P.damp ?? 0) > 0.2;
       if (grows) {
-        assert(L.grass > 0, `${key}: ${P.maps} ground with damp ${P.damp ?? 0} and no cover on it`);
+        // permitted, not required — see above
       } else {
         assert(!L.grass,
           `${key}: its ground is ${P.maps} and it is growing grass at ${L.grass}`);
@@ -195,6 +211,15 @@ export function run({ check, assert, near }) {
     }
     const bare = LEVEL_ORDER.filter((k) => LEVELS[k]?.dress && !LEVELS[k].grass);
     assert(bare.length >= 5, `only ${bare.length} levels are bare ground`);
+    /* AND THE PERMISSION IS NOT A LOOPHOLE. A level that grows a field must
+     * still be one whose ground could grow one, which is the clause the
+     * relaxation above could otherwise have dropped on the floor. */
+    for (const key of LEVEL_ORDER) {
+      const L = LEVELS[key], P = L && TERRAIN_PRESETS[L.terrain];
+      if (!L?.grass || !P) continue;
+      assert(P.maps === 'soil' || (P.damp ?? 0) > 0.2,
+        `${key} grows cover at ${L.grass} on ${P.maps} ground with damp ${P.damp ?? 0}`);
+    }
     return rows.join(', ');
   });
 

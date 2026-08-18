@@ -258,13 +258,23 @@ class Arrival {
     else this._makeMarch();
   }
 
-  get capacity() { return capacityOf(this.kind); }
+  /* `capOverride` is the Command mode's reinforcement flight and nothing
+   * else. A wave's gunship carries four because four droids spilling out is
+   * the read; a LAAT bringing your own squad down between areas carries the
+   * squad, and at four a thirteen-man roster took three round trips and
+   * twelve seconds to finish arriving. */
+  get capacity() { return this.capOverride ?? capacityOf(this.kind); }
   get full() { return this.manifest.length >= this.capacity; }
   get pending() { return this.manifest.length - this.delivered; }
   /** Seconds before this arrival will put its first body down. */
   get openAt() { return this.kind === 'dropship' ? 3.6 : this.kind === 'gate' ? 2.6 : 0; }
 
-  add(type, mod) { this.manifest.push({ type, mod }); }
+  /* `onBody` is the seam the Command mode needs and nothing else uses: a
+   * trooper record has to be welded to the Enemy the ship puts down, and only
+   * the caller knows which record goes with which slot. Kept per SLOT rather
+   * than per flight, because a gunship carries four and a squad of four is
+   * four different named people. */
+  add(type, mod, onBody = null) { this.manifest.push({ type, mod, onBody }); }
 
   /* ── the ship ──────────────────────────────────────────────────────── */
 
@@ -516,6 +526,8 @@ class Arrival {
     const e = deliver(slot.type, slot.mod, point, this);
     this.delivered++;
     if (!e) return;
+    // …and whoever asked for this body gets it before anything else touches it.
+    slot.onBody?.(e, this);
 
     if (this.kind === 'dropship') {
       // dropped, not placed: it falls the last few metres and lands on its own
@@ -590,9 +602,18 @@ export class ArrivalDirector {
    * only reused for another body with the same bearing, or a bearing wave would
    * pick up a ship already inbound from the far side.
    */
-  request(type, mod = null, bearing = null, arc = Math.PI / 2) {
+  request(type, mod = null, bearing = null, arc = Math.PI / 2, onBody = null, opts = {}) {
     if (!this.enabled) return false;
-    this.staging.push({ type, mod, bearing, arc });
+    /* `kind` and `near` OVERRIDE THE LEVEL'S TABLE, and there is exactly one
+     * caller: your own reinforcements at an area boundary. `ARRIVAL_BY_TERRAIN`
+     * answers "how does the ENEMY get onto this ground" — which on Geonosis is
+     * mostly a march, deliberately, because the walk across the plain is the
+     * point of the place. Your gunships are not answering that question. They
+     * land, in the open, next to you, which is what the mode's own first brief
+     * describes; drawn from the same table they walked in from 134 m and the
+     * area started without them. */
+    this.staging.push({ type, mod, bearing, arc, onBody, kind: opts.kind || null,
+      near: opts.near ?? null, cap: opts.cap ?? 0 });
     return true;
   }
 
@@ -650,14 +671,18 @@ export class ArrivalDirector {
     return this._ground(out.set(ax + Math.cos(a) * rMin, 0, az + Math.sin(a) * rMin));
   }
 
-  _open(kind, A, bearing = null, arc = Math.PI / 2) {
+  _open(kind, A, bearing = null, arc = Math.PI / 2, near = null, cap = 0) {
     const anchor = this._anchor(new THREE.Vector3());
     const ring = this._ring();
-    const at = kind === 'march'
-      ? this._sitePoint(ring * MARCH_RADIUS, ring * MARCH_RADIUS * 1.14, new THREE.Vector3(), bearing, arc)
-      : this._sitePoint(ring * 0.72, ring * 0.94, new THREE.Vector3(), bearing, arc);
+    const at = near !== null
+      ? this._sitePoint(near * 0.55, near, new THREE.Vector3(), bearing, arc)
+      : kind === 'march'
+        ? this._sitePoint(ring * MARCH_RADIUS, ring * MARCH_RADIUS * 1.14, new THREE.Vector3(), bearing, arc)
+        : this._sitePoint(ring * 0.72, ring * 0.94, new THREE.Vector3(), bearing, arc);
     const f = new Arrival(this.world, kind, at, anchor, this.group);
     f.bearing = bearing;
+    f.near = near;
+    if (cap) f.capOverride = cap;
     this.flights.push(f);
     return f;
   }
@@ -667,14 +692,14 @@ export class ArrivalDirector {
     while (this.staging.length && this.flights.filter(f => !f.done).length < MAX_CONCURRENT) {
       const slot = this.staging[0];
       const A = this.archetypes[slot.type];
-      const kind = arrivalKindFor(this.world.level, A, rng);
+      const kind = slot.kind || arrivalKindFor(this.world.level, A, rng);
       // an existing flight of the right kind with room takes it, so a squad
       // rides in together instead of one ship per droid
       const want = slot.bearing ?? null;
       let f = this.flights.find(x => !x.done && x.kind === kind && !x.full && x.age < x.openAt * 0.6
-        && (x.bearing ?? null) === want);
-      if (!f) f = this._open(kind, A, want, slot.arc ?? Math.PI / 2);
-      f.add(slot.type, slot.mod);
+        && (x.bearing ?? null) === want && (x.near ?? null) === (slot.near ?? null));
+      if (!f) f = this._open(kind, A, want, slot.arc ?? Math.PI / 2, slot.near ?? null, slot.cap ?? 0);
+      f.add(slot.type, slot.mod, slot.onBody);
       this.staging.shift();
     }
 

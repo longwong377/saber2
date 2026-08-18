@@ -2100,7 +2100,9 @@ export class World {
     } else if (t.prop) {
       const halves = t.prop.cut(ev.point, ev.normal, ev.impulse);
       if (!halves) t.prop.shatter(ev.impulse, ev.point);
-      else { for (const h of halves) this.props.push(h); }
+      // …and nothing else: the halves are `Prop`s built in `Prop.cut`, and a
+      // `Prop` puts itself in this list from its own constructor. The push
+      // that stood here was the second copy of every cut half in the game.
       // Only the capsule that parted, when the target is the destruction proxy.
       // Every destructible structure in the level shares that one proxy id, so
       // the prefix sweep was resetting grind progress on every column and wall

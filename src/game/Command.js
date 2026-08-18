@@ -1428,6 +1428,8 @@ export class CommandDirector extends WaveDirector {
     this.done = false;
     /** Raised while the muster is open, so no wave starts under the screen. */
     this.mustering = false;
+    /** Trooper records currently riding a gunship in. See `deploy`. */
+    this._inbound = new Set();
     /** Every promotion, death and order — the campaign's own log. */
     this.log = [];
     this.onRoster = null;         // (summary) => void      — the HUD's feed
@@ -1762,7 +1764,7 @@ export class CommandDirector extends WaveDirector {
    * they arrived with you; the enemy is the thing that has to be announced from
    * a distance, and `Arrivals.js` already owns that.
    */
-  deploy(c = this.commander) {
+  deploy(c = this.commander, opts = {}) {
     const w = this.world;
     if (!w || typeof w.spawnEnemy !== 'function' || !c) return 0;
     /**
@@ -1777,6 +1779,33 @@ export class CommandDirector extends WaveDirector {
      */
     const anchor = c.anchor || c.player?.position || w.player?.position || _v1.set(0, 0, 0);
     const live = c.roster.living;
+    /**
+     * AND THEY COME IN ON SHIPS, which the mode's own first brief has always
+     * claimed and the code never did: "The gunships put you down in the open."
+     * Ten troopers appearing out of nothing in a ring around you is the same
+     * event as a wave spawning, and the player asked whether it was even
+     * happening — "the new troops arrive (hopefully via ship I haven't
+     * confirmed that)".
+     *
+     * `ArrivalDirector` already flies the gunship, opens the doors, drops the
+     * squad the last few metres and makes the landing puff, and it already
+     * carries four bodies a flight so a squad rides in together. All it was
+     * missing was a way to weld the trooper RECORD to the body it puts down —
+     * `onBody`, one seam, used by nothing else.
+     *
+     * It falls back to placing them by hand whenever arrivals are off: the
+     * sandbox, the training dojo and every headless check turn them off, and a
+     * campaign that cannot deploy without a ship is a campaign that cannot be
+     * tested.
+     */
+    /* OPT-IN, and the default is the instant placement this method has always
+     * done. A ship is four seconds of flight and that is right for the ONE
+     * moment the brief describes — the army coming down at the top of an area
+     * — and wrong for everything else `deploy` answers, which is "this record
+     * has no body and needs one now": a mid-wave replacement standing around
+     * for four seconds is a hole in your line, not a cinematic. So
+     * `closeMuster` and the meeting ask for ships and nothing else does. */
+    const air = opts.byShip && this.arrivals?.enabled ? this.arrivals : null;
     let n = 0;
     for (let i = 0; i < live.length; i++) {
       const t = live[i];
@@ -1791,12 +1820,28 @@ export class CommandDirector extends WaveDirector {
         if (!w.terrain.inBounds(_v2.x, _v2.z, 8)) _v2.set(anchor.x, 0, anchor.z);
         _v2.y = w.terrain.height(_v2.x, _v2.z);
       }
-      const e = w.spawnEnemy(t.type, _v2);
-      if (!e) continue;
       /* THE COMMANDER'S SIDE, not the world's one constant. `world.partyTeam`
        * is the LOCAL player's side and there is one of it; a second army on it
        * would be an ally of the first, which is the whole question. */
-      enlistBody(e, t, { team: c.side, teamDamage: this.teamDamage, director: this, cmdr: c });
+      /* ALREADY ON A SHIP. `deploy` is called from three places and one of
+       * them — `start`, whose guard is "does any living record lack a body" —
+       * would otherwise re-order the whole army every frame of the four
+       * seconds a gunship spends in the air, and land ten copies of it. A
+       * record in the air has no body and is not missing one. */
+      if (this._inbound.has(t)) continue;
+      const enlist = (e) => {
+        this._inbound.delete(t);
+        enlistBody(e, t, { team: c.side, teamDamage: this.teamDamage, director: this, cmdr: c });
+      };
+      /* 18 m, and the check holds it under 30: a gunship that sets your line
+       * down at the far edge of the spawn ring has not reinforced you, it has
+       * started them on a walk. */
+      if (air && air.request(t.type, null, null, Math.PI / 2, enlist, { kind: 'dropship', near: 18, cap: 6 })) {
+        this._inbound.add(t); n++; continue;
+      }
+      const e = w.spawnEnemy(t.type, _v2);
+      if (!e) continue;
+      enlist(e);
       n++;
     }
     this._announceRoster();
@@ -1804,9 +1849,9 @@ export class CommandDirector extends WaveDirector {
   }
 
   /** Every commander's army onto the field at once. Returns the total. */
-  deployAll() {
+  deployAll(opts = {}) {
     let n = 0;
-    for (const c of this.commanders) n += this.deploy(c);
+    for (const c of this.commanders) n += this.deploy(c, opts);
     return n;
   }
 
@@ -1837,6 +1882,10 @@ export class CommandDirector extends WaveDirector {
    */
   recall(c = null) {
     if (!c) { let n = 0; for (const k of this.commanders) n += this.recall(k); return n; }
+    /* Anything still in the air is not coming: `Waves.reset` empties the
+     * staging list at an area boundary anyway, and a record left in this set
+     * would never be deployed again. */
+    for (const t of c.roster.all) this._inbound.delete(t);
     let n = 0;
     for (const t of c.roster.all) {
       const e = t.body;
@@ -1845,7 +1894,35 @@ export class CommandDirector extends WaveDirector {
       e.trooper = null;
       if (e.dead) continue;
       e.dead = true;
-      e.dying = 0;
+      /**
+       * `dying` IS THE EXIT, AND IT WAS 0 — WHICH IS THE WHOLE OF NOTE #5.
+       *
+       * "every time you select additional reinforcements in command mode the
+       * new troops arrive but the issue is that the previous surviving troops
+       * become frozen and totally inanimate and are lost essentially."
+       *
+       * They were. `World`'s enemy loop disposes a body when `update` returns
+       * falsy, and for a dead one that is `this.dying < 40` — forty seconds.
+       * And `Enemy.update` on a dead body poses NOTHING: it advances the
+       * dying clock, steps the actor and returns. A body killed in combat
+       * looks right through that window because its death ragdolled it; a body
+       * WITHDRAWN never went limp, so what stands there is a soldier in a walk
+       * pose, perfectly still, for forty seconds — while the muster screen
+       * opens over the top of it and the replacements land alongside.
+       *
+       * A withdrawal is not a death and it is not a corpse. `dying` past the
+       * ceiling makes the body leave on the very next frame through the door
+       * every other body leaves by, which is also what keeps `Corpses` from
+       * spending any of its budget on ten men who walked away.
+       */
+      e.dying = 1e6;
+      /* AND IT LEAVES THE FRAME LIKE SOMETHING LEFT. A withdrawal with no
+       * mark on it reads as a body deleted, which is the other half of "lost
+       * essentially" — so the same dust a hard landing makes, at the feet of
+       * everyone getting on the ship. */
+      this.world?.particles?.sandPuff?.(e.position.clone(), 1.6,
+        this.world.terrain?.height(e.position.x, e.position.z) ?? e.position.y,
+        this.world.groundColor);
       // No score, no kill, no casualty: `World.onEnemyKilled` returns before it
       // pays anything for a body that is not on team 1, and `onDeath` sees no
       // trooper on it.
@@ -2346,7 +2423,7 @@ export class CommandDirector extends WaveDirector {
       return;
     }
     super.start(wave);
-    if (this.roster.living.some((t) => !t.body || t.body.dead)) this.deploy();
+    if (this.roster.living.some((t) => (!t.body || t.body.dead) && !this._inbound.has(t))) this.deploy();
   }
 
   /**
@@ -2692,7 +2769,9 @@ export class CommandDirector extends WaveDirector {
      * that cannot leave a client playing an area the host has not begun. */
     if (this._netShell) return this.world?.requestMuster?.(null, true) ?? false;
     this.mustering = false;
-    this.deploy();
+    // THE GUNSHIPS, which is what the mode's first brief has always said
+    // happens and what the code never did. See `deploy`.
+    this.deploy(this.commander, { byShip: true });
     /* The card comes down on every OTHER machine too, and this is the half a
      * client cannot do for itself: the host's player pressing Done is the only
      * thing that ends the muster, so a peer sitting on an open card would sit

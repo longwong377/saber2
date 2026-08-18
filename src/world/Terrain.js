@@ -1548,7 +1548,7 @@ export const TERRAIN_PRESETS = {
     maps: 'soil',
     gritColor: 0x33301f, rockColor2: 0x38423a,
     // the two ends of the 58 m patchwork: dry leaf litter against black peat
-    dustColor: 0x584a33, crustColor: 0x2a2a1e,
+    dustColor: 0x584a33, crustColor: 0x1a1a12,
     // Nothing here is steep enough to be rock; what stone there is sits in the
     // water as boulders, and the dressing puts it there.
     slopeBands: [0.16, 0.42, 0.08, 0.24],
@@ -1556,13 +1556,13 @@ export const TERRAIN_PRESETS = {
     crust: 0.0, damp: 0.9, strataH: 2.0,
     wind: [0.36, 0.93],
     macro: [58, 0.42, 0.30, 1.05],
-    lagColor: 0x3a3b2c, sheetColor: 0x63563c,
+    lagColor: 0x3a3b2c, sheetColor: 0x7e6c47,
     /* Peat, and it is the deepest and slowest-recovering surface in the game
      * after the alpine snowpack. A footprint in saturated peat fills with
      * water and stays: 0.20 m of give and 420 s of e-folding, which is seven
      * minutes — longer than a run spends here. */
     loose: { depth: 0.20, refill: 420, tilt: 0.72, tint: 0.52, soot: 1.0 },
-    packedColor: 0x241f14,
+    packedColor: 0x151007,
     // Water does not ripple a forest floor into corduroy.
     ripple: 0.25, ripAspect: 1.0,
     detail: [1.15, 26],
@@ -1745,7 +1745,25 @@ export const TERRAIN_PRESETS = {
        * are full of, without another octave of the expensive term. */
       const open = smoothstep(66, 106, d);
       const m = clamp((ridged2(x * 0.0042 - 4.7, z * 0.0042 + 2.9, 3) - 0.62) / 0.30, 0, 1);
-      const stack = strata(smoothstep(0, 0.62, m) * 44 * open, 7.5, 0.46, 21.3);
+      /* 0.34, not 0.46, AND THE BOUND IS A CLIMB RATHER THAN A LOOK. `strata`
+       * quantises with `pow(f, p)` where p runs to 5.8, so at the top of a bed
+       * the riser's local slope is the strength times that exponent — this
+       * ground reached 21.9 (87.4°) against verify's bound of 20, which is the
+       * steepest anything in the game is allowed to be because a face past it
+       * is one the gait solver cannot walk and the player cannot leave.
+       *
+       * It was invisible for as long as Kamino was on the roster: that preset
+       * failed the same clause at 24.7 and the loop asserts per preset, so the
+       * first one to fail was the only one anybody saw. Deleting Kamino
+       * uncovered this one, which had been over the line the whole time.
+       *
+       * The BENCHES are what this term is for and they survive: 0.34 keeps the
+       * flat-topped stack and the stepped wall, and takes the worst riser to
+       * 18.6 (86.9°). What is lost is half a degree on the sheerest bed edge
+       * in the level, which is not a thing anybody can see and is the
+       * difference between a wall you can be pushed against and one you can be
+       * trapped on. */
+      const stack = strata(smoothstep(0, 0.62, m) * 44 * open, 7.5, 0.34, 21.3);
       const m2 = clamp((ridged2(x * 0.0126 + 8.2, z * 0.0126 - 5.1, 2) - 0.66) / 0.26, 0, 1);
       const rubble = smoothstep(0, 0.7, m2) * 8.0 * open;
 

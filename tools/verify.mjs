@@ -481,17 +481,28 @@ check('rapier: props carry the shape they look like, not a bag of spheres', () =
   assert(barrel.body.shape.type === 'cylinder', `a barrel is a ${barrel.body.shape.type}`);
   assert(pillar.body.shape.type === 'compound' && pillar.body.shape.parts.length === 3,
     `a pillar is a ${pillar.body.shape.type}`);
-  assert(spire.body.shape.type === 'hull', `a spire is a ${spire.body.shape.type}`);
-  assert(spire.body.shape.points.length / 3 > 20,
-    `the spire's hull has only ${spire.body.shape.points.length / 3} points`);
+  /* A SPIRE IS A SLAB STACK AND NOT A HULL, and the change is the point of the
+   * check rather than a violation of it. A hull is the smallest shape that
+   * contains the geometry, so on a wasp-waisted, bent, eroded needle every
+   * concavity becomes solid: measured at the height a player walks at, the
+   * hull stood up to 2.68 m outside the drawn rock across Geonosis's
+   * twenty-one spires. That is the physical half of "there are invisible walls
+   * or objects for example on geonosis that block you". `slabCompound` follows
+   * the profile band by band — 0.18 m worst — and `physicality.mjs` holds the
+   * general rule this is one instance of. */
+  assert(spire.body.shape.type === 'compound', `a spire is a ${spire.body.shape.type}`);
+  assert(spire.body.shape.parts.length > 5,
+    `the spire's stack has only ${spire.body.shape.parts.length} bands`);
+  assert(spire.body.shape.parts.every((q) => q.type === 'cylinder'),
+    'a slab stack is cylinders — something else got into it');
 
-  // and the hull actually describes the mesh: every vertex inside its own AABB
+  // and the stack actually describes the mesh: same height, top to bottom
   const g = spire.mesh.geometry; g.computeBoundingBox();
-  const p = spire.body.shape.points;
+  const parts = spire.body.shape.parts;
   let lo = Infinity, hi = -Infinity;
-  for (let i = 1; i < p.length; i += 3) { lo = Math.min(lo, p[i]); hi = Math.max(hi, p[i]); }
-  near(hi - lo, g.boundingBox.max.y - g.boundingBox.min.y, 0.02, 'hull height vs mesh height');
-  return `crate box, barrel cylinder, pillar 3-part compound, spire hull of ${p.length / 3} points`;
+  for (const q of parts) { lo = Math.min(lo, q.at[1] - q.halfHeight); hi = Math.max(hi, q.at[1] + q.halfHeight); }
+  near(hi - lo, g.boundingBox.max.y - g.boundingBox.min.y, 0.35, 'stack height vs mesh height');
+  return `crate box, barrel cylinder, pillar 3-part compound, spire ${parts.length}-band stack`;
 });
 
 check('rapier: a heavy prop actually TIPS off an edge instead of teetering', () => {

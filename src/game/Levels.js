@@ -1401,7 +1401,7 @@ function works(world, opts = {}) {
     field: (x, z) => field.at(x, z), rmin: 12, rmax: R - 6, count: opts.crates ?? 24,
     clearance: 2.6, spawnClear: 11, maxSlope: 0.3, tries: 14,
   }, (pos) => {
-    world.addProp(rng() < 0.3 ? makeBarrel(world, pos) : makeCrate(world, pos, 0.85));
+    if (rng() < 0.3) makeBarrel(world, pos); else makeCrate(world, pos, 0.85);
   });
   for (let k = 0; k < (opts.stacks ?? 5); k++) {
     const site = findSite(world, 16, R - 10, { clearance: 5, spawnClear: 11, maxSlope: 0.3 });
@@ -1544,7 +1544,7 @@ function cut(world, opts = {}) {
    * apart. */
   for (let k = 0; k < 18; k++) {
     const site = findSite(world, 12, 70, { clearance: 3.2, maxSlope: 0.32, minHeight: wet + 0.3, tries: 18 });
-    if (site) world.addProp(rng() < 0.4 ? makeBarrel(world, site.pos) : makeCrate(world, site.pos, 0.8));
+    if (site) if (rng() < 0.4) makeBarrel(world, site.pos); else makeCrate(world, site.pos, 0.8);
   }
   for (let k = 0; k < 5; k++) {
     const site = findSite(world, 16, 68, { clearance: 7, maxSlope: 0.4 });
@@ -1956,6 +1956,20 @@ export const LEVELS = {
         addOutcrop(world, site.pos, { size: 5 + rng() * 4, height: 7 + rng() * 6, seed: 640 + k, mat: M.stone });
       }
       strewWrecks(world, { seed: 8820, radius: 118, clusters: 7, mat: M.hull });
+      /* WHAT THE WRECKS SPILLED. `strewWrecks` builds the hull frames, which
+       * are scenery with colliders; these are the loose objects that go with
+       * them — the things you can cut, lift and throw. `sliceable.mjs` counts
+       * exactly that per level and this one offered ONE, which is a level you
+       * can only fight people on. */
+      for (let k = 0; k < 8; k++) {
+        const site = findSite(world, 20, 116, { clearance: 6, maxSlope: 0.32, tries: 18 });
+        if (site) addCrateStack(world, site.pos, { count: 2 + (rng() * 4 | 0), seed: 8840 + k });
+      }
+      for (let k = 0; k < 12; k++) {
+        const site = findSite(world, 12, 122, { clearance: 3, maxSlope: 0.36, tries: 14 });
+        if (!site) continue;
+        if (rng() < 0.38) makeBarrel(world, site.pos); else makeCrate(world, site.pos, 0.82);
+      }
       strewGround(world, { seed: 8826, radius: 124, spread: 0.30, mat: M.stone,
         landmarks: 1.1, boulders: 1.0, cobble: 1.0 });
       return 9;
@@ -2065,7 +2079,36 @@ export const LEVELS = {
        * piling. Nothing here is a collider and nothing is over a metre high: a
        * snowfield you trip on is a snowfield you cannot fight in. */
       strewSnowForms(world, { seed: 9932, radius: 148, spread: 0.52 });
-      return 9;
+
+      /**
+       * AND SOMETHING TO CUT, because the stone field was carrying that too.
+       *
+       * Taking the rocks out took the level's whole loose-object population
+       * with them — `sliceable.mjs` counts how many levels have enough
+       * reachable objects for "props are cuttable" to be a claim about the
+       * game, and this one fell to nothing. A cirque with no stone in it is
+       * right; a cirque with nothing in it at all is a plate.
+       *
+       * What belongs above the treeline is what somebody LEFT there, and it is
+       * also what the level's own fiction wants: this is a pass, so it is a
+       * route, so there is wreckage on it. Hulls half drifted over, a supply
+       * cache somebody dug in and abandoned, and the crates out of it. All of
+       * it stands clear of the snow, which is the other thing the level needed
+       * — `world-immersion` measures how much walkable ground has nothing with
+       * a silhouette in view of it.
+       */
+      strewWrecks(world, { count: 5, rmin: 34, rmax: 128, maxSlope: 0.34, seed: 9940 });
+      for (let k = 0; k < 7; k++) {
+        const site = findSite(world, 18, 118, { clearance: 6, maxSlope: 0.30, tries: 18 });
+        if (!site) continue;
+        addCrateStack(world, site.pos, { count: 2 + (rng() * 4 | 0), seed: 9950 + k });
+      }
+      for (let k = 0; k < 10; k++) {
+        const site = findSite(world, 12, 130, { clearance: 3, maxSlope: 0.34, tries: 14 });
+        if (!site) continue;
+        if (rng() < 0.4) makeBarrel(world, site.pos); else makeCrate(world, site.pos, 0.8);
+      }
+      return 11;
     },
   },
 
@@ -2414,7 +2457,7 @@ export const LEVELS = {
       // wants a clear centre and its cover at arm's reach from the edge of it.
       for (let i = 0; i < 9; i++) {
         const site = findSite(world, 20, 52, { bias: 1.6, clearance: 4.5, maxSlope: 0.24, minHeight: sea + 1.0 });
-        if (site) world.addProp(rng() < 0.34 ? makeBarrel(world, site.pos) : makeCrate(world, site.pos, 0.85));
+        if (site) if (rng() < 0.34) makeBarrel(world, site.pos); else makeCrate(world, site.pos, 0.85);
       }
       for (let k = 0; k < 3; k++) {
         const site = findSite(world, 26, 62, { clearance: 6, maxSlope: 0.22, minHeight: sea + 1.0 });
@@ -2777,7 +2820,7 @@ export const LEVELS = {
       // ── What a working face has lying on it.
       for (let i = 0; i < 12; i++) {
         const site = findSite(world, 22, 92, { clearance: 4.0, maxSlope: 0.26, minHeight: melt + 1.4 });
-        if (site) world.addProp(rng() < 0.36 ? makeBarrel(world, site.pos) : makeCrate(world, site.pos, 0.85));
+        if (site) if (rng() < 0.36) makeBarrel(world, site.pos); else makeCrate(world, site.pos, 0.85);
       }
       for (let k = 0; k < 4; k++) {
         const site = findSite(world, 28, 88, { clearance: 6, maxSlope: 0.22, minHeight: melt + 1.6 });
@@ -3441,6 +3484,19 @@ export const LEVELS = {
        * cover field paints — but the COBBLE grade runs at full strength,
        * because a bog floor is glacial till and because the chip survey needs
        * enough of it to have something to measure. */
+      /* WHAT CAME DOWN IN HERE WITH THE HULLS. A wood of eighteen hundred
+       * trunks and four hull sections had, measured, ZERO liftable objects on
+       * its floor — a level whose only cuttable thing is the trees. The
+       * supplies that went down with the wrecks are the honest source. */
+      for (let k = 0; k < 6; k++) {
+        const site = findSite(world, 20, 140, { clearance: 5, maxSlope: 0.30, minHeight: wet + 0.3, tries: 18 });
+        if (site) addCrateStack(world, site.pos, { count: 2 + (rng() * 3 | 0), seed: 5660 + k });
+      }
+      for (let k = 0; k < 12; k++) {
+        const site = findSite(world, 12, 150, { clearance: 3, maxSlope: 0.34, minHeight: wet + 0.1, tries: 14 });
+        if (!site) continue;
+        if (rng() < 0.35) makeBarrel(world, site.pos); else makeCrate(world, site.pos, 0.8);
+      }
       strewGround(world, { seed: 5620, radius: 180, spread: 0.26, patch: 34, shun: 0.62,
         mat: M.stoneDark, landmarks: 0.7, boulders: 0.8, cobble: 1.2 });
 
@@ -3775,6 +3831,20 @@ LEVELS.geonosis = {
      * on — you are joining it — so the hulls are the level's own history and
      * they are what every smoke column is standing on. */
     strewWrecks(world, { seed: 9120, count: 14, rmin: 34, rmax: 235, mat: M.hull });
+    /* AND WHAT AN ARMY LEFT ON IT. This level's own note says the fiction is
+     * that the battle has already been going on and you are joining it, and
+     * fourteen wreck clusters said so at the SCENERY scale while the floor
+     * between them held one liftable object in total. Ammunition crates,
+     * fuel drums and the stacks they came off. */
+    for (let k = 0; k < 10; k++) {
+      const site = findSite(world, 22, 190, { clearance: 6, maxSlope: 0.30, tries: 18 });
+      if (site) addCrateStack(world, site.pos, { count: 2 + (rng() * 4 | 0), seed: 9160 + k });
+    }
+    for (let k = 0; k < 16; k++) {
+      const site = findSite(world, 14, 200, { clearance: 3, maxSlope: 0.34, tries: 14 });
+      if (!site) continue;
+      if (rng() < 0.4) makeBarrel(world, site.pos); else makeCrate(world, site.pos, 0.84);
+    }
 
     /* THE SMOKE. See src/world/Smoke.js: seven columns, one draw call, leaning
      * downwind on the preset's own wind vector so they agree with the drifted
