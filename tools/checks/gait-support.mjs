@@ -92,7 +92,7 @@ import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
  * catch either: it knows five syntactic forms and a bare array of strings is
  * none of them, which its own note predicts.
  */
-const LEVELS_FOR_EQUIV = ['temple', 'scoria', LEVEL_ORDER[3] ?? LEVEL_ORDER[1]]
+const LEVELS_FOR_EQUIV = ['alpine', 'scoria', LEVEL_ORDER[3] ?? LEVEL_ORDER[1]]
   .filter((k, i, a) => a.indexOf(k) === i);
 for (const k of LEVELS_FOR_EQUIV) {
   if (!LEVELS[k]) {
@@ -231,7 +231,7 @@ async function measureInner(THREE) {
    * half of the work directly, so it is a number rather than a wall clock on a
    * box with three other agents on it.
    */
-  const world = await fight(THREE, 'temple');
+  const world = await fight(THREE, 'alpine');
   const input = idleInput();
   for (let f = 0; f < 60; f++) world.update(1 / 60, input);
   const boxes = world.physics.staticBoxes;

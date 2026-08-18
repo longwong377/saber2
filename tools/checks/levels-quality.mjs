@@ -305,82 +305,90 @@ export async function run({ check, assert }) {
     for (let f = 0; f < 60 * 8 && !e.dead; f++) mus.update(1 / 60, held(0, 0));
     assert(e.dead, 'a droid stood in the lava sea for eight seconds and walked out of it');
 
-    /* THE FOUNDRY'S CANAL, which is the one this game puts a claim about on
-     * screen: `works()` passes note "the melt is not cover" into world.notify.
-     * It was a decal over a 0.75 m channel with 40° banks. */
-    const fou = (await level('foundry')).world;
-    const FT = fou.terrain, fwl = fou.level.water.level;
-    let melt = null;
-    outer2: for (let b = 0; b < 96; b++) {
-      const a = (b / 96) * Math.PI * 2;
-      for (let r = 6; r < 90; r += 1) {
-        const x = Math.cos(a) * r, z = Math.sin(a) * r;
-        if (FT.height(x, z) < fwl - 0.2) { melt = { x, z }; break outer2; }
-      }
+    /* THE FOUNDRY'S CANAL was the second damaging sheet and the Foundry is
+     * deleted, so the clause is DERIVED rather than deleted: every level whose
+     * water declares `damage` must kill a body standing in it. That is the
+     * property the canal was one instance of, it cannot pass vacuously (the
+     * roster is asserted non-empty), and the day a new level pours melt it is
+     * already covered. */
+    const burners = [];
+    for (const key of LEVEL_ORDER) {
+      const L = LEVELS[key];
+      if (!L?.water?.damage) continue;
+      burners.push(key);
     }
-    assert(melt, 'no melt found on the foundry floor at all');
-    const fp = stand(fou, melt.x, melt.z, 0);
+    assert(burners.length >= 1, 'no level in the game declares a damaging water sheet');
     let fdied = -1;
-    for (let f = 0; f < 60 * 6 && fdied < 0; f++) {
-      fou.update(1 / 60, held(0, 0));
-      if (!fp.alive) fdied = f / 60;
+    for (const key of burners) {
+      const w = (await level(key)).world;
+      const WT = w.terrain, wwl = w.level.water.level;
+      let hot = null;
+      outer2: for (let b = 0; b < 96; b++) {
+        const a = (b / 96) * Math.PI * 2;
+        for (let r = 6; r < 120; r += 1) {
+          const x = Math.cos(a) * r, z = Math.sin(a) * r;
+          if (WT.height(x, z) < wwl - 0.2) { hot = { x, z }; break outer2; }
+        }
+      }
+      assert(hot, `no ${key} sheet found to stand in at all`);
+      const fp = stand(w, hot.x, hot.z, 0);
+      let d = -1;
+      for (let f = 0; f < 60 * 6 && d < 0; f++) {
+        w.update(1 / 60, held(0, 0));
+        if (!fp.alive) d = f / 60;
+      }
+      assert(d > 0 && d < 4.0,
+        `standing in ${key}'s burning sheet for six seconds left the player `
+        + `${fp.alive ? 'alive' : 'dead'} at ${fp.hp.toFixed(0)} HP — the level declares it damaging`);
+      fdied = d;
     }
-    assert(fdied > 0 && fdied < 4.0,
-      `standing in the melt canal for six seconds left the player ${fp.alive ? 'alive' : 'dead'} at `
-      + `${fp.hp.toFixed(0)} HP — this level's own notify calls it "not cover"`);
 
-    const kam = (await level('kamino')).world;
-    const wl = kam.level.water.level;
-    const KT = kam.terrain;
+    /* THE WADE. Kamino's ocean was the subject and Kamino is deleted, so this
+     * walks every level that declares a HARMLESS sheet instead — the property
+     * was never about one platform, it is "a level with water in it does not
+     * let you stroll along the seabed with the camera under the surface". */
+    const waders = LEVEL_ORDER.filter((k) => LEVELS[k]?.water && !LEVELS[k].water.damage);
+    assert(waders.length >= 1, 'no level in the game declares a harmless water sheet');
     let worstDepth = -Infinity, eyeUnder = 0, frames = 0, shores = 0, endDepth = -Infinity;
-    for (let b = 0; b < 6; b++) {
-      const yaw = (b / 6) * Math.PI * 2;
-      const dx = Math.sin(yaw), dz = Math.cos(yaw);
-      let shore = -1;
-      for (let r = 6; r < 150; r += 1) {
-        if (KT.height(dx * r, dz * r) < wl) { shore = r; break; }
+    for (const key of waders) {
+      const kam = (await level(key)).world;
+      const wl = kam.level.water.level;
+      const KT = kam.terrain;
+      for (let b = 0; b < 6; b++) {
+        const yaw = (b / 6) * Math.PI * 2;
+        const dx = Math.sin(yaw), dz = Math.cos(yaw);
+        let shore = -1;
+        for (let r = 6; r < 150; r += 1) {
+          if (KT.height(dx * r, dz * r) < wl) { shore = r; break; }
+        }
+        if (shore < 12) continue;
+        shores++;
+        // yaw + π: forward is `-(sin yaw, cos yaw)`, so this is what walks the
+        // player OUT along the bearing rather than back across the deck.
+        const q = stand(kam, dx * (shore - 10), dz * (shore - 10), yaw + Math.PI);
+        for (let f = 0; f < 60 * 12; f++) {
+          q.camera.yaw = yaw + Math.PI;
+          kam.update(1 / 60, held(0, 1));
+          worstDepth = Math.max(worstDepth, wl - q.position.y);
+          if (q.position.y + 1.62 < wl) eyeUnder++;
+          frames++;
+        }
+        endDepth = Math.max(endDepth, wl - q.position.y);
       }
-      if (shore < 12) continue;
-      shores++;
-      // yaw + π: forward is `-(sin yaw, cos yaw)`, so this is what walks the
-      // player OUT along the bearing rather than back across the deck.
-      const q = stand(kam, dx * (shore - 10), dz * (shore - 10), yaw + Math.PI);
-      for (let f = 0; f < 60 * 12; f++) {
-        q.camera.yaw = yaw + Math.PI;
-        kam.update(1 / 60, held(0, 1));
-        worstDepth = Math.max(worstDepth, wl - q.position.y);
-        if (q.position.y + 1.62 < wl) eyeUnder++;
-        frames++;
-      }
-      endDepth = Math.max(endDepth, wl - q.position.y);
     }
-    assert(shores >= 4, `only ${shores} of 6 bearings off the platform found the sea`);
-    /* Three bars, because a plunge and a walk are different things. The deck
-     * stands 5.6 m over the sea and its edge is a chamfer you slide off, so
-     * walking off it is a FALL and the fall wins against the shove for the
-     * second it lasts — the player goes 2.4 m under. What must not happen is
-     * what used to: 45 s of walking finishing on the seabed at y = -9.0 with
-     * the camera under the ocean for 64% of the walk. So: never deep enough to
-     * be swimming, back in the shallows by the end of the bearing, and the eye
-     * under the surface for moments rather than for the level. */
+    assert(shores >= 2, `only ${shores} bearings across ${waders.length} levels found open water`);
+    /* Three bars, because a plunge and a walk are different things. Never deep
+     * enough to be swimming, back in the shallows by the end of the bearing,
+     * and the eye under the surface for moments rather than for the level. */
     assert(worstDepth < 3.0,
-      `the player reached ${worstDepth.toFixed(1)} m below the surface of the ocean — the seabed is at `
-      + '-9.0 m and the deck is the level');
-    /* 2.0 m at the end, not 1.0: a player who keeps holding forward comes to
-     * rest in a standoff a little seaward of the wade line — the shove is
-     * 7.5 m/s against a 4.6 m/s walk, but the shove runs up the bed's own
-     * gradient and the walk does not, so the balance point sits where the two
-     * cross rather than where `wade` is. Measured on Kamino, the player stops
-     * dead at 1.53 m of depth with their eye 9 cm clear of the surface, and
-     * stays there: chest-deep at the edge of the world, which is the reading,
-     * against the 9 m seabed they used to end up strolling along. */
+      `the player reached ${worstDepth.toFixed(1)} m below the surface — the sheet is not a swim`);
     assert(endDepth < 2.0,
-      `after twelve seconds of walking out to sea the player is still ${endDepth.toFixed(1)} m under — `
+      `after twelve seconds of walking out the player is still ${endDepth.toFixed(1)} m under — `
       + 'the bed is meant to put them back in the shallows');
     assert(eyeUnder / frames < 0.05,
-      `${(100 * eyeUnder / frames).toFixed(0)}% of frames had the player's eye under the ocean`);
-    return `lava kills in ${died.toFixed(1)} s and takes a droid with it, melt in ${fdied.toFixed(1)} s; `
-      + `${shores} bearings walked into the ocean stop at `
+      `${(100 * eyeUnder / frames).toFixed(0)}% of frames had the player's eye under the water`);
+    return `lava kills in ${died.toFixed(1)} s and takes a droid with it, ${burners.length} burning `
+      + `sheet(s) in ${fdied.toFixed(1)} s; ${shores} bearings walked into open water stop at `
       + `${worstDepth.toFixed(2)} m of depth, eye never submerged over ${(frames / 60).toFixed(0)} s`;
   });
 
@@ -589,11 +597,26 @@ export async function run({ check, assert }) {
      * nine stub worlds in this suite implemented an `addDoor` the real World
      * did not have.
      */
-    for (const key of ['foundry']) {   // the intake was the other one, and it is deleted
+    /* DERIVED, because the Foundry was the only level with doors on it and the
+     * Foundry is deleted. The property is "a blast door a level builds is a
+     * real object", and the roster it runs over is whatever levels actually
+     * build one — which is how it keeps working when the bulkheads move to a
+     * new level rather than silently measuring LEVEL_ORDER[0]. */
+    const doorLevels = [];
+    for (const key of LEVEL_ORDER) {
+      const { world } = await level(key);
+      if (world.doors?.length) doorLevels.push(key);
+    }
+    assert(doorLevels.length >= 1,
+      'no level in the game builds a blast door. `BlastDoor` is a finished object — kerf texture, '
+      + 'discard-through hole, static collider, blade capsules, a breach that drops the slug — and '
+      + 'DESIGN.md §3 calls the twenty-second hold a signature mechanic. Unreachable content is '
+      + 'the defect here, not this assertion');
+    for (const key of doorLevels) {
       const { world } = await level(key);
       assert(typeof world.addDoor === 'function', 'World still has no addDoor');
       assert(world.doors.length >= 3,
-        `${key}: ${world.doors.length} doors — the shell comment says every fourth bay is a blast door recess`);
+        `${key}: ${world.doors.length} doors — a level that builds bulkheads builds a rank of them`);
       for (const d of world.doors) {
         assert(d.collider && !d.collider.disabled, `${key}: a door with no collider`);
         assert(world.physics.staticBoxes.includes(d.collider),
@@ -602,8 +625,8 @@ export async function run({ check, assert }) {
           `${key}: a door the blade solver cannot find (${d.capsules().length} capsules)`);
       }
     }
-    const { world } = await level('foundry');
-    return `${world.doors.length} blast doors on the foundry, each a collider and `
+    const { world } = await level(doorLevels[0]);
+    return `${world.doors.length} blast doors on ${doorLevels[0]}, each a collider and `
       + `${world.doors[0].capsules().length} blade capsules`;
   });
 
@@ -626,7 +649,18 @@ export async function run({ check, assert }) {
      * only reach on a frame-perfect input is not a place either.
      */
     const rows = [];
-    for (const key of ['foundry']) {   // the intake, the Cut and the warship went with the Descent
+    /* DERIVED for the same reason the doors are: the Descent's rooms are gone
+     * and so is the Foundry, so this runs over every level that actually
+     * builds a raised deck rather than over a typed list of level names. */
+    const deckLevels = [];
+    for (const key of LEVEL_ORDER) {
+      const { world } = await level(key);
+      const T0 = world.terrain;
+      if (world.physics.staticBoxes.some((b) => !b.disabled && b.halfExtents.y < 0.5
+        && b.halfExtents.x > 1.5 && b.halfExtents.z > 1.5
+        && b.center.y - T0.height(b.center.x, b.center.z) > 2.0)) deckLevels.push(key);
+    }
+    for (const key of deckLevels) {
       const { world } = await level(key);
       const T = world.terrain;
       const decks = [];
@@ -649,7 +683,7 @@ export async function run({ check, assert }) {
         + '— nothing can ever stand on it');
       rows.push(`${key} ${decks.length} decks ≤ ${worst.rise.toFixed(1)} m`);
     }
-    return rows.join('; ');
+    return rows.length ? rows.join('; ') : 'no level in the roster builds a raised deck';
   });
 
   /* ── 9. the wood's own arithmetic ─────────────────────────────────── */

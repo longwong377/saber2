@@ -456,7 +456,7 @@ export async function run({ check, assert }) {
     const CUR = STORE_KEY;
     for (const k of [CUR, ...LEGACY_KEYS]) localStorage.removeItem(k);
     localStorage.setItem(CUR, JSON.stringify({ level: 'wood', colorIndex: 7 }));
-    localStorage.setItem('saber.settings.v3', JSON.stringify({ level: 'foundry', scheme: 'hold', fov: 77 }));
+    localStorage.setItem('saber.settings.v3', JSON.stringify({ level: 'alpine', scheme: 'hold', fov: 77 }));
     localStorage.setItem('saber.settings.v2', JSON.stringify({ level: 'alpine' }));
 
     const a = loadSettings();

@@ -50,7 +50,7 @@ async function arena(seed) {
    * rather than the Ember Shelf because the Shelf is a DUELLING map with a
    * pool thinned of hordes — it composed one contact on wave 1 against the
    * seven this check's arithmetic is calibrated on. */
-  const { world } = await H.bootWorld({ level: 'kamino', settings: { mode: 'roguelite', difficulty: 'knight' } });
+  const { world } = await H.bootWorld({ level: 'colosseum', settings: { mode: 'roguelite', difficulty: 'knight' } });
   return { world, input: H.idleInput() };
 }
 

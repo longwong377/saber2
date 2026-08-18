@@ -640,7 +640,7 @@ export async function run({ check, assert }) {
     const { LEVELS } = await import('../../src/game/Levels.js');
     const rows = [];
     let worstAbsorbed = 1, worstAt = '', worstDeep = 0, worstDeepAt = '';
-    for (const key of ['kamino', 'colosseum']) {
+    for (const key of ['wood', 'colosseum']) {
       const d = new Waves.WaveDirector(tableWorld(), { mode: 'roguelite', pool: LEVELS[key].pool });
       for (const w of [20, 40, 70, 100, 140]) {
         let plainLeft = 0, left = 0, conds = 0;
@@ -703,7 +703,7 @@ export async function run({ check, assert }) {
      * converges on the heaviest body the level fields and then promotes all of
      * them.
      */
-    for (const key of ['kamino', 'colosseum']) {
+    for (const key of ['wood', 'colosseum']) {
       const shallow = rows.find((r) => r.key === key && r.w === 20);
       for (const w of [70, 100]) {
         const deep = rows.find((r) => r.key === key && r.w === w);
@@ -712,7 +712,7 @@ export async function run({ check, assert }) {
           + `${shallow.shapes} — every deep wave is asking the same narrow question`);
       }
     }
-    return rows.filter((r) => r.key === 'kamino')
+    return rows.filter((r) => r.key === 'wood')
       .map((r) => `w${r.w}: ${(r.plainLeft * 100).toFixed(0)}%→${(r.left * 100).toFixed(0)}% stranded, `
         + `${r.conds.toFixed(1)}c, ${r.shapes} shapes, ${r.entries}e`).join(' · ')
       + ` · worst absorbed ${(worstAbsorbed * 100).toFixed(0)}% at ${worstAt}`;
@@ -1074,10 +1074,14 @@ export async function run({ check, assert }) {
 
   check('conditions: a level that cannot field one is never given it', () => {
     /**
-     * `needs` is how a pool vetoes a condition, and the veto has to be real:
-     * kamino's only melee archetype is the acolyte, so NO GUNS on that level
-     * would be six identical acolytes — a different question asked so narrowly
-     * that it is a monotony. A wave asked differently still has to be a wave.
+     * `needs` is how a pool vetoes a condition, and the veto has to be real: a
+     * pool whose only melee archetype is the acolyte would answer NO GUNS with
+     * six identical acolytes — a different question asked so narrowly that it
+     * is a monotony. A wave asked differently still has to be a wave.
+     *
+     * THE POOL IS WRITTEN OUT HERE rather than named off a level, because the
+     * level it used to name (Kamino) is deleted and the property is about the
+     * SHAPE of a pool, not about a place.
      */
     const kamino = new Waves.WaveDirector(tableWorld(),
       { mode: 'roguelite', pool: ['trooper', 'b1', 'trooper', 'b2', 'sniper', 'acolyte', 'droideka', 'b1'] });
@@ -1094,8 +1098,8 @@ export async function run({ check, assert }) {
       for (const k of kamino.conditions) seen.add(k);
     }
     assert(!seen.has('silence') && !seen.has('titans'),
-      `kamino composed ${[...seen].join(', ')} — a vetoed condition reached the field`);
-    return `kamino may field ${[...seen].join(', ')}; NO GUNS and THE HEAVY GUARD correctly vetoed`;
+      `the one-melee pool composed ${[...seen].join(', ')} — a vetoed condition reached the field`);
+    return `a one-melee pool may field ${[...seen].join(', ')}; NO GUNS and THE HEAVY GUARD correctly vetoed`;
   });
 
   check('trial: the Trial of Waves is not Path of the Blade with the cards deleted', async () => {
@@ -1112,7 +1116,7 @@ export async function run({ check, assert }) {
      * the conditions are what it has instead of a build.
      */
     const { LEVELS } = await import('../../src/game/Levels.js');
-    const pool = LEVELS.kamino.pool;
+    const pool = LEVELS.colosseum.pool;
     const make = (mode) => new Waves.WaveDirector(tableWorld(), { mode, pool });
     let differ = 0, total = 0;
     for (let w = 1; w <= 40; w++) {

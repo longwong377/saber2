@@ -208,7 +208,7 @@ export async function run({ check, assert }) {
       /* SAME WORLD OUT OF BOTH DOORS. The two paths share one list of stages,
        * so this cannot drift — but "cannot drift" is what every duplicated
        * table in this codebase's history was said to be, so it is measured. */
-      world.loadLevel('temple');
+      world.loadLevel('alpine');
       const sync = { statics: world.statics.length, props: world.props.length,
         terrain: !!world.terrain, grass: !!world.grass, key: world.levelKey,
         director: world.director?.constructor?.name, running: world.running };
@@ -216,7 +216,7 @@ export async function run({ check, assert }) {
       const seen = [];
       let last = 0;
       const cost = [];
-      await world.loadLevelAsync('temple', {}, (frac, name) => {
+      await world.loadLevelAsync('alpine', {}, (frac, name) => {
         const now = performance.now();
         // The callback fires BEFORE its stage runs, so each tick times the
         // stage that came before it. Attributing it to the label being

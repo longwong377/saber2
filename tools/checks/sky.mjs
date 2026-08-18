@@ -469,11 +469,13 @@ export function run({ check, assert, near }) {
       near(cloudLight(LEVELS[key].atmosphere).amb, 0.42, 1e-9,
         `${key}: an interior must fall back to the neutral default`);
     }
-    dome.configure(LEVELS.foundry.atmosphere);
-    const L = cloudLight(LEVELS.foundry.atmosphere);
-    near(L.amb, 0.42, 1e-9, 'an interior must fall back to the neutral default');
-    near(lum(L.tint), 1, 1e-6, 'an interior cloud tint must be white');
+    /* The named sample went with the Foundry. The loop above IS the check now
+     * — it walks whatever interiors the roster has, and the roster has none,
+     * so this reports the empty set rather than pretending to a subject. */
+    const interiors = LEVEL_ORDER.filter((k) => LEVELS[k].atmosphere.sky === false);
     dome.dispose();
-    return 'interiors opt out of the deck and of the sky-derived cloud light';
+    return interiors.length
+      ? `${interiors.length} interiors opt out of the deck and of the sky-derived cloud light`
+      : 'no interior levels on the roster — every ground in the game is under open sky';
   });
 }

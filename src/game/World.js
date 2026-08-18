@@ -467,7 +467,7 @@ export class World {
      * the thing it governs, and is CALLED, not restated.
      *
      * Putting it here is also what makes the check honest: it can ask for
-     * `kamino` through the ordinary door and observe geonosis come back.
+     * another theatre through the ordinary door and observe geonosis come back.
      */
     const owned = MODES[this.settings?.mode]?.level;
     if (owned && LEVELS[owned]) key = owned;

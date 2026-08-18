@@ -180,16 +180,10 @@ b{font-weight:800}
   display:flex;flex-direction:column;animation:stampIn .5s cubic-bezier(.22,1,.36,1) both}
 .menu-head{text-align:center;padding:4px 0 12px}
 .menu-head .logo{justify-content:center}
-/* The tagline is a CALL SIGN, not a marketing line. "a single blade against a
-   hundred" described a mode this game outgrew — it is a squad game now, and a
-   title screen that describes the wrong game is worse than one that describes
-   none. What is here instead is a status line: the kind of thing stencilled on
-   the side of a transport. */
-.tagline{margin-top:11px;font:var(--mono);font-weight:700;letter-spacing:.34em;
-  text-transform:uppercase;color:var(--stroke);background:var(--accent-warm);
-  display:inline-block;padding:3px 12px 4px;clip-path:var(--cut-sm)}
-.byline{margin-top:12px;font:var(--mono);font-size:10px;font-weight:700;letter-spacing:.3em;
-  text-transform:uppercase;color:var(--dim)}
+/* NO TAGLINE AND NO BYLINE. Both were removed on instruction — a menu that is
+   one keypress from the game does not need to describe the game, and the
+   byline is gone outright. The rules are deleted rather than left orphaned:
+   an unused selector is the thing that gets re-attached by accident. */
 .record{margin-top:7px;font:var(--mono);font-size:10px;letter-spacing:.14em;color:var(--dim)}
 .record:empty{display:none}
 

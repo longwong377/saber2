@@ -198,11 +198,11 @@ export function run({ check, assert }) {
      */
     const { bootWorld } = await import('./_coop.mjs');
     const { world } = await bootWorld({
-      level: 'kamino',                       // deliberately NOT geonosis
-      settings: { mode: 'command', level: 'kamino' },
+      level: 'colosseum',                    // deliberately NOT geonosis
+      settings: { mode: 'command', level: 'colosseum' },
     });
     assert(world.levelKey === 'geonosis',
-      `Command deployed onto '${world.levelKey}' after being asked for 'kamino'. `
+      `Command deployed onto '${world.levelKey}' after being asked for 'colosseum'. `
       + 'The mode declares fixedTheatre and MODES.command.level; if nothing on the load '
       + 'side reads them, the menu greys the Theatre column and then lies about the ground.');
     const got = world.levelKey;

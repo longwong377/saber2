@@ -399,7 +399,7 @@ export function run({ check, assert, near }) {
       'ripple amplitude is constant from the toe to the horizon');
 
     const out = [];
-    for (const name of ['dunes', 'arena', 'canyon', 'hangar', 'works', 'cavern', 'scoria', 'temple']) {
+    for (const name of ['dunes', 'arena', 'canyon', 'hangar', 'works', 'cavern', 'scoria']) {
       const t = new Terrain(new THREE.Scene(), name, 0.5);
       const cell = t._uniforms.uHex.value.x, tile = 1 / t._uniforms.uScales.value.x;
       // a cell smaller than a tile scrambles the map instead of placing it; a

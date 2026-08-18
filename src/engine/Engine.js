@@ -779,10 +779,13 @@ const KEY = 0.191;
  *     spent against the reference.
  *
  *  3. WHAT IS LEFT IS THE ONE THING THE AUTHOR HOLDS. `exposure` spans
- *     0.74 … 1.20 across the outdoor roster, a factor of 1.62. A meter that
+ *     0.86 … 1.20 across the outdoor roster, a factor of 1.395 — it was
+ *     0.74 … 1.20 and 1.62 until three levels were struck, and the numbers
+ *     below are RE-DERIVED rather than left standing, which is the whole point
+ *     of deriving them in the first place. A meter that
  *     may move a frame further than the full travel of that knob can overrule
  *     any decision an author is able to express with it, and did. So the trim
- *     is capped at the authored travel and centred on 1 in log: √1.62 = 1.273,
+ *     is capped at the authored travel and centred on 1 in log: √1.395 = 1.181,
  *     pulled in a hair so a small re-author cannot silently push the meter
  *     past the author. `tools/checks/lighting.mjs` asserts that relationship
  *     rather than these two numbers, so it survives the roster changing.
@@ -792,7 +795,7 @@ const KEY = 0.191;
  * is still right. What changes is that the bias is no longer the only surviving
  * term: a level that authors a dark atmosphere now renders one.
  */
-const METER_TRIM = [0.79, 1.27];
+const METER_TRIM = [0.85, 1.18];
 
 /**
  * HOW MANY PLATEAUS THE DRAWN SKY IS CUT INTO.

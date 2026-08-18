@@ -1078,7 +1078,12 @@ export async function run({ check, assert }) {
     // …and it lands. The impulse is a real buffer and the send is a real ramp.
     const { a } = engine();
     const open = roomOf(LEVELS[LEVEL_ORDER.find(k => LEVELS[k].ambience?.wind >= 0.3)] || {}, 'sand');
-    const hall = roomOf(LEVELS.foundry || LEVELS[LEVEL_ORDER[0]], 'metal');
+    /* A HALL, WRITTEN OUT. This used to read the Foundry's block and the
+     * Foundry is deleted; the property is that a big metal room and an open
+     * windy one get different impulses, and neither half of that needs a level
+     * to exist to be true. `sky: false` is what `roomOf` reads to call a place
+     * enclosed, so the fixture declares it. */
+    const hall = roomOf({ atmosphere: { sky: false }, ambience: { wind: 0.02, drone: 0.3 } }, 'metal');
     a.setAmbience({ wind: 0.04, drone: 0.3, room: hall });
     const long = a.reverb.buffer;
     assert(long, 'setRoom left the convolver with no impulse at all');

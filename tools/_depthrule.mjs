@@ -41,7 +41,7 @@ function stubWorld(terrain, level) {
 }
 
 const keys = process.argv.slice(2).filter((a) => !a.startsWith('-'));
-for (const key of (keys.length ? keys : ['temple', 'foundry'])) {
+for (const key of (keys.length ? keys : ['colosseum', 'geonosis'])) {
   const L = LEVELS[key];
   const terrain = new Terrain(new THREE.Scene(), L.terrain, 0.5);
   const world = stubWorld(terrain, L);

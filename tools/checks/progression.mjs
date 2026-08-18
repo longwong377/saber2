@@ -80,7 +80,7 @@ function mostFacets(purse, wave) {
 export async function run({ check, assert }) {
   check('progression: a set-piece cleared pays the draft the code configures', async () => {
     const { LEVELS } = await import('../../src/game/Levels.js');
-    const world = stubWorld(LEVELS.foundry.pool);
+    const world = stubWorld(LEVELS.colosseum.pool);
     const d = new Waves.WaveDirector(world, { mode: 'roguelite', pool: world.level.pool });
     const hands = [];
     d.onDraft = (hand) => hands.push({

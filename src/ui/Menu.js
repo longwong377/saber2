@@ -2555,10 +2555,11 @@ export class Menu {
       g.stroke();
     });
 
-    /* the Ember Shelf gets its fissure and the Foundry its pour: one hot line each,
-     * because the thing that identifies both places is that the LIGHT comes
-     * off the floor. Everything else here is lit from above. */
-    if (L.terrain === 'scoria' || L.terrain === 'foundry') {
+    /* the Ember Shelf gets its fissure: one hot line, because the thing that
+     * identifies the place is that the LIGHT comes off the floor. Everything
+     * else here is lit from above. (The Foundry shared this clause and is
+     * deleted; the clause is narrowed rather than left naming a dead level.) */
+    if (L.terrain === 'scoria') {
       g.fillStyle = css(sun, 0.26);
       g.fillRect(0, 82, W, 12);
       g.fillStyle = css(mix(sun, [255, 255, 255], 0.35), 0.92);

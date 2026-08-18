@@ -21,7 +21,7 @@ const { World } = await import('../src/game/World.js');
 const { MODES } = await import('../src/game/Waves.js');
 const { DEFAULT_SETTINGS } = await import('../src/ui/Menu.js');
 console.log('fixedTheatre:', MODES.command.fixedTheatre);
-for (const lvl of ['kamino','scoria']) {
+for (const lvl of ['wood','scoria']) {
   const w = new World(stubEngine(), { ...DEFAULT_SETTINGS, mode:'command', level: lvl, quality:'low' });
   await w.loadLevel(lvl);
   console.log(`asked ${lvl.padEnd(8)} -> levelKey=${w.levelKey}  name="${w.level.name}"  command=${!!w.command}  area="${w.command?.area?.name}"`);

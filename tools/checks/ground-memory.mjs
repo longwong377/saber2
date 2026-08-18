@@ -253,7 +253,7 @@ export function run({ check, assert, near }) {
     assert(depth('drifts') > depth('dunes'), 'the deep erg is firmer than the young dune field');
     assert(depth('meadow') < depth('arena') * 0.6, 'turf takes a print like a silt pan does');
     assert(depth('hangar') < 0.05, 'a poured deck takes a footprint');
-    assert(depth('works') < 0.05 && depth('temple') < 0.05,
+    assert(depth('works') < 0.05,
       'a poured works floor and a flagged temple hall take a footprint');
     assert(depth('scoria') > depth('dunes') && depth('scoria') < depth('drifts'),
       'an ash fall lies deeper than a young dune field and shallower than a deep erg');
