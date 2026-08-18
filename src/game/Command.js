@@ -55,10 +55,38 @@
  * image of this fight agrees on: rank is legible BY COLOUR on the helmet crest,
  * the shoulder bells and the torso. Plain white is a trooper, yellow is a
  * commander. See RANKS.
+ *
+ * ── AND WHAT A FORCE USER IS WORTH TO AN ARMY ───────────────────────────
+ *
+ * The nine powers in `Powers.js` are a duellist's. Every one of them is about
+ * one body, which is the right shape for the game this repository started as
+ * and the wrong shape for a general: a Jedi's contribution to a battle was
+ * never that they could throw one soldier further than another soldier could.
+ * So this file adds two verbs of its own — `COMMAND_FORCE`, RALLY and DREAD,
+ * one aimed at your line and one at theirs — and they are expressed in morale
+ * and in physics rather than in damage, because a commander power that killed
+ * would just be a worse Force lightning.
+ *
+ * The squad half of the same idea is that a line REACTS. Four things it does
+ * that no order has to be given for, all of them derived from state this file
+ * already kept:
+ *
+ *   under fire      it uses the ground it is standing on (`COVER_LEAN`),
+ *                   bounded by the formation's own tolerance so the shape
+ *                   survives the first bolt;
+ *   concentration   a squad shoots at what its leader is shooting at, when
+ *                   that is inside its own leash (`targetFor`);
+ *   the rout        a squad that has mostly broken withdraws TOGETHER, and
+ *                   the steady men go with it (`MORALE.ROUT`);
+ *   the callout     which is already true and is not this file's — every body
+ *                   in the game raises `alarm`, `scream`, `cheer` and `panic`
+ *                   through `Enemy.cry`, and `src/ui/Announcer.js` decides
+ *                   which throat says it. An ally is an Enemy, so an ally
+ *                   already calls contacts and already cheers its kills.
  */
 
 import * as THREE from 'three';
-import { ARCHETYPES, applyModifier } from './Enemy.js';
+import { ARCHETYPES, applyModifier, DREAD, FORCE_KINDS } from './Enemy.js';
 import { buildTrooper, buildB1, buildB2, buildBodyguard } from './Bodies.js';
 import { TOUGHNESS } from './Combat.js';
 import { BOLT_COLORS } from './Bolts.js';
@@ -671,6 +699,145 @@ export const DEFAULT_FORMATION = 'behind';
  */
 export const MEETING_FORMATION = 'charge';
 
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  The commander's own Force — what a Jedi does for an ARMY              */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * TWO VERBS, ONE EACH WAY, AND THE COUNT IS THE DESIGN.
+ *
+ * The nine powers in `src/game/Powers.js` are a DUELLIST's kit. Every one of
+ * them answers a question about one body — this droid is inside my guard, that
+ * acolyte is backing off to heal, that crate would hurt if it landed on
+ * something. None of them answers the question this mode is actually about,
+ * which is what a Force user is worth to two hundred men who cannot lift a
+ * rock: a Jedi general's contribution to a battle was never that they could
+ * throw one soldier further than another soldier could.
+ *
+ * So there are exactly two, they are directed at LINES rather than at bodies,
+ * and they are the two directions a commander can push:
+ *
+ *   RALLY   yours. Nerve, and the fighting that comes back with it.
+ *   DREAD   theirs. Nerve taken away, and the footing with it.
+ *
+ * A third was drafted and cut. Every candidate — a barrier that turns bolts, a
+ * wave that flattens the enemy rank, a pull that drags a line off its ground —
+ * turned out to be `push`, `stasis` or `unleash` with a bigger radius, and a
+ * power whose only novelty is its radius is a slider with a name on it. That
+ * is the same argument FORMATIONS makes about its six: these are not a taste,
+ * they are the things you can ask the Force to do to a formation that are not
+ * each other.
+ *
+ * ── NOTHING HERE DEALS DAMAGE ──────────────────────────────────────────
+ *
+ * Deliberately, and it is the whole reason the pair is worth having beside a
+ * kit that already contains lightning. DREAD's entire output is a body that
+ * cannot shoot straight, has lost the burst it was in the middle of, has been
+ * knocked off its line and is shouting about it; the damage number is zero and
+ * `castForce` passes a literal 0 into `applyKnockback` to say so. A commander
+ * power that killed would be measured against lightning, lose, and be a worse
+ * lightning; measured against what it actually does — a firing line that stops
+ * firing for four seconds while yours walks into it — it is a different game.
+ *
+ * ── WHY NO KEY, AND WHY THAT IS NOT THE KeyB/KeyN DISEASE ──────────────
+ *
+ * Every other control in this game carries a `keys` row in ACTIONS, and the
+ * two bugs this repository has written the longest notes about are controls
+ * that did not (stasis and rend read raw KeyB/KeyN inside Player.js; the six
+ * order keys were read raw off FORMATIONS). Neither of those is this. Those
+ * were keys that WORKED and that nothing could see — unrebindable, absent from
+ * the options screen, invisible to `findConflicts`. These records carry no key
+ * at all, which `registerOrders` reads correctly as "not a keyboard action"
+ * and skips, so `ACTIONS` is unchanged and there is nothing to collide with.
+ *
+ * They live on the ORDER WHEEL, which is the input device note #18 asked for
+ * in as many words — "commanding your troops takes up too many buttons so it
+ * needs to be a small popup mousewheel sort of thing" — and every letter
+ * within reach of WASD is already spoken for (see the note over `unleash` in
+ * Bindings.js, which had to go hunting as far as U). A commander verb is a
+ * deliberate act with a twelve-second cooldown on it, which is exactly the
+ * kind of thing a wheel is for and exactly the kind of thing a reflex key is
+ * not. Adding `key: 'KeyX'` to a record below is all it would take to change
+ * that answer, and it would be bound, listed and conflict-checked the same
+ * day — which is the property the two old bugs did not have.
+ */
+export const COMMAND_FORCE = {
+  rally: {
+    id: 'rally', name: 'Rally', force: true,
+    blurb: 'Steady your line. Broken men stand up and everything fires faster.',
+    /**
+     * 26, between `push` at 20 and `lightning` at 30, and the placement is the
+     * argument: this is worth more than shoving one body and less than killing
+     * one. The pool is 100 and regenerates at 7.5/s, so a rally is three and a
+     * half seconds of standing still — you cannot open every engagement with
+     * it and still have a jump in the bank.
+     */
+    cost: 26,
+    /** Long enough that it is a decision. Two rallies inside one wave, not ten. */
+    cd: 12,
+    /**
+     * 22 m, against MORALE.NEAR's 14. Presence already pays a line for standing
+     * with it out to 14 m; a verb that reached no further would be a button
+     * that does what walking does. 22 takes in a line abreast of twelve at
+     * 2.4 m spacing from the middle of it, which is the shape this is for.
+     */
+    radius: 22,
+    /**
+     * 8 s of `RALLY` on the bodies it reaches — the same aura the Leader
+     * modifier carries, granted by the Force instead of by a standard. The
+     * modifier refreshes at RALLY.refresh (0.25 s) every frame it is in range;
+     * this hands out eight seconds at once and lets Enemy's own timer drain
+     * it, so there is one implementation of what a rallied body does and this
+     * verb is only a different way of switching it on.
+     */
+    seconds: 8,
+    /** What the notice says once it knows how many it reached. */
+    reached: (n) => `${n} of your own steady, and firing faster`,
+  },
+  dread: {
+    id: 'dread', name: 'Dread', force: true,
+    blurb: 'Reach into the line in front of you. They lose the shot and their feet.',
+    /** 32, past lightning's 30: it reaches a whole rank rather than one body. */
+    cost: 32,
+    cd: 16,
+    /** Further than RALLY, because it is thrown at a line you are not standing in. */
+    radius: 26,
+    /**
+     * ±60° of the commander's own heading. Not a radius, because "the enemy in
+     * front of you" is the sentence this verb has to keep — a 360° version
+     * would take the flank you cannot see and the men behind you would watch a
+     * fight they were not in. 1.05 rad is a frontage you can aim by turning
+     * your body, and `headingOf` is what it is measured against, so it follows
+     * the blade rather than the camera.
+     */
+    arc: 1.05,
+    /**
+     * 6 s. Shorter than RALLY's 8 on purpose: the effect is on bodies you do
+     * not own and cannot see the state of, and a debuff you cannot read the
+     * end of should not outlast the advance it buys.
+     */
+    seconds: 6,
+    reached: (n) => `${n} of theirs off the trigger and off their line`,
+  },
+};
+
+/**
+ * EVERYTHING A COMMANDER CAN ORDER, formations and Force alike, in one table.
+ *
+ * This is what the order wheel and the bindings registry should be handed, and
+ * it is the reason `order()` below answers for both kinds: an order is an
+ * order, and a player holding the wheel open is choosing between "form a line"
+ * and "steady them" in the same gesture, not between two systems.
+ *
+ * `FORMATIONS` stays exactly what it was and is still the authority on what a
+ * formation is — `commandConfig`'s standing-order setting, `_troops`, `steer`
+ * and `slotFor` all read it and none of them may ever be handed a verb. The
+ * union is built here, once, rather than by each consumer doing its own spread,
+ * so there is one statement of what the full set is.
+ */
+export const ORDERS = { ...FORMATIONS, ...COMMAND_FORCE };
+export const ORDER_IDS = Object.keys(ORDERS);
+
 /**
  * THE SHORTEST LEASH ANY BODY IS EVER GIVEN, in metres.
  *
@@ -725,6 +892,42 @@ const BLADE_ROOM = 3.0;
 
 /** How far a trooper taking cover will go looking for something to get behind. */
 const COVER_HUNT = 16;
+
+/**
+ * …AND HOW FAR ONE WHO IS MERELY BEING SHOT AT WILL GO, which is a different
+ * number because it answers a different question.
+ *
+ * "they should take cover when under fire" is not the same order as TAKE
+ * COVER, and answering it with the same 16 m hunt would delete every other
+ * formation in the game: the first bolt into a line abreast would send twelve
+ * men off to twelve crates and the shape would never come back. What infantry
+ * actually do on a position they have been told to hold is use the ground
+ * WITHIN it — a step and a half to put a drum between you and the muzzle — so
+ * the reactive hunt is bounded by `FORM_TOLERANCE`, the same slack the
+ * formation already allows a body that is standing still.
+ *
+ * 2.2 m of tolerance and a 4.5 m hunt: a trooper will take anything it can
+ * reach in about a second, and the line it is standing in is still a line.
+ */
+export const COVER_LEAN = 4.5;
+
+/**
+ * HOW LONG A BODY COUNTS AS BEING UNDER FIRE after it is hit, in seconds.
+ *
+ * The signal is a hit rather than a bolt passing close, and that is a choice
+ * with a cost that is worth stating: near-misses live in `World._boltHitTest`
+ * and a trooper ducking for them would be the better simulation. What is here
+ * is the signal this file can read without a second pass over every bolt in
+ * the air — `installTeamDamage` already wraps `damage` on every enlisted body
+ * for the friendly-fire notice, so the hit is in hand and costs nothing.
+ *
+ * 3.5 s, because it has to outlast the gap between two bursts of the same
+ * rifle (a clone trooper's `fireRate` is under a second) or a man would stand
+ * up between them, and it has to be short enough that a squad walks out of
+ * cover once the shooting genuinely stops rather than hugging a crate for the
+ * rest of the area.
+ */
+export const UNDER_FIRE = 3.5;
 
 /** The plan half-extent of a static box — how wide a thing is to hide behind. */
 function h2(b) { return Math.max(b.halfExtents.x, b.halfExtents.z); }
@@ -869,6 +1072,9 @@ export const MORALE = {
   BETRAYED: -0.20,
   /** …and empowering one instead. Per use. */
   INSPIRED: 0.16,
+  /** A commander reached into their nerve through the Force. Per use, and it
+   *  is the one entry in this table an ENEMY commander causes. See `castForce`. */
+  SHAKEN: -0.22,
   /** How close counts as near, in metres. */
   NEAR: 14,
   /** Below this a body breaks: it stops holding formation and falls back. */
@@ -877,6 +1083,28 @@ export const MORALE = {
   REFUSE: 0.10,
   /** How fast a broken body recovers its nerve once it is out of contact. */
   RALLY_PER_S: 0.05,
+  /**
+   * WHAT SHARE OF A SQUAD HAS TO BREAK BEFORE THE REST GO WITH THEM.
+   *
+   * "they should fall back when a position is lost." Breaking is a MAN's
+   * decision and the file already had it — below `BREAK` he stops holding
+   * formation and runs to you. A position is a SQUAD's, and a squad does not
+   * lose one man at a time: the two riflemen still steady when three of their
+   * five have broken are not holding a position, they are the last two people
+   * standing on a piece of ground nobody else is on.
+   *
+   * A half rather than a third or a whole, and the reason is that it has to
+   * be a number the player can see coming. `census` and the roster feed both
+   * show the squad, so "half of them are running" is a state you can read off
+   * the screen and answer — which is the test every other number in this
+   * table had to pass. At a third a squad withdraws while most of it is still
+   * fighting; at a whole the rule never fires, because the last steady man in
+   * a squad of five is precisely the one standing next to a commander whose
+   * presence is holding him up.
+   *
+   * Strictly greater, so a two-man squad with one broken man is not a rout.
+   */
+  ROUT: 0.5,
 };
 
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -920,6 +1148,12 @@ export class Trooper {
      * a ladder with no room above the start has nothing for winning to buy.
      */
     this.morale = opts.morale ?? 0.72;
+    /** Below `MORALE.BREAK`: this man has stopped holding the line. Written by
+     *  `_morale` and `shake`, read by `steer`, `targetFor` and the HUD. */
+    this.broken = false;
+    /** …and his SQUAD has. Written by `_morale`, read by `steer`. See
+     *  `MORALE.ROUT` for why a steady man in a broken squad goes back too. */
+    this.rout = false;
     this.areas = 0;               // areas survived
     this.joined = opts.joined ?? 1;
     this.alive = true;
@@ -1406,11 +1640,32 @@ export function installTeamDamage(e, scale) {
   e._cmdDamage = true;
   e.teamDamage = clamp(scale, 0, 1);
   e.damage = function (amount, ...rest) {
-    // `rest[1]` is `source`, by position, because that is the one argument this
-    // wrapper reads. Named out of the list rather than declared, so the list
-    // itself stays the callee's business.
-    const source = rest[1];
+    // `rest[1]` is `source` and `rest[2]` is `kind`, by position, because those
+    // are the two arguments this wrapper reads. Named out of the list rather
+    // than declared, so the list itself stays the callee's business — and
+    // `preResisted`, which grew onto the end of that list after this wrapper
+    // was written, is still forwarded without this file having an opinion on
+    // it. That is the whole reason the forward is variadic; see the note above.
+    const source = rest[1], kind = rest[2];
     let amt = amount;
+    /**
+     * SOMEBODY IS SHOOTING AT THIS MAN. Recorded here because this is the one
+     * door every injury already comes through — blade, bolt, blast, fall — so
+     * it cannot miss the kind somebody adds next, and it costs one compare on
+     * a path that was already running.
+     *
+     * Hostile fire only: a stray shot from your own line is a reason to shout
+     * (below), not a reason for the man it hit to go to ground behind a crate
+     * — a squad that took cover from each other would spend a battle behind
+     * the nearest drum. `_fireEpoch` counts the SPELL rather than the hits, so
+     * a man pinned again after his line has moved picks the ground he is on
+     * now instead of walking back to the crate he liked last time. See
+     * UNDER_FIRE and `_coverSite`.
+     */
+    if (amount > 0 && (!source || source.team !== this.team)) {
+      if (!(this.underFire > 0)) this._fireEpoch = (this._fireEpoch | 0) + 1;
+      this.underFire = UNDER_FIRE;
+    }
     // `team` on the source, not `instanceof Player`: a co-op partner's blade and
     // a peer's avatar are as much your side as you are, and a bolt carries its
     // owner. A source with no team at all (a hazard, a falling crate) is nobody's
@@ -1418,7 +1673,7 @@ export function installTeamDamage(e, scale) {
     if (source && source !== this && source.team !== undefined && source.team === this.team) {
       amt = amount * this.teamDamage;
       const d = this.commandOf;
-      if (d && amt > 0) d.onFriendlyHit(this, amt, source);
+      if (d && amt > 0) d.onFriendlyHit(this, amt, source, kind);
       if (this.teamDamage <= 0) return false;
     }
     return base.call(this, amt, ...rest);
@@ -2069,6 +2324,37 @@ export class CommandDirector extends WaveDirector {
    * design that survives the player being busy with a lightsaber.
    */
   order(id, cmdr = null) {
+    /**
+     * THREE KINDS OF ORDER THROUGH ONE DOOR, and the door is not widened by
+     * restating what each kind is anywhere else.
+     *
+     * `main.js`'s key loop, the order wheel and `World.applyOrder` all call
+     * exactly this, so a verb that is reachable here is reachable from a key,
+     * from the wheel and from a joining commander's machine at the same
+     * moment, with no second dispatch to keep in step. `ORDERS` is the
+     * membership test for all three.
+     *
+     * HOLD CAME IN THROUGH THIS DOOR AND FELL STRAIGHT THROUGH IT. `hold()`
+     * on a client sends `requestOrder('hold')`; the host answers it by calling
+     * this method, which tested `FORMATIONS['hold']`, found nothing and
+     * returned false. A joining commander could not hold ground — the one
+     * order in the mode that is a toggle was the one order that did not cross
+     * the wire — and nothing could see it, because both halves were doing
+     * exactly what they said. It is answered here, where the id arrives, and
+     * by CALLING `hold` rather than by repeating what it does.
+     */
+    if (id === 'hold' || id === 'hold:off') {
+      /* `hold` is the TOGGLE and `hold:off` is the explicit release, because
+       * that is what the two spellings already mean on the sending side: the
+       * shell sends `hold:off` only when a caller passed `false`, and every
+       * other press — the wheel's, which takes no argument — arrives as
+       * `hold`. Reading `hold` as "on" instead would give a joining commander
+       * a switch that cannot be switched back. */
+      this.hold(id === 'hold:off' ? false : null, cmdr);
+      return true;
+    }
+    const P = COMMAND_FORCE[id];
+    if (P) return this.castForce(id, cmdr);
     const F = FORMATIONS[id];
     if (!F) return false;
     /**
@@ -2132,6 +2418,309 @@ export class CommandDirector extends WaveDirector {
           : `${F.name.toLowerCase()}, and they come with you`);
     }
     return want;
+  }
+
+  /* ── the commander's own Force ─────────────────────────────────────── */
+
+  /**
+   * IS THIS VERB READY, AND IF NOT WHY NOT — one rule, three readers.
+   *
+   * `castForce` asks it before it spends anything, a check asks it to prove
+   * the cooldown exists, and a HUD that greys a wheel slot should ask it too
+   * rather than deciding for itself what "ready" means. That last one is the
+   * reason it returns a REASON and not a boolean: every refusal in this game
+   * says what it wants (see `Player._refuse`, and the note over it about a
+   * bound key that does nothing being the same lie as a dead checkbox).
+   *
+   * @returns null when it is ready, else the sentence to say.
+   */
+  castReady(id, c = this.commander) {
+    const P = COMMAND_FORCE[id];
+    if (!P) return 'no such order';
+    const left = (c._castCd && c._castCd[id]) || 0;
+    if (left > 0) return `recovering — ${left.toFixed(1)}s`;
+    const p = c.player;
+    /* An army with no living commander has nobody to reach through the Force,
+     * which is the same statement `_frame` makes when it falls back to the
+     * anchor: a leaderless line holds the ground it was on. */
+    if (!p || p.alive === false || p.dead) return 'you are not there to give it';
+    /* PRICED BY THE PLAYER, NEVER HERE. `_canSpend` is the expression the Force
+     * Drain slider and the `forceCost` boons both live in, and `_priceOf` is
+     * the one that renders it — quoting `P.cost` in this sentence instead is
+     * exactly the defect the note over `Player._priceOf` records, where eight
+     * refusals named a list price the game does not charge. A commander with
+     * no Force economy at all (a RemoteAvatar, a stub in a check) pays
+     * nothing, which is the same fails-open rule the rest of this file uses. */
+    if (typeof p._canSpend === 'function' && !p._canSpend(P.cost)) {
+      const price = typeof p._priceOf === 'function' ? p._priceOf(P.cost) : P.cost;
+      return `${price} Force needed, you have ${Math.round(p.force ?? 0)}`;
+    }
+    return null;
+  }
+
+  /**
+   * CAST ONE OF THE TWO — see COMMAND_FORCE for what they are and why two.
+   *
+   * Structured the way every power in `Player.js` is, and in the same order,
+   * because a power that pays before it checks is a power that can charge you
+   * for nothing: ask, refuse out loud, spend, then act. What is different is
+   * only what "act" means — this reaches a LIST rather than a body, and it
+   * ends in state that already existed on the far side (`Enemy.rallyTimer`,
+   * `Enemy.dread`, `Waves.holdFire`, `MORALE`) rather than in anything new.
+   *
+   * @returns whether it actually went off.
+   */
+  castForce(id, cmdr = null) {
+    const P = COMMAND_FORCE[id];
+    if (!P) return false;
+    /* THE SAME ASK EVERY OTHER ORDER MAKES. A client holds no bodies, so a
+     * verb cast there would light no one — the request goes to the host and
+     * comes back as the roster feed, exactly as `order` and `recruit` do. */
+    if (this._netShell) return this.world?.requestOrder?.(id) ?? false;
+    const c = cmdr || this.commander;
+    const why = this.castReady(id, c);
+    if (why) {
+      c.player?._refuse?.(P.name, why);
+      return false;
+    }
+    const p = c.player;
+    if (typeof p._spend === 'function' && !p._spend(P.cost)) return false;
+    (c._castCd || (c._castCd = {}))[id] = P.cd;
+
+    const A = this._frame(c, _v1);
+    const n = id === 'rally' ? this._castRally(P, c, A) : this._castDread(P, c, A);
+    this.log.push({ t: 'force', id, reached: n, area: this.areaNumber, wave: this.wave });
+    /* The same door every power in Player.js ends in. 'push' rather than a
+     * kind of its own because Audio.js is not this file's to extend, and of
+     * the four it answers to a shove outward is what both of these are. */
+    audio.force?.(A.pos, 'push');
+    if (c === this.commander) {
+      this.world?.notify?.(P.name.toUpperCase(),
+        n ? P.reached(n) : 'nothing was in reach of it');
+    }
+    return true;
+  }
+
+  /**
+   * RALLY — your own line. The verb is the PRICE and the reach; what a rally
+   * actually does to a man lives in `rallyNear` below, because a stratagem
+   * code says the same thing for a different price and there must not be two
+   * answers to what it means.
+   */
+  _castRally(P, c, A) {
+    return this.rallyNear(A.pos, P.radius, c, P.seconds);
+  }
+
+  /* ── what the army can be asked for, by anything ───────────────────── */
+
+  /**
+   * THE THREE VERBS THAT ARE NOT ORDERS, and why they are methods rather than
+   * order ids.
+   *
+   * `rallyNear`, `reinforce` and `reviveNear` are the effects a caller OUTSIDE
+   * this file needs on an army: `src/game/Stratagems.js` — the support-call
+   * system, entered as a WASD code — reaches for all three by name and guards
+   * on their absence, so until they existed its Rally, its Reinforcements and
+   * the second half of its Resupply were dead calls that spent Force and did
+   * nothing. They are implemented here because this is the file that owns a
+   * roster, a muster purse, an anchor and a gunship, and a second answer to
+   * "put four more men on the field" would be the twin this repository keeps
+   * deleting.
+   *
+   * `rallyNear` is also what `castForce('rally')` runs, which is the point: the
+   * order wheel and a stratagem code are two ways to say one thing, not two
+   * things that happen to look alike. What differs is only what each pays —
+   * the wheel pays `COMMAND_FORCE.rally.cost` through the Player's own spender,
+   * the stratagem pays its own — and neither of them decides what a rally IS.
+   */
+
+  /**
+   * STEADY EVERY MAN OF THIS ARMY WITHIN `radius` OF `at`.
+   *
+   * `INSPIRED` is 0.16 and `BREAK` is 0.24, so a rally lifts any man whose
+   * nerve is still above 0.08 back over the line: every soldier who has not
+   * already stopped answering, and nobody who has. That is not a threshold
+   * this method picked — it is two numbers in the MORALE table multiplied
+   * out, and it is the property worth having, because "get to them, or lose
+   * them" needs a version of getting to them that is not standing next to
+   * them for eleven seconds.
+   *
+   * The FIGHTING comes back through `Enemy.rallyTimer`, which is the aura the
+   * Leader modifier already grants and which `_shoot`, `_move` and the duel
+   * brain already read. Nothing here decides what a rallied body does.
+   *
+   * @returns how many were in earshot.
+   */
+  rallyNear(at, radius, c = this.commander, seconds = COMMAND_FORCE.rally.seconds) {
+    if (!at || !c) return 0;
+    const r2 = radius * radius;
+    const list = [];
+    for (const t of c.roster.living) {
+      const e = t.body;
+      if (!e || e.dead) continue;
+      if (dist2(e.position, at) > r2) continue;
+      list.push(t);
+      e.rallyTimer = Math.max(e.rallyTimer || 0, seconds);
+      e.cry?.('cheer', 1.4);
+    }
+    /* A man who was running stops running THIS frame rather than at the top of
+     * the next one: `steer` reads `t.broken`, `shake` rewrites it, and the
+     * order of those two is what decides whether the rally you can hear is the
+     * rally you can see. */
+    this.shake(list, 'INSPIRED', c);
+    return list.length;
+  }
+
+  /**
+   * MORE OF YOURS, NOW, WITHOUT WAITING FOR THE MUSTER SCREEN.
+   *
+   * AND IT IS PAID FOR, which is the whole design and the reason this is not a
+   * free respawn wearing a gunship. Note #21's premise is that a loss is
+   * permanent and a replacement has to be BOUGHT — `autoMuster`'s own header
+   * says so in as many words — so a mid-battle reinforcement spends exactly
+   * what a reinforcement at the muster spends, out of the same purse, at the
+   * same prices, through the same `recruit`. What the call actually buys is
+   * TIMING: the points you were saving for the next area, landed beside you in
+   * the fight you are losing now.
+   *
+   * The cheapest rung, deliberately. A support call that let a player buy four
+   * ARC troopers the moment they could afford them would make the muster
+   * screen — where the choice of WHICH body is the entire decision — the slow
+   * way to do the same thing.
+   *
+   * @returns how many actually came.
+   */
+  reinforce(n = 4, opts = {}, c = this.commander) {
+    if (this._netShell || !c) return 0;
+    const cheapest = c.army.tiers[0].type;
+    let bought = 0;
+    this._bulk = true;
+    try {
+      for (let i = 0; i < n; i++) if (this.recruit(cheapest, c)) bought++;
+    } finally { this._bulk = false; }
+    if (!bought) {
+      /* Silent refusal is the thing `Player._refuse` exists to stop. The
+       * caller has already spent something to get here. */
+      if (c === this.commander) {
+        this.world?.notify?.('NO REINFORCEMENTS',
+          this.refused || `${c.roster.points} reinforcement points left`);
+      }
+      return 0;
+    }
+    this.world?.publishMuster?.(c);
+    /* `byShip` by default: this is the one moment the mode's brief describes —
+     * men coming off a ramp — and unlike `deploy`'s mid-wave replacements the
+     * four seconds of flight is the point rather than a hole in the line. The
+     * caller may still turn it off, and every headless check does. */
+    this.deploy(c, { byShip: opts.byShip !== false });
+    this.log.push({ t: 'reinforce', n: bought, area: this.areaNumber, wave: this.wave });
+    return bought;
+  }
+
+  /**
+   * THE WOUNDED BACK ONTO THEIR FEET — heal, and un-ragdoll.
+   *
+   * Two different states and both of them are what a player means by "down":
+   * a trooper on a fifth of its health, and a trooper lying limp after a blast
+   * that did not kill it. `Enemy.recover` is the one door for the second — it
+   * is what `_tickGetUp` calls after a body has been still long enough — so
+   * this asks for it early rather than reimplementing a stand-up.
+   *
+   * A HALF OF MAXIMUM, NOT A FULL HEAL. A support pod that undid a firefight
+   * would make the firefight not matter; what it does is take a squad that
+   * cannot survive the next volley and make it able to.
+   *
+   * @returns how many it reached.
+   */
+  reviveNear(at, radius, c = this.commander) {
+    if (!at || !c) return 0;
+    const r2 = radius * radius;
+    let n = 0;
+    for (const t of c.roster.living) {
+      const e = t.body;
+      if (!e || e.dead) continue;
+      if (dist2(e.position, at) > r2) continue;
+      const want = (e.maxHp || 0) * 0.5;
+      if (e.hp < want) e.hp = Math.min(e.maxHp, want);
+      if (e.actor?.ragdolled) e.recover?.();
+      n++;
+    }
+    return n;
+  }
+
+  /**
+   * DREAD — the line in front of you, and it is deliberately not a weapon.
+   *
+   * Four things happen to every body it reaches and not one of them is a
+   * damage number:
+   *
+   *   the SHOT      `holdFire` — Waves.js's own primitive, the same one a HOLD
+   *                 order uses. The burst it was in the middle of is gone and
+   *                 the fuse goes back up.
+   *   the AIM       `Enemy.dread`, read by `aimQuality` beside morale. See the
+   *                 DREAD record in Enemy.js for why the term is there rather
+   *                 than here: a campaign's enemy carries no roster record, so
+   *                 a verb that only lowered morale would do nothing at all in
+   *                 the mode it was written for.
+   *   the FOOTING   a shove with a literal 0 of damage, through the same
+   *                 `applyKnockback` every Force power in the game ends in —
+   *                 so it is answered by the target's own Force pool, it
+   *                 breaks whatever they were casting, and it is under the
+   *                 12 m/s that would knock them off their feet, because this
+   *                 is a line recoiling and not a line being thrown.
+   *   the NERVE     `SHAKEN`, but only where there is a record to shake. In a
+   *                 meeting that is the other player's roster and it is the
+   *                 whole point; in a campaign there is none and the three
+   *                 above are the entire effect.
+   *
+   * ONLY THE HORDE AND OTHER ARMIES, never a player. A human on the other end
+   * of a meeting is not a body this verb is allowed to reach into: the state
+   * it hands out is unreadable from inside — you would be shooting worse for
+   * six seconds with nothing on your own screen to say so — and every other
+   * power in this game announces itself to the person it lands on by moving
+   * them. `world.enemies` is the list, which is that rule expressed as the
+   * only list it walks.
+   */
+  _castDread(P, c, A) {
+    const r2 = P.radius * P.radius;
+    /**
+     * THE LIVE HEADING, NOT THE FORMATION'S.
+     *
+     * `_frame` returns the SLEWED yaw, and that is exactly right for what it
+     * is for: a formation should not swing around the player every time they
+     * look somewhere, so it holds inside a 40° deadband and turns at 1.1 rad/s
+     * afterwards (see FRAME_DEADBAND). A power is the other kind of thing. It
+     * is thrown at what you are pointing at in the moment you throw it, and a
+     * cone that lagged the mouse by up to a quadrant would be a verb that
+     * missed the rank you were plainly aiming at. Position from the frame,
+     * bearing from the body — which is the same split `Player`'s own powers
+     * make between where you stand and where you aim.
+     */
+    const yaw = c.player ? headingOf(c.player) : A.yaw;
+    const fx = Math.sin(yaw), fz = Math.cos(yaw);
+    const cosArc = Math.cos(P.arc);
+    let n = 0;
+    for (const e of this.world?.enemies || []) {
+      if (!e || e.dead || e.alive === false) continue;
+      if (e.team === c.side) continue;
+      const dx = e.position.x - A.pos.x, dz = e.position.z - A.pos.z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 > r2 || d2 < 1e-6) continue;
+      const d = Math.sqrt(d2);
+      if ((dx * fx + dz * fz) / d < cosArc) continue;
+      n++;
+      e.dread = Math.max(e.dread || 0, P.seconds);
+      holdFire(e);
+      _v2.set(dx / d, 0.18, dz / d).multiplyScalar(DREAD.recoil);
+      if (e.applyKnockback) e.applyKnockback(_v2, 0, c.player);
+      else e.breakCast?.();
+      e.cry?.('panic', 1.2);
+      /* …and where the body is somebody's soldier rather than the composer's,
+       * the same event goes on the record through the one door that writes
+       * morale. `commanderOf` answers for whichever army it belongs to. */
+      if (e.trooper) this.shake(e.trooper, 'SHAKEN', this.commanderOf(e));
+    }
+    return n;
   }
 
   /**
@@ -2235,7 +2824,26 @@ export class CommandDirector extends WaveDirector {
     const x = out.x * c + out.z * s;
     const z = -out.x * s + out.z * c;
     out.set(A.pos.x + x, 0, A.pos.z + z);
-    if (F.seeksCover) this._coverSite(e, out, A);
+    /**
+     * …AND THE GROUND IT IS STANDING ON. Two callers, one hunt, and the only
+     * difference between them is how far a man is allowed to walk for it.
+     *
+     * TAKE COVER is an ORDER and it re-solves when the order is given, so it
+     * gets `COVER_HUNT` and the whole level to look through. Being SHOT AT is
+     * not an order — "they should take cover when under fire" is a thing a
+     * soldier does inside whatever he was already told to do — so it gets
+     * `COVER_LEAN`, which is bounded by the formation's own tolerance and
+     * therefore cannot turn a line abreast into twelve men behind twelve
+     * crates. See both constants.
+     *
+     * The cache key is the epoch for the ordered hunt and the body's own fire
+     * count for the reactive one, which is what makes the second re-choose
+     * per BURST rather than per order: a man pinned again after the line has
+     * moved picks the ground he is on now, and a man nobody is shooting at
+     * falls back onto his slot the moment `underFire` lapses.
+     */
+    if (F.seeksCover) this._coverSite(e, out, A, COVER_HUNT, this._coverEpoch | 0, 0);
+    else if (e.underFire > 0) this._coverSite(e, out, A, COVER_LEAN, e._fireEpoch | 0, 1);
     if (this.world?.terrain) out.y = this.world.terrain.height(out.x, out.z);
     return out;
   }
@@ -2259,8 +2867,8 @@ export class CommandDirector extends WaveDirector {
    * a man who has chosen a rock stays behind it. The choice is re-made when
    * the order is re-given, which is what `_coverEpoch` counts.
    */
-  _coverSite(e, out, A) {
-    if (e._coverAt === this._coverEpoch && e._coverPt) { out.copy(e._coverPt); return; }
+  _coverSite(e, out, A, hunt = COVER_HUNT, at = 0, mode = 0) {
+    if (e._coverAt === at && e._coverFor === mode && e._coverPt) { out.copy(e._coverPt); return; }
     const boxes = this.world?.physics?.staticBoxes;
     if (!boxes || !boxes.length) return;
     /* Where the shooting is coming from, as one bearing for the whole army. */
@@ -2285,7 +2893,7 @@ export class CommandDirector extends WaveDirector {
       if (h.y < 0.55 || Math.max(h.x, h.z) < 0.5) continue;
       const dx = b.center.x - out.x, dz = b.center.z - out.z;
       const d2 = dx * dx + dz * dz;
-      if (d2 > COVER_HUNT * COVER_HUNT || d2 > bestD) continue;
+      if (d2 > hunt * hunt || d2 > bestD) continue;
       bestD = d2; best = b;
     }
     if (!best) return;
@@ -2293,7 +2901,8 @@ export class CommandDirector extends WaveDirector {
     const r = Math.max(h2(best), 0.5) + 0.85;
     out.set(best.center.x - T.x * r, 0, best.center.z - T.z * r);
     e._coverPt = out.clone();
-    e._coverAt = this._coverEpoch;
+    e._coverAt = at;
+    e._coverFor = mode;
   }
 
   /**
@@ -2406,7 +3015,15 @@ export class CommandDirector extends WaveDirector {
      * running to you is a man you can stand in front of.
      */
     const t = e.trooper;
-    if (t.broken) {
+    /**
+     * …AND THE SQUAD FALLS BACK WITH HIM. `t.rout` is `_morale`'s statement
+     * that most of this squad has broken, and a man who is personally steady
+     * inside one goes home too — see the note over it. Same destination and
+     * the same pace as a break, because "fall back" is one act however many
+     * people decided on it, and the man who is still steady is the one you
+     * can actually see leading the others out.
+     */
+    if (t.broken || t.rout) {
       if (t.morale < MORALE.REFUSE) return;             // finished: nothing reaches them
       const home = c.player?.position || c.anchor;
       if (home) {
@@ -2514,14 +3131,16 @@ export class CommandDirector extends WaveDirector {
   /**
    * WHO A TROOPER OF YOURS IS ALLOWED TO SHOOT.
    *
-   * `World.pickTarget` delegates here for anything carrying a `trooper`. Two
+   * `World.pickTarget` delegates here for anything carrying a `trooper`. Three
    * rules, and between them they are the whole tactical content of a formation:
    *
    *   the nearest HOSTILE — which for an ally is the horde and for the horde is
    *     you, one function answering for both armies rather than two lists built
    *     from two ideas of who is fighting whom;
    *   within the formation's LEASH of the trooper's own slot, so a tight
-   *     formation genuinely will not chase and a loose one genuinely will.
+   *     formation genuinely will not chase and a loose one genuinely will;
+   *   …and WHAT THE SQUAD LEADER IS FIGHTING first, when that passes the same
+   *     two tests. See the note on `focus` below.
    *
    * Returning null is a legitimate answer and it is what makes the leash mean
    * something: `Enemy._think` sets `wish = null` on a null target, and `steer`
@@ -2538,6 +3157,30 @@ export class CommandDirector extends WaveDirector {
     const ax = slot ? slot.x : e.position.x;
     const az = slot ? slot.z : e.position.z;
     const leash2 = leash === Infinity ? Infinity : leash * leash;
+    /**
+     * THE SQUAD SHOOTS AT WHAT ITS LEADER IS SHOOTING AT — the third rule, and
+     * it is a PREFERENCE inside the other two rather than a rule beside them.
+     *
+     * "concentrate fire on what their leader is fighting." Written as an
+     * override it would be a squad that ignores the droid at its elbow to fire
+     * across the field at whatever the sergeant found, which is not
+     * concentration, it is a squad walking past a fight. So the leader's pick
+     * has to pass exactly the same test every other candidate passes — alive,
+     * hostile, and inside this trooper's own leash of its own slot — and the
+     * nearest-hostile rule below is what answers when it does not.
+     *
+     * What it buys is the thing a firing line is for: five rifles that all
+     * kill the same B2 in one second instead of five rifles chipping five B2s
+     * for five. It is also the one place in this file where a body's decision
+     * depends on another body's, which is why the focus is READ off a field
+     * `_troops` stamped rather than looked up here — see the note there for
+     * the frame of latency that buys and why it is the right trade.
+     */
+    const focus = e.cmdFocus;
+    if (focus && !focus.dead && focus.alive !== false && focus.team !== e.team) {
+      const fx = focus.position.x - ax, fz = focus.position.z - az;
+      if (fx * fx + fz * fz <= leash2) return focus;
+    }
     let best = null, bestD = Infinity;
     for (const c of candidates) {
       if (!c || c.dead || c.alive === false) continue;
@@ -2729,10 +3372,40 @@ export class CommandDirector extends WaveDirector {
     return on > 0;
   }
 
-  /** The player hit one of their own. Told once, loudly, and never nagged. */
-  onFriendlyHit(e, amount, source) {
+  /**
+   * The player hit one of their own. Told once, loudly, and never nagged —
+   * and if it was the FORCE that did it, the line remembers.
+   *
+   * `MORALE.BETRAYED` has read "the Jedi used a Force power ON one of their
+   * own, per use" since the table was written and nothing has ever called it.
+   * It is the "Dark-side excess" half of note #36 — "Heavy losses, Dark-side
+   * excess, or abandoning them tanks morale" — the other two halves of which
+   * (`COMRADE_FELL`, `ALONE`) have been live all along, so the sentence the
+   * table makes was two thirds true.
+   *
+   * FORCE ONLY, and the distinction is the design rather than pedantry. A
+   * clumsy sweep of the blade through the man beside you is an accident in a
+   * melee and this mode already prices it, in health, through `teamDamage`.
+   * Reaching out and throwing one of your own soldiers into a wall is a
+   * DECISION, it takes a Force pool to make, and it is the one the squad reads
+   * as something about you. `FORCE_KINDS` is Enemy.js's own list of what
+   * counts and it is called rather than restated.
+   *
+   * The whole squad takes it, not the man: what shakes a line is watching it
+   * happen, and the man it happened to is the only one who could not see it.
+   */
+  onFriendlyHit(e, amount, source, kind = null) {
+    if (!e.trooper) return;
+    const c = this.commanderOf(e);
+    if (FORCE_KINDS.test(kind ?? '')) {
+      this._btT = (this._btT || 0);
+      if (this._btT <= 0) {
+        this._btT = 1.5;
+        this.shake(this.squadOf(e.trooper, c), 'BETRAYED', c);
+      }
+    }
     this._ffT = (this._ffT || 0);
-    if (this._ffT > 0 || !e.trooper) return;
+    if (this._ffT > 0) return;
     this._ffT = 6;
     this.world?.notify?.('CHECK YOUR FIRE', `${e.trooper.name} is one of yours`);
   }
@@ -2835,6 +3508,11 @@ export class CommandDirector extends WaveDirector {
    */
   update(dt, ctx) {
     if (this._ffT > 0) this._ffT -= dt;
+    /* The BETRAYED gate, on its own clock and a much shorter one: the notice
+     * above is a nag if it repeats, where a Force power that throws four of
+     * your own men is four separate things the line watched you do. 1.5 s is
+     * long enough that ONE push through a squad is one betrayal. */
+    if (this._btT > 0) this._btT -= dt;
     this._trackLeader(dt);
     /* THE ADVANCE IS OVER AND THIS DIRECTOR IS INERT. `world.over` already stops
      * World from calling this at all, and that is the load-bearing guard — this
@@ -2994,6 +3672,7 @@ export class CommandDirector extends WaveDirector {
     const squads = c.roster.squads();
     for (const squad of squads) {
       const lead = this.leaderOf(squad);
+      let living = 0, broke = 0;
       for (const t of squad) {
         if (!t.alive) continue;
         const e = t.body;
@@ -3021,7 +3700,29 @@ export class CommandDirector extends WaveDirector {
          * already reads `trooper.morale` directly; keeping the broken flag
          * here means the three consumers cannot disagree about it. */
         t.broken = t.morale < MORALE.BREAK;
+        living++;
+        if (t.broken) broke++;
       }
+      /**
+       * …AND THE SQUAD'S OWN ANSWER TO THE SAME QUESTION.
+       *
+       * "they should fall back when a position is lost." Breaking is what one
+       * man does; a rout is what a squad does, and it is the same fact counted
+       * one level up — `MORALE.ROUT` of them broken and the ground they were
+       * holding is no longer being held by anybody. The men who are still
+       * steady go back with them, which is the part that makes it a WITHDRAWAL
+       * rather than three separate men running: a squad that leaves its two
+       * bravest riflemen standing on a lost position has not fallen back, it
+       * has been destroyed in detail.
+       *
+       * Written on the RECORD beside `broken` and derived from it, so there is
+       * no second state to clear: the moment enough nerve comes back — a rally,
+       * a commander walking over, the wave clearing — the count falls under the
+       * fraction and the squad re-forms with no event anywhere. `steer` is the
+       * only reader.
+       */
+      const rout = living > 0 && broke > living * MORALE.ROUT;
+      for (const t of squad) if (t.alive) t.rout = rout;
     }
   }
 
@@ -3061,23 +3762,69 @@ export class CommandDirector extends WaveDirector {
   }
 
   _troops(dt, ctx) {
+    /**
+     * WHERE THE SHOOTING IS COMING FROM GOES STALE, and it used to go stale
+     * for a whole order.
+     *
+     * `_coverSite` solves one threat bearing for the whole army and caches it
+     * against `_coverEpoch`, which only moves when an order is given. That is
+     * right for TAKE COVER — the order is the moment of choosing — and it is
+     * wrong for a man leaning behind a drum in the middle of a fight, who
+     * should be putting it between himself and the muzzle that is firing at
+     * him NOW. Clearing the mark once a second is what makes the second
+     * caller honest; a second bearing computed a second way would be the
+     * thing this file keeps deleting.
+     */
+    this._threatT = (this._threatT || 0) + dt;
+    if (this._threatT >= 1) { this._threatT = 0; this._threatAt = -1; }
     /* Per commander, and the indices restart per army: `cmdIndex` is a position
      * in ONE roster's living list, and two armies sharing a numbering would
      * have the second one solving its slots against the first one's count. */
     for (const c of this.commanders) {
       this._slewFrame(c, dt);
       this._morale(dt, c);
+      /* The commander's own Force, one clock per verb per army. Here rather
+       * than in `update` because this is the loop that already runs once a
+       * frame for every commander in the world, meeting or campaign. */
+      if (c._castCd) for (const k in c._castCd) if (c._castCd[k] > 0) c._castCd[k] = Math.max(0, c._castCd[k] - dt);
       const F = FORMATIONS[c.formation] || FORMATIONS[DEFAULT_FORMATION];
       const squads = c.roster.squads();
       let i = 0;
       const n = c.roster.strength;
       for (let k = 0; k < squads.length; k++) {
+        /**
+         * WHAT THE MAN IN CHARGE IS FIGHTING — read once per squad, not once
+         * per trooper, and stamped on the bodies for `targetFor` to prefer.
+         *
+         * "concentrate fire on what their leader is fighting." The leader is
+         * already derived (`leaderOf`), so nothing new is stored anywhere: the
+         * squad's focus is whatever its highest-ranked living member picked
+         * this frame, and the moment he falls the next man's pick becomes the
+         * squad's on the following frame — the same property that makes the
+         * hierarchy work at all.
+         *
+         * ONE FRAME LATE, ON PURPOSE AND STATED. `_think` runs inside
+         * `world.enemies`' own update and this runs after it, so the focus a
+         * trooper reads is the target its leader had last frame. Refreshing it
+         * inside `targetFor` instead would cost a `squadOf` walk per trooper
+         * per frame — twenty-four rosters scanned twenty-four times — to buy
+         * one frame of latency on a decision that is re-made sixty times a
+         * second. It is not worth it and it would be the slower answer.
+         */
+        const lead = this.leaderOf(squads[k]);
+        const focus = (lead && lead.body && !lead.body.dead) ? lead.body.target : null;
         for (const t of squads[k]) {
           const e = t.body;
           if (!e || e.dead) { i++; continue; }
           e.cmdIndex = i++;
           e.cmdCount = n;
           e.cmdSquad = k;
+          e.cmdFocus = (focus && focus !== e) ? focus : null;
+          /* UNDER FIRE decays here for the same reason the indices are
+           * refreshed here: this is the one loop that touches every living
+           * body of every army exactly once a frame. See UNDER_FIRE, and
+           * `installTeamDamage` for what sets it. */
+          if (e.underFire > 0) e.underFire = Math.max(0, e.underFire - dt);
           // Fire discipline. `holdFire` is Waves.js's own primitive — it pushes
           // the fuse back up without touching the brain, so a trooper ordered to
           // hold still takes cover, calls out and tracks you exactly as it did.
@@ -3159,6 +3906,22 @@ export class CommandDirector extends WaveDirector {
       const p = t.award(1);
       if (p) this._promoteTrooper(t, t.body);
     }
+    /**
+     * …AND THE NERVE THAT COMES WITH SURVIVING ONE.
+     *
+     * `MORALE.WAVE_CLEAR` has been in the table since it was written, at 0.34
+     * — the second largest event in it, behind only holding a whole area — and
+     * nothing ever called it. So a line that had just beaten a wave off got
+     * nothing for it, and the only thing that could lift a shaken squad
+     * between areas was standing next to it. "Troops perform better when
+     * you're winning" was the first sentence of the note the table implements
+     * and it was the one clause with no arithmetic behind it.
+     *
+     * Every army on the field, not only the player's: in a campaign there is
+     * one, and in a meeting there is no wave to clear, so the loop is what the
+     * sentence means rather than a hedge.
+     */
+    for (const c of this.commanders) this.shake(null, 'WAVE_CLEAR', c);
     if (this.areaWaves >= this.area.waves) this._areaClear();
     return fresh;
   }
@@ -3366,6 +4129,25 @@ export class CommandDirector extends WaveDirector {
        * is unanswerable on a machine whose roster is a wire record rather than a
        * list of Troopers. Derived here, once, from the same roll. */
       squads: c.roster.squads().length,
+      /**
+       * THE COMMANDER'S OWN FORCE, in the same object as everything else the
+       * outside is allowed to know — plain data, no functions and no live
+       * Commander, because this object crosses the wire verbatim (see
+       * `netShell`/`applyNet`) and a joining commander's wheel has to be able
+       * to grey a slot the host says is not ready.
+       *
+       * DERIVED FROM `castReady`, which is the same rule `castForce` refuses
+       * on. A HUD that decided for itself what "ready" means is precisely the
+       * defect the note over `Powers.js` records — the wheel greyed a power
+       * the player could afford and lit one they could not — and the fix there
+       * was the one taken here: one authority, two readers.
+       */
+      force: ORDER_IDS.filter((id) => COMMAND_FORCE[id]).map((id) => ({
+        id,
+        name: COMMAND_FORCE[id].name,
+        ready: this.castReady(id, c) === null,
+        cd: Math.round(((c._castCd && c._castCd[id]) || 0) * 10) / 10,
+      })),
       mustering: this.mustering,
       /** The advance is behind you. The HUD's cue that this is a finished run. */
       done: this.done,

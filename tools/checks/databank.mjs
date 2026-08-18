@@ -340,7 +340,11 @@ export async function run({ check, assert }) {
       /* …and the Codex was NOT repurposed. It is the keybind reference and it
        * stays one — the databank is a second page, not a replacement, and the
        * check that the Codex still renders its grid lives in menu.mjs. */
-      const codex = tabs.find((t) => t.dataset.tab === 'train');
+      /* `codex`, and it used to be `train` — one character from `training`,
+       * which is a DIFFERENT tab built in Menu.js. The two reference pages also
+       * moved in front of Options at the same time. Neither is a repurposing:
+       * the clause below is the one that matters and it is unchanged. */
+      const codex = tabs.find((t) => t.dataset.tab === 'codex');
       assert(codex, 'the Codex tab is gone');
       assert(doc.getElementById('codex-grid').children.length > 20, 'the Codex stopped rendering');
       /* A row opens a page: driven, not assumed. */

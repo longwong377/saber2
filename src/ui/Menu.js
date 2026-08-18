@@ -24,7 +24,12 @@ import { applyInjury } from '../game/Injury.js';
 import { LEVELS, LEVEL_ORDER } from '../game/Levels.js';
 // The Descent's ladder, named on the Deploy panel because the mode picks its
 // own places and the Theatre column has no say in it — see _syncTheatre.
-import { DIFFICULTY } from '../game/Combat.js';
+// The rest of this import is the DEFLECTION LADDER, and it is here because the
+// Codex teaches it: `GRADE_NAME` is the four answers a bolt can get, and
+// SPEED_GRADE/PARRY_GRADE/parryScale are the gates between them. Every number
+// on that page is read from these, so a balance pass that moves a gate moves
+// the page that teaches it in the same commit.
+import { DIFFICULTY, GRADE_NAME, SPEED_GRADE, PARRY_GRADE, parryScale } from '../game/Combat.js';
 // The Codex and the training panel both quote Focus's numbers. They are read
 // from the system rather than typed, because both of them had been left behind
 // by the round that changed heldScale from 0.35 to 0.18.
@@ -35,8 +40,53 @@ import { FOCUS } from '../game/Focus.js';
 // is the same eleven.
 import { LESSONS } from '../game/Dojo.js';
 import { MODES, sandboxUnits, SANDBOX_MAX_ENEMIES, sandboxConfig,
-         DRAFT_EVERY, BOSS_EVERY,
+         DRAFT_EVERY, BOSS_EVERY, boonById,
          CONDITIONS, CONDITION_KEYS, CONDITION_MAX, WaveDirector } from '../game/Waves.js';
+/**
+ * WHAT EVERY FORCE POWER COSTS — and the Codex prints it because this table
+ * exists precisely so that two surfaces can read one price list.
+ *
+ * Powers.js's own header records what happened when they did not: the HUD kept
+ * a private duplicate that carried lightning at 14 against a real 30, so the
+ * wheel greyed out a power the player could afford. The Codex was the third
+ * surface in that story and it solved the problem by saying nothing at all —
+ * eleven rows reading "Force push." with no number on any of them. It is a
+ * leaf module (it imports nothing), so there is no cycle to pay for.
+ */
+import { POWER_COST, POWER_BOON } from '../game/Powers.js';
+/**
+ * THE SUPPORT CALLS, so the page that documents controls documents these too.
+ *
+ * `STRATAGEM_BY_ID`'s own comment in that file says what it is for — "by id,
+ * for the HUD and the Codex. Derived, so a row cannot be missed" — and the
+ * table's header says "adding a stratagem should be adding a ROW". This is the
+ * Codex end of that promise: the rows below are mapped off `STRATAGEMS`, so a
+ * seventh call is documented, priced and spelled on this page the day it is
+ * authored, with nothing typed here.
+ *
+ * `DIR_ACTION` is the reason a code can be printed at all. A code is stored as
+ * DIRECTIONS ('WSWD'), not key names, and `DIR_ACTION` maps each direction onto
+ * the movement action that means it — so the Codex spells every code in the
+ * player's OWN movement bindings. A player on ESDF reads E-S-E-F, and a pad
+ * reads the D-pad. That is the same rule the rest of this page obeys, applied
+ * to a control that is four presses instead of one.
+ *
+ * Menu already imports Player.js, which imports this module, so nothing new
+ * enters the graph.
+ */
+import { STRATAGEMS, DIR_ACTION, CODE_GAP } from '../game/Stratagems.js';
+/**
+ * THE INSIGHT ECONOMY, so the Codex can state it rather than the player having
+ * to infer it from a number that ticks up after a wave.
+ *
+ * Menu → LivingForce → Waves, and Menu already imports Waves: no new cycle.
+ * Nothing about the rate, the prices or the escalator is typed on the page —
+ * `insightRate` is asked in the SELECTED MODE's own terms (see codexTeaching),
+ * because the Trial of Waves is paid four times what Path of the Blade is and
+ * a page that quoted one number would be wrong in the other mode.
+ */
+import { insightRate, insightAfter, COST as FACET_COST, COST_STEP, RANK_STEP,
+         FACETS, CURRENTS } from '../game/LivingForce.js';
 import { audio, MUSIC_TRACKS, trackAt, SPOKEN_LINES, wordsFor, canSpeakWords } from '../engine/Audio.js';
 import { voiceAt, PLAYER_VOICES } from '../engine/Voice.js';
 // The reticle's shape table and its painter live with the HUD that draws it;
@@ -1194,15 +1244,16 @@ export const CODEX = [
   { keys: ['heal'],
     text: () => 'Force heal — three seconds of standing still, and a hit breaks it. Press again to stop.' },
   { keys: ['rend'], text: () => 'Rend apart. Takes a mechanical enemy to pieces where it stands.' },
-  { keys: ['lightning'],
-    text: () => 'Force lightning, once the <b>Force Lightning</b> boon has been drafted.' },
+  { keys: ['lightning'], text: () => 'Force lightning — an arc that jumps between bodies.' },
   { keys: ['unleash'],
+    // "costs more than any other power" used to be the end of that sentence and
+    // it was a claim ABOUT THE PRICE LIST typed beside it. The chip carries the
+    // number now, next to push's, so the comparison is on the page instead of
+    // being asserted by prose that cannot follow a tuning pass.
     text: () => 'Unleash — a full circle of Force, thrown outward with both arms. It staggers '
-      + 'everything within eleven metres and costs more than any other power. For when there is '
-      + 'no direction left to face.' },
+      + 'everything within eleven metres. For when there is no direction left to face.' },
   { keys: ['compel'],
-    text: () => 'Force compel, once <b>Domination</b> is drafted. The unit you are looking at '
-      + 'turns on its own — or, alone, on itself.' },
+    text: () => 'Force compel — the unit you are looking at turns on its own, or, alone, on itself.' },
   { keys: ['swap'],
     text: () => 'Standing over a fallen hilt, take it — crystal, hilt and all, so a friend\'s '
       + 'blade is theirs in your hand. Standing over nothing, put yours down.' },
@@ -1246,6 +1297,38 @@ export const CODEX = [
   ...ORDER_ACTIONS.map(o => ({
     keys: [o.action],
     text: () => `<b>${o.name}</b> — ${o.blurb}`,
+  })),
+
+  /**
+   * THE STRATAGEMS, GENERATED — the same argument as the orders above, and one
+   * more on top of it.
+   *
+   * A stratagem is not a binding. There is ONE binding (`stratagem`) and the
+   * calls are told apart by a CODE spelled in movement directions, which is
+   * why the rows below carry `code` where every other row carries `keys`.
+   * `codexHtml` renders a code by asking the bindings table what each direction
+   * is bound to, so these rows print live bindings exactly as the rest of the
+   * page does — there is no third kind of row that gets to type a key.
+   *
+   * Everything on the row comes off the table: the name, the sentence, the
+   * price and whether it needs an army. Nothing is written here.
+   */
+  { head: 'Calling for support' },
+  { keys: ['stratagem'], hold: true,
+    // "your movement bindings" and not "the movement keys": on a pad these four
+    // chips read Stick ↑/←/↓/→, and a page that calls them keys to somebody
+    // holding a controller is the same defect as printing a key name at them.
+    text: k => `Hold it and SPELL one of the ${STRATAGEMS.length} codes below with `
+      + `${k('moveF')}${k('moveL')}${k('moveB')}${k('moveR')} — your movement bindings, so a `
+      + `rebind respells every code. Pause for ${CODE_GAP}&nbsp;s and the entry is abandoned. A `
+      + 'call bills the same Force pool a power does, and it arrives after you asked for it, '
+      + 'not when.' },
+  ...STRATAGEMS.map(S => ({
+    code: S.code,
+    text: () => `<b>${S.name}</b> — ${S.blurb}`,
+    /* Read by `powerChips`, which prices the Force rows the same way. A
+     * stratagem's price is `cost` on its own row; there is no second table. */
+    strat: S,
   })),
 ];
 
@@ -1318,6 +1401,44 @@ export function keyChips(bindings, id, hold = false, pad = null) {
 }
 
 /**
+ * WHAT A ROW COSTS, IF THE THING IT NAMES IS A FORCE POWER.
+ *
+ * NOTHING DECLARES THIS. A power's action id and its key in `POWER_COST` are
+ * THE SAME STRING — `push`, `grip`, `unleash` — because `Player` spends
+ * `POWER_COST[id]` in the method the action `id` fires, and `POWER_BOON` is
+ * keyed the same way. So a row that names exactly one action names a price
+ * whenever the price list has one, and a twelfth power gets its number on the
+ * page the day somebody writes its row. A `cost:` field on each row would be
+ * the hand-maintained twin of a table that is already right (HANDOFF §2.3),
+ * and it would be wrong in exactly the way Powers.js's own header describes the
+ * HUD's private duplicate being wrong.
+ *
+ * Two chips and not one sentence: the price is a NUMBER the eye should be able
+ * to compare down the column (push 20 against unleash 52 is the whole argument
+ * for unleash being a panic button), and the gate is a different kind of fact —
+ * it is not that the power is expensive, it is that you do not have it yet.
+ *
+ * The boon's NAME comes off `boonById`, so the two gated rows stopped typing
+ * "Force Lightning" and "Domination" into their prose. A card renamed in
+ * Waves.js renames itself here.
+ */
+function powerChips(row) {
+  /* A stratagem carries its own row off `STRATAGEMS`, so its price is on the
+   * record it was generated from rather than in a table keyed by action id —
+   * it has no action id of its own to be keyed by. Same two chips either way. */
+  if (row.strat) {
+    return `<em class="cost">${row.strat.cost} Force</em>`
+      + (row.strat.commandOnly ? '<em class="cost gate">needs an army</em>' : '');
+  }
+  const id = row.keys && row.keys.length === 1 ? row.keys[0] : null;
+  const cost = id ? POWER_COST[id] : undefined;
+  if (cost === undefined) return '';
+  const boon = POWER_BOON[id] ? boonById(POWER_BOON[id]) : null;
+  return `<em class="cost">${cost} Force</em>`
+    + (boon ? `<em class="cost gate">needs ${boon.name}</em>` : '');
+}
+
+/**
  * The Codex grid, as markup, from a bindings table.
  *
  * Pure and DOM-free so that the check can render it against a rebound table and
@@ -1335,11 +1456,233 @@ export function codexHtml(bindings, pad = null) {
     // is the one row a pad has to rename, because on a pad the blade is the
     // right stick and a player told to flick a mouse they are not holding has
     // been told nothing. See CODEX's `device` rows.
+    /* THREE KINDS OF LEAD, and only one of them may contain a literal.
+     *   `device` — the mouse's own MOTION, which is not a binding at all.
+     *   `code`   — a stratagem's spelling, printed as the movement bindings the
+     *              directions resolve to, so it follows a rebind like the rest.
+     *   `keys`   — everything else. */
     const lead = row.device
       ? `<kbd>${escKey(pad && pad.device === 'pad' && row.padDevice ? row.padDevice : row.device)}</kbd>`
-      : row.keys.map(id => keyChips(bindings, id, row.hold, pad)).join(' ');
-    return `<div>${lead}<span>${row.text(id => keyChips(bindings, id, false, pad))}</span></div>`;
+      : row.code
+        ? [...row.code].map(d => keyChips(bindings, DIR_ACTION[d], false, pad)).join('')
+        : row.keys.map(id => keyChips(bindings, id, row.hold, pad)).join(' ');
+    /* The chips live INSIDE the row's `<span>`, which is not cosmetic: every
+     * reader of this markup — tools/checks/controls.mjs's row parser included —
+     * matches `<div>…<span>…</span></div>`, and a chip hung after the `</span>`
+     * would make each priced row invisible to all of them at once. */
+    return `<div>${lead}<span>${row.text(id => keyChips(bindings, id, false, pad))}`
+      + `${powerChips(row)}</span></div>`;
   }).join('');
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  The Codex's second half — what the controls are FOR                   */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * THE PAGE WAS A KEY LIST AND FOUR SENTENCES OF ADVICE.
+ *
+ * The grid above it is the one part of this product that has never been able
+ * to lie about a control, and it is worth saying what it therefore does NOT
+ * do: it tells a player which key deflects and nothing whatsoever about what
+ * deflecting is worth. Under it sat "The four things that make a master" —
+ * four hand-written paragraphs restating §2.3 and §2.4 of DESIGN.md in prose,
+ * with not one number in them, in a game whose entire skill curve is four
+ * graded outcomes separated by measured thresholds. Every threshold on that
+ * ladder is an exported constant that `tools/checks/balance.mjs` and
+ * `tools/checks/directional.mjs` already measure the game against. The page
+ * that teaches the game was the only reader that did not have them.
+ *
+ * So the four paragraphs became two generated blocks and one short list:
+ *
+ *   THE LADDER  the four answers a bolt can get, off `GRADE_NAME`, with the
+ *               gate between each pair read from `SPEED_GRADE` and
+ *               `PARRY_GRADE`. The parry windows are scaled by the SELECTED
+ *               DIFFICULTY through `parryScale`, which is the same call
+ *               `Player` makes when it hands the number to the controller —
+ *               so picking Grandmaster on the Deploy panel visibly tightens
+ *               the window on this page.
+ *
+ *   THE PURSE   what a run pays and what a facet costs, asked of the SELECTED
+ *               MODE's own director. The Trial of Waves pays four times what
+ *               Path of the Blade pays and drafts nothing; one number typed
+ *               here would have been wrong in whichever mode it was not
+ *               written for. See `_ruleDirector`, which already builds a
+ *               table-only director for exactly this kind of question.
+ *
+ *   THE LIST    the two techniques that fall out of the blade being a rigid
+ *               body and have no constant behind them at all — a drag and a
+ *               chamber. They stay prose because there is nothing to read.
+ *
+ * ── WHAT IS DELIBERATELY MISSING, AND IT IS THE BEST NUMBER ON THE LADDER ──
+ *
+ * A RETURN is worth ×1.5 and a PERFECT RETURN ×2.5, and neither appears here.
+ * `Combat.gradeCaught` carries both as bare literals on one line
+ * (`const damageMul = grade === GRADE.PERFECT ? 2.5 : …`), so there is nothing
+ * to read and typing them would put the payoff of the game's headline mechanic
+ * on a page that cannot follow a balance pass — which is the whole defect this
+ * file has spent three rounds removing. Exporting them from Combat.js is four
+ * characters of change in a file this lane does not own; until then the ladder
+ * says what each rung REQUIRES and lets the game say what it pays.
+ */
+
+/** One chip in a fact strip: a mono label over a value. */
+const factChip = (label, value, wide = false) =>
+  `<div${wide ? ' class="wide"' : ''}><b>${label}</b><span>${value}</span></div>`;
+
+/**
+ * The first wave at which a run has earned `n` Insight, at this mode's rate.
+ *
+ * `insightAfter` is the closed form and this walks it — deliberately, rather
+ * than inverting it by hand. The closed form has a floor in it (`floor(w /
+ * bossEvery)`), so its inverse is not one expression, and a second expression
+ * that is nearly the inverse is the shape HANDOFF §2.4 is about.
+ */
+function waveAffording(n, rate) {
+  for (let w = 1; w <= 200; w++) if (insightAfter(w, BOSS_EVERY, rate) >= n) return w;
+  return null;
+}
+
+/**
+ * The most facets a purse of `w` waves can wake, buying the cheapest thing
+ * available every time.
+ *
+ * The same arithmetic `tools/checks/living-force.mjs` uses to hold the tree
+ * under the draft, for the same reason: the prices are an arithmetic series, so
+ * "how many" is a walk down it and not a division. It is an upper bound and the
+ * page says so — a real run also pays `RANK_STEP` for repeats and cannot always
+ * reach the cheap thing.
+ */
+function facetsAffordable(waves, rate) {
+  let purse = insightAfter(waves, BOSS_EVERY, rate), n = 0;
+  for (;;) {
+    const cost = FACET_COST.common + COST_STEP * n;
+    if (purse < cost) break;
+    purse -= cost; n++;
+  }
+  return n;
+}
+
+/**
+ * The Codex's teaching half, as markup.
+ *
+ * Pure and DOM-free for the same reason `codexHtml` is: a check can render it
+ * against a chosen difficulty and a chosen mode and assert what a PLAYER would
+ * read, instead of re-deriving the answer with a second copy of this arithmetic
+ * and then agreeing with itself.
+ *
+ * @param {object} opts
+ * @param {string} opts.difficulty  a key of DIFFICULTY — scales the parry windows
+ * @param {object} opts.director    a WaveDirector; `drafts` and `isDraftWave`
+ *                                  are the only two things asked of it
+ */
+export function codexTeaching({ difficulty = 'knight', director = null } = {}) {
+  const tier = DIFFICULTY[difficulty] || DIFFICULTY.knight;
+  const scale = parryScale(tier);
+  const ms = (s) => `${Math.round(s * 1000)} ms`;
+  const pct = (v) => `${Math.round(v * 100)}%`;
+
+  /* THE LADDER. `GRADE_NAME` is the list and its ORDER is the ladder — the
+   * labels are read off it rather than typed, so a fifth grade cannot be added
+   * to the game without this page growing a rung with nothing in it, which is
+   * visible. What each rung requires is the gate `gradeCaught` actually tests. */
+  const rungs = [
+    `Blade under ${SPEED_GRADE.driven}&nbsp;m/s and closing slower than `
+      + `${SPEED_GRADE.closing}&nbsp;m/s. You got it in the way. It scatters, and nobody chose where.`,
+    `Blade over ${SPEED_GRADE.driven}&nbsp;m/s, or driving into the bolt at over `
+      + `${SPEED_GRADE.closing}&nbsp;m/s. It mirrors off the plane you actually held.`,
+    `A deflect, with the tip over ${SPEED_GRADE.return}&nbsp;m/s past `
+      + `${pct(SPEED_GRADE.returnBladeT)} of the blade and a body under your reticle — or a guard `
+      + `entered inside ${ms(PARRY_GRADE.window * scale)} of the bolt arriving.`,
+    `A return met at over ${SPEED_GRADE.perfect}&nbsp;m/s, closing at over `
+      + `${SPEED_GRADE.perfectClosing}&nbsp;m/s, past ${pct(SPEED_GRADE.perfectBladeT)} of the blade `
+      + `— or a guard entered inside ${ms(PARRY_GRADE.perfect * scale)}.`,
+  ];
+  const ladder = GRADE_NAME.map((name, i) => factChip(name, rungs[i] || '—')).join('');
+
+  /* THE PURSE, in the selected mode's own terms. A director is asked rather
+   * than a mode name being switched on: `drafts` is the shipped statement of
+   * which modes hand out cards and `isDraftWave` is the shipped cadence, and
+   * HANDOFF §2.4 is a whole section about what happens to an instrument that
+   * restates the second of those. */
+  const drafts = director ? director.drafts !== false : true;
+  const rate = insightRate(drafts);
+  /**
+   * TWO MODES PAY NOTHING AND THE PAGE HAS TO SAY SO.
+   *
+   * `World._earnInsight` hangs off `onWaveClear` and nothing else. The sandbox
+   * never clears a wave — `WaveDirector.update` hands the whole frame to
+   * `_sandboxUpdate` and returns — and Training is driven by `DojoDirector`,
+   * which has a `wave` field for the coach panel and never fires the signal at
+   * all. So in both of them the rate above is the rate that WOULD apply and
+   * nothing is ever earned, which is a worse thing to print than nothing:
+   * a purse table over a mode with no purse is the interface promising a loop
+   * that is not there.
+   */
+  const pays = !director || !(director.sandbox || director.mode === 'training');
+  let cards = 0;
+  if (director && typeof director.isDraftWave === 'function') {
+    for (let w = 1; w <= 20; w++) if (director.isDraftWave(w)) cards++;
+  }
+  const openings = CURRENTS
+    .map((c) => FACET_COST[boonById(c.root)?.rarity] ?? FACET_COST.common);
+  const opening = Math.min(...openings);
+  const openAt = waveAffording(opening, rate);
+  const modeName = (director && MODES[director.mode]?.name) || MODES.roguelite.name;
+  const purse = [
+    factChip('A wave survived', `+${rate.per} Insight, and +${rate.per + rate.boss} on `
+      + `the set-piece every ${BOSS_EVERY}${BOSS_EVERY === 1 ? 'st' : 'th'} wave`, true),
+    factChip('By wave 20 · 40', `${insightAfter(20, BOSS_EVERY, rate)} · `
+      + `${insightAfter(40, BOSS_EVERY, rate)} Insight earned`),
+    factChip('A facet costs', `${FACET_COST.common} · ${FACET_COST.rare} · ${FACET_COST.epic} `
+      + 'by rarity, before the escalator'),
+    factChip('The escalator', `every facet you have already woken adds +${COST_STEP} to the price `
+      + `of the next one; a second rank of one you hold adds +${RANK_STEP} more`, true),
+    factChip('Your first facet', openAt
+      ? `one of the ${CURRENTS.length} hearts, at ${opening} — about wave ${openAt}`
+      : 'out of reach at this rate'),
+    factChip('At best, by wave 40', `${facetsAffordable(40, rate)} facets of the ${FACETS.length} `
+      + `in the lattice${drafts ? ', beside the cards' : ''}`),
+    drafts
+      ? factChip('Cards drafted by wave 20', `${cards}, and one facet wakes with each`)
+      : factChip('Cards drafted', 'none in this mode — the Holocron is the whole of your build', true),
+  ].join('');
+
+  /* `h3.stacked` and not `.codex-head`: the grid above already uses
+   * `.codex-head` for its own subsections ("Commanding an army", "Calling for
+   * support"), so a teaching section wearing it would read as a fourth block of
+   * key rows rather than as a peer of "The blade is yours to move". Same two
+   * rules the rest of the front end heads a column with, and the 26 px of air
+   * `stacked` carries is what the Deploy panel's second list already asks for. */
+  return `
+    <h3 class="stacked">The four answers to a bolt</h3>
+    <p class="hint codex-note">Deflection is graded, never rolled — these are the gates the game
+      tests, at <b>${tier.name}</b>. Change the trial on <b>Deploy</b> and the two windows below
+      move with it.</p>
+    <div class="codex-facts rungs">${ladder}</div>
+
+    <h3 class="stacked">What a run pays you, and what it buys</h3>
+    <p class="hint codex-note">Insight is earned by surviving and dies with the run. You kneel —
+      still, on the floor, with nothing near you — to spend it in the <b>Holocron</b>, and the same
+      lattice opens from the bar under this panel between runs, as a chart you cannot spend in.
+      Prices climb
+      with the number of facets you have woken and not with the Insight you are holding, so a purse
+      kept shut reaches further up the lattice than one spent on the first thing it can afford.
+      These are the numbers for <b>${modeName}</b>, chosen under Deploy.</p>
+    ${pays ? `<div class="codex-facts">${purse}</div>`
+      : '<p class="hint codex-note">Nothing is earned in this one: Insight is paid for clearing a '
+        + 'wave, and this mode never clears one. Open the Holocron from the Temple to read the '
+        + 'lattice, and take it into a run to spend in it.</p>'}
+
+    <h3 class="stacked">Two things with no number behind them</h3>
+    <ol class="codex-list">
+      <li><b>Drag and accelerate.</b> Your blade has mass and lags your hand. Slow the mouse mid-arc
+        and the strike lands late, past their parry. Snap it and you arrive early. Reverse it before
+        contact and the blade genuinely reverses, because nothing was ever committed.</li>
+      <li><b>Chamber.</b> When a duelist winds up, the arc they have declared is drawn for you. Whip
+        your blade <i>against</i> that direction while the telegraph is lit and the attack dies
+        outright — no recoil, no trade, and your own blade is already free.</li>
+    </ol>`;
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -2219,6 +2562,10 @@ export class Menu {
     // that bails out early when #bind-list is absent (a stripped DOM), and the
     // Codex must still be built in that case rather than left empty.
     this._buildKeyLegends();
+    // …and the other half of that page, which reads the trial and the mode
+    // rather than the bindings. After _buildModes and _buildDifficulty, because
+    // both of those normalise the setting this renders.
+    this._buildCodexTeaching();
     // after _buildSaber, so the forge's own Length slider gets the ceiling too
     this._applyBladeCeiling?.(this.s.unlimitedBlade);
     // How much of a column is below the fold is a function of the window, so it
@@ -2874,6 +3221,10 @@ export class Menu {
         this.s.difficulty = key;
         [...this.el.diffs.children].forEach(c => c.classList.toggle('sel', c === d));
         saveSettings(this.s);
+        // The Codex quotes this tier's parry windows. A page that goes on
+        // saying 250 ms after the player has chosen the trial that makes it
+        // 172 ms is a page teaching a game they are not about to play.
+        this._buildCodexTeaching();
       });
       this.el.diffs.appendChild(d);
     }
@@ -2905,6 +3256,10 @@ export class Menu {
     this._syncTheatre();
     // A mode can pick its own theatre, and the theatre is what vetoes a rule.
     this._syncRules();
+    // …and the Codex's purse table is the same director's answer to a different
+    // question: the Trial pays four times what Path of the Blade pays and
+    // drafts nothing, so the page moves with the mode or it is wrong in one.
+    this._buildCodexTeaching();
     saveSettings(this.s);
   }
 
@@ -3882,8 +4237,10 @@ export class Menu {
     tab.textContent = 'Databank';
     /* Immediately before the Codex, which is the other reference page. The two
      * are one thought — what the controls do, and what the things you are using
-     * them on are — and a player who has found one has found the other. */
-    const codexTab = [...tabs.children].find((t) => t.dataset.tab === 'train');
+     * them on are — and a player who has found one has found the other. Both of
+     * them now sit BEFORE Options rather than behind it; see the note on the
+     * tab bar in index.html, which is also where `train` became `codex`. */
+    const codexTab = [...tabs.children].find((t) => t.dataset.tab === 'codex');
     tabs.insertBefore(tab, codexTab || null);
 
     const panel = document.createElement('section');
@@ -4367,6 +4724,28 @@ export class Menu {
       const el = document.querySelector(`#opt-scheme [data-scheme="${s.key}"] .txt span`);
       if (el) el.innerHTML = s.blurb(id => keyChips(this.bindings, id, false, pad));
     }
+  }
+
+  /**
+   * The Codex's teaching half, repainted whenever one of its two inputs moves.
+   *
+   * Its inputs are the chosen TRIAL (which scales both parry windows) and the
+   * chosen MODE (which decides what a wave pays and whether cards exist at
+   * all), and both of those are picked two tabs away on Deploy. A page built
+   * once in the constructor would quote Knight's window and Path of the Blade's
+   * purse to a player who had chosen Grandmaster and the Trial — which is the
+   * same defect as a Codex row with a key name typed into it, one screen along:
+   * a surface stating a number it is not reading.
+   *
+   * The director is the one `_buildRules` already builds for the rule column —
+   * a table-only WaveDirector over a stub world that spawns nothing — so the
+   * cadence and the draft rule are CALLED and not restated. See HANDOFF §2.4,
+   * which is a whole section about an instrument that restated `isDraftWave`.
+   */
+  _buildCodexTeaching() {
+    const host = document.getElementById('codex-teaching');
+    if (!host) return;
+    host.innerHTML = codexTeaching({ difficulty: this.s.difficulty, director: this._ruleDirector() });
   }
 
   /**

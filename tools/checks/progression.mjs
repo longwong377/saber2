@@ -58,7 +58,21 @@ function clearWave(d) {
  * director reads, and a caller that has a run is entitled to pass it.
  */
 
-/** Facets an exhaustive search can wake on `purse` Insight at `wave`. */
+/**
+ * Facets an exhaustive search can wake on `purse` Insight at `wave`.
+ *
+ * IT HAD NO CALLER, in a file whose own header is about a harness for a mode
+ * that no longer exists being "not a check, it is a fixture". This one is the
+ * same shape one step milder: a real, correct search that nothing had ever
+ * asked a question. `the Insight curve is a cadence` below is now its caller,
+ * and it is the right one — the whole point of an exhaustive optimum is to say
+ * what the OBVIOUS play costs you against the best one, which is the only
+ * honest way to ask whether an economy punishes the way people actually play.
+ *
+ * Cost, measured: 7 nodes at wave 10, 295 at 20, 2 603 at 30 and 33 760 at 40,
+ * the last of those in 465 ms. It is exponential in the purse and the file
+ * calls it once, at one depth.
+ */
 function mostFacets(purse, wave) {
   let best = 0, line = [];
   const step = (led, taken, path) => {
@@ -215,6 +229,126 @@ export async function run({ check, assert }) {
       `a player who has never seen the card was handed ${bare.boonMods.secondWind} charges of it`);
     return `lethal blows survived by rank: ${survived.join(' / ')}; two ranks refresh to 2, `
       + 'a player without the card refreshes to 0';
+  });
+
+  /* ══════════════════════════════════════════════════════════════════ */
+  /*  4. The Insight economy, as a cadence rather than a rate           */
+  /* ══════════════════════════════════════════════════════════════════ */
+
+  check('progression: Insight arrives as a cadence a player can plan against', () => {
+    /**
+     * WHAT THE RATE IS, MEASURED, BECAUSE "IT DOES NOT FEEL LIKE IT DOES
+     * ANYTHING" IS A CLAIM ABOUT A CADENCE AND NOT ABOUT A RATE.
+     *
+     * `living-force.mjs` already pins the two bounds that matter to BALANCE —
+     * the tree never outgrows the draft beside it, and a Trial run buys about
+     * the w/3 growth events its own budget curve is fitted for. Both are
+     * shares. Neither of them can see the thing a player actually experiences,
+     * which is HOW OFTEN THEY GET TO DECIDE SOMETHING: a currency that pays out
+     * once in a run is a reward, and one that pays out every other wave is not
+     * a decision. Between those two there is a cadence, and nothing measured
+     * it.
+     *
+     * So this walks the SHIPPED objects — a real `Communion`, a real `RankSet`,
+     * `canBuy`/`costOf`/`buy` — forty waves, as the most impatient player
+     * possible: buy the cheapest reachable facet the moment it is affordable.
+     * Nothing here reimplements the price series or the reachability rule; the
+     * arithmetic in `insightAfter` is exercised by living-force.mjs against the
+     * ledger, and this one asks the ledger directly.
+     *
+     * MEASURED, at the shipping tables:
+     *
+     *   Path of the Blade   5 purchases at waves 7, 11, 17, 25, 33
+     *                       gaps 7 · 4 · 6 · 8 · 8
+     *   Trial of Waves     12 purchases at waves 3 … 37
+     *                       gaps 3 · 1 · 1 · 2 · 3 · 1 · 4 · 4 · 3 · 5 · 4 · 6
+     *
+     * That is the number the Codex now prints and the Holocron now counts down
+     * to, and it is why the fix for the player's note was legibility and not
+     * rate: five spends in forty waves is a real cadence, and before this the
+     * only place either number appeared was in a comment.
+     */
+    const walk = (drafts) => {
+      const rate = Tree.insightRate(drafts);
+      const taken = new Waves.RankSet();
+      const led = new Tree.Communion();
+      const buys = [];
+      for (let w = 1; w <= 40; w++) {
+        led.earn(w, w % Waves.BOSS_EVERY === 0, rate);
+        for (;;) {
+          const open = Tree.FACETS.filter((s) => led.canBuy(s.id, taken, w));
+          if (!open.length) break;
+          open.sort((a, b) => led.costOf(a.id, taken) - led.costOf(b.id, taken));
+          const cost = led.costOf(open[0].id, taken);
+          if (!led.buy(open[0].id, taken, w)) break;
+          taken.take(open[0].id);
+          buys.push({ wave: w, cost, id: open[0].id });
+        }
+      }
+      return buys;
+    };
+
+    const path = walk(true);
+    const trial = walk(false);
+
+    /* A CADENCE HAS A FLOOR AND A CEILING, and both of them are a statement
+     * about the player's attention rather than about the balance. Under the
+     * floor the Holocron is a screen you visit twice; over the ceiling it is a
+     * vending machine and the draft is not the spine any more. */
+    assert(path.length >= 3,
+      `a forty-wave run of the drafting mode offers ${path.length} purchase moments — `
+      + 'the Holocron is a reward you collect, not an economy you spend in');
+    assert(path.length <= 12,
+      `a forty-wave run offers ${path.length} purchase moments — at that rate the tree is the `
+      + 'spine of the run and the draft is the side channel');
+
+    /* AND THE FIRST ONE HAS TO ARRIVE. Every heart of a current is an epic, and
+     * from an empty hand the hearts are the only reachable facets — so in a
+     * mode with no draft the opening purchase is priced at the top of the table
+     * and a player earning 1 a wave would wait a quarter of the run for it. */
+    assert(path[0].wave <= 10,
+      `the first facet a run can afford lands at wave ${path[0].wave} — a currency that cannot be `
+      + 'spent for a quarter of a run is a number that ticks');
+    assert(trial[0].wave < path[0].wave,
+      `the mode with no draft opens its first facet at wave ${trial[0].wave} against the drafting `
+      + `mode's ${path[0].wave} — the rate that is supposed to be four times larger is not earlier`);
+
+    /* THE WAIT MUST GROW. That is the whole design of an arithmetic price
+     * series — a purse kept shut reaches further than one spent — and if the
+     * gaps were flat the escalator would not be one. Halves rather than
+     * first-against-last, so one long gap in the middle cannot carry it. */
+    const gaps = path.slice(1).map((b, i) => b.wave - path[i].wave);
+    const half = Math.floor(gaps.length / 2);
+    const early = gaps.slice(0, half).reduce((a, b) => a + b, 0) / (half || 1);
+    const late = gaps.slice(gaps.length - half).reduce((a, b) => a + b, 0) / (half || 1);
+    assert(late >= early,
+      `the wait between purchases runs ${early.toFixed(1)} waves early and ${late.toFixed(1)} late — `
+      + 'the price escalator is not escalating anything a player would notice');
+
+    /* WHAT THE OBVIOUS PLAY COSTS, against the best play there is.
+     *
+     * `mostFacets` is an exhaustive search over every buying ORDER on the whole
+     * forty-wave purse at once — strictly more freedom than the walk above had,
+     * which spent as it earned and was gated by `minWave` on the way. So the
+     * optimum is an upper bound by construction and the question is the SIZE OF
+     * THE GAP: an economy where buying the cheapest thing you can afford costs
+     * you two facets out of five is an economy that punishes the way everybody
+     * plays and never says so. Measured: 5 against 5, i.e. impatience costs
+     * nothing in COUNT — what saving buys is a different set, which is
+     * living-force.mjs's territory and is exactly what the Holocron's footer
+     * now states in Insight.
+     */
+    const purse = Tree.insightAfter(40, Waves.BOSS_EVERY);
+    const best = mostFacets(purse, 40);
+    assert(path.length >= best.best - 2,
+      `spending as you earn wakes ${path.length} facets where the best possible play on the same `
+      + `${purse} Insight wakes ${best.best} — the economy punishes the obvious play and nothing `
+      + 'in the game warns anybody');
+
+    return `path ${path.length} buys at w${path.map((b) => b.wave).join('/')} `
+      + `(gaps ${gaps.join('·')}, ${early.toFixed(1)}→${late.toFixed(1)}); `
+      + `trial ${trial.length} buys from w${trial[0].wave}; `
+      + `best possible on ${purse} Insight is ${best.best}`;
   });
 
   /* ══════════════════════════════════════════════════════════════════ */

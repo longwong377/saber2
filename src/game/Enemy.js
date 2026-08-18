@@ -1339,6 +1339,29 @@ export const ENEMY_POWERS = {
 /** How much of a leader's aura a nearby ally gets, and how far it reaches. */
 export const RALLY = { radius: 9.5, speed: 1.15, damage: 1.25, rate: 0.78, refresh: 0.25 };
 
+/**
+ * WHAT DREAD DOES TO ONE BODY — the other end of `Command.js`'s DREAD verb.
+ *
+ * It is here rather than there for the same reason `RALLY` is: this file owns
+ * what a state does to a body, and Command.js owns what it costs, how far it
+ * reaches and who is allowed to cast it. Two numbers in two files with one
+ * meaning between them is the defect this repository keeps deleting; a state's
+ * CONSEQUENCE and a verb's PRICE are two different facts.
+ *
+ * `aim` is the only figure that needed measuring. `RALLY.rate` is 0.78 — a
+ * leader makes a rifle 22% quicker — and morale's own gunnery term already
+ * spans lerp(1.65, 0.9), so a body's aim is worth between 0.9 and 1.65 of its
+ * stated spread across the whole range of nerve a soldier can have. 1.45 sits
+ * inside that band deliberately: a droid that has just had its footing taken
+ * from it shoots about as badly as a man who is frightened, and no worse,
+ * because a power that simply switched the enemy's guns off would not be a
+ * disruption, it would be a stun with a story.
+ *
+ * `recoil` is the physics face of it, in metres per second of shove, and it
+ * carries NO damage: see `CommandDirector.castForce`.
+ */
+export const DREAD = { aim: 1.45, recoil: 4.2 };
+
 /** The unstable core: how long the fuse burns, and what the blast is worth. */
 export const UNSTABLE = { fuse: 0.85, radius: 5.0, damage: 34, impulse: 15 };
 
@@ -1845,6 +1868,13 @@ export class Enemy {
     this._prevPos = new THREE.Vector3();
     /** Time left on a Leader's aura. Refreshed by whoever is leading. */
     this.rallyTimer = 0;
+    /**
+     * Time left on the DREAD a commander put on this body. Same shape as
+     * `rallyTimer` on purpose — a timer that drains in `update` and is read as
+     * a boolean wherever it bites — because a second idiom for "a battlefield
+     * state with a clock on it" is a second thing to keep in step. See DREAD.
+     */
+    this.dread = 0;
     /** Which modifier this body wears, if any — see MODIFIERS. */
     this.mod = null;
     this.fuse = 0;
@@ -2914,6 +2944,13 @@ export class Enemy {
    *   MORALE     a shaken body does not shoot straight. Squad morale is
    *              Command's, and the whole of the effect it has on gunnery is
    *              this line. Bodies with no morale (the horde) read 1.
+   *   DREAD      …and a body a commander has just reached through the Force
+   *              has had its nerve taken from it for a few seconds whether or
+   *              not it owns any. This is the term that lets the disruption
+   *              verb bite a HORDE — the enemy in a campaign carries no roster
+   *              record, so it has no morale to lower, and a verb that only
+   *              worked in a two-player meeting would be a verb that does
+   *              nothing in the mode it was written for. See DREAD.
    *   MOVEMENT   a body running is not aiming. This is the one term with a
    *              tactical instruction inside it — troops that stop shoot
    *              better — and it is why HOLD and TAKE COVER are worth giving.
@@ -2944,6 +2981,9 @@ export class Enemy {
     if (this.trooper && this.trooper.morale !== undefined) {
       q *= lerp(1.65, 0.9, clamp(this.trooper.morale, 0, 1));
     }
+
+    // ── dread: the same effect, from outside, on a body that has no record
+    if (this.dread > 0) q *= DREAD.aim;
 
     // ── movement: measured off the body, not off an intent
     const v = this.velocity ? this.velocity.length() : 0;
@@ -3302,6 +3342,7 @@ export class Enemy {
     this._nearStale = true;
     this._updateElite(dt, ctx);
     if (this.rallyTimer > 0) this.rallyTimer = Math.max(0, this.rallyTimer - dt);
+    if (this.dread > 0) this.dread = Math.max(0, this.dread - dt);
     if (this.dead) {
       this.dying += dt;
       if (this.actor) this.actor.update(dt);

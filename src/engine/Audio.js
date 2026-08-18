@@ -50,13 +50,35 @@ const BAND = [0.34, 0.68, 0.88, 1];
 /**
  * The panner's inverse distance law, as a plain number.
  *
- * _panner() builds every positional voice with the same refDistance 1.8 and
- * rolloffFactor 1.1, so the amplitude a sound arrives at is knowable before a
- * single node exists — which is what lets a sound be refused for being
- * inaudible instead of for being late.
+ * The amplitude a sound arrives at is knowable before a single node exists,
+ * which is what lets a sound be refused for being inaudible instead of for
+ * being late.
+ *
+ * IT TAKES THE CURVE AS AN ARGUMENT, AND IT DID NOT USED TO. This function's
+ * own docstring said "_panner() builds every positional voice with the same
+ * refDistance 1.8 and rolloffFactor 1.1", and that has been false since speech
+ * was written: `speak()` alone builds `_panner(pos, VOICE_REF, VOICE_MAX)`, a
+ * closer reference and a shorter tail, because a voice has to carry further
+ * than a footstep. So `_reach` was predicting every scream on the wrong curve
+ * — measured at 40 m, 0.0411 predicted against 0.0594 delivered, 45% under the
+ * truth — and a prediction that is quiet by a constant factor can only cull
+ * EARLY, which is a line silently thrown away for arriving further off than
+ * the maths said it did. It never bit, because the amounts involved are far
+ * over HEARING_FLOOR at every distance inside MAX_RANGE; it is exactly the
+ * shape of HANDOFF §2.3 all the same — one rule written down in two places,
+ * with the copy drifting.
+ *
+ * The clamp at `maxDist` is the same clamp the `inverse` distance model
+ * applies, so past it the prediction stops falling exactly where the node
+ * stops falling.
  */
-const REF_DIST = 1.8, ROLLOFF = 1.1;
-const attenuation = (d) => (d <= REF_DIST ? 1 : REF_DIST / (REF_DIST + ROLLOFF * (d - REF_DIST)));
+const REF_DIST = 1.8, ROLLOFF = 1.1, MAX_DIST = 160;
+/** …and the pair a VOICE is built on. Read by `speak` and by nothing else. */
+const VOICE_REF = 2.6, VOICE_MAX = 120;
+const attenuation = (d, ref = REF_DIST, maxD = MAX_DIST) => {
+  const dd = Math.max(Math.min(d, maxD), ref);
+  return ref / (ref + ROLLOFF * (dd - ref));
+};
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  THE SCORE — which one                                                 */
@@ -979,13 +1001,13 @@ export class AudioEngine {
     }
   }
 
-  _panner(pos, refDist = 1.8, maxDist = 160) {
+  _panner(pos, refDist = REF_DIST, maxDist = MAX_DIST) {
     const p = this.ctx.createPanner();
     p.panningModel = 'HRTF';
     p.distanceModel = 'inverse';
     p.refDistance = refDist;
     p.maxDistance = maxDist;
-    p.rolloffFactor = 1.1;
+    p.rolloffFactor = ROLLOFF;
     if (p.positionX) { p.positionX.value = pos.x; p.positionY.value = pos.y; p.positionZ.value = pos.z; }
     else p.setPosition(pos.x, pos.y, pos.z);
     return p;
@@ -1003,12 +1025,12 @@ export class AudioEngine {
    * This has to be answerable BEFORE a voice is taken and before any node
    * exists, which is the whole reason it is separate from _out().
    */
-  _reach(pos, gain = 1) {
+  _reach(pos, gain = 1, ref = REF_DIST, maxD = MAX_DIST) {
     if (!pos) return 1;
     if (!Number.isFinite(pos.x) || !Number.isFinite(pos.y) || !Number.isFinite(pos.z)) return 1;
     const d = this._listenerPos.distanceTo(pos);
     if (!(d <= MAX_RANGE)) return 0;
-    return num(gain, 1) * attenuation(d) >= HEARING_FLOOR ? 2 : 0;
+    return num(gain, 1) * attenuation(d, ref, maxD) >= HEARING_FLOOR ? 2 : 0;
   }
 
   _out(pos, gain = 1) {
@@ -1358,7 +1380,8 @@ export class AudioEngine {
     const pos = opts.pos || null;
 
     // Decide before allocating, in the same order every other sound uses.
-    const reach = this._reach(pos, peakGain(u) * level);
+    // The SAME curve the panner five lines down is built on. See `attenuation`.
+    const reach = this._reach(pos, peakGain(u) * level, VOICE_REF, VOICE_MAX);
     if (!reach) { this.stats.culled++; return 0; }
     this._retireSpeech();
     if (this._speech.length >= this.maxSpeech) { this.stats.speechDenied++; return 0; }
@@ -1369,7 +1392,7 @@ export class AudioEngine {
     try {
       const t = this.ctx.currentTime;
       const stopAt = t + u.dur + 0.09;
-      out = reach === 2 ? this._panner(pos, 2.6, 120) : this.speechBus;
+      out = reach === 2 ? this._panner(pos, VOICE_REF, VOICE_MAX) : this.speechBus;
       if (out !== this.speechBus) out.connect(this.speechBus);
 
       bus = this.ctx.createGain();

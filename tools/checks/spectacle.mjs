@@ -641,7 +641,14 @@ export async function run({ check, assert }) {
       // Comments are stripped first: this file, and Voice.js, DISCUSS every
       // contour by name, and a mention is not an emission.
       const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
-      for (const call of code.matchAll(/\b(?:say|_say|cry|speak|_battleLine|_enemyLine)\s*\(([^;]{0,200})/g)) {
+      // THE CALLEE LIST IS A SHAPE, NOT A ROSTER, and that is the third time
+      // this pattern has been widened by hand. It knew say/_say/cry/speak and
+      // missed `_battleLine`/`_enemyLine`; widened to name those, it then
+      // missed `_roomLine`, the router those two now sit under, and would have
+      // reported five working contours as silent. Anything ending in `Line`
+      // plays one, which is the naming rule the announcer already follows, so
+      // the next one is covered the day it is written.
+      for (const call of code.matchAll(/\b(?:say|_say|cry|speak|[A-Za-z_]*[Ll]ine)\s*\(([^;]{0,200})/g)) {
         for (const lit of call[1].matchAll(/['"]([a-z]+)['"]/g)) {
           if (LINE_KINDS.includes(lit[1])) spoken.add(lit[1]);
         }

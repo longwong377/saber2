@@ -34,7 +34,8 @@ import { AudioEngine, PRIO } from '../../src/engine/Audio.js';
 import { PLAYER_VOICES, ENEMY_VOICES, ALL_VOICES, LINES, utterance, peakGain, voiceAt }
   from '../../src/engine/Voice.js';
 import { Presence, bodyOf, MAX_BODIES, RANGE } from '../../src/engine/Presence.js';
-import { Announcer, STREAKS, RETURNS, QUIP_GAP, CHATTER_GAP } from '../../src/ui/Announcer.js';
+import { Announcer, STREAKS, RETURNS, QUIP_GAP, CHATTER_GAP, ALARM_WINDOW, CHEER_DELAY, RALLY_GAP }
+  from '../../src/ui/Announcer.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const TAU = Math.PI * 2;
@@ -1337,6 +1338,245 @@ export async function run({ check, assert }) {
     assert(Announcer.prototype._enemySpec.call(null, invented) === ENEMY_VOICES.beast,
       'a brand-new beast archetype does not get the beast voice');
     return rows.join(' ');
+  });
+
+  /* ────────────────────────────────────────────────────────────────────
+   * WHAT THE BUDGETS THROW AWAY
+   *
+   * Everything above proves the rate limits EXIST and are honoured. None of it
+   * could see what they were spending themselves on, and measured on a real
+   * Geonosis command wave (tools/_voiceprobe.mjs, seed 4242, 60 s) the answer
+   * was: seven bodies fell and the player heard none of them, while 679 alarm
+   * retries from bodies that were still standing took the budget instead.
+   *
+   * "The budget was honoured" and "the feature is strangled" are the same
+   * observation from inside a unit check, so these three are all behavioural —
+   * they drive an event a fight really produces and count what came out.
+   * ──────────────────────────────────────────────────────────────────── */
+
+  check('announcer: a squad wiped in one second is a squad you HEAR', () => {
+    /**
+     * THE ONE THAT WOULD HAVE CAUGHT IT.
+     *
+     * Six bodies die inside two frames — a Force rend, a thrown blade down a
+     * corridor, one detonation, all of which the game produces — and every one
+     * of them has to be heard. Before deaths moved onto the per-event budget
+     * this returned ONE line for six deaths and every assertion in the file
+     * still passed, because one line per 0.45 s is exactly what the shared
+     * budget promises. The promise was the defect.
+     */
+    const rec = recorder();
+    const an = new Announcer(rec);
+    const w = mkWorld(), p = mkPlayer(), hud = mkHud();
+    const mk = (type, x) => ({ type, A: { ...ARCHETYPES[type], mass: 80, label: type },
+      position: V(x, 0, 0), dead: false, hp: 10, maxHp: 10, target: null, team: 1 });
+    const squad = [mk('b1', 3), mk('trooper', 4), mk('acolyte', 5),
+      mk('b2', 6), mk('sniper', 7), mk('jet', 8)];
+    w.enemies.push(...squad);
+    an.update(1 / 60, w, p, hud);
+    for (const e of squad) e.dead = true;
+    an.update(1 / 60, w, p, hud);
+    an.update(1 / 60, w, p, hud);
+
+    const deaths = rec.lines.filter(l => l.kind === 'die' || l.kind === 'scream');
+    assert(deaths.length === squad.length,
+      `${squad.length} bodies fell in one frame and ${deaths.length} of them made a sound — `
+      + `the rest were refused by a budget and thrown away (lost: ${JSON.stringify(an.stats.lost)})`);
+    assert(an.stats.lost.die === undefined && an.stats.lost.scream === undefined,
+      'a death cry was refused');
+    // …and they are not all the same voice, which is the other half of a wipe.
+    assert(new Set(deaths.map(l => l.id)).size >= 3,
+      `six bodies of five archetypes died in ${new Set(deaths.map(l => l.id)).size} voices`);
+    return `${deaths.length} of ${squad.length} deaths heard, in ${new Set(deaths.map(l => l.id)).size} throats`;
+  });
+
+  check('announcer: a cheer ANSWERS a fall — it does not talk over it', () => {
+    /**
+     * Two per-event lines about one death, raised on one frame, against one
+     * 0.14 s gap. Whichever is spoken first silences the other, so the order
+     * and the delay are both load-bearing: the cry is the event and the cheer
+     * is the reaction, and a reaction that arrives first is not one.
+     *
+     * Driven with two sides on the field, which is the only situation that
+     * produces a cheer at all — `_cheerFor` reads `team` and nothing else.
+     */
+    const rec = recorder();
+    const an = new Announcer(rec);
+    const w = mkWorld(), p = mkPlayer(), hud = mkHud();
+    const mk = (type, x, team) => ({ type, A: { ...ARCHETYPES[type], mass: 80, label: type },
+      position: V(x, 0, 0), dead: false, hp: 10, maxHp: 10, target: null, team });
+    const victim = mk('trooper', 3, 0);
+    const enemy = mk('b1', 6, 1);
+    w.enemies.push(victim, enemy);
+    an.update(1 / 60, w, p, hud);
+    victim.dead = true;
+    an.update(1 / 60, w, p, hud);
+
+    const first = rec.lines[0];
+    assert(first && first.kind === 'scream',
+      `the frame a body fell said "${first?.kind}" first — the cheer beat the death it is about`);
+    assert(!rec.lines.some(l => l.kind === 'cheer'),
+      'the cheer landed on the same frame as the fall');
+    let t = 0;
+    for (let f = 0; f < 90 && !rec.lines.some(l => l.kind === 'cheer'); f++) { an.update(1 / 60, w, p, hud); t += 1 / 60; }
+    const cheer = rec.lines.find(l => l.kind === 'cheer');
+    assert(cheer, `nobody cheered a fall on the other side within ${t.toFixed(2)}s`);
+    assert(cheer.id === 'droid', `the cheer came out of a ${cheer.id} throat, not the surviving droid's`);
+    assert(t >= CHEER_DELAY * 0.8 && t <= CHEER_DELAY * 1.6,
+      `the cheer arrived ${t.toFixed(2)}s after the fall against a ${CHEER_DELAY}s beat`);
+
+    // AND A CHEERER WHO DIES IN THE MEANTIME DOES NOT CHEER. This is why the
+    // body is chosen at the moment of the death and re-checked at the moment
+    // of the cheer, rather than searched for once.
+    const rec2 = recorder();
+    const an2 = new Announcer(rec2);
+    const w2 = mkWorld(), p2 = mkPlayer(), hud2 = mkHud();
+    const v2 = mk('trooper', 3, 0), e2 = mk('b1', 6, 1);
+    w2.enemies.push(v2, e2);
+    an2.update(1 / 60, w2, p2, hud2);
+    v2.dead = true; an2.update(1 / 60, w2, p2, hud2);
+    e2.dead = true;
+    for (let f = 0; f < 90; f++) an2.update(1 / 60, w2, p2, hud2);
+    assert(!rec2.lines.some(l => l.kind === 'cheer'), 'a corpse cheered');
+    return `scream then cheer ${t.toFixed(2)}s later, in the survivor's own throat; a dead cheerer stays quiet`;
+  });
+
+  check('announcer: a call-out nobody had room for expires instead of arriving late', () => {
+    /**
+     * `st.spotted` is latched on success and never on the attempt, which is
+     * right and is what stops a squad of five producing one alarm between
+     * them. What it had no notion of was TIME: a body refused by the shared
+     * budget re-offered the same line every frame until it won, so a Geonosis
+     * minute produced 679 refused attempts against 18 spoken and the one that
+     * finally landed was a body telling you it had seen you twenty seconds
+     * ago. Both halves are asserted here, because fixing the spin by latching
+     * on the attempt would satisfy the first and re-break the second.
+     */
+    const rec = recorder();
+    const an = new Announcer(rec);
+    const w = mkWorld(), p = mkPlayer(), hud = mkHud();
+    const mk = (i) => ({ type: 'b1', A: { ...ARCHETYPES.b1, mass: 52, label: 'B1' },
+      position: V(3 + i * 0.5, 0, 0), dead: false, hp: 10, maxHp: 10, target: p, team: 1 });
+    const squad = [];
+    for (let i = 0; i < 12; i++) squad.push(mk(i));
+    w.enemies.push(...squad);
+    an.update(1 / 60, w, p, hud);
+    // Hold the shared budget shut for the whole window, then let it go.
+    const frames = Math.round((ALARM_WINDOW + 0.5) * 60);
+    for (let f = 0; f < frames; f++) an.update(1 / 60, w, p, hud);
+    const spokeEarly = rec.lines.filter(l => l.kind === 'alarm').length;
+    const tries = an.stats.lost.alarm || 0;
+
+    assert(spokeEarly >= 2, `twelve bodies acquiring you produced ${spokeEarly} alarms`);
+    assert(spokeEarly <= squad.length, `${spokeEarly} alarms from ${squad.length} bodies — somebody repeated`);
+    // The spin: without a window every unspoken body retries on every frame,
+    // which over this drive is ~10 bodies x ~100 frames.
+    assert(tries < squad.length * frames * 0.2,
+      `${tries} refused alarm attempts over ${frames} frames — the retry never gives up`);
+
+    // Nothing new arrives once the moment has passed, even with the room silent.
+    const was = rec.lines.length;
+    for (let f = 0; f < 60 * 6; f++) an.update(1 / 60, w, p, hud);
+    const late = rec.lines.slice(was).filter(l => l.kind === 'alarm').length;
+    assert(late === 0, `${late} bodies called out about spotting you six seconds after they did`);
+    return `${spokeEarly} of ${squad.length} called out inside the window, ${tries} retries, ${late} stale`;
+  });
+
+  check('announcer: your own line talks too — banter, and an order relayed', () => {
+    /**
+     * "A squad that never talks is the loudest silence in the game."
+     *
+     * Measured before this: your clones DID speak — 16 to 30 lines a minute of
+     * alarms, wounds, deaths and cheers — so the premise was not quite right.
+     * Two things they genuinely could not do:
+     *
+     *  1. IDLE BANTER, gated on `/^(b1|b2|droideka)$/` — three typed archetype
+     *     keys against a roster of 31, so the only bodies with an idle voice in
+     *     the whole game were the three the list happened to name. A clone
+     *     squad standing beside you was silent between events.
+     *  2. ANSWER AN ORDER. `LINES.order` is authored as a shout from a body
+     *     with a rank; `HUD.setOrder` played it out of the JEDI'S throat, with
+     *     no position, on the player's quip budget.
+     *
+     * Both are driven here rather than read, and the second is driven through
+     * the public `say` the HUD calls.
+     */
+    const rec = recorder();
+    const an = new Announcer(rec);
+    const w = mkWorld(), p = mkPlayer(), hud = mkHud();
+    p.team = 0;
+    w.player = p;
+    const mk = (type, x, team) => ({ type, A: { ...ARCHETYPES[type], mass: 80, label: type },
+      position: V(x, 0, 0), dead: false, hp: 10, maxHp: 10, target: p, team });
+    const mine = [mk('trooper', 3, 0), mk('trooper', 5, 0), mk('heavy', 7, 0)];
+    w.enemies.push(...mine, mk('b1', 20, 1), mk('b1', 22, 1));
+    for (let f = 0; f < 60 * 30; f++) an.update(1 / 60, w, p, hud);
+    const chatter = rec.lines.filter(l => l.kind === 'chatter');
+    assert(chatter.length >= 2,
+      `thirty seconds beside a clone squad produced ${chatter.length} idle lines`);
+    assert(chatter.some(l => l.id === 'trooper'),
+      `nothing in your own line ever chattered: ${[...new Set(chatter.map(l => l.id))].join(',')}`);
+
+    // The dojo is still quiet. A training remote has nobody to talk to and an
+    // inert dummy is furniture — the clauses the deleted key list encoded as
+    // names are `training`, `boss`, `big`, and having an ally within reach.
+    const quiet = new Announcer(recorder());
+    for (const t of ['remote', 'dummy', 'sparring']) {
+      const body = { type: t, A: { ...ARCHETYPES[t], label: t }, position: V(0, 0, 0), team: 1 };
+      const mate = { type: t, A: { ...ARCHETYPES[t], label: t }, position: V(1, 0, 0), team: 1, dead: false };
+      assert(!quiet._chatty(body, [body, mate]), `a ${t} chatters`);
+    }
+    const lone = { type: 'trooper', A: { ...ARCHETYPES.trooper, label: 't' }, position: V(0, 0, 0), team: 0 };
+    assert(!quiet._chatty(lone, [lone]), 'the last body standing mutters to itself');
+
+    // …and the order comes out of a trooper, at the trooper's position.
+    rec.lines.length = 0;
+    const said = an.say(w.settings, 'order');
+    assert(said, 'changing formation said nothing at all');
+    const order = rec.lines.find(l => l.kind === 'order');
+    assert(order, `say('order') produced ${rec.lines.map(l => l.kind).join(',') || 'nothing'}`);
+    assert(!order.self, 'the order came out of the player');
+    assert(order.id === 'trooper' || order.id === 'officer',
+      `a ${order.id} relayed your formation order`);
+    assert(order.pos, 'the order has no position — it cannot be looked toward');
+    return `${chatter.length} idle lines in 30 s from ${[...new Set(chatter.map(l => l.id))].join('+')}, `
+      + `the dojo silent, the order relayed by a ${order.id}`;
+  });
+
+  check('announcer: the rally ring has something audible in it', () => {
+    /**
+     * `ENEMY_VOICES.officer` was built for this and has said so since it was
+     * written — "the rally aura is already drawn as a ring on the ground, and a
+     * ring with nothing audible in it is half a tell" — and for a whole session
+     * nothing on the field emitted `LINES.order` at all. The one emitter was
+     * the HUD, on a formation key, in the player's own voice.
+     *
+     * `commandAura` and not a rank or a type, for `_enemySpec`'s reason: it is
+     * the field that MEANS this, `enlistBody` reads it to install the modifier,
+     * and both armies field a body that carries it.
+     */
+    const rec = recorder();
+    const an = new Announcer(rec);
+    const w = mkWorld(), p = mkPlayer(), hud = mkHud();
+    const boss = { type: 'officer', A: { ...ARCHETYPES.trooper, commandAura: 'leader', label: 'CMD' },
+      position: V(6, 0, 0), dead: false, hp: 10, maxHp: 10, target: p, team: 1 };
+    w.enemies.push(boss);
+    for (let f = 0; f < 60 * (RALLY_GAP + 2); f++) an.update(1 / 60, w, p, hud);
+    const orders = rec.lines.filter(l => l.kind === 'order');
+    assert(orders.length >= 1, `an officer held a line for ${RALLY_GAP + 2}s and never opened its mouth`);
+    assert(orders.length <= Math.ceil((RALLY_GAP + 2) / RALLY_GAP) + 1,
+      `${orders.length} orders in ${RALLY_GAP + 2}s — the commander never stops talking`);
+    assert(orders[0].id === 'officer', `the rally came out of a ${orders[0].id}, not a commander`);
+
+    // A body with no aura is not a commander and does not get the line.
+    const rec2 = recorder();
+    const an2 = new Announcer(rec2);
+    const w2 = mkWorld(), p2 = mkPlayer(), hud2 = mkHud();
+    w2.enemies.push({ type: 'trooper', A: { ...ARCHETYPES.trooper, label: 'CT' },
+      position: V(6, 0, 0), dead: false, hp: 10, maxHp: 10, target: p2, team: 1 });
+    for (let f = 0; f < 60 * (RALLY_GAP + 2); f++) an2.update(1 / 60, w2, p2, hud2);
+    assert(!rec2.lines.some(l => l.kind === 'order'), 'a rifleman gave the orders');
+    return `${orders.length} rally shouts in ${RALLY_GAP + 2}s from the aura body, none from a rifleman`;
   });
 
   /* ────────────────────────────────────────────────────────────────────

@@ -62,6 +62,7 @@ export class SkillTree {
       root: doc.getElementById('meditation'),
       field: doc.getElementById('med-field'),
       insight: doc.getElementById('med-insight'),
+      purse: doc.getElementById('med-purse'),
       title: doc.getElementById('med-title'),
       sub: doc.getElementById('med-sub'),
       detail: doc.getElementById('med-detail'),
@@ -368,8 +369,33 @@ export class SkillTree {
       for (let i = 0; i < Math.min(v.rank, 5); i++) {
         g.appendChild(svg('circle', { class: 'pip', cx: (i - (Math.min(v.rank, 5) - 1) / 2) * 7, cy: -20, r: 2 }));
       }
-      if (!v.held && v.can && live) {
-        const c = svg('text', { class: 'cost', y: -22, 'text-anchor': 'middle' });
+      /**
+       * THE SHOP HID ITS PRICE TAGS ON EVERYTHING YOU COULD NOT AFFORD.
+       *
+       * This was `!v.held && v.can && live`, and `can` means affordable AND
+       * reachable AND ungated — so on the first open of a run, with a purse of
+       * 0 against six hearts at 9, the lattice carried NOT ONE NUMBER. The
+       * player was shown forty-six circles and asked to plan against them with
+       * no idea what any of them cost or how far off it was. That is the honest
+       * form of "the Insight economy does not feel like it does anything": the
+       * economy is fine (see the arithmetic in LivingForce.js and the bound in
+       * living-force.mjs) and it was invisible at the exact moment the player
+       * was standing in front of it deciding.
+       *
+       * A price is drawn for anything the purse is the ONLY thing standing
+       * between the player and — `can`, or locked on Insight alone — and the
+       * ones out of reach are marked `short` and drawn back rather than hidden,
+       * because "9, and you have 4" is a plan and a blank circle is not.
+       *
+       * The other three reasons stay silent on the map deliberately. `reach`
+       * and `spent` are not prices, and a `gated` mastery quoting a number
+       * would be advertising something no amount of Insight buys.
+       */
+      const priced = !v.held && live && (v.can || v.locked === LOCKED.insight);
+      if (priced) {
+        const c = svg('text', {
+          class: 'cost' + (v.can ? '' : ' short'), y: -22, 'text-anchor': 'middle',
+        });
         c.textContent = String(v.cost);
         g.appendChild(c);
       }
@@ -403,6 +429,21 @@ export class SkillTree {
 
     /* the ledger line */
     if (this.el.insight) this.el.insight.textContent = String(Math.floor(ledger?.insight ?? 0));
+    /**
+     * WHAT THE NUMBER IS FOR, under the number.
+     *
+     * A purse is only a currency if the player can see what it is short of.
+     * This said `28` and `INSIGHT` and nothing else, so the one thing the
+     * screen never answered was the only question a player standing in front
+     * of it has: is that a lot? The answer is a fact about THIS lattice at
+     * THIS moment and it is counted off the view that was just drawn — how
+     * many of the facets within reach are already yours to take, or, when none
+     * are, exactly how far off the nearest one is.
+     *
+     * `reach` is the same set the price badges are drawn on, deliberately:
+     * whatever this line counts, the player can point at.
+     */
+    if (this.el.purse) this.el.purse.textContent = this._purseLine(live);
     if (this.el.sub) {
       this.el.sub.textContent = live
         ? (this.ctx.subtitle || 'Insight is earned by surviving. Wake a facet joined to one you already hold.')
@@ -417,13 +458,89 @@ export class SkillTree {
        * Same defect as the backdrop above it and found in the same screenshot:
        * copy written for the kneel, shown on both ways in.
        */
+      /**
+       * TWO CLAUSES, AND IT USED TO BE ONE OR THE OTHER.
+       *
+       * The escalator note and the way out shared this line through a ternary,
+       * so buying a single facet DELETED "Escape returns you to the fight" for
+       * the rest of the run — the only sentence on the screen that says how to
+       * leave it, removed by the act of using the screen.
+       *
+       * The escalator clause also states the step and not the STANDING
+       * SURCHARGE, which is the number that decides anything: "+2 each" is a
+       * rule, "everything is 6 over base right now" is a price. Both are read
+       * off the ledger (`bought.length` is the escalator, exactly as
+       * `Communion.costOf` reads it) rather than being counted here.
+       */
       const n = ledger?.bought?.length ?? 0;
-      this.el.hint.textContent = n
-        ? `${n} facet${n === 1 ? '' : 's'} woken this run · each one makes the next cost ${COST_STEP} more`
-        : live ? 'Escape returns you to the fight.'
-          : 'Escape returns you to the Temple. Plan here; the run is where you spend.';
+      const out = live
+        ? 'Escape returns you to the fight.'
+        : 'Escape returns you to the Temple. Plan here; the run is where you spend.';
+      const climb = !live ? ''
+        : n ? `${n} facet${n === 1 ? '' : 's'} woken · every price is ${n * COST_STEP} over its base, `
+            + `and the next one you wake adds ${COST_STEP} more`
+          : `Nothing woken yet · prices are at their base, and each facet you wake adds ${COST_STEP} `
+            + 'to every price after it';
+      this.el.hint.textContent = climb ? `${climb} · ${out}` : out;
     }
     this._drawShape();
+  }
+
+  /**
+   * The line under the purse: what this many Insight is, in facets.
+   *
+   * Counted off `this.view`, which `_draw` has just built out of `latticeView`
+   * — so the answer cannot disagree with the badges on the map or with the
+   * button, because all three are reading one array. Deriving it a second time
+   * from `FACETS` and the ledger would be the shape HANDOFF §2.4 is about.
+   */
+  _purseLine(live) {
+    const view = this.view || [];
+    if (!live) {
+      /* Between runs the purse is 0 and always will be — Insight does not
+       * survive a run (Progress.js: "no unlocks, no currency, no cross-run
+       * power"). What the number under it can honestly count is the RECORD,
+       * which is the thing the Temple's Holocron is actually for: what have I
+       * ever tried. `history` is the map main.js draws the faint facets from,
+       * so the count and the drawing are the same source. */
+      const seen = this.ctx?.history;
+      if (!seen) return `${view.length} facets`;
+      const ever = view.filter((v) => seen.get(v.id)).length;
+      return `${ever} of ${view.length} facets ever held`;
+    }
+    /* The same set the price badges are drawn on: what the purse alone stands
+     * between you and. A `gated` mastery or a facet nothing joins is not a
+     * thing this line can promise anything about. */
+    const reach = view.filter((v) => !v.held && (v.can || v.locked === LOCKED.insight));
+    if (!reach.length) return 'nothing within reach — a card opens one';
+    const now = reach.filter((v) => v.can).length;
+    if (now) return `${now} of ${reach.length} within reach, yours now`;
+    const short = Math.min(...reach.map((v) => v.cost)) - Math.floor(this.ctx?.ledger?.insight ?? 0);
+    return `${short} short of the cheapest within reach`;
+  }
+
+  /**
+   * How far off a price is, in Insight and in WAVES.
+   *
+   * The wave figure is the whole point and it is why this is not just
+   * "4 more": the rate is 1 a wave in Path of the Blade and 4 a wave in the
+   * Trial, and a player cannot be expected to know either. Rather than import
+   * a rate and then have to know which mode is being played, it is read off
+   * THIS RUN'S OWN LEDGER — `earned` over the waves that earned it — so the
+   * mode, the boss bonus and any future rate are all already in the number and
+   * none of them is restated here.
+   *
+   * Silent for the first wave of a run, where `earned` is 0 and there is no
+   * pace to report. A guess in that gap would be the plausible default this
+   * project keeps deleting.
+   */
+  _wavesAway(short) {
+    const { ledger, wave = 1 } = this.ctx || {};
+    const earned = ledger?.earned ?? 0;
+    if (!(earned > 0) || !(wave >= 1) || !(short > 0)) return '';
+    const pace = earned / wave;
+    const w = Math.ceil(short / pace);
+    return `, about ${w} more wave${w === 1 ? '' : 's'}`;
   }
 
   _drawShape() {
@@ -483,7 +600,16 @@ export class SkillTree {
     // is renamed cannot silently become an empty line here.
     switch (v.locked) {
       case LOCKED.spent: return `${rank}There is nothing left of this one to take.`;
-      case LOCKED.insight: return `${rank}${v.cost} Insight — you have not earned it yet.`;
+      /* "you have not earned it yet" is a refusal. What a player deciding
+       * whether to SAVE needs is the distance, and living-force.mjs's own note
+       * says the system rewards saving "and nothing in the game tells the
+       * player that" — the escalator counts purchases MADE, not Insight HELD,
+       * so a shut purse reaches a mastery a spender never gets to. This is the
+       * sentence that says so, in the two units the player has. */
+      case LOCKED.insight: {
+        const short = Math.max(0, v.cost - Math.floor(this.ctx?.ledger?.insight ?? 0));
+        return `${rank}${v.cost} Insight — ${short} more${this._wavesAway(short)}.`;
+      }
       case LOCKED.reach: return `${rank}Nothing you hold reaches this far.`;
       case LOCKED.gated: return `${rank}A mastery. Commit to the discipline first.`;
       case LOCKED.depth: return `${rank}Too early. This one comes later.`;

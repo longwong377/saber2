@@ -1317,6 +1317,114 @@ export async function run({ check, assert }) {
     } finally { restore(); }
   });
 
+  check('holocron: every price the purse could ever meet is on the map', async () => {
+    /**
+     * THE SHOP HID ITS PRICE TAGS ON EVERYTHING YOU COULD NOT AFFORD.
+     *
+     * `SkillTree._draw` drew a cost badge under `!v.held && v.can && live`, and
+     * `can` is affordable AND reachable AND ungated. So on the first open of a
+     * run — purse 0, empty hand, six hearts at 9 — the lattice carried NOT ONE
+     * NUMBER, and the player was asked to plan against forty-six unlabelled
+     * circles. That is the legible form of "the Insight economy does not feel
+     * like it does anything": the economy is sound (three checks above measure
+     * it) and it was invisible at the one moment the player was standing in
+     * front of it deciding.
+     *
+     * Driven through the real SkillTree on the real markup, and every number it
+     * prints is compared against `Communion` rather than against a second copy
+     * of the price series — the whole point of `facetView` is that the rules
+     * have one implementation, and a check that re-derived them would agree
+     * with itself and nothing else.
+     */
+    const html = await readFile(new URL('../../index.html', import.meta.url), 'utf8');
+    const { SkillTree } = await import('../../src/ui/SkillTree.js');
+    const doc = makeDocument(html);
+    const restore = doc.install();
+    try {
+      const tree = new SkillTree(doc, {});
+      const priced = (t) => [...t._nodes].flatMap(([id, g]) => {
+        const c = g.querySelector('.cost');
+        return c ? [{ id, cost: Number(c.textContent), short: c.classList.contains('short') }] : [];
+      });
+
+      /* ── the opening of a run, which is where it was worst ─────────── */
+      const taken = new Waves.RankSet();
+      const led = new Tree.Communion();
+      tree.show({ taken, ledger: led, wave: 1, order: 'jedi', live: true });
+      const open = priced(tree);
+      assert(open.length > 0,
+        'a run opens on a lattice with no price on it anywhere — the purse has nothing to be short of');
+      /* And the set is exactly the hearts, because from an empty hand nothing
+       * else is reachable. Derived from the ledger, not named. */
+      const reachable = Tree.FACETS
+        .filter((f) => led.reasonLocked(f.id, taken, 1) === Tree.LOCKED.insight
+          || led.canBuy(f.id, taken, 1));
+      assert(open.length === reachable.length,
+        `${open.length} prices drawn against ${reachable.length} facets the purse alone stands `
+        + 'between the player and');
+      assert(open.every((p) => p.short),
+        'a facet is drawn as affordable on an empty purse');
+
+      /* ── every number equals the ledger's ──────────────────────────── */
+      const wrong = open.filter((p) => p.cost !== led.costOf(p.id, taken));
+      assert(!wrong.length,
+        `prices that disagree with Communion.costOf: ${wrong.map((p) => `${p.id} shows ${p.cost} `
+          + `against ${led.costOf(p.id, taken)}`).join('; ')}`);
+
+      /* ── and the purse line names the exact shortfall ──────────────── */
+      const cheapest = Math.min(...open.map((p) => p.cost));
+      const line = doc.getElementById('med-purse').textContent;
+      assert(line.includes(String(cheapest)),
+        `the purse says "${line}" and the cheapest thing within reach is ${cheapest}`);
+
+      /* ── mid-run: prices climb, the footer says by how much, and the
+       *    detail line converts the gap into waves off this run's ledger ─ */
+      const t2 = new Waves.RankSet(['cadence', 'attune-blade', 'djemso']);
+      const led2 = new Tree.Communion({ insight: 6, earned: 28, bought: ['attune-blade', 'djemso', 'cadence'] });
+      tree.show({ taken: t2, ledger: led2, wave: 20, order: 'jedi', live: true });
+      const mid = priced(tree);
+      const bad = mid.filter((p) => p.cost !== led2.costOf(p.id, t2));
+      assert(!bad.length, `mid-run prices disagree with the ledger: ${bad.map((p) => p.id).join(', ')}`);
+      assert(mid.every((p) => p.short === !led2.canBuy(p.id, t2, 20)),
+        'a price is lit as affordable that the ledger refuses, or dimmed on one it would take');
+
+      const foot = doc.getElementById('med-hint').textContent;
+      const surcharge = led2.bought.length * Tree.COST_STEP;
+      assert(foot.includes(String(surcharge)),
+        `the footer says "${foot}" and every price is ${surcharge} over its base`);
+      /* The way out is on that line whatever else is: it used to be a ternary
+       * against the escalator note, so buying one facet DELETED the only
+       * sentence on the screen that says how to leave it. */
+      assert(/escape/i.test(foot),
+        `after three purchases the footer is "${foot}" and no longer says how to leave the screen`);
+
+      /* The distance, in the two units the player has. `earned/wave` is this
+       * run's own pace — 28 over 20 waves — so the estimate carries the mode's
+       * rate without the screen having to know which mode it is in. */
+      const far = tree.view.find((v) => v.locked === Tree.LOCKED.insight);
+      assert(far, 'nothing on a 6-Insight purse at wave 20 is out of reach on price alone');
+      tree._select(far.id);
+      const detail = doc.getElementById('med-detail').textContent;
+      const short = far.cost - Math.floor(led2.insight);
+      const waves = Math.ceil(short / (led2.earned / 20));
+      assert(detail.includes(`${short} more`),
+        `the card for ${far.id} costs ${far.cost} against ${led2.insight} held and does not say `
+        + `"${short} more" — it says: ${detail.replace(/\s+/g, ' ').slice(-90)}`);
+      assert(detail.includes(`${waves} more wave`),
+        `${short} Insight at ${(led2.earned / 20).toFixed(2)} a wave is ${waves} waves and the card `
+        + `does not say so: ${detail.replace(/\s+/g, ' ').slice(-90)}`);
+
+      /* ── between runs there is no purse, so there are no prices ────── */
+      tree.show({ taken: new Waves.RankSet(), ledger: new Tree.Communion(), wave: 1, order: null, live: false });
+      assert(priced(tree).length === 0,
+        'the Temple chart prices facets it cannot sell');
+
+      return `w1 empty purse: ${open.length} prices, all dim, cheapest ${cheapest}; `
+        + `w20 three woken: ${mid.length} prices all +${surcharge} over base; `
+        + `${far.id} reads "${short} more, about ${waves} more waves"; chart prices nothing`;
+    } finally { restore(); }
+  });
+
   /**
    * THE HOLOCRON CAN BE OPENED, because a kit nobody can reach is a kit
    * nobody can tell you is broken.

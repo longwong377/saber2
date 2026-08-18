@@ -28,12 +28,18 @@
 
 import { readFile } from 'node:fs/promises';
 import { makeDocument } from './_page.mjs';
-import { Menu, DEFAULT_SETTINGS, DEATH_TITLE } from '../../src/ui/Menu.js';
-import { ACTIONS } from '../../src/engine/Bindings.js';
+import { Menu, DEFAULT_SETTINGS, DEATH_TITLE, codexHtml, codexTeaching } from '../../src/ui/Menu.js';
+import { ACTIONS, defaultBindings } from '../../src/engine/Bindings.js';
 import { FOCUS } from '../../src/game/Focus.js';
 import { QUALITY } from '../../src/engine/Engine.js';
-import { MODES } from '../../src/game/Waves.js';
+import { MODES, WaveDirector, BOSS_EVERY } from '../../src/game/Waves.js';
 import { LEVEL_ORDER } from '../../src/game/Levels.js';
+/* The Codex's teaching half is generated off these, and the check reads the
+ * same tables rather than a transcription of what they said on the day. */
+import { DIFFICULTY, GRADE_NAME, SPEED_GRADE, PARRY_GRADE, parryScale } from '../../src/game/Combat.js';
+import { POWER_COST, POWER_BOON } from '../../src/game/Powers.js';
+import { STRATAGEMS } from '../../src/game/Stratagems.js';
+import { insightRate, insightAfter, COST as FACET_COST, COST_STEP } from '../../src/game/LivingForce.js';
 
 const read = (p) => readFile(new URL('../../' + p, import.meta.url), 'utf8');
 
@@ -537,6 +543,153 @@ export async function run({ check, assert }) {
       assert(!/start here/i.test(all), 'the "start here" pill is back, on a flag no level sets');
       return `Focus quoted as ${(FOCUS.heldScale * 100).toFixed(0)}% / ${FOCUS.drain} Force/s, no dojo, no dead signpost`;
     } finally { close(); }
+  });
+
+  check('menu: the Codex prices the kit off the price list, not off prose', () => {
+    /**
+     * ELEVEN FORCE POWERS, ELEVEN CODEX ROWS, AND NOT ONE NUMBER ON ANY OF
+     * THEM. "Force push." was the whole of what the page that teaches this game
+     * said about a 20-Force power, next to "Unleash — … costs more than any
+     * other power", which is a claim ABOUT THE PRICE LIST typed beside it in a
+     * file that cannot read one.
+     *
+     * `Powers.js` exists precisely so two surfaces can share one price list —
+     * its header records the HUD's private duplicate carrying lightning at 14
+     * against a real 30 — and the Codex was the third surface, which had solved
+     * the problem by saying nothing. Every price on the page is now
+     * `POWER_COST[id]`, keyed on the row's own action id, and the two gated
+     * powers name their card off `boonById` instead of typing "Force Lightning"
+     * into prose.
+     *
+     * The bound is BOTH DIRECTIONS: every priced thing appears, and nothing
+     * appears that is not in a table. A twelfth power with no chip fails here,
+     * and so does a chip somebody typed.
+     */
+    const html = codexHtml(defaultBindings());
+    const chips = [...html.matchAll(/<em class="cost">([^<]*)<\/em>/g)].map((m) => m[1]);
+    const gates = [...html.matchAll(/<em class="cost gate">([^<]*)<\/em>/g)].map((m) => m[1]);
+
+    const missing = Object.entries(POWER_COST)
+      .filter(([, cost]) => !chips.includes(`${cost} Force`));
+    assert(!missing.length,
+      `powers the Codex documents with no price: ${missing.map(([id]) => id).join(', ')}`);
+    const strats = STRATAGEMS.filter((S) => !chips.includes(`${S.cost} Force`));
+    assert(!strats.length,
+      `stratagems the Codex documents with no price: ${strats.map((S) => S.id).join(', ')}`);
+    /* Nothing typed: every chip's number is somebody's `cost` field. */
+    const priced = new Set([...Object.values(POWER_COST), ...STRATAGEMS.map((S) => S.cost)]
+      .map((c) => `${c} Force`));
+    const stray = chips.filter((c) => !priced.has(c));
+    assert(!stray.length, `price chips that came from no table: ${[...new Set(stray)].join(', ')}`);
+    assert(chips.length === Object.keys(POWER_COST).length + STRATAGEMS.length,
+      `${chips.length} price chips against ${Object.keys(POWER_COST).length} powers and `
+      + `${STRATAGEMS.length} stratagems — one of them is priced twice or not at all`);
+
+    /* The gates are the two boon-locked powers plus whatever the stratagem
+     * table marks `commandOnly`, and they name the CARD rather than a string. */
+    const wantGates = Object.values(POWER_BOON).length
+      + STRATAGEMS.filter((S) => S.commandOnly).length;
+    assert(gates.length === wantGates,
+      `${gates.length} gate chips against ${wantGates} gated calls`);
+    assert(!/\bForce Lightning\b/.test(html.replace(/<em class="cost gate">[^<]*<\/em>/g, '')),
+      'the Codex still types a boon name into its prose');
+    return `${chips.length} prices and ${gates.length} gates, all off POWER_COST / STRATAGEMS; `
+      + `push ${POWER_COST.push} · unleash ${POWER_COST.unleash} with nothing typed`;
+  });
+
+  check('menu: the Codex teaches the ladder and the purse in the numbers the game uses', () => {
+    /**
+     * "The four things that make a master" was four hand-written paragraphs
+     * with not one number in them, under a keybind grid, in a game whose skill
+     * curve IS four graded outcomes separated by measured thresholds and whose
+     * progression IS a price series. Every threshold is an exported constant
+     * two other suites already measure the game against; the page that teaches
+     * the game was the only reader that did not have them.
+     *
+     * Two properties are worth holding and neither is "the string says X":
+     *
+     *   IT MOVES WITH THE TRIAL. Both parry windows scale by `parryScale`, so
+     *   Padawan and Grandmaster must produce DIFFERENT pages and each must
+     *   carry its own arithmetic. A page that quoted 200 ms to everybody would
+     *   pass any single-tier assertion.
+     *
+     *   IT MOVES WITH THE MODE. `insightRate` pays the Trial four times what
+     *   Path of the Blade is paid and the Trial drafts nothing, so one typed
+     *   rate would be wrong in whichever mode it was not written for.
+     */
+    const dir = (mode) => new WaveDirector(
+      { enemies: [], players: [], settings: {}, takenBoons: new Set() },
+      { mode, pool: ['b1'], rules: [] });
+    const text = (o) => codexTeaching(o).replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ')
+      .replace(/\s+/g, ' ');
+
+    /* The four rungs are named off GRADE_NAME, so a fifth grade in Combat.js
+     * cannot appear in the game and stay off the page that teaches it. */
+    const path = text({ difficulty: 'knight', director: dir('roguelite') });
+    for (const g of GRADE_NAME) {
+      assert(path.includes(g), `the ladder does not name the ${g} grade`);
+    }
+    for (const [what, v] of [['driven', SPEED_GRADE.driven], ['closing', SPEED_GRADE.closing],
+      ['return', SPEED_GRADE.return], ['perfect', SPEED_GRADE.perfect]]) {
+      assert(path.includes(String(v)), `the ladder never states the ${what} gate (${v})`);
+    }
+
+    /* THE WINDOWS MOVE WITH THE TIER, and they are the tier's own arithmetic. */
+    const windows = {};
+    for (const key of ['padawan', 'grandmaster']) {
+      const t = text({ difficulty: key, director: dir('roguelite') });
+      const scale = parryScale(DIFFICULTY[key]);
+      const want = Math.round(PARRY_GRADE.window * scale * 1000);
+      const sharp = Math.round(PARRY_GRADE.perfect * scale * 1000);
+      assert(t.includes(`${want} ms`),
+        `at ${key} the parry window is ${want} ms and the Codex does not say so`);
+      assert(t.includes(`${sharp} ms`),
+        `at ${key} a perfect needs ${sharp} ms and the Codex does not say so`);
+      assert(t.includes(DIFFICULTY[key].name), `the page does not say which trial it is quoting`);
+      windows[key] = want;
+    }
+    assert(windows.padawan !== windows.grandmaster,
+      `every trial reads ${windows.padawan} ms — the page is not scaling with the tier at all`);
+
+    /* THE PURSE MOVES WITH THE MODE. */
+    const trial = text({ difficulty: 'knight', director: dir('waves') });
+    for (const [mode, page] of [['roguelite', path], ['waves', trial]]) {
+      const d = dir(mode);
+      const rate = insightRate(d.drafts);
+      assert(page.includes(`+${rate.per} Insight`),
+        `${MODES[mode].name} pays ${rate.per} a wave and its page does not say so`);
+      assert(page.includes(String(insightAfter(40, BOSS_EVERY, rate))),
+        `${MODES[mode].name} has earned ${insightAfter(40, BOSS_EVERY, rate)} by wave 40 and the `
+        + 'page does not say so');
+      assert(page.includes(MODES[mode].name), 'the purse table does not name the mode it describes');
+    }
+    assert(!trial.includes(`+${insightRate(true).per} Insight,`),
+      'the Trial page is quoting the drafting mode\'s rate');
+    /* The draft cadence is COUNTED off `isDraftWave` — HANDOFF §2.4 is a whole
+     * section about an instrument that restated that rule and manufactured a
+     * defect out of the difference. */
+    let cards = 0;
+    for (let w = 1; w <= 20; w++) if (dir('roguelite').isDraftWave(w)) cards++;
+    assert(path.includes(String(cards)),
+      `${cards} cards are drafted by wave 20 and the page does not say so`);
+    assert(/none in this mode/.test(trial), 'the Trial page does not say that it drafts nothing');
+
+    /* And the prices: the base tiers and the escalator, off LivingForce. */
+    for (const r of ['common', 'rare', 'epic']) {
+      assert(path.includes(String(FACET_COST[r])), `the page never states the ${r} price`);
+    }
+    assert(path.includes(`+${COST_STEP}`), 'the page never states the escalator');
+
+    /* A mode that never clears a wave must not be shown a purse table at all —
+     * `World._earnInsight` hangs off `onWaveClear` and the sandbox never fires
+     * one, so every number in that block would be a rate nothing is paid at. */
+    const box = text({ difficulty: 'knight', director: dir('sandbox') });
+    assert(/never clears one/.test(box) && !box.includes('The escalator'),
+      'the sandbox is shown a purse table for a loop it does not have');
+    return `ladder off GRADE_NAME with ${GRADE_NAME.length} rungs; parry window `
+      + `${windows.padawan} ms padawan / ${windows.grandmaster} ms grandmaster; `
+      + `purse ${insightRate(true).per}/wave with ${cards} cards by w20, Trial `
+      + `${insightRate(false).per}/wave with none; sandbox shown no purse`;
   });
 
   check('menu: the way into the Holocron is a button, not a strip', () => {

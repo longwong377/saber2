@@ -214,6 +214,55 @@ export const MODES = {
      */
     level: 'geonosis',
   },
+  /**
+   * SKIRMISH — the one run in this game that can be WON, anywhere.
+   *
+   * Player note #46: "a mode where you pick the map, the sides, the army sizes
+   * and the rules, and fight a self-contained battle that ends in a win or a
+   * loss — as opposed to the endless wave survival". Every word of that is a
+   * thing the shipped game did not have, and the reason is worth stating
+   * because it decides what this mode is ALLOWED to be:
+   *
+   *   THE ENDLESS MODES CANNOT BE WON BY CONSTRUCTION. `roguelite` and `waves`
+   *     end when `_checkWipe` finds every player down. `won` is a field
+   *     `Progress.recordRun` has always read and that nothing in the tree ever
+   *     set until Command's campaign arrived.
+   *   COMMAND CAN BE WON AND OWNS ITS GROUND. `fixedTheatre` above is not
+   *     decoration — the campaign is a crossing of one planet, its five AREAS
+   *     are Geonosis by name and brief, and `_endCampaign` says so out loud.
+   *     So "a battle you can win, on the map you picked" cannot be a Command
+   *     setting; it is the mode Command is not.
+   *   THE DUEL IS ONE BODY AGAINST ONE BODY. It is a ladder, not a battle.
+   *
+   * SO: A SKIRMISH IS A COMMAND ENGAGEMENT WITH THE CAMPAIGN TAKEN OFF IT. You
+   * lead an army — the same `CommandRoster`, the same ranks, the same
+   * permadeath, the same formations and orders — against a force the ordinary
+   * composer builds out of the level's own pool at a stated pressure, under the
+   * run's chosen CONDITIONS. It is a stated number of engagements long, it ends
+   * in a win when the last one is cleared, and it ends in a loss the way every
+   * other mode does.
+   *
+   * NOTHING HERE IS A SECOND COPY OF ANYTHING. The army is Command's, the
+   * pressure ladder is Command's `AREAS`, the wave is the composer's, the rules
+   * are `CONDITIONS`, the ground list is `LEVEL_ORDER`, the defeat is
+   * `_checkWipe`'s and the report is `onGameOver`'s. What this mode adds is the
+   * three decisions none of them makes: how long, how big, and where — and
+   * `where` is a list rather than a single answer, which is `rotates` below.
+   *
+   * `rotates` IS THE MACHINE-READABLE HALF OF "THE GROUND CHANGES", in exactly
+   * the sense `MODES.command.level` is the machine-readable half of
+   * `fixedTheatre`. That note records what it cost to have the sentence and not
+   * the field: the menu said Geonosis and the army deployed onto the Ember
+   * Shelf. So a mode whose ground moves says so in a field that `World` reads,
+   * and the Theatre column stays live because the player's pick is still real —
+   * it is round one, and `Levels.levelRotation`'s `first` is what makes it so.
+   */
+  skirmish: {
+    name: 'Skirmish',
+    blurb: 'One battle, fought over changing ground. You lead an army, they field one, '
+      + 'and it ends in a victory or a defeat — not in a high score.',
+    rotates: true,
+  },
 };
 
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -336,6 +385,69 @@ export function sandboxConfig(settings) {
   const fire = clamp(typeof f === 'number' && isFinite(f) ? f : 1, 0, 2);
   const t = s.sandboxType;
   return { count, fire, type: (t === 'mixed' || ARCHETYPES[t]) ? t : 'mixed' };
+}
+
+/* ═══════════════════════════════════════════════════════════════════════ */
+/*  Skirmish                                                              */
+/* ═══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * HOW LONG A BATTLE IS, AND HOW BIG.
+ *
+ * Only the numbers this module can honestly own are here, and the split is
+ * forced rather than chosen: `Command.js` imports this file for `WaveDirector`,
+ * so this file may not import `Command.js` — the edge would close a cycle and
+ * run `ARCHETYPES`' consumers inside its own temporal dead zone (the header of
+ * Command.js records that being tried). `MAX_STRENGTH`, `OPENING_STRENGTH`,
+ * `musterCost` and `AREAS` therefore cannot be seen from here, and the clamps
+ * that need them are applied by the one caller that can see them,
+ * `World.beginSkirmish`. `MODES.command.level` already lives with the same
+ * split for the same reason.
+ *
+ * `engagements` — how many waves the battle is. 1 is a single stand-up fight;
+ *   the ceiling is 9 because past that a "self-contained battle" is an endless
+ *   mode with a stopping rule bolted on, which is the thing this mode exists
+ *   instead of. Three is the default because three grounds is enough for the
+ *   rotation to be the point and short enough to finish in one sitting.
+ *
+ * `strength` — the size of YOUR line, in bodies. Clamped here only against
+ *   zero; `World` clamps it against Command's own `OPENING_STRENGTH` floor and
+ *   `MAX_STRENGTH` ceiling, which are the numbers the muster is actually built
+ *   around. The default is 0, meaning "whatever the campaign opens with", so a
+ *   player who never touches the control gets the line Command gives them.
+ *
+ * `pressure` — which rung of Command's own advance this battle is fought at,
+ *   as an index into `AREAS`. That table already carries a budget multiplier, a
+ *   heavy bias, a length and a reinforcement purse per rung, all of them tuned;
+ *   inventing a second difficulty ladder beside it is the defect this file has
+ *   a section of HANDOFF about. Clamped in `World` against `AREAS.length`.
+ *
+ * The RULES are not here at all, and that is the point: a skirmish is fought
+ * under `settings.rules`, the same CONDITION keys every other run is fought
+ * under, read by `WaveDirector`'s constructor through `legalRuleSet` before
+ * this mode existed. There is nothing for this function to add — and because a
+ * skirmish COMPOSES its opposing force rather than mustering it, every one of
+ * those conditions bites here exactly as it bites in the Trial.
+ */
+export const SKIRMISH = {
+  engagements: { min: 1, max: 9, def: 3 },
+};
+
+/** Read the battle's shape off a settings blob, clamped and defaulted. */
+export function skirmishConfig(settings) {
+  const s = settings || {};
+  const n = (v, d) => (typeof v === 'number' && isFinite(v) ? v : d);
+  return {
+    engagements: clamp(Math.round(n(s.skirmishEngagements, SKIRMISH.engagements.def)),
+      SKIRMISH.engagements.min, SKIRMISH.engagements.max),
+    strength: Math.max(0, Math.round(n(s.skirmishStrength, 0))),
+    pressure: Math.max(0, Math.round(n(s.skirmishPressure, 0))),
+    /* THE GROUND MOVES UNLESS THE PLAYER SAYS OTHERWISE, and the default is the
+     * feature: note #48 is a complaint that it never did. Off is a real thing
+     * to want — a player learning one map, or measuring one — so it is a
+     * setting and not a law, but the answer to an absent setting is yes. */
+    rotate: s.skirmishRotate !== false,
+  };
 }
 
 /**
@@ -4390,6 +4502,19 @@ export class RankSet extends Set {
   rank(id) { return this._n.get(id) || 0; }
   /** Total ranks across every card — the real size of a build. */
   get ranks() { let n = 0; for (const v of this._n.values()) n += v; return n; }
+  /**
+   * Every rank held, as a flat list of ids — `new RankSet(s.flat())` is a copy.
+   *
+   * Iterating a RankSet yields each id ONCE, because it is a Set, so `[...set]`
+   * silently flattens a rank-3 Vitality to a rank-1 one. That is exactly the
+   * shape of loss `World.runCarry` cannot afford: a build carried across a
+   * ground change through the Set's own iterator would come out the far side
+   * with every card at rank 1 and no error anywhere. Replaying this list
+   * through `applyBoon` reproduces the build move for move, because a rank was
+   * always N separate `applyBoon` calls and `boon.apply(p, rankScale(rank))`
+   * compounds them in that order.
+   */
+  flat() { const out = []; for (const [id, n] of this._n) for (let i = 0; i < n; i++) out.push(id); return out; }
   delete(id) { this._n.delete(id); return super.delete(id); }
   clear() { this._n.clear(); super.clear(); }
 }

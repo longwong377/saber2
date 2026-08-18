@@ -204,12 +204,51 @@ export function voiceById(id) { return PLAYER_VOICES.find(v => v.id === id) || P
  * The trigger list is the brief: a kill, a deflect streak, a boss arriving, low
  * health — plus the four efforts a body makes on its own.
  */
+/**
+ * ── one voice, or every voice ────────────────────────────────────────────
+ *
+ * `each: true` marks a contour where EVERY SPEAKER IS ITS OWN EVENT, and it is
+ * the field that decides which of the announcer's two room budgets a line
+ * spends. The distinction was already written down — in prose, over
+ * `Announcer.BATTLE_GAP` — and being prose is exactly why the call sites did
+ * not follow it:
+ *
+ *   "the limit was written for lines the room says about ITSELF — an alarm, a
+ *    panic call, idle banter — where one is representative and six are noise.
+ *    A body being flung is a thing the PLAYER just did, one per body, and
+ *    hearing only one of six is hearing the power wrong."
+ *
+ * A DEATH IS THE CANONICAL ONE-PER-BODY LINE and it was on the wrong side of
+ * that sentence. Measured with `tools/_voiceprobe.mjs` on a real Geonosis
+ * command wave, seed 4242, 60 s: **seven bodies fell and the player heard none
+ * of them.** Every death cry in the run — five screams and two power-downs —
+ * was refused by the shared 0.45 s budget, which had already been spent on the
+ * alarm calls of bodies that were still standing. `cheer`, which was moved to
+ * the per-event budget when it was written, was refused zero times in the same
+ * run. The colosseum run says the same thing with one death instead of seven.
+ *
+ * So the split is DATA now, on the contour, next to the contour. A new line is
+ * on the shared budget unless it says otherwise, which is the quiet side to
+ * default to — the failure mode of guessing wrong here is a wall of sound, and
+ * a contour whose author has not thought about it should not be able to make
+ * one.
+ */
 export const LINES = {
   /* efforts — one syllable, no thinking involved */
   effort: { gain: 0.50, syll: [[1.02, 0.42, 1.0]] },
+  /**
+   * A WOUND IS NOT MARKED `each`, AND THAT IS THE ONE JUDGEMENT IN THIS TABLE.
+   *
+   * It is the closest call of the five. A grunt is a thing that happens to one
+   * body, like a death — but twenty bodies trading rifle fire is precisely the
+   * case the shared budget was written for, and `Enemy.damage` fires this at
+   * 8.5% of a body's health with only a 2.2 s per-body gap under it, so a
+   * squad under sustained fire would be seven grunts a second. One grunt IS
+   * representative of a firefight; one death is not representative of anything.
+   */
   hurt:   { gain: 0.85, syll: [[1.22, 0.36, 1.0], [0.92, 0.42, 0.55]] },
   land:   { gain: 0.62, syll: [[0.78, 0.40, 1.0]] },
-  die:    { gain: 1.00, syll: [[1.18, 0.55, 1.0], [0.96, 0.70, 0.8], [0.70, 1.15, 0.45]] },
+  die:    { each: true, gain: 1.00, syll: [[1.18, 0.55, 1.0], [0.96, 0.70, 0.8], [0.70, 1.15, 0.45]] },
   /* quips — the four triggers the brief names */
   kill:   { gain: 0.72, syll: [[1.05, 0.42, 0.9], [0.90, 0.52, 0.72]] },
   streak: { gain: 0.80, syll: [[0.94, 0.40, 0.8], [1.06, 0.40, 0.9], [1.20, 0.62, 1.0]] },
@@ -218,7 +257,7 @@ export const LINES = {
   /* the enemy side */
   alarm:  { gain: 0.85, syll: [[1.10, 0.30, 1.0], [1.28, 0.34, 0.9]] },
   panic:  { gain: 0.90, syll: [[1.24, 0.28, 1.0], [1.34, 0.26, 0.9], [1.12, 0.44, 0.8]] },
-  scream: { gain: 1.00, syll: [[1.30, 0.70, 1.0], [1.05, 0.95, 0.6]] },
+  scream: { each: true, gain: 1.00, syll: [[1.30, 0.70, 1.0], [1.05, 0.95, 0.6]] },
   chatter:{ gain: 0.55, syll: [[1.00, 0.26, 0.9], [0.90, 0.30, 0.7]] },
 
   /* ── the battle, and it is the whole of player note #21's last sentence ──
@@ -244,7 +283,7 @@ export const LINES = {
    * not mistake for something ending. It is also the loudest (1.05), because
    * this fires at the moment the body is furthest away it will ever be.
    */
-  flung:  { gain: 1.05, syll: [[1.22, 1.35, 1.0]] },
+  flung:  { each: true, gain: 1.05, syll: [[1.22, 1.35, 1.0]] },
 
   /**
    * A CHEER, which is a THIRD thing and not a happy scream.
@@ -255,7 +294,7 @@ export const LINES = {
    * tell: 0.20/0.20/0.20 then 0.62 is three beats and a held note, and it is
    * unmistakable at any pitch, through any throat, at any distance.
    */
-  cheer:  { gain: 0.92, syll: [[1.06, 0.20, 0.85], [1.06, 0.20, 0.9], [1.06, 0.20, 0.95], [1.14, 0.62, 1.0]] },
+  cheer:  { each: true, gain: 0.92, syll: [[1.06, 0.20, 0.85], [1.06, 0.20, 0.9], [1.06, 0.20, 0.95], [1.14, 0.62, 1.0]] },
 
   /**
    * AN ORDER GIVEN. Short, hard, and it lands DOWN.
@@ -265,6 +304,17 @@ export const LINES = {
    * the player hears when they change formation, so it has to be legible under
    * a firefight: the fall is what distinguishes it from `alarm`, which is the
    * other short two-syllable line in the table and which rises.
+   *
+   * WHOSE LINE IT IS was written down twice here and the two did not agree —
+   * this paragraph said "the officer's" and the note over ENEMY_LINES said "the
+   * reply to a command, said by the troops, not by the commander". The contour
+   * cannot be both a command and an answer to one; it FALLS, and an
+   * acknowledgement rises. So it is the ORDER, said by whoever gives it: an
+   * officer on the field shouting at the line around it, and — when the player
+   * presses a formation key — the nearest of the player's own troops relaying
+   * it, because a Jedi giving a hand signal is not a Jedi shouting. It is on
+   * ENEMY_LINES under either reading: what the wheel must never do is let the
+   * player speak it, and neither reading ever wanted that.
    */
   order:  { gain: 0.95, syll: [[1.16, 0.22, 1.0], [0.86, 0.58, 0.9]] },
 };
@@ -295,13 +345,28 @@ export const LINE_KINDS = Object.keys(LINES);
  * happens TO somebody else — the player is the one doing the throwing. `cheer`
  * is a line the army around you says about a kill; a wheel slot that made the
  * player cheer their own kill would be a different and much worse emote. `order`
- * is the reply to a command, said by the troops, not by the commander — the
- * commander's own voice is already on the wheel through `streak` and `boss`.
+ * is a command given on the field — by an officer, or relayed by a trooper when
+ * the player presses a formation key. See the contour's own note, which used to
+ * contradict this sentence and no longer does. Either way it is not a thing a
+ * Jedi shouts, and the commander's own voice is already on the wheel through
+ * `streak` and `boss`.
  *
  * (`die` remains on both sides and therefore in neither list — see below.)
  */
 export const ENEMY_LINES = ['alarm', 'panic', 'scream', 'chatter', 'flung', 'cheer', 'order'];
 export const PLAYER_LINES = LINE_KINDS.filter(k => !ENEMY_LINES.includes(k));
+
+/**
+ * The two halves of `each`, derived — never listed. See the note over LINES.
+ *
+ * `EACH_LINES` is every contour where one speaker is one event and the next
+ * speaker is another one; `CHORUS_LINES` is the rest of the room's vocabulary,
+ * where one voice stands for all of them. `Announcer.roomLine` is the single
+ * reader, and it is the only place in the game that decides which of the two
+ * room budgets a line spends.
+ */
+export const EACH_LINES = LINE_KINDS.filter((k) => !!LINES[k].each);
+export const CHORUS_LINES = ENEMY_LINES.filter((k) => !LINES[k].each);
 
 /** Seconds one syllable of length 1.0 lasts at cadence 1. */
 const SYLL_BASE = 0.30;

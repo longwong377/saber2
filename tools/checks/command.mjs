@@ -1770,6 +1770,466 @@ export function run({ check, assert }) {
       + `refuses under ${Cmd.MORALE?.REFUSE ?? 0.1}; rallied ${t.morale.toFixed(2)}`;
   });
 
+  /* ══════════════════════════════════════════════════════════════════ */
+  /*  The commander's own Force, and the line that reacts               */
+  /* ══════════════════════════════════════════════════════════════════ */
+
+  /**
+   * A commander stub with a real Force economy on it.
+   *
+   * `_spend`, `_canSpend`, `_priceOf` and `_refuse` are the four methods
+   * `Player.js` charges every one of its nine powers through, and the whole
+   * point of asserting against a stub that HAS them is that a director doing
+   * its own `force -= cost` arithmetic would pass a test written against a
+   * plain object and fail here. The drain multiplier is the one thing that
+   * makes the difference visible: this pays 2x list, so a director quoting the
+   * list price is caught by the refusal text as well as by the balance.
+   */
+  const forceful = (opts = {}) => {
+    const drain = opts.drain ?? 1;
+    return {
+      position: V(0, 0, 0), aimDir: V(0, 0, 1), facing: 0, alive: true, team: TEAM.PARTY,
+      force: opts.force ?? 100, refusals: [],
+      _canSpend(c) { return this.force >= c * drain; },
+      _spend(c) { if (!this._canSpend(c)) return false; this.force -= c * drain; return true; },
+      _priceOf(c) { return Math.round(c * drain); },
+      _refuse(name, why) { this.refusals.push(`${name}: ${why}`); return false; },
+    };
+  };
+
+  check('command: RALLY is a Force verb that reaches a LINE, and it is priced like one', () => {
+    /**
+     * The commander half of the note: a Jedi general's contribution to a
+     * battle is not that they can throw one soldier further than another
+     * soldier can. RALLY is one of the two verbs in `COMMAND_FORCE`, and every
+     * clause of what it claims is checkable — it costs Force through the
+     * player's own spender, it has a cooldown that runs down on the clock, it
+     * reaches a radius rather than a body, and what it hands out is state that
+     * already existed on the far side.
+     */
+    const { w, d } = dirFor();
+    const me = forceful();
+    w.players.push(me); w.player = me; d.commander.player = me;
+    d.deploy();
+    const troops = d.roster.living.map((t) => t.body).filter(Boolean);
+    assert(troops.length >= 6, `only ${troops.length} bodies`);
+
+    const P = Cmd.COMMAND_FORCE.rally;
+    /* ONE OF THEM IS BROKEN AND ONE OF THEM IS FINISHED. INSPIRED is 0.16 and
+     * BREAK is 0.24, so the first comes back and the second cannot — which is
+     * the property, and it is two numbers in the MORALE table rather than a
+     * threshold this verb invented. */
+    const shaken = d.roster.living[0], done = d.roster.living[1], far = d.roster.living[2];
+    shaken.morale = 0.14; shaken.broken = true;
+    done.morale = 0.01; done.broken = true;
+    far.morale = 0.14; far.broken = true;
+    far.body.position.set(0, 0, P.radius + 25);
+
+    const before = me.force;
+    assert(d.order('rally') === true, 'the order door does not answer for a Force verb');
+    assert(me.force < before, 'a commander Force verb was free');
+    assert(Math.abs((before - me.force) - P.cost) < 1e-6,
+      `RALLY charged ${(before - me.force).toFixed(1)} against a list price of ${P.cost}`);
+    assert(!shaken.broken, `a rallied man at ${shaken.morale.toFixed(2)} is still broken`);
+    assert(done.broken, 'a rally brought back a man who had already given up');
+    assert(far.broken, `a man ${(P.radius + 25).toFixed(0)} m away was rallied from inside the radius`);
+    assert(shaken.body.rallyTimer >= P.seconds,
+      'a rallied body carries no rallyTimer — it is a morale event with no fighting in it');
+    assert(far.body.rallyTimer === 0, 'the aura reached outside the radius');
+
+    /* …AND IT DOES NOT BECOME THE ORDER. A verb that set `formation` would put
+     * a line into a shape with no `slot` function on the very next frame. */
+    assert(d.commander.formation !== 'rally',
+      'casting a Force verb changed the standing formation');
+    assert(Cmd.commandConfig({ commandFormation: 'rally' }).formation === Cmd.DEFAULT_FORMATION,
+      'a Force verb was accepted as a STANDING formation');
+
+    /* THE COOLDOWN IS REAL AND IT RUNS DOWN ON THE CLOCK. */
+    const held = me.force;
+    assert(d.order('rally') === false, 'RALLY fired twice in one frame');
+    assert(me.force === held, 'a refused verb still charged for it');
+    assert(/recovering/.test(me.refusals[me.refusals.length - 1] || ''),
+      `a refusal that does not say why: ${me.refusals[me.refusals.length - 1]}`);
+    for (let i = 0; i < Math.ceil(P.cd * 30) + 2; i++) d._troops(1 / 30, {});
+    assert(d.castReady('rally', d.commander) === null,
+      `RALLY never came off cooldown after ${P.cd}s of frames`);
+
+    /* AND THE PRICE IS THE PLAYER'S TO QUOTE. Force Drain doubles it; a
+     * director that had typed the list price into its own refusal would say
+     * the wrong number here. */
+    const poor = forceful({ drain: 2, force: P.cost });
+    d.commander.player = poor;
+    assert(d.order('rally') === false, 'RALLY fired with half the Force it costs');
+    assert(new RegExp(`${P.cost * 2} Force needed`).test(poor.refusals[0] || ''),
+      `the refusal quotes "${poor.refusals[0]}" where Force Drain 2x charges ${P.cost * 2}`);
+    return `RALLY at ${P.cost} Force, ${P.radius} m, ${P.seconds}s of aura; broke→steady, `
+      + `refused at 0.01 morale, ${P.cd}s cooldown, and 2x drain quoted as ${P.cost * 2}`;
+  });
+
+  check('command: DREAD takes the shot, the aim and the footing — and none of the health', () => {
+    /**
+     * "expressed as physics and morale rather than as damage numbers." DREAD
+     * is the verb that had to earn that sentence, because the easy version of
+     * a commander power aimed at the enemy is a bigger Force lightning. Four
+     * consequences and the health bar is not one of them.
+     */
+    const { w, d } = dirFor();
+    const me = forceful();
+    w.players.push(me); w.player = me; d.commander.player = me;
+    d.deploy();
+    const P = Cmd.COMMAND_FORCE.dread;
+
+    /* Real Enemies, not stubs: `applyKnockback`, `aimQuality` and the burst
+     * clock are all real methods and the claim is about what they do. */
+    const front = new Enemy(w, 'b1', V(0, 0, 12));
+    const behind = new Enemy(w, 'b1', V(0, 0, -12));
+    const away = new Enemy(w, 'b1', V(0, 0, P.radius + 14));
+    for (const e of [front, behind, away]) { e.team = 1; w.enemies.push(e); }
+    const mine = d.roster.living[0].body;
+    mine.position.set(0, 0, 6);
+    const hp0 = front.hp, aim0 = front.aimQuality(20);
+    front.burstLeft = 3; front.attackTimer = 0;
+
+    assert(d.order('dread') === true, 'DREAD did not fire');
+    /* THE SHOT. `holdFire` is Waves.js's own primitive and it is what a HOLD
+     * order already uses — the burst is gone and the fuse is back up. */
+    assert(front.burstLeft === 0 && front.attackTimer >= 0.5,
+      `the burst survived: ${front.burstLeft} left, fuse ${front.attackTimer.toFixed(2)}`);
+    /* THE AIM, through the one function that decides a spread. */
+    assert(front.aimQuality(20) > aim0 * 1.2,
+      `a body under dread shoots at ${(front.aimQuality(20) / aim0).toFixed(2)}x its own spread`);
+    /* THE FOOTING — and it is a shove away from the commander, not a pull. */
+    assert(front.velocity.lengthSq() > 1,
+      'a body under dread was not moved at all — the physics half is missing');
+    assert(front.velocity.z > 0, 'the shove went toward the commander rather than away');
+    /* AND NONE OF THE HEALTH. */
+    assert(front.hp === hp0, `DREAD took ${(hp0 - front.hp).toFixed(1)} hp — it is a damage button`);
+
+    /* THE ARC AND THE RADIUS BOTH BITE, and your own line is never in it. */
+    assert(behind.dread === 0, 'DREAD reached behind the commander — it has no frontage');
+    assert(away.dread === 0, `DREAD reached ${P.radius + 14} m against a radius of ${P.radius}`);
+    assert(!(mine.dread > 0), 'DREAD landed on one of your own');
+    return `${P.cost} Force, ${P.radius} m, ±${(P.arc * 180 / Math.PI).toFixed(0)}°: burst gone, `
+      + `spread ${(front.aimQuality(20) / aim0).toFixed(2)}x, |v| ${front.velocity.length().toFixed(1)} m/s, `
+      + `0.0 hp; the man behind and the man beyond took nothing`;
+  });
+
+  check('command: DREAD shakes a record where there is one, and MORALE is where it says so', () => {
+    /* The fourth consequence, and it only exists in a MEETING: a campaign's
+     * enemy carries no roster record, which is exactly why the aim term lives
+     * on the body (see DREAD in Enemy.js). Two armies is where the table's
+     * own SHAKEN entry is reachable. */
+    const { w, d } = dirFor();
+    const me = forceful(), them = { position: V(0, 0, 60), aimDir: V(0, 0, -1), facing: Math.PI, alive: true, team: 2 };
+    w.players.push(me, them); w.player = me;
+    d.commander.player = me;
+    const foe = d.enlistCommander({ player: them, side: 2, army: Cmd.ARMIES.separatist,
+      anchor: V(0, 0, 30), facing: Math.PI });
+    d.deployAll();
+    const near = foe.roster.living.find((t) => t.body && t.body.position.distanceTo(V(0, 0, 0)) < Cmd.COMMAND_FORCE.dread.radius);
+    assert(near, 'no enemy trooper landed inside the radius to shake');
+    const was = near.morale;
+    d.order('dread');
+    assert(near.morale < was - 0.1,
+      `an enemy trooper inside DREAD lost ${(was - near.morale).toFixed(2)} of nerve`);
+    return `SHAKEN ${Cmd.MORALE.SHAKEN} on the record: ${was.toFixed(2)} → ${near.morale.toFixed(2)}`;
+  });
+
+  check('command: every event in the MORALE table has something that fires it', () => {
+    /**
+     * THE TRIPWIRE THIS TABLE WAS MISSING, and it caught three.
+     *
+     * `WAVE_CLEAR` (0.34, the second largest event in the table), `INSPIRED`
+     * and `BETRAYED` were declared, documented, and called by NOTHING. A
+     * number in a design table with no caller is worse than a missing feature:
+     * it reads as shipped, it is quoted in the note above the table as if it
+     * were live, and the only way to find out is to grep for it.
+     *
+     * Derived, not listed. Every key of `MORALE` has to appear in Command.js
+     * as either `MORALE.KEY` — how a per-second drift or a threshold is read —
+     * or `'KEY'`, which is how an event reaches `shake`. The DECLARATION does
+     * not match either form (it is `KEY:`, unquoted), so a key that is only
+     * declared fails, which is the whole point. Comments are stripped first,
+     * or the prose above the table would satisfy the check on its own.
+     */
+    const src = require$(new URL('../../src/game/Command.js', import.meta.url))
+      .replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
+    const orphans = Object.keys(Cmd.MORALE).filter((k) =>
+      !new RegExp(`MORALE\\.${k}\\b`).test(src) && !src.includes(`'${k}'`));
+    assert(!orphans.length,
+      `${orphans.length} of ${Object.keys(Cmd.MORALE).length} entries in the MORALE table are `
+      + `declared and never used: ${orphans.join(', ')} — a design number with no caller`);
+    return `${Object.keys(Cmd.MORALE).length} morale entries, every one of them reachable`;
+  });
+
+  check('command: throwing one of your own with the FORCE is a betrayal; a stray cut is an accident', () => {
+    /* Note #36's "Dark-side excess" clause, which was the one third of the
+     * sentence with no arithmetic behind it. The distinction is deliberate:
+     * team damage already prices a clumsy sweep in health, where reaching out
+     * and throwing a soldier of yours into a wall is a decision. */
+    const { w, d } = dirFor();
+    const me = forceful();
+    w.players.push(me); w.player = me; d.commander.player = me;
+    d.deploy();
+    const t = d.roster.living[0], e = t.body;
+    const squad = d.squadOf(t);
+    const blade0 = squad.map((x) => x.morale);
+    e.damage(4, null, me, 'blade');
+    assert(squad.every((x, i) => x.morale === blade0[i]),
+      'a stray sword cut shook the squad — that is friendly fire, not the dark side');
+
+    const was = squad.map((x) => x.morale);
+    e.damage(4, null, me, 'force');
+    const drop = was[0] - squad[0].morale;
+    assert(Math.abs(drop - (-Cmd.MORALE.BETRAYED)) < 1e-6,
+      `a Force power through one of your own cost the squad ${drop.toFixed(3)} against `
+      + `BETRAYED's ${Cmd.MORALE.BETRAYED}`);
+    /* …and once, not sixty times: one push through a squad is one betrayal. */
+    const after = squad[0].morale;
+    e.damage(4, null, me, 'force');
+    assert(squad[0].morale === after, 'the second body in the same push was a second betrayal');
+    return `blade 0.000, force ${drop.toFixed(2)}, and the same push does not bill twice`;
+  });
+
+  check('command: troops use the ground when they are shot at, and the formation survives it', () => {
+    /**
+     * "they should take cover when under fire." The order TAKE COVER already
+     * existed and this is the other thing — a man inside a formation using
+     * what is beside him — which is why it is the SAME hunt with a different
+     * radius rather than a second cover system. The property that matters is
+     * the bound: the ordered hunt may cross the level, this one may not leave
+     * the shape.
+     */
+    const { w, d } = dirFor();
+    const me = { position: V(0, 0, 0), aimDir: V(0, 0, 1), facing: 0, alive: true, team: TEAM.PARTY };
+    w.players.push(me); w.player = me; d.commander.player = me;
+    d.order('line');
+    d.deploy();
+    d._troops(1 / 30, {});
+    const e = d.roster.living[0].body;
+    const dry = d.slotFor(e, new THREE.Vector3()).clone();
+
+    /* A crate a step and a half off that man's mark, and a threat behind us. */
+    const box = { center: V(dry.x + 2.2, 0.9, dry.z), halfExtents: V(1.0, 1.0, 1.0),
+      quat: null, radius: 2, disabled: false };
+    w.physics.staticBoxes.push(box);
+    w.enemies.push({ position: V(0, 0, -60), dead: false, trooper: null });
+    d._threatAt = -1;
+
+    assert(!(e.underFire > 0), 'a trooper nobody has shot at is already under fire');
+    const same = d.slotFor(e, new THREE.Vector3()).clone();
+    assert(same.distanceTo(dry) < 1e-6, 'the slot moved with no fire on it at all');
+
+    /* SHOT AT — through the real damage door, so this is the path the game
+     * takes rather than a field set by hand. */
+    e.damage(3, null, { team: 9 }, 'blaster');
+    assert(e.underFire > 0, 'a hostile hit did not mark the man as being under fire');
+    const wet = d.slotFor(e, new THREE.Vector3()).clone();
+    const moved = wet.distanceTo(dry);
+    assert(moved > 0.5, 'a trooper under fire stood exactly where it was — it ignored the crate');
+    assert(wet.z > box.center.z,
+      'it went to the side of the crate the shooting is coming from');
+    const bound = Cmd.COVER_LEAN + Math.max(box.halfExtents.x, box.halfExtents.z) + 1;
+    assert(moved <= bound,
+      `it walked ${moved.toFixed(1)} m off its mark for cover, past the ${bound.toFixed(1)} m `
+      + 'the formation can absorb — this is a rout with a good name');
+
+    /* …AND IT STANDS BACK UP. `UNDER_FIRE` seconds of frames and the slot is
+     * the formation's again, which is what stops a line spending a battle
+     * behind the first drum it met. */
+    for (let i = 0; i < Math.ceil(Cmd.UNDER_FIRE * 30) + 2; i++) d._troops(1 / 30, {});
+    const back = d.slotFor(e, new THREE.Vector3()).clone();
+    assert(back.distanceTo(dry) < 1e-6,
+      `${Cmd.UNDER_FIRE}s after the last hit the man is still ${back.distanceTo(dry).toFixed(1)} m off his mark`);
+    return `leaned ${moved.toFixed(1)} m to the lee of a crate (bound ${bound.toFixed(1)} m) `
+      + `and was back on his mark ${Cmd.UNDER_FIRE}s later`;
+  });
+
+  check('command: a squad shoots at what its leader is shooting at', () => {
+    /**
+     * "concentrate fire on what their leader is fighting." A PREFERENCE inside
+     * the leash and not an override of it: five rifles that all kill the same
+     * B2 in a second beat five rifles chipping five B2s for five, and a squad
+     * that walked past the droid at its elbow to answer a call across the
+     * field would be the opposite of concentration.
+     */
+    const { w, d } = dirFor();
+    const me = { position: V(0, 0, 0), aimDir: V(0, 0, 1), facing: 0, alive: true, team: TEAM.PARTY };
+    w.players.push(me); w.player = me; d.commander.player = me;
+    d.order('line');
+    d.deploy();
+    const squad = d.roster.squads()[0];
+    squad[0].award(30);                                  // make him unambiguously the leader
+    assert(d.leaderOf(squad) === squad[0], 'the leader is not who this check thinks');
+    const men = squad.filter((t) => t !== squad[0]).map((t) => t.body);
+    for (const b of men) b.position.set(0, 0, 4);
+
+    /* Two legal targets: one right beside the squad, one the leader is on. */
+    const near = { position: V(1, 0, 6), dead: false, team: 1, trooper: null };
+    const his = { position: V(-6, 0, 10), dead: false, team: 1, trooper: null };
+    w.enemies.push(near, his);
+    const cand = [near, his];
+
+    d._troops(1 / 30, {});
+    const loose = men.map((b) => d.targetFor(b, cand));
+    assert(loose.every((t) => t === near),
+      'with no lead target the squad did not simply take the nearest — the baseline is wrong');
+
+    squad[0].body.target = his;
+    d._troops(1 / 30, {});
+    const focused = men.map((b) => d.targetFor(b, cand));
+    const onHim = focused.filter((t) => t === his).length;
+    assert(onHim === men.length,
+      `${onHim} of ${men.length} riflemen followed their leader onto the thing he is fighting`);
+
+    /* …AND THE LEASH STILL DECIDES. A leader who has run out to something
+     * nobody else may engage does not drag the squad off its ground. */
+    his.position.set(0, 0, 400);
+    d._troops(1 / 30, {});
+    const beyond = men.map((b) => d.targetFor(b, cand));
+    assert(beyond.every((t) => t === near),
+      'the squad followed its leader onto a target outside its own leash');
+    return `${onHim}/${men.length} concentrated on the leader's target; ` +
+      'a target past the leash is refused like any other';
+  });
+
+  check('command: a squad that has mostly broken falls back together', () => {
+    /**
+     * "they should fall back when a position is lost." Breaking is a MAN's
+     * decision and this file already had it; a position is a SQUAD's. The
+     * steady men go back with the broken ones, because a squad that leaves its
+     * two bravest riflemen standing on lost ground has not fallen back, it has
+     * been destroyed in detail. `MORALE.ROUT` is the fraction.
+     */
+    const { w, d } = dirFor();
+    const me = { position: V(0, 0, 0), aimDir: V(0, 0, 1), facing: 0, alive: true, team: TEAM.PARTY };
+    w.players.push(me); w.player = me; d.commander.player = me;
+    d.order('front');                                   // a vanguard, well ahead of you
+    d.deploy();
+    d._troops(1 / 30, {});
+    const squad = d.roster.squads()[0];
+    const steady = squad[squad.length - 1];
+    for (const t of squad) { t.morale = 0.8; t.broken = false; }
+    for (const t of squad) t.body.position.set(0, 0, 30);
+
+    d._morale(1 / 30, d.commander);
+    assert(!steady.rout, 'a squad at 0.80 morale is already routing');
+    const held = steady.body;
+    held.wish = null; held.target = null;
+    d.steer(held, 1 / 30);
+    const wasHome = held.wish ? held.wish.z < 0 : false;
+    assert(!wasHome, 'a steady man in a steady squad was already walking home');
+
+    /* Break just over half of them and leave the last man steady. */
+    const n = squad.length, need = Math.floor(n * Cmd.MORALE.ROUT) + 1;
+    for (let i = 0; i < need; i++) { squad[i].morale = 0.05; squad[i].broken = true; }
+    d._morale(1 / 30, d.commander);
+    assert(steady.rout, `${need} of ${n} broken did not rout the squad`);
+    assert(!steady.broken, 'the man this check is about broke on his own');
+
+    held.wish = null;
+    d.steer(held, 1 / 30);
+    assert(held.wish, 'the steady man in a routed squad was given no direction');
+    const toward = held.wish.x * (me.position.x - held.position.x)
+      + held.wish.z * (me.position.z - held.position.z);
+    assert(toward > 0, 'the withdrawal went away from the commander rather than back to them');
+
+    /* …AND IT RE-FORMS WITH NO EVENT. Derived from the same `broken` count, so
+     * a rally is all it takes to put the squad back on its ground. */
+    d.rallyNear(me.position, 500);
+    d._morale(1 / 30, d.commander);
+    assert(!steady.rout, 'a rallied squad is still routing');
+    return `${need}/${n} broken → the whole squad withdrew toward the commander, and a rally re-formed it`;
+  });
+
+  check('command: the order door answers for every id the wheel can show', () => {
+    /**
+     * `ORDERS` is what the order wheel and the bindings registry should be
+     * handed, and the property that makes that safe is that `order()` answers
+     * for every id in it — HUD.js dispatches anything that is not the HOLD
+     * toggle straight into `order(id)`, so an id on the wheel that the door
+     * refuses is a slot that does nothing when you let go of the key.
+     *
+     * HOLD is the one that was broken and it was broken over the WIRE: a
+     * joining commander's `hold()` sends `requestOrder('hold')`, the host
+     * answers by calling this method, and this method tested `FORMATIONS`.
+     */
+    const { w, d } = dirFor();
+    const me = forceful();
+    w.players.push(me); w.player = me; d.commander.player = me;
+    d.deploy();
+    assert(Cmd.FORMATION_IDS.every((id) => Cmd.ORDERS[id] === Cmd.FORMATIONS[id]),
+      'ORDERS is not a superset of FORMATIONS');
+    const names = Object.values(Cmd.ORDERS).map((o) => o.name);
+    assert(new Set(names).size === names.length, `two orders share a name: ${names.join(', ')}`);
+    /* A key, where one is claimed, is claimed once — the wheel is not a reason
+     * to stop caring about the keyboard. */
+    const keys = Object.values(Cmd.ORDERS).map((o) => o.key).filter(Boolean);
+    assert(new Set(keys).size === keys.length, `two orders want the same key: ${keys.join(', ')}`);
+
+    for (const id of Cmd.ORDER_IDS) {
+      me.force = 500;
+      d.commander._castCd = {};
+      assert(d.order(id) === true, `order('${id}') was refused — the wheel would show a dead slot`);
+    }
+    /* HOLD, both spellings, through the same door the wire uses. */
+    d.commander.holding = false;
+    assert(d.order('hold') === true && d.commander.holding === true, "order('hold') did not hold");
+    assert(d.order('hold') === true && d.commander.holding === false, "order('hold') is not a toggle");
+    d.commander.holding = true;
+    assert(d.order('hold:off') === true && d.commander.holding === false, "order('hold:off') did not release");
+    assert(d.order('nonsense') === false, 'the door accepted an id that is not an order');
+    return `${Cmd.ORDER_IDS.length} orders (${Cmd.FORMATION_IDS.length} formations, `
+      + `${Object.keys(Cmd.COMMAND_FORCE).length} Force verbs) all answered, plus hold and hold:off`;
+  });
+
+  check('command: the army answers the three things something outside it can ask for', () => {
+    /**
+     * `src/game/Stratagems.js` — the support calls entered as a WASD code —
+     * reaches into this director by name for `rallyNear`, `reinforce` and
+     * `reviveNear`, and guards on their absence. So the failure mode is a
+     * stratagem that charges Force, plays its sound and does nothing at all,
+     * which is invisible from either side. Asserted here because this is the
+     * file that owns the roster, the purse and the gunship.
+     *
+     * `rallyNear` is also what the RALLY verb runs. One rally, two prices.
+     */
+    const { w, d } = dirFor();
+    const me = { position: V(0, 0, 0), aimDir: V(0, 0, 1), facing: 0, alive: true, team: TEAM.PARTY };
+    w.players.push(me); w.player = me; d.commander.player = me;
+    d.deploy();
+    for (const m of ['rallyNear', 'reinforce', 'reviveNear']) {
+      assert(typeof d[m] === 'function', `CommandDirector.${m} is missing — Stratagems.js calls it`);
+    }
+    const t = d.roster.living[0];
+    t.morale = 0.14; t.broken = true;
+    assert(d.rallyNear(me.position, 22) >= 6, 'rallyNear reached nobody');
+    assert(!t.broken, 'rallyNear does not do what the RALLY verb does');
+
+    /* REINFORCEMENTS ARE PAID FOR. That is the note's whole premise — a loss is
+     * permanent and a replacement is bought — so a support call spends the
+     * same purse the muster screen does, and refuses when it is empty. */
+    const strength = d.roster.strength;
+    d.roster.points = 0;
+    assert(d.reinforce(4, { byShip: false }) === 0, 'four free troopers arrived on an empty purse');
+    assert(d.roster.strength === strength, 'the roster grew anyway');
+    d.roster.points = 200;
+    const came = d.reinforce(4, { byShip: false });
+    assert(came === 4, `${came} of 4 reinforcements arrived with 200 points in hand`);
+    assert(d.roster.points < 200, 'they were free');
+    assert(d.roster.living.slice(-1)[0].body, 'a reinforcement was enlisted and never given a body');
+
+    /* THE WOUNDED BACK UP — half of maximum, not a full heal. */
+    const hurt = d.roster.living[1].body;
+    hurt.hp = 1; hurt.position.set(0, 0, 3);
+    const n = d.reviveNear(me.position, 9);
+    assert(n > 0 && hurt.hp > 1, 'reviveNear left the wounded on the floor');
+    assert(hurt.hp <= hurt.maxHp * 0.5 + 1e-6,
+      `reviveNear healed to ${(hurt.hp / hurt.maxHp * 100).toFixed(0)}% — a support pod undid the firefight`);
+    return `rallyNear ${d.roster.strength} standing, reinforce refused an empty purse and landed 4 on a full one, `
+      + `reviveNear put a 1 hp man back to ${(hurt.hp / hurt.maxHp * 100).toFixed(0)}%`;
+  });
+
 }
 
 /* A file read, kept out of the check body so the import list stays honest. */

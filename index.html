@@ -50,8 +50,24 @@
       <button class="tab active" data-tab="play">Deploy</button>
       <button class="tab" data-tab="saber">Jedi</button>
       <button class="tab" data-tab="coop">Co-op</button>
+      <!-- THE TWO REFERENCE PAGES COME BEFORE THE SETTINGS, and the key is
+           `codex` rather than `train`.
+
+           Menu._buildDatabank inserts the Databank tab immediately before this
+           one, with a comment saying the two "are one thought — what the
+           controls do, and what the things you are using them on are, and a
+           player who has found one has found the other". That was true and
+           Options was wedged in front of both of them, so the pair sat at the
+           far right of the bar behind the settings page. _buildTraining's own
+           note two tabs along says it plainly: "the last tab is where nobody
+           looks."
+
+           The key was `train` while a DIFFERENT tab, built in Menu.js, is
+           `training` — two data-tab values one character apart, one of them
+           naming the other tab's subject. Everything that reads it reads the
+           string, so the two were one typo away from swapping panels. -->
+      <button class="tab" data-tab="codex">Codex</button>
       <button class="tab" data-tab="opts">Options</button>
-      <button class="tab" data-tab="train">Codex</button>
     </nav>
 
     <section class="panel active" data-panel="play">
@@ -388,7 +404,7 @@
       </div>
     </section>
 
-    <section class="panel" data-panel="train">
+    <section class="panel" data-panel="codex">
       <div class="col wide codex">
         <h3>The blade is yours to move</h3>
         <!-- Filled by Menu._buildKeyLegends from the CODEX table and the LIVE
@@ -401,13 +417,22 @@
         <div class="codex-grid" id="codex-grid"></div>
         <p class="hint" style="margin-top:14px">Every one of these can be rebound under <b>Options</b>, and this
           page is printed from those bindings — rebind a key and this is what it says.</p>
-        <h3 style="margin-top:26px">The four things that make a master</h3>
-        <ol class="codex-list">
-          <li><b>Return, don't block.</b> A still blade scatters a bolt. A blade moving <i>into</i> the bolt mirrors it. A fast tip with an enemy under your reticle sends it back through their chest.</li>
-          <li><b>Chamber.</b> When a duelist swings, whip your blade <i>against</i> the direction of their arc. Their attack dies and yours is already free.</li>
-          <li><b>Drag and accelerate.</b> Your blade has mass. Slow the mouse mid-arc and the strike lands late, past their parry. Snap it and you arrive early.</li>
-          <li><b>Cut with the tip.</b> The end of the blade travels many times faster than the emitter. That is where limbs come off.</li>
-        </ol>
+        <!-- WHAT THE CONTROLS ARE FOR, filled by Menu._buildCodexTeaching.
+
+             This was "The four things that make a master": four hand-written
+             paragraphs with not one number in them, in a game whose skill curve
+             is four graded outcomes separated by measured thresholds. Every one
+             of those thresholds is an exported constant that two check suites
+             already measure the game against — the page that teaches the game
+             was the only reader that did not have them. It is generated for the
+             same reason the grid above it is: a threshold typed into markup
+             cannot follow a balance pass, exactly as a key name typed into
+             markup cannot follow a rebind.
+
+             It is repainted when the TRIAL changes (both parry windows scale
+             with the tier) and when the MODE changes (the Trial of Waves pays
+             four times what Path of the Blade pays and drafts nothing). -->
+        <div id="codex-teaching"></div>
       </div>
     </section>
 
@@ -855,7 +880,14 @@
         <h2 id="med-title">Connect to the Force</h2>
         <p class="hint" id="med-sub"></p>
       </div>
-      <div class="med-insight"><b id="med-insight">0</b><span>Insight</span></div>
+      <!-- The purse, and WHAT IT IS SHORT OF. The second line is filled by
+           SkillTree._purseLine off the lattice it has just drawn — how many of
+           the facets within reach are already yours, or how far off the nearest
+           one is. The number on its own answered neither, which is the whole of
+           "the Insight economy does not feel like it does anything": a currency
+           you cannot price anything in is a score. -->
+      <div class="med-insight"><b id="med-insight">0</b><span>Insight</span>
+        <i id="med-purse"></i></div>
     </header>
     <div class="med-body">
       <svg id="med-field" viewBox="0 0 1000 720" preserveAspectRatio="xMidYMid meet" aria-label="the Holocron"></svg>

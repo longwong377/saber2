@@ -32,7 +32,7 @@
  */
 
 import { audio as defaultAudio } from '../engine/Audio.js';
-import { ENEMY_VOICES, voiceAt, LINE_KINDS } from '../engine/Voice.js';
+import { ENEMY_VOICES, voiceAt, LINE_KINDS, EACH_LINES, ENEMY_LINES } from '../engine/Voice.js';
 import { bodyOf } from '../engine/Presence.js';
 import { clamp } from '../engine/MathUtil.js';
 
@@ -47,6 +47,22 @@ import { clamp } from '../engine/MathUtil.js';
  * the failure src/engine/Voice.js is shaped around.
  */
 const LINES_HAS = (kind) => LINE_KINDS.includes(kind);
+
+/**
+ * The two questions a room line is asked, both answered off src/engine/Voice.js
+ * and neither of them written down twice.
+ *
+ * `EACH` — is every speaker its own event? That decides which budget the line
+ * spends (see `roomLine`), and it is the `each` flag on the contour.
+ * `ROOM`  — is this something a body on the field says rather than something the
+ * player says? That is `ENEMY_LINES`, which the emote wheel already derives its
+ * own half from.
+ *
+ * Sets rather than `Array.includes` because the alarm call asks the first
+ * question of every body on the field on every frame.
+ */
+const EACH = new Set(EACH_LINES);
+const ROOM = new Set(ENEMY_LINES);
 
 /** Seconds between quips (kill, streak, boss, low health) whatever happens. */
 export const QUIP_GAP = 4.5;
@@ -80,6 +96,50 @@ export const BATTLE_GAP = 0.14;
 const FLUNG_SPEED = 8.5;
 /** …and how often a droid is allowed to say nothing in particular. */
 export const CHATTER_GAP = 6.5;
+/**
+ * HOW LONG A CALL-OUT IS STILL ABOUT THE MOMENT IT WAS ABOUT.
+ *
+ * `st.spotted` is latched only when the alarm has actually been MADE, which is
+ * right — the note beside it records that latching on the ATTEMPT gave a squad
+ * of five exactly one alarm between them. What it never had was an expiry, so
+ * a body refused by the shared budget re-offered the same line on every frame
+ * until it won. Measured on a Geonosis command wave, seed 4242, 60 s: **679
+ * refused alarm attempts against 18 spoken**, one body's stale call arriving
+ * up to twenty seconds after it saw you, and the shared budget so completely
+ * occupied by the retry that every death cry in the run was refused behind it.
+ *
+ * A call-out is about a moment. If the room was too loud for it for this long,
+ * the moment has gone: the body is marked as having called out and shuts up.
+ * 1.2 s is two or three swings of the shared budget — long enough that a squad
+ * spotting you together still gets two or three voices out, short enough that
+ * nobody announces something the player watched happen.
+ */
+export const ALARM_WINDOW = 1.2;
+/**
+ * HOW LONG AFTER A BODY FALLS ITS SIDE'S ENEMY CHEERS.
+ *
+ * Zero, until deaths moved onto the per-event budget — at which point the cheer
+ * and the death cry it answers were two calls on ONE frame competing for one
+ * 0.14 s gap, and the cheer (which is raised first) won every time. That is a
+ * regression dressed as a fix, so the cheer waits.
+ *
+ * It is also simply what a crowd does. A cheer is a REACTION: the body falls,
+ * and then the line around it shouts. 0.42 s is long enough to read as an
+ * answer rather than a chorus, and short enough to still be about that death.
+ */
+export const CHEER_DELAY = 0.42;
+/**
+ * …and how often an officer shouts at the line it is holding together.
+ *
+ * `ENEMY_VOICES.officer`'s own note says what this is for: "the rally aura is
+ * already drawn as a ring on the ground, and a ring with nothing audible in it
+ * is half a tell". The ring has been drawn for a session and nothing on the
+ * field ever spoke through it — `LINES.order` had exactly one emitter, the HUD,
+ * and it fired on a formation key rather than on anything the enemy's officer
+ * did. Rarer than the droids' banter by design: a commander who talks as often
+ * as a B1 is not a commander.
+ */
+export const RALLY_GAP = 11;
 /** A kill inside this many seconds of the last one extends the streak. */
 export const STREAK_WINDOW = 3.6;
 /** Tip speed (m/s) that counts as a swing worth grunting over. */
@@ -176,10 +236,64 @@ export class Announcer {
     this.lowSaid = false;
     this.deaths = [];
     this.panicFor = 0;
+    /** Cheers waiting out CHEER_DELAY: `{t, who}`, cleared if the cheerer falls. */
+    this.pendingCheers = [];
+    this.rallyT = RALLY_GAP;
+    /** Seconds of fight this announcer has watched. Its own, because the HUD
+     *  drives it with a stub world in five different checks and `world.time`
+     *  is not something a stub is required to carry. */
+    this.clock = 0;
     this.enemies = new WeakMap();
     this.bosses = new WeakSet();
     this._level = null;
-    this.stats = { quips: 0, efforts: 0, enemyLines: 0, popups: 0, suppressed: 0 };
+    /**
+     * WHAT WAS SAID, AND WHAT WAS REFUSED — broken down by the budget that
+     * refused it.
+     *
+     * `suppressed` was one number covering four different reasons, and a single
+     * number cannot answer the only question worth asking about a rate limit:
+     * *which* limit is the one biting. Measured on a real Colosseum wave with a
+     * real director, the four are not remotely comparable — the room's shared
+     * 0.45 s budget threw away four fifths of what the battlefield tried to say
+     * while the quip and effort budgets refused almost nothing — and with one
+     * counter that finding is invisible.
+     *
+     * `refused` is keyed by BUDGET (which gate said no) and `lines` by CONTOUR
+     * (what was actually heard). Neither is a second copy of a rule: both are
+     * written at the one place the corresponding decision is made, and
+     * `tools/_voiceprobe.mjs` reads them rather than re-deriving anything.
+     *
+     * `suppressed` is kept and is still the sum, because it is the number the
+     * existing readers use.
+     */
+    this.stats = {
+      quips: 0, efforts: 0, enemyLines: 0, popups: 0, suppressed: 0,
+      refused: { quip: 0, effort: 0, enemy: 0, battle: 0, off: 0, popup: 0, engine: 0 },
+      lost: Object.create(null),
+      lines: Object.create(null),
+    };
+  }
+
+  /**
+   * One refusal, against the gate that made it AND the contour it threw away.
+   *
+   * `lost` is the half that turns the count into a finding: 696 refusals is a
+   * number, and "of those, every death cry on the field" is a defect. On
+   * Geonosis with sixteen bodies up the two disagree completely — the budget
+   * spends itself on alarms and idle banter and then refuses the screams,
+   * because a first-come cooldown has no idea which of them the player asked
+   * for.
+   */
+  _refuse(why, kind = null) {
+    this.stats.suppressed++;
+    this.stats.refused[why] = (this.stats.refused[why] || 0) + 1;
+    if (kind) this.stats.lost[kind] = (this.stats.lost[kind] || 0) + 1;
+    return false;
+  }
+
+  /** One line that actually reached the engine. */
+  _spoke(kind) {
+    this.stats.lines[kind] = (this.stats.lines[kind] || 0) + 1;
   }
 
   /** The voice the player has chosen, live off the settings blob. */
@@ -206,7 +320,49 @@ export class Announcer {
    */
   say(settings, kind, pos = null) {
     if (!kind || !LINES_HAS(kind)) return false;
+    if (ROOM.has(kind)) return this._relay(settings, kind);
     return this._say(this.voice(settings), kind, pos, 1.0, settings?.voiceLines !== false, true);
+  }
+
+  /**
+   * A ROOM LINE ASKED FOR THROUGH `say` IS SAID BY THE ROOM, not by the player.
+   *
+   * `ENEMY_LINES` is the list of contours the emote wheel refuses to offer,
+   * which makes it exactly the list of contours that reaching `say` cannot be
+   * an emote: the player pressed something and the answer is supposed to come
+   * from the field. There is one such caller and it is the whole of Command's
+   * feedback loop — `HUD.setOrder` plays `LINES.order` when you change
+   * formation — and it was coming out of the JEDI'S OWN THROAT, non-positional,
+   * on the quip budget, in a voice the player chose on the options screen.
+   *
+   * That is the wrong body twice over. src/engine/Voice.js authored `order` as
+   * a shout from a body with a rank; and the player's note asks to hear the
+   * BATTLEFIELD, of which their own line is half. A trooper twelve metres to
+   * your left relaying the order is the answer to both, and it costs nothing
+   * new: `_enemySpec` already knows what that body sounds like and the
+   * position makes it a sound you can turn toward.
+   *
+   * NEAREST ON YOUR OWN SIDE, and nobody at all if you have no side — which is
+   * every mode except Command, where there is also no formation key, so this
+   * silently does nothing rather than inventing a squadmate. It is FORCED past
+   * the room's budget for `say`'s own stated reason: a rate limit written to
+   * stop the room chattering may not swallow a key press.
+   */
+  _relay(settings, kind) {
+    const list = this._level?.enemies;
+    const me = this._level?.player;
+    const ear = me?.chest || me?.position || null;
+    if (!list || !ear) return false;
+    const mine = me?.team;
+    let best = null, bestD = 40 * 40;
+    for (const e of list) {
+      if (!e || e.dead || !e.position || e.team === undefined || e.team !== mine) continue;
+      const d = e.position.distanceToSquared(ear);
+      if (d < bestD) { bestD = d; best = e; }
+    }
+    if (!best) return false;
+    return this._roomLine(this._enemySpec(best), kind, best.position,
+      settings?.enemyVoices !== false, true);
   }
 
   /**
@@ -218,6 +374,7 @@ export class Announcer {
     if (!(dt > 0)) return;
     const settings = world?.settings || {};
     this._mixer(settings);
+    this.clock += dt;
     this.quipT -= dt; this.effortT -= dt; this.enemyT -= dt; this.battleT -= dt;
     if (this.streakT > 0 && (this.streakT -= dt) <= 0) this.streak = 0;
     if (this.returnT > 0 && (this.returnT -= dt) <= 0) this.returns = 0;
@@ -439,8 +596,27 @@ export class Announcer {
        * frame it landed. The gain is only meaningful once there is a previous
        * frame to gain over. */
       if (!e.dead && st.speed !== undefined && sp - st.speed > FLUNG_SPEED) {
-        const spec = this._enemySpec(e);
-        this._battleLine(spec, spec.ring ? 'alarm' : 'flung', e.position, on);
+        /**
+         * A FLUNG DROID SAYS `flung`, and it used to say `alarm`.
+         *
+         * The branch was `spec.ring ? 'alarm' : 'flung'`, on the reasoning that
+         * a droid has no throat and its alarm chirp is the right noise for one
+         * being thrown. That swaps the two halves of this whole system's design
+         * over, and src/engine/Voice.js's own header says which is which: "what
+         * carries the character is the contour and the timbre — a rising
+         * three-syllable line reads as a taunt and a falling one reads as a
+         * curse, WHOEVER IS SPEAKING". The contour is the event; the larynx is
+         * the character. A droid thrown across a courtyard is having the same
+         * thing happen to it as a trooper, and `flung` through a ring-modulated
+         * square at cadence 1.9 is already exactly the panicked chirp that
+         * branch was reaching for — it is the droid's throat that makes it one.
+         *
+         * It also removed the one case where the same contour meant two
+         * different events, which is what `each` (Voice.js) could not have
+         * classified: six droids spotting you is one piece of news and six
+         * droids in the air is six.
+         */
+        this._roomLine(this._enemySpec(e), 'flung', e.position, on);
       }
       st.speed = sp;
 
@@ -463,7 +639,6 @@ export class Announcer {
          * a battlefield rather than a cheer squad: a trooper of yours falls and
          * the DROIDS cheer. Nothing here knows which side the player is on.
          */
-        this._cheerFor(e, ear, on);
         /**
          * A squad breaking is a WANT, not an event.
          *
@@ -474,10 +649,22 @@ export class Announcer {
          * there is room for it.
          */
         if (this.deaths.length >= 3) this.panicFor = 2;
-        // A droid does not scream, it powers down: the descending three-note
-        // 'die' contour on a ring-modulated square reads as exactly that.
+        /**
+         * THE DEATH CRY IS RAISED BEFORE THE CHEER THAT ANSWERS IT, and the
+         * order is now load-bearing rather than incidental.
+         *
+         * Both are per-event lines on the same 0.14 s budget, so two of them on
+         * one frame is one line and one refusal. Which one survives has to be
+         * the one the other is ABOUT: cheering a fall nobody heard is the wrong
+         * half of the pair. `_cheerFor` therefore queues rather than speaks —
+         * see CHEER_DELAY.
+         *
+         * A droid does not scream, it powers down: the descending three-note
+         * 'die' contour on a ring-modulated square reads as exactly that.
+         */
         const spec = this._enemySpec(e);
-        this._enemyLine(spec, spec.ring ? 'die' : 'scream', e.position, on);
+        this._roomLine(spec, spec.ring ? 'die' : 'scream', e.position, on);
+        this._cheerFor(e, ear, on);
         continue;
       }
       if (e.dead) continue;
@@ -490,7 +677,15 @@ export class Announcer {
         // spotted you on the same frame produced exactly one alarm: four of
         // them were refused by the shared budget and then recorded as having
         // already spoken, so they never called out at all.
-        if (this._enemyLine(this._enemySpec(e), 'alarm', e.position, on) || !on) st.spotted = true;
+        //
+        // …AND IT EXPIRES. Without the window below the retry never stopped:
+        // one Geonosis minute produced 679 refused attempts against 18 spoken,
+        // which is a body still trying to tell you it has seen you twenty
+        // seconds after you killed the two next to it, and a shared budget with
+        // no room left in it for anything that matters. See ALARM_WINDOW.
+        if (st.saw === undefined) st.saw = this.clock;
+        if (this._roomLine(this._enemySpec(e), 'alarm', e.position, on) || !on
+            || this.clock - st.saw > ALARM_WINDOW) st.spotted = true;
       }
     }
 
@@ -516,13 +711,60 @@ export class Announcer {
       const talkers = [];
       for (const e of list) {
         if (!e || e.dead || !e.position || !e.target) continue;
-        if (!/^(b1|b2|droideka)$/.test(String(e.type || ''))) continue;
+        if (!this._chatty(e, list)) continue;
         if (e.position.distanceToSquared(ear) < 26 * 26) talkers.push(e);
       }
       if (talkers.length) {
         const who = talkers[(this._chatterAt = ((this._chatterAt | 0) + 1)) % talkers.length];
-        this._enemyLine(ENEMY_VOICES.droid, 'chatter', who.position, on);
+        // …AND IN ITS OWN THROAT. This handed `ENEMY_VOICES.droid` to whoever
+        // it picked, which was safe only because the picker was a list of three
+        // droid names; the moment the test became a property of the body, a
+        // clone would have chattered as a B1. One classifier, as everywhere
+        // else here.
+        this._roomLine(this._enemySpec(who), 'chatter', who.position, on);
       }
+    }
+
+    /**
+     * THE OFFICER SHOUTS AT THE LINE IT IS HOLDING TOGETHER.
+     *
+     * `commandAura` is the field that says a body carries the rally ring, and
+     * `_enemySpec` already gives that body a voice built to carry across a
+     * battle — a spec whose own note complains that "a ring with nothing
+     * audible in it is half a tell". This is the audible half, and it is the
+     * only thing on the field that ever emits `LINES.order`.
+     *
+     * Furniture, on the same terms as the droids' banter and rarer: a slow
+     * cadence, a body that is alive and near enough to be worth overhearing,
+     * and the shared budget under it so an order can never speak over a death.
+     * `commandAura` rather than a rank or a type, for the reason `_enemySpec`
+     * gives at length — it is the field that MEANS this, it is read by
+     * `enlistBody` to install the modifier, and both armies have a body that
+     * carries it, so the enemy's commander shouts exactly as yours does.
+     */
+    this.rallyT -= dt;
+    if (this.rallyT <= 0 && this.enemyT <= 0 && ear) {
+      this.rallyT = RALLY_GAP;
+      let best = null, bestD = 40 * 40;
+      for (const e of list) {
+        if (!e || e.dead || !e.position || !e.A?.commandAura) continue;
+        const d = e.position.distanceToSquared(ear);
+        if (d < bestD) { bestD = d; best = e; }
+      }
+      if (best) this._roomLine(this._enemySpec(best), 'order', best.position, on);
+    }
+
+    /* the cheers that are waiting out CHEER_DELAY behind the fall they answer */
+    for (let i = this.pendingCheers.length - 1; i >= 0; i--) {
+      const c = this.pendingCheers[i];
+      if ((c.t -= dt) > 0) continue;
+      this.pendingCheers.splice(i, 1);
+      // A body that has fallen in the meantime does not get to cheer. This is
+      // the whole reason the cheerer is chosen at the moment of the death and
+      // re-checked now rather than searched for now: the nearest survivor half
+      // a second later may be somebody who was never there.
+      if (!c.who || c.who.dead || !c.who.position) continue;
+      this._roomLine(this._enemySpec(c.who), 'cheer', c.who.position, c.on);
     }
 
     /* the squad breaking — three of them gone inside three and a half seconds */
@@ -536,7 +778,7 @@ export class Announcer {
       if (best && bestD < 32 * 32) {
         this.panicFor = 0;
         this.deaths.length = 0;
-        this._enemyLine(this._enemySpec(best), 'panic', best.position, on);
+        this._roomLine(this._enemySpec(best), 'panic', best.position, on);
       }
     }
   }
@@ -607,28 +849,70 @@ export class Announcer {
     return ENEMY_VOICES.sith;
   }
 
+  /**
+   * HAS THIS BODY GOT SOMEBODY TO TALK TO — derived, like everything else here.
+   *
+   * The test was `/^(b1|b2|droideka)$/.test(e.type)`, which is a typed list of
+   * archetype keys sitting beside a roster of 31 that grows every session, and
+   * it is the exact shape `_enemySpec`'s own header is four hundred words about.
+   * Its comment argued the right things and encoded them as names: "a training
+   * remote and an inert dummy are dojo furniture with nobody to talk to, a
+   * walker is a vehicle, and an IG general muttering B1 banter would be a worse
+   * boss".
+   *
+   * Every one of those three clauses is a FIELD the archetype already carries,
+   * so this asks for the fields instead. Measured over the whole roster with
+   * Levels.js loaded, the two agree everywhere the old list had an opinion and
+   * differ where it had none: the dojo three are excluded by `training`, the
+   * IG general by `boss`, the machines by `bodyOf`, and the seven bodies the
+   * name list had never heard of — every clone trooper, heavy, jet, ARC and
+   * commander in Command mode, plus the B2's rocket and BX cousins — are IN.
+   *
+   * THAT IS THE POINT. The player's note is that the battlefield should be
+   * audible, and the one thing your own army never did was talk: a clone squad
+   * standing beside you was silent between deaths, because the only idle line
+   * in the game was gated on three droid names.
+   *
+   * The last clause is what the old comment's "nobody to talk to" really meant
+   * and could not express: banter needs a second body. A lone survivor does not
+   * mutter to itself.
+   */
+  _chatty(enemy, list) {
+    const A = enemy.A || {};
+    if (A.training || A.boss || A.big || A.setPieceOnly) return false;
+    const body = bodyOf(enemy);
+    if (!body.droid && !body.trooper) return false;
+    for (const o of list) {
+      if (o === enemy || !o || o.dead || !o.position || o.team !== enemy.team) continue;
+      if (o.position.distanceToSquared(enemy.position) < 9 * 9) return true;
+    }
+    return false;
+  }
+
   /* ── the three budgets ─────────────────────────────────────────────── */
 
   /** A quip: rare, deliberate, and never on top of another one. */
   _say(spec, kind, pos, gain, enabled, force = false) {
-    if (!enabled) { this.stats.suppressed++; return false; }
-    if (!force && this.quipT > 0) { this.stats.suppressed++; return false; }
+    if (!enabled) return this._refuse('off', kind);
+    if (!force && this.quipT > 0) return this._refuse('quip', kind);
     const dur = this.audio.speak(spec, kind, { pos, gain, self: true });
-    if (!dur) return false;
+    if (!dur) return this._refuse('engine', kind);
     this.quipT = QUIP_GAP + dur;
     this.effortT = Math.max(this.effortT, dur * 0.6);
     this.stats.quips++;
+    this._spoke(kind);
     return true;
   }
 
   /** An effort: frequent, wordless, and it does not eat the quip budget. */
   _effort(spec, kind, pos, gain, enabled) {
-    if (!enabled) { this.stats.suppressed++; return false; }
-    if (this.effortT > 0) { this.stats.suppressed++; return false; }
+    if (!enabled) return this._refuse('off', kind);
+    if (this.effortT > 0) return this._refuse('effort', kind);
     const dur = this.audio.speak(spec, kind, { pos, gain, self: true });
-    if (!dur) return false;
+    if (!dur) return this._refuse('engine', kind);
     this.effortT = EFFORT_GAP + dur;
     this.stats.efforts++;
+    this._spoke(kind);
     return true;
   }
 
@@ -658,7 +942,11 @@ export class Announcer {
     // metres away is a sound the mixer will place and the player will not
     // connect to anything.
     if (best.position.distanceToSquared(ear) > 46 * 46) return false;
-    return this._battleLine(this._enemySpec(best), 'cheer', best.position, enabled);
+    // QUEUED, NOT SPOKEN. See CHEER_DELAY: the cry and the cheer are two calls
+    // on one 0.14 s budget and the cheer is raised second, so speaking it here
+    // would silence the death it is about. A crowd answers a fall anyway.
+    this.pendingCheers.push({ t: CHEER_DELAY, who: best, on: enabled });
+    return true;
   }
 
   /**
@@ -670,29 +958,79 @@ export class Announcer {
    * those are two different things the room is saying and they are not competing
    * for the same air.
    */
-  _battleLine(spec, kind, pos, enabled) {
-    if (!enabled) { this.stats.suppressed++; return false; }
-    if (this.battleT > 0) { this.stats.suppressed++; return false; }
+  _battleLine(spec, kind, pos, enabled, force = false) {
+    if (!enabled) return this._refuse('off', kind);
+    if (!force && this.battleT > 0) return this._refuse('battle', kind);
     const dur = this.audio.speak(spec, kind, { pos, gain: 0.95 });
-    if (!dur) return false;
+    if (!dur) return this._refuse('engine', kind);
     this.battleT = BATTLE_GAP;
     this.stats.enemyLines++;
+    this._spoke(kind);
     return true;
   }
 
+  /**
+   * WHICH BUDGET A ROOM LINE SPENDS — the one place that decides, for all of
+   * them.
+   *
+   * There are two, they mean different things, and until now every call site
+   * picked one by hand. Measured with `tools/_voiceprobe.mjs` on a real
+   * Geonosis command wave (seed 4242, 60 s, 18 bodies up), the hand-picking was
+   * wrong in exactly one place and it was the place that mattered: **seven
+   * bodies fell and the player heard none of them.** Deaths were on the shared
+   * budget behind the alarm calls of bodies that were still standing, while
+   * `cheer` — which was given the per-event budget when it was written, for
+   * reasons that apply to a death word for word — was refused zero times.
+   *
+   * The rule is not restated here. `each` is declared on the contour in
+   * src/engine/Voice.js, beside the paragraph that authored the contour, and
+   * `EACH` is that flag. This is the reader.
+   *
+   * `force` is for a line the PLAYER asked for by pressing something. It skips
+   * the gap and then sets it, exactly as `_say(force)` does, so the automatic
+   * line that would have followed waits instead of landing on top of it.
+   */
+  _roomLine(spec, kind, pos, enabled, force = false) {
+    return EACH.has(kind)
+      ? this._battleLine(spec, kind, pos, enabled, force)
+      : this._enemyLine(spec, kind, pos, enabled, force);
+  }
+
+  /**
+   * A BODY ASKED TO SPEAK — the public door onto the room's voice.
+   *
+   * `Enemy.cry` raises `world.onEnemyVoice(enemy, kind)` and deliberately
+   * decides nothing else: which larynx is `_enemySpec`'s job and how often the
+   * room may speak is `_enemyLine`'s, and duplicating either is the defect this
+   * project keeps a whole section of the handoff for. Until now the wire in
+   * `src/main.js` had to reach through the class and call BOTH private methods
+   * itself, and the note beside it says so in as many words — "Announcer wants
+   * a public `enemyLine(enemy, kind)` that is exactly these two calls, and it is
+   * owned by another pass".
+   *
+   * This is that method. It is exactly those two calls and it takes a BODY
+   * rather than a spec, which is the whole point: a caller that has to pick the
+   * spec is a caller that can pick the wrong one.
+   */
+  enemyLine(enemy, kind, enabled = true) {
+    if (!enemy?.position || !LINES_HAS(kind)) return false;
+    return this._roomLine(this._enemySpec(enemy), kind, enemy.position, enabled);
+  }
+
   /** Anything an enemy says, on one shared budget for the whole room. */
-  _enemyLine(spec, kind, pos, enabled) {
-    if (!enabled) { this.stats.suppressed++; return false; }
-    if (this.enemyT > 0) { this.stats.suppressed++; return false; }
+  _enemyLine(spec, kind, pos, enabled, force = false) {
+    if (!enabled) return this._refuse('off', kind);
+    if (!force && this.enemyT > 0) return this._refuse('enemy', kind);
     const dur = this.audio.speak(spec, kind, { pos, gain: 0.9 });
-    if (!dur) return false;
+    if (!dur) return this._refuse('engine', kind);
     this.enemyT = ENEMY_GAP + dur * 0.5;
     this.stats.enemyLines++;
+    this._spoke(kind);
     return true;
   }
 
   _popup(hud, settings, title, sub, kind) {
-    if (settings.popups === false) { this.stats.suppressed++; return false; }
+    if (settings.popups === false) return this._refuse('popup');
     if (!hud || typeof hud.popup !== 'function') return false;
     hud.popup(title, sub, kind);
     this.stats.popups++;

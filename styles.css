@@ -586,6 +586,48 @@ button{font-family:inherit}
 .codex-list i{color:var(--accent);font-style:normal;font-weight:700}
 .col.codex{padding-right:14px}
 
+/* WHAT A FORCE POWER COSTS, on the row that names it.
+
+   Warm, because `--accent-warm` is already this interface's colour for a cost
+   (see the palette note at the top of this file, and the databank's tag chips)
+   and the blade colour is reserved for things that are live. It is an `em` and
+   not a `kbd` on purpose: a price is not a key, and tools/checks/controls.mjs
+   holds every `<kbd>` on this page to having come out of the bindings table —
+   a chip wearing that tag would be a key name the table never issued.
+
+   Inline rather than a right-hand column: the rows are a masonry-ish grid of
+   two or three lines each, so a column of prices would only line up inside one
+   grid column and read as a stray number in the other two. */
+.codex-grid em.cost{display:inline-block;margin-left:7px;padding:1px 6px 2px;font-style:normal;
+  font:var(--mono);font-size:9px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--stroke);background:var(--accent-warm);clip-path:var(--cut-sm);white-space:nowrap;
+  vertical-align:1px}
+/* …and the one that is not a price but a lock: this power does not exist until
+   the card does. Grey rather than warm, so a glance down the column reads the
+   prices as one series and the two gates as a different kind of fact. */
+.codex-grid em.cost.gate{color:var(--ink);background:var(--panel-hi)}
+
+/* The teaching half's own furniture. `.codex-facts` IS the databank's stat
+   strip — same chip, same ink, same cut — so it is declared once, down in that
+   block, with both selectors on it rather than as a second copy of three rules
+   that would then have to be kept in step by hand. */
+.codex-note{max-width:86ch;margin:2px 0 12px}
+.codex-facts{margin-bottom:18px}
+/* `.codex-facts div span` and not `.codex-facts span`, because the rule this
+   overrides is declared LATER in the file (in the databank block, which is
+   where the chip itself lives) and an equally specific rule would lose the
+   cascade to it. A databank stat is two words and reads as a value at 700; a
+   ladder rung is two lines and reads as a wall at 700. */
+.codex-facts div span{font-weight:400;line-height:1.58}
+.codex-facts div.wide{grid-column:span 2}
+/* THE LADDER IS A LADDER — four rungs, in order. On the shared strip's
+   auto-fill they flow 3-and-1 at this panel's width, which reads as a group of
+   three with a straggler rather than as four steps of one thing; two to a row
+   keeps the order legible left-to-right and top-to-bottom. Below 900 px the
+   two-up row is narrower than a rung's two lines of prose want, so it stacks. */
+.codex-facts.rungs{grid-template-columns:repeat(2,minmax(0,1fr))}
+@media (max-width:900px){ .codex-facts.rungs{grid-template-columns:1fr} }
+
 /* ── databank ─────────────────────────────────────────────────────────
    The one page in this product where the player READS. Everything here is
    already-built furniture — .diff rows for the roster, .codex-head for the
@@ -621,16 +663,21 @@ button{font-family:inherit}
    Independent chips have nothing to leave behind, and they are the same object
    as a .diff row or a crystal swatch, which is what the rest of this file is
    made of. */
-.databank-stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:9px;
+/* `.codex-facts` rides along: the Codex's teaching half needed exactly this
+   chip and a second set of rules for it would be the hand-maintained twin this
+   project keeps deleting. Declared here, in the block that owns the object,
+   rather than copied into the codex block above. */
+.databank-stats,.codex-facts{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:9px;
   margin-bottom:14px;align-items:start}
-.databank-stats div{background:var(--panel);padding:8px 11px 9px;border:2px solid var(--stroke);
-  box-shadow:var(--stamp);clip-path:var(--cut-sm)}
+.databank-stats div,.codex-facts div{background:var(--panel);padding:8px 11px 9px;
+  border:2px solid var(--stroke);box-shadow:var(--stamp);clip-path:var(--cut-sm)}
 /* The theatres a body is met on is a list and not a number, so it gets the room
    a list needs rather than wrapping six times in a column sized for "170". */
 .databank-stats div.wide{grid-column:span 2}
-.databank-stats b{display:block;font:var(--mono);font-size:9px;font-weight:800;letter-spacing:.18em;
-  text-transform:uppercase;color:var(--dimmer);margin-bottom:3px}
-.databank-stats span{display:block;font-size:12px;font-weight:700;color:var(--ink);line-height:1.4}
+.databank-stats b,.codex-facts b{display:block;font:var(--mono);font-size:9px;font-weight:800;
+  letter-spacing:.18em;text-transform:uppercase;color:var(--dimmer);margin-bottom:3px}
+.databank-stats span,.codex-facts span{display:block;font-size:12px;font-weight:700;color:var(--ink);
+  line-height:1.4}
 
 /* What the roster says about a body that a stat cannot: a set-piece, a heavy,
    a thing you only meet on a boss wave. Chips, not adjectives. */
@@ -1319,6 +1366,12 @@ button{font-family:inherit}
 .med-insight b{display:block;font:800 30px/1 var(--ui);color:var(--force);
   text-shadow:0 0 22px rgba(160,125,255,.6);font-variant-numeric:tabular-nums}
 .med-insight span{font:var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
+/* …and what it is short of. Dimmer and un-tracked, because it is a sentence
+   rather than a label: the two lines above it are the reading, this is the
+   consequence. `max-width` in ch so it wraps to two short lines instead of
+   pushing the head's flex row wider than the lattice under it. */
+.med-insight i{display:block;margin-top:4px;font:var(--mono);font-style:normal;
+  color:var(--dimmer);max-width:30ch;line-height:1.45;text-transform:none;letter-spacing:.02em}
 .med-body{flex:1;min-height:0;display:flex;gap:16px}
 #med-field{flex:1;min-width:0;height:100%;display:block;
   border:2px solid var(--stroke);clip-path:var(--cut);
@@ -1366,6 +1419,12 @@ button{font-family:inherit}
      covers the ones it cannot, and it costs nothing when there are none. */
   stroke:var(--void);stroke-width:3;paint-order:stroke fill}
 #med-field .facet .cost{font:600 10px/1 ui-monospace,monospace;fill:var(--accent-warm)}
+/* A PRICE YOU CANNOT YET MEET, and it is drawn rather than withheld — see the
+   note above the badge in SkillTree.js. Same warm hue at a third of the weight
+   of the affordable one: the eye reads the lit numbers as the shortlist and the
+   faint ones as the map of what saving buys, which is the distinction the
+   screen exists to make and previously made by showing nothing at all. */
+#med-field .facet .cost.short{fill:rgba(255,176,32,.34)}
 #med-field .facet .pip{fill:var(--force);filter:drop-shadow(0 0 4px rgba(160,125,255,.95))}
 #med-field .facet.root .disc{stroke-dasharray:3 3}
 #med-field .facet.mastery .disc{stroke:var(--stroke);stroke-dasharray:5 3}
