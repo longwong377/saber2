@@ -6257,7 +6257,8 @@ export class Player {
   }
 
   /**
-   * Sweep the field and arrest anything hostile inside it. Returns how many.
+   * Sweep the field and arrest everything inside it the fight lets you fight.
+   * Returns how many.
    *
    * Three subjects, in the order the eye reads them: the bolts in the air, the
    * loose objects already in flight, and — the thing the Codex card has always
@@ -6338,17 +6339,46 @@ export class Player {
      * `mass > liftCapacity`. A field stricter than the grip would be a second
      * rulebook for the same question.
      *
-     * HOSTILE ONLY, exactly as the bolt sweep above is. `bolt.team ===
-     * this.team` is the line Command.js and World.js both cite for why the
-     * bolt-stop does not freeze your own army's fire, and this is the same line
-     * about the men rather than their shots. Push, pull, grip, lightning and
-     * rend all reach your own troops because you AIMED them at one; a sweep
-     * that froze the squad you are leading every time you cast is a tax the
-     * player never chose. Command's allies are `Enemy` instances on
-     * `world.partyTeam`, so they are covered by the same comparison.
+     * WHO IT MAY REACH IS `canHarm`'S QUESTION AND NOT THIS METHOD'S, and the
+     * distinction is the whole of player note #29:
+     *
+     *   "your allies should be as real as the enemies like no difference — you
+     *    can do damage to them and throw them and manipulate them so you need
+     *    to be careful not to hurt them … but like obviously the force
+     *    blaster-stop thing shouldn't affect your allies' blasters."
+     *
+     * Two clauses, and they are about two different subjects. Their SHOTS are
+     * exempt: the bolt loop above skips `bolt.team === this.team`, which
+     * Command.js and World.js both cite by name, and a bolt is an object in
+     * flight with no allegiance of its own to consult — its team field IS the
+     * whole question. Their BODIES are not exempt: a body has a rule attached
+     * to it, the note asks for allies you can throw and manipulate and must be
+     * careful with, and freezing one is a manipulation. So the field reaches
+     * exactly what push, pull, grip, lightning, compel and rend reach, by
+     * asking the same gate they ask.
+     *
+     * `hostileTo` is that gate — `canHarm` per body, against `ctx.rules` — and
+     * routing through it is what stops a second rulebook: the day `rules` grows
+     * a case, a hand-written team comparison here would be the one call site
+     * that never heard about it. `tools/checks/pvp.mjs` forbids the comparison
+     * outright for that reason, and it is right to.
+     *
+     * The list is `ctx.enemies` and NOT `_foes(ctx)`, which is the same filter
+     * over the players as well. A rival player is not arrested by this, and the
+     * reason is mechanical rather than political: the arrest is `Enemy.stun`
+     * and a Player has no `stunTimer` to set — its own note in `_readInput`
+     * says as much. Freezing a person who is holding the controls is a
+     * different power with a different argument, and it is not this one.
+     *
+     * The array is retained for the reason `_foeList` is: the sweep runs every
+     * frame the field is up, and this is a hot path in a crowd. It is a second
+     * array rather than `_foeList` itself because a power iterating `_foes` can
+     * be on the stack when the field sweeps.
      */
-    for (const e of (ctx.enemies || [])) {
-      if (!e || e.dead || e.team === this.team) continue;
+    const foes = (this._stasisFoes ||= []);
+    foes.length = 0;
+    hostileTo(this, ctx.enemies, ctx.rules ?? this.world?.rules ?? null, foes);
+    for (const e of foes) {
       // Already ours, or the grip's — two holds on one body is two bills for
       // one arrest, and `_updateGrip` is the one that can also move it.
       if (e.stasisHeld || e.gripped || e === this.gripEnemy) continue;
@@ -6470,7 +6500,8 @@ export class Player {
      *        3        +1.74          65.6
      *        5        +4.57          52.0        (half the bar for half a squad)
      *        8        +8.81          31.5
-     *       12       +14.47           4.3        (one more and it drops instead)
+     *       12       +14.47           4.3
+     *       13       +15.80           0.3        (DROPS at 4.67 s, 0.15 s short)
      *
      * So one or two is nearly free and a whole squad is the whole bar, which is
      * the shape a crowd power wants: the decision is HOW MANY, not whether.

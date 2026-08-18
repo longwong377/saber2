@@ -135,9 +135,18 @@ consumer.
 
 ## 6. New capability, if wanted
 
-- **Stasis that holds a person** — `_stasisCapture` (`Player.js:5453-5464`)
-  skips `LAYER.ENEMY` and needs `v² ≥ 4`. The marquee time-stop is a bolt
-  freezer.
+- ~~**Stasis that holds a person**~~ — **done**, and it was a defect rather than
+  new capability: the Codex card said "freeze what is near you, bolts included",
+  which reads as bolts being an addition to a broader set when they were the
+  whole of it. Measured before the change — five hostiles inside a 9 m field,
+  0 arrested, one closing 5.77 m into melee while "frozen". A body is held by
+  `Enemy.stun`, the file's existing verb for *this body cannot act*, refreshed
+  each frame so anything that stops the loop frees it in twelve frames rather
+  than forever. Priced off the grip's own person-to-prop ratio (11/7), the only
+  place in the game that already values a person against an object for the same
+  act. There is no speed gate for people and the absence is the rule: a resting
+  crate is scenery, a hostile standing still shooting you is the most
+  fight-shaped thing in the room.
 - **Multi-target grip and slam** — `gripBody`/`gripEnemy` are two scalars
   (`:4510-4517`). A held *set* plus a bring-them-together release is the best
   single moment on the wishlist.

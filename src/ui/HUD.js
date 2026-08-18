@@ -1625,7 +1625,14 @@ export class HUD {
     // discharge, and the flag the wheel used to read (`player.lightningOn`)
     // exists nowhere in src/, so that slot's active border could never light.
     this._power('lightning', cd.lightning, this._afford(player, 'lightning'));
-    this._power('stasis', cd.stasis, this._afford(player, 'stasis'), player.stasis?.bodies?.size > 0);
+    /* `active`, NOT `bodies.size`. The lit border means "this power is running",
+     * and `bodies` holds only the prop/debris/ragdoll physics bodies the field
+     * caught — so it has never lit for a field of pure bolts, which is the
+     * commonest field there is, and it does not light for a field of PEOPLE
+     * either now that stasis arrests them. `active` is the field's own name for
+     * exactly the state being drawn, and it is what `grip` and `sense` next to
+     * it already read. */
+    this._power('stasis', cd.stasis, this._afford(player, 'stasis'), !!player.stasis?.active);
     // `healing` is elapsed seconds or null (`Player.forceHeal` sets it to 0), so it is `0`
     // on the first frame of a heal — `!!player.healing` would blink the border
     // off at exactly the moment the power starts.

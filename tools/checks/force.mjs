@@ -29,7 +29,7 @@
 import * as THREE from 'three';
 import { initPhysics } from '../../src/physics/Rapier.js';
 import { RapierWorld, Body as RBody, LAYER, box as boxShape } from '../../src/physics/RapierWorld.js';
-import { Player, HOLD_COST, PERSON_OVER_PROP, STASIS_GRACE } from '../../src/game/Player.js';
+import { Player, canHarm, HOLD_COST, PERSON_OVER_PROP, STASIS_GRACE } from '../../src/game/Player.js';
 import { Enemy, ARCHETYPES } from '../../src/game/Enemy.js';
 import { BoltPool } from '../../src/game/Bolts.js';
 import { buildJedi } from '../../src/game/Bodies.js';
@@ -736,7 +736,7 @@ export async function run({ check, assert, near }) {
   /* ── force stop: the people ──────────────────────────────────────── */
 
   /**
-   * THE FOUR CHECKS BELOW ARE THE ONES THAT WOULD HAVE CAUGHT IT.
+   * THE CHECKS BELOW ARE THE ONES THAT WOULD HAVE CAUGHT IT.
    *
    * Every stasis check above this line is about bolts and crates, and every one
    * of them passed for the whole life of the defect: the Codex card said
@@ -847,13 +847,14 @@ export async function run({ check, assert, near }) {
      * which is the right picture. Holding the man as well would be the same
      * subject on the books twice. */
     assert(!b.p.stasis.held.some(h => h.enemy === felled),
-      'a body that came apart in the field is still held as a person as well as as its parts');
+      'a body that came apart in the field is held as a person AND in pieces — one subject, two bills');
     assert(b.p.stasis.held.some(h => h.body), 'the parts of a body that came apart were not caught at all');
 
-    // Measured: 40 Force against 5 + 0.9x3x(11/7) = 9.24/s runs out in 91
-    // frames, the bodies land within 0.00 m of where they stood, and half a
-    // second later they have closed 1.99 m — which is the whole difference
-    // between a drop and a fire.
+    // Measured: the cast leaves 14 of the 40, three men cost 5 + 0.9x3x(11/7) =
+    // 9.24/s and the ten bones of the toppled one take it to about 17, so the
+    // bar is gone in 54 frames. The bodies land within 0.00 m of where they
+    // stood and have closed 1.99 m half a second later — which is the whole
+    // difference between a drop and a fire.
     let frames = 0;
     while (b.p.stasis.active && frames < 600) { pump(b, 1); frames++; }
     assert(!b.p.stasis.active, 'the field never ran out of Force');
@@ -939,26 +940,51 @@ export async function run({ check, assert, near }) {
     return `too heavy → "${heavySaid}" · ungrippable → "${c.w.notices[0]}"`;
   });
 
-  check('force: the field does not freeze your own army', () => {
-    /* SYMMETRY. Command's allies are `Enemy` instances with `team` set to the
-     * party's — Command.js:1650 — and every hostile test in the game is that
-     * one comparison. `_stasisCapture` skipping `bolt.team === this.team` is
-     * the line Command.js and World.js both cite for why the bolt-stop does not
-     * freeze your own army's fire; this is the same line about the men.
+  check('force: who the field may freeze is the fight’s rule, asked once', () => {
+    /* SYMMETRY, and it is decided by `canHarm` rather than here.
      *
-     * It is not the same call as push/pull/grip, which DO reach your own troops
-     * and are documented as doing so: those you aimed at somebody. A sweep that
-     * froze the squad you are leading, every time, is a tax nobody chose. */
-    const b = liveWorld();
-    const mine = stand(b, 'trooper', 4, -0.6);
-    mine.team = 0;                       // world.partyTeam, as installCommand sets it
-    const theirs = stand(b, 'b1', 4, 0.6);
-    b.p.toggleStasis(b.ctx);
-    assert(!mine.stasisHeld, 'the field froze a trooper on your own side');
-    assert(theirs.stasisHeld, 'setup: the field froze nobody at all');
-    assert(b.p.stasis.held.filter(h => h.enemy).length === 1, 'the field holds more than the one hostile');
-    b.dispose();
-    return 'one hostile arrested, one ally of the same archetype standing at the same range untouched';
+     * Command's allies are `Enemy` instances with `team` set to the party's
+     * (Command.js:1650), so a sweep over `ctx.enemies` meets them. Player note
+     * #29 draws the line in two clauses about two different subjects:
+     *
+     *   "your allies should be as real as the enemies like no difference — you
+     *    can do damage to them and throw them and manipulate them so you need
+     *    to be careful not to hurt them … but like obviously the force
+     *    blaster-stop thing shouldn't affect your allies' blasters."
+     *
+     * Their SHOTS are exempt and their BODIES are not, so the field reaches
+     * exactly what push, pull, grip, lightning, compel and rend reach — which
+     * is `ctx.rules`, the field World hands the powers. What this check pins is
+     * not the answer but WHERE IT COMES FROM: run the same two bodies under
+     * co-op's rules and under the friendly-fire rules Command gives the powers,
+     * and the field's answer must equal `canHarm`'s, body for body, both times.
+     * A hand-written `e.team === this.team` passes the first half of that and
+     * fails the second, which is the whole reason `pvp.mjs` forbids it.
+     */
+    const seen = {};
+    for (const [label, rules] of [['co-op', null], ['powers', { pvp: false, friendlyFire: true }]]) {
+      const b = liveWorld();
+      if (rules) b.ctx.rules = rules;
+      const mine = stand(b, 'trooper', 4, -0.6);
+      mine.team = b.p.team;                  // world.partyTeam, as installCommand sets it
+      const theirs = stand(b, 'b1', 4, 0.6);
+      b.p.toggleStasis(b.ctx);
+      for (const [who, e] of [['ally', mine], ['hostile', theirs]]) {
+        const may = canHarm(b.p, e, rules);
+        assert(!!e.stasisHeld === may,
+          `under ${label} rules canHarm says ${may} about the ${who} and the field did ${!!e.stasisHeld}`);
+      }
+      seen[label] = { ally: !!mine.stasisHeld, hostile: !!theirs.stasisHeld };
+      b.dispose();
+    }
+    // …and the two rule sets must actually DISAGREE about the ally, or the
+    // check above is satisfied by a field that never asked anybody anything.
+    assert(seen['co-op'].ally === false && seen.powers.ally === true,
+      `the two rule sets gave the same answer about an ally (${seen['co-op'].ally}/${seen.powers.ally}), `
+      + 'so nothing here proves the rule was consulted');
+    assert(seen['co-op'].hostile && seen.powers.hostile, 'the field froze no hostile under one of the rule sets');
+    return 'ally frozen: no under co-op, yes under the rules Command hands the powers; hostile frozen under both '
+      + '— the same answers canHarm gives';
   });
 
   check('force: the field lets go of a body that dies, is gripped, or outlives its holder', () => {

@@ -1320,7 +1320,15 @@ export const CODEX = [
   { keys: ['throw'], text: () => 'Throw the saber. Press again to recall it.' },
   { keys: ['sense'], text: () => 'Force sense — see through walls.' },
   { keys: ['stasis'],
-    text: k => `Stasis field — freeze what is near you, bolts included. ${k('hurl')} fires the whole field.` },
+    /* "bolts included" said bolts were an ADDITION to a broader set and they
+     * were the whole of it: the sweep skipped LAYER.ENEMY entirely, so five
+     * hostiles standing inside a 9 m field walked on unarrested and one of them
+     * closed 5.77 m into melee while "frozen". The card is true now, and it
+     * says the two things it was quietest about — that PEOPLE are what it
+     * mainly holds, and that the key has a second use. */
+    text: k => `Stasis field — freeze what is near you: the people, their bolts, and anything `
+      + `already in flight. ${k('hurl')} fires the whole field; pressing ${k('stasis')} again `
+      + `sends every bolt back to whoever fired it.` },
   { keys: ['heal'],
     text: () => 'Force heal — three seconds of standing still, and a hit breaks it. Press again to stop.' },
   { keys: ['rend'], text: () => 'Rend apart. Takes a mechanical enemy to pieces where it stands.' },
