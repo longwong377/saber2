@@ -658,15 +658,19 @@ export class World {
     /** The army, or null. Read by the HUD, the summary and the checks. */
     this.command = leadsArmy ? this.director : null;
     /**
-     * THE BATTLE, or null — and it is made ONCE PER RUN, not once per load.
+     * THE BATTLE, or null — and it is CARRIED, never rebuilt.
      *
      * `rotateTo` re-enters this whole list of stages for every engagement, so a
-     * plan built unconditionally here would draw a fresh rotation on the ground
-     * it had just rotated to and the run would never reach engagement two. The
-     * plan is a fact about the RUN — its seed, its length, its army — exactly
-     * as `runSeed` is, so it outlives the level the way the run does.
+     * plan made here would draw a fresh rotation on the ground it had just
+     * rotated to and the run would never reach engagement two. A plan is a fact
+     * about the RUN — its seed, its length, its army — exactly as `runSeed` is,
+     * so it outlives the level the way the run does.
+     *
+     * Made by `beginSkirmish`, which is where the picks arrive; `update` calls
+     * that on the first frame if nothing else has. This line exists only to
+     * make sure a world that has stopped being a skirmish stops carrying one.
      */
-    this.skirmish = mode === 'skirmish' ? (this.skirmish || this._planSkirmish()) : null;
+    if (mode !== 'skirmish') this.skirmish = null;
     /**
      * A MEETING IS A FIGHT BETWEEN PLAYERS, SO IT IS FOUGHT UNDER A FIGHT'S
      * RULES — and this is where the mode-wide freeze retires.
@@ -1323,8 +1327,8 @@ export class World {
    * on rather than the one they asked for. That distinction is exactly the trap
    * `levelKey`'s own note in `_loadSteps` records.
    */
-  _planSkirmish() {
-    const cfg = skirmishConfig(this.settings);
+  _planSkirmish(picks) {
+    const cfg = skirmishConfig(picks);
     const pressure = Math.min(cfg.pressure, AREAS.length - 1);
     const strength = clamp(cfg.strength || OPENING_STRENGTH, OPENING_STRENGTH, MAX_STRENGTH);
     const seed = Number.isFinite(this.runSeed) ? this.runSeed : 0;
@@ -1387,9 +1391,11 @@ export class World {
    * body yet. `deploy` builds one for every record that has none and skips the
    * rest, so the two orderings converge.
    */
-  beginSkirmish() {
-    const sk = this.skirmish, d = this.command;
-    if (!sk || !d || sk.started || sk.done) return sk || null;
+  beginSkirmish(picks = null) {
+    const d = this.command;
+    if (!d || this.settings?.mode !== 'skirmish') return null;
+    const sk = (this.skirmish ||= this._planSkirmish(picks));
+    if (sk.started || sk.done) return sk;
     sk.started = true;
     d.areaIndex = sk.pressure;
     d.areaWaves = 0;
@@ -2037,7 +2043,7 @@ export class World {
      * plan is built at load and the picks are applied here, so the mode is
      * playable through a front end that knows nothing about it. Guarded on a
      * body because `deploy` puts the line down around the commander. */
-    if (this.skirmish && !this.skirmish.started && this.player) this.beginSkirmish();
+    if (this.settings?.mode === 'skirmish' && !this.skirmish?.started && this.player) this.beginSkirmish();
     if (this.skirmish?.pending) {
       const key = this.skirmish.pending;
       this.skirmish.pending = null;

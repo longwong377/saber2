@@ -414,7 +414,7 @@ export function sandboxConfig(settings) {
  *   zero; `World` clamps it against Command's own `OPENING_STRENGTH` floor and
  *   `MAX_STRENGTH` ceiling, which are the numbers the muster is actually built
  *   around. The default is 0, meaning "whatever the campaign opens with", so a
- *   player who never touches the control gets the line Command gives them.
+ *   battle nobody sized fields the line Command gives them.
  *
  * `pressure` — which rung of Command's own advance this battle is fought at,
  *   as an index into `AREAS`. That table already carries a budget multiplier, a
@@ -422,10 +422,10 @@ export function sandboxConfig(settings) {
  *   inventing a second difficulty ladder beside it is the defect this file has
  *   a section of HANDOFF about. Clamped in `World` against `AREAS.length`.
  *
- * The RULES are not here at all, and that is the point: a skirmish is fought
- * under `settings.rules`, the same CONDITION keys every other run is fought
- * under, read by `WaveDirector`'s constructor through `legalRuleSet` before
- * this mode existed. There is nothing for this function to add — and because a
+ * The RULES are not a pick at all, and that is the point: a skirmish is fought
+ * under the run's own rules — the same CONDITION keys every other run is fought
+ * under, read off the settings by `WaveDirector`'s constructor through
+ * `legalRuleSet`, a path that predates this mode and needed no line. There is nothing for this function to add — and because a
  * skirmish COMPOSES its opposing force rather than mustering it, every one of
  * those conditions bites here exactly as it bites in the Trial.
  */
@@ -433,20 +433,45 @@ export const SKIRMISH = {
   engagements: { min: 1, max: 9, def: 3 },
 };
 
-/** Read the battle's shape off a settings blob, clamped and defaulted. */
-export function skirmishConfig(settings) {
-  const s = settings || {};
+/**
+ * Read the battle's shape off a set of picks, clamped and defaulted.
+ *
+ * IT TAKES THE PICKS, NOT THE SETTINGS BLOB, and that is the one place this
+ * differs in shape from `sandboxConfig`, `commandConfig` and `pvpRules`. Two
+ * reasons, and the second is the load-bearing one:
+ *
+ *   A BATTLE IS STARTED WITH A PLAN. `World.beginSkirmish(picks)` is the only
+ *     door into the mode, and a plan handed to it can come from the Deploy
+ *     panel, from a check driving a world by hand, from four numbers a player
+ *     shares, or one day off the wire. Reading four globals instead would make
+ *     the menu the only thing in the game that can ever state one.
+ *   A SETTING READ WITH NO DEFAULT IS INVISIBLE TO EVERY OTHER GUARD.
+ *     `tools/checks/controls.mjs` scans `src/` for what the shipped code reads
+ *     and demands a key in `DEFAULT_SETTINGS` for each — in its own words, "a
+ *     guard keyed on the list of things you remembered to declare cannot find
+ *     the thing you forgot to declare". The Deploy panel's four controls, their
+ *     defaults and their reader declarations are ONE commit across `Menu.js`
+ *     and `index.html`; a read here before that commit is an orphan the guard
+ *     is right to name. The menu normalises its blob into these four names at
+ *     the single call site, which is where the line between a PREFERENCE and a
+ *     PLAN belongs anyway.
+ *
+ * Every field is optional and every default is a real answer, so
+ * `skirmishConfig()` with nothing at all describes the shipped battle.
+ */
+export function skirmishConfig(picks) {
+  const p = picks || {};
   const n = (v, d) => (typeof v === 'number' && isFinite(v) ? v : d);
   return {
-    engagements: clamp(Math.round(n(s.skirmishEngagements, SKIRMISH.engagements.def)),
+    engagements: clamp(Math.round(n(p.engagements, SKIRMISH.engagements.def)),
       SKIRMISH.engagements.min, SKIRMISH.engagements.max),
-    strength: Math.max(0, Math.round(n(s.skirmishStrength, 0))),
-    pressure: Math.max(0, Math.round(n(s.skirmishPressure, 0))),
+    strength: Math.max(0, Math.round(n(p.strength, 0))),
+    pressure: Math.max(0, Math.round(n(p.pressure, 0))),
     /* THE GROUND MOVES UNLESS THE PLAYER SAYS OTHERWISE, and the default is the
      * feature: note #48 is a complaint that it never did. Off is a real thing
-     * to want — a player learning one map, or measuring one — so it is a
-     * setting and not a law, but the answer to an absent setting is yes. */
-    rotate: s.skirmishRotate !== false,
+     * to want — a player learning one map, or measuring one — so it is a pick
+     * and not a law, but the answer to an absent one is yes. */
+    rotate: p.rotate !== false,
   };
 }
 

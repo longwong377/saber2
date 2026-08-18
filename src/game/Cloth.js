@@ -83,6 +83,8 @@ const STRUCT = 0, SHEAR = 1, BEND = 2;
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _v4 = new THREE.Vector3();
 const _m = new THREE.Matrix4();
+/** Extra relaxation iterations on a frame the wearer turned through. See `iters`. */
+const CARRY_ITERS = 6;
 
 export class Cloak {
   /**
@@ -652,6 +654,14 @@ export class Cloak {
   update(dt, colliders, wind) {
     if (!this.enabled || !this.anchorFn) return;
     if (!this.initialised) { this.reset(); return; }
+    /* WHERE THE PINS ARE, AS OF THIS SOLVE — read before anything moves, and
+     * the only reader is `carry`, which needs the same point two frames
+     * running to tell the body's TURN apart from the collar's own drift. Kept
+     * here rather than in `carry` so it is right whether or not the last frame
+     * carried: a stale reference would make the first carry after a run of
+     * plain frames translate the whole garment by however far the body had
+     * walked. */
+    if (this._anchorCentre(_v3)) (this._anchorC ||= new THREE.Vector3()).copy(_v3);
     // a long frame would explode a verlet solve; take the hit as slow motion
     dt = Math.min(dt, 1 / 45);
     this._dt = dt;
@@ -692,7 +702,26 @@ export class Cloak {
 
     // ── satisfy the links
     const stretchOnly = this.bendStretchOnly;
-    for (let it = 0; it < this.iterations; it++) {
+    /**
+     * A FRAME THE BODY TURNED THROUGH IS A HARDER SOLVE THAN ONE IT WALKED
+     * THROUGH, and it used to get the same four iterations.
+     *
+     * `carry` rotates the whole sheet into the body's new frame, which is what
+     * stops a somersault from reading as an enormous velocity — but it cannot
+     * account for the collar's own motion beyond a translation, and one cell
+     * below a PIN there is no slack to absorb what is left. Measured on a cape
+     * seamed to the back of the torso through a front flip, the worst stretch
+     * sat in rows 1-2 at every frame rate and nowhere else.
+     *
+     * Iterations are the honest answer because the residual is a
+     * CONVERGENCE problem and not a modelling one: the constraint is right, the
+     * solver just has not finished with it. `CARRY_ITERS` more of them, on the
+     * frames that were carried and no others, so a garment on a walking body
+     * costs exactly what it always did.
+     */
+    const iters = this.iterations + (this._carried ? CARRY_ITERS : 0);
+    this._carried = false;
+    for (let it = 0; it < iters; it++) {
       for (let li = 0; li < this.links.length; li++) {
         const l = this.links[li];
         const a = l.a * 3, b = l.b * 3;
@@ -964,15 +993,70 @@ export class Cloak {
    * on the next update, but not carrying them would leave the pinned row a
    * frame behind the rest of its own sheet, which is a seam at the collar.
    */
+  /**
+   * The centroid of the pinned row, wherever `anchorFn` is putting it now.
+   *
+   * Written down because `carry` needs the SAME point two frames running and
+   * the row is not stored anywhere — the pins are re-derived from the rig on
+   * every solve. See the note in `carry`.
+   */
+  _anchorCentre(out) {
+    if (!this.anchorFn || !this.cols) return null;
+    out.set(0, 0, 0);
+    for (let c = 0; c < this.cols; c++) { this.anchorFn(c, this.cols, _v2, 0); out.add(_v2); }
+    return out.multiplyScalar(1 / this.cols);
+  }
+
+
   carry(quat, pivot) {
+    // …and tell the solver it has a hard frame ahead of it. See `iters`.
+    this._carried = true;
+    /**
+     * A CLOTH IS CARRIED IN THE FRAME ITS ANCHORS LIVE IN, and the rotation
+     * alone is not that frame.
+     *
+     * The turn is the root's, and rotating every particle about the root's
+     * pivot is exactly right for the turn — that is what stops a whole-body
+     * flip from reading as an enormous velocity and straightening the garment
+     * into a plank. But the PINS do not hang off the root. They hang off a
+     * bone the animator is also moving, and one cell below a pin that residual
+     * is the whole error: measured through a front flip with the collar seamed
+     * to the back of the torso, the worst stretch under `carry` moved to ROW 1
+     * and sat at 3.3x at every rate, while the same solve without carrying
+     * peaked further down the sheet. The rigid rotation was carrying the cloth
+     * to where the body's ROOT went and the collar had gone somewhere else.
+     *
+     * So: rotate, then close the gap the rotation did not predict. `_anchorC`
+     * is where the pins were when this cloth was last solved; rotate that by
+     * the same quaternion to get where the rotation THINKS they are, ask
+     * `anchorFn` where they actually are, and translate the whole sheet by the
+     * difference. Applied to `pos` and `prev` together, so it is a change of
+     * frame and not an impulse — nothing here may alter a particle's implied
+     * velocity, which is the invariant the second somersault check pins to
+     * 0.2 µm.
+     */
     const n = this.cols * this.rows;
     const p = this.pos, q = this.prev;
+    let ok = false;
+    if (this._anchorC && this._anchorCentre(_v3)) {
+      /* NOT ALSO THE COLLAR'S OWN TURN. Correcting the pinned row's AXIS the
+       * same way — the smallest rotation from where the caller's quaternion
+       * says it should point to where `anchorFn` is putting it — was built and
+       * measured and is not here, because it moved the worst stretch by 0.02
+       * across all four rates. The row rotates with the root and almost not at
+       * all against it, so the residual is a translation and the rotation term
+       * was dead weight in the hot path. */
+      _v4.copy(this._anchorC).sub(pivot).applyQuaternion(quat).add(pivot);
+      _v4.subVectors(_v3, _v4);
+      ok = true;
+    }
+    const dx = ok ? _v4.x : 0, dy = ok ? _v4.y : 0, dz = ok ? _v4.z : 0;
     for (let i = 0; i < n; i++) {
       const i3 = i * 3;
       _v1.set(p[i3] - pivot.x, p[i3 + 1] - pivot.y, p[i3 + 2] - pivot.z).applyQuaternion(quat);
-      p[i3] = pivot.x + _v1.x; p[i3 + 1] = pivot.y + _v1.y; p[i3 + 2] = pivot.z + _v1.z;
+      p[i3] = pivot.x + _v1.x + dx; p[i3 + 1] = pivot.y + _v1.y + dy; p[i3 + 2] = pivot.z + _v1.z + dz;
       _v1.set(q[i3] - pivot.x, q[i3 + 1] - pivot.y, q[i3 + 2] - pivot.z).applyQuaternion(quat);
-      q[i3] = pivot.x + _v1.x; q[i3 + 1] = pivot.y + _v1.y; q[i3 + 2] = pivot.z + _v1.z;
+      q[i3] = pivot.x + _v1.x + dx; q[i3 + 1] = pivot.y + _v1.y + dy; q[i3 + 2] = pivot.z + _v1.z + dz;
     }
   }
 
@@ -1868,7 +1952,9 @@ export function attachTabard(scene, rig, opts = {}) {
     parts,
     get initialised() { return parts.every((p) => p.initialised); },
     update(dt, wind) { for (const p of parts) if (p.enabled) p.update(dt, p.refreshColliders(), wind); },
-    carry(quat, pivot) { for (const p of parts) if (p.enabled && p.initialised) p.carry(quat, pivot); },
+    carry(quat, pivot) {
+    // …and tell the solver it has a hard frame ahead of it. See `iters`.
+    this._carried = true; for (const p of parts) if (p.enabled && p.initialised) p.carry(quat, pivot); },
     impulse(dir, strength, dt) { for (const p of parts) p.impulse(dir, strength, dt); },
     setVisible(v) { for (const p of parts) p.setVisible(v); },
     dispose() { for (const p of parts) p.dispose(); parts.length = 0; },
@@ -2782,6 +2868,8 @@ export function attachSash(scene, rig, opts = {}) {
       for (const p of parts) if (p.enabled) p.update(dt, p.refreshColliders(), wind);
     },
     carry(quat, pivot) {
+    // …and tell the solver it has a hard frame ahead of it. See `iters`.
+    this._carried = true;
       for (const p of parts) if (p.enabled && p.initialised) p.carry(quat, pivot);
     },
     impulse(dir, strength, dt) { for (const p of parts) p.impulse(dir, strength, dt); },
@@ -2953,6 +3041,8 @@ export function attachLekku(scene, rig, opts = {}) {
       for (const l of parts) if (l.enabled) l.update(dt, l.refreshColliders(), wind);
     },
     carry(quat, pivot) {
+    // …and tell the solver it has a hard frame ahead of it. See `iters`.
+    this._carried = true;
       for (const l of parts) if (l.enabled && l.initialised) l.carry(quat, pivot);
     },
     setVisible(v) {

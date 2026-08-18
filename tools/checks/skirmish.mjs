@@ -270,20 +270,28 @@ export async function run({ check, assert }) {
   check('skirmish: every pick is clamped, and the two Command ones by Command', async () => {
     const { skirmishConfig, SKIRMISH } = await import('../../src/game/Waves.js');
     const { AREAS, MAX_STRENGTH, OPENING_STRENGTH } = await import('../../src/game/Command.js');
-    const wild = skirmishConfig({ skirmishEngagements: 900, skirmishStrength: -4, skirmishPressure: -2 });
+    const wild = skirmishConfig({ engagements: 900, strength: -4, pressure: -2 });
     assert(wild.engagements === SKIRMISH.engagements.max, `engagements clamped to ${wild.engagements}`);
     assert(wild.strength === 0 && wild.pressure === 0, 'a negative pick got through');
     const none = skirmishConfig(undefined);
     assert(none.engagements === SKIRMISH.engagements.def && none.rotate === true,
       'the default battle is not the documented one');
-    assert(skirmishConfig({ skirmishRotate: false }).rotate === false, 'the rotation cannot be turned off');
+    assert(skirmishConfig({ rotate: false }).rotate === false, 'the rotation cannot be turned off');
+    /* NOTHING IN src/ READS A SKIRMISH SETTING, and that is deliberate rather
+     * than unfinished — see this function's own note. The four names belong to
+     * the Deploy panel, and a read here before the panel declares them would be
+     * an orphan `tools/checks/controls.mjs` is right to name. */
+    assert(skirmishConfig({ skirmishEngagements: 9 }).engagements === SKIRMISH.engagements.def,
+      'skirmishConfig has started reading a settings blob by another name');
 
     // …and the two that need Command's tables are clamped where those tables
     // are visible, because Waves.js may not import Command.js.
-    const { world } = await boot({ mode: 'skirmish', skirmishStrength: 999, skirmishPressure: 99 });
+    const { world } = await boot({ mode: 'skirmish' });
+    world.beginSkirmish({ strength: 999, pressure: 99 });
     assert(world.skirmish.strength === MAX_STRENGTH, `strength clamped to ${world.skirmish.strength}`);
     assert(world.skirmish.pressure === AREAS.length - 1, `pressure clamped to ${world.skirmish.pressure}`);
-    const { world: small } = await boot({ mode: 'skirmish', skirmishStrength: 1 });
+    const { world: small } = await boot({ mode: 'skirmish' });
+    small.beginSkirmish({ strength: 1 });
     assert(small.skirmish.strength === OPENING_STRENGTH,
       `an army below the muster's opening line: ${small.skirmish.strength}`);
     return `engagements ≤ ${SKIRMISH.engagements.max}, strength ${OPENING_STRENGTH}..${MAX_STRENGTH}, `
@@ -292,16 +300,16 @@ export async function run({ check, assert }) {
 
   check('skirmish: the line is raised to strength off the muster, and it is a mix', async () => {
     const { AREAS } = await import('../../src/game/Command.js');
-    const { world } = await boot({ mode: 'skirmish', skirmishStrength: 18, skirmishPressure: 4 });
-    world.beginSkirmish();
+    const { world } = await boot({ mode: 'skirmish' });
+    world.beginSkirmish({ strength: 18, pressure: 4 });
     const r = world.command.roster;
     assert(r.strength === 18, `asked for 18 and fielded ${r.strength}`);
     const kinds = new Set(r.living.map((t) => t.type));
     assert(kinds.size >= 3, `an army of 18 with ${kinds.size} kind(s) in it — the fill is not walking the ladder`);
     assert(r.points === 0, `${r.points} reinforcement points left in a purse with no muster screen`);
     // The pressure gates the shelf through the muster's own `at <= areaNumber`.
-    const { world: light } = await boot({ mode: 'skirmish', skirmishStrength: 18, skirmishPressure: 0 });
-    light.beginSkirmish();
+    const { world: light } = await boot({ mode: 'skirmish' });
+    light.beginSkirmish({ strength: 18, pressure: 0 });
     const early = new Set(light.command.roster.living.map((t) => t.type));
     const late = light.command.army.tiers.filter((t) => t.at > 1).map((t) => t.type);
     for (const t of late) assert(!early.has(t), `${t} reached the field at ${AREAS[0].name}`);
@@ -324,10 +332,10 @@ export async function run({ check, assert }) {
         `${k} declares no composition hook — this check's premise needs rewriting`);
     }
     const want = ['silence', 'deluge'];
-    const { world } = await boot({ mode: 'skirmish', rules: want, skirmishPressure: 2 });
+    const { world } = await boot({ mode: 'skirmish', rules: want });
     const legal = world.director.legalRuleSet(want);
     for (const k of legal) assert(world.director.rules.includes(k), `${k} did not reach the director`);
-    world.beginSkirmish();
+    world.beginSkirmish({ pressure: 2 });
     const shape = world.director.shape;
     assert(shape, 'a skirmish composed no wave at all, so no rule could bite');
     assert(world.director.spawnQueue.length + world.enemies.length > 0, 'the opposing force is empty');
@@ -339,12 +347,10 @@ export async function run({ check, assert }) {
     const S = await import('./_shared.mjs');
     const snap = await S.snapshotShared();
     try {
-      const { world, input } = await boot({
-        mode: 'skirmish', skirmishEngagements: 3, skirmishStrength: 10, skirmishPressure: 1,
-      }, 'colosseum', 4242);
+      const { world, input } = await boot({ mode: 'skirmish' }, 'colosseum', 4242);
       let ended = null;
       world.onGameOver = (s) => { ended = s; };
-      world.beginSkirmish();
+      world.beginSkirmish({ engagements: 3, strength: 10, pressure: 1 });
       const opened = world.levelKey;
       assert(world.skirmish.rotation[0] === opened, 'the battle did not open on the ground it was standing on');
       const grounds = [opened];
@@ -385,11 +391,9 @@ export async function run({ check, assert }) {
     try {
       const { AREAS } = await import('../../src/game/Command.js');
       const shortest = Math.min(...AREAS.map((a) => a.waves));
-      const { world, input } = await boot({
-        mode: 'skirmish', skirmishEngagements: 5, skirmishStrength: 10, skirmishPressure: 0, skirmishRotate: false,
-      });
+      const { world, input } = await boot({ mode: 'skirmish' });
       let peak = 0, musters = 0, campaign = false;
-      world.beginSkirmish();
+      world.beginSkirmish({ engagements: 5, strength: 10, pressure: 0, rotate: false });
       world.command.onMuster = () => { musters++; };
       const notify = world.notify.bind(world);
       world.notify = (t, sub) => { if (/ADVANCE IS OVER|HELD/.test(String(t))) campaign = true; notify(t, sub); };
@@ -414,10 +418,10 @@ export async function run({ check, assert }) {
     const S = await import('./_shared.mjs');
     const snap = await S.snapshotShared();
     try {
-      const { world, input } = await boot({ mode: 'skirmish', skirmishEngagements: 4, skirmishStrength: 10 });
+      const { world, input } = await boot({ mode: 'skirmish' });
       let ended = null;
       world.onGameOver = (s) => { ended = s; };
-      world.beginSkirmish();
+      world.beginSkirmish({ engagements: 4, strength: 10 });
       for (let i = 0; i < 30; i++) world.update(1 / 60, input);
       world.player.damage?.(99999, null, 'probe');
       for (let i = 0; i < 30 && !world.over; i++) world.update(1 / 60, input);
@@ -443,15 +447,15 @@ export async function run({ check, assert }) {
     const S = await import('./_shared.mjs');
     const snap = await S.snapshotShared();
     try {
-      const { world, input } = await boot({
-        mode: 'skirmish', skirmishEngagements: 2, skirmishStrength: 16, skirmishPressure: 3,
-      }, 'wood', 808);
+      const { SKIRMISH } = await import('../../src/game/Waves.js');
+      const { OPENING_STRENGTH } = await import('../../src/game/Command.js');
+      const { world, input } = await boot({ mode: 'skirmish' }, 'wood', 808);
       let ended = null;
       world.onGameOver = (s) => { ended = s; };
       world.director.start(1);                       // main.js, verbatim
-      assert(!world.skirmish.started, 'the battle opened before a frame was stepped');
+      assert(!world.skirmish, 'a plan appeared before anybody asked for one');
       let peakLine = 0;
-      for (let t = 0; t < 240 && !world.over; t++) {
+      for (let t = 0; t < 300 && !world.over; t++) {
         for (let i = 0; i < 30 && !world.over; i++) {
           if (world.player) world.player.hp = world.player.maxHp;
           world.update(1 / 60, input);
@@ -459,11 +463,13 @@ export async function run({ check, assert }) {
         }
         for (const e of world.enemies) if (e.team !== world.partyTeam && !e.dead) e.damage?.(9999, null, 'probe');
       }
-      assert(world.skirmish.started, 'the battle never opened itself');
-      assert(world.command.areaIndex === 3, `the pressure pick was ignored: areaIndex ${world.command.areaIndex}`);
-      assert(peakLine >= 16, `the strength pick was ignored: the line peaked at ${peakLine}`);
+      assert(world.skirmish?.started, 'the battle never opened itself');
+      assert(world.skirmish.engagements === SKIRMISH.engagements.def,
+        `the default battle is ${world.skirmish.engagements} engagements`);
+      assert(peakLine >= OPENING_STRENGTH, `the line peaked at ${peakLine}`);
       assert(world.over && ended?.won === true, `the battle did not resolve: ${JSON.stringify(ended)}`);
-      return `start(1) alone: opened itself, pressure 3, ${peakLine} on the line, won in 2`;
+      return `start(1) alone: opened itself, ${world.skirmish.engagements} engagements, `
+        + `${peakLine} on the line, won`;
     } finally { S.restoreShared(snap); }
   });
 
