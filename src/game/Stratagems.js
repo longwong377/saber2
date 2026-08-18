@@ -59,6 +59,23 @@ const TAU = Math.PI * 2;
 export const DIRS = ['W', 'A', 'S', 'D'];
 /** The action id whose axis a direction is read off. One place, both devices. */
 export const DIR_ACTION = { W: 'moveF', A: 'moveL', S: 'moveB', D: 'moveR' };
+/**
+ * HOW A DIRECTION IS WRITTEN, and it is an ARROW and not a letter.
+ *
+ * The letters are the internal token — `'WSWD'` is legible in a stack trace in
+ * a way `'↑↓↑→'` is not — but a player never sees them, because the code is
+ * not made of keys. It is made of DIRECTIONS, and W is only what a direction
+ * happens to be bound to on a keyboard. An arrow says the thing itself: it is
+ * right on a pad, right after a rebind to ESDF, and right in a screenshot.
+ *
+ * This also settles a question the Codex had answered the other way. Printing
+ * the live binding chip for each letter followed a rebind, which sounds like
+ * the correct instinct and is the wrong one here — it made the code look like
+ * four separate controls instead of one word.
+ */
+export const DIR_GLYPH = { W: '↑', A: '←', S: '↓', D: '→' };
+/** A whole code, as the player reads it. One reader for the HUD and the Codex. */
+export const spell = (code) => [...(code || '')].map(c => DIR_GLYPH[c] || c).join('');
 
 /**
  * HOW LONG A CODE MAY TAKE, in seconds since the last letter.
@@ -77,8 +94,12 @@ export const CODE_GAP = 1.6;
 /**
  * THE TABLE. Every stratagem is a row and nothing else.
  *
- *   code      the letters, in order. Must be unique and must not be a PREFIX
- *             of another code — see `codeFaults`, which is what enforces it.
+ *   code      the directions, in order — and it is NOT written here. It is
+ *             dealt by `rollCodes` at the start of every run, because a code
+ *             the player has memorised is not a code, it is a second binding
+ *             with more keystrokes. See that function.
+ *   cost      Force. Also decides how LONG the code is, which is the whole
+ *             reason the length is not a field either — see `codeLength`.
  *   cost      Force. Stratagems are a Force-user's calls, so they bill the
  *             same pool every power does rather than inventing a currency.
  *   cooldown  seconds, per stratagem. Each has its own, so a cheap smoke does
@@ -97,14 +118,14 @@ export const CODE_GAP = 1.6;
  */
 export const STRATAGEMS = [
   {
-    id: 'strike', name: 'Orbital strike', code: 'WSWD',
+    id: 'strike', name: 'Orbital strike',
     cost: 34, cooldown: 26, lead: 3.2, at: 'aim',
     blurb: 'A lance from orbit, on the ground you marked. Three seconds of warning, '
       + 'for you and for them.',
     fire: (ctx, site, S) => S.blast(ctx, site, 7.5, 62, 150),
   },
   {
-    id: 'barrage', name: 'Artillery barrage', code: 'SSWA',
+    id: 'barrage', name: 'Artillery barrage',
     cost: 26, cooldown: 22, lead: 2.6, at: 'aim',
     blurb: 'Six shells walked across the position. Wider than the lance and much '
       + 'less certain about where anything is.',
@@ -128,28 +149,28 @@ export const STRATAGEMS = [
     },
   },
   {
-    id: 'smoke', name: 'Smoke screen', code: 'ASAS',
+    id: 'smoke', name: 'Smoke screen',
     cost: 12, cooldown: 14, lead: 1.1, at: 'aim',
     blurb: 'A wall of smoke on the marked ground. Nothing on either side can '
       + 'shoot what it cannot see.',
     fire: (ctx, site, S) => S.smoke(ctx, site, 8.5, 11),
   },
   {
-    id: 'reinforce', name: 'Reinforcements', code: 'WWSS', commandOnly: true,
+    id: 'reinforce', name: 'Reinforcements', commandOnly: true,
     cost: 30, cooldown: 34, lead: 0.4, at: 'self',
     blurb: 'A gunship, and four more of yours off the ramp. They come down beside '
       + 'you, not at the edge of the field.',
     fire: (ctx, site, S) => S.reinforce(ctx, 4),
   },
   {
-    id: 'rally', name: 'Rally', code: 'WAWD', commandOnly: true,
+    id: 'rally', name: 'Rally', commandOnly: true,
     cost: 18, cooldown: 20, lead: 0, at: 'self',
     blurb: 'Steady the line. Everyone of yours inside the shout stops breaking and '
       + 'stands up.',
     fire: (ctx, site, S) => S.rally(ctx, 22),
   },
   {
-    id: 'resupply', name: 'Resupply', code: 'SASD',
+    id: 'resupply', name: 'Resupply',
     cost: 16, cooldown: 24, lead: 2.0, at: 'self',
     blurb: 'A pod on your position: health for you, and it wakes the wounded around '
       + 'you back onto their feet.',
@@ -159,6 +180,90 @@ export const STRATAGEMS = [
 
 /** By id, for the HUD and the Codex. Derived, so a row cannot be missed. */
 export const STRATAGEM_BY_ID = Object.fromEntries(STRATAGEMS.map(s => [s.id, s]));
+
+/**
+ * HOW LONG A CODE IS, AND IT IS NOT A FIELD ON THE ROW.
+ *
+ * A stratagem's price is already the statement of how much it is worth, and
+ * the code is the OTHER price — the seconds you spend standing still in the
+ * open, not fighting, to ask for it. Two prices for one thing that a designer
+ * has to keep in step by hand is the defect this codebase keeps removing, so
+ * there is one: a keystroke per `PER_KEY` Force on top of a floor.
+ *
+ * The floor is five and not four. Four was too short in two ways at once —
+ * every code in the table was the same length, so the panel taught nothing
+ * about which call was the expensive one, and four directions is 256
+ * spellings, which is a small enough space that two rows chosen at random
+ * collide often.
+ *
+ * Measured over the shipped prices: smoke 12 → 5, resupply 16 → 5, rally
+ * 18 → 5, barrage 26 → 6, reinforce 30 → 7, orbital strike 34 → 7. The
+ * cheapest calls are a flick and the lance takes a moment, which is the
+ * relationship the mechanic is for.
+ */
+export const CODE_MIN = 5, CODE_MAX = 8, PER_KEY = 8;
+export const codeLength = (s) =>
+  clamp(CODE_MIN + Math.floor(((s.cost ?? 0) - cheapest()) / PER_KEY), CODE_MIN, CODE_MAX);
+const cheapest = () => STRATAGEMS.reduce((m, s) => Math.min(m, s.cost ?? 0), Infinity);
+
+/**
+ * DEAL EVERY CODE, FROM A SEED.
+ *
+ * The codes were six literals and the player learns them in an evening; after
+ * that the panel is furniture and the mechanic is six bindings that take four
+ * presses each. Dealing them per run keeps the thing the mechanic is actually
+ * made of — you stopped moving, in the open, to READ something and enter it —
+ * alive for as long as the game is installed.
+ *
+ * SEEDED, and from the run's own seed, so it is not chaos: a code is fixed for
+ * the whole of a run, two players in a co-op run spell the same thing, and a
+ * replayed seed replays its codes. `Math.random` here would break all three.
+ *
+ * THREE CONSTRAINTS, and each is a way a dealt code can be unusable:
+ *
+ *  · UNIQUE, or one of the pair can never fire.
+ *  · NO PREFIXES, or the short one fires the moment its last letter lands and
+ *    the long one is unreachable — the failure `codeFaults` exists to catch,
+ *    and dealing codes of different lengths is exactly how it would arise.
+ *  · NO RUN OF THREE. `↑↑↑←↓` is not a code, it is a stuck key, and a player
+ *    cannot tell their third press from their fourth without counting.
+ *
+ * Rejection sampling, which is the right tool when the constraints are cheap
+ * to test and the space is enormous: the shortest code alone has 1024
+ * spellings against six rows. `tries` is a backstop and not a budget — if it
+ * ever ran out the table would have grown past what the space can hold, and
+ * the caller is told rather than handed a broken deal.
+ */
+export function rollCodes(seed = 1, rows = STRATAGEMS) {
+  let x = (Math.floor(seed) ^ 0x5f3759df) >>> 0 || 1;
+  const rnd = () => ((x = (x * 1664525 + 1013904223) >>> 0) / 4294967296);
+  const taken = [];
+  for (const s of rows) {
+    const n = codeLength(s);
+    let code = null;
+    for (let tries = 0; tries < 400 && !code; tries++) {
+      let c = '';
+      for (let i = 0; i < n; i++) {
+        const d = DIRS[(rnd() * DIRS.length) | 0];
+        // no run of three: reject the letter, not the whole code
+        if (c.length >= 2 && c[c.length - 1] === d && c[c.length - 2] === d) { i--; continue; }
+        c += d;
+      }
+      if (taken.some(t => t.startsWith(c) || c.startsWith(t))) continue;
+      code = c;
+    }
+    if (!code) throw new Error(`rollCodes: no free ${n}-direction code left for ${s.id}`);
+    taken.push(code);
+    s.code = code;
+  }
+  return rows.map(s => s.code);
+}
+
+/* A table with no codes in it cannot be spelled, and nothing guarantees that a
+ * Player is constructed before something reads one — the Codex is reachable
+ * from the main menu. So the module deals itself an opening hand, and a run
+ * replaces it. */
+rollCodes(1);
 
 /**
  * EVERYTHING WRONG WITH THE TABLE, as a list of sentences.
@@ -211,6 +316,11 @@ export class Stratagems {
      * per level, which makes this the honest place rather than a hook the
      * teardown has to remember. */
     clearSmoke();
+    /* AND A NEW RUN GETS NEW CODES, off the run's own seed so a replayed seed
+     * replays its codes and a co-op guest spells what the host spells. Falls
+     * back to a fixed deal where there is no run — the character creator and
+     * the Codex are both reachable before one starts. */
+    rollCodes(owner?.world?.runSeed ?? 1);
     /** Letters entered so far, as a string. Empty when nothing is being spelled. */
     this.entry = '';
     /** Seconds since the last letter, for CODE_GAP. */

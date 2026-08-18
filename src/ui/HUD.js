@@ -21,6 +21,7 @@ import { keyLabel, walkScale, ORDER_ACTIONS, codesFor } from '../engine/Bindings
  * the model wearing it.
  */
 import { RANKS, ARMIES, ORDERS } from '../game/Command.js';
+import { DIR_GLYPH } from '../game/Stratagems.js';
 import { POWER_COST, POWER_BOON } from '../game/Powers.js';
 // The words a slot is about to say, and whether this browser can say them
 // at all. Audio.js owns both the table and the speaking; the wheel prints.
@@ -1125,8 +1126,10 @@ export class HUD {
     host.innerHTML = rows.map((r) => {
       const cd = Math.ceil(S.cooldowns[r.id] ?? 0);
       const off = cd > 0 || force < r.cost;
+      /* ARROWS, not the letters. A code is made of DIRECTIONS and W is only
+       * what one happens to be bound to on a keyboard — see DIR_GLYPH. */
       const code = [...r.code].map((c, i) =>
-        `<i class="sg-d${i < S.entry.length ? ' on' : ''}">${c}</i>`).join('');
+        `<i class="sg-d${i < S.entry.length ? ' on' : ''}">${DIR_GLYPH[c] || c}</i>`).join('');
       const note = cd > 0 ? `${cd}s` : `${r.cost}`;
       return `<div class="sg-row${off ? ' off' : ''}"><span class="sg-code">${code}</span>`
         + `<b>${r.name}</b><span class="sg-cost">${note}</span></div>`;

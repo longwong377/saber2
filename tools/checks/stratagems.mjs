@@ -40,7 +40,8 @@
 import { Player } from '../../src/game/Player.js';
 import { Enemy } from '../../src/game/Enemy.js';
 import {
-  Stratagems, STRATAGEMS, STRATAGEM_BY_ID, DIRS, DIR_ACTION, CODE_GAP, codeFaults,
+  Stratagems, STRATAGEMS, STRATAGEM_BY_ID, DIRS, DIR_ACTION, DIR_GLYPH, CODE_GAP,
+  CODE_MIN, CODE_MAX, codeFaults, codeLength, rollCodes, spell,
 } from '../../src/game/Stratagems.js';
 import { ACTIONS, defaultBindings } from '../../src/engine/Bindings.js';
 import {
@@ -114,6 +115,98 @@ export async function run({ check, assert, THREE: T }) {
     const pre = codeFaults([{ id: 'a', code: 'WS' }, { id: 'b', code: 'WSAD' }]);
     assert(pre.length, 'codeFaults does not notice a code that is a prefix of another');
     return `${STRATAGEMS.length} calls, no duplicate and no prefix; the detector catches both`;
+  });
+
+  check('stratagems: the codes are dealt per run, and every deal is spellable', () => {
+    /**
+     * A CODE THE PLAYER HAS MEMORISED IS NOT A CODE — it is a second binding
+     * with more keystrokes in it, and the mechanic is over the evening they
+     * learn the six. So the codes are dealt from the run's seed, and this is
+     * what says the dealer cannot deal a broken hand.
+     *
+     * Two hundred seeds, because the constraints `rollCodes` enforces are the
+     * ones that fail RARELY and silently — a prefix collision needs two
+     * particular codes to land, and testing one deal proves nothing about the
+     * next. `codeFaults` is the shipped detector and is called rather than
+     * re-implemented, so there is one answer to "is this hand spellable".
+     */
+    const seen = new Set();
+    for (let seed = 1; seed <= 200; seed++) {
+      rollCodes(seed);
+      const faults = codeFaults();
+      assert(!faults.length, `seed ${seed} dealt an unspellable hand: ${faults.join('; ')}`);
+      for (const s of STRATAGEMS) {
+        assert(s.code.length === codeLength(s),
+          `seed ${seed}: ${s.id} was dealt ${s.code.length} directions and its price asks for `
+          + `${codeLength(s)}`);
+        assert(!/(.)\1\1/.test(s.code),
+          `seed ${seed}: ${s.id} was dealt ${s.code} — three of the same in a row is a stuck key, `
+          + 'not a code a player can count');
+      }
+      seen.add(STRATAGEMS.map(s => s.code).join('|'));
+    }
+    assert(seen.size > 190,
+      `200 seeds produced only ${seen.size} distinct hands — the deal is barely moving`);
+
+    /* SEEDED, and that is the half that makes it usable rather than chaotic: a
+     * code is fixed for a whole run, a replayed seed replays its codes, and a
+     * co-op guest spells what the host spells. */
+    rollCodes(4242);
+    const a = STRATAGEMS.map(s => s.code).join('|');
+    rollCodes(77);
+    rollCodes(4242);
+    assert(STRATAGEMS.map(s => s.code).join('|') === a,
+      'the same seed dealt two different hands — a replayed run would not replay its codes');
+    return `200 seeds, ${seen.size} distinct hands, no duplicate / prefix / triple in any of them; `
+      + `lengths ${STRATAGEMS.map(s => s.code.length).sort().join('')}`;
+  });
+
+  check('stratagems: a code is longer than four, and its length is its price', () => {
+    /* FOUR WAS TOO SHORT IN TWO WAYS AT ONCE. Every code in the table was the
+     * same length, so the panel taught nothing about which call was the
+     * expensive one; and four directions is 256 spellings, which is a small
+     * enough space that two rows dealt at random collide often.
+     *
+     * Length is DERIVED from cost — one keystroke per PER_KEY Force over a
+     * floor — because a stratagem's price and the seconds you stand still to
+     * ask for it are two statements of the same thing, and two of those kept
+     * in step by hand is the defect this codebase keeps removing. */
+    rollCodes(1);
+    for (const s of STRATAGEMS) {
+      assert(s.code.length > 4, `${s.id} is still a four-direction code`);
+      assert(s.code.length >= CODE_MIN && s.code.length <= CODE_MAX,
+        `${s.id} is ${s.code.length} directions, outside ${CODE_MIN}..${CODE_MAX}`);
+    }
+    const by = STRATAGEMS.slice().sort((x, y) => x.cost - y.cost);
+    for (let i = 1; i < by.length; i++) {
+      assert(by[i].code.length >= by[i - 1].code.length,
+        `${by[i].id} costs ${by[i].cost} and spells in ${by[i].code.length}, while `
+        + `${by[i - 1].id} costs ${by[i - 1].cost} and spells in ${by[i - 1].code.length} — `
+        + 'a dearer call must not be quicker to ask for');
+    }
+    assert(by[by.length - 1].code.length > by[0].code.length,
+      'every call is the same length, so the panel says nothing about which one is expensive');
+    return by.map(s => `${s.id} ${s.cost}→${s.code.length}`).join(', ');
+  });
+
+  check('stratagems: a code is written in arrows, not in key names', () => {
+    /* A code is made of DIRECTIONS. W is only what a direction happens to be
+     * bound to on a keyboard, so printing the letter is printing the input
+     * method and not the thing — wrong on a pad, wrong after a rebind to ESDF,
+     * and wrong in a screenshot. */
+    for (const d of DIRS) {
+      assert(DIR_GLYPH[d] && !/[A-Za-z]/.test(DIR_GLYPH[d]),
+        `direction ${d} has no arrow of its own (${DIR_GLYPH[d] ?? 'nothing'})`);
+    }
+    assert(new Set(Object.values(DIR_GLYPH)).size === DIRS.length,
+      'two directions share an arrow');
+    rollCodes(1);
+    for (const s of STRATAGEMS) {
+      const w = spell(s.code);
+      assert(!/[A-Za-z]/.test(w), `${s.id} spells as "${w}", which still has a letter in it`);
+      assert([...w].length === s.code.length, `${s.id} spelled to ${[...w].length} glyphs`);
+    }
+    return `${DIRS.map(d => DIR_GLYPH[d]).join('')} — ${spell(STRATAGEM_BY_ID.smoke.code)} lays smoke`;
   });
 
   check('stratagems: the key is in the bindings table and the letters are movement', () => {
