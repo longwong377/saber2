@@ -100,3 +100,62 @@ export function topOfProps(props, x, z, feetY, radius, stepUp, best) {
  */
 export const STEP_UP = 0.45;
 export const GROUND_SNAP = 0.12;
+
+/**
+ * The BOTTOM of one static box in the column through (x, z), or +Infinity if
+ * the column misses it. The mirror of `boxTopAt`, and built the same way for
+ * the same reason: clamping a point far BELOW (x, z) into the box's own frame
+ * and coming back out lands on the underside, which stays correct for a
+ * rotated box where "the bottom" is not a single height.
+ */
+export function boxBottomAt(box, x, z, radius) {
+  _p1.set(x, box.center.y - box.radius - 1, z).sub(box.center).applyQuaternion(box.invQuat);
+  const h = box.halfExtents;
+  _p2.set(clamp(_p1.x, -h.x, h.x), clamp(_p1.y, -h.y, h.y), clamp(_p1.z, -h.z, h.z));
+  _p2.applyQuaternion(box.quat).add(box.center);
+  const dx = _p2.x - x, dz = _p2.z - z;
+  if (dx * dx + dz * dz > radius * radius) return Infinity;
+  return _p2.y;
+}
+
+/**
+ * WHAT IS OVER YOUR HEAD — and until this existed, nothing was.
+ *
+ * The file opened with "one question, asked by the player, by every enemy and
+ * by the gait solver", and that question only ever pointed DOWN. Vertical
+ * resolution therefore existed in one direction: Player._collide skips upward
+ * faces because floors belong to `supportHeight` above, and then flattens what
+ * is left with `_v5.y = 0` — which for a DOWNWARD face is the whole normal, so
+ * the contact was computed and thrown away. Measured on a stub world with a
+ * slab at y=3.5..4.5: a jump crossed the underside at f38, was 0.5 m inside
+ * solid slab at f42, and STEP_UP snapped the body out onto the roof at f57.
+ * Swept over the nine shipped levels the same jump entered 11 roofs from
+ * underneath (scoria 3, mustafar 1, geonosis 3, hangar 4).
+ *
+ * A ceiling is the exact complement of a floor and is written as one: the
+ * LOWEST downward face in the column, ignoring anything at or below
+ * `feetY + stepUp`, because everything down there is floor or step and
+ * `supportHeight` already owns it. Nothing above the column answers, so an
+ * open sky is +Infinity and the caller does nothing.
+ *
+ * STATIC BOXES ONLY, on purpose. The dynamic-prop record does not describe its
+ * own underside in one shape — a crate's `position` is its centre with
+ * `extent` as half-extents, while `Enemy.platform()` hands back `position` at
+ * the feet and `extent.y` as the height ABOVE them (see topOfProps, which only
+ * ever needs the top and so never has to tell them apart). Guessing a bottom
+ * from that would be one rule with two meanings, which is the defect this
+ * project keeps deleting. Roofs are static boxes; when a walker's belly needs
+ * to be solid, the record gets an honest underside first.
+ */
+export function ceilingHeight(boxes, x, z, feetY, radius, stepUp) {
+  let best = Infinity;
+  if (!boxes) return best;
+  const floorLimit = feetY + stepUp;
+  for (let i = 0; i < boxes.length; i++) {
+    const box = boxes[i];
+    if (box.disabled) continue;
+    const y = boxBottomAt(box, x, z, radius);
+    if (y < best && y > floorLimit) best = y;
+  }
+  return best;
+}

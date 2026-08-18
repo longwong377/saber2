@@ -65,8 +65,8 @@ function bonePts(rig, bone, stride = 1) {
 
 /** A figure walked in a straight line, sampled in its own body frame. */
 function march(opts = {}) {
-  const { speed = 0, seconds = 9, dt = 1 / 60, build = null, boots = false } = opts;
-  const built = build ? BUILD[build]({}) : null;
+  const { speed = 0, seconds = 9, dt = 1 / 60, build = null, boots = false, opts: bopts = {} } = opts;
+  const built = build ? BUILD[build](bopts) : null;
   const rig = built ? built.rig : new Rig(humanoidSkeleton(1));
   const s = rig.scale;
   const anim = new BipedAnimator(rig, { scale: s, hipHeight: 0.95 * s });
@@ -74,7 +74,7 @@ function march(opts = {}) {
   anim.setFacing(0);
   const rec = [];
   let prevBoot = [null, null], prevGround = [true, true];
-  let bootSlip = 0, bootSlipSum = 0, bootSlipN = 0;
+  let bootSlip = 0, bootSlipSum = 0, bootSlipN = 0, bootLow = Infinity;
   const N = Math.round(seconds / dt);
   for (let i = 0; i < N; i++) {
     pos.z += speed * dt;
@@ -93,10 +93,20 @@ function march(opts = {}) {
       for (const k of [0, 1]) {
         const pts = bonePts(rig, k === 0 ? 'footL' : 'footR', 3);
         if (prevBoot[k] && anim.feet[k].grounded && prevGround[k] && i * dt > 2.5) {
-          let lo = Infinity;
-          for (const p of pts) lo = Math.min(lo, p.y);
+          for (const p of pts) bootLow = Math.min(bootLow, p.y);
           for (let j = 0; j < pts.length; j++) {
-            if (pts[j].y > lo + 0.015 * s) continue;          // not in contact
+            /* IN CONTACT MEANS AT THE FLOOR, and it used to mean "within 15 mm
+             * of whatever the lowest part of this boot happens to be" — which
+             * is not the same question and was answering it about a boot that
+             * was 22 mm UNDER the floor (see the walking clause below). Two
+             * ways that hid: a buried boot's lowest 15 mm is a band that never
+             * touches anything, and once the boot sits ON the floor the same
+             * 15 mm reaches up the curve of the toe onto geometry that is
+             * genuinely rolling and is supposed to move. Measured on the jedi
+             * at 4.6 m/s, the same frames: the relative window reads 4.11 mm
+             * and names a vertex 14.8 mm off the ground, the floor window
+             * reads 0.59 mm. The floor is not a matter of degree. */
+            if (pts[j].y > 0.004 * s) continue;               // not in contact
             const d = Math.hypot(pts[j].x - prevBoot[k][j].x, pts[j].z - prevBoot[k][j].z);
             bootSlip = Math.max(bootSlip, d);
             bootSlipSum += d; bootSlipN++;
@@ -118,7 +128,7 @@ function march(opts = {}) {
   }
   return {
     rig, anim, rec, scale: s,
-    bootSlip, bootSlipMean: bootSlipSum / Math.max(bootSlipN, 1),
+    bootSlip, bootSlipMean: bootSlipSum / Math.max(bootSlipN, 1), bootLow,
     // track width: the lateral gap between successive PLANTS
     track: (() => {
       const p = [[], []];
@@ -377,6 +387,53 @@ export function run({ check, assert, near, THREE: T }) {
     assert(hi - lo < 0.003,
       `sole clearance varies ${((hi - lo) * 1000).toFixed(1)}mm across archetypes — it is falling out of boot thickness`);
     return `${rows.join(', ')} (spread ${((hi - lo) * 1000).toFixed(2)}mm)`;
+  });
+
+  check('boots: …AND WHILE IT WALKS, which is the other half of the same clause', () => {
+    /* THE CHECK ABOVE PASSED THROUGHOUT AND EVERY BOOT IN THE GAME WENT THROUGH
+     * THE FLOOR THE MOMENT IT TOOK A STEP.
+     *
+     * It only ever called `standing()`, and standing is the one pose in which
+     * the animator's idealised foot and the boot `buildFoot` actually draws
+     * agree: the ankle sits 72mm over a sole 70.9mm below it. Pitch that foot
+     * and they stop agreeing, because the underside of the drawn toe is 161.4mm
+     * from the ankle where the model's steepest pivot is 151.2mm. Measured over
+     * a fifteen-second march, lowest drawn boot vertex, at every speed from 1.0
+     * to 7.45 m/s and INDEPENDENT of speed — which is what says geometry rather
+     * than a landing dip:
+     *
+     *     b1 -16.7mm · acolyte -22.7 · jedi -23.6 · trooper -27.4 · b2 -30.1
+     *
+     * All nineteen humanoids, buried to the laces, in a game whose whole
+     * dismemberment mechanic is watched from three metres away.
+     *
+     * The second thing this covers is SPECIES. `BUILD` is a table of five
+     * builders called with no arguments, so every figure this file has ever
+     * measured is a 1.78m human — and `jediLook()` gives one enemy Jedi in
+     * seven a `smallfolk` frame at 0.40 scale. Nothing about the boot is
+     * allowed to be a length in a human's metres. */
+    const rows = [];
+    const SUBJECTS = [
+      ...Object.keys(BUILD).map((n) => [n, {}]),
+      ...B.SPECIES.map((sp) => [`jedi/${sp.id}`, { species: sp.id }, 'jedi']),
+    ];
+    for (const [label, opts, builder] of SUBJECTS) {
+      let worst = Infinity, worstAt = 0;
+      for (const speed of [1.0, 1.6, 2.5, 4.6, 7.45]) {
+        const r = march({ speed, build: builder || label, boots: true, seconds: 8, opts });
+        if (r.bootLow < worst) { worst = r.bootLow; worstAt = speed; }
+        // The same two bounds the standing clause uses, in the figure's own
+        // scale, because a small species is allowed small numbers and is not
+        // allowed a different relationship to the floor.
+        assert(r.bootLow > -0.003 * r.scale,
+          `${label} walking at ${speed} m/s puts its sole ${(-r.bootLow * 1000).toFixed(1)}mm `
+          + `through the floor (standing it is clear)`);
+        assert(r.bootLow < 0.006 * r.scale,
+          `${label} walking at ${speed} m/s floats ${(r.bootLow * 1000).toFixed(1)}mm above the floor`);
+      }
+      rows.push(`${label} ${(worst * 1000).toFixed(1)}mm@${worstAt}`);
+    }
+    return rows.join(', ');
   });
 
   /* ── (b) the cone ──────────────────────────────────────────────────── */

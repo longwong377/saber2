@@ -390,6 +390,127 @@ export async function run({ check, assert }) {
   });
 
   /* ══════════════════════════════════════════════════════════════════
+   *  GEOMETRY — the one thing nothing in this tree could see
+   * ══════════════════════════════════════════════════════════════════ */
+
+  check('layout: nothing on the front screen or the HUD leaves the frame', async () => {
+    /**
+     * THE CHECK TREE HAD NO LAYOUT ENGINE, AND THAT IS WHY TWO OF THESE SHIPPED.
+     *
+     * `tools/checks/_page.mjs` says it outright — "what this deliberately is
+     * not: a layout engine. Nothing here computes a box." — so every geometric
+     * claim in the suite is argued STRUCTURALLY off styles.css, which can say
+     * "these two boxes are in one flex row so they cannot overlap" and can
+     * never say "this row is 566 px wide in a 360 px frame". Both of the
+     * defects below read perfectly as source and were invisible to all ~1450
+     * checks:
+     *
+     *   THE TAB STRIP  `.menu-tabs` was `display:flex` with no wrap and no
+     *                  overflow-x. Five tabs ship in the markup and
+     *                  `_buildTraining`/`_buildDatabank` insert two more at
+     *                  runtime, so the strip is SEVEN wide and the author never
+     *                  saw it at full width. Measured: at 740x900 Deploy and
+     *                  Options were off the edges, at 480 and 360 it was
+     *                  Deploy, Training, Codex and Options — and with
+     *                  `scrollWidth === clientWidth` and overflow visible there
+     *                  was no scrollbar and no wheel scroll to reach them with.
+     *   THE HUD        `.powers` was a bare `display:flex` and `.centermsg` was
+     *                  `white-space:nowrap` at 38 px. Measured at 360x1080:
+     *                  `.hud-br` spanned x -222…344 — 566 px of power wheel in
+     *                  a 360 px frame — and the centre banner -113…473.
+     *
+     * So this one drives the REAL page in the real browser and asks the only
+     * question a stylesheet cannot be asked: where did it land. It is the
+     * cheapest honest version — three viewports, one measurement pass, no
+     * frames rendered — because the alternative is another five checks that
+     * read the file the box came from.
+     *
+     * The banner is FILLED before it is measured. An empty `.centermsg` is
+     * zero wide and inside any frame, so measuring it at rest would be a check
+     * that cannot fail; it is given the longest string the game puts in it —
+     * which is a peer name arriving from another machine, `main.js`'s
+     * 'A JEDI HAS FALLEN AWAY'.
+     */
+    const { chromium } = await import('playwright-core');
+    const { existsSync, readdirSync } = await import('node:fs');
+    /* Resolved rather than typed, and NOT skipped when it is missing: a check
+     * that quietly passes on a box with no browser is the "0 passed, 0 failed"
+     * shape HANDOFF §2.3 files under a missing thing answered with a plausible
+     * default. Say so and fail. */
+    const candidates = [process.env.CHROMIUM_PATH,
+      ...(existsSync('/opt/pw-browsers')
+        ? readdirSync('/opt/pw-browsers').map(d => `/opt/pw-browsers/${d}/chrome-linux/chrome`)
+        : []),
+      '/opt/pw-browsers/chromium'];
+    const exe = candidates.find(p => p && existsSync(p));
+    assert(exe, `no chromium found for the geometry check — tried ${candidates.filter(Boolean).join(', ')}`);
+
+    const server = createServer(handler);
+    await new Promise(r => server.listen(0, '127.0.0.1', r));
+    const port = server.address().port;
+    const browser = await chromium.launch({
+      executablePath: exe,
+      args: ['--no-sandbox', '--disable-dev-shm-usage', '--use-gl=angle', '--use-angle=swiftshader',
+        '--enable-unsafe-swiftshader'],
+    });
+    // Three: the shipped desktop shot, the width the tab strip broke at, and a
+    // portrait phone, which is where every one of these fails first.
+    const SIZES = [[1280, 720], [740, 900], [360, 1080]];
+    const lines = [];
+    try {
+      for (const [width, height] of SIZES) {
+        const page = await browser.newPage({ viewport: { width, height } });
+        try {
+          await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'load' });
+          // Wait for the two RUNTIME tabs rather than for a clock: the whole
+          // point is that the strip is seven wide, and a timeout that fires
+          // early measures the five in the markup and passes.
+          await page.waitForFunction(
+            () => document.querySelectorAll('.menu-tabs .tab').length >= 7,
+            null, { timeout: 30000 });
+          const out = await page.evaluate(() => {
+            document.getElementById('boot')?.classList.add('hidden');
+            document.getElementById('menu')?.classList.remove('hidden');
+            const hud = document.getElementById('hud');
+            hud?.classList.remove('hidden');
+            const cm = document.querySelector('.centermsg');
+            if (cm) {
+              cm.classList.add('on');
+              cm.innerHTML = '<b>A JEDI HAS FALLEN AWAY</b><span>somebody left the fight</span>';
+            }
+            const escaped = [];
+            const seen = [];
+            const WATCH = ['.menu-tabs .tab', '.hud-br', '.hud-bl', '.hud-tl', '.hud-tr',
+              '.centermsg', '.powers', '.menu-wrap'];
+            for (const sel of WATCH) {
+              for (const el of document.querySelectorAll(sel)) {
+                const b = el.getBoundingClientRect();
+                if (!b.width && !b.height) continue;
+                seen.push(sel);
+                if (b.left < -0.5 || b.right > innerWidth + 0.5) {
+                  escaped.push(`${sel}${el.textContent.trim() ? ` "${el.textContent.trim().slice(0, 14)}"` : ''}`
+                    + ` at x ${Math.round(b.left)}…${Math.round(b.right)}`);
+                }
+              }
+            }
+            return { escaped, boxes: seen.length, docW: document.documentElement.scrollWidth, w: innerWidth };
+          });
+          assert(!out.escaped.length,
+            `${width}x${height}: ${out.escaped.length} box(es) outside the frame — ${out.escaped.join('; ')}`);
+          // …and the page itself does not scroll sideways to hide it
+          assert(out.docW <= out.w + 1,
+            `${width}x${height}: the document is ${out.docW}px wide in a ${out.w}px frame`);
+          lines.push(`${width}x${height} ${out.boxes} boxes in frame`);
+        } finally { await page.close(); }
+      }
+      return lines.join(' · ');
+    } finally {
+      await browser.close();
+      await new Promise(r => server.close(r));
+    }
+  });
+
+  /* ══════════════════════════════════════════════════════════════════
    *  THE SERVER
    * ══════════════════════════════════════════════════════════════════ */
 

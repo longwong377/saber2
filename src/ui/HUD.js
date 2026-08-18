@@ -410,10 +410,20 @@ export class Minimap {
       n++;
     };
 
+    /* YOUR OWN ARMY IS IN THIS ARRAY. index.html's Interface hint promises
+     * "bosses warm, allies green", and `MINIMAP_COLORS.ally` was reachable only
+     * from the two co-op loops below — so in Command every trooper you own was
+     * drawn as a hostile contact. Measured on a real geonosis Command run: 18
+     * bodies alive, 10 of them yours, colours used `{enemy: 18}` and the ally
+     * colour used zero times. `big` is a SIZE and not a side, so an allied
+     * heavy takes the ally colour at the boss's size rather than the boss's
+     * warm. */
     for (const e of world?.enemies || []) {
       if (!e || e.dead || !e.position) continue;
-      plot(e.position.x, e.position.z, (e.A?.boss || e.A?.big) ? MINIMAP_COLORS.boss : MINIMAP_COLORS.enemy,
-        (e.A?.boss || e.A?.big) ? 3.4 : 2.3);
+      const heavy = !!(e.A?.boss || e.A?.big);
+      const colour = !isHostile(world, e) ? MINIMAP_COLORS.ally
+        : heavy ? MINIMAP_COLORS.boss : MINIMAP_COLORS.enemy;
+      plot(e.position.x, e.position.z, colour, heavy ? 3.4 : 2.3);
     }
     // Co-op. `world.players` carries the local body too, which is already the
     // arrow in the middle, so it is skipped by identity rather than by name.
@@ -1650,7 +1660,15 @@ export class HUD {
 
     // ── reticle & blade cursor
     const firstPerson = !!player.camera.firstPerson;
-    const threat = world.enemies.some(e => !e.dead && e.position.distanceToSquared(player.position) < 25);
+    /* THE SAME MISSING FILTER, AND IT PINNED THE WARNING ON FOR ALL OF COMMAND.
+     * Every formation parks your squads inside 5 m by construction: measured on
+     * a real geonosis run with ZERO hostiles inside the radius, circle, behind,
+     * cover, line and holdfire all lit it — five of seven orders, permanently.
+     * index.html's reticle note argues that a colour which could hide this
+     * "would be a customisation which removes information"; a warning that is
+     * always on carries none either. */
+    const threat = world.enemies.some(e => isHostile(world, e)
+      && e.position.distanceToSquared(player.position) < 25);
     el.reticle.classList.toggle('hot', threat);
     // full strength: a reticle you cannot see is not a reticle
     el.reticle.style.opacity = firstPerson ? 1 : 0.9;
@@ -1682,6 +1700,10 @@ export class HUD {
     if (el.targetOpen) {
       let best = null, bestState = null, bestD = Infinity;
       for (const e of world.enemies) {
+        // …and the same filter again. Verified rather than assumed: an allied
+        // trooper toppled 2 m from the player returns the shared `downed` row,
+        // and this readout offered "1.5x CUT" over your own downed sergeant.
+        if (!isHostile(world, e)) continue;
         const s = openState(e);
         if (!s) continue;
         const d = e.gripped ? -1 : e.position.distanceToSquared(player.position);
@@ -1735,9 +1757,12 @@ export class HUD {
     }
 
     // ── boss bar: whichever boss is alive and nearest
+    /* Both armies field a `big` body, so the third reader with the missing
+     * filter put your own heavy on the boss bar. Verified: an allied trooper
+     * given `A.big` was picked by this loop and named on the bar. */
     let boss = null;
     for (const e of world.enemies) {
-      if (e.dead || !e.A.boss && !e.A.big) continue;
+      if (!isHostile(world, e) || !e.A.boss && !e.A.big) continue;
       if (!boss || e.position.distanceToSquared(player.position) < boss.position.distanceToSquared(player.position)) boss = e;
     }
     if (boss) {
@@ -2187,6 +2212,28 @@ const esc = (s) => String(s == null ? '' : s).replace(/[<>&]/g, (c) => ({ '<': '
  * not subtract from the getter's answer, it composes its own. A subtraction
  * would silently start under-counting the moment the real fix landed.
  */
+/**
+ * IS THIS BODY ON THE OTHER SIDE — the predicate FOUR readers in this file were
+ * missing, and the same one `hostilesLeft` twelve lines down already needed.
+ *
+ * In Command your own troops ARE `Enemy` instances in `world.enemies` with a
+ * different `team`; that is the design decision that makes allies real, and
+ * `WaveDirector.blocksWaveEnd` is the one statement of it, with a comment
+ * naming the three callers that each had a wrong copy. So this asks the
+ * director rather than writing a fourth. Measured on a real geonosis Command
+ * run: 18 bodies alive, 10 of them yours.
+ *
+ * The fallback is not a second opinion, it is the no-director case — the
+ * options preview and the co-op lobby both drive this HUD against a world with
+ * no wave director, and a minimap that goes blank there would be a worse defect
+ * than the one this fixes.
+ */
+export function isHostile(world, e) {
+  const d = world?.director;
+  if (d && typeof d.blocksWaveEnd === 'function') return d.blocksWaveEnd(e);
+  return !!e && !e.dead && (e.team ?? 1) !== (world?.partyTeam ?? 0);
+}
+
 export function hostilesLeft(world) {
   /**
    * COMPOSED, NOT DELEGATED — and it stays that way on purpose.

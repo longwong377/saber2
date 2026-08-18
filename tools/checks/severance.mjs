@@ -51,7 +51,7 @@
 import * as THREE from 'three';
 import { ARCHETYPES, Enemy, guardFor, severance, PRICED_ROLES, AXIAL_ROLES, SEVER_LETHALITY }
   from '../../src/game/Enemy.js';
-import { GRIND_LETHALITY, grindWorth } from '../../src/game/World.js';
+import { GRIND_LETHALITY, grindWorth, World } from '../../src/game/World.js';
 import { Rig, BONE_ROLES } from '../../src/game/Rig.js';
 import * as PHYS from '../../src/physics/RapierWorld.js';
 import '../../src/game/Levels.js';        // registers the Command units, machines and menagerie
@@ -588,5 +588,77 @@ export async function run({ check, assert }) {
     return `${core.length} bodies · cheapest non-vital bone survives ${worst.passes} completed passes `
       + `(${worst.type} '${worst.bone}', ${worst.vital.toFixed(3)}) · every core capsule still 1`
       + (allVital.length ? ` · ${allVital.join(', ')} is vital all through and out of scope` : '');
+  });
+
+  check('severance: a corpse pays nothing — a body already dead is not a till', () => {
+    /**
+     * SAWING A CORPSE PAID FULL SEVER PRICE, FOREVER.
+     *
+     * A ragdolled body stays a blade target on purpose — an arm should come off
+     * a corpse — but the reward block in `World._applyBladeEvent` never asked
+     * whether the body had been alive, and nothing downstream closes the till:
+     * `Ragdoll.cutRagdoll` never sets `severed`, so `isSevered` stays false and
+     * the SAME hand can be taken off without bound. Measured on the shipped
+     * build, ten seconds of sawing one hand of one dead body: 53 severs billed,
+     * limbsRemoved 53, score 3180, combo 53, flow +5.30 against a bar clamped
+     * to 0..1 — five hundred and thirty full bars — and 318 hp of lifesteal.
+     * Corpses linger for the whole Corpses budget, so it is available on every
+     * body after every wave at no risk at all.
+     *
+     * WHY THE REST OF THIS FILE COULD NOT SEE IT. Everything above prices a
+     * bone: what a sever is WORTH. Not one line asks who gets PAID, or whether
+     * the thing under the blade was still fighting. The lethality tables are
+     * all satisfied by a corpse — it is already dead.
+     *
+     * Both bodies are driven through the shipped `_applyBladeEvent`, twenty
+     * identical cut events each, so the only difference between the two columns
+     * is `dead`. The living column is asserted too: a fix that simply stopped
+     * paying for cuts would satisfy the corpse half on its own.
+     */
+    const V = (x, y, z) => new THREE.Vector3(x, y, z);
+    const till = (dead) => {
+      const out = { severs: 0, marks: 0 };
+      const player = {
+        isLocal: false, score: 0, limbsRemoved: 0, combo: 0, comboTimer: 0, flow: 0,
+        boonMods: { lifesteal: 6, cutPower: 1 }, healed: 0,
+        addFlow(v) { this.flow += v; }, heal(v) { this.healed += v; },
+        camera: { addShake() {} }, saber: { color: { getHex: () => 0 } },
+      };
+      const e = {
+        id: 'e', dead, hp: dead ? -40 : 100, maxHp: 100,
+        actor: { ragdolled: dead, isSevered: () => false },
+        takeCut() { out.severs++; return undefined; },   // a real sever, every time
+      };
+      const w = Object.assign(Object.create(World.prototype), {
+        time: 0, particles: { cutFlare() {}, sparkBurst() {}, slag() {}, plasma: { spawn() {} } },
+        addHitstop() {}, notifyFloating() {}, report() {}, _claim() {},
+        onHitmark() { out.marks++; },
+      });
+      for (let i = 0; i < 20; i++) {
+        w._applyBladeEvent(player, {
+          type: 'cut', target: { id: 'e', enemy: e }, cap: { name: 'handL', vital: 0.05 },
+          bone: 'handL', cutT: 0.5, speed: 24,
+          point: V(0, 1.2, -1.5), impulse: V(1, 0, 0), normal: V(0, 1, 0),
+        }, 1 / 60);
+      }
+      return { ...out, score: player.score, limbs: player.limbsRemoved,
+        combo: player.combo, flow: player.flow, healed: player.healed };
+    };
+
+    const live = till(false), dead = till(true);
+    assert(live.limbs === 20 && live.score === 1200 && live.flow > 0 && live.healed > 0,
+      `twenty passes through a LIVING body paid ${live.limbs} limbs, ${live.score} score, `
+      + `${live.flow.toFixed(2)} flow and ${live.healed} hp — the reward path itself is broken, `
+      + 'so the corpse half below would pass for the wrong reason');
+    assert(dead.severs === 20,
+      `the blade stopped taking limbs off a corpse (${dead.severs} of 20 passes severed) — a body `
+      + 'you have killed must still come apart; it is only the till that closes');
+    assert(dead.limbs === 0 && dead.score === 0 && dead.combo === 0 && dead.flow === 0
+      && dead.healed === 0,
+      `sawing a CORPSE billed ${dead.limbs} limbs, ${dead.score} score, combo ${dead.combo}, `
+      + `flow +${dead.flow.toFixed(2)} and ${dead.healed} hp of lifesteal across twenty passes at `
+      + 'one dead hand — an unbounded score, combo and heal fountain standing after every wave');
+    return `living body: ${live.limbs} limbs / ${live.score} score / +${live.flow.toFixed(2)} flow / `
+      + `${live.healed} hp · corpse: ${dead.severs} limbs off, nothing paid`;
   });
 }

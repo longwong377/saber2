@@ -724,6 +724,12 @@ function swingEase(t) {
  */
 const SOLE_BIAS = 0.008;
 
+/* The band of roll angles a foot is posed through, and the step the sole's
+ * roll integral is tabulated at. `_poseFeet` drives pitch over roughly
+ * [-0.30, +1.10] rad (a dorsiflexed swing foot to a sprinter's toe-off); the
+ * table is given a rad of headroom either side and clamps beyond it. */
+const ROLL_LO = -1.4, ROLL_HI = 2.2, ROLL_STEP = 0.01;
+
 /**
  * ANKLE PITCH AT THE TWO ENDS OF STANCE, radians, [walk, run].
  *
@@ -879,6 +885,55 @@ export class BipedAnimator {
 
     this.stepTrigger = 0.105 * s;            // stance error that provokes a step
 
+    /**
+     * THE BOOT'S OWN OUTLINE — because the model above is a boot the game does
+     * not draw.
+     *
+     * `ankleY`, `footBall` and `footToe` describe an idealised sole: a segment
+     * of length `footLen` with the ankle `ankleY` above it. The mesh
+     * `buildFoot` produces is bigger than that at the corners. Measured on the
+     * built Jedi, in the foot bone's own frame: the underside of the toe is
+     * 161.4 mm from the ankle where the model's steepest pivot is 151.2 mm.
+     *
+     * That 10 mm is nothing standing and everything walking, because toe-off
+     * rotates it. Measured over a 15-second march on a flat floor, the lowest
+     * drawn boot vertex, at every speed from 1.0 to 7.45 m/s:
+     *
+     *     standing   walking
+     *     +1.1 mm    −23.6 mm   jedi        +1.2   −16.7   b1
+     *     +1.3 mm    −30.1 mm   b2          +1.1   −27.4   trooper
+     *     +1.2 mm    −22.7 mm   acolyte     +1.4   −33.2   bodyguard
+     *
+     * Every archetype in the game, boot through the floor, the moment it takes
+     * a step — and the amount does not depend on speed, which is what says it
+     * is geometry and not a landing dip. `character-gait`'s boot check only
+     * ever measured a STANDING figure, where the two models agree to a
+     * millimetre, so it read green throughout.
+     *
+     * So the outline is READ off the mesh rather than described a second time
+     * (HANDOFF 2.3). What is kept is the upper convex hull of the drawn boot in
+     * the sagittal plane — five to nine points — which is all the support
+     * function of a rotated foot can ever touch. A rig with no boot on it (a
+     * bare `humanoidSkeleton`, which is what most of the animation harness
+     * drives) gets `null` and the analytic model, unchanged.
+     */
+    this._sole = this._measureSole(rig);
+    if (this._sole) {
+      // The roll integral, once, over every angle a foot can reach.
+      const n = Math.round((ROLL_HI - ROLL_LO) / ROLL_STEP) + 1;
+      this._soleI = new Float64Array(n);
+      let prev = this._soleDepth(ROLL_LO);
+      for (let i = 1; i < n; i++) {
+        const d = this._soleDepth(ROLL_LO + i * ROLL_STEP);
+        this._soleI[i] = this._soleI[i - 1] + (prev + d) * 0.5 * ROLL_STEP;
+        prev = d;
+      }
+      // The flat-footed readings, so both terms above are offsets from the pose
+      // the figure already stood in and a standing archetype does not move.
+      this._sole0 = this._soleDepth(SOLE_BIAS);
+      this._soleRoll0 = this._soleRoll(SOLE_BIAS);
+    }
+
     this.phase = 0;
     this.duty = 0.63;
     this.freq = 0; this.spanMax = 0; this.span = 0;
@@ -956,6 +1011,108 @@ export class BipedAnimator {
     const c = Math.cos(pitch), sn = Math.sin(pitch);
     this._ankFwd = d * (1 - c) - this.ankleY * sn;
     this._ankRise = this.ankleY * (c - 1) - d * sn;
+    /**
+     * …AND THEN THE DRAWN BOOT REPLACES BOTH TERMS, when there is one.
+     *
+     * Both terms, and not just the height: they have to come out of ONE model
+     * or the foot rolls about a point that is not the one touching the floor,
+     * which is skating. Measured on the sprint, worst contact vertex per frame:
+     * veto the height alone and it slides 4.45 mm against 3.55 before; take
+     * both off the same model and it is 1.87 mm, better than either. On an
+     * honest contact window — vertices AT the floor rather than within 15 mm of
+     * whatever the lowest part of a buried boot was — the walk goes from 1.09
+     * to 0.09 mm and the sprint from 3.60 to 1.87.
+     *
+     * Both are offsets from the FLAT-FOOTED reading rather than absolutes, so a
+     * standing figure does not move: `rise(bias) = 0`, `fwd(bias) = 0`, and the
+     * +1.1 mm of clearance the sole is built with is exactly what it had.
+     */
+    if (this._sole) {
+      const th = SOLE_BIAS - pitch;
+      this._ankRise = this._soleDepth(th) - this._sole0;
+      this._ankFwd = this._soleRoll(th) - this._soleRoll0;
+    }
+  }
+
+  /**
+   * How far under the ankle the lowest DRAWN vertex of the boot is, at roll
+   * angle `theta` — the angle `_poseFeet` actually applies to the bone.
+   *
+   * The hull is [alongToe, belowAnkle] pairs in the foot bone's own frame,
+   * where +Y runs to the toe and +Z through the sole, which is the convention
+   * `aimBoneWorld` orients a foot with. Rolling by `theta` sends a point to a
+   * depth of `b·cos + a·sin`, so this is a SUPPORT function and only the
+   * convex hull can ever be the answer to it.
+   */
+  _soleDepth(theta) {
+    const c = Math.cos(theta), sn = Math.sin(theta);
+    let mx = -Infinity;
+    for (const q of this._sole) {
+      const d = q[1] * c + q[0] * sn;
+      if (d > mx) mx = d;
+    }
+    return mx;
+  }
+
+  /**
+   * How far FORWARD the ankle has travelled by the time the boot has rolled to
+   * `theta`, from a table built once.
+   *
+   * A foot that rolls without slipping moves its ankle at the rate the contact
+   * point is deep: `d(fwd)/d(theta) = depth(theta)`, whichever vertex happens
+   * to be the contact. That identity is why this is an integral and not a
+   * second geometric construction — and it is worth checking it against the
+   * model above rather than trusting it, which is the whole of HANDOFF 2.4.
+   * For the idealised foot, `depth = ankleY·cos + d·sin`, and integrating it
+   * from zero gives `ankleY·sin(theta) + d(1 - cos(theta))`, which with
+   * `theta = -pitch` is `d(1-c) - ankleY·sin(pitch)` — the existing `_ankFwd`,
+   * term for term. So the two models agree exactly on the boot the analytic one
+   * describes, and differ only where the mesh does.
+   *
+   * Tabulated because `depth` is a max over the hull and integrating it at
+   * every call is not free: 0.01 rad steps over the whole range a foot can
+   * pitch through, trapezoid, interpolated. The integrand is bounded by the
+   * length of the boot, so the quadrature error over the table is under a
+   * micron.
+   */
+  _soleRoll(theta) {
+    const t = clamp((theta - ROLL_LO) / ROLL_STEP, 0, this._soleI.length - 1.0001);
+    const i = Math.floor(t);
+    return lerp(this._soleI[i], this._soleI[i + 1], t - i);
+  }
+
+  /** The upper convex hull of the boot mesh in the foot bone's sagittal plane. */
+  _measureSole(rig) {
+    const b = rig.get('footL') || rig.get('footR');
+    if (!b?.parts?.length) return null;
+    rig.root.updateMatrixWorld(true);
+    const inv = new THREE.Matrix4().copy(b.obj.matrixWorld).invert();
+    const pts = [];
+    const p = new THREE.Vector3();
+    for (const m of b.parts) {
+      const attr = m.geometry?.attributes?.position;
+      if (!attr) continue;
+      m.updateWorldMatrix(true, false);
+      for (let i = 0; i < attr.count; i++) {
+        p.fromBufferAttribute(attr, i).applyMatrix4(m.matrixWorld).applyMatrix4(inv);
+        pts.push([p.y, p.z]);
+      }
+    }
+    if (pts.length < 3) return null;
+    // Monotone chain, upper side only: the support directions a rolling foot
+    // ever asks for all have a positive "down" component, so the lower half of
+    // the hull can never be the deepest point and is not worth carrying.
+    pts.sort((u, v) => u[0] - v[0] || u[1] - v[1]);
+    const hull = [];
+    for (const q of pts) {
+      while (hull.length >= 2) {
+        const a = hull[hull.length - 2], c2 = hull[hull.length - 1];
+        if ((c2[0] - a[0]) * (q[1] - a[1]) - (c2[1] - a[1]) * (q[0] - a[0]) >= 0) hull.pop();
+        else break;
+      }
+      hull.push(q);
+    }
+    return hull.length >= 2 ? hull : null;
   }
 
   /** Ground normal by central difference — groundAt is all we are handed. */

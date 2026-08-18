@@ -1835,6 +1835,35 @@ export class Enemy {
      * liftable, at a price in Force Power.
      */
     this.grippable = A.grippable !== false;
+    /**
+     * THE SIZE THIS BODY *IS*, WHICH IS NOT ALWAYS THE SIZE IT WAS ASKED TO BE.
+     *
+     * `A.scale` is a request. `jediLook()` draws a species uniformly from the
+     * seven rows of `SPECIES`, one of which is `smallfolk` at `frame.scale`
+     * 0.40, and `buildJedi` honours it: a 1.05-scale Temple Guardian comes back
+     * as a 0.42-scale rig. Everything downstream that sized itself off `A.scale`
+     * was therefore sizing a 0.42 body with a 1.05 number. Measured over 40
+     * guardian spawns at seed 4711 before this field existed: 6 of 40 smallfolk
+     * (15%), drawn 0.727 m tall against a human's 1.79, standing with the sole
+     * 46 mm clear of the floor — 6% of the figure's own height, and it walks on
+     * that — and `chestY` 0.45 m ABOVE the top of its own head, which is where
+     * the aim assist, every floating notice and the deflector bubble all go.
+     * With this field: 0 mm of air under the boot, chest inside the chest.
+     *
+     * `_build` overwrites this from the rig the builder actually returned, so
+     * the authority is the geometry and not the table beside it (HANDOFF 2.3).
+     * It is initialised here because `_build` is not the only thing that runs
+     * before it — a body with no rig at all (droideka, remote) keeps the
+     * archetype's number, which for those is also the truth.
+     *
+     * WHAT DELIBERATELY STAYS ON `A.scale`: the COMBAT numbers — melee reach,
+     * the duel's spacing band, the off-blade cone. That is the same call
+     * `Saber.setGripScale` already makes in as many words — "a smaller wielder
+     * is not carrying a shorter sword" — and a species roll is not allowed to
+     * decide a fight's distances (HANDOFF 6.2). This field is the body's
+     * ANATOMY: where its chest is, how wide it stands, how long its cape is.
+     */
+    this.bodyScale = A.scale ?? 1;
     this.gripped = false;
     this.liftTarget = null;
     /**
@@ -2085,6 +2114,11 @@ export class Enemy {
 
     if (built.rig) {
       this.rig = built.rig;
+      // The builder is the authority on how big this body came out — see the
+      // note on `bodyScale` in the constructor. `Rig` records the scale it was
+      // laid out at, so this is a read of the geometry and not a second guess
+      // at it.
+      this.bodyScale = this.rig.scale ?? this.bodyScale;
       this.world.scene.add(this.rig.root);
       this.actor = new Actor(this.world.scene, this.world.physics, this.rig, {
         mass: A.mass, layer: LAYER.RAGDOLL, bladeColor: 0x57c9ff,
@@ -2092,7 +2126,13 @@ export class Enemy {
       });
       this.humanoid = !A.custom || A.custom === 'humanoid';
       if (this.humanoid) {
-        this.animator = new BipedAnimator(this.rig, { scale: A.scale, hipHeight: A.hipHeight ?? 0.95 });
+        /* `this.bodyScale`, not `A.scale`. BipedAnimator takes ankleY, footLen,
+         * stanceWidth, kneeIn and stepTrigger all from this one argument, so a
+         * 0.42-scale smallfolk Jedi was being planted on a 1.05 ankle — 74 mm
+         * of air under the boot on average and 232 mm at worst. `hipHeight` is
+         * scaled by the same argument inside the animator, so it stays a
+         * fraction and not a metre count. */
+        this.animator = new BipedAnimator(this.rig, { scale: this.bodyScale, hipHeight: A.hipHeight ?? 0.95 });
         this.animator.onFootstep = (p) => {
           if (this.lod > 1) return;
           audio.step(p, this.world.terrain ? this.world.terrain.surfaceAt(p.x, p.z) : 'sand');
@@ -2152,7 +2192,7 @@ export class Enemy {
     if (A.weapon) {
       this.weapon = buildBlaster(A.weapon);
       const hand = this.rig?.get('handR');
-      if (hand) { hand.obj.add(this.weapon); this.weapon.position.set(0, 0.06 * A.scale, 0.02); this.weapon.rotation.x = -0.2; }
+      if (hand) { hand.obj.add(this.weapon); this.weapon.position.set(0, 0.06 * this.bodyScale, 0.02); this.weapon.rotation.x = -0.2; }
     }
     if (A.saber) {
       this.saber = new Saber(this.world.scene, {
@@ -2231,7 +2271,11 @@ export class Enemy {
        */
       if (A.cape !== false) {
         this.cloak = attachCloak(this.world.scene, this.rig, {
-          scale: A.scale, width: 0.34, length: 0.82, cols: 7, rows: 9, flare: 1.0,
+          // The cape is cut from the BODY's scale. A human's 0.86 m cape on a
+          // 0.75 m smallfolk hangs its hem through the floor — the same defect
+          // HANDOFF 6.1b measured at 280 mm on the creator's preview figure,
+          // alive on the enemy path because this line read the request.
+          scale: this.bodyScale, width: 0.34, length: 0.82, cols: 7, rows: 9, flare: 1.0,
           color: robeHex ?? (this.type === 'sparring' ? 0x2c3742 : 0x14151a),
         });
       }
@@ -2240,7 +2284,7 @@ export class Enemy {
       // costs the character fewer triangles than it saves.
       if (built.robeSkirt && A.simSkirt && this.cloak) {
         this.skirt = attachSkirt(this.world.scene, this.rig, {
-          scale: A.scale, rigid: built.robeSkirt,
+          scale: this.bodyScale, rigid: built.robeSkirt,
           // …and the same for the skirt it replaces: the simulated cloth has to
           // come out the colour of the rigid panels it is swapped for, or the
           // body changes colour at LOD range when attachSkirt hands them back.
@@ -2363,8 +2407,8 @@ export class Enemy {
         if (this.rig.get(name)) return this.rig.worldPos(name, out);
       }
     }
-    if (this.group) return out.copy(this.group.position).addScaledVector(UP, 0.8 * this.A.scale);
-    return out.copy(this.position).setY(this.position.y + 1.1 * this.A.scale);
+    if (this.group) return out.copy(this.group.position).addScaledVector(UP, 0.8 * this.bodyScale);
+    return out.copy(this.position).setY(this.position.y + 1.1 * this.bodyScale);
   }
 
   /**
@@ -2376,7 +2420,7 @@ export class Enemy {
    * named nothing in particular.
    */
   shieldCentre(out = new THREE.Vector3()) {
-    const S = this.A.scale ?? 1;
+    const S = this.bodyScale;
     // 1.75·S puts it on a walker's chassis (which _poseWalker holds at 1.6·S
     // above the ground) and 1.02·S on a humanoid's chest. Measured against the
     // posed rigs, not guessed: a bubble half a metre below the body reads as a
@@ -2384,7 +2428,10 @@ export class Enemy {
     return out.set(this.position.x, this.position.y + (this.A.big ? 1.75 : 1.02) * S, this.position.z);
   }
 
-  get chestY() { return this.position.y + 1.15 * this.A.scale; }
+  /* 1.15 of the BODY's own scale. On `A.scale` this put a smallfolk Jedi's
+   * chest 0.45 m above the top of its head — the point every floating notice,
+   * every aim assist and every "centre of mass" query in the game reads. */
+  get chestY() { return this.position.y + 1.15 * this.bodyScale; }
 
   /** Capsules the blade solver tests against — one per living bone. */
   capsules() {

@@ -4516,14 +4516,51 @@ export function addRailing(world, pos, opts = {}) {
   const mat = opts.mat || M.darkSteel;
   const pitch = opts.pitch ?? 0;
   const cp = Math.cos(pitch), sp = Math.sin(pitch);
+  /**
+   * EVERY POST STANDS ON THE GROUND UNDER IT — and until this line the whole
+   * run stood on ONE terrain sample, the one the level happened to take.
+   *
+   * The Providence's bridge rail is what found it: `addRailing(world,
+   * at(-26, -40), { length: 52, yaw: π/2 })` took the deck height at one point
+   * and ran 52 m of rail off it. Measured along its own line, 17 of 27 samples
+   * had the deck ABOVE the rail's top and 8 had it more than 0.3 m below the
+   * rail's foot, up to 2.0 m of daylight — 63% of the run buried, 30% in the
+   * air — because the line crosses the bridge ramp (5.4 m over 26 m) and a
+   * 9.0 m bulkhead pier. And the collider is one box at that same y, so the
+   * barrier was a wall standing where no rail is drawn and no barrier at all
+   * where the rail is. `prop-seating` could not see any of it: its seat is a
+   * single `max` over the footprint and its float bound is one-sided, so a run
+   * 3.55 m inside a pier reads as seated.
+   *
+   * So the run is sampled per post — the posts and the rails between them
+   * follow the terrain, and the collider is one box PER BAY rather than one
+   * for the whole run, each spanning its own two feet. A rail is still a
+   * barrier and not a row of bollards (that argument is below and unchanged);
+   * what changes is that the barrier is where the rail is.
+   *
+   * Three cases keep the flat run they had. A rail composed into another kit
+   * (`opts.kit` — the stair's, the balcony's, the gantry's) rides the
+   * structure and not the heightfield; a PITCHED rail is already following a
+   * stair by construction; and `follow: false` is the way to ask for a
+   * dead-level rail on rolling ground. In all three `gy` is zero everywhere
+   * and every line below reduces to what it was.
+   */
+  const T = (!opts.kit && !pitch && opts.follow !== false && world && world.terrain) ? world.terrain : null;
+  const cy = Math.cos(opts.yaw || 0), sy = Math.sin(opts.yaw || 0);
+  const gy = (sx) => (T ? T.height(pos.x + sx * cy, pos.z - sx * sy) - pos.y : 0);
+  const feet = [];
+  for (let i = 0; i <= posts; i++) feet.push(((i / posts) - 0.5) * L);
+  const drop = feet.map(gy);
   for (let i = 0; i <= posts; i++) {
-    const t = i / posts, s = (t - 0.5) * L;
-    kit.post(mat, 0.032, 0.038, h, s * cp, s * sp + h / 2, 0, { radial: 6, tile: 0.9 });
+    const s = feet[i];
+    kit.post(mat, 0.032, 0.038, h, s * cp, s * sp + drop[i] + h / 2, 0, { radial: 6, tile: 0.9 });
   }
   for (const yy of [h, h * 0.52]) {
-    const a = new THREE.Vector3(-L / 2 * cp, -L / 2 * sp + yy, 0);
-    const b = new THREE.Vector3(L / 2 * cp, L / 2 * sp + yy, 0);
-    kit.put(pipeBetween(a, b, yy === h ? 0.042 : 0.028, 6), mat);
+    for (let i = 0; i < posts; i++) {
+      const a = new THREE.Vector3(feet[i] * cp, feet[i] * sp + drop[i] + yy, 0);
+      const b = new THREE.Vector3(feet[i + 1] * cp, feet[i + 1] * sp + drop[i + 1] + yy, 0);
+      kit.put(pipeBetween(a, b, yy === h ? 0.042 : 0.028, 6), mat);
+    }
   }
   /**
    * AND YOU CANNOT WALK THROUGH IT, which until now you could.
@@ -4545,7 +4582,19 @@ export function addRailing(world, pos, opts = {}) {
    * boxes on Kamino instead of a hundred and twelve.
    */
   if (opts.collide !== false) {
-    kit.collider(0, h * 0.5, 0, L * 0.5, h * 0.5 + Math.abs(sp) * L * 0.5, 0.09);
+    if (T) {
+      /* One box per bay, each from the lower of its two feet to the top of the
+       * higher one, so the barrier climbs with the rail. 52 m of bridge rail
+       * costs 37 boxes instead of 1 and is the only version that is where the
+       * player can see it. */
+      for (let i = 0; i < posts; i++) {
+        const mid = (feet[i] + feet[i + 1]) * 0.5;
+        const lo = Math.min(drop[i], drop[i + 1]), hi = Math.max(drop[i], drop[i + 1]) + h;
+        kit.collider(mid, (lo + hi) * 0.5, 0, (feet[i + 1] - feet[i]) * 0.5, (hi - lo) * 0.5, 0.09);
+      }
+    } else {
+      kit.collider(0, h * 0.5, 0, L * 0.5, h * 0.5 + Math.abs(sp) * L * 0.5, 0.09);
+    }
   }
   return kitClose(world, kit, pos, opts);
 }

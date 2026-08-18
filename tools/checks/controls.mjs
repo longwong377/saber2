@@ -34,7 +34,7 @@ import { DEFAULT_SETTINGS, SETTING_READERS, applyFeelSettings, CODEX, SCHEMES, c
   keyChips } from '../../src/ui/Menu.js';
 import { BOONS, CLEAVE, cleavingThrow } from '../../src/game/Waves.js';
 import { ACTIONS, ACTION_IDS, MOUSE, defaultBindings, conflicts, findConflict, findConflicts,
-  resolveConflicts, keyLabel, ORDER_ACTIONS, ORDER_GROUP, orderActionId,
+  resolveConflicts, loadBindings, saveBindings, settleBindings, keyLabel, ORDER_ACTIONS, ORDER_GROUP, orderActionId,
   registerOrders, PAD, PAD_CODES, PAD_AXES, PAD_AXIS_CODES, PAD_MODIFIERS, PAD_FAMILY,
   isPadCode, isChord, chordParts, codesFor, padFamily, padLabel } from '../../src/engine/Bindings.js';
 // The authority for what an order IS. Imported here so the check can re-derive
@@ -886,6 +886,158 @@ export async function run({ check, assert }) {
       'an action on its last key was left unbound');
     return `first-only left ${left.map(c => c.ids.join('+')).join(', ')}; `
       + 'resolveConflicts clears all of them and refuses to mute an action';
+  });
+
+  check('controls: a SAVED blob cannot boot into a clash the defaults do not have', () => {
+    /**
+     * THE DEFAULTS MOVE; A SAVED TABLE DOES NOT.
+     *
+     * `saveBindings` writes the WHOLE table the first time anything is rebound
+     * — or Reset is pressed — so every returning player carries a snapshot of
+     * the defaults of the day they touched the controls screen, and
+     * `loadBindings` merged it over today's table without ever asking
+     * `conflicts()`. Measured against the table five commits back: Mouse4 on
+     * `dash` AND `attackSpin`, CapsLock on `grip2` AND `stratagem`, KeyT on
+     * `focus` AND `orderwheel`, and `PadLB+PadBack` on `flourish` AND
+     * `orderwheel` — the chord-order collision `chordKey` exists to abolish,
+     * arriving back out of storage. `conflicts(defaultBindings())` was 0
+     * throughout, which is why the check above could not see any of it.
+     *
+     * Driven over EVERY action rather than against one transcribed blob: the
+     * stale table of five commits back is a fact about one day, and the class
+     * is "a key this action used to own now belongs to another one". Fifty
+     * blobs, each one a default key moved somewhere it does not belong.
+     */
+    const store = new Map();
+    const real = globalThis.localStorage;
+    globalThis.localStorage = {
+      getItem: (k) => (store.has(k) ? store.get(k) : null),
+      setItem: (k, v) => store.set(k, String(v)),
+      removeItem: (k) => store.delete(k),
+    };
+    try {
+      const def = defaultBindings();
+      let worst = 0, cases = 0;
+      for (const id of ACTION_IDS) {
+        const other = ACTION_IDS.find(x => x !== id);
+        const stale = structuredClone(def);
+        // the key `id` holds today, saved against the action that used to hold it
+        stale[other] = [def[id][0], ...(def[other] || [])].slice(0, 3);
+        store.clear();
+        store.set('saber.bindings.v2', JSON.stringify(stale));
+        worst = Math.max(worst, conflicts(stale).length);
+        const got = loadBindings();
+        cases++;
+        assert(!conflicts(got).length,
+          `a saved blob booted into ${conflicts(got).map(c => `${c.code} → ${c.ids.join('+')}`).join(', ')}`);
+        const mute = ACTION_IDS.filter(a => !(got[a] || []).length);
+        assert(!mute.length, `settling left ${mute.join(', ')} answering to nothing`);
+      }
+      // a table that is ALREADY clean is left exactly as the player wrote it —
+      // settling must not be a second Reset to defaults
+      store.clear();
+      const chosen = structuredClone(def);
+      const free = [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'].map(c => `Key${c}`)
+        .find(k => !Object.values(def).flat().includes(k));
+      chosen.jump = [free];
+      store.set('saber.bindings.v2', JSON.stringify(chosen));
+      assert(loadBindings().jump[0] === free, 'settling threw away a deliberate rebind');
+      return `${cases} stale blobs, up to ${worst} clash each → 0 after load, nothing muted, `
+        + 'a clean rebind untouched';
+    } finally { globalThis.localStorage = real; }
+  });
+
+  check('controls: the v1 blob does not pin a returning player to the old mouse scheme', () => {
+    /**
+     * Player note #15 swapped the mouse: RMB guards, LMB attacks. Anybody who
+     * had ever rebound anything — or pressed Reset — had the old pair on disk,
+     * so the fix was invisible to exactly the players who had opened the
+     * controls screen. Measured off the real v1 table: `blade: Mouse1,
+     * thrust: Mouse2`, the inverse of what ships, with no conflict to see it by.
+     *
+     * The two rows are retired by name the way Menu.js's RETIRED retires a
+     * setting, so everything else the player chose survives the bump.
+     */
+    const store = new Map();
+    const real = globalThis.localStorage;
+    globalThis.localStorage = {
+      getItem: (k) => (store.has(k) ? store.get(k) : null),
+      setItem: (k, v) => store.set(k, String(v)),
+      removeItem: (k) => store.delete(k),
+    };
+    try {
+      const def = defaultBindings();
+      const free = [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'].map(c => `Key${c}`)
+        .find(k => !Object.values(def).flat().includes(k));
+      // the v1 scheme, built by INVERTING today's pair rather than by typing
+      // two codes that would go stale the next time the mouse moves
+      const v1 = structuredClone(def);
+      v1.blade = def.thrust.slice(); v1.thrust = def.blade.slice();
+      v1.jump = [free];
+      store.set('saber.bindings.v1', JSON.stringify(v1));
+      const got = loadBindings();
+      assert(got.blade[0] === def.blade[0] && got.thrust[0] === def.thrust[0],
+        `a v1 blob still holds the old mouse scheme: blade ${got.blade[0]}, thrust ${got.thrust[0]}`);
+      assert(got.jump[0] === free, 'retiring the mouse pair threw away the rest of the blob');
+      assert(!store.has('saber.bindings.v1'), 'the retired blob speaks more than once');
+      return `v1 blade/thrust ${v1.blade[0]}/${v1.thrust[0]} → ${got.blade[0]}/${got.thrust[0]}, `
+        + `jump ${free} kept, v1 drained`;
+    } finally { globalThis.localStorage = real; }
+  });
+
+  check('controls: a clash the rebinder REFUSES to settle is on the screen', async () => {
+    /**
+     * `resolveConflicts` refuses to take an action's last key — right, because
+     * the alternative is an action that answers to nothing — so a duplicate
+     * the player can SEE is the intended outcome, and the seeing half was
+     * missing. `conflicts()` had no caller in src/ at all: its definition and
+     * one comment. `.bindrow b.conflict{background:var(--danger)}` sat in
+     * styles.css with nothing that ever added the class.
+     *
+     * Measured by binding all fifty actions to one key through the real
+     * rebinder: K was left answering for EIGHT actions, seven of them
+     * formation orders, the `#bind-hint` sentence named only the last refusal
+     * and was cleared by the next rebind, and not one row on screen said so.
+     */
+    const { makeDocument } = await import('./_page.mjs');
+    const { Menu } = await import('../../src/ui/Menu.js');
+    const INDEX = await readFile(new URL('../../index.html', import.meta.url), 'utf8');
+    const CSS = await readFile(new URL('../../styles.css', import.meta.url), 'utf8');
+    assert(/\.bindrow b\.conflict\s*\{/.test(CSS), 'the clash paint rule is gone from styles.css');
+
+    const doc = makeDocument(INDEX);
+    const restore = doc.install();
+    const listeners = new Map();
+    const realAdd = globalThis.addEventListener, realRem = globalThis.removeEventListener;
+    globalThis.window = globalThis;
+    globalThis.addEventListener = (t, fn) => { if (!listeners.has(t)) listeners.set(t, []); listeners.get(t).push(fn); };
+    globalThis.removeEventListener = (t, fn) => {
+      const a = listeners.get(t) || []; const i = a.indexOf(fn); if (i >= 0) a.splice(i, 1);
+    };
+    try {
+      const menu = new Menu({ ...structuredClone(DEFAULT_SETTINGS) }, {});
+      const host = doc.getElementById('bind-list');
+      const CODE = 'KeyK';
+      for (let n = 0; n < ACTIONS.length; n++) {
+        const chip = host.querySelectorAll('.bindrow')[n].querySelector('b');
+        chip.click();
+        (listeners.get('keydown') || [])[0]?.({ code: CODE, preventDefault() {}, stopPropagation() {} });
+      }
+      const left = conflicts(menu.bindings);
+      assert(left.length, 'this fixture no longer produces a clash the resolver refuses');
+      const owners = left.reduce((n, c) => n + c.ids.length, 0);
+      const marked = host.querySelectorAll('b.conflict');
+      assert(marked.length === owners,
+        `${owners} actions share a key and ${marked.length} chips are marked`);
+      for (const chip of marked) {
+        assert(/ is also /.test(chip.title || ''),
+          'a marked chip does not name the action it is sharing with');
+      }
+      return `50 actions onto ${CODE} → ${owners} left sharing it, ${marked.length} chips lit and named`;
+    } finally {
+      restore();
+      globalThis.addEventListener = realAdd; globalThis.removeEventListener = realRem;
+    }
   });
 
   check('controls: the dojo steps lessons through the bindings table, not off raw keys', async () => {

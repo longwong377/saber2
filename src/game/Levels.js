@@ -2976,10 +2976,30 @@ export const LEVELS = {
       /* ── THE FOUR GATES, cut through the podium by the heightfield. What
        * stands here is the frame: a barred arch under a keystone, at the scale
        * of the thing that comes through it. */
+      /* THE BEARING IS THE CUT'S, AND THE RADIUS IS THE ELLIPSE'S — because
+       * `(cos a · 66, sin a · 49)` is a point ON the ellipse and its actual
+       * compass bearing is NOT `a`. The podium is an oval and the cut through
+       * it is circular: `TERRAIN_PRESETS.colosseum` opens each gate on
+       * `atan2(z, x)` within `smoothstep(0.075, 0.0, d)`, i.e. exactly zero
+       * past 0.075 rad. The parametric angle of an ellipse runs ahead of the
+       * geometric one by up to atan((a−b)/2√(ab)) — 0.0788 rad on the long
+       * axis pair here and 0.0998 on the short one, both outside the cut. So
+       * all four arches stood on the UNCUT podium wall: terrain 4.76–5.05 m
+       * under a ramp floor of 1.76–2.24 m, 6.0–6.4 m sideways of the ramp they
+       * frame, `prop-seating` reading their seat as −1.48 to −4.93 m, and the
+       * render (`/tmp/lshots/colosseum-gate.png`) showing the crowd THROUGH
+       * the span and behind both piers.
+       *
+       * Solving the ellipse for r at the bearing the cut uses keeps the shape
+       * — 63.5 m on the long pair, 50.1 on the short, the same oval — and puts
+       * the gate where the hole is: d = 0.000000 rad on all four, terrain
+       * 2.00–2.83 m. Deriving the position from the cut's own bearing is also
+       * the only form that survives the podium being re-proportioned. */
       const gates = [0.32, 0.32 + Math.PI / 2, 0.32 + Math.PI, 0.32 + Math.PI * 1.5];
       for (let g = 0; g < gates.length; g++) {
         const a = gates[g];
-        const cx = Math.cos(a) * 66, cz = Math.sin(a) * 49;
+        const r = 1 / Math.hypot(Math.cos(a) / 66, Math.sin(a) / 49);
+        const cx = Math.cos(a) * r, cz = Math.sin(a) * r;
         addArch(world, at(cx, cz), {
           span: 9.5, rise: 5.0, thickness: 2.0, yaw: -Math.atan2(cz, cx) + Math.PI / 2,
           seed: 6100 + g, mat: M.sandstone, trimMat: M.duracreteWarm, broken: g === 3 ? 0.3 : 0,

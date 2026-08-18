@@ -1218,6 +1218,95 @@ export async function run({ check, assert }) {
     return `blade → ${billed.toFixed(1)} hp through World.update on ${sawPlayerTarget} player target `
       + `records; bolt → ${onRival.toFixed(1)} hp on a rival, ${onAlly.toFixed(1)} on an ally`;
   });
+  check('pvp: a returned bolt can be answered by the other side', async () => {
+    /**
+     * `_creditDeflect` stamped `bolt.team = 0` for every deflector alive, and
+     * `_onBoltDeflect` returned on `bolt.team === 0` with the comment "already
+     * ours". In a duel there is no "ours": side 0 returns a bolt, side 2 puts
+     * their blade in its path, and the shipped code read the constant instead
+     * of the question. Measured: `B.deflects` 0 and the bolt's velocity
+     * untouched, while a non-Player duellist standing in exactly that spot
+     * turned it.
+     *
+     * AND IT IS WORSE THAN A NO-OP. `Bolts.update` sets `consumed` for the
+     * frame before calling this back, so the early return skips the body
+     * hit-test too: the bolt phases through the guard AND through the fighter
+     * behind it. The one contact in the game that is pure reflex, deleted for
+     * whichever duellist did not fire first.
+     *
+     * `_bladeEntries` carried the same constant — every player's blade stamped
+     * `team: 0`, which is the number `Bolts.update` compares against to decide
+     * whether a bolt is hostile to that guard — so the check reads the entry
+     * the game builds rather than hand-writing one.
+     */
+    const THREE = await import('three');
+    const { World } = await import('../../src/game/World.js');
+    const { Player, SIDES, asTeam } = await import('../../src/game/Player.js');
+    const { Saber } = await import('../../src/game/Saber.js');
+    const { BoltPool } = await import('../../src/game/Bolts.js');
+
+    const scene = new THREE.Scene();
+    const V = (x, y, z) => new THREE.Vector3(x, y, z);
+    const blade = () => { const b = new Saber(scene, { length: 1.3 }); b.lit = true; b.ignition = 1; return b; };
+    const swing = (b, a, z) => {
+      const q = new THREE.Quaternion();
+      b.setHiltPose(a, q); b.update(1 / 60, 0); b.setHiltPose(z, q); b.update(1 / 60, 1 / 60);
+    };
+    const pool = new BoltPool(scene, 8);
+    const w = {
+      players: [], enemies: [], bolts: pool, settings: {}, rules: { friendlyFire: true },
+      particles: { sparkBurst() {}, plasma: { spawn() {} } }, engine: { flash() {} },
+      addHitstop() {}, report() {}, notifyFloating() {}, onDeflectFeedback() {}, feelOn: () => false,
+      _creditDeflect: World.prototype._creditDeflect,
+      _onBoltDeflect: World.prototype._onBoltDeflect,
+      _bladeEntries: World.prototype._bladeEntries,
+    };
+    const mk = (saber, team) => Object.assign(Object.create(Player.prototype), {
+      alive: true, saber, isLocal: true, team, flow: 1, score: 0, stamina: 100,
+      deflects: 0, perfects: 0, combo: 0, comboTimer: 0, aimDir: V(0, 0, -1), chest: V(0, 1.35, 0),
+      camera: { pos: V(0, 1.35, 0), addShake() {} },
+      boonMods: { deflectDamage: 1, returnCone: 0.42 }, addFlow() {}, boltCatch: null, control: null,
+    });
+    const sA = blade(), sB = blade();
+    const A = mk(sA, SIDES[0]), B = mk(sB, SIDES[1]);
+    w.players.push(A, B);
+    assert(A.team !== B.team, `both duellists are on side ${A.team} — this is not a duel`);
+
+    const entries = w._bladeEntries();
+    const eA = entries.find((e) => e.owner === A), eB = entries.find((e) => e.owner === B);
+    assert(eA.team === asTeam(A.team) && eB.team === asTeam(B.team),
+      `_bladeEntries published sides ${eA.team}/${eB.team} for players on ${A.team}/${B.team} — `
+      + 'Bolts.update decides whether a bolt is hostile to a guard by comparing against that number');
+
+    const bolt = pool.fire(V(0, 1.35, -6), V(0, 0, 1), { speed: 40, team: asTeam(B.team), damage: 11 });
+    swing(sA, V(-0.35, 1.35, -0.4), V(0.35, 1.35, -0.4));
+    let pt = sA.pointAt(0.6, new THREE.Vector3());
+    w._onBoltDeflect(bolt, eA, { bladeT: 0.6, point: pt }, pt.clone());
+    assert(A.deflects === 1, 'the first duellist could not deflect a bolt at all');
+    assert(bolt.team === asTeam(A.team),
+      `a bolt returned by the player on side ${A.team} came away stamped team ${bolt.team} — a duel `
+      + 'has no party, so a flat 0 makes it friendly to whoever holds that number');
+
+    // …and now the other side answers it, which is the whole of the defect
+    swing(sB, V(-0.35, 1.35, 0.4), V(0.35, 1.35, 0.4));
+    pt = sB.pointAt(0.6, new THREE.Vector3());
+    w._onBoltDeflect(bolt, eB, { bladeT: 0.6, point: pt }, pt.clone());
+    assert(B.deflects === 1,
+      `the duellist on side ${B.team} watched a bolt returned by side ${A.team} pass through their `
+      + 'blade — and Bolts.update has already marked it consumed, so it phases through their body too');
+    assert(bolt.team === asTeam(B.team) && bolt.deflector === B,
+      `the answered bolt is still stamped team ${bolt.team} — it was not handed back`);
+
+    // the same gate in the other direction: nobody re-deflects their own return
+    const again = B.deflects;
+    w._onBoltDeflect(bolt, eB, { bladeT: 0.6, point: pt }, pt.clone());
+    assert(B.deflects === again,
+      'a duellist deflected a bolt that was already theirs — "ours" has stopped being a question '
+      + 'about sides in the other direction');
+    pool.dispose();
+    return `side ${A.team} returns → team ${asTeam(A.team)}; side ${B.team} answers → `
+      + `team ${asTeam(B.team)}; neither can re-deflect their own`;
+  });
 }
 
 /** A muzzle clear of the shooter's own capsule, pointing at the victim. */

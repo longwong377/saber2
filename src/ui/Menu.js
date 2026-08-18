@@ -104,7 +104,7 @@ import { applyReticle, shapeAt, colorAt, RETICLE_SHAPES, RETICLE_COLORS, EMOTES,
          rosterHtml } from './HUD.js';
 import { QUALITY } from '../engine/Engine.js';
 import { ACTIONS, MOUSE, WHEEL, keyLabel, loadBindings, saveBindings, defaultBindings, resolveConflicts,
-         WALK_SCALE, walkScale, registerOrders, ORDER_ACTIONS,
+         conflicts, chordKey, WALK_SCALE, walkScale, registerOrders, ORDER_ACTIONS,
          codesFor, isPadCode, PAD_MODIFIERS } from '../engine/Bindings.js';
 // The six formation orders, so they can be pushed through Bindings' seam below.
 import { AREAS, FORMATIONS, MAX_STRENGTH, TEAM_DAMAGE_DEFAULT, DEFAULT_FORMATION } from '../game/Command.js';
@@ -4655,11 +4655,42 @@ export class Menu {
      * appearance, so the list still reads Movement, Blade, Force, Interface,
      * Training the way the table intends.
      */
-    const render = () => {
+    const render = (note = '') => {
       const grouped = new Map();
       for (const a of ACTIONS) {
         if (!grouped.has(a.group)) grouped.set(a.group, []);
         grouped.get(a.group).push(a);
+      }
+      /**
+       * THE CLASHES THE TABLE IS CARRYING, PAINTED ON THE ROWS THAT HAVE THEM.
+       *
+       * `conflicts()` had no caller anywhere in src/ — its definition and one
+       * comment — while `.bindrow b.conflict{background:var(--danger)}` had sat
+       * in styles.css with nothing that ever added the class. The rebinder's
+       * only account of a clash was a sentence in `#bind-hint`, which the next
+       * rebind clears: measured by binding all fifty actions to one key, the
+       * hint named the last refusal only, K was left answering for EIGHT
+       * actions — seven of them formation orders — and not one row on screen
+       * said so. `resolveConflicts` refuses to take an action's last key by
+       * design, so a duplicate the player can see is the intended outcome and
+       * the seeing half was missing.
+       *
+       * Keyed by `chordKey`, not by the spelling, so `PadLB+PadBack` and
+       * `PadBack+PadLB` light the same two rows. See the note over chordKey.
+       */
+      const clash = new Map();
+      for (const { code, ids } of conflicts(this.bindings)) clash.set(chordKey(code), ids);
+      // …and a standing line under the list, because a clash six rows below the
+      // scroller's fold is a red chip nobody is looking at. Only while nothing
+      // is listening: the listener owns this line for the length of a rebind.
+      if (hint && !this._listening) {
+        // `note` is what the rebind that just finished has to say — it names
+        // the one action and beats the census, which the red chips already
+        // show. Without this the refusal sentence was overwritten by the
+        // repaint one line after it was written.
+        hint.textContent = note || (clash.size
+          ? `${clash.size} key${clash.size > 1 ? 's are' : ' is'} bound to more than one action — marked in red`
+          : '');
       }
       for (const host of hosts) {
       host.innerHTML = '';
@@ -4680,6 +4711,16 @@ export class Menu {
             const b = document.createElement('b');
             b.textContent = keyLabel(bound[i], this.pad?.family || 'xbox');
             b.title = bound[i] ? 'Click to rebind, right-click to clear' : 'Click to add a key';
+            const shared = bound[i] ? clash.get(chordKey(bound[i])) : null;
+            if (shared && shared.length > 1) {
+              b.classList.add('conflict');
+              const others = shared.filter(id => id !== a.id)
+                .map(id => ACTIONS.find(x => x.id === id)?.label || id);
+              // Named, not just coloured: a red chip says something is wrong
+              // and a red chip that names the other action says what to fix.
+              b.title = `${keyLabel(bound[i], this.pad?.family || 'xbox')} is also `
+                + `${others.join(', ')} — click to rebind`;
+            }
             // A key chip is a control, so it takes focus and answers Enter and
             // Space — rebinding the keyboard was itself mouse-only.
             this._activate(b, () => listen(a, i, b), `rebind ${a.label}`);
@@ -4710,6 +4751,7 @@ export class Menu {
       if (hint) hint.textContent = 'press a key or mouse button — Esc to cancel';
 
       const finish = (code) => {
+        let note = '';
         window.removeEventListener('keydown', onKey, true);
         window.removeEventListener('mousedown', onMouse, true);
         window.removeEventListener('wheel', onWheel, true);
@@ -4723,8 +4765,8 @@ export class Menu {
           // that was still a duplicate — the resolver could not settle the one
           // table that came out of the box needing it.
           const { refused } = resolveConflicts(this.bindings, code, action.id);
-          if (refused.length && hint) {
-            hint.textContent = `${keyLabel(code)} is the last key on `
+          if (refused.length) {
+            note = `${keyLabel(code)} is the last key on `
               + `${refused.map(id => ACTIONS.find(a => a.id === id)?.label || id).join(', ')} — `
               + 'it is bound to both. Give that one another key first.';
           }
@@ -4735,7 +4777,7 @@ export class Menu {
           this.hooks.onBindings?.(this.bindings);
           audio.ui('click');
         }
-        render();
+        render(note);
       };
       const onKey = (e) => {
         e.preventDefault(); e.stopPropagation();

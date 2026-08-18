@@ -17,7 +17,7 @@ import { Rig, BipedAnimator, aimY, limbScale } from './Rig.js';
 import { dropSaber, hiltWithinReach, ageDropped } from './Dropped.js';
 import { attachCloak, attachSkirt } from './Cloth.js';
 import { Body, LAYER, capsuleSpheres, capsule } from '../physics/RapierWorld.js';
-import { supportHeight, topOfProps, STEP_UP, GROUND_SNAP } from '../physics/Support.js';
+import { supportHeight, topOfProps, ceilingHeight, STEP_UP, GROUND_SNAP } from '../physics/Support.js';
 import { walkScale } from '../engine/Bindings.js';
 import { RankSet, rankScale } from './Waves.js';
 import { parryScale, TOUGHNESS } from './Combat.js';
@@ -501,7 +501,34 @@ const FLIP_TIME = 0.52;
  * because it buys the same thing: one committed movement that cannot be spammed
  * through a fight.
  */
-const DIVE_SPEED = 30, DIVE_CLEAR = 1.2, DIVE_STAMINA = 18;
+const DASH_STAMINA = 18;
+const DIVE_SPEED = 30, DIVE_CLEAR = 1.2, DIVE_STAMINA = DASH_STAMINA;
+/**
+ * SPRINTING USED TO COST NOTHING, and neither did dashing.
+ *
+ * The drain is 11/s while sprinting and `_regen` handed back
+ * `(16 + 10*(1 - combatIntensity)) * staminaRegen` every frame unconditionally
+ * — a FLOOR of 13.6/s at the worst order multiplier and full combat heat, a
+ * ceiling of 26/s out of it. Measured on a default profile: 30 s of sprinting
+ * from an EMPTY bar ended at 100.0 stamina having covered 222.8 m, and 20 s
+ * ended at 100.0 over 148.7 m. The dash inherited it — 18 a dash against 26/s
+ * of regen and a 0.55 s cooldown is a net 1.6 — so the two most committing
+ * movements in the game were both free.
+ *
+ * The rule is the one every stamina bar has: it does not refill while it is
+ * being spent, and not for a moment after. `STAMINA_HOLD` is longer than
+ * `cooldowns.dash` (0.55) on purpose — a dash chained at its own cooldown
+ * ceiling must not refund itself between dashes, which is exactly what made 27
+ * dashes in 15 s possible without dropping below half a bar.
+ *
+ * `SPRINT_START` is hysteresis and it is not decoration. The sprint gate is
+ * `stamina > SPRINT_FLOOR`, so with regen paused the bar lands on that line and
+ * a single regen frame lifts it back over: the run would flicker on and off at
+ * one frame in thirty-six, in the speed, the FOV and the gait at once. You
+ * cannot break into a run on fumes; once you are running you may spend down to
+ * the last of it.
+ */
+const SPRINT_DRAIN = 11, SPRINT_FLOOR = 4, SPRINT_START = 20, STAMINA_HOLD = 0.6;
 /** How much bigger a dive's landing is than the same speed arrived at by
  *  accident. Radius and impulse take it once, damage twice — the blade is what
  *  makes the difference and the blade is a damage term. */
@@ -1201,6 +1228,23 @@ export class CameraRig {
     this.shot = {
       t: 0,
       dur: clamp(opts.seconds ?? 3.4, 0.5, 12),
+      /**
+       * WHETHER THE SHOT MAY MOVE — and NOT whether it happens at all.
+       *
+       * The one line that gets a first-person lens out of the corpse lives in
+       * `update`, and it lived inside `if (shot)`, and the shot was begun only
+       * when `feelOn('shake') !== false` — an ordinary user checkbox. So a
+       * player who had turned camera shake off died INSIDE THEIR OWN HEAD:
+       * measured with shake off, shot NONE, `firstPerson` still true, the lens
+       * 1.02 m from the ragdoll's middle, for the whole death.
+       *
+       * Coming off the body is not motion feedback, it is the difference
+       * between watching a death and watching the inside of a skull, so the
+       * shot is always taken and only its SCRIPT — the turn, the drift, the
+       * boom, the lens — answers to the toggle. With motion off the still
+       * frame in `_updateDead` owns the boom exactly as it did before.
+       */
+      motion: opts.motion !== false,
       // Away from whatever the body was facing, so the camera swings to look at
       // the front of it rather than following it down from behind.
       turn: (this.shoulderSide >= 0 ? 1 : -1) * (opts.turn ?? 0.62),
@@ -1379,11 +1423,16 @@ export class CameraRig {
     const shot = this.shot;
     if (shot) {
       shot.t = Math.min(shot.dur, shot.t + Math.max(dt, 0));
+      // OUT OF THE HEAD FIRST, and outside the script: a first-person death
+      // has to come out of the head whether or not the camera is allowed to
+      // move afterwards. See `motion` in beginDeathShot for the measurement.
+      this.firstPerson = false;
+    }
+    if (shot && shot.motion) {
       const k = shot.t / shot.dur;
       // ease-out on everything, so the move is quick where it is informative
       // (getting off the shoulder and onto the body) and slow where it is not.
       const e = 1 - Math.pow(1 - k, 2.2);
-      this.firstPerson = false;
       this.yaw = shot.yaw0 + shot.turn * e;
       this.pitch = lerp(this.pitch, -0.52, Math.min(1, dt * 2.4));
       this.targetDistance = lerp(3.05, 5.1, e);
@@ -2234,6 +2283,12 @@ export class Player {
     this.coyote = 0;
     this.jumpHeld = 0;
     this.dashTimer = 0;
+    /** Seconds until stamina may refill again. See STAMINA_HOLD. */
+    this.staminaHold = 0;
+    /** Running last frame — the other half of SPRINT_START's hysteresis. */
+    this._sprinting = false;
+    /** Where the feet were at the top of this frame; _collide sweeps from it. */
+    this._sweepFromY = this.position.y;
     /** Committed to a slam. Set by `_tryDive`, cleared by `_land`. */
     this.diving = false;
     this.dashDir = new THREE.Vector3();
@@ -2700,6 +2755,19 @@ export class Player {
    * `stratagems.arming` for itself, so exactly one place decides that a player
    * spelling a code is standing still, and it is the place that owns walking.
    */
+  /**
+   * ARE YOU SPELLING A CODE RIGHT NOW?
+   *
+   * One reader for a rule that had one writer and three verbs that walked past
+   * it. `_move` zeroed the move axis and nothing else did, so the lock the
+   * whole mechanic is priced on — "you stop, in the open, for as long as the
+   * code takes" — held for the run and not for the dash, the jump or the dive.
+   * Measured: arming + run 0.00 m, arming + dash 3.87 m with 0.16 s of
+   * invulnerability, arming + jump a 4.32 m apex. The WASD you are spelling
+   * with doubles as the dash direction, so the escape was aimed.
+   */
+  _spelling() { return !!this.stratagems?.arming; }
+
   _stratagemInput(input, ctx) {
     const S = this.stratagems;
     if (!S) return;
@@ -2736,12 +2804,14 @@ export class Player {
    * the run carries the arc forward and lets a dive be aimed at something.
    */
   _tryDive(ctx) {
+    if (this._spelling()) return this._refuse('dive', 'you are calling in a stratagem');
     if (this.grounded || this.diving || this.dashTimer > 0) return false;
     if (this.velocity.y > 2) return false;              // still going up: that is a jump
     const ground = ctx.terrain ? ctx.terrain.height(this.position.x, this.position.z) : 0;
     if (this.position.y - ground < DIVE_CLEAR) return false;
     if (this.stamina < DIVE_STAMINA) return this._refuse('dive', 'no stamina left to drive it');
     this.stamina -= DIVE_STAMINA;
+    this.staminaHold = STAMINA_HOLD;
     this.diving = true;
     this.velocity.y = -DIVE_SPEED;
     this.velocity.x *= 0.34; this.velocity.z *= 0.34;
@@ -2837,9 +2907,12 @@ export class Player {
      *
      * It is also the cost the whole mechanic is built on: you stop, in the
      * open, for as long as the code takes. See Stratagems.js. */
-    if (this.stratagems?.arming) { axis.x = 0; axis.y = 0; }
+    if (this._spelling()) { axis.x = 0; axis.y = 0; }
 
-    const sprinting = this.isLocal && input.act('sprint') && axis.y > 0.2 && this.stamina > 4;
+    /* THE START IS DEARER THAN THE CONTINUATION — see SPRINT_START. */
+    const sprintGate = this._sprinting ? SPRINT_FLOOR : SPRINT_START;
+    const sprinting = this.isLocal && input.act('sprint') && axis.y > 0.2 && this.stamina > sprintGate;
+    this._sprinting = sprinting;
     const crouching = this.isLocal && input.act('crouch');
     this.crouch = damp(this.crouch, crouching ? 1 : 0, 12, dt);
 
@@ -2906,7 +2979,14 @@ export class Player {
 
     if (this.isLocal) {
       if (input.actHit('jump')) {
-        if (this.coyote > 0) {
+        /* A LEAP IS AN ESCAPE, AND THE LOCK IS THE PRICE OF THE CODE.
+         * `_move` zeroes the move axis while a stratagem is being spelled and
+         * its note calls that the cost the whole mechanic is built on — "you
+         * stop, in the open, for as long as the code takes". The jump was not
+         * in the lock at all: measured, arming + jump was a 4.70 m apex while
+         * arming + run was 0.00 m of travel. */
+        if (this._spelling()) this._refuse('jump', 'you are calling in a stratagem');
+        else if (this.coyote > 0) {
           this.velocity.y = 7.4 * this.boonMods.jumpPower;
           this.grounded = false; this.coyote = 0;
           /* Note 22's longer force jump. Net upward acceleration while the
@@ -2930,14 +3010,29 @@ export class Player {
         }
       }
       // holding jump feeds the Force into the leap — a real, controllable arc
-      if (input.act('jump') && this.jumpHeld > 0 && this.velocity.y > 0 && this.force > 0) {
-        this._spend(34 * dt);
-        this.velocity.y += 20 * dt;
-        this.jumpHeld -= dt;
-        if (ctx.particles && rng() < 0.5) {
-          _v5.copy(this.position).setY(this.position.y + 0.1);
-          ctx.particles.dust.spawn(_v5, _v6.set((rng() - .5) * 2, -1, (rng() - .5) * 2),
-            { life: 0.6, size: 0.3, drag: 2, gravity: -1, color: 0xd8c8a8, alpha: 0.16, floor: this.position.y });
+      //
+      // AND THE LIFT ONLY ARRIVES IF THE FORCE IS ACTUALLY BOUGHT. This was
+      // `this._spend(34 * dt); this.velocity.y += 20 * dt;` with the spend's
+      // answer dropped on the floor — and `_spend` deducts NOTHING when it
+      // refuses, so below the tick price the impulse was simply free. Measured:
+      // 0.4 Force bought the identical 4.32 m apex that 125 Force bought, and
+      // the 7.5/s regen outran the bill, so the full force-jump was permanent
+      // at an empty bar. `force > 0` was the only gate and it is not one: the
+      // price is `34 * dt * forceDrain * forceCost`, which is what `_spend`
+      // evaluates and why the test has to BE the spend rather than sit beside
+      // it. Refusing also ends the window, so the arc stops where the Force
+      // ran out instead of coasting on a silent refusal for the rest of it.
+      if (input.act('jump') && this.jumpHeld > 0 && this.velocity.y > 0) {
+        if (!this._spend(34 * dt)) {
+          this.jumpHeld = 0;
+        } else {
+          this.velocity.y += 20 * dt;
+          this.jumpHeld -= dt;
+          if (ctx.particles && rng() < 0.5) {
+            _v5.copy(this.position).setY(this.position.y + 0.1);
+            ctx.particles.dust.spawn(_v5, _v6.set((rng() - .5) * 2, -1, (rng() - .5) * 2),
+              { life: 0.6, size: 0.3, drag: 2, gravity: -1, color: 0xd8c8a8, alpha: 0.16, floor: this.position.y });
+          }
         }
       } else this.jumpHeld = 0;
     }
@@ -2945,6 +3040,10 @@ export class Player {
     // ── gravity + integrate
     if (!this.grounded) this.velocity.y -= 24 * dt;
     this.fallSpeed = Math.min(this.fallSpeed, this.velocity.y);
+    /* WHERE THE FEET STARTED THIS FRAME — read by _collide, which is a SWEEP
+     * over the step and not a sample at the end of it. See _collide's own note
+     * for the dive that went through a hangar roof AND the deck under it. */
+    this._sweepFromY = this.position.y;
     this.position.addScaledVector(this.velocity, dt);
 
     // ── collide
@@ -2961,8 +3060,13 @@ export class Player {
     while (d < -Math.PI) d += TAU;
     this.facing += d * Math.min(1, dt * 13);
 
-    // stamina from sprinting
-    if (sprinting) this.stamina = Math.max(0, this.stamina - 11 * dt);
+    // stamina from sprinting — and the bar does not refill while it is going
+    // out. See STAMINA_HOLD: without this the regen ceiling of 26/s paid the
+    // 11/s drain twice over and a 30 s sprint from empty ENDED FULL.
+    if (sprinting) {
+      this.stamina = Math.max(0, this.stamina - SPRINT_DRAIN * dt);
+      this.staminaHold = STAMINA_HOLD;
+    }
   }
 
   /**
@@ -3006,6 +3110,20 @@ export class Player {
       x, z, feetY, this.radius, STEP_UP);
     // …and the things you can stand on but not shove, raised above it.
     return topOfProps(this._nearDecks, x, z, feetY, this.radius, STEP_UP, floor);
+  }
+
+  /**
+   * How far above the feet the top of the head is, right now.
+   *
+   * `height` is the standing figure; the crouch takes off exactly what it
+   * takes off the eye line — EYE_H -> EYE_H_CROUCH, the same 0.40 m the chest
+   * and the camera already move by — rather than a second number for how low a
+   * crouch is. Scaled by the same stature the chest and eye heights are, so a
+   * 0.66 m player ducks under things a 1.78 m one does not.
+   */
+  _crownHeight() {
+    const st = this.limbs?.stand ?? this.stature ?? 1;
+    return this.height * st - (EYE_H - lerp(EYE_H, EYE_H_CROUCH, this.crouch)) * st;
   }
 
   /** The short list of colliders near enough to matter, rebuilt once a frame. */
@@ -3135,7 +3253,26 @@ export class Player {
      */
     terrain?.blockClimb?.(this.position, this.velocity);
     const gh = terrain ? terrain.height(this.position.x, this.position.z) : 0;
-    const support = this._supportAt(ctx, this.position.x, this.position.z, this.position.y);
+    /**
+     * THE QUERY COVERS THE WHOLE STEP, not the end of it.
+     *
+     * `supportHeight` only answers with a surface within STEP_UP (0.45) below
+     * the feet, and the grounding window is GROUND_SNAP (0.12) above it — so a
+     * frame that steps further than 0.57 m passes clean between the two and
+     * the surface is never seen at all. That is 34.2 m/s at 1/60, and
+     * DIVE_SPEED is 30 with gravity still adding: measured on a stub hangar,
+     * the same column, a dive from 25 m rests on the roof at y=22.80 and a
+     * dive from 60 m went through the roof AND the deck to y=0.00.
+     *
+     * Asking with the feet where they were at the TOP of the step closes it:
+     * every surface crossed during the step is within STEP_UP of where the
+     * feet were when the frame began, so it answers, and the clamp below puts
+     * the body on it. Rising, `_sweepFromY` is BELOW the current position and
+     * the max is the current position — which is the old behaviour exactly,
+     * so a jump past a ledge still cannot be snatched onto it.
+     */
+    const sweepFrom = Math.max(this.position.y, this._sweepFromY ?? this.position.y);
+    const support = this._supportAt(ctx, this.position.x, this.position.z, sweepFrom);
     this.supportY = support;
     // Never inside it: a body below the surface it is standing on is the
     // "phase into it" the player described, and it is unconditional.
@@ -3163,6 +3300,40 @@ export class Player {
       }
     } else if (this.position.y > support + 0.06) {
       this.grounded = false;
+    }
+
+    /**
+     * AND THE THING OVER YOUR HEAD.
+     *
+     * There was no ceiling in this game. The loop above skips upward faces
+     * because floors belong to the support query — correct — and then does
+     * `_v5.y = 0`, which for a DOWNWARD face is the entire normal, so the
+     * contact was found and discarded. Vertical resolution existed in one
+     * direction only. Measured on a slab spanning y=3.5..4.5: the jump crossed
+     * the underside at f38, was 0.5 m inside solid slab at f42, and STEP_UP
+     * snapped the body out onto the ROOF at f57 — free entry to every interior
+     * from below (11 roofs across the nine levels).
+     *
+     * The crown, not the collider's mid-body sphere: that sphere is 0.89 m up
+     * with a 0.38 m reach, so resolving against it would leave half a metre of
+     * head inside the slab. It drops with the crouch by exactly what the eyes
+     * drop by — one rule for how far a crouch lowers you, not two — so
+     * crouching does clear a beam the standing body will not.
+     *
+     * Clamped against `support` so a ceiling can never push the body below the
+     * floor it is standing on: a slab too low to stand under stops the head
+     * where the ceiling is and no further, which is a squeeze and not a
+     * trapdoor.
+     */
+    const ceiling = ceilingHeight(this._nearBoxes, this.position.x, this.position.z,
+      sweepFrom, this.radius, STEP_UP);
+    if (ceiling < Infinity) {
+      const crown = this.position.y + this._crownHeight();
+      if (crown > ceiling) {
+        this.position.y = Math.max(support, this.position.y - (crown - ceiling));
+        if (this.velocity.y > 0) this.velocity.y = 0;
+        this.jumpHeld = 0;     // the Force is not pushing you through a roof
+      }
     }
 
     if (terrain && !terrain.inBounds(this.position.x, this.position.z, 6)) {
@@ -3277,7 +3448,31 @@ export class Player {
   }
 
   _tryDash(ctx) {
-    if (this.stamina < 18) return;
+    /**
+     * THREE REFUSALS, AND ALL THREE SAY SO.
+     *
+     * `_refuse`'s own header is the rule — "a bound key that does nothing and
+     * does not say why is the same lie as a dead checkbox" — and all eleven
+     * Force powers obey it. The dash opened with a bare `return` on the
+     * stamina.
+     *
+     * THE LOCK. `_move` zeroes the move axis while a stratagem is being
+     * spelled; this method reads `moveAxis()` FRESH, past the zeroing, so the
+     * one verb that could not be locked out was the one aimed by the very keys
+     * the code is spelled with. Measured: 3.87 m of travel and 0.16 s of
+     * invulnerability out of a lock that held a run to 0.00 m.
+     *
+     * THE DIVE. `_tryDive` refuses while `dashTimer > 0` and this had no
+     * mirror clause, so the pair was only exclusive in one direction: a dive
+     * could be dashed. Measured — a 31.6 m/s descent, steerable, wearing the
+     * somersault, with 0.28 s of invulnerability, for 36 stamina. A commitment
+     * you can steer out of is not one.
+     */
+    if (this._spelling()) return this._refuse('dash', 'you are calling in a stratagem');
+    if (this.diving) return this._refuse('dash', 'committed to the dive');
+    if (this.stamina < DASH_STAMINA) {
+      return this._refuse('dash', `${DASH_STAMINA} stamina needed, you have ${Math.round(this.stamina)}`);
+    }
     const axis = ctx.input.moveAxis(_axis);
     const fwd = _v1.set(Math.sin(this.camera.yaw), 0, Math.cos(this.camera.yaw)).negate();
     const right = _v2.set(fwd.z, 0, -fwd.x).negate();
@@ -3293,7 +3488,8 @@ export class Player {
      * comment already claims it is. `cooldowns.dash = 0.55` still gates it, so
      * the rate is unchanged and only the distance moves. */
     this.dashTimer = 0.24;
-    this.stamina -= 18;
+    this.stamina -= DASH_STAMINA;
+    this.staminaHold = STAMINA_HOLD;   // and it does not refill between dashes
     this.cooldowns.dash = 0.55;
     this.invuln = Math.max(this.invuln, 0.16);
     /* AIRBORNE ONLY. A dodge with a foot on the ground is a sidestep and it
@@ -4471,12 +4667,25 @@ export class Player {
 
   _regen(dt) {
     const combatHot = this.world.combatIntensity ?? 0;
-    this.stamina = Math.min(this.maxStamina, this.stamina + (16 + 10 * (1 - combatHot)) * dt * this.boonMods.staminaRegen);
+    /* THE BAR DOES NOT REFILL WHILE IT IS GOING OUT. See STAMINA_HOLD for the
+     * 30 s sprint from empty that ended full, and for why the hold outlasts
+     * the dash cooldown it is measured against. */
+    if (this.staminaHold > 0) this.staminaHold = Math.max(0, this.staminaHold - dt);
+    else this.stamina = Math.min(this.maxStamina, this.stamina + (16 + 10 * (1 - combatHot)) * dt * this.boonMods.staminaRegen);
     this.force = Math.min(this.maxForce, this.force + (this.senseActive ? 0 : 7.5) * dt);
     // Flow bleeds unless you keep earning it
     this.flow = clamp(this.flow - dt * 0.085, 0, 1);
     if (this.senseActive) {
-      this.force -= 22 * dt;
+      /* THE POOL HAS A FLOOR AND THIS LINE WENT THROUGH IT. `force -= 22 * dt`
+       * was unclamped and the shutdown below fires a frame AFTER the pool is
+       * already under: measured -0.3333 at 1/60 from a full-price Sense, and a
+       * 22-verb randomised fuzz across all nine levels turned up seven
+       * negatives (-0.1405, -0.0110, -0.1170, -0.1529, -0.0721, -0.1038,
+       * -0.0462). Every other drain in the file goes through `_spend`, which
+       * refuses rather than overdraws; this one is a per-frame hold, so it
+       * takes what is left and stops. A negative pool is a HUD bar drawn below
+       * zero and a `_canSpend` answered against a debt. */
+      this.force = Math.max(0, this.force - 22 * dt);
       if (this.force <= 0) this.toggleSense(this.world);
     }
   }
@@ -5036,7 +5245,13 @@ export class Player {
 
   toggleGrip(ctx) {
     if (this.gripBody || this.gripEnemy) { this.releaseGrip(); return; }
-    if (!this._canSpend(POWER_COST.grip)) return;
+    /* AND IT SAYS SO. A bare `return` here was the second of the file's two
+     * silent refusals — see `_refuse`'s own header, which all eleven powers
+     * obey and this one did not. `_priceOf` rather than the list number,
+     * because the gate below charges `cost * forceDrain * forceCost`. */
+    if (!this._canSpend(POWER_COST.grip)) {
+      return this._refuse('force grip', `${this._priceOf(POWER_COST.grip)} Force needed, you have ${Math.round(this.force)}`);
+    }
 
     const target = this._pickGripTarget(ctx);
     this.lastGripRefusal = null;
@@ -5103,6 +5318,22 @@ export class Player {
       return;
     }
 
+    /**
+     * AND NOW IT IS PAID FOR.
+     *
+     * `POWER_COST.grip = 10` was CHECKED above and never charged: the only bill
+     * was the per-second hold, so the HUD drew a price tag on a threshold and a
+     * player watching the pool saw 100 Force go to 100 Force. Measured before
+     * this line existed: grip at 100 Force left 100.00.
+     *
+     * Charged HERE and not at the gate, because everything between the two is a
+     * refusal — no target, too heavy, or a body no Force Power will move — and
+     * you are not billed for pointing at a wall. The gate stays where it is so
+     * an empty pool is answered before a target is even looked for.
+     */
+    if (!this._spend(POWER_COST.grip)) {
+      return this._refuse('force grip', `${this._priceOf(POWER_COST.grip)} Force needed, you have ${Math.round(this.force)}`);
+    }
     this._gesture('grip');
     const lead = this.camera.pos.distanceTo(this.chest);
     this.gripDistance = clamp(target.distance, lead + 1.4, lead + this.forceReach);
@@ -7003,11 +7234,13 @@ export class Player {
        * are the two cues that cost no movement at all. */
       w.engine?.setDrain?.(0.72);
       w.engine?.setBars?.(0.085);
-      if (w.feelOn?.('shake') !== false) {
-        w.engine?.rumble?.(0.9, 0.5, 620);
-        // A death is the one moment the camera is allowed to take the frame over.
-        this.camera.beginDeathShot?.();
-      }
+      if (w.feelOn?.('shake') !== false) w.engine?.rumble?.(0.9, 0.5, 620);
+      /* A death is the one moment the camera is allowed to take the frame over
+       * — and it takes it either way. The `shake` toggle governs the SCRIPT
+       * (the turn, the drift, the boom, the lens); what it must not govern is
+       * whether a first-person lens leaves the corpse it is standing inside.
+       * See `motion` in Camera.beginDeathShot. */
+      this.camera.beginDeathShot?.({ motion: w.feelOn?.('shake') !== false });
       w.killTime?.(0.34, 2.4);
     } else audio.ui('bad');
     /**
@@ -7055,7 +7288,7 @@ export class Player {
     // are what the camera does for a death with the shot turned off (a peer's
     // body, or a player who has motion feedback off), and they are the reason
     // the shot is a script over the rig rather than a replacement for it.
-    if (!this.camera.shot) {
+    if (!this.camera.shot?.motion) {
       this.camera.targetDistance = 4.4;
       this.camera.pitch = damp(this.camera.pitch, -0.42, 2, dt);
     }
@@ -7090,6 +7323,29 @@ export class Player {
     this.hp = this.maxHp; this.force = this.maxForce; this.stamina = this.maxStamina;
     this.flow = 0; this.combo = 0;
     this.velocity.set(0, 0, 0);
+    /**
+     * AND THE FALL YOU DIED IN DOES NOT ARRIVE AT THE PLACE YOU CAME BACK.
+     *
+     * `fallSpeed` is the most negative velocity.y since the last contact and
+     * `diving` is a commitment that only an impact may answer — both are state
+     * of a body that no longer exists, and this line reset neither. The next
+     * frame `_collide` saw `!wasGrounded && fallSpeed < -7` and fired
+     * `_land(ctx, 23.6)` AT THE REVIVE POINT, with `dove` true so the DIVE_LAND
+     * multiplier was on it. Measured: a trooper 3 m from the spawn went 46 ->
+     * 18.7 hp and was thrown at 14.8 m/s, the ground cratered, the camera shook
+     * 0.55, and the player took none of it because `invuln` is 2.2 two lines
+     * down. Reachable through `World._reviveDowned`, which is the co-op
+     * wave-clear revive and runs once per death for the whole session.
+     *
+     * `_sweepFromY` goes with them: it is where the feet were last frame, and
+     * after a respawn there is no last frame — leaving it at the height you
+     * died at would make _collide's sweep look for floor along a line the body
+     * never travelled.
+     */
+    this.fallSpeed = 0;
+    this.diving = false;
+    this.jumpHeld = 0;
+    this._sweepFromY = pos ? pos.y : this.position.y;
     if (pos) this.position.copy(pos);
     this.invuln = 2.2;
     if (this.actor) { this.actor.dispose(); this.actor = null; }

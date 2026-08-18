@@ -198,4 +198,95 @@ export async function run({ check, assert }) {
     return `stone ${stoneNow.toFixed(3)} → ${stoneLater.toFixed(3)} (kept), `
       + `flesh ${fleshNow.toFixed(3)} → ${fleshLater.toFixed(3)} (faded)`;
   });
+
+  check('cut: a blade held in a lock does not also dismember what it is locked with', async () => {
+    /**
+     * A LOCK OWNS BOTH BLADES, AND ONLY ONE OF THE TWO LOOPS KNEW IT.
+     *
+     * `World._resolveBlades` stands the ENEMY down for a locked duellist
+     * (`if (e.lock) continue`), and `Enemy._saberStrike` stands down again
+     * while the steel is crossed. The PLAYER's loop had neither guard, so the
+     * blade went on being solved against the body it was locked with — and a
+     * lock is won by driving the mouse hard, which is the same input that feeds
+     * the solver. So the correct way to WIN a lock was also the way to take
+     * your opponent apart for free while their blade was barred from answering.
+     * Measured on the shipped build with both fighters locked and
+     * `bladesTouching` true, over twelve frames: 1 cut billed, a forearm
+     * severed, 20.63 hp of grind and +60 score.
+     *
+     * WHY NOTHING HERE SAW IT. Every other check in this file drives
+     * `BladeContactSolver` directly — which is right for the model and blind to
+     * the loop, and the loop is where the guard lives. This one goes through
+     * the shipped `World._resolveBlades` and asserts about the till, not about
+     * the contact: the blades really are touching and the solver really does
+     * report, which is the setup half below.
+     *
+     * World.js is imported inside the check body, never at module scope —
+     * HANDOFF §2.1.
+     */
+    const { World } = await import('../../src/game/World.js');
+    const { bladesTouching } = await import('../../src/game/Combat.js');
+    const blade = () => { const s = new Saber(scene, { length: 1.3 }); s.lit = true; s.ignition = 1; return s; };
+
+    const run = (locked) => {
+      const bill = { cuts: 0, grinds: 0, dmg: 0 };
+      const ps = blade();
+      const player = {
+        alive: true, saber: ps, isLocal: false, team: 0, id: 'p', score: 0,
+        limbsRemoved: 0, combo: 0, comboTimer: 0, position: V(0, 0, 0), chest: V(0, 1.35, 0),
+        boonMods: { cutPower: 1, lifesteal: 0 }, addFlow() {}, heal() {},
+        camera: { addShake() {}, pos: V(0, 1.4, 0) }, control: {}, lockState: null,
+      };
+      /* The control column carries NO blade. With one, `_applyClash` sees the
+       * bind and builds a real BladeLock on the first frame, so "unlocked"
+       * would be a lock two frames later and both columns would read clean.
+       * Same sweep, same body, same solver — the only thing missing is the
+       * steel that would have crossed. */
+      const enemy = {
+        id: 'e', dead: false, team: 1, hp: 150, maxHp: 150, position: V(0, 0, -1.6),
+        A: { scale: 1 }, saber: locked ? blade() : null, lock: null, actor: null,
+        capsules: () => [{ name: 'forearmL', p0: V(-0.35, 1.25, -1.5), p1: V(0.35, 1.25, -1.5),
+          r: 0.07, toughness: TOUGHNESS.flesh, vital: 0.3 }],
+        takeCut() { bill.cuts++; return true; },
+        damage(a) { bill.dmg += a; bill.grinds++; return false; },
+      };
+      const w = Object.assign(Object.create(World.prototype), {
+        players: [player], enemies: [enemy], props: [], doors: [], locks: [], _targets: [],
+        bladeSolver: new BladeContactSolver(), rules: { friendlyFire: false }, time: 0,
+        particles: { sparkBurst() {}, plasma: { spawn() {} }, slag() {}, cutFlare() {} },
+        addHitstop() {}, onHitmark() {}, notifyFloating() {}, report() {}, _claim() {},
+        engine: { flash() {} },
+      });
+      // the enemy's blade laid across the player's, which is what a bind IS
+      const eq = new THREE.Quaternion().setFromAxisAngle(V(0, 0, 1), -Math.PI / 2);
+      if (enemy.saber) {
+        enemy.saber.setHiltPose(V(-0.5, 1.5, -1.5), eq); enemy.saber.update(1 / 60, 0);
+        enemy.saber.setHiltPose(V(-0.5, 1.5, -1.5), eq); enemy.saber.update(1 / 60, 1 / 60);
+      }
+
+      const q = new THREE.Quaternion();
+      for (let i = 0; i < 12; i++) {
+        ps.setHiltPose(V(-0.4 + (i % 8) * 0.1, 0.6, -1.5), q);   // driving the mouse hard
+        ps.update(1 / 60, i / 60);
+        w.time += 1 / 60;
+        if (locked) { player.lockState = { done: false }; enemy.lock = player.lockState; }
+        w._resolveBlades(1 / 60);
+      }
+      return { ...bill, touching: !!enemy.saber && bladesTouching(ps, enemy.saber),
+        score: player.score, limbs: player.limbsRemoved };
+    };
+
+    const free = run(false), locked = run(true);
+    assert(locked.touching,
+      'the two blades are not even in contact — this scene is not a lock and proves nothing');
+    assert(free.cuts > 0 || free.dmg > 0,
+      `the same sweep with NO lock billed ${free.cuts} cuts and ${free.dmg.toFixed(2)} hp — the blade `
+      + 'is not reaching the body at all, so the locked column would read clean for the wrong reason');
+    assert(locked.cuts === 0 && locked.grinds === 0,
+      `a blade in a lock still billed ${locked.cuts} cut(s), ${locked.dmg.toFixed(2)} hp of grind and `
+      + `+${locked.score} score against the body it was locked with — the enemy loop stands down for a `
+      + 'lock and the player loop did not, so driving the mouse to win the lock dismembers a fighter '
+      + 'whose blade cannot answer');
+    return `no lock: ${free.cuts} cut(s) / ${free.dmg.toFixed(1)} hp · locked: 0 / 0.0 with the blades touching`;
+  });
 }

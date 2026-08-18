@@ -585,4 +585,68 @@ export async function run({ check, assert }) {
     return `revived in-window keeps ${after}/${before} meshes and is not ragdolled; disposal leaves `
       + '0 live bodies; an ordinary death and a die-revive-die both still ragdoll';
   });
+
+  check('lifecycle: a cut that parts nothing frees the copy it made to try', async () => {
+    /**
+     * `sliceGeometry` converts the mesh to non-indexed before it clips anything
+     * — a whole second copy of position, normal and uv, expanded to three
+     * vertices per triangle — and EVERY prop mesh in the game is indexed, so
+     * every attempt makes one. The dispose stood on the last line of the
+     * function and three of the four returns are above it: the plane missing
+     * the solid, a ring that collapsed to fewer than three unique points, and a
+     * half too small to build.
+     *
+     * Measured on the shipped build with `BoxGeometry`: 50 missed cuts leaked
+     * 50 geometries, 50 tangent cuts leaked 50, 50 REAL cuts leaked none. So
+     * the leak sat on exactly the paths a player triggers by grazing furniture
+     * — the common outcome of a swing near a crate — and not on the one that
+     * anybody watches. Typed arrays on the JS heap, not VRAM, so no GPU counter
+     * moves and the level's own teardown never sees them.
+     *
+     * The rest of this file measures what a LEVEL leaves behind, which is why
+     * it could not see this: nothing is retained here. The clone is garbage the
+     * moment the call returns, and `dispose()` is the only thing that tells the
+     * renderer's caches so. The property is per-call, and it is asserted on all
+     * four exits because the one that worked is the one the tests took.
+     */
+    const { sliceGeometry } = await import('../../src/world/Slice.js');
+    const V = (x, y, z) => new THREE.Vector3(x, y, z);
+    const box = () => new THREE.BoxGeometry(1, 1, 1);
+    assert(!!box().index, 'BoxGeometry is no longer indexed — this check is measuring nothing');
+
+    const count = (n, point, normal) => {
+      let made = 0, freed = 0;
+      const toNon = THREE.BufferGeometry.prototype.toNonIndexed;
+      const dis = THREE.BufferGeometry.prototype.dispose;
+      THREE.BufferGeometry.prototype.toNonIndexed = function () { made++; return toNon.call(this); };
+      THREE.BufferGeometry.prototype.dispose = function () { freed++; return dis.call(this); };
+      try {
+        for (let i = 0; i < n; i++) sliceGeometry(box(), point, normal);
+      } finally {
+        THREE.BufferGeometry.prototype.toNonIndexed = toNon;
+        THREE.BufferGeometry.prototype.dispose = dis;
+      }
+      return { made, freed };
+    };
+
+    const miss = count(50, V(0, 9, 0), V(0, 1, 0));      // the plane never reaches the solid
+    const tangent = count(50, V(0, 0.5, 0), V(0, 1, 0)); // grazes one face: ring under three points
+    const real = count(50, V(0, 0, 0), V(0, 1, 0));      // a genuine cut, the path that worked
+
+    assert(miss.made === 50 && tangent.made === 50 && real.made === 50,
+      `the clone is no longer being made on every call (${miss.made}/${tangent.made}/${real.made} of `
+      + '50) — if slicing has stopped converting to non-indexed this check needs rewriting, not '
+      + 'satisfying');
+    assert(miss.freed >= miss.made,
+      `${miss.made - miss.freed} of ${miss.made} non-indexed clones survived a cut that MISSED — the `
+      + 'geometry a player leaks by grazing furniture');
+    assert(tangent.freed >= tangent.made,
+      `${tangent.made - tangent.freed} of ${tangent.made} clones survived a cut whose cross-section `
+      + 'collapsed — the second early return');
+    assert(real.freed >= real.made,
+      `${real.made - real.freed} of ${real.made} clones survived a REAL cut — the path that was `
+      + 'always right has broken');
+    return `50 misses, 50 tangents, 50 real cuts: ${miss.made + tangent.made + real.made} clones made, `
+      + `${miss.freed + tangent.freed + real.freed} freed`;
+  });
 }

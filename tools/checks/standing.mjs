@@ -33,8 +33,14 @@ function stubWorld() {
     settings: { fov: 60, bloom: false, forcePower: 1, forceDrain: 1 },
     terrain: null, particles: null, bolts: null, time: 0, combatIntensity: 0,
     physics: { add() {}, remove() {}, raycast: () => null, bodies: [], staticBoxes: [] },
-    engine: { addHeat() {}, camera: new THREE.PerspectiveCamera(60, 16 / 9, 0.045, 1000) },
-    report() {},
+    /* `hurt`, `flash` and the rest are here because a body that falls far
+     * enough now actually LANDS on the thing it used to pass through, and a
+     * 67 m arrival costs hp — the fixture has to be able to survive the game
+     * doing its job. */
+    engine: { addHeat() {}, hurt() {}, flash() {}, setRadial() {}, setSense() {}, rumble() {},
+      setDrain() {}, setBars() {}, camera: new THREE.PerspectiveCamera(60, 16 / 9, 0.045, 1000) },
+    report() {}, notify() {}, killTime() {}, setTimeScale() {}, onPlayerDeath() {},
+    feelOn: () => true,
   };
 }
 
@@ -55,6 +61,8 @@ function flatTerrain() {
     normalAt: (x, z, out) => out.set(0, 1, 0),
     inBounds: () => true,
     half: 200,
+    // A footstep asks what it is standing ON, and this fixture now walks.
+    surfaceAt: () => 'sand',
     crater() {},
   };
 }
@@ -131,6 +139,56 @@ function drop(world, fromY, { frames = 240, x = 0, z = 0, enemies = null } = {})
     trace.push({ i, y: p.position.y, grounded: p.grounded, vy: p.velocity.y, landings, footsteps });
   }
   return { p, trace, get landings() { return landings; }, get footsteps() { return footsteps; } };
+}
+
+/**
+ * THE SAME DRIVER, POINTED UP.
+ *
+ * Every other fixture in this file drops a body and asks what caught it, and
+ * that is exactly why twelve checks about what is under the feet stood beside
+ * no check at all about what is over the head: the harness had no way to send
+ * a body upward, so the one direction vertical resolution did not exist in was
+ * also the one direction nothing here could look.
+ *
+ * `jump` presses the real bound action through the real input seam and holds
+ * it for `hold` seconds, so the arc is the shipped Force jump — not a velocity
+ * written onto the body, which would test a number this file made up.
+ */
+function launch(world, { frames = 120, hold = 0.7, x = 0, z = 0, fromY = 0 } = {}) {
+  const p = new Player(world, { isLocal: true });
+  p.position.set(x, fromY, z);
+  p.velocity.set(0, 0, 0);
+  const held = new Set(), hits = new Set();
+  const input = { ...stubInput(), act: (a) => held.has(a), actHit: (a) => hits.has(a) };
+  const ctx = { input, terrain: world.terrain, physics: world.physics, particles: null,
+    camera: world.engine.camera, time: 0, groundColor: 0, enemies: null };
+  const trace = [];
+  for (let i = 0; i < frames; i++) {
+    if (i === 4) { hits.add('jump'); held.add('jump'); }
+    if (i > 4 + hold * 60) held.delete('jump');
+    ctx.time = world.time = i / 60;
+    p.update(1 / 60, ctx);
+    hits.clear();
+    trace.push({ i, y: p.position.y, vy: p.velocity.y, grounded: p.grounded });
+  }
+  return { p, trace, apex: Math.max(...trace.map((r) => r.y)) };
+}
+
+/** Drop a body from `fromY` with no input at all, and return where it stops. */
+function plunge(world, fromY, { frames = 400, dive = false } = {}) {
+  const p = new Player(world, { isLocal: true });
+  p.position.set(0, fromY, 0);
+  p.velocity.set(0, 0, 0);
+  const input = stubInput();
+  const ctx = { input, terrain: world.terrain, physics: world.physics, particles: null,
+    camera: world.engine.camera, time: 0, groundColor: 0, enemies: null };
+  let dived = false;
+  for (let i = 0; i < frames; i++) {
+    ctx.time = world.time = i / 60;
+    if (dive && !dived && i === 6) dived = p._tryDive(ctx);
+    p.update(1 / 60, ctx);
+  }
+  return { p, dived, y: p.position.y };
 }
 
 /** Peak-to-peak of a value over the settled tail of a trace. */
@@ -367,6 +425,85 @@ export async function run({ check, assert, THREE: T }) {
       out.push(`${name} deck ${top.toFixed(2)} m, r ${e.platformRadius.toFixed(2)}`);
     }
     return out.join('; ');
+  });
+
+  check('standing: there is a ceiling, and you stop under it', () => {
+    /**
+     * THERE WAS NO CEILING IN THIS GAME.
+     *
+     * `_collide`'s depenetration loop skips upward faces — correct, floors
+     * belong to the support query — and then flattens what is left with
+     * `_v5.y = 0`, which for a DOWNWARD face is the whole normal. So the
+     * contact under a slab was computed and thrown away, and vertical
+     * resolution existed in one direction only. On the code this replaces, a
+     * jump under a slab spanning y=3.5..4.5 crossed the underside at f38, was
+     * 0.5 m inside solid rock at f42, and STEP_UP snapped the body out ONTO
+     * THE ROOF at f57, where it stood. Swept over the nine shipped levels the
+     * same jump entered 11 roofs from underneath.
+     *
+     * The property is the one a player would state: a roof you jump into is a
+     * roof you hit. Both halves are asserted, because passing the first alone
+     * is what the old code did in the frame before it teleported.
+     */
+    const w = stubWorld();
+    w.terrain = flatTerrain();
+    w.physics.staticBoxes.push(box(0, 4.0, 0, 4, 0.5, 4));    // underside 3.5, top 4.5
+    const r = launch(w, { frames: 150 });
+    const crown = r.p._crownHeight();
+    assert(r.apex + crown <= 3.5 + 0.01,
+      `the head reached y=${(r.apex + crown).toFixed(2)} through a slab whose underside is at 3.50`);
+    assert(r.trace[r.trace.length - 1].y < 0.01,
+      `the jump ended at y=${r.trace[r.trace.length - 1].y.toFixed(2)} — the roof at 4.50 was entered from below `
+      + 'and STEP_UP put the body on top of it');
+    // …and the ceiling is only a ceiling where the slab is: the same jump one
+    // span to the side has to reach its full height, or "a ceiling" would just
+    // be a shorter jump everywhere.
+    const w2 = stubWorld();
+    w2.terrain = flatTerrain();
+    w2.physics.staticBoxes.push(box(9, 4.0, 0, 4, 0.5, 4));
+    const clear = launch(w2, { frames: 150 });
+    assert(clear.apex > r.apex + 1,
+      `with the slab 9 m away the jump still only reached ${clear.apex.toFixed(2)} m against `
+      + `${r.apex.toFixed(2)} m under it — the ceiling is being applied to open sky`);
+    return `apex ${r.apex.toFixed(2)} m (crown ${(r.apex + crown).toFixed(2)} under a 3.50 underside), `
+      + `${clear.apex.toFixed(2)} m in the open, and it comes back down`;
+  });
+
+  check('standing: a fast descent cannot fall through the floor', () => {
+    /**
+     * `supportHeight` only answers with a surface within STEP_UP (0.45) below
+     * the feet and the grounding window is GROUND_SNAP (0.12) above it, so a
+     * frame that steps more than 0.57 m — 34.2 m/s at 1/60 — passes clean
+     * between the two and the floor is never seen. DIVE_SPEED is 30 and
+     * gravity keeps adding. Measured on this fixture, the identical column: a
+     * dive from 25 m rested on the roof at y=22.80 and a dive from 60 m went
+     * through the roof AND the deck under it to y=0.00.
+     *
+     * The A/B is the assertion, not the absolute: the same roof, the same
+     * column, two heights, and the answer must not depend on how fast you
+     * arrived. `_collide` sweeps from where the feet were at the top of the
+     * frame, so every surface crossed during the step answers.
+     */
+    const roof = () => {
+      const w = stubWorld();
+      w.terrain = flatTerrain();
+      w.physics.staticBoxes.push(box(0, 22.5, 0, 6, 0.3, 6));   // top at 22.80
+      return w;
+    };
+    const slow = plunge(roof(), 25, { dive: true });
+    const fast = plunge(roof(), 60, { dive: true });
+    assert(slow.dived && fast.dived, 'the fixture never actually dived');
+    assert(Math.abs(slow.y - 22.80) < 0.02,
+      `a dive from 25 m came to rest at y=${slow.y.toFixed(2)} on a roof topping out at 22.80`);
+    assert(Math.abs(fast.y - slow.y) < 0.02,
+      `a dive from 25 m rests at y=${slow.y.toFixed(2)} and one from 60 m at y=${fast.y.toFixed(2)} — `
+      + 'the same roof, the same column, and the faster body went through it');
+    // and a free fall long enough to beat the window, with no dive at all
+    const drop90 = plunge(roof(), 90);
+    assert(Math.abs(drop90.y - 22.80) < 0.02,
+      `a 67 m free fall ended at y=${drop90.y.toFixed(2)} instead of on the roof at 22.80`);
+    return `roof at 22.80: dive from 25 → ${slow.y.toFixed(2)}, from 60 → ${fast.y.toFixed(2)}, `
+      + `90 m free fall → ${drop90.y.toFixed(2)}`;
   });
 
   check('standing: a ledge above your head does not snatch you out of the air', () => {

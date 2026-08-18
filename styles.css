@@ -272,7 +272,17 @@ b{font-weight:800}
 
 /* Tabs are TABS: they sit on the panel, joined to it, cut on one corner so the
    row reads as a stack of folders rather than a row of underlined words. */
-.menu-tabs{display:flex;gap:4px;justify-content:center;margin-bottom:-2px;position:relative;z-index:2}
+/* WRAPPED, BECAUSE THE STRIP IS SEVEN WIDE AND WAS WRITTEN WHEN IT WAS FIVE.
+   Five tabs are in the markup and `_buildTraining` and `_buildDatabank` insert
+   two more at runtime, so the author never saw the row at full width. Measured
+   in Chromium with the strip laid out: at 740x900 Deploy and Options are off
+   both edges; at 480 and at 360 it is Deploy, Training, Codex and Options —
+   four of seven. `justify-content:center` overflows in BOTH directions, and
+   `scrollWidth === clientWidth` with `overflow-x: visible`, so there is no
+   scrollbar and no wheel scroll to reach them with either: a mouse-only player
+   who opened Jedi or Databank at 740 px could not click Deploy again. Wrapping
+   costs a second row of folders at narrow widths and loses nothing. */
+.menu-tabs{display:flex;flex-wrap:wrap;gap:4px;justify-content:center;margin-bottom:-2px;position:relative;z-index:2}
 .tab{background:var(--panel);border:2px solid var(--stroke);border-bottom:0;
   color:var(--dim);font:var(--ui);font-weight:800;letter-spacing:.14em;text-transform:uppercase;
   font-size:11px;padding:10px 24px 9px;cursor:pointer;transition:.14s;clip-path:var(--cut-tab)}
@@ -1058,7 +1068,14 @@ button{font-family:inherit}
    left are printed over the shutter — the one thing an ability bar exists to
    tell you, which a proportional shutter cannot: `left / peak` answers "how
    far through", never "how long". */
-.powers{display:flex;gap:6px}
+/* AND IT WRAPS, for the same reason the tab strip does. Eleven 46 px slots plus
+   gaps is 566 px of wheel measured on the real page, pinned to the bottom-right
+   corner by `.hud-br` — which at 360x1080 put it at x -222…344 in a 360 px
+   frame, more of the wheel off screen than on. `max-width` is what makes the
+   wrap fire, since a flex row with no width constraint has nothing to wrap
+   against; it is expressed against the viewport rather than typed so it follows
+   any future slot, and the column above it is already right-aligned. */
+.powers{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;max-width:min(566px,calc(100vw - 48px))}
 .pw{position:relative;width:46px;height:46px;border:2px solid var(--stroke);background:var(--panel);
   display:flex;align-items:center;justify-content:center;
   overflow:hidden;transition:.13s;clip-path:var(--cut-sm);opacity:.55}
@@ -1088,10 +1105,18 @@ button{font-family:inherit}
 .pw.active .cost{color:var(--stroke)}
 .pw .cd{position:absolute;inset:0;background:rgba(5,6,12,.78);transform-origin:bottom;transition:transform .1s linear}
 
+/* THE BANNER IS ALLOWED TO BREAK. `white-space:nowrap` at 38 px meant one long
+   line whatever the frame was: measured at 360x1080 the box ran x -113…473 —
+   585 px wide in a 360 px frame, both ends outside it. The centre of the screen
+   is where the wave number and "A JEDI HAS FALLEN AWAY" are announced, so a
+   banner that leaves the frame is an announcement nobody reads. The size is
+   clamped rather than fixed for the same reason: 38 px is right at 1280 and
+   is four words on three lines at 360. */
 .centermsg{position:absolute;left:50%;top:31%;transform:translateX(-50%);text-align:center;opacity:0;
-  transition:opacity .3s;pointer-events:none;white-space:nowrap}
+  transition:opacity .3s;pointer-events:none;white-space:normal;
+  max-width:min(760px,calc(100vw - 32px))}
 .centermsg.on{opacity:1}
-.centermsg b{display:block;font-size:38px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;
+.centermsg b{display:block;font-size:clamp(20px,4.6vw,38px);overflow-wrap:break-word;font-weight:800;letter-spacing:.06em;text-transform:uppercase;
   text-shadow:3px 0 var(--stroke),-3px 0 var(--stroke),0 3px var(--stroke),0 -3px var(--stroke),
     0 0 44px rgba(72,216,255,.7)}
 .centermsg span{display:inline-block;margin-top:9px;font:var(--mono);font-size:10px;font-weight:800;

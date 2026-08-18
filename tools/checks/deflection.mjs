@@ -348,4 +348,151 @@ export async function run({ check, assert }) {
     return `guard drawn to gx=${ctrl.gx.toFixed(2)} (left, toward the near bolt)`;
   });
 
+
+  /* ── what a return is worth, and who it may be aimed at ────────────── */
+
+  /**
+   * One stub World carrying the three shipped methods that decide a deflection,
+   * exactly as `catch.mjs` does it: building a real World needs an Engine, and
+   * calling its methods against a hand-made frame is the same code. World.js is
+   * reached by `await import` inside the check bodies — HANDOFF §2.1.
+   */
+  const deflectScene = async (rules = { friendlyFire: false }) => {
+    const { World } = await import('../../src/game/World.js');
+    const { Player } = await import('../../src/game/Player.js');
+    const { BoltPool } = await import('../../src/game/Bolts.js');
+    const pool = new BoltPool(scene, 8);
+    const fed = [];
+    const w = {
+      players: [], enemies: [], bolts: pool, settings: {}, rules,
+      particles: { sparkBurst() {}, plasma: { spawn() {} } }, engine: { flash() {} },
+      addHitstop() {}, report() {}, notifyFloating() {},
+      onDeflectFeedback(g, p, why) { fed.push({ g, why }); }, feelOn: () => false,
+      _creditDeflect: World.prototype._creditDeflect,
+      _onBoltDeflect: World.prototype._onBoltDeflect,
+      fed,
+    };
+    const mkPlayer = (saber, team = 0) => Object.assign(Object.create(Player.prototype), {
+      alive: true, saber, isLocal: true, team, flow: 1, score: 0, stamina: 100,
+      deflects: 0, perfects: 0, combo: 0, comboTimer: 0,
+      aimDir: new THREE.Vector3(0, 0, -1), chest: new THREE.Vector3(0, 1.35, 0),
+      camera: { pos: new THREE.Vector3(0, 1.35, 0), addShake() {} },
+      boonMods: { deflectDamage: 1, returnCone: 0.42 },
+      addFlow() {}, boltCatch: null, control: null,
+    });
+    return { w, mkPlayer, pool };
+  };
+
+  check('deflect: a bolt volleyed back and forth cannot compound past one perfect return', async () => {
+    /**
+     * `bolt.damage *= res.damageMul * deflectDamage` — and nothing ever put it
+     * back. A bolt is a POOLED object that survives every exchange, and the
+     * enemy branch of `_onBoltDeflect` hands it straight back with no gate, so
+     * one 11-damage bolt volleyed between a player and a duellist measured
+     * 11.00 → 16.50 → 41.25 → … → 2175.29 over eight exchanges: 198×, with
+     * `bolt.life` pushed back to ≥2.2 s on every touch so the volley never
+     * expired. `canHarm(bolt.owner, victim)` is attacker === victim → true, so
+     * the end of that rally is a 2175 damage bolt pointed at the 100 hp player
+     * who made it.
+     *
+     * WHY NOTHING SAW IT. Every other deflection check grades ONE contact.
+     * The multiply is correct for one contact and this file had no notion of a
+     * bolt with a history — the state that compounds lives on the bolt, across
+     * calls, and nothing was looking at the same bolt twice.
+     *
+     * The ceiling asserted is the one the game already publishes: a bolt cannot
+     * be worth more than the best single return by its deflector.
+     */
+    const { GRADE, GRADE_DAMAGE } = await import('../../src/game/Combat.js');
+    const { w, mkPlayer, pool } = await deflectScene();
+    const ps = blade(), es = blade();
+    const p = mkPlayer(ps, 0);
+    w.players.push(p);
+    const foe = { saber: es, team: 1, dead: false };
+    w.enemies.push({ dead: false, team: 1, position: new THREE.Vector3(0, 1.35, -20),
+      aimPoint: (o) => o.set(0, 1.35, -20) });
+
+    const bolt = pool.fire(new THREE.Vector3(0, 1.35, -6), new THREE.Vector3(0, 0, 1),
+      { speed: 40, team: 1, damage: 11 });
+    const muzzle = bolt.damage;
+    const trace = [muzzle];
+    for (let i = 0; i < 8; i++) {
+      swing(ps, new THREE.Vector3(-0.35, 1.35, -0.4), new THREE.Quaternion(),
+        new THREE.Vector3(0.35, 1.35, -0.4), new THREE.Quaternion());
+      let pt = ps.pointAt(0.6, new THREE.Vector3());
+      w._onBoltDeflect(bolt, { saber: ps, owner: p, team: 0 }, { bladeT: 0.6, point: pt }, pt.clone());
+      trace.push(bolt.damage);
+      // …and the duellist bats it back, which is what makes it a rally
+      pt = es.pointAt(0.6, new THREE.Vector3());
+      w._onBoltDeflect(bolt, { saber: es, owner: foe, team: 1 }, { bladeT: 0.6, point: pt }, pt.clone());
+    }
+    const ceiling = muzzle * GRADE_DAMAGE[GRADE.PERFECT];
+    assert(trace[1] > muzzle,
+      `the first deflection left the bolt at ${trace[1].toFixed(2)} against a ${muzzle} muzzle — a `
+      + 'return is supposed to be worth more, so a capped-at-nothing fix would pass this check');
+    assert(bolt.damage <= ceiling + 1e-6,
+      `eight exchanges took an ${muzzle} damage bolt to ${bolt.damage.toFixed(2)} — `
+      + `${(bolt.damage / muzzle).toFixed(0)}× its muzzle damage, against a ceiling of `
+      + `${ceiling.toFixed(2)} for the best single return. The grade multiplier is being applied to `
+      + 'a number that already carries every earlier multiplier');
+    pool.dispose();
+    return `11 → ${trace.slice(1, 4).map((d) => d.toFixed(2)).join(' → ')} → … → `
+      + `${bolt.damage.toFixed(2)} over eight exchanges, ceiling ${ceiling.toFixed(2)}`;
+  });
+
+  check('deflect: the return is never aimed at your own side', async () => {
+    /**
+     * The blade's target list goes through `bladeTargets` → `canHarm`. The
+     * deflection's candidate list was `this.enemies.filter(e => !e.dead)` raw,
+     * at both call sites — and Command mode puts YOUR OWN TROOPERS in
+     * `world.enemies`. Measured with a friendly trooper 14 m straight ahead and
+     * the only foe out of the cone: 2 candidates where `hostileTo` gives 1,
+     * `pickReturnTarget` chose THE ALLY, and `gradeCaught` paid a PERFECT
+     * RETURN for it — 2.5× damage, 160 score, hitstop, flash — after which the
+     * bolt passed through them harmlessly. A full reward for nothing, and with
+     * friendly fire on the bolt lands.
+     *
+     * Asserted on the GRADE and the score rather than on the candidate list, so
+     * it cannot be satisfied by filtering in one of the two call sites: what
+     * must be true is that no reward is paid for aiming at a friend.
+     */
+    const { GRADE } = await import('../../src/game/Combat.js');
+    const ally = { team: 0, dead: false, position: new THREE.Vector3(0, 1.4, -14),
+      aimPoint: (o) => o.set(0, 1.4, -14) };
+    const foe = { team: 1, dead: false, position: new THREE.Vector3(0, 1.4, -14),
+      aimPoint: (o) => o.set(0, 1.4, -14) };
+
+    const shot = async (mark) => {
+      const { w, mkPlayer, pool } = await deflectScene();
+      const s = blade();
+      swing(s, new THREE.Vector3(-0.35, 1.35, -0.4), new THREE.Quaternion(),
+        new THREE.Vector3(0.35, 1.35, -0.4), new THREE.Quaternion());
+      const p = mkPlayer(s, 0);
+      w.players.push(p);
+      w.enemies.push(mark);
+      const bolt = pool.fire(new THREE.Vector3(0, 1.35, -6), new THREE.Vector3(0, 0, 1),
+        { speed: 40, team: 1, damage: 11 });
+      const pt = s.pointAt(0.6, new THREE.Vector3());
+      w._onBoltDeflect(bolt, { saber: s, owner: p, team: 0 }, { bladeT: 0.6, point: pt }, pt.clone());
+      const out = { grade: w.fed[0]?.g ?? -1, score: p.score };
+      pool.dispose();
+      return out;
+    };
+
+    // The same bolt, the same swing, the same body in the same place — the only
+    // difference is whose side the figure under the reticle is on.
+    const onFoe = await shot(foe);
+    const onAlly = await shot(ally);
+    assert(onFoe.grade >= GRADE.RETURN,
+      `a clean deflect with an ENEMY under the reticle graded ${onFoe.grade} — the return is not `
+      + 'being earned at all, so the ally half below proves nothing');
+    assert(onAlly.grade < GRADE.RETURN,
+      `the same deflect with a FRIENDLY trooper under the reticle graded ${onAlly.grade} and paid `
+      + `${onAlly.score} score — the aim assist is picking a target the damage rules will refuse, `
+      + 'and in Command mode your own squad stands in world.enemies');
+    assert(onAlly.score < onFoe.score,
+      `sending a bolt at an ally paid ${onAlly.score}, the same as sending it at a foe`);
+    return `foe under the reticle → grade ${onFoe.grade}, ${onFoe.score} score · `
+      + `ally → grade ${onAlly.grade}, ${onAlly.score}`;
+  });
 }
