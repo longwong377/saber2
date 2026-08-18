@@ -14,6 +14,24 @@ verified with `file:line`.
 rule the game already owns — call it (§2.4); and a check that cannot fail is
 worse than no check (§2.3).
 
+## Status — three of the four defects are closed
+
+Verified against the tree, not remembered. Left in place rather than deleted,
+because the reasoning under each is what the next reader needs and because a
+list that only ever grows teaches nobody which of its arguments won.
+
+| # | Then | Now |
+|---|---|---|
+| 1 | a thrown body did no damage | **closed** — the enemy branch calls `_trackHurl(e, speed, { body: true })`, with the separate coefficient item 1 asks for |
+| 2 | a released grip walked forever, ragdolled | **closed** — `Actor.recover()` exists and is the recovery ending, not the cheap one |
+| 3 | `Destruction.explosion()` had no caller | **closed** — `Destruction`'s constructor wraps `world.onExplosion`, so the blast reaches the destructible world through the door that already existed |
+| 4 | contact dispatch lost in the Rapier migration | **open**, and still the structural one. `RapierWorld` stores `onContact` at `:338` and `:1084` and dispatches it nowhere |
+| 5 | features that exist and cannot be reached | partly closed — read the section, several of its bullets have been done since |
+
+Items 1–3 were the ones item 4 was blamed for. It is worth knowing that they
+were each fixable without it: the contact system is still worth building, but it
+is no longer holding three visible defects hostage.
+
 ---
 
 # PART ONE — The gap fixes
