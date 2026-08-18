@@ -439,8 +439,33 @@ export async function run({ check, assert, THREE }) {
     assert(m, 'Cloth.js no longer declares CARRY_ITERS, so nothing here is measuring it');
     const extra = Number(m[1]);
 
+    /**
+     * ITS OWN WORLD, AND A SMALL ONE — because `built` is not this check's.
+     *
+     * The census above says so in its own teardown note ("it is this check's
+     * alone") and then proves it: its `finally` calls `world.unload()` and
+     * `dispose()` on the shared promise. Every check in a suite is pushed onto
+     * one `Promise.all`, so they interleave, and this one reading `built`'s
+     * player was a RACE it happened to win when the suite ran alone and lost
+     * under a full verify — `cleave` ahead of it is enough to flip the order.
+     * The failure was `Cannot read properties of null (reading 'cloak')`, which
+     * is a torn-down world, not a defect in anything it was measuring.
+     *
+     * Nothing here needs the census: this counts LINKS and ITERATIONS on the
+     * player's own garment set, and the check above it has already established
+     * that the player's garments are not distance-gated the way an enemy's are.
+     * So: one player, no enemies, no 31-body ultra field. Costs a level load
+     * this file was paying anyway and owes nothing to anybody else's lifetime.
+     */
+    const { World } = await import('../../src/game/World.js');
+    const { DEFAULT_SETTINGS } = await import('../../src/ui/Menu.js');
+    const world = new World(stubEngine(THREE), { ...DEFAULT_SETTINGS, quality: 'ultra' });
     try {
-      const { world } = await built;
+      await world.loadLevel(FIELD);
+      world.spawnPlayer?.();
+      const input = idleInput();
+      for (let f = 0; f < 4; f++) world.update(1 / 60, input);
+      assert(world.player, 'the player did not come up, so there is no garment set to price');
       const set = garments(world.player);
       assert(set.n >= 4, `the player is wearing ${set.n} cloth bodies — nothing to price`);
       let plain = 0, carried = 0, iters = 0;
@@ -483,6 +508,9 @@ export async function run({ check, assert, THREE }) {
         'the carry no longer happens inside `_spinBody`, so it is no longer bounded by a flip');
       return `${plain} link-solves a frame, ${carried} on a carried one (${ratio.toFixed(2)}x, `
         + `+${extra} iterations on ${iters}); one caller, and it is a somersault`;
-    } finally { restoreShared(shared); }
+    } finally {
+      restoreShared(shared);
+      world.unload(); world.dispose?.();
+    }
   });
 }

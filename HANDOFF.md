@@ -48,6 +48,7 @@ Run things this way and no other way:
 npm run verify                                   # the gate — ~1268 checks, ~11 min
 SABER_CHECK_ORDER=reverse npm run verify         # same suites backwards — §6.4
 node --import ./tools/register.mjs tools/_one.mjs <suite>
+node --import ./tools/register.mjs tools/_seq.mjs <suite> <suite>   # §6.4's missing tool
 node --import ./tools/register.mjs tools/trace.mjs --waves 20 --level colosseum
 node --import ./tools/register.mjs tools/combat-trace.mjs --waves 8
 node tools/smoke.mjs --shots                     # real browser, real render
@@ -1143,6 +1144,21 @@ finding until it has been re-run alone on a quiet box — in the previous sessio
 three of nine evaporated that way and one was a race with a peer's commit. The
 per-suite output tells you which line to re-run instead of handing you a
 filename, so this is cheap.
+
+**And when it passes alone, run `tools/_seq.mjs`.** That is the case this advice
+used to have no answer for: `_one.mjs` runs a suite in a clean process and
+`verify.mjs` takes thirteen minutes, so a check that is green alone and red in
+the full run was expensive to even look at. `_seq` runs several suites in ONE
+process in the order given, which is almost always enough, because what carries
+is either module-scope state (`enemyRng`, `duelRng`, the wave stream, `wind` and
+`ground`, Engine's once-only ShaderChunk flags) or the scheduling of a suite's
+own async checks — `check()` pushes them all onto one `Promise.all`, so they
+interleave, and the interleaving changes with what ran before. It was written
+for `cloth: the extra iterations a carried frame buys…`, which read a shared
+world off a promise ANOTHER check in the same file tears down in its `finally`.
+Alone it read first; with `cleave` ahead of it, it read second and got null.
+`node --import ./tools/register.mjs tools/_seq.mjs cleave cloth-cost` showed
+that in forty seconds.
 
 | # | Check | Reads | What it is |
 |---|---|---|---|
