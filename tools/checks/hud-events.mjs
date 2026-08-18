@@ -30,6 +30,7 @@ import { makeDocument } from './_page.mjs';
 import { DEFAULT_SETTINGS, SETTING_READERS, Menu } from '../../src/ui/Menu.js';
 import { PLAYER_VOICES } from '../../src/engine/Voice.js';
 import { defaultBindings, keyLabel, ORDER_ACTIONS } from '../../src/engine/Bindings.js';
+import { Stratagems, STRATAGEMS } from '../../src/game/Stratagems.js';
 // The two tables the roster panel draws WITH. Imported here for the same
 // reason the HUD imports them: a rank colour or an army name typed into a
 // check is a third copy of a table that already has two readers.
@@ -174,6 +175,72 @@ export async function run({ check, assert }) {
       assert(!feed.children[feed.children.length - 1].innerHTML.includes('<img'),
         'a popup title is being injected as markup');
       return `9 events → ${feed.children.length} on screen, newest kept, kinds tagged, titles escaped`;
+    } finally { restore(); }
+  });
+
+  check('hud: the stratagem panel is the STRATAGEMS table and not a copy of it', () => {
+    /**
+     * A CODE SYSTEM WITH NO READOUT IS A MANUAL YOU KEEP BESIDE THE KEYBOARD.
+     * The panel is the whole of this mechanic's discoverability, so what it
+     * has to be is a live view of the real table — every call still consistent
+     * with what has been typed, in the order the table declares them, priced,
+     * with the letters already matched lit.
+     *
+     * Driven by REBINDING the table rather than by reading the markup: a row
+     * added to `STRATAGEMS` has to appear on the panel by itself, and the only
+     * way to assert that is to look for a call this file never names.
+     */
+    const { hud, root, restore } = hudOn();
+    try {
+      const host = root.getElementById('stratagem');
+      assert(hud.el.stratagem === host, 'the HUD no longer looks up #stratagem');
+      const p = player();
+      p.world = { command: null };
+      p.stratagems = new Stratagems(p);
+      p.force = 400;
+
+      // key up: nothing on screen at all
+      hud._stratagemPanel(p);
+      assert(!host.innerHTML, 'the panel is painted with the stratagem key up');
+
+      // key down: every call the table offers, and nothing else
+      p.stratagems.setArming(true);
+      hud._stratagemPanel(p);
+      const solo = STRATAGEMS.filter((s) => !s.commandOnly);
+      for (const s of solo) {
+        assert(host.innerHTML.includes(s.name), `${s.id} is in the table and not on the panel`);
+      }
+      for (const s of STRATAGEMS.filter((s) => s.commandOnly)) {
+        assert(!host.innerHTML.includes(s.name),
+          `${s.id} needs an army and is offered to a lone Jedi`);
+      }
+
+      // one letter: the panel narrows to what is still spellable, and says so
+      const pick = solo[0];
+      p.stratagems.feed(pick.code[0], { world: p.world });
+      hud._stratagemPanel(p);
+      const still = solo.filter((s) => s.code.startsWith(pick.code[0]));
+      const gone = solo.filter((s) => !s.code.startsWith(pick.code[0]));
+      assert(gone.length, 'every call starts with the same letter — this clause measures nothing');
+      for (const s of gone) {
+        assert(!host.innerHTML.includes(s.name),
+          `${s.id} cannot be spelled from "${pick.code[0]}" and is still on the panel`);
+      }
+      assert(host.innerHTML.includes(still[0].name), 'the panel dropped a call that is still live');
+      const lit = (host.innerHTML.match(/class="sg-d on"/g) || []).length;
+      assert(lit === still.length,
+        `${lit} letters are lit across ${still.length} live rows — one per row is how far in you are`);
+
+      // a call you cannot afford is greyed, not hidden: a list that reordered
+      // itself as the Force came back would be unreadable
+      p.stratagems.entry = '';
+      p.force = 0;
+      hud._stratagemPanel(p);
+      for (const s of solo) assert(host.innerHTML.includes(s.name), `${s.id} vanished when the purse emptied`);
+      assert((host.innerHTML.match(/sg-row off/g) || []).length >= solo.length,
+        'nothing is greyed with no Force at all');
+      return `${solo.length} calls offered solo, ${gone.length} dropped by one letter, `
+        + `${lit} matched letters lit, all greyed at 0 Force`;
     } finally { restore(); }
   });
 

@@ -1113,8 +1113,10 @@ export class HUD {
       if (this._stratOpen) { host.classList.add('hidden'); host.innerHTML = ''; this._stratOpen = false; this._stratKey = ''; }
       return;
     }
-    const rows = S.candidates(player.world);
-    const key = `${S.entry}|${rows.map(r => r.id).join(',')}|${rows.map(r => Math.ceil(S.cooldowns[r.id] ?? 0)).join(',')}`;
+    const rows = S.candidates({ world: player.world });
+    const said = S.saidT > 0 ? S.said : '';
+    const key = `${S.entry}|${said}|${rows.map(r => r.id).join(',')}`
+      + `|${rows.map(r => Math.ceil(S.cooldowns[r.id] ?? 0)).join(',')}`;
     if (key === this._stratKey) return;
     this._stratKey = key;
     this._stratOpen = true;
@@ -1129,6 +1131,17 @@ export class HUD {
       return `<div class="sg-row${off ? ' off' : ''}"><span class="sg-code">${code}</span>`
         + `<b>${r.name}</b><span class="sg-cost">${note}</span></div>`;
     }).join('') || '<div class="sg-row off"><b>no such call</b></div>';
+    /* WHAT THE LAST ENTRY DID, under the list. The panel says what you CAN
+     * still spell; this says what happened to the thing you just spelled — a
+     * call made and how long until it lands, a refusal and why. Without it a
+     * code entered into a cooldown looks exactly like a code that was not
+     * recognised, which is the one thing a player must be able to tell apart. */
+    if (said) {
+      const el = document.createElement('div');
+      el.className = 'sg-said';
+      el.textContent = said;
+      host.appendChild(el);
+    }
   }
 
   _nameplates(world, player, camera) {

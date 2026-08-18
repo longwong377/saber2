@@ -1088,6 +1088,12 @@ button{font-family:inherit}
    into the code you are without a cursor or a caret. */
 .sg-d.on{color:var(--stroke);background:var(--accent);border-color:var(--accent)}
 .sg-cost{margin-left:auto;color:var(--muted);font-size:11px}
+/* What the last entry did — a call made, or a refusal and its reason. Warm,
+   because it is an answer to something the player just did rather than part of
+   the list they are reading. */
+.sg-said{margin-top:3px;padding:4px 11px;font:var(--mono);font-size:11px;
+  color:var(--accent-warm);background:rgba(10,13,26,.82);
+  border:2px solid var(--stroke);box-shadow:var(--stamp-sm)}
 
 /* A commander's Force verb that is cooling or unaffordable, on the order
    wheel. Same reading as .sg-row.off and for the same reason. */
