@@ -523,12 +523,49 @@ export class Injury {
            * whatever the rim ran off, and puts the vertex there. A stain that
            * reaches past the hem of a tabard therefore stops at the hem.
            */
-          for (let k = 1; k <= 4 && !hit; k++) {
-            hit = rayAt(bear, out.y + (centre.y - out.y) * (k / 4));
+          /* THE HEIGHT THE WALK ARRIVES AT IS THE HEIGHT THE VERTEX GOES TO,
+           * and that is the fix for a mark that measured 24.2 mm off the body.
+           *
+           * The walk finds the nearest height at which this bearing HAS a
+           * surface — and the old code then placed the vertex at that height's
+           * RADIUS but at the original `out.y`. On anything that tapers or
+           * flares, those are two different circles: a chest lathe's radius
+           * three centimetres up is not its radius here, so the vertex came
+           * out proud by the taper over the distance the walk travelled. The
+           * note below already said the intent — "puts the vertex there" — and
+           * `there` includes the height. */
+          let hy = out.y;
+          for (let k = 1; k <= 8 && !hit; k++) {
+            hy = out.y + (centre.y - out.y) * (k / 8);
+            hit = rayAt(bear, hy);
           }
-          if (!hit) return;
-          const dx = Math.sin(bear), dz = Math.cos(bear);
-          out.set(hit[0] + dx * proud, out.y, hit[1] + dz * proud);
+          if (hit) {
+            const dx = Math.sin(bear), dz = Math.cos(bear);
+            out.set(hit[0] + dx * proud, hy, hit[1] + dz * proud);
+            return;
+          }
+          /**
+           * …AND IF THE WHOLE WALK MISSES, THE POINT COLLAPSES ONTO THE WOUND
+           * RATHER THAN STAYING WHERE IT WAS.
+           *
+           * `return` was the fallback, which leaves the vertex exactly where
+           * `markGeo` put it — on a circle in the tangent plane, with nothing
+           * underneath it. `grooming` measured one at 24.2 mm off the body the
+           * first time a different random draw sent a rim point somewhere the
+           * eight-step walk could not answer for.
+           *
+           * The wound's own centre is on the surface by construction — it is
+           * where the ray that made this mark hit — so collapsing to it is the
+           * one fallback that cannot float. The triangles that share the point
+           * come out degenerate and draw nothing, which is the honest picture:
+           * a stain that cannot reach somewhere does not extend there.
+           *
+           * NOT the centre's RADIUS at the rim's bearing, which was the first
+           * draft and is the thing the note above rules out — a torso section
+           * is an ellipse, so a radius borrowed from one bearing is 5 cm wrong
+           * at another. This borrows the POINT, not the radius.
+           */
+          out.copy(centre);
         };
         wb.push(markGeo(p, n, w.r, rand, 9, wrapTo(0.0015 * this.scale)));
         /**
