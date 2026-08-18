@@ -1170,6 +1170,9 @@ button{font-family:inherit}
    list that reordered itself as the Force came back would be unreadable. */
 .sg-row.off{opacity:.38}
 .sg-code{display:flex;gap:3px}
+/* A stratagem code in the Codex: one word, not a row of separate controls.
+   Wider tracking than a key chip because it is read as a sequence. */
+kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
 .sg-d{display:grid;place-items:center;width:15px;height:15px;font-style:normal;
   font-size:10px;font-weight:700;color:var(--muted);
   background:var(--panel);border:1px solid var(--stroke)}

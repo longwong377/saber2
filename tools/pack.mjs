@@ -23,7 +23,7 @@
  * one optional mp3 — the score is generated, so nothing depends on it.
  */
 import { readFile, writeFile, stat } from 'node:fs/promises';
-import { dirname, resolve, relative } from 'node:path';
+import { dirname, resolve, relative, extname } from 'node:path';
 
 const ROOT = new URL('../', import.meta.url).pathname.replace(/\/$/, '');
 const OUT = process.argv[2] || `${ROOT}/borz-play.html`;
@@ -132,7 +132,30 @@ for (const [file, src] of mods) {
   });
 }
 
-const css = await readFile(`${ROOT}/styles.css`, 'utf8');
+/**
+ * THE TITLE PLATE IS A `url()` IN THE STYLESHEET, and a stylesheet moved into a
+ * `<style>` tag resolves it against the PAGE rather than against styles.css.
+ *
+ * The promise printed at the end of this file — "nothing was fetched and
+ * nothing can 404" — was true of all 76 modules and stopped being true the day
+ * the front screen gained a backdrop. A packed page written beside `assets/`
+ * still finds it, because the URL is relative and `keyart` asserts it stays
+ * relative; one moved anywhere else silently falls back to the wash it
+ * replaced, which is the worst kind of failure — the page still works.
+ *
+ * So the picture comes with it. Anything named that this cannot inline throws
+ * rather than being copied through, because a `url()` this does not understand
+ * is exactly the 404 the promise is about.
+ */
+let css = await readFile(`${ROOT}/styles.css`, 'utf8');
+const IMG = { '.png': 'image/png', '.webp': 'image/webp', '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.svg': 'image/svg+xml' };
+for (const m of [...css.matchAll(/url\(\s*["']?(\.\/[^"')]+)["']?\s*\)/g)]) {
+  const file = `${ROOT}/${m[1].slice(2)}`;
+  const type = IMG[extname(file).toLowerCase()];
+  if (!type) throw new Error(`pack: styles.css names ${m[1]}, which is not an image this can inline`);
+  css = css.replace(m[0], `url("data:${type};base64,${(await readFile(file)).toString('base64')}")`);
+}
 
 let page = html
   .replace(/<script[^>]*type=["']importmap["'][^>]*>[\s\S]*?<\/script>/,
@@ -161,7 +184,11 @@ const body = (page.match(/<body[^>]*>([\s\S]*)<\/body>/) || [, page])[1]
 
 const head = (page.match(/<head[^>]*>([\s\S]*?)<\/head>/) || [, ''])[1]
   .replace(/<meta[^>]*charset[^>]*>/i, '')
-  .replace(TAG, (m) => (/rel=["']icon["']/i.test(m) ? '' : m));
+  /* …and the PRELOAD goes with the icon. It asks the browser to start fetching
+   * the title plate early, and the plate is a data URI in the <style> above by
+   * the time this runs — so the tag is a second, redundant request for a file
+   * that is no longer fetched at all. */
+  .replace(TAG, (m) => (/rel=["'](?:icon|preload)["']/i.test(m) ? '' : m));
 
 await writeFile(OUT, `${head}\n${body}`);
 const size = (await stat(OUT)).size;

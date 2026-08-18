@@ -64,17 +64,25 @@ import { POWER_COST, POWER_BOON } from '../game/Powers.js';
  * seventh call is documented, priced and spelled on this page the day it is
  * authored, with nothing typed here.
  *
- * `DIR_ACTION` is the reason a code can be printed at all. A code is stored as
- * DIRECTIONS ('WSWD'), not key names, and `DIR_ACTION` maps each direction onto
- * the movement action that means it — so the Codex spells every code in the
- * player's OWN movement bindings. A player on ESDF reads E-S-E-F, and a pad
- * reads the D-pad. That is the same rule the rest of this page obeys, applied
- * to a control that is four presses instead of one.
+ * A CODE IS PRINTED IN ARROWS, and it is the one lead on this page that is not
+ * a binding. That was tried the other way first — each direction printed as the
+ * movement key it resolves to, so the spelling followed a rebind — and it is
+ * wrong for a reason that only shows up on the screen: a code is ONE WORD made
+ * of directions, and four key chips in a row make it look like four separate
+ * controls. W is not what a code is made of; it is what a direction happens to
+ * be bound to on one device.
+ *
+ * The binding half of the fact is not lost, it is moved to where it belongs:
+ * the row above the stratagems names the key you hold and the four movement
+ * actions you spell with, and that clause IS printed from the live bindings, so
+ * a player on ESDF is told so once instead of six times.
+ *
+ * `DIR_ACTION` still travels with the table because that row reads it.
  *
  * Menu already imports Player.js, which imports this module, so nothing new
  * enters the graph.
  */
-import { STRATAGEMS, DIR_ACTION, CODE_GAP } from '../game/Stratagems.js';
+import { STRATAGEMS, DIR_ACTION, CODE_GAP, spell } from '../game/Stratagems.js';
 /**
  * THE INSIGHT ECONOMY, so the Codex can state it rather than the player having
  * to infer it from a number that ticks up after a wave.
@@ -1318,11 +1326,12 @@ export const CODEX = [
     // "your movement bindings" and not "the movement keys": on a pad these four
     // chips read Stick ↑/←/↓/→, and a page that calls them keys to somebody
     // holding a controller is the same defect as printing a key name at them.
-    text: k => `Hold it and SPELL one of the ${STRATAGEMS.length} codes below with `
-      + `${k('moveF')}${k('moveL')}${k('moveB')}${k('moveR')} — your movement bindings, so a `
-      + `rebind respells every code. Pause for ${CODE_GAP}&nbsp;s and the entry is abandoned. A `
-      + 'call bills the same Force pool a power does, and it arrives after you asked for it, '
-      + 'not when.' },
+    text: k => `Hold it and SPELL one of the ${STRATAGEMS.length} codes below. The arrows are `
+      + `directions: ${k('moveF')}${k('moveL')}${k('moveB')}${k('moveR')} are what they are on `
+      + `yours. Pause for ${CODE_GAP}&nbsp;s and the entry is abandoned. Every code is DEALT `
+      + 'FRESH each run, so read them here or off the panel while you hold the key — nobody is '
+      + 'entering these from memory. A call bills the same Force pool a power does, and it '
+      + 'arrives after you asked for it, not when.' },
   ...STRATAGEMS.map(S => ({
     code: S.code,
     text: () => `<b>${S.name}</b> — ${S.blurb}`,
@@ -1458,13 +1467,22 @@ export function codexHtml(bindings, pad = null) {
     // been told nothing. See CODEX's `device` rows.
     /* THREE KINDS OF LEAD, and only one of them may contain a literal.
      *   `device` — the mouse's own MOTION, which is not a binding at all.
-     *   `code`   — a stratagem's spelling, printed as the movement bindings the
-     *              directions resolve to, so it follows a rebind like the rest.
-     *   `keys`   — everything else. */
+     *   `code`   — a stratagem's spelling, in ARROWS.
+     *   `keys`   — everything else, printed from the live bindings.
+     *
+     * THE CODE ROW IS THE ODD ONE AND IT IS ODD ON PURPOSE. It used to print
+     * the movement BINDING for each direction — W A S D on a keyboard, stick
+     * arrows on a pad — which follows a rebind and sounds like the correct
+     * instinct here. It is the wrong one: a code is one word made of
+     * directions, and four separate key chips make it look like four separate
+     * controls. W is not what the code is made of, it is what a direction
+     * happens to be bound to. The row above the stratagems names the key you
+     * hold and the directions you spell with, and that clause is a binding and
+     * does follow a rebind — which is where that fact belongs. */
     const lead = row.device
       ? `<kbd>${escKey(pad && pad.device === 'pad' && row.padDevice ? row.padDevice : row.device)}</kbd>`
       : row.code
-        ? [...row.code].map(d => keyChips(bindings, DIR_ACTION[d], false, pad)).join('')
+        ? `<kbd class="sgc">${escKey(spell(row.code))}</kbd>`
         : row.keys.map(id => keyChips(bindings, id, row.hold, pad)).join(' ');
     /* The chips live INSIDE the row's `<span>`, which is not cosmetic: every
      * reader of this markup — tools/checks/controls.mjs's row parser included —
