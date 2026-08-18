@@ -1,0 +1,297 @@
+/**
+ * BATTLEFRONT BORZ — the support calls, and whether a code can be entered.
+ *
+ * Player note #29 asked for WASD-coded support calls. The system is
+ * src/game/Stratagems.js; this is what says it works, and the four things it
+ * has to say are the four ways a code system fails silently.
+ *
+ *  1. A TABLE THAT CANNOT BE SPELLED. Two rows on one code, or a short code
+ *     that is a prefix of a long one, and one of the pair is simply
+ *     unreachable — with nothing at runtime to say so. This is authored by
+ *     accident the first time somebody adds a row, and from the outside it
+ *     looks like "that call sometimes does the wrong thing".
+ *
+ *  2. AN ENTRY THAT IS NOT AN ENTRY. Feeding the letters has to actually fire
+ *     the call, a wrong letter has to fail rather than be ignored, and letting
+ *     go has to abandon the code — otherwise the next W a player presses to
+ *     walk completes something.
+ *
+ *  3. A CODE THAT COSTS NOTHING. The whole mechanic is that you stopped moving
+ *     in the open to ask for something. If movement is not actually suppressed
+ *     while spelling, there is no risk and the lead times are decoration.
+ *
+ *  4. AN EFFECT THAT REIMPLEMENTS SOMEBODY ELSE'S RULE. A blast that threw
+ *     bodies with its own arithmetic instead of `applyKnockback` would not
+ *     answer the target's Force pool — see forceResistance — and the same
+ *     shell would hit a Force user harder from a stratagem than from a landing.
+ *
+ * Everything below drives the real `Stratagems` against a real `Player` and a
+ * real `Enemy` rather than reading the source, except the table check, which
+ * is a property of the table itself and is exported from the module so there
+ * is one implementation of "is this table spellable" and not two.
+ */
+
+import { Player } from '../../src/game/Player.js';
+import { Enemy } from '../../src/game/Enemy.js';
+import {
+  Stratagems, STRATAGEMS, STRATAGEM_BY_ID, DIRS, DIR_ACTION, CODE_GAP, codeFaults,
+} from '../../src/game/Stratagems.js';
+import { ACTIONS, defaultBindings } from '../../src/engine/Bindings.js';
+
+let THREE = null;
+
+/** An input that answers only what it is told to. */
+function stubInput(held = new Set(), hits = new Set()) {
+  return {
+    act: (id) => held.has(id),
+    actHit: (id) => hits.has(id),
+    actAxis: (id) => (held.has(id) ? 1 : 0),
+    moveAxis: (out = { x: 0, y: 0 }) => {
+      out.x = (held.has('moveR') ? 1 : 0) - (held.has('moveL') ? 1 : 0);
+      out.y = (held.has('moveF') ? 1 : 0) - (held.has('moveB') ? 1 : 0);
+      return out;
+    },
+    mouse: { dx: 0, dy: 0, wheel: 0 },
+    accel: { x: 0, y: 0 },
+    locked: true, enabled: true,
+  };
+}
+
+function bench({ command = null, force = 400 } = {}) {
+  const hit = [];
+  const world = {
+    scene: new THREE.Scene(),
+    settings: { fov: 60, bloom: false, forcePower: 1, forceDrain: 1 },
+    terrain: {
+      height: () => 0, normalAt: (x, z, o) => o.set(0, 1, 0),
+      inBounds: () => true, half: 200, surfaceAt: () => 'sand',
+      crater(x, z, r, d) { hit.push({ kind: 'crater', x, z, r, d }); },
+    },
+    particles: null, bolts: null, time: 0, combatIntensity: 0,
+    enemies: [], props: [], command,
+    addProp() {}, onHitmark() {}, notify() {}, report() {},
+    physics: { add() {}, remove() {}, raycast: () => null, bodies: [], staticBoxes: [],
+      addJoint() {}, removeJoint() {} },
+    engine: { addHeat() {}, hurt() {}, shake() {}, camera: new THREE.PerspectiveCamera(60, 16 / 9, 0.045, 1000) },
+  };
+  const p = new Player(world, { isLocal: true });
+  p.position.set(0, 0, 0);
+  p.force = force;
+  const ctx = {
+    dt: 1 / 60, terrain: world.terrain, enemies: world.enemies, particles: null,
+    physics: world.physics, world, input: stubInput(), camera: world.engine.camera,
+    time: 0, groundColor: 0,
+  };
+  return { world, p, ctx, hit };
+}
+
+export async function run({ check, assert, THREE: T }) {
+  THREE = T;
+
+  check('stratagems: every code can actually be spelled', () => {
+    /* THE ONE RULE THIS SYSTEM CANNOT ENFORCE AT RUNTIME. `codeFaults` is
+     * exported from the module rather than re-derived here, for the reason
+     * HANDOFF §2.3 gives: a second implementation of "is this table spellable"
+     * would be the copy that drifts, and it is the copy an author would trust.
+     * What this check adds is that it is RUN, against the shipped table. */
+    const faults = codeFaults();
+    assert(!faults.length, faults.join('; '));
+    // …and that the detector detects, so a green result means something. Two
+    // planted faults, one of each kind.
+    const dupe = codeFaults([{ id: 'a', code: 'WS' }, { id: 'b', code: 'WS' }]);
+    assert(dupe.length, 'codeFaults does not notice two rows sharing a code');
+    const pre = codeFaults([{ id: 'a', code: 'WS' }, { id: 'b', code: 'WSAD' }]);
+    assert(pre.length, 'codeFaults does not notice a code that is a prefix of another');
+    return `${STRATAGEMS.length} calls, no duplicate and no prefix; the detector catches both`;
+  });
+
+  check('stratagems: the key is in the bindings table and the letters are movement', () => {
+    /* A control that is not in ACTIONS cannot be rebound, cannot be listed and
+     * cannot be seen to COLLIDE — which is the exact hole `registerOrders`
+     * exists to have closed for the formations. The stratagem key is one row;
+     * the four letters are deliberately NOT four rows, because they are the
+     * movement actions and a code written in key names could not survive a
+     * player rebinding WASD. This asserts that second part rather than
+     * assuming it: every direction has to name an action that exists. */
+    const row = ACTIONS.find(a => a.id === 'stratagem');
+    assert(row, 'no `stratagem` action — the key cannot be rebound or listed');
+    assert(row.hold, 'the stratagem key is not a hold, so nothing tells a letter from a step');
+    const b = defaultBindings();
+    assert((b.stratagem || []).length, 'the stratagem action ships bound to nothing');
+    const missing = DIRS.filter(d => !ACTIONS.some(a => a.id === DIR_ACTION[d]));
+    assert(!missing.length,
+      `the code letters ${missing.join(',')} name actions that do not exist`);
+    return `${b.stratagem.join('+')} holds; letters read off `
+      + `${DIRS.map(d => DIR_ACTION[d]).join(', ')}`;
+  });
+
+  check('stratagems: spelling a code fires the call, and a wrong letter fails it', () => {
+    const b = bench();
+    const S = b.p.stratagems;
+    assert(S, 'the player has no stratagems');
+    const strike = STRATAGEM_BY_ID.strike;
+    // nothing happens while the key is up — a code cannot be entered by walking
+    for (const c of strike.code) assert(S.feed(c, b.ctx) === null, 'a letter landed with the key up');
+    assert(S.entry === '', 'walking spelled something');
+
+    S.setArming(true);
+    let fired = null;
+    for (const c of strike.code) fired = S.feed(c, b.ctx) || fired;
+    assert(fired && fired.id === 'strike',
+      `spelling ${strike.code} produced ${fired ? fired.id : 'nothing'}`);
+    assert(S.pending.length === 1, 'the call did not queue');
+    assert(S.entry === '', 'the entry did not clear after a completed code');
+
+    /* A WRONG LETTER IS A FAILED CODE, not a character to backspace. The
+     * alternative — ignoring letters that lead nowhere — means a code can be
+     * entered with arbitrary garbage in the middle of it, and a player who
+     * fumbled would get a call they did not ask for. */
+    S.cooldowns.strike = 0;
+    const wrong = [...strike.code];
+    wrong[1] = DIRS.find(d => d !== wrong[1] && !STRATAGEMS.some(s => s.code.startsWith(wrong[0] + d)));
+    assert(wrong[1], 'every second letter leads somewhere — this fixture needs a dead one');
+    assert(S.feed(wrong[0], b.ctx) === null, 'the first letter of a real code went nowhere');
+    assert(S.feed(wrong[1], b.ctx) === false, 'a letter that leads nowhere was accepted');
+    assert(S.entry === '', 'a failed code left the entry standing');
+    return `${strike.code} → ${strike.id}; ${wrong[0]}${wrong[1]} → refused and cleared`;
+  });
+
+  check('stratagems: letting go abandons the code, and so does silence', () => {
+    const b = bench();
+    const S = b.p.stratagems;
+    S.setArming(true);
+    S.feed(STRATAGEM_BY_ID.strike.code[0], b.ctx);
+    assert(S.entry.length === 1, 'the first letter did not stick');
+    S.setArming(false);
+    assert(S.entry === '',
+      'releasing the key left a half-entered code standing — the next step would complete it');
+
+    S.setArming(true);
+    S.feed(STRATAGEM_BY_ID.strike.code[0], b.ctx);
+    for (let t = 0; t < CODE_GAP + 0.2; t += 1 / 60) S.update(1 / 60, b.ctx);
+    assert(S.entry === '', `a code left alone for ${CODE_GAP}s did not time out`);
+    return `release clears; ${CODE_GAP}s of silence clears`;
+  });
+
+  check('stratagems: entering a code costs you the ground you are standing on', () => {
+    /* THE WHOLE MECHANIC, as a measurement. If the player still walks while
+     * spelling, the lead times are decoration and the call is free. Driven
+     * through the real `_move` with the real input seam rather than by reading
+     * the source, because "does the player move" is a claim about a position. */
+    const b = bench();
+    const held = new Set(['moveF']);
+    b.ctx.input = stubInput(held);
+    const start = b.p.position.clone();
+    for (let i = 0; i < 60; i++) b.p._move(1 / 60, b.ctx);
+    const walked = b.p.position.distanceTo(start);
+    assert(walked > 1.5, `the fixture cannot walk at all (${walked.toFixed(2)} m in a second)`);
+
+    b.p.position.copy(start);
+    b.p.velocity.set(0, 0, 0);
+    b.p.stratagems.setArming(true);
+    for (let i = 0; i < 60; i++) b.p._move(1 / 60, b.ctx);
+    const spelled = b.p.position.distanceTo(start);
+    assert(spelled < walked * 0.15,
+      `holding W while spelling still moved ${spelled.toFixed(2)} m against ${walked.toFixed(2)} m free — `
+      + 'a code that costs no ground costs nothing');
+    return `1 s of held W: ${walked.toFixed(2)} m free, ${spelled.toFixed(2)} m while spelling`;
+  });
+
+  check('stratagems: a call is charged, cooled, and lands late', () => {
+    const b = bench({ force: 400 });
+    const S = b.p.stratagems;
+    const strike = STRATAGEM_BY_ID.strike;
+    S.setArming(true);
+    const before = b.p.force;
+    for (const c of strike.code) S.feed(c, b.ctx);
+    assert(b.p.force < before, 'a call was free');
+    assert(S.cooldowns.strike > 0, 'a call left no cooldown');
+    // it has NOT happened yet
+    assert(!b.hit.length, 'the call landed on the frame it was made — the lead is not a lead');
+    let t = 0;
+    for (; t < strike.lead + 0.5 && !b.hit.length; t += 1 / 60) S.update(1 / 60, b.ctx);
+    assert(b.hit.length, `nothing landed within ${(strike.lead + 0.5).toFixed(1)}s`);
+    assert(Math.abs(t - strike.lead) < 0.2,
+      `it landed at ${t.toFixed(2)}s against a ${strike.lead}s lead`);
+
+    // …and it cannot be called again while it is cooling
+    S.setArming(true);
+    const spentBefore = b.p.force;
+    for (const c of strike.code) S.feed(c, b.ctx);
+    assert(b.p.force === spentBefore, 'a call on cooldown still charged the player');
+    return `${strike.cost} Force, landed at ${t.toFixed(2)}s of a ${strike.lead}s lead, `
+      + `${strike.cooldown}s cooldown honoured`;
+  });
+
+  check('stratagems: a blast goes through the same door a landing does', () => {
+    /* `applyKnockback` is where a blow is answered out of the target's own
+     * Force pool (see forceResistance, which both sides call). A stratagem
+     * that threw bodies with its own arithmetic would be the one blast in the
+     * game a Force user could not resist — so this drives a real Enemy and
+     * asserts that resisting CHANGED the outcome, which is only possible if
+     * the blast used the shared door. */
+    /* A FORCE USER AND THE SAME FORCE USER WITH AN EMPTY POOL, and not a
+     * droid against a Jedi: `resistForce` returns 0 for anything with no
+     * `powers` at all, so a B1 would show the same number either way and this
+     * check would pass for a body that could never have resisted. Same
+     * archetype, same distance from the centre, one difference. */
+    const mk = (b, at, force) => {
+      const e = new Enemy(b.world, 'sentinel', at.clone());
+      e.position.copy(at);
+      e.force = force; e.maxForce = Math.max(force, 1);
+      b.world.enemies.push(e);
+      return e;
+    };
+    const b = bench();
+    const site = new THREE.Vector3(4, 0, 0);
+    const bare = mk(b, new THREE.Vector3(5.2, 0, 0), 0);
+    const held = mk(b, new THREE.Vector3(2.8, 0, 0), 400);
+    assert(bare.powers && held.powers, 'the fixture archetype has no Force powers to resist with');
+    const hp0 = { bare: bare.hp, held: held.hp };
+    b.p.stratagems.blast(b.ctx, site, 7.5, 62, 150);
+    const tookBare = hp0.bare - bare.hp, tookHeld = hp0.held - held.hp;
+    assert(tookBare > 0, 'the blast did nothing to a body 1.2 m from the centre');
+    assert(tookHeld < tookBare,
+      `a body with 400 Force took ${tookHeld.toFixed(0)} and one with none took ${tookBare.toFixed(0)} `
+      + '— the blast is not going through applyKnockback');
+    assert(held.force < 400, 'resisting the blast cost the target nothing');
+    assert(b.hit.some(h => h.kind === 'crater'), 'the blast left no crater');
+    return `1.2 m out: ${tookBare.toFixed(0)} hp unresisted, ${tookHeld.toFixed(0)} hp against `
+      + `400 Force (${(400 - held.force).toFixed(0)} spent)`;
+  });
+
+  check('stratagems: it does not spare the person who called it', () => {
+    /* A support call with no friendly fire is a button with no downside, and
+     * the lead time only means something if the marked circle is somewhere you
+     * must not be standing. */
+    const b = bench();
+    const hp0 = b.p.hp;
+    b.p.stratagems.blast(b.ctx, b.p.position.clone(), 7.5, 62, 150);
+    assert(b.p.hp < hp0, 'standing in your own orbital strike is free');
+    const took = hp0 - b.p.hp;
+    assert(took < 150, `it hit the caller for the full ${took.toFixed(0)} — the caller knew it was coming`);
+    return `dead centre of your own strike: ${took.toFixed(0)} hp`;
+  });
+
+  check('stratagems: a call needing an army is not offered without one', () => {
+    const solo = bench();
+    const army = bench({ command: { formation: 'line', reinforce() {}, rallyNear: () => 0 } });
+    const soloIds = solo.p.stratagems.available(solo.ctx).map(s => s.id);
+    const armyIds = army.p.stratagems.available(army.ctx).map(s => s.id);
+    const gated = STRATAGEMS.filter(s => s.commandOnly).map(s => s.id);
+    assert(gated.length, 'no call is marked commandOnly — this check is measuring nothing');
+    for (const id of gated) {
+      assert(!soloIds.includes(id), `${id} is offered with no army behind you`);
+      assert(armyIds.includes(id), `${id} is not offered even in Command`);
+    }
+    /* …and the gate is on the OFFER, not only on the effect: a code that can
+     * be spelled and then refuses is a menu item that lies. */
+    const S = solo.p.stratagems;
+    S.setArming(true);
+    const first = STRATAGEM_BY_ID[gated[0]];
+    let out = null;
+    for (const c of first.code) out = S.feed(c, solo.ctx);
+    assert(out !== first, `${first.id} was spelled to completion with no army`);
+    return `${gated.join(', ')} hidden solo, offered in Command`;
+  });
+}

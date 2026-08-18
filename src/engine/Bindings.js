@@ -175,7 +175,17 @@ export const ACTIONS = [
   // it is a THING YOU ARE DOING — you hold it to walk into a room, and the
   // moment you let go you are moving normally again. A toggled walk is a mode
   // you forget you are in, and the first time you forget is a bolt in the back.
-  { id: 'walk',       group: 'Movement', label: 'Slow walk',         keys: ['Backquote'],  hold: true, pad: 'PadBack+PadL3' },
+  /* KeyI, and it is the one row in this table deliberately placed where the
+   * hand is NOT. The left hand has six keys a pinky or a thumb can hold —
+   * Tab, CapsLock, Backquote, Shift, Ctrl, Alt — every one of them was spoken
+   * for, and the stratagem key has to be one of them because it is held while
+   * the same hand spells WASD (see `stratagem`). Something had to move, and
+   * the honest question is which hold is least needed WHILE THE LEFT HAND IS
+   * BUSY. That is this one: a slow walk is how you creep into a room, it is
+   * never a reflex, and reaching over for a moment costs nothing. Its pad
+   * binding and the left stick's own analog walk are untouched — see
+   * WALK_SCALE, which is how most players will meet this at all. */
+  { id: 'walk',       group: 'Movement', label: 'Slow walk',         keys: ['KeyI'],       hold: true, pad: 'PadBack+PadL3' },
   { id: 'crouch',     group: 'Movement', label: 'Crouch',            keys: ['ControlLeft'], hold: true, pad: 'PadR3' },
   { id: 'dash',       group: 'Movement', label: 'Dash / evade',      keys: ['AltLeft'], pad: 'PadB' },
 
@@ -243,7 +253,11 @@ export const ACTIONS = [
   { id: 'rollL',      group: 'Blade',    label: 'Roll wrist left',   keys: ['KeyQ'],       hold: true, pad: 'PadLeft' },
   { id: 'rollR',      group: 'Blade',    label: 'Roll wrist right',  keys: ['KeyE'],       hold: true, pad: 'PadRight' },
   { id: 'ignite',     group: 'Blade',    label: 'Ignite / retract',  keys: ['KeyX'], pad: 'PadX' },
-  { id: 'grip2',      group: 'Blade',    label: 'One-handed grip',   keys: ['CapsLock'],   hold: true, pad: 'PadBack+PadRB' },
+  /* Backquote, vacated by `walk` — see the note there for why the left hand's
+   * holds were reshuffled at all. A one-handed grip is a STANCE you settle
+   * into rather than a flick, so a pinky stretch above Tab is a home it can
+   * live with; the stratagem key that took CapsLock cannot be anywhere else. */
+  { id: 'grip2',      group: 'Blade',    label: 'One-handed grip',   keys: ['Backquote'],  hold: true, pad: 'PadBack+PadRB' },
   // Digit1/Digit2, not KeyB/KeyN. These two were seeded onto B and N at runtime
   // by SaberController, which meant they were not in this table, so they never
   // reached the options screen, could not be rebound, and could not be seen to
@@ -345,6 +359,28 @@ export const ACTIONS = [
    * wheel. What the note asks for is that nobody HAS to.
    */
   { id: 'orderwheel', group: 'Command',   label: 'Order wheel',      keys: ['KeyT'],       hold: true, pad: 'PadBack+PadLB' },
+  /**
+   * ONE BINDING FOR EVERY SUPPORT CALL THERE WILL EVER BE.
+   *
+   * Hold it and the movement keys stop moving you and start SPELLING — see
+   * src/game/Stratagems.js for why a code and not a key, and for the part that
+   * matters here: a stratagem costs this table exactly one row however many
+   * calls are authored. That is the only shape that fits. The keyboard has no
+   * free letter under the left hand and the pad has forty-six places and had
+   * filled all of them; a sixth support call on the sixth spare button was
+   * never going to happen, and a sixth code costs nothing.
+   *
+   * A HOLD, and the hold is load-bearing rather than a style: it is what tells
+   * `moveF` apart from the letter W. Nothing about movement changes when it is
+   * up, and while it is down the player has deliberately stopped walking in
+   * order to ask for something — which is the risk the mechanic is made of.
+   *
+   * `PadBack+PadUp` was one of the six chords the retired order pool gave back
+   * (see ORDER_PAD_POOL): the D-pad spells the same four directions the
+   * keyboard does, so the codes read identically on both devices without the
+   * table knowing that either exists.
+   */
+  { id: 'stratagem',  group: 'Command',   label: 'Call a stratagem', keys: ['CapsLock'],   hold: true, pad: 'PadBack+PadUp' },
   // P for photo. This one may live under the right hand precisely BECAUSE it
   // is a press and not a hold: you take the mouse off the game the moment it
   // is on, and everything you do afterwards is flown with the movement keys.

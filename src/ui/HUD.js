@@ -939,6 +939,7 @@ export class HUD {
       center: root.getElementById('hud-center-msg'),
       hitmarks: root.getElementById('hitmarks'),
       troopnames: root.getElementById('troopnames'),
+      stratagem: root.getElementById('stratagem'),
       killfeed: root.getElementById('killfeed'),
       coach: root.getElementById('coach'),
       coachTitle: root.getElementById('coach-title'),
@@ -1073,6 +1074,53 @@ export class HUD {
    * is the one authority for who exists and what they are called, and a second
    * copy of it here is the defect this project keeps removing.
    */
+  /**
+   * WHAT YOU HAVE TYPED AND WHAT IT COULD STILL BE.
+   *
+   * The panel is the whole of the mechanic's discoverability. A code system
+   * with no readout is a manual you have to keep beside the keyboard, and the
+   * player asked for support calls, not for homework — so while the key is
+   * held this lists every call still consistent with what has been entered,
+   * greys the ones on cooldown or out of Force, and shows each code with the
+   * letters already matched lit.
+   *
+   * IT IS BUILT FROM `STRATAGEMS` AND NOT FROM A COPY. The rows, their names,
+   * their codes, their costs and their blurbs all come off the table in
+   * src/game/Stratagems.js through `candidates`, so a call authored there is
+   * on this panel the same day and there is nothing here to fall out of step
+   * with it (HANDOFF §2.3).
+   *
+   * The DOM is rebuilt only when the entry or the candidate set changes, which
+   * on a normal frame is never — this runs inside the HUD's per-frame update
+   * and a panel that re-rendered six rows every frame would be the most
+   * expensive thing on the screen for the 99% of the time it is not open.
+   */
+  _stratagemPanel(player) {
+    const host = this.el.stratagem;
+    if (!host) return;
+    const S = player?.stratagems;
+    if (!S || !S.arming) {
+      if (this._stratOpen) { host.classList.add('hidden'); host.innerHTML = ''; this._stratOpen = false; this._stratKey = ''; }
+      return;
+    }
+    const rows = S.candidates(player.world);
+    const key = `${S.entry}|${rows.map(r => r.id).join(',')}|${rows.map(r => Math.ceil(S.cooldowns[r.id] ?? 0)).join(',')}`;
+    if (key === this._stratKey) return;
+    this._stratKey = key;
+    this._stratOpen = true;
+    host.classList.remove('hidden');
+    const force = player.force ?? 0;
+    host.innerHTML = rows.map((r) => {
+      const cd = Math.ceil(S.cooldowns[r.id] ?? 0);
+      const off = cd > 0 || force < r.cost;
+      const code = [...r.code].map((c, i) =>
+        `<i class="sg-d${i < S.entry.length ? ' on' : ''}">${c}</i>`).join('');
+      const note = cd > 0 ? `${cd}s` : `${r.cost}`;
+      return `<div class="sg-row${off ? ' off' : ''}"><span class="sg-code">${code}</span>`
+        + `<b>${r.name}</b><span class="sg-cost">${note}</span></div>`;
+    }).join('') || '<div class="sg-row off"><b>no such call</b></div>';
+  }
+
   _nameplates(world, player, camera) {
     const host = this.el.troopnames;
     if (!host) return;
@@ -1691,6 +1739,9 @@ export class HUD {
 
     // ── who is who. Note #16; see `_nameplates`.
     this._nameplates(world, player, camera);
+
+    // ── the support calls, while one is being spelled. See `_stratagemPanel`.
+    this._stratagemPanel(player);
 
     /**
      * ── the room, and what it has to say about itself

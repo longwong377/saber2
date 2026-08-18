@@ -28,6 +28,7 @@ import { parryScale, TOUGHNESS } from './Combat.js';
  * Enemy.js imports nothing from this file, so the edge is one-way. */
 import { forceResistance, IMPULSE_AS_HP, limitBackpedal } from './Enemy.js';
 import { POWER_COST } from './Powers.js';
+import { Stratagems, DIRS, DIR_ACTION } from './Stratagems.js';
 import { bodyOf } from '../engine/Presence.js';
 import { clamp, lerp, damp, smoothstep, dampVec, makeRng, TAU } from '../engine/MathUtil.js';
 import { audio } from '../engine/Audio.js';
@@ -2152,6 +2153,10 @@ export class Player {
     this.hurled = [];
     this._wheel = 0;
     this.cooldowns = { push: 0, pull: 0, throw: 0, sense: 0, dash: 0, lightning: 0, stasis: 0, rend: 0, heal: 0, compel: 0, unleash: 0 };
+    /* The support calls. One per player, constructed here rather than lazily,
+     * so `hud` and the checks can read the entry state on frame one instead of
+     * guarding for its absence. */
+    this.stratagems = new Stratagems(this);
     this.boons = new RankSet();
     this.boonMods = defaultBoonMods();
     this.airJumps = 0;
@@ -2379,6 +2384,10 @@ export class Player {
     // The aim the input just wrote, available to everything solved this frame
     // rather than only to the camera at the end of it — see syncAim.
     this.camera.syncAim();
+    /* AFTER the aim and not before it: a stratagem aimed at the ground reads
+     * `aimDir`, and a call placed on last frame's aim would land where you
+     * were looking rather than where you are. */
+    this.stratagems?.update(dt, ctx);
     this._move(dt, ctx);
     this._updateForce(dt, ctx);
     // ONE ORDER, AND IT IS A CHAIN OF DEPENDENCIES, NOT A HABIT.
@@ -2498,6 +2507,32 @@ export class Player {
      * feature nobody has. The controller runs its thrust envelope on the same
      * press, which is right: the blade leads the fall. */
     if (input.actHit('thrust')) this._tryDive(ctx);
+    this._stratagemInput(input, ctx);
+  }
+
+  /**
+   * SPELLING A SUPPORT CALL — the input half of src/game/Stratagems.js.
+   *
+   * It lives here rather than in that file because this is where the game
+   * already asks the input layer questions, and Stratagems deliberately knows
+   * nothing about `Input` — it is handed a DIRECTION and decides what that
+   * means. See the note over `DIRS` for why that split is what lets a pad
+   * spell the same codes.
+   *
+   * `actHit` and not `act`: a letter is a press. A held W while a code is
+   * being spelled is one W, not sixty — which the axis read this replaced
+   * would have made it.
+   *
+   * THE MOVEMENT IS NOT SUPPRESSED HERE and that is on purpose: `_move` reads
+   * `stratagems.arming` for itself, so exactly one place decides that a player
+   * spelling a code is standing still, and it is the place that owns walking.
+   */
+  _stratagemInput(input, ctx) {
+    const S = this.stratagems;
+    if (!S) return;
+    S.setArming(input.act('stratagem'));
+    if (!S.arming) return;
+    for (const d of DIRS) if (input.actHit(DIR_ACTION[d])) S.feed(d, ctx);
   }
 
   /**
@@ -2621,6 +2656,15 @@ export class Player {
     const input = ctx.input;
     const terrain = ctx.terrain;
     const axis = this.isLocal ? input.moveAxis(_axis) : (this.netAxis || _axis0);
+    /* SPELLING IS NOT WALKING. While the stratagem key is held, WASD is four
+     * letters and not a direction, and this is the ONE place that says so —
+     * `_stratagemInput` deliberately does not suppress movement itself, so
+     * "a player entering a code is standing still" is decided by the code
+     * that owns walking rather than in two places that could disagree.
+     *
+     * It is also the cost the whole mechanic is built on: you stop, in the
+     * open, for as long as the code takes. See Stratagems.js. */
+    if (this.stratagems?.arming) { axis.x = 0; axis.y = 0; }
 
     const sprinting = this.isLocal && input.act('sprint') && axis.y > 0.2 && this.stamina > 4;
     const crouching = this.isLocal && input.act('crouch');
