@@ -209,7 +209,12 @@ export const ACTIONS = [
   // does not need to be the nearest key left.
   { id: 'swap',       group: 'Blade',    label: 'Drop / take a saber', keys: ['KeyM'], pad: 'PadBack+PadX' },
 
-  { id: 'focus',      group: 'Force',    label: 'Focus (slow time)', keys: ['Mouse3', 'KeyT'], hold: true, pad: 'PadLT' },
+  /* KeyT WENT TO THE ORDER WHEEL, and this is the trade. Focus keeps Mouse3,
+   * which is where it is actually pressed — the second bind was a courtesy for
+   * a mouse with no wheel click, and it was the only left-hand letter left in
+   * a table where every key within reach of WASD is spoken for. Note #18 asks
+   * for six order keys to become one, and the one has to be somewhere. */
+  { id: 'focus',      group: 'Force',    label: 'Focus (slow time)', keys: ['Mouse3'], hold: true, pad: 'PadLT' },
   { id: 'push',       group: 'Force',    label: 'Force push',        keys: ['KeyF'], pad: 'PadLB+PadA' },
   { id: 'pull',       group: 'Force',    label: 'Force pull',        keys: ['KeyR'], pad: 'PadLB+PadB' },
   { id: 'grip',       group: 'Force',    label: 'Force grip object', keys: ['KeyG'],       hold: true, pad: 'PadLB+PadX' },
@@ -253,6 +258,22 @@ export const ACTIONS = [
   // same gesture every radial wheel in every game uses, and the one that
   // cannot leave the player stuck in a menu they did not mean to open.
   { id: 'emote',      group: 'Interface', label: 'Emote wheel',      keys: ['Digit5'],     hold: true, pad: 'PadBack+PadLT' },
+  /**
+   * THE ORDER WHEEL — note #18, "commanding your troops takes up too many
+   * buttons so it needs to be a small popup mousewheel sort of thing".
+   *
+   * `KeyT` and not another digit, and the reason is the whole point of the
+   * note: the six formation keys are Digit6 through Minus, and the fix for
+   * "too many buttons on the digit row" cannot be a seventh button on the
+   * digit row. T is inside the WASD hand's reach, it is a hold like the emote
+   * wheel and for the same reason, and it is the one letter in that cluster
+   * with nothing on it.
+   *
+   * THE SIX DIGITS STAY. They are in this table, they are rebindable, and a
+   * player who has learned them has learned something real and faster than a
+   * wheel. What the note asks for is that nobody HAS to.
+   */
+  { id: 'orderwheel', group: 'Command',   label: 'Order wheel',      keys: ['KeyT'],       hold: true, pad: 'PadBack+PadLB' },
   // P for photo. This one may live under the right hand precisely BECAUSE it
   // is a press and not a hold: you take the mouse off the game the moment it
   // is on, and everything you do afterwards is flown with the movement keys.

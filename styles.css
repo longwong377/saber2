@@ -977,10 +977,10 @@ button{font-family:inherit}
    screen, and the reticle is 44 px. The slots are placed from emoteAngle() in
    JS, so nothing here knows how many there are: add a ninth and the ring
    re-spaces itself. */
-#emote-wheel{position:absolute;left:50%;top:50%;width:440px;height:440px;
+#emote-wheel,#order-wheel{position:absolute;left:50%;top:50%;width:440px;height:440px;
   transform:translate(-50%,-50%);pointer-events:none;
   animation:emoteIn .13s cubic-bezier(.22,1,.36,1) both}
-#emote-wheel.hidden{display:none}
+#emote-wheel.hidden,#order-wheel.hidden{display:none}
 /* The dim disc under it, and it has to reach PAST the slots.
    A wheel over a firefight is unreadable without one — measured against a real
    Mustafar sunset, eight labels in the HUD's dim grey over a 90%-white sky were
@@ -989,7 +989,7 @@ button{font-family:inherit}
    stopping at 22% where it lit nothing but the middle. This is the only moment
    in the game where taking contrast AWAY from the fight is right: you have
    already decided not to be fighting. */
-#emote-wheel::before{content:"";position:absolute;inset:-9%;border-radius:50%;
+#emote-wheel::before,#order-wheel::before{content:"";position:absolute;inset:-9%;border-radius:50%;
   background:radial-gradient(circle at 50% 50%,rgba(5,7,12,.86) 20%,rgba(5,7,12,.74) 48%,
     rgba(5,7,12,.34) 70%,transparent 86%)}
 .em{position:absolute;transform:translate(-50%,-50%);width:118px;text-align:center;
@@ -1010,6 +1010,20 @@ button{font-family:inherit}
    blade's colour rather than in a streak's warm one or a boss's red. */
 #event-feed .ev-emote{border-right-color:var(--accent)}
 #event-feed .ev-emote b{color:#bfeaff}
+
+/* The order wheel is the emote wheel with the mode's own table in it — same
+   geometry, same hit test, same class (see RadialWheel). Two differences and
+   both are about what an ORDER is: the slots are wider, because a formation's
+   blurb is a sentence rather than a noise; and the order you are ALREADY
+   giving is marked, because a wheel that does not say where you are makes you
+   guess whether the flick took. */
+.em.ow{width:150px}
+.em.ow b{letter-spacing:.16em}
+.em.ow.live b{color:var(--accent-warm)}
+.em.ow.live::after{content:"";position:absolute;left:50%;bottom:1px;width:26px;height:2px;
+  transform:translateX(-50%);background:var(--accent-warm)}
+.em.ow.sel.live b{color:var(--stroke)}
+.em.ow.sel.live::after{background:var(--stroke)}
 
 /* ══════════════════ the free camera ══════════════════
    OUTSIDE #hud in the markup, so it survives the HUD being hidden — this rule
@@ -1414,3 +1428,51 @@ button{font-family:inherit}
 #med-field .facet.known .disc{stroke:rgba(190,170,120,.42)}
 #med-field .facet.known .label{fill:rgba(200,190,160,.55)}
 #commune em{font-style:normal;color:var(--accent-warm);letter-spacing:.1em;font-weight:800}
+
+
+/* ── nameplates over your own troops ──────────────────────────────────────
+   Note #16: "When you hover your reticle over your troops it should show you
+   their name or maybe optionally their names will be displayed attractively
+   and carefully over their heads like in other games."
+
+   BOTH, and the switch is in Options → Interface. What follows is drawn the
+   way everything else here is: a flat band, a hard ink edge, no gradient and
+   no rounded corner. A soft-edged floating label with a drop shadow is the
+   house style of a different game.
+
+   THE PLATE IS TWO LINES AND A BAR and it is deliberately small: at any
+   moment there are up to twelve of these on screen and the thing they must
+   never do is compete with the fight. The rank chip carries the rank COLOUR,
+   which is the same colour the body is painted in (see RANKS in Command.js),
+   so the plate and the man agree without either being told about the other. */
+#troopnames{position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:5}
+.tplate{position:absolute;transform:translate(-50%,-100%);
+  font:var(--mono);font-size:10px;letter-spacing:.10em;text-transform:uppercase;
+  white-space:nowrap;text-align:center;line-height:1.15;
+  /* The one thing that keeps a white plate legible over a white sky and a dark
+     one over dust: an ink outline on the TYPE, which is the law the wordmark
+     and the boxes both obey. */
+  text-shadow:1px 0 var(--stroke),-1px 0 var(--stroke),0 1px var(--stroke),0 -1px var(--stroke)}
+.tplate.far{font-size:9px;letter-spacing:.06em}
+.tplate .tp-rank{display:inline-block;padding:0 3px;margin-right:3px;
+  color:var(--stroke);font-weight:800;clip-path:var(--cut-sm)}
+.tplate .tp-name{color:var(--ink);font-weight:700}
+/* HEALTH AND NERVE ARE TWO BARS AND THEY ARE DIFFERENT WIDTHS ON PURPOSE. A
+   man at half health and a man who is about to break are two different
+   problems and the player has to be able to tell them apart at a glance
+   without reading anything. */
+.tplate .tp-bars{display:flex;gap:2px;justify-content:center;margin-top:2px}
+.tplate .tp-hp,.tplate .tp-mor{height:3px;background:rgba(6,8,14,.72);
+  outline:1px solid rgba(6,8,14,.85)}
+.tplate .tp-hp{width:34px}
+.tplate .tp-mor{width:18px}
+.tplate .tp-hp i,.tplate .tp-mor i{display:block;height:100%;width:100%}
+.tplate .tp-hp i{background:var(--accent)}
+.tplate .tp-mor i{background:var(--accent-warm)}
+.tplate.hurt .tp-hp i{background:#e2553a}
+.tplate.shaken .tp-mor i{background:#e2553a}
+/* The one under your reticle is the one you are talking to. */
+.tplate.aimed .tp-name{color:var(--accent)}
+.tplate.aimed{font-size:11px}
+/* Broken men are named in the colour of the thing that is happening to them. */
+.tplate.broken .tp-name{color:#ff8c6b}

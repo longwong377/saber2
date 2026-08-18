@@ -20,7 +20,7 @@ import { keyLabel, walkScale, ORDER_ACTIONS, codesFor } from '../engine/Bindings
  * §2.3), and the first repaint of an insignia would make the HUD disagree with
  * the model wearing it.
  */
-import { RANKS, ARMIES } from '../game/Command.js';
+import { RANKS, ARMIES, FORMATIONS } from '../game/Command.js';
 import { POWER_COST, POWER_BOON } from '../game/Powers.js';
 // The words a slot is about to say, and whether this browser can say them
 // at all. Audio.js owns both the table and the speaking; the wheel prints.
@@ -529,9 +529,36 @@ export function emoteAt(x, y, n = EMOTES.length) {
  * unlocked path. A wheel that read the position would work perfectly on the
  * menu and be dead in the one place it exists for.
  */
-export class EmoteWheel {
-  constructor(host) {
+/**
+ * A RADIAL WHEEL — hold a key, push the mouse, let go.
+ *
+ * Written once and used twice, which is the whole reason it exists as its own
+ * class: note #18 asks for the orders to move onto one — "commanding your
+ * troops takes up too many buttons so it needs to be a small popup mousewheel
+ * sort of thing you know like in other games where you press a botton and use
+ * your mouse to select one of the options in the popup wheel" — and the emote
+ * wheel was already exactly that, for a different table.
+ *
+ * A second copy of the geometry, the hit test and the DOM pooling would have
+ * been the eighth instance of this project's signature defect (HANDOFF §2.3).
+ * So `EmoteWheel` is now this class with a table and a name, and `OrderWheel`
+ * is this class with a different table and a different name.
+ *
+ * WHAT A SUBCLASS SUPPLIES: the list, the action it is held on, the caption
+ * for a slot, and what happens when one commits. Nothing else.
+ */
+export class RadialWheel {
+  /**
+   * @param host   the container element
+   * @param opts.items  the table — one entry per slot
+   * @param opts.action the input action held to open it
+   * @param opts.cls    the class on each slot node
+   */
+  constructor(host, opts = {}) {
     this.host = host || null;
+    this.items = opts.items || [];
+    this.action = opts.action || 'emote';
+    this.cls = opts.cls || 'em';
     this.on = false;
     this.x = 0; this.y = 0;
     this.sel = -1;
@@ -539,74 +566,60 @@ export class EmoteWheel {
     this._build();
   }
 
+  /** The caption for slot `i`. Overridden by a subclass that has a live one. */
+  captionFor(item) { return item.blurb || ''; }
+  /** The title for slot `i`. */
+  titleFor(item) { return item.name || item.id || ''; }
+
   _build() {
     if (!this.host) return;
     this.host.innerHTML = '';
-    for (let i = 0; i < EMOTES.length; i++) {
-      const e = EMOTES[i];
-      const a = emoteAngle(i);
+    this.slots = [];
+    const n = this.items.length;
+    for (let i = 0; i < n; i++) {
+      const e = this.items[i];
+      const a = emoteAngle(i, n);
       const d = document.createElement('div');
-      d.className = 'em';
+      d.className = this.cls;
       // The slot's own position, in the wheel's own units. Written here from
       // emoteAngle rather than typed into styles.css because eight hand-typed
       // transforms is eight chances for the markup and the hit test to point
       // at different places, and the player would only find out by pressing.
       d.style.left = `${(50 + Math.cos(a) * 37).toFixed(3)}%`;
       d.style.top = `${(50 + Math.sin(a) * 37).toFixed(3)}%`;
-      /*
-       * THE WORDS, WHERE THERE ARE WORDS.
-       *
-       * `blurb` is a description of a NOISE — "come on, then", "one note,
-       * downward" — which is the right caption for a wordless larynx and the
-       * wrong one the moment the same slot says an actual sentence. So a slot
-       * prints the line it will really speak when spoken lines are on, and its
-       * description when they are not. `wordsFor(kind, i)` is deterministic on
-       * the slot index, so the caption and the line that follows it are the
-       * same line; it is refreshed by setSpeech rather than decided once here,
-       * because the mode is a live setting.
-       */
-      d.innerHTML = `<b>${esc(e.name)}</b><span>${esc(e.blurb)}</span>`;
+      d.innerHTML = `<b>${esc(this.titleFor(e))}</b><span>${esc(this.captionFor(e))}</span>`;
       d._say = d.querySelector('span');
       this.host.appendChild(d);
       this.slots.push(d);
     }
-    this.setSpeech(this.spoken);
   }
 
-  /**
-   * Print what each slot will SAY, or what it will sound like.
-   *
-   * Called from HUD.update off the live setting and only when the answer has
-   * changed — eight innerHTML writes a frame, for a wheel that is on screen a
-   * second at a time, would be a real cost for no change at all.
-   */
-  setSpeech(spoken) {
-    this.spoken = !!spoken;
+  /** Rewrite every caption from whatever the subclass says they are now. */
+  refresh() {
     for (let i = 0; i < this.slots.length; i++) {
-      const e = EMOTES[i], el = this.slots[i];
+      const el = this.slots[i];
       if (!el || !el._say) continue;
-      const words = this.spoken ? wordsFor(e.line, i) : '';
-      el._say.textContent = words ? `“${words}”` : e.blurb;
+      el._say.textContent = this.captionFor(this.items[i], i);
     }
-    return this.spoken;
   }
 
   /**
    * One frame of the wheel.
    *
-   * @returns the EMOTE that was just committed, or null.
+   * @returns the ITEM that was just committed, or null.
    */
   update(input, hud) {
     if (!input || typeof input.act !== 'function') { this.close(); return null; }
-    const held = input.act('emote');
+    const held = input.act(this.action);
     if (held && !this.on) {
       this.on = true;
       this.x = 0; this.y = 0; this.sel = -1;
       this.host?.classList?.remove('hidden');
+      this.onOpen?.();
     }
     if (!held) {
       if (!this.on) return null;
-      const picked = this.sel >= 0 ? EMOTES[this.sel] : null;
+      const picked = this.sel >= 0 ? this.items[this.sel] : null;
       this.close();
       return picked;
     }
@@ -617,7 +630,7 @@ export class EmoteWheel {
     // is not aiming.
     this.x = clamp(this.x + num(input.mouse?.dx, 0), -EMOTE_REACH * 1.6, EMOTE_REACH * 1.6);
     this.y = clamp(this.y + num(input.mouse?.dy, 0), -EMOTE_REACH * 1.6, EMOTE_REACH * 1.6);
-    const sel = emoteAt(this.x, this.y);
+    const sel = emoteAt(this.x, this.y, this.items.length);
     if (sel !== this.sel) {
       this.sel = sel;
       for (let i = 0; i < this.slots.length; i++) this.slots[i].classList.toggle('sel', i === sel);
@@ -632,6 +645,94 @@ export class EmoteWheel {
     this.sel = -1;
     for (const s of this.slots) s.classList.remove('sel');
     this.host?.classList?.add('hidden');
+  }
+}
+
+export class EmoteWheel extends RadialWheel {
+  constructor(host) {
+    super(host, { items: EMOTES, action: 'emote', cls: 'em' });
+    this.setSpeech(this.spoken);
+  }
+
+  /*
+   * THE WORDS, WHERE THERE ARE WORDS.
+   *
+   * `blurb` is a description of a NOISE — "come on, then", "one note,
+   * downward" — which is the right caption for a wordless larynx and the
+   * wrong one the moment the same slot says an actual sentence. So a slot
+   * prints the line it will really speak when spoken lines are on, and its
+   * description when they are not. `wordsFor(kind, i)` is deterministic on
+   * the slot index, so the caption and the line that follows it are the
+   * same line; it is refreshed by setSpeech rather than decided once here,
+   * because the mode is a live setting.
+   */
+  captionFor(e, i = EMOTES.indexOf(e)) {
+    const words = this.spoken ? wordsFor(e.line, i) : '';
+    return words ? `\u201c${words}\u201d` : e.blurb;
+  }
+
+  /**
+   * Print what each slot will SAY, or what it will sound like.
+   *
+   * Called from HUD.update off the live setting and only when the answer has
+   * changed — eight innerHTML writes a frame, for a wheel that is on screen a
+   * second at a time, would be a real cost for no change at all.
+   */
+  setSpeech(spoken) {
+    this.spoken = !!spoken;
+    this.refresh();
+    return this.spoken;
+  }
+}
+
+/**
+ * THE ORDER WHEEL — note #18.
+ *
+ * "commanding your troops takes up too many buttons so it needs to be a small
+ * popup mousewheel sort of thing."
+ *
+ * Six formations were six digit keys, plus a seventh for HOLD would have been
+ * seven. They are one held key and a flick now. The six digit binds STAY —
+ * they are in `ACTIONS`, they are rebindable, and a player who has learned
+ * them has learned something real — but nobody has to.
+ *
+ * THE TABLE IS COMMAND'S, not a copy of it. `FORMATIONS` is the authority for
+ * what an order is and what it says about itself, so a seventh formation
+ * appears on this wheel the day it is authored and cannot appear with the
+ * wrong blurb on it. HOLD is appended because it is a toggle rather than a
+ * formation and lives beside them rather than among them.
+ */
+export class OrderWheel extends RadialWheel {
+  constructor(host, formations) {
+    const items = Object.values(formations || {}).map((F) => ({
+      id: F.id, name: F.name, blurb: F.blurb, kind: 'form',
+    }));
+    items.push({ id: 'hold', name: 'Hold ground', kind: 'hold',
+      blurb: 'Stay where you are put. They still turn and fight.' });
+    super(host, { items, action: 'orderwheel', cls: 'em ow' });
+    this.director = null;
+  }
+
+  /** The live caption: the current order and the hold state are both readable. */
+  captionFor(item) {
+    const d = this.director;
+    if (item.kind === 'hold' && d) {
+      return d.commander?.holding
+        ? 'Holding. Choose this again to bring them with you.'
+        : item.blurb;
+    }
+    return item.blurb;
+  }
+
+  /** Light whichever order is up, so the wheel says where you are. */
+  onOpen() {
+    const d = this.director;
+    this.refresh();
+    for (let i = 0; i < this.slots.length; i++) {
+      const it = this.items[i];
+      const live = d && (it.kind === 'hold' ? !!d.commander?.holding : d.formation === it.id);
+      this.slots[i].classList.toggle('live', !!live);
+    }
   }
 }
 
@@ -837,6 +938,7 @@ export class HUD {
       targetOpen: root.getElementById('target-open'),
       center: root.getElementById('hud-center-msg'),
       hitmarks: root.getElementById('hitmarks'),
+      troopnames: root.getElementById('troopnames'),
       killfeed: root.getElementById('killfeed'),
       coach: root.getElementById('coach'),
       coachTitle: root.getElementById('coach-title'),
@@ -861,6 +963,7 @@ export class HUD {
       minimap: root.getElementById('minimap'),
       mapKey: root.getElementById('minimap-key'),
       emotes: root.getElementById('emote-wheel'),
+      orderwheel: root.getElementById('order-wheel'),
       // The free camera's own line lives OUTSIDE #hud, because #hud is the
       // thing it hides — a legend inside it would go away with everything else
       // and leave a player flying a detached camera with no way to learn how to
@@ -886,6 +989,8 @@ export class HUD {
     this.centerTimer = 0;
     this._buildPowers();
     this._marks = [];
+    /** Pooled nameplate nodes, one per living trooper. See `_nameplates`. */
+    this._plates = [];
     this.whyTimer = 0;
     /* The last state+multiplier drawn, so the two strings are only written when
      * one of them has actually changed. null means the readout is hidden. */
@@ -940,6 +1045,116 @@ export class HUD {
    * POWER_ICONS. A cooldown the player cannot see is a cooldown they learn by
    * pressing the key and getting nothing.
    */
+  /**
+   * NAMEPLATES OVER YOUR OWN TROOPS.
+   *
+   * "When you hover your reticle over your troops it should show you their
+   * name or maybe optionally their names will be displayed attractively and
+   * carefully over their heads like in other games."
+   *
+   * Both, and the setting is `troopNames`: `aimed` (the default — only the one
+   * you are looking at), `all`, or `off`. The default is the conservative one
+   * because twelve labels is twelve things competing with a lightsaber, and
+   * the note itself offers the hover reading first.
+   *
+   * WHAT IS ON IT is decided by what the player can do about it. The rank chip
+   * because the ladder is the mode's whole progression and it is the same
+   * colour the body is painted in; the name because that is the point; a
+   * health bar because a man about to die is a man you can go and stand in
+   * front of; and a NERVE bar beside it, narrower, because a man about to
+   * break is a different problem with a different answer and the two must be
+   * distinguishable without reading.
+   *
+   * THE NODES ARE POOLED. A plate per trooper per frame is twelve DOM writes
+   * and twelve creations at sixty hertz; the pool grows to the roster's high
+   * water mark and then never allocates again.
+   *
+   * IT IS DERIVED FROM THE ROSTER, not from a list the HUD keeps: the roster
+   * is the one authority for who exists and what they are called, and a second
+   * copy of it here is the defect this project keeps removing.
+   */
+  _nameplates(world, player, camera) {
+    const host = this.el.troopnames;
+    if (!host) return;
+    const mode = world.settings?.troopNames ?? 'aimed';
+    const cmd = world.command;
+    if (mode === 'off' || !cmd || !player) {
+      if (this._plates.length) { for (const p of this._plates) p.node.style.display = 'none'; }
+      return;
+    }
+    /* WHICH ONE IS UNDER THE RETICLE, in the same terms the rest of the HUD
+     * uses: the smallest angle between the aim and the line to the body. A
+     * screen-space test would disagree with the crosshair in third person,
+     * where the camera and the aim are not the same ray. */
+    const aim = player.aimDir;
+    const eye = player.camera ? player.camera.pos : player.position;
+    let aimed = null, bestDot = 0.986;                     // ≈ 9.5° cone
+    const live = [];
+    for (const c of cmd.commanders || []) {
+      if (c.side !== undefined && player.team !== undefined && c.side !== player.team) continue;
+      for (const t of c.roster.living) {
+        const e = t.body;
+        if (!e || e.dead) continue;
+        live.push(t);
+        if (!aim) continue;
+        _v.set(e.position.x - eye.x, e.position.y + 1.5 - eye.y, e.position.z - eye.z);
+        const d = _v.length();
+        if (d < 0.4 || d > 90) continue;
+        const dot = _v.divideScalar(d).dot(aim);
+        if (dot > bestDot) { bestDot = dot; aimed = t; }
+      }
+    }
+    while (this._plates.length < live.length) {
+      const node = document.createElement('div');
+      node.className = 'tplate';
+      node.innerHTML = '<div><span class="tp-rank"></span><span class="tp-name"></span></div>'
+        + '<div class="tp-bars"><div class="tp-hp"><i></i></div><div class="tp-mor"><i></i></div></div>';
+      host.appendChild(node);
+      this._plates.push({ node, rank: node.querySelector('.tp-rank'),
+        name: node.querySelector('.tp-name'), hp: node.querySelector('.tp-hp i'),
+        mor: node.querySelector('.tp-mor i') });
+    }
+    for (let i = 0; i < this._plates.length; i++) {
+      const P = this._plates[i];
+      const t = live[i];
+      if (!t) { P.node.style.display = 'none'; continue; }
+      const isAimed = t === aimed;
+      if (mode === 'aimed' && !isAimed) { P.node.style.display = 'none'; continue; }
+      const e = t.body;
+      /* THE HEAD, not the origin: a plate at a body's feet reads as belonging
+       * to the ground. `hipHeight` is the archetype's own and scales with it,
+       * so an ARC and a spider walker both get their label over their heads. */
+      _v.set(e.position.x, e.position.y + (e.A?.hipHeight ?? 0.95) + 1.15, e.position.z);
+      const dist = _v.distanceTo(eye);
+      _v.project(camera);
+      if (_v.z > 1 || dist > 120) { P.node.style.display = 'none'; continue; }
+      P.node.style.display = '';
+      P.node.style.left = `${(_v.x * 0.5 + 0.5) * 100}%`;
+      P.node.style.top = `${(-_v.y * 0.5 + 0.5) * 100}%`;
+      /* FADE WITH DISTANCE rather than cutting out: a label that pops off at a
+       * radius is the thing that makes a crowd of them read as a system. */
+      P.node.style.opacity = String(clamp(1.25 - dist / 90, 0.18, 1));
+      const R = t.rankRec;
+      if (P._rank !== R.short) {
+        P._rank = R.short;
+        P.rank.textContent = R.short;
+        // The rank's own colour, which is the colour the body is painted in.
+        P.rank.style.background = R.color ? `#${R.color.toString(16).padStart(6, '0')}` : 'var(--panel-hi)';
+        P.rank.style.color = R.color ? '#0a0b14' : 'var(--ink)';
+      }
+      if (P._name !== t.name) { P._name = t.name; P.name.textContent = t.name; }
+      const hp = clamp((e.hp ?? 1) / Math.max(1, e.maxHp ?? 1), 0, 1);
+      const mo = clamp(t.morale ?? 1, 0, 1);
+      P.hp.style.width = `${hp * 100}%`;
+      P.mor.style.width = `${mo * 100}%`;
+      P.node.classList.toggle('aimed', isAimed);
+      P.node.classList.toggle('far', dist > 40);
+      P.node.classList.toggle('hurt', hp < 0.35);
+      P.node.classList.toggle('shaken', mo < 0.4);
+      P.node.classList.toggle('broken', !!t.broken);
+    }
+  }
+
   _buildPowers(bindings = null) {
     this.powerEls = {};
     this.el.powers.innerHTML = '';
@@ -1474,6 +1689,9 @@ export class HUD {
       m.node.style.top = `${(-_v.y * 0.5 + 0.5) * 100}%`;
     }
 
+    // ── who is who. Note #16; see `_nameplates`.
+    this._nameplates(world, player, camera);
+
     /**
      * ── the room, and what it has to say about itself
      *
@@ -1517,6 +1735,29 @@ export class HUD {
     if (spoken !== this.emotes.spoken) this.emotes.setSpeech(spoken);
     const picked = this.emotes.update(input, this);
     if (picked) this.emote(picked, world, player);
+
+    /**
+     * …AND THE ORDER WHEEL, which is the same machine with the mode's own
+     * table in it. Note #18.
+     *
+     * Built lazily and only where there is an army: `FORMATIONS` is the
+     * authority for what an order is, so the wheel cannot exist before the
+     * director does and there is nothing for it to say in a mode with no
+     * troops in it.
+     */
+    if (world.command && this.el.orderwheel) {
+      if (!this.orders) {
+        this.orders = new OrderWheel(this.el.orderwheel, FORMATIONS);
+      }
+      this.orders.director = world.command;
+      const o = this.orders.update(input, this);
+      if (o) {
+        if (o.kind === 'hold') world.command.hold?.();
+        else world.command.order?.(o.id);
+      }
+    } else if (this.orders) {
+      this.orders.close();
+    }
   }
 
   /**

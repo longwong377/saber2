@@ -513,6 +513,15 @@ export const DEFAULT_SETTINGS = {
   /** Killstreak and event popups in the HUD's score column. */
   popups: true,
   /**
+   * NAMES OVER YOUR OWN TROOPS — `aimed`, `all` or `off`. Note #16.
+   *
+   * `aimed` is the default and the note itself offers that reading first: at
+   * any moment there are up to twelve of these on screen and a label is a
+   * thing competing with a lightsaber. `all` is the other half of what was
+   * asked for and is one setting away.
+   */
+  troopNames: 'aimed',
+  /**
    * THE MINIMAP, on by default and switchable off.
    *
    * On because a fight against 25 bodies with no idea where the other 24 are is
@@ -696,6 +705,7 @@ export const SETTING_READERS = {
   enemyVoices:     ['ui/Announcer.js', 'settings.enemyVoices !== false'],
   enemyBody:       ['engine/Presence.js', 's.enemyBody !== false'],
   popups:          ['ui/HUD.js', 'world.settings.popups !== false'],
+  troopNames:      ['ui/HUD.js', "world.settings?.troopNames ?? 'aimed'"],
   minimap:         ['ui/HUD.js', 'settings.minimap !== false'],
   minimapSense:    ['ui/HUD.js', 'settings.minimapSense !== false'],
   reticleShape:    ['ui/HUD.js', 'shapeAt(s.reticleShape)'],
@@ -1214,6 +1224,14 @@ export const CODEX = [
    * string in the whole block.
    */
   { head: 'Commanding an army' },
+  /* THE WHEEL FIRST, because it is how most people will give an order and
+   * because the six rows under it are the same six orders the wheel holds.
+   * The count comes off the registry for the same reason the emote row's
+   * does: a seventh formation moves this line without anybody editing it. */
+  { keys: ['orderwheel'], hold: true,
+    text: () => `Order wheel — the ${ORDER_ACTIONS.length} orders and <b>hold ground</b>, on one key. `
+      + 'Hold it, aim at a slot, let go. The six keys below are the same orders '
+      + 'without the wheel, for anybody who would rather not.' },
   ...ORDER_ACTIONS.map(o => ({
     keys: [o.action],
     text: () => `<b>${o.name}</b> — ${o.blurb}`,
@@ -4532,6 +4550,29 @@ export class Menu {
     return value;
   }
 
+  /** Note #16 — whose name is over whose head. See DEFAULT_SETTINGS.troopNames. */
+  _buildTroopNames() {
+    const host = document.getElementById('opt-troopnames');
+    if (!host) return;
+    const modes = [
+      ['aimed', 'The one you are looking at', 'A plate over whoever is under your reticle, and nobody else.'],
+      ['all', 'All of them', 'Every man in your line, faded with distance. This is the one that reads as a squad.'],
+      ['off', 'None', 'Nothing over anybody. The roster panel still has every name in it.'],
+    ];
+    host.innerHTML = '';
+    for (const [key, name, blurb] of modes) {
+      const d = document.createElement('div');
+      d.className = 'diff' + (this.s.troopNames === key ? ' sel' : '');
+      d.innerHTML = `<i class="dot"></i><div class="txt"><b>${name}</b><span>${blurb}</span></div>`;
+      this._activate(d, () => {
+        audio.ui('click');
+        this._pick('troopNames', key);
+        [...host.children].forEach(c => c.classList.toggle('sel', c === d));
+      });
+      host.appendChild(d);
+    }
+  }
+
   _buildOptions() {
     /* FOUR of these sliders index a TABLE, and the tables can grow. Their
      * `max` is taken from the table rather than typed into index.html, so
@@ -4748,6 +4789,7 @@ export class Menu {
     this._check('opt-minimap', 'minimap');
     // Same shape and the same reason as the box above it: HUD.Minimap asks
     // `world.settings` on the frame it draws, and that is this object.
+    this._buildTroopNames();
     this._check('opt-minimap-sense', 'minimapSense');
     const test = document.getElementById('btn-voice-test');
     if (test) test.addEventListener('click', () => this._auditionVoice(this.s.voiceIndex));

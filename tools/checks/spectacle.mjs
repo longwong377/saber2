@@ -37,7 +37,7 @@ import { ACTIONS, ACTION_IDS, defaultBindings, conflicts, findConflicts, keyLabe
 import { Input } from '../../src/engine/Input.js';
 import { LINES, LINE_KINDS, PLAYER_LINES, ENEMY_LINES, voiceAt } from '../../src/engine/Voice.js';
 import { Announcer, STREAKS, RETURNS, CHAMBERS, QUIP_GAP } from '../../src/ui/Announcer.js';
-import { HUD, Minimap, EmoteWheel, FreeCam, EMOTES, MINIMAP, MINIMAP_COLORS,
+import { HUD, Minimap, EmoteWheel, OrderWheel, FreeCam, EMOTES, MINIMAP, MINIMAP_COLORS,
   emoteAngle, emoteAt, EMOTE_DEADZONE, FREECAM } from '../../src/ui/HUD.js';
 import { DEFAULT_SETTINGS, SETTING_READERS, CODEX, codexHtml,
   applyGait, tapFrame, applyFeelSettings } from '../../src/ui/Menu.js';
@@ -786,7 +786,10 @@ export async function run({ check, assert }) {
     const host = INDEX.slice(INDEX.indexOf('id="emote-wheel"'));
     assert(!/class="em"/.test(host.slice(0, host.indexOf('</div>'))),
       'the wheel\'s slots are typed into the markup as well as computed from the table');
-    assert(/#emote-wheel\{/.test(CSS) && /\.em\.sel\{/.test(CSS), 'the wheel has no styles');
+    /* The rule is shared with the ORDER wheel now — same class, same geometry,
+     * same hit test (see `RadialWheel`) — so the selector is a list and the
+     * test asks whether this wheel is in it rather than whether it is alone. */
+    assert(/#emote-wheel[,{]/.test(CSS) && /\.em\.sel\{/.test(CSS), 'the wheel has no styles');
     return `emote on ${b.emote.map(keyLabel).join('+')}, hold, in the Codex, host in index.html, no typed slots`;
   });
 
@@ -1120,4 +1123,66 @@ export async function run({ check, assert }) {
     assert(count() === tris, 'unticking the box left the marks on the body');
     return `applyFeelSettings arms Injury on the real rig: a hit adds geometry, the box wipes it`;
   });
+
+  check('spectacle: the ORDER wheel is the same machine, with the mode\'s own table in it', () => {
+    /* Note #18: "commanding your troops takes up too many buttons so it needs
+     * to be a small popup mousewheel sort of thing you know like in other
+     * games where you press a botton and use your mouse to select one of the
+     * options in the popup wheel."
+     *
+     * Six digit keys become one held key and a flick. Two properties, and the
+     * second is the one that keeps it honest a year from now: the wheel's
+     * table is `FORMATIONS`, not a copy of it, so a seventh order appears on
+     * it the day it is authored and cannot appear with the wrong words on. */
+    assert(INDEX.includes('id="order-wheel"'), 'index.html has no host for the order wheel');
+    const host = INDEX.slice(INDEX.indexOf('id="order-wheel"'));
+    assert(!/class="em/.test(host.slice(0, host.indexOf('</div>'))),
+      'the order wheel\'s slots are typed into the markup as well as computed from the table');
+    assert(/#order-wheel[,{]/.test(CSS) && /\.em\.ow\{/.test(CSS), 'the order wheel has no styles');
+
+    const b = defaultBindings();
+    assert(b.orderwheel?.length, 'the order wheel has no default binding');
+    for (const code of b.orderwheel) {
+      assert(!findConflicts(b, code, 'orderwheel').length,
+        `the order wheel defaults to ${code}, which ${findConflicts(b, code, 'orderwheel').join('+')} answers to`);
+    }
+    const probe = defaultBindings();
+    probe.orderwheel = ['F13'];
+    assert(/<kbd>(?:Hold )?F13<\/kbd>/.test(codexHtml(probe)),
+      'the Codex never prints the order wheel\'s binding');
+
+    /* AND THE TABLE IS COMMAND'S. Built against a fake FORMATIONS with a name
+     * nothing else in the game has, so a wheel that had quietly grown its own
+     * copy of the real six would fail here rather than in a year. */
+    const fake = {
+      alpha: { id: 'alpha', name: 'Alpha', blurb: 'first' },
+      beta: { id: 'beta', name: 'Beta', blurb: 'second' },
+    };
+    const el = { innerHTML: '', children: [], classList: { add() {}, remove() {}, toggle() {} },
+      appendChild(c) { this.children.push(c); } };
+    const made = [];
+    const realCreate = globalThis.document.createElement.bind(globalThis.document);
+    const w = new OrderWheel(el, fake);
+    assert(w.items.length === 3,
+      `the wheel holds ${w.items.length} slots for two formations — it should be those two plus HOLD`);
+    assert(w.items[0].id === 'alpha' && w.items[1].id === 'beta',
+      'the wheel is not built from the formations it was handed');
+    assert(w.items[2].kind === 'hold', 'the wheel has no HOLD slot');
+    assert(w.slots.length === 3, `${w.slots.length} slot nodes for 3 items`);
+    /* The slots are placed from the SAME function the hit test reads back, at
+     * the wheel's own length — so a three-slot wheel is thirds and an
+     * eight-slot one is eighths, and neither has a transform typed anywhere. */
+    for (let i = 0; i < 3; i++) {
+      const a = emoteAngle(i, 3);
+      const want = `${(50 + Math.cos(a) * 37).toFixed(3)}%`;
+      assert(w.slots[i].style.left === want,
+        `slot ${i} sits at ${w.slots[i].style.left} and the hit test says ${want}`);
+      assert(emoteAt(Math.cos(a) * 80, Math.sin(a) * 80, 3) === i,
+        `pushing at slot ${i} picks ${emoteAt(Math.cos(a) * 80, Math.sin(a) * 80, 3)}`);
+    }
+    void realCreate; void made;
+    return `order wheel on ${b.orderwheel.join('/')}, ${w.items.length} slots derived from `
+      + `${Object.keys(fake).length} formations plus hold, geometry shared with the emote wheel`;
+  });
+
 }

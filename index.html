@@ -372,6 +372,12 @@
         <p class="hint">Contacts around you, heading-up, out to 42&nbsp;m — bosses warm, allies green, and
           anything further away pinned to the rim so you still know it is there. Off, it costs nothing at
           all rather than being drawn invisible.</p>
+        <!-- WHOSE NAME YOU SEE, and when. Note #16. The list is built by
+             Menu._buildTroopNames off one table, so a fourth mode is one row. -->
+        <h3 style="margin-top:20px;font-size:11px">Names over your troops</h3>
+        <div id="opt-troopnames" class="difflist"></div>
+        <p class="hint">Command mode only. Rank, name, health and nerve, over the head of the man
+          carrying them.</p>
         <label class="check"><input type="checkbox" id="opt-minimap-sense" checked> Read the map with the Force</label>
         <p class="hint">On, the map is what <b>Force sense</b> shows you: hold the power open and it stays
           lit while the pool drains, or tap it for a reading that fades over a few seconds. It costs what
@@ -635,6 +641,11 @@
     one is wrong by pressing it and getting the wrong emote.
   -->
   <div id="emote-wheel" class="hidden" aria-hidden="true"></div>
+  <!-- THE ORDER WHEEL. Note #18 — six digit keys become one held key and a
+       flick. Empty for the same reason the emote wheel is: FORMATIONS is the
+       table, and a second copy of it typed in here is the defect this project
+       keeps removing. Built by HUD.js the first frame there is an army. -->
+  <div id="order-wheel" class="hidden" aria-hidden="true"></div>
 
   <div id="bossbar" class="bossbar hidden">
     <div class="boss-name"><b id="boss-label">—</b><em id="boss-phase"></em></div>
@@ -663,6 +674,12 @@
 
   <div id="hud-center-msg" class="centermsg"></div>
   <div id="hitmarks"></div>
+  <!-- NAMEPLATES OVER YOUR OWN TROOPS. Empty markup for the same reason every
+       other list in this file is: the roster is the table, and a plate per
+       trooper typed in here would be the second copy of it. HUD.js fills and
+       pools these; the pool is the roster's size, so it does not churn nodes
+       every frame. See `_nameplates`. -->
+  <div id="troopnames"></div>
   <div id="dmg-vignette"></div>
   <div id="flow-vignette"></div>
 </div>

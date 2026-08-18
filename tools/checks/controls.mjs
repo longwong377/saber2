@@ -464,18 +464,32 @@ export async function run({ check, assert }) {
     // crate reaches its generation cap on a single frame. The sweep is bounded
     // by the length it started with; this is what holds that.
     let nextId = 100;
-    const makeProp = (z, gen) => ({
-      id: 'p' + (nextId++), dead: false, gen,
-      capsules: () => [{ name: 'c0', p0: new THREE.Vector3(0, 1.2, z), p1: new THREE.Vector3(0, 1.2, z), r: 0.45 }],
-      cut() {
-        if (this.gen >= 2) return null;
-        return [makeProp(z - 0.2, this.gen + 1), makeProp(z + 0.2, this.gen + 1)];
-      },
-      shatter() { this.dead = true; },
-    });
+    /* THE HALVES REGISTER THEMSELVES, which is what a real `Prop` does now:
+     * its constructor puts it in `world.props` (see the note there — a level
+     * built twenty-one spires with a bare `makeSpire()` and got twenty-one
+     * unsynced colliders out of it), so `_applyBladeEvent` no longer pushes
+     * them and a stub that does not self-register measures nothing. The
+     * property under test is unchanged: the sweep is bounded by the length the
+     * array had when it started, so a half cannot be cut in the same frame. */
+    let bench = null;
+    const makeProp = (z, gen) => {
+      const q = {
+        id: 'p' + (nextId++), dead: false, gen,
+        capsules: () => [{ name: 'c0', p0: new THREE.Vector3(0, 1.2, z), p1: new THREE.Vector3(0, 1.2, z), r: 0.45 }],
+        cut() {
+          if (this.gen >= 2) return null;
+          return [makeProp(z - 0.2, this.gen + 1), makeProp(z + 0.2, this.gen + 1)];
+        },
+        shatter() { this.dead = true; },
+      };
+      if (bench && !bench.props.includes(q)) bench.props.push(q);
+      return q;
+    };
 
     const w = targetsWorld(0);
-    w.props = [makeProp(-8, 0), makeProp(-14, 0)];
+    w.props = [];
+    bench = w;
+    makeProp(-8, 0); makeProp(-14, 0);
     w.bladeSolver = { clearTarget() {} };
     w.particles = { sparkBurst() {}, slag() {}, cutFlare() {} };
     w._applyBladeEvent = World.prototype._applyBladeEvent;
@@ -563,6 +577,24 @@ export async function run({ check, assert }) {
     const readers = new Map();
     for (const [path, text] of files) {
       for (const m of text.matchAll(/\.act(?:Hit)?\(\s*['"]([A-Za-z0-9_]+)['"]/g)) {
+        if (!readers.has(m[1])) readers.set(m[1], []);
+        readers.get(m[1]).push(path);
+      }
+      /**
+       * …AND A WHEEL DECLARES ITS ACTION AT THE CONSTRUCTION SITE.
+       *
+       * `RadialWheel` reads `input.act(this.action)`, which the regex above
+       * cannot see through — and it is one class serving two wheels, so
+       * inlining a literal would mean two copies of the geometry, the hit test
+       * and the DOM pooling, which is the thing the class exists to prevent.
+       *
+       * What it does instead is name its action, by name, at the one place it
+       * is built: `new RadialWheel(host, { action: 'emote' })`. That is the
+       * same guarantee as a literal `act('emote')` — a wheel still cannot
+       * reach this list without saying which action it answers — and it is the
+       * same widening the ORDER_ACTIONS clause below already makes.
+       */
+      for (const m of text.matchAll(/\baction:\s*['"]([A-Za-z0-9_]+)['"]/g)) {
         if (!readers.has(m[1])) readers.set(m[1], []);
         readers.get(m[1]).push(path);
       }
@@ -1592,7 +1624,10 @@ export async function run({ check, assert }) {
       // panel, toggled rather than selected. Same shape as the mode list and
       // held to the same standard: `_syncRules` writes `this.s.rules` by name,
       // which is what the regex below is checking for.
-      'rules'];
+      'rules',
+      // Whose name is over whose head — a row of cards on the Interface
+      // panel, written by `_pick('troopNames', …)` like every other picker.
+      'troopNames'];
     /**
      * The settings that are TYPED — a text box rather than a slider, a
      * checkbox or a row of cards. One so far: the co-op name, which is the
