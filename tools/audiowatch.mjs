@@ -27,7 +27,7 @@
  * The summary at the end is the part that settles it: how many of the sounds
  * the game asked for actually got a voice, broken down by which sound.
  *
- *   node tools/audiowatch.mjs [--level arena] [--seconds 40] [--hide 15]
+ *   node tools/audiowatch.mjs [--level colosseum] [--seconds 40] [--hide 15]
  *
  * `--hide N` fakes a tab switch at N seconds (suspend + visibilitychange), the
  * exact event the player describes as the sound going away and not coming back.
@@ -37,10 +37,32 @@
 import { chromium } from 'playwright-core';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { resolveLevel, installFrameHelper, deployAndWait, waitFramesFor } from './_level.mjs';
 
 const args = process.argv.slice(2);
 const opt = (n, d) => { const i = args.indexOf(`--${n}`); return i >= 0 && args[i + 1] ? args[i + 1] : d; };
-const LEVEL = opt('level', 'arena');
+/**
+ * THE DEFAULT WAS `arena`, WHICH IS NOT A LEVEL AND HAS NOT BEEN FOR A WHILE.
+ *
+ * `World.loadLevel` resolves `LEVELS[key] ? key : LEVEL_ORDER[0]` — a safety
+ * net for a player with a stale profile and a trap for an instrument (HANDOFF
+ * §2.7). So every audiowatch run since the roster cull has measured the Ember
+ * Shelf while printing `level arena` at the top of its own report, and
+ * `Audio.js:31` still quotes "the arena run was worse, 1331 refusals" as the
+ * evidence the current band layout was sized on. That number is from a level
+ * that does not exist, measured on one that was never named.
+ *
+ * `null` here and the roster is asked at the page — see `_level.mjs`. A key
+ * this build does not have is now refused OUT LOUD instead of substituted, and
+ * with no `--level` the tool takes whatever the build opens with rather than a
+ * name typed here that can rot the same way.
+ *
+ * `tools/checks/roster.mjs` could not have caught this: its scan has eight
+ * syntactic forms for a level name and `opt('level', 'arena')` — a default
+ * argument to this file's own flag parser — matched none of them. It matches
+ * the eighth now.
+ */
+const LEVEL = opt('level', null);
 const SECONDS = Number(opt('seconds', 40));
 const HIDE_AT = Number(opt('hide', -1));
 const HIDE_FOR = Number(opt('hide-for', 4));
@@ -62,11 +84,14 @@ const browser = await chromium.launch({
     '--disable-features=AudioServiceOutOfProcess'],
 });
 const page = await browser.newPage();
+// `window.__frame()` before any navigation, so the deploy below waits in frames.
+await installFrameHelper(page);
 const errors = [];
 page.on('pageerror', (e) => errors.push(String(e.message || e)));
 page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
 
 await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded', timeout: 45000 });
+const level0 = await resolveLevel(page, LEVEL);
 await page.evaluate((level) => {
   localStorage.setItem('saber.settings.v2', JSON.stringify({
     level, quality: 'low', resolutionScale: 0.4, difficulty: 'knight', mode: 'roguelite',
@@ -74,12 +99,13 @@ await page.evaluate((level) => {
     // setting that would trivially explain silence has to be ruled out.
     volume: 0.8, music: 0.45, grassScale: 0.5, particleScale: 0.6,
   }));
-}, LEVEL);
+}, level0);
 await page.reload({ waitUntil: 'domcontentloaded' });
-await page.waitForSelector('#menu:not(.hidden)', { timeout: 90000 });
-await page.click('#btn-deploy');
-await page.waitForSelector('#hud:not(.hidden)', { timeout: 60000 });
-await page.waitForTimeout(800);
+/* IN FRAMES, NOT SECONDS — HANDOFF §2.6. One frame through swiftshader is up
+ * to 4151 ms, so the 60 s this replaces was about fourteen frames and the
+ * 800 ms was under one. */
+await waitFramesFor(page, '#btn-deploy', { frames: 60 });
+await deployAndWait(page, { settle: 2 });
 
 /* ── instrument, from outside the file under test ──────────────────────
  * Counting from the harness rather than from Audio.js means the before and
@@ -182,7 +208,7 @@ const setup = await page.evaluate(({ fast }) => {
 }, { fast: FAST });
 
 if (setup.error) { console.log('\n  ' + setup.error + '\n'); await browser.close(); stop(); process.exit(1); }
-console.log(`\n  level ${LEVEL}  ctx ${setup.state} @ ${setup.rate}Hz  pool ${setup.maxVoices}${FAST ? '  [fast]' : ''}\n`);
+console.log(`\n  level ${level0}  ctx ${setup.state} @ ${setup.rate}Hz  pool ${setup.maxVoices}${FAST ? '  [fast]' : ''}\n`);
 
 const rows = [];
 const t0 = Date.now();

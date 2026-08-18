@@ -148,6 +148,29 @@ const FORMS = [
    * assignment in the tree and the failures would stop being read.
    */
   [/\blevel(?:Key)?\s*=\s*'([a-z][a-z0-9_]*)'/g, "level = '…' (default / assignment)"],
+
+  /**
+   * THE EIGHTH, and the note above is right a third time.
+   *
+   * The second form here is `flag('level', '…')`, which is the argument parser
+   * `tools/trace.mjs` and friends use. `tools/audiowatch.mjs` has its own, and
+   * calls it `opt` — `const LEVEL = opt('level', 'arena')` — so the default
+   * naming a level deleted in the roster cull went unseen by every pattern
+   * above, including the flag one it is a spelling of.
+   *
+   * What it cost is the reason it is here rather than in a commit message:
+   * `World.loadLevel` substituted `LEVEL_ORDER[0]`, so every audiowatch run
+   * since the cull measured the Ember Shelf while printing `level arena`, and
+   * `Audio.js`'s note over the voice bands quoted a number from that run — "the
+   * arena run was worse, 1331 refusals" — as the evidence the band layout was
+   * sized on. A dead level name reached a design argument.
+   *
+   * Written over the NAME of the flag rather than the name of the function, so
+   * a ninth parser spelt `arg('level', …)` or `param('level', …)` is covered
+   * the day it is written. That is the difference between this entry and the
+   * two above it, both of which named a caller and were then short of one.
+   */
+  [/\b[A-Za-z_$][\w$]*\(\s*'level'\s*,\s*'([a-z][a-z0-9_]*)'\s*\)/g, "…('level', '…')"],
 ];
 
 export function run({ check, assert }) {

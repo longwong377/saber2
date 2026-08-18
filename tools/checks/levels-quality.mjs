@@ -205,57 +205,6 @@ export async function run({ check, assert }) {
     return `8 bearings × 12 s from the bank, furthest e = ${worstE.toFixed(2)} (${rows.join(' ')})`;
   });
 
-  acheck('levels: the gate arches stand IN the gates, not on the wall beside them', async () => {
-    /**
-     * ALL FOUR OF THE COLOSSEUM'S GATE ARCHES STOOD SIX METRES OVER THE RAMP
-     * THEY FRAME, and every seating check in the game passed them.
-     *
-     * The level placed each one at `(cos a · 66, sin a · 49)` — a point on the
-     * podium ELLIPSE — while the preset cuts the gate on a CIRCULAR bearing,
-     * `smoothstep(0.075, 0.0, |atan2(z, x) − a|)`, which is exactly zero past
-     * 0.075 rad. The parametric angle of an ellipse is not its compass
-     * bearing: the four arches came out 0.0788–0.0998 rad off, i.e. outside
-     * their own cut, standing on terrain at 4.76–5.05 m over a ramp floor of
-     * 1.76–2.24 m and 6.0–6.4 m sideways of it. In the render you could see
-     * the crowd THROUGH the span and behind both piers.
-     *
-     * `prop-seating` cannot catch this and never could: an arch on top of a
-     * wall is resting on the wall. The property that fails is not seating, it
-     * is that a GATE is the low ground on its own ring — a hole cut through a
-     * wall is the lowest thing on the circle it is cut through. So this walks
-     * the podium ring at the arch's own radius and asks where the floor of the
-     * ramp is, which is measurement rather than a second copy of the preset's
-     * arithmetic (HANDOFF §2.4): if the cut moves, this follows it.
-     *
-     * Measured after the fix: each arch sits 0.00–0.10 m over the lowest
-     * ground on its ring, against 2.8–3.0 m over it before.
-     */
-    const { world } = await level('colosseum');
-    const T = world.terrain;
-    const arches = [];
-    world.scene.traverse((o) => {
-      if (o.isMesh || !o.userData || o.userData.__maker !== 'addArch') return;
-      arches.push(o.position.clone());
-    });
-    assert(arches.length === 4, `${arches.length} arches on the colosseum, not the four gates`);
-    const rows = [];
-    for (const p of arches) {
-      const r = Math.hypot(p.x, p.z), a = Math.atan2(p.z, p.x);
-      let lowest = Infinity, at = 0;
-      for (let d = -0.45; d <= 0.45; d += 0.005) {
-        const h = T.height(Math.cos(a + d) * r, Math.sin(a + d) * r);
-        if (h < lowest) { lowest = h; at = d; }
-      }
-      const over = T.height(p.x, p.z) - lowest;
-      rows.push(`${(a * 57.3).toFixed(0)}° +${over.toFixed(2)} m`);
-      assert(over < 1.0,
-        `a gate arch at (${p.x.toFixed(0)}, ${p.z.toFixed(0)}) stands ${over.toFixed(2)} m above the `
-        + `lowest ground on its own ring, which is ${(Math.abs(at) * r).toFixed(1)} m to the side of it — `
-        + 'the arch is on the podium wall and the gate is somewhere else');
-    }
-    return `4 gates, height over the floor of their own ramp: ${rows.join(', ')}`;
-  });
-
   acheck('hazard: the sheet a level is built round is in front of the player when it opens', async () => {
     /**
      * THE EMBER SHELF'S LAVA SEA COULD NOT BE SEEN FROM WHERE THE GAME STOOD

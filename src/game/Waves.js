@@ -2859,20 +2859,90 @@ export class WaveDirector {
     };
   }
 
-  /** How many rungs of the ladder this depth has opened. */
+  /** How far up the ladder this depth has climbed — the TOP of the window. */
   duelTier(wave) {
     const { rungs } = this.duelRoster();
-    return clamp(1 + Math.floor(Math.max(0, wave - 1) / DUEL_RUNG), 1, Math.max(1, rungs.length));
+    return clamp(this.duelStep(wave), 1, Math.max(1, rungs.length));
   }
+
+  /** The rung the cadence is on, unclamped — what `duelFloor` climbs by. */
+  duelStep(wave) { return 1 + Math.floor(Math.max(0, wave - 1) / DUEL_RUNG); }
 
   /** How many blades stand against you. A duel stays a duel. */
   duelSize(wave) {
     return clamp(1 + Math.floor(Math.max(0, wave - 1) / DUEL_PAIR), 1, DUEL_MAX);
   }
 
+  /**
+   * WHETHER THE LADDER HAS RUN OUT OF NEW FORMS, and what happens after.
+   *
+   * `duelTier` saturates the wave the last rung opens — six rungs at DUEL_RUNG
+   * apart is wave 16 — and `duelSize` saturates at DUEL_MAX by wave 19. Past
+   * that the mode stopped: measured on the colosseum at seed 99, delivered
+   * threat over w19..w40 read 32 39 32 32 32 32 38 32 32 40 40 46 40 40 40 40
+   * 45 40 40 40 40 46 — a flat line with a bump every fifth wave — while the
+   * Trial over the same span went 130 to 259 and the shared budget 130 to 364.
+   * The only growing term left was one extra elite every twenty waves against a
+   * cap of four bodies, and `World._earnInsight` pays out on every wave clear
+   * in every mode, so the player went on growing against a fight that had
+   * stopped. The blurb promises "a master at the top" and there was no top.
+   *
+   * The body count may not carry it — four blades IS the mode — so what grows
+   * past saturation is QUALITY, on the ladder's own teaching rate rather than a
+   * second number invented for it:
+   *
+   *   THE LADDER IS A WINDOW THAT CLIMBS, not a set that only grows. It opened
+   *   a rung every DUEL_RUNG waves and never closed one, so the acolyte of wave
+   *   1 was still a quarter of the draw at wave 40. Past the last rung the
+   *   BOTTOM falls away on the same cadence — one form retired every DUEL_RUNG
+   *   waves — and the two set-piece duellists, the Jedi Master and the
+   *   Magnaguard captain, are the rungs at the far end. So the climb runs to
+   *   the top of the roster and stops there, on a wave of masters, which is
+   *   what "a master at the top" says. One number does all of it, and it is the
+   *   one the blurb already states.
+   *
+   *   EVERY BLADE ARRIVES PROMOTED, one more per DUEL_RUNG waves from
+   *   DUEL_ELITE_FROM, so the promotion cadence is the teaching cadence too: a
+   *   new form every three waves while there are forms, and a new elite every
+   *   three waves until all four wear one. It was one more elite every TWENTY
+   *   waves, which put the fourth at wave 68 of a mode that had stopped at 19.
+   *
+   * AND IT IS BOUNDED, which is stated rather than hidden. Four bodies, the
+   * heaviest forms the roster holds, one modifier each — that product is the
+   * ceiling and no arrangement of them beats it, exactly as `escalation.mjs`
+   * says of the horde's stranded budget. What changed is where the ceiling sits
+   * and how long the climb to it is. `escalation.mjs` holds both halves — the
+   * climb from wave 19 to the top of the ladder, and the saturation after it.
+   */
+  duelFloor(wave) {
+    const { rungs } = this.duelRoster();
+    /**
+     * NEVER NARROWER THAN A PAIR. Four bodies drawn from one form is the
+     * single-archetype duel this ladder was built to replace — measured over
+     * twelve seeds, a one-rung window fields 6 distinct entries at wave 40
+     * where a pair fields 12 — so the climb stops with the top two rungs open
+     * and the modifiers carry the rest of the variety.
+     */
+    return clamp(this.duelStep(wave) - rungs.length, 0, Math.max(0, rungs.length - 2));
+  }
+
+  /** The forms this wave draws from: the window between floor and tier. */
+  duelWindow(wave) {
+    const { rungs } = this.duelRoster();
+    return rungs.slice(this.duelFloor(wave), this.duelTier(wave));
+  }
+
+  /** How many of the blades arrive promoted. The teaching rate, reused. */
+  duelElites(wave) {
+    if (wave < DUEL_ELITE_FROM) return 0;
+    return Math.min(this.duelSize(wave),
+      1 + Math.floor((wave - DUEL_ELITE_FROM) / DUEL_RUNG));
+  }
+
   _composeDuel(w) {
-    const { rungs, bosses } = this.duelRoster();
-    const open = rungs.slice(0, this.duelTier(w));
+    const { bosses } = this.duelRoster();
+    // The window, not the whole ladder — see `duelFloor` for why it climbs.
+    const open = this.duelWindow(w);
     const allowed = this.modifiersAt(w);
     const queue = [];
 
@@ -2895,8 +2965,10 @@ export class WaveDirector {
      * "lean on the heavy end as depth grows" rule (§2.4).
      */
     const want = this.duelSize(w) - queue.length;
-    // A duel has no budget to spend, so the elites are gated on depth alone.
-    let elites = w < DUEL_ELITE_FROM ? 0 : 1 + Math.floor((w - DUEL_ELITE_FROM) / 20);
+    // A duel has no budget to spend, so the elites are gated on depth alone —
+    // on DUEL_RUNG, the ladder's own rate, rather than the `/20` that put the
+    // fourth elite at wave 68 of a mode that had stopped moving at 19.
+    let elites = this.duelElites(w);
     for (const e of queue) if (spawnMod(e)) elites--;
     for (let i = 0; i < want; i++) {
       const t = this._pickType(open, w, DUEL_MAX) || open[open.length - 1];

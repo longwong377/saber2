@@ -136,6 +136,15 @@ const CHAFF = ROSTER.filter((t) => guardFor(ARCHETYPES[t]) === 0 && !ARCHETYPES[
 
 const pc = (v) => `${(v * 100).toFixed(1)}%`;
 
+/** Point to capsule AXIS distance — the same segment test the solver uses. */
+const _sdA = new THREE.Vector3(), _sdB = new THREE.Vector3();
+function segDist(p, a, b) {
+  _sdA.subVectors(b, a);
+  const L2 = _sdA.lengthSq();
+  const t = L2 > 1e-12 ? Math.max(0, Math.min(1, _sdB.subVectors(p, a).dot(_sdA) / L2)) : 0;
+  return p.distanceTo(_sdB.copy(a).addScaledVector(_sdA, t));
+}
+
 /**
  * A REAL `Enemy` on a flat field — for the one check that has to drive the
  * shipped `takeCut` rather than reason about the numbers it reads.
@@ -174,6 +183,84 @@ function live(type) {
 }
 
 export async function run({ check, assert }) {
+
+  check('severance: a blade through the DRAWN body reaches a capsule', () => {
+    /**
+     * ══ THE QUESTION NEITHER THIS FILE NOR `beasts.mjs` HAD EVER ASKED ══
+     *
+     * Both of them START from `capsules()`. Every property above is about what
+     * a capsule is WORTH — its price, its role, its order down a limb — and not
+     * one of them asks whether the capsule is anywhere near the thing the
+     * player can see. So a bone could emit a perfectly priced capsule two and a
+     * half metres from its own mesh and the whole suite would stay green.
+     *
+     * It did. Measured before `coverSpotOf` existed, every drawn vertex on
+     * every body against the COMPLETE shipped capsule set:
+     *
+     *     AAT      57% of its surface outside, worst point 1.23 m out
+     *     AT-TE    38%   (tarsus 70% × 6, 0.56 m)
+     *     nexu     15%   (head 57%, 1.13 m)
+     *     acklay    9%   (head 63%, 2.91 m — the mesh runs 4.38 m along the
+     *                     bone's local +Z and the capsule 1.62 m along its +Y)
+     *     dwarf spider 10%  (tarsus 100% × 4)
+     *
+     * and every one of the nineteen HUMANOIDS was inside its own capsules to
+     * within 0.07 m, which is what says this is a creature and machine problem
+     * and not a tolerance. The feet are the ones that matter: HANDOFF 6.1c's
+     * whole design is that "the counter-play to a body you cannot cut through
+     * is the legs it is standing on", `legsLost >= 3` topples, and 70% of a
+     * walker's foot was not there to be cut.
+     *
+     * TWO BOUNDS, because the two say different things. The WORST GAP is about
+     * a blade passing through drawn geometry and meeting nothing — an acklay's
+     * head at 2.91 m is not a tolerance, it is an absence. The SHARE is about
+     * how much of a body is like that.
+     */
+    const rows = [];
+    let worstAll = 0, worstWhere = '';
+    for (const type of RIGGED) {
+      const { rig, caps } = body(type);
+      rig.root.updateMatrixWorld(true);
+      let n = 0, out = 0, worst = 0, worstBone = '';
+      for (const b of rig.list) {
+        if (!b.parts.length) continue;
+        for (const m of b.parts) {
+          const attr = m.geometry?.attributes?.position;
+          if (!attr) continue;
+          m.updateWorldMatrix(true, false);
+          // Subsampled to about 400 points a bone: a hull with 4000 vertices
+          // does not describe its own extent ten times better, and this runs
+          // over 29 bodies.
+          const stride = Math.max(1, Math.floor(attr.count / 400));
+          for (let i = 0; i < attr.count; i += stride) {
+            const q = new THREE.Vector3().fromBufferAttribute(attr, i).applyMatrix4(m.matrixWorld);
+            let best = Infinity;
+            for (const c of caps) {
+              const d = segDist(q, c.p0, c.p1) - c.r;
+              if (d < best) best = d;
+            }
+            n++;
+            if (best > 0) {
+              out++;
+              if (best > worst) { worst = best; worstBone = b.name; }
+            }
+          }
+        }
+      }
+      if (!n) continue;
+      const share = out / n;
+      if (worst > worstAll) { worstAll = worst; worstWhere = `${type}.${worstBone}`; }
+      assert(worst < 0.20,
+        `${type}: a point on the drawn '${worstBone}' is ${worst.toFixed(2)} m outside every capsule this `
+        + 'body emits — a blade through it meets nothing at all');
+      assert(share < 0.22,
+        `${type}: ${(share * 100).toFixed(0)}% of its drawn surface is outside its own capsules`);
+      rows.push(`${type} ${(share * 100).toFixed(0)}%/${worst.toFixed(2)}m`);
+    }
+    assert(rows.length >= 25, `only ${rows.length} rigged bodies were measured`);
+    return `worst ${worstWhere} ${worstAll.toFixed(2)} m; ` + rows.join(' ');
+  });
+
   check('severance: every bone every body can produce has a price, and nothing defaults', () => {
     const names = new Set();
     let capsules = 0;

@@ -15,7 +15,11 @@ import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
 import { existsSync, statSync } from 'node:fs';
 import { extname, join, resolve, normalize } from 'node:path';
-import { resolveLevel } from './_roster.mjs';
+/* `./_level.mjs` AND NOT `./_roster.mjs`, WHICH HAS NEVER EXPORTED THIS NAME.
+ * This import was a SyntaxError and this tool has never run — see the header of
+ * `_level.mjs` for why `_roster.mjs` could not have provided it either (it
+ * imports `three`, and this file runs without the module loader). */
+import { resolveLevel, installFrameHelper, deployAndWait, waitFramesFor } from './_level.mjs';
 
 const ROOT = resolve(new URL('..', import.meta.url).pathname);
 const OUT = join(ROOT, '.smoke');
@@ -39,16 +43,28 @@ const browser = await chromium.launch({
          '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--enable-webgl'],
 });
 const page = await browser.newPage({ viewport: { width: 800, height: 800 } });
+// `window.__frame()`, before any navigation, so every wait below is in frames.
+await installFrameHelper(page);
+/* AND THE SCREENSHOT ITSELF IS A FRAME. Playwright's default action timeout is
+ * 30 s; a screenshot forces a render, and HANDOFF 2.6 measures one frame here
+ * at up to 4151 ms on an EMPTY field and more with a body and a level in it.
+ * So every shot this tool tried to take timed out: it got as far as writing one
+ * portrait and died on the second. The other four tools already set this. */
+page.setDefaultTimeout(300000);
 page.on('pageerror', e => console.log('pageerror', e.message));
 await page.goto(url, { waitUntil: 'domcontentloaded' });
 const level = await resolveLevel(page, null);
 await page.evaluate((lv) => localStorage.setItem('saber.settings.v2', JSON.stringify({
   level: lv, quality: 'low', resolutionScale: 1, difficulty: 'knight', mode: 'roguelite', volume: 0, music: 0 })), level);
 await page.reload({ waitUntil: 'domcontentloaded' });
-await page.waitForSelector('#menu:not(.hidden)', { timeout: 90000 });
-await page.click('#btn-deploy');
-await page.waitForSelector('#hud:not(.hidden)', { timeout: 60000 });
-await page.waitForTimeout(4000);
+await waitFramesFor(page, '#btn-deploy', { frames: 60 });
+/* DEPLOY IS WAITED OUT IN FRAMES, NOT IN SECONDS — HANDOFF 2.6. One frame
+ * through swiftshader takes up to 4151 ms on an EMPTY field, and the frames
+ * just after a deploy are the most expensive in the run, so a wall-clock wait
+ * here asks "is this box quiet" and not "did the game deploy". Measured: the
+ * 60 s below is about fourteen frames, and `waitForTimeout(4000)` is under one.
+ * `smoke.mjs` was rewritten for exactly this; these five never were. */
+await deployAndWait(page, { settle: 4 });
 await page.evaluate(() => { for (const el of document.querySelectorAll('#hud, .overlay, #title, .banner')) el.style.display = 'none'; });
 
 // hold the blade up so the arms are actually working, then freeze
@@ -111,7 +127,9 @@ if (enemyArg) {
       e.velocity.set(0, 0, 0);
       window.__pin = e;
     });
-    await page.waitForTimeout(1600);
+    // Settled in FRAMES: 1600 ms is under one frame here, so the gait had not
+    // moved at all before the body was measured.
+    await page.evaluate(async () => { for (let i = 0; i < 6; i++) await window.__frame(); });
     const box = await page.evaluate(() => {
       const e = window.__pin;
       const THREE = window.SABER.engine.scene.constructor === Object ? null : null;
@@ -151,7 +169,7 @@ if (enemyArg) {
           fov: v.fov,
         };
       }, { box, v, a });
-      await page.waitForTimeout(650);
+      await page.evaluate(async () => { for (let i = 0; i < 2; i++) await window.__frame(); });
       await page.screenshot({ path: join(OUT, `e-${type}-${name}.png`) });
     }
     console.log('wrote', type, `(height ${H.toFixed(2)}m, radius ${box.wide.toFixed(2)}m)`);
@@ -182,7 +200,7 @@ for (const [name, s] of shots) {
       fov: s.fov,
     };
   }, s);
-  await page.waitForTimeout(1400);
+  await page.evaluate(async () => { for (let i = 0; i < 2; i++) await window.__frame(); });
   await page.screenshot({ path: join(OUT, name + '.png') });
   console.log('wrote', name);
 }

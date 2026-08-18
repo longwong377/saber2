@@ -30,7 +30,11 @@
 import { readFile } from 'node:fs/promises';
 import { existsSync, statSync, mkdirSync } from 'node:fs';
 import { resolve, join, extname, normalize } from 'node:path';
-import { resolveLevel } from './_roster.mjs';
+/* `./_level.mjs` AND NOT `./_roster.mjs`, WHICH HAS NEVER EXPORTED THIS NAME.
+ * This import was a SyntaxError and this tool has never run — see the header of
+ * `_level.mjs` for why `_roster.mjs` could not have provided it either (it
+ * imports `three`, and this file runs without the module loader). */
+import { resolveLevel, installFrameHelper, deployAndWait, waitFramesFor } from './_level.mjs';
 
 const ROOT = resolve(new URL('..', import.meta.url).pathname);
 const argv = process.argv.slice(2);
@@ -77,6 +81,8 @@ const browser = await chromium.launch({
     '--autoplay-policy=no-user-gesture-required'],
 });
 const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+// `window.__frame()`, before any navigation, so every wait below is in frames.
+await installFrameHelper(page);
 page.setDefaultTimeout(300000);
 const errors = [];
 page.on('pageerror', (e) => errors.push(String(e.message)));
@@ -89,10 +95,13 @@ await page.evaluate(([lv, q]) => {
     volume: 0, music: 0, grassScale: 1, particleScale: 0.6 }));
 }, [level, quality]);
 await page.reload({ waitUntil: 'domcontentloaded' });
-await page.waitForSelector('#menu:not(.hidden)', { timeout: 180000 });
-await page.click('#btn-deploy', { timeout: 240000, noWaitAfter: true });
-await page.waitForSelector('#hud:not(.hidden)', { timeout: 180000 });
-await page.waitForTimeout(2500);
+await waitFramesFor(page, '#btn-deploy', { frames: 60 });
+  /* DEPLOY IS WAITED OUT IN FRAMES, NOT IN SECONDS — HANDOFF 2.6. One frame
+ * through swiftshader takes up to 4151 ms on an EMPTY field, and the frames
+ * just after a deploy are the most expensive in the run, so a wall-clock
+ * wait here asks "is this box quiet" and not "did the game deploy".
+ * `smoke.mjs` was rewritten for exactly this; these five never were. */
+await deployAndWait(page, { settle: 3 });
 
 const frozen = await page.evaluate(async () => {
   const w = window.SABER.world;

@@ -712,10 +712,93 @@ export async function run({ check, assert }) {
           + `${shallow.shapes} — every deep wave is asking the same narrow question`);
       }
     }
+    /**
+     * ── AND THE MODE WHOSE ROSTER RUNS OUT SOONEST ────────────────────────
+     *
+     * THIS CHECK ONLY EVER BUILT ROGUELITE DIRECTORS, and its title claims a
+     * property of the escalation rather than of one mode. The Duel is where the
+     * roster runs out first and hardest — six rungs three waves apart is gone
+     * by wave 16, DUEL_MAX is four bodies by wave 19 — and it flattened there
+     * completely: measured on the colosseum at seed 99 BEFORE the fix, delivered
+     * threat over w19..w40 read 32 39 32 32 32 32 38 32 32 40 40 46 40 … 46,
+     * no trend, while the shared budget over the same span went 130 → 364. The
+     * one growing term was `1 + floor((w-8)/20)` elites against a cap of four.
+     *
+     * The duel may not answer with bodies — four IS the mode — so the property
+     * is stated the way the mode can keep it: past the depth where BOTH ladders
+     * saturate, the wave must still get better. Three spans, twelve seeds each,
+     * and the bar is a comparison between spans rather than a number, so it
+     * survives a retune of any of the four constants.
+     *
+     * AND WHAT IT DELIBERATELY DOES NOT CLAIM: that it climbs forever. Four
+     * bodies × the heaviest form × one modifier each is a hard ceiling, exactly
+     * as the roster's own ceiling is for the horde above; measured, the climb
+     * runs to about wave 28 and holds. What must not happen — what did happen —
+     * is the flattening starting the wave the last rung opens.
+     */
+    const duel = new Waves.WaveDirector(tableWorld(), { mode: 'duel' });
+    const SEEDS = [1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233];
+    const span = (from, to) => {
+      let threat = 0, elite = 0, bodies = 0, n = 0, most = 0;
+      const entries = new Set();
+      for (let w = from; w <= to; w++) {
+        for (const s of SEEDS) {
+          Waves.seedWaves(s, 0); duel.wave = w; duel._compose();
+          threat += duel.spawnQueue.reduce((a, e) => a + Waves.spawnCost(e), 0);
+          elite += duel.spawnQueue.filter((e) => Waves.spawnMod(e)).length;
+          bodies += duel.spawnQueue.length;
+          most = Math.max(most, duel.spawnQueue.length);
+          for (const e of duel.spawnQueue) entries.add(e);
+          n++;
+        }
+      }
+      return { threat: threat / n, elite: elite / bodies, bodies: bodies / n, most, entries: entries.size };
+    };
+    // The depth where the two stated ladders have both stopped: the last rung
+    // has opened and the body count has reached DUEL_MAX. Read off the shipped
+    // rules rather than typed, so it moves when they do (§2.4).
+    const { rungs } = duel.duelRoster();
+    const flat = Math.max(1 + Waves.DUEL_RUNG * (rungs.length - 1),
+      1 + Waves.DUEL_PAIR * (Waves.DUEL_MAX - 1));
+    assert(duel.duelTier(flat) === rungs.length && duel.duelSize(flat) === Waves.DUEL_MAX,
+      `wave ${flat} was supposed to be where both duel ladders saturate and it is not`);
+    const before = span(flat - Waves.DUEL_RUNG, flat);
+    const after = span(flat + Waves.DUEL_RUNG * 2, flat + Waves.DUEL_RUNG * 3);
+    assert(after.threat > before.threat * 1.05,
+      `the duel delivers ${before.threat.toFixed(1)} threat at wave ${flat} and `
+      + `${after.threat.toFixed(1)} nine waves later — it stops escalating the wave its ladders saturate, `
+      + 'in a mode that goes on paying Insight for every clear');
+    /* THE PROMOTION LADDER MUST KEEP UP WITH THE BODY LADDER. It ran on `/20`
+     * — one more elite every twenty waves — so the fourth blade arrived
+     * promoted at wave 68 of a mode that had stopped moving at 19. Stated
+     * against the shipped size rather than as a share, because the share tops
+     * out at 100% and a share cannot then say when it got there. */
+    let plainWave = flat;
+    while (duel.isBossWave(plainWave)) plainWave++;  // a boss wears no modifier
+    const at = span(plainWave, plainWave);
+    assert(at.elite >= 1,
+      `at wave ${plainWave}, where both duel ladders saturate, ${(at.elite * 100).toFixed(0)}% of the `
+      + 'blades arrive promoted — the elite cadence is slower than the mode it escalates');
+    assert(after.elite >= before.elite * 0.9,
+      `the duel promotes ${(before.elite * 100).toFixed(0)}% of its blades at wave ${flat} and `
+      + `${(after.elite * 100).toFixed(0)}% deeper — the quality went backwards`);
+    // It is still a duel: the answer may not be more bodies.
+    assert(after.most <= Waves.DUEL_MAX,
+      `a deep duel fielded ${after.most} bodies against DUEL_MAX ${Waves.DUEL_MAX}`);
+    // And the ladder has moved rather than merely grown: the form wave 1 taught
+    // is not still a quarter of the draw once the top rungs are open.
+    const deepWindow = duel.duelWindow(flat + Waves.DUEL_RUNG * 3);
+    assert(!deepWindow.includes(rungs[0]) && deepWindow.length >= 2,
+      `at wave ${flat + Waves.DUEL_RUNG * 3} the duel still draws from ${deepWindow.join(', ')} — `
+      + `${rungs[0]} is the wave-1 lesson and it is still a rung of the late ladder`);
+
     return rows.filter((r) => r.key === 'wood')
       .map((r) => `w${r.w}: ${(r.plainLeft * 100).toFixed(0)}%→${(r.left * 100).toFixed(0)}% stranded, `
         + `${r.conds.toFixed(1)}c, ${r.shapes} shapes, ${r.entries}e`).join(' · ')
-      + ` · worst absorbed ${(worstAbsorbed * 100).toFixed(0)}% at ${worstAt}`;
+      + ` · worst absorbed ${(worstAbsorbed * 100).toFixed(0)}% at ${worstAt}`
+      + ` · duel w${plainWave} ${before.threat.toFixed(1)} threat / ${(at.elite * 100).toFixed(0)}% elite `
+      + `→ w${flat + Waves.DUEL_RUNG * 3} ${after.threat.toFixed(1)} / ${(after.elite * 100).toFixed(0)}%, `
+      + `window ${deepWindow.join('+')}`;
   });
 
   check('conditions: every condition does on the field what its own card says', () => {

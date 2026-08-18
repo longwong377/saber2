@@ -836,6 +836,69 @@ export function run({ check, assert }) {
     return lines.join('; ');
   });
 
+  check('props: a gate arch stands IN its gate, not on the wall beside it', () => {
+    /**
+     * ALL FOUR OF THE COLOSSEUM'S GATE ARCHES STOOD SIX METRES OVER THE RAMP
+     * THEY FRAME, and every check in this file passed them — correctly, on
+     * its own terms: an arch standing on top of a wall IS resting on the wall.
+     *
+     * The level placed each one at `(cos a · 66, sin a · 49)`, a point on the
+     * podium ELLIPSE, while `TERRAIN_PRESETS.colosseum` cuts each gate on a
+     * CIRCULAR bearing — `smoothstep(0.075, 0.0, |atan2(z, x) − a|)`, exactly
+     * zero past 0.075 rad. An ellipse's parametric angle is not its compass
+     * bearing, and the four came out 0.0788–0.0998 rad off: outside their own
+     * cut, on terrain at 4.76–5.05 m over a ramp floor of 1.76–2.24 m, 6.0–6.4
+     * m sideways of the ramp. The render showed the crowd THROUGH the span and
+     * behind both piers.
+     *
+     * The property that failed is not seating, it is that A GATE IS THE LOW
+     * GROUND ALONG THE WALL IT IS CUT THROUGH: a hole through a rampart is the
+     * lowest thing on the rampart, whatever shape the rampart is in plan. So
+     * this sweeps 14 m either way along the arch's own TANGENT — the wall's
+     * local direction, perpendicular to the radius — and asks how far the
+     * ground under the arch stands above the lowest ground on that line.
+     *
+     * The tangent and not the ring, and the difference is the whole reason
+     * this is measurement rather than a restatement: the podium is an ELLIPSE,
+     * so a circle at the arch's radius leaves the wall entirely on the short
+     * axis and finds the arena sand 19 m away. The tangent stays on the
+     * structure the arch is standing in. Nothing here reads the preset's
+     * arithmetic, so if the cut moves this follows it (HANDOFF §2.4).
+     *
+     * Measured: 0.00–0.30 m over the floor of its own ramp on all four now,
+     * against 2.82–3.08 m before, with the ramp 6.0–6.5 m to the side.
+     *
+     * Every arch on every level, not just this one: an arch is a hole through
+     * something by definition, and a level that stands one on a bank has drawn
+     * a doorway into a wall.
+     */
+    const rows = [];
+    for (const [key, all] of seating()) {
+      const arches = all.filter((r) => r.maker === 'addArch');
+      if (!arches.length) continue;
+      const terrain = new Terrain(new THREE.Scene(), LEVELS[key].terrain, 0.5);
+      for (const r of arches) {
+        const x = (r.cx0 + r.cx1) / 2, z = (r.cz0 + r.cz1) / 2;
+        const rad = Math.hypot(x, z), a = Math.atan2(z, x);
+        if (rad < 8) continue;                       // an arch at the middle stands in no wall
+        let lowest = Infinity, at = 0;
+        for (let d = -14; d <= 14; d += 0.25) {
+          const h = terrain.height(x - Math.sin(a) * d, z + Math.cos(a) * d);
+          if (h < lowest) { lowest = h; at = d; }
+        }
+        const over = terrain.height(x, z) - lowest;
+        rows.push(`${key} ${(a * 57.3).toFixed(0)}° +${over.toFixed(2)} m`);
+        assert(over < 1.0,
+          `${key}: a gate arch at (${x.toFixed(0)}, ${z.toFixed(0)}) stands ${over.toFixed(2)} m above the `
+          + `lowest ground along its own wall, ${Math.abs(at).toFixed(1)} m to the side of it — `
+          + 'the arch is on the wall and the gate it frames is somewhere else');
+      }
+      terrain.dispose();
+    }
+    assert(rows.length >= 4, `${rows.length} arches surveyed — the sweep has stopped matching them`);
+    return `height over the floor of their own ramp: ${rows.join(', ')}`;
+  });
+
   check('props: a run is on the ground for its whole length, not at the one point the level sampled', () => {
     /* THE OTHER HALF OF `nothing floats`, and the reason two of these shipped.
      *

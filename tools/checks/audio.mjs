@@ -20,7 +20,9 @@
  */
 
 import * as THREE from 'three';
+import { readFileSync, readdirSync } from 'node:fs';
 import { AudioEngine, PRIO, MUSIC_TRACKS } from '../../src/engine/Audio.js';
+import { ENEMY_POWERS } from '../../src/game/Enemy.js';
 import { ENEMY_VOICES } from '../../src/engine/Voice.js';
 import { SCORE_STATES, CHORDS, ROOT, hz } from '../../src/engine/Score.js';
 
@@ -179,6 +181,33 @@ class FakeCtx {
  * measured on the same graph as everything else rather than against a second
  * fake that could drift away from this one.
  */
+
+/* ── what a sound actually delivers ─────────────────────────────────────
+ *
+ * A voice count answers "did anything play"; it does not answer "did these two
+ * events sound different", which is what four of the defects below were. So
+ * this records the GAIN NODES a call builds and the peak each one was commanded
+ * to, in order — the closest thing to a waveform this fake context has. Two
+ * calls with the same signature here are, to a listener, the same sound.
+ */
+function record(a, ctx, fn) {
+  const made = [];
+  const real = ctx.createGain.bind(ctx);
+  ctx.createGain = () => { const n = real(); made.push(n); return n; };
+  const v0 = a.stats.alloc;
+  try { fn(); } finally { ctx.createGain = real; }
+  const peaks = made
+    .map((n) => Math.max(0, ...n.gain.calls.map((c) => c[1])))
+    .filter((g) => g > 1e-6)
+    .sort((x, y) => y - x);
+  return {
+    voices: a.stats.alloc - v0,
+    layers: peaks.length,
+    sum: peaks.reduce((x, y) => x + y, 0),
+    sig: peaks.map((g) => g.toFixed(4)).join('/'),
+  };
+}
+
 export function engine() {
   const prevAC = globalThis.AudioContext;
   let made = null;
@@ -192,6 +221,294 @@ export function engine() {
 }
 
 export async function run({ check, assert }) {
+
+  /* ══ what a sound SAYS — four events that said nothing, or said it wrong ══ */
+
+  check('audio: every power a body can cast makes a sound, and an unknown one is not silence', () => {
+    /**
+     * `ENEMY_POWERS.choke` has declared `sound: 'grip'` since it was written.
+     * `AudioEngine.force` was an if/else over push · pull · jump · sense ·
+     * lightning WITH NO FINAL `else`, so a grip cast, held and released made
+     * nothing at all — measured through the shipped engine, push / pull /
+     * lightning 2 voices each and grip 0. The only one of the five enemy
+     * powers with that property, on the power whose whole point is that the
+     * player cannot see what has hold of them.
+     *
+     * THE LIST IS READ OFF THE POWERS TABLES, not written here. That is the
+     * whole reason this check catches the class rather than the instance: a
+     * sixth power declaring a sixth `sound` is covered the day it is authored,
+     * and nobody has to remember this file exists (HANDOFF 2.3). And the last
+     * clause is the one that makes silence impossible rather than merely
+     * absent — an unnamed kind has to be audible too, because a missing thing
+     * answered with silence is worse than one answered with a plausible
+     * default: the default is at least heard.
+     */
+    const { a, ctx } = engine();
+    const near = V(2, 0, 0);
+    const kinds = new Set();
+    for (const k of Object.keys(ENEMY_POWERS)) {
+      if (ENEMY_POWERS[k]?.sound) kinds.add(ENEMY_POWERS[k].sound);
+    }
+    // `Player` names its own kinds at the call site rather than in a table, so
+    // those are added by hand — and the day they become a table this loop takes
+    // them the way it takes the enemy's.
+    for (const k of ['push', 'pull', 'jump', 'sense', 'lightning']) kinds.add(k);
+    assert(kinds.size >= 4, `only ${kinds.size} distinct power sounds were found — the tables did not load`);
+    const rows = [];
+    for (const kind of kinds) {
+      const r = record(a, ctx, () => a.force(near, kind));
+      assert(r.voices > 0, `a power declaring sound:'${kind}' plays NOTHING — force() has no branch for it`);
+      rows.push(`${kind} ${r.voices}`);
+    }
+    const unknown = record(a, ctx, () => a.force(near, 'a-kind-nobody-has-written-yet'));
+    assert(unknown.voices > 0,
+      'force() answers a kind it does not know with silence — the next power added goes quiet the way grip did');
+    return `${rows.join(', ')}, unknown ${unknown.voices}`;
+  });
+
+  check('audio: losing a limb does not sound exactly like a graze that took nothing', () => {
+    /**
+     * `Enemy._onSever` played `audio.cut(point, this.A.big)` and a contact that
+     * severed nothing played `audio.cut(ev.point, false)`. On the 22 of 31
+     * bodies whose `A.big` is falsy those two calls are byte-identical: same
+     * two layers, same 0.380 of delivered gain. Dismemberment is the mechanic
+     * this game is named for and it had no sound of its own.
+     *
+     * Measured on the SIGNATURE and not on a voice count, because the defect
+     * was never that nothing played.
+     */
+    const { a, ctx } = engine();
+    const near = V(2, 0, 0);
+    const graze = record(a, ctx, () => a.cut(near, false));
+    const light = record(a, ctx, () => a.sever(near, false));
+    const heavy = record(a, ctx, () => a.sever(near, true));
+    assert(light.sig !== graze.sig,
+      `a severance on a small body delivers ${light.sig} and a graze delivers ${graze.sig} — the same sound`);
+    assert(heavy.sig !== graze.sig,
+      `a severance on a big body delivers ${heavy.sig} and a graze delivers ${graze.sig} — the same sound`);
+    assert(light.layers > graze.layers,
+      `a severance is ${light.layers} layers against a graze's ${graze.layers} — it is the graze at a different volume`);
+    assert(heavy.sig !== light.sig, 'a Rancor\'s arm and a B1\'s arm come off with the same sound');
+    // and it is still the same EVENT: the graze's own opening has to be in it
+    assert(light.sum > graze.sum,
+      `a severance delivers ${light.sum.toFixed(3)} against a graze's ${graze.sum.toFixed(3)}`);
+    return `graze ${graze.sum.toFixed(3)} (${graze.layers} layers) · sever ${light.sum.toFixed(3)} (${light.layers}) · `
+      + `sever big ${heavy.sum.toFixed(3)} (${heavy.layers})`;
+  });
+
+  check('audio: the outcomes of a blade exchange are told apart by ear', () => {
+    /**
+     * `World._applyClash` plays `clash(point, power)` and THEN branches six
+     * ways. Two of the six add a sound — a chamber adds `deflect`, a lock has
+     * its own opening — and four add nothing. Measured as delivered gain sums
+     * through the shipped engine: clash 0.780, +chamber 1.470, +lock 0.940, and
+     * PARRY, LOST CLASH, GUARD BROKEN and UNBLOCKABLE all 0.780, identical to
+     * the plain clash and to each other. Four different words in four different
+     * colours on the HUD, one waveform in the ears.
+     *
+     * This holds the ENGINE's half: the four timbres exist, none is silent, no
+     * two are the same, and an outcome nobody has written yet is audible. The
+     * caller's half — `World._applyClash` raising one per branch — is a patch
+     * in a file this lane does not own and is reported rather than made.
+     */
+    const { a, ctx } = engine();
+    const near = V(2, 0, 0);
+    const base = record(a, ctx, () => a.clash(near, 1));
+    const KINDS = ['parry', 'lost', 'guardBroken', 'unblockable'];
+    const seen = new Map();
+    for (const k of KINDS) {
+      const r = record(a, ctx, () => { a.clash(near, 1); a.clashOutcome(near, k, 1); });
+      assert(r.sig !== base.sig, `a ${k} delivers ${r.sig}, which is the bare clash`);
+      for (const [other, o] of seen) {
+        assert(o.sig !== r.sig, `${k} and ${other} deliver the same ${r.sig} — the HUD says two words and the ears hear one`);
+      }
+      seen.set(k, r);
+    }
+    const unknown = record(a, ctx, () => a.clashOutcome(near, 'a-seventh-outcome', 1));
+    assert(unknown.voices > 0, 'clashOutcome answers an outcome it does not know with silence');
+    return `clash ${base.sum.toFixed(3)} · `
+      + [...seen].map(([k, r]) => `${k} ${r.sum.toFixed(3)}`).join(' · ');
+  });
+
+  check('audio: a dead jet trooper stops making a noise', async () => {
+    /**
+     * THE ONE VOICE IN THE ENGINE WITH A MANUALLY MANAGED LIFETIME, AND
+     * NOTHING WAS MANAGING IT.
+     *
+     * `audio.jet(pos, power, id)` opens a CONTINUOUS positional voice — the
+     * only one in Audio.js, because a jetpack is a state and everything else
+     * here is an event — and releases it only on a later call with
+     * `power <= 0.02`. That call comes out of `Enemy._move`, which `update`
+     * returns above the moment `this.dead`. So the release could never arrive.
+     *
+     * Measured before the fix: five seconds after death `audio._jets` still
+     * held 1; after `dispose()` — forty seconds later, when the corpse is
+     * cleaned up — it still held 1; only `unload()` cleared it. Eight troopers
+     * dying takes the map to its cap of SIX: six live panners at the spots they
+     * fell, six of the world band's thirty voices gone, and a ninth trooper
+     * still alive 1.7 m from the listener gets NO voice, because the cap is
+     * full of corpses.
+     *
+     * `audio.mjs` had 40 checks and not one of them exercised a voice with a
+     * lifetime, which is why this survived: every other check here plays a
+     * one-shot and asks whether the pool drains, and a one-shot drains itself.
+     * So this drives the REAL body — the shipped archetype, `update` on the
+     * shipped clock, `die` — against the shipped singleton, and asks the map.
+     */
+    const { audio } = await import('../../src/engine/Audio.js');
+    const { Enemy, ARCHETYPES } = await import('../../src/game/Enemy.js');
+    await import('../../src/game/Levels.js');   // registers the Command units, jet trooper included
+    const { bodyOptsFor } = await import('../../src/game/Bodies.js');
+    const { initPhysics } = await import('../../src/physics/Rapier.js');
+    const { RapierWorld } = await import('../../src/physics/RapierWorld.js');
+    await initPhysics();
+
+    const prevAC = globalThis.AudioContext;
+    let ctx = null;
+    globalThis.AudioContext = function () { ctx = new FakeCtx(); return ctx; };
+    const hadCtx = audio.ctx;
+    audio.ctx = null; audio.ready = false; audio._lastWake = -1e9;
+    try { audio.init(); } finally { globalThis.AudioContext = prevAC; }
+    audio._listenerPos.set(0, 0, 0);
+
+    const terrain = { height: () => 0, normalAt: (x, z, o) => o.set(0, 1, 0), raycast: () => null,
+      size: 400, half: 200, inBounds: () => true, surfaceAt: () => 'sand',
+      crater() {}, flush() {}, slopeAt: () => 0 };
+    const physics = new RapierWorld({ gravity: -24, iterations: 4, maxBodies: 64 });
+    physics.terrain = terrain;
+    const particles = { sandPuff() {}, muzzle() {}, sparkBurst() {}, cutFlare() {}, slag() {},
+      plasma: { spawn() {} }, smoke: { spawn() {} }, explosion() {} };
+    const w = {
+      scene: new THREE.Scene(), physics, terrain, statics: [], players: [], enemies: [], props: [],
+      doors: [], locks: [], particles, settings: { fov: 60 }, time: 0, groundColor: 0xcfae82,
+      bolts: { fire() {}, update() {}, threatsNear: () => [] },
+      engine: { addHeat() {}, hurt() {}, flash() {}, setRadial() {},
+        camera: new THREE.PerspectiveCamera(60, 16 / 9, 0.045, 1000) },
+      report() {}, notify() {}, notifyFloating() {}, addHitstop() {},
+      onEnemyKilled() {}, onLimbSevered() {}, spawnDebrisGroup() {},
+    };
+    const ctxA = { enemies: w.enemies, particles, terrain, physics, bolts: w.bolts, time: 0,
+      pickTarget: () => null, camera: w.engine.camera };
+
+    /* A flier WITH ENGINES ON IT. `float` alone is not the property: the
+     * training remote hovers and has no jetpack and no rig, so it never opens
+     * a voice and would have made this check prove nothing. `rig.jets` is what
+     * `_jetFx` reads, so that is what is asked — of a built body, not of a list
+     * of names (HANDOFF 2.3). */
+    const FLIERS = Object.keys(ARCHETYPES).filter((k) => {
+      const A = ARCHETYPES[k];
+      if (!A.float || !A.build) return false;
+      // Through `bodyOptsFor`, because that is how `Enemy._build` builds one:
+      // the nozzles come off BODY_KITS.jet's `pack`, not off the archetype.
+      try { return !!A.build({ scale: A.scale, ...(bodyOptsFor(k) || {}) })?.rig?.jets?.length; }
+      catch { return false; }
+    });
+    assert(FLIERS.length, 'no archetype has a jetpack on it, so nothing here is being tested');
+    const type = FLIERS[0];
+    const held = () => audio._jets?.size ?? 0;
+
+    const bodies = [];
+    for (let i = 0; i < 3; i++) {
+      const e = new Enemy(w, type, new THREE.Vector3(i * 3, 0, 0));
+      e.position.set(i * 3, 2.2, 0);
+      w.enemies.push(e);
+      bodies.push(e);
+      // Open the voice through the shipped path: `_jetFx` is what `update`
+      // reaches, and it is what calls `audio.jet`.
+      e._jetFx(1 / 60, ctxA, 1.0);
+      e._jetFx(1 / 60, ctxA, 1.0);
+    }
+    const open = held();
+    assert(open === bodies.length,
+      `${open} jet voices for ${bodies.length} flying bodies — the fixture never opened them`);
+
+    for (const e of bodies) e.die(null, null, 'test');
+    // Five seconds of the world carrying on, exactly as it would.
+    for (let f = 0; f < 300; f++) { w.time += 1 / 60; ctxA.time = w.time; for (const e of bodies) e.update(1 / 60, ctxA); }
+    const after = held();
+    assert(after === 0,
+      `${after} of ${open} jetpack voices were still held five seconds after the bodies died — `
+      + 'they roar at the spot they fell, for ever, and each one is a world-band voice the living cannot have');
+
+    // …and a body torn down without dying (a level unload) leaves nothing either.
+    const e2 = new Enemy(w, type, new THREE.Vector3(9, 0, 0));
+    e2.position.set(9, 2.2, 0);
+    e2._jetFx(1 / 60, ctxA, 1.0); e2._jetFx(1 / 60, ctxA, 1.0);
+    assert(held() === 1, 'the second fixture never opened a voice');
+    e2.dispose();
+    assert(held() === 0, 'dispose() left the jetpack voice open — a level unload leaks one per flier');
+
+    for (const e of bodies) e.dispose();
+    audio.unload?.();
+    audio.ctx = hadCtx;
+    audio.ready = !!hadCtx;
+    return `${open} fliers opened ${open} voices; all released by die(), and by dispose() on its own`;
+  });
+
+  check('audio: a menu blip is not what a physical contest ends on', () => {
+    /**
+     * `Duel.js` ended a four-and-a-half-second blade lock with
+     * `audio.ui('good')` / `ui('bad')` — the exact 620 → 1240 Hz ping the skill
+     * tree plays when you buy an upgrade, non-positional, 0.140/0.180 of gain,
+     * against the lock's own OPENING at 0.940 positional. `death()` and
+     * `victory()` exist because the same substitution was made twice before and
+     * both docstrings say so; that was the third instance, and the docstring on
+     * `ui()` claiming `ui('wave')` was "the ONLY caller of that kind anywhere
+     * in the project" outside `src/ui/` was false in five files.
+     *
+     * So the tree is read. Every `audio.ui(` outside `src/ui/` has to be on the
+     * list below with a reason, and the list is short on purpose: a refusal, a
+     * lesson advancing, a stratagem code being typed and a screen opening are
+     * UI events that happen to be raised from a game file. Anything the
+     * player's BODY did is not, and that is the whole distinction.
+     */
+    const ALLOWED = {
+      'src/game/World.js': "ui('wave') — a wave beginning, which `ui()`'s own docstring treats as an "
+        + 'announcement and not a button, and routes to the score',
+      'src/game/Player.js': 'a refusal — "not enough Force", raised beside world.notify()',
+      'src/game/Dojo.js': 'a training lesson passing, which is a card on the screen',
+      'src/game/Stratagems.js': 'the code-entry pad: a keypress, a refusal and a wrong code',
+      'src/main.js': 'the meditation screen opening',
+    };
+    const root = new URL('../../', import.meta.url).pathname;
+    const found = new Map();
+    const walk = (rel) => {
+      for (const ent of readdirSync(root + rel, { withFileTypes: true })) {
+        const r = rel + ent.name;
+        if (ent.isDirectory()) { if (ent.name !== 'ui') walk(r + '/'); continue; }
+        if (!ent.name.endsWith('.js')) continue;
+        /* COMMENTS STRIPPED FIRST. This file's own prose quotes `audio.ui(`
+         * five times explaining why the blade lock is off it, and a scan that
+         * counted those would have gone red at the paragraph that documents the
+         * fix. Same `strip` shape `roster.mjs` uses on the same tree. */
+        const src = readFileSync(root + r, 'utf8')
+          .replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+        const n = (src.match(/audio\.ui\(/g) || []).length;
+        if (n) found.set(r, n);
+      }
+    };
+    walk('src/');
+    for (const [file, n] of found) {
+      assert(ALLOWED[file],
+        `${file} plays a menu blip ${n} time(s) (audio.ui). If it is a UI event say so on the list in `
+        + 'this check; if it is something the player\'s body did, it wants a sound of its own');
+    }
+    assert(!found.has('src/game/Duel.js'),
+      'the blade lock is back on the menu ping — see AudioEngine.lockBroken');
+    // and the lock's own sounds must be positional and not the UI ping
+    const { a, ctx } = engine();
+    const won = record(a, ctx, () => a.lockBroken(V(2, 0, 0), true));
+    const lost = record(a, ctx, () => a.lockBroken(V(2, 0, 0), false));
+    const ping = record(a, ctx, () => a.ui('good'));
+    assert(won.sig !== lost.sig, 'winning and losing a blade lock sound the same');
+    assert(won.sum > ping.sum * 2,
+      `winning a lock delivers ${won.sum.toFixed(3)} against the menu ping's ${ping.sum.toFixed(3)}`);
+    const p0 = ctx.panners;
+    a.lockBroken(V(2, 0, 0), true);
+    assert(ctx.panners > p0, 'the lock resolves non-positionally — it happens where the blades are crossed');
+    return `${found.size} game files play audio.ui, all declared; lock won ${won.sum.toFixed(3)} / `
+      + `lost ${lost.sum.toFixed(3)} against the ping's ${ping.sum.toFixed(3)}`;
+  });
 
   check('audio: the engine comes up with a live graph and a full master', () => {
     const { a, ctx } = engine();

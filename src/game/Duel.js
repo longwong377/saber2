@@ -1362,7 +1362,23 @@ export class BladeLock {
       p.riposteTimer = Math.max(p.riposteTimer, 0.75);
       p.addFlow(0.26);
       p.score += 180;
-      audio.ui('good');
+      /**
+       * A BLADE LOCK IS NOT A BUTTON. It was `audio.ui('good')` — the exact
+       * 620 → 1240 Hz ping the skill tree plays when you buy an upgrade,
+       * non-positional, 0.140 of delivered gain, ending a four-and-a-half
+       * second physical contest whose own OPENING is 0.940 positional.
+       *
+       * `AudioEngine.death()` and `AudioEngine.victory()` both exist because
+       * exactly this substitution was made twice before, and both of their
+       * docstrings say so in these words; this was the third instance. The
+       * pattern is worth naming: `ui()` is the sound that is always to hand
+       * when a moment needs one, and it is the wrong one for anything the
+       * player's body did.
+       *
+       * `this.point` is where the two blades are crossed, which is where this
+       * happens — see the note on `lockBroken` in Audio.js.
+       */
+      audio.lockBroken(this.point, true);
     } else {
       p.staggerTimer = 0.75;
       p.stamina = Math.max(0, p.stamina - 26);
@@ -1370,7 +1386,7 @@ export class BladeLock {
       p.velocity.add(_v1);
       p.camera.addShake(0.5);
       p.damage(6, this.point, e, 'lock');
-      audio.ui('bad');
+      audio.lockBroken(this.point, false);
     }
   }
 }

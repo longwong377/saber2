@@ -367,15 +367,92 @@ export function thinner(tough) {
  *      B2 torso       26 m/s  CUT
  *
  * ARCHITECTURE IS EXEMPT FROM ALL OF IT. `cap.structure` takes rush, softness
- * and coverage out, so a destructible wall carves at exactly the rate it always
- * did. Bringing a building down is a patient-press mechanic whose statics —
- * flood fill, plan kerning, overturning — are calibrated against that rate;
- * speeding it up turned a 0.30 m notch into something that dropped a whole
- * column, and the destruction checks said so twice.
+ * and coverage out, so a destructible wall carves at the rate it always did per
+ * FRAME OF CONTACT. Bringing a building down is a patient-press mechanic whose
+ * statics — flood fill, plan kerning, overturning — are calibrated against that
+ * rate; speeding it up turned a 0.30 m notch into something that dropped a
+ * whole column, and the destruction checks said so twice.
+ *
+ * "PER FRAME OF CONTACT" IS THE PART THAT WAS MISSING, and it is why the
+ * exemption did not protect architecture from the sampler being replaced. A
+ * structure frame is billed the whole of `speed * dt` however little of the
+ * frame was spent inside the stone, so for a wall — and only for a wall — the
+ * answer is decided by HOW MANY frames register a touch. Measured on the
+ * shipped destruction scene, a blade held just onto a column face and swept:
+ * 182 contact frames under the old five-sample sweep against 98 under this one,
+ * for a press that lasts the same eight seconds either way. Phase-averaged the
+ * work per frame is unchanged (0.98–0.99), so nothing here is a strength
+ * change; what moved is the count.
  */
 const SLASH_REF = 8;     // m/s at which a swing does twice a press's work
 const SLASH_CAP = 8;     // ceiling: no speed may slash through a blast door
-const WORK_RATE = 2.4;   // unchanged, so every authored TOUGHNESS keeps its meaning
+/**
+ * WORK_RATE — AND WHY IT IS STILL 2.4 AFTER THE SAMPLER CHANGED UNDER IT.
+ *
+ * This line used to read "unchanged, so every authored TOUGHNESS keeps its
+ * meaning", and that sentence was made false by the fix above it: the sampler
+ * that decides how much of a frame counts as contact was replaced, so the
+ * coverage every authored TOUGHNESS was calibrated against is not the coverage
+ * they are measured against now. The right response looked obvious — measure
+ * the ratio, divide it out here, keep the invariance and put the tuning point
+ * back. It was measured, and there is no ratio to divide out.
+ *
+ * WHAT THE OLD SAMPLER ACTUALLY OVER-BILLED. Its first sample was `k = 0` —
+ * the pose at the START of the frame, which is the same instant as the previous
+ * frame's `k = 1`. Every contact instant lying on a frame boundary was billed
+ * by both frames. So the surplus was proportional to the number of frame
+ * BOUNDARIES a contact spanned, not to the work done, and it therefore differed
+ * per contact by a factor of two:
+ *
+ *     marginal press (a blade held just onto a column face)   182 → 98 frames
+ *     two-frame crossing (a B1 head at 11 m/s)                  3 → 2 frames
+ *     glancing crossing (a torso at 14 m/s, phase-averaged)  0.75 → 0.55
+ *
+ * Measured at the frame: with the old sampler a B1's head severed on a frame
+ * where the blade stood at x = 0.314 against a capsule of radius 0.137 — 0.18 m
+ * clear of the body it was cutting.
+ *
+ * SO THE WORK PER PASS DID NOT MOVE BY A CONSTANT. Phase-averaged over the
+ * sub-frame phase, ten reference capsules at 60 Hz, new ÷ old:
+ *
+ *     droid torso 0.50 · trooper torso 0.61 · beast femur 0.99 · walker hull
+ *     1.00 · slow press 1.00 · B1 head 1.00 · flesh forearm 1.03 · B2 1.16
+ *     · architecture 0.98–0.99
+ *
+ * A single multiplier cannot reproduce a surplus that ran from 0.50 to 1.16,
+ * and the two suites that went red want it moved in OPPOSITE directions —
+ * `destruction` wants a weaker blade at the column face, `balance` wants a
+ * stronger one at a droid's neck. Swept end to end, at 60 Hz:
+ *
+ *     WORK_RATE     2.0     2.4      2.62     3.0     3.6
+ *     destruction    ✗       ✗        ✓        ✗       ✗
+ *     balance        ✗       ✗        ✗        ✓       ✓
+ *     cutting        ✗       ✓        ✓        ✓       ✓
+ *
+ * No value carries both, and `destruction` is not even monotone in it — which
+ * is the signature of a threshold being tripped rather than a strength being
+ * tuned.
+ *
+ * AND THE DERIVED VALUE COSTS THE INVARIANCE, WHICH IS THE WHOLE PURCHASE.
+ * The mean of the eight body rows is 0.91, so the rescale it asks for is
+ * 2.4 / 0.91 = 2.63; the sweep above ran it at 2.62. At that value, the share of
+ * sub-frame phases in which one identical 14 m/s pass parts a B2's armour:
+ *
+ *     240 Hz  144 Hz   60 Hz   30 Hz
+ *     0%      0%       0%      0%      ← 2.4, this line
+ *     67%     33%      33%     42%     ← 2.62
+ *
+ * Not because the model became rate-dependent — a scalar cannot do that — but
+ * because a crossing that sits FAR from the sever threshold is invariant and
+ * one that sits ON it is not. 2.62 moves the B2 pass onto the bar, and armour
+ * starts parting at 14 m/s against an authored 26. That regression is invisible
+ * to `cutting`, which tests 26 and 30 and not 14.
+ *
+ * So the constant stays, the two reds are calibration debt in the suites rather
+ * than a number to move here, and the sentence that used to sit on this line is
+ * replaced by the measurements that refuted it.
+ */
+const WORK_RATE = 2.4;
 
 /** No contact for this long and accumulated cut work begins to fade. */
 const PROGRESS_GRACE = 1.5;

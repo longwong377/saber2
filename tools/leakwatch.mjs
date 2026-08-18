@@ -21,13 +21,21 @@
 import { chromium } from 'playwright-core';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { resolveLevel } from './_level.mjs';
 
 const args = process.argv.slice(2);
 const opt = (name, dflt) => {
   const i = args.indexOf(`--${name}`);
   return i >= 0 && args[i + 1] ? args[i + 1] : dflt;
 };
-const LEVEL = opt('level', 'arena');
+/* `arena` was the default here and `arena` is not a level — deleted in the
+ * roster cull. `World.loadLevel` substitutes `LEVEL_ORDER[0]` for a key it does
+ * not know, so every leakwatch run since has sampled the Ember Shelf while
+ * printing `level arena` at the top of its own report (HANDOFF §2.7). Found by
+ * the EIGHTH form in `tools/checks/roster.mjs`, added for the identical default
+ * in `audiowatch.mjs`, on its first run. `null` means "whatever this build
+ * opens with", which cannot rot; `--level <key>` still names one. */
+const LEVEL = opt('level', null);
 const SECONDS = Number(opt('seconds', 240));
 const SAMPLES = Number(opt('samples', 12));
 // Rendering every frame is the honest reproduction of a real session; it is far
@@ -52,19 +60,22 @@ page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
 
 const url = `http://127.0.0.1:${PORT}/`;
 await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
+// The roster is asked of the PAGE, and an unknown key is refused out loud
+// rather than silently substituted — see tools/_level.mjs.
+const level0 = await resolveLevel(page, LEVEL);
 await page.evaluate((level) => {
   localStorage.setItem('saber.settings.v2', JSON.stringify({
     level, quality: 'low', resolutionScale: 0.5, difficulty: 'knight', mode: 'roguelite',
     volume: 0, music: 0, grassScale: 0.5, particleScale: 0.6,
   }));
-}, LEVEL);
+}, level0);
 await page.reload({ waitUntil: 'domcontentloaded' });
 await page.waitForSelector('#menu:not(.hidden)', { timeout: 90000 });
 await page.click('#btn-deploy');
 await page.waitForSelector('#hud:not(.hidden)', { timeout: 60000 });
 await page.waitForTimeout(1500);
 
-console.log(`\n  level ${LEVEL}, ${SECONDS}s simulated, ${SAMPLES} samples\n`);
+console.log(`\n  level ${level0}, ${SECONDS}s simulated, ${SAMPLES} samples\n`);
 
 const rows = await page.evaluate(async ({ seconds, samples, render }) => {
   const S = window.SABER;

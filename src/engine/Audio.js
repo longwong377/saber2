@@ -34,9 +34,20 @@ const rng = makeRng(4242);
  * asked for 3435 sounds, and 3230 of them — 94% — were footsteps. The pool of
  * 44 sat completely full from t=11.6 s to t=20.2 s, and every request that
  * arrived in that window was thrown away: 37 bolt impacts, 14 blaster shots and
- * 12 deflections among them. The arena run was worse, 1331 refusals. Nothing
- * threw, nothing leaked, no gain was zero — the loudest events in the game were
- * simply queued behind boots on sand. That is "the sound comes in and out".
+ * 12 deflections among them. Nothing threw, nothing leaked, no gain was zero —
+ * the loudest events in the game were simply queued behind boots on sand. That
+ * is "the sound comes in and out".
+ *
+ * A SECOND FIGURE USED TO STAND HERE — "the arena run was worse, 1331
+ * refusals" — AND IT IS WITHDRAWN. `arena` is not a level and had not been for
+ * a while; `audiowatch.mjs` defaulted to `--level arena`, `World.loadLevel`
+ * substituted `LEVEL_ORDER[0]` for the key it did not know, and the run
+ * therefore measured the Ember Shelf while printing `level arena` at the top of
+ * its own report. The evidence quoted for the band layout was from a place that
+ * does not exist. The dunes figures above stand — they were measured on a level
+ * that was real at the time — and the bands are pinned by `audio.mjs` besides.
+ * `audiowatch.mjs` now asks the page for its roster and refuses an unknown key
+ * out loud.
  *
  * So the pool is banded. A footstep may only ever fill the bottom third of it;
  * a clash may take the lot. The bands are ceilings on the LIVE count rather
@@ -2147,10 +2158,23 @@ export class AudioEngine {
      * A WAVE ARRIVING IS NOT A UI SOUND, and this is where it stopped being one.
      *
      * `World.onWaveStart` calls `audio.ui('wave')` and it is the ONLY caller of
-     * that kind anywhere in the project — every other `ui()` in `src/` is a
-     * menu click, a hover or a skill node. So this call is not a button being
+     * that kind anywhere in the project. So this call is not a button being
      * pressed, it is the game announcing that a wave has begun, and it is
      * treated as one: the score goes to combat and the swell fires.
+     *
+     * THE SECOND HALF OF THIS PARAGRAPH USED TO SAY "every other `ui()` in
+     * `src/` is a menu click, a hover or a skill node" AND IT WAS NOT TRUE.
+     * `grep -rn "audio.ui(" src/` finds callers in `Duel.js`, `Dojo.js`,
+     * `Stratagems.js`, `Player.js` and `main.js` — five files outside `src/ui/`
+     * — and one of them, the blade lock's resolution, was a four-and-a-half
+     * second physical contest ending on the skill tree's purchase ping. It is
+     * `lockBroken` now. The rest are refusals, a lesson advancing and a screen
+     * opening, which are UI events happening to be raised from a game file.
+     *
+     * A claim in a comment that nothing checks is a claim that expires
+     * silently, so `audio.mjs` now reads the tree for it: every `audio.ui(`
+     * outside `src/ui/` has to be on a named list with a reason, and this
+     * paragraph goes red the day a sixth one appears.
      *
      * Listening to the call the game already makes rather than restating the
      * rule that raised it is HANDOFF §2.4. The director owns "when is a wave" and
