@@ -28,7 +28,7 @@ Playable two ways:
 
 | | |
 |---|---|
-| Suite | **1311 passed, 5 failed, ~13 min** — failures in §6.4, all named and none blocking |
+| Suite | **1424 passed, 4 failed, ~21 min** — failures in §6.4, all named and none blocking |
 | Smoke | 11/11 steps clean, ~2 min |
 | Levels | **9** — `scoria, mustafar, colosseum, wood, drifts, alpine, geonosis, hangar, warship` |
 | Modes | **8** — `waves, roguelite, duel, sandbox, training, command, skirmish, campaign` |
@@ -494,9 +494,12 @@ frames** now, on two conditions that are each a real regression when they fire:
 the render loop stopping, and the HUD still hidden after 24 frames.
 
 **What the run reports, and how to read it.** Individual re-runs on a quiet box
-are how you tell a real failure from contention — `training` and `prefracture`
-were red in the full run and are green alone, which is §2.6's timing-check
-warning doing exactly what it says. The live list is in §6.4.
+are how you tell a real failure from contention — `prefracture` is red in the
+full run and green alone, and says so in its own message ("this box paused
+identical work by 158.6×"), which is §2.6's timing-check warning doing exactly
+what it says. When a suite is green alone AND red in the run, `tools/_seq.mjs`
+is what reproduces it in one process; §6.4 has the live list and the ordering
+trap.
 
 **`_memtrace.mjs` is answered and did not answer it.** Its header said "WRITTEN,
 NOT YET ANSWERED" and guessed both the reason it could not work — a second copy
@@ -1133,54 +1136,45 @@ one-level tuning pass becomes a four-suite bisect.
 
 ---
 
-## 6.4 The five the gate is red on, and who owns each
+## 6.4 The four the gate is red on, and who owns each
 
 ```
-forward   1311 passed, 5 failed   ~13 min
+forward   1424 passed, 4 failed   ~21 min of suite time
 ```
 
 **Read this table the way it is built.** A red line in a full run is not a
-finding until it has been re-run alone on a quiet box — in the previous session
+finding until it has been re-run alone on a quiet box — in an earlier session
 three of nine evaporated that way and one was a race with a peer's commit. The
 per-suite output tells you which line to re-run instead of handing you a
 filename, so this is cheap.
 
 **And when it passes alone, run `tools/_seq.mjs`.** That is the case this advice
 used to have no answer for: `_one.mjs` runs a suite in a clean process and
-`verify.mjs` takes thirteen minutes, so a check that is green alone and red in
-the full run was expensive to even look at. `_seq` runs several suites in ONE
+`verify.mjs` takes twenty minutes, so a check that is green alone and red in the
+full run was expensive to even look at. `_seq` runs several suites in ONE
 process in the order given, which is almost always enough, because what carries
 is either module-scope state (`enemyRng`, `duelRng`, the wave stream, `wind` and
 `ground`, Engine's once-only ShaderChunk flags) or the scheduling of a suite's
 own async checks — `check()` pushes them all onto one `Promise.all`, so they
-interleave, and the interleaving changes with what ran before. It was written
-for `cloth: the extra iterations a carried frame buys…`, which read a shared
-world off a promise ANOTHER check in the same file tears down in its `finally`.
-Alone it read first; with `cleave` ahead of it, it read second and got null.
-`node --import ./tools/register.mjs tools/_seq.mjs cleave cloth-cost` showed
-that in forty seconds.
+interleave, and the interleaving changes with what ran before. **Suites run in
+`readdir` order, so a hyphen sorts before a dot: `command-pvp` runs BEFORE
+`command`.** Get that wrong and your reproduction is green.
 
-| # | Check | Reads | What it is |
-|---|---|---|---|
-| 1 | `first person: the hilt is ON SCREEN and not behind your own fist` | 35% of the hilt behind the fist against a `< 35` bound | **two bounds that contradict each other by about 2 mm.** `hilts` needs the grip inside EVERY hilt's own extent with a 12 mm margin (`fp > −0.042`, set by the Shoto); `first person` needs at most 35% occlusion (`fp ≲ −0.070`, set by the Graflex). That interval is empty. The grip is derived per hilt off `Saber.hiltFloor` now, so nine weapons stopped inheriting one number — the residual is ONE sample of 31, and `pct < 35` on a 31-point grid can only ever be met at 10/31 = 32.3%, so the "35%" in that message is not a value its own measurement can produce. Which constant gives is a question about how the weapon should look in frame. §6.0 |
-| 2 | `terrain: no level composes to one colour at three brightnesses` | kamino chroma varies by 0.032 | **not the exposure meter, and it was checked.** Every number there comes off `composeSurface` in linear albedo — no exposure, no tone curve, and `chroma` is a ratio invariant under any scaling the meter could apply. Kamino's eight authored ground swatches spread ±0.063, the narrowest of any shipped ground (temple 0.081, foundry 0.117, bog 0.171). A palette decision |
-| 3 | `terrain: every height function is smooth, and the poured floors are the cheapest` | kamino costs 6.75× the median shaped ground | **real, and new — nothing measured this before the ground list was derived.** `height()` runs once per foot per character per frame; roughly 0.27 ms/frame at forty bodies. Kamino's profile loops every deck and every span per call. Fixing it properly is a spatial index or a cached grid on a shipped level, which is why it was written down rather than rushed |
-| 4 | `terrain: every preset stays finite, bounded and continuous everywhere` | `kamino reaches a gradient of 24.7 (88°)` against a bound of 20 | the Kamino platforms working (§6.1). **Steep, not discontinuous** — the fine/coarse clause passes, so it is a face too sheer for the bound, not a hole |
-| 5 | `training: the eleven lessons run in any theatre, not only the dojo` | a lesson placed a body away from the player | **order-dependent, not a defect: `training` is 23/23 alone in the same run.** §6.2.5 |
+| # | Check | What it is |
+|---|---|---|
+| 1 | `cloth: the extra iterations a carried frame buys are paid only on carried frames` | **closed.** A race inside its own suite: it read a shared 31-body world off a promise that another check in the same file tears down in its `finally`. Alone it read first; with `cleave` ahead of it, second, and got null. It builds its own small world now |
+| 2 | `command/versus: the two armies actually fight, and one of them wins` | **order-dependent** — 16/16 alone, red after `cloth-cost colosseum`. It pumps 120 game-seconds and asserts the match reached `match-over`; with the shared streams at a different phase the fight simply is not finished. Passes alone because it has margin, not because it is pinned |
+| 3 | `prefracture: preparing a piece the player is walking towards never costs a frame` | **load-dependent, and it says so in its own message** — "this box paused identical work by 158.6×". 3/3 alone. §2.6 |
+| 4 | `pvp: a Force push moves the player it was aimed at, on both machines` | **a fixture window, not the wire.** It counts `seen.toClient` from boot, so "23 hit packets for one push" is the push's ONE packet plus 22 `saber` grazes of 0.002–0.012 hp from the setup pumps. Measured with a mark taken at the push: exactly one, `{d: 7.175, k: 'force', s: 'HOST', v: [...]}` |
 
-Two more are order- or load-dependent and appear in one direction only, which
-is what the reverse switch and §2.6 are for: `escalation` (green alone) and
-`prefracture` (3/3 alone, red under load).
-
-**Closed since the last list, and worth knowing they are gone:** the
-`sparkBurst` freeze (#1 on the old table, a shipped multi-second stall); the
-`audio` NaN (`_timePitch` was initialised where the audio GRAPH is built, not
-where the object is, so `if (this._timePitch !== 1)` passed on `undefined` and
-`freq *= undefined` re-poisoned a frequency `num()` had just sanitised); both
-`vitals` failures (a fixture two versions behind `Player.damage`, not a game
-defect); and `hilts`, by deriving the grip per weapon.
+Note what is NOT on this list any more. The previous table's five were four
+`kamino` rows and a `first person` occlusion bound; **`kamino` is not a level in
+this build** — see §1, and run `tools/state.mjs` rather than believing any
+count. `first person` is 6/6. `escalation`, which used to be named here as
+green-alone, is green in both directions.
 
 ---
+
 
 ## 6.5 If you pick this up cold, do these in this order
 
