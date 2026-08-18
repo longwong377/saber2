@@ -1767,9 +1767,17 @@ export async function run({ check, assert }) {
     const { SESSION_KEYS, sessionPart } = await import('../../src/net/Net.js');
     assert(SESSION_KEYS.length >= 3 && SESSION_KEYS.includes('level'),
       `SESSION_KEYS is ${JSON.stringify(SESSION_KEYS)} — this clause is measuring nothing`);
-    /* The function is the contract: those keys, and only the ones present. */
-    const got = sessionPart({ level: 'x', mode: 'y', quality: 'ultra', pvp: undefined });
-    assert(got.level === 'x' && got.mode === 'y' && !('quality' in got) && !('pvp' in got),
+    /* The function is the contract: those keys, and only the ones present.
+     *
+     * THE FIXTURE'S LEVEL IS A REAL ONE, and not because this clause cares —
+     * any string would do the arithmetic. `roster: nothing in the tree names a
+     * level the game does not have` greps the whole tree for `level: '…'` and
+     * a placeholder `'x'` reads to it exactly like a level somebody deleted.
+     * Taken from LEVEL_ORDER rather than typed, so it is not a literal at all. */
+    const { LEVEL_ORDER } = await import('../../src/game/Levels.js');
+    const key = LEVEL_ORDER[0];
+    const got = sessionPart({ level: key, mode: 'duel', quality: 'ultra', pvp: undefined });
+    assert(got.level === key && got.mode === 'duel' && !('quality' in got) && !('pvp' in got),
       `sessionPart let through ${JSON.stringify(got)} — it must carry the session's keys, skip `
       + 'everyone else\'s, and OMIT an absent one rather than writing it as undefined (`session` is '
       + 'replaced on a start, not merged, so absent and present-but-undefined must stay distinct)');

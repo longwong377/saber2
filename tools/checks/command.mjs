@@ -514,17 +514,41 @@ export function run({ check, assert }) {
      * is the one this whole check exists to punish: a number that was never
      * measured, sitting next to an assertion that could not fail.
      */
-    const bolts = () => (world.bolts?.bolts ?? []).reduce((n, b) => n + (b.active ? 1 : 0), 0);
-    let before = bolts();
+    /**
+     * …AND A THIRD WRONG ANSWER, WHICH IS THE ONE THAT ACTUALLY SHIPPED.
+     *
+     * The count above was the POPULATION of live bolts, and `shots` was the
+     * number of frames that population ROSE. That is a delta on a total, and a
+     * total has other contributors: this world is a `waves` Geonosis with a
+     * director in it, so on any frame where the jet fires one and two of
+     * somebody else's expire, the total falls and the shot is not counted. With
+     * an empty sky it works; with traffic it undercounts, and at zero it
+     * reports that the jet never fired at all.
+     *
+     * That is exactly the fault the note above this one exists to punish, one
+     * layer further in — a number measured off the wrong population, sitting
+     * next to an assertion whose failure message then blamed something else
+     * entirely. It went red in a full verify and green alone, and the message
+     * it printed named a NaN position that the per-frame assertion four lines
+     * up had already ruled out on every one of the 240 frames.
+     *
+     * A bolt carries its `owner` (Bolts.js:120), so the honest count is the
+     * jet's own bolts crossing from inactive to active. Pool reuse is handled
+     * by comparing the SET frame to frame rather than a number: a slot that was
+     * this body's bolt last frame and is this body's bolt again now is the same
+     * shot until it goes out.
+     */
+    let flying = new Set();
     for (let i = 0; i < 240; i++) {
       world.update(1 / 60, idleInput());
       assert(Number.isFinite(e.position.y),
         `the jet trooper's y went non-finite on frame ${i} — hoverPhase is uninitialised again`);
       const clear = e.position.y - world.terrain.height(e.position.x, e.position.z);
       if (i > 30) minClear = Math.min(minClear, clear);
-      const now = bolts();
-      if (now > before) shots++;
-      before = now;
+      const now = new Set();
+      for (const b of world.bolts?.bolts ?? []) if (b.active && b.owner === e) now.add(b);
+      for (const b of now) if (!flying.has(b)) shots++;
+      flying = now;
     }
     assert(minClear > 0.8,
       `the jet trooper flew at ${minClear.toFixed(2)} m of clearance — it is walking`);
@@ -532,11 +556,16 @@ export function run({ check, assert }) {
       'the jet trooper was retired mid-flight — the watchdog is rejecting its position');
     /* The third symptom, and the one the table could never see: NaN made every
      * range test in `_rangedBrain` false, so the body flew and never fired. */
+    /* The third symptom of the NaN, and the one the table could never see: it
+     * made every range test in `_rangedBrain` false, so the body flew and never
+     * fired. Counted per-owner now, so a quiet sky and a busy one give the same
+     * answer — see the note over the loop. */
     assert(shots > 0,
-      'the jet trooper never fired in 4 s — a NaN position fails every range '
-      + 'comparison in _rangedBrain, so it hovers and does nothing');
+      `the jet trooper fired ${shots} of its own bolts in 4 s at `
+      + `${e.position.distanceTo(world.player.position).toFixed(1)} m — it is flying and not `
+      + 'shooting, which is what a NaN position looks like from _rangedBrain');
     world.unload();
-    return `clearance ${minClear.toFixed(2)} m over 4 s, ${shots} bolts in flight, y finite throughout`;
+    return `clearance ${minClear.toFixed(2)} m over 4 s, ${shots} shots of its own, y finite throughout`;
   });
 
   /* ══════════════════════════════════════════════════════════════════ */

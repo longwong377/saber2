@@ -28,7 +28,7 @@ Playable two ways:
 
 | | |
 |---|---|
-| Suite | **1424 passed, 4 failed, ~21 min** — failures in §6.4, all named and none blocking |
+| Suite | **1443 passed, 2 failed, ~21 min** — and both of the two are fixed since that run; §6.4 keeps them for how each was found |
 | Smoke | 11/11 steps clean, ~2 min |
 | Levels | **9** — `scoria, mustafar, colosseum, wood, drifts, alpine, geonosis, hangar, warship` |
 | Modes | **8** — `waves, roguelite, duel, sandbox, training, command, skirmish, campaign` |
@@ -1136,11 +1136,15 @@ one-level tuning pass becomes a four-suite bisect.
 
 ---
 
-## 6.4 The four the gate is red on, and who owns each
+## 6.4 What the gate is red on, and who owns each
 
 ```
-forward   1424 passed, 4 failed   ~21 min of suite time
+forward   1443 passed, 2 failed   ~21 min of suite time
 ```
+
+Both of those two are fixed since that run, so the expected state is **green**;
+they are kept here with what they were, because how each was found is worth more
+than the fact that it is closed.
 
 **Read this table the way it is built.** A red line in a full run is not a
 finding until it has been re-run alone on a quiet box — in an earlier session
@@ -1152,20 +1156,26 @@ filename, so this is cheap.
 used to have no answer for: `_one.mjs` runs a suite in a clean process and
 `verify.mjs` takes twenty minutes, so a check that is green alone and red in the
 full run was expensive to even look at. `_seq` runs several suites in ONE
-process in the order given, which is almost always enough, because what carries
-is either module-scope state (`enemyRng`, `duelRng`, the wave stream, `wind` and
+process in the order given, which is often enough, because what carries is
+either module-scope state (`enemyRng`, `duelRng`, the wave stream, `wind` and
 `ground`, Engine's once-only ShaderChunk flags) or the scheduling of a suite's
 own async checks — `check()` pushes them all onto one `Promise.all`, so they
 interleave, and the interleaving changes with what ran before. **Suites run in
 `readdir` order, so a hyphen sorts before a dot: `command-pvp` runs BEFORE
 `command`.** Get that wrong and your reproduction is green.
 
-| # | Check | What it is |
+**And when `_seq` will not reproduce it either, read the failure message against
+the check's own earlier assertions.** That is what closed the jet trooper below:
+four suites in one process would not reproduce it, and the message turned out to
+be blaming a cause the check itself had already ruled out on every frame.
+
+| # | Check | What it was |
 |---|---|---|
-| 1 | `cloth: the extra iterations a carried frame buys are paid only on carried frames` | **closed.** A race inside its own suite: it read a shared 31-body world off a promise that another check in the same file tears down in its `finally`. Alone it read first; with `cleave` ahead of it, second, and got null. It builds its own small world now |
-| 2 | `command/versus: the two armies actually fight, and one of them wins` | **order-dependent** — 16/16 alone, red after `cloth-cost colosseum`. It pumps 120 game-seconds and asserts the match reached `match-over`; with the shared streams at a different phase the fight simply is not finished. Passes alone because it has margin, not because it is pinned |
-| 3 | `prefracture: preparing a piece the player is walking towards never costs a frame` | **load-dependent, and it says so in its own message** — "this box paused identical work by 158.6×". 3/3 alone. §2.6 |
-| 4 | `pvp: a Force push moves the player it was aimed at, on both machines` | **a fixture window, not the wire.** It counts `seen.toClient` from boot, so "23 hit packets for one push" is the push's ONE packet plus 22 `saber` grazes of 0.002–0.012 hp from the setup pumps. Measured with a mark taken at the push: exactly one, `{d: 7.175, k: 'force', s: 'HOST', v: [...]}` |
+| 1 | `command: the jet trooper actually flies, and shoots while it does` | **a delta on the wrong population.** It counted every live bolt in the world and called a rise in that total a shot — but this world has a director in it, so a frame where the jet fires one and two of somebody else's expire reads as no shot. Quiet sky, correct; busy sky, undercounts; at zero it reported that the jet never fired. Its message then blamed a NaN position that the per-frame assertion four lines above had ruled out on all 240 frames. Counted per `bolt.owner` now |
+| 2 | `roster: nothing in the tree names a level the game does not have` | **a placeholder that reads as a deleted level.** A new fixture in `coop.mjs` passed `level: 'x'` to exercise `sessionPart`, and `roster` greps the tree for exactly that shape. Taken from `LEVEL_ORDER` now, so there is no literal to trip over — and the check was right: a level key nobody can resolve is the same defect whether it was deleted or never existed |
+| — | `command/versus: the two armies actually fight` | **closed.** Not only stream phase: the drive capped at 120 game-seconds while `DuelMatch` spends its countdown BEFORE setting a 120 s clock, so the cap sat under the match's own guaranteed decision time. Derived from the match's constants now |
+| — | `prefracture: preparing a piece…` | **load-dependent, and it says so in its own message** — "this box paused identical work by 158.6×". 3/3 alone. §2.6 |
+| — | `cloth: the extra iterations a carried frame buys…` | **closed.** A race inside its own suite: it read a shared world off a promise another check tears down in its `finally` |
 
 Note what is NOT on this list any more. The previous table's five were four
 `kamino` rows and a `first person` occlusion bound; **`kamino` is not a level in
