@@ -41,6 +41,7 @@
 import * as THREE from 'three';
 import { audio } from '../engine/Audio.js';
 import { clamp } from '../engine/MathUtil.js';
+import { addSmoke, updateSmoke, clearSmoke } from './Smoke.js';
 
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const TAU = Math.PI * 2;
@@ -204,6 +205,12 @@ export function codeFaults(rows = STRATAGEMS) {
 export class Stratagems {
   constructor(owner) {
     this.owner = owner;
+    /* A NEW FIELD HAS NO SMOKE ON IT. The cloud registry is a module and
+     * outlives a level by construction (see Smoke.js for why it is one), so
+     * something has to say when the field is new — and a Player is built once
+     * per level, which makes this the honest place rather than a hook the
+     * teardown has to remember. */
+    clearSmoke();
     /** Letters entered so far, as a string. Empty when nothing is being spelled. */
     this.entry = '';
     /** Seconds since the last letter, for CODE_GAP. */
@@ -352,6 +359,10 @@ export class Stratagems {
   after(t, fn) { this._timers.push({ t, fn }); }
 
   update(dt, ctx) {
+    /* THE CLOUDS AGE HERE, and this is the only caller. A stratagem is the only
+     * thing that lays smoke, so the thing that lays it is the thing that ticks
+     * it — one owner, and no second place to forget. */
+    updateSmoke(dt);
     for (const id in this.cooldowns) {
       if (this.cooldowns[id] > 0) this.cooldowns[id] = Math.max(0, this.cooldowns[id] - dt);
     }
@@ -386,7 +397,10 @@ export class Stratagems {
   }
 
   /** Nothing outlives a level. */
-  reset() { this.entry = ''; this.pending.length = 0; this._timers.length = 0; this.cooldowns = {}; }
+  reset() {
+    this.entry = ''; this.pending.length = 0; this._timers.length = 0; this.cooldowns = {};
+    clearSmoke();
+  }
 
   /* ── the effects, and every one of them is somebody else's verb ────── */
 
@@ -451,8 +465,7 @@ export class Stratagems {
    * `world.smokeBlocks`. One question, one answer, both sides subject to it.
    */
   smoke(ctx, site, radius, life) {
-    const w = ctx?.world || this.owner?.world;
-    if (w?.addSmoke) w.addSmoke(site.clone(), radius, life);
+    addSmoke(site, radius, life);
     audio.noise({ dur: 0.9, gain: 0.3, type: 'lowpass', freq: 1400, freqEnd: 300,
       pink: true, attack: 0.02, pos: site });
     const P = ctx?.particles;

@@ -43,6 +43,11 @@ import {
   Stratagems, STRATAGEMS, STRATAGEM_BY_ID, DIRS, DIR_ACTION, CODE_GAP, codeFaults,
 } from '../../src/game/Stratagems.js';
 import { ACTIONS, defaultBindings } from '../../src/engine/Bindings.js';
+import {
+  addSmoke, updateSmoke, clearSmoke, depthAlong, seeThrough, smokeClouds,
+  DENSITY, OPAQUE, BLOOM,
+} from '../../src/game/Smoke.js';
+import { BoltPool } from '../../src/game/Bolts.js';
 
 let THREE = null;
 
@@ -277,6 +282,95 @@ export async function run({ check, assert, THREE: T }) {
     const took = hp0 - b.p.hp;
     assert(took < 150, `it hit the caller for the full ${took.toFixed(0)} — the caller knew it was coming`);
     return `dead centre of your own strike: ${took.toFixed(0)} hp`;
+  });
+
+  check('smoke: the screen actually blinds, and it blinds both ways', () => {
+    /**
+     * THE CARD SAYS "Nothing on either side can shoot what it cannot see" and
+     * what shipped was sixty dust particles. A card promising a mechanic the
+     * game does not have is worse than no card: the player spends Force on it,
+     * stands behind it, and is shot.
+     *
+     * So the claim is measured as an INTEGRAL and not as a flag: how much
+     * cloud a given line passes through, in the same units a bolt reads. A
+     * line through the middle of a bank must be worth far less than one
+     * clipping its edge, or the mechanic is a wall with a hole in it.
+     */
+    clearSmoke();
+    const at = (x, z) => new THREE.Vector3(x, 0, z);
+    addSmoke(at(0, 0), 8.5, 11);
+    updateSmoke(BLOOM + 0.01);                      // let it bloom to full
+    assert(smokeClouds().length === 1, 'the cloud was not registered');
+
+    const across = depthAlong(at(-20, 0), at(20, 0));      // straight through the middle
+    const edge = depthAlong(at(-20, 8.0), at(20, 8.0));    // clipping the top
+    const miss = depthAlong(at(-20, 30), at(20, 30));      // nowhere near it
+    assert(miss === 0, `a line 30 m from a 8.5 m cloud reads ${miss.toFixed(2)} of depth`);
+    assert(across > edge * 2.5,
+      `through the middle reads ${across.toFixed(2)} and along the edge ${edge.toFixed(2)} — `
+      + 'a cloud that costs the same wherever you cross it is a wall with no shape');
+    assert(across >= OPAQUE,
+      `the middle of a full-sized bank reads ${across.toFixed(2)} against an opaque depth of `
+      + `${OPAQUE} — a bolt goes straight through the thickest part of a smoke screen`);
+    assert(seeThrough(at(-20, 0), at(20, 0)) < 0.15,
+      'a sightline through the middle of the bank is still most of the way clear');
+    assert(seeThrough(at(-20, 30), at(20, 30)) === 1, 'a line nowhere near the smoke is not clear');
+
+    /* IT BLOOMS AND IT THINS. A round that was instantly a wall would be a
+     * dodge you cannot react to, and one that vanished on a frame boundary
+     * would take cover away from a player mid-crossing. */
+    clearSmoke();
+    addSmoke(at(0, 0), 8.5, 11);
+    const fresh = depthAlong(at(-20, 0), at(20, 0));
+    updateSmoke(BLOOM);
+    const full = depthAlong(at(-20, 0), at(20, 0));
+    assert(fresh < full * 0.5, `a cloud is ${(100 * fresh / full).toFixed(0)}% dense on the frame it lands`);
+    updateSmoke(11);
+    assert(!smokeClouds().length, 'the cloud outlived its own life');
+    assert(depthAlong(at(-20, 0), at(20, 0)) === 0, 'an expired cloud still blinds');
+    return `middle ${across.toFixed(2)} vs edge ${edge.toFixed(2)} vs clear 0.00; `
+      + `${(100 * fresh / full).toFixed(0)}% dense on arrival, gone at its life`;
+  });
+
+  check('smoke: a bolt through it arrives weaker, bent, or not at all', () => {
+    /* THROUGH THE REAL BoltPool, because "the model says so" and "the bolt
+     * that reaches you is weaker" are different claims and only the second one
+     * is the feature. Three bolts on three lines through the same bank. */
+    clearSmoke();
+    const b = bench();
+    const pool = new BoltPool(b.world.scene, 64);
+    const fire = (z) => {
+      const bolt = pool.fire(new THREE.Vector3(-14, 1, z), new THREE.Vector3(1, 0, 0),
+        { speed: 90, damage: 24, team: 'red', life: 3 });
+      return bolt;
+    };
+    const run = (z, seconds = 0.35) => {
+      const bolt = fire(z);
+      const d0 = bolt.damage;
+      for (let i = 0; i < seconds * 60 && bolt.active; i++) {
+        pool.update(1 / 60, { blades: null, enemies: [], player: null });
+      }
+      return { d0, d: bolt.damage, active: bolt.active, dir: bolt.vel.clone().normalize() };
+    };
+    const clear = run(40);
+    assert(Math.abs(clear.d - clear.d0) < 1e-6,
+      `a bolt nowhere near smoke lost ${(clear.d0 - clear.d).toFixed(1)} damage`);
+
+    addSmoke(new THREE.Vector3(0, 1, 0), 8.5, 11);
+    updateSmoke(BLOOM + 0.01);
+    const through = run(0);
+    const grazed = run(8.0);
+    assert(!through.active,
+      `a bolt through the middle of a full bank came out the other side with `
+      + `${through.d.toFixed(1)} of its ${through.d0} damage`);
+    assert(grazed.d < grazed.d0 * 0.8,
+      `a bolt clipping the edge kept ${(100 * grazed.d / grazed.d0).toFixed(0)}% of its damage`);
+    assert(grazed.d > 0, 'the edge of a cloud absorbs a bolt outright — it is meant to be a gamble');
+    const bend = Math.acos(Math.max(-1, Math.min(1, grazed.dir.x))) * 180 / Math.PI;
+    assert(bend > 0.05, 'a bolt through smoke came out on exactly the line it went in on');
+    clearSmoke();
+    return `clear ${clear.d.toFixed(0)}/${clear.d0}; edge ${grazed.d.toFixed(0)}/${grazed.d0} `
+      + `bent ${bend.toFixed(1)}°; middle absorbed`;
   });
 
   check('dive: attacking in the air drives you into the ground, hard', () => {

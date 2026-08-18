@@ -10,6 +10,7 @@
 import * as THREE from 'three';
 import { segmentSegment } from '../physics/Physics.js';
 import { clamp, lerp, makeRng } from '../engine/MathUtil.js';
+import { depthAlong, OPAQUE, SCATTER } from './Smoke.js';
 
 const rng = makeRng(606);
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
@@ -40,6 +41,9 @@ export class BoltPool {
         vel: new THREE.Vector3(), color: new THREE.Color(), life: 0, damage: 10,
         owner: null, team: 1, deflected: false, turned: false, deflector: null, speed: 90,
         length: 1.1, radius: 0.05, homing: 0, target: null, big: false,
+        // How much cloud this bolt has crossed so far. See the smoke block in
+        // update(): optical depth accumulates along a path and so does this.
+        smokeDepth: 0,
         // While `held` the bolt is stuck to a blade: it does not fly, does not
         // hit anything, and does not age. See update().
         held: null, heldT: 0,
@@ -106,6 +110,7 @@ export class BoltPool {
     }
     if (!b) return null;
     b.active = true;
+    b.smokeDepth = 0;
     b.pos.copy(origin); b.prev.copy(origin);
     b.speed = opts.speed ?? 88;
     b.vel.copy(dir).normalize().multiplyScalar(b.speed);
@@ -199,6 +204,49 @@ export class BoltPool {
         b.vel.lerp(_v1.multiplyScalar(b.speed), clamp(b.homing * dt, 0, 1)).setLength(b.speed);
       }
       b.pos.addScaledVector(b.vel, dt);
+
+      /**
+       * ── THROUGH THE SMOKE, and it happens before anything can be hit.
+       *
+       * A blaster bolt is a plasma packet and smoke degrades it rather than
+       * stopping it, so what this reads is the optical depth of the cloud the
+       * bolt's own path just crossed — see src/game/Smoke.js, which owns the
+       * model so that a shooter deciding whether it can SEE a target and a
+       * bolt deciding what it is worth on ARRIVAL cannot answer out of two.
+       *
+       * Three effects and each is doing a different job. It loses damage, so
+       * cover is cover. It is deflected, because a bolt that arrived on target
+       * for three points would still be a HIT, and not being hit is most of
+       * what the player laid the smoke for. And past `OPAQUE` it is absorbed
+       * outright, which is what makes a thick bank a wall rather than a tax.
+       *
+       * Nothing here asks who fired: the player standing in their own smoke is
+       * exactly as hard to hit as the line shooting into it, which is the only
+       * version of this that is a decision rather than a free win.
+       */
+      if (b.damage > 0) {
+        const depth = depthAlong(b.prev, b.pos);
+        if (depth > 0) {
+          /* DEPTH IS CUMULATIVE ALONG THE PATH and the absorption test has to
+           * be too. A bolt at 90 m/s crosses 1.5 m in a frame, which is 0.24 of
+           * depth through a full bank — so a per-frame test against `OPAQUE`
+           * could never fire at any speed a blaster actually shoots, and the
+           * thick middle of a smoke screen would have been a 93% tax rather
+           * than a wall. The damage term was already right by construction,
+           * because multiplying exp(-d) frame by frame is exp(-sum). */
+          b.smokeDepth += depth;
+          if (b.smokeDepth >= OPAQUE) { b.active = false; continue; }
+          const k = Math.exp(-depth);
+          b.damage *= k;
+          /* Scattered about an axis perpendicular to travel, picked off the
+           * bolt's own position so a stream through one cloud sprays rather
+           * than all bending the same way — and without touching the shared
+           * RNG, which the wave director's reproducibility depends on. */
+          const a = (b.pos.x * 12.9898 + b.pos.z * 78.233) % 6.2831853;
+          _v1.set(Math.cos(a), 0.35, Math.sin(a)).cross(b.vel).normalize();
+          if (_v1.lengthSq() > 0.5) b.vel.applyAxisAngle(_v1, depth * SCATTER);
+        }
+      }
 
       // ── blades first: a deflection has to beat a body hit
       let consumed = false;
