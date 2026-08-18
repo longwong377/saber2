@@ -299,15 +299,29 @@ export function beginDressing(world, seed) {
  * never found out the player had got stronger.
  *
  * The scale is derived HERE, at dressing time, rather than passed at the call
- * site, because dressing is the moment where the run and the heightfield are
- * both in hand and neither Player.js nor World.js has any business knowing
- * about the other. Three inputs, all of them things the player can see they
- * have earned:
+ * site, because dressing is the moment where the progress and the heightfield
+ * are both in hand and neither Player.js nor World.js has any business knowing
+ * about the other.
  *
- *   the RUNG    0.22 per tier. Four rungs of the Spire is a 66% deeper hole.
- *   the BOONS   0.055 each — the small, steady one, because a boon set grows
- *               faster than the tier does and this is the term that would run
- *               away if it were the big one.
+ * ── AND IT READS THE COUNTERS THAT EXIST ────────────────────────────────
+ *
+ * It used to read `world.run` — tier and boon count off a Run object. `Run.js`
+ * went with the Descent, `loadLevel`'s doc block stopped promising `opts.run`,
+ * and nothing has assigned `world.run` since; `grep -rn 'this.run ='` finds
+ * nothing. So two of the three terms were reliably zero and this function was
+ * `cbrt(forcePower)` wearing a paragraph about rungs. The counters it wanted
+ * are all still on the World under different names, which is the whole fix:
+ *
+ *   the WAVE    0.045 each, off `director.wave` — the depth signal the game
+ *               actually keeps. Twenty waves in is a 90% deeper hole. Smaller
+ *               per step than the old rung because waves run to twenty and
+ *               rungs ran to four.
+ *   the MISSION 0.22 per campaign leg already behind you, off `campaign.index`
+ *               — the authored tier, and the one place a step really is a step.
+ *   the BOONS   0.055 each, off `world.takenBoons.flat()` (the same reading
+ *               `runStats` bills) — the small, steady one, because a boon set
+ *               grows faster than the wave count does and this is the term
+ *               that would run away if it were the big one.
  *   the SLIDER  `forcePower`, entering as its CUBE ROOT. It already multiplies
  *               reach and impulse linearly everywhere else, and cubing that
  *               into the ground as well puts a forcePower-4 push through a
@@ -318,11 +332,12 @@ export function beginDressing(world, seed) {
  * you fall into whatever the settings say.
  */
 export function groundMight(world) {
-  const run = world?.run && !world.run.done ? world.run : null;
-  const tier = run ? (run.tier ?? 0) : 0;
-  const boons = run && Array.isArray(run.boons) ? run.boons.length : 0;
+  const wave = Math.max(0, (world?.director?.wave ?? 0) - 1);
+  const c = world?.campaign;
+  const leg = c && !c.done ? (c.index ?? 0) : 0;
+  const boons = world?.takenBoons?.flat?.().length ?? 0;
   const force = clamp(world?.settings?.forcePower ?? 1, 0.25, 4);
-  return (1 + tier * 0.22 + boons * 0.055) * Math.cbrt(force);
+  return (1 + wave * 0.045 + leg * 0.22 + boons * 0.055) * Math.cbrt(force);
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
