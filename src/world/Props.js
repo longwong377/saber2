@@ -59,6 +59,138 @@ const _plate = new THREE.Vector3(), _tan = new THREE.Vector3(), _q2 = new THREE.
 
 let _propId = 1;
 
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  An option a builder does not understand                               */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * A BUILDER REFUSES AN OPTION IT DOES NOT READ, and it finds out what it reads
+ * BY READING ITSELF.
+ *
+ * Four call sites in Levels.js asked `addCrateStack` for `{ count: 2 + … }`.
+ * The builder reads `size`, `tiers`, `columns`, `seed`, `yaw`, `dynamic` and
+ * `quaternion`; it had never read `count`, so four stacks in the shipped game
+ * were not the size their call site said and nothing anywhere said so. A fifth
+ * site handed the same builder `{ kit }` — the whole file's composition
+ * convention, documented at the top of this file — and got a stack emitted at
+ * kit-space coordinates in world space, metres from where it was asked for.
+ * Both are the same defect: an object handed over, read for the keys the
+ * callee happens to know, and silently short of the rest.
+ *
+ * The cure has to be cheaper than remembering, or it decays. So the accepted
+ * set is not written down anywhere: `optionKeys` scans the builder's OWN
+ * SOURCE (`Function.prototype.toString`, exact for every function in this
+ * tree — there is no build step and nothing is minified) for `opts.x`,
+ * `opts?.x` and `const { x } = opts`, and unions in the same reading of every
+ * helper the builder hands its whole `opts` to. Change what a builder reads
+ * and the accepted set changes with it, in the same edit, with nothing to keep
+ * in step. That is HANDOFF §2.3 and §2.4 applied to an argument list.
+ *
+ * MEASURED, so the cost is on the record rather than assumed: the derivation
+ * runs once per function and is cached, and the per-call cost is
+ * `Object.keys(opts)` against a Set. Over a full dressing of all nine levels
+ * — 14 084 builder calls — that is 14 084 Set lookups against 41 cached
+ * derivations, and the dressing pass measures the same wall time either way
+ * (`tools/checks/builder-options.mjs` reports the count).
+ *
+ * IT THROWS. A warning would be read by nobody: the four `count` sites sat in
+ * the game through two adversarial audits and a judging pass. The failure mode
+ * of the derivation itself is the same throw — a helper that starts consuming
+ * options without being listed in `OPT_SINKS` below makes every builder that
+ * uses it refuse a key it really does honour — and that is deliberate too: it
+ * fails on the first dressed level, in the gate, with the key named, rather
+ * than quietly widening what a builder will swallow.
+ */
+const _OPT_KEYS = new Map();
+
+/** Every `opts.x` a function's own source reads, including its destructurings. */
+function readsOfSource(src) {
+  const keys = new Set();
+  for (const m of src.matchAll(/\bopts\s*(?:\?\.|\.)\s*([A-Za-z_$][\w$]*)/g)) keys.add(m[1]);
+  for (const m of src.matchAll(/\{([^{}]*)\}\s*=\s*opts\b/g)) {
+    for (const part of m[1].split(',')) {
+      const k = /^\s*([A-Za-z_$][\w$]*)/.exec(part);
+      if (k) keys.add(k[1]);
+    }
+  }
+  return keys;
+}
+
+/**
+ * The helpers a builder can hand its whole `opts` to, and which therefore read
+ * options on its behalf. Held as the FUNCTIONS, not as their key lists — what
+ * each one accepts is read off its own source by the same scan, so this table
+ * cannot fall out of step with them; only a new helper has to be added.
+ */
+let _SINKS = null;
+function sinkTable() {
+  return (_SINKS ||= [
+    ['kitOpen', kitOpen], ['kitClose', kitClose],
+    ['emit', Kit.prototype.emit], ['light', Kit.prototype.light],
+    ['Prop', Prop], ['Crowd', Crowd], ['Storm', Storm],
+  ]);
+}
+
+/** Does this source hand its whole `opts` to somebody — `f(a, opts)`, `{ ...opts }`? */
+function forwardsOpts(src) { return /\bopts\s*[,)]/.test(src) || /\.\.\.opts\b/.test(src); }
+
+/** Which of those a function's source actually forwards `opts` into. */
+export function optionSinks(fn) {
+  const src = fn.toString();
+  if (!forwardsOpts(src)) return [];
+  const out = [];
+  for (const [name] of sinkTable()) if (new RegExp('\\b' + name + '\\b').test(src)) out.push(name);
+  return out;
+}
+
+/**
+ * The option keys a builder understands: what it reads itself, plus what the
+ * helpers it forwards to read. `null` means "cannot be answered" — a builder
+ * that spreads its options into something this file does not know about could
+ * legitimately be handed anything, and guessing would either refuse a real
+ * option or wave everything through. `builder-options` reports the null ones
+ * by name rather than counting them as covered.
+ */
+export function optionKeys(fn) {
+  let keys = _OPT_KEYS.get(fn);
+  if (keys !== undefined) return keys;
+  const src = fn.toString();
+  keys = readsOfSource(src);
+  const sinks = optionSinks(fn);
+  const table = new Map(sinkTable());
+  for (const name of sinks) for (const k of readsOfSource(table.get(name).toString())) keys.add(k);
+  /* HANDED ON TO SOMETHING THIS FILE DOES NOT KNOW — the answer is `null`, not
+   * an empty set, and the difference is the whole safety of the guard. A
+   * builder that forwards its options wholesale to an unlisted helper reads
+   * almost nothing itself, so an empty set would make it refuse every option
+   * it really does honour: `addStorm` is four lines around `new Storm(world,
+   * opts)` and would have rejected all fourteen of Storm's. Unanswerable is
+   * therefore unguarded, and `builder-options` prints the unguarded ones by
+   * name so they are a visible list rather than a silent hole. */
+  if (forwardsOpts(src) && !sinks.length) keys = null;
+  _OPT_KEYS.set(fn, keys);
+  return keys;
+}
+
+/**
+ * Refuse anything `fn` does not read. Called by every builder in this file as
+ * its first statement, with ITSELF as the first argument — which is the whole
+ * mechanism: the guard has the function, so it can read what the function
+ * reads, and there is no second copy of the answer to maintain.
+ */
+export function assertOpts(fn, opts) {
+  if (!opts) return opts;
+  const known = optionKeys(fn);
+  if (!known) return opts;
+  let bad = null;
+  for (const k in opts) if (!known.has(k)) (bad ||= []).push(k);
+  if (bad) {
+    throw new Error(`${fn.name}: handed ${bad.length > 1 ? 'options' : 'an option'} it does not read — `
+      + `${bad.join(', ')}. It reads: ${[...known].sort().join(', ')}.`);
+  }
+  return opts;
+}
+
 /* ── shared materials ────────────────────────────────────────────────── */
 
 /**
@@ -1180,6 +1312,19 @@ export class Kit {
      * their own instead cost 53. */
     this.parts = [];
     this._part = null;
+    /* WHAT ONLY THE EMIT KNOWS. A maker composed into somebody else's kit is
+     * building in KIT SPACE and has no idea where the assembly will stand —
+     * `kit.emit(world, position, quaternion)` decides that, later, and the
+     * caller of the composed maker never sees it. That is fine for geometry
+     * and colliders, which are transformed here, and fatal for anything that
+     * has to be created at a WORLD point: `addCrateStack`'s live top crates
+     * are rigid bodies, and a body has no kit space to live in.
+     *
+     * So a maker can leave a callback instead of a position. It is handed
+     * (world, position, quaternion) at the end of the emit and places its own
+     * bodies then — which is exactly when a bare call would have placed them,
+     * so the two forms do the same thing in the same order. */
+    this.deferred = [];
     this.rng = makeRng(seed);
     this.tris = 0;
     this._pm = new THREE.Matrix4();
@@ -1275,6 +1420,19 @@ export class Kit {
     this.put(g, mat, x, y, z, opts.rx || 0, opts.ry || 0, opts.rz || 0);
     if (opts.collide) this.collider(x, y, z, Math.max(r0, r1), h / 2, Math.max(r0, r1), opts.ry || 0);
     return g;
+  }
+
+  /**
+   * Run `fn(world, position, quaternion)` when this kit is emitted — the hook
+   * a composed maker uses for anything that needs a world point. `p` is a
+   * kit-space position, handed back already transformed into the world, so
+   * the maker does not have to know whether it was composed or not.
+   */
+  after(p, fn) {
+    const c = p.clone();
+    if (this._placed) c.applyMatrix4(this._pm);
+    this.deferred.push({ c, yaw: this._yaw, fn });
+    return this;
   }
 
   /** A kit-space box collider, yawed about Y. */
@@ -1401,6 +1559,15 @@ export class Kit {
     // out which piece rests on which
     let parts = 0;
     for (const spec of pending) if (registerDestructible(world, spec)) parts++;
+    // and last of all, whatever could only be placed once the world position
+    // was known — see `after`. Last, so a body spawned here lands on colliders
+    // that already exist.
+    const deferred = this.deferred;
+    this.deferred = [];
+    for (const d of deferred) {
+      d.fn(world, d.c.clone().applyQuaternion(quaternion).add(position),
+        new THREE.Quaternion().setFromAxisAngle(UP, d.yaw).premultiply(quaternion));
+    }
     return { meshes, triangles, draws: meshes.length, boxes: madeBoxes, parts };
   }
 }

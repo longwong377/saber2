@@ -28,6 +28,7 @@
 import './dom-shim.mjs';
 import * as THREE from 'three';
 import { Player, HILT_ANCHOR } from '../src/game/Player.js';
+import { GRIP_AT, GRIP_STABLE } from '../src/game/Player.js';
 import { GUARD, ZONE_ORDER, ZONE_ROSE } from '../src/game/SaberController.js';
 import { guardIntercept } from '../src/game/Bolts.js';
 
@@ -216,12 +217,24 @@ function framing(pitch = 0) {
     seen, n, occ: seen ? 100 * blocked / seen : 100, frame: (hi - lo) / 2 * 100 };
 }
 
-/** The third-person arm pair, the way tools/checks/viewmodel.mjs reads them. */
+/**
+ * The third-person arm pair, the way tools/checks/viewmodel.mjs reads them —
+ * plus the quantity that turns out to drive both of them.
+ *
+ * `handPoseOnHilt` builds the hand's frame from `toward`, the direction from the
+ * shoulder to the grip, with the blade's own component taken out. When the arm
+ * arrives ALONG the blade that residue vanishes and the frame spins about the
+ * shaft; `sep` is the smallest angle between the two over the run, and it is the
+ * distance from that singularity.
+ */
 function arm() {
   const b = bench({ terrain: false, holdBlade: true });
   b.ctx.terrain = null; b.ctx.physics = null;
-  let worstWrist = 0, worstFore = 0, prev = null;
+  let worstWrist = 0, worstFore = 0, prev = null, sep = 180, atWorst = 0;
+  let worstSwing = 0, atSwing = 0;
   const qf = new THREE.Quaternion();
+  const dir = new THREE.Vector3(), prevDir = new THREE.Vector3();
+  const bore = new THREE.Vector3(), toward = new THREE.Vector3();
   for (let i = 0; i < 260; i++) {
     b.input.mouse.dx = Math.cos(i / 22) * -34;
     b.input.mouse.dy = Math.sin(i / 22) * -22;
@@ -230,10 +243,23 @@ function arm() {
     const h = b.p.rig.get('handR');
     worstWrist = Math.max(worstWrist, h.obj.quaternion.angleTo(h.restQuat));
     b.p.rig.worldQuat('foreR', qf);
-    if (prev) worstFore = Math.max(worstFore, qf.angleTo(prev));
-    prev = qf.clone();
+    dir.copy(b.p.rig.tipPos('foreR', new THREE.Vector3()))
+      .sub(b.p.rig.worldPos('foreR', new THREE.Vector3())).normalize();
+    b.p.saber.root.updateMatrixWorld(true);
+    bore.set(0, 1, 0).applyQuaternion(b.p.saber.root.getWorldQuaternion(new THREE.Quaternion()));
+    toward.copy(b.p.saber.root.localToWorld(new THREE.Vector3(0, GRIP_AT.R, 0)))
+      .sub(b.p.rig.worldPos('armR', new THREE.Vector3())).normalize();
+    const a = Math.acos(Math.min(1, Math.abs(toward.dot(bore)))) * DEG;
+    sep = Math.min(sep, a);
+    if (prev) {
+      const w = qf.angleTo(prev);
+      if (w > worstFore) { worstFore = w; atWorst = a; atSwing = dir.angleTo(prevDir); }
+      worstSwing = Math.max(worstSwing, dir.angleTo(prevDir));
+    }
+    prev = qf.clone(); prevDir.copy(dir);
   }
-  return { wrist: worstWrist * DEG, fore: worstFore * DEG * 60 };
+  return { wrist: worstWrist * DEG, fore: worstFore * DEG * 60, sep, atWorst,
+    swing: worstSwing * DEG * 60, atSwing: atSwing * DEG * 60 };
 }
 
 /**
@@ -294,7 +320,7 @@ function line(tag) {
     + `   fwd ${e3.fwd.toFixed(2)}/${e1.fwd.toFixed(2)} = ${(e1.fwd / e3.fwd).toFixed(3)}`
     + `   stab ${t3.horiz.toFixed(2)}/${t1.horiz.toFixed(2)} = ${(t1.horiz / t3.horiz).toFixed(3)}`
     + `   hand ${f.handDown.toFixed(1)}°  hilt ${f.seen}/${f.n} ${f.occ.toFixed(0)}% ${f.frame.toFixed(0)}%`
-    + `   wrist ${a.wrist.toFixed(1)}°  fore ${a.fore.toFixed(0)}°/s`);
+    + `   wrist ${a.wrist.toFixed(1)}°  fore ${a.fore.toFixed(0)}°/s (bend ${a.atSwing.toFixed(0)}°/s of it, worst bend ${a.swing.toFixed(0)})  arm-off-blade min ${a.sep.toFixed(1)}°`);
 }
 
 const sweep = process.argv.includes('--sweep');
@@ -319,4 +345,46 @@ for (const fp of [false, true]) {
     console.log(`   a level shot at ${row.h.toFixed(2)} m answered by `
       + `${row.answered.length}/4 zones${row.answered.length === 4 ? ' (the centre disc)' : `: ${row.answered.join(', ') || 'none'}`}`);
   }
+}
+
+/**
+ * `--arm` — the third-person arm alone, swept over the anchor, which is the
+ * only measurement that is quick enough to sweep.
+ */
+if (process.argv.includes('--arm')) {
+  console.log('\nrise  fwd    wrist    fore   arm-off-blade');
+  for (const [rise, fwd] of [[0, 0], [0.08, 0.04], [0.16, 0.08], [0.24, 0.12],
+    [0.28, 0.14], [0.32, 0.16], [0.32, 0.08], [0.32, 0.24], [0.24, 0.24], [0.40, 0.16]]) {
+    HILT_ANCHOR.rise = rise; HILT_ANCHOR.fwd = fwd;
+    const a = arm();
+    console.log(`${rise.toFixed(2)}  ${fwd.toFixed(2)}   ${a.wrist.toFixed(1)}   ${a.fore.toFixed(0).padStart(6)}   `
+      + `${a.sep.toFixed(1)}° min, ${a.atWorst.toFixed(1)}° at the worst frame, bend ${a.atSwing.toFixed(0)}/${a.swing.toFixed(0)}°/s`);
+  }
+  HILT_ANCHOR.rise = 0.32; HILT_ANCHOR.fwd = 0.16;
+}
+
+/**
+ * `--cone` — the stabiliser's own sweep. Worst forearm and worst wrist over the
+ * viewmodel bench, with the anchor unified and with the old chest anchor, so
+ * that the repair can be seen not to touch the case it is not for.
+ */
+if (process.argv.includes('--cone')) {
+  const base = { ...GRIP_STABLE };
+  const pair = () => {
+    HILT_ANCHOR.rise = 0.32; HILT_ANCHOR.fwd = 0.16;
+    const u = arm();
+    HILT_ANCHOR.rise = 0; HILT_ANCHOR.fwd = 0;
+    const c = arm();
+    HILT_ANCHOR.rise = 0.32; HILT_ANCHOR.fwd = 0.16;
+    return `${u.fore.toFixed(0).padStart(5)} / ${u.wrist.toFixed(1)}      `
+      + `${c.fore.toFixed(0).padStart(5)} / ${c.wrist.toFixed(1)}`;
+  };
+  console.log('\ncone  pronate     unified            chest (the ratchet\'s own bench)');
+  for (const [deg, pr] of [[0, 1e9], [12, 1e9], [0, 18], [8, 18], [12, 18], [18, 18], [25, 18],
+    [12, 40], [12, 25], [12, 12], [12, 8]]) {
+    GRIP_STABLE.cone = Math.sin(deg * Math.PI / 180);
+    GRIP_STABLE.pronate = pr;
+    console.log(` ${deg === 0 ? 'off' : `${deg}\u00b0`.padStart(3)}  ${pr > 1e8 ? '  off' : `${pr}`.padStart(5)}     ${pair()}`);
+  }
+  Object.assign(GRIP_STABLE, base);
 }
