@@ -269,6 +269,52 @@ export const PARRY = { speed: 1400, burst: 1.8, window: 0.20, perfect: 0.10, coo
 export const OVERHEAD = { wind: 0.10, cut: 0.07, dur: 0.32, rise: 0.95, drop: 1.00, cooldown: 0.46 };
 
 /**
+ * SPIN, the attack that mirrors the rose SIDEWAYS.
+ *
+ * The same three-phase arc as the overhead with the axes exchanged: the guard
+ * is wound to one side, driven across the centreline, and recovered. Because
+ * `GX_MAX` is 1.0 against the overhead's 1.05/1.0 the two sweep almost exactly
+ * the same distance, so a spin and an overhead peak the tip at the same speed
+ * and neither is the strictly better button — which is the only thing that
+ * makes having both a choice.
+ *
+ * WHAT MAKES IT A SPIN AND NOT A SLASH is `yaw`: the body turns through the
+ * cut. A horizontal sweep with the feet planted is a slash and the controller
+ * already has one (steer sideways and swing). Turning the carrier through
+ * 0.62 rad over the cut is what puts the blade through everything standing
+ * around you rather than everything standing in front of you, and it is the
+ * reason this costs a third more stamina and recovers half as fast.
+ *
+ * `side` is which way it goes and it is not a constant: it takes the sign of
+ * whichever side the guard is already on, so the sweep starts from where your
+ * hands are. A spin that always went left would be unusable half the time.
+ */
+export const SPIN = { wind: 0.13, cut: 0.10, dur: 0.44, rise: 0.98, drop: 1.00, cooldown: 0.92, yaw: 0.62 };
+
+/**
+ * THE CHARGED HEAVY, and it is not a fourth attack — it is the overhead with
+ * its own clock run slower.
+ *
+ * Player note #15 asked for "a charged heavy". The honest way to build one in
+ * a game whose damage is `bladeSpeed × sharpness / toughness` is NOT to attach
+ * a damage multiplier to a button: it is to make the arc bigger and the cut
+ * longer, and let the same contact solver read the faster tip. So a full
+ * charge scales the overhead's amplitude by `arc` and its cut window by `cut`,
+ * and everything downstream — severance, stagger, the RETURN grade, the trail
+ * — sees one thing, a blade that is genuinely moving faster.
+ *
+ * `hold` is how long the button has to be down before any of it applies, and
+ * it is longer than the overhead's own recovery on purpose: a player mashing
+ * the attack must never accidentally charge, and a player who wants the heavy
+ * must accept that they are not swinging during it.
+ *
+ * `drain` is stamina per second while winding. Standing at full charge is not
+ * free, which is what stops the heavy from being a permanent state you enter
+ * once and swing out of forever.
+ */
+export const CHARGE = { hold: 0.28, full: 0.85, arc: 1.55, cut: 1.45, drain: 0.22 };
+
+/**
  * How fast the guard point travels to a zone's pose, in e-folds per second.
  * The same order as `stanceRate` (9), doubled: a lateral guard is a stance you
  * settle into, a zone change is a flick you have already made with your hand
@@ -505,6 +551,22 @@ export class SaberController {
     this.swing = 0;
     this.swingCool = 0;
     this._swX = 0; this._swY = 0;
+    /* SPIN — its own timer and its own cooldown, deliberately not shared with
+     * the overhead's. Sharing one would make the pair a rotation you alternate
+     * for free, and the whole point of the longer recovery is that a spin is a
+     * commitment. `spinSide` is latched at the press so the sweep cannot
+     * reverse mid-cut if the guard drifts across the centreline. */
+    this.spinT = -1;
+    this.spin = 0;
+    this.spinCool = 0;
+    this.spinSide = 1;
+    this.spinYaw = 0;
+    /* CHARGE — 0..1, how much of a heavy is wound up, and `charged` is what it
+     * was AT THE RELEASE, which is the number the swing runs on. Reading the
+     * live `charge` inside the envelope would let a swing get stronger after
+     * it had already started. */
+    this.charge = 0;
+    this.charged = 0;
 
     /**
      * "Blade holds position": on release the blade stays where you left it
@@ -548,6 +610,7 @@ export class SaberController {
     this.handVel.set(0, 0, 0); this.angVel.set(0, 0, 0);
     this.stance = 0; this.stanceTarget = 0;
     this.thrust = 0; this.thrustT = -1; this.thrustStanding = 0;
+    this.spinT = -1; this.spin = 0; this.spinYaw = 0; this.charge = 0; this.charged = 0;
     this.flourish = 0; this.flourishT = -1;
     this._flX = 0; this._flY = 0; this._flRoll = 0;
     this.swing = 0; this.swingT = -1; this.swingCool = 0;
@@ -720,7 +783,13 @@ export class SaberController {
     //                 because a zone is a state and states do not need holding
     //                 in place; the same motion aims and picks the guard.
     const directional = this.scheme === 'directional';
-    const bladeHeld = this.scheme === 'free' ? !input.act('thrust') : input.act('blade');
+    /* ONE BUTTON, ONE MEANING. `blade` is the guard in all three schemes now
+     * that it is on RMB (see its row in Bindings.js) — and Free is the scheme
+     * where the blade is ALREADY live, so its guard is the press that pins it.
+     * That is why this reads the same action either way and only the sense
+     * flips; it used to read a different action per scheme, which is how the
+     * attack button ended up being the thing that pinned the blade. */
+    const bladeHeld = this.scheme === 'free' ? !input.act('blade') : input.act('blade');
     this.bladeHeld = bladeHeld;
     // …except while a bolt is caught. Then the camera comes back immediately and
     // fully, button or no button, because the whole reason the bolt is stuck to
@@ -889,6 +958,23 @@ export class SaberController {
     // (The removal is at the top of this function, above every reader of the
     // base guard — see the note there.)
     this.swingCool = Math.max(0, this.swingCool - dt);
+    /**
+     * THE CHARGE, and it is read BEFORE the release so a tap is still a tap.
+     *
+     * `attackOver` is a press in the table and a hold here, which is not a
+     * contradiction: `actHit` is the edge and `act` is the level, and the two
+     * together are exactly "tap for the light, hold for the heavy" without a
+     * second binding for the player to find. A tap releases inside CHARGE.hold
+     * and `charged` comes out 0, which is the swing that shipped.
+     */
+    const overDown = input.act('attackOver') && this.swingT < 0 && this.swingCool <= 0;
+    if (overDown && ctx.stamina > 0.12) {
+      this.charge = Math.min(this.charge + dt, CHARGE.full);
+      // Winding costs, so a full charge is a decision and not a resting state.
+      if (this.charge > CHARGE.hold && ctx.onStrain) ctx.onStrain(CHARGE.drain * dt);
+    } else if (!overDown && this.charge > 0 && this.swingT < 0) {
+      this.charge = 0;
+    }
     if (input.actHit('attackOver') && this.swingT < 0 && this.swingCool <= 0 && ctx.stamina > 0.12) {
       this.swingT = 0;
       // The one offensive rate in the game, and until Cadence nothing could
@@ -899,10 +985,33 @@ export class SaberController {
       this.swingCool = OVERHEAD.cooldown / Math.max(0.2, ctx.attackRate ?? 1);
       if (ctx.onSwing) ctx.onSwing();
     }
+    /* THE RELEASE. `actHit` fires on the PRESS, so the light swing above still
+     * starts the instant the button goes down — what the hold changes is the
+     * swing that is already running, and it can, because `charged` is sampled
+     * every frame until the wind-up ends. Past CHARGE.hold the arc and the cut
+     * window grow with it; below it nothing happens at all. */
+    if (this.swingT >= 0 && this.swingT < OVERHEAD.wind * (1 + this.charged)) {
+      this.charged = this.charge <= CHARGE.hold ? 0
+        : (this.charge - CHARGE.hold) / Math.max(1e-4, CHARGE.full - CHARGE.hold);
+    }
+    if (this.swingT < 0) this.charged = 0;
     if (this.swingT >= 0) {
       this.swingT += dt;
-      const T = OVERHEAD;
-      if (this.swingT >= T.dur) { this.swingT = -1; this.swing = 0; }
+      /* ONE ENVELOPE, SCALED — not a second table for the heavy. A charged
+       * overhead is the same three phases with a taller arc and a longer cut,
+       * so every phase boundary below is derived from OVERHEAD and the charge
+       * rather than typed twice. `wind` grows too: a heavier blade takes
+       * longer to get above your head, and that wind-up is the tell an enemy
+       * duellist reads to chamber you. */
+      const c = this.charged;
+      const A = 1 + (CHARGE.arc - 1) * c;
+      const T = c > 0 ? {
+        wind: OVERHEAD.wind * (1 + c),
+        cut: OVERHEAD.cut * (1 + (CHARGE.cut - 1) * c),
+        dur: OVERHEAD.dur * (1 + 0.75 * c),
+        rise: OVERHEAD.rise * A, drop: OVERHEAD.drop * A,
+      } : OVERHEAD;
+      if (this.swingT >= T.dur) { this.swingT = -1; this.swing = 0; this.charge = 0; this.charged = 0; }
       else {
         // wind up, cut through, recover. Three phases rather than one lerp
         // because the cut is the only part that has to be FAST: a snap straight
@@ -920,6 +1029,59 @@ export class SaberController {
         this._swY = clamp(this.gy + arc, -GY_MIN, GY_MAX) - this.gy;
       }
     } else this.swing = 0;
+
+    /**
+     * ── SPIN. The overhead's arc, turned on its side, with the body going
+     * round with it.
+     *
+     * Everything structural here is the overhead's and deliberately so: three
+     * phases, an additive offset taken back at the top of this function, the
+     * offset clamped rather than the result. What differs is the axis (`_swX`,
+     * not `_swY`), the side (latched, so the sweep cannot reverse mid-cut) and
+     * `spinYaw` — the carrier turn that makes it a spin rather than a
+     * horizontal slash, handed to the caller through `cam.yaw` the same way
+     * every other camera contribution in this function is.
+     *
+     * Both attacks write different components of the same offset pair, so the
+     * two CAN overlap — an overhead released during a spin is a diagonal, and
+     * it falls out of the arithmetic rather than being a case.
+     */
+    this.spinCool = Math.max(0, this.spinCool - dt);
+    this.spinYaw = 0;
+    if (input.actHit('attackSpin') && this.spinT < 0 && this.spinCool <= 0 && ctx.stamina > 0.2) {
+      this.spinT = 0;
+      // Start from the side the guard is already on, so the sweep crosses the
+      // body instead of jumping to the far side and coming back.
+      this.spinSide = this.gx >= 0 ? 1 : -1;
+      this.spinCool = SPIN.cooldown / Math.max(0.2, ctx.attackRate ?? 1);
+      if (ctx.onSwing) ctx.onSwing();
+      if (ctx.onSpin) ctx.onSpin();
+    }
+    if (this.spinT >= 0) {
+      this.spinT += dt;
+      const T = SPIN;
+      if (this.spinT >= T.dur) { this.spinT = -1; this.spin = 0; }
+      else {
+        let arc;
+        if (this.spinT < T.wind) arc = T.rise * smoothstep(0, T.wind, this.spinT);
+        else if (this.spinT < T.wind + T.cut) {
+          arc = lerp(T.rise, -T.drop, smoothstep(T.wind, T.wind + T.cut, this.spinT));
+        } else arc = -T.drop * (1 - smoothstep(T.wind + T.cut, T.dur, this.spinT));
+        arc *= this.spinSide;
+        this.spin = smoothstep(0, T.wind, this.spinT)
+          * (1 - smoothstep(T.wind + T.cut, T.dur, this.spinT));
+        this._swX = clamp(this.gx + arc, -GX_MAX, GX_MAX) - this.gx;
+        /* The turn is spent over the CUT and nowhere else — winding up and
+         * recovering must not move the view, or a spin would read as a shove
+         * on the mouse. `dt / T.cut` distributes the whole `yaw` across
+         * exactly that window however long a frame is. */
+        if (this.spinT >= T.wind && this.spinT < T.wind + T.cut) {
+          this.spinYaw = -this.spinSide * T.yaw * (dt / T.cut);
+        }
+      }
+    } else this.spin = 0;
+    cam.yaw += this.spinYaw;
+
     this.gx += this._swX; this.gy += this._swY;
 
     // gesture signal
@@ -940,8 +1102,8 @@ export class SaberController {
     this.thrustCooldown = Math.max(0, this.thrustCooldown - dt);
     // `attackStab` is the wheel-down half of the rose and reaches the same
     // envelope in every scheme — a stab is a stab, not a directional feature.
-    const stabPressed = input.actHit('attackStab')
-      || (this.scheme === 'free' ? input.actHit('blade') : input.actHit('thrust'));
+    // …and `thrust` in EVERY scheme, with no condition left on it: LMB attacks.
+    const stabPressed = input.actHit('attackStab') || input.actHit('thrust');
     if (stabPressed && this.thrustCooldown <= 0 && ctx.stamina > 0.12) {
       this.thrustT = 0;
       // A lunge with no feet behind it has to come entirely out of the arms, so

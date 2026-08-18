@@ -324,6 +324,11 @@ export const DEFAULT_SETTINGS = {
   // chose it, so without the bump the new default would reach nobody who had
   // opened the menu once.
   scheme: 'directional',
+  /* ONE HAND OR TWO, in first person only — see the note over `twoHanded` in
+   * Player._updateBody for why this is a player's decision and not a tuning
+   * number. It changes where the ARMS go and nothing about the blade's grip
+   * model, so neither reach, stiffness nor inertia moves with it. */
+  fpHands: 'one',
   deflectAim: 'reticle',
   forcePower: 1,
   forceDrain: 1,
@@ -646,6 +651,7 @@ export const SETTING_READERS = {
   fov:             ['main.js', 'settings.fov'],
   invertY:         ['main.js', 'input.invertY = settings.invertY'],
   firstPerson:     ['game/World.js', '!!this.settings.firstPerson'],
+  fpHands:         ['game/Player.js', "this.world.settings?.fpHands === 'two'"],
   scheme:          ['game/World.js', 'scheme: this.settings.scheme'],
   deflectAim:      ['game/World.js', 'this.settings.deflectAim'],
   forcePower:      ['game/Player.js', 'this.world.settings?.forcePower'],
@@ -1137,9 +1143,14 @@ export const CODEX = [
   { device: 'Mouse', padDevice: 'Right stick',
     text: () => 'Flick into a zone as the bolt lands — inside 0.2 s — and it is a <b>parry</b>: '
       + 'the bolt goes back at whatever is under your reticle.' },
-  { keys: ['attackOver'], text: () => 'Overhead attack — wind up over the head and cut down.' },
+  { keys: ['attackOver'], text: () => 'Overhead attack — wind up over the head and cut down. '
+      + '<b>Hold</b> it and the arc grows and the cut slows: a charged heavy, and the blade is '
+      + 'genuinely moving faster when it lands.' },
   { keys: ['attackStab'], text: () => 'Stab. Same lunge as the thrust, on the other half of the wheel.' },
-  { keys: ['thrust'], text: () => 'Thrust — drive the hands forward along the blade.' },
+  { keys: ['attackSpin'], text: () => 'Spinning attack — the overhead\u2019s arc turned on its '
+      + 'side, and the body turns through the cut. Reaches what is beside you, not what is in '
+      + 'front of you.' },
+  { keys: ['thrust'], text: () => 'Attack — drive the hands forward along the blade.' },
   { keys: ['moveF', 'moveL', 'moveB', 'moveR'],
     // The walk's share is READ off WALK_SCALE rather than typed as "a third".
     // Every number this grid has ever typed by hand has eventually described a
@@ -1243,10 +1254,13 @@ export const CODEX = [
  * functions of the bindings like the Codex rows.
  *
  * The Free Blade card said "Hold RMB to look around", which was a typed key
- * name AND a description of an action rather than a button: what the free
- * scheme actually reads is `!input.act('thrust')` for the camera and
- * `actHit('blade')` for the stab, so the card was naming Mouse2's DEFAULT and
- * would have gone on saying RMB after a rebind moved thrust anywhere else.
+ * name AND a description of an action rather than a button, so the card was
+ * naming Mouse2's DEFAULT and would have gone on saying RMB after a rebind
+ * moved the action anywhere else.
+ *
+ * Free now reads `!input.act('blade')` for the camera and `actHit('thrust')`
+ * for the stab, like the other two — see the swap note in Bindings.js — so the
+ * card names the same two actions every other card does.
  *
  * DIRECTIONAL ships first and by default because the other two share one
  * unresolvable flaw, and it is the flaw the player named: both of them buy a
@@ -1263,8 +1277,8 @@ export const SCHEMES = [
     blurb: k => `The mouse looks. Hold ${k('blade')} and the mouse IS the blade — while you hold it `
       + `the camera is frozen, so you cannot aim a return until you let go.` },
   { key: 'free', name: 'Free Blade',
-    blurb: k => `The mouse always moves the blade and the camera follows it. Hold ${k('thrust')} `
-      + `to look around; ${k('blade')} stabs. Chaotic.` },
+    blurb: k => `The mouse always moves the blade and the camera follows it. Hold ${k('blade')} `
+      + `to pin the blade and look around; ${k('thrust')} attacks. Chaotic.` },
 ];
 
 // Key codes come from KeyboardEvent.code and cannot carry markup, but this is
@@ -4573,6 +4587,45 @@ export class Menu {
     }
   }
 
+  /**
+   * HOW MANY HANDS ARE ON THE HILT WHEN YOU ARE LOOKING DOWN IT.
+   *
+   * This was decided once, in code, and the decision is defensible enough that
+   * its note in Player._updateBody runs to a page: two fists on a 25 cm shaft
+   * at half a metre from the lens hid 91% of the hilt, and taking the off hand
+   * off removed both the second occluder and the folded left arm the near
+   * plane was slicing. Then the same player who asked for one hand said "you
+   * hold it only with one hand in 1st person and it's a weird awkward reverse
+   * grip", which is two complaints wearing one sentence — the reverse grip was
+   * real and is fixed (see FP_GRIP_SIDE), and the hand count was never a fault
+   * at all, it was a taste.
+   *
+   * A taste belongs on the options screen. Both poses are built, both are
+   * measured by tools/checks/first-person.mjs, and the player picks.
+   */
+  _buildFpHands() {
+    const host = document.getElementById('opt-fphands');
+    if (!host) return;
+    const modes = [
+      ['one', 'One hand', 'The off hand stays down. You see the whole hilt and the emitter, '
+        + 'and nothing folds across the near plane.'],
+      ['two', 'Both hands', 'The off hand joins the grip below the first. Closer to the '
+        + 'third-person guard, at the cost of some of the hilt behind a glove.'],
+    ];
+    host.innerHTML = '';
+    for (const [key, name, blurb] of modes) {
+      const d = document.createElement('div');
+      d.className = 'diff' + (this.s.fpHands === key ? ' sel' : '');
+      d.innerHTML = `<i class="dot"></i><div class="txt"><b>${name}</b><span>${blurb}</span></div>`;
+      this._activate(d, () => {
+        audio.ui('click');
+        this._pick('fpHands', key);
+        [...host.children].forEach(c => c.classList.toggle('sel', c === d));
+      });
+      host.appendChild(d);
+    }
+  }
+
   _buildOptions() {
     /* FOUR of these sliders index a TABLE, and the tables can grow. Their
      * `max` is taken from the table rather than typed into index.html, so
@@ -4790,6 +4843,7 @@ export class Menu {
     // Same shape and the same reason as the box above it: HUD.Minimap asks
     // `world.settings` on the frame it draws, and that is this object.
     this._buildTroopNames();
+    this._buildFpHands();
     this._check('opt-minimap-sense', 'minimapSense');
     const test = document.getElementById('btn-voice-test');
     if (test) test.addEventListener('click', () => this._auditionVoice(this.s.voiceIndex));

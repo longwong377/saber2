@@ -833,29 +833,38 @@ export async function run({ check, assert }) {
       return free;
     };
 
+    /* THE CLASHING CODE IS FOUND, NOT TYPED, for exactly the reason the spares
+     * are. It was 'Mouse2', which was `thrust`'s own key when this was written
+     * — then the mouse buttons were swapped so that RMB guards and LMB attacks
+     * (see Bindings.js), `blade` took Mouse2, and the fixture was quietly
+     * manufacturing a THREE-way clash: the resolver correctly took the key off
+     * all three and the check failed reporting a defect in the test data.
+     * `thrust`'s first key, whatever it is, plus two spares, is a two-way clash
+     * by construction and cannot go stale that way. */
+    const CODE = defaultBindings().thrust[0];
     const doubled = () => {
       const b = defaultBindings();
       const [s1, s2] = spares();
-      b.thrust = ['Mouse2', s1]; b.hurl = ['Mouse2', s2];
+      b.thrust = [CODE, s1]; b.hurl = [CODE, s2];
       return b;
     };
 
     const old = doubled();
     // what finish() used to do, verbatim
-    const first = findConflict(old, 'Mouse2', 'dash');
-    const rest = old[first].filter(k => k !== 'Mouse2');
+    const first = findConflict(old, CODE, 'dash');
+    const rest = old[first].filter(k => k !== CODE);
     if (rest.length) old[first] = rest;
-    old.dash = ['Mouse2'];
+    old.dash = [CODE];
     const left = conflicts(old);
     assert(left.length > 0,
       'the single-clash path was supposed to leave a duplicate behind and did not — '
       + 'this check no longer reproduces the bug it exists for');
 
     const now = doubled();
-    const res = resolveConflicts(now, 'Mouse2', 'dash');
-    now.dash = ['Mouse2'];
+    const res = resolveConflicts(now, CODE, 'dash');
+    now.dash = [CODE];
     assert(!conflicts(now).length,
-      `after settling, Mouse2 still answers to ${conflicts(now).map(c => c.ids.join('+')).join(', ')}`);
+      `after settling, ${CODE} still answers to ${conflicts(now).map(c => c.ids.join('+')).join(', ')}`);
     assert(res.taken.length === 2 && !res.refused.length,
       `both victims had a spare, so both should give the key up, not ${JSON.stringify(res)}`);
     assert(now.thrust.length === 1 && now.hurl.length === 1, 'a victim lost more than the clashing key');
@@ -1419,8 +1428,17 @@ export async function run({ check, assert }) {
     assert(inline.length === 1 && inline[0] === keyLabel(b.hurl[0]),
       `the grip row says ${inline.join('/') || 'nothing'} hurls, and hurl answers to `
       + `${b.hurl.map(keyLabel).join('+')}`);
-    assert(b.thrust.includes('Mouse2') && !b.hurl.includes('Mouse2'),
-      'Mouse2 no longer thrusts, so the row this check exists for is measuring something else now');
+    /* THE SENTINEL, and it is derived rather than named. What made the typed
+     * row a lie was that Mouse2 belongs to SOMETHING ELSE — it does not matter
+     * which action, and naming one meant this check went red the day the
+     * mouse buttons were swapped (RMB guards, LMB attacks) even though the
+     * rule it protects had not moved an inch. */
+    const holder = ACTION_IDS.find(id => id !== 'hurl' && (b[id] || []).includes('Mouse2'));
+    assert(holder && !b.hurl.includes('Mouse2'),
+      holder ? 'hurl answers to Mouse2 again, so the Codex row this check exists for is honest '
+        + 'and the check is measuring nothing'
+        : 'nothing but hurl claims Mouse2 any more, so a typed "M2 to hurl it" would be TRUE '
+        + 'and this check would pass for the wrong reason');
 
     // EVERY action, and by REBINDING rather than by reading a declaration:
     // move one action onto a key nothing else uses, re-render, and the Codex
@@ -1627,7 +1645,10 @@ export async function run({ check, assert }) {
       'rules',
       // Whose name is over whose head — a row of cards on the Interface
       // panel, written by `_pick('troopNames', …)` like every other picker.
-      'troopNames'];
+      'troopNames',
+      // One hand on the hilt in first person, or both. A two-card row on the
+      // Interface panel, written by `_pick('fpHands', …)`.
+      'fpHands'];
     /**
      * The settings that are TYPED — a text box rather than a slider, a
      * checkbox or a row of cards. One so far: the co-op name, which is the
@@ -1786,9 +1807,35 @@ export async function run({ check, assert }) {
      * 47th action added tomorrow fails here on the day it is written.
      */
     const b = defaultBindings();
-    const missing = ACTION_IDS.filter(id => !(b[id] || []).some(isPadCode));
+    /**
+     * …AND A WHEEL IS A CONTROLLER ROUTE. This is the one amendment the rule
+     * has ever taken and it is derived, not an exception list.
+     *
+     * The six orders were each dealt a `Back`+button chord from a pool written
+     * before the ORDER WHEEL existed. The wheel is on the pad, it is built from
+     * `FORMATIONS` itself, and it carries every formation plus the hold toggle
+     * — so those chords were a second complete route to the same six verbs, on
+     * a pad that had filled all forty-six of its places and could not take a
+     * spinning attack until something gave. The pool is retired (see
+     * ORDER_PAD_POOL) and the wheel is what carries them.
+     *
+     * The exemption is CONDITIONAL and computed: an order is excused only while
+     * `orderwheel` itself has a pad binding. Unbind the wheel and all six come
+     * straight back into `missing`, which is what stops this from becoming the
+     * hole the check exists to close.
+     */
+    const wheeled = (b.orderwheel || []).some(isPadCode)
+      ? new Set(ORDER_ACTIONS.map(o => o.action)) : new Set();
+    const missing = ACTION_IDS.filter(id => !wheeled.has(id) && !(b[id] || []).some(isPadCode));
     assert(!missing.length,
       `no pad binding at all for: ${missing.join(', ')} — a controller player cannot do these`);
+    // The wheel's own claim, checked rather than trusted: every order it excuses
+    // has to be an item ON it. `OrderWheel` builds its items from FORMATIONS, so
+    // the two lists are the same list — this asserts they have not drifted.
+    for (const o of ORDER_ACTIONS) {
+      assert(FORMATION_IDS.some(id => orderActionId(id) === o.action),
+        `${o.action} is excused by the order wheel and is not a formation the wheel builds`);
+    }
 
     // Every pad code names a real button or a real stick direction, so a typo
     // is a dead binding rather than a silent one.

@@ -850,6 +850,19 @@ export const FIST_CLEAR = 0.065;
  * top of the hilt and stopped needing the pommel to hide behind.
  */
 const FP_GRIP_SIDE = -0.05;
+/** One fist down the shaft from the leading hand, in hilt metres. The
+ *  third-person pair sit 0.065 apart (GRIP_AT.R − GRIP_AT.L) and that is the
+ *  width of a closed hand on this hilt, so the same number holds here. */
+const FP_HAND_GAP = 0.065;
+/**
+ * THE ROLL OF THE FIST ABOUT THE HILT, in radians, and it is a live object so a
+ * render can sweep it without an edit — `tools/_palmsweep.mjs` prints the table
+ * and `tools/shot.mjs --pose` sets the value it is testing.
+ *
+ * Zero is "the fist comes up under the grip from the outboard side", which is
+ * where FP_GRIP_SIDE alone puts it.
+ */
+export const FP_TUNE = { roll: 0 };
 export function fpGripOn(saber) {
   const lo = saber?.hiltFloor;
   return typeof lo === 'number' && Number.isFinite(lo) ? lo + FIST_CLEAR : GRIP_AT.FP;
@@ -3577,7 +3590,8 @@ export class Player {
      * stiffness and inertia and does not silently become a different weapon.
      */
     const twoHanded = this.control.grip === 'two' && this.throwState === 'held'
-      && !this.gesture.kind && !this.saberDown && !this.camera.firstPerson;
+      && !this.gesture.kind && !this.saberDown
+      && (!this.camera.firstPerson || this.world.settings?.fpHands === 'two');
     // In first person the arms hang off the VIEW, not off the ribcage, and
     // `chest` — which is the frame every elbow pole below is built in — becomes
     // the point midway between the two viewmodel shoulders. See _anchorViewArms.
@@ -3593,9 +3607,18 @@ export class Player {
        * fists where the spec says they are — on the grip section — at any size,
        * and it is 1 for every full-sized wielder in the game. */
       const gs = this.saber.gripScale ?? 1;
-      const gripR = this.saber.root.localToWorld(
-        _v2.set(0, (fp ? fpGripOn(this.saber) : GRIP_AT.R) * gs, 0));
-      const gripL = this.saber.root.localToWorld(_v3.set(0, GRIP_AT.L * gs, 0));
+      /* A SECOND FIST IN FIRST PERSON GOES BELOW THE FIRST, NOT ABOVE IT.
+       * `fpGripOn` is the ONE place that knows where a viewmodel fist may sit
+       * without hanging over the emitter (hilt floor + FIST_CLEAR), so the
+       * two-handed variant keeps that as the LEADING hand and stacks the off
+       * hand one fist-width further down the shaft — rather than reusing the
+       * third-person pair, whose upper fist is 12 cm nearer the blade and put
+       * a glove across the emitter at 0.5 m from the lens. */
+      const fpPair = fp && twoHanded ? FP_HAND_GAP * 0.5 : 0;
+      const fpR = fp ? fpGripOn(this.saber) + fpPair : GRIP_AT.R;
+      const gripR = this.saber.root.localToWorld(_v2.set(0, fpR * gs, 0));
+      const gripL = this.saber.root.localToWorld(
+        _v3.set(0, (fp ? fpR - FP_HAND_GAP : GRIP_AT.L) * gs, 0));
       /**
        * THE WRIST IS NOT THE GRIP. See GRIP_BORE.
        *
@@ -3673,12 +3696,26 @@ export class Player {
        */
       if (fp) {
         _v10.set(FP_GRIP_SIDE, 1, 0).normalize().applyQuaternion(this.camera.aimQuat);
+        /* …AND THEN ROLLED ROUND THE SHAFT. `toward` fixes where the fist sits
+         * on the circle about the hilt, and up-and-inboard is only one point on
+         * it. See FP_TUNE for the sweep this is picked from. */
+        if (FP_TUNE.roll) {
+          _v10.applyAxisAngle(_v9.set(0, 1, 0).applyQuaternion(_q1), FP_TUNE.roll);
+        }
       } else {
         _v10.subVectors(gripR, rig.worldPos('armR', _v9));
       }
       handPoseOnHilt('R', _q1, _v10, _q2, _v9, hs);
       const wristR = _v7.copy(gripR).add(_v9);
-      handPoseOnHilt('L', _q1, _v10.subVectors(gripL, rig.worldPos('armL', _v9)), _q3, _v9, hs);
+      /* The off hand takes the SAME free axis in first person, mirrored: the
+       * whole reason the shipped one-hand solve reads as an icepick is that
+       * "the side the arm arrives from" is meaningless behind the lens, and
+       * that is no less true of the left arm. Mirroring keeps both fists
+       * coming up under the shaft from their own side instead of one of them
+       * reaching over the top. */
+      if (fp) _v10.set(-FP_GRIP_SIDE, 1, 0).normalize().applyQuaternion(this.camera.aimQuat);
+      else _v10.subVectors(gripL, rig.worldPos('armL', _v9));
+      handPoseOnHilt('L', _q1, _v10, _q3, _v9, hs);
       const wristL = _v8.copy(gripL).add(_v9);
       const fwd = _v4.set(0, 0, -1).applyQuaternion(this.camera.aimQuat);
       const right = _v5.set(1, 0, 0).applyQuaternion(this.camera.aimQuat);

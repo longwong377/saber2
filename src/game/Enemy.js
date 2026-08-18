@@ -999,6 +999,9 @@ export const IMPULSE_AS_HP = 1.2;
  */
 const CAST_FLINCH_FLOOR = 8;
 const CAST_FLINCH_FRAC = 0.05;
+/** How much of a body's own health a blow has to take before it says so. See
+ *  the note at the call site for why this is a fraction and not a floor. */
+const HURT_CRY_FRAC = 0.085;
 
 /**
  * ── THE GUARD, AND WHY "THEY DIE TOO EASILY" IS NOT A HEALTH NUMBER ────
@@ -2412,6 +2415,33 @@ export class Enemy {
      */
     if (keepsWind(this.A)) this.recentDamage = (this.recentDamage || 0) + amount;
     if (this.hp <= 0) { this.die(point, source, kind); return true; }
+    /**
+     * IT HURT. Player note #17 asked for pain and death sounds, and of the two
+     * only the death had one: a body screamed when it lost a limb, when it was
+     * flung and when it died, and took a rifle burst to the chest in complete
+     * silence. That is the most common thing that happens in a firefight and it
+     * was the one thing with no voice.
+     *
+     * `hurt` and not `scream`. The contour table already separates them and the
+     * difference is the whole point — `scream` is two long syllables that FALL
+     * and reads as something ending, which is why the dismemberment and death
+     * calls use it. `hurt` is a clipped rise and drop, a quarter of the length,
+     * and reads as a body that is still standing. Using the death contour for
+     * a flesh wound would make every exchange sound like a kill.
+     *
+     * THE THRESHOLD IS A FRACTION, not a number of hit points, so a B1 losing
+     * a fifth of itself and an acklay losing a fifth of itself both say so —
+     * an absolute floor would have the horde grunting at every bolt and the
+     * boss silent through a whole duel.
+     *
+     * The gap is long relative to the rate hits land (`cry` refuses inside
+     * it), which is deliberate: the announcer's shared budget is what stops
+     * five bodies talking at once, and this is what stops ONE body narrating
+     * every bolt of a burst. Without it a squad under sustained fire is a wall
+     * of grunting, and the deaths — which take the same budget — never get a
+     * word in.
+     */
+    if (amount >= this.maxHp * HURT_CRY_FRAC) this.cry('hurt', 2.2);
     // A heavy blow throws the guard AWAY from whoever landed it, and how far
     // scales with how heavy. Both arguments used to be omitted here, so every
     // hit in the game beat the blade to the same side by the same amount.

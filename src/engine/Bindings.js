@@ -117,6 +117,24 @@ export const chordParts = (code) => String(code).split(CHORD);
 export const isChord = (code) => String(code).includes(CHORD);
 
 /**
+ * A CHORD IS A SET OF BUTTONS, NOT A STRING — and the difference was a bug.
+ *
+ * `PadLB+PadBack` and `PadBack+PadLB` are one physical pair of buttons and two
+ * different strings, so every comparison in this file that used `===` or
+ * `.includes(code)` read them as unrelated. Two actions shipped on that pair —
+ * the flourish and the order wheel — and `conflicts()` reported the table as
+ * clean, because it was comparing spellings.
+ *
+ * So a comparison key: the parts, sorted, rejoined. Sorting is what makes the
+ * order stop mattering, and it is done HERE and read by `conflicts`,
+ * `findConflicts` and `resolveConflicts` rather than at each of them, so a
+ * fourth reader cannot get its own opinion. A plain key is its own key, which
+ * is why this is safe to apply to every code and not only to chords.
+ */
+export const chordKey = (code) => (isChord(code)
+  ? chordParts(code).slice().sort().join(CHORD) : String(code));
+
+/**
  * THE TWO MODIFIERS, AND WHY THEY HOLD NOTHING OF THEIR OWN.
  *
  * LB is the Force layer and Back/View is the interface-and-orders layer. Both
@@ -159,14 +177,44 @@ export const ACTIONS = [
   // you forget you are in, and the first time you forget is a bolt in the back.
   { id: 'walk',       group: 'Movement', label: 'Slow walk',         keys: ['Backquote'],  hold: true, pad: 'PadBack+PadL3' },
   { id: 'crouch',     group: 'Movement', label: 'Crouch',            keys: ['ControlLeft'], hold: true, pad: 'PadR3' },
-  { id: 'dash',       group: 'Movement', label: 'Dash / evade',      keys: ['AltLeft', 'Mouse4'], pad: 'PadB' },
+  { id: 'dash',       group: 'Movement', label: 'Dash / evade',      keys: ['AltLeft'], pad: 'PadB' },
 
-  { id: 'blade',      group: 'Blade',    label: 'Take the blade',    keys: ['Mouse1'],     hold: true, pad: 'PadRT' },
+  /**
+   * RIGHT BUTTON GUARDS, LEFT BUTTON ATTACKS. Player note #15: "block should be
+   * right click and attack should be left click".
+   *
+   * These two rows were the wrong way round and had been since the first
+   * scheme: `blade` — which is the GUARD in the shipped directional scheme,
+   * where holding it raises a zone — sat on LMB, and `thrust` — the only
+   * attack on the mouse at all — sat on RMB. That is inverted from every
+   * melee game the reference list names, and it is the whole of the note.
+   *
+   * Swapping the two KEYS is the entire fix, and it is a swap rather than a
+   * scheme because the meaning of each button then becomes one sentence that
+   * holds in all three schemes:
+   *
+   *   RMB (`blade`)   the guard. Directional raises a zone, Hold-to-Blade
+   *                   takes the blade, Free PINS it — free is the one where
+   *                   the blade is always live, so its guard button is the one
+   *                   that stops it, and it is still the same button.
+   *   LMB (`thrust`)  the attack. A stab in every scheme, with no scheme
+   *                   condition left on it at all.
+   *
+   * That collapsed two `scheme === 'free' ? … : …` ternaries in
+   * SaberController.applyInput into one expression each — see the notes there.
+   *
+   * The PAD is deliberately untouched. RT is not "left click on a controller":
+   * it is the trigger you pull to engage, both hands are already committed to
+   * the sticks, and `stance`'s own note above spends a paragraph on why the
+   * holds live under the index fingers and the presses on the face buttons.
+   * Re-deriving that layout from a mouse convention would undo it.
+   */
+  { id: 'blade',      group: 'Blade',    label: 'Guard / take the blade', keys: ['Mouse2'], hold: true, pad: 'PadRT' },
   // PadY and not PadRB, and `stance` has the bumper instead — see the note on
   // `stance` below. A thrust is a PRESS, so a face button costs the right thumb
   // one beat off the look stick; a lateral guard is a HOLD, and a hold on a face
   // button is a guard the player cannot aim from.
-  { id: 'thrust',     group: 'Blade',    label: 'Thrust',            keys: ['Mouse2'], pad: 'PadY' },
+  { id: 'thrust',     group: 'Blade',    label: 'Attack (thrust)',   keys: ['Mouse1'], pad: 'PadY' },
   // The two halves of the attack rose, mirroring the guard rose: wheel up is an
   // overhead, wheel down is a stab. They are ordinary rows here rather than a
   // raw `mouse.wheel` read for exactly the reason the four rows below this one
@@ -175,6 +223,23 @@ export const ACTIONS = [
   // other thing that wants the wheel.
   { id: 'attackOver', group: 'Blade',    label: 'Overhead attack',   keys: ['WheelUp'], pad: 'PadUp' },
   { id: 'attackStab', group: 'Blade',    label: 'Stab',              keys: ['WheelDown'], pad: 'PadDown' },
+  /**
+   * THE SPIN, and the reason it is on the THUMB BUTTON rather than a letter.
+   *
+   * There is no free key left under the left hand — every one of them is a
+   * Force power, a roll, a stance or a gait — and putting the third attack in
+   * the I/J/K/L block would be putting it where no hand is. The mouse has one
+   * spare control and this is it: `dash` is the only action bound to two keys,
+   * and the one it keeps (AltLeft) is under the left hand where movement
+   * already lives, so the thumb button costs the dash nothing it needs.
+   *
+   * The pad takes a chord because the pad has genuinely run out: every bare
+   * button and every LB/Back chord but six is spoken for, and of those six
+   * this is the one a right thumb can reach without leaving the look stick for
+   * longer than the wind-up. A pad player who disagrees can rebind it, which
+   * is the whole reason this row is in the table rather than read raw.
+   */
+  { id: 'attackSpin', group: 'Blade',    label: 'Spinning attack',   keys: ['Mouse4'], pad: 'PadBack+PadB' },
   { id: 'rollL',      group: 'Blade',    label: 'Roll wrist left',   keys: ['KeyQ'],       hold: true, pad: 'PadLeft' },
   { id: 'rollR',      group: 'Blade',    label: 'Roll wrist right',  keys: ['KeyE'],       hold: true, pad: 'PadRight' },
   { id: 'ignite',     group: 'Blade',    label: 'Ignite / retract',  keys: ['KeyX'], pad: 'PadX' },
@@ -196,7 +261,13 @@ export const ACTIONS = [
    * `focus`; RB is the one left, and `thrust` took the face button it vacated
    * because a press can afford to. */
   { id: 'stance',     group: 'Blade',    label: 'Lateral guard',     keys: ['Digit1', 'Mouse5'], hold: true, pad: 'PadRB' },
-  { id: 'flourish',   group: 'Blade',    label: 'Flourish',          keys: ['Digit2'], pad: 'PadLB+PadBack' },
+  /* MOVED OFF `PadLB+PadBack`, which is both modifiers at once and which
+   * `orderwheel` also claimed under the other spelling: two rows on one
+   * physical pair, and the conflict finder could not see it because it
+   * compared chord STRINGS and 'PadLB+PadBack' is not 'PadBack+PadLB'. The
+   * blindness is fixed in `chordKey`; this row is the half of the pair that
+   * moved, onto a chord the retired order pool gave back. */
+  { id: 'flourish',   group: 'Blade',    label: 'Flourish',          keys: ['Digit2'], pad: 'PadBack+PadRT' },
   // One key for both halves of note 61: over a fallen hilt it takes, otherwise
   // it puts yours down.
   //
@@ -363,13 +434,33 @@ export const ORDER_ACTIONS = [];
  * this seam already refuses it once for the keyboard.
  *
  * So a formation is DEALT the next code in this pool, in declaration order.
- * `Back` is the interface-and-orders modifier and the four face buttons plus
- * the two vertical D-pad presses are the six nearest things under the thumb;
- * a seventh formation gets no pad code rather than a wrong one, and
- * tools/checks/controls.mjs prints the shortfall instead of hiding it.
+ * A formation past the end of the pool gets no pad code rather than a wrong
+ * one, and tools/checks/controls.mjs prints the shortfall instead of hiding it.
+ *
+ * ── AND THE POOL IS NOW EMPTY, WHICH IS THE POINT ──────────────────────
+ *
+ * It held six chords — `Back` plus the four face buttons and the two vertical
+ * D-pad presses — dealt one to each formation, and it was written before the
+ * ORDER WHEEL existed. The wheel is on the pad (`orderwheel`, PadBack+PadLB),
+ * it is built from `FORMATIONS` itself, and it carries every order plus the
+ * hold toggle. So on a pad the orders already had two complete routes and the
+ * second one was costing a sixth of the pad's remaining capacity.
+ *
+ * That capacity is not theoretical. The pad holds thirteen bare buttons, four
+ * stick directions and twenty-nine modifier chords — forty-six places — and
+ * the table had grown to fill every one of them, which is how two actions came
+ * to share `LB+Back` under two spellings with nothing able to see it. A
+ * spinning attack could not be added at all until something gave, and of
+ * everything on the pad the least defensible was a second way to say a thing
+ * the wheel already says better.
+ *
+ * A KEYBOARD IS UNTOUCHED. Digit6…Minus still fire the six orders directly,
+ * because a keyboard has the room and a wheel on a mouse is slower than a key.
+ * tools/checks/controls.mjs asserts the wheel is what carries them on a pad —
+ * derived from `ORDER_ACTIONS` and the wheel's own binding, so retiring the
+ * wheel would put the shortfall straight back on the screen.
  */
-export const ORDER_PAD_POOL = ['PadBack+PadB', 'PadBack+PadRT',
-  'PadBack+PadUp', 'PadBack+PadDown', 'PadBack+PadR3', 'PadBack+PadStart'];
+export const ORDER_PAD_POOL = [];
 
 /**
  * Teach the bindings table about a set of orders.
@@ -621,9 +712,12 @@ export function keyLabel(code, family = 'xbox') {
  */
 export function findConflicts(bindings, code, exceptId) {
   const out = [];
+  // `chordKey` and not `includes`: the same two buttons in the other order are
+  // the same chord. See the note over chordKey.
+  const want = chordKey(code);
   for (const id of ACTION_IDS) {
     if (id === exceptId) continue;
-    if ((bindings[id] || []).includes(code)) out.push(id);
+    if ((bindings[id] || []).some(k => chordKey(k) === want)) out.push(id);
   }
   return out;
 }
@@ -649,8 +743,9 @@ export function findConflict(bindings, code, exceptId) {
  */
 export function resolveConflicts(bindings, code, keepId) {
   const taken = [], refused = [];
+  const want = chordKey(code);
   for (const id of findConflicts(bindings, code, keepId)) {
-    const rest = (bindings[id] || []).filter(k => k !== code);
+    const rest = (bindings[id] || []).filter(k => chordKey(k) !== want);
     if (rest.length) { bindings[id] = rest; taken.push(id); }
     else refused.push(id);
   }
@@ -668,11 +763,15 @@ export function conflicts(bindings) {
   const byCode = new Map();
   for (const id of ACTION_IDS) {
     for (const code of bindings[id] || []) {
-      if (!byCode.has(code)) byCode.set(code, []);
-      byCode.get(code).push(id);
+      // Keyed by the SET of buttons and reported under the first spelling seen,
+      // so a clash between `A+B` and `B+A` is one row naming both actions
+      // rather than two rows naming neither. See chordKey.
+      const k = chordKey(code);
+      if (!byCode.has(k)) byCode.set(k, { code, ids: [] });
+      byCode.get(k).ids.push(id);
     }
   }
   const out = [];
-  for (const [code, ids] of byCode) if (ids.length > 1) out.push({ code, ids });
+  for (const { code, ids } of byCode.values()) if (ids.length > 1) out.push({ code, ids });
   return out;
 }
