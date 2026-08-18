@@ -605,16 +605,18 @@ function designate(army, taken) {
  *
  * MEASURED, one fresh Geonosis world per order, `enemyRng` seeded the same
  * way for each, 1800 frames of `world.update` at 1/30 (60 game-seconds), army
- * bolts counted at `bolts.fire` by whether the owner carries a roster record:
+ * bolts counted at `bolts.fire` by whether the owner carries a roster record
+ * (`tools/checks/command.mjs` holds the same drive at 45 s):
  *
  *     circle 219   column 291   vanguard 276   line 304   cover 241
  *     charge 195   HOLD FIRE 0
  *
  * The zero is not a low rate, it is silence — `_troops` pushes the fuse back
  * up every frame through Waves.js's own primitive. And the held line was the
- * most shot at of the seven (210 incoming bolts against 104-174), with all ten
- * men still standing at the end: it was in a firefight and did not answer,
- * which is the order and not a quiet corner of the map.
+ * most shot at of the seven — 193 incoming bolts against 104-174 for the six
+ * that answer — with all ten men still standing and `_closing` never raised.
+ * It was in a firefight and did not fire, which is the order rather than a
+ * quiet corner of the map.
  *
  * IT IS NOT THE `hold` TOGGLE AND THE TWO ARE DELIBERATELY DIFFERENT WORDS.
  * `hold()` below holds the GROUND — a toggle over whatever formation is up,
@@ -2843,9 +2845,12 @@ export class CommandDirector extends WaveDirector {
    * Four things happen to every body it reaches and not one of them is a
    * damage number:
    *
-   *   the SHOT      `holdFire` — Waves.js's own primitive, the same one a HOLD
-   *                 order uses. The burst it was in the middle of is gone and
-   *                 the fuse goes back up.
+   *   the SHOT      `holdFire` — Waves.js's own primitive, the same one the
+   *                 HOLD FIRE order uses. The burst it was in the middle of is
+   *                 gone and the fuse goes back up. (That sentence was written
+   *                 before the order was, and was false for as long as every
+   *                 formation declared `fire: 1` — see the note above
+   *                 FORMATIONS. It is true now and a check holds it.)
    *   the AIM       `Enemy.dread`, read by `aimQuality` beside morale. See the
    *                 DREAD record in Enemy.js for why the term is there rather
    *                 than here: a campaign's enemy carries no roster record, so

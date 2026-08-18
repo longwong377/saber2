@@ -1837,6 +1837,31 @@ export class Enemy {
     this.grippable = A.grippable !== false;
     this.gripped = false;
     this.liftTarget = null;
+    /**
+     * ARRESTED BY A FORCE STOP — the field has this body, and this is the only
+     * thing on the class that says so.
+     *
+     * It is a MARK, not a second freeze. The arrest itself is `stun()`, which
+     * is what a parry, a chamber, a lost blade lock, a shove and `topple()` all
+     * call and what `_think`, `_move`, `_faceTarget`, `_sustain`, `breakCast`
+     * and `_guardOpen` already read — so a frozen body cannot think, walk,
+     * turn, shoot, hold a power or keep its guard, and not one of those rules
+     * is restated here. What the mark buys is the two things a stun on its own
+     * does not say, and both of them are what the player SEES:
+     *
+     *   `_move`  a stun still carries residual velocity and still falls, so a
+     *            body caught mid-air would drift down out of the field. Held,
+     *            it hangs exactly where it was caught, the way an arrested bolt
+     *            and an arrested crate do.
+     *   `_pose`  a stunned body still ANIMATES — it stands there breathing, and
+     *            a breathing statue is not a time-stop. Held, the whole solve
+     *            is skipped, so the rig, the blade and the robes keep the pose
+     *            they were in on the frame of capture and resume from it.
+     *
+     * Cleared by `Player._freeStasisEnemy`, which every one of the field's
+     * endings goes through. See Player._stasisCapture.
+     */
+    this.stasisHeld = false;
     /** Seconds left of the "just dragged off my feet" window a Force pull
      *  opens. Read by Combat.openness; decayed in update. */
     this.yankT = 0;
@@ -3712,7 +3737,14 @@ export class Enemy {
       // reaction would play late, after the window it is advertising has half
       // gone. Only the stagger phase runs here; a stunned duellist still
       // cannot think, aim or attack.
-      if (this.duel?.staggered && !this.toppled) this.duel.update(dt, ctx, dist);
+      //
+      // …EXCEPT INSIDE A FORCE STOP, and that is the one exception the clause
+      // has. The whole promise of the field is that nothing moves; a blade
+      // still travelling to the end of its stagger is a moving thing, and it
+      // would also spend the reel DURING the hold, so a released body would
+      // come out composed instead of out of line. Frozen, the stagger waits
+      // its turn — which is what makes holding someone worth the Force.
+      if (this.duel?.staggered && !this.toppled && !this.stasisHeld) this.duel.update(dt, ctx, dist);
       return;
     }
     if (A.inert) { this.wish = null; return; }
@@ -5021,6 +5053,26 @@ export class Enemy {
     if (this.toppled) { this._syncBody(); return; }
 
     /**
+     * HELD BY A FORCE STOP — it hangs where it was caught.
+     *
+     * The stun the field lays on this body already stops it WALKING (`canMove`
+     * below reads `stunTimer`), and that is not the same as stopping. Past that
+     * gate the method still applies gravity and still integrates whatever
+     * velocity the body had, so a jet trooper caught mid-hop, or anyone caught
+     * mid-knockback, would go on sinking and sliding inside a field that had
+     * visibly stopped every bolt in the air around them.
+     *
+     * Zeroing the velocity here is the same statement `_updateStasis` makes to
+     * an arrested crate one line apart — `velocity.set(0,0,0)` — and the same
+     * one `StasisAnchor` makes to an arrested bolt. One field, one answer.
+     */
+    if (this.stasisHeld) {
+      this.velocity.set(0, 0, 0);
+      this._syncBody();
+      return;
+    }
+
+    /**
      * LIMP. A living body whose actor is ragdolled is not walking anywhere,
      * and — the part that was actually broken — its `position` has to follow
      * the ragdoll rather than stay where the body left the ground.
@@ -5250,6 +5302,21 @@ export class Enemy {
   _pose(dt, ctx) {
     const A = this.A;
     if (this.actor?.ragdolled) return;
+    /**
+     * AND A HELD BODY DOES NOT ANIMATE. This is the whole visible half of a
+     * Force stop and it costs one line.
+     *
+     * Without it a frozen enemy stands in place and goes on breathing, blinking
+     * its idle, settling its cape and swinging its blade back to guard — a
+     * body that has stopped WALKING, which is what "he only stopped shooting"
+     * looks like from two metres away. Returning here leaves the rig, the IK'd
+     * arms, the sabre pose and the cloth (which `_poseArms` steps) exactly as
+     * they were on the frame of capture: caught mid-stride, arm still up, robe
+     * still mid-swing. The animator's own clock does not advance either, so the
+     * body resumes the same stride when the field lets go rather than snapping
+     * to a new one.
+     */
+    if (this.stasisHeld) return;
 
     if (this.animator) {
       // the feet stand where the body stands — see src/physics/Support.js, and

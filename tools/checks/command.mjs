@@ -27,7 +27,7 @@
 import * as THREE from 'three';
 import * as Cmd from '../../src/game/Command.js';
 import * as Waves from '../../src/game/Waves.js';
-import { ARCHETYPES, Enemy } from '../../src/game/Enemy.js';
+import { ARCHETYPES, Enemy, enemyRng } from '../../src/game/Enemy.js';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
 import { TEAM, canHarm } from '../../src/game/Player.js';
 import { CORPSE_BUDGET, Corpses } from '../../src/game/Corpses.js';
@@ -1058,7 +1058,7 @@ export function run({ check, assert }) {
       + `${inAirNow} flown in, furthest ${far.toFixed(1)} m from the commander`;
   });
 
-  check('command: the six formations are six different shapes, and the leash bites', () => {
+  check('command: every formation is a different shape, and the leash bites', () => {
     /* Note #30: "you can order your troops into different formations, circle
      * around you, behind you, in front idk."
      *
@@ -1167,17 +1167,169 @@ export function run({ check, assert }) {
         }
       }
     }
-    /* …and the six are still SIX. A leash that is the same for everybody is the
-     * slider-with-six-labels this check exists to prevent, in the other
-     * direction. */
+    /* …and they are still DIFFERENT. A leash that is the same for everybody is
+     * the slider-with-N-labels this check exists to prevent, in the other
+     * direction. The floor is a share of the table rather than a typed 5, so
+     * a seventh order cannot dilute it by simply existing. */
     const spread = new Set(Object.values(Cmd.FORMATIONS).map((F) => F.leash));
-    assert(spread.size >= 5, `${spread.size} distinct leashes over six formations`);
+    const wantSpread = Math.ceil(Cmd.FORMATION_IDS.length * 0.8);
+    assert(spread.size >= wantSpread,
+      `${spread.size} distinct leashes over ${Cmd.FORMATION_IDS.length} formations, wanted ${wantSpread}`);
     assert(Cmd.FORMATIONS.charge.leash === Infinity, 'a charge is leashed');
     assert(Cmd.FORMATIONS.circle.leash < Cmd.FORMATIONS.front.leash,
       'a ring around you is not tighter than a screen in front of you');
     const tightest = worst.reduce((a, b) => (b[2] < a[2] ? b : a));
     return `${worst.length} order/body pairs, tightest ${tightest[0]}/${tightest[1]} at `
       + `${tightest[2].toFixed(2)}× its own reach; ${spread.size} distinct leashes`;
+  });
+
+  check('command: no field in a formation record is a knob nothing turns', () => {
+    /**
+     * THE TRIPWIRE THAT WOULD HAVE CAUGHT `fire`, AND IT IS DERIVED FROM THE
+     * TABLE RATHER THAN FROM A LIST OF FIELDS.
+     *
+     * `fire` was declared in FORMATIONS' own note — "a multiplier on how
+     * eagerly the troops shoot… 0 is `holdFire`" — read by `_troops`, and set
+     * to 1 by every single record. So `if (F.fire <= 0) holdFire(e)` could not
+     * be reached by any order the game was able to give: a design number with
+     * no caller, which reads as shipped, is quoted in the note above the table
+     * as if it were live, and is invisible to every check in this file because
+     * every check in this file asks what an order DOES and no order did that.
+     *
+     * It is the same shape as `command: every event in the MORALE table has
+     * something that fires it` and it is the other half of the same argument:
+     * that one finds a table entry nothing calls, this finds a table COLUMN
+     * that only ever holds one value. A field whose value is constant across
+     * every record is not a property of a formation, it is a constant with an
+     * extra six copies of itself — and the branch that reads it is dead.
+     *
+     * Enumerated over the union of every record's keys, so it covers the next
+     * field somebody adds without anybody editing this check. Functions are
+     * skipped because `slot` is compared by SHAPE in the check above and two
+     * formations may legitimately share one; the per-record identity strings
+     * are skipped because they are required to be distinct, which is a
+     * different property and is asserted elsewhere.
+     */
+    const records = Object.values(Cmd.FORMATIONS);
+    const IDENTITY = new Set(['id', 'name', 'key', 'blurb']);
+    const fields = new Set();
+    for (const F of records) for (const k of Object.keys(F)) if (!IDENTITY.has(k)) fields.add(k);
+
+    const flat = [];
+    for (const k of [...fields].sort()) {
+      // `undefined` counts as a value: `urgency` and `seeksCover` are declared
+      // by ONE order and absent from the rest, which is a real two-valued knob
+      // and is exactly how a formation says "this one is different".
+      const seen = new Set(records.map((F) => (typeof F[k] === 'function' ? 'ƒ' : String(F[k]))));
+      if (seen.size === 1 && typeof records[0][k] !== 'function') flat.push(`${k}=${[...seen][0]}`);
+    }
+    assert(!flat.length,
+      `${flat.length} of ${fields.size} formation field(s) hold ONE value across all `
+      + `${records.length} orders: ${flat.join(', ')} — the branch that reads such a field cannot be `
+      + 'reached by any order the game can give, and the note above FORMATIONS describes it as if it '
+      + 'could. That is how `fire` shipped: declared, documented, read by `_troops`, and 1 six times');
+
+    /* AND THE ONE THIS WAS WRITTEN FOR, named rather than left to the loop:
+     * both sides of the fire gate `_troops` reads must be occupied, or the
+     * branch is unreachable in one direction. */
+    const holding = records.filter((F) => F.fire <= 0);
+    const firing = records.filter((F) => F.fire > 0);
+    assert(holding.length && firing.length,
+      `${holding.length} order(s) hold fire and ${firing.length} do not — `
+      + '`if (F.fire <= 0) holdFire(e)` needs both sides to be a rule rather than a constant');
+    return `${fields.size} fields over ${records.length} orders, every one of them varying; `
+      + `fire: ${holding.map((F) => F.name).join(', ')} hold, ${firing.length} do not`;
+  });
+
+  check('command: the order that holds fire stops the shooting, and the default does not', async () => {
+    /**
+     * THE BEHAVIOUR, ON A REAL WORLD, COUNTED AT THE ONE DOOR A BOLT COMES OUT
+     * OF.
+     *
+     * The table check above proves `fire` is a knob with two positions. It
+     * cannot prove that turning it does anything, and "the field is read by a
+     * line of code" is precisely the kind of evidence this repository has been
+     * wrong with before — `holdFire` could be called on every trooper every
+     * frame and the line could still shoot, because a burst that is already in
+     * the air is not a burst that has been cancelled.
+     *
+     * So this counts BOLTS. `BoltPool.fire` is the single door every blaster
+     * round in the game leaves by (`Enemy._fire` and `World._spawnNetBolts`
+     * are its only callers), and a bolt is the army's if its owner carries a
+     * roster record — which is derived from the thing that makes a trooper a
+     * trooper, not from a team number this check would have to know.
+     *
+     * DERIVED FROM THE TABLE, so it covers the next order: every formation
+     * with `fire <= 0` is driven, and the reference is `DEFAULT_FORMATION` —
+     * the order the game gives when nobody has said anything.
+     *
+     * FRESH WORLD PER CONDITION (HANDOFF §2.5) and `enemyRng` seeded the same
+     * way for each, so the two lines are shot at by a wave making the same
+     * rolls. Measured at 45 game-seconds, over two runs of the suite:
+     *
+     *     column (the default)    222-223 out, 60-75 incoming
+     *     HOLD FIRE                     0 out, 118-129 incoming
+     *
+     * The out column spreads a little between runs and the reason is worth
+     * knowing rather than seeding harder: this suite's async checks interleave
+     * at their awaits, so a peer check gets to advance `enemyRng` between the
+     * seed and the drive. The property is not a number, which is why the bar
+     * below is `> 20` for the reference and `=== 0` for the order.
+     *
+     * That second column is the one that matters. A zero is also what you get
+     * from a line nobody is fighting; a zero while taking HALF AGAIN as many
+     * rounds as the order that shoots back is fire discipline. All ten men
+     * were still standing at the end of both.
+     */
+    const SECONDS = 45;
+    const drive = async (formation) => {
+      enemyRng.seed(20250814);
+      const { world, d, input } = await commandWorld({ formation });
+      let out = 0, incoming = 0;
+      const fire = world.bolts.fire.bind(world.bolts);
+      world.bolts.fire = (from, dir, opts = {}) => {
+        if (opts.owner?.trooper) out++; else incoming++;
+        return fire(from, dir, opts);
+      };
+      /* `_closing` is this file's own rule that a wave with four bodies left
+       * stops being a battle and every order comes off — including this one.
+       * It is correct and it is not what is being measured, so it is READ and
+       * reported rather than assumed away. */
+      let closed = false;
+      for (let i = 0; i < Math.round(SECONDS / STEP); i++) {
+        world.update(STEP, input);
+        if (d._closing) closed = true;
+      }
+      const standing = d.roster.living.filter((t) => t.body && !t.body.dead).length;
+      world.unload();
+      return { out, incoming, standing, closed };
+    };
+
+    const hold = Object.values(Cmd.FORMATIONS).filter((F) => F.fire <= 0);
+    assert(hold.length, 'no order in the table holds fire — see the check above');
+    const ref = await drive(Cmd.DEFAULT_FORMATION);
+    assert(ref.out > 20,
+      `the line fired ${ref.out} bolts in ${SECONDS} s under ${Cmd.DEFAULT_FORMATION} — the reference `
+      + 'condition is not a firefight, so nothing below it can mean anything');
+
+    const rows = [`${Cmd.FORMATIONS[Cmd.DEFAULT_FORMATION].name} ${ref.out} out/${ref.incoming} in`];
+    for (const F of hold) {
+      const r = await drive(F.id);
+      rows.push(`${F.name} ${r.out} out/${r.incoming} in`);
+      assert(!r.closed,
+        `${F.name}: the wave fell to the close-out inside ${SECONDS} s, which lifts every order — `
+        + 'this drive is measuring `_updateClosing` and not fire discipline');
+      assert(r.out === 0,
+        `${F.name} declares fire ${F.fire} and its line still put ${r.out} bolts out in ${SECONDS} s `
+        + `against ${ref.out} under ${Cmd.DEFAULT_FORMATION} — \`holdFire\` is being called and the `
+        + 'trigger is being pulled anyway');
+      assert(r.incoming > 0,
+        `${F.name}: nothing shot at the line for ${SECONDS} s, so its 0 is an empty map rather than `
+        + 'an order — this drive cannot tell fire discipline from a quiet corner');
+      assert(r.standing > 0,
+        `${F.name}: the whole line was dead inside ${SECONDS} s, so its 0 is a casualty list`);
+    }
+    return rows.join('; ') + ` over ${SECONDS} s apiece on geonosis, one fresh World each`;
   });
 
   check('command: an idle commander\'s army clears a wave by itself', async () => {
@@ -1945,8 +2097,10 @@ export function run({ check, assert }) {
     front.burstLeft = 3; front.attackTimer = 0;
 
     assert(d.order('dread') === true, 'DREAD did not fire');
-    /* THE SHOT. `holdFire` is Waves.js's own primitive and it is what a HOLD
-     * order already uses — the burst is gone and the fuse is back up. */
+    /* THE SHOT. `holdFire` is Waves.js's own primitive and it is what the HOLD
+     * FIRE order uses — the burst is gone and the fuse is back up. Two callers
+     * of one primitive, which is the reason a verb and an order can silence a
+     * droideka mid-burst and a marksman mid-telegraph with no second rule. */
     assert(front.burstLeft === 0 && front.attackTimer >= 0.5,
       `the burst survived: ${front.burstLeft} left, fuse ${front.attackTimer.toFixed(2)}`);
     /* THE AIM, through the one function that decides a spread. */

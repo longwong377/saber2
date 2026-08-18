@@ -475,6 +475,26 @@ export const DEFAULT_SETTINGS = {
    * A slider for them outside Command would be a control that does nothing,
    * which is the exact defect this object's own notes keep recording. They stay
    * session-scoped, as `tools/checks/controls.mjs` already declares them.
+   * (`duelHealth` is the near miss: `spawnPlayer` really does read it outside a
+   * match. It stays out because its default would have to be `PVP_LIMITS.health.def`,
+   * and this object is built at MODULE SCOPE while the note over the Player.js
+   * import above is explicit that nothing here may read a Player binding then.
+   * A typed 100 beside the table that owns it is HANDOFF §2.3.)
+   *
+   * IT CHANGES THE RULES AND NOT THE SEATING, deliberately. Everyone stays on
+   * the side they were on; what changes is that `canHarm` stops refusing two
+   * bodies that share one, which is the branch `pvpRules`' own note describes
+   * and is the whole of a free-for-all. Giving each player a side of their own
+   * is `assignSides` + `Net.setSides`, and both belong to `beginVersus`: a side
+   * is a fact both machines have to agree on and only the host may hand out,
+   * which is a seat allocation rather than a rule.
+   *
+   * AND IT IS READ ON EACH MACHINE, which is the same scope `commandVersus`
+   * has and is stated on the control. `net.host()` puts `{level, difficulty,
+   * mode}` on the wire and nothing else, so a host who wants the rule to be
+   * the session's has to add it there — `main.js` is the file, it is three
+   * words in `hostSession` and two in the `welcome`/`start` handlers, and it
+   * is not this file's to write.
    */
   pvp: false,
   /**

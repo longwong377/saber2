@@ -29,6 +29,9 @@
 import { readFile } from 'node:fs/promises';
 import { makeDocument } from './_page.mjs';
 import { Menu, DEFAULT_SETTINGS, DEATH_TITLE, codexHtml, codexTeaching } from '../../src/ui/Menu.js';
+/* The standing-order row is BUILT from this table, so the check that says so reads the
+ * table rather than a transcription of what it said on the day. */
+import { FORMATIONS } from '../../src/game/Command.js';
 import { ACTIONS, defaultBindings } from '../../src/engine/Bindings.js';
 import { FOCUS } from '../../src/game/Focus.js';
 import { QUALITY } from '../../src/engine/Engine.js';
@@ -487,6 +490,114 @@ export async function run({ check, assert }) {
       cards[3].dispatchEvent({ type: 'click' });
       assert(!box.disabled && box.checked, 'the preference did not come back with the tier');
       return 'high → live; low → overruled, setting untouched; ultra → live again';
+    } finally { close(); }
+  });
+
+  check('menu: the standing-order row IS the formation table, and a new order needs no markup', () => {
+    /**
+     * "A NEW RECORD SHOULD APPEAR THERE FOR FREE" IS A CLAIM, AND THIS IS THE
+     * THING THAT MEASURES IT.
+     *
+     * `_cardRow('command-list', …, Object.values(FORMATIONS))` is written to
+     * be derived and index.html carries an EMPTY `<div id="command-list">`, so
+     * the row is supposed to follow Command.js by itself. Nothing checked it.
+     * The failure it protects against is silent in the direction that matters:
+     * `_cardRow` returns quietly when its host is missing, and an order the
+     * player cannot pick looks exactly like an order they can — a seventh
+     * formation would be bound to a key, listed in the Codex, printed on the
+     * controls card, and absent from the one screen where a STANDING order is
+     * chosen.
+     *
+     * Built from the real constructor on a real parse of index.html, and every
+     * expectation comes off `FORMATIONS` rather than out of this file: one
+     * card per record, in declaration order, each carrying that record's own
+     * name and its own blurb. Then one is PICKED, by key, and the settings
+     * blob is read back — which is the half a DOM count cannot answer.
+     */
+    const { menu, settings, doc, close } = menuOn();
+    try {
+      const records = Object.values(FORMATIONS);
+      const cards = [...kids(doc, 'command-list')];
+      assert(cards.length === records.length,
+        `${cards.length} cards in the standing-order row against ${records.length} formations — `
+        + `${records.map((F) => F.name).join(', ')}`);
+      const wrong = [];
+      records.forEach((F, i) => {
+        const text = cards[i].textContent;
+        if (!text.includes(F.name)) wrong.push(`${F.id}: card ${i} reads "${text.slice(0, 40)}"`);
+        if (F.blurb && !text.includes(F.blurb)) wrong.push(`${F.id}: the card does not carry its own blurb`);
+      });
+      assert(!wrong.length, wrong.join('; '));
+
+      /* AND PICKING ONE WRITES THE SETTING `commandConfig` READS. The card
+       * picked is the LAST record, because a row that has fallen behind the
+       * table is short at the end — the position a new order lands in. */
+      const last = records[records.length - 1];
+      assert(settings.commandFormation !== last.id,
+        `the shipped default is already ${last.id}, so picking it proves nothing — `
+        + 'this check needs the last card to be a change');
+      cards[cards.length - 1].dispatchEvent({ type: 'keydown', key: 'Enter' });
+      assert(settings.commandFormation === last.id,
+        `picking "${last.name}" left settings.commandFormation at ${settings.commandFormation}`);
+      assert(cards.filter((c) => c.classList.contains('sel')).length === 1,
+        'two standing orders are lit at once');
+      assert(menu._bound.size > 0, 'sanity: the menu is still the one that was built');
+      return `${cards.length} cards from ${records.length} formations, in order, each with its own `
+        + `blurb; Enter on "${last.name}" wrote commandFormation=${settings.commandFormation}`;
+    } finally { close(); }
+  });
+
+  check('menu: every setting bound in the Co-op tab is written by its own control', () => {
+    /**
+     * THE HALF `controls.mjs` CANNOT SEE, AND IT IS WHY `pvp` HID FOR SO LONG.
+     *
+     * There are two dead-control guards in this repository and both are
+     * STRING guards: one matches `_check('opt-…', '…'` against `id="opt-…"`
+     * harvested from index.html, the other iterates `DEFAULT_SETTINGS` looking
+     * for a reader. Both are satisfied by text sitting in two files, and
+     * `_check` returns SILENTLY when `getElementById` misses — so a control in
+     * a panel the menu never reaches, or one whose id the markup spells
+     * differently, passes both of them while doing nothing at all.
+     *
+     * This drives the box. Every checkbox inside the Co-op panel is found in
+     * the built page, matched to the setting `Menu` bound it to, toggled
+     * through its own `change` listener, and the settings blob is read back.
+     * Derived from the PANEL rather than from a list of ids, so the next
+     * session rule is covered the day somebody adds it.
+     */
+    const { menu, settings, doc, close } = menuOn();
+    try {
+      const panel = doc.querySelector('section[data-panel="coop"]');
+      assert(panel, 'index.html has no Co-op panel at all');
+      const boxes = panel.querySelectorAll('input[type="checkbox"]');
+      assert(boxes.length > 0,
+        'the Co-op tab holds no switch of its own — a session has a code and no rules, and '
+        + '`settings.pvp` is read by every damage path in the game with nothing able to write it');
+      /* The binding is read out of the built Menu rather than out of the
+       * source: `_check` writes the value on `change`, so the setting a box
+       * really owns is whichever one MOVES when the box does. */
+      const rows = [];
+      for (const box of boxes) {
+        assert(box.id, 'a checkbox in the Co-op tab has no id, so nothing can bind to it');
+        const before = { ...settings };
+        box.checked = !box.checked;
+        box.dispatchEvent({ type: 'change' });
+        const moved = Object.keys(settings).filter((k) => settings[k] !== before[k]);
+        assert(moved.length === 1,
+          `#${box.id} moved ${moved.length} settings (${moved.join(', ') || 'none'}) — a control that `
+          + 'writes nothing is the defect this check exists for, and one that writes two is worse');
+        assert(settings[moved[0]] === box.checked,
+          `#${box.id} is ${box.checked} and it wrote ${settings[moved[0]]} to ${moved[0]}`);
+        assert(moved[0] in DEFAULT_SETTINGS,
+          `#${box.id} writes ${moved[0]}, which is not a key of DEFAULT_SETTINGS — a setting with no `
+          + 'default is invisible to both of controls.mjs\'s dead-control guards');
+        rows.push(`#${box.id} → ${moved[0]}`);
+        box.checked = !box.checked;
+        box.dispatchEvent({ type: 'change' });
+      }
+      assert(menu._bound.size > 0, 'sanity: the menu is still the one that was built');
+      return `${boxes.length} switch(es) in the Co-op tab, each writing exactly one setting: `
+        + rows.join(', ');
     } finally { close(); }
   });
 

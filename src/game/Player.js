@@ -100,6 +100,50 @@ const LIFT_AT_ONE = 220;
 const LIFT_EXPONENT = 1.5;
 
 /**
+ * WHAT HOLDING SOMETHING COSTS PER SECOND — and the one statement anywhere in
+ * this file about what a PERSON costs over an object.
+ *
+ * `_updateGrip` charges `base + rise × (mass / capacity)` and has always
+ * charged a living body more than a crate: 11 against 7 empty-handed, 20
+ * against 13 at the cap. That difference is not decoration, it is the game's
+ * own answer to "a person is not a crate", arrived at for exactly the act the
+ * stasis field also performs — holding a thing still, per second.
+ *
+ * The field needs the RATIO rather than the table, because a field holds
+ * whatever walked into it instead of one chosen mass. So it reads
+ * `PERSON_OVER_PROP` off these two numbers. Typing 1.57 beside the field would
+ * be the hand-written twin of a table five hundred lines away, and the twin is
+ * this repository's signature defect.
+ */
+export const HOLD_COST = { prop: { base: 7, rise: 6 }, person: { base: 11, rise: 9 } };
+/**
+ * 11 / 7 = 1.571 — a living body against an object, read off HOLD_COST.
+ *
+ * Exported so a check can ask the game what the ratio IS rather than typing
+ * 1.571 into an assertion. An instrument that restates a rule eventually
+ * disagrees with it, and it fails in the direction nobody checks.
+ */
+export const PERSON_OVER_PROP = HOLD_COST.person.base / HOLD_COST.prop.base;
+
+/**
+ * How long ONE refresh keeps an arrested body arrested, in seconds.
+ *
+ * The hold is a stun that `_updateStasis` renews every frame, and this is the
+ * window between renewals — a leash, not a duration. Anything that stops the
+ * update loop without releasing (a level torn down mid-hold, a host that
+ * stopped sending, a throw) frees the body a fifth of a second later instead
+ * of forever. `topple()` shows what forever looks like — `stun(9999)` — and it
+ * is right there because a toppled walker has exactly one way back up; a field
+ * has five ways to end and every one of them would have to remember.
+ *
+ * 0.2 s is twelve frames at 60 Hz, and deliberately shorter than
+ * `DuelBrain.stagger`'s own 0.32 s floor, so the beat a released duellist
+ * spends finding its guard is the stagger's number rather than a second one
+ * competing with it.
+ */
+export const STASIS_GRACE = 0.2;
+
+/**
  * Force gestures — the arm that reads the power.
  *
  * Every offset is in the AIM frame and in metres from the chest: `out` along
@@ -4937,6 +4981,37 @@ export class Player {
     return best || refuse;
   }
 
+  /**
+   * WHY THE FORCE WILL NOT TAKE HOLD OF THIS, in the words the player gets.
+   *
+   * Two gates, in this order: an author's outright `grippable: false` (the
+   * AT-TE and the AAT — terrain that shoots, see Vehicles.js), then the mass
+   * cap the Force Power slider moves. `toggleGrip` wrote both sentences inline
+   * and the stasis field refuses bodies by exactly the same two gates, so a
+   * second copy of the prose would be a second copy of the RULE: the day the
+   * AAT stops being a repulsorlift, one of them would say so and the other
+   * would go on telling the player to cut the legs off a hovering tank.
+   *
+   * The HEADLINE stays with each caller, because a grip that will not lift and
+   * a field that will not hold are different sentences about the same fact.
+   * What is shared is the part that carries information — the numbers, and the
+   * counter-play read off the RIG rather than typed beside it.
+   */
+  _liftRefusal(target) {
+    const cap = this.liftCapacity;
+    const mass = target.mass;
+    if (!target.immovable) {
+      return { mass, cap, why: `${Math.round(mass)} kg against your ${Math.round(cap)} kg — raise Force Power` };
+    }
+    const e = target.enemy;
+    const label = e && e.A ? e.A.label : 'it';
+    const legged = !!(e && e.rig && [...e.rig.bones.keys()]
+      .some((n) => /thigh|shin|foot|femur|tibia|tarsus/.test(n)));
+    return { mass, cap, immovable: true, label, legged,
+      why: `${(mass / 1000).toFixed(1)} tonnes — no Force Power moves it. `
+        + (legged ? 'Cut its legs out from under it.' : 'Break its armour instead.') };
+  }
+
   toggleGrip(ctx) {
     if (this.gripBody || this.gripEnemy) { this.releaseGrip(); return; }
     if (!this._canSpend(POWER_COST.grip)) return;
@@ -4971,15 +5046,15 @@ export class Player {
      * `Enemy._loseLimbBehaviour` severs on bones matching thigh/shin/foot, so
      * the rig itself is the authority on whether this one has any. */
     if (target.immovable) {
-      const e = target.enemy;
-      const label = e && e.A ? e.A.label : 'it';
-      const legged = !!(e && e.rig && [...e.rig.bones.keys()]
-        .some((n) => /thigh|shin|foot|femur|tibia|tarsus/.test(n)));
-      this.lastGripRefusal = { mass: target.mass, cap, immovable: true, label, legged };
+      this.lastGripRefusal = { ...this._liftRefusal(target) };
+      /* The record a refusal leaves: the mass, the cap it lost to, and — for a
+       * body no Force Power will ever move — the counter-play in place of a
+       * number. Read back out of the FIELD by name rather than off a local,
+       * because a field with no reader is a comment with syntax, and this one
+       * had no reader for as long as a refused lift was a groan with no
+       * explanation. */
       const why = this.lastGripRefusal;
-      this.world?.notify?.(`${String(why.label).toUpperCase()} WILL NOT LIFT`,
-        `${(why.mass / 1000).toFixed(1)} tonnes — no Force Power moves it. `
-        + (why.legged ? 'Cut its legs out from under it.' : 'Break its armour instead.'));
+      this.world?.notify?.(`${String(why.label).toUpperCase()} WILL NOT LIFT`, why.why);
       this._gripStrain(ctx, target);
       return;
     }
@@ -4994,15 +5069,14 @@ export class Player {
       // as the Force being broken rather than as the thing being too heavy. The
       // player cannot see a mass, so the feedback has to carry it, and it has to
       // name the slider that moves the cap or the number is just a wall.
-      this.lastGripRefusal = { mass: target.mass, cap };
+      this.lastGripRefusal = { ...this._liftRefusal(target) };
       // Read back out of the FIELD, by name, rather than off the locals. It
       // looks redundant and is not: writing these two numbers somewhere nothing
       // read them is exactly how a refused lift ended up being a groan with no
       // explanation, and a field with no reader is a comment with syntax. One
       // home, and the seam stays open for the HUD to show it too.
       const why = this.lastGripRefusal;
-      this.world?.notify?.('TOO HEAVY',
-        `${Math.round(why.mass)} kg against your ${Math.round(why.cap)} kg — raise Force Power`);
+      this.world?.notify?.('TOO HEAVY', why.why);
       this._gripStrain(ctx, target);
       return;
     }
@@ -5152,37 +5226,52 @@ export class Player {
       this._hurlVfx(ctx, b.position, _v2, Math.max(0.3, b.boundingRadius), speed);
       this.gripBody = null;
     } else {
-      const e = this.gripEnemy;
-      const m = e.A ? e.A.mass : 80;
-      e.gripped = false;
-      e.liftTarget = null;
-      _v2.subVectors(aim.point, e.position);
-      if (_v2.lengthSq() < 1e-8) _v2.copy(this.aimDir);
-      _v2.normalize();
-      const speed = 30 * Math.sqrt(P) * lerp(1.2, 0.5, clamp(m / cap, 0, 1));
-      e.applyKnockback(_v2.clone().multiplyScalar(speed), 8 + 14 * P, this);
-      e.stun(0.9, _v2, 1.3);      // `_v2` is the direction it was hurled
-      /**
-       * AND THE BODY IS A PROJECTILE, which it was not. Note #9: "if I pick up
-       * a trooper and move him through a column of other men it doesnt hit
-       * them or move them passively it's like not a real object."
-       *
-       * The prop branch twelve lines above has called `_trackHurl` since it
-       * was written and this one never did, so a 22 kg crate was a deadlier
-       * thing to throw than an 80 kg soldier — the crate damaged what it
-       * landed on and the soldier passed through a squad without touching it.
-       *
-       * `bodyHurl` is a separate coefficient and not a tuning of the crate's,
-       * because a body is three to ten times a crate's mass and would sit on
-       * the 140 ceiling on every single throw — one throw would clear a squad.
-       * See `_trackHurl`.
-       */
-      this._trackHurl(e, speed, { body: true });
-      this._hurlVfx(ctx, e.position, _v2, 0.5, speed);
+      this._hurlBody(ctx, this.gripEnemy, aim.point);
       this.gripEnemy = null;
     }
     this._endGesture('grip');
     audio.force(this.chest, 'push');
+  }
+
+  /**
+   * A PERSON LEAVES YOUR HAND — the one place a body is thrown, for the grip
+   * and for the stasis field alike.
+   *
+   * This was `hurlGripped`'s inner half and had exactly one caller. The field's
+   * volley wants every line of it and not one line different: the same speed
+   * law by mass against the same cap, the same knockback, the same stun in the
+   * direction it was thrown, and the same `_trackHurl(..., { body: true })`
+   * that makes it a real projectile — note #9, *"if I pick up a trooper and
+   * move him through a column of other men it doesnt hit them or move them
+   * passively it's like not a real object"*. `bodyHurl` is a separate
+   * coefficient from the crate's, because a body is three to ten times a
+   * crate's mass and would otherwise sit on the 140 ceiling on every throw.
+   *
+   * A second copy for the field is how the crate and the man drift apart
+   * again, and it is how the field's half would quietly miss the day that
+   * coefficient is retuned.
+   *
+   * @param at  where it is being thrown, in world space.
+   * @returns   the speed it left at, in m/s.
+   */
+  _hurlBody(ctx, e, at) {
+    const P = this.forceScale;
+    const m = e.A ? e.A.mass : 80;
+    // Whichever hold had it, it does not have it any more. Both are cleared
+    // because the volley throws bodies the FIELD held while the grip may hold
+    // one of its own, and a body must not leave with a mark still on it.
+    e.gripped = false;
+    e.liftTarget = null;
+    this._freeStasisEnemy(e);
+    _v2.subVectors(at, e.position);
+    if (_v2.lengthSq() < 1e-8) _v2.copy(this.aimDir);
+    _v2.normalize();
+    const speed = 30 * Math.sqrt(P) * lerp(1.2, 0.5, clamp(m / this.liftCapacity, 0, 1));
+    e.applyKnockback(_v2.clone().multiplyScalar(speed), 8 + 14 * P, this);
+    e.stun(0.9, _v2, 1.3);      // `_v2` is the direction it was hurled
+    this._trackHurl(e, speed, { body: true });
+    this._hurlVfx(ctx, e.position, _v2, 0.5, speed);
+    return speed;
   }
 
   /** The visible half of a throw: a cone of exhaust behind it and a whoosh. */
@@ -5411,7 +5500,7 @@ export class Player {
       // Heavy things cost more to hold, which is what stops the top of the
       // slider from being free. Only drop it when the Force actually ran out —
       // with drain disabled the bar sits wherever it was and this must not fire.
-      if (!this._spend((7 + 6 * clamp(b.mass / cap, 0, 1)) * effort * dt)) { this.releaseGrip(); return; }
+      if (!this._spend((HOLD_COST.prop.base + HOLD_COST.prop.rise * clamp(b.mass / cap, 0, 1)) * effort * dt)) { this.releaseGrip(); return; }
       const heft = this._heft(b.mass);
       b.wake();
       _v2.subVectors(hold, b.position);
@@ -5428,7 +5517,7 @@ export class Player {
       const e = this.gripEnemy;
       const m = e.A ? e.A.mass : 80;
       if (e.dead || m > cap) { this.releaseGrip(); return; }
-      if (!this._spend((11 + 9 * clamp(m / cap, 0, 1)) * effort * dt)) { this.releaseGrip(); return; }
+      if (!this._spend((HOLD_COST.person.base + HOLD_COST.person.rise * clamp(m / cap, 0, 1)) * effort * dt)) { this.releaseGrip(); return; }
       // Enemy.update damps its own position toward liftTarget at a fixed rate,
       // so the only place a heavy body can be made to FEEL heavy from here is
       // the target: walk it toward the hold point at a speed the Force can
@@ -6149,7 +6238,9 @@ export class Player {
     S.target = null;
     S.vfx = 0;
     this._gesture('stasis');
-    const taken = this._stasisCapture(ctx);
+    const refused = [];
+    const taken = this._stasisCapture(ctx, refused);
+    if (refused.length) this._refuseStasis(ctx, refused);
     audio.force(this.chest, 'sense');
     audio.tone({ freq: 220, freqEnd: 1500, dur: 0.5, gain: 0.18, type: 'triangle', pos: this.chest });
     this.world?.engine?.flash?.(0.05);
@@ -6165,8 +6256,28 @@ export class Player {
     return taken;
   }
 
-  /** Sweep the field and arrest anything hostile inside it. Returns how many. */
-  _stasisCapture(ctx) {
+  /**
+   * Sweep the field and arrest anything hostile inside it. Returns how many.
+   *
+   * Three subjects, in the order the eye reads them: the bolts in the air, the
+   * loose objects already in flight, and — the thing the Codex card has always
+   * promised and this method could not do — THE PEOPLE.
+   *
+   * A living enemy is not in `ctx.physics.bodies` in any form the second loop
+   * could take. Its movement proxy is KINEMATIC, so `invMass === 0` drops it on
+   * the first line, and `LAYER.ENEMY` is in none of the three layers on the
+   * second. Measured on a real world before this existed — five living bodies
+   * standing 3.0 to 8.5 m inside a 9.0 m field — `toggleStasis` returned **0**
+   * and all five went on fighting through the hold: the acolyte closed 5.77 m
+   * to melee range while it was supposedly frozen, and the three shooters walked
+   * 2.0 to 2.7 m each to their preferred stand-off. "Freeze what is near you,
+   * bolts included" described a bolt freezer with a crate-catcher attached.
+   *
+   * @param refusals  optional array; bodies the field would not take are
+   *   pushed onto it so the CAST can say so once. The sweep runs every frame
+   *   and a running commentary is not feedback — see `_refuseStasis`.
+   */
+  _stasisCapture(ctx, refusals = null) {
     const S = this.stasis;
     const r2 = S.radius * S.radius;
     let taken = 0;
@@ -6194,7 +6305,105 @@ export class Player {
         taken++;
       }
     }
+
+    /**
+     * AND THE PEOPLE — which is what "what is near you" means in a fight.
+     *
+     * THE ARREST IS `Enemy.stun`, and it is a reuse rather than a new freeze.
+     * That verb is what a parry, a chamber, a lost blade lock, a Force shove, a
+     * heavy cut and `topple()` all already call, and every consumer of "can
+     * this body act" already reads the `stunTimer` it sets: `_think` returns
+     * without a wish, `_move`'s `canMove` refuses to walk, the facing solve
+     * refuses to turn, `_sustain` drops a held power, `breakCast` breaks a
+     * wind-up mid-flight, and `_guardOpen` opens the guard so the blade can
+     * finish what the field started. A parallel freeze would have had to
+     * restate every one of those and would have drifted from all of them.
+     * `Enemy.stasisHeld` is the MARK that says which arrest this is; it buys
+     * exactly two narrow things, both of them visible, and its own note in
+     * Enemy.js says what they are.
+     *
+     * THERE IS NO `v² ≥ 4` HERE, AND THE ABSENCE IS THE RULE. The crate branch
+     * takes only what is in flight because freezing the crate you are standing
+     * next to is a bug report — but that rule was never about MOVEMENT, it was
+     * about whether the thing is part of the fight, and a resting crate is
+     * scenery. A hostile standing still and shooting you is the most
+     * fight-shaped thing in the room. Gating people on speed would refuse
+     * exactly the sniper, the cover-camper and the wind-up you most want to
+     * stop, and would make the power fire differently depending on which foot
+     * a walking man happened to be on.
+     *
+     * WHAT DOES GET REFUSED is what the grip refuses, by the same two gates in
+     * the same order and against the same cap: an author's outright
+     * `grippable: false` (the AT-TE and the AAT — terrain that shoots), then
+     * `mass > liftCapacity`. A field stricter than the grip would be a second
+     * rulebook for the same question.
+     *
+     * HOSTILE ONLY, exactly as the bolt sweep above is. `bolt.team ===
+     * this.team` is the line Command.js and World.js both cite for why the
+     * bolt-stop does not freeze your own army's fire, and this is the same line
+     * about the men rather than their shots. Push, pull, grip, lightning and
+     * rend all reach your own troops because you AIMED them at one; a sweep
+     * that froze the squad you are leading every time you cast is a tax the
+     * player never chose. Command's allies are `Enemy` instances on
+     * `world.partyTeam`, so they are covered by the same comparison.
+     */
+    for (const e of (ctx.enemies || [])) {
+      if (!e || e.dead || e.team === this.team) continue;
+      // Already ours, or the grip's — two holds on one body is two bills for
+      // one arrest, and `_updateGrip` is the one that can also move it.
+      if (e.stasisHeld || e.gripped || e === this.gripEnemy) continue;
+      /* A body already LIMP is not a person walking into your field, it is a
+       * set of parts — and the loop above owns parts. Taking it as a person
+       * too would bill one subject twice and freeze it by two different rules,
+       * one of which (`_move`) it is not even running any more. */
+      if (e.actor?.ragdolled) continue;
+      if (this._enemyPoint(e, _g5).distanceToSquared(S.centre) > r2) continue;
+      const m = e.A ? e.A.mass : 80;
+      if (e.grippable === false || m > cap) {
+        refusals?.push({ enemy: e, mass: m, immovable: e.grippable === false });
+        continue;
+      }
+      e.stasisHeld = true;
+      e.stun(STASIS_GRACE);
+      S.held.push({ enemy: e });
+      taken++;
+    }
     return taken;
+  }
+
+  /** Let go of one arrested body. Every one of the field's endings calls it. */
+  _freeStasisEnemy(e) {
+    if (!e) return;
+    /* The stun is deliberately NOT cleared. It was laid with `Math.max` — the
+     * rule `Enemy.stun` itself follows — so it cannot be told apart from
+     * anybody else's, and a body toppled by a cut while it was frozen carries
+     * `stun(9999)` that only `_getUp` may end. What is left is at most
+     * STASIS_GRACE, which is the beat the body spends finding its feet. */
+    e.stasisHeld = false;
+  }
+
+  /**
+   * THE BODIES THE FIELD WOULD NOT TAKE, SAID OUT LOUD — once, on the cast.
+   *
+   * A crate too heavy is dropped from the sweep in silence and that is right; a
+   * crate has no expectations. A PERSON left standing inside a field that
+   * visibly stopped everyone around them is the "the power appears to do
+   * nothing" complaint that `toggleGrip`'s refusal exists to answer, and it
+   * gets the same answer out of the same rulebook — the counter-play for a body
+   * no setting will ever move, the two numbers and the name of the slider for
+   * one that a setting would.
+   *
+   * The heaviest refusal only. Six troopers behind an AT-TE should read as one
+   * fact about the walker, not as six notifications.
+   */
+  _refuseStasis(ctx, refusals) {
+    let worst = refusals[0];
+    for (const r of refusals) if (r.mass > worst.mass) worst = r;
+    const why = this._liftRefusal(worst);
+    this.world?.notify?.(why.immovable
+      ? `${String(why.label).toUpperCase()} STANDS THROUGH IT`
+      : 'TOO HEAVY TO HOLD', why.why);
+    this._gripStrain(ctx, worst);
   }
 
   _updateStasis(dt, ctx) {
@@ -6214,20 +6423,79 @@ export class Player {
     // would go on charging Force for holding nothing.
     for (let i = S.held.length - 1; i >= 0; i--) {
       const h = S.held[i];
-      if (h.bolt ? (!h.bolt.active || !h.bolt.held) : (!h.body || h.body.dead)) {
-        if (h.body) S.bodies.delete(h.body);
-        S.held.splice(i, 1);
-      }
+      /* A body leaves the field five ways, and four of them are somebody else's
+       * doing: it DIED under the hold (a cut lands, and a held body's guard is
+       * open, so this is the common one), it went LIMP — cut down, toppled,
+       * ragdolled — and is a set of parts the loop in `_stasisCapture` owns
+       * instead, the GRIP took it (one arrest, one bill, and the grip is the
+       * hold that can also move it), or something else cleared the mark. The
+       * fifth is the field letting go, which is `releaseStasis`.
+       *
+       * The limp clause is what stops one man being billed twice while he
+       * comes apart: measured, a held trooper toppled inside the field turns
+       * into TEN LAYER.RAGDOLL bodies, every one of them in flight and every
+       * one of them taken by the sweep above. Ten hanging bones is the right
+       * picture and the right price; ten bones plus the man is not. */
+      const gone = h.bolt ? (!h.bolt.active || !h.bolt.held)
+        : h.enemy ? (h.enemy.dead || h.enemy.actor?.ragdolled
+                     || h.enemy === this.gripEnemy || !h.enemy.stasisHeld)
+        : (!h.body || h.body.dead);
+      if (!gone) continue;
+      if (h.body) S.bodies.delete(h.body);
+      if (h.enemy) this._freeStasisEnemy(h.enemy);
+      S.held.splice(i, 1);
     }
 
-    const n = S.held.length;
-    // Holding costs more the more you are holding. Running the bar dry DROPS
-    // the field; letting the clock run out FIRES it — the two failures should
-    // not feel the same.
+    /**
+     * Holding costs more the more you are holding — AND A PERSON IS NOT A
+     * CRATE, which is the one thing this sum did not used to have to say.
+     *
+     * The weight is not chosen here. `_updateGrip` is the only place in the
+     * game that prices a living body against an object for the same act, and it
+     * charges 11 against 7 (`HOLD_COST`); `PERSON_OVER_PROP` is that ratio and
+     * nothing else, so a tuning pass on the grip carries to the field instead
+     * of leaving a stale 1.57 typed here. One arrested body therefore costs
+     * 0.9 × 11/7 = 1.41 Force a second on top of the field's own 5.
+     *
+     * WHAT THAT BUYS, measured through `_updateStasis` AND `_regen` together on
+     * a real world at the shipped Force Power, because the bar is what the
+     * player reads and regen is 7.5/s of it. The cast is 26, the clock is
+     * 4.82 s, the pool is 100, and the field FIRES at the end unless the bar
+     * ran out first:
+     *
+     *      held   net Force/s   bar at the end
+     *        0        -2.50          86.0        (an empty field pays for itself)
+     *        1        -1.09          79.2
+     *        2        +0.33          72.4
+     *        3        +1.74          65.6
+     *        5        +4.57          52.0        (half the bar for half a squad)
+     *        8        +8.81          31.5
+     *       12       +14.47           4.3        (one more and it drops instead)
+     *
+     * So one or two is nearly free and a whole squad is the whole bar, which is
+     * the shape a crowd power wants: the decision is HOW MANY, not whether.
+     * The grip charges ~9.9/s gross for one body at arm's length and can also
+     * walk him about, choke him and hold him up as a shield; the field is the
+     * crowd answer and is priced under the single-target one per head.
+     *
+     * Running the bar dry DROPS the field; letting the clock run out FIRES it —
+     * the two failures should not feel the same.
+     */
+    let n = 0;
+    for (const h of S.held) n += h.enemy ? PERSON_OVER_PROP : 1;
     if (!this._spend((5 + 0.9 * n) * dt)) { this.releaseStasis(ctx, false); return; }
     if (S.timer <= 0) { this.releaseStasis(ctx, true); return; }
 
     for (const h of S.held) {
+      if (h.enemy) {
+        /* THE LEASH, RENEWED — see STASIS_GRACE for why the hold is a renewal
+         * rather than one long stun. `Math.max` is `Enemy.stun`'s own rule, so
+         * a renewal can never SHORTEN somebody else's arrest: a body toppled by
+         * a cut while it hangs here keeps its `stun(9999)` and gets up by
+         * `_getUp`, not by being let go of from a field. */
+        h.enemy.stunTimer = Math.max(h.enemy.stunTimer, STASIS_GRACE);
+        continue;
+      }
       if (!h.body || h.body.dead) continue;
       h.body.velocity.set(0, 0, 0);
       h.body.angularVelocity.set(0, 0, 0);
@@ -6240,9 +6508,12 @@ export class Player {
     if (ctx.particles && S.vfx <= 0) {
       S.vfx = 0.033;
       for (const h of S.held) {
-        const p = h.bolt ? h.bolt.pos : h.body.position;
+        // A man-sized bubble on a man: 0.2 reads on a bolt and disappears on a
+        // body, and the shimmer is how you tell an arrested trooper from one
+        // who has merely stopped to aim.
+        const p = h.bolt ? h.bolt.pos : h.enemy ? this._enemyPoint(h.enemy, _g4) : h.body.position;
         ctx.particles.plasma.spawn(p, _g1.set(0, 0, 0),
-          { life: 0.09, size: h.bolt ? 0.2 : 0.7, drag: 1, gravity: 0, color: 0xa8d0ff, alpha: 0.5 });
+          { life: 0.09, size: h.bolt ? 0.2 : h.enemy ? 1.2 : 0.7, drag: 1, gravity: 0, color: 0xa8d0ff, alpha: 0.5 });
       }
     }
   }
@@ -6279,6 +6550,7 @@ export class Player {
     if (!fire || !S.held.length) {
       for (const h of S.held) {
         if (h.bolt) { h.bolt.held = null; h.bolt.active = false; }
+        else if (h.enemy) this._freeStasisEnemy(h.enemy);
         else if (h.body) h.body.gravityScale = h.grav;
       }
       S.held.length = 0;
@@ -6344,6 +6616,22 @@ export class Player {
       b.speed = b.vel.length();
       if (live) { b.homing = 2.4; b.target = at.clone(); }
       ctx.particles?.sparkBurst(b.pos, null, 5, { speed: 6, embers: false, color: 0xfff2c0 });
+      return;
+    }
+    /* A HELD BODY IS PART OF THE VOLLEY. It leaves in the ripple with
+     * everything else — 28 ms apart, so a field of four men and twelve bolts
+     * reads as one thing being thrown rather than as a bolt volley with some
+     * people in it — and it leaves through the grip's own thrower, so it hurts
+     * what it lands on for the same reason a hurled trooper does. A body whose
+     * hold ended between the release and its turn in the ripple is skipped:
+     * `_launchStasisItem` is the only reader of `firing`, and a corpse is not
+     * thrown. */
+    if (h.enemy) {
+      // A body that died between the release and its turn in the ripple is let
+      // go rather than thrown — a corpse is not a projectile, and leaving the
+      // mark on it is how a body ends up frozen with nothing holding it.
+      if (h.enemy.dead) { this._freeStasisEnemy(h.enemy); return; }
+      this._hurlBody(ctx, h.enemy, at);
       return;
     }
     const b = h.body;
@@ -6595,22 +6883,40 @@ export class Player {
 
   heal(v) { this.hp = Math.min(this.maxHp, this.hp + v); }
 
+  /**
+   * EVERYTHING THE FIELD IS TOUCHING, LET GO OF AT ONCE — the held and the
+   * volley already leaving, in one place.
+   *
+   * `die()` and `dispose()` are the two endings nobody presses, and each kept
+   * its own copy of this. They had already drifted: `die` deactivated the bolts
+   * still pinned mid-ripple and `dispose` did not, so a level torn down during
+   * a volley left bolts hanging on anchors that no longer had an owner. The
+   * two differ in nothing that matters — a volley with no player behind it has
+   * nowhere to go either way — and now they cannot differ at all.
+   *
+   * `firing` needs its own pass because `releaseStasis` only owns `held`: once
+   * an item is in the ripple, `_flushStasisFire` is the only thing that would
+   * ever have launched it, and `_updateForce` stops running the moment the
+   * player is dead or gone.
+   */
+  _abandonStasis() {
+    this.releaseStasis(this.world, false);
+    for (const h of this.stasis.firing) {
+      if (h.bolt) { h.bolt.held = null; h.bolt.active = false; }
+      else if (h.enemy) this._freeStasisEnemy(h.enemy);
+      else if (h.body) h.body.gravityScale = h.grav;
+    }
+    this.stasis.firing.length = 0;
+    this.stasis.bodies.clear();
+  }
+
   die(source) {
     if (!this.alive) return;
     this.alive = false;
     this.releaseGrip();
     // A corpse is not holding a stasis field. Dropped rather than fired: the
     // bolts were never aimed, and a dying player should not get a free volley.
-    this.releaseStasis(this.world, false);
-    // A volley already in the air mid-ripple has nobody left to flush it —
-    // _updateForce stops running the moment `alive` goes false — so its bolts
-    // would hang on their anchors forever.
-    for (const h of this.stasis.firing) {
-      if (h.bolt) { h.bolt.held = null; h.bolt.active = false; }
-      else if (h.body) h.body.gravityScale = h.grav;
-    }
-    this.stasis.firing.length = 0;
-    this.stasis.bodies.clear();
+    this._abandonStasis();
     this.hurled.length = 0;
     this.gesture.kind = ''; this.gesture.env = 0; this.gesture.sustain = false; this.gesture.hasAt = false;
     if (this.senseActive) this.toggleSense(this.world);
@@ -6813,10 +7119,7 @@ export class Player {
     // Anything the Force is holding has its gravity switched off and its bolt
     // pinned to an anchor. Leaving on a level change would strand both.
     this.releaseGrip();
-    this.releaseStasis(this.world, false);
-    for (const h of this.stasis.firing) if (h.body) h.body.gravityScale = h.grav;
-    this.stasis.firing.length = 0;
-    this.stasis.bodies.clear();
+    this._abandonStasis();
     this.hurled.length = 0;
     this.hum.dispose();
     this.cloak?.dispose(); this.cloak = null;

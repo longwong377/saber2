@@ -29,7 +29,7 @@
 import * as THREE from 'three';
 import { initPhysics } from '../../src/physics/Rapier.js';
 import { RapierWorld, Body as RBody, LAYER, box as boxShape } from '../../src/physics/RapierWorld.js';
-import { Player } from '../../src/game/Player.js';
+import { Player, HOLD_COST, PERSON_OVER_PROP, STASIS_GRACE } from '../../src/game/Player.js';
 import { Enemy, ARCHETYPES } from '../../src/game/Enemy.js';
 import { BoltPool } from '../../src/game/Bolts.js';
 import { buildJedi } from '../../src/game/Bodies.js';
@@ -101,6 +101,91 @@ function prop(w, mass, pos = V(0, 1.35, -6)) {
     layer: LAYER.PROP, mask: LAYER.WORLD });
   w.add(b);
   return b;
+}
+
+/**
+ * A LIVE FIELD — a real RapierWorld, a real Player, real Enemies with their
+ * brains running, and a real BoltPool because a ranged brain shoots.
+ *
+ * Everything else in this file drives the Force over hand-made state, which is
+ * right for a claim about arithmetic. The stasis field's claim is not about
+ * arithmetic: "freeze what is near you" is a claim about what a WAVE OF PEOPLE
+ * does for the next few seconds, and the only way to be wrong about that in a
+ * way a player would notice is to be wrong about the brain, the mover and the
+ * animator — none of which a Player-shaped literal has. So this half of the
+ * suite pays for a real world.
+ *
+ * Deliberately NOT `World.loadLevel`: HANDOFF 2.6/2.7 — the two suites that
+ * build real Worlds are the two that stopped finishing, and nothing measured
+ * here is a property of a level.
+ */
+function liveWorld({ forcePower = 1, force = null } = {}) {
+  const physics = physicsWorld();
+  const scene = new THREE.Scene();
+  const w = {
+    scene, physics, terrain: physics.terrain, statics: [],
+    settings: { fov: 60, bloom: false, forcePower, forceDrain: 1 },
+    difficulty: null, hpScale: 1, dmgScale: 1,
+    players: [], enemies: [], props: [], doors: [], locks: [],
+    particles: null, bolts: new BoltPool(scene, 160), time: 0, combatIntensity: 0,
+    groundColor: 0xcfae82, severs: 0, notices: [],
+    engine: { addHeat() {}, hurt() {}, flash() {}, setRadial() {}, setSense() {},
+      camera: new THREE.PerspectiveCamera(60, 16 / 9, 0.045, 1000) },
+    report() {}, notify(t, d) { this.notices.push(`${t} — ${d}`); }, notifyFloating() {},
+    addHitstop() {}, onDeflectFeedback() {}, onEnemyKilled() {}, onLimbSevered() {},
+    onHitmark() {}, onExplosion() {}, spawnDebrisGroup() {}, onPlayerDeath() {},
+  };
+  const p = new Player(w, { isLocal: true });
+  p.position.set(0, 0, 0);
+  p.force = force ?? p.maxForce;
+  w.players.push(p);
+  const ctx = {
+    input: null, terrain: w.terrain, physics, particles: null, bolts: w.bolts,
+    camera: w.engine.camera, time: 0, groundColor: 0, enemies: w.enemies,
+    players: w.players, pickTarget: () => p,
+  };
+  return { w, p, ctx, physics, dispose: () => w.bolts.dispose() };
+}
+
+/** A living hostile `d` metres away on bearing `a`, already posed once. */
+function stand(b, type, d, a = 0) {
+  const e = new Enemy(b.w, type, V(Math.sin(a) * d, 0, -Math.cos(a) * d));
+  b.w.enemies.push(e);
+  e.update(1 / 60, b.ctx);
+  return e;
+}
+
+/** How far this body is from the player, across the ground. */
+const away = (b, e) => Math.hypot(e.position.x - b.p.position.x, e.position.z - b.p.position.z);
+
+/**
+ * Where a bone of this body IS, in world space — the only honest way to ask
+ * whether the player can SEE that it stopped.
+ *
+ * A body that has stopped walking has stopped WALKING. It goes on breathing,
+ * settling its guard and swinging its cape, and from two metres away that is
+ * indistinguishable from a man who paused to aim. So the freeze is measured on
+ * a hand, which moves under every one of those and cannot move under a stop.
+ */
+function bone(e, out = new THREE.Vector3()) {
+  const rig = e.rig;
+  if (!rig) return out.copy(e.position);
+  for (const n of ['handR', 'handL', 'foreR', 'footR', 'chest']) {
+    if (rig.get(n)) return rig.worldPos(n, out);
+  }
+  return out.copy(e.position);
+}
+
+/** Run the whole world forward: the field, then every body, then physics. */
+function pump(b, frames) {
+  const dt = 1 / 60;
+  for (let i = 0; i < frames; i++) {
+    b.w.time += dt; b.ctx.time = b.w.time;
+    b.p._updateStasis(dt, b.ctx);
+    for (const e of b.w.enemies) e.update(dt, b.ctx);
+    b.w.bolts.update(dt, { blades: [], hitTest: () => null });
+    b.physics.step(dt);
+  }
 }
 
 /** One update, so the rig is solved exactly as it always is in-game. */
@@ -646,6 +731,329 @@ export async function run({ check, assert, near }) {
     assert(p.stasis.held.length === 0 && p.stasis.firing.length === 0, 'the field kept its bookkeeping');
     pool.dispose();
     return 'running the bar dry drops the bolts; only a deliberate release fires them';
+  });
+
+  /* ── force stop: the people ──────────────────────────────────────── */
+
+  /**
+   * THE FOUR CHECKS BELOW ARE THE ONES THAT WOULD HAVE CAUGHT IT.
+   *
+   * Every stasis check above this line is about bolts and crates, and every one
+   * of them passed for the whole life of the defect: the Codex card said
+   * "freeze what is near you, bolts included" — an ADDITION to a broader set,
+   * and what is near you in a fight is people — while `_stasisCapture` walked
+   * `physics.bodies` filtered to PROP|DEBRIS|RAGDOLL with `v² ≥ 4`. A living
+   * enemy is none of those and its proxy is kinematic besides, so the marquee
+   * time-stop was a bolt freezer with a crate-catcher attached.
+   *
+   * Measured on the tree before the fix, five living bodies standing 3.0-8.5 m
+   * inside a 9.0 m field: `toggleStasis` took **0**, and over the next two
+   * seconds of held field the acolyte closed **5.77 m** to melee range while
+   * the three shooters walked 2.0-2.7 m each to their stand-off. So these
+   * assert on BEHAVIOUR — how many were arrested, how far they got, what
+   * happened when it ended — and not on the source text, which read perfectly.
+   */
+
+  check('force: a stasis field arrests the PEOPLE inside it, not only the bolts', () => {
+    const b = liveWorld();
+    // A firefight's worth, spread around the player and across the radius: two
+    // droids close, a trooper and an acolyte at the edge, a B2 at 8.5 of 9.0.
+    const near = [['b1', 3.0], ['b1', 4.5], ['trooper', 6.0], ['acolyte', 7.5], ['b2', 8.5]]
+      .map(([t, d], i) => stand(b, t, d, (i / 5) * Math.PI * 2));
+    // …and one outside it, because a field that takes everything on the map is
+    // not a field. 14 m against a 9 m radius.
+    const out = stand(b, 'trooper', 14);
+
+    const took = b.p.toggleStasis(b.ctx);
+    const held = b.p.stasis.held.filter(h => h.enemy).length;
+    assert(b.p.stasis.radius > 8.9 && b.p.stasis.radius < 9.1,
+      `the field is ${b.p.stasis.radius.toFixed(2)} m, so these distances measure nothing`);
+    assert(held === near.length,
+      `${held} of ${near.length} living bodies inside a ${b.p.stasis.radius.toFixed(1)} m field were arrested`);
+    assert(took === near.length, `toggleStasis reported ${took} taken, not ${near.length}`);
+    for (const e of near) {
+      assert(e.stasisHeld, `${e.A.label} at ${away(b, e).toFixed(1)} m is inside the field and free`);
+      // The arrest is a stun and nothing else — every reader of "can this act"
+      // already reads it, so this is the whole of "it cannot act".
+      assert(e.stunTimer > 0, `${e.A.label} is marked held with no arrest behind it`);
+    }
+    assert(!out.stasisHeld, `the field reached a body ${(away(b, out) - b.p.stasis.radius).toFixed(1)} m outside itself`);
+    b.dispose();
+    return `${held} of ${near.length} living bodies arrested in a ${b.p.stasis.radius.toFixed(1)} m field `
+      + `(${near.map(e => away(b, e).toFixed(1)).join('/')} m); the one at ${away(b, out).toFixed(1)} m untouched`;
+  });
+
+  check('force: a held body does not advance, and it does not go on moving either', () => {
+    const b = liveWorld();
+    // Caught WALKING. They are given half a second first, so a frozen hand is
+    // frozen mid-stride rather than frozen in an idle that was not going
+    // anywhere — a stopped body and a body that never moved look identical.
+    const near = [['acolyte', 8.4], ['trooper', 8.0], ['b1', 7.6]]
+      .map(([t, d], i) => stand(b, t, d, (i - 1) * 0.5));
+    const free = stand(b, 'acolyte', 24);      // the control, well outside
+    pump(b, 30);
+    const freeFrom = away(b, free);
+
+    b.p.toggleStasis(b.ctx);
+    assert(near.every(e => e.stasisHeld), 'setup: the field did not take the walkers');
+    const hand0 = near.map(e => bone(e));
+    const at0 = near.map(e => away(b, e));
+    const freeHand0 = bone(free);
+    pump(b, 120);      // two seconds of held field
+
+    /* Measured on the fixed tree, three bodies caught mid-stride against one
+     * control at 24 m: held 0.0000 m travelled and 0.00 mm of hand over 120
+     * frames, free 9.30 m closed and 9340 mm of hand. Two decimal places of
+     * separation, so these bars are not fine margins. */
+    const drift = Math.max(...near.map((e, i) => Math.abs(away(b, e) - at0[i])));
+    const twitch = Math.max(...near.map((e, i) => bone(e).distanceTo(hand0[i])));
+    const freeClosed = freeFrom - away(b, free);
+    const freeTwitch = bone(free).distanceTo(freeHand0);
+    // A metre-per-second body over two seconds; a millimetre is nothing.
+    assert(drift < 0.01, `a held body moved ${drift.toFixed(3)} m in two seconds`);
+    assert(twitch < 0.001, `a held body's hand moved ${(twitch * 1000).toFixed(1)} mm — it is standing still, not stopped`);
+    // …and the world was not simply inert, which is the way this check could
+    // pass while being worthless.
+    assert(freeClosed > 0.5, `the control body only closed ${freeClosed.toFixed(2)} m, so nothing here was moving anyway`);
+    assert(freeTwitch > 0.01, `the control body's hand moved ${(freeTwitch * 1000).toFixed(1)} mm, so a frozen hand proves nothing`);
+    b.dispose();
+    return `held: ${drift.toFixed(4)} m travelled, hand ${(twitch * 1000).toFixed(2)} mm, over 120 frames · `
+      + `free: ${freeClosed.toFixed(2)} m closed, hand ${(freeTwitch * 1000).toFixed(0)} mm`;
+  });
+
+  check('force: running the bar dry DROPS the bodies and does not throw them', () => {
+    // The two failures are deliberately different — see `_updateStasis`. This is
+    // the one that costs you: the men land where they stood and walk again.
+    const b = liveWorld({ force: 40 });
+    const near = [['b1', 4], ['trooper', 6], ['acolyte', 7]].map(([t, d], i) => stand(b, t, d, (i - 1) * 0.7));
+    b.p.toggleStasis(b.ctx);
+    assert(near.every(e => e.stasisHeld), 'setup: nobody was caught');
+    const at0 = near.map(e => away(b, e));
+    /* AND ONE OF THEM IS CUT DOWN WHILE IT HANGS THERE, which is the whole
+     * point of holding somebody: a held body's guard is open, so the blade
+     * lands. `topple()` answers with `stun(9999)` and `_getUp` is the only
+     * thing allowed to end it — so the field letting go must not stand it back
+     * up. That is why the hold is laid with `Math.max` and why releasing it
+     * clears the MARK and never the arrest. */
+    const felled = near[0];
+    felled.topple();
+    // Twelve frames, because the parts have to be MOVING before the sweep that
+    // takes loose things will look at them — `v² >= 4` is 2 m/s and a fifth of
+    // a second of gravity is what buys it. Measured: 0 parts at 2 frames, 10 at
+    // 10, which is the number of bones the rig comes apart into.
+    pump(b, 12);
+    /* …and ONE MAN IS BILLED ONCE. A toppled body turns into ten LAYER.RAGDOLL
+     * bodies, every one in flight and every one taken by that same sweep —
+     * which is the right picture. Holding the man as well would be the same
+     * subject on the books twice. */
+    assert(!b.p.stasis.held.some(h => h.enemy === felled),
+      'a body that came apart in the field is still held as a person as well as as its parts');
+    assert(b.p.stasis.held.some(h => h.body), 'the parts of a body that came apart were not caught at all');
+
+    // Measured: 40 Force against 5 + 0.9x3x(11/7) = 9.24/s runs out in 91
+    // frames, the bodies land within 0.00 m of where they stood, and half a
+    // second later they have closed 1.99 m — which is the whole difference
+    // between a drop and a fire.
+    let frames = 0;
+    while (b.p.stasis.active && frames < 600) { pump(b, 1); frames++; }
+    assert(!b.p.stasis.active, 'the field never ran out of Force');
+    assert(b.p.stasis.held.length === 0 && b.p.stasis.firing.length === 0,
+      `the dropped field kept ${b.p.stasis.held.length} held and ${b.p.stasis.firing.length} firing`);
+    for (const e of near) assert(!e.stasisHeld, `${e.A.label} is still marked held by a field that dropped`);
+    // Dropped, not fired: nothing left the ground and nothing was made a
+    // projectile that could hurt what it lands on.
+    assert(b.p.hurled.length === 0, `a dropped field threw ${b.p.hurled.length} bodies`);
+    const flung = Math.max(...near.map((e, i) => Math.abs(away(b, e) - at0[i])));
+    assert(flung < 0.6, `a dropped body travelled ${flung.toFixed(2)} m — that is a throw, not a release`);
+    // And they are FREE, which is the half a mark left behind would hide: the
+    // grace window is the longest a released body may stay arrested.
+    pump(b, Math.ceil(STASIS_GRACE * 60) + 30);
+    const closed = Math.max(...near.map((e, i) => at0[i] - away(b, e)));
+    assert(closed > 0.15, `released bodies closed only ${closed.toFixed(2)} m in half a second — they are still frozen`);
+    assert(felled.toppled && felled.stunTimer > 100,
+      `the field let go and stood a toppled body back up (toppled ${felled.toppled}, stun ${felled.stunTimer.toFixed(1)})`);
+    b.dispose();
+    return `field dropped after ${frames} frames at ${b.p.force.toFixed(1)} Force; 3 bodies released within `
+      + `${flung.toFixed(2)} m of where they stood and closed ${closed.toFixed(2)} m once free`;
+  });
+
+  check('force: firing the field THROWS the people it was holding', () => {
+    const b = liveWorld();
+    const near = [['b1', 4], ['trooper', 5.5], ['b1', 7]].map(([t, d], i) => stand(b, t, d, (i - 1) * 0.6));
+    b.p.toggleStasis(b.ctx);
+    assert(near.every(e => e.stasisHeld), 'setup: nobody was caught');
+    const at0 = near.map(e => away(b, e));
+    b.p.releaseStasis(b.ctx, true);
+    assert(b.p.stasis.firing.length === near.length,
+      `${b.p.stasis.firing.length} of ${near.length} bodies made it into the volley`);
+    // The ripple is 28 ms a body — twenty things leaving on one frame is a
+    // single white flash. Long enough to flush all three.
+    pump(b, 60);
+    assert(b.p.stasis.firing.length === 0, 'the volley never flushed');
+    for (const e of near) assert(!e.stasisHeld, `${e.A.label} left the field still marked as held`);
+    // A thrown body is a PROJECTILE, through the grip's own thrower — note #9.
+    assert(b.p.hurled.length === near.length,
+      `${b.p.hurled.length} of ${near.length} thrown bodies can hurt what they hit`);
+    // Measured: the least-travelled of the three goes 23.29 m in one second, so
+    // 0.8 m is not a margin, it is the difference between thrown and dropped.
+    const moved = Math.min(...near.map((e, i) => Math.abs(away(b, e) - at0[i])));
+    assert(moved > 0.8, `the least-moved body travelled ${moved.toFixed(2)} m — it was released, not thrown`);
+    b.dispose();
+    return `3 of 3 held bodies went into the volley and left it as tracked projectiles, `
+      + `least travel ${moved.toFixed(2)} m`;
+  });
+
+  check('force: the field refuses what the grip refuses, and says so out loud', () => {
+    // Same two gates, same order, same cap as `toggleGrip` — an author's
+    // outright `grippable: false` first, then the mass the slider moves. A
+    // field stricter or looser than the grip is a second rulebook.
+    const b = liveWorld();
+    const heavy = stand(b, 'walker', 6);              // 900 kg against a 220 kg cap
+    const light = stand(b, 'b1', 5);
+    b.p.toggleStasis(b.ctx);
+    assert(!heavy.stasisHeld, `a ${heavy.A.mass} kg walker froze against a ${Math.round(b.p.liftCapacity)} kg cap`);
+    assert(light.stasisHeld, 'the field took nothing at all, so the refusal proves nothing');
+    assert(b.w.notices.length === 1, `the refusal spoke ${b.w.notices.length} times, not once`);
+    assert(/kg/.test(b.w.notices[0]) && /Force Power/i.test(b.w.notices[0]),
+      `the refusal does not carry the numbers or the slider: ${b.w.notices[0]}`);
+    const heavySaid = b.w.notices[0];
+
+    /* …and the body no setting will ever move gets the counter-play instead of
+     * a number, because there is no number that would help. The subject is READ
+     * OFF THE ROSTER rather than named here — `grippable: false` is authored in
+     * Vehicles.js and the day a third body declares it, this tests that one
+     * too. Driven at the TOP of the slider, so the refusal cannot be the mass
+     * gate wearing the other message. */
+    const [immovableKey] = Object.entries(ARCHETYPES).find(([, a]) => a.grippable === false) || [];
+    assert(immovableKey, 'nothing on the roster declares grippable:false, so this half tests nothing');
+    const c = liveWorld({ forcePower: 4 });
+    const terrain = stand(c, immovableKey, 6);
+    const other = stand(c, 'b1', 5);
+    c.p.toggleStasis(c.ctx);
+    assert(!terrain.stasisHeld, 'a body its author marked ungrippable was frozen anyway');
+    assert(other.stasisHeld, 'setup: the second field took nothing');
+    assert(c.w.notices.length === 1 && !/raise Force Power/i.test(c.w.notices[0]),
+      `an immovable body was refused with a number the player cannot act on: ${c.w.notices[0]}`);
+    assert(/legs|armour/i.test(c.w.notices[0]), `the refusal names no way in: ${c.w.notices[0]}`);
+    b.dispose(); c.dispose();
+    return `too heavy → "${heavySaid}" · ungrippable → "${c.w.notices[0]}"`;
+  });
+
+  check('force: the field does not freeze your own army', () => {
+    /* SYMMETRY. Command's allies are `Enemy` instances with `team` set to the
+     * party's — Command.js:1650 — and every hostile test in the game is that
+     * one comparison. `_stasisCapture` skipping `bolt.team === this.team` is
+     * the line Command.js and World.js both cite for why the bolt-stop does not
+     * freeze your own army's fire; this is the same line about the men.
+     *
+     * It is not the same call as push/pull/grip, which DO reach your own troops
+     * and are documented as doing so: those you aimed at somebody. A sweep that
+     * froze the squad you are leading, every time, is a tax nobody chose. */
+    const b = liveWorld();
+    const mine = stand(b, 'trooper', 4, -0.6);
+    mine.team = 0;                       // world.partyTeam, as installCommand sets it
+    const theirs = stand(b, 'b1', 4, 0.6);
+    b.p.toggleStasis(b.ctx);
+    assert(!mine.stasisHeld, 'the field froze a trooper on your own side');
+    assert(theirs.stasisHeld, 'setup: the field froze nobody at all');
+    assert(b.p.stasis.held.filter(h => h.enemy).length === 1, 'the field holds more than the one hostile');
+    b.dispose();
+    return 'one hostile arrested, one ally of the same archetype standing at the same range untouched';
+  });
+
+  check('force: the field lets go of a body that dies, is gripped, or outlives its holder', () => {
+    const b = liveWorld();
+    const dies = stand(b, 'b1', 4, -0.8);
+    const taken = stand(b, 'b1', 5, 0);
+    const rest = stand(b, 'trooper', 6, 0.8);
+    b.p.toggleStasis(b.ctx);
+    assert([dies, taken, rest].every(e => e.stasisHeld), 'setup: not everyone was caught');
+    const n0 = b.p.stasis.held.length;
+
+    // 1. it dies in the field — the common one, because a held body's guard is
+    //    open and the blade is the whole reason you held it.
+    dies.dead = true;
+    pump(b, 2);
+    assert(!b.p.stasis.held.some(h => h.enemy === dies), 'the field is still holding — and billing for — a corpse');
+
+    // 2. the grip takes it. One arrest, one bill, and the grip is the hold that
+    //    can also walk it about.
+    b.p.gripEnemy = taken; taken.gripped = true;
+    pump(b, 2);
+    assert(!taken.stasisHeld, 'a gripped body is still marked as held by the field');
+    assert(!b.p.stasis.held.some(h => h.enemy === taken), 'the field and the grip are both holding one body');
+    assert(b.p.stasis.held.length === n0 - 2, `the field holds ${b.p.stasis.held.length} of an expected ${n0 - 2}`);
+    b.p.gripEnemy = null; taken.gripped = false;
+
+    // 3. the holder dies. A corpse is not holding a stasis field, and a body
+    //    left marked would stand there for the rest of the level.
+    assert(rest.stasisHeld, 'setup: nothing survived to test the death path');
+    b.p.die(null);
+    assert(!rest.stasisHeld, 'a held body outlived the player that was holding it');
+    assert(b.p.stasis.held.length === 0 && b.p.stasis.firing.length === 0,
+      'a dead player still has a field on the books');
+    b.dispose();
+    return 'a corpse, a body the grip took and a body whose holder died are all off the field within two frames';
+  });
+
+  check('force: a level change lets go of everyone the field was holding', () => {
+    const b = liveWorld();
+    const held = [4, 5.5, 7].map((d, i) => stand(b, 'b1', d, (i - 1) * 0.6));
+    b.p.toggleStasis(b.ctx);
+    assert(held.every(e => e.stasisHeld), 'setup: nobody was caught');
+    // Mid-volley is the harder half: `releaseStasis` owns `held` and nothing
+    // else owns `firing`, and `_updateForce` stops the moment the player is gone.
+    b.p.releaseStasis(b.ctx, true);
+    assert(b.p.stasis.firing.length === held.length, 'setup: the volley did not form');
+    b.p.dispose();
+    for (const e of held) assert(!e.stasisHeld, 'a body was left frozen by a torn-down level');
+    assert(b.p.stasis.firing.length === 0, 'the volley outlived the world it was thrown in');
+    b.dispose();
+    return '3 bodies mid-volley, all released by dispose(); nothing left marked and nothing left in flight';
+  });
+
+  check('force: a person costs more to hold than a bolt, at the grip’s own ratio', () => {
+    /* THE PRICE, AND IT IS NOT CHOSEN HERE EITHER. `_updateGrip` is the only
+     * place in the game that prices a living body against an object for the
+     * same act — 11 against 7 per second — and the field reads that ratio
+     * rather than carrying a number of its own. So this check asks the module
+     * what the ratio IS and measures whether the field charges it, instead of
+     * typing 1.571 into an assertion and drifting from the grip in silence. */
+    const dt = 1 / 60;
+    const drain = (b) => { const f = b.p.force; b.p._updateStasis(dt, b.ctx); return (f - b.p.force) / dt; };
+
+    // Nothing in range: the field's own standing cost.
+    const empty = liveWorld();
+    stand(empty, 'b1', 30);
+    empty.p.toggleStasis(empty.ctx);
+    const base = drain(empty);
+
+    // The same field, four hostile bolts inside it.
+    const shots = liveWorld();
+    shots.p.toggleStasis(shots.ctx);
+    for (let i = 0; i < 4; i++) {
+      shots.w.bolts.fire(V(i * 0.3 - 1, 1.4, -4), V(0, 0, 1), { speed: 80, team: 1, damage: 9 });
+    }
+    const withBolts = drain(shots);
+
+    // The same field, four hostile bodies inside it.
+    const men = liveWorld();
+    const four = [3, 4.5, 6, 7.5].map((d, i) => stand(men, 'b1', d, (i - 1.5) * 0.5));
+    men.p.toggleStasis(men.ctx);
+    assert(four.every(e => e.stasisHeld), 'setup: the four bodies were not all caught');
+    const withMen = drain(men);
+
+    // Measured: 5.00 Force/s standing, +0.90 a bolt, +1.41 a body — 1.571x,
+    // which is HOLD_COST's 11/7 and nothing typed into this file.
+    const perBolt = (withBolts - base) / 4;
+    const perMan = (withMen - base) / 4;
+    assert(perBolt > 0 && perMan > 0, `the field charges nothing for what it holds (${perBolt}, ${perMan})`);
+    near(perMan / perBolt, PERSON_OVER_PROP, 1e-9,
+      `a person costs ${(perMan / perBolt).toFixed(3)} bolts against the grip's own`);
+    near(PERSON_OVER_PROP, HOLD_COST.person.base / HOLD_COST.prop.base, 1e-12, 'the ratio drifted from HOLD_COST');
+    empty.dispose(); shots.dispose(); men.dispose();
+    return `${base.toFixed(2)} Force/s standing, +${perBolt.toFixed(2)} a bolt, +${perMan.toFixed(2)} a body `
+      + `— ${(perMan / perBolt).toFixed(3)}x, which is HOLD_COST's ${HOLD_COST.person.base}/${HOLD_COST.prop.base}`;
   });
 
   /* ── disassembly ─────────────────────────────────────────────────── */

@@ -278,6 +278,28 @@ export async function run({ check, assert }) {
     const at0 = state();
     hp.force = hp.maxForce; hp.cooldowns.push = 0;
     hp.aimDir.subVectors(drawn.position, hp.chest).normalize();
+    /**
+     * THE WINDOW, AND IT IS WHY THIS CHECK WAS RED.
+     *
+     * `seen.toClient` is everything the host has ever broadcast, from
+     * `bootPair` onward, and the packet count below was filtering ALL of it —
+     * so "one hit packet for one push" was really "one hit packet in the whole
+     * session". It is not the wire that is wrong and it never was: the two
+     * duellists are standing 2 m apart under `pvp` rules through `pump(0.6)`
+     * and `pump(0.4)` of setup, their blades graze, and every graze is a
+     * legitimate `{t:'hit', k:'saber'}` on the wire. Measured: 23 packets, of
+     * which ONE is `k:'force'` at d=7.175 with an impulse on it and 22 are
+     * `k:'saber'` at d=0.002-0.012.
+     *
+     * The count was the loud half; the quiet half is worse and is the real
+     * reason this is a mark rather than a looser bound. `packets[0]` was
+     * whichever packet happened to be FIRST in the session — a 0.002 hp blade
+     * graze — so the three assertions under it were reading a saber packet
+     * while claiming to prove that the push's impulse, direction and source
+     * cross the wire. A bound of `>= 1` would have left all three of them
+     * measuring the wrong packet forever.
+     */
+    const mark = seen.toClient.length;
     hp.forcePush({ enemies: host.enemies, players: host.players, bolts: host.bolts,
       physics: host.physics, terrain: host.terrain, particles: host.particles });
     let guestPeak = 0, drawnPeak = 0;
@@ -287,8 +309,11 @@ export async function run({ check, assert }) {
       drawnPeak = Math.max(drawnPeak, drawnFrom.distanceTo(drawn.position));
     }
     assert(thrown, 'the push never reached the avatar at all — _foes does not see a remote player');
-    const packets = seen.toClient.filter((m) => m.t === 'hit');
-    assert(packets.length === 1, `${packets.length} hit packets for one push`);
+    const packets = seen.toClient.slice(mark).filter((m) => m.t === 'hit');
+    assert(packets.length === 1,
+      `${packets.length} hit packets after the push, out of `
+      + `${seen.toClient.filter((m) => m.t === 'hit').length} in the session — one shove is one packet, `
+      + 'and the packet the assertions below read has to be that shove');
     assert(Array.isArray(packets[0].v),
       'the hit packet carries no impulse — a duel\'s Force is a number with no direction again');
     assert(packets[0].s, 'the hit packet names nobody as its source');
@@ -326,7 +351,107 @@ export async function run({ check, assert }) {
     assert(wireHp < hp0, 'the push did no damage at all');
     return `push: the same impulse moves the same body ${soloPeak.toFixed(2)} m by hand and `
       + `${guestPeak.toFixed(2)} m over the wire, ${drawnPeak.toFixed(2)} m on the shover's screen, `
-      + `\u2212${(hp0 - wireHp).toFixed(1)} hp, one packet carrying the impulse and a source`;
+      + `\u2212${(hp0 - wireHp).toFixed(1)} hp, and exactly one hit packet after the shove out of `
+      + `${seen.toClient.filter((m) => m.t === 'hit').length} in the session, carrying the impulse `
+      + 'and a source';
+  });
+
+  check('pvp: a duel can be turned on from the settings blob the menu writes', async () => {
+    /**
+     * THE CLAUSE THAT WOULD HAVE CAUGHT IT, AND WHAT "IT" WAS.
+     *
+     * Everything in this file was green while the feature was unreachable.
+     * `pvpRules` read `settings.pvp`, `World`'s constructor called it on the
+     * settings blob, `canHarm` gated every damage path on the result, and
+     * `DuelMatch` ran to a winner — and the ONLY writer of `settings.pvp` in
+     * the whole tree was `World`'s Command-meeting branch, which passes a
+     * literal `{pvp: true, duelRounds: 1}` of its own. There was no key in
+     * `DEFAULT_SETTINGS`, so there was no control, and there could be no
+     * control: `tools/checks/controls.mjs`'s two dead-control guards both
+     * iterate `Object.keys(DEFAULT_SETTINGS)`, so a setting that is read and
+     * never declared is invisible to the pair of them. Two commanders could
+     * duel and two friends standing in a level could not.
+     *
+     * Every check in this file measured the mechanism by CONSTRUCTING the
+     * rules itself — `P.pvpRules({ pvp: true, … })`, thirteen times — which is
+     * exactly right for asking whether the mechanism works and is exactly
+     * blind to whether anything can reach it. This asks the other question,
+     * and it asks it the same way: from the blob a menu actually writes.
+     *
+     * DERIVED, so it covers the next duel setting. Nothing below names `pvp`
+     * as the key to look for — the keys are found by MOVING each one and
+     * seeing which of them `pvpRules` answers differently, which is the same
+     * question "does the front end reach the rules" without a second copy of
+     * the answer sitting here to go stale.
+     */
+    const P = await import('../../src/game/Player.js');
+    const { DEFAULT_SETTINGS } = await import('../../src/ui/Menu.js');
+    const H = await import('./_coop.mjs');
+
+    /* Somewhere else in the same type. A number is nudged rather than zeroed
+     * because `pvpLimit` clamps, and a value outside the band would come back
+     * as the same clamped answer and read as "nothing reads this". */
+    const elsewhere = (v) => (typeof v === 'boolean' ? !v
+      : typeof v === 'number' ? v + 1
+        : typeof v === 'string' ? `${v}!` : v);
+    const base = JSON.stringify(P.pvpRules(DEFAULT_SETTINGS));
+    const movers = Object.keys(DEFAULT_SETTINGS).filter((k) =>
+      JSON.stringify(P.pvpRules({ ...DEFAULT_SETTINGS, [k]: elsewhere(DEFAULT_SETTINGS[k]) })) !== base);
+    assert(movers.length,
+      'no key of DEFAULT_SETTINGS reaches `pvpRules` at all, so nothing a player can touch decides '
+      + 'whether a session is a duel — the rules object every damage path in the game asks is '
+      + 'unreachable from the front end');
+    const switches = movers.filter((k) =>
+      P.pvpRules({ ...DEFAULT_SETTINGS, [k]: elsewhere(DEFAULT_SETTINGS[k]) }).pvp === true);
+    assert(switches.length,
+      `${movers.length} setting(s) reach pvpRules (${movers.join(', ')}) and not one of them can turn `
+      + '`pvp` ON — the duel rules are configurable and the duel is not');
+
+    /* AND THE DERIVATION IS THE GAME'S. `friendlyFire` is not offered as its
+     * own key on purpose — `pvpRules`' note says so — so the switch is asked
+     * for rather than restated: whatever turns `pvp` on must turn it on too. */
+    for (const k of switches) {
+      const r = P.pvpRules({ ...DEFAULT_SETTINGS, [k]: elsewhere(DEFAULT_SETTINGS[k]) });
+      assert(r.friendlyFire === true,
+        `${k} turns pvp on and leaves friendlyFire ${r.friendlyFire} — a duel in which you cannot hit `
+        + 'the other player');
+    }
+
+    /**
+     * …AND THEN THE WORLD, because "pvpRules returns a different object" is a
+     * statement about a pure function and this feature is a statement about a
+     * blade. Two real Worlds off the same DEFAULT_SETTINGS with one key moved,
+     * two real Players a metre apart in each, and the question put to the
+     * shipped gate: how many of the other bodies may this blade find?
+     */
+    const stand = async (settings) => {
+      const { world } = await H.bootWorld({ settings: { ...settings, quality: 'low' } });
+      const a = world.player;
+      const b = world.spawnPlayer({ name: 'RIVAL', isLocal: false });
+      H.run(world, 0.4);
+      b.position.copy(a.position).setX(a.position.x + 1.1);
+      H.run(world, 0.4);
+      const out = { rules: world.rules, targets: P.bladeTargets(a, world.players, world.rules).length,
+        harm: P.canHarm(a, b, world.rules), maxHp: b.maxHp };
+      world.unload();
+      return out;
+    };
+    const key = switches[0];
+    const off = await stand(DEFAULT_SETTINGS);
+    const on = await stand({ ...DEFAULT_SETTINGS, [key]: elsewhere(DEFAULT_SETTINGS[key]) });
+    assert(off.targets === 0 && off.harm === false,
+      `with the shipped defaults one player's blade already finds ${off.targets} of the people they `
+      + 'came with — co-op is not the default and this whole check is measuring the wrong direction');
+    assert(on.targets === 1 && on.harm === true,
+      `${key} moved and a blade still finds ${on.targets} rival(s) (canHarm ${on.harm}) — the setting `
+      + 'reaches `world.rules` and `world.rules` reaches nothing');
+    /* The duel's health is the other thing the rules decide about a BODY, and
+     * `spawnPlayer` is where it lands. Asked of the rules rather than typed. */
+    assert(on.maxHp === on.rules.health,
+      `a duellist stood up with ${on.maxHp} hp under rules that say ${on.rules.health}`);
+    return `${movers.length} of ${Object.keys(DEFAULT_SETTINGS).length} settings reach pvpRules, `
+      + `${switches.length} can turn it on (${switches.join(', ')}); off → ${off.targets} blade `
+      + `targets / canHarm ${off.harm}, on → ${on.targets} / ${on.harm} at ${on.maxHp} hp`;
   });
 
   check('pvp: none of that happens to an ally, and it is one gate that says so', async () => {
