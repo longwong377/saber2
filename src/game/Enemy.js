@@ -23,6 +23,9 @@ import { supportHeight, STEP_UP, GROUND_SNAP } from '../physics/Support.js';
 import { TOUGHNESS, bladesTouching } from './Combat.js';
 import { segmentSegment } from '../physics/Physics.js';
 import { BOLT_COLORS } from './Bolts.js';
+/* The one weather every system reads — see its own note in Scenery.js. Used by
+ * `aimQuality` and by nothing else in this file. */
+import { weather } from '../world/Scenery.js';
 import { clamp, lerp, damp, smoothstep, makeRng, TAU, dampVec } from '../engine/MathUtil.js';
 import { POWER_COST } from './Powers.js';
 import { audio } from '../engine/Audio.js';
@@ -902,6 +905,17 @@ export const FORCE_KINDS = /^(force|lightning|choke|grip|rend)$/;
  *  which the thing you threw is out of the fight. Long enough to be worth
  *  doing, short enough that a squad you shoved does not stay shoved. */
 const GET_UP = 1.35;
+
+/**
+ * What a rank is worth to a soldier's AIM, as a multiplier on their own spread.
+ *
+ * Derived from RANKS' shape rather than authored beside it: the ladder buys
+ * about 78% more health from bottom to top, and this is the same climb applied
+ * to the one thing a rank obviously should buy and did not. A Commander shoots
+ * at 0.68 of a raw trooper's spread, which over a 30 m shot is the difference
+ * between a hit and a near miss and is visible in one firefight.
+ */
+const AIM_BY_RANK = [1.00, 0.92, 0.84, 0.76, 0.68];
 
 /**
  * THE RULE ITSELF, AS ONE FUNCTION — and it is exported so that the other half
@@ -2822,6 +2836,80 @@ export class Enemy {
     if (this._recoverAt >= GET_UP) this.recover();
   }
 
+  /**
+   * HOW WELL THIS BODY IS SHOOTING RIGHT NOW — a multiplier on its own spread,
+   * where 1 is its archetype's stated best and larger is worse.
+   *
+   * "weather should effect ability of enemies and allies to aim like they
+   * shouldn't have perfect aim, aim should be a skill like better enemies or
+   * allies do it better you know what I mean?"
+   *
+   * Before this, the only thing between an archetype's `spread` and the bolt
+   * was the DIFFICULTY setting — one number for the whole roster, identical
+   * for a raw B1 and a veteran ARC, identical standing still and at a dead
+   * run, and identical in clear air and in a whiteout that has cut sight to
+   * forty metres. A sandstorm changed the look of a fight and nothing about
+   * it, which is what `ROADMAP.md` records too: "Enemy.js has no fog or
+   * visibility term, so a whiteout cutting sight to 47 m changes nothing".
+   *
+   * FIVE TERMS, and every one of them is a thing the player can see and act
+   * on. That is the test each had to pass: a hidden accuracy modifier is a
+   * random number generator with extra steps.
+   *
+   *   WEATHER    the storm's own `visibility()`, which is the metres at which
+   *              half the light survives. Past it you are shooting at a shape,
+   *              and the term is the ratio — so at the edge of sight a shot is
+   *              twice as loose and at three times the range it is four times.
+   *              This is also the term that makes a whiteout worth standing in.
+   *   SKILL      the body's own. A rank is a soldier who has done this before,
+   *              so the promotion ladder buys accuracy as well as health, and
+   *              `elite` buys it too. Falls out of RANKS rather than adding a
+   *              second table beside it.
+   *   MORALE     a shaken body does not shoot straight. Squad morale is
+   *              Command's, and the whole of the effect it has on gunnery is
+   *              this line. Bodies with no morale (the horde) read 1.
+   *   MOVEMENT   a body running is not aiming. This is the one term with a
+   *              tactical instruction inside it — troops that stop shoot
+   *              better — and it is why HOLD and TAKE COVER are worth giving.
+   *   RANGE      past the archetype's own `preferred` band, its weapon is
+   *              being asked to do something it was not sighted for.
+   *
+   * Bounded at both ends: nothing shoots better than 0.55 of its stated
+   * spread, because a perfect shot is the thing the player asked to remove,
+   * and nothing shoots worse than 4.5, because past that a firing line is
+   * decoration.
+   */
+  aimQuality(range = 20) {
+    const A = this.A;
+    let q = 1;
+
+    // ── weather
+    if (this.world?.level?.atmosphere && weather.intensity > 0.02) {
+      const vis = weather.visibility(this.world.level.atmosphere.fogDensity ?? 0.004);
+      if (range > vis * 0.6) q *= 1 + clamp((range - vis * 0.6) / Math.max(8, vis), 0, 2.6);
+    }
+
+    // ── skill: the rank ladder, and elites
+    const r = this.trooper ? this.trooper.rank : 0;
+    q *= AIM_BY_RANK[Math.min(r, AIM_BY_RANK.length - 1)];
+    if (this.elite) q *= 0.86;
+
+    // ── morale
+    if (this.trooper && this.trooper.morale !== undefined) {
+      q *= lerp(1.65, 0.9, clamp(this.trooper.morale, 0, 1));
+    }
+
+    // ── movement: measured off the body, not off an intent
+    const v = this.velocity ? this.velocity.length() : 0;
+    q *= 1 + clamp(v / Math.max(1.5, this.speed || 4), 0, 1.4) * 0.55;
+
+    // ── range against its own band
+    const far = A.preferred?.[1] ?? 24;
+    if (range > far) q *= 1 + clamp((range - far) / far, 0, 1.5) * 0.7;
+
+    return clamp(q, 0.55, 4.5);
+  }
+
   applyKnockback(impulse, damage, source, gentle) {
     if (this.dead) {
       // `impulse` is legitimately null — `_sustain` bills damage with no shove
@@ -3538,7 +3626,9 @@ export class Enemy {
     if (target.velocity && !aimed) aimAt.addScaledVector(target.velocity, tof * acc);
 
     _v3.subVectors(aimAt, from).normalize();
-    const spread = (A.spread ?? 0.06) * (2 - acc);
+    /* AIM IS A SKILL AND A CIRCUMSTANCE, not a difficulty slider. See
+     * `aimQuality` — the whole of note #20 goes through this one multiply. */
+    const spread = (A.spread ?? 0.06) * (2 - acc) * this.aimQuality(from.distanceTo(aimAt));
     _v3.x += (rng() - 0.5) * spread; _v3.y += (rng() - 0.5) * spread * 0.7; _v3.z += (rng() - 0.5) * spread;
     _v3.normalize();
 

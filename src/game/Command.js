@@ -630,7 +630,10 @@ export const FORMATIONS = {
     // The one formation with no slot function at all: `advance: false` means the
     // anchor is FROZEN at the moment the order was given, and the slot is
     // computed against that frozen frame. See `_anchorFor`.
-    leash: 1.1, advance: false, fire: 1,
+    /* AND IT IS THE ONE ORDER THAT IS RUN. `urgency` multiplies the walk-home
+     * pace and its ceiling — see `followSpeed` — because on this order the
+     * speed IS the content: cover you reach in four seconds is not cover. */
+    leash: 1.1, advance: false, fire: 1, urgency: 1.85,
     slot(i, n, k, out) {
       // A loose scatter rather than a shape — troops going to ground spread out,
       // and a tight ring under fire is a grenade's dream. Deterministic in `i`
@@ -639,6 +642,12 @@ export const FORMATIONS = {
       const r = 6 + (i % 5) * 1.9;
       return out.set(Math.sin(a) * r, 0, Math.cos(a) * r);
     },
+    /* …AND IT GOES TO SOMETHING. See `_coverSite`: the scatter above is where
+     * a man goes when there is nothing to get behind, and every slot that has
+     * a real object within reach is moved to the lee of it instead. An order
+     * called TAKE COVER that ignores the cover on the level is a scatter with
+     * a good name. */
+    seeksCover: true,
   },
   charge: {
     id: 'charge', name: 'Charge', key: 'Minus',
@@ -674,6 +683,54 @@ export const MEETING_FORMATION = 'charge';
  * than any formation's shape.
  */
 export const LEASH_FLOOR = 10;
+
+/**
+ * HOW FAR THE COMMANDER MAY TURN BEFORE THE FORMATION TURNS WITH THEM, in
+ * radians, and how fast it follows once it does. See `_frame`.
+ *
+ * 40° is a quadrant either side: it covers looking about, checking a flank and
+ * tracking a target across the front without the line moving at all. 1.1 rad/s
+ * is a little slower than a person turns on the spot, so committing to a new
+ * direction is something the squad visibly answers rather than something it
+ * mirrors.
+ */
+const FRAME_DEADBAND = 0.70;
+const FRAME_SLEW = 1.1;
+
+/** Which way a commander's BODY is pointing — not what they are aiming at. */
+function headingOf(p) {
+  if (p.facing !== undefined && p.facing !== null) return p.facing;
+  return p.aimDir ? Math.atan2(p.aimDir.x, p.aimDir.z) : 0;
+}
+const wrapPi = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+
+/**
+ * THE RING NOBODY MAY STAND IN, in metres — the commander's own blade.
+ *
+ * "in too many of the troop formations the troops are totally in the way of
+ * your saber like they don't avoid it at all and crowd you."
+ *
+ * A lightsaber is a 1.15 m blade on a 0.6 m reach swung from a 0.55 m guard
+ * sphere, so the working volume is about 2.3 m of radius and everything inside
+ * it is something you are about to cut in half. The `circle` formation put its
+ * inner rank at 4.2 m, which is clear — but a formation is a TARGET and a
+ * trooper walking to it, fighting from it, or shoved into you by a blast is
+ * not at it. So the clearance is enforced on the body rather than on the slot:
+ * see `_clearBlade`.
+ *
+ * 3.0 rather than 2.3: the margin is a step, because a trooper that is exactly
+ * at the edge of the swing is one the player has to think about.
+ */
+const BLADE_ROOM = 3.0;
+
+/** How far a trooper taking cover will go looking for something to get behind. */
+const COVER_HUNT = 16;
+
+/** The plan half-extent of a static box — how wide a thing is to hide behind. */
+function h2(b) { return Math.max(b.halfExtents.x, b.halfExtents.z); }
+
+/** Squared plan distance between two positions. */
+function dist2(a, b) { const dx = a.x - b.x, dz = a.z - b.z; return dx * dx + dz * dz; }
 
 /**
  * The most a body may exceed its own `speed` while walking back into position.
@@ -767,6 +824,61 @@ export const AREAS = [
   },
 ];
 
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  Morale, and who is in charge of whom                                  */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * WHAT MOVES A SQUAD'S NERVE, per event or per second.
+ *
+ * "Troops perform better when you're winning or aligned with their side.
+ * Heavy losses, Dark-side excess, or abandoning them tanks morale — they can
+ * break, refuse orders, or even turn on you."
+ *
+ * Every entry is an event the player can see happening and can choose to
+ * cause or prevent, which is the whole test a morale term has to pass: a
+ * number that moves for reasons the player cannot observe is a random number
+ * generator wearing a name.
+ *
+ * The two `_NEAR` terms are what make a commander's PRESENCE worth something
+ * mechanically, and they are deliberately the largest per-second terms in the
+ * table: standing with your line is the cheapest thing a Jedi can do for it
+ * and it should be worth doing.
+ */
+export const MORALE = {
+  /** A squadmate goes down in front of them. */
+  COMRADE_FELL: -0.16,
+  /** …and their squad leader is worth more than a squadmate. */
+  LEADER_FELL: -0.26,
+  /** Somebody in the squad kills something. */
+  SQUAD_KILL: 0.045,
+  /** The wave is cleared. Everyone gets it. */
+  WAVE_CLEAR: 0.34,
+  /** An area is held. */
+  AREA_HELD: 0.5,
+  /** Their own health, per second, below a third. */
+  WOUNDED: -0.10,
+  /** Per second within `NEAR` of a living commander who is on their side. */
+  LEADER_NEAR: 0.055,
+  /** …and of the Jedi themselves, which is worth more. */
+  JEDI_NEAR: 0.085,
+  /** Per second with no friendly commander and no Jedi inside `NEAR`. */
+  ALONE: -0.022,
+  /** The Jedi used a Force power ON one of their own. Per use. */
+  BETRAYED: -0.20,
+  /** …and empowering one instead. Per use. */
+  INSPIRED: 0.16,
+  /** How close counts as near, in metres. */
+  NEAR: 14,
+  /** Below this a body breaks: it stops holding formation and falls back. */
+  BREAK: 0.24,
+  /** Below this it will not take an order at all. */
+  REFUSE: 0.10,
+  /** How fast a broken body recovers its nerve once it is out of contact. */
+  RALLY_PER_S: 0.05,
+};
+
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  One soldier                                                           */
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -798,6 +910,16 @@ export class Trooper {
     this.xp = opts.xp ?? 0;
     this.kills = 0;
     this.wounds = 0;              // times brought below a quarter and survived
+    /**
+     * MORALE, 0..1, and it lives on the RECORD rather than on the body for the
+     * same reason the name does: it is the thing about this soldier that
+     * outlives the Enemy they are currently wearing. A squad that was broken
+     * in the spires is a squad that arrives at the core ship shaken.
+     *
+     * 0.72 at the muster, not 1: a fresh trooper is steady, not fearless, and
+     * a ladder with no room above the start has nothing for winning to buy.
+     */
+    this.morale = opts.morale ?? 0.72;
     this.areas = 0;               // areas survived
     this.joined = opts.joined ?? 1;
     this.alive = true;
@@ -1351,6 +1473,10 @@ export class Commander {
     this.formation = FORMATIONS[opts.formation] ? opts.formation : DEFAULT_FORMATION;
     /** The frame a non-advancing formation was planted in. See `_anchorFor`. */
     this._planted = null;
+    /** HOLD THIS GROUND, over whatever formation is up. See `hold`. */
+    this.holding = false;
+    /** The heading the formation is solved in — slewed, not the live aim. */
+    this._heldYaw = null;
     /** This commander's own measured pace. See `_trackLeader`/`followSpeed`. */
     this._leaderSpeed = 0;
     this._leaderPos = null;
@@ -1964,11 +2090,48 @@ export class CommandDirector extends WaveDirector {
     const c = cmdr || this.commander;
     c.formation = id;
     // A formation that does not advance is planted where the commander was
-    // STANDING when the order was given — see `_anchorFor`.
-    c._planted = F.advance ? null : this._frame(c, new THREE.Vector3());
+    // STANDING when the order was given — see `_anchorFor`. So is one the
+    // commander has told to HOLD, which is the same mechanism as a decision
+    // rather than as a property of one order.
+    c._planted = (F.advance && !c.holding) ? null : this._frame(c, new THREE.Vector3());
+    // A new order is a new choice of cover. See `_coverSite`.
+    this._coverEpoch = (this._coverEpoch | 0) + 1;
     this.log.push({ t: 'order', formation: id, area: this.areaNumber, wave: this.wave });
     if (c === this.commander) this.onOrder?.(F, c.roster.squads().length);
     return true;
+  }
+
+  /**
+   * HOLD THIS GROUND — and let go of it. A toggle over whatever formation is
+   * up, not a seventh formation.
+   *
+   * "there should be an option where you can tell your troops to get into a
+   * certain formation and hold it and stay there regardless of where you are,
+   * like obviously they should still be able to turn and fight new enemies
+   * from different angles but they would just hold their position."
+   *
+   * Every clause of that falls out of planting the FRAME and changing nothing
+   * else: the shape is solved against the planted anchor so it stays where it
+   * was put; the leash is unchanged so a body still steps out to fight; and
+   * `Enemy` faces whatever it is shooting at, which was never a function of
+   * the formation. What is held is the ground, not the heads.
+   *
+   * @returns the new state.
+   */
+  hold(on = null, cmdr = null) {
+    const c = cmdr || this.commander;
+    if (this._netShell) { this.world?.requestOrder?.(on === false ? 'hold:off' : 'hold'); return c.holding; }
+    const want = on === null ? !c.holding : !!on;
+    c.holding = want;
+    const F = FORMATIONS[c.formation] || FORMATIONS[DEFAULT_FORMATION];
+    c._planted = (F.advance && !want) ? null : this._frame(c, new THREE.Vector3());
+    this.log.push({ t: 'hold', on: want, area: this.areaNumber, wave: this.wave });
+    if (c === this.commander) {
+      this.world?.notify?.(want ? 'HOLD THIS GROUND' : 'ON ME',
+        want ? `${F.name.toLowerCase()}, and they stay where you put them`
+          : `${F.name.toLowerCase()}, and they come with you`);
+    }
+    return want;
   }
 
   /**
@@ -1995,14 +2158,60 @@ export class CommandDirector extends WaveDirector {
       return { pos: outPos.clone(), yaw: 0 };
     }
     outPos.copy(p.position);
-    const d = p.aimDir;
-    const yaw = d ? Math.atan2(d.x, d.z) : (p.facing ?? 0);
-    return { pos: outPos.clone(), yaw };
+    /**
+     * THE FRAME'S YAW IS THE COMMANDER'S HELD HEADING, NOT WHERE THEY ARE
+     * LOOKING — and this line read `p.aimDir`.
+     *
+     * "it's really strange it's like your troops are locked into the direction
+     * you're facing like if you were to spin they would rotate around you like
+     * a clock." Exactly that, and the mechanism is one dereference: the whole
+     * formation is solved in a frame whose yaw was the AIM direction, sampled
+     * fresh every frame, so a flick of the mouse swung a twelve-man line
+     * bodily around the player. Nothing about a formation should move when you
+     * look somewhere; a squad forms up on where its commander is GOING.
+     *
+     * Two changes and both are needed. The source is the body heading, which
+     * is the thing that means "the way I am facing" rather than "the thing I
+     * am aiming at". And it is SLEWED with a deadband: inside 40° the held
+     * heading does not move at all, and past it, it turns at 1.1 rad/s. That
+     * is what makes the shape a shape — it holds while you fight and re-forms
+     * when you commit to a new direction, instead of tracking you continuously
+     * like a turret ring.
+     */
+    /* A PURE READER. The slew itself is advanced ONCE PER FRAME PER COMMANDER
+     * in `_slewFrame`, not here: `_frame` is called from `slotFor`, which is
+     * called once per trooper per frame and again from `targetFor` — so
+     * stepping the turn in here would multiply the slew rate by the size of
+     * the army, and a twelve-man line would track the commander twelve times
+     * faster than a four-man one. */
+    if (c._heldYaw === null || c._heldYaw === undefined) c._heldYaw = headingOf(p);
+    return { pos: outPos.clone(), yaw: c._heldYaw };
+  }
+
+  /**
+   * Advance one commander's held heading toward where they are actually
+   * facing. Once a frame, from `_troops`. See `_frame` and FRAME_DEADBAND.
+   */
+  _slewFrame(c, dt) {
+    const p = c?.player;
+    if (!p) return;
+    const live = headingOf(p);
+    if (c._heldYaw === null || c._heldYaw === undefined) { c._heldYaw = live; return; }
+    const err = wrapPi(live - c._heldYaw);
+    if (Math.abs(err) <= FRAME_DEADBAND) return;
+    const room = Math.abs(err) - FRAME_DEADBAND * 0.6;
+    c._heldYaw = wrapPi(c._heldYaw + Math.sign(err) * Math.min(room, FRAME_SLEW * dt));
   }
 
   /** The frame a formation is measured in — live, or frozen if it was planted. */
   _anchorFor(F, c = this.commander) {
-    if (!F.advance && c._planted) return c._planted;
+    /* `c.holding` is the HOLD toggle and it applies to whatever formation is
+     * up, which is what was asked for: "there should be an option where you
+     * can tell your troops to get into a certain formation and hold it and
+     * stay there regardless of where you are". `cover`'s `advance: false` is
+     * the same mechanism authored into one order; this is the same mechanism
+     * as a decision the player makes. */
+    if ((!F.advance || c.holding) && c._planted) return c._planted;
     return this._frame(c, _v1);
   }
 
@@ -2026,8 +2235,65 @@ export class CommandDirector extends WaveDirector {
     const x = out.x * c + out.z * s;
     const z = -out.x * s + out.z * c;
     out.set(A.pos.x + x, 0, A.pos.z + z);
+    if (F.seeksCover) this._coverSite(e, out, A);
     if (this.world?.terrain) out.y = this.world.terrain.height(out.x, out.z);
     return out;
+  }
+
+  /**
+   * MOVE A SLOT TO THE LEE OF SOMETHING SOLID.
+   *
+   * The scatter `cover` computes is where a man goes when there is nothing to
+   * get behind. Where there IS something, he gets behind it — and this level
+   * is full of crates, drums, hull plates and outcrops, every one of which is
+   * already a static box the physics world can be asked about.
+   *
+   * "Behind" is relative to the THREAT, and the honest bearing for that is the
+   * mean direction of whatever is currently hostile — one vector for the whole
+   * squad, so a line does not take cover on both sides of the same crate. With
+   * nothing hostile on the field it falls back to the commander's own heading,
+   * which is where the next thing is going to come from.
+   *
+   * CACHED PER BODY AND STICKY. Re-solving every frame would have a trooper
+   * swapping crates as the horde moved, which is both wrong and unwatchable —
+   * a man who has chosen a rock stays behind it. The choice is re-made when
+   * the order is re-given, which is what `_coverEpoch` counts.
+   */
+  _coverSite(e, out, A) {
+    if (e._coverAt === this._coverEpoch && e._coverPt) { out.copy(e._coverPt); return; }
+    const boxes = this.world?.physics?.staticBoxes;
+    if (!boxes || !boxes.length) return;
+    /* Where the shooting is coming from, as one bearing for the whole army. */
+    if (this._threatAt !== this._coverEpoch) {
+      this._threatAt = this._coverEpoch;
+      let tx = 0, tz = 0, n = 0;
+      for (const h of this.world.enemies || []) {
+        if (!h || h.dead || h.trooper) continue;
+        tx += h.position.x - A.pos.x; tz += h.position.z - A.pos.z; n++;
+      }
+      const m = Math.hypot(tx, tz);
+      this._threat = (n && m > 1e-3) ? { x: tx / m, z: tz / m }
+        : { x: Math.sin(A.yaw), z: Math.cos(A.yaw) };
+    }
+    const T = this._threat;
+    let best = null, bestD = Infinity;
+    for (const b of boxes) {
+      if (b.disabled) continue;
+      const h = b.halfExtents;
+      // A thing you can get behind: at least chest high and wide enough to hide
+      // a man. A kerb is not cover and neither is a post.
+      if (h.y < 0.55 || Math.max(h.x, h.z) < 0.5) continue;
+      const dx = b.center.x - out.x, dz = b.center.z - out.z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 > COVER_HUNT * COVER_HUNT || d2 > bestD) continue;
+      bestD = d2; best = b;
+    }
+    if (!best) return;
+    // …and stand on the far side of it from the threat, a body's width clear.
+    const r = Math.max(h2(best), 0.5) + 0.85;
+    out.set(best.center.x - T.x * r, 0, best.center.z - T.z * r);
+    e._coverPt = out.clone();
+    e._coverAt = this._coverEpoch;
   }
 
   /**
@@ -2121,7 +2387,43 @@ export class CommandDirector extends WaveDirector {
    */
   steer(e, dt) {
     if (!e.trooper) return;
-    const F = FORMATIONS[this.commanderOf(e).formation] || FORMATIONS[DEFAULT_FORMATION];
+    const c = this.commanderOf(e);
+    /**
+     * A BROKEN MAN DOES NOT HOLD THE LINE — the first of morale's two
+     * consequences, and the reason the whole system is worth having.
+     *
+     * "they can break, refuse orders, or even turn on you." Below `BREAK` a
+     * body stops answering the formation and falls back toward its commander;
+     * below `REFUSE` it stops answering anything, which is the difference
+     * between a man who is frightened and a man who is finished. Both are
+     * read off the record here rather than being separate states on the body,
+     * so there is one authority and `aimQuality` and the HUD are reading it
+     * too.
+     *
+     * FALLING BACK TOWARD THE COMMANDER and not away from the enemy: a rout
+     * that scatters is one the player can do nothing about, and the note asks
+     * for troops that can be SAVED — "get to them, or lose them". A man
+     * running to you is a man you can stand in front of.
+     */
+    const t = e.trooper;
+    if (t.broken) {
+      if (t.morale < MORALE.REFUSE) return;             // finished: nothing reaches them
+      const home = c.player?.position || c.anchor;
+      if (home) {
+        const dx = home.x - e.position.x, dz = home.z - e.position.z;
+        const d = Math.hypot(dx, dz);
+        if (d > 5) {
+          if (!e.wish) e.wish = new THREE.Vector3();
+          e.wish.set(dx / d, 0, dz / d);
+          if (!e.toTarget) e.toTarget = new THREE.Vector3();
+          e.toTarget.copy(e.wish);
+          const want = (e.speed || 4) * 1.5;
+          if (want > e.speed) e.speed = want;
+        }
+      }
+      return;
+    }
+    const F = FORMATIONS[c.formation] || FORMATIONS[DEFAULT_FORMATION];
     const slot = this.slotFor(e);
     if (!slot) return;                                  // charge: no slot at all
     const dx = slot.x - e.position.x, dz = slot.z - e.position.z;
@@ -2186,8 +2488,27 @@ export class CommandDirector extends WaveDirector {
     const own = e.speed || 1;
     /* Its OWN commander's measured pace: two armies chasing two people who are
      * running at different speeds is two different follow speeds. */
-    const want = this.commanderOf(e)._leaderSpeed * 1.05 + Math.min(gap, 24) * 0.30;
-    return Math.min(own * CATCH_UP, Math.max(own, want));
+    const c = this.commanderOf(e);
+    const want = c._leaderSpeed * 1.05 + Math.min(gap, 24) * 0.30;
+    /**
+     * …AND AN URGENT ORDER IS RUN, NOT WALKED.
+     *
+     * "when I order take cover they don't really run for their lives." They
+     * did not: every order shared one pace, and that pace is derived from how
+     * fast the COMMANDER is going — so ordering a stationary squad to ground
+     * asked them to amble to it at their own walk. A man told to get down
+     * behind something moves at everything he has, and it is the only order
+     * where the SPEED is the content: cover you reach in four seconds is not
+     * cover.
+     *
+     * The multiplier is on the ceiling as well as on the want, because the
+     * ceiling is what was actually binding — `CATCH_UP` exists to stop a heavy
+     * outrunning an ARC, and for the two seconds of a sprint to cover that
+     * distinction is not the thing being protected.
+     */
+    const F = FORMATIONS[c.formation] || FORMATIONS[DEFAULT_FORMATION];
+    const urge = F.urgency ?? 1;
+    return Math.min(own * CATCH_UP * urge, Math.max(own, want * urge));
   }
 
   /**
@@ -2208,6 +2529,10 @@ export class CommandDirector extends WaveDirector {
    */
   targetFor(e, candidates) {
     const F = FORMATIONS[this.commanderOf(e).formation] || FORMATIONS[DEFAULT_FORMATION];
+    /* MORALE'S SECOND CONSEQUENCE. A body that has given up does not pick a
+     * target, which is the same door `Enemy._think` already reads — it sets
+     * `wish = null` on a null target and `steer` supplies whatever is left. */
+    if (e.trooper && e.trooper.morale < MORALE.REFUSE) return null;
     const leash = this.leashFor(F, e);
     const slot = leash === Infinity ? null : this.slotFor(e, _slot);
     const ax = slot ? slot.x : e.position.x;
@@ -2243,11 +2568,34 @@ export class CommandDirector extends WaveDirector {
        * roll it was ever on, and with two armies on the field the wrong roll
        * would silently keep a dead man standing and lose a living one. */
       const c = this.commanderOf(e);
+      /* WHO WATCHED IT HAPPEN, and whether he was in charge of them. Taken
+       * BEFORE `fall`, because both questions are about the squad this man was
+       * still a member of a frame ago — `squads()` is a slice of the LIVING
+       * list, so asking after he is dead asks about a different squad. */
+      const squad = this.squadOf(t, c);
+      const wasLeader = this.leaderOf(squad) === t;
       if (c.roster.fall(t, this.areaNumber)) {
         this.log.push({ t: 'fell', name: t.name, unit: t.label, rank: t.rankRec.short,
                         area: this.areaNumber, wave: this.wave, xp: t.xp, kills: t.kills });
         this.world?.notify?.(`${t.rankRec.title.toUpperCase()} DOWN`,
           `${t.name} — ${t.kills} kill${t.kills === 1 ? '' : 's'}, ${c.roster.strength} still standing`);
+        this.shake(squad, wasLeader ? 'LEADER_FELL' : 'COMRADE_FELL', c);
+        /* AND SOMEBODY TAKES OVER. `leaderOf` is derived, so the successor is
+         * already the leader by the time this line runs — what this does is
+         * SAY so, which is the half a player can act on, and pay the field
+         * promotion that makes taking over worth something. */
+        if (wasLeader) {
+          const heir = this.leaderOf(squad);
+          if (heir) {
+            const rose = heir.award(1);
+            if (rose) this._promoteTrooper(heir, heir.body);
+            this.log.push({ t: 'steps-up', name: heir.name, after: t.name, area: this.areaNumber });
+            if (c === this.commander) {
+              this.world?.notify?.(`${heir.name} HAS THE SQUAD`,
+                `${t.name} is down — ${heir.rankRec.title.toLowerCase()}, ${squad.filter((x) => x.alive).length} left in it`);
+            }
+          }
+        }
         this._announceRoster();
       }
       e.trooper = null;
@@ -2258,6 +2606,8 @@ export class CommandDirector extends WaveDirector {
     const t = source && source.trooper ? source.trooper : null;
     if (!t) return;
     t.kills++;
+    // A squad that is winning knows it. See the MORALE table.
+    this.shake(this.squadOf(t, this.commanderOf(source)), 'SQUAD_KILL', this.commanderOf(source));
     const promoted = t.award(1);
     if (promoted) this._promoteTrooper(t, source);
   }
@@ -2598,11 +2948,125 @@ export class CommandDirector extends WaveDirector {
    * everyone behind him closes up. A stored index would leave a gap in the
    * circle exactly where the casualty was.
    */
+  /**
+   * WHO IS IN CHARGE OF THIS SQUAD — derived, never stored.
+   *
+   * "Troops should have a squad commander/hierarchy if they already don't,
+   * certain roles are replaced if that person falls in combat, other's are
+   * not."
+   *
+   * The leader of a squad is its highest-ranked living member, ties broken by
+   * experience and then by enlistment order so the answer is stable frame to
+   * frame. Deriving it is the whole of "replaced if that person falls": there
+   * is no field to clear and no promotion to schedule — the moment a sergeant
+   * goes down, the next man up IS the leader, on the next frame, because the
+   * question is asked rather than remembered.
+   *
+   * The role that is NOT replaced is yours. A Jedi commanding is a person, not
+   * a rung, and `_endCampaign` is what happens when that one falls.
+   */
+  leaderOf(squad) {
+    let best = null;
+    for (const t of squad) {
+      if (!t.alive) continue;
+      if (!best) { best = t; continue; }
+      if (t.rank > best.rank) { best = t; continue; }
+      if (t.rank === best.rank && t.xp > best.xp) best = t;
+    }
+    return best;
+  }
+
+  /**
+   * MORALE, once a frame, for every living record in every army.
+   *
+   * The table above is the design; this is the arithmetic. Three shapes:
+   * per-second drifts that depend on where a body is standing, one-shot
+   * events pushed in from elsewhere (`shake`, `cheer`), and the two
+   * CONSEQUENCES — breaking and refusing — which are read back out by
+   * `_troops` and `targetFor` rather than being applied here.
+   *
+   * WHY IT IS NOT ON THE BODY. A squad broken in the spires should arrive at
+   * the core ship shaken, and the Enemy is disposed at every area boundary.
+   * The record is the thing that crosses.
+   */
+  _morale(dt, c) {
+    const jedi = c.player;
+    const squads = c.roster.squads();
+    for (const squad of squads) {
+      const lead = this.leaderOf(squad);
+      for (const t of squad) {
+        if (!t.alive) continue;
+        const e = t.body;
+        let d = 0;
+        if (e && !e.dead) {
+          /* PRESENCE. The Jedi is worth more than a sergeant, and a body with
+           * neither in reach is a body on its own. */
+          let near = false;
+          if (jedi?.position && dist2(e.position, jedi.position) < MORALE.NEAR * MORALE.NEAR) {
+            d += MORALE.JEDI_NEAR; near = true;
+          }
+          if (lead && lead !== t && lead.body && !lead.body.dead
+            && dist2(e.position, lead.body.position) < MORALE.NEAR * MORALE.NEAR) {
+            d += MORALE.LEADER_NEAR; near = true;
+          }
+          if (!near) d += MORALE.ALONE;
+          if (e.maxHp && e.hp < e.maxHp * 0.34) d += MORALE.WOUNDED;
+        } else {
+          // between areas, or waiting on a gunship: nerve comes back
+          d += MORALE.RALLY_PER_S;
+        }
+        t.morale = clamp(t.morale + d * dt, 0, 1);
+        /* THE ONE THING A BODY READS OFF ITS RECORD EVERY FRAME. `_pace` is
+         * how much of its own speed a shaken body uses and `aimQuality`
+         * already reads `trooper.morale` directly; keeping the broken flag
+         * here means the three consumers cannot disagree about it. */
+        t.broken = t.morale < MORALE.BREAK;
+      }
+    }
+  }
+
+  /**
+   * A THING HAPPENED TO THIS SQUAD. One entry point for every event in the
+   * MORALE table that is not a per-second drift, so the table is the only
+   * place the numbers live.
+   *
+   * @param who    a Trooper, an array of them, or null for the whole army
+   * @param key    a key of MORALE
+   */
+  shake(who, key, c = this.commander) {
+    const amount = MORALE[key];
+    if (amount === undefined) return 0;
+    const list = who ? (Array.isArray(who) ? who : [who]) : c.roster.living;
+    let n = 0;
+    for (const t of list) {
+      if (!t || !t.alive) continue;
+      const was = t.morale;
+      t.morale = clamp(t.morale + amount, 0, 1);
+      t.broken = t.morale < MORALE.BREAK;
+      if (was >= MORALE.BREAK && t.broken) {
+        this.log.push({ t: 'broke', name: t.name, area: this.areaNumber });
+        if (c === this.commander) {
+          this.world?.notify?.(`${t.name} IS BREAKING`, 'get to them, or lose them');
+        }
+      }
+      n++;
+    }
+    return n;
+  }
+
+  /** The squad a record belongs to, as an array. Derived like everything else. */
+  squadOf(t, c = this.commander) {
+    for (const sq of c.roster.squads()) if (sq.includes(t)) return sq;
+    return [t];
+  }
+
   _troops(dt, ctx) {
     /* Per commander, and the indices restart per army: `cmdIndex` is a position
      * in ONE roster's living list, and two armies sharing a numbering would
      * have the second one solving its slots against the first one's count. */
     for (const c of this.commanders) {
+      this._slewFrame(c, dt);
+      this._morale(dt, c);
       const F = FORMATIONS[c.formation] || FORMATIONS[DEFAULT_FORMATION];
       const squads = c.roster.squads();
       let i = 0;
@@ -2618,9 +3082,63 @@ export class CommandDirector extends WaveDirector {
           // the fuse back up without touching the brain, so a trooper ordered to
           // hold still takes cover, calls out and tracks you exactly as it did.
           if (F.fire <= 0) holdFire(e);
+          this._clearBlade(e, c, dt);
         }
       }
     }
+    this._frameDt = dt;
+  }
+
+  /**
+   * GET OUT OF THE WAY OF THE BLADE.
+   *
+   * "in too many of the troop formations the troops are totally in the way of
+   * your saber like they don't avoid it at all and crowd you."
+   *
+   * Nothing in the formation solver knew the commander was holding a weapon.
+   * The slots are all clear of one — `circle`'s inner rank is at 4.2 m against
+   * a 2.3 m working volume — but a slot is a TARGET, and a trooper walking to
+   * it, fighting from it, backing off something, or shoved into you by a blast
+   * is not standing at it. What crowds you is the traffic, not the shape.
+   *
+   * So the clearance is enforced on the BODY, every frame, and it is a shove
+   * rather than a refusal: a trooper inside `BLADE_ROOM` is pushed radially
+   * out at a pace that gets it clear in about a third of a second and its
+   * `wish` is overridden for that frame, so it stops walking into you. Radial
+   * and not tangential, because the shortest way out of a swing is straight
+   * away from the person swinging.
+   *
+   * IT DOES NOT APPLY TO A TROOPER THAT IS FIGHTING SOMETHING WITHIN THE RING.
+   * If an acolyte has closed on the commander, the trooper going in after it
+   * is doing its job, and pushing it out would be the mode refusing to help.
+   * The test is its own target's distance from the commander, not its own.
+   */
+  _clearBlade(e, c, dt) {
+    const p = c.player;
+    if (!p || !p.position || e.dead) return;
+    const dx = e.position.x - p.position.x, dz = e.position.z - p.position.z;
+    const d2 = dx * dx + dz * dz;
+    if (d2 >= BLADE_ROOM * BLADE_ROOM || d2 < 1e-6) return;
+    const tgt = e.target;
+    if (tgt && !tgt.dead) {
+      const tx = tgt.position.x - p.position.x, tz = tgt.position.z - p.position.z;
+      if (tx * tx + tz * tz < (BLADE_ROOM + 1.5) * (BLADE_ROOM + 1.5)) return;
+    }
+    const d = Math.sqrt(d2), inv = 1 / d;
+    const nx = dx * inv, nz = dz * inv;
+    /* Written onto `wish` AND onto the position, and both are needed: `wish`
+     * is what `_move` integrates and stops the body walking back in this
+     * frame, and the direct nudge is what gets a body that is stunned,
+     * knocked or braced out of the swing at all — a trooper on the floor has
+     * no wish and is exactly the one you cut in half by accident. */
+    if (!e.wish) e.wish = new THREE.Vector3();
+    e.wish.set(nx, 0, nz);
+    if (!e.toTarget) e.toTarget = new THREE.Vector3();
+    e.toTarget.set(nx, 0, nz);
+    const push = Math.min(BLADE_ROOM - d, 9 * dt);
+    e.position.x += nx * push; e.position.z += nz * push;
+    if (this.world?.terrain) e.position.y = this.world.terrain.height(e.position.x, e.position.z);
+    e._syncBody?.();
   }
 
   /**
@@ -2659,6 +3177,8 @@ export class CommandDirector extends WaveDirector {
       const p = t.award(2);
       if (p) this._promoteTrooper(t, t.body);
     }
+    // Holding a whole area is the biggest thing that happens to a line's nerve.
+    for (const c of this.commanders) this.shake(null, 'AREA_HELD', c);
     this.roster.points += this.area.muster;
     this.log.push({ t: 'area', area: this.areaNumber, name: this.area.name,
                     strength: this.roster.strength, fallen: this.roster.fallen.length });
@@ -2836,6 +3356,10 @@ export class CommandDirector extends WaveDirector {
       areaWaves: this.area.waves,
       formation: F.id,
       formationName: F.name,
+      /* HOLD is a state of the ARMY and not of the order, so it rides here
+       * beside the formation rather than being inferred from `_planted` —
+       * which a joining commander cannot see. */
+      holding: !!c.holding,
       /* The formation indicator prints this beside the name, and main.js used
        * to fetch it separately off `roster.squads().length` — which is a second
        * caller deriving a number this object already had everything for, and it
@@ -2913,6 +3437,7 @@ export class CommandDirector extends WaveDirector {
     this.areaIndex = clamp((r.area | 0) - 1, 0, AREAS.length - 1);
     this.areaWaves = r.waveInArea | 0;
     if (FORMATIONS[r.formation]) this.formation = r.formation;
+    if (r.holding !== undefined) this.commander.holding = !!r.holding;
     this.mustering = !!r.mustering;
     this.done = !!r.done;
     this.roster.points = r.points | 0;

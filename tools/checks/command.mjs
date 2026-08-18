@@ -27,7 +27,7 @@
 import * as THREE from 'three';
 import * as Cmd from '../../src/game/Command.js';
 import * as Waves from '../../src/game/Waves.js';
-import { ARCHETYPES } from '../../src/game/Enemy.js';
+import { ARCHETYPES, Enemy } from '../../src/game/Enemy.js';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
 import { TEAM, canHarm } from '../../src/game/Player.js';
 import { CORPSE_BUDGET, Corpses } from '../../src/game/Corpses.js';
@@ -61,6 +61,11 @@ function cmdWorld(opts = {}) {
     settings: opts.settings || {},
     difficulty: null, hpScale: 1, dmgScale: 1,
     players: [], enemies: [], statics: [], props: [], doors: [],
+    /* `staticBoxes` is what TAKE COVER looks through for something to get
+     * behind (`_coverSite`), so a stub without it turns that half of the order
+     * off silently rather than failing. */
+    physics: { staticBoxes: [], bodies: [], add() {}, remove() {},
+      addStaticBox() { return null; }, removeStaticBox() {}, raycast: () => null },
     level: LEVELS.geonosis,
     run: null, takenBoons: new Set(),
     notes: [],
@@ -1518,6 +1523,253 @@ export function run({ check, assert }) {
     return `${budget * 4} dead → ${c.list.length} kept, ${c.retired} retired; `
       + `tiers ${tiers.map((t) => CORPSE_BUDGET[t]).join('/')}; World wires all four calls`;
   });
+
+  check('command: the formation holds its heading, keeps out of the blade, and can be planted', () => {
+    /**
+     * NOTE #23, and its three clauses are three different things going wrong
+     * around one shape.
+     *
+     * "it's really strange it's like your troops are locked into the direction
+     * you're facing like if you were to spin they would rotate around you like
+     * a clock" — `_frame` read `player.aimDir`, live, every frame. A flick of
+     * the mouse swung a twelve-man line bodily around the player.
+     *
+     * "the troops are totally in the way of your saber like they don't avoid
+     * it at all and crowd you" — nothing in the solver knew the commander was
+     * holding one. The slots are clear of a blade; the traffic to and from
+     * them is not.
+     *
+     * "there should be an option where you can tell your troops to get into a
+     * certain formation and hold it and stay there regardless of where you
+     * are" — there was not, except as one order's baked-in property.
+     */
+    const { w, d } = dirFor();
+    const me = { position: V(0, 0, 0), aimDir: V(0, 0, 1), facing: 0, alive: true, team: TEAM.PARTY };
+    w.players.push(me);
+    /* THE COMMANDER'S OWN PLAYER, which is what `_frame` reads. `world.player`
+     * is where the director takes it from at construction and this stub has
+     * only `players`, so without this the frame falls back to the anchor and
+     * every clause below measures a formation nobody is standing in. */
+    w.player = me; d.commander.player = me;
+    d.deploy();
+    d.order('line');
+    const troops = d.roster.living.map((t) => t.body).filter(Boolean);
+    assert(troops.length >= 6, `only ${troops.length} bodies to measure`);
+    const slots = () => troops.map((e) => d.slotFor(e, new THREE.Vector3()).clone());
+    /* ONE TICK FIRST. `cmdIndex`, `cmdCount` and `cmdSquad` are written by
+     * `_troops`, and a slot solved before that is every trooper's slot zero —
+     * so a `before` sampled cold and an `after` sampled warm differ by the
+     * whole width of the formation and this would measure the numbering. */
+    d._frameDt = 1 / 60; d._troops(1 / 60, {});
+
+    /* ── 1. LOOKING ABOUT DOES NOT MOVE THE LINE. */
+    const before = slots();
+    for (let i = 0; i < 40; i++) {
+      me.aimDir.set(Math.sin(i * 0.15), 0, Math.cos(i * 0.15));   // sweeping the mouse
+      d._frameDt = 1 / 60;
+      d._troops(1 / 60, {});
+    }
+    const after = slots();
+    let moved = 0;
+    for (let i = 0; i < before.length; i++) moved = Math.max(moved, before[i].distanceTo(after[i]));
+    assert(moved < 0.5,
+      `sweeping the aim through 90 degrees moved a slot ${moved.toFixed(1)} m — the formation is `
+      + 'solved in the AIM frame and rotates round the player like a clock');
+
+    /* ── 2. …AND TURNING THE BODY DOES, eventually. The deadband is 40 degrees
+     * and the slew 1.1 rad/s, so a half turn arrives in about two seconds. */
+    me.facing = Math.PI;
+    for (let i = 0; i < 240; i++) { d._frameDt = 1 / 60; d._troops(1 / 60, {}); }
+    const turned = slots();
+    let swung = 0;
+    for (let i = 0; i < before.length; i++) swung = Math.max(swung, before[i].distanceTo(turned[i]));
+    assert(swung > 2,
+      `the commander turned right around and the furthest slot moved ${swung.toFixed(1)} m — the `
+      + 'formation is not following the commander at all');
+
+    /* ── 3. NOBODY STANDS IN THE SWING. Put every trooper on top of the
+     * commander and step: they clear. */
+    me.facing = 0;
+    for (const e of troops) { e.position.set(0.4, 0, 0.2); e.target = null; }
+    for (let i = 0; i < 60; i++) { d._frameDt = 1 / 60; d._troops(1 / 60, {}); }
+    let closest = Infinity;
+    for (const e of troops) closest = Math.min(closest, Math.hypot(e.position.x, e.position.z));
+    assert(closest > 2.4,
+      `a trooper is standing ${closest.toFixed(2)} m from the commander — inside the blade's own `
+      + 'working volume, which is what "they are in the way of your saber" is');
+
+    /* ── 4. HOLD. Planted, the shape stays where it was put no matter where
+     * the commander goes; released, it comes back with them. */
+    const held = d.hold(true);
+    assert(held === true, 'hold(true) did not take');
+    const plantedAt = slots();
+    me.position.set(40, 0, -25);
+    for (let i = 0; i < 60; i++) { d._frameDt = 1 / 60; d._troops(1 / 60, {}); }
+    const stillThere = slots();
+    let drift = 0;
+    for (let i = 0; i < plantedAt.length; i++) drift = Math.max(drift, plantedAt[i].distanceTo(stillThere[i]));
+    assert(drift < 0.5,
+      `the commander walked 47 m and a held slot followed ${drift.toFixed(1)} m of it`);
+    d.hold(false);
+    const released = slots();
+    let came = 0;
+    for (let i = 0; i < plantedAt.length; i++) came = Math.max(came, plantedAt[i].distanceTo(released[i]));
+    assert(came > 20, `released, the formation moved ${came.toFixed(1)} m toward a commander 47 m away`);
+    return `aim sweep moved a slot ${moved.toFixed(2)} m, a body turn ${swung.toFixed(1)} m; `
+      + `blade room ${closest.toFixed(2)} m; held drift ${drift.toFixed(2)} m, released ${came.toFixed(0)} m`;
+  });
+
+  check('command: TAKE COVER is run, and it goes to something', () => {
+    /* "i noticed when I order take cover they don't really run for their
+     * lives." Every order shared one walk-home pace, and that pace is derived
+     * from how fast the COMMANDER is going — so ordering a standing squad to
+     * ground asked them to amble to it. And the order ignored every crate on
+     * the level, which makes it a scatter with a good name. */
+    const { w, d } = dirFor();
+    const me = { position: V(0, 0, 0), aimDir: V(0, 0, 1), facing: 0, alive: true, team: TEAM.PARTY };
+    w.players.push(me);
+    w.player = me; d.commander.player = me;
+    d.deploy();
+    const troops = d.roster.living.map((t) => t.body).filter(Boolean);
+    assert(troops.length >= 6, 'not enough bodies');
+
+    /* THE PACE. `followSpeed` is the one statement of it, so the claim is
+     * measured there rather than by racing two simulations. */
+    d.order('line');
+    const walk = troops.map((e) => d.followSpeed(e, 12));
+    d.order('cover');
+    const run = troops.map((e) => d.followSpeed(e, 12));
+    const ratio = run.reduce((a, b) => a + b, 0) / Math.max(1e-6, walk.reduce((a, b) => a + b, 0));
+    assert(ratio > 1.4,
+      `an order to take cover moves at ${ratio.toFixed(2)}x the pace of an order to form a line — `
+      + 'they are not running for their lives, they are ambling to it');
+
+    /* AND IT GOES TO SOMETHING. One crate-sized static box near the squad, and
+     * a threat on the far side of the commander: the slots move to its lee. */
+    const box = { center: V(9, 0.9, 3), halfExtents: V(1.2, 1.0, 1.2),
+      quat: null, radius: 2, disabled: false };
+    w.physics.staticBoxes.push(box);
+    w.enemies.push({ position: V(-40, 0, 0), dead: false, trooper: null });
+    d.order('cover');                            // re-solve against the new field
+    let behind = 0;
+    for (const e of troops) {
+      const s = d.slotFor(e, new THREE.Vector3());
+      if (!s) continue;
+      // behind means: within a couple of metres of the box, on the far side
+      // from the threat, which is at -x
+      if (Math.hypot(s.x - box.center.x, s.z - box.center.z) < 3.2 && s.x > box.center.x) behind++;
+    }
+    assert(behind >= 1,
+      'not one trooper taking cover chose the only object on the level to get behind');
+    return `cover runs at ${ratio.toFixed(2)}x a line's pace; ${behind} of ${troops.length} took the lee of the crate`;
+  });
+
+
+  check('command: a squad has somebody in charge, and the job passes down', () => {
+    /* Note #30: "Troops should have a squad commander/hierarchy if they
+     * already don't, certain roles are replaced if that person falls in
+     * combat, other's are not."
+     *
+     * The leader is DERIVED — highest rank, then experience — which is the
+     * whole of "replaced if that person falls": there is no field to clear
+     * and no promotion to schedule, the question is asked rather than
+     * remembered. */
+    const { w, d } = dirFor();
+    const me = { position: V(0, 0, 0), aimDir: V(0, 0, 1), facing: 0, alive: true, team: TEAM.PARTY };
+    w.players.push(me); w.player = me; d.commander.player = me;
+    d.deploy();
+    const squad = d.roster.squads()[0];
+    assert(squad.length >= 3, `a squad of ${squad.length}`);
+    // Everyone starts a Trooper, so the leader is decided by xp — give one some.
+    squad[1].award(12);
+    const lead = d.leaderOf(squad);
+    assert(lead === squad[1],
+      `the highest-ranked man is not the leader (${lead?.name} vs ${squad[1].name})`);
+    const before = squad.map((t) => t.morale);
+
+    /* HE FALLS. The squad takes it harder than it takes a rifleman, somebody
+     * steps up on the same frame, and the promotion is paid. */
+    const heirWas = d.leaderOf(squad.filter((t) => t !== squad[1]));
+    const heirXp = heirWas.xp;
+    d.onDeath(lead.body, null);
+    assert(!lead.alive, 'the leader survived being killed');
+    const now = d.leaderOf(d.squadOf(heirWas));
+    assert(now === heirWas, `nobody took the squad: ${now?.name}`);
+    assert(heirWas.xp > heirXp, 'the man who took over was not paid for it');
+    const dropped = before[0] - squad[0].morale;
+    assert(dropped > 0.2,
+      `losing the squad leader cost the man beside him ${dropped.toFixed(2)} of morale`);
+
+    /* AND A RIFLEMAN COSTS LESS THAN A LEADER. */
+    const { d: d2 } = (() => { const r = dirFor(); r.w.players.push(me); r.w.player = me;
+      r.d.commander.player = me; r.d.deploy(); return r; })();
+    const sq2 = d2.roster.squads()[0];
+    sq2[0].award(12);                                     // make someone else the leader
+    const watcher = sq2[2], m0 = watcher.morale;
+    d2.onDeath(sq2[1].body, null);                        // a plain trooper falls
+    const plain = m0 - watcher.morale;
+    assert(plain > 0 && plain < dropped,
+      `a rifleman falling cost ${plain.toFixed(2)} and a leader ${dropped.toFixed(2)} — `
+      + 'the hierarchy has no weight in it');
+    return `leader by rank then xp; succession paid; leader ${dropped.toFixed(2)} vs rifleman ${plain.toFixed(2)} of morale`;
+  });
+
+  check('command: a squad that breaks stops holding the line, and can be rallied', () => {
+    /* Note #36: "Heavy losses, Dark-side excess, or abandoning them tanks
+     * morale — they can break, refuse orders, or even turn on you."
+     *
+     * Three consequences and each is measured through the thing that consumes
+     * it: the aim model, the steer, and the target picker. */
+    const { w, d } = dirFor();
+    const me = { position: V(0, 0, 0), aimDir: V(0, 0, 1), facing: 0, alive: true, team: TEAM.PARTY };
+    w.players.push(me); w.player = me; d.commander.player = me;
+    d.deploy();
+    const t = d.roster.living[0];
+    const e = t.body;
+    e.position.set(0, 0, 26);
+    e.trooper = t;
+
+    /* 1. NERVE IS ACCURACY. Measured through `Enemy.aimQuality`, which is the
+     * one place a spread is decided, on a real Enemy rather than on a stub. */
+    const real = new Enemy(w, 'trooper', V(0, 0, 26));
+    real.trooper = t;
+    t.morale = 1.0; const steady = real.aimQuality(20);
+    t.morale = 0.05; const shaken = real.aimQuality(20);
+    assert(shaken > steady * 1.4,
+      `a terrified trooper shoots at ${(shaken / steady).toFixed(2)}x a steady one's spread`);
+
+    /* 2. A BROKEN MAN FALLS BACK TOWARD YOU. Toward, deliberately: a rout that
+     * scatters is one the player can do nothing about. */
+    t.morale = 0.15; t.broken = true;
+    e.wish = null;
+    d.steer(e, 1 / 60);
+    assert(e.wish, 'a broken trooper was given no direction at all');
+    const toward = e.wish.x * (me.position.x - e.position.x) + e.wish.z * (me.position.z - e.position.z);
+    assert(toward > 0, 'a broken trooper ran away from its commander rather than to them');
+
+    /* 3. AND ONE THAT IS FINISHED TAKES NOTHING. */
+    t.morale = 0.02; t.broken = true;
+    e.wish = null;
+    d.steer(e, 1 / 60);
+    assert(!e.wish, 'a trooper past refusing still answered the order');
+    assert(d.targetFor(e, w.enemies) === null, 'a trooper past refusing still picked a target');
+
+    /* 4. RALLIED. Standing with them is what buys it back, and the table says
+     * so — JEDI_NEAR is the largest per-second term in it. */
+    t.morale = 0.3; t.broken = false;
+    e.position.set(1, 0, 1);
+    for (let i = 0; i < 300; i++) d._morale(1 / 60, d.commander);
+    assert(t.morale > 0.55,
+      `five seconds beside their commander took a shaken trooper to ${t.morale.toFixed(2)}`);
+    /* …and being left alone costs it. */
+    e.position.set(120, 0, 120);
+    const high = t.morale;
+    for (let i = 0; i < 600; i++) d._morale(1 / 60, d.commander);
+    assert(t.morale < high, 'a trooper abandoned across the level lost no nerve at all');
+    return `spread ${(shaken / steady).toFixed(2)}x when broken; falls back to the commander; `
+      + `refuses under ${Cmd.MORALE?.REFUSE ?? 0.1}; rallied ${t.morale.toFixed(2)}`;
+  });
+
 }
 
 /* A file read, kept out of the check body so the import list stays honest. */
