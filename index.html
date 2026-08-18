@@ -7,6 +7,19 @@
 <title>Battlefront Borz</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='14' y='2' width='4' height='20' rx='2' fill='%2348d8ff'/><rect x='13' y='21' width='6' height='9' rx='1.5' fill='%23888'/></svg>">
 <link rel="stylesheet" href="./styles.css">
+<!-- THE TITLE SCREEN'S BACKDROP, STARTED EARLY AND CHEAPLY.
+
+     `.menu-bg` loads it, but `#menu` is `display:none` until the boot finishes
+     and a background-image inside a display:none subtree is never requested —
+     which is exactly why the plate costs nothing at first paint, and exactly
+     why it would otherwise arrive as a visible pop the moment the menu appears.
+     `fetchpriority=low` is the half that matters: the boot is waiting on 76 ES
+     modules and a Rapier WASM blob, and a backdrop that no one can see yet must
+     not be in front of them in the queue.
+
+     The path is here AND in styles.css, which is one path in two files —
+     tools/checks/keyart.mjs compares them rather than trusting them. -->
+<link rel="preload" as="image" fetchpriority="low" href="./assets/menu/title.png">
 <script type="importmap">
 {
   "imports": {

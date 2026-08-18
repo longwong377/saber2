@@ -97,23 +97,31 @@ export function bands({ plateW, plateH, panelW, panelH }) {
 }
 
 /**
- * THE WORDMARK'S BOX, MEASURED IN CHROMIUM, and stated here because a DOM with
+ * THE HEADER'S BOX, MEASURED IN CHROMIUM, and stated here because a DOM with
  * no layout engine cannot compute it — the same admission and the same device
  * as tools/checks/front-screen.mjs's stated geometries.
  *
+ * `.menu-head` and not `.logo`, and that is the whole point of measuring the
+ * box rather than the letters. The wordmark is 308x29 of it; the rest is
+ * `#menu-record`, which main.js fills from Progress.js after a first run and
+ * which `.record:empty{display:none}` hides before one. So a played profile
+ * puts a SECOND line of type on the plate that a fresh one does not, and it is
+ * 10 px mono in `--dim` — the least defensible thing on the screen to lay over
+ * a lit sky. The band asserted against is the one that has to hold both.
+ *
  * `node tools/_menubands.mjs` re-measures it in about two seconds and prints
- * the line to paste. `FONT_PX` is the size it was measured at: the check
- * compares that against the live rule in styles.css and fails if they differ,
- * so the pair cannot drift silently (HANDOFF §2.3).
+ * the line to paste. `fontPx` is the guard on the pair: the check compares it
+ * against the live rule in styles.css and fails if they differ, so a resized
+ * wordmark cannot silently leave a stale rectangle behind (HANDOFF §2.3).
  */
-export const WORDMARK = { w: 308, h: 29, fontPx: 25, top: 4 };
+export const HEAD = { w: 1180, h: 66, fontPx: 25 };
 
-/** The wordmark's box on the plate, at the reference viewport. */
-export function wordmarkBand({ plateW, plateH, panelH }, mark = WORDMARK) {
+/** `.menu-head`'s box on the plate, at the reference viewport. */
+export function headBand({ plateW, plateH, panelH }, head = HEAD) {
   const s = Math.max(REF_W / plateW, REF_H / plateH);
   const dw = plateW * s, dh = plateH * s;
   const ox = (REF_W - dw) / 2, oy = (REF_H - dh) / 2;
   const ph = Math.min(panelH, REF_H * 0.92);
-  const top = (REF_H - ph) / 2 + mark.top;
-  return [(REF_W / 2 - mark.w / 2 - ox) / dw, (top - oy) / dh, mark.w / dw, mark.h / dh];
+  return [(REF_W / 2 - head.w / 2 - ox) / dw, ((REF_H - ph) / 2 - oy) / dh,
+    head.w / dw, head.h / dh];
 }

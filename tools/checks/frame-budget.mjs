@@ -32,6 +32,36 @@
  * The first check drives the SHIPPED `prepass` body against a recording
  * renderer rather than asserting on source text, so a future edit that reorders
  * the save/restore is caught by the thing it would actually break.
+ *
+ * ── AND TWO MORE THINGS NOTHING WAS COUNTING ─────────────────────────────
+ *
+ * A day's worth of content landed with no price on any of it — jetpack plumes,
+ * blood that rays every rim vertex back onto the body, B2 droids, a forked
+ * lightning arc, artillery, smoke, nameplates. Most of it measured fine. Two
+ * costs did not, and both were invisible for the same reason the two above
+ * were: nothing anywhere turned them into a number.
+ *
+ * 3. THE SKELETON WAS WALKED FOUR TIMES OVER TO POSE IT ONCE. `solveIK` called
+ *    `updateMatrixWorld(true)` three times, which walks DOWN — forced, it
+ *    re-multiplies every object below the one it is called on. The parent of a
+ *    thigh is the hips and the hips carry the whole body, so solving one leg
+ *    refreshed both arms, the head, the other leg and everything each of them
+ *    wears; then the other leg did it again; then the gait's closing
+ *    `updateMatrices()` did it a third time. Measured on one walking Jedi,
+ *    counting node VISITS and not calls: **366 a frame against a rig of 84
+ *    objects, 4.36x its own graph.** It is 168 (2.00x) now, and the check
+ *    below is scale-free — a ratio to the body's own size — so it holds for a
+ *    droideka and for a six-legged siege walker without a second number.
+ *
+ * 4. A STRATAGEM COULD ASK A PARTICLE POOL FOR MORE THAN IT HOLDS, and the
+ *    surplus would be invisible by construction: a pool is a ring buffer, so a
+ *    single call over capacity overwrites what it wrote a microsecond earlier.
+ *    That is exactly the shape of the `sparkBurst` freeze — a colour in a
+ *    `count` slot, 10 467 583 sparks, 71 to 134 seconds a frame — and
+ *    `cloth-cost` pins that one call site. This prices the whole stratagem
+ *    table instead, and it is DERIVED from `STRATAGEMS` rather than listing
+ *    the six calls that exist today, so the seventh is priced the day it is
+ *    written (HANDOFF §2.3).
  */
 
 import * as THREE from 'three';

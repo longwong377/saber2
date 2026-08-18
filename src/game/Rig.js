@@ -433,18 +433,28 @@ export class Rig {
      * own ancestry, and the gait and both pose paths close with
      * `rig.updateMatrices()` in any case.
      *
-     * MEASURED, one traced frame of a Command battle with 16 bodies standing,
-     * counting node VISITS inside updateMatrixWorld rather than calls —
-     * because one call and nine hundred matrix multiplies look identical from
-     * the call site (tools/_framecost.mjs prints the table):
+     * MEASURED as node VISITS and not as calls, because one call and three
+     * hundred matrix multiplies look identical from the call site. Two
+     * readings, both counts and neither a clock:
      *
-     *     this line (48 calls)     2158 visits  ->  147
-     *     the upper placement       466        ->  144
-     *     the lower placement       254        ->  144
-     *     whole frame              6848        ->  4211   (-38%)
+     *   ONE JEDI, WALKING, gait only, nothing else touching the rig — the
+     *   deterministic one, and what `frame-budget` holds:
      *
-     * The pose is bit-identical: `determinism`, `somersault`, `garments`,
-     * `animation` and `character-gait` all read the same numbers after.
+     *       366 visits/frame from 26 calls   ->   168 from 40
+     *       4.36x this rig's own 84 objects  ->   2.00x
+     *
+     *   (More calls and less work: `updateWorldMatrix(true, false)` reaches
+     *   its parent through a second call rather than through recursion.)
+     *
+     *   A COMMAND BATTLE, 12 hand-placed bodies and the player, the whole
+     *   frame — tools/_framecost.mjs prints the table and the attribution:
+     *
+     *       7996 visits/frame from 336 calls  ->  4889-5107 from 172-180
+     *                                    i.e. -38%, 615 -> 376-393 per body
+     *
+     * The pose is unchanged: `determinism`, `somersault`, `garments`,
+     * `animation`, `character-gait`, `cel` and `spectacle` all read the same
+     * numbers after.
      */
     upper.obj.updateWorldMatrix(true, false);
     const rootPos = _ikRoot.setFromMatrixPosition(upper.obj.matrixWorld);

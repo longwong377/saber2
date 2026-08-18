@@ -1136,18 +1136,28 @@ function works(world, opts = {}) {
   const at = (x, z, dy = 0) => V(x, T.height(x, z) + dy, z);
   /* R IS THE FIGHT AND SHELL IS THE ROOM, and they are two numbers now because
    * the depth rule made them different things. R is where the plant, the bay
-   * grid, the gantries and the drift stop — unchanged at 66, because the note
+   * grid, the gantries and the drift stop — 66 on the works, because the note
    * this pass answers is about the walls and not about the floor. SHELL is
    * where the wall actually is, and it went out to 94 so there is somewhere for
-   * three ranks of structure to stand between the two. */
-  const R = 66;
-  const SHELL = 94;
+   * three ranks of structure to stand between the two.
+   *
+   * BOTH ARE ARGUMENTS NOW, because this vocabulary outlived the room it was
+   * written for. The Foundry is deleted and this function had no caller at all
+   * (`grep -n 'works(world' src/` found the definition and nothing else) while
+   * holding the only `BlastDoor` construction in the game — which is why
+   * `levels-quality`'s door check has been red. The Providence's deck is a
+   * different size from the works' floor: its hull closes at 72 m in beam
+   * against the works' 94, so the outermost depth rank would have been planted
+   * 18 m up the inside of the hull. Two numbers rather than a rewrite, and the
+   * defaults are byte-for-byte the room this was authored for. */
+  const R = opts.r ?? 66;
+  const SHELL = opts.shell ?? 94;
   const lamp = opts.lampColor ?? 0xffb04a;
   const hot = !!opts.hot;
 
   // The roof first, because everything below is lit under it.
-  roof(world, { height: 16.5, half: SHELL + 2, well: opts.well ?? 0, shadow: !!opts.well,
-    mat: M.hull, beamCount: 11 });
+  roof(world, { height: opts.roofHeight ?? 16.5, half: SHELL + 2, well: opts.well ?? 0,
+    shadow: !!opts.well, mat: M.hull, beamCount: 11 });
 
   /* ── THE DEPTH RANKS, and this is the fix for "you're in a large box".
    *
@@ -1176,7 +1186,11 @@ function works(world, opts = {}) {
     const posts = [], trusses = [], boxes = [];
     const mm = new THREE.Matrix4(), qq = new THREE.Quaternion();
     const pp = new THREE.Vector3(), ss = new THREE.Vector3();
-    for (const [rad, h] of [[62, 12.5], [76, 11.0], [90, 9.5]]) {
+    /* AS FRACTIONS OF THE SHELL, not as three literals. They were 62, 76 and
+     * 90 against a shell of 94 — 0.66, 0.81 and 0.96 — and a room with a
+     * different shell needs the same three ranks at the same three depths, not
+     * the works' three radii planted wherever they land. */
+    for (const [rad, h] of [[SHELL * 0.66, 12.5], [SHELL * 0.81, 11.0], [SHELL * 0.96, 9.5]]) {
       const n = Math.max(12, Math.round(rad * 8 / 14));
       for (let i = 0; i < n; i++) {
         const a = (i / n) * TAU + rad * 0.013;
@@ -1233,7 +1247,7 @@ function works(world, opts = {}) {
       const a = (i / 28) * TAU + 0.2;
       const c = Math.cos(a), s = Math.sin(a);
       const kk = 1 / Math.max(Math.abs(c), Math.abs(s));
-      const x = c * kk * 88, z = s * kk * 88;
+      const x = c * kk * (SHELL * 0.936), z = s * kk * (SHELL * 0.936);
       if (!T.inBounds(x, z, 3)) continue;
       qq.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.abs(c) > Math.abs(s) ? 0 : Math.PI / 2);
       slots.push(mm.clone().compose(pp.set(x, T.height(x, z) + 7.0, z), qq, ss.set(1, 1, 1)));
@@ -3874,6 +3888,296 @@ LEVELS.geonosis = {
   },
 };
 
+/* ══════════════════════════════════════════════════════════════════════════
+ *  THE PROVIDENCE — two grounds, and the argument for building an interior
+ *  at all.
+ *
+ *  Player note #21 asks for a boarding action, and the standing instruction on
+ *  this roster is the opposite one: "get rid of all your maps that take place
+ *  indoors… you do better with maps out in the open where you can use tricks
+ *  to increase the immersion". Both are the player's, they were said months
+ *  apart, and the second one is not a veto on the first — it is a diagnosis.
+ *  The block at the foot of this file states it exactly: "a roof plus four
+ *  walls at the draw budget this engine has is a BOX, and a box is the one
+ *  shape that cannot be anywhere." It also names the two subjects that survive
+ *  the deletion, and one of them is this: "a Jedi temple and a FLAGSHIP are
+ *  both worth building, from reference, as new levels rather than as edits to
+ *  these."
+ *
+ *  So the test these two have to pass is not "is it indoors", it is "is it a
+ *  box", and the answer is in the heightfields rather than in the dressing:
+ *
+ *    THE BAY has no fourth wall. `TERRAIN_PRESETS.hangar` is a 148 m deck
+ *      inside a shell that only rises past 74 m — and the level opens the
+ *      forward quarter of that shell onto space, which is the one thing an
+ *      interior in this engine can have that a room cannot: a horizon made of
+ *      NOTHING, with a starfield behind it and the ship's own lit deck falling
+ *      away into it. A player can walk to the edge of it.
+ *    THE DECK is a ship in plan rather than a hall. `TERRAIN_PRESETS.warship`
+ *      is 118 lines of authored heightfield that nothing has ever built: an
+ *      anisotropic Chebyshev hull so the beam is a straight run of wall
+ *      amidships, a spine that closes to 26 m half-width forward of a
+ *      blast-door threshold you step DOWN through, a bridge raised 5.4 m aft
+ *      up a 12° ramp behind its own bulkhead, and a launch trench crossed
+ *      twice. Four spaces, four silhouettes, one heightfield. Its own notes
+ *      record two rounds of work making the walls unwalkable and the spine
+ *      narrow "in the GROUND rather than in the props standing on it", which
+ *      is the same finding this comment is about, reached from the other side.
+ *
+ *  AND IT REVIVES THREE ORPHANS AT ONCE, which is most of why it is worth the
+ *  risk. `works()` above had no caller anywhere in the tree and holds the only
+ *  `BlastDoor` construction in the game — DESIGN.md §3 calls the twenty-second
+ *  door hold a signature mechanic and `levels-quality`'s door check has been
+ *  red for want of a level that builds one. The `warship` and `hangar` presets
+ *  had no level. And the IG-100 general registered at the foot of this file as
+ *  a SET_PIECE — `bodyguard`, with its own Djem So form and an armoured torso —
+ *  is gated on a level's pool naming it, and no pool has since the Foundry
+ *  went. All four were finished content nobody could reach.
+ * ═════════════════════════════════════════════════════════════════════════ */
+
+LEVELS.hangar = {
+  name: 'The Boarding Bay',
+  blurb: 'A landing deck with the shield across its mouth and nothing behind it. Their crew is between you and the ship.',
+  terrain: 'hangar',
+  /**
+   * DROIDS AND NOTHING ELSE, and it is the second pool in the game of which
+   * that is true — the other is the deck forward. A Separatist ship has no
+   * marksman and no grenadier, so what replaces the clone roster's pressure at
+   * range is VOLUME: a B1 is threat 1 against a marksman's 3.2, so the same
+   * budget buys three times the bodies and a bay fills with them.
+   *
+   * The bay is the LIGHT half of the boarding action — line droids, the
+   * rocket crew that services the fighters, and the shielded droideka the
+   * hangar guard runs. The elites are on the deck.
+   */
+  pool: ['b1', 'b1', 'b1', 'b1', 'b2', 'b2', 'rocket', 'droideka', 'b1', 'b2'],
+  groundColor: 0x4e535c,
+  spawnRadius: [26, 48],
+  atmosphere: {
+    /**
+     * AN INTERIOR IS NOT METERED FROM A SKY IT DOES NOT HAVE. `sky: false`
+     * makes `scene.background` a flat `bgColor`, takes the cloud deck away
+     * (`lighting.mjs` asserts both) and leaves the authored exposure alone.
+     *
+     * THE BACKGROUND IS SPACE, and this is the one interior in the game where
+     * that is literally true rather than a dark grey standing in for a wall:
+     * the bay's mouth is open, so what is behind the ships is the void, and
+     * `bgColor` is nearly black on purpose. Everything the player can see is
+     * lit BY THE SHIP, which is what makes a hangar read as a hangar.
+     */
+    sky: false, bgColor: 0x05070c, fog: true, fogColor: 0x1b2028, fogDensity: 0.0060,
+    /* The key is the deck's own overhead floods — high, cold and hard, because
+     * a working bay is lit for handling cargo and not for looking good in. A
+     * 34° key is what puts a long shadow off every crate down a flat deck,
+     * which is the only relief this ground has. */
+    sunColor: 0xd6e2f2, sunIntensity: 3.6, ambient: 0.26,
+    skyColor: 0x2c3644, groundColor: 0x3a4048, elevation: 34, azimuth: 118,
+    /* …and the fill is the SHIELD. A magnetic containment field across the
+     * mouth of the bay is a wall of pale blue light two hundred metres wide,
+     * and it is the only large soft source in the room — so the shadow side of
+     * everything on this deck is cold and slightly blue, which is the whole
+     * look of the reference plates. */
+    fillColor: 0x6ea8d8, fillIntensity: 0.62,
+    exposure: 1.06, bloom: 0.42, saturation: 1.04,
+    lift: [0.004, 0.006, 0.014], gain: [0.99, 1.0, 1.03],
+    clouds: false, horizon: false,
+  },
+  /* No wind at all — a bay under containment is dead air — and a heavy drone,
+   * which is the ship. `roomOf` reads the surface under (0,0) for the reverb
+   * and finds steel, so the tail is the plated one without anybody saying so. */
+  ambience: { wind: 0.0, windFreq: 120, drone: 0.34 },
+  dust: { count: 620, color: 0x7c8794, opacity: 0.18, size: 20, fleckColor: 0xbcd0e4 },
+  grass: 0,
+  dress(world) {
+    beginDressing(world, 20250805 + 91);
+    const M = propMaterials();
+    const T = world.terrain;
+    const at = (x, z, dy = 0) => new THREE.Vector3(x, T.height(x, z) + dy, z);
+
+    /* THE DECKHEAD, high and open. 22 m rather than the works' 16.5: a bay has
+     * to have room for the thing that lands in it, and the height is what
+     * stops the roof reading as a lid. `well` is the open mouth — see below. */
+    roof(world, { height: 22, half: 96, mat: M.hull, beamCount: 9 });
+
+    /**
+     * THE MOUTH. The forward quarter of the bay opens onto space, and this is
+     * the whole reason the level is worth building indoors.
+     *
+     * It is drawn as what it is: two flanking buttresses carrying the frame,
+     * a sill you can stand on, and NOTHING in between. There is no shield
+     * plane in the geometry — a translucent sheet at this scale reads as a
+     * window rather than as an opening, and the containment field is already
+     * doing its work in the lighting (see `fillColor`). What the player sees
+     * through it is `bgColor`, which is space.
+     */
+    for (const sx of [-1, 1]) {
+      addButtress(world, at(sx * 46, 66), { height: 20, width: 7, depth: 9, yaw: 0, seed: 9210 + sx });
+      addStanchion(world, at(sx * 34, 63), { height: 15, lamp: true, light: true,
+        color: 0x9ec8ff, intensity: 22, distance: 40, seed: 9214 + sx });
+    }
+
+    /* THE RANK OF LAMPS DOWN THE LONG WALLS, so the far end of a flat deck is
+     * a receding row of points rather than a wall. Instanced for the reason
+     * `works` instances its own: this is a level with nothing on its floor to
+     * hide a draw call behind. */
+    {
+      const lamps = [];
+      const mm = new THREE.Matrix4(), qq = new THREE.Quaternion();
+      const pp = new THREE.Vector3(), ss = new THREE.Vector3(1, 1, 1);
+      for (let i = 0; i < 22; i++) {
+        const t = (i / 11) - 1;
+        for (const sx of [-1, 1]) {
+          const x = sx * 68, z = t * 64;
+          if (!T.inBounds(x, z, 3)) continue;
+          qq.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2);
+          lamps.push(mm.clone().compose(pp.set(x, T.height(x, z) + 8.4, z), qq, ss));
+        }
+      }
+      addInstanced(world, slabGeo(0.4, 0.5, 2.6, { tile: 1.4, seg: 2 }), M.glowAmber,
+        lamps, new THREE.Vector3(0, 0, 0), { name: 'bayLamp', castShadow: false });
+    }
+
+    /* WHAT A BAY IS FULL OF: racks, tugs and the fighters that did not make it
+     * back. Laid on the deck's own 12 m drainage grid through `bay`, so the
+     * clutter lines up with the floor the way a handled deck does. */
+    bay(world, {
+      nx: 5, nz: 5, pitch: 24, jitter: 5, skip: 0.14,
+      clearance: 8, spawnClear: 11, maxSlope: 0.3,
+    }, (pos, i, j, r) => {
+      const sd = 9300 + i * 13 + j;
+      if (r < 0.34) {
+        addCrateStack(world, pos.clone(), { seed: sd, tiers: 3, columns: 3, yaw: rng() * TAU });
+      } else if (r < 0.58) {
+        island(world, pos.clone(), { seed: sd, yaw: rng() * TAU, span: 13, maker: 'rack' },
+          (kit, local) => {
+            addMachine(world, local(-2.6, 0), { kit, width: 4.0, height: 2.6, depth: 2.4, seed: sd + 1 });
+            addTank(world, local(3.2, 1.8), { kit, radius: 1.5, height: 3.6, seed: sd + 2 });
+            addPipeRun(world, [
+              new THREE.Vector3(-2.6, 3.0, 1.2), new THREE.Vector3(3.2, 3.8, -1.2),
+            ], { kit, count: 2, radius: 0.11, seed: sd + 3 });
+          });
+      } else if (r < 0.76) {
+        addHullSection(world, pos.clone(), { length: 13 + rng() * 7, radius: 2.8, yaw: rng() * TAU, seed: sd + 4 });
+      } else {
+        makeCrate(world, pos.clone(), 0.9);
+      }
+    });
+
+    /* A gantry down each long wall at a height the player's own double jump
+     * reaches — 5.2 m, which is the number `works` derives and states. */
+    for (const side of [-1, 1]) {
+      addGantry(world, at(side * 56, -14), { length: 34, height: 5.2, yaw: Math.PI / 2,
+        seed: 9400 + side, lights: true });
+      addCableRun(world, at(side * 62, -40, 8.0), at(side * 62, 40, 7.0), { seed: 9410 + side, sag: 1.6 });
+    }
+
+    /* The scorch and the swarf of a working deck. `strewGround` is the only
+     * instanced grade this level has and it is what stops the floor reading as
+     * a plane with objects on it. */
+    strewGround(world, { seed: 9420, radius: 68, inner: 4, spread: 0.26, mat: M.stone,
+      landmarks: 0.2, boulders: 0.5, cobble: 1.4 });
+    return 4;
+  },
+};
+
+LEVELS.warship = {
+  name: 'The Providence',
+  blurb: 'Amidships, forward through the bulkheads, and up the ramp to the bridge. Nothing aboard is alive.',
+  terrain: 'warship',
+  /**
+   * THE SHIP'S CREW, AND THE GENERAL AT THE END OF IT.
+   *
+   * The elite half of the Confederacy roster, because the bay forward of this
+   * is where the line droids are and a player who has crossed it has already
+   * fought them. What is on the deck is the things a flagship keeps: the
+   * shielded droideka, the BX commando that fights like you do, and the
+   * MagnaGuard.
+   *
+   * `bodyguard` IS THE SET-PIECE AND IT IS WHY THE POOL NAMES IT. Registered
+   * at the foot of this file as `SET_PIECE.unshift({ type: 'bodyguard', from:
+   * 10 })` and carrying `setPieceOnly: true`, it can never arrive as fill —
+   * `_setPiece` fields it on a boss wave and only on a level whose pool names
+   * the type. No pool has since the Foundry was struck, so the IG-100 general,
+   * its Djem So form and its armoured torso have been unreachable content. The
+   * ship is where a general belongs.
+   */
+  pool: ['b1', 'b1', 'b2', 'b2', 'droideka', 'bx', 'rocket', 'magna', 'b1', 'bodyguard'],
+  groundColor: 0x474e58,
+  spawnRadius: [28, 50],
+  atmosphere: {
+    /* Deeper inside the ship than the bay, and every number says so: no mouth,
+     * so the background is the hull's own unlit steel rather than space; a
+     * thicker haze, because a corridor is the one place in this game where
+     * distance is measured in tens of metres and aerial perspective has to do
+     * its work over that range instead of over four hundred. */
+    sky: false, bgColor: 0x0c1015, fog: true, fogColor: 0x232a33, fogDensity: 0.0105,
+    /* THE KEY IS COLDER AND LOWER THAN THE BAY'S, which is the whole difference
+     * between a deck that is worked on and a deck that is walked through. The
+     * `warship` preset's own note explains the palette it was authored for —
+     * "the accent this level is authored around is the BOLTS, which are red,
+     * so the ground is held cold and low so that red has somewhere to be" —
+     * and a warm key here would spend that room. */
+    sunColor: 0xc2d2e8, sunIntensity: 2.9, ambient: 0.22,
+    skyColor: 0x232d3a, groundColor: 0x2e343d, elevation: 27, azimuth: 204,
+    /* The fill is the hazard strip: an amber line down both sides of a
+     * corridor at knee height, which is what an emergency-lit deck looks like
+     * and the only warm thing aboard. Weak, and warm against a cold key, so
+     * the two separate a body from the bulkhead behind it. */
+    fillColor: 0xd08a3a, fillIntensity: 0.44,
+    exposure: 1.12, bloom: 0.48, saturation: 1.06,
+    lift: [0.010, 0.007, 0.006], gain: [1.02, 1.0, 0.99],
+    clouds: false, horizon: false,
+  },
+  ambience: { wind: 0.0, windFreq: 110, drone: 0.42 },
+  dust: { count: 700, color: 0x69727e, opacity: 0.20, size: 18, fleckColor: 0xc0b09a },
+  grass: 0,
+  dress(world) {
+    beginDressing(world, 20250805 + 92);
+    /**
+     * THE WHOLE DECK IS `works()`, WITH THE MELT TURNED OFF — and the reuse is
+     * the point rather than a saving.
+     *
+     * That function is a vocabulary and not a room: bulkhead ribs with blast
+     * doors in every fourth bay, three ranks of stanchion-and-truss standing
+     * between the fight and the wall, a plant grid, gantries at a height the
+     * player can actually reach, and the clutter of people who worked here.
+     * Every one of those is a ship's engineering deck as readily as a foundry
+     * floor; what made the Foundry a foundry was `hot: true`, which lights the
+     * canal, the ladles and the tap spouts. Off, the same floor is cold plate.
+     *
+     * `r` and `shell` are the two arguments this pass added — the Providence's
+     * hull closes at 72 m in beam against the works' 94, so the outer rank
+     * would otherwise have been planted 18 m up the inside of it.
+     *
+     * AND IT IS WHERE THE BLAST DOORS COME BACK. Three of them, in the recesses
+     * the bulkhead ribs cut, each a real collider with blade capsules and a
+     * breach that drops the slug — see the note inside `works`.
+     */
+    works(world, {
+      seed: 9500, r: 52, shell: 66, roofHeight: 14.0,
+      lampColor: 0xff7a30, lights: true, hot: false,
+      crates: 18, stacks: 4, wrecks: 3,
+    });
+    const M = propMaterials();
+    const T = world.terrain;
+    const at = (x, z, dy = 0) => new THREE.Vector3(x, T.height(x, z) + dy, z);
+    /* THE BRIDGE, aft and up the ramp, and it gets the one thing on this deck
+     * that is not industrial: a rank of consoles and a railing along the drop.
+     * The terrain already raises it 5.4 m behind its own bulkhead — see the
+     * preset — so this is the furniture of a place the ground has already
+     * made. */
+    for (let i = 0; i < 5; i++) {
+      const x = -22 + i * 11;
+      const z = -50;
+      if (!T.inBounds(x, z, 3)) continue;
+      addMachine(world, at(x, z), { width: 3.4, height: 1.5, depth: 1.8, yaw: 0,
+        seed: 9600 + i, glowMat: M.glowAmber });
+    }
+    addRailing(world, at(-26, -40), { length: 52, height: 1.1, yaw: Math.PI / 2, seed: 9620 });
+    return 3;
+  },
+};
+
 /**
  * The order the menu lists them in: the outdoor grounds first, because those
  * are the ones that read as PLACES, and the one interior last.
@@ -3905,8 +4209,16 @@ LEVELS.geonosis = {
  * "broke" the Cut's standing-water test and the nav walk without touching
  * either: they were measuring Mustafar's lava rivers. The Ember Shelf keeps the
  * slot it has always had. */
+/* THE TWO SHIP GROUNDS GO LAST, and the sentence above about interiors is now
+ * a sentence with two exceptions rather than a statement of fact. Both are
+ * argued in the block over `LEVELS.hangar`, and the argument is not "an
+ * interior is fine after all" — it is that the failure the roster was cut on
+ * was a BOX, and neither of these is one: the bay has no fourth wall and opens
+ * onto space, and the deck is a ship in plan with four spaces strung along one
+ * spine. They stand last because a player scanning the list should meet the
+ * seven grounds that read as places first. */
 export const LEVEL_ORDER = ['scoria', 'mustafar', 'colosseum', 'wood', 'drifts', 'alpine',
-  'geonosis'];
+  'geonosis', 'hangar', 'warship'];
 
 /**
  * DELETED LEVELS.
@@ -4220,6 +4532,15 @@ Object.assign(ARRIVAL_BY_TERRAIN, {
    * enough that a march is a real approach rather than eighty metres of
    * watching — so both, weighted to the ship the way the open levels are. */
   mustafar: ['dropship', 'dropship', 'march'],
+  /* A DECK WITH A CEILING ON IT TAKES A DOOR, which is the rule Arrivals.js
+   * states and the whole of why this entry exists: `hangar` is already
+   * `['gate']` in that table, and the Providence's decks were not in it at all
+   * — a level whose terrain is missing from it falls through to `['march']`,
+   * so every droid aboard would have walked in from the edge of the
+   * heightfield, which on this ground is the inside of the hull. The bulkhead
+   * ribs `works()` builds ARE the doors they come through, three of them
+   * openable. */
+  warship: ['gate'],
 });
 
 /**

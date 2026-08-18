@@ -45,7 +45,7 @@
 
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { decodePng, region } from './_png.mjs';
-import { bands, wordmarkBand } from './_bands.mjs';
+import { bands, headBand } from './_bands.mjs';
 import { existsSync, statSync } from 'node:fs';
 import { resolve, join, extname, normalize, basename } from 'node:path';
 
@@ -364,7 +364,7 @@ if (!plate) {
 function measure(buf) {
   const img = decodePng(buf);
   const B = bands({ plateW: img.width, plateH: img.height, panelW: PANEL_W, panelH: PANEL_H });
-  const wm = wordmarkBand({ plateW: img.width, plateH: img.height, panelH: PANEL_H });
+  const wm = headBand({ plateW: img.width, plateH: img.height, panelH: PANEL_H });
   const step = Math.max(1, Math.round(img.width / 900));
   const one = (n, r) => {
     const s = region(img, r[0], r[1], r[2], r[3], step);
@@ -373,7 +373,7 @@ function measure(buf) {
   };
   return [`  ${img.width}x${img.height}  ${(img.width / img.height).toFixed(3)}:1`,
     one('left', B.ring.left), one('right', B.ring.right), one('top', B.ring.top),
-    one('bottom', B.ring.bottom), one('panel', B.covered), one('WORDMARK', wm)].join('\\n');
+    one('bottom', B.ring.bottom), one('panel', B.covered), one('HEAD', wm)].join('\n');
 }
 
 /* ── ENCODE, AND THE FORMAT ARGUMENT ──────────────────────────────────────

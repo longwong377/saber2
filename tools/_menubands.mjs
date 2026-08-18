@@ -22,7 +22,7 @@
  */
 
 import { readFile } from 'node:fs/promises';
-import { bands, wordmarkBand, WORDMARK, REF_W, REF_H } from './_bands.mjs';
+import { bands, headBand, HEAD, REF_W, REF_H } from './_bands.mjs';
 import { resolve, join, extname, normalize } from 'node:path';
 import { existsSync, statSync } from 'node:fs';
 
@@ -81,6 +81,13 @@ for (const [w, h, why] of VIEWPORTS) {
   const r = await page.evaluate(([PW, PH]) => {
     document.getElementById('boot').classList.add('hidden');
     document.getElementById('menu').classList.remove('hidden');
+    /* THE RECORD LINE IS PUT BACK BEFORE MEASURING. `.record:empty{display:none}`
+     * so a fresh profile has a shorter header than a played one — and the taller
+     * one is the case the backdrop has to survive, because it is the one with
+     * more type on the plate. main.js writes `progressLines().join('  ·  ')`
+     * here; this is a representative one at a representative length. */
+    document.getElementById('menu-record').textContent =
+      'Best wave 27  ·  1482 felled  ·  Ember Shelf, Knight  ·  6 h 12 m';
     const box = (sel) => {
       const el = document.querySelector(sel);
       if (!el) return null;
@@ -105,6 +112,7 @@ for (const [w, h, why] of VIEWPORTS) {
       tabs: box('.menu-tabs'),
       logo: box('.menu-head .logo h1'), logoPlate: toPlate(box('.menu-head .logo h1')),
       record: box('#menu-record'),
+      fontPx: parseInt(getComputedStyle(document.querySelector('.logo.small .lg-a')).fontSize, 10),
       head: box('.menu-head'), headPlate: toPlate(box('.menu-head')),
       foot: box('.menu-foot'),
     };
@@ -182,19 +190,21 @@ console.log('WORDMARK BAND          x %s…%s   y %s…%s   (%dx%d css px at 192
  */
 const panelW = 1180, panelH = 770;                    // `.menu-wrap`, from styles.css
 const calc = bands({ plateW: PW, plateH: PH, panelW, panelH });
-const wm = wordmarkBand({ plateW: PW, plateH: PH, panelH });
+const wm = headBand({ plateW: PW, plateH: PH, panelH });
 const d = (a, b) => (Math.abs(a - b) * 100).toFixed(2) + ' pt';
 console.log('');
 console.log('_bands.mjs  safe     x %s…%s   y %s…%s', f(calc.safe[0]), f(calc.safe[0] + calc.safe[2]),
   f(calc.safe[1]), f(calc.safe[1] + calc.safe[3]));
 console.log('_bands.mjs  covered  x %s…%s   y %s…%s', f(calc.covered[0]), f(calc.covered[0] + calc.covered[2]),
   f(calc.covered[1]), f(calc.covered[1] + calc.covered[3]));
-console.log('_bands.mjs  wordmark x %s…%s   y %s…%s', f(wm[0]), f(wm[0] + wm[2]), f(wm[1]), f(wm[1] + wm[3]));
-console.log('DISAGREEMENT with the browser: safe x %s y %s · covered x %s y %s · wordmark x %s y %s',
+console.log('_bands.mjs  head     x %s…%s   y %s…%s', f(wm[0]), f(wm[0] + wm[2]), f(wm[1]), f(wm[1] + wm[3]));
+console.log('DISAGREEMENT with the browser: safe x %s y %s · covered x %s y %s · head x %s y %s',
   d(calc.safe[0], safeX0), d(calc.safe[1], safeY0), d(calc.covered[0], wx), d(calc.covered[1], wy),
-  d(wm[0], lx), d(wm[1], ly));
-console.log('MEASURED WORDMARK: { w: %d, h: %d, fontPx: %s, top: %d }  ← paste into tools/_bands.mjs',
-  REF.logo[2], REF.logo[3], /font-size:\s*(\d+)px/.exec(
-    (await readFile(new URL('../styles.css', import.meta.url), 'utf8'))
-      .slice((await readFile(new URL('../styles.css', import.meta.url), 'utf8')).indexOf('.logo.small .lg-a')))?.[1] ?? '?',
-  REF.logo[1] - REF.wrap[1]);
+  d(wm[0], REF.headPlate[0]), d(wm[1], REF.headPlate[1]));
+console.log('HEAD BAND              x %s…%s   y %s…%s   (%dx%d css px, wordmark %dx%d, record %dx%d)',
+  f(REF.headPlate[0]), f(REF.headPlate[0] + REF.headPlate[2]),
+  f(REF.headPlate[1]), f(REF.headPlate[1] + REF.headPlate[3]),
+  REF.head[2], REF.head[3], REF.logo[2], REF.logo[3], REF.record[2], REF.record[3]);
+console.log('');
+console.log('  export const HEAD = { w: %d, h: %d, fontPx: %d };   ← paste into tools/_bands.mjs',
+  REF.head[2], REF.head[3], REF.fontPx);

@@ -2645,6 +2645,19 @@ export class Enemy {
      * mistake somebody has now made: `escalation: an elite comes apart like
      * everything else does` threw on the Shielded elite's first pass. */
     if (ev.cap.shield) { this.dropShield(); return; }
+    /* …AND A BONE THAT IS ALREADY GONE IS NOT CUT TWICE.
+     *
+     * `capsules()` never offers a severed bone, so for the blade this cannot
+     * happen — but `Player.forceDisassemble` builds its list ONCE and walks it,
+     * and its own re-check is `actor.isSevered(cap.name)`, which answers false
+     * for a weak point's name because `femur0.tip` is not a bone the rig has.
+     * Without this, a rend that took `femur0` off would then spend a second
+     * joint of its budget on the gap in the same femur: `Actor.cut` correctly
+     * refuses (`bone.severed`), and the sever price below would be billed
+     * anyway. `isSevered` walks the parent chain, and it is deliberately not
+     * `bone.severed`: a LEAF bone is shortened rather than severed, and chopping
+     * the same stub again is a real thing the game lets you do. */
+    if (this.actor && this.actor.isSevered(bone)) return;
     /* NO `?? 0.4` HERE EITHER. Every BONE capsule this game emits is priced by
      * `severance`, which throws rather than guessing, so a missing `vital` is
      * a capsule from somewhere that has not been through it — and answering
