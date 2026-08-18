@@ -1637,7 +1637,18 @@ export async function run({ check, assert }) {
         `${handler} writes the host's choice onto the player's own settings, which deploy() persists `
         + 'to localStorage — their next solo run starts in the host\'s level');
     }
-    assert(/session\s*=\s*\{/.test(main), 'there is no session scope for the host\'s choices');
+    /* THE SCOPE EXISTS AND THE HANDLERS WRITE INTO IT. This used to look for
+     * the literal `session = {`, which is a proxy for the shape rather than
+     * for the property — and it went red the day those two literals became
+     * `sessionPart(msg)`, a change that made the scope MORE correct rather
+     * than less (see the SESSION_KEYS clause below). What matters is that the
+     * host's choices land in `session` and not in `settings`; the loop above
+     * asserts the second half, and this asserts the first. */
+    for (const handler of ["net.on('welcome'", "net.on('start'"]) {
+      const body = functionBody(main, handler);
+      assert(/\bsession\s*=/.test(body),
+        `${handler} does not write the host's choices into the session scope at all`);
+    }
     const d = main.slice(main.indexOf('function deploy('), main.indexOf('function deploy(') + 1200);
     assert(/saveSettings\(settings\)/.test(d), 'deploy no longer persists the player\'s settings at all');
     assert(/sessionOr\('level'\)|session\?\.level/.test(d),
@@ -1725,6 +1736,68 @@ export async function run({ check, assert }) {
   });
 
   /* ══ the general rules worth keeping ══════════════════════════════════ */
+
+  check('co-op: a rule the session shares is on the wire at every site that says the session moved', async () => {
+    /**
+     * THE SESSION'S RULES, AND THE FIVE PLACES THAT USED TO COPY THEM BY HAND.
+     *
+     * A session has two kinds of setting. Most are yours — quality, fov, blade
+     * colour, bindings. A few are the MATCH's and have to be identical on every
+     * machine or the game is two different games: the ground, the difficulty,
+     * the mode, and the rules of engagement. That set was written out longhand
+     * at five sites — main.js's handshake, its `start` broadcast, the two
+     * places a joining player writes `session`, and `World._afterRotate`, which
+     * announces a mid-run ground change — and one of them being short is not a
+     * crash, it is two players in different games with nothing said.
+     *
+     * IT HAD ALREADY COST SOMETHING. `commandVersus` turns Command into a
+     * meeting between two players and was on NONE of the five, so a host who
+     * ticked it and a client who had not were in a meeting and a campaign
+     * respectively. `pvp` was about to be the second the day it got a control.
+     *
+     * So `Net.SESSION_KEYS` is the list and `sessionPart` is the only way to
+     * build one of these payloads. Asserted by SOURCE here rather than by
+     * behaviour, deliberately and against the usual rule: what is being tested
+     * is that no SIXTH site grows its own hand-written copy, and a site that
+     * does not exist yet cannot be driven. The behaviour half is the clause in
+     * `skirmish` that watches a rotation put exactly one `start` on the wire.
+     */
+    const files = await sources();
+    const src = (p) => files.find(([f]) => f === p)?.[1] ?? '';
+    const { SESSION_KEYS, sessionPart } = await import('../../src/net/Net.js');
+    assert(SESSION_KEYS.length >= 3 && SESSION_KEYS.includes('level'),
+      `SESSION_KEYS is ${JSON.stringify(SESSION_KEYS)} — this clause is measuring nothing`);
+    /* The function is the contract: those keys, and only the ones present. */
+    const got = sessionPart({ level: 'x', mode: 'y', quality: 'ultra', pvp: undefined });
+    assert(got.level === 'x' && got.mode === 'y' && !('quality' in got) && !('pvp' in got),
+      `sessionPart let through ${JSON.stringify(got)} — it must carry the session's keys, skip `
+      + 'everyone else\'s, and OMIT an absent one rather than writing it as undefined (`session` is '
+      + 'replaced on a start, not merged, so absent and present-but-undefined must stay distinct)');
+
+    /* Every payload that says "the session is now this" must be built from it. */
+    const sites = [];
+    for (const f of ['main.js', 'game/World.js']) {
+      const text = src(f);
+      for (const m of text.matchAll(/\{[^{}]*\bt: 'start'[^{}]*\}/g)) sites.push([f, m[0]]);
+      /* `session = null` is a TEARDOWN, not a payload — leaving a session has
+       * no keys to get right. Only an assignment that carries something is a
+       * site this clause is about. */
+      for (const m of text.matchAll(/session = (?!null\b)([^;\n]+)/g)) sites.push([f, m[0]]);
+      /* One level of nesting, because the argument IS a call: a `[^)]*` stops
+       * at the inner paren and reports the site as hand-built when it is not. */
+      for (const m of text.matchAll(/net\.host\((?:[^()]|\([^()]*\))*\)/g)) sites.push([f, m[0]]);
+    }
+    assert(sites.length >= 4,
+      `found ${sites.length} session payload site(s) — the finder has gone stale and this clause is `
+      + 'passing on an empty set');
+    const raw = sites.filter(([, code]) => !code.includes('sessionPart'));
+    assert(raw.length === 0,
+      `${raw.length} site(s) build the session's rules by hand instead of from sessionPart: `
+      + raw.map(([f, c]) => `${f}: ${c.trim().slice(0, 70)}`).join(' · ')
+      + ' — a site that is one key short is two players in different games, silently');
+    return `${SESSION_KEYS.length} session-wide key(s) (${SESSION_KEYS.join(', ')}) across `
+      + `${sites.length} payload site(s), all built from sessionPart`;
+  });
 
   check('co-op: no message type is handled and never sent', async () => {
     // THE GENERAL FORM, kept from the old suite. A `case 'x':` in the router

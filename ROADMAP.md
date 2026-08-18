@@ -114,15 +114,20 @@ consumer.
 
 ## 5. Features that exist and cannot be reached
 
-- **Free PvP duels** — rounds, health, round time, boons
-  (`Player.js:1574-1585`), `DuelMatch`, a whole suite in `tools/checks/pvp.mjs`.
-  **No menu control ever sets `settings.pvp`.** The only writer is
-  `World.js:644`, the Command-meeting branch, hard-coded to one round. *Fix:* a
-  control in the Co-op tab.
-- **Hold-fire** — the formation table documents `fire` as "0 is `holdFire`"
-  (`Command.js:552-553`) and all six formations declare `fire: 1`, so
-  `if (F.fire <= 0) holdFire(e)` (`:2543`) is unreachable. *Fix:* give one
-  formation `fire: 0`, or delete the field and the claim.
+- ~~**Free PvP duels**~~ — **done.** `settings.pvp` had exactly one writer, the
+  Command-meeting branch, so the whole free-duel path was unreachable. It is a
+  `DEFAULT_SETTINGS` key with a checkbox in the Co-op tab now, and it rides the
+  host's session blob (`Net.SESSION_KEYS`) so a session's rules are the host's.
+  Only `pvp`: the four `duel*` keys are read solely inside `DuelMatch`, which
+  only the host builds, so controls for them would do nothing.
+- ~~**Hold-fire**~~ — **done**, by the first ending rather than the second. `fire`
+  is the only field in the table about the SHOT; the other orders are all shape
+  and footing and every one of them ends in a rifle going off, so no arrangement
+  of them says "quiet". `holdfire` is a seventh order on `Equal` with its own
+  tight slot. Measured over 60 game-seconds on Geonosis, one fresh World per
+  order with `enemyRng` seeded identically: circle 219 bolts, column 291,
+  vanguard 276, line 304, cover 241, charge 195, **hold fire 0** — while taking
+  193 incoming and keeping all ten men.
 - **Duel ignores run rules while still offering them** — `_compose` returns into
   `_composeDuel` before conditions are assembled (`Waves.js:2513`) and
   `Menu._syncRules` does not gate by mode. *Fix:* grey the column with a reason,

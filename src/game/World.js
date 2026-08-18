@@ -119,7 +119,7 @@ import { BladeLock } from './Duel.js';
 import { FocusSystem } from './Focus.js';
 import { DojoDirector } from './Dojo.js';
 import { updateCauterisation } from './Ragdoll.js';
-import { packAvatar, packMatch, packSnapshot } from '../net/Net.js';
+import { packAvatar, packMatch, packSnapshot, sessionPart } from '../net/Net.js';
 import { QUALITY } from '../engine/Engine.js';
 import { clamp, lerp, damp, dampVec, makeRng, TAU } from '../engine/MathUtil.js';
 import { audio, PRIO } from '../engine/Audio.js';
@@ -1373,8 +1373,7 @@ export class World {
      * independently.
      */
     if (this.netMode === 'host' && this.net?.connected) {
-      this.net.broadcast({ t: 'start', level: this.levelKey,
-        difficulty: this.settings?.difficulty, mode: this.settings?.mode });
+      this.net.broadcast({ t: 'start', ...sessionPart(this.settings), level: this.levelKey });
     }
     /* WE HAVE ARRIVED — a separate signal from `onRotate`, which is the
      * request. The handful of things a front end owns per player (the camera's

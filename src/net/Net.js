@@ -959,6 +959,52 @@ function lerpAngle(a, b, t) {
  * blast — which is what `World.netSource` reads as "unattributed", and is
  * exactly the state every `hit` was in before the field existed.
  */
+/**
+ * WHAT THE HOST DECIDES FOR EVERYBODY — named once, spread everywhere.
+ *
+ * A session has two kinds of setting. Most are yours: your quality tier, your
+ * fov, your blade colour, your bindings. A few are the MATCH's, and they have
+ * to be identical on every machine or the game is two different games — the
+ * ground, the difficulty, the mode, and the rules of engagement.
+ *
+ * That set was written out by hand at four sites in main.js — the handshake,
+ * the `start` broadcast, and the two places a joining player writes `session` —
+ * and a fifth in `World._afterRotate`, which announces a mid-run ground change.
+ * Five hand-copies of one list is the §2.3 shape and it had already cost
+ * something: `commandVersus`, the switch that turns Command into a meeting
+ * between two players, is on none of them, so a host who ticks it and a client
+ * who has not are in a meeting and a campaign respectively and neither is told.
+ * `pvp` was about to become the second the day it got a control.
+ *
+ * IT LIVES HERE because this file is what decides what goes on the wire, and
+ * because World.js and main.js are the two readers — neither imports the other,
+ * and both already import this. A sixth session-wide rule is added to this line
+ * and is on the wire at all five sites by construction.
+ *
+ * NOTE WHAT IS NOT HERE. `duelRounds`, `duelHealth`, `duelRoundTime` and
+ * `duelBoons` are session-scoped too (see the SESSION_ONLY note in
+ * tools/checks/controls.mjs) but are read only inside `DuelMatch`, which only
+ * the host ever builds — a client never asks. Putting them on the wire would be
+ * bytes nobody reads, and the day something else reads them is the day they
+ * join this list.
+ */
+export const SESSION_KEYS = ['level', 'difficulty', 'mode', 'pvp', 'commandVersus'];
+
+/**
+ * Those keys of an object, skipping the ones it does not carry.
+ *
+ * Skipping rather than writing `undefined` is load-bearing at the receiving
+ * end: `session` is REPLACED on a `start`, not merged, because a mode change
+ * has to be able to take a key away. A sender that wrote `pvp: undefined`
+ * would put the key on the wire as absent-but-present and the two would stop
+ * being distinguishable.
+ */
+export function sessionPart(o) {
+  const out = {};
+  for (const k of SESSION_KEYS) if (o && o[k] !== undefined) out[k] = o[k];
+  return out;
+}
+
 export function hitSourceId(source, net) {
   const id = source?.id;
   if (id === undefined || id === null) return 0;

@@ -692,10 +692,13 @@ export class EmoteWheel extends RadialWheel {
  * "commanding your troops takes up too many buttons so it needs to be a small
  * popup mousewheel sort of thing."
  *
- * Six formations were six digit keys, plus a seventh for HOLD would have been
- * seven. They are one held key and a flick now. The six digit binds STAY —
- * they are in `ACTIONS`, they are rebindable, and a player who has learned
- * them has learned something real — but nobody has to.
+ * Six formations were six digit keys, and the seventh this note said a HOLD
+ * order "would have been" now exists — Hold fire, on Equal. That is the whole
+ * argument for the wheel arriving before it: the row is built from the table,
+ * so the order that made this paragraph's hypothetical real cost no markup and
+ * no key hunt. They are one held key and a flick. The direct binds STAY — they
+ * are in `ACTIONS`, they are rebindable, and a player who has learned them has
+ * learned something real — but nobody has to.
  *
  * THE TABLE IS COMMAND'S, not a copy of it. `ORDERS` is the authority for what
  * an order is and what it says about itself — the six formations and the

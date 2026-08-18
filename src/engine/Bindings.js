@@ -414,7 +414,7 @@ export const ACTION_IDS = ACTIONS.map(a => a.id);
  * SIX ORDER KEYS THAT NOTHING COULD SEE — and why the fix is a seam.
  *
  * `FORMATIONS` (src/game/Command.js) carries the key each order wants —
- * Digit6…Digit0 and Minus — and main.js read them RAW: `input.hit(F.key)`.
+ * Digit6…Digit0, Minus and Equal — and main.js read them RAW: `input.hit(F.key)`.
  * Everything this file exists to guarantee was therefore false for six of the
  * game's controls at once. They were not rebindable, they were on no controls
  * card, they were in no Codex row, and `findConflicts` reported every one of
@@ -490,8 +490,11 @@ export const ORDER_ACTIONS = [];
  * everything on the pad the least defensible was a second way to say a thing
  * the wheel already says better.
  *
- * A KEYBOARD IS UNTOUCHED. Digit6…Minus still fire the six orders directly,
- * because a keyboard has the room and a wheel on a mouse is slower than a key.
+ * A KEYBOARD IS UNTOUCHED. Digit6…Equal still fire the orders directly, one key
+ * each, because a keyboard has the room and a wheel on a mouse is slower than a
+ * key. The count is deliberately not written here: the orders are FORMATIONS'
+ * and the binds are derived from it, so a seventh (Hold fire, on Equal) needed
+ * no edit to this file and an eighth will not either.
  * tools/checks/controls.mjs asserts the wheel is what carries them on a pad —
  * derived from `ORDER_ACTIONS` and the wheel's own binding, so retiring the
  * wheel would put the shortfall straight back on the screen.

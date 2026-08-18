@@ -615,7 +615,7 @@ export async function run({ check, assert }) {
     if (orderIds.size) {
       const mainSrc = files.find(([p]) => p === 'main.js')?.[1] || '';
       const walks = /for\s*\(\s*const\s+(\w+)\s+of\s+ORDER_ACTIONS\s*\)/.exec(mainSrc);
-      assert(walks, 'main.js no longer walks ORDER_ACTIONS, so the six order keys are read by nobody');
+      assert(walks, 'main.js no longer walks ORDER_ACTIONS, so the order keys are read by nobody');
       assert(new RegExp(`\\.actHit\\(\\s*${walks[1]}\\.action\\s*\\)`).test(mainSrc),
         `main.js walks ORDER_ACTIONS but never asks input.actHit(${walks[1]}.action) — `
         + 'the orders are back to being raw key codes');
@@ -716,7 +716,7 @@ export async function run({ check, assert }) {
     return `#scoreboard filled from act('scoreboard'), default ${b.scoreboard.join('+')}, hold, label from the binding`;
   });
 
-  check('controls: the six order keys are in the table, and the table is not a copy', async () => {
+  check('controls: the order keys are in the table, and the table is not a copy', async () => {
     /**
      * WHAT THIS IS FOR.
      *
@@ -1200,6 +1200,14 @@ export async function run({ check, assert }) {
      * hole. Held to a standard anyway: each must still be genuinely read, so
      * this list cannot rot into a place to put things.
      */
+    /* `pvp` IS BOTH NOW, and that is not a contradiction. It has a control and
+     * a DEFAULT_SETTINGS key — a solo player can turn a free duel on — AND it
+     * rides the host's session blob (`Net.SESSION_KEYS`), because in a session
+     * the match's rules are the host's. The four `duel*` keys stay session-only:
+     * they are read exclusively inside `DuelMatch`, which only the host builds,
+     * so a client never asks and a default would be a number nobody consults.
+     * The clause below holds every name here to being genuinely read, so this
+     * list cannot rot into a place to put things. */
     const SESSION_ONLY = ['pvp', 'duelRounds', 'duelHealth', 'duelRoundTime', 'duelBoons'];
     const stale = SESSION_ONLY.filter(k => !readAt.has(k));
     assert(!stale.length,

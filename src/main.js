@@ -15,7 +15,7 @@ import { World } from './game/World.js';
 import { DIFFICULTY } from './game/Combat.js';
 import { HUD } from './ui/HUD.js';
 import { Menu, loadSettings, saveSettings, applyFeelSettings, VICTORY_TITLE } from './ui/Menu.js';
-import { Net, RemoteAvatar, packLook } from './net/Net.js';
+import { Net, RemoteAvatar, packLook, sessionPart } from './net/Net.js';
 import { boonById, drawBoons, BOSS_EVERY, MODES } from './game/Waves.js';
 // No `FORMATIONS` import any more: the orders reach this file as ordinary
 // bindings through `ORDER_ACTIONS` below, which is the point of the seam.
@@ -89,6 +89,7 @@ let session = null;
 const sessionOr = (key) => (session && session[key] !== undefined ? session[key] : settings[key]);
 /** The settings a world is built from: the player's, with the host's overrides. */
 const worldSettings = () => (session ? { ...settings, ...session } : settings);
+
 /** A name from the wire, on its way into innerHTML. */
 const escName = (s) => String(s == null ? '' : s).replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
 
@@ -585,7 +586,7 @@ async function deploy() {
     // missed, and each of them would fall back independently. They would agree
     // today, by luck, because the fallback is deterministic — but "the host
     // sends the level it is standing in" is the thing that has to be true.
-    if (net.isHost) net.broadcast({ t: 'start', level: world.levelKey, difficulty: settings.difficulty, mode: settings.mode });
+    if (net.isHost) net.broadcast({ t: 'start', ...sessionPart(settings), level: world.levelKey });
   }
 
   hud.show(true);
@@ -1255,9 +1256,7 @@ function wireNet() {
   });
   net.on('welcome', (hostSettings) => {
     // Into the SESSION, not into the save file. See `session` at the top.
-    if (hostSettings) {
-      session = { level: hostSettings.level, difficulty: hostSettings.difficulty, mode: hostSettings.mode };
-    }
+    if (hostSettings) session = sessionPart(hostSettings);
     menu.netStatus('connected — waiting for the host to deploy', 'ok');
   });
   /**
@@ -1292,7 +1291,7 @@ function wireNet() {
    * own idea of the ground to the one on the wire.)
    */
   net.on('start', (msg) => {
-    session = { level: msg.level, difficulty: msg.difficulty, mode: msg.mode };
+    session = sessionPart(msg);
     if (net.isHost) return;                       // our own broadcast, coming back
     if (world) {
       // A world already stands, in some level that is no longer the session's.
@@ -1408,9 +1407,7 @@ const localLook = () => packLook(settings);
 async function hostSession() {
   menu.netStatus('opening a session…');
   try {
-    const code = await net.host(playerName(), {
-      level: settings.level, difficulty: settings.difficulty, mode: settings.mode,
-    }, localLook());
+    const code = await net.host(playerName(), sessionPart(settings), localLook());
     menu.netCode(code);
     menu.netStatus('session open — share the code, then Ignite', 'ok');
     menu.netSession('host');
