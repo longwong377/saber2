@@ -49,9 +49,10 @@
 import { readFileSync } from 'node:fs';
 import * as THREE from 'three';
 import {
-  CEL, celTone, celShadow, celAlbedo, celBand, celDistance, lambertTone, bandCount,
+  CEL, CEL_KEY, celTone, celShadow, celAlbedo, celBand, celDistance, lambertTone, bandCount,
 } from '../../src/toon/Cel.js';
-import { INK } from '../../src/toon/Ink.js';
+import { templateAfter, glslUnit } from './_glsl.mjs';
+import { INK, OutlinePass } from '../../src/toon/Ink.js';
 import { Cloak } from '../../src/game/Cloth.js';
 import { waterShade } from '../../src/world/Scenery.js';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
@@ -311,7 +312,7 @@ export function run({ check, assert, near }) {
      */
     const keys = [0.24, 0.37, 0.44, 0.62, 1.0];    // canyon, meadow, arena, high sun, point
     const casts = [0, 0.25, 0.5, 0.75, 1];
-    let n = 0, worst = 0, at = null;
+    let n = 0, worst = 0, worstAt = [0, 0, 0, 0, 0, 0];
     for (const key of keys) {
       for (const shape of [0, 1]) {
         for (const cast of casts) {
@@ -319,7 +320,7 @@ export function run({ check, assert, near }) {
             const d = i / 400;
             const g = glslTone(d, key, shape, cast), j = celTone(d, key, shape, cast);
             const e = Math.abs(g - j);
-            if (e > worst) { worst = e; at = [d, key, shape, cast, g, j]; }
+            if (e > worst) { worst = e; worstAt = [d, key, shape, cast, g, j]; }
             n++;
           }
         }
@@ -327,7 +328,8 @@ export function run({ check, assert, near }) {
     }
     assert(worst < 1e-12,
       `the shipped saberCelTone and Cel.js's celTone disagree by ${worst.toExponential(2)} at `
-      + `N·L ${at[0]}, key ${at[1]}, shape ${at[2]}, cast ${at[3]} — GLSL ${at[4]}, JS ${at[5]}. `
+      + `N·L ${worstAt[0]}, key ${worstAt[1]}, shape ${worstAt[2]}, cast ${worstAt[3]} — `
+      + `GLSL ${worstAt[4]}, JS ${worstAt[5]}. `
       + 'One of the two is the game and the other is what every check in this file measures');
 
     /* AND THE SAME FOR THE OTHER FOUR. The band quantisers and the shadow
@@ -1943,17 +1945,46 @@ export function run({ check, assert, near }) {
     const src = INK_SRC();
     const ss = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
+    /* THE NUMBERS COME OFF A REAL PASS'S UNIFORMS, NOT OFF INK.
+     *
+     * The shader reads `uEdge.xy` and `uRange.zw`; this check re-derived its
+     * fades from `INK.edgeFade` / `INK.creaseFade` and never looked at either
+     * uniform. Those two are only the same number while one line of Ink.js
+     * keeps them so, and that line was covered by nothing: swap `uEdge` to the
+     * crease pair, hard-code the vector, or read a constant that no longer
+     * exists, and every distance below still measured the constants file while
+     * the game inked the horizon.
+     *
+     * So build the pass the Engine builds and read what it hands the GPU. The
+     * pair is asserted to BE the authored constant as well, because a uniform
+     * that agrees with nothing is the other half of the same defect. */
+    const pass = new OutlinePass(new THREE.Scene(), new THREE.PerspectiveCamera(), 1);
+    const uEdge = [pass.uniforms.uEdge.value.x, pass.uniforms.uEdge.value.y];
+    const uCrease = [pass.uniforms.uRange.value.z, pass.uniforms.uRange.value.w];
+    const uBias = pass.uniforms.uWeight.value.z, uCreaseBias = pass.uniforms.uWeight.value.w;
+    near(uEdge[0], INK.edgeFade[0], 1e-9, 'uEdge.x is not INK.edgeFade[0] — the shader fades silhouettes at a range nobody authored');
+    near(uEdge[1], INK.edgeFade[1], 1e-9, 'uEdge.y is not INK.edgeFade[1]');
+    near(uCrease[0], INK.creaseFade[0], 1e-9, 'uRange.z is not INK.creaseFade[0] — the shader fades creases at a range nobody authored');
+    near(uCrease[1], INK.creaseFade[1], 1e-9, 'uRange.w is not INK.creaseFade[1]');
+    near(uBias, INK.depthBias, 1e-9, 'uWeight.z is not INK.depthBias');
+    near(uCreaseBias, INK.creaseBias, 1e-9, 'uWeight.w is not INK.creaseBias');
+    assert(uEdge[1] > uEdge[0] && uEdge[1] < 200,
+      `the silhouette fade runs ${uEdge[0]}–${uEdge[1]} m — past ~200 m the far field is inked at `
+      + 'full weight, which is the scribbled horizon this check exists for');
+    assert(uCrease[1] > uCrease[0] && uCrease[1] < 120,
+      `the crease fade runs ${uCrease[0]}–${uCrease[1]} m — every fold in the landscape is drawn`);
+
     // A REAL SILHOUETTE, in the shader's own units: a wall with sky behind it,
     // which is what a ruin's edge and a butte's rim both are. Its dEdge is far
     // over the threshold, so the only thing that can switch it off is the fade.
     const BIG = 0.35;                                  // relative depth jump
-    const bias = INK.depthBias * 0.02;
-    const edgeAt = (d) => ss(bias, bias + 0.004, BIG) * (1 - ss(INK.edgeFade[0], INK.edgeFade[1], d));
+    const bias = uBias * 0.02;
+    const edgeAt = (d) => ss(bias, bias + 0.004, BIG) * (1 - ss(uEdge[0], uEdge[1], d));
     // The crease term, on the 35° chamfer the check above uses, faded twice.
     const chamfer = 2 * Math.sin(35 * Math.PI / 360);
     const creaseAt = (d) => {
-      const f = 1 - ss(INK.creaseFade[0], INK.creaseFade[1], d);
-      return ss(INK.creaseBias, INK.creaseBias + INK.creaseSoft, chamfer * f) * f;
+      const f = 1 - ss(uCrease[0], uCrease[1], d);
+      return ss(uCreaseBias, uCreaseBias + INK.creaseSoft, chamfer * f) * f;
     };
 
     // 1. INSIDE A FIGHT, NOTHING HAS CHANGED. A duel happens inside 25 m.
@@ -1976,8 +2007,8 @@ export function run({ check, assert, near }) {
     const creaseOld = (d) => ss(INK.creaseBias, INK.creaseBias + INK.creaseSoft,
       corner * (1 - ss(40, 120, d)));
     const cornerAt = (d) => {
-      const f = 1 - ss(INK.creaseFade[0], INK.creaseFade[1], d);
-      return ss(INK.creaseBias, INK.creaseBias + INK.creaseSoft, corner * f) * f;
+      const f = 1 - ss(uCrease[0], uCrease[1], d);
+      return ss(uCreaseBias, uCreaseBias + INK.creaseSoft, corner * f) * f;
     };
     assert(creaseOld(90) > 0.5,
       `the old crease fade already had a stacked-block corner at 90 m down to `
@@ -2017,8 +2048,8 @@ export function run({ check, assert, near }) {
     assert(/const reach = Math\.min\(this\.uniforms\.uHaze\.value\.y, this\.uniforms\.uEdge\.value\.y\)/.test(src),
       'the prepass frustum no longer tracks the nearer of the two fades, so it is drawing geometry '
       + 'to produce pixels the composite multiplies by nothing');
-    return `silhouette full to ${INK.edgeFade[0]} m, gone by ${INK.edgeFade[1]} m; crease full to `
-      + `${INK.creaseFade[0]} m, gone by ${INK.creaseFade[1]} m (a block corner at 90 m: `
+    return `silhouette full to ${uEdge[0]} m, gone by ${uEdge[1]} m (uEdge); crease full to `
+      + `${uCrease[0]} m, gone by ${uCrease[1]} m (uRange.zw) (a block corner at 90 m: `
       + `${creaseOld(90).toFixed(2)} → 0.00) · `
       + `16-bit contour scores ${scoreAt(16, 150).toFixed(4)} vs 24-bit ${scoreAt(24, 150).toExponential(1)} `
       + `against a ${bias} threshold`;

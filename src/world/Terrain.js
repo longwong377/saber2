@@ -2889,6 +2889,13 @@ const TERRAIN_FRAG_FOG = /* glsl */`
 
 /* ══════════════════════════════════════════════════════════════════════ */
 
+/**
+ * How far the ground may be dug out and piled up over a whole run, in metres,
+ * accumulated per grid cell. These were inline in `crater` and bounded the
+ * wrong array — see the note at the point of use.
+ */
+const MAX_DEFORM_DOWN = 4.5, MAX_DEFORM_UP = 3.0;
+
 export class Terrain {
   constructor(scene, presetName = 'dunes', quality = 1) {
     const preset = TERRAIN_PRESETS[presetName] || TERRAIN_PRESETS.dunes;
@@ -3678,9 +3685,41 @@ export class Terrain {
           ? depth * rim * Math.exp(-Math.pow((d - 1.0) * 4.2, 2))
           : 0;
         const delta = bowl + lip;
-        this.deform[k] += delta;
-        this.deform[k] = clamp(this.deform[k], -4.5, 3.0);
-        this.heights[k] += delta;
+        /**
+         * THE BOUND IS ON THE ACCUMULATED DEFORMATION, AND IT HAS TO REACH
+         * `heights`, WHICH IS THE GRID EVERY READER USES.
+         *
+         * `deform` was written on these two lines and read nowhere in src/ or
+         * tools/, so the −4.5 m floor bounded an array nothing consulted while
+         * `heights` — what `height()`, `slopeAt()`, the mesh and the physics
+         * heightfield all answer from — took the raw delta and accumulated
+         * without limit. Measured on scoria at might 1, the same 2.2 m × 0.55 m
+         * crater repeated at the origin:
+         *
+         *     10× deform −2.80  h(0,0) 20.17→17.37   rim slope 0.18
+         *     30× deform −4.50  h(0,0)       11.77   rim slope 0.67
+         *     60× deform −4.50  h(0,0)        3.38   rim slope 0.84
+         *    400× deform −4.50  h(0,0)      −91.74   rim slope 0.98
+         *
+         * — the clamp pinned after sixteen and the ground kept sinking. This is
+         * reachable from `Player._land`, which craters at the player's own feet
+         * on ANY landing over 15 m/s with no height gate, so about thirty hard
+         * landings on one spot leave the player at the bottom of a nine-metre
+         * hole whose walls are past the anti-climb threshold (slope 0.52)
+         * against a STEP_UP of 0.45: a soft lock, not a fall-through, since the
+         * heightfield follows the grid correctly the whole way down.
+         *
+         * Taking the applied delta from the CLAMPED difference makes the two
+         * arrays agree by construction: `deform` is the bound and `heights` is
+         * the bound applied. Levels.js's "nothing here can produce a hole you
+         * fall into whatever the settings say" is true per crater and was false
+         * for the sum; the sum is what this is for. Same shape as
+         * `Surface.tread`, one file away.
+         */
+        const was = this.deform[k];
+        const now = clamp(was + delta, -MAX_DEFORM_DOWN, MAX_DEFORM_UP);
+        this.deform[k] = now;
+        this.heights[k] += now - was;
       }
     }
     this._markDirty(i0, j0, i1, j1);
