@@ -1346,6 +1346,36 @@ export class World {
       this._skirmishBanner();
     }
     this.rotating = false;
+    /**
+     * …AND EVERYONE ELSE IN THE SESSION IS TOLD, which nothing did.
+     *
+     * A ground change is host-only by construction — `_groundPending` is set by
+     * `_advanceMission` and `_skirmishCleared`, and a client's director never
+     * runs — so a client never rotated. Both machines stayed up and neither
+     * said anything: the host rebuilt on the next mission's ground and went on
+     * broadcasting snapshots in its own absolute coordinates, and the client
+     * kept applying them to the OLD terrain. That is the same failure the
+     * `start` handler in main.js was written for, described there in full: the
+     * bodies all arrive, some buried in the client's hills and some hanging in
+     * its air, and the level's hazards exist on one machine only.
+     *
+     * `start` IS the message for this — "the session is now on this ground",
+     * carrying level, difficulty and mode, and a client that gets it tears its
+     * world down and lands in the new one. It was sent once, at deploy, and
+     * never again. Sending it from here rather than from the two callers is the
+     * same choice `onGround` makes one line down: both doors, sync and async,
+     * come through `_afterRotate`, so a rotation that forgot to announce itself
+     * is not a shape this can take.
+     *
+     * `this.levelKey` and not the key that was asked for, for the reason
+     * main.js gives at its own `start`: a host whose key missed and fell back
+     * would otherwise send the key that missed and let every client fall back
+     * independently.
+     */
+    if (this.netMode === 'host' && this.net?.connected) {
+      this.net.broadcast({ t: 'start', level: this.levelKey,
+        difficulty: this.settings?.difficulty, mode: this.settings?.mode });
+    }
     /* WE HAVE ARRIVED — a separate signal from `onRotate`, which is the
      * request. The handful of things a front end owns per player (the camera's
      * fov, the HUD's level name and difficulty, the boon strip) are re-applied

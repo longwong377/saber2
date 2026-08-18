@@ -80,6 +80,55 @@ export async function run({ check, assert }) {
 
   /* ══ the level swap ═══════════════════════════════════════════════ */
 
+  check('rotation: the ground changing is announced to the session, not only survived', async () => {
+    /**
+     * A ground change is HOST-ONLY by construction — `_groundPending` is set by
+     * `_advanceMission` and `_skirmishCleared`, and a client's director never
+     * runs — so nothing rotated a client and nothing told one. Both machines
+     * stayed up and neither said anything: the host rebuilt on the next
+     * mission's ground and went on broadcasting snapshots in its own absolute
+     * coordinates, and the client kept applying them to the OLD terrain. That
+     * is the failure main.js's `start` handler documents in full — every body
+     * arrives, some buried in the client's hills and some hanging in its air,
+     * and the level's hazards exist on one machine only.
+     *
+     * `start` is already the message for "the session is now on this ground";
+     * it was sent once, at deploy, and never again. Asserted on the WIRE rather
+     * than on the handler, because the handler is main.js's and the thing that
+     * was missing is the send.
+     */
+    const { world } = await boot({ mode: 'roguelite' });
+    const sent = [];
+    world.attachNet({ connected: true, isHost: true, sweep() {}, toPeer() {}, toHost() {},
+      broadcast: (m) => sent.push(m) }, 'host');
+    world.rotateTo('drifts');
+    const starts = sent.filter((m) => m.t === 'start');
+    assert(starts.length === 1,
+      `a host rotated to another level and put ${starts.length} 'start' messages on the wire — a `
+      + "client is still standing on the old ground, applying the host's coordinates to it");
+    assert(starts[0].level === world.levelKey,
+      `the host announced '${starts[0].level}' and is standing on '${world.levelKey}' — a key that `
+      + 'missed and fell back must not be the key every client falls back from independently');
+    assert(starts[0].mode === world.settings.mode,
+      `the announcement carries mode '${starts[0].mode}' against the session's '${world.settings.mode}'`);
+
+    /* …AND A CLIENT DOES NOT ANNOUNCE ONE. A client rotates only because it was
+     * told to, and a client that echoed the message would rotate the host. */
+    const { world: c } = await boot({ mode: 'roguelite' });
+    const cSent = [];
+    c.attachNet({ connected: true, isHost: false, sweep() {}, toPeer() {}, toHost() {},
+      broadcast: (m) => cSent.push(m) }, 'client');
+    c.rotateTo('drifts');
+    assert(cSent.filter((m) => m.t === 'start').length === 0,
+      'a client announced a ground change of its own — the host is the only node that decides one');
+
+    /* …and a solo world has nobody to tell and must not crash trying. */
+    const { world: solo } = await boot({ mode: 'roguelite' });
+    solo.rotateTo('drifts');
+    assert(solo.levelKey === 'drifts', 'a solo rotation did not arrive');
+    return `host announced ${starts[0].level}/${starts[0].mode} once; client silent; solo unaffected`;
+  });
+
   check('rotation: a plain level change loses the whole run, and rotateTo does not', async () => {
     const { world } = await boot({ mode: 'roguelite' });
     const before = await buildARun(world);

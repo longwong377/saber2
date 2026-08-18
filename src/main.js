@@ -1263,50 +1263,33 @@ function wireNet() {
   /**
    * THE HOST HAS DEPLOYED — AND WE GO, WHEREVER WE HAPPEN TO BE STANDING.
    *
-   * This used to act only `if (screens.state === 'menu')`. In a co-op Descent
-   * the host clears rung 1 and re-deploys into the Foundry, broadcasting a
-   * fresh `start` — and every client that was playing, paused, drafting or dead
-   * ignored it and stayed in the Intake, receiving snapshots of bodies at
-   * Foundry coordinates. Enemies spawned inside walls or in mid-air and the run
-   * was unrecoverable. A client's own Run can never ascend either (the rung
-   * signal is host-only, by design), so this message is the ONLY thing that can
-   * take a joining player down the ladder.
+   * This used to act only `if (screens.state === 'menu')`, so a client that was
+   * playing, paused, drafting or dead when the host changed ground ignored the
+   * message and stayed where it was, receiving snapshots of bodies at the new
+   * level's coordinates. `packSnapshot` writes the host's ABSOLUTE positions
+   * into whatever terrain the client happens to have, so the bodies all arrive
+   * and land wrong: measured on two real Worlds a level apart, all 8 bodies
+   * arrive, 5 buried in the client's hills and 3 hanging in its air, and the
+   * level's own hazards exist on one machine only.
    *
-   * …AND ONLY THE `screens.state === 'menu'` GATE CAME OFF. The level did not.
+   * THIS IS THE ONLY LEVEL KEY ON THE WIRE. There is no other message that can
+   * move a joining player, which is why it is sent from `World._afterRotate` as
+   * well as from `deploy` — a mission boundary and a skirmish's next ground are
+   * both ground changes the client cannot work out for itself, since a client's
+   * director never runs.
    *
-   * `deploy()` fell through to its default argument, `startRun()`, which builds
-   * a BRAND NEW gauntlet Run at tier 0 — and `deploy`'s own next line is
-   * `const levelKey = run && !run.done ? run.rung.level : sessionOr('level')`,
-   * so that fresh run's rung won over `msg.level`, which the line above has
-   * just put into `session`. Evaluated against the real Run and DESCENT
-   * (`0:intake 1:foundry 2:deeps 3:deeps`): the host sends intake and the
-   * client builds intake; the host sends foundry, then deeps, then deeps, and
-   * the client builds intake, intake, intake. THREE OF FOUR RUNGS, and every
-   * one of them puts the joining player in a different building from everyone
-   * else while snapshots keep arriving at the host's coordinates — measured on
-   * two real Worlds, a host on the foundry and a client on the intake: all 8
-   * bodies arrive, 5 buried and 3 floating against the client's own terrain,
-   * and the foundry's 58 dps melt hazard does not exist over there at all. The
-   * atmosphere follows the client's tier too (`SPIRE[run.tier]`), so the bottom
-   * of the ladder is lit like the top of it.
+   * A client keeps no run of its own and loses nothing by rebuilding: the score
+   * it shows comes off the snapshot's `sc`, and the run fields are written only
+   * in `onWaveClear`'s host half. Carrying a joining player's own build across
+   * a ground change is a separate piece of work.
    *
-   * `deploy(null)` and not `deploy()`, and the difference is the whole fix: a
-   * default parameter fires on `undefined` only, so passing an explicit null
-   * makes `levelKey` fall through to `sessionOr('level')` — which is `msg.level`
-   * one line up. Nothing else can carry it; there is no level key on the wire
-   * anywhere else, and `packSnapshot` writes the host's absolute coordinates
-   * into whatever terrain the client happens to have.
-   *
-   * A client has no ladder of its own to keep, so it loses nothing by not
-   * holding a Run: the score it shows comes off the snapshot's `sc`, and
-   * `run.wave`/`kills`/`hpFrac` are written only in `onWaveClear`'s host half.
-   * What a client's Run did hold is its drafted boons, and those did not
-   * survive a landing before this either — the Run was rebuilt from scratch on
-   * every one. Carrying a joining player's build down the ladder is a separate
-   * piece of work and wants a run that accumulates without ever ascending.
-   *
-   * Only in the gauntlet, note: in every other mode `startRun()` already
-   * returns null and the client already loaded the host's level correctly.
+   * (This note used to run four times as long, about `deploy()`'s default
+   * argument beating `msg.level` with a fresh gauntlet Run's rung. `startRun`,
+   * `run.rung.level` and DESCENT went with the Descent; `deploy` takes no
+   * argument now and reads `MODES[settings.mode]?.level ?? sessionOr('level')`.
+   * Left as one line rather than deleted because the fix it describes is still
+   * load-bearing in shape: nothing between here and `loadLevel` may prefer its
+   * own idea of the ground to the one on the wire.)
    */
   net.on('start', (msg) => {
     session = { level: msg.level, difficulty: msg.difficulty, mode: msg.mode };
