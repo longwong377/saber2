@@ -1,5 +1,11 @@
 /**
- * BATTLEFRONT BORZ — the support calls, and whether a code can be entered.
+ * BATTLEFRONT BORZ — the two things you call down: a support call, and
+ * yourself.
+ *
+ * Two of player note #15 and #29's verbs share this file because they share a
+ * bench — a real Player over real ground — and because they are the same kind
+ * of claim: something arrives late, somewhere you chose, and hurts what is
+ * standing there. The stratagems are first; the aerial dive is at the end.
  *
  * Player note #29 asked for WASD-coded support calls. The system is
  * src/game/Stratagems.js; this is what says it works, and the four things it
@@ -271,6 +277,93 @@ export async function run({ check, assert, THREE: T }) {
     const took = hp0 - b.p.hp;
     assert(took < 150, `it hit the caller for the full ${took.toFixed(0)} — the caller knew it was coming`);
     return `dead centre of your own strike: ${took.toFixed(0)} hp`;
+  });
+
+  check('dive: attacking in the air drives you into the ground, hard', () => {
+    /**
+     * THE DIVE IS A VELOCITY AND NOTHING ELSE — see `_tryDive`. Everything the
+     * attack does when it arrives is `_land`'s, keyed off the speed a body
+     * came down at, so the only thing to measure here is that it produces that
+     * speed and that it refuses when it should.
+     *
+     * Two refusals, and both matter. A dive with the ground under your feet is
+     * not a dive; a dive from a kerb should not shake the field, which is what
+     * DIVE_CLEAR is for. Without them the attack is a free stomp on a button
+     * that is also the ordinary stab.
+     */
+    const b = bench();
+    const p = b.p;
+
+    // on the ground: nothing
+    p.grounded = true;
+    assert(p._tryDive(b.ctx) === false, 'a dive fired with both feet on the sand');
+
+    // in the air but too low: nothing
+    p.grounded = false;
+    p.position.set(0, 0.6, 0);
+    p.velocity.set(0, -1, 0);
+    assert(p._tryDive(b.ctx) === false,
+      `a dive fired from 0.6 m up — below DIVE_CLEAR there is nothing to fall from`);
+
+    // in the air and still rising: that is a jump, not a dive
+    p.position.set(0, 6, 0);
+    p.velocity.set(0, 8, 0);
+    assert(p._tryDive(b.ctx) === false, 'a dive fired on the way UP');
+
+    // high, falling, with stamina: a slam
+    p.velocity.set(3, -1, 0);
+    p.stamina = 100;
+    const st0 = p.stamina;
+    assert(p._tryDive(b.ctx) === true, 'a dive from 6 m up while falling did not fire');
+    assert(p.velocity.y < -25,
+      `the dive left the body falling at ${(-p.velocity.y).toFixed(1)} m/s — under the 15 m/s `
+      + '`_land` needs before it cracks the ground, the dive is just a fall');
+    assert(Math.abs(p.velocity.x) < 3 * 0.5,
+      'the dive kept full horizontal speed — a slam that carries the whole run is a long jump');
+    assert(Math.abs(p.velocity.x) > 0.1,
+      'the dive zeroed the horizontal — a slam that stops you dead in the air reads as a wall');
+    assert(p.stamina < st0, 'the dive was free');
+    assert(p.diving, 'the dive did not mark the body as committed');
+    assert(p._tryDive(b.ctx) === false, 'a second dive fired while the first was still falling');
+    return `refused grounded / at 0.6 m / rising; fired at 6 m into `
+      + `${(-p.velocity.y).toFixed(0)} m/s for ${(st0 - p.stamina).toFixed(0)} stamina`;
+  });
+
+  check('dive: landing from one hits harder than arriving at the same speed', () => {
+    /**
+     * The dive's whole claim on being an ATTACK rather than a fall is
+     * `DIVE_LAND`, and it is one multiplier on a landing that already exists
+     * rather than a second landing path. So: two identical landings at the
+     * same speed on the same ground, one of them committed, and the bodies
+     * standing next to them compared.
+     *
+     * Same archetype, same distance, same impact speed. The only difference is
+     * the flag.
+     */
+    const land = (dove) => {
+      const b = bench();
+      const e = new Enemy(b.world, 'b1', new THREE.Vector3(2.2, 0, 0));
+      e.position.set(2.2, 0, 0);
+      b.world.enemies.push(e);
+      b.ctx.enemies = b.world.enemies;
+      const hp0 = e.hp;
+      b.p.position.set(0, 0, 0);
+      b.p.diving = dove;
+      b.p._land(b.ctx, 30);
+      return { took: hp0 - e.hp, moved: Math.hypot(e.velocity.x, e.velocity.z), diving: b.p.diving };
+    };
+    const fell = land(false);
+    const dove = land(true);
+    assert(fell.took > 0, 'a 30 m/s landing did nothing to a body 2.2 m away — the bench is wrong');
+    assert(dove.took > fell.took * 1.3,
+      `a dive landing took ${dove.took.toFixed(0)} hp against a fall's ${fell.took.toFixed(0)} — `
+      + 'the blade in it is worth nothing');
+    assert(dove.moved > fell.moved,
+      'a dive landing threw the body no further than an accident at the same speed');
+    assert(!dove.diving,
+      '`diving` survived the landing — the next accidental fall would land as a dive');
+    return `2.2 m away: fall ${fell.took.toFixed(0)} hp / ${fell.moved.toFixed(1)} m/s, `
+      + `dive ${dove.took.toFixed(0)} hp / ${dove.moved.toFixed(1)} m/s`;
   });
 
   check('stratagems: a call needing an army is not offered without one', () => {
