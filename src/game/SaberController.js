@@ -112,7 +112,17 @@ const FLOURISH = { dur: 0.62, turns: 2, radius: 0.30 };
  */
 export const READY_GUARD = {
   third: { x: 0.30, y: 0.08 },
-  first: { x: 0.26, y: 0.02 },
+  /* THE FIRST-PERSON READY IS HIGHER THAN THE THIRD-PERSON ONE, which is the
+   * opposite of what it was, and the reason is the WRIST rather than the blade.
+   * A fist rolled round the shaft to where the palm faces across the body (see
+   * FP_TUNE) sits 59 mm below the grip point instead of 27 mm, and at half a
+   * metre from the lens those 32 mm are 3.7 degrees — enough to put the hand
+   * off the bottom of a 30-degree half-field. The guard carries the hilt, the
+   * hilt carries the fist, so the hold comes up rather than the grip being
+   * compromised back toward the emitter. Measured, not guessed: the hand reads
+   * 27.6 degrees down at y=0.02 and 23.2 at y=0.12, against a 26-degree bound
+   * — and 23.2 frames the hold better than the 26.0 it shipped at. */
+  first: { x: 0.26, y: 0.12 },
 };
 
 /* ══════════════════════════════════════════════════════════════════════ */

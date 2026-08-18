@@ -446,6 +446,39 @@ const PULL_OPEN = 0.34;
  */
 const FLIP_TIME = 0.52;
 /**
+ * THE DIVE, in three numbers. See `_tryDive` for why each is derived rather
+ * than chosen.
+ *
+ * `DIVE_SPEED` clears `_land`'s 15 m/s shockwave threshold twice over and lands
+ * at the `power` cap. `DIVE_CLEAR` is the height a dive has to start above the
+ * ground to be one at all — below it there is nothing to fall from and it would
+ * only cancel the jump you are in. `DIVE_STAMINA` is the dash's 18 again,
+ * because it buys the same thing: one committed movement that cannot be spammed
+ * through a fight.
+ */
+const DIVE_SPEED = 30, DIVE_CLEAR = 1.2, DIVE_STAMINA = 18;
+/** How much bigger a dive's landing is than the same speed arrived at by
+ *  accident. Radius and impulse take it once, damage twice — the blade is what
+ *  makes the difference and the blade is a damage term. */
+const DIVE_LAND = 1.45;
+
+/**
+ * FORCE LIGHTNING, as an arc. See `forceLightning` and `_lightningArc`.
+ *
+ * `LIGHTNING_DAMAGE` is the 46 it always did, kept so the power's strength at
+ * the first body is unchanged and only its REACH is new. `CHAIN` is hops past
+ * that first body, `REACH` is how far a hop can find the next conductor, and
+ * `FALLOFF` is what each hop keeps: three hops at 0.62 take 46 to 11, which is
+ * a body that has plainly been hit and is plainly not the target.
+ *
+ * `STEPS_PER_M`, `WANDER` and `FORK` are the drawing, not the rule: samples per
+ * metre of arc, how far one step of the walk may stray, and the chance a sample
+ * throws a dead-end branch.
+ */
+const LIGHTNING_RANGE = 16, LIGHTNING_DAMAGE = 46;
+const LIGHTNING_CHAIN = 3, LIGHTNING_REACH = 6.5, LIGHTNING_FALLOFF = 0.62;
+const LIGHTNING_STEPS_PER_M = 3.2, LIGHTNING_WANDER = 0.55, LIGHTNING_FORK = 0.16;
+/**
  * …and how high above the feet it turns. 1.02 m on a 1.75 m figure is 58% of
  * standing height, which is where a tucked gymnast's centre of mass actually
  * sits — a little above the navel. The pelvis (0.95) is the obvious choice and
@@ -855,14 +888,44 @@ const FP_GRIP_SIDE = -0.05;
  *  width of a closed hand on this hilt, so the same number holds here. */
 const FP_HAND_GAP = 0.065;
 /**
- * THE ROLL OF THE FIST ABOUT THE HILT, in radians, and it is a live object so a
- * render can sweep it without an edit — `tools/_palmsweep.mjs` prints the table
- * and `tools/shot.mjs --pose` sets the value it is testing.
+ * THE ROLL OF THE FIST ABOUT THE HILT — "still looks like the palms are facing
+ * out", the report that survived the icepick fix.
  *
- * Zero is "the fist comes up under the grip from the outboard side", which is
- * where FP_GRIP_SIDE alone puts it.
+ * FP_GRIP_SIDE settles which SIDE of the hilt the fist comes up from and that
+ * was the whole of the previous pass; it leaves the fist free to sit anywhere
+ * on the circle about the shaft, and zero is not the right place on it.
+ * Measured with `tools/_palm.mjs`, which reads the palm normal in the camera's
+ * own frame — the palm is the hand's +Z, and `buildHand` settles that rather
+ * than a guess: the finger roots carry `rotation.x = 1.24`, a positive turn
+ * about X takes +Y toward +Z, so the fingers close toward +Z, and GRIP_BORE
+ * agrees by putting the hilt's axis 30 mm out on the same side.
+ *
+ * At zero the right palm read (out −0.68, up −0.52, eye −0.52): turned away
+ * from the lens, so what is on the screen is the BACK of the glove and the
+ * little-finger edge — a smooth slab with the hilt behind it, which is what
+ * "palms facing out" describes.
+ *
+ * `tools/_palmsweep.mjs` prints the whole circle. Three were rendered and
+ * looked at, because the last two passes at this were argued and both were
+ * wrong:
+ *
+ *     roll   palm (out  up  eye)      wrist below the grip   what it looks like
+ *      0°        −0.68 −0.52 −0.52          27 mm            a brown slab
+ *     60°        −0.95  0.31 −0.01          59 mm            four fingers round the grip
+ *    120°        −0.27  0.82  0.50          33 mm            edge-on, arm across the body
+ *    160°         0.40  0.71  0.58           7 mm            open palm, hilt lying on it
+ *
+ * 60° it is: the palm turned squarely across the body, which is where a real
+ * one-handed sabre guard puts it, so the fingers wrap toward the lens and the
+ * hilt sits inside the curl instead of behind a knuckle. It also puts the
+ * wrist furthest below the grip point of any candidate, which is the anti-
+ * icepick bound the previous pass was solving for — the two wants turned out
+ * to agree.
+ *
+ * An object rather than a constant so a render can sweep it without an edit:
+ * `tools/shot.mjs --pose` sets the value it is testing.
  */
-export const FP_TUNE = { roll: 0 };
+export const FP_TUNE = { roll: 60 * Math.PI / 180 };
 export function fpGripOn(saber) {
   const lo = saber?.hiltFloor;
   return typeof lo === 'number' && Number.isFinite(lo) ? lo + FIST_CLEAR : GRIP_AT.FP;
@@ -2000,6 +2063,8 @@ export class Player {
     this.coyote = 0;
     this.jumpHeld = 0;
     this.dashTimer = 0;
+    /** Committed to a slam. Set by `_tryDive`, cleared by `_land`. */
+    this.diving = false;
     this.dashDir = new THREE.Vector3();
     /** Seconds left of an air dodge's somersault, and the horizontal axis it
      *  turns about. Zero on the ground: a dodge with a foot down is a step. */
@@ -2427,6 +2492,54 @@ export class Player {
       else if (this.stasis.active) this.releaseStasis(ctx, true);
     }
     if (input.actHit('dash') && this.cooldowns.dash <= 0) this._tryDash(ctx);
+    /* THE DIVE. An attack pressed with both feet off the ground is not a stab,
+     * it is a slam — and it needs no binding of its own, because "attack, in
+     * the air" is already an unambiguous input and a key nobody can find is a
+     * feature nobody has. The controller runs its thrust envelope on the same
+     * press, which is right: the blade leads the fall. */
+    if (input.actHit('thrust')) this._tryDive(ctx);
+  }
+
+  /**
+   * THE AERIAL DIVE — player note #15's "aerial dive attack".
+   *
+   * IT IS A VELOCITY AND NOTHING ELSE, and that is the whole design. The
+   * landing shockwave, the crater, the stagger, the sand, the thud and the
+   * fall damage are all already written and all already keyed off the speed a
+   * body arrives at (`_land`, `impactSpeed > 15`). A dive that dealt its own
+   * damage in its own radius would be a second copy of that rule which could
+   * disagree with the first — so this drives the number the existing rule
+   * reads, and everything downstream happens because the player genuinely came
+   * down that fast.
+   *
+   * DIVE_SPEED is set from that threshold rather than picked: the landing
+   * shockwave needs 15 m/s and gravity gives that after 1.15 s of fall, which
+   * is longer than most jumps are in the air. 30 m/s clears it instantly and
+   * lands at `power` 1.6, the cap, so a dive is always the biggest landing in
+   * the game.
+   *
+   * THE FLOOR CLEARANCE is what stops it being a free stomp: a body 1.2 m off
+   * the ground has nothing to gain and would only cancel its own jump, and a
+   * dive off a kerb should not shake the field. `coyote` is not consulted —
+   * that is for jumping, and this is the opposite question.
+   *
+   * The horizontal velocity is kept at a third rather than zeroed. A dive
+   * that stopped you dead in the air reads as hitting a wall; keeping some of
+   * the run carries the arc forward and lets a dive be aimed at something.
+   */
+  _tryDive(ctx) {
+    if (this.grounded || this.diving || this.dashTimer > 0) return false;
+    if (this.velocity.y > 2) return false;              // still going up: that is a jump
+    const ground = ctx.terrain ? ctx.terrain.height(this.position.x, this.position.z) : 0;
+    if (this.position.y - ground < DIVE_CLEAR) return false;
+    if (this.stamina < DIVE_STAMINA) return this._refuse('dive', 'no stamina left to drive it');
+    this.stamina -= DIVE_STAMINA;
+    this.diving = true;
+    this.velocity.y = -DIVE_SPEED;
+    this.velocity.x *= 0.34; this.velocity.z *= 0.34;
+    this.cloak?.impulse(_v5.set(0, 1, 0), 2.4); this.skirt?.impulse(_v5.set(0, 1, 0), 2.4);
+    audio.swing(18, this.chest);
+    return true;
   }
 
   _applyViewMode() {
@@ -2852,11 +2965,23 @@ export class Player {
     if (ctx.particles) {
       ctx.particles.sandPuff(this.position.clone(), power * 1.9, this.position.y, ctx.groundColor);
     }
+    /* A DIVE LANDS HARDER THAN A FALL, and it is one multiplier rather than a
+     * second landing path: everything below already scales with `power`, so a
+     * dive is a landing with more of it. The blade is in it — that is the
+     * difference between arriving fast and arriving with a sword — which is
+     * why the damage term takes the bigger share.
+     *
+     * `diving` is cleared HERE and nowhere else. It is set by an input and can
+     * only be answered by an impact, so any other clear would be a second
+     * owner of the same fact. */
+    const dove = this.diving;
+    this.diving = false;
     if (impactSpeed > 15) {
       // a Force landing cracks the ground and staggers everything near it
       if (ctx.terrain) ctx.terrain.crater(this.position.x, this.position.z, 1.8 + power, 0.42 * power);
       audio.explosion(this.position, 0.5);
-      this._shockwave(ctx, 5.4 * power, 11 * power, 14 * power);
+      const k = dove ? DIVE_LAND : 1;
+      this._shockwave(ctx, 5.4 * power * k, 11 * power * k, 14 * power * k * k);
       if (this.boonMods.repulse) this._shockwave(ctx, 8 * power, 20 * power, 26 * power);
     }
     // Four arguments, not three. The signature is (amount, point, source, kind)
@@ -5244,23 +5369,116 @@ export class Player {
     this._gesture('lightning');
     audio.force(this.chest, 'lightning');
     const origin = _v1.copy(this.chest).addScaledVector(this.aimDir, 0.4);
+    /**
+     * IT ARCS. Player note #13 asked for a lightning ARC and what was here was
+     * a cone that damaged everything inside it, each target joined to the hand
+     * by twelve points lerped along a straight line with a little jitter. Two
+     * separate things were missing from that and this fixes both.
+     *
+     * IT JUMPS. A bolt earths itself through the nearest conductor and then
+     * through the next one, which is the whole reason lightning is the crowd
+     * power and not a second push: you point it at the front of a line and it
+     * walks down the line. `LIGHTNING_CHAIN` hops, `LIGHTNING_REACH` metres a
+     * hop, and each hop keeps `LIGHTNING_FALLOFF` of the last one's damage so
+     * the fourth body in a chain is singed rather than killed.
+     *
+     * `hit` is a Set and not a list, and it is what stops the arc from
+     * bouncing between two bodies forever — a chain that could revisit is not
+     * a chain, it is a loop with a damage multiplier.
+     *
+     * The cone still decides where it STARTS. Everything the hand can see is a
+     * root, and the chain grows from each root independently, so pointing into
+     * a crowd is different from pointing at one straggler — which is the
+     * choice the power is for.
+     */
+    const hit = new Set();
+    const roots = [];
     for (const e of this._foes(ctx)) {
       if (e.dead) continue;
       _v2.subVectors(e.position, origin);
       const d = _v2.length();
-      if (d > 16) continue;
+      if (d > LIGHTNING_RANGE) continue;
       if (_v2.normalize().dot(this.aimDir) < 0.8) continue;
-      e.damage(46, e.position, this, 'lightning');
-      // `?.` because a player is never taken off the controls — there is no
-      // `Player.stun` and there should not be one. The stagger a player gets
-      // instead is applied by `damage()` itself, at its own threshold.
-      e.stun?.(1.4, _v2, 1.4);    // `_v2` is the normalised line from the hand
-      if (ctx.particles) {
-        for (let i = 0; i < 12; i++) {
-          _v3.copy(origin).lerp(e.position, i / 12);
-          _v3.x += (rng() - 0.5) * 0.6; _v3.y += (rng() - 0.5) * 0.6; _v3.z += (rng() - 0.5) * 0.6;
-          ctx.particles.sparks.spawn(_v3, _v4.set((rng() - .5) * 3, (rng() - .5) * 3, (rng() - .5) * 3),
-            { life: 0.2, size: 0.06, drag: 1, gravity: 0, color: this._lightningColor(), alpha: 1 });
+      roots.push(e);
+    }
+    for (const root of roots) {
+      let from = origin, node = root, power = 1;
+      for (let hop = 0; hop <= LIGHTNING_CHAIN && node; hop++) {
+        if (hit.has(node)) break;
+        hit.add(node);
+        this._lightningArc(ctx, from, node.position, power);
+        node.damage(LIGHTNING_DAMAGE * power, node.position, this, 'lightning');
+        // `?.` because a player is never taken off the controls — there is no
+        // `Player.stun` and there should not be one. The stagger a player gets
+        // instead is applied by `damage()` itself, at its own threshold.
+        node.stun?.(1.4 * power, _v2.subVectors(node.position, from).normalize(), 1.4 * power);
+        from = node.position;
+        power *= LIGHTNING_FALLOFF;
+        // the next conductor: nearest unhit body inside a hop
+        let best = null, bestD = LIGHTNING_REACH * LIGHTNING_REACH;
+        for (const e of this._foes(ctx)) {
+          if (e.dead || hit.has(e)) continue;
+          const dd = e.position.distanceToSquared(from);
+          if (dd < bestD) { bestD = dd; best = e; }
+        }
+        node = best;
+      }
+    }
+  }
+
+  /**
+   * ONE ARC, DRAWN — and it is drawn as a WALK rather than as a line.
+   *
+   * The old geometry was `lerp(origin, target, i/12)` with an independent
+   * ±0.3 m jitter on each point, which is a straight line of unrelated dots:
+   * every sample forgets where the last one was, so what the eye reads is a
+   * dotted rule between two things and not a discharge.
+   *
+   * A discharge is a RANDOM WALK that has to arrive: the offset carries from
+   * one step to the next, so the path stays continuous, and it is multiplied
+   * by `sin(pi t)` so it is pinned at the hand and at the body and free in the
+   * middle — which is what makes the shape read as a bolt whipping between two
+   * fixed ends. The step count follows the LENGTH rather than being a constant,
+   * so a 2 m arc is not made of the same twelve fat dots as a 16 m one.
+   *
+   * FORKS are the second half of it. A bolt that reaches a body has usually
+   * thrown two or three that did not, and those dead ends are most of what a
+   * lightning strike looks like. They branch off a point on the walk, run a
+   * fraction of the remaining distance in a direction that is mostly the
+   * bolt's own, and stop.
+   */
+  _lightningArc(ctx, from, to, power = 1) {
+    const P = ctx.particles;
+    if (!P) return;
+    const colour = this._lightningColor();
+    const span = _v2.subVectors(to, from);
+    const len = span.length();
+    if (len < 1e-3) return;
+    const steps = clamp(Math.round(len * LIGHTNING_STEPS_PER_M), 6, 48);
+    const wander = _v3.set(0, 0, 0);
+    const at = _v4;
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      // the walk: the offset persists, so consecutive samples are neighbours
+      wander.x += (rng() - 0.5) * LIGHTNING_WANDER;
+      wander.y += (rng() - 0.5) * LIGHTNING_WANDER;
+      wander.z += (rng() - 0.5) * LIGHTNING_WANDER;
+      wander.multiplyScalar(0.72);                       // …and it is damped, or it runs away
+      const pin = Math.sin(Math.PI * t);                 // zero at both ends
+      at.copy(from).addScaledVector(span, t).addScaledVector(wander, pin);
+      P.sparks.spawn(at, _v5.set((rng() - .5) * 3, (rng() - .5) * 3, (rng() - .5) * 3),
+        { life: 0.2, size: 0.06 * power, drag: 1, gravity: 0, color: colour, alpha: power });
+      // a fork, off a point that is not an end
+      if (i > 1 && i < steps - 1 && rng() < LIGHTNING_FORK) {
+        const branch = _v6.copy(span).normalize()
+          .addScaledVector(_v7.set(rng() - 0.5, rng() - 0.5, rng() - 0.5).normalize(), 1.15)
+          .normalize().multiplyScalar(len * (0.12 + rng() * 0.18));
+        const n = 4;
+        for (let j = 1; j <= n; j++) {
+          _v8.copy(at).addScaledVector(branch, j / n);
+          _v8.x += (rng() - 0.5) * 0.12; _v8.y += (rng() - 0.5) * 0.12; _v8.z += (rng() - 0.5) * 0.12;
+          P.sparks.spawn(_v8, _v5.set((rng() - .5) * 2, (rng() - .5) * 2, (rng() - .5) * 2),
+            { life: 0.14, size: 0.045 * power, drag: 1, gravity: 0, color: colour, alpha: 0.75 * power });
         }
       }
     }
