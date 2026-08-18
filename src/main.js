@@ -551,7 +551,17 @@ async function deploy() {
    * while greying the Theatre column. Without this line the menu said Geonosis
    * and the army deployed onto whatever was last picked, which for a fresh
    * profile is the Ember Shelf. */
-  const levelKey = MODES[settings.mode]?.level ?? sessionOr('level');
+  /* THE SESSION'S MODE, NOT OURS. `worldSettings()` builds the World from the
+   * host's mode, and this line read the player's own SAVED one — so a client
+   * whose last solo game was Command deployed onto Geonosis whatever the host
+   * sent, because `MODES.command.level` won the `??` before `sessionOr` was
+   * ever consulted. Measured against the shipped expression: saved mode
+   * `command` against a host on skirmish/drifts, roguelite/scoria and
+   * campaign/wood all built geonosis. It is the one line between the `start`
+   * handler and `loadLevel` that could still prefer its own idea of the ground
+   * to the one on the wire, which is what the note over that handler promises
+   * nothing does. */
+  const levelKey = MODES[sessionOr('mode')]?.level ?? sessionOr('level');
   try {
     /* AWAITED, so the build yields between its stages instead of freezing the
      * tab. The progress callback is the same shape the boot sequence's bar
@@ -1291,8 +1301,15 @@ function wireNet() {
    * own idea of the ground to the one on the wire.)
    */
   net.on('start', (msg) => {
-    session = sessionPart(msg);
+    // THE GUARD COMES FIRST, and it did not. `session` was written before the
+    // `isHost` return, so a packet the host should have ignored outright still
+    // rewrote its level, difficulty, mode, pvp and commandVersus — and those
+    // are what the NEXT `deploy()` reads, so a client's `start` chose the
+    // host's next ground. Net now refuses a client's `start` on the host at
+    // all; this stays because the order was wrong on its own terms — the line
+    // that says "this is not ours" cannot run after the line that acts on it.
     if (net.isHost) return;                       // our own broadcast, coming back
+    session = sessionPart(msg);
     if (world) {
       // A world already stands, in some level that is no longer the session's.
       // Tear it down without leaving the session — quitToMenu would close the

@@ -16,7 +16,7 @@ import { BoltPool } from './Bolts.js';
 import { BladeContactSolver, captureSnapshot, gradeCaught, resolveBladeClash, GRADE, GRADE_NAME, DIFFICULTY, CatchWindow } from './Combat.js';
 import { assignSides, DuelMatch, Player, asTeam, bladeTargets, canHarm, hostileTo, pvpRules, sideTeam, TEAM } from './Player.js';
 import { ageDropped } from './Dropped.js';
-import { Enemy, ARCHETYPES, applyModifier, ENEMY_POWERS, FORCE_KINDS } from './Enemy.js';
+import { Enemy, ARCHETYPES, applyModifier, ENEMY_POWERS, FORCE_KINDS, IMPULSE_AS_HP } from './Enemy.js';
 import { WaveDirector, RankSet, boonTick, boonGuard, bondReceive, bondGuardIn, bondGive, BOND, boonById, MODES,
   skirmishConfig } from './Waves.js';
 import { Communion, FACETS, insightRate } from './LivingForce.js';
@@ -799,6 +799,21 @@ export class World {
         this._earnInsight(this.director.wave);
         this.score += 500 * w;
         for (const p of this.players) { p.addFlow(0.35); p.heal(8); }
+        /**
+         * …AND THE GROUND HEARS THE WAVE COUNT, which it never did.
+         *
+         * `groundMight` reads `director.wave`, and `setMight` had exactly three
+         * callers: dressing, `applyBoon` and `applyCarry`. Dressing runs BEFORE
+         * `this.director` is assigned, so the wave term is zero there; the other
+         * two are a draft and a level change. So in `waves`, `duel`, `command`,
+         * `sandbox` and `training` — no draft, no rotation — `might` sat at its
+         * dressing value of 1.000 for the whole run. Measured at wave 21: the
+         * function said 1.900 and the terrain had never been told, so the
+         * retarget was true of the function and false of the game in five of
+         * eight modes. Wave clear is the signal the term is made of, so it is
+         * where the ground is told.
+         */
+        this.terrain?.setMight?.(groundMight(this));
       }
       cleared(w);
       this._reviveDowned();
@@ -2268,7 +2283,17 @@ export class World {
      * plan is built at load and the picks are applied here, so the mode is
      * playable through a front end that knows nothing about it. Guarded on a
      * body because `deploy` puts the line down around the commander. */
-    if (MODES[this.settings?.mode]?.battles && !this.skirmish?.started && this.player) {
+    /* …AND NOT ON A CLIENT, which is the guard `director.update` and main.js's
+     * own call sites already carry. A client rebuilt by the host's `start` ran
+     * `beginCampaign()` here, which builds a FRESH campaign at index 0, sees
+     * that mission 1's ground is not the one it is standing on, and sets
+     * `_groundPending` — which the block below then acts on. Measured: a client
+     * correctly rotated to the host's mission-2 ground walked itself back to
+     * mission 1's in a single frame, silently, because its own `_afterRotate`
+     * broadcast is host-gated. That is the exact symptom the rotation announce
+     * was written to remove, arriving by the other door. */
+    if (this.netMode !== 'client' && MODES[this.settings?.mode]?.battles
+        && !this.skirmish?.started && this.player) {
       if (this.settings.mode === 'campaign') this.beginCampaign();
       else this.beginSkirmish();
     }
@@ -4352,10 +4377,29 @@ export class World {
   applyBond(msg, from) {
     const p = this.player;
     if (!p || !msg) return false;
-    // Keyed on the peer it came from, exactly as a local ally's aura is keyed on
-    // the ally: with three in a session the strongest live offer wins rather
-    // than the most recent packet.
-    return bondGive(p, { cut: msg.c, spd: msg.s, ward: msg.g, heal: msg.h }, this.time, from || 'peer');
+    /**
+     * THROUGH THE GAME'S OWN NUMBERS, NOT THE SENDER'S.
+     *
+     * `bondGive` is shared with the local path, where the descriptor was
+     * computed on this machine from this machine's cards and needs no checking.
+     * This is the other door, and everything through it is a stranger's claim:
+     * `{c: 1e6, s: 1e6, h: 1e6}` bought moveSpeed 1 → 1000000, cutPower 0.85 →
+     * 850000 and a full heal. `ward` was already bounded by `bondGuardIn`; the
+     * other three were not. See BOND.cutCap for why the ceilings are loose.
+     *
+     * A heal is bounded by the body being healed, because a heal past full is
+     * not a bigger heal — it is a number nobody can spend.
+     */
+    const num = (v, lo, hi) => {
+      const n = Number(v);
+      return Number.isFinite(n) ? clamp(n, lo, hi) : lo;
+    };
+    return bondGive(p, {
+      cut: num(msg.c, 1, BOND.cutCap),
+      spd: num(msg.s, 1, BOND.spdCap),
+      ward: num(msg.g, 0, BOND.wardCap),
+      heal: num(msg.h, 0, p.maxHp ?? 100),
+    }, this.time, from || 'peer');
   }
 
   /** Host → client: reconcile the enemy list against the snapshot. */
@@ -4979,18 +5023,91 @@ export class World {
     const e = this._netEnemyIndex?.get(msg.id) || this.enemies.find(x => x.id === msg.id);
     if (!e || e.dead) return;
     const by = this.remotes?.get(peerId) || null;
+    /**
+     * THE GATE EVERY LOCAL BLADE PASSES, ASKED ON THIS SIDE TOO.
+     *
+     * `RemoteAvatar._tellHit` consults `canHarm` before it will SEND a hit, and
+     * its own note says the host is "the only machine in the session that can
+     * see both fighters". The receiving half never asked. Measured on a Command
+     * host with ten of its own troopers on the field: `canHarm(peer, trooper)`
+     * is false — the answer every local blade gets — and a peer's `dmg` claim
+     * took that trooper to −349954 hp and killed it anyway, 9 of 10 standing.
+     * In a meeting that is how a commander deletes the opposing army from
+     * across the map with no blade in reach; in co-op it is a peer shooting
+     * your named troopers in the back.
+     *
+     * A NULL `by` keeps today's behaviour on purpose: an unattributed claim is
+     * the environment, which is exactly how `_tellHit` treats a null source.
+     */
+    if (by && !canHarm(by, e, this.rules)) return;
+    /**
+     * …AND THE NUMBER HAS TO BE A NUMBER.
+     *
+     * `Enemy.damage` does `hp -= amount` with no finiteness test, and `NaN <= 0`
+     * is false forever — so one claim carrying a string, an object, or NOTHING
+     * AT ALL makes a body permanently unkillable and the wave permanently
+     * unclearable. Measured: `d` of `"x"`, `{}`, `"5e"` and `undefined` each
+     * took a 420 hp body to NaN, after which thirty seconds of the host swinging
+     * for 10^6 a blow left `remaining 1, active true, wave 1` — nobody in the
+     * session ever gets the payout, the revive, or wave 2. `null` and `[]`
+     * coerce to 0 and were already harmless.
+     *
+     * THIS NEEDS NO MALICE. A string survives JSON, so a client that simply
+     * forgets to fill in `d` does it. Clamped as well as checked, because a
+     * peer's honest claim is bounded by what it could actually have dealt and
+     * `maxHp * 2` is past any single blow in the game.
+     */
+    const asDamage = (v) => {
+      const n = Number(v);
+      return Number.isFinite(n) && n > 0 ? Math.min(n, e.maxHp * 2) : 0;
+    };
+    /** A point off the wire, or null. Three finite numbers or nothing. */
+    const asVec = (a) => (Array.isArray(a) && a.length === 3 && a.every(Number.isFinite)
+      ? new THREE.Vector3(a[0], a[1], a[2]) : null);
+    /**
+     * …AND AN IMPULSE IS BOUNDED BY THE SAME RULE, IN THE SAME CURRENCY.
+     *
+     * Clamping the damage and not the shove leaves the hole half open, and the
+     * half that is left is the worse one: `d: 1e9` is absorbed downstream, but
+     * `v: [1e9,1e9,1e9]` reaches Rapier, and Rapier does not absorb it — it
+     * traps. Measured: with only the damage clamped, a claim carrying a 10^9
+     * impulse put the body at y = 2×10^9 and the NEXT step of the physics world
+     * died on `RuntimeError: unreachable` out of wasm. A peer can crash the host
+     * with one packet.
+     *
+     * `IMPULSE_AS_HP` is how the rest of the game converts a shove into the
+     * currency `asDamage` is already bounded in, so this is that same ceiling
+     * asked in impulse units rather than a second number invented here. For a
+     * 420 hp body it is 700 m/s — far past the 12 m/s that knocks a body off its
+     * feet, and far short of what breaks the solver.
+     */
+    const asImpulse = (a) => {
+      const v = asVec(a);
+      if (!v) return null;
+      const cap = (e.maxHp * 2) / IMPULSE_AS_HP;
+      return v.length() > cap ? v.setLength(cap) : v;
+    };
     if (msg.k === 'cut') {
       const cap = e.capsules().find(c => c.name === msg.b);
       if (!cap) return;
+      const at = asVec(msg.p);
+      if (!at) return;                      // see asVec — a cut with no place did not happen
+      const ct = Number(msg.ct);
       e.takeCut({
         // `ct`, NOT `t`: Net routes every message on `msg.t`, so the receiver
         // asking for the cut parameter under the same name would have read the
         // string 'claim'. Never caught because nothing ever sent one.
-        bone: msg.b, cutT: msg.ct, cap, point: new THREE.Vector3(...msg.p),
-        impulse: new THREE.Vector3(...msg.v), normal: new THREE.Vector3(0, 1, 0), speed: 20,
+        bone: msg.b, cutT: Number.isFinite(ct) ? ct : 0.5, cap, point: at,
+        impulse: asImpulse(msg.v) || new THREE.Vector3(), normal: new THREE.Vector3(0, 1, 0), speed: 20,
       }, by);
     } else if (msg.k === 'dmg') {
-      e.damage(msg.d, new THREE.Vector3(...msg.p), by, 'remote');
+      /* `asVec` and not a bare spread: `new THREE.Vector3(...undefined)` THROWS,
+       * and a claim with no `p` used to take the handler down half-applied.
+       * `Net._emit` wraps every handler in a try/catch so it was never a crash
+       * — which is precisely why nobody saw it. */
+      const at = asVec(msg.p);
+      if (!at) return;
+      e.damage(asDamage(msg.d), at, by, 'remote');
     } else if (msg.k === 'imp') {
       /**
        * A FRIEND'S SHOVE, ARRIVING AS A SHOVE.
@@ -5004,12 +5121,23 @@ export class World {
        * not billed twice for one blow. `by` is the peer's own RemoteAvatar, so
        * a kill lands in their column exactly as `dmg` already made it.
        */
-      e.applyKnockback(msg.v ? new THREE.Vector3(...msg.v) : null,
-        msg.d || 0, by, !!msg.g);
+      e.applyKnockback(asImpulse(msg.v), asDamage(msg.d), by, !!msg.g);
     } else if (msg.k === 'grip') {
-      if (msg.g && msg.p) {
+      /**
+       * A LIFT POINT THAT IS NOT THREE FINITE NUMBERS IS NOT A LIFT.
+       *
+       * The knockback branch above resists a non-finite impulse; this one wrote
+       * `msg.p` straight into `liftTarget`, and `_move` suspends the body by it.
+       * Measured: a grip claim carrying NaN put the host's copy of a body at
+       * `NaN,NaN,NaN`, shipped `[null,null,null]` to everyone in the snapshot,
+       * and left the two machines permanently disagreeing — the host's copy
+       * unrecoverable. A malformed lift releases instead, which is the same
+       * ending the lease already has for a guest that goes silent.
+       */
+      const at = msg.g ? asVec(msg.p) : null;
+      if (at) {
         e.gripped = true;
-        e.liftTarget = (e._netLift ||= new THREE.Vector3()).set(msg.p[0], msg.p[1], msg.p[2]);
+        e.liftTarget = (e._netLift ||= new THREE.Vector3()).copy(at);
         /**
          * A LEASE, because a held body is the one state a lost connection can
          * strand. Every other claim is an event that happened; this one is a
@@ -5128,9 +5256,28 @@ export class World {
   applyHit(msg) {
     const p = this.player;
     if (!p || !p.alive || !msg) return false;
-    const push = Array.isArray(msg.v)
-      ? _v1.set(msg.v[0] || 0, msg.v[1] || 0, msg.v[2] || 0) : null;
-    const d = msg.d > 0 ? msg.d : 0;
+    /**
+     * ONE DIRECTION, AND THIS END SAYS SO TOO.
+     *
+     * `hit` is the host telling a peer what landed on it — the reconciliation
+     * for what that peer's own machine could not resolve. It has never been a
+     * message a client may send, and until now nothing on either end said so:
+     * `Net` guards `army`, `match` and `left` by direction and did not guard
+     * this one, and this method never asked `netMode`. A client sending one
+     * `{d: 9999, k: 'force', v: [0, 40, 0], s: 0}` took the HOST from 100 hp to
+     * 0 and threw it 39 m/s, with `canHarm` never consulted — `s: 0` resolves
+     * to a null source, which `RemoteAvatar._tellHit`'s own note defines as
+     * "the environment", and the environment is never gated.
+     *
+     * Guarded in `Net` as well, which is where the other three are. Both,
+     * because a rule with one enforcement point is a rule that moves house the
+     * next time somebody adds a caller.
+     */
+    if (this.netMode !== 'client') return false;
+    const push = Array.isArray(msg.v) && msg.v.every(Number.isFinite)
+      ? _v1.set(msg.v[0], msg.v[1], msg.v[2]) : null;
+    const dRaw = Number(msg.d);
+    const d = Number.isFinite(dRaw) && dRaw > 0 ? dRaw : 0;
     if (!d && !push) return false;
     const by = this.netSource(msg.s);
     if (push || FORCE_KINDS.test(msg.k ?? '')) p.applyKnockback(push, d, by, !!msg.g);

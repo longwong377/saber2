@@ -4300,6 +4300,26 @@ export const BOND = {
   /** The most an ally's ward may take off an incoming blow. */
   wardCap: 0.35,
   /**
+   * WHAT A STRANGER'S AURA MAY CLAIM TO BE — a bound on the WIRE, not on the game.
+   *
+   * `bondGive` is one function with two doors: a local ally's aura, whose
+   * numbers this machine computed from its own cards, and `World.applyBond`,
+   * whose numbers are whatever arrived. Only `ward` was ever bounded (through
+   * `bondGuardIn`), so a peer sending `{c: 1e6, s: 1e6, h: 1e6}` bought itself
+   * ×10⁶ cut power and move speed and a full heal — measured, moveSpeed 1 →
+   * 1000000 and cutPower 0.85 → 850000 — laundered through the host, which
+   * relayed it and therefore vouched for it.
+   *
+   * Deliberately far above anything the cards can reach rather than tight to
+   * them: `cut` is `1 + edge` and `edge` accrues in steps of `step` (0.16), so
+   * `cutCap` is about nineteen bond cards' worth and no run gets there. A cap
+   * that bit a legitimate ally would be a worse bug than the one it fixes, and
+   * a stranger has no business anywhere near this range regardless.
+   */
+  cutCap: 4,
+  /** As `cutCap`. `spd` is `1 + edge * 0.5`, so this is the same edge. */
+  spdCap: 2.5,
+  /**
    * What one step along the bond axis is worth, as `_bondEdge`.
    *
    * Named because two cards spend it and they must not drift: Communion pays

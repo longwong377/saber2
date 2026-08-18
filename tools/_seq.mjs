@@ -50,8 +50,27 @@ if ((await import('three')) !== THREE) {
   process.exit(2);
 }
 
+/**
+ * THE GATE PUTS THE SHARED CLOCKS BACK BETWEEN SUITES, and so does this.
+ *
+ * `verify.mjs` calls `restoreShared(baseline)` before every suite — `wind.time`
+ * to baseline, `enemyRng.seed(4711)`, `duelRng.seed(8123)`. This tool did not,
+ * while its own header named those exact streams as the carrier it exists to
+ * reproduce. Three of the four are precisely what the gate NEUTRALISES, so a
+ * red found through them could not exist in a full run: measured, `wind.time`
+ * arrived at 0.000, then 137.500, then 275.000 across three suites here, and
+ * 0.000 every time under the gate.
+ *
+ * What legitimately carries between suites is what the gate does NOT put back:
+ * `ground`, Engine's once-only ShaderChunk flags, and a suite's own async
+ * interleaving — which is the class the cloth race belonged to.
+ */
+const { snapshotShared, restoreShared } = await import('./checks/_shared.mjs');
+const baseline = await snapshotShared();
+
 let pass = 0, fail = 0;
 for (const raw of names) {
+  restoreShared(baseline);
   const name = raw.replace(/\.mjs$/, '');
   const mod = await import(`./checks/${name}.mjs`);
   const pending = [], bad = [];

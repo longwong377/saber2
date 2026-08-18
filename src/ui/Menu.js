@@ -1328,7 +1328,7 @@ export const CODEX = [
      * mainly holds, and that the key has a second use. */
     text: k => `Stasis field — freeze what is near you: the people, their bolts, and anything `
       + `already in flight. ${k('hurl')} fires the whole field; pressing ${k('stasis')} again `
-      + `sends every bolt back to whoever fired it.` },
+      + `throws the whole field again, with every bolt going back to whoever fired it.` },
   { keys: ['heal'],
     text: () => 'Force heal — three seconds of standing still, and a hit breaks it. Press again to stop.' },
   { keys: ['rend'], text: () => 'Rend apart. Takes a mechanical enemy to pieces where it stands.' },

@@ -128,6 +128,8 @@ export class Net {
     this.sides = new Map();
     /** Round trip / 2, from the ping World sends every 2 s. Read by the scoreboard. */
     this.latency = 0;
+    /** The stamp of the ping we are still waiting on. See the `pong` case. */
+    this._pingSent = null;
     this.enabled = false;
   }
 
@@ -365,8 +367,20 @@ export class Net {
    * built exactly ONE RemoteAvatar and fed it the interleaved position streams
    * of every other player: measured 840 m of travel and a 1200 m/s peak for two
    * players standing still.
+   *
+   * READ ON THE HOST IT IS A FORGERY, and that is the other half of the same
+   * fact. `from` exists because a CLIENT cannot tell senders apart on its one
+   * host connection; the HOST has a connection per peer, so `conn.peer` is
+   * already the answer and `msg.from` is nothing but a string the sender chose.
+   * Trusting it on the host cost two proven attacks, both from a peer that only
+   * ever had to add one field: ALPHA sent `{t:'muster', from:'PEER2', …}` and
+   * spent BRAVO's purse (40 → 35 points on a commander ALPHA does not command),
+   * and ALPHA sent `{t:'avatar', from:BRAVO, p:[400,0,400], h:0, a:0}` and
+   * puppeted BRAVO's body on the host — driven to (400,0,400), dead, hp 0, 0
+   * capsules for a blade to find, while on BRAVO's own machine it stood alive
+   * at (3,0,4). `claim` and `order` were already right; they read `conn.peer`.
    */
-  _sender(msg, conn) { return msg.from || conn.peer; }
+  _sender(msg, conn) { return this.isHost ? conn.peer : (msg.from || conn.peer); }
 
   _onMessage(msg, conn) {
     if (!msg || !msg.t) return;
@@ -377,17 +391,34 @@ export class Net {
         if (c) { c.name = msg.name; if (msg.look) c.look = msg.look; }
         this._refreshRoster();
         break;
+      /**
+       * Host → peers, all five of them, and the `!this.isHost` is the direction
+       * exactly as it is on `army` and `match`.
+       *
+       * They were unguarded, and a peer therefore spoke to the host in the
+       * host's own voice. Measured on a real three-endpoint session: one
+       * `{t:'roster', roster:[{id:'ghost', name:'<img onerror>', host:true,
+       * team:3}]}` replaced the host's three-entry roster with that single
+       * forged line — and since `teams` and `peers` are both derived from
+       * `roster`, the host's idea of who is playing and which side they are on
+       * went with it. One `welcome` then made the host announce a level, mode
+       * and difficulty it had never chosen (`hangar/duel/master`) and emptied
+       * the roster completely. A ledger only the host can keep is a ledger only
+       * the host may write, which is the whole of `army`'s argument.
+       */
       case 'welcome':
+        if (this.isHost) break;
         this.roster = msg.roster || [];
         this._emit('roster', this.roster);
         this._emit('welcome', msg.settings);
         break;
       case 'roster':
+        if (this.isHost) break;
         this.roster = msg.roster || [];
         this._emit('roster', this.roster);
         break;
-      case 'start': this._emit('start', msg); break;
-      case 'snapshot': this._emit('snapshot', msg); break;
+      case 'start': if (!this.isHost) this._emit('start', msg); break;
+      case 'snapshot': if (!this.isHost) this._emit('snapshot', msg); break;
       case 'avatar':
         this._emit('avatar', this._sender(msg, conn), msg);
         if (this.isHost) this.broadcastExcept(conn.peer, { ...msg, from: conn.peer });
@@ -449,10 +480,18 @@ export class Net {
       // is drawn. A peer owns its own health (its avatar packet carries `hp`,
       // and the host overwrites its copy 24 times a second), so the host cannot
       // apply the damage itself; it can only say so.
-      case 'hit': this._emit('hit', msg); break;
+      // Guarded like `army`, and it is the most expensive omission on this
+      // wire: it was the ONE host→peer message with no direction on it. A
+      // client sending a single `{t:'hit', d:9999, k:'force', v:[0,40,0], s:0}`
+      // took the host from 100 hp to 0 and threw it upward at 39.3 m/s, in one
+      // packet, from full health — and `canHarm` never got a word in, because
+      // `s:0` resolves to a null source and a null source is the environment,
+      // which `_tellHit`'s own note says is never gated. There is no legitimate
+      // sender: the host is the only node that can say a blow landed.
+      case 'hit': if (!this.isHost) this._emit('hit', msg); break;
       // Host → peers: a draft is open. The moment, not the hand — see the note
       // on World's onDraft.
-      case 'draft': this._emit('draft', msg); break;
+      case 'draft': if (!this.isHost) this._emit('draft', msg); break;
       /**
        * Host → peers: the state of the duel.
        *
@@ -485,7 +524,14 @@ export class Net {
         // avatar relay is: `bondGive` keys a live offer on the peer it came
         // from, and two client auras arriving at a third machine under the
         // host's id would silently overwrite one another.
-        if (this.isHost && msg.to && msg.to !== this.peer?.id) this.toPeer(msg.to, { ...msg, from: conn.peer });
+        // …and NOT back to the peer that sent it. The only test used to be
+        // `msg.to !== this.peer?.id`, so a peer addressing an aura to its own
+        // id had the host post it straight back — a buff nobody granted it,
+        // arriving with the host's blessing. Measured: moveSpeed 1 → 1000000,
+        // cutPower 0.85 → 850000, hp 10 → 100 off one self-addressed packet.
+        // The relay's job is to reach the node the sender cannot; `conn.peer`
+        // is by definition not that node.
+        if (this.isHost && msg.to && msg.to !== this.peer?.id && msg.to !== conn.peer) this.toPeer(msg.to, { ...msg, from: conn.peer });
         else this._emit('bond', msg, this._sender(msg, conn));
         break;
       // 'event' was routed here with no sender anywhere and no listener
@@ -493,12 +539,27 @@ export class Net {
       // valid a fix as giving it a purpose, and it is the honest one: nothing
       // downstream was waiting for it. See tools/checks/coop.mjs.
       case 'ping': this.send(conn, { t: 'pong', s: msg.s }); break;
-      case 'pong': this.latency = (performance.now() - msg.s) * 0.5; break;
+      // A pong is only an answer, so it is only worth reading on the side that
+      // asked — `_pingSent` is stamped by `send` and cleared here, one pong per
+      // ping. Unsolicited, it is a number the sender chose: a peer sent
+      // `{t:'pong', s:-1e9}` to a host that had never pinged it and set the
+      // host's published latency to 500000653 ms, which every consumer of it
+      // reads as truth (`World`'s interception lead is `2*latency/1000`).
+      case 'pong':
+        if (msg.s !== this._pingSent) break;
+        this._pingSent = null;
+        this.latency = (performance.now() - msg.s) * 0.5;
+        break;
       default: this._emit(msg.t, msg, conn.peer);
     }
   }
 
-  send(conn, msg) { try { conn.send(msg); } catch {} }
+  send(conn, msg) {
+    // The ping is composed in World (`net.toHost({t:'ping', …})`), so this is
+    // the only place Net can learn that it asked — see the `pong` case.
+    if (msg && msg.t === 'ping') this._pingSent = msg.s;
+    try { conn.send(msg); } catch {}
+  }
 
   broadcast(msg) {
     if (this.isHost) { for (const { conn } of this.conns.values()) this.send(conn, msg); }
@@ -1183,6 +1244,26 @@ export function packSnapshot(world) {
   const fires = world._netFires || [];
   const snap = {
     t: 'snapshot',
+    /**
+     * THE ONLY ORDERING THIS PROTOCOL OWNS.
+     *
+     * Everything else about a snapshot's ordering is borrowed from the
+     * transport: `Net.join` asks for `reliable: true`, so the DataChannel is
+     * ordered and de-duplicated and no replay can happen today. That is a
+     * property of one line in the connect options, not of the record — and a
+     * record whose correctness lives in somebody else's config is one edit away
+     * from being wrong. Replayed by hand, an old snapshot rewinds a client's
+     * wave and score and re-announces WAVE N over the top of the wave it is
+     * actually fighting, and a duplicated one fires every bolt in `bf` twice.
+     *
+     * Per WORLD rather than per Net, so it restarts with the ground: a client
+     * rebuilds its World on `start` (see main.js) and must not reject the first
+     * snapshot of the new level for being older than the last of the old one.
+     *
+     * The receiving half belongs in `World.applySnapshot` — drop a packet whose
+     * `n` is not greater than the last one applied, and remember `n` per host.
+     */
+    n: (world._netSeq = (world._netSeq || 0) + 1),
     e: enemies,
     bf: fires.slice(),
     w: world.director.wave,

@@ -4514,6 +4514,21 @@ export class Player {
    * do, so on the frame a wave spawns every Force power would have aimed at the
    * world origin. Position plus chest height is always true.
    */
+  /**
+   * WHERE A HELD THING IS — bolt, loose body, or person.
+   *
+   * One expression, because there are two readers (the gesture's focus and the
+   * field's own shimmer) and they went out of step the moment stasis learned to
+   * hold people: the shimmer knew about `{enemy}` and the focus did not, and the
+   * focus is the one on `world.update`'s path.
+   */
+  _heldPoint(h, out) {
+    if (!h) return out.set(0, 0, 0);
+    if (h.bolt) return out.copy(h.bolt.pos);
+    if (h.enemy) return this._enemyPoint(h.enemy, out);
+    return h.body ? out.copy(h.body.position) : out.set(0, 0, 0);
+  }
+
   _enemyPoint(e, out) {
     return out.set(e.position.x, e.position.y + 1.12 * (e.A ? e.A.scale : 1), e.position.z);
   }
@@ -4565,8 +4580,15 @@ export class Player {
       if (this.gripBody) return out.copy(this.gripBody.position);
       if (this.gripEnemy) return this._enemyPoint(this.gripEnemy, out);
       if (this.stasis.active && this.stasis.held.length) {
-        const h = this.stasis.held[0];
-        return out.copy(h.bolt ? h.bolt.pos : h.body.position);
+        /* THREE KINDS OF HELD THING, NOT TWO. A held PERSON is `{enemy}` — it
+         * has no `body`, so this read threw a TypeError out of `world.update`
+         * on the first frame the field's first entry was a man, and `stasis`
+         * is `track: true` so the gesture asks every frame. It is not even a
+         * cast-time fault: in Command the field can be empty at the cast and a
+         * trooper walks into it twenty-five frames later. The vfx loop in
+         * `_updateStasis` already spells all three; this is that expression,
+         * called rather than restated. */
+        return this._heldPoint(this.stasis.held[0], out);
       }
     }
     return this.gesture.hasAt ? out.copy(this.gesture.at) : null;
@@ -6542,7 +6564,7 @@ export class Player {
         // A man-sized bubble on a man: 0.2 reads on a bolt and disappears on a
         // body, and the shimmer is how you tell an arrested trooper from one
         // who has merely stopped to aim.
-        const p = h.bolt ? h.bolt.pos : h.enemy ? this._enemyPoint(h.enemy, _g4) : h.body.position;
+        const p = this._heldPoint(h, _g4);
         ctx.particles.plasma.spawn(p, _g1.set(0, 0, 0),
           { life: 0.09, size: h.bolt ? 0.2 : h.enemy ? 1.2 : 0.7, drag: 1, gravity: 0, color: 0xa8d0ff, alpha: 0.5 });
       }
