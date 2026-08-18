@@ -467,6 +467,12 @@ export function run({ check, assert, near }) {
           if (gap > 0.01) { floating++; maxFloat = Math.max(maxFloat, gap); }
         }
       });
+      /* A LEVEL WITH NO CHIPS CANNOT VIOLATE A PROPERTY OF CHIPS. The White
+       * Pass strews none — its reference plate has no rock in it at all and
+       * its ground furniture is snow forms — so it is recorded and skipped
+       * rather than failed, and the roster-wide bars below are what stop
+       * "delete the scree" from being a way past this check. */
+      if (chips === 0) { rows.push(`${key} — no scree`); terrain.dispose(); continue; }
       assert(chips > 400, `${key}: only ${chips} scree chips to survey`);
       assert(blades === 0, `${key}: ${blades} chips stand past 55° with a face over 0.6 m across`);
       // 36° is CHIP_REPOSE, the angle of repose of loose rock; a shade over it
@@ -483,6 +489,13 @@ export function run({ check, assert, near }) {
       rows.push(`${key} ${chips} chips, 0 blades, ≤${maxTilt.toFixed(0)}°, worst ${maxExcess.toFixed(2)} m² excess sunlit, plate ${maxPair.toFixed(2)} m²`);
       terrain.dispose();
     }
+    /* THE ROSTER-WIDE HALF. Skipping a chipless level is only honest if
+     * emptying every level is not a way through, so: most of the roster must
+     * still carry scree, and the total must be a real survey. */
+    const withChips = rows.filter((r) => !r.endsWith('no scree')).length;
+    assert(withChips >= Math.ceil(rows.length * 0.6),
+      `${withChips} of ${rows.length} levels carry any scree at all — this check has stopped `
+      + 'measuring anything');
     return rows.join('; ');
   });
 

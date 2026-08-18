@@ -525,6 +525,477 @@ function strewGround(world, opts = {}) {
   return 7;
 }
 
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  SNOW FORMS — the White Pass's ground furniture                        */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * THE ROCKS ARE GONE FROM THE WHITE PASS, AND THIS IS WHAT IS THERE INSTEAD.
+ *
+ * Second time of asking: "i already told you to get rid of the rocks in the
+ * white pass but they're still there it feels like a reskin of the dunes map."
+ * The first answer was a TINT — the same stone field, the same fourteen
+ * outcrops, re-materialled from the desert's warm varnish to a cold one — and
+ * its own note said out loud that "the counts are untouched, and that is
+ * deliberate". That was the wrong call and the note is what makes it easy to
+ * see why: the complaint has never been about the hue. It is that the shapes
+ * on the ground are a desert's shapes.
+ *
+ * `assets/reference/maps/alpine/hoth.jpeg` settles it. There is not one stone
+ * in that frame, not one spire, not one chip. Everything in it is a SNOW form:
+ *
+ *   · sastrugi — long low ridges combed by the wind, all lying one way
+ *   · drift humps — smooth domes where the wind dropped its load
+ *   · one big rounded massif in the mid-ground, which is a hill under snow
+ *     rather than a crag with snow on it
+ *
+ * So the White Pass strews none of `strewGround`'s three grades and none of
+ * `addOutcrop`'s bedded crags. It gets these, they are all `M.snowPack`, and
+ * the only thing that distinguishes one from the ground it stands on is VALUE
+ * and a blue shadow — which is exactly what the reference does and exactly
+ * what the last pass's own note said the reference does, one paragraph before
+ * it decided to keep the stones.
+ *
+ * THE WIND IS THE COMPOSITION. Every sastruga is aligned to the level's own
+ * `dust.wind.from`, ±12°, which is what makes a snowfield read as a snowfield
+ * from a standing eye: the ground tells you which way the weather comes from.
+ * That is one direction for the whole level and it is READ from the level
+ * rather than typed here, so a level that re-authors its wind re-combs its
+ * ground with it.
+ */
+
+/** A sastruga: a long, low, wind-combed ridge. Steep on the windward end,
+ *  drawn out to nothing downwind, which is the asymmetry that makes it read
+ *  as carved rather than as a lump. */
+function sastrugaGeo(seed) {
+  const q = makeRng(seed);
+  const N = 13, M = 7;                     // along, across
+  const pos = [], idx = [];
+  for (let i = 0; i < N; i++) {
+    const t = i / (N - 1);
+    // the profile along the wind: a fast rise and a long tail
+    const h = Math.pow(Math.sin(Math.pow(t, 0.55) * Math.PI), 1.35);
+    const halfW = (0.34 + 0.66 * Math.sin(t * Math.PI)) * (0.8 + q() * 0.4);
+    for (let j = 0; j < M; j++) {
+      const u = j / (M - 1);
+      const across = (u - 0.5) * 2;
+      const lift = h * Math.cos(across * Math.PI * 0.5) * (0.88 + q() * 0.24);
+      pos.push((t - 0.5) * 2, lift - 0.12, across * halfW);
+    }
+  }
+  for (let i = 0; i < N - 1; i++) {
+    for (let j = 0; j < M - 1; j++) {
+      const a = i * M + j, b = a + M;
+      idx.push(a, b, a + 1, a + 1, b, b + 1);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+
+/** A drift hump: a smooth dome with a low-frequency wobble, flattened. */
+function driftHumpGeo(seed) {
+  const q = makeRng(seed);
+  const g = new THREE.IcosahedronGeometry(1, 2);
+  const p = g.attributes.position;
+  const ph = [q() * TAU, q() * TAU, q() * TAU];
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+    const w = 1 + 0.16 * Math.sin(x * 2.1 + ph[0]) + 0.13 * Math.sin(z * 1.7 + ph[1])
+                + 0.09 * Math.sin((x + z) * 3.3 + ph[2]);
+    // squashed and sunk: a drift is a third as tall as it is wide, and its
+    // skirt is BELOW the ground so it beds into whatever it lands on
+    p.setXYZ(i, x * w, y * w * 0.34 - 0.18, z * w);
+  }
+  g.computeVertexNormals();
+  return g;
+}
+
+/**
+ * A massif: the big rounded white hill in the reference's mid-distance. It is
+ * cover, so unlike everything else here it carries a collider — the ONLY
+ * furniture on this level that does, which is the honest reading of a place
+ * whose ground is otherwise unbroken.
+ */
+function addSnowMassif(world, pos, opts = {}) {
+  const q = makeRng(opts.seed ?? 1);
+  const w = opts.size ?? 7, h = opts.height ?? 5;
+  const g = new THREE.IcosahedronGeometry(1, 3);
+  const p = g.attributes.position;
+  const ph = [q() * TAU, q() * TAU, q() * TAU, q() * TAU];
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+    const k = 1 + 0.20 * Math.sin(x * 1.3 + ph[0]) + 0.16 * Math.sin(z * 1.1 + ph[1])
+                + 0.11 * Math.sin(y * 2.0 + ph[2]) + 0.07 * Math.sin((x - z) * 2.7 + ph[3]);
+    p.setXYZ(i, x * k * w, y * k * h - h * 0.42, z * k * w * (0.7 + q() * 0.05));
+  }
+  g.computeVertexNormals();
+  const mesh = new THREE.Mesh(g, propMaterials().snowPack);
+  mesh.position.copy(pos);
+  mesh.rotation.y = opts.yaw ?? 0;
+  mesh.castShadow = true; mesh.receiveShadow = true;
+  mesh.matrixAutoUpdate = false; mesh.updateMatrix();
+  world.scene.add(mesh);
+  world.statics.push(mesh);
+  world.physics?.addStaticBox?.(pos.clone().add(new THREE.Vector3(0, h * 0.12, 0)),
+    new THREE.Vector3(w * 0.66, h * 0.52, w * 0.52),
+    new THREE.Quaternion().setFromEuler(new THREE.Euler(0, mesh.rotation.y, 0)),
+    { friction: 0.62 });
+  return mesh;
+}
+
+/** Comb the whole field. Returns the draw calls spent. */
+function strewSnowForms(world, opts = {}) {
+  const T = world.terrain;
+  const M = propMaterials();
+  const seed = opts.seed ?? 9900;
+  const R = opts.radius ?? 150;
+  const q = makeRng(seed);
+  /* THE WIND, read off the level rather than typed here. `dust.wind.from` is a
+   * compass bearing in degrees; the ridges lie ALONG it. */
+  const from = ((world.level?.dust?.wind?.from ?? 0) * Math.PI) / 180;
+  const field = makeCoverField({ seed: seed + 5, amount: opts.spread ?? 0.5,
+    patch: 52, grain: 15, extent: R });
+  const _m = new THREE.Matrix4(), _p = new THREE.Vector3();
+  const _q = new THREE.Quaternion(), _s = new THREE.Vector3();
+  const UPY = new THREE.Vector3(0, 1, 0);
+  let calls = 0;
+
+  /* ── sastrugi, in two lengths, all lying with the wind.
+   *
+   * IN FIELDS, not spread. Wind-carved ground is patchy — the comb bites where
+   * the snow is packed and leaves the soft ground alone — and it has to be
+   * patchy for a second reason too: `ground-cover.mjs` measures every level's
+   * instanced litter against a Poisson control and a plain `drift` scatter
+   * cannot beat its 0.70 bound, because uniform-within-the-accepted-area IS
+   * uniform at the nearest-neighbour scale. Measured on this level: 0.734
+   * spread, 0.53 in fields. The check and the drawing want the same thing. */
+  for (let v = 0; v < 2; v++) {
+    const list = [];
+    drift(world, {
+      field: (x, z) => field.at(x, z), count: Math.round((opts.ridges ?? 1) * (v ? 34 : 52)),
+      rmin: 2, rmax: R, clearance: 0, maxSlope: 0.52, tries: 6,
+    }, (p) => {
+      const n = 5 + (q() * 8 | 0);
+      for (let i = 0; i < n; i++) {
+        /* Elongated ALONG the wind, because a comb-mark field is a set of
+         * parallel streaks and not a round patch of them. */
+        const rr = (v ? 9.0 : 5.5) * Math.sqrt(q()), a = q() * TAU;
+        const ox = Math.cos(a) * rr, oz = Math.sin(a) * rr;
+        const x = p.x + ox * Math.cos(from) * 1.9 - oz * Math.sin(from) * 0.5;
+        const z = p.z + ox * Math.sin(from) * 1.9 + oz * Math.cos(from) * 0.5;
+        const len = (v ? 3.4 : 1.5) * (0.7 + q() * 0.9);
+        _q.setFromAxisAngle(UPY, from + (q() - 0.5) * 0.42);
+        _s.set(len, (0.30 + q() * 0.34) * (v ? 1.25 : 1), 0.9 + q() * 0.7);
+        list.push(_m.compose(_p.set(x, T ? T.height(x, z) : 0, z), _q, _s).clone());
+      }
+    });
+    if (addInstanced(world, sastrugaGeo(seed + 20 + v), M.snowPack, list,
+      new THREE.Vector3(), { name: 'snowSastruga' + v, castShadow: false })) calls++;
+  }
+
+  /* ── drift humps, in clumps: the wind piles them where it is already piling. */
+  for (let v = 0; v < 2; v++) {
+    const list = [];
+    drift(world, {
+      field: (x, z) => field.at(x, z), count: Math.round((opts.humps ?? 1) * (v ? 28 : 46)),
+      rmin: 4, rmax: R, clearance: 0, maxSlope: 0.45, tries: 7,
+    }, (p) => {
+      const n = 3 + (q() * 5 | 0);
+      for (let i = 0; i < n; i++) {
+        const a = q() * TAU, rr = (v ? 7.5 : 4.2) * Math.sqrt(q());
+        const x = p.x + Math.cos(a) * rr, z = p.z + Math.sin(a) * rr;
+        const s = (v ? 2.2 : 0.95) * (0.6 + q() * 0.9);
+        _q.setFromAxisAngle(UPY, q() * TAU);
+        _s.set(s, s * (0.7 + q() * 0.6), s * (0.72 + q() * 0.5));
+        list.push(_m.compose(_p.set(x, T ? T.height(x, z) : 0, z), _q, _s).clone());
+      }
+    });
+    if (addInstanced(world, driftHumpGeo(seed + 40 + v), M.snowPack, list,
+      new THREE.Vector3(), { name: 'snowDrift' + v, castShadow: v === 1 })) calls++;
+  }
+  return calls;
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  THE SWAMP FLOOR                                                       */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * A BOG FLOOR IS NOT A FIELD OF ANYTHING, AND THAT IS THE FOURTH ATTEMPT AT
+ * THIS AND THE FIRST ONE THAT IS NOT A GRASS TUNING.
+ *
+ * The note, in full, on its third repetition: "get rid of the grass on drowned
+ * wood completely… it doesn't look stylistic and just looks like complete
+ * trash… you need to do something completely different because it's a 1/10
+ * right now."
+ *
+ * The three passes before this one were: a browner grass, a sparser grass, and
+ * a grass with a `swamp` multiplier row on its tier table. All three were the
+ * same move, and the reference says why all three were doomed before they were
+ * written. `assets/reference/maps/drowned-wood/dagobah.jpeg` has **no grass in
+ * it at all** — no upright cover of any kind. What is on that floor is four
+ * things and every one of them is HORIZONTAL:
+ *
+ *   · standing water, which is the brightest thing in the frame
+ *   · low banks of matted litter between the channels
+ *   · buttress roots flaring off the foot of every trunk
+ *   · tangles of bare dead branches, lying in and half under the water
+ *
+ * An upright blade is the one shape that is not in the picture. So the fix is
+ * not a better field — it is DELETING the field and building the floor out of
+ * geometry, which is what this is. `grass: 0` on the level, and this instead.
+ *
+ * WHY IT IS AFFORDABLE. Eight InstancedMeshes, against `world-immersion`'s 520
+ * draw-call budget and the wood's own existing spend. Every kind is authored
+ * twice so the eye cannot lock onto one silhouette — the crowd note in
+ * HANDOFF §6.1b is the same finding from the other end, and two variants is
+ * where the cost curve and the read cross for something you are looking DOWN
+ * at rather than across at.
+ *
+ * WHY NOTHING HERE IS A COLLIDER. All of it is under 40 cm and the player
+ * walks over it. A litter bank you can trip on is a bog you cannot fight in,
+ * and 1,500 tiny static boxes is exactly the linear scan `Trees.js` already
+ * has a paragraph about.
+ */
+
+/** An irregular low mound of matted debris, sitting ON the ground.
+ *
+ *  The rim is BELOW zero and the crown is above it, so the disc beds itself
+ *  into whatever slope it lands on instead of standing off the hill on one
+ *  edge — the same problem `Scenery.js`'s contact quads solve by tilting to
+ *  the ground normal, answered here by burying the skirt, because a mound has
+ *  a thickness to bury and a shadow quad does not. */
+function litterMoundGeo(r, seed, sides = 11) {
+  const q = makeRng(seed);
+  const pos = [], idx = [];
+  pos.push(0, r * 0.16, 0);                       // the crown
+  for (let i = 0; i < sides; i++) {
+    const a = (i / sides) * TAU;
+    const rr = r * (0.58 + q() * 0.42);
+    pos.push(Math.cos(a) * rr, -r * 0.22, Math.sin(a) * rr);
+  }
+  for (let i = 0; i < sides; i++) idx.push(0, 1 + ((i + 1) % sides), 1 + i);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+
+/** One root: a tapered tube that leaves the trunk high and reaches the ground
+ *  a couple of metres out, bending as it goes. */
+function rootStrandGeo(q, opts = {}) {
+  const up = opts.up ?? 1.35, out = opts.out ?? 1.9;
+  const a = opts.angle ?? 0;
+  const pts = [];
+  for (let i = 0; i <= 4; i++) {
+    const t = i / 4;
+    /* The profile is the whole read. A root does not leave the trunk on a
+     * straight line — it comes out nearly horizontally at the top, drops
+     * steeply through the middle and flattens again where it enters the
+     * ground, which is `t^1.7` against `t^0.55`. A straight strand reads as a
+     * guy wire. */
+    const rad = out * Math.pow(t, 0.55) * (0.55 + opts.reach * 0.45);
+    const y = up * (1 - Math.pow(t, 1.7));
+    const wob = (q() - 0.5) * 0.16 * t;
+    pts.push(new THREE.Vector3(Math.cos(a + wob) * rad, y, Math.sin(a + wob) * rad));
+  }
+  const curve = new THREE.CatmullRomCurve3(pts);
+  // 5 radial segments and 5 along: a root is read by its LINE, and the eye
+  // is never closer to one than a metre and a half.
+  const g = new THREE.TubeGeometry(curve, 5, opts.r ?? 0.13, 5, false);
+  // taper it by hand — TubeGeometry has one radius
+  const p = g.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const t = Math.floor(i / 6) / 5;
+    const k = 1 - t * 0.62;
+    const cx = pts[Math.min(4, Math.round(t * 4))];
+    p.setXYZ(i, cx.x + (p.getX(i) - cx.x) * k, cx.y + (p.getY(i) - cx.y) * k,
+      cx.z + (p.getZ(i) - cx.z) * k);
+  }
+  g.computeVertexNormals();
+  return g;
+}
+
+/** A buttress: five to eight roots off one stem, splayed all the way round. */
+function rootFlareGeo(seed) {
+  const q = makeRng(seed);
+  const n = 5 + Math.floor(q() * 4);
+  const parts = [];
+  const a0 = q() * TAU;
+  for (let i = 0; i < n; i++) {
+    parts.push(rootStrandGeo(q, {
+      angle: a0 + (i / n) * TAU + (q() - 0.5) * 0.5,
+      up: 1.0 + q() * 0.9, out: 1.5 + q() * 1.3, reach: q(),
+      r: 0.10 + q() * 0.07,
+    }));
+  }
+  // the stem they all come off, so the flare is not a spider with no body
+  const stem = new THREE.CylinderGeometry(0.30, 0.46, 1.7, 7, 1, true);
+  stem.translate(0, 0.72, 0);
+  parts.push(stem);
+  return mergeGeos(parts);
+}
+
+/** A tangle of bare dead branches: the black spiky note in every plate. */
+function deadwoodGeo(seed) {
+  const q = makeRng(seed);
+  const n = 6 + Math.floor(q() * 5);
+  const parts = [];
+  for (let i = 0; i < n; i++) {
+    const len = 0.7 + q() * 1.5;
+    const g = new THREE.CylinderGeometry(0.010 + q() * 0.014, 0.028 + q() * 0.024, len, 4, 1, true);
+    g.translate(0, len * 0.5, 0);
+    /* Shallow, not upright. A stick standing on its end is a spear; what is in
+     * the plate is deadfall lying at 15-45 degrees across the bank, with the
+     * odd one propped higher by whatever it fell against. */
+    const tilt = 0.9 + q() * 0.7;
+    const e = new THREE.Euler(tilt, q() * TAU, (q() - 0.5) * 0.7);
+    g.applyMatrix4(new THREE.Matrix4().makeRotationFromEuler(e));
+    g.translate((q() - 0.5) * 0.7, 0.04 + q() * 0.16, (q() - 0.5) * 0.7);
+    parts.push(g);
+  }
+  return mergeGeos(parts);
+}
+
+/** A root that leaves the ground and comes back — the arch you step over. */
+function rootArchGeo(seed) {
+  const q = makeRng(seed);
+  const span = 1.6 + q() * 2.2, rise = 0.45 + q() * 0.55;
+  const pts = [];
+  for (let i = 0; i <= 6; i++) {
+    const t = i / 6;
+    pts.push(new THREE.Vector3((t - 0.5) * span, Math.sin(t * Math.PI) * rise - 0.14,
+      (q() - 0.5) * 0.22));
+  }
+  return new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 7, 0.10 + q() * 0.06, 5, false);
+}
+
+/**
+ * Lay the whole floor. Everything is placed through the cover field so the
+ * banks are banks and the channels are channels — `drift`'s own header is the
+ * argument, and it applies here harder than anywhere: a bog whose litter is
+ * spread evenly is a carpet, and what makes this floor read is that the
+ * matted parts are matted and the water between them is open.
+ */
+function strewSwampFloor(world, opts = {}) {
+  const T = world.terrain;
+  const M = propMaterials();
+  const seed = opts.seed ?? 8800;
+  const R = opts.radius ?? 150;
+  const wet = opts.wet ?? 0;
+  const q = makeRng(seed);
+  /* The litter's own field, coarser than the tree field: debris collects in
+   * fewer and bigger places than trunks stand in. */
+  /* THE FIELD IS SHARPENED, and the exponent is measured rather than picked.
+   * `ground-cover.mjs` holds every level's litter to a Clark–Evans ratio under
+   * 0.70 against a Poisson control — the whole of "a drift, not a sprinkle" —
+   * and the wood's pooled litter came out 0.871 at `amount: 0.44` taken flat.
+   * Squaring the field keeps the same swathes and empties their margins, which
+   * is what a bank actually looks like: the debris does not thin out toward
+   * the water, it STOPS at it. 0.871 → 0.605. */
+  const raw = makeCoverField({ seed: seed + 3, amount: opts.spread ?? 0.40,
+    patch: 30, grain: 9, extent: R });
+  const field = { at: (x, z) => { const v = raw.at(x, z); return v * v; } };
+  const _m = new THREE.Matrix4(), _p2 = new THREE.Vector3();
+  const _qt = new THREE.Quaternion(), _s2 = new THREE.Vector3();
+  const UPY = new THREE.Vector3(0, 1, 0);
+  const put = (list, x, z, y, yaw, sc, lift = 0) => {
+    _qt.setFromAxisAngle(UPY, yaw);
+    _s2.set(sc, sc * (0.72 + q() * 0.56), sc);
+    list.push(_m.compose(_p2.set(x, y + lift, z), _qt, _s2).clone());
+  };
+  /**
+   * A BANK, NOT A SPRINKLE — and this is the shape of the whole floor.
+   *
+   * The first draft placed every item through `drift` on its own, which is
+   * uniform-disc-plus-rejection: 460 litter mounds over a 130 m disc is ONE
+   * EVERY HUNDRED SQUARE METRES, which is not a mat, it is confetti. It
+   * measured as confetti too — `ground-cover.mjs` pooled it with the stone and
+   * the level's Clark–Evans went 0.596 → 0.801 against a 0.70 bound. The
+   * check was right and the drawing was wrong in the same direction, which is
+   * the useful case.
+   *
+   * What a bog floor actually is: debris CONTIGUOUS where the water dropped it
+   * and absent everywhere else. So `drift` picks the banks — a few dozen of
+   * them, through the field, so they land where the field says litter
+   * collects — and each bank is then filled to overlapping density. The
+   * spray is `sqrt`-distributed in radius so a bank is denser at its middle
+   * than at its edge rather than being a disc of even confetti.
+   */
+  const bankify = (list, opts2, geoScale) => {
+    const banks = opts2.banks, per = opts2.per, rad = opts2.rad;
+    drift(world, {
+      field: (x, z) => field.at(x, z), count: banks,
+      rmin: opts2.rmin ?? 4, rmax: opts2.rmax ?? R, clearance: opts2.clearance ?? 0,
+      minHeight: opts2.minHeight, maxSlope: opts2.maxSlope, tries: 7,
+    }, (p) => {
+      const n = per * (0.6 + q() * 0.8) | 0;
+      for (let i = 0; i < n; i++) {
+        const a2 = q() * TAU, rr = rad * Math.sqrt(q());
+        const x = p.x + Math.cos(a2) * rr, z = p.z + Math.sin(a2) * rr;
+        const y = T ? T.height(x, z) : 0;
+        if (opts2.minHeight !== undefined && y < opts2.minHeight) continue;
+        put(list, x, z, y, q() * TAU, geoScale(), opts2.lift ?? 0);
+      }
+    });
+  };
+  let calls = 0;
+
+  /* ── 1. THE BANKS. Two variants, both flat, both dark, and the only thing
+   * on this level whose job is to CLOSE GROUND. This is the rung the grass
+   * field used to be and it does it lying down. */
+  for (let v = 0; v < 2; v++) {
+    const list = [];
+    bankify(list, { banks: Math.round((opts.litter ?? 1) * (v ? 26 : 34)), per: v ? 9 : 16,
+      rad: v ? 5.4 : 3.4, rmin: 3, rmax: R, minHeight: wet - 0.10 },
+    () => 0.55 + q() * (v ? 1.7 : 0.75));
+    if (addInstanced(world, litterMoundGeo(1, seed + 40 + v, v ? 13 : 9), M.litterMat,
+      list, new THREE.Vector3(), { name: 'bogLitter' + v, castShadow: false })) calls++;
+  }
+
+  /* ── 2. THE BUTTRESSES. On the hummocks, where the trunks are — a root
+   * flare standing in open water is a mangrove and this is not one. */
+  for (let v = 0; v < 2; v++) {
+    const list = [];
+    bankify(list, { banks: Math.round((opts.roots ?? 1) * 14), per: 4, rad: 4.2,
+      rmin: 6, rmax: R * 0.92, clearance: 2.4, minHeight: wet + 0.10, maxSlope: 0.55 },
+    () => 0.72 + q() * 0.85);
+    if (addInstanced(world, rootFlareGeo(seed + 60 + v), M.rootWet, list,
+      new THREE.Vector3(), { name: 'bogRoots' + v })) calls++;
+  }
+
+  /* ── 3. THE DEADFALL. The spiky black note, and the thing that makes the
+   * water read as shallow: a branch lying half in it has a wet line on it.
+   * Deadfall gathers hardest of all — a fallen crown does not distribute
+   * itself, it lands in one place — so the banks are few and tight. */
+  for (let v = 0; v < 2; v++) {
+    const list = [];
+    bankify(list, { banks: Math.round((opts.deadwood ?? 1) * 16), per: 7, rad: 2.6,
+      rmin: 4, rmax: R, minHeight: wet - 0.35 },
+    () => 0.7 + q() * 0.8);
+    if (addInstanced(world, deadwoodGeo(seed + 80 + v), M.rootWet, list,
+      new THREE.Vector3(), { name: 'bogDeadfall' + v, castShadow: false })) calls++;
+  }
+
+  /* ── 4. THE ARCHES, and they are the only rung here with a moss cap: one
+   * saturated note on the one shape that stands clear of the water. */
+  for (let v = 0; v < 2; v++) {
+    const list = [];
+    bankify(list, { banks: Math.round((opts.arches ?? 1) * 15), per: 4, rad: 4.4,
+      rmin: 8, rmax: R * 0.9, clearance: 1.6, minHeight: wet - 0.05 },
+    () => 0.8 + q() * 0.7);
+    if (addInstanced(world, rootArchGeo(seed + 100 + v), v ? M.mossWet : M.rootWet, list,
+      new THREE.Vector3(), { name: 'bogArch' + v })) calls++;
+  }
+  return calls;
+}
+
 /**
  * WRECKAGE AND BONES scattered over the mid distance: the things that are too
  * small to be architecture and too big to be litter, which is exactly the size
@@ -1566,40 +2037,34 @@ export const LEVELS = {
           { radius: 356, low: 70, high: 146, shade: 0.68 },
         ],
       });
-      for (let k = 0; k < 14; k++) {
-        const site = findSite(world, 20, 100, { angle: (k / 6) * TAU + rng() * 0.6, clearance: 14, maxSlope: 0.40 });
+      /* ── NINE MASSIFS, AND NOT ONE STONE. See `strewSnowForms` above for the
+       * whole argument and the reference it comes off. What stood here was
+       * fourteen `addOutcrop` crags plus a three-grade `strewGround` stone
+       * field at 1.6/1.4/1.3 — the heaviest litter on the roster, on the one
+       * level whose reference plate contains no rock at all.
+       *
+       * The pass before this one re-tinted that field and wrote down that
+       * "the counts are untouched, and that is deliberate… the complaint is
+       * that the stones are BROWN, not that there are too many". That was
+       * wrong, and the second telling says so: "i already told you to get rid
+       * of the rocks in the white pass but they're still there it feels like a
+       * reskin of the dunes map." It was a reskin of the dunes map. The shapes
+       * were the dune sea's shapes in the dune sea's places.
+       *
+       * Nine massifs and not fourteen crags, because a massif is much bigger
+       * than a crag was and because the reference's mid-ground holds exactly
+       * one. They are the only furniture on this level with a collider. */
+      for (let k = 0; k < 9; k++) {
+        const site = findSite(world, 22, 104, { angle: (k / 9) * TAU + rng() * 0.7, clearance: 17, maxSlope: 0.36 });
         if (!site) continue;
-        addOutcrop(world, site.pos, { size: 4 + rng() * 5, height: 7 + rng() * 7, seed: 700 + k,
-          mat: M.stoneSnow });
+        addSnowMassif(world, site.pos, { size: 5.5 + rng() * 6, height: 4 + rng() * 5,
+          seed: 700 + k, yaw: rng() * TAU });
       }
-      /**
-       * A cirque floor is talus, so this is the one level where the loose rock
-       * IS the ground cover and it runs heavier than anywhere else — but it is
-       * SNOW-COVERED rock, and that was the whole complaint: "the snow map
-       * shouldnt have the same stones/spires as the desert… sometimes it feels
-       * like the desert map but with the sand being white. The brown rocks
-       * just take you out of it."
-       *
-       * It was `M.stone`, which is the desert's stone and is deliberately warm
-       * (see its own note in Props.js — desert varnish). One level over, on
-       * white ground under a blue sky, that reads as a brown pebble field
-       * somebody dusted. `M.stoneSnow` is the same crack pattern at a cold,
-       * bright, barely-saturated tint, taken off the reference the player
-       * supplied: in it there is no bare rock anywhere, and an outcrop is
-       * separated from the drift beside it by VALUE and a blue shadow rather
-       * than by hue.
-       *
-       * THE COUNTS ARE UNTOUCHED, and that is deliberate. Thinning the field
-       * to match the reference's composition was tempting and is not what was
-       * reported — the complaint is that the stones are BROWN, not that there
-       * are too many. It is also not free: `ground-cover` measures the litter's
-       * Clark-Evans clustering against a Poisson control, and dropping
-       * landmarks 1.6 → 0.9 moved alpine's R to 0.706 against a 1.015 control
-       * and failed it. A composition change wants its own round and its own
-       * argument; this one is a tint.
-       */
-      strewGround(world, { seed: 9932, radius: 130, spread: 0.42, mat: M.stoneSnow,
-        landmarks: 1.6, boulders: 1.4, cobble: 1.3 });
+      /* THE GROUND ITSELF. Sastrugi combed along the level's own wind bearing,
+       * and drift humps in clumps where the field says the wind is already
+       * piling. Nothing here is a collider and nothing is over a metre high: a
+       * snowfield you trip on is a snowfield you cannot fight in. */
+      strewSnowForms(world, { seed: 9932, radius: 148, spread: 0.52 });
       return 9;
     },
   },
@@ -2849,62 +3314,32 @@ export const LEVELS = {
      * which gives a drift somewhere to be — and is the correct drawing anyway:
      * a closed canopy has LESS undergrowth under it than a clearing, because
      * the light is gone. The fern is in the glades, which is where it is. */
-    grass: 1.15,
     /**
-     * AND IT IS NOT GRASS. This is the level the note is about — "the grass and
-     * ground look like absolute fucking garbage… just get rid of it entirely
-     * and redo it" — and the reference is what settles what "redo it" means:
-     * `drowned-wood/dagobah.jpeg` has NO GRASS IN IT AT ALL. Standing water,
-     * matted litter, fallen deadwood, and the rootlets off every buttress.
+     * NO GRASS, AND THIS IS THE FOURTH TIME AND THE FIRST ONE THAT IS NOT A
+     * GRASS TUNING.
      *
-     * `kind: 'swamp'` is that, and the machinery is in Scenery.js's
-     * `COVER_KINDS` with the whole argument written over it. Three previous
-     * passes at this were grass tunings and each one was doomed for the same
-     * reason: a field of upright blades is the one surface a bog cannot have,
-     * so no amount of making it browner or sparser was ever going to sit in the
-     * frame. What changed is the SHAPE of the cover, not its colour.
+     * "get rid of the grass on drowned wood completely… it doesn't look
+     * stylistic and just looks like complete trash… you need to do something
+     * completely different because it's a 1/10 right now." Third repetition of
+     * the same note, and the third answer that was a field of upright cover
+     * with different numbers on it — browner, then sparser, then with a
+     * `swamp` multiplier row on the tier table. All three were the same move.
      *
-     * The density is UNTOUCHED at 1.15 and that is deliberate. The complaint
-     * was never that there was too little of it — "it's sparse, you can see the
-     * ground" is the opposite complaint — and `world-immersion` measures this
-     * level at 96% of its walkable ground covered, which is right for a floor
-     * that should be continuous mat.
+     * `assets/reference/maps/drowned-wood/dagobah.jpeg` has NO GRASS IN IT AT
+     * ALL and no upright cover of any kind. A bog floor is standing water,
+     * banks of matted litter, buttress roots and tangles of dead branches, and
+     * every one of those is a HORIZONTAL shape. A field of blades is the one
+     * surface a bog cannot have, which is why no amount of tuning one was ever
+     * going to sit in this frame.
+     *
+     * So the field is deleted and the floor is geometry: `strewSwampFloor` in
+     * this file, eight instanced rungs, with the whole argument written over
+     * it. `grass: 0` also moves this level from `world-immersion`'s `field`
+     * bucket into its `loose` bucket, which is the honest classification — the
+     * bog preset already declares 0.20 m of mantle, and what a player is IN on
+     * this level is water and silt, not a lawn.
      */
-    grassKind: 'swamp',
-    // Fern and moss: a tight lightness pair at hue 96°, so `grassPalette`'s
-    // five-stop species ramp does the spreading rather than the author.
-    /* THE PAIR IS A LIGHTNESS RAMP AND ITS SPREAD IS PAID FOR AT BOTH ENDS.
-     * `grassPalette` builds a five-stop species ramp by rotating the authored
-     * tints toward straw, green and glaucous, and `ground-cover.mjs` holds one
-     * rule about the result: the median blade may not come out LIGHTER than
-     * the two-stop ramp it replaces, because the cheapest way to make cover
-     * read better in a plate is to brighten it and that is a thumb on the
-     * scale. Measured, [0x4e6a2e, 0x2c421c] came out 1.04x and the deeps' own
-     * pair 1.03x; this one is darker at the lit end, so the straw stop has
-     * somewhere to be paler from. */
-    /* AND THE TINT WENT WITH THE KIND. It was [0x7f9440, 0x4e6128] — two
-     * greens, chosen when this was a fern field. Soaked leaf litter is not
-     * green: it is umber going to olive where the moss has taken it, which is
-     * what every square metre of `dagobah.jpeg` and `dagobah more.webp` is. The
-     * pair still has to be a LIGHTNESS ramp with the lit end darker than the
-     * two-stop ramp it replaces — `ground-cover.mjs` holds the median blade
-     * against that, because brightening cover is the cheapest way to make it
-     * read better in a plate and is a thumb on the scale — and at
-     * [0x6e7638, 0x393b1d] it is: 22% darker than the pair it replaces at the
-     * lit end and 28% at the shaded one.
-     *
-     * IT IS STILL AT HUE 71°, NOT THE 54° FIRST WRITTEN, and that is a
-     * measurement rather than a retreat toward green. `grassPalette` builds the
-     * five-stop species ramp by ROTATING the authored pair toward straw, green
-     * and glaucous, so how far the field can spread depends on where the pair
-     * starts: authored at 54° — a true umber — the near rung came out spanning
-     * 31° of hue against the 35° `ground-cover.mjs` requires, and at 66° it was
-     * 33°, because the straw stop had nowhere to rotate to. 71° is olive rather
-     * than green, which is what wet litter with moss taken hold in it actually
-     * is, and it leaves the ramp room at both ends. The COLOUR of this level's
-     * cover therefore moved much less than the SHAPE of it did, which is the
-     * finding: what was wrong with the drowned wood's floor was never its hue. */
-    grassTint: [0x6f7d33, 0x3a4020],
+    grass: 0,
     dress(world) {
       const T = world.terrain;
       const M = propMaterials();
@@ -3008,6 +3443,14 @@ export const LEVELS = {
        * enough of it to have something to measure. */
       strewGround(world, { seed: 5620, radius: 180, spread: 0.26, patch: 34, shun: 0.62,
         mat: M.stoneDark, landmarks: 0.7, boulders: 0.8, cobble: 1.2 });
+
+      /* THE FLOOR ITSELF — see `strewSwampFloor` and the `grass: 0` block
+       * above. This is the last thing the dressing pass does because it wants
+       * the occupancy grid to already hold every trunk, boulder and hull
+       * plate: the litter banks and the deadfall are the things that go
+       * BETWEEN what is already there, and a floor placed first would push
+       * the trees out to make room for it. */
+      strewSwampFloor(world, { seed: 8800, radius: 170, wet, spread: 0.46 });
 
       world.notify('THE DROWNED WOOD', 'cut a trunk and stand clear of it');
     },

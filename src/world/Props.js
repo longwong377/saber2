@@ -157,6 +157,32 @@ export function propMaterials() {
     emissive: new THREE.MeshStandardMaterial({ color: 0x111318, emissive: 0x60d8ff, emissiveIntensity: 2.2,
       roughness: 0.4, metalness: 0.3 }),
     wood: mk(crete, lit(0.49, 0.32, 0.17), 0.88, 0.02),
+    /* ── THE SWAMP FLOOR'S THREE MATERIALS ────────────────────────────────
+     *
+     * Read off `assets/reference/maps/drowned-wood/dagobah.jpeg`, which is the
+     * plate that settled what a bog floor is: standing water, banks of matted
+     * litter, buttress roots, and tangles of bare dead branches. There is no
+     * grass in it and there is no green in it either — the whole frame lives
+     * between a blue-grey and a very dark umber, and the ONLY bright thing is
+     * the water, because the water is what is holding the sky.
+     *
+     * So all three of these are darker than anything else in this table, and
+     * that is the point rather than an accident: the ground has to be the
+     * value the water is read AGAINST. A litter bank painted at the value the
+     * old fern field used would put the brightest thing in the frame on the
+     * floor and the water would stop being water.
+     *
+     * `rootWet` is barely rough, because wet wood is not matte — the specular
+     * roll-off along a root is most of what says it is soaked. `litterMat` is
+     * the opposite: matted leaf debris is the roughest surface on the level.
+     */
+    rootWet: mk(crete, lit(0.30, 0.255, 0.205), 0.62, 0.04),
+    litterMat: mk(crete, lit(0.315, 0.285, 0.175), 0.97, 0.0),
+    /* Moss is the one saturated note and there is very little of it, which is
+     * why it is allowed to be as green as it is: it is the accent in rule 5's
+     * sense — one hue family, one accent, and the accent IS the subject where
+     * it lands. Caps on roots and the tops of fallen logs only. */
+    mossWet: mk(crete, lit(0.235, 0.335, 0.175), 0.90, 0.0),
 
     /* ── the environment vocabulary ───────────────────────────────────
      * A place needs more than one grey. Facing stone, its shadowed core,
@@ -216,6 +242,19 @@ export function propMaterials() {
      * the tint that was wrong.
      */
     stoneSnow: mk(rock, lit(2.45, 2.62, 2.95), 0.95, 0.0),
+    /* WIND-PACKED SNOW, and it is a different material from the stone above
+     * rather than a paler tint of it. `assets/reference/maps/alpine/hoth.jpeg`
+     * has NO ROCK IN IT — not a stone, not a spire, not a chip — and every
+     * form in the frame is snow: sastrugi combed by the wind, drift humps,
+     * and one big rounded massif in the mid-ground. So the White Pass's
+     * ground furniture is made of this and the stone is gone from that level
+     * entirely.
+     *
+     * Brighter than anything else in the table and tilted BLUE, which is not
+     * decoration: snow is bright because its albedo is high, and its shadows
+     * are blue because the only thing lighting them is the dome. The level's
+     * own atmosphere block makes the same argument about its ambient. */
+    snowPack: mk(sandy, lit(3.15, 3.32, 3.62), 0.93, 0.0),
     /* Wind-blown sand banked against anything that has stood still in a desert
      * long enough to matter. It is built on the SAND map, and the reason is a
      * textbook case of a mean hiding a distribution.

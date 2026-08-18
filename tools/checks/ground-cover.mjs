@@ -467,7 +467,14 @@ export function run({ check, assert, near }) {
      * bare (no field, no tint, no mat) rather than being allowed to pass with
      * a token cover mask nothing grew out of. Every outdoor level is in
      * exactly one of the two halves and cannot be in both. */
-    assert(rows.length === COVERED.length && rows.length >= 1,
+    /* COVERED IS ALLOWED TO BE EMPTY, and today it is — every ground in the
+     * game is sand, snow, basalt, red dust, arena sand or bog, and the last
+     * grass field went with the Drowned Wood's floor rebuild. What is NOT
+     * allowed is for that to be silent, so the count is reported either way
+     * and the bare half below is what the check then rests on. Its own note
+     * already said so: "what carries the weight is the OTHER half, which is
+     * strictly more than a headcount asked for". */
+    assert(rows.length === COVERED.length,
       `${rows.length} of ${COVERED.length} levels with cover were compared`);
     const bare = [];
     for (const key of BARE) {
@@ -483,7 +490,9 @@ export function run({ check, assert, near }) {
       t.dispose();
     }
     assert(bare.length >= 4, `only ${bare.length} levels are bare ground`);
-    return `mean cover under a stone vs over the level: ${rows.join(', ')}; `
+    return (rows.length
+      ? `mean cover under a stone vs over the level: ${rows.join(', ')}; `
+      : 'no level grows a cover field — every ground in the game is loose or hard; ')
       + `bare by design: ${bare.join(', ')}`;
   });
 

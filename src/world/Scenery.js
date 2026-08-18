@@ -1856,6 +1856,14 @@ export function makeCoverField(opts = {}) {
  * constructor for why the Drowned Wood needed one and why a fourth grass tuning
  * pass could not have worked.
  */
+/* NOTHING ON THE ROSTER SELECTS A KIND TODAY, OR A FIELD AT ALL. Every level
+ * in the game authors `grass: 0` — the tundra and desert grounds by request,
+ * and the Drowned Wood because a bog floor turned out to be geometry rather
+ * than cover (see `strewSwampFloor` in Levels.js). `GrassField` and this table
+ * are kept because the machinery around them is not idle: `makeCoverField` is
+ * what every `drift` placement in the game samples, and the contact-shadow
+ * pass under it is the answer to "nothing in the frame touched the ground".
+ * The day a grass level exists again it wants this, unchanged. */
 const COVER_KINDS = {
   swamp: { width: 1.55, height: 0.52, wave: 0.14, bend: 1.70 },
 };
