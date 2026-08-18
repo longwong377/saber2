@@ -331,4 +331,84 @@ export async function run({ check, assert }) {
       `${broke.length} mode/rule pairs cannot be deployed at all:\n    ${broke.slice(0, 8).join('\n    ')}`);
     return `${modes.length} modes × ${Waves.CONDITION_KEYS.length} rules, all ${modes.length * Waves.CONDITION_KEYS.length} deployable`;
   });
+
+  check('run rules: a mode whose composer never sees a rule declares it, and no other mode does', async () => {
+    /**
+     * index.html promises, unconditionally, that the run rules "are in force
+     * from the first wave". Driven through each mode's OWN director — the one
+     * `World.loadLevel` builds for it, not the throwaway `WaveDirector` the
+     * menu asks — `legalRuleSet` accepts every rule in all EIGHT modes and
+     * FIVE of them compose a wave that carries one:
+     *
+     *     waves 4 · roguelite 4 · command 4 · skirmish 4 · campaign 4
+     *     duel 0 · sandbox 0 · training — no composer at all
+     *
+     * So in three modes a player lights up to four cards, watches them written
+     * to settings, and fights a run that has never heard of them.
+     * `MODES[key].fixedRules` is what `Menu._syncRules` reads to grey the
+     * column and say why, and this is the clause that keeps the field honest in
+     * BOTH directions: a mode that goes deaf and does not say so, and a mode
+     * that says so and honours them perfectly well, are the same defect wearing
+     * opposite signs. Neither list is typed here — the deaf set is measured.
+     *
+     * THE DIRECTOR PER MODE IS THE WHOLE POINT. Training's refusal is a layer
+     * further out than the other two: `World.loadLevel` gives it a
+     * `DojoDirector`, which has no `legalRuleSet` and no `conditions`, so a
+     * probe that holds a WaveDirector for every mode reports training as fine.
+     * That is the shape §2.4 warns about — an instrument restating the rule
+     * instead of asking it — and it is why this builds what the game builds.
+     */
+    const { CommandDirector } = await import('../../src/game/Command.js');
+    const { DojoDirector } = await import('../../src/game/Dojo.js');
+    const pool = LEVELS[LEVEL_ORDER[0]].pool;
+    /** The one thing all three directors are given: a field to stand on. */
+    const stubWorld = (mode) => ({
+      enemies: [], players: [], settings: { mode }, takenBoons: new Set(),
+      spawnEnemy: () => ({}), notify() {}, scene: { add() {}, remove() {} },
+      player: null, difficulty: null, hpScale: 1, dmgScale: 1, partyTeam: 0, level: {},
+      terrain: {
+        height: () => 0, normalAt: (x, z, o) => o.set(0, 1, 0), raycast: () => null,
+        size: 400, half: 200, inBounds: () => true, surfaceAt: () => 'sand', crater() {}, flush() {},
+      },
+    });
+    /* The director `World.loadLevel` builds, chosen by the same two questions
+     * it asks: the training branch first, then `MODES[mode].battles`. */
+    const directorFor = (mode) => {
+      const w = stubWorld(mode);
+      if (mode === 'training') return new DojoDirector(w);
+      return (mode === 'command' || Waves.MODES[mode].battles)
+        ? new CommandDirector(w, { pool })
+        : new Waves.WaveDirector(w, { mode, pool });
+    };
+    const rows = [], deaf = [];
+    for (const mode of Object.keys(Waves.MODES)) {
+      Waves.seedWaves(77, 0);
+      const d = directorFor(mode);
+      let carried = 0;
+      try {
+        if (d.legalRuleSet) d.rules = d.legalRuleSet([...Waves.CONDITION_KEYS]);
+        d.start(6);
+        carried = (d.conditions || []).length;
+      } catch { carried = 0; }
+      rows.push(`${mode} ${carried}`);
+      if (!carried) deaf.push(mode);
+    }
+    assert(deaf.length && deaf.length < Object.keys(Waves.MODES).length,
+      `${deaf.length} of ${Object.keys(Waves.MODES).length} modes honour no rule — the drive itself is wrong`);
+    const declared = Object.keys(Waves.MODES).filter((m) => Waves.MODES[m].fixedRules);
+    const silent = deaf.filter((m) => !Waves.MODES[m].fixedRules);
+    assert(!silent.length,
+      `${silent.join(', ')} compose${silent.length === 1 ? 's' : ''} a wave that carries no run rule and `
+      + 'declare no `fixedRules` — the Deploy panel lights the cards, writes them to settings and throws '
+      + 'them away, which reads as the picker being randomly broken');
+    const lying = declared.filter((m) => !deaf.includes(m));
+    assert(!lying.length,
+      `${lying.join(', ')} declare \`fixedRules\` and honour the rules perfectly well — the column is `
+      + 'greyed on a mode that would have kept the promise');
+    for (const m of declared) {
+      assert(typeof Waves.MODES[m].fixedRules === 'string' && Waves.MODES[m].fixedRules.length > 20,
+        `${m}'s fixedRules is not a sentence a player can read: ${JSON.stringify(Waves.MODES[m].fixedRules)}`);
+    }
+    return `conditions at wave 6 per mode — ${rows.join(', ')}; deaf and declared: ${deaf.join(', ')}`;
+  });
 }

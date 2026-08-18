@@ -753,6 +753,13 @@ const MOTOR_DEADBAND = 0.4;
  */
 const SLEEP_MOVE = 0.015, SLEEP_TURN = 0.18, SLEEP_TIME = 0.75;
 
+/**
+ * The largest step this solver stays stable over, the largest frame it will
+ * simulate, and the cap on how many of the former it will spend on one of the
+ * latter. See `step` for the measurement that separated the first two.
+ */
+const MAX_STEP = 1 / 30, MAX_FRAME = 0.1, MAX_SUBSTEPS = 4;
+
 /** Legacy `spheres:` with no `shape:` — a compound of balls, honestly labelled. */
 function shapeFromSpheres(spheres) {
   if (!spheres || !spheres.length) return null;
@@ -797,7 +804,7 @@ export class RapierWorld {
 
     this.maxBodies = opts.maxBodies ?? 1400;
     this.killY = opts.killY ?? -180;
-    this.stats = { bodies: 0, contacts: 0, awake: 0, ms: 0, colliders: 0, rapier: 0, joints: 0 };
+    this.stats = { bodies: 0, contacts: 0, awake: 0, ms: 0, colliders: 0, rapier: 0, joints: 0, substeps: 1, overBudget: 0 };
 
     this._ray = new R.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 });
     this._rayFilter = null;
@@ -1039,17 +1046,59 @@ export class RapierWorld {
     relW.add(_v5);
   }
 
+  /**
+   * THE BODY BUDGET SPENDS DEBRIS, AND NOTHING ELSE.
+   *
+   * This had a second pass under the debris one that took the first non-static
+   * body in insertion order, guarded only by `b.userData.keep` — a flag READ
+   * here and in the sphere solver's twin and WRITTEN NOWHERE in src/, so the
+   * guard was vacuous and the pass was unfiltered. Measured at `maxBodies: 300`
+   * (the settings slider's MINIMUM — what a player on a weak machine sets),
+   * twelve acolytes killed per round over six rounds, no debris on the field:
+   *
+   *     711 fallback culls — victims PLAYER×1, PROP×2, RAGDOLL×708
+   *
+   * Every one of those is a live object with no way back. The player's proxy is
+   * added exactly once, in the Player constructor, so after its cull `rb` is
+   * null forever: nothing collides with the player and `_push` writes into
+   * nothing. A prop's mesh stays in the scene without its collider — a wall you
+   * now walk through, created at runtime. And a corpse's bone taken out from
+   * under it drops every joint that touched it while `syncRagdoll` keeps
+   * copying a transform off a null `rb`.
+   *
+   * The trigger is a batch death: `goRagdoll` adds ~10-17 bodies for ONE corpse
+   * in ONE frame, so twelve simultaneous deaths clear the cap in a single frame
+   * with no debris in the world to absorb it.
+   *
+   * So the rule is now structural rather than flag-based, and it is the whole
+   * of the fix rather than a guard on kinematic proxies:
+   *
+   *   · DEBRIS is the only unbounded producer in the game — cut chunks, gibs,
+   *     rubble, all made at runtime with nothing counting them. It is what the
+   *     budget exists for and it is all the budget may spend.
+   *   · Everything else already has an owner that knows how to take it away
+   *     WHOLE: `Corpses` retires a corpse by worth, fades it and disposes it
+   *     (and takes its bodies out of the world 0.75 s after it stops moving);
+   *     props and architecture belong to the level. A budget that evicts one
+   *     bone of a live corpse is not enforcing a bound, it is corrupting an
+   *     object that another system still holds — and it is the same defect a
+   *     second time, so both halves are closed here.
+   *   · When there is no debris left, the budget is not met. That is honest and
+   *     it is bounded: the overshoot is a batch of deaths, and `Corpses` drains
+   *     it within a second at every tier (low is 6 corpses ≈ 100 bodies against
+   *     a 300 floor). `stats.overBudget` counts the refusals so the pressure is
+   *     visible instead of silent.
+   */
   _cullOldestDebris() {
     for (const b of this.bodies) {
-      if (b.layer === LAYER.DEBRIS && !b.userData.keep) {
+      if (b.layer === LAYER.DEBRIS && !b.static && !b.userData.keep) {
         if (b.userData.onCull) b.userData.onCull();
         this.remove(b);
-        return;
+        return true;
       }
     }
-    for (const b of this.bodies) {
-      if (!b.static && !b.userData.keep) { if (b.userData.onCull) b.userData.onCull(); this.remove(b); return; }
-    }
+    this.stats.overBudget++;
+    return false;
   }
 
   /* ── statics ─────────────────────────────────────────────────────── */
@@ -1109,11 +1158,46 @@ export class RapierWorld {
 
   /* ── step ────────────────────────────────────────────────────────── */
 
+  /**
+   * THE FRAME'S WORTH OF SIMULATION, IN STEPS THE SOLVER CAN ACTUALLY TAKE.
+   *
+   * This used to open `dt = Math.min(dt, 1/30)` and hand that to Rapier once.
+   * 1/30 is a stability bound on ONE integration step; used as a bound on the
+   * FRAME it silently throws the rest of the frame away, and `main.js` clamps
+   * at 0.1 s and hands that whole value to every player, enemy, blade and bolt.
+   * So below 30 fps the rigid-body world ran slow while everything the player
+   * drives ran at full speed. Measured, a 20 m free fall at g=22 whose true
+   * answer is 1.35 s:
+   *
+   *     dt=1/240 → 1.34 s    dt=1/30 → 1.37 s    dt=0.1 → 4.10 s
+   *     dt=1/60  → 1.35 s    dt=1/15 → 2.73 s
+   *
+   * At main.js's own clamp a crate, a corpse or a severed limb fell at a THIRD
+   * of the rate a character walks at, and `Destruction._impactScan`, which
+   * gates on `b.velocity`, stopped seeing heavy impacts at low framerates
+   * because the velocity it reads was a third of what gameplay believed.
+   *
+   * Substepping keeps the bound where it belongs — on the step — and advances
+   * the world by the whole frame. The substep count is capped so a frame that
+   * is already slow cannot buy itself three more physics steps and spiral;
+   * main.js's 0.1 clamp means the cap is not reachable from the game loop, and
+   * it is here for the callers that are not the game loop.
+   */
   step(dt) {
     if (this.dead) return;
+    if (!(dt > 0)) return;
+    dt = Math.min(dt, MAX_FRAME);
+    const n = Math.min(MAX_SUBSTEPS, Math.max(1, Math.ceil(dt / MAX_STEP)));
+    const h = dt / n;
+    let ms = 0;
+    for (let s = 0; s < n; s++) { this._stepOnce(h); ms += this.stats.ms; }
+    this.stats.ms = ms;
+    this.stats.substeps = n;
+  }
+
+  /** ONE integration step, of at most MAX_STEP. See `step`. */
+  _stepOnce(dt) {
     const t0 = performance.now();
-    dt = Math.min(dt, 1 / 30);
-    if (dt <= 0) return;
 
     this._refreshHeightfield(dt);
     if (this.joints.length) this._solveJoints(dt);

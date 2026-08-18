@@ -2391,13 +2391,45 @@ export class Player {
     this.camera.yaw = Math.PI;
     this.eyeHeight = EYE_H;   // re-derived from the species below, once the rig exists
 
-    // ── physics proxy so enemies and props collide with us
+    /**
+     * ── physics proxy so props, rubble and corpses collide with us
+     *
+     * THE MASK HAS TO NAME THEM. Rapier pairs two colliders iff
+     * `(A.layer & B.mask) && (B.layer & A.mask)`, and this said `LAYER.WORLD`
+     * — so a crate (`layer PROP`) failed the first conjunct, `PROP & WORLD`
+     * being 0, and the capsule interacted with terrain and architecture and
+     * NOTHING ELSE. Four call sites list `LAYER.PLAYER` in their own masks
+     * believing the player is solid (Destruction.js, Props.js, Ragdoll.js ×3)
+     * and all four were dead. Measured, dropped on the player's head, with the
+     * capsule occupying y = 0.35 … 1.45:
+     *
+     *              was (mask WORLD)   now
+     *     crate        rests y=0.35   2.20
+     *     bone         rests y=0.30   2.15
+     *     debris chunk rests y=0.20   2.05
+     *
+     * — three objects at rest INSIDE the player, on the floor, which is the
+     * game's headline rule ("anything you can touch is a physical object")
+     * failing on the one collider the player never stops touching.
+     *
+     * `_gatherNear`/`_collide` already shove props out of the way by hand and
+     * that stays: this proxy is KINEMATIC, so Rapier moves the crate and never
+     * the player, and the hand-rolled pass is what gives the player back the
+     * share of the shove a kinematic body cannot receive. The direction that
+     * was missing is the other one — a crate, a limb or a lump of wall meeting
+     * the player and being stopped by them.
+     *
+     * ENEMY is not in the list: an enemy's proxy is kinematic too, and two
+     * kinematic bodies generate no contact response in Rapier, so naming it
+     * would read as a rule and do nothing.
+     */
     this.body = new Body({
       position: this.position.clone().setY(this.position.y + 0.9),
       spheres: capsuleSpheres(0.55, this.radius, 'y', 3),
       shape: capsule(0.55, this.radius),
       mass: 78, kinematic: true, static: false, layer: LAYER.PLAYER,
-      mask: LAYER.WORLD, allowSleep: false, gravityScale: 0,
+      mask: LAYER.WORLD | LAYER.PROP | LAYER.DEBRIS | LAYER.RAGDOLL,
+      allowSleep: false, gravityScale: 0,
     });
     this.body.userData.player = this;
     world.physics.add(this.body);

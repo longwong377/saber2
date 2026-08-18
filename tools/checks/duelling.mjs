@@ -179,6 +179,43 @@ function duel(formKey, seconds, opts = {}) {
     }
     return realDamage(amt, pt, ...rest);
   };
+  /**
+   * A STRIKE IS COUNTED WHERE THE GAME ENTERS ONE, not where a once-a-frame
+   * sample happens to catch it — and the difference is a whole clause.
+   *
+   * This used to be `isStrike && !wasStrike` on `e.duel.phase`, read at the END
+   * of the frame. Two things happen between the read and the truth. `p.damage`
+   * is billed inside `e.update`, and THIS LOOP then resolves the clash and
+   * calls `duelB.interrupt(0.45)` — so a strike that landed a hit and was
+   * parried in the same frame is out of `strike` again before anything looks,
+   * and the hit is counted while the strike is not.
+   *
+   * Measured over 20 s of Ataru, which is the only form fast enough to chain
+   * into it: the brain entered `strike` 28 times and the sample saw 20, and
+   * `hits > strikes` therefore fired at 21/20 on a fight where 21 hits came out
+   * of 28 swings. `worstHitsInOneStrike` was 1 throughout, which is the tell —
+   * the per-strike latch, which is billed from inside the same frame, never
+   * disagreed with the game.
+   *
+   * So the transition is observed on the FIELD, which cannot be aliased. The
+   * clause is unchanged in every other respect: it is still "no form may land
+   * more hits than it made swings", and it is still the plain arithmetic.
+   */
+  {
+    let ph = e.duel.phase;
+    Object.defineProperty(e.duel, 'phase', {
+      configurable: true,
+      get: () => ph,
+      set: (v) => {
+        if (v === 'strike' && ph !== 'strike') { s.strikes++; s.hitsThisStrike = 0; }
+        else if (v !== 'strike' && ph === 'strike') {
+          s.worstHitsInOneStrike = Math.max(s.worstHitsInOneStrike, s.hitsThisStrike);
+        }
+        ph = v;
+      },
+    });
+  }
+
   const a = new THREE.Vector3(), b = new THREE.Vector3();
   const dt = 1 / 60, N = Math.round(seconds * 60);
   const minStrikes = opts.minStrikes ?? 0;
@@ -226,10 +263,9 @@ function duel(formKey, seconds, opts = {}) {
     lastHp = p.hp;
     if (!p.alive || p.hp <= 0.001) { p.hp = 100; p.alive = true; p.invuln = 0; lastHp = 100; }
 
-    const isStrike = e.duel.phase === 'strike';
-    if (isStrike && !wasStrike) { s.strikes++; s.hitsThisStrike = 0; }
-    if (!isStrike && wasStrike) s.worstHitsInOneStrike = Math.max(s.worstHitsInOneStrike, s.hitsThisStrike);
-    wasStrike = isStrike;
+    // `wasStrike` is still what the `minStrikes` early-out reads — "stop at the
+    // end of a strike, not in the middle of one" — and nothing else now.
+    wasStrike = e.duel.phase === 'strike';
   }
   s.frames = s.frames ?? N;
   s.seconds = s.frames / 60;

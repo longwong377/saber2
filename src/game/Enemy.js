@@ -2055,7 +2055,16 @@ export class Enemy {
       spheres: P?.spheres ?? capsuleSpheres(A.big ? 0.9 : 0.55, r, 'y', 3),
       shape: capsule(A.big ? 0.9 : 0.55, r),
       mass: A.mass, kinematic: true, layer: LAYER.ENEMY,
-      mask: LAYER.WORLD, allowSleep: false, gravityScale: 0,
+      /* Same defect and same measurement as the player's proxy — see the note
+       * over `this.body` in Player.js. `LAYER.WORLD` alone meant a crate, a
+       * chunk of a broken wall or a rolling barrel passed straight through
+       * every living enemy in the game and came to rest on the floor inside
+       * them, while Props.js and Destruction.js both name `LAYER.ENEMY` in
+       * their masks on the understanding that it does not. RAGDOLL is absent
+       * because the corpse's own mask (Ragdoll.js) does not name ENEMY, so it
+       * would be half a pair and therefore inert. */
+      mask: LAYER.WORLD | LAYER.PROP | LAYER.DEBRIS,
+      allowSleep: false, gravityScale: 0,
     });
     this.body.userData.enemy = this;
     world.physics.add(this.body);

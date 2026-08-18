@@ -138,12 +138,40 @@ export const MODES = {
   duel: {
     name: 'Duel',
     blurb: 'No blasters, no crowd. A ladder of duellists — a new form every 3 waves, and a master at the top.',
+    /**
+     * THE RUN RULES ARE LIT, WRITTEN TO SETTINGS AND THEN THROWN AWAY HERE.
+     *
+     * index.html promises without qualification that the rules "are in force
+     * from the first wave", and `legalRuleSet` accepts them in all EIGHT modes
+     * — measured through the shipped directors, five honour them and three do
+     * not. `_compose` branches into `_composeDuel` twenty-seven lines before
+     * the rules are unioned into the conditions, so a duel's wave-6 conditions
+     * come back `[]` however many cards the player lit.
+     *
+     * `fixedRules` is the machine-readable half of that, exactly as
+     * `MODES.command.fixedTheatre` is for the ground it does not let you pick:
+     * `Menu._syncRules` greys `#rule-list`, replaces the promise with this
+     * sentence and puts it on every barred card. A lit control that does
+     * nothing "reads as the picker being randomly broken", which is
+     * `_syncTheatre`'s own account of the defect this is the second instance
+     * of. WHICH modes carry the field is derived rather than trusted:
+     * `tools/checks/runrules.mjs` asks every mode's own director whether a
+     * composed wave carries a rule, and holds the field to the answer.
+     */
+    fixedRules: 'Not in a duel: the ladder is composed one opponent at a time, and the wave that would carry a rule is never built.',
   },
   // THE DESCENT IS GONE, and the reason is not that the ladder was broken —
   // it worked. Three of its four rungs were the three interiors the player
   // named as the worst rooms in the game, so the mode's whole content was the
   // content being deleted. A ladder is only as good as the rooms on it.
-  sandbox: { name: 'Sandbox', blurb: 'You set the numbers. However many droids you say, firing as slowly as you say — including none of either.' },
+  sandbox: {
+    name: 'Sandbox',
+    blurb: 'You set the numbers. However many droids you say, firing as slowly as you say — including none of either.',
+    /* Deaf a layer earlier than the duel: `start()` returns on the sandbox
+     * branch above `_compose`, so there is no wave for a rule to condition —
+     * the room is whatever the dials say. See `MODES.duel.fixedRules`. */
+    fixedRules: 'Not in the sandbox: the field is whatever you dialled in, and no wave is composed to carry a rule.',
+  },
   /**
    * TRAINING WAS PINNED TO ONE ROOM.
    *
@@ -163,7 +191,16 @@ export const MODES = {
    * to describe as still present. Nothing was lost with it: the room was the
    * one thing the lessons never read.)
    */
-  training: { name: 'Training', blurb: 'The eleven lessons, in whatever theatre you choose. Nothing here can kill you.' },
+  training: {
+    name: 'Training',
+    blurb: 'The eleven lessons, in whatever theatre you choose. Nothing here can kill you.',
+    /* Deaf a layer further out than either: `World.loadLevel` builds a
+     * `DojoDirector` for this mode, which has no `legalRuleSet` and no
+     * composer at all — measured, it has no `conditions` to read. No probe
+     * holding a WaveDirector can see that, which is why the check that pins
+     * this field builds each mode's OWN director. See `MODES.duel.fixedRules`. */
+    fixedRules: 'Not in Training: the lessons are run by the dojo, which composes no waves for a rule to change.',
+  },
   /**
    * COMMAND — the one mode where you are not alone.
    *

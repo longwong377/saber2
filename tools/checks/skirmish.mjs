@@ -474,13 +474,39 @@ export async function run({ check, assert }) {
     } finally { S.restoreShared(snap); }
   });
 
-  check('skirmish: going down loses it, through the one wipe rule every mode uses', async () => {
+  check('skirmish: going down loses it, and the defeat is announced like the victory', async () => {
+    /**
+     * THE CHECK USED TO STOP AT THE `won` FIELD, and that is why nothing caught
+     * a defeat nobody was told about. `World._endSkirmish` held the notify and
+     * `audio.runWon`, and `grep -rn "_endSkirmish" src/` finds ONE call site —
+     * `_endSkirmish(true)`. The defeat path is `_checkWipe`, which set the
+     * flags, raised the card and said nothing.
+     *
+     * Measured on this exact drive before the fix: the last line on screen is
+     * "THE COLOSSEUM — ENGAGEMENT 1 OF 2" and `audio.runWon` fires zero times,
+     * against a won battle's "THE BATTLE IS WON" and `audio.runWon(true)`. The
+     * mode's blurb is "it ends in a victory or a defeat — not in a high score",
+     * so a mute defeat is the blurb half-kept.
+     *
+     * Both halves are read off the SHIPPED announcement rather than matched
+     * against a sentence typed here: the word is whatever `_announceBattle`
+     * says for a loss, and what is asserted is that a loss says something at
+     * all, that it names the battle, and that the sound the victory plays is
+     * played for the defeat with `false` on it.
+     */
     const S = await import('./_shared.mjs');
     const snap = await S.snapshotShared();
+    const { audio } = await import('../../src/engine/Audio.js');
+    const realRunWon = audio.runWon;
     try {
       const { world, input } = await boot({ mode: 'skirmish' });
       let ended = null;
       world.onGameOver = (s) => { ended = s; };
+      const said = [];
+      const notify = world.notify.bind(world);
+      world.notify = (t, sub) => { said.push(String(t)); notify(t, sub); };
+      const sounded = [];
+      audio.runWon = (w) => { sounded.push(w); return realRunWon?.call(audio, w); };
       world.beginSkirmish({ engagements: 4, strength: 10 });
       for (let i = 0; i < 30; i++) world.update(1 / 60, input);
       world.player.damage?.(99999, null, 'probe');
@@ -490,8 +516,17 @@ export async function run({ check, assert }) {
       assert(ended.won === false, `a lost battle reported won=${ended.won}`);
       assert(world.skirmish.done && world.skirmish.won === false, 'the plan was left undecided');
       assert(world.skirmish.cleared < 4, 'the battle was somehow also completed');
-      return `dead on engagement 1: won=false, wave ${ended.wave}, ${ended.kills} kills`;
-    } finally { S.restoreShared(snap); }
+      const verdict = said.filter((t) => /\bLOST\b|\bDEFEAT\b/i.test(t));
+      assert(verdict.length,
+        'the battle was lost and nothing on screen said so — the last line a beaten player sees is '
+        + `"${said[said.length - 1]}". The announcement lives in _endSkirmish, whose only caller passes `
+        + 'true; the defeat path is _checkWipe. World._announceBattle is the fix and it is in the lane report');
+      assert(sounded.length === 1 && sounded[0] === false,
+        `a lost battle called audio.runWon ${sounded.length} time(s) (${JSON.stringify(sounded)}) — `
+        + 'the victory plays it and the defeat is silent');
+      return `dead on engagement 1: won=false, wave ${ended.wave}, ${ended.kills} kills, `
+        + `announced "${verdict[0]}", runWon(false)`;
+    } finally { audio.runWon = realRunWon; S.restoreShared(snap); }
   });
 
   check('skirmish: it plays through a front end that has never heard of it', async () => {

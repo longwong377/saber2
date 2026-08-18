@@ -469,29 +469,30 @@ export async function run({ check, assert }) {
         wrong.push(`the IG Bodyguard's page says four times the MagnaGuard's health and it is ${hpX.toFixed(2)}x`);
       }
       /**
-       * THE SIZE HALF IS A PINNED, REPORTED DEFECT AND NOT A PASSING CLAUSE.
+       * THE SIZE HALF, AND THE PIN THAT USED TO BE HERE IS DISCHARGED.
        *
-       * The page says "half again the size" and the archetypes say 1.30/1.18 =
-       * 1.10x — a tenth, not a half, out by a factor of five. `src/game/`
-       * belongs to another lane, so the prose is not this one's to correct; the
-       * one-line patch has been reported. Meanwhile the measurement is PINNED
-       * rather than relaxed: this fails the moment either scale moves, and it
-       * fails the moment the sentence is corrected, which is what forces the
-       * pin to be deleted and the live clause below it to be uncommented. A
-       * clause tuned to accept a defect quietly is the thing this file exists
-       * to stop; a clause that accepts it loudly and cannot drift is a record.
+       * The page said "half again the size" against archetypes reading
+       * 1.30/1.18 = 1.10x — a tenth, not a half, out by a factor of five. The
+       * prose belonged to another lane, so this clause was written as a PINNED
+       * measurement rather than a relaxed bound: it failed if either scale
+       * moved AND it failed the moment the sentence was corrected, which is
+       * what forced its own deletion. The sentence has been corrected and the
+       * pin fired exactly as designed, so what is left is the live claim.
+       *
+       * READ OFF THE PAGE rather than compared to a typed 1.10, because the
+       * next person to change either number should not have to remember this
+       * file: the page names a fraction in words, the tables name a ratio, and
+       * a mismatch between them is the whole defect this clause exists for.
        */
-      if (/half again the size/.test(page)) {
-        if (Math.abs(sizeX - 1.10) > 0.005) {
-          wrong.push(`the IG Bodyguard's size ratio has moved to ${sizeX.toFixed(3)}x — the pinned `
-            + 'defect (page says "half again", tables say 1.10x) is stale, re-measure and '
-            + 'delete this pin');
-        }
-      } else if (Math.abs(sizeX - 1.5) > 0.1) {
-        // the reported patch has landed and the sentence changed: hold the real
-        // claim from here on, whatever it now says
-        wrong.push(`the IG Bodyguard's page was corrected but its size claim still does not match `
-          + `${sizeX.toFixed(2)}x — re-read it against the tables`);
+      const SAYS = [[/half again the size/, 1.5], [/a tenth again the size/, 1.1],
+        [/a third again the size/, 1.333], [/twice the size/, 2]];
+      const claim = SAYS.find(([re]) => re.test(page));
+      if (claim && Math.abs(sizeX - claim[1]) > 0.05) {
+        wrong.push(`the IG Bodyguard's page claims ${claim[1]}x the MagnaGuard's size and the `
+          + `archetypes make it ${sizeX.toFixed(2)}x`);
+      } else if (!claim && /the size/.test(page)) {
+        wrong.push('the IG Bodyguard\'s page makes a size claim this check cannot read — add its '
+          + 'wording to SAYS so the sentence and the tables stay tied together');
       }
     }
     assert(!wrong.length, wrong.join('; '));
@@ -499,8 +500,8 @@ export async function run({ check, assert }) {
       + `${ARCHETYPES.stalker.speed} m/s, the AT-TE's ${ARCHETYPES.atte.damage} damage, `
       + `the rancor's ${ARCHETYPES.brute.hp} hp across ${arena.length} arena bodies, and the `
       + `IG Bodyguard at ${(ARCHETYPES.bodyguard.hp / ARCHETYPES.magna.hp).toFixed(2)}x the `
-      + `MagnaGuard's health (page says four times: holds) and `
-      + `${((ARCHETYPES.bodyguard.scale ?? 1) / (ARCHETYPES.magna.scale ?? 1)).toFixed(2)}x its size `
-      + '(page says half again: PINNED WRONG, patch reported to the src/game lane)';
+      + `MagnaGuard's health and `
+      + `${((ARCHETYPES.bodyguard.scale ?? 1) / (ARCHETYPES.magna.scale ?? 1)).toFixed(2)}x its size, `
+      + 'both matching what its page says';
   });
 }

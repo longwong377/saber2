@@ -251,7 +251,7 @@ export const DATABANK = {
     faction: 'separatist',
     weapon: 'Electrostaff',
     text: 'The same IG chassis a MagnaGuard is built on, at four times the health '
-      + 'and half again the size: the machine a Confederate general keeps at the '
+      + 'and a tenth again the size: the machine a Confederate general keeps at the '
       + 'door rather than in the line. The torso is plated in durasteel and that is '
       + 'the whole of the counter-play — you '
       + 'are not going to cut this one in half across the chest, and you do not have '

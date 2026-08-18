@@ -2867,9 +2867,23 @@ export const LEVELS = {
    *
    *  FOUR CLAIMS, and each is answered by a different piece of machinery.
    *
-   *  THE CROWD is `addCrowd` in Props.js: 3,000-odd figures in ONE draw call,
-   *  with per-instance colour out of six garment families and a rolling
-   *  animation that touches 240 of them a frame. A crowd is the one piece of
+   *  THE CROWD is `addCrowd` in Props.js: nearly 7,000 figures across six
+   *  draw calls, with per-instance colour out of six garment families and a
+   *  rolling animation that touches 240 of them a frame.
+   *
+   *  BOTH HALVES OF THAT SENTENCE WERE WRONG, in opposite directions, and it
+   *  is this file's signature defect — a number typed in prose beside the
+   *  table that owns it (HANDOFF §2.3). It said "3,000-odd figures in ONE draw
+   *  call". Counted twice off a dressed world, once through `prop-seating`'s
+   *  survey and once by walking the scene: 6,952 instances over SIX instanced
+   *  meshes — 2983 + 2792 + 374 + 403 + 386 in the banks, five head variants
+   *  because an InstancedMesh draws one geometry, and 14 lords in the box. The
+   *  blurb below had the same fact 4.3× the other way, at thirty thousand.
+   *
+   *  Round numbers here on purpose. The authority is the instance counts
+   *  themselves and `tools/checks/colosseum.mjs` is where they are asserted;
+   *  prose that repeats an exact figure is what rotted, in both directions at
+   *  once, and repeating 6,952 would only reset the clock on it. A crowd is the one piece of
    *  scenery whose whole job is a NUMBER — two hundred spectators is a village
    *  meeting — so it had to be the instanced path from the first line.
    *
@@ -2896,7 +2910,11 @@ export const LEVELS = {
 
   colosseum: {
     name: 'The Colosseum',
-    blurb: 'Raked sand under thirty thousand people. They did not come to watch you win.',
+    /* SEVEN THOUSAND, NOT THIRTY. Measured on a dressed world: 6,952 crowd
+     * instances, lords included. A blurb is not a census — the round number is
+     * deliberate, because an exact one printed in prose is the thing that
+     * rotted here in the first place. */
+    blurb: 'Raked sand under seven thousand people. They did not come to watch you win.',
     terrain: 'colosseum',
     /* THE HANDLERS AND THE MENAGERIE. The droids are the arena's staff — the
      * thing that opens the gates and shoots you if the animals fail — and they
@@ -4653,7 +4671,7 @@ export const CAMPAIGNS = {
    * levels to seven.
    *
    * THE COLOSSEUM IS ALREADY THAT LEVEL AND IS BETTER AT IT. Its own blurb is
-   * "raked sand under thirty thousand people"; its pool is charger, stalker,
+   * "raked sand under seven thousand people"; its pool is charger, stalker,
    * brute, pouncer and beast with the arena's droid staff behind them; it has a
    * podium the player cannot climb, a cavea that puts a crowd above the fight,
    * the longest surface memory of any ground in the game after the alpine

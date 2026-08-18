@@ -21,14 +21,35 @@ import { WaveDirector, RankSet, boonTick, boonGuard, bondReceive, bondGuardIn, b
   skirmishConfig } from './Waves.js';
 import { Communion, FACETS, insightRate } from './LivingForce.js';
 /**
- * What "open" is worth, in Insight. Every facet in the lattice, at its first-
- * purchase price, plus the escalator — `Communion.price` adds COST_STEP per
- * facet already woken, so the last one costs a great deal more than the
- * first. 600 clears the whole chart with room over; it is deliberately a
- * number rather than a computed sum, because the point is "you will not run
- * out" and a computed sum would be exactly enough and therefore tense.
+ * What "open" is worth, in Insight — and it was a quarter of what it promised.
+ *
+ * The card the player clicks says "A full purse at every deploy … you simply
+ * never run short", and the note here said 600 "clears the whole chart with
+ * room over". Measured through `Communion.costOf` itself, cheapest-first at
+ * rank 0 — the most favourable order there is — waking all 46 facets costs
+ * **2359**, and 600 buys **22 of 46**. Not a rounding error: a 3.9x shortfall
+ * behind a sentence promising the opposite, on the setting that exists because
+ * a player reported they could not reach Force lightning or Compel to find out
+ * whether those powers work.
+ *
+ * DERIVED NOW, because the escalator makes any typed number wrong again the day
+ * a facet is added — which is exactly how this one rotted. The old note's
+ * REASONING was right and only its arithmetic was wrong, so the half again on
+ * top is kept: the point is that you do not run out, and a sum that is exactly
+ * enough is tense.
  */
-const HOLOCRON_PURSE = 600;
+const HOLOCRON_PURSE = (() => {
+  const c = new Communion();
+  const left = new Set(FACETS.map((f) => f.id));
+  const taken = new Set();
+  let total = 0;
+  while (left.size) {
+    let best = null, bp = Infinity;
+    for (const id of left) { const p = c.costOf(id, taken); if (p < bp) { bp = p; best = id; } }
+    total += bp; taken.add(best); c.bought.push(best); left.delete(best);
+  }
+  return Math.ceil(total * 1.5 / 100) * 100;
+})();
 
 /**
  * HOW HARD THE GROUND IS, as a reflection coefficient.

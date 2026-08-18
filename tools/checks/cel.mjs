@@ -59,6 +59,35 @@ import { rawMaps, MEAN_ALBEDO } from '../../src/engine/Textures.js';
 import { fbm2 } from '../../src/engine/MathUtil.js';
 
 const CEL_SRC = () => readFileSync(new URL('../../src/toon/Cel.js', import.meta.url), 'utf8');
+
+/* ── THE SHIPPED GLSL, RUN ────────────────────────────────────────────────
+ *
+ * Every number below used to come off `celTone` and friends — JS functions in
+ * src/toon/Cel.js that read the same CEL constants as the shader and then
+ * WRITE THE FORMULA OUT A SECOND TIME. An audit changed the shader's
+ * terminator to `smoothstep( 0.0, 1.0, dotNL )` — a smooth gradient on every
+ * lit surface in the game, which is what rule 1 exists to forbid — and this
+ * file reported 24/0, because not one of its 24 checks touches the string the
+ * compiler is handed.
+ *
+ * `_glsl.mjs` interprets that string. `SHADER.call('saberCelTone', [dotNL],
+ * { saberCelKey })` is the shipped arithmetic with the shipped constants
+ * substituted, so a change to the GLSL moves these numbers. The JS twin is
+ * still measured — it is what the other suites call — but only alongside an
+ * identity assertion that the two agree everywhere.
+ */
+let _shader = null;
+const SHADER = () => {
+  if (_shader) return _shader;
+  const src = CEL_SRC();
+  const glsl = templateAfter(src, 'export const CEL_BAND_GLSL =')
+    + templateAfter(src, 'const CEL_COMMON = CEL_BAND_GLSL +', { CEL, CEL_KEY });
+  _shader = glslUnit(glsl);
+  return _shader;
+};
+/** saberCelTone() as the GPU gets it. Same signature as celTone(). */
+const glslTone = (dotNL, key, shape = 1, cast = 1) => SHADER().call(
+  'saberCelTone', [dotNL], { saberCelKey: key, saberCelShape: shape, saberCelCast: cast });
 const INK_SRC = () => readFileSync(new URL('../../src/toon/Ink.js', import.meta.url), 'utf8');
 const ENGINE_SRC = () => readFileSync(new URL('../../src/engine/Engine.js', import.meta.url), 'utf8');
 const TERRAIN_SRC = () => readFileSync(new URL('../../src/world/Terrain.js', import.meta.url), 'utf8');
@@ -198,8 +227,9 @@ export function run({ check, assert, near }) {
      * exactly two values. */
     const key = 0.44;                                   // the arena's 26° sun
     const N = 20001;
+    /* MEASURED ON THE SHIPPED GLSL, not on the JS twin. See SHADER above. */
     const vals = [];
-    for (let i = 0; i < N; i++) vals.push(celTone(i / (N - 1), key, 1));
+    for (let i = 0; i < N; i++) vals.push(glslTone(i / (N - 1), key, 1));
     const hi = Math.max(...vals), lo = Math.min(...vals);
     near(hi, key, 1e-9, 'the lit band is not the light\'s own horizontal response');
 
@@ -251,13 +281,77 @@ export function run({ check, assert, near }) {
     const deg = (Math.acos(Math.max(t - CEL.edge, 0)) - Math.acos(Math.min(t + CEL.edge, 1))) * 180 / Math.PI;
     assert(deg < 2.0, `the terminator is ${deg.toFixed(2)}° of tilt wide — that is a ramp, not an edge`);
 
-    // …and it is a step in the SHADER too, not only in the twin.
+    // …and the shader is what was just swept: this is the wiring assertion that
+    // says the swept function is the one the direct term goes through.
     const src = CEL_SRC();
     assert(/vec3 irradiance = saberCelTone\( dotNL \)/.test(src),
       'the direct term no longer goes through saberCelTone');
     return `2 tones over ${(flat * 100).toFixed(1)}% of the sweep, terminator ${deg.toFixed(2)}° wide `
       + `(Lambert: ${(lamFlat * 100).toFixed(1)}% flat), lit band = ${hi.toFixed(3)} = sin(elevation), `
       + `shadow band = ${lo.toFixed(3)} = ${CEL.shadowBand} of it, in the same colour`;
+  });
+
+  check('cel: the shader IS the twin — the shipped GLSL and Cel.js\'s JS agree everywhere', () => {
+    /* THE STRUCTURAL DEFECT THIS FILE WAS BUILT ON, CLOSED.
+     *
+     * `celTone` and `saberCelTone` are two hand-written statements of one
+     * formula: the JS is what six suites measure and the GLSL is what the
+     * player sees. Nothing connected them but a regex on the call site, so the
+     * audit's `smoothstep( 0.0, 1.0, dotNL )` — every lit surface a gradient —
+     * left 24 checks here green.
+     *
+     * So evaluate the GLSL. Over the whole domain that matters: N·L across its
+     * range, the key from a 14° sun to a point light, both values of the shape
+     * flag (a key light and a fill), and the cast mask continuous because a
+     * PCF filter hands it every value in between. 4 × 5 × 2 × 5 × 401 samples.
+     *
+     * The tolerance is 1e-12 and not a percentage, because these are the same
+     * arithmetic on the same constants: anything a float can tell apart here is
+     * a divergence, and a divergence is a shipped look nobody is measuring.
+     */
+    const keys = [0.24, 0.37, 0.44, 0.62, 1.0];    // canyon, meadow, arena, high sun, point
+    const casts = [0, 0.25, 0.5, 0.75, 1];
+    let n = 0, worst = 0, at = null;
+    for (const key of keys) {
+      for (const shape of [0, 1]) {
+        for (const cast of casts) {
+          for (let i = 0; i <= 400; i++) {
+            const d = i / 400;
+            const g = glslTone(d, key, shape, cast), j = celTone(d, key, shape, cast);
+            const e = Math.abs(g - j);
+            if (e > worst) { worst = e; at = [d, key, shape, cast, g, j]; }
+            n++;
+          }
+        }
+      }
+    }
+    assert(worst < 1e-12,
+      `the shipped saberCelTone and Cel.js's celTone disagree by ${worst.toExponential(2)} at `
+      + `N·L ${at[0]}, key ${at[1]}, shape ${at[2]}, cast ${at[3]} — GLSL ${at[4]}, JS ${at[5]}. `
+      + 'One of the two is the game and the other is what every check in this file measures');
+
+    /* AND THE SAME FOR THE OTHER FOUR. The band quantisers and the shadow
+     * contour are transcribed the same way in the same places. */
+    for (let i = 0; i <= 200; i++) {
+      const v = i / 200;
+      near(SHADER().call('saberCelShadow', [v]), celShadow(v), 1e-12,
+        `saberCelShadow and celShadow disagree at ${v} — the cast-shadow contour in the game is `
+        + 'not the one every penumbra measurement here is made on');
+      const q = SHADER().call('saberCelQuant', [v, 4]);
+      near(q, Math.floor(v * 4 + 0.5) / 4, 1e-12, 'saberCelQuant is no longer a snap to the nearest node');
+      const b1 = SHADER().call('saberCelBand1', [v, 5]);
+      near(b1, (Math.floor(v * 5) + 0.5) / 5, 1e-12, 'saberCelBand1 is no longer the plateau centre');
+    }
+    for (const rgb of [[0.5, 0.3, 0.2], [0.05, 0.05, 0.06], [0.9, 0.85, 0.7]]) {
+      const g = SHADER().call('saberCelBand', [rgb, CEL.albedoBands]);
+      const j = celBand(rgb, CEL.albedoBands);
+      for (let k = 0; k < 3; k++) {
+        near(g[k], j[k], 1e-12, 'saberCelBand and celBand disagree — the albedo posteriser in the '
+          + 'game is not the one the flat-fields measurements are made on');
+      }
+    }
+    return `${n} samples of saberCelTone through the shipped GLSL, worst |GLSL−JS| `
+      + `${worst.toExponential(1)}; band, band1, quant and shadow identical too`;
   });
 
   check('cel: the whole frame is countable — a sphere in the game\'s own rig has two tones', () => {
