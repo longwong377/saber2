@@ -47,7 +47,33 @@ function stubWorld(terrain = null, level = null) {
   const scene = new THREE.Scene();
   return {
     scene, level, statics: [], props: [], enemies: [], levelLights: [], doors: [],
-    physics: { staticBoxes: [], addStaticBox(p, e, q, o) { const b = { p, e, q, o }; this.staticBoxes.push(b); return b; } },
+    /* `add`/`remove`/`bodies` are not decoration: `Forest._syncLogs` opens
+     * with `if (!this.world.physics?.add) return`, so a stub without them
+     * silently turns off the whole log-realisation path and every claim about
+     * a felled trunk being an OBJECT measures nothing. That is the shape
+     * HANDOFF §2.3 warns about — a fixture that cannot express the thing it
+     * is standing in for. */
+    physics: {
+      staticBoxes: [], bodies: [],
+      /* THE SAME RECORD SHAPE THE REAL ENGINE RETURNS — `center`,
+       * `halfExtents`, `quat`, `radius`, `userData` — because `Forest._realise`
+       * reads `box.center.clone()` off it to remember where to lay the log's
+       * collider back down. A stub that returns a differently-named bag
+       * throws there, three call layers away from anything this file names. */
+      addStaticBox(center, halfExtents, quat, o = {}) {
+        const b = {
+          center: center.clone(), halfExtents: halfExtents.clone(),
+          quat: (quat || new THREE.Quaternion()).clone(),
+          radius: halfExtents.length(), disabled: false, userData: o.userData || null,
+          p: center, e: halfExtents, q: quat, o,
+        };
+        this.staticBoxes.push(b); return b;
+      },
+      removeStaticBox(b) { const i = this.staticBoxes.indexOf(b); if (i >= 0) this.staticBoxes.splice(i, 1); },
+      add(b) { this.bodies.push(b); return b; },
+      remove(b) { const i = this.bodies.indexOf(b); if (i >= 0) this.bodies.splice(i, 1); },
+      addJoint() {}, removeJoint() {}, raycast: () => null,
+    },
     particles: { sparkBurst() {}, sandPuff() {}, slag() {} },
     addProp(p) { this.props.push(p); return p; },
     notify() {}, report() {}, spawnEnemy: () => null,
@@ -426,4 +452,53 @@ export function run({ check, assert }) {
     return `aimed at a trunk ${target.r.toFixed(1)} m out: passed ${closest.toFixed(2)} m from its `
       + `axis, crossed ${crossed} standing trunks, felled ${felled}`;
   });
+
+  check('felling: the player is under it too, and the logs stay objects', () => {
+    /* TWO CLAUSES OF NOTE #24 IN ONE FIXTURE, because they are one complaint:
+     * "tree don't have physics anymore when they fall like you can't keep
+     * cutting them up or anything. Also they should damage things/players/
+     * enemies if they fall on you."
+     *
+     * The crush walked `world.enemies` and nothing else, so the one hazard on
+     * the level was free to the person who made it. And `LIFT_CAP` was 4 while
+     * one cut in a dense stand fells a median of three trees and a max of
+     * nine — so past the fourth, a felled trunk stayed a picture with a static
+     * box under it and could not be cut again. */
+    const list = [];
+    for (let i = 0; i < 9; i++) list.push({ x: -8 + i * 2.2, z: 0, height: 16, radius: 0.42 });
+    const { world, f } = stand(list, { crush: 46 });
+    /* THE PLAYER STANDS UNDER TREE 0's FALL LINE. `players` is the array World
+     * keeps and every other system reads; the crush is the one that did not. */
+    const me = { position: V(-8, 0, 6), hp: 100, alive: true, hits: 0,
+      damage(d) { this.hp -= d; this.hits++; }, applyKnockback() { this.shoved = true; } };
+    world.players = [me];
+    f.fell(0, 0, 1, 1);                      // straight along +z, onto the player
+    sim(f, 8);
+    assert(me.hits > 0, 'a sixteen-metre trunk came down through the player and did not touch them');
+    assert(me.hp < 100, `the player is on ${me.hp} hp after being flattened`);
+    assert(me.shoved, 'it hurt but it did not move them — a tree flattens');
+
+    /* …AND EVERY LOG WITHIN REACH IS A REAL OBJECT. Fell the whole stand, put
+     * the player in the middle of it, and count what became a Prop. */
+    for (let i = 1; i < 9; i++) f.fell(i, 1, 0, 1);
+    sim(f, 12);
+    me.position.set(0, 0, 0);
+    f.update(1 / 60);
+    const down = [];
+    for (let i = 0; i < f.count; i++) if (f.data[i * 15 + 6] === DOWN) down.push(i);
+    assert(down.length >= 8, `only ${down.length} of 9 trees came down at all`);
+    const near = down.filter((i) => Math.hypot(f.data[i * 15], f.data[i * 15 + 1]) < 9);
+    const realNear = near.filter((i) => f.real.has(i)).length;
+    assert(realNear === near.length,
+      `${realNear} of ${near.length} logs within nine metres of the player are objects — the rest are `
+      + 'pictures with a static box under them, and cutting one does nothing');
+    for (const i of near) {
+      const rec = f.real.get(i);
+      assert(rec?.prop && !rec.prop.dead, `log ${i} realised without a live Prop`);
+      assert(rec.prop.body && rec.prop.body.mass > 0, `log ${i} is an object with no mass`);
+    }
+    return `player took ${(100 - me.hp).toFixed(0)} hp and was shoved; `
+      + `${realNear}/${near.length} nearby logs are cuttable objects`;
+  });
+
 }

@@ -1007,7 +1007,13 @@ export class World {
 
   /* ── spawning ────────────────────────────────────────────────────── */
 
-  addProp(p) { this.props.push(p); return p; }
+  /**
+   * IDEMPOTENT, because `Prop` now registers itself and every existing caller
+   * still hands its prop over by hand. Both roads lead here and the second one
+   * has to be free — see the note in `Prop`'s constructor for why the
+   * constructor took the job over.
+   */
+  addProp(p) { if (p && !this.props.includes(p)) this.props.push(p); return p; }
 
   /**
    * A door the level has hung. `this.doors` is stepped every frame and fed to

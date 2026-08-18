@@ -143,10 +143,42 @@ export async function run({ check, assert }) {
       };
 
       world.scene.updateMatrixWorld(true);
+      /**
+       * A CHARACTER IS NOT A LEVEL PROP, and this check's own note has said
+       * so since it was written: "80 of the ~110 per level hang off a
+       * character rig — the player's own thighs, spine and hilt rings, which
+       * are 0.1 m lathe and torus pieces that can never carry a static box and
+       * are not what 'you just fall through them' is about."
+       *
+       * They were counted anyway, and that made the reading depend on
+       * something it has no business depending on: the RATIO of level
+       * geometry to bodies on the field. Deleting the three most
+       * architecture-heavy levels from the roster moved this number from
+       * 55.9% to 70.7% without one prop changing, which is the proof — the
+       * check was reporting the composition of the level list.
+       *
+       * So the rig subtrees are excluded by ANCESTRY, and the bound below is
+       * restated against the narrowed subject. The number is not comparable
+       * with the ones above it and the ladder says so.
+       */
+      const rigRoots = new Set();
+      const addRoot = (r) => { if (r) rigRoots.add(r); };
+      for (const p2 of world.players || []) {
+        addRoot(p2?.rig?.root); addRoot(p2?.actor?.rig?.root); addRoot(p2?.saber?.group);
+        addRoot(p2?.saber?.mesh);
+      }
+      for (const e of world.enemies || []) {
+        addRoot(e?.rig?.root); addRoot(e?.actor?.rig?.root); addRoot(e?.saber?.group);
+      }
+      const onARig = (o) => {
+        for (let n = o; n; n = n.parent) if (rigRoots.has(n)) return true;
+        return false;
+      };
       const seen = new Set();
       world.scene.traverse((o) => {
         if (!o.isMesh || !o.visible || seen.has(o.uuid)) return;
         seen.add(o.uuid);
+        if (onARig(o)) return;
         const name = `${o.name || ''} ${o.material?.name || ''}`;
         if (NOT_MATTER.test(name)) return;
         if (o.material?.transparent && (o.material.opacity ?? 1) < 0.9) return;
@@ -230,6 +262,14 @@ export async function run({ check, assert }) {
      *            approach lights, the Temple's 228 columns and the foundry's
      *            three depth ranks all given a static box each where an
      *            InstancedMesh gets none from the kit path.
+     *     0.52   THE SUBJECT NARROWED AND THE NUMBERS ABOVE ARE NOT
+     *            COMPARABLE. Character rigs are excluded by ancestry now —
+     *            see the note at the survey — because counting them made the
+     *            reading depend on the ratio of level geometry to bodies on
+     *            the field rather than on the levels. Proof: deleting the
+     *            three most architecture-heavy levels moved the old number
+     *            55.9% → 70.7% with not one prop changed. Measured on the
+     *            narrowed subject over the surviving seven: 295 of 592, 49.8%.
      *
      * ONE FINDING FOR WHOEVER TAKES THIS FURTHER, because it decides where the
      * next 900 are: MOST OF WHAT IS LEFT IS NOT A LEVEL PROP. Grouping the
@@ -243,11 +283,119 @@ export async function run({ check, assert }) {
      * large one that is mostly the player's own knees.
      */
     const share = bad.length / Math.max(1, reachable);
-    assert(share < 0.57,
+    assert(share < 0.52,
       `${bad.length} of ${reachable} reachable objects (${(share * 100).toFixed(1)}%) have no collider — `
       + 'you walk through them. The rule is that anything you can touch is physical:\n    '
       + bad.slice(0, 14).join('\n    '));
     return `${reachable} reachable of ${solid} solid across ${LEVEL_ORDER.length} levels; `
       + `${bad.length} intangible (${(share * 100).toFixed(1)}%) — ${rows.join(', ')}`;
   });
+
+  /**
+   * THE INVERSE OF THE RULE ABOVE, AND IT IS THE ONE THAT WAS BROKEN.
+   *
+   * The rule this file exists for is "if you can touch it, it is a physical
+   * object". The failure mode nobody was watching is the other one: a
+   * COLLIDER STANDING WHERE THERE IS NOTHING TO SEE.
+   *
+   * "there are invisible walls or objects for example on geonosis that block
+   * you." Two separate causes, both on that level and both found by measuring
+   * rather than by reading:
+   *
+   *  1. `makeSpire(world, p, …)` was called with its return value dropped, so
+   *     twenty-one 500 kg dynamic bodies were in the physics world and in no
+   *     list that syncs a mesh to a body. The collider settled and slid under
+   *     gravity; the drawn rock did not move. Fixed at the source — `Prop`
+   *     registers itself now — and the first clause here is what would have
+   *     caught it.
+   *  2. Their collider was a CONVEX HULL of a wasp-waisted, bent, eroded
+   *     needle. A hull is by definition the smallest shape containing the
+   *     geometry, so every concavity in the silhouette becomes solid: measured
+   *     at the height a player walks at, the hull stood as much as 2.68 m
+   *     outside the rock, mean 0.30 m over twenty-one spires. `slabCompound`
+   *     replaces it with a stack of cylinders that follows the profile: 0.18 m
+   *     worst, 0.10 m mean.
+   *
+   * The bound is 0.9 m and it is not tight — a hull round a crate is exact and
+   * a hull round a boulder is within a hand's width. What it refuses is a
+   * collider you meet from a metre away with nothing between you and it.
+   */
+  check('physicality: no collider stands where there is nothing to see', async () => {
+    const { bootWorld } = await import('./_coop.mjs');
+    const THREE = (await import('three')).default ?? (await import('three'));
+    const rows = [], bad = [], strays = [];
+    for (const key of LEVEL_ORDER) {
+      const { world } = await bootWorld({ level: key, settings: { level: key } });
+      /* CLAUSE ONE: a body whose mesh nothing syncs. Every `Prop` puts its
+       * mesh in the scene and its body in the physics world from its own
+       * constructor; only membership of `world.props` gets it `update()`d, and
+       * `update` is what copies the body's pose onto the mesh. Asked of the
+       * PHYSICS WORLD rather than of the prop list, because the list is the
+       * thing that was wrong. */
+      for (const b of world.physics.bodies || []) {
+        const prop = b.userData?.prop;
+        if (!prop || prop.dead) continue;
+        if (!world.props.includes(prop)) {
+          strays.push(`${key}: a ${prop.kind} body is in the physics world and in no list that syncs `
+            + 'its mesh — the collider will drift away from the drawn object');
+        }
+      }
+      /* CLAUSE TWO: how far the collider stands outside the drawn thing, at
+       * the height a player walks at. */
+      let worst = 0, worstKind = '';
+      for (const p of world.props) {
+        const b = p.body;
+        if (!b?.shape || !p.mesh?.geometry?.attributes?.position) continue;
+        if (b.shape.type !== 'hull' && b.shape.type !== 'compound') continue;
+        const pos = p.mesh.geometry.attributes.position;
+        const gy = world.terrain ? world.terrain.height(b.position.x, b.position.z) : 0;
+        const lo = gy + 0.2 - b.position.y, hi = gy + 1.9 - b.position.y;
+        let meshR = 0;
+        for (let i = 0; i < pos.count; i++) {
+          const y = pos.getY(i);
+          if (y < lo || y > hi) continue;
+          meshR = Math.max(meshR, Math.hypot(pos.getX(i), pos.getZ(i)));
+        }
+        if (meshR <= 0.05) continue;             // nothing of it at walking height
+        let colR = 0;
+        if (b.shape.type === 'hull') {
+          // the hull's own radius at each sampled height, off its point cloud
+          const pts = b.shape.points;
+          for (let s = 0; s <= 8; s++) {
+            const y = lo + (hi - lo) * s / 8;
+            let r = 0;
+            for (let i = 0; i < pts.length; i += 3) {
+              // a hull point only bounds the surface at its own height, so
+              // take the nearest band rather than the whole cloud
+              if (Math.abs(pts[i + 1] - y) > (hi - lo)) continue;
+              r = Math.max(r, Math.hypot(pts[i], pts[i + 2]));
+            }
+            colR = Math.max(colR, r);
+          }
+        } else {
+          for (let s = 0; s <= 8; s++) {
+            const y = lo + (hi - lo) * s / 8;
+            for (const part of b.shape.parts) {
+              const at = part.at || [0, 0, 0], hh = part.halfHeight ?? part.hy ?? 0;
+              if (y < at[1] - hh || y > at[1] + hh) continue;
+              colR = Math.max(colR, (part.radius ?? Math.hypot(part.hx ?? 0, part.hz ?? 0))
+                + Math.hypot(at[0], at[2]));
+            }
+          }
+        }
+        const shell = colR - meshR;
+        if (shell > worst) { worst = shell; worstKind = p.kind; }
+      }
+      if (worst > 0.9) {
+        bad.push(`${key}: a ${worstKind}'s collider stands ${worst.toFixed(2)} m outside the drawn `
+          + 'object at walking height');
+      }
+      rows.push(`${key} ${worst > 0 ? worst.toFixed(2) + 'm (' + worstKind + ')' : '—'}`);
+      world.unload?.();
+    }
+    assert(strays.length === 0, strays.slice(0, 4).join('; '));
+    assert(bad.length === 0, bad.join('; '));
+    return `worst invisible shell per level: ${rows.join(', ')}`;
+  });
+
 }

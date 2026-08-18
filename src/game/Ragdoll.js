@@ -338,6 +338,52 @@ export class Actor {
     return this;
   }
 
+  /**
+   * GET UP. The exact inverse of `goRagdoll`, and until now there was no such
+   * thing — `ragdolled` was written `true` in one place and `false` only in
+   * the constructor, so NOTHING in the game ever un-ragdolled.
+   *
+   * That is the whole of note #6: "every time you force control someone and
+   * ragdoll them when you release them they are dead". They were not dead.
+   * `Enemy._move` clears `gripped` on release and goes back to walking, while
+   * `Enemy._pose` returns early forever on `actor.ragdolled` — so the rig kept
+   * being driven and the MESHES kept hanging off loose physics bodies, sliding
+   * along behind a walking capsule nobody could see. A broken puppet, and the
+   * player read it as a corpse, correctly.
+   *
+   * Returns the world point the body came to rest at, so the caller can stand
+   * the character up WHERE IT LANDED rather than where it fell from — which is
+   * the difference between recovering and teleporting.
+   *
+   * Severed bones were never given a body and are skipped here for free, so a
+   * one-armed body gets up one-armed and the arm stays on the floor.
+   */
+  recover() {
+    if (!this.ragdolled) return null;
+    const at = this.centre(new THREE.Vector3());
+    for (const j of this.joints) this.physics.removeJoint?.(j);
+    this.joints = [];
+    for (const body of this.bodies.values()) this.physics.remove(body);
+    this.bodies.clear();
+    /* Re-home the visuals. `goRagdoll` moved each bone's own children into a
+     * holder's inner group WITHOUT touching their local transforms — the
+     * inner group carries the whole offset — so handing them straight back to
+     * the bone restores exactly the pose they were authored in. */
+    for (const [name, holder] of this.holders) {
+      const bone = this.rig.get(name);
+      const inner = holder.children[0];
+      if (bone && inner) {
+        for (let i = inner.children.length - 1; i >= 0; i--) bone.obj.add(inner.children[i]);
+        bone.holder = null;
+      }
+      holder.parent?.remove(holder);
+    }
+    this.holders.clear();
+    this.rig.root.visible = true;
+    this.ragdolled = false;
+    return at;
+  }
+
   /** Drive the visual holders from the physics bodies. */
   syncRagdoll() {
     if (!this.ragdolled) return;

@@ -4659,6 +4659,22 @@ export class Player {
       const speed = 30 * Math.sqrt(P) * lerp(1.2, 0.5, clamp(m / cap, 0, 1));
       e.applyKnockback(_v2.clone().multiplyScalar(speed), 8 + 14 * P, this);
       e.stun(0.9, _v2, 1.3);      // `_v2` is the direction it was hurled
+      /**
+       * AND THE BODY IS A PROJECTILE, which it was not. Note #9: "if I pick up
+       * a trooper and move him through a column of other men it doesnt hit
+       * them or move them passively it's like not a real object."
+       *
+       * The prop branch twelve lines above has called `_trackHurl` since it
+       * was written and this one never did, so a 22 kg crate was a deadlier
+       * thing to throw than an 80 kg soldier — the crate damaged what it
+       * landed on and the soldier passed through a squad without touching it.
+       *
+       * `bodyHurl` is a separate coefficient and not a tuning of the crate's,
+       * because a body is three to ten times a crate's mass and would sit on
+       * the 140 ceiling on every single throw — one throw would clear a squad.
+       * See `_trackHurl`.
+       */
+      this._trackHurl(e, speed, { body: true });
       this._hurlVfx(ctx, e.position, _v2, 0.5, speed);
       this.gripEnemy = null;
     }
@@ -4688,41 +4704,144 @@ export class Player {
    * the retired sphere solver ever did — so a hurled crate passed through a
    * droid without touching it. Until contacts come back the thrower owns the
    * consequence, which is also the only place that knows it was a throw.
+   *
+   * IT TAKES A PROP *OR* A BODY. The two are different objects with different
+   * shapes — a `Prop` has `mass`, `boundingRadius` and a live `velocity`; an
+   * `Enemy` keeps its mass on its archetype and, while limp, gets its velocity
+   * off its ragdoll's chest — so the record carries READERS rather than the
+   * numbers, and `_updateHurled` does not know or care which it has.
    */
-  _trackHurl(body, speed) {
-    body.userData.hurledBy = this;
-    body.userData.hurlTimer = 2.6;
-    this.hurled.push({ body, timer: 2.6, hit: new Set(), speed });
+  _trackHurl(thing, speed, opts = {}) {
+    const isBody = !!opts.body;
+    if (!isBody) {
+      thing.userData.hurledBy = this;
+      thing.userData.hurlTimer = 2.6;
+    }
+    const rec = {
+      thing, isBody, timer: 2.6, hit: new Set(), speed,
+      /* A THROWN PERSON IS PRICED DIFFERENTLY FROM A THROWN CRATE, and the
+       * reason is arithmetic rather than taste. The prop coefficient reads a
+       * 22 kg crate at 40 m/s as 21 damage and saturates its own 140 ceiling
+       * at about 240 kg·(m/s)²·10⁻³; a clone trooper is 80 kg and a super
+       * battle droid is 210, so at any throw speed worth making, EVERY body
+       * would land on the ceiling and one throw would clear a squad. A body
+       * therefore pays two thirds of the crate's rate and carries a much lower
+       * cap — an 80 kg trooper arriving at 25 m/s reads 20 and a 210 kg super
+       * battle droid reads 52, against a crate's 140 ceiling. The floor is
+       * HIGHER than the crate's, though, and that is the other half of the
+       * shape: a person landing on you is never a nothing, so a slow throw
+       * still reads 12 where a slow crate reads 8. */
+      k: isBody ? 0.0004 : 0.0006,
+      floor: isBody ? 12 : 8,
+      cap: isBody ? 55 : 140,
+      mass: isBody ? (thing.A ? thing.A.mass : 80) : Math.max(1, thing.mass),
+      radius: isBody ? (thing.radius ?? 0.55) : thing.boundingRadius,
+    };
+    this.hurled.push(rec);
     if (this.hurled.length > 12) this.hurled.shift();
+  }
+
+  /** Where a hurled thing is, whichever kind it is. */
+  static _hurlPos(h, out) {
+    if (!h.isBody) return out.copy(h.thing.position);
+    const a = h.thing.actor;
+    if (a?.ragdolled) return a.centre(out);
+    return out.copy(h.thing.position);
+  }
+
+  /** How fast it is going, whichever kind it is. */
+  static _hurlVel(h, out) {
+    if (!h.isBody) return out.copy(h.thing.velocity);
+    const a = h.thing.actor;
+    const c = a?.ragdolled && (a.bodies.get('chest') || a.bodies.get('spine') || a.bodies.get('hips'));
+    return out.copy(c ? c.velocity : h.thing.velocity);
   }
 
   _updateHurled(dt, ctx) {
     for (let i = this.hurled.length - 1; i >= 0; i--) {
       const h = this.hurled[i];
-      const b = h.body;
       h.timer -= dt;
-      const speed = b.velocity.length();
+      Player._hurlVel(h, _g3);
+      const speed = _g3.length();
       // Spent: out of time, gone, or slowed to something that could not hurt a
       // droid if it landed on one.
-      if (h.timer <= 0 || b.dead || speed < 7) { this.hurled.splice(i, 1); continue; }
+      if (h.timer <= 0 || h.thing.dead || speed < 7) { this.hurled.splice(i, 1); continue; }
+      Player._hurlPos(h, _g4);
       for (const e of ctx.enemies || []) {
-        if (e.dead || h.hit.has(e.id)) continue;
-        const r = b.boundingRadius + (e.radius ?? 0.4) + 0.25;
+        if (e.dead || e === h.thing || h.hit.has(e.id)) continue;
+        const r = h.radius + (e.radius ?? 0.4) + 0.25;
         _g1.copy(e.position).setY(e.position.y + (e.A && e.A.big ? 1.4 : 0.9));
-        if (_g1.distanceToSquared(b.position) > r * r) continue;
+        if (_g1.distanceToSquared(_g4) > r * r) continue;
         h.hit.add(e.id);
         // Kinetic energy, scaled to the damage numbers this game uses: a 22 kg
         // crate at 40 m/s reads 21, a 210 kg droideka body at 25 reads 79, and
         // the ceiling stops a pillar from one-shotting a boss.
-        const dmg = clamp(b.mass * speed * speed * 0.0006, 8, 140);
-        _g2.copy(b.velocity).multiplyScalar(1 / Math.max(1e-3, speed));
-        e.applyKnockback(_g2.multiplyScalar(clamp(speed * 0.5, 4, 22)).setY(4), dmg, this);
-        audio.thud(b.position, clamp(dmg / 60, 0.4, 1.4));
+        const dmg = clamp(h.mass * speed * speed * h.k, h.floor, h.cap);
+        _g2.copy(_g3).multiplyScalar(1 / Math.max(1e-3, speed));
+        e.applyKnockback(_g2.clone().multiplyScalar(clamp(speed * 0.5, 4, 22)).setY(4), dmg, this);
+        /* BOTH BODIES TAKE A SHARE. A person thrown into a person hurts the
+         * person who was thrown, and that is what makes a living projectile a
+         * decision rather than a free crowd-clear: you are spending the body
+         * you are holding. A crate takes nothing, because a crate has no
+         * health and shattering it is `Prop`'s own business. */
+        if (h.isBody && !h.thing.dead) {
+          h.thing.damage?.(dmg * 0.55, e.position, this, 'impact');
+          h.thing.stun?.(0.5, _g2, 1.0);
+        }
+        audio.thud(_g4, clamp(dmg / 60, 0.4, 1.4));
         this.camera.addShake(clamp(dmg / 220, 0.04, 0.3));
-        ctx.particles?.sparkBurst(b.position, null, 14, { speed: 7 });
+        ctx.particles?.sparkBurst(_g4, null, 14, { speed: 7 });
         // A throw sheds most of its momentum into whatever it hit.
-        b.velocity.multiplyScalar(0.35);
+        if (h.isBody) {
+          const a = h.thing.actor;
+          if (a?.ragdolled) for (const b of a.bodies.values()) b.velocity.multiplyScalar(0.4);
+        } else {
+          h.thing.velocity.multiplyScalar(0.35);
+        }
       }
+    }
+  }
+
+  /**
+   * A HELD THING IS STILL A REAL OBJECT — the other half of note #9.
+   *
+   * "if I pick up a trooper and move him through a column of other men it
+   * doesnt hit them or move them passively." A throw is one event and this is
+   * the continuous one: whatever is in the grip sweeps against the field every
+   * frame it is MOVING, and shoves what it crosses.
+   *
+   * It is a shove and not a throw, on purpose. Damage is a tenth of the
+   * throw's rate and capped low, because the interesting thing about swinging
+   * a body through a line is the LINE COMING APART — bodies staggering, losing
+   * their guard and being pushed off their marks — and not the damage number.
+   * Killing a squad by waving one droid at them would make the throw pointless
+   * and make the grip the best weapon in the game.
+   *
+   * `_sweptHit` is a per-victim cooldown rather than a one-shot set, because
+   * unlike a throw the grip is a thing you can hold: a set would let you sweep
+   * a body through a rank once and never again, and a raw per-frame test would
+   * bill sixty hits a second.
+   */
+  _sweepHeld(dt, ctx, pos, radius, vel) {
+    const speed = vel.length();
+    if (speed < 3.5) return;
+    const cd = this._sweptHit || (this._sweptHit = new Map());
+    for (const [id, t] of cd) { const n = t - dt; if (n <= 0) cd.delete(id); else cd.set(id, n); }
+    const held = this.gripEnemy;
+    for (const e of ctx.enemies || []) {
+      if (e.dead || e === held || cd.has(e.id)) continue;
+      const r = radius + (e.radius ?? 0.4) + 0.3;
+      _g1.copy(e.position).setY(e.position.y + (e.A && e.A.big ? 1.4 : 0.9));
+      if (_g1.distanceToSquared(pos) > r * r) continue;
+      cd.set(e.id, 0.55);
+      const mass = this.gripBody ? Math.max(1, this.gripBody.mass)
+        : (held?.A ? held.A.mass : 80);
+      const dmg = clamp(mass * speed * speed * 0.00004, 3, 18);
+      _g2.copy(vel).multiplyScalar(1 / Math.max(1e-3, speed));
+      e.applyKnockback(_g2.clone().multiplyScalar(clamp(speed * 0.62, 5, 17)).setY(2.6), dmg, this);
+      if (held && !held.dead) held.damage?.(dmg * 0.4, e.position, this, 'impact');
+      audio.thud(pos, clamp(dmg / 40, 0.3, 0.9));
+      ctx.particles?.sparkBurst(pos, null, 7, { speed: 5 });
     }
   }
 
@@ -4800,6 +4919,8 @@ export class Player {
         ctx.particles.plasma.spawn(b.position, _v3.set(0, 0, 0),
           { life: 0.3, size: b.boundingRadius * 1.5, drag: 1, gravity: 0, color: 0x88bbff, alpha: 0.12 });
       }
+      // …and while it moves it is a real object. See `_sweepHeld`.
+      this._sweepHeld(dt, ctx, b.position, b.boundingRadius, b.velocity);
     } else if (this.gripEnemy) {
       const e = this.gripEnemy;
       const m = e.A ? e.A.mass : 80;
@@ -4811,6 +4932,15 @@ export class Player {
       // actually manage rather than teleporting it there every frame.
       dampVec(this._liftPoint, hold, 0.8 + 3.4 * this._heft(m), dt);
       e.liftTarget = this._liftPoint;
+      /* A HELD BODY IS A REAL OBJECT TOO — note #9's other half. The velocity
+       * is read off the ragdoll's own chest rather than off `e.velocity`,
+       * which a limp body does not drive. See `_sweepHeld`. */
+      {
+        const chest = e.actor?.ragdolled && (e.actor.bodies.get('chest')
+          || e.actor.bodies.get('spine') || e.actor.bodies.get('hips'));
+        this._sweepHeld(dt, ctx, e.position, e.radius ?? 0.55,
+          _v4.copy(chest ? chest.velocity : e.velocity));
+      }
 
       /**
        * FORCE CHOKE, which is what holding a living thing off the ground IS.

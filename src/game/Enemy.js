@@ -894,6 +894,15 @@ const RESIST_BEATEN = 0.35;
 /** The kinds that are the Force, and are therefore answerable by it. */
 export const FORCE_KINDS = /^(force|lightning|choke|grip|rend)$/;
 
+/** How long a living body lies still before it picks itself up, in seconds.
+ *
+ *  1.35 rather than something snappier, and the number is a READ rather than a
+ *  feel: a body that springs up the instant it stops sliding reads as a bug in
+ *  the other direction, and the whole value of a Force throw is the second in
+ *  which the thing you threw is out of the fight. Long enough to be worth
+ *  doing, short enough that a squad you shoved does not stay shoved. */
+const GET_UP = 1.35;
+
 /**
  * THE RULE ITSELF, AS ONE FUNCTION — and it is exported so that the other half
  * of this contest is three lines rather than a second copy of it.
@@ -2746,6 +2755,73 @@ export class Enemy {
     }
   }
 
+  /**
+   * GET UP — the other half of `Actor.recover`, and the whole of note #6.
+   *
+   * A living body that has been ragdolled (gripped and released, thrown,
+   * toppled by a blast) puts itself back together, stands where the ragdoll
+   * came to rest, and spends `beat` seconds on the floor first.
+   *
+   * THREE THINGS HAVE TO HAPPEN TOGETHER or the body is worse off than it was:
+   *
+   *  1. the visuals come back onto the rig (`Actor.recover`),
+   *  2. the walking capsule goes back into the world — `topple` and the death
+   *     path both REMOVE it, and a body walking with no collider is the bug
+   *     from the other side,
+   *  3. the position is taken from where the ragdoll LANDED. Everything else
+   *     in this class reads `this.position`, which has been frozen at the spot
+   *     the body left the ground since the moment it went limp, so recovering
+   *     without this line teleports the character back across the room.
+   *
+   * The get-up beat is a `stun`, which is the natural window: the body is
+   * already on the floor, `stun` already breaks whatever it was casting, and
+   * every consumer of "can this act" already reads `stunTimer`.
+   */
+  recover(beat = 1.1) {
+    if (this.dead || !this.actor?.ragdolled) return false;
+    const at = this.actor.recover();
+    if (at) {
+      const ground = this.world?.terrain ? this.world.terrain.height(at.x, at.z) : at.y;
+      this.position.set(at.x, Math.max(ground, at.y - (this.A.big ? 1.2 : 0.7)), at.z);
+      this.velocity.set(0, 0, 0);
+      this.grounded = true;
+    }
+    if (this.bodyRemoved && this.body && this.world?.physics) {
+      this.world.physics.add(this.body);
+      this.bodyRemoved = false;
+    }
+    /* `toppled` is a walker losing its legs and is NOT recoverable — a spider
+     * droid on its back stays on its back. Only clear it if the legs are still
+     * there, which is the condition `topple` itself is about. */
+    if (this.toppled && !this.legsLost) { this.toppled = false; this.stunTimer = 0; }
+    this._syncBody();
+    this.stun(beat);
+    this._recoverAt = 0;
+    return true;
+  }
+
+  /**
+   * A LIVING BODY DOES NOT STAY DOWN. Called every frame from `update`.
+   *
+   * The rule is one line and its subject is everything that can put a body on
+   * the floor: if it is alive, limp, and nothing is holding it, it gets up
+   * after `GET_UP` seconds of lying still. Written as a countdown started by
+   * the CONDITION rather than by each of the four call sites that can cause
+   * it, because a fifth will be added and would not have known to arm a timer.
+   */
+  _tickGetUp(dt) {
+    if (this.dead || !this.actor?.ragdolled) { this._recoverAt = 0; return; }
+    if (this.gripped || (this.toppled && this.legsLost)) { this._recoverAt = 0; return; }
+    /* Wait for it to be still first. Getting up mid-flight is the other
+     * comedy — a body two metres in the air snapping upright — so the timer
+     * only runs while the ragdoll's own chest is slow. */
+    const b = this.actor.bodies.get('chest') || this.actor.bodies.get('spine')
+      || this.actor.bodies.get('hips');
+    if (b && b.velocity.lengthSq() > 4) { this._recoverAt = 0; return; }
+    this._recoverAt = (this._recoverAt || 0) + dt;
+    if (this._recoverAt >= GET_UP) this.recover();
+  }
+
   applyKnockback(impulse, damage, source, gentle) {
     if (this.dead) {
       // `impulse` is legitimately null — `_sustain` bills damage with no shove
@@ -3052,6 +3128,9 @@ export class Enemy {
     }
 
     this.stateTime += dt;
+    // A living body that is limp and still puts itself back together. See
+    // `_tickGetUp`; before this, nothing in the game ever un-ragdolled.
+    this._tickGetUp(dt);
     this.stunTimer = Math.max(0, this.stunTimer - dt);
     this.knockTimer = Math.max(0, this.knockTimer - dt);
     this.yankT = Math.max(0, this.yankT - dt);
@@ -4456,6 +4535,29 @@ export class Enemy {
       return;
     }
     if (this.toppled) { this._syncBody(); return; }
+
+    /**
+     * LIMP. A living body whose actor is ragdolled is not walking anywhere,
+     * and — the part that was actually broken — its `position` has to follow
+     * the ragdoll rather than stay where the body left the ground.
+     *
+     * Everything in this class reads `this.position`: the AI, the spawner's
+     * spacing, the wave's alive test, the blade's broad phase and every Force
+     * power's range test. While a released body was limp, all of them were
+     * reading the spot it was standing on before it was picked up — so a droid
+     * thrown thirty metres was still, as far as the game was concerned, right
+     * in front of you. This is the other half of note #6 and it is why the
+     * released body looked "lost": it was in two places at once.
+     */
+    if (this.actor?.ragdolled) {
+      this.actor.centre(this.position);
+      const chest = this.actor.bodies.get('chest') || this.actor.bodies.get('spine')
+        || this.actor.bodies.get('hips');
+      if (chest) this.velocity.copy(chest.velocity);
+      this.grounded = false;
+      this._syncBody();
+      return;
+    }
 
     const canMove = this.stunTimer <= 0 && this.knockTimer <= 0 && !this.gripped;
     if (canMove && this.wish) {

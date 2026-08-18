@@ -280,4 +280,150 @@ export async function run({ check, assert, THREE: T }) {
     assert(openness(e) === 1, 'the window closed and the bonus did not');
     return `${opened}× for ${t.toFixed(2)}s, then ${openness(e)}×`;
   });
+
+  /**
+   * NOTE #9, BOTH HALVES. "when I pick something up and throw it doesnt do
+   * damage or physcially interact with the thing it's hitting… like if I pick
+   * up a trooper and move him through a collumn of other men it doesnt hit
+   * them or move them passively it's like not a real object."
+   *
+   * Measured through the real throw, the real `_updateHurled` and a real
+   * bystander, because the claim is about what happens to the BYSTANDER and
+   * nothing about the source could say whether it does.
+   */
+  check('force throw: a thrown body damages and shoves what it lands on', () => {
+    const rows = [];
+    for (const type of ['b1', 'trooper', 'b2']) {
+      const b = bench({ force: 900, forcePower: 1 });
+      const held = standing(b, 3, type);
+      /* The bystander is directly along the throw line, four metres past the
+       * held body, and it is a `b1` in every row so the damage is comparable
+       * across the three throwers. */
+      const mark = standing(b, 9, 'b1');
+      const hp0 = mark.hp, x0 = mark.position.x, z0 = mark.position.z;
+      b.p.aimDir.set(0, 0, -1);
+      b.p.gripEnemy = held;
+      held.gripped = true;
+      b.p._liftPoint.copy(held.position);
+      b.p.hurlGripped(b.ctx);
+      assert(b.p.hurled.length === 1,
+        `${type}: throwing a BODY tracked ${b.p.hurled.length} projectiles — the prop branch has `
+        + 'called _trackHurl since it was written and the body branch never did');
+      const dt = 1 / 60;
+      for (let i = 0; i < 150; i++) {
+        b.world.time += dt;
+        held._move(dt, b.ctx);
+        b.p._updateHurled(dt, b.ctx);
+        if (mark.hp < hp0) break;
+      }
+      const took = hp0 - mark.hp;
+      const moved = Math.hypot(mark.position.x - x0, mark.position.z - z0)
+        + Math.abs(mark.velocity.y) * 0.001;
+      assert(took > 0, `${type}: a body thrown through a droid took ${took.toFixed(1)} hp off it`);
+      /* THE CEILING IS THE POINT OF THE SEPARATE COEFFICIENT. A body is three
+       * to ten times a crate's mass, so on the crate's rate every throw would
+       * saturate the 140 cap and one throw would clear a squad. */
+      assert(took < 60, `${type}: a single thrown body took ${took.toFixed(0)} hp — that is a crowd-clear`);
+      assert(mark.knockTimer > 0 || moved > 0.05,
+        `${type}: the droid took ${took.toFixed(1)} hp and did not move at all`);
+      /* AND THE THROWN BODY PAYS. Spending the thing you are holding is what
+       * makes a living projectile a decision. */
+      assert(held.hp < held.maxHp,
+        `${type}: the body that was thrown into a droid took nothing for it`);
+      rows.push(`${type} (${(held.A?.mass ?? 80)} kg) → ${took.toFixed(0)} hp, `
+        + `thrower kept ${Math.max(0, 100 * held.hp / held.maxHp).toFixed(0)}%`);
+    }
+    return rows.join('; ');
+  });
+
+  check('force grip: a body swung through a rank shoves the rank', () => {
+    /* The continuous half. A held body moving at speed sweeps the field and
+     * staggers what it crosses; the damage is deliberately a tenth of a
+     * throw's, because the read is the LINE COMING APART and not the number. */
+    const b = bench({ force: 2000, forcePower: 1 });
+    const held = standing(b, 2.5, 'trooper');
+    held.gripped = true;
+    b.p.gripEnemy = held;
+    b.p._liftPoint.copy(held.position);
+    const rank = [];
+    for (let i = 0; i < 5; i++) {
+      const e = new Enemy(b.world, 'b1', new THREE.Vector3(-4 + i * 2, 0, -6));
+      e.position.set(-4 + i * 2, 0, -6);
+      b.ctx.enemies.push(e); rank.push({ e, hp: e.hp, x: e.position.x, z: e.position.z });
+    }
+    /* Swing it across the rank by driving the sweep directly with a real
+     * velocity — the hold's own solver is measured by the checks above, and
+     * what this one is about is whether a moving held body TOUCHES anything. */
+    const dt = 1 / 60;
+    const vel = new THREE.Vector3(9, 0, 0);
+    for (let i = 0; i < 120; i++) {
+      held.position.set(-5.5 + i * dt * 9, 1.0, -6);
+      b.p._sweepHeld(dt, b.ctx, held.position, 0.55, vel);
+    }
+    const hit = rank.filter((r) => r.e.hp < r.hp).length;
+    const shoved = rank.filter((r) => Math.hypot(r.e.position.x - r.x, r.e.position.z - r.z) > 0.02
+      || r.e.knockTimer > 0).length;
+    assert(hit >= 4, `a body swung through five men touched ${hit} of them`);
+    assert(shoved >= 4, `${shoved} of five were actually moved — damage without a shove is a number, not an object`);
+    const worst = Math.max(...rank.map((r) => r.hp - r.e.hp));
+    assert(worst < 25, `one sweep took ${worst.toFixed(0)} hp — swinging a body must not out-damage throwing it`);
+    return `${hit}/5 struck, ${shoved}/5 shoved, worst ${worst.toFixed(1)} hp`;
+  });
+
+  /**
+   * NOTE #6. "every time you force control someone and ragdoll them when you
+   * release them they are dead."
+   *
+   * They were not dead. Nothing in the game un-ragdolled — `Actor.ragdolled`
+   * was written `true` in one place and `false` only in the constructor — so a
+   * released body kept its walking capsule and its AI while its meshes hung
+   * off loose physics bodies and slid along the floor behind it.
+   */
+  check('force grip: a body released alive gets back up, where it landed', () => {
+    const b = bench({ force: 900, forcePower: 1 });
+    const e = standing(b, 4, 'trooper');
+    b.p.aimDir.set(0, 0, -1);
+    b.p.gripEnemy = e;
+    e.gripped = true;
+    b.p._liftPoint.set(0, 2.2, -4);
+    e.liftTarget = b.p._liftPoint;
+    const dt = 1 / 60;
+    for (let i = 0; i < 30; i++) { e._move(dt, b.ctx); }
+    assert(e.actor?.ragdolled, 'holding a living body did not ragdoll it — the premise has expired');
+    // release without killing it
+    b.p.releaseGrip();
+    assert(!e.dead, 'the fixture killed its own subject');
+    const where = e.actor.centre(new THREE.Vector3());
+    let recovered = -1;
+    for (let i = 0; i < 60 * 6; i++) {
+      b.world.time += dt;
+      /* THE BENCH'S PHYSICS IS A STUB, so nothing integrates or damps a
+       * ragdoll body on its own and the chest keeps whatever velocity the
+       * suspend spring last commanded — forever. A real world bleeds that off
+       * in a few tenths against the ground. Standing in for that here is the
+       * one thing this fixture has to do that the game does for itself, and
+       * without it the stillness gate in `_tickGetUp` can never open. */
+      for (const bd of e.actor.bodies.values()) bd.velocity.multiplyScalar(0.86);
+      // `_tickGetUp` is the subject; the brain is not, and driving it here
+      // would need a target picker this bench has no reason to own.
+      e._tickGetUp(dt);
+      e._move(dt, b.ctx);
+      if (!e.actor.ragdolled) { recovered = i * dt; break; }
+    }
+    assert(recovered > 0,
+      'a living body released from a grip never got up — six seconds and still limp');
+    assert(recovered < 5, `it took ${recovered.toFixed(1)}s to get up`);
+    /* WHERE IT LANDED, not where it was picked up. Everything in Enemy reads
+     * `position`, so a body that recovers to its old spot teleports across the
+     * room — which is the failure this clause exists to catch. */
+    const gap = Math.hypot(e.position.x - where.x, e.position.z - where.z);
+    assert(gap < 1.5,
+      `it stood up ${gap.toFixed(1)} m from where the ragdoll came to rest`);
+    assert(!e.bodyRemoved, 'it got up with no collider in the world');
+    // …and it is animating again rather than walking while ragdolled
+    e._tickGetUp(dt); e._move(dt, b.ctx);
+    assert(!e.actor.ragdolled, 'it went limp again on the very next frame');
+    return `up in ${recovered.toFixed(2)}s, ${gap.toFixed(2)} m from where it landed`;
+  });
+
 }

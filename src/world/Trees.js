@@ -139,12 +139,24 @@ const COLLIDER_H = 9;
  * what makes the wood possible and it is also what made every log furniture.
  *
  * So a log becomes a REAL OBJECT when the player is close enough to reach for
- * it, and goes back to being an instance when they leave. `LIFT_RING` is 9 m —
- * the Force reach is 22 m but a log you grip from across a clearing is a log
- * you never walked up to, and the point of this is that the thing you just cut
- * down is a thing. `LIFT_CAP` is 4, which is the draw-call budget: four logs is
- * four calls on a level that spends 98, and it is also more logs than a player
- * can hold, throw or stand on at once.
+ * it, and goes back to being an instance when they leave.
+ *
+ * BOTH NUMBERS WENT UP, and the note they replace is what says why they had to.
+ * It read: "`LIFT_RING` is 9 m — the Force reach is 22 m but a log you grip
+ * from across a clearing is a log you never walked up to… `LIFT_CAP` is 4,
+ * which is the draw-call budget… and it is also more logs than a player can
+ * hold, throw or stand on at once."
+ *
+ * The second clause is the one that was wrong, and note #24 is what it costs:
+ * "tree don't have physics anymore when they fall like you can't keep cutting
+ * them up or anything." A cap of four is not about how many you can HOLD, it
+ * is about how many can be real AT ONCE — and one cut in a dense stand fells a
+ * median of three trees and a maximum of nine, all of them within a few metres
+ * of each other. Four of nine become objects and five stay pictures with a
+ * static box under them, which is exactly the reading: some of the trees you
+ * just cut down can be cut again and some cannot, with nothing to tell you
+ * which. 14 m and 9 covers the whole of a chain, and nine logs is nine draw
+ * calls on a level that spends 106.
  *
  * THE MASS IS CAPPED AT 900 kg AND THAT IS A DECISION RATHER THAN A CHEAT. A
  * 20 m trunk 0.5 m through is eleven tonnes of green wood, and `force.mjs`
@@ -154,8 +166,8 @@ const COLLIDER_H = 9;
  * stopped working. A log is the largest object a player will ever try to lift,
  * so it is the one that would break that promise first.
  */
-const LIFT_RING = 9;
-const LIFT_CAP = 4;
+const LIFT_RING = 14;
+const LIFT_CAP = 9;
 const LOG_MASS_CAP = 900;
 /** Grid cell for the standing-tree index, in metres. */
 const CELL = 12;
@@ -904,17 +916,33 @@ export class Forest {
       this.fell(j, D[k + F.DX], D[k + F.DZ], 0.35, (this._chainDepth || 0) + 1);
     }
 
-    // and anything standing under it
+    /* AND ANYTHING STANDING UNDER IT — WHICH NOW INCLUDES YOU.
+     *
+     * This walked `world.enemies` and nothing else, so a twenty-metre trunk
+     * came down through the player and did not touch them. Note #24: "they
+     * should damage things/players/enemies if they fall on you." A tree that
+     * is lethal to a droid and free to the person who cut it down is the one
+     * hazard in the game the player can ignore, and it is the one they made.
+     *
+     * The two lists are walked through one loop over one concatenation rather
+     * than by copying the body twice, because the property is "anything
+     * standing under it" and a second copy is how the player half would have
+     * drifted from the droid half. */
     const world = this.world;
-    const hitList = world.enemies;
-    if (hitList) {
-      for (let e = 0; e < hitList.length; e++) {
-        const en = hitList[e];
-        if (!en || en.dead || en._treeHit === this.stats.felled) continue;
+    for (const list of [world.enemies, world.players]) {
+      if (!list) continue;
+      for (let e = 0; e < list.length; e++) {
+        const en = list[e];
+        if (!en || en.dead || en.alive === false || en._treeHit === this.stats.felled) continue;
         const d = pointSegDist(en.position.x, en.position.y + 0.9, en.position.z, _v1, _v2);
         if (d > rad + 1.0) continue;
         en._treeHit = this.stats.felled;
         en.damage?.(this.crush, en.position, null, 'crush');
+        /* A tree does not only hurt, it FLATTENS. The impulse is along the
+         * trunk's own fall direction with the weight of it going down, so
+         * being caught by one throws you the way it went — which is the whole
+         * physical read and the thing that makes standing clear worth doing. */
+        en.applyKnockback?.(_v3.set(D[k + F.DX] * 9, -7, D[k + F.DZ] * 9), 0, null);
         this.stats.crushed++;
       }
     }

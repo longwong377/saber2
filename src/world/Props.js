@@ -1437,6 +1437,33 @@ export class Prop {
     this.body.userData.prop = this;
     world.physics.add(this.body);
     this._syncMesh();
+    /**
+     * AND IT PUTS ITSELF IN THE WORLD'S LIST, which used to be the caller's
+     * job and was missed exactly once — with consequences that read as a
+     * different bug entirely.
+     *
+     * "there are invisible walls or objects for example on geonosis that block
+     * you." Geonosis's twenty needle spires were built with a bare
+     * `makeSpire(world, p, …)` and the return value dropped. A `Prop` puts its
+     * MESH in the scene and its BODY in the physics world from right here, but
+     * only `world.props` gets it `update()`d — and `update` is what copies the
+     * body's pose onto the mesh. So the spires were dynamic 500 kg bodies that
+     * nobody synced: the collider settled, slid and toppled under gravity while
+     * the drawn rock stayed exactly where it was placed. What the player walks
+     * into is a 26 m convex hull standing several metres from anything visible.
+     *
+     * Three more things went with it, all silent: an unlisted prop is never
+     * offered to the blade solver (so those spires could not be cut), never
+     * disposed by `World.unload` (so it leaks across every level change), and
+     * never weathered or slept.
+     *
+     * The header of this file has said "hand to world.addProp" since it was
+     * written. A rule stated in a comment is a rule that gets missed; this is
+     * the same rule, CALLED (HANDOFF §2.4). `World.addProp` is idempotent, so
+     * every existing caller that still hands its prop over is unaffected.
+     */
+    if (world.addProp) world.addProp(this);
+    else if (world.props && !world.props.includes(this)) world.props.push(this);
   }
 
   _syncMesh() {
@@ -1757,6 +1784,78 @@ export function makeVaporator(world, pos, opts = {}) {
  * A wind-carved rock spire: bedded, leaning, undercut at the base. 4–10 m.
  * Cuttable, so it stays on one material rather than vertex-coloured strata.
  */
+/**
+ * A STACK OF CYLINDERS THAT FOLLOWS THE SHAPE, instead of a convex hull that
+ * swallows it.
+ *
+ * A hull is the right default for a crate and the wrong one for anything with
+ * a WAIST or a LEAN, and the difference is not cosmetic. Measured on Geonosis's
+ * needle spires — wasp-waisted, eroded, bent by up to a quarter of their own
+ * height — the hull stands as much as 2.68 m outside the drawn rock at the
+ * height a player walks at, with a mean of 0.30 m over twenty-one of them. A
+ * hull cannot do better: it is by definition the smallest shape containing all
+ * of the geometry, so every concavity in the silhouette becomes solid.
+ *
+ * That is the physical half of "there are invisible walls or objects for
+ * example on geonosis that block you", and the arithmetic says why it is
+ * WORST on the tallest props: the hull runs a straight line from the widest
+ * ring at the bottom to the widest at the top, so the further apart those two
+ * are, the more of the middle it fills in.
+ *
+ * The shape here is exact for anything lathe-like, which is most eroded rock:
+ * slice the mesh into `n` horizontal bands, take each band's own centre in
+ * plan and its own maximum radius about that centre, and emit one cylinder per
+ * band. A lean is carried for free because each band is centred on itself.
+ *
+ * `n` is a real cost — Rapier attaches every part as its own collider — so it
+ * is chosen against the height rather than fixed: a 5 m spire gets 6 and a
+ * 40 m one gets 16, which is a band every metre and a half either way.
+ */
+export function slabCompound(geo, opts = {}) {
+  const pos = geo.attributes.position;
+  if (!pos || pos.count < 8) return null;
+  geo.computeBoundingBox();
+  const bb = geo.boundingBox;
+  const lo = bb.min.y, hi = bb.max.y, span = hi - lo;
+  if (!(span > 1e-4)) return null;
+  const n = clamp(Math.round(opts.slabs ?? (span / 2.6 + 4)), 3, 20);
+  const sx = new Float64Array(n), sz = new Float64Array(n), cnt = new Float64Array(n);
+  const band = (y) => Math.min(n - 1, Math.max(0, Math.floor(((y - lo) / span) * n)));
+  for (let i = 0; i < pos.count; i++) {
+    const b = band(pos.getY(i));
+    sx[b] += pos.getX(i); sz[b] += pos.getZ(i); cnt[b]++;
+  }
+  for (let b = 0; b < n; b++) { if (cnt[b]) { sx[b] /= cnt[b]; sz[b] /= cnt[b]; } }
+  /* A band with no vertices in it borrows its neighbour's centre, so a mesh
+   * whose rings do not divide evenly into `n` does not emit a cylinder at the
+   * origin — which on a leaning spire is metres away from the rock. */
+  for (let b = 0; b < n; b++) {
+    if (cnt[b]) continue;
+    let k = b; while (k > 0 && !cnt[k]) k--;
+    if (!cnt[k]) { k = b; while (k < n - 1 && !cnt[k]) k++; }
+    sx[b] = sx[k]; sz[b] = sz[k];
+  }
+  const rad = new Float64Array(n);
+  for (let i = 0; i < pos.count; i++) {
+    const b = band(pos.getY(i));
+    const d = Math.hypot(pos.getX(i) - sx[b], pos.getZ(i) - sz[b]);
+    if (d > rad[b]) rad[b] = d;
+  }
+  const h = span / n;
+  const parts = [];
+  for (let b = 0; b < n; b++) {
+    if (!(rad[b] > 1e-3)) continue;
+    /* A CYLINDER PER BAND UNDERSHOOTS AT THE SEAMS, because a band's radius is
+     * its own maximum and the surface between two bands is a ramp. Half a band
+     * of overlap in height costs nothing and closes the steps; the radius is
+     * left exact, because overshooting it is the whole defect being fixed. */
+    parts.push({ type: 'cylinder', radius: rad[b], halfHeight: h * 0.62,
+      at: [sx[b], lo + (b + 0.5) * h, sz[b]] });
+  }
+  if (parts.length < 2) return null;
+  return { type: 'compound', parts };
+}
+
 export function makeSpire(world, pos, height = 6, opts = {}) {
   const M = propMaterials();
   const r = makeRng(Math.floor(rng() * 1e6) + 3);
@@ -1786,8 +1885,13 @@ export function makeSpire(world, pos, height = 6, opts = {}) {
     kind: 'spire', mesh, position: pos, mass: 500,
     toughness: TOUGHNESS.armour, hp: 200, grippable: false,
     spheres: capsuleSpheres(height / 2 - 0.6, 0.55, 'y', 4),
-    // no `shape`: the Prop falls back to a convex hull of this exact bent,
-    // wasp-waisted lathe — which is the whole reason for the migration
+    /* THE SHAPE IS A SLAB STACK AND NOT A HULL, and this prop is the reason
+     * `slabCompound` exists — see its note. A convex hull of a bent,
+     * wasp-waisted needle stood up to 2.68 m outside the drawn rock at the
+     * height a player walks at. The stack measures 0.11 m worst over the same
+     * twenty-one spires, which is a collider you can feel the edge of rather
+     * than one you walk into from three metres away. */
+    shape: slabCompound(geo) || undefined,
     ...opts,
   });
 }
