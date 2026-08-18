@@ -5365,9 +5365,10 @@ export function addCrateStack(world, pos, opts = {}) {
    * compose it into a larger merge"; this maker built a `new Kit` of its own
    * and emitted it, so `{ kit }` was accepted and dropped. That is not only a
    * draw call: a composed maker is handed a KIT-SPACE position, so the one
-   * call site that tried it (`cut()`'s derelict cell) put its stack at world
-   * (3.4, 1.8) — beside the level origin, twenty to a hundred metres from the
-   * machine it was meant to be stacked against. */
+   * call site that tried it (the derelict cell in the Cut's dressing pass,
+   * since deleted for having had no caller) put its stack at world (3.4, 1.8) —
+   * beside the level origin, twenty to a hundred metres from the machine it was
+   * meant to be stacked against. */
   const kit = kitOpen(pos, opts, seed);
   const size = opts.size ?? 0.8;
   /* HOW BIG IS THE PILE, in the vocabulary the caller used.

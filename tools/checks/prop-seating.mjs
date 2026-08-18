@@ -808,6 +808,140 @@ export function run({ check, assert }) {
     return 'chip refused, post accepted, one crossing support under a 12 m run accepted';
   });
 
+  check('props: a cable run is BOLTED at both ends, not hung from the air', () => {
+    /* THE HOLE IN THE CHECK ABOVE, MEASURED FROM THE OTHER END.
+     *
+     * `carried` asks whether ANY part of an assembly touches something that
+     * comes up to it, and for a catenary that is the wrong part. A cable run
+     * is 80 m of rope between two 0.3 m bracket slabs: the brackets are the
+     * only thing on it that is fixed to anything, and its belly is the only
+     * thing `seatOf` looks at. So a run could pass both — belly excused by
+     * whatever it happens to cross in the middle, brackets bolted to nothing —
+     * and one did. MEASURED on the shipped hangar before this clause existed:
+     *
+     *   bracket                    nearest assembly of ANY kind, in 3D
+     *   (±62, 8.1, ∓40)            3.15 to 4.71 m
+     *   warship (±49, 11.9, −30)   1.32 m, and it was the ROOF, above it
+     *
+     * Both runs were excused all the same, the hangar's by the gantry it
+     * crossed at z = −14 — and that gantry's own row named the cable run as
+     * what held the GANTRY up, so the two were holding each other up in a
+     * ring. Straightening the gantry (it ran across the bay, not down it) took
+     * the crossing away and left both runs floating 5.5 m over the deck, which
+     * is what they had always been.
+     *
+     * The bound is what a bolt is: a bracket is a 0.3 m slab and the thing it
+     * is fixed to has to be within reach of it. Half a metre of daylight is
+     * not a fixing. Both levels' runs stand on stanchion heads now and read
+     * 0.030 m, which is the slab's own half-thickness.
+     *
+     * The END is derived from the run's own bounds and its own top grid — the
+     * anchor is the highest point of the run at that end — so this measures
+     * where the bracket IS and not where a call site says it is. */
+    const BOLT = 0.5;
+    const lines = [], failed = [];
+    let ends = 0, worst = 0;
+    for (const [key, rows] of seating()) {
+      for (const r of rows) {
+        if (r.maker !== 'addCableRun') continue;
+        const alongZ = (r.bz1 - r.bz0) >= (r.bx1 - r.bx0);
+        for (const far of [false, true]) {
+          ends++;
+          const ex = alongZ ? (r.bx0 + r.bx1) / 2 : (far ? r.bx1 : r.bx0);
+          const ez = alongZ ? (far ? r.bz1 : r.bz0) : (r.bz0 + r.bz1) / 2;
+          // the anchor is the top of the run in the grid column at that end
+          const G = r.G;
+          const bin = (v, lo, hi) => Math.min(G - 1, Math.max(0, ((v - lo) * G / Math.max(1e-6, hi - lo)) | 0));
+          const gi = bin(ex, r.bx0, r.bx1), gj = bin(ez, r.bz0, r.bz1);
+          let ey = -Infinity;
+          for (let i = 0; i < G; i++) for (let j = 0; j < G; j++) {
+            if (alongZ ? j !== gj : i !== gi) continue;
+            if (r.top[i * G + j] > ey) ey = r.top[i * G + j];
+          }
+          if (!isFinite(ey)) ey = r.maxY;
+          let best = null, bd = Infinity;
+          for (const o of rows) {
+            if (o === r || o.maker === 'addCableRun') continue;
+            const d = Math.hypot(Math.max(0, o.bx0 - ex, ex - o.bx1),
+              Math.max(0, o.minY - ey, ey - o.maxY),
+              Math.max(0, o.bz0 - ez, ez - o.bz1));
+            if (d < bd) { bd = d; best = o; }
+          }
+          lines.push(`${key} (${ex.toFixed(0)}, ${ey.toFixed(1)}, ${ez.toFixed(0)}) → ${best ? best.maker : 'nothing'} ${bd.toFixed(3)} m`);
+          if (bd > worst) worst = bd;
+          if (bd > BOLT) {
+            failed.push(`${key}: a cable run's bracket at (${ex.toFixed(0)}, ${ey.toFixed(1)}, ${ez.toFixed(0)}) `
+              + `is ${bd.toFixed(2)} m from the nearest assembly (${best ? best.maker : 'nothing at all'}) — nothing to bolt it to`);
+          }
+        }
+      }
+    }
+    /* A tripwire on the FINDER, not a fact about the tree: two levels string
+     * cable runs and each strings two, so eight ends is what there is to look
+     * at. A sweep that quietly stopped matching would otherwise report a clean
+     * result for having measured nothing — §2.3's plausible default. */
+    assert(ends >= 8, `only ${ends} cable-run ends surveyed — the sweep is not finding them`);
+    assert(failed.length === 0, failed.join('\n    ') + '\n    ' + lines.join('; '));
+    return `${ends} bracket ends, worst ${worst.toFixed(3)} m from its fixing; ${lines.join('; ')}`;
+  });
+
+  check('props: a gantry runs ALONG the side it stands on, not across it', () => {
+    /* WHICH WORLD AXIS THE DECK'S LONG SIDE LIES ON, measured off the built
+     * geometry rather than off the `yaw` in the call.
+     *
+     * `addGantry` builds its deck as `slab(deckM, W, 0.14, L, …)` and steps
+     * its trestle bays along z, so unrotated it is long in Z; `kitOpen` pushes
+     * `yaw` onto the kit frame, and π/2 puts that on X. Three call sites
+     * carried π/2 — the bay's pair and the works' two pairs — so every gantry
+     * in the game ran ACROSS the room it was placed down the side of. It is
+     * invisible in a seating survey: a deck lying the wrong way still stands
+     * on its feet.
+     *
+     * WHAT SAYS WHICH WAY IS RIGHT, without a table of levels to maintain:
+     * the PLACEMENT does. A level that builds two gantries at x = ±d, at the
+     * same z, has put one down each side of a room whose spine is the x = 0
+     * plane — that is what mirroring across an axis means — and a run down the
+     * side of a room lies along the spine, not across it. So the pair itself
+     * carries the answer and a new level gets checked the day it is authored.
+     *
+     * MEASURED, plan extent of each deck, before and after:
+     *
+     *   hangar  x = ±56 pair    36.7 × 4.8 → across   now 4.8 × 36.7 at ±60
+     *   warship x = ±36 pair    32.7 × 4.8 → across   now 4.8 × 26.7
+     *   warship x = ±36 pair    26.7 × 4.5 → across   now 4.5 × 18.7
+     *
+     * A single gantry that is nobody's mirror is not judged here — the cut's
+     * two were placed at 0.3 and 2.1 radians on purpose — and neither is a
+     * pair standing on a diagonal. This asks about the one arrangement that
+     * states its own intent. */
+    const mid = (a, b) => (a + b) / 2;
+    const lines = [], failed = [];
+    let pairs = 0;
+    for (const [key, rows] of seating()) {
+      const g = rows.filter((r) => r.maker === 'addGantry').map((r) => ({
+        cx: mid(r.bx0, r.bx1), cz: mid(r.bz0, r.bz1), ex: r.bx1 - r.bx0, ez: r.bz1 - r.bz0,
+      }));
+      for (let i = 0; i < g.length; i++) for (let j = i + 1; j < g.length; j++) {
+        const a = g[i], b = g[j];
+        const onX = Math.abs(a.cx + b.cx) < 0.5 && Math.abs(a.cz - b.cz) < 0.5 && Math.abs(a.cx) > 10;
+        const onZ = Math.abs(a.cz + b.cz) < 0.5 && Math.abs(a.cx - b.cx) < 0.5 && Math.abs(a.cz) > 10;
+        if (!onX && !onZ) continue;
+        pairs++;
+        const want = onX ? 'z' : 'x';
+        const got = a.ex > a.ez ? 'x' : 'z';
+        lines.push(`${key} pair at ${onX ? 'x' : 'z'} = ±${Math.abs(onX ? a.cx : a.cz).toFixed(0)}: ${a.ex.toFixed(1)}×${a.ez.toFixed(1)} m, long side on ${got}`);
+        if (got !== want) {
+          failed.push(`${key}: a pair of gantries mirrored across ${onX ? 'x' : 'z'} = 0 at `
+            + `${onX ? 'x' : 'z'} = ±${Math.abs(onX ? a.cx : a.cz).toFixed(0)} has its decks lying along ${got} `
+            + `(${a.ex.toFixed(1)} × ${a.ez.toFixed(1)} m in plan) — they run across the room, not down its sides`);
+        }
+      }
+    }
+    assert(pairs >= 3, `only ${pairs} mirrored gantry pairs found — the pairing is not matching`);
+    assert(failed.length === 0, failed.join('\n    ') + '\n    ' + lines.join('; '));
+    return lines.join('; ');
+  });
+
   check('props: on level ground a prop\'s underside is ON the ground', () => {
     /* THE NUMBER IN THE REPORT, isolated from the one thing that legitimately
      * lifts a corner. On a slope a rigid box rests on its uphill contact and

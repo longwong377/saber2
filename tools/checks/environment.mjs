@@ -887,7 +887,8 @@ export function run({ check, assert, near }) {
      * emitted it, and returned; the `{ kit }` it was handed went nowhere. That
      * costs draw calls, which is the visible half, and it puts the assembly in
      * the WRONG PLACE, which is the half nobody would have found by looking: a
-     * composed maker is given a KIT-SPACE position, so `cut()`'s derelict cell
+     * composed maker is given a KIT-SPACE position, so the derelict cell in
+     * the Cut's dressing pass (deleted since, for having had no caller anywhere)
      * asked for a stack 3.4 m from its machine and got one at world (3.4, 1.8)
      * — beside the level origin, up to a hundred metres away.
      *

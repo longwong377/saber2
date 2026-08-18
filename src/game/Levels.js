@@ -1451,7 +1451,18 @@ function works(world, opts = {}) {
       addGantry(world, at(side * (R - 16), gz), { length: len, height: h, yaw: 0,
         seed: seed + 300 + k * 10 + side, lights: opts.lights !== false });
     }
-    addCableRun(world, at(side * (R - 3), -30, 8.2), at(side * (R - 3), 26, 7.2), { seed: seed + 320 + side, sag: 1.5 });
+    /* …and the cable run stands on posts, for the reason the bay's does: a
+     * `addCableRun` bracket is a 0.3 m slab at each end and it has to be
+     * bolted to something. Measured before these two stanchions existed, the
+     * aft end sat 8.20 m over the floor with the nearest assembly of any kind
+     * 1.32 m away and ABOVE it (a roof beam), which is not a fixing. The ends
+     * move to ±26 with them: −30 was on the flank of the bulkhead ridge, where
+     * a base plate stands on a 40° slope. */
+    for (const z of [-26, 26]) {
+      addStanchion(world, at(side * (R - 3), z), { height: 8.0, destructible: 'durasteel',
+        seed: seed + 330 + side * 2 + (z > 0 ? 1 : 0) });
+    }
+    addCableRun(world, at(side * (R - 3), -26, 8.44), at(side * (R - 3), 26, 8.44), { seed: seed + 320 + side, sag: 1.5 });
   }
 
   /* ── THE MELT, if this floor is running one. Ladles, slag pots and the tap
@@ -1505,10 +1516,17 @@ function works(world, opts = {}) {
     const site = findSite(world, 14, R - 8, { clearance: 6, spawnClear: 11, maxSlope: 0.35 });
     if (site) addDebrisField(world, site.pos, { radius: 8, seed: seed + 540 + k, count: 22 });
   }
-  // Swarf, slag and broken plate over the whole floor — the grade a room reads
-  // as ground while standing on it, and the one thing here that is instanced.
-  strewGround(world, { seed: seed + 600, radius: R - 4, inner: 3, spread: 0.32, mat: M.stone,
-    landmarks: 0.35, boulders: 0.8, cobble: 1.5 });
+  /* Swarf, slag and broken plate over the whole floor — the grade a room reads
+   * as ground while standing on it, and the one thing here that is instanced.
+   *
+   * AND IT IS PLATE NOW RATHER THAN ROCK, for the reason written out over the
+   * hangar's own copy of this call: `M.stone` is desert varnish and the
+   * `landmarks` grade is metre-scale boulders. Measured on the Providence's
+   * deck, 18 of them, the widest 8.5 m across and 4.1 m tall, standing on
+   * poured plate. The two fine grades stay — at 0.95 and 0.58 a chip is
+   * broken plate, which is what this line always said it was. */
+  strewGround(world, { seed: seed + 600, radius: R - 4, inner: 3, spread: 0.32, mat: M.darkSteel,
+    landmarks: 0, boulders: 0.8, cobble: 1.5 });
 
   if (opts.banner) world.notify(opts.banner, opts.note || '');
   return bays;
@@ -4034,7 +4052,29 @@ LEVELS.hangar = {
       const sd = 9300 + i * 13 + j;
       if (r < 0.34) addCrateStack(world, pos.clone(), { seed: sd, tiers: 3, columns: 3, yaw: rng() * TAU });
       else if (r < 0.80) cargo(pos.clone(), sd, rng() * TAU, r >= 0.62);
-      else addHullSection(world, pos.clone(), { length: 13 + rng() * 7, radius: 2.8, yaw: rng() * TAU, seed: sd + 4 });
+      else {
+        /* ON the deck, not IN it, and the lift is the maker's own radius.
+         *
+         * `addHullSection` puts its origin on the CYLINDER AXIS and says so in
+         * its own line — "the origin is the axis, not the keel" — which is
+         * right everywhere it has been used until now, because a wreck lying
+         * in sand is bedded into the dune it came down in: measured, scoria's
+         * three sit 81% underground and mustafar's two 89%, and that is the
+         * picture those levels want.
+         *
+         * A POURED DECK CANNOT BE DUG. Measured before this branch grew a
+         * lift, all eight of the bay's wrecks were 63% of themselves below the
+         * plate — 4.16 m of a 6.9 m section — so what the player saw was the
+         * two torn lips standing 2.5 m out of a flat floor with the whole hull
+         * between them hidden underneath it. That reads as a sheet lying on
+         * the deck, which is what a render of this level shows and what got it
+         * reported. Lifted by R the keel rests on the plate, and the maker's
+         * own colliders come up with it — the walkable floor it puts at
+         * −0.94 R was under the deck too. */
+        const rad = 2.8;
+        addHullSection(world, pos.clone().setY(pos.y + rad),
+          { length: 13 + rng() * 7, radius: rad, yaw: rng() * TAU, seed: sd + 4 });
+      }
     });
 
     /**
@@ -4051,9 +4091,12 @@ LEVELS.hangar = {
      * ground has risen 2.3 m at 27°, well inside the survey. So a quarter of
      * what the check calls walkable is the shallow foot of the hull, and a bay
      * dressed only to its 74 m deck edge left it bare: 14.5% of the floor with
-     * nothing within twelve metres, against a bar of 10. With both ranks it is
-     * 0.1%. Racks standing on the turn of the hull are also simply what the
-     * reference plates have there.
+     * nothing within twelve metres, against a bar of 10. With both ranks it
+     * was 0.1%, and it is 1.6% since the strew below stopped putting boulders
+     * on the deck — that grade was carrying a share of this number, which is
+     * worth knowing before anything else is taken off the floor. Racks
+     * standing on the turn of the hull are also simply what the reference
+     * plates have there.
      */
     for (const [rad, n, tag] of [[66, 12, 0], [84, 15, 1]]) {
       for (let i = 0; i < n; i++) {
@@ -4084,7 +4127,7 @@ LEVELS.hangar = {
      * `prop-seating`'s survey rather than read off the source: the deck's plan
      * extent was 36.7 × 4.8 m, running x = 37.7 → 74.3 — from the middle of the
      * deck to the wall — and it is 4.8 × 36.7 now. The long walls of this bay
-     * run along z: the lamp rank below is x = ±68 from z = −64 to +64, and the
+     * run along z: the lamp rank above is x = ±68 from z = −64 to +64, and the
      * mouth is at +z, so z is the length of the room by construction.
      *
      * ±60 AND NOT ±56, because a walkway is not a place for a rack to stand up
@@ -4104,9 +4147,10 @@ LEVELS.hangar = {
        *
        * It was strung at x = ±62 with its brackets 8.0 and 7.0 m over the deck,
        * and there is nothing at either end to bolt a bracket to: measured,
-       * 8.11 m of air under each one, the nearest object of any kind 3.46 m
-       * away and two metres below it. The only wall this level has is the
-       * heightfield — `roof()` builds a ceiling and no walls at all — and
+       * 8.11 m of air under each one and the nearest object of any kind
+       * between 3.15 and 4.71 m away — and two of the four nearest were the
+       * bay lamps, which hang off nothing themselves. The only wall this level
+       * has is the heightfield — `roof()` builds a ceiling and no walls — and
        * `TERRAIN_PRESETS.hangar` is dead flat out to |x| = 74 and does not
        * reach the run's own 8 m until |x| = 90.2. It was a run hung 28 m
        * inboard of its own wall.
@@ -4133,9 +4177,18 @@ LEVELS.hangar = {
        * outermost station whose base plate is entirely on flat deck (the plate
        * is 1.61 m across and the shell starts at 74), and it is clear of the
        * inner rack ring's 69.3 by 0.9 m.
+       *
+       * `destructible` because a post is something a player walks up to. A
+       * bare `add*` goes through `kitClose` with no profile and is registered
+       * with nothing — the static-box-with-a-picture-on-it defect `sliceable`
+       * exists to catch. Measured: the four posts these two lines stand on the
+       * two ship decks took the warship from 46 of 64 reachable objects
+       * cuttable to 46 of 68, under that check's 0.70 bar; named as durasteel
+       * they take it to 50 of 68, and the bay to 141 of 147.
        */
       for (const z of [-40, 40]) {
-        addStanchion(world, at(side * 71, z), { height: 8.0, seed: 9414 + side * 2 + (z > 0 ? 1 : 0) });
+        addStanchion(world, at(side * 71, z), { height: 8.0, destructible: 'durasteel',
+          seed: 9414 + side * 2 + (z > 0 ? 1 : 0) });
       }
       addCableRun(world, at(side * 71, -40, 8.44), at(side * 71, 40, 8.44), { seed: 9410 + side, sag: 1.6 });
     }
@@ -4155,11 +4208,48 @@ LEVELS.hangar = {
       });
     }
 
-    /* The scorch and the swarf of a working deck. `strewGround` is the only
+    /**
+     * The scorch and the swarf of a working deck. `strewGround` is the only
      * instanced grade this level has and it is what stops the floor reading as
-     * a plane with objects on it. */
-    strewGround(world, { seed: 9420, radius: 88, inner: 4, spread: 0.30, mat: M.stone,
-      landmarks: 0.55, boulders: 0.8, cobble: 1.4 });
+     * a plane with objects on it.
+     *
+     * IT WAS PUTTING BOULDERS ON A HANGAR FLOOR, and the comment above is the
+     * §2.3 tell: it says swarf and broken plate, and what it asked for was
+     * `strewGround`'s outdoor rock ladder in `M.stone`, which is desert
+     * varnish — `lit(1.98, 1.80, 1.55)`, the warmest, brightest loose material
+     * in the file, against a deck authored at 0x4e535c. Measured on the
+     * dressed level: 35 landmark boulders, the widest 10.8 m across and 4.1 m
+     * tall, plus 1003 chips, every one of them tan on a blue-grey plate. In a
+     * render they are the loudest thing in the room.
+     *
+     * `landmarks` is the grade `strewGround`'s own note calls "the only thing
+     * on the floor big enough to give the ground a scale from across the
+     * level" — which is a job this deck already has 32 cargo islands, two rack
+     * ranks and a pair of gantries doing, and a four-metre rock is the one
+     * shape a poured floor cannot have. So the grade is off here and the two
+     * fine ones stay: at 0.95 and 0.58 a chip reads as broken plate, which is
+     * what the comment always claimed was down there.
+     *
+     * `darkSteel` is the level's own structural metal — the gantries, the
+     * stanchions and the racks are already made of it — so the swarf matches
+     * what it fell off instead of matching a canyon.
+     *
+     * WHAT THE CHANGE IS WORTH, off two renders of the same frame rather than
+     * off an argument. One 110 × 45 px patch of the chip field, same chips,
+     * same camera:
+     *
+     *   M.stone      mean (0.183, 0.202, 0.291)   lum 0.204   R/B 0.629
+     *   M.darkSteel  mean (0.170, 0.235, 0.391)   lum 0.232   R/B 0.435
+     *
+     * The HUE is what moves — a warm cast on a deck authored at 0x4e535c, into
+     * the deck's own family — and the value barely does, which is right,
+     * because breaking the plane is the grade's whole job. `M.panel` was
+     * rendered too and came out 0.036 lighter and slightly warmer than
+     * darkSteel: the two metals are not a visible choice, so this takes the
+     * one the level is already built out of.
+     */
+    strewGround(world, { seed: 9420, radius: 88, inner: 4, spread: 0.30, mat: M.darkSteel,
+      landmarks: 0, boulders: 0.8, cobble: 1.4 });
     return 4;
   },
 };

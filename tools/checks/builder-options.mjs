@@ -48,9 +48,10 @@
  *     `{ kit }` one was hiding).
  *
  * The runtime guard is the authority and this is the net under it: the guard
- * only fires on a call that actually runs, and `cut()` — the dressing pass
- * that carried the `{ kit }` defect — has had no caller in the tree for some
- * time. A source sweep sees it anyway.
+ * only fires on a call that actually runs, and the pass that carried the
+ * `{ kit }` defect — `cut()`, the Cut's dressing, since deleted for having had
+ * no caller anywhere in the tree — never ran at all. A source sweep saw it
+ * anyway, which is the whole argument and holds for the next orphan.
  */
 
 import * as P from '../../src/world/Props.js';
