@@ -1193,4 +1193,297 @@ export function run({ check, assert, near }) {
     }
     return rows.join('; ') + ' — 4.000 uv²/m², was 0.000';
   });
+
+  /* ══════════════════════════════════════════════════════════════════════ */
+  /*  WHAT THE PARTICLE SYSTEM COSTS WHEN NOTHING IS HAPPENING              */
+  /*                                                                        */
+  /*  A day's content landed with nothing priced. Most of it measured fine  */
+  /*  — the jet plume is 1.9 particles a trooper a frame, the B2 is 2 268   */
+  /*  triangles more than a B1 and cheaper than a clone, the barrage is     */
+  /*  9.7% of the spark pool in one call. The three below are the ones that */
+  /*  were not fine, and all three were invisible for the same reason:      */
+  /*  nothing turned them into a number.                                    */
+  /* ══════════════════════════════════════════════════════════════════════ */
+
+  check('particles: a pool with nothing alive in it draws nothing', () => {
+    /**
+     * THE POOL DREW ITS WHOLE CAPACITY EVERY FRAME, FOREVER.
+     *
+     * A dead particle is culled in the VERTEX shader — `gl_Position =
+     * vec4(2.0)`, outside the clip volume — so it costs no fragments. It costs
+     * a vertex shader invocation, because that is the thing that decided to
+     * cull it, and every pool set `geo.instanceCount = max` in its constructor
+     * and never moved it again. Measured on a Command battle with 18 bodies
+     * standing and nothing firing: **19 800 instances drawn, 122 particles
+     * alive.** 79 200 vertex shader invocations a frame, permanently, on the
+     * tier the menu offers to integrated graphics.
+     *
+     * Instancing draws 0..N-1 and cannot skip a hole, so the only shape the
+     * answer can take is a PREFIX of the ring, and the two ends of that are
+     * what is asserted here: an idle system draws exactly nothing, and a busy
+     * one never draws fewer instances than it has particles alive (which would
+     * be a live particle silently clipped out of the frame).
+     */
+    const scene = litScene();
+    const p = new Particles(scene, 1);
+    const capacity = p.pools.reduce((a, q) => a + q.max, 0) + p.decals.max;
+
+    // an idle frame, before anything has ever been spawned
+    for (let i = 0; i < 4; i++) p.update(1 / 60);
+    assert(p.stats().drawn === 0,
+      `a particle system with nothing in it draws ${p.stats().drawn} instances of a possible `
+      + `${capacity}. Every one is a vertex shader invocation on a quad that the vertex shader `
+      + 'then throws away — the pools set instanceCount = max once and never moved it.');
+
+    // …then a real burst, and it must cover everything alive
+    const at = new THREE.Vector3(2, 1, -1), dir = new THREE.Vector3(0, 1, 0);
+    p.sparkBurst(at, dir, 40);
+    p.explosion(at, 1.6);
+    p.sandPuff(at, 1.2, 0);
+    let peakDrawn = 0, peakLive = 0;
+    const liveIn = (pool) => {
+      let n = 0;
+      const pa = pool.aParams.array, ex = pool.aExtra.array, t = pool.time;
+      for (let i = 0; i < pool.max; i++) {
+        const life = pa[i * 4];
+        if (life > 0 && t - ex[i * 3 + 2] >= 0 && t - ex[i * 3 + 2] <= life) n++;
+      }
+      return n;
+    };
+    for (let f = 0; f < 200; f++) {
+      p.update(1 / 60);
+      let drawn = 0, live = 0;
+      for (const pool of p.pools) { drawn += pool.mesh.geometry.instanceCount; live += liveIn(pool); }
+      assert(drawn >= live,
+        `${live} particles are alive and only ${drawn} instances are being drawn — a live particle `
+        + 'past the end of the drawn prefix never reaches the screen at all');
+      peakDrawn = Math.max(peakDrawn, drawn);
+      peakLive = Math.max(peakLive, live);
+    }
+    /* …and once they have all gone out, back to nothing. Stepped to the end
+     * of the LONGEST thing any of these recipes lays down rather than to a
+     * round number of frames: `explosion` leaves a scorch decal that lives 16
+     * seconds, and a test that stopped at 200 frames would read that decal as
+     * a pool that had failed to empty. */
+    for (let f = 0; f < 1400; f++) p.update(1 / 60);
+    const settled = p.stats().drawn;
+    p.dispose();
+    assert(settled === 0,
+      `${settled} instances are still being drawn after every particle has expired — the ring's `
+      + 'head never returns to 0, so a pool that has been used once costs its high-water mark for '
+      + 'the rest of the level');
+    return `idle draws 0 of ${capacity}; a burst peaks at ${peakDrawn} instances for ${peakLive} `
+      + 'alive; it returns to 0 when they go out';
+  });
+
+  check('particles: every recipe is priced against the pool it draws from', () => {
+    /**
+     * DERIVED FROM THE CLASS, not from a list of the recipes that exist today.
+     * `RECIPES` below is checked against `Particles.prototype` itself, so a
+     * fifteenth effect fails this check on the day it is written rather than
+     * on a player's machine — which is HANDOFF §2.3's rule applied to a cost
+     * instead of to a table of content.
+     *
+     * WHAT IS ASSERTED IS A COUNT AND NOT A CLOCK. A pool is a ring buffer of
+     * `max` slots: one call that asks for more than that overwrites what it
+     * wrote a microsecond earlier, so the surplus is not merely wasteful, it
+     * is provably invisible — no frame can ever show it. That makes "over
+     * capacity" always a defect and never a tuning decision, which is the one
+     * property a bound can be asserted on without anybody having to agree
+     * about taste. It is also exactly how the `sparkBurst` freeze arrived: a
+     * colour where the parameter is `count`, 10 467 583 sparks, 71 to 134
+     * SECONDS a frame, and a suite that could not finish for a session.
+     *
+     * The bound is a fifth of a pool and not the whole of it, because a single
+     * effect that fills a fifth of a shared pool means five of them on screen
+     * erase each other — an artillery shell landing inside a smoke screen is
+     * exactly that situation and it is the one the barrage was built for.
+     */
+    const V = (x, y, z) => new THREE.Vector3(x, y, z);
+    const at = () => V(2, 1, -1), dir = () => V(0.3, 0.9, 0.1).normalize();
+    /** recipe → the arguments a caller in the game really passes. */
+    const RECIPES = {
+      sparkBurst: [at(), dir(), 40, { speed: 16 }],
+      spatter: [at(), dir(), 12, 0xffb050],
+      cutFlare: [at(), dir(), 0x57c9ff, 26],
+      boltImpact: [at(), dir(), 0xff3a2a],
+      scorch: [at(), dir(), 0.6],
+      sandPuff: [at(), 1.6, 0],
+      landingRing: [at(), 2.0, 0],
+      slide: [at(), dir(), 1.4, 0],
+      bladeScar: [V(0, 1, 0), V(2, 1.6, 0.4), 0xffb040],
+      grassClippings: [V(0, 1, 0), V(2, 1.6, 0.4), 0x7d8c4a, 1.4],
+      chipBurst: [at(), dir(), 10, { heat: 0.8 }],
+      splash: [at(), 1.6],
+      explosion: [at(), 2.2],
+      slag: [at(), dir(), 0xffa030],
+    };
+    const skip = new Set(['constructor', '_syncKey', 'update', '_stride', 'stats', 'dispose']);
+    const onClass = Object.getOwnPropertyNames(Particles.prototype).filter((n) => !skip.has(n));
+    for (const name of onClass) {
+      assert(RECIPES[name],
+        `Particles has a recipe '${name}' that nothing prices. Add it to RECIPES with the arguments `
+        + 'a real caller passes; an effect nobody has costed is how the spark freeze shipped.');
+    }
+    for (const name of Object.keys(RECIPES)) {
+      assert(onClass.includes(name), `RECIPES prices '${name}', which is no longer a recipe`);
+    }
+
+    const scene = litScene();
+    const p = new Particles(scene, 1);
+    const POOLS = ['sparks', 'embers', 'plasma', 'smoke', 'dust', 'grit', 'water'];
+    const tally = {};
+    for (const k of POOLS) {
+      const pool = p[k];
+      const real = pool.spawn.bind(pool);
+      pool.spawn = (...a) => { tally[k] = (tally[k] || 0) + 1; return real(...a); };
+    }
+    /* The chip field and the decal field are not pools and have no ring to
+     * overrun, but a recipe that draws only from them still has to be seen to
+     * EMIT — otherwise "spawned nothing" cannot tell a dead recipe apart from
+     * a chip-only one, and the clause below would have to carry a list of
+     * names, which is the thing §2.3 keeps deleting. */
+    let elsewhere = 0;
+    const realChip = p.chips.spawn.bind(p.chips);
+    p.chips.spawn = (...a) => { elsewhere++; return realChip(...a); };
+    const realDecal = p.decals.add.bind(p.decals);
+    p.decals.add = (...a) => { elsewhere++; return realDecal(...a); };
+    let worst = 0, worstAt = 'nothing';
+    for (const [name, args] of Object.entries(RECIPES)) {
+      for (const k of POOLS) tally[k] = 0;
+      elsewhere = 0;
+      p[name](...args);
+      let touched = 0;
+      for (const k of POOLS) {
+        const n = tally[k] || 0;
+        if (!n) continue;
+        touched++;
+        const share = n / p[k].max;
+        if (share > worst) { worst = share; worstAt = `${name} → ${n} of the ${k} pool's ${p[k].max}`; }
+        assert(share < 0.2,
+          `one call to ${name}() spawns ${n} into the ${k} pool, which holds ${p[k].max} — `
+          + `${(share * 100).toFixed(0)}% of a shared ring in a single effect. Five of these on `
+          + 'screen at once erase each other, and a ring buffer cannot show more than it holds, so '
+          + 'anything over the whole capacity is arithmetic nobody can ever see.');
+      }
+      assert(touched > 0 || elsewhere > 0,
+        `${name}() emitted nothing at all — not a particle, not a chip, not a decal. Either the `
+        + 'recipe has stopped working or the '
+        + 'arguments in RECIPES no longer match what a caller passes, and a priced effect that '
+        + 'emits nothing is a budget that measures nothing');
+    }
+    p.dispose();
+    return `${onClass.length} recipes, all priced; worst single call is ${worstAt} `
+      + `(${(worst * 100).toFixed(1)}%)`;
+  });
+
+  check('injury: a wound costs the same however many are already on the body', async () => {
+    /**
+     * THE ONE THING THIS SESSION SHIPPED THAT IS GENUINELY TOO EXPENSIVE, and
+     * it is the same shape as every other cost this project has found: a
+     * correct feature under a comment that describes it correctly, with
+     * nothing anywhere counting what it does.
+     *
+     * `Injury._rebuild` re-seats every mark by RAYCASTING the bone's own
+     * meshes — the right answer, and the note above it says why: a torso lathe
+     * is revolved circular and then squashed on Z, so "the surface is at
+     * chestR" is wrong by up to four centimetres depending on the bearing.
+     * Each mark is a 9-point rim plus two 7-point satellite runs plus a tear,
+     * every vertex rayed at its own bearing and own height, with up to four
+     * retries walking the height home when a rim point runs off the end of a
+     * plate. That is about a hundred rays a wound, and `surfacePoint` is a
+     * brute-force Möller-Trumbore over EVERY triangle of EVERY mesh the bone
+     * carries — 832 triangles on a chest, 2 532 on a head.
+     *
+     * So one wound is ~86 000 ray-triangle tests. That is affordable.
+     *
+     * WHAT IS NOT is that `_rebuild()` rebuilds ALL of them, and it is called
+     * from `hit()`. The bill is therefore quadratic in the number of wounds a
+     * body is carrying, and `max` is 14:
+     *
+     *     wound  1     86 088 triangle tests        median  6.4 ms
+     *     wound  7    638 064
+     *     wound 14  1 293 852                       median 78.5 ms
+     *     ---------------------------------------------------------
+     *     a full health bar   9 550 704             median  635 ms
+     *
+     * The millisecond figures are seven repetitions each on this contended
+     * box, quoted because the two distributions do not touch — every one of
+     * the seven fourteenth-wound samples was between 66.6 and 123.0 ms and
+     * every cached one between 4.1 and 6.1 — which is the only form a wall
+     * clock is worth anything in here (HANDOFF §2.6). The COUNT above is the
+     * claim; the clock is the corroboration.
+     *
+     * 1.29 million ray-triangle tests is twenty times the triangle count of
+     * the entire cast (`characters` prints 64 538 over the whole roster), paid
+     * on the frame the player is hit, and it gets worse the more hurt they
+     * are — which is the player's original complaint about this game almost
+     * word for word.
+     *
+     * THE FIX IS A CACHE AND IT IS SEVEN LINES. A mark's geometry is in
+     * BONE-LOCAL space and cannot move once it is built, so `_rebuild` only
+     * ever needs to build the marks that have none. Give each wound its own
+     * seed at `hit()` so the shapes stop depending on the order the shared
+     * `rand` is drawn in, keep the built geometry on the wound, and reuse it.
+     * Measured with exactly that patch applied to a copy of the file: the
+     * fourteenth wound costs 86 088 tests instead of 1 293 852 (15.0x) and a
+     * whole health bar 1 260 936 instead of 9 550 704 (7.6x), with the same
+     * 420 mark triangles and the same 2 meshes on the body. On the clock, same
+     * seven repetitions: the fourteenth hit 78.5 -> 5.2 ms median, a full bar
+     * 635 -> 96 ms.
+     *
+     * `src/game/Injury.js` is outside this lane's boundary, so this check is
+     * RED ON PURPOSE and is the handover. It is the same arrangement
+     * `cloth-cost` used for the `sparkBurst` freeze — the damage is priced
+     * where it can be seen, and nothing this lane could do to soften it is
+     * allowed to silence it.
+     */
+    const { buildJedi } = await import('../../src/game/Bodies.js');
+    const { Injury } = await import('../../src/game/Injury.js');
+
+    const built = buildJedi({ scale: 1 });
+    const rig = built.rig ?? built;
+    /* COUNTED THROUGH THE GEOMETRY, not through a stub of `surfacePoint`: the
+     * ray is a `const` binding imported into Injury.js and cannot be replaced
+     * from here, and counting the index reads it makes is both unfakeable and
+     * exactly proportional to the work — three per triangle tested. */
+    let reads = 0;
+    const wrapped = [];
+    rig.root.traverse((o) => {
+      if (!o.isMesh || !o.geometry?.index || o.geometry.__counted) return;
+      const g = o.geometry;
+      const real = g.index.getX.bind(g.index);
+      g.index.getX = (i) => { reads++; return real(i); };
+      g.__counted = true;
+      wrapped.push(g);
+    });
+    assert(wrapped.length > 10, `only ${wrapped.length} indexed meshes on the body — nothing to count`);
+
+    const inj = new Injury(rig, { scale: 1 });
+    const cost = [];
+    for (let w = 0; w < inj.max; w++) {
+      const before = reads;
+      inj.hit(new THREE.Vector3(0.1, 1.3, 0.25), 0.25);
+      cost.push((reads - before) / 3);
+    }
+    for (const g of wrapped) { delete g.__counted; }
+
+    const first = cost[0], last = cost[cost.length - 1];
+    const total = cost.reduce((a, b) => a + b, 0);
+    assert(first > 100, `the first wound cost ${first} triangle tests — nothing was measured`);
+    assert(last < first * 2,
+      `the ${cost.length}th wound costs ${Math.round(last).toLocaleString()} ray-triangle tests `
+      + `against the first wound's ${Math.round(first).toLocaleString()} — `
+      + `${(last / first).toFixed(1)}x, and ${Math.round(total).toLocaleString()} over a full health `
+      + 'bar. `Injury._rebuild` re-rays EVERY mark on the body every time one is added, so the cost '
+      + 'of being hit grows with how hurt you already are. A mark\'s geometry is in bone-local space '
+      + 'and cannot move once built: give each wound its own seed in `hit()` (`seed: (this.rand() * '
+      + '0xffffffff) >>> 0`), build its marks into a `w.geo = { blood: [...], tear }` the first time, '
+      + 'and have `_rebuild` push `w.geo` straight through when it is there. Measured with that '
+      + 'patch: 15.0x off the worst hit, 7.6x off a full bar, identical output. '
+      + 'src/game/Injury.js is outside this lane\'s files — see the handover.');
+    return `${cost.length} wounds, ${Math.round(first).toLocaleString()} → `
+      + `${Math.round(last).toLocaleString()} ray-triangle tests (${(last / first).toFixed(2)}x), `
+      + `${Math.round(total).toLocaleString()} over a full bar`;
+  });
 }

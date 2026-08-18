@@ -284,6 +284,25 @@ export async function run({ check, assert, THREE }) {
       return rawBurst(pos, normal, count, opts);
     };
 
+    /**
+     * AND THE CAMERA GOES WHERE THE PLAYER IS, which every real frame does and
+     * this fixture never did.
+     *
+     * `Enemy.update` decides both its LOD and `clothOn` from `camera.position
+     * .distanceTo(this.position)`, and `stubEngine`'s camera is left at the
+     * origin. That was invisible for as long as the level happened to spawn
+     * the player near it — and stopped being invisible the moment a level
+     * moved: measured, all twenty acolytes alive and the nearest 526.1 m from
+     * the camera against a 30 m cut, so every garment in the fixture was
+     * switched off and the suite was timing an empty loop while reporting a
+     * millisecond figure.
+     *
+     * Not a distance test on the ring, which would be measuring the fixture's
+     * own arithmetic: the camera is put where the thing it is a camera FOR is.
+     */
+    world.engine.camera.position.copy(world.player.position).add(new THREE.Vector3(0, 1.7, 4));
+    world.engine.camera.updateMatrixWorld(true);
+
     const input = idleInput();
     for (let f = 0; f < 90; f++) world.update(1 / 60, input);
 
@@ -305,9 +324,17 @@ export async function run({ check, assert, THREE }) {
     const FRAMES = 400;
     solve = 0; refresh = 0;
     for (let f = 0; f < FRAMES; f++) world.update(1 / 60, input);
-    const on = world.enemies.filter((e) => !e.dead && e.clothOn).length;
+    const alive = world.enemies.filter((e) => !e.dead);
+    const on = alive.filter((e) => e.clothOn).length;
+    /* WHY none, when it is none — the two ways this fixture can stop measuring
+     * are a fight that killed everything and a cut that switched the cloth
+     * off, and "0 enemies were inside the cloth cut" cannot tell them apart. */
+    const near = alive.map((e) => e.position.distanceTo(world.engine.camera.position))
+      .sort((a, b) => a - b);
     const out = { solveMs: solve / FRAMES, refreshMs: refresh / FRAMES,
-      on, patched: patched.length, FRAMES, audit };
+      on, alive: alive.length, spawned: world.enemies.length,
+      nearest: near.length ? near[0] : Infinity, cut: world.clothCut,
+      patched: patched.length, FRAMES, audit };
     world.unload();
     world.dispose?.();
     return out;
@@ -322,10 +349,13 @@ export async function run({ check, assert, THREE }) {
      * would not.
      */
     try {
-      const { solveMs, refreshMs, on, patched, FRAMES } = await timed;
+      const { solveMs, refreshMs, on, alive, spawned, nearest, cut, patched, FRAMES } = await timed;
       assert(patched >= 10, `only ${patched} enemy garments were found to time`);
       const total = solveMs + refreshMs;
-      assert(on >= 10, `only ${on} enemies were inside the cloth cut — nothing was measured`);
+      assert(on >= 10,
+        `only ${on} enemies were inside the cloth cut — nothing was measured. `
+        + `${alive} of ${spawned} still alive, nearest ${nearest === Infinity ? 'n/a' : nearest.toFixed(1)} m `
+        + `against a cut of ${cut} m`);
       assert(total < 6.0,
         `${on} enemies' garments cost ${total.toFixed(2)} ms a frame. Engine.js was sized on 7.5 ms for `
         + 'this population; if that is true again the tier decision needs re-deriving, and if it is '
@@ -377,4 +407,82 @@ export async function run({ check, assert, THREE }) {
     return 'the enemy garments are gated and the player\'s are not, which is what the note says';
   });
 
+  check('cloth: the extra iterations a carried frame buys are paid only on carried frames', async () => {
+    /**
+     * WHAT `CARRY_ITERS` COSTS, AND HOW OFTEN.
+     *
+     * A frame the wearer turned through gets `CARRY_ITERS` more relaxation
+     * passes than one it walked through — the right answer, because the
+     * residual one cell below a pin is a CONVERGENCE problem and not a
+     * modelling one (see the note over `iters` in Cloth.js). What nothing
+     * measured is the size of the bill or the size of the population paying
+     * it, and both are needed before the constant can ever be raised again.
+     *
+     * Counted rather than timed, so it is the same number on every machine.
+     * A link-solve is one distance constraint relaxed once, which is what the
+     * inner loop of `Cloak.update` does `links.length x iterations` times:
+     *
+     *     the player's whole set   1466 links, 4 iterations   5 864 a frame
+     *     a carried frame          the same links, 4 + 6     14 660 a frame
+     *
+     * 2.5x, and the population is ONE BODY for the duration of a somersault:
+     * `Cloak.carry` has exactly one caller in the game — `Player._spinBody`,
+     * which runs only while `flipT > 0`. No enemy carries anything, so the
+     * multiplier can never be paid by a field of them. That is the whole of
+     * why this is affordable, and it is what this check pins: the day a
+     * second caller appears, or the day an enemy gets one, the cost stops
+     * being a flip's and starts being a wave's.
+     */
+    const { readFile } = await import('node:fs/promises');
+    const src = await readFile(new URL('../../src/game/Cloth.js', import.meta.url), 'utf8');
+    const m = /const CARRY_ITERS = (\d+)/.exec(src);
+    assert(m, 'Cloth.js no longer declares CARRY_ITERS, so nothing here is measuring it');
+    const extra = Number(m[1]);
+
+    try {
+      const { world } = await built;
+      const set = garments(world.player);
+      assert(set.n >= 4, `the player is wearing ${set.n} cloth bodies — nothing to price`);
+      let plain = 0, carried = 0, iters = 0;
+      /* DEDUPED, for the same reason `garments()` above is a graph walk and
+       * not a list of two property names: the player's skirt is reachable as
+       * `skirt` AND as `cloak.outer`, and counting it twice doubles the very
+       * number this check exists to bound. */
+      const seen = [];
+      const walk = (c) => {
+        if (!c || typeof c !== 'object' || seen.includes(c)) return;
+        seen.push(c);
+        if (c.pos && c.links) {
+          plain += c.links.length * c.iterations;
+          carried += c.links.length * (c.iterations + extra);
+          iters = Math.max(iters, c.iterations);
+        }
+        for (const k of ['sash', 'outer', 'inner']) if (c[k] && c[k] !== c) walk(c[k]);
+        for (const a of ['parts', 'panels']) if (Array.isArray(c[a])) c[a].forEach(walk);
+      };
+      walk(world.player.cloak); walk(world.player.skirt);
+      const ratio = carried / plain;
+      assert(ratio < 3.0,
+        `a carried frame costs ${carried} link-solves against a plain frame's ${plain} — `
+        + `${ratio.toFixed(2)}x. CARRY_ITERS is ${extra} on top of ${iters}; past 3x the extra `
+        + 'passes are most of what a garment costs and the "on the frames that were carried and no '
+        + 'others" argument stops covering it.');
+
+      /* AND THE POPULATION. One caller, and it is a somersault. */
+      const player = await readFile(new URL('../../src/game/Player.js', import.meta.url), 'utf8');
+      const enemy = await readFile(new URL('../../src/game/Enemy.js', import.meta.url), 'utf8');
+      const callers = (t) => (t.match(/(?:cloak|skirt)\??\.carry\(/g) || []).length;
+      assert(callers(enemy) === 0,
+        `Enemy now carries a garment in ${callers(enemy)} place(s). CARRY_ITERS is sized on ONE `
+        + 'body paying it for the length of one flip; a field of enemies paying 2.5x their garment '
+        + 'solve is a different budget and Cloth.js\'s note has to be re-derived before it lands.');
+      assert(callers(player) === 2,
+        `Player carries its garments from ${callers(player)} sites, not the cape-and-skirt pair in `
+        + '`_spinBody`. Every extra site is another population paying CARRY_ITERS.');
+      assert(/_spinBody[\s\S]{0,3000}?cloak\?\.carry\(/.test(player),
+        'the carry no longer happens inside `_spinBody`, so it is no longer bounded by a flip');
+      return `${plain} link-solves a frame, ${carried} on a carried one (${ratio.toFixed(2)}x, `
+        + `+${extra} iterations on ${iters}); one caller, and it is a somersault`;
+    } finally { restoreShared(shared); }
+  });
 }

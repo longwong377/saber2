@@ -6208,7 +6208,7 @@ export class Player {
        * `Enemy.severance`, which throws rather than defaulting, so a fallback
        * here would only ever hide the one thing it was there to cover up. */
       .filter(c => !c.shield && c.vital >= 0.15 && c.vital < 0.7 && !CORE_BONE.test(c.name))
-      .filter(c => !e.actor || !e.actor.isSevered(c.name))
+      .filter(c => !e.actor || !e.actor.isSevered(c.covers ?? c.name))
       .map(c => ({ c, d: _g2.lerpVectors(c.p0, c.p1, 0.5).distanceTo(centre), k: depth(c.name) }))
       .sort((a, b) => (b.d - a.d) || (b.k - a.k))
       .map(x => x.c);
@@ -6255,7 +6255,13 @@ export class Player {
       // spent budget on bones that were already gone, reported two sever
       // events the actor never made, and a forcePower-4 disassembly took
       // exactly one joint off.
-      if (e.actor && e.actor.isSevered(c.name)) continue;
+      /* `c.covers ?? c.name` — a weak point's capsule is named for the GAP
+       * (`femur0.tip`) and the thing that comes off is the BONE the gap is a
+       * hole in, so asking the actor about the capsule's own name always
+       * answers false and the rend spends a joint of its budget on a limb that
+       * is already on the floor. `Enemy.takeCut` refuses the second cut, so
+       * this was safe and wasteful rather than wrong. */
+      if (e.actor && e.actor.isSevered(c.covers ?? c.name)) continue;
       _g3.lerpVectors(c.p0, c.p1, 0.5);
       _g4.subVectors(_g3, centre);
       _g4.y = _g4.y * 0.4 + 0.35;                       // bias the scatter upward

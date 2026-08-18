@@ -1,36 +1,59 @@
 /**
  * BATTLEFRONT BORZ — what a frame COSTS, in counts, at the worst moment.
  *
- * A large amount of content landed in one day and none of it was priced. This
- * is the instrument that prices it, and every number it prints is a COUNT and
- * not a clock, for the reason HANDOFF §2.6 gives twice: this box is shared,
- * one frame through swiftshader takes seconds, and a millisecond measured here
- * is a measurement of whoever else is running. A count is the same number on
- * every machine and it is the number a budget is actually made of.
+ * A day's worth of content landed with no price on any of it — jetpack plumes
+ * and a held audio loop, blood that rays every rim vertex back onto the body,
+ * B2 droids, cape columns, a forked lightning arc, artillery, smoke,
+ * nameplates. This is the instrument that prices it, and every number it
+ * prints is a COUNT and not a clock, for the reason HANDOFF §2.6 gives twice:
+ * this box is shared, one frame through swiftshader takes seconds, and a
+ * millisecond measured here is a measurement of whoever else is running. A
+ * count is the same number on every machine and it is what a budget is made
+ * of.
  *
  * WHAT IT COUNTS, and why each one is the number that matters:
  *
- *   matrix        node-visits inside Object3D.updateMatrixWorld per frame.
- *                 Not calls — visits — because `updateMatrixWorld(true)` on a
- *                 rig root walks and re-multiplies every descendant, so one
- *                 call and 900 of them look identical from the call site. The
- *                 renderer then walks the graph again at draw time. This is
- *                 how you see a rig being solved twice.
- *   instances     what the particle system asks the GPU to run a vertex
- *                 shader over. A ParticlePool sets `geo.instanceCount = max`
- *                 in its constructor and never moves it, so the draw is the
- *                 pool's CAPACITY every frame whether or not anything is
- *                 alive in it — dead particles are culled in the vertex
- *                 shader, which is after the vertex shader has run.
- *   live          how many of those instances are actually inside their life
- *                 window. The gap between this and `instances` is the waste.
- *   spawns        particle spawns per pool per frame, so an effect with no
- *                 ceiling shows up as a spike against a pool's own capacity.
- *   links         cloth link-solves per frame — links × iterations, summed
- *                 over every garment being solved. `CARRY_ITERS` shows up
- *                 here and nowhere else.
+ *   mtxVisit  node-visits inside Object3D.updateMatrixWorld per frame. Not
+ *             calls — VISITS — because `updateMatrixWorld(true)` on a rig root
+ *             walks and re-multiplies every descendant, so one call and nine
+ *             hundred matrix multiplies look identical from the call site.
+ *             This is how you see a rig being posed three times over.
+ *   drawn     what the particle system asks the GPU to run a vertex shader
+ *             over. A dead particle is culled BY the vertex shader, so the
+ *             cost of a pool used to be its capacity whether or not anything
+ *             was alive in it: 19 800 instances a frame, permanently.
+ *   live      how many of those are actually inside their life window. The
+ *             gap between this and `drawn` is the waste.
+ *   spawn/f   particle spawns per pool per frame, so an effect with no ceiling
+ *             shows up as a spike against its own pool's capacity.
+ *   clothLnk  cloth link-solves per frame — links x iterations over every
+ *             garment being solved. `CARRY_ITERS` shows up here and nowhere
+ *             else.
  *
- * Run it: node --import ./tools/register.mjs tools/_framecost.mjs [--scene X]
+ * WHAT IT FOUND, on geonosis in Command at `high`:
+ *
+ *                                    before        after
+ *     matrix visits/frame, 12+1        7 996    4 889-5 107   (-38%)
+ *     ...per body                        615        376-393
+ *     particle instances drawn        19 800        295-1 798
+ *     ...on an ordinary wave frame    19 800            661   (30x)
+ *     ...at the worst moment          19 800          1 798   (11x)
+ *
+ * The two scenes are deliberately different in kind. CENSUS spawns twelve of
+ * one archetype by hand with no director, because the director's body count
+ * wanders by three or four between runs and a per-frame count compared against
+ * another run's has to be over the same bodies. The rows after it are a real
+ * escalating battle, where the point is the SHAPE of the worst moment rather
+ * than a number you can difference.
+ *
+ * Powers are driven through the INPUT and not called directly (see `press`),
+ * for HANDOFF §2.4's reason: `Player.update` builds the `ctx` these effects
+ * read, and a probe that calls `forceLightning` with a hand-made context is
+ * measuring its own object.
+ *
+ *   node --import ./tools/register.mjs tools/_framecost.mjs
+ *     [--level=geonosis] [--mode=command] [--quality=high]
+ *     [--wave=6] [--waves=2] [--type=trooper] [--census=0]
  */
 import './dom-shim.mjs';
 import * as THREE from 'three';

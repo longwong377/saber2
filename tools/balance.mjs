@@ -523,7 +523,12 @@ export function capsulesFor(entry) {
     // downstream has to guess a leg from its spelling. See limbConsequence.
     out = real.map(c => ({
       name: c.name, r: c.r, len: c.p0.distanceTo(c.p1),
-      role: rig?.get?.(c.name)?.role ?? null,
+      /* The bone a weak point is a hole IN, and whether it is one at all.
+       * Without `covers`, `limbConsequence` looks up `femur0.tip` — which is
+       * not a bone the rig has — reads a null role, and concludes that cutting
+       * a knee joint topples nothing. */
+      covers: c.covers ?? null, opens: !!c.opens,
+      role: rig?.get?.(c.covers ?? c.name)?.role ?? null,
       topplesAt: toppleAt(A, rig),
       // No `?? 0.4`: `Enemy.severance` prices every capsule and throws on a
       // role it has no price for, so a default here would put back exactly the
@@ -768,7 +773,8 @@ const q = (v) => (Math.round(v * 100) / 100).toFixed(2);
  * own guard is enough to make that check report a leak that is not there. */
 const _engage = new Map();
 export function engagementFor(entry, mods, guardShare = 0, opts = {}) {
-  const key = `${entry}|${q(mods.cutPower)}|${q(mods.bladeLength)}|${q(mods.attackRate)}|${q(guardShare)}|${opts.onlyKey ?? ''}|${opts.guardOpen ? 'open' : ''}`;
+  const key = `${entry}|${q(mods.cutPower)}|${q(mods.bladeLength)}|${q(mods.attackRate)}|${q(guardShare)}`
+    + `|${opts.onlyKey ?? ''}|${opts.guardOpen ? 'open' : ''}|${opts.noGaps ? 'plate' : ''}`;
   if (_engage.has(key)) return _engage.get(key);
   if (_engage.size >= MEMO_MAX) _engage.clear();
 
@@ -794,6 +800,13 @@ export function engagementFor(entry, mods, guardShare = 0, opts = {}) {
   const ceiling = measureSwing().reachHeight + (reach - BLADE_REACH_BASE);
   const caps = capsulesFor(entry)
     .filter(c => !c.shield && c.height - c.r <= ceiling)
+    /* THE ROUTE OVER THE PLATE, asked for by name rather than by spelling a
+     * capsule id. A weak point deliberately bypasses the guard, so the best
+     * plan on a body that has one says nothing about what the guard is worth —
+     * and "what is the guard worth" is a question the harness still has to be
+     * able to answer. `opens` is the capsule's own flag; filtering on the dot
+     * in `femur0.tip` would be the same query written as a guess. */
+    .filter(c => !opts.noGaps || !c.opens)
     .filter(c => !opts.only || opts.only(c.name));
 
   // A shield — a droideka's, or the Shielded elite's bubble — is in front of
@@ -845,6 +858,14 @@ export function engagementFor(entry, mods, guardShare = 0, opts = {}) {
   const maxTurns = Math.ceil(1 / TURNED_CUT);
   const turnsFor = (cap) => {
     if (guardMax <= 0) return 0;
+    /* …AND A GAP IN A LIMB IS NOT TURNED AT ALL.
+     *
+     * `_turnCut` grew a fourth gate — a weak point on a non-axial bone, see
+     * `Enemy.capsules` — and a model that knows three of its four gates is not
+     * a model, it is a different game. Measured before this line existed: the
+     * harness priced the spatial opening at exactly zero on every creature,
+     * which is the whole of note #35 reported as worth nothing. */
+    if (cap.opens) return 0;
     const ending = Enemy.prototype._fightEnding.call(
       { A, hp: maxHp, maxHp, disarmed: false }, cap.name, cap.vital);
     return ending ? Math.min(guardMax, maxTurns) : 0;

@@ -114,7 +114,7 @@ export function bands({ plateW, plateH, panelW, panelH }) {
  * against the live rule in styles.css and fails if they differ, so a resized
  * wordmark cannot silently leave a stale rectangle behind (HANDOFF §2.3).
  */
-export const HEAD = { w: 1180, h: 66, fontPx: 25 };
+export const HEAD = { w: 1180, h: 83, fontPx: 40 };
 
 /** `.menu-head`'s box on the plate, at the reference viewport. */
 export function headBand({ plateW, plateH, panelH }, head = HEAD) {

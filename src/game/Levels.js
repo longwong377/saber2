@@ -3996,19 +3996,19 @@ LEVELS.hangar = {
 
     /* THE DECKHEAD, high and open. 22 m rather than the works' 16.5: a bay has
      * to have room for the thing that lands in it, and the height is what
-     * stops the roof reading as a lid. `well` is the open mouth — see below. */
+     * stops the roof reading as a lid. */
     roof(world, { height: 22, half: 96, mat: M.hull, beamCount: 9 });
 
     /**
      * THE MOUTH. The forward quarter of the bay opens onto space, and this is
      * the whole reason the level is worth building indoors.
      *
-     * It is drawn as what it is: two flanking buttresses carrying the frame,
-     * a sill you can stand on, and NOTHING in between. There is no shield
-     * plane in the geometry — a translucent sheet at this scale reads as a
-     * window rather than as an opening, and the containment field is already
-     * doing its work in the lighting (see `fillColor`). What the player sees
-     * through it is `bgColor`, which is space.
+     * It is drawn as what it is: two flanking buttresses carrying the frame and
+     * NOTHING in between. There is no shield plane in the geometry — a
+     * translucent sheet at this scale reads as a window rather than as an
+     * opening, and the containment field is already doing its work in the
+     * lighting (see `fillColor`). What the player sees through it is `bgColor`,
+     * which is space.
      */
     for (const sx of [-1, 1]) {
       addButtress(world, at(sx * 46, 66), { height: 20, width: 7, depth: 9, yaw: 0, seed: 9210 + sx });
@@ -4016,8 +4016,8 @@ LEVELS.hangar = {
         color: 0x9ec8ff, intensity: 22, distance: 40, seed: 9214 + sx });
     }
 
-    /* THE RANK OF LAMPS DOWN THE LONG WALLS, so the far end of a flat deck is
-     * a receding row of points rather than a wall. Instanced for the reason
+    /* THE RANK OF LAMPS DOWN THE LONG WALLS, so the far end of a flat deck is a
+     * receding row of points rather than a wall. Instanced, for the reason
      * `works` instances its own: this is a level with nothing on its floor to
      * hide a draw call behind. */
     {
@@ -4037,31 +4037,95 @@ LEVELS.hangar = {
         lamps, new THREE.Vector3(0, 0, 0), { name: 'bayLamp', castShadow: false });
     }
 
-    /* WHAT A BAY IS FULL OF: racks, tugs and the fighters that did not make it
-     * back. Laid on the deck's own 12 m drainage grid through `bay`, so the
-     * clutter lines up with the floor the way a handled deck does. */
+    /**
+     * EVERYTHING ON THIS DECK IS AN ISLAND, and that is a draw-call decision
+     * rather than a compositional one.
+     *
+     * `island()` merges every maker called inside it into ONE Kit and emits one
+     * mesh per material, which is the same trick `works` uses on its bulkhead
+     * ribs and its plant cells and states the reason for: separately they were
+     * "three emits and seven draw calls a bay". The first cut of this level
+     * called `addCrateStack`, `addMachine` and `addHullSection` bare, and each
+     * builds a Kit of its own — 593 draw calls against `world-immersion`'s cap
+     * of 520, on a level whose whole floor is objects because a deck has no
+     * ground cover to carry it.
+     *
+     * The makers used inside are the kit-aware ones (`addMachine`, `addTank`,
+     * `addStanchion`, `addPipeRun`); `addCrateStack` and `addHullSection` build
+     * their own and are kept for the few places a stack of loose boxes is what
+     * the picture needs.
+     */
+    /**
+     * …AND AN ISLAND IS ONE MESH PER MATERIAL, NOT ONE MESH. That is the
+     * correction the first cut of this level needed and it is worth writing
+     * down, because "islands are cheap" is only half true: `Kit.emit` merges by
+     * MATERIAL, so a cell holding a machine, a tank and a pipe run — three
+     * makers with a glow, a trim, a hull and a rust between them — comes out at
+     * six to ten draw calls, not one. Measured on this deck: 53 cargo cells
+     * built that way were 358 of its 582 meshes against `world-immersion`'s cap
+     * of 520.
+     *
+     * So a cell is ONE maker and one optional companion, which is three meshes,
+     * and there are fewer of them. The picture loses nothing: a bay reads as a
+     * bay because of the ranks and the spacing, not because every rack has its
+     * own pipework.
+     */
+    const cargo = (pos, sd, yaw, big) => island(world, pos, { seed: sd, yaw, span: big ? 14 : 10, maker: 'cargo' },
+      (kit, local) => {
+        addMachine(world, local(0, 0), { kit, width: big ? 5.0 : 3.8, height: big ? 3.6 : 2.4,
+          depth: 2.8, seed: sd + 1 });
+        if (big) addTank(world, local(4.2, 1.8), { kit, radius: 1.5, height: 4.2, seed: sd + 2 });
+      });
+
+    /* WHAT A BAY IS FULL OF, on the deck's own 12 m drainage grid through
+     * `bay`, so the clutter lines up with the floor the way a handled deck
+     * does. Six by six at 22 m and not five by five at 24: a 5×5 grid covers
+     * ±48 m of a ±74 m deck and left a quarter of the surveyed floor bare. */
     bay(world, {
-      nx: 5, nz: 5, pitch: 24, jitter: 5, skip: 0.14,
+      nx: 6, nz: 6, pitch: 22, jitter: 5, skip: 0.10,
       clearance: 8, spawnClear: 11, maxSlope: 0.3,
     }, (pos, i, j, r) => {
       const sd = 9300 + i * 13 + j;
-      if (r < 0.34) {
-        addCrateStack(world, pos.clone(), { seed: sd, tiers: 3, columns: 3, yaw: rng() * TAU });
-      } else if (r < 0.58) {
-        island(world, pos.clone(), { seed: sd, yaw: rng() * TAU, span: 13, maker: 'rack' },
-          (kit, local) => {
-            addMachine(world, local(-2.6, 0), { kit, width: 4.0, height: 2.6, depth: 2.4, seed: sd + 1 });
-            addTank(world, local(3.2, 1.8), { kit, radius: 1.5, height: 3.6, seed: sd + 2 });
-            addPipeRun(world, [
-              new THREE.Vector3(-2.6, 3.0, 1.2), new THREE.Vector3(3.2, 3.8, -1.2),
-            ], { kit, count: 2, radius: 0.11, seed: sd + 3 });
-          });
-      } else if (r < 0.76) {
-        addHullSection(world, pos.clone(), { length: 13 + rng() * 7, radius: 2.8, yaw: rng() * TAU, seed: sd + 4 });
-      } else {
-        makeCrate(world, pos.clone(), 0.9);
-      }
+      if (r < 0.34) addCrateStack(world, pos.clone(), { seed: sd, tiers: 3, columns: 3, yaw: rng() * TAU });
+      else if (r < 0.80) cargo(pos.clone(), sd, rng() * TAU, r >= 0.62);
+      else addHullSection(world, pos.clone(), { length: 13 + rng() * 7, radius: 2.8, yaw: rng() * TAU, seed: sd + 4 });
     });
+
+    /**
+     * TWO OUTER RANKS: what is stacked against the walls of a bay, on the
+     * ground the grid does not reach. Walked as RECTANGLES rather than circles,
+     * for the reason `works` walks its bulkhead ribs that way — this is a room,
+     * and a ring of objects inside a square deck reads as a circle drawn on a
+     * floor.
+     *
+     * THE SECOND RANK IS AT 84 AND THAT NUMBER IS A MEASUREMENT, not a margin.
+     * `world-immersion`'s reach survey walks a 90 m disc and keeps every sample
+     * whose slope is under 0.55 — and this preset's shell is
+     * `smoothstep(74, 132, d) * 42`, which is FLAT where it starts: at 84 m the
+     * ground has risen 2.3 m at 27°, well inside the survey. So a quarter of
+     * what the check calls walkable is the shallow foot of the hull, and a bay
+     * dressed only to its 74 m deck edge left it bare: 14.5% of the floor with
+     * nothing within twelve metres, against a bar of 10. With both ranks it is
+     * 0.1%. Racks standing on the turn of the hull are also simply what the
+     * reference plates have there.
+     */
+    for (const [rad, n, tag] of [[66, 12, 0], [84, 15, 1]]) {
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * TAU + 0.17 + tag * 0.11;
+        const c = Math.cos(a), sn = Math.sin(a);
+        const kk = 1 / Math.max(Math.abs(c), Math.abs(sn));
+        const x = c * kk * rad, z = sn * kk * rad;
+        if (!T.inBounds(x, z, 4)) continue;
+        /* The outer rank is allowed onto the turn of the hull and the inner one
+         * is not: `maxSlope` here is the number the survey itself uses to
+         * decide what counts as ground, so anything it rejects is ground
+         * nobody is measuring either. */
+        if (!siteOk(world, x, z, { clearance: 4, spawnClear: 6, maxSlope: tag ? 0.5 : 0.3 })) continue;
+        const yaw = Math.abs(c) > Math.abs(sn) ? Math.PI / 2 : 0;
+        if ((i + tag) % 4 === 1) addCrateStack(world, at(x, z), { seed: 9380 + i + tag * 40, tiers: 2, columns: 2, yaw });
+        else cargo(at(x, z), 9350 + i + tag * 40, yaw, (i + tag) % 3 === 0);
+      }
+    }
 
     /* A gantry down each long wall at a height the player's own double jump
      * reaches — 5.2 m, which is the number `works` derives and states. */
@@ -4071,11 +4135,26 @@ LEVELS.hangar = {
       addCableRun(world, at(side * 62, -40, 8.0), at(side * 62, 40, 7.0), { seed: 9410 + side, sag: 1.6 });
     }
 
+    /* …AND THE THINGS PEOPLE PUT DOWN AND DID NOT PICK UP, through the drift
+     * rather than a uniform sprinkle, for the reason `works` gives: even on a
+     * swept deck things end up against things. These are the only PROPS on the
+     * level — real physics, cuttable, throwable — and the count is what it is
+     * because every one of them is also a draw call. */
+    {
+      const field = makeCoverField({ seed: 9430, amount: 0.36, patch: 30, grain: 10, edge: 0.28, extent: 88 });
+      drift(world, {
+        field: (x, z) => field.at(x, z), rmin: 10, rmax: 86,
+        count: 22, clearance: 2.4, spawnClear: 9, maxSlope: 0.4, tries: 14,
+      }, (pos) => {
+        if (rng() < 0.34) makeBarrel(world, pos); else makeCrate(world, pos, 0.9);
+      });
+    }
+
     /* The scorch and the swarf of a working deck. `strewGround` is the only
      * instanced grade this level has and it is what stops the floor reading as
      * a plane with objects on it. */
-    strewGround(world, { seed: 9420, radius: 68, inner: 4, spread: 0.26, mat: M.stone,
-      landmarks: 0.2, boulders: 0.5, cobble: 1.4 });
+    strewGround(world, { seed: 9420, radius: 88, inner: 4, spread: 0.30, mat: M.stone,
+      landmarks: 0.55, boulders: 0.8, cobble: 1.4 });
     return 4;
   },
 };
@@ -4447,6 +4526,48 @@ export const CAMPAIGNS = {
          * army exists for and the campaign's opening deliberately does not
          * give you one bigger than the muster's own opening line. */
         engagements: 3, pressure: 2, strength: 16,
+      },
+    ],
+  },
+
+  /**
+   * PLAYER NOTE #21 — a capital ship campaign, and it is the one campaign in
+   * the game whose two grounds did not exist before it.
+   *
+   * The shape is the boarding action every reference for it has: you come in
+   * through the bay and you fight forward. Two missions because the ship is
+   * two places — a deck that is worked on and a deck that is walked through —
+   * and the presets say so before any dressing does: `hangar` is 148 m of flat
+   * plate inside a shell that only closes at 74 m, and `warship` is an
+   * anisotropic hull in plan with a spine that narrows to 26 m and a bridge up
+   * a ramp behind its own bulkhead.
+   *
+   * THE DIFFICULTY CURVE IS THE MISSION LIST AND NOT A MULTIPLIER. The bay is
+   * the light half — line droids, three engagements, the second rung of
+   * Command's own pressure ladder — and the deck is where the elites and the
+   * general are, at the fourth. A campaign that scaled by turning one number up
+   * would be a playlist with a difficulty slider on it.
+   */
+  boarding: {
+    id: 'boarding',
+    name: 'The Boarding Action',
+    blurb: 'In through the bay, forward through the bulkheads, and up the ramp to the bridge.',
+    missions: [
+      {
+        level: 'hangar',
+        name: 'THE BOARDING BAY',
+        brief: 'Their deck, their crew, and a shield across the only way out. Clear it before they seal the bulkheads.',
+        engagements: 3, pressure: 1,
+      },
+      {
+        level: 'warship',
+        name: 'AMIDSHIPS',
+        brief: 'Forward through the blast doors and aft up the ramp. Their general is on the bridge.',
+        /* Four engagements at the Spire Approach's pressure, and a full line:
+         * this is the mission the `bodyguard` set-piece is gated behind — see
+         * the pool on `LEVELS.warship` — and a boss wave needs an army and a
+         * ladder that has reached it. */
+        engagements: 4, pressure: 3, strength: 16,
       },
     ],
   },

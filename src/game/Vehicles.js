@@ -100,7 +100,7 @@ import { Rig } from './Rig.js';
 import { ARCHETYPES } from './Enemy.js';
 import { TOUGHNESS } from './Combat.js';
 import { BOLT_COLORS } from './Bolts.js';
-import { plateGeo, bandGeo, limbGeo } from './Bodies.js';
+import { plateGeo, bandGeo, limbGeo, platedSpan, weakSpot } from './Bodies.js';
 import { armorMaps, metalMaps, MEAN_ALBEDO } from '../engine/Textures.js';
 import { makeRng, lerp, clamp, TAU } from '../engine/MathUtil.js';
 
@@ -728,6 +728,10 @@ export function buildDwarfSpider(opts = {}) {
     const kt = new Kit();
     kt.add(shell, bladePlateGeo(T * 0.68, 0.17 * S, 0.11 * S, 0.05 * S), [0, T * 0.12, 0.02 * S]);
     kt.add(dark, new THREE.CylinderGeometry(0.055 * S, 0.055 * S, 0.13 * S, 8), [0, T, 0], [0, 0, 1.5708]);
+    /* `bladePlateGeo` spans [0, len] in its own frame, so a 0.68T blade seated
+     * at 0.12T reaches 0.80T and the ankle is bare. The femur above is one flat
+     * blade over the whole bone and correctly has no gap. */
+    platedSpan(tibia, T * 0.12, T * 0.80);
     kt.bake(tibia.obj);
 
     /* A FLAT CLAWED PAD, seated at the tarsus tip and flipped so it stands on
@@ -919,6 +923,13 @@ export function buildATTE(opts = {}) {
     kf.add(dark, new THREE.CylinderGeometry(0.17 * S, 0.17 * S, 0.20 * S, 10), [sx * 0.09 * S, 0, 0], [0, 0, 1.5708]);
     kf.add(shell, plateGeo(0.16 * S, F * 0.72, 0.30 * S, 0.05 * S, 1), [0, F * 0.42, -0.06 * S]);
     kf.add(dark, new THREE.CylinderGeometry(0.30 * S, 0.30 * S, 0.16 * S, 12), [0, F, 0], [0, 0, 1.5708]);
+    /* WHERE THE PLATE ACTUALLY REACHES, out of the two numbers that placed it —
+     * a 0.72F plate centred at 0.42F spans 0.06F to 0.78F, so it stops short of
+     * the hip disc and short of the knee housing. It stops short at both
+     * because a leg has to SWING at both, which is why the derivation in
+     * `weakSpotsOf` can take a plate's span and hand back two joints without
+     * knowing anything about this machine. Player note #35. */
+    platedSpan(femur, F * 0.06, F * 0.78);
     kf.bake(femur.obj);
 
     const T = tibia.length;
@@ -927,6 +938,7 @@ export function buildATTE(opts = {}) {
     const kt2 = new Kit();
     kt2.add(shell, plateGeo(0.14 * S, T * 0.66, 0.24 * S, 0.04 * S, 1), [0, T * 0.36, 0.05 * S]);
     kt2.add(dark, new THREE.CylinderGeometry(0.13 * S, 0.13 * S, 0.16 * S, 10), [0, T, 0], [0, 0, 1.5708]);
+    platedSpan(tibia, T * 0.03, T * 0.69);            // 0.66T centred at 0.36T
     kt2.bake(tibia.obj);
 
     /* THE PAD STANDS ON THE GROUND, and getting that right is arithmetic
@@ -1018,6 +1030,27 @@ export function buildAAT(opts = {}) {
     // they are what says "this floats" rather than "the tracks are missing".
     kb.row(3, (i, t) => kb.add(dark, new THREE.CylinderGeometry(0.14 * S, 0.14 * S, 0.09 * S, 12),
       [sx * 1.79 * S, -0.34 * S, (t - 0.5) * 1.70 * S], [0, 0, 1.5708], [1, 1, 2.0]));
+    /* …AND THE INTAKES ARE THE ONLY SOFT PLACE ON A MACHINE WITH NO LIMBS.
+     *
+     * Player note #35 names this tank, and the derivation that gives every
+     * other big body its weak points reads what a LIMB PLATE left uncovered —
+     * an AAT has no limbs, so it would have had none at all. Six holes in a
+     * repulsorlift skirt, on a hull that is otherwise durasteel the whole way
+     * round, declared out of the same three numbers that place each one, so
+     * the capsule cannot drift from the mesh.
+     *
+     * These sit on `body`, which is an AXIAL bone — so the guard still turns a
+     * pass here (see `_turnCut`). That is deliberate and it is the honest
+     * reading: an intake is thin metal, not an open joint, so what it buys is
+     * SPEED through the material and a reason to get behind the thing. It is
+     * not a shortcut past the hull. */
+    kb.row(3, (i, t) => weakSpot(body, {
+      key: `intake${sx > 0 ? 'L' : 'R'}${i}`, label: 'INTAKE',
+      p0: [sx * 1.69 * S, -0.34 * S, (t - 0.5) * 1.70 * S],
+      p1: [sx * 1.89 * S, -0.34 * S, (t - 0.5) * 1.70 * S],
+      r: 0.17 * S,
+      at0: 0, at1: 0,
+    }));
     // the rounded sponson bulge along the flank
     kb.add(shell, new THREE.CylinderGeometry(0.22 * S, 0.22 * S, 2.10 * S, 8), [sx * 1.20 * S, 0.06 * S, 0.05 * S], [1.5708, 0, 0]);
     kb.add(trim, plateGeo(0.02 * S, 0.13 * S, 1.20 * S, 0.005 * S, 1), [sx * 1.225 * S, 0.24 * S, 0.05 * S]);

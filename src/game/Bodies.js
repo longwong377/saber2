@@ -696,12 +696,27 @@ function limbPlate(bone, y0, y1, arc, opts = {}) {
    * no second list of "which bones have a gap" to fall out of step with them
    * (HANDOFF §2.3). A limb may be plated more than once — a trooper's thigh
    * gets a cuisse and a tasset — so the record is the UNION of the spans. */
-  if (bone && bone.length > 0) {
-    bone.plateFrom = Math.min(bone.plateFrom ?? Infinity, y0);
-    bone.plateTo = Math.max(bone.plateTo ?? 0, y1);
-    bone._weakCache = undefined;
-  }
+  platedSpan(bone, y0, y1);
   return arcGeo(r0, r1, y1 - y0, arc, opts.thick ?? 0.012, opts.seg ?? 8);
+}
+
+/**
+ * "This bone is covered from `y0` to `y1`", in bone-local metres.
+ *
+ * `limbPlate` calls it for free; anything that armours a limb some other way
+ * has to say so. `src/game/Vehicles.js` is the reason it is exported rather
+ * than inlined above: its four machines plate their legs with `plateGeo` and
+ * `bladePlateGeo` seated by hand rather than with `limbPlate`, so the fact is
+ * exactly as true there and there is nothing to read it off. One call beside
+ * each plate is the whole of what those machines need to grow joints.
+ *
+ * The union of spans, not the last one: a limb may be plated twice.
+ */
+export function platedSpan(bone, y0, y1) {
+  if (!bone || !(bone.length > 0)) return;
+  bone.plateFrom = Math.min(bone.plateFrom ?? Infinity, y0);
+  bone.plateTo = Math.max(bone.plateTo ?? 0, y1);
+  bone._weakCache = undefined;
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */

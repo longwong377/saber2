@@ -206,12 +206,53 @@ function assemblies(world) {
      * answers the only question worth asking: how high is that thing HERE. */
     const G = 8, top = new Float32Array(G * G).fill(-Infinity);
     const sx = G / Math.max(1e-6, bx1 - bx0), sz = G / Math.max(1e-6, bz1 - bz0);
+    const cellX = (bx1 - bx0) / G, cellZ = (bz1 - bz0) / G;
+    const bin = (v) => Math.min(G - 1, Math.max(0, v | 0));
     for (const p of parts) {
       for (let i = 0; i < p.low.length; i += 3) {
-        const gi = Math.min(G - 1, Math.max(0, ((p.low[i] - bx0) * sx) | 0));
-        const gj = Math.min(G - 1, Math.max(0, ((p.low[i + 2] - bz0) * sz) | 0));
-        const k = gi * G + gj;
+        const k = bin((p.low[i] - bx0) * sx) * G + bin((p.low[i + 2] - bz0) * sz);
         if (p.low[i + 1] > top[k]) top[k] = p.low[i + 1];
+      }
+      /* AND THE FACES BETWEEN THEM, which is the difference between a height
+       * field and a scatter of points.
+       *
+       * The vertex pass alone leaves holes in a solid object wherever a cell is
+       * finer than the model's own vertex pitch, and it silently decides what
+       * this whole file measures. Measured on `addCrateStack` seed 9952: the
+       * stack is 1.68 × 0.84 m and solid to 1.37 m over the whole of it, the
+       * grid is 0.210 × 0.104 m a cell, and a crate's top face carries four
+       * vertex rows 0.22 m apart — so **24 of the 64 cells came back empty**,
+       * in stripes, and the nine points `seatOf` samples under a live crate all
+       * landed in them. The crate was resting across two lids and this file
+       * called it "standing on nothing", which is how a real defect (the crate
+       * was in fact bedded 0.205 m INTO those lids — Props.js `seatOnGround`)
+       * got reported upside down and stayed open.
+       *
+       * A face fills every cell whose CENTRE it covers, at the height of the
+       * face there. Not the face's bounding box and not its maximum: a bbox
+       * splat over-states the surface, and over-stating support is the one
+       * error this file must never make, because it excuses a float. */
+      const T = p.tris, L = p.low;
+      for (let t = 0; t + 2 < T.length; t += 3) {
+        const a = T[t] * 3, b = T[t + 1] * 3, c = T[t + 2] * 3;
+        const ax = L[a], az = L[a + 2], bx = L[b], bz = L[b + 2], cx = L[c], cz = L[c + 2];
+        const det = (bz - cz) * (ax - cx) + (cx - bx) * (az - cz);
+        if (Math.abs(det) < 1e-12) continue;                 // edge-on: no plan area
+        const i0 = bin((Math.min(ax, bx, cx) - bx0) * sx), i1 = bin((Math.max(ax, bx, cx) - bx0) * sx);
+        const j0 = bin((Math.min(az, bz, cz) - bz0) * sz), j1 = bin((Math.max(az, bz, cz) - bz0) * sz);
+        for (let gi = i0; gi <= i1; gi++) {
+          const x = bx0 + (gi + 0.5) * cellX;
+          for (let gj = j0; gj <= j1; gj++) {
+            const z = bz0 + (gj + 0.5) * cellZ;
+            const u = ((bz - cz) * (x - cx) + (cx - bx) * (z - cz)) / det;
+            if (u < 0 || u > 1) continue;
+            const v = ((cz - az) * (x - cx) + (ax - cx) * (z - cz)) / det;
+            if (v < 0 || u + v > 1) continue;
+            const y = u * L[a + 1] + v * L[b + 1] + (1 - u - v) * L[c + 1];
+            const k = gi * G + gj;
+            if (y > top[k]) top[k] = y;
+          }
+        }
       }
     }
     return { minY, maxY, bx0, bx1, bz0, bz1, cx0, cx1, cz0, cz1, top, G };
@@ -230,7 +271,13 @@ function assemblies(world) {
       if (_v.z < bz0) bz0 = _v.z; if (_v.z > bz1) bz1 = _v.z;
       low.push(_v.x, _v.y, _v.z);
     }
-    return { minY, maxY, bx0, bx1, bz0, bz1, low, mat: mesh.material };
+    // …and which of those vertices are a triangle, because `measure` builds a
+    // HEIGHT FIELD out of them and a surface is its faces, not its corners.
+    const index = mesh.geometry.index;
+    const n = index ? index.count : pos.count;
+    const tris = new Int32Array(n - (n % 3));
+    for (let t = 0; t < tris.length; t++) tris[t] = index ? index.getX(t) : t;
+    return { minY, maxY, bx0, bx1, bz0, bz1, low, tris, mat: mesh.material };
   };
 
   const add = (key, maker, o) => {
@@ -608,6 +655,13 @@ export function run({ check, assert }) {
      * Anything that touches no other assembly at all has to be standing. */
     const TOL = 0.05;
     const lines = [];
+    /* EVERY LEVEL IS RAISED TOGETHER. This used to `assert` inside the loop, so
+     * the first theatre to fail was the only one anybody ever saw — and that is
+     * not academic here: alpine's one crate hid four floating conduit runs on
+     * the warship for as long as it stood, and fixing alpine is what revealed
+     * them. HANDOFF §6.1b has the same lesson from `cel`, where one message was
+     * two failures and the second had been red the whole time. */
+    const failed = [];
     for (const [key, rows] of seating()) {
       const ground = rows.filter((r) => !r.lamp);
       const bad = [];
@@ -619,10 +673,12 @@ export function run({ check, assert }) {
       bad.sort((a, b) => b.seat - a.seat);
       const seats = ground.map((r) => r.seat);
       lines.push(`${key} n=${rows.length} p50=${pct(seats, 0.5).toFixed(2)} p99=${pct(seats, 0.99).toFixed(2)} worst=${Math.max(...seats).toFixed(2)}`);
-      assert(bad.length === 0,
-        `${key}: ${bad.length} of ${ground.length} assemblies stand on nothing — `
-        + bad.slice(0, 4).map((b) => `${b.maker} +${b.seat.toFixed(2)} m at (${b.cx0.toFixed(0)}, ${b.minY.toFixed(1)}, ${b.cz0.toFixed(0)})`).join('; '));
+      if (bad.length) {
+        failed.push(`${key}: ${bad.length} of ${ground.length} assemblies stand on nothing — `
+          + bad.slice(0, 4).map((b) => `${b.maker} +${b.seat.toFixed(2)} m at (${b.cx0.toFixed(0)}, ${b.minY.toFixed(1)}, ${b.cz0.toFixed(0)})`).join('; '));
+      }
     }
+    assert(failed.length === 0, failed.join('\n    '));
     return lines.join('; ');
   });
 

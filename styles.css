@@ -164,7 +164,32 @@ b{font-weight:800}
   box-shadow:0 0 8px 2px var(--blade),0 0 26px 7px var(--blade),0 0 64px 16px rgba(72,216,255,.55);
   animation:ignite 1s cubic-bezier(.16,1,.3,1) both}
 @keyframes ignite{from{height:0;opacity:0}to{height:66px;opacity:1}}
-.logo.small .lg-a,.logo.small .lg-b{font-size:25px}
+/* ── THE MENU'S WORDMARK IS A TITLE NOW, NOT A CAPTION ────────────────────
+   It was 25 px. The boot screen — the thing on screen five seconds earlier —
+   sets the same two words at 44 px, so arriving at the menu SHRANK the title
+   by 43%, and 25 px of type across a 1180 px header reads as a label on a
+   dialog. That was tolerable while the backdrop was a gradient. It is not
+   tolerable over a picture: a small word laid on a photograph is a watermark.
+
+   40 and not 44, because unlike the boot screen this header also has to leave
+   room for the record line and 770 px of panel under it, and 40 px is where
+   the wordmark stops growing without the Mode column losing a card. Measured
+   at 1920x1080: the header goes 66 px → 83 and the panel 668 → 651. Below
+   the clawback nothing moves at all — 1366x768 and 1280x720 measure 66 and
+   605/561 before and after.
+
+   THE GLYPH IS STILL GONE. The blade that stands between the two words on the
+   boot screen was removed from here on instruction, along with the tagline
+   and the byline; size was not part of that instruction and the name is still
+   the only thing in the header. `.logo.small .logo-blade` stays for the same
+   reason it always did — the class is a size, not a screen.
+
+   The clawback is in the existing `@media (max-height:800px)` block with the
+   other short-viewport rules, which is also what keeps the base rule honest:
+   tools/checks/keyart.mjs reads THIS number and asserts it is the size the
+   header band in tools/_bands.mjs was measured at, and that no min-height
+   query moves it at the reference viewport. */
+.logo.small .lg-a,.logo.small .lg-b{font-size:40px}
 .logo.small .logo-blade{height:38px;width:4px;animation:none}
 
 /* ── menu ────────────────────────────────────────────────── */
@@ -220,7 +245,17 @@ b{font-weight:800}
    one keypress from the game does not need to describe the game, and the
    byline is gone outright. The rules are deleted rather than left orphaned:
    an unused selector is the thing that gets re-attached by accident. */
-.record{margin-top:7px;font:var(--mono);font-size:10px;letter-spacing:.14em;color:var(--dim)}
+/* THE RECORD LINE IS THE LEAST DEFENSIBLE TYPE ON THE SCREEN, and it only
+   became so when the backdrop did. 10 px mono in `--dim` (#a9a4bd) was fine on
+   a flat wash; over a rendered sky it is the one string in the header with no
+   ink behind it — the wordmark has a four-offset halo and a solid block, this
+   had nothing. Same halo, one step lighter than the wordmark's, because 10 px
+   letterforms close up if the ink is 2 px on all four sides. It costs nothing
+   when the line is empty, which is most of the time: `.record:empty` is gone
+   from the layout entirely. */
+.record{margin-top:7px;font:var(--mono);font-size:10px;letter-spacing:.14em;color:var(--dim);
+  text-shadow:1px 0 var(--stroke),-1px 0 var(--stroke),0 1px var(--stroke),0 -1px var(--stroke),
+    0 0 10px rgba(5,6,12,.9)}
 .record:empty{display:none}
 
 /* Tabs are TABS: they sit on the panel, joined to it, cut on one corner so the
@@ -333,6 +368,12 @@ h3.stacked{margin-top:26px}
    what it says. Measured before and after in Chromium at the six viewports the
    footer collision was measured at. */
 @media (max-height:800px){
+  /* The wordmark goes back to the size it was before the backdrop existed.
+     A 1280x720 wrap is 1180x662 with 819 px of content wanting to fit in it —
+     see `.col.narrow.pinned` — and the 15 px the bigger title costs is 15 px
+     the Mode list does not have. Above 800 px there is room and the title is a
+     title; at or below it, the panel wins. */
+  .logo.small .lg-a,.logo.small .lg-b{font-size:25px}
   h3.stacked{margin-top:14px}
   .col.narrow.pinned h3{margin-bottom:8px}
   .col.narrow.pinned .difflist{gap:6px}
@@ -1281,7 +1322,14 @@ button{font-family:inherit}
   .col.narrow{flex:none}
   .hud-tl,.hud-tr{top:16px}.hud-tl{left:16px}.hud-tr{right:16px}
   .hud-bl{left:16px;bottom:18px}.hud-br{right:16px;bottom:18px}
-  .logo h1{font-size:36px}
+  /* THIS RULE HAD NEVER DONE ANYTHING. It was `.logo h1{font-size:36px}`, and
+     `.logo h1` is set to `font-size:0` twenty lines up — deliberately, to
+     collapse the inline whitespace between the two spans — while `.lg-a` and
+     `.lg-b` each carry their own `font:` shorthand with a size in it. So the
+     narrow-screen shrink it was written for has never fired on any viewport,
+     on either screen that uses the wordmark. Same intent, on the elements that
+     actually carry the size. */
+  .logo .lg-a,.logo .lg-b{font-size:36px}
 }
 
 /* ══════════════════ V2: coaching, locks, deflect feedback ══════════════ */

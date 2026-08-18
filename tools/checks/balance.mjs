@@ -663,15 +663,48 @@ export async function run({ check, assert }) {
         + `28 hp B1's ${bare.toFixed(2)} s — the model is still standing it still`);
       assert(isFinite(h.tKill), `${h.t} cannot be killed at all — the hide has become a wall`);
     }
-    // The guard is what buys the time, so a body that turns more passes than
-    // another of the same shape must not die faster. Compared within the beast
-    // family only, because a machine's capsules are a different problem.
-    const beasts = heavies.filter((h) => h.A.custom === 'beast').sort((a, b) => a.g - b.g);
+    /**
+     * THE GUARD BUYS TIME ON THE ROUTE THE GUARD DEFENDS.
+     *
+     * This clause used to compare BEST-route kill times ordered by guard, and
+     * that was a complete statement of the model until weak points existed
+     * (player note #35). A weak point deliberately bypasses the guard — that is
+     * what it is — so on a body that has one the best route says nothing about
+     * what the guard is worth, and the old comparison started reporting a
+     * charger (guard 5) dying faster than a beast (guard 4) as a fault. It is
+     * not a fault, it is the feature: measured, charger 3.83 s over the plate
+     * and 2.56 s through the hip.
+     *
+     * So the one ordering becomes two statements, and together they are
+     * strictly stronger than the one they replace — the second was never
+     * asserted at all:
+     *
+     *   · over the PLATE, more guard is more time. This is the original claim,
+     *     now asked of the route it was always about. `noGaps` is a flag on the
+     *     capsule and not a filter on its spelling.
+     *   · and the gap is worth taking: it may never be SLOWER than the plate on
+     *     any body, and on at least one body it has to be genuinely faster, or
+     *     66 capsules of derived geometry are decoration.
+     */
+    const beasts = heavies.filter((h) => h.A.custom === 'beast')
+      .map((h) => ({ ...h, plate: engagementFor(h.t, mods, 0, { noGaps: true }).tKill }))
+      .sort((a, b) => a.g - b.g);
     for (let i = 1; i < beasts.length; i++) {
-      assert(beasts[i].tKill >= beasts[i - 1].tKill - 1e-9,
-        `${beasts[i].t} turns ${beasts[i].g} passes and dies in ${beasts[i].tKill.toFixed(2)} s, `
-        + `while ${beasts[i - 1].t} turns ${beasts[i - 1].g} and takes ${beasts[i - 1].tKill.toFixed(2)} s`);
+      assert(beasts[i].plate >= beasts[i - 1].plate - 1e-9,
+        `over the plate, ${beasts[i].t} turns ${beasts[i].g} passes and dies in `
+        + `${beasts[i].plate.toFixed(2)} s, while ${beasts[i - 1].t} turns ${beasts[i - 1].g} `
+        + `and takes ${beasts[i - 1].plate.toFixed(2)} s`);
     }
+    let paid = 0;
+    for (const h of beasts) {
+      assert(h.tKill <= h.plate + 1e-9,
+        `${h.t} is SLOWER through its weak points (${h.tKill.toFixed(2)} s) than over the plate `
+        + `(${h.plate.toFixed(2)} s) — a soft place that costs you time is not one`);
+      if (h.tKill < h.plate - 1e-9) paid++;
+    }
+    assert(paid > 0,
+      `not one of ${beasts.length} beasts is quicker through a weak point than over the plate — `
+      + 'the gaps are geometry with no reward attached');
     // …and the ceiling the game itself imposes is respected: no engagement may
     // charge more turns than `1 / TURNED_CUT`, whatever the guard says.
     for (const h of heavies) {

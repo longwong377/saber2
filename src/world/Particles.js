@@ -262,6 +262,18 @@ export class ParticlePool {
      * `_exp` is absolute expiry per slot, which the shader already recomputes
      * from `aParams`/`aExtra`; it is kept separately because the retire loop
      * must not pay two array reads and a subtract per slot per frame.
+     *
+     * MEASURED AFTER, same battle, same probe — and these are COUNTS, so they
+     * are the same numbers on any machine:
+     *
+     *     idle, nothing ever spawned            19 800  ->      0
+     *     a wave standing, nothing firing       19 800  ->    661   (30x)
+     *     force lightning into a barrage
+     *       landing inside a smoke screen       19 800  ->  1 798   (11x)
+     *
+     * `vfx` holds both ends of it: an idle system draws nothing, and a busy
+     * one never draws FEWER instances than it has particles alive — which
+     * would be a live particle clipped out of the frame by its own budget.
      */
     this._exp = new Float32Array(this.max);
     this._hi = 0;
@@ -421,15 +433,28 @@ export class ParticlePool {
     this.mesh.geometry.instanceCount = hi;
 
     if (this._dirty) {
-      /* ONE RANGE, ALWAYS FROM 0, because that is the only span the draw can
-       * read. three clears `updateRanges` when it uploads and merges them when
-       * it does not, so replacing the pending one here is safe: every range
-       * this pool ever asks for starts at 0, and a shorter one can only drop
-       * slots that `instanceCount` has already stopped drawing. */
+      /**
+       * ONE RANGE, ALWAYS FROM 0, because that is the only span the draw can
+       * read — and it is a RANGE and not a whole-attribute upload because
+       * `needsUpdate` on its own re-sends the entire buffer. Five attributes
+       * over seven pools is 1.35 MB of `bufferSubData` on every frame anything
+       * spawns, for a handful of particles.
+       *
+       * three's `updateBuffer` (r169) takes `updateRanges` in typed-array
+       * ELEMENTS, merges what it is given, and calls `clearUpdateRanges()`
+       * once it has uploaded — so a non-empty list here means last frame's
+       * range was never taken, and replacing it is safe: every range this pool
+       * ever asks for starts at 0, so a shorter one can only drop slots that
+       * `instanceCount` has already stopped drawing.
+       *
+       * An EMPTY pool uploads nothing at all. Its buffer contents cannot reach
+       * the screen behind `instanceCount = 0`, and leaving `needsUpdate` set
+       * would make three fall back to the full-attribute path — a whole 285 KB
+       * spark buffer re-sent on the one frame the pool goes quiet.
+       */
       for (const [a, item] of this._attrs) {
         if (a.updateRanges.length) a.clearUpdateRanges();
-        if (hi > 0) a.addUpdateRange(0, hi * item);
-        a.needsUpdate = true;
+        if (hi > 0) { a.addUpdateRange(0, hi * item); a.needsUpdate = true; }
       }
       this._dirty = false;
     }
@@ -910,6 +935,8 @@ export class DecalField {
   update(dt) {
     this.time += dt;
     this.mat.uniforms.uTime.value = this.time;
+    // The prefix, the retire loop and the partial upload are ParticlePool's,
+    // for the reasons written out over its own copy.
     const t = this.time, exp = this._exp;
     let hi = this._hi;
     while (hi > 0 && exp[hi - 1] <= t) hi--;
@@ -922,8 +949,7 @@ export class DecalField {
     if (this._dirty) {
       for (const [a, item] of this._attrs) {
         if (a.updateRanges.length) a.clearUpdateRanges();
-        if (hi > 0) a.addUpdateRange(0, hi * item);
-        a.needsUpdate = true;
+        if (hi > 0) { a.addUpdateRange(0, hi * item); a.needsUpdate = true; }
       }
       this._dirty = false;
     }

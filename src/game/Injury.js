@@ -347,8 +347,13 @@ export class Injury {
       dir = new THREE.Vector3(Math.sin(a), 0, Math.cos(a));
     }
     const y = bone.length * (0.18 + 0.64 * this.rand());
+    /* `seed` AND `geo` ARE WHAT MAKE A WOUND CACHEABLE, and the seed is the
+     * half that makes the cache legal. See `_rebuild`: the mark shapes used to
+     * be drawn from one `rand` shared across every wound on the body, so a
+     * wound's geometry depended on how many had been rayed before it and could
+     * not be reused. Its own seed makes it a function of itself alone. */
     const w = { bone: site.bone, dir, y, r: site.r * this.scale * (0.7 + 0.6 * this.rand()),
-      torn: frac > 0.16 };
+      torn: frac > 0.16, seed: (this.rand() * 0xffffffff) >>> 0, geo: null };
     this.wounds.push(w);
     // Oldest first out. A body that accumulated marks forever would be solid
     // red by the third wave, and the cap is a draw-call budget as much as a
@@ -395,7 +400,6 @@ export class Injury {
       if (!byBone.has(w.bone)) byBone.set(w.bone, []);
       byBone.get(w.bone).push(w);
     }
-    const rand = rng(0x9e3779b1);
     for (const [name, list] of byBone) {
       const bone = this.rig.get(name);
       const prim = bone && bone.primary;
@@ -422,6 +426,39 @@ export class Injury {
       }
       const blood = [], tears = [];
       for (const w of list) {
+        /**
+         * ── A WOUND IS RAYED ONCE, NOT ONCE PER LATER WOUND ────────────────
+         *
+         * `_rebuild` re-rayed EVERY mark on the body every time one was added,
+         * and `hit()` calls it. A single wound is about a hundred rays and
+         * `surfacePoint` is a brute-force Möller–Trumbore over the bone's whole
+         * triangle count — a chest is 832 and a head 2 532 — so the cost grew
+         * with the square of how hurt the player already was.
+         *
+         * Measured, ray-triangle tests: the 1st wound 86 088, the 7th 638 064,
+         * the 14th 1 293 852 — twenty times the triangle count of the entire
+         * cast, paid on the frame the player is hit. As a timing, seven repeats
+         * each and quoted only because the two sets do not overlap: 66.6–123 ms
+         * shipped against 4.0–4.7 ms cached, a four-to-seven frame stall that
+         * got worse the closer to death you were.
+         *
+         * KEYED ON THE GEOMETRY IT WAS RAYED ONTO, by identity. A mark lives in
+         * bone-local space and cannot move — except that `Ragdoll` REPLACES
+         * `bone.primary.geometry` when a limb is cut short, and a mark seated
+         * on the old lathe would then be floating off the stump. Identity is
+         * exact for that, and it degrades the safe way: a geometry this cache
+         * does not recognise is rebuilt.
+         *
+         * Nothing else needs invalidating — `clear()` and the `wounds.shift()`
+         * cap drop the cache with the wound that owns it.
+         */
+        if (w.geo && w.geo.on === prim.geometry) {
+          blood.push(...w.geo.blood);
+          if (w.geo.tear) tears.push(w.geo.tear);
+          continue;
+        }
+        const rand = rng(w.seed ?? 0x9e3779b1);
+        const wb = [];
         const y = Math.min(Math.max(w.y, 0.01), bone.length - 0.01);
         let p = null, best = -Infinity;
         for (const m of skins) {
@@ -493,7 +530,7 @@ export class Injury {
           const dx = Math.sin(bear), dz = Math.cos(bear);
           out.set(hit[0] + dx * proud, out.y, hit[1] + dz * proud);
         };
-        blood.push(markGeo(p, n, w.r, rand, 9, wrapTo(0.0015 * this.scale)));
+        wb.push(markGeo(p, n, w.r, rand, 9, wrapTo(0.0015 * this.scale)));
         /**
          * AND IT SPREADS ROUND THE LIMB, which is both what blood does and
          * what makes a wound visible from anywhere but the angle it was
@@ -528,7 +565,7 @@ export class Injury {
           const R = Math.hypot(p.x, p.z) || 0.01;
           const sp = new THREE.Vector3(sn.x * R, p.y - w.r * (0.15 + rand() * 0.5), sn.z * R);
           wrapTo(0.0015 * this.scale)(sp);
-          blood.push(markGeo(sp, sn, w.r * (0.34 + rand() * 0.26), rand, 7,
+          wb.push(markGeo(sp, sn, w.r * (0.34 + rand() * 0.26), rand, 7,
             wrapTo(0.0015 * this.scale, sp)));
         }
         if (w.torn) {
@@ -537,8 +574,13 @@ export class Injury {
           // shape inside another with a hard edge between them is the whole
           // grammar of this look.
           const q = p.clone().addScaledVector(n, 0.0010 * this.scale);
-          tears.push(markGeo(q, n, w.r * 0.46, rand, 7, wrapTo(0.0026 * this.scale)));
+          w.geo = { on: prim.geometry, blood: wb,
+            tear: markGeo(q, n, w.r * 0.46, rand, 7, wrapTo(0.0026 * this.scale)) };
+          tears.push(w.geo.tear);
         }
+        // …and an untorn wound caches too, with nothing in the tear slot.
+        if (!w.geo || w.geo.on !== prim.geometry) w.geo = { on: prim.geometry, blood: wb, tear: null };
+        blood.push(...wb);
       }
       if (!blood.length) continue;
       const mesh = new THREE.Mesh(mergeMarks(blood), this.blood);

@@ -44,7 +44,7 @@
  */
 
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import { decodePng, region } from './_png.mjs';
+import { decodePng, encodePng, region } from './_png.mjs';
 import { bands, headBand } from './_bands.mjs';
 import { existsSync, statSync } from 'node:fs';
 import { resolve, join, extname, normalize, basename } from 'node:path';
@@ -69,37 +69,6 @@ const has = (n) => argv.includes('--' + n);
  *   cast      bodies to place, in camera-relative polar: [type, forward, right]
  *   hero      where the player stands, same polar, or null to leave them home
  */
-const SHOTS = {
-  shelf: {
-    level: 'scoria', at: [0, 0], yaw: 180, eye: 3.2, pitch: 6, reach: 140, fov: 34,
-    hero: null, cast: [],
-  },
-  mustafar: {
-    level: 'mustafar', at: [0, 0], yaw: 180, eye: 3.2, pitch: 6, reach: 140, fov: 34,
-    hero: null, cast: [],
-  },
-  geonosis: {
-    level: 'geonosis', at: [0, 0], yaw: 180, eye: 3.2, pitch: 6, reach: 140, fov: 34,
-    hero: null, cast: [],
-  },
-  colosseum: {
-    level: 'colosseum', at: [0, 0], yaw: 180, eye: 3.2, pitch: 6, reach: 140, fov: 34,
-    hero: null, cast: [],
-  },
-  drifts: {
-    level: 'drifts', at: [0, 0], yaw: 180, eye: 3.2, pitch: 6, reach: 140, fov: 34,
-    hero: null, cast: [],
-  },
-  alpine: {
-    level: 'alpine', at: [0, 0], yaw: 180, eye: 3.2, pitch: 6, reach: 140, fov: 34,
-    hero: null, cast: [],
-  },
-  wood: {
-    level: 'wood', at: [0, 0], yaw: 180, eye: 3.2, pitch: 6, reach: 140, fov: 34,
-    hero: null, cast: [],
-  },
-};
-
 /* `.menu-wrap`, read from styles.css rather than typed, because it is the one
  * number the whole ring is measured against and it lives there. */
 const CSSTEXT = await readFile(join(ROOT, 'styles.css'), 'utf8');
@@ -108,7 +77,61 @@ const wrapDims = /width:\s*min\((\d+)px[^)]*\);height:\s*min\((\d+)px/.exec(wrap
 if (!wrapDims) throw new Error('cannot read .menu-wrap width/height out of styles.css');
 const PANEL_W = Number(wrapDims[1]), PANEL_H = Number(wrapDims[2]);
 
-const SHOT = flag('shot', 'shelf');
+const SHOTS = {
+  /**
+   * THE ONE IN THE PRODUCT.
+   *
+   * The Ember Shelf, chosen against six other levels by shooting all of them
+   * (`--yaws 0,60,120,180,240,300`) and reading the bands rather than the
+   * pictures. It wins on one number that no amount of posing fixes elsewhere:
+   * its ground is basalt at 0.02-0.05 luminance under a sky at 0.6, which is
+   * the contrast a front end wants — the interface is ink outlines on lit
+   * panels and it needs a dark field to sit on. Geonosis and the Colosseum are
+   * the opposite shape (a bright floor filling two thirds of the frame, and
+   * the Colosseum's crowd is a high-frequency speckle exactly where the
+   * wordmark goes); Mustafar is close but muddier, its lower half a single
+   * flat red. The Shelf is also the level whose sky the interface palette was
+   * taken from — styles.css names `--danger` "EMBER" and says so.
+   *
+   * BEARING 300 because the compass sweep put two lit basalt stacks at u 0.10
+   * and u 0.80 with an empty middle between them, which is the ring
+   * composition arriving for free: the two things worth looking at are already
+   * where the panel is not.
+   *
+   * A LOW CAMERA, AND THAT WAS MEASURED TOO. Elevated poses were tried first
+   * (eye 12 and 24, pitched 16-20 down) on the theory that a high horizon puts
+   * dark ground behind the wordmark instead of sky. It does — and it also
+   * fills the band with this level's distance haze, a flat pale strip at 0.72
+   * luminance and rising with altitude, which is worse than the sky it
+   * replaced and has nothing in it. `.shots/keyart/v-y240-e24-p16.png` is the
+   * record. So the camera stands on the shelf at eye height, the header sits
+   * on open sky, and the sink layer in styles.css does the work instead.
+   *
+   * THE HERO AND THE RANK ARE PLACED IN NDC, NOT IN METRES. u = 0.246 and
+   * u = 0.754 are the centres of the two side bands; the polar offsets below
+   * are `right = ±forward · tan(22.5°)`, which is what puts a body there at
+   * this fov. `marks` in the output re-projects them so the arithmetic is
+   * checked against the renderer's own matrix and not against this comment.
+   */
+  ship: {
+    level: 'scoria', at: [0, 0], yaw: 300, eye: 1.9, pitch: 3, reach: 140, fov: 38,
+    hero: { fwd: 11, right: -5.22, faceYaw: -120, gx: 0.02, gy: 0.92 },
+    cast: [
+      { type: 'b1', fwd: 21, right: 8.7 }, { type: 'b1', fwd: 23.5, right: 9.1 },
+      { type: 'b2', fwd: 26, right: 9.9 }, { type: 'b1', fwd: 19, right: 8.4 },
+      { type: 'b1', fwd: 29, right: 11.3 },
+    ],
+  },
+
+  /** The level scout. `--yaws`/`--eyes`/`--pitches` sweep it; `--level` moves
+   *  it. Everything above was found with this. */
+  scout: {
+    level: 'scoria', at: [0, 0], yaw: 180, eye: 6, pitch: 6, reach: 140, fov: 46,
+    hero: null, cast: [],
+  },
+};
+
+const SHOT = flag('shot', 'ship');
 const spec = SHOTS[SHOT];
 if (!spec) { console.error(`unknown shot "${SHOT}" — have ${Object.keys(SHOTS).join(', ')}`); process.exit(1); }
 
@@ -138,12 +161,16 @@ for (const yaw of sweep('yaws', pose.yaw)) {
   for (const eye of sweep('eyes', pose.eye)) {
     for (const fov of sweep('fovs', pose.fov)) {
       for (const pitch of sweep('pitches', pose.pitch)) {
+        for (const gx of sweep('gxs', pose.hero ? pose.hero.gx : 0)) {
         const parts = [TAG];
         if (flag('yaws', null) !== null) parts.push('y' + yaw);
         if (flag('eyes', null) !== null) parts.push('e' + eye);
         if (flag('fovs', null) !== null) parts.push('f' + fov);
         if (flag('pitches', null) !== null) parts.push('p' + pitch);
-        variants.push({ ...pose, yaw, eye, fov, pitch, tag: parts.join('-') });
+        if (flag('gxs', null) !== null) parts.push('g' + gx);
+        variants.push({ ...pose, yaw, eye, fov, pitch, tag: parts.join('-'),
+          hero: pose.hero ? { ...pose.hero, gx } : null });
+        }
       }
     }
   }
@@ -153,6 +180,8 @@ const WIDTH = parseInt(flag('width', '1260'), 10);
 const HEIGHT = parseInt(flag('height', '540'), 10);
 const SETTLE = parseInt(flag('settle', '14'), 10);
 const QUALITY = flag('quality', 'high');
+const BIG = flag('big', null) ? flag('big').split('x').map(Number) : null;
+const BIG_SETTLE = parseInt(flag('bigsettle', '4'), 10);
 const OUT = join(ROOT, '.shots', 'keyart');
 
 const MIME = {
@@ -183,14 +212,15 @@ const server = createServer(async (req, res) => {
 });
 const port = await new Promise((r) => server.listen(0, '127.0.0.1', () => r(server.address().port)));
 
-const browser = await chromium.launch({
+let plate0 = flag('pack', null);
+const browser = plate0 && !has('webp') ? null : await chromium.launch({
   executablePath: CHROME,
   args: ['--no-sandbox', '--disable-dev-shm-usage', '--use-gl=angle', '--use-angle=swiftshader',
     '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--enable-webgl',
     '--autoplay-policy=no-user-gesture-required'],
 });
 
-let plate = flag('pack', null);
+let plate = plate0;
 
 if (!plate) {
   const page = await browser.newPage({ viewport: { width: WIDTH, height: HEIGHT } });
@@ -200,12 +230,22 @@ if (!plate) {
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
 
   await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'domcontentloaded', timeout: 90000 });
-  await page.evaluate(([lv, q]) => {
+  await page.evaluate(([lv, q, n]) => {
+    /* `sandboxCount` IS THE CAST SIZE, and the first attempt got an empty
+     * frame for leaving it at 0. The sandbox director does not top a room up
+     * to a count — it decides what STAYS: "keep up to `count` of the right
+     * archetype, nearest first" (Waves.js), and disposes the rest every frame.
+     * At 0 it therefore deleted all five bodies this tool had just placed,
+     * reported nothing, and rendered a landscape. Setting it to the cast size
+     * means the room is already the size it asked for, so nothing is culled
+     * and nothing extra is summoned. `instantSpawn` for the same reason: an
+     * arrival is a dropship, and a dropship is not in the composition. */
     localStorage.setItem('saber.settings.v2', JSON.stringify({
       level: lv, quality: q, mode: 'sandbox', resolutionScale: 1, difficulty: 'knight',
-      volume: 0, music: 0, sandboxCount: 0, sandboxFire: 0, grassScale: 1,
+      volume: 0, music: 0, sandboxCount: n, sandboxFire: 1, sandboxType: 'mixed',
+      instantSpawn: true, grassScale: 1,
     }));
-  }, [pose.level, QUALITY]);
+  }, [pose.level, QUALITY, Math.max(...variants.map((v) => (v.cast || []).length))]);
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForSelector('#menu:not(.hidden)', { timeout: 240000 });
   await page.click('#btn-deploy', { timeout: 240000, noWaitAfter: true });
@@ -230,6 +270,31 @@ if (!plate) {
      * that cannot be reproduced cannot be re-measured. */
     const W = w.atmosphere?.weather;
     if (W) { W.peak = 0; W.unrest = 0; W.update(0); }
+
+    /* ── THE ONE-LSB DITHER COMES OUT, AND IT IS WORTH 3.5x ──────────────
+     *
+     * Engine's composite pass ends with an unconditional triangular dither of
+     * one least-significant bit — `col += (hash(...) - hash(...)) / 255.0` —
+     * and its own comment says why: an 8-bit framebuffer bands in the
+     * highlights and this is invisible. It is invisible ON A SCREEN. It is not
+     * invisible to a compressor, because it makes every single pixel differ
+     * from its neighbour, which is precisely the input PNG cannot pack.
+     * Measured on the same 710x300 frame: 403 KB with it, 116 KB without, and
+     * the two are indistinguishable at 1:1.
+     *
+     * It is patched HERE, in the page, and not in src/. The dither is right
+     * for a live frame and wrong for a still, `.screen::after` lays an SVG
+     * paper tooth over the whole menu anyway, and a still that has been
+     * banded on purpose is the house look rather than a compromise.
+     */
+    const cm = e.composite?.material;
+    if (cm && cm.fragmentShader.includes('hash(gl_FragCoord.xy + 17.0)')) {
+      cm.fragmentShader = cm.fragmentShader.replace(
+        /col \+= \(hash\(gl_FragCoord\.xy \+ 17\.0\) - hash\(gl_FragCoord\.xy \+ 71\.0\)\) \* \(1\.0\/255\.0\);/,
+        '// dither removed for the title plate — see tools/keyart.mjs');
+      cm.needsUpdate = true;
+      window.__flat = true;
+    }
 
     /* No interface in the plate. The HUD is the thing the backdrop sits
      * BEHIND; leaving it in would bake one interface into another.
@@ -264,7 +329,19 @@ if (!plate) {
         p.facing = rad(H.faceYaw) + Math.PI;
         if (p.control) { p.control.gx = H.gx; p.control.gy = H.gy; }
         if (!p.saber?.lit) p.saber?.ignite?.();
+        /* THE HERO DOES NOT DIE FOR A PHOTOGRAPH. Five droids with line of
+         * sight put real bolts in the air over the settle, and a plate whose
+         * subject is on the floor is not the plate. The bolts stay — they are
+         * the best thing in the frame — but the body they are aimed at is
+         * held whole. */
+        p.hp = p.maxHp; p.invuln = Math.max(p.invuln, 1); p.stagger = 0;
       }
+      /* AND THE RANK STAYS WHERE IT WAS PUT. The AI walks: over 30 settle
+       * frames at a clamped 0.1 s each, a droid closes three seconds of ground
+       * and the composition that was measured is not the one that is shot.
+       * Position is pinned and nothing else is, so they still TURN to face the
+       * player and their legs still stride — which is what a still wants. */
+      for (const [b, at] of (window.__PINS || [])) { if (b.alive !== false) b.position.copy(at); }
       c.fov = P.fov; c.updateProjectionMatrix();
       const ya = rad(P.yaw), pr = rad(P.pitch);
       const fx = Math.sin(ya), fz = Math.cos(ya);
@@ -307,10 +384,12 @@ if (!plate) {
         p.position.copy(place(-60, 0));
       }
       const cast = [];
+      window.__PINS = [];
       for (const c of (P.cast || [])) {
         try {
-          const b = w.spawnEnemy(c.type, place(c.fwd, c.right));
-          if (b && c.face !== undefined) b.facing = rad(c.face);
+          const at = place(c.fwd, c.right);
+          const b = w.spawnEnemy(c.type, at);
+          if (b) window.__PINS.push([b, at.clone()]);
           cast.push([c.type, b ? 'ok' : 'nil']);
         } catch (err) { cast.push([c.type, String(err)]); }
       }
@@ -340,8 +419,29 @@ if (!plate) {
         sun: e.sun ? [+e.sun.intensity.toFixed(2), '#' + e.sun.color.getHexString()] : null,
       };
     }, [P, SETTLE]);
+    /* ── SETTLE SMALL, SHOOT BIG ──────────────────────────────────────────
+     *
+     * SwiftShader is fill-rate bound, so a frame costs what its pixels cost:
+     * about 12 s at 710x300 and about 13 times that at 2560x1080. Settling the
+     * pose at the final size is therefore a 40-minute render for 30 frames of
+     * a spring converging, and 29 of those frames are thrown away.
+     *
+     * The pose does not depend on the viewport. The camera override sets a
+     * VERTICAL fov and the two sizes are 2.367:1 and 2.370:1, so the framing
+     * survives the resize to three decimal places; everything that needs time
+     * — the saber's angular spring, the gait, the cloth, the bolts in the air —
+     * has already converged. Four frames after the resize is enough for the
+     * engine's own onResize to rebuild its targets and redraw. Measured: 11
+     * minutes instead of 70, and the two frames are the same picture.
+     */
+    if (BIG) {
+      await page.setViewportSize({ width: BIG[0], height: BIG[1] });
+      await page.evaluate(async (n) => {
+        for (let i = 0; i < n; i++) await new Promise((r) => requestAnimationFrame(r));
+      }, BIG_SETTLE);
+    }
     const f = join(OUT, `${P.tag}.png`);
-    await page.screenshot({ path: f, timeout: 900000 });
+    await page.screenshot({ path: f, timeout: 1800000 });
     shots.push(f);
     console.log(JSON.stringify({ plate: f, yaw: P.yaw, at: P.at, eye: P.eye, pitch: P.pitch,
       fov: P.fov, ...info, errors: errors.slice(0, 4) }));
@@ -378,84 +478,80 @@ function measure(buf) {
 
 /* ── ENCODE, AND THE FORMAT ARGUMENT ──────────────────────────────────────
  *
- * The shipped plate is a POSTERISED PNG, and both halves of that were measured
- * rather than assumed.
+ * The shipped plate is a POSTERISED PNG, and every part of that was measured.
  *
  * PNG rather than WebP costs bytes and buys a check. tools/verify.mjs runs
  * eighty suites in workers on four cores; launching Chromium inside the gate to
- * decode one image is the shape HANDOFF §2.6 spends a page on. A WebP can only
- * be measured by a browser, so a WebP plate would have to be asserted against a
- * committed table of statistics somebody promised were true of it — §2.3's
- * signature defect with a picture in it. tools/_png.mjs is ninety lines of
- * zlib and unfiltering, and with it tools/checks/keyart.mjs measures the actual
- * bytes the browser will load.
+ * decode one image is the shape HANDOFF §2.6 spends a page on, and a WebP can
+ * only be decoded by a browser. The alternative — a committed table of
+ * statistics beside an image nothing re-reads — is §2.3's signature defect with
+ * a picture in it. So the plate is a format tools/_png.mjs can read, and
+ * tools/checks/keyart.mjs measures the actual bytes the browser will load.
+ *
+ * The encoder is tools/_png.mjs's and NOT the browser's, which is worth 2.8x on
+ * its own: `canvas.toDataURL('image/png')` returned 397 KB for a 710x300 frame
+ * of this game against 143 KB for the same pixels at zlib level 9 with the
+ * spec's own per-row filter heuristic. A format argument made against Chromium's
+ * encoder would have been made against the wrong number.
  *
  * POSTERISED because this renderer is cel-shaded and a PNG of a cel frame is
- * mostly paying for the three things that are NOT flat: the sky's gradient, the
- * bloom halo and the fog ramp. Rounding every channel to N levels turns those
- * into bands — which is the house look, not a compromise: `styles.css`'s own
- * header says fills are solid and a gradient is allowed only where it is
- * depicting light. It is applied in linear-ish display space with no dither on
- * purpose; dithering is per-pixel noise, and per-pixel noise is exactly what
- * PNG cannot compress. The grain a cel frame wants is put back live by
- * `.screen::after`, which is an SVG turbulence and costs nothing.
+ * mostly paying for the parts that are NOT flat: the sky's gradient, the bloom
+ * halo, the terrain's fine value texture. Rounding every channel to N levels
+ * turns those into bands — which is the house look and not a compromise, since
+ * styles.css's own header says fills are solid and a gradient is allowed only
+ * where it depicts light. No dither, on purpose: dithering is per-pixel noise
+ * and per-pixel noise is exactly what a PNG cannot pack. The tooth a flat field
+ * wants is put back live by `.screen::after`, an SVG turbulence that costs
+ * nothing.
  *
- * `--levels 0` prints the whole size table instead of writing anything.
+ *   --levels 0            print the size table and write nothing
+ *   --levels 32 --ship assets/menu/title.png
+ *   --webp                add the WebP column (needs the browser)
  */
 const LEVELS = parseInt(flag('levels', '0'), 10);
 const SHIP = flag('ship', null);
-if (LEVELS || SHIP || has('pack')) {
-  const b64 = (await readFile(plate)).toString('base64');
-  const page = await browser.newPage({ viewport: { width: 64, height: 64 } });
-  const res = await page.evaluate(async ({ b64, levels, want }) => {
-    const img = new Image();
-    img.src = 'data:image/png;base64,' + b64;
-    await img.decode();
-    const c = document.createElement('canvas');
-    c.width = img.width; c.height = img.height;
-    const ctx = c.getContext('2d', { willReadFrequently: true });
-    ctx.drawImage(img, 0, 0);
-    const base = ctx.getImageData(0, 0, img.width, img.height);
-    const bytes = (url) => Math.round((url.length - url.indexOf(',') - 1) * 3 / 4);
-    const post = (n) => {
-      const d = new ImageData(new Uint8ClampedArray(base.data), img.width, img.height);
-      if (n) {
-        const q = 255 / (n - 1);
-        for (let i = 0; i < d.data.length; i += 4) {
-          d.data[i] = Math.round(Math.round(d.data[i] / q) * q);
-          d.data[i + 1] = Math.round(Math.round(d.data[i + 1] / q) * q);
-          d.data[i + 2] = Math.round(Math.round(d.data[i + 2] / q) * q);
-        }
-      }
-      ctx.putImageData(d, 0, 0);
-    };
-    const table = [];
-    for (const n of (levels ? [levels] : [0, 64, 48, 32, 24, 20, 16, 12])) {
-      post(n);
-      const row = { levels: n || 256, png: bytes(c.toDataURL('image/png')) };
-      if (!levels) row.webp70 = bytes(c.toDataURL('image/webp', 0.7));
-      table.push(row);
+{
+  const src = decodePng(await readFile(plate));
+  const post = (n) => {
+    if (!n) return src;
+    const d = new Uint8Array(src.rgba);
+    const q = 255 / (n - 1);
+    for (let i = 0; i < d.length; i += 4) {
+      d[i] = Math.round(Math.round(d[i] / q) * q);
+      d[i + 1] = Math.round(Math.round(d[i + 1] / q) * q);
+      d[i + 2] = Math.round(Math.round(d[i + 2] / q) * q);
     }
-    let data = null;
-    if (want) { post(levels); data = c.toDataURL('image/png').split(',')[1]; }
-    return { size: [img.width, img.height], table, data };
-  }, { b64, levels: LEVELS, want: !!SHIP });
+    return { ...src, rgba: d };
+  };
   const kb = (n) => (n / 1024).toFixed(0) + ' KB';
-  console.log(`  ${res.size[0]}x${res.size[1]}`);
-  for (const r of res.table) {
-    console.log(`  levels ${String(r.levels).padStart(3)}   png ${kb(r.png).padStart(8)}`
-      + (r.webp70 === undefined ? '' : `   webp q70 ${kb(r.webp70).padStart(8)}`));
+  console.log(`  ${src.width}x${src.height}  ${(src.width / src.height).toFixed(3)}:1`);
+  for (const n of (LEVELS ? [LEVELS] : [0, 64, 48, 32, 24, 20, 16])) {
+    console.log(`  levels ${String(n || 256).padStart(3)}   png ${kb(encodePng(post(n)).length).padStart(9)}`);
+  }
+  if (has('webp') && browser) {
+    const b64 = (await readFile(plate)).toString('base64');
+    const pg = await browser.newPage({ viewport: { width: 64, height: 64 } });
+    const w = await pg.evaluate(async (b) => {
+      const im = new Image(); im.src = 'data:image/png;base64,' + b; await im.decode();
+      const c = document.createElement('canvas'); c.width = im.width; c.height = im.height;
+      c.getContext('2d').drawImage(im, 0, 0);
+      return [0.6, 0.7, 0.8].map((q) => {
+        const u = c.toDataURL('image/webp', q);
+        return [q, Math.round((u.length - u.indexOf(',') - 1) * 3 / 4)];
+      });
+    }, b64);
+    for (const [q, n] of w) console.log(`  webp q${q * 100}          ${kb(n).padStart(9)}`);
+    await pg.close();
   }
   if (SHIP) {
     const out = resolve(ROOT, SHIP);
     await mkdir(resolve(out, '..'), { recursive: true });
-    await writeFile(out, Buffer.from(res.data, 'base64'));
-    const n = (await readFile(out)).length;
-    console.log(`  wrote ${SHIP} — ${kb(n)} (${n} bytes) at ${LEVELS} levels`);
-    console.log(measure(await readFile(out)));
+    const buf = encodePng(post(LEVELS));
+    await writeFile(out, buf);
+    console.log(`  wrote ${SHIP} — ${kb(buf.length)} (${buf.length} bytes) at ${LEVELS || 256} levels`);
+    console.log(measure(buf));
   }
-  await page.close();
 }
 
-await browser.close();
+if (browser) await browser.close();
 server.close();

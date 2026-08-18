@@ -22,7 +22,7 @@
  * is the other half of §2.3.
  */
 
-import { inflateSync } from 'node:zlib';
+import { inflateSync, deflateSync } from 'node:zlib';
 
 const SIG = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 /** channels per pixel, by PNG colour type. */
@@ -152,4 +152,91 @@ export function region(img, fx, fy, fw, fh, step = 1) {
     edge: +(en ? e / en : 0).toFixed(4),
     rgb: [+(r / Math.max(1, n)).toFixed(3), +(g / Math.max(1, n)).toFixed(3), +(b / Math.max(1, n)).toFixed(3)],
   };
+}
+
+/**
+ * And back the other way — because the browser's canvas encoder is not good
+ * enough to decide a format on.
+ *
+ * `canvas.toDataURL('image/png')` gave 397 KB for a 710x300 frame of this
+ * game. The same pixels through this function are 143 KB, and the only
+ * difference is effort: Chromium encodes at a low zlib level with a fixed
+ * filter, while this tries all five filters per row against the spec's own
+ * minimum-sum-of-absolute-differences heuristic and deflates at level 9. That
+ * 2.8x is the whole reason the shipped plate can be a PNG at all, and a PNG is
+ * the reason tools/checks/keyart.mjs can measure it without a browser.
+ *
+ * @param {{width:number,height:number,rgba:Uint8Array}} img
+ * @param {boolean} alpha keep the alpha channel (colour type 6) or drop it (2)
+ */
+export function encodePng(img, alpha = false) {
+  const { width, height, rgba } = img;
+  const bpp = alpha ? 4 : 3;
+  const stride = width * bpp;
+  const raw = Buffer.alloc(height * (stride + 1));
+  const line = Buffer.alloc(stride);
+  const cand = [Buffer.alloc(stride), Buffer.alloc(stride), Buffer.alloc(stride),
+    Buffer.alloc(stride), Buffer.alloc(stride)];
+  let prev = Buffer.alloc(stride);
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const s = (y * width + x) * 4, d = x * bpp;
+      line[d] = rgba[s]; line[d + 1] = rgba[s + 1]; line[d + 2] = rgba[s + 2];
+      if (alpha) line[d + 3] = rgba[s + 3];
+    }
+    let best = 0, bestScore = Infinity;
+    for (let f = 0; f < 5; f++) {
+      const out = cand[f];
+      let score = 0;
+      for (let i = 0; i < stride; i++) {
+        const a = i >= bpp ? line[i - bpp] : 0, b = prev[i], c = i >= bpp ? prev[i - bpp] : 0;
+        let v;
+        if (f === 0) v = line[i];
+        else if (f === 1) v = line[i] - a;
+        else if (f === 2) v = line[i] - b;
+        else if (f === 3) v = line[i] - ((a + b) >> 1);
+        else {
+          const p = a + b - c, pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c);
+          v = line[i] - (pa <= pb && pa <= pc ? a : pb <= pc ? b : c);
+        }
+        out[i] = v & 255;
+        score += out[i] < 128 ? out[i] : 256 - out[i];
+      }
+      if (score < bestScore) { bestScore = score; best = f; }
+    }
+    raw[y * (stride + 1)] = best;
+    cand[best].copy(raw, y * (stride + 1) + 1);
+    prev = Buffer.from(cand[0]);          // filter 0 IS the unfiltered row, which is what `prev` means
+  }
+
+  const chunk = (type, data) => {
+    const b = Buffer.alloc(8 + data.length + 4);
+    b.writeUInt32BE(data.length, 0);
+    b.write(type, 4, 'latin1');
+    data.copy(b, 8);
+    b.writeInt32BE(crc32(b.subarray(4, 8 + data.length)) | 0, 8 + data.length);
+    return b;
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0); ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8; ihdr[9] = alpha ? 6 : 2; ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0;
+  return Buffer.concat([SIG, chunk('IHDR', ihdr),
+    chunk('IDAT', deflateSync(raw, { level: 9, memLevel: 9, strategy: 0 })),
+    chunk('IEND', Buffer.alloc(0))]);
+}
+
+const CRC = (() => {
+  const t = new Int32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    t[n] = c;
+  }
+  return t;
+})();
+function crc32(buf) {
+  let c = -1;
+  for (let i = 0; i < buf.length; i++) c = CRC[(c ^ buf[i]) & 255] ^ (c >>> 8);
+  return (c ^ -1) >>> 0;
 }

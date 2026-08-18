@@ -31,7 +31,7 @@
 import { readFile, stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { decodePng, region } from '../_png.mjs';
-import { bands, wordmarkBand, WORDMARK, MIN_ASPECT, MAX_ASPECT, REF_W, REF_H } from '../_bands.mjs';
+import { bands, headBand, HEAD, MAX_ASPECT, REF_W, REF_H } from '../_bands.mjs';
 import { handler } from '../serve.mjs';
 
 const read = (p) => readFile(new URL('../../' + p, import.meta.url), 'utf8');
@@ -62,6 +62,37 @@ function rule(css, selector) {
  * index.html starts it early at low priority instead.
  */
 const BUDGET = 250 * 1024;
+
+/**
+ * WHAT COUNTS AS A HIGHLIGHT, and why the number is not tuned to this plate.
+ *
+ * 0.90 display luminance. Measured over nine renders of this game — six of them
+ * plain landscape scouts of five different levels — a frame with no lit blade
+ * in it has ZERO pixels this bright and a frame with one has 150 to 300 at
+ * 710x300. There is nothing else in this renderer that gets there: the hottest
+ * cloud on the Ember Shelf tops out at 0.87, the Colosseum's sand at 0.83.
+ * `HOT_SHARE` is that count as a fraction of the frame, floored well under the
+ * measured 7e-4 so a smaller blade or a further hero still clears it.
+ */
+const HOT = 0.90;
+const HOT_SHARE = 2e-4;
+
+/**
+ * WHEN A BAND OF THE RING IS DEAD, as a fraction of the plate's own mean edge
+ * energy — and the number comes from a distribution, not from taste.
+ *
+ * Measured over 35 renders of this game (seven levels, six bearings, five
+ * pitches, four elevations) the four bands run from 0.14x to 2.40x of the whole
+ * plate. The bottom band is systematically the weakest, median around 0.55,
+ * because the near foreground is one continuous surface with the fewest
+ * silhouettes crossing it. Every band that scored under 0.4 was a frame whose
+ * band is literally a black cut-out or an empty sky — `comp-y180` bottom 0.14,
+ * `comp-y120` bottom 0.27 and left 0.39, `scout-mustafar` bottom 0.29. So 0.4
+ * separates "there is nothing there" from "there is less there", which is the
+ * only distinction this clause is entitled to make. The shipped plate's weakest
+ * band is 0.5x.
+ */
+const DEAD_BAND = 0.4;
 
 export async function run({ check, assert }) {
   const CSS = await read('styles.css');
@@ -106,6 +137,13 @@ export async function run({ check, assert }) {
     }
     return { ...img, rgba: out };
   }
+
+  /* Every check below this point measures pixels, and there are none if the
+   * file is missing. They say so once, in the words of the check that owns
+   * that failure, rather than each throwing a TypeError about `null.width` —
+   * seven identical stack traces are how a real second failure hides. */
+  const needPlate = () => assert(img,
+    `${rel || '.menu-bg\'s url()'} is missing or does not decode — see "the menu names a backdrop"`);
 
   /* `.menu-wrap` owns the panel size. Nothing here types 1180 or 770. */
   const wrap = rule(CSS, '.menu-wrap') ?? '';
@@ -188,6 +226,7 @@ export async function run({ check, assert }) {
   });
 
   check('keyart: the plate is shaped so that `cover` never crops it vertically', () => {
+    needPlate();
     const B = bands({ plateW: img.width, plateH: img.height, panelW: PANEL_W, panelH: PANEL_H });
     /*
      * MEASURED, and it is the whole reason the plate is 21:9. `cover` crops on
@@ -213,6 +252,7 @@ export async function run({ check, assert }) {
   });
 
   check('keyart: it is not upscaled at the viewport every number here was measured at', () => {
+    needPlate();
     /*
      * `cover` scales by max(vw/pw, vh/ph). At 1920x1080 a 2560x1080 plate
      * scales by exactly 1.0 and a smaller one is blown up — and the one thing
@@ -229,6 +269,7 @@ export async function run({ check, assert }) {
   });
 
   check('keyart: the plate costs what a page with no build step can spend', () => {
+    needPlate();
     assert(fileBytes <= BUDGET,
       `${rel} is ${(fileBytes / 1024).toFixed(0)} KB against a ${(BUDGET / 1024).toFixed(0)} KB budget`);
     /* And it is a real picture, not a placeholder fill that happens to be
@@ -239,47 +280,102 @@ export async function run({ check, assert }) {
       + `(${(fileBytes / (img.width * img.height)).toFixed(3)} B/px), whole-frame sd ${whole.sd}`;
   });
 
-  check('keyart: the picture is in the ring and not behind the panel', () => {
+  check('keyart: the brightest thing in the game is not behind the interface', () => {
+    needPlate();
     /*
-     * THE COMPOSITION CLAIM, and the only one a machine can make.
+     * THE COMPOSITION CLAIM, and it took two attempts because the first metric
+     * did not measure what it was named after.
      *
-     * At 1920x1080 `.menu-wrap` hides the middle of the plate outright, so a
-     * frame composed the ordinary way — subject centred, edges empty — spends
-     * its whole budget on pixels nobody sees. `edge`, the mean absolute
-     * luminance step between neighbours, is the right statistic for "is there
-     * anything drawn here": this renderer puts a hard ink line on every
-     * silhouette, so drawn detail scores and a smooth sky gradient does not.
+     * WHAT WAS TRIED AND REJECTED. The obvious test of "interest in the outer
+     * band, nothing you care about behind the panel" is to compare edge energy
+     * — the mean absolute luminance step between neighbours, which is what a
+     * hard ink outline scores on — inside the ring against the region the panel
+     * hides, and demand the ring win. It was written, and then measured against
+     * nine plates, six of which are plain landscape scouts with no composition
+     * in them at all:
      *
-     * The bound is a RATIO against the hidden middle rather than an absolute,
-     * because an absolute would be a number about this one picture and the
-     * claim is about where a picture is put.
+     *     colosseum 0.67   geonosis 0.64   mustafar 0.80   shelf@0 0.83
+     *     shelf@300 0.93   shelf elevated 1.18   the composed candidates 0.71-0.85
+     *
+     * The uncomposed frames span the composed ones on both sides. The ratio is
+     * not measuring composition, it is measuring WHERE THE HORIZON IS: a
+     * horizon crosses the full width of the frame at one height, and unless the
+     * camera is pitched down far enough to fill the plate with dirt that height
+     * is in the middle third. A bound anywhere in that range would have passed
+     * and failed plates for a reason with no relation to its own name — HANDOFF
+     * §2.4's instrument that manufactures defects. It is gone.
+     *
+     * WHAT REPLACED IT is specific to this game and discriminates cleanly.
+     * DESIGN.md's presentation bar is "bloom that makes the blade the brightest
+     * thing in your life", and that is literally true of the pixels: over the
+     * same nine plates, every frame WITHOUT a lit blade in it has exactly ZERO
+     * pixels at or above 0.90 luminance, and every frame with one has 150-300
+     * at 710x300. So "how many pixels are that bright" answers "is the subject
+     * of this game in this picture", and "where are they" answers "can it be
+     * seen" — and the first time it was run it returned 13%, which was a real
+     * defect: the hero was posed with the blade sweeping toward the middle of
+     * the frame, so nine tenths of it was behind the panel at 1920x1080.
+     *
+     * The dead-band clause below is the other half. It cannot discriminate
+     * composition either, and it is not trying to: it is the regression guard
+     * that catches a band of the ring going flat.
+     *
+     * All of it is raised together rather than as separate asserts, for
+     * `cel: a shadow is READABLE`'s reason (HANDOFF §6.1b): with one assert per
+     * clause the first failure is the only one anybody ever sees.
      */
     const B = bands({ plateW: img.width, plateH: img.height, panelW: PANEL_W, panelH: PANEL_H });
-    const step = Math.max(1, Math.round(img.width / 1200));
-    const hidden = region(img, ...B.covered, step);
-    const seen = ['left', 'right', 'top', 'bottom'].map((k) => [k, region(img, ...B.ring[k], step)]);
-    const ringEdge = seen.reduce((a, [, s]) => a + s.edge * s.px, 0) / seen.reduce((a, [, s]) => a + s.px, 0);
-    assert(ringEdge >= hidden.edge,
-      `the ring carries ${ringEdge.toFixed(4)} of edge energy against ${hidden.edge.toFixed(4)} behind the panel — `
-      + 'the composition is centred on the part of the frame the interface covers');
-    /* Every band has to earn its place; one dead side is a plate that only
-     * works on one monitor. The floor is a share of the ring's own mean, so it
-     * scales with how detailed the chosen frame is. */
-    for (const [k, s] of seen) {
-      assert(s.edge > ringEdge * 0.25,
-        `the ${k} band is ${s.edge.toFixed(4)} against a ring mean of ${ringEdge.toFixed(4)} — it is empty`);
+    const whole = region(img, 0, 0, 1, 1);
+    const seen = ['left', 'right', 'top', 'bottom'].map((k) => [k, region(img, ...B.ring[k])]);
+
+    const [px0, py0, pw0, ph0] = B.covered;
+    const x0 = Math.round(px0 * img.width), x1 = Math.round((px0 + pw0) * img.width);
+    const y0 = Math.round(py0 * img.height), y1 = Math.round((py0 + ph0) * img.height);
+    let lit = 0, litHidden = 0;
+    for (let y = 0; y < img.height; y++) {
+      for (let x = 0; x < img.width; x++) {
+        const k = (y * img.width + x) * 4;
+        const l = (0.2126 * img.rgba[k] + 0.7152 * img.rgba[k + 1] + 0.0722 * img.rgba[k + 2]) / 255;
+        if (l < HOT) continue;
+        lit++;
+        if (x >= x0 && x < x1 && y >= y0 && y < y1) litHidden++;
+      }
     }
-    return seen.map(([k, s]) => `${k} ${s.edge.toFixed(4)}`).join(' · ')
-      + ` vs hidden ${hidden.edge.toFixed(4)}`;
+    const open = lit ? 1 - litHidden / lit : 0;
+    const floor = Math.round(img.width * img.height * HOT_SHARE);
+
+    const bad = [];
+    if (lit < floor) {
+      bad.push(`${lit} px of ${img.width * img.height} are at or above ${HOT} luminance, against a floor of `
+        + `${floor} — there is no lit blade in this plate, and a title screen for this game without one is a `
+        + 'landscape photograph');
+    } else if (open < 0.6) {
+      bad.push(`${(open * 100).toFixed(0)}% of the plate's ${lit} brightest pixels fall outside `
+        + '`.menu-wrap` at 1920x1080 — the blade is behind the interface');
+    }
+    for (const [k, s2] of seen) {
+      if (s2.edge < whole.edge * DEAD_BAND) {
+        bad.push(`the ${k} band carries ${s2.edge.toFixed(4)} of edge energy against a whole-plate `
+          + `${whole.edge.toFixed(4)} — ${(s2.edge / whole.edge).toFixed(2)}x, and that band of the ring `
+          + 'has nothing drawn in it');
+      }
+    }
+    assert(bad.length === 0, bad.join('\n    '));
+    return `${(open * 100).toFixed(0)}% of ${lit} highlight px in the open · `
+      + seen.map(([k, s2]) => `${k} ${s2.edge.toFixed(4)}`).join(' · ')
+      + ` vs whole ${whole.edge.toFixed(4)}`;
   });
 
-  check('keyart: the wordmark has something quiet to sit on', () => {
+  check('keyart: the header has something quiet to sit on', () => {
+    needPlate();
     /*
-     * `.menu-head` has no background. The wordmark is painted straight onto
-     * the plate, and the only things defending it are the four-offset ink halo
-     * `.logo .lg-a` carries and the sink layer parsed above. So this measures
-     * the band the letters actually occupy, THROUGH the sink, and asks two
-     * different questions of it:
+     * `.menu-head` has no background. The wordmark and the record line are
+     * painted straight onto the plate, and the only things defending them are
+     * the ink halos they carry — four offsets on `.logo .lg-a`, a lighter set
+     * added to `.record` when this backdrop landed — and the sink layer parsed
+     * above. So this measures `.menu-head`'s WHOLE box rather than the letters,
+     * because the record line is what a played profile puts there and it is
+     * 10 px mono in `--dim`. Two different questions of it:
      *
      *   lum   can warm off-white type hold against it at all
      *   edge  is there drawn detail crossing the letterforms — a cloud edge or
@@ -294,34 +390,38 @@ export async function run({ check, assert }) {
      */
     const live = /\.logo\.small\s+\.lg-a\s*,\s*\.logo\.small\s+\.lg-b\s*\{[^}]*font-size:\s*(\d+)px/.exec(CSS);
     assert(live, 'cannot find the `.logo.small` font-size rule in styles.css');
-    assert(Number(live[1]) === WORDMARK.fontPx,
+    assert(Number(live[1]) === HEAD.fontPx,
       `styles.css sets the menu wordmark at ${live[1]}px and tools/_bands.mjs states a box measured at `
-      + `${WORDMARK.fontPx}px — re-run \`node tools/_menubands.mjs\` and paste the line it prints`);
+      + `${HEAD.fontPx}px — re-run \`node tools/_menubands.mjs\` and paste the line it prints`);
 
     assert(sinkRgba, '.menu-bg has no flat sink layer over the plate, so the type sits on the raw render');
     const shown = composited();
-    const band = wordmarkBand({ plateW: img.width, plateH: img.height, panelH: PANEL_H });
+    const band = headBand({ plateW: img.width, plateH: img.height, panelH: PANEL_H });
     const s = region(shown, ...band, 1);
 
     /* THE BOUNDS, and where each comes from.
      *
      * `--ink` is #f4ecdc, luminance 0.884. WCAG's contrast ratio against a
      * background of luminance L is (0.884 + 0.05) / (L + 0.05); at L = 0.42
-     * that is exactly 2.0, which is the floor for 800-weight 25 px type that
+     * that is exactly 2.0, which is the floor for 800-weight 40 px type that
      * also carries a 2 px ink outline on all four sides. It is deliberately not
      * the 4.5 a body-copy bound would use: the halo, not the fill, is what
      * separates these letters from their ground, and a 4.5 bound would forbid
-     * every sky this game has.
+     * every sky this game has and leave a backdrop nobody can see.
      *
-     * `edge` is the one that actually bites. 0.020 is a quiet field; the same
-     * measurement over this level's cloud deck reads three times that.
+     * `edge` is the one that actually bites, and it is measured THROUGH the
+     * sink because that is what a player looks at. Measured on the candidates:
+     * the shipped pose reads 0.0095, the same band with the camera pitched 7°
+     * further down — which drags the cloud deck into it — reads 0.0147, and the
+     * raw plate before the sink reads 0.0231. 0.020 admits a cloudy sky seen
+     * through the sink and refuses one seen without it.
      */
     const INK = 0.884;
     const ratio = (INK + 0.05) / (s.lum + 0.05);
     assert(ratio >= 2.0,
-      `the wordmark band reads ${s.lum.toFixed(3)} through the sink — warm off-white on that is ${ratio.toFixed(2)}:1`);
+      `the header band reads ${s.lum.toFixed(3)} through the sink — warm off-white on that is only ${ratio.toFixed(2)}:1`);
     assert(s.edge <= 0.020,
-      `the wordmark band carries ${s.edge.toFixed(4)} of edge energy — there is drawn detail behind the letters`);
+      `the header band carries ${s.edge.toFixed(4)} of edge energy through the sink — there is drawn detail behind the letters`);
     return `lum ${s.lum.toFixed(3)} (${ratio.toFixed(2)}:1 against --ink), sd ${s.sd.toFixed(3)}, `
       + `edge ${s.edge.toFixed(4)}, sink rgba(${sinkRgba.join(',')})`;
   });

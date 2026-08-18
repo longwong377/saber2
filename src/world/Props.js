@@ -1087,11 +1087,44 @@ export function seatOnGround(world, mesh, quaternion, ground, opts = {}) {
    * measured 0.89 m under a 0.8 m crate; sitting it on the middle of the
    * relief halves the daylight and buries the uphill edge instead, which is
    * what every rock in this file already does deliberately. */
+  /* IS IT ON THE GROUND AT ALL? — and until this line that was assumed.
+   *
+   * `ground.y` is the caller's answer to "what is under this". For everything
+   * scattered across a level that answer IS the terrain: `findSite` fills it in
+   * from `terrain.height` at the very point it hands over, so `lift` is exactly
+   * zero and the loop below measures the ground the prop is standing on.
+   *
+   * For a crate on top of a crate stack it is nothing of the kind. The lid it
+   * stands on is 1.37 m up and the sand is at zero, so `low` came back as the
+   * SAND and the "relief across the contact patch" came out as the whole height
+   * of the stack — which then saturated the 30% cap and bedded the crate 30% of
+   * itself into the box underneath it. Measured on dead flat ground, no terrain
+   * involved: `addCrateStack`'s live top crate asks for y 1.370 and is seated at
+   * 1.165, **0.205 m inside the tier below it**, and it is a dynamic rigid body,
+   * so it is spawned interpenetrating a static collider by 20 cm. That is every
+   * stack in the game that carries a live crate, on every level, not one site.
+   * It surfaced as `prop-seating`'s "alpine: addCrateStack stands on nothing",
+   * which found the right crate and described it upside down.
+   *
+   * So the terrain is this prop's floor only where the prop is actually on it.
+   * The bar is the prop's own bed-in cap: if the caller's point stands further
+   * above the ground than this prop could ever legitimately be bedded, the prop
+   * is standing on something else and the ground below is not its business.
+   * Derived from the prop rather than picked, and the two cases are nowhere
+   * near it — 0 m for anything seated on terrain against 0.19 m for a 0.64 m
+   * crate, and 1.37 m for the same crate on a stack.
+   *
+   * `base` still reads the terrain either way: "never below the y the caller
+   * asked for" is a floor, not a substitute, and a rock the terrain throws up
+   * inside the contact patch still has to be stood on. */
+  const bedCap = (maxY - minY) * (opts.bedMax ?? 0.3);
+  const lift = ground.y - world.terrain.height(ground.x, ground.z);
+  const onGround = lift <= bedCap;
   let base = ground.y, low = ground.y;
   for (let i = 0; i <= 2; i++) for (let j = 0; j <= 2; j++) {
     const h = world.terrain.height(ground.x + lerp(x0, x1, i / 2), ground.z + lerp(z0, z1, j / 2));
     if (h > base) base = h;
-    if (h < low) low = h;
+    if (onGround && h < low) low = h;
   }
   /* Capped at 30% of the prop's own height, because half the relief is the
    * right instinct and an unbounded one is not: the dunes let a crate sit on a
@@ -1100,8 +1133,7 @@ export function seatOnGround(world, mesh, quaternion, ground, opts = {}) {
    * third buried is a lid lying on the sand. The cap costs nothing on the
    * float side — the seat is exactly −bed either way — it only decides how
    * much of the thing you can still see. */
-  const bed = (opts.bed ?? 0.015)
-    + Math.min((base - low) * (opts.bedSlope ?? 0.5), (maxY - minY) * (opts.bedMax ?? 0.3));
+  const bed = (opts.bed ?? 0.015) + Math.min((base - low) * (opts.bedSlope ?? 0.5), bedCap);
   return new THREE.Vector3(ground.x, base - minY - bed, ground.z);
 }
 

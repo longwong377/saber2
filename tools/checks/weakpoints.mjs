@@ -52,7 +52,6 @@ import '../../src/game/Levels.js';        // registers the menagerie and the mac
 import '../../src/game/Vehicles.js';      // …and the four machines built outside Bodies.js
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
-const pc = (v) => `${(v * 100).toFixed(1)}%`;
 
 /** Every archetype the shipped predicate says can carry a weak point. */
 const GUARDED = Object.keys(ARCHETYPES)
@@ -111,9 +110,17 @@ function capsOf(type) {
   // thing at its own call site).
   const out = e.capsules().map((c) => ({ ...c, enemy: null }));
   const roles = new Map();
-  for (const b of (e.rig?.list ?? [])) roles.set(b.name, b.role);
+  /* WHICH BONES CARRY A LIMB PLATE, which is the only thing the derivation in
+   * `weakSpotsOf` can read. Not the same question as "which bones are not
+   * axial": an AAT's prow and stern are `hull` — non-axial, and no more a limb
+   * than its turret is. */
+  const plated = new Set();
+  for (const b of (e.rig?.list ?? [])) {
+    roles.set(b.name, b.role);
+    if (b.plateFrom !== undefined) plated.add(b.name);
+  }
   e.dispose?.();
-  const v = { caps: out, roles, A: ARCHETYPES[type] };
+  const v = { caps: out, roles, plated, A: ARCHETYPES[type] };
   _caps.set(type, v);
   return v;
 }
@@ -151,11 +158,13 @@ function swingsFor(scene, cap, speed, reach, budget = 24) {
   } finally { saber.dispose(); }
 }
 let SABER = null;
+let CELMOD = null;
 
 export async function run({ check, assert }) {
   const { initPhysics } = await import('../../src/physics/Rapier.js');
   await initPhysics();
   SABER = await import('../../src/game/Saber.js');
+  CELMOD = await import('../../src/toon/Cel.js');
 
   check('weak points: the bodies that have a hide to have a gap in, and no others', () => {
     /**
@@ -363,6 +372,66 @@ export async function run({ check, assert }) {
       + `(${worstAt}) · ${rows.join(', ')}`;
   });
 
+  check('weak points: the cel-shaded body can show the spot, and does', () => {
+    /**
+     * THE OTHER HALF OF "A SPOT NOBODY CAN FIND IS NOT A MECHANIC", and it is
+     * the half that has to be true BEFORE the player swings rather than after.
+     *
+     * A weak point is a place a cover does not reach, so on screen it is the
+     * bone's own tube showing between two plates — and it is only findable if
+     * the tube and the plate are different colours. They are, on every body,
+     * and not because anyone arranged it here: a walker's legs are `metalMat`
+     * tubes under `armorMat` plates and a creature's are `hideMat` under
+     * chitin, which is a decision the builders took about how a machine and an
+     * animal are put together, long before any of this.
+     *
+     * THE BAR IS THE SHIPPED POSTERISER'S, not a taste. `CEL.albedoBands`
+     * quantises albedo to five flat fields, so a band is 0.2 wide; two colours
+     * an offset apart land in different fields with probability Δ/w, which
+     * makes half a band the point where a difference is as likely to survive
+     * the posterise as to be swallowed by it. Anything under that is a spot
+     * that may render as one flat colour with the plate beside it.
+     *
+     * Measured on the shipped bodies, the tightest pair on the roster is the
+     * spider walker's leg at 0.184 — nearly a whole band — and the widest is an
+     * acklay's belly at 0.888.
+     */
+    const { CEL } = CELMOD;
+    const floorD = 0.5 / CEL.albedoBands;
+    const rows = [];
+    let worst = Infinity, worstAt = '';
+    for (const type of GUARDED) {
+      const A = ARCHETYPES[type];
+      const built = A.build({ scale: A.scale });
+      if (!built.rig) continue;
+      for (const b of built.rig.list) {
+        if (!weakSpotsOf(b)) continue;
+        const bare = b.primary && b.primary.material && b.primary.material.color;
+        assert(bare, `${type}: '${b.name}' has a weak point and no primary material to show it in`);
+        // Everything the Kit merged onto this bone: the plates, the ram, the
+        // belly, the intake louvres. One mesh per material, which is exactly
+        // the granularity the question is asked at.
+        let best = 0, hex = null;
+        for (const c of b.obj.children) {
+          if (c.userData.boneChild || c === b.primary || !c.material || !c.material.color) continue;
+          const o = c.material.color;
+          const d = Math.hypot(o.r - bare.r, o.g - bare.g, o.b - bare.b);
+          if (d > best) { best = d; hex = `#${o.getHexString()}`; }
+        }
+        assert(best >= floorD,
+          `${type}: the cover on '${b.name}' is ${best.toFixed(3)} from the tube under it in `
+          + `linear RGB, inside the ${floorD.toFixed(2)} that ${CEL.albedoBands} albedo bands `
+          + 'can swallow — the gap and the plate would posterise to one flat field and there '
+          + 'would be nothing on screen to aim at');
+        if (best < worst) { worst = best; worstAt = `${type}/${b.name}`; }
+        rows.push(`${type} ${b.name} #${bare.getHexString()} vs ${hex} Δ${best.toFixed(2)}`);
+      }
+    }
+    assert(rows.length >= 20, `only ${rows.length} bones with a spot were measured`);
+    return `${rows.length} spots, all clear of the ${floorD.toFixed(2)} a ${CEL.albedoBands}-band `
+      + `posterise can swallow · tightest ${worst.toFixed(3)} at ${worstAt}`;
+  });
+
   check('weak points: the spatial opening and the temporal one compose, and neither is the other', () =>
     (async () => {
       /**
@@ -393,7 +462,33 @@ export async function run({ check, assert }) {
         if (!gaps.length) continue;
         const limbGap = gaps.find((g) => g.opens);
         const axialGap = gaps.find((g) => !g.opens);
-        assert(limbGap, `${type} has ${gaps.length} gaps and not one of them is on a limb`);
+        /**
+         * A BODY WITH LIMBS MUST HAVE LIMB GAPS — and a body with none may not.
+         *
+         * The derivation reads what a LIMB PLATE left uncovered, so on anything
+         * with legs a gap list that is all trunk means it silently found
+         * nothing and the declared belly is carrying the whole feature. That is
+         * the failure this clause is for.
+         *
+         * The AAT is the honest exception and it is not an exception list: a
+         * hovertank has no limbs at all, so its only soft places are the six
+         * intakes in the repulsorlift skirt, declared on the line that builds
+         * them. They sit on an axial bone and are therefore STILL TURNED by the
+         * guard — which is the right reading, because an intake is thin metal
+         * and not an open joint. What it buys is speed through the material and
+         * a reason to get behind the thing, and the row below asserts exactly
+         * that of every axial gap on every body.
+         */
+        const plated = [...probe.plated].filter((n) => !AXIAL_ROLES.includes(probe.roles.get(n)));
+        if (plated.length) {
+          assert(limbGap,
+            `${type} carries a limb plate on ${plated.join(', ')} and not one of its ${gaps.length} `
+            + 'gaps is on a limb — the derivation found nothing and a declared trunk gap is '
+            + 'carrying the whole feature');
+        } else {
+          assert(!limbGap, `${type} has no limb plate anywhere and yet a gap on a limb`);
+          assert(axialGap, `${type} has ${gaps.length} gaps and none of them anywhere`);
+        }
         for (const g of gaps) {
           const role = probe.roles.get(g.covers);
           assert(g.opens === !AXIAL_ROLES.includes(role),
@@ -405,6 +500,25 @@ export async function run({ check, assert }) {
           point: e.position.clone().setY(1), impulse: V(0, 0, -1) }, null);
         const fresh = (fn) => { const e = live(type); try { return fn(e); } finally { e.dispose?.(); } };
         const capNamed = (e, name) => e.capsules().find((c) => c.name === name);
+
+        /* THE LIMB ROWS OF THE GRID NEED A LIMB, and one body on the roster
+         * has none: an AAT is a hull on a repulsorlift and its only soft
+         * places are the intakes, which are axial and are covered by the trunk
+         * row below on its own. Skipping the rows a body cannot have is not
+         * skipping the body — the axial row above already ran, and the census
+         * clause elsewhere in this file is what stops a body from quietly
+         * having no gaps at all. */
+        // A gap on the trunk, guard up: still turned. Run BEFORE the limb rows,
+        // so a body whose only gaps are axial still exercises it.
+        let c = null;
+        if (axialGap) {
+          c = fresh((e) => cut(e, capNamed(e, axialGap.name)));
+          assert(c === 'turned',
+            `${type}: a pass through '${axialGap.name}' went straight through the guard. `
+            + 'A soft place on a trunk still has the whole body behind it.');
+        }
+
+        if (!limbGap) { rows.push(`${type} hull-only (${gaps.length} axial)`); continue; }
 
         // A fight-ending plate pass, guard up: turned.
         const plate = probe.caps.find((c) => !c.covers && !c.shield
@@ -419,15 +533,6 @@ export async function run({ check, assert }) {
         assert(b !== 'turned',
           `${type}: a pass through '${limbGap.name}' was turned. A joint is where the bulk `
           + 'the guard is made of is not.');
-
-        // A gap on the trunk, guard up: still turned.
-        let c = null;
-        if (axialGap) {
-          c = fresh((e) => cut(e, capNamed(e, axialGap.name)));
-          assert(c === 'turned',
-            `${type}: a pass through '${axialGap.name}' went straight through the guard. `
-            + 'A soft place on a trunk still has the whole body behind it.');
-        }
 
         // The plate again, with the opening the player earns: lands.
         const d = fresh((e) => { e.state = 'winded'; return cut(e, capNamed(e, plate.name)); });

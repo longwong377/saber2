@@ -2625,6 +2625,12 @@ export class Enemy {
    * the shake. (This note said the fix was still owed. It is not, and it
    * matters more than it did: the guard is no longer only a duellist's, so
    * every big body in the game would otherwise have paid a false reward.)
+   *
+   * It also means NOTHING CAME OFF for the one other reason that can happen —
+   * a caller offering a bone the actor has already lost. Both readers act on
+   * the same sentence, "do not pay for a limb", and there is no third reader
+   * that needs to tell the two apart; a second return value would be a
+   * distinction nobody consumes. See the `isSevered` guard below.
    */
   takeCut(ev, source) {
     if (this.dead && !this.actor) return;
@@ -2645,19 +2651,34 @@ export class Enemy {
      * mistake somebody has now made: `escalation: an elite comes apart like
      * everything else does` threw on the Shielded elite's first pass. */
     if (ev.cap.shield) { this.dropShield(); return; }
-    /* …AND A BONE THAT IS ALREADY GONE IS NOT CUT TWICE.
+    /**
+     * …AND A BONE THAT IS ALREADY GONE IS NOT CUT TWICE.
      *
      * `capsules()` never offers a severed bone, so for the blade this cannot
      * happen — but `Player.forceDisassemble` builds its list ONCE and walks it,
      * and its own re-check is `actor.isSevered(cap.name)`, which answers false
      * for a weak point's name because `femur0.tip` is not a bone the rig has.
-     * Without this, a rend that took `femur0` off would then spend a second
-     * joint of its budget on the gap in the same femur: `Actor.cut` correctly
-     * refuses (`bone.severed`), and the sever price below would be billed
-     * anyway. `isSevered` walks the parent chain, and it is deliberately not
-     * `bone.severed`: a LEAF bone is shortened rather than severed, and chopping
-     * the same stub again is a real thing the game lets you do. */
-    if (this.actor && this.actor.isSevered(bone)) return;
+     * Without this a rend that took `femur0` off spends a second joint of its
+     * budget on the gap in the same femur: `Actor.cut` correctly refuses
+     * (`bone.severed`) and the sever price below is billed anyway, so one leg
+     * costs the body two limbs' worth of health.
+     *
+     * `isSevered` walks the parent chain, and it is deliberately not
+     * `bone.severed`: a LEAF bone is SHORTENED rather than severed, and chopping
+     * the same stub again is a real thing the game lets you do (severance.mjs
+     * measures a Rancor dying to nine chops of one toe).
+     *
+     * `'turned'` AND NOT A BARE RETURN, and the difference is a green check.
+     * The documented meaning of the return value is the one every caller acts
+     * on — "nothing came off, do not pay for a limb" — and both of them do
+     * exactly the right thing with it here: `World._applyBladeEvent` shakes the
+     * camera and returns without crediting a sever, and `forceDisassemble`
+     * skips the joint without spending its budget. Returning nothing instead
+     * let `forceDisassemble` count a limb the actor never removed, which is the
+     * false reward that branch's own note is about; `force: a droid comes apart`
+     * caught it on the walker within the hour.
+     */
+    if (this.actor && this.actor.isSevered(bone)) return 'turned';
     /* NO `?? 0.4` HERE EITHER. Every BONE capsule this game emits is priced by
      * `severance`, which throws rather than guessing, so a missing `vital` is
      * a capsule from somewhere that has not been through it — and answering

@@ -63,6 +63,20 @@ for (const key of keys) {
   }
   const uniq = new Set(rows.map((r) => r[4]));
   console.log(`   ${rows.length} bones, ${uniq.size} distinct toughness: ${[...uniq].join(' ')}`);
+  /* …and what the BLADE is offered, which is not the same list: a weak point is
+   * a capsule inside a bone's capsule, not a bone. The gap between these two
+   * counts is the whole of player note #35 — every big body carried exactly two
+   * distinct materials over all of its bones, so a cut anywhere was worth a cut
+   * anywhere else. */
+  const caps = Enemy.prototype.capsules.call({
+    _caps: [], dead: false, actor: null, shieldUp: false, shieldMesh: null,
+    rig, group: built.group || null, built, A, position: new THREE.Vector3(),
+    _boneToughness: Enemy.prototype._boneToughness,
+  });
+  const capT = new Set(caps.filter((c) => !c.shield).map((c) => NAMES[c.toughness] ?? c.toughness));
+  const gaps = caps.filter((c) => c.covers);
+  console.log(`   ${caps.length} capsules, ${capT.size} distinct toughness: ${[...capT].join(' ')}`
+    + `  ${gaps.length} weak points${gaps.length ? ': ' + [...new Set(gaps.map((g) => g.name.replace(/\d+/g, '#')))].join(' ') : ''}`);
   const hdr = ['bone', 'role', 'r', 'len', 'tough', 'vital', 'passes@14'];
   const w = hdr.map((h, i) => Math.max(h.length, ...rows.map((r) => String(r[i]).length)));
   console.log('   ' + hdr.map((h, i) => h.padEnd(w[i])).join('  '));
