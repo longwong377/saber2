@@ -666,6 +666,10 @@ export function run({ check, assert, near, THREE: T }) {
       return {
         hand: spread(hand, dist), joint: spread(joint, dist),
         spine: spread(spine, ang), clav: spread(clav, ang),
+        /* HOW FAR THE HAND GETS, as well as how far it moved. See the stab's
+         * clause: under a guard carried further forward those are different
+         * questions and only one of them is what a lunge is for. */
+        far: Math.max(...hand.map((h) => h.length())),
       };
     };
 
@@ -677,10 +681,28 @@ export function run({ check, assert, near, THREE: T }) {
       `a standing player is already moving ${(idle.hand * 100).toFixed(0)} cm of hand and ${idle.spine.toFixed(1)}° `
       + 'of spine — this bench cannot tell an attack from an idle');
 
+    /**
+     * …AND A STAB IS JUDGED ON WHERE THE HAND GETS TO, NOT ON HOW FAR IT WENT.
+     *
+     * Travel was the right proxy while the guard sat 20 cm below the sternum:
+     * the hand started near the body, so a long lunge and a long reach were
+     * the same number. Unifying the first- and third-person hilt anchor moved
+     * the resting guard forward, and the two came apart — measured across that
+     * change, the stab's hand ENDS 74.1 cm from the chest before and 74.8 cm
+     * after, which is the same lunge arriving in the same place, while its
+     * START moved 34.9 → 55.4 cm. A fencer already in a forward guard has a
+     * shorter lunge to make, and holding them to the travel of a fencer who
+     * was not would be asking for a worse guard.
+     *
+     * So the stab asserts REACH and the overhead still asserts travel, because
+     * an overhead is an arc and the distance the hand covers through it IS the
+     * thing. The reference figures are the same measurement taken on the tree
+     * that raised the complaint.
+     */
     const rows = [];
-    for (const [name, action, wasHand, wasSpine] of [
-      ['overhead', 'attackOver', 0.22, 1.0],
-      ['stab', 'attackStab', 0.32, 1.6],
+    for (const [name, action, wasHand, wasSpine, reach] of [
+      ['overhead', 'attackOver', 0.22, 1.0, null],
+      ['stab', 'attackStab', 0.32, 1.6, 0.70],
     ]) {
       const r = drive(action);
       assert(r.spine > 15,
@@ -692,10 +714,20 @@ export function run({ check, assert, near, THREE: T }) {
       assert(r.joint > 0.08,
         `${name}: the shoulder JOINT travels ${(r.joint * 1000).toFixed(0)} mm, against the 9 mm an idle body `
         + 'breathes — the girdle is turning in place');
-      assert(r.hand > wasHand * 1.4,
-        `${name}: the hand travels ${(r.hand * 100).toFixed(0)} cm against the ${(wasHand * 100).toFixed(0)} cm `
-        + 'it travelled before the body was put behind it');
-      rows.push(`${name} hand ${(wasHand * 100).toFixed(0)}→${(r.hand * 100).toFixed(0)} cm, `
+      if (reach === null) {
+        assert(r.hand > wasHand * 1.4,
+          `${name}: the hand travels ${(r.hand * 100).toFixed(0)} cm against the `
+          + `${(wasHand * 100).toFixed(0)} cm it travelled before the body was put behind it`);
+      } else {
+        assert(r.far > reach,
+          `${name}: the hand reaches ${(r.far * 100).toFixed(0)} cm from the chest against the `
+          + `${(reach * 100).toFixed(0)} cm it reached before — the lunge arrives short`);
+        assert(r.hand > 0.12,
+          `${name}: the hand travels only ${(r.hand * 100).toFixed(0)} cm — a stab that arrives `
+          + 'without moving is a pose, however far forward the guard already was');
+      }
+      rows.push(`${name} hand ${(wasHand * 100).toFixed(0)}→${(r.hand * 100).toFixed(0)} cm`
+        + `${reach === null ? '' : ` (reach ${(r.far * 100).toFixed(0)} cm)`}, `
         + `spine ${wasSpine}→${r.spine.toFixed(0)}°, shoulder 0→${r.clav.toFixed(0)}° / ${(r.joint * 1000).toFixed(0)} mm`);
     }
     return rows.join('; ');

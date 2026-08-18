@@ -147,8 +147,8 @@ function duel(formKey, seconds, opts = {}) {
   };
 
   const s = {
-    hits: 0, tipHits: 0, clashes: 0, locks: 0, staggers: 0, strikes: 0,
-    hpLost: 0, minBladeGap: Infinity, minTipDist: Infinity, hitsThisStrike: 0,
+    hits: 0, clashes: 0, locks: 0, staggers: 0, strikes: 0,
+    hpLost: 0, minBladeGap: Infinity, hitsThisStrike: 0,
     worstHitsInOneStrike: 0, e, p, w,
   };
   const realDamage = p.damage.bind(p);
@@ -159,27 +159,26 @@ function duel(formKey, seconds, opts = {}) {
    * the pool twice INSIDE THE HARNESS ONLY. Nothing here reads past `kind`, so
    * there is no reason to name any of them. */
   /**
-   * AND `s.hits` IS THE SWEPT TEST'S ALONE, WHICH IT WAS NOT.
+   * AND `s.hits` IS THE GAME'S HIT TEST, THE ONLY ONE LEFT.
    *
-   * The tip branch below bills through this same `p.damage`, so every tip hit
-   * used to land in BOTH counters — and the clause "the two hit tests must
-   * never both fire for the same swing" then read `tipHits + hits > strikes`
-   * with the tips counted twice. A form that connects on more than half its
-   * swings and takes one tip hit fails an inequality about double-billing
-   * without anything having been billed twice, and the pass line's "N swept
-   * hits, M tip-test hits" printed the total under the word `swept`. The two
-   * counters are disjoint now; `hitsThisStrike`, which is the per-swing latch,
-   * still counts either.
+   * This harness used to run a second one of its own — an unswept chord from
+   * `prevTip` to `tip` against a capsule — and bill damage through this same
+   * wrapper when it passed. `World._resolveBlades` had already deleted the
+   * game's copy of that test, and its note records why: "every hit it produced
+   * was a false positive". A chord cuts the corner of a swing that arcs round
+   * the body, so on Ataru it passed 0.386 m from the player while the swept
+   * blade the game actually uses passed 0.441 — no `_struck`, no clash, no
+   * invulnerability window, and 12 hp billed for a miss. A harness that keeps
+   * running a test the thing under test threw away is measuring itself. It is
+   * gone, so every hit counted here is one the game landed.
    */
   p.damage = (amt, pt, ...rest) => {
     if (rest[0] === e && rest[1] === 'saber') {
-      if (!inTipTest) s.hits++;
+      s.hits++;
       s.hitsThisStrike++;
     }
     return realDamage(amt, pt, ...rest);
   };
-  let inTipTest = false;
-  const c0 = new THREE.Vector3(), c1 = new THREE.Vector3();
   const a = new THREE.Vector3(), b = new THREE.Vector3();
   const dt = 1 / 60, N = Math.round(seconds * 60);
   const minStrikes = opts.minStrikes ?? 0;
@@ -215,18 +214,6 @@ function duel(formKey, seconds, opts = {}) {
             duelB.interrupt(0.45); e.stun(0.18); s.staggers++;
           }
         }
-      } else if (e.duel.phase === 'strike' && p.invuln <= 0) {
-        c0.set(p.position.x, p.position.y + 0.4, p.position.z);
-        c1.set(p.position.x, p.position.y + 1.7, p.position.z);
-        const d = Math.sqrt(segmentSegment(e.saber.prevTip, e.saber.tip, c0, c1, a, b).distSq);
-        s.minTipDist = Math.min(s.minTipDist, d);
-        if (d <= 0.44) {
-          s.tipHits++;
-          inTipTest = true;
-          p.damage(e.attackDamage * e.duel.damageScale, a.clone(), e, 'saber');
-          inTipTest = false;
-          e.duel.interrupt(0.45);
-        }
       }
     }
     for (let li = w.locks.length - 1; li >= 0; li--) {
@@ -247,7 +234,7 @@ function duel(formKey, seconds, opts = {}) {
   s.frames = s.frames ?? N;
   s.seconds = s.frames / 60;
   s.dps = s.hpLost / s.seconds;
-  s.connect = s.strikes ? (s.hits + s.tipHits) / s.strikes : 0;
+  s.connect = s.strikes ? s.hits / s.strikes : 0;
   return s;
 }
 
@@ -387,7 +374,7 @@ export async function run({ check, assert }) {
     assert(thin.length === 0,
       `${thin.map(r => FORMS[r.key].name).join(', ')} threw fewer than four strikes in 60 s, so `
       + 'this measured nothing');
-    const dead = runs.filter(r => r.hits + r.tipHits === 0);
+    const dead = runs.filter(r => r.hits === 0);
     assert(dead.length === 0,
       `${dead.length} of ${runs.length} forms never landed one hit on an unarmed, motionless player `
       + 'at knife range: '
@@ -458,14 +445,16 @@ export async function run({ check, assert }) {
     const worst = Math.max(...runs.map(r => r.worstHitsInOneStrike));
     assert(worst <= 1,
       `one strike phase landed ${worst} separate hits — a swing is billing per frame`);
-    // and the two hit tests must never both fire for the same swing
-    const doubled = runs.filter(r => r.tipHits > 0 && r.hits > 0 && r.tipHits + r.hits > r.strikes);
-    assert(doubled.length === 0,
-      `${doubled.length} form(s) landed more hits than they made strikes — the swept test and `
-      + "World's tip test are both billing the same swing");
-    const tips = runs.reduce((s, r) => s + r.tipHits, 0);
+    /* AND NO FORM MAY LAND MORE HITS THAN IT MADE SWINGS. This used to be a
+     * clause about two hit tests billing the same swing; there is one test
+     * now, so what is left is the plain arithmetic — more hits than strikes
+     * means a swing was counted twice by some route the latch above missed. */
+    const over = runs.filter(r => r.hits > r.strikes);
+    assert(over.length === 0,
+      `${over.map(r => FORMS[r.key].name).join(', ')} landed more hits than they made strikes`);
     const own = runs.reduce((s, r) => s + r.hits, 0);
-    return `${own} swept hits, ${tips} tip-test hits, worst ${worst} hit(s) in any one strike`;
+    return `${own} hits over ${runs.reduce((s, r) => s + r.strikes, 0)} strikes, `
+      + `worst ${worst} hit(s) in any one strike`;
   });
 
   check('duel: steel on steel outranks steel on flesh', () => {

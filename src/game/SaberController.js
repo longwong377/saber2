@@ -189,10 +189,15 @@ export const ZONE_POSE = {
 /**
  * The guard volume, and why every number in it is the size it is.
  *
- * `radius` 1.4 m — the blade's own reach. Settled at the four poses the blade's
- * midpoint sits 0.84–1.07 m off the chest, so its tip is at about 1.4 m: a bolt
- * arrested at this sphere is arrested where the blade actually is, not out in
- * front of it.
+ * `radius` 1.4 m — where the blade is. Settled at the four poses and measured
+ * off the CHEST, which is what this sphere is centred on (tools/_unify.mjs
+ * --radius), the lit blade runs 0.52 m to 1.78 m out with its midpoint at
+ * 1.09–1.21. So a bolt arrested at this sphere is arrested on the weapon, a
+ * little past its middle, and not out in front of it. It used to be read as
+ * "the midpoint sits 0.84–1.07 off the chest so the tip is at about 1.4", which
+ * was the same claim about the shorter span the chest anchor gave; the anchor
+ * moved 0.32 m up and 0.20 forward and 1.4 m came out nearer the middle of the
+ * blade rather than off its end.
  *
  * `centre` 20° — THE ONE NUMBER THAT MAKES THIS PLAYABLE, and it was measured
  * rather than chosen. A bolt is classified by where its LINE crosses the guard
@@ -1173,7 +1178,7 @@ export class SaberController {
 
   /* ── targets ───────────────────────────────────────────────────────── */
 
-  solveTargets(chest, aimQuat, dt) {
+  solveTargets(chest, aimQuat, dt, trunk = chest) {
     const g = GRIPS[this.grip];
     this._grip = g;
 
@@ -1219,12 +1224,32 @@ export class SaberController {
       guardWorld.y = handTarget.y + (guardWorld.y - handTarget.y) * (1 - sAbs * 0.85);
     }
 
-    // Never let the hands leave arm's reach — except that a lunge is exactly the
-    // move where the shoulder and the torso add to the arm, so the ceiling
-    // lifts with the thrust rather than clipping the one action that needs it.
-    _v5.subVectors(handTarget, chest);
+    /**
+     * Never let the hands leave arm's reach — except that a lunge is exactly the
+     * move where the shoulder and the torso add to the arm, so the ceiling
+     * lifts with the thrust rather than clipping the one action that needs it.
+     *
+     * FROM THE TRUNK, NOT FROM THE ANCHOR, and that distinction only appeared
+     * when the anchor left the sternum. This is an ARM LENGTH: the arm hangs off
+     * a shoulder on the ribcage, so 0.78 m is 0.78 m from the CHEST and always
+     * was — it merely used to be the same point as the anchor. Measured off the
+     * anchor once the anchor is 0.36 m from the chest it becomes 1.14 m
+     * of arm, and the two-bone IK answers the only way it can: it straightens,
+     * points, and stops short. Measured, the STANDING STAB's hand travel — the
+     * one move whose whole point is reach — fell from 45.2 cm to 33.3, and the
+     * tip with it, while the guard target went on being placed somewhere no arm
+     * could follow.
+     *
+     * `trunk` is the chest plus whatever the BODY has committed to the attack
+     * (`Player._attackDrive`'s shift), and not the bare chest, because the note
+     * above is literally true: a lunge is the move where the torso adds to the
+     * arm, and the torso adds by travelling. Clamping to the bare chest takes
+     * that back and costs the standing stab 0.8 cm of hand on the old anchor,
+     * where nothing else about it changes.
+     */
+    _v5.subVectors(handTarget, trunk);
     const armMax = (0.78 + this.thrust * 0.10) * R;
-    if (_v5.length() > armMax) { _v5.setLength(armMax); handTarget.copy(chest).add(_v5); }
+    if (_v5.length() > armMax) { _v5.setLength(armMax); handTarget.copy(trunk).add(_v5); }
 
     this._handTarget = this._handTarget || new THREE.Vector3();
     this._handTarget.copy(handTarget);
@@ -1284,9 +1309,13 @@ export class SaberController {
       this.carrierSpeed = damp(this.carrierSpeed ?? 0, v, 12, dt);
     }
     this._prevChest.copy(chest);
-    this._publishGuard(chest, aimQuat);
+    /* THE ROSE IS CENTRED ON THE BODY, NOT ON THE WEAPON — see _publishGuard.
+     * `chest` here is the anchor the blade is SOLVED from, which since the
+     * anchor was unified is 0.32 m above the sternum and 0.20 in front of it.
+     * A caller that knows where its body actually is says so. */
+    this._publishGuard(ctx.body || chest, aimQuat);
 
-    this.solveTargets(chest, aimQuat, dt);
+    this.solveTargets(chest, aimQuat, dt, ctx.trunk || chest);
     if (!this.initialised) {
       this.handLocal.subVectors(this._handTarget, chest);
       this.handPos.copy(this._handTarget);
@@ -1364,12 +1393,51 @@ export class SaberController {
   /**
    * Republish the guard volume Bolts.update tests bolts against.
    *
-   * Origin and aim frame are COPIED from the live chest and the live aim every
+   * Origin and aim frame are COPIED from the live body and the live aim every
    * frame, not captured once: the guard is yours, it walks with you and it turns
    * with you. (The auto-guard cone deliberately does the opposite — it stays
    * pointing down the line the bolt came in on, because its whole job is to
    * cover you while you look somewhere else. Two guards, two rules, and the
    * difference is the mechanic.)
+   *
+   * ── THE ORIGIN IS THE BODY AND NOT THE ANCHOR, AND THAT WAS A REAL BUG ────
+   *
+   * This used to be handed whatever `update` was handed, which is the point the
+   * blade is SOLVED from. In third person that was the sternum and the two were
+   * the same point; in first person it has always been ~0.32 m above the chest,
+   * so the rose the bolt was classified on was centred a foot over the player's
+   * head. Measured through the real Player, a level shot fired at each height up
+   * a standing figure and asked of the player's own published guard
+   * (tools/_unify.mjs):
+   *
+   *                      third person        first person
+   *     1.62 m (eye)     any guard           any guard
+   *     1.34 m (chest)   any guard           any guard
+   *     1.15 m           any guard           any guard
+   *     1.00 m (gut)     any guard           LOW, and only LOW
+   *
+   * Same shot, same shooter, and whether you had to be holding a particular
+   * guard depended on which camera you were using. Unifying the anchor would
+   * have exported that to third person as well, silently — every check in
+   * tools/checks/directional.mjs builds its guard descriptor by hand with the
+   * origin AT the chest, so nothing in the suite could have seen it move.
+   *
+   * The centre disc is the reason it has to be the body. `GUARD.centre` is 20°
+   * because "a bolt that would actually hit your torso misses your CHEST by at
+   * most ~0.4 m, so it arrives inside asin(0.4/1.4) = 16.6°" — an argument about
+   * the body being shot at, which is false about any other point. Off an origin
+   * 0.32 m above the sternum the same gut shot arrives at asin(0.72/1.4) = 31°
+   * and falls in a quadrant.
+   *
+   * `radius` still measures the blade and is still right, and it was re-read
+   * rather than assumed (`--radius`): settled at each of the four zone poses the
+   * lit blade spans 0.52 m to 1.78 m from the chest in third person and 0.57 to
+   * 1.81 in first, with its MIDPOINT at 1.09–1.24 in both. A sphere of 1.4 m
+   * about the chest is therefore crossed by the weapon at every guard, which is
+   * the whole claim the number makes. On the old chest anchor the same reading
+   * is 0.30–1.58 m with the midpoint at 0.84–1.04, which is where the 0.84–1.07
+   * in the GUARD note above came from; the blade is further out now, and 1.4 m
+   * sits nearer the middle of its span than it did.
    *
    * `zoneTol` is the difficulty tier's share of your zone error, computed here
    * rather than in applyAssist because Player only calls applyAssist on tiers

@@ -511,83 +511,114 @@ const HEAL_TIME = 3.0;
 const HEAL_FRACTION = 0.45;
 
 /**
- * WHERE THE HILT HANGS — AND WHY IT IS STILL TWO PLACES.
+ * WHERE THE HILT HANGS. ONE PLACE, BOTH VIEWS.
  *
- * Third person solves the blade from the chest; first person solves it from
- * 0.26 m above and 0.16 m in front of it, in the aim frame, so that the hands
- * are in front of the lens where you can see them. The blade tip therefore
- * reaches 1.89 m from the chest in first person and 1.49 in third — 27% more
- * sword for pressing the camera key, held by a ratchet in
- * tools/checks/first-person.mjs whose note names the only fix there is: give
- * both views one anchor.
+ * The offset from the CHEST to the point the blade is solved from, in the aim
+ * frame, in metres of arm. `_updateBlade` applies it directly in third person
+ * and off the eye with the eye-to-chest height taken back out in first, which
+ * lands on the same point plus the eye's own ride.
  *
- * THAT WAS BUILT AND MEASURED, AND IT IS BLOCKED. The unification itself works
- * — one offset from the chest, applied directly in third person and applied to
- * the eye with the eye-to-chest height taken back out in first, which lands on
- * the same point plus the eye's own ride. It takes the ratio from 1.27 to
- * between 1.06 and 1.11. What it cannot do is satisfy the other three bounds at
- * the same time. tools/_anchor.mjs sweeps the offset — as an ANGLE, because the
- * 0.30 m radius is how far in front of the body the weapon is and is not free —
- * and prints all five numbers:
+ * ── WHAT THIS REPLACED, AND WHAT THE OLD NOTE HAD WRONG ────────────────────
  *
- *     angle  rise  fwd    ratio   forearm°/s  wrist°  hand-down°
- *      20     0.10 0.28   1.125      2182      127.7     34.3
- *      30     0.15 0.26   1.110      2626      128.1     31.2
- *      36     0.18 0.24   1.101      2847      128.2     29.5
- *      50     0.23 0.19   1.077      5159      132.5     26.3
- *      74     0.29 0.08   1.055      2619      157.7     25.7
- *     bounds                <1.30      <2700     <145      <30
+ * It used to be two anchors — the chest in third person, chest + 0.32 up +
+ * 0.16 forward in first — and the note here said that cost "27% more sword for
+ * pressing the camera key", ratcheted in tools/checks/first-person.mjs. Both
+ * halves of that were measured on a bench that never holds `blade`, so the
+ * guard never left READY_GUARD and what the 27% compared was where the two
+ * views PARK the blade. The sword's length is the ENVELOPE, and the envelope
+ * was measured by holding the guard still at each point of a 9x9 grid over its
+ * whole travel and reading the tip off the chest (tools/_unify.mjs), on the two
+ * anchors as they then were:
  *
- * The hands are only in the frame past about 36 degrees and the forearm is only
- * under its ratchet below about 30. There is no window. Raising the radius makes
- * the forearm worse, not better (0.32 m at 36 degrees reads 3965).
+ *                          third    first     over
+ *     tip from the chest    1.81 m   1.82 m    0.3%   <- the same weapon, always
+ *     tip from the feet     1.59     1.73      9.1%
+ *     tip along the aim     1.49     1.70     14.3%
+ *     standing stab, feet   2.05     2.25      9.3%
  *
- * And the forearm spike is not a discontinuity that could be smoothed away. At
- * the worst frame the HAND is turning at 2432 deg/s while its position moves at
- * 0.61 m/s — the hilt rolling over in place — and the forearm follows it,
- * because pronation follows the hand. The median over the same run is 217. So
- * the number is measuring how fast SaberController rolls the guard, which is
- * exactly what the wrist ratchet in tools/checks/viewmodel.mjs already says is
- * the outstanding fault: "the CONTROLLER placing the hands where a wrist could
- * actually hold that blade, which is a change to SaberController's guard model,
- * not to the rig."
+ * So the two views held the SAME weapon in two places, and the nine percent is
+ * the translation, not the blade. That is what one anchor fixes; the ratchet is
+ * a parity assertion on the envelope now rather than a bound on a parked pose.
  *
- * So: unifying the anchor is blocked on the guard model, and the guard model is
- * the prerequisite rather than the other way round. The sweep is committed so
- * nobody has to derive this twice.
+ * ── THE OLD NOTE ALSO SAID THE UNIFICATION WAS BLOCKED, AND ITS SWEEP IS WHY ─
  *
- * ── RISE 0.26 → 0.32, WHEN FIRST PERSON WENT ONE-HANDED ─────────────────
+ * The block was a third-person forearm at up to 5159 deg/s against the 2700
+ * ratchet in tools/checks/viewmodel.mjs, over a sweep that found no window
+ * between "the hands are in the frame" and "the forearm is under its bound".
+ * That sweep walked a 0.30 m offset round an ARC at fixed radius, on the
+ * reasoning that the radius "is how far in front of the body the weapon is and
+ * is not free". The radius is exactly what was free. Gridded on rise and
+ * forward independently, with the first-person framing, the third-person arm
+ * and the reach all read at once (tools/_unify.mjs --grid):
  *
- * The one-handed grip (see GRIP_AT.FP) slides the fist to the bottom of the
- * shaft, and at rise 0.26 that put NINE of the hilt's thirty-one sample points
- * off the bottom of the frame — the whole pommel section, and the fist with it
- * at 30.7 degrees below the view axis against a 26 degree bound. Sweeping rise
- * against fwd on the same bench tools/checks/first-person.mjs uses:
+ *     rise  fwd   hand   hilt  occ  frame    wrist   fore    reach 3/1
+ *                 <26°  31/31 <35%  >10%     <145  <2700
+ *     0.00  0.00   61.9   0/31 100%    —     140.0   2494    1.59/1.59
+ *     0.32  0.13   24.7  31/31  35%   42%    157.0   2332    1.65/1.70
+ *     0.32  0.16   23.2  31/31  32%   38%    160.3   2442    1.68/1.73
+ *     0.32  0.20   21.4  31/31  32%   34%    114.4   2487    1.72/1.77   <-
+ *     0.32  0.24   19.9  31/31  32%   31%    111.1   1581    1.76/1.81
  *
- *     rise   fwd    hilt on screen   behind the fist   handR down   reach ratio
- *     0.260  0.16      23/31              17%            30.7°        1.276
- *     0.308  0.16      29/31              34%            24.5°        1.289
- *     0.316  0.16      30/31              30%            25.3°        1.292
- *     0.320  0.16      31/31              32%            24.8°        1.293
- *     0.340  0.16      31/31              39%            20.5°        1.300
- *     0.320  0.13      30/31              30%            25.7°        1.287
- *     0.320  0.11      29/31              28%            27.9°        1.276
+ * The first row is the old third-person anchor, and its first four columns are
+ * what first person looks like from inside a chest: no hilt on screen at all.
+ * 0.13 fails on OCCLUSION — 35% of the hilt behind the player's own fist — and
+ * 0.13 and 0.16 both fail on a wrist past 145 degrees. 0.24 passes everything
+ * in that table and fails two things that are not in it, both the same fact:
+ * the arm cannot get there. `demand` in tools/checks/stature.mjs reads 0.97 of
+ * the arm's whole reach against a 0.95 bound, and the overhead's hand travel
+ * falls under its floor, because the two-bone IK straightens, points and stops
+ * short.
  *
- * Pulling `fwd` IN to pay for the rise does not work and the reason is worth
- * writing down: the frame is an ANGLE, so bringing the hilt nearer the lens
- * narrows the frame at the hilt's own depth faster than the lift raises it.
- * Every row with fwd reduced loses samples. The rise has to be bought.
+ * 0.32 / 0.20 is the window, and it is about four centimetres wide.
  *
- * WHAT IT COSTS is 1.5 cm of sword: the first/third reach ratio goes 1.276 to
- * 1.293 against the 1.30 ratchet in tools/checks/first-person.mjs, which is
- * NOT relaxed. The mechanism is that ratchet's own subject — `armMax` clamps
- * the hands to 0.78 m from the ANCHOR, so every centimetre the anchor leaves
- * the chest is a centimetre the tip can reach past third person's. The margin
- * is now 0.7% and the next person who wants to move this anchor has to unify
- * it first; that is the whole content of the note above.
+ * THE WRIST COLUMN IS BISTABLE AND THAT IS WHY THE WINDOW HAS AN EDGE RATHER
+ * THAN A SLOPE. 114 and 157 are not two points on a curve: they are the fist
+ * ending up on one side of the shaft or the other early in the run and every
+ * frame after it following. Swept over six mouse sweeps instead of the
+ * ratchet's one, the worst is 2564 / 160.3 at fwd 0.16 and 8959 / 171.1 on the
+ * old chest anchor, so both basins exist at every anchor and what the grid
+ * above reports is which one the ratchet's own sweep lands in. It is the bench
+ * the bound is written against, so it is the one this is chosen on — and the
+ * next person to move this number should re-read the whole column rather than
+ * interpolating it.
+ *
+ * WHAT IT COSTS is reach, in both views at once, which is the honest way to pay
+ * for it: on the ground plane the third-person player goes 1.59 m to 1.72 and
+ * the first-person player 1.73 to 1.77, so the two agree to 3% and the fight
+ * gets 8% more third-person reach. See tools/balance.mjs, which measures the
+ * blade from this anchor now instead of from a chest the game stopped using,
+ * and `--anchor=0,0` there for the before.
+ *
+ * WHAT IT DOES NOT COST is the arm, which is the part the old note could not
+ * see through its own sweep's noise. Both ratchets in tools/checks/viewmodel.mjs
+ * come out BETTER than they went in — the forearm 2548 -> 2487 deg/s and the
+ * wrist 140.0 -> 114.4, the latter being the largest single step that number
+ * has taken since it was 179.7. Some of that is FOREARM, which repairs a
+ * degeneracy that was live on the chest anchor too; most of it is that a hand
+ * carried in front of the body is a hand a wrist can hold a sword with.
+ *
+ * ── RISE 0.32, AND WHY IT IS NOT LOWER ─────────────────────────────────────
+ *
+ * The one-handed first-person grip (see GRIP_AT.FP) slides the fist to the
+ * bottom of the shaft, and at rise 0.26 that put NINE of the hilt's thirty-one
+ * sample points off the bottom of the frame — the whole pommel section, and the
+ * fist with it at 30.7 degrees below the view axis against a 26 degree bound.
+ * Measured on the bench tools/checks/first-person.mjs uses, at fwd 0.16:
+ *
+ *     rise    hilt on screen   behind the fist   handR down
+ *     0.260      23/31              17%            30.7°
+ *     0.308      29/31              34%            24.5°
+ *     0.320      31/31              32%            24.8°
+ *     0.340      31/31              39%            20.5°
+ *
+ * Pulling `fwd` IN to pay for the rise does not work, and the reason is worth
+ * keeping: the frame is an ANGLE, so bringing the hilt nearer the lens narrows
+ * the frame at the hilt's own depth faster than the lift raises it. Every row
+ * with fwd reduced loses samples. Pushing it OUT is what the grid above does,
+ * and it helps the framing as well as the arm.
  */
-const HILT = { rise: 0.32, fwd: 0.16 };
-/** Exported so tools/_anchor.mjs can sweep it. */
+const HILT = { rise: 0.32, fwd: 0.20 };
+/** Exported so tools/_anchor.mjs and tools/_unify.mjs can sweep it. */
 export const HILT_ANCHOR = HILT;
 
 /**
@@ -679,33 +710,24 @@ export const GRIP_BORE = new THREE.Vector3(0, 0.065, 0.030);
  * Scaled here rather than at the call site because every caller has the same
  * problem and only one of them had noticed it.
  */
-export function handPoseOnHilt(side, hiltQuat, toward, outQuat, outWrist, handScale = 1, hold = null) {
+export function handPoseOnHilt(side, hiltQuat, toward, outQuat, outWrist, handScale = 1) {
   const L = side === 'L';
   const bore = _hp1.set(0, 1, 0).applyQuaternion(hiltQuat);      // the blade
   const x = _hp2.copy(bore).multiplyScalar(L ? 1 : -1);          // thumb to the emitter
-  // The REFERENCE frame — the hilt's own, turned a quarter — shares this X axis
-  // exactly (GRIP_ROLL_R carries x̂ onto −ŷ and GRIP_ROLL_L onto +ŷ). So does
-  // every frame below it, which is the point: once the bore is forced, the only
-  // freedom left is ONE SIGNED ANGLE about the shaft, and an angle is a thing
-  // that can be held, unwrapped and rate-limited. A quaternion is not.
-  _hpQ.copy(hiltQuat).multiply(L ? GRIP_ROLL_L : GRIP_ROLL_R);
-  const refY = _hp5.set(0, 1, 0).applyQuaternion(_hpQ);
-  let w = 0, phi = hold ? hold.roll : 0;
+  let ok = false;
   if (toward) {
-    _hp3.copy(toward).normalize();
-    _hp3.addScaledVector(bore, -_hp3.dot(bore));                 // across the blade
-    // |perp| IS sin(the angle between the arm and the blade), because `toward`
-    // was normalised first. See GRIP_STABLE.
-    w = smoothstep(0, GRIP_STABLE.cone, _hp3.length());
+    _hp3.copy(toward).addScaledVector(bore, -toward.dot(bore));  // across the blade
+    ok = _hp3.lengthSq() > 1e-6;
   }
-  if (w > 0) {
+  if (ok) {
     const y = _hp3.normalize().applyAxisAngle(x, GRIP_TWIST);
-    let d = Math.atan2(_hp4.crossVectors(refY, y).dot(x), refY.dot(y)) - phi;
-    d = ((d % TAU) + TAU + Math.PI) % TAU - Math.PI;              // shortest way round
-    phi += w * (hold ? clamp(d, -hold.step, hold.step) : d);
+    const z = _hp4.crossVectors(x, y).normalize();
+    _hpM.makeBasis(x, y, z);
+    outQuat.setFromRotationMatrix(_hpM);
+  } else {
+    // no arm to ask: the hilt's own frame, turned a quarter
+    outQuat.copy(hiltQuat).multiply(L ? GRIP_ROLL_L : GRIP_ROLL_R);
   }
-  if (hold) hold.roll = phi;
-  outQuat.setFromAxisAngle(x, phi).multiply(_hpQ);
   if (outWrist) {
     outWrist.copy(GRIP_BORE).multiplyScalar(handScale).applyQuaternion(outQuat).negate();
   }
@@ -714,48 +736,85 @@ export function handPoseOnHilt(side, hiltQuat, toward, outQuat, outWrist, handSc
 
 const _hp1 = new THREE.Vector3(), _hp2 = new THREE.Vector3();
 const _hp3 = new THREE.Vector3(), _hp4 = new THREE.Vector3();
-const _hp5 = new THREE.Vector3();
-const _hpQ = new THREE.Quaternion();
+const _hpM = new THREE.Matrix4();
 
 /**
- * HOW CLOSE THE ARM MAY COME TO LYING ALONG THE BLADE BEFORE THE FREE AXIS
- * STOPS BEING A DIRECTION — as the sine of that angle.
- *
- * `toward` decides where round the hilt the fist sits, and it does it through
- * the component of the arm's direction that is ACROSS the blade. When the arm
- * arrives along the blade — a straight-armed thrust, which is a pose a fencer
- * actually holds — that component vanishes, the residue's azimuth is decided by
- * whatever noise is left, and the hand spins about the shaft between one frame
- * and the next. That is not a hypothetical: with the anchor unified the arm and
- * the blade come within 3.0 degrees of collinear at the worst frame of the
- * viewmodel bench and the forearm turned at 9454 deg/s through it, against
- * 2548 with the old chest anchor whose closest approach was 17.9 degrees.
- *
- * Inside this cone the solve is faded onto the hilt's OWN frame, which is
- * defined for every hilt orientation and turns smoothly with it. The fade goes
- * to zero exactly where the direction goes undefined, so the result is
- * continuous through the singularity rather than merely bounded near it.
- *
- * 12 degrees is measured, not chosen — it has to be wide enough to cover the
- * pose and narrow enough not to touch the sweep GRIP_TWIST was fitted against.
- * Driven through the real rig on the same mouse-driven slash, worst forearm and
- * worst wrist over the whole run, unified anchor first and the old chest anchor
- * second:
- *
- *     cone      unified            chest (the ratchet's own bench)
- *      off    9454 / 140.5         2548 / 140.0
- *       8°    5108 / 140.5         2548 / 140.0
- *      12°    1592 / 140.5         2548 / 140.0
- *      18°    1119 / 140.6         2548 / 140.0
- *      25°     958 / 140.6         2415 / 140.0
- *
- * The old anchor is untouched up to 18 degrees, which is what says this is a
- * repair of a degeneracy and not a second tuning knob laid over the first.
- *
- * An object rather than a bare constant for the same reason FP_TUNE is one: so
- * tools/_unify.mjs can sweep it without an edit. The table above is its output.
+ * Scratch for _rollForearm's twist alone. It runs inside the arm solve, which
+ * is already holding _v10.._v12Q and _q4/_q5, so it may borrow none of them.
  */
-export const GRIP_STABLE = { cone: Math.sin(12 * Math.PI / 180), pronate: 18 };
+const _fv1 = new THREE.Vector3(), _fv2 = new THREE.Vector3(), _fv3 = new THREE.Vector3();
+const _fq1 = new THREE.Quaternion();
+
+/**
+ * WHAT KEEPS THE FOREARM FROM SPINNING, and why it is one angle and not a
+ * quaternion.
+ *
+ * `_rollForearm` takes the forearm pose the WRIST wants — the one that leaves
+ * the hand at its own rest — and swings it onto the direction `solveIK` chose.
+ * `setFromUnitVectors` is the minimal rotation between two directions and there
+ * is no minimal rotation between ANTIPARALLEL ones: every axis perpendicular to
+ * the bone turns one onto the other through 180 degrees, and three.js picks by
+ * a fixed rule that flips as the pair crosses over. The pair is "the forearm
+ * the wrist wants" against "the forearm the IK chose", so the singularity is a
+ * wrist folded all the way back — and the ratchet in tools/checks/viewmodel.mjs
+ * has been carrying that wrist at 140 degrees from rest for its whole life, a
+ * hand's width from the flip.
+ *
+ * `rate`  is the cure. Once the direction is fixed the only freedom left is ONE
+ *         SIGNED ANGLE about it, so carry the angle instead of rebuilding a
+ *         quaternion from nothing: the reference is last frame's forearm swung
+ *         onto today's direction — a swing of a few degrees, never degenerate —
+ *         and the twist is measured off that and limited to what a forearm can
+ *         actually pronate at. 40 rad/s is 2292 deg/s, which is at the top of
+ *         what a human forearm does and an order under what the rig was asking.
+ * `cone`  fades the target out where it stops being a direction at all, as the
+ *         sine of the angle from antiparallel. Measured, it is worth NOTHING on
+ *         top of the rate: `--robust` reads 2564 / 160.3 with both and 2564 /
+ *         160.3 with the rate alone, to the digit. It is kept anyway, and that
+ *         is a deliberate choice rather than an oversight — the rate limit only
+ *         BOUNDS the flip, and this is the statement that is true about the
+ *         geometry: a direction that does not exist cannot be followed. Delete
+ *         it the day something measures it costing more than it says.
+ *
+ * MEASURED on the same mouse-driven slash the ratchet runs, worst forearm deg/s
+ * and worst wrist degrees from rest, at the anchor as it ships and at the two
+ * nearest anchors either side of it (tools/_unify.mjs --rate):
+ *
+ *     rate     fwd 0.16        fwd 0.20 (ships)     fwd 0.22
+ *      off    9454 / 140.5      2883 / 114.4      1987 / 112.7
+ *       60    3535 / 154.9      2883 / 114.4      1987 / 112.7
+ *       50    2983 / 157.5      2883 / 114.4      1987 / 112.7
+ *       45    2711 / 158.9      2751 / 114.4      1987 / 112.7
+ *       40    2442 / 160.3      2487 / 114.4  <-  1987 / 112.7
+ *       30    1917 / 163.2      1976 / 114.4      1890 / 112.7
+ *
+ * On the shipped anchor the rate buys 2883 -> 2487 deg/s and the wrist does not
+ * move at all. On the anchor four centimetres nearer the body it buys 9454 ->
+ * 2442 and the wrist goes 140.5 -> 160.3, which is the trade to know about:
+ * the twist the blade demands has to sit in the forearm or in the wrist, and
+ * where the pose is bad enough, taking it off one puts it on the other. The
+ * shipped anchor is the one where it does not have to.
+ *
+ * AND THE BENCH IS ONE SAMPLE OF A SINGULARITY. Six sweeps of different
+ * amplitude and period rather than the ratchet's one (`--robust`), worst of all
+ * six, with this repair and without it:
+ *
+ *     anchor          with         without
+ *     chest        8959 / 171.1   10723 / 169.5
+ *     0.32 / 0.16  2564 / 160.3    9454 / 154.4
+ *     0.32 / 0.24  2639 / 164.2   10361 / 149.1
+ *
+ * So the fault this repairs was live before the anchor moved — 10723 deg/s on
+ * the shipped tree, on a sweep the ratchet does not run — it is simply not
+ * reached by the bench that watches for it, and it is four times smaller now.
+ * The wrist column is the outstanding one and it is not this method's to fix;
+ * see the ratchet's own note, which has said since it was written that the cure
+ * is the CONTROLLER putting the hands where a wrist could hold that blade.
+ *
+ * An object rather than two bare constants for the same reason FP_TUNE is one:
+ * so tools/_unify.mjs can sweep them without an edit. The tables are its output.
+ */
+export const FOREARM = { cone: Math.sin(12 * Math.PI / 180), rate: 40 };
 
 /**
  * HOW FAST A FIST CAN ROLL ROUND THE SHAFT, in radians per second.
@@ -2094,9 +2153,9 @@ export class Player {
      * IN a fist, and `buildHand` is called with the body scale — see
      * Saber.setGripScale for the measurement and for why it shrinks at all. */
     this.saber.setGripScale?.(this.limbs.torso);
-    /** Where each fist sits round the shaft, in radians off the hilt's own
-     *  frame, carried between frames. See handPoseOnHilt and GRIP_STABLE. */
-    this._gripRoll = { R: { roll: 0, step: 1 }, L: { roll: 0, step: 1 } };
+    /** …and the same for each forearm's own twist. See _rollForearm. */
+    this._foreRoll = { foreR: { q: new THREE.Quaternion(), have: false },
+      foreL: { q: new THREE.Quaternion(), have: false } };
     this.control = new SaberController({
       sensitivity: opts.sensitivity ?? 1,
       followStrength: opts.followStrength ?? 0,
@@ -2251,6 +2310,9 @@ export class Player {
      * what the rest of the game aims at. See _updateBlade.
      */
     this.gripAnchor = new THREE.Vector3();
+    /** Where the arms hang from: the chest plus the trunk's own attack travel.
+     *  See the armMax clamp in SaberController.solveTargets. */
+    this.armRoot = new THREE.Vector3();
     this.headPos = new THREE.Vector3();
     this._prevChest = new THREE.Vector3();
     this.aimDir = new THREE.Vector3(0, 0, -1);
@@ -3329,11 +3391,13 @@ export class Player {
      * views park the blade, not how far either can reach. The two numbers are
      * both real; only one of them is the sword's length.)
      *
-     * Giving third person the same offset makes those three rows agree to 1%,
-     * and what it costs is that the third-person figure now holds its sword
-     * 12 cm above and 14 cm in front of its own sternum instead of 20 cm below
-     * it — which is where a held sword goes, and is the pose the first-person
-     * view has been using all along.
+     * Giving both views one offset makes those three rows agree to 3%, and what
+     * it costs is that the third-person figure now holds its sword 12 cm above
+     * and 18 cm in front of its own sternum instead of 20 cm below and 2 cm
+     * behind it — which is where a held sword goes, and is very nearly the pose
+     * the first-person view has been using all along. The offset that lands in
+     * the window is 0.32 / 0.20 rather than first person's old 0.32 / 0.16;
+     * HILT's own note has the grid and the four bounds it is threading.
      *
      * `HILT` takes the arm's scale like every other chest-to-hand length. A
      * human's is exactly 1 (`limbScale` divides the reference figure's arm by
@@ -3356,6 +3420,11 @@ export class Player {
      * layered over a blade that is somewhere else. See _attackDrive. */
     this._attackDrive(dt);
     this.gripAnchor.add(this.attack.shift);
+    /* WHERE THE ARMS HANG FROM — the chest, plus whatever the trunk has
+     * committed to the attack. It is the anchor minus HILT, and the two are
+     * different points now: one is the weapon's, one is the body's. See the
+     * armMax clamp in SaberController.solveTargets. */
+    this.armRoot.copy(this.chest).add(this.attack.shift);
 
     // The tier's scale on the parry window. Set unconditionally, unlike assist:
     // Grandmaster has assist 0 and still declares the tightest window in the
@@ -3373,6 +3442,14 @@ export class Player {
     } else this.control.assist = 0;
 
     this.control.update(dt, this.gripAnchor, this.camera.aimQuat, {
+      /* WHERE THE BODY IS, as distinct from where the weapon hangs. The guard
+       * VOLUME is a rose centred on the thing bolts are aimed at; the anchor
+       * above it is where the blade is solved from. They were one argument
+       * until the anchor was unified and left the sternum — see _publishGuard. */
+      body: this.chest,
+      /* …and where the ARMS hang from, which is the chest plus the trunk's own
+       * commitment to an attack. `body` is a target, `trunk` is a shoulder. */
+      trunk: this.armRoot,
       stamina: this.stamina / this.maxStamina,
       flow: this.flow,
       riposte: this.riposteTimer > 0,
@@ -3698,7 +3775,7 @@ export class Player {
    * hand's. Pronation is a forearm motion; this is the bone that should be
    * doing it.
    */
-  _rollForearm(foreName, handName, handQuat) {
+  _rollForearm(foreName, handName, handQuat, dt = 1 / 60) {
     const bone = this.rig.get(foreName);
     const hand = this.rig.get(handName);
     if (!bone || !bone.obj.parent || !hand) return;
@@ -3726,6 +3803,47 @@ export class Player {
     _q5.copy(handQuat).multiply(_v12Q.copy(hand.restQuat).invert());
     const y = _v11.set(0, 1, 0).applyQuaternion(_q5);
     _q4.setFromUnitVectors(y, dir).multiply(_q5);
+
+    /**
+     * …AND THE SWING HAS A SINGULARITY OF ITS OWN, WHICH IS THE SECOND HALF.
+     *
+     * `setFromUnitVectors(y, dir)` is the minimal rotation carrying one
+     * direction onto another, and when the two are ANTIPARALLEL there is no
+     * minimal rotation: every axis perpendicular to `dir` turns y onto dir
+     * through 180 degrees, and three.js picks one by a fixed rule that flips as
+     * y crosses over. y is the forearm the WRIST wants and dir is the forearm
+     * the IK chose, so y ≈ −dir is a wrist folded all the way back — which is
+     * exactly the pose the ratchet in tools/checks/viewmodel.mjs has been
+     * carrying forward at 140 degrees from rest, a hand's width from the flip.
+     *
+     * Measured on the same bench, over six mouse sweeps rather than the one the
+     * ratchet runs, the forearm reaches 10723 deg/s on the CHEST anchor with
+     * everything else as it shipped. That is not this pass's doing and it is
+     * not reached by the bench; it is a live fault the bench happens to miss.
+     *
+     * The cure and its two numbers are FOREARM, and the note over it carries
+     * the measurement: carry the ANGLE rather than rebuild the quaternion, take
+     * the reference from last frame's forearm swung onto today's direction, and
+     * limit how fast it may turn.
+     */
+    const st = this._foreRoll[foreName];
+    if (st.have) {
+      // last frame's pose, re-aimed at today's direction: the reference frame
+      _fq1.setFromUnitVectors(_fv1.set(0, 1, 0).applyQuaternion(st.q), dir).multiply(st.q);
+      // how far round `dir` the ideal sits from it
+      _fv1.set(1, 0, 0).applyQuaternion(_fq1);
+      _fv2.set(1, 0, 0).applyQuaternion(_q4);
+      let phi = Math.atan2(_fv3.crossVectors(_fv1, _fv2).dot(dir), _fv1.dot(_fv2));
+      // …and how well defined it is. Only the antiparallel end is degenerate:
+      // y ≈ +dir is the identity swing and perfectly well behaved.
+      const c = y.dot(dir);
+      const w = c >= 0 ? 1
+        : smoothstep(0, FOREARM.cone, Math.sqrt(Math.max(0, 1 - c * c)));
+      const step = FOREARM.rate * dt;
+      _q4.setFromAxisAngle(dir, clamp(w * phi, -step, step)).multiply(_fq1);
+    }
+    st.q.copy(_q4); st.have = true;
+
     bone.obj.parent.getWorldQuaternion(_v12Q);
     bone.obj.quaternion.copy(_v12Q.invert()).multiply(_q4);
     bone.obj.updateMatrixWorld(true);
@@ -3799,6 +3917,17 @@ export class Player {
      * so an idle third-person figure is the same figure it was.
      */
     if (!this.camera.firstPerson) {
+      /**
+       * (While here: the Y term below is INERT, and nothing in the tree knew.
+       * Measured on the real rig, 0.25 rad about a clavicle's local axes moves
+       * the shoulder JOINT: X carries it 22 mm FORWARD, Z carries it 32 mm UP,
+       * and Y moves it 0.000 m in every direction because Y runs ALONG the
+       * bone. So `CLAV_YAW` has never moved anything, and the note over it has
+       * the two live axes the wrong way round — it is X that protracts and Z
+       * that elevates, not the other way about. Left in place rather than
+       * deleted: removing it changes nothing that can be measured, and the
+       * attack's read is somebody's next measurement rather than this one's.)
+       */
       const drive = A.over * CLAV_OVER + A.lunge * CLAV_LUNGE;
       for (const [name, side] of CLAV_DRIVE) {
         const b = rig.get(name);
@@ -3952,11 +4081,7 @@ export class Player {
       } else {
         _v10.subVectors(gripR, rig.worldPos('armR', _v9));
       }
-      /* THE ROLL IS CARRIED, not recomputed from nothing every frame — see
-       * GRIP_STABLE. `_gripRoll` is where the one free angle
-       * lives between frames; the step is what a forearm can pronate in one. */
-      this._gripRoll.R.step = GRIP_STABLE.pronate * dt;
-      handPoseOnHilt('R', _q1, _v10, _q2, _v9, hs, this._gripRoll.R);
+      handPoseOnHilt('R', _q1, _v10, _q2, _v9, hs);
       const wristR = _v7.copy(gripR).add(_v9);
       /* The off hand takes the SAME free axis in first person, mirrored: the
        * whole reason the shipped one-hand solve reads as an icepick is that
@@ -3966,8 +4091,7 @@ export class Player {
        * reaching over the top. */
       if (fp) _v10.set(-FP_GRIP_SIDE, 1, 0).normalize().applyQuaternion(this.camera.aimQuat);
       else _v10.subVectors(gripL, rig.worldPos('armL', _v9));
-      this._gripRoll.L.step = GRIP_STABLE.pronate * dt;
-      handPoseOnHilt('L', _q1, _v10, _q3, _v9, hs, this._gripRoll.L);
+      handPoseOnHilt('L', _q1, _v10, _q3, _v9, hs);
       const wristL = _v8.copy(gripL).add(_v9);
       const fwd = _v4.set(0, 0, -1).applyQuaternion(this.camera.aimQuat);
       const right = _v5.set(1, 0, 0).applyQuaternion(this.camera.aimQuat);
@@ -3988,12 +4112,12 @@ export class Player {
       const poleR = _v6.copy(chest).addScaledVector(right, 0.75 * A + side)
         .addScaledVector(UP, -0.75 * A + lift).addScaledVector(fwd, -0.2 * A);
       rig.solveIK('armR', 'foreR', wristR, poleR);
-      this._rollForearm('foreR', 'handR', _q2);
+      this._rollForearm('foreR', 'handR', _q2, dt);
       if (twoHanded) {
         const poleL = _v6.copy(chest).addScaledVector(right, -0.62 * A + side)
           .addScaledVector(UP, -0.8 * A + lift).addScaledVector(fwd, -0.2 * A);
         rig.solveIK('armL', 'foreL', wristL, poleL);
-        this._rollForearm('foreL', 'handL', _q3);
+        this._rollForearm('foreL', 'handL', _q3, dt);
       } else {
         // handL's local quaternion is force-set while two-handed; nothing put it
         // back, so switching to one hand left it frozen 167 degrees off rest.
@@ -6587,6 +6711,11 @@ export class Player {
   }
 
   respawn(pos) {
+    /* THE FOREARM'S CARRIED TWIST IS RUN STATE. It is the previous frame's
+     * pose, and after a respawn there is no previous frame — leaving it set
+     * makes FOREARM.rate spend a fifth of a second walking the arm back from
+     * wherever the corpse left it. See _rollForearm. */
+    this._foreRoll.foreR.have = false; this._foreRoll.foreL.have = false;
     this.alive = true;
     /* Everything die() took over comes back here, and it has to be here rather
      * than on the death card: co-op's revive puts a player back on their feet
