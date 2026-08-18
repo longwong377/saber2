@@ -1167,6 +1167,12 @@ function works(world, opts = {}) {
    * defaults are byte-for-byte the room this was authored for. */
   const R = opts.r ?? 66;
   const SHELL = opts.shell ?? 94;
+  /* WHERE THE GANTRIES STAND, for the same reason `r` and `shell` are
+   * arguments: a run that lies down the length of the room has to land on the
+   * room's FLOOR, and the works' floor is a flat square while the Providence's
+   * is not. `[z, length, height]`, and the default is the two the foundry was
+   * authored with. See the note over the loop for the measurement. */
+  const gantries = opts.gantries ?? [[-18, 30, 5.2], [24, 24, 4.4]];
   const lamp = opts.lampColor ?? 0xffb04a;
   const hot = !!opts.hot;
   /**
@@ -1416,10 +1422,35 @@ function works(world, opts = {}) {
    * nothing to climb it with (see the ladder in `addGantry`). So every deck in
    * the game was furniture: you could see it, you could never stand on it, and
    * nothing spawned up there either. At 5.2 the deck is 0.8 m inside the jump,
-   * which is the margin that makes it a place you go rather than a trick. */
+   * which is the margin that makes it a place you go rather than a trick.
+   *
+   * YAW 0, AND IT WAS π/2, WHICH TURNED ALL FOUR OF THEM ACROSS THE ROOM.
+   * `addGantry` builds its deck as `slab(deckM, W, 0.14, L, …)` and steps its
+   * trestle bays along z, so its unrotated long axis is Z; `kitOpen` pushes
+   * `yaw` onto the kit frame and π/2 puts that on X. Measured through
+   * `prop-seating`'s survey: each deck's plan extent was 32.7 × 4.8 m and
+   * 26.7 × 4.5 m running ACROSS the beam, and the pair at each side — both
+   * centred on x = ±(R−16) — projected one inside the other, which is not two
+   * gantries down a wall in any reading. They are 4.8 × 32.7 and 4.5 × 26.7
+   * along z now, and the pair reads as one run down the side with a gap in it.
+   *
+   * WHICH IS WHY THE STATIONS MOVED WITH THE YAW. Across the beam the whole
+   * length of a gantry sat on one z, so the ground under it was whatever was
+   * at that z; along it, a 30 m deck spans 30 m of ground and this deck has
+   * things in it. Measured on the Providence at x = ±36 against its own
+   * heightfield: the bulkhead ridge stands 9.6 m over the plate from z = −40
+   * to −28, and the aft gantry — 30 m centred at −18, so reaching z = −33 —
+   * came out seated −9.32 m, i.e. buried nine metres in it. The launch trench
+   * takes another 1.6 m out of the deck from z = −8 to +4. What is left at
+   * that station is plate from z = −26 to −10 and from +8 to +32, so the
+   * warship's own call names a 16 m run in the first and a 24 m run in the
+   * second, and nothing stands in a wall or over a trench. */
   for (const side of [-1, 1]) {
-    addGantry(world, at(side * (R - 16), -18), { length: 30, height: 5.2, yaw: Math.PI / 2, seed: seed + 300 + side, lights: opts.lights !== false });
-    addGantry(world, at(side * (R - 16), 24), { length: 24, height: 4.4, yaw: Math.PI / 2, seed: seed + 310 + side, lights: opts.lights !== false });
+    for (let k = 0; k < gantries.length; k++) {
+      const [gz, len, h] = gantries[k];
+      addGantry(world, at(side * (R - 16), gz), { length: len, height: h, yaw: 0,
+        seed: seed + 300 + k * 10 + side, lights: opts.lights !== false });
+    }
     addCableRun(world, at(side * (R - 3), -30, 8.2), at(side * (R - 3), 26, 7.2), { seed: seed + 320 + side, sag: 1.5 });
   }
 
@@ -1481,136 +1512,6 @@ function works(world, opts = {}) {
 
   if (opts.banner) world.notify(opts.banner, opts.note || '');
   return bays;
-}
-
-/**
- * THE CUT — the excavation under the works, and the last two rungs of the
- * descent.
- *
- * It is dressed to be READ IN THE DARK, which is a different job from the
- * floors above. Nothing here is small: what a player carrying the only light
- * source in the room can actually see is a silhouette at four metres, so the
- * vocabulary is pit props, spoil heaps, rock and the abandoned end of the
- * machinery — big shapes with a clear outline and nothing that depends on
- * being able to make out detail.
- */
-function cut(world, opts = {}) {
-  const T = world.terrain;
-  const M = propMaterials();
-  const seed = opts.seed ?? 8700;
-  const V = (x, y, z) => new THREE.Vector3(x, y, z);
-  const at = (x, z, dy = 0) => V(x, T.height(x, z) + dy, z);
-  const wet = world.level?.water?.level ?? 0.30;
-
-  /* The BACK of the cut. Rock rather than plate, and lower than the works'
-   * roof — a heading follows the seam and the seam is not a storey high. */
-  roof(world, { height: 13.0, half: 76, mat: M.stone, beams: false, thickness: 2.4 });
-
-  /* ── The face. Rock left standing where the cut stopped, all round the
-   * room, with its own talus banked at the foot of it. */
-  for (let k = 0; k < 15; k++) {
-    const site = findSite(world, 30, 74, { angle: (k / 7) * TAU + rng() * 0.6, clearance: 12, maxSlope: 0.62 });
-    if (!site) continue;
-    addOutcrop(world, site.pos, { size: 4.5 + rng() * 4, height: 7 + rng() * 8, seed: seed + 100 + k, mat: M.stone });
-    addScree(world, at(site.pos.x + (rng() - 0.5) * 8, site.pos.z + (rng() - 0.5) * 8),
-      { radius: 11, count: 120, seed: seed + 120 + k, mat: M.stone, field: stoneField(world, seed) });
-  }
-  for (let k = 0; k < 10; k++) {
-    const site = findSite(world, 14, 70, { clearance: 8, maxSlope: 0.7 });
-    if (site) addBoulderCluster(world, site.pos, { radius: 8, count: 12, size: 1.6, seed: seed + 200 + k, mat: M.stone });
-  }
-
-  /* ── PIT PROPS on the bay grid. Timbering is the one thing in a cut that IS
-   * on a grid — it is holding the roof up, and it was set out by somebody with
-   * a rule — so it is the only regular thing in an otherwise broken room, and
-   * that contrast is what says "this was a mine and not a cave". */
-  bay(world, {
-    nx: 5, nz: 5, pitch: 26, jitter: 6, skip: 0.16,
-    clearance: 9, spawnClear: 11, maxSlope: 0.34, minHeight: wet + 0.2,
-  }, (pos, i, j, r) => {
-    const s = seed + 300 + i * 11 + j;
-    if (r < 0.55) {
-      island(world, pos.clone(), { seed: s, yaw: rng() * TAU, span: 12, maker: 'timbering' },
-        (kit, local) => {
-          for (const sx of [-1, 1]) {
-            addStanchion(world, local(sx * 4.6, 0), {
-              kit, height: 6.5 + rng() * 2.5, width: 0.7, mat: M.wood,
-              lamp: sx > 0 && r < 0.25, light: sx > 0 && r < 0.25,
-              color: 0xffc06a, intensity: 9, distance: 15, seed: s + sx,
-            });
-          }
-          kit.slab(M.wood, 10.2, 0.55, 0.75, 0, 7.4, 0, { tile: 2.4, seg: 3, collide: false });
-        });
-    } else {
-      // the abandoned end of the plant, left standing where it stopped
-      island(world, pos.clone(), { seed: s, yaw: rng() * TAU, span: 12, maker: 'derelict' },
-        (kit, local) => {
-          addMachine(world, local(-2.4, 0), { kit, width: 4.0, height: 2.8, depth: 2.4, seed: s + 3, mat: M.rust, glowMat: M.duracreteDark });
-          addCrateStack(world, local(3.4, 1.8), { kit, tiers: 2, columns: 2, seed: s + 4 });
-        });
-    }
-  });
-
-  /* ── The spoil. Where the rock came out and was never taken away: three
-   * heaps, each one a landmark you can find your way by in the dark. */
-  for (let k = 0; k < 3; k++) {
-    const site = findSite(world, 26, 62, { angle: 0.6 + k * 2.1, clearance: 18, maxSlope: 0.3, tries: 22 });
-    if (!site) continue;
-    addOutcrop(world, site.pos, { size: 8 + rng() * 4, height: 10 + rng() * 5, seed: seed + 400 + k, mat: M.stone });
-    /* Through the level's own stone field, like every other loose grade here.
-     * `ground-cover.mjs` measures the mean cover UNDER a stone against the
-     * level's own mean, and a spoil heap dropped as a plain disc is exactly the
-     * uniform sprinkle that test exists to catch — measured, the three heaps
-     * and the islands' local rubble alone put the cut's stones on ground 4
-     * points MORE covered than the level average. */
-    addScree(world, site.pos, { radius: 20, count: 420, size: 0.62, seed: seed + 410 + k,
-      mat: M.stone, field: stoneField(world, seed) });
-  }
-
-  /* ── The way the ore left: a conveyor gantry running the length of the cut,
-   * still standing, still empty. 5.2 and 4.4, not 7.2 and 6.2 — a deck the
-   * player cannot reach is scenery, and the measured ceiling of a full double
-   * Force jump is 6.18 m. The note over the works' own gantries has the whole
-   * measurement. */
-  addGantry(world, at(-30, -40), { length: 40, height: 5.2, yaw: 0.3, seed: seed + 500, lights: false });
-  addGantry(world, at(28, 34), { length: 32, height: 4.4, yaw: 2.1, seed: seed + 510, lights: false });
-  addPipeRun(world, [at(-52, -10, 5.5), at(-18, -6, 6.2), at(16, 4, 6.0), at(48, 12, 5.2)],
-    { count: 3, radius: 0.16, seed: seed + 520 });
-
-  /* ── Four worklights, and there are FOUR of them on purpose. This is a room
-   * lit by what somebody forgot to switch off; a fifth would start to be
-   * lighting rather than evidence. On the last rung the run's own air takes
-   * them down to almost nothing anyway — see Run.js. */
-  for (let k = 0; k < 4; k++) {
-    const a = 0.9 + k * 1.6, r = 26 + (k % 2) * 16;
-    const p = at(Math.cos(a) * r, Math.sin(a) * r);
-    addLamp(world, p, { height: 5.6, seed: seed + 600 + k, light: true, color: 0xffc478, intensity: 20, distance: 26 });
-  }
-
-  /* ── The floor of a flooded cut: silt, and everything that has fallen into
-   * it since. */
-  strewGround(world, { seed: seed + 700, radius: 74, spread: 0.34, mat: M.stone,
-    landmarks: 1.2, boulders: 1.2, cobble: 1.4 });
-  /* WHAT WAS LEFT LYING ON THE FLOOR — and until the water line was fixed,
-   * almost none of it arrived. `minHeight: wet + 0.3` is the right gate (a
-   * crate does not sit in a sump) but it was being asked against a sheet at
-   * +0.30 over a floor whose median is -1.09, so it rejected 92% of the room
-   * and this level shipped with nothing loose on it at all. Measured by
-   * sliceable.mjs once its own survey started attaching `world.level`: 4
-   * reachable crate-sized objects on the whole level, none of them cuttable.
-   * 18, because a working floor that was walked away from has drums and boxes
-   * on it, and because they are the only things down here a blade can take
-   * apart. */
-  for (let k = 0; k < 18; k++) {
-    const site = findSite(world, 12, 70, { clearance: 3.2, maxSlope: 0.32, minHeight: wet + 0.3, tries: 18 });
-    if (site) if (rng() < 0.4) makeBarrel(world, site.pos); else makeCrate(world, site.pos, 0.8);
-  }
-  for (let k = 0; k < 5; k++) {
-    const site = findSite(world, 16, 68, { clearance: 7, maxSlope: 0.4 });
-    if (site) addDebrisField(world, site.pos, { radius: 8, seed: seed + 800 + k, count: 20 });
-  }
-  world.notify('THE CUT', 'bring your own light');
-  return 12;
 }
 
 /**
@@ -4172,12 +4073,71 @@ LEVELS.hangar = {
       }
     }
 
-    /* A gantry down each long wall at a height the player's own double jump
-     * reaches — 5.2 m, which is the number `works` derives and states. */
+    /**
+     * A gantry down each long wall at a height the player's own double jump
+     * reaches — 5.2 m, which is the number `works` derives and states.
+     *
+     * YAW 0, AND IT WAS π/2, WHICH RAN BOTH OF THEM ACROSS THE BAY.
+     * `addGantry` lays its deck as `slab(deckM, W, 0.14, L, …)` and steps its
+     * trestle bays along z, so its unrotated long axis is Z and `kitOpen`'s
+     * `kit.push(0, 0, 0, yaw)` turns that onto X at π/2. Measured through
+     * `prop-seating`'s survey rather than read off the source: the deck's plan
+     * extent was 36.7 × 4.8 m, running x = 37.7 → 74.3 — from the middle of the
+     * deck to the wall — and it is 4.8 × 36.7 now. The long walls of this bay
+     * run along z: the lamp rank below is x = ±68 from z = −64 to +64, and the
+     * mouth is at +z, so z is the length of the room by construction.
+     *
+     * ±60 AND NOT ±56, because a walkway is not a place for a rack to stand up
+     * through. The bay grid's outermost column is at x = ±55 with 5 m of
+     * jitter and islands 5 m across, so turning the gantry onto z laid it down
+     * the middle of that column: measured against the dressed level, 51 m² of
+     * cargo inside the walkway's footprint, the tallest island topping at
+     * 6.39 m against a deck at 5.34 — it came up THROUGH the deck for 5.4 m of
+     * its length. At ±60 it is 5.5 m², and the level's other structure is
+     * further out still (the inner rack ring reaches x = 69.3).
+     */
     for (const side of [-1, 1]) {
-      addGantry(world, at(side * 56, -14), { length: 34, height: 5.2, yaw: Math.PI / 2,
+      addGantry(world, at(side * 60, -14), { length: 34, height: 5.2, yaw: 0,
         seed: 9400 + side, lights: true });
-      addCableRun(world, at(side * 62, -40, 8.0), at(side * 62, 40, 7.0), { seed: 9410 + side, sag: 1.6 });
+      /**
+       * …AND THE CABLE RUN STANDS ON SOMETHING NOW.
+       *
+       * It was strung at x = ±62 with its brackets 8.0 and 7.0 m over the deck,
+       * and there is nothing at either end to bolt a bracket to: measured,
+       * 8.11 m of air under each one, the nearest object of any kind 3.46 m
+       * away and two metres below it. The only wall this level has is the
+       * heightfield — `roof()` builds a ceiling and no walls at all — and
+       * `TERRAIN_PRESETS.hangar` is dead flat out to |x| = 74 and does not
+       * reach the run's own 8 m until |x| = 90.2. It was a run hung 28 m
+       * inboard of its own wall.
+       *
+       * IT PASSED `prop-seating` ON A CYCLE, which is the part worth keeping.
+       * The mis-yawed gantry crossed underneath it at z = −14, the check
+       * counted that as holding the cable up — and the gantry's own row named
+       * the CABLE RUN as what held the gantry up. Two floating assemblies each
+       * excused by the other. Straightening the gantry broke the ring and both
+       * runs reported +5.5 m of seat, which is what they had been all along.
+       *
+       * Moving it to the wall does not fix it either, and the arithmetic is the
+       * argument: the shell is a 41° slope at the station where it reaches 8 m
+       * (h(88) = 6.22, h(92) = 9.66), so a run at constant height along it
+       * either stands off the plate — with nothing under the belly, which is
+       * this bug again — or dips into the hull. `catenaryPoints` floors its own
+       * slack, so an 80 m span cannot dip less than 1.55 m however small a sag
+       * is asked for; there is no standoff that is both clear of the plate and
+       * resting on it.
+       *
+       * What a cable run wants is POSTS, so it gets two: `addStanchion` at 8.0,
+       * which puts its head plate at 8.44 — the lamp rank's own service height,
+       * so the wall carries one line of services and not two. x = ±71 is the
+       * outermost station whose base plate is entirely on flat deck (the plate
+       * is 1.61 m across and the shell starts at 74), and it is clear of the
+       * inner rack ring's 69.3 by 0.9 m.
+       */
+      for (const z of [-40, 40]) {
+        addStanchion(world, at(side * 71, z), { height: 8.0, seed: 9414 + side * 2 + (z > 0 ? 1 : 0) });
+      }
+      addCableRun(world, at(side * 71, -40, 8.44), at(side * 71, 40, 8.44), { seed: 9410 + side, sag: 1.6 });
     }
 
     /* …AND THE THINGS PEOPLE PUT DOWN AND DID NOT PICK UP, through the drift
@@ -4281,6 +4241,14 @@ LEVELS.warship = {
       seed: 9500, r: 52, shell: 66, roofHeight: 14.0,
       lampColor: 0xff7a30, lights: true, hot: false,
       crates: 18, stacks: 4, wrecks: 3,
+      /* THE GANTRIES STAND ON THE TWO STRETCHES OF PLATE THIS DECK HAS, and
+       * the numbers are read off the preset rather than chosen: at x = ±36 the
+       * bulkhead ridge holds z = −40…−28 and the launch trench holds
+       * z = −8…+4, which leaves 16 m of floor aft and 24 m forward. The
+       * foundry's 30 m run does not fit in either and was buried 9.32 m in the
+       * bulkhead the moment the gantries were turned to lie along the ship —
+       * see the note in `works`. */
+      gantries: [[20, 24, 5.2], [-18, 16, 4.4]],
     });
     const M = propMaterials();
     const T = world.terrain;

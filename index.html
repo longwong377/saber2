@@ -250,6 +250,18 @@
         <h3>Session</h3>
         <div id="net-code" class="codebox">—</div>
         <p class="hint">Share this code. Up to 4 Jedi.</p>
+        <!-- FREE DUELS. `pvpRules` has read `settings.pvp` since duels were
+             built and nothing in the front end ever wrote it: the only writer
+             in the tree was World's Command-meeting branch, so two commanders
+             could fight each other and two friends could not. This is the
+             writer. See DEFAULT_SETTINGS.pvp in src/ui/Menu.js. -->
+        <h3 style="margin-top:22px">Rules of the session</h3>
+        <label class="check"><input type="checkbox" id="opt-pvp"> Free duel — everyone can hit everyone</label>
+        <p class="hint">Off, this is <b>co-op</b>: your blade, your bolts and your Force pass through the
+          people you came with, and the only thing you can hurt is the horde. On, it is a
+          <b>free-for-all</b> — friendly fire is not a separate switch, it is what this one means, so
+          there are no allies and no accidents. Everybody drops to the duel's health. Takes effect on
+          the next <b>Ignite</b>, and it is read on each machine, so agree on it before you deploy.</p>
       </div>
     </section>
 

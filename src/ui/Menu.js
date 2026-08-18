@@ -449,6 +449,35 @@ export const DEFAULT_SETTINGS = {
    */
   commandVersus: false,
   /**
+   * FREE DUELS WITH FRIENDS — the switch the whole of `pvpRules` was waiting
+   * for.
+   *
+   * `Player.pvpRules` has read this key since duels were built, `World`'s
+   * constructor calls it on the settings blob (`this.rules = pvpRules(settings)`),
+   * `canHarm` is the one gate every damage path in the game asks, and
+   * `tools/checks/pvp.mjs` is thirteen checks over the result. NOTHING WROTE
+   * IT. The only writer in the tree was `World`'s Command-meeting branch,
+   * which passes `{pvp: true, duelRounds: 1}` of its own — so two commanders
+   * could fight and two friends standing in a level could not, and the whole
+   * feature was reachable only by editing a source file.
+   *
+   * ON is a FREE-FOR-ALL: `friendlyFire` is DERIVED from this one boolean
+   * (`pvpRules` refuses to offer them separately, and its note says why), so
+   * every player in the session may hit every other whatever side they are on.
+   * Measured through the shipped gate rather than described: with it off, one
+   * player's blade finds 0 target records on another; with it on it finds
+   * them, and `spawnPlayer` sets both bodies to `rules.health`.
+   *
+   * ONE KEY AND NOT FIVE, and the other four are named here so nobody adds
+   * them by symmetry. `duelRounds`, `duelRoundTime` and `duelBoons` are read
+   * ONLY inside `DuelMatch`, and the only thing in the tree that builds one is
+   * `World.beginVersus` — a Command meeting, whose census is the two armies'.
+   * A slider for them outside Command would be a control that does nothing,
+   * which is the exact defect this object's own notes keep recording. They stay
+   * session-scoped, as `tools/checks/controls.mjs` already declares them.
+   */
+  pvp: false,
+  /**
    * THE BATTLE, AS FOUR PICKS. Read by `main.js`'s deploy, normalised by
    * `Waves.skirmishConfig` and handed to `World.beginSkirmish` as a PLAN —
    * which is why they are picks and not a settings blob the mode reads for
@@ -736,6 +765,10 @@ export const SETTING_READERS = {
   teamDamage:      ['game/Command.js', 'const td = s.teamDamage'],
   commandFormation: ['game/Command.js', 'const f = s.commandFormation'],
   commandVersus:   ['game/Command.js', 'versus: !!s.commandVersus'],
+  /* The duel switch, read where every world's rules are decided. One reader,
+   * one object: `pvpRules` is the only thing allowed to say what the key means
+   * and `world.rules` is the only place the answer lives — see `canHarm`. */
+  pvp:             ['game/World.js', 'this.rules = pvpRules(settings)'],
   skirmishEngagements: ['main.js', 'engagements: settings.skirmishEngagements'],
   skirmishStrength: ['main.js', 'strength: settings.skirmishStrength'],
   skirmishPressure: ['main.js', 'pressure: settings.skirmishPressure'],
@@ -1319,7 +1352,7 @@ export const CODEX = [
    * does: a seventh formation moves this line without anybody editing it. */
   { keys: ['orderwheel'], hold: true,
     text: () => `Order wheel — the ${ORDER_ACTIONS.length} orders and <b>hold ground</b>, on one key. `
-      + 'Hold it, aim at a slot, let go. The six keys below are the same orders '
+      + `Hold it, aim at a slot, let go. The ${ORDER_ACTIONS.length} keys below are the same orders `
       + 'without the wheel, for anybody who would rather not.' },
   ...ORDER_ACTIONS.map(o => ({
     keys: [o.action],
@@ -5425,6 +5458,16 @@ export class Menu {
         saveSettings(this.s);
       });
     }
+    /**
+     * THE ONE RULE OF THE SESSION THAT IS A RULE AND NOT A PREFERENCE.
+     *
+     * No hook: `pvpRules` runs in `World`'s constructor, so the value written
+     * here is the one the next Ignite builds its `world.rules` from — the same
+     * shape `commandVersus`, `instantSpawn` and `maxBodies` all have, and for
+     * the same reason. Turning it on mid-fight would have to re-side every
+     * body already standing, which is a different feature.
+     */
+    this._check('opt-pvp', 'pvp');
     bind('btn-host', () => this.hooks.onHost?.());
     bind('btn-join', () => {
       const code = document.getElementById('join-code').value.trim().toUpperCase();

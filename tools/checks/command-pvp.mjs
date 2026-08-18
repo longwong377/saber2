@@ -768,7 +768,8 @@ export function run({ check, assert }) {
      * arena, so an army-vs-army round is the same state machine as a duel with
      * a different census. That is asserted here by driving it to a real end.
      */
-    const { SIDES } = await import('../../src/game/Player.js');
+    const { SIDES, PVP_COUNTDOWN, PVP_INTERMISSION } = await import('../../src/game/Player.js');
+    const { enemyRng } = await import('../../src/game/Enemy.js');
     const { host, client, pump } = await commandPair({ host: { commandVersus: true }, start: false });
     await joinAsCommander(host, { team: SIDES[1] });
     const cs = host.beginVersus();
@@ -798,28 +799,61 @@ export function run({ check, assert }) {
     for (const c of cs) d.order('charge', c);
 
     const before = cs.map((c) => c.roster.strength);
-    /* Long enough to cross 120 m at a trooper's pace and fight it out. The
-     * match's own clock is `roundTime`, well past this. */
-    let engaged = 0, closest = Infinity;
-    for (let i = 0; i < 60; i++) {
+    /**
+     * THE BUDGET IS THE MATCH'S OWN CLOCK, AND THAT IS THE WHOLE FIX.
+     *
+     * This drive used to be `for (i = 0; i < 60; i++) pump(2)` — a flat 120
+     * game-seconds — with a comment claiming `roundTime` was "well past this".
+     * It is the other way round. `DuelMatch` spends `PVP_COUNTDOWN` before the
+     * blades are live and only THEN sets `clock = roundTime`, so the latest a
+     * round can be decided is 3 + 120 = 123 s, and the drive stopped at 120.
+     * The three seconds it was short by are exactly the countdown it forgot.
+     *
+     * So it passed alone by MARGIN and not by construction: whenever one line
+     * happened to wipe the other out early it ended, and whenever the fight
+     * went the distance it did not. Which of those you get depends on who
+     * shoots straight, and `Enemy.aimQuality` draws off `enemyRng` — a
+     * module-scope stream every suite that drives a World advances. Run after
+     * `cloth-cost` and `colosseum`, which is the real order in `verify` (the
+     * hyphen sorts before the dot, so this file runs BEFORE command.mjs), the
+     * battle was a different battle and stood at 5 v 4 with the phase still
+     * 'fighting'. HANDOFF §6.2.5's "order-independence residue" in the flesh.
+     *
+     * TWO CHANGES AND THEY ANSWER DIFFERENT HALVES. The stream is SEEDED here,
+     * as tools/checks/cloth-cost.mjs does, so the fight is the same fight
+     * whatever ran before it — seeded at the last possible moment, after every
+     * `await` in this check, because an async check's awaits are exactly where
+     * a peer's frames get to run. And the cap is DERIVED from the rules the
+     * match is actually being fought under rather than typed, so a change to
+     * `PVP_LIMITS` or to the meeting's `duelRounds: 1` moves it by itself and
+     * a real hang still reads as a hang instead of as a slow battle.
+     */
+    enemyRng.seed(20250814);
+    const m0 = host.match;
+    const budget = PVP_COUNTDOWN + m0.rounds * host.rules.roundTime
+      + PVP_INTERMISSION * Math.max(0, m0.rounds - 1) + 4;
+    let engaged = 0, closest = Infinity, spent = 0;
+    while (spent < budget && host.match.phase !== 'match-over') {
       pump(2);
+      spent += 2;
       const mine = host.enemies.filter((e) => e.cmdr === cs[0] && !e.dead);
       const them = host.enemies.filter((e) => e.cmdr === cs[1] && !e.dead);
       for (const e of mine) {
         if (e.target && e.target.team !== undefined && e.target.team !== e.team) engaged++;
         for (const o of them) closest = Math.min(closest, e.position.distanceTo(o.position));
       }
-      if (host.match.phase === 'match-over') break;
     }
 
     assert(engaged > 0, 'no trooper on either side ever picked a target on the other');
     assert(closest < 40, `the two lines never got closer than ${closest.toFixed(0)} m — they did not meet`);
     const after = cs.map((c) => c.roster.strength);
     assert(after[0] < before[0] || after[1] < before[1],
-      `no casualties on either roster after 120 s (${before.join('v')} → ${after.join('v')})`);
+      `no casualties on either roster after ${spent} s (${before.join('v')} → ${after.join('v')})`);
     assert(host.match.phase === 'match-over',
-      `the meeting is still in phase '${host.match.phase}' — ${after.join(' v ')} standing, `
-      + 'a battle that cannot end is worse than one that cannot start');
+      `the meeting is still in phase '${host.match.phase}' after ${spent} s of a ${budget} s budget `
+      + `— ${after.join(' v ')} standing. That budget is the match's OWN clock `
+      + `(${PVP_COUNTDOWN} s countdown + ${m0.rounds}\u00d7${host.rules.roundTime} s round), so a `
+      + 'meeting that reaches it has stopped deciding rather than merely being slow');
     assert(ended.length === 1, `onGameOver fired ${ended.length} times`);
     assert(typeof ended[0].won === 'boolean', 'the meeting did not report a winner');
     /**
@@ -839,7 +873,8 @@ export function run({ check, assert }) {
     const w = host.match.winner;
     assert(w === null || cs.some((c) => c.side === w), `side ${w} took the field and is nobody's`);
     return `${before.join(' v ')} → ${after.join(' v ')} standing, closed to ${closest.toFixed(1)} m, `
-      + `${engaged} target picks across the line; side ${w} took the field, won=${ended[0].won}`;
+      + `${engaged} target picks across the line; side ${w} took the field in ${spent} s of a `
+      + `${budget} s budget, won=${ended[0].won}`;
   });
 
   check('command/versus: a joining commander is sent their OWN army, not the host\'s', async () => {

@@ -577,12 +577,50 @@ function designate(army, taken) {
  *   advance        whether the formation moves with you at all. COVER does not
  *                  — it plants where it was ordered, which is the only way "take
  *                  cover" can mean anything when the anchor is a moving player.
- *   fire           a multiplier on how eagerly the troops shoot, so HOLD is a
- *                  real order and not a slower CHARGE. 0 is `holdFire`.
+ *   fire           a multiplier on how eagerly the troops shoot, so HOLD FIRE
+ *                  is a real order and not a slower CHARGE. 0 is `holdFire`.
  *
- * Six of them, and the six are not a taste: they are the six things you can ask
- * a body near you to do that produce visibly different battles. Anything else is
- * one of these with a different radius.
+ * Seven of them, and the seven are not a taste: they are the seven things you
+ * can ask a body near you to do that produce visibly different battles.
+ * Anything else is one of these with a different radius.
+ *
+ * ── AND THE SEVENTH IS THE ONE THAT TURNS `fire` ────────────────────────
+ *
+ * `fire` was declared, documented in the line above, read by `_troops` — and
+ * every one of the first six records set it to 1, so `if (F.fire <= 0)` could
+ * not be reached by any order the game could give and the field was a knob
+ * nothing turned. That is HANDOFF §2.3's close relative: a design number with
+ * no caller reads as shipped, and the note over `_castDread` was already
+ * describing `holdFire` as "the same one a HOLD order uses" about an order
+ * that did not exist.
+ *
+ * `holdfire` is that order, and the reason it is worth having rather than
+ * deleting is that it is the only thing in this table that is about the SHOT.
+ * The other six are all shape and footing — where a man stands, how far he
+ * strays, whether he comes with you — and every one of them ends in a rifle
+ * going off. A commander who wants the rifles quiet (walking into a melee
+ * their own line would be firing into, holding a position without announcing
+ * it) has no way to say so, and no arrangement of the other six says it: a
+ * tight CIRCLE is still twelve men shooting.
+ *
+ * MEASURED, one fresh Geonosis world per order, `enemyRng` seeded the same
+ * way for each, 1800 frames of `world.update` at 1/30 (60 game-seconds), army
+ * bolts counted at `bolts.fire` by whether the owner carries a roster record:
+ *
+ *     circle 219   column 291   vanguard 276   line 304   cover 241
+ *     charge 195   HOLD FIRE 0
+ *
+ * The zero is not a low rate, it is silence — `_troops` pushes the fuse back
+ * up every frame through Waves.js's own primitive. And the held line was the
+ * most shot at of the seven (210 incoming bolts against 104-174), with all ten
+ * men still standing at the end: it was in a firefight and did not answer,
+ * which is the order and not a quiet corner of the map.
+ *
+ * IT IS NOT THE `hold` TOGGLE AND THE TWO ARE DELIBERATELY DIFFERENT WORDS.
+ * `hold()` below holds the GROUND — a toggle over whatever formation is up,
+ * which is what note #30's "hold it and stay there" asked for. This holds the
+ * FIRE. They compose: an army can be told to hold fire and then told to hold
+ * the ground it is holding fire on.
  *
  * ── WHY THE LEASH IS A MULTIPLE AND NOT A DISTANCE ──────────────────────
  *
@@ -602,7 +640,7 @@ function designate(army, taken) {
  * whether a body can reach the fight from where it stands — so the leash is a
  * multiplier on it. 1.0 means "engage anything your weapon was built to engage,
  * and not one metre further"; 1.7 is a screen that will go and get it. The
- * ordering of the six is preserved, so the tactic each name promises is the
+ * ordering of them is preserved, so the tactic each name promises is the
  * tactic it delivers, and the numbers now mean something in a roster where one
  * body's reach is six times another's.
  */
@@ -682,6 +720,60 @@ export const FORMATIONS = {
     blurb: 'Break formation. Find something and kill it.',
     leash: Infinity, advance: true, fire: 1,
     slot() { return null; },
+  },
+  /**
+   * HOLD FIRE — the one order in the table that is about the trigger.
+   *
+   * `fire: 0` is the whole of it, and `_troops` is the only reader: it calls
+   * `holdFire`, which is Waves.js's own primitive and NOT a second copy of
+   * one. That matters more here than anywhere else in this file, because
+   * "stop shooting" has four separate mechanisms behind it — the burst that
+   * is already queued, the fuse counting down to the next one, a marksman's
+   * charged telegraph, and a droideka's six rounds in the air — and a
+   * hand-rolled version would silence three of them.
+   *
+   * `Equal` because the six orders are Digit6…Minus and `=` is the next key
+   * along that row, so the seven are one unbroken run under the left hand.
+   * It is free in `defaultBindings` and `controls.mjs` re-derives every order
+   * row from this table, so nothing here is typed twice.
+   *
+   * ── WHY THIS SHAPE ─────────────────────────────────────────────────────
+   *
+   * The tightest footprint in the table, and that is an argument rather than
+   * a taste. A line that may not shoot has exactly one remaining use — being
+   * bodies between you and them — and every metre of frontage it spreads over
+   * is a metre of men standing in a firefight they are not allowed to answer.
+   * So two files at the commander's shoulders, one rank deep per pair, at
+   * 3.4 m: outside `BLADE_ROOM` by 0.4 m so `_clearBlade` is not shoving the
+   * whole order out of shape every frame, and inside every other formation's
+   * inner rank (`circle` 4.2, `behind` 3.0 back, `front` 5.0 forward).
+   *
+   * `leash: 1.0` — THE TIGHTEST THE RULES ALLOW, and the first draft of this
+   * order got that wrong in a way worth recording. 0.6 was written here to
+   * mean "stay close, you are not shooting anyway", and
+   * `command: no order may forbid a body from fighting at its own range`
+   * refused it on the spot: a leash under 1.0 leashes a clone trooper to
+   * 11.4 m of its slot against a 19 m weapon band, so the order would have
+   * stopped the shooting a SECOND time, silently, by starving `targetFor`.
+   * That check's own note is the argument — "a formation is allowed to say do
+   * not chase; it is not allowed to say do not shoot" — and the whole point of
+   * this order is that `fire` is the field that says it, out loud, where one
+   * reader acts on it. 1.0 is `circle`'s number: engage anything your weapon
+   * was built to engage, and not one metre further.
+   *
+   * `advance: true`, because this is an order you give while moving — the
+   * whole point is that they come with you and stay quiet. Telling them to
+   * hold the ground as well is `hold()`, which composes with any formation.
+   */
+  holdfire: {
+    id: 'holdfire', name: 'Hold fire', key: 'Equal',
+    blurb: 'Weapons down, close on me. Nobody shoots until you say otherwise.',
+    leash: 1.0, advance: true, fire: 0,
+    slot(i, n, k, out) {
+      const file = i % 2 ? 1 : -1;
+      const rank = Math.floor(i / 2);
+      return out.set(file * (3.4 + (k % 2) * 1.1), 0, 1.2 - rank * 2.0);
+    },
   },
 };
 
@@ -2460,7 +2552,7 @@ export class CommandDirector extends WaveDirector {
     /**
      * A COMMANDER WHO IS NOT HOLDING THE ARMY CAN ONLY ASK FOR IT.
      *
-     * `main.js` binds the six order keys to this method on whichever machine
+     * `main.js` binds the order keys to this method on whichever machine
      * pressed them, and the bodies exist on the host alone — so on a joining
      * player's machine this used to re-pose ten troopers that were never
      * deployed and the real line did not move a metre. There was no path from
@@ -2489,7 +2581,13 @@ export class CommandDirector extends WaveDirector {
 
   /**
    * HOLD THIS GROUND — and let go of it. A toggle over whatever formation is
-   * up, not a seventh formation.
+   * up, and NOT the HOLD FIRE order.
+   *
+   * Two different things wearing one word, so both spellings are used out
+   * loud: this holds the GROUND (a modifier on any formation), `holdfire`
+   * holds the FIRE (a formation, because it is what the line is doing rather
+   * than where). They compose — hold fire, then hold the ground you are
+   * holding fire on — and each is useless as a version of the other.
    *
    * "there should be an option where you can tell your troops to get into a
    * certain formation and hold it and stay there regardless of where you are,
@@ -3979,10 +4077,19 @@ export class CommandDirector extends WaveDirector {
            * body of every army exactly once a frame. See UNDER_FIRE, and
            * `installTeamDamage` for what sets it. */
           if (e.underFire > 0) e.underFire = Math.max(0, e.underFire - dt);
-          // Fire discipline. `holdFire` is Waves.js's own primitive — it pushes
-          // the fuse back up without touching the brain, so a trooper ordered to
-          // hold still takes cover, calls out and tracks you exactly as it did.
-          if (F.fire <= 0) holdFire(e);
+          /* Fire discipline. `holdFire` is Waves.js's own primitive — it pushes
+           * the fuse back up without touching the brain, so a trooper ordered to
+           * hold still takes cover, calls out and tracks you exactly as it did.
+           *
+           * …AND THE CLOSE-OUT LIFTS IT, which is not a second rule: `_closing`
+           * is this file's existing statement that a wave with four bodies left
+           * is not a battle any more and every order is off. It already opens
+           * the leash so a squad told to take cover breaks it and goes; a line
+           * that kept its guns down through that would reproduce the exact
+           * failure that note was written for — a driven run stuck from t≈711 s
+           * to t=3535 s with two bodies alive and no way out but Abandon —
+           * except that this time the army would be standing next to them. */
+          if (F.fire <= 0 && !this._closing) holdFire(e);
           this._clearBlade(e, c, dt);
         }
       }
@@ -4477,7 +4584,7 @@ export const FORM_TOLERANCE = 2.2;
  *     areas, alive, diedIn}`. It wants a column down one edge with the living
  *     above the fallen, the rank colour as a chip (RANKS[i].color), and the
  *     dead struck through — the casualty list is the point.
- *   · A FORMATION INDICATOR. `readout().formationName`, and the six ids are in
+ *   · A FORMATION INDICATOR. `readout().formationName`, and the ids are in
  *     `FORMATIONS`. NOTE THE UNITS: `FORMATIONS[*].leash` is a MULTIPLE of the
  *     body's own reach now, not metres — printing it raw gives "1.2". The metres
  *     for a given body are `director.leashFor(F, body)`.
@@ -4517,9 +4624,13 @@ export const FORM_TOLERANCE = 2.2;
  *     player automatically, so nothing is blocked.
  *
  * src/engine/Bindings.js
- *   · SIX ORDER KEYS. `FORMATIONS[*].key` names the code each one wants
- *     (Digit6-Digit0 and Minus). They are read as raw key codes in main.js
- *     today, which means they are not rebindable and do not appear on the
- *     controls card. Six ACTIONS rows under a "Command" group, ids
- *     `form.circle` … `form.charge`, is the whole change.
+ *   · THE ORDER KEYS — LANDED, and this entry is kept because the shape of
+ *     the fix is the reusable part. `FORMATIONS[*].key` names the code each
+ *     order wants (Digit6-Digit0, Minus, Equal); they were read as raw key
+ *     codes in main.js, so they were not rebindable, on no controls card and
+ *     invisible to `findConflicts`. The fix is NOT a row per order in
+ *     `ACTIONS` — that is HANDOFF §2.3, a hand table beside its generated
+ *     twin — it is `registerOrders(FORMATIONS)`, called once from ui/Menu.js,
+ *     which is the module allowed to see both halves. A formation authored
+ *     here is bound, listed, printed and conflict-checked the day it lands.
  */
