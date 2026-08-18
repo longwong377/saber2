@@ -3617,7 +3617,23 @@ check('destruction: an explosion takes a bite out of a wall without levelling it
     restoreShared(baseline);
     try {
       const mod = await import(new URL(f, dir).href);
-      if (typeof mod.run === 'function') await mod.run({ check, assert, near, V, Q, THREE, lerpN });
+      /**
+       * A SUITE THAT EXPORTS NOTHING IS A FAILURE, NOT A GREEN 0/0.
+       *
+       * This was a bare `if` with no `else`, so a suite whose `run` was renamed,
+       * removed, or lost to a bad merge vanished from the gate in silence —
+       * printed as `✓ animation.mjs 0/0`, sixteen checks gone, nothing in the
+       * summary. Proven by renaming `export function run` to `runx` in
+       * `animation.mjs`: the full gate went green with a suite missing.
+       *
+       * `_one.mjs` has refused exactly this since it was written ("no checks
+       * ran at all", exit 1) — the gate, which is the thing anyone actually
+       * trusts, did not. Same rule, both runners.
+       */
+      if (typeof mod.run !== 'function') {
+        fail++;
+        results.push(['✗', `suite ${f}`, 'exports no run() — every check in it is silently absent from this gate']);
+      } else await mod.run({ check, assert, near, V, Q, THREE, lerpN });
     } catch (e) {
       fail++;
       results.push(['✗', `suite ${f}`, e.message]);

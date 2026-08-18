@@ -910,15 +910,17 @@ function _segDist2(px, py, pz, ax, ay, az, bx, by, bz) {
  *
  * The axis is the mesh's own principal direction, found by power iteration on
  * the covariance of its vertices, which costs a few dozen multiplies once per
- * bone in the lifetime of a body. The radius is the 90th percentile of the
- * perpendicular spread and not the maximum: a tank hull is a slab, and a
- * capsule sized to the corner of a slab is a cylinder of empty air over the
- * deck that a blade would cut. Measured both ways, sampled uniformly inside
- * each capsule against the bone's own drawn extent: the 90th percentile takes
- * the AAT's unreachable surface from 57% to 0% while sitting outside the mesh
- * no more than the axial capsules already do (acklay head 4% against the bone
- * capsule's 83%, AAT hull 65% against 38%, AT-TE foot 66% against 30%). The
- * two ends are then solved rather
+ * bone in the lifetime of a body. The radius starts at the 90th PERCENTILE of
+ * the perpendicular spread rather than at the maximum, and grows only if the
+ * residual demands it: a tank hull is a slab, and a capsule sized to the corner
+ * of a slab is a cylinder of empty air over the deck that a blade would cut.
+ * Measured over the roster, the acklay's trunk is the only bone that asks for
+ * the second rung and nothing asks for the third. Measured the other way —
+ * sampled uniformly inside each capsule against the bone's own drawn extent —
+ * the cover sits outside the mesh no more than the axial capsules it stands
+ * beside already do: acklay head 4% against the bone capsule's 83%, AAT hull
+ * 66% against 37%, AT-TE foot 66% against 31%. The two ends are then solved
+ * rather
  * than guessed — `t0 = min(t_i + sqrt(r² - d_i²))` is the furthest the cap can
  * be pulled in and still contain every point it is responsible for.
  *
@@ -985,16 +987,43 @@ export function coverSpotOf(bone) {
     T[i] = t;
     D[i] = Math.hypot(x - ux * t, y - uy * t, z - uz * t);
   }
+  /* THE RADIUS IS THE SMALLEST OF THESE THAT FINISHES THE JOB.
+   *
+   * Starting at the 90th percentile and growing only if the residual demands
+   * it: a slab covered to its corner is a cylinder of air over the deck, and a
+   * body with one spike on it should not have the whole cover sized by the
+   * spike. Measured over the roster, three rungs are enough — the acklay's
+   * trunk is the only bone that needs the second and nothing needs the third,
+   * and the AAT hull stays at the first. The loop is bounded and falls through
+   * to the maximum, so a shape nobody has drawn yet is covered rather than
+   * approximated. */
   const sorted = Float64Array.from(D).sort();
-  const r = sorted[Math.min(n - 1, Math.floor(n * 0.90))];
-  if (!(r > 1e-4)) return null;
-  let t0 = Infinity, t1 = -Infinity;
-  for (let i = 0; i < n; i++) {
-    const h = D[i] < r ? Math.sqrt(r * r - D[i] * D[i]) : 0;
-    if (T[i] + h < t0) t0 = T[i] + h;
-    if (T[i] - h > t1) t1 = T[i] - h;
+  let r = 0, t0 = 0, t1 = 0;
+  for (const q of [0.90, 0.98, 1.0]) {
+    r = sorted[Math.min(n - 1, Math.floor(n * q))];
+    if (!(r > 1e-4)) return null;
+    t0 = Infinity; t1 = -Infinity;
+    for (let i = 0; i < n; i++) {
+      const h = D[i] < r ? Math.sqrt(r * r - D[i] * D[i]) : 0;
+      if (T[i] + h < t0) t0 = T[i] + h;
+      if (T[i] - h > t1) t1 = T[i] - h;
+    }
+    if (t0 > t1) { t0 = t1 = (t0 + t1) * 0.5; }
+    // The residual: how far outside BOTH capsules the worst drawn point still
+    // is. Asked of the pair, because the bone's own capsule covers most of a
+    // limb and the cover is only responsible for what it does not.
+    const a0x = cx + ux * t0, a0y = cy + uy * t0, a0z = cz + uz * t0;
+    const a1x = cx + ux * t1, a1y = cy + uy * t1, a1z = cz + uz * t1;
+    let resid = 0;
+    for (let i = 0; i < n; i++) {
+      const px = P[i * 3], py = P[i * 3 + 1], pz = P[i * 3 + 2];
+      const d = Math.min(
+        Math.sqrt(_segDist2(px, py, pz, 0, 0, 0, 0, len, 0)) - rad,
+        Math.sqrt(_segDist2(px, py, pz, a0x, a0y, a0z, a1x, a1y, a1z)) - r * 1.12);
+      if (d > resid) resid = d;
+    }
+    if (resid <= COVER_GAP) break;
   }
-  if (t0 > t1) { t0 = t1 = (t0 + t1) * 0.5; }
   return (bone._coverCache = {
     key: 'cover',
     p0: [cx + ux * t0, cy + uy * t0, cz + uz * t0],

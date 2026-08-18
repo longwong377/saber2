@@ -208,6 +208,116 @@ const worst = (r, k) => Math.max(...Object.values(r.poses).map((q) => q[k]));
 /* ══════════════════════════════════════════════════════════════════════ */
 
 export function run({ check, assert }) {
+
+  check('stature: a body SPAWNED as an enemy is dressed and planted at the size it came out', async () => {
+    /**
+     * ══ THE CREATOR'S DEFECT, ALIVE ON THE ENEMY PATH ══
+     *
+     * Everything else in this file measures the PLAYER's figure and the
+     * creator's preview. `Enemy._build` is a third dresser and nothing had ever
+     * looked at it, which is exactly how HANDOFF 6.1b's fix — scale the
+     * garments and the grip by the RIG's scale, not by the number that was
+     * asked for — came to be applied in two of the three places.
+     *
+     * `jediLook()` draws a species uniformly from the seven rows of `SPECIES`,
+     * one of which is `smallfolk` at `frame.scale` 0.40, and `buildJedi`
+     * honours it: a 1.05-scale Temple Guardian comes back as a 0.42-scale rig.
+     * `_build` then built the animator, the cape, the skirt and `chestY` from
+     * `A.scale` — the size the body was ASKED to be. Measured over 40 guardian
+     * spawns at seed 4711: 6 of 40 smallfolk (15%), drawn 0.727 m tall against
+     * a human's 1.79, standing with the sole 46 mm clear of the floor — 6% of
+     * the figure's own height, and it walks on that — and `chestY` 0.45 m ABOVE
+     * the top of its own head, which is where the aim assist, every floating
+     * notice and the deflector bubble go.
+     *
+     * The bounds are RELATIVE for the reason the header gives: a small body is
+     * supposed to have small numbers, so what is asserted is that the figure's
+     * relationship to the floor and to its own chest does not depend on how big
+     * it is. The seed is fixed so the smallfolk draw is reproducible, and the
+     * check FAILS OUT LOUD if the draw stops producing one rather than passing
+     * on an empty set.
+     */
+    const { initPhysics } = await import('../../src/physics/Rapier.js');
+    const { RapierWorld } = await import('../../src/physics/RapierWorld.js');
+    const { Enemy, enemyRng, ARCHETYPES } = await import('../../src/game/Enemy.js');
+    await initPhysics();
+
+    const terrain = { height: () => 0, normalAt: (x, z, o) => o.set(0, 1, 0), raycast: () => null,
+      size: 400, half: 200, inBounds: () => true, surfaceAt: () => 'sand',
+      crater() {}, flush() {}, slopeAt: () => 0 };
+    const physics = new RapierWorld({ gravity: -24, iterations: 4, maxBodies: 128 });
+    physics.terrain = terrain;
+    const particles = { sandPuff() {}, sparkBurst() {}, cutFlare() {}, slag() {}, plasma: { spawn() {} } };
+    const w = { scene: new THREE.Scene(), physics, terrain, statics: [], settings: { fov: 60 },
+      players: [], enemies: [], props: [], particles, time: 0, groundColor: 0xcfae82,
+      bolts: { fire() {} }, engine: { flash() {}, camera: new THREE.PerspectiveCamera() },
+      report() {}, notify() {}, notifyFloating() {}, addHitstop() {} };
+    const ctx = { enemies: [], particles, terrain, physics, bolts: w.bolts, time: 0,
+      pickTarget: () => null, camera: w.engine.camera };
+
+    /* The archetype is FOUND, not named: whichever sabered body rolls its look
+     * — which is what puts a species on it — and there is one. A check with a
+     * hard-coded 'guardian' would go quiet the day the Temple's roster moved. */
+    const TYPE = Object.keys(ARCHETYPES).find((k) => ARCHETYPES[k].jedi);
+    assert(TYPE, 'no archetype declares `jedi`, so nothing here rolls a species');
+
+    enemyRng.seed(4711);
+    const rows = [];
+    let small = 0, n = 0;
+    for (let i = 0; i < 40; i++) {
+      const e = new Enemy(w, TYPE, new THREE.Vector3(0, 0, 0));
+      n++;
+      if (!e.rig) { e.dispose?.(); continue; }
+      e.position.set(0, 0, 0); e.facing = 0; e.grounded = true; e.state = 'idle';
+      for (let f = 0; f < 180; f++) e._pose(1 / 60, ctx);
+      e.rig.updateMatrices(); e.rig.root.updateMatrixWorld(true);
+      const S = e.rig.scale ?? 1;
+      const box = new THREE.Box3().setFromObject(e.rig.root);
+      const H = box.max.y - box.min.y;
+      let sole = Infinity;
+      for (const bn of ['footL', 'footR']) {
+        const b = e.rig.get(bn);
+        for (const m of b?.parts || []) {
+          m.updateMatrixWorld(true);
+          const attr = m.geometry.attributes.position;
+          for (let k = 0; k < attr.count; k++) {
+            const q = v().fromBufferAttribute(attr, k).applyMatrix4(m.matrixWorld);
+            if (q.y < sole) sole = q.y;
+          }
+        }
+      }
+      // THE FLOOR, in the figure's own scale. A human reads +1.1 mm; a 0.42
+      // body is allowed 0.42 of that and not 46 mm of air.
+      assert(sole > -0.003 * S && sole < 0.006 * S,
+        `a ${S.toFixed(2)}-scale ${TYPE} stands ${(sole * 1000).toFixed(0)}mm off the floor — the animator `
+        + 'was sized on the scale the archetype ASKED for, not the one the builder returned');
+      // …AND THE CHEST IS IN THE CHEST. `chestY` is where the aim assist, the
+      // floating notices and the deflector bubble all go.
+      assert(e.chestY > box.min.y + H * 0.35 && e.chestY < box.max.y,
+        `a ${S.toFixed(2)}-scale ${TYPE} carries chestY at ${e.chestY.toFixed(2)} m on a body that runs `
+        + `${box.min.y.toFixed(2)}–${box.max.y.toFixed(2)} m`);
+      // …and any garment it is wearing is cut for the body, not for a human.
+      for (const [name, g] of [['cloak', e.cloak], ['skirt', e.skirt]]) {
+        if (!g?.mesh) continue;
+        g.mesh.updateMatrixWorld(true);
+        const hem = new THREE.Box3().setFromObject(g.mesh).min.y;
+        assert(hem > box.min.y - 0.02 * S,
+          `a ${S.toFixed(2)}-scale ${TYPE}'s ${name} hangs ${((box.min.y - hem) * 1000).toFixed(0)}mm `
+          + 'through the floor it is standing on');
+      }
+      if (S < 0.6) { small++; if (small === 1) rows.push(`${S.toFixed(2)} scale, ${H.toFixed(3)}m tall, sole ${(sole * 1000).toFixed(1)}mm, chest ${e.chestY.toFixed(2)}m`); }
+      e.dispose?.();
+    }
+    /* THE DRAW HAS TO HAVE PRODUCED ONE, or this proves nothing. `smallfolk` is
+     * one of seven rows drawn uniformly, so 40 spawns miss it with probability
+     * 0.2%; if the roll ever stops reaching it, this says so instead of passing
+     * on a set of forty humans. */
+    assert(small > 0,
+      `none of ${n} ${TYPE} spawns at seed 4711 rolled a small species — the case this check exists for `
+      + 'was never exercised');
+    return `${small} of ${n} small — ${rows[0]}`;
+  });
+
   check('stature: a figure is measured off its own bones, and the reference reads exactly 1', () => {
     /* The four scales are DERIVED from `humanoidSkeleton` rather than typed
      * beside it, which is the only thing that keeps a bone-length change from
