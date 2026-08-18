@@ -230,6 +230,15 @@ export async function run({ check, assert }) {
       const lit = (host.innerHTML.match(/class="sg-d on"/g) || []).length;
       assert(lit === still.length,
         `${lit} letters are lit across ${still.length} live rows — one per row is how far in you are`);
+      /* AND EXACTLY ONE ARROW IS MARKED AS THE NEXT ONE TO PRESS. The codes
+       * are dealt per run, so nobody enters one from memory and the panel has
+       * to be an instruction rather than a reference — but marking the next
+       * arrow of every candidate at once would be several instructions and no
+       * answer, so it belongs to the leading row alone. */
+      const nxt = (host.innerHTML.match(/class="sg-d next"/g) || []).length;
+      assert(nxt === 1,
+        `${nxt} arrows are marked as the next press — the panel is either not telling the `
+        + 'player what to do or telling them several things at once');
 
       // a call you cannot afford is greyed, not hidden: a list that reordered
       // itself as the Force came back would be unreadable

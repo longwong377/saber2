@@ -1127,9 +1127,20 @@ export class HUD {
       const cd = Math.ceil(S.cooldowns[r.id] ?? 0);
       const off = cd > 0 || force < r.cost;
       /* ARROWS, not the letters. A code is made of DIRECTIONS and W is only
-       * what one happens to be bound to on a keyboard — see DIR_GLYPH. */
-      const code = [...r.code].map((c, i) =>
-        `<i class="sg-d${i < S.entry.length ? ' on' : ''}">${DIR_GLYPH[c] || c}</i>`).join('');
+       * what one happens to be bound to on a keyboard — see DIR_GLYPH.
+       *
+       * THREE STATES AND NOT TWO. `on` is what you have already pressed, and
+       * that alone makes the panel a reference you have to read your place in.
+       * `next` is the one to press, which makes it an INSTRUCTION — and that
+       * is the difference that matters under fire, because the codes are dealt
+       * per run (see rollCodes) so nobody is entering one from memory. It is
+       * only ever on the leading candidate: marking the next arrow of six rows
+       * at once would be six instructions and no answer. */
+      const lead = r === rows[0];
+      const code = [...r.code].map((c, i) => {
+        const cls = i < S.entry.length ? ' on' : (lead && i === S.entry.length ? ' next' : '');
+        return `<i class="sg-d${cls}">${DIR_GLYPH[c] || c}</i>`;
+      }).join('');
       const note = cd > 0 ? `${cd}s` : `${r.cost}`;
       return `<div class="sg-row${off ? ' off' : ''}"><span class="sg-code">${code}</span>`
         + `<b>${r.name}</b><span class="sg-cost">${note}</span></div>`;
