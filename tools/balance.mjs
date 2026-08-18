@@ -112,7 +112,7 @@ Math.random = _realRandom;
 
 const { WaveDirector, BOONS, ATTUNEMENTS, RankSet, rankScale, maxRank, rankOf, BOSS_EVERY,
   RANK_DIMINISH, refreshWaveBoons } = Waves;
-const { defaultBoonMods } = await import('../src/game/Player.js');
+const { defaultBoonMods, HILT_ANCHOR } = await import('../src/game/Player.js');
 const Combat = await import('../src/game/Combat.js');
 const { DIFFICULTY, TOUGHNESS, BladeContactSolver, zoneTolerance, SPEED_GRADE } = Combat;
 const EnemyMod = await import('../src/game/Enemy.js');
@@ -292,7 +292,29 @@ const quantile = (a, q) => { const s = a.slice().sort((x, y) => x - y); if (!s.l
 let _swing = null;
 export function measureSwing() {
   if (_swing) return _swing;
-  const CHEST = V(0, 1.35, 0);
+  /**
+   * WHERE THE BLADE HANGS, AND IT IS NOT THE CHEST ANY MORE.
+   *
+   * This drove the controller from a point at 1.35 m — Player's chest — because
+   * that is where Player used to solve the blade from. It is not: `HILT` is one
+   * offset from the chest in the aim frame, taken in BOTH views since the two
+   * anchors were unified, and the blade the player actually swings hangs off
+   * chest + 0.32 up + 0.24 forward. Driving it from the sternum measured a
+   * weapon the game does not have, and it measured it in the one place this
+   * file calls a MEASURED ANCHOR — the tip speed, the grade mix and the reach
+   * ceiling all come out of this trace.
+   *
+   * The aim here is the identity quaternion, so the aim frame's up is +Y and
+   * its forward is −Z, and the offset is written out in those terms rather than
+   * rotated. Anything that gives this function a real aim has to rotate it.
+   *
+   * What it moved, measured on the default run: the tip peaks at the same speed
+   * (the guard's own travel is unchanged — the anchor translates it, it does not
+   * lengthen it), and the blade's ceiling above the feet goes 2.32 m to 2.64,
+   * which is the whole of the change and is 0.32 m of anchor rise exactly. That
+   * ceiling is what decides which capsules on a tall body are reachable at all.
+   */
+  const CHEST = V(0, 1.35 + HILT_ANCHOR.rise, -HILT_ANCHOR.fwd);
   const input = {
     mouse: { dx: 0, dy: 0, wheel: 0 }, accel: { x: 0, y: 0 }, bindings: {},
     _held: new Set(), _hit: new Set(),
@@ -305,7 +327,7 @@ export function measureSwing() {
   saber.ignite(); saber.ignition = 1;
   const dt = 1 / 240, q = new THREE.Quaternion();
   const samples = [];
-  let peak = 0, topOfBlade = 0;
+  let peak = 0, topOfBlade = 0, standReach = 0;
   for (let i = 0; i < 240; i++) {
     input._hit.clear();
     if (i === 20) input._hit.add('attackOver');
@@ -317,9 +339,13 @@ export function measureSwing() {
       const s = saber.tipVelocity.length();
       peak = Math.max(peak, s);
       if (s > 0.2) samples.push(s);
-      // The chest anchor sits at 1.35 m, which is where Player carries it, so
-      // this is the blade's ceiling above the player's own feet.
+      // The anchor above is placed off a 1.35 m chest, which is where Player
+      // carries it, so this is the blade's ceiling above the player's own feet.
       topOfBlade = Math.max(topOfBlade, saber.tip.y, saber.base.y);
+      // …and how far out from the body's own axis it gets, on the ground plane,
+      // which is the distance a body standing in front of you has to be inside
+      // to be touched at all. See MODEL.standReach and closeTime().
+      standReach = Math.max(standReach, Math.hypot(saber.tip.x, saber.tip.z));
     }
   }
   // The grade a contact earns is decided at the blade point that met the bolt;
@@ -354,6 +380,19 @@ export function measureSwing() {
     attacksPerSec: 1 / OVERHEAD.cooldown,
     /** How high the blade actually gets, above the feet. Measured, not assumed. */
     reachHeight: topOfBlade,
+    /**
+     * How far out it gets, on the ground plane, from the body's own axis.
+     *
+     * `closeTime` used to spell this `mods.bladeLength + 0.6` — a 1.15 m blade
+     * plus 0.6 m of hand-written arm, so 1.75 m. That literal is the shape
+     * HANDOFF §2.3 is about: a measurement of the guard geometry, written down
+     * beside the guard geometry, that does not move when the geometry does.
+     * Measured off the authored overhead through the real controller, the tip
+     * gets 1.47 m out from the feet on the old chest anchor and 1.70 m on the
+     * unified one — so the literal was 0.28 m generous before this change and
+     * 0.05 m generous after it, and nothing in this file could have said so.
+     */
+    standReach: topOfBlade === 0 ? 0 : standReach,
   };
   return _swing;
 }
@@ -934,7 +973,11 @@ export function engagementFor(entry, mods, guardShare = 0, opts = {}) {
 function closeTime(entry, mods) {
   const { A } = archetypeOf(entry);
   const mid = (A.preferred[0] + A.preferred[1]) / 2;
-  const gap = Math.max(0, mid - mods.bladeLength - 0.6);
+  // MEASURED, not `bladeLength + 0.6` — see measureSwing().standReach. A boon
+  // that lengthens the blade adds its extra length on top of the reach the
+  // authored swing was measured with.
+  const reach = measureSwing().standReach + (mods.bladeLength - BLADE_REACH_BASE);
+  const gap = Math.max(0, mid - reach);
   // 4.6 m/s is Player's own base; the enemy gives ground at Enemy's own
   // BACKPEDAL share of its speed once you are inside its band.
   const close = Math.max(0.5, 4.6 * mods.moveSpeed - BACKPEDAL * A.speed);
@@ -2010,7 +2053,8 @@ export function offenceReport() {
   out.push('');
   const s = measureSwing();
   out.push(`  MEASURED off the real controller: one authored overhead attack peaks the`);
-  out.push(`  tip at ${s.peak.toFixed(2)} m/s, tops out ${s.reachHeight.toFixed(2)} m above the feet, and may be repeated at`);
+  out.push(`  tip at ${s.peak.toFixed(2)} m/s, tops out ${s.reachHeight.toFixed(2)} m above the feet`);
+  out.push(`  and ${s.standReach.toFixed(2)} m out from them, and may be repeated at`);
   out.push(`  most ${s.attacksPerSec.toFixed(2)} times a second (OVERHEAD.cooldown). Graded against Combat's own`);
   out.push(`  gates, that trace answers ${(100 * s.grade.block).toFixed(0)}% BLOCK, ${(100 * s.grade.deflect).toFixed(0)}% DEFLECT, ${(100 * s.grade.return).toFixed(0)}% RETURN, ${(100 * s.grade.perfect).toFixed(0)}% PERFECT`);
   out.push(`  BY SPEED ALONE, against SPEED_GRADE (${SPEED_GRADE.driven}/${SPEED_GRADE.return}/${SPEED_GRADE.perfect} m/s).`);
@@ -2164,6 +2208,22 @@ function parseArgs(argv) {
     else if (k === 'los') MODEL.lineOfSight = clamp(parseFloat(v), 0.05, 1);
     else if (k === 'reaction') MODEL.reactionExponent = clamp(parseFloat(v), 0, 2);
     else if (k === 'tiers') cfg.boonTiers = v.split(',');
+    /**
+     * `--anchor=rise,fwd` — put the blade's anchor somewhere else for this run.
+     *
+     * This file's whole purpose is a COMPARISON BETWEEN BUILDS, and the one
+     * thing it could not compare was the build it is most sensitive to: the
+     * anchor `HILT` hangs the weapon on, which sets the reach ceiling and the
+     * standing reach and therefore which capsules on a body are targets at all.
+     * `--anchor=0,0` is the chest anchor third person used before the two views
+     * were unified, so "what did moving it do to the fight" is one flag and two
+     * runs rather than an edit.
+     */
+    else if (k === 'anchor') {
+      const [r, f] = v.split(',').map(Number);
+      if (Number.isFinite(r)) HILT_ANCHOR.rise = r;
+      if (Number.isFinite(f)) HILT_ANCHOR.fwd = f;
+    }
   }
   return cfg;
 }
@@ -2177,6 +2237,7 @@ async function main() {
   console.log('  BATTLEFRONT BORZ — BALANCE. Every depth below is MODEL-DEPTH under one fixed');
   console.log('  model of a player (see the header of tools/balance.mjs). Compare the');
   console.log('  rows to each other; do not read a row as a prediction about a human.');
+  console.log(`  Blade anchor: ${HILT_ANCHOR.rise} up, ${HILT_ANCHOR.fwd} forward of the chest.`);
 
   if (want('blade')) console.log(offenceReport());
   if (want('ramp')) console.log(rampReport(cfg).text);

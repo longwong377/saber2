@@ -390,21 +390,93 @@ function seatOf(a, all, terrain) {
  * come up to at least the middle of `a`. A chip of rubble touching the bottom
  * corner of a floating crate is not holding it up.
  */
-function carried(a, all, slack = 0.06) {
-  const mid = a.minY + (a.maxY - a.minY) * 0.5;
+export function carried(a, all, slack = 0.06) {
   for (const b of all) {
-    if (b === a || b.maxY < mid) continue;
+    if (b === a) continue;
     if (b.bx1 + slack < a.bx0 || b.bx0 - slack > a.bx1) continue;
     if (b.bz1 + slack < a.bz0 || b.bz0 - slack > a.bz1) continue;
     if (b.maxY + slack < a.minY || b.minY - slack > a.maxY) continue;
-    return true;
+    /* HOW HIGH IS EACH OF THEM *WHERE THEY MEET* — and until now this asked
+     * both of them for a single maxY, which is the exact mistake `measure`
+     * builds its 8 × 8 top grid to avoid and says so in its own note.
+     *
+     * The rule is unchanged in words: the other thing has to REACH this one
+     * rather than brush its foot, so it must come up to the middle of it. What
+     * changes is what "it" means. An assembly's global mid-height is the right
+     * number for a crate and the wrong one for a RUN: the hangar strings two
+     * 80 m cable runs down its long walls, and their 2.5 m of vertical extent
+     * is nearly all SAG — the cable is 0.7 m thick and the rest of that number
+     * is the dip between its anchors. Held against the global mid-height at
+     * 6.75 m, the gantry the cable crosses (top rail 6.4 m, and the cable
+     * passes through it) does not count; held against the cable where the two
+     * actually meet, it plainly does.
+     *
+     * MEASURED over the nine levels, this changes exactly which assemblies:
+     * see the check's own detail line, which now names every exemption. The
+     * pebble case the rule exists for is untouched, because for a compact
+     * object the local extent IS the global one: a 0.1 m chip against the
+     * corner of a 0.8 m crate still has to reach 0.4 m and still does not. */
+    const ox0 = Math.max(a.bx0, b.bx0), ox1 = Math.min(a.bx1, b.bx1);
+    const oz0 = Math.max(a.bz0, b.bz0), oz1 = Math.min(a.bz1, b.bz1);
+    const aTop = gridMax(a, ox0, ox1, oz0, oz1);
+    const bTop = gridMax(b, ox0, ox1, oz0, oz1);
+    // no surface of one of them over the ground they share: fall back to the
+    // bounds, which is what this test used to do everywhere
+    const aHigh = isFinite(aTop) ? Math.min(aTop, a.maxY) : a.maxY;
+    const bHigh = isFinite(bTop) ? Math.max(bTop, b.minY) : b.maxY;
+    if (bHigh + slack < a.minY + (aHigh - a.minY) * 0.5) continue;
+    return b;
   }
-  return false;
+  return null;
+}
+
+/** The highest surface of `r` over a patch of ground, off its own top grid. */
+function gridMax(r, x0, x1, z0, z1) {
+  const sx = r.G / Math.max(1e-6, r.bx1 - r.bx0), sz = r.G / Math.max(1e-6, r.bz1 - r.bz0);
+  const bin = (v) => Math.min(r.G - 1, Math.max(0, v | 0));
+  let hi = -Infinity;
+  for (let i = bin((x0 - r.bx0) * sx); i <= bin((x1 - r.bx0) * sx); i++) {
+    for (let j = bin((z0 - r.bz0) * sz); j <= bin((z1 - r.bz0) * sz); j++) {
+      const h = r.top[i * r.G + j];
+      if (h > hi) hi = h;
+    }
+  }
+  return hi;
+}
+
+/**
+ * The nearest assembly to `a`, and how far away it is — the diagnostic half of
+ * the exemption above.
+ *
+ * "It is fixed to something" is the one excuse this check accepts, and until
+ * now it was accepted SILENTLY: the pass line said nothing about how many
+ * assemblies were being waved through on it or what was holding them up. Four
+ * conduit runs on the warship were reported to a later session as floating,
+ * and answering that took a probe, because the check that had already decided
+ * they were fine could not say what it thought was carrying them. It says now.
+ */
+export function nearestTo(a, all) {
+  let best = null, bd = Infinity;
+  for (const b of all) {
+    if (b === a) continue;
+    const dx = Math.max(0, Math.max(b.bx0 - a.bx1, a.bx0 - b.bx1));
+    const dz = Math.max(0, Math.max(b.bz0 - a.bz1, a.bz0 - b.bz1));
+    const dy = Math.max(0, Math.max(b.minY - a.maxY, a.minY - b.maxY));
+    const d = Math.hypot(dx, dy, dz);
+    if (d < bd) { bd = d; best = b; }
+  }
+  return { at: best, d: bd };
 }
 
 let SEATED = null;
-/** Dress every level once and measure how everything in it sits. */
-function seating() {
+/**
+ * Dress every level once and measure how everything in it sits.
+ *
+ * Exported so a probe can ask this survey a question instead of building a
+ * second one: `tools/_seating.mjs` prints what the checks below only assert
+ * on, and a copy of the survey would be a copy of the seating rule with it.
+ */
+export function seating() {
   if (SEATED) return SEATED;
   SEATED = new Map();
   P.propMaterials();
@@ -665,21 +737,75 @@ export function run({ check, assert }) {
     for (const [key, rows] of seating()) {
       const ground = rows.filter((r) => !r.lamp);
       const bad = [];
+      const fixed = [];
       for (const r of ground) {
         if (r.seat <= TOL) continue;
-        if (carried(r, rows)) continue;
+        const by = carried(r, rows);
+        if (by) { fixed.push([r, by]); continue; }
         bad.push(r);
       }
       bad.sort((a, b) => b.seat - a.seat);
+      fixed.sort((a, b) => b[0].seat - a[0].seat);
       const seats = ground.map((r) => r.seat);
-      lines.push(`${key} n=${rows.length} p50=${pct(seats, 0.5).toFixed(2)} p99=${pct(seats, 0.99).toFixed(2)} worst=${Math.max(...seats).toFixed(2)}`);
+      /* EVERY EXEMPTION, NAMED. `fixed` is the whole of the reason this check
+       * passes on a level with a ten-metre positive seat in it, so it belongs
+       * in the pass line: what is off the ground, and what the check believes
+       * is holding it. A silent exemption is a hole nobody can audit. */
+      lines.push(`${key} n=${rows.length} p50=${pct(seats, 0.5).toFixed(2)} p99=${pct(seats, 0.99).toFixed(2)} worst=${Math.max(...seats).toFixed(2)}`
+        + (fixed.length ? `, ${fixed.length} fixed to something (worst ${fixed[0][0].maker} +${fixed[0][0].seat.toFixed(1)} m on ${fixed[0][1].maker})` : ''));
       if (bad.length) {
         failed.push(`${key}: ${bad.length} of ${ground.length} assemblies stand on nothing — `
-          + bad.slice(0, 4).map((b) => `${b.maker} +${b.seat.toFixed(2)} m at (${b.cx0.toFixed(0)}, ${b.minY.toFixed(1)}, ${b.cz0.toFixed(0)})`).join('; '));
+          + bad.slice(0, 4).map((b) => {
+            const n = nearestTo(b, rows);
+            return `${b.maker} +${b.seat.toFixed(2)} m at (${b.cx0.toFixed(0)}, ${b.minY.toFixed(1)}, ${b.cz0.toFixed(0)}), `
+              + `nearest ${n.at ? n.at.maker : 'nothing'} ${n.d.toFixed(2)} m away`;
+          }).join('; '));
       }
     }
-    assert(failed.length === 0, failed.join('\n    '));
+    /* THE WHOLE TABLE, PASS OR FAIL. A failure used to throw away the per-level
+     * detail — the very numbers that say whether the level that failed is the
+     * only one near the line — and the next reader had to re-run the survey by
+     * hand to get them back. */
+    assert(failed.length === 0, failed.join('\n    ') + '\n    ' + lines.join('; '));
     return lines.join('; ');
+  });
+
+  check('props: what "fixed to something" will and will not excuse', () => {
+    /* THE EXEMPTION, PINNED FROM BOTH SIDES — because it is the one way an
+     * assembly can be a metre in the air and still pass, and because it was
+     * loosened once already (see `carried`) to let a cable run count the
+     * gantry it crosses. A rule that can be loosened silently is a rule that
+     * will be, so the case it exists to refuse is a check of its own now.
+     *
+     * Both scenes are built out of real meshes and measured by the same
+     * `assemblies` the levels go through, so this cannot pass by describing
+     * the rule differently from the way the survey applies it. */
+    const scene = (boxes) => {
+      const sc = new THREE.Scene();
+      for (const [w, h, d, x, y, z] of boxes) {
+        const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshStandardMaterial());
+        m.position.set(x, y + h / 2, z);
+        sc.add(m);
+      }
+      return assemblies({ scene: sc, props: [] });
+    };
+    // a 0.8 m crate hanging 1 m up, with a 0.1 m chip standing against the
+    // bottom corner of it: the chip is not holding it up
+    const chip = scene([[0.8, 0.8, 0.8, 0, 1.0, 0], [0.1, 0.1, 0.1, 0.44, 0.96, 0.44]]);
+    assert(chip.length === 2, `the scene did not survey: ${chip.length} assemblies`);
+    const crate = chip.find((r) => r.maxY - r.minY > 0.5);
+    assert(!carried(crate, chip), 'a 0.1 m chip against its corner counts as holding up a floating crate');
+    // the same crate against a post that comes up past the middle of it
+    const post = scene([[0.8, 0.8, 0.8, 0, 1.0, 0], [0.3, 1.5, 0.3, 0.5, 0, 0]]);
+    const crate2 = post.find((r) => r.maxY - r.minY < 1.0 && r.maxY - r.minY > 0.5);
+    assert(carried(crate2, post), 'a post reaching past its mid-height does not count as holding a crate');
+    // and a long thin run whose one crossing support reaches it locally, which
+    // is the hangar's cable over its gantry in miniature: 12 m of 0.2 m rail
+    // hung at 3 m, one 3.1 m post touching it a third of the way along
+    const run = scene([[0.2, 0.2, 12, 0, 3.0, 0], [0.4, 3.1, 0.4, 0, 0, -4]]);
+    const rail = run.find((r) => r.bz1 - r.bz0 > 5);
+    assert(carried(rail, run), 'a post standing under a rail and touching it does not count as holding it');
+    return 'chip refused, post accepted, one crossing support under a 12 m run accepted';
   });
 
   check('props: on level ground a prop\'s underside is ON the ground', () => {

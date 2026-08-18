@@ -84,8 +84,16 @@ function occupancy(world) {
   const b = new THREE.Box3(), s = new THREE.Vector3(), c = new THREE.Vector3();
   const m = new THREE.Matrix4(), t = new THREE.Vector3();
   const q = new THREE.Quaternion(), sc = new THREE.Vector3();
+  /* ONE MESH IS ONE MESH, however many of the world's lists it is on. A Prop
+   * puts its mesh in `world.scene` AND on `world.props`, so walking both — as
+   * this must, since a Prop's mesh is not always parented to the scene root —
+   * counted every loose crate, barrel and drum in the game TWICE. See the
+   * draw-call count below, which is where it mattered. */
+  const seen = new Set();
   const take = (o) => {
     if (!o.isMesh || !o.geometry || !o.geometry.attributes || !o.geometry.attributes.position) return;
+    if (seen.has(o)) return;
+    seen.add(o);
     o.updateMatrixWorld(true);
     if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
     if (o.isInstancedMesh) {
@@ -204,9 +212,29 @@ function fill() {
     }
     foot.sort((a, b) => a - b);
     grass?.dispose();
-    let meshes = 0;
-    world.scene.traverse((o) => { if (o.isMesh && o.geometry) meshes++; });
-    for (const p of world.props) { if (p.mesh) p.mesh.traverse((o) => { if (o.isMesh && o.geometry) meshes++; }); }
+    /* A DRAW CALL IS A MESH, AND EVERY PROP WAS COUNTED AS TWO.
+     *
+     * `Prop` adds its mesh to `world.scene` and hands itself to
+     * `world.addProp`, so it is on both lists; this counted the scene walk and
+     * then the props walk and added them together. MEASURED at the moment the
+     * error was found, scene meshes / prop meshes / what this reported:
+     *
+     *   scoria 170 + 19 = 189      geonosis 241 + 82 = 323
+     *   colosseum 165 + 10 = 175   hangar   395 + 75 = 470
+     *   wood 150 + 36 = 186        warship  328 + 34 = 362
+     *
+     * Every one of those prop meshes is in the scene already, so the right
+     * number is the first of each pair. The hangar is the level this decided
+     * anything about — it is the densest room in the game and the only one
+     * anywhere near the cap — and it was being reported 19% over what it
+     * costs. The props walk stays, because a Prop's mesh is not required to be
+     * parented to the scene root and one that is not would otherwise go
+     * uncounted; it is the double count that goes. */
+    const counted = new Set();
+    const tally = (o) => { if (o.isMesh && o.geometry) counted.add(o); };
+    world.scene.traverse(tally);
+    for (const p of world.props) { if (p.mesh) p.mesh.traverse(tally); }
+    const meshes = counted.size;
     FILL.set(key, {
       samples: total, objects: occ.length, meshes,
       foot: footBad / total, objFoot: objBad / total, cover: covered / total,
@@ -363,7 +391,48 @@ export function run({ check, assert, near }) {
      * took the arena from 351 meshes to 502 for less fill than the instanced
      * version gives. Everything wide-area now goes through `addScree`, which is
      * one instanced call for hundreds of stones — so the object count and the
-     * mesh count have to be allowed to diverge by a wide margin. */
+     * mesh count have to be allowed to diverge by a wide margin.
+     *
+     * ── WHERE 520 COMES FROM, since it is a number and somebody will ask ──
+     *
+     * It is that regression plus a margin: a level filled the wrong way came
+     * out at 502 meshes, so anything at five hundred is a level that has
+     * stopped instancing. It is NOT a statement about how dense a room may be,
+     * and the ratio bar below is the part that actually measures instancing.
+     *
+     * MEASURED with the count fixed (see the note on `meshes`), worst first:
+     * hangar 395, warship 328, mustafar 224, geonosis 225, scoria 170,
+     * colosseum 165, wood 149, drifts 113, alpine 101.
+     *
+     * The hangar is the only level that has ever been near this, and a later
+     * session was told it "dresses itself in 593 draw calls against a bound of
+     * 520". That number is real and it is HISTORY: it is quoted in the level's
+     * own comment, describing its first cut, where every bay cell called
+     * `addCrateStack`, `addMachine` and `addHullSection` bare and each built a
+     * Kit of its own. The level was rebuilt on `island()` and the number went
+     * with it. Do not go looking for it; measure instead.
+     *
+     * What the hangar's 395 actually consists of, attributed by maker with
+     * `tools/_drawcalls.mjs`, because the next person to meet this number
+     * should not have to derive it again:
+     *
+     *   204  32 cargo islands (a machine, sometimes a tank) — 6.4 calls each,
+     *        which is one mesh per MATERIAL and not per object
+     *    58  16 crate stacks and the live crates on top of them
+     *    40  8 hull sections, 5 materials each
+     *    49  22 loose props — crates and barrels you can cut, 2-3 meshes each
+     *    16  2 gantries, 4 buttresses, 2 cable runs, 6 stanchions
+     *    10  the roof shell
+     *     8  INSTANCED: 1077 objects — 1033 floor stones in 7 calls, 44 bay
+     *        lamps in one
+     *
+     * So the wide-area fill is instanced at 135:1 and everything else is a
+     * hand-placed object costing one call per material it uses. That is the
+     * floor for objects that have to cull and seat separately, and it is not
+     * what this check is about. The lever, if the room ever needs one, is the
+     * material count per maker — `addMachine` spends a whole draw call on 24
+     * triangles of conduit and another on 48 of indicator glow, 32 times over
+     * — and that is an art decision about the machine, not an instancing one. */
     const rows = [];
     const ratios = [];
     for (const [key, f] of fill()) {

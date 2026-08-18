@@ -9,7 +9,7 @@ import './dom-shim.mjs';
 import { readFileSync } from 'node:fs';
 import * as P from '../src/world/Props.js';
 import { optionKeys, optionSinks } from '../src/world/Props.js';
-import { objectKeysAt, callSites } from './_optscan.mjs';
+import { callSites } from './_optscan.mjs';
 
 const files = ['src/world/Props.js', 'src/world/Scenery.js', 'src/world/Trees.js',
   'src/world/Destruction.js', 'src/game/Levels.js', 'src/game/World.js', 'src/game/Waves.js'];

@@ -87,11 +87,11 @@ let _propId = 1;
  * in step. That is HANDOFF §2.3 and §2.4 applied to an argument list.
  *
  * MEASURED, so the cost is on the record rather than assumed: the derivation
- * runs once per function and is cached, and the per-call cost is
- * `Object.keys(opts)` against a Set. Over a full dressing of all nine levels
- * — 14 084 builder calls — that is 14 084 Set lookups against 41 cached
- * derivations, and the dressing pass measures the same wall time either way
- * (`tools/checks/builder-options.mjs` reports the count).
+ * runs once per function and is cached behind a Map. Dressing all nine levels
+ * — every prop in the game, built — makes 1017 guarded builder calls against
+ * 41 cached derivations, so the whole of what the guard adds to a level load
+ * is 1017 `Object.keys` walks of a handful of keys each. The dressing pass it
+ * sits in takes 4.5 s.
  *
  * IT THROWS. A warning would be read by nobody: the four `count` sites sat in
  * the game through two adversarial audits and a judging pass. The failure mode
@@ -131,8 +131,18 @@ function sinkTable() {
   ]);
 }
 
-/** Does this source hand its whole `opts` to somebody — `f(a, opts)`, `{ ...opts }`? */
-function forwardsOpts(src) { return /\bopts\s*[,)]/.test(src) || /\.\.\.opts\b/.test(src); }
+/**
+ * Does this source hand its whole `opts` to somebody — `f(a, opts)`,
+ * `{ ...opts }`? The guard call every builder opens with is `assertOpts(fn,
+ * opts)`, which is that shape and is not that thing, so it comes out first:
+ * without it every builder looks like it forwards, and the four that forward
+ * to nothing else — addScree, addInstanced, addBoulderCluster, addDebrisField
+ * — would have been marked unanswerable and left unguarded by their own guard.
+ */
+function forwardsOpts(src) {
+  const s = src.replace(/assertOpts\([^)]*\)/g, '');
+  return /\bopts\s*[,)]/.test(s) || /\.\.\.opts\b/.test(s);
+}
 
 /** Which of those a function's source actually forwards `opts` into. */
 export function optionSinks(fn) {
@@ -145,30 +155,41 @@ export function optionSinks(fn) {
 
 /**
  * The option keys a builder understands: what it reads itself, plus what the
- * helpers it forwards to read. `null` means "cannot be answered" — a builder
- * that spreads its options into something this file does not know about could
- * legitimately be handed anything, and guessing would either refuse a real
- * option or wave everything through. `builder-options` reports the null ones
- * by name rather than counting them as covered.
+ * helpers it forwards to read — RECURSIVELY, because the chain is two deep
+ * already. A maker calls `kitClose`, which calls `Kit.emit`, which is where
+ * `collide`, `castShadow` and `receiveShadow` are read; a derivation that
+ * stopped at the first hop would have every kit-based maker in the file
+ * refusing three options it honours.
+ *
+ * `null` means "cannot be answered" — see the note on the guard above.
  */
-export function optionKeys(fn) {
-  let keys = _OPT_KEYS.get(fn);
-  if (keys !== undefined) return keys;
+function collectKeys(fn, seen) {
+  if (seen.has(fn)) return new Set();
+  seen.add(fn);
   const src = fn.toString();
-  keys = readsOfSource(src);
+  const keys = readsOfSource(src);
   const sinks = optionSinks(fn);
   const table = new Map(sinkTable());
-  for (const name of sinks) for (const k of readsOfSource(table.get(name).toString())) keys.add(k);
+  for (const name of sinks) {
+    const sub = collectKeys(table.get(name), seen);
+    if (!sub) return null;
+    for (const k of sub) keys.add(k);
+  }
   /* HANDED ON TO SOMETHING THIS FILE DOES NOT KNOW — the answer is `null`, not
    * an empty set, and the difference is the whole safety of the guard. A
    * builder that forwards its options wholesale to an unlisted helper reads
    * almost nothing itself, so an empty set would make it refuse every option
    * it really does honour: `addStorm` is four lines around `new Storm(world,
-   * opts)` and would have rejected all fourteen of Storm's. Unanswerable is
+   * opts)` and would have rejected all six of Storm's. Unanswerable is
    * therefore unguarded, and `builder-options` prints the unguarded ones by
    * name so they are a visible list rather than a silent hole. */
-  if (forwardsOpts(src) && !sinks.length) keys = null;
-  _OPT_KEYS.set(fn, keys);
+  if (forwardsOpts(src) && !sinks.length) return null;
+  return keys;
+}
+
+export function optionKeys(fn) {
+  let keys = _OPT_KEYS.get(fn);
+  if (keys === undefined) _OPT_KEYS.set(fn, keys = collectKeys(fn, new Set()));
   return keys;
 }
 
@@ -183,7 +204,7 @@ export function assertOpts(fn, opts) {
   const known = optionKeys(fn);
   if (!known) return opts;
   let bad = null;
-  for (const k in opts) if (!known.has(k)) (bad ||= []).push(k);
+  for (const k of Object.keys(opts)) if (!known.has(k)) (bad ||= []).push(k);
   if (bad) {
     throw new Error(`${fn.name}: handed ${bad.length > 1 ? 'options' : 'an option'} it does not read — `
       + `${bad.join(', ')}. It reads: ${[...known].sort().join(', ')}.`);
@@ -1797,6 +1818,7 @@ export class Prop {
  * banding and a latch, because a bare cube with a stripe on it is a cube.
  */
 export function makeCrate(world, pos, size = 0.7, opts = {}) {
+  assertOpts(makeCrate, opts);
   const M = propMaterials();
   /* A scattered crate varies ±18% around the size it was asked for, because
    * forty identical boxes are forty copies of one box. A crate in a STACK does
@@ -1846,6 +1868,7 @@ export function makeCrate(world, pos, size = 0.7, opts = {}) {
  * hazard band. Explosive. One size, 0.92 m tall.
  */
 export function makeBarrel(world, pos, opts = {}) {
+  assertOpts(makeBarrel, opts);
   const M = propMaterials();
   const r = 0.32, h = 0.92;
   // a real drum bulges at the belly and rolls in at the chimes
@@ -1882,6 +1905,7 @@ export function makeBarrel(world, pos, opts = {}) {
  * base and a capital — the static version of the same thing is addColumn.
  */
 export function makePillar(world, pos, height = 4.2, opts = {}) {
+  assertOpts(makePillar, opts);
   const M = propMaterials();
   const r = 0.42;
   const sh = shaftGeo(r, r * 0.84, height - 0.5, {
@@ -1935,6 +1959,7 @@ export function makePillar(world, pos, height = 4.2, opts = {}) {
  * panel and a valve cluster. 2.4 m of stem.
  */
 export function makeVaporator(world, pos, opts = {}) {
+  assertOpts(makeVaporator, opts);
   const M = propMaterials();
   const geo = revolveGeo([
     [0, -1.2], [0.24, -1.2], [0.24, -1.1], [0.19, -1.02], [0.185, -0.2], [0.2, -0.1],
@@ -2056,6 +2081,7 @@ export function slabCompound(geo, opts = {}) {
 }
 
 export function makeSpire(world, pos, height = 6, opts = {}) {
+  assertOpts(makeSpire, opts);
   const M = propMaterials();
   const r = makeRng(Math.floor(rng() * 1e6) + 3);
   const seg = 11, rings = Math.max(5, Math.round(height / 0.9));
@@ -2079,7 +2105,10 @@ export function makeSpire(world, pos, height = 6, opts = {}) {
     p3.setZ(i, p3.getZ(i) + bendZ * t * t * height * 0.5);
   }
   geo.computeVertexNormals();
-  const mesh = new THREE.Mesh(geo, M.stone);
+  // `mat`, like every other maker in this file: the one call site that wanted
+  // a level's own stone passed it and was ignored, and the default it landed
+  // on happened to be the same material — which is the only reason nobody saw.
+  const mesh = new THREE.Mesh(geo, opts.mat || M.stone);
   return new Prop(world, {
     kind: 'spire', mesh, position: pos, mass: 500,
     toughness: TOUGHNESS.armour, hp: 200, grippable: false,
@@ -2100,6 +2129,7 @@ export function makeSpire(world, pos, height = 6, opts = {}) {
  * cable run into the floor. 1.1 m across.
  */
 export function makeConsole(world, pos, opts = {}) {
+  assertOpts(makeConsole, opts);
   const M = propMaterials();
   const parts = [slabGeo(1.1, 0.62, 0.6, { bevel: 0.05, seg: 3, tile: TRIM_TILE })];
   const desk = extrudeBeveled([[-0.55, -0.05], [0.55, -0.05], [0.55, 0.16], [-0.55, 0.3]], 0.62,
@@ -2648,6 +2678,7 @@ export function addRock(world, centre, size, seed = 1) {
 
 /** Place `list` of local Matrix4 as one InstancedMesh centred on `centre`. */
 export function addInstanced(world, geo, mat, list, centre, opts = {}) {
+  assertOpts(addInstanced, opts);
   if (!list.length) return null;
   const im = new THREE.InstancedMesh(geo, mat, list.length);
   const c = opts.colors;
@@ -2682,6 +2713,7 @@ export function addInstanced(world, geo, mat, list, centre, opts = {}) {
  * fight around, 12 m is a landmark you can lose a squad behind.
  */
 export function addOutcrop(world, pos, opts = {}) {
+  assertOpts(addOutcrop, opts);
   const kit = kitOpen(pos, opts, 606);
   const M = propMaterials();
   const S = opts.size ?? 7;
@@ -2735,6 +2767,7 @@ export function addOutcrop(world, pos, opts = {}) {
  * strata run continuously over the top. Spans 8–24 m.
  */
 export function addRockArch(world, pos, opts = {}) {
+  assertOpts(addRockArch, opts);
   const kit = kitOpen(pos, opts, 707);
   const M = propMaterials();
   const span = opts.span ?? 14;
@@ -2867,6 +2900,7 @@ function boulderGeo(variant, seed) {
  * Only the ones you could hide behind get colliders.
  */
 export function addBoulderCluster(world, centre, opts = {}) {
+  assertOpts(addBoulderCluster, opts);
   const M = propMaterials();
   const n = opts.count ?? 12;
   const R = opts.radius ?? 6;
@@ -2993,6 +3027,7 @@ const _cv = new THREE.Vector3();
  * ground along a hard line.
  */
 export function addScree(world, centre, opts = {}) {
+  assertOpts(addScree, opts);
   const M = propMaterials();
   const n = opts.count ?? 140;
   const R = opts.radius ?? 8, inner = opts.inner ?? 0;
@@ -3902,6 +3937,7 @@ function shaftGeo(rBot, rTop, h, opts = {}) {
  * ruin actually wants three of for every intact one.
  */
 export function addColumn(world, pos, opts = {}) {
+  assertOpts(addColumn, opts);
   const kit = kitOpen(pos, opts, 21);
   const M = propMaterials();
   const S = ARCH.column[opts.size || 'M'] || ARCH.column.M;
@@ -4023,6 +4059,7 @@ export function addColumn(world, pos, opts = {}) {
  * fraction of the ring from one side. Standard spans: 3, 5, 8 m.
  */
 export function addArch(world, pos, opts = {}) {
+  assertOpts(addArch, opts);
   const kit = kitOpen(pos, opts, 33);
   const M = propMaterials();
   const span = opts.span ?? 5;
@@ -4120,7 +4157,11 @@ export function addArch(world, pos, opts = {}) {
       for (const sx of [-1, 1]) {
         addBrokenWall(world, new THREE.Vector3(sx * (rIn + t + wl / 2), 0, 0),
           new THREE.Vector3(wl, spring * (0.72 + rr() * 0.2), d * 0.92), {
-            kit, seed: (opts.seed ?? 33) * 3 + 17 + sx, mat, trimMat: trim, coreMat: M.duracreteDark,
+            kit, seed: (opts.seed ?? 33) * 3 + 17 + sx, mat, trimMat: trim,
+            // the caller's own broken-face colour if it has one: a wing is a
+            // torn-off piece of the wall the arch was cut through, so it shows
+            // the same core as the wall does
+            coreMat: opts.coreMat || M.duracreteDark,
             ruin: 0.62 + rr() * 0.2, course: opts.course, stringCourse: false,
           });
       }
@@ -4137,6 +4178,7 @@ export function addArch(world, pos, opts = {}) {
  * end and a chamfered soffit. Sits at `y` = its own mid-height.
  */
 export function addLintel(world, pos, opts = {}) {
+  assertOpts(addLintel, opts);
   const kit = kitOpen(pos, opts, 44);
   const M = propMaterials();
   const L = opts.length ?? 6, h = opts.height ?? 0.62, d = opts.depth ?? 0.72;
@@ -4165,6 +4207,7 @@ export function addLintel(world, pos, opts = {}) {
  * 5 m (one course of wall), 9 m (two).
  */
 export function addButtress(world, pos, opts = {}) {
+  assertOpts(addButtress, opts);
   const kit = kitOpen(pos, opts, 55);
   const M = propMaterials();
   const h = opts.height ?? 5, t = opts.depth ?? 1.5, w = opts.width ?? 1.2;
@@ -4185,6 +4228,7 @@ export function addButtress(world, pos, opts = {}) {
  * optional door/window openings. size = (length, full height, thickness).
  */
 export function addBrokenWall(world, pos, size, opts = {}) {
+  assertOpts(addBrokenWall, opts);
   const kit = kitOpen(pos, opts, 66);
   const M = propMaterials();
   const w = size.x, h = size.y, t = size.z;
@@ -4420,6 +4464,7 @@ export function addBrokenWall(world, pos, size, opts = {}) {
  * ramp rather than a stack of boxes, so walking up it is smooth.
  */
 export function addStair(world, pos, opts = {}) {
+  assertOpts(addStair, opts);
   const kit = kitOpen(pos, opts, 77);
   const M = propMaterials();
   const steps = opts.steps ?? 8;
@@ -4446,7 +4491,7 @@ export function addStair(world, pos, opts = {}) {
     for (const sx of [-1, 1]) {
       addRailing(world, new THREE.Vector3(sx * (w / 2 + 0.1), 0, 0), {
         kit, length: Math.hypot(D, H), height: 1.05, posts: steps > 5 ? 5 : 3,
-        pitch: Math.atan2(H, D), lift: 0, yaw: Math.PI / 2,
+        pitch: Math.atan2(H, D), yaw: Math.PI / 2,
       });
     }
   }
@@ -4463,6 +4508,7 @@ export function addStair(world, pos, opts = {}) {
  * Lengths 2-24 m; one post every 1.4 m unless you say otherwise.
  */
 export function addRailing(world, pos, opts = {}) {
+  assertOpts(addRailing, opts);
   const kit = kitOpen(pos, opts, 88);
   const M = propMaterials();
   const L = opts.length ?? 4, h = opts.height ?? 1.05;
@@ -4506,6 +4552,7 @@ export function addRailing(world, pos, opts = {}) {
 
 /** A stepped plinth — what a monument stands on. Sizes: 2, 4, 8 m across. */
 export function addPlinth(world, pos, opts = {}) {
+  assertOpts(addPlinth, opts);
   const kit = kitOpen(pos, opts, 99);
   const M = propMaterials();
   const w = opts.width ?? 4, d = opts.depth ?? w, h = opts.height ?? 1.2;
@@ -4559,6 +4606,7 @@ export function addPlinth(world, pos, opts = {}) {
  * Sizes: 2×1.4, 4×2, 6×2.6.
  */
 export function addBalcony(world, pos, opts = {}) {
+  assertOpts(addBalcony, opts);
   const kit = kitOpen(pos, opts, 111);
   const M = propMaterials();
   const w = opts.width ?? 4, d = opts.depth ?? 2, t = opts.thickness ?? ARCH.slabT;
@@ -4585,6 +4633,7 @@ export function addBalcony(world, pos, opts = {}) {
  * size = (x extent, z extent).
  */
 export function addFloorSlab(world, pos, size, opts = {}) {
+  assertOpts(addFloorSlab, opts);
   const kit = kitOpen(pos, opts, 122);
   const M = propMaterials();
   const w = size.x, d = size.y ?? size.z;
@@ -4732,6 +4781,7 @@ function drapeGeo(w, h, opts = {}) {
  * the silhouette is interesting from across the map.
  */
 export function addColossus(world, pos, opts = {}) {
+  assertOpts(addColossus, opts);
   const kit = kitOpen(pos, opts, 202);
   const M = propMaterials();
   const H = opts.height ?? 18;
@@ -4845,6 +4895,7 @@ export function addColossus(world, pos, opts = {}) {
  * them, chains, a rotted banner and the rubble it all shed. Spans 8–20 m.
  */
 export function addRuinedGate(world, pos, opts = {}) {
+  assertOpts(addRuinedGate, opts);
   const kit = kitOpen(pos, opts, 303);
   const M = propMaterials();
   const span = opts.span ?? 12;
@@ -4940,6 +4991,7 @@ export function addRuinedGate(world, pos, opts = {}) {
  * fight inside, and a horizon line from anywhere on the map.
  */
 export function addHullSection(world, pos, opts = {}) {
+  assertOpts(addHullSection, opts);
   const kit = kitOpen(pos, opts, 404);
   const M = propMaterials();
   const L = opts.length ?? 34, R = opts.radius ?? 8;
@@ -5097,6 +5149,7 @@ export function addHullSection(world, pos, opts = {}) {
  * crane trolley on a rail. Default 22 m long, 7 m to the deck.
  */
 export function addGantry(world, pos, opts = {}) {
+  assertOpts(addGantry, opts);
   const kit = kitOpen(pos, opts, 505);
   const M = propMaterials();
   const L = opts.length ?? 22, H = opts.height ?? 7, W = opts.width ?? 2.6;
@@ -5181,6 +5234,7 @@ export function addGantry(world, pos, opts = {}) {
  * down to the floor. Radius 0.06 reads as conduit, 0.3 as a main.
  */
 export function addPipeRun(world, points, opts = {}) {
+  assertOpts(addPipeRun, opts);
   const first = points[0];
   const kit = kitOpen(first, opts, 1010);
   const M = propMaterials();
@@ -5239,12 +5293,42 @@ export function addPipeRun(world, points, opts = {}) {
  * insulator bracket at each end.
  */
 export function addCableRun(world, a, b, opts = {}) {
+  assertOpts(addCableRun, opts);
   const kit = kitOpen(a, opts, 1111);
   const M = propMaterials();
   const n = opts.count ?? 3;
   const rad = opts.radius ?? 0.035;
   const rr = kit.rng;
   const la = new THREE.Vector3(), lb = new THREE.Vector3().subVectors(b, a);
+  /* HOW FAR IT DIPS, IN METRES — and until now the two levels that asked for
+   * that were ignored and got a swag through the floor.
+   *
+   * `catenaryPoints` takes SLACK: the fraction of extra arc length over the
+   * straight line, which is the right thing to default because it is
+   * dimensionless and reads the same on a 6 m run and a 90 m one. It is not
+   * what a level knows. Both call sites in Levels.js wrote `sag: 1.5` and
+   * `sag: 1.6` — "the cable dips about a metre and a half" — and `sag` was not
+   * a key this maker read, so both fell back to the 9% default. MEASURED on
+   * the hangar's own run (80 m wall to wall, anchored at 8.0 and 7.0 m): the
+   * cable bottoms out 26 m below its low anchor, i.e. eighteen metres under
+   * the deck it is strung over. The deck level's 56 m run drops 20.6 m.
+   *
+   * So `sag` is read, in metres, and converted with the shallow-cable identity
+   * — a parabola of dip d over span L is (8/3)(d/L)² longer than its chord —
+   * rather than with a fitted number. MEASURED against the curve it feeds, over
+   * spans of 6 to 120 m: within 0.6% of the dip asked for while d/L is under a
+   * tenth, 2.1% at d/L = 0.15, and useless past that — which is fine, because
+   * a caller who wants a third of the span in droop wants `slack` and the deep
+   * catenary it describes. The one edge worth knowing is at the other end:
+   * `catenaryPoints` floors its own slack at 0.001, so no cable can dip less
+   * than L·0.0194 however small a sag is asked for — 1.55 m across the
+   * hangar's 80 m wall, which is under the 1.6 it asks for and over a 1.0 it
+   * might have. The per-cable jitter stays on top, because a bundle does not
+   * hang as one line: dip runs 0.84× to 1.22× the number asked for. */
+  const span = Math.hypot(b.x - a.x, b.z - a.z);
+  const slack0 = opts.sag != null && span > 1e-3
+    ? (8 / 3) * (opts.sag / span) ** 2
+    : (opts.slack ?? 0.09);
   const side = new THREE.Vector3().subVectors(lb, la).cross(UP).normalize();
   if (!isFinite(side.x) || side.lengthSq() < 0.1) side.set(1, 0, 0);
   for (let i = 0; i < n; i++) {
@@ -5252,7 +5336,7 @@ export function addCableRun(world, a, b, opts = {}) {
     const drop = (opts.stagger ?? 0.18) * i;
     const p0 = la.clone().add(off).setY(la.y - drop);
     const p1 = lb.clone().add(off).setY(lb.y - drop);
-    const slack = (opts.slack ?? 0.09) * (0.7 + rr() * 0.8);
+    const slack = slack0 * (0.7 + rr() * 0.8);
     kit.add(tubeAlong(catenaryPoints(p0, p1, slack, opts.segments ?? 16), rad * (0.8 + rr() * 0.5), 5, FINE_TILE), opts.mat || M.cable);
   }
   if (opts.brackets !== false) {
@@ -5265,20 +5349,58 @@ export function addCableRun(world, a, b, opts = {}) {
 
 /**
  * A stack of crates: the base courses static and merged, the top one or two
- * live Props you can cut and shove off. Sizes: 'small' (4-6), 'medium' (8-12),
- * 'large' (14-20 crates).
+ * live Props you can cut and shove off.
+ *
+ * `count` is how many boxes the pile is made of; `tiers` and `columns` set the
+ * lattice directly if a caller would rather say it that way. Without either it
+ * is a medium pile of eight to twelve.
  */
 export function addCrateStack(world, pos, opts = {}) {
+  assertOpts(addCrateStack, opts);
   const M = propMaterials();
   const seed = opts.seed ?? 1212;
   const rr = makeRng(seed * 7 + 1);
-  const kit = new Kit(seed);
+  /* COMPOSABLE, like every other `add*` in this file — and it was the one that
+   * was not. The header of this file says "pass `{ kit }` to any `add*` to
+   * compose it into a larger merge"; this maker built a `new Kit` of its own
+   * and emitted it, so `{ kit }` was accepted and dropped. That is not only a
+   * draw call: a composed maker is handed a KIT-SPACE position, so the one
+   * call site that tried it (`cut()`'s derelict cell) put its stack at world
+   * (3.4, 1.8) — beside the level origin, twenty to a hundred metres from the
+   * machine it was meant to be stacked against. */
+  const kit = kitOpen(pos, opts, seed);
   const size = opts.size ?? 0.8;
-  const tiers = opts.tiers ?? (2 + Math.floor(rr() * 3));
-  const cols = opts.columns ?? (2 + Math.floor(rr() * 2));
+  /* HOW BIG IS THE PILE, in the vocabulary the caller used.
+   *
+   * Four call sites in Levels.js asked for `{ count: 2 + (rng() * 4 | 0) }` —
+   * two to five boxes, the spill off a wreck — and got the default eight to
+   * twelve, because `count` was not read. It is the word the rest of this file
+   * already uses for how many of a thing to make (addScree, addBoulderCluster,
+   * addDebrisField, addPipeRun, addCableRun), so it is the word this maker
+   * should have taken.
+   *
+   * It is derived into the lattice rather than being a third way of describing
+   * one: `columns` comes out of the count as √count — a pile is about as wide
+   * as it is deep and grows upward from there — and the tier loop below stops
+   * the moment the last box is laid, so an explicit `tiers` or `columns` still
+   * overrides either half of that.
+   */
+  const want = opts.count ?? Infinity;
+  /* The two default draws stay in this order and are skipped rather than
+   * overwritten when the count decides them, because `rr` also rolls every
+   * gap and every jitter below: a draw taken and thrown away moves the whole
+   * pile. */
+  const byCount = opts.count != null;
+  let tiers = opts.tiers ?? (byCount ? 0 : 2 + Math.floor(rr() * 3));
+  const cols = opts.columns ?? (byCount
+    ? Math.max(1, Math.round(Math.sqrt(opts.count)))
+    : 2 + Math.floor(rr() * 2));
+  // cells in tier t of this lattice, which is what says how tall the pile has
+  // to be to hold `count` of them
+  const cellsIn = (t) => Math.max(1, cols - Math.floor(t * 0.7)) * Math.max(1, cols - 1 - Math.floor(t * 0.5));
+  if (byCount && !tiers) for (let held = 0; held < want; tiers++) held += cellsIn(tiers);
   const dyn = [];
   const yaw = opts.yaw || 0;
-  kit.push(0, 0, 0, yaw);
 
   const cell = size * 1.06;
   /* EVERY CRATE SITS ON WHAT IS ACTUALLY UNDER IT, not on its tier's nominal
@@ -5302,16 +5424,26 @@ export function addCrateStack(world, pos, opts = {}) {
     }
     return h;
   };
-  for (let t = 0; t < tiers; t++) {
+  let laid = 0;
+  /* The gap roll skips a CELL, not a crate: `laid` is what stops the loop, so
+   * a pile asked for five boxes is five boxes with a gap in it rather than
+   * four. The headroom above the lattice estimate is what absorbs the skips,
+   * and it costs nothing when it is not needed because the loop stops on the
+   * last box. MEASURED over 30 000 piles — every count from 1 to 30, a
+   * thousand seeds each: with three tiers of headroom 1% of piles came up
+   * short, worst by two; with six, none of them do. */
+  const top = tiers + (byCount && opts.tiers == null ? 6 : 0);
+  for (let t = 0; t < top && laid < want; t++) {
     const w = Math.max(1, cols - Math.floor(t * 0.7));
     const d = Math.max(1, cols - 1 - Math.floor(t * 0.5));
-    const s = size * lerp(1, 0.82, t / Math.max(1, tiers));
-    for (let i = 0; i < w; i++) for (let j = 0; j < d; j++) {
+    const s = size * lerp(1, 0.82, Math.min(1, t / Math.max(1, tiers)));
+    for (let i = 0; i < w && laid < want; i++) for (let j = 0; j < d && laid < want; j++) {
       if (t > 0 && rr() < 0.18) continue;                     // gaps, not a wall
       const x = (i - (w - 1) / 2) * cell, z = (j - (d - 1) / 2) * cell;
       const jitter = (rr() - 0.5) * 0.12;
       const y = restOn(x, z, s);
-      if (t === tiers - 1 && rr() < 0.5 && dyn.length < (opts.dynamic ?? 2)) {
+      laid++;
+      if ((t === tiers - 1 || laid === want) && rr() < 0.5 && dyn.length < (opts.dynamic ?? 2)) {
         // this one is a live prop, and it stands on the tier — `y`, not the
         // tier's mid-height, because makeCrate seats itself on what it is given
         dyn.push([x, y, z, s]);
@@ -5328,17 +5460,26 @@ export function addCrateStack(world, pos, opts = {}) {
       placed.push({ x, z, s, top: y + s * 0.88 });
     }
   }
-  kit.pop();
-  const stats = kit.emit(world, pos, opts.quaternion || IDENT, opts);
   for (const [x, yy, z, s] of dyn) {
     /* EXACTLY the size of the crates it is stacked with. `s / 0.85` asked for
      * a crate between 1.00 and 1.41 times its own slot — 24% oversized on
      * average — so the live crate on top of a stack overlapped the static ones
-     * beside it by up to 12 cm and stood on their lids instead of on the tier. */
-    const p = new THREE.Vector3(x, yy, z).applyAxisAngle(UP, yaw).add(pos);
-    makeCrate(world, p, s, { exactSize: true, toughness: TOUGHNESS.plastoid });
+     * beside it by up to 12 cm and stood on their lids instead of on the tier.
+     *
+     * Placed through `kit.after` rather than here, because a body needs a
+     * WORLD point and a composed maker does not have one until the kit it was
+     * built into is emitted. Bare, that is this same instant.
+     */
+    kit.after(_kv.set(x, yy, z), (w2, p) => {
+      makeCrate(w2, p, s, { exactSize: true, toughness: TOUGHNESS.plastoid });
+    });
   }
-  return stats;
+  /* AND THE STACK ITSELF CAN BE CUT. Its lower courses are merged into the
+   * kit, and merged used to mean untouchable — the `crate` profile and the
+   * measurement that put it there are in Destruction.js. Registration costs a
+   * bounds computation; the manager pre-fractures only what is threatened, so
+   * a stack nobody swings at costs exactly what it cost before. */
+  return kitClose(world, kit, pos, opts, 'crate');
 }
 
 /**
@@ -5346,6 +5487,7 @@ export function addCrateStack(world, pos, opts = {}) {
  * points, wrinkles, and a ragged edge. Covers a 2–4 m pile.
  */
 export function addTarp(world, pos, opts = {}) {
+  assertOpts(addTarp, opts);
   const kit = kitOpen(pos, opts, 1313);
   const M = propMaterials();
   const w = opts.width ?? 3, d = opts.depth ?? 2.4, h = opts.height ?? 1.3;
@@ -5403,6 +5545,7 @@ export function addTarp(world, pos, opts = {}) {
  * Sizes: 2×2 m footprint per bay, 2 m per lift. Default 4 m × 2 m × 3 lifts.
  */
 export function addScaffold(world, pos, opts = {}) {
+  assertOpts(addScaffold, opts);
   const kit = kitOpen(pos, opts, 1414);
   const M = propMaterials();
   const W = opts.width ?? 4, D = opts.depth ?? 2, lifts = opts.lifts ?? 3;
@@ -5461,6 +5604,7 @@ export function addScaffold(world, pos, opts = {}) {
  * ground anchors and a warning lamp. Heights 6–24 m.
  */
 export function addAntenna(world, pos, opts = {}) {
+  assertOpts(addAntenna, opts);
   const kit = kitOpen(pos, opts, 1515);
   const M = propMaterials();
   const H = opts.height ?? 12;
@@ -5564,6 +5708,7 @@ export function addAntenna(world, pos, opts = {}) {
  * exactly one saturated thing on it, the control face, and it is 20 cm wide.
  */
 export function addMachine(world, pos, opts = {}) {
+  assertOpts(addMachine, opts);
   const kit = kitOpen(pos, opts, 1818);
   const M = propMaterials();
   const W = opts.width ?? 3.4, H = opts.height ?? 2.8, D = opts.depth ?? 2.2;
@@ -5617,6 +5762,7 @@ export function addMachine(world, pos, opts = {}) {
  * never seen, which costs a few hundred triangles and cannot be wrong.
  */
 export function addTank(world, pos, opts = {}) {
+  assertOpts(addTank, opts);
   const kit = kitOpen(pos, opts, 1919);
   const M = propMaterials();
   const R = opts.radius ?? 2.0, H = opts.height ?? 6.0;
@@ -5664,6 +5810,7 @@ export function addTank(world, pos, opts = {}) {
  * would be a lie about how the room stands up.
  */
 export function addStanchion(world, pos, opts = {}) {
+  assertOpts(addStanchion, opts);
   const kit = kitOpen(pos, opts, 2020);
   const M = propMaterials();
   const H = opts.height ?? 9, W = opts.width ?? 0.62;
@@ -5699,6 +5846,7 @@ export function addStanchion(world, pos, opts = {}) {
  * Heights 3 m (path), 6 m (yard), 9 m (apron).
  */
 export function addLamp(world, pos, opts = {}) {
+  assertOpts(addLamp, opts);
   const kit = kitOpen(pos, opts, 1616);
   const M = propMaterials();
   const H = opts.height ?? 6;
@@ -5756,6 +5904,7 @@ let SIGN_MAT = null;
  * (`post: true`) or bracketed off a wall. Widths 1.2–4 m.
  */
 export function addSign(world, pos, opts = {}) {
+  assertOpts(addSign, opts);
   const kit = kitOpen(pos, opts, 1717);
   const M = propMaterials();
   const w = opts.width ?? 2.2, h = opts.height ?? w * 0.42;
@@ -5831,6 +5980,7 @@ function rubbleGeo(variant, seed) {
  * radius 5 m = a collapsed wall, 12 m = a collapsed building.
  */
 export function addDebrisField(world, centre, opts = {}) {
+  assertOpts(addDebrisField, opts);
   const M = propMaterials();
   const R = opts.radius ?? 8;
   const seed = opts.seed ?? 1818;
@@ -5951,6 +6101,7 @@ export function addDebrisField(world, centre, opts = {}) {
  * Sizes: 'small' 12×9 m, 'medium' 18×13 m, 'large' 26×18 m.
  */
 export function addRuin(world, pos, opts = {}) {
+  assertOpts(addRuin, opts);
   const SZ = { small: [12, 9, 4.5], medium: [18, 13, 5.5], large: [26, 18, 7] };
   const [W, D, H] = SZ[opts.size || 'medium'] || SZ.medium;
   const kit = opts.kit || new Kit(opts.seed ?? 2020);
@@ -5960,7 +6111,13 @@ export function addRuin(world, pos, opts = {}) {
   const seed = opts.seed ?? 2020;
   const V = (x, y, z) => new THREE.Vector3(x, y, z);
   const stone = opts.mat || M.duracreteWarm;
-  const sub = { kit, mat: stone, trimMat: opts.trimMat || M.sandstone, coreMat: M.duracreteDark };
+  const sub = { kit, mat: stone, trimMat: opts.trimMat || M.sandstone };
+  /* WHAT A BROKEN FACE SHOWS, and only to the makers that break. `coreMat` was
+   * in the bag every sub-maker got, and a floor slab and a stair have no core
+   * to show — they dropped it silently, which is the defect this file's option
+   * guard exists to refuse. Two bags rather than one is the honest shape: the
+   * masonry that can be broken open carries a core colour, the rest does not. */
+  const masonry = { ...sub, coreMat: M.duracreteDark };
   // the hall stands on a stylobate, and the stair outside climbs exactly onto
   // it — a building sitting flush on the dirt is the thing that reads as a box
   const steps = 4;
@@ -5970,19 +6127,19 @@ export function addRuin(world, pos, opts = {}) {
     { ...sub, ruin: 0.3, cell: 2.2, seed: seed + 1, mat: M.duracrete });
   // back and side walls, each broken to a different height
   addBrokenWall(world, V(0, podium, -D / 2), V(W, H, ARCH.wallT), {
-    ...sub, ruin: 0.42, seed: seed + 2,
+    ...masonry, ruin: 0.42, seed: seed + 2,
     openings: [{ x: -W * 0.26, y: 0.2, w: 1.4, h: 2.6, arched: true }, { x: W * 0.26, y: 1.6, w: 1.6, h: 1.6 }],
   });
   for (const sx of [-1, 1]) {
     addBrokenWall(world, V(sx * W / 2, podium, 0), V(D, H * 0.86, ARCH.wallT), {
-      ...sub, ruin: 0.62 + rr() * 0.2, yaw: Math.PI / 2, seed: seed + 3 + sx,
+      ...masonry, ruin: 0.62 + rr() * 0.2, yaw: Math.PI / 2, seed: seed + 3 + sx,
       openings: [{ x: sx * D * 0.2, y: 0.2, w: 1.3, h: 2.4, arched: rr() < 0.5 }],
     });
   }
   // the front: a doorway arch, and the stair up to it
   const doorW = Math.min(5, W * 0.3);
   addArch(world, V(0, podium, D / 2), {
-    ...sub, span: doorW, springing: H * 0.5, depth: ARCH.wallT * 1.4,
+    ...masonry, span: doorW, springing: H * 0.5, depth: ARCH.wallT * 1.4,
     broken: rr() < 0.5 ? 0.25 : 0, seed: seed + 5, collideArch: false,
   });
   addStair(world, V(0, 0, D / 2 + steps * ARCH.step.run * 0.5), {
@@ -5998,7 +6155,7 @@ export function addRuin(world, pos, opts = {}) {
       const roll = rr();
       if (roll < 0.2) continue;                            // gone entirely
       addColumn(world, V(x, podium, z), {
-        ...sub, size: H > 6 ? 'L' : 'M', height: H * 0.92,
+        ...masonry, size: H > 6 ? 'L' : 'M', height: H * 0.92,
         standing: roll < 0.55 ? 0.3 + rr() * 0.45 : 1, seed: seed + 20 + i * 3 + sz,
       });
       if (roll < 0.42) {                                    // and its drum lying beside it
@@ -6036,6 +6193,7 @@ export function addRuin(world, pos, opts = {}) {
  * Returns the static stats; the crate stacks add live Props of their own.
  */
 export function addOutpost(world, pos, opts = {}) {
+  assertOpts(addOutpost, opts);
   const M = propMaterials();
   const R = opts.radius ?? 11;
   const seed = opts.seed ?? 2121;
@@ -6229,6 +6387,7 @@ class Crowd {
  * occupants and does not want a crowd sitting on top of them.
  */
 export function addCrowd(world, centre, opts = {}) {
+  assertOpts(addCrowd, opts);
   const rng2 = makeRng(opts.seed ?? 5150);
   const rows = opts.rows ?? 18;
   const rmin = opts.rmin ?? 58, rmax = opts.rmax ?? 96;
@@ -6627,6 +6786,7 @@ class Storm {
 
 /** Put a storm over the level. */
 export function addStorm(world, opts = {}) {
+  assertOpts(addStorm, opts);
   const s = new Storm(world, opts);
   if (world.addProp) world.addProp(s);
   else if (world.props) world.props.push(s);

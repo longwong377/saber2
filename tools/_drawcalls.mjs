@@ -87,8 +87,12 @@ for (const key of list) {
   let meshes = 0, instanced = 0, instances = 0, tris = 0;
   const byMaker = new Map();
   const bySite = new Map();
+  const seen = new Set();
   const take = (o, fromProp) => {
     if (!o.isMesh || !o.geometry || !o.geometry.attributes || !o.geometry.attributes.position) return;
+    // a Prop's mesh is on world.scene AND on world.props; one mesh is one call
+    if (seen.has(o)) return;
+    seen.add(o);
     meshes++;
     const g = o.geometry;
     const n = (g.index ? g.index.count : g.attributes.position.count) / 3;

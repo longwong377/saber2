@@ -354,82 +354,149 @@ export async function run({ check, assert, THREE: T }) {
 
   check('first person: a view, not a longer sword', () => {
     /**
-     * THE REASON THE HANDS COULD NOT SIMPLY BE RAISED.
+     * ONE WEAPON, AND THIS IS THE INEQUALITY THAT SAYS SO.
      *
-     * `FP_HILT_DROP` is where the blade is SOLVED from, not merely where it is
-     * drawn, so moving it moves the weapon in the world. The note above the
-     * constant stops at 11 cm for exactly that reason and says the rest "wants
-     * the blade's own framing checked, and that is a picture, not an
-     * inequality." It is an inequality — this one. What must not change is how
-     * far the blade reaches FROM THE BODY, and the body is `chest`, which every
-     * enemy in the game aims at and which is the same point in both views.
+     * `HILT` is where the blade is SOLVED from, not merely where it is drawn, so
+     * it moves the weapon in the world. It used to be two places — the chest in
+     * third person, 0.32 m above and 0.16 in front of it in first — because to
+     * SEE your hands they have to be in front of the lens, the lens is above and
+     * behind the chest, so the hands are in front of the chest. What must not
+     * differ between the views is how far the blade reaches FROM THE BODY, and
+     * the body is `chest`, which every enemy in the game aims at and which is
+     * the same point in both views.
      *
-     * So: sweep the blade through its whole guard range in each view and
-     * compare the envelopes. If first person reaches further from the chest
-     * than third does, it is a different weapon and the framing has to be
-     * bought some other way. If it does not, the anchor is free to move.
+     * ── THE 28% THIS CLAUSE USED TO RATCHET WAS THE RESTING POSE ────────────
+     *
+     * The measurement below drives the guard with `input.mouse`, and the stub
+     * above answers `false` to every action — including `blade`. In the shipped
+     * `hold` scheme the mouse is the CAMERA until that button is down, so the
+     * guard never left READY_GUARD and all this ever compared was where the two
+     * views PARK the blade: third 1.49 m from the chest, first 1.91, "28% more
+     * sword for changing the camera". The parking spots did differ, by exactly
+     * the anchor offset. The sword did not.
+     *
+     * So the reach is read three ways now, and the third one is the sword:
+     *
+     *   REST      the old measurement, kept because it is a real property — how
+     *             far out the blade sits when you are not steering it.
+     *   SWEPT     the guard driven over its travel with the button held, which
+     *             is what the old note said it was doing and was not.
+     *   STILL     the ENVELOPE: the guard held motionless at each point of a
+     *             9x9 grid over its whole travel, the hands and the blade let
+     *             settle at each, and the tip read off the chest. No spring
+     *             overshoot, no sweep phase — the reachable set.
+     *
+     * Measured before the anchors were unified: rest 1.49/1.91 (+28%), swept
+     * 1.82/1.84 (+1.2%), still 1.81/1.82 (+0.3%). The weapon was already the
+     * same length; what was 9% longer in first person was its reach FORWARD, on
+     * the ground plane where an enemy stands — 1.59 m against 1.73 — and that
+     * is the number a fight feels. It is asserted here as well, because a 3D
+     * distance from the chest can be spent going upwards.
+     *
+     * All three are asserted at a few percent, and NONE of them is a ratchet.
+     * One anchor is one weapon or it is not.
+     *
+     * WHY THE BOUND IS 5% AND NOT ZERO, and it is derived rather than chosen.
+     * The first-person anchor hangs off the EYE — it has to, or the hands swim
+     * against the view — and `CameraRig.eyePosition` sets the eye 0.07 m forward
+     * along the body's own horizontal (see the note there). That 7 cm is a
+     * property of a head sitting in front of a spine, not of the weapon, and on
+     * a 1.76 m reach it is 4.0%. Everything the two views can still differ by is
+     * that, plus the pelvis ride the eye also takes; measured, the remainder
+     * comes in at 2.4% of the envelope and 3.1% on the ground plane.
      */
-    const reach = (firstPerson) => {
+    const bench = ({ firstPerson, hold = false }) => {
       const world = stubWorld();
       const p = new Player(world, { isLocal: true });
       p.position.set(0, 0, 0);
+      p.velocity.set(0, 0, 0);
       if (firstPerson) { p.camera.firstPerson = true; p._applyViewMode(); }
       p.saber.ignite(); p.saber.ignition = 1;
       const input = stubInput();
+      // `blade` MUST answer for the mouse to reach the guard at all — see the
+      // note over stubInput in tools/_anchor.mjs, which has been bitten twice.
+      if (hold) input.act = (id) => id === 'blade';
       const ctx = { input, terrain: world.terrain, physics: world.physics, particles: null,
         camera: world.engine.camera, time: 0, groundColor: 0, enemies: [] };
+      return { p, input, ctx, world, step: (i) => { ctx.time = world.time = i / 60; p.update(1 / 60, ctx); } };
+    };
+
+    /** The blade parked at READY_GUARD while the camera turns. */
+    const rest = (firstPerson) => {
+      const b = bench({ firstPerson });
       let far = 0, near = Infinity;
       const tip = new THREE.Vector3();
       for (let i = 0; i < 420; i++) {
-        ctx.time = world.time = i / 60;
-        // drive the guard right round its travel, the way a fight does
-        input.mouse.dx = Math.cos(i / 19) * -38;
-        input.mouse.dy = Math.sin(i / 13) * -26;
-        input.buttons[0] = (i % 130) < 80;
-        p.update(1 / 60, ctx);
+        b.input.mouse.dx = Math.cos(i / 19) * -38;
+        b.input.mouse.dy = Math.sin(i / 13) * -26;
+        b.step(i);
         if (i < 120) continue;
-        p.saber.pointAt(1, tip);
-        const d = tip.distanceTo(p.chest);
-        if (d > far) far = d;
-        if (d < near) near = d;
+        const d = b.p.saber.pointAt(1, tip).distanceTo(b.p.chest);
+        far = Math.max(far, d); near = Math.min(near, d);
       }
       return { far, near };
     };
-    const third = reach(false), first = reach(true);
-    /*
-     * A RATCHET ON A KNOWN FAULT, not a pass mark — the same shape as the wrist
-     * check in viewmodel.mjs.
-     *
-     * First person reaches 1.89 m from the chest and third person 1.49: 27%
-     * more sword for changing the camera. It is not a rounding error and it is
-     * not new — it is what the note over FP_HILT_DROP predicted ("0.45 looked
-     * best but handed first person a third more range, which is not a view
-     * option, it is a different weapon") and it was 1.99 before this pass.
-     *
-     * It cannot be tuned away, and that is worth writing down so nobody spends
-     * another afternoon on it. To SEE your hands they have to be in front of
-     * the lens; the lens is above and behind the chest; so the hands are in
-     * front of the chest; so the blade reaches further from it. Every value of
-     * the anchor that frames the hands lengthens the sword, and every value
-     * that matches third person's reach puts the hands under the floor. There
-     * is no third option while one rigid blade is solved from one anchor.
-     *
-     * THE FIX IS TO UNIFY THE ANCHOR, not to move it: give third person the
-     * same forward-and-up offset from the chest, so there is one weapon and the
-     * third-person figure holds its sword in front of itself, which is where a
-     * held sword goes. That moves guard geometry SaberController has tuned
-     * against the sternum and wants the balance harness run over it, so it is
-     * its own piece of work. Until then this bound holds the line at what it is
-     * today and fails if it grows.
-     */
-    assert(first.far < third.far * 1.30,
-      `first person reaches ${first.far.toFixed(2)} m from the chest against third person's ${third.far.toFixed(2)} — `
-      + `${((first.far / third.far - 1) * 100).toFixed(0)}% more sword for changing the camera, and it was 27% before`);
-    assert(first.far > third.far * 0.88,
-      `first person reaches only ${first.far.toFixed(2)} m against third person's ${third.far.toFixed(2)} — `
-      + 'the view is costing the player their sword');
-    return `blade tip from the chest: third ${third.near.toFixed(2)}–${third.far.toFixed(2)} m, `
-      + `first ${first.near.toFixed(2)}–${first.far.toFixed(2)} m — `
-      + `${((first.far / third.far - 1) * 100).toFixed(0)}% over, UNFIXED, the anchors have to be unified`;
+
+    /** The guard driven round its travel, the way a fight does. */
+    const swept = (firstPerson) => {
+      const b = bench({ firstPerson, hold: true });
+      let far = 0;
+      const tip = new THREE.Vector3();
+      for (let i = 0; i < 600; i++) {
+        b.input.mouse.dx = Math.cos(i / 19) * 46;
+        b.input.mouse.dy = Math.sin(i / 13) * 34;
+        b.step(i);
+        if (i >= 120) far = Math.max(far, b.p.saber.pointAt(1, tip).distanceTo(b.p.chest));
+      }
+      return far;
+    };
+
+    /** The envelope: every guard, held still, settled. */
+    const still = (firstPerson) => {
+      const b = bench({ firstPerson, hold: true });
+      for (let i = 0; i < 120; i++) b.step(i);
+      let far = 0, horiz = 0, i = 120;
+      const tip = new THREE.Vector3();
+      for (let gx = -1; gx <= 1.001; gx += 0.25) {
+        for (let gy = -1; gy <= 1.05; gy += 0.25) {
+          for (let k = 0; k < 26; k++) { b.p.control.gx = gx; b.p.control.gy = gy; b.step(i++); }
+          b.p.saber.pointAt(1, tip);
+          far = Math.max(far, tip.distanceTo(b.p.chest));
+          // …and on the ground plane, from the feet, which is the reach an
+          // enemy standing in front of you has to close. A tip a metre over
+          // your head is 1.8 m from the chest and can touch nothing.
+          horiz = Math.max(horiz, Math.hypot(tip.x - b.p.position.x, tip.z - b.p.position.z));
+        }
+      }
+      return { far, horiz };
+    };
+
+    const r3 = rest(false), r1 = rest(true);
+    const w3 = swept(false), w1 = swept(true);
+    const s3 = still(false), s1 = still(true);
+    const over = (a, b) => (a / b - 1) * 100;
+
+    // The envelope first: it is the one that is the sword.
+    assert(Math.abs(over(s1.far, s3.far)) < 5,
+      `the blade reaches ${s1.far.toFixed(2)} m from the chest in first person against ${s3.far.toFixed(2)} in third — `
+      + `${over(s1.far, s3.far).toFixed(1)}%, and one anchor is supposed to be one weapon`);
+    assert(Math.abs(over(s1.horiz, s3.horiz)) < 5,
+      `on the ground plane the tip reaches ${s1.horiz.toFixed(2)} m from the feet in first person against `
+      + `${s3.horiz.toFixed(2)} in third — ${over(s1.horiz, s3.horiz).toFixed(1)}% of reach for changing the camera`);
+    assert(Math.abs(over(w1, w3)) < 5,
+      `swept through its travel the tip reaches ${w1.toFixed(2)} m in first person against ${w3.toFixed(2)} in third — `
+      + `${over(w1, w3).toFixed(1)}%`);
+    // The resting pose is allowed to differ a little — READY_GUARD is per view
+    // by design and the eye carries its own 7 cm forward set — but not by the
+    // 28% that used to stand here.
+    assert(Math.abs(over(r1.far, r3.far)) < 8,
+      `at rest the blade sits ${r1.far.toFixed(2)} m from the chest in first person against ${r3.far.toFixed(2)} in third — `
+      + `${over(r1.far, r3.far).toFixed(1)}%; the ready guards differ per view, this much is not a ready guard`);
+
+    return `one anchor: envelope ${s3.far.toFixed(2)}/${s1.far.toFixed(2)} m from the chest `
+      + `(${over(s1.far, s3.far).toFixed(1)}%), ${s3.horiz.toFixed(2)}/${s1.horiz.toFixed(2)} m from the feet `
+      + `(${over(s1.horiz, s3.horiz).toFixed(1)}%), swept ${w3.toFixed(2)}/${w1.toFixed(2)} `
+      + `(${over(w1, w3).toFixed(1)}%), at rest ${r3.far.toFixed(2)}/${r1.far.toFixed(2)} `
+      + `(${over(r1.far, r3.far).toFixed(1)}%)`;
   });
 }

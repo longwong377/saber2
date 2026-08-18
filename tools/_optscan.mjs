@@ -116,7 +116,40 @@ export function objectKeysAt(s, start) {
  * literal earlier in the list is a different kind of thing (an openings list,
  * a size).
  */
-export function callSites(src, names) {
+/**
+ * Blank out comments and string bodies, keeping every character position, so
+ * the scan below cannot match a call written in prose. This file's own header
+ * names four builders and the options they were wrongly handed, and without
+ * this it reported them as live defects — an instrument finding its own
+ * documentation, which is HANDOFF §2.4 in miniature.
+ */
+function blankNonCode(src) {
+  const out = src.split('');
+  for (let i = 0; i < src.length;) {
+    const c = src[i];
+    if (c === '/' && src[i + 1] === '/') {
+      while (i < src.length && src[i] !== '\n') out[i++] = ' ';
+      continue;
+    }
+    if (c === '/' && src[i + 1] === '*') {
+      const end = src.indexOf('*/', i + 2);
+      const stop = end < 0 ? src.length : end + 2;
+      for (; i < stop; i++) if (src[i] !== '\n') out[i] = ' ';
+      continue;
+    }
+    if (c === '"' || c === '\'' || c === '`') {
+      const end = skipString(src, i);
+      for (let j = i + 1; j < end - 1; j++) if (src[j] !== '\n') out[j] = ' ';
+      i = end;
+      continue;
+    }
+    i++;
+  }
+  return out.join('');
+}
+
+export function callSites(source, names) {
+  const src = blankNonCode(source);
   const out = [];
   const re = /(?:^|[^\w$.])((?:[A-Za-z_$][\w$]*\.)?)([A-Za-z_$][\w$]*)\s*\(/g;
   let m;

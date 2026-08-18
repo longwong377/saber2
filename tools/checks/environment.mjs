@@ -880,6 +880,59 @@ export function run({ check, assert, near }) {
     return `${rows.join(', ')} — ${Math.round(tris / 1000)}k triangles over ${MAKERS.length} makers`;
   });
 
+  check('construction: a maker composed into a kit lands IN it, and where it was asked', () => {
+    /* `{ kit }` IS THE FILE'S WHOLE COMPOSITION CONVENTION — its header says
+     * "pass `{ kit }` to any `add*` to compose it into a larger merge" — and
+     * one maker did not implement it. `addCrateStack` built a Kit of its own,
+     * emitted it, and returned; the `{ kit }` it was handed went nowhere. That
+     * costs draw calls, which is the visible half, and it puts the assembly in
+     * the WRONG PLACE, which is the half nobody would have found by looking: a
+     * composed maker is given a KIT-SPACE position, so `cut()`'s derelict cell
+     * asked for a stack 3.4 m from its machine and got one at world (3.4, 1.8)
+     * — beside the level origin, up to a hundred metres away.
+     *
+     * Both halves are pinned here, and pinned by COMPARISON rather than
+     * against numbers typed in: the same stack is built bare at a world point
+     * and composed into a kit emitted at that same point, and the two have to
+     * agree. That also covers the live crates on top, which are rigid bodies
+     * and have no kit space to live in — they are placed through `Kit.after`,
+     * at the emit, which is the only moment their world point exists. */
+    const at = new THREE.Vector3(11, 0, -7);
+    const yaw = new THREE.Quaternion().setFromAxisAngle(V(0, 1, 0), 0.7);
+    const opts = { tiers: 3, columns: 3, seed: 4242 };
+
+    const bare = stubWorld();
+    const bareRes = addCrateStack(bare, at, { ...opts, quaternion: yaw });
+
+    const comp = stubWorld();
+    const kit = new Kit(7);
+    addCrateStack(comp, V(0, 0, 0), { ...opts, kit });
+    const res = kit.emit(comp, at, yaw);
+
+    assert(res.draws === bareRes.draws,
+      `composed into a kit the stack emitted ${res.draws} meshes against ${bareRes.draws} bare`);
+    /* The live crates only — `world.props` also holds the destruction proxy the
+     * stack registers, which has a body and no mesh. */
+    const crates = (w) => w.props.filter((p) => p.mesh).map((p) => p.mesh.position.clone())
+      .sort((a, b) => (a.x - b.x) || (a.y - b.y) || (a.z - b.z));
+    const cb = crates(bare), cc = crates(comp);
+    assert(cb.length > 0, 'the bare stack put no live crate on top of itself');
+    assert(cc.length === cb.length, `${cc.length} live crates composed against ${cb.length} bare`);
+    let worst = 0;
+    for (let i = 0; i < cb.length; i++) worst = Math.max(worst, cc[i].distanceTo(cb[i]));
+    assert(worst < 1e-6, `a composed stack's live crates land ${worst.toFixed(3)} m from where a bare one's do`);
+    // and composing two of them really does merge: one bin per material, not
+    // one per maker
+    const two = stubWorld();
+    const k2 = new Kit(7);
+    addCrateStack(two, V(0, 0, 0), { ...opts, kit: k2 });
+    addCrateStack(two, V(4, 0, 0), { ...opts, kit: k2, seed: 99 });
+    const r2 = k2.emit(two, at, yaw);
+    assert(r2.draws === res.draws,
+      `two stacks in one kit cost ${r2.draws} draw calls against one stack's ${res.draws}`);
+    return `${res.draws} draws composed and bare, ${cb.length} live crates within ${worst.toExponential(1)} m, two stacks still ${r2.draws}`;
+  });
+
   check('construction: every maker still puts colliders where its mass is', () => {
     const bad = [];
     for (const [name, fn] of MAKERS) {

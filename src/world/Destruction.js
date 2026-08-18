@@ -108,6 +108,30 @@ let _structId = 1;
  *   cell       target chunk edge in metres. Bigger = fewer, heavier chunks.
  */
 export const PROFILES = {
+  /* THE ONE SOFT THING IN THE TABLE, and every number in it is taken off the
+   * loose crate `Props.makeCrate` already builds rather than picked to look
+   * plausible beside the masonry above.
+   *
+   * A crate stack's lower courses are merged static geometry — that is the
+   * whole point of the maker — and merged static geometry used to mean
+   * untouchable, which is exactly the complaint `island()` was made
+   * destructible to answer: "everything built as an island was a static box
+   * with a picture on it". A pile of boxes you cannot cut is the same defect
+   * wearing crates, and `sliceable` measures it the moment a pile is small
+   * enough to fall inside its 3.2 m survey window: geonosis went from 4 of 41
+   * reachable objects untouchable to 10 of 33 when its stacks shrank to the
+   * two-to-five boxes their call sites ask for.
+   *
+   *   toughness  TOUGHNESS.plastoid — makeCrate's own, so a crate in a stack
+   *              parts under the blade exactly as the loose one beside it does
+   *   density    makeCrate is `mass: 22 * s` over a box of s × 0.9s × s, which
+   *              at its default 0.7 m is 15.4 kg in 0.309 m³ = 50 kg/m³
+   *   hpPerM2    chosen so `cellHp` of ONE crate comes out at makeCrate's own
+   *              hp of 34: 34 / (4.8 · ∛(0.46²)) for the 0.8 m crate these
+   *              stacks are built from = 11.9
+   *   cell       0.9 — one chunk per crate, because a stack comes apart into
+   *              the boxes it is made of and not into splinters */
+  crate: { toughness: TOUGHNESS.plastoid, density: 50, hpPerM2: 11.9, cell: 0.9, chip: 0x9c8352 },
   sandstone: { toughness: TOUGHNESS.heavy * 0.55, density: 75, hpPerM2: 8, cell: 1.25, chip: 0xbba077 },
   stone: { toughness: TOUGHNESS.heavy, density: 90, hpPerM2: 11, cell: 1.35, chip: 0x9c9186 },
   duracrete: { toughness: TOUGHNESS.heavy * 1.6, density: 100, hpPerM2: 15, cell: 1.5, chip: 0x8e8b84 },
