@@ -598,6 +598,35 @@ function jediLook(seed = null) {
 const JEDI_BASE = {
   toughness: TOUGHNESS.flesh, melee: true, saber: true,
   hipHeight: 0.95, jedi: true,
+  /**
+   * NO SIMULATED SKIRT — WRITTEN DOWN, because until this line the flag had NO
+   * WRITER AT ALL.
+   *
+   * `grep -rn simSkirt src/ tools/` returned exactly ONE line, the reader in
+   * `_build`, so `A.simSkirt` was `undefined` for all 31 archetypes and the
+   * `attachSkirt` branch on the enemy path was unreachable code that read as a
+   * feature. A flag whose only possible value is `undefined` is HANDOFF 2.3's
+   * close relative: an omission wearing a decision's clothes. These four are
+   * the only bodies that publish a `robeSkirt` for it to act on, so this is
+   * where the decision belongs.
+   *
+   * AND IT IS `false` ON A MEASUREMENT, not on caution. Measured on a built
+   * Master: the simulated skirt is 970 links against a cape's 300 — 3.2 capes
+   * on one body, and 66% of the PLAYER's entire four-garment set. Engine.js
+   * sizes `QUALITY.cloth` on "every enemy wearing exactly one cape" and
+   * `cloth-cost.mjs` holds every archetype to `g.n === 1` in a census that
+   * counts the skirt's two sash straps as garments of their own — so a
+   * simulated skirt is structurally THREE by that count and no body can carry
+   * one while that assertion stands, whatever the body is.
+   *
+   * Turning it on is therefore a cloth-budget decision and not a costume one.
+   * The Master is the candidate — `setPieceOnly`, one per level, gated the way
+   * the warship's general is, capeless like every Jedi here, and the body the
+   * player spends longest looking at — and it needs exactly two lines: this
+   * field to `true` on the master's own row, and `cloth-cost.mjs` counting a
+   * GARMENT rather than a cloth object.
+   */
+  simSkirt: false,
   /* NO CAPE. A Jedi takes the outer robe off to fight, which is both the image
    * the source material is most consistent about and the thing that separates
    * these four from the hooded, caped acolyte at silhouette range — and it is
@@ -749,27 +778,6 @@ export const ARCHETYPES = {
      * fill by not appearing on a list. See the note on the IG Bodyguard. */
     setPieceOnly: true,
     saberColor: 2, hilt: 'Duelist', form: 'makashi',
-    /**
-     * THE ONE BODY IN THE GAME THAT WEARS SIMULATED CLOTH, and the flag that
-     * makes it so had NO WRITER AT ALL until it did.
-     *
-     * `grep -rn simSkirt src/ tools/` returned exactly one line — the reader in
-     * `_build` — so `A.simSkirt` was `undefined` for all 31 archetypes and the
-     * `attachSkirt` branch on the enemy path was unreachable code. A flag whose
-     * only possible value is `undefined` is HANDOFF 2.3's close relative: it
-     * reads as a decision and is an omission.
-     *
-     * The decision is made HERE, and it is the Master because the budget says
-     * it can only be the Master. Engine.js sizes `QUALITY.cloth` on "every
-     * enemy wearing exactly one cape" and `cloth-cost.mjs` holds it to that; a
-     * body with a cape AND a skirt doubles a column the Temple fields in double
-     * figures. The Master is `setPieceOnly` — one per level, gated the way the
-     * warship's general is — it is capeless like every Jedi here, so its skirt
-     * is still exactly one garment, and it is the body the player spends the
-     * longest looking at. The robe moving when it moves is the whole of what
-     * that costs and the whole of what it buys.
-     */
-    simSkirt: true,
     damage: 30, preferred: [1.7, 3.4], score: 2800, threat: 12, boss: true,
     /* The set-piece gets four of the five and the only UNLEASH on the roster,
      * which fires once, below a third of its health, with a blade inside its

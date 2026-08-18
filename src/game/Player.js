@@ -502,7 +502,12 @@ const FLIP_TIME = 0.52;
  * through a fight.
  */
 const DASH_STAMINA = 18;
-const DIVE_SPEED = 30, DIVE_CLEAR = 1.2, DIVE_STAMINA = DASH_STAMINA;
+/* Exported so the Codex card for the dive quotes these three rather than
+ * retyping them beside the table that owns them — the drift this codebase
+ * keeps finding (HANDOFF §2.3): the Codex's parry window was wrong on three of
+ * four difficulties and the Colosseum's card claims 30 000 seats against a
+ * measured 6 952, both from a number typed next to its source. */
+export const DIVE_SPEED = 30, DIVE_CLEAR = 1.2, DIVE_STAMINA = DASH_STAMINA;
 /**
  * SPRINTING USED TO COST NOTHING, and neither did dashing.
  *

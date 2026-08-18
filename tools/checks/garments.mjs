@@ -328,6 +328,60 @@ function capeInside(sk, cl, rig) {
 /* ── the suite ───────────────────────────────────────────────────────── */
 
 export function run({ check, assert }) {
+
+  check('garments: every gate on the enemy wardrobe has somebody who sets it', async () => {
+    /**
+     * ══ A FLAG WHOSE ONLY POSSIBLE VALUE IS `undefined` ══
+     *
+     * `Enemy._build` gates the simulated robe on `A.simSkirt`, and
+     * `grep -rn simSkirt src/ tools/` returned exactly ONE line: that reader.
+     * No archetype set it, nothing could set it, and `attachSkirt` on the enemy
+     * path was unreachable code that read as a feature — one of a pair of
+     * flags in the same method whose comment says "an archetype has to ask NOT
+     * to have a cape, and has to ask to have its skirt simulated", where one of
+     * the two asks had no caller.
+     *
+     * That is HANDOFF 2.3's close relative and it is a CLASS, not an instance:
+     * a gate with no writer is indistinguishable, from inside the method, from
+     * a gate every body happens to decline. So this reads the shipped source of
+     * `_build` for the fields it consults, and asks the shipped roster whether
+     * any body has ever heard of them. Nothing is listed here — a wardrobe
+     * field added tomorrow is covered the day it is read.
+     *
+     * `undefined` is not the same as `false`: `JEDI_BASE` declares
+     * `simSkirt: false` with its reasons and that satisfies this, which is the
+     * whole point. The demand is an AUTHOR, not a value.
+     */
+    const { ARCHETYPES } = await import('../../src/game/Enemy.js');
+    await import('../../src/game/Levels.js');   // the Command units and the machines
+    const { readFileSync } = await import('node:fs');
+    const src = readFileSync(new URL('../../src/game/Enemy.js', import.meta.url).pathname, 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+    /* The wardrobe block only: from the cape gate to the end of the skirt
+     * branch. Scoped rather than whole-method because `_build` also reads
+     * fields that are legitimately positional (`A.scale`) or read through a
+     * `??` with an authored default, and a check that cannot say which is which
+     * would be a list of exceptions inside a page (HANDOFF 2.4). */
+    const i0 = src.indexOf('if (A.cape !== false)');
+    assert(i0 > 0, "the cape gate is no longer spelt `if (A.cape !== false)` — re-anchor this scan");
+    const i1 = src.indexOf('if (A.shield)', i0);
+    assert(i1 > i0, 'the wardrobe block no longer ends at the shield gate — re-anchor this scan');
+    const block = src.slice(i0, i1);
+    const fields = new Set();
+    for (const m of block.matchAll(/\bA\.([A-Za-z_$][\w$]*)/g)) fields.add(m[1]);
+    assert(fields.size >= 2, `only ${fields.size} archetype fields found in the wardrobe block`);
+    const rows = [];
+    for (const f of fields) {
+      const setters = Object.keys(ARCHETYPES).filter((k) => ARCHETYPES[k][f] !== undefined);
+      assert(setters.length > 0,
+        `\`A.${f}\` gates the enemy wardrobe and NOT ONE of the ${Object.keys(ARCHETYPES).length} `
+        + 'archetypes sets it — its only possible value is `undefined`, so the branch behind it is '
+        + 'unreachable code that reads as a decision');
+      rows.push(`${f} ${setters.length}`);
+    }
+    return `${fields.size} wardrobe gates, all authored: ${rows.join(', ')}`;
+  });
+
   const IDS = ROBE_CUTS.map((c) => c.id);
 
   /**

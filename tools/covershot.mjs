@@ -237,7 +237,7 @@ const shots = [];
 const measured = [];
 for (const [name, pose] of Object.entries(POSES)) {
   await page.evaluate((p) => { window.SABER.__pose = p; }, pose);
-  await page.waitForTimeout(2200);
+  await page.evaluate(async () => { for (let i = 0; i < 3; i++) await window.__frame(); });
   const file = join(out, `${tag}-${level}-${name}.png`);
   const lit = await page.screenshot({ path: file });
   shots.push(file);
@@ -248,7 +248,7 @@ for (const [name, pose] of Object.entries(POSES)) {
       window.__hidden = g.rings.map((r) => r.mesh).filter((m) => m && m.visible);
       for (const m of window.__hidden) m.visible = false;
     });
-    await page.waitForTimeout(2200);
+    await page.evaluate(async () => { for (let i = 0; i < 3; i++) await window.__frame(); });
     const bareFile = join(out, `${tag}-${level}-${name}-bare.png`);
     const bare = await page.screenshot({ path: bareFile });
     await page.evaluate(() => { for (const m of window.__hidden) m.visible = true; });
@@ -275,7 +275,10 @@ if (argv.includes('--probe')) {
     u.uCover.value.x = 1;
     window.SABER.__pose = { y: 6, pitch: 22, reach: 90 };
   });
-  await page.waitForTimeout(2500);
+  /* SETTLED IN FRAMES, NOT MILLISECONDS — HANDOFF 2.6. One frame here is up to
+   * 4151 ms, so every wall-clock settle in this file was under a single frame
+   * and settled nothing at all. */
+  await page.evaluate(async () => { for (let i = 0; i < 3; i++) await window.__frame(); });
   const f = join(out, `${tag}-${level}-probe.png`);
   await page.screenshot({ path: f });
   shots.push(f);

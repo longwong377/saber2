@@ -621,6 +621,82 @@ export function run({ check, assert, near }) {
       + `${(b.deepest * 100).toFixed(0)} cm / ${b.wide.toFixed(1)} m`;
   });
 
+  /**
+   * AND THE HEIGHTFIELD HAS A BOUND TOO — which is the one this file never
+   * measured. Everything above about persistence and refill is the SURFACE
+   * memory, and `Surface.tread` clamps correctly; the mesh grid underneath it
+   * did not. `Terrain.crater` read
+   *
+   *     deform[k] += delta; deform[k] = clamp(deform[k], -4.5, 3.0);
+   *     heights[k] += delta;
+   *
+   * and `deform` is written on those two lines and read NOWHERE in src/ or
+   * tools/ — nothing in tools/ so much as mentions it — so the −4.5 m bound
+   * governed an array with no readers while `heights`, which `height()`,
+   * `slopeAt()`, the mesh and the physics heightfield all answer from, took
+   * the raw delta and accumulated without limit. Measured on scoria at might 1,
+   * the same 2.2 m × 0.55 m crater at the origin: deform pinned at −4.50 after
+   * sixteen while h(0,0) went 20.17 → 11.77 (30×) → 3.38 (60×) → −91.74 (400×).
+   *
+   * `Player._land` craters at the player's own feet on ANY landing over 15 m/s
+   * with no height gate, so this is reachable by playing: about thirty hard
+   * landings on one spot leave the player at the bottom of a nine-metre hole
+   * whose walls are past the game's own anti-climb slope against a STEP_UP of
+   * 0.45 — a soft lock, and Levels.js's doc block states the opposite in as
+   * many words ("nothing here can produce a hole you fall into whatever the
+   * settings say"), which is true per crater and was false for the sum.
+   *
+   * The bar is the depth AND the wall, because the depth alone is survivable
+   * and the wall is what traps you.
+   */
+  check('ground: the ground cannot be dug out from under the player', () => {
+    const t = new Terrain(new THREE.Scene(), shipped('scoria'), 1);
+    const h0 = t.height(0, 0);
+    /* The bound has to be the one the ground itself states, not a number typed
+     * here beside it (§2.3) — so it is read off `deform`, which is what carries
+     * it, after enough craters to pin it. */
+    const marks = [];
+    let at60 = 0;
+    for (let n = 1; n <= 400; n++) {
+      t.crater(0, 0, 2.2, 0.55);
+      if (n === 10 || n === 30 || n === 60 || n === 400) {
+        marks.push(`${n}× ${(t.height(0, 0) - h0).toFixed(2)}`);
+        if (n === 60) at60 = h0 - t.height(0, 0);
+      }
+    }
+    const k = Math.round(t.half * t.invStep) * t.res + Math.round(t.half * t.invStep);
+    const bound = Math.abs(t.deform[k]);
+    const sank = h0 - t.height(0, 0);
+    assert(sank <= bound + 0.01,
+      `400 craters on one spot sank the ground ${sank.toFixed(2)} m while the deformation the `
+      + `terrain records for that cell is ${bound.toFixed(2)} m — the clamp is on an array nobody `
+      + 'reads and `heights`, which every reader uses, is unbounded. Player._land craters at the '
+      + 'feet on any landing over 15 m/s with no height gate, so this is a hole you dig yourself '
+      + 'into by playing');
+    /* …AND IT CONVERGES, which is the property the dead clamp was there for:
+     * playing longer cannot dig deeper. Measured before the fix, the same
+     * crater 400× went on past every mark — 11.77 m of ground at 30, 3.38 at
+     * 60, −91.74 at 400 — so a bound that is only ever approached is not a
+     * bound. The last 340 craters have to move nothing at all.
+     *
+     * The residual wall is worth naming and is NOT asserted here: a 4.5 m bowl
+     * still leaves a face of about 0.6 against `blockClimb`'s 0.52, so the
+     * player walks out of it only by jumping — which they can, twice, off a
+     * 7.4 m/s jump that everyone gets. Bounding the crater's GRADIENT rather
+     * than its depth is a design change to how a crater is shaped and it is
+     * not this fix. */
+    const converged = h0 - t.height(0, 0);
+    assert(Math.abs(converged - at60) < 1e-3,
+      `the ground was ${at60.toFixed(2)} m down after 60 craters and ${converged.toFixed(2)} m after `
+      + '400 — it is still sinking, so the bound is only ever approached and never reached');
+    let worst = 0;
+    for (let r = 0.5; r <= 9; r += 0.25) worst = Math.max(worst, t.slopeAt(r, 0), t.slopeAt(0, r));
+    const rep = `scoria, one spot, 400 craters: sank ${sank.toFixed(2)} m against a recorded `
+      + `${bound.toFixed(2)} (${marks.join(', ')}), converged by 60, wall ${worst.toFixed(2)}`;
+    t.dispose();
+    return rep;
+  });
+
   check('ground: a small hit still marks the loose layer the heightfield cannot hold', () => {
     /* The grid is the reason this exists. `crater` widens anything under
      * step × 1.35 — 2.20 m on the alpine preset — and SHALLOWS it to conserve

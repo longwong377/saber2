@@ -456,7 +456,10 @@ async function cmdFrame() {
     return { exposure: e.renderer.toneMappingExposure, cascades: lights.length,
       boxes: lights.map((L) => [L.shadow.camera.right, L.shadow.mapSize.x, L.shadow.normalBias]) };
   }, eye);
-  await page.waitForTimeout(4200);
+  /* SETTLED IN FRAMES, NOT MILLISECONDS — HANDOFF 2.6. One frame here is up to
+   * 4151 ms, so every wall-clock settle in this file was under a single frame
+   * and settled nothing at all. */
+  await page.evaluate(async () => { for (let i = 0; i < 5; i++) await window.__frame(); });
   const out = join(ROOT, '.smoke', 'lane-arena');
   mkdirSync(out, { recursive: true });
   const file = join(out, `${tag}-${level}.png`);

@@ -982,7 +982,14 @@ export async function run({ check, assert }) {
     assert(emitted.size > 3, `only found ${emitted.size} reported event types — the scan is broken`);
     const unreachable = [];
     for (const L of LESSONS) {
-      if (L.need === Infinity) continue;          // free practice and the sandbox
+      /* The one endless rung — the sandbox the ladder ends in. It used to be
+       * two, and the second was `free practice` sitting one rung ABOVE the end
+       * with `check: () => false`, which stopped the ladder dead: this line
+       * excused exactly the lesson that made the one past it unreachable.
+       * `tools/checks/training.mjs` walks the ladder through `report` now and
+       * asserts only the LAST rung may be endless, which is the half this
+       * `continue` cannot make. */
+      if (L.need === Infinity) continue;
       // Which event types can satisfy this lesson? Ask it, with the real shapes.
       const answers = [...emitted].filter((type) => {
         for (const ev of [{ type, speed: 99, grade: 3 }, { type, speed: 0, grade: 0 }]) {
