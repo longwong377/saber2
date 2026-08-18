@@ -479,14 +479,48 @@ export function run({ check, assert, near }) {
      * both linearly at might 3 is an eight-metre hole, which is a change to
      * the level geometry rather than a hit.
      */
-    const mightOf = (run, settings) => groundMight({ run, settings });
-    const early = mightOf({ tier: 0, boons: [], done: false }, { forcePower: 1 });
-    const late = mightOf({ tier: 3, boons: new Array(9).fill({ id: 'x' }), done: false }, { forcePower: 1 });
+    /* ── AND THE COUNTERS IT READS HAVE TO BE ONES THE GAME KEEPS ──────
+     *
+     * This clause used to feed `groundMight` a `{ run: { tier, boons } }` and
+     * pass, and `groundMight` used to read exactly that — and NOTHING in the
+     * game has assigned `world.run` since `Run.js` was deleted with the
+     * Descent. Two harnessed terms agreeing with each other about an object
+     * that is never built is not a measurement; the whole function was
+     * `cbrt(forcePower)` in play, which is the flat crater the complaint was
+     * about. So the field names come first, checked against the file that
+     * would have to assign them, and the arithmetic second. */
+    const W = SRC('game/World.js');
+    for (const [field, pattern] of [
+      ['director', /this\.director\s*=/],
+      ['campaign', /this\.campaign\s*=/],
+      ['takenBoons', /this\.takenBoons\s*=/],
+    ]) {
+      assert(pattern.test(W),
+        `groundMight reads world.${field} and World.js never assigns it — that term is a constant zero, `
+        + 'which is how the run stopped reaching the ground the first time');
+    }
+    const mightOf = (w) => groundMight({ takenBoons: { flat: () => [] }, ...w });
+    const early = mightOf({ director: { wave: 1 }, settings: { forcePower: 1 } });
+    const late = mightOf({
+      director: { wave: 14 }, campaign: { index: 1, done: false },
+      takenBoons: { flat: () => new Array(9).fill('x') }, settings: { forcePower: 1 },
+    });
     assert(Math.abs(early - 1) < 1e-9, `an untouched run already hits at ${early.toFixed(2)}×`);
     assert(late / early > 1.9,
-      `a fourth-rung run with nine boons hits at ${late.toFixed(2)}× — that is not "visibly" harder`);
+      `wave 14 of a second campaign leg with nine boons hits at ${late.toFixed(2)}× — that is not `
+      + '"visibly" harder');
+    /* EACH TERM ON ITS OWN, so a single one carrying the whole ratio cannot
+     * hide the other two being dead the way the run's two were. */
+    for (const [name, w] of [
+      ['the wave count', { director: { wave: 9 } }],
+      ['a campaign leg', { campaign: { index: 1, done: false } }],
+      ['the boon set', { takenBoons: { flat: () => new Array(5).fill('x') } }],
+    ]) {
+      const m = mightOf({ director: { wave: 1 }, ...w, settings: { forcePower: 1 } });
+      assert(m > 1.05, `${name} moves the ground to ${m.toFixed(3)}× — that term is not wired`);
+    }
     // the slider enters as a cube root, so turning it to 4 is not 4× the hole
-    const slid = mightOf({ tier: 0, boons: [], done: false }, { forcePower: 4 });
+    const slid = mightOf({ director: { wave: 1 }, settings: { forcePower: 4 } });
     assert(slid < 1.7, `forcePower 4 alone puts the ground at ${slid.toFixed(2)}×`);
 
     // …and the hole that comes out of it, measured off the heightfield.
@@ -519,7 +553,10 @@ export function run({ check, assert, near }) {
 
     // and the dressing pass is what publishes it, so it is live in the game
     const t = new Terrain(new THREE.Scene(), 'dunes', 0.5);
-    const w = { terrain: t, run: { tier: 2, boons: [{ id: 'a' }], done: false }, settings: { forcePower: 1 } };
+    const w = {
+      terrain: t, director: { wave: 8 }, campaign: { index: 1, done: false },
+      takenBoons: { flat: () => ['a'] }, settings: { forcePower: 1 },
+    };
     beginDressing(w, 1);
     assert(t.might > 1.3, `dressing left the ground at might ${t.might.toFixed(2)}`);
     t.dispose();

@@ -30,9 +30,17 @@ Playable two ways:
 |---|---|
 | Suite | **1311 passed, 5 failed, ~13 min** — failures in §6.4, all named and none blocking |
 | Smoke | 11/11 steps clean, ~2 min |
-| Levels | **10** |
-| Modes | **6** — `waves, roguelite, duel, sandbox, training, command` |
+| Levels | **9** — `scoria, mustafar, colosseum, wood, drifts, alpine, geonosis, hangar, warship` |
+| Modes | **8** — `waves, roguelite, duel, sandbox, training, command, skirmish, campaign` |
+| Campaigns | **2** — `petranaki`, `boarding`, two missions each |
 | Archetypes | **31**, and `src/game/Levels.js` must be imported to see 16 of them |
+
+Those four rows are a hand copy of what `node --import ./tools/register.mjs
+tools/state.mjs` prints, and they read **10** and **6** through a whole session
+that deleted three levels and added two modes and two campaigns — §2.3, playing
+out in the one file that tells the next reader what is here. Run the tool
+rather than believing the table; it also warns when a level exists and is not
+in `LEVEL_ORDER`, which is a level nobody can reach except by typing its key.
 
 Run things this way and no other way:
 
