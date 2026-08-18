@@ -466,6 +466,91 @@ export async function run({ check, assert, THREE: T }) {
       + `bent ${bend.toFixed(1)}°; middle absorbed`;
   });
 
+  check('smoke: a shooter behind it stops shooting, and so does yours', () => {
+    /**
+     * THE OTHER HALF OF THE CARD. "Nothing on either side can shoot what it
+     * cannot see" — and until the sightline knew about smoke, the cloud only
+     * degraded the BOLT. A shooter in front of a wall of it still picked its
+     * target, still aimed and still fired: a damage filter, not a screen.
+     *
+     * Driven through the real `_hasLineOfSight`, which is the ONE place in the
+     * game that asks the question, so this is measuring the thing the shooter
+     * actually consults and not a parallel model.
+     *
+     * SYMMETRY IS ASSERTED AND NOT ASSUMED. The same body is asked from both
+     * ends of the same line, because a screen that blinded one side would be a
+     * free win rather than a decision — and in Command mode the allies are
+     * `Enemy` instances too, so a one-sided rule would be the player's own
+     * line shooting out of a cloud their enemies cannot shoot into.
+     */
+    clearSmoke();
+    const b = bench();
+    const shooter = new Enemy(b.world, 'trooper', new THREE.Vector3(0, 0, -14));
+    b.world.enemies.push(shooter);
+    shooter.target = b.p;
+    const ctx = { ...b.ctx, physics: b.world.physics, terrain: null };
+    /* THE MUZZLE IS ON THE RIG, not on `position` — `_muzzleWorld` walks the
+     * skeleton — so a body moved by writing `position` alone still shoots from
+     * wherever its bones were last solved. Moving it properly is what makes
+     * this a measurement of the sightline rather than of a stale matrix: the
+     * first version of this fixture put a 14 m shooter's muzzle 0.5 m from the
+     * player's chest and concluded the smoke did nothing. */
+    const place = (x, z) => {
+      shooter.position.set(x, 0, z);
+      if (shooter.rig) { shooter.rig.root.position.copy(shooter.position); shooter.rig.updateMatrices(); }
+    };
+    place(0, -14);
+    // The line the shipped code will actually use, asked of the shipped code.
+    const line = () => [shooter._muzzleWorld(new THREE.Vector3()),
+      (b.p.chest ?? b.p.position).clone()];
+    const [m0, c0] = line();
+    assert(m0.distanceTo(c0) > 10,
+      `the fixture's sightline is only ${m0.distanceTo(c0).toFixed(1)} m long — the body did not move`);
+    assert(shooter._hasLineOfSight(ctx), 'the fixture cannot see the player in clear air');
+
+    // a bank on the midpoint of the line the shooter is actually using
+    const mid = m0.clone().lerp(c0, 0.5);
+    addSmoke(mid, 8.5, 11);
+    updateSmoke(BLOOM + 0.01);
+    assert(!shooter._hasLineOfSight(ctx),
+      `a shooter ${m0.distanceTo(c0).toFixed(0)} m away is still picking its shot through a full `
+      + `smoke bank (transmittance ${seeThrough(m0, c0).toFixed(3)})`);
+
+    /* THE BANK HAS A WIDTH, or it is an on/off wall and standing near one is
+     * the same as standing in one.
+     *
+     * Measured by walking the CLOUD off the line rather than the shooter off
+     * it: moving the shooter pivots the line about the player, so the cloud
+     * sitting at its midpoint stays on it for a very long way and what that
+     * sweep measures is trigonometry rather than the screen. Stepping the
+     * cloud sideways is the direct question — how far off a sightline does a
+     * bank have to be before it stops mattering. */
+    let clearAt = null;
+    for (let off = 1; off <= 14 && clearAt === null; off++) {
+      clearSmoke();
+      addSmoke(mid.clone().setX(mid.x + off), 8.5, 11);
+      updateSmoke(BLOOM + 0.01);
+      if (shooter._hasLineOfSight(ctx)) clearAt = off;
+    }
+    assert(clearAt !== null,
+      'a bank fourteen metres off the sightline still blinds — the cloud has no edge');
+    assert(clearAt > 3,
+      `the sightline came back with the bank only ${clearAt} m off it — an 8.5 m cloud with a `
+      + 'three-metre reach is a wall with the wrong radius');
+    clearSmoke();
+    addSmoke(mid, 8.5, 11);
+    updateSmoke(BLOOM + 0.01);
+
+    // …and it blinds the other way too, from the player's own eye back.
+    place(0, -14);
+    assert(seeThrough(b.p.chest ?? b.p.position, shooter._muzzleWorld(new THREE.Vector3())) < 0.3,
+      'the line reads clear from the player back down it — the screen is one-sided');
+    clearSmoke();
+    assert(shooter._hasLineOfSight(ctx), 'the sightline never came back after the cloud expired');
+    return `clear → sees; a full bank on the line → blind; the same bank ${clearAt} m off it → `
+      + 'sees again; blind in both directions';
+  });
+
   check('dive: attacking in the air drives you into the ground, hard', () => {
     /**
      * THE DIVE IS A VELOCITY AND NOTHING ELSE — see `_tryDive`. Everything the

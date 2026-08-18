@@ -21,6 +21,7 @@ import { attachCloak, attachSkirt } from './Cloth.js';
 import { LAYER, Body, capsuleSpheres, capsule } from '../physics/RapierWorld.js';
 import { supportHeight, STEP_UP, GROUND_SNAP } from '../physics/Support.js';
 import { TOUGHNESS, thinner, bladesTouching } from './Combat.js';
+import { seeThrough } from './Smoke.js';
 import { segmentSegment } from '../physics/Physics.js';
 import { BOLT_COLORS } from './Bolts.js';
 /* The one weather every system reads — see its own note in Scenery.js. Used by
@@ -1010,6 +1011,18 @@ export const IMPULSE_AS_HP = 1.2;
  */
 const CAST_FLINCH_FLOOR = 8;
 const CAST_FLINCH_FRAC = 0.05;
+/**
+ * HOW MUCH OF A SIGHTLINE HAS TO SURVIVE THE SMOKE for a body to shoot down it.
+ *
+ * `seeThrough` is transmittance — 1 in clear air, falling exponentially with
+ * the depth of cloud on the line — and this is where a shooter gives up. 0.30
+ * is roughly a metre and a half through the middle of a full bank: enough that
+ * the fringe of a cloud is cover you are gambling on rather than cover you are
+ * behind, and little enough that walking into the middle of one genuinely
+ * breaks contact. The bolt model reads the same integral, so the round that
+ * does get thrown at you through the edge is already the weaker one.
+ */
+const SMOKE_SEE = 0.30;
 /** How much of a body's own health a blow has to take before it says so. See
  *  the note at the call site for why this is a fraction and not a floor. */
 const HURT_CRY_FRAC = 0.085;
@@ -3911,7 +3924,8 @@ export class Enemy {
   _hasLineOfSight(ctx) {
     if (!this.target) return false;
     const from = this._muzzleWorld(_v5);
-    _v6.subVectors(this.target.chest ?? this.target.position, from);
+    const at = this.target.chest ?? this.target.position;
+    _v6.subVectors(at, from);
     const d = _v6.length();
     _v6.multiplyScalar(1 / d);
     const hit = ctx.physics.raycast(from, _v6, d - 0.6, (b) => b.static || b.layer === LAYER.PROP);
@@ -3920,6 +3934,30 @@ export class Enemy {
       const t = ctx.terrain.raycast(from, _v6, d - 0.6, _v1, _v2);
       if (t !== null) return false;
     }
+    /**
+     * …AND SMOKE, which is the half of the smoke screen that was missing.
+     *
+     * `Stratagems.smoke`'s card says "Nothing on either side can shoot what it
+     * cannot see", and until now the cloud only degraded the BOLT — a shooter
+     * standing in front of a wall of smoke still picked its target, still
+     * aimed and still fired, and the screen was a damage filter rather than a
+     * screen. This is the one place in the game that asks "can I see it", so
+     * it is the one place that has to know.
+     *
+     * NOT A HARD WALL, and the same integral the bolt reads (`seeThrough` in
+     * src/game/Smoke.js — one model, so a shooter's answer and a bolt's answer
+     * cannot disagree). Transmittance is 1 in clear air and falls off with the
+     * depth of cloud on the line, and a body loses sight when less than
+     * `SMOKE_SEE` of the line survives. A threshold rather than a chance,
+     * because a shooter that flickered between seeing and not seeing at the
+     * edge of a bank would be an enemy the player cannot read.
+     *
+     * SYMMETRIC BY CONSTRUCTION, like everything else in that file: this runs
+     * on every body with a weapon, and the allies in Command mode are Enemy
+     * instances too. Your own line cannot shoot through your own smoke either,
+     * which is what makes laying one a decision.
+     */
+    if (seeThrough(from, at) < SMOKE_SEE) return false;
     return true;
   }
 

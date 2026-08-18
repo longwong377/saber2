@@ -140,7 +140,11 @@ const blank = () => ({
  * `_endCampaign` is the first and only writer of `won: true`, which is why it
  * had to be admitted here on the same commit.
  */
-const RECORDED = new Set(['roguelite', 'waves', 'duel', 'command']);
+/* Skirmish and Campaign are runs with an ENDING, which is the property this
+ * set is really about: both can be won, both write `won` through
+ * `World.runStats`, and `wins`/`crowned` have had a reader waiting since
+ * Command's campaign arrived. */
+const RECORDED = new Set(['roguelite', 'waves', 'duel', 'command', 'skirmish', 'campaign']);
 
 function read() {
   try {

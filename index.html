@@ -297,6 +297,18 @@
           keeps the army their order names and the other takes the opposing one. Permadeath is the
           same, which is the point: the field belongs to whichever side still has somebody standing,
           and every name you lose taking it is gone.</p>
+        <!-- THE BATTLE. Skirmish only; Campaign authors its own missions, which
+             is the whole difference between the two — see Levels.CAMPAIGNS. -->
+        <h3 style="margin-top:22px">The battle</h3>
+        <label class="slider">Engagements <input type="range" id="opt-sk-engagements" min="1" max="9" step="1" value="3"><b></b></label>
+        <label class="slider">Your line <input type="range" id="opt-sk-strength" min="0" max="24" step="1" value="0"><b></b></label>
+        <label class="slider">Pressure <input type="range" id="opt-sk-pressure" min="0" max="4" step="1" value="0"><b></b></label>
+        <label class="check"><input type="checkbox" id="opt-sk-rotate" checked> Change ground between engagements</label>
+        <p class="hint"><b>Skirmish</b> is one battle with an ending, fought over changing ground — as many
+          engagements as you say, on a different theatre each time, drawn from the run's seed so the same
+          number walks the same grounds. Pressure is which rung of the Geonosis advance the fight is held
+          at: it moves the enemy's budget, how heavy they come and what your muster can buy. Your line at
+          zero is the ten the campaign opens with.</p>
         <h3 id="h-standing-order" style="margin-top:22px">Standing order</h3>
         <div id="command-list" class="difflist"></div>
         <p class="hint">The formation your squads form up in at the start of every area. You can change

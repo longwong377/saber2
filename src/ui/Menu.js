@@ -39,7 +39,7 @@ import { FOCUS } from '../game/Focus.js';
 // list it starts. MODES.training's own blurb says "the eleven lessons" and it
 // is the same eleven.
 import { LESSONS } from '../game/Dojo.js';
-import { MODES, sandboxUnits, SANDBOX_MAX_ENEMIES, sandboxConfig,
+import { MODES, sandboxUnits, SANDBOX_MAX_ENEMIES, sandboxConfig, SKIRMISH,
          DRAFT_EVERY, BOSS_EVERY, boonById,
          CONDITIONS, CONDITION_KEYS, CONDITION_MAX, WaveDirector } from '../game/Waves.js';
 /**
@@ -107,7 +107,7 @@ import { ACTIONS, MOUSE, WHEEL, keyLabel, loadBindings, saveBindings, defaultBin
          WALK_SCALE, walkScale, registerOrders, ORDER_ACTIONS,
          codesFor, isPadCode, PAD_MODIFIERS } from '../engine/Bindings.js';
 // The six formation orders, so they can be pushed through Bindings' seam below.
-import { FORMATIONS, TEAM_DAMAGE_DEFAULT, DEFAULT_FORMATION } from '../game/Command.js';
+import { AREAS, FORMATIONS, MAX_STRENGTH, TEAM_DAMAGE_DEFAULT, DEFAULT_FORMATION } from '../game/Command.js';
 // THE DATABANK. `ARCHETYPES` is the roster — the page list is enumerated off it
 // and never typed — and Databank.js carries the one thing a roster cannot hold:
 // which side a body fights for, what it is carrying, and who it is.
@@ -448,6 +448,21 @@ export const DEFAULT_SETTINGS = {
    * makes "this has no control" a question anybody can ask.
    */
   commandVersus: false,
+  /**
+   * THE BATTLE, AS FOUR PICKS. Read by `main.js`'s deploy, normalised by
+   * `Waves.skirmishConfig` and handed to `World.beginSkirmish` as a PLAN —
+   * which is why they are picks and not a settings blob the mode reads for
+   * itself.
+   *
+   * Zero strength means "whatever the campaign opens with": World floors it at
+   * Command's own OPENING_STRENGTH rather than this file inventing a number.
+   * The pressure is an index into Command's `AREAS`, so the mode borrows a
+   * ladder somebody has already tuned instead of growing a second one.
+   */
+  skirmishEngagements: SKIRMISH.engagements.def,
+  skirmishStrength: 0,
+  skirmishPressure: 0,
+  skirmishRotate: true,
   quality: 'high',
   resolutionScale: 1,
   /**
@@ -721,6 +736,10 @@ export const SETTING_READERS = {
   teamDamage:      ['game/Command.js', 'const td = s.teamDamage'],
   commandFormation: ['game/Command.js', 'const f = s.commandFormation'],
   commandVersus:   ['game/Command.js', 'versus: !!s.commandVersus'],
+  skirmishEngagements: ['main.js', 'engagements: settings.skirmishEngagements'],
+  skirmishStrength: ['main.js', 'strength: settings.skirmishStrength'],
+  skirmishPressure: ['main.js', 'pressure: settings.skirmishPressure'],
+  skirmishRotate:  ['main.js', 'rotate: settings.skirmishRotate'],
   quality:         ['main.js', 'new Engine(canvas, settings.quality)'],
   resolutionScale: ['main.js', 'engine.setResolutionScale(settings.resolutionScale)'],
   /* One reader for arrivals, everywhere: the wave path, the sandbox path and
@@ -5138,6 +5157,14 @@ export class Menu {
     /* The meeting. Read by `commandConfig` at world build, like the two above,
      * so the value written here is the one the next deployment gets. */
     this._check('opt-command-versus', 'commandVersus');
+    /* The battle, for Skirmish. Read by `deploy()` at world build like the
+     * three above, so the value written here is the one the next battle gets
+     * and not one a running world would have to be told about. */
+    this._slider('opt-sk-engagements', 'skirmishEngagements', v => `${Math.round(v)}`);
+    this._slider('opt-sk-strength', 'skirmishStrength',
+      v => (v <= 0 ? "the muster's own line" : `${Math.round(v)} of ${MAX_STRENGTH}`));
+    this._slider('opt-sk-pressure', 'skirmishPressure', v => AREAS[Math.round(v)]?.name ?? '');
+    this._check('opt-sk-rotate', 'skirmishRotate');
     /* The standing order, as six cards — the formation records ARE the card
      * list (id, name, blurb), so the row cannot fall out of step with the
      * orders on the keyboard or with what the director will actually do. */

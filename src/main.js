@@ -413,6 +413,28 @@ async function buildWorld(levelKey, onProgress = null) {
   hud.setLevel(world.level.name, world.difficulty.name);
   hud.setBoons(heldBoons());
 
+  /**
+   * THE GROUND CHANGES UNDER A RUN — Skirmish rotates between engagements and
+   * Campaign between missions. World asks; this answers with the ASYNC door, so
+   * the rebuild gets the same progress bar a deploy gets rather than freezing
+   * the tab for a second, and the truthy return is the contract that tells
+   * World not to take the synchronous one.
+   */
+  world.onRotate = (key) => world.rotateToAsync(key, (f, l) => screens.loading?.(f, l))
+    .catch((e) => { console.error('rotate failed', e); });
+  /* …AND WE HAVE ARRIVED. The handful of per-player things this file owns, put
+   * back exactly as they are after the first `spawnPlayer` above — a landing is
+   * a transition and not a restart, so everything that survives the rotation is
+   * World's business and everything re-applied here is this file's. */
+  world.onGround = (levelKey, level, player) => {
+    player.camera.fovTarget = settings.fov;
+    player.camera.fov = settings.fov;
+    applyFeelSettings(world, settings);
+    hud.setLevel(level.name, world.difficulty.name);
+    hud.setBoons(heldBoons());
+    screens.clear();
+  };
+
   if (world.training) {
     world.director.onLesson = (state) => hud.setCoach(state);
     world.director.start();
@@ -580,6 +602,20 @@ async function deploy() {
    * somebody to lead. */
   if (world.netMode !== 'client' && !world.training) {
     if (world.command?.versus) world.beginVersus();
+    /* A BATTLE IS STARTED WITH A PLAN, which is why `skirmishConfig` takes
+     * picks rather than reading the settings blob itself — see its note. This
+     * is the one place a preference becomes a plan. */
+    else if (settings.mode === 'skirmish') {
+      world.beginSkirmish({
+        engagements: settings.skirmishEngagements,
+        strength: settings.skirmishStrength,
+        pressure: settings.skirmishPressure,
+        rotate: settings.skirmishRotate,
+      });
+    /* The theatre the player picked IS the campaign — see `Levels.campaignAt`,
+     * which is the whole derivation and the reason neither campaign needs a
+     * setting of its own. */
+    } else if (settings.mode === 'campaign') world.beginCampaign();
     else world.director.start(1);
   }
   world.notify('MAY THE FORCE BE WITH YOU', world.level.name);
