@@ -8,9 +8,15 @@
  * `.menu-bg` ships. Nothing is painted by hand and nothing is downloaded: the
  * shipped file is the output of this file, and re-running it rebuilds it.
  *
- *   node tools/keyart.mjs --shot shelf --tag try1            # render + measure
- *   node tools/keyart.mjs --shot shelf --width 2560 --height 1080 --settle 30
- *   node tools/keyart.mjs --pack .shots/keyart/try1.png      # re-encode only
+ *   # scout a level: one boot, a contact sheet of bearings, bands measured
+ *   node tools/keyart.mjs --shot scout --level colosseum --yaws 0,60,120,180,240,300
+ *
+ *   # the shipped plate, exactly as it stands in the product
+ *   node tools/keyart.mjs --shot ship --tag ship --settle 26 \
+ *        --width 710 --height 300 --big 2560x1080 --bigsettle 4
+ *   node tools/keyart.mjs --pack .shots/keyart/ship.png --levels 0    # size table
+ *   node tools/keyart.mjs --pack .shots/keyart/ship.png --levels 32 \
+ *        --ship assets/menu/title.png
  *
  * WHY THE PLATE IS 21:9 AND NOT 16:9 — this is the whole geometry argument and
  * it was arithmetic, not taste. `.menu-bg` is `background-size:cover`, so the
@@ -47,7 +53,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { decodePng, encodePng, region } from './_png.mjs';
 import { bands, headBand } from './_bands.mjs';
 import { existsSync, statSync } from 'node:fs';
-import { resolve, join, extname, normalize, basename } from 'node:path';
+import { resolve, join, extname, normalize } from 'node:path';
 
 const ROOT = resolve(new URL('..', import.meta.url).pathname);
 const argv = process.argv.slice(2);
