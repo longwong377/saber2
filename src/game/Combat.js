@@ -736,6 +736,17 @@ export function gradeDeflection(bolt, saber, hit, ctx) {
  * sightline, not a compromise between your sightline and a mirror. You caught
  * it, you looked somewhere, it goes there.
  */
+/**
+ * WHAT EACH RUNG PAYS, indexed by GRADE.
+ *
+ * It was two literals on one line inside `gradeCaught`, which meant the Codex
+ * — the page that teaches deflection — could state every GATE on the ladder
+ * and not one PAYOFF, because there was nothing to read. `GRADE_NAME` is
+ * already the parallel array; this is its other column, and a fifth grade that
+ * forgets a row here is caught by `GRADE_DAMAGE.length === GRADE_NAME.length`.
+ */
+export const GRADE_DAMAGE = [1.0, 1.0, 1.5, 2.5];
+
 export function gradeCaught(snap, ctx) {
   const { bladeT, bladeSpeed, closing, boltDir } = snap;
   const _v4 = snap.normal;
@@ -850,7 +861,7 @@ export function gradeCaught(snap, ctx) {
     }
   }
 
-  const damageMul = grade === GRADE.PERFECT ? 2.5 : grade === GRADE.RETURN ? 1.5 : 1.0;
+  const damageMul = GRADE_DAMAGE[grade];
   return { grade, dir: out, damageMul, target, bladeSpeed, normal: _v4.clone(), bladeT };
 }
 

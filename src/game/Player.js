@@ -350,7 +350,7 @@ const HEAT_NEAR = 0.55;
  * that spends them. Named here rather than typed into the call so the HUD's
  * price list and tools/checks can read the same values the power uses.
  */
-const UNLEASH = { radius: 11, impulse: 34, damage: 30, stun: 1.6 };
+export const UNLEASH = { radius: 11, impulse: 34, damage: 30, stun: 1.6 };
 
 /**
  * `_shockwave`'s own direction vector, and it may not be one of the shared

@@ -15,7 +15,7 @@ import { BipedAnimator, limbScale } from '../game/Rig.js';
 // binding at module scope — `handPoseOnHilt` is a hoisted function declaration
 // and GRIP_AT is only ever read inside poseSaberArm, long after both modules
 // have finished evaluating, whichever of the two the browser reaches first.
-import { handPoseOnHilt, GRIP_AT } from '../game/Player.js';
+import { handPoseOnHilt, GRIP_AT, UNLEASH } from '../game/Player.js';
 import { ORDERS, getOrder, crystalPalette, crystalForOrder, hiltsForOrder } from '../game/Order.js';
 import { ROBE_CUTS, attachCloak, attachSkirt, attachLekku,
          CAPE_CUTS, TABARD_CUTS, SASH_CUTS, GARMENT_TONES, WARDROBE, wardrobeOf, tintWardrobe,
@@ -29,7 +29,7 @@ import { LEVELS, LEVEL_ORDER } from '../game/Levels.js';
 // SPEED_GRADE/PARRY_GRADE/parryScale are the gates between them. Every number
 // on that page is read from these, so a balance pass that moves a gate moves
 // the page that teaches it in the same commit.
-import { DIFFICULTY, GRADE_NAME, SPEED_GRADE, PARRY_GRADE, parryScale } from '../game/Combat.js';
+import { DIFFICULTY, GRADE_NAME, GRADE_DAMAGE, SPEED_GRADE, PARRY_GRADE, parryScale } from '../game/Combat.js';
 // The Codex and the training panel both quote Focus's numbers. They are read
 // from the system rather than typed, because both of them had been left behind
 // by the round that changed heldScale from 0.35 to 0.18.
@@ -1251,7 +1251,7 @@ export const CODEX = [
     // number now, next to push's, so the comparison is on the page instead of
     // being asserted by prose that cannot follow a tuning pass.
     text: () => 'Unleash — a full circle of Force, thrown outward with both arms. It staggers '
-      + 'everything within eleven metres. For when there is no direction left to face.' },
+      + `everything within ${UNLEASH.radius} metres. For when there is no direction left to face.` },
   { keys: ['compel'],
     text: () => 'Force compel — the unit you are looking at turns on its own, or, alone, on itself.' },
   { keys: ['swap'],
@@ -1598,7 +1598,14 @@ export function codexTeaching({ difficulty = 'knight', director = null } = {}) {
       + `${SPEED_GRADE.perfectClosing}&nbsp;m/s, past ${pct(SPEED_GRADE.perfectBladeT)} of the blade `
       + `— or a guard entered inside ${ms(PARRY_GRADE.perfect * scale)}.`,
   ];
-  const ladder = GRADE_NAME.map((name, i) => factChip(name, rungs[i] || '—')).join('');
+  /* AND WHAT EACH RUNG PAYS. Every gate above was already derived and the
+   * PAYOFF was the one thing this page could not state, because the two
+   * multipliers were bare literals on one line inside `gradeCaught`. They are
+   * `GRADE_DAMAGE` now — the other column of the array `GRADE_NAME` already
+   * is — so the page that teaches the ladder can finally say what climbing it
+   * is worth, and cannot drift from what the solver charges. */
+  const ladder = GRADE_NAME.map((name, i) => factChip(name,
+    (rungs[i] || '—') + (GRADE_DAMAGE[i] > 1 ? ` &times;${GRADE_DAMAGE[i]} damage.` : ''))).join('');
 
   /* THE PURSE, in the selected mode's own terms. A director is asked rather
    * than a mode name being switched on: `drafts` is the shipped statement of

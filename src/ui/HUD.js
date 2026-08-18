@@ -20,7 +20,7 @@ import { keyLabel, walkScale, ORDER_ACTIONS, codesFor } from '../engine/Bindings
  * §2.3), and the first repaint of an insignia would make the HUD disagree with
  * the model wearing it.
  */
-import { RANKS, ARMIES, FORMATIONS } from '../game/Command.js';
+import { RANKS, ARMIES, ORDERS } from '../game/Command.js';
 import { POWER_COST, POWER_BOON } from '../game/Powers.js';
 // The words a slot is about to say, and whether this browser can say them
 // at all. Audio.js owns both the table and the speaking; the wheel prints.
@@ -696,8 +696,9 @@ export class EmoteWheel extends RadialWheel {
  * they are in `ACTIONS`, they are rebindable, and a player who has learned
  * them has learned something real — but nobody has to.
  *
- * THE TABLE IS COMMAND'S, not a copy of it. `FORMATIONS` is the authority for
- * what an order is and what it says about itself, so a seventh formation
+ * THE TABLE IS COMMAND'S, not a copy of it. `ORDERS` is the authority for what
+ * an order is and what it says about itself — the six formations and the
+ * commander's Force verbs together — so a seventh entry of either kind
  * appears on this wheel the day it is authored and cannot appear with the
  * wrong blurb on it. HOLD is appended because it is a toggle rather than a
  * formation and lives beside them rather than among them.
@@ -721,17 +722,26 @@ export class OrderWheel extends RadialWheel {
         ? 'Holding. Choose this again to bring them with you.'
         : item.blurb;
     }
+    const f = this._force && this._force[item.id];
+    if (f && !f.ready) return f.cd > 0 ? `Recovering — ${f.cd.toFixed(1)}s` : 'Not enough Force';
     return item.blurb;
   }
 
   /** Light whichever order is up, so the wheel says where you are. */
   onOpen() {
     const d = this.director;
+    /* THE DIRECTOR'S OWN READINESS, read once per open rather than once per
+     * caption. `castReady` is the single rule `castForce` refuses on, and a
+     * wheel that decided for itself whether a verb was ready would be the
+     * second copy of it — which is the defect Powers.js's note records. */
+    this._force = d ? Object.fromEntries((d.readout?.()?.force || []).map((f) => [f.id, f])) : null;
     this.refresh();
     for (let i = 0; i < this.slots.length; i++) {
       const it = this.items[i];
+      const f = this._force && this._force[it.id];
       const live = d && (it.kind === 'hold' ? !!d.commander?.holding : d.formation === it.id);
       this.slots[i].classList.toggle('live', !!live);
+      this.slots[i].classList.toggle('cold', !!(f && !f.ready));
     }
   }
 }
@@ -1791,14 +1801,14 @@ export class HUD {
      * …AND THE ORDER WHEEL, which is the same machine with the mode's own
      * table in it. Note #18.
      *
-     * Built lazily and only where there is an army: `FORMATIONS` is the
+     * Built lazily and only where there is an army: `ORDERS` is the
      * authority for what an order is, so the wheel cannot exist before the
      * director does and there is nothing for it to say in a mode with no
      * troops in it.
      */
     if (world.command && this.el.orderwheel) {
       if (!this.orders) {
-        this.orders = new OrderWheel(this.el.orderwheel, FORMATIONS);
+        this.orders = new OrderWheel(this.el.orderwheel, ORDERS);
       }
       this.orders.director = world.command;
       const o = this.orders.update(input, this);

@@ -430,6 +430,43 @@ export async function run({ check, assert }) {
     } finally { S.restoreShared(snap); }
   });
 
+  check('skirmish: it plays through a front end that has never heard of it', async () => {
+    /**
+     * THE WIRING IS OPTIONAL AND THIS IS THE PROOF. `Menu._buildModes` iterates
+     * `Object.entries(MODES)`, so the card exists the moment the mode does; the
+     * picks default in `skirmishConfig`; and main.js's deploy path for every
+     * mode that is not Command or training is one line — `director.start(1)`.
+     * This drives exactly that line and nothing else, so a red here means the
+     * mode needs front-end work before a player can reach it, which is the
+     * state every mode in this game has been shipped out of.
+     */
+    const S = await import('./_shared.mjs');
+    const snap = await S.snapshotShared();
+    try {
+      const { world, input } = await boot({
+        mode: 'skirmish', skirmishEngagements: 2, skirmishStrength: 16, skirmishPressure: 3,
+      }, 'wood', 808);
+      let ended = null;
+      world.onGameOver = (s) => { ended = s; };
+      world.director.start(1);                       // main.js, verbatim
+      assert(!world.skirmish.started, 'the battle opened before a frame was stepped');
+      let peakLine = 0;
+      for (let t = 0; t < 240 && !world.over; t++) {
+        for (let i = 0; i < 30 && !world.over; i++) {
+          if (world.player) world.player.hp = world.player.maxHp;
+          world.update(1 / 60, input);
+          peakLine = Math.max(peakLine, world.command.roster.strength);
+        }
+        for (const e of world.enemies) if (e.team !== world.partyTeam && !e.dead) e.damage?.(9999, null, 'probe');
+      }
+      assert(world.skirmish.started, 'the battle never opened itself');
+      assert(world.command.areaIndex === 3, `the pressure pick was ignored: areaIndex ${world.command.areaIndex}`);
+      assert(peakLine >= 16, `the strength pick was ignored: the line peaked at ${peakLine}`);
+      assert(world.over && ended?.won === true, `the battle did not resolve: ${JSON.stringify(ended)}`);
+      return `start(1) alone: opened itself, pressure 3, ${peakLine} on the line, won in 2`;
+    } finally { S.restoreShared(snap); }
+  });
+
   check('skirmish: every ending in this file reports the same six numbers', async () => {
     /**
      * `_checkWipe`, `_endMeeting` and `CommandDirector._endCampaign` each built

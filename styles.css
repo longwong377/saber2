@@ -1064,6 +1064,35 @@ button{font-family:inherit}
    blurb is a sentence rather than a noise; and the order you are ALREADY
    giving is marked, because a wheel that does not say where you are makes you
    guess whether the flick took. */
+/* ── the stratagem panel ─────────────────────────────────────────────
+   Left of centre and vertically middled, where the code is being typed with
+   the left hand and where nothing else on the HUD lives: the vitals are
+   bottom-left, the power wheel bottom-right, the wave counter top-left. It is
+   only ever up while a key is held, so it may sit over the world. */
+#stratagem{position:absolute;left:34px;top:50%;transform:translateY(-50%);
+  display:flex;flex-direction:column;gap:5px;pointer-events:none;z-index:6;
+  animation:riseIn .12s ease-out both}
+#stratagem.hidden{display:none}
+.sg-row{display:flex;align-items:center;gap:10px;padding:5px 11px;
+  background:rgba(10,13,26,.82);border:2px solid var(--stroke);
+  box-shadow:var(--stamp-sm);font:var(--mono);font-size:12px;white-space:nowrap}
+.sg-row b{color:var(--ink);font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+/* Greyed and not hidden: a call you cannot afford yet is information, and a
+   list that reordered itself as the Force came back would be unreadable. */
+.sg-row.off{opacity:.38}
+.sg-code{display:flex;gap:3px}
+.sg-d{display:grid;place-items:center;width:15px;height:15px;font-style:normal;
+  font-size:10px;font-weight:700;color:var(--muted);
+  background:var(--panel);border:1px solid var(--stroke)}
+/* The letters already matched. This is the whole readout — it says how far
+   into the code you are without a cursor or a caret. */
+.sg-d.on{color:var(--stroke);background:var(--accent);border-color:var(--accent)}
+.sg-cost{margin-left:auto;color:var(--muted);font-size:11px}
+
+/* A commander's Force verb that is cooling or unaffordable, on the order
+   wheel. Same reading as .sg-row.off and for the same reason. */
+.em.ow.cold b{color:var(--muted)}
+.em.ow.cold{opacity:.5}
 .em.ow{width:150px}
 .em.ow b{letter-spacing:.16em}
 .em.ow.live b{color:var(--accent-warm)}

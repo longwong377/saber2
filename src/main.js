@@ -25,7 +25,7 @@ import { guardZoneOf } from './game/Bolts.js';
 import { clamp } from './engine/MathUtil.js';
 import { Screens } from './ui/Screens.js';
 import { SkillTree } from './ui/SkillTree.js';
-import { Communion, shapeOf, currentName, dominantAxis } from './game/LivingForce.js';
+import { Communion, shapeOf, currentName, dominantAxis, FACETS, LOCKED } from './game/LivingForce.js';
 
 const canvas = document.getElementById('view');
 
@@ -344,10 +344,37 @@ async function buildWorld(levelKey, onProgress = null) {
    * top of it — the director notifies first, and a currency that silently
    * accumulates is a currency the player never learns they have.
    */
+  /**
+   * THE MOMENT A WAVE PAYS, AND WHAT THE NUMBER IS SHORT OF.
+   *
+   * The toast fired at the right instant and said "12 held", which is a
+   * quantity and not a distance — and `living-force.mjs`'s own note recorded
+   * that the system rewards saving and "nothing in the game tells the player
+   * that". A held number only means something against a price.
+   *
+   * The cheapest REACHABLE facet is asked of the same ledger the Holocron
+   * prices its lattice on, over the same set — the ones the purse ALONE stands
+   * between the player and, which is `reasonLocked` returning either nothing
+   * or `LOCKED.insight`. So the toast and the lattice cannot disagree about
+   * what a wave was worth, because neither of them is deciding it.
+   */
   world.onInsight = (n, ledger) => {
     communePrompt.insight = Math.floor(ledger.insight);
     setTimeout(() => {
-      if (screens.state === 'playing') hud.message(`INSIGHT +${n}`, `${Math.floor(ledger.insight)} held — kneel to open the Holocron`);
+      if (screens.state !== 'playing' || !world) return;
+      const held = Math.floor(ledger.insight);
+      const wave = world.director?.wave ?? 1;
+      let cheapest = Infinity;
+      for (const f of FACETS) {
+        const why = ledger.reasonLocked(f.id, world.takenBoons, wave);
+        if (why === null || why === LOCKED.insight) {
+          cheapest = Math.min(cheapest, ledger.costOf(f.id, world.takenBoons));
+        }
+      }
+      hud.message(`INSIGHT +${n}`,
+        !isFinite(cheapest) ? `${held} held — kneel to open the Holocron`
+          : held >= cheapest ? `${held} held — enough to wake a facet. Kneel.`
+            : `${held} held · ${cheapest - held} more wakes a facet`);
     }, 1500);
   };
 
