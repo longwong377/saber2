@@ -854,7 +854,13 @@ export function run({ check, assert }) {
 
     const built = buildJedi({ scale: 1 });
     built.rig.updateMatrices(); built.rig.root.updateMatrixWorld(true);
-    const cape = attachCloak(new THREE.Scene(), built.rig, { width: 0.36, length: 0.86, cols: 9, rows: 11 });
+    /* THE SHIPPED CAPE, not a typed copy of what it used to be. `cols: 9,
+     * rows: 11` here were the defaults on the day this was written, and the
+     * cape went to ten columns when its collar was seamed to the back — so the
+     * reference every other cut is measured against was a cape the game does
+     * not build. That is the hand-maintained-twin defect (HANDOFF §2.3) inside
+     * the check whose whole job is a comparison. */
+    const cape = attachCloak(new THREE.Scene(), built.rig, { width: 0.36, length: 0.86 });
     const C = weave(cape);
     const capeTests = C.n * C.colliders / C.area;
     let rigidTris = 0;

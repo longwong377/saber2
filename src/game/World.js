@@ -952,6 +952,11 @@ export class World {
     // The level's wind and drone are level state; without this they kept
     // playing under the main menu after quitting.
     audio.setAmbience?.({ wind: 0, drone: 0 });
+    /* …AND EVERY HELD VOICE. A jetpack is a loop keyed on a body id (see
+     * `Audio.jet`), and a body disposed while its engines are running has no
+     * way left to release it — twelve jet troopers across three level loads
+     * is thirty-six roars nobody can stop. */
+    audio.stopLoops?.();
     /* …and so is everything a death left on the screen and on the clock. A
      * player who quits from the death card and deploys again used to arrive on
      * the next level grey, letterboxed and at a third speed, because the three

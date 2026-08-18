@@ -40,6 +40,9 @@ import * as THREE from 'three';
 import { surfacePoint } from './Bodies.js';
 
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
+const _mk = new THREE.Vector3();
+const _XAXIS = new THREE.Vector3(1, 0, 0);
+const _wa = new THREE.Vector3(), _wb = new THREE.Vector3(), _wd = new THREE.Vector3();
 const _q = new THREE.Quaternion(), _m = new THREE.Matrix4();
 const _UP = new THREE.Vector3(0, 1, 0);
 
@@ -76,14 +79,27 @@ const SITES = [
    * is the range that decides it: this figure is only ever looked at from the
    * third-person boom or the character screen.
    */
-  { bone: 'chest', r: 0.132, w: 3 },
-  { bone: 'spine', r: 0.120, w: 2 },
-  { bone: 'hips', r: 0.108, w: 1 },
-  { bone: 'armL', r: 0.072, w: 1 }, { bone: 'armR', r: 0.072, w: 1 },
-  { bone: 'foreL', r: 0.062, w: 1 }, { bone: 'foreR', r: 0.062, w: 1 },
-  { bone: 'thighL', r: 0.096, w: 1 }, { bone: 'thighR', r: 0.096, w: 1 },
-  { bone: 'shinL', r: 0.077, w: 1 }, { bone: 'shinR', r: 0.077, w: 1 },
-  { bone: 'head', r: 0.058, w: 1 },
+  /* …AND THEY WENT UP AGAIN WHEN THE DOME CAME OFF, which is the same
+   * measurement read the other way. The 2.4x above bought its visibility
+   * partly from a shape that should never have existed: a raised cone
+   * projects more area than the flat patch it is standing in for, so taking
+   * the tent out of the mark took a third of the silhouette with it —
+   * AND THEY CAME BACK DOWN when the shape was fixed, which is the same
+   * measurement read a third way. Taking the dome off cost silhouette; adding
+   * the runs that spread round the limb (see the placement pass) more than
+   * paid it back, because a stain on the near side is worth more than a lump
+   * on the far one. Measured through `tools/_hurt.mjs` at 53 hp: 2.01% with
+   * the dome, 0.29% flat, 9.8% flat with the runs at 1.45x these radii — which
+   * is a paint job. Back to roughly the 2.4x above and the reading is 4-6%:
+   * plainly hurt, still a person. */
+  { bone: 'chest', r: 0.128, w: 3 },
+  { bone: 'spine', r: 0.116, w: 2 },
+  { bone: 'hips', r: 0.105, w: 1 },
+  { bone: 'armL', r: 0.07, w: 1 }, { bone: 'armR', r: 0.07, w: 1 },
+  { bone: 'foreL', r: 0.060, w: 1 }, { bone: 'foreR', r: 0.060, w: 1 },
+  { bone: 'thighL', r: 0.093, w: 1 }, { bone: 'thighR', r: 0.093, w: 1 },
+  { bone: 'shinL', r: 0.075, w: 1 }, { bone: 'shinR', r: 0.075, w: 1 },
+  { bone: 'head', r: 0.056, w: 1 },
 ];
 
 /**
@@ -115,24 +131,66 @@ function rng(seed) {
  * surface normal at the same time as it is spread, which curves the patch onto
  * a limb instead of standing off it as a flat card.
  */
-function markGeo(centre, normal, radius, rand, n = 9) {
-  const t1 = _v1.copy(Math.abs(normal.y) > 0.9 ? new THREE.Vector3(1, 0, 0) : _UP)
+function markGeo(centre, normal, radius, rand, n = 9, wrap = null) {
+  /**
+   * THE TANGENTS ARE LOCAL, and that is not tidiness.
+   *
+   * They were the module scratch vectors `_v1` and `_v2`, which was fine while
+   * this function only did arithmetic. It calls `wrap` now — a closure that
+   * rays the body and uses those same two scratch vectors for the ray — so
+   * from the second rim point on, `t1` and `t2` were the ray's leftovers and
+   * every mark after the first vertex was built in a random plane. Measured:
+   * 230 triangles of wound geometry covering 0.0% of the silhouette.
+   */
+  const t1 = new THREE.Vector3().copy(Math.abs(normal.y) > 0.9 ? _XAXIS : _UP)
     .cross(normal).normalize();
-  const t2 = _v2.crossVectors(normal, t1).normalize();
+  const t2 = new THREE.Vector3().crossVectors(normal, t1).normalize();
   const pos = new Float32Array((n + 1) * 3), nrm = new Float32Array((n + 1) * 3);
   const idx = new Uint16Array(n * 3);
   pos[0] = centre.x; pos[1] = centre.y; pos[2] = centre.z;
   nrm[0] = normal.x; nrm[1] = normal.y; nrm[2] = normal.z;
   const phase = rand() * Math.PI * 2;
+  const _rim = new THREE.Vector3();
   for (let i = 0; i < n; i++) {
     const a = phase + (i / n) * Math.PI * 2;
-    const r = radius * (0.62 + 0.76 * rand());
-    _v3.copy(centre)
-      .addScaledVector(t1, Math.cos(a) * r)
-      .addScaledVector(t2, Math.sin(a) * r)
-      // sink the rim back toward the body so the patch wraps rather than tents
-      .addScaledVector(normal, -r * 0.22);
-    pos[(i + 1) * 3] = _v3.x; pos[(i + 1) * 3 + 1] = _v3.y; pos[(i + 1) * 3 + 2] = _v3.z;
+    /**
+     * A STAIN IS TALLER THAN IT IS WIDE, AND IT HAS RUN.
+     *
+     * The outline used to be `radius * (0.62 + 0.76 * rand())` in every
+     * direction — a jittered disc, which is a BLOB, and note #31 is what a
+     * blob on a body reads as: "it's more like you added a red blob or glob of
+     * putty to the character model like it looks like you're diseased or have
+     * growths or something."
+     *
+     * Two shape terms fix the read and both are physical. Blood runs DOWN, so
+     * the patch is 1.45x as long vertically as across; and a run has a TAIL,
+     * so the two or three rim points nearest straight-down reach further than
+     * the jitter alone would take them. What comes out is a torn streak with
+     * drips off the bottom of it rather than a coin.
+     */
+    const ca = Math.cos(a), sa = Math.sin(a);
+    let r = radius * (0.58 + 0.72 * rand());
+    // `t2` is the tangent nearest world down for any normal off the vertical,
+    // so `sa` is how far down this rim point is. Only the downward half runs.
+    const down = Math.max(0, -sa);
+    r *= 1 + down * 0.45;
+    if (down > 0.72 && rand() < 0.55) r *= 1.5 + rand() * 0.9;      // a drip
+    _rim.copy(centre).addScaledVector(t1, ca * r * 1.02).addScaledVector(t2, sa * r * 1.34);
+    /**
+     * AND IT LIES ON THE BODY. This is the other half of the putty, and it was
+     * the bigger half: the rim used to be pushed BACK along the normal by
+     * `r * 0.22` while the centre stood 1.5 mm proud of the surface. On the
+     * 26 cm chest mark the radii were widened to that is a 29 mm cone standing
+     * off the chest — a dome, in flat crimson, with a hard edge round it. It
+     * was not a stain that looked like a growth; it was a growth.
+     *
+     * `wrap` rays each rim point back onto the surface it belongs to, so the
+     * patch curves round a forearm the way a stain does. Without one — a
+     * caller that has no mesh to ray — every vertex takes the CENTRE's own
+     * offset, which is flat and wrong on a tight curve but is never proud.
+     */
+    if (wrap) wrap(_rim, ca, sa, r);
+    pos[(i + 1) * 3] = _rim.x; pos[(i + 1) * 3 + 1] = _rim.y; pos[(i + 1) * 3 + 2] = _rim.z;
     nrm[(i + 1) * 3] = normal.x; nrm[(i + 1) * 3 + 1] = normal.y; nrm[(i + 1) * 3 + 2] = normal.z;
     idx[i * 3] = 0; idx[i * 3 + 1] = i + 1; idx[i * 3 + 2] = ((i + 1) % n) + 1;
   }
@@ -384,14 +442,102 @@ export class Injury {
         if (!p) continue;
         const n = new THREE.Vector3(w.dir.x, 0, w.dir.z).normalize();
         p.addScaledVector(n, 0.0015 * this.scale);
-        blood.push(markGeo(p, n, w.r, rand));
+        /**
+         * THE WRAP. Every rim point is put back on the surface it belongs to,
+         * by the same ray that found the wound's own centre — see `markGeo`.
+         *
+         * The ray is cast at the rim point's OWN bearing and OWN height, so a
+         * stain across the outside of a forearm follows the forearm instead of
+         * standing off it as a card. Bearing and height are all a lathe needs:
+         * everything a bone carries is a body of revolution about its Y.
+         */
+        const rayAt = (bear, atY) => {
+          const dir = _wd.set(Math.sin(bear), 0, Math.cos(bear));
+          let hit = null, far = -Infinity;
+          for (const m of skins) {
+            const sx = m.scale.x || 1, sy = m.scale.y || 1, sz = m.scale.z || 1;
+            const d = _wa.set(dir.x / sx, 0, dir.z / sz).normalize();
+            const o = _wb.set(0, (atY - m.position.y) / sy, 0);
+            const q = surfacePoint(m.geometry, d, o, _mk, true);
+            if (!q) continue;
+            const px = q.x * sx, py = q.y * sy + m.position.y, pz = q.z * sz;
+            if (Math.abs(py - atY) > 0.14 * this.scale) continue;
+            const reach = px * dir.x + pz * dir.z;
+            if (reach > far) { far = reach; hit = [px, pz]; }
+          }
+          return hit;
+        };
+        const wrapTo = (proud, centre = p) => (out) => {
+          const bear = Math.atan2(out.x, out.z);
+          let hit = rayAt(bear, out.y);
+          /**
+           * AND IF THE RIM'S OWN HEIGHT MISSES, IT WALKS BACK TOWARD THE
+           * WOUND'S UNTIL IT DOES NOT.
+           *
+           * A rim point past the top of a plate or off the end of a limb gets
+           * no answer at that height. The first draft fell back to the
+           * CENTRE's radius at the rim's bearing, which is exact on a cylinder
+           * and 5 cm out on a chest — a torso section is an ellipse, not a
+           * circle, so a radius borrowed from one bearing is wrong at another.
+           * `grooming` measured that as a vertex 52 mm off the body.
+           *
+           * Walking the height home is the honest answer: it finds the nearest
+           * height at which this bearing HAS a surface, which is the edge of
+           * whatever the rim ran off, and puts the vertex there. A stain that
+           * reaches past the hem of a tabard therefore stops at the hem.
+           */
+          for (let k = 1; k <= 4 && !hit; k++) {
+            hit = rayAt(bear, out.y + (centre.y - out.y) * (k / 4));
+          }
+          if (!hit) return;
+          const dx = Math.sin(bear), dz = Math.cos(bear);
+          out.set(hit[0] + dx * proud, out.y, hit[1] + dz * proud);
+        };
+        blood.push(markGeo(p, n, w.r, rand, 9, wrapTo(0.0015 * this.scale)));
+        /**
+         * AND IT SPREADS ROUND THE LIMB, which is both what blood does and
+         * what makes a wound visible from anywhere but the angle it was
+         * inflicted from.
+         *
+         * A hit knows the bearing it came from, so a single stain is on the
+         * side the attacker was standing. Measured through `tools/_hurt.mjs`,
+         * which looks at the player from the third-person boom BEHIND them:
+         * one stain per wound covered 0.6% of the silhouette, because most of
+         * the marks were on the far side of the body from the camera.
+         *
+         * The old answer to that was accidental and is the thing note #31 is
+         * about — a 29 mm dome standing off the chest is visible from behind
+         * because it breaks the outline. This is the real one: two smaller
+         * runs at 40-80 degrees of bearing either side, which is where blood
+         * off a wound in the side of a chest actually ends up, and which puts
+         * something on the visible half whichever half that is.
+         *
+         * They are laid into the SAME merged geometry, so the cost is
+         * triangles and not draw calls — the budget note at the top of this
+         * file is about meshes per bone and this does not add one.
+         */
+        for (let k = 0; k < 2; k++) {
+          const off = (0.70 + rand() * 0.70) * (k ? 1 : -1);
+          const bear = Math.atan2(n.x, n.z) + off;
+          const sn = new THREE.Vector3(Math.sin(bear), 0, Math.cos(bear));
+          /* AT ITS OWN BEARING, which is the whole point: the first draft put
+           * the satellite at the parent's x/z with a different normal, so it
+           * was a second stain in the same place. The bone is a body of
+           * revolution, so a bearing plus the parent's own radius is a point
+           * beside it round the limb, and `wrapTo` then puts it on the skin. */
+          const R = Math.hypot(p.x, p.z) || 0.01;
+          const sp = new THREE.Vector3(sn.x * R, p.y - w.r * (0.15 + rand() * 0.5), sn.z * R);
+          wrapTo(0.0015 * this.scale)(sp);
+          blood.push(markGeo(sp, sn, w.r * (0.34 + rand() * 0.26), rand, 7,
+            wrapTo(0.0015 * this.scale, sp)));
+        }
         if (w.torn) {
           // The tear is a SMALLER shape inside the stain, so the wound reads as
           // an opening with blood around it rather than as two patches. One
           // shape inside another with a hard edge between them is the whole
           // grammar of this look.
           const q = p.clone().addScaledVector(n, 0.0010 * this.scale);
-          tears.push(markGeo(q, n, w.r * 0.46, rand, 7));
+          tears.push(markGeo(q, n, w.r * 0.46, rand, 7, wrapTo(0.0026 * this.scale)));
         }
       }
       if (!blood.length) continue;

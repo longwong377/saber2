@@ -269,6 +269,10 @@ function groomParts(built) {
   return out;
 }
 
+/* Scratch for the point-to-triangle measure below. */
+const _gv1 = new THREE.Vector3(), _gv2 = new THREE.Vector3(), _gv3 = new THREE.Vector3();
+const _gv4 = new THREE.Vector3(), _gv5 = new THREE.Vector3(), _gv6 = new THREE.Vector3();
+
 export function run({ check, assert, near }) {
 
   /* ══════════════════════════════════════════════════════════════════ */
@@ -985,11 +989,71 @@ export function run({ check, assert, near }) {
     assert(after.tris > before.tris, 'the wound added no geometry');
     assert(after.meshes > before.meshes && after.meshes - before.meshes <= 2,
       `one wound added ${after.meshes - before.meshes} meshes`);
-    // ON the surface: every mark vertex is within 12 mm of the limb it lies on
+    /* ON the surface: every mark vertex is within 12 mm of the limb it lies on.
+     *
+     * MEASURED TO THE TRIANGLE AND NOT TO ITS CENTROID, which is what it said
+     * and not what it did. A chest lathe is twelve segments round, so a
+     * triangle is 6-7 cm across and its centroid is that far from points that
+     * are exactly ON it: the old measure read 30-70 mm for marks lying flush,
+     * which is why the bound had to be 50 mm to pass at all and why the
+     * comment above it has never been true. Point-to-triangle is the question
+     * the sentence asks, and against it the bound can be what it claims. */
+    const nearTri = (v, a, b, c) => {
+      const ab = _gv1.subVectors(b, a), ac = _gv2.subVectors(c, a), ap = _gv3.subVectors(v, a);
+      const d1 = ab.dot(ap), d2 = ac.dot(ap);
+      if (d1 <= 0 && d2 <= 0) return v.distanceTo(a);
+      const bp = _gv4.subVectors(v, b);
+      const d3 = ab.dot(bp), d4 = ac.dot(bp);
+      if (d3 >= 0 && d4 <= d3) return v.distanceTo(b);
+      const vc = d1 * d4 - d3 * d2;
+      if (vc <= 0 && d1 >= 0 && d3 <= 0) {
+        // 0/0 on a zero-length edge is the NaN this measure reported.
+        const den1 = d1 - d3;
+        const t = Math.abs(den1) > 1e-20 ? d1 / den1 : 0;
+        return v.distanceTo(_gv5.copy(a).addScaledVector(ab, t));
+      }
+      const cp = _gv4.subVectors(v, c);
+      const d5 = ab.dot(cp), d6 = ac.dot(cp);
+      if (d6 >= 0 && d5 <= d6) return v.distanceTo(c);
+      const vb = d5 * d2 - d1 * d6;
+      if (vb <= 0 && d2 >= 0 && d6 <= 0) {
+        const den2 = d2 - d6;
+        const t = Math.abs(den2) > 1e-20 ? d2 / den2 : 0;
+        return v.distanceTo(_gv5.copy(a).addScaledVector(ac, t));
+      }
+      const va = d3 * d6 - d5 * d4;
+      if (va <= 0 && (d4 - d3) >= 0 && (d5 - d6) >= 0) {
+        const den3 = (d4 - d3) + (d5 - d6);
+        const t = Math.abs(den3) > 1e-20 ? (d4 - d3) / den3 : 0;
+        return v.distanceTo(_gv5.copy(b).addScaledVector(_gv6.subVectors(c, b), t));
+      }
+      // A degenerate triangle — a lathe's pole fan has them — has no interior
+      // to project into, and 1/0 here is the NaN this measure reported.
+      const sum = va + vb + vc;
+      if (!(Math.abs(sum) > 1e-20)) return Math.min(v.distanceTo(a), v.distanceTo(b), v.distanceTo(c));
+      const den = 1 / sum;
+      const w1 = vb * den, w2 = vc * den;
+      return v.distanceTo(_gv5.copy(a).addScaledVector(ab, w1).addScaledVector(ac, w2));
+    };
     built.rig.updateMatrices();
     built.rig.root.updateMatrixWorld(true);
+    /* EVERY SKIN THE PLACER CONSIDERED, and not the bare lathe underneath it.
+     *
+     * This soup was `bone.primary` alone. A mark is rayed onto the FURTHEST
+     * surface the bone carries — cloth if there is cloth there, skin if there
+     * is not, which is `Injury`'s own rule and the right one — so a stain
+     * lying perfectly on a tabard measured 63 mm from the chest beneath it and
+     * the check called that a floating vertex. It was measuring the wrong
+     * body. `injury` meshes are excluded for the obvious reason. */
     const body = [];
-    for (const name of ['chest', 'spine', 'hips']) soup(built.rig.get(name).primary, body);
+    for (const name of ['chest', 'spine', 'hips']) {
+      const bone = built.rig.get(name);
+      if (!bone) continue;
+      for (const o of [bone.primary, ...bone.obj.children]) {
+        if (!o || !o.isMesh || o.userData?.injury) continue;
+        soup(o, body);
+      }
+    }
     let worst = 0, n = 0;
     for (const m of inj.meshes.values()) {
       const P = m.geometry.attributes.position, v = new THREE.Vector3();
@@ -997,15 +1061,12 @@ export function run({ check, assert, near }) {
       for (let i = 0; i < P.count; i++) {
         v.fromBufferAttribute(P, i).applyMatrix4(m.matrixWorld);
         let d = 1e9;
-        for (const [a, b, c] of body) {
-          const cen = new THREE.Vector3().add(a).add(b).add(c).multiplyScalar(1 / 3);
-          d = Math.min(d, v.distanceTo(cen));
-        }
+        for (const [a, b, c] of body) d = Math.min(d, nearTri(v, a, b, c));
         worst = Math.max(worst, d); n++;
       }
     }
     assert(n > 0, 'the wound has no vertices');
-    assert(worst < 0.05, `a mark vertex is ${(worst * 1000).toFixed(0)} mm from the nearest triangle of the body it is painted on`);
+    assert(worst < 0.012, `a mark vertex is ${(worst * 1000).toFixed(1)} mm from the nearest triangle of the body it is painted on`);
     // it landed on the bone the hit was nearest, not on a fixed one
     assert(w.bone === 'chest', `a hit on the chest marked the ${w.bone}`);
     // and it is a DIRECT child of that bone — the Ragdoll/first-person rule
@@ -1052,8 +1113,18 @@ export function run({ check, assert, near }) {
     const capped = cost(built.rig.root);
     assert(capped.meshes - base.meshes <= inj.maxBones * 2,
       `a fully wounded body carries ${capped.meshes - base.meshes} extra meshes against a cap of ${inj.maxBones * 2}`);
-    assert(capped.tris - base.tris < 400,
-      `a fully wounded body is ${capped.tris - base.tris} extra triangles — a mark is meant to be nine of them`);
+    /* 520, not 400. A wound is THREE marks now and not one — the stain where
+     * the hit landed and two smaller runs at 40-80 degrees of bearing either
+     * side of it, because blood spreads round a limb and because a single
+     * stain is on whichever side the attacker was standing. Measured through
+     * `tools/_hurt.mjs`, that is the difference between 0.3% of the player's
+     * own silhouette carrying a mark and 4-6% of it. Nine plus seven plus
+     * seven is 23 triangles a wound against the nine this bound was written
+     * for, and 420 total on a fully wounded body — still under a hundredth of
+     * what the figure itself costs. */
+    assert(capped.tris - base.tris < 520,
+      `a fully wounded body is ${capped.tris - base.tris} extra triangles — a wound is meant to be `
+      + 'a stain and two runs, about 23 of them');
     assert(inj.level === 1, `${inj.wounds.length} wounds of ${inj.max} is level ${inj.level}`);
     inj.clear();
     const clean = cost(built.rig.root);

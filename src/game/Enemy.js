@@ -139,7 +139,23 @@ export function limitBackpedal(vel, toTarget, factor = BACKPEDAL) {
 }
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _v4 = new THREE.Vector3(), _v5 = new THREE.Vector3(), _v6 = new THREE.Vector3();
+const _v7 = new THREE.Vector3();
+
+/** The object a rig's pose hangs off, or null. Used only by the hover lean. */
+function rigRootOf(e) { return e.rig?.root || null; }
 const _q1 = new THREE.Quaternion(), _q2 = new THREE.Quaternion();
+const _m1 = new THREE.Matrix4();
+/**
+ * How far the wrist has to pitch DOWN for the bore to land on the aim.
+ *
+ * Not derivable from the -0.2 the weapon carries in `_build` alone, because
+ * the hand bone has a rest orientation of its own that the basis below is
+ * composed against. It is MEASURED: `tools/checks/characters.mjs` drives a
+ * real trooper at a real target and asserts the angle between the bore and
+ * the aim, so this number cannot drift without something saying so.
+ * Shipped reading: 0.4 degrees, from 77.6.
+ */
+const WEAPON_PITCH = 0.26;
 const _box = new THREE.Box3(), _box2 = new THREE.Box3();
 /** The off-hand pose's own scratch — see _poseOffhand for why it needs it. */
 const _o1 = new THREE.Vector3(), _o2 = new THREE.Vector3(), _o3 = new THREE.Vector3();
@@ -2910,6 +2926,58 @@ export class Enemy {
     return clamp(q, 0.55, 4.5);
   }
 
+  /**
+   * THE ENGINES: a plume, some exhaust, and a noise. Note #33.
+   *
+   * "they need to have actual jetpacks and exhaust and engines that fire and
+   * thrust and makes sounds like you know what I mean?" Three things, and the
+   * body had none of them — the pack was a shape on a back and the man
+   * hovered in silence.
+   *
+   * @param power 0..1.6 — how hard the engines are working right now.
+   */
+  _jetFx(dt, ctx, power) {
+    const jets = this.rig?.jets;
+    if (!jets || !jets.length) return;
+    /* THE FLAME IS A LENGTH. Scaled on Y only, so the cone stays the width of
+     * the bell it comes out of and grows out of it — a flame that gets fatter
+     * as it gets longer is a fire, and this is a nozzle. */
+    const want = clamp(power, 0, 1.6);
+    this._jetShow = damp(this._jetShow ?? 0, want, 11, dt);
+    /* Flicker, per engine and out of phase, because two perfectly matched
+     * plumes read as one object drawn twice. */
+    for (let i = 0; i < jets.length; i++) {
+      const f = 0.86 + Math.sin(this.hoverPhase * 9 + i * 2.1) * 0.10 + rng() * 0.08;
+      const L = Math.max(0.001, this._jetShow * f);
+      jets[i].scale.set(0.72 + this._jetShow * 0.34, L, 0.72 + this._jetShow * 0.34);
+      const m = jets[i].material;
+      if (m) m.opacity = clamp(0.30 + this._jetShow * 0.55, 0, 0.95);
+    }
+    if (!ctx) return;
+    /* THE EXHAUST, and it comes off the bells rather than off the body: two
+     * emitters at the real nozzle positions, so a trooper banking away leaves
+     * two trails and not one. Rate-limited on the same clock the flame uses —
+     * a hovering man makes a wisp and a climbing one makes a column. */
+    const P = ctx.particles;
+    this._jetPuff = (this._jetPuff || 0) - dt * (2 + this._jetShow * 26);
+    if (P && this._jetPuff <= 0) {
+      this._jetPuff = 1;
+      for (const j of jets) {
+        j.getWorldPosition(_v6);
+        _v7.set((rng() - 0.5) * 0.5, -2.4 - this._jetShow * 3.6, (rng() - 0.5) * 0.5);
+        P.smoke?.spawn?.(_v6, _v7, { life: 0.5 + rng() * 0.4, size: 0.16 + this._jetShow * 0.14,
+          drag: 1.6, gravity: 0.4, color: 0x9aa6b4, alpha: 0.16 });
+        P.plasma?.spawn?.(_v6, _v7, { life: 0.14, size: 0.10 + this._jetShow * 0.10,
+          drag: 2.2, gravity: 0, color: 0x9fd0ff, alpha: 0.5 });
+      }
+    }
+    /* AND IT IS AUDIBLE. `audio.jet` is a positional loop that follows the
+     * body; it is started once and told how hard it is working after that, so
+     * twelve jet troopers are twelve voices rather than twelve retriggers a
+     * frame. */
+    audio.jet?.(this.position, this._jetShow, this.id);
+  }
+
   applyKnockback(impulse, damage, source, gentle) {
     if (this.dead) {
       // `impulse` is legitimately null — `_sustain` bills damage with no shove
@@ -4732,6 +4800,27 @@ export class Enemy {
       this.velocity.y = damp(this.velocity.y, (want - this.position.y) * 4.5, 8, dt);
       this.position.addScaledVector(this.velocity, dt);
       this.grounded = false;
+      /**
+       * A MAN UNDER THRUST LEANS INTO IT. Note #33's first clause — "it's like
+       * they're magically sitting in the air" — is as much about the POSE as
+       * about the pack: a body held upright at a fixed height with a sine on
+       * it is a body being levitated, and a body on a jetpack is a body being
+       * PUSHED, which means it is tilted away from where it is going and it
+       * moves in arcs rather than on rails.
+       *
+       * `jetLean` is read by the poser. Forward pitch off the horizontal
+       * speed, roll off the turn — the two things a real pack rider does, and
+       * the two the eye reads as "under power" without being told.
+       */
+      const sp = Math.hypot(this.velocity.x, this.velocity.z);
+      const pitch = clamp(sp * 0.055, 0, 0.34);
+      const turn = clamp((this.velocity.x * Math.cos(this.facing) - this.velocity.z * Math.sin(this.facing)) * 0.05, -0.30, 0.30);
+      this.jetLean = damp(this.jetLean ?? 0, pitch, 6, dt);
+      this.jetRoll = damp(this.jetRoll ?? 0, turn, 6, dt);
+      /* THE ENGINES ANSWER WHAT THE BODY IS DOING, which is the whole read.
+       * Climbing hard is a long white plume; holding station is a pilot
+       * flame. `_jetFx` also owns the noise. */
+      this._jetFx(dt, ctx, clamp(0.22 + Math.max(0, this.velocity.y) * 0.42 + sp * 0.05, 0, 1.6));
       this._syncBody();
       return;
     }
@@ -4848,6 +4937,26 @@ export class Enemy {
         accelForward: clamp(this.velocity.length() / 5, 0, 1),
       });
       this._poseArms(dt, ctx);
+      /**
+       * AND A MAN UNDER THRUST IS TILTED. Note #33's first clause.
+       *
+       * The animator solves a WALK — hips level, feet reaching for ground —
+       * and a body that is not standing on anything gets the same solve with
+       * the ground moved. That is the whole of "it's like they're magically
+       * sitting in the air": nothing about the pose says the man is being
+       * pushed.
+       *
+       * Applied to the rig ROOT and after the animator has run, because it is
+       * an attitude and not a gait: the legs still trail correctly under it,
+       * the arms are still IK'd to the weapon, and the body leans into its own
+       * acceleration the way anything on a pack does. `_move` derives the two
+       * angles; this only spends them.
+       */
+      if (A.float && rigRootOf(this)) {
+        const root = rigRootOf(this);
+        root.rotation.x = this.jetLean ?? 0;
+        root.rotation.z = this.jetRoll ?? 0;
+      }
     } else if (this.rig) {
       this._poseWalker(dt, ctx);
     } else if (this.group && A.custom === 'remote') {
@@ -4888,21 +4997,59 @@ export class Enemy {
       this.animator?.swingArms(dt, this.velocity.length(), 1);
       return;
     }
-    // both hands to the weapon, weapon pointed at the target
+    /**
+     * BOTH HANDS ON THE BORE, AND THE BORE ON THE AIM. Note #32: "the troopers
+     * (at least the clones but probably others too tbh) hold their weapons
+     * really awkwardly like it's really bad, kind of takes you out of it."
+     *
+     * Measured on a shipped clone trooper aiming at a target twenty metres
+     * dead ahead: **the barrel pointed 77.6 degrees away from the aim** — very
+     * nearly across the body — because the hand was oriented by putting its
+     * +Y up the aim line while the blaster's barrel is its own +Z. The two
+     * axes are perpendicular, so aiming one aimed nothing.
+     *
+     * `assets/reference/units/clones/trooper holding … DC-15A blaster
+     * rifle.webp` is what the pose should be, and it is three things: the bore
+     * level and along the line of sight; both hands ON that line, the trigger
+     * hand in close under the chin and the support hand well forward; and both
+     * elbows DOWN. What was here had the two hands on opposite sides of the
+     * centreline, which is why the weapon lay across the chest.
+     */
     const aim = this.target ? _v4.copy(this.target.chest ?? this.target.position).sub(chest).normalize()
                             : _v4.copy(fwd);
-    const holdR = _v5.copy(chest).addScaledVector(aim, 0.34 * S).addScaledVector(right, 0.16 * S).addScaledVector(UP, -0.13 * S);
-    const poleR = _v6.copy(chest).addScaledVector(right, 0.8).addScaledVector(UP, -0.7);
+    /* The bore line: offset to the shooting side and just under the chin, so
+     * both hands hang off ONE line instead of straddling the body. */
+    const boreAt = (t, out) => out.copy(chest)
+      .addScaledVector(aim, t * S).addScaledVector(right, 0.125 * S).addScaledVector(UP, -0.045 * S);
+    const holdR = boreAt(0.25, _v5);
+    // elbow DOWN and back, which is where a trigger arm's is — it was out to
+    // the side at shoulder height, which is a pose for holding a tray
+    const poleR = _v6.copy(chest).addScaledVector(right, 0.55).addScaledVector(UP, -1.05).addScaledVector(aim, -0.35);
     rig.solveIK('armR', 'foreR', holdR, poleR);
     if (!this.A.custom) {
-      const holdL = _v5.copy(chest).addScaledVector(aim, 0.5 * S).addScaledVector(right, -0.02 * S).addScaledVector(UP, -0.1 * S);
-      const poleL = _v6.copy(chest).addScaledVector(right, -0.8).addScaledVector(UP, -0.7);
+      const holdL = boreAt(0.62, _v5);
+      const poleL = _v6.copy(chest).addScaledVector(right, -0.35).addScaledVector(UP, -1.1).addScaledVector(aim, 0.1);
       rig.solveIK('armL', 'foreL', holdL, poleL);
     }
-    // point the weapon down the aim line
+    /**
+     * AND THE WRIST PUTS THE BARREL ON THE LINE.
+     *
+     * A basis rather than a single-axis aim, because a weapon needs both a
+     * direction and a ROLL: `aimY` fixes one axis and leaves the other two to
+     * whatever its own convention picks, which is how a rifle ends up on its
+     * side. +Z down the aim, +Y up, +X across — and the whole thing pitched by
+     * the 0.2 rad the weapon carries in its own local rotation (see where it
+     * is parented in `_build`), so the BORE lands on the aim rather than the
+     * hand.
+     */
     const hand = rig.get('handR');
     if (hand && hand.obj.parent) {
-      aimY(_v5.copy(aim).lerp(UP, 0.42).normalize(), null, _q1);
+      const f = _v5.copy(aim).applyAxisAngle(right, WEAPON_PITCH).normalize();
+      const rr = _v6.crossVectors(UP, f).normalize();
+      if (rr.lengthSq() < 1e-6) rr.copy(right);
+      const uu = _v7.crossVectors(f, rr).normalize();
+      _m1.makeBasis(rr, uu, f);
+      _q1.setFromRotationMatrix(_m1);
       hand.obj.parent.getWorldQuaternion(_q2);
       hand.obj.quaternion.copy(_q2.invert()).multiply(_q1);
     }

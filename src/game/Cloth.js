@@ -1956,7 +1956,13 @@ export function attachCloak(scene, rig, opts = {}) {
   // any scaled character got a collar half as wide as its own cloth.
   const halfSpan = ((opts.width ?? 0.6) * S) * 0.5;
   const cloak = new Cloak(scene, {
-    cols: opts.cols ?? 9,
+    /* TEN, NOT NINE. `garments` holds one rule about resolution — no garment
+     * may be diced finer than the cape, because the cape is the one every
+     * other cut is compared against — and seaming the collar to the back
+     * (see `anchorFn`) spread the top row over the real shoulder line, which
+     * grew the cape's own cell from 77 cm² to 88 and put the coat under it.
+     * Two more columns are 22 particles and take it back under: 88.0 -> 71.4 cm^2. */
+    cols: opts.cols ?? 11,
     rows: opts.rows ?? 11,
     width: (opts.width ?? 0.6) * S,
     length: (opts.length ?? 1.0) * D,  // collar at S, hem down the leg at D
@@ -1975,13 +1981,58 @@ export function attachCloak(scene, rig, opts = {}) {
     fullness: opts.fullness, jitter: opts.jitter, lift: opts.lift, seed: opts.seed,
     foldAO: opts.foldAO,
     gravity: opts.gravity ?? -13,
+    /**
+     * THE COLLAR FOLLOWS THE BACK, AND IT USED TO CUT ACROSS IT.
+     *
+     * Note #11: "can we do a better job attaching the capes to the body? right
+     * now if you look close enough it's completely disconnected the
+     * shoulder/back like in a straight line whereas it should look seamlessly
+     * integrated."
+     *
+     * That is exactly what it was. Every pin sat at a fixed `z = -0.10` with a
+     * 5.5 cm cosine bow on it, which is a nearly straight chord laid across a
+     * torso whose back is an arc of about 20 cm radius: the two ends touched
+     * and the middle stood a good five centimetres off the spine, so the top
+     * of the cape floated and the shoulders showed through under it.
+     *
+     * The section is an ELLIPSE, so the fix is the ellipse: at a lateral
+     * offset `x`, the back surface is at `-depth·sqrt(1 - (x/halfWidth)²)`,
+     * which puts every pin ON the body and curls the ends of the collar
+     * FORWARD over the tops of the shoulders — which is where a cape is
+     * actually fastened and what makes it read as worn rather than as hung.
+     *
+     * The row rises at the ends too, because the trapezius does: a collar that
+     * is level across a sloped shoulder line is the same defect one axis over.
+     */
     anchorFn: (c, n, out) => {
-      // spread the pins across the shoulders, slightly behind the back
       const t = n === 1 ? 0.5 : c / (n - 1);
       _m.copy(chest.obj.matrixWorld);
-      out.set(lerp(-halfSpan, halfSpan, t), chest.length * 0.92, -0.10 * S);
-      // bow the collar so it sits on the shoulders rather than in a straight line
-      out.z -= Math.cos((t - 0.5) * Math.PI) * 0.055 * S;
+      const x = lerp(-halfSpan, halfSpan, t);
+      /* The torso's own half-width and depth at the shoulders. `chest.radius`
+       * is the lathe's, and the shoulders are a little wider than it — the
+       * span the caller asked for is the honest measure of how far out the
+       * pins go, so the ellipse is fitted to whichever is bigger. */
+      const halfW = Math.max(halfSpan, (chest.radius ?? 0.2 * S) * 1.02);
+      const depth = (chest.radius ?? 0.2 * S) * 0.86;
+      const k = clamp(Math.abs(x) / halfW, 0, 1);
+      const back = -depth * Math.sqrt(Math.max(0, 1 - k * k));
+      /* THE CLEARANCE GOES OUT ALONG THE ELLIPSE'S OWN NORMAL, not along −Z.
+       *
+       * A fixed −Z offset is the right push for a pin behind the spine and no
+       * push at all for one at the shoulder point, where the surface normal is
+       * sideways — so the outer pins of the collar ended up ON the lathe, and
+       * the wearer's COAT is a few millimetres outside that. `garments`
+       * measured the cape 3.2 mm inside the coat.
+       *
+       * 26 mm, which is the thickest garment on the roster plus a little. The
+       * solver pushes particles out of the body's collision proxy anyway; what
+       * this has to guarantee is that the first row does not START inside it,
+       * because a pin is an ANCHOR and the solver never moves one. */
+      const nx = x / (halfW * halfW), nz = back / (depth * depth);
+      const nl = Math.hypot(nx, nz) || 1;
+      out.set(x + (nx / nl) * 0.026 * S,
+        chest.length * (0.92 + k * k * 0.045),
+        back + (nz / nl) * 0.026 * S);
       out.applyMatrix4(_m);
     },
   });

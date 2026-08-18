@@ -1855,6 +1855,119 @@ export class AudioEngine {
       attack: out ? 0.05 : 0.09, prio: PRIO.chatter });
   }
 
+  /**
+   * A JETPACK, HELD OPEN. Note #33 — "engines that fire and thrust and makes
+   * sounds like you know what I mean?"
+   *
+   * A LOOP AND NOT A RETRIGGER, and that is the whole design problem. Every
+   * other voice in this file is an event; a jetpack is a continuous state, and
+   * firing a one-shot per frame per trooper is twelve retriggers a frame and a
+   * machine-gun instead of a roar. So each body gets ONE voice, keyed on its
+   * id, and after that it is only ever told how hard it is working.
+   *
+   * TWO LAYERS, because a rocket is two sounds: a broadband roar (the
+   * combustion) under a narrow whistle (the nozzle). The roar's filter opens
+   * with power and the whistle rises with it, which is what makes a climb
+   * audibly different from a hover rather than merely louder.
+   *
+   * @param power 0..1.6 — how hard it is working. 0 releases the voice.
+   */
+  jet(pos, power, id) {
+    if (!this.ctx || this.muted) return;
+    const jets = this._jets || (this._jets = new Map());
+    let v = jets.get(id);
+    if (power <= 0.02) {
+      if (v) { try { v.stop(); } catch { /* already gone */ } jets.delete(id); }
+      return;
+    }
+    if (!v) {
+      /* A cap, for the same reason every other voice pool in this file has
+       * one: a wave of twelve jet troopers is twelve continuous voices and
+       * the mixer has a budget. Past it the far ones are silent, which is
+       * what distance would have done anyway. */
+      if (jets.size >= 6) return;
+      v = this._openLoop(pos, PRIO.world);
+      if (!v) return;
+      jets.set(id, v);
+    }
+    v.set(pos, Math.min(power, 1.6));
+  }
+
+  /**
+   * A CONTINUOUS POSITIONAL VOICE — two layers, held open, driven by a number.
+   *
+   * The only one in this file, and it exists because a jetpack is a STATE and
+   * everything else here is an event. Two sources: pink noise through a
+   * band-pass for the combustion, and a saw for the nozzle whistle. Both
+   * filters and both gains move with `power`, which is what makes a climb
+   * sound different from a hover rather than merely louder.
+   *
+   * The returned handle is the only way to reach it again: `set` retunes it,
+   * `stop` releases the voice and the panner together. A caller that drops the
+   * handle leaks a voice, which is why `jet()` keys them by body id and
+   * releases on zero.
+   */
+  _openLoop(pos, prio = PRIO.world) {
+    if (!this.ready || !this._live()) return null;
+    if (!this._voice(prio)) return null;
+    let out = null;
+    try {
+      out = this._panner(pos);
+      out.connect(this.sfxBus);
+      const t = this.ctx.currentTime;
+      const src = this.ctx.createBufferSource();
+      src.buffer = this._pinkBuf; src.loop = true;
+      const flt = this.ctx.createBiquadFilter();
+      flt.type = 'bandpass'; flt.frequency.value = 420; flt.Q.value = 0.9;
+      const ng = this.ctx.createGain(); ng.gain.setValueAtTime(0.0001, t);
+      src.connect(flt); flt.connect(ng); ng.connect(out);
+      const osc = this.ctx.createOscillator();
+      osc.type = 'sawtooth'; osc.frequency.value = 240;
+      const olp = this.ctx.createBiquadFilter();
+      olp.type = 'lowpass'; olp.frequency.value = 900;
+      const og = this.ctx.createGain(); og.gain.setValueAtTime(0.0001, t);
+      osc.connect(olp); olp.connect(og); og.connect(out);
+      src.start(t); osc.start(t);
+      let dead = false;
+      const handle = {
+        set: (p, power) => {
+          if (dead || !this.ctx) return;
+          const now = this.ctx.currentTime;
+          if (p && out.positionX) {
+            out.positionX.setTargetAtTime(num(p.x, 0), now, 0.03);
+            out.positionY.setTargetAtTime(num(p.y, 0), now, 0.03);
+            out.positionZ.setTargetAtTime(num(p.z, 0), now, 0.03);
+          } else if (p && out.setPosition) {
+            out.setPosition(num(p.x, 0), num(p.y, 0), num(p.z, 0));
+          }
+          const k = clamp(num(power, 0), 0, 1.6);
+          ng.gain.setTargetAtTime(0.045 + k * 0.13, now, 0.06);
+          og.gain.setTargetAtTime(0.008 + k * 0.028, now, 0.06);
+          flt.frequency.setTargetAtTime(340 + k * 720, now, 0.08);
+          osc.frequency.setTargetAtTime(190 + k * 260, now, 0.08);
+        },
+        stop: () => {
+          if (dead) return;
+          dead = true;
+          const now = this.ctx.currentTime;
+          ng.gain.setTargetAtTime(0.0001, now, 0.05);
+          og.gain.setTargetAtTime(0.0001, now, 0.05);
+          try { src.stop(now + 0.3); osc.stop(now + 0.3); } catch { /* already stopped */ }
+          setTimeout(() => {
+            try { src.disconnect(); osc.disconnect(); out.disconnect(); } catch { /* gone */ }
+            this._release();
+          }, 400);
+        },
+      };
+      return handle;
+    } catch {
+      this.stats.threw++;
+      this._release();
+      if (out) { try { out.disconnect(); } catch { /* gone */ } }
+      return null;
+    }
+  }
+
   thud(pos, power = 1) {
     this.noise({ dur: 0.2, gain: 0.16 * power, type: 'lowpass', freq: 700, freqEnd: 130, pos, pink: true, prio: PRIO.world });
     this.tone({ freq: 110, freqEnd: 44, dur: 0.22, gain: 0.2 * power, type: 'sine', pos, prio: PRIO.world });
@@ -2296,6 +2409,13 @@ export class AudioEngine {
     try { this.reverbSend.gain.setTargetAtTime(g, t, 0.5); } catch {}
     this.room = { seconds: s, decay: d, send: g };
     return this.room;
+  }
+
+  /** Release every held jetpack voice. Called on unload — see `setAmbience`. */
+  stopLoops() {
+    if (!this._jets) return;
+    for (const v of this._jets.values()) { try { v.stop(); } catch { /* gone */ } }
+    this._jets.clear();
   }
 
   setAmbience({ wind = 0.1, windFreq = 420, drone = 0.1, room = null } = {}) {

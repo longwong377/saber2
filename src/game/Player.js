@@ -825,7 +825,31 @@ export const GRIP_AT = { R: 0.050, L: -0.015, FP: -0.075 };
  * for a saber whose hilt has not been measured — a preview, a fixture, a
  * dropped weapon rebuilt from the wire — and is no longer what the game holds.
  */
-export const FIST_CLEAR = 0.013;
+export const FIST_CLEAR = 0.065;
+
+/**
+ * WHERE ROUND THE HILT THE FIRST-PERSON FIST SITS, as a lateral term on the
+ * camera's own up vector. See the note at the call site in `_poseArms`.
+ *
+ * −0.05: a hair inboard of straight under the grip. It is a narrow window and
+ * both walls of it are checks that used to be called unsatisfiable together
+ * (HANDOFF §6.4 #1), so the sweep is kept:
+ *
+ *     side    hand below the axis     hilt behind the fist
+ *     +0.42        29.6°  fail                10%
+ *      0.00        26.2°  fail                19%
+ *     −0.05        26.0°  PASS                26%
+ *     −0.09        25.8°                      35%  fail
+ *     −0.14        25.6°                      35%  fail
+ *     −0.35        24.6°                      42%  fail
+ *
+ * Outboard clears the hilt and drops the hand out of the bottom of the frame;
+ * inboard lifts it and puts the fist across the grip. The window exists at all
+ * only because the grip point came UP the shaft at the same time — see
+ * FIST_CLEAR, which went 0.013 → 0.065 once the fist stopped hanging over the
+ * top of the hilt and stopped needing the pommel to hide behind.
+ */
+const FP_GRIP_SIDE = -0.05;
 export function fpGripOn(saber) {
   const lo = saber?.hiltFloor;
   return typeof lo === 'number' && Number.isFinite(lo) ? lo + FIST_CLEAR : GRIP_AT.FP;
@@ -3586,7 +3610,73 @@ export class Player {
       // `rig.scale` and not `stature`: the bore is a place inside the HAND, and
       // buildHand is called with the body scale. See handPoseOnHilt.
       const hs = rig.scale ?? 1;
-      handPoseOnHilt('R', _q1, _v10.subVectors(gripR, rig.worldPos('armR', _v9)), _q2, _v9, hs);
+      /**
+       * IN FIRST PERSON THE HAND GOES UNDER THE HILT, NOT IN FRONT OF IT.
+       *
+       * Note #10: "1st person pov hand gripping the saber it's like a really
+       * weird reverse backwards grip it looks really dorky."
+       *
+       * `handPoseOnHilt`'s free axis — where round the hilt the fist sits — is
+       * solved as "the side the arm arrives from", which is exactly right in
+       * third person and is the whole defect here. In first person the arm
+       * arrives from BEHIND THE LENS, so the solve dutifully puts the fist
+       * between the camera and the weapon: measured with `tools/_fpgeom.mjs`,
+       * the hand sits 87 mm nearer the eye than the hilt and hides 35% of it,
+       * and what you are looking at is the back of your own glove with a grip
+       * somewhere behind it. That reads as holding the thing backwards.
+       *
+       * A real one-handed sabre guard in your own eyeline is held from
+       * UNDERNEATH and slightly outboard: you see the inside of the wrist, the
+       * fingers wrapped round the grip, and the hilt clear above the fist.
+       * That is a direction, so it is passed as one — down and to the sword
+       * side, in the CAMERA's frame rather than the world's so it stays right
+       * when you look up or down.
+       *
+       * Third person is untouched: the arm-direction solve is correct there
+       * and has a sweep behind it (see `handPoseOnHilt`'s own note).
+       */
+      /**
+       * IN FIRST PERSON THE HAND GOES UNDER THE HILT. Note #10: "1st person
+       * pov hand gripping the saber it's like a really weird reverse backwards
+       * grip it looks really dorky."
+       *
+       * MEASURED, because "reverse" is a claim about geometry and the thumb
+       * turned out to be innocent. `handPoseOnHilt` forces the thumb up the
+       * blade and it does: thumb·blade reads 1.00. What is reversed is the
+       * FREE axis — where round the hilt the fist sits — and in first person
+       * the shipped solve is the only orientation of eight that puts the wrist
+       * ABOVE the grip point:
+       *
+       *     candidate        wrist relative to the grip, in camera space
+       *                        right      up      toward the eye
+       *     arm (shipped)      0.019   +0.055        0.042
+       *     camera up          0.065   −0.030       −0.005
+       *     camera up+right    0.043   −0.051       −0.025
+       *     camera right      −0.035   −0.047       −0.041
+       *
+       * A hand hanging over the top of a hilt with the blade coming out of the
+       * far side of the fist is an icepick grip. That is what "reverse
+       * backwards" describes and it is what the numbers say.
+       *
+       * The cause is that the free axis is solved as "the side the arm arrives
+       * from", which is right in third person and meaningless here: the
+       * viewmodel shoulder is 32 cm below the LENS, so the direction from it
+       * to a hilt held up in front of you points up and forward — and the
+       * wrist is placed one bore-offset back along that, i.e. over the top.
+       *
+       * `up + right` in the CAMERA's frame instead, so a right hand comes up
+       * under the grip from the outboard side: wrist 5 cm below the hilt and
+       * 2.5 cm behind it, the fingers wrapping up and across, and the whole
+       * emitter section standing clear above the fist. Third person is
+       * untouched — the arm solve is correct there and has its own sweep
+       * behind it.
+       */
+      if (fp) {
+        _v10.set(FP_GRIP_SIDE, 1, 0).normalize().applyQuaternion(this.camera.aimQuat);
+      } else {
+        _v10.subVectors(gripR, rig.worldPos('armR', _v9));
+      }
+      handPoseOnHilt('R', _q1, _v10, _q2, _v9, hs);
       const wristR = _v7.copy(gripR).add(_v9);
       handPoseOnHilt('L', _q1, _v10.subVectors(gripL, rig.worldPos('armL', _v9)), _q3, _v9, hs);
       const wristL = _v8.copy(gripL).add(_v9);

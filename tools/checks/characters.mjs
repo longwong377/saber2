@@ -19,6 +19,20 @@
 
 import * as B from '../../src/game/Bodies.js';
 import { BipedAnimator } from '../../src/game/Rig.js';
+import { Enemy } from '../../src/game/Enemy.js';
+
+/** The five things an Enemy touches while it is being posed, and nothing else. */
+function gunWorld() {
+  return {
+    scene: new THREE.Scene(), settings: {}, difficulty: null,
+    terrain: { height: () => 0, normalAt: (x, z, o) => o.set(0, 1, 0),
+      inBounds: () => true, half: 200, surfaceAt: () => 'sand' },
+    physics: { add() {}, remove() {}, bodies: [], staticBoxes: [], raycast: () => null,
+      addJoint() {}, removeJoint() {} },
+    particles: null, bolts: null, time: 0, enemies: [], players: [],
+    notify() {}, report() {}, addHitstop() {},
+  };
+}
 
 const HUMANOIDS = ['jedi', 'b1', 'b2', 'trooper', 'acolyte'];
 const ALL = [...HUMANOIDS, 'droideka', 'walker', 'beast'];
@@ -781,4 +795,62 @@ export function run({ check, assert, near, THREE: T }) {
       'nothing multiplies the blade anchor by the figure’s stature');
     return 'cape, skirt and blade anchor all scale with the figure';
   });
+
+  check('characters: a rifle points where its owner is aiming', () => {
+    /**
+     * NOTE #32: "the troopers (at least the clones but probably others too
+     * tbh) hold their weapons really awkwardly like it's really bad, kind of
+     * takes you out of it sometimes."
+     *
+     * Measured on the shipped tree, a clone trooper aiming at a target twenty
+     * metres dead ahead pointed its barrel **77.6 degrees away from the aim** —
+     * very nearly across its own body. The cause is one axis: the hand was
+     * oriented by putting its +Y up the aim line, and a blaster's barrel is
+     * its own +Z. Perpendicular axes, so aiming one aimed nothing.
+     *
+     * This is measured through the real rig, the real IK and the real weapon
+     * attachment, because every part of that chain can put the bore somewhere
+     * else and none of them can be read off the source.
+     */
+    const rows = [];
+    for (const type of ['trooper', 'b1', 'b2', 'sniper', 'heavy', 'arc']) {
+      const w = gunWorld();
+      const e = new Enemy(w, type, new THREE.Vector3(0, 0, 0));
+      if (!e.weapon) continue;
+      e.facing = 0;
+      const at = new THREE.Vector3(0, 1.4, 20);
+      e.target = { position: at, chest: at, dead: false, alive: true };
+      const ctx = { terrain: w.terrain, physics: w.physics, particles: null, time: 0, enemies: [] };
+      for (let i = 0; i < 30; i++) e._pose(1 / 60, ctx);
+      e.rig.root.updateMatrixWorld(true);
+      e.weapon.updateMatrixWorld(true);
+      const muzzle = (e.weapon.userData.muzzle || new THREE.Vector3(0, 0, 0.34))
+        .clone().applyMatrix4(e.weapon.matrixWorld);
+      const root = new THREE.Vector3().applyMatrix4(e.weapon.matrixWorld);
+      const bore = muzzle.clone().sub(root).normalize();
+      const aim = at.clone().sub(e.rig.worldPos('chest', new THREE.Vector3())).normalize();
+      const off = Math.acos(Math.max(-1, Math.min(1, bore.dot(aim)))) * 180 / Math.PI;
+      /* 12 degrees. Not zero: the hand is IK'd to a point and the weapon hangs
+       * off a bone with its own rest pose, so a body whose arms cannot quite
+       * reach the bore line will be a few degrees out and should be. What is
+       * refused is a weapon held across the chest. */
+      assert(off < 12,
+        `a ${type} aiming straight ahead points its barrel ${off.toFixed(1)}° away from the aim`);
+      /* AND BOTH HANDS ARE ON THE WEAPON. The support hand off the bore line
+       * is the other half of the reference pose — in it the two hands are on
+       * one line with the fore-end between them, and what was here put them on
+       * opposite sides of the centreline. */
+      if (!e.A.custom) {
+        const hL = e.rig.worldPos('handL', new THREE.Vector3());
+        const d = hL.clone().sub(root);
+        const perp = d.clone().addScaledVector(bore, -d.dot(bore)).length();
+        assert(perp < 0.30,
+          `a ${type}'s support hand is ${(perp * 100).toFixed(0)} cm off the line of its own weapon`);
+      }
+      rows.push(`${type} ${off.toFixed(1)}°`);
+    }
+    assert(rows.length >= 4, `only ${rows.length} armed bodies measured`);
+    return `bore against aim: ${rows.join(', ')}`;
+  });
+
 }

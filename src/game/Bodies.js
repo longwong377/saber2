@@ -4714,7 +4714,21 @@ export function buildB2(opts = {}) {
   const G = opts.frame ?? 1, g = (v) => v * G;
   const S = opts.scale ?? 1.18;
   const rig = new Rig(humanoidSkeleton(S, { armLen: 1.0 }), { scale: S });
-  const shell = armorMat(opts.color ?? 0x7d7266, 0.55, 0.48);
+  /**
+   * THE COLOUR IS PEWTER AND IT WAS TAN. Note #34: "get the B2 battle droids
+   * to look more like what they actually look like in the reference images,
+   * right now they look like the iron giant or iron man and that's nothing
+   * like what they actually look like."
+   *
+   * `assets/reference/units/droids/B2 super battle droid.webp` is a cool
+   * gunmetal — a desaturated grey with a violet cast in the shadows and almost
+   * no warmth anywhere on it. 0x7d7266 is a khaki, which is the B1's colour,
+   * and a khaki humanoid slab with smooth armour and a small head is the Iron
+   * Giant almost exactly. The reference's own tell is that the B2 reads as a
+   * MACHINED metal object and the B1 reads as a plastic one, and that is a hue
+   * and a roughness before it is a shape.
+   */
+  const shell = armorMat(opts.color ?? 0x6d7076, 0.42, 0.62);
   // was bare: hands, boots and the whole backpack rendered as flat plastic
   const dark = metalMat(0x2f2c27, 0.5);
   const hot = emissiveMat(0xff7a2a, 1.1);
@@ -4724,20 +4738,52 @@ export function buildB2(opts = {}) {
   const riv = rivet(0.009 * S);
   const bolt = boltGeo(0.011 * S, 0.010 * S);
 
-  /** A flat-topped wedge with a brow and a vented crown. */
+  /**
+   * A DOME AND A BEAK, which is what the plate shows and what a flat-topped
+   * wedge is not.
+   *
+   * `assets/reference/units/droids/B2 super battle droid.webp`: the head is a
+   * smooth rounded dome, small, sunk between the shoulders so that its crown
+   * is barely above them — and under it, pointing DOWN and forward, a
+   * triangular beak plate that is most of what you read at range. There is no
+   * face, no visor band across a flat front and no crown vents; the whole
+   * thing is one curve and one wedge.
+   *
+   * That silhouette is the difference between a B2 and a generic armoured
+   * humanoid, and it is where the Iron Giant reading came from: a flat-topped
+   * box head with a lit band across it is exactly that character.
+   */
   const headShell = (s) => assemble([
-    [plateGeo(0.140 * s, 0.128 * s, 0.150 * s, 0.020 * s, 2), [0, 0.078 * s, 0.004 * s]],
-    [plateGeo(0.148 * s, 0.044 * s, 0.056 * s, 0.012 * s, 1), [0, 0.118 * s, 0.052 * s], [-0.34, 0, 0]],
-    [plateGeo(0.098 * s, 0.030 * s, 0.104 * s, 0.010 * s, 1), [0, 0.146 * s, -0.010 * s]],
-    [plateGeo(0.118 * s, 0.050 * s, 0.040 * s, 0.010 * s, 1), [0, 0.036 * s, -0.070 * s], [0.4, 0, 0]],
+    // the dome, squashed a little front-to-back so it is not a ball
+    [new THREE.SphereGeometry(0.078 * s, 12, 8), [0, 0.086 * s, -0.004 * s], null, [1, 0.92, 0.94]],
+    // the beak: a wedge under the dome, tipped forward and down
+    [plateGeo(0.086 * s, 0.096 * s, 0.062 * s, 0.014 * s, 1), [0, 0.030 * s, 0.038 * s], [0.42, 0, 0]],
+    // and the collar it sits in — the cowl's own throat, not a neck
+    [plateGeo(0.116 * s, 0.042 * s, 0.100 * s, 0.014 * s, 1), [0, -0.006 * s, -0.004 * s]],
   ], 'head');
 
   dressHumanoid(rig, {
     scale: S,
     body: shell, arm: shell, leg: shell, hand: dark, boot: dark, head: shell,
-    parts: { chestR: g(0.21), shoulderR: g(0.175), hipR: g(0.14), waistR: g(0.125),
-             armR: g(0.072), clavR: g(0.095), thighR: g(0.095), neckR: 0.070, torsoDepth: 0.86,
-             shoulderDome: 0.30 },
+    /**
+     * THE SILHOUETTE, AND THE REFERENCE IS AN HOURGLASS.
+     *
+     * What was here read the B2's own header correctly — "no neck, no waist,
+     * all shoulder" — and then authored a waist at 0.125 against a chest at
+     * 0.21, which is 60% and is not a waist, it is a barrel with a slight
+     * taper. In the plate the abdomen is a ribbed COLUMN about a third of the
+     * chest's width, and the legs under it are conspicuously spindly: the
+     * whole read of the thing is a heavy slab carried on thin legs, and the
+     * pinch between them is what makes the slab look heavy.
+     *
+     * Four numbers move and they move together, because the silhouette is a
+     * ratio rather than a set of sizes: chest and shoulder out, waist and
+     * thigh in. The neck goes to almost nothing — a B2 has none, and 0.070 was
+     * enough to see between the head and the cowl.
+     */
+    parts: { chestR: g(0.228), shoulderR: g(0.196), hipR: g(0.128), waistR: g(0.082),
+             armR: g(0.070), clavR: g(0.100), thighR: g(0.074), neckR: 0.044, torsoDepth: 0.86,
+             shoulderDome: 0.34 },
     seg: { torso: 12, arm: 12, leg: 10, clav: 8, neck: 8 },
     limbOpts: {
       hips: { capN: 3 }, spine: { capN: 3 }, chest: { capN: 3 },
@@ -4755,22 +4801,27 @@ export function buildB2(opts = {}) {
       w: 0.088, l: 0.082, t: 0.038, digitL: 0.086, r: 0.0145, seg: 6, curl: 0.9 }),
     feet: { w: 0.098, len: 0.21, h: 0.115 },
 
+    /**
+     * WHAT IS ON THE HEAD, and the reference's answer is: almost nothing.
+     *
+     * No visor band, no crown vents, no face. A B2's head is a bare dome with
+     * a shadow line where the beak meets it and ONE small red photoreceptor —
+     * and the plate puts that receptor on the SHOULDER, not the head, which is
+     * the detail that makes the thing read as machinery rather than as a
+     * person in armour. The lit band that used to be here is the single
+     * strongest reason it read as the Iron Giant: a horizontal glowing line
+     * across a flat head is a face.
+     */
     buildHead(headObj, s, hg) {
       const k = new Kit();
-      const core = new THREE.Vector3(0, 0.085 * s, 0);
-      const d = new THREE.Vector3(0, 0.24, 1).normalize();
-      // the photoreceptor band, seated in the brow rather than hovering off it
-      k.aim(eye, plateGeo(0.098 * s, 0.020 * s, 0.010 * s, 0.003 * s, 1),
-        onSurface(hg, d, 0.003 * s, core), d);
-      k.aim(dark, plateGeo(0.118 * s, 0.034 * s, 0.008 * s, 0.003 * s, 1),
-        onSurface(hg, d, 0.008 * s, core), d);
-      // three crown vents — the B2's tell from above and from the side
-      k.row(3, (i, t) => k.add(dark, plateGeo(0.016 * s, 0.014 * s, 0.084 * s, 0.003 * s, 1),
-        [(t - 0.5) * 0.062 * s, 0.160 * s, -0.008 * s]));
+      const core = new THREE.Vector3(0, 0.086 * s, 0);
+      const d = new THREE.Vector3(0, 0.18, 1).normalize();
+      // the seam where the beak is bolted under the dome — a shadow, not a light
+      k.aim(dark, plateGeo(0.090 * s, 0.010 * s, 0.008 * s, 0.002 * s, 1),
+        onSurface(hg, d, 0.004 * s, core), d);
+      // two small sensor pits either side of the crown, dark and recessed
       k.pair((sx) => {
-        k.add(dark, ventGeo(0.052 * s, 0.048 * s, 0.010 * s, 3),
-          [sx * 0.074 * s, 0.080 * s, 0.010 * s], [0, sx * 1.5708, 0]);
-        k.add(dark, riv, [sx * 0.050 * s, 0.140 * s, 0.062 * s], [0.4, 0, 0]);
+        k.add(dark, riv, [sx * 0.052 * s, 0.098 * s, 0.046 * s], [0.5, 0, 0]);
       });
       k.bake(headObj);
     },
@@ -4802,14 +4853,55 @@ export function buildB2(opts = {}) {
        * and it read as a barrel from the side — which is how a B2 came to
        * share 0.845 of a silhouette with a MagnaGuard. */
       const ko = new Kit();
-      ko.add(shell, arcGeo(g(0.218) * s, g(0.196) * s, 0.250 * s, 2.55, 0.030 * s, 10), [0, 0.002 * s, 0], null, [1, 1, D]);
-      ko.add(shell, arcGeo(g(0.212) * s, g(0.192) * s, 0.150 * s, 0.80, 0.042 * s, 5), [0, 0.048 * s, 0], null, [1, 1, D]);
-      ko.add(shell, arcGeo(g(0.214) * s, g(0.206) * s, 0.062 * s, 2.75, 0.034 * s, 10), [0, 0.216 * s, 0], null, [1, 1, D]);
+      ko.add(shell, arcGeo(g(0.232) * s, g(0.208) * s, 0.250 * s, 2.55, 0.030 * s, 10), [0, 0.002 * s, 0], null, [1, 1, D]);
+      ko.add(shell, arcGeo(g(0.226) * s, g(0.204) * s, 0.150 * s, 0.80, 0.042 * s, 5), [0, 0.048 * s, 0], null, [1, 1, D]);
+      /**
+       * THE V, AND IT IS THE WHOLE SILHOUETTE.
+       *
+       * Every plate of a B2 shows the same thing above the sternum: two big
+       * armour panels sweeping UP and OUT from the middle of the chest to the
+       * points of the shoulders, meeting in a peak, with the head sunk in the
+       * notch between them. It is the most recognisable line on the body and
+       * there was nothing like it here — a hoop round the top of the ribcage,
+       * which reads as a collar.
+       *
+       * Built as two long plates rather than as an arc, because the shape is
+       * two flat panels meeting at an angle and an arc of the ribcage is by
+       * construction the wrong curve for it: what makes the V read is the
+       * STRAIGHT top edge running out to a point over each shoulder.
+       */
       ko.pair((sx) => {
-        ko.add(shell, arcGeo(g(0.216) * s, g(0.196) * s, 0.230 * s, 1.05, 0.026 * s, 6),
+        ko.add(shell, plateGeo(0.205 * s, 0.115 * s, 0.100 * s, 0.020 * s, 1),
+          [sx * 0.098 * s, 0.238 * s, 0.052 * s], [0.30, sx * 0.10, sx * 0.62]);
+      });
+      // …and the sternum ridge the two panels meet on
+      ko.add(shell, plateGeo(0.062 * s, 0.150 * s, 0.086 * s, 0.016 * s, 1),
+        [0, 0.208 * s, 0.088 * s], [0.22, 0, 0]);
+      ko.add(shell, arcGeo(g(0.228) * s, g(0.216) * s, 0.062 * s, 2.75, 0.034 * s, 10), [0, 0.216 * s, 0], null, [1, 1, D]);
+      ko.pair((sx) => {
+        ko.add(shell, arcGeo(g(0.230) * s, g(0.208) * s, 0.230 * s, 1.05, 0.026 * s, 6),
           [0, 0.012 * s, 0], [0, sx * 1.5708, 0], [1, 1, D]);
       });
+      /* THE RED EYE, and on the plate it is on the SHOULDER. One 12 mm dot,
+       * and it is the only lit thing on the whole body — which is what makes
+       * a B2 read as a machine with a sensor rather than as a face. */
+      ko.add(eye, new THREE.SphereGeometry(0.011 * s, 6, 4),
+        [0.150 * s, 0.226 * s, 0.062 * s]);
       markSilhouette(ko.bake(chest));
+      /**
+       * THE RIBBED COLUMN. `waistR` is 0.082 now against a 0.228 chest, which
+       * is the reference's own pinch — and a bare lathe at that radius reads
+       * as a stick. In the plate the abdomen is a stack of horizontal ribs, a
+       * flexible spine section with the armour STOPPED at it, and it is what
+       * makes the narrowness read as engineered rather than as thin.
+       */
+      {
+        const kr = new Kit();
+        kr.row(7, (i, t) => kr.add(dark,
+          bandGeo(g(0.078) * s, g(0.094) * s, g(0.078) * s, g(0.094) * s, 0.014 * s, 10),
+          [0, (-0.052 + t * 0.150) * s, 0], null, [1, 1, D]));
+        kr.bake(r.get('spine')?.obj || chest);
+      }
       // Back: a vented dorsal block and two exhaust stacks, seated on the
       // ribcage's real back surface (it is 15cm deep here, not 5.8).
       const back = at;
@@ -5282,14 +5374,43 @@ export function buildTrooper(opts = {}) {
         const kp = new Kit();
         const jet = K.pack === 'jet';
         if (jet) {
-          // spine block between the bells, two nozzles below the belt line
-          kp.add(plate, plateGeo(0.180 * s, 0.230 * s, 0.098 * s, 0.020 * s, 2), [0, 0.086 * s, -0.166 * s]);
-          kp.add(accent, plateGeo(0.052 * s, 0.150 * s, 0.020 * s, 0.006 * s, 1), [0, 0.096 * s, -0.216 * s]);
+          /**
+           * A JETPACK THAT LOOKS LIKE A JETPACK. Note #33: "the jet troopers
+           * look awkward and funny as hell it's like they're magically sitting
+           * in the air and floating like you need to do a way better job, they
+           * need to have actual jetpacks and exhaust and engines that fire and
+           * thrust and makes sounds."
+           *
+           * The pack was already here — a spine block and two nozzles — and
+           * every one of the three things named after "jetpacks" was not: no
+           * exhaust, no engine that fires, no sound. A shape on a back is not
+           * an explanation for a man in the air; a FLAME is.
+           *
+           * So the nozzles are bigger and canted, they get intake scoops and
+           * heat shrouding so they read as engines rather than as pipes, and —
+           * the part that matters — each one keeps a live `jets` handle so
+           * `Enemy._jetFx` can drive a plume out of it. That handle is why the
+           * two cones below are separate meshes instead of being baked into
+           * the kit with everything else: a merged nozzle cannot be lit.
+           */
+          // spine block between the bells, and a pair of engine bodies
+          kp.add(plate, plateGeo(0.190 * s, 0.250 * s, 0.110 * s, 0.020 * s, 2), [0, 0.092 * s, -0.170 * s]);
+          kp.add(accent, plateGeo(0.052 * s, 0.150 * s, 0.020 * s, 0.006 * s, 1), [0, 0.100 * s, -0.222 * s]);
           kp.pair((sx) => {
-            kp.add(gear, new THREE.CylinderGeometry(0.030 * s, 0.042 * s, 0.140 * s, 8),
-              [sx * 0.076 * s, -0.036 * s, -0.176 * s], [0.30, 0, sx * 0.16]);
-            kp.add(plate, new THREE.CylinderGeometry(0.036 * s, 0.036 * s, 0.070 * s, 8),
-              [sx * 0.076 * s, 0.048 * s, -0.184 * s], [0.16, 0, sx * 0.10]);
+            // the engine can: a fat cylinder standing proud of the block
+            kp.add(gear, new THREE.CylinderGeometry(0.050 * s, 0.056 * s, 0.190 * s, 10),
+              [sx * 0.086 * s, 0.036 * s, -0.192 * s], [0.24, 0, sx * 0.12]);
+            // an intake scoop at the top of it
+            kp.add(plate, new THREE.CylinderGeometry(0.058 * s, 0.046 * s, 0.046 * s, 10),
+              [sx * 0.086 * s, 0.134 * s, -0.204 * s], [0.24, 0, sx * 0.12]);
+            // heat shrouding: three rings down the can
+            for (let i = 0; i < 3; i++) {
+              kp.add(gear, bandGeo(0.050 * s, 0.062 * s, 0.050 * s, 0.062 * s, 0.012 * s, 10),
+                [sx * 0.086 * s, (0.004 - i * 0.046) * s, (-0.192 - i * 0.011) * s], [0.24, 0, sx * 0.12]);
+            }
+            // and the bell it fires out of, angled down and outward
+            kp.add(gear, new THREE.CylinderGeometry(0.038 * s, 0.058 * s, 0.070 * s, 10),
+              [sx * 0.090 * s, -0.078 * s, -0.216 * s], [0.24, 0, sx * 0.12]);
           });
         } else if (K.pack === 'scout') {
           // a flat scout pack with a folded bipod down it — narrow, so the
@@ -5324,6 +5445,39 @@ export function buildTrooper(opts = {}) {
             [-0.070 * s, 0.030 * s, -0.244 * s], [0.24, 0.34, 1.20]);
         }
         markSilhouette(kp.bake(chestB.obj));
+        /**
+         * THE FLAME, and it is two live meshes rather than part of the kit.
+         *
+         * A merged nozzle cannot be lit and cannot be scaled, and the whole of
+         * "engines that fire and thrust" is a plume whose LENGTH answers what
+         * the body is doing — long and white when it is climbing, a blue
+         * pilot flame when it is holding station. `Enemy._jetFx` drives them;
+         * they are stored on the rig because that is the object the Enemy has
+         * a handle to.
+         *
+         * Cones with the point DOWN, additive and depth-written-off, which is
+         * the same treatment every other self-luminous thing in this game gets
+         * — a flame that occludes what is behind it is a solid object.
+         */
+        if (jet) {
+          const flame = new THREE.MeshBasicMaterial({
+            color: 0x9fd0ff, transparent: true, opacity: 0.85, depthWrite: false,
+            blending: THREE.AdditiveBlending, side: THREE.DoubleSide, toneMapped: false,
+          });
+          rig.jets = [];
+          for (const sx of [1, -1]) {
+            const geo = new THREE.ConeGeometry(0.046 * s, 0.34 * s, 8, 1, true);
+            geo.translate(0, -0.17 * s, 0);
+            const m = new THREE.Mesh(geo, flame);
+            m.position.set(sx * 0.090 * s, -0.118 * s, -0.226 * s);
+            m.rotation.set(0.24, 0, sx * 0.12);
+            m.scale.set(1, 0.001, 1);
+            m.castShadow = false; m.receiveShadow = false;
+            m.userData.jetFlame = true;
+            chestB.obj.add(m);
+            rig.jets.push(m);
+          }
+        }
       }
 
       /* ── abdomen: three overlapping bands, so the waist articulates ── */
