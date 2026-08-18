@@ -194,6 +194,25 @@ export const MODES = {
     blurb: 'Lead an army across Geonosis. Your troops have names, they earn rank, and when they die they are gone.',
     fixedTheatre: 'Command is fought on Geonosis: five areas, one crossing, and the ground does not change.',
     /**
+     * THE ONLY MODE THAT CAN BE A MEETING — and this field is what stopped a
+     * Command option from emptying two other modes.
+     *
+     * `commandConfig`'s `versus` says "the other army is a PERSON's, deployed
+     * rather than composed", and `CommandDirector.start` implements that by not
+     * composing a wave at all. `World.loadLevel` builds a CommandDirector for
+     * `command`, `skirmish` AND `campaign`, and `commandConfig` reads a global
+     * settings key, so a player who ticked the meeting box in Command and then
+     * started a Skirmish got a battle with no opposing army: measured on
+     * geonosis, the opening spawn queue goes 8 bodies → 0 in all three modes.
+     * A campaign mission with nothing in it clears itself.
+     *
+     * A meeting needs a second COMMANDER, and only this mode has one. That is a
+     * fact about the mode, so it is written on the mode rather than as a list
+     * of mode names inside `commandConfig` — the fourth mode that leads an army
+     * then declines the meeting by saying nothing, which is the safe way round.
+     */
+    meeting: true,
+    /**
      * THE GROUND, AS A FIELD SOMETHING CAN READ.
      *
      * `fixedTheatre` above is PROSE. The menu greys the Theatre column and
@@ -1742,11 +1761,11 @@ export class WaveDirector {
   sideFor(wave, open = null) {
     const armies = this.levelArmies();
     if (armies.length < 2) return null;
-    /* Command already answers this question, once, its own way: its
-     * `unlockedAt` filters the level's two armies down to the one you are not
-     * leading. A rotation here would answer it a second time and half the waves
-     * would come back empty. */
-    if (this.mode === 'command') return null;
+    /* The class that filters the pool is the class that declines this — see
+     * `CommandDirector.sideFor`. It used to be a `this.mode === 'command'` test
+     * right here, which is a rule about a SUBCLASS written as a test on one of
+     * the three mode strings that subclass runs under, and it is the reason the
+     * subclass hard-coded its mode and a skirmish reported itself as Command. */
     const types = open || this._openTypes(wave);
     const live = armies.filter((id) => types.some((t) => factionOf(t) === id));
     if (live.length < 2) return live[0] ?? null;

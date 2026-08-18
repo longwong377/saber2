@@ -90,7 +90,7 @@ import { ARCHETYPES, applyModifier, DREAD, FORCE_KINDS } from './Enemy.js';
 import { buildTrooper, buildB1, buildB2, buildBodyguard } from './Bodies.js';
 import { TOUGHNESS } from './Combat.js';
 import { BOLT_COLORS } from './Bolts.js';
-import { WaveDirector, holdFire, isHeavy } from './Waves.js';
+import { MODES, WaveDirector, holdFire, isHeavy } from './Waves.js';
 import { clamp, lerp, makeRng, TAU } from '../engine/MathUtil.js';
 /* The score's ending. `_endCampaign` is one of the two places in this game a run
  * can be WON rather than survived, and until this import existed the other one
@@ -1372,8 +1372,19 @@ export function commandConfig(settings) {
      * opening formation are already read. The same shape `sandboxConfig` and
      * `pvpRules` have: a menu writes a free-form value and exactly one function
      * decides what it means.
+     *
+     * AND THE MODE HAS TO BE ABLE TO HOLD ONE. The box is a global setting and
+     * this function runs for every mode that leads an army — `World.loadLevel`
+     * builds a CommandDirector for `command`, `skirmish` and `campaign` — so a
+     * player who ticked it here and then started a Skirmish got a battle with
+     * no opposing army at all: the opening spawn queue on geonosis goes 8
+     * bodies to 0 in all three, because `start` declines to compose a wave when
+     * the other side is supposed to be a person's. `MODES.command.meeting` is
+     * where that fact lives; the mode table is asked rather than a list of mode
+     * names being kept here, so the next mode that leads an army declines the
+     * meeting by saying nothing.
      */
-    versus: !!s.commandVersus,
+    versus: !!s.commandVersus && !!MODES[s.mode]?.meeting,
   };
 }
 
@@ -1816,7 +1827,38 @@ export class Commander {
  */
 export class CommandDirector extends WaveDirector {
   constructor(world, opts = {}) {
-    super(world, { ...opts, mode: 'command' });
+    /**
+     * THE MODE IT REPORTS IS THE MODE THE GAME IS IN — it used to be the string
+     * `'command'` on every world this class runs, and this class runs three.
+     *
+     * `World.loadLevel` builds a `CommandDirector` for `command`, for
+     * `skirmish` and for `campaign` (`leadsArmy`), which is right: all three
+     * lead an army through the same director. Hard-coding the mode on the way
+     * past made the director lie to everything that reads one. Measured on
+     * three real Worlds, one per mode, all on Geonosis:
+     *
+     *     settings.mode  command   skirmish  campaign
+     *     director.mode  command   command   command      ← before
+     *     director.mode  command   skirmish  campaign     ← after
+     *
+     * The reader that shows it is `Menu`'s codex: `MODES[director.mode].name`,
+     * printed as "These are the numbers for <b>Command</b>, chosen under
+     * Deploy" — on the page a Skirmish player opens, above a purse table that
+     * is the Skirmish's. `settings.mode` is the one authority and it is read
+     * here rather than restated, so a fourth mode that leads an army reports
+     * itself on the day it is added.
+     *
+     * `opts.mode` still wins, because a harness composing a wave without a
+     * World is the caller `WaveDirector`'s own `opts.pool`/`opts.armies` exist
+     * for; the world's settings are next; `'command'` is the floor, so a
+     * director built with no world at all is what it always was.
+     *
+     * THE RULE THAT WAS RIDING ON THE STRING IS NOW STATED WHERE IT LIVES —
+     * see `sideFor` below. Nothing else keyed on it: `sandbox` and the duel
+     * branch of `_compose` cannot match any of the three, and `DRAFT_MODES`
+     * holds none of them, so `drafts` is false before and after (measured).
+     */
+    super(world, { ...opts, mode: opts.mode ?? world?.settings?.mode ?? 'command' });
     const cfg = commandConfig(world?.settings);
 
     /**
@@ -1963,6 +2005,30 @@ export class CommandDirector extends WaveDirector {
     const mine = new Set(this.army.tiers.map((t) => t.type));
     return super.unlockedAt(wave).filter((t) => !mine.has(t));
   }
+
+  /**
+   * …AND THIS DIRECTOR NEVER ALTERNATES THE LEVEL'S TWO ARMIES, because the
+   * method directly above has already answered the question once.
+   *
+   * `WaveDirector.sideFor` gives one wave to each army in turn on a level that
+   * declares two, and its own note says what a second answer costs here: this
+   * class's `unlockedAt` has already narrowed the pool to the army you are NOT
+   * leading, so a wave the rotation hands to YOUR side comes back empty.
+   *
+   * It was spelled `this.mode === 'command'` inside `sideFor`, in Waves.js —
+   * which is the whole reason the constructor above used to hard-code the mode
+   * string, and therefore the reason a skirmish reported itself as a campaign.
+   * A rule about THIS CLASS written as a test on one of the three mode strings
+   * the class runs under is a rule that breaks when a fourth arrives. It is an
+   * override now: the subclass that filters the pool is the subclass that
+   * declines the rotation, and the mode string is free to be true.
+   *
+   * Measured on Geonosis (`armies: ['republic','separatist']`), all three
+   * modes, waves 1-4: `sideFor` null throughout and `unlockedAt(6)` 10 types,
+   * identical before and after — the behaviour is unchanged, only where it is
+   * stated has moved.
+   */
+  sideFor() { return null; }
 
   /**
    * THE AREA'S OWN PRESSURE, ON TOP OF THE WAVE'S.

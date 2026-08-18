@@ -47,7 +47,7 @@
 import * as Waves from '../../src/game/Waves.js';
 import { ARCHETYPES } from '../../src/game/Enemy.js';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
-import { ARMIES } from '../../src/game/Command.js';
+import { ARMIES, CommandDirector } from '../../src/game/Command.js';
 import { VEHICLE_SIDE } from '../../src/game/Vehicles.js';
 import { DATABANK, FACTIONS, ARMY_FACTIONS, factionOf } from '../../src/game/Databank.js';
 
@@ -309,7 +309,7 @@ export async function run({ check, assert }) {
     return out.join(' · ');
   });
 
-  check('factions: the rotation stands down in Command, which answers the question itself', () => {
+  check('factions: the rotation stands down for the director that leads an army', () => {
     /**
      * `CommandDirector.unlockedAt` is `super.unlockedAt(wave).filter(t => !mine)`
      * — the level's two armies minus the one you are leading. If the base
@@ -317,28 +317,64 @@ export async function run({ check, assert }) {
      * would come back empty after the filter, and a campaign would alternate
      * between a wave and nothing.
      *
-     * Asserted against the base director in command mode, so it holds whether or
-     * not a CommandDirector can be built without a World.
+     * ── AND IT IS ASSERTED AGAINST THE REAL CLASS, IN ALL THREE MODES ──────
+     *
+     * It used to build a BASE `WaveDirector` with `mode: 'command'` and say so:
+     * "so it holds whether or not a CommandDirector can be built without a
+     * World". It can — the constructor reads `world?.settings` through an
+     * optional chain and the stub above is enough — and that hedge cost more
+     * than it saved. The rule lived in the base as `this.mode === 'command'`,
+     * a test on ONE of the three mode strings this subclass runs under; the
+     * subclass hard-coded `mode: 'command'` to keep it true, and every skirmish
+     * therefore reported itself as Command to everything that reads a mode
+     * (the codex prints `MODES[director.mode].name` over the purse table). The
+     * rule is an override on the subclass now, and this asserts it where the
+     * game builds it: `World.loadLevel` builds a CommandDirector for `command`,
+     * `skirmish` AND `campaign`, so all three are checked, and the mode string
+     * each one reports is checked with them — that is the half that used to be
+     * unmeasurable, because the fixture pinned it by hand.
      */
+    /* THE BOTH-LADDERS PROPERTY IS `super`'s, AND IT IS TESTED AS `super`'s.
+     *
+     * The old fixture read it off a base director standing in for this one,
+     * which hid the shape of the thing: `CommandDirector.unlockedAt` DELIBERATELY
+     * returns one army — the one you are not leading — so asserting "both
+     * armies open" against the subclass fails on its own contract (measured:
+     * geonosis w2 sees separatist alone, correctly). What the filter depends on
+     * is that the call it wraps opened both. So that clause is aimed at the
+     * inherited method, called on the real instance, and the subclass is held
+     * to its own contract instead: never empty, never your own side. */
+    const superUnlocked = Waves.WaveDirector.prototype.unlockedAt;
     for (const key of twoArmyLevels()) {
       const L = LEVELS[key];
-      const cmd = new Waves.WaveDirector(worldOn(L), { mode: 'command', pool: L.pool, seed: 1234 });
       const plain = new Waves.WaveDirector(worldOn(L), { mode: 'roguelite', pool: L.pool, seed: 1234 });
-      for (let w = 1; w <= 40; w++) {
-        assert(cmd.sideFor(w) === null, `${key} w${w}: the rotation ran in command mode`);
-        const both = cmd.unlockedAt(w);
-        const sides = new Set(both.map(factionOf));
-        const opened = L.armies.filter((id) => both.some((t) => factionOf(t) === id));
-        /* Both armies present as soon as both have anything open — which is the
-         * property Command's own filter depends on. */
-        const shouldHave = L.armies.filter((id) =>
-          plain._openTypes(w).some((t) => factionOf(t) === id));
-        assert(opened.length === shouldHave.length,
-          `${key} w${w}: command saw ${opened.join('/')} where the pool opens ${shouldHave.join('/')}`);
-        assert(sides.size <= L.armies.length, `${key} w${w}: command saw a faction the level does not name`);
+      for (const mode of ['command', 'skirmish', 'campaign']) {
+        const cmd = new CommandDirector(
+          { ...worldOn(L), settings: { mode, level: key, order: 'jedi' } },
+          { pool: L.pool, seed: 1234 });
+        assert(cmd.mode === mode,
+          `a ${mode} reports itself as '${cmd.mode}' — everything that reads a director's mode, the `
+          + 'codex included, is being told the player picked a different game');
+        for (let w = 1; w <= 40; w++) {
+          assert(cmd.sideFor(w) === null, `${key} w${w}: the rotation ran in ${mode}`);
+          const both = superUnlocked.call(cmd, w);
+          const opened = L.armies.filter((id) => both.some((t) => factionOf(t) === id));
+          const shouldHave = L.armies.filter((id) =>
+            plain._openTypes(w).some((t) => factionOf(t) === id));
+          assert(opened.length === shouldHave.length,
+            `${key} w${w}: ${mode} saw ${opened.join('/')} where the pool opens ${shouldHave.join('/')}`);
+          /* …and then the filter, which is the thing that would go silent. */
+          const mine = cmd.unlockedAt(w);
+          assert(mine.length > 0,
+            `${key} w${w}: ${mode} opened nothing at all — this is the empty wave the rotation `
+            + 'standing down exists to prevent');
+          const sides = new Set(mine.map(factionOf));
+          assert(sides.size <= L.armies.length, `${key} w${w}: ${mode} saw a faction the level does not name`);
+        }
       }
     }
-    return `command mode still opens both ladders on ${twoArmyLevels().join(', ')}`;
+    return `command, skirmish and campaign each report their own mode on ${twoArmyLevels().join(', ')}, `
+      + 'stand the rotation down, and never open empty';
   });
 
   check('factions: a level with one army composes exactly what it always did', () => {

@@ -215,6 +215,60 @@ export function run({ check, assert }) {
     return `${M.name} → ${LEVELS.geonosis.name}; asked for kamino, stood up on ${got}`;
   });
 
+  check('command: the meeting is Command\'s, and it cannot empty another mode', () => {
+    /**
+     * `commandConfig`'s `versus` means "the other army is a PERSON's, deployed
+     * rather than composed", and `CommandDirector.start` implements it by not
+     * composing a wave at all. The box that sets it is a GLOBAL settings key,
+     * and `World.loadLevel` builds a CommandDirector for `command`, `skirmish`
+     * AND `campaign` — so a player who ticked the meeting box in Command and
+     * then started a Skirmish got a battle with no opposing army in it, and a
+     * campaign mission that cleared itself the moment it opened. Measured on
+     * geonosis: the opening spawn queue was 8 bodies with the box clear and 0
+     * with it ticked, in all three modes.
+     *
+     * DERIVED FROM THE MODE TABLE, not from a list of names here: the modes
+     * that can hold a meeting are the ones declaring `meeting`, so this clause
+     * covers a mode that does not exist yet. It also holds the other end — the
+     * mode that DOES declare it must still get its meeting, or the fix would be
+     * "turn the feature off" wearing a different hat.
+     */
+    const L = LEVELS.geonosis;
+    const stub = (mode, versus) => ({
+      enemies: [], players: [], difficulty: null, takenBoons: new Set(), level: L,
+      settings: { mode, level: 'geonosis', order: 'jedi', commandVersus: versus },
+    });
+    /* AN A/B ON THE BOX, PER MODE, rather than a bar on the queue length. Some
+     * modes compose nothing of their own — `sandbox` opens empty and is
+     * supposed to — so "did it field anything" cannot tell a mode minding its
+     * own business from a mode that a Command box just emptied. What can is
+     * whether ticking the box CHANGED anything: outside Command it must not. */
+    const open = (mode, versus) => {
+      const d = new Cmd.CommandDirector(stub(mode, versus), { pool: L.pool, seed: 1234 });
+      d.start(1);
+      return { versus: d.versus, queue: d.spawnQueue.length };
+    };
+    const out = [];
+    for (const mode of Object.keys(Waves.MODES)) {
+      const off = open(mode, false), on = open(mode, true);
+      const wants = !!Waves.MODES[mode].meeting;
+      assert(on.versus === wants,
+        `${mode} reads the meeting box as ${on.versus} where its own entry says ${wants}`);
+      if (wants) {
+        assert(on.queue === 0 && off.queue > 0,
+          `${mode} declares a meeting and composed ${on.queue} bodies anyway (${off.queue} without `
+          + "the box) — the other army is supposed to be a person's");
+        out.push(`${mode} ${off.queue}→meets`);
+      } else {
+        assert(on.queue === off.queue,
+          `${mode} fields ${off.queue} bodies normally and ${on.queue} with a COMMAND box ticked — `
+          + 'a setting from another mode is emptying this one');
+        out.push(`${mode} ${off.queue}`);
+      }
+    }
+    return out.join(', ');
+  });
+
   check('command: geonosis is FLAT where you fight and has something to see everywhere', () => {
     /**
      * THE ONE PROPERTY THE WHOLE MODE RESTS ON, as a number.
