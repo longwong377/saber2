@@ -1178,14 +1178,15 @@ green-alone, is green in both directions.
 
 ## 6.5 If you pick this up cold, do these in this order
 
-**`ROADMAP.md` at the repo root is the other half of this section.** It holds
-nine gaps found by comparing the game against a genre wishlist, each with
-`file:line`, and a design for procedural levels the player progresses through.
-Four of the nine are defects — a thrown BODY does no damage to what it hits
-while a thrown crate does; releasing a gripped enemy leaves it permanently
-ragdolled and walking; `Destruction.explosion()` has no caller though a comment
-says it is wired; and contact dispatch was lost in the Rapier migration, which
-is why only the player's throws damage anything.
+**`ROADMAP.md` at the repo root is the other half of this section**, and it now
+opens with a status table checked against the tree rather than remembered.
+**Three of its four defects are closed** — a thrown body damages what it hits, a
+released grip recovers instead of walking ragdolled forever, and
+`Destruction.explosion()` reaches the destructible world through a wrapper on
+`World.onExplosion`. The fourth, contact dispatch lost in the Rapier migration,
+is open and is the structural one; what is worth knowing is that the other three
+were each fixable WITHOUT it, so it is not holding three visible defects hostage
+the way the roadmap assumed.
 
 Read its procedural-levels half before designing anything there. It records that
 this project has killed progression-through-levels **twice** — the Spire and the
@@ -1194,29 +1195,32 @@ than its implementation notes.
 
 1. **Get it in front of the player, then read §7.** `node tools/pack.mjs
    /tmp/borz.html` and send them the file. Nothing in §6.4 is worth more than
-   one person playing it for ten minutes, and after two audit rounds every
-   remaining finding is a measurement rather than a complaint.
-2. **Kamino's height cost** (§6.4 #3) is the only red that is unambiguously a
-   defect with an unambiguous fix — a spatial index or a cached grid. It is
-   self-contained and it is the one a next session can close cleanly.
-3. **Decide the grip contradiction** (§6.4 #1). It needs a look, not a
-   measurement: the two bounds cannot both hold and somebody has to say which
-   matters more. Show the player `_fpgeom` and a screenshot rather than a table.
-4. **The nine levels that still mix two armies.** The faction rotation works and
-   is on Geonosis alone, because only its blurb promises two armies; the other
-   nine field Republic and Confederate bodies in one wave and their notes each
-   argue a horde. `factions` prints the census so it stays visible, and refuses
-   any level whose second side is under three archetypes. One line plus the
-   measurement, per level, if the player wants it.
-5. **`World.js:1123`** — `pickTarget`'s cross-team loop is gated `if
-   (this.command)`, and dropping that gate is the whole of "both armies fight
-   each other as well as you". Wave-clear already works for it: `blocksWaveEnd`
-   counts anything not on the party team.
+   one person playing it for ten minutes, and every remaining finding there is a
+   measurement rather than a complaint.
+2. **The two order-dependent reds in §6.4** (`command/versus`, `prefracture`).
+   Both are green alone and both are the same shape — a bar with margin rather
+   than a pinned measurement. `tools/_seq.mjs` reproduces the first in about two
+   minutes; the second says in its own message that this box paused identical
+   work by 158.6×. Pin them or state the margin; do not widen the bar.
+3. **`World.js`'s `pickTarget` cross-army loop** is gated `if (this.command)`,
+   which is now three modes rather than one. Dropping the gate is the whole of
+   "both armies fight each other as well as you" — and it is a DESIGN decision
+   about six levels, not a fix. Six levels field Republic and Confederate bodies
+   in the same wave without declaring a split (`factions` prints the census) and
+   every one of their notes argues a HORDE, a field united against you. Either
+   make those six single-army or let their halves fight; the comment at the gate
+   states the cost of the second either way.
+4. **`ROADMAP` §5 and §6, which are partly closed.** Several bullets have been
+   done since it was written, and the ones that were still real when last
+   checked are the hold-fire order the formation table documents and does not
+   have, a free-PvP control nothing sets, and stasis that cannot hold a person
+   though its Codex card says "freeze what is near you, bolts included". Verify
+   before building — that section is older than the tree.
 
-**What NOT to do first.** Do not start another audit. Two rounds have run, the
-second found real things, and a third would be measuring a game nobody has
-played since the first. §7 is not a platitude here — it is the specific reason
-this list is short.
+**What NOT to do first.** Do not start another audit. Several rounds have run,
+each found real things, and another would be measuring a game nobody has played
+since the last one. §7 is not a platitude here — it is the specific reason this
+list is short.
 
 ## 6.6 If you are handed a long list, ORDER IT FIRST — and show the order
 

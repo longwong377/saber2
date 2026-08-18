@@ -1939,9 +1939,24 @@ export class World {
       const d = p.position.distanceToSquared(enemy.position);
       if (d < bestD) { bestD = d; best = p; }
     }
-    /* …and the other army, if there is one. Skipped entirely when there is not,
-     * which is every mode but Command: `this.command` is null and this line
-     * does not run at all. */
+    /* …and the other army, if there is one. Skipped entirely when there is not:
+     * `this.command` is null and this loop does not run at all.
+     *
+     * THAT IS THREE MODES NOW, NOT ONE. This used to say "every mode but
+     * Command"; `World.loadLevel` builds a CommandDirector for `command`,
+     * `skirmish` and `campaign` alike, so all three get the cross-army pass and
+     * the rest do not.
+     *
+     * AND IT IS STILL A MODE GATE RATHER THAN A FIELD ONE, deliberately. Six
+     * levels field Republic and Confederate bodies in the same wave without
+     * declaring a split (`factions` prints the census), so dropping this gate
+     * would set those two halves on each other in the Trial and in Path of the
+     * Blade — and every one of those levels' notes argues a HORDE, a field
+     * united against you. That is a design decision about six levels and not a
+     * defect to be quietly fixed here; ROADMAP and HANDOFF §6.5 both carry it
+     * as an open question. What is NOT deliberate is the cost if it ever
+     * changes: this is O(bodies²) per frame and it is only affordable because
+     * `_hostilesFor` is the path Command actually takes. */
     if (this.command) {
       for (const e of this.enemies) {
         if (e === enemy || e.dead || e.team === enemy.team) continue;
