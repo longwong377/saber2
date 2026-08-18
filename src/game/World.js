@@ -17,7 +17,8 @@ import { BladeContactSolver, captureSnapshot, gradeCaught, resolveBladeClash, GR
 import { assignSides, DuelMatch, Player, asTeam, bladeTargets, canHarm, hostileTo, pvpRules, sideTeam, TEAM } from './Player.js';
 import { ageDropped } from './Dropped.js';
 import { Enemy, ARCHETYPES, applyModifier, ENEMY_POWERS, FORCE_KINDS } from './Enemy.js';
-import { WaveDirector, RankSet, boonTick, boonGuard, bondReceive, bondGuardIn, bondGive, BOND, boonById, MODES } from './Waves.js';
+import { WaveDirector, RankSet, boonTick, boonGuard, bondReceive, bondGuardIn, bondGive, BOND, boonById, MODES,
+  skirmishConfig } from './Waves.js';
 import { Communion, FACETS, insightRate } from './LivingForce.js';
 /**
  * What "open" is worth, in Insight. Every facet in the lattice, at its first-
@@ -109,8 +110,9 @@ export function roomOf(level, surface = 'sand') {
   return { seconds, decay, send };
 }
 import { applyOrder } from './Order.js';
-import { LEVELS, LEVEL_ORDER, groundMight, spawnClear } from './Levels.js';
-import { ARMY_IDS, CommandDirector, COMMAND_POWER_RULES, assignArmies } from './Command.js';
+import { LEVELS, LEVEL_ORDER, groundMight, levelRotation, spawnClear } from './Levels.js';
+import { AREAS, ARMY_IDS, CommandDirector, COMMAND_POWER_RULES, MAX_STRENGTH, OPENING_STRENGTH,
+  assignArmies } from './Command.js';
 import { Corpses, CORPSE_BUDGET } from './Corpses.js';
 import { BladeLock } from './Duel.js';
 import { FocusSystem } from './Focus.js';
@@ -354,13 +356,25 @@ export class World {
 
   /**
    * @param key   a LEVELS key
-   * @param opts.run  a Run that must SURVIVE this call.
    *
-   * `unload()` disposes every player, and with it `boonMods`, `maxHp`, the
-   * taken boons and the score — which is why every level in this game used to
-   * be a separate arena rather than a place in a longer journey. A run handed
-   * in here is held across that and re-applied to the player that comes out the
-   * other side, so a landing is a transition rather than a restart.
+   * `unload()` disposes every player, and with it `boonMods`, `maxHp`, the taken
+   * boons, the Insight and the per-player tally — which is why every level in
+   * this game is a separate arena rather than a place in a longer journey.
+   *
+   * THIS DOC BLOCK USED TO PROMISE `opts.run`: "a Run that must SURVIVE this
+   * call … held across that and re-applied to the player that comes out the
+   * other side, so a landing is a transition rather than a restart." That was
+   * true of the Descent and `Run.js` was deleted with it. `grep -n 'opts.run'`
+   * over this file returned that one line — the parameter had no reader
+   * anywhere in `_loadSteps`, so anything trusting the sentence would have
+   * silently lost the whole build. A promise with no implementation is worse
+   * than an absence, because it is the absence plus a reason not to look.
+   *
+   * The capability the sentence described is real again and is `rotateTo`,
+   * which snapshots with `runCarry()` and restores with `applyCarry()`. It is
+   * NOT a parameter of this method: a level load starts a clean world by
+   * definition, and the carry is a decision the CALLER makes about a run, which
+   * is the same reason `runSeed` is assigned by main.js and not by World.
    */
   loadLevel(key, opts = {}) {
     for (const step of this._loadSteps(key, opts)) step.run();
@@ -437,12 +451,13 @@ export class World {
      * which are the only two things it should ever have contained.
      */
     this.takenBoons = new RankSet();
-    // …and the same for the Insight ledger. It used to be restored from the
-    // Run across a landing, because `bought.length` is the price escalator and
-    // a climb that forgot it would make every facet on the next rung cost
-    // first-purchase prices again. There are no landings now — the Descent was
-    // the only mode with them — so a level load starts a fresh ledger, which is
-    // what every other mode always did.
+    // …and the same for the Insight ledger. `bought.length` is the price
+    // escalator, so a ground change that forgot it would make every facet cost
+    // first-purchase prices again. A level load starts a FRESH ledger — that is
+    // what a level load is — and the run that has to survive one puts it back:
+    // `runCarry` reads `insight`/`bought`/`earned` off here and `applyCarry`
+    // rebuilds the Communion from them, which is the same shape the deleted Run
+    // used and the same three fields `Communion`'s own constructor takes.
     this.communion = new Communion({});
     // LEVEL_ORDER[0] rather than a name: a named fallback is how a deleted
     // level stays load-bearing after it is gone. See Levels.js's alias block.
@@ -614,12 +629,44 @@ export class World {
      * the draft, the party heal — is identical for both, which is the property
      * that keeps Command inside the balance the rest of the game is held to.
      */
+    /**
+     * …AND SO DOES A SKIRMISH, THROUGH THE SAME DOOR, because a skirmish IS a
+     * Command engagement with the campaign taken off it. See MODES.skirmish.
+     *
+     * `leadsArmy` rather than two branches: everything that follows — the
+     * callbacks, the Insight, the party heal, the pool, the escalation — is
+     * identical for all three of Command, a meeting and a skirmish, and a
+     * second construction of the same director beside the first is the shape
+     * this repository keeps deleting. What separates them is entirely in
+     * `this.skirmish` below and in `beginSkirmish`.
+     *
+     * The director's own `mode` stays `'command'` — `CommandDirector`'s super
+     * call sets it and this lane does not own that file. It is load-bearing
+     * rather than cosmetic: `WaveDirector.sideFor` returns null on exactly that
+     * string, because a director whose `unlockedAt` has already narrowed the
+     * pool to one army must not ALSO alternate the level's two armies wave by
+     * wave — its own note says half the waves would come back empty. The cost
+     * is that `MODES[director.mode].name` reads "Command" on a skirmish's
+     * progress line; `settings.mode` is what the record is keyed on and that is
+     * right. The honest fix is in the handover.
+     */
     const mode = this.settings.mode ?? 'roguelite';
-    this.director = mode === 'command'
+    const leadsArmy = mode === 'command' || mode === 'skirmish';
+    this.director = leadsArmy
       ? new CommandDirector(this, { pool: L.pool })
       : new WaveDirector(this, { mode, pool: L.pool });
     /** The army, or null. Read by the HUD, the summary and the checks. */
-    this.command = mode === 'command' ? this.director : null;
+    this.command = leadsArmy ? this.director : null;
+    /**
+     * THE BATTLE, or null — and it is made ONCE PER RUN, not once per load.
+     *
+     * `rotateTo` re-enters this whole list of stages for every engagement, so a
+     * plan built unconditionally here would draw a fresh rotation on the ground
+     * it had just rotated to and the run would never reach engagement two. The
+     * plan is a fact about the RUN — its seed, its length, its army — exactly
+     * as `runSeed` is, so it outlives the level the way the run does.
+     */
+    this.skirmish = mode === 'skirmish' ? (this.skirmish || this._planSkirmish()) : null;
     /**
      * A MEETING IS A FIGHT BETWEEN PLAYERS, SO IT IS FOUGHT UNDER A FIGHT'S
      * RULES — and this is where the mode-wide freeze retires.
@@ -735,6 +782,15 @@ export class World {
       }
       cleared(w);
       this._reviveDowned();
+      /* AN ENGAGEMENT IS A CLEARED WAVE, so a skirmish counts on the ledger's
+       * own signal and not on a second one. `fresh` is `payWave`'s answer —
+       * the same gate the score, the Insight and the heal are behind — so
+       * `restartWave` cannot advance a battle towards its victory by
+       * re-clearing a wave the player has already been paid for. That is the
+       * defect tools/checks/restart.mjs measured at +10 drafts and +20,400
+       * score, arriving in a new mode if this were hung off the announcement
+       * instead. */
+      if (fresh) this._skirmishCleared();
     };
 
     this.director.onDraft = (boons) => {
@@ -1006,8 +1062,538 @@ export class World {
     // arena) after a quit to the menu, for as long as the World was held.
     this._siteTaken = null;
     this._stoneField = null;
+    /**
+     * …AND THE STATE THAT IS NOT A THING BUT IS STILL THE DEPARTED LEVEL'S.
+     *
+     * Everything above frees an object. These are FIELDS, and every one of them
+     * was found by diffing what the constructor sets against what this method
+     * mentions. Harmless while a level change only ever happened between two
+     * fresh Worlds; each one is a real fault the moment a run rotates ground
+     * mid-fight, which is what `rotateTo` now does:
+     *
+     *   `focus`      `held`, `passive` and `active` are a blend, not an event.
+     *                Rotating while the player is holding Focus opened the next
+     *                ground at heldScale — the world in slow motion, with the
+     *                drain still billing — until they pressed and released the
+     *                key. `reset()` is the FocusSystem's own door and `update`
+     *                already calls it every frame there is no live local player.
+     *   `hitstop` and `targetTimeScale`  the line below sets `timeScale`, which
+     *                is the OUTPUT; these two are the inputs it is damped
+     *                towards, so a rotation during a 120 ms freeze carried the
+     *                freeze and a rotation during kill-time carried the target.
+     *   `paused`     a fresh field is not a paused one, and `update` returns on
+     *                this before it reaches anything.
+     *   `_targets` / `_capsCache` / `_foes`  retained scratch arrays, each
+     *                emptied at the top of its own use. Between an `unload` and
+     *                the next frame of the next level they hold up to forty
+     *                `{enemy, capsules}` records pointing at disposed bodies —
+     *                a whole Enemy graph apiece, held across the most expensive
+     *                second in the game.
+     *   `match` / `_matchSent` / `_aloneAt`  a DuelMatch is the state of ONE
+     *                battle on ONE field. `beginVersus` refuses to build a
+     *                second while one exists, so a finished match surviving a
+     *                ground change is a new battle scored by the old one's
+     *                clock.
+     *   `_bossFrame` the timer that releases the letterbox. `setBars(0)` above
+     *                puts the bars away; a non-zero timer left behind also
+     *                suppresses the NEXT boss's entrance, because `spawnEnemy`
+     *                frames one only when this is falsy.
+     *
+     * `rotating` is deliberately NOT in this list: `loadLevelAsync` yields
+     * between stages and that flag is what stops `update` stepping a half-built
+     * world in the frames between them. Clearing it here would defeat it.
+     */
+    this.focus?.reset?.();
+    this.hitstop = 0;
+    this.targetTimeScale = 1;
+    this.paused = false;
+    this.combatIntensity = 0;
+    this._bossFrame = 0;
+    this._targets.length = 0;
+    this._capsCache.length = 0;
+    if (this._foes) this._foes.length = 0;
+    this.match = null;
+    this._matchSent = '';
+    this._aloneAt = false;
     this.running = false;
     this.over = false;
+  }
+
+  /* ── a run that outlives the ground it is fought on ───────────────── */
+
+  /**
+   * EVERYTHING ABOUT THIS RUN THAT IS NOT THE LEVEL.
+   *
+   * `unload()` is thorough and this is not a complaint about it: it disposes
+   * every player, and a Player is where `boonMods`, `maxHp`, the blade, the
+   * per-player tally and the whole of a build live. `_loadSteps` then rebuilds
+   * `takenBoons` and `communion` from nothing, and it is RIGHT to — its own
+   * note explains that appending to a carried set would have counted a rank-2
+   * Vitality as rank 8. So a level change is a clean world by construction, and
+   * the run has to be handed back to it by something.
+   *
+   * NOTHING WAS DOING THAT. `loadLevel`'s doc block promised `opts.run` and no
+   * stage read it; `spawnPlayer` still carries a paragraph headed "AND THEN THE
+   * RUN — which is what makes a landing a transition rather than a restart",
+   * with no statement whatsoever under it. Measured on a real World, roguelite
+   * on the Colosseum, four ranks of three cards drafted (Vaapad twice) and two
+   * Insight earned, then a plain `loadLevel` into the next ground and a
+   * respawn:
+   *
+   *     ranks held      4 → 0        Insight        2 → 0
+   *     distinct cards  3 → 0        facets bought  1 → 0
+   *     Vaapad rank     2 → 0        deflectDamage  1.800 → 1.000
+   *     kills           9 → 0        director wave  6 → 0
+   *
+   * `world.score` is the one thing that already survived, because it is on the
+   * World and nothing resets it. Everything else is on the Player or is rebuilt
+   * by `_loadSteps`. The map-rotation feature dies here if this is not fixed
+   * first, and it dies SILENTLY — nothing throws, no console line, the player
+   * simply arrives on the next ground as a fresh character with the same score.
+   *
+   * `boons` is `RankSet.flat()` and not `[...takenBoons]`: a RankSet is a Set,
+   * so its iterator yields a rank-3 card once. See that method.
+   *
+   * The Insight ledger crosses as the three fields `Communion`'s constructor
+   * takes, because `bought.length` is the price escalator — a carry that kept
+   * the purse and forgot the receipts would re-price every facet at
+   * first-purchase rates.
+   */
+  runCarry() {
+    const p = this.player;
+    return {
+      boons: this.takenBoons.flat(),
+      communion: {
+        insight: this.communion?.insight ?? 0,
+        bought: [...(this.communion?.bought ?? [])],
+        earned: this.communion?.earned ?? 0,
+      },
+      score: this.score,
+      wave: this.director?.wave ?? 0,
+      /* WHO THE PLAYER IS, because `spawnPlayer` takes the name as an argument
+       * and the World never stored it — a rotation without this line respawns
+       * the local player as whatever the caller's default is, and in co-op that
+       * is a different name on the roster every ground. */
+      name: this.player?.name ?? null,
+      /* The tally the death card and `runStats` print. It lives on the Player
+       * and the Player does not survive `unload`, so a rotation without this
+       * reports the last engagement's kills as the battle's. */
+      tally: p ? {
+        kills: p.kills | 0, deflects: p.deflects | 0, perfects: p.perfects | 0,
+        limbsRemoved: p.limbsRemoved | 0, score: p.score | 0,
+      } : null,
+    };
+  }
+
+  /**
+   * …AND BACK ONTO THE WORLD THAT CAME OUT OF THE REBUILD.
+   *
+   * Order matters and it is the same order `spawnPlayer` states for the order
+   * and the boons: the ORDER starts the numbers, a boon multiplies them, so the
+   * boons go on a player that has already had `applyOrder` run over it — which
+   * it has, because `spawnPlayer` did that before this is called.
+   *
+   * Applied through `Player.applyBoon` and NOT through `World.applyBoon`, and
+   * the difference is not style: `World.applyBoon` notifies, repaints the
+   * ground's might and calls `director.resumeAfterDraft()`, which sets a four
+   * second intermission. Replaying an eight-card build through it would put
+   * eight banners on the screen and hand the next engagement a 4 s delay for
+   * each. The two things it does that a restore DOES want — the taken-set and
+   * the ground's might — are done here once.
+   */
+  applyCarry(carry) {
+    if (!carry) return null;
+    this.communion = new Communion(carry.communion || {});
+    this.score = carry.score || 0;
+    for (const id of carry.boons || []) {
+      const boon = boonById(id);
+      if (!boon) continue;
+      this.takenBoons.take(id);
+      for (const p of this.players) if (typeof p.applyBoon === 'function') p.applyBoon(boon);
+    }
+    const t = carry.tally, p = this.player;
+    if (t && p) {
+      p.kills = t.kills; p.deflects = t.deflects; p.perfects = t.perfects;
+      p.limbsRemoved = t.limbsRemoved; p.score = t.score;
+    }
+    // Once, after the build is back on, for the reason World.applyBoon does it
+    // per card: `might` is otherwise fixed at dressing time.
+    this.terrain?.setMight?.(groundMight(this));
+    return carry;
+  }
+
+  /**
+   * THE GROUND CHANGES AND THE RUN DOES NOT — player note #48.
+   *
+   * One method rather than a sequence every caller repeats, because the
+   * sequence is the whole feature and every step of it is load-bearing:
+   *
+   *   the army comes OFF the field first, through `recall`, so the records
+   *     survive the bodies. Its own note explains why detaching before
+   *     disposing matters — `onDeath` reads `e.trooper` to decide whether a
+   *     death is a casualty, and twelve troopers disposed by `unload` would
+   *     otherwise be twelve casualties on the roster at every ground change.
+   *   the run is snapshotted BEFORE the load, because the load disposes the
+   *     player it has to be read off;
+   *   the load is the ordinary one, unchanged, with no carry parameter — see
+   *     the note on `loadLevel`;
+   *   the player is respawned and the run put back;
+   *   `onRotate` lets a front end re-apply the handful of per-player view
+   *     settings it owns (fov, the HUD's level name) exactly as it does after
+   *     the first `spawnPlayer`. It is optional: a headless caller and a check
+   *     get a complete, playable world without one.
+   *
+   * `rotating` is what stops `update` stepping a half-built world. It matters
+   * for the async door below, where several frames pass between the two halves.
+   *
+   * @returns the level that was actually loaded.
+   */
+  rotateTo(key) {
+    const carry = this._beforeRotate();
+    this.loadLevel(key);
+    return this._afterRotate(carry);
+  }
+
+  /** The same, yielding between stages, for a front end that draws a bar. */
+  async rotateToAsync(key, onProgress = null) {
+    const carry = this._beforeRotate();
+    try {
+      await this.loadLevelAsync(key, {}, onProgress);
+    } catch (e) { this.rotating = false; throw e; }
+    return this._afterRotate(carry);
+  }
+
+  _beforeRotate() {
+    this.rotating = true;
+    /* Names, ranks and casualty lists belong to the CAMPAIGN, which is the mode
+     * whose whole subject is a body you recognise. A skirmish raises a line for
+     * the battle and raises a fresh one on the next ground — see
+     * `_musterSkirmish`. The recall is still the right call: it is how bodies
+     * leave the field without being counted as casualties, and `unload` is
+     * about to dispose every one of them. */
+    this.command?.recall?.();
+    return this.runCarry();
+  }
+
+  _afterRotate(carry) {
+    const p = this.spawnPlayer({ name: carry?.name || this.settings.playerName || 'Jedi', isLocal: true });
+    this.applyCarry(carry);
+    if (this.skirmish) this._musterSkirmish();
+    /* THE ESCALATION CONTINUES. `start(1)` on a new ground would hand the
+     * player wave 1's budget again on every engagement, which is the sawtooth
+     * `WaveDirector.floor` was written for and which cost the Descent its whole
+     * difficulty curve: 7,11,15 · 7,11,15,21 · 7,11,15,21 was a ladder that
+     * DROPS 53% at the exact moment the fiction says you went further. */
+    if (!this.training && this.netMode !== 'client') this.director.start((carry?.wave || 0) + 1);
+    this._skirmishBanner();
+    this.rotating = false;
+    /* WE HAVE ARRIVED — a separate signal from `onRotate`, which is the
+     * request. The handful of things a front end owns per player (the camera's
+     * fov, the HUD's level name and difficulty, the boon strip) are re-applied
+     * here exactly as they are after the first `spawnPlayer` in main.js. */
+    this.onGround?.(this.levelKey, this.level, p);
+    return this.level;
+  }
+
+  /* ── skirmish ─────────────────────────────────────────────────────── */
+
+  /**
+   * THE BATTLE, AS A PLAN — decided once, from the run's number.
+   *
+   * `skirmishConfig` normalises what Waves.js can see; the two clamps that need
+   * Command's own tables are here, because this is the file that can see them
+   * and because a copy of `MAX_STRENGTH` over there would be the twin defect.
+   *
+   *   PRESSURE is an index into `AREAS`, Command's own tuned ladder — a budget
+   *     multiplier, a heavy bias and a reinforcement purse per rung, five rungs
+   *     from the landing zone to the core ship. A skirmish picks a rung and
+   *     stays on it; the campaign is the mode that walks up them. Inventing a
+   *     second difficulty ladder beside a tuned one is the defect §2.3 is about.
+   *   STRENGTH is the size of your line. Floored at `OPENING_STRENGTH`, which
+   *     is the number the muster is built around and what every Command
+   *     campaign opens with, and ceilinged at `MAX_STRENGTH`, which is
+   *     `recruit`'s own refusal. 0 means "whatever the campaign opens with", so
+   *     a player who never touches the control gets Command's line.
+   *
+   * THE ROTATION IS DRAWN HERE AND NOWHERE ELSE, which is what makes a battle
+   * reproducible: the same seed lays out the same grounds in the same order
+   * before the first shot. `first: this.levelKey` and not `settings.level` —
+   * `loadLevel` is allowed to substitute for a key it does not know, and the
+   * ground the rotation opens on has to be the ground the player is standing
+   * on rather than the one they asked for. That distinction is exactly the trap
+   * `levelKey`'s own note in `_loadSteps` records.
+   */
+  _planSkirmish() {
+    const cfg = skirmishConfig(this.settings);
+    const pressure = Math.min(cfg.pressure, AREAS.length - 1);
+    const strength = clamp(cfg.strength || OPENING_STRENGTH, OPENING_STRENGTH, MAX_STRENGTH);
+    const seed = Number.isFinite(this.runSeed) ? this.runSeed : 0;
+    return {
+      engagements: cfg.engagements,
+      pressure,
+      strength,
+      rotate: cfg.rotate,
+      /* One entry per engagement, so `[cleared]` is where you are going next
+       * and index 0 is where you started. Length `engagements` even when the
+       * rotation is off, so the readout can name the ground of every round. */
+      rotation: cfg.rotate
+        ? levelRotation(seed, { length: cfg.engagements, first: this.levelKey })
+        : new Array(cfg.engagements).fill(this.levelKey),
+      seed,
+      cleared: 0,
+      /** Raised by `beginSkirmish`, once. */
+      started: false,
+      /** The ground still to be moved to, set by `_skirmishCleared`. */
+      pending: null,
+      done: false,
+      /** true, false or null while it is still being fought. */
+      won: null,
+      log: [],
+    };
+  }
+
+  /**
+   * THE BATTLE OPENS — the one call a front end makes, in place of `start(1)`.
+   *
+   * A meeting has `beginVersus` for the same reason: a mode whose opening is
+   * more than "compose wave one" cannot be started by the line that composes
+   * wave one, and main.js already branches on exactly that. This is the other
+   * arm of that branch.
+   *
+   * Three statements and every one of them is a call into machinery that
+   * already exists:
+   *
+   *   the PRESSURE is written onto `areaIndex`, so `budgetFor`, `heavyBias`
+   *     and the muster shelf's `at <= areaNumber` gate all move together —
+   *     they already read it, and reading it is all this mode does to them.
+   *   the LINE is raised by `_musterSkirmish` through the muster's own prices.
+   *   the WAVE is the ordinary `start`, so the composer, the CONDITIONS, the
+   *     arrivals and the escalation are untouched. A skirmish is the standard
+   *     wave with an army beside the player and a stopping rule after it.
+   *
+   * IDEMPOTENT, and `update` calls it on the first frame if nothing else has —
+   * which is what makes the front-end wiring genuinely optional rather than
+   * nominally optional. The mode card builds itself out of `MODES`, the plan
+   * defaults itself out of `skirmishConfig`, and a player who reaches Skirmish
+   * through a menu nobody has taught about it gets a real battle at the first
+   * pressure with the campaign's opening line. `CommandDirector._areaClear`
+   * takes the same position about its muster screen and says why: a mode that
+   * cannot be played without a UI that does not exist yet is a mode that does
+   * not exist.
+   *
+   * `deploy()` rather than `start()` on the second door: main.js says
+   * `director.start(1)` for every mode and may well have already run, in which
+   * case the wave is composed and the bodies this call just enlisted have no
+   * body yet. `deploy` builds one for every record that has none and skips the
+   * rest, so the two orderings converge.
+   */
+  beginSkirmish() {
+    const sk = this.skirmish, d = this.command;
+    if (!sk || !d || sk.started || sk.done) return sk || null;
+    sk.started = true;
+    d.areaIndex = sk.pressure;
+    d.areaWaves = 0;
+    this._musterSkirmish();
+    if (!d.active) d.start(this.director.wave + 1);
+    else d.deploy();
+    this._skirmishBanner();
+    return sk;
+  }
+
+  /**
+   * WHERE YOU ARE AND HOW MUCH OF THE BATTLE IS LEFT — said once, from one
+   * place, because the opening engagement, a same-ground engagement and one
+   * arrived at by a ground change are the same announcement and three copies of
+   * a template string is how they stop being.
+   */
+  _skirmishBanner() {
+    const sk = this.skirmish;
+    if (!sk || sk.done) return;
+    this.notify(`${(this.level?.name || '').toUpperCase()} — ENGAGEMENT ${sk.cleared + 1} OF ${sk.engagements}`,
+      `${this.command?.roster?.strength ?? 0} of yours on the ground`);
+  }
+
+  /**
+   * RAISE THE LINE TO THE STATED STRENGTH, through the muster and not beside it.
+   *
+   * `CommandDirector`'s constructor has already enlisted `OPENING_STRENGTH`
+   * bodies of the army's first rung — that is `_musterOpening`, and it is why
+   * the plan's strength is floored there rather than at one. What is left is to
+   * fill the gap, and the fill walks `musterOffer(c).units` IN LADDER ORDER and
+   * wraps: an army of eighteen is the ladder twice over rather than eighteen
+   * line troopers, and the shelf is already filtered by `at <= areaNumber` so
+   * the pressure decides what is on it. A skirmish at the landing zone fields
+   * troopers and heavies; one at the core ship can field the machine.
+   *
+   * THE PURSE IS CREDITED EXACTLY WHAT THE NEXT BODY COSTS, one at a time, so
+   * `musterCost` stays the only price list in the game and `MAX_STRENGTH` stays
+   * `recruit`'s own refusal rather than a second bound written here. The
+   * remainder is zeroed afterwards: a skirmish has no muster screen and points
+   * left in a purse nobody can spend are a number on a HUD that lies.
+   *
+   * Called again by `_afterRotate`, which is the whole of "how the armies are
+   * reinforced": the line is brought back up to strength on the next ground,
+   * with new designations for the replacements, and the fallen stay fallen on
+   * the roll that is about to be replaced. Names persist within an engagement
+   * and not across one — Command is the mode where a body you recognise walks
+   * off the planet with you, and a skirmish that also did that would be Command
+   * with a shorter map list.
+   */
+  _musterSkirmish() {
+    const sk = this.skirmish, d = this.command;
+    if (!sk || !d) return 0;
+    d.areaIndex = sk.pressure;
+    let added = 0;
+    for (const c of d.commanders) {
+      const shelf = d.musterOffer(c)?.units || [];
+      if (!shelf.length) continue;
+      for (let i = 0; c.roster.strength < sk.strength && i < MAX_STRENGTH * shelf.length; i++) {
+        const unit = shelf[i % shelf.length];
+        c.roster.points += unit.cost;
+        if (!d.recruit(unit.type, c)) { c.roster.points -= unit.cost; break; }
+        added++;
+      }
+      c.roster.points = 0;
+    }
+    return added;
+  }
+
+  /**
+   * ONE ENGAGEMENT IS BEHIND YOU.
+   *
+   * `areaWaves = 0` is the load-bearing line and it is worth the paragraph.
+   * `CommandDirector.payWave` counts cleared waves against `this.area.waves`
+   * and calls `_areaClear` when it reaches it — the campaign's area boundary,
+   * which recalls the army, credits a purse, opens a muster screen and names
+   * the next AREA OF GEONOSIS in a banner. Every one of those is wrong for a
+   * battle on the Colosseum, and `_endCampaign` beyond it announces "walked off
+   * Geonosis". Command.js is not this lane's file and none of it needs to be:
+   * resetting the counter after every clear keeps `areaWaves` at 1, the
+   * shortest area in the table is 3 waves long, and the campaign's boundary is
+   * therefore unreachable by construction. A skirmish's ending is World's, the
+   * way a meeting's is.
+   *
+   * The ground change is DEFERRED rather than done here. This runs inside
+   * `WaveDirector.update`, immediately after the clear branch, and `unload()`
+   * disposes the bodies that loop is standing in. `update` takes it at the top
+   * of the next frame, which is the same shape `_bossFrame` and the kill-time
+   * release use for the same reason.
+   */
+  _skirmishCleared() {
+    const sk = this.skirmish, d = this.command;
+    if (!sk || sk.done || this.over) return false;
+    /* A CLIENT IS TOLD WHERE IT IS, IT DOES NOT DECIDE. `_afterRotate` spawns
+     * one local player and knows nothing about the RemoteAvatars `unload`
+     * disposed, so a peer rotating itself would leave a session on two
+     * different grounds with each machine drawing one body. The host-side
+     * message that carries a mid-run level change does not exist yet and is in
+     * the handover; until it does, a joined skirmish holds the ground it
+     * started on rather than desynchronising. */
+    if (this.netMode === 'client') return false;
+    if (d) d.areaWaves = 0;
+    sk.cleared++;
+    sk.log.push({
+      engagement: sk.cleared, level: this.levelKey, name: this.level?.name,
+      wave: this.director?.wave ?? 0,
+      standing: d?.roster?.strength ?? 0, fallen: d?.roster?.fallen?.length ?? 0,
+    });
+    if (sk.cleared >= sk.engagements) { this._endSkirmish(true); return true; }
+    const next = sk.rotation[sk.cleared % sk.rotation.length] || this.levelKey;
+    if (next !== this.levelKey) sk.pending = next;
+    else {
+      // Same ground, so there is nothing to tear down — but the line is still
+      // brought back to strength, because reinforcement is a property of the
+      // engagement boundary and not of the rotation being on.
+      this._musterSkirmish();
+      this._skirmishBanner();
+    }
+    return true;
+  }
+
+  /**
+   * THE BATTLE IS DECIDED — the third door in this game that can say `won`.
+   *
+   * Through `onGameOver`, which is the one event that stops the director,
+   * releases the pointer, shows a card and writes the record — the same door
+   * `_endMeeting` and `CommandDirector._endCampaign` use, for the same reason,
+   * with the same six fields under it. `runStats` is what stops those six from
+   * being written out a third time; see it.
+   *
+   * A DEFEAT DOES NOT COME THROUGH HERE. The player going down is `_checkWipe`,
+   * which every mode in the game already ends on, and restating it would be a
+   * second wipe rule that could disagree with the first. Losing your whole LINE
+   * is deliberately not a defeat either: the army is a cost, not a life bar,
+   * and a Jedi standing alone at the end of a lost engagement is a real thing
+   * this mode should let you fight your way out of.
+   */
+  _endSkirmish(won) {
+    const sk = this.skirmish;
+    if (!sk || this.over) return false;
+    sk.done = true;
+    sk.won = !!won;
+    if (this.command) this.command.done = true;
+    this.over = true;
+    const rounds = sk.rotation.slice(0, sk.cleared).map((k) => LEVELS[k]?.name || k);
+    this.notify(won ? 'THE BATTLE IS WON' : 'THE BATTLE IS LOST',
+      rounds.length ? `${sk.cleared} of ${sk.engagements} — ${rounds.join(' · ')}`
+        : `${sk.cleared} of ${sk.engagements} engagements`);
+    audio.runWon?.(!!won);
+    this.onGameOver?.(this.runStats({ won: !!won }));
+    return true;
+  }
+
+  /**
+   * WHAT THE BATTLE LOOKS LIKE FROM OUTSIDE — the HUD's line and the summary's,
+   * derived off the plan so the two cannot disagree. `CommandDirector.readout`
+   * is the precedent and the reason: one authority, no second assembly.
+   */
+  skirmishReadout() {
+    const sk = this.skirmish;
+    if (!sk) return null;
+    const d = this.command;
+    return {
+      engagement: Math.min(sk.cleared + 1, sk.engagements),
+      engagements: sk.engagements,
+      cleared: sk.cleared,
+      level: this.levelKey,
+      levelName: this.level?.name ?? null,
+      next: sk.done ? null : (LEVELS[sk.rotation[(sk.cleared + 1) % sk.rotation.length]]?.name ?? null),
+      area: AREAS[sk.pressure]?.name ?? null,
+      strength: d?.roster?.strength ?? 0,
+      wanted: sk.strength,
+      fallen: d?.roster?.fallen?.length ?? 0,
+      rotation: sk.rotation.map((k) => LEVELS[k]?.name || k),
+      seed: sk.seed,
+      won: sk.won,
+      done: sk.done,
+      log: sk.log,
+    };
+  }
+
+  /**
+   * THE SIX NUMBERS EVERY ENDING REPORTS, IN ONE PLACE.
+   *
+   * `_checkWipe`, `_endMeeting` and `CommandDirector._endCampaign` each
+   * assembled this object by hand. That is a three-way twin, and it was known:
+   * the note over `_endCampaign` says so in as many words and
+   * `tools/checks/command.mjs` holds a wipe's key set and a victory's to being
+   * identical precisely because nothing else could — "the honest fix is a
+   * `World.runStats()` both call; it is in the handover at the foot of this
+   * file". Two of the three are in this file and now call it. The third cannot
+   * be edited from this lane and is held to the same shape by that check, which
+   * is the arrangement that has been keeping it honest all along.
+   */
+  runStats(extra = null) {
+    const sum = (f) => (this.players || []).reduce((a, p) => a + (p[f] || 0), 0);
+    return {
+      ...(extra || {}),
+      wave: this.director?.wave ?? 0,
+      score: this.score,
+      kills: sum('kills'),
+      deflects: sum('deflects'),
+      perfects: sum('perfects'),
+      limbs: sum('limbsRemoved'),
+    };
   }
 
   /* ── spawning ────────────────────────────────────────────────────── */
@@ -1428,6 +2014,42 @@ export class World {
 
   update(rawDt, input) {
     if (!this.running || this.paused) return;
+    /**
+     * THE GROUND CHANGES BETWEEN ENGAGEMENTS — here, at the top of a frame, and
+     * not where the decision was made.
+     *
+     * `_skirmishCleared` runs inside `WaveDirector.update`, three lines after
+     * the clear branch, and `unload()` disposes the enemies that loop is
+     * standing in and the player whose `_move` is about to run. Deferring by
+     * one frame is the same shape `_bossFrame` and the kill-time release use,
+     * and for the same reason: the world's own clock is the only safe place to
+     * do something to the world.
+     *
+     * `onRotate` gets first refusal so a front end can put its progress bar
+     * over the rebuild (`rotateToAsync`), and `rotating` holds the frame loop
+     * off until it says it is done. Without a front end this takes the
+     * synchronous door, which is the same fallback `CommandDirector._areaClear`
+     * takes when no muster screen is wired: a mode that cannot be played
+     * without a UI that does not exist yet is a mode that does not exist.
+     */
+    if (this.rotating) return;
+    /* THE BATTLE OPENS ITSELF IF NOBODY OPENED IT. See `beginSkirmish` — the
+     * plan is built at load and the picks are applied here, so the mode is
+     * playable through a front end that knows nothing about it. Guarded on a
+     * body because `deploy` puts the line down around the commander. */
+    if (this.skirmish && !this.skirmish.started && this.player) this.beginSkirmish();
+    if (this.skirmish?.pending) {
+      const key = this.skirmish.pending;
+      this.skirmish.pending = null;
+      /* THE RETURN VALUE IS THE CONTRACT. A front end that wants a progress bar
+       * over the rebuild answers by calling `rotateToAsync`, which raises
+       * `rotating` before its first await and returns a promise — truthy, so
+       * this leaves it alone. Anything falsy, including no handler at all,
+       * means nobody took it and the synchronous door is used, because a battle
+       * that silently stops changing ground is worse than one that hitches. */
+      if (!this.onRotate?.(key)) this.rotateTo(key);
+      return;
+    }
 
     // hitstop bites first — it is what makes a perfect return land in the hands
     let dt = rawDt;
@@ -2676,14 +3298,13 @@ export class World {
        * still there for when an overlay genuinely owns the screen.
        */
       this.over = true;
-      this.onGameOver?.({
-        wave: this.director.wave,
-        score: this.score,
-        kills: this.players.reduce((a, p) => a + p.kills, 0),
-        deflects: this.players.reduce((a, p) => a + p.deflects, 0),
-        perfects: this.players.reduce((a, p) => a + p.perfects, 0),
-        limbs: this.players.reduce((a, p) => a + p.limbsRemoved, 0),
-      });
+      /* A LOST SKIRMISH IS STILL A DECIDED BATTLE, so the plan is closed before
+       * the card goes up: `won` is what the record is keyed on and a plan left
+       * at `won: null` would report a battle nobody lost. Through the flag and
+       * not through `_endSkirmish`, which returns on `this.over` on purpose —
+       * there is exactly one ending and this is it. */
+      if (this.skirmish && !this.skirmish.done) { this.skirmish.done = true; this.skirmish.won = false; }
+      this.onGameOver?.(this.runStats(this.skirmish ? { won: false } : null));
       return true;
     }
     return false;
@@ -3195,8 +3816,15 @@ export class World {
     if (d) d.done = true;
     const mine = this.partyTeam;
     const name = d?.commanders.find((c) => c.side === winner)?.army.name ?? null;
+    /* THE GROUND IS NAMED OFF THE GROUND. This said "holds Geonosis", which was
+     * true for as long as Command owned the only field a meeting could be
+     * fought on — `MODES.command.level` pins it. It is a level name written out
+     * in a file that is holding the level, which is the same defect as a price
+     * written beside a price list, and a skirmish makes it visibly wrong: a
+     * battle decided on the Colosseum floor announced Geonosis. */
+    const where = this.level?.name || 'the field';
     this.notify(winner === mine ? 'THE FIELD IS YOURS' : 'THE FIELD IS LOST',
-      name ? `${name} holds Geonosis` : 'neither army holds the field');
+      name ? `${name} holds ${where}` : 'neither army holds the field');
     /**
      * …AND IT MAKES A SOUND. Until this line a won meeting was silent: the
      * score's only ending was a death, and this mode is the first thing in the
@@ -3208,16 +3836,7 @@ export class World {
      * nothing.
      */
     audio.runWon?.(winner === mine);
-    const sum = (f) => (this.players || []).reduce((a, p) => a + (p[f] || 0), 0);
-    this.onGameOver?.({
-      won: winner === mine,
-      wave: this.director.wave,
-      score: this.score,
-      kills: sum('kills'),
-      deflects: sum('deflects'),
-      perfects: sum('perfects'),
-      limbs: sum('limbsRemoved'),
-    });
+    this.onGameOver?.(this.runStats({ won: winner === mine }));
   }
 
   /** Host → this client: the state of the meeting. A client owns none of it. */

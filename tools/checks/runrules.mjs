@@ -282,4 +282,53 @@ export async function run({ check, assert }) {
     clearProgress();
     return `${keys[0]} recorded once at depth 21; the menu line reads "${line}"`;
   });
+
+  check('run rules: every mode can be deployed under every rule', async () => {
+    /**
+     * FIVE OF THE SEVEN RULES CRASHED COMMAND MODE ON DEPLOY, and the panel had
+     * no way to know: `_syncRules` asks `legalRuleSet` on a THROWAWAY director
+     * built for the menu, which is a plain `WaveDirector`, and the veto it gets
+     * back is correct. The mode's own director is a `CommandDirector`, and the
+     * throw is in its constructor.
+     *
+     * `WaveDirector`'s constructor resolved `this.rules` eagerly, which asks
+     * `ruleVeto`, which asks the OVERRIDDEN `unlockedAt`, which in Command
+     * reads `this.commanders[0]` — a field whose initialiser runs after
+     * `super()` returns. So the base class was calling into a subclass that did
+     * not exist yet. `deploy()` caught the TypeError and put the menu back with
+     * "Could not deploy: Cannot read properties of undefined (reading '0')",
+     * which names neither the mode nor the rule.
+     *
+     * Every mode against every rule rather than the one pair that broke: this
+     * is a constructor-ordering fault and the next subclass to override
+     * anything `ruleVeto` touches would reintroduce it in a mode nobody thought
+     * to try. The two that composed a wave-driving mode are excluded — the
+     * sandbox and the dojo have no wave to condition — and they are named off
+     * the director's own statement rather than by string, so a mode added to
+     * `MODES` is covered on the commit it lands.
+     */
+    const H = await import('./_coop.mjs');
+    const { enemyRng } = await import('../../src/game/Enemy.js');
+    const modes = Object.keys(Waves.MODES).filter((m) => m !== 'sandbox' && m !== 'training');
+    const broke = [];
+    for (const mode of modes) {
+      for (const rule of Waves.CONDITION_KEYS) {
+        enemyRng.seed(2211);
+        Waves.seedWaves(2211, 0);
+        try {
+          const { world } = await H.bootWorld({
+            level: 'geonosis', settings: { quality: 'low', mode, rules: [rule] }, spawn: false,
+          });
+          // …and the resolution really happens, rather than being deferred into
+          // a throw the first time somebody reads it mid-fight.
+          const held = world.director.rules;
+          assert(Array.isArray(held), `${mode}/${rule} resolved to ${held}`);
+          world.dispose();
+        } catch (e) { broke.push(`${mode}+${rule}: ${e.message}`); }
+      }
+    }
+    assert(!broke.length,
+      `${broke.length} mode/rule pairs cannot be deployed at all:\n    ${broke.slice(0, 8).join('\n    ')}`);
+    return `${modes.length} modes × ${Waves.CONDITION_KEYS.length} rules, all ${modes.length * Waves.CONDITION_KEYS.length} deployable`;
+  });
 }

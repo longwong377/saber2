@@ -764,7 +764,7 @@ export const MEETING_FORMATION = 'charge';
 export const COMMAND_FORCE = {
   rally: {
     id: 'rally', name: 'Rally', force: true,
-    blurb: 'Steady your line. Broken men stand up and everything fires faster.',
+    blurb: 'Steady your line. Anyone still listening stands up and fires faster.',
     /**
      * 26, between `push` at 20 and `lightning` at 30, and the placement is the
      * argument: this is worth more than shoving one body and less than killing
@@ -793,6 +793,22 @@ export const COMMAND_FORCE = {
     seconds: 8,
     /** What the notice says once it knows how many it reached. */
     reached: (n) => `${n} of your own steady, and firing faster`,
+    /* A RISING sweep, which is what `pull` is (180 → 1400 Hz) and what a line
+     * being drawn back together should sound like. `push` is the falling one
+     * and it belongs to the verb below. Named on the record rather than typed
+     * into `castForce` for the same reason `slot` is named on a formation. */
+    sound: 'pull',
+    /**
+     * WHAT THE VERB DOES, ON THE RECORD.
+     *
+     * `castForce` used to branch on the id — `id === 'rally' ? … : …` — which
+     * is a rule restated beside the table that owns it (HANDOFF §2.4) and it
+     * means a third verb is an edit in two places, one of which nothing would
+     * remind you about. A formation is "three numbers and one function"; so is
+     * this. The function is handed the director because the work belongs to
+     * the army, not to the row.
+     */
+    cast: (d, P, c, A) => d.rallyNear(A.pos, P.radius, c, P.seconds),
   },
   dread: {
     id: 'dread', name: 'Dread', force: true,
@@ -818,6 +834,9 @@ export const COMMAND_FORCE = {
      */
     seconds: 6,
     reached: (n) => `${n} of theirs off the trigger and off their line`,
+    /** The falling one: a rank going backwards. See `rally.sound`. */
+    sound: 'push',
+    cast: (d, P, c, A) => d._castDread(P, c, A),
   },
 };
 
@@ -928,6 +947,21 @@ export const COVER_LEAN = 4.5;
  * rest of the area.
  */
 export const UNDER_FIRE = 3.5;
+
+/**
+ * HOW MUCH FURTHER THE SQUAD'S TARGET MAY BE THAN A MAN'S OWN, as a SQUARED
+ * ratio — `targetFor` compares squared distances and a square root per trooper
+ * per frame to make one comparison prettier is a square root per trooper per
+ * frame.
+ *
+ * 2.25 is 1.5×. A line abreast is 2.4 m between men and engages from 9-19 m, so
+ * one and a half times the nearest range covers every target the squad beside
+ * you can see and does not cover the one that has walked into your own guard.
+ * At 1.0 the rule almost never fires (the leader's pick has to be the nearest
+ * anyway, which it usually already is) and past about 2× a trooper will turn
+ * his back on something at four metres.
+ */
+export const FOCUS_SLACK = 2.25;
 
 /** The plan half-extent of a static box — how wide a thing is to hide behind. */
 function h2(b) { return Math.max(b.halfExtents.x, b.halfExtents.z); }
@@ -2488,27 +2522,18 @@ export class CommandDirector extends WaveDirector {
     (c._castCd || (c._castCd = {}))[id] = P.cd;
 
     const A = this._frame(c, _v1);
-    const n = id === 'rally' ? this._castRally(P, c, A) : this._castDread(P, c, A);
+    const n = P.cast(this, P, c, A) | 0;
     this.log.push({ t: 'force', id, reached: n, area: this.areaNumber, wave: this.wave });
-    /* The same door every power in Player.js ends in. 'push' rather than a
-     * kind of its own because Audio.js is not this file's to extend, and of
-     * the four it answers to a shove outward is what both of these are. */
-    audio.force?.(A.pos, 'push');
+    /* The same door every power in Player.js ends in, and the record names
+     * which of its five voices this one has. Audio.js is not this file's to
+     * extend, so the choice is between what already exists rather than a new
+     * synthesis nobody would hear until it shipped. */
+    audio.force?.(A.pos, P.sound);
     if (c === this.commander) {
       this.world?.notify?.(P.name.toUpperCase(),
         n ? P.reached(n) : 'nothing was in reach of it');
     }
     return true;
-  }
-
-  /**
-   * RALLY — your own line. The verb is the PRICE and the reach; what a rally
-   * actually does to a man lives in `rallyNear` below, because a stratagem
-   * code says the same thing for a different price and there must not be two
-   * answers to what it means.
-   */
-  _castRally(P, c, A) {
-    return this.rallyNear(A.pos, P.radius, c, P.seconds);
   }
 
   /* ── what the army can be asked for, by anything ───────────────────── */
@@ -2868,7 +2893,19 @@ export class CommandDirector extends WaveDirector {
    * the order is re-given, which is what `_coverEpoch` counts.
    */
   _coverSite(e, out, A, hunt = COVER_HUNT, at = 0, mode = 0) {
-    if (e._coverAt === at && e._coverFor === mode && e._coverPt) { out.copy(e._coverPt); return; }
+    /* THE MISS IS CACHED TOO, and that is not tidiness. This walks every
+     * static box on the level, and it is called once per trooper per frame
+     * from `slotFor` — which `steer` and `targetFor` both call. Caching only
+     * the HIT meant a squad standing in the open re-scanned the whole level
+     * twenty-four times a frame forever, and the reactive caller made that the
+     * common case rather than the rare one. A null is a decision: there was
+     * nothing to get behind when this man last looked, and he looks again when
+     * the order changes or the next burst arrives. */
+    if (e._coverAt === at && e._coverFor === mode) {
+      if (e._coverPt) out.copy(e._coverPt);
+      return;
+    }
+    e._coverAt = at; e._coverFor = mode; e._coverPt = null;
     const boxes = this.world?.physics?.staticBoxes;
     if (!boxes || !boxes.length) return;
     /* Where the shooting is coming from, as one bearing for the whole army. */
@@ -2901,8 +2938,6 @@ export class CommandDirector extends WaveDirector {
     const r = Math.max(h2(best), 0.5) + 0.85;
     out.set(best.center.x - T.x * r, 0, best.center.z - T.z * r);
     e._coverPt = out.clone();
-    e._coverAt = at;
-    e._coverFor = mode;
   }
 
   /**
@@ -2925,8 +2960,25 @@ export class CommandDirector extends WaveDirector {
    */
   leashFor(F, e) {
     if (F.leash === Infinity || this._closing) return Infinity;
-    const reach = e?.A?.preferred?.[1] ?? ARCHETYPES[e?.trooper?.type]?.preferred?.[1] ?? 12;
-    return Math.max(LEASH_FLOOR, reach * F.leash);
+    return Math.max(LEASH_FLOOR, this.reachOf(e) * F.leash);
+  }
+
+  /**
+   * HOW FAR THIS BODY FIGHTS FROM, in metres — its own `preferred[1]`.
+   *
+   * One expression, two readers: the leash above multiplies it by the
+   * formation's number, and `targetFor`'s concentration rule bounds itself by
+   * it flat. It was written out twice for about ten minutes and that is
+   * exactly long enough for a marksman's 42 and a B1's 15 to start meaning
+   * different things in the two places.
+   *
+   * The fallback chain is the body's live archetype first — an elite carries
+   * its OWN copy of `A`, patched by its modifier, and a Marksman's band is
+   * 20-38 where the base body's is not — then the roster record's type, for a
+   * record whose body has not been built yet, and 12 for neither.
+   */
+  reachOf(e) {
+    return e?.A?.preferred?.[1] ?? ARCHETYPES[e?.trooper?.type]?.preferred?.[1] ?? 12;
   }
 
   /**
@@ -3139,8 +3191,10 @@ export class CommandDirector extends WaveDirector {
    *     from two ideas of who is fighting whom;
    *   within the formation's LEASH of the trooper's own slot, so a tight
    *     formation genuinely will not chase and a loose one genuinely will;
-   *   …and WHAT THE SQUAD LEADER IS FIGHTING first, when that passes the same
-   *     two tests. See the note on `focus` below.
+   *   …and WHAT THE SQUAD LEADER IS FIGHTING in preference to the nearest, when
+   *     it passes the leash, is inside this body's own weapon band, and is not
+   *     much further off than the nearest would have been. See the note on
+   *     `focus` below for what each of those three bounds is stopping.
    *
    * Returning null is a legitimate answer and it is what makes the leash mean
    * something: `Enemy._think` sets `wish = null` on a null target, and `steer`
@@ -3176,11 +3230,6 @@ export class CommandDirector extends WaveDirector {
      * `_troops` stamped rather than looked up here — see the note there for
      * the frame of latency that buys and why it is the right trade.
      */
-    const focus = e.cmdFocus;
-    if (focus && !focus.dead && focus.alive !== false && focus.team !== e.team) {
-      const fx = focus.position.x - ax, fz = focus.position.z - az;
-      if (fx * fx + fz * fz <= leash2) return focus;
-    }
     let best = null, bestD = Infinity;
     for (const c of candidates) {
       if (!c || c.dead || c.alive === false) continue;
@@ -3192,7 +3241,40 @@ export class CommandDirector extends WaveDirector {
       const d = c.position.distanceToSquared(e.position);
       if (d < bestD) { bestD = d; best = c; }
     }
-    return best;
+    /**
+     * THE CONCENTRATION, AND IT IS DECIDED AGAINST THE NEAREST RATHER THAN
+     * INSTEAD OF IT.
+     *
+     * Written as an override — "take the leader's target whenever it is legal"
+     * — it produced a line that ignored the droid at its elbow to answer a
+     * call across the field, which is not concentration. Two bounds hold it
+     * to what a firing line actually does:
+     *
+     *   the GRASP    the trooper's own weapon band (`reachOf`, floored at
+     *                LEASH_FLOOR so a duellist can still be told where the
+     *                fight is). CHARGE has a leash of Infinity, so without
+     *                this the leash test alone means "every rifle in the squad
+     *                fires at whatever the sergeant found, anywhere on the
+     *                map".
+     *   the SLACK    and it may be no more than half again as far as whatever
+     *                this man would have shot at anyway. That is the clause
+     *                that makes it a PREFERENCE: a squad all engaging the same
+     *                rank concentrates, and a man with something inside his
+     *                guard deals with it.
+     *
+     * `bestD` and the focus distance are both measured from the BODY, not from
+     * the slot — the slot is what decides whether a target is allowed at all
+     * (the leash, above), and this is a question about which of two allowed
+     * targets a rifle is actually pointing at.
+     */
+    const focus = e.cmdFocus;
+    if (!focus || focus.dead || focus.alive === false || focus.team === e.team) return best;
+    const fx = focus.position.x - ax, fz = focus.position.z - az;
+    if (fx * fx + fz * fz > leash2) return best;
+    const grasp = Math.max(LEASH_FLOOR, this.reachOf(e));
+    const focusD = focus.position.distanceToSquared(e.position);
+    if (focusD > grasp * grasp) return best;
+    return (best === null || focusD <= bestD * FOCUS_SLACK) ? focus : best;
   }
 
   /* ── the campaign's own bookkeeping ────────────────────────────────── */
@@ -3813,13 +3895,19 @@ export class CommandDirector extends WaveDirector {
          */
         const lead = this.leaderOf(squads[k]);
         const focus = (lead && lead.body && !lead.body.dead) ? lead.body.target : null;
+        /* …AND THE LEADER DOES NOT FOLLOW HIMSELF. Stamping the focus on every
+         * body of the squad including his own made his last pick his next
+         * pick, every frame, for as long as it stayed in reach — a target lock
+         * nobody asked for, on the one man whose job is to choose. Measured in
+         * a meeting: both lines locked onto each other's front rank at first
+         * contact and neither ever re-aimed. */
         for (const t of squads[k]) {
           const e = t.body;
           if (!e || e.dead) { i++; continue; }
           e.cmdIndex = i++;
           e.cmdCount = n;
           e.cmdSquad = k;
-          e.cmdFocus = (focus && focus !== e) ? focus : null;
+          e.cmdFocus = (focus && t !== lead) ? focus : null;
           /* UNDER FIRE decays here for the same reason the indices are
            * refreshed here: this is the one loop that touches every living
            * body of every army exactly once a frame. See UNDER_FIRE, and
@@ -4142,11 +4230,11 @@ export class CommandDirector extends WaveDirector {
        * the player could afford and lit one they could not — and the fix there
        * was the one taken here: one authority, two readers.
        */
-      force: ORDER_IDS.filter((id) => COMMAND_FORCE[id]).map((id) => ({
-        id,
-        name: COMMAND_FORCE[id].name,
-        ready: this.castReady(id, c) === null,
-        cd: Math.round(((c._castCd && c._castCd[id]) || 0) * 10) / 10,
+      force: Object.values(COMMAND_FORCE).map((P) => ({
+        id: P.id,
+        name: P.name,
+        ready: this.castReady(P.id, c) === null,
+        cd: Math.round(((c._castCd && c._castCd[P.id]) || 0) * 10) / 10,
       })),
       mustering: this.mustering,
       /** The advance is behind you. The HUD's cue that this is a finished run. */

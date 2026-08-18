@@ -1835,7 +1835,7 @@ export function run({ check, assert }) {
     assert(far.broken, `a man ${(P.radius + 25).toFixed(0)} m away was rallied from inside the radius`);
     assert(shaken.body.rallyTimer >= P.seconds,
       'a rallied body carries no rallyTimer — it is a morale event with no fighting in it');
-    assert(far.body.rallyTimer === 0, 'the aura reached outside the radius');
+    assert(!(far.body.rallyTimer > 0), 'the aura reached outside the radius');
 
     /* …AND IT DOES NOT BECOME THE ORDER. A verb that set `formation` would put
      * a line into a shape with no `slot` function on the very next frame. */
@@ -2051,7 +2051,7 @@ export function run({ check, assert }) {
      * the leash and not an override of it: five rifles that all kill the same
      * B2 in a second beat five rifles chipping five B2s for five, and a squad
      * that walked past the droid at its elbow to answer a call across the
-     * field would be the opposite of concentration.
+     * field would be the opposite of concentration. Both bounds are measured.
      */
     const { w, d } = dirFor();
     const me = { position: V(0, 0, 0), aimDir: V(0, 0, 1), facing: 0, alive: true, team: TEAM.PARTY };
@@ -2063,34 +2063,48 @@ export function run({ check, assert }) {
     assert(d.leaderOf(squad) === squad[0], 'the leader is not who this check thinks');
     const men = squad.filter((t) => t !== squad[0]).map((t) => t.body);
     for (const b of men) b.position.set(0, 0, 4);
+    const reach = d.reachOf(men[0]);
 
-    /* Two legal targets: one right beside the squad, one the leader is on. */
+    /* Two legal targets at comparable range: one a step nearer, one the
+     * leader is on. */
     const near = { position: V(1, 0, 6), dead: false, team: 1, trooper: null };
-    const his = { position: V(-6, 0, 10), dead: false, team: 1, trooper: null };
+    const his = { position: V(2.5, 0, 5.5), dead: false, team: 1, trooper: null };
     w.enemies.push(near, his);
     const cand = [near, his];
+    const picks = () => { d._troops(1 / 30, {}); return men.map((b) => d.targetFor(b, cand)); };
 
-    d._troops(1 / 30, {});
-    const loose = men.map((b) => d.targetFor(b, cand));
-    assert(loose.every((t) => t === near),
+    assert(picks().every((t) => t === near),
       'with no lead target the squad did not simply take the nearest — the baseline is wrong');
 
     squad[0].body.target = his;
-    d._troops(1 / 30, {});
-    const focused = men.map((b) => d.targetFor(b, cand));
-    const onHim = focused.filter((t) => t === his).length;
+    const onHim = picks().filter((t) => t === his).length;
     assert(onHim === men.length,
       `${onHim} of ${men.length} riflemen followed their leader onto the thing he is fighting`);
 
-    /* …AND THE LEASH STILL DECIDES. A leader who has run out to something
-     * nobody else may engage does not drag the squad off its ground. */
+    /* …AND THE MAN IN YOUR GUARD WINS. `FOCUS_SLACK` is the clause that makes
+     * this a preference: the leader's target may be half again as far as
+     * whatever you would have shot at anyway, and no further. Still well
+     * inside the rifle's own band, so it is the slack refusing it and not the
+     * reach. */
+     his.position.set(0, 0, 4 + reach * 0.9);
+    assert(his.position.distanceTo(men[0].position) < reach,
+      'this clause has put the leader\'s target outside the weapon band, so it proves nothing');
+    assert(picks().every((t) => t === near),
+      'a rifleman turned his back on something at two metres to follow the squad onto a body '
+      + `${(his.position.distanceTo(men[0].position)).toFixed(0)} m away`);
+
+    /* …AND THE LEADER HIMSELF IS NEVER FOLLOWING HIMSELF. His last pick must
+     * not become his next one, or the one man whose job is to choose has a
+     * target lock on. */
+    assert(squad[0].body.cmdFocus === null,
+      'the squad leader was handed his own target as a focus — that is a lock, not an order');
+
+    /* AND A TARGET NEITHER BOUND ALLOWS IS REFUSED LIKE ANY OTHER. */
     his.position.set(0, 0, 400);
-    d._troops(1 / 30, {});
-    const beyond = men.map((b) => d.targetFor(b, cand));
-    assert(beyond.every((t) => t === near),
+    assert(picks().every((t) => t === near),
       'the squad followed its leader onto a target outside its own leash');
-    return `${onHim}/${men.length} concentrated on the leader's target; ` +
-      'a target past the leash is refused like any other';
+    return `${onHim}/${men.length} concentrated on the leader's target at a comparable range; `
+      + `refused at ${(reach * 0.9).toFixed(0)} m with something at 2 m, and refused past the leash`;
   });
 
   check('command: a squad that has mostly broken falls back together', () => {
@@ -2108,21 +2122,34 @@ export function run({ check, assert }) {
     d.deploy();
     d._troops(1 / 30, {});
     const squad = d.roster.squads()[0];
-    const steady = squad[squad.length - 1];
     for (const t of squad) { t.morale = 0.8; t.broken = false; }
-    for (const t of squad) t.body.position.set(0, 0, 30);
+    /* Every man exactly on his mark, so a steady one has nothing to walk to
+     * and any `wish` at all is the withdrawal rather than the walk home. */
+    for (const t of squad) {
+      const at = d.slotFor(t.body, new THREE.Vector3());
+      if (at) t.body.position.copy(at);
+    }
+    /* The one this check is about is the man FURTHEST forward: `steer`'s
+     * fall-back only writes a direction past 5 m, which is the rule that stops
+     * a rout being a shuffle. */
+    const steady = squad.slice().sort((a, b) =>
+      b.body.position.length() - a.body.position.length())[0];
+    assert(steady.body.position.length() > 6,
+      `the vanguard's furthest slot is ${steady.body.position.length().toFixed(1)} m out`);
 
     d._morale(1 / 30, d.commander);
     assert(!steady.rout, 'a squad at 0.80 morale is already routing');
     const held = steady.body;
     held.wish = null; held.target = null;
     d.steer(held, 1 / 30);
-    const wasHome = held.wish ? held.wish.z < 0 : false;
-    assert(!wasHome, 'a steady man in a steady squad was already walking home');
+    assert(!held.wish, 'a steady man on his own mark was already walking somewhere');
 
-    /* Break just over half of them and leave the last man steady. */
+    /* Break just over half of them and leave that one steady. Above REFUSE, so
+     * a rally can reach them again at the end. */
     const n = squad.length, need = Math.floor(n * Cmd.MORALE.ROUT) + 1;
-    for (let i = 0; i < need; i++) { squad[i].morale = 0.05; squad[i].broken = true; }
+    const others = squad.filter((t) => t !== steady);
+    assert(others.length >= need, `a squad of ${n} cannot be half broken and leave one steady`);
+    for (let i = 0; i < need; i++) { others[i].morale = 0.15; others[i].broken = true; }
     d._morale(1 / 30, d.commander);
     assert(steady.rout, `${need} of ${n} broken did not rout the squad`);
     assert(!steady.broken, 'the man this check is about broke on his own');

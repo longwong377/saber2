@@ -53,7 +53,7 @@ const LINES_HAS = (kind) => LINE_KINDS.includes(kind);
  * and neither of them written down twice.
  *
  * `EACH` — is every speaker its own event? That decides which budget the line
- * spends (see `roomLine`), and it is the `each` flag on the contour.
+ * spends (see `_spend`), and it is the `each` flag on the contour.
  * `ROOM`  — is this something a body on the field says rather than something the
  * player says? That is `ENEMY_LINES`, which the emote wheel already derives its
  * own half from.
@@ -85,11 +85,31 @@ export const ENEMY_GAP = 0.45;
  * for lines the room says about ITSELF — an alarm, a panic call, idle banter —
  * where one is representative and six are noise. A body being flung is a thing
  * the PLAYER just did, one per body, and hearing only one of six is hearing the
- * power wrong. 0.14 s lets a six-body push produce four or five voices stacked
- * over each other, which is what a six-body push sounds like.
+ * power wrong. WHICH LINES THOSE ARE is `each`, declared on the contour in
+ * src/engine/Voice.js and read in exactly one place here (`_spend`); it used to
+ * be this paragraph, and being a paragraph is why every death cry in the game
+ * was on the wrong side of it.
+ *
+ * THE SENTENCE THAT USED TO END THIS NOTE WAS FALSE, and it is worth leaving
+ * the correction in. It said "0.14 s lets a six-body push produce four or five
+ * voices stacked over each other, which is what a six-body push sounds like".
+ * It does not and it never did: `forcePush` knocks every body in the cone back
+ * on ONE frame, so all six calls are raised inside 16 ms and 0.14 s is eight
+ * frames. Driven, six thrown bodies produced ONE voice and five refusals. **No
+ * value of this constant can fix that** — a gap between lines cannot let
+ * simultaneous lines through, whatever it is set to, and the smaller it gets
+ * the closer it comes to having no rate limit at all on the frames when nothing
+ * is happening.
+ *
+ * What fixes it is holding the refused lines instead of dropping them, which is
+ * LINE_LIFE. The gap then means what it always should have: not "one line per
+ * 0.14 s" but "the room lets one out every 0.14 s until the backlog is clear",
+ * so a push is a ripple of six voices over three quarters of a second.
  *
  * `AudioEngine.speak`'s own hard cap of three concurrent utterances is still
- * under all of it, so this cannot become a wall of sound.
+ * under all of it, so this cannot become a wall of sound. Measured over a real
+ * Geonosis minute with 24 bodies on the field: three lines alive at once at the
+ * worst moment, and 30% of the minute with any voice in it at all.
  */
 export const BATTLE_GAP = 0.14;
 /** Speed a body has to gain in one frame to have been THROWN rather than to be running. */
@@ -97,24 +117,40 @@ const FLUNG_SPEED = 8.5;
 /** …and how often a droid is allowed to say nothing in particular. */
 export const CHATTER_GAP = 6.5;
 /**
- * HOW LONG A CALL-OUT IS STILL ABOUT THE MOMENT IT WAS ABOUT.
+ * HOW LONG A LINE IS STILL ABOUT THE MOMENT IT WAS ABOUT.
  *
- * `st.spotted` is latched only when the alarm has actually been MADE, which is
- * right — the note beside it records that latching on the ATTEMPT gave a squad
- * of five exactly one alarm between them. What it never had was an expiry, so
- * a body refused by the shared budget re-offered the same line on every frame
- * until it won. Measured on a Geonosis command wave, seed 4242, 60 s: **679
- * refused alarm attempts against 18 spoken**, one body's stale call arriving
- * up to twenty seconds after it saw you, and the shared budget so completely
- * occupied by the retry that every death cry in the run was refused behind it.
+ * A rate limit can only ever say "not now", and until now that is all this file
+ * could do: a line the budget refused was counted and thrown on the floor. Two
+ * measured consequences, and they pull in opposite directions, which is why one
+ * number could not fix both.
  *
- * A call-out is about a moment. If the room was too loud for it for this long,
- * the moment has gone: the body is marked as having called out and shuts up.
- * 1.2 s is two or three swings of the shared budget — long enough that a squad
- * spotting you together still gets two or three voices out, short enough that
- * nobody announces something the player watched happen.
+ *  · SIMULTANEOUS EVENTS WERE SILENCED BY A TIME GAP THEY CANNOT SATISFY.
+ *    BATTLE_GAP's own note claims "0.14 s lets a six-body push produce four or
+ *    five voices stacked over each other". It does not, and it never did: a
+ *    push knocks six bodies back on ONE frame, so all six calls are raised
+ *    inside the same 16 ms and 0.14 s is eight frames. Driven: six bodies dying
+ *    on one frame produced ONE line and five refusals. A Force rend, a thrown
+ *    blade down a corridor and one detonation all do exactly that.
+ *  · THE ALARM RETRIED FOREVER. `st.spotted` is latched only when the call has
+ *    actually been made — right, and the note beside it records that latching
+ *    on the ATTEMPT gave a squad of five one alarm between them — so a body the
+ *    budget refused re-offered the same line on every frame until it won.
+ *    Measured on a Geonosis command wave, seed 4242, 60 s: **679 refused alarm
+ *    attempts against 18 spoken**, with the last of them arriving twenty
+ *    seconds after the body saw you.
+ *
+ * So a refused room line is HELD instead of dropped, and it expires. That one
+ * change answers both: the wipe becomes a ripple of screams over three quarters
+ * of a second, which is what six bodies falling together sounds like, and the
+ * spin becomes one queue entry per body offered at most once a frame.
+ *
+ * 1.5 s is three swings of the shared budget — long enough for a squad that
+ * spotted you together to get two or three voices out, short enough that
+ * nobody ever announces something the player watched happen.
  */
-export const ALARM_WINDOW = 1.2;
+export const LINE_LIFE = 1.5;
+/** How many held lines is a battlefield and not a backlog. Oldest goes first. */
+const PENDING_CAP = 24;
 /**
  * HOW LONG AFTER A BODY FALLS ITS SIDE'S ENEMY CHEERS.
  *
@@ -236,8 +272,16 @@ export class Announcer {
     this.lowSaid = false;
     this.deaths = [];
     this.panicFor = 0;
-    /** Cheers waiting out CHEER_DELAY: `{t, who}`, cleared if the cheerer falls. */
-    this.pendingCheers = [];
+    /**
+     * ROOM LINES WAITING FOR AIR — `{spec, kind, who, pos, on, at, dies}`.
+     *
+     * One queue and not three. A cheer waiting out CHEER_DELAY, a death cry
+     * that lost a 0.14 s gap to the five bodies that fell with it, and an alarm
+     * that lost the shared budget are the same object with different clocks on
+     * it, and holding them in one list is what stops the alarm's retry being a
+     * per-frame sweep of every body on the field. See LINE_LIFE.
+     */
+    this.pending = [];
     this.rallyT = RALLY_GAP;
     /** Seconds of fight this announcer has watched. Its own, because the HUD
      *  drives it with a stub world in five different checks and `world.time`
@@ -268,28 +312,38 @@ export class Announcer {
      */
     this.stats = {
       quips: 0, efforts: 0, enemyLines: 0, popups: 0, suppressed: 0,
-      refused: { quip: 0, effort: 0, enemy: 0, battle: 0, off: 0, popup: 0, engine: 0 },
+      refused: { quip: 0, effort: 0, enemy: 0, battle: 0, off: 0, popup: 0, engine: 0, stale: 0 },
+      held: 0,
       lost: Object.create(null),
       lines: Object.create(null),
     };
   }
 
   /**
-   * One refusal, against the gate that made it AND the contour it threw away.
+   * One refusal, against the gate that made it — AND, separately, one contour
+   * the player is never going to hear.
    *
-   * `lost` is the half that turns the count into a finding: 696 refusals is a
-   * number, and "of those, every death cry on the field" is a defect. On
-   * Geonosis with sixteen bodies up the two disagree completely — the budget
-   * spends itself on alarms and idle banter and then refuses the screams,
-   * because a first-come cooldown has no idea which of them the player asked
-   * for.
+   * THE TWO ARE NOT THE SAME NUMBER and conflating them is what made the
+   * original single `suppressed` counter useless. A room line the budget turns
+   * away is HELD (see `_room`) and usually said a moment later, so it is a
+   * refusal and not a loss; a line that expires on the queue, or that the
+   * player has switched off, is a loss and there is no gate to blame it on.
+   *
+   * `refused` answers "which limit is biting" and `lost` answers "what did the
+   * player not hear", and on a real Geonosis wave the two disagree completely:
+   * the budget refuses hundreds of alarm retries and loses almost none of them,
+   * and it used to lose every death cry on the field while refusing each of
+   * them exactly once. `tools/_voiceprobe.mjs` prints both.
    */
-  _refuse(why, kind = null) {
+  _refuse(why, kind = null, gone = false) {
     this.stats.suppressed++;
     this.stats.refused[why] = (this.stats.refused[why] || 0) + 1;
-    if (kind) this.stats.lost[kind] = (this.stats.lost[kind] || 0) + 1;
+    if (gone && kind) this._lost(kind);
     return false;
   }
+
+  /** One contour raised and never heard. */
+  _lost(kind) { this.stats.lost[kind] = (this.stats.lost[kind] || 0) + 1; }
 
   /** One line that actually reached the engine. */
   _spoke(kind) {
@@ -361,7 +415,7 @@ export class Announcer {
       if (d < bestD) { bestD = d; best = e; }
     }
     if (!best) return false;
-    return this._roomLine(this._enemySpec(best), kind, best.position,
+    return this._spend(this._enemySpec(best), kind, best.position,
       settings?.enemyVoices !== false, true);
   }
 
@@ -386,12 +440,20 @@ export class Announcer {
 
     if (player) this._player(dt, world, player, hud, settings);
     this._enemies(dt, world, player, hud, settings);
+    /* AFTER the frame's own events, not before. Something happening now has
+     * the better claim on the air than something that was already late; the
+     * held lines take the gaps the new ones leave. */
+    this._drain();
   }
 
   _baseline(world, player) {
     this.started = true;
     this._level = world;
     this.streak = 0; this.returns = 0; this.chamberRun = 0; this.deaths.length = 0;
+    // A held line is about a body in the world that just went away. Nothing on
+    // this queue survives a level change, and a `cheer` whose cheerer belongs
+    // to the previous world would speak from wherever that body last stood.
+    this.pending.length = 0;
     this.lowSaid = false;
     const p = player || {};
     this.prev = {
@@ -616,7 +678,7 @@ export class Announcer {
          * classified: six droids spotting you is one piece of news and six
          * droids in the air is six.
          */
-        this._roomLine(this._enemySpec(e), 'flung', e.position, on);
+        this._roomLine(e, 'flung', on);
       }
       st.speed = sp;
 
@@ -662,8 +724,7 @@ export class Announcer {
          * A droid does not scream, it powers down: the descending three-note
          * 'die' contour on a ring-modulated square reads as exactly that.
          */
-        const spec = this._enemySpec(e);
-        this._roomLine(spec, spec.ring ? 'die' : 'scream', e.position, on);
+        this._roomLine(e, this._enemySpec(e).ring ? 'die' : 'scream', on);
         this._cheerFor(e, ear, on);
         continue;
       }
@@ -682,10 +743,17 @@ export class Announcer {
         // one Geonosis minute produced 679 refused attempts against 18 spoken,
         // which is a body still trying to tell you it has seen you twenty
         // seconds after you killed the two next to it, and a shared budget with
-        // no room left in it for anything that matters. See ALARM_WINDOW.
-        if (st.saw === undefined) st.saw = this.clock;
-        if (this._roomLine(this._enemySpec(e), 'alarm', e.position, on) || !on
-            || this.clock - st.saw > ALARM_WINDOW) st.spotted = true;
+        // no room left in it for anything that matters. See LINE_LIFE.
+        // …AND IT IS OFFERED EXACTLY ONCE. The latch used to wait for the line
+        // to be MADE, so a body the shared budget refused re-offered it on
+        // every frame until it won: 679 attempts a minute, the last of them
+        // arriving twenty seconds after the sighting. It is offered once and
+        // HELD now, which keeps the property that latch was protecting — a
+        // squad spotting you together still gets two or three voices out,
+        // because the queue delivers them as the budget opens — without the
+        // sweep and without the stale call. See LINE_LIFE.
+        this._roomLine(e, 'alarm', on);
+        st.spotted = true;
       }
     }
 
@@ -721,7 +789,7 @@ export class Announcer {
         // droid names; the moment the test became a property of the body, a
         // clone would have chattered as a B1. One classifier, as everywhere
         // else here.
-        this._roomLine(this._enemySpec(who), 'chatter', who.position, on);
+        this._roomLine(who, 'chatter', on);
       }
     }
 
@@ -751,21 +819,9 @@ export class Announcer {
         const d = e.position.distanceToSquared(ear);
         if (d < bestD) { bestD = d; best = e; }
       }
-      if (best) this._roomLine(this._enemySpec(best), 'order', best.position, on);
+      if (best) this._roomLine(best, 'order', on);
     }
 
-    /* the cheers that are waiting out CHEER_DELAY behind the fall they answer */
-    for (let i = this.pendingCheers.length - 1; i >= 0; i--) {
-      const c = this.pendingCheers[i];
-      if ((c.t -= dt) > 0) continue;
-      this.pendingCheers.splice(i, 1);
-      // A body that has fallen in the meantime does not get to cheer. This is
-      // the whole reason the cheerer is chosen at the moment of the death and
-      // re-checked now rather than searched for now: the nearest survivor half
-      // a second later may be somebody who was never there.
-      if (!c.who || c.who.dead || !c.who.position) continue;
-      this._roomLine(this._enemySpec(c.who), 'cheer', c.who.position, c.on);
-    }
 
     /* the squad breaking — three of them gone inside three and a half seconds */
     if (this.panicFor > 0 && this.enemyT <= 0) {
@@ -778,7 +834,7 @@ export class Announcer {
       if (best && bestD < 32 * 32) {
         this.panicFor = 0;
         this.deaths.length = 0;
-        this._roomLine(this._enemySpec(best), 'panic', best.position, on);
+        this._roomLine(best, 'panic', on);
       }
     }
   }
@@ -893,8 +949,8 @@ export class Announcer {
 
   /** A quip: rare, deliberate, and never on top of another one. */
   _say(spec, kind, pos, gain, enabled, force = false) {
-    if (!enabled) return this._refuse('off', kind);
-    if (!force && this.quipT > 0) return this._refuse('quip', kind);
+    if (!enabled) return this._refuse('off', kind, true);
+    if (!force && this.quipT > 0) return this._refuse('quip', kind, true);
     const dur = this.audio.speak(spec, kind, { pos, gain, self: true });
     if (!dur) return this._refuse('engine', kind);
     this.quipT = QUIP_GAP + dur;
@@ -906,8 +962,8 @@ export class Announcer {
 
   /** An effort: frequent, wordless, and it does not eat the quip budget. */
   _effort(spec, kind, pos, gain, enabled) {
-    if (!enabled) return this._refuse('off', kind);
-    if (this.effortT > 0) return this._refuse('effort', kind);
+    if (!enabled) return this._refuse('off', kind, true);
+    if (this.effortT > 0) return this._refuse('effort', kind, true);
     const dur = this.audio.speak(spec, kind, { pos, gain, self: true });
     if (!dur) return this._refuse('engine', kind);
     this.effortT = EFFORT_GAP + dur;
@@ -942,11 +998,10 @@ export class Announcer {
     // metres away is a sound the mixer will place and the player will not
     // connect to anything.
     if (best.position.distanceToSquared(ear) > 46 * 46) return false;
-    // QUEUED, NOT SPOKEN. See CHEER_DELAY: the cry and the cheer are two calls
+    // HELD, NOT SPOKEN. See CHEER_DELAY: the cry and the cheer are two calls
     // on one 0.14 s budget and the cheer is raised second, so speaking it here
     // would silence the death it is about. A crowd answers a fall anyway.
-    this.pendingCheers.push({ t: CHEER_DELAY, who: best, on: enabled });
-    return true;
+    return this._roomLine(best, 'cheer', enabled, CHEER_DELAY);
   }
 
   /**
@@ -971,7 +1026,7 @@ export class Announcer {
 
   /**
    * WHICH BUDGET A ROOM LINE SPENDS — the one place that decides, for all of
-   * them.
+   * them. `_roomLine` is the door; this is the till.
    *
    * There are two, they mean different things, and until now every call site
    * picked one by hand. Measured with `tools/_voiceprobe.mjs` on a real
@@ -990,10 +1045,80 @@ export class Announcer {
    * the gap and then sets it, exactly as `_say(force)` does, so the automatic
    * line that would have followed waits instead of landing on top of it.
    */
-  _roomLine(spec, kind, pos, enabled, force = false) {
+  _spend(spec, kind, pos, enabled, force = false) {
     return EACH.has(kind)
       ? this._battleLine(spec, kind, pos, enabled, force)
       : this._enemyLine(spec, kind, pos, enabled, force);
+  }
+
+  /**
+   * A LINE THE ROOM MAKES: say it now, or hold it until there is air for it.
+   * See LINE_LIFE.
+   *
+   * Every room line the game raises comes through here. The immediate attempt
+   * is first, so a quiet field costs a queue push of nothing at all, and only a
+   * line the BUDGET refused is held — a line refused because the channel is
+   * switched off is not waiting for anything.
+   *
+   * The body is carried alongside the position for two reasons: a held line
+   * speaks from where the body is when it is finally said rather than from
+   * where it was, and a cheer whose cheerer has fallen in the meantime is not
+   * said at all.
+   */
+  _roomLine(enemy, kind, enabled, delay = 0) {
+    if (!enemy?.position) return false;
+    const spec = this._enemySpec(enemy);
+    if (delay <= 0 && this._spend(spec, kind, enemy.position, enabled)) return true;
+    if (!enabled) { this._lost(kind); return false; }
+    this._hold(spec, kind, enemy, enabled, delay);
+    return false;
+  }
+
+  /** Put one line on the queue, oldest out if it is full. */
+  _hold(spec, kind, who, enabled, delay = 0) {
+    if (this.pending.length >= PENDING_CAP) {
+      const drop = this.pending.shift();
+      this._refuse('stale', drop.kind, true);
+    }
+    const p = who?.position;
+    this.pending.push({ spec, kind, who, on: enabled,
+      /* A death cry is said BY the body that just fell, so "the speaker died"
+       * cannot be a blanket reason to drop a held line. It is only a reason
+       * when the speaker was STANDING when the line was raised — a cheer, a
+       * panic call, an order — which is a fact about the moment and not a list
+       * of contour names. */
+      wasAlive: !who?.dead,
+      pos: p ? { x: p.x, y: p.y, z: p.z } : null,
+      at: this.clock + delay, dies: this.clock + delay + LINE_LIFE });
+    this.stats.held++;
+  }
+
+  /**
+   * One pass over the held lines.
+   *
+   * AT MOST ONE ATTEMPT PER BUDGET PER FRAME, and that is the whole reason the
+   * queue exists rather than a per-body retry: the two budgets are shared, so
+   * once one of them has refused a line this frame it will refuse every other
+   * line of that class this frame too, and asking it twenty more times is the
+   * 679-refusals-a-minute spin this replaced. Dead entries and expired ones are
+   * dropped on the way past.
+   */
+  _drain() {
+    let eachShut = false, chorusShut = false;
+    for (let i = 0; i < this.pending.length;) {
+      const q = this.pending[i];
+      if (this.clock < q.at) { i++; continue; }
+      if (this.clock > q.dies || !(q.who?.position || q.pos) || (q.wasAlive && q.who?.dead)) {
+        this.pending.splice(i, 1);
+        this._refuse('stale', q.kind, true);
+        continue;
+      }
+      const each = EACH.has(q.kind);
+      if (each ? eachShut : chorusShut) { i++; continue; }
+      if (this._spend(q.spec, q.kind, q.who?.position || q.pos, q.on)) { this.pending.splice(i, 1); continue; }
+      if (each) eachShut = true; else chorusShut = true;
+      i++;
+    }
   }
 
   /**
@@ -1014,7 +1139,7 @@ export class Announcer {
    */
   enemyLine(enemy, kind, enabled = true) {
     if (!enemy?.position || !LINES_HAS(kind)) return false;
-    return this._roomLine(this._enemySpec(enemy), kind, enemy.position, enabled);
+    return this._roomLine(enemy, kind, enabled);
   }
 
   /** Anything an enemy says, on one shared budget for the whole room. */

@@ -21,6 +21,7 @@
 
 import * as THREE from 'three';
 import { AudioEngine, PRIO, MUSIC_TRACKS } from '../../src/engine/Audio.js';
+import { ENEMY_VOICES } from '../../src/engine/Voice.js';
 import { SCORE_STATES, CHORDS, ROOT, hz } from '../../src/engine/Score.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
@@ -125,6 +126,10 @@ class FakeCtx {
     n.panningModel = 'equalpower'; n.distanceModel = 'inverse';
     n.refDistance = 1; n.maxDistance = 10000; n.rolloffFactor = 1;
     n.positionX = new Param(); n.positionY = new Param(); n.positionZ = new Param();
+    // Kept so a check can ask what the game DECIDED about distance rather than
+    // recomputing it: the curve a sound is played on is set by its caller, and
+    // speech does not use the same one as the rest of the game.
+    this.lastPanner = n;
     return n;
   }
   createOscillator() {
@@ -303,6 +308,76 @@ export async function run({ check, assert }) {
     b.step(V(2, 0, 0), 'sand');
     assert(b.voices === 1, 'a footstep two metres away was culled');
     return `footstep culled at 80 m, explosion kept, footstep at 2 m kept`;
+  });
+
+  check('audio: a voice is judged on the curve it is actually built on', () => {
+    /**
+     * `_reach` decides whether a sound is worth a voice by predicting the
+     * amplitude it will arrive at, BEFORE any node exists. That prediction and
+     * the panner it predicts are two expressions of one law, which is HANDOFF
+     * §2.3's shape exactly — and they had drifted: `attenuation` was hard-wired
+     * to refDistance 1.8 under a docstring claiming "_panner() builds every
+     * positional voice with the same refDistance 1.8", while `speak()` alone
+     * builds its panner at 2.6. Measured at 40 m: 0.0411 predicted against
+     * 0.0594 delivered, 45% under the truth, in the direction that culls a line
+     * the player would have heard.
+     *
+     * Rather than restate the law a third time, this drives BOTH halves and
+     * compares them: every positional sound in the game is played at a series
+     * of distances against a listener at the origin, and the panner each one
+     * actually built is read back out of the context and asked what it will do.
+     */
+    const { a, ctx } = engine();
+    const law = (p, d) => {
+      const dd = Math.max(Math.min(d, p.maxDistance), p.refDistance);
+      return p.refDistance / (p.refDistance + p.rolloffFactor * (dd - p.refDistance));
+    };
+    const rows = [];
+    for (const d of [2, 20, 60, 120, 185]) {
+      // Let the previous line finish. Three live utterances is the engine's own
+      // ceiling, so a loop that does not advance the clock measures the
+      // concurrency cap and reports it as a distance cull.
+      ctx.advance(3);
+      const before = ctx.panners;
+      a.speak(ENEMY_VOICES.sith, 'scream', { pos: V(d, 0, 0), gain: 0.9 });
+      const p = ctx.lastPanner;
+      assert(ctx.panners > before, `a scream ${d} m away built no panner at all`);
+      // What the cull believed, recomputed through the SHIPPED predicate: if it
+      // had thought this inaudible it would have refused before building one.
+      assert(a._reach(V(d, 0, 0), 1.7 * 0.9, p.refDistance, p.maxDistance) === 2,
+        `_reach called a scream at ${d} m inaudible while speak() built it anyway`);
+      rows.push(`${d}m ${(law(p, d) * 1.55).toFixed(3)}`);
+    }
+    // …and the two curves are genuinely different, so the check has a subject.
+    const voice = ctx.lastPanner;
+    ctx.advance(3);
+    const n0 = ctx.panners;
+    a.blaster(V(20, 0, 0));
+    assert(ctx.panners > n0, 'the blaster built no panner');
+    const world = ctx.lastPanner;
+    assert(voice.refDistance !== world.refDistance,
+      'a voice and a one-shot are on the same curve now — this check has nothing to hold apart');
+
+    /**
+     * AND THE MIX, WHICH IS THE OTHER HALF OF THE SAME QUESTION: is a voice
+     * buried under the fight? Both sounds are driven at the same distance and
+     * their own gains are read off the calls they made, so this is the shipped
+     * blaster against the shipped scream and not two numbers typed here.
+     */
+    const gains = { blaster: 0, scream: 1.55 };
+    const spy = Object.create(a.constructor.prototype);
+    spy._listenerPos = a._listenerPos;
+    spy.ready = false;
+    spy.tone = ({ gain = 0 }) => { gains.blaster += gain; };
+    spy.noise = ({ gain = 0 }) => { gains.blaster += gain; };
+    a.constructor.prototype.blaster.call(spy, V(20, 0, 0));
+    const heardBolt = gains.blaster * law(world, 20);
+    const heardCry = gains.scream * 0.9 * law(voice, 20);
+    assert(heardCry > heardBolt * 3,
+      `a scream at 20 m arrives at ${heardCry.toFixed(4)} against a blaster bolt's `
+      + `${heardBolt.toFixed(4)} — the room is louder than the people in it`);
+    return `${rows.join(' ')}; a 20 m scream is ${(heardCry / heardBolt).toFixed(1)}x a 20 m bolt `
+      + `(voice ref ${voice.refDistance}/${voice.maxDistance}, world ref ${world.refDistance}/${world.maxDistance})`;
   });
 
   check('audio: a stopped context is not fed sounds it cannot play', () => {

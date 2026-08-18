@@ -335,7 +335,7 @@ export const LINE_KINDS = Object.keys(LINES);
  *
  * `die` is deliberately on BOTH sides of that line and is therefore in neither
  * list of exclusions: a droid powers down on the same three descending
- * syllables the player dies on (see Announcer._enemyLine, which picks 'die' for
+ * syllables the player dies on (see Announcer._enemies, which picks 'die' for
  * anything with a `ring` partial and 'scream' for anything with a throat).
  */
 /**
@@ -361,7 +361,7 @@ export const PLAYER_LINES = LINE_KINDS.filter(k => !ENEMY_LINES.includes(k));
  *
  * `EACH_LINES` is every contour where one speaker is one event and the next
  * speaker is another one; `CHORUS_LINES` is the rest of the room's vocabulary,
- * where one voice stands for all of them. `Announcer.roomLine` is the single
+ * where one voice stands for all of them. `Announcer._spend` is the single
  * reader, and it is the only place in the game that decides which of the two
  * room budgets a line spends.
  */

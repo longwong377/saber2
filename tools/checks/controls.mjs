@@ -1419,6 +1419,28 @@ export async function run({ check, assert }) {
 
     // The exact row, stated as arithmetic against the shipped table.
     const b = defaultBindings();
+
+    /**
+     * AND THE ONE THAT WAS NOT IN A `<kbd>`.
+     *
+     * The sweep above matches `<kbd>` because that is the tag every legend in
+     * this product uses — and the kneel prompt did not use it. `<b
+     * id="commune-key">Ctrl</b>` sat in the markup carrying `crouch`'s default,
+     * overwritten by main.js's `liveKey('crouch')` on the frame the prompt is
+     * raised, so the typed word was invisible in a working build and would have
+     * been a wrong key in any build where that write did not happen. Same class
+     * of defect as the Codex's "M2 to hurl it", one tag along.
+     *
+     * The bar is that whatever ships in it is not a key name: `—` is what
+     * `keyChips` prints for an action bound to nothing, and an empty element is
+     * equally honest. Checked against EVERY label the table can produce rather
+     * than against the word "Ctrl", so re-typing a different default fails too.
+     */
+    const seeded = html.match(/id="commune-key"[^>]*>([^<]*)</);
+    assert(seeded, '#commune-key is gone, so nothing can name the kneel from the bindings');
+    const labels = new Set(ACTION_IDS.flatMap((id) => (b[id] || []).map((c) => keyLabel(c))));
+    assert(!labels.has(seeded[1].trim()),
+      `the kneel prompt ships with "${seeded[1].trim()}" typed into it — markup cannot follow a rebind`);
     const rowOf = (markup, re) =>
       [...markup.matchAll(/<div>([\s\S]*?)<span>([\s\S]*?)<\/span><\/div>/g)].find(r => re.test(r[2]));
     const chips = (s) => [...s.matchAll(/<kbd>([^<]*)<\/kbd>/g)].map(m => m[1]);

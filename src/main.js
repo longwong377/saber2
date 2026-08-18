@@ -315,15 +315,9 @@ async function buildWorld(levelKey, onProgress = null) {
    * simultaneous deaths from talking over each other. So the event goes to the
    * announcer and the announcer answers both questions.
    *
-   * The two methods are private today, which is the wart in this line and not
-   * in the design: `Announcer` wants a public `enemyLine(enemy, kind)` that is
-   * exactly these two calls, and it is owned by another pass this session.
    */
-  world.onEnemyVoice = (enemy, kind) => {
-    const a = hud.announcer;
-    if (!a || !enemy?.position) return;
-    a._enemyLine(a._enemySpec(enemy), kind, enemy.position, settings.enemyVoices !== false);
-  };
+  world.onEnemyVoice = (enemy, kind) =>
+    hud.announcer?.enemyLine(enemy, kind, settings.enemyVoices !== false);
   world.onKillFeed = (who, what, kind) => hud.killFeed(who, what, kind);
   world.onGameOver = (stats) => gameOver(stats);
   world.onDraftOffer = (boons) => offerDraft(boons);

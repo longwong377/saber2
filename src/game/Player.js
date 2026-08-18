@@ -5234,8 +5234,13 @@ export class Player {
       {
         const chest = e.actor?.ragdolled && (e.actor.bodies.get('chest')
           || e.actor.bodies.get('spine') || e.actor.bodies.get('hips'));
+        /* A body with no velocity of its own is not moving, which is a fact
+         * and not a crash. `e.velocity` is always there on a real Enemy and is
+         * not on the minimal stand-ins the checks hold up — and a sweep that
+         * threw on one of those took the whole choke measurement with it. */
+        const vel = (chest && chest.velocity) || e.velocity;
         this._sweepHeld(dt, ctx, e.position, e.radius ?? 0.55,
-          _v4.copy(chest ? chest.velocity : e.velocity));
+          vel ? _v4.copy(vel) : _v4.set(0, 0, 0));
       }
 
       /**

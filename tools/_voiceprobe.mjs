@@ -174,12 +174,22 @@ async function rangeTable() {
   console.log('\n    the room it is heard over: 0.013 RMS of wind and drone, ducked to 0.008');
   console.log('    while any line is live (SFX_DUCK). A line is audible while it clears that.');
 
-  /* And the discrepancy that only shows up when both curves are printed. */
-  const cull = (d) => lawW(d);
-  console.log(`\n    _reach() predicts a speech line's arrival with the ONE-SHOT curve`
-    + `\n    (ref ${world.refDistance}) while speak() builds it on ref ${voice.refDistance}: at 40 m that is `
-    + `${cull(40).toFixed(4)} predicted against ${lawV(40).toFixed(4)} delivered`
-    + `\n    (${((lawV(40) / cull(40) - 1) * 100).toFixed(0)}% quieter than the truth — it can only ever cull EARLY, never late).`);
+  /**
+   * AND THE TWO CURVES AGREE WITH THE CULL, which is the thing that was wrong.
+   *
+   * `_reach` decides before any node exists whether a sound is worth a voice,
+   * and it used to make that decision for SPEECH on the one-shot curve — 0.0411
+   * predicted at 40 m against 0.0594 delivered, 45% under the truth, always in
+   * the direction that throws a line away. Printed here as a comparison rather
+   * than asserted, because a probe is not a check; `audio: a voice is judged on
+   * the curve it is actually built on` is the one that fails the build.
+   */
+  const bad = lawW(40), good = lawV(40);
+  console.log(`\n    at 40 m a voice arrives at ${good.toFixed(4)} of its own peak;`
+    + ` the one-shot curve would have said ${bad.toFixed(4)}`
+    + `\n    (${((good / bad - 1) * 100).toFixed(0)}% under, and _reach used to predict every scream that way).`);
+  console.log(`    a blaster bolt is ${(0.32 * lawW(20)).toFixed(4)} at 20 m against a scream's `
+    + `${(1.72 * 0.9 * lawV(20)).toFixed(4)} — voices are ${((1.72 * 0.9 * lawV(20)) / (0.32 * lawW(20))).toFixed(1)}x the fight.`);
   return { lawV, lawW };
 }
 
@@ -351,11 +361,12 @@ function report(title, r) {
   console.log(`  ${seconds.toFixed(0)} s of game time · peak ${r.peakAlive} bodies alive, mean ${r.meanAlive.toFixed(1)}`
     + ` · ${r.died} bodies fell (${r.kills} to the player)`);
   console.log(`  spoke ${spoke}  →  ${(spoke * 60 / seconds).toFixed(1)} lines/min`);
-  console.log(`  refused by budget: quip ${ref.quip}  effort ${ref.effort}  `
-    + `enemy(shared ${0.45}s) ${ref.enemy}  battle ${ref.battle}`);
-  if (tried) {
-    console.log(`  the player heard ${(100 * spoke / tried).toFixed(0)}% of what the game tried to say`);
-  }
+  console.log(`  gate refusals: quip ${ref.quip}  effort ${ref.effort}  shared ${ref.enemy}  `
+    + `per-event ${ref.battle}  expired ${ref.stale}   (${s.held} lines were held and re-offered)`);
+  const lostN = Object.values(s.lost).reduce((a, b) => a + b, 0);
+  console.log(`  raised ${spoke + lostN}, HEARD ${spoke}, lost ${lostN}`
+    + ` — ${(100 * spoke / Math.max(1, spoke + lostN)).toFixed(0)}% of what the game tried to say`);
+  void tried;
   const byKind = {};
   for (const l of rec.lines) byKind[l.kind] = (byKind[l.kind] || 0) + 1;
   const order = LINE_KINDS.filter((k) => byKind[k]);
@@ -363,7 +374,7 @@ function report(title, r) {
     ? order.map((k) => `${k} ${byKind[k]}`).join('  ')
     : '— nothing at all —'));
   const lost = LINE_KINDS.filter((k) => s.lost[k]);
-  if (lost.length) console.log('  thrown away: ' + lost.map((k) => `${k} ${s.lost[k]}`).join('  '));
+  if (lost.length) console.log('  never heard at all: ' + lost.map((k) => `${k} ${s.lost[k]}`).join('  '));
   const silent = LINE_KINDS.filter((k) => !byKind[k]);
   if (silent.length) console.log('  never heard: ' + silent.join(' '));
 

@@ -34,7 +34,7 @@ import { AudioEngine, PRIO } from '../../src/engine/Audio.js';
 import { PLAYER_VOICES, ENEMY_VOICES, ALL_VOICES, LINES, utterance, peakGain, voiceAt }
   from '../../src/engine/Voice.js';
 import { Presence, bodyOf, MAX_BODIES, RANGE } from '../../src/engine/Presence.js';
-import { Announcer, STREAKS, RETURNS, QUIP_GAP, CHATTER_GAP, ALARM_WINDOW, CHEER_DELAY, RALLY_GAP }
+import { Announcer, STREAKS, RETURNS, QUIP_GAP, CHATTER_GAP, LINE_LIFE, CHEER_DELAY, RALLY_GAP }
   from '../../src/ui/Announcer.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
@@ -344,7 +344,13 @@ function recorder() {
     servo(pos, effort, size) { this.calls.push({ fn: 'servo', effort, size }); },
     breath(pos, o = {}) { this.calls.push({ fn: 'breath', ...o }); },
     bodyThump(pos, mass) { this.calls.push({ fn: 'thump', mass }); },
-    speak(spec, kind, o = {}) { this.lines.push({ id: spec.id, kind, self: !!o.self, gain: o.gain }); return 0.3; },
+    // `pos` is recorded because a positional line and a non-positional one are
+    // two different sounds: the room's voice must be somewhere you can turn
+    // toward, and the player's must not be anywhere at all.
+    speak(spec, kind, o = {}) {
+      this.lines.push({ id: spec.id, kind, self: !!o.self, gain: o.gain, pos: o.pos || null });
+      return 0.3;
+    },
     setVoiceLevel(v) { this.levels.push(v); },
     of(fn) { return this.calls.filter(c => c.fn === fn); },
   };
@@ -1375,8 +1381,13 @@ export async function run({ check, assert }) {
     w.enemies.push(...squad);
     an.update(1 / 60, w, p, hud);
     for (const e of squad) e.dead = true;
-    an.update(1 / 60, w, p, hud);
-    an.update(1 / 60, w, p, hud);
+    // A second and a half, which is LINE_LIFE: six calls raised on one frame
+    // cannot all be SAID on one frame — the engine will not play more than
+    // three at once whatever this file decides — so the property is that every
+    // one of them is heard, as a ripple, inside the window they are still
+    // about. One frame of driving would measure the queue and not the rule.
+    let spread = 0;
+    for (let f = 0; f < Math.ceil(LINE_LIFE * 60); f++) { an.update(1 / 60, w, p, hud); spread += 1 / 60; }
 
     const deaths = rec.lines.filter(l => l.kind === 'die' || l.kind === 'scream');
     assert(deaths.length === squad.length,
@@ -1387,7 +1398,43 @@ export async function run({ check, assert }) {
     // …and they are not all the same voice, which is the other half of a wipe.
     assert(new Set(deaths.map(l => l.id)).size >= 3,
       `six bodies of five archetypes died in ${new Set(deaths.map(l => l.id)).size} voices`);
-    return `${deaths.length} of ${squad.length} deaths heard, in ${new Set(deaths.map(l => l.id)).size} throats`;
+    /**
+     * …AND SO IS A SIX-BODY PUSH, which is the case BATTLE_GAP's own note
+     * claimed to have solved and had not: "0.14 s lets a six-body push produce
+     * four or five voices stacked over each other". `forcePush` knocks every
+     * body in the cone back on ONE frame, so all six calls are raised inside 16
+     * ms and 0.14 s is eight frames — it produced one.
+     *
+     * Driven the way the announcer sees it, which is a speed GAIN and not a
+     * call: six bodies standing still, then all six moving at once.
+     */
+    const rec2 = recorder();
+    const an2 = new Announcer(rec2);
+    const w2 = mkWorld(), p2 = mkPlayer(), hud2 = mkHud();
+    const thrown = ['b1', 'b1', 'trooper', 'acolyte', 'b2', 'sniper'].map((t, i) => ({
+      type: t, A: { ...ARCHETYPES[t], mass: 80, label: t }, position: V(3 + i, 0, 0),
+      dead: false, hp: 10, maxHp: 10, target: null, team: 1,
+      velocity: { length: () => 0 },
+    }));
+    w2.enemies.push(...thrown);
+    an2.update(1 / 60, w2, p2, hud2);
+    an2.update(1 / 60, w2, p2, hud2);                     // a previous frame to gain over
+    for (const e of thrown) e.velocity = { length: () => 22 };
+    for (let f = 0; f < Math.ceil(LINE_LIFE * 60); f++) an2.update(1 / 60, w2, p2, hud2);
+    const flung = rec2.lines.filter(l => l.kind === 'flung');
+    assert(flung.length === thrown.length,
+      `a push threw ${thrown.length} bodies and ${flung.length} of them made a sound`);
+    // …in their own throats, and a droid's is a droid's. The branch that used
+    // to send a ring-modulated body to the `alarm` contour instead swapped the
+    // meaning for the character, which src/engine/Voice.js's header says is
+    // exactly backwards.
+    assert(flung.some(l => l.id === 'droid') && flung.some(l => l.id !== 'droid'),
+      `six thrown bodies of four archetypes spoke in ${new Set(flung.map(l => l.id)).size} voices`);
+    assert(!rec2.lines.some(l => l.kind === 'alarm'),
+      'a thrown droid called out that it had seen you instead of screaming');
+
+    return `${deaths.length} of ${squad.length} deaths heard over ${spread.toFixed(2)}s in `
+      + `${new Set(deaths.map(l => l.id)).size} throats; ${flung.length} of ${thrown.length} thrown bodies heard`;
   });
 
   check('announcer: a cheer ANSWERS a fall — it does not talk over it', () => {
@@ -1461,25 +1508,33 @@ export async function run({ check, assert }) {
     for (let i = 0; i < 12; i++) squad.push(mk(i));
     w.enemies.push(...squad);
     an.update(1 / 60, w, p, hud);
-    // Hold the shared budget shut for the whole window, then let it go.
-    const frames = Math.round((ALARM_WINDOW + 0.5) * 60);
+    const frames = Math.round((LINE_LIFE + 0.5) * 60);
     for (let f = 0; f < frames; f++) an.update(1 / 60, w, p, hud);
     const spokeEarly = rec.lines.filter(l => l.kind === 'alarm').length;
-    const tries = an.stats.lost.alarm || 0;
+    const expired = an.stats.lost.alarm || 0;
+    const attempts = an.stats.refused.enemy;
 
     assert(spokeEarly >= 2, `twelve bodies acquiring you produced ${spokeEarly} alarms`);
     assert(spokeEarly <= squad.length, `${spokeEarly} alarms from ${squad.length} bodies — somebody repeated`);
-    // The spin: without a window every unspoken body retries on every frame,
-    // which over this drive is ~10 bodies x ~100 frames.
-    assert(tries < squad.length * frames * 0.2,
-      `${tries} refused alarm attempts over ${frames} frames — the retry never gives up`);
+    assert(spokeEarly + expired === squad.length,
+      `${squad.length} bodies spotted you, ${spokeEarly} were heard and ${expired} expired — `
+      + 'the rest are still on the queue, which means the window is not a window');
+    // THE SPIN. Without the queue every unspoken body re-offered its own line
+    // on every frame: ~10 bodies x ~120 frames, measured at 765 here and 679
+    // over a real minute of Geonosis. Held, the whole queue is offered at most
+    // once per budget per frame however long it is, so the count is O(frames)
+    // and not O(frames x bodies) — which is the property, not the number.
+    assert(attempts <= frames + squad.length,
+      `${attempts} refused room-line attempts over ${frames} frames from ${squad.length} bodies — `
+      + 'the retry is a per-body sweep again');
 
     // Nothing new arrives once the moment has passed, even with the room silent.
     const was = rec.lines.length;
     for (let f = 0; f < 60 * 6; f++) an.update(1 / 60, w, p, hud);
     const late = rec.lines.slice(was).filter(l => l.kind === 'alarm').length;
     assert(late === 0, `${late} bodies called out about spotting you six seconds after they did`);
-    return `${spokeEarly} of ${squad.length} called out inside the window, ${tries} retries, ${late} stale`;
+    return `${spokeEarly} of ${squad.length} called out inside the window, ${expired} expired unheard, `
+      + `${attempts} attempts over ${frames} frames, ${late} stale`;
   });
 
   check('announcer: your own line talks too — banter, and an order relayed', () => {

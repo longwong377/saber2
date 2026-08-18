@@ -512,7 +512,10 @@ export class SkillTree {
      * between you and. A `gated` mastery or a facet nothing joins is not a
      * thing this line can promise anything about. */
     const reach = view.filter((v) => !v.held && (v.can || v.locked === LOCKED.insight));
-    if (!reach.length) return 'nothing within reach — a card opens one';
+    /* Effectively unreachable — every heart of a current is a root, needs no
+     * neighbour and is uncapped, so there is normally always something here.
+     * The wording is the one that stays true whichever reason emptied it. */
+    if (!reach.length) return 'nothing the purse alone can open';
     const now = reach.filter((v) => v.can).length;
     if (now) return `${now} of ${reach.length} within reach, yours now`;
     const short = Math.min(...reach.map((v) => v.cost)) - Math.floor(this.ctx?.ledger?.insight ?? 0);

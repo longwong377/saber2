@@ -1253,8 +1253,46 @@ export class WaveDirector {
      * card, so what the player is shown and what the director honours are one
      * answer.
      */
-    this.rules = [];
-    this.rules = this.legalRuleSet(opts.rules ?? world?.settings?.rules ?? []);
+    /**
+     * …AND IT IS RESOLVED ON FIRST READ, NOT HERE. This used to be
+     *
+     *     this.rules = [];
+     *     this.rules = this.legalRuleSet(opts.rules ?? world?.settings?.rules ?? []);
+     *
+     * and it CRASHED COMMAND MODE ON DEPLOY for five of the seven run rules.
+     *
+     * `legalRuleSet` asks `ruleVeto`, which asks `this.unlockedAt(at)`, which
+     * is overridden — `CommandDirector.unlockedAt` filters the level's roster
+     * down to the army you are NOT leading, and reads `this.commanders[0]` to
+     * find out which one that is. A subclass's constructor body runs AFTER
+     * `super()` returns, by specification, so `this.commanders` provably does
+     * not exist at this line. A base constructor that calls an overridable
+     * method is calling into a subclass that has not been built yet.
+     *
+     * Measured on a real `bootWorld`, geonosis, mode `command`, one rule each:
+     *
+     *     vanguard  THROWS      silence   THROWS      titans    THROWS
+     *     elites    THROWS      fusillade THROWS      deluge    ok
+     *     hammer    ok          (no rules at all)     ok
+     *
+     * The five that throw are the five whose `needs(types, d)` predicate reads
+     * the type list `unlockedAt` produces. `deploy()` catches the TypeError and
+     * puts the menu back with "Could not deploy: Cannot read properties of
+     * undefined (reading '0')", so the mode is simply unreachable with those
+     * rules picked and the message says nothing about rules. Every other mode
+     * is fine, because `WaveDirector.unlockedAt` reads only `this.pool`, which
+     * is set eight lines up.
+     *
+     * Deferring the resolution to the first READ fixes it for every subclass
+     * there will ever be rather than for the one that exists, and it changes
+     * nothing about WHEN the answer is used: the first reader is `_compose`,
+     * `ruleLabel` or the menu, all of them long after any constructor has run.
+     * The empty array before the call is kept as a re-entrancy guard for the
+     * same reason it was written the first time — a `needs` predicate is handed
+     * the director and may ask it anything, including this.
+     */
+    this._ruleAsk = opts.rules ?? world?.settings?.rules ?? [];
+    this._rules = null;
     /**
      * THE RUN'S OWN NUMBER, ON THE STREAM THAT COMPOSES ITS WAVES.
      *
@@ -2381,6 +2419,24 @@ export class WaveDirector {
     }
     return out;
   }
+
+  /**
+   * The rules in force, resolved once and cached. See the constructor.
+   *
+   * A pair rather than a field because `Menu._syncRules` writes it — the panel
+   * re-legalises the player's picks against the theatre they have just chosen
+   * and hands the answer straight back — and because a lazily resolved value
+   * that could be overwritten by a plain assignment would resolve itself again
+   * on the next read and throw the write away.
+   */
+  get rules() {
+    if (this._rules) return this._rules;
+    this._rules = [];
+    this._rules = this.legalRuleSet(this._ruleAsk);
+    return this._rules;
+  }
+
+  set rules(v) { this._rules = Array.isArray(v) ? v.slice() : []; }
 
   /** What the Deploy panel prints, and what `Progress.byRule` is keyed on. */
   get ruleLabel() {

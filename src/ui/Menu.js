@@ -1630,8 +1630,11 @@ export function codexTeaching({ difficulty = 'knight', director = null } = {}) {
   const openAt = waveAffording(opening, rate);
   const modeName = (director && MODES[director.mode]?.name) || MODES.roguelite.name;
   const purse = [
-    factChip('A wave survived', `+${rate.per} Insight, and +${rate.per + rate.boss} on `
-      + `the set-piece every ${BOSS_EVERY}${BOSS_EVERY === 1 ? 'st' : 'th'} wave`, true),
+    /* "one wave in 5" rather than "every 5th wave": an ordinal built by
+     * appending 'th' to a constant is right at 5 and reads "2th" the day
+     * somebody moves it, which is a typed number with extra steps. */
+    factChip('A wave survived', `+${rate.per} Insight, and +${rate.per + rate.boss} on a `
+      + `set-piece — one wave in ${BOSS_EVERY}`, true),
     factChip('By wave 20 · 40', `${insightAfter(20, BOSS_EVERY, rate)} · `
       + `${insightAfter(40, BOSS_EVERY, rate)} Insight earned`),
     factChip('A facet costs', `${FACET_COST.common} · ${FACET_COST.rare} · ${FACET_COST.epic} `
@@ -1665,14 +1668,15 @@ export function codexTeaching({ difficulty = 'knight', director = null } = {}) {
     <p class="hint codex-note">Insight is earned by surviving and dies with the run. You kneel —
       still, on the floor, with nothing near you — to spend it in the <b>Holocron</b>, and the same
       lattice opens from the bar under this panel between runs, as a chart you cannot spend in.
-      Prices climb
-      with the number of facets you have woken and not with the Insight you are holding, so a purse
-      kept shut reaches further up the lattice than one spent on the first thing it can afford.
-      These are the numbers for <b>${modeName}</b>, chosen under Deploy.</p>
-    ${pays ? `<div class="codex-facts">${purse}</div>`
-      : '<p class="hint codex-note">Nothing is earned in this one: Insight is paid for clearing a '
-        + 'wave, and this mode never clears one. Open the Holocron from the Temple to read the '
-        + 'lattice, and take it into a run to spend in it.</p>'}
+      Prices climb with the number of facets you have woken and not with the Insight you are
+      holding, so a purse kept shut reaches further up the lattice than one spent on the first
+      thing it can afford.</p>
+    ${pays
+      ? `<p class="hint codex-note">These are the numbers for <b>${modeName}</b>, chosen under
+          Deploy.</p><div class="codex-facts">${purse}</div>`
+      : `<p class="hint codex-note">Not in <b>${modeName}</b>, though: Insight is paid for clearing
+          a wave and this mode never clears one. Open the Holocron from the Temple to read the
+          lattice, and take a plan into a mode that fights waves.</p>`}
 
     <h3 class="stacked">Two things with no number behind them</h3>
     <ol class="codex-list">

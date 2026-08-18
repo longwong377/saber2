@@ -55,7 +55,7 @@
 
            Menu._buildDatabank inserts the Databank tab immediately before this
            one, with a comment saying the two "are one thought — what the
-           controls do, and what the things you are using them on are, and a
+           controls do, and what the things you are using them on are — and a
            player who has found one has found the other". That was true and
            Options was wedged in front of both of them, so the pair sat at the
            far right of the bar behind the settings page. _buildTraining's own
@@ -904,10 +904,20 @@
   </div>
 </div>
 
-<!-- The kneel. The way in from the Temple is the button in the menu footer. -->
+<!-- The kneel. The way in from the Temple is the button in the menu footer.
+
+     `#commune-key` SHIPS EMPTY-DASHED and not with a key name in it. It read
+     `Ctrl`, which is what `crouch` happens to default to, and main.js overwrites
+     it with `liveKey('crouch')` on the frame the prompt is first raised — so the
+     typed word was invisible in every working build and would have been a lie in
+     any build where that write did not happen, on the one prompt a player meets
+     mid-fight. It is not inside a `<kbd>`, which is why the sweep in
+     tools/checks/controls.mjs never saw it. `—` is the same placeholder
+     `keyChips` prints for an action bound to nothing: honest, and never a key
+     the player does not have. -->
 <div id="commune" class="hidden">
   <div class="commune-ring"><i id="commune-fill"></i></div>
-  <span>Hold <b id="commune-key">Ctrl</b> to kneel and connect to the Force</span>
+  <span>Hold <b id="commune-key">—</b> to kneel and connect to the Force</span>
   <em id="commune-insight"></em>
 </div>
 
