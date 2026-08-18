@@ -427,11 +427,78 @@ export function run({ check, assert, near }) {
       // the three sources of the base, and none of them dominating outright
       assert(L.bounce > L.amb * 0.10 && L.inner > L.amb * 0.10 && L.sky > L.amb * 0.10,
         `${key}: base light is bounce ${L.bounce.toFixed(2)} / sky ${L.sky.toFixed(2)} / internal ${L.inner.toFixed(2)}`);
-      // the base is grey, not blue: read straight off Preetham it was 0.51
-      assert(sat(L.tint) < 0.40,
-        `${key}: the base tint is ${sat(L.tint).toFixed(2)} saturated — that is a turquoise cloud`);
+      /* ── THE BASE IS THE FRAME'S COLOUR, AND NOT VERY MUCH OF IT ────────
+       *
+       * "A turquoise cloud" is a claim about a HUE and this clause used to test
+       * only a magnitude — `sat(L.tint) < 0.40` — which is the same fault
+       * cel.mjs's "in its own hue" carried, in the same lane, on the same
+       * illuminant. It let through exactly the frame it was written to catch:
+       * shipped, GEONOSIS' base tint measured 0.245 saturated at hue 341°, a
+       * MAGENTA cloud belly on a dust world whose ground is 13°, whose sky is
+       * authored at 26° and whose sun is 35°. It passed with room to spare.
+       *
+       * It passed because 0.245 is a CANCELLATION, not a colour: the base is a
+       * weighted average of the ground bounce (warm on five of the seven
+       * levels), the sky (Preetham-blue on ALL of them — see Engine's
+       * skyProbeTurn) and the deck's own internal scattering (white). Two
+       * opposed chromas average to something small and pointed nowhere. The
+       * magnitude bound was reading that cancellation and calling it grey.
+       *
+       * With the sky sample turned to the level's own hue the three sources
+       * agree, and the numbers move the way that predicts — the tint's HUE
+       * lands within 25° of the level's sky on every level, and its saturation
+       * rises where the cancellation used to be:
+       *
+       *     level      before          after
+       *     scoria     0.220 @ 235°    0.220 @  21°   (sky  11°)
+       *     mustafar   0.208 @ 231°    0.208 @  18°   (sky   7°)
+       *     colosseum  0.204 @ 236°    0.204 @ 244°   (sky 219°)
+       *     wood       0.237 @ 224°    0.290 @  77°   (sky  96°)
+       *     drifts     0.068 @ 343°    0.073 @ 337°   (sky 219°)
+       *     alpine     0.389 @ 217°    0.390 @ 221°   (sky 220°)
+       *     geonosis   0.245 @ 341°    0.466 @  18°   (sky  26°)
+       *
+       * So the clause is stated as the two things it was always trying to say.
+       *
+       * THE HUE, gated on there being one. Below 0.15 saturated a base has no
+       * hue to be wrong about — the Shifting Waste's is 0.073, a genuinely
+       * neutral belly under a pale sky — and asserting a hue there is asserting
+       * on noise. 30° is not a new number: it is the bar lighting.mjs holds the
+       * fill to and cel.mjs holds the shade's ambient to, and this is the third
+       * term of the same sum. Four levels fail it on the shipped tree.
+       *
+       * THE MAGNITUDE, at the fault's own measurement. 0.51 is what the tint
+       * read when it was taken straight off the dome at full chroma, which is
+       * the frame this check was written from; 0.50 fails that and nothing
+       * else. It is LOOSER than the 0.40 it replaces and that is deliberate and
+       * costed: 0.40 was measured across a roster whose skies all disagreed
+       * with their own ground, i.e. it was a bound on the cancellation. The
+       * highest any level now reaches is Geonosis at 0.466 — and measured in
+       * display through its own grade its thick core lands at 0.441 saturation
+       * against the sky it hangs in front of at 0.439, which is a dust cloud on
+       * a dust world and not a card. The hue clause is what carries the weight
+       * the 0.40 was pretending to. */
+      const tintSat = sat(L.tint);
+      if (tintSat > 0.15) {
+        const hueOf = (c) => {
+          const mx = Math.max(c.r, c.g, c.b), mn = Math.min(c.r, c.g, c.b), d = mx - mn;
+          if (d < 1e-6) return null;
+          const h = mx === c.r ? ((c.g - c.b) / d + 6) % 6
+            : mx === c.g ? (c.b - c.r) / d + 2 : (c.r - c.g) / d + 4;
+          return h * 60;
+        };
+        const ht = hueOf(L.tint), hk = hueOf(new THREE.Color(a.skyColor ?? 0xbcd8ff));
+        assert(ht !== null && hk !== null, `${key}: the base tint or the sky has no hue`);
+        let off = Math.abs(ht - hk); if (off > 180) off = 360 - off;
+        assert(off < 30,
+          `${key}: the light on a cloud base is at ${ht.toFixed(0)}° against a sky this level `
+          + `authors at ${hk.toFixed(0)}° — ${off.toFixed(0)}° apart, so the deck is lit by `
+          + 'somebody else\'s sky');
+      }
+      assert(tintSat < 0.50,
+        `${key}: the base tint is ${tintSat.toFixed(2)} saturated — that is a coloured card, not a cloud`);
       rows.push(`${key} lit ${L.sun.toFixed(2)} / sky ${s.ceil.toFixed(2)} / base ${base.toFixed(2)} `
-        + `(${(L.sun / base).toFixed(1)}:1, tint sat ${sat(L.tint).toFixed(2)})`);
+        + `(${(L.sun / base).toFixed(1)}:1, tint sat ${tintSat.toFixed(2)})`);
     }
     return rows.join('; ');
   });

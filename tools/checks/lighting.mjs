@@ -18,6 +18,7 @@ import { Sky } from 'three/addons/objects/Sky.js';
 import {
   AERIAL, QUALITY, skyRadiance, skyShoulder, sunDirection, atmosphereMeter, hazeRadiance,
   cascadeBoxes, CASCADE_SPLIT, PMREM_FAR, BOUNCE_RADIUS, diffuseCap,
+  skyProbeTurn, skyTurn,
 } from '../../src/engine/Engine.js';
 import { SkyDome } from '../../src/engine/SkyDome.js';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
@@ -131,6 +132,135 @@ export function run({ check, assert, near, THREE: T }) {
     }
     assert(worst < 1e-6, `the port drifts ${(worst * 100).toFixed(4)}% from the model: ${lines[0]}`);
     return `${OUTDOOR.length} atmospheres x 4 directions x 3 channels, worst ${(worst * 1e9).toFixed(1)} ppb`;
+  });
+
+  check('sky: the probe is turned to the level\'s own hue, and the shader turns it the same way', () => {
+    /* THE FAULT THIS PINS. `skyRadiance` is Preetham and Preetham's colour is
+     * three hard-coded Rayleigh coefficients — there is no input to it, on any
+     * level, that can say what colour that level's sky is. So the environment
+     * probe baked from it came out BLUE on every level in the game, including
+     * the four whose every authored swatch is warm or green, and the probe is
+     * 62–81% of everything a shaded surface receives. The Ember Shelf's
+     * foreground sand rendered LAVENDER under an orange sky. See Engine's
+     * skyProbeTurn; cel.mjs's "in its own hue" is the property, this is the
+     * mechanism.
+     *
+     * TWO THINGS ARE PINNED HERE and they fail in different directions.
+     *
+     * ONE — THE TURN DOES WHAT IT SAYS. It must be the IDENTITY where the sky
+     * already agrees with its own level (or the three levels that were right
+     * move for nothing), it must LAND on the authored `skyColor` where it does
+     * not, and it must not touch a single luminance — the meter, the exposure,
+     * the drawn shoulder, the lit/shade ratio and the key share are all
+     * functions of luminance alone and every one of them would be a silent
+     * regression.
+     *
+     * TWO — THE GPU RUNS THE SAME ARITHMETIC. The bake happens in the sky
+     * shader; everything measurable in this harness happens in `skyTurn`. If
+     * the two ever disagree the checks go on passing and the frame goes on
+     * being wrong, which is the failure mode the whole file is built against.
+     * There is no GL context here, so the GLSL is read out of Engine.js as
+     * TEXT, transcribed once into JS below, and the transcription is required
+     * to agree with the shipped function to a part in 1e12. A change to either
+     * that is not made to the other fails on the exact-source clause first. */
+    const src = readFileSync(new URL('../../src/engine/Engine.js', import.meta.url), 'utf8');
+    const GLSL = [
+      "'  const float k = 0.5773502691896258;',",
+      "'  const vec3 W = vec3( 0.2126, 0.7152, 0.0722 );',",
+      "'  float axis = ( ( c.r + c.g + c.b ) / 3.0 ) * ( 1.0 - uSkyTurn.x );',",
+      "'  vec3 r = max( c * uSkyTurn.x + k * uSkyTurn.y * vec3( c.b - c.g, c.r - c.b, c.g - c.r ) + axis, 0.0 );',",
+      "'  return r * ( dot( c, W ) / max( dot( r, W ), 1e-9 ) );',",
+    ];
+    for (const line of GLSL) {
+      assert(src.indexOf(line) >= 0, `the shader's rotation has changed shape: ${line.slice(0, 52)}…`);
+    }
+    // …and it is set for the BAKE only, and put back. A turn left on the drawn
+    // dome would repaint every sky in the game.
+    assert(/turnU\.value\.set\(turn\.cos, turn\.sin\);/.test(src)
+      && /turnU\.value\.set\(1, 0\);/.test(src),
+      'the turn is no longer scoped to the probe bake');
+    assert(src.indexOf('m.uniforms.uSkyTurn = { value: new THREE.Vector2(1, 0) };') >= 0,
+      'the drawn dome no longer starts at the identity turn');
+
+    // the GLSL above, transcribed — the only copy of it in this harness
+    const glslTurn = (c, cos, sin) => {
+      const k = 0.5773502691896258, W = [0.2126, 0.7152, 0.0722];
+      const axis = ((c.r + c.g + c.b) / 3) * (1 - cos);
+      const r = [c.r * cos + k * sin * (c.b - c.g) + axis,
+        c.g * cos + k * sin * (c.r - c.b) + axis,
+        c.b * cos + k * sin * (c.g - c.r) + axis].map((v) => Math.max(v, 0));
+      const Lc = c.r * W[0] + c.g * W[1] + c.b * W[2];
+      const Lr = r[0] * W[0] + r[1] * W[1] + r[2] * W[2];
+      const g = Lc / Math.max(Lr, 1e-9);
+      return r.map((v) => v * g);
+    };
+
+    const hueOf = (c) => {
+      const mx = Math.max(c.r, c.g, c.b), mn = Math.min(c.r, c.g, c.b), d = mx - mn;
+      if (d < 1e-9) return null;
+      const h = mx === c.r ? ((c.g - c.b) / d + 6) % 6
+        : mx === c.g ? (c.b - c.r) / d + 2 : (c.r - c.g) / d + 4;
+      return h * 60;
+    };
+    const lumOf = (c) => c.r * 0.2126 + c.g * 0.7152 + c.b * 0.0722;
+    const rows = [];
+    let worstDrift = 0, worstLum = 0, worstLand = 0, quietest = Infinity;
+    for (const key of OUTDOOR) {
+      const a = LEVELS[key].atmosphere;
+      const m = atmosphereMeter(a);
+      const turn = skyProbeTurn(a, m);
+      const sun = sunDirection(a);
+      // the shipped function against the shader's own arithmetic, over the
+      // whole dome rather than at one convenient direction
+      for (let ring = 0; ring < 6; ring++) {
+        for (let k = 0; k < 8; k++) {
+          const el = ((ring + 0.5) / 6) * (Math.PI / 2), az = ((k + 0.5) / 8) * Math.PI * 2;
+          const d = new THREE.Vector3(Math.sin(el) * Math.cos(az), Math.cos(el), Math.sin(el) * Math.sin(az));
+          const raw = skyShoulder(skyRadiance(d, sun, a, new THREE.Color()));
+          const mine = skyTurn(raw, turn, new THREE.Color());
+          const ref = glslTurn(raw, turn.cos, turn.sin);
+          for (let i = 0; i < 3; i++) {
+            const rel = Math.abs([mine.r, mine.g, mine.b][i] - ref[i]) / Math.max(1e-6, Math.abs(ref[i]));
+            worstDrift = Math.max(worstDrift, rel);
+          }
+          // …and no luminance anywhere in the dome moved
+          worstLum = Math.max(worstLum, Math.abs(lumOf(mine) / Math.max(lumOf(raw), 1e-9) - 1));
+        }
+      }
+      // where it points: the mean sky, turned, against the swatch it is aimed at
+      const landed = skyTurn(m.skyMean, turn, new THREE.Color());
+      const hA = hueOf(landed), hS = hueOf(new THREE.Color(a.skyColor ?? 0xbcd8ff));
+      let off = Math.abs(hA - hS); if (off > 180) off = 360 - off;
+      worstLand = Math.max(worstLand, off);
+      // and the levels that already agreed are the ones it may not move
+      const before = hueOf(m.skyMean);
+      let moved = Math.abs(before - hS); if (moved > 180) moved = 360 - moved;
+      if (moved < 20) quietest = Math.min(quietest, moved);
+      rows.push(`${key} ${before.toFixed(0)}°→${hA.toFixed(0)}° (sky ${hS.toFixed(0)}°, turn ${turn.deg.toFixed(0)}°)`);
+    }
+    assert(worstDrift < 1e-12,
+      `the CPU turn and the shader's drift ${(worstDrift * 100).toFixed(6)}% apart — the probe is not `
+      + 'baked through the function every check in this harness measures');
+    assert(worstLum < 1e-9,
+      `the turn moved a luminance by ${(worstLum * 100).toFixed(6)}% — it is supposed to be rigid, and `
+      + 'the meter, the exposure and every lit/shade bound are downstream of it');
+    assert(worstLand < 1.0,
+      `the turned sky lands ${worstLand.toFixed(1)}° off the swatch it is aimed at`);
+    // the identity clause, stated on the data: a level already in agreement is
+    // turned by an angle no larger than the disagreement it started with.
+    for (const key of OUTDOOR) {
+      const a = LEVELS[key].atmosphere;
+      const m = atmosphereMeter(a);
+      const turn = skyProbeTurn(a, m);
+      const before = hueOf(m.skyMean), hS = hueOf(new THREE.Color(a.skyColor ?? 0xbcd8ff));
+      let gap = Math.abs(before - hS); if (gap > 180) gap = 360 - gap;
+      const deg = Math.min(turn.deg, 360 - turn.deg);
+      assert(gap > 15 || deg < 15,
+        `${key}: its sky was already ${gap.toFixed(0)}° from its own swatch and the turn moves it `
+        + `${deg.toFixed(0)}° — a level that was right is being moved`);
+    }
+    return `${rows.join('; ')} — shader/CPU agree to ${(worstDrift * 1e12).toFixed(2)}e-12, `
+      + `luminance unmoved to ${(worstLum * 1e9).toFixed(2)} ppb`;
   });
 
   check('sky: linear radiance keeps a hundred to one that the gamma curve threw away', () => {

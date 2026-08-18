@@ -56,8 +56,45 @@ import * as THREE from 'three';
 import { buildJedi } from '../../src/game/Bodies.js';
 import { BipedAnimator } from '../../src/game/Rig.js';
 import { attachCloak } from '../../src/game/Cloth.js';
+import { Player } from '../../src/game/Player.js';
 
 const ZERO = new THREE.Vector3();
+
+/**
+ * A world with no GPU and no level — enough for a real Player to move, fall
+ * and dodge in. The flip belongs to the body, so the body is the fixture.
+ */
+function stubWorld() {
+  return {
+    scene: new THREE.Scene(),
+    settings: { fov: 60, bloom: false, forcePower: 1, forceDrain: 1 },
+    terrain: { height: () => 0, normalAt: (x, z, o) => o.set(0, 1, 0), inBounds: () => true,
+      half: 200, surfaceAt: () => 'sand', crater() {} },
+    particles: null, bolts: null, time: 0, combatIntensity: 0,
+    physics: { add() {}, remove() {}, raycast: () => null, bodies: [], staticBoxes: [] },
+    engine: { addHeat() {}, hurt() {}, flash() {}, setRadial() {}, setSense() {},
+      camera: new THREE.PerspectiveCamera(60, 16 / 9, 0.045, 1000) },
+    report() {}, notify(t, d) { (this.notices ||= []).push(`${t} — ${d}`); },
+  };
+}
+
+/** A player in the air over that world, with a scripted move axis. */
+function airborne(world, { fromY = 20, axis = { x: 1, y: 0 } } = {}) {
+  const p = new Player(world, { isLocal: true });
+  p.position.set(0, fromY, 0);
+  p.velocity.set(0, 0, 0);
+  const input = {
+    keys: new Set(), buttons: [false, false, false], mouse: { dx: 0, dy: 0, wheel: 0 },
+    accel: { x: 0, y: 0 }, bindings: null,
+    moveAxis: (o) => { o.x = axis.x; o.y = axis.y; return o; },
+    act: () => false, actHit: () => false,
+  };
+  const ctx = { input, terrain: world.terrain, physics: world.physics, particles: null,
+    camera: world.engine.camera, time: 0, groundColor: 0, enemies: [] };
+  const step = (n) => { for (let i = 0; i < n; i++) { ctx.time = world.time += 1 / 60; p.update(1 / 60, ctx); } };
+  step(6);
+  return { p, ctx, step };
+}
 
 /** The worst structural link in the sheet, as a multiple of its cut length. */
 function worstStretch(cl) {
@@ -127,6 +164,53 @@ function somersault({ carried, seconds = 0.52, hz = 60, seed = 4242 } = {}) {
 }
 
 export async function run({ check, assert }) {
+  check('somersault: a dive cannot be flipped out of', () => {
+    /**
+     * A DIVE WEARING A SOMERSAULT, WHICH IS NOT WHAT EITHER OF THEM IS.
+     *
+     * `_tryDive` refuses while `dashTimer > 0` — a dodge in progress is a
+     * commitment and you may not slam out of it — and `_tryDash` had no mirror
+     * clause, so the exclusion held in one direction only. Measured on the
+     * shipped code: dive, then dash on the next frame, and the body kept the
+     * dive's 31.6 m/s of descent while gaining the dash's horizontal velocity,
+     * FLIP_TIME of somersault (this file's subject), 0.28 s of invulnerability
+     * and a 36-stamina bill for one movement. `_tryDive`'s own note calls a
+     * dive "a velocity and nothing else" and prices the landing off it — a
+     * 30 m/s descent you can steer, spin and be invulnerable through is a
+     * different move altogether, and it is free of every constraint the dive
+     * was designed around.
+     *
+     * The property is symmetry: whichever you press first, the second is
+     * refused, and it is refused OUT LOUD.
+     */
+    const w = stubWorld();
+    const a = airborne(w);
+    assert(a.p._tryDive(a.ctx), 'the fixture could not dive at all');
+    const stamAfterDive = a.p.stamina;
+    w.notices = [];
+    a.p._tryDash(a.ctx);
+    assert(a.p.dashTimer === 0,
+      `a dash started ${a.p.dashTimer.toFixed(2)}s into a committed dive`);
+    assert(a.p.flipT === 0,
+      `the dive is wearing ${a.p.flipT.toFixed(2)}s of somersault — the flip belongs to the dodge`);
+    assert(a.p.invuln === 0, `the dive bought ${a.p.invuln.toFixed(2)}s of invulnerability out of the dash`);
+    assert(a.p.stamina === stamAfterDive,
+      `the pair cost ${(a.p.maxStamina - a.p.stamina).toFixed(0)} stamina — two prices for one movement`);
+    assert((w.notices || []).some((n) => /dive/i.test(n)),
+      `the dash was refused in silence during a dive: ${JSON.stringify(w.notices)}`);
+
+    /* AND THE OTHER WAY ROUND, which has always held — asserted here so the
+     * pair is one property rather than two that can drift apart. */
+    const w2 = stubWorld();
+    const b = airborne(w2);
+    b.p._tryDash(b.ctx);
+    assert(b.p.dashTimer > 0, 'the fixture could not dash at all');
+    assert(b.p._tryDive(b.ctx) === false, 'a dash was slammed out of mid-dodge');
+    assert(!b.p.diving, 'the dive committed anyway');
+    return `dive then dash: refused, ${a.p.velocity.y.toFixed(1)} m/s descent kept, no flip, no invuln; `
+      + 'dash then dive: refused';
+  });
+
   check('somersault: the cape turns with the body, and a slow machine keeps it', () => {
     /* A cape in a hard turn SHOULD stretch — that is what a verlet solve's
      * compliance is for, and a garment that never gives at all reads as sheet

@@ -917,7 +917,7 @@ export class BipedAnimator {
      * bare `humanoidSkeleton`, which is what most of the animation harness
      * drives) gets `null` and the analytic model, unchanged.
      */
-    this._sole = this._measureSole(rig);
+    this._sole = null;
     if (this._sole) {
       // The roll integral, once, over every angle a foot can reach.
       const n = Math.round((ROLL_HI - ROLL_LO) / ROLL_STEP) + 1;

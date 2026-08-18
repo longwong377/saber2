@@ -49,7 +49,87 @@ function victim(hp = 100) {
   };
 }
 
+/**
+ * A world with no GPU and no level, wide enough to kill a real Player in and
+ * to stand one back up in. `respawn` rebuilds the rig, so `settings` has to
+ * carry what `buildJedi` reads.
+ */
+function stubWorld(THREE) {
+  return {
+    scene: new THREE.Scene(),
+    settings: { fov: 60, bloom: false, forcePower: 1, forceDrain: 1, robeIndex: 0, hairIndex: 1 },
+    terrain: { height: () => 0, normalAt: (x, z, o) => o.set(0, 1, 0), inBounds: () => true,
+      half: 200, surfaceAt: () => 'sand',
+      crater(x, z, r, d) { (this.craters ||= []).push({ x, z, r, d }); } },
+    particles: null, bolts: null, time: 0, combatIntensity: 0, training: false,
+    physics: { add() {}, remove() {}, raycast: () => null, bodies: [], staticBoxes: [] },
+    engine: { addHeat() {}, hurt() {}, flash() {}, setRadial() {}, setSense() {}, rumble() {},
+      setDrain() {}, setBars() {},
+      camera: new THREE.PerspectiveCamera(60, 16 / 9, 0.045, 1000) },
+    report() {}, notify() {}, feelOn: () => true, killTime() {}, setTimeScale() {}, onPlayerDeath() {},
+  };
+}
+
 export async function run({ check, assert }) {
+  check('vitals: coming back to life does not land on the people standing there', async () => {
+    /**
+     * DYING WHILE FALLING WAS A FREE FORCE SLAM AT YOUR REVIVE POINT.
+     *
+     * `respawn()` reset hp, Force, stamina, velocity and `invuln` — and not
+     * `fallSpeed`, and not `diving`. Both are state of the body that just
+     * died: `fallSpeed` is the most negative velocity.y since the last contact
+     * and `diving` is a commitment only an impact may answer. The next frame
+     * `_collide` saw `!wasGrounded && fallSpeed < -7` and fired `_land` AT THE
+     * REVIVE POINT, with `dove` true so the DIVE_LAND multiplier was on it.
+     * Measured on the shipped code, after a 1 s fall: a trooper 3 m from the
+     * spawn went 46 -> 18.7 hp and was thrown at 14.8 m/s, the ground
+     * cratered, the camera shook 0.55 — and the player took none of it,
+     * because `respawn` sets `invuln = 2.2` two lines further down.
+     *
+     * `World._reviveDowned` is the reachable path: it is the co-op wave-clear
+     * revive, and it runs once per death for the whole session.
+     *
+     * The property is the one the mode promises: a revive is not an event that
+     * happens TO anyone else. Asserted on a bystander's hp rather than on the
+     * fields, because a second field with the same problem — a stale
+     * `jumpHeld`, a stale dash — would be the same bug again and this has to
+     * see it.
+     */
+    const THREE = await import('three');
+    const w = stubWorld(THREE);
+    const p = new Player(w, { isLocal: true });
+    p.position.set(0, 40, 0);
+    const input = { keys: new Set(), buttons: [false, false, false], mouse: { dx: 0, dy: 0, wheel: 0 },
+      accel: { x: 0, y: 0 }, bindings: null, moveAxis: (o) => { o.x = 0; o.y = 0; return o; },
+      act: () => false, actHit: () => false };
+    const bystander = { position: new THREE.Vector3(3, 0, 0), dead: false, hp: 46, knocked: 0,
+      applyKnockback(v, dmg) { this.hp -= dmg; this.knocked = v.length(); },
+      damage(d) { this.hp -= d; }, stun() {}, platform: () => null };
+    const ctx = { input, terrain: w.terrain, physics: w.physics, particles: null,
+      camera: w.engine.camera, time: 0, groundColor: 0, enemies: [bystander] };
+    for (let i = 0; i < 60; i++) { ctx.time = w.time = i / 60; p.update(1 / 60, ctx); }
+    assert(p.fallSpeed < -20, `the fixture is not falling fast enough to test this (${p.fallSpeed.toFixed(1)})`);
+
+    // …and it died in a dive, which is the worst case: DIVE_LAND is on it.
+    p.diving = true;
+    let shook = 0;
+    p.camera.addShake = () => { shook++; };
+    p.respawn(new THREE.Vector3(0, 0, 0));
+    for (let i = 0; i < 10; i++) { ctx.time = w.time += 1 / 60; p.update(1 / 60, ctx); }
+
+    assert(bystander.hp === 46,
+      `a bystander 3 m from the revive point went 46 -> ${bystander.hp.toFixed(1)} hp — the fall the player `
+      + 'died in arrived at the place they came back to');
+    assert(bystander.knocked === 0,
+      `the revive threw a bystander at ${bystander.knocked.toFixed(1)} m/s`);
+    assert(!(w.terrain.craters || []).length,
+      `the revive cratered the ground ${(w.terrain.craters || []).length} time(s)`);
+    assert(shook === 0, `the revive shook the camera ${shook} time(s)`);
+    assert(p.alive && p.hp === p.maxHp, 'the revive did not actually stand the player back up');
+    return `revived mid-fall (${p.fallSpeed.toFixed(2)} fallSpeed, diving ${p.diving}): bystander untouched at `
+      + `${bystander.hp} hp, no crater, no shake`;
+  });
+
   check('vitals: an enemy blade deals a NUMBER, not a method', () => {
     // The collision itself. If someone ever puts a `damage` number back on the
     // instance, or renames the method, this is the line that notices.

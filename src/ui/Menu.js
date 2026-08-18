@@ -29,7 +29,10 @@ import { LEVELS, LEVEL_ORDER } from '../game/Levels.js';
 // SPEED_GRADE/PARRY_GRADE/parryScale are the gates between them. Every number
 // on that page is read from these, so a balance pass that moves a gate moves
 // the page that teaches it in the same commit.
-import { DIFFICULTY, GRADE_NAME, GRADE_DAMAGE, SPEED_GRADE, PARRY_GRADE, parryScale } from '../game/Combat.js';
+/* CATCH comes in with them because the Codex teaches the catch now, and every
+ * number in that row is read off this record rather than transcribed. */
+import { DIFFICULTY, GRADE_NAME, GRADE_DAMAGE, SPEED_GRADE, PARRY_GRADE, parryScale,
+         CATCH } from '../game/Combat.js';
 // The Codex and the training panel both quote Focus's numbers. They are read
 // from the system rather than typed, because both of them had been left behind
 // by the round that changed heldScale from 0.35 to 0.18.
@@ -107,7 +110,12 @@ import { ACTIONS, MOUSE, WHEEL, keyLabel, loadBindings, saveBindings, defaultBin
          conflicts, chordKey, WALK_SCALE, walkScale, registerOrders, ORDER_ACTIONS,
          codesFor, isPadCode, PAD_MODIFIERS } from '../engine/Bindings.js';
 // The six formation orders, so they can be pushed through Bindings' seam below.
-import { AREAS, FORMATIONS, MAX_STRENGTH, TEAM_DAMAGE_DEFAULT, DEFAULT_FORMATION } from '../game/Command.js';
+/* `ORDERS` is aliased because Order.js already exports a table of that name —
+ * the Jedi orders a crystal belongs to — and the two are unrelated. This one is
+ * `{...FORMATIONS, ...COMMAND_FORCE}`: what the order WHEEL is handed, which is
+ * the set the block below has to count. */
+import { AREAS, FORMATIONS, COMMAND_FORCE, ORDERS as COMMAND_ORDERS,
+         MAX_STRENGTH, TEAM_DAMAGE_DEFAULT, DEFAULT_FORMATION } from '../game/Command.js';
 // THE DATABANK. `ARCHETYPES` is the roster — the page list is enumerated off it
 // and never typed — and Databank.js carries the one thing a roster cannot hold:
 // which side a body fights for, what it is carrying, and who it is.
@@ -1270,9 +1278,48 @@ export const CODEX = [
   { device: 'Mouse', padDevice: 'Right stick',
     text: () => '<b>Flick</b> up, left, right or down to set the guard zone. It stays where you '
       + 'put it. Slow movement is pure aim.' },
+  /* NO NUMBER HERE, DELIBERATELY. This row said "inside 0.2 s" — the raw
+   * `PARRY_GRADE.window`, before `parryScale(difficulty)` touches it — and the
+   * window is 320 ms on padawan, 250 on knight (the DEFAULT), 200 on master and
+   * 172 on grandmaster. So it was wrong on three tiers of four, and on the tier
+   * most players are on it under-sold the window by 25%. Thirteen lines below
+   * it in the same panel, `#codex-teaching` prints "inside 250 ms" and "inside
+   * 125 ms" off the same two constants and the selected difficulty: a player
+   * read two different numbers on one screen. This row cannot know the
+   * difficulty — `codexHtml` is handed bindings and a pad and nothing else —
+   * so it stops competing with the twin that can, and names where the number
+   * is instead of guessing at it. */
   { device: 'Mouse', padDevice: 'Right stick',
-    text: () => 'Flick into a zone as the bolt lands — inside 0.2 s — and it is a <b>parry</b>: '
-      + 'the bolt goes back at whatever is under your reticle.' },
+    text: () => 'Flick into a zone as the bolt lands and it is a <b>parry</b>: the bolt goes '
+      + 'back at whatever is under your reticle. How long that window is depends on the '
+      + 'difficulty — it is printed under <b>The four answers to a bolt</b> below.' },
+  /**
+   * CATCH AND THROW, WHICH WAS TAUGHT NOWHERE AT ALL.
+   *
+   * `Combat.js`'s CATCH exists to remove the contradiction the player reported
+   * in their own words — "I don't understand how you're supposed to block and
+   * also aim at an enemy in the same motion because when you're moving the
+   * blade to specifically deflect the cursor can't move." A search of 25 236
+   * characters of player-facing text for `stick`, `caught`, `catch`, `holds
+   * the bolt`, `camera comes back`, `auto-guard` and `six bolts` found none of
+   * them: the answer to the game's most-complained-about problem existed and
+   * no screen said so. A player who lets go of the blade button on contact —
+   * which every other sentence on this page teaches — never learns the
+   * mechanic is there.
+   *
+   * Two rows, because it is two facts (the bolt stops; the cone covers the
+   * follow-up), and every number is read off CATCH.
+   */
+  { keys: ['blade'], hold: true,
+    text: () => `Keep holding after a bolt lands and it does not leave — the blade <b>catches</b> it, `
+      + `up to ${CATCH.maxHeld}, and the camera comes back to you for `
+      + `${Math.round(CATCH.hold * 1000)}&nbsp;ms even with the button still down. Let go and every `
+      + `bolt you are holding goes where you are looking.` },
+  { device: 'Mouse', padDevice: 'Right stick',
+    text: () => `So aim AFTER the block, not during it. The window refreshes on each new catch and `
+      + `shuts after ${CATCH.maxOpen.toFixed(2)}&nbsp;s, and a catch you made yourself opens a `
+      + `${Math.round(CATCH.autoCone * 360 / Math.PI)}&deg; cone in front of you for `
+      + `${CATCH.autoGuard.toFixed(2)}&nbsp;s that takes the rest of the burst for free.` },
   { keys: ['attackOver'], text: () => 'Overhead attack — wind up over the head and cut down. '
       + '<b>Hold</b> it and the arc grows and the cut slows: a charged heavy, and the blade is '
       + 'genuinely moving faster when it lands.' },
@@ -1291,6 +1338,19 @@ export const CODEX = [
   { keys: ['jump'], text: () => 'Force jump — hold to leap higher. Landing sends out a shockwave.' },
   { keys: ['jump', 'jump'], text: () => 'Double jump. Hold on the way up to feed Force into the leap.' },
   { keys: ['dash'], text: () => 'Dash, in any direction you are holding. No direction = dash back.' },
+  /* THE DIVE HAD NO KEY, NO ROW AND NO SENTENCE. `Player._tryDive` is real and
+   * checked — it fires on an attack pressed with both feet off the ground, at
+   * enough height to be a fall, and lands a shockwave that hurts far more than
+   * the drop would. Its own comment argues that "attack, in the air" needs no
+   * binding of its own because "a key nobody can find is a feature nobody has";
+   * it had no key AND no line of text, which is the same thing with an extra
+   * step. NO NUMBERS ARE TYPED HERE: `DIVE_SPEED`, `DIVE_CLEAR` and
+   * `DIVE_STAMINA` are module-private to Player.js, and a transcription of
+   * three constants this file cannot import is the hand-written twin HANDOFF
+   * §2.3 is about. The request to export them has been sent. */
+  { keys: ['thrust'], text: () => 'Attack while you are in the air and high enough to fall — that is '
+      + 'a <b>dive</b>, not a stab. You drop blade-first and land a shockwave far bigger than the '
+      + 'same fall on its own. It costs a dash\u2019s stamina and you cannot dash out of it.' },
   { keys: ['rollL', 'rollR'], text: () => 'Roll the wrist. Changes the plane your blade cuts on.' },
   // Kept to two or three lines each, like every other row: .codex-grid sizes a
   // grid ROW to its tallest cell, so one five-line entry opens a hole beside
@@ -1378,13 +1438,34 @@ export const CODEX = [
    * because the six rows under it are the same six orders the wheel holds.
    * The count comes off the registry for the same reason the emote row's
    * does: a seventh formation moves this line without anybody editing it. */
+  /* THE COUNT COMES OFF THE TABLE THE WHEEL IS HANDED, which is not the one
+   * this block was reading. `HUD.OrderWheel` is constructed with `ORDERS` —
+   * `{...FORMATIONS, ...COMMAND_FORCE}`, nine — plus a hold-ground slot, so it
+   * has TEN. This line said "the 7 orders" because it counted `ORDER_ACTIONS`,
+   * which is the registry of orders that have a KEY, and only formations do.
+   * The block's own note claims its rows come off the table so "a seventh entry
+   * appears the day it is authored"; it was reading the wrong table, and the
+   * two Force verbs authored with it appeared in no list a player could read —
+   * not here, not in the teaching panel, nowhere but a wheel caption. */
   { keys: ['orderwheel'], hold: true,
-    text: () => `Order wheel — the ${ORDER_ACTIONS.length} orders and <b>hold ground</b>, on one key. `
-      + `Hold it, aim at a slot, let go. The ${ORDER_ACTIONS.length} keys below are the same orders `
-      + 'without the wheel, for anybody who would rather not.' },
+    text: () => `Order wheel — all ${Object.keys(COMMAND_ORDERS).length} orders and `
+      + '<b>hold ground</b>, on one key. Hold it, aim at a slot, let go. The '
+      + `${ORDER_ACTIONS.length} keys below are the ${ORDER_ACTIONS.length} FORMATIONS without the `
+      + 'wheel, for anybody who would rather not; the two Force orders are the wheel only.' },
   ...ORDER_ACTIONS.map(o => ({
     keys: [o.action],
     text: () => `<b>${o.name}</b> — ${o.blurb}`,
+  })),
+  /* THE TWO FORCE ORDERS, GENERATED — and every number derived, including the
+   * arc, which is stored in radians and is the only reason this row is not a
+   * plain interpolation. They have no key of their own by design (see
+   * COMMAND_FORCE), so the wheel's binding is the lead, which is the truthful
+   * one: holding that key is how you cast them. */
+  ...Object.values(COMMAND_FORCE).map(P => ({
+    keys: ['orderwheel'], hold: true, force: P,
+    text: () => `<b>${P.name}</b> — ${P.blurb} Reaches ${P.radius}&nbsp;m`
+      + (P.arc ? `, within &plusmn;${Math.round(P.arc * 180 / Math.PI)}&deg; of where you face` : '')
+      + `, lasts ${P.seconds}&nbsp;s, and will not come again for ${P.cd}&nbsp;s.`,
   })),
 
   /**
@@ -1518,6 +1599,12 @@ function powerChips(row) {
   if (row.strat) {
     return `<em class="cost">${row.strat.cost} Force</em>`
       + (row.strat.commandOnly ? '<em class="cost gate">needs an army</em>' : '');
+  }
+  /* A COMMAND_FORCE verb carries its own record for the same reason a
+   * stratagem does: it is cast off the order wheel and has no action id of its
+   * own for POWER_COST to be keyed by. */
+  if (row.force) {
+    return `<em class="cost">${row.force.cost} Force</em><em class="cost gate">needs an army</em>`;
   }
   const id = row.keys && row.keys.length === 1 ? row.keys[0] : null;
   const cost = id ? POWER_COST[id] : undefined;
@@ -1768,6 +1855,18 @@ export function codexTeaching({ difficulty = 'knight', director = null } = {}) {
       tests, at <b>${tier.name}</b>. Change the trial on <b>Deploy</b> and the two windows below
       move with it.</p>
     <div class="codex-facts rungs">${ladder}</div>
+    <!-- THE FIFTH ANSWER, which this page did not know about. A bolt can be
+         HELD: the four rungs above all describe a bolt that leaves on contact,
+         and the whole reason Combat.js's CATCH record exists is that it does
+         not have to. Every number below is read off that record. -->
+    <p class="hint codex-note">And a fifth answer the four rungs above do not cover: a bolt does not
+      have to leave at all. Keep the guard held as it lands and the blade <b>catches</b> it — up to
+      ${CATCH.maxHeld} at once — and for ${Math.round(CATCH.hold * 1000)}&nbsp;ms the camera comes
+      back to you with the button still down. That is the answer to aiming and blocking being the
+      same motion: you do them one after the other. The hold refreshes on each catch up to
+      ${CATCH.maxOpen.toFixed(2)}&nbsp;s, and a catch you made yourself opens a
+      ${Math.round(CATCH.autoCone * 360 / Math.PI)}&deg; cone for ${CATCH.autoGuard.toFixed(2)}&nbsp;s
+      that takes the rest of that burst for you.</p>
 
     <h3 class="stacked">What a run pays you, and what it buys</h3>
     <p class="hint codex-note">Insight is earned by surviving and dies with the run. You kneel —
@@ -1978,12 +2077,61 @@ export function characterSheet(face) {
   };
 }
 
+/**
+ * EVERY SCALAR IS THE SHAPE ITS DEFAULT IS, OR IT IS ITS DEFAULT.
+ *
+ * `loadSettings` normalised three fields — the blade ceiling, the face sheet
+ * and the wardrobe — and TYPE-CHECKED NONE of the other 73. Nothing reachable
+ * through today's controls can write the wrong shape; that is exactly what
+ * makes it the next schema change's trap, and the blast radius is not small.
+ * Measured by loading a blob with `fov: "wide"`: the string went straight
+ * through to `camera.fov` and produced a NaN projection matrix — a black
+ * screen with no error — and `bladeLength: "long"` came back as NaN through
+ * the ceiling clamp that was already there.
+ *
+ * The rule is read off `DEFAULT_SETTINGS` itself rather than from a schema
+ * typed beside it, which is the same argument `characterSheet`'s `num`/`has`
+ * make one screen down and the reason this cannot go stale when a setting is
+ * added: a number default demands a finite number, a boolean demands a
+ * boolean, a string demands a string, and a list demands a list of strings.
+ * The three keys with a normaliser of their own (`face`, `wardrobe`) and the
+ * one that is legitimately `number | null` (`seed`) are named, because their
+ * shapes are not derivable from a default of `{}` or `null`.
+ *
+ * It is NOT a legality check. Whether `level` names a level that still exists
+ * is somebody else's question and is already answered — `World.loadLevel`
+ * substitutes `LEVEL_ORDER[0]` deliberately — and re-deciding it here would be
+ * the second copy of a rule that already has one.
+ */
+const SETTING_SHAPED = { face: 1, wardrobe: 1, seed: 1 };
+export function coerceSettings(s) {
+  for (const [k, def] of Object.entries(DEFAULT_SETTINGS)) {
+    if (SETTING_SHAPED[k]) continue;
+    const v = s[k];
+    if (Array.isArray(def)) {
+      if (!Array.isArray(v) || !v.every(x => typeof x === 'string')) s[k] = def.slice();
+    } else if (typeof def === 'number') {
+      if (typeof v !== 'number' || !Number.isFinite(v)) s[k] = def;
+    } else if (typeof def === 'boolean') {
+      if (typeof v !== 'boolean') s[k] = def;
+    } else if (typeof def === 'string') {
+      if (typeof v !== 'string') s[k] = def;
+    }
+  }
+  // `seed` is the one field that is legitimately a number OR null — null means
+  // "draw a fresh one", which is not the same as any number.
+  if (s.seed !== null && (typeof s.seed !== 'number' || !Number.isFinite(s.seed))) {
+    s.seed = DEFAULT_SETTINGS.seed;
+  }
+  return s;
+}
+
 export function loadSettings() {
   try {
     const raw = localStorage.getItem(STORE_KEY);
     const legacy = drainLegacy();
     if (!raw && !legacy) return { ...DEFAULT_SETTINGS };
-    const s = { ...DEFAULT_SETTINGS, ...(raw ? JSON.parse(raw) : null), ...legacy };
+    const s = coerceSettings({ ...DEFAULT_SETTINGS, ...(raw ? JSON.parse(raw) : null), ...legacy });
     // A blob written with the leash off and then read with it on would carry a
     // 4 m blade into a normal run without a single control saying so.
     s.bladeLength = Math.min(s.bladeLength, bladeCeiling(s));
@@ -3289,6 +3437,37 @@ export class Menu {
    */
   _syncRules() {
     if (!this._ruleCards) return;
+    /**
+     * …AND THE WHOLE COLUMN GOES OUT WHEN THE MODE WILL NOT HONOUR IT.
+     *
+     * index.html says, unconditionally, that the rules "are in force from the
+     * first wave". Measured: `legalRuleSet` accepts them in all EIGHT modes and
+     * the run honours them in five. `_compose` returns into `_composeDuel`
+     * twenty-seven lines before the rules are unioned in, so a duel's wave-6
+     * conditions are `[]`; `start()` returns before `_compose` at all in
+     * sandbox; and training runs a `DojoDirector`, which has no composer to
+     * reach. So in three modes a player lights up to four cards, watches them
+     * be written to settings, and fights a run that has never heard of them.
+     *
+     * This is exactly what `_syncTheatre` was written for and says in its own
+     * words: "a card that is lit, written to settings and then thrown away
+     * reads as the picker being randomly broken." Same shape, same switch — a
+     * MODE declares it and this reads it, so there is one authority and not a
+     * mode name repeated in the front end. `MODES[key].fixedRules` is the
+     * string; the request to add it to the three modes that need it has been
+     * sent to the lane that owns src/game/Waves.js, and the day it lands this
+     * column greys itself with no edit here.
+     */
+    const inert = MODES[this.s.mode]?.fixedRules || null;
+    this._rulesInert = inert;
+    this.el.rules?.classList.toggle('inert', !!inert);
+    const note = document.getElementById('rule-note');
+    if (note) {
+      if (inert) {
+        if (this._ruleNote === undefined) this._ruleNote = note.textContent;
+        note.textContent = inert;
+      } else if (this._ruleNote !== undefined) note.textContent = this._ruleNote;
+    }
     const d = this._ruleDirector();
     this.s.rules = d.legalRuleSet(this.s.rules || []);
     const held = new Set(this.s.rules);
@@ -3301,7 +3480,10 @@ export class Menu {
       const clash = !on && [...held].find((h) => CONDITIONS[h]?.excludes?.includes(key)
         || C.excludes?.includes(h));
       const full = !on && held.size >= CONDITION_MAX;
-      const why = veto ? `${LEVELS[this.s.level]?.name ?? 'this theatre'}: ${veto}`
+      // The mode's refusal comes FIRST: a rule this run will never read is not
+      // usefully described as clashing with another one it will also not read.
+      const why = inert ? inert
+        : veto ? `${LEVELS[this.s.level]?.name ?? 'this theatre'}: ${veto}`
         : clash ? `cannot be held with ${CONDITIONS[clash].label}`
         : full ? `${CONDITION_MAX} rules is the most a wave can carry`
         : null;
@@ -4581,8 +4763,19 @@ export class Menu {
     const modes = [
       ['earned', 'Earned',
        'The game. Insight is a run currency, you kneel to spend it, and nothing carries over.'],
+      /* "you simply never run short" WAS NOT TRUE, and it is not this file's
+       * number to fix. `World.HOLOCRON_PURSE` is 600 and its comment says "600
+       * clears the whole chart with room over"; measured over the shipped
+       * FACETS and COST tables through `Communion.costOf` itself — cheapest
+       * first, rank 0, the most favourable order there is — waking all 46
+       * facets costs 2359, and 600 buys 22 of them. So the card is written to
+       * what the mode actually is: a purse that starts every deploy full
+       * enough to build, against a price series that still climbs. The derived
+       * replacement for the constant has been sent to the lane that owns
+       * src/game/World.js; when it lands, this line can promise more again. */
       ['open', 'Open',
-       'A full purse at every deploy. You still kneel, still choose, and prices still climb — you simply never run short.'],
+       'A deep purse at every deploy, and it refills for the next one. You still kneel, still choose, '
+       + 'and prices still climb — a full lattice is still further than one run\u2019s spending.'],
       ['all', 'Everything woken',
        'Every facet already yours before the first wave. No choice at all: this is for looking at a power, not earning it.'],
     ];
@@ -5521,10 +5714,29 @@ export class Menu {
     const seedField = document.getElementById('opt-seed');
     if (seedField) {
       seedField.value = this.s.seed == null ? '' : String(this.s.seed);
+    }
+    /* …AND THE BOX SHOWS THE NUMBER THAT WILL ACTUALLY BE PLAYED.
+     *
+     * The field took ten digits and stored `Number(clean) >>> 0`, which is a
+     * 32-bit wrap: 9999999999 became 1410065407 while the box went on showing
+     * 9999999999. So two different typed seeds ran the same waves and nothing
+     * on screen said so — in the one field whose entire purpose is that the
+     * number you read out is the number that composed the run.
+     *
+     * Clamped rather than wrapped, because a wrap turns 4294967296 into 0 and
+     * "one past the end is the beginning" is not something a seed box should
+     * teach anybody, and then ECHOED BACK: the stored value and the visible
+     * value are written from the same variable, one line apart, so they cannot
+     * disagree. Nothing under the ceiling is touched, so a player typing an
+     * ordinary seed sees no interference at all. */
+    const SEED_MAX = 0xFFFFFFFF;
+    if (seedField) {
       seedField.addEventListener('input', () => {
         const clean = String(seedField.value || '').replace(/[^0-9]/g, '').slice(0, 10);
-        if (seedField.value !== clean) seedField.value = clean;
-        this.s.seed = clean === '' ? null : (Number(clean) >>> 0);
+        const seed = clean === '' ? null : (Math.min(Number(clean), SEED_MAX) >>> 0);
+        const shown = seed == null ? '' : String(seed);
+        if (seedField.value !== shown) seedField.value = shown;
+        this.s.seed = seed;
         saveSettings(this.s);
       });
     }

@@ -35,6 +35,23 @@ import {
 import { skyRadiance, skyShoulder, skyDisplayShoulder, sunDirection } from '../../src/engine/Engine.js';
 import { SkyDome } from '../../src/engine/SkyDome.js';
 
+/**
+ * A GROUND NO LEVEL SHIPS IS NOT THIS GAME'S GROUND. Two checks below built
+ * their air and their horizon on `dunes`, one of the six presets — dunes,
+ * arena, canyon, meadow, works, cavern — that `LEVEL_ORDER` does not reach.
+ * `Terrain`'s constructor answers an unknown preset with `dunes` rather than
+ * an error, so a name that stops meaning anything measures the default and
+ * still reports a clean result. This refuses one.
+ */
+const SHIPPED = [...new Set(LEVEL_ORDER.map((k) => LEVELS[k] && LEVELS[k].terrain).filter(Boolean))];
+function shipped(name) {
+  if (!SHIPPED.includes(name)) {
+    throw new Error(`world-immersion measured '${name}', which no level in LEVEL_ORDER stands on`
+      + ` — the grounds the game ships are ${SHIPPED.join(', ')}`);
+  }
+  return name;
+}
+
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
 /** The levels with open ground and a sun on it, ASKED rather than listed.
@@ -806,7 +823,7 @@ export function run({ check, assert, near }) {
     assert(peak.vis < vis0 * 0.28,
       `visibility only fell ${vis0.toFixed(0)} m → ${peak.vis.toFixed(0)} m`);
     {
-      const t = new Terrain(new THREE.Scene(), 'dunes', 0.5);
+      const t = new Terrain(new THREE.Scene(), shipped('geonosis'), 0.5);
       t._scene = scene;
       scene.fog.density = fog0; t._syncAtmosphere();          // calm, outdoors
       const calm = t._uniforms.uHaze.value.y;
@@ -952,7 +969,7 @@ export function run({ check, assert, near }) {
      * Measured as parallax: from the centre and from 60 m off it, the apparent
      * bearing of a point on the near range has to move several times as far as
      * the same point on the far one. */
-    const terrain = new Terrain(new THREE.Scene(), 'dunes', 0.5);
+    const terrain = new Terrain(new THREE.Scene(), shipped('geonosis'), 0.5);
     // no level here: this one surveys addHorizon against a bare heightfield
     const world = stubWorld(terrain);
     world.scene.fog = new THREE.FogExp2(0xd8c8a4, 0.0042);

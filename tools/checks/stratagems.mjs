@@ -301,6 +301,80 @@ export async function run({ check, assert, THREE: T }) {
     return `1 s of held W: ${walked.toFixed(2)} m free, ${spelled.toFixed(2)} m while spelling`;
   });
 
+  check('stratagems: the lock holds the dash and the jump too, and says so', () => {
+    /**
+     * THE CHECK ABOVE MEASURED THE ONE VERB THAT WAS LOCKED.
+     *
+     * `_move` zeroes the move axis while `stratagems.arming` and its own note
+     * calls that the price the whole mechanic is built on — "you stop, in the
+     * open, for as long as the code takes". Two other verbs walked straight
+     * past it. `_tryDash` reads `ctx.input.moveAxis()` FRESH, after the
+     * zeroing, so it kept its direction; the jump block was never guarded at
+     * all. Measured through this fixture on the shipped code: arming + run
+     * 0.00 m of travel, arming + dash 3.87 m WITH 0.16 s of invulnerability,
+     * arming + jump a 4.32 m apex. The WASD you spell a code with is the same
+     * WASD that aims the dash, so the escape was aimed.
+     *
+     * Driven through `update` rather than `_move`, because the defect was in
+     * the two paths `_move` does not own — a check that calls `_move` cannot
+     * see either of them, which is why the one above did not.
+     */
+    const held = new Set(['moveF']), hits = new Set();
+    const b = bench();
+    b.ctx.input = stubInput(held, hits);
+    b.world.notices = [];
+    b.world.notify = (t, d) => b.world.notices.push(`${t} — ${d}`);
+    const frame = (i) => { b.world.time = b.ctx.time = i / 60; b.p.update(1 / 60, b.ctx); hits.clear(); };
+
+    const runs = {};
+    for (const verb of ['run', 'dash', 'jump']) {
+      const c = bench();
+      c.ctx.input = stubInput(held, hits);
+      c.world.notices = [];
+      c.world.notify = (t, d) => c.world.notices.push(`${t} — ${d}`);
+      /* THE KEY IS HELD, not the flag set: `_stratagemInput` runs inside
+       * `update` and writes `arming` from the input every frame, so a fixture
+       * that set the flag by hand would have it cleared on the first step. */
+      held.add('stratagem');
+      const start = c.p.position.clone();
+      let apex = 0, invuln = 0;
+      for (let i = 0; i < 60; i++) {
+        if (i === 3 && verb !== 'run') hits.add(verb);
+        if (verb === 'jump' && i > 3 && i < 40) held.add('jump'); else held.delete('jump');
+        c.world.time = c.ctx.time = i / 60;
+        c.p.update(1 / 60, c.ctx);
+        hits.clear();
+        apex = Math.max(apex, c.p.position.y);
+        invuln = Math.max(invuln, c.p.invuln);
+      }
+      held.delete('jump'); held.delete('stratagem');
+      runs[verb] = { moved: Math.hypot(c.p.position.x - start.x, c.p.position.z - start.z),
+        apex, invuln, notices: c.world.notices.slice() };
+      assert(c.p.stratagems.arming, `the ${verb} run stopped spelling part way through — the fixture lost the lock`);
+    }
+
+    assert(runs.run.moved < 0.05, `holding W while spelling still moved ${runs.run.moved.toFixed(2)} m`);
+    assert(runs.dash.moved < 0.25,
+      `a dash while spelling carried the player ${runs.dash.moved.toFixed(2)} m out of a lock that held a `
+      + `run to ${runs.run.moved.toFixed(2)} m`);
+    assert(runs.dash.invuln === 0,
+      `a dash while spelling bought ${runs.dash.invuln.toFixed(2)}s of invulnerability`);
+    assert(runs.jump.apex < 0.05,
+      `a jump while spelling reached ${runs.jump.apex.toFixed(2)} m — the ground you are supposed to be `
+      + 'standing on is the price of the call');
+
+    /* AND NEITHER REFUSAL IS SILENT. `_refuse`'s own header is the rule — a
+     * bound key that does nothing and does not say why is the same lie as a
+     * dead checkbox — and a player pressing dash in a panic while spelling has
+     * to be told which of the two the game is honouring. */
+    for (const verb of ['dash', 'jump']) {
+      assert(runs[verb].notices.some((n) => /stratagem/i.test(n)),
+        `${verb} was refused in silence while spelling: ${JSON.stringify(runs[verb].notices)}`);
+    }
+    return `spelling: run ${runs.run.moved.toFixed(2)} m, dash ${runs.dash.moved.toFixed(2)} m `
+      + `(invuln ${runs.dash.invuln.toFixed(2)}), jump apex ${runs.jump.apex.toFixed(2)} m; both refusals spoken`;
+  });
+
   check('stratagems: a call is charged, cooled, and lands late', () => {
     const b = bench({ force: 400 });
     const S = b.p.stratagems;

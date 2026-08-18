@@ -1541,7 +1541,73 @@ export function run({ check, assert, near }) {
        * and "every outdoor level" is what the property was always about. */
       const { LEVEL_ORDER } = await import('../../src/game/Levels.js');
       const OUT = LEVEL_ORDER.filter((k) => LEVELS[k] && LEVELS[k].atmosphere.sky !== false);
-      const rows = [], seen = [];
+
+      /* THE LIGHT A SHADOWED, UPWARD-FACING SURFACE RECEIVES, built the way the
+       * bake actually contains it: the sky above and the ground-bounce
+       * hemisphere below, cosine-weighted about the normal, scaled by the
+       * environment intensity the engine will use — plus the hemisphere light
+       * and the fill, which are the other two terms of the same sum. Every
+       * constant in here is read off the engine rather than typed: `envI` and
+       * `irradiance` come from the meter, the 0.45 hemisphere trim and the
+       * ×0.5 on the fill are the same two the meter itself applies.
+       *
+       * 512 directions on a Fibonacci sphere. Half of them are below the
+       * horizon and cost nothing; the remaining ~256 put the integral within a
+       * degree of hue of a 16k-sample reference on every level. */
+      const DIRS = (() => {
+        const out = [], n = 512, gr = Math.PI * (1 + Math.sqrt(5));
+        for (let i = 0; i < n; i++) {
+          const y = 1 - (2 * i + 1) / n, r = Math.sqrt(Math.max(0, 1 - y * y)), th = gr * i;
+          out.push(new THREE.Vector3(Math.cos(th) * r, y, Math.sin(th) * r));
+        }
+        return out;
+      })();
+      const shadeAmbient = (a, m) => {
+        const sun = E.sunDirection(a, new THREE.Vector3());
+        const turn = E.skyProbeTurn(a, m);
+        const bounce = new THREE.Color(a.groundColor ?? 0x60482e)
+          .multiplyScalar(Math.min(6, Math.max(0.02, m.irradiance / Math.PI)));
+        const c = new THREE.Color();
+        const w = (4 * Math.PI) / DIRS.length;
+        let R = 0, G = 0, B = 0;
+        for (const d of DIRS) {
+          const cs = d.y;                       // the normal is straight up
+          if (cs <= 0) continue;
+          let r, g, b;
+          if (d.y > 0) {
+            E.skyTurn(E.skyShoulder(E.skyRadiance(d, sun, a, c)), turn, c);
+            r = c.r; g = c.g; b = c.b;
+          } else { r = bounce.r; g = bounce.g; b = bounce.b; }
+          R += r * cs * w; G += g * cs * w; B += b * cs * w;
+        }
+        R *= m.envI; G *= m.envI; B *= m.envI;
+        // the hemisphere light, at the same normal: mix(ground, sky, 0.5·n·y+0.5)
+        const skyC = new THREE.Color(a.skyColor ?? 0xbcd8ff);
+        const grdC = new THREE.Color(a.groundColor ?? 0x60482e);
+        const hemiI = (a.ambient ?? 0.85) * 0.45;
+        R += skyC.r * hemiI; G += skyC.g * hemiI; B += skyC.b * hemiI;
+        const f = new THREE.Color(a.fillColor ?? 0x9fc4ff)
+          .multiplyScalar((a.fillIntensity ?? 0.25) * 0.5);
+        return new THREE.Color(R + f.r, G + f.g, B + f.b);
+      };
+      const hueOf = (c) => {
+        const mx = Math.max(c.r, c.g, c.b), mn = Math.min(c.r, c.g, c.b), d = mx - mn;
+        if (d < 1e-6) return null;
+        const h = mx === c.r ? ((c.g - c.b) / d + 6) % 6
+          : mx === c.g ? (c.b - c.r) / d + 2 : (c.r - c.g) / d + 4;
+        return h * 60;
+      };
+      const chroma = (c) => {
+        const mx = Math.max(c.r, c.g, c.b);
+        return mx <= 1e-6 ? 0 : (mx - Math.min(c.r, c.g, c.b)) / mx;
+      };
+      const rows = [], seen = [], hues = [];
+      /* Collected across the whole loop and raised together at the end — see
+       * "ALL THREE ARE EVALUATED BEFORE ANY OF THEM THROWS" below. The hue
+       * clause joins that set for the same reason: it is a fourth statement
+       * about the same data, and a first-failure-wins assert over four levels
+       * reports one and hides three. */
+      const wrong = [];
       let tightest = 0, loosest = Infinity, worstGap = 0;
       for (const key of OUT) {
         const a = LEVELS[key].atmosphere;
@@ -1579,6 +1645,73 @@ export function run({ check, assert, near }) {
         assert(keyShare > 0.30,
           `${key}: only ${(keyShare * 100).toFixed(0)}% of a shadowed surface's light comes from the key, `
           + 'so its hue is the ambient\'s and not the surface\'s');
+        /* ── AND IN ITS OWN HUE, WHICH IS THE HALF OF THE TITLE THAT WAS
+         *    NEVER MEASURED ────────────────────────────────────────────────
+         *
+         * This check is called "in its own hue" and until now it compared no
+         * colours at all. The clause above measures how much of the shade is
+         * the key, in ENERGY; its own comment then says the failure mode is
+         * that "its hue is the ambient's and not the surface's" — and nothing
+         * anywhere asked what colour the ambient is. It was blue on every
+         * level in the game, including the four whose every authored swatch is
+         * warm or green, because `skyRadiance` is Preetham and Preetham has no
+         * input that can say what colour a sky is (see Engine's skyProbeTurn).
+         * Measured on the shipped tree, the ambient's hue against the level's
+         * own `skyColor`:
+         *
+         *     scoria    332° vs  11°   39° off      colosseum 216° vs 219°   3°
+         *     mustafar  259° vs   7°  108° off      drifts    217° vs 219°   2°
+         *     wood      208° vs  96°  112° off      alpine    214° vs 220°   6°
+         *     geonosis  231° vs  26°  155° off
+         *
+         * — and the Ember Shelf's foreground sand duly rendered LAVENDER (hue
+         * 260–327° at 17–22% saturation) under an orange sky, on a level where
+         * nothing at all is authored outside 15–30°. A warm albedo under a blue
+         * illuminant is magenta by construction, which is why warming the two
+         * cold swatches in its terrain preset moved the rendered ground by one
+         * degree: the albedo was never the problem.
+         *
+         * THE AMBIENT, and not the shade, is what this asks about, and that is
+         * the point of putting it here rather than in a new check. The shade is
+         * ambient + 30% of the key, and the key is warm on every level in the
+         * game — on the Ember Shelf that alone dragged the shade to 2° while
+         * the light filling it was at 332°, so a bound on the shade's hue would
+         * have passed a frame the eye reads as broken. What the clause above
+         * bounds is the key's SHARE; what this one bounds is the colour of the
+         * rest.
+         *
+         * The bound is 30° and it is NOT a new number: it is the one
+         * lighting.mjs already holds the fill to — "the fill has to be the
+         * colour of the sky ON THIS LEVEL: within 30° of `skyColor`" — and the
+         * fill is one of the three terms being measured here. The probe is the
+         * other two thirds and was never asked the same question. The chroma
+         * floor is the second half of that same rule, verbatim, and it is what
+         * stops a level satisfying the hue with a grey.
+         *
+         * The probe is built the way the BAKE contains it — the sky above and
+         * the ground-bounce hemisphere below, cosine-weighted about the up
+         * normal, through the engine's own turn — so this measures the light
+         * the frame is actually lit by rather than a swatch. */
+        const ambC = shadeAmbient(a, m);
+        const hA = hueOf(ambC), hS = hueOf(new THREE.Color(a.skyColor ?? 0xbcd8ff));
+        const chrA = chroma(ambC), chrS = chroma(new THREE.Color(a.skyColor ?? 0xbcd8ff));
+        if (hA === null || hS === null) {
+          wrong.push(`${key}: the ambient or the sky has no hue at all`);
+        } else {
+          let off = Math.abs(hA - hS); if (off > 180) off = 360 - off;
+          if (off >= 30) {
+            wrong.push(`${key}: a shadowed surface is filled with light at ${hA.toFixed(0)}° `
+              + `against a sky this level authors at ${hS.toFixed(0)}° — ${off.toFixed(0)}° apart, so `
+              + 'the shadow is not a deeper version of the surface, it is a different colour '
+              + '(a warm albedo under a blue ambient is magenta)');
+          }
+        }
+        if (chrA <= chrS * 0.33) {
+          wrong.push(`${key}: the ambient carries ${(chrA / Math.max(chrS, 1e-6)).toFixed(2)} of its `
+            + 'own sky\'s chroma — the shadow has no hue to be its own');
+        }
+        hues.push(`${key} ${hA === null ? '—' : hA.toFixed(0) + '°'} vs sky `
+          + `${hS === null ? '—' : hS.toFixed(0) + '°'}`);
         tightest = Math.max(tightest, ratio); loosest = Math.min(loosest, ratio);
         worstGap = Math.max(worstGap, ratio0);
         seen.push([m.sunPos.y, keyShare, key]);
@@ -1637,7 +1770,6 @@ export function run({ check, assert, near }) {
       seen.sort((p, q) => p[0] - q[0]);
       const shares = seen.map((s) => s[1]);
       const span = Math.max(...shares) / Math.min(...shares);
-      const wrong = [];
       if (span < 1.5) {
         wrong.push(`the shadow's key share spans only ${span.toFixed(2)}x across the whole roster `
           + `(${(Math.min(...shares) * 100).toFixed(0)}% to ${(Math.max(...shares) * 100).toFixed(0)}%) — `
@@ -1692,7 +1824,8 @@ export function run({ check, assert, near }) {
         'the cascade mask is being multiplied into the light colour again, which skips the band');
       assert(/saberCelCast = shadow;/.test(SCENERY_SRC()),
         'the grass is not on the same shadow tone as the ground it grows out of');
-      return rows.join(' · ') + ` — worst zero-band control ${worstGap.toFixed(2)}:1`;
+      return rows.join(' · ') + ` — worst zero-band control ${worstGap.toFixed(2)}:1`
+        + `; ambient hue ${hues.join(', ')}`;
     })();
   });
 

@@ -53,6 +53,36 @@ import { Particles } from '../../src/world/Particles.js';
 import { LEVELS, LEVEL_ORDER, groundMight, beginDressing } from '../../src/game/Levels.js';
 import { Saber } from '../../src/game/Saber.js';
 
+/**
+ * THE GROUNDS THE GAME ACTUALLY SHIPS, and a constructor that refuses the rest.
+ *
+ * `TERRAIN_PRESETS` holds fifteen presets and `LEVEL_ORDER` reaches nine of
+ * them. Six — dunes, arena, canyon, meadow, works, cavern — are ground no
+ * player can stand on, and this file was built on them: its footprint, crater
+ * and scar mechanics were all measured on `dunes`, and the material ordering
+ * below asserted a relation among `dunes`, `meadow`, `arena` and `works`, four
+ * grounds at once. That is not a small blind spot. `Terrain`'s constructor
+ * answers an unknown preset name with `dunes` rather than an error, so a typo
+ * here measures the default and reports a clean result for the wrong ground;
+ * and a preset nothing points at can drift arbitrarily far from the game
+ * without a single check going red.
+ *
+ * The file's own note above the ordering is right that the property belongs to
+ * the PRESET rather than to whichever levels exist today — a preset is a
+ * material, not a level. What it missed is that a material nobody can walk on
+ * is not a claim about the game. So the statements stay statements about
+ * presets, and every one of them is now made about a preset a level ships.
+ */
+const SHIPPED = new Set(LEVEL_ORDER.map((k) => LEVELS[k] && LEVELS[k].terrain).filter(Boolean));
+const UNSHIPPED = Object.keys(TERRAIN_PRESETS).filter((k) => !SHIPPED.has(k));
+function shipped(name) {
+  if (!SHIPPED.has(name)) {
+    throw new Error(`ground-memory measured '${name}', which no level in LEVEL_ORDER stands on`
+      + ` — the grounds the game ships are ${[...SHIPPED].join(', ')}`);
+  }
+  return name;
+}
+
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const SRC = (f) => readFileSync(new URL(`../../src/${f}`, import.meta.url), 'utf8');
 
@@ -273,21 +303,40 @@ export function run({ check, assert, near }) {
      * levels stand on. The property was always about the preset; now it says
      * so, and it covers every preset in the file rather than the subset a
      * level currently points at. */
-    const depth = (name) => TERRAIN_PRESETS[name].loose.depth;
-    assert(depth('alpine') > depth('drifts'), 'a boot goes deeper into an erg than into fresh snow');
-    assert(depth('drifts') > depth('dunes'), 'the deep erg is firmer than the young dune field');
-    assert(depth('meadow') < depth('arena') * 0.6, 'turf takes a print like a silt pan does');
+    /* EVERY COMPARISON IS BETWEEN TWO GROUNDS A PLAYER CAN STAND ON. Four of
+     * the seven here were not: `depth('meadow') < depth('arena') * 0.6`,
+     * `depth('drifts') > depth('dunes')`, `depth('works') < 0.05` and
+     * `depth('cavern') > depth('works') * 4` between them named dunes, arena,
+     * meadow, works and cavern — five presets, none of them reachable from
+     * LEVEL_ORDER. The relations were all true and none of them was about the
+     * game. Restated over the shipped nine, with the same materials argument:
+     * a snowpack is the deepest thing you sink into, an ash fall is deeper
+     * than bog silt and shallower than a wind-packed drift, an arena's sand is
+     * a dressing over a stone sub-base, and a plated or poured deck takes a
+     * print and nothing more. */
+    const depth = (name) => TERRAIN_PRESETS[shipped(name)].loose.depth;
+    assert(depth('alpine') > depth('drifts'), 'a boot goes deeper into a snowpack than into a wind-packed drift');
+    assert(depth('drifts') > depth('bog'), 'wind-packed snow is looser underfoot than a silt bank');
+    assert(depth('colosseum') < depth('scoria') * 0.6,
+      'raked arena sand over a stone sub-base takes a print like an ash fall does');
     assert(depth('hangar') < 0.05, 'a poured deck takes a footprint');
-    assert(depth('works') < 0.05,
-      'a poured works floor and a flagged temple hall take a footprint');
-    assert(depth('scoria') > depth('dunes') && depth('scoria') < depth('drifts'),
-      'an ash fall lies deeper than a young dune field and shallower than a deep erg');
-    assert(depth('cavern') > depth('works') * 4, 'a flooded cut is as firm as the deck above it');
+    assert(depth('warship') < 0.05, 'a plated deck takes a footprint');
+    assert(depth('scoria') > depth('bog') && depth('scoria') < depth('drifts'),
+      'an ash fall lies deeper than bog silt and shallower than a wind-packed drift');
+    assert(depth('colosseum') > depth('hangar') * 4, 'an arena floor is not a swept deck');
     // and every preset that is not a built floor carries a real layer
     for (const name of Object.keys(TERRAIN_PRESETS)) {
       assert(TERRAIN_PRESETS[name].loose, `${name} declares no loose layer at all`);
     }
-    return rows.join('; ');
+    /* WHAT IS NOT BEING MEASURED, SAID OUT LOUD. Six of fifteen presets are
+     * unreachable, and the way that stops being a silent 40% is for the number
+     * to be in the pass line every run. It is not an assertion because this
+     * file cannot fix it: a preset becomes reachable when a LEVEL points at it
+     * (Levels.js) or is deleted (Terrain.js), and neither is this check's to
+     * do. It is a standing report, and the shipped/unshipped split is derived
+     * from LEVEL_ORDER, so it cannot go stale. */
+    return `${rows.join('; ')} — ${SHIPPED.size} of ${Object.keys(TERRAIN_PRESETS).length} presets ship, `
+      + `no level stands on ${UNSHIPPED.join(', ')}`;
   });
 
   /* ══ footprints ══════════════════════════════════════════════════════ */
@@ -432,10 +481,16 @@ export function run({ check, assert, near }) {
     // Keyed by PRESET, like the depth check above it: `dunes` and `hangar` are
     // still perfectly good grounds that surviving levels stand on, and going
     // through LEVELS meant this died the day those level keys were deleted.
-    const tau = (k) => TERRAIN_PRESETS[k].loose.refill;
-    assert(tau('alpine') > tau('arena') && tau('arena') > tau('dunes') && tau('dunes') > tau('drifts'),
-      `the memory ordering is wrong: alpine ${tau('alpine')}, arena ${tau('arena')}, `
-      + `dunes ${tau('dunes')}, drifts ${tau('drifts')}`);
+    /* Shipped grounds only — this chain used to run alpine → arena → dunes →
+     * drifts and two of those four are presets no level points at. The claim
+     * is the same one and it is now made about ground a player stands on: a
+     * bog holds a print until something fills it in, a snowpack for minutes,
+     * an ash fall for about a minute, and a drift field is being combed out
+     * from under you while you fight on it. */
+    const tau = (k) => TERRAIN_PRESETS[shipped(k)].loose.refill;
+    assert(tau('bog') > tau('alpine') && tau('alpine') > tau('scoria') && tau('scoria') > tau('drifts'),
+      `the memory ordering is wrong: bog ${tau('bog')}, alpine ${tau('alpine')}, `
+      + `scoria ${tau('scoria')}, drifts ${tau('drifts')}`);
     return rows.join('; ');
   });
 
@@ -530,7 +585,7 @@ export function run({ check, assert, near }) {
      * so the two differ by centimetres everywhere and a width measured that
      * way comes out as the whole probe, at every might. */
     const dig = (might) => {
-      const t = new Terrain(new THREE.Scene(), 'dunes', 0.6);
+      const t = new Terrain(new THREE.Scene(), shipped('geonosis'), 0.6);
       t.setMight(might);
       const before = [];
       for (let r = 0; r <= 14; r += 0.1) before.push(t.height(r, 0));
@@ -552,7 +607,7 @@ export function run({ check, assert, near }) {
       `the crater got ${(b.wide / a.wide).toFixed(2)}× wider — that is level geometry, not a hit`);
 
     // and the dressing pass is what publishes it, so it is live in the game
-    const t = new Terrain(new THREE.Scene(), 'dunes', 0.5);
+    const t = new Terrain(new THREE.Scene(), shipped('geonosis'), 0.5);
     const w = {
       terrain: t, director: { wave: 8 }, campaign: { index: 1, done: false },
       takenBoons: { flat: () => ['a'] }, settings: { forcePower: 1 },
@@ -576,7 +631,7 @@ export function run({ check, assert, near }) {
      * The loose layer takes it at its real size instead, which is what makes a
      * near miss read as a near miss.
      */
-    const t = new Terrain(new THREE.Scene(), 'dunes', 0.6);
+    const t = new Terrain(new THREE.Scene(), shipped('geonosis'), 0.6);
     ground.frame(0.02, V(0, 0, 0));
     const h0 = t.height(1, 1);
     t.crater(1, 1, 0.55, 0.06);
@@ -609,7 +664,7 @@ export function run({ check, assert, near }) {
      * reads as glow for the first few seconds and as soot for the next minute.
      * A scorch decal alone is a sticker; a trench alone is a scratch.
      */
-    const t = new Terrain(new THREE.Scene(), 'dunes', 1.0);
+    const t = new Terrain(new THREE.Scene(), shipped('geonosis'), 1.0);
     const P = new Particles(new THREE.Scene(), 1);
     ground.frame(0.02, V(0, 0, 0));
     const a = V(-1.2, t.height(-1.2, 0.4), 0.4), b = V(1.4, t.height(1.4, -0.3), -0.3);
@@ -831,7 +886,7 @@ export function run({ check, assert, near }) {
      * Driven through the transition rather than asserted about the field: what
      * matters is that a cut lands on the far side of it.
      */
-    const t = new Terrain(new THREE.Scene(), 'dunes', 1.0);
+    const t = new Terrain(new THREE.Scene(), shipped('geonosis'), 1.0);
     const P = new Particles(new THREE.Scene(), 1);
     const prevFx = ground.fx;
     try {

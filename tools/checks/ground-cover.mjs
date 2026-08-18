@@ -108,6 +108,52 @@ const OUTDOOR = [...new Set([
 const DEG = 180 / Math.PI;
 
 /**
+ * THE GROUNDS THE GAME SHIPS, and a stand-in for the level that would grow a
+ * field if any did.
+ *
+ * Two things this file could not say about itself, both found by measurement:
+ *
+ *   SIX OF FIFTEEN PRESETS ARE UNREACHABLE — dunes, arena, canyon, meadow,
+ *   works, cavern — and six of the checks below built their blade and cover
+ *   measurements on `canyon`, a ground no level stands on. `Terrain` answers
+ *   an unknown preset name with `dunes` rather than an error, so nothing was
+ *   ever going to say so. `shipped()` refuses one, which is the only way a
+ *   name in this file stays tied to the game.
+ *
+ *   AND `COVERED` IS EMPTY, so two checks — 'every level grows a different
+ *   field' and 'a field is not one colour' — iterated NOTHING and printed a
+ *   green with a blank result. The file's own note at the drift check says
+ *   "COVERED IS ALLOWED TO BE EMPTY, and today it is"; what is not allowed,
+ *   and what this fixes, is a check that measures nothing reporting a pass.
+ *   `prop-seating` names the same failure — "a sweep that quietly stopped
+ *   matching would report a clean result for having measured nothing" — and
+ *   carries `assert(ends >= 8)` against it. Both checks below now carry the
+ *   same tripwire, and both measure the FIELD MECHANISM over the shipped
+ *   grounds when no level authors one: whether every ground gets its own
+ *   field, and whether a field is more than one colour, are properties of the
+ *   code that the first level to grow cover depends on. When a level does grow
+ *   one, `SAMPLE` picks it up and the stand-in disappears.
+ */
+const SHIPPED = [...new Set(LEVEL_ORDER.map((k) => LEVELS[k] && LEVELS[k].terrain).filter(Boolean))];
+function shipped(name) {
+  if (!SHIPPED.includes(name)) {
+    throw new Error(`ground-cover measured '${name}', which no level in LEVEL_ORDER stands on`
+      + ` — the grounds the game ships are ${SHIPPED.join(', ')}`);
+  }
+  return name;
+}
+/* The last pair a level in this game authored, off the Drowned Wood before its
+ * floor was rebuilt out of geometry (commit 3cdc0a7). A measured historical
+ * pair rather than an invented one: the control assertion below requires the
+ * authored ramp to span under 12° of hue, so a pair picked to flatter the
+ * check would be caught by the check's own control. */
+const STAND_IN = { tint: [0x6f7d33, 0x3a4020], density: 1 };
+/** Every level that grows a field — or the mechanism's own stand-in if none does. */
+const SAMPLE = COVERED.length
+  ? COVERED.map((k) => ({ key: k, terrain: LEVELS[k].terrain, tint: LEVELS[k].grassTint, density: LEVELS[k].grass }))
+  : SHIPPED.map((g) => ({ key: `${g} (no level grows a field)`, terrain: g, ...STAND_IN }));
+
+/**
  * `level` belongs on the stub, because dressing passes read it: the cut takes
  * its water line from `world.level?.water?.level ?? 0.30` and then refuses to
  * place anything loose below that, so a survey without a level attached is
@@ -256,7 +302,7 @@ export function run({ check, assert, near }) {
      * and the terrain gets it as a baked texture, which is also the only way
      * the tone can reach past the instanced field's outer radius at all: the
      * texture runs to the edge of the heightfield for no draw calls. */
-    const t = new Terrain(new THREE.Scene(), 'canyon', 0.6);
+    const t = new Terrain(new THREE.Scene(), shipped('geonosis'), 0.6);
     const u = t._uniforms;
     near(u.uCover.value.x, 0, 1e-6, 'bare ground starts out covered');
     const g = new GrassField(new THREE.Scene(), t, { count: 4000, density: 1, radius: 46 });
@@ -302,16 +348,26 @@ export function run({ check, assert, near }) {
     // The seed came off the terrain preset, and the terrain did not carry its
     // own name — so every level in the game was handed seed 1337 and the three
     // outdoor levels had the SAME grass laid out in the same places.
+    /* OVER `SAMPLE`, WHICH IS NEVER EMPTY. This iterated `COVERED` — the
+     * levels with `grass > 0` — and there are none, so the loop ran zero times
+     * and the check printed a green with a blank result line. The seed is the
+     * TERRAIN's own name (`GrassField` hashes `terrain.presetKey`), so the
+     * property is a property of the ground, and it is measured on every ground
+     * the game ships rather than on the empty set. */
     const seen = new Map();
-    for (const key of COVERED) {
-      const t = new Terrain(new THREE.Scene(), LEVELS[key].terrain, 0.5);
-      assert(t.presetKey === LEVELS[key].terrain,
-        `${key}: the terrain does not know it is a ${LEVELS[key].terrain}`);
-      const g = new GrassField(new THREE.Scene(), t, { count: 400, density: LEVELS[key].grass, radius: 46 });
+    for (const { key, terrain, density } of SAMPLE) {
+      const t = new Terrain(new THREE.Scene(), terrain, 0.5);
+      assert(t.presetKey === terrain, `${key}: the terrain does not know it is a ${terrain}`);
+      const g = new GrassField(new THREE.Scene(), t, { count: 400, density, radius: 46 });
       seen.set(key, { ox: g.cover.ox, oz: g.cover.oz, amount: g.cover.amount });
       g.dispose(); t.dispose();
     }
     const keys = [...seen.keys()];
+    /* THE TRIPWIRE `prop-seating` carries and this file did not: a sweep that
+     * stopped matching reports a clean result for having measured nothing.
+     * Two, because the claim is about two fields being different and one field
+     * cannot be. */
+    assert(keys.length >= 2, `${keys.length} fields were compared — the survey has stopped matching`);
     for (let i = 0; i < keys.length; i++) {
       for (let j = i + 1; j < keys.length; j++) {
         const a = seen.get(keys[i]), b = seen.get(keys[j]);
@@ -626,7 +682,7 @@ export function run({ check, assert, near }) {
     /* 6. AND THE SHADER IS THE SAME CURVE. The polynomial in GRASS_VERT is
      *    generated from the exponent, so it can only be checked by reading it
      *    back out of the compiled material and evaluating it here. */
-    const t = new Terrain(new THREE.Scene(), 'canyon', 0.5);
+    const t = new Terrain(new THREE.Scene(), shipped('geonosis'), 0.5);
     const g = new GrassField(new THREE.Scene(), t, { count: 400, density: 1, radius: 46 });
     const vs = g.near.mat.vertexShader;
     const exp = /float ks = bend \* pow\(max\(h, 1e-4\), ([\d.]+)\)/.exec(vs);
@@ -692,7 +748,7 @@ export function run({ check, assert, near }) {
     assert(area > 0.75,
       `a blade covers ${(area * 100).toFixed(0)}% of its own bounding rectangle — 63% was the needle`);
     // the shader must be drawing this curve and not another
-    const t = new Terrain(new THREE.Scene(), 'canyon', 0.5);
+    const t = new Terrain(new THREE.Scene(), shipped('geonosis'), 0.5);
     const g = new GrassField(new THREE.Scene(), t, { count: 400, density: 1, radius: 46 });
     const m = /float wdt = uWidth \* len \* pow\(max\(1\.0 - h \* h \* h, ([\de.-]+)\), ([\d.]+)\)/.exec(g.near.mat.vertexShader);
     assert(m, 'the shader is no longer using the taper this check measures');
@@ -772,8 +828,14 @@ export function run({ check, assert, near }) {
     const hsl = (c) => c.getHSL({}, THREE.SRGBColorSpace);
     const col = new THREE.Color();
     const rows = [];
-    for (const key of COVERED) {
-      const L = LEVELS[key];
+    /* ONE GROUND, NOT ZERO. This iterated `COVERED` and there are no levels in
+     * it, so a check whose whole subject is 47° of hue measured nothing and
+     * passed. The subject is the FIELD's colour rather than any level's, so
+     * the first shipped ground and the last pair a level in this game actually
+     * authored stand in until a level grows cover again — and the moment one
+     * does, `SAMPLE` is that level and its own tints instead. */
+    for (const { key, terrain, tint, density } of SAMPLE.slice(0, Math.max(1, COVERED.length))) {
+      const L = { grassTint: tint, grass: density, terrain };
       assert(Array.isArray(L.grassTint),
         `${key}: it grows a field at density ${L.grass} and authors no tint for it`);
       // the control: what the shipped two-stop ramp spanned on this level
@@ -846,6 +908,7 @@ export function run({ check, assert, near }) {
         + ` L×${lifted.toFixed(2)}`);
       g.dispose(); t.dispose();
     }
+    assert(rows.length >= 1, 'no field was measured at all — the survey has stopped matching');
     return `hue span, then withered/green/blue-green %: ${rows.join('; ')}`;
   });
 
@@ -856,7 +919,7 @@ export function run({ check, assert, near }) {
      * out of one crown then point eight different ways, which is what made
      * every clump in the game go off like a firework. A tuft is ONE PLANT: its
      * blades share a colour and a direction and fan a little around both. */
-    const t = new Terrain(new THREE.Scene(), 'canyon', 0.6);
+    const t = new Terrain(new THREE.Scene(), shipped('geonosis'), 0.6);
     const g = new GrassField(new THREE.Scene(), t, { count: 9000, density: 1, radius: 46 });
     g.update(1 / 60, new THREE.Vector3(0, 0, 0), [], null);
     const ring = g.rings[0], per = ring.per;
@@ -1105,7 +1168,7 @@ export function run({ check, assert, near }) {
     assert(Math.abs(lum(lit) / lum(shippedLit) - 1) < 1e-9,
       'the guard changed what a blade in full sun receives');
     // 5. the shader has to be doing what this model says
-    const t = new Terrain(new THREE.Scene(), 'canyon', 0.5);
+    const t = new Terrain(new THREE.Scene(), shipped('geonosis'), 0.5);
     const g = new GrassField(new THREE.Scene(), t, { count: 200, density: 1, radius: 30 });
     const fs = g.near.mat.fragmentShader;
     const loop = fs.slice(fs.indexOf('for(int i = 0; i < NUM_DIR_LIGHTS'), fs.indexOf('#pragma unroll_loop_end', fs.indexOf('NUM_DIR_LIGHTS')));
@@ -1133,7 +1196,7 @@ export function run({ check, assert, near }) {
      * way and 2246 the other, with 96% of its buffer different — and the far
      * ring 99%. Everything else about this field is a pure function of the cell
      * coordinate; this was the one thing that was not. */
-    const t = new Terrain(new THREE.Scene(), 'canyon', 0.6);
+    const t = new Terrain(new THREE.Scene(), shipped('geonosis'), 0.6);
     const at = (x, z) => new THREE.Vector3(x, t.height(x, z), z);
     const walk = (path) => {
       const g = new GrassField(new THREE.Scene(), t, { count: 8000, density: 1, radius: 46 });

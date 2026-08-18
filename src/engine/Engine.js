@@ -1131,6 +1131,112 @@ export function skyShoulder(c, knee = SKY_PHYSICAL.knee, ceil = SKY_PHYSICAL.cei
   return c.setRGB(f(c.r), f(c.g), f(c.b), THREE.LinearSRGBColorSpace);
 }
 
+/* ── THE SKY IS THE LEVEL'S SKY, NOT PREETHAM'S ─────────────────────────
+ *
+ * `skyRadiance` is a transcription of Preetham. Its wavelength dependence is
+ * three hard-coded Rayleigh coefficients and three Mie constants, and the only
+ * knobs a level has over it are SCALARS — turbidity, rayleigh, mie, mieG,
+ * elevation. There is no input to it that can say what colour this sky is.
+ * So every sky in this game integrates BLUE, whatever the level says: measured
+ * cosine-weighted over the hemisphere, the mean sky hue is 213–218° on all
+ * seven outdoor levels, against authored `skyColor`s of 11°, 7°, 26° and 96°
+ * on four of them.
+ *
+ * That is invisible in the DRAWN dome, which is graded, banded and hazed on top
+ * of, and it is not invisible at all in the light: the probe baked from that
+ * sky is 62–81% of what a shaded surface receives. A warm albedo under a blue
+ * illuminant is MAGENTA by construction, and it duly was — measured off the
+ * Ember Shelf's own frame (`tools/shot.mjs --level scoria`), the foreground
+ * sand came back at hue 252°, 324° and 328°, 31–35% saturated, under a sky at
+ * 39° and mesas at 14°, on a level where nothing at all is authored outside
+ * 15–30°. Warming the two coldest swatches in its terrain preset moved that
+ * ground by ONE degree. The albedo was never it; the illuminant is wrong.
+ * (Those are screen hues, through sRGB. The angles further down are read off
+ * LINEAR radiance, which is the space the light is in and the space every
+ * check in tools/ measures; the same swatch reads 21° on screen and 11° here.)
+ *
+ * lighting.mjs already holds the rule this is the other half of — "the fill has
+ * to be the colour of the sky ON THIS LEVEL: within 30° of `skyColor`". The
+ * fill is a tenth of the shade and was made to obey it. The probe is two thirds
+ * of the shade and was never asked.
+ *
+ * SO: THE PROBE IS BAKED THROUGH A HUE ROTATION, by exactly the angle between
+ * the sky's own cosine-weighted mean hue and the level's authored `skyColor`.
+ * A rotation and not a tint, and that choice is the whole of the risk control:
+ *
+ *   · it is the IDENTITY when the two already agree, so the three levels whose
+ *     probe already matches their sky (Colosseum 4.3°, the Shifting Waste 1.4°,
+ *     the White Pass 7.6°) cannot be moved by it — there is no threshold to
+ *     tune and no level to except.
+ *   · luminance is renormalised per sample, so EVERY luminance in the sky is
+ *     bit-for-bit what it was: the meter, the exposure, `skyFull`, the lit/shade
+ *     ratio, the key share, the drawn shoulder and the bloom headroom are all
+ *     functions of luminance alone and none of them can see this.
+ *   · saturation is preserved too — a rotation about the grey axis is rigid —
+ *     so the sky's own chroma STRUCTURE survives: the aureole stays near
+ *     neutral, the zenith stays the most saturated thing in it, and the
+ *     horizon-to-zenith gradient the probe's directionality lives in is intact.
+ *     A per-channel multiply would have flattened all three.
+ *
+ * A tint by `skyColor` and letting a level author the probe outright were the
+ * other two shapes. The tint cannot be the identity on an agreeing level unless
+ * the authored swatch also happens to carry the model's saturation, which none
+ * of them does; and an authored probe is a fourth colour to keep in step with
+ * `skyColor`, `fillColor` and the hemisphere — HANDOFF §2.3's hand-maintained
+ * table beside its generated twin, with a rendering change behind it.
+ *
+ * WHAT THIS DELIBERATELY DOES NOT TOUCH: the drawn dome, the fog and the
+ * aerial-perspective tint. Those are what distance CONVERGES ON and they have
+ * to match what is actually painted on screen, which is the sky as drawn —
+ * through the display shoulder and the level's own `gain`. The Ember Shelf's
+ * grade (`gain: [1.13, 1.00, 0.74]`) is what makes its dome read orange, and
+ * that is where its author put the orange on purpose. This changes only what
+ * the sky LIGHTS, which is the half no grade can reach.
+ */
+export function skyProbeTurn(a, meter = null) {
+  const IDENTITY = { cos: 1, sin: 0, deg: 0 };
+  if (!a || a.sky === false) return IDENTITY;
+  const m = meter || atmosphereMeter(a);
+  if (!m.skyMean) return IDENTITY;
+  const th = _greyAngle(new THREE.Color(a.skyColor ?? 0xbcd8ff)) - _greyAngle(m.skyMean);
+  return { cos: Math.cos(th), sin: Math.sin(th),
+    deg: ((th * 180 / Math.PI) % 360 + 360) % 360 };
+}
+
+/** Where a colour sits on the wheel about the grey axis, in radians. */
+function _greyAngle(c) {
+  const L = (c.r + c.g + c.b) / 3, r = c.r - L, g = c.g - L, b = c.b - L;
+  return Math.atan2((g - b) / Math.SQRT2, (2 * r - g - b) / Math.sqrt(6));
+}
+
+/**
+ * The rotation itself, on the CPU, so a check and a probe can run the same
+ * arithmetic the shader does. Rodrigues about (1,1,1), then renormalised to the
+ * input's own luminance — see skyProbeTurn for why both halves matter. Kept
+ * identical to `saberSkyTurn` in _linearSky; lighting.mjs pins the pair.
+ */
+export function skyTurn(c, turn, out = new THREE.Color()) {
+  if (!turn.sin && turn.cos === 1) return out.copy(c);
+  const k = 0.5773502691896258;
+  // k·(k·c)·(1−cos), and k·k is 1/3 — the component of c along the grey axis.
+  const axis = ((c.r + c.g + c.b) / 3) * (1 - turn.cos);
+  const r = c.r * turn.cos + k * (c.b - c.g) * turn.sin + axis;
+  const g = c.g * turn.cos + k * (c.r - c.b) * turn.sin + axis;
+  const b = c.b * turn.cos + k * (c.g - c.r) * turn.sin + axis;
+  /* CLAMP FIRST, THEN RENORMALISE, and the order is the guarantee. A rigid
+   * rotation of a very saturated sample can take one channel below zero —
+   * measured, only Geonosis' dome does it at all, and by 3% of one sample's
+   * luminance in one channel — and clamping AFTER the rescale leaves that
+   * sample's luminance 0.2% light. Everything downstream of this function is a
+   * function of luminance, so "0.2% on one level" is a silent regression in the
+   * meter. Clamping first costs that sample a little chroma instead, which is
+   * the term this function is allowed to move. */
+  const cr = Math.max(r, 0), cg = Math.max(g, 0), cb = Math.max(b, 0);
+  const L1 = cr * 0.2126 + cg * 0.7152 + cb * 0.0722;
+  const s = L1 > 1e-9 ? lum(c) / L1 : 1;
+  return out.setRGB(cr * s, cg * s, cb * s, THREE.LinearSRGBColorSpace);
+}
+
 /**
  * What distance dissolves into, in radiance. One function, so the checks can
  * assert on the thing the engine actually runs instead of on a transcription
@@ -1257,8 +1363,16 @@ export function cloudLight(a, meter = null) {
   // average in with a single sample left the canyon's base tint 0.43 saturated,
   // which is a turquoise cloud. Pulling a third of the way to white is the
   // cheap version of the integral and lands all three levels under 0.35.
+  /* …and through the same turn the probe is baked through, because this is the
+   * same question: what colour is the light this level's sky throws. Left out,
+   * the deck read TEAL over an orange desert — cloud bases lit at 210° while
+   * everything else in the frame was authored at 17–30° — which is the sky
+   * probe's fault showing up in the one other place it is consulted. Identity
+   * on a level whose sky already agrees with its own atmosphere; see
+   * skyProbeTurn. */
   const skyHue = skyRadiance(new THREE.Vector3(-sunPos.x, 1.6, -sunPos.z).normalize(),
     sunPos, a, new THREE.Color());
+  skyTurn(skyHue, skyProbeTurn(a, m), skyHue);
   skyHue.multiplyScalar(1 / Math.max(0.02, lum(skyHue))).lerp(WHITE, 0.34);
   const inner = sun * 0.22;
   const amb = bounce + sky + inner;
@@ -1315,23 +1429,32 @@ export function atmosphereMeter(a) {
     // No atmosphere to meter — an interior is lit by lamps this cannot see.
     // `trim` is 1 and not absent: there is nothing to trim here, and a reader
     // that has to tell "not metered" from "field missing" gets it wrong.
-    return { sunPos, outdoor, direct, skyFull: 0, envI: ENV_INTENSITY,
+    return { sunPos, outdoor, direct, skyFull: 0, skyMean: null, envI: ENV_INTENSITY,
       irradiance: direct + hemiIrr + fillIrr, key: null, trim: 1, rawTrim: 1,
       exposure: (a.exposure ?? 1.05) * EXPOSURE };
   }
 
-  let e = 0, w = 0;
+  /* THE INTEGRAL IS A COLOUR AND IT ALWAYS WAS. `e` used to be a scalar, and
+   * taking the luminance inside the loop instead of outside threw away the one
+   * number that says WHAT COLOUR THE SKY LIGHTS THIS LEVEL — see skyProbeTurn,
+   * which is the whole reason this is a Color now. `lum` is linear, so
+   * `lum(mean)` is exactly the `mean(lum)` this used to accumulate and no
+   * number downstream of `skyFull` moves by a bit. */
+  const skyMean = new THREE.Color(0, 0, 0);
+  let w = 0;
   for (let ring = 0; ring < 4; ring++) {
     const el = ((ring + 0.5) / 4) * (Math.PI / 2);
     const s = Math.sin(el), c = Math.cos(el);
     for (let k = 0; k < 6; k++) {
       const az = ((k + 0.5) / 6) * Math.PI * 2;
       _v1.set(s * Math.cos(az), c, s * Math.sin(az));
-      e += lum(skyShoulder(skyRadiance(_v1, sunPos, a, _c1))) * c * s;
+      skyShoulder(skyRadiance(_v1, sunPos, a, _c1));
+      skyMean.r += _c1.r * c * s; skyMean.g += _c1.g * c * s; skyMean.b += _c1.b * c * s;
       w += c * s;
     }
   }
-  const skyFull = Math.PI * (e / Math.max(w, 1e-6)) * ENV_INTENSITY;
+  skyMean.multiplyScalar(1 / Math.max(w, 1e-6));
+  const skyFull = Math.PI * lum(skyMean) * ENV_INTENSITY;
   // The floor was 0.45 and is now 0.16, because the cap it guards is no longer
   // a flat 0.55: a floor set just under the old cap turned the whole thing into
   // a constant the moment the cap came down. No level sits on it — the clamp's
@@ -1358,7 +1481,7 @@ export function atmosphereMeter(a) {
   // as a control without a second copy of this arithmetic living in tools/.
   const rawTrim = KEY / Math.max(key, 1e-4);
   const trim = clamp(rawTrim, METER_TRIM[0], METER_TRIM[1]);
-  return { sunPos, outdoor, direct, skyFull, envI, irradiance, key, trim, rawTrim,
+  return { sunPos, outdoor, direct, skyFull, skyMean, envI, irradiance, key, trim, rawTrim,
     exposure: clamp((a.exposure ?? 1.05) * trim, 0.2, 3.0) };
 }
 
@@ -1889,6 +2012,10 @@ export class Engine {
     // Only ever anything but 1 while the environment probe is being baked, see
     // refreshEnvironment.
     m.uniforms.uSkySat = { value: 1 };
+    // …and neither is this: (cos, sin) of the hue rotation that carries the
+    // model's sky onto the level's own `skyColor`. Identity while the dome is
+    // being DRAWN — see skyProbeTurn for why only the light is turned.
+    m.uniforms.uSkyTurn = { value: new THREE.Vector2(1, 0) };
     m.fragmentShader = ([
       /* THE SKY IS FLAT, OR ONE SIMPLE GRADIENT — rule 7 of
        * src/toon/REFERENCE.md, and the single thing the player named first
@@ -1912,6 +2039,17 @@ export class Engine {
       'uniform float uSkyScale, uSkyKnee, uSkyCeil, uSkySat;',
       'uniform vec3 uSkyDisc;',
       'uniform vec2 uSkyDiscCos;',
+      'uniform vec2 uSkyTurn;',
+      // The probe's hue rotation, about the grey axis, luminance renormalised.
+      // MUST stay identical to skyTurn() above — tools/checks/lighting.mjs pins
+      // the two against each other on the levels' own atmospheres.
+      'vec3 saberSkyTurn( vec3 c ) {',
+      '  const float k = 0.5773502691896258;',
+      '  const vec3 W = vec3( 0.2126, 0.7152, 0.0722 );',
+      '  float axis = ( ( c.r + c.g + c.b ) / 3.0 ) * ( 1.0 - uSkyTurn.x );',
+      '  vec3 r = max( c * uSkyTurn.x + k * uSkyTurn.y * vec3( c.b - c.g, c.r - c.b, c.g - c.r ) + axis, 0.0 );',
+      '  return r * ( dot( c, W ) / max( dot( r, W ), 1e-9 ) );',
+      '}',
       // Reciprocal shoulder: identity below the knee, asymptotic to the ceiling
       // above it, and — unlike the exponential this replaces — still separating
       // decades past it. Keeps the horizon glow bright without letting it
@@ -1926,8 +2064,11 @@ export class Engine {
       .replace(size, 'float sundisk = smoothstep( uSkyDiscCos.x, uSkyDiscCos.y, cosTheta );')
       .replace(disc, '')
       .replace(grade, [
-        `vec3 retColor = saberCelBand( skyShoulder( texColor * uSkyScale ), ${SKY_BANDS.toFixed(1)} )`
-          + ' + uSkyDisc * sundisk;',
+        // The turn goes on the ATMOSPHERE and not on the disc: the disc is the
+        // sun, its colour is the sun's, and the CPU derivation the checks read
+        // (`skyRadiance`) has no disc term in it at all.
+        `vec3 retColor = saberSkyTurn( saberCelBand( skyShoulder( texColor * uSkyScale ), `
+          + `${SKY_BANDS.toFixed(1)} ) ) + uSkyDisc * sundisk;`,
         'retColor = mix( vec3( dot( retColor, vec3( 0.2126, 0.7152, 0.0722 ) ) ), retColor, uSkySat );',
       ].join('\n'));
     m.needsUpdate = true;
@@ -2019,6 +2160,10 @@ export class Engine {
     // Everything about level, ambient budget and exposure comes off the meter.
     const meter = atmosphereMeter(a);
     this.meter = meter;
+    // Kept so refreshEnvironment can ask what colour this level's sky is: it
+    // takes no arguments, and a public method that re-bakes the probe must not
+    // need the caller to have an atmosphere block in hand.
+    this._atmos = a;
 
     // What the sky is doing at the skyline, away from the sun and toward it,
     // and what it is throwing down on everything the sun cannot reach.
@@ -2157,6 +2302,14 @@ export class Engine {
     // in the bake for the first time.
     const sat = this.sky.material.uniforms.uSkySat;
     if (sat) sat.value = PROBE_CHROMA;
+    /* AND AT THE LEVEL'S OWN HUE. Preetham cannot be told what colour a sky is
+     * (skyProbeTurn), so the bake — which is 62–81% of everything a shaded
+     * surface receives — turned every level's indirect light blue. Set for the
+     * duration of the bake and put back afterwards, exactly as the shoulder and
+     * the chroma are, so the DRAWN dome is untouched. */
+    const turnU = this.sky.material.uniforms.uSkyTurn;
+    const turn = skyProbeTurn(this._atmos, this.meter);
+    if (turnU) turnU.value.set(turn.cos, turn.sin);
     // And bake from the PHYSICAL sky, not the drawn one. The drawn dome is
     // soft-clipped at 1.55 so it cannot feed the bloom pass (see SKY_DISPLAY);
     // baking the probe from that would quietly re-flatten the image-based
@@ -2168,6 +2321,7 @@ export class Engine {
     this._envRT = this.pmrem.fromScene(tmp, 0.04, 0.1, PMREM_FAR);
     if (knee) { knee.value = this.skyDisplay.knee; ceil.value = this.skyDisplay.ceil; }
     if (sat) sat.value = 1;
+    if (turnU) turnU.value.set(1, 0);
     this.scene.environment = this._envRT.texture;
     // With the sky linearised the probe is in the same units as the sun, so
     // this is 1.0 — the physical answer — instead of a fudge factor cancelling

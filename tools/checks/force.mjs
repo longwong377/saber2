@@ -34,6 +34,7 @@ import { Enemy, ARCHETYPES } from '../../src/game/Enemy.js';
 import { BoltPool } from '../../src/game/Bolts.js';
 import { buildJedi } from '../../src/game/Bodies.js';
 import { Input } from '../../src/engine/Input.js';
+import { POWER_COST } from '../../src/game/Powers.js';
 import { defaultBindings } from '../../src/engine/Bindings.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
@@ -134,6 +135,9 @@ function liveWorld({ forcePower = 1, force = null } = {}) {
     report() {}, notify(t, d) { this.notices.push(`${t} — ${d}`); }, notifyFloating() {},
     addHitstop() {}, onDeflectFeedback() {}, onEnemyKilled() {}, onLimbSevered() {},
     onHitmark() {}, onExplosion() {}, spawnDebrisGroup() {}, onPlayerDeath() {},
+    /* Force Sense dilates time, and `toggleSense` says so to the world it is
+     * in — a fixture that cannot be told is a fixture that cannot light it. */
+    setTimeScale() {},
   };
   const p = new Player(w, { isLocal: true });
   p.position.set(0, 0, 0);
@@ -1396,6 +1400,151 @@ export async function run({ check, assert, near }) {
       `${under} of ${frames} flight frames put the blade under the surface, deepest ${deepest.toFixed(2)} m `
       + `(${worst}) — the note this answers opens "thrown saber vanishes into the ground"`);
     return `${LEVEL_ORDER.length} levels x ${PITCHES.length} pitches, ${frames} flight frames, none below the surface`;
+  });
+
+  check('force: the grip charges the price the HUD prints, and refuses out loud', () => {
+    /**
+     * A THRESHOLD WEARING A PRICE TAG.
+     *
+     * `toggleGrip` opened with `if (!this._canSpend(POWER_COST.grip)) return;`
+     * and there was no matching `_spend` anywhere in the take-hold path — the
+     * only real bill was the per-second hold. So `POWER_COST.grip = 10`, which
+     * the HUD draws on the wheel as the price of the power, was a gate that
+     * charged nothing: measured, grip at 100 Force left 100.00 and held a crate.
+     *
+     * And the `return` was silent, in a file whose own `_refuse` header calls
+     * that "the same lie as a dead checkbox". All eleven powers say why; this
+     * one and the dash did not.
+     *
+     * Both halves are asserted against `POWER_COST` and `_priceOf` rather than
+     * against 10, because the defect was a number in one place disagreeing
+     * with a number in another and a check that types a third copy joins in.
+     */
+    const w = physicsWorld();
+    const world = gameWorld(w);
+    world.notices = [];
+    world.notify = (t, d) => world.notices.push(`${t} — ${d}`);
+    const b = prop(w, PROPS.crate, V(0, 1.35, -6));
+    w.step(1 / 60);
+    const p = player(world, { force: 100, maxForce: 100, world });
+    const price = p._priceOf(POWER_COST.grip);
+    const ctx = { physics: w, enemies: [], particles: null };
+
+    const before = p.force;
+    p.toggleGrip(ctx);
+    assert(p.gripBody === b, 'the fixture never took hold of the crate at all');
+    assert(Math.abs((before - p.force) - price) < 1e-6,
+      `taking hold cost ${(before - p.force).toFixed(2)} Force against the ${price} the wheel prints — `
+      + 'a price that is checked and never charged is a threshold wearing a price tag');
+
+    /* AND YOU ARE NOT BILLED FOR POINTING AT NOTHING. The gate is at the top of
+     * the method and the charge is at the take-hold, with every refusal in
+     * between — no target, too heavy, immovable. */
+    const empty = player(world, { force: 100, maxForce: 100, world });
+    const beforeEmpty = empty.force;
+    empty.toggleGrip({ physics: physicsWorld(), enemies: [], particles: null });
+    assert(!empty.gripBody && empty.force === beforeEmpty,
+      `a grip that found nothing still cost ${(beforeEmpty - empty.force).toFixed(2)} Force`);
+
+    // …and below the price it says so, in the charged price and not the list one.
+    world.notices.length = 0;
+    const broke = player(world, { force: price - 1, maxForce: 100, world });
+    broke.toggleGrip(ctx);
+    assert(!broke.gripBody, 'the grip took hold on less Force than it costs');
+    const said = world.notices.find((n) => /Force needed/.test(n));
+    assert(said, `the grip refused in silence at ${(price - 1).toFixed(0)} Force: ${JSON.stringify(world.notices)}`);
+    assert(said.includes(String(price)),
+      `the refusal reads "${said}" while _canSpend charges ${price}`);
+    return `grip charged ${(before - p.force).toFixed(0)} of a printed ${price}; nothing charged for an empty `
+      + `pick; refused with "${said}"`;
+  });
+
+  check('force: a held jump only lifts you while the Force is actually bought', () => {
+    /**
+     * THE HELD FORCE JUMP ADDED LIFT WHEN THE FORCE WAS REFUSED.
+     *
+     * `this._spend(34 * dt); this.velocity.y += 20 * dt;` — the spend's answer
+     * dropped on the floor, and `_spend` deducts NOTHING when it refuses, so
+     * below the tick price the impulse was simply free. The only gate was
+     * `this.force > 0`, which is not the price: the price is
+     * `34 * dt * forceDrain * forceCost`. Measured through the real input seam
+     * on the shipped code: 0.4 Force bought the identical 4.32 m apex that 125
+     * Force bought, and the 7.5/s regen outran the bill, so the full
+     * force-jump was permanent at an empty bar.
+     *
+     * Stated as an ORDERING over the pool the leap is paid from, so it cannot
+     * be satisfied by any particular apex: what you can afford is how high you
+     * go. The floor is the unpaid leap — `velocity.y = 7.4` off the ground,
+     * which costs nothing and must stay free.
+     */
+    const arc = (force) => {
+      const w = liveWorld({ force });
+      const held = new Set(), hits = new Set();
+      w.ctx.input = {
+        keys: new Set(), buttons: [false, false, false], mouse: { dx: 0, dy: 0, wheel: 0 },
+        accel: { x: 0, y: 0 }, bindings: null,
+        moveAxis: (o) => { o.x = 0; o.y = 0; return o; },
+        act: (a) => held.has(a), actHit: (a) => hits.has(a),
+      };
+      let apex = 0;
+      for (let i = 0; i < 150; i++) {
+        if (i === 4) { hits.add('jump'); held.add('jump'); }
+        if (i > 45) held.delete('jump');
+        w.ctx.time = w.w.time = i / 60;
+        w.p.update(1 / 60, w.ctx);
+        hits.clear();
+        apex = Math.max(apex, w.p.position.y);
+      }
+      const out = { apex, left: w.p.force };
+      w.dispose();
+      return out;
+    };
+    const empty = arc(0.4);
+    const rich = arc(125);
+    assert(rich.apex > empty.apex + 1.5,
+      `0.4 Force reached ${empty.apex.toFixed(2)} m and 125 Force reached ${rich.apex.toFixed(2)} m — the `
+      + 'held jump is not being paid for, so the pool does not decide the leap');
+    assert(empty.apex > 0.5,
+      `an unaffordable hold left the leap itself at ${empty.apex.toFixed(2)} m — the ground jump is free and `
+      + 'must stay free');
+    return `apex 0.4 Force ${empty.apex.toFixed(2)} m, 125 Force ${rich.apex.toFixed(2)} m `
+      + `(${(125 - rich.left).toFixed(0)} spent)`;
+  });
+
+  check('force: the pool never goes below empty', () => {
+    /**
+     * `_regen`'s Force Sense drain was `this.force -= 22 * dt`, unclamped, with
+     * the shutdown a frame behind it — so the pool spent every tick of a Sense
+     * ending a fraction under zero. Measured at 1/60: -0.3333 on the frame
+     * before the shutdown, and a 22-verb randomised fuzz across all nine levels
+     * turned up seven of them (-0.1405, -0.0110, -0.1170, -0.1529, -0.0721,
+     * -0.1038, -0.0462). A negative pool is a bar drawn below zero and a
+     * `_canSpend` answered against a debt.
+     *
+     * Every other drain in the file goes through `_spend`, which refuses rather
+     * than overdraws; the per-frame holds are the ones that can undershoot, so
+     * the property is stated over the WHOLE pool and swept across frame rates —
+     * the overshoot is `rate * dt`, so a low frame rate is where it is worst,
+     * and 10 Hz is a rate this project has measured on real hardware (see
+     * tools/checks/somersault.mjs).
+     */
+    const rows = [];
+    for (const hz of [60, 30, 10]) {
+      const b = liveWorld({ force: 40 });
+      b.p.toggleSense(b.ctx);
+      assert(b.p.senseActive, `Force Sense would not light at 40 Force (${hz} Hz)`);
+      let min = Infinity;
+      for (let i = 0; i < Math.round(hz * 8); i++) {
+        b.ctx.time = b.w.time += 1 / hz;
+        b.p._regen(1 / hz);
+        min = Math.min(min, b.p.force);
+      }
+      assert(min >= 0, `the pool reached ${min.toFixed(4)} at ${hz} Hz — the bar goes below empty`);
+      assert(!b.p.senseActive, `Force Sense was still running after 8 s at ${hz} Hz`);
+      rows.push(`${hz}Hz ${min.toFixed(4)}`);
+      b.dispose();
+    }
+    return `lowest pool seen: ${rows.join(', ')}`;
   });
 
   check('force: a refusal quotes the price it actually charges, and the wheel gates what Player gates', async () => {

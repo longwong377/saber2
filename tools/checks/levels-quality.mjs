@@ -205,6 +205,117 @@ export async function run({ check, assert }) {
     return `8 bearings × 12 s from the bank, furthest e = ${worstE.toFixed(2)} (${rows.join(' ')})`;
   });
 
+  acheck('levels: the gate arches stand IN the gates, not on the wall beside them', async () => {
+    /**
+     * ALL FOUR OF THE COLOSSEUM'S GATE ARCHES STOOD SIX METRES OVER THE RAMP
+     * THEY FRAME, and every seating check in the game passed them.
+     *
+     * The level placed each one at `(cos a · 66, sin a · 49)` — a point on the
+     * podium ELLIPSE — while the preset cuts the gate on a CIRCULAR bearing,
+     * `smoothstep(0.075, 0.0, |atan2(z, x) − a|)`, which is exactly zero past
+     * 0.075 rad. The parametric angle of an ellipse is not its compass
+     * bearing: the four arches came out 0.0788–0.0998 rad off, i.e. outside
+     * their own cut, standing on terrain at 4.76–5.05 m over a ramp floor of
+     * 1.76–2.24 m and 6.0–6.4 m sideways of it. In the render you could see
+     * the crowd THROUGH the span and behind both piers.
+     *
+     * `prop-seating` cannot catch this and never could: an arch on top of a
+     * wall is resting on the wall. The property that fails is not seating, it
+     * is that a GATE is the low ground on its own ring — a hole cut through a
+     * wall is the lowest thing on the circle it is cut through. So this walks
+     * the podium ring at the arch's own radius and asks where the floor of the
+     * ramp is, which is measurement rather than a second copy of the preset's
+     * arithmetic (HANDOFF §2.4): if the cut moves, this follows it.
+     *
+     * Measured after the fix: each arch sits 0.00–0.10 m over the lowest
+     * ground on its ring, against 2.8–3.0 m over it before.
+     */
+    const { world } = await level('colosseum');
+    const T = world.terrain;
+    const arches = [];
+    world.scene.traverse((o) => {
+      if (o.isMesh || !o.userData || o.userData.__maker !== 'addArch') return;
+      arches.push(o.position.clone());
+    });
+    assert(arches.length === 4, `${arches.length} arches on the colosseum, not the four gates`);
+    const rows = [];
+    for (const p of arches) {
+      const r = Math.hypot(p.x, p.z), a = Math.atan2(p.z, p.x);
+      let lowest = Infinity, at = 0;
+      for (let d = -0.45; d <= 0.45; d += 0.005) {
+        const h = T.height(Math.cos(a + d) * r, Math.sin(a + d) * r);
+        if (h < lowest) { lowest = h; at = d; }
+      }
+      const over = T.height(p.x, p.z) - lowest;
+      rows.push(`${(a * 57.3).toFixed(0)}° +${over.toFixed(2)} m`);
+      assert(over < 1.0,
+        `a gate arch at (${p.x.toFixed(0)}, ${p.z.toFixed(0)}) stands ${over.toFixed(2)} m above the `
+        + `lowest ground on its own ring, which is ${(Math.abs(at) * r).toFixed(1)} m to the side of it — `
+        + 'the arch is on the podium wall and the gate is somewhere else');
+    }
+    return `4 gates, height over the floor of their own ramp: ${rows.join(', ')}`;
+  });
+
+  acheck('hazard: the sheet a level is built round is in front of the player when it opens', async () => {
+    /**
+     * THE EMBER SHELF'S LAVA SEA COULD NOT BE SEEN FROM WHERE THE GAME STOOD
+     * YOU UP, ON ANY BEARING.
+     *
+     * `World._playerSpawn` hard-coded `(0, h(0, 8), 8)` for all nine levels,
+     * so a level had no way to say where it opens. Measured from that point on
+     * scoria at eye height: nearest ground under the sheet 94 m away, 0.0% of
+     * the r ≤ 60 m fight disc under it, and 0 of 360 bearings with an
+     * unobstructed line to it — over a ridge, behind you, on a level whose
+     * blurb is "a basalt shelf standing out of a lava sea". `Hazard.js`'s own
+     * header is the rule this makes checkable: "the levels that have a hazard
+     * are the levels whose fights happen along its edge."
+     *
+     * Driven through `_playerSpawn` itself rather than through `L.start`, so
+     * the check measures where the game ACTUALLY stands the player — the
+     * authored point, or whatever the widening ring found instead when the
+     * authored point was illegal. The eye line is a straight segment from eye
+     * height to the sheet, stepped against the heightfield.
+     *
+     * 60 m and one bearing are deliberately weak bars: this is a claim about
+     * a sea being present at the opening, not about how much of it there is.
+     * Measured now — mustafar 40 m with 156 bearings, scoria 30 m with 63.
+     */
+    const rows = [];
+    for (const key of LEVEL_ORDER) {
+      const L = LEVELS[key];
+      if (!L?.water?.damage) continue;
+      const { world } = await level(key);
+      const T = world.terrain, sheet = L.water.level ?? 0;
+      const p = world._playerSpawn();
+      const eye = p.y + 1.6;
+      let nearest = Infinity, seen = 0, reach = 0;
+      for (let b = 0; b < 360; b++) {
+        const cx = Math.cos(b * Math.PI / 180), cz = Math.sin(b * Math.PI / 180);
+        for (let r = 2; r <= 300; r += 2) {
+          const x = p.x + cx * r, z = p.z + cz * r;
+          if (!T.inBounds(x, z, 4)) break;
+          if (T.height(x, z) >= sheet) continue;
+          reach++;
+          nearest = Math.min(nearest, r);
+          let clear = true;
+          for (let t = 4; t < r; t += 3) {
+            if (T.height(p.x + cx * t, p.z + cz * t) > eye + (sheet - eye) * (t / r)) { clear = false; break; }
+          }
+          if (clear) seen++;
+          break;
+        }
+      }
+      assert(reach > 0, `${key}: no bearing from the opening position reaches the sheet at all`);
+      assert(nearest <= 60, `${key}: the nearest ${L.water.damage} HP/s sheet is ${nearest} m from where the `
+        + `game stands the player up, at (${p.x.toFixed(0)}, ${p.z.toFixed(0)})`);
+      assert(seen >= 1, `${key}: ${reach} bearings reach the sheet and NONE of them has an eye line to it — `
+        + `the hazard the level is built round is not visible from where it opens`);
+      rows.push(`${key} ${nearest} m, ${seen}/${reach} bearings see it`);
+    }
+    assert(rows.length >= 1, 'no level in the game declares a damaging sheet — nothing was measured');
+    return rows.join('; ');
+  });
+
   /* ── 2. the trees ─────────────────────────────────────────────────── */
 
   acheck('wood: a standing trunk is something you walk into, not through', async () => {

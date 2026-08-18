@@ -24,7 +24,7 @@
 import { readFile } from 'node:fs/promises';
 import * as THREE from 'three';
 import { HUD, POWERS, POWER_COST, POWER_BOON, applyReticle, shapeAt, colorAt, RETICLE_SHAPES, RETICLE_COLORS, RETICLE_BASE,
-  Minimap, MINIMAP, hostilesLeft, rosterHtml } from '../../src/ui/HUD.js';
+  Minimap, MINIMAP, MINIMAP_COLORS, hostilesLeft, rosterHtml } from '../../src/ui/HUD.js';
 import { Player } from '../../src/game/Player.js';
 import { makeDocument } from './_page.mjs';
 import { DEFAULT_SETTINGS, SETTING_READERS, Menu } from '../../src/ui/Menu.js';
@@ -36,6 +36,9 @@ import { Stratagems, STRATAGEMS } from '../../src/game/Stratagems.js';
 // check is a third copy of a table that already has two readers.
 import { RANKS, ARMIES, CommandRoster } from '../../src/game/Command.js';
 import { OPEN_STATES, openState, openMul } from '../../src/game/Combat.js';
+/* The ONE statement of "does this body belong to the other side", so the check
+ * asks it the same way the HUD now does instead of writing a fourth copy. */
+import { WaveDirector } from '../../src/game/Waves.js';
 
 const read = (p) => readFile(new URL('../../' + p, import.meta.url), 'utf8');
 
@@ -1296,6 +1299,103 @@ export async function run({ check, assert }) {
   /* ────────────────────────────────────────────────────────────────────
    * THE MUSTER
    * ──────────────────────────────────────────────────────────────────── */
+
+  check('hud: four readers stop treating your own army as the enemy', () => {
+    /**
+     * IN COMMAND, `world.enemies` HOLDS YOUR OWN TROOPS — an ally is an `Enemy`
+     * with a different `team`. The check above fixed the COUNTER for that and
+     * wrote a paragraph about it; four readers twelve lines either side of it
+     * had the identical missing filter, and every one was measured on a real
+     * geonosis Command run (18 bodies alive, 10 of them yours):
+     *
+     *   THE MINIMAP     index.html promises "bosses warm, allies green" and
+     *                   `MINIMAP_COLORS.ally` was reachable only from the two
+     *                   co-op loops. Colours used: `{enemy: 18}`, ally 0.
+     *   THE RETICLE     `.hot` — "something within 5 m can kill you" — with
+     *                   zero hostiles inside the radius: circle, behind, cover,
+     *                   line and holdfire all lit it, five of seven formations,
+     *                   permanently. A warning that is always on carries none.
+     *   THE OPEN STATE  offered a "1.5x CUT" over the player's own toppled
+     *                   sergeant.
+     *   THE BOSS BAR    both armies field a `big` body, so an allied heavy took
+     *                   the boss bar and its name.
+     *
+     * The predicate is the DIRECTOR'S, not a fourth copy: `blocksWaveEnd` is
+     * borrowed onto the fixture the way `wheelPlayer` borrows `_canSpend`.
+     */
+    const { hud, restore } = hudOnPage(INDEX);
+    try {
+      const at = (x, z, team, extra = {}) => ({
+        dead: false, team, position: new THREE.Vector3(x, 0, z),
+        hp: 100, maxHp: 100, ...extra,
+        A: { label: `T${team}`, ...(extra.A || {}) },
+      });
+      const world = stubWorld({ ...DEFAULT_SETTINGS });
+      world.command = {};
+      world.partyTeam = 0;
+      world.director.blocksWaveEnd = WaveDirector.prototype.blocksWaveEnd;
+      world.director.world = world;
+      // Your own squad, standing where a formation puts it — inside 5 m — with
+      // one man toppled and one heavy. Nothing hostile is anywhere near.
+      world.enemies = [
+        at(1, 1, 0), at(-1, 1, 0), at(2, 0, 0, { toppled: true }),
+        at(1.5, 1.5, 0, { A: { label: 'ALLIED HEAVY', big: true } }),
+        at(60, 60, 1), at(62, 60, 1, { A: { label: 'HOSTILE HEAVY', big: true } }),
+      ];
+      const p = player();
+      const cam = new THREE.PerspectiveCamera();
+      hud.update(1 / 60, world, p, cam);
+
+      const near = world.enemies.filter(e => e.position.distanceToSquared(p.position) < 25);
+      assert(near.length && near.every(e => e.team === 0),
+        'this fixture no longer parks allies and only allies inside the threat radius');
+      assert(!hud.el.reticle.classList.contains('hot'),
+        `the reticle warns of a threat with ${near.length} of your own troops and no hostile inside 5 m`);
+      assert(hud.el.targetOpen.classList.contains('hidden'),
+        `the open-state readout is offering "${hud.el.targetOpen.textContent}" over your own downed trooper`);
+      assert(hud.el.boss.classList.contains('hidden')
+        || hud.el.bossLabel.textContent !== 'ALLIED HEAVY',
+        `the boss bar is showing "${hud.el.bossLabel.textContent}" — that is your own heavy`);
+
+      // …and each one still fires for the real thing, so this is a filter and
+      // not an off switch.
+      world.enemies = [at(2, 0, 1, { toppled: true }),
+        at(3, 0, 1, { A: { label: 'HOSTILE HEAVY', big: true } })];
+      hud.update(1 / 60, world, p, cam);
+      assert(hud.el.reticle.classList.contains('hot'), 'a real hostile inside 5 m no longer warns');
+      assert(!hud.el.targetOpen.classList.contains('hidden'), 'a downed hostile is no longer worth extra');
+      assert(hud.el.bossLabel.textContent === 'HOSTILE HEAVY',
+        `the boss bar reads "${hud.el.bossLabel.textContent}" with a hostile heavy on the field`);
+
+      /* THE MINIMAP, through the shipped Minimap on a colour-counting canvas —
+       * the claim is about which entry of MINIMAP_COLORS came out, and a check
+       * that read the source could not tell you. */
+      const used = new Map();
+      const g = new Proxy({}, {
+        get: () => () => {},
+        set: (_t, k, v) => { if (k === 'fillStyle') used.set(v, (used.get(v) || 0) + 1); return true; },
+      });
+      const canvas = { width: 0, height: 0, style: {},
+        classList: { toggle() {}, contains: () => false }, getContext: () => g };
+      const map = new Minimap(canvas);
+      const army = { ...world, enemies: [], players: [] };
+      army.director = { ...world.director, world: army };
+      army.director.blocksWaveEnd = WaveDirector.prototype.blocksWaveEnd;
+      for (let i = 0; i < 10; i++) army.enemies.push(at(i, i, 0));
+      for (let i = 0; i < 8; i++) army.enemies.push(at(-i - 1, i, 1));
+      const me = player(); me.senseActive = true;
+      for (let i = 0; i < 60; i++) map.update(1 / 60, army, me, { ...DEFAULT_SETTINGS });
+      const allyBlips = used.get(MINIMAP_COLORS.ally) || 0;
+      const hostileBlips = (used.get(MINIMAP_COLORS.enemy) || 0) + (used.get(MINIMAP_COLORS.boss) || 0);
+      assert(allyBlips > 0,
+        `${army.enemies.filter(e => e.team === 0).length} of your own troops are on the map and the `
+        + 'ally colour was used 0 times — index.html promises "allies green"');
+      assert(Math.abs(allyBlips / hostileBlips - 10 / 8) < 0.05,
+        `10 allies and 8 hostiles drew ${allyBlips} ally blips and ${hostileBlips} hostile ones`);
+      return `18 bodies, 10 yours: reticle cold, no open-state offer, no boss bar, `
+        + `map ${allyBlips} green / ${hostileBlips} red — and all four still fire on a real hostile`;
+    } finally { restore(); }
+  });
 
   check('hud: the muster sells what the director offers, and spends the director\'s points', () => {
     /**

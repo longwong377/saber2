@@ -28,20 +28,21 @@
 
 import { readFile } from 'node:fs/promises';
 import { makeDocument } from './_page.mjs';
-import { Menu, DEFAULT_SETTINGS, DEATH_TITLE, codexHtml, codexTeaching } from '../../src/ui/Menu.js';
+import { Menu, DEFAULT_SETTINGS, DEATH_TITLE, codexHtml, codexTeaching,
+  loadSettings, STORE_KEY } from '../../src/ui/Menu.js';
 /* The standing-order row is BUILT from this table, so the check that says so reads the
  * table rather than a transcription of what it said on the day. */
-import { FORMATIONS } from '../../src/game/Command.js';
+import { FORMATIONS, COMMAND_FORCE, ORDERS as COMMAND_ORDERS } from '../../src/game/Command.js';
 import { ACTIONS, defaultBindings } from '../../src/engine/Bindings.js';
 import { FOCUS } from '../../src/game/Focus.js';
 import { QUALITY } from '../../src/engine/Engine.js';
-import { MODES, WaveDirector, BOSS_EVERY } from '../../src/game/Waves.js';
-import { LEVEL_ORDER } from '../../src/game/Levels.js';
+import { MODES, WaveDirector, BOSS_EVERY, CONDITION_KEYS } from '../../src/game/Waves.js';
+import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
 /* The Codex's teaching half is generated off these, and the check reads the
  * same tables rather than a transcription of what they said on the day. */
-import { DIFFICULTY, GRADE_NAME, SPEED_GRADE, PARRY_GRADE, parryScale } from '../../src/game/Combat.js';
+import { DIFFICULTY, GRADE_NAME, SPEED_GRADE, PARRY_GRADE, parryScale, CATCH } from '../../src/game/Combat.js';
 import { POWER_COST, POWER_BOON } from '../../src/game/Powers.js';
-import { STRATAGEMS } from '../../src/game/Stratagems.js';
+import { STRATAGEMS, CODE_GAP } from '../../src/game/Stratagems.js';
 import { insightRate, insightAfter, COST as FACET_COST, COST_STEP } from '../../src/game/LivingForce.js';
 
 const read = (p) => readFile(new URL('../../' + p, import.meta.url), 'utf8');
@@ -687,25 +688,365 @@ export async function run({ check, assert }) {
     const strats = STRATAGEMS.filter((S) => !chips.includes(`${S.cost} Force`));
     assert(!strats.length,
       `stratagems the Codex documents with no price: ${strats.map((S) => S.id).join(', ')}`);
+    /* THE THIRD PRICED TABLE. `COMMAND_FORCE`'s two verbs — Rally and Dread —
+     * were in NO list a player could read: they exist only as captions on the
+     * order wheel, and the Codex's own Command block counted `ORDER_ACTIONS`
+     * (the orders that have a key, which is formations only) and therefore
+     * said "the 7 orders" about a wheel with ten slots. They are documented
+     * rows now, so they are held to the same both-directions bound as a power
+     * and a stratagem. */
+    const verbs = Object.values(COMMAND_FORCE).filter((P) => !chips.includes(`${P.cost} Force`));
+    assert(!verbs.length,
+      `command Force orders the Codex does not price: ${verbs.map((P) => P.id).join(', ')}`);
     /* Nothing typed: every chip's number is somebody's `cost` field. */
-    const priced = new Set([...Object.values(POWER_COST), ...STRATAGEMS.map((S) => S.cost)]
-      .map((c) => `${c} Force`));
+    const priced = new Set([...Object.values(POWER_COST), ...STRATAGEMS.map((S) => S.cost),
+      ...Object.values(COMMAND_FORCE).map((P) => P.cost)].map((c) => `${c} Force`));
     const stray = chips.filter((c) => !priced.has(c));
     assert(!stray.length, `price chips that came from no table: ${[...new Set(stray)].join(', ')}`);
-    assert(chips.length === Object.keys(POWER_COST).length + STRATAGEMS.length,
-      `${chips.length} price chips against ${Object.keys(POWER_COST).length} powers and `
-      + `${STRATAGEMS.length} stratagems — one of them is priced twice or not at all`);
+    const want = Object.keys(POWER_COST).length + STRATAGEMS.length + Object.keys(COMMAND_FORCE).length;
+    assert(chips.length === want,
+      `${chips.length} price chips against ${Object.keys(POWER_COST).length} powers, `
+      + `${STRATAGEMS.length} stratagems and ${Object.keys(COMMAND_FORCE).length} Force orders — `
+      + 'one of them is priced twice or not at all');
 
     /* The gates are the two boon-locked powers plus whatever the stratagem
      * table marks `commandOnly`, and they name the CARD rather than a string. */
     const wantGates = Object.values(POWER_BOON).length
-      + STRATAGEMS.filter((S) => S.commandOnly).length;
+      + STRATAGEMS.filter((S) => S.commandOnly).length
+      // …and both Force orders, which need an army by definition: there is
+      // nobody to rally and nothing to lead without one.
+      + Object.keys(COMMAND_FORCE).length;
     assert(gates.length === wantGates,
       `${gates.length} gate chips against ${wantGates} gated calls`);
     assert(!/\bForce Lightning\b/.test(html.replace(/<em class="cost gate">[^<]*<\/em>/g, '')),
       'the Codex still types a boon name into its prose');
     return `${chips.length} prices and ${gates.length} gates, all off POWER_COST / STRATAGEMS; `
       + `push ${POWER_COST.push} · unleash ${POWER_COST.unleash} with nothing typed`;
+  });
+
+  check('menu: no page-facing number competes with the generated one that owns it', () => {
+    /**
+     * A HAND-TYPED NUMBER BESIDE ITS GENERATED TWIN — HANDOFF §2.3, on the one
+     * screen whose whole job is to be believed.
+     *
+     * The Codex grid's parry row said "inside 0.2 s". That is `PARRY_GRADE.window`
+     * BEFORE `parryScale(difficulty)` touches it, and the shipped windows are
+     * padawan 320 ms, knight 250 (the default), master 200, grandmaster 172 —
+     * so it was wrong on three tiers of four and 25% pessimistic on the tier
+     * most players are on. Thirteen lines below it, in the same panel,
+     * `codexTeaching` printed 250 ms and 125 ms off the same two constants.
+     * One screen, two numbers, and the typed one was the wrong one.
+     *
+     * So: the GRID may not quote a duration at all — the panel that knows the
+     * difficulty owns that — and the PANEL's numbers must move with the tier.
+     */
+    const grid = codexHtml(defaultBindings());
+    const times = [...grid.matchAll(/(\d+(?:\.\d+)?)\s*(?:&nbsp;)?\s*(ms|s)\b/g)];
+    /* Every duration left in the grid has to be DERIVABLE from a table this
+     * file can also read — that is the whole test. The parry window is not,
+     * because `codexHtml` is handed bindings and a pad and has no difficulty to
+     * scale it with; CATCH's three, the two Force orders' timers and the
+     * stratagem gap all are, so the allowed set is built from those tables
+     * rather than from a list of numbers, and a typed one has nowhere to hide. */
+    const derivable = new Set([
+      `${Math.round(CATCH.hold * 1000)}`, `${CATCH.maxOpen.toFixed(2)}`,
+      `${CATCH.autoGuard.toFixed(2)}`, `${CODE_GAP}`,
+      ...Object.values(COMMAND_FORCE).flatMap(P => [`${P.seconds}`, `${P.cd}`]),
+    ]);
+    const stray = times.map(m => m[1]).filter(v => !derivable.has(v));
+    assert(!stray.length,
+      `the Codex grid types the durations ${[...new Set(stray)].join(', ')} — a duration that is not `
+      + 'read off a table is a number that will be right on one difficulty');
+    // …and the window really does differ across tiers, so "the panel owns it"
+    // is a fact and not a slogan.
+    const win = (d) => Number((codexTeaching({ difficulty: d }).match(/inside (\d+) ms/) || [])[1]);
+    const tiers = Object.keys(DIFFICULTY);
+    const windows = tiers.map(win);
+    assert(windows.every(Number.isFinite), 'the teaching panel stopped printing a parry window');
+    assert(new Set(windows).size === tiers.length,
+      `${tiers.length} difficulties produce ${new Set(windows).size} distinct parry windows`);
+    for (let i = 0; i < tiers.length; i++) {
+      const want = Math.round(PARRY_GRADE.window * parryScale(DIFFICULTY[tiers[i]]) * 1000);
+      assert(windows[i] === want, `${tiers[i]} reads ${windows[i]} ms and the game gives ${want} ms`);
+    }
+    return `grid: 0 typed durations left (${times.length} all derived); panel: `
+      + tiers.map((t, i) => `${t} ${windows[i]}ms`).join(', ');
+  });
+
+  check('menu: the wheel, the two Force orders and the dive are all on a page', () => {
+    /**
+     * THREE THINGS THE GAME HAD AND NO SCREEN MENTIONED.
+     *
+     *   THE WHEEL'S COUNT   `HUD.OrderWheel` is constructed with `ORDERS` =
+     *                       `{...FORMATIONS, ...COMMAND_FORCE}` — nine — plus a
+     *                       hold-ground slot, so it has ten. The Codex said
+     *                       "the 7 orders", because it counted `ORDER_ACTIONS`,
+     *                       the registry of orders that have a KEY, and only
+     *                       formations do. The block's own comment claimed its
+     *                       rows come off the table "so a seventh entry appears
+     *                       the day it is authored"; it read the wrong table.
+     *   RALLY AND DREAD     existed in no list a player could read — not the
+     *                       grid, not the teaching panel, nowhere but a wheel
+     *                       caption they have to hold the wheel open to see.
+     *   THE DIVE            `Player._tryDive` is real and checked, and had no
+     *                       key of its own, no row and no sentence anywhere.
+     *
+     * Held against the TABLES, so a third Force verb has to be documented the
+     * day it is authored — which is what the block always claimed to do.
+     */
+    const grid = codexHtml(defaultBindings());
+    const text = grid.replace(/<[^>]*>/g, ' ');
+    const wheelRow = grid.split('</div>').find(r => /Order wheel/.test(r)) || '';
+    assert(wheelRow.includes(String(Object.keys(COMMAND_ORDERS).length)),
+      `the wheel row does not name ${Object.keys(COMMAND_ORDERS).length} — the size of the table `
+      + `the wheel is handed — it says "${wheelRow.replace(/<[^>]*>/g, ' ').trim().slice(0, 90)}"`);
+    for (const P of Object.values(COMMAND_FORCE)) {
+      const row = grid.split('</div>').find(r => r.includes(`<b>${P.name}</b>`));
+      assert(row, `${P.id} is on the order wheel and in no list a player can read`);
+      for (const [what, want] of [['radius', P.radius], ['recovery', P.cd], ['duration', P.seconds]]) {
+        assert(row.includes(String(want)),
+          `${P.id}'s row never states its ${what} (${want}) — it is a caption, not a page`);
+      }
+      assert(row.includes(`${P.cost} Force`), `${P.id}'s row is not priced`);
+    }
+    // The dive: named, and named where the input that fires it is described.
+    assert(/\bdive\b/i.test(text), 'the aerial dive is taught on no screen at all');
+    return `wheel says ${Object.keys(COMMAND_ORDERS).length} orders; `
+      + `${Object.keys(COMMAND_FORCE).length} Force orders documented with cost, reach, `
+      + 'duration and recovery; the dive has a sentence';
+  });
+
+  check('menu: catch-and-throw — the answer to the loudest complaint — is taught', () => {
+    /**
+     * `Combat.js`'s CATCH block states outright that it exists to remove the
+     * contradiction the player reported in their own words: "I don't understand
+     * how you're supposed to block and also aim at an enemy in the same motion
+     * because when you're moving the blade to specifically deflect the cursor
+     * can't move." A search of every player-facing string in the project —
+     * index.html plus both halves of the Codex, 25 236 characters — for
+     * `stick`, `caught`, `catch`, `holds the bolt`, `camera comes back`,
+     * `auto-guard` and `six bolts` found NONE of them. The mechanic shipped and
+     * no screen said it existed, and a player who lets go of the guard on
+     * contact — which every other sentence on the page teaches — never meets it.
+     *
+     * Every number is held to CATCH so the teaching cannot drift from the
+     * mechanic, and the Codex's own "four answers to a bolt" is held to
+     * mentioning the fifth.
+     */
+    const page = codexHtml(defaultBindings()) + '\n' + codexTeaching({});
+    assert(/\bcatch(es)?\b/i.test(page), 'nothing on either half of the Codex says a bolt can be held');
+    for (const [what, want] of [
+      ['the hold', `${Math.round(CATCH.hold * 1000)}`],
+      ['how many at once', `${CATCH.maxHeld}`],
+      ['the ceiling', `${CATCH.maxOpen.toFixed(2)}`],
+      ['the auto-guard', `${CATCH.autoGuard.toFixed(2)}`],
+      ['the cone', `${Math.round(CATCH.autoCone * 360 / Math.PI)}`],
+    ]) {
+      assert(page.includes(want), `the Codex never states ${what} (${want}) from CATCH`);
+    }
+    // …and the half that answers the complaint: the camera comes back to you.
+    assert(/camera comes back/i.test(page),
+      'the page teaches the catch without the reason it exists — that you aim AFTER the block');
+    const four = codexTeaching({});
+    assert(/answers to a bolt/.test(four) && /\bcatch(es)?\b/i.test(four),
+      '"The four answers to a bolt" still never mentions that a bolt can be held');
+    return `catch taught with all five CATCH numbers: ${Math.round(CATCH.hold * 1000)}ms hold, `
+      + `${CATCH.maxHeld} bolts, ${CATCH.maxOpen.toFixed(2)}s ceiling, `
+      + `${CATCH.autoGuard.toFixed(2)}s cone at ${Math.round(CATCH.autoCone * 360 / Math.PI)}°`;
+  });
+
+  check('menu: a mode that throws the run rules away greys the column and says so', () => {
+    /**
+     * index.html promises, unconditionally, that the run rules "are in force
+     * from the first wave". Measured against the shipped composer:
+     * `legalRuleSet` accepts them in all EIGHT modes and exactly FIVE honour
+     * them. `_compose` returns into `_composeDuel` twenty-seven lines before
+     * the rules are unioned in, so a duel's wave-6 conditions are `[]`;
+     * `start()` returns before `_compose` at all in sandbox; and training runs
+     * a `DojoDirector`, which has no composer to reach at all. So in three
+     * modes a player lights up to four cards, watches them written to
+     * settings, and fights a run that has never heard of them.
+     *
+     * `_syncTheatre` already had the answer in its own words — "a card that is
+     * lit, written to settings and then thrown away reads as the picker being
+     * randomly broken" — and this is the same switch on the same shape:
+     * `MODES[key].fixedRules` is declared by the mode and read here. The
+     * STRINGS belong on MODES in src/game/Waves.js, which this lane does not
+     * own; what is held here is the reader, driven with a mode that declares
+     * one, so the day the three strings land the column greys with no edit in
+     * Menu.js.
+     */
+    // Which modes actually honour a rule, asked of the shipped composer rather
+    // than listed here — the list is the thing that would go stale.
+    const honours = (mode) => {
+      const d = new WaveDirector(
+        { enemies: [], players: [], settings: {}, takenBoons: new Set(), spawnEnemy: () => ({}) },
+        { mode, pool: LEVELS[LEVEL_ORDER[0]].pool, rules: [] });
+      d.rules = d.legalRuleSet([...CONDITION_KEYS]);
+      if (!d.rules.length) return false;
+      /* Through `start()`, not straight into `_compose()`: sandbox's refusal is
+       * a `return` in start() twenty lines ABOVE the composer, so a probe that
+       * calls the composer directly reports sandbox as honouring rules it will
+       * never see. Training is deaf a layer further out again — main.js builds
+       * a `DojoDirector` there, which has no composer at all — and no probe
+       * that holds a WaveDirector can see that one. */
+      try { d.start(6); } catch { return false; }
+      return (d.conditions || []).length > 0;
+    };
+    const deaf = Object.keys(MODES).filter(m => !honours(m));
+    assert(deaf.length, 'every mode now honours the rules — this check has nothing left to guard');
+
+    const { menu, doc, close } = menuOn();
+    try {
+      const list = doc.getElementById('rule-list');
+      const note = doc.getElementById('rule-note');
+      const promise = note.textContent;
+      // A mode that honours them: live column, the shipped promise intact.
+      menu.s.mode = Object.keys(MODES).find(m => honours(m));
+      menu._syncRules();
+      assert(!list.classList.contains('inert'),
+        `the column is greyed in ${menu.s.mode}, which honours the rules`);
+      assert(note.textContent === promise, 'the shipped note was overwritten by a mode that is fine');
+
+      /* THE READER, driven with a declared refusal. Injected onto the real
+       * MODES record rather than faked, and removed again: this is the exact
+       * field src/game/Waves.js is being asked to carry, and pinning the
+       * reader is the half this lane can hold. */
+      const target = deaf[0];
+      const REASON = 'Not in a duel: the run is composed one opponent at a time.';
+      MODES[target].fixedRules = REASON;
+      try {
+        menu.s.mode = target;
+        menu._syncRules();
+        assert(list.classList.contains('inert'),
+          `${target} declares it throws the rules away and the column is still live`);
+        assert(note.textContent === REASON,
+          `the column still promises "${note.textContent}" in a mode that ignores it`);
+        const cards = [...list.children];
+        assert(cards.length && cards.every(c => c.classList.contains('barred')),
+          `${cards.filter(c => !c.classList.contains('barred')).length} cards are still pickable`);
+        assert(cards.every(c => c.getAttribute('aria-disabled') === 'true' && c.tabIndex === -1),
+          'a greyed card is still on the keyboard path');
+        assert(cards.every(c => c.querySelector('.txt span').textContent === REASON),
+          'a barred card does not say WHY — that is the silent dead control again');
+      } finally { delete MODES[target].fixedRules; }
+
+      // …and it comes back when the mode does.
+      menu.s.mode = Object.keys(MODES).find(m => honours(m));
+      menu._syncRules();
+      assert(!list.classList.contains('inert') && note.textContent === promise,
+        'the column stayed greyed after moving back to a mode that honours the rules');
+      return `${Object.keys(MODES).length} modes, ${deaf.length} deaf to the rules `
+        + `(${deaf.join(', ')}); the reader greys, names the reason on every card, and comes back`;
+    } finally { close(); }
+  });
+
+  check('menu: the seed box plays the number it is showing', () => {
+    /**
+     * THE WHOLE POINT OF THE FIELD is that the number you read out is the
+     * number that composed the waves. It stored `Number(clean) >>> 0` against a
+     * ten-digit box, so 9999999999 was played as 1410065407 while the box went
+     * on showing 9999999999 — two typed seeds, one run, and nothing on screen
+     * saying so.
+     *
+     * Held as an IDENTITY between what is shown and what is stored, over the
+     * boundary values of the 32-bit stream `main.js` seeds, so it cannot be
+     * satisfied by a different truncation next time.
+     */
+    const { menu, settings, doc, close } = menuOn();
+    try {
+      const field = doc.getElementById('opt-seed');
+      assert(field, 'index.html has no #opt-seed');
+      const type = (v) => { field.value = v; field.dispatchEvent({ type: 'input' }); };
+      const MAX = 0xFFFFFFFF;
+      for (const typed of ['1234', String(MAX), String(MAX + 1), '9999999999', '12x34', '']) {
+        type(typed);
+        const shown = field.value;
+        assert(settings.seed === (shown === '' ? null : Number(shown)),
+          `the box shows "${shown}" and the run will be seeded ${settings.seed}`);
+        if (settings.seed !== null) {
+          assert(Number.isInteger(settings.seed) && settings.seed >= 0 && settings.seed <= MAX,
+            `"${typed}" stored ${settings.seed}, which is not a 32-bit seed`);
+          assert((settings.seed >>> 0) === settings.seed,
+            `"${typed}" stored a value the stream will change under the player`);
+        }
+      }
+      // and the two seeds that used to collide no longer do
+      type(String(MAX + 1)); const a = settings.seed; const aShown = field.value;
+      type('9999999999'); const b = settings.seed;
+      assert(a === b ? aShown === field.value : true,
+        'two typed seeds still map to one run while showing different numbers');
+      return `1234, ${MAX}, ${MAX + 1}, 9999999999, "12x34" and empty — the box and the run `
+        + 'agree on every one';
+    } finally { close(); }
+  });
+
+  check('menu: a stored setting of the wrong TYPE cannot reach the engine', () => {
+    /**
+     * `loadSettings` normalised three fields — the blade ceiling, the face
+     * sheet, the wardrobe — and type-checked none of the other 73. Nothing
+     * reachable through today's controls writes the wrong shape, which is
+     * exactly what makes it the next schema change's trap: measured, a stored
+     * `fov: "wide"` went straight through to `camera.fov` and produced a NaN
+     * projection matrix — a black screen with no error — and
+     * `bladeLength: "long"` came back NaN through the ceiling clamp already
+     * standing there.
+     *
+     * Driven over EVERY key in DEFAULT_SETTINGS with a value of the wrong
+     * shape, so a setting added tomorrow is covered by the same clause on the
+     * day it is added. The expectation is derived from the DEFAULT's own type,
+     * not from a schema typed here.
+     */
+    const store = new Map();
+    const real = globalThis.localStorage;
+    globalThis.localStorage = {
+      getItem: (k) => (store.has(k) ? store.get(k) : null),
+      setItem: (k, v) => store.set(k, String(v)),
+      removeItem: (k) => store.delete(k),
+    };
+    try {
+      const scalars = Object.entries(DEFAULT_SETTINGS)
+        .filter(([, v]) => typeof v === 'number' || typeof v === 'boolean' || typeof v === 'string'
+          || Array.isArray(v));
+      assert(scalars.length > 60, `only ${scalars.length} scalar settings — the fixture found nothing`);
+      const POISON = ['wide', {}, [], NaN, null, undefined, Infinity, '12'];
+      let cases = 0;
+      for (const [key, def] of scalars) {
+        for (const bad of POISON) {
+          store.clear();
+          store.set(STORE_KEY, JSON.stringify({ ...DEFAULT_SETTINGS, [key]: bad }));
+          const s = loadSettings();
+          cases++;
+          const v = s[key];
+          if (Array.isArray(def)) {
+            assert(Array.isArray(v) && v.every(x => typeof x === 'string'),
+              `${key}: ${JSON.stringify(bad)} survived as ${JSON.stringify(v)}`);
+          } else {
+            assert(typeof v === typeof def, `${key}: ${JSON.stringify(bad)} came back as `
+              + `${typeof v} ${JSON.stringify(v)} against a ${typeof def} default`);
+            if (typeof def === 'number') {
+              assert(Number.isFinite(v), `${key}: ${JSON.stringify(bad)} came back as ${v}`);
+            }
+          }
+        }
+      }
+      // …and the specific one that was measured, end to end.
+      store.clear();
+      store.set(STORE_KEY, JSON.stringify({ ...DEFAULT_SETTINGS, fov: 'wide', bladeLength: 'long' }));
+      const s = loadSettings();
+      assert(Number.isFinite(s.fov) && Number.isFinite(s.bladeLength),
+        `fov ${s.fov} and bladeLength ${s.bladeLength} still reach the camera`);
+      // A legal blob is untouched — this is a type guard, not a reset button.
+      store.clear();
+      const chosen = { ...DEFAULT_SETTINGS, fov: 78, sfxVolume: 0.31, popups: false, quality: 'low' };
+      store.set(STORE_KEY, JSON.stringify(chosen));
+      const kept = loadSettings();
+      for (const k of ['fov', 'sfxVolume', 'popups', 'quality']) {
+        assert(kept[k] === chosen[k], `a legal ${k} of ${chosen[k]} was reset to ${kept[k]}`);
+      }
+      return `${scalars.length} scalar settings x ${POISON.length} wrong shapes = ${cases} loads, `
+        + 'every one the type its default is; four deliberate choices untouched';
+    } finally { globalThis.localStorage = real; }
   });
 
   check('menu: the Codex teaches the ladder and the purse in the numbers the game uses', () => {

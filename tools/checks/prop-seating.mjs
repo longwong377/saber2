@@ -205,6 +205,19 @@ function assemblies(world) {
      * enough to make the crate look unsupported. The grid costs 64 floats and
      * answers the only question worth asking: how high is that thing HERE. */
     const G = 8, top = new Float32Array(G * G).fill(-Infinity);
+    /* AND THE UNDERSIDE, cell by cell — the half of the height field this file
+     * never built, and the reason two whole-level defects survived it.
+     *
+     * Everything below reads the assembly's seat off ONE number: `minY` minus
+     * the highest ground under the contact patch. That is a single `max` over
+     * a box, so it answers "is any part of this on something" and cannot
+     * answer "is ALL of it on something" — an arch straddling a ramp reads as
+     * seated off the bank its patch corner clips, and 52 m of bridge rail
+     * planted from one terrain sample reads as seated off the pier it happens
+     * to cross. Both shipped. `bot[k]` is the lowest surface of the assembly
+     * over cell k, built by the same vertex-then-face rasterisation as `top`
+     * and for the same reason: a scatter of corners is not a surface. */
+    const bot = new Float32Array(G * G).fill(Infinity);
     const sx = G / Math.max(1e-6, bx1 - bx0), sz = G / Math.max(1e-6, bz1 - bz0);
     const cellX = (bx1 - bx0) / G, cellZ = (bz1 - bz0) / G;
     const bin = (v) => Math.min(G - 1, Math.max(0, v | 0));
@@ -212,6 +225,7 @@ function assemblies(world) {
       for (let i = 0; i < p.low.length; i += 3) {
         const k = bin((p.low[i] - bx0) * sx) * G + bin((p.low[i + 2] - bz0) * sz);
         if (p.low[i + 1] > top[k]) top[k] = p.low[i + 1];
+        if (p.low[i + 1] < bot[k]) bot[k] = p.low[i + 1];
       }
       /* AND THE FACES BETWEEN THEM, which is the difference between a height
        * field and a scatter of points.
@@ -251,11 +265,12 @@ function assemblies(world) {
             const y = u * L[a + 1] + v * L[b + 1] + (1 - u - v) * L[c + 1];
             const k = gi * G + gj;
             if (y > top[k]) top[k] = y;
+            if (y < bot[k]) bot[k] = y;
           }
         }
       }
     }
-    return { minY, maxY, bx0, bx1, bz0, bz1, cx0, cx1, cz0, cz1, top, G };
+    return { minY, maxY, bx0, bx1, bz0, bz1, cx0, cx1, cz0, cz1, top, bot, G };
   };
 
   const partOf = (mesh, M) => {
@@ -379,6 +394,52 @@ function seatOf(a, all, terrain) {
     }
   }
   return a.minY - support;
+}
+
+/**
+ * HOW MUCH OF AN ASSEMBLY'S FOOTING IS ACTUALLY ON THE GROUND — cell by cell,
+ * and in BOTH directions.
+ *
+ * `seatOf` above is one number: the lowest vertex against the highest ground
+ * under the patch. Two things follow from that shape and both of them shipped:
+ *
+ *   ONE-SIDED. The float check reads `if (r.seat <= TOL) continue`, so a prop
+ *   4.9 m INSIDE the ground is not merely tolerated, it is invisible. The only
+ *   burial bound in this file (`swallowed by the ground`) filters on
+ *   `/^make/`, and every `addX` in Props.js — every wall, rail, arch, gantry
+ *   and machine in the game — is outside it.
+ *
+ *   ONE SAMPLE. `max` over the patch means ANY part of it on something reads
+ *   as seated. The Providence's bridge rail was 63% inside the deck and 30%
+ *   in the air along its own line and reported a seat of −3.55 m; the
+ *   Colosseum's gate arches stood on the podium wall six metres over the ramp
+ *   they frame and reported −1.48 m.
+ *
+ * So: over the cells the assembly actually OCCUPIES (an empty cell is not a
+ * footprint — the box round an arch is mostly the hole), and only the cells
+ * whose underside is in the contact band, the ground is compared to the
+ * underside HERE. `air` is the fraction hanging more than 30 cm clear, `sunk`
+ * the fraction buried past what bedding into a slope can explain — which is
+ * proportional to the prop's own height, exactly as the `swallowed` bound is,
+ * because a 14 m arch cut through a wall is meant to have its piers in that
+ * wall and a 1.1 m rail is not.
+ */
+export function footing(r, terrain) {
+  const G = r.G, h = r.maxY - r.minY;
+  const band = r.minY + Math.max(0.10, h * 0.12);
+  const cw = (r.bx1 - r.bx0) / G, cd = (r.bz1 - r.bz0) / G;
+  const deep = Math.max(0.30, h * 0.25);
+  let n = 0, air = 0, sunk = 0, worstAir = 0, worstSunk = 0;
+  for (let i = 0; i < G; i++) for (let j = 0; j < G; j++) {
+    const b = r.bot[i * G + j];
+    if (!isFinite(b) || b > band) continue;
+    const g = terrain ? terrain.height(r.bx0 + (i + 0.5) * cw, r.bz0 + (j + 0.5) * cd) : 0;
+    const d = b - g;
+    n++;
+    if (d > 0.30) { air++; if (d > worstAir) worstAir = d; }
+    else if (-d > deep) { sunk++; if (-d > worstSunk) worstSunk = -d; }
+  }
+  return { n, air: n ? air / n : 0, sunk: n ? sunk / n : 0, worstAir, worstSunk, deep };
 }
 
 /**
@@ -751,7 +812,12 @@ export function run({ check, assert }) {
        * passes on a level with a ten-metre positive seat in it, so it belongs
        * in the pass line: what is off the ground, and what the check believes
        * is holding it. A silent exemption is a hole nobody can audit. */
-      lines.push(`${key} n=${rows.length} p50=${pct(seats, 0.5).toFixed(2)} p99=${pct(seats, 0.99).toFixed(2)} worst=${Math.max(...seats).toFixed(2)}`
+      /* AND THE DEEPEST, because this bound is ONE-SIDED and will stay that
+       * way: `seat <= TOL` cannot see a prop inside the ground, and the only
+       * burial bound in this file filters on `/^make/`. Reporting the minimum
+       * beside the maximum is what makes a −3.55 m rail visible to a reader
+       * of the pass line at all; the assertion on it is the run check above. */
+      lines.push(`${key} n=${rows.length} p50=${pct(seats, 0.5).toFixed(2)} p99=${pct(seats, 0.99).toFixed(2)} worst=${Math.max(...seats).toFixed(2)} deepest=${Math.min(...seats).toFixed(2)}`
         + (fixed.length ? `, ${fixed.length} fixed to something (worst ${fixed[0][0].maker} +${fixed[0][0].seat.toFixed(1)} m on ${fixed[0][1].maker})` : ''));
       if (bad.length) {
         failed.push(`${key}: ${bad.length} of ${ground.length} assemblies stand on nothing — `
@@ -768,6 +834,69 @@ export function run({ check, assert }) {
      * hand to get them back. */
     assert(failed.length === 0, failed.join('\n    ') + '\n    ' + lines.join('; '));
     return lines.join('; ');
+  });
+
+  check('props: a run is on the ground for its whole length, not at the one point the level sampled', () => {
+    /* THE OTHER HALF OF `nothing floats`, and the reason two of these shipped.
+     *
+     * That check reads `if (r.seat <= TOL) continue` — one-sided — and `seat`
+     * is a single `max` over the contact patch, so an assembly is passed the
+     * moment ANY part of it is on ANYTHING. Both halves failed on the same
+     * prop: `addRailing(world, at(-26, -40), { length: 52, yaw: π/2 })` took
+     * ONE terrain sample and ran 52 m of rail off it, across a 5.4 m ramp and
+     * through a 9.0 m bulkhead pier. 63% of it was inside the deck and 30% was
+     * hanging up to 2.0 m in the air, and `nothing floats` reported its seat
+     * as −3.55 m and said nothing, because inside the ground is under the
+     * bound and the pier it crossed was the `max`.
+     *
+     * A RUN is where that failure is invisible and unavoidable: long in plan,
+     * thin across, so its underside is a straight LINE and any relief along it
+     * shows. `footing` measures the ground against the assembly's own
+     * underside cell by cell, in both directions.
+     *
+     * THE THREE FILTERS ARE DERIVED, not tastes:
+     *   6 m by 2.5 m — under 6 m the survey fills with rock walls, sastrugi
+     *   and boulder clusters, whose undersides are modelled to bed into a
+     *   slope and legitimately run 30-60% buried;
+     *   ON THE GROUND — the assembly's own base within a metre of the terrain
+     *   under its centre, i.e. a level put it on the heightfield. The ship's
+     *   wall conduit rides at 12 m and was never on the ground;
+     *   NOT CARRIED — the same exemption `nothing floats` grants, unchanged.
+     * The Providence's rail is caught by all three and by nothing else in
+     * this file. */
+    const RUNS = [];
+    const failed = [];
+    for (const [key, rows] of seating()) {
+      const terrain = new Terrain(new THREE.Scene(), LEVELS[key].terrain, 0.5);
+      for (const r of rows) {
+        if (r.lamp) continue;
+        const long = Math.max(r.cx1 - r.cx0, r.cz1 - r.cz0);
+        const short = Math.min(r.cx1 - r.cx0, r.cz1 - r.cz0);
+        if (long < 6 || short > 2.5) continue;
+        if (Math.abs(r.minY - terrain.height((r.cx0 + r.cx1) / 2, (r.cz0 + r.cz1) / 2)) > 1.0) continue;
+        const f = footing(r, terrain);
+        if (f.n < 4 || carried(r, rows)) continue;
+        RUNS.push(`${key} ${r.maker} ${long.toFixed(0)} m: ${(f.air * 100).toFixed(0)}% clear / `
+          + `${(f.sunk * 100).toFixed(0)}% under`);
+        if (f.air > 0.10 || f.sunk > 0.10) {
+          failed.push(`${key}: ${r.maker} runs ${long.toFixed(0)} m at (${r.cx0.toFixed(0)}, ${r.cz0.toFixed(0)}) `
+            + `with ${(f.air * 100).toFixed(0)}% of its footing more than 0.3 m clear of the ground `
+            + `(worst ${f.worstAir.toFixed(2)} m) and ${(f.sunk * 100).toFixed(0)}% more than `
+            + `${f.deep.toFixed(2)} m inside it (worst ${f.worstSunk.toFixed(2)} m)`);
+        }
+      }
+      terrain.dispose();
+    }
+    /* THE SIZE TRIPWIRE, and it is exactly `prop-seating`'s own guard from the
+     * check below: a sweep that quietly stopped matching would report a clean
+     * result for having measured nothing. Two is the whole census — the game
+     * builds precisely two rails that stand on open ground, both on the
+     * Providence's bridge — so this fires the moment a filter above stops
+     * matching them rather than waiting for a third run to be authored. */
+    assert(RUNS.length >= 2, `only ${RUNS.length} runs on open ground were surveyed — `
+      + 'the filters have stopped matching the props this check exists for');
+    assert(!failed.length, failed.join('\n    ') + '\n    ' + RUNS.join('; '));
+    return RUNS.join('; ');
   });
 
   check('props: what "fixed to something" will and will not excuse', () => {

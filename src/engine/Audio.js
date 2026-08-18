@@ -1738,6 +1738,119 @@ export class AudioEngine {
     this.tone({ freq: 220, freqEnd: 60, dur: 0.26, gain: 0.16, type: 'sawtooth', pos, prio: PRIO.combat });
   }
 
+  /**
+   * A LIMB COMES OFF — and until this existed it sounded like a graze.
+   *
+   * `Enemy._onSever` played `audio.cut(point, this.A.big)` and a contact that
+   * took nothing played `audio.cut(ev.point, false)`. On the 22 of 31 bodies
+   * whose `A.big` is falsy those are the SAME CALL: same two layers, same
+   * 0.380 of delivered gain, measured through the shipped engine. The mechanic
+   * this game is named for had no sound of its own.
+   *
+   * `cut` FIRST and then this over it, so a severance is a graze plus
+   * something — which is what it is, physically and dramatically. Three layers
+   * the graze has none of:
+   *
+   *   · the PART. A tone that falls away and keeps falling, because what makes
+   *     a dismemberment read is that something left;
+   *   · the SEPARATION — a short, wide, dry noise burst, no resonance. A limb
+   *     parting is not a ring, it is a tearing;
+   *   · a SUB, only for a `big` body, because a Rancor's arm hitting the
+   *     ground is felt and a B1's is not.
+   *
+   * `critical`, not `combat`: a full pool refusing the one event the whole
+   * mechanic exists for is exactly the failure `audio.mjs` was written after.
+   */
+  sever(pos, big = false) {
+    const P = PRIO.critical;
+    this.cut(pos, big);
+    this.noise({ dur: 0.11, gain: 0.30, type: 'highpass', freq: 1800, q: 0.5, pos, prio: P });
+    this.tone({ freq: big ? 300 : 460, freqEnd: big ? 44 : 70, dur: big ? 0.62 : 0.44,
+      gain: 0.24, type: 'triangle', pos, prio: P });
+    if (big) this.tone({ freq: 70, freqEnd: 30, dur: 0.5, gain: 0.26, type: 'sine', pos, prio: P });
+  }
+
+  /**
+   * HOW A FOUR-AND-A-HALF-SECOND CONTEST OF STRENGTH ENDS.
+   *
+   * `Duel.js` ended one with `audio.ui('good')` / `ui('bad')` — the exact
+   * 620→1240 Hz ping the skill tree plays when you buy an upgrade,
+   * non-positional, 0.140/0.180 of gain, against the lock's own OPENING at
+   * 0.940 positional. `death()` and `victory()` both exist because the same
+   * substitution was made twice before and both of their docstrings say so;
+   * this was the third instance.
+   *
+   * Positional, because a blade lock happens at a place — the point where the
+   * two blades are crossed — and it is the one moment in the game where the
+   * player and the thing they are fighting are in physical contact.
+   *
+   * WON: the bind lets go. A rising third under a scrape that releases, and a
+   * body-weight thump as the beaten guard is driven off.
+   * LOST: the same materials falling. No triad, no resolution: a descending
+   * scrape into a low hit, which is the player being pushed onto their heels.
+   */
+  lockBroken(pos, won = true) {
+    const P = PRIO.critical;
+    if (won) {
+      this.noise({ dur: 0.34, gain: 0.30, type: 'bandpass', freq: 1400, freqEnd: 4200, q: 1.2, pos, prio: P });
+      this.tone({ freq: 330, freqEnd: 495, dur: 0.30, gain: 0.20, type: 'triangle', pos, prio: P });
+      this.tone({ freq: 120, freqEnd: 60, dur: 0.36, gain: 0.26, type: 'sine', pos, prio: P });
+    } else {
+      this.noise({ dur: 0.40, gain: 0.30, type: 'bandpass', freq: 3000, freqEnd: 500, q: 1.0, pos, prio: P });
+      this.tone({ freq: 260, freqEnd: 98, dur: 0.42, gain: 0.22, type: 'sawtooth', pos, prio: P });
+      this.tone({ freq: 96, freqEnd: 40, dur: 0.5, gain: 0.28, type: 'sine', pos, prio: P });
+    }
+  }
+
+  /**
+   * WHAT A BLADE EXCHANGE ACTUALLY DID — the four outcomes that had no sound.
+   *
+   * `World._applyClash` plays `clash(point, power)` and THEN branches six ways.
+   * Two of the six add something (a chamber adds `deflect`, a lock adds its own
+   * opening) and four add nothing at all. Measured as delivered gain sums:
+   * clash 0.780, +chamber 1.470, +lock 0.940, and PARRY, LOST CLASH, GUARD
+   * BROKEN and UNBLOCKABLE all 0.780 — byte-identical. The HUD prints four
+   * different words in four different colours and the ears get one waveform,
+   * on the four outcomes a player most needs to tell apart in the dark.
+   *
+   * Each is the same physical event — two blades meeting — so each is a LAYER
+   * OVER the clash rather than a replacement for it, and each says the one
+   * thing the player has to know:
+   *
+   *   parry        you won it. Bright, short, rising — and it is the only one
+   *                of the four that goes up, because it is the only one that
+   *                opens a riposte.
+   *   lost         you did not. The same event dulled and dropped: the blade
+   *                was moved rather than the enemy's.
+   *   guardBroken  something got through. A hard low crack with the mid
+   *                scooped out, so it does not read as a heavier parry.
+   *   unblockable  the blade was never the answer. A dead, wide, unpitched
+   *                thud — nothing rings, because nothing was blocked.
+   *
+   * And the chain ENDS IN A FALLBACK, for the reason `force` now does.
+   */
+  clashOutcome(pos, kind = 'parry', power = 1) {
+    const P = PRIO.critical, g = clamp(num(power, 1), 0.5, 1.6);
+    if (kind === 'parry') {
+      this.tone({ freq: 1600, freqEnd: 3200, dur: 0.16, gain: 0.16 * g, type: 'square', pos,
+        filter: { type: 'lowpass', freq: 6000 }, prio: P });
+      this.noise({ dur: 0.13, gain: 0.16 * g, type: 'highpass', freq: 3400, pos, prio: P });
+    } else if (kind === 'lost') {
+      this.tone({ freq: 900, freqEnd: 320, dur: 0.22, gain: 0.16 * g, type: 'triangle', pos, prio: P });
+      this.noise({ dur: 0.20, gain: 0.14 * g, type: 'bandpass', freq: 900, freqEnd: 260, q: 1.4, pos, prio: P });
+    } else if (kind === 'guardBroken') {
+      this.tone({ freq: 210, freqEnd: 62, dur: 0.30, gain: 0.30 * g, type: 'sawtooth', pos,
+        filter: { type: 'lowpass', freq: 1400, q: 4 }, prio: P });
+      this.noise({ dur: 0.24, gain: 0.24 * g, type: 'lowpass', freq: 520, freqEnd: 120, q: 0.7, pos, pink: true, prio: P });
+    } else if (kind === 'unblockable') {
+      this.noise({ dur: 0.34, gain: 0.32 * g, type: 'lowpass', freq: 900, freqEnd: 90, q: 0.5, pos, pink: true, prio: P });
+      this.tone({ freq: 58, freqEnd: 30, dur: 0.36, gain: 0.30 * g, type: 'sine', pos, prio: P });
+    } else {
+      this.noise({ dur: 0.18, gain: 0.18 * g, type: 'bandpass', freq: 1200, freqEnd: 500, q: 1.0, pos, prio: P });
+      this.tone({ freq: 520, freqEnd: 260, dur: 0.18, gain: 0.14 * g, type: 'triangle', pos, prio: P });
+    }
+  }
+
   blaster(pos, big = false) {
     const f = big ? 1500 : 2600, P = PRIO.combat;
     this.tone({ freq: f, freqEnd: f * 0.16, dur: big ? 0.24 : 0.14, gain: big ? 0.3 : 0.20,
@@ -1787,6 +1900,39 @@ export class AudioEngine {
     } else if (kind === 'lightning') {
       this.noise({ dur: 0.6, gain: 0.3, type: 'highpass', freq: 2600, q: 1.0, pos, prio: P });
       this.tone({ freq: 60, freqEnd: 40, dur: 0.6, gain: 0.2, type: 'square', pos, prio: P });
+    } else if (kind === 'grip') {
+      /**
+       * THE CHOKE, WHICH WAS THE ONE POWER IN THE GAME WITH NO SOUND AT ALL.
+       *
+       * `ENEMY_POWERS.choke` has declared `sound: 'grip'` since it was written
+       * and this chain had no branch for it and no fallback, so the cast, the
+       * hold and the release were silent — measured through the shipped engine,
+       * push / pull / lightning 2 voices each and grip 0. The only one of the
+       * five enemy powers with that property, on the power whose whole point is
+       * that the player cannot see what has them.
+       *
+       * A grip is not a shove. It CLOSES: a band-pass that narrows and falls
+       * rather than opening out, over a sub that rises — the sound of something
+       * tightening, not something arriving. Deliberately the quietest of the
+       * five: it is a hold, and it has to sit under the victim's own voice.
+       */
+      this.noise({ dur: 0.7, gain: 0.20, type: 'bandpass', freq: 900, freqEnd: 220, q: 3.2, pos, pink: true, prio: P });
+      this.tone({ freq: 48, freqEnd: 96, dur: 0.75, gain: 0.22, type: 'triangle', pos, prio: P });
+    } else {
+      /**
+       * AND A SIXTH KIND CANNOT GO SILENT THE WAY THE FIFTH DID.
+       *
+       * This chain used to end at `lightning` with nothing after it, so a power
+       * that named a sound this method did not know made no sound and nothing
+       * anywhere reported it. That is HANDOFF 2.3's close relative — a missing
+       * thing answered with silence instead of an error — except that silence
+       * is worse than a plausible default, because a plausible default is at
+       * least audible. A generic effort layer is what an unnamed power gets: it
+       * is wrong for the power and it is not nothing, and `audio.mjs` asserts
+       * that every `sound` any POWERS table declares reaches a branch.
+       */
+      this.noise({ dur: 0.45, gain: 0.22, type: 'bandpass', freq: 520, freqEnd: 240, q: 1.0, pos, pink: true, prio: P });
+      this.tone({ freq: 90, freqEnd: 55, dur: 0.5, gain: 0.20, type: 'sine', pos, prio: P });
     }
   }
 

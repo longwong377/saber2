@@ -4545,7 +4545,8 @@ export function addRailing(world, pos, opts = {}) {
    * dead-level rail on rolling ground. In all three `gy` is zero everywhere
    * and every line below reduces to what it was.
    */
-  const T = (!opts.kit && !pitch && opts.follow !== false && world && world.terrain) ? world.terrain : null;
+  const T = (!opts.kit && !pitch && !opts.quaternion && opts.follow !== false
+    && world && world.terrain) ? world.terrain : null;
   const cy = Math.cos(opts.yaw || 0), sy = Math.sin(opts.yaw || 0);
   const gy = (sx) => (T ? T.height(pos.x + sx * cy, pos.z - sx * sy) - pos.y : 0);
   const feet = [];

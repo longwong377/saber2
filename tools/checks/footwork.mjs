@@ -626,6 +626,123 @@ export async function run({ check, assert }) {
       + 'and the chase needs a target that is running';
   });
 
+  check('footwork: holding sprint spends the pool it runs on', () => {
+    /**
+     * NOTHING IN THIS TREE HAD EVER PRESSED `sprint`.
+     *
+     * This file's own `stubInput` answers `act: () => false`, and its price
+     * column sums DEBITS ONLY — `stamSpent` counts the decrements — so it could
+     * report a cost of 18 for a dash while the pool itself never moved. A
+     * balance measured by adding up the withdrawals cannot see an account that
+     * refills faster than it is drawn on, and that is exactly what was
+     * happening: `_move` drained 11/s while sprinting and `_regen` handed back
+     * `(16 + 10*(1 - combatIntensity)) * staminaRegen` EVERY frame, a floor of
+     * 13.6/s and a ceiling of 26/s. Measured on the shipped code: 30 s of
+     * sprinting from an EMPTY bar ended at 100.0 stamina having covered
+     * 222.8 m, and 20 s from full ended at 100.0 over 148.7 m. The dash
+     * inherited it — 27 dashes in 15 s, the cooldown ceiling exactly, never
+     * dropping below half a bar, because 18 against 26/s of regen over a 0.55 s
+     * cooldown is a net 1.6.
+     *
+     * So the property is stated on the POOL and never on the debits: pressing
+     * the key that spends stamina must leave you with less of it than not
+     * pressing it. It is a comparison rather than a threshold, so it cannot be
+     * satisfied by tuning either number.
+     */
+    const run = (sprint, seconds) => {
+      const w = gameWorld('knight');
+      const p = new Player(w, { isLocal: true });
+      p.position.set(0, 0, 0);
+      w.players.push(p);
+      const axis = { x: 0, y: 1 };
+      const input = {
+        keys: new Set(), buttons: [false, false, false], mouse: { dx: 0, dy: 0, wheel: 0 },
+        accel: { x: 0, y: 0 }, bindings: null,
+        moveAxis: (o) => { o.x = axis.x; o.y = axis.y; return o; },
+        act: (a) => (a === 'sprint' ? sprint : false),
+        actHit: () => false,
+      };
+      const ctx = { input, terrain: w.terrain, physics: w.physics, particles: null,
+        camera: w.engine.camera, time: 0, groundColor: 0, enemies: w.enemies, players: w.players };
+      const from = p.position.clone();
+      let running = 0;
+      const frames = Math.round(seconds * 60);
+      for (let i = 0; i < frames; i++) {
+        ctx.time = w.time = i / 60;
+        p.update(1 / 60, ctx);
+        if (p._sprinting) running++;
+      }
+      return { stamina: p.stamina, metres: p.position.distanceTo(from), duty: running / frames };
+    };
+
+    const walked = run(false, 20);
+    const sprinted = run(true, 20);
+    assert(walked.stamina > 99,
+      `the fixture cannot even walk without spending stamina (${walked.stamina.toFixed(1)} left)`);
+    assert(sprinted.stamina < walked.stamina - 20,
+      `20 s of holding sprint ended at ${sprinted.stamina.toFixed(1)} stamina against ${walked.stamina.toFixed(1)} `
+      + 'for the same 20 s of walking — the run is paying for itself out of its own regen');
+    assert(sprinted.duty < 0.95,
+      `the bar sustained a run for ${(sprinted.duty * 100).toFixed(0)}% of 20 s — sprinting has no end`);
+    assert(sprinted.metres > walked.metres,
+      `sprinting covered ${sprinted.metres.toFixed(0)} m against a walk's ${walked.metres.toFixed(0)} m — `
+      + 'it has been priced out of being worth pressing');
+
+    /* AND FROM EMPTY IT IS NOT AN OPENING AT ALL. A pool that pays for the
+     * verb that empties it can be run indefinitely from zero; this is the
+     * measurement that read 222.8 m on the old code. */
+    const fromEmpty = (() => {
+      const w = gameWorld('knight');
+      const p = new Player(w, { isLocal: true });
+      p.position.set(0, 0, 0); p.stamina = 0; w.players.push(p);
+      const input = { keys: new Set(), buttons: [false, false, false], mouse: { dx: 0, dy: 0, wheel: 0 },
+        accel: { x: 0, y: 0 }, bindings: null, moveAxis: (o) => { o.x = 0; o.y = 1; return o; },
+        act: (a) => a === 'sprint', actHit: () => false };
+      const ctx = { input, terrain: w.terrain, physics: w.physics, particles: null,
+        camera: w.engine.camera, time: 0, groundColor: 0, enemies: w.enemies, players: w.players };
+      let first = -1;
+      for (let i = 0; i < 120; i++) {
+        ctx.time = w.time = i / 60; p.update(1 / 60, ctx);
+        if (p._sprinting && first < 0) first = i;
+      }
+      return first;
+    })();
+    assert(fromEmpty > 30,
+      `an empty bar was running again ${(fromEmpty / 60).toFixed(2)}s after hitting zero — the floor the `
+      + 'sprint gate uses is a rounding error away from empty, so the run never really stops');
+
+    /* THE DASH RIDES THE SAME POOL. Pressed at its own cooldown ceiling it has
+     * to run the bar down; 27 dashes without passing half a bar was the
+     * measurement, and the bound here is that the chain ENDS. */
+    const dashChain = (() => {
+      const w = gameWorld('knight');
+      const p = new Player(w, { isLocal: true });
+      p.position.set(0, 0, 0); w.players.push(p);
+      let want = false, dashes = 0, low = p.maxStamina;
+      const input = { keys: new Set(), buttons: [false, false, false], mouse: { dx: 0, dy: 0, wheel: 0 },
+        accel: { x: 0, y: 0 }, bindings: null, moveAxis: (o) => { o.x = 0; o.y = 1; return o; },
+        act: () => false, actHit: (a) => (a === 'dash' ? want : false) };
+      const ctx = { input, terrain: w.terrain, physics: w.physics, particles: null,
+        camera: w.engine.camera, time: 0, groundColor: 0, enemies: w.enemies, players: w.players };
+      for (let i = 0; i < 15 * 60; i++) {
+        want = p.cooldowns.dash <= 0;
+        const before = p.stamina;
+        ctx.time = w.time = i / 60;
+        p.update(1 / 60, ctx);
+        if (p.stamina < before - 10) dashes++;
+        low = Math.min(low, p.stamina);
+      }
+      return { dashes, low };
+    })();
+    assert(dashChain.low < 20,
+      `15 s of dashing at the cooldown ceiling never took the bar below ${dashChain.low.toFixed(0)} — `
+      + `${dashChain.dashes} dashes at 18 each is not a cost if the pool refills between them`);
+    return `20 s held: walk ${walked.stamina.toFixed(0)} stamina / ${walked.metres.toFixed(0)} m, `
+      + `sprint ${sprinted.stamina.toFixed(0)} / ${sprinted.metres.toFixed(0)} m at ${(sprinted.duty * 100).toFixed(0)}% `
+      + `duty; from empty the run resumes at ${(fromEmpty / 60).toFixed(2)}s; `
+      + `dash chain ${dashChain.dashes} dashes, low-water ${dashChain.low.toFixed(0)}`;
+  });
+
   check('footwork: both presses are bounded well under what a dash buys', () => {
     /**
      * The caps are what keep the attack answerable, so they are worth measuring

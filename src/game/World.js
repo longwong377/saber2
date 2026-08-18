@@ -892,15 +892,36 @@ export class World {
    * shot of a level stays where its author put it whenever that spot is legal,
    * which on twelve of thirteen levels it is.
    */
+  /**
+   * AND WHY IT IS NOT (0, 8) ON EVERY LEVEL EITHER.
+   *
+   * The literal above was replaced by a search and the SEARCH's centre stayed
+   * a literal, the same one on all nine levels, so a level still had no way to
+   * say where it opens. The Ember Shelf is what that costs: its lava sea is
+   * the reason the level exists and `Hazard.js`'s own header argues "the
+   * levels that have a hazard are the levels whose fights happen along its
+   * edge" — measured from (0, 8), the nearest point under the sheet is 94 m
+   * away, 0.0% of the r ≤ 60 m fight disc is under it, and 0 of 360 bearings
+   * have an unobstructed eye line to it. The sea cannot be seen from where the
+   * game stands you up, on any bearing. Mustafar's is 40 m out and 3.0% of its
+   * disc; the Drowned Wood's is 12 m and 20.9%.
+   *
+   * `start: [x, z]` is the level's answer, defaulting to the same (0, 8) every
+   * level used to get, so eight of the nine are unchanged to the metre. It is
+   * a POSITION and not a spawn, because everything below still applies to it:
+   * the collider test, the level's own water block, and the widening ring if
+   * the authored spot is illegal.
+   */
   _playerSpawn() {
     const t = this.terrain;
     const h = (x, z) => (t ? t.height(x, z) : 0);
-    const home = new THREE.Vector3(0, h(0, 8), 8);
+    const s = this.level && Array.isArray(this.level.start) ? this.level.start : [0, 8];
+    const home = new THREE.Vector3(s[0], h(s[0], s[1]), s[1]);
     if (spawnClear(this, home.x, home.y, home.z)) return home;
     for (let r = 4; r <= 44; r += 4) {
       for (let i = 0; i < 16; i++) {
         const a = (i / 16) * Math.PI * 2 + r * 0.37;
-        const x = Math.cos(a) * r, z = 8 + Math.sin(a) * r;
+        const x = home.x + Math.cos(a) * r, z = home.z + Math.sin(a) * r;
         if (t && !t.inBounds(x, z, 3)) continue;
         if (t?.slopeAt && t.slopeAt(x, z) > 0.5) continue;
         const y = h(x, z);
@@ -1069,6 +1090,21 @@ export class World {
     // …and the client's id→enemy map, which holds a whole Enemy graph per
     // entry. Clearing the list it points into is not the same as clearing it.
     this._netEnemyIndex?.clear();
+    /**
+     * …AND THE PEERS, which is the OTHER half of the same registration.
+     *
+     * This method disposes every RemoteAvatar — they live in `players` — and
+     * empties that list, and left `remotes` pointing at every one of them.
+     * `main.js`'s `avatar` handler builds a peer only when `remotes.get(id)` is
+     * ABSENT, so it never built a replacement: measured across one ground
+     * change, `remotes` still maps the peer to the avatar `unload` had just
+     * disposed, that avatar is no longer in `players`, and the handler declines
+     * to make a new one. Every packet from that peer is then applied to a body
+     * with no mesh that nothing targets and no blade can test, and `netSource`
+     * still hands it back as a damage source — for the rest of the session,
+     * from the first cleared skirmish or campaign mission onward.
+     */
+    this.remotes?.clear();
     for (const p of this.props.slice()) p.destroy();
     this.props.length = 0;
     for (const d of this.doors) d.dispose();
@@ -1316,7 +1352,16 @@ export class World {
    */
   rotateTo(key) {
     const carry = this._beforeRotate();
-    this.loadLevel(key);
+    /* THE SAME GUARD `rotateToAsync` CARRIES, and for a worse reason. `rotating`
+     * gates `update`, and `unload` deliberately does not clear it (see the note
+     * there) — so a build that throws in here stops the world for the rest of
+     * the session: the tab paints, the input works, and nothing steps, ever.
+     * Measured against the async door, which has the catch: sync leaves
+     * `rotating` true and the clock advances 0.000 s over 120 frames; async
+     * recovers and advances 2.000 s. This is the door `update` takes itself
+     * whenever a front end does not answer `onRotate`. */
+    try { this.loadLevel(key); }
+    catch (e) { this.rotating = false; throw e; }
     return this._afterRotate(carry);
   }
 
@@ -5053,6 +5098,24 @@ export class World {
     for (const e of this.enemies) e.dispose();
     this.enemies.length = 0;
     this._netEnemyIndex?.clear();
+    /**
+     * …AND THE LEDGERS THAT POINT INTO THE LIST JUST DISPOSED.
+     *
+     * `unload` clears both of these; a wave reset is the same event with the
+     * ground left standing, and it cleared neither. Measured: six corpses
+     * survived a restart pointing at enemies this method had disposed, which is
+     * the WHOLE `low` corpse budget held by ghosts — stepped and `worth()`-ranked
+     * every frame against real bodies, so fresh corpses were evicted early right
+     * after a restart, and each ghost was eventually disposed a SECOND time
+     * inside Corpses' own bare `catch {}`.
+     *
+     * The ledger has an escape hatch for exactly this and it was dead code:
+     * `Corpses.update` guards on `e.disposed`, and `Enemy.dispose` never wrote
+     * it — only `Player` does. Both halves are fixed, because either alone
+     * leaves the other reader wrong.
+     */
+    this.corpses?.clear();
+    this.locks.length = 0;
     /**
      * …AND WHAT IS STILL IN THE AIR, which this did not touch.
      *

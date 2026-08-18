@@ -11,7 +11,7 @@ import * as THREE from 'three';
 import { Actor } from './Ragdoll.js';
 import { Rig, BipedAnimator, aimY } from './Rig.js';
 import { buildB1, buildB2, buildTrooper, buildAcolyte, buildDroideka, buildWalker, buildBeast, buildBlaster, plateGeo,
-  buildJedi, bodyOptsFor, weakSpotsOf, SPECIES, HAIR_STYLES, BEARD_STYLES, ROBE_COLORS } from './Bodies.js';
+  buildJedi, bodyOptsFor, weakSpotsOf, coverSpotOf, SPECIES, HAIR_STYLES, BEARD_STYLES, ROBE_COLORS } from './Bodies.js';
 import { Saber } from './Saber.js';
 import { dropSaber } from './Dropped.js';
 import { DuelBrain, Telegraph, FORMS, FORM_KEYS, TIER, ATTACKS, ATTACK_KEYS,
@@ -749,6 +749,27 @@ export const ARCHETYPES = {
      * fill by not appearing on a list. See the note on the IG Bodyguard. */
     setPieceOnly: true,
     saberColor: 2, hilt: 'Duelist', form: 'makashi',
+    /**
+     * THE ONE BODY IN THE GAME THAT WEARS SIMULATED CLOTH, and the flag that
+     * makes it so had NO WRITER AT ALL until it did.
+     *
+     * `grep -rn simSkirt src/ tools/` returned exactly one line — the reader in
+     * `_build` — so `A.simSkirt` was `undefined` for all 31 archetypes and the
+     * `attachSkirt` branch on the enemy path was unreachable code. A flag whose
+     * only possible value is `undefined` is HANDOFF 2.3's close relative: it
+     * reads as a decision and is an omission.
+     *
+     * The decision is made HERE, and it is the Master because the budget says
+     * it can only be the Master. Engine.js sizes `QUALITY.cloth` on "every
+     * enemy wearing exactly one cape" and `cloth-cost.mjs` holds it to that; a
+     * body with a cape AND a skirt doubles a column the Temple fields in double
+     * figures. The Master is `setPieceOnly` — one per level, gated the way the
+     * warship's general is — it is capeless like every Jedi here, so its skirt
+     * is still exactly one garment, and it is the body the player spends the
+     * longest looking at. The robe moving when it moves is the whole of what
+     * that costs and the whole of what it buys.
+     */
+    simSkirt: true,
     damage: 30, preferred: [1.7, 3.4], score: 2800, threat: 12, boss: true,
     /* The set-piece gets four of the five and the only UNLEASH on the roster,
      * which fires once, below a third of its health, with a blade inside its
@@ -2279,10 +2300,20 @@ export class Enemy {
           color: robeHex ?? (this.type === 'sparring' ? 0x2c3742 : 0x14151a),
         });
       }
-      // The robe below the belt, simulated rather than three lathes welded to
-      // the pelvis — see Player._makeCloak. It replaces the rigid meshes, so it
-      // costs the character fewer triangles than it saves.
-      if (built.robeSkirt && A.simSkirt && this.cloak) {
+      /**
+       * The robe below the belt, simulated rather than three lathes welded to
+       * the pelvis — see Player._makeCloak. It replaces the rigid meshes, so it
+       * costs the character fewer triangles than it saves.
+       *
+       * THE `this.cloak` TERM WAS THE THIRD OF THREE GATES AND IT IS GONE.
+       * With `cape: false` on JEDI_BASE it could never be true for the only
+       * four bodies that publish a `robeSkirt`, so the skirt was reachable only
+       * by a body that had both — of which there are none and, given the note
+       * above, never will be. A skirt does not need a cape over it; what needed
+       * the cape was the `outer` link, which is now made only when there is one
+       * to make.
+       */
+      if (built.robeSkirt && A.simSkirt) {
         this.skirt = attachSkirt(this.world.scene, this.rig, {
           scale: this.bodyScale, rigid: built.robeSkirt,
           // …and the same for the skirt it replaces: the simulated cloth has to
@@ -2293,7 +2324,7 @@ export class Enemy {
           // robe's — the obi they are tied in is still the built one.
           sashMaterial: built.palette.trim,
         });
-        this.cloak.outer = this.skirt;
+        if (this.cloak) this.cloak.outer = this.skirt;
       }
     }
     if (A.shield) {
@@ -2546,6 +2577,44 @@ export class Enemy {
           name: b.name, p0: _v1.clone(), p1: _v2.clone(), r: b.radius * CAP_BITE,
           toughness: this._boneToughness(b.name), enemy: this, vital: severanceOf(b),
         });
+        /**
+         * …AND THE PART OF THE DRAWN BODY THE LINE ABOVE DOES NOT REACH.
+         *
+         * The capsule above is the bone's own axis at the bone's own radius,
+         * which describes a limb and does not describe a head that runs
+         * sideways out of its socket or a tank hull that is a slab. Measured
+         * over the whole roster against the drawn mesh: the acklay's head 63%
+         * outside its capsule and 2.91 m out at worst, the AAT 57% of its whole
+         * surface, the AT-TE's six tarsi 70% each. A blade through any of them
+         * met nothing, on the bodies whose only counter-play is their feet.
+         *
+         * It carries NO `covers` field. `covers` is what marks a capsule as a
+         * GAP in the cover — thinner than the plate, offered ahead of it,
+         * billed against a host — and this is the opposite thing: the cover
+         * itself, in the places the bone's own axis does not describe it.
+         * `weakpoints.mjs` reads `covers` to find the gaps and would have taken
+         * every one of these for one.
+         *
+         * `coverSpotOf` is the same read of the geometry that `weakSpotsOf` is,
+         * and returns null for every bone already covered — which is all 19
+         * humanoids — so this line costs those bodies one function call that
+         * returns a cached null. It carries the BONE'S OWN name, toughness and
+         * severance value, because meeting it IS meeting the bone.
+         *
+         * Suppressed on a shortened bone: `cutT < 1` means the far half of this
+         * limb is on the floor, and a cover fitted to the whole drawn mesh
+         * would still be standing where the mesh no longer is.
+         */
+        const cover = b.cutT > 0.999 ? coverSpotOf(b) : null;
+        if (cover) {
+          out.push({
+            name: b.name, cover: true,
+            p0: _v4.set(cover.p0[0], cover.p0[1], cover.p0[2]).applyQuaternion(_q1).add(_v1).clone(),
+            p1: _v5.set(cover.p1[0], cover.p1[1], cover.p1[2]).applyQuaternion(_q1).add(_v1).clone(),
+            r: cover.r * CAP_BITE,
+            toughness: this._boneToughness(b.name), enemy: this, vital: severanceOf(b),
+          });
+        }
       }
     } else if (this.group && this.A.custom === 'remote') {
       const c = _v1.copy(this.group.position);
@@ -3084,7 +3153,21 @@ export class Enemy {
       p.cutFlare(point, null, 0x57c9ff, this.A.big ? 44 : 26);
       if (/droid|b1|b2|walker|droideka/.test(this.type)) p.sparkBurst(point, null, 22, { speed: 8 });
     }
-    audio.cut(point, this.A.big);
+    /**
+     * A LIMB COMING OFF HAS ITS OWN SOUND NOW, and it needed one.
+     *
+     * This was `audio.cut(point, this.A.big)` — the identical call a contact
+     * that severs NOTHING makes (`World._applyBladeEvent` plays
+     * `audio.cut(ev.point, false)`), and on the 22 of 31 bodies whose `A.big`
+     * is falsy the two are the same two layers at the same 0.380 of delivered
+     * gain. Dismemberment is the mechanic this game is named for and a graze
+     * and a severance were byte-identical.
+     *
+     * `sever` plays the graze and then three layers over it — see the note on
+     * it in Audio.js — so the two are still the same event with the same
+     * opening, which is what they are.
+     */
+    audio.sever(point, this.A.big);
     // Losing a limb and living through it. `cry` decides nothing about what
     // comes out of the throat — see the note there — only that there is
     // something to say, and a droid's version of a scream is that it powers
@@ -3515,6 +3598,26 @@ export class Enemy {
       this.world.notifyFloating?.(this.aimPoint(_v3), 'UNSTABLE', '#ff8a40');
     }
     if (this.telegraphArc) this.telegraphArc.hide();
+    /**
+     * AND THE JETPACK STOPS, which is the one voice in the engine with a
+     * MANUALLY MANAGED LIFETIME and the one nothing was managing.
+     *
+     * `audio.jet(pos, power, id)` opens a continuous positional voice and
+     * releases it only on a later call with `power <= 0.02`. That call comes
+     * from `_move`, which `update` returns above the moment `this.dead` — so a
+     * dead jet trooper's roar was held open at the spot it fell, forever.
+     * Measured: five seconds after death `audio._jets` still held 1; after
+     * `dispose()` it still held 1; only `unload()` cleared it. Eight troopers
+     * dying takes `_jets` to its cap of 6 — six live panners and six of the
+     * thirty world-band voices gone — and a NINTH, ALIVE trooper 1.7 m from the
+     * listener then got no voice at all, because the cap was full of corpses.
+     *
+     * Here rather than in `dispose()` because `dispose()` runs forty seconds
+     * later when the corpse is cleaned up, and a corpse should not be roaring
+     * for forty seconds. The same argument the hum above is retired on.
+     * `dispose()` gets the line too, for a body that is removed without dying.
+     */
+    audio.jet?.(this.position, 0, this.id);
     if (this.cloak) { this.cloak.dispose(); this.cloak = null; }
     if (this.skirt) { this.skirt.dispose(); this.skirt = null; }
     if (this.saber) {
@@ -5886,6 +5989,11 @@ export class Enemy {
     if (this._modMaterials) { for (const m of this._modMaterials) m.dispose(); this._modMaterials = null; }
     if (this.saber) this.saber.dispose();
     if (this.hum) this.hum.dispose();
+    // Belt and braces on the jetpack loop: `die()` retires it, and a body torn
+    // down without dying (a level unload, a wave reset) never went through
+    // `die()`. Idempotent — `jet(pos, 0, id)` on an id with no voice is a Map
+    // miss and a return.
+    audio.jet?.(this.position, 0, this.id);
     if (this.cloak) this.cloak.dispose();
     if (this.skirt) this.skirt.dispose();
     if (this.telegraphArc) this.telegraphArc.dispose();

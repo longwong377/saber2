@@ -280,6 +280,84 @@ export async function run({ check, assert }) {
       + `OFF ${aOff.toFixed(4)}° / ${peakShift(off).toFixed(4)} m`;
   });
 
+  check('controls: with camera shake off you still come out of your own head', () => {
+    /**
+     * A FIRST-PERSON DEATH WITH ONE CHECKBOX UNTICKED LEFT THE LENS INSIDE THE
+     * CORPSE.
+     *
+     * The one line that gets the camera out of the head on death —
+     * `this.firstPerson = false` — lived INSIDE `if (shot)` in `CameraRig.update`,
+     * and `die()` only called `beginDeathShot` when `feelOn('shake') !== false`.
+     * So a player who had turned camera shake off — an ordinary comfort
+     * setting, and one this file already holds two other checks about —
+     * watched their whole death from behind their own eyes: measured with
+     * shake off, shot NONE, `firstPerson` still true, the lens 1.02 m from the
+     * ragdoll's middle, boomless, for the entire death.
+     *
+     * The rule the neighbouring check states for the letterbox and the drain is
+     * the rule here: `shake` governs MOTION. Whether the camera is inside the
+     * body is not motion, it is whether there is a shot at all, and the death
+     * camera is now always taken with only its script behind the toggle.
+     *
+     * Driven through a real Player dying in a stub world rather than by
+     * reading the source, because "where is the lens" is a claim about a
+     * position — and asserted in BOTH toggle states, since a fix that simply
+     * stopped honouring the checkbox would pass a one-sided test.
+     */
+    const stubWorld = (shake) => ({
+      scene: new THREE.Scene(),
+      settings: { fov: 60, bloom: false, forcePower: 1, forceDrain: 1 },
+      terrain: { height: () => 0, normalAt: (x, z, o) => o.set(0, 1, 0), inBounds: () => true,
+        half: 200, surfaceAt: () => 'sand', crater() {} },
+      particles: null, bolts: null, time: 0, combatIntensity: 0, training: false,
+      physics: { add() {}, remove() {}, raycast: () => null, bodies: [], staticBoxes: [],
+        addJoint() {}, removeJoint() {} },
+      engine: { addHeat() {}, hurt() {}, flash() {}, setRadial() {}, setSense() {}, rumble() {},
+        setDrain() {}, setBars() {}, camera: new THREE.PerspectiveCamera(60, 16 / 9, 0.045, 1000) },
+      report() {}, notify() {}, killTime() {}, setTimeScale() {}, onPlayerDeath() {},
+      feelOn: (kind) => (kind === 'shake' ? shake : true),
+    });
+
+    const die = (shake) => {
+      const w = stubWorld(shake);
+      const p = new Player(w, { isLocal: true });
+      p.position.set(0, 0, 0);
+      const input = { keys: new Set(), buttons: [false, false, false], mouse: { dx: 0, dy: 0, wheel: 0 },
+        accel: { x: 0, y: 0 }, bindings: null, moveAxis: (o) => { o.x = 0; o.y = 0; return o; },
+        act: () => false, actHit: () => false };
+      const ctx = { input, terrain: w.terrain, physics: w.physics, particles: null,
+        camera: w.engine.camera, time: 0, groundColor: 0, enemies: [] };
+      for (let i = 0; i < 8; i++) { ctx.time = w.time = i / 60; p.update(1 / 60, ctx); }
+      p.camera.firstPerson = true;
+      p._applyViewMode();
+      const yaw0 = p.camera.yaw;
+      p.hp = 1;
+      p.damage(999, null, null, 'saber');
+      for (let i = 0; i < 40; i++) { ctx.time = w.time += 1 / 60; p.update(1 / 60, ctx); }
+      return { p, fp: p.camera.firstPerson, dist: p.camera.distance, turned: Math.abs(p.camera.yaw - yaw0) };
+    };
+
+    const off = die(false);
+    const on = die(true);
+    for (const [label, r] of [['off', off], ['on', on]]) {
+      assert(!r.p.alive, `the fixture did not die with shake ${label}`);
+      assert(r.fp === false,
+        `with camera shake ${label} the lens is still in first person while the body is a corpse — `
+        + 'the death is watched from inside your own head');
+      assert(r.dist > 1.5,
+        `with camera shake ${label} the boom sat ${r.dist.toFixed(2)} m from the body`);
+    }
+    /* AND THE CHECKBOX STILL DOES ITS JOB: the SCRIPT — the turn around the
+     * body — is the part motion feedback owns, and it must be gone with the
+     * box unticked or this fix has quietly overridden a player's setting. */
+    assert(on.turned > 0.2,
+      `with shake on the death shot only turned ${on.turned.toFixed(3)} rad — there is no script to switch off`);
+    assert(off.turned < 1e-9,
+      `with shake off the camera still swung ${off.turned.toFixed(3)} rad around the body`);
+    return `shake off: firstPerson ${off.fp}, boom ${off.dist.toFixed(2)} m, ${off.turned.toFixed(3)} rad of script; `
+      + `shake on: boom ${on.dist.toFixed(2)} m, ${on.turned.toFixed(2)} rad`;
+  });
+
   check('controls: the shake runs on the game clock, not on the wall clock', () => {
     /**
      * WHAT THIS CAUGHT, and it was reported as a flaky test rather than as the
@@ -1881,12 +1959,12 @@ export async function run({ check, assert }) {
     const scene = new THREE.Scene();
     const w = { settings: { quality: 'high', particleScale: 1 }, particles: new Particles(scene, QUALITY.high.particles),
       applyQuality: World.prototype.applyQuality };
-    const full = w.particles.scale;
+    const pFull = w.particles.scale;
     w.settings.particleScale = 0.5;
     w.applyQuality('high');
-    const half = w.particles.scale;
-    assert(Math.abs(half / full - 0.5) < 1e-6,
-      `halving the slider took emission from ${full} to ${half}, not half of it`);
+    const pHalf = w.particles.scale;
+    assert(Math.abs(pHalf / pFull - 0.5) < 1e-6,
+      `halving the slider took emission from ${pFull} to ${pHalf}, not half of it`);
     // It must MULTIPLY the tier, not replace it: at the same slider position,
     // Performance has to stay under Cinematic.
     w.settings.particleScale = 1.5;
@@ -1896,12 +1974,96 @@ export async function run({ check, assert }) {
     const ultraMax = w.particles.scale;
     assert(lowMax < ultraMax,
       `Performance at 150% emits ${lowMax} and Cinematic at 150% emits ${ultraMax} — the slider is replacing the tier`);
-    // Grass is planted at level load, so the slider scales the DENSITY the
-    // level asks for. Asserted on the expression, because the field it feeds is
-    // an allocation and rebuilding it needs a level.
+    /**
+     * THE GRASS SLIDER, THROUGH THE LEVEL LOAD THAT READS IT — and this was
+     * the hole in this check.
+     *
+     * It read: "Grass is planted at level load, so the slider scales the
+     * DENSITY the level asks for. Asserted on the expression, because the
+     * field it feeds is an allocation and rebuilding it needs a level", and
+     * then regexed `density: (this.settings.grassScale ?? 1) * L.grass` out of
+     * World.js. A source match proves a line is WRITTEN. This check's own
+     * opening sentence says that is not the claim — and rebuilding the field
+     * needs a level, so the answer is to build one rather than to describe it.
+     *
+     * `World.loadLevel` is driven twice at two slider positions, and the
+     * assertions are on `world.grass`, the field the game actually planted. No
+     * arithmetic is restated here: if the product moves out of World.js, or
+     * the `if (L.grass)` gate stops firing, or GrassField stops reading
+     * `density`, this goes red (HANDOFF §2.4).
+     */
+    const { initPhysics } = await import('../../src/physics/Rapier.js');
+    const { LEVELS, LEVEL_ORDER } = await import('../../src/game/Levels.js');
+    await initPhysics();
+    const stubEngine = () => {
+      const sc = new THREE.Scene();
+      const sun = new THREE.DirectionalLight(0xffffff, 1);
+      sun.shadow.camera.updateProjectionMatrix();
+      sc.add(sun, new THREE.HemisphereLight(0x88aaff, 0x886644, 1));
+      return { scene: sc, camera: new THREE.PerspectiveCamera(60, 16 / 9, 0.045, 900),
+        sun, hemi: sc.children[1], sunDir: new THREE.Vector3(0.4, 0.7, 0.5).normalize(),
+        renderer: { info: { render: { calls: 0, triangles: 0 }, memory: { geometries: 0, textures: 0 } } },
+        profiler: { begin() {}, end() {}, beginDraw() {}, endDraw() {}, dispose() {} },
+        applyAtmosphere() {}, fitShadows() {}, flash() {}, hurt() {}, addHeat() {},
+        setFocus() {}, setRadial() {}, setGrain() {}, setBloom() {}, setSense() {},
+        setQuality() {}, setResolutionScale() {}, render() {} };
+    };
+    /* ON A LEVEL THAT GROWS ONE, WHICH TODAY MEANS A LEVEL THIS CHECK PLANTS.
+     * Nine of nine ship `grass: 0` — see the assertion below, which is the
+     * other half of this — so the density the slider multiplies is zero and
+     * loading the roster as it stands would measure the slider against
+     * nothing, which is the defect. The level record is restored immediately;
+     * `LEVEL_ORDER[0]`'s own ground and dressing are used unchanged. */
+    const key = LEVEL_ORDER[0], L = LEVELS[key], was = L.grass;
+    const planted = [];
+    try {
+      L.grass = 0.8;
+      for (const grassScale of [1, 0.5]) {
+        const w = new World(stubEngine(), { ...DEFAULT_SETTINGS, quality: 'high', grassScale });
+        await w.loadLevel(key);
+        assert(w.grass, `the slider at ${grassScale} planted no field at all on a level asking for ${L.grass}`);
+        planted.push({ grassScale, density: w.grass.density, cover: w.grass.cover.amount });
+        w.unload();
+      }
+    } finally { L.grass = was; }
+    const [gFull, gHalf] = planted;
+    assert(Math.abs(gHalf.density / gFull.density - 0.5) < 1e-6,
+      `halving the grass slider took the planted density from ${gFull.density} to ${gHalf.density}`);
+    assert(Math.abs(gFull.density - 0.8) < 1e-6,
+      `at 100% the field was planted at ${gFull.density} against the level's own 0.8 — `
+      + 'the slider is replacing the level rather than scaling it');
+    assert(gHalf.cover < gFull.cover,
+      `the ground is painted ${(gFull.cover * 100).toFixed(0)}% covered at 100% and `
+      + `${(gHalf.cover * 100).toFixed(0)}% at 50% — the slider moves the blades and not the ground under them`);
+
+    /**
+     * AND THE HALF THE ARITHMETIC CANNOT ANSWER: does that product ever reach
+     * a field in the SHIPPED game?
+     *
+     * It does not. `density` is `slider × L.grass`, and nine of nine levels
+     * author `grass: 0`, so `World.loadLevel` never enters `if (L.grass)` and
+     * `new GrassField` never runs — the control is live and visible on the
+     * options screen and cannot move anything. That zero is a design call,
+     * repeated by the player four times ("delete grass from any level whose
+     * ground is snow, ice, sand or metal"; "get rid of the grass on drowned
+     * wood completely"), and every ground the roster ships is snow, sand,
+     * basalt, ash, red dust, bog or deck plate.
+     *
+     * So the two states are pinned against each other instead of one of them
+     * being assumed. TODAY the slider is dead, which this says in its own pass
+     * line rather than leaving silent — the patch that owes is `ui/Menu.js`
+     * plus `index.html` (drop `opt-grass`/`grassScale`, or mark it dead), not
+     * this file. THE DAY A LEVEL GROWS COVER this goes red, and what it asks
+     * for is that the loop above be pointed at that level instead of planting
+     * its own.
+     */
+    const covered = LEVEL_ORDER.filter((k) => LEVELS[k] && LEVELS[k].grass > 0);
+    const dead = `no level grows a field (${LEVEL_ORDER.length} of ${LEVEL_ORDER.length} author grass: 0), `
+      + 'so #opt-grass is a live control with nothing at the other end of it';
+    assert(covered.length === 0,
+      `${covered.join(', ')} now grow a cover field, so the grass slider finally reaches something in the `
+      + 'shipped game — point the load above at that level and its own density, and drop this branch');
     const world = await readFile(src('game/World.js'), 'utf8');
-    assert(/density:\s*\(this\.settings\.grassScale \?\? 1\) \* L\.grass/.test(world),
-      'grassScale no longer multiplies the level density');
     /* The DECLARATION KEYWORD is not part of the claim, and pinning it made
      * this red for a refactor that changed nothing it measures: World.js now
      * hoists `particleScale` to the top of loadLevel and assigns it lower down,
@@ -1913,8 +2075,10 @@ export async function run({ check, assert }) {
      * particleScale is the setting TIMES the tier, however it is declared. */
     assert(/particleScale\s*=\s*\(this\.settings\.particleScale \?\? 1\) \* q\.particles/.test(world),
       'particleScale no longer multiplies the tier');
-    return `slider 1.0→0.5 takes emission ${full.toFixed(2)}→${half.toFixed(2)}; `
-      + `at 1.5, low ${lowMax.toFixed(2)} < ultra ${ultraMax.toFixed(2)}`;
+    return `particles: slider 1.0→0.5 takes emission ${pFull.toFixed(2)}→${pHalf.toFixed(2)}, `
+      + `at 1.5 low ${lowMax.toFixed(2)} < ultra ${ultraMax.toFixed(2)}; `
+      + `grass: 1.0→0.5 plants density ${gFull.density}→${gHalf.density} and cover `
+      + `${(gFull.cover * 100).toFixed(0)}%→${(gHalf.cover * 100).toFixed(0)}% — but ${dead}`;
   });
 
   check('controls: movement is read from the table and from nowhere else', () => {

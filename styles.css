@@ -536,6 +536,12 @@ h3::after{content:"";flex:1;height:2px;background:var(--panel-hi)}
    inert exactly as the Theatre column is, and the card keeps its own reason
    in place of its tell — a control that is off and does not say why reads as
    broken, which is the whole argument in Menu._syncTheatre. */
+/* THE WHOLE COLUMN, when the MODE will not honour a rule rather than the
+   theatre vetoing one. Same treatment `.cards.inert` gives the theatre list, on
+   the list the run rules live in: a column that is lit and thrown away reads as
+   the picker being broken, and the rules were live in eight modes and honoured
+   in five. Each card still carries the reason — see _syncRules. */
+.difflist.inert{opacity:.38;filter:saturate(.4);pointer-events:none}
 .diff.rule.barred{opacity:.4;filter:saturate(.35);pointer-events:none;cursor:default;
   box-shadow:none;transform:none}
 .diff.rule.barred .txt span{color:var(--dimmer)}

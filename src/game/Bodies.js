@@ -829,6 +829,183 @@ export function weakSpotsOf(bone) {
   return (bone._weakCache = out.length ? out : null);
 }
 
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  Cover — the drawn mesh a bone's own capsule does not reach            */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ══ A BLADE THROUGH THE ACKLAY'S HEAD MET NOTHING AT ALL ══
+ *
+ * `Enemy.capsules()` emits one capsule per bone, about that bone's OWN +Y, of
+ * the bone's nominal radius. That is exactly right for a limb, which is what a
+ * bone is on the nineteen humanoids: measured against the drawn mesh, every one
+ * of them is inside its own capsule set to within 0.07 m, and the worst offender
+ * is a glove.
+ *
+ * It is not right for a body part that is not a tube along its bone. Measured
+ * on the shipped builds — every drawn vertex against the COMPLETE shipped
+ * capsule set, in a settled standing pose:
+ *
+ *     acklay  head    63% of the drawn surface outside, worst point 2.91 m out
+ *     nexu    head    57%, 1.13 m          reek  head  43%, 0.93 m
+ *     AAT     hull    65-75%, 1.23 m       AT-TE tarsus 70% ×6, 0.56 m
+ *     dwarf spider    tarsus 100% ×4, 0.19 m
+ *
+ * Whole-body: AAT 57% of its surface unreachable, AT-TE 38%, nexu 15%, dwarf
+ * spider 10%, reek 10%, acklay 9%. With the cover in: AAT 0%, AT-TE 2%, nexu
+ * 1%, dwarf spider 3%, reek 0%, acklay 1%, and the acklay's worst point comes
+ * in from 2.91 m to 0.32 m.
+ * The acklay's head MESH runs 4.38 m along the bone's local +Z while the
+ * capsule reaches 1.62 m along +Y, so the blade passes through the drawn skull
+ * and out the other side without the solver ever being offered a contact.
+ *
+ * The feet are the ones that matter most, and HANDOFF 6.1c says why in its own
+ * words: `_boneToughness` plates a walker's body and hips to durasteel, so "the
+ * counter-play to a body you cannot cut through is the legs it is standing on"
+ * — `legsLost >= 3` topples. 6.1c priced a toe at 25 passes; 70% of it was not
+ * there to be passed through.
+ *
+ * ── WHY THE COVER IS MEASURED AND NOT AUTHORED ────────────────────────────
+ *
+ * The same argument the note over `weakSpotsOf` makes, for the same reason: a
+ * per-body list of "and also put a capsule here" beside the roster is HANDOFF
+ * 2.3's signature defect, and this file has already paid for it twice in this
+ * area. The body is what knows its own shape. This reads it.
+ *
+ * ── WHY IT IS A SECOND CAPSULE AND NOT A REPLACEMENT ──────────────────────
+ *
+ * The bone's axial capsule is what `Actor.cut` splits a limb along and what
+ * every severance number in the game is priced against; replacing it would
+ * re-price the whole roster to fix five bodies. The cover is emitted ALONGSIDE
+ * it, under the bone's own name, toughness and severance value, so a blade that
+ * meets it is billed exactly as if it had met the bone — which it did. Nothing
+ * a player can do tells the two apart, and nothing downstream has to know.
+ *
+ * ── AND WHY ONLY SOME BONES GET ONE ───────────────────────────────────────
+ *
+ * `COVER_GAP` is the worst gap a bone is allowed to leave before it is given a
+ * cover. Every humanoid bone in the game is under it by a factor of two, so
+ * this changes nothing about the nineteen bodies whose covers were already
+ * measured correct, and a fresh capsule per bone per frame on all of them would
+ * be paid for nothing. What is left is heads, hulls and feet.
+ */
+const COVER_GAP = 0.18;
+
+/** Squared distance from `p` to the segment a→b, all as flat [x,y,z]. */
+function _segDist2(px, py, pz, ax, ay, az, bx, by, bz) {
+  const ux = bx - ax, uy = by - ay, uz = bz - az;
+  const L2 = ux * ux + uy * uy + uz * uz;
+  let t = L2 > 1e-12 ? ((px - ax) * ux + (py - ay) * uy + (pz - az) * uz) / L2 : 0;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  const dx = px - (ax + ux * t), dy = py - (ay + uy * t), dz = pz - (az + uz * t);
+  return dx * dx + dy * dy + dz * dz;
+}
+
+/**
+ * A capsule bounding the drawn mesh of `bone`, in the bone's own local frame,
+ * or null if the bone's axial capsule already reaches all of it.
+ *
+ * Shaped exactly like a weak spot — `{ p0, p1, r }` in bone-local metres — so
+ * `Enemy.capsules()` places it with the same three lines that place those.
+ *
+ * The axis is the mesh's own principal direction, found by power iteration on
+ * the covariance of its vertices, which costs a few dozen multiplies once per
+ * bone in the lifetime of a body. The radius is the 90th percentile of the
+ * perpendicular spread and not the maximum: a tank hull is a slab, and a
+ * capsule sized to the corner of a slab is a cylinder of empty air over the
+ * deck that a blade would cut. Measured both ways, sampled uniformly inside
+ * each capsule against the bone's own drawn extent: the 90th percentile takes
+ * the AAT's unreachable surface from 57% to 0% while sitting outside the mesh
+ * no more than the axial capsules already do (acklay head 4% against the bone
+ * capsule's 83%, AAT hull 65% against 38%, AT-TE foot 66% against 30%). The
+ * two ends are then solved rather
+ * than guessed — `t0 = min(t_i + sqrt(r² - d_i²))` is the furthest the cap can
+ * be pulled in and still contain every point it is responsible for.
+ *
+ * Cached on the bone next to `_weakCache`, and for the same reason: this is a
+ * property of how the body was built and it does not change afterwards.
+ */
+export function coverSpotOf(bone) {
+  if (!bone) return null;
+  if (bone._coverCache !== undefined) return bone._coverCache;
+  bone._coverCache = null;
+  if (!bone.parts?.length || !bone.obj) return null;
+
+  /* Bone-local vertices of everything drawn on this bone. Subsampled: a hull
+   * with 4 000 vertices does not describe its own extent 400 times better. */
+  bone.obj.updateWorldMatrix(true, false);
+  const inv = _coverM.copy(bone.obj.matrixWorld).invert();
+  const P = [];
+  for (const m of bone.parts) {
+    const attr = m.geometry?.attributes?.position;
+    if (!attr) continue;
+    m.updateWorldMatrix(true, false);
+    const stride = Math.max(1, Math.floor(attr.count / 400));
+    for (let i = 0; i < attr.count; i += stride) {
+      _coverV.fromBufferAttribute(attr, i).applyMatrix4(m.matrixWorld).applyMatrix4(inv);
+      P.push(_coverV.x, _coverV.y, _coverV.z);
+    }
+  }
+  const n = P.length / 3;
+  if (n < 8) return null;
+
+  // Is the bone's own capsule already enough? Same allowance the solver adds.
+  const len = bone.length || 0, rad = (bone.radius || 0) * 1.12;
+  let worst = 0;
+  for (let i = 0; i < n; i++) {
+    const d = Math.sqrt(_segDist2(P[i * 3], P[i * 3 + 1], P[i * 3 + 2], 0, 0, 0, 0, len, 0)) - rad;
+    if (d > worst) worst = d;
+  }
+  if (worst <= COVER_GAP) return null;
+
+  // Principal axis, by power iteration on the covariance.
+  let cx = 0, cy = 0, cz = 0;
+  for (let i = 0; i < n; i++) { cx += P[i * 3]; cy += P[i * 3 + 1]; cz += P[i * 3 + 2]; }
+  cx /= n; cy /= n; cz /= n;
+  let axx = 0, axy = 0, axz = 0, ayy = 0, ayz = 0, azz = 0;
+  for (let i = 0; i < n; i++) {
+    const x = P[i * 3] - cx, y = P[i * 3 + 1] - cy, z = P[i * 3 + 2] - cz;
+    axx += x * x; axy += x * y; axz += x * z; ayy += y * y; ayz += y * z; azz += z * z;
+  }
+  let ux = 1, uy = 1, uz = 1;
+  for (let k = 0; k < 24; k++) {
+    const vx = axx * ux + axy * uy + axz * uz;
+    const vy = axy * ux + ayy * uy + ayz * uz;
+    const vz = axz * ux + ayz * uy + azz * uz;
+    const L = Math.hypot(vx, vy, vz);
+    if (!(L > 1e-12)) { ux = 0; uy = 1; uz = 0; break; }
+    ux = vx / L; uy = vy / L; uz = vz / L;
+  }
+
+  // Axial coordinate and perpendicular distance of every vertex.
+  const T = new Float64Array(n), D = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    const x = P[i * 3] - cx, y = P[i * 3 + 1] - cy, z = P[i * 3 + 2] - cz;
+    const t = x * ux + y * uy + z * uz;
+    T[i] = t;
+    D[i] = Math.hypot(x - ux * t, y - uy * t, z - uz * t);
+  }
+  const sorted = Float64Array.from(D).sort();
+  const r = sorted[Math.min(n - 1, Math.floor(n * 0.90))];
+  if (!(r > 1e-4)) return null;
+  let t0 = Infinity, t1 = -Infinity;
+  for (let i = 0; i < n; i++) {
+    const h = D[i] < r ? Math.sqrt(r * r - D[i] * D[i]) : 0;
+    if (T[i] + h < t0) t0 = T[i] + h;
+    if (T[i] - h > t1) t1 = T[i] - h;
+  }
+  if (t0 > t1) { t0 = t1 = (t0 + t1) * 0.5; }
+  return (bone._coverCache = {
+    key: 'cover',
+    p0: [cx + ux * t0, cy + uy * t0, cz + uz * t0],
+    p1: [cx + ux * t1, cy + uy * t1, cz + uz * t1],
+    r,
+  });
+}
+
+const _coverM = new THREE.Matrix4();
+const _coverV = new THREE.Vector3();
+
 /** One finger bone: a short tapered tube, optionally domed off at the tip. */
 function digitGeo(len, r0, r1, seg = 6, tip = false) {
   const p = [

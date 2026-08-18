@@ -2161,6 +2161,26 @@ export const LEVELS = {
     name: 'The Ember Shelf',
     blurb: 'A basalt shelf standing out of a lava sea, under an ash fall. Nothing here is neutral ground.',
     terrain: 'scoria',
+    /**
+     * WHERE THE LEVEL OPENS, and this is the level that needed the field to
+     * exist. The blurb says "a basalt shelf standing out of a lava sea" and
+     * from the old opening position — (0, 8), which every level got, because
+     * `World._playerSpawn` hard-coded it — YOU CANNOT SEE THE SEA. Measured
+     * off the heightfield at eye height: nearest point under the sheet 94 m
+     * away, 0.0% of the r ≤ 60 m fight disc under it, and 0 of 360 bearings
+     * with an unobstructed eye line. The hazard that the level is named for,
+     * priced around and lit by was over a ridge behind you.
+     *
+     * (−22, 68) is on the same shelf and puts the coast inside the fight: the
+     * sea is 30 m out, 9.7% of the fight disc is under it and 63 of 360
+     * bearings see it — between Mustafar's 40 m / 3.0% and the Drowned Wood's
+     * 12 m / 20.9%, which is the band `Hazard.js` describes when it says "the
+     * levels that have a hazard are the levels whose fights happen along its
+     * edge". The ground there is flat (slope 0.04) and 90% of the enemy spawn
+     * ring is still standable, so the opening is a shelf with a coast on one
+     * side rather than a balcony over one.
+     */
+    start: [-22, 68],
     // A duelling map wants blades in it. The pool is weighted to the one
     // sabered archetype this game has and thinned of hordes: half of what
     // walks out of the ash is something that will meet your guard.
@@ -4375,7 +4395,35 @@ LEVELS.warship = {
       addMachine(world, at(x, z), { width: 3.4, height: 1.5, depth: 1.8, yaw: 0,
         seed: 9600 + i, glowMat: M.glowAmber });
     }
-    addRailing(world, at(-26, -40), { length: 52, height: 1.1, yaw: Math.PI / 2, seed: 9620 });
+    /* THE RAIL RUNS ACROSS THE HEAD OF THE RAMP, NOT DOWN THE LENGTH OF THE
+     * SHIP — and it is in two runs because the bulkhead has a door in it.
+     *
+     * It was one 52 m run at (−26, −40) yawed a quarter turn, i.e. along z
+     * from −66 to −14 at x = −26. That line crosses the bridge ramp (5.4 m
+     * over 26 m of run) and one of the bulkhead's 9.0 m piers: measured along
+     * it, 17 of 27 samples had the deck above the rail's TOP and 8 had the
+     * deck more than 0.3 m below its foot, up to 2.0 m of daylight. 63% of the
+     * rail was inside the ship and 30% of it was hanging in the air.
+     *
+     * The lip it is furniture for runs the other way. The bridge is raised aft
+     * of the bulkhead, so what a hand goes onto is the front edge of that
+     * floor, facing the hangar — and at z = −42 the deck is level to 6-8 cm
+     * over the whole beam, which is what a straight rail wants.
+     *
+     * The gap is not decoration either: the preset opens the bulkhead over
+     * `|x − 4| < 11`, and that doorway is the only way onto the bridge. A
+     * full-beam rail at this z walls the bridge off from its own level — the
+     * player and the nav both — so the run stops either side of the opening
+     * and the numbers below are the preset's own, not a second guess at them.
+     * `addRailing` now seats every post on the ground under it, so this is
+     * two straight lines on flat plate rather than a straight line trusted to
+     * one sample. */
+    const gap0 = 4 - 11, gap1 = 4 + 11;            // the bulkhead's opening
+    for (const [x0, x1] of [[gap0 - 23, gap0 - 1], [gap1 + 1, gap1 + 23]]) {
+      addRailing(world, at((x0 + x1) / 2, -42), {
+        length: x1 - x0, height: 1.1, seed: 9620 + (x0 < 0 ? 0 : 1),
+      });
+    }
     return 3;
   },
 };
