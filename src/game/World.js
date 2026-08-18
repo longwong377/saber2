@@ -1186,6 +1186,27 @@ export class World {
         kills: p.kills | 0, deflects: p.deflects | 0, perfects: p.perfects | 0,
         limbsRemoved: p.limbsRemoved | 0, score: p.score | 0,
       } : null,
+      /**
+       * …AND THE STATE YOU ARE IN, WHICH IS A DECISION AND NOT AN OVERSIGHT.
+       *
+       * A respawned Player is at full health, full Force and full stamina.
+       * Leaving it there would make a ground change the cheapest heal in the
+       * game — free, repeatable, and worth more the longer the battle runs —
+       * and this method is the door every mode's rotation will go through, so
+       * whatever it does becomes the rule. A transition is not a rest.
+       *
+       * Carried as a FRACTION rather than as points, because `maxHp`, `maxForce`
+       * and `maxStamina` are all re-derived from the order and the boons on the
+       * far side and a raw number would either overflow the new maximum or
+       * quietly shrink against it. A mode that wants to heal between rounds
+       * heals — `CommandDirector` already pays 8 hp at every wave clear — and
+       * it does so where that decision is legible.
+       */
+      vitals: p ? {
+        hp: p.maxHp ? clamp(p.hp / p.maxHp, 0, 1) : 1,
+        force: p.maxForce ? clamp(p.force / p.maxForce, 0, 1) : 1,
+        stamina: p.maxStamina ? clamp(p.stamina / p.maxStamina, 0, 1) : 1,
+      } : null,
     };
   }
 
@@ -1219,6 +1240,16 @@ export class World {
     if (t && p) {
       p.kills = t.kills; p.deflects = t.deflects; p.perfects = t.perfects;
       p.limbsRemoved = t.limbsRemoved; p.score = t.score;
+    }
+    const v = carry.vitals;
+    if (v && p) {
+      /* A floor of one point rather than zero: a fraction of 0 is a body that
+       * was already dead when the ground changed, and arriving on the next one
+       * dead is a run that ends to a level load. `_checkWipe` is the only thing
+       * allowed to end a run. */
+      p.hp = Math.max(1, Math.round(p.maxHp * v.hp));
+      p.force = p.maxForce * v.force;
+      p.stamina = p.maxStamina * v.stamina;
     }
     // Once, after the build is back on, for the reason World.applyBoon does it
     // per card: `might` is otherwise fixed at dressing time.

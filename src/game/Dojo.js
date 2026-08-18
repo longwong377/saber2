@@ -17,12 +17,47 @@ import { propMaterials, addWall } from '../world/Props.js';
 import { FORMS, FORM_KEYS } from './Duel.js';
 import { GRADE } from './Combat.js';
 import { ARCHETYPES } from './Enemy.js';
-import { sandboxConfig, holdFire, tuneFireRate, walkIn, instantSpawn, DOJO_MIX } from './Waves.js';
-import { clamp, lerp, makeRng, TAU } from '../engine/MathUtil.js';
+import { sandboxConfig, holdFire, tuneFireRate, walkIn, arrived, instantSpawn, DOJO_MIX } from './Waves.js';
+import { clamp, lerp, TAU } from '../engine/MathUtil.js';
 import { audio } from '../engine/Audio.js';
 
-const rng = makeRng(51515);
-const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3();
+const _v1 = new THREE.Vector3();
+
+/**
+ * HOW FAR OUTSIDE ITS OWN POST A LESSON BODY ENTERS THE ROOM.
+ *
+ * This was a flat 34 m measured from the PLAYER, under a note claiming that was
+ * "past the level's own inner spawn ring on every level in the game". Both
+ * halves were wrong, and the second one is HANDOFF §2.4 exactly: it restates
+ * `level.spawnRadius` instead of reading it, and the restatement is false on
+ * two of the seven shipped theatres — `drifts` opens its inner ring at 36 m and
+ * `geonosis` at 58 m, so on the Shifting Waste a lesson body was entering from
+ * INSIDE the ring the waves use, not past it.
+ *
+ * The number itself is a wave distance being spent on a room 5.5 m across, and
+ * what it cost was measured on a real World on `drifts`:
+ *
+ *   - 6.1 to 9.6 seconds of crossing PER LESSON, eleven lessons, with `holdFire`
+ *     keeping every remote silent for all of it. The first thing a new player
+ *     meets after "Feel the weight" is eight seconds of nothing.
+ *   - Worse, `walkIn`'s post is a SNAPSHOT of where the player stood when the
+ *     lesson opened. Walk while the room is still crossing — an ordinary walk,
+ *     3.3 m/s, no sprint — and the `cut` lesson's three dummies finish their
+ *     approach 29.5, 36.6 and 31.7 m away from you and STOP THERE FOREVER: an
+ *     inert body's speed goes back to zero on arrival and nothing moves it
+ *     again. `cut` needs eight severed limbs from three targets you can no
+ *     longer reach, so the lesson cannot be completed and cannot be restarted
+ *     except by leaving it.
+ *
+ * So the approach is measured off the POST rather than off the player, and it
+ * is room-sized: every body walks the same 6 m in, whatever ring it is joining.
+ * Measured against each archetype's own pace — remote 2.6 m/s × 1.35, dummy 0
+ * m/s given the walking 3.2, partner 3.4 × 1.35 — that is 1.7 s, 1.9 s and
+ * 1.3 s. Long enough to watch a body walk in, which is all player note #17 ever
+ * asked for, and short enough that the room is standing before you have taken
+ * four paces. `_steerRoom` covers the paces you do take.
+ */
+const APPROACH = 6.0;
 
 /* ── the training remote ─────────────────────────────────────────────── */
 
@@ -206,6 +241,8 @@ export class DojoDirector {
     this.onLesson = null;
     this.totalSpawned = 0;
     this.streak = 0;
+    // bodies still walking to their post — see _steerRoom
+    this._crossing = [];
     // sandbox bookkeeping — see _sandboxRoom
     this.sandboxUnits = [];
     this._mixCursor = 0;
@@ -259,6 +296,7 @@ export class DojoDirector {
     w.enemies.length = 0;
     w.locks.length = 0;
     this.remotes.length = 0; this.dummies.length = 0; this.spar = null;
+    this._crossing.length = 0;
     this.sandboxUnits.length = 0;
     this._mixCursor = 0;
     this._sandboxFire = null;
@@ -270,7 +308,7 @@ export class DojoDirector {
 
     for (let i = 0; i < (s.remotes || 0); i++) {
       const a = (i / Math.max(1, s.remotes)) * TAU + 0.5;
-      const e = this._post('remote', anchor, a, 5.5);
+      const e = this._post('remote', anchor, a);
       e.trainingFireRate = s.fireRate ?? 2.0;
       e.trainingBoltSpeed = s.boltSpeed ?? 30;
       e.invincible = !!s.invincibleRemotes;
@@ -278,10 +316,10 @@ export class DojoDirector {
     }
     for (let i = 0; i < (s.dummies || 0); i++) {
       const a = (i / Math.max(1, s.dummies)) * TAU - 0.8;
-      this.dummies.push(this._post('dummy', anchor, a, 3.4));
+      this.dummies.push(this._post('dummy', anchor, a));
     }
     if (s.spar) {
-      const e = this._post('sparring', anchor, Math.PI, 3.2);
+      const e = this._post('sparring', anchor, Math.PI);
       if (e.duel) {
         e.duel.formKey = s.sparForm || 'makashi';
         e.duel.form = FORMS[e.duel.formKey];
@@ -308,38 +346,64 @@ export class DojoDirector {
    * the room a new player meets first, so it is the room that teaches them that
    * things in this game appear out of nothing.
    *
-   * So the body is spawned OUT PAST THE RING, on the same bearing, and walks in
+   * So the body is spawned OUTSIDE THE ROOM, on the same bearing, and walks in
    * to the post the lesson chose. The lesson's geometry is byte-identical to
    * what it was — the body ends exactly where it used to start — and what
    * changes is that you watch it come. `Waves.walkIn` is the primitive and it
-   * holds the body's fire the whole way, so nothing shoots at you from forty
-   * metres while it is still crossing.
+   * holds the body's fire the whole way, so nothing shoots at you while it is
+   * still crossing. How far outside, and why that stopped being 34 m, is
+   * `APPROACH`.
    *
    * `settings.instantSpawn` is the same opt-out the wave and sandbox paths take:
    * one setting, one reader, and the default everywhere is that things arrive
    * from somewhere.
    *
-   * @param bearing radians about the anchor; `dist` the lesson's own radius.
+   * THE SEAT IS KEPT ON THE BODY. `_dojoSeat` is the room's record of where
+   * this body belongs — its type, its bearing and its ring — and it is the one
+   * authority three separate places used to write out by hand: `_applyLesson`
+   * named 5.5/3.4/3.2 at the call sites, `_sandboxRadius` derived the same
+   * three off the archetype, and the respawn in `update()` kept a THIRD copy
+   * (5.5/3.4, with the partner at `anchor.z - 3.4`, which is neither the right
+   * radius nor a bearing any lesson uses). HANDOFF §2.3, three times over in
+   * one file. Everything now reads `_roomRadius`, and a respawn re-posts on the
+   * seat the body already had.
+   *
+   * @param bearing radians about the anchor; `dist` defaults to the body's ring.
    */
-  _post(type, anchor, bearing, dist) {
+  _post(type, anchor, bearing, dist = this._roomRadius(type)) {
     const w = this.world;
     const post = new THREE.Vector3(
       anchor.x + Math.cos(bearing) * dist, 0, anchor.z + Math.sin(bearing) * dist);
     if (w.terrain) post.y = w.terrain.height(post.x, post.z);
-    if (instantSpawn(w.settings)) return w.spawnEnemy(type, post);
-    /* FROM WHERE. Far enough to be an arrival rather than a hop — 34 m is past
-     * the level's own inner spawn ring on every level in the game — and on the
-     * post's own bearing, so it walks IN along the radius and stops where the
-     * lesson wants it rather than crossing the room diagonally through you.
-     * Clamped into the world, because the dojo runs on every theatre now and
-     * some of them are bounded tighter than others. */
-    const from = new THREE.Vector3(
-      anchor.x + Math.cos(bearing) * 34, 0, anchor.z + Math.sin(bearing) * 34);
-    if (w.terrain?.inBounds && !w.terrain.inBounds(from.x, from.z, 6)) {
-      from.set(anchor.x + Math.cos(bearing) * 16, 0, anchor.z + Math.sin(bearing) * 16);
+    const seat = { type, bearing, dist, post };
+    if (instantSpawn(w.settings)) {
+      const direct = w.spawnEnemy(type, post);
+      if (direct) direct._dojoSeat = seat;
+      return direct;
     }
+    /* FROM WHERE. `APPROACH` metres further out along the post's own bearing,
+     * so the body walks IN along the radius and stops where the lesson wants it
+     * rather than crossing the room diagonally through you.
+     *
+     * Pulled in until it fits, because the dojo runs on every theatre now and
+     * some of them are bounded tighter than others — and unlike the version
+     * before it, this ends somewhere legal. The old fallback tried 34 m, then
+     * 16 m, and if THAT was also outside the world it spawned there anyway. The
+     * last resort here is the post itself: a body that has nowhere to walk from
+     * stands up on its mark, which is the one case note #17 cannot be honoured
+     * in and is strictly better than a body outside the map. */
+    const from = new THREE.Vector3();
+    let entry = 0;
+    for (const reach of [APPROACH, APPROACH * 0.5]) {
+      from.set(anchor.x + Math.cos(bearing) * (dist + reach), 0,
+        anchor.z + Math.sin(bearing) * (dist + reach));
+      if (!w.terrain?.inBounds || w.terrain.inBounds(from.x, from.z, 2)) { entry = reach; break; }
+    }
+    if (!entry) from.copy(post);
     if (w.terrain) from.y = w.terrain.height(from.x, from.z);
     const e = w.spawnEnemy(type, from);
+    if (!e) return e;
+    e._dojoSeat = seat;
     /* An inert dummy has speed 0 and would never arrive — `walkIn` writes
      * `wish` and `_move` multiplies it by `this.speed`. It is given a walking
      * pace for the crossing and put back to nothing on arrival, which is what
@@ -347,14 +411,98 @@ export class DojoDirector {
      * standing where it was put. */
     const rest = e.speed;
     if (!(e.speed > 0)) e.speed = 3.2;
-    walkIn(e, post, { speed: rest > 0 ? 1.35 : 1.0, tolerance: 1.1, rest });
+    if (entry) {
+      walkIn(e, post, { speed: rest > 0 ? 1.35 : 1.0, tolerance: 1.1, rest });
+      this._crossing.push(e);
+    }
     return e;
+  }
+
+  /**
+   * THE ROOM IS WHEREVER YOU ARE, INCLUDING WHILE IT IS STILL ARRIVING.
+   *
+   * `walkIn` holds the post BY REFERENCE and reads it every frame, so keeping
+   * that vector pointed at the live anchor steers a body which is still
+   * crossing into the room the player is standing in NOW rather than the one
+   * they were standing in when the lesson opened. It is the shipped primitive's
+   * own target being kept true, not a second walk written beside it (§2.4).
+   *
+   * The dependency is on `walkIn` storing the vector rather than copying it,
+   * which is worth stating out loud because it lives in another file: if that
+   * ever changes this degrades to exactly the old behaviour over a SIX metre
+   * approach, so the error goes from thirty metres to about two.
+   */
+  _steerRoom(anchor) {
+    const w = this.world;
+    for (let i = this._crossing.length - 1; i >= 0; i--) {
+      const e = this._crossing[i];
+      const seat = e && e._dojoSeat;
+      if (!seat || e.dead || arrived(e)) { this._crossing.splice(i, 1); continue; }
+      seat.post.set(anchor.x + Math.cos(seat.bearing) * seat.dist, 0,
+        anchor.z + Math.sin(seat.bearing) * seat.dist);
+      if (w.terrain) seat.post.y = w.terrain.height(seat.post.x, seat.post.z);
+    }
+  }
+
+  /**
+   * IS THIS SEAT EMPTY? Two ways it can be, and the second is new.
+   *
+   * Dead and settled — the original rule, with the delay read off the seat
+   * because a partner's death is longer than a droid's. That difference is why
+   * the two used to be written out as separate blocks.
+   *
+   * Or STANDING WHERE THE ROOM USED TO BE. Anything with a brain walks back to
+   * the player on its own; an inert body is `speed: 0` — "a target that does
+   * not move once it is standing where it was put" — so when the player leaves,
+   * the dummy does not follow and the lesson that needs it is over. The bar is
+   * the body's own seat plus the approach it would have walked to reach it,
+   * i.e. the furthest out it has ever legitimately stood, so nothing is
+   * reseated for being a step wide of its post.
+   */
+  _vacated(e, anchor) {
+    const seat = e && e._dojoSeat;
+    if (!seat) return false;
+    if (e.dead) return e.dying > (seat.type === 'sparring' ? 2.6 : 2.2);
+    if (!e.A?.inert || !arrived(e)) return false;
+    return e.position.distanceTo(anchor) > seat.dist + APPROACH;
+  }
+
+  /** Take a body out of the room — off the world's list, off the blade's target
+   *  list, and out of its seat so nothing steers it any more. */
+  _retire(e) {
+    const w = this.world;
+    const i = w.enemies.indexOf(e);
+    if (i >= 0) w.enemies.splice(i, 1);
+    const j = this.sandboxUnits.indexOf(e);
+    if (j >= 0) this.sandboxUnits.splice(j, 1);
+    w.bladeSolver?.clearTarget?.(e.id);
+    e._dojoSeat = null;
+    e.dispose();
+  }
+
+  /** Put a fresh body on an empty seat — same type, same bearing, same ring —
+   *  and let it walk in the way the first one did. A corpse is left to fade on
+   *  its own clock; a stray is taken out, because it is still standing there. */
+  _reseat(e, anchor) {
+    const seat = e && e._dojoSeat;
+    if (!seat) return null;
+    if (!e.dead) this._retire(e);
+    return this._post(seat.type, anchor, seat.bearing, seat.dist);
   }
 
   /* ── the sandbox room ────────────────────────────────────────────── */
 
-  /** Ring radius for a sandbox unit: remotes orbit wide, dummies stand close. */
-  _sandboxRadius(type) {
+  /**
+   * WHERE A BODY OF THIS TYPE STANDS: remotes orbit wide, dummies stand close.
+   *
+   * Named `_sandboxRadius` while it served one caller, and the lessons kept
+   * their own copy of the three numbers it already knew (5.5 / 3.4 / 3.2,
+   * written at the `_post` call sites) with the respawn keeping a third. It is
+   * the room's single authority now — lessons, sandbox and respawn all read it
+   * — and it is derived off the archetype rather than listed, so a body added
+   * to `DOJO_MIX` is seated the day it is authored (§2.3).
+   */
+  _roomRadius(type) {
     const A = ARCHETYPES[type];
     if (!A) return 5.0;
     if (A.inert) return 3.4;                    // walk-up-and-cut range
@@ -370,7 +518,7 @@ export class DojoDirector {
     // promise when n grows — and forty bodies on ONE circle 8 m out is 1.25 m
     // apart, which the separation steering then spends the whole session
     // untangling. The rings spread that over 8.0 to 9.9 m instead.
-    const r = this._sandboxRadius(type) * (1 + 0.06 * (index % 5));
+    const r = this._roomRadius(type) * (1 + 0.06 * (index % 5));
     const a = index * 2.39996 + 0.5;
     /* …AND THIS ROOM WALKS IN TOO. Note #17 says "in any mode", and the sandbox
      * is where a player spends the longest watching bodies enter the world — it
@@ -442,12 +590,7 @@ export class DojoDirector {
     if (keep.size < live.length) {
       for (const e of live) {
         if (keep.has(e)) continue;
-        const idx = w.enemies.indexOf(e);
-        if (idx >= 0) w.enemies.splice(idx, 1);
-        const j = this.sandboxUnits.indexOf(e);
-        if (j >= 0) this.sandboxUnits.splice(j, 1);
-        w.bladeSolver?.clearTarget?.(e.id);
-        e.dispose();
+        this._retire(e);
       }
     } else if (live.length < cfg.count) {
       this._spawnSandboxUnit(anchor, this._sandboxType(cfg), this.totalSpawned);
@@ -503,6 +646,12 @@ export class DojoDirector {
   }
 
   update(dt, ctx) {
+    const anchor = this.world.player ? this.world.player.position : _v1.set(0, 0, 0);
+    /* Every frame, not on the settle tick. A post refreshed once a second is a
+     * post up to a second stale, and at a walking 3.3 m/s that is three metres
+     * of a six-metre approach. */
+    this._steerRoom(anchor);
+
     if (this.inSandbox) {
       // The fuse has to be pushed back EVERY frame, not on the settle tick:
       // holdFire only guarantees half a second of silence, and a one-second
@@ -520,23 +669,24 @@ export class DojoDirector {
       return;
     }
 
-    // dummies and remotes come back so the lesson never stalls
+    /* Dummies and remotes come back so the lesson never stalls — and a room
+     * the player has walked out of is re-formed around them, which is the same
+     * sentence and used not to be true. Both go through `_reseat`, so a
+     * replacement walks in on its own seat instead of appearing out of nothing
+     * one metre from your shoulder: the old path here spawned directly at the
+     * ring with `y = 0`, which is note #17's complaint verbatim, in the path a
+     * player hits most (the `cut` lesson wants eight limbs off three dummies)
+     * and on any theatre whose ground is not at sea level. */
     this._settleTimer -= dt;
     if (this._settleTimer <= 0) {
       this._settleTimer = 1.0;
-      const w = this.world;
-      const anchor = w.player ? w.player.position : _v1.set(0, 0, 0);
       for (const list of [this.remotes, this.dummies]) {
         for (let i = 0; i < list.length; i++) {
           const e = list[i];
-          if (!e.dead) continue;
-          if (e.dying < 2.2) continue;
-          const isRemote = list === this.remotes;
-          const a = rng() * TAU;
-          const r = isRemote ? 5.5 : 3.4;
-          const fresh = w.spawnEnemy(isRemote ? 'remote' : 'dummy',
-            _v2.set(anchor.x + Math.cos(a) * r, 0, anchor.z + Math.sin(a) * r));
-          if (isRemote) {
+          if (!this._vacated(e, anchor)) continue;
+          const fresh = this._reseat(e, anchor);
+          if (!fresh) continue;
+          if (list === this.remotes) {
             fresh.trainingFireRate = e.trainingFireRate;
             fresh.trainingBoltSpeed = e.trainingBoltSpeed;
             fresh.invincible = e.invincible;
@@ -544,16 +694,18 @@ export class DojoDirector {
           list[i] = fresh;
         }
       }
-      if (this.spar && this.spar.dead && this.spar.dying > 2.6) {
-        const fresh = this.world.spawnEnemy('sparring',
-          _v2.set(anchor.x, 0, anchor.z - 3.4));
-        if (fresh.duel && this.spar.duel) {
-          fresh.duel.formKey = this.spar.duel.formKey;
-          fresh.duel.form = this.spar.duel.form;
-          fresh.formName = fresh.duel.describe();
+      if (this._vacated(this.spar, anchor)) {
+        const was = this.spar;
+        const fresh = this._reseat(was, anchor);
+        if (fresh) {
+          if (fresh.duel && was.duel) {
+            fresh.duel.formKey = was.duel.formKey;
+            fresh.duel.form = was.duel.form;
+            fresh.formName = fresh.duel.describe();
+          }
+          fresh.trainingSpeed = was.trainingSpeed;
+          this.spar = fresh;
         }
-        fresh.trainingSpeed = this.spar.trainingSpeed;
-        this.spar = fresh;
       }
     }
   }

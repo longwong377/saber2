@@ -108,8 +108,19 @@ export async function run({ check, assert }) {
      * `WaveDirector.floor` was written for. */
     assert(kept.wave === before.wave + 1, `the escalation restarted: wave ${before.wave} -> ${kept.wave}`);
     assert(w2.levelKey === 'drifts' && w2.running && w2.director.active, 'the world did not come back up');
+    /* …AND A GROUND CHANGE IS NOT A HEAL. A respawned Player is at full
+     * everything, so the cheapest way to top up in any rotating mode would be
+     * to clear a wave. Carried as a fraction of a maximum that is re-derived on
+     * the far side; see `runCarry`. */
+    const { world: hurt } = await boot({ mode: 'roguelite' });
+    hurt.player.hp = hurt.player.maxHp * 0.4;
+    hurt.player.force = hurt.player.maxForce * 0.25;
+    hurt.rotateTo('alpine');
+    const frac = hurt.player.hp / hurt.player.maxHp;
+    assert(Math.abs(frac - 0.4) < 0.02, `a ground change healed the player from 40% to ${(frac * 100).toFixed(0)}%`);
+    assert(Math.abs(hurt.player.force / hurt.player.maxForce - 0.25) < 0.02, 'a ground change refilled the Force');
     return `plain load ${before.ranks}→0 ranks, ${before.deflect}→${plain.deflect} deflect; `
-      + `rotateTo keeps all 8 fields and wave ${before.wave}→${kept.wave}`;
+      + `rotateTo keeps all 8 fields, wave ${before.wave}→${kept.wave}, and 40% health stays 40%`;
   });
 
   check('rotation: a rank-3 card crosses as rank 3, which the Set iterator cannot do', async () => {

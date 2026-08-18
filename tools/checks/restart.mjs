@@ -34,13 +34,41 @@
  * tools/checks/materials.mjs.
  */
 
-/** A world on the arena in the shipped default mode, with a seeded ladder. */
+/**
+ * A world on the arena in the shipped default mode, with a seeded ladder.
+ *
+ * THE SEED GOES ON AFTER THE BOOT, AND THE FIRST VERSION PUT IT BEFORE — which
+ * meant the number this file is calibrated on was not a property of the seed at
+ * all. `_one.mjs` and `verify.mjs` start every check body in a file at once and
+ * they interleave at each `await`; `bootWorld` awaits `initPhysics` and
+ * `stubEngine`, so the sibling check's `seedWaves(9, 0)` ran INSIDE this one's
+ * boot and the wave composed off the sibling's stream. Measured on the shipped
+ * tree, wave 1 on the colosseum, each seed applied immediately before
+ * composition:
+ *
+ *     seed  99   9   1   2   3   4   5   7  11  13  17  23  42  77 123
+ *     bodies 1   7   1   7   1   1   1   1   7   1   1   7   7   1   7
+ *
+ * The wave is bimodal — one big beast or seven small ones — and this file
+ * asserted `announced === 7` while asking for seed 99, whose honest answer is
+ * ONE. The 7 was seed 9's, arriving from the check below through a shared
+ * module-level generator. It survived for as long as nothing perturbed the
+ * interleaving, and then an unrelated change in Waves.js moved one await and
+ * this file went red with a message blaming the composer.
+ *
+ * That is the §2.5 shape exactly: a harness measuring itself. So the seeding is
+ * handed BACK as `restream()` for the caller to fire on the line before its
+ * `start(1)`, and not done here: an async function's `return` resolves a
+ * promise and the caller resumes in a microtask, so even seeding on the last
+ * line of this function leaves a gap the sibling check's boot can land in.
+ * Fired synchronously from the caller there is no gap at all, and the number in
+ * the assertion is the number the seed really produces, stable over repeated
+ * runs and unmoved by anything the rest of the suite does.
+ */
 async function arena(seed) {
   const H = await import('./_coop.mjs');
   const { enemyRng } = await import('../../src/game/Enemy.js');
   const { seedWaves } = await import('../../src/game/Waves.js');
-  enemyRng.seed(seed);
-  seedWaves(seed, 0);
   /* A DROPSHIP LEVEL, and it has to be one: this check watches `arrivals`
    * still have flights in the air at the moment of the restart, and a level
    * whose arrival is `gate` delivers without staging any. It used to be the
@@ -51,7 +79,11 @@ async function arena(seed) {
    * pool thinned of hordes — it composed one contact on wave 1 against the
    * seven this check's arithmetic is calibrated on. */
   const { world } = await H.bootWorld({ level: 'colosseum', settings: { mode: 'roguelite', difficulty: 'knight' } });
-  return { world, input: H.idleInput() };
+  return {
+    world,
+    input: H.idleInput(),
+    restream() { enemyRng.seed(seed); seedWaves(seed, 0); },
+  };
 }
 
 export async function run({ check, assert }) {
@@ -65,11 +97,44 @@ export async function run({ check, assert }) {
      * clears and the count is exactly "how many bodies this wave put on the
      * ground" with no second wave to confuse it.
      */
-    const { world, input } = await arena(99);
-    let fielded = 0, announced = 0;
+    /**
+     * SEED 23, AND THE FIXTURE IS CHOSEN AGAINST THE PARAGRAPH ABOVE RATHER
+     * THAN AGAINST THE ANSWER.
+     *
+     * The seven this check asserts was never seed 99's answer — see the note
+     * over `arena`; it arrived from the check below through a shared generator,
+     * and 99's own wave 1 is a single body, which cannot put anything in the
+     * air for a restart to strand. Scanned over nine seeds with the stream
+     * fired synchronously, each run to the same 55 s:
+     *
+     *   seed  announced  inbound at the restart  fielded  a 2nd wave started
+     *     99      4              0                  5            yes
+     *      9      4              3                  5            yes
+     *      2      5              3                  6            yes
+     *     11      5              4                  1            yes
+     *     42      1              3                  1            no
+     *     23      7              4                  7            no
+     *
+     * The rows where `fielded` exceeds `announced` are not the defect this
+     * check hunts: they are runs where the restarted wave CLEARED inside the
+     * 55 s and wave two began under it, so `announced` is wave two's and
+     * `fielded` spans both. It cleared because the liveness watchdog retires a
+     * body it cannot reach (`_retire` marks it dead, which is a clear), and
+     * whether that happens depends on which bodies the seed drew — a colosseum
+     * beast strands where a B1 does not. The check's own preamble already
+     * requires a wave that never clears; it just never said so to the machine.
+     * `starts` below does now, so a fixture that drifts into that state fails
+     * with the reason rather than with an arithmetic mismatch.
+     *
+     * 23 is the seed that satisfies every precondition the paragraph states:
+     * seven contacts, four of them still in the air at the moment of the
+     * restart, and nothing cleared.
+     */
+    const { world, input, restream } = await arena(23);
+    let fielded = 0, announced = 0, starts = 0;
     const realSpawn = world.spawnEnemy.bind(world);
     world.spawnEnemy = (...a) => { const e = realSpawn(...a); if (e) fielded++; return e; };
-    world.director.onWaveStart = (w, n) => { announced = n; };
+    world.director.onWaveStart = (w, n) => { announced = n; starts++; };
 
     const step = (seconds) => {
       for (let i = 0; i < Math.round(seconds * 60); i++) {
@@ -77,6 +142,7 @@ export async function run({ check, assert }) {
         world.update(1 / 60, input);
       }
     };
+    restream();
     world.director.start(1);
     step(5);
     const A = world.director.arrivals;
@@ -88,11 +154,18 @@ export async function run({ check, assert }) {
     world.restartWave();
     const survived = inbound();
     fielded = 0;
+    starts = 0;
     step(55);
 
     // The player-visible number first, then the mechanism under it — a failing
     // check should say what the player saw before it says why.
-    assert(announced === 7, `the seeded wave 1 composed ${announced} contacts, not the 7 this check is calibrated on`);
+    assert(announced === 7, `seed 23's wave 1 composed ${announced} contacts, not the 7 this check is calibrated on`);
+    /* THE PRECONDITION THE PREAMBLE STATES, ASSERTED. Without it a fixture that
+     * drifts into a wave which clears inside the 55 s reports the SECOND wave's
+     * banner against BOTH waves' bodies, and the message blames the restart. */
+    assert(starts === 0,
+      `${starts} further wave(s) began inside the 55 s, so \`announced\` is no longer the restarted `
+      + "wave's — the fixture has drifted into a wave that clears itself and this check cannot read it");
     assert(fielded === announced,
       `the banner said ${announced} contacts and ${fielded} bodies walked out — the restarted wave is `
       + `${(fielded / announced).toFixed(2)}× the wave the director thinks it started`);
@@ -121,7 +194,7 @@ export async function run({ check, assert }) {
      * so restarting is strictly worse score per minute than playing on. What is
      * asserted here is the WAVE payout, which is the part that was.
      */
-    const { world, input } = await arena(9);
+    const { world, input, restream } = await arena(9);
     let clears = 0, drafts = 0;
     const bonus = [];
     const realClear = world.director.onWaveClear;
@@ -137,6 +210,7 @@ export async function run({ check, assert }) {
       return r;
     };
     world.director.onDraft = (boons) => { drafts++; if (boons?.length) world.applyBoon(boons[0]); };
+    restream();
     world.director.start(1);
 
     const step = () => {
