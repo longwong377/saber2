@@ -19,6 +19,21 @@ const _v = new THREE.Vector3(), _n = new THREE.Vector3(), _t = new THREE.Vector3
  */
 export function sliceGeometry(geometry, planePoint, planeNormal) {
   const geo = geometry.index ? geometry.toNonIndexed() : geometry;
+  /**
+   * THE CLONE IS FREED ON EVERY WAY OUT, NOT ONLY THE ONE THAT SUCCEEDS.
+   *
+   * `toNonIndexed()` builds a whole second copy of the mesh — position, normal
+   * and uv expanded to three vertices per triangle — and every prop mesh in the
+   * game is indexed, so every call makes one. The dispose sat on the LAST line
+   * and three of the four returns are above it: the plane missing the solid
+   * entirely, a cut whose ring collapsed to fewer than three unique points, and
+   * a half too small to build. Measured: 50 missed cuts leaked 50 geometries,
+   * 50 tangent cuts leaked 50, 50 real cuts leaked none — so the leak is on
+   * exactly the paths a player triggers by GRAZING furniture, which is the
+   * common case and the one nobody watches. Typed arrays on the JS heap, not
+   * VRAM, so no GPU counter shows it.
+   */
+  const bail = () => { if (geo !== geometry) geo.dispose(); return null; };
   const pos = geo.attributes.position;
   const nrm = geo.attributes.normal;
   const uv = geo.attributes.uv;
@@ -77,7 +92,7 @@ export function sliceGeometry(geometry, planePoint, planeNormal) {
     for (let i = 1; i + 1 < bp.length; i++) tri(back, bp[0], bp[i], bp[i + 1], bn[0], bn[i], bn[i + 1], bu[0], bu[i], bu[i + 1]);
   }
 
-  if (!anyFront || !anyBack || ring.length < 3) return null;
+  if (!anyFront || !anyBack || ring.length < 3) return bail();
 
   // ── cap the cross-section
   const centroid = new THREE.Vector3();
@@ -103,7 +118,7 @@ export function sliceGeometry(geometry, planePoint, planeNormal) {
     if (!ptsUnique.length || ptsUnique[ptsUnique.length - 1].distanceToSquared(s.p) > 1e-8) ptsUnique.push(s.p);
   }
   if (ptsUnique.length >= 3 && ptsUnique[0].distanceToSquared(ptsUnique[ptsUnique.length - 1]) < 1e-8) ptsUnique.pop();
-  if (ptsUnique.length < 3) return null;
+  if (ptsUnique.length < 3) return bail();
 
   let area = 0;
   const uvC = new THREE.Vector2(0.5, 0.5);
@@ -141,7 +156,7 @@ export function sliceGeometry(geometry, planePoint, planeNormal) {
   };
 
   const f = build(front), b = build(back);
-  if (!f || !b) return null;
+  if (!f || !b) { f?.dispose(); b?.dispose(); return bail(); }
   if (geo !== geometry) geo.dispose();
   return { front: f, back: b, area, centroid, ringCount: ptsUnique.length };
 }

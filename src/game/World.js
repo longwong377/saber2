@@ -13,7 +13,7 @@ import { Terrain } from '../world/Terrain.js';
 import { Particles } from '../world/Particles.js';
 import { GrassField, Water, Atmosphere, weather } from '../world/Scenery.js';
 import { BoltPool } from './Bolts.js';
-import { BladeContactSolver, captureSnapshot, gradeCaught, resolveBladeClash, GRADE, GRADE_NAME, DIFFICULTY, CatchWindow } from './Combat.js';
+import { BladeContactSolver, captureSnapshot, gradeCaught, resolveBladeClash, GRADE, GRADE_DAMAGE, GRADE_NAME, DIFFICULTY, CatchWindow } from './Combat.js';
 import { assignSides, DuelMatch, Player, asTeam, bladeTargets, canHarm, hostileTo, pvpRules, sideTeam, TEAM } from './Player.js';
 import { ageDropped } from './Dropped.js';
 import { Enemy, ARCHETYPES, applyModifier, ENEMY_POWERS, FORCE_KINDS, IMPULSE_AS_HP } from './Enemy.js';
@@ -2555,9 +2555,13 @@ export class World {
       if (!p.alive || p.saber.ignition <= 0.5) continue;
       // `guard` is the auto-guard cone a successful deflect opened. Null when
       // shut, which is most of the time — it is 0.40 s off a manual catch.
-      out.push({ saber: p.saber, owner: p, team: 0, guard: p.boltCatch ? p.boltCatch.guard() : null });
+      // `asTeam(p.team)` and not the literal 0: `Bolts.update` skips the guard
+      // on `b.team === entry.team`, and in PvP a duellist is on side 2, 3 or 4.
+      // Stamping every player's blade with the party's number told that test
+      // the wrong side for three of the four. Same rule as `_onBoltDeflect`.
+      out.push({ saber: p.saber, owner: p, team: asTeam(p.team), guard: p.boltCatch ? p.boltCatch.guard() : null });
     }
-    for (const e of this.enemies) if (!e.dead && e.saber && e.saber.ignition > 0.5) out.push({ saber: e.saber, owner: e, team: 1 });
+    for (const e of this.enemies) if (!e.dead && e.saber && e.saber.ignition > 0.5) out.push({ saber: e.saber, owner: e, team: asTeam(e.team) });
     return out;
   }
 
@@ -2615,7 +2619,26 @@ export class World {
     // clear() unconditionally: it is what resets `age`, and a window left with a
     // spent age can never open wide again.
     if (!cw.held.length) { cw.clear(); return; }
-    const candidates = this.enemies.filter(e => !e.dead);
+    /**
+     * WHO A RETURNED BOLT MAY BE AIMED AT — THE SAME GATE THE BLADE ASKS.
+     *
+     * This was `this.enemies.filter(e => !e.dead)`, here and again in
+     * `_onBoltDeflect`, and in Command mode YOUR OWN TROOPERS stand in
+     * `world.enemies` on the party's team. Measured with one ally at 14 m and
+     * one foe 9 m off-axis: the raw list offered 2 candidates where `hostileTo`
+     * offers 1, `pickReturnTarget` chose THE ALLY, and `gradeCaught` paid a
+     * PERFECT RETURN for it — 2.5× damage, 160 score, a hitstop and a screen
+     * flash — after which the bolt passed through them harmlessly. A reward for
+     * nothing, and with `friendlyFire` on the bolt lands.
+     *
+     * `hostileTo` already drops the dead, so it REPLACES the filter rather than
+     * joining it, and it is the gate `bladeTargets` and `_boltHitTest` consult:
+     * an aim assist that can lock onto someone the damage rules will refuse is
+     * worse than no assist. Called at both sites rather than wrapped in a
+     * method of this class, because three suites drive these two methods
+     * against a hand-built stub world that lists the members it borrows.
+     */
+    const candidates = hostileTo(player, this.enemies, this.rules);
     let best = -1, bestPoint = null;
     const n = cw.held.length;
 
@@ -2651,8 +2674,33 @@ export class World {
 
   /** Score, flow, strain and sparks for one bolt that has just left the blade. */
   _creditDeflect(owner, bolt, res, point) {
-    bolt.damage *= res.damageMul * owner.boonMods.deflectDamage;
-    bolt.team = 0;
+    /**
+     * REMEMBER THE BASE, CAP THE PRODUCT.
+     *
+     * This was `bolt.damage *= res.damageMul * deflectDamage` and nothing ever
+     * put it back. A bolt is a pooled object that survives every exchange, and
+     * the enemy branch of `_onBoltDeflect` hands it straight back — so one
+     * bolt volleyed between a player and a duellist went
+     * 11.00 → 16.50 → 41.25 → … → 2175.29 over eight exchanges, 198× its
+     * muzzle damage, while `bolt.life` was pushed back to 2.2 s on every touch
+     * so the volley never expired. `canHarm(bolt.owner, victim)` is
+     * attacker === victim → true, so the end of that rally is a 2175 damage
+     * bolt pointed at the 100 hp player who made it.
+     *
+     * `baseDamage` is taken on the FIRST deflection — a fresh bolt out of the
+     * pool has `deflected` false, which is what makes this safe against reuse —
+     * and the ceiling is one perfect return by this deflector. A rally can
+     * still earn the 2.5×; it cannot compound past it. Eight exchanges now end
+     * at 27.50 instead of 2175.29.
+     */
+    if (!bolt.deflected || !(bolt.baseDamage > 0)) bolt.baseDamage = bolt.damage;
+    const boon = owner.boonMods.deflectDamage ?? 1;
+    bolt.damage = Math.min(bolt.damage * res.damageMul * boon,
+      bolt.baseDamage * GRADE_DAMAGE[GRADE.PERFECT] * boon);
+    // "Ours" is a question about SIDES. A flat 0 made every returned bolt the
+    // party's, which in PvP hands a duellist on side 2 a bolt their own gate
+    // then calls friendly. `asTeam` is the one place a side number is minted.
+    bolt.team = asTeam(owner.team);
     bolt.owner = owner;
     bolt.deflected = true;
     bolt.deflector = owner;
@@ -2689,6 +2737,25 @@ export class World {
     this._grindMark = (this._grindMark || 0) - dt;
     for (const p of this.players) {
       if (!p.alive || p.saber.ignition < 0.6) continue;
+      /**
+       * A LOCK OWNS BOTH BLADES — AND ONLY ONE OF THE TWO LOOPS KNEW IT.
+       *
+       * The enemy pass below stands down for a locked duellist (`if (e.lock)
+       * continue`) and `Enemy._saberStrike` stands down again while the steel
+       * is crossed. This loop had neither, so during a bind the player's blade
+       * went on being solved against the body it was locked with — and a lock
+       * is WON by driving the mouse hard, which is the same input that feeds
+       * the solver. Measured with both fighters locked and `bladesTouching`
+       * true, over 12 frames: 1 cut billed, a forearm severed, 20.63 hp of
+       * grind and +60 score, taken off an opponent whose own blade was barred
+       * from answering.
+       *
+       * `lockState` is what `_applyClash` sets on the player when it builds the
+       * BladeLock and clears when the lock resolves, so this is the same flag
+       * from the other end — not a second opinion about what a lock is. The
+       * contest is decided in `BladeLock.update`, which runs below.
+       */
+      if (p.lockState && !p.lockState.done) continue;
 
       // build the target list once per player
       const targets = this._targets;
@@ -2852,11 +2919,20 @@ export class World {
         // slag and no consequence — "you slash them and it appears to do
         // nothing", exactly as reported.
         //
-        // Damage is the SHARE OF A SEVER done this frame, so it is bounded by
-        // construction: work accumulates to `tough` and then the limb comes
-        // off, which means a grind can never deal more than GRIND_LETHALITY of
-        // max hp before it stops being a grind. That holds at any frame rate,
-        // because the share is a share of work and not of time.
+        // Damage is the SHARE OF A SEVER done this frame, so it is bounded per
+        // CAPSULE: that capsule's work accumulates to `tough`, the limb comes
+        // off, and the total billed on the way is GRIND_LETHALITY × `vital` of
+        // max hp. That much holds at any frame rate, because the share is a
+        // share of work and not of time.
+        //
+        // IT IS NOT A BOUND ON THE BODY, and this comment used to claim it was.
+        // A torso publishes four overlapping capsules (hips, spine, chest,
+        // neck) and one blade laid across it is in contact with all of them, so
+        // four independent budgets are spent at once. Measured on a real rig,
+        // a 0.4 m/s press held for one second: 3.14× max hp across 326 bills.
+        // Against a Player that is throttled elsewhere — see the branch below —
+        // and against an Enemy the body is long dead before the fourth capsule
+        // finishes, which is why nothing ever felt it.
         const t = ev.target;
         if (t.enemy && ev.dWork > 0 && ev.need > 0 && !t.enemy.dead) {
           const e = t.enemy;
@@ -2876,7 +2952,18 @@ export class World {
          * VICTIM's maxHp so the duel's health setting scales it. Holding a
          * blade on someone is a pressure tool in a duel exactly as it is
          * against the horde, and it was the one contact type that produced
-         * nothing at all. */
+         * nothing at all.
+         *
+         * WHAT HOLDS THIS DOWN IS `Player.damage`'s 0.18 s INVULNERABILITY
+         * WINDOW, and it is worth naming because nothing at this site says so.
+         * There is no `_grindMark`-style throttle here and no `grindWorth`
+         * vital term as the enemy branch above has, so read alone this bills
+         * every capsule of every frame at full price — and against a stub
+         * victim with no window it does exactly that: 3.14× max hp in one
+         * second. Against a real Player the window swallows all but one bill
+         * per 0.18 s: measured 4.9 hp over two seconds of the same press. So
+         * the exploit is refuted, by a guard that lives in another file — do
+         * not remove or shorten that window without putting a throttle here. */
         if (t.player && ev.dWork > 0 && ev.need > 0 && t.player.alive) {
           t.player.damage((ev.dWork / ev.need) * t.player.maxHp * GRIND_LETHALITY,
             ev.point, player, 'saber');
@@ -2933,6 +3020,29 @@ export class World {
         v: [ev.impulse.x, ev.impulse.y, ev.impulse.z] });
       if (outcome === 'turned') {
         // Felt, and not rewarded. Two blades met; the shake is the whole of it.
+        player.camera?.addShake(clamp(ev.speed / 90, 0.03, 0.18));
+        return;
+      }
+      /**
+       * A CORPSE IS NOT AN OPPONENT, AND SAWING ONE PAID FULL PRICE FOREVER.
+       *
+       * A ragdolled body stays a blade target on purpose — you can take an arm
+       * off a corpse and it should come off — but nothing here asked whether it
+       * was alive, and nothing downstream stops the till. `Ragdoll.cutRagdoll`
+       * never sets `severed`, so `isSevered` stays false and the SAME hand can
+       * be chopped without bound. Measured, 10 s of sawing one hand of one dead
+       * body: 53 severs billed, limbsRemoved 53, score 3180, combo 53, flow
+       * +5.30 against a bar clamped to 0..1 — 530 full bars — and 318 hp of
+       * lifesteal. Corpses linger for the whole Corpses budget, so that is
+       * available on every body after every wave, at no risk whatever.
+       *
+       * The grind branch fifty lines up already refuses a dead body
+       * (`!t.enemy.dead`); this is the same rule on the other contact type.
+       * `wasAlive` was already sitting here, computed and unread by this path.
+       * The cut itself still happens — `takeCut` ran above — so the limb comes
+       * off and the shake lands; it is only the till that closes.
+       */
+      if (!wasAlive) {
         player.camera?.addShake(clamp(ev.speed / 90, 0.03, 0.18));
         return;
       }
@@ -3174,18 +3284,38 @@ export class World {
   _onBoltDeflect(bolt, entry, hit, bladePoint) {
     const owner = entry.owner;
     const isPlayer = owner instanceof Player;
+    /**
+     * "ALREADY OURS" IS A QUESTION ABOUT SIDES, NOT ABOUT THE CONSTANT 0.
+     *
+     * The player branch used to stand down on `bolt.team === 0` and the enemy
+     * branch had no gate at all. Both are the same rule and both were wrong:
+     *
+     *   • In PvP a human duellist on side 1 met a bolt player A had just
+     *     returned — team 0, hostile to them — and this returned. Measured:
+     *     `B.deflects` 0 and the velocity untouched, while a non-Player
+     *     duellist standing in the same spot turned it. And it is worse than a
+     *     no-op, because `Bolts.update` has already set `consumed` for the
+     *     frame by the time we return: the bolt phases through the guard AND
+     *     skips its own body hit-test, so it cannot even be taken in the chest.
+     *
+     *   • The enemy branch stamped `team = 1` for anyone, so an enemy could bat
+     *     back a bolt that was already the horde's.
+     *
+     * One gate, asked of the deflector's own side.
+     */
+    const side = asTeam(owner.team);
+    if (bolt.team === side) return;
 
     if (!isPlayer) {
       // an enemy duelist batting a bolt away — no grading, just a deflection
       bolt.vel.copy(hit.point).sub(bladePoint).normalize().multiplyScalar(bolt.speed);
       if (bolt.vel.lengthSq() < 1) bolt.vel.set(rng() - .5, rng() * .4, rng() - .5).setLength(bolt.speed);
-      bolt.team = 1;
+      bolt.team = side;
       bolt.deflected = true; bolt.deflector = owner;
       this.particles.sparkBurst(bladePoint, null, 8, { speed: 6 });
       audio.deflect(bladePoint, 0);
       return;
     }
-    if (bolt.team === 0) return;    // already ours
 
     // Freeze the blade half of the grade NOW; the aim half waits for the throw.
     const snap = captureSnapshot(bolt, owner.saber, { bladeT: hit.bladeT, point: bladePoint, auto: hit.auto });
@@ -3225,7 +3355,7 @@ export class World {
     const res = gradeCaught(snap, {
       aimOrigin: owner.camera.pos,
       aimDir: owner.aimDir,
-      candidates: this.enemies.filter(e => !e.dead),
+      candidates: hostileTo(owner, this.enemies, this.rules),   // see _throwCaught
       flow: owner.flow,
       returnCone: owner.boonMods.returnCone,
       aimMode: this.settings.deflectAim || 'reticle',

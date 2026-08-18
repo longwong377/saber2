@@ -13,7 +13,29 @@
  * matched before a chord without.
  */
 
-const STORE_KEY = 'saber.bindings.v1';
+/**
+ * THE BINDINGS BLOB IS VERSIONED, LIKE THE SETTINGS BLOB, AND FOR THE SAME REASON.
+ *
+ * `saveBindings` writes the WHOLE table the first time a player rebinds
+ * anything — or presses Reset to defaults — so anybody who has touched the
+ * controls screen once has a full snapshot of that day's defaults on disk, and
+ * every later change to the shipped table is invisible to them forever. Player
+ * note #15's mouse fix is the live example: RMB became the guard and LMB the
+ * attack, and measured against a table saved five commits back the blob comes
+ * back `blade: Mouse1, thrust: Mouse2` — the old scheme, inverted, silently.
+ *
+ * Retiring the two rows by name rather than dropping the blob is the same
+ * trade Menu.js's `RETIRED` makes: dropping it would also forget every
+ * deliberate rebind the player made, which is the complaint the whole
+ * mechanism exists to avoid.
+ */
+const STORE_KEY = 'saber.bindings.v2';
+const LEGACY_KEYS = ['saber.bindings.v1'];
+const RETIRED = {
+  // v1 predates the RMB-guards / LMB-attacks swap. Those two rows come back
+  // from the shipped table; everything else the player chose is kept.
+  'saber.bindings.v1': ['blade', 'thrust'],
+};
 
 /** Mouse buttons live in the same namespace as keys. */
 export const MOUSE = { 0: 'Mouse1', 1: 'Mouse3', 2: 'Mouse2', 3: 'Mouse4', 4: 'Mouse5' };
@@ -612,12 +634,78 @@ export function defaultBindings() {
   return out;
 }
 
+/**
+ * SETTLE A TABLE AGAINST THE SHIPPED ONE — the load-time half of `conflicts`.
+ *
+ * A saved blob merged over current defaults can be conflict-free on the day it
+ * was written and full of collisions the day it is read, because the DEFAULTS
+ * moved underneath it. Measured against a table saved five commits back, the
+ * merge produced four silent ones — Mouse4 on `dash` AND `attackSpin`,
+ * CapsLock on `grip2` AND `stratagem`, KeyT on `focus` AND `orderwheel`, and
+ * `PadLB+PadBack` on `flourish` AND `orderwheel`, which is the exact
+ * chord-order collision `chordKey` was written to abolish, arriving back out
+ * of storage. `conflicts(defaultBindings())` is 0; nothing asked the merged
+ * table the same question.
+ *
+ * WHO KEEPS THE KEY: whoever it is a DEFAULT for. An action that was given the
+ * code by the shipped table has the better claim than one that inherited it
+ * from a blob, and it is the only tie-break that does not depend on the order
+ * the collision happened to arrive in. When neither side holds it by default —
+ * two player rebinds onto one key — the first in table order keeps it, so the
+ * answer is at least deterministic.
+ *
+ * AND A STRIPPED ACTION GETS ITS DEFAULTS BACK. `resolveConflicts` refuses to
+ * take an action's last key, which is right for the rebinder (the player is
+ * standing there and can be told) and useless at load, where the alternative
+ * to a refusal is an action that answers to a key belonging to something else.
+ * Restoring the shipped row can itself clash, so this loops; each pass either
+ * takes a code off an action or restores a row, both of which move the table
+ * towards the shipped one, and `ACTION_IDS.length` passes is a ceiling it
+ * never approaches.
+ *
+ * Exported because the rebinder and the check suite both want to ask.
+ */
+export function settleBindings(bindings) {
+  const def = defaultBindings();
+  const settled = [], restored = [];
+  for (let pass = 0; pass < ACTION_IDS.length; pass++) {
+    const rows = conflicts(bindings);
+    if (!rows.length) break;
+    for (const { code } of rows) {
+      const keep = findConflicts(def, code)[0] ?? findConflicts(bindings, code)[0];
+      if (!keep) continue;
+      const { taken, refused } = resolveConflicts(bindings, code, keep);
+      for (const id of taken) settled.push({ id, code, keep });
+      for (const id of refused) {
+        bindings[id] = def[id].slice();
+        if (!restored.includes(id)) restored.push(id);
+      }
+    }
+  }
+  return { settled, restored };
+}
+
 export function loadBindings() {
   const base = defaultBindings();
   try {
+    let saved = null;
     const raw = localStorage.getItem(STORE_KEY);
-    if (!raw) return base;
-    const saved = JSON.parse(raw);
+    if (raw) saved = JSON.parse(raw);
+    // An older blob speaks once and is then retired, exactly as Menu.js's
+    // drainLegacy does it — read LAST so it cannot overwrite a table already
+    // written under the current key, and removed either way.
+    for (const k of LEGACY_KEYS) {
+      try {
+        const old = localStorage.getItem(k);
+        if (old && !saved) {
+          const blob = JSON.parse(old);
+          for (const dead of RETIRED[k] || []) delete blob[dead];
+          saved = blob;
+        }
+        localStorage.removeItem(k);
+      } catch {}
+    }
+    if (!saved) return base;
     // Only accept known actions, and only non-empty key lists — a corrupt or
     // half-written blob must never be able to leave the player unable to move.
     for (const id of ACTION_IDS) {
@@ -625,6 +713,7 @@ export function loadBindings() {
         base[id] = saved[id].slice(0, 3);
       }
     }
+    settleBindings(base);
   } catch { /* defaults */ }
   return base;
 }

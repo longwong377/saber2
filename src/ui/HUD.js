@@ -2051,8 +2051,20 @@ export class HUD {
     this.whyTimer = duration;
   }
 
+  /**
+   * The banner across the middle. `sub` CAN BE A PEER'S NAME.
+   *
+   * `main.js` calls `world.notify('A JEDI HAS FALLEN AWAY', `${r.name} left the
+   * fight`)` when a co-op remote drops, and `r.name` arrives off that peer's
+   * `{t:'hello', name}` with no cap and no sanitisation — so the string on the
+   * far side of this template is written by another machine, exactly as
+   * `killFeed`'s `who` is. That fix was made once, for this threat, and this
+   * method one screen away was missed: measured on the real page, a name of
+   * `<img src="/nope" onerror=…>` parsed into the live DOM with its handler
+   * attached and the browser went and fetched the URL.
+   */
   message(title, sub, duration = 2.4) {
-    this.el.center.innerHTML = `<b>${title}</b>${sub ? `<span>${sub}</span>` : ''}`;
+    this.el.center.innerHTML = `<b>${esc(title)}</b>${sub ? `<span>${esc(sub)}</span>` : ''}`;
     this.el.center.classList.add('on');
     this.centerTimer = duration;
   }

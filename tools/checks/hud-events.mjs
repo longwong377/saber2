@@ -178,6 +178,42 @@ export async function run({ check, assert }) {
     } finally { restore(); }
   });
 
+  check('hud: every writer that can carry a PEER NAME escapes it', () => {
+    /**
+     * A CO-OP NAME IS ATTACKER-CONTROLLED MARKUP UNTIL IT IS ESCAPED.
+     *
+     * `Net.js` reads a remote's name off their own `{t:'hello', name}` — no
+     * cap, no sanitisation — and `main.js` puts it straight into
+     * `world.notify('A JEDI HAS FALLEN AWAY', `${r.name} left the fight`)`,
+     * which lands in `HUD.message`. That method wrote its template raw while
+     * `popup` and `killFeed` one screen away both escaped: a name of
+     * `<img src=/nope onerror=…>` parsed into the live DOM with its handler
+     * attached and the browser fetched the URL.
+     *
+     * Driven on a document that PARSES innerHTML rather than storing it, so
+     * the question asked is "is there an element" and not "is there a
+     * substring" — a check that greps for `<img` passes against a page that
+     * built the node. Every writer that can receive a name is driven, because
+     * the defect was one method being missed when its neighbour was fixed.
+     */
+    const { hud, doc, restore } = hudOnPage(INDEX);
+    try {
+      const HOSTILE = '<img src="/nope" onerror="globalThis.__pwned = 1">';
+      hud.popupsOn = true;
+      hud.message('A JEDI HAS FALLEN AWAY', `${HOSTILE} left the fight`);
+      hud.popup('A JEDI HAS FALLEN AWAY', `${HOSTILE} left the fight`, 'event');
+      hud.killFeed(HOSTILE, 'a droideka', 'cut');
+      const injected = doc.documentElement.querySelectorAll('img');
+      assert(injected.length === 0,
+        `${injected.length} element(s) were parsed out of a peer's name — `
+        + 'a remote machine is writing markup into this page');
+      // and the name still has to READ, so the text must survive the escaping
+      assert(hud.el.center.textContent.includes('left the fight'),
+        'the banner escaped the name into nothing');
+      return `3 name-bearing writers × a hostile name → 0 elements built, text intact`;
+    } finally { restore(); }
+  });
+
   check('hud: the stratagem panel is the STRATAGEMS table and not a copy of it', () => {
     /**
      * A CODE SYSTEM WITH NO READOUT IS A MANUAL YOU KEEP BESIDE THE KEYBOARD.
