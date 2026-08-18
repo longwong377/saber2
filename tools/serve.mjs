@@ -48,6 +48,7 @@ const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
   '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml',
+  '.webp': 'image/webp',
   '.ico': 'image/x-icon', '.map': 'application/json', '.wasm': 'application/wasm',
   // The score, and the two containers a replacement is most likely to arrive in.
   '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4', '.wav': 'audio/wav',

@@ -118,6 +118,16 @@ for (const [w, h, why] of VIEWPORTS) {
     };
   }, [PW, PH]);
   rows.push({ why, ...r });
+  /* `--shots` also writes the picture. The numbers below say whether the ring
+   * is where it was designed to be; this says whether the front screen LOOKS
+   * like the front of a game, which no statistic answers. The lists are empty
+   * because the scripts are stripped — the subject here is the backdrop, the
+   * header and the panel's outline, and not one of those is written by JS. */
+  if (argv.includes('--shots')) {
+    const { mkdirSync } = await import('node:fs');
+    mkdirSync(join(ROOT, '.shots', 'menu'), { recursive: true });
+    await page.screenshot({ path: join(ROOT, '.shots', 'menu', `menu-${w}x${h}.png`) });
+  }
   await page.close();
 }
 await browser.close();
@@ -176,7 +186,7 @@ console.log('THE RING               left %s…%s (%d px)   right %s…%s (%d px)
 console.log('                       top  %s…%s (%d px)   bottom %s…%s (%d px)',
   f(safeY0), f(wy), Math.round((wy - safeY0) * PH), f(wy + wh), f(safeY1), Math.round((safeY1 - wy - wh) * PH));
 const [lx, ly, lw, lh] = REF.logoPlate;
-console.log('WORDMARK BAND          x %s…%s   y %s…%s   (%dx%d css px at 1920x1080)',
+console.log('WORDMARK ALONE         x %s…%s   y %s…%s   (%dx%d css px at 1920x1080)',
   f(lx), f(lx + lw), f(ly), f(ly + lh), REF.logo[2], REF.logo[3]);
 
 /* ── AND DOES tools/_bands.mjs AGREE? ─────────────────────────────────────

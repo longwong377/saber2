@@ -203,8 +203,18 @@ b{font-weight:800}
    the style — and DESIGN.md §7's claim that every asset except one licensed
    MP3 is generated in code survives, because this one is generated too. The
    pose lives in that tool's SHOTS table under `ship`; re-running it rebuilds
-   the file. tools/checks/keyart.mjs fails if it goes missing, if it stops
-   being reproducible, or if the composition drifts out of the ring below.
+   the file, and it REFUSES to write one whose blade is behind this panel or
+   whose header band the type cannot hold. tools/checks/keyart.mjs fails if it
+   goes missing, if its shape stops fitting the ring below, if it outgrows its
+   budget, or if that generator stops being able to rebuild it.
+
+   IT IS 96 KB, AND THAT WAS A DECISION WITH A TABLE UNDER IT. The same
+   2560x1080 frame is 628 KB as the best PNG this repo can make (indexed,
+   median-cut to 256 colours, zlib 9) and 2783 KB as a plain one. A PNG is the
+   format the gate could decode without a browser, and 532 KB of every
+   player's bandwidth is not what that convenience is worth on a game whose
+   whole pitch is that it opens at a URL. The four bounds that need pixels
+   moved into the generator instead; see tools/checks/keyart.mjs's header.
 
    IT IS 21:9 AND THAT IS ARITHMETIC. `cover` crops one axis and `.menu-wrap`
    covers the middle, so what is ever SEEN of it is a ring. Measured by
@@ -223,7 +233,9 @@ b{font-weight:800}
    THE SINK — the fourth layer — is a flat field of `--void`, and it is what
    makes the interface legible over a lit ash sky. It is not decoration: the
    wordmark is painted straight onto this backdrop with no panel behind it,
-   and tools/checks/keyart.mjs measures the type's band THROUGH this alpha.
+   and `keyart.mjs --ship` measures the whole header band THROUGH this alpha
+   before it will write a plate — 0.290 mean luminance and 0.0048 edge energy
+   for the one that shipped, which is 2.74:1 against `--ink`.
    Flat rather than graded, because law 2 of this file is that a gradient is
    allowed only where it depicts light, and this depicts distance.
 
@@ -236,7 +248,7 @@ b{font-weight:800}
     linear-gradient(20deg,rgba(255,176,32,.09) 0 21%,transparent 21.4%),
     linear-gradient(160deg,rgba(160,125,255,.07) 0 13%,transparent 13.4%),
     linear-gradient(rgba(10,11,20,.52),rgba(10,11,20,.52)),
-    url("./assets/menu/title.png") 50% 50%/cover no-repeat}
+    url("./assets/menu/title.webp") 50% 50%/cover no-repeat}
 .menu-wrap{position:relative;z-index:2;width:min(1180px,94vw);height:min(770px,92vh);
   display:flex;flex-direction:column;animation:stampIn .5s cubic-bezier(.22,1,.36,1) both}
 .menu-head{text-align:center;padding:4px 0 12px}

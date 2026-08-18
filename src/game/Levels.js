@@ -1154,6 +1154,31 @@ function works(world, opts = {}) {
   const SHELL = opts.shell ?? 94;
   const lamp = opts.lampColor ?? 0xffb04a;
   const hot = !!opts.hot;
+  /**
+   * IS THIS SPOT THE FLOOR OF THE ROOM, or something standing up out of it?
+   *
+   * The depth ranks and the hazard slots are FURNITURE OF THE FLOOR: a post
+   * carries a truss, a truss carries a lamp, and all three assume the ground
+   * under the rank is the ground the fight is on. On the works that was true by
+   * construction — a poured floor with drainage falls under a metre — and the
+   * loops below have no guard at all.
+   *
+   * On the Providence it is false. `TERRAIN_PRESETS.warship` raises a 40 m
+   * corridor ridge between |x| = 30 and 68 forward of z = 38, and the outer
+   * ranks walk straight over the top of it: measured by
+   * `tools/checks/prop-seating.mjs`, four instanced assemblies standing on
+   * nothing, the worst 10.13 m in the air at y = 48.9 — a truss whose posts
+   * were on the other side of the step. A rank on top of a bulkhead is also
+   * simply wrong to look at.
+   *
+   * The band is 8 m so that a room with a raised bridge or a sunk trench keeps
+   * its ranks — the Providence's own floor spans −1.6 to +5.4 — and rejects a
+   * wall. `T.height(0, 0)` is the same reading `roomOf` takes for the reverb,
+   * which is the game's existing answer to "what is this room's floor".
+   */
+  const floorY = T.height(0, 0);
+  const band = opts.floorBand ?? 8;
+  const onFloor = (x, z) => Math.abs(T.height(x, z) - floorY) <= band;
 
   // The roof first, because everything below is lit under it.
   roof(world, { height: opts.roofHeight ?? 16.5, half: SHELL + 2, well: opts.well ?? 0,
@@ -1198,7 +1223,7 @@ function works(world, opts = {}) {
         const c = Math.cos(a), s = Math.sin(a);
         const kk = 1 / Math.max(Math.abs(c), Math.abs(s));
         const x = c * kk * rad, z = s * kk * rad;
-        if (!T.inBounds(x, z, 3)) continue;
+        if (!T.inBounds(x, z, 3) || !onFloor(x, z)) continue;
         const y = T.height(x, z);
         const yaw = Math.abs(c) > Math.abs(s) ? 0 : Math.PI / 2;
         qq.setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
@@ -1210,7 +1235,12 @@ function works(world, opts = {}) {
         const c2 = Math.cos(a2), s2 = Math.sin(a2);
         const k2 = 1 / Math.max(Math.abs(c2), Math.abs(s2));
         const x2 = c2 * k2 * rad, z2 = s2 * k2 * rad;
-        if (!T.inBounds(x2, z2, 3)) continue;
+        /* …AND THE TRUSS ONLY WHERE THE POST BESIDE IT IS. A truss is carried,
+         * so `prop-seating` exempts it from standing on anything — but only
+         * while something is under it. Spanning a step in the ground leaves it
+         * in the air with its posts on the far side, which is the four floating
+         * assemblies the note above records. */
+        if (!T.inBounds(x2, z2, 3) || !onFloor(x2, z2)) continue;
         const span = Math.hypot(x2 - x, z2 - z) * 2.0;
         qq.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.atan2(x2 - x, z2 - z));
         trusses.push(mm.clone().compose(pp.set(x2, T.height(x2, z2) + h - 0.6, z2), qq,
@@ -1248,7 +1278,7 @@ function works(world, opts = {}) {
       const c = Math.cos(a), s = Math.sin(a);
       const kk = 1 / Math.max(Math.abs(c), Math.abs(s));
       const x = c * kk * (SHELL * 0.936), z = s * kk * (SHELL * 0.936);
-      if (!T.inBounds(x, z, 3)) continue;
+      if (!T.inBounds(x, z, 3) || !onFloor(x, z)) continue;
       qq.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.abs(c) > Math.abs(s) ? 0 : Math.PI / 2);
       slots.push(mm.clone().compose(pp.set(x, T.height(x, z) + 7.0, z), qq, ss.set(1, 1, 1)));
     }

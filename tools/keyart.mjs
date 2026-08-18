@@ -15,8 +15,8 @@
  *   node tools/keyart.mjs --shot ship --tag ship --settle 26 \
  *        --width 710 --height 300 --big 2560x1080 --bigsettle 4
  *   node tools/keyart.mjs --pack .shots/keyart/ship.png --levels 0    # size table
- *   node tools/keyart.mjs --pack .shots/keyart/ship.png --levels 32 \
- *        --ship assets/menu/title.png
+ *   node tools/keyart.mjs --pack .shots/keyart/ship.png \
+ *        --ship assets/menu/title.webp --q 0.70
  *
  * WHY THE PLATE IS 21:9 AND NOT 16:9 — this is the whole geometry argument and
  * it was arithmetic, not taste. `.menu-bg` is `background-size:cover`, so the
@@ -50,7 +50,7 @@
  */
 
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import { decodePng, encodePng, region } from './_png.mjs';
+import { decodePng, encodePng, encodeIndexedPng, quantise, region } from './_png.mjs';
 import { bands, headBand } from './_bands.mjs';
 import { existsSync, statSync } from 'node:fs';
 import { resolve, join, extname, normalize } from 'node:path';
@@ -218,8 +218,11 @@ const server = createServer(async (req, res) => {
 });
 const port = await new Promise((r) => server.listen(0, '127.0.0.1', () => r(server.address().port)));
 
+/* The browser is the renderer AND the only WebP encoder in reach, so `--pack`
+ * skips launching it only when neither is wanted. */
 let plate0 = flag('pack', null);
-const browser = plate0 && !has('webp') ? null : await chromium.launch({
+const wantsWebp = has('webp') || (flag('ship', '') || '').endsWith('.webp') || !flag('ship', null);
+const browser = plate0 && !wantsWebp ? null : await chromium.launch({
   executablePath: CHROME,
   args: ['--no-sandbox', '--disable-dev-shm-usage', '--use-gl=angle', '--use-angle=swiftshader',
     '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--enable-webgl',
@@ -471,9 +474,11 @@ function measure(buf) {
   const img = decodePng(buf);
   const B = bands({ plateW: img.width, plateH: img.height, panelW: PANEL_W, panelH: PANEL_H });
   const wm = headBand({ plateW: img.width, plateH: img.height, panelH: PANEL_H });
-  const step = Math.max(1, Math.round(img.width / 900));
+  /* Step 1, not a subsample. The --ship gate measures these same bands at
+   * step 1, and two numbers for one band in one printout is how a reading gets
+   * quoted against the wrong bound. 2.8 M pixels is a fifth of a second. */
   const one = (n, r) => {
-    const s = region(img, r[0], r[1], r[2], r[3], step);
+    const s = region(img, r[0], r[1], r[2], r[3], 1);
     return `  ${n.padEnd(9)} lum ${s.lum.toFixed(3)}  sd ${s.sd.toFixed(3)}  edge ${s.edge.toFixed(4)}`
       + `  max ${s.lmax.toFixed(2)}  rgb ${s.rgb.join('/')}`;
   };
@@ -484,39 +489,48 @@ function measure(buf) {
 
 /* ── ENCODE, AND THE FORMAT ARGUMENT ──────────────────────────────────────
  *
- * The shipped plate is a POSTERISED PNG, and every part of that was measured.
+ * The shipped plate is a WebP. Measured on the 2560x1080 frame this file
+ * renders, every number produced by the code in this repo:
  *
- * PNG rather than WebP costs bytes and buys a check. tools/verify.mjs runs
- * eighty suites in workers on four cores; launching Chromium inside the gate to
- * decode one image is the shape HANDOFF §2.6 spends a page on, and a WebP can
- * only be decoded by a browser. The alternative — a committed table of
- * statistics beside an image nothing re-reads — is §2.3's signature defect with
- * a picture in it. So the plate is a format tools/_png.mjs can read, and
- * tools/checks/keyart.mjs measures the actual bytes the browser will load.
+ *   PNG truecolour, straight out of Chromium's canvas       ~5.5 MB
+ *   PNG truecolour, tools/_png.mjs at zlib 9, adaptive       2783 KB
+ *   PNG truecolour, 24 levels per channel                     749 KB
+ *   PNG indexed, median-cut to 256 colours                    628 KB
+ *   PNG indexed, 64 colours (visibly banded)                  360 KB
+ *   WebP q60 / q70 / q80                                86 / 96 / 130 KB
  *
- * The encoder is tools/_png.mjs's and NOT the browser's, which is worth 2.8x on
- * its own: `canvas.toDataURL('image/png')` returned 397 KB for a 710x300 frame
- * of this game against 143 KB for the same pixels at zlib level 9 with the
- * spec's own per-row filter heuristic. A format argument made against Chromium's
- * encoder would have been made against the wrong number.
+ * That is the whole argument. A PNG is the format tools/checks/keyart.mjs can
+ * read without a browser, and the composition and legibility bounds would then
+ * live in the gate rather than here — which is what was built first. It costs
+ * 532 KB of the player's bandwidth, on a game whose entire pitch is that it
+ * opens at a URL, to make a test more convenient. WebP is the same picture at
+ * a sixth of the weight and every browser that can run this game (WebGL2 and
+ * WebAssembly) has decoded WebP since 2020.
  *
- * POSTERISED because this renderer is cel-shaded and a PNG of a cel frame is
- * mostly paying for the parts that are NOT flat: the sky's gradient, the bloom
- * halo, the terrain's fine value texture. Rounding every channel to N levels
- * turns those into bands — which is the house look and not a compromise, since
- * styles.css's own header says fills are solid and a gradient is allowed only
- * where it depicts light. No dither, on purpose: dithering is per-pixel noise
- * and per-pixel noise is exactly what a PNG cannot pack. The tooth a flat field
- * wants is put back live by `.screen::after`, an SVG turbulence that costs
- * nothing.
+ * SO THE BOUNDS MOVED HERE INSTEAD OF BEING DROPPED, and they are `--ship`'s
+ * gate: a plate that fails them is not written. Measuring them here is in one
+ * way strictly better — it is done on the lossless render rather than through
+ * a lossy codec — and in one way worse, which is stated rather than hidden:
+ * nothing re-measures the file after it is committed. tools/checks/keyart.mjs
+ * carries everything that survives without a decoder, which is more than it
+ * sounds: existence, format, the plate's own dimensions out of its RIFF header,
+ * the crop geometry, the upscale factor, the byte budget, the MIME type, and
+ * the two places the path is written.
  *
- *   --levels 0            print the size table and write nothing
- *   --levels 32 --ship assets/menu/title.png
- *   --webp                add the WebP column (needs the browser)
+ * The lossless intermediate is kept in `.shots/keyart/` (gitignored) so the
+ * encode can be re-run, re-measured and re-argued without paying for the
+ * eleven-minute render again.
+ *
+ *   --levels 0                    print the size table and write nothing
+ *   --ship assets/menu/title.webp [--q 0.70]
+ *   --ship assets/menu/title.png  [--levels 24] [--colours 256]   (the PNG path,
+ *                                 kept because it is what the table was made with)
  */
 const LEVELS = parseInt(flag('levels', '0'), 10);
+const COLOURS = parseInt(flag('colours', '256'), 10);
+const QUALITY_W = parseFloat(flag('q', '0.70'));
 const SHIP = flag('ship', null);
-{
+if (LEVELS || SHIP || has('pack')) {
   const src = decodePng(await readFile(plate));
   const post = (n) => {
     if (!n) return src;
@@ -530,32 +544,155 @@ const SHIP = flag('ship', null);
     return { ...src, rgba: d };
   };
   const kb = (n) => (n / 1024).toFixed(0) + ' KB';
-  console.log(`  ${src.width}x${src.height}  ${(src.width / src.height).toFixed(3)}:1`);
-  for (const n of (LEVELS ? [LEVELS] : [0, 64, 48, 32, 24, 20, 16])) {
-    console.log(`  levels ${String(n || 256).padStart(3)}   png ${kb(encodePng(post(n)).length).padStart(9)}`);
-  }
-  if (has('webp') && browser) {
+  const webp = async (q) => {
     const b64 = (await readFile(plate)).toString('base64');
     const pg = await browser.newPage({ viewport: { width: 64, height: 64 } });
-    const w = await pg.evaluate(async (b) => {
+    const out = await pg.evaluate(async ([b, quality]) => {
       const im = new Image(); im.src = 'data:image/png;base64,' + b; await im.decode();
       const c = document.createElement('canvas'); c.width = im.width; c.height = im.height;
       c.getContext('2d').drawImage(im, 0, 0);
-      return [0.6, 0.7, 0.8].map((q) => {
-        const u = c.toDataURL('image/webp', q);
-        return [q, Math.round((u.length - u.indexOf(',') - 1) * 3 / 4)];
-      });
-    }, b64);
-    for (const [q, n] of w) console.log(`  webp q${q * 100}          ${kb(n).padStart(9)}`);
+      return c.toDataURL('image/webp', quality).split(',')[1];
+    }, [b64, q]);
     await pg.close();
+    return Buffer.from(out, 'base64');
+  };
+
+  console.log(`  ${src.width}x${src.height}  ${(src.width / src.height).toFixed(3)}:1`);
+  if (!SHIP) {
+    for (const n of (LEVELS ? [LEVELS] : [0, 32, 24])) {
+      console.log(`  png ${String(n || 256).padStart(3)} levels   ${kb(encodePng(post(n)).length).padStart(9)}`);
+    }
+    console.log(`  png indexed ${COLOURS}   ${kb(encodeIndexedPng(quantise(post(LEVELS), COLOURS)).length).padStart(9)}`);
+    if (browser) for (const q of [0.6, 0.7, 0.8]) console.log(`  webp q${q * 100}       ${kb((await webp(q)).length).padStart(9)}`);
   }
+
   if (SHIP) {
-    const out = resolve(ROOT, SHIP);
-    await mkdir(resolve(out, '..'), { recursive: true });
-    const buf = encodePng(post(LEVELS));
-    await writeFile(out, buf);
-    console.log(`  wrote ${SHIP} — ${kb(buf.length)} (${buf.length} bytes) at ${LEVELS || 256} levels`);
-    console.log(measure(buf));
+    /* ── THE GATE ────────────────────────────────────────────────────────
+     *
+     * The four bounds that need pixels, checked before the file is written and
+     * not after — because the shipped plate is a WebP and nothing downstream
+     * can decode one without a browser (see the format argument above). This
+     * is their only home; tools/checks/keyart.mjs owns everything that survives
+     * without a decoder and carries a tripwire that fails if this gate is ever
+     * removed. Every number below has a distribution under it.
+     *
+     * 1. THE SHAPE. A plate narrower than the widest viewport in range is
+     *    cropped vertically by `cover`, which is what takes the top and bottom
+     *    bands from 155 screen px to 20. tools/_bands.mjs computes it.
+     *
+     * 2. THE SUBJECT IS IN THE OPEN. DESIGN.md's presentation bar is "bloom
+     *    that makes the blade the brightest thing in your life", and that is
+     *    literally true of the pixels: over 35 renders of this game — seven
+     *    levels, six bearings, five pitches, four elevations — every frame
+     *    WITHOUT a lit blade in it has exactly zero pixels at or above 0.90
+     *    display luminance, and every frame with one has 150 to 300 at
+     *    710x300. Nothing else in this renderer reaches it; the hottest cloud
+     *    on the Ember Shelf tops out at 0.87 and the Colosseum's sand at 0.83.
+     *    So the count answers "is the subject of this game in this picture" and
+     *    the split answers "can it be seen". The first pose this was run
+     *    against scored 13% and it was a real defect — the hero was posed with
+     *    the blade sweeping toward the middle of the frame, so nine tenths of
+     *    it was behind `.menu-wrap` at 1920x1080. The shipped plate is 100%.
+     *
+     * 3. NO DEAD BAND. Each quarter of the ring against the plate's own mean
+     *    edge energy. Over the same 35 renders the four bands run 0.14x to
+     *    2.40x; the bottom is systematically weakest (median ~0.55) because the
+     *    near foreground is one continuous surface with the fewest silhouettes
+     *    crossing it. Every band under 0.4x was a frame whose band is literally
+     *    a black cut-out or an empty sky — comp-y180 bottom 0.14, comp-y120
+     *    bottom 0.27 and left 0.39, mustafar bottom 0.29 — so 0.4 separates
+     *    "there is nothing there" from "there is less there", which is the only
+     *    distinction this clause is entitled to make. The shipped plate's
+     *    weakest band is 0.71x.
+     *
+     *    A FIFTH CLAUSE WAS WRITTEN AND DELETED, and it is worth the paragraph.
+     *    The obvious test of "nothing you care about behind the panel" is to
+     *    compare edge energy in the ring against the region the panel hides and
+     *    demand the ring win. Measured over nine plates, six of them plain
+     *    landscape scouts with no composition in them: colosseum 0.67,
+     *    geonosis 0.64, mustafar 0.80, shelf@0 0.83, shelf@300 0.93, shelf
+     *    elevated 1.18, the composed candidates 0.71-0.85. The uncomposed
+     *    frames span the composed ones on both sides — the ratio is measuring
+     *    WHERE THE HORIZON IS, not where the subject is, because a horizon
+     *    crosses the full width at one height and that height is in the middle
+     *    third unless the camera is pitched down into the dirt. Any bound in
+     *    that range would have passed and failed plates for a reason unrelated
+     *    to its own name, which is HANDOFF §2.4's instrument that manufactures
+     *    defects. Clause 2 is what replaced it.
+     *
+     * 4. THE HEADER HOLDS. `.menu-head` has no background, so the wordmark and
+     *    the record line are painted straight onto this plate. Measured through
+     *    the sink layer parsed out of styles.css, over the whole header box
+     *    (tools/_bands.mjs's stated geometry, 1180x83 at 1920x1080 — the box
+     *    and not the letters, because a played profile puts a second line of
+     *    10 px mono there that a fresh one does not).
+     *
+     *    `--ink` is #f4ecdc, luminance 0.884, so WCAG's ratio against a ground
+     *    of luminance L is (0.884 + 0.05) / (L + 0.05); 2.0 is L = 0.42. That
+     *    is deliberately not the 4.5 a body-copy bound would use — the four-
+     *    offset ink halo, not the fill, is what separates these letters from
+     *    their ground, and 4.5 would forbid every sky this game has and leave a
+     *    backdrop nobody can see. `edge` is the one that bites: the shipped
+     *    pose reads 0.0048 through the sink, the same band with the camera
+     *    pitched 7 degrees further down — which drags the cloud deck into it —
+     *    reads 0.0147, and the raw plate before the sink reads 0.0099. 0.020
+     *    admits a cloudy sky seen through the sink and refuses one without it.
+     */
+    const B = bands({ plateW: src.width, plateH: src.height, panelW: PANEL_W, panelH: PANEL_H });
+    const whole = region(src, 0, 0, 1, 1);
+    const sink = /linear-gradient\(\s*rgba?\(([\d.,\s]+)\)/.exec(
+      /\.menu-bg\{([^}]*)\}/.exec(CSSTEXT)?.[1] ?? '')?.[1]?.split(',').map(Number);
+    if (!sink) throw new Error('cannot read the sink layer out of `.menu-bg` in styles.css');
+    const [sr, sg, sb, sa] = sink;
+    const dim = new Uint8Array(src.rgba);
+    for (let i = 0; i < dim.length; i += 4) {
+      dim[i] = dim[i] * (1 - sa) + sr * sa;
+      dim[i + 1] = dim[i + 1] * (1 - sa) + sg * sa;
+      dim[i + 2] = dim[i + 2] * (1 - sa) + sb * sa;
+    }
+    const head = region({ ...src, rgba: dim }, ...headBand({ plateW: src.width, plateH: src.height, panelH: PANEL_H }));
+
+    const [cx, cy, cw, ch] = B.covered;
+    const x0 = Math.round(cx * src.width), x1 = Math.round((cx + cw) * src.width);
+    const y0 = Math.round(cy * src.height), y1 = Math.round((cy + ch) * src.height);
+    let lit = 0, hid = 0;
+    for (let y = 0; y < src.height; y++) {
+      for (let x = 0; x < src.width; x++) {
+        const k = (y * src.width + x) * 4;
+        const l = (0.2126 * src.rgba[k] + 0.7152 * src.rgba[k + 1] + 0.0722 * src.rgba[k + 2]) / 255;
+        if (l < 0.90) continue;
+        lit++;
+        if (x >= x0 && x < x1 && y >= y0 && y < y1) hid++;
+      }
+    }
+    const open = lit ? 1 - hid / lit : 0;
+    const bad = [];
+    if (B.cropsVertically) bad.push(`the plate is ${B.aspect.toFixed(3)}:1 — cover will crop it vertically`);
+    if (lit < src.width * src.height * 2e-4) bad.push(`${lit} px at or above 0.90 luminance — no lit blade in frame`);
+    else if (open < 0.6) bad.push(`only ${(open * 100).toFixed(0)}% of ${lit} highlight px fall outside the panel`);
+    for (const k of ['left', 'right', 'top', 'bottom']) {
+      const r = region(src, ...B.ring[k]);
+      if (r.edge < whole.edge * 0.4) {
+        bad.push(`the ${k} band is ${(r.edge / whole.edge).toFixed(2)}x the plate's edge energy — nothing drawn in it`);
+      }
+    }
+    const ratio = (0.884 + 0.05) / (head.lum + 0.05);
+    if (ratio < 2.0) bad.push(`the header band reads ${head.lum.toFixed(3)} through the sink — ${ratio.toFixed(2)}:1`);
+    if (head.edge > 0.020) bad.push(`the header band carries ${head.edge.toFixed(4)} of edge energy through the sink`);
+    console.log(measure(await readFile(plate)));
+    console.log(`  highlights ${lit} px, ${(open * 100).toFixed(0)}% outside the panel`);
+    console.log(`  header through the sink: lum ${head.lum.toFixed(3)} (${ratio.toFixed(2)}:1), edge ${head.edge.toFixed(4)}`);
+    if (bad.length) {
+      console.error('\n  NOT SHIPPED — the plate fails its own bounds:\n    ' + bad.join('\n    ') + '\n');
+      process.exitCode = 1;
+    } else {
+      const out = resolve(ROOT, SHIP);
+      await mkdir(resolve(out, '..'), { recursive: true });
+      const buf = SHIP.endsWith('.webp') ? await webp(QUALITY_W)
+        : (LEVELS || COLOURS < 256 ? encodeIndexedPng(quantise(post(LEVELS), COLOURS)) : encodePng(src));
+      await writeFile(out, buf);
+      console.log(`  wrote ${SHIP} — ${kb(buf.length)} (${buf.length} bytes)`);
+    }
   }
 }
 
