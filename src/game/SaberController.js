@@ -307,22 +307,35 @@ export const SPIN = { wind: 0.13, cut: 0.10, dur: 0.44, rise: 0.98, drop: 1.00, 
  *
  * Player note #15 asked for "a charged heavy". The honest way to build one in
  * a game whose damage is `bladeSpeed × sharpness / toughness` is NOT to attach
- * a damage multiplier to a button: it is to make the arc bigger and the cut
- * longer, and let the same contact solver read the faster tip. So a full
- * charge scales the overhead's amplitude by `arc` and its cut window by `cut`,
- * and everything downstream — severance, stagger, the RETURN grade, the trail
- * — sees one thing, a blade that is genuinely moving faster.
+ * a damage multiplier to a button: it is to change the SWING, and let the same
+ * contact solver read whatever the blade is then doing. Everything downstream
+ * — severance, stagger, the RETURN grade, the trail, the hum — sees one thing,
+ * a blade that is genuinely moving faster, and none of them needs to know a
+ * charge exists.
  *
- * `hold` is how long the button has to be down before any of it applies, and
- * it is longer than the overhead's own recovery on purpose: a player mashing
- * the attack must never accidentally charge, and a player who wants the heavy
- * must accept that they are not swinging during it.
+ * IT IS NOT A BIGGER ARC, and that was the first attempt. The guard's travel
+ * is bounded — `clamp(gy + arc, -GY_MIN, GY_MAX)` — and the ordinary overhead
+ * already saturates it, so a 1.55x amplitude measured out at 2.03 units
+ * against the tap's 1.94: a 5% gain, entirely eaten by the clamp. A number
+ * that cannot move the thing it multiplies is not a tuning value, it is a
+ * comment.
  *
- * `drain` is stamina per second while winding. Standing at full charge is not
- * free, which is what stops the heavy from being a permanent state you enter
- * once and swing out of forever.
+ * IT IS A FASTER CUT THROUGH THE SAME ARC, which is also what a real wind-up
+ * buys: you hold the blade chambered, and when you let go the same distance is
+ * covered in less time. `cut` is the fraction of the cut window a full charge
+ * keeps — 0.62, so the tip crosses the centreline about 1.6x faster — and
+ * `rec` is how much longer the recovery takes, because the whole trade is that
+ * you are committed afterwards.
+ *
+ * `hold` is how long the blade has to stay chambered before any of it applies.
+ * A player mashing the attack must never accidentally charge, so a tap
+ * releases inside it and comes out at exactly the swing that shipped.
+ *
+ * `drain` is stamina per second while chambered. Standing at full charge is
+ * not free, which is what stops the heavy from being a state you enter once
+ * and swing out of forever.
  */
-export const CHARGE = { hold: 0.28, full: 0.85, arc: 1.55, cut: 1.45, drain: 0.22 };
+export const CHARGE = { hold: 0.28, full: 0.85, cut: 0.62, rec: 1.9, drain: 0.22 };
 
 /**
  * How fast the guard point travels to a zone's pose, in e-folds per second.
@@ -577,6 +590,8 @@ export class SaberController {
      * it had already started. */
     this.charge = 0;
     this.charged = 0;
+    /** `charged` is sampled once, at the release. See the note at the pin. */
+    this.chargeLocked = false;
 
     /**
      * "Blade holds position": on release the blade stays where you left it
@@ -620,7 +635,8 @@ export class SaberController {
     this.handVel.set(0, 0, 0); this.angVel.set(0, 0, 0);
     this.stance = 0; this.stanceTarget = 0;
     this.thrust = 0; this.thrustT = -1; this.thrustStanding = 0;
-    this.spinT = -1; this.spin = 0; this.spinYaw = 0; this.charge = 0; this.charged = 0;
+    this.spinT = -1; this.spin = 0; this.spinYaw = 0;
+    this.charge = 0; this.charged = 0; this.chargeLocked = false;
     this.flourish = 0; this.flourishT = -1;
     this._flX = 0; this._flY = 0; this._flRoll = 0;
     this.swing = 0; this.swingT = -1; this.swingCool = 0;
@@ -968,23 +984,6 @@ export class SaberController {
     // (The removal is at the top of this function, above every reader of the
     // base guard — see the note there.)
     this.swingCool = Math.max(0, this.swingCool - dt);
-    /**
-     * THE CHARGE, and it is read BEFORE the release so a tap is still a tap.
-     *
-     * `attackOver` is a press in the table and a hold here, which is not a
-     * contradiction: `actHit` is the edge and `act` is the level, and the two
-     * together are exactly "tap for the light, hold for the heavy" without a
-     * second binding for the player to find. A tap releases inside CHARGE.hold
-     * and `charged` comes out 0, which is the swing that shipped.
-     */
-    const overDown = input.act('attackOver') && this.swingT < 0 && this.swingCool <= 0;
-    if (overDown && ctx.stamina > 0.12) {
-      this.charge = Math.min(this.charge + dt, CHARGE.full);
-      // Winding costs, so a full charge is a decision and not a resting state.
-      if (this.charge > CHARGE.hold && ctx.onStrain) ctx.onStrain(CHARGE.drain * dt);
-    } else if (!overDown && this.charge > 0 && this.swingT < 0) {
-      this.charge = 0;
-    }
     if (input.actHit('attackOver') && this.swingT < 0 && this.swingCool <= 0 && ctx.stamina > 0.12) {
       this.swingT = 0;
       // The one offensive rate in the game, and until Cadence nothing could
@@ -995,16 +994,37 @@ export class SaberController {
       this.swingCool = OVERHEAD.cooldown / Math.max(0.2, ctx.attackRate ?? 1);
       if (ctx.onSwing) ctx.onSwing();
     }
-    /* THE RELEASE. `actHit` fires on the PRESS, so the light swing above still
-     * starts the instant the button goes down — what the hold changes is the
-     * swing that is already running, and it can, because `charged` is sampled
-     * every frame until the wind-up ends. Past CHARGE.hold the arc and the cut
-     * window grow with it; below it nothing happens at all. */
-    if (this.swingT >= 0 && this.swingT < OVERHEAD.wind * (1 + this.charged)) {
-      this.charged = this.charge <= CHARGE.hold ? 0
-        : (this.charge - CHARGE.hold) / Math.max(1e-4, CHARGE.full - CHARGE.hold);
+    /**
+     * THE CHARGE IS A PAUSE AT THE TOP OF THE WIND-UP, and that is the whole
+     * mechanism — nothing here is a second attack or a second timer.
+     *
+     * `actHit` fires the swing on the PRESS, so a light overhead still starts
+     * the instant the button goes down and nothing about it has changed. What
+     * the hold does is PIN `swingT` at the end of the wind-up: the blade
+     * reaches the top of the arc and stays there, chambered, for as long as
+     * the button is down. Let go and the clock runs on into the cut.
+     *
+     * That is why a tap is still a tap and needs no second binding: a press
+     * released inside CHARGE.hold never pins for long enough to clear the
+     * threshold and `charged` comes out 0.
+     *
+     * `chargeLocked` exists because `charged` must be sampled ONCE, at the
+     * release. Reading the live `charge` inside the envelope below would let a
+     * swing keep growing after the cut had already started.
+     */
+    if (this.swingT >= 0 && !this.chargeLocked) {
+      const held = input.act('attackOver') && this.charge < CHARGE.full && ctx.stamina > 0.12;
+      if (held && this.swingT >= OVERHEAD.wind) {
+        this.swingT = OVERHEAD.wind;
+        this.charge = Math.min(this.charge + dt, CHARGE.full);
+        // Winding costs, so a full charge is a decision and not a resting state.
+        if (this.charge > CHARGE.hold && ctx.onStrain) ctx.onStrain(CHARGE.drain * dt);
+      } else if (!held && this.swingT >= OVERHEAD.wind) {
+        this.chargeLocked = true;
+        this.charged = this.charge <= CHARGE.hold ? 0
+          : (this.charge - CHARGE.hold) / Math.max(1e-4, CHARGE.full - CHARGE.hold);
+      }
     }
-    if (this.swingT < 0) this.charged = 0;
     if (this.swingT >= 0) {
       this.swingT += dt;
       /* ONE ENVELOPE, SCALED — not a second table for the heavy. A charged
@@ -1014,14 +1034,21 @@ export class SaberController {
        * longer to get above your head, and that wind-up is the tell an enemy
        * duellist reads to chamber you. */
       const c = this.charged;
-      const A = 1 + (CHARGE.arc - 1) * c;
-      const T = c > 0 ? {
-        wind: OVERHEAD.wind * (1 + c),
-        cut: OVERHEAD.cut * (1 + (CHARGE.cut - 1) * c),
-        dur: OVERHEAD.dur * (1 + 0.75 * c),
-        rise: OVERHEAD.rise * A, drop: OVERHEAD.drop * A,
-      } : OVERHEAD;
-      if (this.swingT >= T.dur) { this.swingT = -1; this.swing = 0; this.charge = 0; this.charged = 0; }
+      /* `wind` is NOT scaled: the wind-up's length IS the hold, and scaling it
+       * as well would make the blade re-chamber after the player had already
+       * let go. The cut shortens, the recovery lengthens, and `dur` is rebuilt
+       * from its three parts rather than multiplied, so every phase boundary
+       * below lands exactly where the arithmetic puts it. */
+      const cut = OVERHEAD.cut * (1 + (CHARGE.cut - 1) * c);
+      const rec = (OVERHEAD.dur - OVERHEAD.wind - OVERHEAD.cut) * (1 + (CHARGE.rec - 1) * c);
+      const T = c > 0
+        ? { wind: OVERHEAD.wind, cut, dur: OVERHEAD.wind + cut + rec,
+            rise: OVERHEAD.rise, drop: OVERHEAD.drop }
+        : OVERHEAD;
+      if (this.swingT >= T.dur) {
+        this.swingT = -1; this.swing = 0;
+        this.charge = 0; this.charged = 0; this.chargeLocked = false;
+      }
       else {
         // wind up, cut through, recover. Three phases rather than one lerp
         // because the cut is the only part that has to be FAST: a snap straight

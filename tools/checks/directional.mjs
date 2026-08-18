@@ -22,7 +22,7 @@ import * as THREE from 'three';
 import { Saber } from '../../src/game/Saber.js';
 import {
   SaberController, ZONE, ZONE_POSE, ZONE_ROSE, ZONE_ORDER, GUARD, PARRY,
-  aimAngles, zoneOfRose, zoneOfDir, roseDelta,
+  SPIN, CHARGE, aimAngles, zoneOfRose, zoneOfDir, roseDelta,
 } from '../../src/game/SaberController.js';
 import { BoltPool, guardIntercept, guardZoneOf } from '../../src/game/Bolts.js';
 import {
@@ -992,6 +992,122 @@ export async function run({ check, assert }) {
       rows.push(`${z} ${tip.toFixed(1)} m/s over ${(high - low).toFixed(2)} units`);
     }
     return `${rows.join(', ')}; every one lands back on its own zone`;
+  });
+
+  check('attack: a spin sweeps SIDEWAYS and turns the body through the cut', () => {
+    /**
+     * THE SPIN IS THE OVERHEAD WITH THE AXES EXCHANGED, and the two claims
+     * that make it a different attack rather than a second button are both
+     * measured here.
+     *
+     * IT IS LATERAL. If the sweep showed up on `gy` it would be an overhead
+     * with a longer cooldown. The travel is compared against the overhead's
+     * own on the SAME rig, so this cannot pass by the spin being feeble in
+     * both axes.
+     *
+     * IT TURNS YOU. A horizontal sweep with the feet planted is a slash, and
+     * the controller already has one. `cam.yaw` accumulated over the cut is
+     * what makes the blade reach what is BESIDE you, and it has to be spent on
+     * the cut and nowhere else — a wind-up that moved the view would read as a
+     * shove on the mouse.
+     *
+     * And it gives the guard back, for the reason the overhead's note gives.
+     */
+    const r = rig('directional');
+    const s = blade();
+    r.input._held.add('blade');
+    for (let i = 0; i < 40; i++) { r.step(); s.setHiltPose(r.c.handPos, r.c.quat); s.update(1 / 60, i / 60); }
+    r.c.setZone(ZONE_ORDER[0], { force: true });
+    for (let i = 0; i < 40; i++) { r.step(); s.setHiltPose(r.c.handPos, r.c.quat); s.update(1 / 60, (40 + i) / 60); }
+    const gx0 = r.c.gx, gy0 = r.c.gy;
+
+    r.input._hit.add('attackSpin');
+    let tip = 0, xlo = 9, xhi = -9, ylo = 9, yhi = -9, yaw = 0, windYaw = 0, frames = 0;
+    for (let i = 0; i < 80; i++) {
+      const cam = r.step();
+      s.setHiltPose(r.c.handPos, r.c.quat); s.update(1 / 60, (80 + i) / 60);
+      tip = Math.max(tip, s.speedAt(1));
+      if (r.c.spinT >= 0) {
+        frames++;
+        xhi = Math.max(xhi, r.c.gx); xlo = Math.min(xlo, r.c.gx);
+        yhi = Math.max(yhi, r.c.gy); ylo = Math.min(ylo, r.c.gy);
+        yaw += Math.abs(r.c.spinYaw);
+        if (r.c.spinT < SPIN.wind) windYaw += Math.abs(r.c.spinYaw);
+      }
+    }
+    assert(frames > 0, 'the spin never started');
+    assert(tip > 8, `the spin peaked the tip at ${tip.toFixed(1)} m/s, under the 8 m/s a swing needs`);
+    const across = xhi - xlo, up = yhi - ylo;
+    assert(across > 1.2, `the spin only travelled ${across.toFixed(2)} units across`);
+    assert(across > up * 3,
+      `the spin moved ${across.toFixed(2)} across and ${up.toFixed(2)} up — that is not a lateral sweep`);
+    assert(Math.abs(yaw - SPIN.yaw) < 0.05,
+      `the body turned ${yaw.toFixed(2)} rad through the spin against SPIN.yaw ${SPIN.yaw}`);
+    assert(windYaw < 1e-6,
+      `${windYaw.toFixed(3)} rad of the turn was spent winding up — the view must not move before the cut`);
+    assert(Math.abs(r.c.gx - gx0) < 0.02 && Math.abs(r.c.gy - gy0) < 0.02,
+      `the spin left the guard at (${r.c.gx.toFixed(3)}, ${r.c.gy.toFixed(3)}) instead of back on `
+      + `(${gx0.toFixed(3)}, ${gy0.toFixed(3)})`);
+    return `${tip.toFixed(1)} m/s over ${across.toFixed(2)} units across and ${up.toFixed(2)} up, `
+      + `${yaw.toFixed(2)} rad of body turn, all of it inside the cut`;
+  });
+
+  check('attack: holding the overhead makes the blade genuinely faster', () => {
+    /**
+     * A CHARGED HEAVY THAT IS NOT A DAMAGE MULTIPLIER.
+     *
+     * Cutting in this game is `bladeSpeed × sharpness / toughness`, so the
+     * honest way to build a heavy is to change the SWING and let the same
+     * contact solver read whatever the blade is then doing. Two swings on
+     * identical rigs, one tapped and one held past CHARGE.hold, compared on
+     * the two things that are supposed to move: the tip's peak speed, and how
+     * long the whole attack takes.
+     *
+     * NOT THE ARC. That was the first attempt and it is worth the sentence:
+     * the guard's travel is clamped and the ordinary overhead already
+     * saturates it, so a 1.55x amplitude measured out at 2.03 units against
+     * 1.94. The check that caught it is this one, which is why it asserts on
+     * speed and commitment instead.
+     *
+     * A TAP MUST STILL BE A TAP. The heavy shares the light's button, so the
+     * thing that could go wrong is a player mashing the attack and getting a
+     * heavy they did not ask for. The tapped rig releases inside CHARGE.hold
+     * and has to come out at `charged` 0 — the swing that shipped.
+     */
+    const swing = (holdFrames) => {
+      const r = rig('directional');
+      const s = blade();
+      for (let i = 0; i < 40; i++) { r.step(); s.setHiltPose(r.c.handPos, r.c.quat); s.update(1 / 60, i / 60); }
+      r.input._hit.add('attackOver');
+      r.input._held.add('attackOver');
+      let tip = 0, lo = 9, hi = -9, dur = 0, charged = 0;
+      for (let i = 0; i < 140; i++) {
+        if (i === 1) r.input._hit.delete('attackOver');
+        if (i >= holdFrames) r.input._held.delete('attackOver');
+        r.step();
+        s.setHiltPose(r.c.handPos, r.c.quat); s.update(1 / 60, (40 + i) / 60);
+        tip = Math.max(tip, s.speedAt(1));
+        if (r.c.swingT >= 0) {
+          dur += 1 / 60; hi = Math.max(hi, r.c.gy); lo = Math.min(lo, r.c.gy);
+          charged = Math.max(charged, r.c.charged);
+        }
+      }
+      return { tip, arc: hi - lo, dur, charged };
+    };
+    const tap = swing(2);
+    const held = swing(Math.ceil(CHARGE.full * 60) + 4);
+    assert(tap.charged === 0,
+      `a tapped overhead came out at charge ${tap.charged.toFixed(2)} — mashing produces a heavy`);
+    assert(held.charged > 0.9,
+      `holding for the full ${CHARGE.full}s only reached charge ${held.charged.toFixed(2)}`);
+    assert(held.tip > tap.tip * 1.25,
+      `the heavy peaked at ${held.tip.toFixed(1)} m/s against the tap's ${tap.tip.toFixed(1)} — `
+      + 'a charge that does not move the blade faster is a damage multiplier wearing a costume');
+    assert(held.dur > tap.dur * 1.15,
+      `the heavy took ${held.dur.toFixed(2)}s against the tap's ${tap.dur.toFixed(2)}s — a heavy that `
+      + 'costs no time is free');
+    return `tap ${tap.tip.toFixed(1)} m/s over ${tap.arc.toFixed(2)} units in ${tap.dur.toFixed(2)}s; `
+      + `held ${held.tip.toFixed(1)} m/s over ${held.arc.toFixed(2)} units in ${held.dur.toFixed(2)}s`;
   });
 
   check('attack: a stab reaches the same envelope from either input', () => {
