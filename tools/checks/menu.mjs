@@ -1106,6 +1106,17 @@ export async function run({ check, assert }) {
        * reader is the half this lane can hold. */
       const target = deaf[0];
       const REASON = 'Not in a duel: the run is composed one opponent at a time.';
+      /* PUT BACK WHAT WAS THERE, which is not the same as deleting.
+       *
+       * The `finally` below used to `delete MODES[target].fixedRules`
+       * unconditionally, and `deaf[0]` is `duel` — a mode that SHIPS one. So
+       * this check removed a real field from a module-scope record for the rest
+       * of the process, and `runrules`'s "a mode whose composer never sees a
+       * rule declares it" — which runs after `menu` in readdir order — then read
+       * duel as deaf and undeclared and failed on it. Green alone, red in the
+       * gate; `tools/_seq.mjs menu runrules` is the two-suite reproduction. */
+      const had = Object.prototype.hasOwnProperty.call(MODES[target], 'fixedRules');
+      const was = MODES[target].fixedRules;
       MODES[target].fixedRules = REASON;
       try {
         menu.s.mode = target;
@@ -1121,7 +1132,7 @@ export async function run({ check, assert }) {
           'a greyed card is still on the keyboard path');
         assert(cards.every(c => c.querySelector('.txt span').textContent === REASON),
           'a barred card does not say WHY — that is the silent dead control again');
-      } finally { delete MODES[target].fixedRules; }
+      } finally { if (had) MODES[target].fixedRules = was; else delete MODES[target].fixedRules; }
 
       // …and it comes back when the mode does.
       menu.s.mode = Object.keys(MODES).find(m => honours(m));
