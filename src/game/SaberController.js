@@ -1267,9 +1267,26 @@ export class SaberController {
          * recovering must not move the view, or a spin would read as a shove
          * on the mouse. `dt / T.cut` distributes the whole `yaw` across
          * exactly that window however long a frame is. */
-        if (this.spinT >= T.wind && this.spinT < T.wind + T.cut) {
-          this.spinYaw = -this.spinSide * T.yaw * (dt / T.cut);
-        }
+        /**
+         * THE TURN IS THE DIFFERENCE OF AN INTEGRAL, not a rate times dt.
+         *
+         * `dt / T.cut` looks equivalent and is not: the cut window is entered
+         * and left on frame boundaries, so the number of frames inside it is
+         * `ceil(cut/dt)` and the sum overshoots by up to one frame's worth.
+         * Measured at 60 Hz with a 0.38 s cut, a "full revolution" came out at
+         * 6.34 rad — a degree and a half of overspin, every time, in the same
+         * direction. Differencing a curve that is 0 at the start of the cut and
+         * 1 at the end totals exactly `yaw` at any frame rate.
+         *
+         * And the curve is a smoothstep rather than a ramp, which is the half
+         * of this the player feels: a body winds into a turn and unwinds out of
+         * it. A constant rate starts and stops the whole view instantly, which
+         * is the same complaint as the one this attack is being rebuilt for,
+         * one level up.
+         */
+        const k0 = smoothstep(T.wind, T.wind + T.cut, this.spinT - dt);
+        const k1 = smoothstep(T.wind, T.wind + T.cut, this.spinT);
+        this.spinYaw = -this.spinSide * T.yaw * (k1 - k0);
       }
     } else this.spin = 0;
     cam.yaw += this.spinYaw;

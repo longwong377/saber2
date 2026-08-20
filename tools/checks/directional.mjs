@@ -22,7 +22,7 @@ import * as THREE from 'three';
 import { Saber } from '../../src/game/Saber.js';
 import {
   SaberController, ZONE, ZONE_POSE, ZONE_ROSE, ZONE_ORDER, GUARD, PARRY,
-  SPIN, CHARGE, aimAngles, zoneOfRose, zoneOfDir, roseDelta,
+  SPIN, SLASH, CHARGE, aimAngles, zoneOfRose, zoneOfDir, roseDelta,
 } from '../../src/game/SaberController.js';
 import { BoltPool, guardIntercept, guardZoneOf } from '../../src/game/Bolts.js';
 import {
@@ -1117,8 +1117,29 @@ export async function run({ check, assert }) {
       + `held ${held.tip.toFixed(1)} m/s over ${held.arc.toFixed(2)} units in ${held.dur.toFixed(2)}s`;
   });
 
-  check('attack: a stab reaches the same envelope from either input', () => {
-    const reach = (fire) => {
+  check('attack: both attack inputs run ONE lunge envelope, and only the button cuts', () => {
+    /**
+     * THE PREMISE OF THIS CHECK EXPIRED, and the measurement that expired it
+     * is the one the player made by playing:
+     *
+     *   "the left click attacks barely do anything, like it's the slightest
+     *    movement of the saber"
+     *
+     * It used to assert that `thrust` and `attackStab` reached the same TIP
+     * DISTANCE, under the title "a stab is a stab, not a directional feature",
+     * and that was right while the left button was a stab and nothing else.
+     * The left button is a CUT now (`SLASH`) with the lunge inside it, so tip
+     * distance can no longer be the instrument: measured across the change,
+     * the wheel reaches 53 cm and the button 158 cm, and 105 cm of that is the
+     * cut the button is supposed to have.
+     *
+     * The claim underneath it has NOT expired and is asserted harder here, on
+     * the envelope itself rather than on a proxy that a second attack can move:
+     * there is ONE thrust envelope in this file and both inputs run it, frame
+     * for frame. What differs is `thrustGain` — how much of that envelope the
+     * hands are given — and whether a cut runs alongside.
+     */
+    const run = (fire) => {
       const c = new SaberController({ scheme: 'directional' });
       const aim = new THREE.Quaternion();
       c.reset(CHEST, aim);
@@ -1126,21 +1147,41 @@ export async function run({ check, assert }) {
       for (let i = 0; i < 120; i++) { c.applyInput(input, 1 / 60, { stamina: 1 }); c.update(1 / 60, CHEST, aim, {}); }
       const tip0 = c.handPos.clone().addScaledVector(c._bladeDir, 1.15);
       fire(input);
-      let max = 0;
+      let max = 0, slashFrames = 0;
+      const env = [];
       for (let i = 0; i < 90; i++) {
         c.applyInput(input, 1 / 60, { stamina: 1 });
         input._hit.clear();
         c.update(1 / 60, CHEST, aim, {});
+        env.push(c.thrust);
+        if (c.slashT >= 0) slashFrames++;
         max = Math.max(max, c.handPos.clone().addScaledVector(c._bladeDir, 1.15).distanceTo(tip0));
       }
-      return max;
+      return { max, env, slashFrames, gain: c.thrustGain };
     };
-    const wheel = reach((i) => i._hit.add('attackStab'));
-    const button = reach((i) => i._hit.add('thrust'));
-    assert(wheel > 0.3, `the wheel stab only moved the tip ${(wheel * 100).toFixed(0)} cm`);
-    assert(Math.abs(wheel - button) < 0.01,
-      `the wheel stab reached ${(wheel * 100).toFixed(0)} cm and the button stab ${(button * 100).toFixed(0)} cm — two stabs`);
-    return `wheel ${(wheel * 100).toFixed(0)} cm, thrust ${(button * 100).toFixed(0)} cm — one envelope`;
+    const wheel = run((i) => i._hit.add('attackStab'));
+    const button = run((i) => i._hit.add('thrust'));
+
+    // ONE envelope. Not "similar" — the same numbers, because it is the same
+    // three lines of code reached from two keys.
+    let worst = 0;
+    for (let i = 0; i < wheel.env.length; i++) worst = Math.max(worst, Math.abs(wheel.env[i] - button.env[i]));
+    assert(worst < 1e-9,
+      `the two inputs traced different thrust envelopes — worst frame differs by ${worst.toFixed(6)}`);
+    assert(wheel.env.some((v) => v > 0.99), 'the wheel stab never reached a full lunge');
+
+    // …and only ONE of them cuts.
+    assert(wheel.slashFrames === 0, `the wheel stab also ran ${wheel.slashFrames} frames of cut`);
+    assert(button.slashFrames > 6, `the left button ran only ${button.slashFrames} frames of cut`);
+    assert(button.gain === SLASH.lunge && wheel.gain === 1,
+      `thrustGain came out ${button.gain} on the button and ${wheel.gain} on the wheel`);
+    // The cut is the difference, and it is most of the reach.
+    assert(button.max > wheel.max * 1.8,
+      `the left button reached ${(button.max * 100).toFixed(0)} cm against the bare stab's `
+      + `${(wheel.max * 100).toFixed(0)} cm — the cut is not adding a cut`);
+    return `one envelope to 1e-9; wheel ${(wheel.max * 100).toFixed(0)} cm and no cut, `
+      + `button ${(button.max * 100).toFixed(0)} cm over ${button.slashFrames} frames of cut `
+      + `at ${SLASH.lunge}x lunge`;
   });
 
   /* ══════════════════════════════════════════════════════════════════ */
