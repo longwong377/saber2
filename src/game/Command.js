@@ -2459,29 +2459,37 @@ export class CommandDirector extends WaveDirector {
      * tested.
      */
     /**
-     * OPT-OUT, AND IT USED TO BE OPT-IN. THE PLAYER OVERRULED THE NOTE.
+     * OPT-IN, and the default is the instant placement this method has always
+     * done. A ship is four seconds of flight and that is right for the ONE
+     * moment the brief describes — the army coming down at the top of an area
+     * — and wrong for everything else `deploy` answers, which is "this record
+     * has no body and needs one now": a mid-wave replacement standing around
+     * for four seconds is a hole in your line, not a cinematic. So
+     * `closeMuster` and the meeting ask for ships and nothing else does.
      *
-     * What stood here said a ship is right for the one moment the brief
-     * describes and wrong for everything else, "because a mid-wave replacement
-     * standing around for four seconds is a hole in your line, not a
-     * cinematic". Two of the four call sites therefore placed bodies out of
-     * nothing, and the player watched it happen and said so: "your
-     * reinforcements still teleport in next to you, they don't arrive via
-     * transport."
+     * ── AND THIS IS WHERE THE PLAYER'S SECOND COMPLAINT IS *NOT* ANSWERED ──
      *
-     * The argument was not wrong about the cost; it was wrong about who gets to
-     * weigh it. A hole in the line for four seconds is a tactical problem the
-     * player can see, plan around and swear at. A body appearing out of nothing
-     * is not a problem at all — it is the game admitting it is a list of
-     * `new Enemy(...)` calls, which is the exact sentence `Arrivals.js` was
-     * written to delete.
+     * "your reinforcements still teleport in next to you, they don't arrive via
+     * transport." The obvious reading is that this default is the defect, and
+     * flipping it was tried: it costs SIXTEEN checks in tools/checks/command.mjs
+     * (measured: 27 passed / 16 failed, almost all of them "only 0 bodies
+     * deployed") and, much worse, it fixes nothing — both callers that
+     * reinforce a LIVE battle already pass `byShip: true` and have since the
+     * seam existed. Your mid-battle reinforcements were already flying in.
      *
-     * So the default is the gunship and the exception is named at the one call
-     * site that has an argument for it — `start`, the opening deployment, where
-     * the line is already on the ground because they came off the same
-     * transport you did. See it.
+     * The body the player was watching appear was deployed by `start`, at a
+     * GROUND CHANGE — `_afterRotate` runs `beginMission`, which starts this
+     * director, which puts the whole roster down around the commander on the
+     * new planet, one frame after the old one vanished. That is answered where
+     * it happens, in src/game/Extraction.js: those bodies are lifted into the
+     * transport's bay by `_reboard` and walk off its ramp by `_release`, so the
+     * placement `start` does is never something the player sees at all.
+     *
+     * The lesson is HANDOFF §2.4's arriving from the other side: the rule this
+     * default states was right, and the call site that looked like it was
+     * breaking it was not the one the player was looking at.
      */
-    const air = opts.byShip !== false && this.arrivals?.enabled ? this.arrivals : null;
+    const air = opts.byShip && this.arrivals?.enabled ? this.arrivals : null;
     let n = 0;
     for (let i = 0; i < live.length; i++) {
       const t = live[i];
@@ -2502,9 +2510,19 @@ export class CommandDirector extends WaveDirector {
        * Spawn.js beside `spawnClear`, because "is this somewhere a body can
        * arrive" is one question and it now has two clauses.
        */
-      const back = (c.player?.facing ?? w.player?.facing ?? 0) + Math.PI;
+      /* WHOSE BACK. `c.player` is the body this army forms up on, and it is
+       * null for an AI commander deployed on a bare `anchor` — an opposed
+       * meeting, where there is no blade to be in front of and no facing to
+       * read. Fanning THAT army behind the local player's back is what a
+       * `w.player.facing` fallback quietly did, and it deforms both lines of a
+       * meeting around a body on neither side. So a commander with no face
+       * keeps the full circle it has always had, and `nudgeFromSwing` below
+       * remains the law for every case. */
+      const face = c.player && c.player.alive !== false ? c.player : null;
       const spread = live.length > 1 ? (i / (live.length - 1) - 0.5) : 0;
-      const a = back + spread * REAR_FAN + (rng() - 0.5) * 0.22;
+      const a = face
+        ? (face.facing ?? 0) + Math.PI + spread * REAR_FAN + (rng() - 0.5) * 0.22
+        : (i / Math.max(1, live.length)) * TAU + rng() * 0.4;
       const r = 4 + (i % 3) * 2.2;
       _v2.set(anchor.x + Math.sin(a) * r, 0, anchor.z + Math.cos(a) * r);
       nudgeFromSwing(w, _v2);
@@ -4014,23 +4032,19 @@ export class CommandDirector extends WaveDirector {
       this.wave = wave;
       this.active = true;
       this.spawnQueue.length = 0;
-      /* `byShip: false` for the same reason `start`'s own deploy takes it one
-       * screen down: this is the opening of the battle, both lines are already
-       * on the ground when the round begins, and a meeting has no wave and no
-       * arrival ring for a gunship to fly an approach from. */
-      this.deployAll({ byShip: false });
+      this.deployAll();
       return;
     }
     super.start(wave);
-    /* `byShip: false` — THE ONE EXEMPTION, and this is the argument for it.
-     * `start` is the battle opening: either the level has just loaded, or
+    /* NO SHIP HERE, AND THAT IS NOT AN OVERSIGHT — see `deploy`'s own note.
+     * `start` is the battle OPENING: either the level has just loaded, or
      * `_afterRotate` has just run inside an extraction flight and the commander
      * is stood in a troop bay 90 m up. In the first case the line was already
      * with you before the camera opened; in the second the bodies placed here
      * are lifted straight into the bay by `Extraction._reboard` and come down
      * the ramp with you, so a gunship queued for them would be a second
      * aircraft delivering passengers who are already aboard the first. */
-    if (this.roster.living.some((t) => (!t.body || t.body.dead) && !this._inbound.has(t))) this.deploy(this.commander, { byShip: false });
+    if (this.roster.living.some((t) => (!t.body || t.body.dead) && !this._inbound.has(t))) this.deploy();
   }
 
   /**
