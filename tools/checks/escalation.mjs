@@ -1480,6 +1480,70 @@ export async function run({ check, assert }) {
     return `${rows.join(', ')}; elite vs plain wave ${worstRatio.toFixed(2)}× at worst (w${worstWave})`;
   });
 
+  check('escalation: a promoted body actually shoots like one', () => {
+    /**
+     * THE PROMOTION WAS PRICED AND HALF OF IT WAS NOT DELIVERED.
+     *
+     * `Enemy.aimQuality` is the one place a shot's spread is decided, and its
+     * skill term reads "a rank is a soldier who has done this before, so the
+     * promotion ladder buys accuracy as well as health, and `elite` buys it
+     * too". It tested `this.elite`. `applyModifier` writes `A.elite = key` on
+     * the cloned archetype and `e.mod = key` on the body, and NOTHING in the
+     * tree writes `e.elite` — so the term was `undefined` on every promoted
+     * body ever fielded, while `escalation: every modifier is charged for at
+     * least the pressure it adds` went on charging the wave's budget for it.
+     *
+     * Measured before the fix, on a real Enemy through the real
+     * `applyModifier`: 1.2333 → 1.2333 for frenzied, shielded, unstable,
+     * armoured and leader, six of seven modifiers at exactly 1.000×. What the
+     * player was owed, over 200 000 shots of `_shoot`'s own arithmetic against
+     * a 0.35 m torso at each body's mid band on Knight: an elite B1 landing
+     * 57.2% of its bolts instead of 42.7%, an elite trooper 84.0% instead of
+     * 68.7%.
+     *
+     * DRIVEN THROUGH `applyModifier` AND `aimQuality`, never through the
+     * constant: a check that multiplied 0.86 itself would be the same defect
+     * one layer out. Every ranged wearer of every modifier is asked, so a
+     * modifier added tomorrow is covered, and the OTHER direction is asserted
+     * too — a body nobody promoted must be unaffected, or the term is a
+     * global change of difficulty wearing an elite's name.
+     */
+    const world = gameWorld();
+    const at = () => new THREE.Vector3(0, 0, 20);
+    const rows = [], flat = [];
+    let wearers = 0;
+    for (const key of Object.keys(Foe.MODIFIERS)) {
+      for (const type of Object.keys(ARCHETYPES)) {
+        if (!ARCHETYPES[type].ranged) continue;
+        if (!Foe.modifiersFor(type).includes(key)) continue;
+        wearers++;
+        const plain = new Foe.Enemy(world, type, at());
+        const e = new Foe.Enemy(world, type, at());
+        /* The RANGE term moves when a modifier rewrites `preferred` — the
+         * marksman's does — so both are asked at the same distance INSIDE both
+         * bands, which isolates the skill term from the sighting one. */
+        const r = Math.min(plain.A.preferred[1], 12);
+        const before = plain.aimQuality(r);
+        assert(Foe.applyModifier(e, key), `${key} would not apply to a ${type} that declares it`);
+        const after = e.aimQuality(r);
+        const ratio = after / before;
+        if (ratio > 0.999) flat.push(`${key} on ${type} (${ratio.toFixed(3)}×)`);
+        if (type === 'b1' || type === 'trooper') rows.push(`${key}/${type} ${ratio.toFixed(3)}×`);
+      }
+    }
+    assert(wearers > 10, `only ${wearers} ranged modifier/archetype pairs to measure`);
+    assert(!flat.length,
+      `${flat.length} promotion(s) leave the body's aim exactly where it was: ${flat.slice(0, 6).join(', ')}`
+      + ' — the wave is charged for an elite and fields a body that shoots like chaff');
+    /* …and an unpromoted body of the same type is untouched by any of it. */
+    const control = new Foe.Enemy(world, 'b1', at());
+    const twin = new Foe.Enemy(world, 'b1', at());
+    assert(control.aimQuality(12) === twin.aimQuality(12),
+      'two identical unpromoted bodies do not agree on their own aim');
+    world.physics.dispose?.();
+    return `${wearers} ranged modifier/archetype pairs, every one of them a better shot: ${rows.join(', ')}`;
+  });
+
   check('escalation: every modifier puts a tell on the body that the LOD never hides', () => {
     // The rule that makes an elite fair. Every tell is either a change to a
     // bone's PRIMARY mesh — the limb tubes, which `_applyLod` keeps at every

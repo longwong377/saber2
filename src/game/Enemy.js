@@ -3390,7 +3390,21 @@ export class Enemy {
     // ── skill: the rank ladder, and elites
     const r = this.trooper ? this.trooper.rank : 0;
     q *= AIM_BY_RANK[Math.min(r, AIM_BY_RANK.length - 1)];
-    if (this.elite) q *= 0.86;
+    /* `A.elite`, NOT `this.elite`, AND THAT ONE WORD WAS THE WHOLE TERM.
+     * `applyModifier` writes the promotion onto the CLONED archetype
+     * (`A.elite = key`) and onto the body as `e.mod`; nothing anywhere in the
+     * tree ever writes `e.elite`, so this read was `undefined` on every
+     * promoted body the game has ever fielded and the line above it — "a rank
+     * is a soldier who has done this before … and `elite` buys it too" —
+     * described a term that never fired. Measured on a real Enemy through
+     * `applyModifier`: aimQuality 1.2333 → 1.2333 for frenzied, shielded,
+     * unstable, armoured and leader alike, six of the seven modifiers at
+     * exactly 1.000×. What it is worth, over 200 000 shots of the same
+     * arithmetic `_shoot` uses, against a 0.35 m torso at each body's own mid
+     * band on Knight: an elite B1 lands 42.7% of its bolts where it should land
+     * 57.2%, and an elite trooper 68.7% against 84.0% — 1.34× and 1.22× of the
+     * fire the wave's budget has already been charged for. */
+    if (A.elite) q *= 0.86;
 
     // ── morale
     if (this.trooper && this.trooper.morale !== undefined) {
