@@ -28,8 +28,8 @@ Playable two ways:
 
 | | |
 |---|---|
-| Suite | **1438 passed, 59 failed, ~35 min** on a box under load 15 with five lanes writing — 38 of the 59 were ONE defect (§2.9) and are fixed; §6.4 has the rest and who owns each |
-| Smoke | 11 steps; the last four time out on a loaded box and the timeouts are wall-clock — see §2.6 before believing them |
+| Suite | **1517 passed, 0 failed** — 111 suites, 18.7 min of suite time, from a clean worktree on a quiet box. Earlier the same day it was 1438/59; §6.4 says what each of those was, because how they were found is the part worth keeping |
+| Smoke | **11/11 clean** on a quiet box. Its timeouts are wall-clock, so on a loaded one the last four fail and mean nothing — §2.6 |
 | Packed | `node tools/pack.mjs out.html` — 79 modules, 12.8 MB, boots from `file://`, and `tools/checks/packed.mjs` proves it every run |
 | Levels | **9** — `scoria, mustafar, colosseum, wood, drifts, alpine, geonosis, hangar, warship` |
 | Modes | **8** — `waves, roguelite, duel, sandbox, training, command, skirmish, campaign` |
@@ -1266,12 +1266,20 @@ one-level tuning pass becomes a four-suite bisect.
 ## 6.4 What the gate is red on, and who owns each
 
 ```
-forward   1438 passed, 59 failed   ~35 min, on a box under load 15 with five lanes writing
+forward   1517 passed, 0 failed    111 suites, 18.7 min of suite time, clean worktree, quiet box
 ```
 
-**Thirty-eight of those fifty-nine were one defect** — a suite leaving the audio
-singleton half-built, §2.9 — and every one of them is green when its own suite
-is run alone. That is the single most important thing this table has to say:
+**It is green. The table below is what it took, and it is kept because every row
+is a way a check can be wrong that a green run cannot show you.** Earlier the
+same day the same gate read 1438/59.
+
+
+**Forty-two of those fifty-nine were ONE DEFECT WEARING THREE HATS** — a suite
+borrowing shared state and not handing all of it back, §2.9: the audio singleton
+(38 checks), the `MODES` record (`runrules`, 1), and the player's saved key
+bindings in `localStorage` (`spectacle`, 4, all four reading as unrelated
+control faults). Every one of them was green when its own suite ran alone. That
+is the single most important thing this table has to say:
 the full run is not a slower version of the per-suite runs, it is the only place
 a whole class of defect is visible at all, and this session found that class by
 running it.
@@ -1307,6 +1315,9 @@ because the run was in a worktree. §2.10.
 | `skirmish` ×2 | written red-first: the defeat is never announced (`_endSkirmish`'s only caller passes `true`), and the ending card reads `stats.taken`/`stats.fallen` that no ending sends | modes lane |
 | `determinism` ×2 | written red-first: 13 suites build enemies without seeding the stream, 26 drive a World without handing the clocks back | determinism lane |
 | `roster: nothing in the tree names a level the game does not have` | one dead reference; the suite also gained an arm for terrain preset names | **fixed**, 5/0 |
+| `run rules: a mode whose composer never sees a rule declares it` | **a restore that deleted.** A `menu` check injects `fixedRules` onto the real `MODES` record and put it back with `delete` — and its target is `duel`, which SHIPS that field. Green alone every time; red in the last two full runs. `_seq.mjs menu runrules` reproduces it | **fixed** |
+| `spectacle` ×4 | **the player's saved key bindings, handed on.** `controls` drives a rebind through a real Menu, `saveBindings` writes the whole table to `localStorage`, and every later `new Input` reads it back: `loadBindings().walk` comes back `["PadBack+PadL3"]` against a default of `["KeyI", …]`. 19/19 alone, 15/19 after `controls`, and all four failures read as unrelated control faults. Fixed at the boundary — `snapshotShared` carries the whole of storage now | **fixed** |
+| `destruction: the blade grinds through a column and drops what was above the cut` (verify.mjs core) | **a budget calibrated on a bug.** Excluding a structure's own debris from its impact scan — correct, and the fix for the suite's own column check — took away the 110 self-impacts carrying 38× the column's health. The blade alone needs 13 s, not the fixture's 4. Reach was never the limit: pushing the tip from 55% to 105% through changes nothing at 4 s | **fixed** |
 
 **And what a full run cannot tell you at all.** Four of `smoke.mjs`'s eleven
 steps failed on the run above with "no animation frame in 8000 ms". The box was
