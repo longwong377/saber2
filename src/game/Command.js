@@ -1578,17 +1578,19 @@ export function commandConfig(settings) {
  *
  * A campaign reinforces at an AREA boundary, on a screen, out of a purse the
  * area pays (`AREAS[*].muster`). A contingent has no areas and no screen — see
- * `payWave` — so it needs a cadence of its own, and the honest one is derived
- * from the price of the body it is replacing rather than typed: half the cost
- * of the cheapest rung in the army, so TWO cleared waves buy one replacement.
+ * `payWave` — so it needs a cadence of its own, and it is stated as a NUMBER OF
+ * CLEARED WAVES rather than as points, because points are `musterCost`'s
+ * business and a constant here in points would be a second price list that
+ * drifts the day a trooper's threat moves (§2.3). `_reinforce` divides the
+ * cheapest rung's own price by this.
  *
- * Slow on purpose. `_reinforce` will never take a contingent past the strength
- * the player deployed with, so the only thing this rate decides is how long a
- * hole in the line stays a hole — and a loss that is made good by the next wave
- * clear is not a loss. Two waves is long enough to be felt and short enough
- * that a thirty-wave run does not end with the player alone.
+ * Two, and slow on purpose. `_reinforce` will never take a contingent past the
+ * strength the player deployed with, so the only thing this decides is how long
+ * a hole in the line stays a hole — and a loss made good by the next wave clear
+ * is not a loss. Two waves is long enough to be felt and short enough that a
+ * thirty-wave run does not end with the player alone.
  */
-export const CONTINGENT_WAVE_MUSTER = 0.5;
+export const CONTINGENT_WAVES_PER_BODY = 2;
 
 /**
  * HOW FAR APART TWO ARMIES START, in metres.
@@ -2578,15 +2580,26 @@ export class CommandDirector extends WaveDirector {
        * Spawn.js beside `spawnClear`, because "is this somewhere a body can
        * arrive" is one question and it now has two clauses.
        */
-      /* WHOSE BACK. `c.player` is the body this army forms up on, and it is
-       * null for an AI commander deployed on a bare `anchor` — an opposed
-       * meeting, where there is no blade to be in front of and no facing to
-       * read. Fanning THAT army behind the local player's back is what a
-       * `w.player.facing` fallback quietly did, and it deforms both lines of a
-       * meeting around a body on neither side. So a commander with no face
-       * keeps the full circle it has always had, and `nudgeFromSwing` below
-       * remains the law for every case. */
-      const face = c.player && c.player.alive !== false ? c.player : null;
+      /**
+       * WHOSE BACK — AND THE ANSWER IS "THE PERSON HOLDING THE CAMERA", ONLY.
+       *
+       * The fan is a shape built around a LIGHTSABER, so it belongs to the one
+       * commander who is swinging one on this machine. Two earlier drafts were
+       * both wrong and both were caught by driving:
+       *
+       *   `w.player.facing` as a fallback fanned an AI commander's army behind
+       *     the LOCAL player's back — a body on neither side — which deforms
+       *     both lines of an opposed meeting around a spectator.
+       *   `c.player` alone fanned the enemy commander's army behind the enemy
+       *     commander, i.e. directly away from the fight. Measured: the second
+       *     army in tools/checks/command.mjs's DREAD case landed entirely
+       *     outside a 26 m radius that used to contain several of it.
+       *
+       * So: local player, or the full circle this method has always used.
+       * `nudgeFromSwing` below is unconditional and remains the law in every
+       * case — it is the clause that cannot be got wrong by a shaping choice.
+       */
+      const face = c.player && c.player.isLocal && c.player.alive !== false ? c.player : null;
       const spread = live.length > 1 ? (i / (live.length - 1) - 0.5) : 0;
       const a = face
         ? (face.facing ?? 0) + Math.PI + spread * REAR_FAN + (rng() - 0.5) * 0.22
@@ -4652,7 +4665,16 @@ export class CommandDirector extends WaveDirector {
     let any = false;
     for (const c of this.commanders) {
       const cheapest = c.army.tiers[0].type;
-      c.roster.points += CONTINGENT_WAVE_MUSTER;
+      /* PAID ONLY WHILE THE LINE IS SHORT, and that is not a saving. A purse
+       * that accrues through a full roster is a purse that buys the NEXT
+       * casualty back on the frame it happens — measured, sixty clears at full
+       * strength banked thirty points and two men lost were replaced before
+       * either body hit the ground, which is the opposite of "they permanently
+       * die unless they are replaced". You are paid for the replacements you
+       * need, when you need them. */
+      if (c.roster.strength < this.opening) {
+        c.roster.points += musterCost(cheapest) / CONTINGENT_WAVES_PER_BODY;
+      }
       /* `recruit` is the one door — it prices, it enlists, it publishes, and it
        * refuses a roster already at `MAX_STRENGTH`. The extra ceiling here is
        * the player's own number, which is smaller. */
