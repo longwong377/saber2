@@ -563,7 +563,7 @@ export class Forest {
     if (!(len > 0.05)) return;
     const yaw = Math.atan2(b.x - a.x, b.z - a.z);
     const q = new THREE.Quaternion().setFromAxisAngle(UP, yaw);
-    const T = null;  // TEMP: the old code laid one box for the whole trunk
+    const T = this.world.terrain;
     /* One sample every metre and a half, which is finer than the terrain's own
      * feature size and coarse enough that a 26 m trunk is eighteen height
      * lookups — paid once, when the log is laid. With no terrain to ask (the
