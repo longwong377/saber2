@@ -85,10 +85,20 @@ if (typeof globalThis.HTMLCanvasElement === 'undefined') globalThis.HTMLCanvasEl
 if (typeof globalThis.ImageBitmap === 'undefined') globalThis.ImageBitmap = class {};
 if (typeof globalThis.OffscreenCanvas === 'undefined') globalThis.OffscreenCanvas = Canvas;
 if (typeof globalThis.localStorage === 'undefined') {
+  /* A WHOLE Storage, not the three methods the game happens to call. `key(i)`
+   * and `length` are how anything ENUMERATES what is saved, and without them a
+   * caller can read and write a key it already knows the name of and can never
+   * ask what is there — which is exactly what `_shared.mjs` needs in order to
+   * hand the next suite the storage this one was given. A suite that drives a
+   * rebind through a real Menu calls `saveBindings`, and every later suite's
+   * `new Input` reads that table back. */
   const store = new Map();
   globalThis.localStorage = {
     getItem: (k) => (store.has(k) ? store.get(k) : null),
     setItem: (k, v) => store.set(k, String(v)),
     removeItem: (k) => store.delete(k),
+    clear: () => store.clear(),
+    key: (i) => [...store.keys()][i] ?? null,
+    get length() { return store.size; },
   };
 }

@@ -67,6 +67,25 @@
  * makes the class structurally impossible instead of fixed once. Neither lists
  * a field name — a graph node added to `init()` tomorrow is carried by both.
  *
+ * ── AND THE PLAYER'S SAVED KEY BINDINGS, which are module scope wearing a
+ * different coat: `localStorage`. `Menu`'s rebinder calls `saveBindings`, which
+ * writes the whole table under one key, and `loadBindings` re-reads it on every
+ * `new Input`. A suite that drives a rebind through a real Menu therefore hands
+ * every later suite a keyboard the player never chose.
+ *
+ * Measured, `controls` then anything: the blob left behind binds every action
+ * to PAD codes only, so `loadBindings().walk` comes back `["PadBack+PadL3"]`
+ * against a default of `["KeyI", "PadBack+PadL3"]`. `spectacle` is 19/19 alone
+ * and 15/19 after `controls` — pressing the walk key answers to nothing at all,
+ * and its message reads `KeyI answers to  — one press, two systems`, an empty
+ * list where the check expected a collision. Two of its other three failures
+ * are the same cause wearing different words: a body that will not walk and a
+ * free-camera key that does nothing.
+ *
+ * Every key is recorded, not just the bindings one — the same argument as the
+ * audio singleton above: naming the key means the NEXT thing a screen persists
+ * is uncovered on the day it is written.
+ *
  * ── WHAT IS STILL NOT COVERED, and it is not an oversight in each case:
  * Scenery.js's own `rng` (module scope, private, drives every scatter), the
  * wave stream (`seedWaves` is a suite's own call, because the seed is part of
@@ -97,7 +116,24 @@ export async function snapshotShared() {
     audio,
     /* Every own property, by name at no point. */
     sound: { ...audio },
+    /* The whole of persistent storage, likewise by no name. `null` on a box
+     * with no shim rather than a throw: this runs before every suite. */
+    store: readStore(),
   };
+}
+
+/** Every key `localStorage` holds, or null where there is no storage at all. */
+function readStore() {
+  const ls = globalThis.localStorage;
+  if (!ls || typeof ls.key !== 'function' || typeof ls.getItem !== 'function') return null;
+  const out = [];
+  try {
+    for (let i = 0; i < (ls.length ?? 0); i++) {
+      const k = ls.key(i);
+      if (k != null) out.push([k, ls.getItem(k)]);
+    }
+  } catch { return null; }
+  return out;
 }
 
 /** The clock back exactly; the two generators back to their modules' seeds. */
@@ -114,6 +150,14 @@ export function restoreShared(snap) {
   snap.duelRng.seed(8123);                  // src/game/Duel.js:33
   for (const k of Object.keys(snap.audio)) if (!(k in snap.sound)) delete snap.audio[k];
   Object.assign(snap.audio, snap.sound);
+  if (snap.store) {
+    const ls = globalThis.localStorage;
+    try {
+      const now = readStore() || [];
+      for (const [k] of now) if (!snap.store.some((e) => e[0] === k)) ls.removeItem(k);
+      for (const [k, v] of snap.store) ls.setItem(k, v);
+    } catch { /* a shim that refuses writes is a shim nothing saved into */ }
+  }
 }
 
 /**
