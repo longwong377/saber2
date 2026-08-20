@@ -886,32 +886,158 @@ function capsulesOf(rig) {
   return out;
 }
 
+/**
+ * The same physical sweep, resolved into `n` frames instead of one.
+ *
+ * Same start, same end, same wall clock, so the same speed and the same
+ * `slash` — the ONLY thing that changes is how finely the frame is cut up. That
+ * makes it the instrument for the two things the check below is about: what a
+ * sweep MEETS (a coarse sampler steps over a thin limb) and what it BANKS (a
+ * coarse sampler credits a whole frame's travel for a glancing touch).
+ */
+function resolveSweep(caps, from, to, quat, n) {
+  const saber = makeBlade(scene);
+  saber.valid = false;
+  const dt = (1 / 60) / n;
+  saber.setHiltPose(from, quat);
+  saber.update(dt, 0);                       // establishes the previous frame
+  const solver = new BladeContactSolver();
+  const work = new Map(), events = [];
+  const p = new THREE.Vector3();
+  for (let i = 1; i <= n; i++) {
+    saber.setHiltPose(p.copy(from).lerp(to, i / n), quat);
+    saber.update(dt, i * dt);
+    for (const e of solver.solve(saber, [{ id: 'd1', capsules: caps }], dt, { power: 1 })) {
+      work.set(e.cap.name, (work.get(e.cap.name) || 0) + (e.dWork || 0));
+      events.push(e);
+    }
+  }
+  return { work, events, met: new Set(work.keys()) };
+}
+
 check('blade: a fast sweep across a forearm produces a cut event at the crossing point', () => {
+  /**
+   * TUNNELLING IS THE SUBJECT, and the fixture is deliberately past anything a
+   * player can do: 1.8 m of travel inside one 1/60 s frame is 108 m/s, against
+   * a peak blade speed of 10.97 m/s (`balance` measures it) and `main.js`'s
+   * 0.1 s dt clamp. If the sweep is resolved at all, it is resolved here.
+   *
+   * ── WHAT THIS USED TO ASSERT, AND WHY IT WAS A FRAME-RATE ARTEFACT ───────
+   *
+   * It asserted that ONE crossing severs the forearm, and that passed until
+   * `BladeContactSolver.solve` stopped sampling the sweep at five fixed points.
+   * The old sampler's answer for a one-frame sweep did not depend on the body
+   * it went through: one endpoint sample inside the capsule is `coverage` 1/5
+   * whatever the capsule is, so `speed * dt * coverage` came to 0.36 m of
+   * travel credited for every bone alike. Measured on this exact fixture, work
+   * banked per bone with the toughness pinned so nothing parts:
+   *
+   *                 chord     n=1     n=2     n=4    n=16    n=64
+   *     old  hips   0.1691  6.9120  6.9120  3.4560  3.0240  3.2400
+   *          spine  0.2559  6.9120  6.9120  6.9120  5.1840  4.8600
+   *          foreR  0.0590  6.9120  6.9120  3.4560  1.7280  1.2960
+   *     new  hips   0.1691  3.2400  3.2400  3.1200  3.1200  3.2400
+   *          spine  0.2559  4.8600  4.7796  4.6800  4.8600  4.7925
+   *          foreR  0.0590  1.0800  1.0800  1.0800  1.1631  1.0800
+   *
+   * 6.9120 through a forearm 59 mm across, identical to the figure for a spine
+   * four times its width — and 5.3x what the same sweep banks when it is cut
+   * into 64 frames. The forearm severed at n = 1, 2 and 4 and did NOT sever at
+   * n = 16 or 64. The same swing, decided by the frame rate. That is the
+   * defect; this check was reading its symptom as a pass.
+   *
+   * The new sampler banks the capsule's own chord at every resolution:
+   * 0.0590 x WORK_RATE 2.4 x SLASH_CAP 8 = 1.13, measured 1.08. Against a
+   * `cutNeed` of 2.0 for droid plate that is 54%, so ONE crossing of a B1's
+   * forearm cannot part it at any speed or any frame rate, and two can. The
+   * fixture crosses twice now and the check says why in its pass line.
+   *
+   * (A THINNER LIMB THEREFORE COSTS MORE CROSSINGS THAN A THICKER ONE of the
+   * same material, which is backwards as physics. It is not this change's:
+   * `cutNeed` is an absolute budget rather than a per-metre one, deliberately,
+   * and its own note in Combat.js states the chord model is the right one to
+   * come back to WITH the destruction statics re-tuned alongside it. Recorded
+   * here because this is where it is visible, not fixed here.)
+   *
+   * The two clauses that replace "one crossing severs it" are strictly
+   * stronger, and neither needs a tuned bar: the bones a one-frame sweep meets
+   * must be the bones a 64-frame sweep meets (nothing is passed through), and
+   * the work it banks must be the same to within the sampler's own spread
+   * (nothing is credited twice). The old sampler fails the second by 5.3x.
+   */
   const rig = droidRig();
   const caps = capsulesOf(rig);
   const fore = caps.find(c => c.name === 'foreR');
   assert(fore, 'no forearm capsule');
 
   const mid = fore.p0.clone().lerp(fore.p1, 0.5);
-  const saber = makeBlade(scene);
   // blade pointing along +X so it crosses the (roughly vertical) forearm,
   // hilt set back far enough that the limb sits mid-blade
   const along = new THREE.Quaternion().setFromUnitVectors(V(0, 1, 0), V(1, 0, 0));
   const from = mid.clone().add(V(-0.75, 0, 0.9));
   const to = mid.clone().add(V(-0.75, 0, -0.9));
-  sweepBlade(saber, from, along, to, along);
 
+  /* ── nothing is passed through, and nothing is billed twice ───────────
+   * Pinned toughness so no capsule parts part-way and takes itself out of the
+   * comparison. It moves `softness` for every run identically, so the two
+   * sides are still the same swing. */
+  const inert = caps.map((c) => ({ ...c, toughness: 1e6 }));
+  const LADDER = [1, 2, 4, 16, 64];
+  const runs = LADDER.map((n) => resolveSweep(inert, from, to, along, n));
+  const fine = runs[runs.length - 1], coarse = runs[0];
+  assert(fine.met.size >= 3,
+    `the reference sweep only meets ${fine.met.size} bones — the fixture has stopped crossing the body`);
+  for (const name of fine.met) {
+    assert(coarse.met.has(name),
+      `one frame of the sweep walked straight through ${name}, which the same sweep meets `
+      + `when it is cut into ${LADDER[LADDER.length - 1]} frames — the blade is tunnelling`);
+  }
+  /* 12% against a measured worst of 7.7% (foreR at n = 16). It is the sampler's
+   * own quantisation: a capsule 59 mm across is two samples wide at 64 slices,
+   * so one sample either way is 8%. The failure this is set against is 533%. */
+  let worst = 0, worstAt = '';
+  for (const [name, w] of fine.work) {
+    for (const r of runs) {
+      const d = Math.abs((r.work.get(name) || 0) - w) / w;
+      if (d > worst) { worst = d; worstAt = name; }
+    }
+  }
+  assert(worst < 0.12,
+    `${worstAt} banks ${(worst * 100).toFixed(0)}% more or less work depending on how finely the `
+    + 'same sweep is cut into frames — a swing that severs or does not by frame rate');
+
+  /* ── and the crossing itself ──────────────────────────────────────────── */
+  const saber = makeBlade(scene);
   const solver = new BladeContactSolver();
-  const events = solver.solve(saber, [{ id: 'd1', capsules: caps }], 1 / 60, { power: 1 });
-  const cuts = events.filter(e => e.type === 'cut');
-  assert(cuts.length, `no cut event (got ${events.map(e => e.type).join(',') || 'nothing'})`);
-  const arm = cuts.find(e => e.bone === 'foreR');
-  assert(arm, `the forearm survived a blade through it (cut ${cuts.map(c => c.bone).join(',')})`);
+  saber.valid = false;
+  saber.setHiltPose(from, along);
+  saber.update(1 / 60, 0);
+  const passes = [];
+  for (let i = 1; i <= 2; i++) {
+    saber.setHiltPose(i % 2 ? to : from, along);
+    saber.update(1 / 60, i / 60);
+    passes.push(solver.solve(saber, [{ id: 'd1', capsules: caps }], 1 / 60, { power: 1 }));
+  }
+  const first = passes[0].filter((e) => e.type === 'cut');
+  assert(passes[0].length,
+    `no contact at all on the first crossing (got ${passes[0].map((e) => e.type).join(',') || 'nothing'})`);
+  // a metre of blade through a torso should take more than one limb, and does
+  assert(first.length > 1,
+    `a full-length sweep only caught ${first.length} bone(s): ${first.map((c) => c.bone).join(', ') || 'none'}`);
+  const ground = passes[0].find((e) => e.type === 'grind' && e.cap.name === 'foreR');
+  assert(ground,
+    'the first crossing did not even touch the forearm — the blade went through it');
+  const arm = passes[1].find((e) => e.type === 'cut' && e.bone === 'foreR');
+  assert(arm,
+    `the forearm survived two crossings of a 108 m/s blade (first banked `
+    + `${(100 * ground.dWork / ground.need).toFixed(0)}% of its ${ground.need} budget; second `
+    + `raised ${passes[1].map((e) => e.type + ':' + e.cap.name).join(',') || 'nothing'})`);
   assert(arm.cutT > 0.1 && arm.cutT < 0.9, `cut fraction out of range: ${arm.cutT}`);
   assert(arm.speed > 5, `cut registered at only ${arm.speed.toFixed(1)} m/s`);
-  // a metre of blade through a torso should take more than one limb, and does
-  assert(cuts.length > 1, 'a full-length sweep only caught one bone');
-  return `${cuts.length} bones in one sweep (${cuts.map(c => c.bone).join(', ')}), forearm at ${(arm.cutT * 100).toFixed(0)}%`;
+  return `${first.length} bones on the first crossing (${first.map((c) => c.bone).join(', ')}), the `
+    + `forearm at ${(100 * ground.dWork / ground.need).toFixed(0)}% of its budget and off on the `
+    + `second at ${(arm.cutT * 100).toFixed(0)}%; work per bone holds to `
+    + `${(worst * 100).toFixed(1)}% across ${LADDER.join('/')} frames of the same sweep`;
 });
 
 check('blade: a stationary blade resting on a limb does NOT cut', () => {
