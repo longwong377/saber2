@@ -3550,7 +3550,17 @@ export class Enemy {
    * a second while being knocked down a slope, which no shared budget can see.
    */
   cry(kind, gap = 1.2) {
-    if (this.dead || this._netRemote) return false;
+    /* `this._netRemote` USED TO BE THE SECOND CLAUSE HERE, and nothing in the
+     * tree has ever written it — one read, no writer, so the guard was inert on
+     * every body in every session. It is deleted rather than wired, and which
+     * way round that goes is the part worth recording: the obvious repair is
+     * `this.netDriven`, and it would be a regression. Enemy voices are NOT on
+     * the wire (grep `onEnemyVoice`; `Net.js` carries no voice packet), so on a
+     * guest the local `cry` is the ONLY source of them — suppressing it would
+     * hand a joining player a battlefield in which nothing screams. A dead
+     * guard that would break the game if somebody made it live is worse than
+     * no guard, because it reads as an oversight. */
+    if (this.dead) return false;
     const t = this.world?.time ?? 0;
     if (t < (this._cryAt ?? -99) + gap) return false;
     this._cryAt = t;
