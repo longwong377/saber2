@@ -69,9 +69,10 @@ const REACH = 9.0;
 const NOT_MATTER = /(light|lamp|glow|flame|fire|ember|smoke|steam|haze|dust|mist|fog|water|sea|lava|melt|sky|cloud|star|beam|bolt|spark|halo|aura|shadow|decal|ink|billboard|card|impostor|sprite|banner|flag|cloth|cape|skirt|sash|grass|foliage|leaf|leaves|canopy|reed|weed)/i;
 
 export async function run({ check, assert }) {
-  /* Every check in this file is wrapped: the two shared streams are put on
-   * their modules' own seeds before each body and the wind clock is put back
-   * after it. See tools/checks/_shared.mjs — the rule is there, not here.
+  /* Every check in this file is wrapped, so the shared module state goes back
+   * before each body as well as after it. What that state IS lives in
+   * tools/checks/_shared.mjs and is deliberately not restated here — a list
+   * copied into thirty-three files is a list that drifts from thirty-three.
    */
   check = await clocked(check);
   const { LEVELS, LEVEL_ORDER } = await import('../../src/game/Levels.js');

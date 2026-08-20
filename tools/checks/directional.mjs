@@ -138,9 +138,10 @@ function answers(g, d, { miss = 0, from = 24, origin = CHEST } = {}) {
 }
 
 export async function run({ check, assert }) {
-  /* Every check in this file is wrapped: the two shared streams are put on
-   * their modules' own seeds before each body and the wind clock is put back
-   * after it. See tools/checks/_shared.mjs — the rule is there, not here.
+  /* Every check in this file is wrapped, so the shared module state goes back
+   * before each body as well as after it. What that state IS lives in
+   * tools/checks/_shared.mjs and is deliberately not restated here — a list
+   * copied into thirty-three files is a list that drifts from thirty-three.
    */
   check = await clocked(check);
 
