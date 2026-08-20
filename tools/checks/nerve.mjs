@@ -137,16 +137,6 @@ async function drive(world, { seconds, formation = null, morale = null }) {
       if (frozen) o.frozen++;
       if (r > o.worst) o.worst = r;
       if (r > MOMENT) o.longFrames++;
-      if (process.env.NERVE_DEBUG && r > 2 && r - 2 < DT) {
-        const cc = d.commanderOf(e), home = cc.player?.position || cc.anchor;
-        console.log('FROZEN>2s', e.id, e.type, 'crouch', (e.crouch||0).toFixed(2),
-          'wish', e.wish ? `${e.wish.x.toFixed(2)},${e.wish.z.toFixed(2)}` : 'null',
-          'vel', e.velocity.length().toFixed(2), 'broken', e.trooper.broken, 'rout', e.trooper.rout,
-          'dHome', home ? Math.hypot(home.x-e.position.x, home.z-e.position.z).toFixed(1) : '-',
-          'fear', e._fear?._coverPt ? 'rock' : 'none', 'grip', !!e.gripped, 'topp', !!e.toppled,
-          'stun', (e.stunTimer||0).toFixed(1), 'idleT', (e.idleT||0).toFixed(1),
-          'target', !!e.target, 'wall', (e._wallT||0).toFixed(2));
-      }
     }
     o.frames++;
   }

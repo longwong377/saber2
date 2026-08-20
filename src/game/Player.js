@@ -4642,8 +4642,10 @@ export class Player {
        * coming up under the shaft from their own side instead of one of them
        * reaching over the top. */
       if (fp) {
-        _v10.set(FP_GRIP_SIDE, 1, 0).normalize().applyQuaternion(this.camera.aimQuat)
-          .applyAxisAngle(_v9.set(0, 1, 0).applyQuaternion(_q1), FP_TUNE.roll + FP_TUNE.offRoll);
+        _v10.set(-FP_GRIP_SIDE, 1, 0).normalize().applyQuaternion(this.camera.aimQuat);
+        if (FP_TUNE.roll || FP_TUNE.offRoll) {
+          _v10.applyAxisAngle(_v9.set(0, 1, 0).applyQuaternion(_q1), FP_TUNE.roll + FP_TUNE.offRoll);
+        }
       } else _v10.subVectors(gripL, rig.worldPos('armL', _v9));
       handPoseOnHilt('L', _q1, _v10, _q3, _v9, hs);
       const wristL = _v8.copy(gripL).add(_v9);

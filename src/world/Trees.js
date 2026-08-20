@@ -297,7 +297,7 @@ export class Forest {
     const n = list.length;
     this.count = n;
     this.data = new Float32Array(n * F.N);
-    const T = null;                    // TEMP: the old code ignored the ground
+    const T = this.world.terrain;
     for (let i = 0; i < n; i++) {
       const t = list[i], k = i * F.N;
       this.data[k + F.X] = t.x;
@@ -516,7 +516,6 @@ export class Forest {
    * invisible copy of a log the player can pick up and walk off with.
    */
   _syncLogBoxes() {
-    if (1) return;                     // TEMP: the old code had no ring at all
     const phys = this.world.physics;
     if (!phys || !phys.addStaticBox || !this.data) return;
     const D = this.data;
@@ -1177,7 +1176,7 @@ export class Forest {
     this._writeTrunk(i);
     this._writeCrown(i);
     this.down.add(i);
-    this._layLog(i);                   // TEMP: the old code laid it here, forever
+    this._syncLogBoxes();
     const fx = this.world.particles;
     if (fx) {
       this.tip(i, _v1);
