@@ -28,7 +28,40 @@
  * shipped `canHarm` and the shipped `budgetFor`, and every one of them fails on
  * the tree it was written against.
  *
- * WHAT A FULL VERSION WOULD STILL NEED is named in the last check.
+ * ── WHAT A FULL VERSION WOULD STILL NEED, and none of it is wired here ──
+ *
+ * THE PLAYER CANNOT COMPOSE THE CONTINGENT. It is `opening` bodies of the
+ *   cheapest rung and nothing else, because the shelf that sells the other six
+ *   — sniper, jet, ARC, officer, the AT-TE — is `musterOffer`, and `musterOffer`
+ *   is gated on the AREA a contingent does not have. A full version puts that
+ *   shelf on the deploy screen with a points budget instead of a body count,
+ *   and `musterCost` is already the price list it would spend.
+ *
+ * THE ARMY IS ALWAYS THE ONE YOUR ORDER NAMES. `sideForOrder` is right — a Jedi
+ *   at the head of a droid army is a bug wearing a menu — but it also means the
+ *   contingent on the Wood, the Drifts and the Warship is a Republic clone
+ *   platoon wherever it lands. Allies drawn from the LEVEL's own pool would fit
+ *   the ground; that is a roster decision nobody has made, not a wiring one.
+ *
+ * THE SCORE LADDER DOES NOT KNOW. `allyScale` prices the wave against the army
+ *   standing in it (×1.53 at ten), which is what stops allies trivialising a
+ *   mode — but the wave-clear payout is a flat `500 × wave` and the Insight is
+ *   one per clear in every mode, so a led run banks both FASTER simply by
+ *   clearing faster. `Progress.recordRun` does not record the contingent size,
+ *   so a solo run and a ten-man run sit on one ladder and cannot be told apart.
+ *   Deciding whether they should is the design question this lane did not have
+ *   the standing to answer.
+ *
+ * SMALL GROUND PLACES FEWER MEN. Driven on the Colosseum in `duel`, four allies
+ *   asked put TWO on the field: `deploy` fans bodies behind the commander on a
+ *   4-8 m ring and `spawnClear` refuses the rest. It is not silent — the roster
+ *   says four and the field shows two — and a full version needs a placement
+ *   pass that widens the ring in a room rather than dropping the difference.
+ *
+ * CO-OP IS UNDRIVEN. `_netShell`, `publishMuster` and the roster wire were all
+ *   built for a campaign's muster screen. A contingent raises no screen, so
+ *   there is nothing obvious to break — but nothing here has driven a host and
+ *   a client through a wave run with allies, and that is a gap and not a claim.
  */
 import { clocked } from './_shared.mjs';
 
@@ -84,6 +117,13 @@ export async function run({ check, assert }) {
     try {
       assert(w.command, 'the Trial of Waves still refuses to lead an army');
       assert(w.command.campaign === false, 'a contingent was handed the Geonosis crossing');
+      /* THE MUSTER, BEFORE THE BATTLE TOUCHES IT. `strength` is the LIVING
+       * count, and twenty-two seconds of a real wave will take some of them —
+       * that is the mode working, not the muster failing. So the six are
+       * counted here, and what the window is asked for is bodies on the field
+       * and a roll that still adds up. */
+      assert(w.command.roster.strength === 6,
+        `the muster enlisted ${w.command.roster.strength} of the 6 asked for`);
       w.director.start(1);
       for (let i = 0; i < 22 * 30; i++) w.update(DT, idleInput());
       const troops = w.enemies.filter((e) => e.trooper && !e.dead);
@@ -91,8 +131,8 @@ export async function run({ check, assert }) {
       /* THE ROSTER is what the muster produced; the BODIES are what is still
        * standing twenty-two seconds into a real wave, and holding a live count
        * to six would be a check on how the fight went. */
-      assert(w.command.roster.strength === 6,
-        `the muster enlisted ${w.command.roster.strength} of the 6 asked for`);
+      const roll = w.command.roster.living.length + w.command.roster.fallen.length;
+      assert(roll === 6, `the roll came to ${roll} names, living and dead, out of 6 mustered`);
       assert(troops.length >= 1, 'no ally reached the field at all');
       assert(foes.length >= 1, 'nothing hostile was composed — the mode lost its own wave');
       /* THE FACTION RULES, THROUGH THE SHIPPED FUNCTION. Two sides on a level
@@ -102,7 +142,7 @@ export async function run({ check, assert }) {
       assert(troops.every((e) => !canHarm(p, e)), 'the player can cut down their own troops for free');
       assert(foes.every((f) => canHarm(f, troops[0])), 'the horde cannot touch the line');
       assert(troops.every((e) => canHarm(e, foes[0])), 'the line cannot touch the horde');
-      return `${w.command.roster.strength} enlisted, ${troops.length} standing against `
+      return `6 enlisted, ${troops.length} standing against `
         + `${foes.length} hostiles on the Ember Shelf, teams ${p.team} v ${foes[0].team}`;
     } finally { w.dispose?.(); }
   });

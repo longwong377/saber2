@@ -89,6 +89,7 @@ async function army(seed, mode = 'command', level = 'geonosis') {
  */
 async function drive(world, { seconds, formation = null, morale = null }) {
   const { idleInput } = await import('./_coop.mjs');
+  const { MORALE: { BREAK } } = await import('../../src/game/Command.js');
   const d = world.command;
   const input = idleInput();
   d.start(1);
@@ -96,7 +97,7 @@ async function drive(world, { seconds, formation = null, morale = null }) {
   if (formation) d.order(formation, d.commander);
   const run = new Map(), flash = new Map();
   const o = { frames: 0, bodies: 0, still: 0, frozen: 0, longFrames: 0, worst: 0,
-              shots: 0, crouchPeak: 0, animCrouch: 0, standoff: 0, standoffN: 0 };
+              shots: 0, crouchPeak: 0, animCrouch: 0, inLine: 0 };
   /* THE POSE IS READ WHERE THE RIG READS IT, not off the body. `steer` writing
    * a float nothing forwards would pass every other check in this file and ship
    * ten men standing bolt upright, which is the exact defect. So the animator's
@@ -108,7 +109,21 @@ async function drive(world, { seconds, formation = null, morale = null }) {
     e.animator.update = (dt, p) => { o.animCrouch = Math.max(o.animCrouch, p?.crouch || 0); return base(dt, p); };
   }
   for (let i = 0; i < seconds * 30; i++) {
-    if (morale !== null) for (const t of d.roster.living) t.morale = morale;
+    if (morale !== null) {
+      /* `broken` AS WELL AS THE FLOAT. `_morale` derives the flag once a frame
+       * and runs AFTER the bodies have moved, so a window that sets only the
+       * number has its first frames steered as a steady line — measured, 0.2%
+       * of "broken" frames were a man solving his formation slot, which is the
+       * fixture leaking rather than the game. `MORALE.BREAK` is asked rather
+       * than restated. */
+      for (const t of d.roster.living) { t.morale = morale; t.broken = morale < BREAK; }
+    }
+    /* THE FORMATION, AS A PER-FRAME FACT. `steer` writes `cmdSlotDist` on
+     * exactly the path that solves a man's place in the line and on no other,
+     * so wiping it before the step and reading it after asks the shipped
+     * director "did this man hold his post this frame" without restating one
+     * word of what a post is. */
+    for (const e of world.enemies) if (e.trooper) e.cmdSlotDist = -1;
     world.update(DT, input);
     for (const e of world.enemies) {
       if (!e || e.dead || !e.trooper) continue;
@@ -120,17 +135,7 @@ async function drive(world, { seconds, formation = null, morale = null }) {
       flash.set(e.id, lit);
       o.crouchPeak = Math.max(o.crouchPeak, e.crouch || 0);
       if (!moving && !firing) o.still++;
-      /* HOW FAR THIS MAN IS FROM THE NEAREST THING HE IS SUPPOSED TO BE
-       * FIGHTING. It is the ground the line is holding, as one number, and it
-       * is what breaking is meant to cost. */
-      let near = Infinity;
-      for (const h of world.enemies) {
-        if (!h || h.dead || h.trooper) continue;
-        const dx = h.position.x - e.position.x, dz = h.position.z - e.position.z;
-        const q = dx * dx + dz * dz;
-        if (q < near) near = q;
-      }
-      if (near < Infinity) { o.standoff += Math.sqrt(near); o.standoffN++; }
+      if (e.cmdSlotDist >= 0) o.inLine++;
       const frozen = !moving && !firing && (e.crouch || 0) < DOWN;
       const r = frozen ? (run.get(e.id) || 0) + DT : 0;
       run.set(e.id, r);
@@ -144,7 +149,7 @@ async function drive(world, { seconds, formation = null, morale = null }) {
   o.pctLong = 100 * o.longFrames / Math.max(1, o.bodies);
   o.pctStill = 100 * o.still / Math.max(1, o.bodies);
   o.perBody = o.bodies / Math.max(1, o.frames);
-  o.standoffM = o.standoff / Math.max(1, o.standoffN);
+  o.pctInLine = 100 * o.inLine / Math.max(1, o.bodies);
   return o;
 }
 
@@ -227,25 +232,19 @@ export async function run({ check, assert }) {
    * lost". The standoff is the mean distance from each living ally to the
    * nearest hostile: it is the ground the line is holding, as one number.
    */
-  await check('breaking still costs the line its guns and its ground', async () => {
+  await check('breaking still costs the line its guns and its place', async () => {
     const refuse = await once('refuse', { seconds: 14, morale: 0.05 });
     const broken = await once('broken', { seconds: 14, morale: 0.15 });
     const steady = await once('steady', { seconds: 14, formation: 'circle' });
     assert(refuse.shots === 0, `a refusing army fired ${refuse.shots} shots`);
-    /* THE REFUSING LINE IS THE ONE THE BOUND IS ON, and the broken one only
-     * has to not GAIN ground. A man at 0.15 falls back to five metres of his
-     * commander and stops there, so his standoff is really a fact about where
-     * the player is standing relative to the horde — measured across suite
-     * orders it moves by half; the refusing line's does not, because it keeps
-     * going until `FEAR_LEASH` stops it. */
-    assert(refuse.standoffM > steady.standoffM * 1.4,
-      `a refusing line stands ${refuse.standoffM.toFixed(1)} m off the enemy and a steady one `
-      + `${steady.standoffM.toFixed(1)} m — refusing gave up no ground at all`);
-    assert(broken.standoffM > steady.standoffM * 0.95,
-      `a broken line closed to ${broken.standoffM.toFixed(1)} m against a steady one's `
-      + `${steady.standoffM.toFixed(1)} m — breaking bought the line ground`);
-    return `refusing 0 shots · standoff steady ${steady.standoffM.toFixed(1)} m, `
-      + `broken ${broken.standoffM.toFixed(1)} m, refusing ${refuse.standoffM.toFixed(1)} m`;
+    assert(steady.pctInLine > 60,
+      `a steady line held its posts on only ${steady.pctInLine.toFixed(1)}% of frames — `
+      + 'this condition is not measuring what it claims');
+    assert(refuse.pctInLine === 0 && broken.pctInLine === 0,
+      `a shaken line was still solving the formation on ${broken.pctInLine.toFixed(1)}% of `
+      + `broken frames and ${refuse.pctInLine.toFixed(1)}% of refusing ones`);
+    return `refusing 0 shots · posts held: steady ${steady.pctInLine.toFixed(1)}%, `
+      + `broken ${broken.pctInLine.toFixed(1)}%, refusing ${refuse.pctInLine.toFixed(1)}%`;
   });
 
   /**
