@@ -22,8 +22,8 @@
  * only defence is to ask, mechanically, whether every level key written down
  * anywhere is a level the game actually has.
  *
- * WHAT COUNTS AS NAMING A LEVEL. Five syntactic forms, chosen because each is
- * unambiguous — a level key and nothing else can appear there:
+ * WHAT COUNTS AS NAMING A LEVEL. Nine syntactic forms, chosen because each is
+ * unambiguous — a level key and nothing else can appear there. The first five:
  *
  *     level: 'x'            a settings blob, a rung, a spawn descriptor
  *     flag('level', 'x')    a tool's default
@@ -31,12 +31,18 @@
  *     LEVELS['x']           the same by index
  *     .level === 'x'        a check asserting which level was loaded
  *
+ * …and four more added one at a time, each by this file being short of one; the
+ * note on each says what the blindness cost.
+ *
  * TERRAIN PRESETS ARE A DIFFERENT VOCABULARY that happens to share several
  * spellings — `new Terrain(scene, 'dunes', 0.7)` is still perfectly valid,
  * because the sand it describes did not stop existing when the level did. That
- * is why this scans for the four forms above rather than for the names: a
- * name-based scan cannot tell those two apart and would have to be taught to
- * ignore the presets, which is the same list-kept-by-hand problem one level up.
+ * is why this scans for the forms above rather than for the names: a name-based
+ * scan cannot tell those two apart and would have to be taught to ignore the
+ * presets, which is the same list-kept-by-hand problem one level up. The
+ * presets get their OWN check below, against their own table, for the reason
+ * every vocabulary in this file gets one: nine of the fifteen grounds are
+ * reached by no level, so nothing else is looking at them.
  *
  * The list of forms is itself a list kept by hand, and it will be short of one
  * again. That is fine and it is not the same failure: a form this does not know
@@ -44,6 +50,12 @@
  * violation, and the first four caught seventeen of the eighteen on the day
  * they were written. The fifth was added within the hour, by this check
  * catching the rename that the first four missed.
+ *
+ * THAT CLAIM WAS FALSE OF TWO OF THEM AND IS NOW ENFORCED. The two `LEVELS.…`
+ * forms read a member off an IDENTIFIER, and an identifier is the one thing on
+ * this list another file may bind to something else — see `SHADOWS_LEVELS`,
+ * which is what stopped a GLSL parser's operator-precedence table from being
+ * reported as a level called `length`.
  *
  * Comments and block comments are stripped first. This file's own prose names
  * three dead levels in the course of explaining them, and a scanner that reads
@@ -55,6 +67,7 @@ import { join, relative } from 'node:path';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
 import { ARCHETYPES } from '../../src/game/Enemy.js';
 import { SET_PIECE, DOJO_MIX } from '../../src/game/Waves.js';
+import { TERRAIN_PRESETS } from '../../src/world/Terrain.js';
 
 const ROOT = new URL('../..', import.meta.url).pathname;
 
@@ -171,31 +184,167 @@ const FORMS = [
    * two above it, both of which named a caller and were then short of one.
    */
   [/\b[A-Za-z_$][\w$]*\(\s*'level'\s*,\s*'([a-z][a-z0-9_]*)'\s*\)/g, "…('level', '…')"],
+
+  /**
+   * THE NINTH, AND IT IS THE EIGHTH'S OWN BLIND SPOT — the flag is PLURAL.
+   *
+   * The form above is written over the name of the flag rather than the name
+   * of the parser, so any `arg('level', 'x')` is covered. A tool that sweeps
+   * SEVERAL levels does not spell it that way: `tools/_shade.mjs` opens with
+   * `flag('levels', 'arena,dunes,canyon,hangar,dojo')` and loops over the
+   * split, so one string named four levels the roster cull deleted and one
+   * that survives. Every pattern above walked past it — plural name, and the
+   * value is a list rather than a key.
+   *
+   * What it cost is the same thing the eighth cost, one tool along: the page
+   * `_shade.mjs` serves indexes `LEVELS[key]` for each name, so four fifths of
+   * a default run measured `undefined` and the tone chart it exists to draw
+   * was built from one level pretending to be five.
+   *
+   * `split: true` because the capture is a LIST — the arm checks every key in
+   * it, so a list with one dead name in the middle is not hidden by four live
+   * ones on either side.
+   */
+  [/\b[A-Za-z_$][\w$]*\(\s*'levels'\s*,\s*'([a-z][a-z0-9_]*(?:,[a-z][a-z0-9_]*)*)'\s*\)/g,
+    "…('levels', '…')", { split: true }],
 ];
+
+/**
+ * …AND TWO OF THE FORMS ONLY MEAN A LEVEL WHERE `LEVELS` IS THE GAME'S TABLE.
+ *
+ * `LEVELS.…` and `LEVELS['…']` are member reads on an IDENTIFIER, which is the
+ * one thing on this list that another file is free to bind to something else.
+ * `tools/checks/_glsl.mjs` does: its GLSL expression parser holds the operator
+ * precedence table in `const LEVELS = [['||'], ['&&'], …]` and asks it for
+ * `LEVELS.length`, and this check reported that as a reference to a level
+ * called `length`.
+ *
+ * That is worse than a missed violation and the header above says so in as
+ * many words — "a form this does not know is a violation that goes unreported,
+ * never a correct line reported as a violation". It was true of the first
+ * eight and it was not true of these two, so the claim is now enforced rather
+ * than asserted: the two member forms are skipped in a file that binds its own
+ * `LEVELS` and never mentions the module the real one comes from.
+ *
+ * `let LEVELS = null` beside a dynamic `import('…/Levels.js')` is how
+ * `runrules.mjs` holds the real table — it declares the name AND names the
+ * module — so the second half of the test is what keeps that file in scope.
+ * The third clause is for the table's own home: `Levels.js` declares
+ * `export const LEVELS` and has no reason to mention its own filename, so the
+ * first two clauses between them dropped the file that names three levels by
+ * member read. A guard that silences the source of truth is not a guard.
+ * Every file skipped is NAMED in the result line, because a scan that quietly
+ * stops scanning is the defect this whole file exists to catch.
+ */
+const SHADOWS_LEVELS = (text) =>
+  /\b(?:const|let|var)\s+LEVELS\b/.test(text)
+  && !/Levels\.js/.test(text) && !/\bexport\s+const\s+LEVELS\b/.test(text);
+const NEEDS_TABLE = new Set(['LEVELS.…', "LEVELS['…']"]);
+
+/**
+ * The form with the offending key written into it.
+ *
+ * The LAST ellipsis, not the first: two of the labels carry two — `…('level',
+ * '…')` names the parser as well as the value — and a plain `replace` put the
+ * key where the function name goes, so the eighth form reported the dead level
+ * `arena` as `arena('level', '…')`. The message is the whole product of a
+ * scanner and one that reads backwards is one nobody trusts twice.
+ */
+const nameIn = (form, key) => form.replace(/…(?=[^…]*$)/, key);
 
 export function run({ check, assert }) {
   check('roster: nothing in the tree names a level the game does not have', () => {
-    const bad = [];
+    const bad = [], shadowed = [];
     let named = 0, files = 0;
     for (const file of [...sources(join(ROOT, 'src')), ...sources(join(ROOT, 'tools'))]) {
       const text = strip(readFileSync(file, 'utf8'));
+      const ownsName = !SHADOWS_LEVELS(text);
       let hit = false;
-      for (const [re, form] of FORMS) {
+      for (const [re, form, opts] of FORMS) {
+        if (!ownsName && NEEDS_TABLE.has(form)) continue;
         re.lastIndex = 0;
         let m;
         while ((m = re.exec(text))) {
-          named++;
           hit = true;
-          if (LEVELS[m[1]]) continue;
           const line = text.slice(0, m.index).split('\n').length;
-          bad.push(`${relative(ROOT, file)}:${line} ${form.replace('…', m[1])}`);
+          for (const key of opts?.split ? m[1].split(',') : [m[1]]) {
+            named++;
+            if (LEVELS[key]) continue;
+            bad.push(`${relative(ROOT, file)}:${line} ${nameIn(form, key)}`);
+          }
         }
       }
+      if (!ownsName) shadowed.push(relative(ROOT, file));
       if (hit) files++;
     }
     assert(named > 20, `only ${named} level keys found in the whole tree — the scan is not scanning`);
     assert(!bad.length, `${bad.length} reference(s) to a level that does not exist:\n    ` + bad.join('\n    '));
-    return `${named} level keys across ${files} files, all of them in the roster of ${LEVEL_ORDER.length}`;
+    return `${named} level keys across ${files} files, all of them in the roster of ${LEVEL_ORDER.length}`
+      + (shadowed.length ? `; the member forms skipped ${shadowed.length} file(s) binding their own `
+        + `LEVELS: ${shadowed.join(', ')}` : '');
+  });
+
+  check('roster: nothing in the tree names a ground the game does not have', () => {
+    /**
+     * THE SAME QUESTION IN THE OTHER VOCABULARY, and the header above is the
+     * reason it is a separate check rather than four more rows in `FORMS`.
+     *
+     * "TERRAIN PRESETS ARE A DIFFERENT VOCABULARY that happens to share several
+     * spellings" — `new Terrain(scene, 'dunes', 0.7)` is valid where
+     * `level: 'dunes'` is not, because the sand did not stop existing when the
+     * level did. So the presets need their own arm validating against their own
+     * table, and the arm is worth having for exactly the reason the level one
+     * is: nine of the fifteen presets are reached by no level in `LEVEL_ORDER`,
+     * so a rename or a cull there breaks callers nothing else looks at.
+     *
+     * WHAT IS AND IS NOT COVERED BY THE RUNTIME. `Terrain`'s constructor now
+     * THROWS on a name its table does not hold, rather than substituting the
+     * dunes — so a bad name in a line that RUNS is loud, and that is not what
+     * this is for. It is for the one that does not run: a preset named in a
+     * branch no check exercises, in a lane tool nobody has opened this month,
+     * or in a level record whose `dress` is the only thing anybody drives. Two
+     * forms, chosen the same way the level forms were — a preset key and
+     * nothing else can appear there:
+     *
+     *     new Terrain(…, 'x')   every construction of a ground
+     *     terrain: 'x'          how a LEVEL declares which ground it stands on
+     *
+     * The second is what `LEVELS[k].terrain` reads, and `roster: the list the
+     * menu walks…` already asserts that field is a string. A string is not a
+     * ground; this is the half that says which strings are.
+     */
+    const T_FORMS = [
+      [/\bnew\s+Terrain\(\s*[^,]*,\s*'([a-z][a-z0-9_]*)'/g, "new Terrain(…, '…')"],
+      [/\bterrain:\s*'([a-z][a-z0-9_]*)'/g, "terrain: '…'"],
+    ];
+    const bad = [];
+    let named = 0;
+    for (const file of [...sources(join(ROOT, 'src')), ...sources(join(ROOT, 'tools'))]) {
+      const text = strip(readFileSync(file, 'utf8'));
+      for (const [re, form] of T_FORMS) {
+        re.lastIndex = 0;
+        let m;
+        while ((m = re.exec(text))) {
+          named++;
+          if (TERRAIN_PRESETS[m[1]]) continue;
+          const line = text.slice(0, m.index).split('\n').length;
+          bad.push(`${relative(ROOT, file)}:${line} ${nameIn(form, m[1])}`);
+        }
+      }
+    }
+    assert(named > 10, `only ${named} terrain names found in the whole tree — the scan is not scanning`);
+    assert(!bad.length,
+      `${bad.length} reference(s) to a ground the table does not hold:\n    ` + bad.join('\n    '));
+    /* And the level table's own half, which is the one a player reaches: every
+     * shipped level stands on a preset that exists. Asked here rather than
+     * left to the scan, because a level's `terrain` can be built rather than
+     * written and the scan can only see the written ones. */
+    for (const k of LEVEL_ORDER) {
+      assert(TERRAIN_PRESETS[LEVELS[k].terrain],
+        `${k} stands on '${LEVELS[k].terrain}', which is not a terrain preset`);
+    }
+    return `${named} terrain names across the tree, all in the table of `
+      + `${Object.keys(TERRAIN_PRESETS).length}; ${LEVEL_ORDER.length} levels all on a real ground`;
   });
 
   check('roster: the list the menu walks and the table it indexes are the same set', () => {

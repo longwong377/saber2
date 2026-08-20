@@ -52,7 +52,12 @@ const argv = process.argv.slice(2);
 const CMD = argv[0] || 'chart';
 const flag = (n, d) => { const i = argv.indexOf('--' + n); return i >= 0 ? argv[i + 1] : d; };
 
-const LEVELS = flag('levels', 'arena,dunes,canyon,hangar,dojo').split(',');
+/* The five to shoot when nobody says. Four of the old default's names —
+ * arena, dunes, canyon, dojo — were deleted in the roster cull, and the page
+ * this serves indexes `LEVELS[key]` per name, so a default run measured
+ * `undefined` on four fifths of its own chart. `roster.mjs` has an arm for
+ * this shape now; these five are shipped levels and it holds them to that. */
+const LEVELS = flag('levels', 'scoria,mustafar,colosseum,drifts,hangar').split(',');
 const TAG = flag('tag', 'now');
 const W = parseInt(flag('w', '1200'), 10), H = parseInt(flag('h', '1200'), 10);
 

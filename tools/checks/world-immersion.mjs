@@ -393,13 +393,48 @@ export function run({ check, assert, near }) {
      * Gate 1.2 m radius within 25 m.
      *
      * Before:  dunes 31.8%   canyon 21.6%   arena 7.4%   hangar 0.0% */
+    /**
+     * …AND THE 12% FLOOR COULD NOT SEE ONE LEVEL GOING BARE.
+     *
+     * It is a floor under the WHOLE ROSTER, set when three levels read 31.8%,
+     * 21.6% and 7.4%, and it did its job: eight of nine outdoor levels are at
+     * 0.0% and the ninth at 2.7%. What it cannot see is a single level drifting
+     * out on its own, and one had — Geonosis at **5.3%**, twice the next worst
+     * and the only level in the game where a player could stand with nothing
+     * over 1.2 m for twenty-five metres in any direction, on the map the
+     * Command campaign is fought on end to end.
+     *
+     * THE CAUSE IS AREA-BLINDNESS AND THIS BAR IS NOT THE FIX FOR IT.
+     * `strewGround` spends `64 × landmarks` stones over a disc of `radius ×
+     * 0.94` whatever the radius is, so the grade's density goes as 1/r² and the
+     * biggest map gets the thinnest ground. Measured, landmarks per 1000 m² of
+     * the grade's own disc: drifts 1.64, scoria 1.44, mustafar 1.33, geonosis
+     * **0.63** — the highest multiplier on the roster (1.5) and the lowest
+     * density under it. The real repair is for `strewGround` to spend a
+     * DENSITY, which moves every level's look at once and belongs with a
+     * render pair; Geonosis was raised to scoria's density at the call site in
+     * the meantime, and this clause is what keeps the class visible until the
+     * grade itself learns to divide by area.
+     *
+     * 4% is stated rather than derived, and the margin is printed for the same
+     * reason: with the roster at 0.0-2.7 the honest thing is a number with the
+     * headroom written beside it, not a bar sitting one measurement above the
+     * worst level so that the next authored map fails for being authored.
+     */
+    const SOLO = 0.04;
     const rows = [];
+    let worst = 0, worstKey = '—';
     for (const [key, f] of fill()) {
       assert(f.sil < 0.12,
         `${key}: ${(f.sil * 100).toFixed(1)}% of the ground has nothing over 1.2 m within 25 m`);
+      assert(f.sil < SOLO,
+        `${key}: ${(f.sil * 100).toFixed(1)}% of the ground has nothing over 1.2 m within 25 m — `
+        + `no single level may pass ${(SOLO * 100).toFixed(0)}% while the rest of the roster is under 3%`);
+      if (f.sil > worst) { worst = f.sil; worstKey = key; }
       rows.push(`${key} ${(f.sil * 100).toFixed(1)}%`);
     }
-    return rows.join(', ');
+    return `${rows.join(', ')} — worst ${worstKey} at ${(worst * 100).toFixed(1)}%, `
+      + `${((SOLO - worst) * 100).toFixed(1)} points under the solo bar`;
   });
 
   check('levels: filling the ground did not cost a draw call per pebble', () => {
