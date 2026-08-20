@@ -3,6 +3,25 @@
  *
  * A bespoke sequential-impulse rigid body solver.
  *
+ * ── WHAT OF THIS FILE THE GAME ACTUALLY RUNS ────────────────────────────
+ *
+ * `PhysicsWorld` — the solver below, and the bulk of this file — DOES NOT RUN
+ * IN THE GAME. It was replaced by `RapierWorld`, and the only thing that still
+ * constructs one is a single differential check in `tools/verify.mjs`,
+ * "rapier: raycast agrees with the sphere solver it replaced". That check is
+ * worth the file: a second, independently written implementation is the only
+ * oracle a raycast has, and the camera, line-of-sight and the Force grip all
+ * run that query.
+ *
+ * What the game DOES import from here is `segmentSegment` (Combat, Enemy,
+ * Waves, Bolts), `LAYER`, `LOOSE_MASK` and `Body`. Those are live and hot.
+ *
+ * Say so before working on anything in `PhysicsWorld`: a lane fixed a real body
+ * -cull defect in it this session — the cull could delete the player's own
+ * proxy — and no player could ever have met it, because no player's frame goes
+ * through this class. Fix it if the oracle needs to be right; do not fix it
+ * believing a player is affected.
+ *
  * Every collider is decomposed into a small set of spheres in body-local space.
  * A capsule is two spheres, a crate is eight, a forearm is two. That single
  * choice buys us: one narrowphase routine instead of six, no SAT edge cases,
