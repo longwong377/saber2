@@ -2825,6 +2825,32 @@ export class Player {
         this.stamina = Math.max(0, this.stamina - 6);
         audio.swing(16, this.saber.base);
       },
+      /**
+       * WHAT A SPIN COSTS, and it used to cost nothing at all.
+       *
+       * `SPIN`'s own note has always said "it is the reason this costs a third
+       * more stamina and recovers half as fast", and the recovery was real —
+       * `SPIN.cooldown` is 0.92 against the overhead's 0.46 — while the stamina
+       * half was never wired: `ctx.onSpin` was called by the controller and no
+       * caller had ever supplied it. The only price was whatever the whoosh
+       * drain happened to take.
+       *
+       * That was survivable while the spin was a 35° glance that crossed two
+       * bodies. It stopped being survivable the moment it became a full
+       * revolution that crosses seventeen of eighteen at 17 m/s — measured, one
+       * pass now does about eight times an overhead's work, so a free one is
+       * the answer to every fight in the game.
+       *
+       * 18 is the dash's price, deliberately: those are the two moves that get
+       * you out of being surrounded, and they should compete rather than one
+       * being free. Four in a row empties a full bar, which is the shape of
+       * "this is the answer, and you cannot lean on it".
+       */
+      onSpin: () => {
+        this.stamina = Math.max(0, this.stamina - 18);
+        this.staminaHold = STAMINA_HOLD;
+        audio.swing(26, this.saber.base);
+      },
       /* WHETHER THE FEET ARE UNDER THE LUNGE, from the body's OWN velocity.
        * The controller can otherwise only infer it from how fast the anchor it
        * is handed is travelling, and `_attackDrive` now moves that anchor on

@@ -2021,12 +2021,37 @@ export async function run({ check, assert }) {
     const toward = e.wish.x * (me.position.x - e.position.x) + e.wish.z * (me.position.z - e.position.z);
     assert(toward > 0, 'a broken trooper ran away from its commander rather than to them');
 
-    /* 3. AND ONE THAT IS FINISHED TAKES NOTHING. */
+    /**
+     * 3. AND ONE THAT IS FINISHED TAKES NO ORDER — WHICH IS NOT THE SAME AS
+     *    DOING NOTHING, AND IT USED TO BE.
+     *
+     * This step asserted `!e.wish` after one `steer`, and the property it was
+     * holding down turned out to be the defect: `steer` returned outright below
+     * `REFUSE`, `targetFor` returned null on the same test, and the result was a
+     * man with no wish, no target and no pose. Measured on a real Geonosis with
+     * a real army, 100.0% of his frames were motionless, upright and silent for
+     * the whole twenty-second window. The player: "them frozen still looks like
+     * a bug almost and it happens everywhere."
+     *
+     * The THRESHOLD is untouched and both halves of it are still asserted here
+     * — no target, and no walk to a formation slot. What is asserted instead of
+     * the freeze is that he does something of his own: he goes to ground.
+     * `CommandDirector._goToGround` is the behaviour and tools/checks/nerve.mjs
+     * is the measurement.
+     */
     t.morale = 0.02; t.broken = true;
-    e.wish = null;
-    d.steer(e, 1 / 60);
-    assert(!e.wish, 'a trooper past refusing still answered the order');
+    e.wish = null; e.crouch = 0; e.cmdSlotDist = -1;
+    let acted = 0;
+    for (let i = 0; i < 180; i++) {
+      e.wish = null;
+      d.steer(e, 1 / 60);
+      if (e.wish && e.wish.lengthSq() > 1e-6) acted++;
+    }
     assert(d.targetFor(e, w.enemies) === null, 'a trooper past refusing still picked a target');
+    assert(e.cmdSlotDist === -1, 'a trooper past refusing was still solving a formation slot');
+    assert(acted > 0 && e.crouch > 0.6,
+      `a trooper past refusing stood there: ${acted} of 180 frames with anywhere to go, `
+      + `crouch ${(e.crouch || 0).toFixed(2)}`);
 
     /* 4. RALLIED. Standing with them is what buys it back, and the table says
      * so — JEDI_NEAR is the largest per-second term in it. */
@@ -2041,7 +2066,8 @@ export async function run({ check, assert }) {
     for (let i = 0; i < 600; i++) d._morale(1 / 60, d.commander);
     assert(t.morale < high, 'a trooper abandoned across the level lost no nerve at all');
     return `spread ${(shaken / steady).toFixed(2)}x when broken; falls back to the commander; `
-      + `refuses under ${Cmd.MORALE?.REFUSE ?? 0.1}; rallied ${t.morale.toFixed(2)}`;
+      + `refuses under ${Cmd.MORALE?.REFUSE ?? 0.1} and goes to ground instead `
+      + `(${acted}/180 frames moving, crouch ${(e.crouch || 0).toFixed(2)}); rallied ${t.morale.toFixed(2)}`;
   });
 
   /* ══════════════════════════════════════════════════════════════════ */

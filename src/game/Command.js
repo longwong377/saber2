@@ -3338,7 +3338,14 @@ export class CommandDirector extends WaveDirector {
    * callers honest — see the note there.
    */
   _threatBearing(A) {
-    if (this._threatAt !== this._coverEpoch) {
+    /* `!this._threat` LEADS, and it is not belt-and-braces. Both `_threatAt`
+     * and `_coverEpoch` start `undefined`, so on a director that has never had
+     * an order given the epoch test READS AS A CACHE HIT and hands back the
+     * bearing that was never solved. `_coverSite` survived that because its own
+     * `staticBoxes` guard returns first on a bare fixture; `_goToGround` asks
+     * for the bearing whether there is cover or not, and a frightened man with
+     * no direction to be frightened of is a crash. */
+    if (!this._threat || this._threatAt !== this._coverEpoch) {
       this._threatAt = this._coverEpoch;
       let tx = 0, tz = 0, n = 0;
       for (const h of this.world?.enemies || []) {

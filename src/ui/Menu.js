@@ -441,6 +441,21 @@ export const DEFAULT_SETTINGS = {
   /** The formation your army starts every area in. See FORMATIONS. */
   commandFormation: DEFAULT_FORMATION,
   /**
+   * ALLIED TROOPS IN A MODE THAT NEVER HAD ANY — the player's note, in a
+   * number: "I should be able to choose to spawn in allied troops on any map
+   * in any mode if I so wish."
+   *
+   * Read by `commandConfig` and by nothing else, which is the arrangement
+   * `teamDamage`, `commandFormation` and `commandVersus` above all have and
+   * the reason they are all in one place: a menu writes a free-form value and
+   * exactly one function decides what it means.
+   *
+   * ZERO IS OFF and is the default, so every mode is exactly what it was until
+   * somebody moves this. Command, Skirmish and Campaign ignore it — their army
+   * is the mode, and `World.loadLevel` says so in one line.
+   */
+  allies: 0,
+  /**
    * TWO SIDES COMMAND TWO DIFFERENT ARMIES AND MEET ON THE BATTLEFIELD.
    *
    * `commandConfig` reads it and nothing else may, exactly as for the two
@@ -800,6 +815,7 @@ export const SETTING_READERS = {
   teamDamage:      ['game/Command.js', 'const td = s.teamDamage'],
   commandFormation: ['game/Command.js', 'const f = s.commandFormation'],
   commandVersus:   ['game/Command.js', 'versus: !!s.commandVersus'],
+  allies:          ['game/Command.js', 'Number(s.allies)'],
   /* The duel switch, read where every world's rules are decided. One reader,
    * one object: `pvpRules` is the only thing allowed to say what the key means
    * and `world.rules` is the only place the answer lives — see `canHarm`. */
@@ -5571,6 +5587,15 @@ export class Menu {
     this._check('opt-instant-spawn', 'instantSpawn');
     /* The meeting. Read by `commandConfig` at world build, like the two above,
      * so the value written here is the one the next deployment gets. */
+    /* THE CONTINGENT, and its travel comes off the table that clamps it for
+     * the reason the three skirmish ranges below give: `MAX_STRENGTH` is
+     * `commandConfig`'s ceiling and a second copy of 24 typed into index.html
+     * is the hand-maintained twin this repository keeps paying for. The floor
+     * is 0 and not `OPENING_STRENGTH`, because 0 is what "no allies, the mode
+     * as it was" means and it has to be reachable. */
+    this._range('opt-allies', 0, MAX_STRENGTH, 1, 'allies');
+    this._slider('opt-allies', 'allies',
+      v => (v <= 0 ? 'none' : `${Math.round(v)} of ${MAX_STRENGTH}`));
     this._check('opt-command-versus', 'commandVersus');
     /* The battle, for Skirmish. Read by `deploy()` at world build like the
      * three above, so the value written here is the one the next battle gets
