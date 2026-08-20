@@ -62,7 +62,11 @@
   --danger:#ff5540;        /* EMBER. Damage, a boss, a mistake */
   --good:#5fe0a0;
   --force:#a07dff;         /* the Force itself — the pool, the Holocron */
-  --blade:#48d8ff;
+  /* `--blade` was here, a second name for `--accent`'s exact value, and its
+     last reader was `.logo-blade` — the lit saber bar beside the wordmark,
+     removed from the boot screen on instruction. A token nothing reads is the
+     thing that gets re-attached by accident, which is this file's own argument
+     for deleting the tagline and byline rules rather than orphaning them. */
 
   /* ── geometry ──
      One notch, one angle, everywhere. */
