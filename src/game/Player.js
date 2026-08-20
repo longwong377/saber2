@@ -874,13 +874,21 @@ export function handPoseOnHilt(side, hiltQuat, toward, outQuat, outWrist, handSc
      * two hands are treated identically, each one's wrist goes to its own
      * arm's side of the shaft, and both palms come round onto the metal.
      *
-     * (`FP_TUNE.roll` was 60° and is now 0. It was found by rendering three
-     * candidates and picking the one where "four fingers wrap the grip" — i.e.
-     * a sweep that had discovered 59.8° of bias empirically, on one hand, and
-     * cancelled it there. That is why the leading hand looked right and the
-     * off hand never did.)
+     * NOTHING THE PLAYER HAS ALREADY APPROVED MOVES. `GRIP_TWIST` absorbs the
+     * same angle (see its own note), so the RIGHT hand's world frame is
+     * unchanged in both views to the second decimal, and `FP_TUNE.roll` stays
+     * at the 60° a render picked. Only the off hand turns, by exactly the
+     * 119.6° it was wrong by.
      */
-    const y = _hp3.normalize().applyAxisAngle(x, GRIP_TWIST - BORE_LEAD);
+    const y = _hp3.normalize()
+      // The comfort roll, about the BLADE and not about the thumb. Its own note
+      // swept it on a right hand; applied about `x` it turned the two hands
+      // OPPOSITE ways round the shaft, which is half of the 119.6° split.
+      .applyAxisAngle(bore, -GRIP_TWIST)
+      // …and the bore's own lean taken off, so `toward` means what it has always
+      // claimed to mean. This one is about `x` on purpose: the bore is a place
+      // inside the hand and it genuinely mirrors with the hand.
+      .applyAxisAngle(x, -BORE_LEAD);
     const z = _hp4.crossVectors(x, y).normalize();
     _hpM.makeBasis(x, y, z);
     outQuat.setFromRotationMatrix(_hpM);
@@ -1061,8 +1069,19 @@ const _atkR = new THREE.Vector3();
  * against 179.7 / 7052 with no correction at all. Both curves bottom in the
  * same place, which is what says this is one real quantity and not two knobs
  * fighting.
+ *
+ * ── AND `BORE_LEAD` IS ADDED TO IT, WHICH CHANGES NOTHING ABOUT THAT SWEEP.
+ *
+ * The sweep above was run on a RIGHT hand, and it was run against a frame
+ * construction that leaned the wrist 24.8° round the shaft on its own (see
+ * handPoseOnHilt). Taking that lean off is what makes the two hands agree, and
+ * putting the same angle back here is what keeps the swept optimum where the
+ * sweep found it: measured across the change, the right wrist's worst forearm
+ * rate is 2487°/s before and 2487°/s after (tools/checks/viewmodel.mjs), and its palm in first person reads
+ * (out −0.96, up 0.29, eye 0.01) in both. The LEFT hand moves 119.6°, which is
+ * the entire point.
  */
-const GRIP_TWIST = 35 * Math.PI / 180;
+const GRIP_TWIST = 35 * Math.PI / 180 + BORE_LEAD;
 
 /** The fixed fallback turn, for a caller with no arm to point at. */
 export const GRIP_ROLL_R = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -Math.PI / 2);
@@ -1232,7 +1251,7 @@ const FP_HAND_GAP = 0.065;
  * An object rather than a constant so a render can sweep it without an edit:
  * `tools/shot.mjs --pose` sets the value it is testing.
  */
-export const FP_TUNE = { roll: 0, offRoll: 0 };
+export const FP_TUNE = { roll: 60 * Math.PI / 180 };
 export function fpGripOn(saber) {
   const lo = saber?.hiltFloor;
   return typeof lo === 'number' && Number.isFinite(lo) ? lo + FIST_CLEAR : GRIP_AT.FP;
@@ -4641,10 +4660,16 @@ export class Player {
        * that is no less true of the left arm. Mirroring keeps both fists
        * coming up under the shaft from their own side instead of one of them
        * reaching over the top. */
+      /* THE OFF HAND TAKES THE SAME ROLL AS THE LEADING ONE and always did
+       * not: `FP_TUNE.roll` was applied to the right hand and skipped here, so
+       * the two fists sat 60° apart round the shaft on top of the 119.6° the
+       * frame construction was already splitting them by. Both halves of that
+       * are gone — see handPoseOnHilt — and this reads the same knob the
+       * leading hand reads, mirrored only in the side the arm comes from. */
       if (fp) {
         _v10.set(-FP_GRIP_SIDE, 1, 0).normalize().applyQuaternion(this.camera.aimQuat);
-        if (FP_TUNE.roll || FP_TUNE.offRoll) {
-          _v10.applyAxisAngle(_v9.set(0, 1, 0).applyQuaternion(_q1), FP_TUNE.roll + FP_TUNE.offRoll);
+        if (FP_TUNE.roll) {
+          _v10.applyAxisAngle(_v9.set(0, 1, 0).applyQuaternion(_q1), FP_TUNE.roll);
         }
       } else _v10.subVectors(gripL, rig.worldPos('armL', _v9));
       handPoseOnHilt('L', _q1, _v10, _q3, _v9, hs);

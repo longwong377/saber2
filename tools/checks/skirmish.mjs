@@ -453,7 +453,28 @@ export async function run({ check, assert }) {
     const S = await import('./_shared.mjs');
     const snap = await S.snapshotShared();
     try {
-      const { world, input } = await boot({ mode: 'skirmish' }, 'colosseum', 4242);
+      /**
+       * `instantSpawn: true` — AND THAT IS THIS CHECK SAYING WHAT IT IS ABOUT.
+       *
+       * A ground change is a JOURNEY now (src/game/Extraction.js): five
+       * seconds of aftermath, a transport that flies in and lands, a walk to
+       * it, a bay and a flight, about 39 s of it, and an idle headless
+       * commander who never walks holds the ship to its 22 s last call on top
+       * of that. This check drives a whole battle to its victory and clears
+       * every wave with a probe, so two rotations were suddenly 116 s of a
+       * 130 s budget and it reported "cleared 2 of 3".
+       *
+       * Raising the budget would be the wrong fix twice over: it would make a
+       * bookkeeping check pay for a cinematic every run, and it would leave the
+       * check silently measuring the extraction's timing as well as its own
+       * subject. `instantSpawn` is the game's own single reader for "this
+       * caller wants things to simply appear" — the sandbox, the dojo and the
+       * arrival suite all use it — and it restores the one-frame rotate.
+       *
+       * The journey itself is measured in tools/checks/extraction.mjs, which
+       * is where a change to its timing should break something.
+       */
+      const { world, input } = await boot({ mode: 'skirmish', instantSpawn: true }, 'colosseum', 4242);
       let ended = null;
       world.onGameOver = (s) => { ended = s; };
       world.beginSkirmish({ engagements: 3, strength: 10, pressure: 1 });

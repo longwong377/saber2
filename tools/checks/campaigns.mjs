@@ -127,7 +127,28 @@ export async function run({ check, assert }) {
     try {
       const { CAMPAIGNS } = await import('../../src/game/Levels.js');
       const C = CAMPAIGNS.petranaki;
-      const { world, input } = await boot({ mode: 'campaign' }, C.missions[0].level, 77);
+      /**
+       * `instantSpawn: true` — AND THAT IS THIS CHECK SAYING WHAT IT IS ABOUT.
+       *
+       * A ground change is a JOURNEY now (src/game/Extraction.js): five
+       * seconds of aftermath, a transport that flies in and lands, a walk to
+       * it, a bay and a flight, about 39 s of it, and an idle headless
+       * commander who never walks holds the ship to its 22 s last call on top
+       * of that. This check drives a whole campaign to its ending and clears
+       * every wave with a probe, so the mission boundary alone ate most of the
+       * budget and it reported "the campaign never ended — mission 1".
+       *
+       * Raising the budget would be the wrong fix twice over: it would make a
+       * bookkeeping check pay for a cinematic every run, and it would leave the
+       * check silently measuring the extraction's timing as well as its own
+       * subject. `instantSpawn` is the game's own single reader for "this
+       * caller wants things to simply appear" — the sandbox, the dojo and the
+       * arrival suite all use it — and it restores the one-frame rotate.
+       *
+       * The journey itself is measured in tools/checks/extraction.mjs, which
+       * is where a change to its timing should break something.
+       */
+      const { world, input } = await boot({ mode: 'campaign', instantSpawn: true }, C.missions[0].level, 77);
       let overs = 0, ended = null;
       world.onGameOver = (s) => { overs++; ended = s; };
       const grounds = fight(world, input, 600);
@@ -152,7 +173,10 @@ export async function run({ check, assert }) {
     const snap = await S.snapshotShared();
     try {
       const { boonById } = await import('../../src/game/Waves.js');
-      const { world, input } = await boot({ mode: 'campaign' }, 'colosseum', 91);
+      /* `instantSpawn` for the reason the check above it gives in full: the
+       * mission boundary is a 39 s flight now, and this check is about what
+       * survives one rather than about how long it takes. */
+      const { world, input } = await boot({ mode: 'campaign', instantSpawn: true }, 'colosseum', 91);
       /* A build the campaign never gave the player, so what is measured on the
        * far side is the CARRY and not something the mode handed out. */
       for (const id of ['vaapad', 'vaapad', 'soresu']) {

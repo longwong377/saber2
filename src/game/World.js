@@ -134,7 +134,7 @@ import { applyOrder } from './Order.js';
 import { CAMPAIGNS, CAMPAIGN_IDS, LEVELS, LEVEL_ORDER, campaignAt, groundMight, levelRotation,
   spawnClear } from './Levels.js';
 import { AREAS, ARMY_IDS, CommandDirector, COMMAND_POWER_RULES, MAX_STRENGTH, OPENING_STRENGTH,
-  assignArmies } from './Command.js';
+  assignArmies, commandConfig } from './Command.js';
 import { Corpses, CORPSE_BUDGET } from './Corpses.js';
 import { BladeLock } from './Duel.js';
 import { FocusSystem } from './Focus.js';
@@ -695,9 +695,36 @@ export class World {
      * named because it is the one mode with an army that is NOT a bounded
      * battle — it is five areas and its own ending. */
     const battles = !!MODES[mode]?.battles;
-    const leadsArmy = mode === 'command' || battles;
+    /** The three modes whose subject IS an army: they get the crossing too. */
+    const campaign = mode === 'command' || battles;
+    /**
+     * …AND AN ARMY IS NO LONGER A PROPERTY OF THE MODE.
+     *
+     * The player: "I should be able to choose to spawn in allied troops on any
+     * map in any mode if I so wish." This line was the whole reason they could
+     * not — `leadsArmy` was three mode names, so the answer to "can I have
+     * troops here" was decided by a menu column the player had already left,
+     * and the entire roster, rank, morale and formation system was unreachable
+     * from five of the eight modes and eight of the nine grounds.
+     *
+     * `commandConfig` reads the number, exactly as it already reads the team
+     * damage, the opening formation and the meeting flag. What the director
+     * then does with it is one field — see `CommandDirector.campaign`: the same
+     * roster, ranks, permadeath, morale and orders, WITHOUT the five-area
+     * crossing, because an endless mode already has an escalation and an ending
+     * and a second one on top would end the Trial of Waves on wave 21 and call
+     * it a victory.
+     *
+     * `training` never reaches this line — the branch above it builds a
+     * `DojoDirector` and returns — which is the correct exemption and it is not
+     * spelled here: nothing can kill you in a lesson, so there is nothing for a
+     * line to be lost to.
+     */
+    const contingent = campaign ? 0 : commandConfig(this.settings).contingent;
+    const leadsArmy = campaign || contingent > 0;
     this.director = leadsArmy
-      ? new CommandDirector(this, { pool: L.pool })
+      ? new CommandDirector(this, { pool: L.pool, campaign,
+          strength: contingent || OPENING_STRENGTH })
       : new WaveDirector(this, { mode, pool: L.pool });
     /** The army, or null. Read by the HUD, the summary and the checks. */
     this.command = leadsArmy ? this.director : null;

@@ -486,6 +486,73 @@ export async function run({ check, assert }) {
     run(world, 2, input);
     const bare = world.physics.staticBoxes.length;
 
+    /* CLAUSE ONE, AND IT IS AUDITED AS THE PLAYER WALKS rather than once at
+     * the end. Only the logs near a body carry colliders at all, so the ring
+     * at the end of the circuit holds one or two boxes — a sample of one is
+     * not a measurement of a wood. Asked after every cut instead, it is the
+     * whole of what the player met on the way round.
+     *
+     * The INSTANCE MATRIX is the authority for what is drawn, not this file's
+     * idea of where a log ought to be: a log that has become a `Prop`, or one
+     * the blade has cut to pieces, has its instance collapsed to zero scale. */
+    const m4 = new THREE.Matrix4(), pos = new THREE.Vector3();
+    const quat = new THREE.Quaternion(), scale = new THREE.Vector3();
+    const axis = new THREE.Vector3(), foot = new THREE.Vector3(), tip = new THREE.Vector3();
+    const along = new THREE.Vector3(), sample = new THREE.Vector3();
+    const blind = [];
+    let boxes = 0, worstBuried = Infinity, worstStray = 0;
+    const auditLogs = () => {
+      for (const [i, list] of f.logs) {
+        for (const box of (Array.isArray(list) ? list : [list])) {
+          boxes++;
+          f.trunkMesh.getMatrixAt(i, m4);
+          m4.decompose(pos, quat, scale);
+          if (scale.y < 0.02) {
+            blind.push(`a box stands on log ${i} whose instance is drawn at zero scale — `
+              + 'the log is a Prop or the blade cut it up, and nothing is there');
+            continue;
+          }
+          foot.copy(pos);
+          axis.set(0, 1, 0).applyQuaternion(quat);
+          tip.copy(foot).addScaledVector(axis, scale.y);
+          // …the box is ON the drawn trunk
+          const off = distPointSeg(box.center, foot, tip);
+          worstStray = Math.max(worstStray, off);
+          if (off > Math.max(0.6, box.halfExtents.y + 0.4)) {
+            blind.push(`a box for log ${i} stands ${off.toFixed(2)} m off the trunk drawn there`);
+            continue;
+          }
+          /* …AND THE GROUND IS NOT OVER THE TOP OF IT — ALONG ITS WHOLE
+           * LENGTH, which is the half that matters and the half a test at the
+           * centre cannot see. A trunk lying across a rise has its middle in
+           * the air and its far end metres inside the hill; the box's centre
+           * says "above ground" and the player walks into the buried end.
+           * Sampled every half metre down the box's own long axis, and the
+           * bound is a step height rather than zero because the collider is
+           * laid off a sampled profile too: what this refuses is a wall you
+           * cannot see, not a rounding of where the grass starts. */
+          const he = box.halfExtents;
+          const half = Math.max(he.x, he.y, he.z);
+          along.set(he.x >= he.y && he.x >= he.z ? 1 : 0,
+            he.y > he.x && he.y >= he.z ? 1 : 0,
+            he.z > he.x && he.z > he.y ? 1 : 0).applyQuaternion(box.quat);
+          const steps = Math.max(1, Math.round(half / 0.5));
+          for (let sN = -steps; sN <= steps; sN++) {
+            const d = (sN / steps) * half;
+            sample.copy(box.center).addScaledVector(along, d);
+            const g = world.terrain.height(sample.x, sample.z);
+            const showing = (sample.y + Math.min(he.x, he.y, he.z)) - g;
+            worstBuried = Math.min(worstBuried, showing);
+            if (showing < -0.35) {
+              blind.push(`a box on log ${i} is ${(-showing).toFixed(2)} m under the ground at `
+                + `(${sample.x.toFixed(1)}, ${sample.z.toFixed(1)}) — solid, and nothing to see`);
+              break;
+            }
+          }
+        }
+      }
+    };
+
     let cuts = 0, peak = 0;
     for (let n = 0; n < 30; n++) {
       const a = (n / 30) * Math.PI * 2, rad = 12 + n * 1.6;
@@ -506,50 +573,14 @@ export async function run({ check, assert }) {
       cuts++;
       run(world, 6, input);
       peak = Math.max(peak, world.physics.staticBoxes.length);
+      auditLogs();
     }
     let down = 0;
     for (let i = 0; i < f.count; i++) if (D[i * N + STATE] === 2) down++;
     assert(down >= 20, `${cuts} cuts brought down only ${down} trees; there is nothing to measure`);
 
-    /* CLAUSE ONE: every collider the felling laid is inside something drawn.
-     * The instance matrix is the authority — it is what the player sees. */
-    const m4 = new THREE.Matrix4(), pos = new THREE.Vector3();
-    const quat = new THREE.Quaternion(), scale = new THREE.Vector3();
-    const axis = new THREE.Vector3(), foot = new THREE.Vector3(), tip = new THREE.Vector3();
-    const blind = [];
-    let boxes = 0, worstBuried = Infinity, worstStray = 0;
-    for (const [i, list] of f.logs) {
-      for (const box of (Array.isArray(list) ? list : [list])) {
-        boxes++;
-        f.trunkMesh.getMatrixAt(i, m4);
-        m4.decompose(pos, quat, scale);
-        if (scale.y < 0.02) {
-          blind.push(`a box stands on log ${i} whose instance is drawn at zero scale — `
-            + 'the log is a Prop or the blade cut it up, and nothing is there');
-          continue;
-        }
-        foot.copy(pos);
-        axis.set(0, 1, 0).applyQuaternion(quat);
-        tip.copy(foot).addScaledVector(axis, scale.y);
-        // …the box is ON the drawn trunk
-        const off = distPointSeg(box.center, foot, tip);
-        worstStray = Math.max(worstStray, off);
-        if (off > Math.max(0.6, box.halfExtents.y + 0.4)) {
-          blind.push(`a box for log ${i} stands ${off.toFixed(2)} m off the trunk that is drawn there`);
-          continue;
-        }
-        // …and the ground is not over the top of it
-        const g = world.terrain.height(box.center.x, box.center.z);
-        const showing = (box.center.y + box.halfExtents.y) - g;
-        worstBuried = Math.min(worstBuried, showing);
-        if (showing <= 0) {
-          blind.push(`a box on log ${i} is ${(-showing).toFixed(2)} m under the ground at `
-            + `(${box.center.x.toFixed(1)}, ${box.center.z.toFixed(1)}) — solid, and nothing to see`);
-        }
-      }
-    }
     assert(blind.length === 0,
-      `${blind.length} of ${boxes} colliders left by ${down} felled trees are walls with nothing in them:\n    `
+      `${blind.length} of ${boxes} collider-frames left by ${down} felled trees are walls with nothing in them:\n    `
       + blind.slice(0, 8).join('\n    '));
 
     /* CLAUSE TWO: AND THEY ARE NOT THERE FOR THE REST OF THE SESSION.
@@ -600,7 +631,7 @@ export async function run({ check, assert }) {
       + 'engine walks that array linearly once per body per frame, and a wood you have cleared '
       + 'should not cost more than one you have not');
     world.unload?.();
-    return `${cuts} cuts, ${down} trees down: ${boxes} log colliders at the end of the walk, `
+    return `${cuts} cuts, ${down} trees down, ${boxes} log colliders met on the round, `
       + `peak ${peak} static boxes in play against ${bare} with nobody in the wood, ${after} after `
       + `and none of them on a trunk; `
       + `worst box-to-trunk offset ${worstStray.toFixed(2)} m, least of a log showing above the ground `

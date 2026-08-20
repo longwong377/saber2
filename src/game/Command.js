@@ -1549,8 +1549,46 @@ export function commandConfig(settings) {
      * meeting by saying nothing.
      */
     versus: !!s.commandVersus && !!MODES[s.mode]?.meeting,
+    /**
+     * AN ARMY IN A MODE THAT NEVER HAD ONE.
+     *
+     * The player: "I should be able to choose to spawn in allied troops on any
+     * map in any mode if I so wish." Allies were a property of the MODE —
+     * `World.loadLevel` built a `CommandDirector` for `command`, `skirmish` and
+     * `campaign` and a bare `WaveDirector` for everything else — so the answer
+     * to "can I have troops here" was decided by a menu column the player had
+     * already left.
+     *
+     * It is a NUMBER and not a tick, because the size is the whole decision:
+     * two men beside you is an escort, twenty-four is the mode. And it is read
+     * HERE, where `teamDamage`, the opening formation and the meeting flag are
+     * already read, for the reason stated over `versus` — a menu writes a
+     * free-form value and exactly one function decides what it means.
+     *
+     * ZERO IS OFF and is the default, so every mode is exactly what it was
+     * until the player asks for something else. `MODES.command`, `skirmish` and
+     * `campaign` lead an army whatever this says: their army is the mode.
+     */
+    contingent: clamp(Math.round(Number(s.allies) || 0), 0, MAX_STRENGTH),
   };
 }
+
+/**
+ * WHAT ONE CLEARED WAVE IS WORTH TO A CONTINGENT'S PURSE, in muster points.
+ *
+ * A campaign reinforces at an AREA boundary, on a screen, out of a purse the
+ * area pays (`AREAS[*].muster`). A contingent has no areas and no screen — see
+ * `payWave` — so it needs a cadence of its own, and the honest one is derived
+ * from the price of the body it is replacing rather than typed: half the cost
+ * of the cheapest rung in the army, so TWO cleared waves buy one replacement.
+ *
+ * Slow on purpose. `_reinforce` will never take a contingent past the strength
+ * the player deployed with, so the only thing this rate decides is how long a
+ * hole in the line stays a hole — and a loss that is made good by the next wave
+ * clear is not a loss. Two waves is long enough to be felt and short enough
+ * that a thirty-wave run does not end with the player alone.
+ */
+export const CONTINGENT_WAVE_MUSTER = 0.5;
 
 /**
  * HOW FAR APART TWO ARMIES START, in metres.
@@ -2045,6 +2083,24 @@ export class CommandDirector extends WaveDirector {
     this.teamDamage = cfg.teamDamage;
     /** Two commanders on one field, rather than one against the composer. */
     this.versus = !!cfg.versus;
+    /**
+     * WHETHER THIS DIRECTOR RUNS THE FIVE-AREA CROSSING ABOVE THE WAVE.
+     *
+     * True for the three modes that ARE an army — Command, a skirmish and a
+     * campaign — and false for a CONTINGENT, which is the same roster, the same
+     * ranks, the same permadeath and the same orders dropped into a mode that
+     * has its own escalation and its own ending already. See `commandConfig`'s
+     * `contingent` and the four readers below: `payWave`, `budgetFor`,
+     * `heavyBias` and `_musterOpening`. Nothing else in this class knows.
+     *
+     * It is a FIELD and not a mode-name test for the reason `MODES.skirmish`'s
+     * `battles` is one: `waves`, `roguelite`, `duel` and `sandbox` can all
+     * carry a contingent today and the next mode will too.
+     */
+    this.campaign = opts.campaign ?? true;
+    /** How many bodies the opening muster enlists. A campaign opens with
+     *  `OPENING_STRENGTH`; a contingent opens with what the player asked for. */
+    this.opening = clamp(opts.strength ?? OPENING_STRENGTH, 1, MAX_STRENGTH);
     this.areaIndex = 0;
     this.areaWaves = 0;
     /** Raised once, when the last area is behind you. See `_endCampaign`. */
@@ -2222,7 +2278,14 @@ export class CommandDirector extends WaveDirector {
    * discount because a trooper is not a Jedi.
    */
   budgetFor(wave) {
-    return Math.floor(super.budgetFor(wave) * this.area.budget * this.allyScale());
+    /* THE AREA'S PRESSURE IS THE CAMPAIGN'S. A contingent is dropped into a
+     * mode whose own ramp is already the escalation — charging it the Core
+     * Ship's 1.45 as well would be two curves multiplied. `allyScale` is NOT
+     * conditional: the wave is priced against the army standing in it wherever
+     * that army came from, which is the whole reason allies do not trivialise
+     * a mode that never had them. */
+    const area = this.campaign ? this.area.budget : 1;
+    return Math.floor(super.budgetFor(wave) * area * this.allyScale());
   }
 
   /**
@@ -2244,7 +2307,7 @@ export class CommandDirector extends WaveDirector {
 
   /** How hard this area leans on the heavy end, on top of the depth's own lean. */
   heavyBias(wave) {
-    return clamp(super.heavyBias(wave) + this.area.heavy, 0, 1.3);
+    return clamp(super.heavyBias(wave) + (this.campaign ? this.area.heavy : 0), 0, 1.3);
   }
 
   /* ── the muster ────────────────────────────────────────────────────── */
@@ -2259,8 +2322,13 @@ export class CommandDirector extends WaveDirector {
    */
   _musterOpening(c = this.commander) {
     const first = c.army.tiers[0].type;
-    for (let i = 0; i < OPENING_STRENGTH; i++) c.roster.enlist(first);
-    c.roster.points = AREAS[0].muster;
+    /* `this.opening` and not `OPENING_STRENGTH`: a campaign's opening IS the
+     * constant and says so in the constructor, and a contingent is whatever
+     * number the player set. One loop, one authority. */
+    for (let i = 0; i < this.opening; i++) c.roster.enlist(first);
+    /* A contingent has no muster screen to spend an opening purse on, and a
+     * purse it cannot spend would be a number on a HUD that means nothing. */
+    c.roster.points = this.campaign ? AREAS[0].muster : 0;
   }
 
   /**
@@ -4545,8 +4613,58 @@ export class CommandDirector extends WaveDirector {
      * sentence means rather than a hedge.
      */
     for (const c of this.commanders) this.shake(null, 'WAVE_CLEAR', c);
+    /**
+     * …AND A CONTINGENT HAS NO AREAS TO CLEAR.
+     *
+     * `_areaClear` opens a muster screen, recalls the line onto gunships,
+     * advances `areaIndex` and — five areas in — calls `_endCampaign`, which
+     * fires `onGameOver` with a victory. Every one of those is right for a
+     * crossing of Geonosis and wrong for ten men the player asked for in the
+     * Trial of Waves: it would END AN ENDLESS MODE on wave 21 and call it a
+     * win. So the area ledger is the campaign's and the replacements are the
+     * contingent's, and neither mode runs the other's.
+     */
+    if (!this.campaign) { this._reinforce(); return fresh; }
     if (this.areaWaves >= this.area.waves) this._areaClear();
     return fresh;
+  }
+
+  /**
+   * REPLACEMENTS, WITHOUT A SCREEN — what a contingent has instead of a muster.
+   *
+   * Three properties, and the third is the one that keeps the feature honest:
+   *
+   *   THE PURSE IS PAID BY THE WAVE, at `CONTINGENT_WAVE_MUSTER` a clear, so
+   *     the cadence is derived from the price of a body rather than typed.
+   *   THE REPLACEMENTS ARE NAMELESS STRANGERS, because `roster.enlist` is the
+   *     same call the opening muster makes: the man who died is still gone, and
+   *     the record with his kills on it is still on the fallen list. That is
+   *     Command's whole subject and a contingent does not get to opt out of it.
+   *   IT NEVER GROWS. `this.opening` is a ceiling and not a target — a player
+   *     who asked for four men has four men for the whole run, and the only
+   *     thing the purse can buy is the ground back.
+   *
+   * Every army on the field, not only the player's, for the reason the morale
+   * loop above gives: a second commander with a contingent is a commander with
+   * a contingent.
+   */
+  _reinforce() {
+    let any = false;
+    for (const c of this.commanders) {
+      const cheapest = c.army.tiers[0].type;
+      c.roster.points += CONTINGENT_WAVE_MUSTER;
+      /* `recruit` is the one door — it prices, it enlists, it publishes, and it
+       * refuses a roster already at `MAX_STRENGTH`. The extra ceiling here is
+       * the player's own number, which is smaller. */
+      while (c.roster.strength < this.opening && this.recruit(cheapest, c)) any = true;
+    }
+    /* …AND THEY COME IN ON A SHIP. `deploy`'s note says `byShip` is for the
+     * moment an army ARRIVES, and a replacement walking out of a gunship in the
+     * middle of a run is exactly that moment — it is the one thing the player
+     * sees of this whole method. */
+    if (any || this.roster.living.some((t) => (!t.body || t.body.dead) && !this._inbound.has(t))) {
+      for (const c of this.commanders) this.deploy(c, { byShip: true });
+    }
   }
 
   /**
