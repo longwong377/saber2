@@ -1918,8 +1918,30 @@ export async function run({ check, assert }) {
      * control, not a third way to be excused from having one.
      */
     const TYPED = { playerName: 'opt-name', seed: 'opt-seed' };
+    /**
+     * THE ONE SETTING EXCUSED FROM HAVING A CONTROL, AND THE EXCUSE IS DERIVED
+     * RATHER THAN ASSERTED.
+     *
+     * `grassScale` is read — `World.loadLevel` plants
+     * `density: (settings.grassScale ?? 1) * L.grass` — but nine of nine levels
+     * author `grass: 0`, so the product is zero whatever a slider says. The row
+     * on the options screen was a live control with nothing at the other end of
+     * it, which is the defect this whole file is about, so it is gone. The
+     * multiplier stays because the machinery is real and proved elsewhere.
+     *
+     * The exemption lasts exactly as long as its reason: the day a level grows
+     * a field, `covered` is non-empty, `grassScale` is an orphan again, and
+     * this check asks for the slider back by name. Nothing here is on a list a
+     * reader has to maintain.
+     */
+    const { LEVELS, LEVEL_ORDER } = await import('../../src/game/Levels.js');
+    const covered = LEVEL_ORDER.filter((k) => LEVELS[k] && LEVELS[k].grass > 0);
+    const EXCUSED = covered.length ? {} : {
+      grassScale: 'no level grows a field, so the slider could not move anything — see Menu.js',
+    };
     const orphans = [], ghost = [];
     for (const key of Object.keys(DEFAULT_SETTINGS)) {
+      if (EXCUSED[key] && !bound.has(key)) continue;
       if (TYPED[key]) {
         assert(html.includes(`id="${TYPED[key]}"`), `#${TYPED[key]} is in no markup, so ${key} has no field`);
         assert(new RegExp(`this\\.s\\.${key}\\s*=`).test(menu), `nothing in the menu writes ${key}`);
@@ -1943,13 +1965,20 @@ export async function run({ check, assert }) {
       `settings with a reader and no control: ${orphans.join(', ')} — the player cannot move them, `
       + 'so they are pinned at their default forever');
     assert(!ghost.length, `listed as picked, but nothing in the menu writes them: ${ghost.join(', ')}`);
-    // and the three this check was written for
-    for (const [key, id] of [['grassScale', 'opt-grass'], ['particleScale', 'opt-particles'], ['bladeHold', 'opt-bladehold']]) {
+    /* AND THE ONES THIS CHECK WAS WRITTEN FOR. `grassScale` was the third and
+     * is now the excused one above — it is asserted the other way round here,
+     * so a slider that comes back without a level to feed it is caught too. */
+    for (const key of Object.keys(EXCUSED)) {
+      assert(!bound.has(key) && !html.includes('id="opt-grass"'),
+        `${key} is excused from having a control because ${EXCUSED[key]}, and one is on screen anyway`);
+    }
+    for (const [key, id] of [['particleScale', 'opt-particles'], ['bladeHold', 'opt-bladehold']]) {
       assert(bound.get(key) === id, `${key} is bound to ${bound.get(key) || 'nothing'}, expected #${id}`);
       assert(html.includes(`id="${id}"`), `#${id} is not on the options screen`);
     }
     return `${Object.keys(DEFAULT_SETTINGS).length} settings: ${bound.size} on sliders/checkboxes, `
-      + `${PICKED.length} on pickers, ${Object.keys(TYPED).length} typed, 0 with no control`;
+      + `${PICKED.length} on pickers, ${Object.keys(TYPED).length} typed, `
+      + `${Object.keys(EXCUSED).length} excused (${Object.keys(EXCUSED).join(', ') || '—'}), 0 with no control`;
   });
 
   check('controls: the two fidelity sliders multiply the tier and bite mid-run', async () => {

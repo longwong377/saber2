@@ -21,7 +21,7 @@ import { ROBE_CUTS, attachCloak, attachSkirt, attachLekku,
          CAPE_CUTS, TABARD_CUTS, SASH_CUTS, GARMENT_TONES, WARDROBE, wardrobeOf, tintWardrobe,
          garmentTone } from '../game/Cloth.js';
 import { applyInjury } from '../game/Injury.js';
-import { LEVELS, LEVEL_ORDER } from '../game/Levels.js';
+import { LEVELS, LEVEL_ORDER, theatresFor } from '../game/Levels.js';
 // The Descent's ladder, named on the Deploy panel because the mode picks its
 // own places and the Theatre column has no say in it — see _syncTheatre.
 // The rest of this import is the DEFLECTION LADDER, and it is here because the
@@ -3360,9 +3360,49 @@ export class Menu {
     const inert = !!MODES[this.s.mode]?.fixedTheatre;
     this._theatreInert = inert;
     host.classList.toggle('inert', inert);
+    /**
+     * …AND A MODE MAY TAKE SOME OF THE GROUNDS RATHER THAN ALL OR NONE.
+     *
+     * `fixedTheatre` above is the all-or-nothing switch and it was the only one
+     * there was, so CAMPAIGN — which declares neither `fixedTheatre` nor
+     * `level`, on purpose, because the Theatre column IS its campaign picker —
+     * offered every ground in the game and honoured two. Driven, one deployment
+     * per card: seven of the nine built the level the player chose, ran
+     * `beginCampaign`, fell through `campaignAt` to the first campaign and
+     * rotated the player onto the Colosseum on the next frame. A whole World
+     * built and torn down to arrive somewhere they did not pick, which is this
+     * method's own defect — "a card that is lit, written to settings and then
+     * thrown away reads as the picker being randomly broken" — reached from the
+     * one direction the switch could not see.
+     *
+     * `Levels.theatresFor(mode)` is the roster and the mode declares what feeds
+     * it, so there is no mode name here and no second list. A ground the mode
+     * cannot start on is BARRED and says why, exactly as a vetoed rule does in
+     * `_syncRules` — the two columns had different answers to the same
+     * question and now have one.
+     *
+     * THE SELECTION FOLLOWS AND THE SETTING DOES NOT. Lighting the card the
+     * mode will actually use is the honest thing to show; WRITING it would push
+     * the player's real theatre out of `settings.level` and hand it to the next
+     * run of another mode, which is the leak the paragraph above this method is
+     * about. `Levels.theatreFor` is the same resolution and `deploy()` applies
+     * it at the moment it matters.
+     */
+    const live = new Set(theatresFor(this.s.mode));
+    const resolved = live.has(this.s.level) ? this.s.level : [...live][0];
+    this._theatreLive = live;
     for (const card of host.children) {
-      card.tabIndex = inert ? -1 : 0;
-      card.setAttribute('aria-disabled', inert ? 'true' : 'false');
+      const key = card.dataset.level;
+      const barred = !inert && live.size > 0 && live.size < LEVEL_ORDER.length && !live.has(key);
+      card.classList.toggle('barred', barred);
+      card.classList.toggle('sel', !inert && key === resolved);
+      card.tabIndex = (inert || barred) ? -1 : 0;
+      card.setAttribute('aria-disabled', (inert || barred) ? 'true' : 'false');
+      const why = card.querySelector('.why');
+      if (why) {
+        why.textContent = barred ? (MODES[this.s.mode]?.theatreVeto || 'not in this mode') : '';
+        why.classList.toggle('hidden', !barred);
+      }
     }
     const note = document.getElementById('level-note');
     if (note) {
@@ -5477,7 +5517,18 @@ export class Menu {
     // sparks, impact puffs and blood — the feedback that tells you a hit
     // landed — so the floor is the Performance tier's own 0.4 rather than
     // nothing at all.
-    this._slider('opt-grass', 'grassScale', v => (v <= 0 ? 'bare' : `${Math.round(v * 100)}%`));
+    /* NO GRASS SLIDER. `grassScale` is still read — World.loadLevel plants
+     * `density: (settings.grassScale ?? 1) * L.grass` — but nine of nine levels
+     * author `grass: 0`, so the product is zero whatever the slider says and
+     * the control could not move anything. That zero is a design call the
+     * player made four times over ("delete grass from any level whose ground is
+     * snow, ice, sand or metal"), and every ground the roster ships is snow,
+     * sand, basalt, ash, red dust, bog or deck plate. The multiplier stays
+     * because the machinery behind it is real and proved (ground-cover); what
+     * is gone is the row on the options screen that promised the player a
+     * choice with nothing at the other end of it. `controls.mjs` excuses
+     * `grassScale` from needing a control only while no level grows a field,
+     * so the day one does, the check asks for this line back. */
     this._slider('opt-particles', 'particleScale', v => `${Math.round(v * 100)}%`,
       // Emission is re-read from the settings every time the tier is applied,
       // and applyQuality is the one seam that does it, so the existing hook is
