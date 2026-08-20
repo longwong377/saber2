@@ -767,6 +767,15 @@ export const HILT_ANCHOR = HILT;
 export const GRIP_BORE = new THREE.Vector3(0, 0.065, 0.030);
 
 /**
+ * HOW FAR THE WRIST LEANS OFF `-Y` — `atan2(bore.z, bore.y)`, 24.8°.
+ *
+ * Derived from GRIP_BORE and never typed, because it IS GRIP_BORE seen from
+ * the other end: move the bore and this follows. See handPoseOnHilt, where it
+ * is the whole of the correction.
+ */
+const BORE_LEAD = Math.atan2(GRIP_BORE.z, GRIP_BORE.y);
+
+/**
  * THE HAND'S WORLD ORIENTATION, GIVEN THE HILT'S — and where the arm is.
  *
  * One axis is forced and one is free, and getting the free one wrong is what
@@ -830,7 +839,48 @@ export function handPoseOnHilt(side, hiltQuat, toward, outQuat, outWrist, handSc
     ok = _hp3.lengthSq() > 1e-6;
   }
   if (ok) {
-    const y = _hp3.normalize().applyAxisAngle(x, GRIP_TWIST);
+    /**
+     * ── AND THE BORE'S OWN LEAN IS TAKEN OFF, WHICH IS THE FOURTH REPORT OF
+     *    THE SAME THING AND THE FIRST TIME IT HAS BEEN A NUMBER.
+     *
+     * "the orientation is still janky af like i think the knuckles are facing
+     *  out on both like that's not how you would hold a saber in 1 or even 2
+     *  hands like you keep missing this over and over that's not how human
+     *  hands contort"
+     *
+     * `toward` has always been documented as the direction the ARM arrives
+     * from, and the wrist has never actually landed opposite it. The wrist is
+     * one BORE offset back from the axis — `-(0.065·Y + 0.030·Z)` — and that
+     * vector is not `-Y`: it leans 24.8° toward the back of the hand. Compose
+     * that with `GRIP_TWIST`'s 35° and the wrist comes out 59.8° round the
+     * shaft from where the caller asked for it.
+     *
+     * A CONSTANT BIAS ON ONE HAND IS INVISIBLE; ON TWO IT IS THE DEFECT. The
+     * turn is taken about the hand's own X, and X is the THUMB axis, which
+     * points opposite ways on the two hands — so the bias rolls the right hand
+     * one way round the shaft and the left hand the other, 119.6° apart.
+     * Measured on the shipped tree with `tools/_palm.mjs`, in both views:
+     *
+     *     third person   the two palms agree to −1.00
+     *     first person   the two palms agree to −0.96
+     *
+     * Two hands on one hilt with their palms facing opposite ways round it.
+     * That is not a grip a body can make, and it is exactly what the player
+     * describes: whichever hand you look at, you are looking at the back of it.
+     *
+     * The cure is one rotation and it is DERIVED from `GRIP_BORE` rather than
+     * swept: turn `y` back by `atan2(bore.z, bore.y)` so that after the bore
+     * offset is applied the wrist lands exactly opposite `toward`. Then the
+     * two hands are treated identically, each one's wrist goes to its own
+     * arm's side of the shaft, and both palms come round onto the metal.
+     *
+     * (`FP_TUNE.roll` was 60° and is now 0. It was found by rendering three
+     * candidates and picking the one where "four fingers wrap the grip" — i.e.
+     * a sweep that had discovered 59.8° of bias empirically, on one hand, and
+     * cancelled it there. That is why the leading hand looked right and the
+     * off hand never did.)
+     */
+    const y = _hp3.normalize().applyAxisAngle(x, GRIP_TWIST - BORE_LEAD);
     const z = _hp4.crossVectors(x, y).normalize();
     _hpM.makeBasis(x, y, z);
     outQuat.setFromRotationMatrix(_hpM);
@@ -1182,7 +1232,7 @@ const FP_HAND_GAP = 0.065;
  * An object rather than a constant so a render can sweep it without an edit:
  * `tools/shot.mjs --pose` sets the value it is testing.
  */
-export const FP_TUNE = { roll: 60 * Math.PI / 180 };
+export const FP_TUNE = { roll: 0, offRoll: 0 };
 export function fpGripOn(saber) {
   const lo = saber?.hiltFloor;
   return typeof lo === 'number' && Number.isFinite(lo) ? lo + FIST_CLEAR : GRIP_AT.FP;
@@ -2898,13 +2948,15 @@ export class Player {
     if (!S.designating) {
       for (const d of DIRS) {
         if (!input.actHit(DIR_ACTION[d])) continue;
-        const before = S.entry.length;
-        const word = S.wordAt(ctx, before);
+        const word = S.wordAt(ctx, S.entry.length);
         const out = S.feed(d, ctx);
-        // Spoken only for a letter that LANDED. A wrong direction is a failed
-        // code and gets the refusal sound, not another word of a call that is
-        // no longer being made.
-        if (out !== false && S.entry.length !== before || out) this._sayCall(word);
+        /* SPOKEN ONLY FOR A LETTER THAT LANDED, and `false` is the one return
+         * that means it did not: a direction that leads nowhere, or a code
+         * completed onto a cooldown or an empty Force pool. Both get the
+         * refusal sound instead — a word of a call that is not being made is
+         * the player's own mouth lying to them. `null` (still spelling) and
+         * the row (finished) are both letters that landed. */
+        if (out !== false) this._sayCall(word);
       }
     }
     /* The arm swaps from the comm to the designator on the frame the phase
@@ -4589,8 +4641,10 @@ export class Player {
        * that is no less true of the left arm. Mirroring keeps both fists
        * coming up under the shaft from their own side instead of one of them
        * reaching over the top. */
-      if (fp) _v10.set(-FP_GRIP_SIDE, 1, 0).normalize().applyQuaternion(this.camera.aimQuat);
-      else _v10.subVectors(gripL, rig.worldPos('armL', _v9));
+      if (fp) {
+        _v10.set(FP_GRIP_SIDE, 1, 0).normalize().applyQuaternion(this.camera.aimQuat)
+          .applyAxisAngle(_v9.set(0, 1, 0).applyQuaternion(_q1), FP_TUNE.roll + FP_TUNE.offRoll);
+      } else _v10.subVectors(gripL, rig.worldPos('armL', _v9));
       handPoseOnHilt('L', _q1, _v10, _q3, _v9, hs);
       const wristL = _v8.copy(gripL).add(_v9);
       const fwd = _v4.set(0, 0, -1).applyQuaternion(this.camera.aimQuat);

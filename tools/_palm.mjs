@@ -65,7 +65,37 @@ for (const [bone, side] of [['handR', 'R'], ['handL', 'L']]) {
     `fingers out ${(sign * fingers.dot(camRight)).toFixed(2)}  up ${fingers.dot(camUp).toFixed(2)}  `
     + `eye ${fingers.dot(camEye).toFixed(2)}`]);
 }
+/* ── AND THE ONE THAT SETTLES "that's not how human hands contort" ──────
+ * Two hands on one shaft is a geometric claim with two parts: each palm faces
+ * the shaft, and the two hands wrap it the SAME way round. Both are dots, and
+ * neither had ever been taken. */
+const axis = new THREE.Vector3(0, 1, 0).applyQuaternion(
+  p.saber.root.getWorldQuaternion(new THREE.Quaternion()));
+const hiltAt = p.saber.root.getWorldPosition(new THREE.Vector3());
+const grip = [];
+for (const [bone, side] of [['handR', 'R'], ['handL', 'L']]) {
+  const b = p.rig.get(bone);
+  if (!b) continue;
+  const wp = b.obj.getWorldPosition(new THREE.Vector3());
+  const hq = b.obj.getWorldQuaternion(new THREE.Quaternion());
+  const palm = new THREE.Vector3(0, 0, 1).applyQuaternion(hq);
+  const knuck = new THREE.Vector3(0, 1, 0).applyQuaternion(hq);
+  // the perpendicular from the wrist onto the hilt's axis
+  const d = wp.clone().sub(hiltAt);
+  const toShaft = d.clone().addScaledVector(axis, -d.dot(axis)).negate();
+  const r = toShaft.length();
+  toShaft.normalize();
+  grip.push([side, palm.dot(toShaft), knuck.dot(toShaft), r, palm.clone(), knuck.clone()]);
+}
 console.log(`\n  ${FP ? 'FIRST' : 'THIRD'} PERSON, hands=${process.env.PALM_HANDS || 'one'}`);
+console.log('   palm·(wrist→shaft)   knuckles·(wrist→shaft)   wrist off the axis');
+for (const [side, pd, kd, r] of grip) {
+  console.log(`   ${side}   ${pd.toFixed(2).padStart(6)}              ${kd.toFixed(2).padStart(6)}            ${(r * 1000).toFixed(0)} mm`);
+}
+if (grip.length === 2) {
+  console.log(`   the two palms agree to ${grip[0][4].dot(grip[1][4]).toFixed(2)}, `
+    + `the two knuckle axes to ${grip[0][5].dot(grip[1][5]).toFixed(2)}`);
+}
 for (const r of rows) console.log('   ' + r.join('\n     '));
 console.log();
 world.unload();

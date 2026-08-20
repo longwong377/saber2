@@ -5325,18 +5325,37 @@ export class Enemy {
        *   and it flips at 2.5 s so a body that picked the wrong way round a
        *   room eventually tries the other.
        */
+      /**
+       * …AND A WISH SQUARE INTO A FACE SURVIVED NEITHER TERM.
+       *
+       * The slide REMOVES the into-wall component, and a body walking straight
+       * at a flat face has no other component: the wish came out (0, 0, 0).
+       * That is not "walk along the wall", it is stop — and it then disabled
+       * the COMMIT term twice over, because the lateral below is derived from
+       * the wish that the slide had just emptied, and `_stuckT` (five hundred
+       * lines down) only counts while `wish.lengthSq() > 0.25`. So a body
+       * pressed exactly square into geometry could never be stuck by its own
+       * measure and could never swing out of it.
+       *
+       * Measured on Geonosis with a real army: a broken trooper walled against
+       * a spire on the way back to its commander stood motionless for 6.6 s
+       * with `wish` at (-0.00, 0.00) and `_wallT` alight the whole time.
+       *
+       * The lateral is captured BEFORE the slide, and used as the wish outright
+       * when the slide leaves nothing behind — which is the sentence the slide's
+       * own note already makes: along the face, not into it.
+       */
+      _v7.set(-this.wish.z, 0, this.wish.x).multiplyScalar(this.strafeDir || 1);
       if (this._wallT > 0 && this._wallN.lengthSq() > 1e-6) {
         _v6.copy(this._wallN).setY(0);
         if (_v6.lengthSq() > 1e-6) {
           _v6.normalize();
           const into = this.wish.dot(_v6);
           if (into < 0) this.wish.addScaledVector(_v6, -into);
+          if (this.wish.lengthSq() < 0.04 && _v7.lengthSq() > 1e-6) this.wish.copy(_v7);
         }
       }
-      if (this._stuckT > 0.5) {
-        _v6.set(-this.wish.z, 0, this.wish.x).multiplyScalar(this.strafeDir || 1);
-        this.wish.addScaledVector(_v6, 1.0);
-      }
+      if (this._stuckT > 0.5) this.wish.addScaledVector(_v7, 1.0);
       if (this.wish.lengthSq() > 1e-6) this.wish.normalize();
       _v1.copy(this.wish).multiplyScalar(speed);
       // Nobody backpedals as fast as they run. Only the component pointing AWAY
@@ -5526,7 +5545,18 @@ export class Enemy {
       this.animator.setFacing(this.facing);
       this.animator.update(dt, {
         position: this.position, facing: this.facing, velocity: this.velocity,
-        grounded: this.grounded, groundAt, crouch: 0,
+        /**
+         * AND THE CROUCH IS NO LONGER A HARD ZERO.
+         *
+         * `Rig.update` has always taken this float — it drops the hip to 0.68
+         * of standing and leans the spine into it — and every enemy in the game
+         * handed it a literal `0`, so the one pose that says "this man has gone
+         * to ground" was built, tested by `character-gait.mjs`, and unreachable.
+         * `CommandDirector.steer` is the writer: a frightened trooper kneeling
+         * behind a rock and a steady one taking a knee at his post are both
+         * this number. Anything without a writer still reads exactly 0.
+         */
+        grounded: this.grounded, groundAt, crouch: clamp(this.crouch || 0, 0, 1),
         accelForward: clamp(this.velocity.length() / 5, 0, 1),
       });
       this._poseArms(dt, ctx);

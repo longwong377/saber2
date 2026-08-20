@@ -406,6 +406,218 @@ export async function run({ check, assert }) {
   });
 
   /**
+   * THE SAME QUESTION, ASKED OF THE ONE SYSTEM THAT MAKES NEW COLLIDERS WHILE
+   * YOU PLAY — AND THE CLAUSE ABOVE COULD NOT SEE IT.
+   *
+   * "Every time they fall they create like this invisible wall that you can't
+   * get through, like they end up being everywhere."
+   *
+   * That is precisely the defect the check above this one exists for, and it
+   * was green throughout, because of what it walks: `world.props`, for a body
+   * with a `hull` or `compound` SHAPE and a mesh with a position attribute —
+   * i.e. a dynamic object built by Props.js, measured once, on a level as it is
+   * DRESSED. A forest is none of those things. It is three InstancedMeshes over
+   * a flat array; a felled trunk is a matrix write and a STATIC BOX; and none
+   * of it exists until the player cuts something down. Every term in the older
+   * clause misses it, and the shape of the miss is worth stating because it
+   * generalises: *a check that only measures the level as built cannot see a
+   * collider the game creates while it runs.*
+   *
+   * So this one plays. It boots the wood, fells trees the way a player does,
+   * and then asks the two questions the older clause asks, of the static boxes
+   * rather than of the props:
+   *
+   *   IS THERE ANYTHING DRAWN THERE? The authority is the INSTANCE MATRIX —
+   *   what is actually on screen for that tree — and not this file's idea of
+   *   where a log ought to be. A log that has become a `Prop`, or one the blade
+   *   has cut to pieces, has its instance collapsed to zero scale: a box under
+   *   one of those is a wall with nothing in it. And the ground counts too: the
+   *   fall is a rod pivoting on its stump and the terrain does not stay level
+   *   under it, so a trunk can come to rest inside a hillside — drawn, and
+   *   buried, and still solid. Measured before the fix, over 83 logs on the
+   *   wood: a fifth of the average log's length entirely underground, 34 of the
+   *   83 with some part of themselves buried, and one 90% of the way into a
+   *   slope with its deep end 13.2 m under.
+   *
+   *   AND DO THEY GO AWAY? The standing trunks have carried a collider ring
+   *   round each player since the day the wood shipped — 11 m, rebuilt four
+   *   times a second, because `physics.staticBoxes` is walked LINEARLY once per
+   *   body per frame. The logs got nothing: `_land` laid a box and no code path
+   *   ever removed one. Measured, one player walking a circuit of the wood and
+   *   cutting as they went: 162 trees felled, 147 permanent boxes, all of them
+   *   still there with the player 600 m away — "they end up being everywhere",
+   *   and 10.9 ms a frame of somebody else's problem when it is 208 of them.
+   */
+  check('physicality: felling a tree leaves no collider the player cannot see', async () => {
+    const { bootWorld, idleInput, run } = await import('./_coop.mjs');
+    const THREE = (await import('three')).default ?? (await import('three'));
+    /* The wood is the level built out of trees; it is named once, and asserted
+     * to exist, for the reason HANDOFF §2.6 gives about `loadLevel` quietly
+     * substituting the first level for a name it does not know. */
+    const FIELD = 'wood';
+    assert(LEVELS[FIELD], `${FIELD} is not a level any more — this check is about felling trees`);
+    const { world } = await bootWorld({ level: FIELD, settings: { level: FIELD } });
+    const input = idleInput();
+    run(world, 1, input);
+    const f = world.forest;
+    assert(f && f.count > 100, `the wood planted ${f ? f.count : 0} trees`);
+    const p = world.player;
+    const D = f.data, N = 15;                      // F.N, the record stride
+    const [X, Z, STATE] = [0, 1, 6];
+
+    /* THIRTY TREES, CUT THE WAY A PLAYER CUTS THEM: walk to the nearest
+     * standing trunk and fell it away from yourself. Away, because a trunk that
+     * lands on the player kills them and a dead player has no collider ring at
+     * all — which would hide exactly the defect this is looking for. The health
+     * bar is topped up between cuts for the same reason and for no other: a
+     * chain can still reach you, and what is under test here is not the damage.
+     */
+    /* THE BASELINE IS TAKEN WITH THE PLAYER OFF THE FIELD, and that is the
+     * whole sharpness of clause two. Counted where they are standing it would
+     * include the 53-box ring the wood carries round them, which is enough
+     * slack to hide fifty leaked logs. What the level weighs with nobody near
+     * it is a number that cannot move for any legitimate reason. */
+    const move = (x, z) => {
+      p.position.set(x, world.terrain.height(x, z) + 0.05, z);
+      p.velocity.set(0, 0, 0);
+      if (p.body) p.body.position.set(x, p.position.y + 0.9, z);
+    };
+    move(400, 400);
+    run(world, 2, input);
+    const bare = world.physics.staticBoxes.length;
+
+    let cuts = 0, peak = 0;
+    for (let n = 0; n < 30; n++) {
+      const a = (n / 30) * Math.PI * 2, rad = 12 + n * 1.6;
+      move(Math.cos(a) * rad, Math.sin(a) * rad);
+      p.hp = p.maxHp;
+      run(world, 0.35, input);
+      let best = -1, bd = 1e9;
+      for (let i = 0; i < f.count; i++) {
+        if (D[i * N + STATE] !== 0) continue;
+        const dx = D[i * N + X] - p.position.x, dz = D[i * N + Z] - p.position.z;
+        const d = dx * dx + dz * dz;
+        if (d < bd) { bd = d; best = i; }
+      }
+      if (best < 0) break;
+      const dx = D[best * N + X] - p.position.x, dz = D[best * N + Z] - p.position.z;
+      const m = Math.hypot(dx, dz) || 1;
+      f.fell(best, dx / m, dz / m, 0.6);
+      cuts++;
+      run(world, 6, input);
+      peak = Math.max(peak, world.physics.staticBoxes.length);
+    }
+    let down = 0;
+    for (let i = 0; i < f.count; i++) if (D[i * N + STATE] === 2) down++;
+    assert(down >= 20, `${cuts} cuts brought down only ${down} trees; there is nothing to measure`);
+
+    /* CLAUSE ONE: every collider the felling laid is inside something drawn.
+     * The instance matrix is the authority — it is what the player sees. */
+    const m4 = new THREE.Matrix4(), pos = new THREE.Vector3();
+    const quat = new THREE.Quaternion(), scale = new THREE.Vector3();
+    const axis = new THREE.Vector3(), foot = new THREE.Vector3(), tip = new THREE.Vector3();
+    const blind = [];
+    let boxes = 0, worstBuried = Infinity, worstStray = 0;
+    for (const [i, list] of f.logs) {
+      for (const box of (Array.isArray(list) ? list : [list])) {
+        boxes++;
+        f.trunkMesh.getMatrixAt(i, m4);
+        m4.decompose(pos, quat, scale);
+        if (scale.y < 0.02) {
+          blind.push(`a box stands on log ${i} whose instance is drawn at zero scale — `
+            + 'the log is a Prop or the blade cut it up, and nothing is there');
+          continue;
+        }
+        foot.copy(pos);
+        axis.set(0, 1, 0).applyQuaternion(quat);
+        tip.copy(foot).addScaledVector(axis, scale.y);
+        // …the box is ON the drawn trunk
+        const off = distPointSeg(box.center, foot, tip);
+        worstStray = Math.max(worstStray, off);
+        if (off > Math.max(0.6, box.halfExtents.y + 0.4)) {
+          blind.push(`a box for log ${i} stands ${off.toFixed(2)} m off the trunk that is drawn there`);
+          continue;
+        }
+        // …and the ground is not over the top of it
+        const g = world.terrain.height(box.center.x, box.center.z);
+        const showing = (box.center.y + box.halfExtents.y) - g;
+        worstBuried = Math.min(worstBuried, showing);
+        if (showing <= 0) {
+          blind.push(`a box on log ${i} is ${(-showing).toFixed(2)} m under the ground at `
+            + `(${box.center.x.toFixed(1)}, ${box.center.z.toFixed(1)}) — solid, and nothing to see`);
+        }
+      }
+    }
+    assert(blind.length === 0,
+      `${blind.length} of ${boxes} colliders left by ${down} felled trees are walls with nothing in them:\n    `
+      + blind.slice(0, 8).join('\n    '));
+
+    /* CLAUSE TWO: AND THEY ARE NOT THERE FOR THE REST OF THE SESSION.
+     *
+     * Walk four hundred metres off — further than the wood is wide — and count
+     * what is left standing on the felled trunks. Counted off the PHYSICS ARRAY
+     * and attributed by GEOMETRY rather than by asking the forest for its own
+     * books or reading a tag the code under test writes: a box the forest has
+     * forgotten about is exactly the kind this is looking for, and it would not
+     * be in the map and would not carry the label.
+     *
+     * The raw total cannot be the assertion, and that is worth recording:
+     * felling trees legitimately ADDS colliders elsewhere — a trunk landing on
+     * a destructible piece fractures it, and the rubble is drawn where its
+     * chunks are. Measured, nine such boxes across thirty cuts. So the clause
+     * names what it means: nothing may stand on a trunk nobody is near. */
+    move(400, 400);
+    run(world, 2, input);
+    const after = world.physics.staticBoxes.length;
+    const onLogs = [];
+    for (const box of world.physics.staticBoxes) {
+      /* SHAPED LIKE A LOG, and the term is here because the false positive is
+       * real: a trunk that lands on a destructible piece fractures it, and the
+       * rubble is a handful of 30 cm cubes lying under the very trunk this is
+       * scanning along. Those are drawn where they are and belong there. A log
+       * collider is a rod — half a trunk long down one axis and a trunk's
+       * radius on the other two — so the ratio tells them apart without either
+       * one having to be labelled. */
+      const he = box.halfExtents;
+      const long = Math.max(he.x, he.y, he.z), thin = Math.min(he.x, he.y, he.z);
+      if (long < 0.6 || long < thin * 2) continue;
+      for (let i = 0; i < f.count; i++) {
+        if (D[i * N + STATE] !== 2) continue;
+        const dx = D[i * N + X] - box.center.x, dz = D[i * N + Z] - box.center.z;
+        if (dx * dx + dz * dz > 40 * 40) continue;      // no trunk is 40 m long
+        f.trunkMesh.getMatrixAt(i, m4);
+        m4.decompose(pos, quat, scale);
+        foot.copy(pos);
+        axis.set(0, 1, 0).applyQuaternion(quat);
+        tip.copy(foot).addScaledVector(axis, Math.max(scale.y, 0.01));
+        if (distPointSeg(box.center, foot, tip) < 1.0) { onLogs.push(i); break; }
+      }
+    }
+    assert(onLogs.length === 0 && f.logs.size === 0 && f.live.size === 0,
+      `${down} felled trees left ${onLogs.length} static boxes lying on trunks with the player 400 m `
+      + `away (the forest owns up to ${f.live.size} standing and ${f.logs.size} down; the level `
+      + `weighs ${after} boxes against ${bare} with nobody in the wood). Every near-list in the `
+      + 'engine walks that array linearly once per body per frame, and a wood you have cleared '
+      + 'should not cost more than one you have not');
+    world.unload?.();
+    return `${cuts} cuts, ${down} trees down: ${boxes} log colliders at the end of the walk, `
+      + `peak ${peak} static boxes in play against ${bare} with nobody in the wood, ${after} after `
+      + `and none of them on a trunk; `
+      + `worst box-to-trunk offset ${worstStray.toFixed(2)} m, least of a log showing above the ground `
+      + `${(worstBuried === Infinity ? 0 : worstBuried).toFixed(2)} m`;
+  });
+
+  /** Distance from a point to a segment — the same primitive Trees.js sweeps with. */
+  function distPointSeg(pt, a, b) {
+    const ux = b.x - a.x, uy = b.y - a.y, uz = b.z - a.z;
+    const L = ux * ux + uy * uy + uz * uz;
+    let t = L > 1e-9 ? ((pt.x - a.x) * ux + (pt.y - a.y) * uy + (pt.z - a.z) * uz) / L : 0;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const px = pt.x - (a.x + ux * t), py = pt.y - (a.y + uy * t), pz = pt.z - (a.z + uz * t);
+    return Math.sqrt(px * px + py * py + pz * pz);
+  }
+
+  /**
    * THE QUESTION THIS FILE NEVER ASKED: DO THESE TWO COLLIDERS SEE EACH OTHER?
    *
    * Everything above asks "does this thing have a collider". A collider that

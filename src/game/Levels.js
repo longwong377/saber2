@@ -3494,7 +3494,7 @@ export const LEVELS = {
           tone: 0.82 + rng() * 0.36,
         });
       });
-      attachForest(world, { seed: 5411, crush: 46 }).plant(trees, {
+      attachForest(world, { seed: 5411 }).plant(trees, {
         materials: { bark: M.wood, leaf: M.patina, core: M.duracreteDark },
       });
 

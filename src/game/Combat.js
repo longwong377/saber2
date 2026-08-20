@@ -570,6 +570,39 @@ export function cutNeed(cap) {
   return tough < Infinity ? tough : Infinity;
 }
 
+/**
+ * WHAT A MOVING THING DOES WHEN IT ARRIVES — ONE RULE, THREE CALLERS.
+ *
+ * `Player._updateHurled` has priced a thrown crate and a thrown body as
+ * `mass · v² · k`, clamped, since the Force could throw anything: kinetic
+ * energy in the currency the rest of the game bills in, with a floor so a slow
+ * arrival is never a nothing and a ceiling so a pillar cannot one-shot a boss.
+ * `_sweepHeld` uses the same shape at a tenth of the rate for a body swung
+ * rather than thrown.
+ *
+ * A FALLING TREE WAS THE ONE THING THAT DID NOT. `Forest._sweep` billed a flat
+ * 46 to anything under the trunk regardless of the trunk's size or how fast the
+ * wood was travelling when it got there, which is note #31: "trees instakill
+ * you when they fall instead of doing damage relative to their size or speed."
+ * Two of those flat hits is a dead player, from a sapling brushing past at
+ * walking pace as readily as from twenty metres of hardwood landing square.
+ *
+ * The arithmetic moved here rather than being copied a third time, for the
+ * reason HANDOFF §2.4 gives: an instrument — or a second call site — that
+ * RESTATES a rule eventually disagrees with it. Retune `k` and every mass that
+ * arrives anywhere in the game moves together.
+ *
+ * @param mass   kilogrammes of whatever arrived.
+ * @param speed  metres per second it was travelling when it did.
+ * @param k      damage per kg·(m/s)². 0.0006 is the thrown-crate rate.
+ * @param floor  a hit that lands at all is never a nothing.
+ * @param cap    …and never the whole of anybody's health bar.
+ */
+export function impactDamage(mass, speed, { k = 0.0006, floor = 8, cap = 140 } = {}) {
+  const e = Math.max(0, mass) * speed * speed * k;
+  return Math.min(cap, Math.max(floor, e));
+}
+
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  Catch and throw                                                       */
 /* ══════════════════════════════════════════════════════════════════════ */

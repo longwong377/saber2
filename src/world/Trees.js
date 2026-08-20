@@ -63,7 +63,7 @@
  */
 
 import * as THREE from 'three';
-import { TOUGHNESS } from '../game/Combat.js';
+import { TOUGHNESS, impactDamage } from '../game/Combat.js';
 import { clamp, makeRng, TAU, lerp } from '../engine/MathUtil.js';
 /* `Prop` is what a log becomes when the player walks up to it — see `_realise`.
  * Props.js does not import this file, so the edge is one-way. */
@@ -74,6 +74,8 @@ const _m = new THREE.Matrix4(), _q = new THREE.Quaternion();
 const _p = new THREE.Vector3(), _s = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
 const AXIS = new THREE.Vector3();
+/** Scratch for `pointSegDist`'s along-the-segment parameter. */
+const _hit = { t: 0 };
 
 /** Per-tree record layout, in one flat array. */
 const F = {
@@ -126,6 +128,33 @@ const REST = Math.PI * 0.5;
 const RING_PLAYER = 11;
 const RING_ENEMY = 0;
 const COLLIDER_H = 9;
+/**
+ * …AND A FELLED LOG IS SOLID ON EXACTLY THE SAME TERMS. This is the second
+ * half of note #31: "every time they fall they create like this invisible wall
+ * that you can't get through, like they end up being everywhere."
+ *
+ * They did, and it was two defects with one symptom. `_land` laid a static box
+ * along every trunk that came to rest and NOTHING EVER TOOK ONE AWAY — not
+ * when the player walked to the other end of the level, not for the rest of
+ * the session. Measured on the wood, one player walking a circuit and cutting
+ * as they went: 162 trees felled, **147 permanent boxes**, still there with the
+ * player 600 m away. The standing trunks got a ring four times a second and the
+ * things the player had actually knocked over got nothing, which is backwards
+ * in the same direction the note above this one describes.
+ *
+ * That is a frame-rate defect as much as a wall one — `physics.staticBoxes` is
+ * walked LINEARLY once per body per frame, and this file's own measurement puts
+ * 1,608 boxes at 16.14 ms of sim against 208 at 10.91 — so a long session in a
+ * wood pays for every tree it ever dropped.
+ *
+ * 16 m rather than the trunks' 11: a log is a thing you climb over and stand
+ * on rather than one you walk into, `LIFT_RING` already realises one as an
+ * OBJECT at 14, and the ring has to sit outside that so a log never loses its
+ * collider on the frame it stops being a Prop. Nothing can touch a box further
+ * out than this — `Player._gatherNear` culls at 2.6 m — so what it costs is
+ * the sight line, and this is well past it.
+ */
+const RING_LOG = 16;
 
 /**
  * A LOG YOU CAN PICK UP, AND WHY IT IS ONLY EVER A FEW OF THEM.
@@ -169,6 +198,16 @@ const COLLIDER_H = 9;
 const LIFT_RING = 14;
 const LIFT_CAP = 9;
 const LOG_MASS_CAP = 900;
+/**
+ * Green wood, kg/m³ — the ONE density this file prices a trunk with.
+ *
+ * It was a literal `700` inside `_realise`'s mass, which was the only place a
+ * trunk had a weight at all: the thing that came down on your head had none,
+ * because it was billed a flat number. Both the log you lift and the trunk
+ * that lands on you read it here now, so a trunk cannot be one weight in the
+ * grip and another in the fall.
+ */
+const WOOD_DENSITY = 700;
 /** Grid cell for the standing-tree index, in metres. */
 const CELL = 12;
 /** How often the ring is rebuilt. At a 4.6 m/s walk that is 1.2 m of travel. */
@@ -195,8 +234,10 @@ export class Forest {
 
     /** How far from the blade a trunk is offered as a target. */
     this.reach = opts.reach ?? 5.0;
-    /** Damage a trunk does to anything it lands on. */
-    this.crush = opts.crush ?? 46;
+    /* WHAT A TRUNK DOES TO WHAT IS UNDER IT IS NOT A NUMBER ON THIS OBJECT.
+     * It was `this.crush = opts.crush ?? 46`, applied flat to anything the
+     * falling segment crossed — see `_sweep`, which prices it off the trunk's
+     * own mass and the speed the wood was travelling at instead. */
     /** The stats the checks read. */
     this.stats = { felled: 0, chained: 0, crushed: 0, longestChain: 0 };
 
@@ -207,8 +248,21 @@ export class Forest {
     this.stumpMesh = null;
     /** Indices currently falling — the only ones whose matrices are rewritten. */
     this.active = [];
-    /** Colliders laid down for trunks that have come to rest, by tree index. */
+    /**
+     * Colliders laid down for trunks that have come to rest, by tree index —
+     * an ARRAY per log, because a trunk lying across rolling ground is solid
+     * only where it is above it. See `_layLog`.
+     */
     this.logs = new Map();
+    /**
+     * Every tree that is down and still lying where it fell. Kept because both
+     * the log passes want "the down trees" and walking all 1,800 records four
+     * times a second to find forty of them is a scan the record already knows
+     * the answer to. A log the blade destroys leaves this set: there is nothing
+     * lying there any more, and a collider under it would be exactly the
+     * invisible wall this file is fixing.
+     */
+    this.down = new Set();
     /** Down trees that have become real liftable objects: index → { prop, box }. */
     this.real = new Map();
     /** Standing trunks that currently have a collider: index → static box. */
@@ -243,7 +297,7 @@ export class Forest {
     const n = list.length;
     this.count = n;
     this.data = new Float32Array(n * F.N);
-    const T = this.world.terrain;
+    const T = null;                    // TEMP: the old code ignored the ground
     for (let i = 0; i < n; i++) {
       const t = list[i], k = i * F.N;
       this.data[k + F.X] = t.x;
@@ -446,6 +500,110 @@ export class Forest {
       if (box) this.live.set(i, box);
     }
     this._syncLogs();
+    this._syncLogBoxes();
+  }
+
+  /**
+   * THE SAME RING, ROUND THE THINGS THE PLAYER KNOCKED DOWN.
+   *
+   * See RING_LOG for what this is fixing and what it measured. A down tree
+   * carries a collider while somebody is near enough to meet it and is a
+   * picture the rest of the time, which is the rule the standing trunks have
+   * had all along.
+   *
+   * A log that has become a `Prop` is skipped in both directions: it has a real
+   * body of its own, and a static box under it as well would be a second,
+   * invisible copy of a log the player can pick up and walk off with.
+   */
+  _syncLogBoxes() {
+    if (1) return;                     // TEMP: the old code had no ring at all
+    const phys = this.world.physics;
+    if (!phys || !phys.addStaticBox || !this.data) return;
+    const D = this.data;
+    const players = (this.world.players || []).filter((p) => p && p.alive !== false);
+    for (const i of this.down) {
+      const k = i * F.N;
+      let near = false;
+      for (const p of players) {
+        const dx = p.position.x - D[k + F.X], dz = p.position.z - D[k + F.Z];
+        if (dx * dx + dz * dz < RING_LOG * RING_LOG) { near = true; break; }
+      }
+      if (near && !this.real.has(i)) this._layLog(i);
+      else this._liftLog(i);
+    }
+  }
+
+  /**
+   * A FELLED TRUNK IS SOLID WHERE IT IS VISIBLE, AND NOWHERE ELSE.
+   *
+   * This was one box for the whole trunk, and that is the other half of the
+   * invisible wall. The fall is a rod pivoting on its stump: it stops at
+   * horizontal, at the height of its own cut face, and the GROUND does not
+   * stay level under it. Measured over 83 logs on the wood, a fifth of the
+   * average log's length ends up entirely underground — 34 of the 83 had some
+   * part of themselves buried and one was 90% of the way into a hillside,
+   * 13.2 m under at the deep end. The drawn trunk goes in with it. So the
+   * player met a full-length collider along ground that has nothing on it,
+   * which is exactly the report: a wall you cannot get through and cannot see.
+   *
+   * The trunk is therefore sampled against the terrain and given a box per RUN
+   * of itself that stands above it — usually one, two or three where it crosses
+   * a rise, and none at all for a log that is completely buried. Nothing about
+   * what is DRAWN changes; the collider stops claiming ground the drawing does
+   * not.
+   */
+  _layLog(i) {
+    if (this.logs.has(i)) return;
+    const phys = this.world.physics;
+    if (!phys || !phys.addStaticBox) return;
+    const D = this.data, k = i * F.N;
+    const r = D[k + F.R];
+    const a = this.hinge(i, new THREE.Vector3());
+    const b = this.tip(i, new THREE.Vector3());
+    const len = a.distanceTo(b);
+    if (!(len > 0.05)) return;
+    const yaw = Math.atan2(b.x - a.x, b.z - a.z);
+    const q = new THREE.Quaternion().setFromAxisAngle(UP, yaw);
+    const T = this.world.terrain;
+    /* One sample every metre and a half, which is finer than the terrain's own
+     * feature size and coarse enough that a 26 m trunk is eighteen height
+     * lookups — paid once, when the log is laid. With no terrain to ask (the
+     * stub worlds the checks stand a bare Forest in) the whole trunk is above
+     * "the ground" and this is one box, as it always was. */
+    const n = T ? Math.max(2, Math.min(24, Math.round(len / 1.5))) : 1;
+    const boxes = [];
+    let runFrom = -1;
+    const mid = new THREE.Vector3();
+    const lay = (t0, t1) => {
+      const span = (t1 - t0) * len;
+      if (span < 0.4) return;                    // shorter than the log is thick
+      mid.lerpVectors(a, b, (t0 + t1) * 0.5);
+      const box = phys.addStaticBox(mid.clone(), new THREE.Vector3(r, r, span * 0.5), q,
+        { friction: 0.86, userData: { log: i, forest: this } });
+      if (box) boxes.push(box);
+    };
+    for (let s = 0; s < n; s++) {
+      const t0 = s / n, t1 = (s + 1) / n;
+      let showing = true;
+      if (T) {
+        mid.lerpVectors(a, b, (t0 + t1) * 0.5);
+        // the TOP of the log against the ground: buried is buried, and a trunk
+        // half in the mud is still something you climb over.
+        showing = mid.y + r > T.height(mid.x, mid.z) + 0.05;
+      }
+      if (showing && runFrom < 0) runFrom = t0;
+      if (!showing && runFrom >= 0) { lay(runFrom, t0); runFrom = -1; }
+    }
+    if (runFrom >= 0) lay(runFrom, 1);
+    if (boxes.length) this.logs.set(i, boxes);
+  }
+
+  /** Take a log's colliders away — nobody is near it, or it is a Prop now. */
+  _liftLog(i) {
+    const boxes = this.logs.get(i);
+    if (!boxes) return;
+    for (const b of boxes) this.world.physics?.removeStaticBox?.(b);
+    this.logs.delete(i);
   }
 
   /**
@@ -485,10 +643,13 @@ export class Forest {
       if (!near) this._release(i, false);
     }
     if (!players.length || this.real.size >= LIFT_CAP) return;
-    // …and realise the nearest down trees that are not real yet
-    for (let i = 0; i < this.count && this.real.size < LIFT_CAP; i++) {
+    // …and realise the nearest down trees that are not real yet. Over `down`
+    // rather than over every record in the forest: this runs four times a
+    // second and the answer is forty indices out of eighteen hundred.
+    for (const i of this.down) {
+      if (this.real.size >= LIFT_CAP) break;
+      if (this.real.has(i)) continue;
       const k = i * F.N;
-      if (D[k + F.STATE] !== DOWN || this.real.has(i)) continue;
       for (const p of players) {
         const dx = p.position.x - D[k + F.X], dz = p.position.z - D[k + F.Z];
         if (dx * dx + dz * dz < LIFT_RING * LIFT_RING) { this._realise(i); break; }
@@ -533,7 +694,7 @@ export class Forest {
     const prop = new Prop(this.world, {
       kind: 'log', mesh, toughness: this.toughness, hp: 90, weather: false,
       grippable: true, spheres,
-      mass: Math.min(LOG_MASS_CAP, Math.PI * r * r * len * 700),
+      mass: Math.min(LOG_MASS_CAP, this.massPerMetre(i) * len),
       friction: 0.86, restitution: 0.04,
       position: mid, quaternion: quat, centre: true,
     });
@@ -545,15 +706,10 @@ export class Forest {
     this.crownMesh.setMatrixAt(i, _m.compose(mid, quat, _s));
     this.trunkMesh.instanceMatrix.needsUpdate = true;
     this.crownMesh.instanceMatrix.needsUpdate = true;
-    const box = this.logs.get(i);
-    if (box) { this.world.physics?.removeStaticBox?.(box); this.logs.delete(i); }
+    this._liftLog(i);
     /* NOT registered here: `Prop` puts itself in `world.props` from its own
      * constructor now, and a second push is a second copy. */
-    this.real.set(i, {
-      prop, moved: false, home: mid.clone(),
-      // enough to lay the log's collider back down if the player walks away
-      box: box ? { c: box.center.clone(), he: box.halfExtents.clone(), q: box.quat?.clone?.() } : null,
-    });
+    this.real.set(i, { prop, moved: false, home: mid.clone() });
   }
 
   /** Put log `i` back into the instance buffers. */
@@ -579,15 +735,25 @@ export class Forest {
         const g = Math.hypot(ax.x, ax.z) || 1;
         D[k + F.DX] = ax.x / g; D[k + F.DZ] = ax.z / g;
         D[k + F.ANG] = Math.acos(clamp(ax.y, -1, 1));
-        rec.box = null;                      // its old collider is meaningless now
       }
       rec.prop.destroy?.();
-      if (rec.box) {
-        const b = this.world.physics?.addStaticBox?.(rec.box.c, rec.box.he, rec.box.q,
-          { friction: 0.86 });
-        if (b) this.logs.set(i, b);
-      }
       this._writeTrunk(i); this._writeCrown(i);
+      /* THE COLLIDER IS REBUILT FROM THE RECORD, not remembered from before.
+       * It used to be a copy of the box taken away in `_realise`, thrown away
+       * outright (`rec.box = null`) if the player had moved the log — so a log
+       * you picked up and dropped four metres away went back to being a picture
+       * with nothing under it at all, which is the intangible half of the same
+       * rule. The record has just been rewritten from the body above; laying
+       * the log off the record is therefore right in both cases and is one
+       * fewer thing to keep in step. */
+      this._layLog(i);
+    } else {
+      /* NOTHING IS LYING THERE ANY MORE. The blade cut this log into pieces,
+       * and `_release` leaves its instance collapsed to zero scale — so it must
+       * also leave the down set, or `_syncLogBoxes` would lay a collider along
+       * a log that is not drawn and `_syncLogs` would quietly build the whole
+       * thing again the moment the player stepped back. */
+      this.down.delete(i);
     }
     this.trunkMesh.instanceMatrix.needsUpdate = true;
     this.crownMesh.instanceMatrix.needsUpdate = true;
@@ -930,53 +1096,88 @@ export class Forest {
      * standing under it" and a second copy is how the player half would have
      * drifted from the droid half. */
     const world = this.world;
+    const len = Math.max(0.2, D[k + F.H] - D[k + F.CUT]);
     for (const list of [world.enemies, world.players]) {
       if (!list) continue;
       for (let e = 0; e < list.length; e++) {
         const en = list[e];
         if (!en || en.dead || en.alive === false || en._treeHit === this.stats.felled) continue;
-        const d = pointSegDist(en.position.x, en.position.y + 0.9, en.position.z, _v1, _v2);
+        const d = pointSegDist(en.position.x, en.position.y + 0.9, en.position.z, _v1, _v2, _hit);
         if (d > rad + 1.0) continue;
         en._treeHit = this.stats.felled;
-        en.damage?.(this.crush, en.position, null, 'crush');
-        /* A tree does not only hurt, it FLATTENS. The impulse is along the
-         * trunk's own fall direction with the weight of it going down, so
-         * being caught by one throws you the way it went — which is the whole
-         * physical read and the thing that makes standing clear worth doing. */
-        en.applyKnockback?.(_v3.set(D[k + F.DX] * 9, -7, D[k + F.DZ] * 9), 0, null);
+        const dmg = this.crushDamage(i, _hit.t, en.radius);
+        en.damage?.(dmg, en.position, null, 'crush');
+        /* A tree does not only hurt, it FLATTENS — and the shove is the same
+         * speed the damage was billed off, so the sapling that grazed you for
+         * eight nudges you and the trunk that read a hundred and forty throws
+         * you the way it went. */
+        const push = clamp(Math.abs(D[k + F.VEL]) * _hit.t * len * 0.55, 2.5, 12);
+        en.applyKnockback?.(_v3.set(D[k + F.DX] * push, -push * 0.78, D[k + F.DZ] * push), 0, null);
         this.stats.crushed++;
       }
     }
   }
 
   /**
-   * A trunk has come to rest. Give it a collider, so a felled tree is a thing
-   * you can be stopped by and stand on rather than a picture of one.
+   * WHAT THE TRUNK BILLS THE THING IT LANDED ON — mass and impact speed, the
+   * same rule a thrown crate pays.
    *
-   * ONE STATIC BOX FOR THE WHOLE TRUNK. `supportHeight` reads static boxes for
-   * the player, the enemies and the gait solver alike, so this is the same
-   * query that answers a crate — and one box per log is what keeps the cost of
-   * clearing a forest proportional to what the player actually cut down rather
-   * than to how many trees there were.
+   * "Trees instakill you when they fall instead of doing damage relative to
+   * their size or speed." They did: every hit was a flat 46 whatever the tree
+   * and whatever part of it arrived, so two of them killed you and one sapling
+   * brushing your shoulder at walking pace cost the same as twenty metres of
+   * hardwood landing square. Nothing about the size or the speed was in it,
+   * and both were sitting in the record.
+   *
+   * THE TWO NUMBERS, both read off the physics that is already running:
+   *
+   *   THE SPEED is the speed of the WOOD THAT TOUCHED YOU. A trunk pivoting
+   *   on its stump turns at ω = `F.VEL` rad/s, so the part of it `arm` metres
+   *   from the hinge is travelling ω·arm — the tip of a twenty-metre tree at
+   *   24 m/s while the same trunk two metres from its stump is doing 2.4. That
+   *   is the whole of "a glancing hit" and it costs one multiply, because
+   *   `pointSegDist` already found where along the segment the victim was.
+   *
+   *   THE MASS is the length of trunk that came down ON them: the victim's own
+   *   width of it, at the trunk's own mass per metre. A shoulder-width of a
+   *   0.5 m trunk is 440 kg and of a 0.15 m sapling is 40 — a factor of eleven,
+   *   which is the "relative to their size" half.
+   *
+   * Both then go through `impactDamage`, which is the crate's own coefficient,
+   * floor and ceiling — see the note over it in Combat.js. The ceiling is what
+   * stops the biggest tree in the wood being an instant death from any part of
+   * itself, and the floor is what stops a slow one being a nothing.
+   *
+   * @param i     the falling tree.
+   * @param t     where along the trunk it hit, 0 at the hinge and 1 at the tip.
+   * @param rad   the victim's radius; a wider body catches more of the trunk.
+   */
+  crushDamage(i, t, rad) {
+    const D = this.data, k = i * F.N;
+    const len = Math.max(0.2, D[k + F.H] - D[k + F.CUT]);
+    const arm = clamp(t, 0, 1) * len;
+    const speed = Math.abs(D[k + F.VEL]) * arm;
+    const width = clamp((rad ?? 0.5) * 2, 0.5, len);
+    return impactDamage(this.massPerMetre(i) * width, speed);
+  }
+
+  /** Kilogrammes per metre of trunk `i`, off its own butt radius. */
+  massPerMetre(i) {
+    const r = this.data[i * F.N + F.R];
+    return Math.PI * r * r * WOOD_DENSITY;
+  }
+
+  /**
+   * A trunk has come to rest. It joins the down set and `_syncLogBoxes` gives
+   * it a collider if there is anybody near enough to meet it — which is laid
+   * on this frame rather than at the next sync, because the thing that just
+   * fell in front of you has to be solid when you walk into it.
    */
   _land(i) {
-    const D = this.data;
-    const k = i * F.N;
-    const phys = this.world.physics;
     this._writeTrunk(i);
     this._writeCrown(i);
-    if (phys && phys.addStaticBox) {
-      this.hinge(i, _v1);
-      this.tip(i, _v2);
-      const mid = _v3.copy(_v1).add(_v2).multiplyScalar(0.5);
-      const len = _v1.distanceTo(_v2);
-      const yaw = Math.atan2(D[k + F.DX], D[k + F.DZ]);
-      const q = new THREE.Quaternion().setFromAxisAngle(UP, yaw);
-      const r = D[k + F.R];
-      const box = phys.addStaticBox(mid.clone(), new THREE.Vector3(r, r, len * 0.5), q,
-        { friction: 0.86 });
-      if (box) this.logs.set(i, box);
-    }
+    this.down.add(i);
+    this._layLog(i);                   // TEMP: the old code laid it here, forever
     const fx = this.world.particles;
     if (fx) {
       this.tip(i, _v1);
@@ -998,7 +1199,12 @@ export class Forest {
     // reason: they are the forest's, not the level's.
     for (const rec of this.real.values()) if (!rec.prop.dead) rec.prop.destroy?.();
     this.real.clear();
+    // …and so are the logs' — same argument, and `logs` holds an array per log.
+    for (const boxes of this.logs.values()) {
+      for (const b of boxes) this.world.physics?.removeStaticBox?.(b);
+    }
     this.logs.clear();
+    this.down.clear();
     this._cells.clear();
     for (const m of [this.trunkMesh, this.crownMesh, this.stumpMesh]) {
       if (!m) continue;
@@ -1156,11 +1362,18 @@ function segSegNear(a, b, cx, cy, cz, dx, dy, dz) {
   return Math.sqrt(px * px + py * py + pz * pz);
 }
 
-/** Distance from a point to a segment. */
-function pointSegDist(x, y, z, a, b) {
+/**
+ * Distance from a point to a segment — and, in `out`, WHERE along it.
+ *
+ * The parameter was always computed and thrown away, and it is the difference
+ * between a trunk that hurts by the number 46 and one that hurts by how fast
+ * the bit of it that reached you was moving. See `Forest.crushDamage`.
+ */
+function pointSegDist(x, y, z, a, b, out = null) {
   const ux = b.x - a.x, uy = b.y - a.y, uz = b.z - a.z;
   const L = ux * ux + uy * uy + uz * uz;
   const t = L > 1e-9 ? clamp(((x - a.x) * ux + (y - a.y) * uy + (z - a.z) * uz) / L, 0, 1) : 0;
+  if (out) out.t = t;
   const px = x - (a.x + ux * t), py = y - (a.y + uy * t), pz = z - (a.z + uz * t);
   return Math.sqrt(px * px + py * py + pz * pz);
 }
