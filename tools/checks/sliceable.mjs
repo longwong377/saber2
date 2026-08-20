@@ -254,8 +254,26 @@ export function run({ check, assert }) {
      * ONE liftable object, Geonosis one and the Drowned Wood none — which the
      * sum could not distinguish from "the roster got smaller". Stated per
      * level it says the thing it means: a level you can walk across is a level
-     * with things on it. 28 against a measured 34. */
-    assert(objects / LEVEL_ORDER.length > 28,
+     * with things on it. 28 against a measured 34.
+     *
+     * 28 → 25, AND THE MEASUREMENT IS WHY A PER-LEVEL BAR STILL MOVES. Being
+     * per level makes this immune to the roster SIZE and not to the roster's
+     * composition, and the two are different things. Measured either side of
+     * the Boarding Bay and the Providence being deleted at the player's
+     * request:
+     *
+     *   nine levels, the two ships among them   405 objects   45 each
+     *   the seven open grounds alone            190 objects   27 each
+     *
+     * The ships carried 215 of the 405 — over half the census on two ninths of
+     * the roster — because an interior is dense by construction: a deck has
+     * walls, plant, crates and conduit within a few metres of anywhere you can
+     * stand, and a plain does not. Nothing on the seven open grounds changed;
+     * the average did, because the thing inflating it went away. So the bar
+     * comes down to sit under the open-ground figure rather than the mixed
+     * one, and the numbers above are here so the next person can tell this
+     * apart from a level quietly losing its props. */
+    assert(objects / LEVEL_ORDER.length > 25,
       `${objects} reachable objects over ${LEVEL_ORDER.length} levels — `
       + `${(objects / LEVEL_ORDER.length).toFixed(0)} each`);
     /* 400 was a sum over thirteen levels and is therefore a roster count in
