@@ -36,6 +36,7 @@ import { buildJedi } from '../../src/game/Bodies.js';
 import { Input } from '../../src/engine/Input.js';
 import { POWER_COST } from '../../src/game/Powers.js';
 import { defaultBindings } from '../../src/engine/Bindings.js';
+import { clocked } from './_shared.mjs';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const DEG = 180 / Math.PI;
@@ -202,6 +203,11 @@ function settle(e, world) {
 }
 
 export async function run({ check, assert, near }) {
+  /* Every check in this file is wrapped: the two shared streams are put on
+   * their modules' own seeds before each body and the wind clock is put back
+   * after it. See tools/checks/_shared.mjs — the rule is there, not here.
+   */
+  check = await clocked(check);
   await initPhysics();
 
   /* ── the cap ─────────────────────────────────────────────────────── */
@@ -423,7 +429,10 @@ export async function run({ check, assert, near }) {
     assert(speeds[1].crate > speeds[1].pillar * 2.4,
       `crate ${speeds[1].crate.toFixed(1)} vs pillar ${speeds[1].pillar.toFixed(1)} — the push still ignores mass`);
     assert(speeds[4].pillar > speeds[1].pillar * 4,
-      'turning the setting up does not move a heavy thing appreciably harder');
+      `turning the setting up does not move a heavy thing appreciably harder — pillar `
+      + `${speeds[1].pillar.toFixed(2)} m/s at 1x against ${speeds[4].pillar.toFixed(2)} at 4x `
+      + `(${(speeds[4].pillar / speeds[1].pillar).toFixed(3)}x), crate ${speeds[1].crate.toFixed(2)} → `
+      + `${speeds[4].crate.toFixed(2)} (${(speeds[4].crate / speeds[1].crate).toFixed(3)}x)`);
     return `1x: crate ${speeds[1].crate.toFixed(1)} / pillar ${speeds[1].pillar.toFixed(1)} m/s; ` +
       `4x: crate ${speeds[4].crate.toFixed(1)} / pillar ${speeds[4].pillar.toFixed(1)}`;
   });
