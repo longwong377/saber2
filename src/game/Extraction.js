@@ -469,7 +469,13 @@ export class ExtractionDirector {
   _boarding(dt, ctx) {
     const w = this.world;
     const g = this.group;
-    this._wake(dt, ctx, 1);
+    /* NO WASH WITH THE GEAR ON THE GROUND. `_wake`'s cone is 9 m of it and
+     * `low` is "how close to the deck am I", so a landed ship passing 1 filled
+     * a fifth of the frame with dust it was no longer making — visible in
+     * tools/shot.mjs's boarding plate as a brown cone twice the size of the
+     * aircraft. A ship that is DOWN is not blowing sand about; the approach
+     * ramps it to zero at touchdown and it stays there. */
+    this._wake(dt, ctx, 0);
     const ramp = this._ramp(_v2).clone();
     // your line walks to the ramp and files in, whether or not you do
     this._walkTroops(dt, ramp);
@@ -812,7 +818,7 @@ export class ExtractionDirector {
   _unload(dt, ctx) {
     const w = this.world;
     const k = clamp(this.t / UNLOAD, 0, 1);
-    this._wake(dt, ctx, 0.35);
+    this._wake(dt, ctx, 0);
     if (!this._offloaded) {
       this._offloaded = true;
       const ramp = this._ramp(_v2).clone();
@@ -909,7 +915,7 @@ export class ExtractionDirector {
     const k = clamp(low, 0, 1);
     if (w) {
       w.position.set(0, -0.8, 0);
-      w.material.opacity = k * 0.16;
+      w.material.opacity = k * 0.11;
       w.scale.setScalar(lerp(0.55, 1, k));
     }
     const flare = 0.8 + Math.sin(this.total * 31) * 0.12;
