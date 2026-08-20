@@ -200,19 +200,23 @@ b{font-weight:800}
 .logo{display:block;text-align:center}
 .logo h1.wm{display:block;margin:0;line-height:0}
 .wm-src{position:absolute;width:0;height:0;overflow:hidden}
-/* ── THE WORDMARK'S THREE COLOURS ─────────────────────────────────────────
-   `--wm-a` the caps, `--wm-b` the coral, `--wm-knock` whatever is BEHIND the
-   mark — the reticle inside the O is a hole cut through to it, and the split
-   bar across the O is the same hole. That third property is the whole reason
-   one copy of the geometry can serve a dark boot screen and a lit title plate:
-   the mark carries no background of its own and is told what it is standing on.
+/* ── THE WORDMARK IS THE PLAYER'S OWN FILE ────────────────────────────────
+   An <img> and not geometry: `assets/menu/logo.webp`, prepared from the
+   supplied PNG by `tools/uiart.mjs` (white page unpremultiplied to straight
+   alpha, trimmed to the ink). `height:auto` against the intrinsic 1729x470 is
+   what stops it reflowing as the file decodes — the width and height
+   attributes are in the markup for the same reason.
 
-   The DEFAULT is the boot screen's, which is the dark one: cream caps, coral
-   word, the page's own void behind the reticle. The menu and the load screen
-   override the pair that has to change, and nothing else. */
-.wordmark{display:block;margin:0 auto;width:min(620px,100%);height:auto;overflow:visible;
-  --wm-a:var(--ink);--wm-b:var(--borz);--wm-knock:var(--void)}
-#menu .wordmark,#loading .wordmark{--wm-a:#181a1f;--wm-knock:#f6ecda}
+   THE MARK IS BLACK INK ON ALL THREE SCREENS, which is what settled a
+   question index.html used to answer the other way. The boot screen may not
+   load the plate — it is on screen while 79 modules and a WASM blob come down,
+   and a backdrop that arrives with the thing it was covering for is not a
+   backdrop — so its art stays an inline SVG. What changed is that the SVG is
+   now DAYLIGHT: it was a violet night with an amber sun, drawn when the mark
+   was cream, and black caps on it were unreadable at any halo strength. Same
+   shapes, same bands, the plate's own palette. One mark, three screens, no
+   filter chain and no second export. */
+.wordmark{display:block;margin:0 auto;width:min(620px,100%);height:auto}
 /* ── THE MENU'S WORDMARK IS A TITLE, NOT A CAPTION ────────────────────────
    461 px, against the boot screen's 620. It was 25 px of type when the
    backdrop was a gradient and 40 px once the backdrop became a picture — a
@@ -230,7 +234,7 @@ b{font-weight:800}
 
    The short-viewport clawback lives in the existing `@media (max-height:800px)`
    block with the other rules that give the panel its height back. */
-.logo.small .wordmark{width:min(430px,100%)}
+.logo.small .wordmark{width:min(520px,100%)}
 
 /* ── menu ────────────────────────────────────────────────── */
 /* ── THE TITLE SCREEN'S ART, AND WHY IT IS A FILE ────────────────────────
@@ -292,16 +296,18 @@ b{font-weight:800}
    fighting a mid-value sky.
 
    So it is the same layer with the polarity reversed: one flat field of the
-   plate's own cream at .34, which lifts the sky under the header, holds the
+   plate's own cream at .22, which lifts the sky under the header, holds the
    dark panels off the art, and keeps `tools/checks/keyart.mjs`'s bound (a flat
    sink must exist, its alpha must be between .2 and .8, and the url() must be
-   the last layer so the plate sits UNDER its grade).
+   the last layer so the plate sits UNDER its grade). It was .34 against the
+   painted stand-in and came down when the player's own picture went in: that
+   one carries its own haze and does not need a second one.
 
    The cyan/amber/violet washes went with the night: three cool diagonals over
    a warm poster are a different picture arguing with this one. */
 .menu-bg{position:absolute;inset:0;pointer-events:none;
   background:
-    linear-gradient(rgba(248,240,222,.34),rgba(248,240,222,.34)),
+    linear-gradient(rgba(248,240,222,.22),rgba(248,240,222,.22)),
     url("./assets/menu/title.webp") 50% 50%/cover no-repeat}
 
 /* ── THE LOADING SCREEN ───────────────────────────────────────────────────
@@ -1788,3 +1794,12 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
 .tplate.aimed{font-size:11px}
 /* Broken men are named in the colour of the thing that is happening to them. */
 .tplate.broken .tp-name{color:#ff8c6b}
+
+/* ── THE BOOT SCREEN'S TYPE, ON DAYLIGHT ──────────────────────────────────
+   The bar and its caption were cyan on a violet night. The art is the plate's
+   own palette now and cyan-on-sand measured 1.6:1 — the caption was legible in
+   the file and not on the screen. Ink and a warm fill instead, which is what
+   every other piece of type in this interface does over art. */
+#boot .boot-msg{color:#5a2c17;text-shadow:0 1px 0 rgba(255,246,230,.55)}
+#boot .boot-bar{background:rgba(90,44,23,.22);border-color:#5a2c17}
+#boot .boot-bar i{background:#a4653f}

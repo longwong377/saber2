@@ -103,13 +103,13 @@ export function bands({ plateW, plateH, panelW, panelH }) {
  *
  * `.menu-head` and not `.logo`, and that is the whole point of measuring the
  * box rather than the letters. The header now holds ONE thing: the wordmark,
- * 430x156 of drawn geometry with 16 px of padding around it.
+ * 520x141 of the player’s own logo file with 16 px of padding around it.
  *
- * IT GREW FROM 84 TO 172 WHEN THE MARK CHANGED, and that is a real cost paid
+ * IT GREW FROM 84 TO 157 WHEN THE MARK CHANGED, and that is a real cost paid
  * on purpose. The old wordmark was one line of caps at 1220x180 of viewBox;
- * the supplied logo is a stacked mark — caps, two rules, and a brush word
- * under them — at 1312x476, so the same width is nearly twice the height. The
- * panel loses 88 px of its 770 and the Mode column still holds its cards;
+ * the supplied logo is a STACKED mark — caps, two rules, and a brush word
+ * under them — at an intrinsic 1729x470, so the same width is 2.4x the height.
+ * The panel loses 73 px of its 770 and the Mode column still holds its cards;
  * `tools/_menubands.mjs` printed this line and it was pasted, which is the
  * procedure the note below states.
  *
@@ -130,7 +130,7 @@ export function bands({ plateW, plateH, panelW, panelH }) {
  * rule in styles.css and fails if they differ, so a resized wordmark cannot
  * silently leave a stale rectangle behind (HANDOFF §2.3).
  */
-export const HEAD = { w: 1180, h: 172, markPx: 430 };
+export const HEAD = { w: 1180, h: 157, markPx: 520 };
 
 /** `.menu-head`'s box on the plate, at the reference viewport. */
 export function headBand({ plateW, plateH, panelH }, head = HEAD) {

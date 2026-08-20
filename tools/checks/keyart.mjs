@@ -50,6 +50,7 @@
  */
 
 import { readFile, stat } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { webpInfo } from '../_png.mjs';
 import { bands, HEAD, MAX_ASPECT, MIN_ASPECT, REF_W, REF_H } from '../_bands.mjs';
@@ -362,37 +363,70 @@ export async function run({ check, assert }) {
   /** `#boot`'s markup alone — the screen, not the page it sits in. */
   const bootHtml = HTML_C.slice(HTML_C.indexOf('<div id="boot"'), HTML_C.indexOf('<div id="menu"'));
 
-  check('keyart: the wordmark is drawn geometry, and one copy of it serves both screens', () => {
+  check('keyart: the wordmark is the supplied file, on every screen, from one copy', () => {
     /*
-     * Not a font, and that is a hard constraint rather than a taste: the check
-     * one file over (tools/checks/packed.mjs) boots the single-file build from
-     * `file://` and fails if the page asks for one byte off-page, so a webfont
-     * cannot ship here from Google or anywhere else. An @font-face would pass
-     * every check in THIS file and break that one, a suite away, in a browser.
+     * THIS CHECK USED TO SAY "DRAWN GEOMETRY", and the thing it was guarding
+     * has been superseded rather than broken. It held a stencil alphabet in
+     * index.html to being defined once and <use>d twice — a real property, and
+     * the right one while the mark was geometry this repository authored.
+     *
+     * The player supplied their own logo ("I hate your version") and it is a
+     * PAINTING: brush strokes, a target reticle, soft edges. That is not
+     * expressible as a handful of polygons, and a recreation of it — which was
+     * built, and is still in `tools/wordmark.mjs` — is a second artefact that
+     * drifts from the one the player actually drew. So the page loads the file.
+     *
+     * WHAT SURVIVES UNCHANGED is everything the old check was really about:
+     *
+     *   NO WEBFONT. Still the hard constraint, and still for the reason one
+     *     file over: tools/checks/packed.mjs boots the single-file build from
+     *     `file://` and fails on one byte fetched off-page.
+     *   ONE COPY. Three screens name the same path, so the browser decodes it
+     *     once; a second exported crop for the boot screen would be HANDOFF
+     *     §2.3 with a bigger diff.
+     *   IT IS LOCAL. A logo on a CDN breaks the packed build exactly as a
+     *     webfont does.
+     *
+     * And one is new, because an <img> can fail in a way a <use> cannot: the
+     * intrinsic size has to be in the markup, or the header reflows when the
+     * mark decodes and every band tools/_bands.mjs states is measured against
+     * a layout that existed for one frame.
      */
     assert(!/@font-face/i.test(CSS_C), 'styles.css declares an @font-face — the packed build fetches nothing off-page');
     assert(!/fonts\.(googleapis|gstatic)\.com/i.test(HTML_C + CSS_C),
       'the front end names a Google Fonts host — see tools/checks/packed.mjs, which boots from file://');
 
-    /* The letterforms are ONE object. Two <use>s of one <g>, because 2 KB of
-     * path data pasted into both screens is HANDOFF §2.3 with a bigger diff. */
-    const bodies = (HTML_C.match(/id="wm-body"/g) || []).length;
-    assert(bodies === 1, `index.html defines the wordmark's geometry ${bodies} times — it is drawn once and used`);
-    const uses = (HTML_C.match(/<use[^>]+href="#wm-mark"/g) || []).length;
-    assert(uses === 2,
-      `${uses} screen(s) <use> the wordmark — the boot screen and the menu are both supposed to, and from the `
-      + 'same definition');
-    assert(/<div id="boot"[\s\S]*?href="#wm-mark"/.test(HTML_C), 'the boot screen does not carry the wordmark');
-    assert(/<div id="menu"[\s\S]*?href="#wm-mark"/.test(HTML_C), 'the menu does not carry the wordmark');
-
-    /* And the old one is gone rather than orphaned — an unused selector is the
-     * thing that gets re-attached by accident, which is this file's own note
-     * about the tagline and the byline. */
-    for (const dead of ['lg-a', 'lg-b']) {
-      assert(!HTML_C.includes(dead) && !CSS_C.includes(dead),
-        `"${dead}" is still in the front end — that is the system-font wordmark this replaced`);
+    const marks = [...HTML_C.matchAll(/<img[^>]*class="wordmark"[^>]*>/g)].map((m) => m[0]);
+    assert(marks.length === 3,
+      `${marks.length} screen(s) carry the wordmark — the boot screen, the menu and the loading screen all do`);
+    const srcs = new Set(marks.map((m) => /src="([^"]+)"/.exec(m)?.[1]));
+    assert(srcs.size === 1, `the three marks name ${srcs.size} different files: ${[...srcs].join(', ')}`);
+    const src = [...srcs][0];
+    assert(src && src.startsWith('./'),
+      `the wordmark is loaded from "${src}" — it must be a same-directory relative path, because `
+      + 'tools/pack.mjs writes a page that can live anywhere and packed.mjs boots it from file://');
+    assert(existsSync(new URL('../../' + src.replace(/^\.\//, ''), import.meta.url)),
+      `the wordmark names "${src}" and there is no such file — every screen would show a broken image`);
+    for (const m of marks) {
+      assert(/\bwidth="\d+"/.test(m) && /\bheight="\d+"/.test(m),
+        'a wordmark <img> has no intrinsic width/height in the markup — the header reflows as it decodes, '
+        + 'and tools/_bands.mjs states a band measured against the settled layout');
     }
-    return `#wm-body drawn once, <use>d on ${uses} screens, no @font-face`;
+    for (const id of ['boot', 'menu', 'loading']) {
+      assert(new RegExp(`<div id="${id}"[\\s\\S]*?class="wordmark"`).test(HTML_C),
+        `the ${id} screen does not carry the wordmark`);
+    }
+
+    /* And the things this replaced are GONE rather than orphaned — an unused
+     * selector is the thing that gets re-attached by accident, which is this
+     * file's own note about the tagline and the byline. `wm-body` joins the
+     * list: it was the generated geometry, and leaving 4.5 KB of dead path data
+     * in the page is exactly that trap. */
+    for (const dead of ['lg-a', 'lg-b', 'wm-body', 'wm-mark']) {
+      assert(!HTML_C.includes(dead) && !CSS_C.includes(dead),
+        `"${dead}" is still in the front end — that is a wordmark this replaced`);
+    }
+    return `${src}, one file on ${marks.length} screens, no @font-face`;
   });
 
   check('keyart: the lit saber glyph is gone from the boot screen too, not just the menu', () => {
