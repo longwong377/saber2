@@ -33,7 +33,7 @@
 
 import * as THREE from 'three';
 import { Rig, humanoidSkeleton, BipedAnimator } from '../../src/game/Rig.js';
-import { Player, CameraRig, EYE_FOLLOW, EYE_MAX_SPEED } from '../../src/game/Player.js';
+import { Player, CameraRig, EYE_FOLLOW, EYE_MAX_SPEED, handPoseOnHilt } from '../../src/game/Player.js';
 
 const V3 = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
 const range = (a) => Math.max(...a) - Math.min(...a);
@@ -464,6 +464,109 @@ export async function run({ check, assert }) {
   /* ══════════════════════════════════════════════════════════════════ */
   /*  The arm below the elbow                                           */
   /* ══════════════════════════════════════════════════════════════════ */
+
+  check('arms: two hands on one hilt hold it the SAME way round', () => {
+    /**
+     * THE FOURTH REPORT OF THE SAME THING, AND THE FIRST NUMBER AGAINST IT:
+     *
+     *   "the orientation is still janky af like i think the knuckles are facing
+     *    out on both like that's not how you would hold a saber in 1 or even 2
+     *    hands like you keep missing this over and over that's not how human
+     *    hands contort"
+     *
+     * `buildHand` settles which axis a palm is without a guess — the finger
+     * roots carry `rotation.x = 1.24`, a positive turn about X takes +Y toward
+     * +Z, so the fingers close toward +Z and the palm faces the hand's +Z. Two
+     * hands closed on ONE shaft therefore have a law: whatever else they do,
+     * their palms cannot face opposite ways round it. There is no grip a body
+     * can make that does that.
+     *
+     * Measured on the shipped tree with `tools/_palm.mjs`, palm·palm:
+     *
+     *     third person, two hands on the hilt      −1.00
+     *     first person, two hands on the hilt      −0.96
+     *
+     * −1.00 is not "a bit off". It is the two palms pointing exactly away from
+     * each other, and it is what "the knuckles are facing out on both" means:
+     * whichever hand you look at, you are looking at the back of it.
+     *
+     * THE CAUSE was a constant bias, and a bias is invisible on one hand and
+     * fatal on two. `handPoseOnHilt` documents `toward` as the direction the
+     * arm arrives from and places the wrist one BORE offset back — but that
+     * offset is `-(0.065·Y + 0.030·Z)`, which is not `-Y`: it leans 24.8°
+     * toward the back of the hand. Compose it with `GRIP_TWIST`'s 35° and the
+     * wrist lands 59.8° round the shaft from where the caller asked. Both
+     * turns were taken about the hand's X — the THUMB axis, which points
+     * opposite ways on a left and a right hand — so the bias rolled one hand
+     * one way and the other hand the other, 119.6° apart.
+     *
+     * This check is on `handPoseOnHilt` itself rather than on a posed Player,
+     * because the law belongs to the function: hand it one hilt and two arms
+     * coming in from their own sides and the two palms have to come round onto
+     * the metal together.
+     */
+    const hilt = new THREE.Quaternion();          // blade along +Y
+    const blade = new THREE.Vector3(0, 1, 0);
+    // Two arms, each arriving from its own side of the shaft — which is where
+    // a pair of shoulders is, and the only place they can be.
+    const towardR = new THREE.Vector3(-1, 0, 0).normalize();
+    const towardL = new THREE.Vector3(1, 0, 0).normalize();
+    const qR = new THREE.Quaternion(), qL = new THREE.Quaternion();
+    const wR = new THREE.Vector3(), wL = new THREE.Vector3();
+    handPoseOnHilt('R', hilt, towardR, qR, wR);
+    handPoseOnHilt('L', hilt, towardL, qL, wL);
+
+    const palmR = new THREE.Vector3(0, 0, 1).applyQuaternion(qR);
+    const palmL = new THREE.Vector3(0, 0, 1).applyQuaternion(qL);
+    const thumbR = new THREE.Vector3(-1, 0, 0).applyQuaternion(qR);
+    const thumbL = new THREE.Vector3(1, 0, 0).applyQuaternion(qL);
+    const agree = palmR.dot(palmL);
+
+    /* 0.5 and not 0.99: two hands on a shaft are not parallel, they are a
+     * hand's thickness apart round it. Worked out from GRIP_BORE alone — the
+     * wrist leans `atan2(0.030, 0.065)` off the hand's own axis on each side —
+     * the pair comes out at cos(2 · 24.8°) = 0.65 with the arms exactly
+     * opposite, which is what this measures. The bound is the floor of "the
+     * same way round", not the shipped figure. */
+    assert(agree > 0.5,
+      `the two palms agree to ${agree.toFixed(2)} — it was 0.34 on this bench and −1.00 on a posed `
+      + 'player, two hands on one shaft with their palms pointing away from each other, which is '
+      + 'not a grip a body can make');
+    // …and the thumbs must still run up the blade, which is the half that was
+    // never wrong and is the easiest thing to break while fixing the other.
+    assert(thumbR.dot(blade) > 0.9 && thumbL.dot(blade) > 0.9,
+      `the thumbs read ${thumbR.dot(blade).toFixed(2)} / ${thumbL.dot(blade).toFixed(2)} along the blade — `
+      + 'a sabre grip has both thumbs toward the emitter');
+    /**
+     * AND THE TWO HANDS TAKE THE SAME ROLL, which is the property the fix is
+     * actually made of.
+     *
+     * `handPoseOnHilt` carries a comfort turn (`GRIP_TWIST`) and the bore's own
+     * lean, and together they hold the wrist a fixed angle round the shaft from
+     * straight opposite `toward`. A fixed angle is fine and is what the
+     * wrist-strain sweep chose. What is NOT fine is that angle having opposite
+     * SIGNS on the two hands, which is what taking it about the thumb axis did:
+     * measured on the shipped tree, +59.8° on the right and −59.8° on the left,
+     * 119.6° apart on one shaft.
+     */
+    const roll = (w, t) => {
+      const want = t.clone().negate();
+      const d = w.clone().addScaledVector(blade, -w.dot(blade)).normalize();
+      const a = want.clone().addScaledVector(blade, -want.dot(blade)).normalize();
+      return Math.atan2(a.clone().cross(d).dot(blade), a.dot(d)) * 180 / Math.PI;
+    };
+    const rollR = roll(wR, towardR), rollL = roll(wL, towardL);
+    let split = Math.abs(rollR - rollL);
+    if (split > 180) split = 360 - split;
+    assert(split < 10,
+      `the two hands sit ${split.toFixed(0)}° apart round the shaft — the right wrist rolls `
+      + `${rollR.toFixed(0)}° off its arm's side and the left ${rollL.toFixed(0)}°, so one hand `
+      + 'wraps the hilt one way and the other wraps it the other');
+
+    return `palms agree ${agree.toFixed(2)} (was −1.00), thumbs ${thumbR.dot(blade).toFixed(2)}/`
+      + `${thumbL.dot(blade).toFixed(2)} up the blade, both wrists rolled `
+      + `${rollR.toFixed(0)}°/${rollL.toFixed(0)}° off their own arm's side (was +60/−60)`;
+  });
 
   check('arms: the wrist is set to an ARBITRARY orientation, and this is how far it goes', () => {
     // HALF FIXED, AND THE HALF THAT IS FIXED IS RATCHETED HERE.
