@@ -1266,8 +1266,14 @@ one-level tuning pass becomes a four-suite bisect.
 ## 6.4 What the gate is red on, and who owns each
 
 ```
-forward   1517 passed, 0 failed    111 suites, 18.7 min of suite time, clean worktree, quiet box
+forward   1517 passed, 0 failed    18.7 min of suite time, clean worktree, quiet box
+reverse   1517 passed, 0 failed    SABER_CHECK_ORDER=reverse, same worktree
 ```
+
+**The same count in both directions is the part that matters**, not the zero.
+Forty-two of this session's fifty-nine failures were order-dependent — a suite
+handing shared state to whatever ran next — and a forward-only green would say
+nothing about them. Run it both ways or the class is not closed.
 
 **It is green. The table below is what it took, and it is kept because every row
 is a way a check can be wrong that a green run cannot show you.** Earlier the
