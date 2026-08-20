@@ -232,9 +232,18 @@ export async function run({ check, assert }) {
     const broken = await once('broken', { seconds: 14, morale: 0.15 });
     const steady = await once('steady', { seconds: 14, formation: 'circle' });
     assert(refuse.shots === 0, `a refusing army fired ${refuse.shots} shots`);
-    assert(broken.standoffM > steady.standoffM * 1.15,
-      `a broken line stands ${broken.standoffM.toFixed(1)} m off the enemy and a steady one `
-      + `${steady.standoffM.toFixed(1)} m — breaking gave up no ground at all`);
+    /* THE REFUSING LINE IS THE ONE THE BOUND IS ON, and the broken one only
+     * has to not GAIN ground. A man at 0.15 falls back to five metres of his
+     * commander and stops there, so his standoff is really a fact about where
+     * the player is standing relative to the horde — measured across suite
+     * orders it moves by half; the refusing line's does not, because it keeps
+     * going until `FEAR_LEASH` stops it. */
+    assert(refuse.standoffM > steady.standoffM * 1.4,
+      `a refusing line stands ${refuse.standoffM.toFixed(1)} m off the enemy and a steady one `
+      + `${steady.standoffM.toFixed(1)} m — refusing gave up no ground at all`);
+    assert(broken.standoffM > steady.standoffM * 0.95,
+      `a broken line closed to ${broken.standoffM.toFixed(1)} m against a steady one's `
+      + `${steady.standoffM.toFixed(1)} m — breaking bought the line ground`);
     return `refusing 0 shots · standoff steady ${steady.standoffM.toFixed(1)} m, `
       + `broken ${broken.standoffM.toFixed(1)} m, refusing ${refuse.standoffM.toFixed(1)} m`;
   });
