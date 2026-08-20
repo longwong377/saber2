@@ -1178,8 +1178,31 @@ judge's say-so.
    unanswerable.
 5. Order-independence residue: ~40 passing checks whose measured numbers move
    with a shared stream's phase (escalation 5, props 4, presence and co-op 3
-   each). They pass both ways because they have margin. `ground` (Scenery.js) is
-   the one piece of shared state the runner does not restore between suites.
+   each). They pass both ways because they have margin. **`ground` is no longer
+   the only thing the runner does not restore, and that line was measured and
+   found short.** `restoreShared` put the wind back ONE FIELD OF SIX — the clock,
+   not the heading, strength, gustiness or wander a level's block sets — so every
+   suite inherited whichever level the last one loaded; and `heading`/`dir` are
+   derived from the clock by `_refresh()`, so rewinding the clock under them left
+   the field pointing where it had been at the moved time. The whole
+   configuration goes back now, along with the audio singleton. Still uncovered
+   and each for a stated reason: `ground.clock` and `_scarAt` (they must move
+   together or `ground.scar`'s throttle refuses every cut for the rest of the
+   run), Waves.js's stream, and Engine's ShaderChunk flags. See
+   `tools/checks/_shared.mjs`.
+
+   And the residue that no boundary restore can reach, because it is inside a
+   file: a suite's checks interleave across their awaits, so two of them sharing
+   a module-scope stream draw in an order that depends on what ran before.
+   Measured by running one suite TWICE in one process — `characters` read a
+   heavy's bore at 0.9° off aim and then 0.4°, `arrivals` 2.50 then 2.40 bodies
+   per gunship, `pvp` a shove at 0.94 m then 0.33 m. `clocked` seeds every check
+   body and does not touch this; the suite has to stop sharing the stream across
+   its own awaits. Worse for two of them: `arrivals` and `vehicles` differ from
+   one PROCESS to the next, because `Waves.js` and `MathUtil.js` each seed a
+   module-scope stream with `Math.random()` at load and `Combat.js`, `Duel.js`
+   and `Dropped.js` call `Math.random()` outright. Seeding both streams was tried
+   and does not settle `vehicles`.
 
 ---
 
