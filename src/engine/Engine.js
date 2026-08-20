@@ -1487,7 +1487,18 @@ export function atmosphereMeter(a) {
 
 /* ── composite shader ────────────────────────────────────────────────── */
 
-const CompositeShader = {
+/**
+ * The grade, exported because a CHECK was keeping its own copy of it.
+ *
+ * `lighting.mjs`'s `grade: the S-curve deepens shadows…` opened with
+ * `const black = 0.018, curve = 0.32` and a transcribed `* 1.04`, under a
+ * comment saying "modelled exactly as the composite does it". That is HANDOFF
+ * §2.3's signature defect — a hand-maintained table beside its generated twin —
+ * and it fails silently in the direction nobody looks: move a uniform here and
+ * the check goes on certifying the curve this file no longer has. The uniforms
+ * and the fragment source are the authority now, and the check reads both.
+ */
+export const CompositeShader = {
   uniforms: {
     tDiffuse:    { value: null },
     tNoise:      { value: null },

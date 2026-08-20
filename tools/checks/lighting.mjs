@@ -18,7 +18,7 @@ import { Sky } from 'three/addons/objects/Sky.js';
 import {
   AERIAL, QUALITY, skyRadiance, skyShoulder, sunDirection, atmosphereMeter, hazeRadiance,
   cascadeBoxes, CASCADE_SPLIT, PMREM_FAR, BOUNCE_RADIUS, diffuseCap,
-  skyProbeTurn, skyTurn,
+  skyProbeTurn, skyTurn, CompositeShader,
 } from '../../src/engine/Engine.js';
 import { SkyDome } from '../../src/engine/SkyDome.js';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
@@ -1038,12 +1038,36 @@ export function run({ check, assert, near, THREE: T }) {
   /* ══ the grade ════════════════════════════════════════════════════════ */
 
   check('grade: the S-curve deepens shadows without inverting or clipping', () => {
-    // Modelled exactly as the composite does it, in display space.
-    const black = 0.018, curve = 0.32;
+    /* ── THE CONSTANTS ARE READ, NOT TRANSCRIBED ─────────────────────────
+     *
+     * This opened `const black = 0.018, curve = 0.32` with a `* 1.04` further
+     * down, under a comment that said "modelled exactly as the composite does
+     * it". It was a hand-maintained twin of three uniforms in Engine.js
+     * (HANDOFF §2.3), and it fails in the direction nobody looks: move a
+     * uniform and this goes on certifying a curve the game no longer has. They
+     * come off `CompositeShader.uniforms` now.
+     *
+     * The three ARITHMETIC LINES are pinned against the shipped GLSL for the
+     * same reason — reading the right numbers into the wrong formula is the
+     * same defect one level down, and this file has no way to run a shader.
+     * This is what `cel: the shader IS the twin` does for the cel model.
+     */
+    const u = CompositeShader.uniforms;
+    const black = u.uBlack.value, curve = u.uCurve.value, contrast = u.uContrast.value;
+    const src = CompositeShader.fragmentShader.replace(/\s+/g, ' ');
+    for (const line of [
+      'col = max(col - uBlack, 0.0) / (1.0 - uBlack);',
+      'col = mix(col, col * col * (3.0 - 2.0 * col), uCurve);',
+      'col = (col - 0.5) * uContrast + 0.5;',
+    ]) {
+      assert(src.includes(line.replace(/\s+/g, ' ')),
+        `the composite no longer contains \`${line}\` — the model below is a copy of a grade `
+        + 'the shader has stopped applying');
+    }
     const apply = (x) => {
       let c = Math.max(x - black, 0) / (1 - black);
       c = c + curve * (c * c * (3 - 2 * c) - c);
-      c = (c - 0.5) * 1.04 + 0.5;
+      c = (c - 0.5) * contrast + 0.5;
       return c;
     };
     let prev = -Infinity;
@@ -1060,8 +1084,27 @@ export function run({ check, assert, near, THREE: T }) {
     assert(slope > 1.15, `midtone slope is only ${slope.toFixed(3)} — the curve is doing nothing`);
     // and pull the shadows down rather than lifting them
     assert(apply(0.14) < 0.14 * 0.85, `a shadow at 0.14 only reaches ${apply(0.14).toFixed(3)}`);
+    /* AND WHAT THAT COSTS THE DARKEST GROUND IN THE GAME, printed rather than
+     * bounded, because where the ceiling belongs is a look decision and not
+     * this check's to make. Measured in a real browser at `high`, camera
+     * pitched onto the ground it is standing on, reading the near third of the
+     * frame with the composite ON and with it bypassed:
+     *
+     *   mustafar   27.4 → 14.2 of 255   (0.49x)   95.7% of the near field under L=24
+     *   warship    45.8 → 26.1          (0.57x)   37.6%
+     *   colosseum 181.9 → 177.9         (1.02x)    0.1%
+     *
+     * The same operator at the same strength takes half of one level's floor
+     * and none of another's, because the exposure meter deliberately leaves
+     * each level as dark as it was authored (see `exposure: the meter TRIMS the
+     * authored frame`) and this curve then compounds with it. Both halves are
+     * held — that check measures the spread BEFORE the grade, this one measures
+     * the curve with no level in it — and their PRODUCT, which is the only
+     * thing a player sees, is not. */
+    const gain = (x) => apply(x) / x;
+    const at = [0.05, 0.11, 0.25, 0.50, 0.71].map((x) => `${x}→${gain(x).toFixed(2)}x`).join(' ');
     return `monotonic over 201 samples, black→${apply(0).toFixed(4)}, `
-      + `midtone slope ${slope.toFixed(2)}, 0.14→${apply(0.14).toFixed(3)}`;
+      + `midtone slope ${slope.toFixed(2)}, 0.14→${apply(0.14).toFixed(3)}; gain ${at}`;
   });
 
   check('grade: shadows and highlights are separated by colour, not only by value', () => {
