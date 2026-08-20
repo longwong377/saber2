@@ -26,6 +26,7 @@ import { AudioEngine, PRIO, MUSIC_TRACKS } from '../../src/engine/Audio.js';
 import { ENEMY_POWERS } from '../../src/game/Enemy.js';
 import { ENEMY_VOICES } from '../../src/engine/Voice.js';
 import { SCORE_STATES, CHORDS, ROOT, hz } from '../../src/engine/Score.js';
+import { clocked } from './_shared.mjs';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
@@ -222,6 +223,11 @@ export function engine() {
 }
 
 export async function run({ check, assert }) {
+  /* Every check in this file is wrapped: the two shared streams are put on
+   * their modules' own seeds before each body and the wind clock is put back
+   * after it. See tools/checks/_shared.mjs — the rule is there, not here.
+   */
+  check = await clocked(check);
 
   /* ══ what a sound SAYS — four events that said nothing, or said it wrong ══ */
 
@@ -399,13 +405,39 @@ export async function run({ check, assert }) {
     const { RapierWorld } = await import('../../src/physics/RapierWorld.js');
     await initPhysics();
 
+    /**
+     * THIS CHECK DRIVES THE SHARED SINGLETON, SO IT HAS TO HAND ALL OF IT BACK.
+     *
+     * It has to be the singleton: `Enemy._jetFx` calls the module's `audio`,
+     * not an engine it is handed, so a private one would measure nothing. What
+     * it may not do is leave the singleton half-built for the eighty suites
+     * that run after it.
+     *
+     * The first version put `ctx` and `ready` back and nothing else. `init()`
+     * builds a whole graph off the FakeCtx — `master`, `sfxBus`, `musicBus`,
+     * `speechBus`, the filters — and `AudioEngine.setVolume` guards on
+     * `this.master` and then reads `this.ctx.currentTime`. A live master beside
+     * a null context is a state the game itself cannot reach (`ctx` is nulled
+     * only in the constructor, where `master` is null too) and this check
+     * manufactured it. Measured in one process, `audio` then `menu`: 19 of
+     * menu's 27 checks died on `TypeError: Cannot read properties of null
+     * (reading 'currentTime') at AudioEngine.setVolume`, out of `new Menu`'s
+     * own Volume slider — and across a full gate run, 38 checks in controls,
+     * databank, front-screen, hud-events and menu, every one of them green when
+     * its suite is run alone.
+     *
+     * So the snapshot is every own property, and it goes back in a `finally`.
+     * Nothing here lists a field name: a graph node added to `init()` tomorrow
+     * is carried by the same three lines.
+     */
     const prevAC = globalThis.AudioContext;
     let ctx = null;
     globalThis.AudioContext = function () { ctx = new FakeCtx(); return ctx; };
-    const hadCtx = audio.ctx;
+    const wasAudio = { ...audio };
     audio.ctx = null; audio.ready = false; audio._lastWake = -1e9;
     try { audio.init(); } finally { globalThis.AudioContext = prevAC; }
     audio._listenerPos.set(0, 0, 0);
+    try {
 
     const terrain = { height: () => 0, normalAt: (x, z, o) => o.set(0, 1, 0), raycast: () => null,
       size: 400, half: 200, inBounds: () => true, surfaceAt: () => 'sand',
@@ -475,10 +507,12 @@ export async function run({ check, assert }) {
     assert(held() === 0, 'dispose() left the jetpack voice open — a level unload leaks one per flier');
 
     for (const e of bodies) e.dispose();
-    audio.unload?.();
-    audio.ctx = hadCtx;
-    audio.ready = !!hadCtx;
     return `${open} fliers opened ${open} voices; all released by die(), and by dispose() on its own`;
+    } finally {
+      audio.unload?.();
+      for (const k of Object.keys(audio)) if (!(k in wasAudio)) delete audio[k];
+      Object.assign(audio, wasAudio);
+    }
   });
 
   check('audio: a menu blip is not what a physical contest ends on', () => {
