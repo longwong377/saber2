@@ -28,8 +28,9 @@ Playable two ways:
 
 | | |
 |---|---|
-| Suite | **1443 passed, 2 failed, ~21 min** — and both of the two are fixed since that run; §6.4 keeps them for how each was found |
-| Smoke | 11/11 steps clean, ~2 min |
+| Suite | **1438 passed, 59 failed, ~35 min** on a box under load 15 with five lanes writing — 38 of the 59 were ONE defect (§2.9) and are fixed; §6.4 has the rest and who owns each |
+| Smoke | 11 steps; the last four time out on a loaded box and the timeouts are wall-clock — see §2.6 before believing them |
+| Packed | `node tools/pack.mjs out.html` — 79 modules, 12.8 MB, boots from `file://`, and `tools/checks/packed.mjs` proves it every run |
 | Levels | **9** — `scoria, mustafar, colosseum, wood, drifts, alpine, geonosis, hangar, warship` |
 | Modes | **8** — `waves, roguelite, duel, sandbox, training, command, skirmish, campaign` |
 | Campaigns | **2** — `petranaki`, `boarding`, two missions each |
@@ -513,6 +514,56 @@ memory reading, run the gate and read the RSS column.**
 
 A full `verify` run takes ~12 min. Use `run_in_background: true`. Foreground
 `sleep` is blocked; use an `until` loop in a background command to wait.
+
+---
+
+### 2.9 A suite that borrows a SINGLETON must hand back all of it
+
+`_shared.mjs` exists for the module-scope clocks — `wind.time`, `enemyRng`,
+`duelRng` — and it is not the whole hazard. The engine singletons are the other
+half, and one of them cost thirty-eight checks.
+
+`audio.mjs`'s jet-trooper clause has to drive the shared `AudioEngine`, because
+`Enemy._jetFx` calls the module's `audio` and not an engine it is handed. It
+swapped in a fake `AudioContext`, called `init()`, and afterwards put back `ctx`
+and `ready` — two fields of the dozen that `init()` writes. It left a live
+`master` beside a null `ctx`, which is a state the game itself cannot reach, and
+`setVolume` guards on `this.master` and then reads `this.ctx.currentTime`. Every
+later suite that constructed a Menu died on its own Volume slider: 38 checks
+across `controls`, `databank`, `front-screen`, `hud-events` and `menu`, all
+green when run alone.
+
+**The rule, and it is cheap: snapshot the whole object, not the fields you
+meant to change.**
+
+```js
+const was = { ...singleton };
+try { /* … */ } finally {
+  for (const k of Object.keys(singleton)) if (!(k in was)) delete singleton[k];
+  Object.assign(singleton, was);
+}
+```
+
+Nothing there names a field, so a property added to `init()` tomorrow is carried
+by the same three lines. `tools/_seq.mjs <suite-you-touched> menu` reproduces
+this whole class in about a minute.
+
+---
+
+### 2.10 A gate run inside a `git worktree` has no `node_modules`
+
+Two suites drive a real browser — `front-screen`'s layout check and
+`packed.mjs` — and both `import 'playwright-core'`. A worktree does not get the
+clone's `node_modules`, so both fail with `Cannot find package
+'playwright-core'` and it reads exactly like a broken check.
+
+```bash
+git worktree add --detach /tmp/gate HEAD
+ln -s /home/user/saber2/node_modules /tmp/gate/node_modules
+```
+
+Do that before judging any worktree run. It is the same shape as §2.1: an
+environment difference that produces a confident wrong answer.
 
 ---
 
@@ -1139,49 +1190,53 @@ one-level tuning pass becomes a four-suite bisect.
 ## 6.4 What the gate is red on, and who owns each
 
 ```
-forward   1443 passed, 2 failed   ~21 min of suite time
+forward   1438 passed, 59 failed   ~35 min, on a box under load 15 with five lanes writing
 ```
 
-Both of those two are fixed since that run, so the expected state is **green**;
-they are kept here with what they were, because how each was found is worth more
-than the fact that it is closed.
+**Thirty-eight of those fifty-nine were one defect** — a suite leaving the audio
+singleton half-built, §2.9 — and every one of them is green when its own suite
+is run alone. That is the single most important thing this table has to say:
+the full run is not a slower version of the per-suite runs, it is the only place
+a whole class of defect is visible at all, and this session found that class by
+running it.
 
 **Read this table the way it is built.** A red line in a full run is not a
 finding until it has been re-run alone on a quiet box — in an earlier session
-three of nine evaporated that way and one was a race with a peer's commit. The
-per-suite output tells you which line to re-run instead of handing you a
-filename, so this is cheap.
+three of nine evaporated that way and one was a race with a peer's commit. But
+the converse now has a name too: a line that is GREEN alone and red in the full
+run is not noise, it is the interesting one. Reach for `_seq.mjs` before you
+dismiss it.
 
-**And when it passes alone, run `tools/_seq.mjs`.** That is the case this advice
-used to have no answer for: `_one.mjs` runs a suite in a clean process and
-`verify.mjs` takes twenty minutes, so a check that is green alone and red in the
-full run was expensive to even look at. `_seq` runs several suites in ONE
-process in the order given, which is often enough, because what carries is
-either module-scope state (`enemyRng`, `duelRng`, the wave stream, `wind` and
-`ground`, Engine's once-only ShaderChunk flags) or the scheduling of a suite's
-own async checks — `check()` pushes them all onto one `Promise.all`, so they
-interleave, and the interleaving changes with what ran before. **Suites run in
-`readdir` order, so a hyphen sorts before a dot: `command-pvp` runs BEFORE
-`command`.** Get that wrong and your reproduction is green.
+**`tools/_seq.mjs` runs several suites in ONE process in the order given.** What
+carries between them is module-scope state (`enemyRng`, `duelRng`, the wave
+stream, `wind` and `ground`, Engine's once-only ShaderChunk flags, and the
+engine singletons — §2.9), or the scheduling of a suite's own async checks:
+`check()` pushes them all onto one `Promise.all`, so they interleave, and the
+interleaving changes with what ran before. **Suites run in `readdir` order, so a
+hyphen sorts before a dot: `command-pvp` runs BEFORE `command`.** Get that wrong
+and your reproduction is green.
 
-**And when `_seq` will not reproduce it either, read the failure message against
-the check's own earlier assertions.** That is what closed the jet trooper below:
-four suites in one process would not reproduce it, and the message turned out to
-be blaming a cause the check itself had already ruled out on every frame.
+**Two of the fifty-nine were the harness, not the game** — `front-screen`'s
+layout check and `shadows`, both `Cannot find package 'playwright-core'`,
+because the run was in a worktree. §2.10.
 
-| # | Check | What it was |
+| Check | What it was | State |
 |---|---|---|
-| 1 | `command: the jet trooper actually flies, and shoots while it does` | **a delta on the wrong population.** It counted every live bolt in the world and called a rise in that total a shot — but this world has a director in it, so a frame where the jet fires one and two of somebody else's expire reads as no shot. Quiet sky, correct; busy sky, undercounts; at zero it reported that the jet never fired. Its message then blamed a NaN position that the per-frame assertion four lines above had ruled out on all 240 frames. Counted per `bolt.owner` now |
-| 2 | `roster: nothing in the tree names a level the game does not have` | **a placeholder that reads as a deleted level.** A new fixture in `coop.mjs` passed `level: 'x'` to exercise `sessionPart`, and `roster` greps the tree for exactly that shape. Taken from `LEVEL_ORDER` now, so there is no literal to trip over — and the check was right: a level key nobody can resolve is the same defect whether it was deleted or never existed |
-| — | `command/versus: the two armies actually fight` | **closed.** Not only stream phase: the drive capped at 120 game-seconds while `DuelMatch` spends its countdown BEFORE setting a 120 s clock, so the cap sat under the match's own guaranteed decision time. Derived from the match's constants now |
-| — | `prefracture: preparing a piece…` | **load-dependent, and it says so in its own message** — "this box paused identical work by 158.6×". 3/3 alone. §2.6 |
-| — | `cloth: the extra iterations a carried frame buys…` | **closed.** A race inside its own suite: it read a shared world off a promise another check tears down in its `finally` |
+| 38 checks across `controls`, `databank`, `front-screen`, `hud-events`, `menu`, all reading `Cannot read properties of null (reading 'currentTime')` | **one suite left the audio singleton half-built.** §2.9 has the whole shape. Reproduce with `_seq.mjs audio menu`: 19 of menu's 27 die in `new Menu`, out of its own Volume slider | **fixed** |
+| `force: a push shoves a crate further than it shoves a pillar` | **an impulse bound quoted in the wrong currency.** A hardening pass added `MAX_SPEED = 1e4` and applied it to `applyImpulse`, but an impulse is in N·s and carries the body's mass: the 900 kg pillar's legitimate push is ~28 000 N·s and was silently dropped. Measured, pillar at forcePower 4: 31.3 m/s before, 0.40 after — and 0.40 is gravity for exactly one step, so it received nothing. Turning the Force setting UP stopped heavy props moving at all | physics lane |
+| `first person: the neck cap bounds the eye speed` | **a proxy that failed because the game improved.** It asserted the cap TRIMS >5 mm at a sprint, which was really measuring how rough the pelvis was. The gait fixes took single-frame pelvis travel from 23.7/40.1/69.6/88.3 mm to 8.4/11.3/32.4/28.4 mm against a 46.7 mm allowance, so the cap now trims 0.23 mm. Rewritten to assert both halves directly — the gait is under the cap at every speed, and the cap is proven on itself | **fixed** |
+| `destruction: carve a column and how deep decides whether the top falls` | **a check on a knife edge.** Sweeping the hilt ±10 mm around its own fixture, the column stands 7/11 times on the old code and 4/11 on the new; sweeping DEPTH, it stands 7/7 at 0.15 m, 3/7 at 0.30, 7/7 at 0.45, 1/7 at 0.60, 0/7 at 0.75. The response is not monotone, so the single sample was a coin flip and its previous green was luck | blade lane |
+| `balance: a body with NO blade defends itself too` | same commit's blade change; a beast goes down in 1.28 s | blade lane |
+| `blade: a fast sweep across a forearm produces a cut event` (verify.mjs core) | the chord cap `2 * cap.r` may be smaller than a thin limb's need, so the hips and spine sever in a frame the forearm survives | blade lane |
+| `skirmish` ×2 | written red-first: the defeat is never announced (`_endSkirmish`'s only caller passes `true`), and the ending card reads `stats.taken`/`stats.fallen` that no ending sends | modes lane |
+| `determinism` ×2 | written red-first: 13 suites build enemies without seeding the stream, 26 drive a World without handing the clocks back | determinism lane |
+| `roster: nothing in the tree names a level the game does not have` | one dead reference; the suite also gained an arm for terrain preset names | **fixed**, 5/0 |
 
-Note what is NOT on this list any more. The previous table's five were four
-`kamino` rows and a `first person` occlusion bound; **`kamino` is not a level in
-this build** — see §1, and run `tools/state.mjs` rather than believing any
-count. `first person` is 6/6. `escalation`, which used to be named here as
-green-alone, is green in both directions.
+**And what a full run cannot tell you at all.** Four of `smoke.mjs`'s eleven
+steps failed on the run above with "no animation frame in 8000 ms". The box was
+at load 15 and a frame here can take four seconds. That is §2.6 exactly: the
+timeout measured the box. Re-run smoke on a quiet box before recording anything
+from it.
 
 ---
 
@@ -1204,15 +1259,22 @@ Descent — and that neither death was a code failure. That warning is worth mor
 than its implementation notes.
 
 1. **Get it in front of the player, then read §7.** `node tools/pack.mjs
-   /tmp/borz.html` and send them the file. Nothing in §6.4 is worth more than
-   one person playing it for ten minutes, and every remaining finding there is a
-   measurement rather than a complaint.
-2. **The two order-dependent reds in §6.4** (`command/versus`, `prefracture`).
-   Both are green alone and both are the same shape — a bar with margin rather
-   than a pinned measurement. `tools/_seq.mjs` reproduces the first in about two
-   minutes; the second says in its own message that this box paused identical
-   work by 158.6×. Pin them or state the margin; do not widen the bar.
-3. **`World.js`'s `pickTarget` cross-army loop** is gated `if (this.command)`,
+   /tmp/borz.html` and send them the file. That file did not boot for four days
+   and nobody noticed, because nothing in the tree had ever opened one — see
+   §2.10's neighbour, `tools/checks/packed.mjs`, which now packs the tree and
+   opens the result the way a player does, every run. Nothing in §6.4 is worth
+   more than one person playing it for ten minutes.
+2. **Finish §6.4's owned rows.** Three of them are one story — the blade's
+   sampling rewrite left `destruction`, `balance` and the core forearm sweep
+   red — and the first of those is a check on a knife edge rather than a
+   mechanism that broke, which is a different repair. The `force` row is the
+   sharpest of the lot and the cheapest: an impulse bound quoted in metres per
+   second.
+3. **Run the gate, forward AND with `SABER_CHECK_ORDER=reverse`, on a QUIET
+   box.** This session's single largest find — 38 checks, §2.9 — was invisible
+   to every per-suite run and visible immediately in a full one. Symlink
+   `node_modules` first (§2.10).
+4. **`World.js`'s `pickTarget` cross-army loop** is gated `if (this.command)`,
    which is now three modes rather than one. Dropping the gate is the whole of
    "both armies fight each other as well as you" — and it is a DESIGN decision
    about six levels, not a fix. Six levels field Republic and Confederate bodies
@@ -1220,17 +1282,18 @@ than its implementation notes.
    every one of their notes argues a HORDE, a field united against you. Either
    make those six single-army or let their halves fight; the comment at the gate
    states the cost of the second either way.
-4. **`ROADMAP` §5 and §6, which are partly closed.** Several bullets have been
-   done since it was written, and the ones that were still real when last
-   checked are the hold-fire order the formation table documents and does not
-   have, a free-PvP control nothing sets, and stasis that cannot hold a person
-   though its Codex card says "freeze what is near you, bolts included". Verify
-   before building — that section is older than the tree.
+5. **`ROADMAP` §5 and §6, which are partly closed.** Verify before building —
+   that section is older than the tree. Stasis holding a person is done; check
+   the rest the same way rather than believing the list.
 
-**What NOT to do first.** Do not start another audit. Several rounds have run,
-each found real things, and another would be measuring a game nobody has played
-since the last one. §7 is not a platitude here — it is the specific reason this
-list is short.
+**What NOT to do first.** Do not start another audit *by default*. Rounds of it
+have run and each found real things, but the last one was asked for explicitly
+after a long gap and it was right to run: it found a delivery artifact that had
+never booted, a client packet that could kill the host, a control that could not
+move anything, and 38 checks dying of one suite's housekeeping. The honest rule
+is not "never audit again", it is **audit when the tree has moved a long way
+since the last one, and PLAY IT in between**. §7 is not a platitude here — it is
+the specific reason this list is short.
 
 ## 6.6 If you are handed a long list, ORDER IT FIRST — and show the order
 
