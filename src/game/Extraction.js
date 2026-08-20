@@ -281,6 +281,8 @@ export class ExtractionDirector {
     this._rotateAsked = false;
     this._skip = false;
     this._pull = null;
+    this._said = false;
+    this._lzPoint = null;
     this._seated.length = 0;
     this._log.length = 0;
     this._enter('aftermath');
@@ -903,7 +905,14 @@ export class ExtractionDirector {
 
   dispose() {
     this.clear();
-    if (this.veil) { this.veil.parent?.remove(this.veil); this.veil = null; }
+    if (this.veil) {
+      this.veil.parent?.remove(this.veil);
+      /* The one per-director allocation in the file, for the same reason the
+       * wash cone is one per flight: its opacity is animated, so it cannot be
+       * the shared material. `G.veil` is shared and stays. */
+      this.veil.material.dispose();
+      this.veil = null;
+    }
   }
 
   /* ── the two effects ──────────────────────────────────────────────── */
