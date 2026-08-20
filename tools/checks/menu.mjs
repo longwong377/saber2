@@ -32,11 +32,12 @@ import { Menu, DEFAULT_SETTINGS, DEATH_TITLE, codexHtml, codexTeaching,
   loadSettings, STORE_KEY } from '../../src/ui/Menu.js';
 /* The standing-order row is BUILT from this table, so the check that says so reads the
  * table rather than a transcription of what it said on the day. */
-import { FORMATIONS, COMMAND_FORCE, ORDERS as COMMAND_ORDERS } from '../../src/game/Command.js';
+import { AREAS, FORMATIONS, COMMAND_FORCE, ORDERS as COMMAND_ORDERS,
+         MAX_STRENGTH, OPENING_STRENGTH } from '../../src/game/Command.js';
 import { ACTIONS, defaultBindings } from '../../src/engine/Bindings.js';
 import { FOCUS } from '../../src/game/Focus.js';
 import { QUALITY } from '../../src/engine/Engine.js';
-import { MODES, WaveDirector, BOSS_EVERY, CONDITION_KEYS } from '../../src/game/Waves.js';
+import { MODES, WaveDirector, BOSS_EVERY, CONDITION_KEYS, SKIRMISH } from '../../src/game/Waves.js';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
 /* The Codex's teaching half is generated off these, and the check reads the
  * same tables rather than a transcription of what they said on the day. */
@@ -586,6 +587,66 @@ export async function run({ check, assert }) {
       rows.push(`${mode}→${theatreFor(mode, LEVEL_ORDER[0])}`);
     }
     return `deploy() resolves through theatreFor; ${rows.join(' ')}`;
+  });
+
+  check('menu: a slider offers the numbers the run will take, and no others', () => {
+    /**
+     * A CONTROL WITH A DEAD ZONE IS A CONTROL THAT LIES, and this one lied on
+     * nine of its twenty-five positions.
+     *
+     * `Your line` opened at 0 against `_planSkirmish`'s floor of
+     * OPENING_STRENGTH. Driven through the shipped planner, one battle per
+     * position: the slider read "1 of 24", "2 of 24" … "9 of 24" and every one
+     * of them fielded TEN bodies. The other two were duplicates rather than
+     * lies — `max="24"` typed beside `MAX_STRENGTH = 24`, `max="4"` beside
+     * `AREAS.length - 1`, `min="1" max="9"` beside `SKIRMISH.engagements` —
+     * which is §2.3's hand-maintained table living in the markup, where nothing
+     * that reads the constant can see it.
+     *
+     * `Menu._range` writes the travel from the tables at build time, so what is
+     * held here is that the DOM the player touches agrees with the tables the
+     * game clamps by. The other half — that every offered position survives the
+     * planner — is in `tools/checks/skirmish.mjs`, which can boot a World; this
+     * suite installs a fake `document` and may not await anything.
+     */
+    const { menu, doc, close } = menuOn();
+    try {
+      const rows = [];
+      const want = [
+        ['opt-sk-engagements', SKIRMISH.engagements.min, SKIRMISH.engagements.max, 'SKIRMISH.engagements'],
+        ['opt-sk-strength', OPENING_STRENGTH, MAX_STRENGTH, 'OPENING_STRENGTH..MAX_STRENGTH'],
+        ['opt-sk-pressure', 0, AREAS.length - 1, 'AREAS'],
+      ];
+      for (const [id, lo, hi, from] of want) {
+        const el = doc.getElementById(id);
+        assert(el, `${id} is not in the markup`);
+        assert(Number(el.getAttribute('min')) === lo && Number(el.getAttribute('max')) === hi,
+          `${id} offers ${el.getAttribute('min')}..${el.getAttribute('max')} against ${from}'s ${lo}..${hi}`);
+        /* …AND THE STORED VALUE IS INSIDE IT. A browser clamps `input.value` to
+         * the range and leaves `settings[key]` alone, so a profile saved before
+         * a bound moved would leave the thumb on one number and the run on
+         * another — the same lie one layer along. */
+        const held = Number(el.getAttribute('value'));
+        assert(held >= lo && held <= hi, `${id}'s markup value ${held} is outside its own ${lo}..${hi}`);
+        rows.push(`${id.replace('opt-sk-', '')} ${lo}..${hi}`);
+      }
+      /* A STORED VALUE FROM AN OLDER BOUND IS NORMALISED, not left to disagree
+       * with the thumb. Driven on the real reader with the value the shipped
+       * default used to be. */
+      menu.s.skirmishStrength = 0;
+      menu._range('opt-sk-strength', OPENING_STRENGTH, MAX_STRENGTH, 1, 'skirmishStrength');
+      assert(menu.s.skirmishStrength === OPENING_STRENGTH,
+        `a stored 0 survived the range as ${menu.s.skirmishStrength} — the thumb reads `
+        + `${OPENING_STRENGTH} and the battle would be fought at ${menu.s.skirmishStrength}`);
+      /* …and a control whose markup bound is deliberately narrower than what the
+       * game accepts must NOT be normalised — the sandbox takes the blade off
+       * its leash, and cutting a stored length down to the leashed range would
+       * be this fix causing the defect it removes. */
+      assert(DEFAULT_SETTINGS.skirmishStrength >= OPENING_STRENGTH
+        && DEFAULT_SETTINGS.skirmishStrength <= MAX_STRENGTH,
+        `the shipped default line is ${DEFAULT_SETTINGS.skirmishStrength}, outside its own control`);
+      return `${rows.join(', ')}, all off their own tables; a stored 0 normalises to ${OPENING_STRENGTH}`;
+    } finally { close(); }
   });
 
   check('menu: the Bloom checkbox tells the truth about the tier', () => {

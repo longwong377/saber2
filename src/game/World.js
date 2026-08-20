@@ -852,6 +852,10 @@ export class World {
        * score, arriving in a new mode if this were hung off the announcement
        * instead. */
       if (fresh) this._skirmishCleared();
+      /* …AND THE LADDER HAS A TOP. Same signal and same gate as the engagement
+       * above it: a duel is over when the wave that runs the climb out has been
+       * cleared, and `fresh` is what stops a re-clear reaching it. */
+      if (fresh) this._ladderCleared();
     };
 
     this.director.onDraft = (boons) => {
@@ -1908,7 +1912,13 @@ export class World {
    *   endless mode — those end on `_checkWipe` alone and have no verdict.
    */
   _announceBattle(won) {
-    const c = this.campaign, sk = this.skirmish, d = this.command;
+    const c = this.campaign, sk = this.skirmish, d = this.command, w = this.director;
+    /* ONE `notify` AND ONE `audio.runWon` AT THE FOOT, not one per branch. The
+     * branches decide the WORDS; that a decided run is announced and makes the
+     * sound of how it was decided is the property, and three copies of it is
+     * how a fourth plan ends up with a sentence and no cue — which is the exact
+     * defect this method was extracted to close. */
+    let title = null, sub = '';
     if (c || sk) {
       const done = c ? c.index + (won ? 1 : 0) : sk.cleared;
       const of = c ? c.def.missions.length : sk.engagements;
@@ -1916,13 +1926,10 @@ export class World {
         ? c.def.missions.slice(0, done).map((m) => LEVELS[m.level]?.name || m.level)
         : sk.rotation.slice(0, done).map((k) => LEVELS[k]?.name || k);
       const what = c ? c.def.name.toUpperCase() : 'THE BATTLE';
-      this.notify(won ? `${what} IS WON` : `${what} IS LOST`,
-        rounds.length ? `${done} of ${of} — ${rounds.join(' · ')}`
-          : `${done} of ${of} ${c ? 'missions' : 'engagements'}`);
-      audio.runWon?.(!!won);
-      return true;
-    }
-    if (d) {
+      title = won ? `${what} IS WON` : `${what} IS LOST`;
+      sub = rounds.length ? `${done} of ${of} — ${rounds.join(' · ')}`
+        : `${done} of ${of} ${c ? 'missions' : 'engagements'}`;
+    } else if (d) {
       /* THE GROUND IS NAMED OFF THE GROUND, exactly as `_endMeeting` names it:
        * the shipped sentence said "walked off Geonosis" from inside a file that
        * is holding the level, which is a level name written beside a level
@@ -1930,13 +1937,54 @@ export class World {
        * makes it right the day that changes. */
       const where = this.level?.name || 'the field';
       const all = d.roster?.all?.length ?? 0;
-      this.notify(won ? 'THE ADVANCE IS OVER' : 'THE ADVANCE IS LOST',
-        won ? `${d.roster?.strength ?? 0} of ${all} walked off ${where}`
-          : `${d.areasTaken} of ${AREAS.length} areas · ${d.roster?.fallen?.length ?? 0} of ${all} lost`);
-      audio.runWon?.(!!won);
-      return true;
+      title = won ? 'THE ADVANCE IS OVER' : 'THE ADVANCE IS LOST';
+      sub = won ? `${d.roster?.strength ?? 0} of ${all} walked off ${where}`
+        : `${d.areasTaken} of ${AREAS.length} areas · ${d.roster?.fallen?.length ?? 0} of ${all} lost`;
+    } else if (MODES[this.settings?.mode]?.ladder && w?.duelTop) {
+      /* THE LADDER — the duel's plan, and it does not need an object to be one.
+       * Where a skirmish's shape is three picks a player made, a ladder's is a
+       * function of the ROSTER: `duelTop` is the wave the climb runs out on and
+       * `duelTier` is how much of it is behind you, both derived off the same
+       * archetypes the composer draws from. See `MODES.duel.ladder`. */
+      const top = w.duelTop();
+      const faced = w.duelTier(w.wave);
+      title = won ? 'THE LADDER IS CLIMBED' : 'THE LADDER IS LOST';
+      sub = won ? `every form on it, and the master at the top — ${top} waves`
+        : `wave ${w.wave} of ${top} · ${faced} of ${w.duelRoster().rungs.length} forms faced`;
     }
-    return false;
+    if (!title) return false;
+    this.notify(title, sub);
+    audio.runWon?.(!!won);
+    return true;
+  }
+
+  /**
+   * THE LAST RUNG IS BEHIND YOU — the duel's ending, and it had none.
+   *
+   * The mode card has promised "a master at the top" for the whole life of the
+   * mode and the ladder had a PLATEAU: measured off the shipped composer, the
+   * window narrows to its last two rungs at wave 28 and every wave from 30
+   * onwards is identical for ever. `WaveDirector.duelTop` is where the climb
+   * runs out — the first set-piece wave at full narrowing, four promoted blades
+   * in the two heaviest forms plus the boss that is not on the ladder — and
+   * clearing it is a WIN, which makes the duel the fourth thing in this game
+   * that can be won and the first that is not an army mode.
+   *
+   * Hung off the wave-clear ledger beside `_skirmishCleared` and behind the
+   * same `fresh` gate, for the same reason: `restartWave` re-composes the wave
+   * the player is standing in and fires the clear signal again, so an ending on
+   * the announcement rather than on the ledger could be reached by re-clearing
+   * a wave already paid for. That is the defect `tools/checks/restart.mjs`
+   * measured at +10 drafts and +20,400 score, arriving in a new mode.
+   */
+  _ladderCleared() {
+    if (this.over || !MODES[this.settings?.mode]?.ladder) return false;
+    const d = this.director;
+    if (!d?.duelTop || (d.wave ?? 0) < d.duelTop()) return false;
+    this.over = true;
+    this._announceBattle(true);
+    this.onGameOver?.(this.runStats({ won: true }));
+    return true;
   }
 
   /**
@@ -2012,16 +2060,41 @@ export class World {
       deflects: sum('deflects'),
       perfects: sum('perfects'),
       limbs: sum('limbsRemoved'),
-      /* `c.log` gets one entry per mission behind you — `_advanceMission`
-       * writes it, including on the last one, so a finished campaign counts
-       * itself. `sk.cleared` and `areasTaken` are the same shape one layer
-       * down. */
-      taken: c ? c.log.length : sk ? sk.cleared : d ? d.areasTaken : null,
+      taken: this._taken(),
       /* The roll, not a tally kept beside it: `CommandRoster.fallen` is a
        * getter over the records themselves. Null where there is no army, so
        * "Troops lost" leaves the card in the modes that have no troops. */
       fallen: d?.roster?.fallen?.length ?? null,
     };
+  }
+
+  /**
+   * HOW MUCH OF THE RUN IS BEHIND YOU — one number with four meanings, and the
+   * MODE is what names it. `main.js`'s `TAKEN` map holds the four labels beside
+   * the row it writes; this holds the four counts beside the plans they are
+   * counts of, and each one is read off a ledger something else already keeps:
+   *
+   *   `c.log`      one entry per mission, written by `_advanceMission` —
+   *                  including on the last one, so a finished campaign counts
+   *                  itself rather than needing `index + 1`.
+   *   `sk.cleared` engagements, counted by `_skirmishCleared`.
+   *   `areasTaken` boundaries crossed, counted off `_areaClear`'s own log.
+   *   `duelTier`   how far up the ladder the climb got.
+   *
+   * The order is the nesting order and not a preference: a campaign mission IS
+   * a skirmish and both run a CommandDirector, so any other order would report
+   * an inner plan's count as the outer one's. `null` is the fourth answer and
+   * the load-bearing one — an endless run takes nothing, and the card leaves
+   * the row off rather than inventing the "Areas taken 5" it used to print.
+   */
+  _taken() {
+    if (this.campaign) return this.campaign.log.length;
+    if (this.skirmish) return this.skirmish.cleared;
+    if (this.command) return this.command.areasTaken;
+    if (MODES[this.settings?.mode]?.ladder && this.director?.duelTier) {
+      return this.director.duelTier(this.director.wave);
+    }
+    return null;
   }
 
   /* ── spawning ────────────────────────────────────────────────────── */
@@ -3914,8 +3987,13 @@ export class World {
        * sentence and cue with the verdict as its argument, and it returns false
        * in the endless modes — which have no verdict to announce and whose card
        * is the whole of their ending. */
-      this._announceBattle(false);
-      this.onGameOver?.(this.runStats(this.skirmish || this.campaign ? { won: false } : null));
+      const decided = this._announceBattle(false);
+      /* `won: false` EXACTLY WHEN THERE WAS SOMETHING TO LOSE, and the
+       * announcement is what knows: it returns false in the endless modes,
+       * which have no verdict and whose summary must not claim one. Two tests
+       * of one question — this used to ask `skirmish || campaign` while the
+       * sentence asked something wider — is the twin this file keeps deleting. */
+      this.onGameOver?.(this.runStats(decided ? { won: false } : null));
       return true;
     }
     return false;

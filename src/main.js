@@ -1092,7 +1092,8 @@ function gameOver(stats) {
    * meanings and the mode is what names it; `tools/checks/skirmish.mjs` holds
    * every field read here to being a field `runStats` reports.
    */
-  const TAKEN = { campaign: 'Missions taken', skirmish: 'Engagements won', command: 'Areas taken' };
+  const TAKEN = { campaign: 'Missions taken', skirmish: 'Engagements won', command: 'Areas taken',
+                  duel: 'Forms faced' };
   const row = (label, v) => (v == null ? null : [label, v]);
   const rows = won
     ? [

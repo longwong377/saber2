@@ -137,7 +137,25 @@ export const MODES = {
    */
   duel: {
     name: 'Duel',
-    blurb: 'No blasters, no crowd. A ladder of duellists — a new form every 3 waves, and a master at the top.',
+    blurb: 'No blasters, no crowd. A ladder of duellists — a new form every 3 waves, and a master at the top. '
+      + 'Take the top rung and the run is over.',
+    /**
+     * THE MACHINE-READABLE HALF OF "A MASTER AT THE TOP" — and there was no top.
+     *
+     * Measured against the shipped composer: the window narrows to its last two
+     * rungs at wave 28, and from wave 30 every wave of this mode is the same
+     * wave — `sentinel, guardian`, four bodies, four elites, a set piece every
+     * fifth — to wave 60 and beyond. A ladder that cannot be climbed off is a
+     * plateau, and a mode whose card promises a top could only ever be left by
+     * dying.
+     *
+     * `World.update` reads this the way it reads `battles`: the mode declares
+     * that it ENDS and `WaveDirector.duelTop` says where, so nothing in World
+     * names the mode and a second ladder mode inherits the ending. Not
+     * `battles` — that is the field for a bounded battle with an army under
+     * you, and a duel is one body against one body.
+     */
+    ladder: true,
     /**
      * THE RUN RULES ARE LIT, WRITTEN TO SETTINGS AND THEN THROWN AWAY HERE.
      *
@@ -3000,6 +3018,45 @@ export class WaveDirector {
   duelWindow(wave) {
     const { rungs } = this.duelRoster();
     return rungs.slice(this.duelFloor(wave), this.duelTier(wave));
+  }
+
+  /**
+   * THE TOP OF THE LADDER — the wave a duel ENDS on, and it had none.
+   *
+   * `duelFloor`'s note above finishes with "the climb runs to the top of the
+   * roster and stops there, on a wave of masters, which is what 'a master at
+   * the top' says". Measured against the shipped composer, that is true of the
+   * climb and false of the mode: the window narrows to its last two rungs at
+   * WAVE 28 and from wave 30 onwards every wave is identical — `sentinel,
+   * guardian`, four bodies, four elites, a set piece every BOSS_EVERY — for
+   * ever. There is a plateau where the blurb promises a top. Nothing in the
+   * mode changes again after wave 30 and nothing tells the player they have
+   * finished it, so a duel could only ever end by dying.
+   *
+   * So the ladder has a last rung and this is it: THE FIRST SET-PIECE WAVE AT
+   * WHICH THE CLIMB HAS RUN OUT. Four promoted duellists in the two heaviest
+   * forms the roster holds, plus the boss that is not on the ladder at all —
+   * which is exactly the sentence the mode card has always printed. Clear it
+   * and the run is WON; `World._ladderCleared` is the ending and
+   * `MODES.duel.ladder` is what says the mode has one.
+   *
+   * FOUND BY ASKING THE TWO RULES, not by re-deriving them in closed form.
+   * `duelFloor(w) >= cap && isBossWave(w)` has an obvious arithmetic solution
+   * and writing it here is HANDOFF §2.4 exactly — `trace.mjs` restated
+   * `isDraftWave` as `w % DRAFT_EVERY === 0`, disagreed with the shipped rule
+   * on the boss waves, and manufactured four defects out of the difference. The
+   * search bound is derived from the same two constants and is generous: the
+   * climb costs DUEL_RUNG waves a rung and walks the roster twice, and a set
+   * piece is never more than BOSS_EVERY waves away.
+   */
+  duelTop() {
+    const { rungs } = this.duelRoster();
+    const cap = Math.max(0, rungs.length - 2);
+    const bound = DUEL_RUNG * (rungs.length + cap + 2) + BOSS_EVERY;
+    for (let w = 1; w <= bound; w++) {
+      if (this.duelFloor(w) >= cap && this.isBossWave(w)) return w;
+    }
+    return bound;
   }
 
   /** How many of the blades arrive promoted. The teaching rate, reused. */

@@ -358,6 +358,52 @@ export async function run({ check, assert }) {
       + `pressure 0..${AREAS.length - 1}`;
   });
 
+  check('skirmish: every number the Deploy panel offers is a number the plan keeps', async () => {
+    /**
+     * THE OTHER HALF OF `menu: a slider offers the numbers the run will take`,
+     * and the half that needs a World.
+     *
+     * `Your line` used to open at 0 against `_planSkirmish`'s floor of
+     * OPENING_STRENGTH, so nine of its twenty-five positions read "1 of 24" …
+     * "9 of 24" and every one of them planned TEN. `Menu._range` writes the
+     * three travels off `SKIRMISH.engagements`, `OPENING_STRENGTH..MAX_STRENGTH`
+     * and `AREAS` now; this walks every position of each one through the
+     * shipped planner and requires the plan to keep it.
+     *
+     * A range that merely MATCHES the tables is not enough — the tables could
+     * both be wrong together — so the edges are pushed as well: one step
+     * outside each bound has to come back clamped TO that bound, which is what
+     * makes the offered range the real edge of what the battle accepts rather
+     * than a pair of numbers that happen to agree.
+     *
+     * `_planSkirmish` and not `beginSkirmish`: the planner is the rule under
+     * test and calling it costs nothing, where opening a battle musters an army
+     * and can only happen once per world.
+     */
+    const { SKIRMISH } = await import('../../src/game/Waves.js');
+    const { AREAS, MAX_STRENGTH, OPENING_STRENGTH } = await import('../../src/game/Command.js');
+    const { world } = await boot({ mode: 'skirmish' });
+    const plan = (picks) => world._planSkirmish(picks);
+    const offers = [
+      ['engagements', SKIRMISH.engagements.min, SKIRMISH.engagements.max,
+        (v) => plan({ engagements: v }).engagements],
+      ['strength', OPENING_STRENGTH, MAX_STRENGTH, (v) => plan({ strength: v }).strength],
+      ['pressure', 0, AREAS.length - 1, (v) => plan({ pressure: v }).pressure],
+    ];
+    const rows = [];
+    for (const [name, lo, hi, ask] of offers) {
+      for (let v = lo; v <= hi; v++) {
+        assert(ask(v) === v,
+          `the panel offers ${name} ${v} and the plan comes back ${ask(v)} — that position of the `
+          + 'control is a number no battle will ever be fought at');
+      }
+      assert(ask(lo - 1) === lo, `${name} ${lo - 1} planned as ${ask(lo - 1)} rather than clamping to ${lo}`);
+      assert(ask(hi + 1) === hi, `${name} ${hi + 1} planned as ${ask(hi + 1)} rather than clamping to ${hi}`);
+      rows.push(`${name} ${lo}..${hi} (${hi - lo + 1} honoured)`);
+    }
+    return `${rows.join(', ')}; one step outside each bound clamps to it`;
+  });
+
   check('skirmish: the line is raised to strength off the muster, and it is a mix', async () => {
     const { AREAS } = await import('../../src/game/Command.js');
     const { world } = await boot({ mode: 'skirmish' });
