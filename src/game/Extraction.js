@@ -96,7 +96,7 @@
  */
 
 import * as THREE from 'three';
-import { clamp, lerp, damp, smoothstep, makeRng, TAU } from '../engine/MathUtil.js';
+import { clamp, lerp, smoothstep, makeRng, TAU } from '../engine/MathUtil.js';
 import { audio } from '../engine/Audio.js';
 import { spawnClear, bladeClear, nudgeFromSwing } from './Spawn.js';
 import { dropshipModel } from './Arrivals.js';
