@@ -524,7 +524,13 @@ export async function run({ check, assert }) {
       world.command.onMuster = () => { musters++; };
       const notify = world.notify.bind(world);
       world.notify = (t, sub) => { if (/ADVANCE IS OVER|HELD/.test(String(t))) campaign = true; notify(t, sub); };
-      for (let t = 0; t < 320 && !world.over; t++) {
+      /* 320 HALF-SECONDS WAS THE OLD ARITHMETIC, when an engagement was one
+       * cleared wave. `SKIRMISH.waves` makes it three — the player found the
+       * one-wave version and called it "the map will immediately say cleared"
+       * — so five engagements is fifteen waves and fifteen intermissions. The
+       * budget is the shipped default's, not a number that keeps the old bug
+       * passing. */
+      for (let t = 0; t < 1000 && !world.over; t++) {
         for (let i = 0; i < 30 && !world.over; i++) {
           if (world.player) world.player.hp = world.player.maxHp;
           world.update(1 / 60, input);
@@ -617,7 +623,8 @@ export async function run({ check, assert }) {
       world.director.start(1);                       // main.js, verbatim
       assert(!world.skirmish, 'a plan appeared before anybody asked for one');
       let peakLine = 0;
-      for (let t = 0; t < 300 && !world.over; t++) {
+      // Three waves to an engagement now — see the budget note above.
+      for (let t = 0; t < 900 && !world.over; t++) {
         for (let i = 0; i < 30 && !world.over; i++) {
           if (world.player) world.player.hp = world.player.maxHp;
           world.update(1 / 60, input);
@@ -698,5 +705,99 @@ export async function run({ check, assert }) {
       `the card invents a value for a missing field: ${invented.join(', ')}`);
     return `${calls} endings, one builder, ${Object.keys(stats).length} fields; the card reads `
       + `${wants.length} (${wants.join(', ')}) and every one is sent`;
+  });
+
+  /* ══ what the player found by playing ═════════════════════════════════ */
+
+  check('skirmish: an engagement is a battle and not one cleared wave', async () => {
+    /**
+     * THE PLAYER'S REPORT, and it is the whole of this check: "in skirmish mode
+     * I'll start the map will immediately say cleared and we leave like there
+     * were never any enemies."
+     *
+     * `World._skirmishCleared` is hung off the wave-clear ledger, so an
+     * engagement WAS exactly one cleared wave — and wave 1 of the escalation
+     * composes ONE body. Driven in `tools/_stall.mjs --mode skirmish` before the
+     * fix: engagement 1 closed at t = 6.0 s having composed a single hostile,
+     * and the transport was called on it.
+     *
+     * Two properties, and neither can be satisfied by the old code:
+     *   · clearing ONE wave does not advance the engagement counter;
+     *   · the battle opens at a wave the pressure chose, so the heaviest
+     *     skirmish in the game does not open on the one-droid wave.
+     */
+    const S = await import('./_shared.mjs');
+    const snap = await S.snapshotShared();
+    try {
+      const { SKIRMISH } = await import('../../src/game/Waves.js');
+      assert(SKIRMISH.waves.def >= 3,
+        `an engagement defaults to ${SKIRMISH.waves.def} wave(s) — one is the bug the player reported`);
+      const { world, input } = await boot({ mode: 'skirmish' });
+      world.beginSkirmish({ engagements: 4, strength: 10, pressure: 3, rotate: false });
+      const opened = world.director.wave;
+      assert(opened >= 1 + 3 * SKIRMISH.pressureWaves,
+        `pressure 3 opened the escalation at wave ${opened}`);
+      /* One wave, cleared, by the ledger's own door — the same call World hangs
+       * the engagement off. Anything that advances `cleared` here is the defect. */
+      const first = world.skirmish.cleared;
+      world.director.onWaveClear(world.director.wave, true);
+      assert(world.skirmish.cleared === first,
+        'one cleared wave ended the engagement — that is the bug, exactly');
+      assert(world.skirmish.waveCount === 1,
+        `the wave was not counted (waveCount ${world.skirmish.waveCount})`);
+      for (let i = 1; i < SKIRMISH.waves.def; i++) world.director.onWaveClear(world.director.wave, true);
+      assert(world.skirmish.cleared === first + 1,
+        `${SKIRMISH.waves.def} cleared waves did not close one engagement`);
+      assert(world.skirmish.waveCount === 0, 'the wave counter did not reset at the boundary');
+      return `${SKIRMISH.waves.def} waves to an engagement; pressure 3 opened at wave ${opened}`;
+    } finally { S.restoreShared(snap); }
+  });
+
+  check('skirmish: a journey in flight is not re-asked for every frame — the campaign freeze', async () => {
+    /**
+     * THE PLAYER: "in campaign mode the game completely freezes when you finish
+     * the first wave, never unfreezes so I don't know what's in it."
+     *
+     * A two-line loop between three correct pieces, and the reason no check in
+     * the tree caught it is that EVERY campaign check passes `instantSpawn:
+     * true`, which is precisely the flag that switches the journey off.
+     *
+     *   `_advanceMission` nulls `world.skirmish` and asks for the next ground →
+     *   `World.update`'s auto-open block sees no skirmish and re-opens the
+     *   campaign → which sets `_groundPending` again → which is handed to an
+     *   extraction that already owns it → whose `begin` answers true → and
+     *   `World.update` RETURNS, above the line that steps the extraction.
+     *
+     * So the director is never updated: `phase` stays `aftermath`, `t` never
+     * advances, and the whole game is one frame wide from then on. Measured at
+     * 40 s of driven play with nothing in the world moving.
+     *
+     * The property is stated as a frame count rather than as source text: a
+     * campaign whose first mission ends must still be stepping its extraction
+     * some seconds later.
+     */
+    const S = await import('./_shared.mjs');
+    const snap = await S.snapshotShared();
+    try {
+      const { world, input } = await boot({ mode: 'campaign', instantSpawn: false }, 'geonosis');
+      world.beginCampaign();
+      /* End mission 1 by hand, through the door the battle uses, so this check
+       * does not depend on how long a mission takes to fight. */
+      world.skirmish = world.skirmish || world._planSkirmish({});
+      world.skirmish.started = true;
+      world.skirmish.cleared = world.skirmish.engagements;
+      world._endSkirmish(true);
+      let ticks = 0;
+      const phases = new Set();
+      for (let i = 0; i < 60 * 20 && !world.over; i++) {
+        world.update(1 / 60, input);
+        if (world.extraction?.active) { ticks++; phases.add(world.extraction.phase); }
+      }
+      assert(ticks > 0, 'no extraction ever ran on a mission boundary');
+      assert(phases.size > 1,
+        `the journey never left '${[...phases][0]}' in 20 s — World.update is returning above `
+        + 'extraction.update, which is the campaign freeze');
+      return `mission boundary flew ${phases.size} phases (${[...phases].join(' → ')}) in 20 s`;
+    } finally { S.restoreShared(snap); }
   });
 }

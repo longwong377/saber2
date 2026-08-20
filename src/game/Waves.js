@@ -579,6 +579,33 @@ export function sandboxConfig(settings) {
  */
 export const SKIRMISH = {
   engagements: { min: 1, max: 9, def: 3 },
+  /**
+   * HOW MANY WAVES MAKE ONE ENGAGEMENT — and the default is 3 because 1 was a
+   * bug the player found in ten seconds.
+   *
+   * `World._skirmishCleared` is hung off the wave-clear ledger, so an
+   * engagement was exactly one cleared wave. Wave 1 of the escalation is ONE
+   * body. The player: "in skirmish mode I'll start the map will immediately say
+   * cleared and we leave like there were never any enemies." Driven in
+   * `tools/_stall.mjs --mode skirmish`: engagement 1 closed at t=6.0 s with a
+   * single hostile ever composed, and the transport was called on it.
+   *
+   * An engagement is a BATTLE FOR A PIECE OF GROUND, which is three waves of
+   * escalation at minimum — the same shape `AREAS` uses for a Command area,
+   * whose shortest is 3. It is a pick rather than a constant so a player who
+   * wants a long grind on one map can have one.
+   */
+  waves: { min: 1, max: 8, def: 3 },
+  /**
+   * WHERE THE ESCALATION OPENS, per step of pressure.
+   *
+   * The second half of the same defect. `pressure` moved the muster shelf and
+   * the budget curve's `areaIndex` and left the WAVE NUMBER at 1, so the
+   * heaviest skirmish in the game still opened on the one-droid wave. Two waves
+   * of escalation per step of pressure means pressure 4 opens at wave 9, which
+   * is where that budget belongs.
+   */
+  pressureWaves: 2,
 };
 
 /**
@@ -620,6 +647,9 @@ export function skirmishConfig(picks) {
      * to want — a player learning one map, or measuring one — so it is a pick
      * and not a law, but the answer to an absent one is yes. */
     rotate: p.rotate !== false,
+    /* See SKIRMISH.waves. An engagement is a battle, not a wave. */
+    waves: clamp(Math.round(n(p.waves, SKIRMISH.waves.def)),
+      SKIRMISH.waves.min, SKIRMISH.waves.max),
   };
 }
 

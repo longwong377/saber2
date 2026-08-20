@@ -18,7 +18,7 @@ import { assignSides, DuelMatch, Player, asTeam, bladeTargets, canHarm, hostileT
 import { ageDropped } from './Dropped.js';
 import { Enemy, ARCHETYPES, applyModifier, ENEMY_POWERS, FORCE_KINDS, IMPULSE_AS_HP } from './Enemy.js';
 import { WaveDirector, RankSet, boonTick, boonGuard, bondReceive, bondGuardIn, bondGive, BOND, boonById, MODES,
-  skirmishConfig } from './Waves.js';
+  skirmishConfig, SKIRMISH } from './Waves.js';
 import { Communion, FACETS, insightRate } from './LivingForce.js';
 /**
  * What "open" is worth, in Insight — and it was a quarter of what it promised.
@@ -1570,6 +1570,11 @@ export class World {
       pressure,
       strength,
       rotate: cfg.rotate,
+      /* HOW MANY CLEARED WAVES MAKE ONE ENGAGEMENT, and the counter under it.
+       * See `SKIRMISH.waves`: this was structurally 1, so a skirmish announced
+       * the ground was held after the wave that composes a single body. */
+      waves: cfg.waves,
+      waveCount: 0,
       /* One entry per engagement, so `[cleared]` is where you are going next
        * and index 0 is where you started. Length `engagements` even when the
        * rotation is off, so the readout can name the ground of every round. */
@@ -1630,8 +1635,15 @@ export class World {
     sk.started = true;
     d.areaIndex = sk.pressure;
     d.areaWaves = 0;
+    sk.waveCount = 0;
     this._musterSkirmish();
-    if (!d.active) d.start(wave ?? (this.director.wave + 1));
+    /* …AND THE ESCALATION OPENS WHERE THE PRESSURE SAYS. `pressure` already
+     * moved the budget curve's `areaIndex` and the muster shelf and left the
+     * wave NUMBER at 1, so the heaviest skirmish still opened on the one-body
+     * wave. See `SKIRMISH.pressureWaves`. */
+    const opening = Math.max(this.director.wave + 1,
+      1 + sk.pressure * SKIRMISH.pressureWaves);
+    if (!d.active) d.start(wave ?? opening);
     else d.deploy();
     this._skirmishBanner();
     return sk;
@@ -1849,6 +1861,27 @@ export class World {
      * started on rather than desynchronising. */
     if (this.netMode === 'client') return false;
     if (d) d.areaWaves = 0;
+    /**
+     * AN ENGAGEMENT IS `sk.waves` CLEARED WAVES, NOT ONE.
+     *
+     * The player: "in skirmish mode I'll start the map will immediately say
+     * cleared and we leave like there were never any enemies." That is this
+     * method firing on wave 1, which the escalation composes as ONE body — so
+     * the ground was declared held before the second enemy in the battle had
+     * been bought. Driven in `tools/_stall.mjs --mode skirmish`: engagement 1
+     * closed at t = 6.0 s, one hostile composed, transport called.
+     *
+     * Counted here rather than by reading `director.wave`, because a battle can
+     * open at any wave number (`beginSkirmish` opens it at the pressure's) and
+     * the campaign's own missions restart the count.
+     */
+    sk.waveCount = (sk.waveCount || 0) + 1;
+    if (sk.waveCount < (sk.waves || 1)) {
+      this.notify(`WAVE ${sk.waveCount} OF ${sk.waves} — HOLD`,
+        `${this.command?.roster?.strength ?? 0} of yours still standing`);
+      return false;
+    }
+    sk.waveCount = 0;
     sk.cleared++;
     sk.log.push({
       engagement: sk.cleared, level: this.levelKey, name: this.level?.name,
@@ -2606,8 +2639,41 @@ export class World {
      * mission 1's in a single frame, silently, because its own `_afterRotate`
      * broadcast is host-gated. That is the exact symptom the rotation announce
      * was written to remove, arriving by the other door. */
+    /**
+     * …AND NOT WHILE A JOURNEY IS ALREADY CARRYING THE ANSWER. THIS IS THE
+     * CAMPAIGN FREEZE, and it is a two-line loop between three correct pieces.
+     *
+     * The player: "in campaign mode the game completely freezes when you finish
+     * the first wave, never unfreezes."  Reproduced in
+     * `tools/_stall.mjs --mode campaign`, which is the first thing in the tree
+     * to drive a campaign WITHOUT `instantSpawn` — every campaign check sets
+     * that flag, so the transition the player actually plays had never run
+     * under a harness at all.
+     *
+     *   1. mission 1 ends → `_advanceMission` bumps the index, sets
+     *      `this.skirmish = null` and asks for mission 2's ground.
+     *   2. `_groundPending` is taken below and handed to the extraction, which
+     *      begins its five-second aftermath.
+     *   3. NEXT FRAME, `skirmish` is null, so this block re-opens the campaign,
+     *      which sees mission 2's ground is not the one underfoot and sets
+     *      `_groundPending` AGAIN.
+     *   4. The block below finds it, calls `extraction.begin`, which answers
+     *      "I already own this" — and `return`s.
+     *
+     * That `return` is above `extraction.update`, so the director is never
+     * stepped: `phase` stays `aftermath` and `t` never advances. The whole game
+     * is one frame wide from then on. Measured: 40 s of driven play, `phase`
+     * unchanged, wave 0, nothing else in the world moving.
+     *
+     * A journey in flight IS the pending ground change, so neither door may be
+     * opened while one is running. Both guards are here rather than inside
+     * `beginCampaign`, because the same shape would bite `beginSkirmish` the
+     * moment a mode rotates on it, and because a re-entrancy bug belongs next
+     * to the `return` that makes it fatal.
+     */
     if (this.netMode !== 'client' && MODES[this.settings?.mode]?.battles
-        && !this.skirmish?.started && this.player) {
+        && !this.skirmish?.started && this.player
+        && !this._groundPending && !this.extraction?.active && !this.rotating) {
       if (this.settings.mode === 'campaign') this.beginCampaign();
       else this.beginSkirmish();
     }
