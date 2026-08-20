@@ -59,6 +59,9 @@
      a fifth thing competing to be looked at. */
   --accent:#48d8ff;        /* THE BLADE. Selection, focus, anything live */
   --accent-warm:#ffb020;   /* SAND. Cost, mastery, a permanent choice */
+  --borz:#cf7f66;          /* THE MARK. The second word of the logo, and only
+                              ever that: it is the one colour in this file that
+                              names a thing rather than a role */
   --danger:#ff5540;        /* EMBER. Damage, a boss, a mistake */
   --good:#5fe0a0;
   --force:#a07dff;         /* the Force itself — the pool, the Holocron */
@@ -197,7 +200,19 @@ b{font-weight:800}
 .logo{display:block;text-align:center}
 .logo h1.wm{display:block;margin:0;line-height:0}
 .wm-src{position:absolute;width:0;height:0;overflow:hidden}
-.wordmark{display:block;margin:0 auto;width:min(620px,100%);height:auto}
+/* ── THE WORDMARK'S THREE COLOURS ─────────────────────────────────────────
+   `--wm-a` the caps, `--wm-b` the coral, `--wm-knock` whatever is BEHIND the
+   mark — the reticle inside the O is a hole cut through to it, and the split
+   bar across the O is the same hole. That third property is the whole reason
+   one copy of the geometry can serve a dark boot screen and a lit title plate:
+   the mark carries no background of its own and is told what it is standing on.
+
+   The DEFAULT is the boot screen's, which is the dark one: cream caps, coral
+   word, the page's own void behind the reticle. The menu and the load screen
+   override the pair that has to change, and nothing else. */
+.wordmark{display:block;margin:0 auto;width:min(620px,100%);height:auto;overflow:visible;
+  --wm-a:var(--ink);--wm-b:var(--borz);--wm-knock:var(--void)}
+#menu .wordmark,#loading .wordmark{--wm-a:#181a1f;--wm-knock:#f6ecda}
 /* ── THE MENU'S WORDMARK IS A TITLE, NOT A CAPTION ────────────────────────
    461 px, against the boot screen's 620. It was 25 px of type when the
    backdrop was a gradient and 40 px once the backdrop became a picture — a
@@ -215,7 +230,7 @@ b{font-weight:800}
 
    The short-viewport clawback lives in the existing `@media (max-height:800px)`
    block with the other rules that give the panel its height back. */
-.logo.small .wordmark{width:min(461px,100%)}
+.logo.small .wordmark{width:min(430px,100%)}
 
 /* ── menu ────────────────────────────────────────────────── */
 /* ── THE TITLE SCREEN'S ART, AND WHY IT IS A FILE ────────────────────────
@@ -267,13 +282,36 @@ b{font-weight:800}
    The three original washes stay ON TOP of the plate, in their original
    order. They were the whole backdrop and are now its grade: the same poster
    shapes, laid over a photograph of the game instead of over nothing. */
+/* THE SINK IS NOW A LIGHT ONE, AND THE THREE COOL WASHES ARE GONE.
+   Both follow from the plate changing sides. The old plate was a night frame
+   of the game and everything over it was warm off-white, so the sink was
+   `rgba(10,11,20,.52)` — a dark field pulling the render down so pale type
+   could sit on it. The new plate is a lit ochre battlefield and the wordmark
+   over it is BLACK, which is the supplied logo. A dark sink on that picture
+   would grey the one thing the player asked to see and leave the black caps
+   fighting a mid-value sky.
+
+   So it is the same layer with the polarity reversed: one flat field of the
+   plate's own cream at .34, which lifts the sky under the header, holds the
+   dark panels off the art, and keeps `tools/checks/keyart.mjs`'s bound (a flat
+   sink must exist, its alpha must be between .2 and .8, and the url() must be
+   the last layer so the plate sits UNDER its grade).
+
+   The cyan/amber/violet washes went with the night: three cool diagonals over
+   a warm poster are a different picture arguing with this one. */
 .menu-bg{position:absolute;inset:0;pointer-events:none;
   background:
-    linear-gradient(200deg,rgba(72,216,255,.11) 0 26%,transparent 26.4%),
-    linear-gradient(20deg,rgba(255,176,32,.09) 0 21%,transparent 21.4%),
-    linear-gradient(160deg,rgba(160,125,255,.07) 0 13%,transparent 13.4%),
-    linear-gradient(rgba(10,11,20,.52),rgba(10,11,20,.52)),
+    linear-gradient(rgba(248,240,222,.34),rgba(248,240,222,.34)),
     url("./assets/menu/title.webp") 50% 50%/cover no-repeat}
+
+/* ── THE LOADING SCREEN ───────────────────────────────────────────────────
+   Same plate, same reason: "it will be the background for any non-in game menu
+   or screen". It is a plain stack — backdrop, wordmark, bar — because it is on
+   for between 350 ms and four seconds and has nothing to interact with. */
+#loading{display:grid;place-items:center}
+.load-wrap{position:relative;z-index:2;width:min(720px,88vw);text-align:center;
+  animation:stampIn .35s cubic-bezier(.22,1,.36,1) both}
+.load-wrap .boot-bar{margin-top:30px}
 .menu-wrap{position:relative;z-index:2;width:min(1180px,94vw);height:min(770px,92vh);
   display:flex;flex-direction:column;animation:stampIn .5s cubic-bezier(.22,1,.36,1) both}
 .menu-head{text-align:center;padding:4px 0 12px}
@@ -422,7 +460,7 @@ h3.stacked{margin-top:26px}
      and every pixel the title takes is a pixel the Mode list does not have.
      Above 800 px there is room and the title is a title; at or below it, the
      panel wins. 300 px of mark is 44 px tall against 461's 68. */
-  .logo.small .wordmark{width:min(300px,100%)}
+  .logo.small .wordmark{width:min(280px,100%)}
   h3.stacked{margin-top:14px}
   .col.narrow.pinned h3{margin-bottom:8px}
   .col.narrow.pinned .difflist{gap:6px}

@@ -135,9 +135,53 @@ export class Screens {
    */
   clear() {
     const m = this.io.menu;
+    /* …AND THE LOAD SCREEN, which is not an overlay and is still this class's
+     * to take down — `main.js`'s `world.onGround` handler calls `clear()` the
+     * moment a rotation lands, and that is the only thing that ends a load. */
+    this.hideLoading();
     m.hidePause?.(); m.hideDraft?.(); m.hideMuster?.(); m.hideDeath?.();
     for (const hide of this.cards.values()) hide();
     this.overlay = null;
+  }
+
+  /**
+   * THE LOADING SCREEN — and it had never existed.
+   *
+   * `main.js` has called `screens.loading?.(frac, label)` from two places since
+   * the async loader was written: the deploy path, and `world.onRotate` for
+   * every mid-run ground change. This class had no such method, so the
+   * optional-call operator swallowed both, silently, for the whole life of the
+   * loader. What a player saw while a terrain heightfield, a Rapier world,
+   * every instanced field and up to 224 props were built was the menu going
+   * away and nothing arriving — 350 ms warm, 3.8 s cold, on a blank page.
+   *
+   * IT IS NOT AN OVERLAY, which is why it does not go through `take`. `take`
+   * pauses the world, drops input and remembers a card so Escape can pause over
+   * it; a load is none of those. There is no world yet to pause, there is
+   * nothing to escape to, and being "stuck" here is the loader's problem and
+   * not this state machine's. It is a plain show/hide over the top of
+   * everything, cleared by `clear()` with the rest.
+   *
+   * `frac` is 0..1 and `label` is the stage the loader is in. Both are what the
+   * boot screen's bar already takes, so the two screens read alike.
+   */
+  loading(frac = 0, label = '') {
+    const el = typeof document !== 'undefined' && document.getElementById('loading');
+    if (!el) return;
+    el.classList.remove('hidden');
+    const fill = document.getElementById('load-fill');
+    if (fill) fill.style.width = `${Math.round(Math.max(0, Math.min(1, frac)) * 100)}%`;
+    const msg = document.getElementById('load-msg');
+    if (msg && label) msg.textContent = label;
+    this._loading = true;
+  }
+
+  /** Take it down. Called by `clear()`, and by `set()` through it. */
+  hideLoading() {
+    if (typeof document === 'undefined') return;
+    const el = document.getElementById('loading');
+    if (el) el.classList.add('hidden');
+    this._loading = false;
   }
 
   /* ── overlays ──────────────────────────────────────────────────────── */
