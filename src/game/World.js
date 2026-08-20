@@ -3291,12 +3291,20 @@ export class World {
      * 13.2 against the 14 it was, which is the point — the tier that was
      * already tuned barely moves, and the two that were lying stop.
      */
+    /* AND EACH OUTCOME SOUNDS LIKE ITSELF. `audio.clash` above fires on every
+     * contact, before the branch is taken, so four of the six ways an exchange
+     * can end — unblockable, guard broken, parry, lost — arrived on one sound.
+     * The verb is `clashOutcome`, which ends in a fallback so a fifth outcome
+     * cannot be silent; it is called HERE rather than from `onDeflectFeedback`
+     * because that seam is HUD text and a machine with the HUD off would then
+     * fight in silence. */
     // ── UNBLOCKABLE: the blade is not the answer
     if (attacking && !tier.parryable && !tier.chamberable) {
       player.control?.hitImpulse(clash.point, _v1.clone().multiplyScalar(-9), 1.0);
       player.stamina = Math.max(0, player.stamina - GUARD_COST * tier.guardBreak);
       if (player.stamina <= 0) player.staggerTimer = Math.max(player.staggerTimer, 0.6);
       this.notifyFloating(clash.point, 'UNBLOCKABLE', '#ff5a62');
+      audio.clashOutcome(clash.point, 'unblockable', clash.power);
       this.onDeflectFeedback?.(-1, clash.point, 'that one had to be dodged');
       return;
     }
@@ -3308,6 +3316,7 @@ export class World {
       player.staggerTimer = Math.max(player.staggerTimer, 0.38);
       this.addHitstop(0.05);
       this.notifyFloating(clash.point, 'GUARD BROKEN', '#ffa040');
+      audio.clashOutcome(clash.point, 'guardBroken', clash.power);
       this.onDeflectFeedback?.(-1, clash.point, 'heavy — chamber it or step aside');
       return;
     }
@@ -3334,11 +3343,13 @@ export class World {
       player.addFlow(0.12);
       player.score += 45;
       this.notifyFloating(clash.point, 'PARRY', '#a8f0ff');
+      audio.clashOutcome(clash.point, 'parry', clash.power);
       this.report({ type: 'parry', enemy });
       this.onDeflectFeedback?.(3, clash.point, 'riposte now');
     } else {
       player.stamina = Math.max(0, player.stamina - GUARD_COST * tier.guardBreak);
       if (player.stamina <= 0) player.staggerTimer = Math.max(player.staggerTimer, 0.6);
+      audio.clashOutcome(clash.point, 'lost', clash.power);
     }
     this.addHitstop(0.03);
   }

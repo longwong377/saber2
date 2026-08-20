@@ -2898,14 +2898,25 @@ const MAX_DEFORM_DOWN = 4.5, MAX_DEFORM_UP = 3.0;
 
 export class Terrain {
   constructor(scene, presetName = 'dunes', quality = 1) {
-    const preset = TERRAIN_PRESETS[presetName] || TERRAIN_PRESETS.dunes;
+    /* A NAME THIS TABLE DOES NOT HAVE IS A TYPO, AND A TYPO MUST NOT MEASURE
+     * CLEAN. `TERRAIN_PRESETS[presetName] || TERRAIN_PRESETS.dunes` handed back
+     * the dunes on any misspelling, so a level asking for 'colloseum', a check
+     * asking for a ground that has been renamed, and an instrument defaulting
+     * to a preset that was cut all got a working heightfield and a green run
+     * describing somebody else's ground. Same rule as `_source.functionBody`'s:
+     * a missing thing gets an error, not a plausible default. */
+    const preset = TERRAIN_PRESETS[presetName];
+    if (!preset) {
+      throw new Error(`Terrain: there is no '${presetName}' ground. `
+        + `The table holds ${Object.keys(TERRAIN_PRESETS).join(', ')}`);
+    }
     this.preset = preset;
     /* The NAME, not just the table row. Anything that has to be different from
      * level to level and has only the terrain to ask — the grass's cover field
      * is the first — needs a per-level seed, and reading it off the preset
      * object means two levels on one preset agree, which is the right answer
      * for a heightfield and the right answer for what grows on it. */
-    this.presetKey = TERRAIN_PRESETS[presetName] ? presetName : 'dunes';
+    this.presetKey = presetName;
     this.quality = clamp(quality, 0.4, 1.6);
     this.size = preset.scale;
     this.res = Math.max(64, Math.floor(preset.res * this.quality));

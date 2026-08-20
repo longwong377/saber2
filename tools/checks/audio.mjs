@@ -21,6 +21,7 @@
 
 import * as THREE from 'three';
 import { readFileSync, readdirSync } from 'node:fs';
+import { functionBody } from './_source.mjs';
 import { AudioEngine, PRIO, MUSIC_TRACKS } from '../../src/engine/Audio.js';
 import { ENEMY_POWERS } from '../../src/game/Enemy.js';
 import { ENEMY_VOICES } from '../../src/engine/Voice.js';
@@ -308,8 +309,7 @@ export async function run({ check, assert }) {
      *
      * This holds the ENGINE's half: the four timbres exist, none is silent, no
      * two are the same, and an outcome nobody has written yet is audible. The
-     * caller's half — `World._applyClash` raising one per branch — is a patch
-     * in a file this lane does not own and is reported rather than made.
+     * caller's half is the clause below.
      */
     const { a, ctx } = engine();
     const near = V(2, 0, 0);
@@ -328,6 +328,42 @@ export async function run({ check, assert }) {
     assert(unknown.voices > 0, 'clashOutcome answers an outcome it does not know with silence');
     return `clash ${base.sum.toFixed(3)} · `
       + [...seen].map(([k, r]) => `${k} ${r.sum.toFixed(3)}`).join(' · ');
+  });
+
+  check('audio: every outcome the engine can voice is raised by the branch that takes it', () => {
+    /**
+     * THE OTHER HALF, AND THE HALF THAT ROTS. A verb in the engine with no
+     * caller is exactly the defect this file was pointed at — a mechanism with
+     * nothing on the other end — and it is invisible to the clause above,
+     * which calls `clashOutcome` itself.
+     *
+     * The list of outcomes is read out of `clashOutcome`'s OWN source rather
+     * than typed here (HANDOFF §2.3): a fifth timbre added tomorrow puts itself
+     * on this list and asks `_applyClash` who raises it. The fallback branch has
+     * no `kind === '…'` test and so contributes nothing, which is correct — it
+     * is the thing that catches an outcome nobody named.
+     *
+     * String-matched against the method body, deliberately. Driving a real
+     * clash needs two fighters, two blades and a contact frame at a chosen
+     * tier, and a check that expensive would be run rarely and trusted anyway;
+     * this one answers the only question that was actually open — is there a
+     * call on each branch — and answers it in milliseconds.
+     */
+    const root = new URL('../../', import.meta.url).pathname;
+    const audioSrc = readFileSync(root + 'src/engine/Audio.js', 'utf8');
+    const kinds = [...new Set([...functionBody(audioSrc, '  clashOutcome(')
+      .matchAll(/kind === '([a-zA-Z]+)'/g)].map((m) => m[1]))];
+    assert(kinds.length >= 4, `clashOutcome names ${kinds.length} outcomes — this check has lost its subject`);
+
+    const worldSrc = readFileSync(root + 'src/game/World.js', 'utf8');
+    const body = functionBody(worldSrc, '  _applyClash(')
+      .replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+    for (const k of kinds) {
+      assert(body.includes(`clashOutcome(clash.point, '${k}'`),
+        `AudioEngine can voice a '${k}' clash and _applyClash never raises one — `
+        + 'the HUD says the word and the ears get the bare clash');
+    }
+    return `${kinds.length} outcomes voiced and raised: ${kinds.join(', ')}`;
   });
 
   check('audio: a dead jet trooper stops making a noise', async () => {
