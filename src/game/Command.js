@@ -285,6 +285,12 @@ export const COMMAND_UNITS = {
      * `tools/checks/cloth-cost.mjs` sizes the whole column on how many bodies
      * wear it. It caught these two at 5 of 27 against a budget of 3. */
     cape: false,
+    /* A VIBROSWORD, and this row is where the note above `bx` stops being an
+     * admission and becomes the thing that ships. `weaponStyle: 'vibro'` draws
+     * ground alloy instead of plasma, posts no light, plays no hum and lays no
+     * trail; `saber: true` above it still routes the body through DuelBrain,
+     * which is what a BX is for. See Saber._buildPhysicalBlade. */
+    weaponStyle: 'vibro', bladeLength: 0.98,
     saberColor: 5, hilt: 'Sentinel', form: 'juyo',
     damage: 23, preferred: [1.6, 3.4], score: 900, threat: 6,
     hipHeight: 0.96, unlockAt: 7,
@@ -307,6 +313,10 @@ export const COMMAND_UNITS = {
      * is a tabard hanging off the chassis, not a simulated garment, and the
      * Foundry's IG general already declines one for the same reason. */
     cape: false,
+    /* AN ELECTROSTAFF — double-ended, dark shaft, the charge only at the two
+     * claws. It is the weapon the label has always named and the one thing an
+     * IG-100 is recognised by; a violet plasma blade was neither. */
+    weaponStyle: 'staff', bladeLength: 1.05,
     saberColor: 5, hilt: 'Sentinel', form: 'djemSo',
     damage: 28, preferred: [1.8, 3.6], score: 1400, threat: 7,
     hipHeight: 1.05, unlockAt: 9, commandAura: 'leader',

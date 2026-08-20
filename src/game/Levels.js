@@ -4425,11 +4425,14 @@ Object.assign(ARCHETYPES, {
   bodyguard: {
     label: 'IG Bodyguard Droid', build: buildBodyguard, scale: 1.3, hp: 1050, mass: 240,
     speed: 4.4, toughness: TOUGHNESS.armour, melee: true, saber: true,
-    /* An electrostaff, not a lightsaber, and the game already has the right
-     * knob for that: `saberColor` indexes the crystal table and 5 is the cold
-     * violet-white end of it, which is what an arc weapon looks like against a
-     * ship's warm hazard lighting. The duel brain, the telegraph, the clash
-     * and the blade lock all work off `saber` alone and need nothing else. */
+    /* AN ELECTROSTAFF, AND NOW IT IS ONE. This note used to say the game "has
+     * the right knob for that" and point at `saberColor: 5` — a cold
+     * violet-white crystal. It was a lightsabre in a different colour, which
+     * is what the player saw and said so about. `weaponStyle` is the real
+     * knob: a dark double-ended shaft with the charge at the two claws and
+     * nothing glowing in between. The duel brain, the telegraph, the clash and
+     * the blade lock still work off `saber` alone and still need nothing. */
+    weaponStyle: 'staff', bladeLength: 1.1,
     saberColor: 5, hilt: 'Sentinel', damage: 34, preferred: [1.8, 3.8],
     score: 3200, threat: 13, boss: true, hipHeight: 1.12,
     /**

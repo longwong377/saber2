@@ -732,6 +732,43 @@ export class Saber {
     }
     this.coreWidth = opts.coreWidth ?? 1;
     this.hiltStyle = opts.hiltStyle ?? 'Graflex';
+    /**
+     * A WEAPON THAT IS NOT A LIGHTSABRE, and this exists because of one
+     * player note: "sometimes I see my own troops and they have light sabers
+     * and I don't know why, unless they are other jedi or sith that are
+     * helping you it doesn't make sense for a fucking droid to be holding a
+     * lightsaber."
+     *
+     * They were right, and the reason is in the roster rather than in a bug.
+     * `bx` (the BX commando droid) and `magna` (the MagnaGuard) are both
+     * `melee: true, saber: true`, and both of them are RUNGS OF THE
+     * SEPARATIST LADDER — so a Sith player, whose army IS the Separatists
+     * (`sideForOrder`), musters a line that carries glowing plasma. Their own
+     * archetype notes had already admitted it: Command.js calls the BX's
+     * weapon "a VIBROSWORD… melee: true, saber: true today, which puts a
+     * glowing blade in a commando droid's hand", and Bodies.js builds the
+     * scabbard for it down the chassis's spine.
+     *
+     * The `saber: true` flag is not the problem — it is what routes a body
+     * through `DuelBrain`, and a BX absolutely should duel. What was wrong is
+     * that ONE flag decided both the brain and the look. So the look is its
+     * own field now:
+     *
+     *   null      plasma. A lightsabre, and the only thing that is one.
+     *   'vibro'   a solid alloy blade. Ground metal, no emission, no light,
+     *             no hum, no trail — a sword.
+     *   'staff'   an electrostaff: a long dark shaft with the charge only at
+     *             the two ends, which is the entire visual idea of the weapon.
+     *
+     * Everything downstream is untouched by design. The blade's LENGTH, its
+     * sweep, `cutPowerAt`, the contact solver, the clash and the duel all read
+     * geometry that is identical either way, so a vibrosword cuts exactly as
+     * hard as it did yesterday and this is a change of what you SEE.
+     */
+    this.weaponStyle = opts.weaponStyle ?? null;
+    /** True for anything that is not plasma. Read by ignite, the lights, the
+     *  trail and the audio, which is every system that says "lightsabre". */
+    this.physical = this.weaponStyle === 'vibro' || this.weaponStyle === 'staff';
 
     this.root = new THREE.Group();
     this.root.matrixAutoUpdate = true;
@@ -759,6 +796,7 @@ export class Saber {
 
     this._buildHilt();
     this._buildBlade();
+    if (this.physical) this._buildPhysicalBlade();
     this._buildTrail();
     // The lobes were already tuned by _syncWidth on the way through; this is
     // what lands the SCALARS — instability, core neutralisation, smear lifetime
@@ -1538,6 +1576,79 @@ export class Saber {
    * chop puts the swept plane edge-on to the camera, and a zero-thickness
    * ribbon disappears completely in exactly the strike you most want to see.
    */
+  /**
+   * THE BLADE THAT IS NOT PLASMA — a vibrosword or an electrostaff.
+   *
+   * Built into the SAME `bladeGroup` transform, so it starts at the emitter
+   * and runs up +Y exactly as the plasma quad does. That is the whole trick:
+   * every consumer of this class works in blade-space off `base` and `tip`,
+   * which are computed from `bladeLength` and the root's pose and know nothing
+   * about which mesh is drawn. A body swapped from plasma to alloy fights
+   * identically and looks like a droid with a sword.
+   *
+   * Neither shape is emissive and neither is in the bloom pass. `Cel.js` grades
+   * them like any other lit surface, which is the point — the complaint was
+   * that a droid's weapon GLOWED.
+   */
+  _buildPhysicalBlade() {
+    const L = this.bladeLength;
+    const g = new THREE.Group();
+    g.position.y = this.emitterY;
+    this.root.add(g);
+    this.hardGroup = g;
+    this.hardGroup.visible = false;
+
+    if (this.weaponStyle === 'staff') {
+      /* AN ELECTROSTAFF IS A POLE WITH THE CHARGE AT THE ENDS, and it is
+       * double-ended: the shaft runs BOTH ways off the grip, which is what
+       * makes an IG-100 read as an IG-100 from a hundred metres. The hand is
+       * at the middle, so the near half hangs below the emitter. */
+      const shaft = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.021, 0.019, L * 1.72, 7),
+        new THREE.MeshStandardMaterial({ color: 0x1d1f24, roughness: 0.5, metalness: 0.75 }));
+      shaft.position.y = L * 0.36;
+      g.add(shaft);
+      const collar = new THREE.MeshStandardMaterial({ color: 0x6a6f78, roughness: 0.35, metalness: 0.9 });
+      for (const y of [L * 0.10, L * 0.62]) {
+        const c = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, 0.05, 8), collar);
+        c.position.y = y; g.add(c);
+      }
+      /* THE CHARGE. Two short emissive tips and nothing between them — the one
+       * place a physical weapon is allowed to emit, because that is what the
+       * weapon IS. They are the only thing on the staff that answers
+       * `_applyColour`, which is why the colour is taken here and not shared
+       * with the plasma material. */
+      const arc = new THREE.MeshBasicMaterial({ color: this.glowColor, transparent: true, opacity: 0.92 });
+      this.staffArcs = [];
+      for (const y of [L * 1.16, L * -0.44]) {
+        const tip = new THREE.Mesh(new THREE.CapsuleGeometry(0.030, 0.10, 3, 6), arc);
+        tip.position.y = y; g.add(tip); this.staffArcs.push(tip);
+        const claw = new THREE.Mesh(new THREE.ConeGeometry(0.046, 0.15, 6),
+          new THREE.MeshStandardMaterial({ color: 0x33373d, roughness: 0.45, metalness: 0.8 }));
+        claw.position.y = y - Math.sign(y || 1) * 0.11;
+        claw.rotation.x = y > 0 ? 0 : Math.PI;
+        g.add(claw);
+      }
+      return;
+    }
+
+    /* A VIBROSWORD: a flat ground blade with a fuller down the middle and a
+     * clipped point. Two boxes and a wedge — it is seen at ten metres in a
+     * crowd and every extra face is per-body cost in exactly the mode that
+     * fields thirty of them. */
+    const steel = new THREE.MeshStandardMaterial({ color: 0xb9c0c8, roughness: 0.24, metalness: 0.95 });
+    const dark = new THREE.MeshStandardMaterial({ color: 0x5a6068, roughness: 0.4, metalness: 0.85 });
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.052, L * 0.88, 0.014), steel);
+    body.position.y = L * 0.44; g.add(body);
+    const fuller = new THREE.Mesh(new THREE.BoxGeometry(0.018, L * 0.78, 0.017), dark);
+    fuller.position.y = L * 0.44; g.add(fuller);
+    const point = new THREE.Mesh(new THREE.ConeGeometry(0.030, L * 0.20, 4), steel);
+    point.position.y = L * 0.96; point.rotation.y = Math.PI / 4;
+    point.scale.set(1, 1, 0.45); g.add(point);
+    const guard = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.026, 0.030), dark);
+    g.add(guard);
+  }
+
   _buildTrail() {
     this.trailSegments = 30;
     this.trailSheets = 3;
@@ -1610,8 +1721,28 @@ export class Saber {
 
   /* ── control ───────────────────────────────────────────────────────── */
 
-  ignite() { if (this.lit) return; this.lit = true; this.bladeGroup.visible = true; }
-  retract() { this.lit = false; }
+  /**
+   * A PHYSICAL WEAPON IS ALREADY OUT. `lit` stays the field every other system
+   * reads — `cutPowerAt` gates on it, the duel gates on it, `bladeTargets`
+   * gates on it — so a vibrosword still answers yes; what changes is that the
+   * plasma quad never becomes visible and the metal is shown instead. There is
+   * no ignition ramp either: `update` snaps `ignition` to 1 for these, because
+   * a sword does not extend.
+   */
+  ignite() {
+    if (this.lit) return;
+    this.lit = true;
+    if (this.physical) { this.hardGroup.visible = true; this.ignition = 1; return; }
+    this.bladeGroup.visible = true;
+  }
+  retract() {
+    this.lit = false;
+    /* A SWORD CANNOT BE PUT AWAY MID-FIGHT, so `retract` on a physical weapon
+     * only drops the flag the combat model reads. It is called by the same
+     * paths that disarm a Jedi — a lost hand, a death, boarding a transport —
+     * and in every one of them the metal staying in the frame is correct: it
+     * is still a sword, and it is now on the floor or in a dead hand. */
+  }
   toggle() { this.lit ? this.retract() : this.ignite(); }
 
   setHiltPose(pos, quat) {
@@ -1767,10 +1898,20 @@ export class Saber {
        * is 88% of the visible effect (measured — see PROFILE). Unlit blades ask
        * for nothing, so `retract()` costs a slot the same frame it takes the
        * blade out. */
-      this.engine?.lightUp(this.light.position, this.light.color,
-        this.light.intensity, this.light.distance, this.lightPriority);
-      this.engine?.lightUp(this.tipLight.position, this.tipLight.color,
-        this.tipLight.intensity, this.tipLight.distance, this.lightPriority);
+      /* A SWORD IS NOT A LAMP. An electrostaff's tips are, faintly, and that
+       * is the whole difference between the two physical styles: the staff
+       * keeps the TIP sample at a fifth of a blade's candela and drops the
+       * length sample, because the charge is at the ends. A vibrosword posts
+       * neither, so it costs the pool nothing. */
+      if (!this.physical) {
+        this.engine?.lightUp(this.light.position, this.light.color,
+          this.light.intensity, this.light.distance, this.lightPriority);
+        this.engine?.lightUp(this.tipLight.position, this.tipLight.color,
+          this.tipLight.intensity, this.tipLight.distance, this.lightPriority);
+      } else if (this.weaponStyle === 'staff') {
+        this.engine?.lightUp(this.tipLight.position, this.tipLight.color,
+          this.tipLight.intensity * 0.2, this.tipLight.distance * 0.5, this.lightPriority);
+      }
     } else {
       this.light.intensity = 0;
       this.tipLight.intensity = 0;

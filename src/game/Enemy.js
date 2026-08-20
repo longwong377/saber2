@@ -2244,12 +2244,37 @@ export class Enemy {
       if (hand) { hand.obj.add(this.weapon); this.weapon.position.set(0, 0.06 * this.bodyScale, 0.02); this.weapon.rotation.x = -0.2; }
     }
     if (A.saber) {
+      /**
+       * …AND IT IS NOT ALWAYS A LIGHTSABRE. The player: "sometimes I see my
+       * own troops and they have light sabers and I don't know why, unless
+       * they are other jedi or sith that are helping you it doesn't make sense
+       * for a fucking droid to be holding a lightsaber."
+       *
+       * They were reading the roster correctly. `bx` and `magna` are both
+       * rungs of the SEPARATIST ladder, so a Sith player's own line carries
+       * them, and both were `saber: true` — which is the flag that routes a
+       * body through `DuelBrain`, and which was ALSO deciding what the weapon
+       * looked like. Their own archetype notes had already admitted the gap:
+       * Command.js calls the BX's weapon "a VIBROSWORD… which puts a glowing
+       * blade in a commando droid's hand", and Bodies.js builds the scabbard
+       * for it down the chassis's spine.
+       *
+       * `weapon` is the look and `saber` stays the brain. Everything the fight
+       * reads — length, sweep, `cutPowerAt`, the clash, the duel — is
+       * identical, so a BX cuts exactly as hard as it did and no longer glows.
+       */
       this.saber = new Saber(this.world.scene, {
-        colorIndex: A.saberColor ?? 4, bladeLength: 1.12, hiltStyle: A.hilt ?? 'Sentinel',
+        colorIndex: A.saberColor ?? 4, bladeLength: A.bladeLength ?? 1.12,
+        hiltStyle: A.hilt ?? 'Sentinel', weaponStyle: A.weaponStyle ?? null,
       });
       this.saber.ignite();
-      this.hum = audio.createHum(this.saber.color.getHex());
-      this.hum.ignite();
+      /* A SWORD DOES NOT HUM. `createHum` is the plasma loop, and thirty
+       * commando droids each running one is also thirty oscillators in a mode
+       * built to field thirty of them. */
+      if (!this.saber.physical) {
+        this.hum = audio.createHum(this.saber.color.getHex());
+        this.hum.ignite();
+      }
       this.telegraphArc = new Telegraph(this.world.scene);
       /**
        * THE DIE ROLL IS NOW UNREACHABLE FROM THE SHIPPED ROSTER, and it was
