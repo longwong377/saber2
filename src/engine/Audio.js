@@ -56,6 +56,13 @@ const rng = makeRng(4242);
  * the question is worth asking.
  */
 export const PRIO = { chatter: 0, world: 1, combat: 2, critical: 3 };
+/**
+ * How long the death cue rings for — the length of its own longest layer,
+ * named once because `death()` both schedules it and refuses to start a
+ * second one inside it. Two numbers here would be a hand-maintained twin of
+ * the kind this project keeps deleting.
+ */
+const DEATH_CUE = 2.6;
 const BAND = [0.34, 0.68, 0.88, 1];
 
 /**
@@ -2227,12 +2234,37 @@ export class AudioEngine {
    */
   death() {
     if (!this.ready) return 0;
+    /**
+     * ONCE PER DEATH, HOWEVER MANY THINGS ASK FOR IT.
+     *
+     * There was one caller — `Player.die()` — for as long as there was one way
+     * to end a run, so nothing here needed to think about overlap. There are
+     * two now: a bounded battle that is LOST announces itself through
+     * `audio.runWon(false)`, and the first line of `runWon` for a loss is
+     * `return this.death()` (deliberately — the losing commander of a meeting
+     * has not died and still owes the player a cue). A wipe reaches both, in
+     * the same frame, because `Player.die` raises `onPlayerDeath` → `_checkWipe`
+     * → `_announceBattle(false)` BEFORE it plays its own cue.
+     *
+     * Two of these on top of each other is not "louder", it is a different
+     * sound: five layers doubled with a frame of offset, the 96 Hz drop
+     * summing to +6 dB under a pool that may not refuse a `critical` voice.
+     *
+     * Guarded on the AUDIO clock and not the wall clock, for the reason `_at`
+     * below gives, and for the length of the cue's own longest layer — a
+     * second death two seconds after the first is the same death.
+     */
+    const now = this.ctx.currentTime;
+    if (this._deathAt != null && now - this._deathAt < DEATH_CUE) {
+      return Math.max(0, DEATH_CUE - (now - this._deathAt));
+    }
+    this._deathAt = now;
     const P = PRIO.critical;
     this.tone({ freq: 96, freqEnd: 22, dur: 2.5, gain: 0.42, type: 'sine', attack: 0.01, prio: P });
     this.tone({ freq: 143, freqEnd: 33, dur: 2.2, gain: 0.16, type: 'triangle', attack: 0.02, prio: P });
     this.noise({ dur: 2.4, gain: 0.30, type: 'lowpass', freq: 2400, freqEnd: 90, q: 0.6,
       pink: true, attack: 0.02, curve: 3.4, prio: P });
-    this.tone({ freq: 2900, freqEnd: 2600, dur: 2.6, gain: 0.055, type: 'sine', attack: 0.35, prio: P });
+    this.tone({ freq: 2900, freqEnd: 2600, dur: DEATH_CUE, gain: 0.055, type: 'sine', attack: 0.35, prio: P });
     // Two beats at about 46 bpm — the rate a body slows to, not a resting pulse.
     this.tone({ freq: 58, freqEnd: 30, dur: 0.34, gain: 0.30, type: 'sine', attack: 0.006, prio: P });
     // `_at` and not `setTimeout`: the second beat belongs to the first, and a

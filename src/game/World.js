@@ -551,7 +551,12 @@ export class World {
      * tools/verify.mjs records the same trap being sprung through Player.js.
      * World is not in that graph, so the lookup belongs here.
      */
-    this.clothCut = q.cloth ?? 30;
+    // CALLED, not restated (HANDOFF §2.4). `applyQuality` is the one place a
+    // tier's live scalars are resolved, so a column added there is applied at
+    // load as well without a second line here to keep in step. It is safe this
+    // early: its other clause is guarded on `this.particles`, which the pools
+    // stage builds later in this same list.
+    this.applyQuality(this.settings.quality);
     detail = q.viewDist / QUALITY.high.viewDist;
     particleScale = (this.settings.particleScale ?? 1) * q.particles;
       } },
@@ -886,10 +891,31 @@ export class World {
    * `max` only decides how long a spark lives before its slot is recycled. So
    * dropping to Performance mid-fight thins every burst from the very next
    * impact, and the buffers follow on the next deploy.
+   *
+   * ── AND SO CAN THE CLOTH CUT, WHICH IS AN ALLOCATION OF NOTHING AT ALL.
+   *
+   * `clothCut` is a scalar an Enemy compares its camera distance against every
+   * frame, and it was set once, in the level-load step, and never again — so
+   * the column Engine's own QUALITY note calls "the only column in this table
+   * that changes how much simulation runs EVERY frame" and "the largest thing
+   * the CPU side of the ladder hands back" was the one thing a player could not
+   * reach from the options screen. Driven, sixteen acolytes at 4 m to 49 m on
+   * the Ember Shelf, three frames:
+   *
+   *   built at low                  clothCut 0    0 of 16 solving garments
+   *   built at ultra → low          clothCut 46  14 of 16     ← unchanged
+   *   built at ultra                clothCut 46  14 of 16
+   *
+   * A player whose game is stuttering drags Quality down to Performance and
+   * gets the thinner bursts and none of the cloth, until they happen to change
+   * level. It is set HERE now and the load step calls this rather than keeping
+   * a second copy of the line (HANDOFF §2.3): a cached scalar beside the table
+   * it was read from is the shape this project keeps removing.
    */
   applyQuality(name) {
     const q = QUALITY[name] || QUALITY.high;
     if (this.particles) this.particles.scale = (this.settings.particleScale ?? 1) * q.particles;
+    this.clothCut = q.cloth ?? 30;
   }
 
   /**
@@ -1593,7 +1619,11 @@ export class World {
    * mode that is not playable.
    */
   beginCampaign(id = null) {
-    if (!this.command || this.settings?.mode !== 'campaign') return null;
+    /* Off `picksCampaign` and not off the mode's name, exactly as
+     * `beginSkirmish` reads `battles`: the property is what the branch is
+     * about, and a second mode that picks a campaign from the Theatre column
+     * would otherwise need this line edited to reach its own runner. */
+    if (!this.command || !MODES[this.settings?.mode]?.picksCampaign) return null;
     if (!this.campaign) {
       const def = (id && CAMPAIGNS[id]) || campaignAt(this.levelKey) || CAMPAIGNS[CAMPAIGN_IDS[0]];
       if (!def || !def.missions?.length) return null;
@@ -1863,23 +1893,50 @@ export class World {
    * precisely so a decided run makes the sound of how it was decided, which is
    * the position `_endMeeting` already takes for the commander who lost.
    *
-   * @returns false when there is no bounded battle to announce, which is every
+   * THE THIRD BRANCH IS COMMAND'S ADVANCE, and it had the identical defect one
+   * mode earlier. `CommandDirector._endCampaign` held its own notify and its
+   * own `audio.runWon(true)` — a victory sentence with no losing half — so a
+   * player who went down leading the army on Geonosis was told nothing at all:
+   * driven, the last line on screen was "WAVE 1 · 8 contacts inbound" and the
+   * cue fired zero times. Three plans, three verdicts, one announcement.
+   *
+   * The order is the nesting order, not a preference. A campaign mission and a
+   * skirmish both run a CommandDirector, so a check against `this.command`
+   * first would announce every lost engagement as a lost advance.
+   *
+   * @returns false when there is no bounded run to announce, which is every
    *   endless mode — those end on `_checkWipe` alone and have no verdict.
    */
   _announceBattle(won) {
-    const c = this.campaign, sk = this.skirmish;
-    if (!c && !sk) return false;
-    const done = c ? c.index + (won ? 1 : 0) : sk.cleared;
-    const of = c ? c.def.missions.length : sk.engagements;
-    const rounds = c
-      ? c.def.missions.slice(0, done).map((m) => LEVELS[m.level]?.name || m.level)
-      : sk.rotation.slice(0, done).map((k) => LEVELS[k]?.name || k);
-    const what = c ? c.def.name.toUpperCase() : 'THE BATTLE';
-    this.notify(won ? `${what} IS WON` : `${what} IS LOST`,
-      rounds.length ? `${done} of ${of} — ${rounds.join(' · ')}`
-        : `${done} of ${of} ${c ? 'missions' : 'engagements'}`);
-    audio.runWon?.(!!won);
-    return true;
+    const c = this.campaign, sk = this.skirmish, d = this.command;
+    if (c || sk) {
+      const done = c ? c.index + (won ? 1 : 0) : sk.cleared;
+      const of = c ? c.def.missions.length : sk.engagements;
+      const rounds = c
+        ? c.def.missions.slice(0, done).map((m) => LEVELS[m.level]?.name || m.level)
+        : sk.rotation.slice(0, done).map((k) => LEVELS[k]?.name || k);
+      const what = c ? c.def.name.toUpperCase() : 'THE BATTLE';
+      this.notify(won ? `${what} IS WON` : `${what} IS LOST`,
+        rounds.length ? `${done} of ${of} — ${rounds.join(' · ')}`
+          : `${done} of ${of} ${c ? 'missions' : 'engagements'}`);
+      audio.runWon?.(!!won);
+      return true;
+    }
+    if (d) {
+      /* THE GROUND IS NAMED OFF THE GROUND, exactly as `_endMeeting` names it:
+       * the shipped sentence said "walked off Geonosis" from inside a file that
+       * is holding the level, which is a level name written beside a level
+       * list. `MODES.command.level` makes it Geonosis today and the derivation
+       * makes it right the day that changes. */
+      const where = this.level?.name || 'the field';
+      const all = d.roster?.all?.length ?? 0;
+      this.notify(won ? 'THE ADVANCE IS OVER' : 'THE ADVANCE IS LOST',
+        won ? `${d.roster?.strength ?? 0} of ${all} walked off ${where}`
+          : `${d.areasTaken} of ${AREAS.length} areas · ${d.roster?.fallen?.length ?? 0} of ${all} lost`);
+      audio.runWon?.(!!won);
+      return true;
+    }
+    return false;
   }
 
   /**

@@ -17,6 +17,7 @@ import { HUD } from './ui/HUD.js';
 import { Menu, loadSettings, saveSettings, applyFeelSettings, VICTORY_TITLE } from './ui/Menu.js';
 import { Net, RemoteAvatar, packLook, sessionPart } from './net/Net.js';
 import { boonById, drawBoons, BOSS_EVERY, MODES } from './game/Waves.js';
+import { theatreFor } from './game/Levels.js';
 // No `FORMATIONS` import any more: the orders reach this file as ordinary
 // bindings through `ORDER_ACTIONS` below, which is the point of the seam.
 import { recordRun, progressLines, loadProgress } from './game/Progress.js';
@@ -561,7 +562,15 @@ async function deploy() {
    * handler and `loadLevel` that could still prefer its own idea of the ground
    * to the one on the wire, which is what the note over that handler promises
    * nothing does. */
-  const levelKey = MODES[sessionOr('mode')]?.level ?? sessionOr('level');
+  /* …AND A MODE THAT TAKES SOME OF THE ROSTER RATHER THAN ALL OR NONE OF IT.
+   * `MODES[mode]?.level ?? sessionOr('level')` answered the mode that owns ONE
+   * ground and nothing else, so a campaign deployed onto whatever the player
+   * last picked and then rotated off it: measured, seven of the nine theatre
+   * cards built a whole World, ran `beginCampaign`, fell through `campaignAt`
+   * and moved the player to the Colosseum on the next frame. `theatreFor` is
+   * the clamp for all three cases and it is the same list `_syncTheatre` bars
+   * the column with, so the ground the card shows is the ground that loads. */
+  const levelKey = theatreFor(sessionOr('mode'), sessionOr('level'));
   try {
     /* AWAITED, so the build yields between its stages instead of freezing the
      * tab. The progress callback is the same shape the boot sequence's bar
@@ -625,8 +634,10 @@ async function deploy() {
       });
     /* The theatre the player picked IS the campaign — see `Levels.campaignAt`,
      * which is the whole derivation and the reason neither campaign needs a
-     * setting of its own. */
-    } else if (settings.mode === 'campaign') world.beginCampaign();
+     * setting of its own. Off the declared field rather than the mode's name,
+     * for the reason `battles` above is: the branch belongs to the property,
+     * not to the one mode that has it today. */
+    } else if (MODES[settings.mode]?.picksCampaign) world.beginCampaign();
     else world.director.start(1);
   }
   world.notify('MAY THE FORCE BE WITH YOU', world.level.name);

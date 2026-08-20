@@ -120,7 +120,16 @@ const EnemyMod = await import('../src/game/Enemy.js');
  * only thing standing between the blade and a one-pass kill on every body in
  * the game, and a harness carrying its own copy of `hp / 90` would be HANDOFF
  * §2.4's defect on the single number this file's headline answer turns on. */
-const { ARCHETYPES, Enemy, limitBackpedal, guardFor, TURNED_CUT, toppleAt } = EnemyMod;
+const { ARCHETYPES, Enemy, limitBackpedal, guardFor, TURNED_CUT, toppleAt,
+  SEVER_LETHALITY } = EnemyMod;
+/* THE TWO HALVES OF WHAT A PASS COSTS A BODY, BOTH READ OUT OF THE GAME.
+ *
+ * `GRIND_LETHALITY` used to be copied into this file as a bare `0.55` under a
+ * comment saying "World.js — module-private there", and it is not private: it
+ * is exported, `tools/checks/severance.mjs` already imports it, and beside it
+ * sits `grindWorth` — the per-capsule term the copy did not have. See the note
+ * over the grind branch in `_workCapsule` for what that cost. */
+const { GRIND_LETHALITY, grindWorth } = await import('../src/game/World.js');
 
 /**
  * The elite-modifier layer, read through the game's own exports and tolerated
@@ -624,7 +633,6 @@ function limbConsequence(A, cap) {
  *  real takeCut arithmetic; a severed limb has its real consequence.
  * ══════════════════════════════════════════════════════════════════════════ */
 
-const GRIND_LETHALITY = 0.55;   // World.js — module-private there
 const BLADE_REACH_BASE = 1.15;  // Player's default bladeLength
 
 /**
@@ -680,12 +688,32 @@ function _workCapsule(saber, solver, cap, hp, maxHp, speed, power, reach, cadenc
     saber.update(dt, t);
     for (const ev of solver.solve(saber, [tgt], dt, { power })) {
       if (ev.type === 'grind' && ev.need > 0) {
-        const d = (ev.dWork / ev.need) * maxHp * GRIND_LETHALITY;
+        /* `grindWorth(ev.cap)` — THE TERM THIS LINE DID NOT HAVE, and the one
+         * that decides what a grind on a TOE is worth against one on a torso.
+         *
+         * `World._applyBladeEvent` bills `share * maxHp * GRIND_LETHALITY *
+         * grindWorth(cap)`; this restated it without the last factor, so every
+         * frame of contact anywhere on a body was billed as if it were a frame
+         * on its chest. It is HANDOFF §2.4 exactly — an instrument restating a
+         * rule and drifting from it — and it stayed invisible for as long as
+         * the model happened to sever on the FIRST contact frame, which bills
+         * no grind at all. The moment the sweep sampler stopped over-crediting
+         * a frame's coverage, a beast's femur took two frames instead of one,
+         * and the single grind frame in front of the sever billed 94.7% of a
+         * 0.5 budget at full body worth: 469 hp of a 900 hp animal for a pass
+         * through a knee joint the game prices at 0.18. Measured, that alone
+         * took the beast from 3.19 s to 1.28 s — level with a 28 hp B1.
+         *
+         * Called and not copied, so the harness cannot disagree with the game
+         * about the shield case or about an unpriced capsule either. */
+        const d = (ev.dWork / ev.need) * maxHp * GRIND_LETHALITY * grindWorth(ev.cap);
         hp -= d; dealt += d;
       } else if (ev.type === 'cut') {
         const vital = ev.cap.vital;
         const lethal = vital >= 0.9 || (vital >= 0.7 && hp < maxHp * 0.55);
-        const d = lethal ? maxHp * 2 : maxHp * vital * 1.15;
+        // `SEVER_LETHALITY`, imported, for the same reason: it was a literal
+        // 1.15 here against Enemy.js's own exported constant.
+        const d = lethal ? maxHp * 2 : maxHp * vital * SEVER_LETHALITY;
         hp -= d; dealt += d; severed = true;
       }
     }
@@ -889,14 +917,35 @@ export function engagementFor(entry, mods, guardShare = 0, opts = {}) {
    *
    * AND IT IS PRICED INTO THE CHOICE OF BONE, which is the part that changes
    * the fight rather than the number. A killing pass at the neck now costs the
-   * guard first; a leg does not, because severing one is not fight-ending. So
-   * the model discovers "take its legs" against a big animal on its own, from
-   * the rules the game already had, instead of being told.
+   * guard first; a gap in a limb does not, because `_turnCut` lets one through.
+   * So the model discovers "take its legs" against a big animal on its own,
+   * from the rules the game already had, instead of being told.
+   *
+   * ── AND THE GUARD IS A BUDGET FOR THE WHOLE FIGHT, NOT A TOLL ON THE FIRST
+   *    CUT ─────────────────────────────────────────────────────────────────
+   *
+   * `_turnCut` does `this.guard--` and `guardT = GUARD_REFRESH` (6.0 s), so the
+   * hide a body still has is whatever the fight has not yet spent. This charged
+   * it once, on the OPENING cut, and then ran the whole finishing sequence for
+   * free — so the model could open on a weak point the guard cannot touch and
+   * every pass after it was unguarded. Measured on the beast, that is the whole
+   * of a 900 hp animal dying as fast as a 28 hp B1: `femur0.root` is a gap and
+   * costs nothing, and the next pass went into `body.belly`, a `vital` 1.0 core
+   * capsule that `takeCut` kills outright — four turns in the game, zero here,
+   * two passes and 1.28 s.
+   *
+   * THE FOLLOW-UP PASS IS NOT INSIDE THE OPENING THE SEVER MAKES, and that is
+   * the one thing that could have justified the old shape. `takeCut` stuns for
+   * 0.4 s and `_guardOpen` reads `stunTimer`, so a pass that lands inside that
+   * window is genuinely free — but this model's passes are `1 / (swingHit ×
+   * cadence)` apart, which is 0.639 s at the shipped numbers. The window has
+   * closed before the next landed pass, at every cadence this file measures.
    */
   const guardMax = opts.guardOpen ? 0 : guardFor(A);
   const maxTurns = Math.ceil(1 / TURNED_CUT);
+  let guardLeft = guardMax, turnsSpent = 0;
   const turnsFor = (cap) => {
-    if (guardMax <= 0) return 0;
+    if (guardLeft <= 0 || turnsSpent >= maxTurns) return 0;
     /* …AND A GAP IN A LIMB IS NOT TURNED AT ALL.
      *
      * `_turnCut` grew a fourth gate — a weak point on a non-axial bone, see
@@ -907,8 +956,10 @@ export function engagementFor(entry, mods, guardShare = 0, opts = {}) {
     if (cap.opens) return 0;
     const ending = Enemy.prototype._fightEnding.call(
       { A, hp: maxHp, maxHp, disarmed: false }, cap.name, cap.vital);
-    return ending ? Math.min(guardMax, maxTurns) : 0;
+    return ending ? Math.min(guardLeft, maxTurns - turnsSpent) : 0;
   };
+  /** Spend what a pass cost the guard, so the next one is priced against what is left. */
+  const spend = (turns) => { guardLeft -= turns; turnsSpent += turns; };
 
   // Try every capsule the body offers and keep the best plan, which is what a
   // player learns to do: you do not saw through a B2's chest, you take its arm.
@@ -931,20 +982,31 @@ export function engagementFor(entry, mods, guardShare = 0, opts = {}) {
   // comes off the next-best capsule. The turns come off its health first — a
   // turned pass is not free to the body, which is the whole reason the guard is
   // a delay and not immunity.
+  spend(best.turns);
   let hp = best.r.hp - best.turns * maxHp * TURNED_CUT;
   let passes = passesOf(best.r.t, cadence) + best.turns, guard = 0;
   const neutralPasses = passes;
   const used = new Set([best.cap.name]);
+  const route = [{ name: best.cap.name, opens: !!best.cap.opens, turns: best.turns, vital: best.cap.vital }];
   while (hp > 0 && guard++ < 10) {
     let step = null;
     for (const cap of caps) {
       if (used.has(cap.name)) continue;
       const r = workCapsule(cap, hp, maxHp, passSpeed, mods.cutPower, reach, cadence, 40);
-      if (!step || r.t < step.r.t) step = { cap, r };
+      // Scored the way the opening cut is, and for the same reason: a capsule
+      // the hide turns four times is four thrown swings further away than one
+      // it lets through, and picking on `r.t` alone made the guard invisible to
+      // every pass but the first.
+      const turns = turnsFor(cap);
+      const score = r.t + turns / cadence;
+      if (!step || score < step.score) step = { cap, r, turns, score };
     }
     if (!step || !isFinite(step.r.t)) break;
     used.add(step.cap.name);
-    hp = step.r.hp; passes += passesOf(step.r.t, cadence);
+    route.push({ name: step.cap.name, opens: !!step.cap.opens, turns: step.turns, vital: step.cap.vital });
+    spend(step.turns);
+    hp = step.r.hp - step.turns * maxHp * TURNED_CUT;
+    passes += passesOf(step.r.t, cadence) + step.turns;
   }
   // A body no sequence of cuts finishes still dies — the grind damage of passes
   // that never sever is real hp. Fall back to that rate against the best bone.
@@ -962,7 +1024,13 @@ export function engagementFor(entry, mods, guardShare = 0, opts = {}) {
     tKill: timeFor(passes + shieldPasses, cadence),
     via: `${shieldCap ? 'shield→' : ''}${best.turns ? `guard×${best.turns}→` : ''}${best.cap.name}${best.cons.decapitates ? ' (decap)' : best.cons.disarms ? ' (disarm)' : best.cons.topplesAt === 1 ? ' (topple)' : best.r.dead ? ' (kill)' : ''}`,
     cuts: used.size,
-    turns: best.turns,
+    /* THE WHOLE FIGHT'S TURNS, not the opening cut's. `turnsSpent` is what the
+     * plan actually paid, and it is bounded by `maxTurns` at the point it is
+     * charged — which is what `tools/checks/balance.mjs` asserts against
+     * `ceil(1 / TURNED_CUT)`, and it used to be able to assert that only about
+     * the first cut. */
+    turns: turnsSpent,
+    route,
     guardMax,
   };
   _engage.set(key, out);

@@ -364,6 +364,34 @@ export const MODES = {
       + 'The theatre you pick is the campaign you play.',
     rotates: true,
     battles: true,
+    /**
+     * THE MACHINE-READABLE HALF OF "THE THEATRE YOU PICK IS THE CAMPAIGN YOU
+     * PLAY" — and the note above says why a field rather than a sentence.
+     *
+     * `MODES.command.level` records what that cost the last time: the menu
+     * printed `fixedTheatre` while `deploy()` took the player's last-picked
+     * level, so the army landed on the Ember Shelf under a card that said
+     * Geonosis. The same gap was open here in the other direction. The column
+     * offered all nine grounds and only the two that OPEN a campaign did
+     * anything: driven, one deployment per card, seven of nine built the ground
+     * the player picked, fell through `campaignAt` to the first campaign and
+     * rotated them onto the Colosseum a frame later.
+     *
+     * `Levels.theatresFor` reads this and answers with the campaign openings,
+     * `Menu._syncTheatre` bars the rest with the reason on the card, and
+     * `Levels.theatreFor` is the clamp `deploy()` resolves through — so a third
+     * campaign lights its own ground the day it is authored and nothing here
+     * changes. It is a field and not a mode-name test for the reason
+     * `battles` is: `World.beginCampaign` and main.js both branch on it.
+     */
+    picksCampaign: true,
+    /* WHY A BARRED CARD IS BARRED, in the mode's own words — the same
+     * arrangement `fixedTheatre` and `fixedRules` have, and for the reason
+     * `_syncRules` states: "a control that is dead and silent reads as the
+     * picker being broken, and it sticks". A player who cannot pick the White
+     * Pass has to be told that no campaign starts there, or they will conclude
+     * the mode is broken rather than that nobody has written that campaign. */
+    theatreVeto: 'no campaign opens on this ground',
   },
 };
 

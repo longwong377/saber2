@@ -545,6 +545,16 @@ h3::after{content:"";flex:1;height:2px;background:var(--panel-hi)}
 .diff.rule.barred{opacity:.4;filter:saturate(.35);pointer-events:none;cursor:default;
   box-shadow:none;transform:none}
 .diff.rule.barred .txt span{color:var(--dimmer)}
+/* ONE GROUND AT A TIME, when the MODE takes some of the roster rather than all
+   or none of it. `.cards.inert` above is the all-or-nothing case and it was the
+   only one there was, so Campaign — whose Theatre column IS its campaign picker
+   — lit all nine grounds and honoured the two that open a campaign. Same tell
+   as a vetoed rule, on the column the rules borrowed theirs from, and the card
+   swaps its blurb for the reason rather than going quiet. */
+.card.barred{opacity:.4;filter:saturate(.35);pointer-events:none;cursor:default;
+  box-shadow:none;transform:none}
+.card.barred .meta span{color:var(--dimmer)}
+.card .meta .why{margin-top:5px;font-weight:700;letter-spacing:.02em;color:var(--dimmer)}
 /* The seed field borrows the co-op name field's shape — same socket, same ink,
    one size down because it holds a number and not a name. */
 .seedbox{margin-top:18px}

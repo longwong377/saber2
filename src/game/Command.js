@@ -4296,15 +4296,27 @@ export class CommandDirector extends WaveDirector {
     // The survivors walk off the field. Every record is kept — the roster IS the
     // summary, and the fallen are most of what it is worth reading.
     this.recall();
-    this.world?.notify?.('THE ADVANCE IS OVER', `${strength} of ${all} walked off Geonosis`);
-    /* …and it makes a sound. The same call `World._endMeeting` makes, for the
-     * same reason: the score's only ending was a death, and a campaign that is
-     * WON is the other one. Always true here — a campaign that reaches this
-     * line has been won by definition, where a meeting has to ask whose screen
-     * it is. */
-    audio.runWon?.(true);
     const w = this.world;
     if (!w) return true;
+    /**
+     * SAID BY THE ONE THING THAT SAYS HOW A RUN ENDED — and this is the half
+     * that was missing rather than wrong.
+     *
+     * These two lines used to be a `notify` and an `audio.runWon(true)` right
+     * here, and they were the ONLY announcement the advance had: the losing
+     * half did not exist, because losing goes through `World._checkWipe` and
+     * that method knew nothing about a campaign. Driven, a player who went down
+     * leading the army in area 1 read "WAVE 1 · 8 contacts inbound" as the last
+     * line of their run, with `audio.runWon` firing zero times.
+     *
+     * `World._announceBattle` is the sentence and the cue for all three bounded
+     * plans in the game — the campaign, the skirmish and this — and both of
+     * this one's verdicts now come out of it. Which is also what deletes the
+     * level name that was typed into this line: it said "walked off Geonosis"
+     * from a file that is holding the level, and World reads the ground off the
+     * ground. Same words today; right words the day Command's ground moves.
+     */
+    w._announceBattle(true);
     w.over = true;
     /**
      * THROUGH `World.runStats()` — the third assembly of one object, deleted.

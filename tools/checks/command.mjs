@@ -32,6 +32,7 @@ import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
 import { TEAM, canHarm } from '../../src/game/Player.js';
 import { CORPSE_BUDGET, Corpses } from '../../src/game/Corpses.js';
 import { TERRAIN_PRESETS } from '../../src/world/Terrain.js';
+import { clocked } from './_shared.mjs';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
@@ -162,7 +163,12 @@ function drive(world, seconds, input, until = null) {
   return t;
 }
 
-export function run({ check, assert }) {
+export async function run({ check, assert }) {
+  /* Every check in this file is wrapped: the two shared streams are put on
+   * their modules' own seeds before each body and the wind clock is put back
+   * after it. See tools/checks/_shared.mjs — the rule is there, not here.
+   */
+  check = await clocked(check);
   /* ══════════════════════════════════════════════════════════════════ */
   /*  The mode and its ground                                           */
   /* ══════════════════════════════════════════════════════════════════ */
@@ -813,20 +819,35 @@ export function run({ check, assert }) {
 
   check('command: a victory reports the same stats a defeat does', async () => {
     /**
-     * A PIN ON A TWIN THIS FILE'S OWNER COULD NOT DELETE.
+     * A PIN ON A TWIN THIS FILE'S OWNER COULD NOT DELETE — AND THE TWIN IS GONE.
      *
-     * `World._checkWipe` assembles the six numbers a finished session is
-     * described by, inline, inside its `onGameOver` call. Command's
-     * `_endCampaign` needs the same six for a session that ended by being WON,
-     * and Command.js is not allowed to edit World.js — so there are two
-     * assemblies of one object, which is the shape this repository has been
-     * bitten by nine times (HANDOFF §2.3).
+     * `World._checkWipe` assembled the six numbers a finished session is
+     * described by, inline, inside its `onGameOver` call; `_endCampaign`
+     * assembled the same six again for a session that ended by being WON. Two
+     * assemblies of one object, the shape this repository has been bitten by
+     * nine times (HANDOFF §2.3). It could not be deleted from here, so this
+     * drove a real party wipe and a real campaign victory and required the two
+     * summaries to carry the identical set of keys.
      *
-     * It cannot be deleted from here. It CAN be made unable to drift in
-     * silence: drive a real party wipe and a real campaign victory, and require
-     * the two summaries to carry the identical set of keys. Add a field to one
-     * and this fails. The real fix is `World.runStats()`; it is written down in
-     * the handover at the foot of Command.js.
+     * `World.runStats()` landed and all four endings call it, so the key-set
+     * clause is now held by construction rather than by luck. It stays: it is
+     * what fails the day somebody assembles a fifth ending by hand.
+     *
+     * WHAT DID CHANGE IS THE TYPE CLAUSE, and the reason is the fix rather than
+     * a defect. `runStats` carries two fields more than the six — `taken` and
+     * `fallen`, the two main.js's victory card reads — and a mode with no army
+     * has no answer for either: a Trial of Waves takes no ground and loses no
+     * troops. Both come back `null` there, and `gameOver` DROPS a row it has no
+     * number for rather than printing the invented "Areas taken 5" this whole
+     * line of work started from. A flat `typeof` equality reports that as
+     * drift: `object` against `number`.
+     *
+     * So the pairing is stated instead, and it is stricter than the equality
+     * was. The wipe below is driven in `waves`, which builds no CommandDirector
+     * — asserted, not assumed — so a field that is null on that side is
+     * required to be a NUMBER on the campaign side. A field that went null on
+     * both would mean the mode WITH an army cannot count its own casualties,
+     * and that is exactly the hole the null is allowed to describe.
      */
     const { bootWorld, idleInput } = await import('./_coop.mjs');
     /* A REAL LEVEL, NAMED. `World.loadLevel` substitutes `LEVEL_ORDER[0]` for a
@@ -839,6 +860,7 @@ export function run({ check, assert }) {
     world.player.die(null);
     for (let i = 0; i < 8 && !wipe; i++) world.update(STEP, idleInput());
     assert(wipe, 'killing the only player did not produce a game-over summary');
+    const armyless = !world.command;
     world.unload();
 
     const { world: w2, d, input } = await commandWorld({ trim: 1 });
@@ -851,12 +873,29 @@ export function run({ check, assert }) {
     const a = Object.keys(wipe).sort(), b = Object.keys(win).filter((k) => k !== 'won').sort();
     assert(a.join() === b.join(),
       `a defeat reports {${a.join(', ')}} and a victory {${b.join(', ')}} — the two assemblies have drifted`);
+    /* The premise of the null branch below, measured rather than believed: the
+     * wipe is driven in a mode that leads no army, and the victory in the mode
+     * whose whole subject is one. */
+    assert(armyless, 'the wipe was driven in a mode that DOES lead an army — the branch below is meaningless');
+    assert(w2.command, 'the campaign victory was driven without a CommandDirector');
+    const absent = [];
     for (const k of a) {
+      if (wipe[k] === null) {
+        absent.push(k);
+        assert(typeof win[k] === 'number',
+          `${k} is null in a mode with no army and ${JSON.stringify(win[k])} in the mode that leads one — `
+          + 'a null means "this run has no such thing", so the run that HAS one owes a number');
+        continue;
+      }
+      assert(win[k] !== null,
+        `${k} is ${JSON.stringify(wipe[k])} in a mode with no army and null in the campaign — `
+        + 'the mode whose subject is named people dying cannot be the one that has no answer');
       assert(typeof win[k] === typeof wipe[k],
         `the victory's ${k} is a ${typeof win[k]} where a defeat's is a ${typeof wipe[k]}`);
     }
     w2.unload();
-    return `${a.length} shared fields (${a.join(', ')}) plus won on the victory`;
+    return `${a.length} shared fields (${a.join(', ')}) plus won on the victory; `
+      + `${absent.length} of them (${absent.join(', ') || 'none'}) are null with no army and a number with one`;
   });
 
   check('command: a trooper the watchdog withdraws is a casualty, not a free respawn', async () => {

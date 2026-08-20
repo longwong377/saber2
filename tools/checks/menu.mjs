@@ -457,6 +457,137 @@ export async function run({ check, assert }) {
     } finally { delete MODES.waves.fixedTheatre; }
   });
 
+  check('menu: a mode that takes SOME of the grounds bars the rest and says which', async () => {
+    /**
+     * THE THIRD SHAPE THE THEATRE COLUMN CAN HAVE, and the switch above could
+     * not see it.
+     *
+     * `fixedTheatre` is all-or-nothing: the mode owns the ground, the column
+     * greys, one sentence stands beside it. CAMPAIGN declares neither
+     * `fixedTheatre` nor `level`, deliberately — the Theatre column IS its
+     * campaign picker — so it fell through as "the mode takes everything", and
+     * it takes two of nine. Driven through `World.beginCampaign`, one
+     * deployment per card: picking the Ember Shelf, Mustafar, the Drowned Wood,
+     * the Shifting Waste, the White Pass, Geonosis or the Providence built that
+     * ground, ran the campaign runner, fell through `campaignAt` to the first
+     * campaign and moved the player onto the Colosseum on the next frame. SEVEN
+     * OF NINE cards lit, saved, and overruled — this method's own words, "a
+     * card that is lit, written to settings and then thrown away reads as the
+     * picker being randomly broken" — with a whole World built and torn down
+     * per deployment on top.
+     *
+     * `Levels.theatresFor(mode)` is the roster and the MODE declares what feeds
+     * it (`level`, `picksCampaign`, or nothing), so there is no mode name in
+     * this file and none in Menu.js. What is driven here is the reader, on the
+     * real front end, for every shipped mode — and the ORACLE is the run:
+     * whether a card is barred is compared against whether `theatreFor` would
+     * send the deployment somewhere else, which is the defect stated as a
+     * measurement rather than as a list.
+     */
+    const { theatresFor, theatreFor } = await import('../../src/game/Levels.js');
+    const { menu, settings, doc, close } = menuOn({ level: LEVEL_ORDER[0] });
+    try {
+      const list = doc.getElementById('level-list');
+      let narrowed = 0, barredTotal = 0;
+      const rows = [];
+      for (const mode of Object.keys(MODES)) {
+        menu.selectMode(mode);
+        const cards = [...list.children];
+        assert(cards.length === LEVEL_ORDER.length,
+          `${cards.length} theatre cards against ${LEVEL_ORDER.length} grounds`);
+        const live = theatresFor(mode);
+        assert(live.every((k) => LEVEL_ORDER.includes(k)),
+          `${mode} offers a ground that is not in LEVEL_ORDER: ${live.join(', ')}`);
+        assert(live.length, `${mode} can be started on no ground at all`);
+        const inert = list.classList.contains('inert');
+        if (inert) { rows.push(`${mode} whole column inert`); continue; }
+        const barred = cards.filter((c) => c.classList.contains('barred'));
+        barredTotal += barred.length;
+        for (const c of cards) {
+          const ok = live.includes(c.dataset.level);
+          assert(c.classList.contains('barred') === !ok,
+            `${mode}: ${c.dataset.level} is ${ok ? 'barred and startable' : 'lit and not startable'}`);
+          /* A DEAD CONTROL THAT SAYS NOTHING IS THE DEFECT, not the greying —
+           * the same argument `_syncRules` makes about a vetoed rule. */
+          if (!ok) {
+            assert(c.tabIndex === -1 && c.getAttribute('aria-disabled') === 'true',
+              `${mode}: a barred ${c.dataset.level} is still on the keyboard path`);
+            const why = c.querySelector('.why');
+            assert(why && !why.classList.contains('hidden') && why.textContent.length > 8,
+              `${mode}: ${c.dataset.level} is barred and does not say why`);
+          }
+        }
+        /* THE SELECTION SHOWS THE GROUND THAT WILL LOAD, and the SETTING is not
+         * touched — writing it would push the player's own theatre out of the
+         * store and into the next run of another mode, which is the leak this
+         * whole column's note is about. */
+        const sel = cards.filter((c) => c.classList.contains('sel')).map((c) => c.dataset.level);
+        assert(sel.length === 1 && sel[0] === theatreFor(mode, settings.level),
+          `${mode} lights [${sel.join(',')}] and deploys onto ${theatreFor(mode, settings.level)}`);
+        if (live.length < LEVEL_ORDER.length) narrowed++;
+        rows.push(`${mode} ${live.length}/${LEVEL_ORDER.length}`);
+      }
+      assert(narrowed >= 1,
+        'no mode narrows the Theatre column any more — this check has nothing left to guard');
+      assert(barredTotal >= 1, 'nothing is barred anywhere, so the reader was never exercised');
+
+      /* …AND A BARRED CARD CANNOT WRITE THE SETTING THE RUN WILL DISCARD.
+       * `pointer-events:none` stops a mouse and not a script, a pad walking DOM
+       * focus, or Enter — which is exactly how the first version of this defect
+       * survived. */
+      const narrowMode = Object.keys(MODES).find((m) => theatresFor(m).length < LEVEL_ORDER.length
+        && !MODES[m].fixedTheatre);
+      menu.selectMode(narrowMode);
+      const dead = [...list.children].find((c) => c.classList.contains('barred'));
+      const was = settings.level;
+      dead.dispatchEvent({ type: 'click' });
+      dead.dispatchEvent({ type: 'keydown', key: 'Enter' });
+      assert(settings.level === was,
+        `a barred theatre card wrote settings.level = ${settings.level}`);
+      const alive = [...list.children].find((c) => !c.classList.contains('barred'));
+      alive.dispatchEvent({ type: 'click' });
+      assert(settings.level === alive.dataset.level,
+        `the live cards stopped writing too: settings.level = ${settings.level}`);
+      return `${rows.join(', ')}; ${barredTotal} barred cards over ${narrowed} narrowed mode(s), `
+        + `each naming its reason, and none of them writes`;
+    } finally { close(); }
+  });
+
+  check('menu: the ground the card shows is the ground deploy() loads', async () => {
+    /**
+     * THE OTHER HALF OF THE CLAUSE ABOVE, on the side the menu cannot see.
+     *
+     * `deploy()` read `MODES[sessionOr('mode')]?.level ?? sessionOr('level')` —
+     * the mode that owns ONE ground, and no other case — so a campaign built
+     * whatever the player last picked and `beginCampaign` rotated off it a
+     * frame later. Two resolutions of one question is HANDOFF §2.3, and the
+     * expensive half is that the losing one still costs a full World.
+     *
+     * Held as SOURCE because `deploy()` is main.js's and needs a canvas, a
+     * renderer and a physics world to run: what is asserted is that the one
+     * expression which decides the ground calls the shared resolver, and that
+     * the resolver answers the same thing the column shows for every mode.
+     */
+    const { theatreFor } = await import('../../src/game/Levels.js');
+    const decl = /const levelKey = ([^;]+);/.exec(MAIN);
+    assert(decl, 'main.js no longer declares `const levelKey` in deploy()');
+    assert(/\btheatreFor\(/.test(decl[1]),
+      `deploy() resolves the ground as \`${decl[1].trim()}\` — that is a second resolution of the `
+      + 'question `Levels.theatreFor` answers, and the column is drawn from the other one');
+    assert(/import \{[^}]*\btheatreFor\b[^}]*\} from '\.\/game\/Levels\.js'/.test(MAIN),
+      'main.js uses theatreFor without importing it from Levels.js');
+    /* …and every mode's answer is a ground the game actually has. */
+    const rows = [];
+    for (const mode of Object.keys(MODES)) {
+      for (const want of LEVEL_ORDER) {
+        const got = theatreFor(mode, want);
+        assert(LEVELS[got], `${mode} + ${want} resolves to '${got}', which is not a level`);
+      }
+      rows.push(`${mode}→${theatreFor(mode, LEVEL_ORDER[0])}`);
+    }
+    return `deploy() resolves through theatreFor; ${rows.join(' ')}`;
+  });
+
   check('menu: the Bloom checkbox tells the truth about the tier', () => {
     // QUALITY.low.bloom is false and main.js ANDs the tier column with the box,
     // so on Performance the checkbox could not change anything — and it still

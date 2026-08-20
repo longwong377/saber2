@@ -3315,15 +3315,25 @@ export class Menu {
       const L = LEVELS[key];
       const card = document.createElement('div');
       card.className = 'card' + (this.s.level === key ? ' sel' : '');
+      /* THE CARD KNOWS WHICH GROUND IT IS, so `_syncTheatre` can bar the ones a
+       * mode cannot start on without holding a parallel index into
+       * `LEVEL_ORDER` — a second list beside the one it was built from is the
+       * defect this file keeps removing. */
+      card.dataset.level = key;
       card.innerHTML = `
         <div class="art" style="background-image:url(${this._levelArt(key)});background-size:cover"></div>
         <div class="tagpill">${this._poolTypes(L)} unit types</div>
-        <div class="meta"><b>${L.name}</b><span>${L.blurb}</span></div>`;
+        <div class="meta"><b>${L.name}</b><span>${L.blurb}</span><span class="why hidden"></span></div>`;
       this._activate(card, () => {
         // Ignored in the modes that choose their own place — see _syncTheatre.
         // The guard is here as well as on pointer-events because a card the
         // keyboard can still reach must not write a setting the game discards.
         if (this._theatreInert) return;
+        /* …and the same for a ground this mode cannot START on. A barred card
+         * is `pointer-events:none`, which stops a mouse and not a script or a
+         * pad walking DOM focus, and the whole point of the bar is that the
+         * setting must not be written. */
+        if (card.classList.contains('barred')) return;
         audio.ui('click');
         this.s.level = key;
         [...this.el.levels.children].forEach(c => c.classList.toggle('sel', c === card));
@@ -3395,7 +3405,9 @@ export class Menu {
       const key = card.dataset.level;
       const barred = !inert && live.size > 0 && live.size < LEVEL_ORDER.length && !live.has(key);
       card.classList.toggle('barred', barred);
-      card.classList.toggle('sel', !inert && key === resolved);
+      /* Untouched while the column is inert: the mode owns the ground there and
+       * the player's own stored pick is still what the card row is showing. */
+      if (!inert) card.classList.toggle('sel', key === resolved);
       card.tabIndex = (inert || barred) ? -1 : 0;
       card.setAttribute('aria-disabled', (inert || barred) ? 'true' : 'false');
       const why = card.querySelector('.why');

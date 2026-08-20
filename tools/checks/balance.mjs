@@ -644,25 +644,124 @@ export async function run({ check, assert }) {
      *
      * ORDERINGS, not numbers, for the reason this file's header gives. Three of
      * them, and each was false before:
-     *   · a body over half a tonne costs strictly more than a battle droid;
+     *   · the guard is CHARGED on the route it defends, and it buys time there;
      *   · the heavies are ordered by their guard, so the mass derivation
      *     actually reaches the answer instead of being decorative;
      *   · and it is bounded — nothing is unkillable, at any cut power.
+     *
+     * ── THE FIRST CLAUSE USED TO BE A COMPARISON WITH A B1, AND IT WAS THE
+     *    SAME MISTAKE THE SECOND ONE ALREADY HAD FIXED ───────────────────────
+     *
+     * It read `engagementFor(heavy).tKill > engagementFor('b1').tKill` — "a body
+     * over half a tonne costs strictly more than a battle droid". That compares
+     * a guarded body's BEST route, which on every creature here runs through a
+     * weak point the guard deliberately cannot touch, against an unguarded
+     * body's only route. It is precisely the confusion the plate clause below
+     * already records for the guard ordering, left standing one clause higher.
+     *
+     * It went red when the sweep sampler was fixed (`BladeContactSolver.solve`),
+     * and NOT because the blade got weaker. Phase-swept over the sub-frame phase
+     * at 60 Hz, the work one pass banks is unchanged to three digits — b1 head
+     * 0.96885 → 0.96815, spine 0.89964 → 0.90279 — while the SPREAD across phase
+     * collapses, 13.3% → 7.4% and 28.7% → 0.0%. What moved is that the B1's
+     * one-pass decapitation stopped being a lottery: share of sub-frame phases
+     * in which one identical pass takes its head off,
+     *
+     *     240Hz  144Hz  60Hz  30Hz     old   0%   32%   51%   76%
+     *                                  new   0%    0%    0%    0%
+     *
+     * — and 0% is the true answer, because the head's chord is 0.2742 m and the
+     * work its toughness demands is 0.2894 m. So `bare` moved 0.64 s → 1.28 s,
+     * two passes, and a `>` against it can no longer be met by any body that
+     * also takes two: a 520 kg pouncer pays its one turn of hide and then its
+     * belly is a `vital` 1.0 kill, which is two passes exactly.
+     *
+     * The tie is real and the claim was the wrong instrument. What the clause
+     * was ever for is "the model has a notion of a body defending itself", and
+     * that is asked here of the mechanism instead of through a proxy body: over
+     * the plate the guard must be charged, and opening it must make the same
+     * body strictly cheaper. Both are per-body, so neither can tie, and the two
+     * together are strictly stronger than the comparison they replace. The b1
+     * stays as a floor — nothing over half a tonne may fall in FEWER passes than
+     * a battle droid — and its number stays in the pass line.
      */
     const { engagementFor } = B;
-    const { guardFor, TURNED_CUT } = await import('../../src/game/Enemy.js');
+    const { Enemy, guardFor, TURNED_CUT } = await import('../../src/game/Enemy.js');
     const mods = { cutPower: 1, bladeLength: 1.15, attackRate: 1, moveSpeed: 1 };
-    const bare = engagementFor('b1', mods, 0).tKill;
+    const bare = engagementFor('b1', mods, 0);
+    const maxTurns = Math.ceil(1 / TURNED_CUT);
     const heavies = Object.entries(ARCHETYPES)
       .filter(([, A]) => !A.saber && !A.training && !A.inert && (A.mass ?? 0) >= 520)
-      .map(([t, A]) => ({ t, A, g: guardFor(A), tKill: engagementFor(t, mods, 0).tKill }));
+      .map(([t, A]) => ({ t, A, g: guardFor(A), e: engagementFor(t, mods, 0),
+        // The route the guard defends, with the guard up and with it open. A
+        // weak point bypasses the guard by design, so neither of these may look
+        // through one — `noGaps` is the same filter the plate ordering uses.
+        held: engagementFor(t, mods, 0, { noGaps: true }),
+        open: engagementFor(t, mods, 0, { noGaps: true, guardOpen: true }) }));
     assert(heavies.length >= 8, `only ${heavies.length} bodies over 520 kg to measure`);
+    let opened = 0;
     for (const h of heavies) {
-      assert(h.tKill > bare,
-        `a ${h.t} (${h.A.hp} hp, ${h.A.mass} kg) goes down in ${h.tKill.toFixed(2)} s against a `
-        + `28 hp B1's ${bare.toFixed(2)} s — the model is still standing it still`);
-      assert(isFinite(h.tKill), `${h.t} cannot be killed at all — the hide has become a wall`);
+      assert(isFinite(h.e.tKill), `${h.t} cannot be killed at all — the hide has become a wall`);
+      /* THE 0.64 s ROW, STATED DIRECTLY. Every line in the table this check
+       * opens with is one pass, and one pass is what a body with nothing in the
+       * way costs. Asked of the body itself rather than against a B1, because a
+       * B1 now costs two passes as well and a `>` against it cannot be met by
+       * anything else that costs two — see the note above. */
+      assert(h.e.passes >= 2,
+        `a ${h.t} (${h.A.hp} hp, ${h.A.mass} kg, guard ${h.g}) goes down in ONE pass, via `
+        + `${h.e.via} — the model is standing it still`);
+      assert(h.held.turns > 0,
+        `a ${h.t} (${h.A.hp} hp, ${h.A.mass} kg, guard ${h.g}) is charged ${h.held.turns} turned `
+        + 'passes over its own plate — the guard is not being asked for at all');
+      assert(h.held.turns <= maxTurns,
+        `${h.t} is billed ${h.held.turns} turned passes against a ceiling of ${maxTurns}`);
+      assert(h.held.tKill > h.open.tKill,
+        `a ${h.t} with its guard OPEN takes ${h.open.tKill.toFixed(2)} s over the plate and `
+        + `${h.held.tKill.toFixed(2)} s with it up — the guard is costing the player nothing`);
+      assert(h.held.passes >= bare.passes,
+        `a ${h.t} (${h.A.hp} hp, ${h.A.mass} kg) falls over its own plate in ${h.held.passes} passes `
+        + `against a 28 hp B1's ${bare.passes} — a body with a hide is cheaper than one without`);
+      if (h.open.passes === 1) opened++;
+
+      /* ── THE GUARD IS SPENT BEFORE THE CORE IS ──────────────────────────
+       *
+       * `_turnCut` does `this.guard--`: the hide is a budget for the whole
+       * fight, not a toll on the first cut. `engagementFor` charged it once, on
+       * its OPENING cut, and then ran the rest of the plan for free — so a plan
+       * could open on a weak point the guard cannot touch (`opens`, and
+       * `_turnCut` lets those through by design) and reach the body's core on
+       * the very next pass having paid nothing. Measured on the beast: a knee
+       * joint then `body.belly`, a `vital` 1.0 capsule `takeCut` kills outright,
+       * two passes and 1.28 s against a 900 hp animal with four turns of hide.
+       *
+       * So the plan is walked, and `_fightEnding` is CALLED on each step with
+       * the same arguments the model uses. Any step that is fight-ending and is
+       * NOT a gap must have the body's whole guard paid at or before it. A plan
+       * made only of gaps pays nothing and satisfies this vacuously, which is
+       * right: that is what a weak point is for.
+       */
+      let paid = 0;
+      for (const step of h.e.route ?? []) {
+        paid += step.turns;
+        const ending = Enemy.prototype._fightEnding.call(
+          { A: h.A, hp: h.A.hp, maxHp: h.A.hp, disarmed: false }, step.name, step.vital);
+        if (step.opens || !ending) continue;
+        assert(paid >= Math.min(h.g, maxTurns),
+          `the plan for a ${h.t} reaches ${step.name} — a fight-ending pass its hide turns — `
+          + `having paid ${paid} of ${Math.min(h.g, maxTurns)} turns, by way of `
+          + `${(h.e.route ?? []).map((r) => r.name + (r.opens ? '*' : '')).join(' → ')}`);
+      }
     }
+    /* AND THE REGRESSION THIS CHECK EXISTS FOR IS REPRODUCIBLE ON DEMAND. With
+     * the guard open, some of these bodies do fall to a single pass — that is
+     * the 0.64 s row the note above quotes, and it is what the guard is the only
+     * thing standing in front of. If NOTHING falls in one pass with the guard
+     * open, the line is being held by something else and the clauses above are
+     * passing for a reason nobody has measured. */
+    assert(opened > 0,
+      'not one body over half a tonne falls to a single pass even with its guard open — '
+      + 'the guard is no longer what is holding the line, and these clauses are measuring '
+      + 'something else');
     /**
      * THE GUARD BUYS TIME ON THE ROUTE THE GUARD DEFENDS.
      *
@@ -687,7 +786,7 @@ export async function run({ check, assert }) {
      *     66 capsules of derived geometry are decoration.
      */
     const beasts = heavies.filter((h) => h.A.custom === 'beast')
-      .map((h) => ({ ...h, plate: engagementFor(h.t, mods, 0, { noGaps: true }).tKill }))
+      .map((h) => ({ ...h, tKill: h.e.tKill, plate: h.held.tKill }))
       .sort((a, b) => a.g - b.g);
     for (let i = 1; i < beasts.length; i++) {
       assert(beasts[i].plate >= beasts[i - 1].plate - 1e-9,
@@ -706,13 +805,18 @@ export async function run({ check, assert }) {
       `not one of ${beasts.length} beasts is quicker through a weak point than over the plate — `
       + 'the gaps are geometry with no reward attached');
     // …and the ceiling the game itself imposes is respected: no engagement may
-    // charge more turns than `1 / TURNED_CUT`, whatever the guard says.
+    // charge more turns than `1 / TURNED_CUT`, whatever the guard says. Asked of
+    // the BEST route as well as the plate, because `engagementFor` now reports
+    // what the whole plan paid rather than what its opening cut did.
     for (const h of heavies) {
       const e = engagementFor(h.t, mods, 0);
-      assert((e.turns ?? 0) <= Math.ceil(1 / TURNED_CUT),
-        `${h.t} is billed ${e.turns} turned passes against a ceiling of ${Math.ceil(1 / TURNED_CUT)}`);
+      assert((e.turns ?? 0) <= maxTurns,
+        `${h.t} is billed ${e.turns} turned passes against a ceiling of ${maxTurns}`);
     }
-    return `b1 ${bare.toFixed(2)}s vs ` + heavies.map((h) => `${h.t} ${h.tKill.toFixed(2)}s(g${h.g})`).join(', ');
+    return `b1 ${bare.tKill.toFixed(2)}s/${bare.passes}p; over the plate, guard up→open (${opened} of `
+      + `${heavies.length} fall in one pass once it is open) — `
+      + heavies.map((h) => `${h.t} ${h.held.tKill.toFixed(2)}→${h.open.tKill.toFixed(2)}s(g${h.g},×${h.held.turns})`).join(', ')
+      + '; best route ' + heavies.map((h) => `${h.t} ${h.e.tKill.toFixed(2)}s/${h.e.passes}p`).join(', ');
   });
 
   check('balance: a melee opener gets to attack — wave 1 is not free', async () => {
