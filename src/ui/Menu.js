@@ -115,7 +115,7 @@ import { ACTIONS, MOUSE, WHEEL, keyLabel, loadBindings, saveBindings, defaultBin
  * `{...FORMATIONS, ...COMMAND_FORCE}`: what the order WHEEL is handed, which is
  * the set the block below has to count. */
 import { AREAS, FORMATIONS, COMMAND_FORCE, ORDERS as COMMAND_ORDERS,
-         MAX_STRENGTH, TEAM_DAMAGE_DEFAULT, DEFAULT_FORMATION } from '../game/Command.js';
+         MAX_STRENGTH, OPENING_STRENGTH, TEAM_DAMAGE_DEFAULT, DEFAULT_FORMATION } from '../game/Command.js';
 // THE DATABANK. `ARCHETYPES` is the roster — the page list is enumerated off it
 // and never typed — and Databank.js carries the one thing a roster cannot hold:
 // which side a body fights for, what it is carrying, and who it is.
@@ -511,13 +511,20 @@ export const DEFAULT_SETTINGS = {
    * which is why they are picks and not a settings blob the mode reads for
    * itself.
    *
-   * Zero strength means "whatever the campaign opens with": World floors it at
-   * Command's own OPENING_STRENGTH rather than this file inventing a number.
+   * THE LINE OPENS AT COMMAND'S OWN OPENING LINE, not at zero. `skirmishConfig`
+   * still reads an ABSENT strength as "whatever the campaign opens with" — that
+   * is the right answer for a caller with no opinion, and `_planSkirmish` floors
+   * it there — but a slider that can be dragged below the floor is a control
+   * with a dead zone, and this one had nine positions in it: driven, the
+   * control read "1 of 24" … "9 of 24" and every one of them fielded 10 bodies.
+   * The range is the clamp now (see `_range`), so the number under the slider
+   * is the number that takes the field.
+   *
    * The pressure is an index into Command's `AREAS`, so the mode borrows a
    * ladder somebody has already tuned instead of growing a second one.
    */
   skirmishEngagements: SKIRMISH.engagements.def,
-  skirmishStrength: 0,
+  skirmishStrength: OPENING_STRENGTH,
   skirmishPressure: 0,
   skirmishRotate: true,
   quality: 'high',
@@ -3505,10 +3512,21 @@ export class Menu {
      * words: "a card that is lit, written to settings and then thrown away
      * reads as the picker being randomly broken." Same shape, same switch — a
      * MODE declares it and this reads it, so there is one authority and not a
-     * mode name repeated in the front end. `MODES[key].fixedRules` is the
-     * string; the request to add it to the three modes that need it has been
+     * mode name repeated in the front end.
+     *
+     * IT LANDED, AND THIS PARAGRAPH USED TO SAY IT HAD NOT. The sentence here
+     * read "the request to add it to the three modes that need it has been
      * sent to the lane that owns src/game/Waves.js, and the day it lands this
-     * column greys itself with no edit here.
+     * column greys itself with no edit here" — which was true when it was
+     * written and describes a routed patch that was in fact applied.
+     * `MODES.duel`, `MODES.sandbox` and `MODES.training` each carry a
+     * `fixedRules` sentence today, and `runrules: a mode whose composer never
+     * sees a rule declares it, and no other mode does` holds the field in BOTH
+     * directions against each mode's OWN director — measured, conditions at
+     * wave 6 come back waves 4 · roguelite 4 · command 4 · skirmish 4 ·
+     * campaign 4 · duel 0 · sandbox 0 · training 0. A note saying a fix is
+     * pending, left standing after it lands, sends the next reader to write it
+     * a second time.
      */
     const inert = MODES[this.s.mode]?.fixedRules || null;
     this._rulesInert = inert;
@@ -3851,6 +3869,43 @@ export class Menu {
    * one in the forge and one in the training panel) still registers, and its
    * own listener still only registers once.
    */
+  /**
+   * A SLIDER'S TRAVEL, TAKEN OFF THE THING THAT REFUSES IT.
+   *
+   * `min`, `max` and `step` were typed into index.html — `max="24"` beside
+   * `MAX_STRENGTH = 24`, `max="4"` beside `AREAS.length - 1`, `min="1" max="9"`
+   * beside `SKIRMISH.engagements` — which is a hand-maintained table sitting
+   * next to its generated twin in the markup instead of in a module. Moving one
+   * of those constants leaves the control offering a number the game refuses,
+   * silently, and the control is the only place a player can see it.
+   *
+   * So the travel is written from the authority at build time. The markup keeps
+   * its attributes as a reasonable pre-script value — the panel is visible
+   * before this runs — and stops being what decides.
+   *
+   * `key` NORMALISES A STORED VALUE ON THE WAY IN, and it is not optional
+   * decoration: a saved profile predates every change to a bound, and a browser
+   * clamps `input.value` to the range while leaving `settings[key]` alone — so
+   * without this the thumb sits at one number and the run is fought with
+   * another, which is the same class of lie the range fixes. Narrow on purpose:
+   * only a control whose travel is DERIVED passes a key, because a control
+   * whose markup bound is deliberately narrower than what the game accepts (the
+   * sandbox takes the blade off its leash) must not have the stored value cut
+   * down to the leashed range.
+   */
+  _range(id, min, max, step = 1, key = null) {
+    const input = document.getElementById(id);
+    if (!input) return;
+    input.setAttribute('min', String(min));
+    input.setAttribute('max', String(max));
+    input.setAttribute('step', String(step));
+    if (!key) return;
+    const v = this.s[key];
+    if (typeof v !== 'number' || !isFinite(v)) return;
+    const held = Math.min(max, Math.max(min, v));
+    if (held !== v) this._set(key, held);
+  }
+
   _slider(id, key, fmt, onChange) {
     const input = document.getElementById(id);
     if (!input) return;
@@ -5508,9 +5563,22 @@ export class Menu {
     /* The battle, for Skirmish. Read by `deploy()` at world build like the
      * three above, so the value written here is the one the next battle gets
      * and not one a running world would have to be told about. */
+    /* …AND THEIR TRAVEL COMES OFF THE TABLES THAT CLAMP THEM. All three had
+     * their bounds typed into index.html beside the constants that decide them,
+     * and the strength one was WRONG rather than merely duplicated: it opened at
+     * 0 against a floor of OPENING_STRENGTH, so nine of its twenty-five
+     * positions read "1 of 24" … "9 of 24" and every one of them fielded ten
+     * bodies. Driven through `beginSkirmish`, that is the control lying on 36%
+     * of its own travel. `_planSkirmish` is still the clamp; this is the same
+     * numbers, offered rather than refused. */
+    this._range('opt-sk-engagements', SKIRMISH.engagements.min, SKIRMISH.engagements.max, 1,
+      'skirmishEngagements');
+    this._range('opt-sk-strength', OPENING_STRENGTH, MAX_STRENGTH, 1, 'skirmishStrength');
+    this._range('opt-sk-pressure', 0, AREAS.length - 1, 1, 'skirmishPressure');
     this._slider('opt-sk-engagements', 'skirmishEngagements', v => `${Math.round(v)}`);
     this._slider('opt-sk-strength', 'skirmishStrength',
-      v => (v <= 0 ? "the muster's own line" : `${Math.round(v)} of ${MAX_STRENGTH}`));
+      v => `${Math.round(v)} of ${MAX_STRENGTH}`
+        + (Math.round(v) <= OPENING_STRENGTH ? " — the muster's own line" : ''));
     this._slider('opt-sk-pressure', 'skirmishPressure', v => AREAS[Math.round(v)]?.name ?? '');
     this._check('opt-sk-rotate', 'skirmishRotate');
     /* The standing order, as six cards — the formation records ARE the card
