@@ -557,16 +557,36 @@ export class ExtractionDirector {
    */
   _seat(body) {
     if (!body || body.riding) return;
+    /**
+     * AT THE DOOR, NOT IN THE MIDDLE OF THE HULL — and the first draft got this
+     * wrong in a way only a screenshot could show.
+     *
+     * The seats were at x = ±1.05, y = −0.55: inside the troop bay, which is
+     * the right place to be in a real aircraft and the wrong place to be in
+     * this one. `buildGunship`'s bay is a recessed slot between rails at
+     * y = +0.54 and y = −0.60, about 1.1 m of aperture; a body's feet at −0.55
+     * puts its eye at +1.05, above the roof rail and inside solid hull. Driven
+     * through tools/shot.mjs, the first-person frame was a wall of cream
+     * fuselage with the battlefield entirely behind it.
+     *
+     * So a passenger stands ON THE SILL at x = ±1.45 — the door line, half a
+     * body outboard of the belly — with the feet at −1.05 and therefore the eye
+     * at +0.55, dead level with the aperture. That is the reference plate
+     * exactly: a clone stood at the lip of an open side door with nothing
+     * between him and the ground going past.
+     *
+     * The commander gets the port door and everybody else files aft of them.
+     */
     const isPlayer = body.isLocal !== undefined;
     let local;
     if (isPlayer && !this._doorTaken) {
       this._doorTaken = true;
-      local = new THREE.Vector3(-1.18, -0.55, 0.35);
+      local = new THREE.Vector3(-1.45, -1.05, 0.35);
     } else {
       const n = this._seated.length;
       const side = n % 2 ? 1 : -1;
       const row = Math.floor(n / 2);
-      local = new THREE.Vector3(side * 1.05, -0.55, -0.7 + row * 1.05);
+      local = new THREE.Vector3(side * 1.45, -1.05, -0.55 + row * 1.15);
     }
     body.riding = { local, yaw: local.x < 0 ? -Math.PI / 2 : Math.PI / 2 };
     body._extracting = 'aboard';
