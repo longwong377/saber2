@@ -301,9 +301,21 @@ export async function run({ check, assert }) {
     }
     assert(ships.size > 0, 'four waves on the erg produced no dropship at all');
     const perShip = shipDeliveries / ships.size;
+    /* THIS NUMBER MOVES BETWEEN PROCESSES, AND THE MARGIN IS THE POINT.
+     * `Waves.js` and `MathUtil.js` each seed a module stream from
+     * `Math.random()` at load, and `Combat.js`, `Duel.js` and `Dropped.js` call
+     * it outright, so no seeding a suite can do makes this repeatable — it is
+     * the one class `_shared.mjs` cannot reach, and it is recorded in HANDOFF
+     * §6.2 rather than papered over here. Measured over five separate
+     * processes: 2.00, 2.06, 2.17, 2.27, 2.37. The bar is 1.4 because that is
+     * the claim — a ship that carries fewer than one and a half is a taxi rank
+     * — and it sits about four standard deviations under the run-to-run
+     * spread. DO NOT tighten it toward the observed mean; the distance between
+     * 1.4 and 2.0 is not slack, it is the noise this check has to survive. */
     assert(perShip > 1.4,
       `${shipDeliveries} bodies came off ${ships.size} gunships — ${perShip.toFixed(2)} each, `
-      + 'which is a taxi rank, not a landing');
+      + 'which is a taxi rank, not a landing (this varies 2.00–2.37 between processes; '
+      + 'if it is under 1.4 the squad is not riding together)');
     assert(peak <= MAX_CONCURRENT,
       `${peak} arrivals were live at once against a cap of ${MAX_CONCURRENT}`);
     return `waves 4–10 on the dunes: ${JSON.stringify(byKind)}; ${perShip.toFixed(2)} bodies per `
