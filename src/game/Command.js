@@ -3636,6 +3636,18 @@ export class CommandDirector extends WaveDirector {
      * that scatters is one the player can do nothing about, and the note asks
      * for troops that can be SAVED — "get to them, or lose them". A man
      * running to you is a man you can stand in front of.
+     *
+     * ── AND NEITHER OF THEM IS ALLOWED TO STAND THERE ──
+     *
+     * Both of those sentences used to end in a body that stopped: a refusing
+     * man returned from the top of this method having done nothing, and a
+     * broken one arrived within five metres of his commander and did nothing
+     * from then on. Measured, that was 100.0% and 45.9% of their frames spent
+     * motionless, upright and silent, and the player's whole note is about
+     * exactly that picture. `_goToGround` is what happens instead, and
+     * `_holdPost` is the same omission answered for a man who is perfectly
+     * steady and simply has nothing to shoot. Every branch below now says what
+     * it wants of `crouch`; `_crouch` is the only writer.
      */
     const t = e.trooper;
     /**
