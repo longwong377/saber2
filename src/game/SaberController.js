@@ -295,16 +295,95 @@ export const OVERHEAD = { wind: 0.10, cut: 0.07, dur: 0.32, rise: 0.95, drop: 1.
  *
  * WHAT MAKES IT A SPIN AND NOT A SLASH is `yaw`: the body turns through the
  * cut. A horizontal sweep with the feet planted is a slash and the controller
- * already has one (steer sideways and swing). Turning the carrier through
- * 0.62 rad over the cut is what puts the blade through everything standing
- * around you rather than everything standing in front of you, and it is the
- * reason this costs a third more stamina and recovers half as fast.
+ * already has one (steer sideways and swing).
+ *
+ * `yaw` WAS 0.62 rad — 35 degrees — AND THAT IS NOT A SPIN, IT IS A GLANCE.
+ * The player: "the spin attack needs to be like a whole body spin / directional
+ * force spin thing". Measured on the real rig before the change, against the
+ * overhead on the same bench:
+ *
+ *                     body turn   spine   girdle   shoulder joint   ring hit
+ *     overhead              0°    37.9°    33.3°           187 mm      2 / 18
+ *     spin               35.5°     7.1°     0.0°           102 mm      2 / 18
+ *
+ * Every column says the same thing: the spin had the fastest blade in the game
+ * (11.0 m/s) and no BODY in it at all — less trunk than the overhead, no
+ * shoulder girdle whatsoever, and a quarter turn. Standing in a ring of
+ * eighteen it reached two of them, exactly what the overhead reaches, so the
+ * one attack that exists to answer being surrounded answered it no better than
+ * a downward chop.
+ *
+ * It is a full revolution now — `yaw: TAU` — spent over a `cut` lengthened from
+ * 0.10 s to 0.30 s, which is 1200 deg/s: a hard pirouette, and readable. The
+ * guard still sweeps across through it, so the blade covers the 360 the body
+ * turns PLUS the 116 the arm crosses, and everything standing round you is
+ * inside one pass.
+ *
+ * AND YOU STEER IT, which is the specific thing that was asked for. `drive` is
+ * how fast the body travels while the turn runs and `steer` how quickly it
+ * answers the stick; both are read by `Player._move`, which is the only place
+ * that owns walking. The direction is taken in the frame the spin STARTED in
+ * rather than the live camera frame — with the view going round once a third of
+ * a second, camera-relative WASD would corkscrew and be unusable, which is the
+ * whole reason a steerable spin needs a latched frame rather than a constant.
+ * No stick, no travel: the spin pivots where you stand. That is the honest
+ * answer to "does it move you or not" — it does what you ask it to, and being
+ * able to ask is the feature.
  *
  * `side` is which way it goes and it is not a constant: it takes the sign of
  * whichever side the guard is already on, so the sweep starts from where your
  * hands are. A spin that always went left would be unusable half the time.
  */
-export const SPIN = { wind: 0.13, cut: 0.10, dur: 0.44, rise: 0.98, drop: 1.00, cooldown: 0.92, yaw: 0.62 };
+export const SPIN = {
+  wind: 0.13, cut: 0.38, dur: 0.72, rise: 0.98, drop: 1.00, cooldown: 0.92,
+  yaw: TAU, drive: 6.4, steer: 9, level: 0.42,
+};
+
+/**
+ * SLASH — the LEFT BUTTON, and it is the attack the player presses most.
+ *
+ * It was a THRUST and nothing else, and the player's words for that were "the
+ * left click attacks barely do anything, like it's the slightest movement of
+ * the saber". That is not an impression, it is what the instrument said. Driven
+ * on the real rig (`tools/checks/duelling.mjs`, "the left button lands like a
+ * cut"), the primary attack against the overhead the same player called "a lot
+ * better, it feels real":
+ *
+ *                     tip path   tip peak   arc sweep   spine   girdle
+ *     overhead          2.52 m   10.8 m/s        40°    37.9°    33.3°
+ *     LMB (thrust)      1.39 m    5.9 m/s        13°    21.7°    21.5°
+ *
+ * 13 degrees of blade against 40, and 5.9 m/s against a game whose own cutting
+ * model calls 8 m/s the speed at which "a swing does twice a press's work". By
+ * the rules this project already ships, the primary attack did not qualify as a
+ * swing at all. Everything else — the body drive, the reach, the lunge — was
+ * already there and had nothing to carry.
+ *
+ * So the left button is now a CUT with the lunge still inside it: the same
+ * three-phase arc as the overhead, run DIAGONALLY (`rise`/`drop` across,
+ * `lift`/`fall` down) with the thrust envelope firing on the same press. A
+ * fencer's cut travels forward through the target; separating the two would
+ * have given the player a step OR a cut and the whole complaint is that neither
+ * one alone lands.
+ *
+ * `side` ALTERNATES. Two presses are a left-to-right and then a right-to-left,
+ * so mashing draws a figure eight rather than the same stroke twice — which is
+ * the "graceful" half of "violent but graceful", and it is also why the cut is
+ * effective across a line: consecutive strokes cover opposite sides.
+ *
+ * `cut` 0.085 s across 2.05 units of x and 1.34 of y is 28.8 guard-units a
+ * second, against the overhead's 27.9 — deliberately the same order, because
+ * the overhead IS the reference and a light attack that outran it would make
+ * the heavy pointless.
+ *
+ * `cooldown` is the thrust's own 0.42 and the two are fired from ONE gate. Two
+ * gates on one button is how you get a press that steps without cutting.
+ */
+export const SLASH = {
+  wind: 0.09, cut: 0.13, dur: 0.365,
+  rise: 0.60, drop: 0.67, lift: 0.30, fall: 0.90,
+  lunge: 0.30, cooldown: 0.42,
+};
 
 /**
  * THE CHARGED HEAVY, and it is not a fourth attack — it is the overhead with
@@ -589,6 +668,33 @@ export class SaberController {
     this.spinCool = 0;
     this.spinSide = 1;
     this.spinYaw = 0;
+    /* The spin's VERTICAL half, kept out of `_swY` on purpose: the overhead
+     * owns that one, and the two attacks are allowed to overlap. */
+    this._spY = 0;
+    /* SLASH — the left button. Its own timer and its own additive pair, for
+     * the reason the spin's note gives: two attacks that shared one offset
+     * could not overlap, and an overhead released during a slash is a
+     * different cut rather than a cancelled one. `slashSide` ALTERNATES rather
+     * than being latched from the guard — see SLASH's own note. */
+    this.slashT = -1;
+    this.slash = 0;
+    this.slashCool = 0;
+    this.slashSide = 1;
+    this._slX = 0; this._slY = 0;
+    /**
+     * HOW MUCH OF A FULL STAB THE LIVE THRUST IS WORTH — 1 for the bare stab
+     * on the wheel, `SLASH.lunge` for the step inside a cut.
+     *
+     * It is a scale and not a second envelope because there is only one lunge
+     * in this file and it must stay that way: `THRUST` owns the timing, and
+     * what a cut wants is the same shape, smaller. Measured, a cut carrying a
+     * FULL stab peaked the tip at 17.8 m/s — 1.6x the overhead the player named
+     * as the reference and above the charged heavy, so the light attack would
+     * have been the best attack in the game. The arm is already extended and
+     * already rotating; adding the whole lunge on top multiplies a lever that
+     * is at full length.
+     */
+    this.thrustGain = 1;
     /* CHARGE — 0..1, how much of a heavy is wound up, and `charged` is what it
      * was AT THE RELEASE, which is the number the swing runs on. Reading the
      * live `charge` inside the envelope would let a swing get stronger after
@@ -635,12 +741,39 @@ export class SaberController {
    */
   get swingArc() { return this._swY; }
 
+  /**
+   * WHERE THE LEFT BUTTON'S CUT IS IN ITS OWN ARC, the same contract and for
+   * the same reason: `Player._attackDrive` puts the trunk and the shoulder
+   * girdle behind this cut and has to be in phase with it, and the alternative
+   * is a second copy of the envelope in another file.
+   *
+   * Two components because the cut is DIAGONAL — `slashAcross` is the lateral
+   * half, which is what the torso twists on, and `slashArc` the vertical half,
+   * which is what it folds on. Both are read AFTER the clamp.
+   */
+  get slashArc() { return this._slY; }
+
+  get slashAcross() { return this._slX; }
+
+  /**
+   * THE LIVE LUNGE — the thrust envelope after `thrustGain`, and the number
+   * every reader outside this file wants. `thrust` stays the raw envelope so
+   * "the envelope closed" is still answerable; this is how far it is actually
+   * driving the hands.
+   */
+  get lunge() { return this.thrust * this.thrustGain; }
+
+  /** True while any part of the spin — wind, cut or recovery — is running. */
+  get spinning() { return this.spinT >= 0; }
+
   reset(chest, aimQuat) {
     this.gx = this.readyX; this.gy = this.readyY; this.roll = 0;
     this.handVel.set(0, 0, 0); this.angVel.set(0, 0, 0);
     this.stance = 0; this.stanceTarget = 0;
     this.thrust = 0; this.thrustT = -1; this.thrustStanding = 0;
-    this.spinT = -1; this.spin = 0; this.spinYaw = 0;
+    this.spinT = -1; this.spin = 0; this.spinYaw = 0; this._spY = 0;
+    this.slashT = -1; this.slash = 0; this.slashCool = 0;
+    this._slX = 0; this._slY = 0; this.thrustGain = 1;
     this.charge = 0; this.charged = 0; this.chargeLocked = false;
     this.flourish = 0; this.flourishT = -1;
     this._flX = 0; this._flY = 0; this._flRoll = 0;
@@ -850,11 +983,12 @@ export class SaberController {
     // amplitude every frame. Measured, an overhead out of the LOW guard swept
     // 0.91 units of a 1.33-unit arc and peaked the tip at 7.3 m/s instead of
     // 9-plus. The offsets belong outside every reader of the base guard.
-    this.gx -= this._flX + this._swX;
-    this.gy -= this._flY + this._swY;
+    this.gx -= this._flX + this._swX + this._slX;
+    this.gy -= this._flY + this._swY + this._slY + this._spY;
     this.roll -= this._flRoll;
     this._flX = 0; this._flY = 0; this._flRoll = 0;
-    this._swX = 0; this._swY = 0;
+    this._swX = 0; this._swY = 0; this._spY = 0;
+    this._slX = 0; this._slY = 0;
 
     if (bladeMode) {
       this.steering = 1;
@@ -1113,6 +1247,22 @@ export class SaberController {
         this.spin = smoothstep(0, T.wind, this.spinT)
           * (1 - smoothstep(T.wind + T.cut, T.dur, this.spinT));
         this._swX = clamp(this.gx + arc, -GX_MAX, GX_MAX) - this.gx;
+        /**
+         * AND IT COMES DOWN TO BODY HEIGHT, which is the difference between a
+         * spin that clears a crowd and one that whistles over its heads.
+         *
+         * The ready guard points the blade UP: measured, at rest the hilt sits
+         * at 1.55 m and the tip at 2.19 m, so a sweep that leaves `gy` alone
+         * passes entirely above a standing man. That is exactly what the old
+         * spin did — driven into a ring of eighteen bodies at 1.4 m it crossed
+         * ONE, the one it was already resting on. Dropping the guard to −0.42
+         * through the cut puts the tip at about chest height for the whole
+         * revolution, which is where the bodies are.
+         *
+         * It is still a LATERAL sweep and the numbers keep it one: 0.5 units of
+         * drop against 2.0 units across.
+         */
+        this._spY = (clamp(-T.level, -GY_MIN, GY_MAX) - this.gy) * this.spin;
         /* The turn is spent over the CUT and nowhere else — winding up and
          * recovering must not move the view, or a spin would read as a shove
          * on the mouse. `dt / T.cut` distributes the whole `yaw` across
@@ -1124,7 +1274,69 @@ export class SaberController {
     } else this.spin = 0;
     cam.yaw += this.spinYaw;
 
-    this.gx += this._swX; this.gy += this._swY;
+    /**
+     * ── SLASH. The left button, and the attack the player presses most.
+     *
+     * Structurally the overhead's, deliberately: three phases, an additive
+     * offset taken back at the top of this function, the offset clamped rather
+     * than the result. What differs is that it moves in BOTH axes at once —
+     * a descending diagonal, which is the cut a body makes when it means it —
+     * and that the side alternates, so a mashed left button draws a figure
+     * eight instead of the same stroke twice.
+     *
+     * The press ALSO opens the thrust envelope, from this one gate. See
+     * SLASH's note: a cut that does not travel forward is a wave, and a step
+     * that does not cut is what the player already had.
+     */
+    this.slashCool = Math.max(0, this.slashCool - dt);
+    if (this.slashT >= 0) {
+      this.slashT += dt;
+      const T = SLASH;
+      if (this.slashT >= T.dur) { this.slashT = -1; this.slash = 0; }
+      else {
+        /**
+         * ONE PHASE PARAMETER DRIVES BOTH AXES, so the cut is a straight
+         * diagonal in guard space rather than two arcs that happen to overlap.
+         *
+         * AND THE ARC IS ABSOLUTE WHERE THE OVERHEAD'S IS RELATIVE, which is
+         * the one structural difference between them worth a paragraph. An
+         * overhead ADDED to the guard is right: it chambers from wherever your
+         * hands are and lands below wherever they were. A LATERAL cut cannot
+         * be, because `GX_MAX` is 1.0 and the ready guard already sits at
+         * +0.30 — measured, an offset arc of ±1.0 about that rest pinned `gx`
+         * at the clamp for five frames of a twelve-frame cut and threw a THIRD
+         * of the sweep away. That is CHARGE's own lesson arriving a second
+         * time: a number that cannot move the thing it multiplies is a
+         * comment.
+         *
+         * Both ends of the envelope interpolate back to the LIVE guard, so the
+         * offset is exactly zero at the first and last frame and the cut hands
+         * the guard back the way the overhead hands it back — a slash out of a
+         * held zone lands in that zone.
+         */
+        const side = this.slashSide;
+        let tx, ty;
+        if (this.slashT < T.wind) {
+          const k = smoothstep(0, T.wind, this.slashT);
+          tx = lerp(this.gx, side * T.rise, k);
+          ty = lerp(this.gy, T.lift, k);
+        } else if (this.slashT < T.wind + T.cut) {
+          const k = smoothstep(T.wind, T.wind + T.cut, this.slashT);
+          tx = lerp(side * T.rise, -side * T.drop, k);
+          ty = lerp(T.lift, -T.fall, k);
+        } else {
+          const k = smoothstep(T.wind + T.cut, T.dur, this.slashT);
+          tx = lerp(-side * T.drop, this.gx, k);
+          ty = lerp(-T.fall, this.gy, k);
+        }
+        this.slash = smoothstep(0, T.wind, this.slashT)
+          * (1 - smoothstep(T.wind + T.cut, T.dur, this.slashT));
+        this._slX = clamp(tx, -GX_MAX, GX_MAX) - this.gx;
+        this._slY = clamp(ty, -GY_MIN, GY_MAX) - this.gy;
+      }
+    } else this.slash = 0;
+
+    this.gx += this._swX + this._slX; this.gy += this._swY + this._slY + this._spY;
 
     // gesture signal
     const gspeed = Math.hypot(dx, dy) / Math.max(dt, 1e-4);
@@ -1145,7 +1357,28 @@ export class SaberController {
     // `attackStab` is the wheel-down half of the rose and reaches the same
     // envelope in every scheme — a stab is a stab, not a directional feature.
     // …and `thrust` in EVERY scheme, with no condition left on it: LMB attacks.
-    const stabPressed = input.actHit('attackStab') || input.actHit('thrust');
+    /**
+     * ONE GATE FOR THE LEFT BUTTON. `thrust` opens the slash AND the lunge on
+     * the same press and on the same cooldown; `attackStab` — the wheel-down
+     * half of the rose, and the pad's D-pad down — is still the bare stab it
+     * always was, which is what keeps a fencing thrust available as its own
+     * answer rather than only as an ingredient of the cut.
+     *
+     * The cooldown is written to BOTH clocks so the two cannot come apart: a
+     * rate boon that shortened one and not the other would give the player a
+     * press that steps without cutting, which is the exact defect this button
+     * was reported for.
+     */
+    const lmb = input.actHit('thrust');
+    if (lmb && this.slashCool <= 0 && this.thrustCooldown <= 0 && ctx.stamina > 0.12) {
+      this.slashT = 0;
+      // Alternate. The stroke you get is the opposite of the last one, so the
+      // pair reads as a combination rather than as one animation replayed.
+      this.slashSide = -this.slashSide;
+      this.slashCool = SLASH.cooldown / Math.max(0.2, ctx.attackRate ?? 1);
+      if (ctx.onSwing) ctx.onSwing();
+    }
+    const stabPressed = input.actHit('attackStab') || lmb;
     if (stabPressed && this.thrustCooldown <= 0 && ctx.stamina > 0.12) {
       this.thrustT = 0;
       // A lunge with no feet behind it has to come entirely out of the arms, so
@@ -1159,7 +1392,11 @@ export class SaberController {
       // moving lunge and given 40% less reach for standing still. The fallback
       // stays for every other caller and is unchanged.
       this.thrustStanding = (ctx.moving ?? this.carrierSpeed > THRUST_STANDING_SPEED) ? 0 : 1;
-      this.thrustCooldown = 0.42;
+      // Latched at the press, like `thrustStanding` and for the same reason.
+      this.thrustGain = lmb ? SLASH.lunge : 1;
+      this.thrustCooldown = lmb
+        ? SLASH.cooldown / Math.max(0.2, ctx.attackRate ?? 1)
+        : 0.42;
       if (ctx.onThrust) ctx.onThrust();
     }
     if (this.thrustT >= 0) {
@@ -1184,7 +1421,7 @@ export class SaberController {
 
     // A standing stab gets THRUST_REACH.standing times the reach of a moving
     // one; a moving one has a body behind it already.
-    const reach = this.thrust * lerp(1, THRUST_REACH.standing, this.thrustStanding);
+    const reach = this.lunge * lerp(1, THRUST_REACH.standing, this.thrustStanding);
     const gd = this.guardDir(aimQuat, _v1);
     // In a lateral guard the guard point comes back IN to the hands' own radius.
     // What is then left between hands and guard is almost purely the sideways

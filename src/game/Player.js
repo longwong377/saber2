@@ -9,7 +9,7 @@
 
 import * as THREE from 'three';
 import { Saber, SABER_COLORS } from './Saber.js';
-import { SaberController, THRUST_STANDING_SPEED } from './SaberController.js';
+import { SaberController, THRUST_STANDING_SPEED, SPIN } from './SaberController.js';
 import { buildJedi } from './Bodies.js';
 import { SKIN_TONES, HAIR_COLORS } from '../ui/Menu.js';
 import { speciesOf } from './Bodies.js';
@@ -932,9 +932,32 @@ export const FOREARM = { cone: Math.sin(12 * Math.PI / 180), rate: 40 };
  */
 const SPINE_OVER = 0.34, SPINE_LUNGE = 0.26, SPINE_LUNGE_TWIST = 0.22;
 const CLAV_OVER = 0.30, CLAV_LUNGE = 0.16, CLAV_YAW = 0.34;
+/**
+ * AND THE SAME AGAIN FOR THE LEFT BUTTON'S CUT AND FOR THE SPIN, because both
+ * of them were reported as "barely doing anything" and both of them measured
+ * exactly that.
+ *
+ * A LATERAL cut is mostly TWIST where an overhead is mostly flexion — a body
+ * throwing a cut across itself rotates about its own spine and drags the
+ * shoulder girdle round after it. So `SPINE_SLASH_TWIST` is the big one here
+ * and `SPINE_SLASH` (the fold, driven by the cut's vertical half) the smaller,
+ * which is the mirror image of the overhead's split. 0.30 rad of axial
+ * rotation is inside the ~35 degrees a thoracic spine actually has.
+ *
+ * `SPINE_SPIN` is the lean into a turn. A body spinning about its own axis
+ * leans slightly INTO the turn and drops its trailing shoulder; without it the
+ * figure reads as a statue on a turntable, which is what the spin measured at:
+ * 7.1 degrees of trunk and 0.0 of shoulder girdle, less than the overhead has.
+ */
+const SPINE_SLASH = 0.26, SPINE_SLASH_TWIST = 0.40;
+const CLAV_SLASH = 0.30;
+const SPINE_SPIN = 0.20, SPINE_SPIN_TWIST = 0.34, CLAV_SPIN = 0.32;
 /** Sword side first. The off shoulder answers at a fraction — one torso. */
 const CLAV_DRIVE = [['clavR', 1], ['clavL', -0.45]];
 const _eulA = new THREE.Euler();
+/** _attackDrive's own scratch. _v1.._v6 are threaded through the Force powers
+ *  (see the note at their declaration) and this runs inside the body pass. */
+const _atkR = new THREE.Vector3();
 
 /**
  * The last degree of freedom, and it is the hand's own rest pose.
@@ -2364,7 +2387,9 @@ export class Player {
      * from. Held here rather than recomputed by each reader, because
      * `_updateBlade` and `_updateBody` both need it and they must not disagree.
      */
-    this.attack = { over: 0, lunge: 0, shift: new THREE.Vector3() };
+    this.attack = { over: 0, lunge: 0, slash: 0, slashX: 0, spin: 0, spinSide: 1, shift: new THREE.Vector3() };
+    /** The heading a spin was started in — see `_move`'s steering note. */
+    this._spinFrame = 0; this._wasSpinning = false;
     /**
      * Force stop. `held` is what is frozen right now, `firing` is what has been
      * let go and is leaving in a ripple, and `bodies` is the membership test so
@@ -2935,6 +2960,40 @@ export class Player {
   /* ── locomotion ──────────────────────────────────────────────────── */
 
   _move(dt, ctx) {
+    /**
+     * YOU ARE A PASSENGER — src/game/Extraction.js.
+     *
+     * `riding` is set while the commander is stood in a transport's troop bay,
+     * and it is the whole of what being aboard means to this class: the seat is
+     * written by `ExtractionDirector._flyPassengers` at the TOP of the frame,
+     * before any player is stepped, so by the time this runs the body is
+     * already exactly where the aircraft says it is and every line below would
+     * only fight it — gravity would pull it through the floor, the wish vector
+     * would walk it out of the open door, and the terrain clamp would drop it
+     * 90 m onto the ground going past.
+     *
+     * NOTHING ELSE IS SUPPRESSED, and that is the feature rather than an
+     * oversight. `_readInput` has already run, so the camera is yours, the
+     * blade is yours and you can stand at the door and look at the battlefield
+     * — which is the reference plate the player pointed at. What you cannot do
+     * is walk, and a bay at 90 m is the one place in the game where that is not
+     * a thing being taken away from you.
+     */
+    if (this.riding) {
+      this._sprinting = false;
+      this.crouch = damp(this.crouch, 0, 12, dt);
+      this.velocity.set(0, 0, 0);
+      this.grounded = true;
+      this.coyote = 0.14;
+      this.airJumps = this.boonMods.doubleJump ? 2 : 1;
+      /* The capsule goes where the body went. This is the last line of the
+       * ordinary path too, and leaving it out would draw the commander in a
+       * troop bay while everything that collides with them stayed on the
+       * ground they lifted off — the same defect with a longer symptom that
+       * `Arrivals.relocate` records. */
+      this.body?.setTransform?.(_v1.set(this.position.x, this.position.y + 0.9, this.position.z), null);
+      return;
+    }
     const input = ctx.input;
     const terrain = ctx.terrain;
     const axis = this.isLocal ? input.moveAxis(_axis) : (this.netAxis || _axis0);
@@ -2967,10 +3026,44 @@ export class Player {
     if (this.staggerTimer > 0) speed *= 0.35;
     if (this.senseActive) speed *= 1.18;
 
-    const fwd = _v1.set(Math.sin(this.camera.yaw), 0, Math.cos(this.camera.yaw)).negate();
+    /**
+     * ── STEERING THE SPIN, and the reason it needs a frame of its own.
+     *
+     * The player: "the spin attack needs to be like a whole body spin /
+     * directional force spin thing — you should be able to direct it as well
+     * for the short time you're spinning."
+     *
+     * The spin turns the view through a full revolution in a third of a second.
+     * Every other line in this function builds the walk direction out of the
+     * LIVE `camera.yaw`, so during a spin "forward" would rotate 360° under the
+     * player's thumb and W would trace a circle. That is not a steerable move,
+     * it is a scrambled one — which is why a steerable spin needs a LATCHED
+     * frame and not merely a bigger number.
+     *
+     * `_spinFrame` is the heading at the press. While the turn runs, the stick
+     * is read against it, so W is the way you were facing when you hit the
+     * button and A stays A for the whole revolution — and because it is read
+     * EVERY frame rather than sampled once, changing your mind mid-spin
+     * changes where you end up. That is the whole of the ask.
+     *
+     * No stick, no travel: the spin pivots where you stand. Both answers are
+     * live and the player picks between them with the hand that is already on
+     * the keys.
+     */
+    const spinning = this.control?.spinning === true;
+    if (spinning && !this._wasSpinning) this._spinFrame = this.camera.yaw;
+    this._wasSpinning = spinning;
+    const heading = spinning ? this._spinFrame : this.camera.yaw;
+    const fwd = _v1.set(Math.sin(heading), 0, Math.cos(heading)).negate();
     const right = _v2.set(fwd.z, 0, -fwd.x).negate();
     const wish = _v3.set(0, 0, 0).addScaledVector(fwd, axis.y).addScaledVector(right, axis.x);
     if (wish.lengthSq() > 1) wish.normalize();
+    /* A spin CARRIES you. `SPIN.drive` overrides the walk outright rather than
+     * multiplying it, so the pace is the same whether you were strolling or
+     * sprinting into it — a directional force, which is the words that were
+     * used — and `limitBackpedal` below is skipped for the same reason the
+     * dash skips it: you are not walking. */
+    if (spinning) speed = SPIN.drive;
     /**
      * NOBODY BACKPEDALS AS FAST AS THEY RUN — INCLUDING THE PLAYER.
      *
@@ -2998,10 +3091,10 @@ export class Player {
      * wholesale below — because a dodge is the answer this is meant to leave
      * standing, and it is the one that costs 18 stamina.
      */
-    limitBackpedal(wish, fwd, PLAYER_BACKPEDAL);
+    if (!spinning) limitBackpedal(wish, fwd, PLAYER_BACKPEDAL);
 
     // acceleration: crisp on the ground, floaty in the air
-    const accel = this.grounded ? 46 : 12;
+    const accel = spinning ? SPIN.steer * 11 : (this.grounded ? 46 : 12);
     const targetV = _v4.copy(wish).multiplyScalar(speed);
     if (this.dashTimer > 0) {
       this.dashTimer -= dt;
@@ -3858,7 +3951,9 @@ export class Player {
    *       chambering, and the single biggest term;
    *     · 0.075 m back then forward, so the cut TRAVELS rather than pivots;
    *     · 0.34 rad of spine, arched on the wind and folded through the cut.
-   *   STAB, driven by `control.thrust` (0 -> 1 -> 0 over 0.40 s):
+   *   STAB, driven by `control.lunge` (0 -> 1 -> 0 over 0.40 s; the raw
+   *     envelope scaled by how much of a stab this press is worth — see
+   *     SaberController.thrustGain):
    *     · 0.22 m of trunk along the AIM — the lunge itself. Along the aim and
    *       not the guard, because the legs and the trunk go where the fencer
    *       faces while the point goes where the guard is;
@@ -3874,24 +3969,45 @@ export class Player {
     // The two envelopes, straight off the controller. Neither is recomputed
     // here — see SaberController.swingArc for why that matters.
     const arc = c.swingArc || 0;
-    const thrust = c.thrust || 0;
+    const thrust = c.lunge ?? c.thrust ?? 0;
     // A moving lunge is already half-made by the legs. `thrustStanding` is
     // latched at the press by the controller, so this cannot flicker if the
     // player starts walking halfway through the stab.
     const lunge = thrust * lerp(0.6, 1, c.thrustStanding ?? 0);
 
+    /* THE CUT AND THE SPIN, on the same terms and for the same reason. Both
+     * are read straight off the controller's own envelopes — `slashArc` /
+     * `slashAcross` are the two halves of the diagonal AFTER the clamp, and
+     * `spin` is the turn's 0..1 window — so nothing here restates a phase. */
     a.over = arc;
     a.lunge = lunge;
+    a.slash = c.slashArc || 0;
+    a.slashX = c.slashAcross || 0;
+    a.spin = c.spin || 0;
+    a.spinSide = c.spinSide || 1;
 
     const up = _v3.set(0, 1, 0).applyQuaternion(this.camera.aimQuat);
     const fwd = _v4.set(0, 0, -1).applyQuaternion(this.camera.aimQuat);
+    const right = _atkR.set(1, 0, 0).applyQuaternion(this.camera.aimQuat);
     a.shift.set(0, 0, 0)
       .addScaledVector(up, arc * 0.13)
       .addScaledVector(fwd, -arc * 0.075)
       .addScaledVector(fwd, lunge * 0.22)
       // A lunge drops a little as it goes out — a fencer's line is not level,
       // and without this the stab reads as the arm being extruded forwards.
-      .addScaledVector(up, -lunge * 0.045);
+      .addScaledVector(up, -lunge * 0.045)
+      /* THE CUT TRAVELS SIDEWAYS, which is the whole difference between a cut
+       * and a wave. The trunk goes with the blade — 11 cm of anchor across the
+       * sweep, against the overhead's 13 cm of rise — and rises a little on
+       * the chamber so the stroke has somewhere to fall from. */
+      .addScaledVector(right, a.slashX * 0.11)
+      .addScaledVector(up, a.slash * 0.075)
+      .addScaledVector(fwd, -a.slash * 0.04)
+      /* AND THE SPIN LEADS WITH THE SHOULDER it is turning toward. A turn
+       * whose anchor stays on the centreline is a turntable; 8 cm of lateral
+       * offset is what makes the body look like it is throwing itself round
+       * rather than being rotated. */
+      .addScaledVector(right, -a.spinSide * a.spin * 0.08);
     return a;
   }
 
@@ -4159,6 +4275,12 @@ export class Player {
        */
       lean += -A.over * SPINE_OVER + A.lunge * SPINE_LUNGE;
       twist += A.lunge * SPINE_LUNGE_TWIST;
+      /* THE CUT AND THE TURN. A cut across the body is mostly axial rotation
+       * and a little fold; a spin is a lean into the turn. Added the same way
+       * everything else here is added, so a cut thrown out of a spin keeps
+       * both — which is what makes the pair compose instead of switching. */
+      lean += -A.slash * SPINE_SLASH + A.spin * SPINE_SPIN;
+      twist += -A.slashX * SPINE_SLASH_TWIST - A.spinSide * A.spin * SPINE_SPIN_TWIST;
       spine.obj.quaternion.copy(spine.restQuat)
         .multiply(_q1.setFromEuler(_eulA.set(lean, twist, 0, 'XYZ')));
     }
@@ -4206,7 +4328,13 @@ export class Player {
        * deleted: removing it changes nothing that can be measured, and the
        * attack's read is somebody's next measurement rather than this one's.)
        */
-      const drive = A.over * CLAV_OVER + A.lunge * CLAV_LUNGE;
+      /* The cut and the spin drive the SAME axis the overhead and the lunge
+       * drive — X, the one the paragraph above proves is protraction — because
+       * a shoulder thrown across the body and a shoulder thrown round it are
+       * the same joint doing the same thing. `slashX` is signed, so the girdle
+       * leads the stroke one way and follows it back the other. */
+      const drive = A.over * CLAV_OVER + A.lunge * CLAV_LUNGE
+        - A.slashX * CLAV_SLASH - A.spinSide * A.spin * CLAV_SPIN;
       for (const [name, side] of CLAV_DRIVE) {
         const b = rig.get(name);
         if (!b) continue;
