@@ -18,7 +18,17 @@
      not be in front of them in the queue.
 
      The path is here AND in styles.css, which is one path in two files —
-     tools/checks/keyart.mjs compares them rather than trusting them. -->
+     tools/checks/keyart.mjs compares them rather than trusting them.
+
+     REFUTED, so nobody spends the pop-in fixing it: headless Chromium warns
+     "preloaded using link preload but not used within a few seconds from the
+     window's load event" on every smoke run, and the preload IS matched.
+     Counted on the served page — title.webp is requested exactly ONCE,
+     initiator `link`, 98 690 bytes, 27 ms, and `.menu-bg` reuses it. The
+     warning is the browser's own few-second heuristic against a box that takes
+     twenty-five seconds to reach the menu at one frame per second; on hardware
+     that boots in a second it does not fire. Removing the tag would trade a
+     console line nobody sees for a visible pop the moment the menu opens. -->
 <link rel="preload" as="image" fetchpriority="low" href="./assets/menu/title.webp">
 <script type="importmap">
 {
