@@ -1500,6 +1500,18 @@ export const CODEX = [
       + 'FRESH each run, so read them here or off the panel while you hold the key — nobody is '
       + 'entering these from memory. A call bills the same Force pool a power does, and it '
       + 'arrives after you asked for it, not when.' },
+  /* THE SECOND BEAT HAS TO BE ON THE CARD. Finishing the code does not fire
+   * anything any more — it opens the DESIGNATION — and a control whose second
+   * half is only discoverable by accident is the same defect as a bound key
+   * that does nothing. The words are the other half: `Stratagems.callPhrase`
+   * speaks one per keystroke, and a player who does not know that hears their
+   * own character talking and does not know why. */
+  { keys: ['stratagem'], hold: true,
+    text: () => 'Each direction you press is a WORD of the call, spoken into your comm — the '
+      + 'panel prints the line you are reading. When the last word is out, keep holding: the '
+      + 'beam comes down and you PAINT the ground, or hold it on a body and it locks and '
+      + 'follows. LET GO to send it. The Force is spent when you finish speaking, not when you '
+      + 'release, so there is no free look at the field.' },
   ...STRATAGEMS.map(S => ({
     code: S.code,
     text: () => `<b>${S.name}</b> — ${S.blurb}`,

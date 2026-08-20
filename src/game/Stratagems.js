@@ -199,7 +199,7 @@ export const STRATAGEMS = [
     blurb: 'A lance from orbit, on the thing you painted. It follows what you '
       + 'marked. Five seconds of warning, for you and for them.',
     fire: (ctx, site, S, s) => S.blast(ctx, site, s.radius, 150, 300,
-      { core: 0.35, shake: 1.0, size: 3.6, crater: 2.1, kind: 'stratagem' }),
+      { core: 0.35, shake: 1.0, size: 3.6, crater: 2.1 }),
   },
   {
     id: 'strafe', name: 'Strafing run',
@@ -244,7 +244,7 @@ export const STRATAGEMS = [
         const at = _v2.copy(site).addScaledVector(bear, t)
           .addScaledVector(_v3.set(-bear.z, 0, bear.x), across).clone();
         S.after(i * 0.17, () => S.blast(ctx, at, 6.5, 70, 120,
-          { core: 0.25, shake: 0.30, size: 1.7, crater: 0.9, kind: 'stratagem' }));
+          { core: 0.25, shake: 0.30, size: 1.7, crater: 0.9 }));
       }
     },
   },
@@ -1124,7 +1124,7 @@ export class Stratagems {
           at.y = this._groundAt(c, at);
           this._gunPair(c, from.clone(), at);
           this.blast(c, at, 5.5, 55, 130,
-            { core: 0.25, shake: 0.22, size: 1.2, crater: 0.6, kind: 'stratagem' });
+            { core: 0.25, shake: 0.22, size: 1.2, crater: 0.6 });
         },
       });
     }
