@@ -58,7 +58,42 @@ The playtest lanes, and what each turned out to be:
 
 ---
 
-## Do these first. Each can kill the flagship design.
+## YOU ARE RUNNING TWO STREAMS AT ONCE. Do not pick one.
+
+The player is handing you a **new list of playtest findings** at the start of
+this session, and they want the **flagship mode** built at the same time. Both,
+in parallel, from the first hour.
+
+**Stream A — the list.** Fixes and features from someone who has played the
+build. Log every item into `PLAYTEST.md` as it arrives, in the player's own
+words, before you start. That file already holds the previous round and its
+format is the one to follow.
+
+**Stream B — the flagship.** `FLAGSHIP.md`, starting with §14's three kill
+tests.
+
+### How to run them together
+
+- **Stream A outranks Stream B on conflict.** A thing that is broken in the
+  game the player is holding beats a thing that does not exist yet. If a lane
+  has to choose, it fixes.
+- **But start Stream B's kill tests in the first hour anyway.** They are a day
+  each and a negative result changes what is worth building — finding that out
+  in week one is the whole reason they are cheap. Do not let the list push them
+  to "later"; later never comes.
+- **Fan the list out into lanes by FILE OWNERSHIP, not by topic.** Last session
+  ran seven lanes on one tree and they committed each other's work repeatedly,
+  once capturing a file with a debug line still in it. **Give every lane its own
+  worktree this time** (`isolation: "worktree"`), or partition so hard that two
+  lanes cannot touch one file.
+- **One lane owns the flagship** and does not get interrupted by the list. It is
+  the only piece of work here with a design behind it and it needs continuity.
+- **Re-run the gate before you believe any of it.** Seven lanes landing on one
+  tree is exactly when a green suite goes red for reasons nobody owns.
+
+---
+
+## The flagship's three kill tests. Each can kill the design.
 
 **Step 0 — one day, before anything.** Fight one Command area, dump the crater
 log, reload, replay, fight again. Ask a person: does visit two read as *the
@@ -72,7 +107,9 @@ you take §14's ~600-line fallback.
 **Step 2 — one evening.** The Dead Jedi test. `boonMods.cutPower = 0`, play
 three engagements, and answer whether you had anything to do.
 
-`FLAGSHIP.md` §14 has all three in full, with what each result means.
+`FLAGSHIP.md` §14 has all three in full, with what each result means. **A
+"no" on any of them is a good outcome bought cheaply** — §14 names the fallback
+for each, and the fallback is still a mode worth shipping.
 
 ---
 
