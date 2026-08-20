@@ -31,9 +31,9 @@ Playable two ways:
 | Suite | **1517 passed, 0 failed** — 111 suites, 18.7 min of suite time, from a clean worktree on a quiet box. Earlier the same day it was 1438/59; §6.4 says what each of those was, because how they were found is the part worth keeping |
 | Smoke | **11/11 clean** on a quiet box. Its timeouts are wall-clock, so on a loaded one the last four fail and mean nothing — §2.6 |
 | Packed | `node tools/pack.mjs out.html` — 79 modules, 12.8 MB, boots from `file://`, and `tools/checks/packed.mjs` proves it every run |
-| Levels | **9** — `scoria, mustafar, colosseum, wood, drifts, alpine, geonosis, hangar, warship` |
+| Levels | **7** — `scoria, mustafar, colosseum, wood, drifts, alpine, geonosis`. The Boarding Bay and the Providence were deleted on the player's word — "I just tried the boarding bay and the providence and hated them… just remove them. your outside work is much better" |
 | Modes | **8** — `waves, roguelite, duel, sandbox, training, command, skirmish, campaign` |
-| Campaigns | **2** — `petranaki`, `boarding`, two missions each |
+| Campaigns | **1** — `petranaki`, two missions. `boarding` went with its two grounds; both its missions were the ship levels |
 | Archetypes | **31**, and `src/game/Levels.js` must be imported to see 16 of them |
 
 Those four rows are a hand copy of what `node --import ./tools/register.mjs
