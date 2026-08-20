@@ -8,7 +8,7 @@
  */
 
 import * as THREE from 'three';
-import { RapierWorld, Body, LAYER, box, ball, hullFromGeometry, boxFromObject } from '../physics/RapierWorld.js';
+import { RapierWorld, Body, LAYER, LOOSE_MASK, box, ball, hullFromGeometry, boxFromObject } from '../physics/RapierWorld.js';
 import { Terrain } from '../world/Terrain.js';
 import { Particles } from '../world/Particles.js';
 import { GrassField, Water, Atmosphere, weather } from '../world/Scenery.js';
@@ -2209,7 +2209,11 @@ export class World {
     const body = new Body({
       position, shape, mass: 6 + rng() * 8,
       friction: 0.8, restitution: 0.06, layer: LAYER.DEBRIS,
-      mask: LAYER.WORLD | LAYER.DEBRIS | LAYER.PROP | LAYER.RAGDOLL,
+      /* Everything, via LOOSE_MASK — this named neither PLAYER nor ENEMY, so
+       * every fragment of every broken prop fell through the person standing
+       * under it. Driven, dropped from 4 m: 0.00 m of clearance on a player
+       * whose capsule reaches 1.79, and 0.29 on a Training Droid. */
+      mask: LOOSE_MASK,
     });
     if (velocity) body.velocity.copy(velocity);
     body.angularVelocity.set((rng() - .5) * 9, (rng() - .5) * 9, (rng() - .5) * 9);
@@ -2233,7 +2237,9 @@ export class World {
     const body = new Body({
       position: position.clone(), shape,
       mass: 20, friction: 0.8, restitution: 0.05, layer: LAYER.DEBRIS,
-      mask: LAYER.WORLD | LAYER.DEBRIS | LAYER.PROP | LAYER.RAGDOLL,
+      /* …and this is the one that hurts: `Enemy.js` hands this the WHOLE
+       * wrecked chassis of a destroyed machine, and it was walk-through. */
+      mask: LOOSE_MASK,
     });
     if (velocity) body.velocity.copy(velocity);
     body.angularVelocity.set((rng() - .5) * 8, (rng() - .5) * 8, (rng() - .5) * 8);
