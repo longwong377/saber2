@@ -577,6 +577,7 @@ environment difference that produces a confident wrong answer.
 | `combat-trace.mjs` | what a fight **contains** | anything past a stationary floor |
 | `smoke.mjs` | does the real page **boot and render** | mechanics |
 | `pack.mjs` | does the whole game **run with no server** | anything a check already covers |
+| `checks/packed.mjs` | does the packed page **boot from `file://`** | how it plays once it has |
 
 **`pack.mjs` is how this got play-tested at all.** Browsers refuse ES modules
 from `file://`, so playing the game needed a web server and therefore nobody had
@@ -597,6 +598,27 @@ Two things cannot survive the move and are handled rather than hoped over.
 base)` refuses an opaque path as a base — `main.js` built its track list that
 way at module top level, so the page died before the menu drew. And peerjs,
 injected at runtime as a `<script src>`, is inlined.
+
+**A THIRD THING COULD NOT, AND FOR FOUR DAYS NOTHING NOTICED.** index.html
+carries an inline script that replaces `#boot`'s innerHTML with "Needs a web
+server" when `location.protocol === 'file:'`. A packed page IS opened off disk —
+that is its whole purpose — so the notice fired on every single-file build, and
+it does not merely say the wrong thing: it destroys `#boot-fill` and `#boot-msg`
+on the way past, `Menu.progress` reads `.style` of a null, and the boot dies
+before `hideBoot()`. The packer had rewritten the WORDS of that notice, which is
+why it read as handled to anyone reading pack.mjs; the trigger is a capability
+test now, which is what the replacement text already claimed. Every substitution
+the packer makes is asserted rather than attempted, for the same reason the
+specifier self-check exists: a `String.replace` whose pattern has drifted returns
+its input unchanged and says nothing.
+
+**`tools/checks/packed.mjs` is the standing answer.** It packs the tree as it
+stands and opens the result the way a player does — real Chromium, a bare
+`file://` URL, waits counted in frames — and asserts no page error, the boot bar
+intact, the menu up with all seven tabs, and nothing fetched off the page. It is
+the only check in the tree that exercises the artifact a player is actually
+handed. It needs `node_modules`; see §2.10 before running the gate in a
+worktree.
 
 **Why `trace.mjs` exists.** 1142 checks and two adversarial audits share one
 shape: *the code claims X and does Y*. A finding needs a line to be wrong about,
