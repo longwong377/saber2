@@ -44,10 +44,127 @@
 
 <canvas id="view"></canvas>
 
+<!-- ══════════════════ THE WORDMARK ══════════════════════════════════════
+     DRAWN, NOT SET. The old title was `ui-sans-serif` at weight 800 with a
+     cyan block behind the second word — which is to say it was whatever font
+     the player's OS happened to hand it, and it read as a web page's <h1>
+     rather than as the front of this game. It is now GEOMETRY: a stencil
+     alphabet on a 100-unit cap height, ten glyphs, drawn to the same four laws
+     styles.css states for every box in the interface — inked, flat, stamped,
+     and cut on the diagonal.
+
+     There is no font file and no @font-face, and that is not an aesthetic
+     preference: `tools/checks/packed.mjs` boots the single-file build from
+     `file://` and FAILS if the page asks for one byte off-page, so a webfont —
+     Google's or anyone's — cannot ship here. DESIGN.md §7's claim that every
+     asset but one licensed MP3 is generated in code survives for the same
+     reason it survives for the title plate.
+
+     ONE COPY OF THE GEOMETRY, USED THREE TIMES. `#wm-body` is the letterforms;
+     `#wm-mark` stacks two <use>s of it — the hard offset stamp (law 3) and the
+     inked face — and the boot screen and the menu each <use> that. A second
+     copy of 2 KB of path data pasted into the two screens is HANDOFF §2.3
+     waiting to happen, so the colours are passed in as custom properties,
+     which inherit into a <use> shadow tree, instead of being baked per copy. -->
+<svg class="wm-src" width="0" height="0" aria-hidden="true" focusable="false"><defs>
+<g id="wm-body" fill="var(--wm-a)">
+<g><path fill-rule="evenodd" d="M0 0H52L66 14V34L56 44L66 54V86L52 100H0ZM24 18H44L48 22V34L44 38H24ZM24 60H46L50 64V78L46 82H24ZM0 16H24V26H0ZM0 58H24V68H0Z"/><path fill-rule="evenodd" transform="translate(80 0)" d="M0 100L26 0H46L72 100H50L45 78H27L22 100ZM31 58H41L36 34ZM26 60H46V70H26Z"/><path fill-rule="evenodd" transform="translate(166 0)" d="M0 0H62V22H43V100H19V22H0ZM19 16H43V26H19Z"/><path fill-rule="evenodd" transform="translate(242 0)" d="M0 0H62V22H43V100H19V22H0ZM19 16H43V26H19Z"/><path fill-rule="evenodd" transform="translate(318 0)" d="M0 0H24V78H56V100H0ZM0 68H24V78H0Z"/><path fill-rule="evenodd" transform="translate(388 0)" d="M0 0H58V22H24V39H50V61H24V78H58V100H0ZM0 28H24V38H0ZM0 66H24V76H0Z"/><path fill-rule="evenodd" transform="translate(460 0)" d="M0 0H56V22H24V41H50V63H24V100H0ZM0 28H24V38H0ZM0 70H24V80H0Z"/><path fill-rule="evenodd" transform="translate(530 0)" d="M0 0H52L66 14V38L54 50L68 100H44L34 56H24V100H0ZM24 18H44L48 22V34L44 38H24ZM0 16H24V26H0ZM45 72H56V82H45Z"/><path fill-rule="evenodd" transform="translate(612 0)" d="M14 0H54L68 14V86L54 100H14L0 86V14ZM22 22V78H46V22ZM26 2H42V18H26ZM26 82H42V98H26Z"/><path fill-rule="evenodd" transform="translate(694 0)" d="M0 0H24L46 52V0H70V100H46L24 48V100H0ZM0 10H24V20H0ZM46 80H70V90H46Z"/><path fill-rule="evenodd" transform="translate(778 0)" d="M0 0H62V22H43V100H19V22H0ZM19 16H43V26H19Z"/></g>
+<g fill="var(--wm-b)" transform="translate(886 0)"><path fill-rule="evenodd" d="M0 0H52L66 14V34L56 44L66 54V86L52 100H0ZM24 18H44L48 22V34L44 38H24ZM24 60H46L50 64V78L46 82H24ZM0 16H24V26H0ZM0 58H24V68H0Z"/><path fill-rule="evenodd" transform="translate(80 0)" d="M14 0H54L68 14V86L54 100H14L0 86V14ZM22 22V78H46V22ZM26 2H42V18H26ZM26 82H42V98H26Z"/><path fill-rule="evenodd" transform="translate(162 0)" d="M0 0H52L66 14V38L54 50L68 100H44L34 56H24V100H0ZM24 18H44L48 22V34L44 38H24ZM0 16H24V26H0ZM45 72H56V82H45Z"/><path fill-rule="evenodd" transform="translate(244 0)" d="M0 0H62V20L28 78H62V100H0V80L34 22H0ZM24 2H38V18H24ZM24 82H38V98H24Z"/></g>
+<rect x="0" y="-24" width="1192" height="9" fill="var(--wm-b)"/>
+<rect x="0" y="115" width="1192" height="9" fill="var(--wm-b)"/>
+</g>
+<g id="wm-mark">
+  <use href="#wm-body" transform="translate(11 11)" opacity=".9"
+       style="--wm-a:var(--stroke);--wm-b:var(--stroke)"/>
+  <use href="#wm-body" stroke="var(--stroke)" stroke-width="11" stroke-linejoin="miter"
+       paint-order="stroke fill" style="--wm-a:var(--ink);--wm-b:var(--accent-warm)"/>
+</g>
+</defs></svg>
+
+
 <!-- ══════════════════════ BOOT ══════════════════════ -->
 <div id="boot" class="screen">
+  <!-- THE BOOT SCREEN'S ART, AND WHY IT IS NOT THE TITLE PLATE.
+
+       Reported as "the first loading screen before the main menu also needs an
+       art background like in the main menu, like right now it's bare nothing",
+       and it was: a three-stop wash and a centred word.
+
+       The obvious fix is `.menu-bg`'s plate, and it is the wrong one. This
+       screen is what a player looks at while 79 ES modules and a Rapier WASM
+       blob come down, and everything styles.css says about the plate — that
+       `#menu` is display:none so not one byte of it is on the path to first
+       paint — stops being true the moment a VISIBLE element names it. A
+       backdrop that arrives at the same time as the thing it was covering for
+       is not a backdrop.
+
+       So this one is drawn instead: flat colour bands, hard ink edges, no
+       gradient except where it is depicting light. It costs one inline SVG of
+       about 1.4 KB in a file that is already served, no request, no decode of
+       a 2.8-megapixel bitmap, and it is on screen in the FIRST paint rather
+       than whenever the network gets to it. It is a deliberate variant of the
+       menu's plate rather than a copy of it: the same world, seen from far
+       off and before you land in it. -->
+  <svg class="boot-art" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+    <!-- THE SKY IS BANDED, NOT GRADED. A cel sky is a stack of flat fields
+         with hard edges between them; a three-stop gradient is what this
+         screen already had and what the player called bare. -->
+    <rect width="1600" height="900" fill="#241c3c"/>
+    <rect y="118" width="1600" height="900" fill="#3a2447"/>
+    <rect y="236" width="1600" height="900" fill="#5c2f47"/>
+    <rect y="344" width="1600" height="900" fill="#8c4340"/>
+    <rect y="438" width="1600" height="900" fill="#b85a35"/>
+    <rect y="506" width="1600" height="900" fill="#d97b34"/>
+    <!-- high cloud, flat bars, cut on the same diagonal the interface cuts on -->
+    <path fill="#3f2a4e" d="M0 96h430l-38 34H0ZM614 150h486l-40 34H614ZM1180 74h420v34h-458Z"/>
+    <path fill="#6b3550" d="M84 262h520l-44 30H84ZM980 300h620v30H944Z"/>
+    <!-- the sun, and the only lit thing on the screen -->
+    <circle cx="1178" cy="556" r="164" fill="#ffb020" opacity=".14"/>
+    <circle cx="1178" cy="556" r="96" fill="#ffb020"/>
+    <!-- Gunships, small and far off, because this is a FRONT and not a vista.
+         One silhouette, three sizes: a <use> rather than three copies of the
+         same path, for the reason the wordmark is one copy of its geometry. -->
+    <defs><g id="boot-ship">
+      <path d="M0 10 14 2 74 0 100 9 100 15 72 22 14 22 0 14Z"/>
+      <path d="M24 22 58 22 62 34 28 33Z"/>
+      <path d="M30 0 38 -15 47 -15 43 0Z"/>
+      <path d="M62 0 70 -13 78 -13 74 0Z"/>
+    </g></defs>
+    <use href="#boot-ship" fill="#241631" transform="translate(268 196) rotate(-4) scale(1.5)"/>
+    <use href="#boot-ship" fill="#2c1c39" transform="translate(864 150) rotate(-2) scale(.95)"/>
+    <use href="#boot-ship" fill="#2c1c39" transform="translate(1316 238) rotate(3) scale(.7)"/>
+    <!-- dust, laid flat across the light -->
+    <rect y="470" width="1600" height="12" fill="#f0b878" opacity=".26"/>
+    <rect y="500" width="1600" height="6" fill="#f0b878" opacity=".20"/>
+    <!-- the far needles, hazed back toward the sky -->
+    <!-- Some of these are in the middle third on purpose. A 360 px frame sees
+         only the centre 300 units of this viewBox — `slice` crops the width —
+         so a composition with everything at the edges is a bare screen on a
+         phone, which is the state this was drawn to fix. They sit BELOW the
+         wordmark's band at every wider viewport. -->
+    <path fill="#8a5240" d="M120 570 148 372 178 570ZM212 570 236 456 258 570ZM330 570 356 300 388 570ZM402 570 420 470 440 570ZM1276 570 1302 330 1334 570ZM1362 570 1382 452 1404 570ZM1440 570 1462 392 1488 570ZM700 570 716 486 732 570ZM620 570 640 440 662 570ZM800 570 818 496 836 570ZM880 570 902 424 926 570Z"/>
+    <!-- the middle ground -->
+    <path fill="#4a2a3c" stroke="#05060c" stroke-width="5" stroke-linejoin="miter"
+          d="M-5 646 120 570 262 600 424 546 604 594 782 550 982 598 1180 560 1362 600 1605 550 1605 905 -5 905Z"/>
+    <!-- the near spires, ink-outlined, held to the edges so the name has the middle -->
+    <path fill="#1c1226" stroke="#05060c" stroke-width="6" stroke-linejoin="miter"
+          d="M40 905 112 336 192 905ZM1478 905 1540 272 1610 905Z"/>
+    <!-- the ground you are about to stand on -->
+    <path fill="#181020" stroke="#05060c" stroke-width="6" stroke-linejoin="miter"
+          d="M-5 748 200 710 432 736 700 696 950 726 1220 688 1450 720 1605 700 1605 905 -5 905Z"/>
+    <!-- THE SINK. Same job as `.menu-bg`'s flat field: the type is painted
+         straight onto this and nothing else stands between them. -->
+    <rect width="1600" height="900" fill="#0a0b14" opacity=".44"/>
+  </svg>
   <div class="boot-inner">
-    <div class="logo"><span class="logo-blade"></span><h1><span class="lg-a">Battlefront</span><span class="lg-b">Borz</span></h1></div>
+    <!-- THE SABER GLYPH IS GONE FROM HERE TOO. It was removed from the menu's
+         header on instruction and stayed on the boot screen, which is the
+         screen the player meets FIRST — "it still eventually pops up next to
+         the name at the beginning, which is annoying". `.logo-blade` and its
+         `ignite` keyframe are deleted from styles.css rather than left
+         orphaned: an unused selector is the thing that gets re-attached by
+         accident. -->
+    <div class="logo"><h1 class="wm"><svg class="wordmark" viewBox="-14 -40 1220 180" role="img" aria-label="Battlefront Borz"><use href="#wm-mark"/></svg></h1></div>
     <div class="boot-bar"><i id="boot-fill"></i></div>
     <div id="boot-msg" class="boot-msg">forging blade…</div>
   </div>
@@ -62,10 +179,27 @@
            all removed on instruction: the glyph was a remnant of the previous
            UI, the tagline described the game in a menu that is already the
            game, and the byline is gone outright. What is left is the name. -->
-      <div class="logo small"><h1><span class="lg-a">Battlefront</span><span class="lg-b">Borz</span></h1></div>
-      <!-- Filled by main.js from Progress.js. A HISTORY, not a currency:
-           nothing here unlocks anything, and it is empty until you have played
-           once so a first run is never greeted by a row of zeroes. -->
+      <div class="logo small"><h1 class="wm"><svg class="wordmark" viewBox="-14 -40 1220 180" role="img" aria-label="Battlefront Borz"><use href="#wm-mark"/></svg></h1></div>
+      <!-- EMPTY, AND EMPTY IS ITS RESTING STATE. This carried
+           `Progress.progressLines()` — runs, kills, deepest wave, facets
+           reached, boons crowned — under the title of the game, and it was
+           removed on instruction: "right now under the name of the game in the
+           main menu you have a bunch of little white text describing a bunch of
+           bullshit like your progress and a bunch of other useless shit — I
+           want you to remove it completely."
+
+           THE ELEMENT STAYS BECAUSE IT IS ALSO SOMETHING ELSE. `deploy()` in
+           main.js writes `Could not deploy: …` here when a world fails to
+           build, and tools/checks/session.mjs asserts that it does — "an
+           invisible failure is the same black screen". That is the only other
+           writer, so with the history gone this line is now silent on every
+           screen a player will ever see. `.record:empty{display:none}` keeps it
+           out of the layout entirely until something goes wrong.
+
+           Progress.js and `progressLines()` are untouched: the runs are still
+           counted and still stored, and tools/checks/progress.mjs, history.mjs,
+           runrules.mjs and progression.mjs still hold them to it. What is gone
+           is the display, which was its only surface in the interface. -->
       <p class="record" id="menu-record"></p>
     </header>
 

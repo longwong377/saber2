@@ -102,19 +102,27 @@ export function bands({ plateW, plateH, panelW, panelH }) {
  * as tools/checks/front-screen.mjs's stated geometries.
  *
  * `.menu-head` and not `.logo`, and that is the whole point of measuring the
- * box rather than the letters. The wordmark is 308x29 of it; the rest is
- * `#menu-record`, which main.js fills from Progress.js after a first run and
- * which `.record:empty{display:none}` hides before one. So a played profile
- * puts a SECOND line of type on the plate that a fresh one does not, and it is
- * 10 px mono in `--dim` — the least defensible thing on the screen to lay over
- * a lit sky. The band asserted against is the one that has to hold both.
+ * box rather than the letters. The header now holds ONE thing: the wordmark,
+ * 461x68 of drawn geometry with 16 px of padding around it.
+ *
+ * It used to hold two. `#menu-record` carried a line of `progressLines()` that
+ * `.record:empty{display:none}` hid before a first run, so a played profile put
+ * a SECOND line of 10 px mono on the plate that a fresh one did not, and the
+ * band stated here was the taller of the two. That readout was removed on
+ * instruction (see src/main.js); the element survives as `deploy()`'s failure
+ * notice, a state no player reaches on the way in, so it contributes 0x0 to
+ * this box on every screen the plate is ever seen behind. The band moved by a
+ * single pixel, 83 to 84, because the wordmark grew by about what the record
+ * line gave up.
  *
  * `node tools/_menubands.mjs` re-measures it in about two seconds and prints
- * the line to paste. `fontPx` is the guard on the pair: the check compares it
- * against the live rule in styles.css and fails if they differ, so a resized
- * wordmark cannot silently leave a stale rectangle behind (HANDOFF §2.3).
+ * the line to paste. `markPx` is the guard on the pair: the wordmark is drawn
+ * now, so the number that sizes it is the `width` on `.logo.small .wordmark`
+ * and not a font-size; tools/checks/keyart.mjs compares it against the live
+ * rule in styles.css and fails if they differ, so a resized wordmark cannot
+ * silently leave a stale rectangle behind (HANDOFF §2.3).
  */
-export const HEAD = { w: 1180, h: 83, fontPx: 40 };
+export const HEAD = { w: 1180, h: 84, markPx: 461 };
 
 /** `.menu-head`'s box on the plate, at the reference viewport. */
 export function headBand({ plateW, plateH, panelH }, head = HEAD) {

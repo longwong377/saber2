@@ -20,7 +20,7 @@ import { boonById, drawBoons, BOSS_EVERY, MODES } from './game/Waves.js';
 import { theatreFor } from './game/Levels.js';
 // No `FORMATIONS` import any more: the orders reach this file as ordinary
 // bindings through `ORDER_ACTIONS` below, which is the point of the seam.
-import { recordRun, progressLines, loadProgress } from './game/Progress.js';
+import { recordRun, loadProgress } from './game/Progress.js';
 import { keyLabel, ORDER_ACTIONS, codesFor } from './engine/Bindings.js';
 import { guardZoneOf } from './game/Bolts.js';
 import { clamp } from './engine/MathUtil.js';
@@ -908,19 +908,37 @@ function quitToMenu() {
   // reached" from quietly meaning "deepest you happened to die on".
   record();
   if (world) { world.dispose(); world = null; }
-  showRecord();
   menu.showMenu();
   screens.set('menu');
 }
 
-/** The one line of history the main menu carries. See Progress.js. */
-function showRecord() {
-  const el = document.getElementById('menu-record');
-  if (!el) return;
-  const lines = progressLines();
-  el.textContent = lines.length && lines[0] !== 'No runs yet.' ? lines.join('  ·  ') : '';
-}
-showRecord();
+/**
+ * THE HISTORY LINE UNDER THE TITLE IS GONE, AND ONLY THE DISPLAY IS GONE.
+ *
+ * `showRecord()` used to write `progressLines().join('  ·  ')` into
+ * `#menu-record` on load and again on every return to the menu: runs, kills,
+ * deepest wave, best score, facets of the Holocron reached, boons carried to a
+ * crown. It was removed on instruction — "under the name of the game in the
+ * main menu you have a bunch of little white text describing a bunch of
+ * bullshit like your progress … I want you to remove it completely."
+ *
+ * WHAT WAS CHECKED BEFORE CUTTING IT, because a line that is the only surface
+ * for something real cannot just be deleted:
+ *
+ *   `recordRun` still runs on every path it ran on before — death, victory and
+ *   walking out through `quitToMenu` — so nothing stops being counted or
+ *   stored. `progressLines()` is still exported and is still held to its
+ *   contents by tools/checks/progress.mjs, history.mjs, runrules.mjs and
+ *   progression.mjs. Nothing in the game reads Progress to gate or unlock
+ *   anything; it never did, which is what the record's own note meant by "a
+ *   HISTORY, not a currency". So the only thing this deletion costs is the
+ *   sight of it, which is precisely what was asked for.
+ *
+ * `#menu-record` itself stays and keeps one writer: `deploy()`'s catch, which
+ * says "Could not deploy: …" there when a world fails to build, and which
+ * tools/checks/session.mjs asserts is still said. `.record:empty{display:none}`
+ * keeps the element out of the layout on every screen a player will ever see.
+ */
 
 /**
  * THE DEATH CARD'S TIMER, WHICH NOBODY OWNED.

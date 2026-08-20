@@ -296,15 +296,22 @@ export async function run({ check, assert }) {
      * gated on a band the type does not occupy. Both directions are covered:
      * the base rule must agree, and no media query may move it at a height the
      * reference viewport satisfies.
+     *
+     * THE NUMBER IT READS IS A WIDTH NOW. The wordmark used to be two <span>s
+     * of `ui-sans-serif` and the size that mattered was their `font-size`; it
+     * is drawn geometry now — one <svg> with a fixed viewBox — so the single
+     * number that sets it is `width` on `.logo.small .wordmark`, and the height
+     * follows from the mark's 6.778:1 aspect. Same pairing, same failure mode,
+     * one declaration further along.
      */
-    const live = /\.logo\.small\s+\.lg-a\s*,\s*\.logo\.small\s+\.lg-b\s*\{[^}]*font-size:\s*(\d+)px/.exec(CSS);
-    assert(live, 'cannot find the `.logo.small` font-size rule in styles.css');
-    assert(Number(live[1]) === HEAD.fontPx,
-      `styles.css sets the menu wordmark at ${live[1]}px and tools/_bands.mjs states a header box measured at `
-      + `${HEAD.fontPx}px — re-run \`node tools/_menubands.mjs\` and paste the line it prints`);
+    const live = /\.logo\.small\s+\.wordmark\s*\{[^}]*width:\s*min\((\d+)px/.exec(CSS);
+    assert(live, 'cannot find the `.logo.small .wordmark` width rule in styles.css');
+    assert(Number(live[1]) === HEAD.markPx,
+      `styles.css sets the menu wordmark at ${live[1]}px wide and tools/_bands.mjs states a header box measured `
+      + `at ${HEAD.markPx}px — re-run \`node tools/_menubands.mjs\` and paste the line it prints`);
     let queries = 0;
     for (const m of CSS.matchAll(/@media\s*\(([^)]*)\)\s*\{((?:[^{}]|\{[^{}]*\})*)\}/g)) {
-      if (!/\.logo(?:\.small)?\s+\.lg-a/.test(m[2])) continue;
+      if (!/\.logo(?:\.small)?\s+\.wordmark/.test(m[2])) continue;
       queries++;
       const min = /min-height:\s*(\d+)px/.exec(m[1]);
       const max = /max-height:\s*(\d+)px/.exec(m[1]);
@@ -314,8 +321,168 @@ export async function run({ check, assert }) {
       assert(!max || Number(max[1]) < REF_H,
         `@media (${m[1]}) resizes the wordmark and ${REF_H}px satisfies it — same problem from the other side`);
     }
-    return `${live[1]}px base, ${queries} media override(s) clear of ${REF_H}px, matching the `
+    return `${live[1]}px of mark, ${queries} media override(s) clear of ${REF_H}px, matching the `
       + `${HEAD.w}x${HEAD.h} box tools/_bands.mjs states`;
+  });
+
+  /* ══════════════════════════════════════════════════════════════════
+   *  THE FRONT SCREEN'S OTHER ART — the name, and the screen before the menu
+   *
+   *  Four things were asked for in one breath and every one of them is the
+   *  kind that comes back:
+   *
+   *    THE WORDMARK   was `ui-sans-serif` at weight 800, which is to say it was
+   *                   a different object on every operating system and belonged
+   *                   to none of them. It is drawn now. The way that regresses
+   *                   is somebody "simplifying" 2 KB of path data back into a
+   *                   <span> with a font-size on it.
+   *    THE GLYPH      the lit saber bar beside the name was removed from the
+   *                   menu once already and stayed on the boot screen, which is
+   *                   the screen a player meets FIRST. Removed from one of two
+   *                   places is how it survived the first instruction.
+   *    THE BOOT ART   is drawn rather than fetched, and the reason is a budget:
+   *                   this screen is up while 79 modules and a WASM blob are in
+   *                   flight. A later hand reaching for `.menu-bg`'s 96 KB
+   *                   plate would look like an improvement and would put it on
+   *                   the critical path.
+   *    THE HISTORY    under the title is gone. `progressLines()` is still
+   *                   exported and still tested, so nothing stops a future
+   *                   caller from putting it back where it was.
+   * ══════════════════════════════════════════════════════════════════ */
+
+  /* THE PROSE IS NOT THE PAGE. Both files are heavily commented, and several of
+   * those comments name the very things the checks below say must be gone —
+   * that is the record of why they went, and it is exactly what a future reader
+   * needs. So the "is it still here" questions are asked of the MARKUP and the
+   * DECLARATIONS, with comments stripped; asking them of the raw text makes a
+   * check that can only be satisfied by deleting the explanation. */
+  const noComments = (t) => t.replace(/<!--[\s\S]*?-->/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+  const HTML_C = noComments(HTML), CSS_C = noComments(CSS);
+
+  /** `#boot`'s markup alone — the screen, not the page it sits in. */
+  const bootHtml = HTML_C.slice(HTML_C.indexOf('<div id="boot"'), HTML_C.indexOf('<div id="menu"'));
+
+  check('keyart: the wordmark is drawn geometry, and one copy of it serves both screens', () => {
+    /*
+     * Not a font, and that is a hard constraint rather than a taste: the check
+     * one file over (tools/checks/packed.mjs) boots the single-file build from
+     * `file://` and fails if the page asks for one byte off-page, so a webfont
+     * cannot ship here from Google or anywhere else. An @font-face would pass
+     * every check in THIS file and break that one, a suite away, in a browser.
+     */
+    assert(!/@font-face/i.test(CSS_C), 'styles.css declares an @font-face — the packed build fetches nothing off-page');
+    assert(!/fonts\.(googleapis|gstatic)\.com/i.test(HTML_C + CSS_C),
+      'the front end names a Google Fonts host — see tools/checks/packed.mjs, which boots from file://');
+
+    /* The letterforms are ONE object. Two <use>s of one <g>, because 2 KB of
+     * path data pasted into both screens is HANDOFF §2.3 with a bigger diff. */
+    const bodies = (HTML_C.match(/id="wm-body"/g) || []).length;
+    assert(bodies === 1, `index.html defines the wordmark's geometry ${bodies} times — it is drawn once and used`);
+    const uses = (HTML_C.match(/<use[^>]+href="#wm-mark"/g) || []).length;
+    assert(uses === 2,
+      `${uses} screen(s) <use> the wordmark — the boot screen and the menu are both supposed to, and from the `
+      + 'same definition');
+    assert(/<div id="boot"[\s\S]*?href="#wm-mark"/.test(HTML_C), 'the boot screen does not carry the wordmark');
+    assert(/<div id="menu"[\s\S]*?href="#wm-mark"/.test(HTML_C), 'the menu does not carry the wordmark');
+
+    /* And the old one is gone rather than orphaned — an unused selector is the
+     * thing that gets re-attached by accident, which is this file's own note
+     * about the tagline and the byline. */
+    for (const dead of ['lg-a', 'lg-b']) {
+      assert(!HTML_C.includes(dead) && !CSS_C.includes(dead),
+        `"${dead}" is still in the front end — that is the system-font wordmark this replaced`);
+    }
+    return `#wm-body drawn once, <use>d on ${uses} screens, no @font-face`;
+  });
+
+  check('keyart: the lit saber glyph is gone from the boot screen too, not just the menu', () => {
+    /*
+     * IT WAS REMOVED ONCE ALREADY. The instruction was for the menu's header
+     * and it was carried out there; `.logo-blade` stayed in the boot screen's
+     * markup and in a `.logo.small` override beside it, so the glyph went on
+     * appearing next to the name on the screen the player meets FIRST — "it
+     * still eventually pops up next to the name at the beginning, which is
+     * annoying". A removal that covers one of two call sites is the failure
+     * this check exists for, so it asks about the whole front end and not
+     * about `#boot`.
+     */
+    assert(!HTML_C.includes('logo-blade'),
+      'the saber-line glyph is back in the front end\'s markup — it was removed from the menu and then from the '
+      + 'boot screen, on instruction, twice');
+    assert(!CSS_C.includes('logo-blade'), 'styles.css still styles `.logo-blade` — an unused selector gets re-attached');
+    assert(!/@keyframes\s+ignite\b/.test(CSS_C), 'the `ignite` keyframe is back, which is the glyph growing out of nothing');
+    return 'no .logo-blade, no @keyframes ignite';
+  });
+
+  check('keyart: the boot screen carries art, and the art costs no request', () => {
+    /*
+     * "The first loading screen before the main menu also needs an art
+     * background like in the main menu, like right now it's bare nothing."
+     *
+     * Both halves are asserted, and the second is the one that will be argued
+     * with. The obvious way to give this screen a backdrop is `.menu-bg`'s
+     * plate — and everything styles.css says about that plate costing nothing
+     * at first paint depends on `#menu` being display:none while the boot runs.
+     * A VISIBLE element naming it puts 96 KB in front of the 79 modules and the
+     * WASM blob the boot is actually waiting on, which is to say it makes the
+     * wait longer in order to decorate it. So the boot's art is drawn: flat
+     * polygons in the document that is already on the wire.
+     */
+    assert(/<svg class="boot-art"/.test(bootHtml), '`#boot` has no `.boot-art` — the first screen is bare again');
+    assert(rule(CSS, '.boot-art'), 'styles.css has no `.boot-art` rule, so whatever is in the markup is not covering');
+    const art = /<svg class="boot-art"[\s\S]*?<\/svg>/.exec(bootHtml)[0];
+    for (const [what, re] of [['a url()', /url\(/], ['an <image>', /<image\b/i], ['a remote href', /href="(?:https?:)?\/\//i]]) {
+      assert(!re.test(art),
+        `the boot art names ${what} — this screen is what a player looks at while the modules load and it must `
+        + 'not be waiting on anything itself');
+    }
+    assert(!/title\.webp/.test(bootHtml),
+      'the boot screen names the title plate. `.menu-bg` gets away with it because `#menu` is display:none until '
+      + 'the boot finishes; `#boot` is not, so this puts 96 KB in front of the modules the boot is waiting on');
+    /* And it is a picture rather than three rectangles: the plate next door has
+     * a per-pixel floor for the same reason. */
+    const shapes = (art.match(/<(path|rect|circle|polygon|use)\b/g) || []).length;
+    assert(shapes >= 14, `the boot art is ${shapes} shapes — that is a wash, not a drawing of somewhere`);
+    return `${shapes} shapes, ${(art.length / 1024).toFixed(1)} KB inline, nothing fetched`;
+  });
+
+  check('keyart: nothing writes a history line under the title, and the history still exists', async () => {
+    /*
+     * "Right now under the name of the game in the main menu you have a bunch
+     * of little white text describing a bunch of bullshit like your progress
+     * and a bunch of other useless shit — I want you to remove it completely."
+     *
+     * TWO ASSERTIONS AND THEY PULL AGAINST EACH OTHER ON PURPOSE. The readout
+     * is gone from the menu: `showRecord()` is deleted and main.js no longer
+     * imports `progressLines`. And the record itself is NOT gone — `recordRun`
+     * still files every run and `progressLines` is still exported and still
+     * held to its contents by tools/checks/progress.mjs, history.mjs,
+     * runrules.mjs and progression.mjs. Deleting the store along with its one
+     * display would have been the easy reading of the instruction and would
+     * have quietly taken four suites' subject with it.
+     *
+     * `#menu-record` survives as the failure notice `deploy()`'s catch writes,
+     * which tools/checks/session.mjs asserts is still said — "an invisible
+     * failure is the same black screen". So the element keeps exactly one
+     * writer and it is not this one.
+     */
+    const main = await read('src/main.js');
+    const code = main.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    assert(!/\bprogressLines\b/.test(code),
+      'src/main.js still calls progressLines — the history is back under the title of the game');
+    assert(!/\bshowRecord\b/.test(code), 'showRecord() is back in src/main.js');
+    const writes = [...code.matchAll(/getElementById\('menu-record'\)/g)].length;
+    assert(writes === 1,
+      `#menu-record has ${writes} writers in main.js — it is the failed-deploy notice and nothing else now`);
+    assert(/catch[\s\S]{0,900}?getElementById\('menu-record'\)/.test(code),
+      "the one remaining #menu-record writer is not in deploy()'s catch — see tools/checks/session.mjs, which "
+      + 'requires a failed deploy to say so somewhere the player can read it');
+    /* …and the thing it stopped displaying is still there to display. */
+    const prog = await read('src/game/Progress.js');
+    assert(/export function progressLines\b/.test(prog),
+      'progressLines() was deleted along with its display — the instruction was to remove the line from the menu, '
+      + 'not to stop counting runs');
+    return 'no progressLines in main.js, #menu-record written once, from the catch; Progress.js intact';
   });
 
   check('keyart: the plate can be rebuilt, and its bounds are still enforced where they live', async () => {

@@ -81,13 +81,15 @@ for (const [w, h, why] of VIEWPORTS) {
   const r = await page.evaluate(([PW, PH]) => {
     document.getElementById('boot').classList.add('hidden');
     document.getElementById('menu').classList.remove('hidden');
-    /* THE RECORD LINE IS PUT BACK BEFORE MEASURING. `.record:empty{display:none}`
-     * so a fresh profile has a shorter header than a played one — and the taller
-     * one is the case the backdrop has to survive, because it is the one with
-     * more type on the plate. main.js writes `progressLines().join('  ·  ')`
-     * here; this is a representative one at a representative length. */
-    document.getElementById('menu-record').textContent =
-      'Best wave 27  ·  1482 felled  ·  Ember Shelf, Knight  ·  6 h 12 m';
+    /* THE RECORD LINE IS NOT PUT BACK ANY MORE, and that is the measurement
+     * changing rather than the tool getting lazier. It used to be filled with a
+     * representative `progressLines()` string before measuring, because
+     * `.record:empty{display:none}` made a played profile's header taller than
+     * a fresh one and the taller case is the one the backdrop has to survive.
+     * That line was removed from the menu on instruction (see main.js), and its
+     * only remaining writer is `deploy()`'s failure notice — a state no player
+     * reaches on the way in. The header the plate is posed against is therefore
+     * the wordmark alone, which is what is measured here. */
     const box = (sel) => {
       const el = document.querySelector(sel);
       if (!el) return null;
@@ -112,7 +114,13 @@ for (const [w, h, why] of VIEWPORTS) {
       tabs: box('.menu-tabs'),
       logo: box('.menu-head .logo h1'), logoPlate: toPlate(box('.menu-head .logo h1')),
       record: box('#menu-record'),
-      fontPx: parseInt(getComputedStyle(document.querySelector('.logo.small .lg-a')).fontSize, 10),
+      /* THE WORDMARK IS DRAWN NOW, so the number that sizes it is a WIDTH and
+       * not a font-size — one <svg> with a fixed viewBox, whose height follows
+       * from its aspect. tools/checks/keyart.mjs reads the same width out of
+       * the `.logo.small .wordmark` rule in styles.css and fails if the two
+       * stop agreeing, which is the guard that keeps the stated HEAD box below
+       * from going stale (HANDOFF §2.3). */
+      markPx: parseInt(getComputedStyle(document.querySelector('.logo.small .wordmark')).width, 10),
       head: box('.menu-head'), headPlate: toPlate(box('.menu-head')),
       foot: box('.menu-foot'),
     };
@@ -216,5 +224,5 @@ console.log('HEAD BAND              x %s…%s   y %s…%s   (%dx%d css px, wordm
   f(REF.headPlate[1]), f(REF.headPlate[1] + REF.headPlate[3]),
   REF.head[2], REF.head[3], REF.logo[2], REF.logo[3], REF.record[2], REF.record[3]);
 console.log('');
-console.log('  export const HEAD = { w: %d, h: %d, fontPx: %d };   ← paste into tools/_bands.mjs',
-  REF.head[2], REF.head[3], REF.fontPx);
+console.log('  export const HEAD = { w: %d, h: %d, markPx: %d };   ← paste into tools/_bands.mjs',
+  REF.head[2], REF.head[3], REF.markPx);
