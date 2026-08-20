@@ -545,6 +545,18 @@ later suite that constructed a Menu died on its own Volume slider: 38 checks
 across `controls`, `databank`, `front-screen`, `hud-events` and `menu`, all
 green when run alone.
 
+**AND THE THIRD MEMBER OF THE CLASS IS NOT AN OBJECT AT ALL.** `Menu`'s
+rebinder calls `saveBindings`, which writes the player's whole key table into
+`localStorage`, and `loadBindings` re-reads it on every `new Input`. A suite
+that drives a rebind through a real Menu hands every later suite a keyboard the
+player never chose. Measured, `controls` then anything: the blob left behind is
+pad-only, so `loadBindings().walk` comes back `["PadBack+PadL3"]` against a
+default of `["KeyI", "PadBack+PadL3"]`; `spectacle` is 19/19 alone and 15/19
+after `controls`, and its message reads `KeyI answers to  — one press, two
+systems`, an empty list where it expected a collision. Persistent storage is
+module state wearing a different coat, and `snapshotShared`/`restoreShared`
+carry the whole of it now.
+
 **The rule, and it is cheap: snapshot the whole object, not the fields you
 meant to change.**
 
@@ -557,8 +569,15 @@ try { /* … */ } finally {
 ```
 
 Nothing there names a field, so a property added to `init()` tomorrow is carried
-by the same three lines. `tools/_seq.mjs <suite-you-touched> menu` reproduces
-this whole class in about a minute.
+by the same three lines — and the same argument says name no storage KEY either.
+`tools/_seq.mjs <suite-you-touched> menu` reproduces this whole class in about a
+minute; `_seq.mjs controls spectacle` is the bindings one.
+
+**Three of the four largest red counts this session were this one defect wearing
+three hats**, and every one of them was green when its own suite ran alone. If a
+suite reaches for a singleton, a module record or a saved blob, the question is
+not "did I put back what I changed" — it is "did I put back everything I
+touched, including what I did not know I was touching".
 
 ---
 
