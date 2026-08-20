@@ -2332,16 +2332,43 @@ export class Engine {
     this.scene.environmentIntensity = this._envI ?? (this.skyLinear ? ENV_INTENSITY : 0.30);
   }
 
+  /**
+   * The HDR buffer the whole frame is composed in.
+   *
+   * ONE PLACE, because the sample count is a TIER PROPERTY and a tier can
+   * change while the game is running. This used to be built inline in
+   * `_setupComposer` and nowhere else, so `msaa` was the one column of QUALITY
+   * that a mid-run quality change could not reach: `setQuality` moves the
+   * shadow maps, the pixel ratio, the ink prepass and the view distance, and
+   * left the multisample count at whatever the tier at BOOT asked for.
+   * Measured in a real browser, the same page, switching tiers the way the
+   * options screen does:
+   *
+   *   booted high   →  msaa 4, and still 4 after setQuality('low')
+   *   booted low    →  msaa 0, and still 0 after setQuality('ultra')
+   *
+   * Both directions are wrong for the player and the second one is the one
+   * that hurts: dropping to the tier the menu offers to integrated graphics,
+   * because the game is stuttering, keeps four samples per pixel on the
+   * largest render target in the frame — the single most expensive per-pixel
+   * cost the ladder has to give back.
+   */
+  _composerTarget() {
+    const size = new THREE.Vector2();
+    this.renderer.getDrawingBufferSize(size);
+    return new THREE.WebGLRenderTarget(Math.max(2, size.x), Math.max(2, size.y), {
+      type: THREE.HalfFloatType,
+      samples: QUALITY[this.quality].msaa,
+      colorSpace: THREE.LinearSRGBColorSpace,
+      depthBuffer: true,
+    });
+  }
+
   _setupComposer() {
     const q = QUALITY[this.quality];
     const size = new THREE.Vector2();
     this.renderer.getDrawingBufferSize(size);
-    const rt = new THREE.WebGLRenderTarget(Math.max(2, size.x), Math.max(2, size.y), {
-      type: THREE.HalfFloatType,
-      samples: q.msaa,
-      colorSpace: THREE.LinearSRGBColorSpace,
-      depthBuffer: true,
-    });
+    const rt = this._composerTarget();
     this.composer = new EffectComposer(this.renderer, rt);
     this.composer.setPixelRatio(this.renderer.getPixelRatio());
 
@@ -2398,6 +2425,16 @@ export class Engine {
     // The ink's prepass resolution is a tier property; resize() below is what
     // actually re-allocates its target.
     if (this.outline) this.outline.scale = q.ink ?? 1;
+    /* MSAA is the one tier property that lives in the render target rather than
+     * in a uniform or a map size, so it cannot be assigned — the framebuffer has
+     * to be rebuilt. `EffectComposer.reset` disposes both of its buffers and
+     * adopts the pair given; `resize()` below sizes them. Guarded on the count
+     * actually differing, so the two tier moves that do not change it
+     * (high ↔ ultra, both 4) pay nothing.
+     */
+    if (this.composer && (this.composer.renderTarget1?.samples ?? 0) !== (q.msaa ?? 0)) {
+      this.composer.reset(this._composerTarget());
+    }
     this.resize();
   }
 

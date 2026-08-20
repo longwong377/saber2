@@ -151,6 +151,94 @@ export async function run({ check, assert }) {
       + `${marks[2].meshes} meshes, ${marks[2].geometries} geometries, ${marks[2].bodies} bodies`;
   });
 
+  check('lifecycle: a level re-loaded frees the textures it baked for the one before', async () => {
+    /**
+     * THE CHECK ABOVE COULD NOT SEE THIS, AND THE REASON IS THE FINDING.
+     *
+     * `census` walks the SCENE and counts the textures it can reach through
+     * five named material slots. Both halves of that are blind here. A texture
+     * whose mesh `unload` has already removed is not in the scene at all, so a
+     * leak is exactly the case a scene walk stops being able to see; and the
+     * ones that leaked live in `ShaderMaterial.uniforms.uMap`, which is none of
+     * `map / normalMap / roughnessMap / alphaMap / emissiveMap`. Three cycles
+     * of a level came back byte-identical while four GPU textures a load went
+     * out the back — measured in a real browser off three's own counter,
+     * loading ONE level six times over:
+     *
+     *   renderer.info.memory.textures   52 → 56 → 60 → 64 → 68 → 72
+     *
+     * `Particles` bakes `sparkSprite`, `smokeSprite` and one `radialSprite` in
+     * its constructor and `DecalField` bakes a `scorchSprite`; `World` builds a
+     * fresh `Particles` on every level change, and `Material.dispose()` does
+     * not free a material's maps. Nothing else in the game did it — Terrain's
+     * three, SkyDome's band, Water's depth bake and Atmosphere's puff all came
+     * back at one live copy apiece over the same six loads.
+     *
+     * WHAT IS ASSERTED, AND WHY IT NEEDS NO LIST OF NAMES. Two cycles, and the
+     * discriminator is object IDENTITY across them. A texture the game CACHES
+     * for the session — every bake in the material foundry — is the same object
+     * in both cycles and is correctly never disposed. A texture that was
+     * re-made for the second level is a different object, which means the first
+     * one is unreachable, which means it had to be freed. So the rule is:
+     * anything present in cycle 1 and gone in cycle 2 must have fired its own
+     * `dispose` event. Nothing is enumerated here, so a texture added to any
+     * per-level system next week is covered the day it is written.
+     *
+     * The listener is per-texture rather than a patch of
+     * `Texture.prototype.dispose`, deliberately: the checks in this file run
+     * concurrently on one `Promise.all`, and a prototype swapped out from under
+     * a peer is HANDOFF §2.1 wearing a different hat.
+     */
+    const texturesOf = (scene) => {
+      const out = new Set();
+      const take = (v) => { if (v && v.isTexture) out.add(v); };
+      scene.traverse((o) => {
+        for (const m of (Array.isArray(o.material) ? o.material : [o.material])) {
+          if (!m) continue;
+          for (const k of Object.keys(m)) take(m[k]);
+          if (m.uniforms) for (const u of Object.values(m.uniforms)) take(u && u.value);
+        }
+      });
+      return out;
+    };
+
+    const engine = stubEngine();
+    const world = new World(engine, { ...DEFAULT_SETTINGS, quality: 'low' });
+    const level = LEVEL_ORDER[0];
+
+    await world.loadLevel(level);
+    world.spawnPlayer?.();
+    const first = texturesOf(engine.scene);
+    assert(first.size > 4, `only ${first.size} textures in a built level — nothing was measured`);
+    const freed = new Set();
+    for (const t of first) t.addEventListener('dispose', () => freed.add(t));
+    world.unload();
+
+    await world.loadLevel(level);
+    world.spawnPlayer?.();
+    const second = texturesOf(engine.scene);
+    /* Present in the first level's frame and NOT in the second's: the second
+     * load built its own copy, so this one is unreachable and had to be freed. */
+    const replaced = [...first].filter((t) => !second.has(t));
+    const stranded = replaced.filter((t) => !freed.has(t));
+    world.unload(); world.dispose?.();
+
+    assert(replaced.length > 0,
+      'nothing was re-made between two loads of the same level, so this measured nothing — '
+      + 'either every texture is now cached for the session or the walk stopped finding them');
+    const name = (t) => (t.image?.width ? `${t.image.width}×${t.image.height}` : t.type)
+      + ` ${t.isCanvasTexture ? 'canvas' : t.isDataTexture ? 'data' : 'texture'}`;
+    assert(stranded.length === 0,
+      `${stranded.length} of the ${replaced.length} textures a level load re-bakes are never `
+      + `disposed — ${stranded.map(name).join(', ')}. They are off the scene graph and still on `
+      + 'the GPU, so nothing can reach them and nothing will free them, and every campaign '
+      + 'mission, skirmish rotation and roguelite descent pays it again inside one page. '
+      + 'Material.dispose() does not touch a material\'s maps: whoever BAKED a texture is the '
+      + 'only thing that can free it.');
+    return `${first.size} textures in the frame, ${replaced.length} re-baked on the next load, `
+      + `all ${replaced.length} freed; ${first.size - replaced.length} shared for the session`;
+  });
+
   check('lifecycle: a player who is disposed takes every garment with them', async () => {
     /**
      * The specific defect, held on its own so the failure message names it. The

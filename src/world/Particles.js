@@ -460,6 +460,9 @@ export class ParticlePool {
     }
   }
 
+  /** NOT `this.mat.map` — a pool does not own its sprite. Four of the seven
+   *  share one `radialSprite` and the first pool disposed would blank the
+   *  other three. `Particles` bakes them and `Particles.dispose` frees them. */
   dispose() {
     this.mesh.geometry.dispose();
     this.mat.dispose();
@@ -957,6 +960,12 @@ export class DecalField {
 
   dispose() {
     this.mesh.geometry.dispose(); this.mat.dispose(); this.mesh.parent?.remove(this.mesh);
+    // …AND THE SPRITE, which this field baked in its own constructor and is
+    // therefore the only thing that can free. `Material.dispose()` does not
+    // touch its maps — three leaves that to whoever owns the texture — so the
+    // scorch canvas outlived every level it was built for. See the note over
+    // Particles.dispose for the measurement.
+    this.mat.uniforms.uMap.value?.dispose();
   }
 }
 
@@ -979,6 +988,13 @@ export class Particles {
     const spark = sparkSprite(64);
     const smoke = smokeSprite(128);
     const soft = radialSprite(128, '#ffffff', 'rgba(255,255,255,0)', 2.4);
+    /* THE THREE SPRITES THIS OBJECT BAKED, so `dispose` can free them.
+     *
+     * Seven pools share these three canvases and no pool owns one, which is
+     * why `ParticlePool.dispose` must NOT free its own `map`: `soft` alone is
+     * the map of four of them, and the first pool to go would take the other
+     * three's texture with it. Ownership is here, where the bake is. */
+    this._sprites = [spark, smoke, soft];
 
     // windK is how completely the air owns each pool: 1 means it ends up
     // travelling with the wind, 0 means it is too heavy to care.
@@ -1645,11 +1661,33 @@ export class Particles {
     if (gy !== null && Math.abs(pos.y - gy) < 0.6) ground.burn(pos.x, pos.z, 0.17, 1);
   }
 
+  /**
+   * FOUR TEXTURES A LEVEL LOAD, AND NOTHING FREED THEM.
+   *
+   * `World._loadSteps` builds a fresh `Particles` on every level change and
+   * `World.unload` calls this — but a `Material.dispose()` does not dispose its
+   * maps, so the three canvases baked in the constructor above and the fourth
+   * baked by `DecalField` simply stayed on the GPU. Driven in a real browser,
+   * loading the SAME level six times over and reading three's own counter:
+   *
+   *   renderer.info.memory.textures   52 → 56 → 60 → 64 → 68 → 72
+   *
+   * Exactly +4 a load, monotonic, with no plateau — and the four creation
+   * stacks are `sparkSprite`, `smokeSprite`, `radialSprite` and `scorchSprite`.
+   * Every other per-level texture in the game came back clean at one live copy
+   * apiece over the same six loads (Terrain's three, SkyDome's band, Water's
+   * depth bake, Atmosphere's puff), so this was the whole of it.
+   *
+   * It is unbounded: a campaign, a skirmish rotation or a roguelite run changes
+   * ground repeatedly inside one page, and nothing ever gives these back.
+   */
   dispose() {
     if (ground.fx === this) ground.fx = null;
     for (const p of this.pools) p.dispose();
     this.chips.dispose();
     this.decals.dispose();
+    for (const t of this._sprites) t.dispose();
+    this._sprites.length = 0;
   }
 }
 

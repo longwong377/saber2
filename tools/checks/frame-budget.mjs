@@ -399,4 +399,175 @@ export async function run({ check, assert }) {
       + `${band[0].toFixed(2)}–${band[2].toFixed(2)}; worst is ${worstAt}, `
       + `${(worst * 100).toFixed(1)}% of that pool in one call`;
   });
+  /* ══════════════════════════════════════════════════════════════════════ */
+  /*  5. A tier the player picks mid-run has to REACH the frame             */
+  /* ══════════════════════════════════════════════════════════════════════ */
+
+  check('frame: every column of the quality tier moves when the player moves the tier', async () => {
+    /**
+     * THE COLUMN WITH NO LIVE READER IS THE SHAPE THIS FILE KEEPS FINDING, and
+     * two of them were sitting in QUALITY when this was written. Both were
+     * correct at BOOT and dead to the options screen, which is where a player
+     * whose game is stuttering actually goes.
+     *
+     *   `msaa`    `_setupComposer` read it once, in the constructor, and
+     *             `setQuality` moved the shadow maps, the pixel ratio, the ink
+     *             prepass and the view distance and left the multisample count
+     *             alone. Measured in a real browser on the Providence:
+     *             booted `high` it reported 4 samples and still reported 4
+     *             after `setQuality('low')`; booted `low` it reported 0 and
+     *             still reported 0 at `ultra`. Four samples per pixel on the
+     *             frame's largest target is the biggest per-pixel cost the
+     *             ladder has to hand back, and the tier that promises to hand
+     *             it back could not.
+     *
+     *   `cloth`   `World` cached it in `clothCut` during the level-load step
+     *             and `applyQuality` never touched it. Driven, sixteen
+     *             acolytes at 4-49 m: a world built at `ultra` and dropped to
+     *             `low` the way `main.js`'s `onQualityChange` does it kept
+     *             `clothCut` at 46 and 14 of 16 bodies still solving garments
+     *             — byte-identical to staying at `ultra`. Engine's own note
+     *             calls this "the only column in this table that changes how
+     *             much simulation runs EVERY frame".
+     *
+     * The check above this one already asserted that ENEMY reads `clothCut`
+     * live, and its own comment names the failure it did not test for — "at
+     * build time, where a mid-run quality change could not reach it". It
+     * pinned the reader and never the writer.
+     *
+     * DRIVEN THROUGH THE SHIPPED BODIES. `Engine.prototype.setQuality` is
+     * called on an object whose prototype IS Engine's, so `resize()` and
+     * `_composerTarget()` are the shipped ones too and a future edit that
+     * reorders them is caught by the thing it would break. Nothing here needs
+     * a GL context: a WebGLRenderTarget is inert until something renders to it.
+     */
+    const { Engine } = await import('../../src/engine/Engine.js');
+    const { World } = await import('../../src/game/World.js');
+
+    const tiers = Object.keys(QUALITY);
+    assert(tiers.length >= 3, `only ${tiers.length} tiers — nothing to step`);
+
+    /* A ladder that visits every tier and comes BACK, so each column has to
+     * move in both directions. A one-way sweep passes on a property that only
+     * ever ratchets up. */
+    const ladder = [...tiers, ...tiers.slice(0, -1).reverse(), tiers[0]];
+
+    const eng = Object.create(Engine.prototype);
+    let pixelRatio = 1;
+    Object.assign(eng, {
+      quality: tiers[tiers.length - 1],
+      resolutionScale: 1,
+      renderer: {
+        setPixelRatio(v) { pixelRatio = v; },
+        getPixelRatio: () => pixelRatio,
+        setSize() {},
+        getDrawingBufferSize: (v) => v.set(1280, 720),
+      },
+      camera: new THREE.PerspectiveCamera(60, 16 / 9, 0.045, 900),
+      cascades: [0, 1, 2].map(() => new THREE.DirectionalLight(0xffffff, 1)),
+      outline: { scale: 1, setSize() {} },
+      composite: { uniforms: { uResolution: { value: new THREE.Vector2() } } },
+      bloom: { resolution: new THREE.Vector2() },
+    });
+    /* The composer stands in for EffectComposer, and only for the two things
+     * `setQuality` asks of it: what its buffer's sample count IS, and swapping
+     * that buffer for another. `reset` disposes the pair it is replacing —
+     * vendor/three/postprocessing/EffectComposer.js:183 — so the stub does too,
+     * and a fix that rebuilt the target without freeing the old one would be a
+     * leak this cannot see. `lighting.mjs` drives the real composer in a real
+     * browser; this drives the tier ladder, which that one cannot afford to. */
+    let disposed = 0;
+    eng.composer = {
+      // as the constructor leaves it: a buffer built for the tier booted at.
+      // Built here rather than through Engine's own helper on purpose — a check
+      // that calls the fix's private method cannot fail on code that has not
+      // been fixed, it throws instead, and a TypeError is not a finding.
+      renderTarget1: new THREE.WebGLRenderTarget(1280, 720, {
+        type: THREE.HalfFloatType, samples: QUALITY[eng.quality].msaa,
+        colorSpace: THREE.LinearSRGBColorSpace, depthBuffer: true }),
+      setPixelRatio() {}, setSize() {},
+      reset(rt) { this.renderTarget1.dispose(); disposed++; this.renderTarget1 = rt; },
+    };
+
+    /* World's half needs no level: `applyQuality` is the whole of the live
+     * path, and a World that has not loaded one has no particles to scale. */
+    const w = Object.create(World.prototype);
+    Object.assign(w, { settings: { particleScale: 1 }, particles: { scale: -1 } });
+
+    const seen = [], bad = [];
+    for (const t of ladder) {
+      eng.setQuality(t);
+      w.applyQuality(t);
+      const q = QUALITY[t];
+      const got = {
+        shadow: eng.cascades[0].shadow.mapSize.x,
+        viewDist: eng.camera.far,
+        ink: eng.outline.scale,
+        pixelRatio: +(pixelRatio / eng.resolutionScale).toFixed(4),
+        msaa: eng.composer.renderTarget1.samples ?? 0,
+        particles: +(w.particles.scale).toFixed(4),
+        cloth: w.clothCut,
+      };
+      const want = {
+        shadow: q.shadow, viewDist: q.viewDist, ink: q.ink,
+        pixelRatio: Math.min(window.devicePixelRatio, q.pixelRatio),
+        msaa: q.msaa, particles: q.particles, cloth: q.cloth,
+      };
+      /* COLLECTED, NOT RAISED ONE AT A TIME. Seven columns over eight tier
+       * moves is 56 clauses over the same drive, and `assert`-per-clause means
+       * the first one to break is the only one anybody ever sees — which is
+       * exactly how `cel: a shadow is READABLE` hid a second failure behind a
+       * first for a whole session. Everything that moved wrong is named. */
+      for (const k of Object.keys(want)) {
+        if (got[k] !== want[k]) bad.push(`${t}.${k} reads ${got[k]}, tier says ${want[k]}`);
+      }
+      // …and every cascade, not only the first: they are set in a loop.
+      for (let i = 0; i < eng.cascades.length; i++) {
+        const L = eng.cascades[i];
+        if (L.shadow.mapSize.x !== q.shadow || L.shadow.mapSize.y !== q.shadow) {
+          bad.push(`${t}.cascade[${i}] kept a ${L.shadow.mapSize.x}×${L.shadow.mapSize.y} map, `
+            + `tier says ${q.shadow}²`);
+        }
+      }
+      seen.push(t);
+    }
+    assert(bad.length === 0,
+      `${bad.length} of the tier's columns do not follow a mid-run tier change: ${bad.join('; ')}. `
+      + 'A column of QUALITY that only the constructor reads is a promise the options screen '
+      + 'cannot keep, and the two that were dead when this was written were the frame\'s largest '
+      + 'per-pixel cost (msaa, 4 samples kept on the Performance tier) and its largest per-frame '
+      + 'simulation cost (cloth, 14 of 16 bodies still solving garments after the drop to low).');
+
+    /* THE COLUMN LIST IS DERIVED. Anything added to QUALITY that this loop does
+     * not read is unasserted, and silence is how both of the above survived —
+     * so a new column has to be claimed here or named as deliberately inert. */
+    const READ = new Set(['shadow', 'viewDist', 'ink', 'pixelRatio', 'msaa', 'particles', 'cloth']);
+    const INERT = new Set([
+      'bloom',        // main.js's qualityBloom(), pinned by feel/order rather than here
+      'grass',        // an instance-buffer allocation: World rebuilds it at load, not live
+      'shadowDist',   // read every frame by fitShadows/cascadeBoxes, so it cannot go stale
+    ]);
+    const unclaimed = Object.keys(QUALITY[tiers[0]]).filter((k) => !READ.has(k) && !INERT.has(k));
+    assert(unclaimed.length === 0,
+      `QUALITY grew ${unclaimed.join(', ')} and nothing here asks whether a tier change reaches `
+      + 'it. Add it to the loop, or to INERT with the reason.');
+
+    /* AND NO SECOND COPY OF THE CLOTH CUT. The defect was a cached scalar
+     * written in one place and re-read in another (HANDOFF §2.3); the guard is
+     * that there is exactly ONE assignment of it in the tree and it is the one
+     * `applyQuality` makes. */
+    const { readFile } = await import('node:fs/promises');
+    const world = await readFile(new URL('../../src/game/World.js', import.meta.url), 'utf8');
+    const writes = world.match(/this\.clothCut\s*=/g) || [];
+    assert(writes.length === 1,
+      `${writes.length} places in World.js assign clothCut — it is a tier column with one `
+      + 'authority, and a second assignment is the copy that went stale');
+    assert(/applyQuality\(name\)\s*\{[^}]*this\.clothCut\s*=/s.test(world),
+      'the one assignment of clothCut is not inside applyQuality, so a mid-run tier change '
+      + 'cannot reach it');
+
+    return `${ladder.length} tier moves over ${tiers.join('/')}, seven columns each; `
+      + `msaa ${tiers.map((t) => QUALITY[t].msaa).join('/')} rebuilt the composer buffer `
+      + `${disposed} times and freed the old one each time`;
+  });
 }
