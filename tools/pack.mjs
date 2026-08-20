@@ -172,15 +172,54 @@ let page = html
  */
 const TAG = /<link\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi;
 
+/**
+ * EVERY SUBSTITUTION BELOW HAS TO LAND, so each one is asserted rather than
+ * attempted. A `String.replace` whose pattern has drifted out of index.html
+ * returns the input unchanged and says nothing — which is precisely how the
+ * bug this block now fixes survived: the packer rewrote the WORDS of the
+ * file:// notice and left the CONDITION that fires it, and the wording change
+ * made a reader of this file believe the case was handled.
+ */
+const must = (text, pat, next, why) => {
+  if (!pat.test(text)) throw new Error(`pack: ${why} — index.html no longer matches ${pat}`);
+  return text.replace(pat, next);
+};
+
+/**
+ * THE `file://` NOTICE TOOK THE PACKED BUILD DOWN, AND HAD SINCE THE DAY IT WAS
+ * WRITTEN.
+ *
+ * index.html carries an inline script that replaces `#boot`'s innerHTML with
+ * "Needs a web server" when `location.protocol === 'file:'`, because a browser
+ * refuses ES modules off disk. A PACKED page is opened off disk — that is the
+ * entire point of it — so the notice fired on every single-file build, and it
+ * does not merely say the wrong thing: it destroys `#boot-fill` and `#boot-msg`
+ * on the way past. `Menu.progress` then reads `.style` of a null and the boot
+ * sequence dies before `hideBoot()`, leaving a title screen that never opens.
+ * Measured in headless Chromium at `file:///tmp/borz.html`: `window.SABER`
+ * present, all 79 modules evaluated, nothing fetched off the page, and
+ * `TypeError: Cannot read properties of null (reading 'style') at
+ * Menu.progress` with "THIS BUILD DID NOT LOAD" on screen.
+ *
+ * The previous version of this block rewrote the two message strings, which is
+ * why the fault reads as intentional: the replacement text even describes the
+ * capability check this now performs. The messages were right and the trigger
+ * was wrong. So the trigger becomes the thing the message already claimed — a
+ * browser without WebAssembly or WebGL2 stops here, and every other browser
+ * gets its boot bar.
+ */
+const CAPABLE = "!(window.WebAssembly && document.createElement('canvas').getContext('webgl2'))";
+
 // The page skeleton is supplied by the host, so hand it only the body content.
-const body = (page.match(/<body[^>]*>([\s\S]*)<\/body>/) || [, page])[1]
-  // The file:// fallback tells a reader to start a web server. In a packed
-  // build there is nothing to serve, so it would be advice for a situation
-  // that cannot arise, given to someone whose actual problem is different.
-  .replace(/<h2>Needs a web server<\/h2>/, '<h2>This build did not load</h2>')
-  .replace(/Browsers refuse to load ES modules straight from disk\.[\s\S]*?address it prints\./,
-    'Every module in this page is inline, so nothing was fetched and nothing can 404. '
-    + 'A browser with WebGL2 and WebAssembly runs it; one without either stops here.');
+let body = (page.match(/<body[^>]*>([\s\S]*)<\/body>/) || [, page])[1];
+body = must(body, /<h2>Needs a web server<\/h2>/, '<h2>This build did not load</h2>',
+  'the file:// notice heading is gone');
+body = must(body, /Browsers refuse to load ES modules straight from disk\.[\s\S]*?address it prints\./,
+  'Every module in this page is inline, so nothing was fetched and nothing can 404. '
+  + 'A browser with WebGL2 and WebAssembly runs it; one without either stops here.',
+  'the file:// notice body is gone');
+body = must(body, /location\.protocol === 'file:'/, CAPABLE,
+  'the file:// guard this build has to disarm is gone');
 
 const head = (page.match(/<head[^>]*>([\s\S]*?)<\/head>/) || [, ''])[1]
   .replace(/<meta[^>]*charset[^>]*>/i, '')

@@ -432,27 +432,16 @@ export async function run({ check, assert }) {
      * 'A JEDI HAS FALLEN AWAY'.
      */
     const { chromium } = await import('playwright-core');
-    const { existsSync, readdirSync } = await import('node:fs');
-    /* Resolved rather than typed, and NOT skipped when it is missing: a check
-     * that quietly passes on a box with no browser is the "0 passed, 0 failed"
-     * shape HANDOFF §2.3 files under a missing thing answered with a plausible
-     * default. Say so and fail. */
-    const candidates = [process.env.CHROMIUM_PATH,
-      ...(existsSync('/opt/pw-browsers')
-        ? readdirSync('/opt/pw-browsers').map(d => `/opt/pw-browsers/${d}/chrome-linux/chrome`)
-        : []),
-      '/opt/pw-browsers/chromium'];
-    const exe = candidates.find(p => p && existsSync(p));
-    assert(exe, `no chromium found for the geometry check — tried ${candidates.filter(Boolean).join(', ')}`);
+    /* Resolved rather than typed, and NOT skipped when it is missing — see the
+     * header of `_browser.mjs`, which is the one place that knows where the
+     * browser is now that a second suite drives one. */
+    const { chromiumPath, CHROME_ARGS } = await import('./_browser.mjs');
+    const exe = chromiumPath();
 
     const server = createServer(handler);
     await new Promise(r => server.listen(0, '127.0.0.1', r));
     const port = server.address().port;
-    const browser = await chromium.launch({
-      executablePath: exe,
-      args: ['--no-sandbox', '--disable-dev-shm-usage', '--use-gl=angle', '--use-angle=swiftshader',
-        '--enable-unsafe-swiftshader'],
-    });
+    const browser = await chromium.launch({ executablePath: exe, args: CHROME_ARGS });
     // Three: the shipped desktop shot, the width the tab strip broke at, and a
     // portrait phone, which is where every one of these fails first.
     const SIZES = [[1280, 720], [740, 900], [360, 1080]];
