@@ -3488,7 +3488,7 @@ export class CommandDirector extends WaveDirector {
    * `IDLE_GRACE` before it starts, so a man who is between targets for a third
    * of a second does not bob up and down.
    */
-  _holdPost(e, dt, c) {
+  _holdPost(e, dt) {
     e.idleT = (e.idleT || 0) + dt;
     this._crouch(e, dt, e.idleT < IDLE_GRACE ? 0 : 1);
   }
@@ -3678,25 +3678,31 @@ export class CommandDirector extends WaveDirector {
       return;
     }
     const F = FORMATIONS[c.formation] || FORMATIONS[DEFAULT_FORMATION];
-    const slot = this.slotFor(e);
-    /* CHARGE: no slot at all — so there is nothing to walk to, and a body with
-     * no target either is the same statue reached by a different route. */
-    if (!slot) { this._holdPost(e, dt, c); return; }
-    const dx = slot.x - e.position.x, dz = slot.z - e.position.z;
-    const d = Math.hypot(dx, dz);
-    e.cmdSlotDist = d;
     /* A live target it is allowed to engage buys it the whole leash; otherwise
      * it owes the mark. `e.target` is what `_think` set THIS frame off
      * `pickTarget`, which for a trooper is `targetFor` below — so the two
-     * clauses are reading the same decision and cannot disagree about it. */
+     * readers are the same decision and cannot disagree about it. Read HERE
+     * rather than beside the leash because the CHARGE branch needs it too: a
+     * man running an order down with somebody in front of him is not idle, and
+     * taking a knee mid-charge is exactly the wrong picture. */
     const fighting = e.target && !e.target.dead && e.target.alive !== false;
+    const slot = this.slotFor(e);
+    /* CHARGE: no slot at all — so there is nothing to walk to, and a body with
+     * no target either is the same statue reached by a different route. */
+    if (!slot) {
+      if (fighting) { e.idleT = 0; this._crouch(e, dt, 0); } else this._holdPost(e, dt);
+      return;
+    }
+    const dx = slot.x - e.position.x, dz = slot.z - e.position.z;
+    const d = Math.hypot(dx, dz);
+    e.cmdSlotDist = d;
     const limit = fighting ? this.leashFor(F, e) : FORM_TOLERANCE;
     if (d <= limit) {
       /* ON HIS MARK. Fighting from it is the whole job; NOT fighting from it is
        * a man standing in the open with nothing to do, and that is 54-63% of
        * the frames in every standing formation. See `_holdPost`. */
       if (fighting) { e.idleT = 0; this._crouch(e, dt, 0); }
-      else this._holdPost(e, dt, c);
+      else this._holdPost(e, dt);
       return;
     }
     e.idleT = 0;
