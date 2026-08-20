@@ -78,12 +78,16 @@ function dressed() {
 }
 
 export function run({ check, assert }) {
-  check('colosseum: thirty thousand people, in six draw calls', () => {
+  check('colosseum: seven thousand people, in six draw calls', () => {
     const { crowds, meshes, world } = dressed();
     assert(crowds.length >= 2,
       `${crowds.length} crowd mesh(es) — the house and the box are separate crowds`);
     const heads = crowds.reduce((n, c) => n + c.count, 0);
-    assert(heads > 2500, `only ${heads} spectators — that is a village meeting, not a full house`);
+    /* Half the shipped house. A floor of 2,500 was set when the house was
+     * 3,046 and survived it doubling — it had stopped being a measurement of
+     * anything and would have passed a crowd two thirds gone. */
+    assert(heads > 3400,
+      `only ${heads} spectators — that is a village meeting, not a full house (the shipped house is 6,952)`);
     /**
      * SEVEN, NOT THREE, AND THE BOUND IS RE-DERIVED RATHER THAN RELAXED.
      *
@@ -96,12 +100,20 @@ export function run({ check, assert }) {
      *
      * The bound the old number was protecting is the real one and it is
      * unchanged: a crowd may not cost a draw call per spectator. Measured on
-     * the dressed level, the house is 3,046 spectators and the box 16, and they
-     * arrive in 6 meshes — 510 figures per call. The ceiling is set at 7 rather
-     * than 6 so the lords' box keeps the room to grow a second variant, and at
-     * 7 the worst case this permits is still 437 figures per call. What it
-     * forbids is exactly what it always forbade: somebody reaching for a
+     * the dressed level, the house is 6,938 spectators and the box 14, and they
+     * arrive in 6 meshes — 1,159 figures per call. The ceiling is set at 7
+     * rather than 6 so the lords' box keeps the room to grow a second variant,
+     * and at 7 the worst case this permits is still 993 figures per call. What
+     * it forbids is exactly what it always forbade: somebody reaching for a
      * per-spectator mesh.
+     *
+     * THE FIGURES ABOVE WERE 3,046 AND 16 AND THE TITLE SAID THIRTY THOUSAND —
+     * a check whose own name was 4.3× out in one direction while its comment
+     * was 2.3× out in the other, both describing a house that had since been
+     * rebuilt. Both are re-measured here, and the floor below is derived from
+     * the shipped count rather than left where the old house put it, so it
+     * fails when the crowd is HALVED instead of only when it collapses to a
+     * village.
      */
     assert(crowds.length <= 7,
       `${crowds.length} draw calls of crowd; five head variants is five meshes and the box is one `

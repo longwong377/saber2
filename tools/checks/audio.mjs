@@ -1485,7 +1485,7 @@ export async function run({ check, assert }) {
    *
    * `init()` built one convolver from `_makeImpulse(2.4, 2.6)` behind a send of
    * 0.16, and `grep reverbSend` found nothing after the line that created it. A
-   * 30,000-seat stone bowl, an open dune sea and a sealed foundry were all
+   * 7,000-seat stone bowl, an open dune sea and a sealed foundry were all
    * played through that one tail at that one level for the life of the project.
    *
    * The room is DERIVED (World.roomOf) rather than added as a tenth field to

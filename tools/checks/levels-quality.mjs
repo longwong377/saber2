@@ -155,7 +155,7 @@ export async function run({ check, assert }) {
     /**
      * THE ESCAPE THIS HOLDS. Real Player, `moveAxis {0,1}` pinned, 25 s a
      * bearing from the middle of the sand: six of eight bearings finished at
-     * y = 45.1 m and r = 114.8 m — up the podium, through thirty thousand
+     * y = 45.1 m and r = 114.8 m — up the podium, through seven thousand
      * non-colliding spectators, over the arcade and out onto the plain, and on
      * longer runs out to r = 236 m. The arena's own comments say the podium is
      * 68° and "past the number every walkability survey uses"; on the grid the
