@@ -73,7 +73,12 @@ const QUALITY_READERS = {
   shadowDist: ['engine/Engine.js', 'q.shadowDist * f'],
   viewDist:   ['engine/Engine.js', 'this.camera.far = q.viewDist'],
   pixelRatio: ['engine/Engine.js', 'Math.min(window.devicePixelRatio, q.pixelRatio)'],
-  msaa:       ['engine/Engine.js', 'samples: q.msaa'],
+  /* Was `samples: q.msaa`, which was the CONSTRUCTOR's read and the only one
+   * there was — the composer's sample count could not be assigned, so the tier
+   * the player chose mid-run never reached it. Now that `setQuality` rebuilds
+   * the target, the read that matters is the one inside it; this names the
+   * construction site, and `frame-budget` holds the live path. */
+  msaa:       ['engine/Engine.js', 'QUALITY[this.quality].msaa'],
   bloom:      ['main.js', 'QUALITY.high).bloom'],
   grass:      ['game/World.js', 'Math.round(11000 * q.grass)'],
   particles:  ['game/World.js', 'q.particles'],

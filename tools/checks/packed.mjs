@@ -36,7 +36,7 @@ import { chromiumPath, CHROME_ARGS } from './_browser.mjs';
 const ROOT = new URL('../../', import.meta.url).pathname.replace(/\/$/, '');
 
 export async function run({ check, assert }) {
-  check('packed: the single-file build boots from a bare file:// URL, with no server', async () => {
+  check('packed: the single-file build boots from a bare file:// URL and can be played', async () => {
     const exe = chromiumPath();
     const dir = mkdtempSync(join(tmpdir(), 'borzpack-'));
     const out = join(dir, 'borz.html');
@@ -103,9 +103,50 @@ export async function run({ check, assert }) {
           `the front screen came up with ${state.tabs} tabs — the two built at runtime are missing`);
         assert(offpage.length === 0,
           `a page whose whole promise is that nothing is fetched asked for ${[...new Set(offpage)].join(', ')}`);
+        /**
+         * AND IT CAN BE DEPLOYED INTO, which is the half a boot check does not
+         * cover and the half the player is actually here for. The whole point
+         * of the packed build is that it is the artifact somebody plays; a
+         * title screen that comes up over a game that cannot start is the same
+         * failure one screen later.
+         *
+         * Everything is counted in FRAMES. SwiftShader renders this at about a
+         * frame a second under load and a wall-clock budget would be measuring
+         * the box (HANDOFF §2.6) — a frame count is the same number on a quiet
+         * box and a loaded one. Measured when this was written: menu at frame
+         * 17, a live world one frame after the click, 2.2 s of game time in the
+         * 60 frames after that, 747 draw calls on the Ember Shelf.
+         */
+        const play = await page.evaluate(async () => {
+          const tick = () => new Promise((r) => requestAnimationFrame(r));
+          const btn = document.querySelector('#btn-deploy');
+          if (!btn) return { fail: 'there is no #btn-deploy on the packed front screen' };
+          btn.click();
+          let f = 0;
+          for (let i = 0; i < 400; i++) { await tick(); f++; if (window.SABER?.world) break; }
+          const w = window.SABER?.world;
+          if (!w) return { fail: `no world ${f} frames after the deploy click` };
+          /* Thirty frames, not sixty. Under SwiftShader a frame of a dressed
+           * level is the most expensive thing in the gate, and the question —
+           * is the clock running and is the level being drawn — is answered by
+           * the first handful. Sixty cost three minutes and bought nothing. */
+          const t0 = w.time;
+          for (let i = 0; i < 30; i++) { await tick(); f++; }
+          return { frames: f, advanced: +(w.time - t0).toFixed(3), level: w.levelKey ?? null,
+            enemies: w.enemies.length, hp: w.player?.hp ?? null,
+            draws: window.SABER.engine?.renderer?.info?.render?.calls ?? 0 };
+        });
+        assert(!play.fail, `${play.fail} — the packed page opens and cannot be played`);
+        assert(play.advanced > 0.2,
+          `the packed world advanced ${play.advanced} s over 30 frames — it is built but not running`);
+        assert(play.draws > 50,
+          `${play.draws} draw calls in the deployed frame — the packed page is not drawing a level`);
+        assert(errs.length === 0, `the packed page threw during play: ${errs.join(' · ')}`);
         return `${(size / 1e6).toFixed(2)} MB, menu up in ${state.frames} frames at `
           + `${state.rect[0]}x${state.rect[1]} with ${state.tabs} tabs, boot bar intact, `
-          + 'nothing fetched off the page';
+          + `nothing fetched off the page; deployed onto ${play.level} by frame ${play.frames} `
+          + `— ${play.advanced} s of game time, ${play.enemies} enem${play.enemies === 1 ? 'y' : 'ies'}, `
+          + `${play.draws} draw calls, player at ${play.hp} hp`;
       } finally { await browser.close(); }
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
