@@ -33,7 +33,7 @@
 
 import * as THREE from 'three';
 import { Rig, humanoidSkeleton, BipedAnimator } from '../../src/game/Rig.js';
-import { Player, CameraRig } from '../../src/game/Player.js';
+import { Player, CameraRig, EYE_FOLLOW, EYE_MAX_SPEED } from '../../src/game/Player.js';
 
 const V3 = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
 const range = (a) => Math.max(...a) - Math.min(...a);
@@ -308,27 +308,74 @@ export async function run({ check, assert }) {
     return `eyePosition carries the full offset (${a.distanceTo(c).toFixed(4)} m for a 42 mm pelvis)`;
   });
 
-  check('first person: the neck cap bounds the eye speed without ever filtering the gait', () => {
-    // The cap is a statement about necks: 2.2 m/s. It exists because the pelvis
-    // is still not smooth — the swing foot arrives at a measured 5.3 m/s and
-    // the reach clamp is chained to it. What matters is that it does NOT engage
-    // at a walk, where the pelvis is honest; a cap that trims ordinary walking
-    // is a low-pass filter, and a low-pass filter puts the swim back.
+  check('first person: the neck cap is silent through the whole gait, and still bites', () => {
+    /**
+     * THE PELVIS GOT SMOOTH, WHICH IS THE OUTCOME THE OLD CLAUSE NAMED AND
+     * COULD NOT SURVIVE.
+     *
+     * The cap is a statement about necks — `EYE_MAX_SPEED`, 2.8 m/s — and it
+     * exists because the pelvis was not smooth: the swing foot arrived at a
+     * measured 5.3 m/s with the reach clamp welded to it, so the eye had spikes
+     * to be protected from. This clause used to assert the cap TRIMS more than
+     * 5 mm at a sprint, and that was a proxy: it was really measuring how rough
+     * the pelvis was, through the cap.
+     *
+     * The gait fixes then landed — the swing aim (`SWING_LAND`) and the boot
+     * sole the animator now reads off the mesh — and single-frame pelvis travel
+     * went 23.7/40.1/69.6/88.3 mm to 8.4/11.3/32.4/28.4 mm at 1.6/3.0/4.6/7.4
+     * m/s, against a cap of 46.7 mm/frame. So at a sprint the cap now trims
+     * 0.23 mm, the proxy went red, and the thing it was a proxy FOR got better.
+     * A clause that fails when the game improves is measuring the wrong
+     * quantity.
+     *
+     * Both halves are asserted directly now, and neither is a proxy:
+     *
+     *   THE GAIT is under the cap at every speed the game has, sprint
+     *   included, so nothing the player does during play is being filtered.
+     *   That was always the important half — every millimetre the cap trims is
+     *   a millimetre of body sliding under the eye — and it is now true of the
+     *   sprint as well as the walk. The bound is the headroom, so a pelvis that
+     *   regresses to its old spikes fails here rather than passing quietly.
+     *
+     *   THE LIMIT still bites, proven on the limit itself rather than on
+     *   whatever the gait happens to hand it: a pelvis stepped past `maxStep`
+     *   is trimmed to exactly `maxStep` and the excess is reported in
+     *   `eyeCapped`. That cannot be smoothed away by a better gait, so it is a
+     *   claim about the neck and it stays true whatever the legs do.
+     */
     const { rec } = wield({ forward: true });
-    const worstRun = Math.max(...rec.map(s => s.capped));
+    const worstRun = Math.max(...rec.map((s2) => s2.capped));
     const sprint = wield({ forward: true, sprint: true });
-    const worstSprint = Math.max(...sprint.rec.map(s => s.capped));
-    // 4.6 m/s is not a jog, it is the ONLY forward speed the game has without
-    // the sprint key, so it is where the cap must be silent. At 2.2 m/s it was
-    // trimming 5.9 mm here — during ordinary play — and every millimetre it
-    // trims is a millimetre of body sliding under the eye.
+    const worstSprint = Math.max(...sprint.rec.map((s2) => s2.capped));
+    // 4.6 m/s is the ONLY forward speed the game has without the sprint key.
     assert(worstRun < 0.0005,
-      `the neck cap trims ${(worstRun * 1000).toFixed(1)} mm at the game's ordinary forward speed `
+      `the neck cap trims ${(worstRun * 1000).toFixed(2)} mm at the game's ordinary forward speed `
       + '— that is a filter running during normal play, not a limit');
-    assert(worstSprint > 0.005,
-      'the cap never engages even at a sprint — either the pelvis got smooth (check Rig.js) or the limit is dead');
-    return `cap refuses ${(worstRun * 1000).toFixed(2)} mm at 4.6 m/s, `
-      + `${(worstSprint * 1000).toFixed(1)} mm at a sprint (limit 2.8 m/s = 46.7 mm/frame)`;
+    /* 1 mm in a frame is 60 mm/s of eye the body is not carrying. The sprint
+     * measured 0.23 mm when this was written; a pelvis back at its old 88 mm
+     * spikes would trim 41 mm and fail by a factor of forty. */
+    assert(worstSprint < 0.001,
+      `the neck cap trims ${(worstSprint * 1000).toFixed(2)} mm at a sprint — the pelvis has spikes in `
+      + 'it again and the eye is being filtered to hide them (check the swing aim and the sole in Rig.js)');
+
+    /* AND THE LIMIT, on its own terms. A pelvis that jumps four times the
+     * frame's allowance must move the eye by the allowance and no more. */
+    const solo = new Player(stubWorld(), { isLocal: true });
+    solo.camera.firstPerson = true;
+    solo._applyViewMode();
+    const dt = 1 / 60, allow = EYE_MAX_SPEED * dt;
+    const before = solo.camera.eyeOffset.y;
+    solo.camera.advanceEye(dt, V3(0, allow * 4 / EYE_FOLLOW, 0));
+    const moved = solo.camera.eyeOffset.y - before;
+    assert(Math.abs(moved - allow) < 1e-9,
+      `a pelvis four times past the limit moved the eye ${(moved * 1000).toFixed(2)} mm in one frame, `
+      + `against an allowance of ${(allow * 1000).toFixed(2)} mm — the cap is not wired`);
+    assert(solo.camera.eyeCapped > allow * 2.5,
+      `the cap moved the eye correctly but reported ${(solo.camera.eyeCapped * 1000).toFixed(2)} mm of `
+      + 'excess — eyeCapped is what every one of these measurements reads');
+    return `cap refuses ${(worstRun * 1000).toFixed(2)} mm at 4.6 m/s and `
+      + `${(worstSprint * 1000).toFixed(2)} mm at a sprint, against an allowance of `
+      + `${(allow * 1000).toFixed(1)} mm/frame — the gait no longer needs it, and it still bites`;
   });
 
   /* ══════════════════════════════════════════════════════════════════ */

@@ -278,7 +278,10 @@ const LEG_BONE = /thigh|shin|foot|femur|tibia|tarsus|^leg/;
  * source of the "jumbled mess" the player described. At a gain of 1 the number
  * is zero by construction, in every axis, at every speed.
  */
-const EYE_FOLLOW = 1;
+/* Exported with EYE_MAX_SPEED below so `viewmodel.mjs` proves the cap against
+ * the game's own two numbers instead of retyping them beside the table that
+ * owns them (HANDOFF §2.3). */
+export const EYE_FOLLOW = 1;
 
 /**
  * The fastest a neck is allowed to carry the eye, m/s.
@@ -302,7 +305,7 @@ const EYE_FOLLOW = 1;
  * a filter running during normal play, putting 5.9 mm of swim back on the
  * screen. 2.8 leaves the run untouched and still refuses 41 mm of the sprint.
  */
-const EYE_MAX_SPEED = 2.8;
+export const EYE_MAX_SPEED = 2.8;
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  The first-person viewmodel                                            */
