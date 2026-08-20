@@ -792,6 +792,68 @@ instead of keeping one.
 
 ## 6. Open
 
+### 6.0a THE KNUCKLES WERE FACING OUT, AND IT WAS A DIFFERENT DEFECT — FIXED
+
+*Fourth report of "the hands look wrong". §6.0 below is about FRAMING —
+where on the shaft the fists sit and whether they are in shot — and it is
+still open on its own terms. This one is about WRIST ROLL and it was
+independent of everything §6.0 swept.*
+
+> "the orientation is still janky af like i think the knuckles are facing out
+>  on both like that's not how you would hold a saber in 1 or even 2 hands like
+>  you keep missing this over and over that's not how human hands contort"
+
+`buildHand` settles which axis a palm is without a guess — the finger roots
+carry `rotation.x = 1.24`, a positive turn about X takes +Y toward +Z, so the
+fingers close toward +Z and the palm faces the hand's +Z. Two hands closed on
+one shaft therefore have a LAW: their palms cannot face opposite ways round it.
+`tools/_palm.mjs` now takes that number and it had never been taken:
+
+```
+                                     palm·palm      before → after
+    third person, two hands            −1.00           →  +0.46
+    first person, two hands            −0.96           →  −0.74
+```
+
+−1.00 is the two palms pointing exactly away from each other. That is what "the
+knuckles are facing out on both" means — whichever hand you look at, you are
+looking at the back of it.
+
+**The cause was a constant bias, and a bias is invisible on one hand and fatal
+on two.** `handPoseOnHilt` documents `toward` as "the direction the arm arrives
+from" and places the wrist one BORE offset back — but that offset is
+`−(0.065·Y + 0.030·Z)`, which is not `−Y`: it leans 24.8° toward the back of the
+hand. Compose it with `GRIP_TWIST`'s 35° and the wrist lands **59.8° round the
+shaft** from where the caller asked. Both turns were taken about the hand's X —
+the THUMB axis, which points opposite ways on a left and a right hand — so the
+bias rolled one hand one way and the other the other, **119.6° apart**.
+
+The fix is two lines: the comfort turn goes about the BLADE (a common axis) and
+the bore's lean is taken off about X (where it belongs, because the bore is a
+place inside the hand and genuinely mirrors). `GRIP_TWIST` absorbs the same
+angle, so **the right hand's world frame does not move** — its first-person palm
+reads (out −0.96, up 0.29, eye 0.01) before and after, and `viewmodel`'s forearm
+ratchet reads 2487°/s before and after. Only the off hand turns, by exactly the
+119.6° it was wrong by.
+
+`FP_TUNE.roll = 60°` is now explained rather than merely swept: it is 59.8° of
+bias, found empirically on ONE hand by rendering three candidates. That is why
+the leading hand looked right and the off hand never did.
+
+**What is still not clean, and it is geometry rather than a bug:** first person
+with TWO hands ends at −0.74. Both fists are under a hilt held in the eyeline,
+so the two wrists are 7° apart round the shaft, and the palms can only come
+round together as the wrists separate — swept, `pair` 0.05→3.2 takes the wrists
+7°→152° apart and the palms −0.74→+0.22, but by 3.2 the fists are level with
+the hilt instead of under it and the framing checks §6.0 names go red. **That is
+a second, independent confirmation of §6.0's conclusion that first person should
+be ONE-handed**, which is what `fpHands` already defaults to. The two-handed
+first-person option cannot be made anatomically clean while both fists stay
+under the shaft, and nobody has yet asked whether it should exist.
+
+Check: `tools/checks/viewmodel.mjs`, "arms: two hands on one hilt hold it the
+SAME way round" — proven to fail on `968b575` and pass here.
+
 ### 6.0 The first-person grip is OVER-CONSTRAINED — and this is the live one
 
 Third report of "the first person hand/hilt looks like jumbled garbage", and
