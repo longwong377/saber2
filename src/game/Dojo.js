@@ -208,18 +208,35 @@ export const LESSONS = [
     check: (ev) => ev.type === 'lockWon',
   },
   {
-    id: 'free', title: 'Free practice', need: Infinity,
-    brief: 'Everything at once. Nothing here can kill you.',
-    hint: 'Change the sparring form in the pause menu, or go and find a real fight.',
-    setup: { remotes: 3, fireRate: 1.4, boltSpeed: 38, dummies: 3, spar: true, sparForm: 'juyo', sparSpeed: 0.85 },
-    check: () => false,
-  },
-  {
-    // The lessons above each pin the room to what they are teaching, which is
-    // exactly what makes them lessons and exactly why none of them is a place
-    // to just mess about. This one hands the room over: it reads the sandbox
-    // numbers off the settings every second, so the count and the fire rate
-    // are live from the pause screen.
+    /**
+     * THE LADDER ENDED ON A RUNG NOBODY COULD CLIMB OFF, AND THE ROOM PAST IT
+     * WAS ITS OWN HAND-WRITTEN TWIN.
+     *
+     * There used to be a `free` lesson here — `need: Infinity`,
+     * `check: () => false`, `setup: { remotes: 3, dummies: 3, spar: true }` —
+     * standing between `lock` and this one. `_advance` fires on `check`
+     * returning true `need` times, so it could never fire on that rung:
+     * DRIVEN, feeding the dojo every event its own lessons key on, the ladder
+     * walks 0→1→2→3→4→5→6→7→9 and STOPS on `free` with progress 0. The
+     * eleventh lesson — this room, `inSandbox`, `_sandboxRoom`, the DOJO_MIX
+     * rotation and main.js's `sandboxRoomLive` training arm — was reachable
+     * only by pressing Skip, and the coach read "10 of 11" forever.
+     *
+     * And what it was blocking the way to is the SAME ROOM with its numbers
+     * exposed: `DOJO_MIX` is `['remote', 'dummy', 'sparring']`, which is
+     * exactly the three things free practice hard-coded, at a fixed count and
+     * a fixed fire rate. A hand-written table beside its configurable twin
+     * (§2.3), and the twin was the unreachable one.
+     *
+     * So free practice is gone and this is the tenth lesson. The lessons above
+     * each pin the room to what they are teaching, which is exactly what makes
+     * them lessons and exactly why none of them is a place to just mess about.
+     * This one hands the room over: it reads the sandbox numbers off the
+     * settings every second, so the count and the fire rate are live from the
+     * pause screen — and now a player who finishes the blade lock is standing
+     * in it. `tools/checks/training.mjs` walks the whole ladder through
+     * `report` and asserts it arrives here.
+     */
     id: 'sandbox', title: 'Sandbox', need: Infinity,
     brief: 'Your room. Set how many droids and how fast they shoot in the Training tab — zero of either is allowed.',
     hint: 'Blade length can be taken off its leash in there too. Nothing here can kill you.',
@@ -263,12 +280,20 @@ export class DojoDirector {
   get remaining() { return this.lesson.need === Infinity ? 0 : Math.max(0, this.lesson.need - this.progress); }
   get inSandbox() { return !!this.lesson.setup?.sandbox; }
 
-  start() {
-    // Picking Sandbox on the Deploy screen and then landing on lesson one
-    // would be a lie about what the player asked for.
-    if (this.world.settings?.mode === 'sandbox') this.index = LESSONS.length - 1;
-    this._applyLesson();
-  }
+  /**
+   * THE BRANCH THAT USED TO BE HERE COULD NOT RUN.
+   *
+   * It read `if (this.world.settings?.mode === 'sandbox') this.index =
+   * LESSONS.length - 1`, and `grep -rn "new DojoDirector" src/` returns ONE
+   * line — World.js, inside `if (this.settings.mode === 'training')`. Sandbox
+   * mode is a `WaveDirector` on the `_sandboxUpdate` path and never builds one
+   * of these, so the test could never be true in a deployed game.
+   * `tools/checks/training.mjs` kept it green by constructing a DojoDirector
+   * with `{mode:'sandbox'}` BY HAND — a check standing on a path no deploy can
+   * produce, which is the shape §2.4 is about. The sandbox room is reached the
+   * way every other lesson is now: by finishing the one before it.
+   */
+  start() { this._applyLesson(); }
 
   /** Any world event that a lesson might care about. */
   report(ev) {

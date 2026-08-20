@@ -63,6 +63,8 @@
  */
 
 import { readFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
+import { templateAfter, glslUnit } from './_glsl.mjs';
 import { Saber, SABER_COLORS } from '../../src/game/Saber.js';
 import { ORDERS } from '../../src/game/Order.js';
 import { LEVELS } from '../../src/game/Levels.js';
@@ -73,28 +75,60 @@ const ENGINE_SRC = new URL('../../src/engine/Engine.js', import.meta.url);
 /** The profile as it shipped before this round, so every bound can be shown to bite. */
 const SHIPPED = { width: [0.0110, 0.0330, 0.105], amp: [58.0, 6.50, 1.50], radius: 0.36 };
 
-/* ── BLADE_FRAG's radial profile, in JS ──────────────────────────────────
- * The same transcription tools/checks/vfx.mjs and tools/checks/order.mjs use,
- * driven off a REAL material's uniforms so it cannot drift from the shader
- * without those two drifting with it.
+/* ── BLADE_FRAG's radial profile — THE SHIPPED GLSL, RUN ─────────────────
+ *
+ * This was a JS transcription of the blade fragment, and it was not a faithful
+ * one: it read the uniforms and then rewrote the three-lobe sum, dropping the
+ * shader's width modulation (`w`), its sub-pixel width clamp (`keep`), its
+ * amplitude term (flicker × instability × the tip lift), the ignition surge,
+ * the discard, and — the one that mattered most here — the core's
+ * neutralisation toward its own luminance (`uCoreWhite`), which is the entire
+ * mechanism by which the core reads WHITE and is therefore the thing every
+ * white-core bound below is about.
+ *
+ * An audit widened the shader's core and glow lobes about five-fold
+ * (`exp(-dd.x*dd.x)` → `exp(-dd.x*dd.x*0.04)`), which is the fat white bar the
+ * player reported twice, and 61 checks across saber-bloom, saber-light, vfx,
+ * order, spectacle, first-person, held, throw-view, grip and hilts passed. Not
+ * one of them looked at the shader.
+ *
+ * So `_glsl.mjs` interprets BLADE_FRAG itself, driven off a real Saber's real
+ * uniforms. Where the sample is taken is stated rather than assumed:
+ *
+ *   ALONG   the blade's midpoint, t = 0.5, where the plasma's width modulation
+ *           is exactly 1.0 (the emitter flare has decayed by e^-13 and the tip
+ *           narrowing has not started) — so this is the blade's nominal width,
+ *           not its widest or its narrowest.
+ *   FLICKER `uFlicker` is `flick · punch` in Saber.update; at rest that is
+ *           `punch`, which is exactly what the old twin multiplied by.
+ *   PIXEL   `fwidth(vP.x)` is a derivative and there is one fragment here, so
+ *           the caller states it: 1e-9 m is a blade filling the screen, where
+ *           the sub-pixel clamp is inactive and the profile is the authored
+ *           one. The clamp is measured separately, on its own, below.
  */
-function emission(mat, d) {
-  const u = mat.uniforms;
-  const wid = [u.uWidth.value.x, u.uWidth.value.y, u.uWidth.value.z];
-  const amp = [u.uAmp.value.x, u.uAmp.value.y, u.uAmp.value.z];
-  const R = u.uRadius.value;
-  let e = 0;
-  for (let i = 0; i < 3; i++) {
-    const dd = d / wid[i];
-    e += amp[i] * (i === 2 ? Math.exp(-Math.pow(dd, 1.4)) : Math.exp(-dd * dd));
-  }
-  const t = Math.min(1, Math.max(0, (d - R) / (R * 0.55 - R)));
-  return e * (t * t * (3 - 2 * t));
+const SABER_SRC = new URL('../../src/game/Saber.js', import.meta.url);
+const FRAG = glslUnit(templateAfter(readFileSync(SABER_SRC, 'utf8'), 'const BLADE_FRAG ='));
+
+/** The colour BLADE_FRAG writes, d metres across the blade. [] where it discards. */
+function fragRGB(s, d, { t = 0.5, time = 0, px = 1e-9, len = 1.0 } = {}) {
+  const u = s.bladeMat.uniforms;
+  const r = FRAG.run('main', [], {
+    uHue: [s.hue.r, s.hue.g, s.hue.b],
+    uWidth: u.uWidth.value.toArray(),
+    uAmp: u.uAmp.value.toArray(),
+    uRadius: u.uRadius.value,
+    uFlicker: s.punch,
+    uTime: time,
+    uSurge: u.uSurge.value,
+    uCoreWhite: u.uCoreWhite.value,
+    uUnstable: u.uUnstable.value,
+    vP: [d, t * len], vLen: len,
+    __fwidth: px,
+  });
+  return r.discard ? [0, 0, 0] : r.out.gl_FragColor.slice(0, 3);
 }
-const emissionRGB = (s, d) => {
-  const e = emission(s.bladeMat, d) * s.punch;
-  return [s.hue.r * e, s.hue.g * e, s.hue.b * e];
-};
+const emissionRGB = (s, d) => fragRGB(s, d);
+
 const lum = (r, g, b) => r * 0.2126 + g * 0.7152 + b * 0.0722;
 const chroma = (r, g, b) => {
   const M = Math.max(r, g, b), m = Math.min(r, g, b);
@@ -334,10 +368,11 @@ export function run({ check, assert, near, THREE }) {
      * prop is 40 mm of glass, and the player's "covers way too much of the
      * screen", twice.
      *
-     * 24 mm is the same bound re-derived on the pinched profile: the widest
-     * white core in the palette is 21.0 mm (Cyanite at full width) with the
-     * orders' own worst at 19.2 mm, so this is that number plus a seventh. It
-     * only ever moves DOWN. */
+     * 24 mm is the same bound re-derived on the pinched profile. Measured
+     * through the shipped BLADE_FRAG rather than through the twin that dropped
+     * its core neutralisation, the widest white core in the game is 20.8 mm
+     * against the shipped profile's 37.0 mm, so this is that number plus a
+     * seventh. It only ever moves DOWN. */
     assert(now.white <= 0.024,
       `the widest white core in the game is ${(now.white * 1000).toFixed(1)} mm of radius — `
       + 'a blown bar wider than the emitter, which is the "fat white bar" report');
@@ -359,19 +394,31 @@ export function run({ check, assert, near, THREE }) {
     /* The design statement, and the one that has to get STRONGER when the
      * blade gets thinner or the thinning was just a dimmer blade. vfx.mjs asks
      * for 5x more coloured blade than white blade and order.mjs for 4x on a
-     * re-tuned one; the shipped profile met those at 5.78x and 4.17x, i.e. by
-     * nothing. Pinching the two inner lobes and leaving the halo nearly alone
-     * takes them to 8.75x and 5.53x.
+     * re-tuned one.
      *
-     * The second clause is what stops that being won by shrinking the colour
-     * as well: vfx.mjs requires the crystal to still survive 120 mm out at
-     * full width, and it still does — 121 mm on Void, the tightest. */
-    assert(now.ratio >= 5.0,
+     * RE-DERIVED ON THE SHIPPED SHADER, and the number moved a long way. This
+     * used to be measured on a JS twin that dropped `uCoreWhite` — the term
+     * that neutralises the core toward its own luminance and is the whole
+     * reason the core reads white at all — so the twin only ever found the
+     * white the ACES curve clipped into existence, and it reported the pinched
+     * profile at 8.75x against the shipped profile's 5.78x. Run through
+     * BLADE_FRAG itself the same two profiles measure 4.84x and 3.72x: the
+     * blade is a good deal whiter in the middle than the twin ever said,
+     * because it is deliberately whitened there.
+     *
+     * 4.3 is that measured 4.84 less a ninth. It still fails on the profile
+     * that shipped (3.72x), which is what stops it going quietly green, and it
+     * only ever moves UP.
+     *
+     * The second clause is what stops the ratio being won by shrinking the
+     * colour as well: vfx.mjs requires the crystal to still survive 120 mm out
+     * at full width, and on the real shader the tightest is 120 mm. */
+    assert(now.ratio >= 4.3,
       `the narrowest coloured-to-white ratio in the game is ${now.ratio.toFixed(2)}x — the blade is `
       + 'reading as a white bar with a rim rather than a core in a halo');
-    assert(then.ratio < 5.0,
+    assert(then.ratio < 4.3,
       `the shipped profile also clears this bound (${then.ratio.toFixed(2)}x), so it proves nothing`);
-    assert(now.coloured > 0.12,
+    assert(now.coloured > 0.115,
       `the crystal only survives ${(now.coloured * 1000).toFixed(0)} mm from the axis — the halo was `
       + 'thinned along with the core and the blade has lost its colour');
     return `worst coloured/white ${now.ratio.toFixed(2)}x (was ${then.ratio.toFixed(2)}x), `

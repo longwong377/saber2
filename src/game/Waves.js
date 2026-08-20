@@ -175,7 +175,7 @@ export const MODES = {
   /**
    * TRAINING WAS PINNED TO ONE ROOM.
    *
-   * The eleven lessons are the only way this game teaches its control scheme,
+   * The ten lessons are the only way this game teaches its control scheme,
    * and the only way to reach them was to pick the level called "The Dojo" —
    * an octagonal hangar with a flat floor. So you could learn to return a bolt
    * indoors and had no way at all to practise it on a dune face, in a blizzard,
@@ -193,7 +193,12 @@ export const MODES = {
    */
   training: {
     name: 'Training',
-    blurb: 'The eleven lessons, in whatever theatre you choose. Nothing here can kill you.',
+    /* TEN, and it was eleven while only ten could be reached. The last rung
+     * was `free practice`, whose `check` returns false forever, so `_advance`
+     * could never leave it and the room past it — the sandbox — was reachable
+     * only with the Skip button while the coach read "10 of 11". See the note
+     * on that lesson in Dojo.js. `claims.mjs` holds this word to LESSONS.length. */
+    blurb: 'The ten lessons, in whatever theatre you choose. Nothing here can kill you.',
     /* Deaf a layer further out than either: `World.loadLevel` builds a
      * `DojoDirector` for this mode, which has no `legalRuleSet` and no
      * composer at all — measured, it has no `conditions` to read. No probe

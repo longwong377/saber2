@@ -278,6 +278,48 @@ export async function run({ check, assert }) {
     return 'verify.mjs and _one.mjs both refuse to run against a second copy of three';
   });
 
+  check('determinism: every suite file in tools/checks/ exports a run()', async () => {
+    /**
+     * THE DURABLE FORM OF "A SUITE CANNOT VANISH".
+     *
+     * `verify.mjs` used to invoke a suite behind a bare
+     * `if (typeof mod.run === 'function')` with no `else`, so a suite whose
+     * export was renamed, removed, or lost to a merge printed as
+     * `✓ animation.mjs 0/0` and its checks left the gate in silence. That is
+     * fixed in the runner — it fails the suite now — but a runner-side fix only
+     * fires on the day somebody runs the gate and reads the line, and it is one
+     * `else` away from regressing.
+     *
+     * This is the same rule stated where it cannot be lost: IMPORT EVERY SUITE
+     * AND ASK. `_`-prefixed files are shared helpers by the same convention
+     * verify.mjs and this file's other checks use, so they are excluded here by
+     * the same rule and by no other.
+     *
+     * It also refuses an EMPTY list, which is the shape HANDOFF §2.3 files
+     * under "a missing thing answered with a plausible default": a readdir that
+     * silently returned nothing would make this the greenest check in the tree.
+     */
+    const { readdir } = await import('node:fs/promises');
+    const files = (await readdir(DIR)).filter((f) => f.endsWith('.mjs') && !f.startsWith('_')).sort();
+    assert(files.length > 40,
+      `only ${files.length} suite files found under tools/checks/ — this check is not reading the tree`);
+    const bad = [];
+    for (const f of files) {
+      const mod = await import(new URL(f, DIR).href);
+      if (typeof mod.run !== 'function') bad.push(f);
+    }
+    assert(!bad.length,
+      `${bad.join(', ')} export no run() — every check in ${bad.length === 1 ? 'it' : 'them'} is `
+      + 'absent from the gate, and the gate has no way to know how many that was');
+
+    // …and the runner still refuses one rather than printing a green 0/0.
+    const v = await readFile(new URL('../verify.mjs', DIR), 'utf8');
+    assert(/typeof mod\.run !== 'function'/.test(v) && /exports no run\(\)/.test(v),
+      'verify.mjs is back to invoking a suite behind a bare `if (typeof mod.run === \'function\')` '
+      + 'with no else, so a suite with no export is a silent green 0/0 again');
+    return `${files.length} suite files, every one exporting run(); verify.mjs fails the ones that do not`;
+  });
+
   check('determinism: verify.mjs can still be told to run backwards', async () => {
     /* The switch that found the `mapPeak` fallback on its first run. If it is
      * removed, the only tool for this class goes with it and the next instance

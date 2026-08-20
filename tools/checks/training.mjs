@@ -16,6 +16,7 @@
  * MIDPOINT, so every metre of blade eats half a metre of that budget.
  */
 
+import { readFileSync } from 'node:fs';
 import * as THREE from 'three';
 import { WaveDirector, MODES, sandboxConfig, sandboxUnits, holdFire, tuneFireRate,
   SANDBOX_MAX_ENEMIES } from '../../src/game/Waves.js';
@@ -68,6 +69,24 @@ function ctxFor(w) {
     pickSpawn: () => V(30, 0, 0),
     spawnEnemy: (t, p) => w.spawnEnemy(t, p),
   };
+}
+
+/**
+ * THE DOJO'S LAST ROOM, REACHED THE WAY A PLAYER REACHES IT.
+ *
+ * These three checks used to get here through `new DojoDirector(fakeWorld({mode:
+ * 'sandbox'}))` and `start()`, which took a branch NO DEPLOY CAN PRODUCE:
+ * `grep -rn "new DojoDirector" src/` returns one line, inside World.js's
+ * `if (this.settings.mode === 'training')`, and sandbox mode is a WaveDirector
+ * on the `_sandboxUpdate` path. So three green checks stood on a path the game
+ * has no door to, and the branch they exercised has been deleted. `skip()` is
+ * the shipped control the coach's own button drives; the check above proves the
+ * same room is reached by PLAYING, which is the claim that matters.
+ */
+function intoSandbox(d) {
+  d.start();
+  while (!d.inSandbox && d.index < LESSONS.length - 1) d.skip();
+  return d;
 }
 
 /** Run the director until the population settles, or give up. */
@@ -212,10 +231,9 @@ export async function run({ check, assert }) {
       `the old archetype survived the switch: ${kinds.join(', ')}`);
 
     // and the same in the dojo
-    const s2 = { ...DEFAULT_SETTINGS, mode: 'sandbox', sandboxCount: 4, sandboxType: 'remote' };
+    const s2 = { ...DEFAULT_SETTINGS, mode: 'training', sandboxCount: 4, sandboxType: 'remote' };
     const w2 = fakeWorld(s2);
-    const d2 = new DojoDirector(w2);
-    d2.start();
+    const d2 = intoSandbox(new DojoDirector(w2));
     s2.sandboxType = 'dummy';
     for (let i = 0; i < 240; i++) d2.update(1 / 60, {});
     assert(w2.enemies.length === 4 && w2.enemies.every(e => e.type === 'dummy'),
@@ -323,37 +341,78 @@ export async function run({ check, assert }) {
 
   /* ── the dojo ──────────────────────────────────────────────────────── */
 
-  check('dojo: the lessons still run, and the sandbox is a room after them', () => {
+  check('dojo: the lessons still run, and the sandbox is the room they end in', () => {
     const ids = LESSONS.map(L => L.id);
-    for (const id of ['feel', 'block', 'deflect', 'return', 'perfect', 'cut', 'parry', 'chamber', 'lock', 'free']) {
+    for (const id of ['feel', 'block', 'deflect', 'return', 'perfect', 'cut', 'parry', 'chamber', 'lock']) {
       assert(ids.includes(id), `the ${id} lesson is gone`);
     }
     assert(ids[ids.length - 1] === 'sandbox', `the last lesson is ${ids[ids.length - 1]}`);
-    assert(ids.indexOf('free') === ids.length - 2, 'free practice is no longer next to last');
+    /* AND ONLY THE LAST ONE IS ENDLESS. This check used to pin `free` — a
+     * second `need: Infinity` rung — in place at next-to-last, which is the
+     * rung that made the sandbox unreachable by playing. Stated as a property
+     * rather than as a name, so the next endless room cannot be added in the
+     * middle either. */
+    const endless = LESSONS.filter(L => L.need === Infinity).map(L => L.id);
+    assert(endless.length === 1 && endless[0] === ids[ids.length - 1],
+      `${endless.length} lessons never end (${endless.join(', ')}) — a rung whose \`check\` cannot `
+      + 'pass is a rung the ladder stops on, and everything past it is reachable only with Skip');
     return `${ids.length} lessons: ${ids.join(' → ')}`;
   });
 
-  check('dojo: picking Sandbox on the Deploy screen lands you in the sandbox', () => {
-    const w = fakeWorld({ ...DEFAULT_SETTINGS, mode: 'sandbox', sandboxCount: 4 });
+  check('dojo: the ladder can be WALKED to its end, by playing', () => {
+    /**
+     * THE DEFECT THIS EXISTS FOR, and it is the whole reason an eleventh lesson
+     * shipped that no player could reach. `_advance` fires when a lesson's own
+     * `check` has returned true `need` times, and `LESSONS[9]` was `free
+     * practice` — `need: Infinity`, `check: () => false`. So the ladder walked
+     * 0→1→2→3→4→5→6→7→9 and STOPPED there with progress 0, and the room past
+     * it (the sandbox, its `inSandbox` flag, the DOJO_MIX rotation and
+     * main.js's `sandboxRoomLive` training arm) was reachable only by pressing
+     * Skip ten times while the coach read "10 of 11" forever.
+     *
+     * Driven through `report`, which is the ONLY door the world uses, with the
+     * event vocabulary scanned out of the shipped `report({type: '…'})` call
+     * sites rather than listed here — the same derivation claims.mjs uses, for
+     * the same reason: a renamed event must fail here rather than quietly make
+     * the ladder unwalkable again.
+     */
+    const emitted = new Set();
+    for (const f of ['game/World.js', 'game/Player.js', 'game/Combat.js', 'game/Enemy.js',
+      'game/SaberController.js', 'game/Saber.js', 'game/Duel.js']) {
+      let text = '';
+      try { text = readFileSync(new URL('../../src/' + f, import.meta.url), 'utf8'); } catch { continue; }
+      for (const m of text.matchAll(/report\??\.?\(?\s*\{\s*type:\s*'(\w+)'/g)) emitted.add(m[1]);
+    }
+    assert(emitted.size > 3, `only found ${emitted.size} reported event types — the scan is broken`);
+    const w = fakeWorld({ ...DEFAULT_SETTINGS, mode: 'training' });
     const d = new DojoDirector(w);
     d.start();
-    assert(d.lesson.id === 'sandbox', `landed on ${d.lesson.id}`);
-    assert(d.inSandbox, 'the director does not know it is in a sandbox');
-    assert(w.enemies.length === 4, `the room was built with ${w.enemies.length} units, not 4`);
-
-    // and any other mode still starts at lesson one
-    const w2 = fakeWorld({ ...DEFAULT_SETTINGS, mode: 'roguelite' });
-    const d2 = new DojoDirector(w2);
-    d2.start();
-    assert(d2.lesson.id === 'feel', `a normal dojo run started on ${d2.lesson.id}`);
-    return 'sandbox → sandbox, everything else → feel the weight';
+    assert(d.lesson.id === LESSONS[0].id, `a dojo run started on ${d.lesson.id}`);
+    const walk = [d.lesson.id];
+    // Every event the world can raise, in the two shapes a grade-gated lesson
+    // cares about, until the ladder either moves or stops moving.
+    for (let step = 0; step < 400 && d.index < LESSONS.length - 1; step++) {
+      const before = d.index;
+      for (const type of emitted) {
+        for (const ev of [{ type, speed: 99, grade: 3 }, { type, speed: 0, grade: 0 }]) {
+          try { d.report(ev); } catch { /* not a shape this lesson reads */ }
+        }
+      }
+      if (d.index !== before) walk.push(d.lesson.id);
+      assert(d.index !== before || d.progress > 0 || step < 3,
+        `the ladder stops on "${d.lesson.id}" (${d.index + 1} of ${LESSONS.length}): no event the world `
+        + 'emits moves its counter, so nothing past it can be reached by playing');
+    }
+    assert(d.index === LESSONS.length - 1,
+      `playing reaches lesson ${d.index + 1} of ${LESSONS.length} (${d.lesson.id})`);
+    assert(d.inSandbox, `the ladder ends on ${d.lesson.id}, which is not the room it says it is`);
+    return `walked ${walk.join(' → ')} — ${LESSONS.length} of ${LESSONS.length} by playing`;
   });
 
   check('dojo: the sandbox count is live in the dojo too', () => {
-    const s = { ...DEFAULT_SETTINGS, mode: 'sandbox', sandboxCount: 2 };
+    const s = { ...DEFAULT_SETTINGS, mode: 'training', sandboxCount: 2 };
     const w = fakeWorld(s);
-    const d = new DojoDirector(w);
-    d.start();
+    const d = intoSandbox(new DojoDirector(w));
     const run = (n) => { for (let i = 0; i < n; i++) d.update(1 / 60, {}); };
     assert(w.enemies.length === 2, `opened with ${w.enemies.length}`);
     s.sandboxCount = 9;
@@ -368,10 +427,9 @@ export async function run({ check, assert }) {
   check('dojo: walking into a forty-droid room does not build forty rigs on one frame', () => {
     // Each unit is a rig, an actor and a physics proxy. Doing all of them in the
     // single call that enters the lesson is a visible freeze on the doorstep.
-    const s = { ...DEFAULT_SETTINGS, mode: 'sandbox', sandboxCount: SANDBOX_MAX_ENEMIES };
+    const s = { ...DEFAULT_SETTINGS, mode: 'training', sandboxCount: SANDBOX_MAX_ENEMIES };
     const w = fakeWorld(s);
-    const d = new DojoDirector(w);
-    d.start();
+    const d = intoSandbox(new DojoDirector(w));
     const onEntry = w.enemies.length;
     assert(onEntry > 0 && onEntry <= 8, `${onEntry} bodies built on the entry frame`);
     for (let i = 0; i < 60 * 8; i++) d.update(1 / 60, {});
@@ -381,17 +439,15 @@ export async function run({ check, assert }) {
   });
 
   check('dojo: a mixed sandbox rotates through the training kit', () => {
-    const w = fakeWorld({ ...DEFAULT_SETTINGS, mode: 'sandbox', sandboxCount: 6, sandboxType: 'mixed' });
-    const d = new DojoDirector(w);
-    d.start();
+    const w = fakeWorld({ ...DEFAULT_SETTINGS, mode: 'training', sandboxCount: 6, sandboxType: 'mixed' });
+    const d = intoSandbox(new DojoDirector(w));
     const kinds = new Set(w.enemies.map(e => e.type));
     for (const k of ['remote', 'dummy', 'sparring']) {
       assert(kinds.has(k), `a mixed dojo room has no ${k}`);
     }
     // and asking for one kind gives one kind
-    const w2 = fakeWorld({ ...DEFAULT_SETTINGS, mode: 'sandbox', sandboxCount: 5, sandboxType: 'b1' });
-    const d2 = new DojoDirector(w2);
-    d2.start();
+    const w2 = fakeWorld({ ...DEFAULT_SETTINGS, mode: 'training', sandboxCount: 5, sandboxType: 'b1' });
+    const d2 = intoSandbox(new DojoDirector(w2));
     assert(w2.enemies.every(e => e.type === 'b1'),
       `asked for B1s, got ${[...new Set(w2.enemies.map(e => e.type))].join(', ')}`);
     return `mixed = ${[...kinds].join(' + ')}; single = 5 × b1`;

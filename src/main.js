@@ -842,9 +842,14 @@ const wakeFacet = (id) => screens.guarded('waking a facet', (facetId) => {
  *
  * Two different directors answer this, and only they can. In sandbox MODE the
  * WaveDirector's whole update is `_sandboxUpdate`, which re-reads
- * sandboxConfig every frame in any theatre. In the dojo it is one lesson out of
- * eleven — `DojoDirector.inSandbox`, the one whose setup block says `sandbox` —
- * and the other ten build their own room out of the lesson and never look.
+ * sandboxConfig every frame in any theatre. In the dojo it is the LAST lesson
+ * of ten — `DojoDirector.inSandbox`, the one whose setup block says `sandbox` —
+ * and the other nine build their own room out of the lesson and never look.
+ *
+ * That arm was unreachable by playing until the free-practice rung above it was
+ * deleted: its `check` returned false forever, so `_advance` could never leave
+ * it and nothing but the Skip button ever set `inSandbox`. See the note on the
+ * sandbox lesson in Dojo.js.
  */
 function sandboxRoomLive() {
   if (!world) return false;
@@ -988,6 +993,26 @@ function record(stats = null) {
   recordRun({
     ...(stats || { wave: world.director?.wave ?? 0, score: world.score,
                    kills: world.players.reduce((a, p) => a + (p.kills || 0), 0) }),
+    /**
+     * THE VERDICT, AND A RUN NOBODY FINISHED HAS NONE.
+     *
+     * `quitToMenu` calls this with no stats at all, and `recordRun` stored
+     * `!!summary.won` — so an ABANDONED run and a LOST one were the same byte.
+     * Measured: quitting 25 s into mission 2 of a campaign, alive, with
+     * `campaign {index:1, done:false, won:null}` and `world.over false`, wrote
+     * `{depth:3, score:7460, won:false, mode:'campaign'}`. `recent[]` is the
+     * one history a player reads and it was calling every walk-away a defeat.
+     *
+     * DERIVED, not passed: every ending in the game sets `world.over` —
+     * `_checkWipe`, `_endSkirmish`, `_endMeeting` and `_endCampaign` all do —
+     * so "did this run end" is a question the World already answers, and a
+     * second flag threaded down from the quit button could disagree with it.
+     * A summary that carries its own verdict keeps it; a run that is still
+     * standing when the player walks out files `null`, which `recordRun` now
+     * stores rather than flattening. §2.3's close relative, closed: a missing
+     * thing answered with a plausible default.
+     */
+    won: stats?.won ?? (world.over ? false : null),
     mode: sessionOr('mode'),
     boons: [...(world.takenBoons || [])],
     identity: { order: settings.order, species: settings.species },
@@ -1037,15 +1062,36 @@ function gameOver(stats) {
    * won run reports the ground it took instead.
    */
   const won = !!stats.won;
+  /**
+   * THE CARD REPORTS WHAT THE RUN HANDED IT, AND NOTHING ELSE.
+   *
+   * Two of these six rows were FABRICATED: `stats.areas ?? 5` and
+   * `stats.fallen ?? 0`, against four ending doors — `_endSkirmish`,
+   * `_checkWipe`, `_endMeeting` and `CommandDirector._endCampaign` — not one of
+   * which passed either field. So every won run ever played printed "Areas
+   * taken 5", a literal, and meaningless in a skirmish or a campaign; and
+   * "Troops lost 0" in the mode whose entire subject is named people dying for
+   * good. `_endCampaign` logs `fallen: this.roster.fallen.length` into its own
+   * log one line above the summary it did not put it on.
+   *
+   * Both now come off `World.runStats()` with the rest, and a row whose number
+   * is ABSENT is left off the card rather than invented — §2.3's close
+   * relative, "a missing thing answered with a plausible default", which is how
+   * a literal 5 survived as a statistic. `taken` is one number with three
+   * meanings and the mode is what names it; `tools/checks/skirmish.mjs` holds
+   * every field read here to being a field `runStats` reports.
+   */
+  const TAKEN = { campaign: 'Missions taken', skirmish: 'Engagements won', command: 'Areas taken' };
+  const row = (label, v) => (v == null ? null : [label, v]);
   const rows = won
     ? [
-      ['Areas taken', stats.areas ?? 5],
+      row(TAKEN[sessionOr('mode')] ?? 'Ground taken', stats.taken),
       ['Score', Math.floor(stats.score).toLocaleString()],
       ['Kills', stats.kills],
-      ['Troops lost', stats.fallen ?? 0],
+      row('Troops lost', stats.fallen),
       ['Deflections', stats.deflects],
       ['Limbs taken', stats.limbs],
-    ]
+    ].filter(Boolean)
     : [
       ['Wave reached', stats.wave],
       ['Score', Math.floor(stats.score).toLocaleString()],

@@ -261,7 +261,17 @@ export function recordRun(summary) {
    */
   p.recent.unshift({
     depth, score: summary.score || 0,
-    won: !!summary.won, order: id.order || null, species: id.species || null,
+    /**
+     * THREE STATES, BECAUSE THERE ARE THREE. `!!summary.won` had two, and the
+     * missing one is the commonest: a run the player walked out of. Measured
+     * through main.js's own `record()` — quitting a campaign 25 s into mission
+     * 2, alive, world not over — the entry written was `won: false`, so the
+     * ledger called every abandonment a defeat and `recent[]` is the one
+     * history anybody reads. `null` is "nobody decided", and `wins` and
+     * `crowned` below are gated on `won` being TRUE, so neither moves for it.
+     */
+    won: summary.won == null ? null : !!summary.won,
+    order: id.order || null, species: id.species || null,
     mode: summary.mode || null, seed: summary.seed ?? null,
     rules,
     facets: (summary.woken || []).length,
@@ -340,7 +350,8 @@ export function progressLines(p = read()) {
   if (last) {
     out.push(`last: ${last.depth} wave${last.depth === 1 ? '' : 's'}`
       + (ladderName(last.mode) ? ` of ${ladderName(last.mode)}` : '')
-      + (last.won ? ', crowned' : '')
+      // Three states, one line: crowned, left, or the plain depth of a defeat.
+      + (last.won === null ? ', left' : last.won ? ', crowned' : '')
       + (last.rules?.length ? ` · under ${ruleName(last.rules.join('+'))}` : '')
       + (last.boons?.length ? ` · ${last.boons.length} boon${last.boons.length === 1 ? '' : 's'}` : '')
       + (last.seed != null ? ` · seed ${last.seed}` : ''));

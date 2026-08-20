@@ -568,15 +568,26 @@ export async function run({ check, assert }) {
     } finally { S.restoreShared(snap); }
   });
 
-  check('skirmish: every ending in this file reports the same six numbers', async () => {
+  check('skirmish: one ending builder, and it feeds everything that reads an ending', async () => {
     /**
      * `_checkWipe`, `_endMeeting` and `CommandDirector._endCampaign` each built
-     * this object by hand — a three-way twin the note over `_endCampaign` names
-     * and asks for `World.runStats()` to replace. Two of the three are in
-     * World.js and call it now; the third is held to the same shape by
-     * tools/checks/command.mjs. This asserts the shared builder is actually
-     * shared, by source, because the alternative is driving three whole modes
-     * to three different endings to compare six keys.
+     * this object by hand — a three-way twin the note over `_endCampaign` named
+     * and asked `World.runStats()` to replace. All three call it now.
+     *
+     * THIS CHECK USED TO END ON `Object.keys(runStats()).length === 6`, AND
+     * THAT LINE WAS ENFORCING A DEFECT. main.js's victory card reads
+     * `stats.areas ?? 5` and `stats.fallen ?? 0`; NO ending passes either, so
+     * every won run ever played printed "Areas taken 5" — a literal — and
+     * "Troops lost 0" on the mode whose whole subject is named people dying
+     * permanently. A count of keys cannot see that, and worse, it FAILS the day
+     * somebody fixes it: the shape it pinned is exactly the shape that starves
+     * the card.
+     *
+     * So the property is stated from the consumer's end instead. Every
+     * `stats.<field>` the ending card reads is lifted out of main.js's own
+     * source and required to be a field `runStats` reports — a count is a
+     * number nobody can act on, and "the card asks for something no ending
+     * sends" is the actual defect.
      */
     const { readFile } = await import('node:fs/promises');
     const src = await readFile(new URL('../../src/game/World.js', import.meta.url), 'utf8');
@@ -584,12 +595,41 @@ export async function run({ check, assert }) {
     assert(hand === 0, `${hand} endings still assemble the summary by hand`);
     const calls = [...src.matchAll(/onGameOver\?\.\(this\.runStats\(/g)].length;
     assert(calls >= 3, `only ${calls} endings go through runStats`);
+    const cmd = await readFile(new URL('../../src/game/Command.js', import.meta.url), 'utf8');
+    assert(/onGameOver\?\.\(w\.runStats\(/.test(cmd),
+      "CommandDirector._endCampaign assembles its own summary again — that is the twin World's note names");
+
     const { world } = await boot({ mode: 'roguelite' });
     const stats = world.runStats({ won: true });
     for (const k of ['won', 'wave', 'score', 'kills', 'deflects', 'perfects', 'limbs']) {
       assert(k in stats, `runStats does not report ${k}`);
     }
-    assert(Object.keys(world.runStats()).length === 6, 'a plain runStats is not the six numbers');
-    return `${calls} endings, one builder, ${Object.keys(stats).length} fields with a verdict on it`;
+
+    /* THE CARD'S OWN LIST, LIFTED. `gameOver(stats)` in main.js is the one
+     * reader of an ending summary that a player sees; anything it names and
+     * nothing sends is a fabricated row. */
+    const main = await readFile(new URL('../../src/main.js', import.meta.url), 'utf8');
+    const i = main.indexOf('\nfunction gameOver(stats) {');
+    assert(i > 0, 'main.js no longer declares `function gameOver(stats)` — this check describes a file that is gone');
+    /* CODE ONLY. The block comment over these rows QUOTES the two fabricated
+     * reads it is about, and a scan that counts prose finds fields the card
+     * does not ask for — an instrument manufacturing its own defect (§2.4). */
+    const body = main.slice(i, main.indexOf('\n}\n', i))
+      .replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+    const wants = [...new Set([...body.matchAll(/\bstats\.(\w+)/g)].map((m) => m[1]))];
+    assert(wants.length >= 6, `only ${wants.length} fields lifted out of gameOver — the lift is wrong`);
+    const starved = wants.filter((k) => !(k in stats));
+    assert(!starved.length,
+      `the ending card reads ${starved.map((k) => `stats.${k}`).join(', ')} and no ending sends `
+      + 'it — that is the "Areas taken 5" literal again. World.runStats must carry them; the patch is '
+      + 'in the lane report');
+    /* …AND IT MAY NOT PAPER OVER A MISSING ONE. `?? 5` is what turned an absent
+     * field into a statistic; a row with no number belongs off the card. */
+    const invented = [...body.matchAll(/\bstats\.(\w+)\s*\?\?\s*([^,\n)]+)/g)]
+      .map((m) => `stats.${m[1]} ?? ${m[2].trim()}`);
+    assert(!invented.length,
+      `the card invents a value for a missing field: ${invented.join(', ')}`);
+    return `${calls} endings, one builder, ${Object.keys(stats).length} fields; the card reads `
+      + `${wants.length} (${wants.join(', ')}) and every one is sent`;
   });
 }

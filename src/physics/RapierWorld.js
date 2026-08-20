@@ -55,6 +55,35 @@ const _ra = new THREE.Vector3(), _rb = new THREE.Vector3(), _js = new THREE.Vect
 let _bodyId = 1;
 
 /**
+ * WHAT A FINITE WORLD IS, AND WHY EVERY BOUNDARY HAS TO SAY SO.
+ *
+ * Rapier REJECTS NaN on the way in — a NaN translation or impulse is refused
+ * and the body carries on. `Infinity` is not refused: it is arithmetic, and
+ * `Infinity − Infinity` inside the solver turns the body's whole transform to
+ * NaN permanently. From there the body is unreachable by either of the two
+ * things that would have taken it away, because both are `<` comparisons and
+ * every comparison against NaN is false: the kill plane (`y < killY`) and the
+ * sleep test (`distanceToSquared(_rp) < SLEEP_MOVE²`). Measured — one
+ * `applyImpulse(V(Infinity,0,0))`, then 3 000 steps:
+ *
+ *     pos = NaN,NaN,NaN   awake = true   inWorld = true   stats.awake = 1
+ *
+ * — a body that costs a full island solve for the rest of the session and
+ * drags its mesh to a NaN matrix. The only guard `applyImpulse` had tested the
+ * world POINT, and only because NaN is its "no point given" sentinel.
+ *
+ * So: nothing non-finite crosses into the solver, and anything that is already
+ * non-finite is culled by a test that is true for NaN rather than false.
+ * `MAX_SPEED` is the other half — Rapier traps out of wasm at about 1e12, and
+ * a value that large is a defect on this side of the boundary whatever it is.
+ * 1e4 m/s is four hundred times the fastest thing the game fires.
+ */
+const MAX_SPEED = 1e4;
+const finite3 = (v) => v && Number.isFinite(v.x) && Number.isFinite(v.y) && Number.isFinite(v.z);
+const finite4 = (q) => finite3(q) && Number.isFinite(q.w);
+const sane3 = (v) => finite3(v) && Math.abs(v.x) < MAX_SPEED && Math.abs(v.y) < MAX_SPEED && Math.abs(v.z) < MAX_SPEED;
+
+/**
  * LAYER/mask → Rapier collision groups. Rapier packs a 16-bit membership in the
  * high half and a 16-bit filter in the low half, and two colliders interact iff
  * `(A.memberships & B.filter) && (B.memberships & A.filter)` — which is exactly
@@ -406,6 +435,11 @@ export class Body {
    */
   applyImpulse(impulse, worldPoint) {
     if (this.invMass === 0 || this.static) return;
+    // The IMPULSE, which is what nothing checked. See `finite3` above for what
+    // one Infinity here costs, and note the point's NaN is a sentinel for "no
+    // point", so it is checked for range but never for being a number.
+    if (!sane3(impulse)) return;
+    if (worldPoint && !finite3(worldPoint)) worldPoint = null;
     this.wake();
     if (!this.rb) { this.velocity.addScaledVector(impulse, this.invMass); return; }
     (this._impulses || (this._impulses = [])).push(
@@ -417,6 +451,7 @@ export class Body {
 
   applyTorqueImpulse(t) {
     if (this.invMass === 0 || this.static || !this.rb) return;
+    if (!sane3(t)) return;
     this.wake();
     this.rb.applyTorqueImpulse({ x: t.x, y: t.y, z: t.z }, true);
   }
@@ -558,6 +593,12 @@ export class Body {
     const eps = 1e-9;
 
     if (!this.position.equals(this._sp) || !this.quaternion.equals(this._sq)) {
+      // Gameplay wrote a transform. If it is not a transform, keep the last one
+      // that was: a body left where it was is a visible defect somebody can
+      // chase, a body at NaN is an immortal island solve nobody can see.
+      if (!finite3(this.position) || !finite4(this.quaternion)) {
+        this.position.copy(this._sp); this.quaternion.copy(this._sq);
+      }
       const p = this.position, q = this.quaternion;
       if (this.kinematic) {
         rb.setNextKinematicTranslation({ x: p.x, y: p.y, z: p.z });
@@ -571,10 +612,12 @@ export class Body {
 
     if (!this.static && !this.kinematic) {
       if (this.velocity.distanceToSquared(this._sv) > eps) {
+        if (!sane3(this.velocity)) this.velocity.copy(this._sv);
         rb.setLinvel({ x: this.velocity.x, y: this.velocity.y, z: this.velocity.z }, true);
         this._sv.copy(this.velocity);
       }
       if (this.angularVelocity.distanceToSquared(this._sw) > eps) {
+        if (!sane3(this.angularVelocity)) this.angularVelocity.copy(this._sw);
         rb.setAngvel({ x: this.angularVelocity.x, y: this.angularVelocity.y, z: this.angularVelocity.z }, true);
         this._sw.copy(this.angularVelocity);
       }
@@ -1270,8 +1313,11 @@ export class RapierWorld {
     for (let i = bodies.length - 1; i >= 0; i--) {
       const b = bodies[i];
       if (b.static || !b.rb) continue;
-      // the kill plane
-      if (b.position.y < this.killY) {
+      // the kill plane — and it is written so that NaN falls through it rather
+      // than past it. `y < killY` is false for NaN, which is how a body that
+      // had already gone non-finite stayed in the world forever; `!(y >= killY)`
+      // is the same test for every real number and true for NaN.
+      if (!(b.position.y >= this.killY) || !finite3(b.position)) {
         if (b.userData.onCull) b.userData.onCull();
         this.remove(b);
         continue;

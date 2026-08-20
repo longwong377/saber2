@@ -212,4 +212,77 @@ export function run({ check, assert }) {
     return `driven to the end of area ${Cmd.AREAS.length}: won=${summary.won}, `
       + `recorded once, store reads ${out.runs} run / ${out.wins} win`;
   });
+
+  check('progress: a campaign you walked away from is not a campaign you lost', async () => {
+    /**
+     * `quitToMenu` calls `record()` WITH NO STATS — deliberately, and the note
+     * there is right: "an abandoned session still happened. Recording it is
+     * what stops 'deepest reached' from quietly meaning 'deepest you happened
+     * to die on'." What it had no way to say is that nobody lost.
+     *
+     * Measured before the fix: quitting 25 s into mission 2 of a campaign,
+     * alive — `campaign {index: 1, done: false, won: null}`, `world.over
+     * false` — wrote `{depth: 3, score: 7460, won: false, mode: 'campaign'}`.
+     * `recordRun` coerces with `!!summary.won`, so a missing verdict and a
+     * defeat are the same byte, and `recent[]` is the one history a player
+     * reads. That is §2.3's close relative: a missing thing answered with a
+     * plausible default.
+     *
+     * The verdict is DERIVED rather than passed: every ending in the game sets
+     * `world.over` — `_checkWipe`, `_endSkirmish`, `_endMeeting`,
+     * `_endCampaign` — so a run whose world is not over is a run nobody
+     * finished, and the record says `null` rather than guessing. Driven
+     * through the same lift of main.js's own `record()` the check above uses,
+     * against a live campaign standing on its second mission.
+     */
+    const { readFile } = await import('node:fs/promises');
+    const src = await readFile(new URL('../../src/main.js', import.meta.url), 'utf8');
+    const i = src.indexOf('\nfunction record(stats = null) {');
+    const end = src.indexOf('\n}\n', i);
+    assert(i > 0 && end > i, 'main.js no longer declares `function record(stats = null)`');
+    const body = src.slice(i + 1, end + 2);
+
+    const H = await import('./_coop.mjs');
+    const { world } = await H.bootWorld({
+      level: 'geonosis',
+      settings: { mode: 'campaign', campaign: 'petranaki', order: 'jedi' },
+    });
+    world.director.start(1);
+    for (let n = 0; n < 60; n++) world.update(1 / 30, H.idleInput());
+    world.score = 7460;
+    assert(world.campaign, 'campaign mode did not open a campaign');
+    assert(!world.campaign.done && world.campaign.won == null,
+      `the campaign was already decided before anybody quit: ${JSON.stringify(world.campaign)}`);
+    assert(!world.over, 'the world was already over — this drive is not an abandonment');
+    assert(world.player?.alive !== false, 'the player is down, so this is a defeat and not a walk-away');
+
+    const { recordRun, loadProgress, progressLines } = await import('../../src/game/Progress.js');
+    const out = await withCleanStore(() => {
+      const written = [];
+      // eslint-disable-next-line no-new-func
+      const make = new Function('scope', 'recordRun', 'sessionOr', 'settings',
+        `const world = scope.world;\n${body}\nreturn record;`);
+      const record = make({ world }, (s) => { written.push(s); return recordRun(s); },
+        () => 'campaign', { order: 'jedi', species: 'human' });
+      record();                        // quitToMenu, verbatim
+      assert(written.length === 1, `quitting wrote ${written.length} records`);
+      assert(written[0].won !== false,
+        'quitting a campaign alive, with the world not over, filed it as a DEFEAT — the ledger cannot '
+        + 'tell a run you walked away from from one you lost');
+      return { store: loadProgress(), handed: written[0] };
+    });
+    const last = out.store.recent[0];
+    assert(out.store.runs === 1, `${out.store.runs} runs recorded from one abandoned campaign`);
+    assert(last.won === null,
+      `the history remembers the abandoned run as won=${JSON.stringify(last.won)} — a run with no `
+      + 'verdict must not be stored as one');
+    assert(out.store.wins === 0, 'an abandoned campaign counted as a win');
+    assert(last.depth > 0, `the abandoned run recorded depth ${last.depth} — it still happened`);
+    // …and the one line a player reads says which it was.
+    const line = progressLines(out.store).find((l) => l.startsWith('last:'));
+    assert(/left|abandon/i.test(line), `the menu's last-run line does not say it was abandoned: "${line}"`);
+    world.unload();
+    return `quit on mission ${world.campaign.index + 1}, alive: depth ${last.depth}, `
+      + `won=${JSON.stringify(last.won)}, ${out.store.wins} wins — "${line}"`;
+  });
 }

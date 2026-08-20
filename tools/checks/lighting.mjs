@@ -1121,6 +1121,140 @@ export function run({ check, assert, near, THREE: T }) {
     return rows.join(', ');
   });
 
+  check('shadows: a booted Engine actually darkens the ground under a blocker', async () => {
+    /**
+     * EVERY SHADOW IN THE GAME COULD BE SWITCHED OFF AND NOTHING WENT RED.
+     *
+     * Proven, not suspected: an audit set `renderer.shadowMap.enabled = false`
+     * and `L.castShadow = false` in Engine._setupLights — no shadow map is
+     * rendered and no light casts, so not one shadow exists anywhere in the
+     * product — and 106 checks across nine suites passed. The cascade checks
+     * above are eight regexes over Engine.js and cel.mjs's shadow arithmetic is
+     * a JS twin; neither can see a flag.
+     *
+     * The flags cannot be read under Node either, because
+     * `new THREE.WebGLRenderer()` throws "Error creating WebGL context" against
+     * tools/dom-shim.mjs's canvas stub. So this is the one thing in this file
+     * that boots the real Engine in a real browser on swiftshader.
+     *
+     * It is a DIFFERENCE and not a threshold, which is what makes it immune to
+     * the grade, the exposure, the level and the tone curve: one 192x192 frame
+     * of a lit plane with a box over it, rendered twice, the second time with
+     * the box's `castShadow` cleared. If shadows work, a patch of ground goes
+     * darker; if anything in the chain is off — the map, the light, the
+     * receiver, the cel shader's cast mask — the two frames are identical, and
+     * "identical" is the exact reading both of the audit's breaks produce.
+     *
+     * Measured on this tree: 3206 of 40000 pixels darken, 8.0% of the frame.
+     * With shadowMap.enabled false: 0. With castShadow false on the cascades: 0.
+     * ~9 s including the browser launch.
+     */
+    const { existsSync, readdirSync } = await import('node:fs');
+    const { createServer } = await import('node:http');
+    const { handler } = await import('../serve.mjs');
+    const candidates = [process.env.CHROMIUM_PATH,
+      ...(existsSync('/opt/pw-browsers')
+        ? readdirSync('/opt/pw-browsers').map((d) => `/opt/pw-browsers/${d}/chrome-linux/chrome`)
+        : []),
+      '/opt/pw-browsers/chromium'];
+    const exe = candidates.find((p) => p && existsSync(p));
+    /* Not skipped when the browser is missing. A check that passes on a box
+     * with no Chromium is HANDOFF §2.3's missing thing answered with a
+     * plausible default, and this is the only shadow assertion in the tree. */
+    assert(exe, `no chromium for the shadow check — tried ${candidates.filter(Boolean).join(', ')}`);
+    const { chromium } = await import('playwright-core');
+
+    const server = createServer(handler);
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    const port = server.address().port;
+    const browser = await chromium.launch({
+      executablePath: exe,
+      args: ['--no-sandbox', '--disable-dev-shm-usage', '--use-gl=angle', '--use-angle=swiftshader',
+        '--enable-unsafe-swiftshader'],
+    });
+    try {
+      const page = await browser.newPage({ viewport: { width: 320, height: 240 } });
+      const errors = [];
+      page.on('pageerror', (e) => errors.push(e.message));
+      try {
+        await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'domcontentloaded' });
+        const out = await page.evaluate(async (level) => {
+          const T = await import('three');
+          const { Engine } = await import('/src/engine/Engine.js');
+          const { LEVELS } = await import('/src/game/Levels.js');
+          const cv = document.createElement('canvas');
+          cv.width = 192; cv.height = 192;
+          document.body.appendChild(cv);
+          const eng = new Engine(cv, 'medium');
+          eng.applyAtmosphere(LEVELS[level].atmosphere);
+          const mat = new T.MeshStandardMaterial({ color: 0xbbbbbb, roughness: 1, metalness: 0 });
+          const ground = new T.Mesh(new T.PlaneGeometry(400, 400), mat);
+          ground.rotation.x = -Math.PI / 2;
+          ground.receiveShadow = true;
+          eng.scene.add(ground);
+          const blocker = new T.Mesh(new T.BoxGeometry(8, 8, 8), mat);
+          blocker.position.set(0, 4, 0);
+          blocker.castShadow = true; blocker.receiveShadow = true;
+          eng.scene.add(blocker);
+          // Look straight down at where this level's own sun puts the shadow,
+          // so the frame is ground and shadow and nothing else.
+          const sun = eng.sunDir.clone().normalize();
+          const drop = 4 / Math.max(sun.y, 0.05);
+          const at = new T.Vector3(-sun.x * drop, 0, -sun.z * drop);
+          eng.camera.position.set(at.x, 30, at.z + 0.001);
+          eng.camera.lookAt(at);
+          eng.camera.updateMatrixWorld(true);
+          eng.fitShadows(at);
+          const gl = eng.renderer.getContext();
+          const shot = () => {
+            eng.render(1 / 60);
+            const p = new Uint8Array(cv.width * cv.height * 4);
+            gl.readPixels(0, 0, cv.width, cv.height, gl.RGBA, gl.UNSIGNED_BYTE, p);
+            return p;
+          };
+          const cast = shot();
+          blocker.castShadow = false;
+          const clear = shot();
+          let darker = 0, brighter = 0, sumIn = 0, sumOut = 0;
+          const n = cv.width * cv.height;
+          for (let i = 0; i < cast.length; i += 4) {
+            const a = (cast[i] + cast[i + 1] + cast[i + 2]) / 3;
+            const b = (clear[i] + clear[i + 1] + clear[i + 2]) / 3;
+            if (a < b - 6) { darker++; sumIn += a; sumOut += b; }
+            if (a > b + 6) brighter++;
+          }
+          return { n, darker, brighter,
+            mapEnabled: eng.renderer.shadowMap.enabled,
+            casters: eng.cascades.filter((c) => c.castShadow).length,
+            cascades: eng.cascades.length,
+            ratio: darker ? sumOut / Math.max(sumIn, 1e-6) : 0 };
+        }, OUTDOOR[0]);
+        assert(!errors.length, `the page threw: ${errors.join(' | ')}`);
+        /* THE ASSERTION. Not "the flag is set" — the pixels moved. */
+        assert(out.darker > out.n * 0.01,
+          `clearing castShadow on a box standing on lit ground changed ${out.darker} of ${out.n} `
+          + `pixels (shadowMap.enabled ${out.mapEnabled}, ${out.casters}/${out.cascades} cascades `
+          + 'casting) — there is no cast shadow anywhere in this build');
+        // The flags, as diagnosis rather than as the test.
+        assert(out.mapEnabled, 'renderer.shadowMap.enabled is false');
+        assert(out.casters === out.cascades,
+          `${out.cascades - out.casters} of ${out.cascades} cascades no longer cast`);
+        /* …AND IT IS A TONE, NOT A HOLE. CEL.shadowBand is authored so a shadow
+         * is the surface one step down; a shadow that lands on the ambient
+         * measures far darker than this and is the failure cel.mjs's readability
+         * check names. Loose, because it is measured through the whole grade. */
+        assert(out.ratio > 1.05 && out.ratio < 4.0,
+          `shadowed ground is ${out.ratio.toFixed(2)}x darker than lit ground — a shadow is meant to `
+          + `be the same surface one authored step down (CEL.shadowBand ${CEL.shadowBand})`);
+        return `${out.darker} of ${out.n} pixels darken under the blocker (${(out.darker / out.n * 100).toFixed(1)}%), `
+          + `${out.ratio.toFixed(2)}:1 against lit ground, ${out.casters}/${out.cascades} cascades casting`;
+      } finally { await page.close(); }
+    } finally {
+      await browser.close();
+      await new Promise((r) => server.close(r));
+    }
+  });
+
   check('shadows: the cascade rig lights the scene exactly once', () => {
     // The cascades are three DirectionalLights sharing one direction. If any of
     // the carriers ever gets a colour, every material that sums

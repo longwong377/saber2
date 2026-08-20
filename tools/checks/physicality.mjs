@@ -398,4 +398,152 @@ export async function run({ check, assert }) {
     return `worst invisible shell per level: ${rows.join(', ')}`;
   });
 
+  /**
+   * THE QUESTION THIS FILE NEVER ASKED: DO THESE TWO COLLIDERS SEE EACH OTHER?
+   *
+   * Everything above asks "does this thing have a collider". A collider that
+   * exists and is filtered out of every pair it matters in passes all of it,
+   * and that is exactly what shipped: the player's proxy and every enemy's
+   * carried `mask: LAYER.WORLD`, and Rapier pairs two colliders iff
+   * `(A.layer & B.mask) && (B.layer & A.mask)` — a crate is `layer PROP` and
+   * `PROP & WORLD` is 0, so the conjunction was always zero and the capsule
+   * interacted with terrain and architecture and NOTHING ELSE. Four call sites
+   * name `LAYER.PLAYER` in their masks on the understanding that it is solid
+   * (Destruction.js, Props.js, Ragdoll.js ×3) and all four were dead.
+   *
+   * Measured on scoria, dropped on the player's head, with the capsule
+   * occupying 0.35 … 1.45 above the feet:
+   *
+   *     crate  rested 0.09 above the feet   →  2.14 with the mask fixed
+   *     bone   rested 0.12                  →  2.09
+   *     chunk  rested 0.20                  →  1.99
+   *
+   * — on the floor, inside the player, which is the game's headline rule
+   * failing on the one collider the player never stops touching.
+   *
+   * It is measured rather than read: the bodies are the shipped ones, made by
+   * the shipped constructors, and the only thing this file supplies is a place
+   * to drop them from. Restating Rapier's pairing rule here would be the
+   * §2.4 defect — an instrument that eventually disagrees with the game.
+   */
+  check('physicality: what falls on the player lands ON the player', async () => {
+    const { bootWorld, idleInput, run } = await import('./_coop.mjs');
+    const THREE = (await import('three')).default ?? (await import('three'));
+    const { Body, box, capsule, LAYER } = await import('../../src/physics/RapierWorld.js');
+    const { world } = await bootWorld({ level: 'scoria', settings: { level: 'scoria' } });
+    const input = idleInput();
+    run(world, 0.5, input);
+    const p = world.player;
+    assert(p, 'no player was spawned');
+
+    /* The three things that fall on people, each with the layer and mask its
+     * own maker gives it — Props.js's crate, Ragdoll.js's bone, Destruction's
+     * chunk. The masks are copied from those files deliberately: if one of them
+     * stops naming PLAYER this has to keep asking the question, because a
+     * mask taken from the object under test cannot fail. */
+    const kinds = [
+      ['crate', { shape: box(0.35, 0.35, 0.35), mass: 40, layer: LAYER.PROP,
+        mask: LAYER.WORLD | LAYER.PROP | LAYER.DEBRIS | LAYER.RAGDOLL | LAYER.ENEMY | LAYER.PLAYER }],
+      ['bone', { shape: capsule(0.2, 0.1), mass: 6, layer: LAYER.RAGDOLL,
+        mask: LAYER.WORLD | LAYER.DEBRIS | LAYER.RAGDOLL | LAYER.PROP | LAYER.PLAYER }],
+      ['chunk', { shape: box(0.2, 0.2, 0.2), mass: 12, layer: LAYER.DEBRIS,
+        mask: LAYER.WORLD | LAYER.DEBRIS | LAYER.PROP | LAYER.RAGDOLL | LAYER.ENEMY | LAYER.PLAYER }],
+    ];
+    // The capsule the proxy is actually built from, so the bar moves if it does.
+    const half = p.body.shape?.halfHeight ?? 0.55, rad = p.body.shape?.radius ?? p.radius;
+    const top = (p.body.position.y - p.position.y) + half + rad;
+    const foot = p.position.y;
+    const rows = [], through = [];
+    for (const [name, spec] of kinds) {
+      const b = world.physics.add(new Body({
+        position: new THREE.Vector3(p.position.x, foot + 4, p.position.z), ...spec }));
+      run(world, 4, input);
+      const rest = b.position.y - foot;
+      rows.push(`${name} ${rest.toFixed(2)}`);
+      if (rest < top * 0.75) {
+        through.push(`a ${name} dropped on the player came to rest ${rest.toFixed(2)} m above the `
+          + `feet, and the capsule reaches ${top.toFixed(2)} — it fell THROUGH them`);
+      }
+      world.physics.remove(b);
+    }
+    world.unload?.();
+    assert(!through.length, through.join('; ')
+      + ' — Rapier pairs colliders on `(A.layer & B.mask) && (B.layer & A.mask)`, so a proxy whose '
+      + 'mask names only LAYER.WORLD is filtered out of every pair that is not terrain or '
+      + 'architecture, and the four call sites that name LAYER.PLAYER are all dead');
+    return `dropped on the player's head, resting height above the feet (capsule reaches `
+      + `${top.toFixed(2)}): ${rows.join(', ')}`;
+  });
+
+  /**
+   * A COLLIDER DELETED AT RUNTIME IS INVISIBLE TO EVERY CLAUSE ABOVE.
+   *
+   * They all run on a freshly dressed level with no combat in it. The body
+   * budget's overflow cull took the first non-static body in insertion order,
+   * guarded by a `userData.keep` flag written nowhere in src/ — so at
+   * `maxBodies: 300`, the settings slider's MINIMUM and what a player on a weak
+   * machine sets, twelve simultaneous deaths (a corpse is ~14 bodies added in
+   * ONE frame) cleared the cap and started eating live objects. Measured on
+   * scoria, six rounds of twelve acolytes:
+   *
+   *     the player's proxy CULLED — inWorld=false, rb=NULL, and its only `add`
+   *       is in the Player constructor, so nothing collides with the player for
+   *       the rest of the session
+   *     11 of the level's 13 props left with a dead body and their meshes still
+   *       in the scene — walls you now walk through, made at runtime
+   *
+   * So the rule gets its runtime half: play a level hard and the colliders that
+   * were there at the start are still there at the end.
+   */
+  check('physicality: combat does not delete a collider that is still being drawn', async () => {
+    const { bootWorld, idleInput, run } = await import('./_coop.mjs');
+    const THREE = (await import('three')).default ?? (await import('three'));
+    const { world } = await bootWorld({ level: 'scoria', settings: { level: 'scoria' } });
+    const input = idleInput();
+    run(world, 0.5, input);
+    const p = world.player;
+    // The slider's floor, not the default: the cap is only reachable there, and
+    // it is the machine least able to survive the consequence.
+    world.physics.maxBodies = 300;
+    const watched = [['the player\'s proxy', p.body]];
+    for (const prop of world.props) if (prop.body && !prop.body.static) watched.push([`a ${prop.kind}`, prop.body]);
+
+    let peak = 0;
+    for (let round = 0; round < 6; round++) {
+      const dead = [];
+      for (let i = 0; i < 12; i++) {
+        const x = p.position.x + 3 + i * 1.6, z = p.position.z + 6;
+        const e = world.spawnEnemy('acolyte', new THREE.Vector3(x, world.terrain.height(x, z), z));
+        if (e) dead.push(e);
+      }
+      run(world, 1, input);
+      for (const e of dead) e.die(e.position.clone(), null, 'saber');
+      run(world, 3, input, () => { peak = Math.max(peak, world.physics.bodies.length); });
+    }
+    const gone = watched.filter(([, b]) => b.dead || !world.physics.bodies.includes(b));
+    // …and the second half of the same defect: a corpse the game still holds
+    // must still have every bone it was built with. One bone short is a corpse
+    // whose joints have been dropped and whose mesh is copying a null `rb`.
+    const maimed = [];
+    for (const c of world.corpses?.list || []) {
+      const bodies = c.e?.actor?.bodies;
+      if (!bodies || c.e.actor.slept) continue;
+      const lost = [...bodies.values()].filter((b) => b.dead || !world.physics.bodies.includes(b));
+      if (lost.length) maimed.push(`a corpse the field still holds is ${lost.length} bone(s) short`);
+    }
+    const stats = world.physics.stats, left = world.physics.bodies.length;
+    world.unload?.();
+    assert(!gone.length,
+      `${gone.map(([n]) => n).join(', ')} lost its collider to the body budget during combat — the `
+      + 'mesh is still in the scene and there is nothing behind it. The budget may only spend '
+      + 'DEBRIS, which is the one thing the game makes without counting; everything else has an '
+      + 'owner that knows how to take it away whole');
+    assert(!maimed.length, maimed.slice(0, 3).join('; ')
+      + ' — evicting one bone of a live corpse is not enforcing a bound, it is corrupting an '
+      + 'object another system still holds');
+    return `6 rounds of 12 simultaneous deaths at the slider's minimum budget of 300: peak `
+      + `${peak} bodies, drained to ${left}, ${stats.overBudget} refusal(s), `
+      + `${watched.length} live collider(s) all intact`;
+  });
+
 }

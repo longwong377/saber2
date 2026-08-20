@@ -46,7 +46,8 @@ const V = (THREE, x, y, z) => new THREE.Vector3(x, y, z);
 export async function run({ check, assert, THREE }) {
   const { initPhysics } = await import('../../src/physics/Rapier.js');
   const RAPIER = await initPhysics();
-  const { RapierWorld } = await import('../../src/physics/RapierWorld.js');
+  const RapierWorldModule = await import('../../src/physics/RapierWorld.js');
+  const { RapierWorld } = RapierWorldModule;
 
   check('physics: a disposed world does not build another one when it is torn down again', () => {
     const w = new RapierWorld({ gravity: -22 });
@@ -127,6 +128,106 @@ export async function run({ check, assert, THREE }) {
     assert(w.world === null, 'one of the probes left a Rapier world allocated on a dead world');
     return `${tried.length} entry points driven on a disposed world in the order that exposes the `
       + `hole — ${tried.join(', ')} — none threw, none allocated`;
+  });
+
+  /**
+   * THE CLAUSE THAT WOULD HAVE CAUGHT THE THIRD-SPEED WORLD.
+   *
+   * `step` opened `dt = Math.min(dt, 1/30)` with no substep. 1/30 is a
+   * stability bound on ONE integration step; as a bound on the FRAME it throws
+   * the rest of the frame away, and main.js clamps at 0.1 and hands that whole
+   * value to every player, enemy, blade and bolt. So below 30 fps the rigid
+   * body world ran slow while everything the player drives ran at full speed —
+   * measured, a 20 m fall took 4.10 s at dt=0.1 against a true 1.35.
+   *
+   * Nothing anywhere asked a physics world to advance the same interval at two
+   * frame rates and compare. `somersault.mjs` is the one file in tools/ that
+   * sweeps to 10 Hz, and it drives `cl.update(dt)` directly and never
+   * `world.physics.step(dt)`.
+   *
+   * The bar is deliberately the ANALYTIC answer rather than the 1/60 answer, so
+   * this cannot be satisfied by making every rate equally wrong.
+   */
+  check('physics: the world advances by the frame it was given, at any frame rate', () => {
+    const { Body, box } = RapierWorldModule;
+    const G = -22, H = 20;
+    const truth = Math.sqrt(2 * H / -G);          // 1.348 s
+    const rates = [1 / 240, 1 / 60, 1 / 30, 1 / 15, 0.1];
+    const marks = [];
+    for (const dt of rates) {
+      const w = new RapierWorld({ gravity: G });
+      w.addStaticBox(V(THREE, 0, -0.5, 0), V(THREE, 60, 0.5, 60));
+      const b = new Body({ position: V(THREE, 0, H, 0), shape: box(0.2, 0.2, 0.2), mass: 5, linearDamping: 0 });
+      w.add(b);
+      let t = 0;
+      while (t < 30 && b.position.y > 0.25) { w.step(dt); t += dt; }
+      w.dispose();
+      // One step of sampling error is unavoidable — the fall is over somewhere
+      // inside the last step — so the tolerance is a step plus a tenth.
+      const slack = dt + 0.1;
+      marks.push({ dt, t, slack });
+    }
+    const bad = marks.filter((m) => Math.abs(m.t - truth) > m.slack);
+    assert(!bad.length,
+      `a 20 m fall at g=22 takes ${truth.toFixed(2)} s, and the world disagrees at `
+      + bad.map((m) => `dt=${m.dt.toFixed(4)} → ${m.t.toFixed(2)} s`).join(', ')
+      + ' — a step bound used as a frame bound throws the rest of the frame away, so debris, '
+      + 'corpses, crates and severed limbs fall slower than the characters walking past them, '
+      + 'and Destruction._impactScan stops seeing impacts because the velocity it gates on is '
+      + 'scaled down with them');
+    return `20 m fall, true ${truth.toFixed(2)} s — `
+      + marks.map((m) => `dt=${m.dt.toFixed(4)}→${m.t.toFixed(2)}`).join('  ');
+  });
+
+  /**
+   * THE CLAUSE FOR THE NON-FINITE BODY.
+   *
+   * Rapier rejects NaN on the way in, so NaN is not the reachable failure —
+   * Infinity is. It is accepted, and `Infinity − Infinity` inside the solver
+   * turns the transform to NaN permanently. Both of the things that would then
+   * remove the body are `<` comparisons, and every comparison against NaN is
+   * false, so the body is never culled, never sleeps, costs a full island solve
+   * for the rest of the session and drags its mesh to a NaN matrix. Measured on
+   * the unguarded code: one `applyImpulse(Infinity,0,0)`, 3 000 steps, and the
+   * body is still there at NaN with `stats.awake = 1`.
+   */
+  check('physics: an infinite impulse cannot leave a body in the world at NaN', () => {
+    const { Body, box } = RapierWorldModule;
+    const w = new RapierWorld({ gravity: -22 });
+    w.addStaticBox(V(THREE, 0, -0.5, 0), V(THREE, 60, 0.5, 60));
+    const shots = [
+      ['impulse', (b) => b.applyImpulse(V(THREE, Infinity, 0, 0), null)],
+      ['impulse at a point', (b) => b.applyImpulse(V(THREE, 0, -Infinity, 0), V(THREE, 0, 3, 0))],
+      ['impulse at an infinite point', (b) => b.applyImpulse(V(THREE, 0, 4, 0), V(THREE, Infinity, 0, 0))],
+      ['torque', (b) => b.applyTorqueImpulse(V(THREE, Infinity, Infinity, 0))],
+      ['velocity', (b) => b.velocity.set(Infinity, 0, 0)],
+      ['position', (b) => b.position.set(0, Infinity, 0)],
+      ['1e12 velocity', (b) => b.velocity.set(1e12, 0, 0)],
+    ];
+    const survivors = [];
+    for (const [name, shoot] of shots) {
+      const b = w.add(new Body({ position: V(THREE, 0, 3, 0), shape: box(0.5, 0.5, 0.5), mass: 10 }));
+      shoot(b);
+      // A large enough value does not go to NaN, it TRAPS out of wasm at around
+      // 1e12 and takes the process with it, so the trap is caught and reported
+      // as what it is rather than as a bare `unreachable`.
+      try { for (let i = 0; i < 600; i++) w.step(1 / 60); } catch (e) {
+        assert(false, `a non-finite ${name} trapped the solver out of wasm (${e.message}) — `
+          + 'nothing on this side of the boundary refused it'
+          + (survivors.length ? `; and before it, ${survivors.join('; ')} were left in the world at NaN` : ''));
+      }
+      const p = b.position;
+      const nan = !Number.isFinite(p.x) || !Number.isFinite(p.y) || !Number.isFinite(p.z);
+      if (nan && w.bodies.includes(b)) survivors.push(`${name} → ${p.toArray().join(',')}`);
+      if (w.bodies.includes(b)) w.remove(b);
+    }
+    w.dispose();
+    assert(!survivors.length,
+      `a non-finite ${survivors.join('; ')} left a body in the world with a NaN transform — `
+      + 'the kill plane (y < killY) and the sleep test are both `<`, and every comparison against '
+      + 'NaN is false, so it is stepped and solved forever and its mesh is drawn at a NaN matrix');
+    return `${shots.length} ways of handing the solver a non-finite value — impulse, point, torque, `
+      + 'velocity, position, 1e12 — none of them left a body at NaN in the world';
   });
 
   check('physics: a World disposed twice leaves nothing behind', async () => {

@@ -4267,13 +4267,11 @@ export class CommandDirector extends WaveDirector {
    * are reachable now because this is the first mode with a WIN in it, which is
    * also why `RECORDED` in Progress.js had to learn the word `command`.
    *
-   * THE STATS BLOCK IS A TWIN OF `World._checkWipe`'s AND THAT IS A KNOWN COST.
-   * World assembles the same six fields when the party dies, and this file is
-   * not allowed to edit World.js. Rather than leave the twin to drift in
-   * silence, `tools/checks/command.mjs` drives a real World to a wipe AND a real
-   * campaign to a victory and asserts the two objects carry the identical set of
-   * keys — so adding a field over there fails here. The honest fix is a
-   * `World.runStats()` both call; it is in the handover at the foot of this file.
+   * THE STATS BLOCK WAS A TWIN OF `World._checkWipe`'s AND IT IS GONE.
+   * World assembled the same six fields when the party died and this one
+   * assembled them again; `tools/checks/command.mjs` kept the two key sets
+   * identical because nothing else could. `World.runStats()` — asked for in
+   * the handover at the foot of this file — exists now, and this calls it.
    */
   _endCampaign() {
     this.done = true;
@@ -4295,16 +4293,21 @@ export class CommandDirector extends WaveDirector {
     const w = this.world;
     if (!w) return true;
     w.over = true;
-    const sum = (f) => (w.players || []).reduce((a, p) => a + (p[f] || 0), 0);
-    w.onGameOver?.({
-      won: true,
-      wave: this.wave,
-      score: w.score,
-      kills: sum('kills'),
-      deflects: sum('deflects'),
-      perfects: sum('perfects'),
-      limbs: sum('limbsRemoved'),
-    });
+    /**
+     * THROUGH `World.runStats()` — the third assembly of one object, deleted.
+     *
+     * This built the six numbers by hand beside `_checkWipe`'s and
+     * `_endSkirmish`'s, and the note under it has asked for exactly this since
+     * the mode was written; `tools/checks/command.mjs` has been holding the two
+     * key sets identical because nothing else could. Two things fall out of
+     * calling it rather than restating it: the drift is now impossible instead
+     * of merely detected, and the campaign's own casualty count reaches the
+     * card. `runStats` carries `fallen` and `taken`, and main.js's victory card
+     * was inventing both — "Areas taken 5" was a LITERAL, and "Troops lost 0"
+     * was printed on the mode that names its dead. `this.wave` is what
+     * `runStats` reads off `world.director.wave`, which is this director.
+     */
+    w.onGameOver?.(w.runStats({ won: true }));
     return true;
   }
 
@@ -4571,13 +4574,12 @@ export const FORM_TOLERANCE = 2.2;
  *     the palette, promotion stops being visible and nothing will say so.
  *
  * src/game/World.js
- *   · `runStats()`. `World._checkWipe` assembles the six numbers a finished
- *     session is described by (wave, score, kills, deflects, perfects, limbs)
- *     inline inside the `onGameOver` call, and `_endCampaign` above needs the
- *     same six for a session that ended by being WON rather than lost. There is
- *     now a twin, and it is only kept honest by a check that drives a real wipe
- *     and a real victory and compares the key sets. One method on World that
- *     both call deletes the twin outright.
+ *   · `runStats()` — LANDED, and `_endCampaign` calls it. What is still owed
+ *     there is the two fields main.js's victory card reads: `fallen` (this
+ *     file logs `roster.fallen.length` one line above its own summary) and
+ *     `taken`. The card printed "Areas taken 5" — a literal — and "Troops lost
+ *     0" until they arrive. The patch is in the lane report; the card omits a
+ *     row it has no number for rather than inventing one.
  *   · A VICTORY that is not a death. `_endCampaign` fires `onGameOver` with
  *     `won: true` on it, because that is the one event in the tree that stops
  *     the director, releases the pointer, shows a card and writes the record.
