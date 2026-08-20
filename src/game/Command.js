@@ -3482,8 +3482,8 @@ export class CommandDirector extends WaveDirector {
    * that moved him would be arguing with the formation the player chose, and
    * `FORM_TOLERANCE` exists precisely so that a line reads as a line. What
    * changes is his POSE — hip down, spine forward, weapon up — and it changes
-   * back the moment `targetFor` hands him something, because `steer` decays
-   * `crouch` on every frame that does not renew it.
+   * back the moment `targetFor` hands him something, because the branch of
+   * `steer` that a fighting man takes asks `_crouch` for 0 on the same frame.
    *
    * `IDLE_GRACE` before it starts, so a man who is between targets for a third
    * of a second does not bob up and down.
