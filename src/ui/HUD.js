@@ -2126,11 +2126,21 @@ export class HUD {
     if (this._perfAt % 15) return;
     const s = profiler.stats();
     if (!s) { el.textContent = 'measuring…'; return; }
-    const gpu = profiler.gpuMs == null ? 'n/a' : profiler.gpuMs.toFixed(1);
+    /* …AND THE CPU LINE OBEYS THE PARAGRAPH ABOVE NOW. It read
+     * `profiler.cpuMs`, which is THIS FRAME — the one thing the note two lines
+     * up says this box does not show, and unreadable for exactly the reason it
+     * gives, since the box refreshes on whichever frame lands on the fifteenth.
+     * The window's CPU mean and its 1% low were being recorded and discarded
+     * (see Profiler.stats); a hitching build now says whether the hitch is
+     * ours. The GPU stays instantaneous when there is no window for it — a
+     * machine that refuses the timer query has nothing to average. */
+    const g = s.gpu;
+    const gpu = g ? `${g.mean.toFixed(1)}/${g.low1.toFixed(1)}`
+      : (profiler.gpuMs == null ? 'n/a' : profiler.gpuMs.toFixed(1));
     el.textContent =
       `${s.mean.toFixed(1)} ms  ${s.fps.toFixed(0)} fps\n`
       + `1% low ${s.low1.toFixed(1)}  p99 ${s.p99.toFixed(1)}\n`
-      + `cpu ${profiler.cpuMs.toFixed(1)}  gpu ${gpu}\n`
+      + `cpu ${s.cpu.mean.toFixed(1)}/${s.cpu.low1.toFixed(1)}  gpu ${gpu}\n`
       + `${profiler.calls} calls  ${(profiler.triangles / 1000).toFixed(0)}k tris`;
   }
 

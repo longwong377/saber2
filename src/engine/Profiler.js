@@ -152,36 +152,69 @@ export class Profiler {
     this.gpuMs = ns / 1e6;
   }
 
-  /** Sorted copy of the live window, for percentiles. */
-  _sorted() {
-    const count = Math.min(this.n - 3, HISTORY);
+  /** How many samples the ring currently holds. */
+  _count() { return Math.min(this.n - 3, HISTORY); }
+
+  /** Sorted copy of one of the live windows, for percentiles. */
+  _sortedOf(arr) {
+    const count = this._count();
     if (count < 8) return null;
-    const out = Array.from(this.frames.subarray(0, count));
+    const out = Array.from(arr.subarray(0, count));
     out.sort((a, b) => a - b);
     return out;
+  }
+
+  _sorted() { return this._sortedOf(this.frames); }
+
+  /**
+   * mean / p99 / 1% low over a sorted window, in one place.
+   *
+   * The 1% LOW is the mean of the worst 1% of samples, not the 99th percentile
+   * of one — it is what a player actually notices, and the two differ by a lot
+   * on a game that hitches rather than sags.
+   */
+  static _band(s) {
+    const at = (p) => s[Math.min(s.length - 1, Math.max(0, Math.round(p * (s.length - 1))))];
+    const k = Math.max(1, Math.round(s.length * 0.01));
+    let sum = 0;
+    for (let j = s.length - k; j < s.length; j++) sum += s[j];
+    return {
+      mean: s.reduce((a, b) => a + b, 0) / s.length,
+      median: at(0.5), p95: at(0.95), p99: at(0.99), low1: sum / k,
+    };
   }
 
   stats() {
     const s = this._sorted();
     if (!s) return null;
-    const at = (p) => s[Math.min(s.length - 1, Math.max(0, Math.round(p * (s.length - 1))))];
-    const mean = s.reduce((a, b) => a + b, 0) / s.length;
+    const f = Profiler._band(s);
+    /**
+     * ── THE CPU WINDOW WAS RECORDED AND THROWN AWAY ──────────────────────
+     *
+     * `this.cpus` has been filled every frame since this file was written and
+     * nothing has ever read it: `stats()` returned frame percentiles only and
+     * `report()` printed `cpuMs`, which is ONE INSTANTANEOUS SAMPLE — whichever
+     * frame the player happened to open the pause menu on — inside a report
+     * whose entire thesis is "the worst frames, not the average".
+     *
+     * That is the difference between a report you can diagnose from and one you
+     * cannot. The first question about a hitch is whether it is OUR JS or the
+     * GPU, a player on Apple hardware gets `gpu unavailable` and no second
+     * opinion, and the data to answer it was already in the ring.
+     */
+    const c = Profiler._band(this._sortedOf(this.cpus));
+    const gs = this._sortedOf(this.gpus);
+    const g = gs && gs[gs.length - 1] > 0 ? Profiler._band(gs) : null;
     return {
       frames: s.length,
-      mean, fps: 1000 / mean,
-      median: at(0.5),
-      p95: at(0.95),
-      p99: at(0.99),
-      // The 1% LOW is the mean of the worst 1% of frames, not the 99th
-      // percentile of one — it is what a player actually notices, and the two
-      // differ by a lot on a game that hitches rather than sags.
-      low1: (() => {
-        const k = Math.max(1, Math.round(s.length * 0.01));
-        let sum = 0;
-        for (let j = s.length - k; j < s.length; j++) sum += s[j];
-        return sum / k;
-      })(),
+      mean: f.mean, fps: 1000 / f.mean,
+      median: f.median, p95: f.p95, p99: f.p99, low1: f.low1,
+      cpu: c, gpu: g,
       worst: this.worst,
+      // WHEN the worst frame happened, which is the player's actual complaint:
+      // "it got worse the longer I played". Maintained since this file was
+      // written and never printed anywhere.
+      worstAt: this.worstAt,
     };
   }
 
@@ -195,13 +228,16 @@ export class Profiler {
     L.push('SABER frame report');
     if (s) {
       L.push(`  frame   mean ${s.mean.toFixed(2)} ms (${s.fps.toFixed(0)} fps)  median ${s.median.toFixed(2)}`);
-      L.push(`  worst   1% low ${s.low1.toFixed(2)} ms   p99 ${s.p99.toFixed(2)}   session worst ${s.worst.toFixed(1)}`);
+      L.push(`  worst   1% low ${s.low1.toFixed(2)} ms   p99 ${s.p99.toFixed(2)}   `
+        + `session worst ${s.worst.toFixed(1)} at frame ${s.worstAt} of ${this.n}`);
       L.push(`  window  ${s.frames} frames`);
     } else {
       L.push('  (not enough frames yet)');
     }
-    L.push(`  cpu     ${this.cpuMs.toFixed(2)} ms this frame`);
-    L.push(`  gpu     ${this.gpuMs == null ? 'unavailable (no timer query)' : this.gpuMs.toFixed(2) + ' ms'}`);
+    L.push(`  cpu     ${this.cpuMs.toFixed(2)} ms this frame`
+      + (s ? `   mean ${s.cpu.mean.toFixed(2)}   1% low ${s.cpu.low1.toFixed(2)}   p99 ${s.cpu.p99.toFixed(2)}` : ''));
+    L.push(`  gpu     ${this.gpuMs == null ? 'unavailable (no timer query)' : this.gpuMs.toFixed(2) + ' ms'}`
+      + (s && s.gpu ? `   mean ${s.gpu.mean.toFixed(2)}   1% low ${s.gpu.low1.toFixed(2)}` : ''));
     L.push(`  draw    ${this.calls} calls, ${(this.triangles / 1000).toFixed(0)}k triangles`);
     L.push(`  memory  ${this.geometries} geometries, ${this.textures} textures, ${this.programs} programs`);
     for (const [k, v] of Object.entries(extra)) L.push(`  ${k.padEnd(7)} ${v}`);

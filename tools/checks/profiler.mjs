@@ -79,6 +79,91 @@ export async function run({ check, assert }) {
       + `1% low ${a.low1.toFixed(1)} -> ${b.low1.toFixed(1)} (+${lowGap.toFixed(1)})`;
   });
 
+  check('profiler: a CPU-bound hitch is separable from a GPU-bound one', async () => {
+    /**
+     * THE FIRST QUESTION A DIAGNOSIS ASKS, and the report could not answer it.
+     *
+     * `this.cpus` has been filled every frame since the profiler was written
+     * and nothing read it. `stats()` returned frame percentiles only, and the
+     * report's cpu line was `this.cpuMs` — ONE SAMPLE, from whichever frame the
+     * player happened to open the pause menu on — inside a report whose whole
+     * thesis is the check above this one: the worst frames, not the average.
+     *
+     * So two builds that a player experiences completely differently produced
+     * reports that could not be told apart. Both hitch to 42 ms four times a
+     * second; in one the hitch is OUR JS and in the other our JS is flat and
+     * the wait is somewhere else. The frame series is identical by
+     * construction, so anything that separates them has to come from the CPU
+     * window — and on the hardware where this matters most, a machine that
+     * refuses the GPU timer query, the CPU window is the ONLY second opinion
+     * there is.
+     */
+    const clocked = (frames, cpu) => {
+      const p = headless();
+      let clock = 1000;
+      for (let i = 0; i < frames.length; i++) {
+        clock += frames[i];
+        p.begin(clock);
+        // drive the shipped end(), which reads cpuStart — so what is measured
+        // is the profiler's own arithmetic and not a value written past it
+        p.cpuStart = performance.now() - cpu[i];
+        p.end();
+      }
+      return p;
+    };
+    const frames = [], ourFault = [], theirFault = [];
+    for (let i = 0; i < 600; i++) {
+      const hitch = i % 15 === 0;
+      frames.push(hitch ? 42 : 8.3);        // identical in both builds
+      ourFault.push(hitch ? 40 : 6.5);      // the JS is what took the time
+      theirFault.push(6.5);                 // our JS is flat; the wait is elsewhere
+    }
+    const a = clocked(frames, ourFault), b = clocked(frames, theirFault);
+    const sa = a.stats(), sb = b.stats();
+    assert(sa && sb, 'no statistics after 600 frames');
+    assert(Math.abs(sa.low1 - sb.low1) < 0.5,
+      `the two builds were supposed to have the same frame series and their 1% lows differ by `
+      + `${Math.abs(sa.low1 - sb.low1).toFixed(2)} ms — this comparison is not controlled`);
+    assert(sa.cpu && sb.cpu, 'stats() carries no CPU window, so the report cannot say whose fault a hitch is');
+    const gap = sa.cpu.low1 - sb.cpu.low1;
+    assert(gap > 25,
+      `a build whose JS spikes to 40 ms and one whose JS is flat report CPU 1% lows `
+      + `${sa.cpu.low1.toFixed(2)} and ${sb.cpu.low1.toFixed(2)} — ${gap.toFixed(2)} ms apart. The `
+      + 'frame series is identical in both, so if the CPU window does not separate them nothing '
+      + 'in the report does, and a player on hardware that refuses the GPU timer gets a readout '
+      + 'that cannot tell them whether the hitch is ours.');
+    /* AND THE LIVE OVERLAY, DRIVEN — not a regex over HUD.js. Its own note says
+     * "The values shown are the WINDOW's statistics, not this frame's" and the
+     * cpu field printed `profiler.cpuMs`, which is whichever frame the refresh
+     * landed on: the two builds below differ by 33 ms of JS a frame and the
+     * corner of the screen could show either of them the same number. */
+    const { HUD } = await import('../../src/ui/HUD.js');
+    const overlay = (p) => {
+      const el = { classList: { add() {}, remove() {}, contains: () => false }, textContent: '' };
+      const stub = { el: { perf: el }, _perfAt: 14 };
+      HUD.prototype.perf.call(stub, p, true);
+      return el.textContent;
+    };
+    const oa = overlay(a), ob = overlay(b);
+    assert(oa && ob, 'the perf overlay wrote nothing');
+    assert(oa !== ob,
+      `the on-screen perf box reads identically for a build whose JS spikes to 40 ms and one `
+      + `whose JS is flat:\n${oa}\nIts own note says the values shown are the WINDOW's `
+      + 'statistics, not this frame\'s, and the cpu field was the exception.');
+
+    // …and it has to survive the trip into the text the player actually pastes.
+    const ta = a.report(), tb = b.report();
+    assert(ta !== tb, 'the two reports are byte-identical');
+    for (const t of [ta, tb]) {
+      assert(/cpu[^\n]*1% low/.test(t), `the report's cpu line carries no 1% low:\n${t}`);
+      assert(/at frame \d+ of \d+/.test(t),
+        `the report does not say WHEN the session worst happened — which is the player's own `
+        + `complaint, that it got worse the longer they played:\n${t}`);
+    }
+    return `same frame 1% low (${sa.low1.toFixed(1)} vs ${sb.low1.toFixed(1)} ms), `
+      + `CPU 1% low ${sa.cpu.low1.toFixed(1)} vs ${sb.cpu.low1.toFixed(1)} — ${gap.toFixed(1)} ms apart`;
+  });
+
   check('profiler: the window is bounded, so a long session cannot grow it', () => {
     // The complaint is specifically that it degrades over time, so this thing
     // will be left running for a long time. Its own history must not be the
