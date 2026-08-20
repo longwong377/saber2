@@ -118,17 +118,30 @@ export async function run({ check, assert }) {
      * run reads whatever the first left, and three of these answered a
      * different number the second time they ran in one process:
      *
-     *   characters  a rifle points where its owner is aiming
-     *                 heavy 0.9° → 0.4°, arc 0.9° → 0.4°
      *   compel      the muzzle is behind the chest for a self-shot
      *                 firing 70° up → 69° up
      *   force       a held body does not advance
      *                 free: 9.30 m closed → 10.97 m; the bar runs dry after
      *                 54 frames → 37
+     *   duelling    a duellist holds its blade between itself and its target
+     *                 blade 0.60 → 0.75 toward the target, tip 0.90 → 0.71 m,
+     *                 and a beaten guard driven 104° wide → 64°
      *
-     * Wrapped, each of those is the same number on both runs. That is the whole
-     * of what the sweep fixed: it did not close a red in the gate, and saying
-     * otherwise would make the next reader distrust the rest of this file.
+     * Wrapped, all three are the same number on both runs.
+     *
+     * AND FIVE ARE NOT, WHICH IS THE HALF WORTH WRITING DOWN. `characters`
+     * (a heavy's bore 0.9° → 0.4° off aim), `arrivals` (2.50 → 2.40 bodies per
+     * gunship), `audio`, `vehicles` and `garments` still answer differently on
+     * the second pass, and `pvp` still reports a shove at 0.94 m and then
+     * 0.33 m. Seeding at the top of a body does not reach them: their checks
+     * interleave across an await, so a SIBLING body's seed lands between one
+     * body's seed and its draws. That is `tools/_seq.mjs`'s fourth class — the
+     * scheduling of a suite's own async checks — and no boundary can fix it;
+     * the suite has to stop sharing a stream across its own awaits.
+     *
+     * So the sweep did not close a red in the gate and does not close this
+     * class either. Saying otherwise would make the next reader distrust the
+     * rest of this file.
      */
     const drivers = files.filter(([, t]) => {
       const src = strip(t);
@@ -169,11 +182,21 @@ export async function run({ check, assert }) {
      * clause above and for most of the thirteen it is the same suite.
      *
      * What it moved, measured by running a suite TWICE in one process, which is
-     * the cheapest way to hand a suite the phase it leaves: `characters` read a
-     * heavy's bore at 0.9° off aim on the first pass and 0.4° on the second,
-     * `compel` 70° then 69°, and `force` measured a released body closing 9.30 m
-     * and then 10.97 m. None of the three is a bound anybody had written down —
-     * they are printed numbers, which is exactly why nobody had noticed.
+     * the cheapest way to hand a suite the phase it leaves: `compel` read the
+     * self-shot firing 70° up on the first pass and 69° on the second, and
+     * `force` measured a released body closing 9.30 m and then 10.97 m. Neither
+     * is a bound anybody had written down — they are printed numbers, which is
+     * exactly why nobody had noticed. Both are stable now; the clause above
+     * lists the five that are not, and why a seed cannot reach them.
+     *
+     * AND ONE THING NO SEED HERE REACHES AT ALL. `arrivals` and `vehicles`
+     * answer differently from one PROCESS to the next — arrivals read 1.78
+     * bodies per gunship and then 2.31 — because `Waves.js` and `MathUtil.js`
+     * each seed a module-scope stream with `Math.random()` at load, and
+     * `Combat.js`, `Duel.js` and `Dropped.js` call `Math.random()` outright.
+     * Seeding both streams was tried and does not settle `vehicles`. A suite
+     * that wants a repeatable wave still has to call `seedWaves` itself, which
+     * is why that is one of the three things this clause accepts.
      */
     const spawners = files.filter(([, t]) => {
       const src = strip(t);
