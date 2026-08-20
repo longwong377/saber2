@@ -1830,8 +1830,11 @@ export function run({ check, assert, near }) {
      * decks — and every interior is deleted, so this clause has no subject
      * rather than a failing one. It is kept and gated instead of removed, and
      * the count is REPORTED either way: the day a level with a deck arrives
-     * (the boarding action wants one) the comparison comes back without
-     * anybody having to rediscover that it existed. */
+     * the comparison comes back without anybody having to rediscover that it
+     * existed. The Boarding Action's two decks were that day, briefly, and
+     * they were deleted at the player's request along with the campaign — so
+     * this clause is back to having no subject, which is exactly the state it
+     * was written to survive. */
     const floors = PRESETS.filter((n) => TERRAIN_PRESETS[n].flat);
     const shaped = PRESETS.filter((n) => !TERRAIN_PRESETS[n].flat);
     assert(shaped.length >= 4, `only ${shaped.length} shaped grounds — nothing to compare`);
