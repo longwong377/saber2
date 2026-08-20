@@ -546,4 +546,231 @@ export async function run({ check, assert }) {
       + `${watched.length} live collider(s) all intact`;
   });
 
+
+  /**
+   * …AND THE DEBRIS THE GAME MAKES ITSELF, WHICH THE CLAUSE ABOVE CANNOT SEE.
+   *
+   * That one drops three bodies built here from masks copied out of Props.js,
+   * Ragdoll.js and Destruction.js — deliberately, so a mask taken from the
+   * object under test cannot fail. The cost is that it only covers the three
+   * makers somebody thought to transcribe, and there are five. The two it
+   * missed are `World.spawnDebris` and `World.spawnDebrisGroup`, and the second
+   * is handed the ENTIRE wrecked chassis of a destroyed machine (Enemy.js).
+   * So this one calls the game's own makers instead of describing them, and it
+   * drops on a LIVING BODY as well as on the player, because the enemy proxy is
+   * the other half of every one of these pairs and nothing had ever asked it
+   * anything. Driven, from 4 m, clearance above the victim's feet against
+   * capsules reaching 1.79 (player) and 1.81 (droid):
+   *
+   *                              was            now
+   *     World.spawnDebris        -0.04 / 0.35   1.99 / 2.01
+   *     World.spawnDebrisGroup   -0.06 / 0.26   1.99 / 2.01
+   *     Ragdoll severed limb      2.09 / -2.02  2.09 / 2.09
+   *
+   * The victim is the Training Droid because it is the one body in the game
+   * that does not walk (`speed: 0`), and a victim that steps out from under the
+   * drop reports every body as passing through it — which is what the first
+   * three runs of this measurement did before the confound was found. The spin
+   * the makers put on their debris is zeroed for the same reason: a spinning
+   * box rolls off a rounded capsule, and rolling off is not falling through.
+   */
+  check('physicality: the debris the game itself makes lands on the people in it', async () => {
+    const { bootWorld, idleInput, run } = await import('./_coop.mjs');
+    const THREE = (await import('three')).default ?? (await import('three'));
+    const { Body, box, capsule, LAYER } = await import('../../src/physics/RapierWorld.js');
+    const { ARCHETYPES } = await import('../../src/game/Enemy.js');
+    assert(ARCHETYPES.dummy && !ARCHETYPES.dummy.speed,
+      'the Training Droid is the only body in the game that stands still, and it is what this '
+      + 'measurement needs — a victim that walks steps out from under the drop and every body '
+      + 'reads as passing through it');
+
+    const { world } = await bootWorld({ level: 'scoria', settings: { level: 'scoria' } });
+    const input = idleInput();
+    run(world, 0.5, input);
+    const p = world.player;
+    const ep = p.position.clone(); ep.x += 14; ep.y = world.terrain.height(ep.x, ep.z);
+    const e = world.spawnEnemy('dummy', ep);
+    assert(e, 'the Training Droid would not spawn');
+    const home = p.position.clone();
+    const pin = () => { p.position.x = home.x; p.position.z = home.z; };
+    run(world, 1, input, pin);
+
+    const mesh = () => new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.4, 0.4), new THREE.MeshBasicMaterial());
+    const group = () => { const g = new THREE.Group(); g.add(mesh()); return g; };
+    const at = (v) => v.position.clone().setY(v.position.y + 4);
+    /* The game's own makers, called rather than described. The severed limb is
+     * the one that has to be built here — `Severed` needs a rig and a cut — and
+     * its spec is Ragdoll.js's, copied on purpose for the reason above. */
+    const makers = {
+      'World.spawnDebris': (v) => world.spawnDebris(mesh(), at(v), new THREE.Vector3(), new THREE.Vector3(0.4, 0.4, 0.4)).body,
+      'World.spawnDebrisGroup': (v) => world.spawnDebrisGroup(group(), at(v), new THREE.Vector3(), 0.4).body,
+      'a severed limb': (v) => world.physics.add(new Body({ position: at(v), shape: capsule(0.2, 0.1),
+        mass: 6, layer: LAYER.DEBRIS,
+        mask: LAYER.WORLD | LAYER.DEBRIS | LAYER.RAGDOLL | LAYER.PROP | LAYER.PLAYER | LAYER.ENEMY })),
+    };
+    const victims = [['the player', p], ['a living body', e]];
+    const rows = [], through = [];
+    for (const [mname, make] of Object.entries(makers)) {
+      const dropped = victims.map(([, v]) => make(v));
+      for (const b of dropped) { b.velocity.set(0, 0, 0); b.angularVelocity.set(0, 0, 0); }
+      run(world, 4, input, pin);
+      victims.forEach(([vname, v], i) => {
+        const b = dropped[i];
+        const half = v.body.shape?.halfHeight ?? 0.55, rad = v.body.shape?.radius ?? v.radius;
+        const top = (v.body.position.y - v.position.y) + half + rad;
+        const rest = b.position.y - v.position.y;
+        rows.push(`${mname} on ${vname} ${rest.toFixed(2)}`);
+        if (rest < top * 0.75) {
+          through.push(`${mname} dropped on ${vname} came to rest ${rest.toFixed(2)} m above the feet, `
+            + `and the capsule reaches ${top.toFixed(2)}`);
+        }
+        if (!b.dead) world.physics.remove(b);
+      });
+    }
+    world.unload?.();
+    assert(!through.length, through.join('; ')
+      + ' — it fell THROUGH. Rapier pairs on `(A.layer & B.mask) && (B.layer & A.mask)`, so a loose '
+      + 'body whose mask leaves PLAYER or ENEMY out is half a pair and the pair is dead, however '
+      + 'solid the other half believes itself to be. See LOOSE_MASK in src/physics/Physics.js');
+    return `dropped on the player and on a Training Droid, resting height above the feet: ${rows.join(', ')}`;
+  });
+
+  /**
+   * A LIMB THE BLADE HAS SHORTENED STILL WEIGHS WHAT IT WEIGHS.
+   *
+   * `Body.setShape` is the one thing the sphere solver was originally kept for
+   * — a lightsaber takes part of a limb away and the collider has to become a
+   * shorter limb mid-flight — and on Rapier it rebuilt the collider without
+   * rebuilding the MASS. `_buildColliders` scales collider density by
+   * `this.mass / rb.mass()`, and on a rebuild `rb.mass()` still reported what
+   * the OLD colliders had been scaled to, so the ratio came out at 1 and the
+   * recompute then replaced the body's mass with the raw volume of the new
+   * shape. Driven through `Ragdoll.cutRagdoll` on a B1 corpse: a 1.499 kg thigh
+   * stump weighed 0.001 kg, a 5.573 kg head 0.003 — every stump 0.0004x of what
+   * it asked for, with `inertiaScale` (the whole reason a corpse lies still)
+   * left at zero on top.
+   *
+   * What that is on screen: the joint solve shares its correction by `invMass`,
+   * so a weightless stump takes essentially all of every correction from the
+   * limb it hangs off. Measured over 20 s of settling, three bones cut on one
+   * B1 against the same B1 uncut as the control — 269.1 m of bone travel and a
+   * 37.1 m/s peak, against 102.1 m and 12.5 m/s once the mass is right, and the
+   * uncut control identical at 193.4 m either way.
+   */
+  check('physicality: a limb the blade has shortened still weighs what it weighs', async () => {
+    const THREE = (await import('three')).default ?? (await import('three'));
+    const { RapierWorld, Body, capsule } = await import('../../src/physics/RapierWorld.js');
+    const { initPhysics } = await import('../../src/physics/Rapier.js');
+    await initPhysics();
+
+    // 1 — the contract itself, with no game in the way.
+    const w = new RapierWorld({ gravity: -22 });
+    const b = w.add(new Body({ position: new THREE.Vector3(0, 3, 0), shape: capsule(0.25, 0.07),
+      mass: 6, inertiaScale: 3 }));
+    const born = b.rb.mass();
+    b.setShape(capsule(0.08, 0.07));
+    const rebuilt = b.rb.mass();
+    b.setShape(capsule(0.04, 0.05), { mass: 1.2 });
+    const reweighed = b.rb.mass();
+    const spin = b.rb.principalInertia();
+    w.dispose();
+    const off = [];
+    if (Math.abs(born - 6) > 0.01) off.push(`built at ${born.toFixed(3)} kg against 6.000 asked`);
+    if (Math.abs(rebuilt - 6) > 0.01) off.push(`a shorter shape left it at ${rebuilt.toFixed(3)} kg against 6.000`);
+    if (Math.abs(reweighed - 1.2) > 0.01) off.push(`setShape({mass:1.2}) left it at ${reweighed.toFixed(3)} kg`);
+    if (!(spin.x > 0 && spin.y > 0 && spin.z > 0)) off.push('the rebuilt body has no rotational inertia at all');
+
+    // 2 — and the one call site in the game, on a real corpse.
+    const { bootWorld, idleInput, run } = await import('./_coop.mjs');
+    const { world } = await bootWorld({ level: 'scoria', settings: { level: 'scoria' } });
+    const input = idleInput();
+    run(world, 0.5, input);
+    const p = world.player;
+    const x = p.position.x + 5, z = p.position.z + 5;
+    const en = world.spawnEnemy('b1', new THREE.Vector3(x, world.terrain.height(x, z), z));
+    run(world, 0.5, input);
+    en.die(en.position.clone(), null, 'saber');
+    run(world, 0.6, input);
+    const actor = en.actor;
+    assert(actor && actor.bodies?.size, 'the B1 died without a ragdoll, so nothing here was measured');
+    const cut = [];
+    for (const name of ['armL', 'thighR', 'shinR', 'head']) {
+      const bone = actor.bodies.get(name);
+      if (!bone) continue;
+      actor.cutRagdoll(name, null, 0.5);
+      if (!bone.rb) continue;
+      const got = bone.rb.mass();
+      cut.push(`${name} ${bone.mass.toFixed(3)}→${got.toFixed(3)}`);
+      if (Math.abs(got - bone.mass) > Math.max(1e-3, bone.mass * 0.02)) {
+        off.push(`the ${name} stump asked for ${bone.mass.toFixed(3)} kg and the solver gave it `
+          + `${got.toFixed(3)} (${(got / bone.mass).toFixed(4)}x)`);
+      }
+    }
+    world.unload?.();
+    assert(cut.length >= 3, `only ${cut.length} bone(s) could be cut, so this measured almost nothing`);
+    assert(!off.length, off.join('; ')
+      + ' — a rebuilt collider must be re-weighed against ITS OWN volume, not against the mass the '
+      + 'colliders it replaced were scaled to. A near-weightless stump takes the whole of every '
+      + 'joint correction, because the joint solve shares by invMass');
+    return `setShape holds the mass through a reshape and a re-weigh (6.000, 6.000, 1.200 kg), and a `
+      + `cut B1's stumps keep theirs: ${cut.join(', ')}`;
+  });
+
+  /**
+   * THE BUDGET MAY SPEND DEBRIS AND NOTHING ELSE — IN BOTH SOLVERS.
+   *
+   * The clause above proves it through real combat on the Rapier world. The
+   * sphere solver in Physics.js is the twin that world's API was copied from,
+   * it is still what `verify.mjs` raycasts against as an oracle, and it kept
+   * the defect verbatim: a debris pass guarded by `b.userData.keep` — a flag
+   * READ on two lines and WRITTEN NOWHERE IN src/ — and under it a second pass
+   * that took the first non-static body in insertion order. Driven at
+   * `maxBodies: 12` with a player proxy, twenty ragdoll bones and no debris:
+   *
+   *     RapierWorld   0 culled, 9 refusals counted
+   *     PhysicsWorld  9 culled → the player proxy, bone 0 … bone 7
+   *
+   * Cheap, deterministic and no world: this is the rule itself rather than a
+   * consequence of it, so it belongs next to the expensive one and not instead.
+   */
+  check('physicality: a body budget with no debris to spend refuses instead of eating a live body', async () => {
+    const THREE = (await import('three')).default ?? (await import('three'));
+    const { initPhysics } = await import('../../src/physics/Rapier.js');
+    await initPhysics();
+    const RW = await import('../../src/physics/RapierWorld.js');
+    const PH = await import('../../src/physics/Physics.js');
+    const V = (x, y, z) => new THREE.Vector3(x, y, z);
+    const CAP = 12, N = 20;
+
+    const drive = (label, make, mk) => {
+      const w = make();
+      const live = [['the player\'s proxy', w.add(mk({ position: V(0, 1, 0), mass: 78, kinematic: true,
+        layer: PH.LAYER.PLAYER }))]];
+      for (let i = 0; i < N; i++) {
+        live.push([`bone ${i}`, w.add(mk({ position: V(i * 0.5, 1, 0), mass: 6, layer: PH.LAYER.RAGDOLL }))]);
+      }
+      const lost = live.filter(([, b]) => b.dead || !w.bodies.includes(b));
+      w.dispose?.();
+      return { label, lost: lost.map(([n]) => n), refusals: w.stats.overBudget };
+    };
+    const runs = [
+      drive('RapierWorld', () => new RW.RapierWorld({ gravity: -22, maxBodies: CAP }),
+        (o) => new RW.Body({ ...o, shape: RW.capsule(0.2, 0.1) })),
+      drive('PhysicsWorld', () => new PH.PhysicsWorld({ maxBodies: CAP }),
+        (o) => new PH.Body({ ...o, spheres: PH.capsuleSpheres(0.2, 0.1, 'y', 2) })),
+    ];
+    const guilty = runs.filter((r) => r.lost.length);
+    assert(!guilty.length, guilty.map((r) => `${r.label} culled ${r.lost.length} live bodies to make room — `
+      + r.lost.slice(0, 4).join(', ')).join('; ')
+      + ` — with ${N + 1} live bodies against a cap of ${CAP} and NO DEBRIS in the world at all. DEBRIS is `
+      + 'the only thing the game makes without counting, so it is the only thing the budget may spend; '
+      + 'the player\'s proxy is added exactly once, in the Player constructor, and after its cull '
+      + 'nothing collides with the player for the rest of the session');
+    assert(runs.every((r) => r.refusals > 0),
+      `a budget that culled nothing also counted no refusals (${runs.map((r) => `${r.label} ${r.refusals}`).join(', ')}) `
+      + '— the overshoot has to be visible somewhere or it is silent');
+    return `${N + 1} live bodies, cap ${CAP}, no debris: `
+      + runs.map((r) => `${r.label} 0 culled / ${r.refusals} refusals`).join(', ');
+  });
+
 }

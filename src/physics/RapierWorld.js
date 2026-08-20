@@ -42,9 +42,9 @@
 
 import * as THREE from 'three';
 import { rapier } from './Rapier.js';
-import { LAYER, boxSpheres, capsuleSpheres } from './Physics.js';
+import { LAYER, LOOSE_MASK, boxSpheres, capsuleSpheres } from './Physics.js';
 
-export { LAYER, boxSpheres, capsuleSpheres };
+export { LAYER, LOOSE_MASK, boxSpheres, capsuleSpheres };
 
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _v4 = new THREE.Vector3(), _v5 = new THREE.Vector3();
@@ -72,16 +72,52 @@ let _bodyId = 1;
  * drags its mesh to a NaN matrix. The only guard `applyImpulse` had tested the
  * world POINT, and only because NaN is its "no point given" sentinel.
  *
- * So: nothing non-finite crosses into the solver, and anything that is already
- * non-finite is culled by a test that is true for NaN rather than false.
+ * So: nothing non-finite crosses into the solver on the UPDATE path, and
+ * anything that is already non-finite is culled by a test that is true for NaN
+ * rather than false. The one path deliberately left open is BIRTH — a body
+ * constructed at a non-finite position reaches `createRigidBody` with it,
+ * because `_push` compares against `_sp` and `_sp` was copied from the same bad
+ * value, so nothing there ever fires. Driven, that body goes to NaN on the
+ * first step and the kill plane below takes it away on the same step, calling
+ * its `onCull` and freeing its mesh, so the world is not poisoned and nothing
+ * leaks. It is left that way on purpose: refusing at the door would strand the
+ * caller's mesh, because `onCull` is the only thing that removes it and only a
+ * body that got INTO the world can be culled out of it.
  * `MAX_SPEED` is the other half — Rapier traps out of wasm at about 1e12, and
  * a value that large is a defect on this side of the boundary whatever it is.
  * 1e4 m/s is four hundred times the fastest thing the game fires.
+ *
+ * ── AND A BOUND IS ONLY A BOUND IN ITS OWN CURRENCY ────────────────────
+ *
+ * `MAX_SPEED` is metres per second. It was applied to `applyImpulse` as if an
+ * impulse were one, and an impulse is N·s — it carries the body's MASS, so the
+ * same guard means something different for every object it is asked about.
+ * `Player.forcePush` hands a body `mass · 15 · k · P · heft`; for the 900 kg
+ * pillar at forcePower 4 that is ~28 000 N·s, 2.8x a bound sized for a
+ * velocity, and the push was DROPPED ENTIRELY. Measured by `force.mjs`:
+ *
+ *     before   4x: crate 49.1 m/s   pillar 31.3
+ *     after    4x: crate 49.1 m/s   pillar  0.40   ← one step of gravity
+ *
+ * The crate is 22 kg and stayed under the bound, so the defect was invisible on
+ * every light prop and bit only the payoff case: turning Force Power UP made
+ * the two heaviest things in the game stop moving.
+ *
+ * So the bound is converted rather than re-tuned. What the solver integrates,
+ * and what wasm traps on, is the SPEED an impulse buys — |J|·invMass — and the
+ * torque's is |τ|/I. Stated that way one number covers every body: the largest
+ * thing the game can legitimately ask for is that pillar's 31.3 m/s, against
+ * 1e4, and a 22 kg crate and a 3 600 kg walker are finally being asked the same
+ * question. `Infinity` still fails it (Infinity·anything is Infinity) and so
+ * does the 1e12 that traps the solver, which is what the guard is for.
  */
 const MAX_SPEED = 1e4;
 const finite3 = (v) => v && Number.isFinite(v.x) && Number.isFinite(v.y) && Number.isFinite(v.z);
 const finite4 = (q) => finite3(q) && Number.isFinite(q.w);
-const sane3 = (v) => finite3(v) && Math.abs(v.x) < MAX_SPEED && Math.abs(v.y) < MAX_SPEED && Math.abs(v.z) < MAX_SPEED;
+/** A velocity: already in MAX_SPEED's currency. */
+const sane3 = (v) => finite3(v) && v.lengthSq() < MAX_SPEED * MAX_SPEED;
+/** An impulse or a torque impulse, priced through `inv` (1/mass, or 1/inertia). */
+const sanePer = (v, inv) => finite3(v) && v.lengthSq() * inv * inv < MAX_SPEED * MAX_SPEED;
 
 /**
  * LAYER/mask → Rapier collision groups. Rapier packs a 16-bit membership in the
@@ -437,8 +473,10 @@ export class Body {
     if (this.invMass === 0 || this.static) return;
     // The IMPULSE, which is what nothing checked. See `finite3` above for what
     // one Infinity here costs, and note the point's NaN is a sentinel for "no
-    // point", so it is checked for range but never for being a number.
-    if (!sane3(impulse)) return;
+    // point", so it is checked for range but never for being a number. The
+    // bound is on the SPEED this buys and not on the impulse itself — see
+    // `sanePer`, and the pillar the first version of this refused outright.
+    if (!sanePer(impulse, this.invMass)) return;
     if (worldPoint && !finite3(worldPoint)) worldPoint = null;
     this.wake();
     if (!this.rb) { this.velocity.addScaledVector(impulse, this.invMass); return; }
@@ -451,7 +489,14 @@ export class Body {
 
   applyTorqueImpulse(t) {
     if (this.invMass === 0 || this.static || !this.rb) return;
-    if (!sane3(t)) return;
+    /* Same currency problem as `applyImpulse`, one derivative round: a torque
+     * impulse is N·m·s and what it buys is |τ|/I of spin, so it is priced
+     * through the SMALLEST principal moment — the axis that spins up hardest.
+     * A body whose collider has no inertia at all falls back to the raw
+     * finiteness test rather than dividing by zero. */
+    const I = this.rb.principalInertia();
+    const Imin = Math.min(I.x, I.y, I.z);
+    if (!(Imin > 0) ? !finite3(t) : !sanePer(t, 1 / Imin)) return;
     this.wake();
     this.rb.applyTorqueImpulse({ x: t.x, y: t.y, z: t.z }, true);
   }
@@ -528,10 +573,43 @@ export class Body {
       this.colliders.push(c);
       world._byCollider.set(c.handle, { body: this });
     }
-    // Rapier derives mass from collider density; scale the density so the total
-    // lands on the mass the caller asked for, which keeps the real inertia
-    // tensor of the real shape rather than flattening it to a lump.
+    /**
+     * Rapier derives mass from collider density; scale the density so the total
+     * lands on the mass the caller asked for, which keeps the real inertia
+     * tensor of the real shape rather than flattening it to a lump.
+     *
+     * AND `m0` HAS TO BE THE NEW COLLIDERS' MASS, WHICH ON A REBUILD IT WAS
+     * NOT. `setShape` drops the old colliders and calls this again, and
+     * `rb.mass()` still reported the mass the OLD ones had been scaled to —
+     * the body's own `this.mass` — so `k = mass / m0` came out at 1, the new
+     * colliders kept density 1, and the `recomputeMassPropertiesFromColliders`
+     * below then replaced the body's mass with the raw volume of the new
+     * shape. Driven through the game's own cut, on a B1 corpse:
+     *
+     *     bone      asked   Rapier before   asked after the cut   Rapier after
+     *     armL      0.905   0.905           0.453                 0.000
+     *     thighR    2.998   2.998           1.499                 0.001
+     *     head     11.146  11.146           5.573                 0.003
+     *
+     * — every stump 0.0004x of the mass it asked for. `Ragdoll.cutRagdoll` is
+     * the only caller and it runs on every limb the blade takes off, so a
+     * corpse that has been cut is a chain of near-weightless links: the joint
+     * solve shares its correction by `invMass`, so the stump takes essentially
+     * all of every correction, and `inertiaScale` — the whole reason a corpse
+     * lies still — is left at zero because it is applied to an inertia that no
+     * longer exists. Measured over 20 s of settling, three bones cut on one
+     * B1, against the same B1 uncut as the control:
+     *
+     *     uncut      193.4 m of bone travel, peak 13.7 m/s   (both, unchanged)
+     *     cut, was   269.1 m,                peak 37.1 m/s
+     *     cut, now   102.1 m,                peak 12.5 m/s
+     *
+     * One recompute before the reading makes `m0` the question it was always
+     * meant to be — what do these colliders weigh at density 1 — at both call
+     * sites, and it is a no-op at birth, where nothing has been scaled yet.
+     */
     if (!this.static && this.mass > 0) {
+      this.rb.recomputeMassPropertiesFromColliders();
       const m0 = this.rb.mass();
       if (m0 > 1e-9) {
         const k = this.mass / m0;
@@ -1095,7 +1173,11 @@ export class RapierWorld {
    * This had a second pass under the debris one that took the first non-static
    * body in insertion order, guarded only by `b.userData.keep` — a flag READ
    * here and in the sphere solver's twin and WRITTEN NOWHERE in src/, so the
-   * guard was vacuous and the pass was unfiltered. Measured at `maxBodies: 300`
+   * guard was vacuous and the pass was unfiltered. (The vacuous read is gone
+   * from this line too, and from the twin: a flag with no writer is a promise
+   * of protection that nothing can claim, and the protection below is
+   * structural instead. Both were the last two reads of it in the tree.)
+   * Measured at `maxBodies: 300`
    * (the settings slider's MINIMUM — what a player on a weak machine sets),
    * twelve acolytes killed per round over six rounds, no debris on the field:
    *
@@ -1134,7 +1216,7 @@ export class RapierWorld {
    */
   _cullOldestDebris() {
     for (const b of this.bodies) {
-      if (b.layer === LAYER.DEBRIS && !b.static && !b.userData.keep) {
+      if (b.layer === LAYER.DEBRIS && !b.static) {
         if (b.userData.onCull) b.userData.onCull();
         this.remove(b);
         return true;

@@ -25,7 +25,7 @@
  */
 
 import * as THREE from 'three';
-import { Body, RagdollJoint, LAYER, capsuleSpheres, capsule, selfGroup } from '../physics/RapierWorld.js';
+import { Body, RagdollJoint, LAYER, LOOSE_MASK, capsuleSpheres, capsule, selfGroup } from '../physics/RapierWorld.js';
 import { limbGeo } from './Bodies.js';
 import { clamp, lerp, makeRng } from '../engine/MathUtil.js';
 
@@ -577,7 +577,13 @@ export class DetachedPiece {
       spheres: capsuleSpheres(Math.max(0.001, dropLen * 0.5 - r * 0.5), r, 'y', 2),
       mass: clamp(dropLen * r * r * 300, 0.4, 12),
       friction: 0.8, restitution: 0.04, inertiaScale: 3, layer: LAYER.DEBRIS,
-      mask: LAYER.WORLD | LAYER.DEBRIS | LAYER.RAGDOLL | LAYER.PROP | LAYER.PLAYER,
+      /* A severed piece is a LOOSE body and meets everything — see LOOSE_MASK.
+       * This named PLAYER and not ENEMY, so a limb bounced off the person who
+       * cut it off and fell through the body standing next to them: driven,
+       * dropped from 4 m, 2.09 m of clearance on the player and −2.02 on a
+       * living droid whose own mask names DEBRIS and was waiting for the other
+       * half of the pair. */
+      mask: LOOSE_MASK,
     });
     this.physics.add(body);
     this.entries.push({ body, holder, boneName: bone.name, len: dropLen });
@@ -626,7 +632,7 @@ export class DetachedPiece {
       spheres: capsuleSpheres(Math.max(0.001, len * 0.5 - r * 0.5), r, 'y', 2),
       mass: clamp(len * r * r * 300, 0.3, 14),
       friction: 0.8, restitution: 0.03, inertiaScale: 3, layer: LAYER.DEBRIS,
-      mask: LAYER.WORLD | LAYER.DEBRIS | LAYER.RAGDOLL | LAYER.PROP | LAYER.PLAYER,
+      mask: LOOSE_MASK,                      // see the stump above
     });
     this.physics.add(body);
     this.entries.push({ body, holder, boneName: bone.name, len, bone });

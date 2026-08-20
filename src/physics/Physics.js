@@ -30,6 +30,41 @@ export const LAYER = {
   ALL:      0xffff,
 };
 
+/**
+ * WHAT A LOOSE BODY MEETS — every layer there is, DERIVED from the table above
+ * rather than typed out again beside it.
+ *
+ * Rapier pairs two colliders iff `(A.layer & B.mask) && (B.layer & A.mask)`, so
+ * a mask that leaves a layer out is half a pair and the pair is dead. Five
+ * places in the game make a loose body — a broken prop's fragments and a
+ * wrecked chassis (`World.spawnDebris`/`spawnDebrisGroup`), a severed limb
+ * (Ragdoll.js), a chunk of carved architecture (Destruction.js) and a crate
+ * (Props.js) — carrying four DIFFERENT hand-written masks between them.
+ * Measured, dropped from 4 m onto a standing player and onto a standing
+ * Training Droid, resting height above the victim's feet against capsules
+ * reaching 1.79 and 1.81:
+ *
+ *                              on the player      on a living body
+ *     World.spawnDebris         -0.04  THROUGH      0.35  THROUGH
+ *     World.spawnDebrisGroup    -0.06  THROUGH      0.26  THROUGH
+ *     Ragdoll severed limb       2.09               -2.02  THROUGH
+ *     Destruction chunk          1.99                2.01
+ *     Props crate                2.14                2.16
+ *
+ * — a whole wrecked chassis and every fragment of every broken prop falling
+ * through the person standing under it, and a severed arm passing through the
+ * living body it was cut off next to. `spawnDebrisGroup` is the one that hurts:
+ * `Enemy.js` hands it the ENTIRE destroyed machine.
+ *
+ * The rule a loose body wants is not a list, it is "everything", so this is
+ * that and not a fifth list. A layer added tomorrow is in it the day it exists;
+ * `LAYER.ALL` is deliberately not reused because it also spans the eight
+ * self-exclusion bits above the table (see SELF_GROUPS in RapierWorld.js),
+ * which are not layers and are not anybody's to name.
+ */
+export const LOOSE_MASK = Object.entries(LAYER)
+  .reduce((m, [k, v]) => (k === 'ALL' ? m : m | v), 0);
+
 let _bodyId = 1;
 
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -294,7 +329,7 @@ export class PhysicsWorld {
     this._grid = new Map();
     this.cellSize = opts.cellSize ?? 2.4;
     this.maxBodies = opts.maxBodies ?? 1400;
-    this.stats = { bodies: 0, contacts: 0, awake: 0, ms: 0 };
+    this.stats = { bodies: 0, contacts: 0, awake: 0, ms: 0, overBudget: 0 };
     this.killY = opts.killY ?? -180;
   }
 
@@ -317,20 +352,39 @@ export class PhysicsWorld {
   addJoint(j) { this.joints.push(j); return j; }
   removeJoint(j) { const i = this.joints.indexOf(j); if (i >= 0) this.joints.splice(i, 1); }
 
+  /**
+   * THE BODY BUDGET SPENDS DEBRIS, AND NOTHING ELSE — the same rule as the
+   * Rapier twin's `_cullOldestDebris`, and here for the same reason.
+   *
+   * This had a second pass under the debris one that took the first non-static
+   * body in insertion order, guarded only by `b.userData.keep` — a flag read
+   * on both these lines and WRITTEN NOWHERE IN src/, so the guard was vacuous
+   * and the pass was unfiltered. Driven at `maxBodies: 12` with a player proxy
+   * and twenty ragdoll bones and no debris at all in the world:
+   *
+   *     RapierWorld   0 culled, 9 refusals counted
+   *     PhysicsWorld  9 culled → the player proxy, bone 0 … bone 7
+   *
+   * The player's proxy is added exactly once, in the Player constructor, so
+   * after its cull nothing collides with the player for the rest of the
+   * session; a bone taken out from under a corpse drops every joint that
+   * touched it. DEBRIS is the only thing the game makes without counting, so
+   * it is the only thing the budget may spend; everything else has an owner
+   * that knows how to take it away whole. When there is no debris left the
+   * budget is not met, which is honest and bounded — `stats.overBudget` counts
+   * the refusals so the pressure is visible instead of silent.
+   */
   _cullOldestDebris() {
     for (let i = 0; i < this.bodies.length; i++) {
       const b = this.bodies[i];
-      if (b.layer === LAYER.DEBRIS && !b.userData.keep) {
+      if (b.layer === LAYER.DEBRIS && !b.static) {
         if (b.userData.onCull) b.userData.onCull();
         this.remove(b);
-        return;
+        return true;
       }
     }
-    // No debris to give up — drop the first non-essential body.
-    for (let i = 0; i < this.bodies.length; i++) {
-      const b = this.bodies[i];
-      if (!b.static && !b.userData.keep) { if (b.userData.onCull) b.userData.onCull(); this.remove(b); return; }
-    }
+    this.stats.overBudget++;
+    return false;
   }
 
   _contact() {

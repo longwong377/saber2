@@ -180,6 +180,73 @@ export async function run({ check, assert, THREE }) {
   });
 
   /**
+   * …AND WHETHER THAT IS EXACT OR MERELY CLOSER, WHICH THE CLAUSE ABOVE CANNOT
+   * SAY.
+   *
+   * Its own printed line reads `dt=0.0333→1.37  dt=0.0667→1.47  dt=0.1000→1.50`
+   * against a true 1.35, which looks like a world that still runs slower the
+   * worse the frame rate gets. It is not. Those three rates resolve to the SAME
+   * substep and produce a byte-identical trajectory; the spread is that check's
+   * own sampling — it tests `y > 0.25` once per FRAME, and the box bounces
+   * 2.5 cm back above that line after first touching, so a coarse frame misses
+   * the first crossing and reports the second. A real fall is over inside a
+   * frame, so that is honest for what it measures and useless for this.
+   *
+   * This measures the accumulator with contact taken out of it: free fall, no
+   * ground, an exact number of FRAMES rather than a stopping condition. Two
+   * things follow, and both are exact rather than approximate.
+   *
+   *   · Semi-implicit Euler integrates VELOCITY exactly — v = g·t whatever the
+   *     step — so any frame time the world throws away shows up as a velocity
+   *     deficit with no tolerance to argue about. On the code this replaced,
+   *     ten frames of dt=0.1 advanced 10 x 1/30 s and the body was doing 7.33
+   *     m/s where it should be doing 22.
+   *   · Distance is not exact and cannot be: a step of h over-falls by g·h·t/2.
+   *     But it depends ONLY on h, so every frame rate that resolves to the same
+   *     substep must fall the same distance to the last decimal — which is what
+   *     "the timestep is conserved" means, as opposed to "it is nearly". The
+   *     grouping is read off `stats.substeps`, so it follows the cap rather
+   *     than restating it.
+   */
+  check('physics: a frame of simulation is the same amount of world at every frame rate', () => {
+    const { Body, box } = RapierWorldModule;
+    const G = -22, SECONDS = 1;
+    const rates = [1 / 240, 1 / 120, 1 / 60, 1 / 30, 1 / 20, 1 / 15, 0.1];
+    const marks = [];
+    for (const dt of rates) {
+      const n = Math.round(SECONDS / dt);
+      const w = new RapierWorld({ gravity: G });
+      const b = w.add(new Body({ position: V(THREE, 0, 400, 0), shape: box(0.2, 0.2, 0.2), mass: 5,
+        linearDamping: 0, allowSleep: false }));
+      for (let i = 0; i < n; i++) w.step(dt);
+      marks.push({ dt, n, fell: 400 - b.position.y, v: -b.velocity.y, h: dt / w.stats.substeps });
+      w.dispose();
+    }
+    const trueV = -G * SECONDS;
+    const slow = marks.filter((m) => Math.abs(m.v - trueV) > 1e-3);
+    assert(!slow.length,
+      `after exactly ${SECONDS} s of frames a body in free fall is doing `
+      + slow.map((m) => `${m.v.toFixed(2)} m/s at dt=${m.dt.toFixed(4)}`).join(', ')
+      + ` and not ${trueV.toFixed(2)} — the world is not advancing by the frame it was given. A step `
+      + 'bound used as a FRAME bound throws the rest of the frame away, so debris, corpses, crates '
+      + 'and severed limbs fall slower than the characters walking past them');
+    // …and same substep, same fall, to the last decimal.
+    const groups = new Map();
+    for (const m of marks) {
+      const k = m.h.toFixed(6);
+      (groups.get(k) || groups.set(k, []).get(k)).push(m);
+    }
+    const ragged = [...groups.values()].filter((g) => g.length > 1
+      && Math.max(...g.map((m) => m.fell)) - Math.min(...g.map((m) => m.fell)) > 1e-6);
+    assert(!ragged.length, ragged.map((g) => g.map((m) => `dt=${m.dt.toFixed(4)} fell ${m.fell.toFixed(6)}`).join(' vs ')).join('; ')
+      + ' — these rates resolve to the same substep and must therefore produce the same trajectory; '
+      + 'they do not, so the substep is not the only thing the frame rate is changing');
+    return `1 s of frames in free fall: `
+      + marks.map((m) => `dt=${m.dt.toFixed(4)}x${m.n} → ${m.fell.toFixed(3)} m at ${m.v.toFixed(3)} m/s (h=1/${(1 / m.h).toFixed(0)})`).join('; ')
+      + ` — v is exact at every rate, and the ${(-G * m0h(marks)).toFixed(3)} m spread in distance is the step's own truncation, g·h·t/2`;
+  });
+
+  /**
    * THE CLAUSE FOR THE NON-FINITE BODY.
    *
    * Rapier rejects NaN on the way in, so NaN is not the reachable failure —
@@ -230,6 +297,74 @@ export async function run({ check, assert, THREE }) {
       + 'velocity, position, 1e12 — none of them left a body at NaN in the world';
   });
 
+  /**
+   * THE OTHER SIDE OF THE SAME GUARD, WHICH NOTHING ASKED FOR.
+   *
+   * The clause above proves the boundary REFUSES a bad impulse. Nothing proved
+   * it ADMITS a good one, and a guard with only a refusal clause is the same
+   * shape as a check that cannot fail — so the first version of it was sized in
+   * the wrong currency and shipped. `MAX_SPEED` is metres per second; an
+   * impulse is N·s and carries the body's mass, so `|J| < MAX_SPEED` asks a
+   *22 kg crate an easy question and a 900 kg pillar an impossible one.
+   * `force.mjs` measured the consequence: at forcePower 4 the pillar went from
+   * 31.3 m/s to 0.40, which is one step of gravity, i.e. the push was dropped.
+   *
+   * The property is stated here as MASS-INVARIANCE, so it needs no number of
+   * its own and cannot drift from whatever the bound is set to: the game's own
+   * impulses are all mass-proportional (`Player.forcePush` is `mass · 15 · k ·
+   * P · heft`, the explosion is `force · k · mass · 0.5`, the ragdoll shove is
+   * `mass · 0.4`), so the SPEED a shove buys does not depend on what it is
+   * shoving — and neither may the guard. The mass range is the game's own, from
+   * the lightest severed finger to the heaviest thing on the roster.
+   */
+  check('physics: the impulse guard is priced in mass, so one shove means one speed at every weight', async () => {
+    const { Body, box } = RapierWorldModule;
+    const { ARCHETYPES } = await import('../../src/game/Enemy.js');
+    const heaviest = Math.max(...Object.values(ARCHETYPES).map((a) => a.mass || 0));
+    // A severed fingertip is the light end (Ragdoll clamps a piece at 0.3 kg);
+    // the heaviest body the game can build is the other.
+    const masses = [0.3, 1, 22, 90, 500, 900, heaviest];
+    /* The largest shove each weight is allowed, found by asking rather than by
+     * quoting the bound: double until it is refused, then walk back. */
+    const ceiling = (mass) => {
+      const w = new RapierWorld({ gravity: 0 });
+      let lo = 0, hi = 1;
+      const speed = (v) => {
+        const b = w.add(new Body({ position: V(THREE, 0, 0, 0), shape: box(0.3, 0.3, 0.3), mass,
+          gravityScale: 0, allowSleep: false }));
+        b.applyImpulse(V(THREE, mass * v, 0, 0), null);
+        w.step(1 / 60);
+        const got = b.velocity.length();
+        w.remove(b);
+        return got;
+      };
+      for (let i = 0; i < 40 && speed(hi) > hi * 0.5; i++) { lo = hi; hi *= 2; }
+      for (let i = 0; i < 24; i++) { const mid = (lo + hi) / 2; if (speed(mid) > mid * 0.5) lo = mid; else hi = mid; }
+      w.dispose();
+      return lo;
+    };
+    const rows = masses.map((m) => [m, ceiling(m)]);
+    const top = Math.max(...rows.map(([, c]) => c)), bottom = Math.min(...rows.map(([, c]) => c));
+    assert(bottom > top * 0.9,
+      'the same shove buys a different speed depending on what it is shoving — '
+      + rows.map(([m, c]) => `${m} kg admits ${c.toFixed(1)} m/s`).join(', ')
+      + ' — the boundary is bounding the IMPULSE, which carries mass, with a number that is a '
+      + 'SPEED, so it refuses outright every push heavy enough to be worth making');
+    // …and the refusal must still be there, on the value that traps the solver.
+    const w = new RapierWorld({ gravity: 0 });
+    const b = w.add(new Body({ position: V(THREE, 0, 0, 0), shape: box(0.3, 0.3, 0.3), mass: heaviest,
+      gravityScale: 0, allowSleep: false }));
+    b.applyImpulse(V(THREE, heaviest * 1e12, 0, 0), null);
+    w.step(1 / 60);
+    const trapSpeed = b.velocity.length();
+    w.dispose();
+    assert(trapSpeed === 0,
+      `a 1e12 m/s shove on the heaviest body in the game was ADMITTED (${trapSpeed}) — the guard has `
+      + 'been widened past the value Rapier traps out of wasm on');
+    return `one shove, ${rows.length} weights from ${masses[0]} to ${heaviest} kg: admitted up to `
+      + rows.map(([m, c]) => `${m}kg→${c.toFixed(0)}`).join(', ') + ' m/s, and 1e12 still refused';
+  });
+
   check('physics: a World disposed twice leaves nothing behind', async () => {
     /* The same property one level up, through the real World, because that is
      * the shape `deploy()`'s recovery produces. */
@@ -253,3 +388,6 @@ export async function run({ check, assert, THREE }) {
   });
 
 }
+
+/** The largest step in a sweep, for reporting the truncation term g·h·t/2. */
+function m0h(marks) { return Math.max(...marks.map((m) => m.h)) / 2; }
