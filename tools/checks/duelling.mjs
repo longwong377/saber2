@@ -59,6 +59,7 @@ import { duelRng, DuelBrain, FORMS, FORM_KEYS, BladeLock, guardQuat, guardToWorl
 import { enemyRng } from '../../src/game/Enemy.js';
 import { DIFFICULTY, resolveBladeClash, bladesTouching, CLASH_RADIUS } from '../../src/game/Combat.js';
 import { segmentSegment } from '../../src/physics/Physics.js';
+import { clocked } from './_shared.mjs';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const scene = new THREE.Scene();
@@ -327,6 +328,11 @@ function allFormsBare() {
 }
 
 export async function run({ check, assert }) {
+  /* Every check in this file is wrapped: the two shared streams are put on
+   * their modules' own seeds before each body and the wind clock is put back
+   * after it. See tools/checks/_shared.mjs — the rule is there, not here.
+   */
+  check = await clocked(check);
   await initPhysics();
 
   /* ══ the geometry: which way does a duellist hold its blade? ════════ */

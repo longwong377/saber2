@@ -35,6 +35,7 @@ import { initPhysics } from '../../src/physics/Rapier.js';
 import { World } from '../../src/game/World.js';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
 import { DEFAULT_SETTINGS } from '../../src/ui/Menu.js';
+import { clocked } from './_shared.mjs';
 
 /* ── the smallest engine a World runs on ─────────────────────────────── */
 
@@ -134,6 +135,11 @@ function walk(world, p, secs, input) {
 }
 
 export async function run({ check, assert }) {
+  /* Every check in this file is wrapped: the two shared streams are put on
+   * their modules' own seeds before each body and the wind clock is put back
+   * after it. See tools/checks/_shared.mjs — the rule is there, not here.
+   */
+  check = await clocked(check);
   await initPhysics();
 
   /* Every check here is async and the harness starts them all in one pass, so

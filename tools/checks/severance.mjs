@@ -55,6 +55,7 @@ import { GRIND_LETHALITY, grindWorth, World } from '../../src/game/World.js';
 import { Rig, BONE_ROLES } from '../../src/game/Rig.js';
 import * as PHYS from '../../src/physics/RapierWorld.js';
 import '../../src/game/Levels.js';        // registers the Command units, machines and menagerie
+import { clocked } from './_shared.mjs';
 
 /** Every archetype that can be built — found, not listed. */
 const ROSTER = Object.keys(ARCHETYPES).filter((t) => typeof ARCHETYPES[t].build === 'function');
@@ -183,6 +184,11 @@ function live(type) {
 }
 
 export async function run({ check, assert }) {
+  /* Every check in this file is wrapped: the two shared streams are put on
+   * their modules' own seeds before each body and the wind clock is put back
+   * after it. See tools/checks/_shared.mjs — the rule is there, not here.
+   */
+  check = await clocked(check);
 
   check('severance: a blade through the DRAWN body reaches a capsule', () => {
     /**

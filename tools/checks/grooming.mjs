@@ -43,6 +43,7 @@ import { BipedAnimator } from '../../src/game/Rig.js';
 import { attachCloak, attachLekku } from '../../src/game/Cloth.js';
 import { Injury, applyInjury, INJURY_COLORS } from '../../src/game/Injury.js';
 import { weave, weaveLine } from './_weave.mjs';
+import { clocked } from './_shared.mjs';
 
 const src = (f) => new URL(`../../src/${f}`, import.meta.url);
 const root = (f) => new URL(`../../${f}`, import.meta.url);
@@ -273,7 +274,12 @@ function groomParts(built) {
 const _gv1 = new THREE.Vector3(), _gv2 = new THREE.Vector3(), _gv3 = new THREE.Vector3();
 const _gv4 = new THREE.Vector3(), _gv5 = new THREE.Vector3(), _gv6 = new THREE.Vector3();
 
-export function run({ check, assert, near }) {
+export async function run({ check, assert, near }) {
+  /* Every check in this file is wrapped: the two shared streams are put on
+   * their modules' own seeds before each body and the wind clock is put back
+   * after it. See tools/checks/_shared.mjs — the rule is there, not here.
+   */
+  check = await clocked(check);
 
   /* ══════════════════════════════════════════════════════════════════ */
   /*  the contract                                                      */

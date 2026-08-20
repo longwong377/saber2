@@ -24,6 +24,7 @@ import * as THREE from 'three';
 import { Player } from '../../src/game/Player.js';
 import { Saber, SABER_COLORS, HILT_STYLES } from '../../src/game/Saber.js';
 import { dropSaber, hiltWithinReach, ageDropped, PICKUP_REACH, PICKUP_DELAY } from '../../src/game/Dropped.js';
+import { clocked } from './_shared.mjs';
 
 let THREE_ = null;
 
@@ -63,6 +64,11 @@ function bench() {
 }
 
 export async function run({ check, assert, THREE: T }) {
+  /* Every check in this file is wrapped: the two shared streams are put on
+   * their modules' own seeds before each body and the wind clock is put back
+   * after it. See tools/checks/_shared.mjs — the rule is there, not here.
+   */
+  check = await clocked(check);
   THREE_ = T;
 
   check('dropped: a hilt put down is a real object, in the crystal it was built with', () => {

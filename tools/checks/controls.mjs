@@ -47,6 +47,7 @@ import { Particles } from '../../src/world/Particles.js';
 import { GrassField } from '../../src/world/Scenery.js';
 import { Terrain } from '../../src/world/Terrain.js';
 import { DojoDirector } from '../../src/game/Dojo.js';
+import { clocked } from './_shared.mjs';
 
 /**
  * Where every COLUMN of Engine's QUALITY table is actually read.
@@ -243,6 +244,11 @@ function solverTargets(w) {
 }
 
 export async function run({ check, assert }) {
+  /* Every check in this file is wrapped: the two shared streams are put on
+   * their modules' own seeds before each body and the wind clock is put back
+   * after it. See tools/checks/_shared.mjs — the rule is there, not here.
+   */
+  check = await clocked(check);
 
   /* ══════════════════════════════════════════════════════════════════ */
   /*  1. Camera shake                                                   */

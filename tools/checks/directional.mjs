@@ -33,6 +33,7 @@ import { World } from '../../src/game/World.js';
 import { Player } from '../../src/game/Player.js';
 import { ACTIONS, WHEEL, defaultBindings, conflicts, keyLabel } from '../../src/engine/Bindings.js';
 import { Input } from '../../src/engine/Input.js';
+import { clocked } from './_shared.mjs';
 
 const scene = new THREE.Scene();
 const CHEST = new THREE.Vector3(0, 1.35, 0);
@@ -137,6 +138,11 @@ function answers(g, d, { miss = 0, from = 24, origin = CHEST } = {}) {
 }
 
 export async function run({ check, assert }) {
+  /* Every check in this file is wrapped: the two shared streams are put on
+   * their modules' own seeds before each body and the wind clock is put back
+   * after it. See tools/checks/_shared.mjs — the rule is there, not here.
+   */
+  check = await clocked(check);
 
   /* ══════════════════════════════════════════════════════════════════ */
   /*  1. The partition                                                  */

@@ -52,6 +52,7 @@ import { GrassField, ground } from '../../src/world/Scenery.js';
 import { Particles } from '../../src/world/Particles.js';
 import { LEVELS, LEVEL_ORDER, groundMight, beginDressing } from '../../src/game/Levels.js';
 import { Saber } from '../../src/game/Saber.js';
+import { clocked } from './_shared.mjs';
 
 /**
  * THE GROUNDS THE GAME ACTUALLY SHIPS, and a constructor that refuses the rest.
@@ -194,7 +195,12 @@ function tableTau(tiers, r0, r1, thickness, coverFrac, lenGain) {
   return area;
 }
 
-export function run({ check, assert, near }) {
+export async function run({ check, assert, near }) {
+  /* Every check in this file is wrapped: the two shared streams are put on
+   * their modules' own seeds before each body and the wind clock is put back
+   * after it. See tools/checks/_shared.mjs — the rule is there, not here.
+   */
+  check = await clocked(check);
 
   check('levels: nothing grows on snow, on sand or on deck plate', () => {
     /* "Delete grass from any level whose ground is snow, ice, sand or metal."

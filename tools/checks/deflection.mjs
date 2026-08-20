@@ -20,6 +20,7 @@ import { Saber } from '../../src/game/Saber.js';
 import { intersectBladeSweep } from '../../src/game/Bolts.js';
 import { DIFFICULTY } from '../../src/game/Combat.js';
 import { SaberController } from '../../src/game/SaberController.js';
+import { clocked } from './_shared.mjs';
 
 const scene = new THREE.Scene();
 
@@ -97,6 +98,11 @@ function captureWindow(saber, mid, speed, axis, dt = 1 / 60) {
 }
 
 export async function run({ check, assert }) {
+  /* Every check in this file is wrapped: the two shared streams are put on
+   * their modules' own seeds before each body and the wind clock is put back
+   * after it. See tools/checks/_shared.mjs — the rule is there, not here.
+   */
+  check = await clocked(check);
   /* ── the window itself ─────────────────────────────────────────────── */
 
   check('block: a still blade has a capture window you can actually aim at', () => {

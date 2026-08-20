@@ -20,6 +20,7 @@
 import '../dom-shim.mjs';
 import { Player } from '../../src/game/Player.js';
 import { Enemy } from '../../src/game/Enemy.js';
+import { clocked } from './_shared.mjs';
 
 /** A receiver with just the collaborators Player.damage actually touches. */
 /*
@@ -71,6 +72,11 @@ function stubWorld(THREE) {
 }
 
 export async function run({ check, assert }) {
+  /* Every check in this file is wrapped: the two shared streams are put on
+   * their modules' own seeds before each body and the wind clock is put back
+   * after it. See tools/checks/_shared.mjs — the rule is there, not here.
+   */
+  check = await clocked(check);
   check('vitals: coming back to life does not land on the people standing there', async () => {
     /**
      * DYING WHILE FALLING WAS A FREE FORCE SLAM AT YOUR REVIVE POINT.

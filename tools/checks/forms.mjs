@@ -32,6 +32,7 @@ import { RapierWorld } from '../../src/physics/RapierWorld.js';
 import { Enemy, enemyRng } from '../../src/game/Enemy.js';
 import { DuelBrain, FORMS, FORM_KEYS, TIER, ATTACKS, duelRng } from '../../src/game/Duel.js';
 import { World } from '../../src/game/World.js';
+import { clocked } from './_shared.mjs';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const flat = () => ({
@@ -123,6 +124,11 @@ function brain(formKey = 'makashi') {
 }
 
 export async function run({ check, assert }) {
+  /* Every check in this file is wrapped: the two shared streams are put on
+   * their modules' own seeds before each body and the wind clock is put back
+   * after it. See tools/checks/_shared.mjs — the rule is there, not here.
+   */
+  check = await clocked(check);
   await initPhysics();
 
   check('forms: a form has a rhythm, and only Juyo will not hold one', () => {

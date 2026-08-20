@@ -34,6 +34,7 @@ import { initPhysics } from '../../src/physics/Rapier.js';
 import { RapierWorld } from '../../src/physics/RapierWorld.js';
 import { Enemy, enemyRng, applyModifier } from '../../src/game/Enemy.js';
 import { DIFFICULTY } from '../../src/game/Combat.js';
+import { clocked } from './_shared.mjs';
 
 /** A DuelBrain with just enough of an owner to answer `chambersWith`. */
 function brainFor(key) {
@@ -226,6 +227,11 @@ function dualist({ answer = 'none', seconds = 45 } = {}) {
 }
 
 export async function run({ check, assert }) {
+  /* Every check in this file is wrapped: the two shared streams are put on
+   * their modules' own seeds before each body and the wind clock is put back
+   * after it. See tools/checks/_shared.mjs — the rule is there, not here.
+   */
+  check = await clocked(check);
   await initPhysics();
   check('answerable: every attack the game says to chamber, a swing can chamber', () => {
     /**

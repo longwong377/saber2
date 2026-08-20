@@ -22,6 +22,7 @@
 import * as THREE from 'three';
 import { BladeContactSolver, TOUGHNESS, cutNeed } from '../../src/game/Combat.js';
 import { Saber } from '../../src/game/Saber.js';
+import { clocked } from './_shared.mjs';
 
 const scene = new THREE.Scene();
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
@@ -66,6 +67,11 @@ function pass(cap, speed, { dt = 1 / 60, span = 1.2, target = {} } = {}) {
 }
 
 export async function run({ check, assert }) {
+  /* Every check in this file is wrapped: the two shared streams are put on
+   * their modules' own seeds before each body and the wind clock is put back
+   * after it. See tools/checks/_shared.mjs — the rule is there, not here.
+   */
+  check = await clocked(check);
   check('cutting: one committed slash parts a trooper, a droid and armour', () => {
     const rows = [];
     for (const [what, r, tough, speed] of [

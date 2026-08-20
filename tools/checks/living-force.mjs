@@ -53,6 +53,7 @@ import { DojoDirector, LESSONS } from '../../src/game/Dojo.js';
 import { DIFFICULTY } from '../../src/game/Combat.js';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
 import { makeDocument } from './_page.mjs';
+import { clocked } from './_shared.mjs';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const src = (p) => new URL('../../src/' + p, import.meta.url);
@@ -174,6 +175,11 @@ const NEW_FACETS = [
 ];
 
 export async function run({ check, assert }) {
+  /* Every check in this file is wrapped: the two shared streams are put on
+   * their modules' own seeds before each body and the wind clock is put back
+   * after it. See tools/checks/_shared.mjs — the rule is there, not here.
+   */
+  check = await clocked(check);
   await initPhysics();
   Foe = await import('../../src/game/Enemy.js?living-force');
 

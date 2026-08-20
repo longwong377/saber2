@@ -38,6 +38,7 @@ import { ORDERS, ORDER_IDS, getOrder, applyOrder, crystalPalette, crystalAt,
 import { ROBE_COLORS } from '../../src/game/Bodies.js';
 import { BOONS } from '../../src/game/Waves.js';
 import { readFile } from 'node:fs/promises';
+import { clocked } from './_shared.mjs';
 
 const src = (p) => new URL(`../../src/${p}`, import.meta.url);
 
@@ -148,6 +149,11 @@ function subject(orderId, saberOpts = {}) {
 }
 
 export async function run({ check, assert, near }) {
+  /* Every check in this file is wrapped: the two shared streams are put on
+   * their modules' own seeds before each body and the wind clock is put back
+   * after it. See tools/checks/_shared.mjs — the rule is there, not here.
+   */
+  check = await clocked(check);
   const P = Saber.PROFILE;
 
   /* ══════════════════════════════════════════════════════════════════ */

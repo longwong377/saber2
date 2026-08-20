@@ -32,25 +32,151 @@
  * in the suites that measure a stochastic system without seeding it; this is
  * the part a new file can do for itself.
  *
- * USE IT IN A `finally`, in every check body that drives a World. The checks in
- * one file all start before any of them awaits, so they interleave; each of
- * them restoring the SAME snapshot means whichever finishes last leaves the
- * right value behind, and the suite after this one starts where it would have
- * started if this file did not exist.
+ * USE IT IN A `finally`, in every check body that drives a World — or, since
+ * there are thirty-odd such files, hand this file the suite's `check` once and
+ * let `clocked` below do it. The checks in one file all start before any of
+ * them awaits, so they interleave; each of them restoring the SAME snapshot
+ * means whichever finishes last leaves the right value behind, and the suite
+ * after this one starts where it would have started if this file did not exist.
+ *
+ * ── THE WIND WAS PUT BACK ONE FIELD OUT OF SIX, and it took a measurement to
+ * see it. `snapshotShared` recorded `wind.time` and nothing else, so a suite
+ * that loaded a level handed the next one that level's ENTIRE wind. Measured,
+ * `pvp` then anything, with `restoreShared` called between them exactly as the
+ * gate calls it:
+ *
+ *     at start      heading 0.6200  strength 1.7000  gust 0.6200  wander 1.0000
+ *     after pvp     heading 2.4784  strength 3.6044  gust 0.6061  wander 0.3600
+ *     …restored     heading 2.4784  strength 3.6044  gust 0.6061  wander 0.3600
+ *
+ * — the restore moved the clock and left the weather. Worse, `heading` and
+ * `dir` are DERIVED from `time` by `_refresh()`, so rewinding the clock under
+ * them left the field pointing where it had been at the moved time: a wind
+ * whose direction disagreed with its own clock, which is a state the game
+ * itself cannot reach. The whole configuration goes back now and `_refresh()`
+ * runs, which is what "the clock back exactly" was always claiming.
+ *
+ * ── AND THE AUDIO SINGLETON, which cost 38 checks across five suites. It is
+ * module scope by the same argument the two generators are — `Enemy._jetFx`
+ * calls the module's `audio`, so a check of it must drive the real one — and a
+ * check that swapped in a fake context left `master` live beside a null `ctx`,
+ * a pairing `AudioEngine.setVolume` reads straight through. Every later suite
+ * that built a Menu died on its own Volume slider. tools/checks/audio.mjs holds
+ * the same restore locally, in the `finally` of the one check that does the
+ * damage, which is the right place to CONTAIN it; this is the boundary that
+ * makes the class structurally impossible instead of fixed once. Neither lists
+ * a field name — a graph node added to `init()` tomorrow is carried by both.
+ *
+ * ── WHAT IS STILL NOT COVERED, and it is not an oversight in each case:
+ * Scenery.js's own `rng` (module scope, private, drives every scatter), the
+ * wave stream (`seedWaves` is a suite's own call, because the seed is part of
+ * what it is measuring), `ground.clock` and `_scarAt` (they have to move
+ * together or `ground.scar`'s throttle refuses every cut for the rest of the
+ * run — see the note on `ground.clock`), and Engine's once-only ShaderChunk
+ * flags. And the one nothing here can reach: a suite's own async checks
+ * interleave, so two of them sharing a module-scope stream draw in an order
+ * that depends on what ran before. That is `tools/_seq.mjs`'s fourth class and
+ * it is fixed in the suite, not at the boundary.
  */
 
-/** The module-scope clocks a suite is about to advance. */
+/** Everything at module scope that a suite is about to move. */
 export async function snapshotShared() {
   const { wind } = await import('../../src/world/Scenery.js');
   const { enemyRng } = await import('../../src/game/Enemy.js');
   const { duelRng } = await import('../../src/game/Duel.js');
-  return { wind, time: wind.time, enemyRng, duelRng };
+  const { audio } = await import('../../src/engine/Audio.js');
+  return {
+    wind,
+    time: wind.time,
+    /* The four `configure` sets, which is the whole of a level's wind block.
+     * `heading` and `dir` are derived and are not recorded: `_refresh()` builds
+     * both out of these and the restored clock. */
+    air: { heading: wind.baseHeading, strength: wind.strength, gustiness: wind.gustiness, wander: wind.wander },
+    enemyRng,
+    duelRng,
+    audio,
+    /* Every own property, by name at no point. */
+    sound: { ...audio },
+  };
 }
 
 /** The clock back exactly; the two generators back to their modules' seeds. */
 export function restoreShared(snap) {
   if (!snap) return;
-  snap.wind.time = snap.time;
+  const w = snap.wind;
+  w.time = snap.time;
+  w.baseHeading = snap.air.heading;
+  w.strength = snap.air.strength;
+  w.gustiness = snap.air.gustiness;
+  w.wander = snap.air.wander;
+  w._refresh();                             // heading and dir are derived from all five
   snap.enemyRng.seed(4711);                 // src/game/Enemy.js:41
   snap.duelRng.seed(8123);                  // src/game/Duel.js:33
+  for (const k of Object.keys(snap.audio)) if (!(k in snap.sound)) delete snap.audio[k];
+  Object.assign(snap.audio, snap.sound);
+}
+
+/**
+ * WRAP A SUITE'S `check` ONCE, INSTEAD OF WRITING THE PAIR IN EVERY BODY.
+ *
+ * `snapshotShared` + `restoreShared` in a `finally` is five lines, and the two
+ * clauses in tools/checks/determinism.mjs found 26 suites driving a World's
+ * frames without them and 13 building enemies without ever seeding the stream
+ * they draw from. Twenty-six hand-rolled copies of a five-line rule is HANDOFF
+ * §2.4 waiting to happen — one of them will eventually restore something the
+ * others do not, and it will be a suite nobody re-reads. So the rule lives
+ * here and a suite CALLS it:
+ *
+ *     import { clocked } from './_shared.mjs';
+ *     export async function run({ check, assert }) {
+ *       check = await clocked(check);
+ *       …
+ *     }
+ *
+ * Three things about the shape, each of which was the alternative:
+ *
+ * ONE SNAPSHOT FOR THE WHOLE SUITE, not one per check. The header above says
+ * why: a file's checks all start before any of them awaits, so they interleave,
+ * and each restoring the SAME snapshot means whichever finishes last leaves the
+ * right value behind. Snapshotting per check would have the second check record
+ * the clock the first one had already moved, and the suite would hand its
+ * successor a number that depends on which body won the race.
+ *
+ * SEEDING IS THE RESTORE, called before the body instead of after it. Not a
+ * second function that has to be kept in step with it: `restoreShared` already
+ * says what a quiescent stream is (`enemyRng` 4711, `duelRng` 8123, the wind
+ * clock where the suite found it), and a separate `seedShared` would be a
+ * second copy of that statement — §2.3's hand-maintained table beside its
+ * generated twin, in the one file whose whole subject is that class.
+ *
+ * A SYNCHRONOUS BODY STAYS SYNCHRONOUS. Every runner tells a sync check from an
+ * async one by whether the body handed back a thenable, and wrapping every body
+ * in an `async` function would push all of them onto the pending list — which
+ * changes the interleaving this file exists to make predictable, in every suite
+ * at once, as a side effect of a hygiene fix.
+ *
+ * WHAT IT DOES NOT COVER, measured rather than assumed. `ground` (Scenery.js)
+ * carries a monotonic `clock` and a `_scarAt` stamp that no runner puts back —
+ * HANDOFF §6.2's "the one piece of shared state the runner does not restore
+ * between suites" — and the pair has to move together or not at all, because
+ * `ground.scar`'s throttle compares them and a clock rolled back under a stamp
+ * that was not refuses every scar for the rest of the run. That is the defect
+ * the note on `ground.clock` records, and rewinding one half here would put it
+ * back. Also uncovered: Waves.js's stream (`seedWaves` is a suite's own call,
+ * because the seed is part of what it is measuring) and Engine's once-only
+ * ShaderChunk flags.
+ */
+export async function clocked(check) {
+  const snap = await snapshotShared();
+  return (label, fn) => check(label, () => {
+    restoreShared(snap);                        // the body draws from a stated phase
+    let out;
+    try { out = fn(); } catch (e) { restoreShared(snap); throw e; }
+    if (out && typeof out.then === 'function') {
+      return out.then((v) => { restoreShared(snap); return v; },
+        (e) => { restoreShared(snap); throw e; });
+    }
+    restoreShared(snap);
+    return out;
+  });
 }

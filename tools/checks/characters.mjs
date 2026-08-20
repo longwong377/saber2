@@ -20,6 +20,7 @@
 import * as B from '../../src/game/Bodies.js';
 import { BipedAnimator } from '../../src/game/Rig.js';
 import { Enemy } from '../../src/game/Enemy.js';
+import { clocked } from './_shared.mjs';
 
 /** The five things an Enemy touches while it is being posed, and nothing else. */
 function gunWorld() {
@@ -151,7 +152,12 @@ function sliceFill(m, yLocal, N = 512) {
 
 const lum = (c) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
 
-export function run({ check, assert, near, THREE: T }) {
+export async function run({ check, assert, near, THREE: T }) {
+  /* Every check in this file is wrapped: the two shared streams are put on
+   * their modules' own seeds before each body and the wind clock is put back
+   * after it. See tools/checks/_shared.mjs — the rule is there, not here.
+   */
+  check = await clocked(check);
   THREE = T;
 
   check('characters: the figure is seven heads tall, not six', () => {

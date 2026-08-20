@@ -84,17 +84,51 @@ export async function run({ check, assert }) {
 
   check('determinism: a suite that drives a World hands the module clocks back', async () => {
     /**
-     * `_shared.mjs` snapshots the wind clock and returns both random streams to
-     * their modules' own seeds. It exists because four new World-driving suites
+     * `_shared.mjs` snapshots the wind and returns both random streams to their
+     * modules' own seeds. It exists because four new World-driving suites
      * flipped three unrelated checks; it was written with that fix and adopted
-     * by the four suites in that pass, which is 4 of the 29 that boot a World.
+     * by the four suites in that pass, which was 4 of the 29 that boot a World.
      *
-     * The other 25 are not a backlog of bugs — most of them measure things no
-     * clock touches. The property that matters is that a suite driving a World
-     * either RESTORES what it moved or does not move anything a later suite
-     * reads. This asserts the first half, because it is the half a machine can
-     * see, and it is scoped to the suites that actually run frames: booting a
-     * World costs nothing, `world.update` in a loop is what moves a clock.
+     * The property that matters is that a suite driving a World either RESTORES
+     * what it moved or does not move anything a later suite reads. This asserts
+     * the first half, because it is the half a machine can see, and it is
+     * scoped to the suites that actually run frames: booting a World costs
+     * nothing, `world.update` in a loop is what moves a clock.
+     *
+     * THE OTHER 26 WERE SWEPT ONTO `clocked`, one line in each `run()`, and
+     * what that sweep is worth was measured BEFORE it was made rather than
+     * argued. Every one of the 26 was run under a harness that restores nothing
+     * between suites, and the footprint it left read out:
+     *
+     *   twelve of the 26 leave NOTHING AT ALL — catch, controls, cutting,
+     *     deflection, directional, frame-budget, grooming, living-force, order,
+     *     training, vitals, arrivals: zero on the wind clock, zero on
+     *     `ground.clock`, zero draws from either stream;
+     *   seven move the wind clock — command 335.4 s, coop 238.5 s, force
+     *     121.2 s, pvp 31.4 s, lifecycle 18.6 s, forest 4.0 s, garments 1.7 s;
+     *   the rest only draw — severance 67 289 values out of `duelRng`,
+     *     answerable 385/314, compel 121, audio 73.
+     *
+     * AND UNDER THE GATE ALL OF IT IS ALREADY NEUTRALISED, because
+     * `verify.mjs` calls `restoreShared(baseline)` BEFORE every suite. Measured
+     * both ways: `catch` after `coop`, and `telekinesis` after `severance`, are
+     * byte-identical to the same suite run alone even with no restore between
+     * them at all. So this clause is HYGIENE at the gate's boundary — what it
+     * buys is inside a file. A suite's checks interleave, so the second one to
+     * run reads whatever the first left, and three of these answered a
+     * different number the second time they ran in one process:
+     *
+     *   characters  a rifle points where its owner is aiming
+     *                 heavy 0.9° → 0.4°, arc 0.9° → 0.4°
+     *   compel      the muzzle is behind the chest for a self-shot
+     *                 firing 70° up → 69° up
+     *   force       a held body does not advance
+     *                 free: 9.30 m closed → 10.97 m; the bar runs dry after
+     *                 54 frames → 37
+     *
+     * Wrapped, each of those is the same number on both runs. That is the whole
+     * of what the sweep fixed: it did not close a red in the gate, and saying
+     * otherwise would make the next reader distrust the rest of this file.
      */
     const drivers = files.filter(([, t]) => {
       const src = strip(t);
@@ -102,13 +136,16 @@ export async function run({ check, assert }) {
     });
     assert(drivers.length > 4, `only ${drivers.length} suites were detected as driving frames — the detector is wrong`);
     const bare = drivers.filter(([, t]) => !/_shared\.mjs/.test(t)).map(([n]) => n);
-    // The bar is the count at the time this was written, and it may only fall.
-    // A new suite that drives frames without restoring is a new source of the
-    // exact non-determinism above, and this is where it gets noticed.
-    assert(bare.length <= 25,
+    /* The bar was 25 when this was written and it may only fall; the sweep took
+     * it to nought, so nought is what it holds at. A new suite that drives
+     * frames without restoring is a new source of the non-determinism above,
+     * and this is where it gets noticed — while it is still two lines. */
+    assert(bare.length === 0,
       `${bare.length} suites drive a World's frames without restoring the module clocks `
       + `(${bare.slice(0, 6).join(', ')}${bare.length > 6 ? ', …' : ''}) — each one shifts `
-      + 'the wind clock and both random streams for every suite that follows it');
+      + 'the wind clock and both random streams for every suite that follows it. Two lines: '
+      + "import { clocked } from './_shared.mjs', then `check = await clocked(check)` at the "
+      + 'top of run()');
     return `${drivers.length} suites drive frames, ${drivers.length - bare.length} restore the clocks`;
   });
 
@@ -125,6 +162,18 @@ export async function run({ check, assert }) {
      *
      * Scoped to suites that CONSTRUCT enemies, because those are the ones that
      * draw: importing `ARCHETYPES` to read a label does not touch the stream.
+     *
+     * THE THIRTEEN THAT DID NOT are swept onto `clocked` as well, which seeds
+     * both streams before every check body — so a suite reads the same phase
+     * whether it runs first, last, or twice. It is the same one line as the
+     * clause above and for most of the thirteen it is the same suite.
+     *
+     * What it moved, measured by running a suite TWICE in one process, which is
+     * the cheapest way to hand a suite the phase it leaves: `characters` read a
+     * heavy's bore at 0.9° off aim on the first pass and 0.4° on the second,
+     * `compel` 70° then 69°, and `force` measured a released body closing 9.30 m
+     * and then 10.97 m. None of the three is a bound anybody had written down —
+     * they are printed numbers, which is exactly why nobody had noticed.
      */
     const spawners = files.filter(([, t]) => {
       const src = strip(t);
@@ -134,9 +183,11 @@ export async function run({ check, assert }) {
     const unseeded = spawners
       .filter(([, t]) => !/enemyRng\.seed|seedWaves\(|_shared\.mjs/.test(t))
       .map(([n]) => n);
-    assert(unseeded.length <= 12,
+    /* 12 when this was written; nought since the sweep, and it may only fall. */
+    assert(unseeded.length === 0,
       `${unseeded.length} suites build enemies without ever seeding the stream they draw from `
-      + `(${unseeded.slice(0, 6).join(', ')}${unseeded.length > 6 ? ', …' : ''})`);
+      + `(${unseeded.slice(0, 6).join(', ')}${unseeded.length > 6 ? ', …' : ''}) — seed it, or take `
+      + "the pair for the whole file with `check = await clocked(check)` from './_shared.mjs'");
     return `${spawners.length} suites construct enemies, ${spawners.length - unseeded.length} seed the stream`;
   });
 

@@ -36,6 +36,7 @@ import { LEVELS } from '../../src/game/Levels.js';
 import { Forest, attachForest, STANDING, FALLING, DOWN } from '../../src/world/Trees.js';
 import { propMaterials } from '../../src/world/Props.js';
 import { TAU } from '../../src/engine/MathUtil.js';
+import { clocked } from './_shared.mjs';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
@@ -110,7 +111,12 @@ function angDiff(a, b) {
 }
 
 
-export function run({ check, assert }) {
+export async function run({ check, assert }) {
+  /* Every check in this file is wrapped: the two shared streams are put on
+   * their modules' own seeds before each body and the wind clock is put back
+   * after it. See tools/checks/_shared.mjs — the rule is there, not here.
+   */
+  check = await clocked(check);
   check('felling: a tree falls the way the cut was swung, from every bearing', () => {
     /* Twelve cuts round the compass. Each one is a fresh single tree and a
      * blade contact whose IMPULSE points along the bearing — which is what

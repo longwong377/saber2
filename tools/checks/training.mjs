@@ -26,6 +26,7 @@ import { DEFAULT_SETTINGS, BLADE_CAP, BLADE_MAX, bladeCeiling, loadSettings, STO
 import { DIFFICULTY } from '../../src/game/Combat.js';
 import { Saber } from '../../src/game/Saber.js';
 import { intersectBladeSweep } from '../../src/game/Bolts.js';
+import { clocked } from './_shared.mjs';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
@@ -97,6 +98,11 @@ function settle(d, w, frames = 400) {
 }
 
 export async function run({ check, assert }) {
+  /* Every check in this file is wrapped: the two shared streams are put on
+   * their modules' own seeds before each body and the wind clock is put back
+   * after it. See tools/checks/_shared.mjs — the rule is there, not here.
+   */
+  check = await clocked(check);
 
   /* ── the numbers exist at all ──────────────────────────────────────── */
 

@@ -77,6 +77,7 @@ import * as THREE from 'three';
 import { OutlinePass } from '../../src/toon/Ink.js';
 import { QUALITY } from '../../src/engine/Engine.js';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
+import { clocked } from './_shared.mjs';
 
 /* ── a renderer that records what the shadow map was told ────────────── */
 
@@ -116,6 +117,11 @@ function inkStub() {
 }
 
 export async function run({ check, assert }) {
+  /* Every check in this file is wrapped: the two shared streams are put on
+   * their modules' own seeds before each body and the wind clock is put back
+   * after it. See tools/checks/_shared.mjs — the rule is there, not here.
+   */
+  check = await clocked(check);
   check('frame: the ink prepass does not re-render the shadow cascades', () => {
     /**
      * Driven through the real `OutlinePass.prototype.prepass`, because the

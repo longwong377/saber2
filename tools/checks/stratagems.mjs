@@ -49,6 +49,7 @@ import {
   DENSITY, OPAQUE, BLOOM,
 } from '../../src/game/Smoke.js';
 import { BoltPool } from '../../src/game/Bolts.js';
+import { clocked } from './_shared.mjs';
 
 let THREE = null;
 
@@ -98,6 +99,11 @@ function bench({ command = null, force = 400 } = {}) {
 }
 
 export async function run({ check, assert, THREE: T }) {
+  /* Every check in this file is wrapped: the two shared streams are put on
+   * their modules' own seeds before each body and the wind clock is put back
+   * after it. See tools/checks/_shared.mjs — the rule is there, not here.
+   */
+  check = await clocked(check);
   THREE = T;
 
   check('stratagems: every code can actually be spelled', () => {

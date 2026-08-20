@@ -40,6 +40,7 @@
  */
 import { readFile, readdir } from 'node:fs/promises';
 import { functionBody } from './_source.mjs';
+import { clocked } from './_shared.mjs';
 
 const src = (rel) => readFile(new URL(`../../src/${rel}`, import.meta.url), 'utf8');
 
@@ -85,6 +86,11 @@ const avatarAt = (x) => ({ t: 'avatar', p: [x, 0, 0], f: 0, h: 100, a: 1,
   hp0: [x, 1.2, 0], hq: [0, 0, 0, 1], lit: 1 });
 
 export async function run({ check, assert }) {
+  /* Every check in this file is wrapped: the two shared streams are put on
+   * their modules' own seeds before each body and the wind clock is put back
+   * after it. See tools/checks/_shared.mjs — the rule is there, not here.
+   */
+  check = await clocked(check);
   /* ══ identity ═══════════════════════════════════════════════════════════ */
 
   check('co-op: four players are four bodies, not one body wearing four names', async () => {

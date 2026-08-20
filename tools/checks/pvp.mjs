@@ -47,6 +47,7 @@
  * tools/checks/materials.mjs.
  */
 import { readFile } from 'node:fs/promises';
+import { clocked } from './_shared.mjs';
 
 const src = (rel) => readFile(new URL(`../../src/${rel}`, import.meta.url), 'utf8');
 const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
@@ -131,6 +132,11 @@ async function session(names = ['HOST', 'ALPHA'], looks = []) {
 }
 
 export async function run({ check, assert }) {
+  /* Every check in this file is wrapped: the two shared streams are put on
+   * their modules' own seeds before each body and the wind clock is put back
+   * after it. See tools/checks/_shared.mjs — the rule is there, not here.
+   */
+  check = await clocked(check);
   /* ══ the gap, reproduced ═══════════════════════════════════════════════ */
 
   check('pvp: a player can hurt a player, which nothing in the game could do', async () => {

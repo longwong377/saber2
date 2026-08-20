@@ -46,6 +46,7 @@ import * as THREE from 'three';
 import { ARCHETYPES } from '../../src/game/Enemy.js';
 import { VEHICLE_TYPES, VEHICLE_SIDE, buildGunship } from '../../src/game/Vehicles.js';
 import { TOUGHNESS } from '../../src/game/Combat.js';
+import { clocked } from './_shared.mjs';
 
 /* ── measuring one machine, once ──────────────────────────────────────── */
 
@@ -250,6 +251,11 @@ async function spawn(type) {
 /* ══════════════════════════════════════════════════════════════════════ */
 
 export async function run({ check, assert }) {
+  /* Every check in this file is wrapped: the two shared streams are put on
+   * their modules' own seeds before each body and the wind clock is put back
+   * after it. See tools/checks/_shared.mjs — the rule is there, not here.
+   */
+  check = await clocked(check);
   check('vehicles: four machines are registered, and every one names a side', () => {
     assert(VEHICLE_TYPES.length >= 4, `only ${VEHICLE_TYPES.length} vehicle types`);
     for (const t of VEHICLE_TYPES) {

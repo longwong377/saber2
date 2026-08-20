@@ -26,6 +26,7 @@ import { BoltPool, guardIntercept, intersectBladeSweep } from '../../src/game/Bo
 import { CATCH, CatchWindow, captureSnapshot, gradeCaught, GRADE, DIFFICULTY } from '../../src/game/Combat.js';
 import { World } from '../../src/game/World.js';
 import { Player } from '../../src/game/Player.js';
+import { clocked } from './_shared.mjs';
 
 const scene = new THREE.Scene();
 const CHEST = new THREE.Vector3(0, 1.35, 0);
@@ -67,6 +68,11 @@ function mkInput() {
 }
 
 export async function run({ check, assert }) {
+  /* Every check in this file is wrapped: the two shared streams are put on
+   * their modules' own seeds before each body and the wind clock is put back
+   * after it. See tools/checks/_shared.mjs — the rule is there, not here.
+   */
+  check = await clocked(check);
 
   /* ── the camera comes back ─────────────────────────────────────────── */
 

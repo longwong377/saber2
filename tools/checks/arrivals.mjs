@@ -39,6 +39,7 @@ import {
   ArrivalDirector, ARRIVAL_LEAD, MARCH_RADIUS, MAX_CONCURRENT,
   ARRIVAL_BY_TERRAIN, arrivalKindFor, capacityOf, deliveryIsAnnounced,
 } from '../../src/game/Arrivals.js';
+import { clocked } from './_shared.mjs';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
@@ -92,6 +93,11 @@ function playWave(levelKey, wave = 4, seconds = 120) {
 }
 
 export async function run({ check, assert }) {
+  /* Every check in this file is wrapped: the two shared streams are put on
+   * their modules' own seeds before each body and the wind clock is put back
+   * after it. See tools/checks/_shared.mjs — the rule is there, not here.
+   */
+  check = await clocked(check);
   check('arrivals: nothing is delivered without being announced first', () => {
     // THE PROPERTY. On the old code every delivery had a lead of exactly 0 and
     // sat inside the level's own ring, which is the definition of popping in.

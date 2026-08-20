@@ -42,6 +42,7 @@ import { initPhysics } from '../../src/physics/Rapier.js';
 import { World } from '../../src/game/World.js';
 import { LEVEL_ORDER } from '../../src/game/Levels.js';
 import { DEFAULT_SETTINGS } from '../../src/ui/Menu.js';
+import { clocked } from './_shared.mjs';
 
 /* ── the engine a World actually needs ───────────────────────────────── */
 
@@ -118,6 +119,11 @@ const diff = (a, b) => Object.keys(a)
   .map((k) => `${k} ${a[k]}→${b[k]}`);
 
 export async function run({ check, assert }) {
+  /* Every check in this file is wrapped: the two shared streams are put on
+   * their modules' own seeds before each body and the wind clock is put back
+   * after it. See tools/checks/_shared.mjs — the rule is there, not here.
+   */
+  check = await clocked(check);
   await initPhysics();
 
   check('lifecycle: a level loaded and unloaded leaves the scene exactly as it found it', async () => {

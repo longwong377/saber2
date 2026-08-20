@@ -40,6 +40,7 @@ import { buildJedi } from '../../src/game/Bodies.js';
 import { BipedAnimator } from '../../src/game/Rig.js';
 import { Cloak, attachCloak, attachSkirt, ROBE_CUTS, robeCut } from '../../src/game/Cloth.js';
 import { weave } from './_weave.mjs';
+import { clocked } from './_shared.mjs';
 
 /* ── the bench ───────────────────────────────────────────────────────── */
 
@@ -327,7 +328,12 @@ function capeInside(sk, cl, rig) {
 
 /* ── the suite ───────────────────────────────────────────────────────── */
 
-export function run({ check, assert }) {
+export async function run({ check, assert }) {
+  /* Every check in this file is wrapped: the two shared streams are put on
+   * their modules' own seeds before each body and the wind clock is put back
+   * after it. See tools/checks/_shared.mjs — the rule is there, not here.
+   */
+  check = await clocked(check);
 
   check('garments: every gate on the enemy wardrobe has somebody who sets it', async () => {
     /**
