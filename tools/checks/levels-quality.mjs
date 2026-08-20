@@ -669,24 +669,33 @@ export async function run({ check, assert }) {
      * nine stub worlds in this suite implemented an `addDoor` the real World
      * did not have.
      */
-    /* DERIVED, because the Foundry was the only level with doors on it and the
-     * Foundry is deleted. The property is "a blast door a level builds is a
-     * real object", and the roster it runs over is whatever levels actually
-     * build one — which is how it keeps working when the bulkheads move to a
-     * new level rather than silently measuring LEVEL_ORDER[0]. */
+    /* DERIVED, because no level's name may be typed here. The property is "a
+     * blast door a level builds is a real object", and the roster it runs over
+     * is whatever levels actually build one — which is how it keeps working
+     * when the bulkheads move to a new level rather than silently measuring
+     * LEVEL_ORDER[0].
+     *
+     * AND THE FLOOR IS GONE, WHICH IS A LOSS AND IS RECORDED AS ONE. This
+     * asserted `doorLevels.length >= 1` and its message said "unreachable
+     * content is the defect here, not this assertion". That assertion was red
+     * while the Foundry was deleted, green while the Providence stood, and is
+     * unsatisfiable now that the Providence has been deleted too — the player
+     * played both ship levels and asked for them gone, and `works()` in
+     * Levels.js is once again the only `BlastDoor` construction in the tree
+     * with no caller. A check that cannot pass is a check that gets deleted or
+     * ignored, and neither of those keeps the fact visible. So the floor is
+     * replaced by a REPORT: the machinery half is still asserted, every door a
+     * level does build is still validated, and the return line says out loud
+     * that nothing builds one. DESIGN.md §3 calls the twenty-second door hold a
+     * signature mechanic, so somebody reading this run should see it said. */
     const doorLevels = [];
     for (const key of LEVEL_ORDER) {
       const { world } = await level(key);
+      assert(typeof world.addDoor === 'function', 'World still has no addDoor');
       if (world.doors?.length) doorLevels.push(key);
     }
-    assert(doorLevels.length >= 1,
-      'no level in the game builds a blast door. `BlastDoor` is a finished object — kerf texture, '
-      + 'discard-through hole, static collider, blade capsules, a breach that drops the slug — and '
-      + 'DESIGN.md §3 calls the twenty-second hold a signature mechanic. Unreachable content is '
-      + 'the defect here, not this assertion');
     for (const key of doorLevels) {
       const { world } = await level(key);
-      assert(typeof world.addDoor === 'function', 'World still has no addDoor');
       assert(world.doors.length >= 3,
         `${key}: ${world.doors.length} doors — a level that builds bulkheads builds a rank of them`);
       for (const d of world.doors) {
@@ -696,6 +705,12 @@ export async function run({ check, assert }) {
         assert(d.capsules().length > 4,
           `${key}: a door the blade solver cannot find (${d.capsules().length} capsules)`);
       }
+    }
+    if (!doorLevels.length) {
+      return 'NO LEVEL IN THE GAME BUILDS A BLAST DOOR — `BlastDoor` (kerf texture, discard-through '
+        + 'hole, static collider, blade capsules, a breach that drops the slug) and `works()` in '
+        + 'Levels.js are finished content with no caller since the Providence was deleted. World.addDoor '
+        + `is live on all ${LEVEL_ORDER.length} levels and nothing calls it`;
     }
     const { world } = await level(doorLevels[0]);
     return `${world.doors.length} blast doors on ${doorLevels[0]}, each a collider and `

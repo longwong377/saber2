@@ -950,15 +950,24 @@ export function run({ check, assert }) {
       }
       terrain.dispose();
     }
-    /* THE SIZE TRIPWIRE, and it is exactly `prop-seating`'s own guard from the
-     * check below: a sweep that quietly stopped matching would report a clean
-     * result for having measured nothing. Two is the whole census — the game
-     * builds precisely two rails that stand on open ground, both on the
-     * Providence's bridge — so this fires the moment a filter above stops
-     * matching them rather than waiting for a third run to be authored. */
-    assert(RUNS.length >= 2, `only ${RUNS.length} runs on open ground were surveyed — `
-      + 'the filters have stopped matching the props this check exists for');
+    /* THE SIZE TRIPWIRE WAS `RUNS.length >= 2` AND IT IS NOW A REPORT, because
+     * the two rails it counted were both on the Providence's bridge and the
+     * Providence has been deleted at the player's request. The whole census is
+     * zero: no level in the shipped roster builds a long thin run that stands
+     * on open ground.
+     *
+     * A floor of 2 against a census of 0 is a check that can only fail, and a
+     * check that can only fail gets deleted or ignored — neither of which
+     * keeps the rule. A floor of 0 is the §2.3 defect, a sweep reporting clean
+     * for having measured nothing. So the count goes in the PASS LINE instead:
+     * an empty census says so out loud every run, and the moment a level
+     * authors a rail on open ground the failure arm below is live again with
+     * nothing to re-enable. */
     assert(!failed.length, failed.join('\n    ') + '\n    ' + RUNS.join('; '));
+    if (!RUNS.length) {
+      return 'NO LEVEL BUILDS A RUN ON OPEN GROUND — the census was the Providence\'s two bridge '
+        + 'rails and that level is deleted; the footing rule is unexercised until one is authored';
+    }
     return RUNS.join('; ');
   });
 
@@ -1068,12 +1077,18 @@ export function run({ check, assert }) {
         }
       }
     }
-    /* A tripwire on the FINDER, not a fact about the tree: two levels string
-     * cable runs and each strings two, so eight ends is what there is to look
-     * at. A sweep that quietly stopped matching would otherwise report a clean
-     * result for having measured nothing — §2.3's plausible default. */
-    assert(ends >= 8, `only ${ends} cable-run ends surveyed — the sweep is not finding them`);
+    /* `ends >= 8` WAS THE TRIPWIRE AND IS NOW A REPORT, for the reason given at
+     * length on the run check above: the two levels that strung cable runs
+     * were the Boarding Bay and the Providence, both deleted at the player's
+     * request, and `addCableRun` has no caller in a shipped level any more —
+     * its only remaining call site is `works()` in Levels.js, which is itself
+     * orphaned. An empty census is stated in the pass line rather than
+     * asserted against. */
     assert(failed.length === 0, failed.join('\n    ') + '\n    ' + lines.join('; '));
+    if (!ends) {
+      return 'NO LEVEL STRINGS A CABLE RUN — `addCableRun`\'s only call site is the orphaned '
+        + '`works()`; the bolt rule is unexercised until a level strings one';
+    }
     return `${ends} bracket ends, worst ${worst.toFixed(3)} m from its fixing; ${lines.join('; ')}`;
   });
 
@@ -1129,8 +1144,17 @@ export function run({ check, assert }) {
         }
       }
     }
-    assert(pairs >= 3, `only ${pairs} mirrored gantry pairs found — the pairing is not matching`);
+    /* `pairs >= 3` WAS THE TRIPWIRE AND IS NOW A REPORT: the three mirrored
+     * pairs were the bay's and the Providence's two, and both levels are
+     * deleted. `addGantry`'s only surviving call site is the orphaned
+     * `works()`. Same reasoning as the two checks above — an empty census is
+     * said out loud rather than asserted against, and the axis rule comes back
+     * to life on its own the day a level mirrors a pair again. */
     assert(failed.length === 0, failed.join('\n    ') + '\n    ' + lines.join('; '));
+    if (!pairs) {
+      return 'NO LEVEL BUILDS A MIRRORED PAIR OF GANTRIES — `addGantry`\'s only call site is the '
+        + 'orphaned `works()`; the axis rule is unexercised until a level places a pair';
+    }
     return lines.join('; ');
   });
 

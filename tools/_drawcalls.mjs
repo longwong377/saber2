@@ -5,7 +5,7 @@
  * mesh that reached the scene to the maker that created it, the material it
  * was binned under, and how many instances it carries.
  *
- *   node --import ./tools/register.mjs tools/_drawcalls.mjs hangar [--sites]
+ *   node --import ./tools/register.mjs tools/_drawcalls.mjs geonosis [--sites]
  *
  * The attribution is the same stack walk `prop-seating` uses — never call it a
  * measurement of anything but a label; `--sites` adds the Levels.js line the

@@ -6,7 +6,7 @@
  * means. Prints every assembly whose lowest vertex is clear of what is under
  * it, the exemption that saves it (or does not), and the nearest thing to it.
  *
- *   node --import ./tools/register.mjs tools/_seating.mjs warship [minSeat]
+ *   node --import ./tools/register.mjs tools/_seating.mjs geonosis [minSeat]
  */
 import './dom-shim.mjs';
 import { seating, carried, nearestTo } from './checks/prop-seating.mjs';

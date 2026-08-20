@@ -36,7 +36,7 @@
  *   eye     fov 60 at 1.75 m, 8 m back from the edge: the terminator in
  *           DEGREES OF SCREEN, which is the number the complaint quoted.
  *
- *   node tools/_shade.mjs chart [--levels arena,dunes,canyon,hangar,dojo] [--tag before]
+ *   node tools/_shade.mjs chart [--levels scoria,wood,alpine] [--tag before]
  *   node tools/_shade.mjs read  --tag before        # re-measure existing shots
  */
 
@@ -56,8 +56,14 @@ const flag = (n, d) => { const i = argv.indexOf('--' + n); return i >= 0 ? argv[
  * arena, dunes, canyon, dojo — were deleted in the roster cull, and the page
  * this serves indexes `LEVELS[key]` per name, so a default run measured
  * `undefined` on four fifths of its own chart. `roster.mjs` has an arm for
- * this shape now; these five are shipped levels and it holds them to that. */
-const LEVELS = flag('levels', 'scoria,mustafar,colosseum,drifts,hangar').split(',');
+ * this shape now; these five are shipped levels and it holds them to that.
+ *
+ * `hangar` was the fifth until the Boarding Bay was deleted, and it is the
+ * second time this one line has gone stale by a level going away — which is
+ * the whole argument for the arm rather than for a better list. `wood` takes
+ * the slot: it is the darkest ground left and the terminator is what this
+ * measures. */
+const LEVELS = flag('levels', 'scoria,mustafar,colosseum,drifts,wood').split(',');
 const TAG = flag('tag', 'now');
 const W = parseInt(flag('w', '1200'), 10), H = parseInt(flag('h', '1200'), 10);
 

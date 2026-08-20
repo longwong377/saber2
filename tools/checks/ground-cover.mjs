@@ -81,8 +81,11 @@ import { LEVELS, LEVEL_ORDER, siteOk, drift, beginDressing, stoneField } from '.
  * cover cannot quietly fall out of the survey.
  */
 const COVERED = LEVEL_ORDER.filter((k) => LEVELS[k] && LEVELS[k].grass > 0 && LEVELS[k].dress);
-const BARE = LEVEL_ORDER.filter((k) => LEVELS[k] && !LEVELS[k].grass && LEVELS[k].dress
-  && LEVELS[k].terrain !== 'hangar');
+/* This carried `&& LEVELS[k].terrain !== 'hangar'` — a deck plate is bare by
+ * construction and the bay dressed its own floor — and the clause went vacuous
+ * when the Boarding Bay was deleted. A filter that excludes nothing is a filter
+ * the next reader has to go and check, so it is gone with its level. */
+const BARE = LEVEL_ORDER.filter((k) => LEVELS[k] && !LEVELS[k].grass && LEVELS[k].dress);
 /**
  * What the stone-scatter surveys dress and measure.
  *

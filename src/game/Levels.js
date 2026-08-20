@@ -21,7 +21,8 @@ import { addHorizon, makeCoverField, ground, BODY_FADE } from '../world/Scenery.
 import { registerDestructible } from '../world/Destruction.js';
 import { makeRng, clamp, TAU, lerp } from '../engine/MathUtil.js';
 import { ARRIVAL_BY_TERRAIN } from './Arrivals.js';
-/* The warship's set-piece is registered at the bottom of this file — see the
+/* The IG-100 general's set-piece is registered at the bottom of this file —
+ * see the
  * note there. These three edges add nothing to anybody's static import graph
  * that was not already in it: Waves.js already pulls Enemy.js, Enemy.js
  * already pulls Bodies.js, and none of the three reaches Engine.js, which is
@@ -36,7 +37,7 @@ import { attachHazard } from '../world/Hazard.js';
 import { addSmokeColumns, smokeSites } from '../world/Smoke.js';
 /**
  * COMMAND'S SEVEN BODIES, registered from here for exactly the reason the
- * warship's set-piece at the foot of this file is: "a level and the set-piece it
+ * general's set-piece at the foot of this file is: "a level and the set-piece it
  * ends with are one decision, and this is the module that decides what levels
  * exist." Geonosis's pool is the only pool that names them, so the level and the
  * roster arrive together or `roster.mjs` fails — which is the check doing its
@@ -53,7 +54,7 @@ import { COMMAND_UNITS } from './Command.js';
  * THE MACHINES, imported FOR THE SIDE EFFECT and for no other reason.
  *
  * `src/game/Vehicles.js` ends in `Object.assign(ARCHETYPES, …)` — the same way
- * the warship's set-piece is registered at the foot of this file, and for the
+ * the general's set-piece is registered at the foot of this file, and for the
  * same stated reason: this is the module that decides what levels exist, and a
  * level and the bodies it fields are one decision.
  *
@@ -1160,7 +1161,17 @@ function works(world, opts = {}) {
    * written for. The Foundry is deleted and this function had no caller at all
    * (`grep -n 'works(world' src/` found the definition and nothing else) while
    * holding the only `BlastDoor` construction in the game — which is why
-   * `levels-quality`'s door check has been red. The Providence's deck is a
+   * `levels-quality`'s door check has been red.
+   *
+   * IT IS ORPHANED AGAIN. The Providence was deleted at the player's request
+   * along with the Boarding Bay — "I just tried the boarding bay and the
+   * providence and hated them… just remove them" — so this function has no
+   * caller once more and `levels-quality`'s door check reports the fact in its
+   * pass line rather than asserting against it. The arguments below stay as
+   * arguments: they are what a SECOND caller costs, already paid, so the next
+   * room that wants bulkheads reuses this instead of rewriting it.
+   *
+   * The Providence's deck is a
    * different size from the works' floor: its hull closes at 72 m in beam
    * against the works' 94, so the outermost depth rank would have been planted
    * 18 m up the inside of the hull. Two numbers rather than a rewrite, and the
@@ -4240,12 +4251,15 @@ export function campaignAt(levelKey) {
 /**
  * THE GROUNDS A MODE CAN ACTUALLY BE STARTED ON — the Theatre column's roster.
  *
- * The column offered all nine in every mode, and in Campaign SEVEN OF THE NINE
- * were a lie. Driven, one deployment per card: picking the Ember Shelf, the
- * Drowned Wood, the Shifting Waste, the White Pass, Mustafar, Geonosis or the
- * Providence in Campaign mode built that ground, ran `beginCampaign`, fell back
- * to the first campaign because `campaignAt` answered null, and rotated the
- * player onto the Colosseum on the next frame. Two of nine picks were honoured.
+ * The column offered every ground in every mode, and in Campaign all but two
+ * of them were a lie. Driven, one deployment per card on the nine-level roster
+ * of the day: picking the Ember Shelf, the Drowned Wood, the Shifting Waste,
+ * the White Pass, Mustafar, Geonosis or the Providence in Campaign mode built
+ * that ground, ran `beginCampaign`, fell back to the first campaign because
+ * `campaignAt` answered null, and rotated the player onto the Colosseum on the
+ * next frame. Two of nine picks were honoured. The roster is seven now and the
+ * Boarding Action is deleted, so the honoured set is ONE — the Colosseum — and
+ * the derivation below is the only reason the column says so.
  *
  * That is `_syncTheatre`'s own defect in its own words — "a card that is lit,
  * written to settings and then thrown away reads as the picker being randomly

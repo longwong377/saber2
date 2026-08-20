@@ -326,17 +326,24 @@ export async function run({ check, assert, near }) {
     assert(depth('drifts') > depth('bog'), 'wind-packed snow is looser underfoot than a silt bank');
     assert(depth('colosseum') < depth('scoria') * 0.6,
       'raked arena sand over a stone sub-base takes a print like an ash fall does');
-    assert(depth('hangar') < 0.05, 'a poured deck takes a footprint');
-    assert(depth('warship') < 0.05, 'a plated deck takes a footprint');
     assert(depth('scoria') > depth('bog') && depth('scoria') < depth('drifts'),
       'an ash fall lies deeper than bog silt and shallower than a wind-packed drift');
-    assert(depth('colosseum') > depth('hangar') * 4, 'an arena floor is not a swept deck');
+    /* THREE STATEMENTS ABOUT DECK PLATE WERE HERE AND ARE GONE WITH THE DECKS.
+     * `depth('hangar') < 0.05`, `depth('warship') < 0.05` and
+     * `depth('colosseum') > depth('hangar') * 4` said that a poured or plated
+     * floor takes a print and nothing more. Both grounds went unshipped when
+     * the Boarding Bay and the Providence were deleted at the player's
+     * request, and `shipped()` above THREW rather than letting them stand —
+     * which is the guard working exactly as its own note says it should. The
+     * relations are still true of the presets and they are no longer about the
+     * game, so they are recorded here rather than restated: there is no built
+     * floor in the shipped roster to compare anything against. */
     // and every preset that is not a built floor carries a real layer
     for (const name of Object.keys(TERRAIN_PRESETS)) {
       assert(TERRAIN_PRESETS[name].loose, `${name} declares no loose layer at all`);
     }
-    /* WHAT IS NOT BEING MEASURED, SAID OUT LOUD. Six of fifteen presets are
-     * unreachable, and the way that stops being a silent 40% is for the number
+    /* WHAT IS NOT BEING MEASURED, SAID OUT LOUD. Eight of fifteen presets are
+     * unreachable, and the way that stops being a silent 53% is for the number
      * to be in the pass line every run. It is not an assertion because this
      * file cannot fix it: a preset becomes reachable when a LEVEL points at it
      * (Levels.js) or is deleted (Terrain.js), and neither is this check's to
