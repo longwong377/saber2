@@ -191,6 +191,15 @@ export const MARK_RADIUS = 7.5;
  * field rather than a typical one. The call rewards letting them gather, which
  * is the decision the mechanic exists to offer.
  */
+/**
+ * How many shells the artillery barrage walks across the position. Named
+ * because three things read it and none of them may drift: the loop that
+ * fires them, the spark allowance each shell takes of the shared ring
+ * (`1/sqrt(SHELLS)` — see `blast`), and the blurb the player is shown.
+ */
+const SHELLS = 12;
+const SHELL_WORD = 'Twelve';
+
 export const STRATAGEMS = [
   {
     id: 'strike', name: 'Orbital strike',
@@ -213,8 +222,8 @@ export const STRATAGEMS = [
     id: 'barrage', name: 'Artillery barrage',
     cost: 26, cooldown: 22, lead: 2.6, at: 'aim', radius: 22,
     words: ['fire', 'mission'],
-    blurb: 'Twelve shells walked across the position. Wider than the lance and much '
-      + 'less certain about where anything is.',
+    blurb: `${SHELL_WORD} shells walked across the position. Wider than the lance `
+      + 'and much less certain about where anything is.',
     fire: (ctx, site, S) => {
       /* WALKED, not dropped in a ring. A battery firing at a map reference
        * has an error along its own line of fire and almost none across it,
@@ -231,8 +240,8 @@ export const STRATAGEMS = [
       const bear = _v1.subVectors(site, S.owner.position).setY(0);
       if (bear.lengthSq() < 1e-4) bear.set(0, 0, 1);
       bear.normalize();
-      for (let i = 0; i < 12; i++) {
-        const t = (i - 5.5) * 3.4 + (S.rand() - 0.5) * 2.4;
+      for (let i = 0; i < SHELLS; i++) {
+        const t = (i - (SHELLS - 1) / 2) * 3.4 + (S.rand() - 0.5) * 2.4;
         const across = (S.rand() - 0.5) * 5.2;
         /* CLONED HERE AND NOT INSIDE THE CLOSURE. `_v2` is a module-level
          * scratch vector shared by everything in this file, so a `p.clone()`
@@ -244,7 +253,10 @@ export const STRATAGEMS = [
         const at = _v2.copy(site).addScaledVector(bear, t)
           .addScaledVector(_v3.set(-bear.z, 0, bear.x), across).clone();
         S.after(i * 0.17, () => S.blast(ctx, at, 6.5, 70, 120,
-          { core: 0.25, shake: 0.30, size: 1.7, crater: 0.9 }));
+          { core: 0.25, shake: 0.30, size: 1.7, crater: 0.9,
+            /* Twelve shells share one explosion's spark allowance — SHELLS is
+             * this loop's own bound, so the two can never disagree. */
+            sparkShare: 1 / Math.sqrt(SHELLS) }));
       }
     },
   },
@@ -1068,7 +1080,19 @@ export class Stratagems {
      * ground disturbance. What is added on top is the DUST WALL, because that
      * is the part that carries the scale and it is proportional to the hole. */
     P.explosion?.(site, clamp(size, 0.5, 4));
-    const ring = Math.round(34 * clamp(size, 0.6, 3));
+    /* ONE ALLOWANCE FOR EVERY SHARED RING THIS DETONATION TOUCHES — sparks,
+     * dust and smoke alike. A single blast may have the pools to itself; a
+     * walked barrage is twelve of them 0.17 s apart, all inside one particle's
+     * lifetime, so they stack in the same rings. Measured before this existed:
+     * 372 of 672 spark slots AND 348 of 256 smoke slots at the bottom of the
+     * Particles slider — the smoke ring overflowing by 36% in one call, which
+     * is work no frame can ever show.
+     *
+     * `sparkShare` is named for where it was first needed and governs all
+     * three; a caller firing n rounds passes `1/sqrt(n)`, because perceived
+     * density goes roughly as the square root of the count. */
+    const share = clamp(opts.sparkShare ?? 1, 0.05, 1);
+    const ring = Math.round(34 * clamp(size, 0.6, 3) * share);
     for (let i = 0; i < ring; i++) {
       const a = (i / ring) * TAU;
       _v1.set(Math.cos(a), 0.35 + this.rand() * 0.8, Math.sin(a)).multiplyScalar(radius * 1.7);
@@ -1078,13 +1102,40 @@ export class Stratagems {
     }
     /* AND A COLUMN. A blast this size throws material UP, and a ring with no
      * column in it reads as a puff however wide it is. */
-    for (let i = 0; i < Math.round(14 * size); i++) {
+    /* THE COLUMN TAKES THE LINEAR SHARE, NOT THE SQUARE ROOT, because smoke
+     * OUTLIVES THE BURST. A spark is gone before the next shell lands, so
+     * twelve shells never hold twelve shells' worth of sparks at once and
+     * `1/sqrt(n)` is the honest amortisation. Column smoke lives 2.2–4.2 s
+     * against a barrage that takes 1.87 s to walk: every shell's column is
+     * still in the ring when the last one fires, so the stack is the full
+     * count and the share has to be too. Measured at the bottom of the
+     * slider: 348 slots of 256 before any share, 144 on the square root,
+     * 84 on this. */
+    for (let i = 0; i < Math.round(14 * size * (share * share)); i++) {
       _v1.set((this.rand() - 0.5) * 4, 12 + this.rand() * 22 * size, (this.rand() - 0.5) * 4);
       P.smoke?.spawn(_v2.copy(site).setY(site.y + 0.4), _v1,
         { life: 2.2 + this.rand() * 2, size: 1.4 * size, drag: 1.5, gravity: -1.2,
           color: 0x50505a, alpha: 0.45 });
     }
-    P.sparkBurst?.(site, null, Math.round(40 * size), { speed: 16 * size, color: 0xffb877 });
+    /* SPARKS ARE A SHARED RING, AND A WALKED BARRAGE IS TWELVE OF THESE.
+     *
+     * One detonation may have the pool to itself. Twelve shells 0.17 s apart
+     * all land inside a spark's lifetime, so they stack in the same ring —
+     * measured, 372 of the 672 slots at the bottom of the Particles slider,
+     * 55% of every spark in the game from one call, on the tier the menu
+     * offers to integrated graphics. Past capacity a ring overwrites what it
+     * wrote a microsecond earlier, so the surplus cannot be seen; well before
+     * that it erases every blade hit and bolt impact on the field.
+     *
+     * `share` is how much of one explosion's allowance this detonation may
+     * take, and a multi-shell call divides it by the count it is about to
+     * fire. Not linearly: perceived density goes as roughly the square root of
+     * the count, so `1/sqrt(n)` keeps a single shell looking like a shell
+     * while twelve of them together cost about what three used to. The caller
+     * derives it from its own loop bound, so a barrage that grows a shell
+     * cannot forget to re-divide. */
+    P.sparkBurst?.(site, null, Math.round(40 * size * share),
+      { speed: 16 * size, color: 0xffb877 });
   }
 
   /**

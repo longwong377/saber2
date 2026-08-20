@@ -374,9 +374,23 @@ export async function run({ check, assert }) {
         terrain: { height: () => 0, crater() {} }, groundColor: 0xd8c8a8, world: null,
       };
       for (const row of STRATAGEMS) {
-        assert(typeof row.fire === 'function', `stratagem '${row.id}' has no fire()`);
+        /* A ROW DELIVERS THROUGH `fire` OR THROUGH `cadence`, and the check
+         * has to drive whichever it has. `strafe` and `smoke` are flown by a
+         * craft, so their spawns come from a cadence called per beat rather
+         * than from one shot; asserting `fire` existed made this check red on
+         * a row that was working. Neither is optional — a row with no delivery
+         * at all is still a defect and still fails here. */
+        const deliver = row.fire || row.cadence;
+        assert(typeof deliver === 'function',
+          `stratagem '${row.id}' has neither fire() nor cadence(), so nothing delivers it`);
         for (const k of POOLS) tally[k] = 0;
-        row.fire(ctx, at.clone(), S);
+        /* FOUR arguments, as `Stratagems.update` calls it:
+         * `P.s.fire?.(ctx, P.site, this, P.s)`. The row is its own fourth
+         * argument and rows read `s.radius` off it. Called with three, this
+         * check died on `Cannot read properties of undefined (reading
+         * 'radius')` the day the strike learned to carry a radius — a check
+         * that could not see the shipped signature change. */
+        deliver(ctx, at.clone(), S, row);
         // …and everything it deferred inside itself
         for (let guard = 0; guard < 64 && S._timers.length; guard++) S.update(1 / 30, ctx);
         for (const k of POOLS) {
