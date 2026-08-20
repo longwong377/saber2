@@ -2083,6 +2083,19 @@ export class CommandDirector extends WaveDirector {
   get lastArea() { return this.areaIndex >= AREAS.length - 1; }
 
   /**
+   * HOW MUCH GROUND IS BEHIND YOU — the "Areas taken" row of the victory card.
+   *
+   * `areaNumber` is where you ARE and is one ahead of what you have taken for
+   * the whole of every area; reporting it on the card would credit a campaign
+   * abandoned in area three with three areas. So this counts the boundaries
+   * actually crossed, off the ledger `_areaClear` writes as it crosses them —
+   * a derived count rather than a second tally kept beside the first (§2.3).
+   * The last area logs its entry before `_endCampaign` runs, so a won crossing
+   * reports all five.
+   */
+  get areasTaken() { return this.log.reduce((n, e) => n + (e.t === 'area' ? 1 : 0), 0); }
+
+  /**
    * ONE SIDE'S POOL, OUT OF THE LEVEL'S TWO.
    *
    * The Geonosis level names BOTH armies in its pool, because the level is a

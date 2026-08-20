@@ -1811,6 +1811,16 @@ export class World {
    * is deliberately not a defeat either: the army is a cost, not a life bar,
    * and a Jedi standing alone at the end of a lost engagement is a real thing
    * this mode should let you fight your way out of.
+   *
+   * WHAT THE DEFEAT PATH DID NOT GET WAS THE ANNOUNCEMENT, and that is the
+   * defect `_announceBattle` closes. This method held the notify and
+   * `audio.runWon` in its own body, and its only caller passes `true` — so a
+   * battle you WON said "THE BATTLE IS WON" over the victory cue and a battle
+   * you LOST said nothing at all. Measured on the drive in
+   * `tools/checks/skirmish.mjs`: the last line a beaten player saw was
+   * "THE COLOSSEUM — ENGAGEMENT 1 OF 4", the banner from the engagement they
+   * had just died in, and `audio.runWon` fired zero times against the victory's
+   * one. See `_announceBattle`.
    */
   _endSkirmish(won) {
     const sk = this.skirmish;
@@ -1825,17 +1835,50 @@ export class World {
     if (this.campaign && !this.campaign.done) { this.campaign.done = true; this.campaign.won = !!won; }
     if (this.command) this.command.done = true;
     this.over = true;
-    const c = this.campaign;
+    this._announceBattle(!!won);
+    this.onGameOver?.(this.runStats({ won: !!won }));
+    return true;
+  }
+
+  /**
+   * A BOUNDED BATTLE ENDED, AND THIS IS THE ONLY PLACE THAT SAYS SO.
+   *
+   * Two endings, one sentence. `_endSkirmish` is reached by clearing the last
+   * engagement and `_checkWipe` by dying in any of them, and the second one is
+   * the ONE A PLAYER MEETS FIRST — the mode's blurb promises "a victory or a
+   * defeat, not a high score" and half of that promise was unspoken. The
+   * announcement cannot live in `_endSkirmish` because `_checkWipe` deliberately
+   * does not route through it (that method returns on `this.over`, and there is
+   * exactly one wipe rule in the game), so it lives here and both call it.
+   *
+   * Everything in the line is DERIVED from the plan that is already closed by
+   * the time this runs: `sk.cleared` / `c.index` are the rounds behind you,
+   * `sk.rotation` / `c.def.missions` name them, and `c.def.name` is what the
+   * run is called. A lost battle on round one has no grounds to list, so the
+   * subtitle falls back to the count rather than printing a dangling dash — the
+   * won path never reached that branch, which is why it had never been written
+   * for the campaign.
+   *
+   * `audio.runWon(false)` rather than silence: the cue takes the argument
+   * precisely so a decided run makes the sound of how it was decided, which is
+   * the position `_endMeeting` already takes for the commander who lost.
+   *
+   * @returns false when there is no bounded battle to announce, which is every
+   *   endless mode — those end on `_checkWipe` alone and have no verdict.
+   */
+  _announceBattle(won) {
+    const c = this.campaign, sk = this.skirmish;
+    if (!c && !sk) return false;
+    const done = c ? c.index + (won ? 1 : 0) : sk.cleared;
+    const of = c ? c.def.missions.length : sk.engagements;
     const rounds = c
-      ? c.def.missions.slice(0, c.index + (won ? 1 : 0)).map((m) => LEVELS[m.level]?.name || m.level)
-      : sk.rotation.slice(0, sk.cleared).map((k) => LEVELS[k]?.name || k);
+      ? c.def.missions.slice(0, done).map((m) => LEVELS[m.level]?.name || m.level)
+      : sk.rotation.slice(0, done).map((k) => LEVELS[k]?.name || k);
     const what = c ? c.def.name.toUpperCase() : 'THE BATTLE';
     this.notify(won ? `${what} IS WON` : `${what} IS LOST`,
-      c ? `${c.index + (won ? 1 : 0)} of ${c.def.missions.length} — ${rounds.join(' · ')}`
-        : rounds.length ? `${sk.cleared} of ${sk.engagements} — ${rounds.join(' · ')}`
-          : `${sk.cleared} of ${sk.engagements} engagements`);
+      rounds.length ? `${done} of ${of} — ${rounds.join(' · ')}`
+        : `${done} of ${of} ${c ? 'missions' : 'engagements'}`);
     audio.runWon?.(!!won);
-    this.onGameOver?.(this.runStats({ won: !!won }));
     return true;
   }
 
@@ -1868,7 +1911,7 @@ export class World {
   }
 
   /**
-   * THE SIX NUMBERS EVERY ENDING REPORTS, IN ONE PLACE.
+   * EVERY NUMBER AN ENDING REPORTS, IN ONE PLACE.
    *
    * `_checkWipe`, `_endMeeting` and `CommandDirector._endCampaign` each
    * assembled this object by hand. That is a three-way twin, and it was known:
@@ -1876,12 +1919,34 @@ export class World {
    * `tools/checks/command.mjs` holds a wipe's key set and a victory's to being
    * identical precisely because nothing else could — "the honest fix is a
    * `World.runStats()` both call; it is in the handover at the foot of this
-   * file". Two of the three are in this file and now call it. The third cannot
-   * be edited from this lane and is held to the same shape by that check, which
-   * is the arrangement that has been keeping it honest all along.
+   * file". All four endings call it now.
+   *
+   * IT WAS SIX FIELDS AND THE CARD READS EIGHT. `main.js`'s `gameOver` prints
+   * `stats.taken` and `stats.fallen` on a won run, no ending sent either, and
+   * the card covered for both with `?? 5` and `?? 0` — so **every won run ever
+   * played printed "Areas taken 5"**, a literal with no subject, and "Troops
+   * lost 0" on the mode whose entire subject is named people dying for good.
+   * That is §2.3's close relative exactly: a missing thing answered with a
+   * plausible default. The defaults are gone from the card and the numbers are
+   * sent from here.
+   *
+   * BOTH ARE DERIVED AND BOTH MAY BE `null`, which is the load-bearing part.
+   * `taken` is ONE NUMBER WITH THREE MEANINGS — missions, engagements, areas —
+   * and the mode is what names it, so the number is read off whichever plan is
+   * running and the LABEL stays in main.js's `TAKEN` map beside the row it
+   * writes. The endless modes take no ground and lose no troops: they report
+   * `null`, and `gameOver` drops a row it has no number for rather than
+   * inventing one. A key that is present and null is what lets that check be
+   * "did the ending send this field", not "did it send a truthy value".
+   *
+   * The order is the nesting order and not a preference: a campaign mission IS
+   * a skirmish (`beginMission` builds one), so a campaign that read the
+   * skirmish first would report the engagements of its current mission as the
+   * missions of its run.
    */
   runStats(extra = null) {
     const sum = (f) => (this.players || []).reduce((a, p) => a + (p[f] || 0), 0);
+    const c = this.campaign, sk = this.skirmish, d = this.command;
     return {
       ...(extra || {}),
       wave: this.director?.wave ?? 0,
@@ -1890,6 +1955,15 @@ export class World {
       deflects: sum('deflects'),
       perfects: sum('perfects'),
       limbs: sum('limbsRemoved'),
+      /* `c.log` gets one entry per mission behind you — `_advanceMission`
+       * writes it, including on the last one, so a finished campaign counts
+       * itself. `sk.cleared` and `areasTaken` are the same shape one layer
+       * down. */
+      taken: c ? c.log.length : sk ? sk.cleared : d ? d.areasTaken : null,
+      /* The roll, not a tally kept beside it: `CommandRoster.fallen` is a
+       * getter over the records themselves. Null where there is no army, so
+       * "Troops lost" leaves the card in the modes that have no troops. */
+      fallen: d?.roster?.fallen?.length ?? null,
     };
   }
 
@@ -3771,6 +3845,13 @@ export class World {
        * there is exactly one ending and this is it. */
       if (this.skirmish && !this.skirmish.done) { this.skirmish.done = true; this.skirmish.won = false; }
       if (this.campaign && !this.campaign.done) { this.campaign.done = true; this.campaign.won = false; }
+      /* …AND IT IS SAID OUT LOUD. The flags above decided the battle and
+       * nothing told the player: the last line on screen was the banner of the
+       * engagement they died in. `_announceBattle` is the victory's own
+       * sentence and cue with the verdict as its argument, and it returns false
+       * in the endless modes — which have no verdict to announce and whose card
+       * is the whole of their ending. */
+      this._announceBattle(false);
       this.onGameOver?.(this.runStats(this.skirmish || this.campaign ? { won: false } : null));
       return true;
     }
