@@ -277,11 +277,19 @@ export const DATABANK = {
   trooper: {
     faction: 'republic',
     weapon: 'DC-15A blaster rifle',
+    /* THE CODEX MAY NOT SELL A VERB THE UNIT DOES NOT HAVE. This sentence read
+     * "grenades, cover, and the judgement to use both" while `grenades: true`
+     * on the archetype was read by nothing anywhere in `src/` — see the note
+     * where that field used to be. Cover is real and is the half worth naming,
+     * because it is the half a player can watch happen: under your own command
+     * a clone goes to the lee of the nearest thing big enough to stop a bolt
+     * (`CommandDirector._coverSite`), and a droid never does. */
     text: 'Grown on Kamino from one bounty hunter\'s genome, aged at twice the '
       + 'ordinary rate and trained from the tank. Phase I plastoid over a black body '
       + 'glove, a DC-15 fired in disciplined three-round bursts, and — this is what '
-      + 'separates a clone from a droid — grenades, cover, and the judgement to use '
-      + 'both. He is issued a number, CT and four '
+      + 'separates a clone from a droid — cover, and the judgement to use it: told to '
+      + 'go to ground he picks the nearest thing that will stop a bolt and puts it '
+      + 'between himself and the firing. He is issued a number, CT and four '
       + 'digits, and he does not get a name until the men beside him give him one.',
   },
   heavy: {

@@ -429,4 +429,48 @@ export function run({ check, assert }) {
     return `${Object.keys(ARCHETYPES).length} archetypes: ${named.size} named by a pool, a rung or a `
       + `saddle, ${training.length} dojo-only (${training.join(', ')}); ${SET_PIECE.length} rungs all live`;
   });
+
+  check('roster: every field an archetype declares is a field something reads', () => {
+    /**
+     * THE THIRD TIME A FIELD WAS WRITTEN ON A BODY AND READ BY NOTHING.
+     *
+     * `Run.bestTier` was generated every run and read by nothing.
+     * `Enemy.grippable` was `!A.big && !A.boss` — a size wall the mass cap had
+     * overturned — and claimed an Acklay could never be lifted while the game
+     * lifted one. Both were found by hand, both were the same shape, and the
+     * shape has a mechanical test: a declaration is a promise that something
+     * acts on it, and a promise nothing acts on is indistinguishable in a diff
+     * from a feature.
+     *
+     * The third was `grenades: true` on the clone trooper. Nothing in `src/`
+     * read it — not `Enemy`, not `Waves`, not `Command` — and the Databank was
+     * SELLING it to the player, naming "grenades, cover, and the judgement to
+     * use both" as the thing that separates a clone from a droid. So the codex
+     * described a verb no body in the game has, and the field is what made that
+     * look supported.
+     *
+     * `src/` AND NOT `tools/`, deliberately. A field only the harness reads is
+     * a field the GAME does not act on, which is exactly the defect: this check
+     * would be blind to its own subject if a check counted as a reader.
+     *
+     * Three shapes of read, because the tree uses all three — `A.field`,
+     * `A['field']` and a destructure — and the direction of error is the safe
+     * one: a read this pattern cannot see makes a live field look dead, which
+     * is a loud failure somebody reads, never a dead field passing quietly.
+     */
+    const src = sources(join(ROOT, 'src')).map((f) => strip(readFileSync(f, 'utf8')));
+    const fields = new Set();
+    for (const A of Object.values(ARCHETYPES)) for (const k of Object.keys(A)) fields.add(k);
+    const dead = [];
+    for (const f of fields) {
+      const re = new RegExp(`\\.${f}\\b|\\[\\s*'${f}'\\s*\\]|\\{[^{}\\n]*\\b${f}\\b[^{}\\n]*\\}\\s*=`);
+      if (!src.some((t) => re.test(t))) dead.push(f);
+    }
+    assert(fields.size > 20, `only ${fields.size} archetype fields found — the scan is not scanning`);
+    assert(!dead.length,
+      `${dead.join(', ')} — declared on an archetype and read by nothing in src/. A field the game `
+      + 'never asks about is not a feature, and the databank has sold one of these to a player before');
+    return `${fields.size} distinct fields across ${Object.keys(ARCHETYPES).length} archetypes, `
+      + 'every one of them read by the game';
+  });
 }

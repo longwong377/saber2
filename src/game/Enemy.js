@@ -657,7 +657,20 @@ export const ARCHETYPES = {
     speed: 4.1, toughness: TOUGHNESS.plastoid, ranged: true, weapon: 'dc15',
     fireRate: 1.35, burst: 3, burstGap: 0.11, spread: 0.045, damage: 12,
     preferred: [9, 19], boltColor: BOLT_COLORS.blue, score: 180, threat: 2,
-    grenades: true, hipHeight: 0.95,
+    /* NO `grenades: true`, AND IT WAS HERE FOR THE WHOLE OF THIS BODY'S LIFE.
+     * Nothing in `src/` ever read the field — not Enemy, not Waves, not
+     * Command — so it was `Enemy.grippable` and `Run.bestTier` a third time:
+     * written once, read never, and indistinguishable in a diff from a
+     * feature. What made it worth deleting rather than leaving is that the
+     * Databank was SELLING it: the clone's page named "grenades, cover, and
+     * the judgement to use both" as the thing that separates a clone from a
+     * droid, so a player who read the codex was told about a verb no clone in
+     * the game has. The page names what it does now, and
+     * `roster: every field an archetype declares is a field something reads`
+     * is what stops the next one. A trooper grenade is a real thing to build —
+     * `Stratagems.blast` is the primitive and `dodgeable.mjs` is the bar it
+     * would have to clear — and it is a feature, not a field. */
+    hipHeight: 0.95,
   },
   sniper: {
     label: 'Marksman', build: buildTrooper, scale: 1.0, hp: 38, mass: 76,
