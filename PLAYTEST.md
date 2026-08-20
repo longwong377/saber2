@@ -127,6 +127,19 @@ for before and did not get.
 > this stuff you know this stuff and more, you need to be really creative here the
 > world is our oyster."*
 
+### The Holocron, and the menu's whole look — added mid-session
+
+> *"I've already told you a million times to completely get rid of the
+> attunement star chart shit and start from scratch with something that has
+> nothing to do with stars and is more in keeping with the game's aesthetic and
+> I still see the same exact star chart bullshit like why have you missed this
+> again and again and again get fucking rid of it and redo the whole thing, also
+> make it less confusing"* **(repeat, many times)**
+
+> *"also I want you to redo all the main menu UI to be more aesthetically sable
+> like and in keeping with the new background and logo, the dark blue, light blue
+> shit just doesn't work anything but the whole thing should be redone"*
+
 ### Questions asked
 
 - *"explain to me the difference between the trail of waves and the path of the
