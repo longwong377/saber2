@@ -117,6 +117,122 @@ function relYaw(q, facing, e) {
   return wrap(e.y - facing);
 }
 
+/**
+ * THE ATTACK BENCH, hoisted to module scope so every attack check below shares
+ * ONE of it. A second copy of a bench is a second thing to keep in step with
+ * the rig, which is HANDOFF 2.4's defect wearing a lab coat.
+ *
+ * `Player` is imported DYNAMICALLY, inside a function body — HANDOFF 2.1: a
+ * static edge from a check into the Player/World/Engine graph links against
+ * the other copy of three, and that failure REPORTS rather than crashing.
+ */
+export async function driveAttack(action, frames = 70) {
+  const { Player } = await import('../../src/game/Player.js');
+const stubWorld = () => ({
+  scene: new THREE.Scene(),
+  settings: { fov: 60, bloom: false, forcePower: 1, forceDrain: 1 },
+  terrain: { height: () => 0, normalAt: (x, z, o) => o.set(0, 1, 0), inBounds: () => true,
+    half: 200, crater() {}, surfaceAt: () => 'sand' },
+  particles: null, bolts: null, time: 0, combatIntensity: 0,
+  physics: { add() {}, remove() {}, raycast: () => null, bodies: [], staticBoxes: [] },
+  engine: { addHeat() {}, camera: new THREE.PerspectiveCamera(60, 16 / 9, 0.045, 1000) },
+  report() {},
+});
+
+  const world = stubWorld();
+  const p = new Player(world, { isLocal: true });
+  p.position.set(0, 0, 0); p.velocity.set(0, 0, 0);
+  p.saber.ignite(); p.saber.ignition = 1;
+  const hit = new Set();
+  const input = {
+    keys: new Set(), buttons: [false, false, false], mouse: { dx: 0, dy: 0, wheel: 0 },
+    accel: { x: 0, y: 0 }, bindings: null,
+    moveAxis: (o) => { o.x = 0; o.y = 0; return o; },
+    act: () => false, actHit: (id) => hit.has(id),
+  };
+  const ctx = { input, terrain: world.terrain, physics: world.physics, particles: null,
+    camera: world.engine.camera, time: 0, groundColor: 0, enemies: [] };
+  for (let i = 0; i < 120; i++) { ctx.time = world.time = i / 60; p.update(1 / 60, ctx); }
+
+  // Everything relative to the BODY, so this measures the attack and not
+  // the player drifting.
+  const rel = (b) => p.rig.worldPos(b, V3()).sub(p.position);
+  const shoulder = () => p.rig.tipPos('clavR', V3()).sub(p.position);
+  if (action) hit.add(action);
+  const hand = [], joint = [], spine = [], clav = [];
+  /**
+   * A CROWD, AS EIGHTEEN CAPSULES ON A RING — the only honest way to ask
+   * whether an attack is "effective for slashing down hordes", which is the
+   * words the player used. One body every 20 degrees at 1.4 m, standing
+   * 0.9 m to 1.7 m: a torso, at the distance a swing can reach.
+   *
+   * `front` counts the nine of them inside ±80 degrees of the sightline,
+   * because a forward cut cannot be asked to reach behind the player and a
+   * spin can.
+   */
+  const RING = [];
+  for (let a = 0; a < 18; a++) {
+    RING.push({ a, x: Math.sin(a * Math.PI / 9) * 1.4, z: Math.cos(a * Math.PI / 9) * 1.4, hit: false });
+  }
+  /** Closest approach between two segments — the blade and a body's axis. */
+  const segSeg = (p1, p2, q1, q2) => {
+    const d1 = p2.clone().sub(p1), d2 = q2.clone().sub(q1), r = p1.clone().sub(q1);
+    const a = d1.dot(d1), e = d2.dot(d2), f = d2.dot(r), c = d1.dot(r), b = d1.dot(d2);
+    const den = a * e - b * b;
+    let sN = den !== 0 ? Math.max(0, Math.min(1, (b * f - c * e) / den)) : 0;
+    let tN = Math.max(0, Math.min(1, (b * sN + f) / e));
+    sN = Math.max(0, Math.min(1, (b * tN - c) / a));
+    return p1.clone().addScaledVector(d1, sN).distanceTo(q1.clone().addScaledVector(d2, tN));
+  };
+  let tip = 0, contact = 0, yawTurned = 0, lowest = 9;
+  let prevYaw = p.camera.yaw;
+  let gxLo = 9, gxHi = -9, gyLo = 9, gyHi = -9;
+  for (let i = 0; i < frames; i++) {
+    ctx.time = world.time = (120 + i) / 60;
+    p.update(1 / 60, ctx);
+    hit.clear();
+    hand.push(rel('handR')); joint.push(shoulder());
+    spine.push(p.rig.get('spine').obj.quaternion.clone());
+    clav.push(p.rig.get('clavR').obj.quaternion.clone());
+    tip = Math.max(tip, p.saber.speedAt(1));
+    gxHi = Math.max(gxHi, p.control.gx); gxLo = Math.min(gxLo, p.control.gx);
+    gyHi = Math.max(gyHi, p.control.gy); gyLo = Math.min(gyLo, p.control.gy);
+    let d = p.camera.yaw - prevYaw;
+    while (d > Math.PI) d -= Math.PI * 2;
+    while (d < -Math.PI) d += Math.PI * 2;
+    yawTurned += Math.abs(d); prevYaw = p.camera.yaw;
+    const b0 = p.saber.base.clone(), b1 = p.saber.pointAt(1, V3());
+    lowest = Math.min(lowest, b1.y - p.position.y);
+    for (const cap of RING) {
+      if (cap.hit) continue;
+      const c0 = V3(p.position.x + cap.x, p.position.y + 0.9, p.position.z + cap.z);
+      const c1 = V3(p.position.x + cap.x, p.position.y + 1.7, p.position.z + cap.z);
+      if (segSeg(b0, b1, c0, c1) < 0.32) { cap.hit = true; contact = Math.max(contact, p.saber.speedAt(0.75)); }
+    }
+  }
+  const spread = (a, f) => {
+    let m = 0;
+    for (let i = 0; i < a.length; i++) for (let j = i + 1; j < a.length; j++) m = Math.max(m, f(a[i], a[j]));
+    return m;
+  };
+  const dist = (x, y) => x.distanceTo(y);
+  const ang = (x, y) => x.angleTo(y) * D;
+  return {
+    hand: spread(hand, dist), joint: spread(joint, dist),
+    spine: spread(spine, ang), clav: spread(clav, ang),
+    /* HOW FAR THE HAND GETS, as well as how far it moved. See the stab's
+     * clause: under a guard carried further forward those are different
+     * questions and only one of them is what a lunge is for. */
+    far: Math.max(...hand.map((h) => h.length())),
+    /* THE BLADE'S OWN SIDE OF THE STORY. The body half above was already
+     * healthy on the left button — it is these that were not. */
+    tip, contact, yaw: yawTurned, lowest,
+    across: gxHi - gxLo, up: gyHi - gyLo,
+    ring: RING.filter((c) => c.hit).length,
+    front: RING.filter((c) => c.hit && (c.a <= 4 || c.a >= 14)).length,
+  };
+}
+
 export function run({ check, assert, near, THREE: T }) {
   THREE = T;
   const euler = new THREE.Euler();
@@ -579,6 +695,98 @@ export function run({ check, assert, near, THREE: T }) {
   /*  An attack is a body, not an elbow — player note 23               */
   /* ══════════════════════════════════════════════════════════════════ */
 
+  check('attack: the left button CUTS, and the spin turns the whole body through a crowd', async () => {
+    /**
+     * THE PLAYER, HAVING PLAYED IT:
+     *
+     *   "the left click attacks barely do anything like it's the slightest
+     *    movement of the saber same with the spin attack like I need something
+     *    violent but graceful and effective for slashing down hordes of enemies
+     *    and it's almost like both attacks do nothing"
+     *
+     *   "the spin attack needs to be like a whole body spin/directional force
+     *    spin thing you know what I mean? you should be able to direct it as
+     *    well for the short time you're spinning"
+     *
+     *   "The overhead attack is a lot better like good job it feels real"
+     *
+     * So the OVERHEAD IS THE REFERENCE and this check is the comparison, run on
+     * one bench, in one pass. What it found is not what the words suggest:
+     *
+     *                 tip peak  guard across  ring  front  body turn  spine
+     *     overhead      10.8      0.00 units  2/18   2/9        0°     37.9°
+     *     left button    5.9      0.00        1/18   1/9        0°     21.7°
+     *     spin          11.0      1.98        2/18   1/9       35°      7.1°
+     *
+     *   · the left button had no ARC AT ALL — it was a pure thrust, 0.00 units
+     *     of lateral guard travel — and 5.9 m/s is under the 8 m/s this game's
+     *     own cutting model calls the speed at which a swing outworks a press.
+     *     Its BODY was fine. Its blade did nothing.
+     *   · the spin had the fastest blade in the game and no body: less trunk
+     *     than the overhead, zero shoulder girdle, and 35 degrees of turn.
+     *   · and standing in the middle of eighteen bodies, the attack that exists
+     *     to answer being surrounded reached exactly as many of them as a
+     *     downward chop: two.
+     *
+     * The bounds below are the floor of what reads as a cut rather than the
+     * numbers that ship, so re-tuning does not break them and deleting does.
+     */
+    const over = await driveAttack('attackOver');
+    const cut = await driveAttack('thrust');
+    const spin = await driveAttack('attackSpin', 90);
+
+    /* THE REFERENCE IS STILL THE REFERENCE. If the overhead ever stops being
+     * the thing the player named as good, every bound below is measured
+     * against a moved goalpost. */
+    assert(over.tip > 8 && over.spine > 30,
+      `the overhead — the attack this check is calibrated against — came out at ${over.tip.toFixed(1)} m/s `
+      + `and ${over.spine.toFixed(1)}° of spine; it is no longer the reference`);
+
+    // ── 1. THE LEFT BUTTON IS A CUT.
+    assert(cut.across > 0.9,
+      `the left button moved the guard ${cut.across.toFixed(2)} units across — it was 0.00, a pure `
+      + 'thrust, and that is what "the slightest movement of the saber" is');
+    assert(cut.tip > 8,
+      `the left button peaked the blade at ${cut.tip.toFixed(1)} m/s, under the 8 m/s at which this `
+      + "game's own cutting model says a swing outworks a press");
+    assert(cut.lowest < 1.55,
+      `the cut never brought the tip below ${cut.lowest.toFixed(2)} m — the ready guard points the blade `
+      + 'UP, so a stroke that leaves the pitch alone passes over a standing man');
+    assert(cut.front >= 3,
+      `one pass of the left button crossed ${cut.front} of the 9 bodies in front of the player — it was 1, `
+      + 'and a cut that reaches one body is not an answer to a horde');
+    assert(cut.spine > 20 && cut.clav > 15,
+      `the cut turns ${cut.spine.toFixed(1)}° of spine and ${cut.clav.toFixed(1)}° of shoulder girdle`);
+
+    // ── 2. THE SPIN IS A WHOLE BODY, AND IT GOES ALL THE WAY ROUND.
+    assert(spin.yaw > 6.0,
+      `the spin turned the body ${spin.yaw.toFixed(2)} rad — it was 0.62, which is a glance, not a spin`);
+    assert(spin.ring >= 12,
+      `one spin crossed ${spin.ring} of the 18 bodies standing round the player — it was 2, exactly what a `
+      + 'downward chop reaches');
+    assert(spin.spine > 15,
+      `the spin turns ${spin.spine.toFixed(1)}° of trunk — it was 7.1, LESS than the overhead, which is a `
+      + 'wrist on a turntable');
+    assert(spin.clav > 10,
+      `the spin turns ${spin.clav.toFixed(1)}° of shoulder girdle — it was 0.0, exactly zero`);
+    assert(spin.joint > 0.15,
+      `the spin's shoulder JOINT travels ${(spin.joint * 1000).toFixed(0)} mm against the overhead's `
+      + `${(over.joint * 1000).toFixed(0)} mm — the girdle is turning in place`);
+
+    // ── 3. AND NEITHER OUTRUNS THE ATTACK THE PLAYER SAID WAS GOOD BY SO MUCH
+    //       THAT IT REPLACES IT. Damage in this game is blade speed, so a light
+    //       attack faster than a CHARGED overhead would make the heavy a
+    //       decoration. CHARGE.cut buys the overhead about 1.6x its tap speed.
+    assert(cut.tip < over.tip * 1.6,
+      `the left button peaks at ${cut.tip.toFixed(1)} m/s against the overhead's ${over.tip.toFixed(1)} — `
+      + 'the light attack is now faster than the charged heavy and the heavy is decoration');
+
+    return `cut ${cut.tip.toFixed(1)} m/s over ${cut.across.toFixed(2)} units, ${cut.front}/9 in front, `
+      + `spine ${cut.spine.toFixed(0)}°; spin ${spin.yaw.toFixed(2)} rad, ${spin.ring}/18 of the ring, `
+      + `spine ${spin.spine.toFixed(0)}° girdle ${spin.clav.toFixed(0)}°; `
+      + `overhead reference ${over.tip.toFixed(1)} m/s, ${over.front}/9`;
+  });
+
   check('attack: the overhead and the stab move the whole body, not just the arm', async () => {
     /**
      * "I want the arm movement for the overhead attack to be more pronounced,
@@ -614,69 +822,11 @@ export function run({ check, assert, near, THREE: T }) {
      * and moving them would put the swim back; first person gets the body
      * through the anchor instead, and `tools/checks/viewmodel.mjs` owns that.
      */
-    const { Player } = await import('../../src/game/Player.js');
-    const stubWorld = () => ({
-      scene: new THREE.Scene(),
-      settings: { fov: 60, bloom: false, forcePower: 1, forceDrain: 1 },
-      terrain: { height: () => 0, normalAt: (x, z, o) => o.set(0, 1, 0), inBounds: () => true,
-        half: 200, crater() {}, surfaceAt: () => 'sand' },
-      particles: null, bolts: null, time: 0, combatIntensity: 0,
-      physics: { add() {}, remove() {}, raycast: () => null, bodies: [], staticBoxes: [] },
-      engine: { addHeat() {}, camera: new THREE.PerspectiveCamera(60, 16 / 9, 0.045, 1000) },
-      report() {},
-    });
-
-    const drive = (action) => {
-      const world = stubWorld();
-      const p = new Player(world, { isLocal: true });
-      p.position.set(0, 0, 0); p.velocity.set(0, 0, 0);
-      p.saber.ignite(); p.saber.ignition = 1;
-      const hit = new Set();
-      const input = {
-        keys: new Set(), buttons: [false, false, false], mouse: { dx: 0, dy: 0, wheel: 0 },
-        accel: { x: 0, y: 0 }, bindings: null,
-        moveAxis: (o) => { o.x = 0; o.y = 0; return o; },
-        act: () => false, actHit: (id) => hit.has(id),
-      };
-      const ctx = { input, terrain: world.terrain, physics: world.physics, particles: null,
-        camera: world.engine.camera, time: 0, groundColor: 0, enemies: [] };
-      for (let i = 0; i < 120; i++) { ctx.time = world.time = i / 60; p.update(1 / 60, ctx); }
-
-      // Everything relative to the BODY, so this measures the attack and not
-      // the player drifting.
-      const rel = (b) => p.rig.worldPos(b, V3()).sub(p.position);
-      const shoulder = () => p.rig.tipPos('clavR', V3()).sub(p.position);
-      if (action) hit.add(action);
-      const hand = [], joint = [], spine = [], clav = [];
-      for (let i = 0; i < 70; i++) {
-        ctx.time = world.time = (120 + i) / 60;
-        p.update(1 / 60, ctx);
-        hit.clear();
-        hand.push(rel('handR')); joint.push(shoulder());
-        spine.push(p.rig.get('spine').obj.quaternion.clone());
-        clav.push(p.rig.get('clavR').obj.quaternion.clone());
-      }
-      const spread = (a, f) => {
-        let m = 0;
-        for (let i = 0; i < a.length; i++) for (let j = i + 1; j < a.length; j++) m = Math.max(m, f(a[i], a[j]));
-        return m;
-      };
-      const dist = (x, y) => x.distanceTo(y);
-      const ang = (x, y) => x.angleTo(y) * D;
-      return {
-        hand: spread(hand, dist), joint: spread(joint, dist),
-        spine: spread(spine, ang), clav: spread(clav, ang),
-        /* HOW FAR THE HAND GETS, as well as how far it moved. See the stab's
-         * clause: under a guard carried further forward those are different
-         * questions and only one of them is what a lunge is for. */
-        far: Math.max(...hand.map((h) => h.length())),
-      };
-    };
 
     // The reference arm: the same seventy frames with nothing pressed, so
     // "moving" is measured against a body that is merely standing there rather
     // than against zero.
-    const idle = drive(null);
+    const idle = await driveAttack(null);
     assert(idle.hand < 0.03 && idle.spine < 1 && idle.joint < 0.03,
       `a standing player is already moving ${(idle.hand * 100).toFixed(0)} cm of hand and ${idle.spine.toFixed(1)}° `
       + 'of spine — this bench cannot tell an attack from an idle');
@@ -704,7 +854,7 @@ export function run({ check, assert, near, THREE: T }) {
       ['overhead', 'attackOver', 0.22, 1.0, null],
       ['stab', 'attackStab', 0.32, 1.6, 0.70],
     ]) {
-      const r = drive(action);
+      const r = await driveAttack(action);
       assert(r.spine > 15,
         `${name}: the spine turns ${r.spine.toFixed(1)}° through the attack, against the ${wasSpine}° it had `
         + 'when the complaint was made — this is still an elbow');

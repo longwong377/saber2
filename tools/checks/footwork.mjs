@@ -474,6 +474,111 @@ export async function run({ check, assert }) {
       + `(${(back / fwd * 100).toFixed(0)}% of the advance)`;
   });
 
+  check('footwork: a spin goes where you steer it, in the frame you started it in', () => {
+    /**
+     * "the spin attack needs to be like a whole body spin/directional force
+     *  spin thing you know what I mean? you should be able to direct it as well
+     *  for the short time you're spinning"
+     *
+     * Two claims, and the second one is why the first needed more than a bigger
+     * number in SPIN.yaw.
+     *
+     * THE SPIN CARRIES YOU. Held with a direction, the body travels; held with
+     * none, it pivots where it stands. Both have to be true or "directional" is
+     * decoration.
+     *
+     * AND THE DIRECTION IS READ IN A LATCHED FRAME. `Player._move` builds the
+     * walk direction out of the LIVE camera heading, and a spin turns that
+     * heading through a full revolution in a third of a second — so W would
+     * trace a circle and the move would be unsteerable however hard the player
+     * pushed. `_spinFrame` is the heading at the press, and the whole of this
+     * check's second half is the difference between the two.
+     *
+     * Measured on the shipped `Player._move` at a real 60 Hz. The travel is
+     * taken over the spin's own duration, from a standing start.
+     */
+    const w = gameWorld('knight');
+    const p = new Player(w, { isLocal: true });
+    w.players.push(p);
+    const axis = { x: 0, y: 0 };
+    const hit = new Set();
+    const input = { ...stubInput(axis, () => false), actHit: (a) => hit.has(a) };
+    const ctx = { input, terrain: w.terrain, physics: w.physics, particles: null, bolts: null,
+      camera: w.engine.camera, time: 0, groundColor: 0, enemies: [], players: w.players,
+      pickTarget: () => null };
+
+    /** Spin with `axis` held, optionally switched at `switchAt` frames in. */
+    const spin = (ax, ay, after = null, switchAt = 999) => {
+      p.position.set(0, 0, 0); p.velocity.set(0, 0, 0);
+      p.camera.yaw = 0; p.control.reset(p.chest, p.camera.aimQuat);
+      p.control.spinCool = 0; p.stamina = p.maxStamina;
+      axis.x = 0; axis.y = 0;
+      for (let i = 0; i < 30; i++) { ctx.time = w.time = i / 60; p.update(1 / 60, ctx); }
+      const from = p.position.clone();
+      const yaw0 = p.camera.yaw;
+      axis.x = ax; axis.y = ay;
+      hit.add('attackSpin');
+      let turned = 0, prev = p.camera.yaw;
+      for (let i = 0; i < 46; i++) {
+        ctx.time = w.time = (30 + i) / 60;
+        p.update(1 / 60, ctx);
+        hit.clear();
+        if (after && i === switchAt) { axis.x = after[0]; axis.y = after[1]; }
+        let d = p.camera.yaw - prev;
+        while (d > Math.PI) d -= Math.PI * 2;
+        while (d < -Math.PI) d += Math.PI * 2;
+        turned += Math.abs(d); prev = p.camera.yaw;
+      }
+      const go = p.position.clone().sub(from);
+      axis.x = 0; axis.y = 0;
+      return { dist: Math.hypot(go.x, go.z), bearing: Math.atan2(go.x, go.z), turned, yaw0 };
+    };
+
+    /* The heading `_move` builds W from: `fwd = -(sin yaw, 0, cos yaw)`, so a
+     * pure forward wish points along `atan2(-sin y, -cos y)`. Named from that
+     * identity rather than typed, so a change to the camera convention shows up
+     * as a failure here instead of as a check that quietly measures nothing. */
+    const forwardOf = (yaw) => Math.atan2(-Math.sin(yaw), -Math.cos(yaw));
+    const off = (a, b) => {
+      let d = a - b;
+      while (d > Math.PI) d -= Math.PI * 2;
+      while (d < -Math.PI) d += Math.PI * 2;
+      return Math.abs(d) * 180 / Math.PI;
+    };
+
+    const still = spin(0, 0);
+    const fwd = spin(0, 1);
+    const left = spin(-1, 0);
+    const turnedBack = spin(0, 1, [0, -1], 12);
+
+    assert(fwd.turned > 6.0,
+      `the spin only turned the view ${fwd.turned.toFixed(2)} rad — this check cannot be measuring a spin`);
+    assert(still.dist < 0.35,
+      `a spin with no direction held carried the player ${still.dist.toFixed(2)} m — it is supposed to pivot`);
+    assert(fwd.dist > 1.6,
+      `a spin held forward carried the player ${fwd.dist.toFixed(2)} m — that is not a directional force`);
+    /* THE LATCH. The view went round once during this; if the frame were the
+     * live camera the travel would be a near-closed loop with no bearing worth
+     * the name, which is the `still` case's number. */
+    assert(off(fwd.bearing, forwardOf(fwd.yaw0)) < 25,
+      `a spin held forward travelled ${off(fwd.bearing, forwardOf(fwd.yaw0)).toFixed(0)}° off the heading it `
+      + 'started in — the walk frame is turning with the spin');
+    assert(off(left.bearing, forwardOf(left.yaw0) + Math.PI / 2) < 25,
+      `a spin held left travelled ${off(left.bearing, forwardOf(left.yaw0) + Math.PI / 2).toFixed(0)}° off the `
+      + 'left of the heading it started in');
+    /* …and it is read EVERY frame, not sampled at the press. Changing your mind
+     * mid-spin has to change where you end up, or "for the short time you're
+     * spinning" means nothing. */
+    assert(turnedBack.dist < fwd.dist * 0.6,
+      `reversing the stick halfway through still carried the player ${turnedBack.dist.toFixed(2)} m against `
+      + `${fwd.dist.toFixed(2)} m — the direction was sampled once, at the press`);
+
+    return `pivot ${still.dist.toFixed(2)} m; forward ${fwd.dist.toFixed(2)} m at `
+      + `${off(fwd.bearing, forwardOf(fwd.yaw0)).toFixed(0)}° off the start heading; left `
+      + `${left.dist.toFixed(2)} m at ${off(left.bearing, forwardOf(left.yaw0) + Math.PI / 2).toFixed(0)}° off; `
+      + `reversed mid-spin ${turnedBack.dist.toFixed(2)} m; ${fwd.turned.toFixed(2)} rad of view turned`;
+  });
+
   check('footwork: the band a duellist holds is inside the band it swings from', () => {
     /**
      * ONE NUMBER, TWO READERS — the sixth time this codebase has been bitten by
