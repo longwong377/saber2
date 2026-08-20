@@ -1016,6 +1016,14 @@ export function engagementFor(entry, mods, guardShare = 0, opts = {}) {
     // rather than adds, so a body whose guard cost four passes and then had to
     // be ground down was billed for the grind alone.
     passes = (g.dead ? passesOf(g.t, cadence) : 600) + best.turns;
+    /* …and the sequence this branch just ABANDONED goes with them. `passes` is
+     * assigned, not added, so the finishing loop's cuts are not in the plan any
+     * more — and neither are the turns they were charged or the bones they
+     * named. Reporting `turnsSpent` here would bill a guard the plan never
+     * paid, against a `passes` that does not contain it. */
+    guardLeft += turnsSpent - best.turns;
+    turnsSpent = best.turns;
+    route.length = 1;
   }
 
   const out = {
