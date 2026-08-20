@@ -144,6 +144,7 @@ import { packAvatar, packMatch, packSnapshot, sessionPart } from '../net/Net.js'
 import { QUALITY } from '../engine/Engine.js';
 import { clamp, lerp, damp, dampVec, makeRng, TAU } from '../engine/MathUtil.js';
 import { audio, PRIO } from '../engine/Audio.js';
+import { ExtractionDirector } from './Extraction.js';
 
 const rng = makeRng((Math.random() * 1e9) | 0);
 /** Finite-or-default. Level data and game maths both produce NaN; WebAudio throws on it. */
@@ -372,6 +373,16 @@ export class World {
 
     this._targets = [];
     this._capsCache = [];
+
+    /**
+     * THE JOURNEY BETWEEN GROUNDS — see src/game/Extraction.js.
+     *
+     * Built with the World and not with the level, deliberately: it is the one
+     * director that has to be ALIVE ACROSS a level change, because the flight
+     * it runs spans one. `unload()` therefore does not touch it and neither
+     * does `_loadSteps`; `dispose()` does, and so does the run ending.
+     */
+    this.extraction = new ExtractionDirector(this);
   }
 
   /* ── level lifecycle ─────────────────────────────────────────────── */
@@ -2582,6 +2593,23 @@ export class World {
        * this leaves it alone. Anything falsy, including no handler at all,
        * means nobody took it and the synchronous door is used, because a battle
        * that silently stops changing ground is worse than one that hitches. */
+      /**
+       * …AND THE GROUND CHANGE IS NOW A JOURNEY, WHICH IS THE FIRST DOOR.
+       *
+       * The player, on what used to happen right here: "right now you just
+       * teleport and it's really disorientating … you should never just
+       * teleport." `ExtractionDirector.begin` takes the change if it can fly
+       * it — five seconds of aftermath, a transport you walk to, a bay you
+       * stand in and a flight with the rebuild hidden inside it — and the
+       * rotate below happens INSIDE that flight, at altitude, behind cloud.
+       *
+       * It DECLINES on a client, with no living player, with no terrain, and
+       * whenever `settings.instantSpawn` says this player wants things to
+       * simply appear. Every one of those falls through to the two lines that
+       * were here before, which is the same shape `ArrivalDirector.request`
+       * uses: a caller that cannot be choreographed still has to work.
+       */
+      if (this.extraction?.begin(key)) return;
       if (!this.onRotate?.(key)) this.rotateTo(key);
       return;
     }
@@ -2704,6 +2732,21 @@ export class World {
       spawnEnemy: (t, p) => this.spawnEnemy(t, p),
     };
 
+    /**
+     * BEFORE EVERYTHING, because a passenger's seat has to be written before
+     * the passenger is stepped.
+     *
+     * `ExtractionDirector` moves the transport and then writes every riding
+     * body's position from the ship's new transform. Run with the props, one
+     * frame later, it would place the bodies where the ship WAS — 20 cm of
+     * slide at cruise, once per frame, which is the whole difference between
+     * standing in a bay and being dragged behind one. It is also the only
+     * position in the order where the commander the rotate has just respawned
+     * can be put back aboard before their own `update` walks them off a cliff
+     * on the new ground.
+     */
+    this.extraction?.update(dt, ctx);
+
     // 0 — the catch window, BEFORE the players read input. That order is the
     // feature: control.catchHold has to be true when applyInput runs or the
     // camera does not come back until the frame after the catch.
@@ -2785,7 +2828,14 @@ export class World {
     // 8 — director (the host owns the horde; clients receive it)
     // …but not once the run is over: a director that keeps spawning at a corpse
     // is the reason `running` used to be switched off here. See onPlayerDeath.
-    if (this.netMode !== 'client' && !this.over) this.director.update(dt, ctx);
+    /* …AND NOT WHILE THE ARMY IS BEING FLOWN OFF THE GROUND. An extraction is
+     * up to forty seconds long, and `WaveDirector.intermission` is five and a
+     * half — so without this gate the next engagement's first wave would open
+     * on the ground you are leaving, with the commander sat in an aircraft.
+     * It also stops `CommandDirector._troops` fighting `Extraction._walkTroops`
+     * for the same `wish` field. Everything the director owns resumes on the
+     * far side, on the new ground, exactly as it does after a plain rotate. */
+    if (this.netMode !== 'client' && !this.over && !this.extraction?.active) this.director.update(dt, ctx);
     /* The meeting's clock, and it is outside the director because it is not the
      * director's: `DuelMatch` is driven by facts about the WHOLE field — who
      * has anybody left standing — and the host owns it whether or not there is
@@ -5750,6 +5800,11 @@ export class World {
    * drops its reference on the next line.
    */
   dispose() {
+    /* BEFORE `unload`, and it is the one director with that ordering. The
+     * transport is added to `scene` rather than to `statics` precisely so that
+     * `unload` cannot take it — which is what makes the flight continuous
+     * across a planet change and what makes it this method's job to end. */
+    this.extraction?.dispose();
     this.unload();
     /* Terminal, and RapierWorld owns what that means — see its dispose(),
      * which frees the Rapier world instead of allocating a fresh one nobody

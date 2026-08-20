@@ -55,7 +55,7 @@
 import * as THREE from 'three';
 import { clamp, lerp, damp, smoothstep, makeRng, TAU } from '../engine/MathUtil.js';
 import { audio } from '../engine/Audio.js';
-import { spawnClear } from './Spawn.js';
+import { spawnClear, bladeClear } from './Spawn.js';
 
 /**
  * THE SHIP'S MODEL, INJECTED — and the direction of the arrow is the whole
@@ -79,6 +79,25 @@ import { spawnClear } from './Spawn.js';
  */
 let _shipModel = null;
 export function setDropshipModel(fn) { _shipModel = typeof fn === 'function' ? fn : null; }
+
+/**
+ * THE SAME SHIP, FOR THE ONE THING THAT IS NOT AN ARRIVAL.
+ *
+ * `src/game/Extraction.js` flies the transport the player BOARDS, and it needs
+ * the identical hull — a departure that left on a different craft from the one
+ * that brought the enemy in would read as two games. It cannot import
+ * `Vehicles.js` for the reason the note above gives, and it must not hold a
+ * second injection point, because two registries for one model is exactly the
+ * hand-maintained twin HANDOFF 2.4 is about. So the injected builder is
+ * readable, and `Levels.js` still registers it exactly once.
+ *
+ * Returns null when nothing is registered, which is every headless check that
+ * does not import `Levels.js`; the caller falls back to primitives.
+ */
+export function dropshipModel() {
+  if (!_shipModel) return null;
+  try { return _shipModel(); } catch (e) { return null; }
+}
 
 const rng = makeRng(20931);
 
@@ -665,6 +684,14 @@ export class ArrivalDirector {
        * squad down inside a column or under a lava sheet — measured at 11.9%
        * of temple picks and 94.3% of the deeps'. See Spawn.js. */
       if (!spawnClear(this.world, x, t ? t.height(x, z) : 0, z)) continue;
+      /* …AND NEVER INSIDE A LIT BLADE. `near` is 18 m for the Command mode's
+       * own reinforcement flight, so in practice a landing site is far outside
+       * a swing — but "in practice" is how a placement rule stops being one.
+       * The player's second complaint was allies delivered into the arc; this
+       * is the door every delivered body in the game comes through, so it is
+       * where the law belongs rather than at whichever caller happens to be
+       * close today. See Spawn.js. */
+      if (!bladeClear(this.world, x, z)) continue;
       return this._ground(out.set(x, 0, z));
     }
     const a = rng() * TAU;

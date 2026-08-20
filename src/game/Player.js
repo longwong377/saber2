@@ -20,7 +20,7 @@ import { Body, LAYER, capsuleSpheres, capsule } from '../physics/RapierWorld.js'
 import { supportHeight, topOfProps, ceilingHeight, STEP_UP, GROUND_SNAP } from '../physics/Support.js';
 import { walkScale } from '../engine/Bindings.js';
 import { RankSet, rankScale } from './Waves.js';
-import { parryScale, TOUGHNESS } from './Combat.js';
+import { parryScale, TOUGHNESS, impactDamage } from './Combat.js';
 /* THE OTHER HALF OF THE FORCE CONTEST, IMPORTED RATHER THAN RE-DERIVED. The
  * three constants that decide what a point of pool buys live over
  * `forceResistance` in Enemy.js, and one contest read out of two rulebooks is
@@ -32,6 +32,10 @@ import { Stratagems, DIRS, DIR_ACTION } from './Stratagems.js';
 import { bodyOf } from '../engine/Presence.js';
 import { clamp, lerp, damp, smoothstep, dampVec, makeRng, TAU } from '../engine/MathUtil.js';
 import { audio } from '../engine/Audio.js';
+/* The player's own larynx, for the words a stratagem code is spoken in — see
+ * `_sayCall`. `voiceAt` is the same reader `Announcer.voice` uses, so there is
+ * one answer to "which of the five is this player". */
+import { voiceAt } from '../engine/Voice.js';
 
 /**
  * The skin tone at an index, on the rack that species actually has.
@@ -174,6 +178,33 @@ const GESTURES = {
   // Force heal is the one gesture that is not thrown at anything: the palm
   // comes IN to the chest and stays there for as long as the channel holds.
   mend:      { attack: 0.30, release: 0.45, out: 0.02, side: -0.16, up: -0.06, palm: 0.90, lean: -0.10, twist: 0.06, sustain: true },
+  /**
+   * THE COMM, and it is the only gesture here that is not the Force at all.
+   *
+   * Player note #31: *"imagine you begin the process of calling one in, you
+   * hold up your wrist and speak into it, every keystroke a word"*. The hand
+   * comes IN and UP — 0.30 up and 0.24 back toward the face, off the chest
+   * frame every other row is written in — so the wrist ends up at the mouth
+   * rather than out in front of the body. `palm` is high because the back of
+   * the wrist has to face away from the speaker for the comm on it to be
+   * pointing at them.
+   *
+   * The spine barely moves. Every other gesture here commits the torso because
+   * it is throwing something; this one is a man talking into his sleeve while
+   * trying to watch the field, and a lean would read as a bow.
+   *
+   * SUSTAINED, because the code takes as long as it takes. `_stratagemInput`
+   * starts it when the key goes down and ends it when the call is away.
+   */
+  comm:      { attack: 0.16, release: 0.30, out: -0.24, side: -0.10, up: 0.30, palm: 0.85, lean: 0.04, twist: 0.10, sustain: true },
+  /**
+   * PAINTING THE TARGET. The arm goes OUT and stays out, pointing at the mark,
+   * and it TRACKS — the beam follows the aim, so the hand has to as well.
+   * Further out than a push (0.82 against 0.66) because nothing is being
+   * thrown: the arm is extended to hold a designator on a thing, which is a
+   * longer, stiller shape than a shove.
+   */
+  designate: { attack: 0.14, release: 0.28, out: 0.82, side: -0.06, up: 0.06, palm: 0.05, lean: 0.14, twist: -0.10, sustain: true, track: true },
 };
 
 /**
@@ -2832,12 +2863,75 @@ export class Player {
    */
   _spelling() { return !!this.stratagems?.arming; }
 
+  /**
+   * ── AND EVERY KEYSTROKE IS A WORD, WHICH IS WHY THIS GREW ───────────────
+   *
+   * Player note #31 asks for the call to be a PERFORMANCE: the comm goes up,
+   * the player speaks, and only then do they place the thing. All three beats
+   * are here because all three are input, and each one is one line plus its
+   * reason:
+   *
+   *  · THE COMM COMES UP with the key and goes down when the call is away, so
+   *    the gesture and the mechanic have exactly one lifetime between them.
+   *  · A LETTER SPEAKS ITS WORD. `Stratagems.wordAt` derives which word from
+   *    the phrase and the entry (see `callPhrase`), and `audio.radio` says it
+   *    — so the mouth and the HUD panel are reading the same derivation and
+   *    cannot drift.
+   *  · THE ARM GOES OUT when the code is done and the designation opens. That
+   *    is the visible difference between "still spelling" and "choosing where",
+   *    which is the state the player has to be able to read at a glance while
+   *    something is shooting at them.
+   *
+   * The letters are still `actHit` and not `act`: a letter is a press. A held
+   * W while a code is being spelled is one W, not sixty.
+   */
   _stratagemInput(input, ctx) {
     const S = this.stratagems;
     if (!S) return;
+    const was = S.arming, wasMarking = !!S.designating;
     S.setArming(input.act('stratagem'));
-    if (!S.arming) return;
-    for (const d of DIRS) if (input.actHit(DIR_ACTION[d])) S.feed(d, ctx);
+    if (S.arming && !was) this._gesture('comm');
+    if (!S.arming) {
+      if (was) { this._endGesture('comm'); this._endGesture('designate'); }
+      return;
+    }
+    if (!S.designating) {
+      for (const d of DIRS) {
+        if (!input.actHit(DIR_ACTION[d])) continue;
+        const before = S.entry.length;
+        const word = S.wordAt(ctx, before);
+        const out = S.feed(d, ctx);
+        // Spoken only for a letter that LANDED. A wrong direction is a failed
+        // code and gets the refusal sound, not another word of a call that is
+        // no longer being made.
+        if (out !== false && S.entry.length !== before || out) this._sayCall(word);
+      }
+    }
+    /* The arm swaps from the comm to the designator on the frame the phase
+     * changes, in both directions — a designation that expires and sends
+     * itself has to put the arm back too. */
+    if (!!S.designating !== wasMarking) {
+      if (S.designating) { this._endGesture('comm'); this._gesture('designate', S.designating.site); }
+      else { this._endGesture('designate'); if (S.arming) this._gesture('comm'); }
+    }
+  }
+
+  /**
+   * SAY ONE WORD OF THE CALL.
+   *
+   * Straight at `audio.radio` and deliberately NOT through the Announcer: the
+   * announcer owns the QUIP budget, which exists so that a squad wiped in one
+   * second does not produce five simultaneous lines, and a phrase is the one
+   * case where eight utterances in two seconds is the intended sound. See the
+   * note over `AudioEngine.radio` for the whole of that argument.
+   *
+   * The larynx is the player's own, read off the same setting the announcer
+   * reads, so the voice that spells a code is the voice that shouts on a kill.
+   */
+  _sayCall(word) {
+    if (!word) return;
+    const spec = voiceAt(this.world?.settings?.voiceIndex ?? 0);
+    audio.radio(spec, word, { pos: this.chest ?? this.position });
   }
 
   /**
@@ -5786,8 +5880,11 @@ export class Player {
         h.hit.add(e.id);
         // Kinetic energy, scaled to the damage numbers this game uses: a 22 kg
         // crate at 40 m/s reads 21, a 210 kg droideka body at 25 reads 79, and
-        // the ceiling stops a pillar from one-shotting a boss.
-        const dmg = clamp(h.mass * speed * speed * h.k, h.floor, h.cap);
+        // the ceiling stops a pillar from one-shotting a boss. The record was
+        // built carrying `k`, `floor` and `cap`, which is exactly the rule's
+        // own signature — and `Forest._sweep` prices a falling trunk through
+        // the same function rather than through a second copy of this line.
+        const dmg = impactDamage(h.mass, speed, h);
         _g2.copy(_g3).multiplyScalar(1 / Math.max(1e-3, speed));
         e.applyKnockback(_g2.clone().multiplyScalar(clamp(speed * 0.5, 4, 22)).setY(4), dmg, this);
         /* BOTH BODIES TAKE A SHARE. A person thrown into a person hurts the
@@ -5847,7 +5944,7 @@ export class Player {
       cd.set(e.id, 0.55);
       const mass = this.gripBody ? Math.max(1, this.gripBody.mass)
         : (held?.A ? held.A.mass : 80);
-      const dmg = clamp(mass * speed * speed * 0.00004, 3, 18);
+      const dmg = impactDamage(mass, speed, { k: 0.00004, floor: 3, cap: 18 });
       _g2.copy(vel).multiplyScalar(1 / Math.max(1e-3, speed));
       e.applyKnockback(_g2.clone().multiplyScalar(clamp(speed * 0.62, 5, 17)).setY(2.6), dmg, this);
       if (held && !held.dead) held.damage?.(dmg * 0.4, e.position, this, 'impact');

@@ -97,6 +97,7 @@ import { clamp, lerp, makeRng, TAU } from '../engine/MathUtil.js';
  * — `World._endMeeting` — was the only one that could say so out loud. Same
  * direction as MathUtil above: game reaches into engine, never the reverse. */
 import { audio } from '../engine/Audio.js';
+import { nudgeFromSwing, bladeClear, SWING_REACH } from './Spawn.js';
 
 /**
  * The stream every roll in this mode comes off.
@@ -997,6 +998,20 @@ const wrapPi = (a) => Math.atan2(Math.sin(a), Math.cos(a));
  */
 const BLADE_ROOM = 3.0;
 
+/**
+ * How wide the fan a deploying line forms up in, centred on the commander's
+ * BACK. 240°: everything except the 120° in front of them.
+ *
+ * It is deliberately wider than `Spawn.SWING_HALF_ARC`'s 160° wedge is narrow —
+ * the two do not have to agree, and it would be worse if they did. The fan is a
+ * SHAPE and the wedge is a LAW: a fan that exactly complemented the wedge would
+ * put every deployment's outermost man precisely on the boundary the law is
+ * about, which is the same defect as placing a body at the edge of
+ * `BLADE_ROOM`. 240° leaves 20° of daylight either side of the swing before
+ * the nudge has anything to do.
+ */
+const REAR_FAN = 4.19;
+
 /** How far a trooper taking cover will go looking for something to get behind. */
 const COVER_HUNT = 16;
 
@@ -1035,6 +1050,67 @@ export const COVER_LEAN = 4.5;
  * rest of the area.
  */
 export const UNDER_FIRE = 3.5;
+
+/**
+ * NOBODY IN THIS ARMY STANDS IN THE OPEN DOING NOTHING.
+ *
+ * The player: "your allies shouldn't just freeze in place when they're
+ * uninspired or whatever, it makes for looking bad … them frozen still looks
+ * like a bug almost and it happens everywhere."
+ *
+ * They were right, and it was not one bug. Driven on Geonosis with a real
+ * army, a real wave and a fixed seed, the share of allied body-frames spent
+ * MOTIONLESS, UPRIGHT AND NOT FIRING:
+ *
+ *     circle 62.3%   behind 63.2%   front 17.2%   line 20.5%
+ *     cover  62.6%   charge  0.2%   holdfire 54.3%
+ *     morale forced to 0.15 (broken)    45.9%
+ *     morale forced to 0.05 (refusing) 100.0%   ← every man, every frame
+ *
+ * Three code paths produced it and all three were the same omission — a
+ * `return` with nothing on the other side of it:
+ *
+ *   `steer`'s REFUSE gate returned before it did anything at all, and
+ *     `targetFor` returns null on the same test, so a man below `REFUSE` had
+ *     no wish, no target and no pose. That is the 100%: not a frightened
+ *     soldier, a stopped one.
+ *   `steer`'s BROKEN branch walks home and then returns once it is within 5 m,
+ *     so a squad that fell back arrived and became furniture.
+ *   `steer` returns when a body is inside its slot tolerance with nothing to
+ *     shoot, which is most of a fight in the standing formations.
+ *
+ * What replaces each of them is BELOW in `_goToGround` and `_holdPost`, and the
+ * design rule they share is the one the player asked for: whatever a man does
+ * instead has to read as FEAR or as WATCHFULNESS from thirty metres, and it must
+ * not make him better at fighting. Going to ground costs the line his gun and
+ * his place in the formation; it does not buy him a new attack.
+ */
+/** How long a body may stand on its mark with nothing to shoot before it stops
+ *  standing. Under a second, because "for more than a moment" is the bar. */
+export const IDLE_GRACE = 0.6;
+
+/** How fast a man who has decided to be somewhere else moves. Above `CATCH_UP`
+ *  is deliberate — this is the one pace that is not a walk home. */
+export const PANIC_URGE = 1.45;
+
+/** A cower is a rhythm, not a state: this long still, then `SCUTTLE_FOR`
+ *  seconds of giving ground, over and over. A man who backs away continuously
+ *  reads as a unit withdrawing; one who goes in rushes reads as frightened. */
+export const SCUTTLE_EVERY = 1.4;
+export const SCUTTLE_FOR = 0.55;
+
+/**
+ * HOW FAR BEHIND HIS COMMANDER A FRIGHTENED MAN IS ALLOWED TO GET.
+ *
+ * Without it the scuttle is unbounded: morale below `REFUSE` never recovers
+ * while a body is alive and out of contact (`_morale` pays `ALONE` and nothing
+ * else), so a man giving ground once a second walks off the level and the
+ * player never gets the chance the whole design is built around — "get to them,
+ * or lose them". Past this he turns and runs for his commander instead, which
+ * is the direction the BROKEN branch has always sent people and for the reason
+ * stated there: a man running to you is a man you can stand in front of.
+ */
+export const FEAR_LEASH = 18;
 
 /**
  * HOW MUCH FURTHER THE SQUAD'S TARGET MAY BE THAN A MAN'S OWN, as a SQUARED
@@ -1595,6 +1671,8 @@ export const COMMAND_POWER_RULES = Object.freeze({ pvp: false, friendlyFire: tru
 const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _slot = new THREE.Vector3();
+/* The fear site: `_goToGround` solves it into this and never keeps it. */
+const _hide = new THREE.Vector3();
 
 /**
  * The rank insignia, as two shared geometries.
@@ -2380,21 +2458,56 @@ export class CommandDirector extends WaveDirector {
      * campaign that cannot deploy without a ship is a campaign that cannot be
      * tested.
      */
-    /* OPT-IN, and the default is the instant placement this method has always
-     * done. A ship is four seconds of flight and that is right for the ONE
-     * moment the brief describes — the army coming down at the top of an area
-     * — and wrong for everything else `deploy` answers, which is "this record
-     * has no body and needs one now": a mid-wave replacement standing around
-     * for four seconds is a hole in your line, not a cinematic. So
-     * `closeMuster` and the meeting ask for ships and nothing else does. */
-    const air = opts.byShip && this.arrivals?.enabled ? this.arrivals : null;
+    /**
+     * OPT-OUT, AND IT USED TO BE OPT-IN. THE PLAYER OVERRULED THE NOTE.
+     *
+     * What stood here said a ship is right for the one moment the brief
+     * describes and wrong for everything else, "because a mid-wave replacement
+     * standing around for four seconds is a hole in your line, not a
+     * cinematic". Two of the four call sites therefore placed bodies out of
+     * nothing, and the player watched it happen and said so: "your
+     * reinforcements still teleport in next to you, they don't arrive via
+     * transport."
+     *
+     * The argument was not wrong about the cost; it was wrong about who gets to
+     * weigh it. A hole in the line for four seconds is a tactical problem the
+     * player can see, plan around and swear at. A body appearing out of nothing
+     * is not a problem at all — it is the game admitting it is a list of
+     * `new Enemy(...)` calls, which is the exact sentence `Arrivals.js` was
+     * written to delete.
+     *
+     * So the default is the gunship and the exception is named at the one call
+     * site that has an argument for it — `start`, the opening deployment, where
+     * the line is already on the ground because they came off the same
+     * transport you did. See it.
+     */
+    const air = opts.byShip !== false && this.arrivals?.enabled ? this.arrivals : null;
     let n = 0;
     for (let i = 0; i < live.length; i++) {
       const t = live[i];
       if (t.body && !t.body.dead) continue;
-      const a = (i / Math.max(1, live.length)) * TAU + rng() * 0.4;
+      /**
+       * BEHIND YOU AND BESIDE YOU, NEVER IN FRONT OF YOU.
+       *
+       * The player: "you spawn with your allies in front of your saber so you
+       * end up killing them." This ONE line was most of it — `(i / n) * TAU` is
+       * a full circle at 4 to 8.4 m, so a thirteen-man roster put two or three
+       * bodies in the wedge a lightsaber sweeps through, every single time,
+       * with the commander's blade already lit from the fight that just ended.
+       *
+       * The fan is 240° centred on the commander's back, which is where a line
+       * forming up on its officer belongs anyway; `nudgeFromSwing` is the
+       * backstop for the case the fan cannot cover, which is a commander who
+       * has no facing yet on the frame after `spawnPlayer`. Both halves are in
+       * Spawn.js beside `spawnClear`, because "is this somewhere a body can
+       * arrive" is one question and it now has two clauses.
+       */
+      const back = (c.player?.facing ?? w.player?.facing ?? 0) + Math.PI;
+      const spread = live.length > 1 ? (i / (live.length - 1) - 0.5) : 0;
+      const a = back + spread * REAR_FAN + (rng() - 0.5) * 0.22;
       const r = 4 + (i % 3) * 2.2;
       _v2.set(anchor.x + Math.sin(a) * r, 0, anchor.z + Math.cos(a) * r);
+      nudgeFromSwing(w, _v2);
       if (w.terrain) {
         // Never off the edge of the world: a trooper deployed outside the
         // heightfield is exactly the unreachable body the wave watchdog exists
@@ -3068,7 +3181,15 @@ export class CommandDirector extends WaveDirector {
    * a man who has chosen a rock stays behind it. The choice is re-made when
    * the order is re-given, which is what `_coverEpoch` counts.
    */
-  _coverSite(e, out, A, hunt = COVER_HUNT, at = 0, mode = 0) {
+  /**
+   * @param cache  where the sticky answer is kept. Defaults to the BODY, which
+   *   is what the two `slotFor` callers have always used. `_goToGround` passes
+   *   its own object instead: a frightened man's rock and the cover his slot is
+   *   leaning on are two different decisions with two different lifetimes, and
+   *   one pair of fields for both would have each of them re-scanning every
+   *   static box on the level on every frame the other one asked. */
+  _coverSite(e, out, A, hunt = COVER_HUNT, at = 0, mode = 0, cache = null) {
+    const K = cache || e;
     /* THE MISS IS CACHED TOO, and that is not tidiness. This walks every
      * static box on the level, and it is called once per trooper per frame
      * from `slotFor` — which `steer` and `targetFor` both call. Caching only
@@ -3077,26 +3198,14 @@ export class CommandDirector extends WaveDirector {
      * common case rather than the rare one. A null is a decision: there was
      * nothing to get behind when this man last looked, and he looks again when
      * the order changes or the next burst arrives. */
-    if (e._coverAt === at && e._coverFor === mode) {
-      if (e._coverPt) out.copy(e._coverPt);
+    if (K._coverAt === at && K._coverFor === mode) {
+      if (K._coverPt) out.copy(K._coverPt);
       return;
     }
-    e._coverAt = at; e._coverFor = mode; e._coverPt = null;
+    K._coverAt = at; K._coverFor = mode; K._coverPt = null;
     const boxes = this.world?.physics?.staticBoxes;
     if (!boxes || !boxes.length) return;
-    /* Where the shooting is coming from, as one bearing for the whole army. */
-    if (this._threatAt !== this._coverEpoch) {
-      this._threatAt = this._coverEpoch;
-      let tx = 0, tz = 0, n = 0;
-      for (const h of this.world.enemies || []) {
-        if (!h || h.dead || h.trooper) continue;
-        tx += h.position.x - A.pos.x; tz += h.position.z - A.pos.z; n++;
-      }
-      const m = Math.hypot(tx, tz);
-      this._threat = (n && m > 1e-3) ? { x: tx / m, z: tz / m }
-        : { x: Math.sin(A.yaw), z: Math.cos(A.yaw) };
-    }
-    const T = this._threat;
+    const T = this._threatBearing(A);
     let best = null, bestD = Infinity;
     for (const b of boxes) {
       if (b.disabled) continue;
@@ -3113,7 +3222,187 @@ export class CommandDirector extends WaveDirector {
     // …and stand on the far side of it from the threat, a body's width clear.
     const r = Math.max(h2(best), 0.5) + 0.85;
     out.set(best.center.x - T.x * r, 0, best.center.z - T.z * r);
-    e._coverPt = out.clone();
+    K._coverPt = out.clone();
+  }
+
+  /**
+   * WHERE THE SHOOTING IS COMING FROM, as ONE bearing for the whole army.
+   *
+   * Lifted out of `_coverSite` unchanged when `_goToGround` became a second
+   * caller. It was already cached against `_coverEpoch` and already fell back
+   * to the commander's own heading with nothing hostile on the field; the only
+   * thing that has moved is where it is written, and it is written once
+   * because two answers to "which way is the enemy" is how a line ends up
+   * taking cover on both sides of the same crate.
+   *
+   * `_troops` clears the mark once a second, which is what makes the reactive
+   * callers honest — see the note there.
+   */
+  _threatBearing(A) {
+    if (this._threatAt !== this._coverEpoch) {
+      this._threatAt = this._coverEpoch;
+      let tx = 0, tz = 0, n = 0;
+      for (const h of this.world?.enemies || []) {
+        if (!h || h.dead || h.trooper) continue;
+        tx += h.position.x - A.pos.x; tz += h.position.z - A.pos.z; n++;
+      }
+      const m = Math.hypot(tx, tz);
+      this._threat = (n && m > 1e-3) ? { x: tx / m, z: tz / m }
+        : { x: Math.sin(A.yaw), z: Math.cos(A.yaw) };
+    }
+    return this._threat;
+  }
+
+  /**
+   * A FRIGHTENED MAN GOES TO GROUND. He does not stand there.
+   *
+   * This is the whole of the player's note — "your allies shouldn't just freeze
+   * in place when they're uninspired or whatever … them frozen still looks like
+   * a bug almost" — and the design constraint on it is stated over `IDLE_GRACE`:
+   * it has to READ as fear rather than as a different attack pattern, and it
+   * must not make a broken man better at fighting.
+   *
+   * So it is three acts, in the order a person does them, and not one of them
+   * is a new capability:
+   *
+   *   FIND SOMETHING AND RUN FOR IT. `_coverSite` already hunts the level's
+   *     static boxes and already knows which side of one is away from the
+   *     shooting. What is different from TAKE COVER is only that the search
+   *     starts from where this man is STANDING rather than from a slot in a
+   *     formation he has stopped believing in, and that he does it at
+   *     `PANIC_URGE` rather than at the pace of an order.
+   *   GET DOWN BEHIND IT. `crouch` is the rig's own float and the pose is a
+   *     man kneeling with his head below the top of the rock. He stays there;
+   *     stillness behind cover is what cover is FOR, and it is the one place
+   *     stillness does not read as a crash.
+   *   AND IF THERE IS NOTHING — give ground. See `_scuttle`.
+   *
+   * WHAT IT DOES NOT DO is shoot better, move faster in a fight, or take a
+   * different target. `targetFor` still returns null below `REFUSE`, morale
+   * still costs him 1.65× on his spread through `Enemy.aimQuality`, and he has
+   * left his slot — so the line has lost his gun and the ground he was on,
+   * which is what breaking is supposed to cost. The crouch does shorten the
+   * capsule an enemy BLADE sweeps against (`Enemy._saberStrike`), and that is
+   * the correct answer for a man who is kneeling behind a rock.
+   *
+   * @param finished  below `REFUSE` — he is not coming back on his own.
+   */
+  _goToGround(e, dt, c, finished) {
+    const F = FORMATIONS[c.formation] || FORMATIONS[DEFAULT_FORMATION];
+    const A = this._anchorFor(F, c);
+    const T = this._threatBearing(A);
+    /* He watches the thing he is frightened of. `Enemy._move` turns a body to
+     * face `toTarget` when it has one, so this is the whole of "he keeps his
+     * eyes on it" and it costs a vector. */
+    if (!e.toTarget) e.toTarget = new THREE.Vector3();
+    e.toTarget.set(T.x, 0, T.z);
+    /* ONE ROCK PER FRIGHT, not a new one every frame — the same argument
+     * `_coverSite`'s own cache note makes, in the body's own cache slot so the
+     * two decisions cannot evict each other. `_fearEpoch` is bumped by
+     * `_morale` the frame a man breaks, so a second scare re-chooses. */
+    const K = e._fear || (e._fear = {});
+    _hide.copy(e.position);
+    this._coverSite(e, _hide, A, COVER_HUNT, e._fearEpoch | 0, 2, K);
+    if (K._coverPt) {
+      const dx = _hide.x - e.position.x, dz = _hide.z - e.position.z;
+      const d = Math.hypot(dx, dz);
+      if (d > 1.2) {
+        if (!e.wish) e.wish = new THREE.Vector3();
+        e.wish.set(dx / d, 0, dz / d);
+        e.toTarget.copy(e.wish);
+        const want = (e.speed || 4) * PANIC_URGE;
+        if (want > e.speed) e.speed = want;
+        // low as he runs, and all the way down once he is there
+        this._crouch(e, dt, 0.45);
+        return;
+      }
+      this._crouch(e, dt, 1);
+      return;
+    }
+    this._scuttle(e, dt, c, T, finished);
+  }
+
+  /**
+   * NOTHING TO GET BEHIND, so he gives ground — in rushes, with a look between
+   * them.
+   *
+   * A man backing away CONTINUOUSLY reads as a unit withdrawing under orders,
+   * which is a different sentence from the one this is trying to say. Short
+   * bursts with a pause between them is what fear looks like, and it is also
+   * what makes the behaviour cheap: he is moving about a quarter of the time,
+   * so the line does not evaporate the moment two men wobble.
+   *
+   * AND IT IS BOUNDED, which is the part that took a measurement to get right.
+   * Morale below `REFUSE` does not come back while a body is alive and out of
+   * contact — `_morale` pays `ALONE` and nothing else — so an unbounded retreat
+   * is a man who walks off the level and is never seen again. Past `FEAR_LEASH`
+   * he turns and runs for his commander, which is where the BROKEN branch has
+   * always sent people and for the reason stated there: "get to them, or lose
+   * them" only means something if they are still on the field.
+   */
+  _scuttle(e, dt, c, T, finished) {
+    this._crouch(e, dt, 0.8);
+    e._scuttleT = (e._scuttleT || 0) + dt;
+    if ((e._scuttleT % (SCUTTLE_EVERY + SCUTTLE_FOR)) <= SCUTTLE_EVERY) return;
+    const home = c.player?.position || c.anchor;
+    let ax = -T.x, az = -T.z;
+    if (home) {
+      const hx = home.x - e.position.x, hz = home.z - e.position.z;
+      const hd = Math.hypot(hx, hz);
+      if (hd > FEAR_LEASH) { ax = hx / hd; az = hz / hd; }
+    }
+    /* A lateral wobble off his own index, so ten frightened men do not fall
+     * back down ten parallel lines like a drill. */
+    const j = (((e.cmdIndex | 0) % 5) - 2) * 0.35;
+    if (!e.wish) e.wish = new THREE.Vector3();
+    e.wish.set(ax - az * j, 0, az + ax * j);
+    if (e.wish.lengthSq() > 1e-6) e.wish.normalize();
+    const want = (e.speed || 4) * (finished ? 0.9 : 1.2);
+    if (want > e.speed) e.speed = want;
+  }
+
+  /**
+   * A STEADY MAN ON HIS MARK WITH NOTHING TO SHOOT TAKES A KNEE.
+   *
+   * The second half of the player's "it happens everywhere", and the larger
+   * half by frame count: 54-63% of allied frames in `circle`, `behind`, `cover`
+   * and `holdfire` were a body inside its slot tolerance with no target inside
+   * its leash. `steer` returned, `Enemy._think` had already set `wish = null` on
+   * the null target, and the result is a rank of men standing to attention in
+   * the middle of a battle.
+   *
+   * A knee is the whole answer and it is deliberately the SMALLEST one. He is
+   * at his post and the order says hold it, so he must not wander: anything
+   * that moved him would be arguing with the formation the player chose, and
+   * `FORM_TOLERANCE` exists precisely so that a line reads as a line. What
+   * changes is his POSE — hip down, spine forward, weapon up — and it changes
+   * back the moment `targetFor` hands him something, because `steer` decays
+   * `crouch` on every frame that does not renew it.
+   *
+   * `IDLE_GRACE` before it starts, so a man who is between targets for a third
+   * of a second does not bob up and down.
+   */
+  _holdPost(e, dt, c) {
+    e.idleT = (e.idleT || 0) + dt;
+    this._crouch(e, dt, e.idleT < IDLE_GRACE ? 0 : 1);
+  }
+
+  /**
+   * THE ONE WRITER OF `crouch`, and it is a damp rather than an assignment.
+   *
+   * The first version decayed the float once at the top of `steer` and let each
+   * branch add to it, which is two authorities over one number: the decay ran
+   * first on every frame and was larger than every rise, so `crouch` never left
+   * zero and the whole pose was dead code. Measured that way, `circle` still
+   * read 66.5% of allied frames motionless AND upright with the knee wired in.
+   *
+   * So every branch of `steer` states what it wants and this is the only place
+   * the number moves. Down faster than up — a man stands to fight in about a
+   * third of a second and takes a knee in half of one.
+   */
+  _crouch(e, dt, want) {
+    const now = e.crouch || 0;
+    e.crouch = now + (want - now) * Math.min(1, dt * (want > now ? 2.6 : 3.6));
   }
 
   /**
@@ -3252,7 +3541,15 @@ export class CommandDirector extends WaveDirector {
      * can actually see leading the others out.
      */
     if (t.broken || t.rout) {
-      if (t.morale < MORALE.REFUSE) return;             // finished: nothing reaches them
+      /**
+       * FINISHED IS NOT STOPPED. This line used to be
+       * `if (t.morale < MORALE.REFUSE) return;`, and with `targetFor`
+       * refusing on the same test it left a man below `REFUSE` inert:
+       * measured, 100.0% of his frames motionless, upright and silent. No
+       * ORDER reaches him still — that is what the threshold is for and it is
+       * untouched — but he acts on his own account. See `_goToGround`.
+       */
+      if (t.morale < MORALE.REFUSE) { this._goToGround(e, dt, c, true); return; }
       const home = c.player?.position || c.anchor;
       if (home) {
         const dx = home.x - e.position.x, dz = home.z - e.position.z;
@@ -3264,13 +3561,21 @@ export class CommandDirector extends WaveDirector {
           e.toTarget.copy(e.wish);
           const want = (e.speed || 4) * 1.5;
           if (want > e.speed) e.speed = want;
+          this._crouch(e, dt, 0.2);            // running, and running low
+          return;
         }
       }
+      /* …AND HE HAS ARRIVED, WHICH USED TO BE THE END OF IT: a squad that fell
+       * back to its commander then stood around him at attention. It gets
+       * behind something instead, and stays low while it is there. */
+      this._goToGround(e, dt, c, false);
       return;
     }
     const F = FORMATIONS[c.formation] || FORMATIONS[DEFAULT_FORMATION];
     const slot = this.slotFor(e);
-    if (!slot) return;                                  // charge: no slot at all
+    /* CHARGE: no slot at all — so there is nothing to walk to, and a body with
+     * no target either is the same statue reached by a different route. */
+    if (!slot) { this._holdPost(e, dt, c); return; }
     const dx = slot.x - e.position.x, dz = slot.z - e.position.z;
     const d = Math.hypot(dx, dz);
     e.cmdSlotDist = d;
@@ -3280,7 +3585,16 @@ export class CommandDirector extends WaveDirector {
      * clauses are reading the same decision and cannot disagree about it. */
     const fighting = e.target && !e.target.dead && e.target.alive !== false;
     const limit = fighting ? this.leashFor(F, e) : FORM_TOLERANCE;
-    if (d <= limit) return;
+    if (d <= limit) {
+      /* ON HIS MARK. Fighting from it is the whole job; NOT fighting from it is
+       * a man standing in the open with nothing to do, and that is 54-63% of
+       * the frames in every standing formation. See `_holdPost`. */
+      if (fighting) { e.idleT = 0; this._crouch(e, dt, 0); }
+      else this._holdPost(e, dt, c);
+      return;
+    }
+    e.idleT = 0;
+    this._crouch(e, dt, 0);                    // walking: on his feet
     const inv = 1 / (d || 1);
     if (!e.wish) e.wish = new THREE.Vector3();
     e.wish.set(dx * inv, 0, dz * inv);
@@ -3700,11 +4014,23 @@ export class CommandDirector extends WaveDirector {
       this.wave = wave;
       this.active = true;
       this.spawnQueue.length = 0;
-      this.deployAll();
+      /* `byShip: false` for the same reason `start`'s own deploy takes it one
+       * screen down: this is the opening of the battle, both lines are already
+       * on the ground when the round begins, and a meeting has no wave and no
+       * arrival ring for a gunship to fly an approach from. */
+      this.deployAll({ byShip: false });
       return;
     }
     super.start(wave);
-    if (this.roster.living.some((t) => (!t.body || t.body.dead) && !this._inbound.has(t))) this.deploy();
+    /* `byShip: false` — THE ONE EXEMPTION, and this is the argument for it.
+     * `start` is the battle opening: either the level has just loaded, or
+     * `_afterRotate` has just run inside an extraction flight and the commander
+     * is stood in a troop bay 90 m up. In the first case the line was already
+     * with you before the camera opened; in the second the bodies placed here
+     * are lifted straight into the bay by `Extraction._reboard` and come down
+     * the ramp with you, so a gunship queued for them would be a second
+     * aircraft delivering passengers who are already aboard the first. */
+    if (this.roster.living.some((t) => (!t.body || t.body.dead) && !this._inbound.has(t))) this.deploy(this.commander, { byShip: false });
   }
 
   /**
@@ -3958,6 +4284,17 @@ export class CommandDirector extends WaveDirector {
          * already reads `trooper.morale` directly; keeping the broken flag
          * here means the three consumers cannot disagree about it. */
         t.broken = t.morale < MORALE.BREAK;
+        /* A NEW FRIGHT PICKS A NEW ROCK. `_goToGround` caches the thing a man
+         * is running for against this counter for the reason `_coverSite`'s own
+         * note gives — a body that re-solved every frame would swap cover as
+         * the horde moved, which is unwatchable — so the counter has to move
+         * exactly when he breaks. Latched on the RECORD and not on the body,
+         * because `shake` can break a man from outside this loop and the record
+         * is the thing both of them write. */
+        if (t.broken !== !!t._fearMark) {
+          t._fearMark = t.broken;
+          if (t.broken && e) e._fearEpoch = (e._fearEpoch | 0) + 1;
+        }
         living++;
         if (t.broken) broke++;
       }

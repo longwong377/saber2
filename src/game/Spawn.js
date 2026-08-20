@@ -57,3 +57,128 @@ export function spawnClear(world, x, y, z, radius = 0.45) {
   }
   return true;
 }
+
+/**
+ * ── AND IS IT SOMEWHERE THE PLAYER IS ABOUT TO SWING? ─────────────────────
+ *
+ * The player's words: "you spawn with your allies in front of your saber so
+ * you end up killing them."
+ *
+ * That is a placement defect and not a combat one. `spawnClear` above answers
+ * "is this point inside the level", and every caller that places a body near
+ * the player was asking only that — so `CommandDirector.deploy` fanned the
+ * whole roster over a full circle at 4 m, which puts two or three men in the
+ * one wedge of ground a lightsaber sweeps through. Nothing about friendly fire
+ * needed fixing; the men were standing in the blade.
+ *
+ * ── WHY THE REACH IS 6 m AND NOT 2.6 ─────────────────────────────────────
+ *
+ * The blade is the small number here and it is the wrong one to build the law
+ * on. A one-handed sweep reaches about 2.6 m from the shoulder, and
+ * `Command.BLADE_ROOM` is 3.0 — the ring a trooper is SHOVED back out to every
+ * frame, described in its own note as "the margin is a step, because a trooper
+ * that is exactly at the edge of the swing is one the player has to think
+ * about."
+ *
+ * Now follow a body placed 4 m directly in front of a commander. Its formation
+ * pulls it inward, `_clearBlade` pushes it back out, and it settles at exactly
+ * 3.0 m — in front, seven tenths of a metre off the edge of the swing, for the
+ * rest of the engagement. A placement law with a 3.6 m radius says that is
+ * fine, and it is what the player is describing.
+ *
+ * So the radius is THE SWING PLUS THE STEP THAT CLOSES IT: 6.0 m, which is 3.0
+ * of shove ring plus about a second of a trooper's walk. Anything placed inside
+ * that wedge is a body that will be in the blade shortly, whatever it was
+ * told to do. Measured on the shipped deployment ring (4 / 6.2 / 8.4 m, a full
+ * circle): 60 of 400 placements were inside it.
+ *
+ * `SWING_HALF_ARC` is 80°, i.e. a 160° wedge. A saber arc in this game is a
+ * horizontal sweep of a bit over a right angle plus wherever the camera swings
+ * to mid-swing, and 160° is that plus the turn. Behind you is safe; beside you
+ * is safe; in front of you is not, at any range that can close in a step.
+ *
+ * Both halves are exported because tools/checks/extraction.mjs measures the
+ * property rather than the call sites — anything that ever places a body near
+ * the player is answerable to `bladeClear`.
+ */
+export const SWING_REACH = 6.0;
+export const SWING_HALF_ARC = 1.396;           // 80°, in radians
+
+/**
+ * Is (x, z) inside ONE body's swing wedge?
+ *
+ * `facing` is the yaw the player's own animator poses to, and a body facing
+ * `f` looks along `(sin f, 0, cos f)` — Player._move builds its forward vector
+ * exactly that way from `camera.yaw`, so this is the game's own forward and
+ * not a second opinion about it. Falls back to the camera yaw for a body that
+ * has not been posed yet, which is the case on the frame after `spawnPlayer`.
+ */
+export function inSwingArc(p, x, z) {
+  if (!p || !p.position || p.alive === false) return false;
+  const dx = x - p.position.x, dz = z - p.position.z;
+  const d2 = dx * dx + dz * dz;
+  if (d2 > SWING_REACH * SWING_REACH) return false;
+  // Directly on top of the player is inside every arc there is.
+  if (d2 < 1e-6) return true;
+  const f = p.facing ?? ((p.camera?.yaw ?? 0) + Math.PI);
+  const fx = Math.sin(f), fz = Math.cos(f);
+  const inv = 1 / Math.sqrt(d2);
+  return (dx * inv * fx + dz * inv * fz) > Math.cos(SWING_HALF_ARC);
+}
+
+/**
+ * Is (x, z) clear of every LOCAL player's swing?
+ *
+ * Local only, and that is a co-op decision rather than an oversight: a remote
+ * commander's blade is not the one that will cut this body, their facing on
+ * this machine is a wire value that is up to a round trip stale, and refusing
+ * ground around every peer in a four-player session would leave nowhere at all
+ * to put a squad. The invariant this file is holding is "the person holding
+ * the camera does not kill their own men".
+ */
+export function bladeClear(world, x, z) {
+  const ps = world?.players;
+  if (ps) {
+    for (let i = 0; i < ps.length; i++) {
+      const p = ps[i];
+      if (p && p.isLocal !== false && inSwingArc(p, x, z)) return false;
+    }
+    return true;
+  }
+  return !inSwingArc(world?.player, x, z);
+}
+
+/** Both questions at once, for a caller placing a body near the player. */
+export function placementClear(world, x, y, z, radius = 0.45) {
+  return spawnClear(world, x, y, z, radius) && bladeClear(world, x, z);
+}
+
+/**
+ * MOVE A POINT OUT OF THE SWING, rather than refusing it.
+ *
+ * A rejection loop is wrong for the two callers that matter. Both of them are
+ * placing a KNOWN number of bodies in a ring whose radius they chose — a squad
+ * disembarking, a line deploying — so "try again" means "try the same ring
+ * again", and the wedge does not move between tries.
+ *
+ * Reflecting the offset through the player is the one nudge that cannot fail:
+ * the mirror of a point inside a cone of half-angle < 90° is outside it, by
+ * construction, for any facing and any radius. The body ends up the same
+ * distance away, behind you instead of in front of you, which is also where a
+ * squad forming up on its commander belongs.
+ *
+ * `out` is mutated and returned. `y` is left alone — the caller owns grounding,
+ * because only the caller knows whether it has a heightfield.
+ */
+export function nudgeFromSwing(world, out) {
+  if (!out || bladeClear(world, out.x, out.z)) return out;
+  const ps = world?.players;
+  const list = ps && ps.length ? ps : (world?.player ? [world.player] : []);
+  for (let i = 0; i < list.length; i++) {
+    const p = list[i];
+    if (!p || p.isLocal === false || !inSwingArc(p, out.x, out.z)) continue;
+    out.x = p.position.x - (out.x - p.position.x);
+    out.z = p.position.z - (out.z - p.position.z);
+  }
+  return out;
+}
