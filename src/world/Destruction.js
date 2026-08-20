@@ -1796,9 +1796,22 @@ export class Structure {
      * so the kerf walks past the tip and a 27% notch takes the section off in a
      * few events. The near wall converges instead — cut the ligament again and
      * its capsule's near wall is back where the last one was, which is where
-     * the tip is. Measured: 27% leaves the column standing at 7.45 m, 68%
-     * leaves nothing above the cut, and a blade ground 55% through a different
-     * column still drops everything above it.
+     * the tip is. Measured: 27% leaves the column standing at 7.45 m and 68%
+     * leaves nothing above the cut.
+     *
+     * THE THIRD READING THIS NOTE USED TO CARRY WAS PAID FOR BY THE DEBRIS
+     * LOOP. It said "a blade ground 55% through a different column still drops
+     * everything above it", about the fixture in `tools/verify.mjs`'s core, and
+     * that was true only while `_impactScan` billed a structure for its own
+     * chips — see the note there. With that closed, four seconds of grinding at
+     * 55.5% removes 0.1% of the section and leaves 9 of 10 cells standing; the
+     * blade brings the top down on its own at THIRTEEN seconds. Sliding the tip
+     * from 55.5% to 105.5% of the section changes nothing in those four
+     * seconds, because what bounds that fixture is total work and not reach.
+     * The depth response is `destruction: carve a column and how deep decides
+     * whether the top falls`, which measures it over five depths and five
+     * jitters; this paragraph is about which reading of `reach` converges, and
+     * the two columns above are what settle that.
      */
     let reach = axis ? axis.dot(point) : 0;
     if (axis && chunk && chunk.structure === this) reach -= cellCapsule(chunk).rad;

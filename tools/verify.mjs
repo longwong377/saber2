@@ -3555,49 +3555,200 @@ check('destruction: repeated break and cleanup cycles leak no bodies', () => {
 });
 
 check('destruction: the blade grinds through a column and drops what was above the cut', () => {
+  /**
+   * FOUR SECONDS OF BLADE USED TO DO IT AND THE BLADE WAS NOT DOING IT.
+   *
+   * This drove 240 frames of grinding into a 1.00 m stone column and asserted
+   * that every cell above y = 2.4 had let go. It passed until
+   * `Destruction._impactScan` stopped billing a structure for its own debris,
+   * and it passed for that reason: measured on this exact fixture, with the
+   * self-damage open the column absorbed 110 impacts from its own chips
+   * carrying 29 730 units of energy — against a column whose whole health is
+   * 770, thirty-eight times over — and came down. With it closed, the same four
+   * seconds bank 138 of 770 through `wear`, part two cells whose halves stay
+   * attached, and remove 0.1% of the section at the kerf. The blade was doing
+   * none of the work and the check could not tell.
+   *
+   * SO THE QUESTION IS WHETHER A BLADE HELD INTO A COLUMN SHOULD BRING IT DOWN,
+   * AND IT SHOULD — IT JUST TAKES THIRTEEN SECONDS AND NOT FOUR. Driven with
+   * nothing but the blade, the same sweep, read at intervals:
+   *
+   *     4 s    2 cuts    0.2% of the section gone    9 of 10 cells still up
+   *     8 s    5 cuts    7.8%                       10 of 12 still up
+   *    12 s    5 cuts    7.8%                       10 of 12 still up
+   *    13 s    6 cuts    7.8%                        0 of 16 still up
+   *    16 s    6 cuts    7.8%                        0 of 16
+   *    30 s    8 cuts   52.4%                        0 of 16
+   *
+   * Monotone throughout, and the top comes down between 12 and 13 seconds. It
+   * is a patient-press mechanic and `Combat.js` says so at the line that
+   * exempts architecture from the speed term — "bringing a wall down is a
+   * patient-press mechanic whose statics are tuned against the rate a blade
+   * carves stone". The 240-frame budget was not derived from that rate; the
+   * debris loop was making up the difference.
+   *
+   * REACH IS NOT THE LIMIT HERE, WHICH IS WORTH KNOWING BEFORE TRYING IT. The
+   * tip already ends 55.5% through the section, and sliding the hilt in until
+   * it ends 105.5% through — clean past the far face — changes nothing at all:
+   * 2 cuts, 0.1% gone, 9 of 10 still standing, identical at every depth. What
+   * bounds this fixture is total work, not how far in the blade is. The depth
+   * response itself belongs to `destruction: carve a column and how deep
+   * decides whether the top falls`, which measures it as an ensemble.
+   *
+   * WHAT THIS ASSERTS NOW, and why it is a bracket rather than a threshold:
+   * the top is STILL UP at 4 s and DOWN at 16 s. The first is the tripwire for
+   * the debris loop coming back or the blade being sped up through stone — with
+   * the self-damage restored, 4 s leaves 0 of 10 standing and takes 100% of the
+   * section. The second is the tripwire for the carve stalling. Margins against
+   * the measured 13 s crossing: 9 s below and 3 s above, both stated, and the
+   * whole ladder prints so a drift shows in the pass line before it is a
+   * failure. Swept over ±9 mm of hilt position the run is bit-identical at
+   * every mark, so the ensemble axis that matters here is TIME; three jitters
+   * are carried anyway, because "they all agree" is a measurement and not an
+   * assumption.
+   */
   propMaterials();
-  const w = new RapierWorld({ gravity: -22 });
-  w.terrain = rapierGround();
-  const host = destructionHost(w, { player: V(0, 1.2, 1.4) });
-  const solver = new BladeContactSolver();
-  host.bladeSolver = solver;
-  addColumn(host, V(0, 0, 0), { height: 7, radius: 0.5, seed: 9 });
-  const D = host.destruction;
-  const s = D.structures[0];
-  const saber = makeBlade(host.scene, { length: 1.3 });
-  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
+  const MARKS = [240, 480, 960];              // 4 s, 8 s, 16 s of blade
+  const JITTER = [-0.003, 0, 0.003];          // metres on the hilt's z
+  const R = 0.5;
 
-  const seen = { grind: 0, cut: 0, clang: 0 };
-  let firstCut = -1;
-  for (let i = 0; i < 240; i++) {
-    const dt = 1 / 60, t = i * dt;
-    saber.setHiltPose(V(Math.sin(t * 7) * 0.7, 1.5, 1.4), q);
-    saber.update(dt, dt);
-    // exactly what World does: capsules from props, events back to the prop
-    const caps = D.proxy.capsules();
-    const events = solver.solve(saber, [{ id: D.proxy.id, capsules: caps, prop: D.proxy, dead: false }], dt, {});
-    for (const e of events) {
-      seen[e.type] = (seen[e.type] || 0) + 1;
-      if (e.type === 'cut') {
-        if (firstCut < 0) firstCut = i;
-        const halves = D.proxy.cut(e.point, e.normal, e.impulse);
-        assert(Array.isArray(halves), 'the proxy must hand World an array back, not null');
+  /**
+   * STILL PART OF THE COLUMN — `shell` as well as `attached`, and the
+   * difference is a check that could report a lie.
+   *
+   * A cell is born `shell` and only becomes `attached` when the piece CONVERTS,
+   * which happens on its first cut. Reading "attached" alone therefore answers
+   * "has everything above the cut dropped?" with YES for a column that has not
+   * been cut at all — an absence returned as a result, which is HANDOFF §2.3's
+   * close relative. Measured: slow the architecture carve to 0.7x and this
+   * fixture produces no cut inside four seconds, and the first draft of this
+   * check read that as the whole column already being on the floor.
+   */
+  const UP = new Set(['shell', 'attached']);
+
+  /** Share of the intact section at height y that no standing cell covers. */
+  const sectionGone = (s, y) => {
+    const N = 61, step = (2 * R) / N;
+    const boxes = s.chunks.filter(c => UP.has(c.state)).map(c => c.bounds);
+    let inCol = 0, covered = 0;
+    for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) {
+      const x = -R + (i + 0.5) * step, z = -R + (j + 0.5) * step;
+      if (x * x + z * z > R * R) continue;
+      inCol++;
+      const wx = x + s.position.x, wz = z + s.position.z, ly = y - s.position.y;
+      for (const b of boxes) {
+        if (wx >= b.min.x && wx <= b.max.x && wz >= b.min.z && wz <= b.max.z
+          && ly >= b.min.y && ly <= b.max.y) { covered++; break; }
       }
     }
-    D.update(dt); w.step(dt);
+    return inCol ? 1 - covered / inCol : 0;
+  };
+
+  function grind(jz) {
+    const w = new RapierWorld({ gravity: -22 });
+    w.terrain = rapierGround();
+    const host = destructionHost(w, { player: V(0, 1.2, 1.4) });
+    const solver = new BladeContactSolver();
+    host.bladeSolver = solver;
+    addColumn(host, V(0, 0, 0), { height: 7, radius: R, seed: 9 });
+    const D = host.destruction;
+    const s = D.structures[0];
+    const saber = makeBlade(host.scene, { length: 1.3 });
+    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
+
+    const seen = { grind: 0, cut: 0, clang: 0 };
+    let firstCut = -1;
+    const marks = [];
+    for (let i = 0; i < MARKS[MARKS.length - 1]; i++) {
+      const dt = 1 / 60, t = i * dt;
+      saber.setHiltPose(V(Math.sin(t * 7) * 0.7, 1.5, 1.4 + jz), q);
+      saber.update(dt, dt);
+      // exactly what World does: capsules from props, events back to the prop
+      const caps = D.proxy.capsules();
+      const events = solver.solve(saber, [{ id: D.proxy.id, capsules: caps, prop: D.proxy, dead: false }], dt, {});
+      for (const e of events) {
+        seen[e.type] = (seen[e.type] || 0) + 1;
+        if (e.type === 'cut') {
+          if (firstCut < 0) firstCut = i;
+          const halves = D.proxy.cut(e.point, e.normal, e.impulse);
+          assert(Array.isArray(halves), 'the proxy must hand World an array back, not null');
+        }
+      }
+      D.update(dt); w.step(dt);
+      if (MARKS.includes(i + 1)) {
+        const above = s.chunks.filter(c => c.centre.y > 2.4);
+        /* `top` and not the attached COUNT, because the count is not monotone
+         * and has no right to be: `_partChunk` splits a cell into fragments
+         * that all stay attached, so carving MAKES cells. Measured here, 9 of
+         * 10 above the cut at 4 s and 10 of 12 at 8 s — one more standing, and
+         * nothing re-attached. How high the standing stone reaches cannot rise. */
+        let top = 0;
+        for (const c of s.chunks) {
+          if (UP.has(c.state)) top = Math.max(top, c.bounds.max.y + s.position.y);
+        }
+        marks.push({ at: i + 1, cuts: seen.cut, gone: sectionGone(s, 1.5), top,
+          hanging: above.filter(c => UP.has(c.state)).length, above: above.length });
+      }
+    }
+    for (let i = 0; i < 300; i++) { w.step(1 / 60); D.update(1 / 60); }
+    const ys = s.chunks.filter(c => c.mesh).map(c => c.mesh.position.y);
+    return { seen, firstCut, marks, ys, state: s.state };
   }
-  assert(seen.grind > 20, `only ${seen.grind} grind events — the blade never met the column`);
-  assert(seen.cut > 0, 'the blade never got through a stone column');
-  assert(firstCut > 12, `the column parted in ${(firstCut / 60).toFixed(2)}s — toughness is not being respected`);
-  assert(s.state !== 'intact', `the column is still ${s.state} after being cut`);
-  const above = s.chunks.filter(c => c.centre.y > 2.4);
-  assert(above.every(c => c.state !== 'attached'),
-    'the top of the column is still hanging above the cut');
-  for (let i = 0; i < 300; i++) { w.step(1 / 60); D.update(1 / 60); }
-  const ys = s.chunks.filter(c => c.mesh).map(c => c.mesh.position.y);
-  assert(ys.every(y => isFinite(y) && y < 3), `a piece of the column is still up at y=${Math.max(...ys).toFixed(2)}`);
-  return `${seen.grind} grinds then a cut at ${(firstCut / 60).toFixed(2)}s; `
-    + `${s.chunks.length} pieces on the floor, highest y=${Math.max(...ys).toFixed(2)}`;
+
+  const runs = JITTER.map(grind);
+  const fmt = (r) => r.marks.map(m => `${(m.at / 60).toFixed(0)}s ${m.cuts}c/${(m.gone * 100).toFixed(1)}%/`
+    + `${m.hanging}up/y${m.top.toFixed(1)}`).join(' → ');
+  const ladder = runs.map((r, i) => `${(JITTER[i] * 1000).toFixed(0)}mm ${fmt(r)}`).join('; ');
+
+  for (let i = 0; i < runs.length; i++) {
+    const r = runs[i], mm = (JITTER[i] * 1000).toFixed(0);
+    /* ── the wiring, unchanged: the blade meets the stone, gets through it,
+     * and does not get through it instantly ─────────────────────────────── */
+    assert(r.seen.grind > 20, `${mm}mm: only ${r.seen.grind} grind events — the blade never met the column`);
+    assert(r.seen.cut > 0, `${mm}mm: the blade never got through a stone column`);
+    assert(r.firstCut > 12,
+      `${mm}mm: the column parted in ${(r.firstCut / 60).toFixed(2)}s — toughness is not being respected`);
+    assert(r.state !== 'intact', `${mm}mm: the column is still ${r.state} after being cut`);
+
+    /* ── and the rate, bracketed on both sides ───────────────────────────── */
+    const [four, , sixteen] = r.marks;
+    assert(four.hanging > 0,
+      `${mm}mm: four seconds of blade already dropped all ${four.above} cells above the cut, having `
+      + `taken ${(four.gone * 100).toFixed(1)}% of the section — the column is coming down on `
+      + 'something other than the blade. Measured, that is its own debris: with `_impactScan` billing '
+      + 'a structure for its own chips this fixture absorbs 29 730 units of energy against 770 of '
+      + `health. Ladder: ${ladder}`);
+    assert(sixteen.hanging === 0,
+      `${mm}mm: sixteen seconds of blade left ${sixteen.hanging} of ${sixteen.above} cells hanging above `
+      + `the cut, with ${(sixteen.gone * 100).toFixed(1)}% of the section gone — the carve has stalled; `
+      + `the top comes down at 13 s when the blade is working. Ladder: ${ladder}`);
+
+    /* ── monotone in time: stone does not grow back and cells do not re-attach */
+    for (let k = 1; k < r.marks.length; k++) {
+      const a = r.marks[k - 1], b = r.marks[k];
+      assert(b.cuts >= a.cuts && b.gone >= a.gone - 1e-9 && b.top <= a.top + 1e-6,
+        `${mm}mm: the column is in better shape at ${(b.at / 60).toFixed(0)}s than at `
+        + `${(a.at / 60).toFixed(0)}s — ${b.cuts} cuts against ${a.cuts}, `
+        + `${(b.gone * 100).toFixed(1)}% of the section gone against ${(a.gone * 100).toFixed(1)}%, `
+        + `standing to ${b.top.toFixed(2)} m against ${a.top.toFixed(2)}. Ladder: ${ladder}`);
+    }
+    assert(r.ys.every(y => isFinite(y) && y < 3),
+      `${mm}mm: a piece of the column is still up at y=${Math.max(...r.ys).toFixed(2)}`);
+  }
+
+  /* ── and no jitter disagrees with any other, at any mark ───────────────── */
+  for (let k = 0; k < MARKS.length; k++) {
+    const set = new Set(runs.map(r => r.marks[k].hanging > 0));
+    assert(set.size === 1,
+      `at ${(MARKS[k] / 60).toFixed(0)}s the ±3 mm hilt samples disagree about whether the top is `
+      + `standing — the answer is a coin flip, not a carve rate. Ladder: ${ladder}`);
+  }
+
+  const r0 = runs[0];
+  return `first cut at ${(r0.firstCut / 60).toFixed(2)}s, ${r0.seen.grind} grinds; `
+    + `cuts/section gone at the kerf/cells still up above it/how high it stands, over `
+    + `${JITTER.length} hilt samples — `
+    + `${ladder}; rubble rests at y=${Math.max(...r0.ys).toFixed(2)}`;
 });
 
 check('destruction: an explosion takes a bite out of a wall without levelling it', () => {
