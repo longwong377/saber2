@@ -130,7 +130,22 @@ b{font-weight:800}
   60%{opacity:1;transform:translateY(0) scale(1.004)}100%{transform:none}}
 
 /* ── boot ────────────────────────────────────────────────── */
-.boot-inner{position:relative;z-index:2;text-align:center;max-width:460px;padding:0 24px;
+/* THE BOOT SCREEN'S BACKDROP. index.html's `.boot-art` says at length why it
+   is drawn rather than being the title plate; the short version is that this
+   screen is on while 79 modules and a WASM blob are in flight, and a VISIBLE
+   element naming the 96 KB plate would put it on that path. An inline SVG of
+   flat polygons is in the first paint and costs no request at all.
+   `slice` rather than `meet` so it covers every viewport the way `cover` does. */
+.boot-art{position:absolute;inset:0;width:100%;height:100%;z-index:0;pointer-events:none}
+/* 660 and not 460: the mark is 620 px wide with 24 px of padding either side.
+   The bar and the message underneath keep their own widths. */
+/* A WIDTH AND NOT A MAX-WIDTH, and this is the same trap `.logo` fell into one
+   screen up. `.screen` is a flex row, so `.boot-inner` is a flex item sized to
+   its CONTENT — and the content is an <svg> asking for `min(620px,100%)`, whose
+   100% resolves against a box the svg is itself sizing. The circularity
+   resolves to the SVG's 300 px default intrinsic width, so a 620 px mark came
+   out 300 px on both screens. Measured before: boot-inner 348x120. */
+.boot-inner{position:relative;z-index:2;text-align:center;width:min(668px,100%);padding:0 24px;
   animation:stampIn .6s cubic-bezier(.22,1,.36,1) both}
 .boot-bar{width:300px;height:10px;margin:34px auto 16px;background:var(--panel);
   border:2px solid var(--stroke);clip-path:var(--cut-sm);overflow:hidden}
@@ -138,59 +153,65 @@ b{font-weight:800}
   box-shadow:0 0 14px var(--accent);transition:width .35s cubic-bezier(.22,1,.36,1)}
 .boot-msg{font:var(--mono);font-weight:700;letter-spacing:.24em;text-transform:uppercase;color:var(--accent)}
 
-/* ── logo ─────────────────────────────────────────────────────────────
-   THE WORDMARK IS TWO WORDS AND IT IS SET LIKE A BADGE, not like a fashion
-   house. The old one was a single 200-weight word at .42em of tracking, which
-   is the house style of every browser game with a dark menu; the point of a
-   title screen is that it could not be any other game's.
+/* ── the wordmark ─────────────────────────────────────────────────────
+   IT IS DRAWN, AND THAT IS THE WHOLE POINT.
 
-   BATTLEFRONT is the wide, heavy, inked line; BORZ is knocked out of a solid
-   block of the blade's own colour beside it. The blade itself stands between
-   them and is the only lit object on the screen. */
-.logo{display:flex;align-items:center;justify-content:center;gap:14px}
-.logo h1{display:flex;align-items:center;gap:.34em;font-size:0;line-height:1}
-.logo .lg-a{font:800 44px/1 ui-sans-serif,system-ui,sans-serif;letter-spacing:.055em;
-  text-transform:uppercase;color:var(--ink);
-  /* An ink outline on TYPE, which is the same law the boxes obey. Four
-     offsets rather than -webkit-text-stroke because the stroke property
-     thins the letterform from the inside; these thicken it from the out. */
-  text-shadow:2px 0 var(--stroke),-2px 0 var(--stroke),0 2px var(--stroke),0 -2px var(--stroke),
-    4px 4px 0 rgba(5,6,12,.55)}
-.logo .lg-b{font:800 44px/1 ui-sans-serif,system-ui,sans-serif;letter-spacing:.055em;
-  text-transform:uppercase;color:var(--stroke);background:var(--accent);
-  padding:.06em .2em .1em;clip-path:var(--cut);
-  box-shadow:0 0 34px -6px var(--accent)}
-.logo-blade{width:5px;height:66px;background:linear-gradient(180deg,transparent,#fff 14%,#fff 86%,transparent);
-  box-shadow:0 0 8px 2px var(--blade),0 0 26px 7px var(--blade),0 0 64px 16px rgba(72,216,255,.55);
-  animation:ignite 1s cubic-bezier(.16,1,.3,1) both}
-@keyframes ignite{from{height:0;opacity:0}to{height:66px;opacity:1}}
-/* ── THE MENU'S WORDMARK IS A TITLE NOW, NOT A CAPTION ────────────────────
-   It was 25 px. The boot screen — the thing on screen five seconds earlier —
-   sets the same two words at 44 px, so arriving at the menu SHRANK the title
-   by 43%, and 25 px of type across a 1180 px header reads as a label on a
-   dialog. That was tolerable while the backdrop was a gradient. It is not
-   tolerable over a picture: a small word laid on a photograph is a watermark.
+   What was here: `font:800 44px ui-sans-serif,system-ui` for BATTLEFRONT and
+   the same again for BORZ, knocked out of a cyan block. Two facts about that.
+   It was whatever face the player's operating system handed it — San Francisco
+   on a Mac, Segoe on Windows, Roboto on Android — so the title of the game was
+   not the same object twice. And a bold system sans with a coloured highlight
+   behind one word is the default look of a landing page; it belonged to no
+   world, least of all this one. The player's word for it was "lame and not at
+   all in keeping with the style of the game", and both halves are fair.
 
-   40 and not 44, because unlike the boot screen this header also has to leave
-   room for the record line and 770 px of panel under it, and 40 px is where
-   the wordmark stops growing without the Mode column losing a card. Measured
-   at 1920x1080: the header goes 66 px → 83 and the panel 668 → 651. Below
-   the clawback nothing moves at all — 1366x768 and 1280x720 measure 66 and
-   605/561 before and after.
+   The replacement is GEOMETRY, in index.html's `#wm-body`: a stencil alphabet
+   on a 100-unit cap height, ten glyphs, obeying the same four laws stated at
+   the top of this file — inked on every silhouette, flat fills, a hard offset
+   stamp with no blur, and corners cut on the diagonal. BATTLEFRONT is the warm
+   off-white line; BORZ is the sand accent, because sand is the colour this
+   game's grounds are made of and the blade already owns everything that is
+   live. The stencil bridges are the reason it reads as painted onto armour
+   rather than typed.
 
-   THE GLYPH IS STILL GONE. The blade that stands between the two words on the
-   boot screen was removed from here on instruction, along with the tagline
-   and the byline; size was not part of that instruction and the name is still
-   the only thing in the header. `.logo.small .logo-blade` stays for the same
-   reason it always did — the class is a size, not a screen.
+   NO FONT FILE, and that is a constraint before it is a taste. `packed.mjs`
+   boots the single-file build from `file://` and fails if the page fetches one
+   byte off-page — so a webfont cannot ship here at all, from Google or anyone.
+   Drawing it also keeps DESIGN.md §7 true: every asset in this game except one
+   licensed MP3 is generated in code.
 
-   The clawback is in the existing `@media (max-height:800px)` block with the
-   other short-viewport rules, which is also what keeps the base rule honest:
-   tools/checks/keyart.mjs reads THIS number and asserts it is the size the
-   header band in tools/_bands.mjs was measured at, and that no min-height
-   query moves it at the reference viewport. */
-.logo.small .lg-a,.logo.small .lg-b{font-size:40px}
-.logo.small .logo-blade{height:38px;width:4px;animation:none}
+   SIZE IS A WIDTH, NOT A FONT-SIZE. The mark is one <svg> with a fixed
+   viewBox, so `width` sets it and the height follows the 6.778:1 aspect; the
+   `min(…, 100%)` is what makes it fold into a 360 px frame instead of pushing
+   the document sideways, which tools/checks/front-screen.mjs drives three
+   viewports to prove. */
+/* BLOCK AND NOT FLEX, and this cost a render to find. `.logo` was a flex row
+   holding the two words and the blade glyph; with one <svg> in it the h1 became
+   a flex item, an item's base size is its CONTENT, and `width:min(620px,100%)`
+   on the svg then resolved its 100% against a box the svg itself had sized.
+   Measured at 1280x720: a mark asking for 620 px came out 300. */
+.logo{display:block;text-align:center}
+.logo h1.wm{display:block;margin:0;line-height:0}
+.wm-src{position:absolute;width:0;height:0;overflow:hidden}
+.wordmark{display:block;margin:0 auto;width:min(620px,100%);height:auto}
+/* ── THE MENU'S WORDMARK IS A TITLE, NOT A CAPTION ────────────────────────
+   461 px, against the boot screen's 620. It was 25 px of type when the
+   backdrop was a gradient and 40 px once the backdrop became a picture — a
+   small word laid on a rendered sky is a watermark — and the ceiling has
+   always been the same thing: this header also has to leave room for 770 px of
+   panel under it, and the Mode column loses a card the moment the header wins.
+
+   461 px of mark is 68 px tall, which is where `.menu-head` lands within a few
+   pixels of the 83 px band tools/_bands.mjs states and tools/keyart.mjs posed
+   the title plate against. That is not a coincidence to be preserved by luck:
+   tools/checks/keyart.mjs reads THIS number out of THIS rule and fails if it
+   stops agreeing with the stated band, and fails again if any min-height query
+   moves it at the reference viewport. Re-run `node tools/_menubands.mjs` and
+   paste the line it prints if you change it.
+
+   The short-viewport clawback lives in the existing `@media (max-height:800px)`
+   block with the other rules that give the panel its height back. */
+.logo.small .wordmark{width:min(461px,100%)}
 
 /* ── menu ────────────────────────────────────────────────── */
 /* ── THE TITLE SCREEN'S ART, AND WHY IT IS A FILE ────────────────────────
@@ -257,14 +278,16 @@ b{font-weight:800}
    one keypress from the game does not need to describe the game, and the
    byline is gone outright. The rules are deleted rather than left orphaned:
    an unused selector is the thing that gets re-attached by accident. */
-/* THE RECORD LINE IS THE LEAST DEFENSIBLE TYPE ON THE SCREEN, and it only
-   became so when the backdrop did. 10 px mono in `--dim` (#a9a4bd) was fine on
-   a flat wash; over a rendered sky it is the one string in the header with no
-   ink behind it — the wordmark has a four-offset halo and a solid block, this
-   had nothing. Same halo, one step lighter than the wordmark's, because 10 px
-   letterforms close up if the ink is 2 px on all four sides. It costs nothing
-   when the line is empty, which is most of the time: `.record:empty` is gone
-   from the layout entirely. */
+/* THE RECORD LINE IS NOW A FAILURE NOTICE AND NOTHING ELSE. It carried
+   `Progress.progressLines()` — runs, kills, deepest wave, facets, boons — under
+   the title, and that was removed on instruction; see index.html, which also
+   records that the element itself stays because `deploy()`'s catch writes
+   "Could not deploy: …" here and tools/checks/session.mjs holds it to that.
+
+   So the rule below is dressed for the one case it now has: 10 px mono over a
+   rendered sky with no panel behind it, which is why it carries its own ink
+   halo. `.record:empty{display:none}` takes it out of the layout entirely,
+   which is every screen a player will see unless a world fails to build. */
 .record{margin-top:7px;font:var(--mono);font-size:10px;letter-spacing:.14em;color:var(--dim);
   text-shadow:1px 0 var(--stroke),-1px 0 var(--stroke),0 1px var(--stroke),0 -1px var(--stroke),
     0 0 10px rgba(5,6,12,.9)}
@@ -390,12 +413,12 @@ h3.stacked{margin-top:26px}
    what it says. Measured before and after in Chromium at the six viewports the
    footer collision was measured at. */
 @media (max-height:800px){
-  /* The wordmark goes back to the size it was before the backdrop existed.
-     A 1280x720 wrap is 1180x662 with 819 px of content wanting to fit in it —
-     see `.col.narrow.pinned` — and the 15 px the bigger title costs is 15 px
-     the Mode list does not have. Above 800 px there is room and the title is a
-     title; at or below it, the panel wins. */
-  .logo.small .lg-a,.logo.small .lg-b{font-size:25px}
+  /* The wordmark gives the panel its height back. A 1280x720 wrap is 1180x662
+     with 819 px of content wanting to fit in it — see `.col.narrow.pinned` —
+     and every pixel the title takes is a pixel the Mode list does not have.
+     Above 800 px there is room and the title is a title; at or below it, the
+     panel wins. 300 px of mark is 44 px tall against 461's 68. */
+  .logo.small .wordmark{width:min(300px,100%)}
   h3.stacked{margin-top:14px}
   .col.narrow.pinned h3{margin-bottom:8px}
   .col.narrow.pinned .difflist{gap:6px}
@@ -1203,6 +1226,18 @@ button{font-family:inherit}
   display:flex;flex-direction:column;gap:5px;pointer-events:none;z-index:6;
   animation:riseIn .12s ease-out both}
 #stratagem.hidden{display:none}
+/* THE PHRASE, under the leading row. Every keystroke is a word (see
+   Stratagems.callPhrase); this is the script the player is reading aloud, so
+   the word already said is dim, the next one is lit, and the rest wait. */
+#stratagem .sg-words{margin:1px 0 5px 0;font-size:11px;letter-spacing:.02em;line-height:1.35;
+  opacity:.9;padding-left:2px}
+#stratagem .sg-words em{font-style:normal;color:#6f7c88}
+#stratagem .sg-words em.on{color:#cfe4f5}
+#stratagem .sg-words em.next{color:#ffce50;text-shadow:0 0 6px rgba(255,206,80,.55)}
+/* …and the second phase, which is one line and a state. */
+#stratagem .sg-row.sg-mark b{color:#ffce50}
+#stratagem .sg-row.sg-mark .sg-cost{color:#ff6a4a;letter-spacing:.10em}
+
 .sg-row{display:flex;align-items:center;gap:10px;padding:5px 11px;
   background:rgba(10,13,26,.82);border:2px solid var(--stroke);
   box-shadow:var(--stamp-sm);font:var(--mono);font-size:12px;white-space:nowrap}
@@ -1378,14 +1413,11 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
   .col.narrow{flex:none}
   .hud-tl,.hud-tr{top:16px}.hud-tl{left:16px}.hud-tr{right:16px}
   .hud-bl{left:16px;bottom:18px}.hud-br{right:16px;bottom:18px}
-  /* THIS RULE HAD NEVER DONE ANYTHING. It was `.logo h1{font-size:36px}`, and
-     `.logo h1` is set to `font-size:0` twenty lines up — deliberately, to
-     collapse the inline whitespace between the two spans — while `.lg-a` and
-     `.lg-b` each carry their own `font:` shorthand with a size in it. So the
-     narrow-screen shrink it was written for has never fired on any viewport,
-     on either screen that uses the wordmark. Same intent, on the elements that
-     actually carry the size. */
-  .logo .lg-a,.logo .lg-b{font-size:36px}
+  /* The boot screen's mark on a narrow frame. `min(620px,100%)` already stops
+     it overflowing — the container is the width of the screen — but 100% of a
+     820 px frame is a title that touches both edges, so it is pulled in. The
+     menu's own `.logo.small` rule is more specific and is not affected. */
+  .logo .wordmark{width:min(620px,86%)}
 }
 
 /* ══════════════════ V2: coaching, locks, deflect feedback ══════════════ */

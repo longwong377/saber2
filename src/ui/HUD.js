@@ -21,7 +21,7 @@ import { keyLabel, walkScale, ORDER_ACTIONS, codesFor } from '../engine/Bindings
  * the model wearing it.
  */
 import { RANKS, ARMIES, ORDERS } from '../game/Command.js';
-import { DIR_GLYPH } from '../game/Stratagems.js';
+import { DIR_GLYPH, callPhrase } from '../game/Stratagems.js';
 import { POWER_COST, POWER_BOON } from '../game/Powers.js';
 // The words a slot is about to say, and whether this browser can say them
 // at all. Audio.js owns both the table and the speaking; the wheel prints.
@@ -1127,15 +1127,42 @@ export class HUD {
       if (this._stratOpen) { host.classList.add('hidden'); host.innerHTML = ''; this._stratOpen = false; this._stratKey = ''; }
       return;
     }
-    const rows = S.candidates({ world: player.world });
+    const ctx = { world: player.world, enemies: player.world?.enemies || [] };
+    const D = S.designating;
+    const rows = D ? [D.s] : S.candidates(ctx);
     const said = S.saidT > 0 ? S.said : '';
-    const key = `${S.entry}|${said}|${rows.map(r => r.id).join(',')}`
+    const key = `${D ? 'mark' + (D.lock ? '!' : '') : S.entry}|${said}|${rows.map(r => r.id).join(',')}`
       + `|${rows.map(r => Math.ceil(S.cooldowns[r.id] ?? 0)).join(',')}`;
     if (key === this._stratKey) return;
     this._stratKey = key;
     this._stratOpen = true;
     host.classList.remove('hidden');
     const force = player.force ?? 0;
+    /**
+     * THE SECOND PHASE HAS ITS OWN PANEL, because it is a different question.
+     *
+     * While the code is being spelled the panel answers "what can I still
+     * spell"; once it is spoken there is nothing left to choose except WHERE,
+     * and a list of six other calls at that moment is furniture. So the
+     * designation collapses to one line that says what is being placed and
+     * whether the beam has a body or a piece of ground — which is the one
+     * thing the player cannot tell from the beam alone at fifty metres.
+     */
+    if (D) {
+      host.innerHTML = `<div class="sg-row sg-mark"><b>${D.s.name}</b>`
+        + `<span class="sg-cost">${D.lock ? 'TARGET' : 'GROUND'}</span></div>`
+        + `<div class="sg-said">${D.lock ? 'locked — release to send' : 'paint it, then release'}</div>`;
+      return;
+    }
+    /**
+     * EVERY KEYSTROKE IS A WORD, so the panel prints the words.
+     *
+     * `callPhrase` is the one derivation (src/game/Stratagems.js) and both the
+     * mouth and this row read it, so what the player hears and what they see
+     * cannot disagree. The word already SAID is lit with its arrow; the next
+     * one is the instruction. That is what turns the panel from a reference
+     * you have to find your place in into a script you are reading aloud.
+     */
     host.innerHTML = rows.map((r) => {
       const cd = Math.ceil(S.cooldowns[r.id] ?? 0);
       const off = cd > 0 || force < r.cost;
@@ -1150,13 +1177,19 @@ export class HUD {
        * only ever on the leading candidate: marking the next arrow of six rows
        * at once would be six instructions and no answer. */
       const lead = r === rows[0];
+      const phrase = callPhrase(r);
       const code = [...r.code].map((c, i) => {
         const cls = i < S.entry.length ? ' on' : (lead && i === S.entry.length ? ' next' : '');
         return `<i class="sg-d${cls}">${DIR_GLYPH[c] || c}</i>`;
       }).join('');
       const note = cd > 0 ? `${cd}s` : `${r.cost}`;
+      const words = lead
+        ? `<div class="sg-words">${phrase.map((w, i) => {
+          const cls = i < S.entry.length ? 'on' : (i === S.entry.length ? 'next' : '');
+          return `<em class="${cls}">${w}</em>`;
+        }).join(' ')}</div>` : '';
       return `<div class="sg-row${off ? ' off' : ''}"><span class="sg-code">${code}</span>`
-        + `<b>${r.name}</b><span class="sg-cost">${note}</span></div>`;
+        + `<b>${r.name}</b><span class="sg-cost">${note}</span></div>${words}`;
     }).join('') || '<div class="sg-row off"><b>no such call</b></div>';
     /* WHAT THE LAST ENTRY DID, under the list. The panel says what you CAN
      * still spell; this says what happened to the thing you just spelled — a

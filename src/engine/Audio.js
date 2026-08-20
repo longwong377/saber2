@@ -1314,6 +1314,70 @@ export class AudioEngine {
   }
 
   /**
+   * ONE WORD, INTO A WRIST COMM — player note #31's "every keystroke a word".
+   *
+   * A stratagem code used to be silent. It is a RADIO CALL now: the player
+   * holds the comm up and speaks, and every direction they press is the next
+   * word of the phrase (see `Stratagems.callPhrase`, which derives it, and
+   * `Player._stratagemInput`, which is the only caller).
+   *
+   * ── WHY IT IS NOT `speak()` ─────────────────────────────────────────────
+   *
+   * `speak` is built around the announcer's vocabulary: a `kind` from
+   * Voice.js's LINE_KINDS, one of a handful of authored SPOKEN_LINES chosen at
+   * random, a `WORD_GAP` of 1.1 s under it and a `cancel()` before every line.
+   * Every one of those is right for a quip and wrong for a phrase. A code is
+   * eight words in about two seconds — the gap would silence seven of them,
+   * the cancel would clip each one on the next, and the words are not a line
+   * from a table, they are the specific thing the player is asking for.
+   *
+   * So this is a narrow second door with the shared parts kept shared: the
+   * same larynx spec biases pitch and rate, the same `voiceLevel` gates it,
+   * the same `speechMode` decides between words and a contour, and the same
+   * `canSpeakWords` capability test arms it.
+   *
+   *   'synth'   the wordless larynx says a clipped syllable — one word, one
+   *             sound, so the RHYTHM of the phrase is audible even with no
+   *             speech synthesiser on the platform. `self: false` on purpose:
+   *             a keystroke must not duck the music or fire a stinger.
+   *   'spoken'  the browser says the actual word. It is NOT cancelled, so the
+   *             words queue into a sentence, which is the one place in this
+   *             file where the browser's queue is the feature.
+   *   'both'    both, which is what the mode means everywhere else.
+   *
+   * `pos` is the player's own mouth, so a co-op partner spelling a code beside
+   * you is audibly beside you.
+   */
+  radio(spec, text, opts = {}) {
+    if (!this.ready || !spec || !this._live()) return '';
+    if (this.voiceLevel <= 0.001) return '';
+    let said = '';
+    if (this.speechMode !== 'synth' && canSpeakWords() && text) {
+      try {
+        const u = new globalThis.SpeechSynthesisUtterance(String(text));
+        u.pitch = clamp(num(spec.f0, 130) / 130, 0.55, 1.7);
+        // Clipped: a radio call is not conversation. 1.25x the larynx's own
+        // pace, inside speechSynthesis's own range.
+        u.rate = clamp(num(spec.cadence, 1) * 1.25, 0.6, 1.6);
+        u.volume = clamp(this.voiceLevel * clamp(num(opts.gain, 0.9), 0, 2), 0, 1);
+        globalThis.speechSynthesis.speak(u);
+        this.stats.words = (this.stats.words || 0) + 1;
+        said = String(text);
+      } catch { said = ''; }
+    }
+    if (this.speechMode !== 'spoken' || !said) {
+      /* THE SQUELCH under the word, so the comm is a comm and not a person
+       * talking to themselves. Short, band-limited, and it plays in every mode
+       * — it is the radio, not the voice. */
+      this.noise({ dur: 0.06, gain: 0.16, type: 'bandpass', freq: 2600, q: 3.4,
+        attack: 0.004, pos: opts.pos || null });
+      this.speak(spec, 'effort', { self: false, pos: opts.pos || null,
+        gain: clamp(num(opts.gain, 0.62), 0, 2), vary: num(opts.vary, 0.5) });
+    }
+    return said;
+  }
+
+  /**
    * WHAT A VOICE LINE TELLS THE SCORE.
    *
    * Two of the beats the score needs have exactly one announcement in the whole

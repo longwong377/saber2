@@ -42,6 +42,7 @@ import * as THREE from 'three';
 import { audio } from '../engine/Audio.js';
 import { clamp } from '../engine/MathUtil.js';
 import { addSmoke, updateSmoke, clearSmoke } from './Smoke.js';
+import { SortieDirector } from './Sorties.js';
 
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const TAU = Math.PI * 2;
@@ -92,42 +93,127 @@ export const spell = (code) => [...(code || '')].map(c => DIR_GLYPH[c] || c).joi
 export const CODE_GAP = 1.6;
 
 /**
+ * HOW FAR YOU CAN MARK, in metres. See `_aimSite`, which is also the
+ * line-of-sight test — a beam cannot reach ground it did not fly over.
+ */
+export const AIM_REACH = 90;
+/**
+ * HOW LONG THE BEAM MAY BE HELD before it sends itself.
+ *
+ * It FIRES on expiry rather than cancelling, because the Force was spent when
+ * the code was spoken. Five seconds is long enough to swing the beam across a
+ * field and short enough that a designation cannot become a place to hide.
+ */
+export const DESIGNATE_MAX = 5.0;
+/**
+ * HOW CLOSE THE BEAM HAS TO PASS A BODY TO LATCH ONTO IT, in metres.
+ *
+ * Six is a little over two body-widths at the crosshair, so a deliberate aim
+ * takes the thing and a beam swept past it does not. Bigger and you cannot
+ * mark the GROUND next to a crowd, which is half of what the mechanic is for.
+ */
+export const LOCK_CONE = 6.0;
+/** The warning ring where a row does not say how wide its own effect is. */
+export const MARK_RADIUS = 7.5;
+
+/**
  * THE TABLE. Every stratagem is a row and nothing else.
  *
  *   code      the directions, in order — and it is NOT written here. It is
  *             dealt by `rollCodes` at the start of every run, because a code
  *             the player has memorised is not a code, it is a second binding
  *             with more keystrokes. See that function.
+ *   words     THE PHRASE, as a tail. Every keystroke is a spoken word (see
+ *             `callPhrase`), so a row says the two or three words that are
+ *             ITS own and the shared preamble supplies the rest. Written as a
+ *             tail rather than as a whole line because the code length is
+ *             derived from the price and a hand-written line of the wrong
+ *             length would be a silent fault.
  *   cost      Force. Also decides how LONG the code is, which is the whole
  *             reason the length is not a field either — see `codeLength`.
- *   cost      Force. Stratagems are a Force-user's calls, so they bill the
- *             same pool every power does rather than inventing a currency.
+ *             Stratagems are a Force-user's calls, so they bill the same pool
+ *             every power does rather than inventing a currency.
  *   cooldown  seconds, per stratagem. Each has its own, so a cheap smoke does
  *             not gate an orbital strike.
- *   lead      seconds between the call landing and the effect arriving. This
- *             is the whole texture of the mechanic: you are asking for
- *             something that is not here yet, and where the enemy will BE is
- *             your problem.
- *   at        'aim'  — lands where you are looking, on the ground.
+ *   deliver   a key of `Sorties.PROFILES` — the craft or the beam that carries
+ *             it, and therefore THE LEAD. A row with a delivery does not
+ *             author its own lead: the lead IS the flight time, derived by
+ *             `leadOf`, so a bomb can never be released at a place its ship is
+ *             not. See src/game/Sorties.js.
+ *   lead      seconds — only for the calls with nothing in the sky. An
+ *             artillery battery is genuinely off-map and a resupply pod is
+ *             thrown rather than flown.
+ *   cadence   (ctx, site, S) → [{ t, fn }] — what leaves the craft, in seconds
+ *             relative to the moment it is over the site. A run that lays its
+ *             damage along its own track has no single instant to fire at, so
+ *             the cadence IS the effect and there is no `fire`.
+ *   fire      (ctx, site, S) → void. Runs when the lead expires, for the calls
+ *             that DO land at one point.
+ *   at        'aim'  — you designate the ground or the body. See `_designate`.
  *             'self' — lands on you.
- *   fire      (ctx, site, S) → void. Runs when the lead expires.
+ *   track     'aim' rows only: may the designation latch onto a BODY and
+ *             follow it? True for the lance, which is fired at a thing;
+ *             false for a gun run, which is flown along a line and cannot be
+ *             re-tasked once the pilot has committed to it.
  *
  * `commandOnly` marks the calls that only make sense with an army behind you.
  * The reinforcement drop is not a thing a lone Jedi in a horde run can ask
  * for, and offering it there would be a menu item that always refuses.
+ *
+ * ── WHY THE NUMBERS BELOW ARE WHAT THEY ARE ─────────────────────────────
+ *
+ * Player note #31: *"each of the stratagem attacks is a little poof of
+ * nothing"*. Measured, on a REAL wave 26 of Geonosis (22 bodies — 3 BX, 2
+ * droidekas, 3 AATs, 9 MagnaGuards, a spider walker, a B1, 2 rocket droids and
+ * a Hailfire; 7 666 hp on the field), with the blast centred on the DENSEST
+ * 7.5 m disc it could find, which held 13 of those bodies and 2 774 hp:
+ *
+ *     shipped orbital strike   r 7.5, 150 dmg   →   1 body killed, 868 hp
+ *
+ * One. `tools/balance.mjs` prices the blade against the same roster — a B1
+ * dies in 1.28 s, a MagnaGuard in 5.34, an AAT in 5.75, plus the walk between
+ * them — and clearing that wave with the blade alone comes to about 195
+ * seconds, one body every 8.9 s. So the shipped strike bought ONE body for 34
+ * Force, a 26 s cooldown and several seconds standing still in the open, when
+ * standing still and swinging buys one every nine seconds for free. The player
+ * is not describing a feeling; they are describing the arithmetic.
+ *
+ * What a call is priced at NOW is stated as a share of that wave, measured the
+ * same way and printed by `tools/checks/stratagems.mjs` every run:
+ *
+ *     orbital strike   r 12, core 0.35, 300 dmg   →   7 bodies, 2 490 hp
+ *
+ * — a third of a deep wave's bodies and a third of its health, which is about
+ * sixty seconds of blade work delivered in one instant at a place you chose.
+ * It is deliberately MORE than the 26 s cooldown is worth per second, because
+ * a stratagem is not a damage-per-second race: you only ever collect the full
+ * figure if the enemy is packed, and the number above is the best disc on the
+ * field rather than a typical one. The call rewards letting them gather, which
+ * is the decision the mechanic exists to offer.
  */
 export const STRATAGEMS = [
   {
     id: 'strike', name: 'Orbital strike',
-    cost: 34, cooldown: 26, lead: 3.2, at: 'aim',
-    blurb: 'A lance from orbit, on the ground you marked. Three seconds of warning, '
-      + 'for you and for them.',
-    fire: (ctx, site, S) => S.blast(ctx, site, 7.5, 62, 150),
+    cost: 40, cooldown: 26, at: 'aim', track: true, radius: 12,
+    deliver: 'lance', words: ['orbital', 'strike'],
+    blurb: 'A lance from orbit, on the thing you painted. It follows what you '
+      + 'marked. Five seconds of warning, for you and for them.',
+    fire: (ctx, site, S, s) => S.blast(ctx, site, s.radius, 150, 300,
+      { core: 0.35, shake: 1.0, size: 3.6, crater: 2.1, kind: 'stratagem' }),
+  },
+  {
+    id: 'strafe', name: 'Strafing run',
+    cost: 22, cooldown: 20, at: 'aim', track: false, radius: 30,
+    deliver: 'strafe', words: ['gun', 'run'],
+    blurb: 'A gunship down the line you painted, cannons open. Twelve impacts '
+      + 'across sixty metres, and it does not know whose side you are on.',
+    cadence: (ctx, site, S) => S.gunRun(ctx, site),
   },
   {
     id: 'barrage', name: 'Artillery barrage',
-    cost: 26, cooldown: 22, lead: 2.6, at: 'aim',
-    blurb: 'Six shells walked across the position. Wider than the lance and much '
+    cost: 26, cooldown: 22, lead: 2.6, at: 'aim', radius: 22,
+    words: ['fire', 'mission'],
+    blurb: 'Twelve shells walked across the position. Wider than the lance and much '
       + 'less certain about where anything is.',
     fire: (ctx, site, S) => {
       /* WALKED, not dropped in a ring. A battery firing at a map reference
@@ -135,29 +221,45 @@ export const STRATAGEMS = [
        * so the pattern is a LINE with scatter, laid along the bearing from
        * the caller — which is also what makes it readable: the shells come
        * toward you or away from you, and standing to one side is a real
-       * answer. */
+       * answer.
+       *
+       * NOTHING FLIES IN FOR THIS ONE, and that is not an omission. A battery
+       * is genuinely off the map; a gunship that appeared to deliver artillery
+       * would be telling the player the wrong thing about where it came from
+       * and about why standing to one side works. What arrives is the SOUND of
+       * it arriving — see `blast`'s incoming whistle. */
       const bear = _v1.subVectors(site, S.owner.position).setY(0);
       if (bear.lengthSq() < 1e-4) bear.set(0, 0, 1);
       bear.normalize();
-      for (let i = 0; i < 6; i++) {
-        const t = (i - 2.5) * 4.2 + (S.rand() - 0.5) * 2.4;
-        const across = (S.rand() - 0.5) * 3.6;
-        const p = _v2.copy(site).addScaledVector(bear, t)
-          .addScaledVector(_v3.set(-bear.z, 0, bear.x), across);
-        S.after(i * 0.22, () => S.blast(ctx, p.clone(), 4.2, 30, 62));
+      for (let i = 0; i < 12; i++) {
+        const t = (i - 5.5) * 3.4 + (S.rand() - 0.5) * 2.4;
+        const across = (S.rand() - 0.5) * 5.2;
+        /* CLONED HERE AND NOT INSIDE THE CLOSURE. `_v2` is a module-level
+         * scratch vector shared by everything in this file, so a `p.clone()`
+         * deferred into a timer cloned whatever the LAST caller had left in it
+         * — twelve shells all landing wherever `blast` happened to be looking.
+         * Latent for as long as nothing else touched `_v2` between the call
+         * and the shell; `blast` now does. Take the copy while the value is
+         * still the one this line computed. */
+        const at = _v2.copy(site).addScaledVector(bear, t)
+          .addScaledVector(_v3.set(-bear.z, 0, bear.x), across).clone();
+        S.after(i * 0.17, () => S.blast(ctx, at, 6.5, 70, 120,
+          { core: 0.25, shake: 0.30, size: 1.7, crater: 0.9, kind: 'stratagem' }));
       }
     },
   },
   {
     id: 'smoke', name: 'Smoke screen',
-    cost: 12, cooldown: 14, lead: 1.1, at: 'aim',
-    blurb: 'A wall of smoke on the marked ground. Nothing on either side can '
-      + 'shoot what it cannot see.',
-    fire: (ctx, site, S) => S.smoke(ctx, site, 8.5, 11),
+    cost: 12, cooldown: 14, at: 'aim', radius: 14,
+    deliver: 'smoke', words: ['smoke', 'screen'],
+    blurb: 'A gunship lays four canisters across the ground you painted. Nothing '
+      + 'on either side can shoot what it cannot see.',
+    cadence: (ctx, site, S) => S.canisters(ctx, site),
   },
   {
     id: 'reinforce', name: 'Reinforcements', commandOnly: true,
     cost: 30, cooldown: 34, lead: 0.4, at: 'self',
+    words: ['send', 'bodies'],
     blurb: 'A gunship, and four more of yours off the ramp. They come down beside '
       + 'you, not at the edge of the field.',
     fire: (ctx, site, S) => S.reinforce(ctx, 4),
@@ -165,6 +267,7 @@ export const STRATAGEMS = [
   {
     id: 'rally', name: 'Rally', commandOnly: true,
     cost: 18, cooldown: 20, lead: 0, at: 'self',
+    words: ['hold', 'the', 'line'],
     blurb: 'Steady the line. Everyone of yours inside the shout stops breaking and '
       + 'stands up.',
     fire: (ctx, site, S) => S.rally(ctx, 22),
@@ -172,6 +275,7 @@ export const STRATAGEMS = [
   {
     id: 'resupply', name: 'Resupply',
     cost: 16, cooldown: 24, lead: 2.0, at: 'self',
+    words: ['drop', 'supply'],
     blurb: 'A pod on your position: health for you, and it wakes the wounded around '
       + 'you back onto their feet.',
     fire: (ctx, site, S) => S.resupply(ctx, site, 9),
@@ -180,6 +284,63 @@ export const STRATAGEMS = [
 
 /** By id, for the HUD and the Codex. Derived, so a row cannot be missed. */
 export const STRATAGEM_BY_ID = Object.fromEntries(STRATAGEMS.map(s => [s.id, s]));
+
+/**
+ * HOW LONG IT TAKES TO ARRIVE, AND IT IS THE DELIVERY'S OWN FLIGHT TIME.
+ *
+ * A row with a `deliver` profile does not carry a `lead`, because the lead and
+ * the flight are two statements of one thing and this project has a section of
+ * its handover about what happens to two of those (§2.3). `Sorties` knows how
+ * far out a pass starts and how fast the craft flies; the lead is that
+ * division. Author a lead only where nothing is in the sky.
+ */
+export const leadOf = (s) => (s?.deliver ? SortieDirector.leadOf(s.deliver) : (s?.lead ?? 0));
+
+/**
+ * EVERY KEYSTROKE IS A WORD, AND THE PHRASE IS DERIVED.
+ *
+ * Player note #31: *"imagine you begin the process of calling one in, you hold
+ * up your wrist and speak into it, every keystroke a word"*. So a code is not a
+ * silent WASD sequence any more — it is a radio call, and the arrows are the
+ * player's own mouth. `Player._stratagemInput` speaks `callPhrase(s)[i]` on the
+ * i-th letter and `HUD` prints it, so the gesture, the voice and the code are
+ * one thing rather than three.
+ *
+ * IT IS BUILT AND NOT WRITTEN, for the reason every derived thing in this file
+ * is: the code length comes from the price (`codeLength`), so a hand-written
+ * line would be the wrong length the day somebody re-prices a row, and a phrase
+ * one word short means a keystroke with nothing to say. The row carries the two
+ * or three words that are its own; the shared preamble supplies the rest, and
+ * the phrase is the LAST `n` words of the two joined — so a cheap five-press
+ * call is a clipped "Borz actual, authenticate, smoke screen" and the eight-press
+ * lance gets the whole of it. The important half is always the tail, because
+ * the tail is what you are asking for.
+ *
+ * `PREAMBLE.length + the shortest tail` must be at least `CODE_MAX`, or a long
+ * code would run out of words. `phraseFaults` states that as a check rather
+ * than as a comment.
+ */
+export const PREAMBLE = ['Command', 'this', 'is', 'Borz', 'actual', 'authenticate'];
+export function callPhrase(s) {
+  const all = [...PREAMBLE, ...(s?.words || [])];
+  return all.slice(Math.max(0, all.length - codeLength(s)));
+}
+
+/** Every way the phrase table can be wrong, as sentences. See `callPhrase`. */
+export function phraseFaults(rows = STRATAGEMS) {
+  const out = [];
+  for (const s of rows) {
+    if (!s.words || !s.words.length) { out.push(`${s.id} has no words of its own`); continue; }
+    const n = codeLength(s);
+    const p = callPhrase(s);
+    if (p.length !== n) out.push(`${s.id} spells in ${n} and says ${p.length} words`);
+    if (PREAMBLE.length + s.words.length < CODE_MAX) {
+      out.push(`${s.id}'s ${s.words.length} words plus a ${PREAMBLE.length}-word preamble `
+        + `cannot fill a ${CODE_MAX}-direction code`);
+    }
+  }
+  return out;
+}
 
 /**
  * HOW LONG A CODE IS, AND IT IS NOT A FIELD ON THE ROW.
@@ -337,6 +498,42 @@ export class Stratagems {
     this.said = '';
     this.saidT = 0;
     this._seed = 0x9e3779b9;
+    /**
+     * THE DESIGNATION, and it is the second half of the mechanic.
+     *
+     * Player note #31: *"right now it's just where you're literally standing,
+     * useless. you need to be able to place it where you want to specifically
+     * or target what you want to target"*. The complaint is exact about the
+     * consequence and slightly off about the cause — the call already landed
+     * where you were LOOKING rather than where you stood — and the cause it
+     * describes is the real one anyway: there was no moment in which the
+     * player was placing anything. The last letter fired the call at whatever
+     * the crosshair happened to be over on that frame, which under fire is
+     * your own feet often enough that the difference does not exist.
+     *
+     * So finishing the code no longer fires the call. It opens a DESIGNATION:
+     * the arm comes down, the beam finds the ground, and the site follows the
+     * aim until the player lets go of the key. Null when nothing is being
+     * placed; `{ s, site, lock, t }` while one is.
+     */
+    this.designating = null;
+    /** The craft in the air. Built on first use — see `_sorties`. */
+    this.sorties = null;
+  }
+
+  /**
+   * THE CRAFT, LAZILY.
+   *
+   * A player who never spells a code should not pay for a scene group, and a
+   * headless check that drives `blast` directly should not need a scene at
+   * all. Both fall out of building the director the first time something
+   * actually flies.
+   */
+  _sorties(ctx) {
+    const world = ctx?.world || this.owner?.world;
+    if (!this.sorties) this.sorties = new SortieDirector(world);
+    else this.sorties.world = world || this.sorties.world;
+    return this.sorties;
   }
 
   /* A stratagem's own scatter must not touch the world's RNG stream: an
@@ -360,27 +557,53 @@ export class Stratagems {
   }
 
   /**
-   * ARM OR DISARM. Letting go abandons a half-entered code rather than leaving
-   * it to time out — the key going up is a clearer statement of "I changed my
-   * mind" than any timer, and a code left standing would fire on the next W
-   * the player pressed to walk.
+   * ARM OR DISARM — and RELEASE IS ALSO THE TRIGGER.
+   *
+   * One key does the whole call now, and the phase decides what letting go of
+   * it means. That is deliberate: the mechanic already spends the player's
+   * only spare finger, and a second binding for "confirm" would be a control
+   * nobody could find while a rifle line is 40 m away (Bindings.js is out of
+   * keys, which is why the code exists at all).
+   *
+   *   while SPELLING     letting go abandons a half-entered code, exactly as
+   *                      it always did — the key going up is a clearer "I
+   *                      changed my mind" than any timer, and a code left
+   *                      standing would fire on the next W you pressed to walk.
+   *   while DESIGNATING  letting go FIRES. The code is already spoken and the
+   *                      Force is already spent; what is left is where, and
+   *                      the release is the moment you stop choosing.
+   *
+   * So the gesture is one continuous thing: hold the comm up, speak the call,
+   * paint the ground, let go.
    */
   setArming(on) {
     if (on === this.arming) return;
     this.arming = on;
+    if (!on && this.designating) { this._launch(this.designating.ctx); return; }
     if (!on && this.entry) { this.entry = ''; this.since = 0; }
     if (on) audio.ui('hover');
   }
 
   /**
-   * ONE LETTER.
+   * ONE LETTER — and one WORD.
    *
-   * Returns the stratagem it completed, `false` if the letter took the entry
-   * nowhere (which clears it — a wrong letter is a failed code, not a
-   * character to backspace), and `null` while a code is still being spelled.
+   * Returns the stratagem whose designation it opened, `false` if the letter
+   * took the entry nowhere (which clears it — a wrong letter is a failed code,
+   * not a character to backspace), and `null` while a code is still being
+   * spelled.
+   *
+   * WHAT IT NO LONGER DOES IS FIRE. The last letter opens the designation
+   * instead; `_launch` is what commits. Callers that used to read the return
+   * value as "the call was made" still read it as "the call was made", because
+   * from here on nothing can refuse it — the price and the cooldown are taken
+   * at this moment, which is the moment the player finished asking.
    */
   feed(dir, ctx) {
     if (!this.arming || !DIRS.includes(dir)) return null;
+    /* A LETTER DURING A DESIGNATION IS NOT A LETTER. The four directions are
+     * how you aim on a pad, and a player nudging the mark must not be starting
+     * a second code with the same press. */
+    if (this.designating) return null;
     const next = this.entry + dir;
     const live = this.available(ctx).filter(s => s.code.startsWith(next));
     if (!live.length) {
@@ -396,22 +619,38 @@ export class Stratagems {
     const done = live.find(s => s.code === next);
     if (!done) return null;
     this.entry = '';
-    this._call(done, ctx);
-    return done;
+    return this._open(done, ctx) ? done : false;
   }
 
-  /** Say something, briefly, to whoever is painting the HUD. */
-  _say(text) { this.said = text; this.saidT = 2.2; }
+  /**
+   * THE WORD THIS KEYSTROKE SAYS.
+   *
+   * Read by `Player._stratagemInput` (which speaks it) and by the HUD (which
+   * prints it), off the one derivation in `callPhrase`, so the mouth and the
+   * panel cannot disagree about what was just said. `index` is how many
+   * letters are already down.
+   *
+   * WHICH ROW'S PHRASE, while several are still consistent with the entry? The
+   * LEADING candidate's — the same row the HUD marks the next arrow on. Every
+   * candidate shares the preamble by construction, so the words only diverge
+   * once the entry has narrowed to one row, which is exactly when the player
+   * has committed to what they are asking for.
+   */
+  wordAt(ctx, index = this.entry.length) {
+    const rows = this.candidates(ctx);
+    if (!rows.length) return '';
+    return callPhrase(rows[0])[index] || '';
+  }
 
   /**
-   * THE CALL ITSELF — charged, cooled and queued.
+   * THE CODE IS SPOKEN — now put it somewhere.
    *
-   * The Force is spent through the OWNER's own spender, not by subtracting
-   * from a pool here: `_spend` is where the difficulty's drain multiplier and
-   * the boon cost modifier are applied, and a caller that did its own
-   * arithmetic would be a stratagem that ignored both.
+   * Charged and cooled HERE and not at the release, because the price of a
+   * stratagem is the asking: you stood in the open and said the whole call out
+   * loud. A player who then declines to place it has still spent it, which is
+   * what stops the designation being a free look at the field.
    */
-  _call(s, ctx) {
+  _open(s, ctx) {
     const p = this.owner;
     if ((this.cooldowns[s.id] ?? 0) > 0) {
       this._say(`${s.name}: ${this.cooldowns[s.id].toFixed(0)}s`);
@@ -424,20 +663,81 @@ export class Stratagems {
       return false;
     }
     this.cooldowns[s.id] = s.cooldown;
-    const site = new THREE.Vector3();
-    if (s.at === 'aim') this._aimSite(ctx, site);
-    else site.copy(p.position);
+    /* A CALL THAT LANDS ON YOU IS NOT DESIGNATED. There is nothing to place —
+     * a rally is a shout and a resupply pod is thrown at your own feet — so
+     * those commit on the spot and the phase never opens. */
+    if (s.at !== 'aim') { this._commit(s, p.position.clone(), null, ctx); return true; }
+    this.designating = { s, ctx, site: new THREE.Vector3(), lock: null, t: DESIGNATE_MAX };
+    this._designate(ctx);
+    this._say(`${s.name} — mark it`);
+    audio.ui('hover');
+    return true;
+  }
+
+  /** The player let go, or ran out of time. Send it. */
+  _launch(ctx) {
+    const D = this.designating;
+    if (!D) return false;
+    this.designating = null;
+    this._commit(D.s, D.site.clone(), D.lock, ctx || D.ctx);
+    return true;
+  }
+
+  /**
+   * THE CALL ITSELF — queued, marked, and put in the air.
+   *
+   * The Force was spent in `_open`, through the OWNER's own spender: `_spend`
+   * is where the difficulty's drain multiplier and the boon cost modifier are
+   * applied, and a caller that did its own arithmetic would be a stratagem
+   * that ignored both.
+   */
+  _commit(s, site, lock, ctx) {
+    const p = this.owner;
+    const lead = leadOf(s);
     /* THE MARK IS PART OF THE MECHANIC and not decoration. A call with a lead
      * that landed with no warning would be a delayed instant-kill; a ring on
      * the ground is what makes standing somewhere else the counter-play — for
      * the player, and for anything that learns to read it. Carried on the
      * pending record rather than as a separate list, because it is a property
      * of the inbound call and dies with it. */
-    this.pending.push({ s, site, t: s.lead, mark: s.lead > 0.4 ? s.lead : 0 });
-    this._say(s.lead > 0.2 ? `${s.name} — ${s.lead.toFixed(1)}s` : s.name);
+    const P = { s, site, t: lead, mark: lead > 0.4 ? lead : 0, lock: s.track ? lock : null };
+    this.pending.push(P);
+    /* AND NOW SOMETHING IS ACTUALLY COMING. See src/game/Sorties.js: the lead
+     * used to be a number with nothing in it, and the whole of note #31's
+     * third paragraph is about that emptiness. The craft is launched at the
+     * commit rather than at the impact, so it occupies the entire lead — and
+     * `leadOf` derives the lead FROM the flight, so the payload leaves the
+     * craft at the instant the craft is over the mark. */
+    if (s.deliver) {
+      const cad = s.cadence ? s.cadence(ctx, site, this) : [];
+      const bearing = this._bearing(site);
+      this._sorties(ctx).launch(s.deliver, site, bearing, cad,
+        { hold: lead + 0.25, follow: s.track ? () => P.site : null });
+    }
+    this._say(lead > 0.2 ? `${s.name} — ${lead.toFixed(1)}s` : s.name);
     audio.force(p.chest ?? p.position, 'push');
     return true;
   }
+
+  /**
+   * WHICH WAY THE CRAFT COMES IN FROM.
+   *
+   * Over the player's own shoulder, so the run comes from behind them and goes
+   * away — a gunship that flew in from the far side would cross the player's
+   * view of the thing it is shooting at, and the whole point is watching it
+   * work. Falls back to the site's own bearing when the two coincide.
+   */
+  _bearing(site) {
+    const from = this.owner?.position;
+    if (!from) return 0;
+    const d = _v1.subVectors(site, from).setY(0);
+    if (d.lengthSq() < 1e-4) return this.owner?.camera?.yaw ?? 0;
+    d.normalize();
+    return Math.atan2(-d.x, -d.z);
+  }
+
+  /** Say something, briefly, to whoever is painting the HUD. */
+  _say(text) { this.said = text; this.saidT = 2.2; }
 
   /**
    * WHERE YOU ARE LOOKING, ON THE GROUND.
@@ -445,24 +745,103 @@ export class Stratagems {
    * Walked forward in steps and stopped at the first sample under the terrain,
    * rather than solved: the terrain is a heightfield with no closed form, and
    * the alternative — a physics raycast — answers a different question (it
-   * would stop on a crate, and a stratagem is called on GROUND). Capped at
+   * would stop on a crate, and a stratagem is called on GROUND).
+   *
+   * ── THIS IS ALSO THE LINE-OF-SIGHT TEST, and it is one by construction ──
+   *
+   * The walk stops at the first point that is under the ground, so a mark can
+   * never be placed through a ridge: aim over a hill and the beam lands on the
+   * near face of it, which is the last ground you can actually see. There is
+   * no second visibility rule to keep in step with this one, and nothing to
+   * disagree with — the beam simply cannot reach anywhere it did not pass
+   * through open air to get to.
+   *
+   * ── RANGE ───────────────────────────────────────────────────────────────
+   *
    * `AIM_REACH`, and a call aimed at the sky lands at the cap, which is the
-   * honest answer to "there is nothing there".
+   * honest answer to "there is nothing there". 90 m is the whole of a level's
+   * usable field on every shipped ground and about twice the range anything
+   * shoots you from, so the limit is on the horizon rather than on the fight:
+   * you can always mark the thing that is killing you, and you cannot mark the
+   * far side of the map.
    */
   _aimSite(ctx, out) {
     const p = this.owner;
     const terrain = ctx?.terrain;
     const from = p.chest ?? p.position;
     const dir = p.aimDir;
-    const STEP = 1.2, REACH = 90;
-    out.copy(from).addScaledVector(dir, REACH);
-    for (let d = STEP; d <= REACH; d += STEP) {
+    const STEP = 1.2;
+    out.copy(from).addScaledVector(dir, AIM_REACH);
+    for (let d = STEP; d <= AIM_REACH; d += STEP) {
       _v1.copy(from).addScaledVector(dir, d);
       const h = terrain ? terrain.height(_v1.x, _v1.z) : 0;
       if (_v1.y <= h) { out.copy(_v1).setY(h); return out; }
     }
     out.y = terrain ? terrain.height(out.x, out.z) : 0;
     return out;
+  }
+
+  /**
+   * ONE FRAME OF PAINTING A TARGET.
+   *
+   * Two things, and the second is the answer to "what happens if the target
+   * moves".
+   *
+   * THE GROUND is `_aimSite` — where you are looking, every frame, so the mark
+   * follows the aim while the key is down.
+   *
+   * THE LATCH: if that line passes within `LOCK_CONE` of a living body, the
+   * designator takes the BODY instead of the ground it is standing on, and
+   * from then until impact the site is wherever that body is. That is the
+   * difference between marking a place and marking a thing, and it is the
+   * difference note #31 asks for in as many words ("place it where you want to
+   * specifically OR target what you want to target").
+   *
+   * THE BIGGEST BODY IN THE CONE WINS, not the nearest. A cone six metres
+   * across at fifty metres will hold a B1 in front of the walker you are
+   * plainly aiming at, and a lance that latched onto the droid because it was
+   * a foot closer to the ray would be the game overruling you. Ties go to the
+   * nearer.
+   *
+   * IF THE LATCHED BODY DIES before the lance arrives, the site FREEZES where
+   * it last stood — see `update`. Orbit does not get a refund and the ground
+   * does not get a reprieve: you called it on a place, and by the time you
+   * find out otherwise the round has left the ship.
+   *
+   * Only rows with `track` may latch. A gun run is flown along a line the
+   * pilot has already committed to; being able to steer one after the fact
+   * would make the strafing run a second, better lance.
+   */
+  _designate(ctx) {
+    const D = this.designating;
+    if (!D) return null;
+    this._aimSite(ctx, D.site);
+    D.lock = null;
+    if (!D.s.track) return D.site;
+    const p = this.owner;
+    const from = p.chest ?? p.position;
+    const dir = p.aimDir;
+    let best = null, bestScore = -Infinity;
+    for (const e of (ctx?.enemies || [])) {
+      if (e.dead || !e.position) continue;
+      const along = _v1.subVectors(e.position, from).dot(dir);
+      if (along <= 0 || along > AIM_REACH) continue;
+      const off = _v2.copy(from).addScaledVector(dir, along).distanceTo(e.position);
+      if (off > LOCK_CONE) continue;
+      /* Size first, proximity to the ray as the tie-break. `A.big` and
+       * `A.boss` are the roster's own words for "this is the thing you meant",
+       * and they are read rather than a health threshold invented here. */
+      const size = (e.A?.boss ? 2 : 0) + (e.A?.big ? 1 : 0);
+      const score = size * 1000 - off;
+      if (score > bestScore) { bestScore = score; best = e; }
+    }
+    if (best) { D.lock = best; D.site.copy(best.position); D.site.y = this._groundAt(ctx, D.site); }
+    return D.site;
+  }
+
+  /** The ground under a point, or the point's own height where there is none. */
+  _groundAt(ctx, at) {
+    return ctx?.terrain ? ctx.terrain.height(at.x, at.z) : at.y;
   }
 
   /** Run `fn` in `t` seconds. Cleared with everything else on unload. */
@@ -473,6 +852,7 @@ export class Stratagems {
      * thing that lays smoke, so the thing that lays it is the thing that ticks
      * it — one owner, and no second place to forget. */
     updateSmoke(dt);
+    if (this.sorties) this.sorties.update(dt, ctx);
     for (const id in this.cooldowns) {
       if (this.cooldowns[id] > 0) this.cooldowns[id] = Math.max(0, this.cooldowns[id] - dt);
     }
@@ -480,6 +860,21 @@ export class Stratagems {
     if (this.entry) {
       this.since += dt;
       if (this.since > CODE_GAP) { this.entry = ''; this.since = 0; }
+    }
+    /**
+     * THE DESIGNATION IS ON A CLOCK, and the clock fires rather than cancels.
+     *
+     * A player who is holding the key and being shot at is not deciding; the
+     * call is already paid for, so the honest expiry is to SEND it at whatever
+     * is under the beam. Cancelling would take the Force as well as the call,
+     * and a mechanic whose failure mode is losing both is one nobody presses.
+     */
+    if (this.designating) {
+      this.designating.ctx = ctx;
+      this._designate(ctx);
+      this.designating.t -= dt;
+      if (this.designating.t <= 0) { this._say('mark expired — sending'); this._launch(ctx); }
+      else if (ctx?.particles) this._paintDesignator(ctx, this.designating);
     }
     for (let i = this._timers.length - 1; i >= 0; i--) {
       const T = this._timers[i];
@@ -489,26 +884,79 @@ export class Stratagems {
     for (let i = this.pending.length - 1; i >= 0; i--) {
       const P = this.pending[i];
       P.t -= dt;
+      /* A LATCHED CALL FOLLOWS ITS BODY, and lets go when the body does. The
+       * site is the last place it stood, which is where the round is already
+       * committed to — see `_designate`. */
+      if (P.lock) {
+        if (P.lock.dead) P.lock = null;
+        else { P.site.copy(P.lock.position); P.site.y = this._groundAt(ctx, P.site); }
+      }
       if (P.mark && ctx?.particles) this._paintMark(ctx, P);
-      if (P.t <= 0) { this.pending.splice(i, 1); P.s.fire(ctx, P.site, this); }
+      if (P.t <= 0) { this.pending.splice(i, 1); P.s.fire?.(ctx, P.site, this, P.s); }
     }
   }
 
-  /** The warning ring, tightening. Drawn every frame a call is inbound. */
+  /**
+   * THE BEAM, while the player is placing it.
+   *
+   * A dotted line from the chest to the mark and a bright reticle on the
+   * ground, redrawn every frame — the point is that the player can SEE where
+   * it will land before they let go, which is the whole of the second half of
+   * note #31. A latched body gets a second, tighter ring so that "I have the
+   * walker" and "I have the ground near the walker" are not the same picture.
+   */
+  _paintDesignator(ctx, D) {
+    const P = ctx.particles;
+    const from = _v3.copy(this.owner.chest ?? this.owner.position);
+    const span = from.distanceTo(D.site);
+    const beads = Math.min(26, Math.max(4, Math.round(span / 3.2)));
+    for (let i = 1; i <= beads; i++) {
+      const k = i / (beads + 1);
+      _v1.lerpVectors(from, D.site, k);
+      P.sparks.spawn(_v1, _v2.set(0, 0, 0),
+        { life: 0.06, size: 0.045, drag: 0, gravity: 0, color: 0xff4030, alpha: 0.85 });
+    }
+    const r = D.lock ? 1.6 : 2.4;
+    const n = D.lock ? 10 : 8;
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * TAU + (this.owner.world?.time ?? 0) * (D.lock ? 3.4 : 1.2);
+      _v1.set(D.site.x + Math.cos(a) * r, D.site.y + 0.10, D.site.z + Math.sin(a) * r);
+      P.sparks.spawn(_v1, _v2.set(0, 0.2, 0),
+        { life: 0.10, size: D.lock ? 0.13 : 0.09, drag: 0, gravity: 0,
+          color: D.lock ? 0xffe060 : 0xff5030, alpha: 1 });
+    }
+  }
+
+  /**
+   * THE WARNING RING, tightening — and it is a warning and not a decoration.
+   *
+   * Twice as many marks as it had and a colour that goes from amber to white
+   * as the last second runs out, because at the sizes note #31 asks for
+   * (`STRATAGEMS`'s own numbers say a 12 m lance) a ring the player has to
+   * squint at is a ring nobody steps out of. The radius is the BLAST's radius
+   * rather than a constant: a mark that did not describe the thing it is
+   * warning about is a lie the player only finds out about once.
+   */
   _paintMark(ctx, P) {
     const k = clamp(P.t / P.mark, 0, 1);
-    const r = 1.6 + k * 5.4;
-    for (let i = 0; i < 4; i++) {
-      const a = ((i / 4) + (1 - k) * 1.7) * TAU;
+    const R = P.s.radius ?? MARK_RADIUS;
+    const r = R * (0.35 + k * 0.65);
+    const hot = k < 0.25;
+    const n = hot ? 16 : 10;
+    for (let i = 0; i < n; i++) {
+      const a = ((i / n) + (1 - k) * 1.7) * TAU;
       _v1.set(P.site.x + Math.cos(a) * r, P.site.y + 0.12, P.site.z + Math.sin(a) * r);
       ctx.particles.sparks.spawn(_v1, _v2.set(0, 0.4, 0),
-        { life: 0.16, size: 0.1, drag: 2, gravity: 0, color: 0xffb020, alpha: 0.9 });
+        { life: 0.16, size: hot ? 0.16 : 0.11, drag: 2, gravity: 0,
+          color: hot ? 0xffffff : 0xffb020, alpha: 0.95 });
     }
   }
 
   /** Nothing outlives a level. */
   reset() {
     this.entry = ''; this.pending.length = 0; this._timers.length = 0; this.cooldowns = {};
+    this.designating = null;
+    this.sorties?.clear();
     clearSmoke();
   }
 
@@ -522,47 +970,212 @@ export class Stratagems {
    * shares is the RULE: `applyKnockback(impulse, damage, source)` is the one
    * door a blast goes through, it is what answers the target's own Force pool,
    * and it is called here exactly as the landing shockwave calls it.
+   *
+   * ── `core`, AND WHY A LANCE IS NOT A BALLOON ────────────────────────────
+   *
+   * Linear falloff from a single point is right for a shockwave and wrong for
+   * a shell: a body two metres off the centre of a 12 m strike is not four
+   * fifths hit, it is hit. `core` is the fraction of the radius that takes the
+   * whole of the damage, with the linear taper running from there to nothing
+   * at the rim. It defaults to 0, which is the shape every existing caller
+   * already had, so nothing that does not ask for it moves.
+   *
+   * ── `shake`, `size`, `crater` ───────────────────────────────────────────
+   *
+   * The three halves of "massive" that are not damage. The camera shake is
+   * scaled by the distance to the caller, because a detonation eighty metres
+   * away that punched the frame as hard as one at your feet would tell the
+   * player the wrong thing about where they are safe. Everything about the
+   * ground is `Terrain.crater`'s, which deforms the real heightfield and keeps
+   * it — the hole is still there next wave.
    */
-  blast(ctx, site, radius, force, damage) {
+  blast(ctx, site, radius, force, damage, opts = {}) {
     const p = this.owner;
-    if (ctx?.terrain?.crater) ctx.terrain.crater(site.x, site.z, radius * 0.5, 0.34);
-    audio.explosion(site, clamp(radius / 5, 0.6, 2.2));
+    const core = clamp(opts.core ?? 0, 0, 0.95);
+    const size = opts.size ?? clamp(radius / 5, 0.6, 2.2);
+    /* THE GROUND REMEMBERS. `crater` is a depth in metres and it is the number
+     * that decides whether a player walks past the hole later and knows what
+     * happened there. Measured on Geonosis: the shipped strike's 3.75 m × 0.34
+     * crater moved the ground 0.11 m — a scuff. A 6 m × 2.1 m one moves it
+     * 1.89 m, which is a hole with walls. */
+    if (ctx?.terrain?.crater) ctx.terrain.crater(site.x, site.z, radius * 0.5, opts.crater ?? 0.34);
+    if (ctx?.terrain?.burn) ctx.terrain.burn(site.x, site.z, radius * 0.6, 1);
+    audio.explosion(site, clamp(size, 0.6, 3.6));
+    /** The fraction of the blow a body at `d` takes. See `core`. */
+    const falloff = (d) => {
+      if (d > radius) return 0;
+      const inner = radius * core;
+      return d <= inner ? 1 : 1 - (d - inner) / Math.max(1e-3, radius - inner);
+    };
     for (const e of (ctx?.enemies || [])) {
       if (e.dead) continue;
-      const d = e.position.distanceTo(site);
-      if (d > radius) continue;
-      const k = 1 - d / radius;
+      const k = falloff(e.position.distanceTo(site));
+      if (k <= 0) continue;
       _v1.subVectors(e.position, site).setY(0.7).normalize().multiplyScalar(force * k);
       e.applyKnockback(_v1, damage * k, p);
     }
-    /* AND IT DOES NOT SPARE YOU. A support call that could not hurt its caller
-     * is a button with no downside, and the lead time only means something if
-     * standing in the marked circle is a mistake. Halved, because the caller
-     * knew it was coming — the enemy did not. */
+    /**
+     * AND IT DOES NOT SPARE YOU, OR ANYONE OF YOURS.
+     *
+     * A support call that could not hurt its caller is a button with no
+     * downside, and the lead time only means something if standing in the
+     * marked circle is a mistake. Halved for the CALLER, because you knew it
+     * was coming — the enemy did not.
+     *
+     * YOUR OWN LINE IS NOT HALVED AND IS NOT SPARED. In Command mode the
+     * troops around you are `Enemy` instances on your team, so they come
+     * through the loop above and are billed at `teamDamage` by the wrapper
+     * Command.js already puts in front of `Enemy.damage` — the same door a
+     * stray blade stroke goes through. It also costs you the line's morale:
+     * `applyKnockback` bills its damage as kind `'force'`, `onFriendlyHit`
+     * reads that as the deliberate kind, and `MORALE.BETRAYED` fires. That is
+     * the correct reading of what just happened. Spelling eight directions,
+     * painting a mark and holding it on your own men is not an accident in a
+     * melee; it is a decision, and it is exactly the decision that table's
+     * "the Jedi used a Force power ON one of their own" was written for.
+     */
     if (p && !p.dead) {
-      const d = p.position.distanceTo(site);
-      if (d < radius) p.damage?.(damage * (1 - d / radius) * 0.5, site, null, 'explosion');
+      const k = falloff(p.position.distanceTo(site));
+      if (k > 0) p.damage?.(damage * k * 0.5, site, null, 'explosion');
     }
     if (ctx?.physics) {
       for (const b of ctx.physics.bodies) {
         if (b.invMass === 0) continue;
-        const d = b.position.distanceTo(site);
-        if (d > radius) continue;
-        const k = 1 - d / radius;
+        const k = falloff(b.position.distanceTo(site));
+        if (k <= 0) continue;
         _v1.subVectors(b.position, site).setY(0.6).normalize();
         b.applyImpulse(_v1.multiplyScalar(force * k * b.mass * 0.5), b.position);
       }
     }
+    /* THE FRAME KNOWS. Scaled by how far the caller is from it, and gated
+     * through the camera rig — which is the one writer `applyFeelSettings`
+     * wraps, so a player who turned motion feedback off is not shaken here
+     * either (see Menu.js's note over `addShake`). */
+    const shake = opts.shake ?? 0;
+    if (shake > 0 && p?.camera?.addShake) {
+      const d = p.position.distanceTo(site);
+      const near = clamp(1 - d / (radius * 5), 0, 1);
+      if (near > 0) {
+        p.camera.addShake(shake * near);
+        this.owner?.world?.engine?.punch?.(shake * near);
+        this.owner?.world?.engine?.rumble?.(0.9 * near, 0.5 * near, 260);
+      }
+    }
     const P = ctx?.particles;
     if (!P) return;
-    for (let i = 0; i < 34; i++) {
-      const a = (i / 34) * TAU;
+    /* THE FIREBALL IS `Particles.explosion`, which already owns what a
+     * detonation looks like — a lit smoke ball, chips, a scorch decal and
+     * ground disturbance. What is added on top is the DUST WALL, because that
+     * is the part that carries the scale and it is proportional to the hole. */
+    P.explosion?.(site, clamp(size, 0.5, 4));
+    const ring = Math.round(34 * clamp(size, 0.6, 3));
+    for (let i = 0; i < ring; i++) {
+      const a = (i / ring) * TAU;
       _v1.set(Math.cos(a), 0.35 + this.rand() * 0.8, Math.sin(a)).multiplyScalar(radius * 1.7);
       P.dust.spawn(_v2.copy(site).setY(site.y + 0.15), _v1,
-        { life: 1.5, size: 0.7, drag: 2.0, gravity: 0.5,
+        { life: 1.5 + size * 0.5, size: 0.7 * size, drag: 2.0, gravity: 0.5,
           color: ctx.groundColor ?? 0xd8c8a8, alpha: 0.3, floor: site.y });
     }
-    P.sparkBurst?.(site, null, 40, { speed: 16, color: 0xffb877 });
+    /* AND A COLUMN. A blast this size throws material UP, and a ring with no
+     * column in it reads as a puff however wide it is. */
+    for (let i = 0; i < Math.round(14 * size); i++) {
+      _v1.set((this.rand() - 0.5) * 4, 12 + this.rand() * 22 * size, (this.rand() - 0.5) * 4);
+      P.smoke?.spawn(_v2.copy(site).setY(site.y + 0.4), _v1,
+        { life: 2.2 + this.rand() * 2, size: 1.4 * size, drag: 1.5, gravity: -1.2,
+          color: 0x50505a, alpha: 0.45 });
+    }
+    P.sparkBurst?.(site, null, Math.round(40 * size), { speed: 16 * size, color: 0xffb877 });
+  }
+
+  /**
+   * TWELVE IMPACTS ACROSS SIXTY METRES — the strafing run's payload.
+   *
+   * Returned as a CADENCE (see src/game/Sorties.js) rather than run here,
+   * because the whole point of it is that the impacts happen where the ship
+   * is, when the ship is there. `t` is seconds relative to the craft being
+   * over the mark, so the run opens fire half a second before it arrives and
+   * walks the fire out the other side.
+   *
+   * THE ONLY NEW CODE IS THE CADENCE. Each beat fires real bolts out of the
+   * real `BoltPool` — the 460-bolt pool the whole game shoots from, at two
+   * draw calls — and then cracks the ground with the same `blast` every other
+   * call uses. Nothing here knows how to shoot or how to break ground.
+   */
+  gunRun(ctx, site) {
+    const BEATS = 12, HZ = 8, HALF = 30;
+    const b = this._bearing(site);
+    /* OWN VECTORS, NOT THE MODULE'S SCRATCH. Everything a cadence entry does
+     * calls back into this file — `_gunPair`, `blast` — and both of those use
+     * `_v1.._v3`, so a point held in one of them is overwritten by the first
+     * thing that reads it. The impacts are computed here, once, and each beat
+     * carries its own vector. */
+    const bear = new THREE.Vector3(Math.sin(b), 0, Math.cos(b));
+    const side = new THREE.Vector3(-bear.z, 0, bear.x);
+    const out = [];
+    for (let i = 0; i < BEATS; i++) {
+      /* The impacts walk from in front of the ship to behind it, along its own
+       * track, which is what a gun run looks like from the ground. */
+      const along = HALF - (i / (BEATS - 1)) * HALF * 2;
+      const at = site.clone().addScaledVector(bear, along)
+        .addScaledVector(side, (this.rand() - 0.5) * 2.6);
+      out.push({
+        t: (i / HZ) - (BEATS * 0.5) / HZ,
+        fn: (from, c) => {
+          at.y = this._groundAt(c, at);
+          this._gunPair(c, from.clone(), at);
+          this.blast(c, at, 5.5, 55, 130,
+            { core: 0.25, shake: 0.22, size: 1.2, crater: 0.6, kind: 'stratagem' });
+        },
+      });
+    }
+    return out;
+  }
+
+  /**
+   * ONE BURST FROM THE CHIN TURRETS.
+   *
+   * The bolts are real and carry real damage, so anything standing between the
+   * ship and the ground it is shooting takes the round rather than the crater.
+   * Their `life` is set to their own time of flight, which is what keeps the
+   * visible round and the impact the cadence schedules on the same frame — a
+   * bolt that outlived its impact would fly on through the ground.
+   */
+  _gunPair(ctx, from, at) {
+    const pool = ctx?.world?.bolts || ctx?.bolts;
+    if (!pool?.fire) return;
+    const dir = new THREE.Vector3().subVectors(at, from);
+    const dist = dir.length() || 1;
+    dir.multiplyScalar(1 / dist);
+    const wing = new THREE.Vector3(dir.z, 0, -dir.x);
+    const SPEED = 190;
+    for (const side of [-1, 1]) {
+      const o = from.clone().addScaledVector(wing, side * 1.3);
+      pool.fire(o, dir, { speed: SPEED, damage: 34, life: dist / SPEED, team: this.owner?.team ?? 0,
+        owner: this.owner, color: 0x66ddff, big: true });
+    }
+  }
+
+  /**
+   * FOUR CANISTERS ACROSS THE MARK — the smoke drop's payload.
+   *
+   * A wall and not a ball. One cloud on the mark and three walked along the
+   * craft's own track, which is how a screen is actually laid: what the player
+   * wants is a LINE between themselves and whatever is shooting, and a single
+   * round bank leaves both ends open.
+   */
+  canisters(ctx, site) {
+    const b = this._bearing(site);
+    // Own vectors, for the reason `gunRun` gives above.
+    const across = new THREE.Vector3(Math.cos(b), 0, -Math.sin(b));
+    const out = [];
+    for (let i = 0; i < 4; i++) {
+      const at = site.clone().addScaledVector(across, (i - 1.5) * 7.0);
+      out.push({
+        t: i * 0.28 - 0.42,
+        fn: (from, c) => { at.y = this._groundAt(c, at); this.smoke(c, at, 8.5, 13); },
+      });
+    }
+    return out;
   }
 
   /**
