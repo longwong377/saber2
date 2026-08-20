@@ -63,16 +63,22 @@ export class Input {
     this.invertY = false;
     this.gamepadIndex = null;
     this.gamepad = null;
-    this.usingGamepad = false;
     /**
      * WHICH DEVICE THE PLAYER IS ACTUALLY HOLDING — 'key' or 'pad'.
      *
-     * `usingGamepad` already existed and answered a narrower question (did the
-     * RIGHT STICK move this frame), which is why nothing could use it to decide
-     * what to print: it is false the whole time a player is holding a pad still
-     * and pressing buttons. This flips on ANY pad input, flips back on any key,
-     * mouse move or click, and `onDevice` fires once on each change so the
-     * surfaces that print a binding can repaint instead of polling.
+     * There used to be a `usingGamepad` beside this, and it answered a
+     * narrower question (did the RIGHT STICK move this frame), which is why
+     * nothing could use it to decide what to print: it is false the whole time
+     * a player is holding a pad still and pressing buttons. `device` flips on
+     * ANY pad input, flips back on any key, mouse move or click, and
+     * `onDevice` fires once on each change so the surfaces that print a
+     * binding can repaint instead of polling.
+     *
+     * `usingGamepad` is GONE rather than kept. Once `_useDevice` began setting
+     * it as `d === 'pad'` it stopped answering the narrower question at all and
+     * became a second name for `device`, written on every device change and
+     * read by nothing — two fields carrying one fact, which is the defect
+     * HANDOFF §2.3 is about, at its smallest scale.
      */
     this.device = 'key';
     /** The plugged-in pad's naming family — see padFamily(). */
@@ -99,7 +105,6 @@ export class Input {
 
   /** Say which device is live, and tell anything that prints a binding. */
   _useDevice(d) {
-    this.usingGamepad = d === 'pad';
     if (this.device === d) return;
     this.device = d;
     this.onDevice?.(d);
