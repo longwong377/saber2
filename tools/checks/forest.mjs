@@ -259,10 +259,35 @@ export async function run({ check, assert }) {
     // the stumps ride in the same mesh, as a draw RANGE
     assert(big.f.stumpMesh.count === 600,
       `600 trees were cut and ${big.f.stumpMesh.count} stumps were drawn`);
-    // and each log left a collider, so a felled tree is something you meet
-    assert(big.world.physics.staticBoxes.length === 600,
-      `${big.world.physics.staticBoxes.length} of 600 logs are things you can walk into`);
-    return `600 trees in ${before} draw calls; 600 felled, 600 stumps, 600 log colliders, still ${before}`;
+    /* AND THE COLLIDERS UNDER THEM ARE A RING, NOT A HEADSTONE PER TREE.
+     *
+     * This clause read `staticBoxes.length === 600` — one box per felled trunk,
+     * laid when it came to rest and removed by nothing — and it is the defect
+     * note #31 reports as "every time they fall they create like this invisible
+     * wall that you can't get through, like they end up being everywhere". A
+     * forest that costs three draw calls standing or flat was still costing an
+     * unbounded walk of `physics.staticBoxes` per body per frame, which is the
+     * same budget argument this check is made of, one system further down.
+     *
+     * So the premise expired and the check says so rather than being deleted:
+     * what a felled forest owes is a collider on the logs somebody is near and
+     * nothing on the rest. `physicality`'s felling clause is where the leak
+     * itself is pinned; this stays because THIS is the file about the budget. */
+    assert(big.world.physics.staticBoxes.length === 0,
+      `nobody is within a hundred metres of 600 felled trees and they are carrying `
+      + `${big.world.physics.staticBoxes.length} colliders`);
+    big.world.players = [{ position: V(0, 0, 0), alive: true }];
+    sim(big.f, 0.5);
+    const ringed = big.world.physics.staticBoxes;
+    assert(ringed.length > 0, 'a player standing among 600 felled logs can walk through every one of them');
+    assert(ringed.length < 40,
+      `${ringed.length} log colliders round one player; the ring is 16 m and the stand is 14 m apart`);
+    const far = ringed.filter((b) => Math.hypot(b.center.x, b.center.z) > 16 + 20);
+    assert(far.length === 0,
+      `${far.length} of ${ringed.length} colliders stand further from the player than a trunk's length `
+      + 'past the ring — the ring is not what is deciding');
+    return `600 trees in ${before} draw calls; 600 felled, 600 stumps, still ${before}; `
+      + `0 log colliders with nobody near, ${ringed.length} round a player standing in them`;
   });
 
   check('felling: a trunk coming down hurts whatever is under it', () => {
@@ -277,7 +302,70 @@ export async function run({ check, assert }) {
     sim(f, 8);
     assert(hit > 20, `a 20 m trunk landed on a body and did ${hit} damage`);
     assert(f.stats.crushed === 1, `${f.stats.crushed} bodies were crushed; exactly one was under it`);
-    return `${hit} damage to the body under it, none to the one behind`;
+    return `${hit.toFixed(1)} damage to the body under it, none to the one behind`;
+  });
+
+  /**
+   * WHAT IT HURTS BY. Note #31: "trees instakill you when they fall instead of
+   * doing damage relative to their size or speed."
+   *
+   * It was `this.crush`, a flat 46 to anything the falling segment crossed —
+   * so a sapling brushing past your shoulder at walking pace and twenty metres
+   * of hardwood landing square cost the same, and two of either killed you.
+   * Every number in the table below was 46.
+   *
+   * The rule is now `Combat.impactDamage`, which is what a thrown crate has
+   * always paid: the mass that arrived times the square of the speed it arrived
+   * at. For a trunk pivoting on its stump both terms are already in the record
+   * — ω × the lever arm to the point that touched you, and the trunk's own mass
+   * per metre over the width of what it landed on.
+   *
+   * This drives the SHIPPED path (`_sweep`, through real bodies standing under
+   * real fellings) rather than calling the pricing function, and asserts the
+   * SHAPE rather than the numbers: bigger hurts more than smaller, further out
+   * hurts more than nearer the stump, a sapling cannot kill you and the biggest
+   * tree in the wood can. A flat number fails every clause at once.
+   */
+  check('felling: it hurts by the size of the trunk and the speed of the part that hit you', () => {
+    const SIZES = [['sapling', 7.5, 0.16], ['median', 13.0, 0.42], ['giant', 25.9, 0.63]];
+    const AT = [0.25, 0.60, 0.95];
+    const table = new Map();
+    for (const [name, h, r] of SIZES) {
+      const { world, f } = stand([{ x: 0, z: 0, height: h, radius: r }]);
+      const len = h - 0.6;
+      const took = [];
+      for (const t of AT) {
+        const body = { position: V(0, 0, len * t), dead: false, radius: 0.35, hp: 0,
+          damage(d) { this.hp += d; } };
+        world.enemies.push(body);
+        took.push(body);
+      }
+      f.fell(0, 0, 1, 0.6);
+      sim(f, 10);
+      table.set(name, took.map((b) => b.hp));
+    }
+    const row = (n) => table.get(n);
+    const rows = SIZES.map(([n, h]) => `${n} (${h} m) ${row(n).map((d) => d.toFixed(0)).join(' / ')}`);
+    const say = `damage at ${AT.map((t) => (t * 100) + '%').join(' / ')} of the trunk — ${rows.join(', ')}`;
+
+    for (let i = 0; i < AT.length; i++) {
+      assert(row('giant')[i] >= row('median')[i] && row('median')[i] >= row('sapling')[i],
+        `at ${AT[i] * 100}% of the trunk a bigger tree does not hurt more: ${say}`);
+    }
+    for (const [name] of SIZES) {
+      const r = row(name);
+      assert(r[2] >= r[1] && r[1] >= r[0],
+        `the ${name}'s tip does not hurt more than its stump end: ${say}`);
+    }
+    assert(row('sapling')[2] < 25,
+      `a whole sapling landing on you reads ${row('sapling')[2].toFixed(0)} — you should walk away from that`);
+    assert(row('giant')[2] >= 100,
+      `the biggest trunk in the wood lands square and reads ${row('giant')[2].toFixed(0)}; `
+      + 'standing under it has to be fatal or there is nothing to get out of the way of');
+    assert(row('giant')[0] < 60,
+      `the giant's stump end reads ${row('giant')[0].toFixed(0)} — the part of a tree that is barely `
+      + 'moving is the part you can survive');
+    return say;
   });
 
   check('wood: it is a wood — you cannot see through it', () => {
