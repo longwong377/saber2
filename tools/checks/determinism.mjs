@@ -129,11 +129,11 @@ export async function run({ check, assert }) {
      *
      * Wrapped, all three are the same number on both runs.
      *
-     * AND FIVE ARE NOT, WHICH IS THE HALF WORTH WRITING DOWN. `characters`
+     * AND SIX ARE NOT, WHICH IS THE HALF WORTH WRITING DOWN. `characters`
      * (a heavy's bore 0.9° → 0.4° off aim), `arrivals` (2.50 → 2.40 bodies per
-     * gunship), `audio`, `vehicles` and `garments` still answer differently on
-     * the second pass, and `pvp` still reports a shove at 0.94 m and then
-     * 0.33 m. Seeding at the top of a body does not reach them: their checks
+     * gunship), `pvp` (a shove at 0.94 m and then 0.33 m), `audio`, `vehicles`
+     * and `garments` all answer differently on the second pass, wrapped or not.
+     * Seeding at the top of a body does not reach them: their checks
      * interleave across an await, so a SIBLING body's seed lands between one
      * body's seed and its draws. That is `tools/_seq.mjs`'s fourth class — the
      * scheduling of a suite's own async checks — and no boundary can fix it;
