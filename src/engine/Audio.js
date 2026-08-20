@@ -137,8 +137,8 @@ const attenuation = (d, ref = REF_DIST, maxD = MAX_DIST) => {
  * WHAT IS DELIBERATELY NOT HERE: a row for a file this repository does not
  * ship. A list that offered three tracks and delivered one would be a menu of
  * lies. Drop an mp3 into assets/music/, add a row, and it is an option; the
- * engine reports a row whose file does not arrive (`musicMissing`) rather than
- * playing nothing and saying nothing.
+ * engine reports a row whose file does not arrive (`onMusicMissing`) rather
+ * than playing nothing and saying nothing.
  *
  * ── THE ORDER, AND WHY IT IS THIS ORDER ────────────────────────────────
  *
@@ -447,8 +447,6 @@ export class AudioEngine {
     this.musicIndex = 0;
     /** The live <audio> stream, or null. Never left undefined — see playMusic. */
     this._music = null;
-    /** The id of a track whose files would not load. Read by the options screen. */
-    this.musicMissing = null;
     /**
      * SYNTHESISED, SPOKEN, OR BOTH. See sayWords().
      *
@@ -831,7 +829,6 @@ export class AudioEngine {
     const want = Math.max(0, Math.min(MUSIC_TRACKS.length - 1, Math.round(num(i, 0))));
     if (want === this.musicIndex) return trackAt(this.musicIndex);
     this.musicIndex = want;
-    this.musicMissing = null;
     this._stopMusic();
     this._applyTrack();
     return trackAt(this.musicIndex);
@@ -908,15 +905,19 @@ export class AudioEngine {
          * the whole point of a data-driven list, and it means a row can name
          * an mp3 nobody has dropped in yet. Silence with no explanation is the
          * worst of the three possible answers; inventing a track is the
-         * second worst. So the failure is recorded where the options screen
-         * can read it (`musicMissing`) and the engine falls back to row 0 —
+         * second worst. So the failure is HANDED to the options screen —
+         * `onMusicMissing`, which is what the menu registers and what caches
+         * the name it prints — and the engine falls back to row 0. There used
+         * to be a `this.musicMissing` field beside it, written three times and
+         * read nowhere, and TWO comments (this one included) named that field
+         * as the reporting path while the callback next to them did the work.
+         * The field is gone; one path, and it is the one that runs. Row 0 —
          * which is now the GENERATED score, and is therefore the one row that
          * cannot itself fail to arrive. A fallback that can 404 is not one.
          */
         el.addEventListener('error', () => {
           const t = trackAt(this.musicIndex);
           if (!t || !t.files || !t.files.length) return;      // the shipped score itself
-          this.musicMissing = t.id;
           this._stopMusic();
           this.musicIndex = 0;
           this.onMusicMissing?.(t);

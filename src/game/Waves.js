@@ -5584,14 +5584,6 @@ export function boonById(id) {
   return BOONS.find((b) => b.id === id) || ATTUNEMENTS.find((a) => a.id === id) || null;
 }
 
-/**
- * How many times this holding has attuned to an axis. Ranks, so it counts the
- * repeats that are the whole point.
- */
-export function attunementOf(taken, axis) {
-  return rankOf(taken, `attune-${axis}`);
-}
-
 /** Weighted pick without replacement. Weights are strictly positive. */
 function weightedPick(pool, weightOf) {
   let total = 0;

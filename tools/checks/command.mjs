@@ -1834,13 +1834,12 @@ export async function run({ check, assert }) {
      * `_troops`, and a slot solved before that is every trooper's slot zero —
      * so a `before` sampled cold and an `after` sampled warm differ by the
      * whole width of the formation and this would measure the numbering. */
-    d._frameDt = 1 / 60; d._troops(1 / 60, {});
+    d._troops(1 / 60, {});
 
     /* ── 1. LOOKING ABOUT DOES NOT MOVE THE LINE. */
     const before = slots();
     for (let i = 0; i < 40; i++) {
       me.aimDir.set(Math.sin(i * 0.15), 0, Math.cos(i * 0.15));   // sweeping the mouse
-      d._frameDt = 1 / 60;
       d._troops(1 / 60, {});
     }
     const after = slots();
@@ -1853,7 +1852,7 @@ export async function run({ check, assert }) {
     /* ── 2. …AND TURNING THE BODY DOES, eventually. The deadband is 40 degrees
      * and the slew 1.1 rad/s, so a half turn arrives in about two seconds. */
     me.facing = Math.PI;
-    for (let i = 0; i < 240; i++) { d._frameDt = 1 / 60; d._troops(1 / 60, {}); }
+    for (let i = 0; i < 240; i++) { d._troops(1 / 60, {}); }
     const turned = slots();
     let swung = 0;
     for (let i = 0; i < before.length; i++) swung = Math.max(swung, before[i].distanceTo(turned[i]));
@@ -1865,7 +1864,7 @@ export async function run({ check, assert }) {
      * commander and step: they clear. */
     me.facing = 0;
     for (const e of troops) { e.position.set(0.4, 0, 0.2); e.target = null; }
-    for (let i = 0; i < 60; i++) { d._frameDt = 1 / 60; d._troops(1 / 60, {}); }
+    for (let i = 0; i < 60; i++) { d._troops(1 / 60, {}); }
     let closest = Infinity;
     for (const e of troops) closest = Math.min(closest, Math.hypot(e.position.x, e.position.z));
     assert(closest > 2.4,
@@ -1878,7 +1877,7 @@ export async function run({ check, assert }) {
     assert(held === true, 'hold(true) did not take');
     const plantedAt = slots();
     me.position.set(40, 0, -25);
-    for (let i = 0; i < 60; i++) { d._frameDt = 1 / 60; d._troops(1 / 60, {}); }
+    for (let i = 0; i < 60; i++) { d._troops(1 / 60, {}); }
     const stillThere = slots();
     let drift = 0;
     for (let i = 0; i < plantedAt.length; i++) drift = Math.max(drift, plantedAt[i].distanceTo(stillThere[i]));

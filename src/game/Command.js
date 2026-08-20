@@ -476,12 +476,6 @@ export function rankFor(xp) {
   return r;
 }
 
-/** XP still owed before the next promotion, or null at the top of the ladder. */
-export function toNextRank(xp) {
-  const r = rankFor(xp);
-  return r >= RANKS.length - 1 ? null : RANKS[r + 1].xp - (xp | 0);
-}
-
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  Names                                                                 */
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -4112,7 +4106,6 @@ export class CommandDirector extends WaveDirector {
         }
       }
     }
-    this._frameDt = dt;
   }
 
   /**

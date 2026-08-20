@@ -2287,7 +2287,6 @@ export class Player {
      */
     this._nearDecks = [];
     /** The height of whatever the feet are over — terrain, rock or crate. */
-    this.supportY = 0;
     this.coyote = 0;
     this.jumpHeld = 0;
     this.dashTimer = 0;
@@ -3313,7 +3312,6 @@ export class Player {
      */
     const sweepFrom = Math.max(this.position.y, this._sweepFromY ?? this.position.y);
     const support = this._supportAt(ctx, this.position.x, this.position.z, sweepFrom);
-    this.supportY = support;
     // Never inside it: a body below the surface it is standing on is the
     // "phase into it" the player described, and it is unconditional.
     if (this.position.y < support) this.position.y = support;

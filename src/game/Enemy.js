@@ -2091,7 +2091,6 @@ export class Enemy {
     world.physics.add(this.body);
 
     this._caps = [];
-    this._capsDirty = true;
     this._collectLodParts();
   }
 
@@ -2191,7 +2190,6 @@ export class Enemy {
         };
       } else {
         this.walkPhase = rng();
-        this.legTargets = [];
       }
     } else {
       // droideka / training remote: a bespoke group rather than a bone rig
@@ -2222,7 +2220,7 @@ export class Enemy {
      * propagates:
      *
      *   · the hover target is NaN, so `position.y` is NaN from frame 0;
-     *   · `distToTarget` is a 3-D length, so every range test in
+     *   · the range to the target is a 3-D length, so every test in
      *     `_rangedBrain` is false and the body NEVER FIRES — measured, 0 shots
      *     in 45 s against a trooper's 33;
      *   · `positionIsValid` (Waves.js) rejects non-finite y, so the liveness
@@ -3917,7 +3915,6 @@ export class Enemy {
 
     _v1.subVectors(target.position, this.position);
     const dist = _v1.length();
-    this.distToTarget = dist;
     _v1.y = 0;
     if (_v1.lengthSq() > 1e-6) _v1.normalize();
     this.toTarget = _v1.clone();
@@ -5419,7 +5416,6 @@ export class Enemy {
     const gh = terrain ? terrain.height(this.position.x, this.position.z) : 0;
     this._gatherNear(ctx);
     const support = this._groundAt(ctx, this.position.x, this.position.z);
-    this.supportY = support;
     if (this.position.y < support) this.position.y = support;
     if (this.position.y <= support + GROUND_SNAP && this.velocity.y <= 0.1) {
       if (this.velocity.y < -9) {
@@ -5913,7 +5909,6 @@ export class Enemy {
       this.position.z);
     hips.quaternion.setFromAxisAngle(UP, this.facing);
     if (pitch) hips.quaternion.multiply(_q1.setFromAxisAngle(RIGHT, pitch));
-    this._rear = rise;
     rig.updateMatrices();
 
     if (this.lod > 1) return;
