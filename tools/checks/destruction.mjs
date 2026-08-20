@@ -266,12 +266,72 @@ export async function run({ check, assert }) {
   check('destruction: carve a column and how deep decides whether the top falls', () => {
     /* The whole ask, end to end and with a real blade: hold it horizontally
      * into a stone column, sweeping, with the tip reaching a measured depth
-     * past the near face, and see what is left standing. Both runs get the same
-     * eight and a bit seconds of blade, so the only thing that differs is how
-     * far in it reaches. Nothing anywhere knows this is a column: the flood
-     * fill and the overturning test read the cells that are left. */
+     * past the near face, and see what is left standing. Every run gets the
+     * same eight and a bit seconds of blade, so the only thing that differs is
+     * how far in it reaches. Nothing anywhere knows this is a column: the flood
+     * fill and the overturning test read the cells that are left.
+     *
+     * ── AND IT IS AN ENSEMBLE, BECAUSE ONE SAMPLE OF IT WAS A COIN FLIP ─────
+     *
+     * This used to carve at 0.30 m and at 0.75 m, once each, and assert the
+     * first stood and the second did not. Both of those are true of the shipped
+     * game and NEITHER was a measurement: sweeping the hilt by ±9 mm around the
+     * fixture's own x, in 3 mm steps, the 0.30 m notch left the column standing
+     * in 3 of 7 samples. It had been green on luck, and a 3 mm nudge either way
+     * would have made it green again for no better reason.
+     *
+     * The response was also not monotone in depth, which is the other half of
+     * what the title claims. Measured on the tree this clause was rewritten
+     * against, standing samples out of seven jitters:
+     *
+     *     0.15 m  7/7      0.45 m  7/7      0.75 m  0/7
+     *     0.30 m  3/7      0.60 m  1/7
+     *
+     * A 0.45 m notch stood every time while a SHALLOWER 0.30 m one dropped the
+     * column four times in seven. A player can feel that.
+     *
+     * WHAT WAS ACTUALLY WRONG WAS NOT THE STATICS. Printing the fraction of the
+     * section that is no longer there at the kerf, beside the verdict, settles
+     * it in one line: the carve was bimodal, taking either about a fifth of the
+     * section or ALL of it, and the collapse tracked that exactly. The cause was
+     * `Destruction._impactScan` billing a structure for its own debris — the
+     * 57 kg chip the blade had just cut off came back through the shaft and
+     * `damageSphere`d it over a 1.45 m radius, on a column 1.10 m thick. See
+     * the note at that call site. With that closed the grid is a step function
+     * and every jitter at a depth agrees.
+     *
+     * So the clauses are the ensemble ones. Each depth must agree with itself
+     * across jitter (no coin flip), the verdict must be monotone in depth (no
+     * shallower notch dropping what a deeper one leaves standing), the section
+     * removed must be monotone too, and the verdict must TRACK the section
+     * rather than float free of it. The grid is printed either way.
+     */
     const R = 0.55, H = 3.4, L = 1.3;
-    function carve(depth) {
+    const DEPTHS = [0.15, 0.30, 0.45, 0.60, 0.75];
+    // ±6 mm in 3 mm steps. 3 mm is the step the old single sample flipped on.
+    const JITTER = [-0.006, -0.003, 0, 0.003, 0.006];
+
+    /** Share of the intact section at the kerf that no attached cell covers. */
+    function sectionGone(s, y) {
+      const N = 41, step = (2 * R) / N;
+      let inCol = 0, covered = 0;
+      const boxes = s.chunks.filter((c) => c.state === 'attached').map((c) => c.bounds);
+      for (let i = 0; i < N; i++) {
+        for (let j = 0; j < N; j++) {
+          const x = -R + (i + 0.5) * step, z = -R + (j + 0.5) * step;
+          if (x * x + z * z > R * R) continue;
+          inCol++;
+          const wx = x + s.position.x, wz = z + s.position.z, ly = y - s.position.y;
+          for (const b of boxes) {
+            if (wx >= b.min.x && wx <= b.max.x && wz >= b.min.z && wz <= b.max.z
+              && ly >= b.min.y && ly <= b.max.y) { covered++; break; }
+          }
+        }
+      }
+      return inCol ? 1 - covered / inCol : 0;
+    }
+
+    function carve(depth, jitter) {
       const { w, host: h, D, s } = build(
         (hh) => addColumn(hh, V(0, 0, 0), { height: 7.5, radius: R, seed: 500, drift: false }),
         V(-1.4, 3.2, 0));
@@ -286,7 +346,7 @@ export async function run({ check, assert }) {
        * the tip at `depth + 0.155` past the face and this test was carving 41%
        * and 82% of the section while calling them 27% and 68%. Measured: hilt
        * -1.550 → base -1.395 → tip -0.095, against a face at -0.55. */
-      const hiltX = -R + depth - L - saber.emitterY;
+      const hiltX = -R + depth - L - saber.emitterY + jitter;
       for (let i = 0; i < 500; i++) {
         const dt = 1 / 60;
         saber.setHiltPose(V(hiltX, H, Math.sin(i * dt * 9) * 1.1), q);
@@ -297,6 +357,7 @@ export async function run({ check, assert }) {
         }
         D.update(dt); w.step(dt);
       }
+      const gone = sectionGone(s, H);
       for (let i = 0; i < 180; i++) { D.update(1 / 60); w.step(1 / 60); }
       let top = -Infinity, left = 0;
       for (const c of s.chunks) {
@@ -304,18 +365,139 @@ export async function run({ check, assert }) {
         left++;
         top = Math.max(top, c.bounds.max.y + s.position.y);
       }
-      return { top, left };
+      return { top, left, gone, stands: top > H + 2 };
     }
-    const shallow = carve(0.30), deep = carve(0.75);
-    assert(shallow.top > H + 2,
-      `a 0.30 m notch in a 1.10 m column dropped everything above it (top left standing y=${shallow.top.toFixed(2)})`);
-    assert(deep.top < H,
-      `a 0.75 m cut into a 1.10 m column left it standing to y=${deep.top.toFixed(2)}`);
-    assert(shallow.top - deep.top > 2,
-      `the two depths differ by only ${(shallow.top - deep.top).toFixed(2)} m`);
-    return `27% of the section carved away and the column still stands to y=${shallow.top.toFixed(2)} `
-      + `(${shallow.left} cells up); 68% and nothing above the cut survives — y=${deep.top.toFixed(2)} `
-      + `(${deep.left} cells)`;
+
+    const grid = DEPTHS.map((d) => ({ d, runs: JITTER.map((j) => carve(d, j)) }));
+    const fmt = (r) => grid.map((g) => `${g.d.toFixed(2)}m ${r(g)}`).join(', ');
+    const verdicts = fmt((g) => g.runs.map((r) => (r.stands ? '1' : '0')).join(''));
+    const sections = fmt((g) => g.runs.map((r) => Math.round(r.gone * 100)).join('/') + '%');
+
+    /* 1. NO COIN FLIP. Every jitter at one depth has to give the same answer. */
+    for (const g of grid) {
+      const n = g.runs.filter((r) => r.stands).length;
+      assert(n === 0 || n === g.runs.length,
+        `a ${g.d.toFixed(2)} m notch leaves the column standing in ${n} of ${g.runs.length} samples `
+        + `over ±6 mm of hilt position — the answer is a coin flip, not a depth. Tops `
+        + `${g.runs.map((r) => r.top.toFixed(2)).join('/')}, section gone `
+        + `${g.runs.map((r) => (r.gone * 100).toFixed(0) + '%').join('/')}`);
+    }
+
+    /* 2. MONOTONE IN DEPTH, which is the whole of "how deep decides". The
+     * VERDICT is asked at every step, because that is the claim in the title
+     * and the ensemble makes it solid. */
+    for (let i = 1; i < grid.length; i++) {
+      const a = grid[i - 1], b = grid[i];
+      assert(!(b.runs[0].stands && !a.runs[0].stands),
+        `a ${b.d.toFixed(2)} m notch leaves the column standing where a shallower ${a.d.toFixed(2)} m `
+        + `one drops it — the response is not monotone in depth. Verdicts: ${verdicts}`);
+    }
+    /* And the CARVE under it, at a spacing the stone can resolve.
+     *
+     * Deliberately two steps and not one. `Structure.cutBy` pulls the reach
+     * back by `cellCapsule(chunk).rad` — 0.21 to 0.36 m on this column — so
+     * where the kerf ends is quantised by the cell, and 0.15 m of extra depth
+     * is INSIDE one cell radius. Measured, the ensemble means are 5.0, 18.8,
+     * 20.8, 35.0, 100.0%: monotone at every step, but 0.30 → 0.45 is a 2-point
+     * margin on a spread of 7 and 14 points, which is a number, not a bound.
+     * 0.30 m apart is wider than the biggest cell radius, and there the claim
+     * has the whole gap behind it. Asserting the tighter one would be pinning
+     * the fracture plan's cell layout, which is not what this check is about.
+     */
+    const mean = (g) => g.runs.reduce((t, r) => t + r.gone, 0) / g.runs.length;
+    for (let i = 2; i < grid.length; i++) {
+      const a = grid[i - 2], b = grid[i];
+      assert(mean(b) >= mean(a),
+        `a ${b.d.toFixed(2)} m notch removes ${(mean(b) * 100).toFixed(1)}% of the section on average `
+        + `against ${(mean(a) * 100).toFixed(1)}% for a ${a.d.toFixed(2)} m one — the carve does not `
+        + `take more stone the deeper it goes. Sections: ${sections}`);
+    }
+
+    /* 3. THE VERDICT TRACKS THE STONE. A section still mostly there holds the
+     * weight; a section that is gone does not. Measured, the two populations
+     * are 5–36% and 100%, so the bar sits in a gap two thirds of the range
+     * wide and is not a tuned number. This is the clause that would catch the
+     * statics being replaced by a rule about depth. */
+    for (const g of grid) {
+      for (const r of g.runs) {
+        assert(r.stands === (r.gone < 0.5),
+          `a ${g.d.toFixed(2)} m notch took ${(r.gone * 100).toFixed(0)}% of the section at the kerf `
+          + `and the column ${r.stands ? 'STOOD' : 'FELL'} — the collapse is not reading the stone `
+          + `that is left. Sections: ${sections}; verdicts: ${verdicts}`);
+      }
+    }
+
+    /* 4. AND BOTH ENDS ARE REAL — a notch is a notch and a cut is a cut. */
+    const shallow = grid[0], deep = grid[grid.length - 1];
+    assert(shallow.runs.every((r) => r.top > H + 2),
+      `a ${shallow.d.toFixed(2)} m notch in a 1.10 m column dropped everything above it `
+      + `(tops ${shallow.runs.map((r) => r.top.toFixed(2)).join('/')})`);
+    assert(deep.runs.every((r) => r.top < H),
+      `a ${deep.d.toFixed(2)} m cut into a 1.10 m column left it standing to `
+      + `${Math.max(...deep.runs.map((r) => r.top)).toFixed(2)}`);
+    assert(shallow.runs[0].top - deep.runs[0].top > 2,
+      `the two ends differ by only ${(shallow.runs[0].top - deep.runs[0].top).toFixed(2)} m`);
+
+    const flip = grid.findIndex((g) => !g.runs[0].stands);
+    return `${DEPTHS.length} depths x ${JITTER.length} jitters (±6 mm): stands ${verdicts}; `
+      + `section gone at the kerf ${sections} (means `
+      + `${grid.map((g) => (mean(g) * 100).toFixed(1)).join('/')}%); it lets go between `
+      + `${grid[flip - 1].d.toFixed(2)} m and ${grid[flip].d.toFixed(2)} m`;
+  });
+
+  check('destruction: take the base out and connectivity alone brings the rest down', () => {
+    /**
+     * THE OTHER HALF OF THE STATICS, AND NOTHING IN THIS FILE COULD SEE IT.
+     *
+     * `settleSupport` is two rules: a flood fill from the ground, and the
+     * overturning test (`_toppleScan`). The carve check above exercises the
+     * second — driven with `_toppleScan` disabled it goes red, and says which
+     * depth and how much section. Driven with the FLOOD FILL disabled (seed the
+     * queue with every attached cell instead of the grounded ones) it stays
+     * green, and so did all nine checks in this file: the whole connectivity
+     * rule could be deleted and the suite would not notice.
+     *
+     * The reason is that a carve leaves a ligament, so the top of a notched
+     * column is still connected to the ground and it is overturning that
+     * decides. To ask about connectivity you have to take the GROUND away, and
+     * nothing did — the lintel check below deliberately leaves the base intact
+     * and asserts so in as many words.
+     *
+     * So: knock the bottom out of a column and leave the shaft untouched. With
+     * no grounded cell under it the overturning test cannot fire at all — its
+     * own `if (!base.size) continue` — so anything that comes down here came
+     * down because the flood fill could not find a way to the ground, and
+     * nothing else in the game can produce that answer.
+     */
+    const { w, D, s } = build((h) => addColumn(h, V(0, 0, 0),
+      { height: 7.5, radius: 0.55, seed: 500, drift: false }));
+    // the two lines `cutBy` and `damageSphere` both open with: cells, then the
+    // shell handed over to them. Called here so the census below is of the
+    // standing column rather than of whatever the first blow left.
+    s.prepareAll();
+    s.prefracture();
+    if (s.state === 'intact') s.convert();
+    const before = s.chunks.filter((c) => c.state === 'attached').length;
+    assert(before >= 8, `the column came out as ${before} cells, which is not a column to test`);
+    const high = s.chunks.filter((c) => c.state === 'attached'
+      && c.bounds.min.y + s.position.y > 3).length;
+    assert(high >= 3, `only ${high} cells above 3 m to drop`);
+
+    // the bottom metre, and nothing else: enough damage that every cell in it
+    // parts, applied where the column meets the ground
+    s.damageSphere(V(0, 0.4, 0), 1.1, s.maxHp * 4);
+    const grounded = s.chunks.filter((c) => c.state === 'attached' && c.grounded).length;
+    assert(grounded === 0,
+      `${grounded} grounded cells survived, so this is not testing what it says it is`);
+
+    for (let i = 0; i < 240; i++) { D.update(1 / 60); w.step(1 / 60); }
+    const left = s.chunks.filter((c) => c.state === 'attached');
+    let top = -Infinity;
+    for (const c of left) top = Math.max(top, c.bounds.max.y + s.position.y);
+    assert(!left.length,
+      `${left.length} of ${before} cells are still standing to y=${top.toFixed(2)} with nothing `
+      + 'under them — the flood fill is not reaching the ground question at all');
+    return `${before} cells, base removed, ${high} of them above 3 m: 0 left attached`;
   });
 
   check('destruction: a carrier ground away below a piece stops carrying it', () => {

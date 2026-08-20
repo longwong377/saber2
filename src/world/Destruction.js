@@ -2600,6 +2600,58 @@ export class Destruction {
       const reach = (b.boundingRadius || 0.4) + speed * dt * 1.5;
       for (const s of this.structures) {
         if (s.state === 'gone' || s.profile.hpPerM2 === Infinity) continue;
+        /**
+         * A PIECE OF A STRUCTURE DOES NOT DAMAGE THE STRUCTURE IT CAME FROM,
+         * and that loop is what made a shallow notch demolish a column.
+         *
+         * Everything below this line is written for something ARRIVING — a
+         * thrown body, a rolling barrel, a chunk of somebody else's wall — and
+         * it bills `0.5 m v²` over a sphere at least 1.4 m across. A cell the
+         * blade has just cut off is not an arrival: the energy that freed it
+         * has already been paid, by the blade, through `wear` and `cutBy`, and
+         * charging the stone a second time for the flight of its own chip is
+         * the same double-billing `Enemy._turnCut` refuses when it declines to
+         * charge a Force rend to the blade's guard as well.
+         *
+         * It is also a runaway rather than a mechanic. Measured on the fixture
+         * `destruction: carve a column and how deep decides whether the top
+         * falls` drives — a 1.10 m stone column, notched 0.30 m: the blade
+         * parts two cells, one 57.3 kg cell comes away, and six frames later
+         * it is travelling at 16.4 m/s (see below) and lands back through the
+         * shaft. `_impactScan` billed the column 154.5 damage over a 1.454 m
+         * radius — wider than the column — which took every cell across the
+         * section, and the flood fill dropped the seven above it. 27 attached
+         * cells to 8, everything above the notch on the floor, from a notch
+         * that had removed 23% of the section.
+         *
+         * That is what made the check's response NOT MONOTONE in depth and a
+         * coin flip on ±3 mm of hilt position: whether the chip happened to
+         * re-enter the shaft above `impactSpeed` decided the fight, not the
+         * depth. Standing samples out of seven jitters, before and after:
+         *
+         *     0.15 m  7/7 → 7/7      section gone at the kerf    5% →   5%
+         *     0.30 m  3/7 → 7/7                            23%/100% → 16-23%
+         *     0.45 m  7/7 → 7/7                            20%/33%  → 19-31%
+         *     0.60 m  1/7 → 7/7                            36%/100% →   36%
+         *     0.75 m  0/7 → 0/7                                100% →  100%
+         *
+         * AND THE 16.4 m/s IS ITS OWN DEFECT, NOT FIXED HERE. Measured frame by
+         * frame, the freed cell sits at 0.1–1.6 m/s for six frames and then
+         * jumps to 16.4 in one — Rapier resolving a penetration, because an
+         * attached cell's static collider is its AXIS-ALIGNED BOX and a Voronoi
+         * wedge out of a round column has a box most of the section wide (this
+         * file's own note on `_cellDepth` measures four such boxes all
+         * overlapping the axis). So a cell made dynamic in place starts inside
+         * three of its neighbours' colliders and is blown out of them. A player
+         * sees a 57 kg block rocket off a column they notched. The fix is hulls
+         * rather than boxes for attached cells, which is a change to every
+         * static collider in the destructible world and wants its own pass.
+         *
+         * Scoped to the structure the chunk belongs to, not to debris in
+         * general: a chunk of one column landing on another is a real impact
+         * and still bills.
+         */
+        if (b.userData && b.userData.chunk && b.userData.chunk.structure === s) continue;
         if (s.centre.distanceToSquared(b.position) > (s.radius + reach + 1) ** 2) continue;
         if (_worldBox(s, _box).distanceToPoint(b.position) > reach) continue;
         this._impactCd.set(b.id, this.time + 0.3);
