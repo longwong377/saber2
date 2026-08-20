@@ -101,6 +101,17 @@ are walked linearly per body per frame: 1,608 boxes = 16.14 ms of sim with
 nothing rendered. Ceiling ~1,000 boxes. **Persist the silhouette, never the
 debris.**
 
+**No completely indoor places. Ever.** Player instruction, 20 Aug, after
+playing them: *"I just tried the boarding bay and the providence and hated them,
+you completely missed the ball so just remove them. your outside work is much
+better."* Both levels were deleted and the `boarding` campaign with them. THE
+LINE is fought outdoors, under a sky, with weather and distance and a horizon —
+those are the things the engine is good at and the things the reference plates
+are made of. An interior may exist as a *feature on an outdoor field* — a bunker
+you breach, a downed cruiser you fight through, a gun emplacement — but the
+player must always be able to see out, and no engagement may take place in a
+sealed room.
+
 **The battlefield must not be flat.** At 2.1 m on a plain both armies compress
 into a 40-pixel band at the horizon — a raindrop cannot see a war. At 15 m
 looking down a shallow slope you see *into* the depth of both lines. Every
