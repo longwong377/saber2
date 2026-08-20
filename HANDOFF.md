@@ -171,6 +171,18 @@ refrain from one convenient command.
   is the signal, and it is exactly what a path-scoped `git add` is prone to
   missing.
 
+**AND `git commit --amend` IS A TREE-WIDE VERB TOO** — the third round found
+this one, and it is the subtlest of the three because the lane did everything
+right. It ran a path-scoped `git add`, checked `git diff --cached --stat`, saw
+exactly its own two files, and then amended the commit to drop a trailer. **An
+amend re-uses the shared index**, and a peer had staged in the window between
+the two commands, so the amended commit carries nine files belonging to four
+other lanes. Nothing was lost — committing a snapshot cannot revert anything —
+but a commit that describes 2 of its 11 files is a commit nobody can read later.
+There is no fix after the fact worth taking: six commits had already landed on
+top, and rewriting that history is the worse failure. **Do not amend while peers
+are live. Write the message right the first time, or add a second commit.**
+
 The deeper lesson is that file-ownership partitioning is necessary and *not
 sufficient*: the shared mutable resource is not the files, it is the index and
 the working tree. Either brief every agent off the tree-wide verbs, or give each
