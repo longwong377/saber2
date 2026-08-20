@@ -86,7 +86,7 @@ export async function run({ check, assert }) {
       const rows = [];
       const gave = [];
       const owes = [];
-      let unkillable = [];
+      const unkillable = [];
       for (const mode of Object.keys(MODES)) {
         const { world, input } = await boot(mode);
         const heard = listen(world, audio);
@@ -313,8 +313,7 @@ export async function run({ check, assert }) {
     /* …and something DID move on the way up, so the plateau is a plateau and
      * not the whole mode. */
     assert(shape(1) !== atTop, 'wave 1 already composes the top of the ladder');
-    const M = await import('../../src/game/Waves.js');
-    assert(M.MODES.duel.ladder === true,
+    assert(Waves.MODES.duel.ladder === true,
       'the duel does not declare that it ends, so World will never end it');
     return `${rungs.length} rungs + ${bosses.length} bosses; the climb runs out at wave ${top} `
       + `(${d.duelWindow(top).join(', ')} × ${d.duelSize(top)}, ${d.duelElites(top)} promoted, set piece), `
