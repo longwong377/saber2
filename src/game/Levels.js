@@ -27,7 +27,7 @@ import { ARRIVAL_BY_TERRAIN } from './Arrivals.js';
  * already pulls Bodies.js, and none of the three reaches Engine.js, which is
  * the edge that matters (see the note at src/world/Scenery.js:566). */
 import { ARCHETYPES } from './Enemy.js';
-import { SET_PIECE } from './Waves.js';
+import { MODES, SET_PIECE } from './Waves.js';
 import { TOUGHNESS } from './Combat.js';
 import { buildBodyguard, buildQuadruped } from './Bodies.js';
 import { attachRiders, saddleThreat } from './Riders.js';
@@ -3900,12 +3900,44 @@ LEVELS.geonosis = {
       if (!site) continue;
       addOutcrop(world, site.pos, { size: 3.5 + rng() * 5, height: 3.0 + rng() * 5.5, seed: 9130 + k, mat: M.stone });
     }
-    /* `landmarks` is `strewGround`'s own boulder-sized grade and it is turned
+    /**
+     * `landmarks` is `strewGround`'s own boulder-sized grade and it is turned
      * UP here rather than down. On every other level the loose rock is texture
      * under your feet; on a plain with no landform it is the only thing between
-     * two horizons, so it is doing the job a ridge does elsewhere. */
+     * two horizons, so it is doing the job a ridge does elsewhere.
+     *
+     * …AND AT 1.5 IT WAS TURNED DOWN, because the multiplier is a COUNT and
+     * this is by far the biggest disc anything is strewn over. `strewGround`
+     * spends `64 × landmarks` stones over `radius × 0.94` whatever that radius
+     * is, so the grade's areal density falls as 1/r². Measured, landmarks per
+     * 1000 m² of the grade's own disc:
+     *
+     *     drifts 1.64 (r124)   scoria 1.44 (r150)   mustafar 1.33 (r150)
+     *     geonosis 0.63 (r235) — the highest multiplier in the game and the
+     *     thinnest ground under it, 96 stones over 153 000 m² against
+     *     scoria's 90 over 62 000
+     *
+     * So the sentence above was true of the number and false of the level, and
+     * the player saw the false half: driven through the shipped `dress` over
+     * the walkable r = 90 m disc, 5.3% of Geonosis had nothing over 1.2 m
+     * within 25 m — the worst on the roster, against 2.7% on the drifts and
+     * 0.0% on every other level — with a median gap of 10.1 m against scoria's
+     * 4.3. The one map with no landform was also the one with nothing on it.
+     *
+     * 3.4 is scoria's density on this disc (1.42 against 1.44), which is the
+     * cheap half of the fix: the grade is still spent as a count, and the day
+     * `strewGround` learns to spend a DENSITY this number goes back to 1.
+     * `tools/checks/world-immersion.mjs` holds the silhouette figure.
+     *
+     * THE OTHER TWO GRADES ARE DELIBERATELY LEFT WHERE THEY ARE. They are the
+     * cover grades, and the paragraph above this call is the level's standing
+     * instruction about cover — "the sparseness is the point: `take cover` is
+     * an order you can give on this map and it will not always find you
+     * anything". Landmarks are what you SEE across a plain; boulders and cobble
+     * are what you get behind. Only the first was claiming to be turned up.
+     */
     strewGround(world, { seed: 9140, radius: 235, spread: 0.30, mat: M.stone,
-      landmarks: 1.5, boulders: 1.3, cobble: 1.2 });
+      landmarks: 3.4, boulders: 1.3, cobble: 1.2 });
     return 12;
   },
 };
@@ -4779,6 +4811,64 @@ export function campaignAt(levelKey) {
     if (CAMPAIGNS[id].missions[0]?.level === levelKey) return CAMPAIGNS[id];
   }
   return null;
+}
+
+/**
+ * THE GROUNDS A MODE CAN ACTUALLY BE STARTED ON — the Theatre column's roster.
+ *
+ * The column offered all nine in every mode, and in Campaign SEVEN OF THE NINE
+ * were a lie. Driven, one deployment per card: picking the Ember Shelf, the
+ * Drowned Wood, the Shifting Waste, the White Pass, Mustafar, Geonosis or the
+ * Providence in Campaign mode built that ground, ran `beginCampaign`, fell back
+ * to the first campaign because `campaignAt` answered null, and rotated the
+ * player onto the Colosseum on the next frame. Two of nine picks were honoured.
+ *
+ * That is `_syncTheatre`'s own defect in its own words — "a card that is lit,
+ * written to settings and then thrown away reads as the picker being randomly
+ * broken" — and it cost a whole World build and teardown per deployment on top
+ * of reading as broken.
+ *
+ * DERIVED, AND OFF A FIELD THE MODE DECLARES, so there is no mode name typed
+ * into the front end and no second list to keep. Three answers and each is
+ * already the authority for its own half:
+ *
+ *   `MODES[m].level`  — the mode owns one ground. `World.loadLevel` overrules
+ *     the request on the same field, so the column and the loader cannot
+ *     disagree; today that is Command and Geonosis.
+ *   `MODES[m].picksCampaign` — the Theatre column IS the campaign picker, so
+ *     the roster is the set of grounds a campaign OPENS on. A third campaign
+ *     lights its opening ground on the day it is authored.
+ *   everything else — the whole roster, which is what every wave mode takes.
+ *
+ * @returns {string[]} keys of LEVEL_ORDER, in LEVEL_ORDER's own order.
+ */
+export function theatresFor(mode) {
+  const M = MODES[mode] || {};
+  if (M.level) return LEVELS[M.level] ? [M.level] : [];
+  if (M.picksCampaign) {
+    const opens = new Set(CAMPAIGN_IDS.map((id) => CAMPAIGNS[id].missions[0]?.level));
+    return LEVEL_ORDER.filter((k) => opens.has(k));
+  }
+  return [...LEVEL_ORDER];
+}
+
+/**
+ * THE GROUND A MODE WILL ACTUALLY START ON, given what the player asked for.
+ *
+ * The clamp half of `theatresFor`. `deploy()` used to read
+ * `MODES[mode]?.level ?? sessionOr('level')`, which answers the first of the
+ * three cases above and neither of the others — so a campaign deployment built
+ * the ground the player picked and then threw it away. One expression, all
+ * three cases, and it is the same list the column offers.
+ *
+ * A request that cannot be honoured falls to the FIRST ground the mode can
+ * take rather than to `LEVEL_ORDER[0]`: falling to the roster's first entry
+ * would put a campaign on the Ember Shelf, which opens no campaign.
+ */
+export function theatreFor(mode, want) {
+  const live = theatresFor(mode);
+  if (!live.length) return want;
+  return live.includes(want) ? want : live[0];
 }
 
 
