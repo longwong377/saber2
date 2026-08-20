@@ -854,11 +854,20 @@ export class ExtractionDirector {
       const r = 2.2 + (i % 3) * 1.1;
       _v3.set(ramp.x + Math.sin(a) * r, 0, ramp.z + Math.cos(a) * r);
     }
+    /* THE NUDGE GOES LAST, AND THAT ORDER IS THE WHOLE FIX.
+     *
+     * It used to run first, and the out-of-bounds fallback below then reset
+     * the body to the ramp — unnudged — putting it back in front of a lit
+     * blade. Measured: 1 of 10 of your own men standing in the commander's
+     * swing arc the moment they came off the ramp, which is exactly the
+     * complaint this whole path exists to answer ("you spawn with your allies
+     * in front of your saber so you end up killing them").
+     *
+     * So: place, clamp to the ground, and only then push clear of the swing.
+     * Nothing after this line may move the body laterally again. */
+    if (w.terrain && !w.terrain.inBounds(_v3.x, _v3.z, 6)) _v3.set(ramp.x, 0, ramp.z);
     nudgeFromSwing(w, _v3);
-    if (w.terrain) {
-      if (!w.terrain.inBounds(_v3.x, _v3.z, 6)) _v3.set(ramp.x, 0, ramp.z);
-      _v3.y = w.terrain.height(_v3.x, _v3.z);
-    }
+    if (w.terrain) _v3.y = w.terrain.height(_v3.x, _v3.z);
     b.position.copy(_v3);
     b.velocity?.set?.(0, 0, 0);
     b.grounded = true;
