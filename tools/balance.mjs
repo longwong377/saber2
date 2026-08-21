@@ -150,6 +150,11 @@ const { DuelBrain, FORMS, FORM_KEYS } = await import('../src/game/Duel.js');
 const { LEVELS, LEVEL_ORDER } = await import('../src/game/Levels.js');
 const Bodies = await import('../src/game/Bodies.js');
 const { makeRng, clamp, lerp } = await import('../src/engine/MathUtil.js');
+/* THE LINE'S SIZE AND THE BODY IN IT, ASKED RATHER THAN TYPED. `OPENING_STRENGTH`
+ * is what a Command run marches in with and `SQUAD` is the unit it is cut into;
+ * both are Command's own, so a design that changes the size of a line changes
+ * this instrument on the same day. See MODEL.lineShare. */
+const { OPENING_STRENGTH, SQUAD } = await import('../src/game/Command.js');
 
 const scene = new THREE.Scene();
 /**
@@ -268,6 +273,72 @@ export const MODEL = {
 
   /** A wave that will not end is a modelling failure, not a balance result. */
   waveTimeout: 400,
+
+  /* ── THE LINE ────────────────────────────────────────────────────────────
+   *
+   * FLAGSHIP §8's warning, in this file's own terms:
+   *
+   *   "The four playstyles spend different resources … `attune-force` measures
+   *   Δ0.000 and 17 of 40 boons read UNMODELLED because balance.mjs has no
+   *   Force powers in it. Soresu 0.000, Tutaminis 0.036, Aegis 0.165 are the
+   *   weakest cards in the table BECAUSE MODEL DEPTH IS THE ONLY METRIC. If the
+   *   Sentinel ships, balance.mjs needs an ALLIES PRESERVED axis, or the whole
+   *   playstyle reads as the worst build in the game and nobody picks it twice."
+   *
+   * That is a real objection and it is not about the cards. This model measures
+   * one quantity — how deep a lone player gets — and §2's whole inversion is
+   * that the lone player is not the subject: "your job is not to kill everything
+   * — it is to be the reason the line is still standing when it takes the
+   * ridge", and "a run that kills three hundred droids and loses the squad is a
+   * loss". A ranking with one axis cannot say that, so a build whose whole
+   * output is other people's survival scores zero and is reported as the
+   * weakest thing in the game.
+   *
+   * ── WHAT THE SECOND AXIS IS, EXACTLY ───────────────────────────────────
+   *
+   * A line of `Command.OPENING_STRENGTH` troopers stands beside the modelled
+   * player and takes fire it does not answer. It is a PASSIVE population: it
+   * shoots at nothing, it moves nowhere, and — the property that makes this
+   * safe to add — it draws not one number out of the run's rng, so the depth
+   * axis is bit-identical to what it was before this existed. Every quantity it
+   * consumes (`boltsPerSec`, `pHitStill`, `damage`, whether a body has arrived,
+   * whether the player has neutralised it) is already produced by the loop.
+   *
+   * The only thing that protects the line is the player, in the four ways the
+   * game already gives them: kill the rifle, neutralise the rifle, return a
+   * bolt into the rifle, or stay alive — because a line whose Jedi is dead is
+   * a line with nobody holding it, and the axis writes off whatever is left.
+   *
+   * ── WHAT IT IS NOT ─────────────────────────────────────────────────────
+   *
+   * It is NOT a claim about how much fire a real squad takes. The same shooter
+   * is charged to the player AND to the line, so the absolute number means
+   * nothing at all — exactly as `MODEL-DEPTH` means nothing absolutely. It is a
+   * RELATIVE measure: the same fire, the same line and the same seeds for every
+   * card, so what it ranks is how much of the enemy's output a build takes off
+   * the field and how long it keeps a Jedi standing among them. That is the
+   * Sentinel's whole job (§7's TURN and §8's "guard + bond"), and it is the
+   * thing the depth axis is structurally unable to see.
+   *
+   * `lineShare` is the one guess and it is a common factor across every card,
+   * so it moves the absolute preservation and not the ORDER — the same
+   * relationship `swingHit` has to depth, and stated for the same reason.
+   * `lineWaves` is a fixed exposure: without it a build that survives longer
+   * accrues more losses simply by playing more waves, and the axis would rank
+   * dying early as protecting your men.
+   */
+  lineShare: 0.12,
+  lineWaves: 5,
+
+  /**
+   * How far off your sightline an unaimed return sprays, in radians, full
+   * width. `Combat.gradeCaught` jitters the return direction by 0.028 of a unit
+   * vector when it is not a PERFECT, which is about ±1.6°; this is wider
+   * because it also stands in for where the CAMERA is, and the camera is not
+   * nailed to the body being cut. It is the one draw an unaimed deflect makes,
+   * so it neither adds nor removes one from the run's stream.
+   */
+  returnSpray: 0.5,
 };
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -1270,13 +1341,40 @@ const MODELLED_CHANNELS = {
   attackRate: 'swing rate',
   deflectDamage: 'returned bolts', absorb: 'damage taken',
   lifesteal: 'healing', healOnKill: 'healing', maxHp: 'health',
-  // NOT returnCone. It was listed here as 'return targeting' and NOTHING IN
-  // THE SIMULATION EVER READ IT — `modsOf` copied it out and no line consumed
-  // it, because this model has no notion of picking a victim for a returned
-  // bolt. So Soresu was reported as having a channel, measured at Δ0.000, and
-  // therefore printed as a card that does nothing. Claiming to see something
-  // and then scoring it zero is the one failure mode an instrument must not
-  // have.
+  /**
+   * STILL NOT `returnCone`, AND THE REASON HAS CHANGED — read this before
+   * adding it back a third time.
+   *
+   * It was listed here once as 'return targeting' with NOTHING BEHIND IT:
+   * `modsOf` copied the field out and no line consumed it, so Soresu was
+   * reported as having a channel, measured at Δ0.000 and printed as a card that
+   * does nothing. Delisting it was right — claiming to see something and then
+   * scoring it zero is the one failure an instrument must not have.
+   *
+   * There IS a reader now (`returnVictim`, calling Combat's own
+   * `pickReturnTarget`), so the obvious move is to relist it. It was tried and
+   * MEASURED, and the cone still does not bind:
+   *
+   *     2000 random sightlines over a 12-body field
+   *     cone 0.42 (base)   found a victim 2000/2000
+   *     cone 0.58 (Soresu rank 1)  2000/2000, and the SAME body 2000/2000
+   *
+   *     72 paired runs, two tiers × three skills: Δdepth 0.000, Δline 0.000,
+   *     zero runs of 72 differing in either axis.
+   *
+   * `pickReturnTarget` scores `dot * 2 + (1 - dist/90)`, so the bearing
+   * dominates and the winner is whatever is nearest your sightline. Widening
+   * the cone from ±54.5° to ±65.2° can only ever change the answer when there
+   * is NOTHING inside ±54.5°, and this model's bodies stand on an even ring —
+   * the geometry where that never happens.
+   *
+   * The card is real; the model's FIELD SHAPE is what cannot see it. Making it
+   * visible means bodies that arrive on a front and cluster, which is what the
+   * game's arrivals actually do and what this file does not have. That is the
+   * gap, stated as a gap, and it is a smaller one than it was: `returnVictim`
+   * at least sends an unaimed deflect down your sightline instead of into a
+   * uniformly random body anywhere on the map.
+   */
 };
 
 /**
@@ -1389,6 +1487,53 @@ function answerRate(diff, sigmaDeg) {
  * Runs die, they do not time out: a wave that will not end trips waveTimeout
  * and is reported as a modelling failure rather than as a survival.
  */
+/**
+ * WHERE AN UNAIMED DEFLECT GOES — asked of Combat, not decided here.
+ *
+ * THE HOLE THIS FILLS. `returnCone` was listed as a channel once, `modsOf`
+ * copied it out, and NOTHING in the simulation read it — the note over
+ * MODELLED_CHANNELS records that, and delisting it was right at the time,
+ * because claiming to see a card and scoring it zero is the one failure an
+ * instrument must not have. But delisting it left Soresu — a whole rank-3
+ * common on the guard axis — permanently UNMODELLED, and FLAGSHIP §8 names it
+ * as the cost: "Soresu 0.000 … the weakest cards in the table BECAUSE MODEL
+ * DEPTH IS THE ONLY METRIC."
+ *
+ * `Combat.pickReturnTarget` is what the game asks, in `gradeCaught`'s reticle
+ * branch, with `ctx.returnCone ?? 0.42`: nearest valid body inside the aim cone
+ * about where you are LOOKING. It is exported, it takes plain positions, and it
+ * is the whole of what the card moves — the cone opens from ±54.5° to ±65.2° at
+ * rank 1, which is Soresu's own note. So this calls it rather than restating
+ * it (§2.4), and what the model has to supply is only the geometry: an origin,
+ * a sightline, and bodies with bearings.
+ *
+ * WHAT IT REPLACED, and why that was worse than nothing: `alive[floor(rng() *
+ * alive.length)]` — a uniform victim off the whole field, which is to say a
+ * bolt that ALWAYS found somebody, at any angle, with no card able to change
+ * it. That is generous in the player's favour and blind to the one card whose
+ * subject it is.
+ *
+ * `spray` is the draw that pick used to spend, spent here instead: `gradeCaught`
+ * jitters the return direction (0.028 unaimed, 0.008 on a PERFECT) and this is
+ * that jitter as a bearing. Consuming exactly one draw keeps the change
+ * attributable to the RULE rather than to a shifted rng stream.
+ *
+ * @returns the body, or null — an unaimed deflect with nothing in the cone goes
+ *          past everybody, which is what a deflection off a parked blade does.
+ */
+const _rvOrigin = new THREE.Vector3(0, 0, 0);
+const _rvAim = new THREE.Vector3(1, 0, 0);
+function returnVictim(alive, looking, cone, spray) {
+  if (!alive.length) return null;
+  /* WHERE YOU ARE LOOKING is the body you are cutting; failing that, the
+   * nearest thing on the field, which is where a player's camera is. */
+  const at = looking?.position || alive[0].position;
+  const a = Math.atan2(at.z, at.x) + spray;
+  _rvAim.set(Math.cos(a), 0, Math.sin(a));
+  const hit = Combat.pickReturnTarget(_rvOrigin, _rvAim, alive, cone);
+  return hit ? hit.entity : null;
+}
+
 export function simulateRun(opts) {
   const {
     difficulty = 'knight', level = LEVEL_ORDER[0], seed = 1,
@@ -1426,6 +1571,30 @@ export function simulateRun(opts) {
   }
   const waveLog = [];
   let modelFailure = null;
+  /**
+   * THE LINE — FLAGSHIP §8's second axis. See MODEL.lineShare for what it is
+   * and, more importantly, what it is not.
+   *
+   * Ten troopers of the game's own `trooper` archetype, standing where the
+   * player is standing. Nothing here draws from `rng`: every quantity is an
+   * EXPECTED value off numbers the incoming loop already has, which is what
+   * makes this axis addable to a tuned instrument at all — a single extra draw
+   * would shift every subsequent one and move the depth of every run in the
+   * table.
+   */
+  const lineHp = new Array(OPENING_STRENGTH).fill(ARCHETYPES.trooper?.hp ?? 60);
+  let lineAt = 0, lineLost = 0, lineSeconds = 0;
+  /** Expected damage into the line this tick. Kills men left to right. */
+  const lineTake = (raw) => {
+    let d = raw;
+    while (d > 0 && lineAt < lineHp.length) {
+      if (lineHp[lineAt] > d) { lineHp[lineAt] -= d; return; }
+      d -= lineHp[lineAt];
+      lineHp[lineAt] = 0;
+      lineAt++;
+      lineLost++;
+    }
+  };
   // Damage goes through p.damage() and healing through p.heal(), so every boon
   // wrapper Waves.js installed sees the hit it was written to see.
   const hurt = (raw) => p.damage(raw, null, null, 'bolt');
@@ -1497,9 +1666,28 @@ export function simulateRun(opts) {
           // A droideka's own 260, or the Shielded elite's SHIELD_HP share of hp.
           shield: A.shield ? 260 : (A.elite === 'shielded' ? A.hp * 2.2 : 0),
           neutral: false, arm: armTime(entry, diff, level), auto: 0,
-          // Encircled counts bodies inside 7 m of `player.position`, so a body
-          // has to have one. Its distance is the band it actually holds.
-          position: new THREE.Vector3((A.preferred[0] + A.preferred[1]) / 2, 0, 0),
+          /**
+           * Encircled counts bodies inside 7 m of `player.position`, so a body
+           * has to have one. Its distance is the band it actually holds.
+           *
+           * …AND A BEARING, which it did not have: every body sat on +X, so the
+           * whole field was one line and any question about WHERE something is
+           * relative to anything else was degenerate. That is why `returnCone`
+           * could not be modelled and Soresu measured Δ0.000 — see
+           * `returnVictim`.
+           *
+           * The angle is the golden angle off the SPAWN INDEX, deterministic on
+           * purpose: a draw here would move every subsequent one and change the
+           * depth of every run in the table. It also spreads better than a
+           * uniform draw would, which is the right shape — the arrival ring and
+           * `Spawn.placementClear` put bodies AROUND you rather than in a
+           * cluster. The RADIUS is unchanged, so `encircle` counts exactly what
+           * it counted before.
+           */
+          position: (() => {
+            const r = (A.preferred[0] + A.preferred[1]) / 2, a = qi * 2.399963229728653;
+            return new THREE.Vector3(Math.cos(a) * r, 0, Math.sin(a) * r);
+          })(),
           dead: false,
           eng: engagementFor(entry, mods, guard),
           close: closeTime(entry, mods),
@@ -1597,6 +1785,24 @@ export function simulateRun(opts) {
         e.auto = Math.max(0, e.auto - dt);       // CATCH.autoGuard, per shooter
         const bp = e.bp;
         if (bp) {
+          /**
+           * …AND THE SAME RIFLE IS POINTED AT THE LINE.
+           *
+           * BEFORE the line-of-sight draw, deliberately: `MODEL.lineOfSight` is
+           * a share and this is an EXPECTATION, so it is multiplied in rather
+           * than sampled — a second `rng()` here would move every draw after it
+           * and change the depth of every run in the table.
+           *
+           * `pHitStill` and not `pHitMoving`: a firing line is standing. The
+           * body has already passed `e.neutral` and `e.arm > 0` above, which is
+           * the whole of what the player can do about it — a body they have
+           * neutralised or killed stops appearing here, and that is the axis.
+           */
+          if (wave <= MODEL.lineWaves && lineAt < lineHp.length) {
+            lineSeconds += dt;
+            lineTake(bp.boltsPerSec * bp.pHitStill * MODEL.lineOfSight
+              * MODEL.lineShare * dt * bp.damage);
+          }
           if (rng() >= MODEL.lineOfSight) continue;
           // Standing still to cut is what makes you easy to lead. Walking is
           // what makes you hard to. Both are real states of this fight.
@@ -1652,7 +1858,9 @@ export function simulateRun(opts) {
               if (mul > 0) {
                 const back = bp.damage * mul * p.boonMods.deflectDamage
                   * lerp(0.6, 1.9, aimed ? MODEL.returnVital : MODEL.deflectVital);
-                const victim = aimed ? e : alive[Math.floor(rng() * alive.length)];
+                const victim = aimed ? e
+                  : returnVictim(alive, engaged, p.boonMods.returnCone ?? 0.42,
+                                 (rng() - 0.5) * MODEL.returnSpray);
                 if (victim && victim.hp > 0) {
                   if (victim.shield > 0) victim.shield -= back;
                   else victim.hp -= back;
@@ -1691,7 +1899,21 @@ export function simulateRun(opts) {
     const cleared = total ? clamp(killed / total, 0, 1) : 1;
     waveLog.push({ wave, n: total, t, killed, hpStart: hpAtStart, hpEnd: Math.max(0, p.hp), cleared });
     if (modelFailure) break;
-    if (!p.alive) return { died: wave, depth: (wave - 1) + cleared, waveLog, boons: [...taken], modelFailure };
+    if (!p.alive) {
+      /**
+       * A LINE WHOSE JEDI IS DEAD IS A LINE WITH NOBODY HOLDING IT.
+       *
+       * §2, in the words the whole inversion rests on: "a run that kills three
+       * hundred droids and loses the squad is a loss." Without this the axis
+       * would rank dying on wave 2 as the best way to protect your men, because
+       * a corpse takes no more casualties. The exposure is fixed at
+       * `MODEL.lineWaves`; a player who does not last that long has lost
+       * whatever was still standing.
+       */
+      if (wave <= MODEL.lineWaves) { lineLost = lineHp.length; lineAt = lineHp.length; }
+      return { died: wave, depth: (wave - 1) + cleared, waveLog, boons: [...taken], modelFailure,
+        ...lineOut(lineHp, lineLost, lineSeconds) };
+    }
 
     p.heal(8);                             // World.onWaveClear
     if (wave % 3 === 0) {
@@ -1700,7 +1922,25 @@ export function simulateRun(opts) {
       if (pick) applyBoon(p, pick, taken.take(pick.id));
     }
   }
-  return { died: maxWave + 1, depth: maxWave + 1, waveLog, boons: [...taken], survived: true, modelFailure };
+  return { died: maxWave + 1, depth: maxWave + 1, waveLog, boons: [...taken], survived: true, modelFailure,
+    ...lineOut(lineHp, lineLost, lineSeconds) };
+}
+
+/**
+ * The line's own three numbers, assembled once so the two exits of
+ * `simulateRun` cannot report them differently. `linePreserved` is the axis:
+ * the share of the opening line still on its feet when the exposure window
+ * closed, in 0..1.
+ */
+function lineOut(lineHp, lineLost, lineSeconds) {
+  const n = lineHp.length || 1;
+  return {
+    linePreserved: clamp(1 - lineLost / n, 0, 1),
+    lineLost,
+    /** Rifle-seconds the line stood under. Reported so a Δ can be read against
+     *  the exposure that produced it rather than against a run length. */
+    lineSeconds: Math.round(lineSeconds * 10) / 10,
+  };
 }
 
 /**
@@ -2027,15 +2267,21 @@ export function boonReport(cfg) {
   out.push('');
   out.push('  Control: a run that takes NOTHING. Treatment: the identical run, granted');
   out.push('  exactly this boon at the wave-3 draft and nothing else, ever. Δ is the');
-  out.push('  paired difference in MODEL-DEPTH, so run-to-run noise cancels.');
+  out.push('  paired difference, so run-to-run noise cancels.');
   out.push('  Synergy is NOT measured — this is each boon alone.');
+  out.push('');
+  out.push('  TWO AXES, and the second is FLAGSHIP §8\'s. Δdepth is how much further a');
+  out.push(`  LONE player got. Δline is how much of a ${OPENING_STRENGTH}-man line was still standing`);
+  out.push(`  after ${MODEL.lineWaves} engagements — §2's inversion, "a run that kills three hundred`);
+  out.push('  droids and loses the squad is a loss". A card can score on one and not the');
+  out.push('  other, and a guard build is the case where that matters: see MODEL.lineShare.');
   const rows = [];
   const ladder = cfg.sigma != null ? [{ name: 'custom', sigma: cfg.sigma }] : MODEL.skillLadder;
   const perBoon = new Map();
 
   for (const boon of BOONS) {
     const chans = boonChannels(boon);
-    const deltas = [], perSkill = {};
+    const deltas = [], perSkill = {}, lineDeltas = [];
     for (const skill of ladder) {
       const ds = [];
       for (const dk of cfg.boonTiers) {
@@ -2044,12 +2290,17 @@ export function boonReport(cfg) {
           const a = simulateRun({ difficulty: dk, level: cfg.level, seed, sigma: skill.sigma, boonPolicy: () => null });
           const b = simulateRun({ difficulty: dk, level: cfg.level, seed, sigma: skill.sigma, boonPolicy: (o, w) => (w === 3 ? boon : null) });
           ds.push(b.depth - a.depth);
+          /* THE SECOND AXIS, off the SAME PAIR. Two runs would be two draws and
+           * the noise would not cancel; these are the identical control and
+           * treatment the depth came from. */
+          lineDeltas.push(b.linePreserved - a.linePreserved);
         }
       }
       perSkill[skill.name] = mean(ds);
       deltas.push(...ds);
     }
     const m = mean(deltas);
+    const ml = mean(lineDeltas);
     /**
      * A THIRD STATE, because two was a lie.
      *
@@ -2067,17 +2318,20 @@ export function boonReport(cfg) {
      * MEASURED, and the fact that no declared channel names it is a gap in the
      * channel list — reported as one rather than as a property of the card.
      */
-    const seen = deltas.some((d) => d !== 0);
+    /* EITHER AXIS COUNTS AS SEEN. A card the depth cannot feel and the line can
+     * is exactly the case §8 warns about, and filing it under "cannot see it"
+     * is the libel this whole three-state arrangement exists to avoid. */
+    const seen = deltas.some((d) => d !== 0) || lineDeltas.some((d) => d !== 0);
     const label = chans.length ? chans.join('+') : (seen ? 'measured, unnamed' : 'UNMODELLED');
-    perBoon.set(boon.id, { mean: m, deltas, chans, perSkill, seen, named: !!chans.length });
+    perBoon.set(boon.id, { mean: m, line: ml, deltas, lineDeltas, chans, perSkill, seen, named: !!chans.length });
     rows.push([boon.name, boon.id, label,
-      m.toFixed(3), median(deltas).toFixed(2),
+      m.toFixed(3), ml.toFixed(3), median(deltas).toFixed(2),
       (100 * deltas.filter(d => d > 0.001).length / deltas.length).toFixed(0) + '%',
       (100 * deltas.filter(d => d < -0.001).length / deltas.length).toFixed(0) + '%']);
   }
   rows.sort((a, b) => Number(b[3]) - Number(a[3]));
   out.push('');
-  out.push(table(['boon', 'id', 'channel in this model', 'mean Δdepth', 'median Δ', 'helped', 'hurt'], rows, { left: [0, 1, 2] }));
+  out.push(table(['boon', 'id', 'channel in this model', 'mean Δdepth', 'mean Δline', 'median Δ', 'helped', 'hurt'], rows, { left: [0, 1, 2] }));
 
   // Everything the simulation actually SAW, named or not — see the note above.
   const modelled = [...perBoon.entries()].filter(([, v]) => v.chans.length || v.seen);
@@ -2087,6 +2341,27 @@ export function boonReport(cfg) {
   out.push('');
   out.push(`  median modelled boon: Δ${med.toFixed(3)}   dominant: ${top[0]} (Δ${top[1].mean.toFixed(3)}, ${(top[1].mean / (med || 1e-9)).toFixed(1)}× median)`);
   out.push(`  weakest modelled:     ${bottom[0]} (Δ${bottom[1].mean.toFixed(3)})`);
+  /**
+   * …AND THE SAME TABLE READ ON THE OTHER AXIS — FLAGSHIP §8.
+   *
+   * Printed separately rather than folded into one score, because the two are
+   * not commensurable and a weighted sum would be this file inventing a design
+   * decision. What the reader is being shown is that the ORDER differs: a card
+   * that keeps you alive keeps your line alive, and a card that only gets you
+   * further does not.
+   */
+  const byLine = modelled.slice().sort((a, b) => b[1].line - a[1].line);
+  const medLine = median(modelled.map(([, v]) => v.line));
+  out.push('');
+  out.push(`  median modelled Δline: ${medLine.toFixed(3)}   best for the line: ${byLine[0][0]} `
+    + `(${byLine[0][1].line >= 0 ? '+' : ''}${byLine[0][1].line.toFixed(3)}, Δdepth ${byLine[0][1].mean.toFixed(3)})`);
+  const worstLine = byLine[byLine.length - 1];
+  out.push(`  worst for the line:    ${worstLine[0]} (${worstLine[1].line.toFixed(3)}, Δdepth ${worstLine[1].mean.toFixed(3)})`);
+  const flip = modelled.filter(([, v]) => v.mean <= med && v.line > medLine).map(([k]) => k);
+  if (flip.length) {
+    out.push(`  BELOW THE MEDIAN ON DEPTH AND ABOVE IT ON THE LINE — the builds a one-axis`);
+    out.push(`  ranking calls weak and §8 says nobody would pick twice: ${flip.join(', ')}`);
+  }
   const unmodelled = [...perBoon.entries()].filter(([, v]) => !v.chans.length && !v.seen).map(([k]) => k);
   out.push(`  UNMODELLED (this harness has no Force powers / jumps / cosmetics): ${unmodelled.join(', ')}`);
   // The gap, stated as a gap. These moved the run and no declared channel
