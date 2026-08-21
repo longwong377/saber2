@@ -181,29 +181,6 @@ const repin = () => page.evaluate(() => {
 const manifest = { step: CMD, seed: SEED, quality: QUALITY, settle: SETTLE, camera: setup, plates: [] };
 
 if (CMD === 'step0') {
-  /* ── PLATE A: the ground as the deployment finds it, before anything has
-   * happened on it. */
-  await repin();
-  manifest.plates.push({ file: await shot(`step0-a-visit-one-arrival`), state: 'pristine' });
-
-  /* ── PLATE B: the same ground, on a second visit, with the crater log of one
-   * fought Command area replayed onto it. Nothing else about the world has
-   * changed — same seed, same dressing, same camera, same second. */
-  const res = await page.evaluate(async ([seed]) => {
-    const w = window.SABER.world;
-    const { CraterLog } = await import('/src/world/CraterLog.js');
-    const r = await fetch(`/.flagship/step0-seed${seed}.log.json`);
-    if (!r.ok) return { error: `no crater log for seed ${seed} — run _flagship.mjs step0 first` };
-    const log = CraterLog.fromJSON(await r.json());
-    const out = log.replay(w.terrain);
-    return { craters: out.craters, ms: +out.ms.toFixed(1), res: w.terrain.res };
-  }, [SEED]);
-  if (res.error) { console.error(res.error); process.exit(2); }
-  manifest.replay = res;
-  await repin();
-  manifest.plates.push({ file: await shot(`step0-b-visit-two-arrival`), state: 'after one area',
-    craters: res.craters });
-
   /* ── AND THE SAME PAIR FROM A MAN'S HEIGHT, LOOKING AT HIS OWN FEET.
    *
    * The wide plate is the deployment's first impression and it is where §14's
@@ -227,30 +204,52 @@ if (CMD === 'step0') {
     c.fov = 60; c.updateProjectionMatrix(); c.updateMatrixWorld(true);
     return { x: +x.toFixed(1), z: +z.toFixed(1), y: +y.toFixed(2) };
   });
+
+  /* ── PLATE A: the ground as the deployment finds it, before anything has
+   * happened on it. */
+  await repin();
+  manifest.plates.push({ file: await shot(`step0-a-visit-one-arrival`), state: 'pristine' });
+
+  /* ── PLATE C: AND THE NEAR HALF OF THE PRISTINE PAIR, SHOT NOW.
+   *
+   * THIS USED TO BE TAKEN LAST, BY REPLAYING THE LOG WITH THE DEPTHS NEGATED
+   * — `Terrain.crater` takes a negative depth by design, so the inverse of a
+   * bowl-plus-lip is a mound-plus-moat and the ground came back to within the
+   * accumulation clamp. That trick was sound while the only thing a crater did
+   * was move the heightfield, and it is UNSOUND NOW: a crater also lays soot
+   * and turned ground into `Terrain.scars`, which is a stacking record with no
+   * inverse, so a negated replay does not lift the marks — it lays a second
+   * set on top of the first. The "pristine" plate would have been the most
+   * cratered one in the set, and the near delta would have been measuring the
+   * instrument.
+   *
+   * Shooting it before the replay costs one camera move and is exact. The
+   * ordering rule the old trick existed to protect — one boot, one exposure
+   * meter, one dressing rng — is untouched, because nothing about the world
+   * has changed between this plate and plate A either. */
   manifest.nearCamera = await near();
-  manifest.plates.push({ file: await shot('step0-d-near-after'), state: 'after one area, eye height' });
-  /* The pristine half of the near pair has to be taken on a ground with no
-   * craters on it, and this page's ground now has 539. Rather than boot a
-   * second page — which would put the exposure meter and the dressing rng into
-   * the comparison, the exact thing this file's header refuses — the craters
-   * are LIFTED back out by replaying the same log with the depths negated.
-   * `Terrain.crater` takes a negative depth by design ("push the surface down,
-   * or up with a negative depth"), and the accumulation clamp is symmetric, so
-   * the inverse of a bowl-plus-lip is a mound-plus-moat of the same size: not
-   * bit-exact ground, but the same ground to within the clamp, and the plate
-   * is a photograph rather than a measurement. */
-  manifest.lifted = await page.evaluate(async ([seed]) => {
+  manifest.plates.push({ file: await shot('step0-c-near-pristine'), state: 'pristine, eye height' });
+
+  /* ── PLATE B: the same ground, on a second visit, with the crater log of one
+   * fought Command area replayed onto it. Nothing else about the world has
+   * changed — same seed, same dressing, same camera, same second. */
+  const res = await page.evaluate(async ([seed]) => {
     const w = window.SABER.world;
     const { CraterLog } = await import('/src/world/CraterLog.js');
     const r = await fetch(`/.flagship/step0-seed${seed}.log.json`);
-    const j = await r.json();
-    for (let i = 0; i < j.e.length; i += 6) j.e[i + 3] = -j.e[i + 3];
-    const log = CraterLog.fromJSON(j);
+    if (!r.ok) return { error: `no crater log for seed ${seed} — run _flagship.mjs step0 first` };
+    const log = CraterLog.fromJSON(await r.json());
     const out = log.replay(w.terrain);
-    return { lifted: out.craters };
+    return { craters: out.craters, ms: +out.ms.toFixed(1), res: w.terrain.res };
   }, [SEED]);
+  if (res.error) { console.error(res.error); process.exit(2); }
+  manifest.replay = res;
+  await repin();
+  manifest.plates.push({ file: await shot(`step0-b-visit-two-arrival`), state: 'after one area',
+    craters: res.craters });
+
   await near();
-  manifest.plates.push({ file: await shot('step0-c-near-pristine'), state: 'craters lifted, eye height' });
+  manifest.plates.push({ file: await shot('step0-d-near-after'), state: 'after one area, eye height' });
 
   /* ── PLATE E: TWENTY SORTIES, which is FLAGSHIP §4's own saturation
    * experiment run as a picture rather than as a walkability statistic.
@@ -391,12 +390,17 @@ async function frameDelta(a, b) {
 }
 
 if (CMD === 'step0' && manifest.plates.length >= 2) {
-  manifest.wideDelta = await frameDelta(manifest.plates[0].file, manifest.plates[1].file);
-  if (manifest.plates.length >= 4) {
-    manifest.nearDelta = await frameDelta(manifest.plates[3].file, manifest.plates[2].file);
+  /* BY NAME, NOT BY INDEX. The order the plates are shot in changed when the
+   * near-pristine one moved to the front of the run, and three of these four
+   * comparisons were positional — so the reorder would have silently started
+   * measuring a different pair and reported it under the same key. */
+  const plate = (n) => manifest.plates.find((p) => p.file.includes(n))?.file;
+  manifest.wideDelta = await frameDelta(plate('a-visit-one'), plate('b-visit-two'));
+  if (plate('c-near-pristine') && plate('d-near-after')) {
+    manifest.nearDelta = await frameDelta(plate('d-near-after'), plate('c-near-pristine'));
   }
-  if (manifest.plates.length >= 5) {
-    manifest.twentyDelta = await frameDelta(manifest.plates[3].file, manifest.plates[4].file);
+  if (plate('e-near-twenty')) {
+    manifest.twentyDelta = await frameDelta(plate('d-near-after'), plate('e-near-twenty'));
   }
 }
 

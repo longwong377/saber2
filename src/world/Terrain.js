@@ -2809,11 +2809,44 @@ const TERRAIN_FRAG_MAP = /* glsl */`
        * how deep the hole is. The tilt is kept because a shelled 2.6 m crater
        * is 0.55 m deep and that one does have a wall. */
       terNrmOff += Txz * kgrd.x + Bxz * kgrd.y;
-      float turned = smoothstep(0.05, 0.55, kd) * uScarSet.z;
+      /* ── THE EDGE IS FRAYED BY THE GROUND'S OWN NOISE, AND IT HAS TO BE ───
+       *
+       * A 1.6 m texel read through a linear filter is a 3 m blob with a soft
+       * rim, and twenty sorties of them merge into one amoeba: rendered, the
+       * first pass read as OIL STAINS — smooth, rounded, and exactly the shape
+       * the eye files as a shadow. Rule 6 of src/toon/REFERENCE.md and §11's
+       * "no gore effect may have a soft edge" both say the same thing about
+       * it, and the field cannot be given a finer cell without quadrupling
+       * what the ground remembers to draw a scuff the same size on screen.
+       *
+       * So the threshold is dithered by the two noise fields the shader has
+       * already computed for the sand — 1.2 m and 9 m, no new taps — which
+       * turns a soft ramp into a ragged coastline at both scales at once.
+       * That is also what burnt ground IS: fire takes the patch it takes, and
+       * the boundary is a fractal, not a circle. Scaled by the mark's own
+       * strength so a texel holding almost nothing cannot be dithered UP into
+       * a stain on clean ground. */
+      float kfray = ((mC - 0.5) * 0.30 + (mB - 0.5) * 0.16
+        /* AND A THIRD SCALE, NEAR ONLY. mC is 1.2 m and mB is 9 m, which is
+         * the right pair at fifty metres and not enough at fifteen: a 1.6 m
+         * texel under the player's nose covers fifty pixels, and an edge
+         * dithered only at 1.2 m is still an airbrush at that size. The 0.34 m
+         * term is what makes it a coastline when you walk up to it — and it is
+         * multiplied by terFlat for exactly the reason terFlat exists, because
+         * a 0.34 m feature is sub-pixel past forty metres and past forty metres
+         * a sub-pixel feature is not detail, it is dither. */
+        + (tnoise(wp * 2.9) - 0.5) * 0.26 * terFlat) * min(1.0, max(kd, K.a) * 6.0);
+      float turned = smoothstep(0.08, 0.46, kd + kfray) * uScarSet.z;
       diffuseColor.rgb = mix(diffuseColor.rgb, uSurfCol, turned);
       terAO = clamp(terAO * (1.0 - smoothstep(0.05, 0.62, kd) * 0.34), 0.20, 1.06);
-      float ksoot = clamp(K.a * uScarSet.w, 0.0, 1.0);
-      diffuseColor.rgb *= mix(1.0, 0.20, ksoot);
+      float ksoot = smoothstep(0.06, 0.34, K.a * uScarSet.w + kfray);
+      /* 0.24 AND NOT ZERO. Burnt sand is a dark warm brown, not a hole in the
+       * frame — and §11's second hard rule about the gruesome is the same
+       * thought from the other end: nothing on this ground may out-contrast a
+       * lightsaber. A quarter of the albedo is two full cel bands down from
+       * the sand beside it, which is as far as anything on the ground is
+       * allowed to move. */
+      diffuseColor.rgb *= mix(1.0, 0.24, ksoot);
       terRough = mix(terRough, 0.86, ksoot * 0.7);
     }
   }

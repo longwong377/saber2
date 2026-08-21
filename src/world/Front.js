@@ -45,18 +45,23 @@
  *      `export` and without a bearing. Both are one line each and both are what
  *      §12.4 asks for: "wrecks belong on the fighting line."
  *   4. THE DRESSING SEED — `beginDressing(world, seed + engagement)`, shipped.
- *   5. THE DEAD — **absent, and not faked.** §12.4 wants 520 prone instanced
- *      figures in a 26 m band, thickest at the choke, one draw call. There is
- *      no instanced-corpse builder anywhere in the tree: `Corpses.js` holds
- *      real ragdolled bodies with a budget of a few dozen, which is a
- *      completely different object. Building one is Step 5's work and putting
- *      a stand-in here would put a thing in the kill test's plates that the
- *      game cannot draw.
+ *   5. THE DEAD — **built, and it is `src/world/Fallen.js`.** This line used to
+ *      read "absent, and not faked", and the reason it gave was correct at the
+ *      time: §12.4 wants 520 prone instanced figures in a 26 m band and
+ *      `Corpses.js` holds real ragdolled bodies with a budget of a few dozen,
+ *      which is a completely different object. So the other object was built.
+ *      It is the colosseum crowd's argument on the ground — one geometry, one
+ *      material, per-instance colour, two draw calls for the whole field —
+ *      and it is a thing the game draws rather than a stand-in.
+ *   6. THE SWATH — `burnBand` below, into the ground's own long memory. New
+ *      here, and it is what `NEXT.md`'s Step 1 verdict asked for: the front's
+ *      one visible variable was, in the plates, a fact about the SKY.
  */
 
 import * as THREE from 'three';
 import { makeRng, TAU } from '../engine/MathUtil.js';
 import { addSmokeColumns, smokeSites } from './Smoke.js';
+import { addFallen } from './Fallen.js';
 
 /** Where the line stands before the first engagement, in metres from the spot
  *  the player is standing on. */
@@ -122,6 +127,81 @@ export function walkingBarrage(terrain, from, bearing, opts = {}) {
 }
 
 /**
+ * THE GROUND THE LINE HAS CROSSED, DRAWN.
+ *
+ * `NEXT.md`'s Step 1 verdict is that engagement 3 differs from engagement 1
+ * only by a pale haze at 100 m. The craters were replaying exactly and were
+ * invisible (Step 0), the wrecks were a handful of hulls, and the columns are
+ * smoke seen against a sky the same value as the smoke — so the ONE variable
+ * §3 calls "a fact about a place you can stand on" was, in the plates, a fact
+ * about the sky.
+ *
+ * This is the ground half, and it is the half that cannot be mistaken for
+ * weather: a burnt swath, laid ON the line and thinning out beyond it, into
+ * `Terrain.scars` — the field that does not decay and is not a window (see
+ * Terrain.js). Called once per engagement and additive, so the ground beyond
+ * engagement 1's line carries five bands by engagement 5 and the ground just
+ * past engagement 5's line carries one. That gradient is not authored; it is
+ * what "this ground has been fought over five times and that ground once"
+ * means, and it is the reason the plates can be ordered by looking DOWN.
+ *
+ * ── WHY A LINE OF DISCS AND NOT A HALF-PLANE FILL ───────────────────────
+ *
+ * A uniformly darkened half-plane reads as a shadow or a different sand — it
+ * has one edge and no internal structure, and the eye files it as terrain.
+ * What says *battle* is that the marks are DISCRETE and their density falls
+ * off: individual burns at the line, thinning to scattered ones behind, which
+ * is the same argument §12.4 makes for the walking barrage. It is also what
+ * the scar field is for — its burns stack, so where the discs overlap the
+ * ground goes black on its own rather than by being told to.
+ *
+ * @returns {number} marks laid
+ */
+export function burnBand(terrain, front, opts = {}) {
+  if (!terrain?.scorch) return 0;
+  const rng = makeRng(opts.seed ?? 7717);
+  const dx = front.dir.x, dz = front.dir.z;
+  /* ACROSS the advance, not along it. The line is the set of points at
+   * `distance` along the bearing, so it runs along the perpendicular — and it
+   * has to run out past the frame, or the swath ends in mid-air at the edge of
+   * shot and reads as a rug. 260 m each way covers a 60° frame at the far end
+   * of the schedule with room over. */
+  const ax = -dz, az = dx;
+  const half = opts.half ?? 260;
+  const step = opts.step ?? 5.5;
+  /* HOW FAR BEHIND THE LINE THE FIGHTING REACHED. `rows` bands at `rowStep`
+   * past it, each thinner and paler than the last: a front is not a line, it
+   * is a zone about 30 m deep, and the far edge of that zone is where the
+   * marks give out. */
+  const rows = opts.rows ?? 6;
+  const rowStep = opts.rowStep ?? 6.5;
+  let laid = 0;
+  for (let r = 0; r < rows; r++) {
+    /* Thinning with depth into the burnt side. The near row is the line
+     * itself and is nearly continuous; the far row is a scatter. */
+    const t = r / Math.max(1, rows - 1);
+    const density = 1 - t * 0.72;
+    const along = front.distance + r * rowStep + (rng() - 0.5) * rowStep;
+    for (let k = -half; k <= half; k += step) {
+      if (rng() > density) continue;
+      const across = k + (rng() - 0.5) * step * 1.6;
+      const x = dx * along + ax * across;
+      const z = dz * along + az * across;
+      if (terrain.inBounds && !terrain.inBounds(x, z)) continue;
+      /* The radius is the level's own crater at `size = 1` and a bit over —
+       * 2.6 m is what an artillery round does to this ground everywhere else
+       * in the game (World.js), and a scorch is always wider than the hole
+       * that made it. The spread is 0.8×-2.0× so a band is not a row of
+       * identical stamps. */
+      const rad = (opts.radius ?? 3.4) * (0.8 + rng() * 1.2);
+      terrain.scorch(x, z, rad, (opts.amount ?? 0.5) * (0.55 + rng() * 0.9) * (1 - t * 0.45));
+      laid++;
+    }
+  }
+  return laid;
+}
+
+/**
  * DRESS THE GROUND FOR ENGAGEMENT n.
  *
  * Additive on purpose: a battlefield accumulates, and the plates are meant to
@@ -142,7 +222,7 @@ export function marchFront(world, opts = {}) {
   const front = frontAt(n, opts);
   const T = world.terrain;
   const out = { engagement: n, bearing: front.bearing, distance: front.distance,
-    replayed: 0, replayMs: 0, barrage: 0, smoke: 0, wrecks: 0 };
+    replayed: 0, replayMs: 0, barrage: 0, burns: 0, smoke: 0, wrecks: 0, fallen: 0 };
 
   /* ── 1. THE GROUND'S OWN MEMORY, first, because everything else is placed
    * on top of it and `findSite` reads `terrain.slopeAt`. A wreck sited before
@@ -162,6 +242,14 @@ export function marchFront(world, opts = {}) {
     z: front.dir.z * (front.distance + 6 + rng() * 20) - Math.sin(across) * 52,
   };
   out.barrage = walkingBarrage(T, start, across, { seed: seed + n * 31 });
+
+  /* ── 2b. THE SWATH. The barrage is a SENTENCE — a thing happened, in a
+   * direction, at a time — and this is the paragraph around it: the whole
+   * width of the line, burnt, thinning out behind. It goes down after the
+   * barrage so the two stack in the scar field the way they stacked in the
+   * battle, and before the wrecks so `findSite` is reading the ground the
+   * hulls will actually stand on. */
+  out.burns = burnBand(T, front, { seed: seed + n * 613 });
   T.flush?.();
 
   /* ── 3. THE COLUMNS, on §14's schedule. `smokeSites` spreads its count over
@@ -199,6 +287,22 @@ export function marchFront(world, opts = {}) {
    * asked for at a bearing inside the burnt arc lands on burnt ground by
    * construction — no rejection loop, and no chance of the arc coming up empty
    * on a bad roll the way a reject-and-retry does. */
+  /* ── 4a. THE DEAD, ON THE LINE. §12.4: "the dead mark the front — 520 prone
+   * instanced figures in a 26 m band, thickest at the choke, one draw call."
+   * One band per engagement, so five engagements leave five, and the ground
+   * behind the current line carries every one of them. The count is per
+   * engagement rather than cumulative for the same reason the crater log is
+   * additive: this is a record of what happened, not a picture redrawn. */
+  if (opts.fallen !== false) {
+    const f = addFallen(world, {
+      origin: { x: front.dir.x * front.distance, z: front.dir.z * front.distance },
+      dir: front.dir, count: opts.fallen ?? 110, half: 150, depth: 6.5,
+      seed: seed + n * 4211,
+    });
+    out.fallen = f ? f.count : 0;
+    out.fallenCalls = f ? f.calls : 0;
+  }
+
   const strew = opts.strewWrecks;
   if (strew) {
     for (let k = 0; k < (opts.wrecks ?? 3); k++) {
