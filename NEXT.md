@@ -870,23 +870,48 @@ composer. Until it is taken, no check asserts a survival rate: `command.mjs`
 holds the commander so its two drives measure fire discipline and the watchdog
 rather than this, and says so where it does it.
 
-### A contradiction two lanes should resolve before either number is used
+### RESOLVED: the line does not come apart — it falls behind
 
-The presence lane reports **19.7% of living men inside `MORALE.NEAR`, and the
-median man going 12.6 m → 45.7 m in thirty seconds** — and builds its whole
-conclusion on it ("the question is no longer what a Jedi does for the line, it's
-why the line comes apart to thirty metres wide").
+Two lanes measured the line's spread the same afternoon and got **19.7% of
+living men inside `MORALE.NEAR`** against **50–100%**, and this file carried
+them as an unreconciled contradiction. They are reconciled, and the fault was
+mine.
 
-Measured on the mainline the same afternoon, both modes, idle and scripted
-players, sampling every five seconds for two minutes: **the median man is
-6–19 m from the player and 50–100% of the living are inside `NEAR`.** The
-maximum reaches 22–38 m in bursts and settles back. The line does not come
-apart here.
+**Both of my benches stepped the world without ticking the input script.**
+`dutyInput` is a script whose entire body is `tick(dt)` — that is where it reads
+the field, points the move axis and presses the swing — and `world.update` does
+not call it; `_flagship.mjs`'s own `drive` does, one line above its step. A loop
+that steps without ticking is driving an unkillable **statue** on the deploy
+mark. The formation anchor tracks the player, so of course the line sat on top
+of it. Three benches in three lanes had the same omission on the same afternoon,
+which is a fact about where the contract lives rather than about three lanes.
 
-The two readings cannot both describe the same build. Until somebody says which
-build each was taken on, **neither is safe to design against** — and the
-presence lane's negative result does not depend on it, so the conclusion stands
-either way.
+Re-taken with a Jedi that moves, every five seconds for two minutes, ten men:
+
+    inside NEAR   37.1% of man-samples (89 of 240), swinging 0/10 to 10/10
+    median man    5.8-35.1 m from the player, mean 18.0
+    BAND WIDTH    mean 6.9 m, worst 16.5 m
+    anchor lag    mean 4.7 m behind the player, max 26.1 m; on him 7 of 24 samples
+
+**The band width is the number that settles it. The line holds together to
+within about seven metres — it is the PLAYER who leaves.** The anchor is dead on
+him a third of the time and twenty-six metres behind him at worst, in a sawtooth:
+he chases a target, the line comes on at the pace of its slowest man, he comes
+back, it catches up.
+
+That is not a defect. It is `advancePace` doing exactly what `FLAGSHIP.md` §6
+specifies — "the objective advances at the pace of the slowest friendly inside
+14 m… you can sprint 200 m into their rear; the line does not come with you" —
+and the earlier reading of "why does the line come apart to thirty metres wide"
+was a question about something that is not happening.
+
+**But it explains the two negative results, and that is what makes it worth
+having.** The SCREEN and OPEN both failed for being local goods; the measured
+reason is that a Jedi who plays the way a script plays spends most of the fight
+outside his own line. So the open question is not how to make a local good
+bigger. It is **whether the mode gives a player any reason to stand still**, and
+today it does not: killing is fast, killing is where the targets are, and the
+line arrives afterwards.
 
 ### And the opening wave is 2 bodies on one ground and 49 on another
 
