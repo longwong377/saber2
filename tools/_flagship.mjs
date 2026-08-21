@@ -181,6 +181,12 @@ function dutyInput(world, opts = {}) {
     tally,
   };
   input.tick = (dt) => {
+    /* THE STAMP THAT MAKES THE DRIVING BELOW SAFE. Set in the ORIGINAL body
+     * rather than in a wrapper, because `runArm`'s DEAD arm replaces
+     * `input.tick` with one that calls this one — a stamp written outside
+     * would be dropped by that replacement and the script would tick twice a
+     * frame in exactly one arm of the comparison. */
+    input._tickAt = world.time;
     hit.clear();
     tally.t += dt;
     const p = world.player;
@@ -269,6 +275,46 @@ function dutyInput(world, opts = {}) {
     pushT += dt;
     if (best && dist < PUSH_REACH && pushT >= PUSH_EVERY) { pushT = 0; tally.pushes++; hit.add('push'); }
   };
+  /**
+   * …AND THE WORLD DRIVES IT, so that forgetting to is not a thing a caller
+   * can do.
+   *
+   * THIS COST THREE BENCHES IN ONE AFTERNOON. `dutyInput` hands back an input
+   * whose entire body is `tick(dt)` — that is where it reads the world, points
+   * the move axis at the nearest enemy, presses the swing, holds the guard and
+   * holds station on the line's centroid — and `world.update` does not call
+   * it. `drive` below does, one line above its step, so the contract lived in
+   * a DIFFERENT function from the object it is a contract about. Every caller
+   * that wanted the script without this file's driving loop got an unkillable
+   * STATUE on the deploy mark and did not know: `tools/_linehold.mjs` reported
+   * a fighting Jedi as worth nothing to the line, `tools/_lineform.mjs`
+   * measured a formation against an anchor that never moved (a live candidate
+   * for the 19.7%-against-50-100% `MORALE.NEAR` contradiction), and
+   * `tools/_linewave.mjs` timed a 42.5-minute sitting that ten troopers fought
+   * alone. Three lanes, three benches, one cause — HANDOFF §2.4's shape with
+   * the halves swapped: the rule is enforced in one place and required in
+   * another, and it fails silently and in the direction that manufactures a
+   * finding.
+   *
+   * So the world itself ticks the script, on the instance, which is the same
+   * seam `installCommand` and `installTeamDamage` take and for the same
+   * reason: it needs no edit to World.js and it cannot be left out.
+   *
+   * TICKED AT MOST ONCE A FRAME, and the discriminator is `world.time` rather
+   * than a boolean. `update` advances it at the top, so every tick that
+   * happens before a given step — this one, or `drive`'s explicit one — reads
+   * the SAME value, and a second tick for the same frame is exactly the case
+   * where the stamp already matches. A boolean would need somebody to clear
+   * it, which is another contract in another function.
+   */
+  const base = world.update;
+  if (typeof base === 'function' && !world._dutyDriven) {
+    world._dutyDriven = true;
+    world.update = function (dt, inp, ...rest) {
+      if (inp && typeof inp.tick === 'function' && inp._tickAt !== this.time) inp.tick(dt);
+      return base.call(this, dt, inp, ...rest);
+    };
+  }
   return input;
 }
 

@@ -27,7 +27,6 @@
 import './dom-shim.mjs';
 const H = await import('./checks/_coop.mjs');
 const { dutyInput } = await import('./_flagship.mjs');
-const { AREAS } = await import('../src/game/Command.js');
 
 const STEP = 1 / 30;
 const CAP = 600;                                  // game-seconds before we call it stuck
@@ -35,6 +34,15 @@ const mode = process.argv[2] || 'theline';
 const seeds = (process.argv[3] || '1,2,3,5,7').split(',').map(Number);
 const arms = (process.argv[4] || 'none,idle,blade').split(',');
 const level = process.argv[5] || 'geonosis';
+/**
+ * WHICH ENGAGEMENT, 1-based. Engagement 1 is the cheap end of the sitting —
+ * `tools/_linewave.mjs` times an opening wave at 81 s and a late one at 606 —
+ * so a survival rate tuned on it is a rate at the one place nobody dies. This
+ * stands a FRESH ten-man line at the top of a later stage: no promotions, no
+ * replacements, no accumulated dead, which is not what a real run arrives with
+ * and is exactly what makes two engagements comparable.
+ */
+const at = Math.max(1, Number(process.argv[6] || 1));
 
 /** The run's clock, read by the wave-timing hook below. One per run. */
 let tNow = 0;
@@ -73,7 +81,17 @@ async function run(arm, seed) {
   const onClear = d.onWaveClear;
   d.onWaveClear = function (...a) { waves.push(+(tNow - lastClear).toFixed(1)); lastClear = tNow;
     return onClear?.apply(this, a); };
-  d.start(1);
+  /* THE STAGE, AND THE WAVE NUMBER DERIVED FROM THE STAGES RATHER THAN TYPED
+   * (HANDOFF §2.4): the run's wave counter at the top of stage k is one plus
+   * every wave of every stage before it, which is the same sum `payWave` walks
+   * one clear at a time. A typed 7 here would drift the day an area's length
+   * moves and nothing would say so. */
+  let w0 = 1;
+  if (at > 1) {
+    d.areaIndex = Math.min(at - 1, d.stages.length - 1);
+    for (let i = 0; i < d.areaIndex; i++) w0 += d.stages[i].waves;
+  }
+  d.start(w0);
   const n0 = d.roster.all.length;
   const input = arm === 'blade' ? dutyInput(world) : H.idleInput();
   let t = 0, ended = 'cap';
@@ -113,7 +131,7 @@ for (const arm of arms) for (const seed of seeds) {
     + `${r.left}/${r.n0} left  ${r.t.toFixed(0)}s  wave ${r.wave}  ${r.ended}  `
     + `waves [${r.waves.join(' ')}]s`);
 }
-console.log(`\n${mode} · ${level} · area 1 = ${AREAS[0].waves} waves · n=${seeds.length} seeds`);
+console.log(`\n${mode} · ${level} · engagement ${at} · n=${seeds.length} seeds`);
 for (const arm of arms) {
   const a = rows.filter((r) => r.arm === arm);
   const left = a.map((r) => r.left).sort((x, y) => x - y);
