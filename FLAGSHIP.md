@@ -563,9 +563,25 @@ Not flagship work — these are wrong today.
 2. **Morale is inert while the player stands in the formation** — `JEDI_NEAR`
    pins every record at 1.000 in four seconds.
 3. **Two lines stood 30 m apart for 35 seconds and neither took a casualty.**
-   Leash, preferred band, or line of sight — unknown. **A war that will not
-   fight itself cannot be a war you are a raindrop in**, and every number in
-   this document sits on top of it.
+   ~~Leash, preferred band, or line of sight — unknown.~~ **FOUND, AND IT IS
+   NONE OF THE THREE — FIXED.** `World._boltHitTest` opened its enemy loop with
+   `if (bolt.team === 1 && !friendly) continue`: an early-out over the *whole*
+   loop for every hostile bolt in the game, on a premise the `canHarm` clause
+   thirty lines below it already writes down and contradicts — "Command puts
+   your troops in that same array on the PARTY's team". They do, and it skipped
+   them too. **No rifle on the other side could touch your army.** Measured on
+   a real Command world on Geonosis, ten troopers formed up against a live
+   wave: 90 seconds, roster 10 of 10, every man at full health — and a
+   synthetic bolt driven straight through a trooper's own capsule by
+   `_boltHitTest` returns NO HIT while the identical segment through a droid
+   returns the droid. The line could be killed by a blade, a grenade or a
+   stratagem, and by nothing that was fired at it. §13 calls the name list the
+   mode's second spine, "it only shrinks and it is on the HUD every second";
+   it could not shrink to gunfire. After: same world, idle player, **7 of 10
+   down in 60 s**. The gate is now the cheap half of the question `canHarm`
+   already answers — skip only when the bolt and the body are on the same side.
+   **A war that will not fight itself cannot be a war you are a raindrop in**,
+   and every number in this document sat on top of it.
 4. **`_cullOldestDebris` spends debris only**, so the 1,100 body cap is *missed*
    rather than enforced — measured 1,140 with 60 ragdolls in flight.
 5. **The orphaned `Commander` on `peer-left`** (§9).

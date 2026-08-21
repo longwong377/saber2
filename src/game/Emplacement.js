@@ -374,7 +374,12 @@ export function emplaceGun(world, door, opts = {}) {
   const pit = new GunPit(world, door, opts);
   if (world.addProp) world.addProp(pit);
   else if (world.props) world.props.push(pit);
-  world.gunPits = world.gunPits || [];
+  /* THE DEAD ONES GO. `World.unload` destroys every prop and a `GunPit`
+   * splices itself out of `world.props`, but this second list is the level's
+   * own and nothing was clearing it — so a World that loaded geonosis twice
+   * would report two emplacements, one of them a disposed object, and the
+   * check that counts them would read the reload rather than the ground. */
+  world.gunPits = (world.gunPits || []).filter((g) => g && !g.dead);
   world.gunPits.push(pit);
   return pit;
 }
