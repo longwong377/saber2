@@ -2307,6 +2307,26 @@ export class CommandDirector extends WaveDirector {
     this.plan = this.crossing ? rollSession(this.seed) : DEFAULT_PLAN;
     this.stages = this.crossing ? planStages(this.plan, AREAS) : AREAS;
     /**
+     * WHETHER THE LINE IS THE WIN CONDITION — `MODES.theline.holdTheLine`.
+     *
+     * FLAGSHIP §2, which is the whole design in one sentence: "a run that
+     * kills three hundred droids and loses the squad is a loss." Nothing read
+     * that. `_endCampaign` asserted `won: true` off having reached the last
+     * area and never looked at the roster, so the mode whose subject is an
+     * army scored a crossing finished alone as a victory — and there was no
+     * path at all by which a wiped roster ended anything, because the run ends
+     * on `_checkWipe`, which counts PLAYERS. A Jedi standing over ten graves
+     * kept fighting, took the ridge, and got the same card as a Jedi who
+     * brought their men home.
+     *
+     * Two lines follow from it and both are below: `_checkLine` ends a run
+     * whose army is gone, and `_endCampaign` computes its verdict instead of
+     * declaring it. It is read off the mode's own field rather than off the
+     * mode's name, so Command keeps the ground-is-the-win rule it shipped with
+     * and a second mode that wants this one takes the field.
+     */
+    this.holdTheLine = !!MODES[this.mode]?.holdTheLine;
+    /**
      * THE ROSTERS THIS DIRECTOR KEEPS — one per side-and-army. See `_rosterFor`
      * and `Commander.roster`.
      * @type {Map<string, CommandRoster>}
@@ -3359,6 +3379,13 @@ export class CommandDirector extends WaveDirector {
         `${unplaced} of ${live.length} could not be set down — move off the wall`);
     }
     this._announceRoster();
+    /* THE WITNESS THAT AN ARMY EXISTED. `_checkLine` needs to tell "the roster
+     * has been wiped out" from "the roster has not landed yet", and both read
+     * `strength === 0`. A count of bodies actually put on the ground is the
+     * honest difference; a timer or a frame count is a guess about how long a
+     * gunship takes. Here rather than in `deployAll`, because four of the five
+     * callers in this file call `deploy` directly. */
+    if (n > 0) this._landed = true;
     return n;
   }
 
@@ -5206,6 +5233,7 @@ export class CommandDirector extends WaveDirector {
      * `payWave` returns, so a director that was not told it had finished would
      * start wave 22 five and a half seconds after the campaign ended. */
     if (this.done) return;
+    if (this._checkLine()) return;
     this._updateClosing(ctx);
     /* A meeting has no queue, no arrivals and no wave to clear — see `start`.
      * The army half of the frame is identical, which is the point: two players'
@@ -5900,7 +5928,24 @@ export class CommandDirector extends WaveDirector {
     this.active = false;
     this.areaWaves = 0;
     const strength = this.roster.strength, all = this.roster.all.length;
-    this.log.push({ t: 'won', area: this.areaNumber, strength, fallen: this.roster.fallen.length });
+    /**
+     * THE VERDICT IS COMPUTED, NOT ASSERTED — see `holdTheLine`.
+     *
+     * In Command this is `true` and the line below is the sentence it always
+     * was: the ground is the win, and reaching the far end of it wins. In THE
+     * LINE the ridge is not the win — the men on it are — so a crossing
+     * completed with nobody left is logged and scored as a loss, and the run
+     * ends the same way it ends when the army is wiped mid-crossing.
+     *
+     * `strength > 0` and not a threshold. A rule that wanted six of ten home
+     * would need a number nothing in the design states, and the design does
+     * state this one: §1's job is "to be the reason the line is still standing
+     * when it takes the ridge", and a line with a man in it is standing.
+     */
+    const won = !this.holdTheLine || strength > 0;
+    this.log.push({ t: won ? 'won' : 'lost', area: this.areaNumber, strength,
+                    fallen: this.roster.fallen.length,
+                    ...(won ? {} : { why: 'the line did not survive the crossing' }) });
     // The survivors walk off the field. Every record is kept — the roster IS the
     // summary, and the fallen are most of what it is worth reading.
     this.recall();
@@ -5924,7 +5969,7 @@ export class CommandDirector extends WaveDirector {
      * from a file that is holding the level, and World reads the ground off the
      * ground. Same words today; right words the day Command's ground moves.
      */
-    w._announceBattle(true);
+    w._announceBattle(won);
     w.over = true;
     /**
      * THROUGH `World.runStats()` — the third assembly of one object, deleted.
@@ -5940,7 +5985,51 @@ export class CommandDirector extends WaveDirector {
      * was printed on the mode that names its dead. `this.wave` is what
      * `runStats` reads off `world.director.wave`, which is this director.
      */
-    w.onGameOver?.(w.runStats({ won: true }));
+    w.onGameOver?.(w.runStats({ won }));
+    return true;
+  }
+
+  /**
+   * THE RUN ENDS WHEN THE ARMY DOES — `MODES.theline.holdTheLine`.
+   *
+   * The only ending this director had was `_endCampaign`, reached by clearing
+   * the last area, and the only other ending in the game is `World._checkWipe`,
+   * which asks whether every PLAYER is down. Neither of them can see an army
+   * that has ceased to exist. So in the mode whose entire subject is a roster,
+   * losing the roster was not an event: the muster after it deployed nobody,
+   * the next area opened with a Jedi alone against a composed wave, and the run
+   * went on until the Jedi died or the ridge was taken.
+   *
+   * WHY IT IS GATED ON HAVING DEPLOYED. `strength` is zero before the first
+   * gunship lifts — the roster is enlisted and the men are not on the field —
+   * so an ungated test ends the run on frame one of every session. `_landed`
+   * is raised by the first deployment rather than by a timer, because the
+   * question this asks is "did an army that existed stop existing", and the
+   * only honest witness to the first half of that is the deployment itself.
+   *
+   * NOT `_endCampaign`. That method is the end of a CROSSING and logs the area
+   * it finished on, awards the muster, promotes the living and recalls the
+   * survivors — every one of which is a lie about a run that ended because
+   * there are no survivors. This is a second door, and it is the second door
+   * on purpose: two endings that mean different things should not share one.
+   */
+  _checkLine() {
+    if (!this.holdTheLine || this.done || !this._landed) return false;
+    if (this.roster.strength > 0) return false;
+    /* A muster is the one state where an empty field is correct: the army is
+     * off the ground being paid for and re-deployed, and `closeMuster` is what
+     * puts it back. Ending here would end every Raid at its first interlude. */
+    if (this.mustering) return false;
+    this.done = true;
+    this.active = false;
+    this.areaWaves = 0;
+    this.log.push({ t: 'lost', area: this.areaNumber, strength: 0,
+                    fallen: this.roster.fallen.length, why: 'the line was wiped out' });
+    const w = this.world;
+    if (!w) return true;
+    w._announceBattle(false);
+    w.over = true;
+    w.onGameOver?.(w.runStats({ won: false }));
     return true;
   }
 

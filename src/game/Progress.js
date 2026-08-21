@@ -144,7 +144,12 @@ const blank = () => ({
  * set is really about: both can be won, both write `won` through
  * `World.runStats`, and `wins`/`crowned` have had a reader waiting since
  * Command's campaign arrived. */
-const RECORDED = new Set(['roguelite', 'waves', 'duel', 'command', 'skirmish', 'campaign']);
+/* The Line is the sixth, and it is the one whose record is worth the most: it
+ * is the only mode where `won` can come back FALSE off a crossing that reached
+ * the far end — see `CommandDirector._endCampaign`. A mode left out of this
+ * set leaves no trace at all, and a mode whose whole subject is a casualty
+ * list leaving no trace is the defect the paragraph above is an account of. */
+const RECORDED = new Set(['roguelite', 'waves', 'duel', 'command', 'theline', 'skirmish', 'campaign']);
 
 function read() {
   try {

@@ -323,6 +323,77 @@ export const MODES = {
      * it. Prose is for the player; this is for the code.
      */
     level: 'geonosis',
+    /** Command walks the five areas end to end. See `MODES.theline.crossing`
+     *  for why this is a field and not `mode === 'command'` in World.js. */
+    crossing: true,
+  },
+  /**
+   * THE LINE — the flagship mode, and the one whose subject is NOT you.
+   *
+   * `FLAGSHIP.md` §1, in its own words: "You are one Jedi in somebody else's
+   * war… The war is won and lost by the army. Your job is not to kill
+   * everything — it is to be the reason the line is still standing when it
+   * takes the ridge."
+   *
+   * ── WHAT MAKES IT A MODE RATHER THAN A SECOND COMMAND ────────────────
+   *
+   * Command and this share a director, a roster, five ranks, permadeath, the
+   * muster and the marching front, and that sharing is deliberate — §14's
+   * closing line prices the mode at "~1,100 lines of spine against ~12,000
+   * lines of existing machinery", and a mode that reimplemented the machinery
+   * would be the 12,000 written twice. What separates them is ONE RULE, and it
+   * is the rule the whole design document is an argument for:
+   *
+   *   COMMAND IS WON BY TAKING THE GROUND. `_endCampaign` fires `won: true`
+   *   the moment the last area is behind you, and it does not look at who is
+   *   left. A crossing finished with every name on the fallen list is a
+   *   victory there, and it reads as one.
+   *
+   *   THE LINE IS WON BY THE LINE. `holdTheLine` inverts it: the run is won
+   *   only if there are men still standing at the end of it, and a roster
+   *   emptied mid-crossing ENDS THE RUN — as a loss, with the player alive and
+   *   the field cleared and the ridge one area away. §2: "a run that kills
+   *   three hundred droids and loses the squad is a loss." That sentence is
+   *   either a field something reads or it is a slogan, and it was a slogan.
+   *
+   * Everything else the mode is — the seeded length, the deploy card, the
+   * front that moves between engagements, the quiet muster — Command already
+   * had, because those rungs were built against this document over the four
+   * sessions before it. This entry is what makes them a sitting with a verdict
+   * on it rather than a set of features.
+   *
+   * ── WHY IT DECLARES `crossing` RATHER THAN BEING NAMED IN World ───────
+   *
+   * `World.loadLevel` read `mode === 'command' || battles` — a mode-name
+   * literal in the one file whose own notes complain about mode-name literals
+   * three times on the same page. `crossing: true` is the field that line
+   * actually wanted: "this mode walks one ground from one end to the other",
+   * which is true of Command and of this and of nothing else. The day a fourth
+   * crossing is authored it lights itself.
+   */
+  theline: {
+    name: 'The Line',
+    /* No figure in it, on purpose. The length is a seed roll — `SESSION_PLANS`
+     * runs a Raid at two engagements to a Grind at five — so any number here
+     * would be a claim `claims.mjs` could only hold by pinning the mode to one
+     * of the three plans, which is the thing the roll exists to prevent. What
+     * IS claimed is the verdict, and `theline.mjs` holds the mode to it. */
+    blurb: 'You are one Jedi in somebody else\'s war. One ground, one sitting, a squad with names on '
+      + 'it — and the run is won only if they are still standing at the end. Kill everything and lose '
+      + 'them and you have lost.',
+    fixedTheatre: 'The Line is fought on Geonosis: one ground, one sitting, and the front moves across it.',
+    level: 'geonosis',
+    /** One ground walked end to end — see the note above, and `World.loadLevel`. */
+    crossing: true,
+    /**
+     * THE INVERSION, as a field. `CommandDirector` reads exactly this and
+     * nothing else to tell the two modes apart: `_endCampaign` computes `won`
+     * off the survivors instead of asserting it, and `_checkLine` ends a run
+     * whose roster has emptied. Named for what it does rather than for the
+     * mode, so a second mode that wants the rule takes the field and not a
+     * branch on a string.
+     */
+    holdTheLine: true,
   },
   /**
    * SKIRMISH — the one run in this game that can be WON, anywhere.

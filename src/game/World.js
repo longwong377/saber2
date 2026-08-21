@@ -780,8 +780,19 @@ export class World {
      * named because it is the one mode with an army that is NOT a bounded
      * battle — it is five areas and its own ending. */
     const battles = !!MODES[mode]?.battles;
-    /** The three modes whose subject IS an army: they get the crossing too. */
-    const campaign = mode === 'command' || battles;
+    /**
+     * The modes whose subject IS an army: they get the crossing too.
+     *
+     * `MODES[mode].crossing` and not `mode === 'command'`, which is what this
+     * line said for the life of the mode. A mode-name literal here is the same
+     * defect the two notes above and below it are each an account of, and it
+     * came due the day THE LINE was authored: the flagship mode is a crossing
+     * of one ground by definition and would have been handed a `campaign` of
+     * false, which takes away the seeded length, the five stages, the muster
+     * and the ending in one line. Command declares the field; so does The
+     * Line; a fourth crossing lights itself.
+     */
+    const campaign = !!MODES[mode]?.crossing || battles;
     /**
      * …AND AN ARMY IS NO LONGER A PROPERTY OF THE MODE.
      *
