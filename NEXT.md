@@ -198,6 +198,12 @@ which is the thing the `far` arm exists to control for rather than to deny.
 
 ### …and then §7's OPEN verb was wired, and SCORED — it does not pay
 
+> **THE FIRE-SHARE HALF OF THIS SECTION IS WITHDRAWN — the 0.08 was the
+> instrument.** The table below and the four-arm pair above still stand; the
+> `targetFor` diagnosis under them does not. See "OPEN: the line was never
+> starved of the target" at the end of this file for the corrected numbers and
+> for what actually bounds the verb.
+
 `grep -rn 'openness(' src/` returned one call site — the blade's own slash rate
 — so "the Force is a multiplier on other people's guns" had never been wired to
 a gun. It is wired now, at `World._boltHitTest`, and the mechanism is proven
@@ -379,11 +385,15 @@ Gate at the end: **1718 passed, 0 failed.**
   the numbers as they were: same men lost, half again the time, nothing bought.
   That is §7's problem stated as sharply as this instrument can state it, and it
   is the thing to answer before the mode is built.
-- **OPEN is wired, measured at 3.00×, and does not pay at battle scale.** The
-  controlled pair is in Step 2 above. The open question it leaves is narrow and
-  worth answering: **what share of enemy-seconds is spent in an open state?** If
-  it is 2%, a 3× multiplier on it is worth 6% and §7 needs a different verb; if
-  it is 20%, the multiplier is worth having and something else is eating it.
+- ~~**OPEN is wired, measured at 3.00×, and does not pay at battle scale**, and
+  the cheap fix is a target preference.~~ **Answered, and the diagnosis was an
+  instrument fault.** The share of enemy-seconds is **0.90%** — the 2% case, so
+  the multiplier is worth about what it is measured to be worth, **+5.1%** of
+  the line's damage. The line is not starved of the open body: it AIMS 9.03% of
+  its shots at bodies that are open 0.90% of the time. A target preference was
+  the recorded next step and it has nothing left to buy. What bounds the verb is
+  the WINDOW, and widening it is a design change, not a tuning one. Full
+  numbers at the end of this file.
 - **First person should be one-handed**, and `HANDOFF.md` §6.0 says to ASK
   before doing it, because it is a decision about what a first-person grip IS.
   The wrist lane's sweep this session is the strongest evidence yet: first
@@ -429,3 +439,132 @@ when they do, they want it deep.
 
 **And get it in front of them.** The live link is GitHub Pages off the default
 branch. Ten minutes of them playing is worth more than this document.
+
+---
+
+## OPEN: the line was never starved of the target — and TURN, priced
+
+Two of FLAGSHIP §7's four verbs, re-scored. One of them was being measured by
+an instrument that had invented the defect it was reporting.
+
+### The 0.08 was the instrument. Corrected, `held` draws 9× the aim it deserves
+
+The recorded diagnosis was that `targetFor` picks the NEAREST hostile, that a
+grip drags its victim out of the line's envelope, and that "the one body the
+Jedi just made three times as killable is the body nobody is shooting at" —
+`held` at **0.08** of its fair share of the line's fire. The next step it
+proposed was a target preference.
+
+**There is nothing there to fix.** `tools/_open.mjs` divided bolts landing on
+ANY body by the horde's seconds alone, and in Command your own line stands in
+`world.enemies` and is shot at all battle: on seed 3, **123 bolts landed on a
+body and 19 of them were your line's landing on the horde.** Five sixths of
+that ratio was fire going the other way. HANDOFF §2.4, again, and again in the
+direction that manufactures a defect.
+
+Counted against the horde alone — two seeds, two engagements, geonosis,
+`knight`, `_flagship.mjs`'s scripted Jedi, `grip` and `blade` arms:
+
+| | share of enemy-seconds | of the line's SHOTS | of the bolts that LAND |
+|---|---|---|---|
+| all open states | 0.90% | 9.03% | 7.38% |
+| `held` | 0.513% | **9.12× its share** | 1.95× its share |
+| `downed` | 0.388% | 11.97× | 17.65× |
+
+The line aims **nine times** its fair share of fire at a body you are holding.
+It was over-committed to it, not starved of it. Three independent readings say
+the same thing: 2.52 of 9.9 living troopers had the held body as their pick on
+any given frame while the nearest other hostile averaged 33 m against the held
+body's 15 m; 67 of 185 trooper shots in one 200 s run were fired at a held
+body; and the corrected probe reads 9.12×.
+
+**A target preference is therefore not built, and should not be.** Weighting an
+open body above a near one buys nothing when the line is already choosing it
+nine times out of its share, and every further increment is fire taken off a
+body that is shooting back — the failure the brief for this named ("a trooper
+that ignores the B2 about to shoot it in favour of a held body across the field
+is worse than one that never noticed"). The design call is that `targetFor`
+stays as it is.
+
+### What actually bounds OPEN, and it is the window
+
+Even in the arm where the Jedi grips continuously — retaking the moment the
+last body dies or is dropped — a body is in his hands for **19–24% of the
+battle** and `held` still only reaches **0.51% of enemy-seconds**, because one
+pair of hands holds one body out of a dozen and the choke kills it in about
+four and a half seconds. A 3.0× multiplier over that window buys **+5.1%** of
+the line's damage, measured directly off the bolts that landed
+(`worthOnHits`). That is what the verb is worth and it is what its own
+arithmetic always said it was worth.
+
+So §7's sentence is true of one droid and false of a battle: grip a B2 and the
+riflemen shooting *that* B2 do need a third of the time, and there are eleven
+other B2s. Making OPEN a battle-scale verb means widening the WINDOW — more
+bodies open at once, or open for longer, which is `unleash`, a wider `yank`, or
+a stun that counts — not a bigger multiplier and not a target preference. That
+is a design decision and it is left for the player to make.
+
+**One thing that reads like the cause and is not.** A bolt aimed at an open
+body lands 4.1% of the time against 4.8% for one aimed at a closed body (3 of
+74 against 16 of 331, seed 3). Holding a body does not measurably hide it.
+
+### A real defect found on the way: a held body reported a dead stop
+
+`Enemy._move` has two branches for a ragdolled body and they gave opposite
+answers to one question. The LIMP branch — ragdolled, nobody holding it —
+publishes the ragdoll's velocity. The HELD branch wrote `velocity.set(0,0,0)`.
+Measured over a Command wave with a Jedi gripping continuously, **a held body
+travels 4.75 m/s and `velocity` read 0.00**, and `Enemy._shoot` leads its aim
+by `target.velocity * tof` — so a held body was the one target on the field
+that nobody in either army led. `Player._updateGrip` had already met the same
+lie and worked around it in place.
+
+Fixed as the DISPLACEMENT, not as the chest rigid body: `Ragdoll.suspend`
+commands that body at `(target − pos) × 12` and a hanging body sits at a steady
+sag under the command, so the chest reads 2.01 m/s while the centre moves 0.09.
+Copying it was tried first and is a second lie in the other direction. Bound by
+`held.mjs`, which drives a hold point around a 2.5 m arc and compares the
+published speed against the body's own travel: 5.29 against 5.29.
+
+It is **not** what starved the verb — see the 4.1% against 4.8% above — and it
+is fixed because a field that reports a dead stop for a body crossing the field
+at five metres a second is wrong whatever reads it.
+
+### TURN pays, and it pays more than its own table says
+
+The return path was already wired at `World._boltHitTest` (`killed &&
+bolt.deflected && bolt.deflector → turnedHome`). What was missing was a price.
+`tools/_turn.mjs` takes it, two seeds, two engagements each:
+
+| | seed 3 | seed 5 |
+|---|---|---|
+| bolts deflected | 206 | 161 |
+| returns that killed a droid | 9 | 4 |
+| share of deflections that become a kill | 4.4% | 2.5% |
+| nerve one turned kill takes off the horde | 0.880 | 0.880 |
+| nerve one ordinary bolt kill takes | 0.095 | 0.116 |
+
+**A bolt sent home is worth 8.3× an ordinary casualty to the rank, and
+`NERVE.TURNED` against `NERVE.COMRADE_FELL` is only 4×.** The other half is
+where it happens: a return is thrown from a blade standing in the middle of a
+formation, so `NERVE.SEE` finds four men on average against about one for an
+ordinary bolt kill out on the field. `deflection.mjs` separates the two by
+killing the same body twice on one rank — six witnesses either way, and the
+extra is exactly one `NERVE.TURNED` a man — so the 8.3× is the crowd and not a
+double bill.
+
+Six or seven kills in two engagements out of a hundred deaths is the rarity §7
+asks for, and each one is worth eight ordinary ones. **TURN is the verb of the
+four that pays at the scale its own paragraph claims.**
+
+### Still open after this
+
+- **The line lands about one bolt in twenty.** Every rate above sits on a
+  trooper hit rate of 4.1–4.8% against the body it was aiming at, on Geonosis
+  at `knight`. `aimQuality`'s own note prices a trooper at 68.7–84.0% against a
+  0.35 m torso at its mid band, so a factor of fifteen is going somewhere —
+  terrain, cover, bodies in the way, or a target that has moved. Nobody has
+  looked, and every fire-share number in this document would change if it
+  turned out to be one thing.
+- **6 of 39 bolts a trooper fired at a held body struck one of our own men.**
+  Seen while classifying what the misses hit, on one seed, not chased.

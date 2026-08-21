@@ -40,22 +40,26 @@
  *
  * ── THE ANSWER ──────────────────────────────────────────────────────────
  *
- * Geonosis, `knight`, the scripted Jedi, two engagements, seed 3:
+ * Geonosis, `knight`, the scripted Jedi, two seeds, two engagements each:
  *
- *     bolts deflected                              153
- *     of those, returns that killed a droid          4
- *     nerve one turned kill takes off the horde   0.495
- *     nerve one ordinary bolt kill takes          0.058
+ *     bolts deflected                         206 / 161
+ *     of those, returns that killed a droid       9 / 4   (4.4% / 2.5%)
+ *     nerve one turned kill takes off the horde     0.880
+ *     nerve one ordinary bolt kill takes            0.106
  *
- * So a bolt sent home is worth **8.5x an ordinary casualty** to the rank, and
+ * So a bolt sent home is worth **8.3x an ordinary casualty** to the rank, and
  * the table only says 4x. The other half is WHERE it happens: a return is
  * thrown from a blade standing in the middle of a formation, so `NERVE.SEE`
- * finds 2.25 men on average against 1.05 for an ordinary bolt kill out on the
- * field. `deflection.mjs` separates those two by killing the same body twice on
- * one rank; this file is what found the gap worth separating.
+ * finds four men on average against about one for an ordinary bolt kill out on
+ * the field. `deflection.mjs` separates those two by killing the same body
+ * twice on one rank — six witnesses either way, and the extra is exactly one
+ * `NERVE.TURNED` a man — so the 8.3x is the crowd and not a double bill. This
+ * file is what found the gap worth separating.
  *
- * And four kills in two waves is the rarity §7 asks for — 2.6% of deflections
- * — which is the half of the design that cannot be checked, only counted.
+ * And six or seven kills in two engagements, out of a hundred deaths and two
+ * hundred deflections, is the rarity §7 asks for: 2.5-4.4% of deflections
+ * become a rifle deleted and a nerve broken. That is the half of the design
+ * that cannot be checked, only counted.
  */
 
 import './dom-shim.mjs';
