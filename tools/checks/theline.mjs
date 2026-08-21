@@ -1125,5 +1125,159 @@ export async function run({ check, assert }) {
       + ` — hardest wave is ${span.toFixed(1)}× the opening (it was 42× on the run counter)`;
   });
 
+
+  /* ══════════════════════════════════════════════════════════════════ */
+  /*  How long a sitting is, and what it opens against                  */
+  /* ══════════════════════════════════════════════════════════════════ */
+
+  check('theline.18 every ground opens on a wave, and not on one elite', async () => {
+    /**
+     * MEASURED, before `Waves.WAVE_FLOOR` existed — the opening wave of this
+     * mode on every ground in `LEVEL_ORDER`, all seven handed the same budget
+     * of 8:
+     *
+     *     scoria      2 bodies   1×b1 + 1×sentinel(threat 7)
+     *     colosseum   2 bodies   1×stalker(7) + 1×b1
+     *     mustafar / wood / drifts / alpine   8 bodies, all b1
+     *     geonosis   49 bodies  (42 of them the levy — Levy.js, not this)
+     *
+     * `theline.11` reported that spread and deliberately did not bind it,
+     * because the bar it wanted was a bar on the wave COMPOSER and that is
+     * another file. The composer has one now: a body of the fill may not cost
+     * more than `budget / WAVE_FLOOR`, so a wave can always buy WAVE_FLOOR of
+     * them. This is the outcome that rule exists for, asked of every ground the
+     * mode can roll — a mode about a LINE cannot open against two bodies, and
+     * no first wave should be a single elite the player has nothing to read
+     * against.
+     *
+     * THE BAR IS `WAVE_FLOOR` ITSELF, imported. It is the rule being called
+     * rather than a number kept beside it (HANDOFF §2.4), so the day somebody
+     * moves the floor this check moves with it and cannot manufacture a defect
+     * out of disagreeing with the thing it is testing.
+     *
+     * COMPOSED, NOT FOUGHT: `start(1)` builds the queue and nothing is stepped,
+     * which is what makes a seven-ground sweep cost seven boots and no
+     * game-seconds. What the ground does with that queue afterwards is
+     * `theline.11`'s question and it already asks it.
+     */
+    const { LEVEL_ORDER } = await import('../../src/game/Levels.js');
+    const { ARCHETYPES } = await import('../../src/game/Enemy.js');
+    const rows = [];
+    for (const key of LEVEL_ORDER) {
+      const { world, d } = await lineWorld({ level: key, seed: 3, spawn: false });
+      try {
+        const queue = d.spawnQueue.slice();
+        const n = queue.length;
+        /* The dearest single body, as a share of what the wave had to spend.
+         * Reported rather than asserted — the count is the claim; this is the
+         * cause, and it is what tells a thin pool from a greedy draw. */
+        const dearest = queue.reduce((m, e) => Math.max(m,
+          ARCHETYPES[Waves.spawnType(e)]?.threat ?? 0), 0);
+        assert(n >= Waves.WAVE_FLOOR,
+          `${key}: the mode opens against ${n} ${n === 1 ? 'body' : 'bodies'} — the dearest of them `
+          + `costs ${dearest} of a budget of ${d.budgetFor(1)}, which is one body eating the wave. `
+          + 'A mode about a line cannot open against two bodies; see Waves.WAVE_FLOOR.');
+        rows.push(`${key} ${n}`);
+      } finally { world.unload(); }
+    }
+    return rows.join(' · ') + ` — floor ${Waves.WAVE_FLOOR}`;
+  });
+
+  check('theline.19 the shortest sitting can be played inside the band its own card prints', async () => {
+    /**
+     * ══ THE DEPLOY CARD IS A PROMISE, AND THE MODE COULD NOT KEEP IT ══
+     *
+     * FLAGSHIP §5 sets the three lengths, `Session.SESSION_PLANS` implements
+     * them and `deployCard` prints the band to the player at 0:00, before they
+     * drop. Nothing measured it until `tools/_linelength.mjs` did, and the
+     * answer was that a Push floors at 45.7 minutes against a card saying
+     * 18–25 — **more than double, with the whole army held unkillable.**
+     *
+     * ── WHY THIS DRIVES A RAID AND NOT A NUMBER ─────────────────────────────
+     *
+     * A projection from the composed queue is what the two instruments in
+     * `tools/` are for and it is not a promise: what the card promises is
+     * WALL-CLOCK, and wall-clock is the wave's hit points over the line's
+     * throughput, which is a fight and not an arithmetic. So this fights one —
+     * the whole of the shortest plan the mode has, landing to verdict, through
+     * the musters, which `planStages` makes the first area and the last.
+     *
+     * A Raid is eight waves and it is the only plan cheap enough to sit in a
+     * gate. What holds for it does not automatically hold for a Grind, and the
+     * summary line says which plan was driven for exactly that reason.
+     *
+     * ── IT IS A FLOOR, WHICH IS WHY THE BAR IS ONE-SIDED ────────────────────
+     *
+     * Both sides of the player's army are held on their feet, so this is not a
+     * prediction of a sitting: it is the fastest this build can clear these
+     * waves, and a real run cannot be shorter. A floor OVER the top of the band
+     * is therefore a promise the mode cannot keep for anybody.
+     *
+     * The lower bar is much looser and is there for the opposite failure: a
+     * mode made short by making the fight trivial would satisfy the upper bar
+     * perfectly, and the card would then be overpromising in the other
+     * direction. Half the bottom of the band, because the gap between a floor
+     * and a played sitting is real and nobody has measured it.
+     *
+     * ── AND THE SEED IS NAMED ───────────────────────────────────────────────
+     *
+     * `rollSession` decides the plan, so a seed that is not a Raid drives a
+     * different check. It is asserted rather than assumed, so the day the
+     * weights move this fails with the reason on it instead of quietly timing
+     * a Grind against a Raid's band.
+     */
+    const { SESSION_PLANS } = await import('../../src/game/Session.js');
+    const { dutyInput } = await import('../_flagship.mjs');
+    const SEED = 11;
+    const CAP = 3600;
+    const { world, d } = await lineWorld({ seed: SEED });
+    const raid = SESSION_PLANS.find((p) => p.id === 'raid');
+    assert(d.plan.id === raid.id,
+      `seed ${SEED} no longer rolls a Raid — it rolls a ${d.plan.id}, so this is timing the wrong `
+      + "plan against the Raid's band. Pick a seed that rolls one (Session.rollSession).");
+    /* THE SCRIPT, NOT AN IDLE PLAYER, AND IT HAS TO BE TICKED. `world.update`
+     * does not call `input.tick` — there is no such call in src — so a loop
+     * that omits it drives an unkillable statue on the deploy mark and times a
+     * sitting nobody would play. Three benches in three lanes had exactly that
+     * omission on one afternoon. */
+    const input = dutyInput(world);
+    let t = 0, over = null, waves = 0, wave = d.wave;
+    const marks = [];
+    world.onGameOver = (s) => { over = s; };
+    try {
+      for (let i = 0; i < CAP / STEP && !over; i++) {
+        input.tick(STEP);
+        /* IMMORTAL, BOTH SIDES OF THE PLAYER'S ARMY — see the note above. */
+        if (world.player) world.player.hp = world.player.maxHp;
+        for (const tr of d.roster.all) if (tr.alive && tr.body && !tr.body.dead) tr.body.hp = tr.body.maxHp;
+        world.update(STEP, input); t += STEP;
+        /* The muster is a screen this check does not have, and a crossing that
+         * stops at one is a crossing that never ends. `_areaClear`'s own
+         * fallback does the same thing when nothing is wired. */
+        if (d.mustering) { marks.push(t); d.closeMuster(); }
+        if (d.wave !== wave) { waves++; wave = d.wave; }
+      }
+    } finally { world.unload(); }
+    const mins = t / 60;
+    const [lo, hi] = raid.minutes;
+    const per = marks.map((m, k) => ((m - (marks[k - 1] || 0)) / 60).toFixed(1)).join('/');
+    assert(over,
+      `a ${raid.name} was still going after ${mins.toFixed(1)} minutes of game time and ${waves} `
+      + `waves — its card promises ${lo}-${hi} min, and a sitting that does not end inside an hour `
+      + 'is not a sitting whatever the card says');
+    assert(mins <= hi,
+      `a ${raid.name} floors at ${mins.toFixed(1)} min against a card that promises ${lo}-${hi}. `
+      + 'The army was held unkillable throughout, so that is the FASTEST this build can clear these '
+      + 'waves and a played sitting cannot be shorter. Either the plan changes — AREAS[*].waves, '
+      + "AREAS[*].budget, CommandDirector.rampWave — or SESSION_PLANS' band does, but a card that "
+      + 'promises what the mode cannot deliver is the defect either way.');
+    assert(mins >= lo * 0.5,
+      `a ${raid.name} floors at only ${mins.toFixed(1)} min against a card promising ${lo}-${hi}. `
+      + 'A sitting this far under its own floor has had the fight made trivial rather than the '
+      + 'length fixed, and the card is then overpromising in the other direction.');
+    return `${raid.name} seed ${SEED}: ${waves} waves, floor ${mins.toFixed(1)} min against a card `
+      + `saying ${lo}-${hi} · engagements ${per || '—'} min · ended ${over.won ? 'WON' : 'lost'}`;
+  });
+
   return;
 }
