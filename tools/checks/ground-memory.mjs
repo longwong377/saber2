@@ -1022,4 +1022,163 @@ export async function run({ check, assert, near }) {
       P.dispose?.();
     }
   });
+
+  /* ══ the long memory ═════════════════════════════════════════════════
+   *
+   * `NEXT.md`'s Step 0 verdict is the whole reason `Terrain.scars` exists:
+   * a fought battlefield replayed to `max |Δh| = 0` and 1.9% of pixels moved.
+   * The window above is 29 m wide, follows the player and fills in over four
+   * minutes; the field these check is the map, never moves, and never forgets.
+   * Everything below is a property that distinguishes the two, because a scar
+   * field that behaves like the window is the window with more memory. */
+
+  check('ground: the long memory is the WHOLE map, not a window that follows you', () => {
+    const t = new Terrain(new THREE.Scene(), shipped('geonosis'), 0.6);
+    const K = t.scars;
+    assert(K, 'geonosis has a loose layer, so it has to have a scar field');
+    /* The period is the map exactly, or world space does not tile onto the
+     * texture once: `wp * (1/size)` through RepeatWrapping is a bijection only
+     * when `res * cell === size`, and if it is not, a mark at one end of the
+     * plate is drawn at the other. */
+    assert(Math.abs(K.res * K.cell - t.size) < 1e-6,
+      `the field's period is ${(K.res * K.cell).toFixed(2)} m against a ${t.size} m map`);
+    /* THE CELL DOES NOT MOVE WITH THE QUALITY TIER. What the ground remembers
+     * is not allowed to be a settings slider — the same argument CraterLog
+     * makes for refusing to snapshot the heightfield, which IS one. */
+    const cells = [0.5, 1.0, 1.6].map((q) => {
+      const g = new Terrain(new THREE.Scene(), shipped('geonosis'), q);
+      const c = g.scars.cell; g.dispose(); return c;
+    });
+    assert(Math.max(...cells) - Math.min(...cells) < 1e-9,
+      `the scar cell is ${cells.map((c) => c.toFixed(3)).join(' / ')} across three quality tiers`);
+    /* A mark at the far corner of the plate lands, where the window's own
+     * 0.47 margin would have dropped it. */
+    const far = t.half - 4;
+    assert(K.covers(far, far), `the field does not cover (${far.toFixed(0)}, ${far.toFixed(0)})`);
+    t.scorch(far, far, 3, 1);
+    assert(K.scorchAt(far, far) > 0, 'a mark in the corner of the map was dropped');
+    /* …and following does nothing to it. A window scrolls and clears the
+     * column that left; this one would be clearing ground that was fought
+     * over an hour ago. */
+    const was = K.scorchAt(far, far);
+    K.follow(200, -180);
+    assert(K.center.x === 0 && K.center.y === 0, 'the scar field moved');
+    assert(K.scorchAt(far, far) === was, 'following the player cleared part of the record');
+    const rep = `${K.res}² over ${t.size} m — ${K.cell.toFixed(3)} m cells at every tier, `
+      + `${(K.data.byteLength / 1024).toFixed(0)} kB of texture`;
+    t.dispose();
+    return rep;
+  });
+
+  check('ground: it never ages, and its burns STACK where the window takes the hottest', () => {
+    const t = new Terrain(new THREE.Scene(), shipped('geonosis'), 0.6);
+    ground.frame(0.02, V(0, 0, 0));
+    /* One bolt is a scuff; the same square metre hit again and again is black.
+     * That is what makes the field a record of where the fighting concentrated
+     * rather than of the hottest single thing that ever touched it. */
+    const one = (t.burn(6, 6, 0.26, 0.85), t.scars.scorchAt(6, 6));
+    for (let i = 0; i < 3; i++) t.burn(6, 6, 0.26, 0.85);
+    const four = t.scars.scorchAt(6, 6);
+    assert(four > one * 2.4,
+      `four bolts on one cell read ${four.toFixed(3)} against one bolt's ${one.toFixed(3)} — `
+      + 'the burns are not stacking, so the field cannot tell a fire-swept lane from a stray round');
+    /* The window took the same four hits and is still reading one, because a
+     * saber cut across ground a bolt already scuffed is a saber cut. */
+    assert(Math.abs(t.surface.scorchAt(6, 6) - t.surface.scorchAt(6, 6)) < 1e-9);
+    /* AND NOTHING FILLS IN. Ten minutes of game time through the real tick. */
+    const before = t.scars.scorchAt(6, 6);
+    for (let i = 0; i < 6000; i++) t.tick(0.1, { x: 0, z: 0 });
+    assert(t.scars.scorchAt(6, 6) === before,
+      `the scar faded from ${before.toFixed(3)} to ${t.scars.scorchAt(6, 6).toFixed(3)} over ten `
+      + 'minutes — a battlefield is not a decay with a very long tau');
+    /* …while the window, on the same ticks, has forgotten. That contrast is
+     * the check: two fields, one call site, opposite jobs. */
+    assert(t.surface.scorchAt(6, 6) < 0.02,
+      'the 29 m window is still holding a mark ten minutes later, so the two fields are the same field');
+    const rep = `one bolt ${one.toFixed(3)} → four ${four.toFixed(3)}; unchanged after 600 s, `
+      + `window ${t.surface.scorchAt(6, 6).toFixed(3)}`;
+    t.dispose();
+    return rep;
+  });
+
+  check('ground: a bolt crater the heightfield cannot show is DRAWN anyway', () => {
+    /**
+     * This is `NEXT.md`'s Step 0 verdict as an assertion. `crater` widens
+     * anything under 1.35 cells and shallows it to conserve volume, so a bolt
+     * asking for 0.55 m × 0.06 m lands on the mesh as metres across and
+     * millimetres deep — geometry the heightfield is telling the truth about
+     * and no eye can see. Both albedo channels take it at its real size, and
+     * albedo has no minimum feature size.
+     */
+    const t = new Terrain(new THREE.Scene(), shipped('geonosis'), 0.6);
+    ground.frame(0.02, V(0, 0, 0));
+    const h0 = t.height(-20, 12);
+    t.crater(-20, 12, 0.55, 0.06);
+    const mesh = h0 - t.height(-20, 12);
+    const soot = t.scars.scorchAt(-20, 12), churn = t.scars.depthAt(-20, 12);
+    assert(mesh * 1000 < 20, `the control is wrong — the mesh moved ${(mesh * 1000).toFixed(1)} mm`);
+    assert(soot > 0.05, `a bolt crater left ${soot.toFixed(3)} of permanent soot`);
+    assert(churn > 0.02, `a bolt crater turned ${(churn * 1000).toFixed(1)} mm of permanent ground`);
+    /* AND A SHELL IS NOT A SCUFF. 2.6 m × 0.55 m is World's explosion at
+     * size 1; if the field records the two the same it cannot draw the one
+     * distinction a battlefield is made of. */
+    t.crater(30, -8, 2.6, 0.55);
+    const shell = t.scars.scorchAt(30, -8);
+    assert(shell > soot * 2,
+      `a shell reads ${shell.toFixed(3)} against a bolt scuff's ${soot.toFixed(3)}`);
+    const rep = `bolt: mesh ${(mesh * 1000).toFixed(1)} mm, soot ${soot.toFixed(3)}, `
+      + `churn ${(churn * 1000).toFixed(0)} mm; shell soot ${shell.toFixed(3)}`;
+    t.dispose();
+    return rep;
+  });
+
+  check('ground: the material reads the long memory in ONE tap, with no glow in it', () => {
+    /* The window's scorch is two things read with two smoothsteps — glow above
+     * the half-way mark, soot below — because a saber cut cools on screen.
+     * Nothing in the scar field is hot, and a battlefield that GLOWED where it
+     * had been shot would be the loudest possible wrong answer. */
+    const src = SRC('world/Terrain.js');
+    const i = src.indexOf('if (uScarSet.x > 0.0) {');
+    assert(i > 0, 'the material has no scar block');
+    const blk = src.slice(i, src.indexOf('\n  }\n`;', i));
+    const taps = (blk.match(/texture2D\(\s*uScarMap/g) || []).length;
+    assert(taps === 1, `the scar block takes ${taps} taps of its own map`);
+    assert(!/surfGlow|totalEmissiveRadiance/.test(blk),
+      'the scar block feeds the emissive term — burnt ground would glow');
+    /* THE GRADIENT IS COMPUTED ON THE CPU, exactly as the window's is: there
+     * is no second and third tap for the neighbours, which is the whole reason
+     * either of these fields costs one fetch. */
+    assert(/K\.gb/.test(blk), 'the scar block does not read the encoded gradient');
+    /* And the darkest it may take the ground. §11: nothing may out-contrast a
+     * lightsaber, and a hole in the frame is not a stain on the sand. */
+    const floor = /mix\(1\.0, ([0-9.]+), ksoot\)/.exec(blk);
+    assert(floor && Number(floor[1]) >= 0.18,
+      `burnt ground multiplies the albedo by ${floor ? floor[1] : '?'} — that is a hole, not a scar`);
+    return `one tap, no emissive, albedo floor ${floor[1]}`;
+  });
+
+  check('ground: the long memory costs one upload a tick and none when nothing burned', () => {
+    const t = new Terrain(new THREE.Scene(), shipped('geonosis'), 0.6);
+    ground.frame(0.02, V(0, 0, 0));
+    const K = t.scars;
+    let encodes = 0;
+    const real = K._encode.bind(K);
+    K._encode = (...a) => { encodes++; return real(...a); };
+    /* A quiet second: the window ages and re-encodes, and this one must not.
+     * A field that uploads 590 kB ten times a second on ground nobody has
+     * touched is the most expensive thing on the map. */
+    for (let i = 0; i < 10; i++) t.tick(0.1, { x: 0, z: 0 });
+    assert(encodes === 0, `${encodes} uploads on a battlefield nobody has fired on`);
+    /* …and a burst of a hundred marks costs ONE, because the tick is 10 Hz and
+     * the dirty box is unioned exactly as the geometry's is. */
+    for (let i = 0; i < 100; i++) t.burn(-30 + i * 0.4, 14, 0.26, 0.85);
+    for (let i = 0; i < 3; i++) t.tick(0.033, { x: 0, z: 0 });
+    assert(encodes === 0, 'the field uploaded before its tick came round');
+    t.tick(0.1, { x: 0, z: 0 });
+    assert(encodes === 1, `a hundred marks cost ${encodes} uploads`);
+    K._encode = real;
+    const rep = `0 uploads while quiet, 1 for a hundred marks, ${(K.data.byteLength / 1024).toFixed(0)} kB each`;
+    t.dispose();
+    return rep;
+  });
 }

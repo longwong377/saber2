@@ -34,7 +34,10 @@
  *    140 m    11 px                      — a dark dash, and past the ink
  *
  * So the figure is built for the 27 px reading and checked at 81: a torso, a
- * head, one arm thrown out and the legs apart. Sixty-eight triangles. §11's
+ * head, one arm thrown out and the legs apart. **104 triangles**, measured off
+ * the merged buffer rather than counted off the boxes — the crowd's seated
+ * figure is 96 for comparison, and the reference plates' fallen are read at
+ * about the same size as its spectators. §11's
  * "value, not hue, at scale" is why the variation is per-instance TONE rather
  * than per-instance geometry — at 11 px a second silhouette buys nothing, and
  * two flat tones with 0.18 luma between them is the whole of what survives.
@@ -108,19 +111,25 @@ function curled() {
   return mergeGeos(parts);
 }
 
-let _geos = null;
+/**
+ * A FRESH PAIR PER CALL, and the material shared for the whole process. The
+ * two halves of an object's lifetime are handled by different code here and
+ * getting them the wrong way round leaks either way:
+ *
+ *   GEOMETRY per call, because `World.unload` walks `world.statics` and calls
+ *     `m.geometry?.dispose?.()`. A geometry shared across levels would be
+ *     disposed by the first unload and drawn by the second.
+ *   MATERIAL per process, because `unload` does NOT dispose materials — so a
+ *     material allocated per level is a material leaked per level. This is
+ *     `Smoke.js`'s rule and it is written down there for the same reason.
+ *
+ * Two merges of eight boxes is nothing to rebuild; a leak is forever.
+ */
 function fallenGeometry() {
-  if (!_geos) {
-    /* ONE PER PROCESS, exactly as `smokeMaterial` is and for the same reason:
-     * `World.unload` disposes a static's geometry, so a geometry allocated per
-     * level is a geometry leaked per level. These are shared, so the field
-     * clones nothing and disposes nothing — it hands back the instance count.
-     * The scale to LEN is applied here so both poses measure the same man. */
-    const a = sprawled(), b = curled();
-    for (const g of [a, b]) { g.scale(1, 1, LEN / 1.8); g.computeVertexNormals(); }
-    _geos = [a, b];
-  }
-  return _geos;
+  const a = sprawled(), b = curled();
+  /* The scale to LEN is applied here so both poses measure the same man. */
+  for (const g of [a, b]) { g.scale(1, 1, LEN / 1.8); g.computeVertexNormals(); }
+  return [a, b];
 }
 
 let _mat = null;
@@ -146,7 +155,7 @@ function fallenMaterial() {
  * @param opts.depth   the band's 1σ across the line, metres. §12.4's 26 m band
  *                     is 2σ ≈ 26, so 6.5 either side of the line.
  * @param opts.palette per-army tones, picked per body
- * @returns {{mesh: THREE.Group, count: number, calls: number}|null}
+ * @returns {{meshes: THREE.InstancedMesh[], count: number, calls: number}|null}
  */
 export function addFallen(world, opts = {}) {
   if (!world?.scene) return null;
@@ -208,12 +217,11 @@ export function addFallen(world, opts = {}) {
     tint[v].push(palette[pk < 0.44 ? 0 : pk < 0.82 ? 1 : 2]);
   }
 
-  const group = new THREE.Group();
-  group.name = 'fallen';
+  const meshes = [];
   let calls = 0, placed = 0;
   for (let v = 0; v < geos.length; v++) {
     const list = bins[v];
-    if (!list.length) continue;
+    if (!list.length) { geos[v].dispose(); continue; }
     const im = new THREE.InstancedMesh(geos[v], fallenMaterial(), list.length);
     for (let i = 0; i < list.length; i++) {
       im.setMatrixAt(i, list[i]);
@@ -229,13 +237,20 @@ export function addFallen(world, opts = {}) {
     im.castShadow = false;
     im.receiveShadow = true;
     im.name = 'fallen';
-    group.add(im);
+    im.matrixAutoUpdate = false;
+    im.updateMatrix();
+    im.computeBoundingSphere?.();
+    /* INTO `statics`, one entry per mesh and NOT a Group holding both. That is
+     * what `World.unload` disposes — it reads `.geometry` off each entry, and a
+     * Group has none, so a Group would be removed from the scene with its two
+     * geometries still on the GPU. Same convention as `addInstanced`. */
+    world.scene.add(im);
+    world.statics?.push(im);
+    meshes.push(im);
     calls++; placed += list.length;
   }
   if (!placed) return null;
-  world.scene.add(group);
-  world.statics?.push(group);
-  return { mesh: group, count: placed, calls };
+  return { meshes, count: placed, calls };
 }
 
 /** Exported so a check cannot keep a second copy of how long a man is. */

@@ -34,9 +34,10 @@
 
 import * as THREE from 'three';
 import { Terrain } from '../../src/world/Terrain.js';
-import { CraterLog, CRATER_FIELDS } from '../../src/world/CraterLog.js';
-import { frontAt, burnt, walkingBarrage, marchFront, frontCamera,
+import { CraterLog, CRATER_FIELDS, BURN_LOG_FIELDS } from '../../src/world/CraterLog.js';
+import { frontAt, burnt, walkingBarrage, marchFront, frontCamera, burnBand,
   FRONT_START, FRONT_STEP } from '../../src/world/Front.js';
+import { addFallen, FALLEN_LENGTH } from '../../src/world/Fallen.js';
 import { strewWrecks, findSite } from '../../src/game/Levels.js';
 import { clocked } from './_shared.mjs';
 
@@ -244,6 +245,123 @@ export async function run({ check, assert }) {
       + `round trip ${(max * 1000).toFixed(2)} mm`;
   });
 
+  check('crater log: the DRAWN marks are on the log too, and they are what shows', () => {
+    /**
+     * `NEXT.md`'s Step 0 verdict, as the check that would have caught it.
+     *
+     * The log replayed a battle to `max |Δh| = 0` and 1.9% of pixels moved,
+     * because the battlefield's visible marks were never in the heightfield:
+     * 520 of 539 of them are a bolt striking sand, and `crater` widens
+     * anything under 1.35 cells and shallows it to conserve volume. The marks
+     * lived in `Surface` — a 29 m window that follows the player and forgets —
+     * and the log carried neither that nor the decal ring.
+     *
+     * So the assertion this file was missing is the one below: not "the same
+     * heightfield" but **the same GROUND**, scar for scar. It is the only one
+     * here that would have gone red on the tree the verdict was written about.
+     */
+    const t = ground();
+    const log = new CraterLog().attach(t);
+    battle(log, t, 200, 5);
+    /* A hundred marks with no hole under them — the bolt that scorched the
+     * sand without moving it, which is a class of event the crater list cannot
+     * express at all. `Terrain.burn` goes through `scorch`, so this is what
+     * every bolt impact in the game already does. */
+    let s = 77;
+    const rnd = () => (s = (s * 1103515245 + 12345) % 2147483648) / 2147483648;
+    for (let i = 0; i < 100; i++) {
+      const a = rnd() * Math.PI * 2, r = 10 + rnd() * 90;
+      t.burn(Math.cos(a) * r, Math.sin(a) * r, 0.26, 0.85);
+    }
+    assert(log.burnCount === 100,
+      `${log.burnCount} drawn marks logged for 100 burns — Terrain.burn is not going through scorch`);
+    assert(log.burns.length === 100 * BURN_LOG_FIELDS,
+      `${log.burns.length} numbers for ${log.burnCount} marks`);
+
+    /* THE FOUGHT GROUND'S SCARS, COPIED, then the same log put back twice —
+     * once from the live log and once through JSON — so the two error terms
+     * are separated. That is the same split the heightfield check makes, and
+     * here it is what tells a defect from a rounding. */
+    const fought = Float32Array.from(t.scars.scorch);
+    const churn = Float32Array.from(t.scars.depth);
+    const diff = (K) => {
+      let maxS = 0, maxD = 0, over = 0;
+      for (let i = 0; i < fought.length; i++) {
+        maxS = Math.max(maxS, Math.abs(K.scorch[i] - fought[i]));
+        const d = Math.abs(K.depth[i] - churn[i]);
+        maxD = Math.max(maxD, d);
+        if (d > 0.01) over++;
+      }
+      return { maxS, maxD, over };
+    };
+    let marked = 0;
+    for (let i = 0; i < fought.length; i++) if (fought[i] > 0.004) marked++;
+    assert(marked > 400,
+      `only ${marked} cells of the scar field were marked by a 300-mark battle — the ground is not `
+      + 'recording what happened on it');
+
+    /* ONE: the live log onto fresh ground. EXACT, both channels, every cell.
+     * If this is ever not zero then something in `crater` or `scorch` is
+     * order-dependent or reads state the log does not carry, and every other
+     * number in this file is meaningless. */
+    const live = ground();
+    log.replay(live);
+    const exact = diff(live.scars);
+    assert(exact.maxS === 0 && exact.maxD === 0,
+      `a replay from the live log moved the soot by ${exact.maxS} and the turned ground by `
+      + `${exact.maxD} — the marks are not a pure function of the log`);
+
+    /* TWO: through JSON, which rounds every number to a centimetre. The soot
+     * barely notices — it is a stack of smooth falloffs, so a centimetre of
+     * position is a thousandth of heat. The turned ground has ONE place where
+     * a centimetre is worth a lot: `SurfaceField.tread` puts a BOWL inside the
+     * radius and a BERM just outside it, so a cell sitting exactly on that
+     * boundary can come back on the other side of it and flip sign. Measured
+     * here: four cells out of sixteen hundred marked, and the mean error over
+     * the whole field is under a hundredth of a millimetre. A max is the wrong
+     * statistic for that and a count is the right one. */
+    const back = CraterLog.fromJSON(JSON.parse(JSON.stringify(log.toJSON())));
+    assert(back.burnCount === 100, `${back.burnCount} marks survived the round trip`);
+    const fresh = ground();
+    const r = back.replay(fresh);
+    assert(r.burns === 100, `replay reported ${r.burns} drawn marks`);
+    const round = diff(fresh.scars);
+    assert(round.maxS < 0.02,
+      `a save-and-load moved the soot by ${round.maxS.toFixed(4)} over ${marked} marked cells`);
+    assert(round.over < marked * 0.01,
+      `${round.over} of ${marked} marked cells came back more than a centimetre out — that is past `
+      + 'what a centimetre of rounding can do at a bowl rim, so it is a defect and not a rounding');
+    return `200 craters + 100 drawn marks over ${marked} cells; live replay exact to the bit, `
+      + `round trip Δsoot ${round.maxS.toFixed(4)} and ${round.over} rim cells flipped`;
+  });
+
+  check('crater log: a v1 file still loads, and a v2 one carries both lists', () => {
+    /* A log saved before the drawn marks existed describes a ground that had
+     * none recorded, which is exactly what it loads as. The failure this
+     * refuses is the other one: a v2 reader that throws on a v1 file would
+     * make every saved battlefield in existence unloadable. */
+    const t = ground();
+    const log = new CraterLog().attach(t);
+    t.crater(4, 4, 2.6, 0.22);
+    t.burn(-9, 3, 0.4, 1);
+    const j = log.toJSON();
+    assert(j.v === 2, `toJSON writes v${j.v}`);
+    assert(Array.isArray(j.b) && j.b.length === BURN_LOG_FIELDS, 'the burn list is not in the file');
+    const v1 = { v: 1, n: j.n, e: j.e };
+    const old = CraterLog.fromJSON(v1);
+    assert(old.length === 1 && old.burnCount === 0,
+      `a v1 file loaded as ${old.length} craters and ${old.burnCount} marks`);
+    /* …and the bare-array form, which is what a caller who stored
+     * `log.toJSON().e` has. */
+    const bare = CraterLog.fromJSON(j.e);
+    assert(bare.length === 1 && bare.burnCount === 0, 'a bare entry array did not load');
+    /* A v1 log must still REPLAY, onto a terrain that now has a scar field. */
+    const fresh = ground();
+    const r = old.replay(fresh);
+    assert(r.craters === 1 && r.burns === 0, `a v1 replay reported ${r.craters}/${r.burns}`);
+    return 'v2 writes both lists; v1 and a bare array load and replay';
+  });
+
   check('crater log: trim keeps the newest marks and drops the oldest', () => {
     const t = ground();
     const log = new CraterLog().attach(t);
@@ -367,5 +485,112 @@ export async function run({ check, assert }) {
     assert(fwd.x * f.dir.x + fwd.z * f.dir.z > 0.999,
       'frontCamera does not face down the axis of advance');
     return `engagement 4: line at ${out.distance} m, ${out.barrage} craters, ${out.smoke} columns`;
+  });
+
+  check('front: the swath is burnt ON the line, and the clean side stays clean', () => {
+    /**
+     * `NEXT.md`'s Step 1 verdict: engagement 3 differed from engagement 1 only
+     * by a pale haze at 100 m, because the one variable §3 calls "a fact about
+     * a place you can stand on" was, in the plates, a fact about the SKY. This
+     * is the ground half of the answer, and the property that makes it worth
+     * anything is that it has a HARD EDGE at the line — burnt behind, clean in
+     * front. A wash over the whole map would be weather.
+     */
+    const t = ground();
+    const f = frontAt(3, { seed: 7 });
+    const n = burnBand(t, f, { seed: 11 });
+    assert(n > 200, `the swath laid ${n} marks`);
+    /* Sample along the axis of advance, through the line, and read the field
+     * at each station. Behind the line it must be black; a good way in front
+     * of it, untouched. */
+    const at = (d) => t.scars.scorchAt(f.dir.x * d, f.dir.z * d);
+    let onLine = 0, ahead = 0, behind = 0, samples = 0;
+    for (let k = -120; k <= 120; k += 3) {
+      const px = f.dir.x * f.distance - f.dir.z * k, pz = f.dir.z * f.distance + f.dir.x * k;
+      onLine += t.scars.scorchAt(px, pz);
+      ahead += t.scars.scorchAt(px - f.dir.x * 40, pz - f.dir.z * 40);
+      behind += t.scars.scorchAt(px + f.dir.x * 26, pz + f.dir.z * 26);
+      samples++;
+    }
+    onLine /= samples; ahead /= samples; behind /= samples;
+    assert(ahead < 0.02,
+      `ground 40 m SHORT of the line reads ${ahead.toFixed(3)} — the clean side is not clean, so the `
+      + 'line has no edge and there is nothing to see moving');
+    assert(onLine > 0.25, `the line itself reads ${onLine.toFixed(3)}`);
+    /* …and it THINS with depth into the burnt side rather than stopping dead,
+     * because a front is a zone about thirty metres deep and not a stripe. */
+    assert(behind > 0.01 && behind < onLine * 0.8,
+      `26 m behind the line reads ${behind.toFixed(3)} against ${onLine.toFixed(3)} on it`);
+    /* AND IT IS ADDITIVE ACROSS ENGAGEMENTS. Ground the line crossed at
+     * engagement 1 is fought over again at 2, 3, 4 and 5, and that gradient is
+     * the reason the plates can be ordered by looking down rather than up. */
+    /* Averaged over a patch rather than read at a point: the band is a scatter
+     * of discs with gaps in it BY DESIGN (a continuous fill reads as a shadow),
+     * so a single sample is a coin toss about whether it landed in a gap. */
+    const patch = (d) => {
+      let sum = 0, n = 0;
+      for (let a = -30; a <= 30; a += 4) for (let b = -6; b <= 6; b += 3) {
+        sum += t.scars.scorchAt(f.dir.x * (d + b) - f.dir.z * a, f.dir.z * (d + b) + f.dir.x * a);
+        n++;
+      }
+      return sum / n;
+    };
+    const deep = patch(FRONT_START + 8);
+    burnBand(t, frontAt(1, { seed: 7 }), { seed: 13 });
+    assert(patch(FRONT_START + 8) > deep + 0.01,
+      `a second engagement over the same ground took ${deep.toFixed(3)} to `
+      + `${patch(FRONT_START + 8).toFixed(3)} — the record is not accumulating`);
+    return `line ${onLine.toFixed(3)}, 26 m behind ${behind.toFixed(3)}, 40 m short ${ahead.toFixed(3)} `
+      + `over ${n} marks`;
+  });
+
+  check('front: the dead are instanced, prone, and lying ON the ground', () => {
+    /* §12.4: "the dead mark the front — 520 prone instanced figures in a 26 m
+     * band, thickest at the choke, one draw call." The draw-call claim is the
+     * one that decides whether this can exist at all: `FLAGSHIP.md` §4 measures
+     * a cuttable body at 26 calls at every distance, so four hundred of them is
+     * 10 400 against a 520 budget. */
+    const t = ground();
+    const world = { scene: new THREE.Scene(), terrain: t, statics: [] };
+    const f = frontAt(3, { seed: 7 });
+    const out = addFallen(world, {
+      origin: { x: f.dir.x * f.distance, z: f.dir.z * f.distance },
+      dir: f.dir, count: 400, seed: 21,
+    });
+    assert(out && out.count > 380, `${out ? out.count : 0} of 400 bodies were placed`);
+    assert(out.calls <= 2, `${out.calls} draw calls for ${out.count} bodies`);
+    assert(world.statics.length === out.calls,
+      `${world.statics.length} entries in statics for ${out.calls} meshes — World.unload disposes `
+      + 'what it finds there, and a Group has no geometry for it to dispose');
+    /* EVERY BODY IS ON THE GROUND. A prone figure floating 40 cm over a dune
+     * is the fault `prop-seating.mjs` found 246 instances of in the crowd, and
+     * it is invisible from any distance the field is read from. */
+    const m = new THREE.Matrix4(), p = new THREE.Vector3();
+    let worst = 0, band = 0;
+    for (const mesh of out.meshes) {
+      for (let i = 0; i < mesh.count; i++) {
+        mesh.getMatrixAt(i, m);
+        p.setFromMatrixPosition(m);
+        worst = Math.max(worst, Math.abs(p.y - t.height(p.x, p.z) + 0.045));
+        const across = (p.x * f.dir.x + p.z * f.dir.z) - f.distance;
+        if (Math.abs(across) <= 13) band++;
+      }
+    }
+    /* 1 cm, and the tolerance is the BUFFER's and not the placement's:
+     * `instanceMatrix` is a Float32Array, so a position 200 m from the origin
+     * comes back with about 2e-5 m of quantisation on it. The placement itself
+     * is exact — it is `terrain.height` plus a constant sink. */
+    assert(worst < 0.01, `a body sits ${(worst * 1000).toFixed(1)} mm off the ground it is lying on`);
+    /* …and they are in §12.4's band rather than scattered over the map. */
+    assert(band / out.count > 0.6,
+      `only ${(100 * band / out.count).toFixed(0)}% of the fallen are inside the 26 m band`);
+    /* TWO POSES, because one silhouette four hundred times is a pattern and a
+     * pattern reads as a decal — the crowd was rebuilt for exactly this. */
+    assert(out.meshes.length === 2, `${out.meshes.length} distinct poses`);
+    assert(Math.abs(FALLEN_LENGTH - 1.8) < 0.01, `a man is ${FALLEN_LENGTH} m long lying down`);
+    let tris = 0;
+    for (const mesh of out.meshes) tris += (mesh.geometry.index.count / 3) * mesh.count;
+    return `${out.count} bodies in ${out.calls} calls, ${(tris / out.count).toFixed(0)} triangles each, `
+      + `${(100 * band / out.count).toFixed(0)}% inside the 26 m band`;
   });
 }

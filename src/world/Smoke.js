@@ -44,6 +44,27 @@ import { makeRng, clamp, lerp, TAU } from '../engine/MathUtil.js';
 import { makeSoft } from './SoftDepth.js';
 
 /**
+ * HOW MANY STEPS A COLUMN'S DENSITY IS ALLOWED, and it is `FLAGSHIP.md` §11's
+ * third named art defect turned into one number.
+ *
+ * *"Quantise the smoke. `Smoke.js` uses a soft vertex-alpha gradient — the one
+ * un-cel thing in the frame. At 7 columns you get away with it; at 20 it
+ * dominates the sky."* Confirmed live: the marching front puts nine to ten
+ * columns up by engagement five, and `NEXT.md`'s Step 1 verdict is that
+ * engagement 3 reads as "a pale haze at 100 m" — which is what a smooth alpha
+ * ramp under a bright haze IS. A ramp has no edge, and a shape with no edge
+ * cannot be told from the air it is standing in.
+ *
+ * Five, not four: a column's whole content is its density falling off with
+ * height, so it needs one more step than a blend weight does before the tube
+ * reads as a stack of discs. The base of a column is 0.62 alpha (see the ring
+ * loop below), so five nodes put its steps at 0.6, 0.4, 0.2 and 0 — four
+ * visible plateaus up the height of the tube, and the last node IS zero, which
+ * is what lets a column end rather than fade for ever.
+ */
+const SMOKE_BANDS = 5.0;
+
+/**
  * The one material, shared by every column on every level.
  *
  * Lazy and cached for the same reason `propMaterials()` is: `World.unload`
@@ -74,6 +95,56 @@ function smokeMaterial() {
    * rather than the puff's default because these are the biggest volumes in
    * the game and a fade shorter than the tube is wide reads as a bevel. */
   makeSoft(_mat, 1.6);
+  /* ── AND IT IS BANDED, WHICH IS THE ONLY UN-CEL THING LEFT IN THE FRAME ──
+   *
+   * `makeSoft` OWNS `onBeforeCompile` — it assigns it outright rather than
+   * chaining — so this wraps the hook it installed instead of replacing it.
+   * Overwriting it would silently delete the soft-depth fade and put a hard
+   * intersection curve back across the base of every column, which is the one
+   * part of a column a player can walk up to.
+   *
+   * The band is applied to the ALPHA and not to the colour, and that is the
+   * whole point: a column's shape IS its density. Banding its colour would
+   * posterise a gradient that is already three shades wide; banding its alpha
+   * turns a soft airbrushed cone into a stack of flat discs with a drawn edge
+   * between them, which is what every reference plate of this battle has and
+   * what the frame's ink line is drawn in the language of.
+   *
+   * `saberCelQuant` and NOT `saberCelBand1`, and the difference is fatal here.
+   * `saberCelBand1` takes the plateau CENTRE, so it never returns 0 — a fully
+   * transparent tip would come back at 0.5/n = 10% opaque, which is a veil
+   * over the whole sky, and `makeSoft`'s ground fade could never reach zero
+   * either. `saberCelQuant` snaps to the nearest NODE: 0 stays 0, 1 stays 1,
+   * and what lies between arrives as n flat regions with a drawn boundary.
+   * Cel.js's own note beside the pair says exactly this about masks, and an
+   * alpha is a mask.
+   *
+   * The cache key has to change with it. `makeSoft` pins `customProgramCacheKey`
+   * at the constant 'softDepth', and three caches compiled programs on that
+   * key — so a second material wearing the same key would be handed this
+   * shader, or this one handed the plain soft shader, depending on which
+   * compiled first.
+   */
+  const soft = _mat.onBeforeCompile;
+  _mat.onBeforeCompile = (shader, renderer) => {
+    soft(shader, renderer);
+    shader.uniforms.uSmokeBands = { value: SMOKE_BANDS };
+    /* `saberCelQuant` IS ALREADY IN SCOPE and must not be pasted in again.
+     * `installCelShading` appends CEL_BAND_GLSL to three's `<common>` chunk
+     * (Cel.js: `C.common += CEL_COMMON`), which every standard material's
+     * fragment shader includes — so a second copy here is a duplicate function
+     * definition and the column would not compile at all. SkyDome and the sky
+     * dome in Engine.js do paste it, and the reason is written where they do:
+     * three's Sky addon includes only the tone-mapping chunks. This is a
+     * MeshBasicMaterial and it includes the lot. */
+    shader.fragmentShader = 'uniform float uSmokeBands;\n'
+      + shader.fragmentShader.replace(
+        '#include <fog_fragment>',
+        '  gl_FragColor.a = saberCelQuant( clamp( gl_FragColor.a, 0.0, 1.0 ), uSmokeBands );\n'
+        + '  #include <fog_fragment>');
+  };
+  _mat.customProgramCacheKey = () => 'softDepth+smokeBands';
+  _mat.needsUpdate = true;
   return _mat;
 }
 
