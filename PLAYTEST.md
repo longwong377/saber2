@@ -9,6 +9,108 @@ measurement taken without a person at the controls.
 
 ---
 
+## 21 Aug — SABER GAME NOTES AND IMPROVEMENTS V5
+
+Handed over with: *"add these to the list you don't have to do them now but
+this list is not in order but a stream of consciousness so you will finish it in
+whatever order makes most sense for you"*. Logged verbatim before any work, per
+the rule at the top of this file.
+
+### Voice
+
+> *"the character should say something everytime he uses a particular force
+> ability, perhaps he says the name of the attack, or maybe there's a pool of 3-4
+> things you can say for every force ability so it doesnt get stale and you hear
+> the same thing over and over? i like the robotic voice sound things you do I
+> never use the version where the computer says the actual words"*
+
+### The saber, on the ground and in the air
+
+> *"when/if you drop your lightsaber (maybe if you get hit when you're out of
+> stamina you get staggered and drop your lightsaber) I know you can press a
+> button to pick it put but when i was playing I noticed if you force picked up
+> the saber off the ground and called it back to you even at the closest distance
+> you could not pick it up in the air so I think it could be cool that once you
+> bring it and retract it as close to yourself as possible you just pick it up
+> from the air I think that would be really cool, in that same vein it should be
+> possible to pick up the lightsaber with the force, turn it on or off using the
+> force, and then with the force being able your turn/maniulate the saber
+> anywhere you want on the battlefield within a certain distance (uses a lot of
+> force power up etc. obviously)"*
+
+> *"last time I played (with the last build) I noticed that when lightsaber
+> having enemies died their sabers would stay suspended on and in the air, they
+> should fall to the ground their user is dead, sometimes retracting
+> automatically, sometimes staying on and on the floor"*
+
+### Giants
+
+> *"I want some vehicles and/or creatures that are truly large and giant like
+> AT-AT or AT-M6 sized but obviously not those since they werent in the prequels,
+> if needed come up with your own, they should be incredibly deadly and dangerous
+> and difficult to take down, some piloted obvously; for example Republic's
+> Self-Propelled Heavy Artillery (SPHA), a massive 12-legged walker/gun platform
+> measuring an immense 140.2 meters (460 feet) in length. also HAVw A6
+> Juggernaut, better known as the Clone Turbo Tank, is a massive 49.4-meter-long,
+> 10-wheeled heavy assault vehicle used by the Galactic Republic during the Clone
+> War; Octuptarra Magna Tri-Droid is a massive, super-heavy walking artillery and
+> combat walker utilized by the Confederacy of Independent Systems (CIS),
+> manufactured by the Skakoans of the Techno Union during the Clone Wars; 13.2
+> meters long, 10.2 meters wide, and 5.02 meters tall. This heavy combat walker
+> carries clone troopers into battle and features a mass-driver cannon on top
+> (might already be in the game idk) (All Terrain Tactical Enforcer (AT-TE) is a
+> rugged, six-legged assault walker utilized by the Grand Army of the Republic
+> during the Clone Wars. Built for extreme versatility, its magnetized footpads
+> allow it to scale vertical cliffs and operate even in the vacuum of space. The
+> heavily armored vehicle carries a powerful dorsal mass-driver cannon alongside
+> six laser turrets while transporting a full squad of clone troopers). also the
+> NR-N99 Persuader-class droid enforcer, also known as the Corporate Alliance
+> tank droid or snail tank, is a heavy ground assault vehicle used by the
+> Confederacy of Independent Systems in Star Wars. It features a large central
+> tread flanked by outrigger pylons and is armed with dual blasters and missile
+> launchers. Key Specifications Height: 6.2 meters (20 feet) Length: 10.96 meters
+> (36 feet) Top Speed: 60 km/h (37 mph) standard. Look up other
+> vehicles/mechs/monsters that we could be mssing. all of these need to be
+> accurate and act/move/fire differently as canon"*
+
+### Sides
+
+> *"Ive noticed that many times when as a sith i'll be fighting against mechs
+> that are associated with the separtists which doesnt' make sense, make sure that
+> doesn't happen and also the other way around too like when you're playing as the
+> republic you shouldnt be fighting against things that are canonically on your
+> side, that goes for single npcs too"*
+
+> *"Ive noticed that sith side still gets picked up by the same transports that
+> belong to the republic canonically, so fix that the bad guys need their own
+> unique transports too look it up but functionally they should not be differernt
+> like you should be able to sit/stand in it and see through it, ramp, opening
+> doors, etc."*
+
+### An audit, asked for by name
+
+> *"did you already add the force shield/bubble in the game? i'd already asked for
+> it but I could have missed it (go back to that last list, the one 2 lists ago
+> and make sure that everything on that list actually got done (other than the
+> stuff I already removed because it sucked or changed already so make sure it
+> does not conflict and let me know if we missed anything on it)"*
+
+### Vehicles, and the support calls
+
+> *"you should be able to use vehicles that would make sense to use
+> contextually"*
+
+> *"expand the availablle strategems and/or the stragegems that you can unlock as
+> you progress through a run, there should be a long list of incredibly cool and
+> game impactful deadly and or utility strategems that you creatively come up with
+> in context. you should be able to unlock some really cool shit, also make sure
+> they're not puny and ineffective like your first try at strategems were (also
+> they should not be called strategems in game obviously as that's a helldiver's
+> thing so in case we ever said strategem in game you need to come up with
+> something appropriate to our game if you already have not)"*
+
+---
+
 ## 20 Aug — second play, and the flagship list
 
 Handed over as a stream of consciousness, explicitly not in order. Logged
