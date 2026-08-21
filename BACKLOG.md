@@ -90,6 +90,95 @@ defect and has to be revisited.
 | 4.2 | **The giants.** SPHA (140.2 m, 12 legs), HAVw A6 Juggernaut / Clone Turbo Tank (49.4 m, 10 wheels), Octuptarra Magna Tri-Droid, AT-TE (check the one we have is right), NR-N99 Persuader snail tank. Each accurate, each moving and firing differently. Research what else we are missing. No AT-AT/AT-M6 — wrong era | V5 | ✅ four new machines at their canon dimensions, each with a weak point you can aim at that is derived rather than typed; the AT-TE measured against its own plates |
 | 4.3 | **Drive the vehicles it makes sense to drive**, contextually | V5 | ✅ `crew` on the archetype is the whole rule — the AT-TE (6), the AAT (4), the Juggernaut (12) and the SPHA (25); the four droid vehicles have nobody in them and are refused by name. Yours any time, the enemy's under 25%. The machine stays an ordinary `Enemy`: own legs, own grade, own gun, own death. `driving.mjs`, 6 checks |
 | 4.4 | The Separatist transport (= 1.3) | V5 | ✅ see 1.3 |
+| 4.5 | **"Look up other vehicles/mechs/monsters that we could be missing."** The last sentence of the giants note, and the half of it nobody had answered | V5 | ✅ **audited against the running roster, not against a list — §4.5 below has all thirty of them with a verdict each.** One structural hole found and filled: nothing in the game fought from the air. The Geonosian warrior is built, measured and green (`flight.mjs`, 11 checks). Three more are recommended with their arguments, twenty-two are refused with theirs, and two defects the audit turned up on the way are recorded |
+
+---
+
+## §4.5 — The audit the giants note asked for
+
+> *"Look up other vehicles/mechs/monsters that we could be missing. all of
+> these need to be accurate and act/move/fire differently as canon"*
+
+**The premise a list would have given you is wrong, and that is the first
+finding.** Working from memory of what a prequel roster "ought" to have would
+have named the Petranaki arena's three beasts and the Confederacy's two melee
+droids as the obvious gaps. Measured against `ARCHETYPES` with `Levels.js` and
+`Command.js` imported — which is the only way to see it, because sixteen of the
+thirty-six archetypes are registered outside `Enemy.js` — **all five are already
+in the game**:
+
+| "missing" | actually | where |
+|---|---|---|
+| Reek | `charger`, 1250 hp, gore/toss/charge, carries a B2 | `Levels.js` menagerie |
+| Nexu | `stalker`, 420 hp, 8.6 m/s, rake | `Levels.js` menagerie |
+| Acklay | `beast`, 900 hp, stab from 3.8 m | `Enemy.js` |
+| BX-series commando droid | `bx`, vibrosword, duel brain | `Command.js`, in the Geonosis pool |
+| IG-100 MagnaGuard | `magna`, electrostaff, Djem So, rally aura | `Command.js`, in the Geonosis pool |
+
+So the roster is not short of prequel bodies. What it was short of is one
+**axis**, and it took a census to see it rather than a list.
+
+### What was actually missing, and it was one thing
+
+**THIRTY-FIVE ARCHETYPES AND NOT ONE OF THEM FOUGHT FROM THE AIR.** Two bodies
+already used `Enemy._move`'s `float` branch — the training remote at 1.55 m and
+the Jet Trooper at 1.35 — and a standing overhead swing puts the blade's tip at
+**3.047 m**, measured off a driven `Player`. Both of those hover comfortably
+inside a swing. `Command.js` had already written down why: *"this game has no
+flying brain and inventing one for a trooper would be a different project."*
+
+✅ **Built: the Geonosian warrior** (`src/game/Flight.js`, `tools/checks/flight.mjs`).
+1.749 m against the reference's 1.75; a 4.0 s cruise at 5.60 m the blade cannot
+touch, a 7.5 m/s dive, 3.2 s at 1.30 m where everything on it is reachable, and
+a 3.2 m/s climb back. **44.5% of a 60-second fight has its lowest live capsule
+inside 3.047 m.** It dies its own way — `wing` is a bone role and this is the
+only body that carries one; it flies on two and does not fly on one — and it is
+the one body in the game a Force verb answers better than a blade: 68 kg, so
+grip, pull, push and stasis all take it, and it stays felled for 6 s afterwards.
+
+### Everything else that was looked at, and what was decided
+
+The rule for the table: **era first** (Clone Wars / prequel only — the player
+said so by name, "no AT-AT/AT-M6"), then **does it fill a gap the roster does
+not already cover**, then **can it move, fire and die unlike everything else**.
+A body that is a fourth spider walker fails the third test however canon it is.
+
+| Candidate | Era | Verdict |
+|---|---|---|
+| **Geonosian warrior** | AOTC | ✅ **BUILT.** The only flying enemy in the game. See above |
+| **Massiff** | AOTC/TCW, Geonosian guard beast | ⭐ **RECOMMENDED, AND IT HAS NOWHERE TO STAND UNTIL THE ROW AT THE FOOT OF THIS SECTION IS ANSWERED.** The gap is real and it is the best one left: every one of the five creatures on the roster is `big: true`, which puts all of them under `heavyLimit` — one, plus one per ten waves — so **the player can never be swarmed by animals**, on a level whose whole premise is an arena full of them. A massiff is 1 m at the shoulder, it packs, and it is the only body that would sit BELOW a standing swing's arc rather than in it, which is the mirror of what the Geonosian just added above it. The body itself is cheap: `CREATURE_PLANS` is data, so it is a body plan and a threat number and not a system. **What stops it is where it would live.** The Colosseum is the game's only creature pool and it is closed to new fill (see below, measured). Geonosis is the only other ground a Geonosian guard beast belongs on, and it declares `armies: ['republic', 'separatist']` — on a two-army level every pool entry has to belong to one of the two, and an animal's faction is `wild`. So the massiff is blocked by a composer property and a faction rule, neither of which is about the massiff |
+| **Zillo Beast** | TCW (Malastare) | ⭐ **RECOMMENDED, and it is the honest reading of the note.** The player asked for *"vehicles and/or creatures that are truly large and giant"* and five machines were built and no creature. A Zillo is the era's giant animal, it is 100 m+, and it would be the first giant whose kill is not "take its legs" — its plates are proof against blaster fire and its underbelly is not, which the weak-point system already expresses (`TOUGHNESS.thinner`). Expensive: a new body plan, a new gait, a new topple |
+| **Geonosian sonic cannon / LR-57 emplacement** | AOTC | ⭐ **RECOMMENDED, and it is the cheapest thing on this page.** Nothing on the roster is a FIXED gun you have to cross open ground to reach. No locomotion, no gait, no pose — an archetype with `speed: 0`, a long telegraph and a real threat number. The Geonosis plain is 58–96 m of spawn ring and is exactly the ground for it |
+| **The Wampa** (`pouncer`) | ESB — **wrong era** | ⚠️ **THE ONE ERA WART ON THE SHIPPED ROSTER, and it is not mine.** `pouncer` is labelled Wampa and its own note says the body was built off `wampa.jpg`. A wampa is a Hoth animal from *The Empire Strikes Back*; its databank page excuses it ("an arena that imports its animals imports whatever it can get"), which is a story and not an era fix. The cheap correction is a **gundark** — four-armed, big-eared, Clone Wars, and the label this archetype used to carry — or a **narglatch**. It is a body plan and a label, not a mechanic |
+| **STAP (Single Trooper Aerial Platform)** | TPM/AOTC | **DEFER — and it is now cheap.** A B1 on a repulsor platform is a second flyer, and the flight model it needs is the one that landed this session. The reason to wait is that it should be tuned against a Geonosian a player has actually met, not against a spec |
+| **MTT (Multi-Troop Transport)** | TPM/AOTC | **DEFER, and NOT as an archetype.** Its one interesting property is that it disgorges a rack of B1s — which is `Arrivals.js`'s job, and `Arrivals.js` already brings bodies in by ship and by march. It belongs as a third arrival KIND, not as a vehicle with a health bar |
+| **AT-RT scout walker** | ROTS/TCW | **DEFER.** A real gap in shape — every machine on the roster is either heavy armour or infantry, and there is no light one-rider walker — but it is Republic, so only a Sith or Confederate player ever meets one, and `driving.mjs`'s crewed-vehicle work already covers what makes a one-man walker interesting |
+| **LM-432 crab droid** | ROTS | **SKIP.** Six legs, low-slung, Confederate — and the roster already fields the OG-9 homing spider, the dwarf spider and the Octuptarra tri-droid. `vehicles.mjs` holds no two machines to the same silhouette and a fourth many-legged Confederate walker is exactly the "all your monsters look the same, sphere with some legs" note the player already made |
+| **AT-AP** | ROTS | **SKIP.** A Republic artillery walker beside an AT-TE and an SPHA-T. Third in its own category |
+| **Vulture droid / droid tri-fighter / HMP droid gunship** | TPM–ROTS | **SKIP as enemies.** They are aircraft, and this is a game about a sword. The vulture droid's four-legged walking mode is the only one with a ground presence and it is a starfighter squatting; `Arrivals.js` already flies ships overhead, which is where they belong |
+| **Buzz droid** | ROTS | **SKIP.** Anti-starfighter ordnance. There is nothing for it to attach to |
+| **Super tactical droid / T-series tactical droid** | TCW | **SKIP — already covered.** The rally aura that makes a commander worth killing is on `officer` for the Republic and on `magna` for the Confederacy, by `magna`'s own note. A third body carrying the same aura is a repaint |
+| **Dwarf spider, homing spider, AAT, hailfire, AT-TE, SPHA, Juggernaut, Octuptarra, NR-N99** | — | **ALREADY BUILT** (item 4.2) |
+| **Orray** | AOTC | **SKIP.** A draft animal that pulls the execution carts. It has no fight in it |
+| **Varactyl / dewback / blurrg** | ROTS/TCW | **SKIP.** Mounts. `Riders.js` already carries the saddle idea and puts a gunner on a Reek |
+| **Kouhun** | AOTC | **SKIP.** A 20 cm centipede. There is no fight at that scale |
+| **Geonosian soldier (wingless caste)** | AOTC | **SKIP.** Redundant with the warrior, which is the one that flies |
+| **Aqualish / Weequay / Klatooinian mercenaries** | TPM–ROTS | **SKIP.** Man-shaped bodies with blasters, and the roster fields ten of those |
+| **Jango Fett / Cad Bane / a named hunter** | AOTC/TCW | **SKIP for now, and it is a different decision.** This game has no named characters at all; adding one is a question about the fiction rather than about the roster |
+| **General Grievous** | TCW/ROTS | **SKIP, same reason** — and the silhouette is already occupied by `bodyguard`, the IG general, which is a 1050 hp electrostaff set-piece |
+| **Kaminoan / Neimoidian / Poggle the Lesser** | AOTC | **SKIP.** Civilians |
+| **AT-AT, AT-M6, stormtrooper, dark trooper, purge trooper, TIE anything** | OT / later | **SKIP — the player excluded these by name** |
+
+### Two defects the audit turned up on the way
+
+Neither is on any list; both are recorded because they were found by measuring
+rather than by playing, and both are fixed.
+
+| | What |
+|---|---|
+| **The Jet Trooper has been drawn in the wrong place since it shipped** | ✅ `BipedAnimator.update` writes the pelvis in WORLD coordinates onto a bone parented to the rig root, so the root is only ever allowed to be an identity transform — and `Enemy._pose`'s jet lean rotates it. The drawn body therefore swung about the WORLD ORIGIN, away from the `position` that the muzzle, the brain's range, a Force grip's pick and `Waves.positionIsValid` all read. Measured on the shipped Jet Trooper over 8 s: **1.83 m at x=2, 1.36 m at x=14, 1.79 m at x=30**. Invisible because `jet` was the only rigged body on the roster that floats. Pivoted on the body now (`P - R·P`): 0.33 / 0.30 / 0.33 m, which is what leaning a pelvis 0.9 m above its own pivot costs, and it no longer scales with distance. Guarded by `flight.mjs` over every `float` archetype from three distances |
+| **The Colosseum cannot take a new light archetype** | ⚠️ **open, and it is the composer rather than the unit.** The Petranaki arena is the Geonosian's thematic home and `escalation: the escalation does not flatten once the roster runs out` refuses it. That pool composes so few distinct wave shapes at wave 20 (10 over 24 seeds) that one more affordable type nearly doubles them, while wave 70 stays pinned by `_upgrade`'s convergence — it trades every light body for the heaviest the level fields and `heavyLimit` caps those. Measured: `as shipped 10/12/10/12/11` at w20/40/70/100/140, `+1 geonosian 17/11/9/12/11`, `+2 geonosians 20/12/12/15/11`; threats of 7 and 9 read 18 and 18 at w20, so nothing about the archetype moves the shallow number. **The check is right.** Until deep-wave convergence is answered, the Colosseum is closed to new fill — which is worth knowing before anybody tries to add the massiff to it |
+
 
 ---
 
