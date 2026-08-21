@@ -1254,7 +1254,8 @@ export class RapierWorld {
       friction: opts.friction ?? 0.7,
       restitution: opts.restitution ?? 0.02,
       userData: opts.userData || {},
-      disabled: false,
+      /* `disabled` is installed as a property below, once the collider exists —
+       * it has to be able to reach it. */
       onContact: opts.onContact || null,
     };
     const desc = R.ColliderDesc.cuboid(Math.max(1e-3, halfExtents.x), Math.max(1e-3, halfExtents.y), Math.max(1e-3, halfExtents.z))
@@ -1264,6 +1265,41 @@ export class RapierWorld {
       .setRestitution(rec.restitution)
       .setCollisionGroups(collisionGroups(LAYER.WORLD, LAYER.ALL));
     rec.collider = this.world.createCollider(desc);
+    /**
+     * `disabled` IS A PROPERTY NOW, BECAUSE AS A FIELD IT WAS A LIE.
+     *
+     * Six hand-rolled queries honour it — `Support.supportHeight` and
+     * `ceilingHeight`, `Player._gatherNear` and `_collide`, and both of
+     * `Enemy`'s sweeps — and Rapier honoured none of it: `createCollider`
+     * leaves a live cuboid in the solver whatever this field says. So a box
+     * switched off was passable to the player and to every droid, and solid to
+     * everything that goes through the solver.
+     *
+     * MEASURED by the lane that found it, on a breached blast door — a 0.8 m
+     * crate shoved at 9 m/s from 0.90 m out: with the flag alone it ends
+     * 0.92 m in front of the doorway and never moves; with the collider gone
+     * it ends 1.28 m inside. That is the player's own "there are invisible
+     * walls or objects for example on geonosis that block you", and it was
+     * reachable by any future caller who trusted the field.
+     *
+     * That lane fixed its own call site by removing the collider outright,
+     * which is right for a door that is GONE. This is the other half: a caller
+     * who wants the box back — a shield that drops, a bridge that swings —
+     * writes the flag and Rapier now agrees with the six readers above.
+     * `setEnabled` is the vendored engine's own verb for exactly this and
+     * costs nothing while nobody writes the flag.
+     */
+    let off = false;
+    Object.defineProperty(rec, 'disabled', {
+      enumerable: true,
+      get() { return off; },
+      set(v) {
+        const want = !!v;
+        if (want === off) return;
+        off = want;
+        try { rec.collider?.setEnabled?.(!want); } catch { /* a collider already removed */ }
+      },
+    });
     this._byCollider.set(rec.collider.handle, { box: rec });
     // One array, shared with the sphere solver, so a ragdoll still piles up
     // against architecture and removeStaticBox still reaches both.

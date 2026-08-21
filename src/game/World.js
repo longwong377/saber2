@@ -145,11 +145,13 @@ import { DojoDirector } from './Dojo.js';
 import { updateCauterisation } from './Ragdoll.js';
 import { packAvatar, packMatch, packSnapshot, sessionPart } from '../net/Net.js';
 import { QUALITY } from '../engine/Engine.js';
-import { clamp, lerp, damp, dampVec, makeRng, TAU } from '../engine/MathUtil.js';
+import { clamp, lerp, damp, dampVec, makeRng, moduleSeed, TAU } from '../engine/MathUtil.js';
 import { audio, PRIO } from '../engine/Audio.js';
 import { ExtractionDirector } from './Extraction.js';
 
-const rng = makeRng((Math.random() * 1e9) | 0);
+/* Random per session, FIXED under the gate — see `moduleSeed`. The salt keeps
+ * this stream from being the same sequence as MathUtil's `rand`. */
+const rng = makeRng(moduleSeed(2));
 /** Finite-or-default. Level data and game maths both produce NaN; WebAudio throws on it. */
 const num = (v, d) => (Number.isFinite(v) ? v : d);
 

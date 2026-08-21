@@ -63,7 +63,34 @@ export function makeRng(seed = 1) {
   return rng;
 }
 
-export const rand = makeRng((Math.random() * 1e9) | 0);
+/**
+ * A SEED FOR A MODULE-LEVEL STREAM — random in a game, FIXED under the gate.
+ *
+ * `rand` here and `rng` in World.js are both seeded once, at import, and both
+ * used to read `Math.random()`. In the browser that is exactly right: two
+ * sessions should not deal the same wind, the same dressing jitter or the same
+ * voice dither. Under `tools/verify.mjs` it means every process starts a
+ * different stream, so a check that touches either one gives a different
+ * answer every time it is run — and this repository has now lost three
+ * separate afternoons to it: an escalation composition that failed inside a
+ * sequence and passed alone, a blast-door suite where a different check failed
+ * on each of four consecutive runs of the same code, and a corpse-fade check
+ * that could not be reproduced at all.
+ *
+ * `clocked` (tools/checks/_shared.mjs) already restores these streams AROUND a
+ * check; it cannot do anything about where they started. This can:
+ * `tools/register.mjs` — the loader every check is required to run under
+ * (HANDOFF §2.1) — sets `globalThis.__SABER_SEED` before a single module is
+ * imported, so the whole gate is reproducible and nothing in the shipped game
+ * changes at all, because the browser never sets it.
+ */
+export function moduleSeed(salt = 0) {
+  const pinned = globalThis.__SABER_SEED;
+  if (Number.isFinite(pinned)) return ((pinned + salt * 2654435761) >>> 0) || 1;
+  return ((Math.random() * 1e9) | 0) || 1;
+}
+
+export const rand = makeRng(moduleSeed(1));
 
 /* ── value / simplex-ish noise ───────────────────────────────────────── */
 

@@ -390,4 +390,70 @@ export async function run({ check, assert, THREE }) {
 }
 
 /** The largest step in a sweep, for reporting the truncation term g·h·t/2. */
-function m0h(marks) { return Math.max(...marks.map((m) => m.h)) / 2; }
+function m0h(marks) { return Math.max(...marks.map((m) => m.h)) / 2; 
+
+  check('physics: a static box switched off is switched off for EVERYTHING', async () => {
+    /**
+     * `disabled` IS READ BY SIX HAND-ROLLED QUERIES AND WAS A LIE TO ALL OF
+     * THEM. `Support.supportHeight` and `ceilingHeight`, `Player._gatherNear`
+     * and `_collide`, and both of `Enemy`'s sweeps all skip a box carrying it;
+     * `addStaticBox` wrote it into the record as a plain field and left a live
+     * Rapier cuboid in the solver, which reads nothing. So a box switched off
+     * was passable to the player and to every droid and solid to everything
+     * that goes through the solver — an invisible wall by construction, and the
+     * player has already reported one of those on Geonosis by hand.
+     *
+     * It was found on a breached blast door, where a crate shoved at 9 m/s
+     * bounced off the plane of a door it had just watched fall out: 0.92 m in
+     * front of the doorway, and it never moved. That call site removes its
+     * collider outright, which is right for a door that is GONE. This is the
+     * other half of the same defect — a caller who wants the box BACK writes
+     * the flag — and it is checked here because `RapierWorld` is the layer that
+     * owes the guarantee.
+     *
+     * The measurement is a body falling: on a live box it rests on top of it,
+     * and on a switched-off one it goes past.
+     */
+    const THREE = await import('three');
+    const { initPhysics } = await import('../../src/physics/Rapier.js');
+    const { RapierWorld, Body } = await import('../../src/physics/RapierWorld.js');
+    const { boxSpheres, LAYER } = await import('../../src/physics/Physics.js');
+    await initPhysics();
+
+    const drop = (off, back = false) => {
+      const w = new RapierWorld({ gravity: -22, iterations: 4, maxBodies: 64 });
+      const box = w.addStaticBox(new THREE.Vector3(0, 1, 0), new THREE.Vector3(3, 0.5, 3));
+      if (off) box.disabled = true;
+      if (back) box.disabled = false;
+      const b = new Body({
+        position: new THREE.Vector3(0, 4, 0),
+        shape: { type: 'box', hx: 0.4, hy: 0.4, hz: 0.4 },
+        spheres: boxSpheres(0.4, 0.4, 0.4), mass: 20,
+        layer: LAYER.DEBRIS, mask: LAYER.ALL,
+      });
+      w.add(b);
+      for (let i = 0; i < 120; i++) w.step(1 / 60);
+      const y = b.position.y;
+      const flag = box.disabled;
+      w.dispose();
+      return { y, flag };
+    };
+
+    const on = drop(false);
+    const off = drop(true);
+    const again = drop(true, true);
+    assert(on.y > 1.2,
+      `a crate dropped onto a live static box came to rest at y=${on.y.toFixed(2)} — the fixture is not `
+      + 'dropping anything onto anything');
+    assert(off.y < 0,
+      `a crate dropped onto a DISABLED static box rested at y=${off.y.toFixed(2)} — the flag six queries `
+      + 'honour means nothing to the solver, so the box is passable to the player and solid to the crate');
+    /* AND IT COMES BACK, because a flag that only ever switches off is a
+     * remove() with a worse name. */
+    assert(again.y > 1.2,
+      `switched off and on again, the crate rested at y=${again.y.toFixed(2)} instead of on top of the box`);
+    assert(on.flag === false && off.flag === true,
+      'the property does not read back what was written to it');
+    return `live ${on.y.toFixed(2)} m · disabled ${off.y.toFixed(2)} m · re-enabled ${again.y.toFixed(2)} m`;
+  });
+}
