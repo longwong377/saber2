@@ -157,10 +157,28 @@ export const FLIGHT = {
   DIVE: 7.5,
   CLIMB: 3.2,
   HOLD_HIGH: 4.0,
-  HOLD_LOW: 2.2,
-  /** Where it fights from, per half of the cycle. */
+  HOLD_LOW: 3.2,
+  /**
+   * WHERE IT FIGHTS FROM, PER HALF OF THE CYCLE — and the low band is 1.6 to
+   * 3.4 because it was 2.2 to 7 and that made the stoop a lie.
+   *
+   * `_rangedBrain` holds the band's FAR edge as happily as its near one, so a
+   * stoop whose band opened at 7 m dropped to head height and then sat seven
+   * metres away drifting outward as the player walked in. Measured with a real
+   * Player advancing at it for 40 s: the gap never closed below 6.06 m and the
+   * blade got zero swings. The altitude was right and the fight was not there.
+   *
+   * 3.0 m is inside the blade's own arc and 1.1 is close enough that the body
+   * has to break away rather than hover, which is what makes the low half a
+   * PASS instead of a lower hover — the thing the whole cycle is for. Both
+   * edges were pulled in once a real Player was driven at it: at [1.6, 3.4] the
+   * blade's nearest approach over four swings was 82 cm of clear air, because
+   * the near edge is where the body settles and 1.6 m of separation plus 1.2 m
+   * of height is 2.0 m from a chest to a chest — further than an arm and a
+   * blade.
+   */
   bandHigh: [9, 20],
-  bandLow: [2.2, 7],
+  bandLow: [1.1, 3.0],
   /**
    * SECONDS ON THE GROUND AFTER THE FORCE HAS HAD IT.
    *
@@ -267,33 +285,51 @@ export function wingChains(rig) {
 }
 
 /**
- * HOW MUCH LIFT IS LEFT, from the bones and nothing else.
+ * THE LEAST SPAN THIS BODY IS BEATING WITH, and it flies as well as its worse
+ * wing.
  *
- * 0 the moment a wing ROOT is gone, whichever one — an insect with one wing
- * does not fly on it, and that is the answer this archetype declares as its
- * own (`FLIGHT_CANON.geonosian.kill`). Losing only a FAN is graded rather than
- * fatal: each severed tip costs a fifth of the ceiling, so a body with a torn
- * wing flies lower and is easier to reach again, which is the feedback a cut
- * that did not quite land ought to give.
+ * ── IT READS `cutT` AND NOT `severed`, WHICH IS THE WHOLE OF THE BUG THIS
+ *    FUNCTION WAS WRITTEN WITH ─────────────────────────────────────────────
  *
- * It reads `Actor.isSevered`, which walks the parent chain, rather than
- * `bone.severed` — the same distinction `Enemy.takeCut` makes and for the same
- * reason: a leaf bone is SHORTENED rather than severed.
+ * The first version answered 0 as soon as a wing ROOT was `severed`, which is a
+ * state a blade cannot produce: `Actor.cut` SHORTENS the bone it meets
+ * (`bone.cutT *= t`) and severs only the SUBTREE below it, so a wing cut clean
+ * off at the shoulder leaves `wingL` unsevered with `cutT` near zero.
+ * `severance.mjs`'s own note says it in as many words — "a LEAF bone is
+ * SHORTENED rather than severed" — and `tools/checks/flight.mjs` caught it on
+ * the first run by cutting a real wing off a real body and finding it still
+ * flying at 0.8 lift.
+ *
+ * So the measure is SPAN: how much bone is still attached along the chain,
+ * against how much it was built with. It is graded on the way down, which is
+ * the feedback a cut that did not quite land ought to give — a body with a torn
+ * fan cruises lower and is easier to reach next time — and below `WING_MIN` it
+ * is nothing at all, because an insect does not fly on one wing and that is the
+ * answer this archetype declares as its own (`FLIGHT_CANON.geonosian.kill`).
+ *
+ * `isSevered` walks the parent chain rather than reading the flag, for the same
+ * reason `Enemy.takeCut` does: a bone whose ancestor is gone is gone.
  */
+const WING_MIN = 0.35;
 export function wingLift(e) {
   const rig = e?.rig;
   if (!rig) return 1;
   const roots = wingChains(rig);
   if (!roots.length) return 1;
   const gone = (name) => (e.actor ? e.actor.isSevered(name) : !!rig.get(name)?.severed);
-  for (const r of roots) if (gone(r.name)) return 0;
-  let tips = 0, of = 0;
-  for (const r of roots) for (const c of r.children) {
-    if (c.role !== 'wing') continue;
-    of++;
-    if (gone(c.name)) tips++;
+  let worst = 1;
+  for (const r of roots) {
+    let full = 0, left = 0;
+    const walk = (b) => {
+      full += b.length;
+      if (!gone(b.name)) left += b.length * (b.cutT ?? 1);
+      for (const c of b.children) if (c.role === 'wing') walk(c);
+    };
+    walk(r);
+    const span = full > 0 ? left / full : 1;
+    if (span < worst) worst = span;
   }
-  return of ? clamp(1 - 0.4 * (tips / of), 0, 1) : 1;
+  return worst < WING_MIN ? 0 : clamp(worst, 0, 1);
 }
 
 /**
