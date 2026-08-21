@@ -81,9 +81,16 @@ function box(cx, cy, cz, hx, hy, hz) {
 }
 
 /** A dynamic prop — a crate — with the fields Body now publishes. */
+/* `quaternion` is not decoration and leaving it off cost a run to find. Every
+ * body the engine hands out carries one, and `Player._collide` resolves a prop
+ * shove in the PROP'S OWN FRAME now — against `extent`, the box, rather than
+ * against `boundingRadius`, the half-diagonal of it. A fixture that cannot say
+ * which way round its crate is cannot stand in for one; see the same argument
+ * about `physics.add` in forest.mjs's world stub. */
 function crate(cx, cy, cz, h = 0.35) {
   return {
     position: new THREE.Vector3(cx, cy, cz),
+    quaternion: new THREE.Quaternion(),
     extent: new THREE.Vector3(h, h, h),
     boundingRadius: h * Math.sqrt(3),
     invMass: 1 / 40, mass: 40, layer: LAYER.PROP,
@@ -321,6 +328,67 @@ export async function run({ check, assert, THREE: T }) {
       `stood on a crate whose top is at 0.70 and ended at y=${end.y.toFixed(2)} — fell through it`);
     assert(end.grounded, 'standing on a crate does not count as being on the ground');
     return `rest at y=${end.y.toFixed(3)} on a crate topping out at 0.70`;
+  });
+
+  check('standing: a felled trunk is a log, not a six-metre bubble', () => {
+    /**
+     * BACKLOG 8.1, and the player's own words twice over: "the forest map still
+     * has a shit ton of invisible walls blocking you, I think maybe only when
+     * you cut trees down."
+     *
+     * The shove half of `_collide` used to test the body against a SPHERE of
+     * radius `boundingRadius`, which RapierWorld's own note says is the
+     * HALF-DIAGONAL of the prop's box. On a crate that is centimetres. On a 12 m
+     * trunk it is six metres of empty air, pushing the body out radially every
+     * frame — measured on the wood, three logs in the shove list at once with
+     * radii 5.83, 3.95 and 5.36 m, and a body ON one of them held still by
+     * 0.0551 m of shove against 0.0552 m of walk.
+     *
+     * So: a log lying flat, and a body walking at it from four metres. The
+     * question is only how close it gets. Its own capsule is 0.34 and the wood
+     * is 0.55 thick, so 0.89 m from the axis is touching the timber; the
+     * half-diagonal is 6.05, so the sphere held it at 6.39.
+     *
+     * A BIG trunk on purpose — the chest sphere sits 0.90 m up, so on a small
+     * log the nearest point on the box is its TOP FACE and the shove is
+     * correctly vertical and correctly discarded. This measures the horizontal
+     * half, which is the half that was a bubble.
+     */
+    const w = stubWorld();
+    w.terrain = flatTerrain();
+    const log = crate(0, 0.55, 0, 0.55);
+    log.extent.set(0.55, 6.0, 0.55);                 // 12 m of trunk, along its own +Y
+    log.quaternion.setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2);  // laid down, along z
+    log.boundingRadius = log.extent.length();
+    log.mass = 900; log.invMass = 1 / 900;
+
+    const p = new Player(w, { isLocal: true });
+    p.position.set(-4, 0, 0);
+    p.velocity.set(0, 0, 0);
+    p.camera.yaw = -Math.PI / 2;                     // fwd = +x, at the log's middle
+    const input = { ...stubInput(), moveAxis: (o) => { o.x = 0; o.y = 1; return o; } };
+    const ctx = { input, terrain: w.terrain, physics: w.physics, particles: null,
+      camera: w.engine.camera, time: 0, groundColor: 0, enemies: null };
+    /* The body is added AFTER the Player exists, so nothing about the log is in
+     * the pose it starts from. */
+    w.physics.bodies.push(log);
+    let closest = Infinity;
+    for (let i = 0; i < 60 * 6; i++) {
+      ctx.time = w.time = i / 60;
+      p.camera.yaw = -Math.PI / 2;
+      p.update(1 / 60, ctx);
+      closest = Math.min(closest, Math.abs(p.position.x));
+    }
+    assert(closest < 1.20,
+      `walking straight at a log lying on the ground, the body got no closer than `
+      + `${closest.toFixed(2)} m from its axis — the wood is 0.55 m thick and the body is 0.34, so `
+      + `it stopped ${(closest - 0.89).toFixed(2)} m short of anything. That is the invisible wall, and `
+      + `it is the prop's half-diagonal (${log.boundingRadius.toFixed(2)} m) standing in for its shape`);
+    /* …and it is still SOLID. Reaching the axis would mean walking through it. */
+    assert(closest > 0.70,
+      `the body reached ${closest.toFixed(2)} m from the log's axis — it walked into the wood`);
+    return `walked to ${closest.toFixed(2)} m of a 12 m log's axis (touching is 0.89; `
+      + `its half-diagonal is ${log.boundingRadius.toFixed(2)})`;
   });
 
   check('standing: you land ON a spider walker instead of falling through it', () => {

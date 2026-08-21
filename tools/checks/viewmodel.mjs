@@ -601,14 +601,41 @@ export async function run({ check, assert }) {
     //     minimal swing onto the bone     9912         (degenerate at a 176° wrist)
     //     aimY on the rest frame's X      5496         (degenerate on some frames)
     //
-    // THE WRIST IS STILL 140 DEGREES FROM REST, and that is the other half. It
-    // is not roll any more, it is BEND: the angle between the forearm's
-    // direction — which solveIK picks purely from where the grip POINT is — and
-    // the hilt's axis. No amount of forearm twist can change it. Fixing it means
-    // the CONTROLLER placing the hands where a wrist could actually hold that
-    // blade, which is a change to SaberController's guard model, not to the rig.
-    // 80 degrees of bend and 30 of roll is what a wrist does; this still is not
-    // that, and the ceiling below carries the number forward until it is.
+    // THE BEND IS THE OTHER HALF AND IT IS NOW MOSTLY FIXED — by the ELBOW, of
+    // all things, which is not where either this note or `_rollForearm`'s
+    // expected to find it. Both said the cure had to be the CONTROLLER putting
+    // the hands somewhere a wrist could hold that blade. It was not: once the
+    // shoulder and the wrist are both fixed by the hilt, a two-bone solve still
+    // has exactly ONE free parameter — the elbow's swivel about the line
+    // between them — and the pole that chose it was built entirely out of where
+    // the hand sits relative to the CHEST, with nothing in it about the wrist.
+    // `Player._wristPole` bends that pole toward the elbow a straight wrist
+    // implies, capped by `ELBOW.swivel` and rate-limited by `ELBOW.rate`, and
+    // both of those numbers are the output of `tools/_wristsweep.mjs`:
+    //
+    //                        worst        median       forearm
+    //     third person    114.4 → 89.4   83.6 → 36.7   2487 → 2476 deg/s
+    //     first person    124.2 → 115.8  82.5 → 64.1
+    //
+    // Nothing the player has approved moves: the hand does not move, the hilt
+    // does not move and the blade's envelope does not move. Only the elbow
+    // does, and it moves to where a real elbow goes, since in a real arm the
+    // elbow's swivel IS driven by the hand's orientation.
+    //
+    // WHAT IS LEFT IS GEOMETRY AND IS MEASURED AS SUCH. `handPoseOnHilt` pins
+    // the hand's long axis exactly perpendicular to the blade — 90.0 degrees on
+    // every frame of every bench — so the smallest wrist ANY elbow can reach is
+    // |90 - theta|, theta being the angle between the forearm and the blade.
+    // The worst frame here is theta = 3.1 degrees: the guard lying along the
+    // arm, which is a thrust, and no hammer grip points down its own forearm.
+    // So 89.4 is that frame's floor and not slack. A real wrist reaches about
+    // 80 degrees of flexion and 70 of extension and WORKS in half of that; the
+    // median is inside the working arc now and the worst is at the anatomical
+    // end of the range. The ceiling below is ratcheted to it.
+    //
+    // The attractive wrong answer — that the tunnel a fist makes is oblique, so
+    // tilting GRIP_BORE's axis 25-35 degrees would move the floor — is refuted
+    // by `tools/_bore.mjs` against buildHand's own fingers: 2.9 degrees.
     const world = stubWorld();
     const p = new Player(world, { isLocal: true });
     const input = stubInput();
@@ -632,12 +659,13 @@ export async function run({ check, assert }) {
       prev = qf.clone();
     }
     const D = 180 / Math.PI;
-    assert(worstWrist * D < 145,
-      `the wrist reaches ${(worstWrist * D).toFixed(1)}° from rest — worse than the 140.0° the solved grip achieves`);
+    assert(worstWrist * D < 95,
+      `the wrist reaches ${(worstWrist * D).toFixed(1)}° from rest — worse than the 89.4° the wrist-driven `
+      + 'elbow achieves, and past what a wrist can do at all');
     assert(worstFore * D * 60 < 2700,
-      `the forearm turns at ${(worstFore * D * 60).toFixed(0)}°/s — worse than the 2548°/s the solved grip achieves`);
-    return `wrist reaches ${(worstWrist * D).toFixed(1)}° from rest, down from 179.7 — the BEND is still unfixed, `
-      + `see SaberController; forearm peaks at ${(worstFore * D * 60).toFixed(0)}°/s, down from 7052`;
+      `the forearm turns at ${(worstFore * D * 60).toFixed(0)}°/s — worse than the 2476°/s the solved grip achieves`);
+    return `wrist reaches ${(worstWrist * D).toFixed(1)}° from rest (179.7 → 114.4 → this), `
+      + `forearm peaks at ${(worstFore * D * 60).toFixed(0)}°/s, down from 7052`;
   });
 
   /* ══════════════════════════════════════════════════════════════════ */

@@ -884,6 +884,9 @@ const HEAL_FRACTION = 0.45;
  * has taken since it was 179.7. Some of that is FOREARM, which repairs a
  * degeneracy that was live on the chest anchor too; most of it is that a hand
  * carried in front of the body is a hand a wrist can hold a sword with.
+ * (The wrist column reads 89.4 now — see `Player._wristPole`, which came
+ * later and by a different route. The 114.4 above is the anchor's own step and
+ * is left as it was taken.)
  *
  * ── RISE 0.32, AND WHY IT IS NOT LOWER ─────────────────────────────────────
  *
@@ -1091,6 +1094,11 @@ const _hpM = new THREE.Matrix4();
 const _fv1 = new THREE.Vector3(), _fv2 = new THREE.Vector3(), _fv3 = new THREE.Vector3();
 const _fq1 = new THREE.Quaternion();
 
+/** …and the same again for _wristPole, which runs in the same place. */
+const _wp1 = new THREE.Vector3(), _wp2 = new THREE.Vector3(), _wp3 = new THREE.Vector3();
+const _wp4 = new THREE.Vector3(), _wp5 = new THREE.Vector3(), _wp6 = new THREE.Vector3();
+const _wpQ = new THREE.Quaternion(), _wpQ2 = new THREE.Quaternion();
+
 /**
  * WHAT KEEPS THE FOREARM FROM SPINNING, and why it is one angle and not a
  * quaternion.
@@ -1153,14 +1161,59 @@ const _fq1 = new THREE.Quaternion();
  * So the fault this repairs was live before the anchor moved — 10723 deg/s on
  * the shipped tree, on a sweep the ratchet does not run — it is simply not
  * reached by the bench that watches for it, and it is four times smaller now.
- * The wrist column is the outstanding one and it is not this method's to fix;
- * see the ratchet's own note, which has said since it was written that the cure
- * is the CONTROLLER putting the hands where a wrist could hold that blade.
+ *
+ * THE WRIST COLUMN IS ANSWERED NOW AND IT WAS NOT THIS METHOD'S TO ANSWER —
+ * that much this note had right. What it had wrong is where the cure was: it
+ * and the ratchet's own note both said it had to be the CONTROLLER putting the
+ * hands somewhere a wrist could hold that blade. It is the ELBOW. See
+ * `Player._wristPole`: 114.4 -> 89.4 degrees worst, 83.6 -> 36.7 median, with
+ * the forearm column going 2487 -> 2476 rather than paying for it.
  *
  * An object rather than two bare constants for the same reason FP_TUNE is one:
  * so tools/_unify.mjs can sweep them without an edit. The tables are its output.
  */
 export const FOREARM = { cone: Math.sin(12 * Math.PI / 180), rate: 40 };
+
+/**
+ * HOW FAR THE WRIST MAY TURN THE ELBOW ROUND THE ARM'S OWN LINE, and how fast.
+ * Radians and radians per second.
+ *
+ * The long form is on `Player._wristPole`, its only reader. An object rather
+ * than two bare constants for the same reason `FOREARM` is one: so
+ * `tools/_wristsweep.mjs` can sweep them without an edit, and the tables below
+ * are that sweep's output rather than a taste. Worst and median wrist-from-rest
+ * over the ratchet's own bench in tools/checks/viewmodel.mjs, with the OTHER
+ * ratchet — the forearm's own angular speed — beside them, because this trades
+ * one against the other and a fix that breaks the neighbour is not a fix.
+ *
+ *   swivel, at rate 30      third person, two hands    first person, one hand
+ *                           worst  median  fore °/s    worst  median  fore °/s
+ *        0° (was)           114.4    83.6      2487    124.2    82.5       905
+ *       45                   89.4    56.7      2476    123.5    68.5      1295
+ *       75                   89.4    43.5      2476    123.5    65.0      1810
+ *      110                   89.4    36.8      2476    115.8    64.1      1841
+ *      120  <- ships         89.4    36.7      2476    115.8    64.1      1841
+ *      180                   89.4    36.7      2476    115.8    64.1      1841
+ *
+ *   rate, at swivel 120     third person, two hands
+ *      20 rad/s              97.9    36.7      2335
+ *      30    <- ships        89.4    36.7      2476
+ *      40                    84.3    36.7      2612
+ *      no limit              80.5    36.7      3538
+ *
+ * THE RATE IS WHAT THE FOREARM COSTS. Unlimited it reaches the geometry's own
+ * floor and takes the forearm to 3538 °/s — the elbow snapping through the
+ * chest pole's side, which is `FOREARM.rate`'s lesson one joint up. 30 rad/s
+ * (1719 °/s) is the largest value that leaves the forearm ratchet BETTER than
+ * it was: 2476 against the 2487 this shipped with.
+ *
+ * The swivel saturates at about 110° because that is as far as the wrist ever
+ * asks the elbow to go on this bench; it is left at 120 rather than trimmed to
+ * the sample, since a cap tuned to one mouse sweep is a cap tuned to one mouse
+ * sweep. A shoulder rotates internally and externally through rather more than
+ * that.
+ */
+export const ELBOW = { swivel: 120 * Math.PI / 180, rate: 30 };
 
 /**
  * HOW FAST A FIST CAN ROLL ROUND THE SHAFT, in radians per second.
@@ -2580,6 +2633,8 @@ export class Player {
     /** …and the same for each forearm's own twist. See _rollForearm. */
     this._foreRoll = { foreR: { q: new THREE.Quaternion(), have: false },
       foreL: { q: new THREE.Quaternion(), have: false } };
+    /** …and each elbow's carried swivel. See _wristPole. */
+    this._elbow = { armR: { phi: 0, have: false }, armL: { phi: 0, have: false } };
     this.control = new SaberController({
       sensitivity: opts.sensitivity ?? 1,
       followStrength: opts.followStrength ?? 0,
@@ -3836,24 +3891,72 @@ export class Player {
           if (vn < 0) this.velocity.addScaledVector(_v5, -vn);
         }
       }
-      // shove dynamic props out of the way — the same short list the support
-      // query uses, so a crate you are standing on and a crate you are walking
-      // into are the same object seen twice, not two different searches
+      /**
+       * SHOVE DYNAMIC PROPS OUT OF THE WAY — AGAINST THE PROP'S OWN BOX, and
+       * for a long time against a SPHERE THE SIZE OF ITS DIAGONAL instead.
+       *
+       * The loop's premise is right and is stated above it: a crate you are
+       * standing on and a crate you are walking into are one object seen
+       * twice. The support query resolves it as a box (`topOfProps` reads
+       * `extent`); this half resolved it as a sphere of radius
+       * `boundingRadius`, which `RapierWorld` documents as the HALF-DIAGONAL of
+       * that same box — and its note there says exactly why that is not a
+       * shape: "guessing it back out of the diagonal either floats you or
+       * sinks you". So the two halves disagreed about what the object IS.
+       *
+       * On a crate the difference is centimetres. On a FELLED TRUNK it is the
+       * whole of BACKLOG 8.1. A realised log is a 12-to-24 m prop, so its
+       * half-diagonal is metres, and the sphere test made every log project a
+       * repulsion bubble round its own middle: measured on the pinned deck,
+       * three logs in the shove list at once with boundingRadius 5.83, 3.95 and
+       * 5.36 m against a body standing ON one of them. The shove is
+       * `(rr − d) · massRatio` per frame with nothing bounding it, so the body
+       * settles where the shove balances the walk — 0.0552 m of walk against
+       * 0.0551 m of shove, measured on the stalling frame — and stops dead six
+       * metres from a log's centre with nothing there. That is the player's
+       * "invisible walls… I think maybe only when you cut trees down", and it
+       * is why a body that climbs onto a trunk then stalls on top of it: being
+       * on the log is being deep inside its own bubble.
+       *
+       * Against the box the same body is pushed out of the WOOD and nothing
+       * else, and standing on top now falls out for free rather than needing a
+       * rule: the nearest point on the box is directly below the chest, the
+       * offset is straight up, and `_v4.y = 0` leaves nothing to push with —
+       * which is the same reasoning the static-box loop above spells as
+       * `if (_v5.y > 0.5) continue`.
+       *
+       * `_q1` is free through the whole of `_collide`; the static boxes carry a
+       * precomputed `invQuat` and a dynamic body does not.
+       */
       for (const b of this._nearProps) {
         _v1.set(this.position.x, this.position.y + 0.9, this.position.z);
-        const rr = this.radius + b.boundingRadius;
-        _v2.subVectors(b.position, _v1);
-        const d2 = _v2.lengthSq();
-        if (d2 > rr * rr || d2 < 1e-8) continue;
+        const e = b.extent;
+        _q1.copy(b.quaternion).invert();
+        _v2.subVectors(_v1, b.position).applyQuaternion(_q1);
+        _v3.set(clamp(_v2.x, -e.x, e.x), clamp(_v2.y, -e.y, e.y), clamp(_v2.z, -e.z, e.z));
+        _v4.subVectors(_v2, _v3);
+        let d2 = _v4.lengthSq();
+        const rr = this.radius;
+        if (d2 > rr * rr) continue;
+        if (d2 < 1e-8) {
+          // the chest is INSIDE the prop: leave by the nearest face, exactly as
+          // the static-box loop does when it lands in the same place
+          const dx = e.x - Math.abs(_v2.x), dy = e.y - Math.abs(_v2.y), dz = e.z - Math.abs(_v2.z);
+          if (dx <= dy && dx <= dz) _v4.set(Math.sign(_v2.x) || 1, 0, 0);
+          else if (dy <= dz) _v4.set(0, Math.sign(_v2.y) || 1, 0);
+          else _v4.set(0, 0, Math.sign(_v2.z) || 1);
+          d2 = 1e-4;
+        }
         const d = Math.sqrt(d2);
-        _v2.multiplyScalar(1 / d);
+        // outward, in the world: from the prop's surface toward the chest
+        _v4.multiplyScalar(1 / d).applyQuaternion(b.quaternion);
         b.wake();
-        b.applyImpulse(_v3.copy(_v2).multiplyScalar(Math.min(b.mass, 40) * (rr - d) * 2.4), _v1);
-        _v2.y = 0;
-        if (_v2.lengthSq() > 1e-6) {
-          _v2.normalize();
+        b.applyImpulse(_v5.copy(_v4).multiplyScalar(-Math.min(b.mass, 40) * (rr - d) * 2.4), _v1);
+        _v4.y = 0;
+        if (_v4.lengthSq() > 1e-6) {
+          _v4.normalize();
           const massRatio = clamp(b.mass / 220, 0, 0.55);
-          this.position.addScaledVector(_v2, -(rr - d) * massRatio);
+          this.position.addScaledVector(_v4, (rr - d) * massRatio);
         }
       }
     }
@@ -4770,6 +4873,141 @@ export class Player {
     bone.obj.updateMatrixWorld(true);
   }
 
+  /**
+   * WHERE THE ELBOW GOES IS THE WRIST'S BUSINESS TOO — and nothing had ever
+   * told it.
+   *
+   * This is the BEND half of the grip, the residue `_rollForearm`'s note and
+   * the ratchet in tools/checks/viewmodel.mjs have both been carrying: "the
+   * wrist reaches 114.4° from rest". A human wrist does not bend 114°; the
+   * whole of flexion is about 80° and the whole of extension about 70°, and
+   * every measurement of a *functional* range — the arc people actually use for
+   * work — is well inside half of that. Whatever the number the check reads,
+   * the pose was not one a body can make.
+   *
+   * MEASURED FIRST, because "the wrist is bent" is three different faults
+   * wearing one number. On the ratchet's own bench, over its 170 sampled
+   * frames:
+   *
+   *     wrist from rest      39.2 …  83.6 … 114.4°
+   *     of which BEND        39.2 …  83.6 … 114.4     <- all of it
+   *     of which twist        0.0 …   6.6 …  18.4     <- `_rollForearm` works
+   *     hand's long axis to the blade   90.0 … 90.0 … 90.0
+   *
+   * So it is not roll, `_rollForearm` is doing its job, and the bend is one
+   * angle: between the forearm the IK chose and the forearm the HAND wants —
+   * `handWorld · restQuat⁻¹` pointed along its own +Y, which is the same
+   * quantity `_rollForearm` already builds and swings.
+   *
+   * AND THE FREE PARAMETER THAT DECIDES IT WAS SPENT ON SOMETHING ELSE. Once
+   * the shoulder and the wrist are both fixed — and they are, by the hilt — a
+   * two-bone solve has exactly ONE degree of freedom left: the elbow's swivel
+   * about the line between them. `solveIK` takes it from the pole, and the pole
+   * above is built entirely out of where the hand is relative to the CHEST.
+   * Nothing in it mentions the wrist. Swept through a whole turn at every frame
+   * of the bench, through the shipped `solveIK`, the same wrist reads:
+   *
+   *                          worst      median
+   *     shipped pole         114.4°      83.6°
+   *     best swivel           77.9        36.7
+   *
+   * That is the headroom, and it is free: the hand does not move, the hilt does
+   * not move, the blade's envelope does not move. Only the elbow does, and it
+   * moves to where a real elbow goes — because in a real arm the elbow's
+   * swivel IS driven by the hand's orientation. That is why you turn your
+   * elbow out to pour from a jug.
+   *
+   * So the pole is a HINT and this bends it toward the wrist: `wrist − foreLen ·
+   * wantDir` is the elbow a straight wrist implies, and the swivel between the
+   * two poles is taken up to `ELBOW.swivel` and no further. The cap is what
+   * keeps the note above this — "a pole pinned to the right of the chest folds
+   * the right elbow straight through the ribs" — still true: the chest pole
+   * still chooses the basin, and the wrist is allowed to argue within it.
+   *
+   * MEASURED, same bench, `ELBOW` carries the sweep the two numbers come from:
+   *
+   *                          worst    median    forearm
+   *     third person         114.4 → 89.4   83.6 → 36.7   2487 → 2476 °/s
+   *     first person, 1 hand 124.2 → 115.8  82.5 → 64.1    905 → 1841
+   *     first person, 2 hands 131.1 → 115.1 88.6 → 65.8   1099 → 1605
+   *
+   * A wrist's own limits are about 80° of flexion and 70° of extension, with
+   * 20-30° of deviation across them, so ~85° is the most a real one reaches at
+   * either end and the arc it WORKS in is half that. The median is the number
+   * that says how the arm reads for the other 169 frames, and it lands inside
+   * the working arc; the worst lands at the anatomical end of the range.
+   *
+   * ── WHAT IS LEFT, AND THE ATTRACTIVE WRONG ANSWER ──────────────────────────
+   *
+   * The residue is not tunable, and the same probe says why. `handPoseOnHilt`
+   * forces the hand's long axis EXACTLY perpendicular to the blade — measured,
+   * 90.0° on every frame of every bench — so the smallest wrist any choice of
+   * elbow can reach is |90° − θ|, where θ is the angle between the forearm and
+   * the blade. The worst frame here is θ = 3.1°: the guard has the blade lying
+   * along the arm, which is a THRUST, and a hand cannot hold a hammer grip
+   * pointing down its own forearm. 89.4° is that frame's floor, not a slack
+   * bound — the check's own note has said since it was written that the last of
+   * this is the CONTROLLER's guard model and it is still right.
+   *
+   * The tempting cure is to say the tunnel a fist makes is OBLIQUE — real hands
+   * do hold a hammer nearer their own axis than across it — and tilt
+   * `GRIP_BORE`'s axis by 25-35°, which would take the floor with it. IT IS NOT
+   * TRUE OF THIS HAND, and `tools/_bore.mjs` is the measurement rather than the
+   * opinion: replaying `buildHand`'s finger construction and fitting the arc
+   * each of the four fingers closes on gives bores at y 64.2 / 66.5 / 65.0 /
+   * 61.7 mm across x +26.7 to −26.2, i.e. a tunnel tilted **2.9°** off the
+   * hand's X toward the knuckles and 4.1° out of the palm. (The middle finger's
+   * joints come out at (87,5) (96,33) (81,51) (63,57) mm, which is
+   * `GRIP_BORE`'s own note to the millimetre, and the four-finger centre is
+   * y 64.4 mm against the 65 it ships.) Three degrees is not thirty. Tilting
+   * the grip axis would mean changing what `buildHand` BUILDS, and that is a
+   * different job with a different owner.
+   */
+  _wristPole(upperName, foreName, handName, handQuat, wrist, pole, dt) {
+    const st = this._elbow[upperName];
+    if (!(ELBOW.swivel > 0) || !st) return pole;
+    const fore = this.rig.get(foreName), hand = this.rig.get(handName);
+    if (!fore || !hand) return pole;
+    const shoulder = this.rig.worldPos(upperName, _wp1);
+    // the forearm a wrist at rest would have, and the elbow it puts behind it
+    _wpQ.copy(handQuat).multiply(_wpQ2.copy(hand.restQuat).invert());
+    _wp2.set(0, 1, 0).applyQuaternion(_wpQ);
+    _wp3.copy(wrist).addScaledVector(_wp2, -fore.length * fore.cutT);
+    // both poles carry a swivel about the shoulder→wrist line and nothing else:
+    // solveIK reads `cross(toTarget, poleDir)`, so only this component is seen
+    _wp4.subVectors(wrist, shoulder);
+    if (_wp4.lengthSq() < 1e-8) return pole;
+    _wp4.normalize();
+    _wp5.subVectors(pole, shoulder);
+    _wp5.addScaledVector(_wp4, -_wp5.dot(_wp4));
+    _wp6.subVectors(_wp3, shoulder);
+    _wp6.addScaledVector(_wp4, -_wp6.dot(_wp4));
+    const len = _wp5.length();
+    if (len < 1e-4 || _wp6.lengthSq() < 1e-8) return pole;
+    _wp5.multiplyScalar(1 / len); _wp6.normalize();
+    let phi = clamp(Math.atan2(_wp2.crossVectors(_wp5, _wp6).dot(_wp4), _wp5.dot(_wp6)),
+      -ELBOW.swivel, ELBOW.swivel);
+    /**
+     * …AND AN ELBOW DOES NOT TELEPORT ROUND THE ARM EITHER, which is the same
+     * lesson `FOREARM.rate` is, one joint further up and found the same way.
+     * Uncapped, this took the forearm ratchet from 2487 to 3538 °/s — the
+     * wrist-implied elbow crosses the chest pole's own side and the whole limb
+     * snaps through. The carried angle is the swivel this arm is holding
+     * RELATIVE TO the chest pole, which is a well-defined quantity while the
+     * chest pole moves; limiting how fast it changes is what makes the elbow
+     * roll round rather than jump.
+     */
+    if (st.have) {
+      let d = phi - st.phi;
+      while (d > Math.PI) d -= 2 * Math.PI;
+      while (d < -Math.PI) d += 2 * Math.PI;
+      phi = st.phi + clamp(d, -ELBOW.rate * dt, ELBOW.rate * dt);
+    }
+    st.phi = phi; st.have = true;
+    _wp5.applyAxisAngle(_wp4, phi);
+    return pole.copy(shoulder).addScaledVector(_wp5, len);
+  }
+
   _updateBody(dt, ctx) {
     const rig = this.rig;
 
@@ -5054,11 +5292,13 @@ export class Player {
 
       const poleR = _v6.copy(chest).addScaledVector(right, 0.75 * A + side)
         .addScaledVector(UP, -0.75 * A + lift).addScaledVector(fwd, -0.2 * A);
+      this._wristPole('armR', 'foreR', 'handR', _q2, wristR, poleR, dt);
       rig.solveIK('armR', 'foreR', wristR, poleR);
       this._rollForearm('foreR', 'handR', _q2, dt);
       if (twoHanded) {
         const poleL = _v6.copy(chest).addScaledVector(right, -0.62 * A + side)
           .addScaledVector(UP, -0.8 * A + lift).addScaledVector(fwd, -0.2 * A);
+        this._wristPole('armL', 'foreL', 'handL', _q3, wristL, poleL, dt);
         rig.solveIK('armL', 'foreL', wristL, poleL);
         this._rollForearm('foreL', 'handL', _q3, dt);
       } else {
@@ -8778,6 +9018,7 @@ export class Player {
      * makes FOREARM.rate spend a fifth of a second walking the arm back from
      * wherever the corpse left it. See _rollForearm. */
     this._foreRoll.foreR.have = false; this._foreRoll.foreL.have = false;
+    this._elbow.armR.have = false; this._elbow.armL.have = false;
     this.alive = true;
     /* Everything die() took over comes back here, and it has to be here rather
      * than on the death card: co-op's revive puts a player back on their feet

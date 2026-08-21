@@ -633,13 +633,38 @@ export async function run({ check, assert }) {
      *
      *     71 stalls over 24 walks — 38 standing timber, 21 logs, 12 level boxes
      *
-     * So the climb took the logs from most of the stalls to under a third of
-     * them, and the ones left are real: a body that has climbed ONTO a trunk
-     * and is crossing it, which is a step-over that has not been finished
-     * rather than a wall. That is written down as an open item in BACKLOG.md
-     * rather than rounded off here — one attempt at widening the support
-     * sample for a climbable box made it worse (71 stalls to 88), which is
-     * exactly the kind of thing a wrong number in a comment stops you finding.
+     * ── AND THE ONES LEFT WERE NOT THE CLIMB EITHER ────────────────────────
+     *
+     * The sentence that stood here said the remaining log stalls were "a body
+     * that has climbed ONTO a trunk and is crossing it, which is a step-over
+     * that has not been finished". Half right: the body IS on the trunk. The
+     * step-over had nothing to do with it. Instrumented frame by frame
+     * (BACKLOG 8.1), on the frame it stops the body is grounded, `climbing` is
+     * false, the support query answers with the log's own top to the
+     * centimetre, the move axis is untouched and the velocity out of `_collide`
+     * is the same 3.31 m/s that went in. What was cancelling it was the SHOVE:
+     * `Player._collide` tested the body against dynamic props as a SPHERE of
+     * radius `boundingRadius`, which is the half-diagonal of the prop's box, so
+     * a realised twelve-metre trunk pushed radially out to six metres of empty
+     * air. Measured on the stalling frame: 0.0552 m of walk against 0.0551 m of
+     * shove, three logs in the list at once at 5.83, 3.95 and 5.36 m.
+     *
+     * Resolved against the prop's own box instead — the shape `topOfProps`
+     * already reads — the same 24 walks on the same seed give:
+     *
+     *     50 stalls — 26 standing timber, 15 logs, 9 level boxes
+     *
+     * and `tools/_wallsaudit.mjs`, which measures the same wood by the longest
+     * unbroken stop rather than by a count: the 4.22 s against a 0.85 m log is
+     * gone, seconds-stopped goes 53.3 → 31.6 over 240 s of walking, and the two
+     * walks that never got 4 m from where they started both get out.
+     * `standing: a felled trunk is a log, not a six-metre bubble` is the guard,
+     * and it reads 5.30 m of clear air on the commit before this one.
+     *
+     * The earlier attempt — widening the support sample for a climbable box —
+     * made it worse (71 stalls to 88) and is left recorded here because it is
+     * exactly the wrong place to have looked, and the wrong number in this
+     * comment is what would have kept the next reader looking there.
      *
      * A comment that states a measurement is a claim, and this file exists
      * because claims in this repository are held to the code.
