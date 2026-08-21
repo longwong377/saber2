@@ -30,6 +30,10 @@ import { BOLT_COLORS } from './Bolts.js';
 import { weather } from '../world/Scenery.js';
 import { clamp, lerp, damp, smoothstep, makeRng, TAU, dampVec } from '../engine/MathUtil.js';
 import { MORALE } from './Morale.js';
+/* THE HORDE'S HALF OF THE SAME LEDGER — FLAGSHIP §7's BREAK verb. A leaf, for
+ * the reason Morale.js's own header gives: Command.js imports this file, so
+ * anything this file imports may not reach Command. */
+import { NERVE, nerveAim, nerveBroken, nerveRefusing } from './Nerve.js';
 import { POWER_COST } from './Powers.js';
 /* `findCasualty` and `startDrag` are NOT imported here: the drag is a
  * commander's decision and `CommandDirector.steer` is where it is taken. They
@@ -2321,6 +2325,22 @@ export class Enemy {
      * state with a clock on it" is a second thing to keep in step. See DREAD.
      */
     this.dread = 0;
+    /**
+     * THIS BODY'S OWN NERVE, 0..1 — FLAGSHIP §7's BREAK verb, for a body with
+     * no roster record to keep one on.
+     *
+     * `aimQuality`'s own comment used to end "bodies with no morale (the horde)
+     * read 1", which was true and was the whole problem: §7's first verb is
+     * "walk into the front of a formation and it comes apart", and outside a
+     * meeting between two human commanders there was no formation with a nerve
+     * in it to come apart. See src/game/Nerve.js, which owns the table, the
+     * routing and the two thresholds — both of them MORALE's, because a
+     * soldier losing his nerve is one event.
+     *
+     * Starts at 1 and drifts back to 1, so nothing in the shipped game moves
+     * until a player is standing in the rank.
+     */
+    this.nerve = NERVE.START;
     /** Which modifier this body wears, if any — see MODIFIERS. */
     this.mod = null;
     this.fuse = 0;
@@ -3939,6 +3959,18 @@ export class Enemy {
         : lerp(0.9, 0.82, (m - cap) / Math.max(1 - cap, 1e-3));
     }
 
+    /**
+     * ── …AND THE BODY'S OWN NERVE, WHICH IS THE HORDE'S HALF OF THE TERM ABOVE
+     *
+     * The morale clause is gated on `this.trooper`, so it has always been the
+     * ROSTER's number and this line used to be the whole of what a body without
+     * a record had. `nerveAim` is the identity for a body that has one — the
+     * clause above already ran — and for the horde it is the same curve
+     * anchored at 1, so a full-nerve droid is exactly as accurate as it was
+     * before this shipped and a broken one is as bad as a broken trooper.
+     */
+    q *= nerveAim(this);
+
     // ── dread: the same effect, from outside, on a body that has no record
     if (this.dread > 0) q *= DREAD.aim;
 
@@ -4721,6 +4753,48 @@ export class Enemy {
     }
     if (wish.lengthSq() > 1) wish.normalize();
     this.wish = wish.clone();
+
+    /**
+     * ── AND A BODY THAT HAS LOST ITS NERVE STOPS HOLDING THE LINE ──────────
+     *
+     * FLAGSHIP §7's first verb, and it is the only place in this file where the
+     * ledger changes what a body DOES rather than how well it shoots:
+     *
+     *   "BREAK — walk into the front of a formation and it comes apart."
+     *
+     * TWO THRESHOLDS, BOTH `MORALE`'s, and they are the two `CommandDirector.
+     * steer` already uses on the other side of the field: below `BREAK` a body
+     * gives ground, and below `REFUSE` it has stopped answering altogether.
+     * One rulebook for both armies, which is what makes a Sith leading the
+     * Confederacy and a Jedi leading the Republic the same game.
+     *
+     * `!this.trooper` GATES IT, and that is not a duplicate of `nerveBroken`'s
+     * own routing. A body with a record is steered by `CommandDirector.steer`
+     * — which runs INSIDE `_move`, after this — and it has its own answer to
+     * being broken: it goes to ground behind something and keeps shooting from
+     * there. Letting this clause also fire would give one body two retreats,
+     * and the one that lost would be whichever ran second.
+     *
+     * IT GIVES GROUND AT AN ANGLE, for the reason the yielding band twenty
+     * lines above gives: a wish pointed exactly back down the line the player
+     * came in on reads as a body being shoved rather than one choosing to
+     * leave. The lateral term is the one it was already circling on, so a rank
+     * that breaks peels rather than reversing.
+     */
+    if (!this.trooper && nerveBroken(this)) {
+      _v3.copy(this.toTarget).multiplyScalar(-1).addScaledVector(side, 0.45);
+      if (_v3.lengthSq() > 1e-6) _v3.normalize();
+      this.wish = _v3.clone();
+      /* A body that will not take an order will not take a shot either. Above
+       * `REFUSE` it is still firing — badly, because `nerveAim` is reading the
+       * same number — which is what a line falling back while shooting looks
+       * like, and it is the difference between breaking a formation and
+       * switching it off. */
+      if (nerveRefusing(this)) return;
+      if (A.melee) return;
+      this._rangedBrain(dt, ctx, dist);
+      return;
+    }
 
     if (A.melee) this._meleeBrain(dt, ctx, dist);
     else this._rangedBrain(dt, ctx, dist);

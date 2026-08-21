@@ -24,6 +24,7 @@ import { Enemy, ARCHETYPES, applyModifier, ENEMY_POWERS, FORCE_KINDS, IMPULSE_AS
 import { WaveDirector, RankSet, boonTick, boonGuard, bondReceive, bondGuardIn, bondGive, BOND, boonById, MODES,
   skirmishConfig, SKIRMISH } from './Waves.js';
 import { Communion, FACETS, insightRate } from './LivingForce.js';
+import { nerveTick, witnessDeath, turnedHome, shakeNerve, nerveOf, NERVE } from './Nerve.js';
 /**
  * What "open" is worth, in Insight — and it was a quarter of what it promised.
  *
@@ -2961,6 +2962,35 @@ export class World {
       } else p.update(dt, ctx);
     }
 
+    /**
+     * 1b — THE HORDE'S NERVE. FLAGSHIP §7's BREAK verb, per second.
+     *
+     * BEFORE the bodies think, so a body that broke this frame gives ground on
+     * this frame rather than on the next one — the same ordering argument
+     * `CommandDirector.rallyNear` makes about its own rally ("a man who was
+     * running stops running THIS frame rather than at the top of the next").
+     *
+     * Once for the whole field rather than once per body: the expensive half is
+     * the list of lit blades and there are at most four of them. Bodies with a
+     * roster record are skipped inside `nerveTick`, because `CommandDirector.
+     * _morale` runs its own per-second pass over exactly those.
+     *
+     * ON THE HOST ONLY. A client's bodies are placed from the wire and their
+     * brains do not run (`netDriven`), so a second nerve drifting locally would
+     * be a number the two machines disagree about with nothing to reconcile it.
+     */
+    if (this.netMode !== 'client') {
+      this._nerveBlades = this._nerveBlades || [];
+      this._nerveBlades.length = 0;
+      for (const b of this._bladeEntries()) {
+        if (!b.saber || b.saber.ignition < 0.6) continue;
+        const owner = b.owner;
+        if (!owner || owner.dead || owner.alive === false) continue;
+        this._nerveBlades.push({ position: owner.position, team: asTeam(owner.team) });
+      }
+      nerveTick(this.enemies, this._nerveBlades, dt);
+    }
+
     // 2 — enemies. On a client the body is placed from the wire FIRST, so the
     // pose that follows is solved against a velocity that is the host's own.
     if (this.netMode === 'client') this._stepNetEnemies(dt, ctx);
@@ -4162,6 +4192,27 @@ export class World {
         const vital = c.vital ?? 0.4;
         const dmg = bolt.damage * lerp(0.6, 1.9, vital) * open;
         const killed = e.damage(dmg, hit, bolt.owner, 'bolt');
+        /**
+         * ── AND A BOLT SENT HOME BREAKS A NERVE. FLAGSHIP §7's SECOND VERB ──
+         *
+         *   "TURN — a returned bolt that kills its firer counts on THEIR
+         *    morale ledger. Every bolt sent home deletes a rifle and breaks a
+         *    nerve. Only 5% RETURN / 9% PERFECT by speed alone: a hundred hours
+         *    will not exhaust it."
+         *
+         * `witnessDeath` has already run inside `damage` — the rank pays for
+         * the body either way — and this is the SECOND fact: it was their own
+         * fire that did it. Three times the ordinary knock (see NERVE.TURNED),
+         * and it is the only term in that table a player earns by skill.
+         *
+         * `bolt.deflected` AND a deflector, not "the bolt hit the man who fired
+         * it". The design's second sentence is the operative one: what breaks a
+         * rank is watching its own fire come back, and the return goes to
+         * whoever was under the reticle. The strict case — the firer himself —
+         * is a subset and `tools/checks/nerve.mjs` reports its share rather
+         * than the game paying differently for it.
+         */
+        if (killed && bolt.deflected && bolt.deflector) turnedHome(this.enemies, e);
         if (bolt.owner instanceof Player) {
           bolt.owner.score += killed ? 150 : 25;
           this.onHitmark?.(hit, killed ? 'kill' : 'hit');
@@ -4223,6 +4274,21 @@ export class World {
      */
     this.corpses?.take(enemy);
     this.command?.onDeath(enemy, source);
+    /**
+     * …AND THE MEN AROUND HIM SAW IT. FLAGSHIP §7's BREAK verb.
+     *
+     * ABOVE the casualty return below, and deliberately: a body coming apart
+     * eleven metres away is the same event whichever side it belonged to, and
+     * `witnessDeath` reads the side off the corpse so only its own rank pays.
+     * Putting it under the return would mean a formation only broke when the
+     * player was killing the army the composer happened to call the enemy.
+     *
+     * Bodies with a roster record are skipped inside `shakeNerve` — a name on a
+     * roll is `CommandDirector.shake`'s to move, and it does three more things
+     * with the event than this does (the log, the "IS BREAKING" call, the flag
+     * the steering reads). This is the half of the field that has no roll.
+     */
+    witnessDeath(this.enemies, enemy);
     /* BEFORE the casualty return below, and deliberately so: one of your own
      * troopers falling is not a reward, but it is still a body hitting the
      * ground three metres away and it has to make the sound and move the frame.

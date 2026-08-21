@@ -30,6 +30,9 @@ import { parryScale, TOUGHNESS, impactDamage } from './Combat.js';
  * Enemy.js imports nothing from this file, so the edge is one-way. */
 import { forceResistance, IMPULSE_AS_HP, limitBackpedal } from './Enemy.js';
 import { POWER_COST } from './Powers.js';
+/* FLAGSHIP §7's BREAK verb, and both are leaves — see the header of each. */
+import { MORALE } from './Morale.js';
+import { shakeNerve } from './Nerve.js';
 import { Stratagems, DIRS, DIR_ACTION } from './Stratagems.js';
 import { bodyOf } from '../engine/Presence.js';
 import { clamp, lerp, damp, smoothstep, dampVec, makeRng, TAU } from '../engine/MathUtil.js';
@@ -7540,6 +7543,22 @@ export class Player {
       if (d > UNLEASH.radius) continue;
       _v2.subVectors(e.position, this.position).setY(0.4).normalize();
       e.stun?.(UNLEASH.stun * (1 - 0.4 * d / UNLEASH.radius), _v2, 1.2);
+      /**
+       * …AND IT TAKES THEIR NERVE. FLAGSHIP §7's first verb names this power by
+       * name — "`unleash`, `dread`, then stand there so `JEDI_NEAR` holds your
+       * nerve while theirs goes" — and until the horde had a ledger there was
+       * nothing for the first word of that sentence to write to.
+       *
+       * `MORALE.SHAKEN` and not a number of its own: it is the same event
+       * `CommandDirector`'s DREAD verb causes, which is the table's one entry
+       * for "somebody reached into this body's nerve through the Force", and
+       * two constants for one sentence is the twin this repository keeps
+       * deleting. `shakeNerve` leaves a body with a roster record alone — that
+       * number is the director's — so in a meeting the other player's troopers
+       * are thrown and stunned by this and their morale is not silently
+       * rewritten from outside the one door that writes it.
+       */
+      shakeNerve(e, MORALE.SHAKEN);
     }
     /**
      * BOLTS ARE NOT TOUCHED, and that is a decision rather than an omission.
