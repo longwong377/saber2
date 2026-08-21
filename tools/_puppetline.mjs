@@ -112,7 +112,13 @@
  *  5. FIRE — muzzle flash, and every barrel on ONE bearing. A volley where the
  *     bearings disagree reads as panic, not as a firing line.
  *  6. TAKE COVER — crouch AND move to a piece of the level, not just crouch.
- *     Cover is a position before it is a pose.
+ *     Cover is a position before it is a pose, AND A POSITION IS A SCARCE
+ *     RESOURCE: the slots behind one rock are handed out, one man each, and the
+ *     men who do not get one go flat in the open instead. This clause is here
+ *     because the first run of this script did not have it — every man of the
+ *     line asked for the nearest box, all eighteen were sent to the same point,
+ *     and the plate came back with the line gone from the frame. A cover rule
+ *     that allocates nothing deletes the formation it was meant to save.
  *  7. GO DOWN — ragdoll, in the rank, and stay there.
  *  8. FALL BACK — walk BACKWARD, facing the enemy. This is the posture the
  *     whole taxonomy stands on: a retreat animated as a walk in the other
@@ -128,8 +134,49 @@
  * No gait blending, no transition animations and no per-body variation beyond
  * an interval jitter: the nine postures are switched between hard, on the beat,
  * and the animator's own damping is enough. And no faces, no rank paint, no
- * detail of any kind — every plate here is judged at 20-90 m where §11 says
+ * detail of any kind — every plate here is judged at 20-60 m where §11 says
  * only value and silhouette survive, and they do.
+ *
+ * ══════════════════════════════════════════════════════════════════════════
+ *  THE VERDICT — does the output read as a battle
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * YES, AND IT IS THE SILHOUETTE THAT CARRIES IT. Forty bodies on a hand-written
+ * script, with every brain switched off, produce a picture a person reads as an
+ * engagement: a dressed line, a line walking in step, a rank at two heights,
+ * an exchange of bolts across sixty metres, and — the strongest plate in the
+ * set — a line walking backward while still facing the enemy. Nothing in any of
+ * it is AI. §14's question is answered: the output is not the uncertain part.
+ *
+ * FOUR THINGS THE PLATES SAY THAT THE SCRIPT DID NOT SET OUT TO ASK:
+ *
+ * 1. THE LINE READS AS ONE FLAT BLACK SILHOUETTE, and clone armour authored at
+ *    `0xe8e9ec` never appears. The eye is on the shadow side of the bodies, so
+ *    the two-tone cel shading collapses to the dark tone and forty men become a
+ *    paper cut-out. It is legible AS a line — which is the point of §11's
+ *    "value, not hue, at scale" — but nothing in it carries rank, faction or
+ *    role, and the officer's 1.15× is invisible. A flagship that means to read
+ *    rank at 6-19 px cannot leave which side of a body the sun is on to chance.
+ *    The eye-level plate is the control: the same men, 4.3 m lower, show their
+ *    armour panels, because that eye catches the lit side.
+ *
+ * 2. §4's COMPRESSION CLAIM IS TRUE AND VISIBLE. From 6.4 m the near line at
+ *    20 m and the far line at 60 m are two distinct bands; from 2.1 m they are
+ *    one band and you cannot tell which bodies are which army. The flagship's
+ *    camera cannot sit at a standing man's eye height on a plain.
+ *
+ * 3. A CASUALTY IS NOT AN EVENT YET. The body ragdolls where it stood and the
+ *    line keeps firing, which is exactly what was asked for — and at 20 m,
+ *    among eighteen other dark silhouettes, it is not legible as a man going
+ *    down. The CASUALTY role needs something the ragdoll does not provide: the
+ *    hole in the rank has to persist and be seen, or the fall has to be marked.
+ *
+ * 4. THE TIMELINE WALKED THE LINE INTO THE LEVEL. Seventeen metres of advance
+ *    authored in world coordinates put the rank astride a boulder that the
+ *    ground had dressed there. It cost nothing here — it gave TAKE COVER
+ *    something real to hide behind — but it is the first thing that will break
+ *    when this stops being a script: a formation on procedural ground has to
+ *    solve its slots against the dressing, not against a straight line.
  */
 
 import { chromium } from 'playwright-core';
@@ -341,7 +388,7 @@ const setup = await page.evaluate(async ([seed]) => {
 
   window.__PUP = {
     O, puppets, line, heavies, marks, runners, officer, far,
-    INTERVAL, RANK, t: 0, log: [], down: [],
+    INTERVAL, RANK, t: 0, log: [], down: [], shots: 0, misfires: [],
     gy: (x, z) => w.terrain.height(x, z),
   };
   return { spawned: puppets.length, onField: w.enemies.length, line: line.length, guns: heavies.length,
@@ -416,33 +463,89 @@ await page.evaluate(() => {
   const lerp = (a, b, k) => a + (b - a) * Math.max(0, Math.min(1, k));
   const ease = (k) => (k <= 0 ? 0 : k >= 1 ? 1 : k * k * (3 - 2 * k));
 
-  /* Cover, drawn once from the level's own dressing rather than invented:
-   * the nearest static box to each man, or a spot 4 m to his flank when the
-   * plain has nothing on it — Geonosis is bare by design. */
-  P.cover = P.line.map((e, i) => {
-    const boxes = w.physics?.staticBoxes || [];
-    let best = null, bd = 26 * 26;
-    for (const b of boxes) {
-      if (b.disabled) continue;
-      const dx = b.center.x - e.__home.x, dz = b.center.z - e.__home.z;
-      const d = dx * dx + dz * dz;
-      if (d < bd) { bd = d; best = b; }
-    }
-    if (best) {
-      const dx = best.center.x - e.__home.x, dz = best.center.z - e.__home.z;
-      const L = Math.hypot(dx, dz) || 1;
-      return { x: best.center.x - (dx / L) * (best.radius + 0.9),
-        z: best.center.z - (dz / L) * (best.radius + 0.9) };
-    }
-    /* No cover on the plain: the men go flat and SPREAD, which is the other
-     * thing a line under fire does and is legible as a change of shape. */
-    return { x: e.__home.x + (i % 2 ? 2.6 : -2.6), z: e.__home.z - 3.2 - (i % 3) * 1.1 };
-  });
+  /**
+   * COVER IS ALLOCATED, ONE MAN PER SPOT — and this is the criterion the first
+   * run of this script had to fail to produce.
+   *
+   * The first version asked each man for the nearest static box and sent him to
+   * a point on its far side. Every man of an eighteen-strong line has the SAME
+   * nearest box, so all eighteen were sent to one point: the TAKE COVER plate
+   * came back with the line gone from the frame, piled behind one rock. (It
+   * was also arithmetically wrong on top of that — the cover points were solved
+   * off each man's ORIGINAL station and then had the advance added back, so
+   * they aimed 17.6 m past the rock they were hiding behind.)
+   *
+   * Both halves are worth keeping in the record, because they are the same
+   * lesson from two directions: cover is a POSITION before it is a pose, and a
+   * position is a scarce resource. The rule now solves off where a man is
+   * standing at the moment the order lands, and hands out slots along the lee
+   * face of the box — one man per slot, fanned 0.34 rad apart — so a rock that
+   * can hide three men hides three and the fourth goes flat on the open ground
+   * instead. On a plain with nothing on it, which is most of Geonosis by
+   * design, they go flat and SPREAD, which is the other thing a line under fire
+   * does and is legible as a change of shape.
+   *
+   * Solved once, at the moment the order lands, and not per frame: a body
+   * walking to cover must not have its destination recomputed underneath it.
+   */
+  P.coverAt = null;
+  P.lee = new Map();
+  window.__takeCover = () => {
+    const P2 = window.__PUP;
+    if (P2.coverAt) return;
+    const boxes = (w.physics?.staticBoxes || []).filter((b) => !b.disabled);
+    P2.coverAt = P2.line.map((e, i) => {
+      const at = e.netTarget;
+      let best = null, bd = 20 * 20;
+      for (const b of boxes) {
+        const dx = b.center.x - at.x, dz = b.center.z - at.z;
+        const d = dx * dx + dz * dz;
+        if (d < bd) { bd = d; best = b; }
+      }
+      /* THE LEE IS THE SIDE AWAY FROM THE ENEMY, who are at +Z for the whole
+       * of this script — a body that takes cover on the near face of a rock is
+       * a body standing in the open with a rock behind it. */
+      const used = P2.lee.get(best) || 0;
+      if (best && used < 3) {
+        P2.lee.set(best, used + 1);
+        const a = Math.PI + (used % 2 ? 1 : -1) * Math.ceil(used / 2) * 0.34;
+        const r = best.radius + 1.1;
+        return { x: best.center.x + Math.sin(a) * r, z: best.center.z + Math.cos(a) * r };
+      }
+      return { x: at.x + (i % 2 ? 3.1 : -3.1) + (i % 3) * 0.8, z: at.z - 3.6 - (i % 4) * 1.3 };
+    });
+  };
 
   /** ADVANCE distance, in metres, as a function of t. One pace: 1.35 m/s. */
   const advanceAt = (t) => (t <= 5 ? 0 : t >= 18 ? 17.6 : (t - 5) * 1.35);
   /** FALL BACK distance, backward, from t = 46. */
   const backAt = (t) => (t <= 46 ? 0 : Math.min(11.5, (t - 46) * 1.15));
+
+  /**
+   * PULL A TRIGGER — and it takes the world's OWN bolt pool, which is the one
+   * thing this file got wrong that a screenshot could not show it.
+   *
+   * `Enemy._shoot(ctx)` reads exactly one field off its argument,
+   * `ctx.bolts.fire(...)`, and the first version of this probe handed it `{}`
+   * inside a try/catch. Every shot threw `Cannot read properties of undefined
+   * (reading 'fire')`, the catch swallowed all eighteen, and the VOLLEY plate
+   * came back looking exactly like the HALT plate — a kneeling rank and no
+   * bolts. It read as a finding about the game (bolts too thin to see at 20 m
+   * on an orange ground) and it was a defect in the instrument, which is
+   * HANDOFF §2.5's whole subject: four of one day's apparent game defects were
+   * harnesses lying. It was caught by driving `_shoot` on a bench and printing
+   * the exception instead of believing the picture.
+   *
+   * So the trigger takes the real pool and NOTHING is swallowed: a throw is
+   * counted and surfaced in the manifest, because a silent catch around the
+   * one call this script makes into the game is the only place a beat can fail
+   * without the beat sheet noticing.
+   */
+  const fire = (e) => {
+    if (!e || e.dead) return;
+    try { e._shoot({ bolts: w.bolts }); window.__PUP.shots++; }
+    catch (err) { window.__PUP.misfires.push(String(err && err.message || err)); }
+  };
 
   window.__pose = (t) => {
     const P2 = window.__PUP;
@@ -450,6 +553,8 @@ await page.evaluate(() => {
     const adv = advanceAt(t);
     const back = backAt(t);
     const kneel = t >= 19 && t < 46 ? 1 : 0;
+    /* The order lands at 37 and the slots are handed out on that frame. */
+    if (t >= 37 && !P2.coverAt) window.__takeCover();
     const coverK = ease((t - 37) / 3.2) * (t < 46 ? 1 : 0);
     const dress = ease((t - 54) / 3);
 
@@ -469,10 +574,10 @@ await page.evaluate(() => {
       const dressedZ = P2.O.z - r2 * P2.RANK + adv - back;
       let x = lerp(home.x, dressedX, dress);
       let z = lerp(home.z + adv - back, dressedZ, dress);
-      if (coverK > 0) {
-        const c = P2.cover[i];
-        x = lerp(x, c.x + adv * 0, coverK);
-        z = lerp(z, c.z + adv, coverK);
+      if (coverK > 0 && P2.coverAt) {
+        const c = P2.coverAt[i];
+        x = lerp(x, c.x, coverK);
+        z = lerp(z, c.z, coverK);
       }
       e.netTarget.set(x, P2.gy(x, z), z);
       /* FACING IS INDEPENDENT OF TRAVEL, always. That one property is what
@@ -539,20 +644,19 @@ await page.evaluate(() => {
        */
       const VOLLEY = 1.5;
       const rank = P2.line.filter((e) => e.__downAt == null);
-      if ((t - 24) % VOLLEY < 1 / 30) {
-        for (const e of rank) if (!e.dead) { try { e._shoot({}); } catch (err) { /* no ctx needed */ } }
-      }
-      P2.heavies.forEach((e, i) => {
-        if ((t + i * 0.05) % 0.22 < 1 / 30 && !e.dead) { try { e._shoot({}); } catch (err) { /* ignore */ } }
-      });
-      P2.far.forEach((e, i) => {
-        if ((t + i * 0.11) % 1.4 < 1 / 30 && !e.dead) { try { e._shoot({}); } catch (err) { /* ignore */ } }
-      });
+      if ((t - 24) % VOLLEY < 1 / 30) for (const e of rank) fire(e);
+      P2.heavies.forEach((e, i) => { if ((t + i * 0.05) % 0.22 < 1 / 30) fire(e); });
+      P2.far.forEach((e, i) => { if ((t + i * 0.11) % 1.4 < 1 / 30) fire(e); });
     }
 
     /* ── A MAN GOES DOWN, at 32.0, in the front rank, in the middle. ──── */
     if (t >= 32 && !P2.down.length) {
-      const victim = P2.line[8] || P2.line[0];
+      /* THE NEAR END OF THE FRONT RANK, so the body that goes down is the one
+       * the camera can actually see go down: the line is dressed along X and
+       * the eye is off its −X flank, so index 2 is the second file in and the
+       * front rank. A casualty mid-rank is a casualty behind seventeen other
+       * silhouettes, which is a different beat. */
+      const victim = P2.line[2] || P2.line[0];
       if (victim) {
         victim.__downAt = t;
         P2.down.push(victim.name || 'a trooper');
@@ -568,17 +672,37 @@ await page.evaluate(() => {
 /*  Play it, and render at the beats                                      */
 /* ══════════════════════════════════════════════════════════════════════ */
 
-/** The eye. Off the line's left flank, looking along the rank into the depth,
- *  so the two ranks separate and the far line sits behind them. */
-const EYE = { back: 22, side: -20, height: 6.4, low: 2.1 };
+/**
+ * THE EYE, AND IT TRACKS THE LINE — which the first set of plates is the
+ * argument for.
+ *
+ * A fixed camera was the obvious choice and it is what `_frontshot.mjs` does,
+ * for a good reason there: those plates are ABOUT the ground and have to be the
+ * same viewpoint to the pixel or they cannot be put in order. These plates are
+ * about BODIES, and the line walks 17.6 m downrange between the second beat and
+ * the third. Shot from a fixed eye behind it, the men were 45 px tall at FORM
+ * UP and would have been under 30 by the time they knelt — and §11's own number
+ * is that below about 19 px only value survives, so the single most important
+ * claim in the set (three heights in one silhouette) would have been taken at
+ * exactly the range that cannot show it.
+ *
+ * So the eye holds a STANDOFF from the officer, who is the body every slot is
+ * solved from anyway. Every plate is the same distance and the same bearing;
+ * what moves is the ground under both.
+ */
+const EYE = { back: 16, side: -13, height: 4.6, low: 2.1 };
 
 await page.evaluate((E) => {
   const w = window.SABER.world, P = window.__PUP;
   window.__eye = (height) => {
     const c = w.engine.camera;
-    const x = P.O.x + E.side, z = P.O.z - E.back;
+    /* The line's own centre, read off the officer's live position rather than
+     * off the script's arithmetic — one authority, and it is the body the
+     * formation is dressed on. */
+    const cz = (P.officer ? P.officer.position.z : P.O.z - 3.4) + 3.4;
+    const x = P.O.x + E.side, z = cz - E.back;
     const y = P.gy(x, z) + height;
-    const tx = P.O.x + 1, tz = P.O.z + 20, ty = P.gy(tx, tz) + 1.4;
+    const tx = P.O.x + 1, tz = cz + 6, ty = P.gy(tx, tz) + 1.2;
     c.position.set(x, y, z);
     c.lookAt(tx, ty, tz);
     c.fov = 55;
@@ -602,7 +726,8 @@ const playTo = (t) => page.evaluate((target) => {
     steps++;
   }
   return { t: +P.t.toFixed(2), steps, alive: w.enemies.filter((e) => !e.dead).length,
-    down: P.down.slice() };
+    down: P.down.slice(), shots: P.shots, misfires: P.misfires.slice(0, 3),
+    bolts: w.bolts?.bolts?.filter?.((b) => b && b.active).length ?? -1 };
 }, t);
 
 const manifest = { step: 3, seed: SEED, quality: QUALITY, settle: SETTLE,
@@ -630,8 +755,11 @@ for (const b of BEATS) {
   }, SETTLE);
   const file = join(OUT, b.file + '.png');
   await page.screenshot({ path: file, timeout: 300000 });
-  say(`  ${b.at.toFixed(1).padStart(5)}s  ${b.name}  →  ${b.file}.png  (${state.alive} standing)`);
-  manifest.beats.push({ ...b, standing: state.alive, fallen: state.down, steps: state.steps });
+  say(`  ${b.at.toFixed(1).padStart(5)}s  ${b.name}  →  ${b.file}.png  `
+    + `(${state.alive} standing, ${state.shots} shots fired, ${state.bolts} bolts live`
+    + `${state.misfires.length ? `, MISFIRE: ${state.misfires[0]}` : ''})`);
+  manifest.beats.push({ ...b, standing: state.alive, fallen: state.down, steps: state.steps,
+    shots: state.shots, boltsInAir: state.bolts, misfires: state.misfires });
 }
 
 const tail = await playTo(60);
