@@ -450,6 +450,87 @@ export async function run({ check, assert }) {
       + `and a ${ceiling.toFixed(1)} m ceiling`;
   });
 
+  check('powers: a crowd of shoves cannot move a body faster than the hardest one of them', () => {
+    /**
+     * WHAT TWENTY SHOVES ON ONE FRAME COST, AND WHY THE CHECK ABOVE COULD NOT
+     * SEE IT.
+     *
+     * That check pins how far ONE shove carries, and it has to take the push
+     * off the caster — "so the peak is one shove's and not two stacked" — to
+     * get a clean number. The thing it steps around is the defect: nothing
+     * bounded the stack. `applyKnockback` did `velocity.add(impulse)`, so N
+     * shoves in one frame were N times the impulse, and the population that
+     * finds that out is a RING, which the game fields as a matter of course.
+     *
+     * Measured before the bound, on the colosseum with twenty acolytes spawned
+     * together against an idle player: they are twenty identical bodies running
+     * one brain, so they all reach `pressed` on the same frame and nineteen
+     * pushes land inside frame 166. The ring is symmetric, its horizontal
+     * halves cancel exactly, and its `PUSH_LIFT` halves add — 19 x 10 m/s of
+     * pure lift, out at 190 m/s, apex **718 m**. tools/checks/cloth-cost.mjs
+     * met it as "0 of 20 enemies inside the cloth cut" and spent two sessions
+     * blaming the harness for holding two Worlds at once.
+     *
+     * SO THE SUBJECT HERE IS THE RATIO AND NOT A DISTANCE. Both halves of the
+     * bound are asked separately because a ring answers one of them for free:
+     * capping the SPEED alone leaves 27.9 m/s of surviving lift and a 16 m
+     * launch, because the only thing a symmetric ring has left to spend its
+     * length on is up. The comparison is against the same fixture driven with
+     * ONE shove, so nothing here is a constant that can drift away from
+     * `PUSH_SPEED`.
+     */
+    const ring = (n) => {
+      const { w, p, e, ctx } = bench('master', 2.2, 20);
+      e.breakCast();
+      /* An empty bar and a guard that has not already been beaten: the worst
+       * case for the stack, and the one the check above calls "bare". Damage 0
+       * because the subject is the shove — twenty shoves' worth of hp would
+       * kill the fixture and prove nothing about its velocity. */
+      p.staggerTimer = 0;
+      p.force = 0;
+      p.velocity.set(0, 0, 0);
+      const y0 = p.position.y;
+      const at = e.position.clone();
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2;
+        p.applyKnockback(new THREE.Vector3(Math.cos(a), 0, Math.sin(a))
+          .multiplyScalar(PUSH_SPEED).setY(PUSH_LIFT), 0, e);
+      }
+      const speed = p.velocity.length();
+      let apex = 0, carried = 0;
+      for (let i = 0; i < 240; i++) {
+        ctx.time = w.time = i / 60;
+        p.update(1 / 60, ctx);
+        e.position.copy(at); e.velocity.set(0, 0, 0);
+        apex = Math.max(apex, p.position.y - y0);
+        carried = Math.max(carried, Math.hypot(p.position.x, p.position.z));
+      }
+      return { speed, apex, carried };
+    };
+    const one = ring(1), many = ring(20);
+    const hardest = Math.hypot(PUSH_SPEED, PUSH_LIFT);
+
+    assert(many.speed <= hardest + 0.01,
+      `twenty shoves landing on one frame left the body at ${many.speed.toFixed(1)} m/s against the `
+      + `${hardest.toFixed(1)} m/s of a single one. Impulses are stacking: N shoves are N times the `
+      + 'shove, and a ring of duellists is a population the game fields every wave');
+    assert(many.apex <= one.apex * 1.25 + 0.05,
+      `a ring of twenty shoves threw the body ${many.apex.toFixed(2)} m up against ${one.apex.toFixed(2)} m `
+      + 'for one. A symmetric ring cancels its own horizontals, so every metre of a stacked shove is '
+      + 'spent on LIFT — this is the half of the bound a speed clamp alone does not cover, and '
+      + 'unbounded it is 718 m');
+    /* AND THE ONE-SHOVE ROW IS STILL THE ONE THE SIZING WAS DONE ON, which is
+     * what says the bound did not buy this by making every shove smaller. */
+    assert(one.speed > hardest - 0.01 && one.carried > ENEMY_POWERS.pull.band[0],
+      `a single shove now leaves the body at ${one.speed.toFixed(1)} m/s and carries it `
+      + `${one.carried.toFixed(2)} m — the bound has changed what one shove does, and the whole of `
+      + 'the sizing above rests on it not having');
+
+    return `one shove ${one.speed.toFixed(1)} m/s → ${one.carried.toFixed(2)} m out, ${one.apex.toFixed(2)} m up; `
+      + `twenty on one frame ${many.speed.toFixed(1)} m/s → ${many.apex.toFixed(2)} m up `
+      + `(unbounded: 190 m/s and 718 m)`;
+  });
+
   /* ══ 2. can a cast be broken? ══════════════════════════════════════ */
 
   check('powers: a stagger BREAKS a wind-up instead of freezing it', () => {

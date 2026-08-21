@@ -4149,9 +4149,10 @@ export class Enemy {
      * army surrounds stands in the same ring the player does: `unleash` alone
      * puts every body inside 9 m through this door on one frame. */
     if (impulse) {
-      const was = this.velocity.length();
+      const was = this.velocity.length(), wasUp = this.velocity.y;
       this.velocity.add(impulse);
       this.velocity.clampLength(0, Math.max(was, impulse.length()));
+      this.velocity.y = Math.min(this.velocity.y, Math.max(wasUp, impulse.y));
     }
     this.knockTimer = gentle ? 0.35 : 0.7;
     this.grounded = false;

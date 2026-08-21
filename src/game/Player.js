@@ -3050,17 +3050,33 @@ export class Player {
      * shoves from the same side already break that property (13.7 m, outside
      * the band); this restores it for any number of them.
      *
-     * THE WRONG ANSWER TRIED FIRST was clamping `velocity.y`, which is the
-     * symptom this particular ring produces and not the defect: a ring cancels
-     * its horizontals, a firing line does not, and the two-from-one-side case
-     * above would have sailed straight through it. So the bound is on the
-     * SPEED, and the ceiling is the largest thing acting on the body —
-     * whatever it was already doing, or this shove, whichever is bigger.
-     * A single shove is arithmetically unchanged, so every figure in
-     * `PUSH_SPEED`'s note still holds; a shove ACROSS a body's motion still
-     * turns it, because it barely lengthens a vector it is perpendicular to;
-     * and a body already falling faster than a shove is not slowed by being
-     * shoved sideways.
+     * THE RULE IS ONE SENTENCE WITH TWO HALVES, and it took both — the first
+     * attempt had only the second half and it is written down here because it
+     * measures well and is still wrong.
+     *
+     *   · SPEED. `clampLength` to the largest thing acting on the body,
+     *     whatever it was already doing or this shove, whichever is bigger.
+     *     On its own this fixes the firing line — two shoves from one side no
+     *     longer carry 13.7 m — and leaves the RING almost untouched, because
+     *     a ring's horizontals cancel to nothing and its 190 m/s of lift
+     *     survives the clamp as 27.9 m/s of lift, a 16 m launch off a move
+     *     whose whole apex is 2.1 m. Bounded and still not a shove.
+     *   · LIFT. So the vertical share is bounded the same way and separately:
+     *     no crowd may throw a body UP faster than the hardest single one of
+     *     them does. A ring is now one shove's lift, which is what the ring
+     *     ought to feel like.
+     *
+     * Neither half alone is the rule; `velocity.y` alone was the answer tried
+     * first and it is the symptom this particular ring happens to produce,
+     * not the defect.
+     *
+     * A single shove is arithmetically unchanged by both halves, so every
+     * figure in `PUSH_SPEED`'s note still holds. A shove ACROSS a body's
+     * motion still turns it, because it barely lengthens a vector it is
+     * perpendicular to. A body already falling is not slowed by being shoved
+     * sideways, and one already rising faster than a shove lifts is not
+     * dragged down to it — `max(wasUp, impulse.y)` is a ceiling on the
+     * addition, never a floor imposed on the body.
      *
      * PRE-EXISTING, and `2ed3d65` only moved the dice. At `d736f60` the same
      * twenty-body fixture launches on four of five `enemyRng` seeds and stays
@@ -3070,9 +3086,10 @@ export class Player {
      * is symmetric and a body the army surrounds is in the same ring.
      */
     if (impulse) {
-      const was = this.velocity.length();
+      const was = this.velocity.length(), wasUp = this.velocity.y;
       this.velocity.add(impulse);
       this.velocity.clampLength(0, Math.max(was, impulse.length()));
+      this.velocity.y = Math.min(this.velocity.y, Math.max(wasUp, impulse.y));
       this.grounded = false;
     }
     if (!gentle) this.staggerTimer = Math.max(this.staggerTimer, 0.22);
