@@ -4186,8 +4186,51 @@ export class World {
        * are already priced by the stagger, and multiplying incoming fire while
        * they are staggered is a death spiral rather than a mechanic.
        */
+      /**
+       * ── A BODY-SPHERE REJECT, BEFORE THE BONES ARE BUILT ──────────────────
+       *
+       * `Enemy.capsules()` rebuilds every bone of a body from its rig, every
+       * time it is asked, and this loop asked it for EVERY enemy on the field
+       * for EVERY bolt in the air. Measured on a real Geonosis with the blade
+       * lit and 39 live bodies: **463 calls a frame, 8,797 capsule entries, and
+       * 16.43 ms** — a quarter of a 60 Hz frame at a fifth of the body count
+       * FLAGSHIP §10 measured its own "39% of the frame" at. §10 lists this as
+       * item 3 and calls it "a live bug today", which it was.
+       *
+       * The blade path above already rejects on distance before it gathers; the
+       * bolt path had nothing. A segment-versus-sphere test on the body's own
+       * bound is the cheapest possible answer and it is exact in the direction
+       * that matters: a bolt that misses the sphere cannot touch a bone inside
+       * it, so nothing that could have been hit is dropped.
+       *
+       * THE SPHERE IS MEASURED, NOT GUESSED. A first attempt built it out of
+       * `radius` and `chestY`, and that is a trunk width and a chest height,
+       * neither of which is a bound: the fan below lost 134 of 13,320 bolts on
+       * the dwarf spider alone, whose legs stand its capsules 2.7 m up and well
+       * outside the hull radius. `boltBound` instead takes one `capsules()`
+       * call and wraps what the body ACTUALLY presents.
+       */
+      /* `_bolt4` and not a shared scratch: `segmentNear` builds its own
+       * working vectors out of `_v4`, `_v5`, `_a` and `_b`, so handing it one
+       * of those AS the point it is measuring to is handing it a variable it
+       * is about to overwrite. Measured with `_v4`: 5,585 of 13,320 fanned
+       * bolts changed their answer, which is a fifth of the roster's hit boxes
+       * going missing rather than an optimisation. */
+      const bound = this._noBoltReject ? null : boltBound(e);
+      if (bound) {
+        _bolt4.copy(e.position).setY(e.position.y + bound.y);
+        /* `segmentNear` with a degenerate second segment IS a segment-to-point
+         * test, and it is the same routine the bone pass below uses — one
+         * reader for "does this bolt come within r of that", rather than a
+         * second distance function that could disagree with it about a
+         * grazing hit. */
+        if (!segmentNear(from, to, _bolt4, _bolt4, bound.r)) continue;
+      }
       const open = openness(e);
       const caps = e.capsules();
+      /* Every pass that got through re-measures for free, so a pose that
+       * reaches further than the bake widens the sphere for the next bolt. */
+      if (bound) growBoltBound(e, caps);
       for (const c of caps) {
         if (c.shield) {
           const hit = segmentNear(from, to, c.p0, c.p1, c.r);
@@ -6354,6 +6397,71 @@ const DEFLECT_WHY = [
 /* ── helper: closest approach between two segments ───────────────────── */
 
 const _a = new THREE.Vector3(), _b = new THREE.Vector3();
+/* The bolt pass's own, for the reason its call site gives: `segmentNear`
+ * consumes `_v4`, `_v5`, `_a` and `_b` itself. */
+const _bolt4 = new THREE.Vector3();
+
+/**
+ * THE SPHERE THE BOLT BROAD PHASE REJECTS AGAINST.
+ *
+ * Baked from one `capsules()` call and cached on the body, as `{ y, r }`
+ * relative to `position`: every capsule endpoint, grown by its own radius, then
+ * a margin for the swing of a pose the bake did not happen to catch. Bolts that
+ * DO get through re-measure through `growBoltBound`, so the sphere only ever
+ * widens and a body that reaches further than its bake fixes itself.
+ *
+ * Returns null — meaning "test every bone, reject nothing" — for a ragdoll.
+ * A ragdoll's capsules are placed by the solver and sprawl metres from
+ * `position`, which is still standing where the body fell; no sphere centred
+ * there is honest, and there are few enough loose corpses that the saving is
+ * not worth a wrong answer.
+ */
+function boltBound(e) {
+  if (e.actor?.ragdolled) return null;
+  /* The bubble is a capsule too, so a shield coming up or going down changes
+   * what the body presents. Rebake rather than carry a stale bound. */
+  const sh = !!e.shieldUp;
+  let b = e._boltBound;
+  if (!b || b.shield !== sh) {
+    b = e._boltBound = { y: 0, r: 0, shield: sh };
+    const caps = e.capsules();
+    if (!caps.length) { e._boltBound = null; return null; }
+    let lo = Infinity, hi = -Infinity;
+    for (const c of caps) {
+      /* A non-finite endpoint is skipped rather than folded in, because one
+       * NaN would make the whole sphere NaN and a NaN radius rejects EVERY
+       * bolt — the body would stop being shootable entirely. `segmentNear`
+       * already answers a NaN capsule with a miss, so skipping it here agrees
+       * with the bone pass instead of amplifying it. (A live one: the droideka
+       * presented three, see the `walkPhase` note in Enemy.js.) */
+      if (!Number.isFinite(c.p0.y) || !Number.isFinite(c.p1.y)) continue;
+      lo = Math.min(lo, c.p0.y - c.r, c.p1.y - c.r);
+      hi = Math.max(hi, c.p0.y + c.r, c.p1.y + c.r);
+    }
+    if (!Number.isFinite(lo) || !Number.isFinite(hi)) { e._boltBound = null; return null; }
+    b.y = (lo + hi) * 0.5 - e.position.y;
+    b.r = 0;
+    growBoltBound(e, caps);
+  }
+  return b;
+}
+
+/** Widen a baked bound to hold `caps`. Cheap: it is called only where the
+ *  capsules were gathered anyway. `BOLT_BOUND_SLACK` is roughly a forearm —
+ *  enough that an arm thrown out between two frames is inside the sphere
+ *  before the growth below has seen it. */
+const BOLT_BOUND_SLACK = 0.75;
+function growBoltBound(e, caps) {
+  const b = e._boltBound;
+  if (!b) return;
+  _bolt4.copy(e.position).setY(e.position.y + b.y);
+  let far = b.r - BOLT_BOUND_SLACK;
+  for (const c of caps) {
+    if (!Number.isFinite(c.p0.y) || !Number.isFinite(c.p1.y)) continue;
+    far = Math.max(far, _bolt4.distanceTo(c.p0) + c.r, _bolt4.distanceTo(c.p1) + c.r);
+  }
+  b.r = far + BOLT_BOUND_SLACK;
+}
 /**
  * Where a segment ENTERS a sphere, or null.
  *

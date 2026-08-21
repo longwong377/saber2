@@ -2591,6 +2591,25 @@ export class Enemy {
      */
     if (A.float && this.hoverPhase === undefined) this.hoverPhase = rng() * TAU;
 
+    /**
+     * …AND THE SAME HOLE SWALLOWED THE DROIDEKA'S LEGS.
+     *
+     * `walkPhase` was initialised in the rigged-but-not-biped branch only, and
+     * a droideka is neither: it is the `else` above, a bespoke group. So
+     * `_poseDroideka` ran `(undefined + dt * …) % 1` on its first frame, and
+     * NaN sticks — it feeds back into itself every frame after. The visible
+     * end of it is in `capsules()`, which reads the leg bones' world
+     * positions: every droideka in the game presented THREE LEG CAPSULES WITH
+     * A NON-FINITE ENDPOINT, and `segmentNear` answers a NaN segment with a
+     * miss. Its legs could not be shot off and could not be cut off, so the
+     * topple at two legs lost (`legsLost >= 2`) was unreachable and the only
+     * way to stop one was its core.
+     *
+     * Keyed off having the field rather than off which builder ran, for the
+     * reason the note above gives.
+     */
+    if (this.walkPhase === undefined) this.walkPhase = rng();
+
     // weapon
     if (A.weapon) {
       this.weapon = buildBlaster(A.weapon);
