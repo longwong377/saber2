@@ -52,7 +52,14 @@ function stubWorld() {
   };
 }
 
-function stubInput() {
+/**
+ * `oneHand` HOLDS THE ONE-HAND KEY. There is no other way to ask for one hand:
+ * `Player.handsOnHilt` reads the body, and `grip2` is what a player presses.
+ * The `fpHands` option that used to stand in for it is gone, and it was never
+ * the same thing — it moved the ARMS and left the blade on `GRIPS.two`, so
+ * every bench that reached for it measured a guard nobody can hold.
+ */
+function stubInput(oneHand = false) {
   const keys = new Set();
   return {
     keys, buttons: [false, false, false],
@@ -62,7 +69,9 @@ function stubInput() {
       out.y = (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0);
       return out;
     },
-    act: (id) => (id === 'blade' ? true : id === 'sprint' ? keys.has('ShiftLeft') : false),
+    act: (id) => (id === 'blade' ? true
+      : id === 'grip2' ? oneHand
+        : id === 'sprint' ? keys.has('ShiftLeft') : false),
     actHit: () => false,
   };
 }
@@ -636,36 +645,78 @@ export async function run({ check, assert }) {
     // The attractive wrong answer — that the tunnel a fist makes is oblique, so
     // tilting GRIP_BORE's axis 25-35 degrees would move the floor — is refuted
     // by `tools/_bore.mjs` against buildHand's own fingers: 2.9 degrees.
-    const world = stubWorld();
-    const p = new Player(world, { isLocal: true });
-    const input = stubInput();
-    const ctx = { input, terrain: null, physics: null, particles: null,
-      camera: world.engine.camera, time: 0, groundColor: 0 };
-    p.saber.ignite(); p.saber.ignition = 1;
-    input.buttons[0] = true;
-    let worstWrist = 0, worstFore = 0;
-    let prev = null;
-    const qf = new THREE.Quaternion();
-    for (let i = 0; i < 260; i++) {
-      ctx.time = world.time = i / 60;
-      input.mouse.dx = Math.cos(i / 22) * -34;
-      input.mouse.dy = Math.sin(i / 22) * -22;
-      p.update(1 / 60, ctx);
-      if (i < 90) continue;
-      const b = p.rig.get('handR');
-      worstWrist = Math.max(worstWrist, b.obj.quaternion.angleTo(b.restQuat));
-      p.rig.worldQuat('foreR', qf);
-      if (prev) worstFore = Math.max(worstFore, qf.angleTo(prev));
-      prev = qf.clone();
-    }
+    //
+    // ── AND IT IS RATCHETED ON FOUR ARMS, NOT ONE ─────────────────────────
+    //
+    // This bench ran one condition — third person, both hands — for its whole
+    // life, and the other three were not merely unratcheted, they were
+    // unreachable: the only way anything asked for one hand was an `fpHands`
+    // option that moved the arms and left the blade's grip model alone. So the
+    // first time a bench actually held the one-hand key, first person read
+    // 167.6° and 3002°/s, both past the bounds below, and had been shipping
+    // that way. `FP_TUNE.roll` is a pair now (see Player.js) and the four
+    // conditions come out:
+    //
+    //                              worst   median   forearm °/s
+    //     third person, two hands   89.4    36.7      2476
+    //     third person, one hand    79.0    14.7      1112
+    //     first person, two hands  115.1    65.8      1605
+    //     first person, one hand   102.3    76.7      2429
+    //
+    // The bounds are each condition's own measurement with the margin this
+    // check has always carried — about 6% on the wrist (95 against 89.4) and
+    // 9% on the forearm (2700 against 2476) — rather than one number that
+    // would be slack for two of the four and unreachable for the others.
+    // FIRST PERSON IS THE WORST ARM IN THE TABLE and that is geometry rather
+    // than a defect left standing: the hilt is held out in the eyeline, the arm
+    // is nearly straight, and a straight arm's elbow swivel cone collapses, so
+    // `_wristPole` has almost nothing to bend. One hand is the strongest lever
+    // available on it and it is worth 115.1 → 102.3 on the worst frame while
+    // the MEDIAN goes the other way, 65.8 → 76.7. It does not close the gap.
     const D = 180 / Math.PI;
-    assert(worstWrist * D < 95,
-      `the wrist reaches ${(worstWrist * D).toFixed(1)}° from rest — worse than the 89.4° the wrist-driven `
-      + 'elbow achieves, and past what a wrist can do at all');
-    assert(worstFore * D * 60 < 2700,
-      `the forearm turns at ${(worstFore * D * 60).toFixed(0)}°/s — worse than the 2476°/s the solved grip achieves`);
-    return `wrist reaches ${(worstWrist * D).toFixed(1)}° from rest (179.7 → 114.4 → this), `
-      + `forearm peaks at ${(worstFore * D * 60).toFixed(0)}°/s, down from 7052`;
+    const rows = [];
+    for (const [name, firstPerson, oneHand, wristMax, foreMax] of [
+      ['third person, two hands', false, false, 95, 2700],
+      ['third person, one hand', false, true, 84, 1250],
+      ['first person, two hands', true, false, 122, 1800],
+      ['first person, one hand', true, true, 109, 2700],
+    ]) {
+      const world = stubWorld();
+      const p = new Player(world, { isLocal: true });
+      if (firstPerson) { p.camera.firstPerson = true; p._applyViewMode(); }
+      const input = stubInput(oneHand);
+      const ctx = { input, terrain: null, physics: null, particles: null,
+        camera: world.engine.camera, time: 0, groundColor: 0 };
+      p.saber.ignite(); p.saber.ignition = 1;
+      input.buttons[0] = true;
+      let worstWrist = 0, worstFore = 0, hands = 0;
+      let prev = null;
+      const qf = new THREE.Quaternion();
+      for (let i = 0; i < 260; i++) {
+        ctx.time = world.time = i / 60;
+        input.mouse.dx = Math.cos(i / 22) * -34;
+        input.mouse.dy = Math.sin(i / 22) * -22;
+        p.update(1 / 60, ctx);
+        if (i < 90) continue;
+        hands = Math.max(hands, p.handsOnHilt());
+        const b = p.rig.get('handR');
+        worstWrist = Math.max(worstWrist, b.obj.quaternion.angleTo(b.restQuat));
+        p.rig.worldQuat('foreR', qf);
+        if (prev) worstFore = Math.max(worstFore, qf.angleTo(prev));
+        prev = qf.clone();
+      }
+      // …and the run says which arm it measured, or a column can quietly be
+      // the wrong one — the whole reason the one-handed grip went unmeasured.
+      assert(hands === (oneHand ? 1 : 2),
+        `${name}: the bench meant ${oneHand ? 1 : 2} hands on the hilt and the body read ${hands}`);
+      assert(worstWrist * D < wristMax,
+        `${name}: the wrist reaches ${(worstWrist * D).toFixed(1)}° from rest against a ${wristMax}° bound — `
+        + 'past what a wrist can do at all');
+      assert(worstFore * D * 60 < foreMax,
+        `${name}: the forearm turns at ${(worstFore * D * 60).toFixed(0)}°/s against a ${foreMax}°/s bound`);
+      rows.push(`${name} ${(worstWrist * D).toFixed(1)}° / ${(worstFore * D * 60).toFixed(0)}°/s`);
+    }
+    return `${rows.join(', ')} — the first was 179.7° and 7052°/s`;
   });
 
   /* ══════════════════════════════════════════════════════════════════ */
