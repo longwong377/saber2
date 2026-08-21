@@ -1485,6 +1485,111 @@ export function atmosphereMeter(a) {
     exposure: clamp((a.exposure ?? 1.05) * trim, 0.2, 3.0) };
 }
 
+/**
+ * THE TONE CURVE, AS ITS OWN COMPILATION UNIT — so that a check can RUN it.
+ *
+ * Everything about the grade used to live inside `main()`, and `main()` has
+ * `for` loops and `texture2D` in it, which is outside what
+ * `tools/checks/_glsl.mjs` models. So the only way to measure this curve from
+ * Node was to transcribe it into JS beside the assertion, which is exactly the
+ * defect `_glsl.mjs` was written to end: `lighting.mjs` carried
+ * `const black = 0.018, curve = 0.32` under a comment saying "modelled exactly
+ * as the composite does it", and a later pass had to pin three literal source
+ * lines with a regex to stop the twin drifting away from the shader.
+ *
+ * Split out, the curve is four statements of scalar arithmetic with no loop,
+ * no sampler and no varying in it — which `glslFn` can compile and evaluate
+ * directly. The check that guards the dark end calls THIS STRING. There is no
+ * twin left to drift.
+ */
+export const GRADE_GLSL = /* glsl */`
+  uniform float uBlack, uCurve, uContrast, uKnee;
+
+  /** The filmic curve itself, per channel, in display space. */
+  vec3 tone(vec3 col){
+    // black point: something in the frame has to actually be black
+    col = max(col - uBlack, 0.0) / (1.0 - uBlack);
+
+    // filmic S about the midtones. smoothstep is a hermite S — steeper in
+    // the middle, gentle at both ends — so it adds bite without clipping.
+    col = mix(col, col * col * (3.0 - 2.0 * col), uCurve);
+    col = (col - 0.5) * uContrast + 0.5;
+    return col;
+  }
+
+  /**
+   * …AND WHAT IT IS ALLOWED TO DO TO THE BOTTOM OF THE FRAME.
+   *
+   * tone above is three operators that every one of them takes value away
+   * from a dark pixel, and it was applied to the whole range. Tabulated
+   * straight out of the shipped uniforms, as an OUTPUT ÷ INPUT gain:
+   *
+   *     in    0.02   0.04   0.06   0.11   0.18   0.25   0.35   0.50   0.71
+   *     gain  −0.93  −0.09   0.20   0.49   0.67   0.78   0.88   0.98   1.04
+   *
+   * Two things are wrong with that and only one of them was known.
+   *
+   * THE KNOWN ONE is the ×0.49 in NEXT.md — a dark level's ground arriving at
+   * half the value the renderer drew it at, so the level reads muddy rather
+   * than dark. The same operator at the same strength takes nothing at all off
+   * a bright level's ground, because the exposure meter deliberately leaves
+   * each level as dark as it was authored (see METER_TRIM) and this curve then
+   * compounds with it: the darker a level is authored, the harder it is
+   * crushed, which is the same inversion of the art direction the meter itself
+   * was fixed for.
+   *
+   * THE UNKNOWN ONE is in the first two columns. The curve goes NEGATIVE below
+   * 0.043 — the black point subtracts, and the contrast pivot at 0.5 subtracts
+   * again — and max(col, 0.0) at the end of main() clamps it. So the bottom
+   * ELEVEN of 255 code values were all mapped onto pure black. On a cel-shaded
+   * frame that is not a subtle loss: a flat band, an ink line and a cast
+   * shadow that the renderer drew as three different colours arrive on screen
+   * as the same pixel, and the whole point of src/toon/REFERENCE.md's first
+   * rule is that a surface reads as ONE DELIBERATE COLOUR. The existing check
+   * could not see it — it asserted apply(0) < 0.005 and the answer was
+   * −0.0208, which passes that bound by being further wrong.
+   *
+   * So below uKnee the curve becomes a STRAIGHT LINE THROUGH THE ORIGIN, at
+   * the slope the curve itself has at the knee (tone(knee)/knee). Three
+   * properties come out of that shape and each is why it was chosen over the
+   * alternatives:
+   *
+   *   • Black is still black and nothing else is. The line passes through the
+   *     origin, so 0 maps to 0 and every value above it maps above it. No
+   *     clipping, at any input.
+   *   • A dark band keeps its exact colour. A straight line through the origin
+   *     is a SCALE, and a scale applied to all three channels preserves their
+   *     ratios exactly — hue and chroma survive the grade untouched, and only
+   *     the value moves. That is the whole difference between "dark" and
+   *     "muddy", and it is the property a per-channel curve cannot have.
+   *   • Nothing above the knee moves by a bit. step selects, it does not
+   *     blend, and the two branches are equal at the knee — so a bright
+   *     level's ground, its lit bands and the midtone slope the frame's
+   *     contrast is built on are byte-identical to what shipped.
+   *
+   * WHERE THE KNEE IS is the look call, and it was measured rather than
+   * chosen. tools/gradeprobe.mjs shoots one pinned frame per level twice,
+   * with the composite on and bypassed. The knee has to sit ABOVE the whole of
+   * a dark level's near ground and BELOW a bright level's, and that gap is
+   * wide: see the table in tools/checks/lighting.mjs. 0.28 is inside it with
+   * room at both ends, and it is also the largest value that keeps the shadows
+   * being pulled DOWN rather than lifted — the graded value at 0.14 is 0.114
+   * against that check's 0.119 ceiling, and at 0.32 the toe would breach it.
+   *
+   * An earlier draft rolled the curve off toward the identity instead, so the
+   * deep end kept its value outright. It was rejected on its own arithmetic:
+   * coming back from identity to the shipped curve by the knee needs a stretch
+   * where the slope drops to about 0.35, and a slope under 1 is band
+   * separation being COMPRESSED — precisely in the range a dark level lives
+   * in. The straight toe's slope is 0.811 and it is 0.811 everywhere, so the
+   * bands stay as far apart, relatively, as the renderer drew them.
+   */
+  vec3 gradeCurve(vec3 col){
+    float toe = tone(vec3(uKnee)).x / uKnee;
+    return mix(col * toe, tone(col), step(vec3(uKnee), col));
+  }
+`;
+
 /* ── composite shader ────────────────────────────────────────────────── */
 
 /**
@@ -1598,6 +1703,10 @@ export const CompositeShader = {
     uBars:       { value: 0 },
     uBlack:      { value: 0.018 },  // where black actually is
     uCurve:      { value: 0.32 },   // filmic S, applied in display space
+    /** Below this, the curve is a straight line through the origin. See the
+     *  long note on `gradeCurve` in GRADE_GLSL — this is the one number in the
+     *  grade that decides whether a dark level reads as dark or as muddy. */
+    uKnee:       { value: 0.28 },
     uShadowTint: { value: new THREE.Vector3(0.955, 0.985, 1.070) },
     uHighTint:   { value: new THREE.Vector3(1.035, 1.000, 0.955) },
   },
@@ -1609,16 +1718,19 @@ export const CompositeShader = {
     precision highp float;
     uniform sampler2D tDiffuse, tNoise;
     uniform vec2 uResolution;
-    uniform float uTime, uGrain, uVignette, uAberration, uSaturation, uContrast;
+    uniform float uTime, uGrain, uVignette, uAberration, uSaturation;
     uniform float uSense, uHurt, uRadial, uSharpen, uFlash;
     uniform float uPunch, uDrain, uBars;
-    uniform float uBlack, uCurve;
     uniform vec3 uLift, uGain, uShadowTint, uHighTint;
     uniform vec4 uHeat[6];
     uniform int uHeatCount;
     varying vec2 vUv;
 
     float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453123); }
+
+    /* The tone curve and its toe, and the uniforms they own, spliced in from
+     * the one string a check is able to compile and run. */
+    ${GRADE_GLSL}
 
     // One place that knows how to read the frame, so the radial blur cannot be
     // silently dropped by a later channel-wise fetch.
@@ -1697,13 +1809,11 @@ export const CompositeShader = {
       // compressed into nothing. Exposure now leaves the ground lower on the
       // curve and the contrast is put back HERE, where it can be shaped.
 
-      // black point: something in the frame has to actually be black
-      col = max(col - uBlack, 0.0) / (1.0 - uBlack);
-
-      // filmic S about the midtones. smoothstep is a hermite S — steeper in
-      // the middle, gentle at both ends — so it adds bite without clipping.
-      col = mix(col, col * col * (3.0 - 2.0 * col), uCurve);
-      col = (col - 0.5) * uContrast + 0.5;
+      // The black point, the filmic S and the contrast — and the straight toe
+      // that stops the three of them from taking half the value off a level
+      // that was authored dark. All four live in GRADE_GLSL above, because a
+      // check can compile that and cannot compile this function.
+      col = gradeCurve(col);
 
       /**
        * THE GAIN ROLLS OFF INTO THE HIGHLIGHTS, and the blue lightsaber that
