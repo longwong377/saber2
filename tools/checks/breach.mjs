@@ -236,6 +236,16 @@ export async function run({ check, assert }) {
      * already owns the walk — a Player on foot from the muster ground reaches
      * the plate in about twenty seconds — and including it here would make the
      * two arms differ by a walk as well as by a place.
+     *
+     * AND THE PINNED PLAYER IS HELD ALIVE, in both arms, for the whole run.
+     * The first cut of this did not, and the drive came back "75 s of held
+     * blade burned 79 texels and never opened it" — because a Jedi bolted to
+     * one spot in the middle of a wave-3 engagement, unable to dash, dive or
+     * step out of a beaten zone, is dead inside the warm-up, and a dead player
+     * has no blade to hold against a plate. What this check is a measurement
+     * of is what happens to the LINE; a pinned player is not a measurement of
+     * a player, and holding one alive on both sides of the comparison removes
+     * a variable rather than adding one.
      */
     const WARM = 20;
     const arm = async (breaches, seconds) => {
@@ -248,9 +258,10 @@ export async function run({ check, assert }) {
       p.saber.ignite(); p.saber.ignition = 1;
       const anchor = p.position.clone();
       const input = idle();
+      const hold = () => { p.hp = p.maxHp; p.alive = true; };
       /* The warm-up, with the player in the formation in both arms. */
       for (let f = 0; f < WARM * 60; f++) {
-        p.position.copy(anchor); p.velocity.set(0, 0, 0);
+        p.position.copy(anchor); p.velocity.set(0, 0, 0); hold();
         world.update(1 / 60, input);
       }
       const before = { men: d.roster.living.length, stam: p.stamina, force: p.force };
@@ -261,7 +272,7 @@ export async function run({ check, assert }) {
         const stand = door.mesh.position.clone().addScaledVector(out, 0.95);
         stand.y = world.terrain.height(stand.x, stand.z);
         for (let f = 0; f < 60 * 75; f++) {
-          p.position.copy(stand); p.velocity.set(0, 0, 0);
+          p.position.copy(stand); p.velocity.set(0, 0, 0); hold();
           p.camera.yaw = yaw; p.camera.pitch = 0;
           const th = t * 0.8, gain = C.sensitivity * C.bladeGain, R = 0.70;
           input.mouse.dx = (Math.cos(th) * R - C.gx) / gain;
@@ -272,7 +283,7 @@ export async function run({ check, assert }) {
         }
       } else {
         for (let f = 0; f < Math.round(seconds * 60); f++) {
-          p.position.copy(anchor); p.velocity.set(0, 0, 0);
+          p.position.copy(anchor); p.velocity.set(0, 0, 0); hold();
           world.update(1 / 60, input);
           t += 1 / 60;
         }

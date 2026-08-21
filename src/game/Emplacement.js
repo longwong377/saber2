@@ -122,9 +122,25 @@ import { rand } from '../engine/MathUtil.js';
  * `warmup` 2.2 s — the emplacement does not open fire the instant a body walks
  *   into its arc. It is the tell: a player who has never met one gets one
  *   ranging shot's worth of warning before the line starts losing men.
+ *
+ * `burst` 3 — AND THE FIRST CUT OF THIS FIRED SINGLE ROUNDS, WHICH MEASURED AS
+ *   AN ERRAND. Driven against a formed-up line at 69 m with nothing else on the
+ *   field: **26 rounds over 90 seconds took ONE man off a roster of ten.** The
+ *   arithmetic says why and it is dispersion, not damage: 0.028 rad is ±0.97 m
+ *   of lateral error at 69 m against a body 0.4 m wide, so roughly one round in
+ *   five connects and two are needed for a kill. A gun that takes one name a
+ *   minute and a half is a thing you walk past.
+ *
+ *   The fix is what an emplaced automatic weapon actually does — it fires a
+ *   BURST — and not a tighter cone, which would have made it a sniper covering
+ *   the whole plain with no counter but the one door. Three rounds a burst at
+ *   `burstGap` is the same shape every other automatic weapon on the roster
+ *   has (`ARCHETYPES.b1` is 3 at 0.11, the clone trooper 3 at 0.11), and it
+ *   trebles the rounds without moving what a single round is worth.
  */
 export const GUN = {
   damage: 30, every: 3.4, reach: 120, spread: 0.028, speed: 118, warmup: 2.2,
+  burst: 3, burstGap: 0.14,
 };
 
 const _v = new THREE.Vector3();
@@ -179,6 +195,9 @@ export class GunPit {
     this.shots = 0;
     this.hits = 0;
     this._timer = GUN.warmup;
+    /** Rounds left in the burst being fired, and the gap between them. */
+    this._left = 0;
+    this._gap = 0;
     this.target = null;
 
     /**
@@ -310,6 +329,15 @@ export class GunPit {
       this.group.quaternion.setFromUnitVectors(_v.set(0, 0, 1), _d);
     }
 
+    /* MID-BURST, and the burst finishes on the target it was laid on. A gun
+     * that re-acquired between rounds would walk its own three across two
+     * different men and hit neither — the whole value of a burst is that the
+     * second and third rounds arrive where the first one was aimed. */
+    if (this._left > 0) {
+      this._gap -= dt;
+      if (this._gap <= 0) { this._gap = GUN.burstGap; this._left--; this._fire(t); }
+      return;
+    }
     this._timer -= dt;
     if (this._timer > 0) return;
     /**
@@ -332,6 +360,8 @@ export class GunPit {
     if (w.physics?.raycast?.(this.muzzle, _d, range - 0.6, (b) => b.static)) return;
     if (w.terrain && w.terrain.raycast(this.muzzle, _d, range - 0.6) !== null) return;
     this._timer = GUN.every;
+    this._left = Math.max(1, GUN.burst) - 1;
+    this._gap = GUN.burstGap;
     this._fire(t);
   }
 
