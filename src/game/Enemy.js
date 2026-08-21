@@ -29,6 +29,7 @@ import { BOLT_COLORS } from './Bolts.js';
  * `aimQuality` and by nothing else in this file. */
 import { weather } from '../world/Scenery.js';
 import { clamp, lerp, damp, smoothstep, makeRng, TAU, dampVec } from '../engine/MathUtil.js';
+import { MORALE } from './Morale.js';
 import { POWER_COST } from './Powers.js';
 /* `findCasualty` and `startDrag` are NOT imported here: the drag is a
  * commander's decision and `CommandDirector.steer` is where it is taken. They
@@ -3791,9 +3792,32 @@ export class Enemy {
      * fire the wave's budget has already been charged for. */
     if (A.elite) q *= 0.86;
 
-    // ── morale
+    /**
+     * ── morale, ANCHORED ON THE RESTING POINT AND NOT ON THE CLAMP
+     *
+     * This was `lerp(1.65, 0.9, morale)` — 0.90 at the top of the scale — and
+     * it was written when every record in a winning line sat pinned at 1.000
+     * (see `MORALE.PRESENCE_CAP`, and NEXT.md on the Dead Jedi table). So 0.90
+     * was in practice a CONSTANT: it is what every allied trooper in the game
+     * has always shot at.
+     *
+     * Unpinning morale would have quietly moved it. A line now settles at the
+     * presence ceiling instead of the clamp, and read off the old curve that is
+     * a 12.5% worse spread on every soldier on your side — a balance change
+     * nobody asked for, arriving as a side effect of a bug fix.
+     *
+     * So the curve is anchored where the line actually rests: `PRESENCE_CAP`
+     * maps to the same 0.90 it always did, 0 maps to the same 1.65, and the
+     * band ABOVE the ceiling — which only exists for a few seconds after a wave
+     * is cleared or an area taken — buys a little more. That is the elation
+     * this game did not previously have anywhere to put.
+     */
     if (this.trooper && this.trooper.morale !== undefined) {
-      q *= lerp(1.65, 0.9, clamp(this.trooper.morale, 0, 1));
+      const m = clamp(this.trooper.morale, 0, 1);
+      const cap = MORALE.PRESENCE_CAP;
+      q *= m <= cap
+        ? lerp(1.65, 0.9, m / Math.max(cap, 1e-3))
+        : lerp(0.9, 0.82, (m - cap) / Math.max(1 - cap, 1e-3));
     }
 
     // ── dread: the same effect, from outside, on a body that has no record

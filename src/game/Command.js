@@ -98,6 +98,7 @@ import { clamp, lerp, makeRng, TAU } from '../engine/MathUtil.js';
  * direction as MathUtil above: game reaches into engine, never the reverse. */
 import { audio } from '../engine/Audio.js';
 import { nudgeFromSwing, bladeClear, placementClear, SWING_REACH } from './Spawn.js';
+import { MORALE } from './Morale.js';
 import { findCasualty, startDrag } from './Reactions.js';
 import { armyForOrder, factionOf } from './Databank.js';
 
@@ -1355,86 +1356,27 @@ export const AREAS = [
 /*  Morale, and who is in charge of whom                                  */
 /* ══════════════════════════════════════════════════════════════════════ */
 
-/**
- * WHAT MOVES A SQUAD'S NERVE, per event or per second.
- *
- * "Troops perform better when you're winning or aligned with their side.
- * Heavy losses, Dark-side excess, or abandoning them tanks morale — they can
- * break, refuse orders, or even turn on you."
- *
- * Every entry is an event the player can see happening and can choose to
- * cause or prevent, which is the whole test a morale term has to pass: a
- * number that moves for reasons the player cannot observe is a random number
- * generator wearing a name.
- *
- * The two `_NEAR` terms are what make a commander's PRESENCE worth something
- * mechanically, and they are deliberately the largest per-second terms in the
- * table: standing with your line is the cheapest thing a Jedi can do for it
- * and it should be worth doing.
- */
 /** How long before the same soldier will go back for somebody again, in
  *  seconds. Long, because a rifleman who spends the battle carrying people is
  *  a rifleman who is not shooting, and the point of the behaviour is that it
  *  costs the line something. */
 const DRAG_AGAIN = 26;
 
-export const MORALE = {
-  /** A squadmate goes down in front of them. */
-  COMRADE_FELL: -0.16,
-  /** …and their squad leader is worth more than a squadmate. */
-  LEADER_FELL: -0.26,
-  /** Somebody in the squad kills something. */
-  SQUAD_KILL: 0.045,
-  /** The wave is cleared. Everyone gets it. */
-  WAVE_CLEAR: 0.34,
-  /** An area is held. */
-  AREA_HELD: 0.5,
-  /** Their own health, per second, below a third. */
-  WOUNDED: -0.10,
-  /** Per second within `NEAR` of a living commander who is on their side. */
-  LEADER_NEAR: 0.055,
-  /** …and of the Jedi themselves, which is worth more. */
-  JEDI_NEAR: 0.085,
-  /** Per second with no friendly commander and no Jedi inside `NEAR`. */
-  ALONE: -0.022,
-  /** The Jedi used a Force power ON one of their own. Per use. */
-  BETRAYED: -0.20,
-  /** …and empowering one instead. Per use. */
-  INSPIRED: 0.16,
-  /** A commander reached into their nerve through the Force. Per use, and it
-   *  is the one entry in this table an ENEMY commander causes. See `castForce`. */
-  SHAKEN: -0.22,
-  /** How close counts as near, in metres. */
-  NEAR: 14,
-  /** Below this a body breaks: it stops holding formation and falls back. */
-  BREAK: 0.24,
-  /** Below this it will not take an order at all. */
-  REFUSE: 0.10,
-  /** How fast a broken body recovers its nerve once it is out of contact. */
-  RALLY_PER_S: 0.05,
-  /**
-   * WHAT SHARE OF A SQUAD HAS TO BREAK BEFORE THE REST GO WITH THEM.
-   *
-   * "they should fall back when a position is lost." Breaking is a MAN's
-   * decision and the file already had it — below `BREAK` he stops holding
-   * formation and runs to you. A position is a SQUAD's, and a squad does not
-   * lose one man at a time: the two riflemen still steady when three of their
-   * five have broken are not holding a position, they are the last two people
-   * standing on a piece of ground nobody else is on.
-   *
-   * A half rather than a third or a whole, and the reason is that it has to
-   * be a number the player can see coming. `census` and the roster feed both
-   * show the squad, so "half of them are running" is a state you can read off
-   * the screen and answer — which is the test every other number in this
-   * table had to pass. At a third a squad withdraws while most of it is still
-   * fighting; at a whole the rule never fires, because the last steady man in
-   * a squad of five is precisely the one standing next to a commander whose
-   * presence is holding him up.
-   *
-   * Strictly greater, so a two-man squad with one broken man is not a rout.
-   */
-  ROUT: 0.5,
-};
+/**
+ * THE TABLE ITSELF MOVED TO A LEAF — src/game/Morale.js — and is re-exported
+ * here so every existing importer is untouched.
+ *
+ * It had to: `Enemy.aimQuality` reads `MORALE.PRESENCE_CAP` to anchor its own
+ * curve on the point a line actually rests at, and this file already imports
+ * Enemy.js at its top. Enemy → Command is a cycle, and a constant read through
+ * one is a constant that is `undefined` on the frame the module happens to
+ * evaluate in the wrong order. Same argument, same shape and the same last
+ * clause as `POWER_COST` living in Powers.js rather than in Player.js: one
+ * table, one owner, and the owner is a leaf.
+ */
+export { MORALE };
+
+
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  One soldier                                                           */
@@ -4958,20 +4900,43 @@ export class CommandDirector extends WaveDirector {
         if (e && !e.dead) {
           /* PRESENCE. The Jedi is worth more than a sergeant, and a body with
            * neither in reach is a body on its own. */
-          let near = false;
+          let near = false, presence = 0;
           if (jedi?.position && dist2(e.position, jedi.position) < MORALE.NEAR * MORALE.NEAR) {
-            d += MORALE.JEDI_NEAR; near = true;
+            presence += MORALE.JEDI_NEAR; near = true;
           }
           if (lead && lead !== t && lead.body && !lead.body.dead
             && dist2(e.position, lead.body.position) < MORALE.NEAR * MORALE.NEAR) {
-            d += MORALE.LEADER_NEAR; near = true;
+            presence += MORALE.LEADER_NEAR; near = true;
           }
+          /* AND THEY EASE OFF AT THE CEILING — see `MORALE.PRESENCE_CAP` for
+           * the 1.000 this is here to unpin. A taper and not a switch, because
+           * a term that turns off on one frame reads as the number twitching;
+           * the band is the same idiom `_move`'s grade falloff uses. */
+          if (presence > 0) {
+            const over = (t.morale - (MORALE.PRESENCE_CAP - MORALE.PRESENCE_BAND))
+              / MORALE.PRESENCE_BAND;
+            presence *= 1 - clamp(over, 0, 1);
+          }
+          d += presence;
           if (!near) d += MORALE.ALONE;
           if (e.maxHp && e.hp < e.maxHp * 0.34) d += MORALE.WOUNDED;
         } else {
           // between areas, or waiting on a gunship: nerve comes back
           d += MORALE.RALLY_PER_S;
         }
+        /**
+         * ELATION WEARS OFF — above the cap only, and at a FLAT rate.
+         *
+         * The first version scaled the settle by how far over the ceiling the
+         * record was, which is zero exactly AT the ceiling — so there was no
+         * restoring force at the one point that matters and the equilibrium
+         * sat a hair above it (measured: 0.843 against a 0.84 cap, which is
+         * 1.9% of a comrade falling still eaten by the clamp). Flat, the
+         * settle and the presence taper meet at the cap: presence has reached
+         * zero, the settle switches off, and a line resting beside its Jedi
+         * sits exactly on the ceiling with a full knock of room above it.
+         */
+        if (t.morale > MORALE.PRESENCE_CAP) d -= MORALE.SETTLE;
         t.morale = clamp(t.morale + d * dt, 0, 1);
         /* THE ONE THING A BODY READS OFF ITS RECORD EVERY FRAME. `_pace` is
          * how much of its own speed a shaken body uses and `aimQuality`
