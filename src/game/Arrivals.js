@@ -81,6 +81,34 @@ let _shipModel = null;
 export function setDropshipModel(fn) { _shipModel = typeof fn === 'function' ? fn : null; }
 
 /**
+ * …AND THE OTHER SHIP, WHICH IS A DIFFERENT SHIP ON PURPOSE.
+ *
+ * The gunship above delivers ENEMIES: it comes down, hovers, drops a squad and
+ * climbs away, and nobody is ever inside it. `Extraction` flies the one the
+ * player BOARDS, and the player's note is the whole reason those cannot be the
+ * same hull: "the transports are closed at the sides, you can't see yourself or
+ * your troops it's completely blocked". A gunship's bay is a dark plate between
+ * two rails — see `buildGunship` — with no aperture and no interior, because it
+ * never needed one.
+ *
+ * `buildTransport` has a bay you stand in, a ramp, two sliding doors and two
+ * pilots. It is more than twice the ship in every sense including cost, and
+ * exactly one is ever in the world at a time, which is what makes that
+ * affordable. `Levels.js` registers both, from the same place, for the reason
+ * the note above gives about the direction of the import.
+ */
+let _transportModel = null;
+export function setTransportModel(fn) { _transportModel = typeof fn === 'function' ? fn : null; }
+
+/** And the capital ship the insertion leaves. Same seam, same reason. */
+let _capitalModel = null;
+export function setCapitalModel(fn) { _capitalModel = typeof fn === 'function' ? fn : null; }
+export function capitalModel() {
+  if (!_capitalModel) return null;
+  try { return _capitalModel(); } catch (e) { return null; }
+}
+
+/**
  * THE SAME SHIP, FOR THE ONE THING THAT IS NOT AN ARRIVAL.
  *
  * `src/game/Extraction.js` flies the transport the player BOARDS, and it needs
@@ -97,6 +125,20 @@ export function setDropshipModel(fn) { _shipModel = typeof fn === 'function' ? f
 export function dropshipModel() {
   if (!_shipModel) return null;
   try { return _shipModel(); } catch (e) { return null; }
+}
+
+/**
+ * The transport, for `Extraction`. Falls back to the gunship rather than to
+ * primitives when nothing is registered — a check that has imported Vehicles
+ * but not Levels still gets a hull — and to null after that, which is every
+ * headless suite and which the director already handles.
+ */
+export function transportModel() {
+  for (const fn of [_transportModel, _shipModel]) {
+    if (!fn) continue;
+    try { const m = fn(); if (m) return m; } catch (e) { /* try the next */ }
+  }
+  return null;
 }
 
 const rng = makeRng(20931);

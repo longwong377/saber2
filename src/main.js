@@ -640,7 +640,26 @@ async function deploy() {
     } else if (MODES[settings.mode]?.picksCampaign) world.beginCampaign();
     else world.director.start(1);
   }
-  world.notify('MAY THE FORCE BE WITH YOU', world.level.name);
+  /**
+   * AND YOU ARRIVE, RATHER THAN APPEAR.
+   *
+   * The player, twice: "you should never just appear, ON ANY MAP, you must
+   * always arrive and leave via transport regardless of if you're with troops
+   * or not… Every mode/map should start like this."
+   *
+   * This is the LAST line of the deploy path on purpose. Everything above it
+   * has to have happened first — the world built, the commander spawned, the
+   * army deployed by `beginSkirmish`/`beginCampaign`/`start(1)` — because
+   * `beginInsertion` lifts whatever is standing on the ground into the bay, and
+   * a line that has not been mustered yet is a line that walks on afterwards.
+   *
+   * It DECLINES rather than throws when it cannot fly: no player, no terrain, a
+   * client, or `instantSpawn`. Every one of those falls through to the world
+   * exactly as it was — a commander standing on a spawn point, which is what
+   * every mode in this game did until now.
+   */
+  const flew = world.extraction?.beginInsertion?.({ name: world.level.name });
+  if (!flew) world.notify('MAY THE FORCE BE WITH YOU', world.level.name);
 }
 
 /**

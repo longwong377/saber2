@@ -96,10 +96,10 @@
  */
 
 import * as THREE from 'three';
-import { clamp, lerp, smoothstep, makeRng, TAU } from '../engine/MathUtil.js';
+import { clamp, lerp, damp, smoothstep, makeRng, TAU } from '../engine/MathUtil.js';
 import { audio } from '../engine/Audio.js';
 import { spawnClear, bladeClear, nudgeFromSwing } from './Spawn.js';
-import { dropshipModel } from './Arrivals.js';
+import { transportModel, capitalModel } from './Arrivals.js';
 
 const rng = makeRng(48221);
 export function seedExtraction(seed) { rng.seed(seed); }
@@ -131,8 +131,61 @@ export const INBOUND = 6.0;
  *  near enough that it is never a hike across a level. */
 export const PAD_RANGE = 20;
 
-/** Within this of the ramp and you are aboard. A door's width. */
-export const BOARD_RADIUS = 3.2;
+/**
+ * HOW LONG THE RAMP AND THE DOORS TAKE, and it is one number for both because
+ * they run together: the ramp starts down, the doors start aft, and the bay is
+ * open when both arrive.
+ *
+ * The player asked for the sequence by name — "the transports land, you see a
+ * large ramp come out, then the side doors slide open, the troops file in…
+ * then you land, and can only disembark when the ramp comes back out, then the
+ * ramp retracts once the troops are out, the side doors close, then the ships
+ * leave" — so the phases exist rather than being an animation played over a
+ * teleport. `HATCH` is what all four of those beats cost.
+ */
+export const HATCH = 1.7;
+
+/**
+ * THE BAY, NOT A RADIUS. This was `BOARD_RADIUS = 3.2` and it is the whole of
+ * "you don't even walk into the ship you touch it and teleport in I guess?":
+ * a sphere 3.2 m across the ramp's foot, and anything inside it was snapped
+ * into a seat. You never entered the ship; you brushed a bubble outside it.
+ *
+ * You are aboard when you are STANDING IN THE BAY, which is a box the ship
+ * publishes (`userData.bay`) — and `_seat` no longer moves you when you get
+ * there, it converts where you already are into a seat in the ship's own
+ * frame. There is no jump at any point.
+ *
+ * It survives as a name because `_walkTroops` needs a distance at which a
+ * trooper stops steering for the ramp foot and starts climbing it.
+ */
+export const BOARD_RADIUS = 1.9;
+
+/**
+ * THE BLADE HAS TO BE DOWN BEFORE THE RAMP COMES UP.
+ *
+ * The player: "because of the close quarters you would have to press the button
+ * to retract your saber, would be a cool time to make you actually use it."
+ * It is the one moment in the game with a reason to put the blade away that is
+ * not a menu, and the crew simply will not seal the bay with a metre of plasma
+ * standing in it. Held here rather than in the phase so a check can read it.
+ */
+export const SEAL_NEEDS_BLADE_DOWN = true;
+
+/**
+ * AND HOW LONG THE CREW ASKS BEFORE DOING IT FOR YOU.
+ *
+ * Short, and much shorter than `LAST_CALL`. A stalled BOARDING is a player who
+ * has not walked to the ship and needs twenty-two seconds of rope; a lit blade
+ * in the bay is a player who is standing right there and has been told, in a
+ * banner, which key to press. Six seconds is two reads of that banner.
+ *
+ * The two waits used to be the same number and it made the total hold 47 s,
+ * which `tools/checks/extraction.mjs` is right to refuse: a journey that can be
+ * held for three quarters of a minute by doing nothing is a stall with a
+ * cutscene over it.
+ */
+export const BLADE_WAIT = 6.0;
 
 /** How long the ship holds the ground before the crew stops asking. */
 export const LAST_CALL = 22.0;
@@ -140,8 +193,62 @@ export const LAST_CALL = 22.0;
 /** And how long the haul takes. A slide at walking pace, not a jump cut. */
 export const PULL = 1.6;
 
+/** How long a body takes to walk from where it stepped aboard to its seat.
+ *  See `_flyPassengers`: this is the difference between taking a seat and
+ *  being snapped into one. */
+export const SETTLE = 1.3;
+
+/** …at this pace, in metres a second. A brisk walk across a moving deck. See
+ *  `_flyPassengers`: a RATE is what makes the worst frame bounded, where a
+ *  fraction-of-what-is-left is not. */
+export const SEAT_PACE = 2.2;
+
 /** Gear off the ground to established climb. */
 export const LIFT = 3.4;
+
+/**
+ * HOW MUCH AIR THE HULL KEEPS UNDER IT.
+ *
+ * The player: "Also the ships fly straight through mountains a lot." Every
+ * flight path in this file is a lerp between two points picked for their
+ * ground-level geometry, and nothing ever asked what was between them. See
+ * `_clearGround`: this is the margin it holds over the ground under the hull
+ * and the ground 34 m ahead of it, whichever is higher. 26 m is a comfortable
+ * two hull-heights over the Colosseum's rim and clears every ridge on drifts.
+ */
+export const CLEARANCE = 26;
+
+/* ── the insertion ───────────────────────────────────────────────────────
+ * "You don't start any matches coming in on a transport ship with your troops,
+ *  I already told you that you should never just appear, ON ANY MAP, you must
+ *  always arrive and leave via transport regardless of if you're with troops or
+ *  not… If you're just starting a game or map from scratch maybe you start a
+ *  game in a transport ship with your troops if you have any just as you're
+ *  leaving the capitol ship in space like you when you start you look behind
+ *  the ship flying through space and you see the capitol ship getting smaller
+ *  and smaller and the planet getting larger and larger as you enter the
+ *  atmosphere and land on your battlefield. Every mode/map should start like
+ *  this."
+ *
+ * The EXTRACTION is a journey between two grounds and already existed. This is
+ * the journey onto the FIRST one, which did not: every mode in the game opened
+ * with the player simply being at the spawn point.
+ */
+
+/** How high the transport leaves the capital ship, in metres over the LZ. */
+export const ORBIT_ALT = 2400;
+
+/** Where the capital ship is when the doors open on it, and where it has gone
+ *  by the time the atmosphere does. It is the SHRINKING that is the shot. */
+export const CAPITAL_NEAR = 520;
+export const CAPITAL_FAR = 5200;
+
+/** Station-keeping in space, then the burn, then the fire. */
+export const ORBIT = 7.0;
+export const ENTRY = 6.5;
+/** And the fall from the top of the atmosphere to the flare, which is longer
+ *  than an extraction's descent because it starts eight times higher. */
+export const FALL = 9.0;
 
 /** The cruise, and the shortest a skipped cruise can be. */
 export const TRANSIT = 11.0;
@@ -160,8 +267,14 @@ export const UNLOAD = 2.0;
  *  bodies in shot and the hull is 7.4 m long; six is the honest number. */
 export const BAY_SEATS = 6;
 
-export const PHASES = ['aftermath', 'called', 'inbound', 'boarding', 'liftoff',
-  'transit', 'descent', 'unload', 'done'];
+/**
+ * TWELVE PHASES, AND FOUR OF THEM ARE NEW. `opening` and `sealing` are the ramp
+ * and the doors, and both legs of the journey run them — out of the old ground
+ * and onto the new one — which is why they are named for what they do rather
+ * than for where in the flight they happen. `this.leg` says which.
+ */
+export const PHASES = ['orbit', 'entry', 'aftermath', 'called', 'inbound', 'opening',
+  'boarding', 'sealing', 'liftoff', 'transit', 'descent', 'unload', 'done'];
 
 /**
  * The whole sequence as a table of {phase, at, dur}, in seconds, for a run in
@@ -177,11 +290,15 @@ export function beatSheet({ walk = PAD_RANGE / 4.6, skip = false } = {}) {
     ['aftermath', AFTERMATH, 'the last enemy is down; nothing happens'],
     ['called', CALL, 'you call for transport'],
     ['inbound', INBOUND, 'it comes in and puts its gear down'],
-    ['boarding', walk, 'you walk to it; your line files in around you'],
+    ['opening', HATCH, 'the ramp comes out and the side doors slide open'],
+    ['boarding', walk, 'you WALK up the ramp; your line files in around you'],
+    ['sealing', HATCH, 'blade down, ramp up, doors shut'],
     ['liftoff', LIFT, 'gear up, climb out'],
     ['transit', cruise, 'the journey — free camera, open bay, ground below'],
     ['descent', DESCENT, 'the new ground comes up and it settles'],
-    ['unload', UNLOAD, 'the ramp; everybody walks off it'],
+    ['opening', HATCH, 'the ramp comes out again — nobody may leave before it does'],
+    ['unload', UNLOAD, 'everybody walks off it'],
+    ['sealing', HATCH, 'ramp up, doors shut, and it goes'],
   ];
   let at = 0;
   return rows.map(([phase, dur, what]) => {
@@ -212,6 +329,11 @@ function build() {
   G.nose = new THREE.ConeGeometry(1.45, 3.0, 4);
   G.wing = new THREE.BoxGeometry(6.4, 0.24, 2.2);
   G.glow = new THREE.SphereGeometry(0.5, 8, 6);
+  /* THRUST, as a cone rooted in the nozzle. Two of them per engine — a wide
+   * soft envelope and a narrow bright core — because one translucent shape at
+   * one colour is a glow and two at two is a flame. */
+  G.flame = new THREE.ConeGeometry(0.24, 1.0, 10, 1, true);
+  G.flameCore = new THREE.ConeGeometry(0.12, 1.0, 8, 1, true);
   G.wash = new THREE.ConeGeometry(5.2, 9, 14, 1, true);
   /* The cloud. An inverted sphere 40 cm from the eye, so it is the whole frame
    * whatever the fov and whatever the camera is doing — a plane would show its
@@ -220,7 +342,10 @@ function build() {
   G.veil = new THREE.SphereGeometry(0.4, 12, 8);
   M.hull = new THREE.MeshStandardMaterial({ color: 0x8d8b83, roughness: 0.82, metalness: 0.18 });
   M.trim = new THREE.MeshStandardMaterial({ color: 0x6a6862, roughness: 0.9, metalness: 0.1 });
-  M.engine = new THREE.MeshBasicMaterial({ color: 0xffd39a, transparent: true, opacity: 0.85, depthWrite: false });
+  M.engine = new THREE.MeshBasicMaterial({ color: 0xff9a4a, transparent: true, opacity: 0.55,
+    depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending });
+  M.engineCore = new THREE.MeshBasicMaterial({ color: 0xfff0d0, transparent: true, opacity: 0.9,
+    depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending });
   M.wash = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide });
   M.veil = new THREE.MeshBasicMaterial({ color: 0xd8d2c6, transparent: true, opacity: 0, depthWrite: false, side: THREE.BackSide, fog: false });
 }
@@ -266,6 +391,162 @@ export class ExtractionDirector {
    *
    * @returns true when this director now owns the change.
    */
+  /**
+   * THE OPENING — you arrive, you do not appear.
+   *
+   * The player, twice now: "I already told you that you should never just
+   * appear, ON ANY MAP, you must always arrive and leave via transport
+   * regardless of if you're with troops or not." The extraction answered the
+   * journey BETWEEN two grounds; every mode still opened with the commander
+   * standing on the spawn point with the level already built around them.
+   *
+   * This runs the other half, and it reuses everything: the same transport, the
+   * same bay, the same seats, the same ramp, and the same `descent → opening →
+   * unload → sealing` tail the inbound leg of an extraction uses. What it adds
+   * in front of that is two phases that only exist here —
+   *
+   *   orbit   the bay is open on space. The capital ship is astern and
+   *           receding, the planet is under the floor, and you can look at
+   *           either. Nothing is asked of the player.
+   *   entry   the burn. Stars go, the hull glows, the frame shakes, and the
+   *           ground stops being a texture and starts being a place.
+   *
+   * IT DECLINES for the same four reasons `begin` does, and one more: a mode
+   * with no player yet cannot fly one anywhere. Every decline leaves the world
+   * exactly as it was, which is a commander standing on a spawn point — the old
+   * behaviour, kept as the fallback rather than as the default.
+   */
+  beginInsertion(opts = {}) {
+    const w = this.world;
+    if (this.active) return false;
+    if (!w || w.settings?.instantSpawn) return false;
+    if (w.netMode === 'client') return false;
+    if (!w.player || !w.player.alive) return false;
+    if (!w.terrain) return false;
+    this.nextKey = null;
+    this.t = 0;
+    this.total = 0;
+    /* THE ROTATE IS ALREADY DONE. An insertion lands on the ground it started
+     * on, so the swap machinery is marked complete before it begins and the
+     * cruise's veil logic has nothing to wait for. */
+    this._rotated = true;
+    this._rotateAsked = true;
+    this._skip = false;
+    this._pull = null;
+    this._said = false;
+    this._seated.length = 0;
+    this._takenSlots = new Set();
+    this._log.length = 0;
+    this._offloaded = false;
+    this._doorTaken = false;
+    this.leg = 'in';
+    this._insertion = true;
+
+    /* THE LZ IS WHERE THE LEVEL PUTS YOU. `_lzPoint` is read by `_approach`,
+     * and taking it now — before anybody is lifted into a bay two kilometres up
+     * — is the same discipline `_reboard` records for the same field. */
+    this._lzPoint = w.player.position.clone();
+    const at = this._lzPoint.clone();
+    at.y = w.terrain.height(at.x, at.z);
+    this.pad = at.clone();
+    this.down = at.clone().setY(at.y + 1.15);
+    this.padYaw = rng() * TAU;
+
+    this._makeShip();
+    /* Straight up, and pointing at the planet rather than at the pad: the first
+     * thing the player sees is the bay, the stars and the capital ship, and the
+     * ship noses over during the burn. */
+    const away = _v1.set(Math.cos(this.padYaw), 0, Math.sin(this.padYaw));
+    this.group.position.copy(at).addScaledVector(away, 320).setY(at.y + ORBIT_ALT);
+    this._prevPos = null;
+    this._yaw = this.padYaw + Math.PI / 2;
+    this.group.rotation.set(0, this._yaw, 0);
+    this._makeSpace();
+    this._hatch(1);
+    this._thrust = 0.25;
+
+    /* Everybody aboard, instantly, because nobody has anywhere to have walked
+     * from: the run has not started. This is the ONE place a seat may be taken
+     * without a walk, and it is not a teleport — it is where the game begins. */
+    for (const p of w.players) if (p?.isLocal && p.alive) this._seat(p, true);
+    const team = w.player.team;
+    const room = this._model?.userData?.seats?.length ?? BAY_SEATS;
+    if (team !== undefined && w.enemies) {
+      for (const e of w.enemies) {
+        if (e.dead || e.team !== team) continue;
+        if (this._seated.length >= room) break;
+        this._seat(e, true);
+      }
+    }
+    this._enter('orbit');
+    w.notify?.('MAKING PLANETFALL', opts.name || w.level?.name || '');
+    audio.noise?.({ dur: 4.0, gain: 0.10, type: 'lowpass', freq: 180, q: 0.7, pos: this.group.position });
+    return true;
+  }
+
+  /**
+   * SPACE, AS TWO OBJECTS AND NOT AS A SCENE.
+   *
+   * There is no second scene and no sky swap. A starfield goes in as a `Points`
+   * cloud on a 900-unit shell around the transport — carried WITH it, so it can
+   * never be flown out of — and the capital ship goes in astern. Both are
+   * removed by `_teardown` with the rest of the flight.
+   *
+   * The stars are `Points` rather than a textured sphere for one reason worth
+   * writing down: this file is imported by headless checks that have no canvas,
+   * and `Textures.js` builds every one of its maps by drawing on one.
+   */
+  _makeSpace() {
+    const g = this.group;
+    if (!g) return;
+    const N = 900;
+    const pos = new Float32Array(N * 3);
+    for (let i = 0; i < N; i++) {
+      /* On a shell, biased AWAY from straight down: half a sky of stars under a
+       * planet is the one thing that would give the trick away. */
+      const u = rng() * 2 - 1, a = rng() * TAU;
+      const r = 900, s = Math.sqrt(Math.max(0, 1 - u * u));
+      pos[i * 3] = Math.cos(a) * s * r;
+      pos[i * 3 + 1] = Math.abs(u) * r * (u < 0 ? 0.25 : 1);
+      pos[i * 3 + 2] = Math.sin(a) * s * r;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    const mat = new THREE.PointsMaterial({ color: 0xdfe6ff, size: 4.2, sizeAttenuation: false,
+      transparent: true, opacity: 1, depthWrite: false, fog: false });
+    this._stars = new THREE.Points(geo, mat);
+    this._stars.frustumCulled = false;
+    this._stars.renderOrder = -2;
+    g.add(this._stars);
+
+    const cap = capitalModel();
+    if (cap) {
+      this._capital = cap;
+      cap.frustumCulled = false;
+      cap.renderOrder = -1;
+      g.add(cap);
+    }
+  }
+
+  /** Where the capital ship is this frame, and how big. See CAPITAL_NEAR. */
+  _placeCapital(k) {
+    const c = this._capital;
+    if (!c) return;
+    const d = lerp(CAPITAL_NEAR, CAPITAL_FAR, k * k);
+    /* ASTERN and a little above, in the SHIP'S OWN FRAME — so "look behind you"
+     * is literally true whatever the transport is doing, which is the whole
+     * instruction. +Z is aft. */
+    c.position.set(0, d * 0.06, d);
+    /* THE MODEL IS 1/100 SCALE and the distance is what changes; scaling the
+     * model instead would put an 1,100-unit object in a scene whose terrain is
+     * 400 across and break every shadow cascade in the engine. It grows with
+     * distance only enough to stay a ship rather than a speck. */
+    const sc = 1 + d * 0.010;
+    c.scale.setScalar(sc);
+    c.rotation.set(0.02, Math.PI, 0);
+    c.visible = k < 0.995;
+  }
+
   begin(key) {
     const w = this.world;
     if (this.active) return true;
@@ -312,16 +593,130 @@ export class ExtractionDirector {
     this.total += dt;
     const w = this.world;
     switch (this.phase) {
+      case 'orbit': this._orbit(dt, ctx); break;
+      case 'entry': this._entry(dt, ctx); break;
       case 'aftermath': this._aftermath(dt); break;
       case 'called': this._called(dt); break;
       case 'inbound': this._inbound(dt, ctx); break;
+      case 'opening': this._opening(dt, ctx); break;
       case 'boarding': this._boarding(dt, ctx); break;
+      case 'sealing': this._sealing(dt, ctx); break;
       case 'liftoff': this._liftoff(dt, ctx); break;
       case 'transit': this._transit(dt, ctx); break;
       case 'descent': this._descent(dt, ctx); break;
       case 'unload': this._unload(dt, ctx); break;
     }
     if (this.group) this._flyPassengers(dt);
+  }
+
+  /* ── 0. the opening ───────────────────────────────────────────────── */
+
+  /**
+   * IN SPACE, WITH THE DOORS OPEN AND THE CAPITAL SHIP ASTERN.
+   *
+   * Nothing is asked of the player for seven seconds. The transport holds its
+   * heading, the capital ship falls away behind it, and the planet is the
+   * ground the level has already built, two and a half kilometres down through
+   * an open ramp. That last part is why this works at all without a second
+   * scene: the world under the ship IS the battlefield, so "the planet getting
+   * larger and larger" is the descent, not an effect.
+   */
+  _orbit(dt, ctx) {
+    const g = this.group;
+    if (!g) { this._enter('entry'); return; }
+    this._thrust = 0.22;
+    const k = clamp(this.t / ORBIT, 0, 1);
+    /* A slow drift and a slow roll — a ship under way, not a ship parked. The
+     * numbers are small because the frame of reference is the bay the player is
+     * standing in, and a bay that pitches is a bay you fall out of. */
+    const away = _v1.set(Math.cos(this.padYaw), 0, Math.sin(this.padYaw));
+    g.position.copy(this.pad).addScaledVector(away, 320 - k * 90)
+      .setY(this.pad.y + ORBIT_ALT + Math.sin(this.t * 0.4) * 6);
+    g.rotation.x = Math.sin(this.t * 0.31) * 0.012;
+    g.rotation.z = Math.sin(this.t * 0.23) * 0.02;
+    this._placeCapital(k * 0.55);
+    if (this._stars) this._stars.material.opacity = 1;
+    this._wake(dt, ctx, 0);
+    /* AND YOU CAN SKIP IT. The player asked for this opening on every map, and
+     * meaning it costs 34 s of every deploy — so the same key that skips the
+     * cruise skips the orbit, after a second and a half so it cannot be eaten
+     * by a keypress left over from the menu. The sequence still HAPPENS; you
+     * arrive on a ramp either way, which is the part that was asked for. */
+    if (this.t > 1.5 && ctx?.input?.act?.('jump')) { this._toFall(); return; }
+    if (this.t >= ORBIT) {
+      this._enter('entry');
+      this.world.notify?.('ATMOSPHERIC ENTRY', 'Hold on');
+      audio.noise?.({ dur: 5.0, gain: 0.16, type: 'bandpass', freq: 320, q: 0.5, pos: g.position });
+    }
+  }
+
+  /**
+   * THE BURN — and this is the phase that has to look like something.
+   *
+   * Four things move together and none of them is a post-effect: the stars go
+   * out as the air thickens, the hull's own thrust goes to full, the frame
+   * shakes, and the ship noses over from station-keeping onto the descent. The
+   * capital ship keeps receding through all of it and is gone by the end, which
+   * is the "smaller and smaller" the note asks for spent across two phases
+   * rather than one.
+   *
+   * The SHAKE is `world.addHitstop`'s sibling — `feelOn` is the game's own
+   * camera-shake door and it is used rather than a private one, so a player who
+   * has turned shake down in the options gets an entry they can watch.
+   */
+  _entry(dt, ctx) {
+    const g = this.group;
+    if (!g) { this._toFall(); return; }
+    const k = clamp(this.t / ENTRY, 0, 1);
+    this._thrust = 0.35 + k * 0.55;
+    const away = _v1.set(Math.cos(this.padYaw), 0, Math.sin(this.padYaw));
+    /* Down and forward: the altitude comes off fast and the ship closes on the
+     * pad at the same time, which is what a de-orbit burn is. */
+    const alt = lerp(ORBIT_ALT, ORBIT_ALT * 0.42, k * k);
+    g.position.copy(this.pad).addScaledVector(away, lerp(230, 150, k)).setY(this.pad.y + alt);
+    g.rotation.x = lerp(0, -0.10, smoothstep(0, 1, k)) + Math.sin(this.t * 9) * 0.006 * k;
+    g.rotation.z = Math.sin(this.t * 7.3) * 0.010 * k;
+    /* The stars are the first thing the air takes. */
+    if (this._stars) this._stars.material.opacity = 1 - smoothstep(0, 1, clamp(k / 0.55, 0, 1));
+    this._placeCapital(0.55 + k * 0.45);
+    /* THE FIRE. The wash cone is already a shared, per-flight mesh with an
+     * animated opacity, and re-tinted it is the heat shield: a wide envelope
+     * around the hull rather than a cone under it. One mesh, two jobs, and the
+     * second one lasts six seconds. */
+    if (this._wash) {
+      const heat = Math.sin(clamp(k * 1.35, 0, 1) * Math.PI);
+      this._wash.material.opacity = heat * 0.30;
+      this._wash.material.color.setHex(0xff9a4a);
+      this._wash.position.set(0, 0.4, 1.2);
+      this._wash.rotation.x = Math.PI;
+      this._wash.scale.setScalar(0.7 + heat * 0.5);
+    }
+    this.world.feelOn?.('entry');
+    if (this.t > 0.8 && ctx?.input?.act?.('jump')) { this._toFall(); return; }
+    if (this.t >= ENTRY) this._toFall();
+  }
+
+  /** Hand the burn over to the ordinary descent, from wherever it ended. */
+  _toFall() {
+    const g = this.group;
+    if (this._stars) { this._stars.visible = false; }
+    if (this._capital) { this._capital.visible = false; }
+    if (this._wash) {
+      this._wash.material.opacity = 0;
+      this._wash.material.color.setHex(0xffffff);
+      this._wash.position.set(0, -0.8, 0);
+      this._wash.rotation.x = 0;
+      this._wash.scale.setScalar(1);
+    }
+    /* `_high` is where the ship IS, so the descent picks up exactly where the
+     * burn left off rather than cutting to a stock approach altitude — which
+     * would be a teleport in the middle of the one sequence written to remove
+     * them. `_descentDur` is FALL because this fall is eight times an
+     * extraction's and at DESCENT it would be a drop. */
+    this._high = g ? g.position.clone() : this.pad.clone();
+    this._descentDur = FALL;
+    this._hatch(0);
+    this._enter('descent');
   }
 
   /* ── 1. the beat ──────────────────────────────────────────────────── */
@@ -402,29 +797,53 @@ export class ExtractionDirector {
     const g = new THREE.Group();
     g.name = 'extraction';
     g.frustumCulled = false;
-    let model = dropshipModel();
+    let model = transportModel();
     if (model) {
       g.add(model);
       this._model = model;
-      const anchors = model.userData?.engines || [];
-      for (let i = 0; i < 2; i++) {
-        const fire = new THREE.Mesh(G.glow, M.engine);
+      /**
+       * EVERY NOZZLE GETS A FLAME, and each one is a CONE rather than a ball.
+       *
+       * The player: "I don't see any engines working." Two reasons, and this
+       * fixes both. There were two flares against four nozzles, so half the
+       * engines were visibly dead; and each was a sphere at a fixed scale,
+       * which is a glow floating near a hull rather than thrust coming out of
+       * a hole. A cone rooted in the nozzle and stretched along −Z reads as
+       * exhaust, and `_thrust` drives its length off what the ship is actually
+       * doing — long on the climb, short on the flare, nothing on the ground.
+       */
+      const anchors = (model.userData?.engines || []).filter(Boolean);
+      this._fires = [];
+      for (const a of anchors) {
+        const fire = new THREE.Mesh(G.flame, M.engine);
         fire.frustumCulled = false;
-        fire.scale.set(0.8, 0.8, 1.5);
-        if (anchors[i]) anchors[i].add(fire);
-        else { fire.position.set((i ? 1 : -1) * 4.5, -0.22, 2.6); g.add(fire); }
-        this[i ? '_fireR' : '_fireL'] = fire;
+        fire.rotation.x = -Math.PI / 2;
+        fire.position.z = 0.28;
+        a.add(fire);
+        this._fires.push(fire);
+        const core = new THREE.Mesh(G.flameCore, M.engineCore);
+        core.frustumCulled = false;
+        core.rotation.x = -Math.PI / 2;
+        core.position.z = 0.16;
+        a.add(core);
+        this._fires.push(core);
+      }
+      if (!this._fires.length) {
+        const fire = new THREE.Mesh(G.flame, M.engine);
+        fire.position.set(0, -0.2, 3.0); g.add(fire); this._fires.push(fire);
       }
     } else {
       const hull = new THREE.Mesh(G.hull, M.hull); g.add(hull);
       const nose = new THREE.Mesh(G.nose, M.hull); nose.position.z = -4.9; g.add(nose);
+      this._fires = [];
       for (const s of [-1, 1]) {
         const wing = new THREE.Mesh(G.wing, M.trim);
         wing.position.set(s * 3.2, -0.14, 0.95); g.add(wing);
-        const fire = new THREE.Mesh(G.glow, M.engine);
-        fire.position.set(s * 4.5, -0.22, 2.6);
-        fire.scale.set(0.8, 0.8, 1.5); g.add(fire);
-        this[s > 0 ? '_fireR' : '_fireL'] = fire;
+        const fire = new THREE.Mesh(G.flame, M.engine);
+        fire.position.set(s * 4.5, -0.22, 2.9);
+        fire.rotation.x = -Math.PI / 2;
+        g.add(fire);
+        this._fires.push(fire);
       }
     }
     this._wash = new THREE.Mesh(G.wash, M.wash.clone());
@@ -436,6 +855,10 @@ export class ExtractionDirector {
     this.approach = this.pad.clone().addScaledVector(away, 108).setY(this.pad.y + 44);
     this.down = this.pad.clone().setY(this.pad.y + 1.15);
     g.position.copy(this.approach);
+    /* THE HEADING'S HISTORY IS RESET WITH THE HULL. `_face` derives the nose
+     * from where the ship moved since last frame, so a hull that was just
+     * placed has no history and must not be handed the previous flight's. */
+    this._prevPos = null; this._yaw = undefined; this._roll = 0;
     this.group = g;
     w.scene?.add(g);
     audio.noise?.({ dur: 3.0, gain: 0.11, type: 'bandpass', freq: 240, q: 0.9, pos: this.approach });
@@ -443,41 +866,178 @@ export class ExtractionDirector {
 
   _inbound(dt, ctx) {
     const g = this.group;
+    this._thrust = 0.75;
     if (!g) { this._enter('boarding'); return; }
     const k = clamp(this.t / INBOUND, 0, 1);
     const e = smoothstep(0, 1, k);
     g.position.lerpVectors(this.approach, this.down, e * e * (3 - 2 * e));
     g.position.y = lerp(this.approach.y, this.down.y, smoothstep(0, 1, Math.pow(k, 0.62)));
-    g.rotation.set(clamp(1 - k * 1.6, 0, 1) * 0.22, this.padYaw + Math.PI / 2 + Math.PI, 0);
+    /* Nose-first and clear of the ridge — see `_face` and `_clearGround`. The
+      * approach still noses UP as it flares, which is the pitch this line
+      * always set; only the heading is taken away from it. */
+    if (k < 0.86) this._clearGround(dt);
+    this._face(dt);
+    g.rotation.x = clamp(1 - k * 1.6, 0, 1) * 0.22;
     this._wake(dt, ctx, 1 - k);
     if (k >= 1) {
-      this._enter('boarding');
-      this.world.notify?.('BOARD THE TRANSPORT', 'Walk to the ramp');
+      this.leg = 'out';
+      this._enter('opening');
       audio.thud?.(this.down, 0.8);
     }
   }
 
+  /* ── 3b. the ramp and the doors ───────────────────────────────────── */
+
+  /**
+   * HOW OPEN THE SHIP IS, 0 TO 1, AND THE ONLY PLACE THAT DECIDES IT.
+   *
+   * `k` drives the ramp's hinge and both doors' travel together. The numbers
+   * come off the ship — `userData.bay.back` is where the ramp is hinged and
+   * how far the doors have to slide to clear the aperture — because a hatch
+   * animation with its own constants is a hatch that stops matching the hull
+   * the first time the hull changes.
+   *
+   * A model that publishes no ramp (the primitive fallback, and every headless
+   * check that has not imported Levels.js) simply has nothing to move, and the
+   * phases still run at their stated length so the beat sheet stays true.
+   */
+  _hatch(k) {
+    const u = this._model?.userData;
+    if (!u) return;
+    const e = smoothstep(0, 1, clamp(k, 0, 1));
+    /* THE RAMP TOUCHES THE GROUND. Its hinge is at the bay floor, about a
+     * metre above the pad, and the leaf is 2.6 m long — so the angle that puts
+     * its lip on the sand is asin(drop / length), computed rather than typed,
+     * and clamped so a ship hovering high does not swing the ramp past
+     * vertical. */
+    if (u.ramp) {
+      const drop = Math.max(0, (this.group?.position.y ?? 0) - (this.down?.y ?? 0) + 1.05);
+      const angle = clamp(Math.asin(clamp(drop / 2.6, 0, 0.98)), 0.35, 1.15);
+      u.ramp.rotation.x = e * angle;
+    }
+    const slide = 2.0;
+    if (u.doorL) u.doorL.position.z = e * slide;
+    if (u.doorR) u.doorR.position.z = e * slide;
+    this._open = e;
+  }
+
+  _opening(dt, ctx) {
+    this._thrust = 0.10;
+    this._wake(dt, ctx, 0);
+    this._hatch(this.t / HATCH);
+    if (this.t === dt || !this._saidOpen) {
+      this._saidOpen = true;
+      audio.noise?.({ dur: 1.4, gain: 0.09, type: 'bandpass', freq: 420, q: 1.4, pos: this.group?.position });
+    }
+    if (this.t < HATCH) return;
+    this._hatch(1);
+    this._saidOpen = false;
+    if (this.leg === 'in') { this._enter('unload'); return; }
+    this._enter('boarding');
+    this.world.notify?.('BOARD THE TRANSPORT', 'Walk up the ramp');
+  }
+
+  /**
+   * THE BAY IS SHUT, AND IT WILL NOT SHUT ON A LIT BLADE.
+   *
+   * The player asked for this by name: "because of the close quarters you would
+   * have to press the button to retract your saber, would be a cool time to
+   * make you actually use it." The crew simply waits, and says so — which makes
+   * the retract key a thing you use in the world rather than a binding you
+   * discover in a menu. It cannot strand anybody: `LAST_CALL` seconds of
+   * waiting and the ship's own systems drop the blade for you, with a line
+   * about it, because a mode that can be locked by a control the player has not
+   * found is a mode that is broken.
+   */
+  _sealing(dt, ctx) {
+    const w = this.world;
+    const p = w.player;
+    this._thrust = 0.14;
+    const lit = SEAL_NEEDS_BLADE_DOWN && !!p?.alive && !!p?.saber?.lit && !p.saber.physical;
+    /* THE WAIT HAS ITS OWN CLOCK, and that is not a detail. The first version
+     * held the phase by winding `this.t` back a frame at a time — which meant
+     * `t` never grew, so the `t < LAST_CALL` that was supposed to end the wait
+     * could never be reached and a player who never put the blade away held the
+     * ship for ever. Measured: still on the first ground after 120 s of driven
+     * play. `_sealWait` counts the standing-about; `this.t` counts the travel,
+     * so the seal always takes HATCH seconds of actual movement however long
+     * anybody stood there. */
+    if (lit && (this._sealWait || 0) < BLADE_WAIT) {
+      this._sealWait = (this._sealWait || 0) + dt;
+      this._hatch(1);
+      if (!this._askedBlade) {
+        this._askedBlade = true;
+        w.notify?.('BLADE DOWN', 'Not in the bay — put it away');
+      }
+      this.t -= dt;
+      return;
+    }
+    if (lit) { p.saber.retract?.(); p.hum?.retract?.(); w.notify?.('BLADE DOWN', 'The crew did it for you'); }
+    this._askedBlade = false;
+    this._sealWait = 0;
+    this._wake(dt, ctx, 0);
+    this._hatch(1 - this.t / HATCH);
+    if (this.t < HATCH) return;
+    this._hatch(0);
+    if (this.leg === 'in') { this._finish(); return; }
+    this._enter('liftoff');
+    this._closeUp();
+  }
+
   /* ── 4. the walk ──────────────────────────────────────────────────── */
 
-  /** Where the door is: at the ship's port side, on the ground. */
+  /**
+   * WHERE THE RAMP'S FOOT IS — on the ground, behind the ship.
+   *
+   * It was the PORT SIDE DOOR at (−2.4, −1.15, 0.6), because the old hull had
+   * no ramp and the only way in was a sill. The ship has a ramp now and it is
+   * at the back, which is also what makes filing in read as filing in: a queue
+   * up a centreline rather than eight bodies converging on one hip.
+   */
   _ramp(out = _v2) {
     const g = this.group;
-    out.set(-2.4, -1.15, 0.6);
+    const bay = this._model?.userData?.bay;
+    const back = bay ? bay.back : 3.3;
+    out.set(0, -1.15, back + 2.4);
     g.localToWorld(out);
     if (this.world.terrain) out.y = this.world.terrain.height(out.x, out.z);
     return out;
   }
 
+  /** The middle of the bay floor, in world space — where a walk-in ends. */
+  _bayPoint(out = _v2) {
+    const bay = this._model?.userData?.bay;
+    out.set(0, (bay ? bay.floor : -0.95) + 0.1, bay ? (bay.front + bay.back) / 2 : 0.85);
+    this.group.localToWorld(out);
+    return out;
+  }
+
+  /**
+   * IS THIS BODY STANDING IN THE BAY?
+   *
+   * The test is the ship's own published box, in the ship's own frame, with a
+   * little slack on the aperture so a body half through the door counts as in.
+   * That is the whole replacement for `BOARD_RADIUS`: you are aboard when you
+   * are inside the ship, not when you are near a point beside it.
+   */
+  _inBay(pos) {
+    const bay = this._model?.userData?.bay;
+    if (!bay || !this.group) return false;
+    _v3.copy(pos);
+    this.group.worldToLocal(_v3);
+    return Math.abs(_v3.x) <= bay.halfW + 0.55
+      && _v3.z >= bay.front - 0.2 && _v3.z <= bay.back + 0.9
+      && _v3.y >= bay.floor - 1.4 && _v3.y <= bay.roof + 0.6;
+  }
+
   _boarding(dt, ctx) {
     const w = this.world;
-    const g = this.group;
-    /* NO WASH WITH THE GEAR ON THE GROUND. `_wake`'s cone is 9 m of it and
-     * `low` is "how close to the deck am I", so a landed ship passing 1 filled
-     * a fifth of the frame with dust it was no longer making — visible in
-     * tools/shot.mjs's boarding plate as a brown cone twice the size of the
-     * aircraft. A ship that is DOWN is not blowing sand about; the approach
-     * ramps it to zero at touchdown and it stays there. */
+    this._thrust = 0.08;
+    /* NO WASH WITH THE GEAR ON THE GROUND. `_wake`'s cone is 9 m of it and a
+     * landed ship passing 1 filled a fifth of the frame with dust it was no
+     * longer making. */
     this._wake(dt, ctx, 0);
+    this._hatch(1);
     const ramp = this._ramp(_v2).clone();
     // your line walks to the ramp and files in, whether or not you do
     this._walkTroops(dt, ramp);
@@ -485,7 +1045,10 @@ export class ExtractionDirector {
     for (const p of w.players) {
       if (!p || !p.isLocal || !p.alive) continue;
       if (p.riding) continue;
-      if (p.position.distanceTo(ramp) <= BOARD_RADIUS) { this._seat(p); continue; }
+      /* STANDING IN THE BAY, not "within 3.2 m of a point". See `_inBay`, and
+       * see the player's own words on the version this replaces: "you don't
+       * even walk into the ship you touch it and teleport in I guess?" */
+      if (this._inBay(p.position)) { this._seat(p); continue; }
       waiting.push(p);
     }
     if (this._pull) {
@@ -493,19 +1056,19 @@ export class ExtractionDirector {
       const k = clamp(this._pull.t / PULL, 0, 1);
       for (const p of this._pull.who) {
         if (!p.alive || p.riding) continue;
-        p.position.lerpVectors(this._pull.from.get(p), ramp, smoothstep(0, 1, k));
-        if (w.terrain) p.position.y = w.terrain.height(p.position.x, p.position.z);
+        p.position.lerpVectors(this._pull.from.get(p), this._bayPoint(_v1), smoothstep(0, 1, k));
         p.velocity?.set?.(0, 0, 0);
         if (k >= 1) this._seat(p);
       }
       if (k >= 1) this._pull = null;
       return;
     }
-    if (!waiting.length) { this._enter('liftoff'); this._closeUp(); return; }
+    if (!waiting.length) { this._enter('sealing'); return; }
     if (this.t >= LAST_CALL) {
-      /* LAST CALL, and it is a HAUL and not a placement. See the co-op note in
-       * the header: the only way this file is allowed to end a stall is with
-       * something the player watches happen to them. */
+      /* LAST CALL, and it is a HAUL and not a placement. The only way this file
+       * is allowed to end a stall is with something the player watches happen
+       * to them — and it hauls them UP THE RAMP INTO THE BAY now, rather than
+       * onto a sill. */
       w.notify?.('LAST CALL', 'The crew is pulling you aboard');
       const from = new Map();
       for (const p of waiting) from.set(p, p.position.clone());
@@ -514,89 +1077,192 @@ export class ExtractionDirector {
   }
 
   /**
-   * YOUR LINE WALKS TO THE RAMP.
+   * YOUR LINE WALKS UP THE RAMP — and it is a QUEUE now, not a convergence.
    *
-   * Steered rather than placed, and steered the same way `CommandDirector`
-   * steers everything else it owns — `wish` and `toTarget` are the two fields
-   * `Enemy._move` reads, so writing them makes the legs cycle and the body face
-   * where it is going instead of sliding. The positional advance beside it is
-   * `_clearBlade`'s own device and it is here for the same reason: a trooper
-   * that is stunned, braced or knocked down has no `wish` at all, and a squad
-   * that only MOSTLY boards would hold the ship at last call every single time.
+   * The player: "a lot of troops have trouble getting inside". They did, and
+   * the reason was geometry rather than steering. Every trooper was sent at one
+   * point beside the hull and admitted within 2.4 m of it, so ten bodies
+   * converged on one spot, arrived as a scrum, and shoved each other out of the
+   * admission radius — the ones on the outside of the pile never got in and the
+   * ship held its last call every time.
    *
-   * `CommandDirector.update` is gated off for the whole extraction (see
-   * `World.update`), so nothing is fighting this for the same two fields.
+   * Three waypoints instead, which is what a queue is:
+   *
+   *   1. the MUSTER POINT, six metres behind the ramp on the ship's centreline,
+   *      offset by the trooper's own index so a line forms rather than a heap;
+   *   2. the RAMP FOOT, once they are behind the ship and it is their turn;
+   *   3. their SEAT, up the ramp and into the bay.
+   *
+   * Steered rather than placed, the way `CommandDirector` steers everything it
+   * owns: `wish` and `toTarget` are the two fields `Enemy._move` reads, so
+   * writing them makes the legs cycle and the body face where it is going. The
+   * positional advance beside it is `_clearBlade`'s own device and is here for
+   * the same reason — a trooper that is stunned or knocked down has no `wish`
+   * at all, and a squad that only MOSTLY boards holds the ship every time.
    */
   _walkTroops(dt, ramp) {
     const w = this.world;
     const team = w.player?.team;
     if (team === undefined || !w.enemies) return;
-    for (let i = w.enemies.length - 1; i >= 0; i--) {
-      const e = w.enemies[i];
+    const g = this.group;
+    const seats = this._model?.userData?.seats;
+    const mine = [];
+    for (const e of w.enemies) {
       if (e.dead || e.team !== team || e._extracting) continue;
-      const dx = ramp.x - e.position.x, dz = ramp.z - e.position.z;
-      const d = Math.hypot(dx, dz);
-      if (d <= 2.4) {
-        if (this._seated.length < BAY_SEATS) this._seat(e);
-        else { e._extracting = 'left'; }
+      mine.push(e);
+    }
+    /* THE QUEUE'S ORDER IS BY DISTANCE, once, and then it is kept — a queue
+     * that re-sorts every frame is a queue whose members swap places and walk
+     * into each other, which is a good half of what "trouble getting inside"
+     * looked like. */
+    for (const e of mine) if (e._queue === undefined) e._queue = e.position.distanceToSquared(ramp);
+    mine.sort((a, b) => a._queue - b._queue);
+
+    for (let i = 0; i < mine.length; i++) {
+      const e = mine[i];
+      const seated = this._seated.length;
+      const room = seats ? seats.length : BAY_SEATS;
+      /* Inside the bay: take a place. Nobody is moved to get there — `_seat`
+       * converts where they already stand into a slot. */
+      if (this._inBay(e.position)) {
+        if (seated < room) this._seat(e);
+        else e._extracting = 'left';
         continue;
       }
-      const nx = dx / (d || 1), nz = dz / (d || 1);
+      let target;
+      const dRamp = Math.hypot(ramp.x - e.position.x, ramp.z - e.position.z);
+      if (i < 2 || dRamp < BOARD_RADIUS * 2.2) {
+        /* At the front of the queue, or already at the foot: climb. The target
+         * is the middle of the bay, so the walk goes UP the ramp rather than
+         * at the lip of it. */
+        target = this._bayPoint(_v1);
+      } else {
+        /* Further back: stand in line behind the ramp, on the centreline. */
+        _v1.set(0, -1.15, (this._model?.userData?.bay?.back ?? 3.3) + 4.0 + i * 1.5);
+        g.localToWorld(_v1);
+        if (w.terrain) _v1.y = w.terrain.height(_v1.x, _v1.z);
+        target = _v1;
+      }
+      const dx = target.x - e.position.x, dz = target.z - e.position.z;
+      const d = Math.hypot(dx, dz);
+      if (d < 0.05) continue;
+      const nx = dx / d, nz = dz / d;
       if (!e.wish) e.wish = new THREE.Vector3();
       e.wish.set(nx, 0, nz);
       if (!e.toTarget) e.toTarget = new THREE.Vector3();
       e.toTarget.set(nx, 0, nz);
       const push = Math.min(d, 4.2 * dt);
       e.position.x += nx * push; e.position.z += nz * push;
-      if (w.terrain) e.position.y = w.terrain.height(e.position.x, e.position.z);
+      /* ON THE RAMP THE FLOOR IS THE RAMP. Clamping to terrain height all the
+       * way in is what made a trooper walk THROUGH the ramp and pop up inside
+       * the hull — the ship's floor is a metre off the sand. Inside the ship's
+       * own footprint the body rises to meet the deck instead. */
+      /* THE FLOOR IS DAMPED WHICHEVER FLOOR IT IS, and that second clause is
+       * the one that mattered. The deck branch was damped and the terrain
+       * branch SNAPPED, so a body that drifted a hand's width off the side of
+       * the ramp fell a metre in one frame — 0.36 m of it measured, which is
+       * 21 m/s and reads as exactly the pop this rewrite is here to remove.
+       * One damp, one rate, both surfaces. */
+      const deck = this._deckHeight(e.position);
+      const floor = deck !== null ? deck
+        : (w.terrain ? w.terrain.height(e.position.x, e.position.z) : e.position.y);
+      e.position.y = damp(e.position.y, floor, 8, dt);
       e._syncBody?.();
     }
   }
 
   /**
-   * A SEAT IN THE BAY.
+   * HOW HIGH THE FLOOR IS WHERE THIS BODY IS STANDING, or null for "the ground".
    *
-   * The commander gets the port door — the exact shot the player pointed at,
-   * which is a body stood at an open side door with the ground going past — and
-   * everybody else gets a bench either side of them. `riding` is the one field
-   * `Player._move` and `Enemy` read to know that their position is not theirs
-   * this frame; it is written here and cleared in `_release`, and nothing else
-   * in the tree sets it.
+   * Three surfaces, and the ramp is the one that matters: it is a plane hinged
+   * at the bay floor running down to the sand, so a body on it should be at the
+   * height of the ramp under its feet and not at the height of the terrain
+   * two metres below. Without this a trooper walking up sinks through the leaf
+   * and arrives inside the belly, which reads exactly like the teleport this
+   * whole rewrite exists to remove.
    */
-  _seat(body) {
+  _deckHeight(pos) {
+    const bay = this._model?.userData?.bay;
+    const g = this.group;
+    if (!bay || !g) return null;
+    _v3.copy(pos);
+    g.worldToLocal(_v3);
+    if (Math.abs(_v3.x) > bay.halfW + 0.5) return null;
+    if (_v3.z >= bay.front - 0.2 && _v3.z <= bay.back + 0.2) {
+      _v1.set(_v3.x, bay.floor, _v3.z);
+      g.localToWorld(_v1);
+      return _v1.y;
+    }
+    const u = this._model.userData;
+    const rampLen = 2.6;
+    if (u.ramp && _v3.z > bay.back && _v3.z <= bay.back + rampLen * Math.cos(u.ramp.rotation.x) + 0.4) {
+      const along = clamp((_v3.z - bay.back) / Math.max(0.2, rampLen * Math.cos(u.ramp.rotation.x)), 0, 1);
+      _v1.set(_v3.x, bay.floor - Math.sin(u.ramp.rotation.x) * rampLen * along, _v3.z);
+      g.localToWorld(_v1);
+      return _v1.y;
+    }
+    return null;
+  }
+
+  /**
+   * A PLACE IN THE BAY — AND NOTHING IS MOVED TO GET THERE.
+   *
+   * This is the second half of "you touch it and teleport in". The old version
+   * assigned a fixed local offset on the SILL — x = ±1.45, half a body outboard
+   * of the belly — and the body snapped to it from wherever it was standing.
+   * Two defects in one line: a jump, and a passenger hanging off the outside of
+   * an aircraft.
+   *
+   * Now the seat is taken from the ship's own `userData.seats` table, and the
+   * body EASES to it from where it already is: `riding.local` starts as the
+   * body's current position expressed in the ship's frame, and `_flyPassengers`
+   * walks it to the seat over `SETTLE` seconds. A player who walked up the ramp
+   * sees themselves take a step to the bench; a player hauled aboard at last
+   * call sees the same step. There is no frame in which anybody is somewhere
+   * they were not a moment ago.
+   */
+  _seat(body, instant = false) {
     if (!body || body.riding) return;
-    /**
-     * AT THE DOOR, NOT IN THE MIDDLE OF THE HULL — and the first draft got this
-     * wrong in a way only a screenshot could show.
-     *
-     * The seats were at x = ±1.05, y = −0.55: inside the troop bay, which is
-     * the right place to be in a real aircraft and the wrong place to be in
-     * this one. `buildGunship`'s bay is a recessed slot between rails at
-     * y = +0.54 and y = −0.60, about 1.1 m of aperture; a body's feet at −0.55
-     * puts its eye at +1.05, above the roof rail and inside solid hull. Driven
-     * through tools/shot.mjs, the first-person frame was a wall of cream
-     * fuselage with the battlefield entirely behind it.
-     *
-     * So a passenger stands ON THE SILL at x = ±1.45 — the door line, half a
-     * body outboard of the belly — with the feet at −1.05 and therefore the eye
-     * at +0.55, dead level with the aperture. That is the reference plate
-     * exactly: a clone stood at the lip of an open side door with nothing
-     * between him and the ground going past.
-     *
-     * The commander gets the port door and everybody else files aft of them.
-     */
     const isPlayer = body.isLocal !== undefined;
-    let local;
-    if (isPlayer && !this._doorTaken) {
-      this._doorTaken = true;
-      local = new THREE.Vector3(-1.45, -1.05, 0.35);
+    const seats = this._model?.userData?.seats;
+    let slot;
+    if (seats && seats.length) {
+      /* THE COMMANDER GETS A DOOR. `_doorTaken` used to mean the port sill; it
+       * means the first STANDING place now — the one on the centreline with the
+       * ground going past the open door beside it, which is the shot the player
+       * pointed at. Everybody else fills the benches first and stands when the
+       * benches are gone, which is the order a real stick fills in. */
+      const stand = seats.filter((x) => !x.sit);
+      const bench = seats.filter((x) => x.sit);
+      if (isPlayer && !this._doorTaken && stand.length) { this._doorTaken = true; slot = stand[0]; }
+      else {
+        const taken = this._takenSlots || (this._takenSlots = new Set());
+        const order = isPlayer ? [...stand, ...bench] : [...bench, ...stand];
+        slot = order.find((x) => !taken.has(x)) || order[0];
+        taken.add(slot);
+      }
     } else {
       const n = this._seated.length;
-      const side = n % 2 ? 1 : -1;
-      const row = Math.floor(n / 2);
-      local = new THREE.Vector3(side * 1.45, -1.05, -0.55 + row * 1.15);
+      slot = { x: (n % 2 ? 1 : -1) * 0.86, y: -0.4, z: -0.55 + Math.floor(n / 2) * 1.15,
+        yaw: n % 2 ? -Math.PI / 2 : Math.PI / 2, sit: true };
     }
-    body.riding = { local, yaw: local.x < 0 ? -Math.PI / 2 : Math.PI / 2 };
+    /* Where they ARE, in the ship's frame — the start of the ease.
+     *
+     * `instant` IS `_reboard`'S CASE AND ONLY ITS CASE. On the far side of the
+     * swap the world has just been rebuilt: `_afterRotate` spawned the
+     * commander on the NEW ground's spawn point, which is ninety-odd metres
+     * below a ship at cruise. Easing from there is a body falling out of the
+     * bay for a second — measured at 148.8 m from the hull on 25 frames — so
+     * the reboard puts them straight in the seat. Everybody who actually walked
+     * aboard eases, which is the whole point of the ease. */
+    const to = new THREE.Vector3(slot.x, slot.y, slot.z);
+    if (instant) {
+      body.riding = { local: to.clone(), to, yaw: slot.yaw, sit: !!slot.sit, t: 1 };
+    } else {
+      _v3.copy(body.position);
+      this.group.worldToLocal(_v3);
+      body.riding = { local: _v3.clone(), to, yaw: slot.yaw, sit: !!slot.sit, t: 0 };
+    }
     body._extracting = 'aboard';
     body.velocity?.set?.(0, 0, 0);
     body.grounded = true;
@@ -606,6 +1272,7 @@ export class ExtractionDirector {
       this._seated.push(body);
     } else {
       audio.thud?.(body.position, 0.35);
+      this.world.notify?.('ABOARD', slot.sit ? 'Take a seat' : 'Hold the rail');
     }
   }
 
@@ -616,7 +1283,40 @@ export class ExtractionDirector {
     const yaw = g.rotation.y;
     const move = (b) => {
       if (!b || !b.riding) return;
-      _v3.copy(b.riding.local);
+      /* THE EASE. `local` is where the body was when it stepped aboard and `to`
+       * is its seat; over SETTLE seconds it walks the difference, in the ship's
+       * own frame, so the bay moving underneath it costs nothing. Once it has
+       * arrived the two are identical and this is a copy.
+       *
+       * This is what makes boarding continuous. The old code pinned the body to
+       * a fixed offset the instant it was seated, which is a teleport of up to
+       * three metres — the visible half of "you touch it and teleport in". */
+      const r = b.riding;
+      if (r.to && r.t < 1) {
+        r.t = Math.min(1, r.t + dt / SETTLE);
+        /**
+         * A CONSTANT PACE, AND NOT A DAMP.
+         *
+         * Two attempts got this wrong in the same direction and the second is
+         * the instructive one. `lerpVectors` with an alpha built out of
+         * `smoothstep + dt` can exceed 1 on a long frame and overshoot; a damp
+         * cannot overshoot, but it moves a FRACTION of what is left, so a body
+         * that stepped aboard at the aperture with 3.9 m of bay to cross moved
+         * 35 cm on its first frame — 21 m/s, which is a jump wearing an ease.
+         * The distance is not known in advance and a rate that depends on it
+         * cannot be bounded.
+         *
+         * A body crossing a bay WALKS across it. `SEAT_PACE` is metres per
+         * second and the step is clamped to what is left, so the worst frame is
+         * the same however far the seat is: the thing the player would call a
+         * teleport is impossible by construction rather than by tuning.
+         */
+        _v1.subVectors(r.to, r.local);
+        const left = _v1.length();
+        if (left <= SEAT_PACE * dt) { r.local.copy(r.to); r.t = 1; }
+        else r.local.addScaledVector(_v1.multiplyScalar(1 / left), SEAT_PACE * dt);
+      }
+      _v3.copy(r.local);
       g.localToWorld(_v3);
       const dx = _v3.x - b.position.x, dy = _v3.y - b.position.y, dz = _v3.z - b.position.z;
       b.position.copy(_v3);
@@ -646,10 +1346,13 @@ export class ExtractionDirector {
 
   _liftoff(dt, ctx) {
     const g = this.group;
+    this._thrust = 1;
     const k = clamp(this.t / LIFT, 0, 1);
     const climb = lerp(0, 52, k * k);
     const fwd = _v1.set(Math.cos(this.padYaw), 0, Math.sin(this.padYaw)).multiplyScalar(-lerp(0, 46, k * k));
     g.position.set(this.down.x + fwd.x, this.down.y + climb, this.down.z + fwd.z);
+    this._clearGround(dt);
+    this._face(dt);
     g.rotation.x = -0.14 * k;
     this._wake(dt, ctx, 1 - k);
     if (k >= 1) { this._enter('transit'); this._cruise0 = g.position.clone(); }
@@ -660,6 +1363,7 @@ export class ExtractionDirector {
   _transit(dt, ctx) {
     const w = this.world;
     const g = this.group;
+    this._thrust = 0.45;
     const dur = this._skip ? TRANSIT_MIN : TRANSIT;
     /* THE SKIP, and its one gate. `_rotated` is the rotate having COMPLETED,
      * so the cruise can never be collapsed into a stall. */
@@ -671,8 +1375,9 @@ export class ExtractionDirector {
     const k = clamp(this.t / span, 0, 1);
     const fwd = _v1.set(Math.cos(this.padYaw), 0, Math.sin(this.padYaw)).multiplyScalar(-lerp(0, 620, k));
     g.position.set(this._cruise0.x + fwd.x, this._cruise0.y + Math.sin(k * 3.1) * 6, this._cruise0.z + fwd.z);
+    this._clearGround(dt);
+    this._face(dt, Math.sin(this.t * 0.5) * 0.03);
     g.rotation.x = -0.06 + Math.sin(this.t * 0.7) * 0.02;
-    g.rotation.z = Math.sin(this.t * 0.5) * 0.03;
 
     // the cloud closes, the ground changes, the cloud opens
     const closed = smoothstep(0, 1, clamp((this.t - VEIL_IN + 0.9) / 0.9, 0, 1));
@@ -738,13 +1443,18 @@ export class ExtractionDirector {
     this._lzPoint = w.player?.position?.clone() || null;
     this._doorTaken = false;
     this._seated.length = 0;
-    for (const p of w.players) if (p?.isLocal && p.alive) this._seat(p);
+    /* THE SLOT LEDGER IS RESET WITH THE BODIES IT TRACKS. Without this every
+     * reboarded trooper found every bench already claimed by a body that no
+     * longer exists and fell through to the same fallback seat. */
+    this._takenSlots = new Set();
+    for (const p of w.players) if (p?.isLocal && p.alive) this._seat(p, true);
     const team = w.player?.team;
     if (team === undefined || !w.enemies) return;
+    const room = this._model?.userData?.seats?.length ?? BAY_SEATS;
     for (const e of w.enemies) {
       if (e.dead || e.team !== team) continue;
-      if (this._seated.length >= BAY_SEATS) break;
-      this._seat(e);
+      if (this._seated.length >= room) break;
+      this._seat(e, true);
     }
   }
 
@@ -791,22 +1501,37 @@ export class ExtractionDirector {
     this._high = at.clone().addScaledVector(away, 150).setY(at.y + 96);
     this.down = at.clone().setY(at.y + 1.15);
     g.position.copy(this._high);
+    /* Same reset as `_makeShip`: the descent starts 150 m from where the cruise
+     * ended, and a heading derived from that jump points at nothing. */
+    this._prevPos = null;
   }
 
   _descent(dt, ctx) {
     const g = this.group;
-    const k = clamp(this.t / DESCENT, 0, 1);
+    this._thrust = 0.55;
+    /* `_descentDur` is the insertion's, and it is longer: that fall starts at
+     * a thousand metres where an extraction's starts at ninety-six. Unset for
+     * every other flight, which is what `?? DESCENT` says. */
+    const k = clamp(this.t / (this._descentDur ?? DESCENT), 0, 1);
     const e = smoothstep(0, 1, k);
     g.position.lerpVectors(this._high, this.down, e * e * (3 - 2 * e));
     g.position.y = lerp(this._high.y, this.down.y, smoothstep(0, 1, Math.pow(k, 0.55)));
-    g.rotation.set(clamp(1 - k * 1.6, 0, 1) * 0.2, this.padYaw + Math.PI / 2 + Math.PI, 0);
+    if (k < 0.86) this._clearGround(dt);
+    this._face(dt);
+    g.rotation.x = clamp(1 - k * 1.6, 0, 1) * 0.2;
     this._setVeil(0);
     this._wake(dt, ctx, 1 - k);
     if (k >= 1) {
-      this._enter('unload');
+      /* NOBODY LEAVES BEFORE THE RAMP DOES. The player asked for exactly this —
+       * "you can only disembark when the ramp comes back out" — so the descent
+       * lands in `opening` and `_unload` is not reachable until the leaf is
+       * down. `leg` is what tells `_opening` which side of the journey it is
+       * on and therefore what to hand over to. */
+      this.leg = 'in';
+      this._enter('opening');
       audio.thud?.(this.down, 0.9);
-      this.world.notify?.(this.world.level?.name?.toUpperCase() || 'GROUND', 'Off the ramp');
-      this._closeMuster();
+      this.world.notify?.(this.world.level?.name?.toUpperCase() || 'GROUND', 'Stand by — ramp coming down');
+      if (!this._insertion) this._closeMuster();
     }
   }
 
@@ -819,6 +1544,7 @@ export class ExtractionDirector {
 
   _unload(dt, ctx) {
     const w = this.world;
+    this._thrust = 0.08;
     const k = clamp(this.t / UNLOAD, 0, 1);
     this._wake(dt, ctx, 0);
     if (!this._offloaded) {
@@ -829,7 +1555,10 @@ export class ExtractionDirector {
       for (const e of this._seated.slice()) if (!e.dead && e.riding) this._release(e, ramp, i++);
       this._seated.length = 0;
     }
-    if (k >= 1) this._finish();
+    /* AND THE RAMP COMES BACK UP BEHIND THEM. "then the ramp retracts once the
+     * troops are out, the side doors close, then the ships leave." `_sealing`
+     * on the inbound leg finishes the flight instead of lifting off. */
+    if (k >= 1) this._enter('sealing');
   }
 
   /**
@@ -890,6 +1619,11 @@ export class ExtractionDirector {
       g.parent?.remove(g);
       this._wash?.material.dispose();
     }
+    if (this._stars) { this._stars.geometry.dispose(); this._stars.material.dispose(); }
+    this._stars = null;
+    this._capital = null;
+    this._insertion = false;
+    this._descentDur = null;
     this.group = null;
     this._wash = null;
     this._model = null;
@@ -924,6 +1658,81 @@ export class ExtractionDirector {
     }
   }
 
+  /* ── flying it ────────────────────────────────────────────────────── */
+
+  /**
+   * POINT THE NOSE WHERE IT IS GOING.
+   *
+   * The player: "they fly backwards a lot." They did, and it was one sign. Every
+   * phase set the heading to `padYaw + PI/2 + PI` — a constant derived from the
+   * BEARING THE PAD WAS PICKED ON — and then moved the hull along a vector that
+   * had nothing to do with it. Outbound, `_liftoff` and `_transit` both travel
+   * along `-(cos padYaw, sin padYaw)`, which is 180° from the heading: the ship
+   * climbed out and cruised the whole way to the next planet tail first.
+   *
+   * The heading is DERIVED from the movement now, once, in one place, from the
+   * only thing that can be right about it — where the hull actually went since
+   * the last frame. Below a floor speed it holds its last heading rather than
+   * spinning on noise, and it turns at a rate rather than snapping, so a change
+   * of course is a bank and not a cut.
+   *
+   * `-Z is forward` for every craft in this file, hence the +PI.
+   */
+  _face(dt, roll = 0) {
+    const g = this.group;
+    if (!g) return;
+    if (!this._prevPos) { this._prevPos = g.position.clone(); return; }
+    const dx = g.position.x - this._prevPos.x, dz = g.position.z - this._prevPos.z;
+    this._prevPos.copy(g.position);
+    const sp = Math.hypot(dx, dz);
+    if (sp > 0.02) {
+      const want = Math.atan2(dx, dz) + Math.PI;
+      if (this._yaw === undefined) this._yaw = want;
+      /* Shortest way round, so a heading that crosses ±PI does not unwind the
+       * long way and put the hull broadside for half a second. */
+      let d = want - this._yaw;
+      while (d > Math.PI) d -= TAU;
+      while (d < -Math.PI) d += TAU;
+      this._yaw += d * Math.min(1, dt * 3.4);
+      /* And it BANKS into the turn, which is the other half of reading as
+       * flight rather than as a model being dragged along a spline. */
+      this._roll = damp(this._roll ?? 0, clamp(-d * 2.2, -0.5, 0.5), 4, dt);
+    }
+    g.rotation.y = this._yaw ?? g.rotation.y;
+    g.rotation.z = (this._roll ?? 0) + roll;
+  }
+
+  /**
+   * AND IT DOES NOT FLY THROUGH THE MOUNTAIN.
+   *
+   * The player: "Also the ships fly straight through mountains a lot." The
+   * flight paths are lerps between two points chosen for their ground-level
+   * geometry, and the terrain between them was never consulted — so a cruise
+   * that started and ended in a valley went through whatever was in the middle.
+   *
+   * This is a floor and not a path-finder, deliberately. It samples the ground
+   * a little AHEAD of the hull as well as under it — a ship that only checks
+   * where it already is has already hit the ridge — and lifts the ship to clear
+   * the higher of the two by `CLEARANCE`. It only ever pushes UP: a phase that
+   * wants to descend still descends, it simply cannot descend into rock.
+   */
+  _clearGround(dt) {
+    const g = this.group;
+    const t = this.world.terrain;
+    if (!g || !t) return;
+    _v1.set(0, 0, -1).applyEuler(g.rotation).multiplyScalar(34).add(g.position);
+    const here = t.height(g.position.x, g.position.z);
+    const ahead = t.inBounds?.(_v1.x, _v1.z, 0) === false ? here : t.height(_v1.x, _v1.z);
+    const floor = Math.max(here, ahead) + CLEARANCE;
+    if (g.position.y < floor) {
+      /* Damped rather than clamped: a hard clamp against a jagged ridge makes
+       * the hull stutter frame to frame, which reads worse than the collision
+       * it is preventing. 9 is fast enough to clear a cliff face at cruise. */
+      g.position.y = damp(g.position.y, floor, 9, dt);
+      if (g.position.y < floor - CLEARANCE * 0.5) g.position.y = floor - CLEARANCE * 0.5;
+    }
+  }
+
   /* ── the two effects ──────────────────────────────────────────────── */
 
   _wake(dt, ctx, low) {
@@ -936,9 +1745,20 @@ export class ExtractionDirector {
       w.material.opacity = k * 0.11;
       w.scale.setScalar(lerp(0.55, 1, k));
     }
-    const flare = 0.8 + Math.sin(this.total * 31) * 0.12;
-    if (this._fireL) this._fireL.scale.set(0.8 * flare, 0.8 * flare, 1.5 * flare);
-    if (this._fireR) this._fireR.scale.set(0.8 * flare, 0.8 * flare, 1.5 * flare);
+    /**
+     * THE THRUST IS DRIVEN BY WHAT THE SHIP IS DOING, which is the difference
+     * between an engine and a lamp. `_thrust` is set by each phase — 1 on the
+     * climb, 0.35 on the cruise, 0 with the gear on the ground — and the flicker
+     * is on top of it rather than instead of it. A landed transport with four
+     * jets still burning is what "I don't see any engines working" looks like
+     * from the other side: they were always on, so they never read as ON.
+     */
+    const t = this._thrust ?? 0;
+    const flare = t * (1 + Math.sin(this.total * 31) * 0.14);
+    for (const f of this._fires || []) {
+      f.visible = flare > 0.02;
+      f.scale.set(0.9 + flare * 0.3, 0.6 + flare * 2.6, 0.9 + flare * 0.3);
+    }
     if (k > 0.5 && ctx?.particles && this.pad && rng() < 0.5) {
       const a = rng() * TAU, r = 1.2 + rng() * 3.2;
       const at = this.down || this.pad;

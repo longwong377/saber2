@@ -1802,6 +1802,78 @@ export function buildTransport(opts = {}) {
   return g;
 }
 
+/**
+ * THE CAPITAL SHIP — seen once, from behind, getting smaller.
+ *
+ * The player asked for the opening by name: "you start a game in a transport
+ * ship with your troops… just as you're leaving the capitol ship in space like
+ * you when you start you look behind the ship flying through space and you see
+ * the capitol ship getting smaller and smaller and the planet getting larger
+ * and larger as you enter the atmosphere and land on your battlefield."
+ *
+ * So this is a hull built for ONE shot and it is honest about that. It is only
+ * ever seen from astern at between four hundred metres and four kilometres,
+ * receding, against black — which decides everything about it:
+ *
+ *   IT IS A SILHOUETTE AND A LIGHT PATTERN. A long triangular wedge, a stepped
+ *     dorsal command tower, two hangar mouths at the stern and a bank of eight
+ *     engines. Nothing on it is smaller than about four metres, because at
+ *     four hundred metres four metres is a pixel.
+ *   THE ENGINES ARE THE POINT. Eight discs of unlit blue at the stern, which
+ *     is the only part of a ship seen from behind against space that reads at
+ *     all, and the thing that says which way it is facing.
+ *   IT IS 1,100 m LONG and built at 1/100 scale, so the group is 11 units and
+ *     the director scales the distance rather than the model — a 1,100-unit
+ *     object inside a scene whose terrain is 400 across breaks every frustum
+ *     and shadow cascade in the engine.
+ */
+let _capitalTemplate = null;
+export function buildCapitalShip(opts = {}) {
+  if (_capitalTemplate && !opts.fresh) return _capitalTemplate.clone(true);
+  const g = new THREE.Group();
+  g.name = 'capital';
+  const hull = armorMat(0x8e8b80, 0.06, 0.72, 0.6);
+  const dark = metalMat(0x2f3136, 0.55, 0.9, 1.2);
+  const trim = armorMat(0x5d5a52, 0.05, 0.8, 0.9);
+  const glow = new THREE.MeshBasicMaterial({ color: 0x86d8ff, transparent: true, opacity: 0.9,
+    depthWrite: false, blending: THREE.AdditiveBlending });
+
+  const k = new Kit();
+  /* the wedge: a long flat-bottomed triangle, widest at the stern */
+  k.add(hull, plateGeo(1.90, 0.62, 8.60, 0.12, 1), [0, 0, 0.9]);
+  k.add(hull, plateGeo(1.20, 0.44, 3.20, 0.16, 1), [0, 0.02, -4.9]);
+  k.add(hull, plateGeo(0.52, 0.30, 2.00, 0.14, 1), [0, 0.02, -7.0]);
+  k.add(trim, plateGeo(2.20, 0.22, 3.40, 0.10, 1), [0, -0.28, 3.6]);
+  /* the two hangar mouths, dark, aft-facing */
+  k.pair((sx) => k.add(dark, plateGeo(0.66, 0.30, 0.30, 0.04, 1), [sx * 0.5, -0.10, 5.4]));
+  /* the dorsal towers */
+  k.add(trim, plateGeo(0.90, 0.44, 1.60, 0.08, 1), [0, 0.50, 3.0]);
+  k.add(trim, plateGeo(0.56, 0.40, 0.90, 0.07, 1), [0, 0.86, 3.2]);
+  k.pair((sx) => k.add(dark, new THREE.SphereGeometry(0.18, 8, 6), [sx * 0.30, 1.14, 3.2]));
+  /* the flank hangars and the greebled belly */
+  k.row(9, (i, t) => {
+    k.add(dark, plateGeo(2.02, 0.07, 0.22, 0.02, 1), [0, 0.16, -3.4 + t * 8.0]);
+  });
+  k.pair((sx) => k.row(6, (i, t) => {
+    k.add(dark, plateGeo(0.10, 0.16, 0.34, 0.02, 1), [sx * 0.96, -0.06, -2.0 + t * 6.6]);
+  }));
+  k.bake(g, { silhouette: true });
+
+  /* the engine bank — eight discs, the only lit thing on it */
+  const ke = new Kit();
+  for (let i = 0; i < 8; i++) {
+    const col = i % 4, row = i < 4 ? 0 : 1;
+    const x = (col - 1.5) * 0.42, y = 0.10 - row * 0.30;
+    ke.add(dark, new THREE.CylinderGeometry(0.19, 0.19, 0.30, 10), [x, y, 5.35], [1.5708, 0, 0]);
+    ke.add(glow, new THREE.CircleGeometry(0.15, 12), [x, y, 5.52]);
+  }
+  ke.bake(g, { silhouette: true });
+
+  g.traverse((o) => { if (o.isMesh) { o.frustumCulled = false; o.castShadow = false; o.receiveShadow = false; } });
+  if (!opts.fresh) _capitalTemplate = g;
+  return g;
+}
+
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  Registration                                                          */
 /* ══════════════════════════════════════════════════════════════════════ */
