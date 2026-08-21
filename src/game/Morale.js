@@ -124,6 +124,29 @@ export const MORALE = {
   SHAKEN: -0.22,
   /** How close counts as near, in metres. */
   NEAR: 14,
+  /**
+   * …AND HOW MUCH OF THAT A MAN AT THE EDGE OF IT GETS.
+   *
+   * PRESENCE WAS A STEP AND IS A GRADIENT. `NEAR` is a radius, so before this
+   * the man at your shoulder and the man 13.9 m away drew the identical
+   * `JEDI_NEAR`, and the man at 14.1 m drew `ALONE` instead — a cliff a player
+   * cannot see, in the one term the whole presence argument is built on.
+   *
+   * It also made the two arms of the Dead Jedi test indistinguishable the
+   * moment the ceiling came off: both rest at the cap, because both have a
+   * Jedi somewhere inside a 14 m circle. A step function has one value; a
+   * channel needs a range.
+   *
+   * `EDGE` is the share the term keeps at the rim, and the falloff between is
+   * linear in distance rather than in its square — a soldier judges "how far
+   * away is he" in metres, not in area, and a square-law term spends almost all
+   * of its range in the last three metres.
+   *
+   * 0.35 rather than 0: a man at the edge of the circle can still SEE their
+   * Jedi, and seeing them is most of it. Dropping to nothing at the rim would
+   * put a discontinuity back at exactly the place this exists to remove.
+   */
+  EDGE: 0.35,
   /** Below this a body breaks: it stops holding formation and falls back. */
   BREAK: 0.24,
   /** Below this it will not take an order at all. */

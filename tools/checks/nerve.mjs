@@ -317,6 +317,49 @@ export async function run({ check, assert }) {
   });
 
   /**
+   * …AND PRESENCE IS A GRADIENT, WHICH IS WHAT MAKES IT A CHANNEL.
+   *
+   * `NEAR` is a radius, so `JEDI_NEAR` was a step: the man at your shoulder and
+   * the man 13.9 m away drew the identical term, and the man at 14.1 m drew
+   * `ALONE` instead. A cliff a player cannot see, in the one term the whole of
+   * FLAGSHIP §7's presence argument is built on — and, once the ceiling came
+   * off, the reason both arms of the Dead Jedi test rested at the same 0.84:
+   * both had a Jedi somewhere inside a circle.
+   *
+   * Read off the shipped constants rather than re-deriving the curve, because
+   * the shape is the claim and the numbers are the table's.
+   */
+  await check('presence falls off with distance rather than stopping at a rim', async () => {
+    const { MORALE } = await import('../../src/game/Command.js');
+    /* The same arithmetic `_morale` runs, asked at four distances. Written as
+     * one expression so a change to the curve fails here rather than being
+     * quietly re-stated. */
+    const share = (m) => {
+      const d2 = m * m;
+      if (d2 >= MORALE.NEAR * MORALE.NEAR) return 0;
+      return 1 - (1 - MORALE.EDGE) * (m / MORALE.NEAR);
+    };
+    assert(Math.abs(share(0) - 1) < 1e-9, `at the shoulder a man gets ${share(0).toFixed(3)} of the term`);
+    assert(Math.abs(share(MORALE.NEAR * 0.999) - MORALE.EDGE) < 0.01,
+      `at the rim a man gets ${share(MORALE.NEAR * 0.999).toFixed(3)} against a stated ${MORALE.EDGE}`);
+    assert(share(MORALE.NEAR + 0.1) === 0, 'the term reaches past its own radius');
+    /* THE RANGE IS THE POINT. A channel whose ends are within a few per cent of
+     * each other is a step wearing a curve. */
+    const mid = share(MORALE.NEAR / 2);
+    assert(mid > MORALE.EDGE + 0.1 && mid < 0.95,
+      `halfway out a man gets ${mid.toFixed(2)}, which is not between the two ends`);
+    /* AND IT IS NOT A CLIFF AT THE RIM EITHER, which is the thing it exists to
+     * remove: a man who can still see their Jedi keeps most of it. */
+    assert(MORALE.EDGE > 0.15,
+      `the rim keeps ${MORALE.EDGE} of the term — that is a discontinuity put back where one was taken out`);
+    /* …and what it is worth in the number a body reads: the difference between
+     * standing with your line and standing at the edge of it. */
+    const at = (m) => MORALE.JEDI_NEAR * share(m);
+    return `JEDI_NEAR ${at(0).toFixed(3)}/s at the shoulder, ${at(MORALE.NEAR / 2).toFixed(3)} at `
+      + `${(MORALE.NEAR / 2).toFixed(0)} m, ${at(MORALE.NEAR * 0.999).toFixed(3)} at the rim, 0 past it`;
+  });
+
+  /**
    * …AND NOTHING BELOW THE CAP MOVED, which is the claim that lets every other
    * measurement in this file stand. The rally out of `BREAK` is the number
    * `drive`'s own header quotes — "about a second" at +0.085/s — and it is

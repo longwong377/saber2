@@ -4900,13 +4900,23 @@ export class CommandDirector extends WaveDirector {
         if (e && !e.dead) {
           /* PRESENCE. The Jedi is worth more than a sergeant, and a body with
            * neither in reach is a body on its own. */
+          /* HOW MUCH OF A PRESENCE TERM A MAN AT `d²` GETS — full at the
+           * shoulder, `MORALE.EDGE` at the rim, nothing beyond it. See `EDGE`:
+           * this was a step, and a step has one value where the channel needs
+           * a range. */
+          const share = (d2) => {
+            if (d2 >= MORALE.NEAR * MORALE.NEAR) return 0;
+            const k = Math.sqrt(d2) / MORALE.NEAR;
+            return 1 - (1 - MORALE.EDGE) * k;
+          };
           let near = false, presence = 0;
-          if (jedi?.position && dist2(e.position, jedi.position) < MORALE.NEAR * MORALE.NEAR) {
-            presence += MORALE.JEDI_NEAR; near = true;
+          if (jedi?.position) {
+            const w = share(dist2(e.position, jedi.position));
+            if (w > 0) { presence += MORALE.JEDI_NEAR * w; near = true; }
           }
-          if (lead && lead !== t && lead.body && !lead.body.dead
-            && dist2(e.position, lead.body.position) < MORALE.NEAR * MORALE.NEAR) {
-            presence += MORALE.LEADER_NEAR; near = true;
+          if (lead && lead !== t && lead.body && !lead.body.dead) {
+            const w = share(dist2(e.position, lead.body.position));
+            if (w > 0) { presence += MORALE.LEADER_NEAR * w; near = true; }
           }
           /* AND THEY EASE OFF AT THE CEILING — see `MORALE.PRESENCE_CAP` for
            * the 1.000 this is here to unpin. A taper and not a switch, because
