@@ -221,6 +221,47 @@ export async function run({ check, assert }) {
     return `drove ${drove.toFixed(1)} m, swung ${turned.toFixed(2)} rad, fired ${fired} shell(s)`;
   });
 
+  check('driving: every machine that declares a crew actually drives', async () => {
+    /**
+     * FOUR MACHINES, NOT ONE. The steering check above drives an AT-TE and
+     * proves the mechanism; this one proves the ROSTER, because each of these
+     * bodies carries its own movement rules and two of them have a reason to
+     * refuse. The SPHA "remains motionless to fire" and declares `plant`; the
+     * Juggernaut is ten wheels on a 25 m wheelbase with a grade limit of 0.17.
+     * A machine that says it is drivable and then does not move under a driver
+     * is worse than one that was never offered.
+     *
+     * `plant` is handled inside `_rangedBrain`, which the driven branch of
+     * `Enemy.update` skips — so a driven siege gun should walk. That is an
+     * argument, and this is the measurement of it.
+     */
+    const drivable = Object.keys(ARCHETYPES).filter(k => crewOf(k) > 0);
+    assert(drivable.length >= 4, `only ${drivable.length} machines declare a crew`);
+    const rows = [];
+    for (const type of drivable) {
+      const b = await boot();
+      const { p } = b;
+      const v = b.park(type, 4);
+      v.team = p.team;
+      const why = whyNotDrive(b.world, p, v);
+      assert(!why, `${type} declares ${crewOf(type)} crew and refuses a driver: ${why}`);
+      assert(p.takeControls(b.ctx), `${type}: takeControls said no with no reason`);
+      const from = v.position.clone();
+      b.input.moveAxis = (o) => { if (o) { o.x = 0; o.y = 1; return o; } return { x: 0, y: 1 }; };
+      b.input.act = () => false;
+      b.step(120);
+      const moved = v.position.distanceTo(from);
+      /* Two seconds of full throttle. The slowest of these is the SPHA at 1.1
+       * m/s, so a metre is a floor that nothing honest can fail. */
+      assert(moved > 1,
+        `${type} (${v.A?.label}) moved ${moved.toFixed(2)} m under two seconds of full throttle`);
+      assert(p.driving, `${type} threw its driver out while being driven`);
+      rows.push(`${type} ${moved.toFixed(1)}m`);
+      b.world.unload?.();
+    }
+    return rows.join(' · ');
+  });
+
   /* ────────────────────────────────────────────────────────────────────
    * 3. THE ARMOUR IS A TRADE, NOT AN IMMUNITY
    * ──────────────────────────────────────────────────────────────────── */
