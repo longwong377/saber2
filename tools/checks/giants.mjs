@@ -1339,6 +1339,72 @@ export async function run({ check, assert }) {
   });
 
   /**
+   * TEN WHEELS AND TWO SPROCKETS TURN BECAUSE THE MACHINE MOVED, AND ONLY THEN.
+   *
+   * There is no per-frame hook from Enemy.js into a built body, so anything on
+   * one of these that has to move with the hull reads its own hub displacement
+   * inside `onBeforeRender`. That is a seam nothing else in this project uses,
+   * which makes it exactly the kind of thing that stops working silently — a
+   * renamed field, a mesh that stops being drawn, a group that gets reparented,
+   * and a 25 m transport slides across the map on frozen wheels forever.
+   *
+   * `vehicles.mjs` holds the hailfire's two hoops to the same three properties.
+   * What is different here is the COUNT: ten callbacks integrating the same
+   * displacement separately would come apart the first time one of the ten was
+   * culled — and on a machine this long several always are — so there is one
+   * driver and it turns the whole train.
+   */
+  check('giants: the wheels and the tread turn off odometry, and one driver turns them all', async () => {
+    const rows = [];
+    for (const t of GIANT_TYPES) {
+      const A = ARCHETYPES[t];
+      const built = A.build({ scale: A.scale });
+      const spun = built.wheels ? built.wheels.map((w) => w.hoop) : built.sprockets;
+      if (!spun) continue;
+      const rig = built.rig;
+      rig.hipsBone.obj.position.set(0, built.stance.hipHeight, 0);
+      rig.root.updateMatrixWorld(true);
+      const drivers = [];
+      rig.root.traverse((o) => {
+        if (Object.prototype.hasOwnProperty.call(o, 'onBeforeRender')) drivers.push(o);
+      });
+      assert(drivers.length === 1,
+        `${t} carries ${drivers.length} roll drivers — two of them integrate the same motion `
+        + 'separately, and the train comes apart the first time one is culled');
+      const d = drivers[0];
+      d.onBeforeRender();                       // the first call only takes a reading
+      const a0 = spun.map((m) => m.rotation.y);
+      d.onBeforeRender();
+      assert(spun.every((m, i) => m.rotation.y === a0[i]), `a stationary ${t} turned its wheels`);
+
+      const R = built.wheelRadius;
+      assert(R > 0, `${t} publishes no wheel radius, so nothing can check what rolling means`);
+      rig.hipsBone.obj.position.z += 2;
+      rig.root.updateMatrixWorld(true);
+      d.onBeforeRender();
+      const want = 2 / R;
+      for (let i = 0; i < spun.length; i++) {
+        const turned = spun[i].rotation.y - a0[i];
+        assert(Math.abs(turned - want) < 1e-6,
+          `${t}: two metres of travel turned wheel ${i} of ${spun.length} by ${turned.toFixed(3)} rad `
+          + `on a ${R.toFixed(2)} m radius, not ${want.toFixed(3)} — that is not rolling, it is a timer`);
+      }
+      // …and a jump (a frustum cull, a respawn) is discarded rather than spun through
+      const a1 = spun.map((m) => m.rotation.y);
+      rig.hipsBone.obj.position.z += 60;
+      rig.root.updateMatrixWorld(true);
+      d.onBeforeRender();
+      assert(spun.every((m, i) => m.rotation.y === a1[i]),
+        `${t} integrated a sixty-metre jump as rolling`);
+      rows.push(`${t} ${spun.length} on one driver, ${want.toFixed(2)} rad per 2 m at r ${R.toFixed(2)}`);
+    }
+    assert(rows.length >= 2,
+      `only ${rows.length} giant publishes anything that turns; the Juggernaut runs on ten wheels `
+      + 'and the NR-N99 on a tread with two drive sprockets');
+    return rows.join(' · ');
+  });
+
+  /**
    * SEVERANCE IS NOT A ONE-PASS KILL ON ANY OF THEM.
    *
    * `severance` prices a leg at `1.10 x share / of` where `of` is how many leg

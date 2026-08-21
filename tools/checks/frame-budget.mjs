@@ -74,8 +74,9 @@
  */
 
 import * as THREE from 'three';
-import { OutlinePass } from '../../src/toon/Ink.js';
+import { OutlinePass, cutsItsOwnSilhouette } from '../../src/toon/Ink.js';
 import { QUALITY } from '../../src/engine/Engine.js';
+import { celInstall } from '../../src/toon/Cel.js';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
 import { clocked } from './_shared.mjs';
 
@@ -96,6 +97,37 @@ function recordingRenderer() {
     clear() {},
   };
 }
+
+/**
+ * An Engine-shaped object with no GL behind it, for the checks that need a
+ * whole World rather than one function. Same shape cloth-cost.mjs uses; the
+ * camera is the one the LOD reads its distance off, so it is the instrument
+ * for section 6 and not a formality.
+ */
+function stubEngine() {
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(60, 16 / 9, 0.15, 520);
+  const sun = new THREE.DirectionalLight(0xffffff, 1);
+  sun.shadow.camera.updateProjectionMatrix();
+  const hemi = new THREE.HemisphereLight(0x88aaff, 0x886644, 1);
+  scene.add(sun, hemi);
+  return {
+    scene, camera, sun, hemi,
+    sunDir: new THREE.Vector3(0.4, 0.7, 0.5).normalize(),
+    renderer: { info: { render: { calls: 0, triangles: 0 }, memory: { geometries: 0, textures: 0 } } },
+    profiler: { begin() {}, end() {}, beginDraw() {}, endDraw() {}, dispose() {} },
+    applyAtmosphere() {}, fitShadows() {}, flash() {}, hurt() {}, addHeat() {},
+    setFocus() {}, setRadial() {}, setGrain() {}, setBloom() {}, setSense() {},
+    setQuality() {}, setResolutionScale() {}, render() {}, setBars() {}, punch() {}, rumble() {},
+  };
+}
+
+const idleInput = () => ({
+  act: () => false, actHit: () => false, actDown: () => false,
+  moveAxis: (o) => { if (o) { o.x = 0; o.y = 0; return o; } return { x: 0, y: 0 }; },
+  mouse: { dx: 0, dy: 0, wheel: 0, left: false, right: false },
+  delta: { x: 0, y: 0 }, accel: { x: 0, y: 0 }, end() {},
+});
 
 /** The fields `prepass` reads, and nothing else — no GL, no shaders. */
 function inkStub() {
@@ -590,5 +622,376 @@ export async function run({ check, assert }) {
     return `${ladder.length} tier moves over ${tiers.join('/')}, seven columns each; `
       + `msaa ${tiers.map((t) => QUALITY[t].msaa).join('/')} rebuilt the composer buffer `
       + `${disposed} times and freed the old one each time`;
+  });
+
+  /* ══════════════════════════════════════════════════════════════════════ */
+  /*  6. L2 — the merged rigid skin. FLAGSHIP.md §14 Step 4                 */
+  /* ══════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * THE RUNG, AND WHY IT IS MEASURED HERE RATHER THAN ARGUED ANYWHERE.
+   *
+   * FLAGSHIP §4 states the constraint the whole flagship design rests on: "a
+   * trooper who walks, shoots, takes cover and can be cut in half costs 26 draw
+   * calls at every distance, forever." §14 Step 4 puts a pair of numbers on the
+   * fix — 42 bodies at 1,040 calls today, 394 with L2 — and BACKLOG 6.5 carries
+   * the same pair. Neither had ever been measured.
+   *
+   * Measured here, and both halves move: a real `high` World on geonosis with
+   * 42 mixed bodies (troopers, B1s, heavies, B2s, officers, rocket droids and
+   * Jedi) standing 100-154 m from the camera costs **1064 visible meshes** with
+   * the rung off and **194** with it on. The estimate's "today" was honest to
+   * 2%; its "with it" was pessimistic by 2x, because the merge bins by MATERIAL
+   * and a trooper's 26 meshes wear 4 distinct ones — not the single one a lone
+   * SkinnedMesh would have needed.
+   *
+   * WHAT A DRAW CALL IS COUNTED AS. One visible mesh in the graph. There is no
+   * GL anywhere in this harness (tools/dom-shim.mjs), so `renderer.info` is not
+   * reachable and every performance claim in this repository is a BUDGET rather
+   * than a millisecond — see the header of tools/checks/profiler.mjs, and
+   * tools/_drawcalls.mjs, which attributes the same count on a dressed level.
+   * The count is honest for this question because nothing on a body is
+   * instanced and no two of its meshes share a material instance: 26 meshes is
+   * 26 submissions.
+   */
+  const L2 = { types: ['trooper', 'b1', 'heavy', 'b2', 'officer', 'rocket', 'jedi'],
+               n: 42, field: 'geonosis', near: 100 };
+
+  /** One World with 42 bodies stood out past the L2 cut, built once. */
+  const line = (async () => {
+    const { initPhysics } = await import('../../src/physics/Rapier.js');
+    await initPhysics();
+    const { World } = await import('../../src/game/World.js');
+    const { DEFAULT_SETTINGS } = await import('../../src/ui/Menu.js');
+    const { enemyRng } = await import('../../src/game/Enemy.js');
+    enemyRng.seed(20260821);
+    const engine = stubEngine();
+    const world = new World(engine, { ...DEFAULT_SETTINGS, quality: 'high' });
+    await world.loadLevel(L2.field);
+    /* NO PLAYER, and that is not a shortcut. A body with nobody to charge
+     * stands still, so the distance this is measured at is the distance it was
+     * set up at — and the count stops depending on how many frames a loaded box
+     * managed to run before the reading was taken. */
+    const centre = new THREE.Vector3(0, world.terrain.height(0, 0), 0);
+    for (let i = 0; i < L2.n; i++) {
+      const t = L2.types[i % L2.types.length];
+      const a = (i / L2.n) * 0.9 - 0.45;
+      const d = L2.near + (i % 7) * 9;
+      const x = centre.x + Math.sin(a) * d, z = centre.z + Math.cos(a) * d;
+      world.spawnEnemy(t, new THREE.Vector3(x, world.terrain.height(x, z), z));
+    }
+    engine.camera.position.set(centre.x, centre.y + 1.6, centre.z);
+    engine.camera.lookAt(centre.x, centre.y + 1.6, centre.z + 1);
+    engine.camera.updateMatrixWorld(true);
+    /* Stepped until every body has baked, because MergedSkin caps the bake at
+     * one body a frame. The loop is bounded and the bound is ASSERTED below, so
+     * a rung that silently stopped engaging fails rather than reporting a
+     * flattering number off a shorter run. */
+    const input = idleInput();
+    let frames = 0;
+    while (frames < L2.n * 4) {
+      world.update(1 / 60, input);
+      frames++;
+      if (world.enemies.every((e) => e._l2 && e._l2.on)) break;
+    }
+    return { world, engine, frames, centre };
+  })();
+
+  /** Visible meshes under every body on the field. */
+  const bodyCalls = (world) => {
+    let n = 0;
+    for (const e of world.enemies) (e.rig?.root || e.group)?.traverseVisible((o) => { if (o.isMesh) n++; });
+    return n;
+  };
+
+  check('frame: forty-two bodies past the L2 cut cost a draw call a MATERIAL, not one a mesh', async () => {
+    const { world, engine, frames } = await line;
+    const dists = world.enemies.map((e) => engine.camera.position.distanceTo(e.position));
+    const near = Math.min(...dists), far = Math.max(...dists);
+
+    assert(world.enemies.length === L2.n, `${world.enemies.length} bodies stood up, not ${L2.n}`);
+    assert(world.enemies.every((e) => e.lod === 2),
+      `not every body is at LOD 2 — distances run ${near.toFixed(0)}-${far.toFixed(0)} m and this `
+      + 'rung is the far band. Nothing below would be measuring what it says it is.');
+    assert(frames < L2.n * 4,
+      `${frames} frames and the rung never fully engaged. MergedSkin caps the bake at one body a `
+      + 'frame and Enemy.update retries a deferred one; a body that is never retried draws its '
+      + 'LOD-1 set forever, which is what this measured before that retry existed — 1 of 42.');
+
+    /* BOTH READINGS OFF THE SAME WORLD, one line apart, through the shipped
+     * `_applyLod`. A separately built control World is a different seed, a
+     * different dressing and a different set of bodies. */
+    const on = bodyCalls(world);
+    for (const e of world.enemies) e._applyLod(1);
+    const off = bodyCalls(world);
+    for (const e of world.enemies) e._applyLod(2);
+    const back = bodyCalls(world);
+
+    assert(back === on, `re-engaging the rung gave ${back} calls where it gave ${on} — not idempotent`);
+    assert(off > 900,
+      `the bodies only cost ${off} calls with the rung off, so there is nothing here to save and `
+      + 'the rest of this check is measuring an empty field');
+    assert(on * 3 < off,
+      `42 bodies cost ${off} draw calls without the merged skin and ${on} with it — under 3x. `
+      + 'FLAGSHIP §4 calls the per-body floor the whole architecture; a rung that does not clear it '
+      + 'by a wide margin is not worth the memory it costs.');
+    assert(on <= 394,
+      `${on} draw calls against FLAGSHIP §14 Step 4's stated 394, which is the figure this rung was `
+      + 'specified against.');
+    return `${L2.n} bodies at ${near.toFixed(0)}-${far.toFixed(0)} m on ${L2.field}: `
+      + `${off} draw calls -> ${on} (${(off / on).toFixed(1)}x) over ${frames} frames; `
+      + 'FLAGSHIP §14 Step 4 estimated 1040 -> 394';
+  });
+
+  check('frame: the merged skin is the same body, in a pose it was not baked in', async () => {
+    /**
+     * THE SILHOUETTE GUARANTEE, TAKEN AS A MEASUREMENT AND NOT AS AN ARGUMENT.
+     *
+     * FLAGSHIP §14 Step 4's claim is that the silhouette is "identical by
+     * construction so the 30 m seam is invisible". A construction argument is
+     * exactly what this repository does not accept, so every vertex of every
+     * rigged archetype goes through BOTH paths and the answers are compared in
+     * world space:
+     *
+     *   the graph   the source mesh's own `matrixWorld` times the vertex.
+     *   the skin    `SkinnedMesh.applyBoneTransform` — three's own CPU path,
+     *               reading the same skinIndex/skinWeight the GPU reads —
+     *               times the merged mesh's `matrixWorld`.
+     *
+     * The rig is MOVED AND RE-POSED between the bake and the comparison, bones
+     * and root both, because a bind-space error is invisible in the pose it was
+     * baked at and that is the whole failure mode of a rigid skin.
+     */
+    const { initPhysics } = await import('../../src/physics/Rapier.js');
+    await initPhysics();
+    const { RapierWorld } = await import('../../src/physics/RapierWorld.js');
+    const Foe = await import('../../src/game/Enemy.js');
+    const { buildMergedSkin } = await import('../../src/game/MergedSkin.js');
+    await import('../../src/game/Levels.js');       // the Command units and the IG general
+
+    const physics = new RapierWorld({ gravity: -24, iterations: 4, maxBodies: 64 });
+    const terrain = { height: () => 0, normalAt: (x, z, o) => o.set(0, 1, 0), raycast: () => null,
+      size: 400, half: 200, inBounds: () => true, surfaceAt: () => 'sand',
+      crater() {}, flush() {}, slopeAt: () => 0 };
+    physics.terrain = terrain;
+    const nothing = { sandPuff() {}, sparkBurst() {}, cutFlare() {}, slag() {}, plasma: { spawn() {} } };
+    const world = { scene: new THREE.Scene(), physics, terrain, statics: [], settings: { fov: 60 },
+      players: [], enemies: [], props: [], particles: nothing, time: 0, groundColor: 0xcfae82,
+      bolts: { fire() {} }, engine: { flash() {}, camera: new THREE.PerspectiveCamera() },
+      report() {}, notify() {}, notifyFloating() {}, addHitstop() {} };
+    Foe.enemyRng.seed(20260821);
+
+    let worst = 0, worstAt = '', bodies = 0, merged = 0, kept = 0, vertices = 0;
+    const refusals = new Map();
+    for (const type of Object.keys(Foe.ARCHETYPES)) {
+      const e = new Foe.Enemy(world, type, new THREE.Vector3(0, 0, 0));
+      if (!e.rig) continue;                    // a baked group; `_applyLod` no-ops on those too
+      bodies++;
+      e._applyLod(1);
+      // off the bind pose BEFORE the bake, so "works in bind" cannot pass
+      e.rig.list.forEach((b, i) => { b.obj.rotation.z += 0.11 * Math.sin(i * 1.7); });
+      e.rig.root.position.set(3.3, 1.1, -2.2);
+      e.rig.root.rotation.y = 0.9;
+      e.rig.root.updateMatrixWorld(true);
+
+      const skin = buildMergedSkin(e.rig);
+      assert(skin, `${type} kept ${e._lodParts?.length ?? 0} meshes past 30 m and merged into nothing`);
+      for (const [why, n] of skin.refused) refusals.set(why, (refusals.get(why) || 0) + n);
+      kept += skin.from; merged += skin.to;
+
+      // …and moved AGAIN afterwards, in the bones and in the root
+      e.rig.list.forEach((b, i) => { b.obj.rotation.x += 0.23 * Math.cos(i * 2.3); });
+      e.rig.root.position.set(-7, 0.4, 12);
+      e.rig.root.rotation.y = -2.1;
+      e.rig.root.updateMatrixWorld(true);
+      for (const m of skin.meshes) m.updateMatrixWorld(true);
+
+      const v = new THREE.Vector3(), ref = new THREE.Vector3();
+      for (let b = 0; b < skin.meshes.length; b++) {
+        const mesh = skin.meshes[b];
+        const P = mesh.geometry.attributes.position;
+        const W = mesh.geometry.attributes.skinWeight;
+        let cursor = 0;
+        for (const src of skin.sources[b]) {
+          const S = src.geometry.attributes.position;
+          for (let i = 0; i < S.count; i++, cursor++) {
+            v.fromBufferAttribute(P, cursor);
+            mesh.applyBoneTransform(cursor, v);
+            v.applyMatrix4(mesh.matrixWorld);
+            ref.fromBufferAttribute(S, i).applyMatrix4(src.matrixWorld);
+            const d = v.distanceTo(ref);
+            if (d > worst) { worst = d; worstAt = `${type} ${src.name || 'mesh'} vertex ${i}`; }
+            vertices++;
+            /* RIGID means one bone at 1.0 and nothing anywhere else. A partial
+             * weight is a blend the bake invented, and a blend is the one thing
+             * that could move the silhouette off the graph's answer. */
+            if (Math.abs(W.getX(cursor) - 1) > 1e-6 || W.getY(cursor) !== 0
+                || W.getZ(cursor) !== 0 || W.getW(cursor) !== 0) {
+              assert(false, `${type} has a vertex weighted `
+                + `${[W.getX(cursor), W.getY(cursor), W.getZ(cursor), W.getW(cursor)].join('/')} — `
+                + 'the rung is a RIGID skin and every vertex rides exactly one bone at 1.0');
+            }
+          }
+        }
+        assert(cursor === P.count,
+          `${type} bin ${b} covered ${cursor} of its ${P.count} vertices — the bake and the source `
+          + 'list disagree about what went in, so the comparison above is off by an offset');
+      }
+      e.dispose?.();
+    }
+
+    assert(bodies >= 25, `only ${bodies} archetypes carry a rig — the roster walk found nothing`);
+    assert(vertices > 50000, `only ${vertices} vertices compared`);
+    /* 1 mm is three orders of magnitude under a body's own size and two under
+     * the 13 mm per pixel characters.mjs rasterises at. Float32 positions
+     * through two matrix chains land at ~1e-7 m. */
+    assert(worst < 1e-3,
+      `the merged skin puts a vertex ${(worst * 1000).toFixed(2)} mm from where the mesh it `
+      + `replaced puts it (${worstAt}). The rung's whole claim is that the silhouette is identical `
+      + 'by construction; a drift here is an outline that moves at the 62 m seam.');
+    physics.dispose?.();
+    return `${bodies} rigged archetypes, ${kept} meshes -> ${merged} (${(kept / merged).toFixed(1)}x), `
+      + `${vertices} vertices compared after re-posing and re-placing, worst drift `
+      + `${worst.toExponential(1)} m; left out: `
+      + `${[...refusals].map(([k, n]) => `${n} ${k}`).join(', ') || 'nothing'}`;
+  });
+
+  check('frame: the merged skin inks exactly once, and nothing it swallowed cut its own edge', async () => {
+    /**
+     * TWO WAYS TO BREAK THE INK, and the merge could do either.
+     *
+     * DOUBLE INK: the merged skin drawn while the meshes it was baked from are
+     * still drawn. Two coincident surfaces is z-fighting in the colour buffer
+     * and two edges in the prepass's normal buffer, at twice the cost the rung
+     * claims to have saved.
+     *
+     * NO INK: a merged material that `cutsItsOwnSilhouette`. Ink.js's prepass
+     * hides exactly those objects, because their drawn edge is not their
+     * geometry — so a merged body wearing one would be the only thing on the
+     * field with no outline at all. The predicate is IMPORTED from Ink.js
+     * rather than restated; a second copy would disagree with it the first time
+     * a fifth exclusion was added there (HANDOFF §2.4).
+     *
+     * And the third, in the other direction: a mesh that DOES cut its own edge
+     * has to be refused, or a lit blade folded into an opaque body would gain
+     * an outline and stop glowing.
+     */
+    const { world } = await line;
+    let skins = 0, replaced = 0, drawn = 0;
+    for (const e of world.enemies) {
+      const L = e._l2;
+      assert(L && L.skin && L.on, `a body at LOD ${e.lod} is not merged`);
+      for (const m of L.skin.meshes) {
+        skins++;
+        assert(m.visible, 'a merged skin is not visible while the rung is on');
+        assert(m.isSkinnedMesh, 'the merged skin is not a SkinnedMesh, so the bones do not reach it');
+        assert(!cutsItsOwnSilhouette(m.material),
+          'a merged skin\'s material is transparent / alpha-tested / additive, so Ink.js\'s prepass '
+          + 'leaves it out of the normal buffer and the body draws with no outline at all');
+        assert(m.material.vertexColors && m.material.color.getHex() === 0xffffff,
+          'the merged material did not take white — the bake moves colour into the vertices, so a '
+          + 'coloured material would multiply it in twice');
+        assert(m.castShadow === false,
+          'a merged skin casts a shadow at LOD 2, where Enemy._applyLod has already taken the '
+          + 'shadow pass off the rest of the body');
+      }
+      for (const m of L.skin.replaced) { replaced++; if (m.visible) drawn++; }
+    }
+    assert(skins > 0, 'nothing merged, so nothing was checked');
+    assert(drawn === 0,
+      `${drawn} of ${replaced} meshes the merged skins were baked from are STILL VISIBLE beside `
+      + 'them — the same triangles submitted twice and inked twice');
+
+    let cut = 0;
+    for (const e of world.enemies) {
+      const inSkin = new Set(e._l2.skin.replaced);
+      e.rig?.root?.traverse((o) => {
+        if (!o.isMesh || !o.material || Array.isArray(o.material)) return;
+        if (!cutsItsOwnSilhouette(o.material)) return;
+        cut++;
+        assert(!inSkin.has(o),
+          `${e.type} folded a mesh whose drawn edge is not its geometry into an opaque merged skin`);
+      });
+    }
+    return `${skins} merged skins over ${world.enemies.length} bodies, ${replaced} source meshes all `
+      + `hidden, ${cut} self-cutting materials left with their own draw call`;
+  });
+
+  check('frame: the two material fields the merge drops reach no term in the shipped shader', async () => {
+    /**
+     * THE ONE PLACE THE MERGE IS NOT LOSSLESS BY CONSTRUCTION.
+     *
+     * A bin absorbs `color` exactly (into the vertex attribute) and splits on
+     * every other material property — except `roughness` and `metalness`, which
+     * it takes from one contributor and drops for the rest. That is sound only
+     * while the cel model is what ships, so it is read back off
+     * `THREE.ShaderChunk` AFTER `installCelShading` has run rather than argued
+     * from src/toon/Cel.js's source text. Cel.js's own note says why the
+     * distinction matters: tools/checks/cel.mjs asserts against that file's
+     * source and passes 19/19 in a process where the install never ran and the
+     * frame is fully physical.
+     *
+     * src/engine/Textures.js already stopped BINDING the roughness and metalness
+     * maps on the same reading. If either term comes back, that binding and
+     * this merge both need revisiting, and this is the line that says so.
+     */
+    assert(celInstall, 'installCelShading has not run in this process, so THREE.ShaderChunk is '
+      + 'stock three and the read below would be about a renderer this game does not use');
+    assert(!celInstall.missed.length,
+      `the cel install dropped ${celInstall.missed.join(', ')} — the frame is part physical, and `
+      + 'what survives in the shader is then not what this reads');
+
+    const C = THREE.ShaderChunk;
+    const direct = C.lights_physical_pars_fragment;
+    assert(!/directSpecular\s*\+=\s*irradiance\s*\*\s*BRDF_GGX/.test(direct),
+      'the direct GGX lobe is back in lights_physical_pars_fragment. It reads material.roughness, '
+      + 'so the L2 merge is now averaging a field that changes pixels — and Textures.js has been '
+      + 'leaving the roughness map unbound on the same reading');
+    const phys = C.lights_physical_fragment;
+    assert(!/material\.diffuseColor\s*=\s*diffuseColor\.rgb\s*\*\s*\(\s*1\.0\s*-\s*metalnessFactor/.test(phys),
+      'metalnessFactor divides the diffuse again, so metalness changes a surface\'s colour and the '
+      + 'L2 merge may no longer bin two materials that differ in it');
+    return 'no direct GGX lobe and no metalness term on the diffuse — '
+      + `${celInstall.count} substitutions installed, none missed`;
+  });
+
+  check('frame: the rung is off inside the band, and a body that comes apart gives it back', async () => {
+    /**
+     * The bake is a photograph of a rig with all of its bones. `Ragdoll.cut`
+     * rebuilds `bone.primary`'s geometry and hides a whole subtree, and a merged
+     * vertex cannot know either happened — so a cut body would walk off carrying
+     * an arm the player has just taken off it. Driven through the shipped
+     * `Actor.cut` rather than by poking the counter that watches it.
+     */
+    const { world } = await line;
+    const e = world.enemies.find((x) => x.actor && x.rig && x._l2?.on);
+    assert(e, 'no merged body on the field to cut');
+
+    e._applyLod(0);
+    assert(!e._l2.on, 'the merged skin is still drawing at LOD 0, three metres from the camera');
+    e._applyLod(1);
+    assert(!e._l2.on, 'the merged skin is drawing at LOD 1, inside the 62 m the rung engages at');
+    assert(e._l2.skin.replaced.every((m) => m.visible),
+      'the meshes the merged skin replaced did not come back when the rung switched off — the body '
+      + 'is invisible inside 62 m');
+    e._applyLod(2);
+    assert(e._l2.on, 'the merged skin did not come back at LOD 2');
+
+    const arm = e.rig.list.find((b) => b.role === 'arm' && b.primary && b.children.length);
+    assert(arm, `${e.type} has no limb to cut`);
+    const at = new THREE.Vector3().setFromMatrixPosition(arm.obj.matrixWorld);
+    const wasCut = e.actor.severedCount;
+    e.actor.cut(arm.name, at, new THREE.Vector3(0, 0, 1), 0.5);
+    assert(e.actor.severedCount > wasCut, `Actor.cut refused ${arm.name} on a ${e.type}`);
+
+    e._applyLod(2);
+    assert(!e._l2 || !e._l2.on,
+      `${e.type} kept its merged skin after losing a ${arm.name}. Every vertex of that limb is still `
+      + 'in the merged geometry, riding a bone the rig has marked severed — the body walks off '
+      + 'carrying an arm the player just cut off it.');
+    let stillDrawing = 0;
+    e.rig.root.traverse((o) => { if (o.isMesh && o.visible && o.userData.mergedSkinL2) stillDrawing++; });
+    assert(stillDrawing === 0, `${stillDrawing} merged skins still drawing on a cut body`);
+    return `LOD 0 off, LOD 1 off, LOD 2 on, and a cut ${arm.name} gave the skin back`;
   });
 }

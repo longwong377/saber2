@@ -69,16 +69,18 @@
  * The bake is a photograph of a rig with all its bones. A cut changes the
  * geometry under `bone.primary` and hides a subtree; a merged vertex cannot
  * know that, so it would carry a severed arm around. `staleness` therefore
- * watches the two counters that say the body is no longer the body that was
- * baked — `actor.severedCount` and `actor.ragdolled` — and drops the skin the
- * moment either moves. A cut body pays the old price, which is correct: it has
- * stopped being one of forty identical soldiers.
+ * watches the three things that say the body is no longer the body that was
+ * baked — `actor.severedCount`, `actor.ragdolled` and the elite modifier whose
+ * tell is a repainted material — and drops the skin the moment any of them
+ * moves. A cut body pays the old price, which is correct: it has stopped being
+ * one of forty identical soldiers.
  */
 
 import * as THREE from 'three';
 import { cutsItsOwnSilhouette } from '../toon/Ink.js';
 
 const _m1 = new THREE.Matrix4();
+const _m2 = new THREE.Matrix4();
 const _nm = new THREE.Matrix3();
 const _v = new THREE.Vector3();
 
@@ -234,13 +236,17 @@ function bakeBin(entries, rootInv) {
   const sw = new Float32Array(nv * 4);
   const idx = nv > 65535 ? new Uint32Array(ni) : new Uint16Array(ni);
 
-  let vo = 0, io = 0;
+  let vo = 0, io = 0, radius = 0, shadow = false;
   for (const e of entries) {
     const g = e.mesh.geometry;
     const mat = e.mesh.material;
     const c = countOf(g);
+    if (e.mesh.receiveShadow) shadow = true;
     _m1.multiplyMatrices(rootInv, e.mesh.matrixWorld);
     _nm.getNormalMatrix(_m1);
+    /* …and the same vertices in the BONE's frame, which is what the bounding
+     * sphere is built out of. See `boneReach`. */
+    _m2.copy(e.boneInv).multiply(e.mesh.matrixWorld);
     /* A negative determinant is a mirrored transform, and a mirrored transform
      * turns every triangle inside out. Bodies.js authors its pairs rather than
      * mirroring them by scale for exactly this reason — but `squash` and the
@@ -262,6 +268,8 @@ function bakeBin(entries, rootInv) {
       col[(vo + i) * 3 + 2] = mat.color.b * (C ? C.getZ(i) : 1);
       si[(vo + i) * 4] = e.boneIndex;
       sw[(vo + i) * 4] = 1;
+      _v.fromBufferAttribute(P, i).applyMatrix4(_m2);
+      radius = Math.max(radius, e.reach + _v.length());
     }
     if (g.index) {
       const I = g.index;
@@ -289,7 +297,35 @@ function bakeBin(entries, rootInv) {
   geo.setAttribute('skinWeight', new THREE.BufferAttribute(sw, 4));
   geo.setIndex(new THREE.BufferAttribute(idx, 1));
   geo.computeBoundingSphere();
-  return geo;
+  return { geo, radius, shadow };
+}
+
+/**
+ * HOW FAR FROM THE ROOT A BONE CAN EVER GET — the frustum bound, derived.
+ *
+ * three's own `SkinnedMesh.computeBoundingSphere` skins every vertex at
+ * whatever pose it is first asked at, caches the answer forever, and is asked
+ * inside the frustum test — so it is both a per-body cost paid on a render
+ * frame and a bound taken from one arbitrary pose. Neither is wanted for a
+ * body that is going to walk, kneel and reach for the next four minutes.
+ *
+ * A bone's offset is expressed in its parent's frame, so its length is
+ * rotation-invariant: the sum of |offset| along the chain is the distance from
+ * the root to this bone's origin with the whole skeleton pulled straight,
+ * which no pose can exceed. Add the largest distance from that origin to a
+ * vertex the bone carries and the sphere holds for EVERY pose, including the
+ * ones this rig cannot reach. Nothing here is a number anybody chose.
+ */
+function boneReach(rig) {
+  const out = new Map();
+  const of = (b) => {
+    if (out.has(b)) return out.get(b);
+    const r = (b.parent ? of(b.parent) : 0) + b.offset.length();
+    out.set(b, r);
+    return r;
+  };
+  for (const b of rig.list) of(b);
+  return out;
 }
 
 /**
@@ -307,6 +343,9 @@ export function buildMergedSkin(rig, opts = {}) {
   const bones = rig.list.map((b) => b.obj);
   const boneIndex = new Map();
   bones.forEach((o, i) => boneIndex.set(o, i));
+  const reach = boneReach(rig);
+  const boneInv = new Map();
+  for (const b of rig.list) boneInv.set(b, new THREE.Matrix4().copy(b.obj.matrixWorld).invert());
 
   const bins = new Map();
   const replaced = [];
@@ -326,7 +365,10 @@ export function buildMergedSkin(rig, opts = {}) {
         const key = mergeBinKey(o.material);
         let bin = bins.get(key);
         if (!bin) bins.set(key, (bin = { key, template: o.material, entries: [] }));
-        bin.entries.push({ mesh: o, boneIndex: boneIndex.get(bone.obj) ?? 0 });
+        bin.entries.push({
+          mesh: o, boneIndex: boneIndex.get(bone.obj) ?? 0,
+          boneInv: boneInv.get(bone), reach: reach.get(bone) ?? 0,
+        });
         replaced.push(o);
       }
     }
@@ -340,8 +382,13 @@ export function buildMergedSkin(rig, opts = {}) {
 
   const skeleton = new THREE.Skeleton(bones);
   const meshes = [];
+  /* `sources[i]` is what `meshes[i]` was baked from, IN THE ORDER IT WAS BAKED.
+   * Kept because "the merged skin is the same body" is only checkable
+   * vertex-for-vertex if the correspondence survives the bake — a bounding box
+   * is a test two different bodies can pass. */
+  const sources = [];
   for (const bin of bins.values()) {
-    const geo = bakeBin(bin.entries, rootInv);
+    const baked = bakeBin(bin.entries, rootInv);
     /* The template's own clone, so everything this file does not understand —
      * a define, a shadowSide, a future field — comes across untouched. Only the
      * three things the bake absorbed are overwritten. */
@@ -349,26 +396,40 @@ export function buildMergedSkin(rig, opts = {}) {
     mat.color.setRGB(1, 1, 1);
     mat.vertexColors = true;
     mat.name = `${bin.template.name || 'skin'}·L2`;
-    const mesh = new THREE.SkinnedMesh(geo, mat);
+    const mesh = new THREE.SkinnedMesh(baked.geo, mat);
     mesh.name = 'mergedSkinL2';
     mesh.userData.mergedSkinL2 = true;
+    /* The rung only ever draws at LOD 2, where `Enemy._applyLod` has already
+     * taken the shadow pass off the whole body. */
     mesh.castShadow = false;
-    mesh.receiveShadow = opts.receiveShadow ?? true;
+    mesh.receiveShadow = baked.shadow;
+    // …and the frustum bound is the skeleton's, not one pose's. See boneReach.
+    mesh.boundingSphere = new THREE.Sphere(new THREE.Vector3(), baked.radius);
     mesh.visible = false;
     root.add(mesh);
     mesh.updateMatrixWorld(true);
     mesh.bind(skeleton, mesh.matrixWorld);
     meshes.push(mesh);
+    sources.push(bin.entries.map((e) => e.mesh));
   }
 
-  return { meshes, replaced, refused, skeleton, from: replaced.length, to: meshes.length, visible };
+  return { meshes, sources, replaced, refused, skeleton,
+    from: replaced.length, to: meshes.length, visible };
 }
 
 /* ── the rung, as `Enemy._applyLod` uses it ───────────────────────────── */
 
-/** The two counters that say this is no longer the body that was baked. */
-function staleness(actor) {
-  return actor ? `${actor.severedCount || 0}/${actor.ragdolled ? 1 : 0}` : '0/0';
+/**
+ * The three things that say this is no longer the body that was baked.
+ *
+ * `mod` is in here with the two cut counters because an elite's tell is a
+ * MATERIAL — `Enemy.tintBones` clones the primaries' materials and repaints
+ * them — and the bake copies colour into vertices. A body promoted after its
+ * skin was baked would wear the tell at 30 m and lose it at 63.
+ */
+function staleness(owner) {
+  const a = owner.actor;
+  return `${a?.severedCount || 0}/${a?.ragdolled ? 1 : 0}/${owner.mod || '-'}`;
 }
 
 /**
@@ -407,12 +468,13 @@ export function applyMergedSkin(owner, lod) {
   if (!rig) return false;
   let L = owner._l2;
 
-  const fresh = staleness(owner.actor);
+  const fresh = staleness(owner);
   if (L && L.skin && L.stale !== fresh) { disposeMergedSkin(owner); L = owner._l2 = null; }
 
   const want = lod === L2_LOD && !owner.actor?.ragdolled && !(owner.actor?.severedCount > 0);
 
   if (!want) {
+    owner._l2Wait = false;
     if (L && L.skin && L.on) {
       for (const m of L.skin.meshes) m.visible = false;
       for (const m of L.skin.replaced) m.visible = true;
@@ -422,11 +484,18 @@ export function applyMergedSkin(owner, lod) {
   }
 
   if (!L) {
+    /* THE DEFERRAL HAS TO BE RETRIED, and the flag is how `Enemy.update` knows
+     * to. `_applyLod` is EDGE-triggered — it runs on the frame the band
+     * changes and never again — so a body refused the bake budget on its one
+     * edge would draw its LOD-1 set forever. Measured before the retry existed:
+     * 42 bodies deployed past 62 m, 300 frames, ONE of them merged. */
+    owner._l2Wait = true;
     if (!mayBake(owner)) return false;
+    owner._l2Wait = false;
     /* `skin` may come back null — a body with nothing to gain. It is REMEMBERED
      * as null so the walk is not repeated every time that body crosses the
      * boundary. */
-    const skin = buildMergedSkin(rig, { receiveShadow: owner.rig.root.children.some((c) => c.receiveShadow) });
+    const skin = buildMergedSkin(rig);
     L = owner._l2 = { skin, on: false, stale: fresh };
   }
   if (!L.skin) return false;

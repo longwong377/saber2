@@ -4269,6 +4269,12 @@ export class Enemy {
     const camDist = ctx.camera.position.distanceTo(this.position);
     const lod = camDist > 62 ? 2 : camDist > 30 ? 1 : 0;
     if (lod !== this.lod) { this.lod = lod; this._applyLod(lod); }
+    /* …and a DEFERRED L2 bake is retried. `_applyLod` is EDGE-triggered, and
+     * MergedSkin.js caps the bake at one body a frame because forty of them at
+     * once is 116 ms. Without this line a body refused the budget on its one
+     * edge waits for an edge that never comes: measured, 42 bodies deployed
+     * past 62 m and stepped for 300 frames, exactly ONE of them ever merged. */
+    else if (this._l2Wait) this._applyLod(lod);
     /**
      * …and cloth gets its own cut, from the quality tier.
      *
