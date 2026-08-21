@@ -7,6 +7,19 @@
  */
 
 import * as THREE from 'three';
+/**
+ * FIRST IN THE LIST, AND THAT IS NOT TIDINESS.
+ *
+ * Session.js imports NOTHING — see its own header, which is the property that
+ * lets the director, the menu and this file all ask it the same question
+ * without any of them reaching through the others. This file sits inside a
+ * cycle with Command.js and Waves.js, and an import added into the middle of
+ * the list below moves where that cycle closes: placed after Waves.js it threw
+ * `Cannot access 'COMMAND_UNITS' before initialization` on the `Object.assign`
+ * that folds the Command roster into ARCHETYPES. A leaf with no edges of its
+ * own cannot do that from the front of the list.
+ */
+import { rollGround } from './Session.js';
 import {
   makeCrate, makeBarrel, makePillar, makeVaporator, makeSpire, makeConsole,
   addWall, addRock, BlastDoor, propMaterials, Kit,
@@ -4767,6 +4780,12 @@ export function campaignAt(levelKey) {
  */
 export function theatresFor(mode) {
   const M = MODES[mode] || {};
+  /* …AND A MODE MAY LET THE SEED PICK. Every ground is legal — that is the
+   * whole of FLAGSHIP §13.5, "no room's deletion deletes the mode" — so the
+   * roster is the roster; what the mode owns is that the PLAYER does not
+   * choose from it. `theatreFor` below is where the roll happens, because it
+   * is the only one of the two that is handed the run's number. */
+  if (M.seedsGround) return [...LEVEL_ORDER];
   if (M.level) return LEVELS[M.level] ? [M.level] : [];
   if (M.picksCampaign) {
     const opens = new Set(CAMPAIGN_IDS.map((id) => CAMPAIGNS[id].missions[0]?.level));
@@ -4788,9 +4807,24 @@ export function theatresFor(mode) {
  * take rather than to `LEVEL_ORDER[0]`: falling to the roster's first entry
  * would put a campaign on the Ember Shelf, which opens no campaign.
  */
-export function theatreFor(mode, want) {
+export function theatreFor(mode, want, seed = null) {
   const live = theatresFor(mode);
   if (!live.length) return want;
+  /**
+   * THE FOURTH CASE: THE SEED OWNS THE GROUND.
+   *
+   * `seed` is optional and defaults to null so every existing caller is
+   * unchanged — a mode that does not declare `seedsGround` never reaches this
+   * line, and a `seedsGround` mode with no seed to roll falls through to the
+   * clamp below and takes the roster's first ground, which is the same answer
+   * every seedless run in this file already gets.
+   *
+   * NOT `LEVEL_ORDER[0]` as the fallback, and not the player's `want`: a mode
+   * that says the seed picks the ground must not quietly honour a pick when
+   * the seed is missing, because that is the leak this whole file exists to
+   * close — a card that is lit, written to settings and then thrown away.
+   */
+  if (MODES[mode]?.seedsGround) return rollGround(seed, live) ?? live[0];
   return live.includes(want) ? want : live[0];
 }
 

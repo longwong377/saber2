@@ -39,9 +39,10 @@ const STEP = 1 / 30;
 
 async function lineWorld(opts = {}) {
   const { bootWorld, idleInput } = await import('./_coop.mjs');
+  const ground = opts.level || 'geonosis';
   const { world } = await bootWorld({
-    level: 'geonosis',
-    settings: { mode: opts.mode || 'theline', level: 'geonosis', order: opts.order || 'jedi' },
+    level: ground,
+    settings: { mode: opts.mode || 'theline', level: ground, order: opts.order || 'jedi' },
     /* `runSeed` and not `settings.seed`: the run's number is a property of the
      * SITTING and main.js writes it onto the world before the level loads,
      * which is the door the director reads it through. See `bootWorld`. */
@@ -95,8 +96,13 @@ export async function run({ check, assert }) {
     assert(M, 'there is no `theline` mode');
     assert(typeof M.name === 'string' && M.name.length, 'the mode has no name');
     assert(typeof M.blurb === 'string' && M.blurb.length > 40, 'the mode has no blurb to put on its card');
-    assert(M.fixedTheatre, 'the mode does not tell the menu it owns its ground');
-    assert(M.level && LEVELS[M.level], `the mode declares no real ground (level=${M.level})`);
+    assert(M.fixedTheatre, 'the mode does not tell the menu the ground is not the player\'s');
+    /* The GROUND is a seed roll — §5 and §13.5. `theline.11` drives the roll
+     * and every ground it can land on; what is asserted here is only that the
+     * mode declares it, because a mode that declares `level` instead is pinned
+     * to one room and that is the Descent's mistake. */
+    assert(M.seedsGround, 'the mode does not roll its ground off the seed');
+    assert(!M.level, `the mode is pinned to one ground (level=${M.level}) — §13.5 says every level is a legal seed`);
 
     const { world, d } = await lineWorld({ start: false });
     assert(d, 'the mode built no army — `World.loadLevel` did not give it a CommandDirector');
@@ -297,6 +303,98 @@ export async function run({ check, assert }) {
       `a won run carries ended=${JSON.stringify(win.ended)} — the card would print a defeat`);
     c.world.unload();
     return `both losing doors say "${LINE_LOST_TITLE}"; a win says nothing`;
+  });
+
+  check('theline.11 every ground is a legal seed, and the seed picks it', async () => {
+    /**
+     * FLAGSHIP §13.5: "**No room's deletion deletes the mode** — every level in
+     * `LEVEL_ORDER` is a legal seed. That is exactly what killed the Descent."
+     *
+     * The Descent was a ladder of four authored rooms, three of which the
+     * player named as the worst rooms in the game, so deleting those rooms
+     * deleted the mode. §13.5 asserts the cure without evidence, and this is
+     * the evidence: every ground in the roster is booted IN THIS MODE and
+     * required to field both sides — a full roster of named troopers on the
+     * player's side and a live wave on the other. A ground that quietly stops
+     * being playable narrows the mode by a seventh with nothing saying so.
+     *
+     * And the roll has to be a roll: a hash that returns the same ground for
+     * every seed satisfies every clause above and delivers the Descent anyway.
+     */
+    const { LEVEL_ORDER } = await import('../../src/game/Levels.js');
+    const { rollGround } = await import('../../src/game/Session.js');
+    const { theatreFor, theatresFor } = await import('../../src/game/Levels.js');
+
+    assert(theatresFor('theline').length === LEVEL_ORDER.length,
+      `the mode offers ${theatresFor('theline').length} of ${LEVEL_ORDER.length} grounds`);
+    const drawn = new Map();
+    for (let seed = 1; seed <= 200; seed++) {
+      const g = theatreFor('theline', 'geonosis', seed);
+      assert(LEVEL_ORDER.includes(g), `seed ${seed} rolled "${g}", which is not a ground`);
+      /* The player's `want` is ignored — every seed above asked for geonosis. */
+      drawn.set(g, (drawn.get(g) | 0) + 1);
+      assert(rollGround(seed, LEVEL_ORDER) === g, `theatreFor and rollGround disagree on seed ${seed}`);
+    }
+    assert(drawn.size === LEVEL_ORDER.length,
+      `200 seeds reached ${drawn.size} of ${LEVEL_ORDER.length} grounds — the roll does not reach them all`);
+    /* Seedless is not the player's pick either: a mode that says the seed owns
+     * the ground must not honour a stored pick when there is no seed, which is
+     * the leak `theatreFor`'s own note is about. */
+    assert(theatreFor('theline', 'alpine', null) === LEVEL_ORDER[0],
+      'a seedless run of the mode honoured the stored pick');
+
+    let worst = null;
+    for (const key of LEVEL_ORDER) {
+      const { world, d, input } = await lineWorld({ level: key, seed: 3 });
+      assert(d, `${key}: the mode built no army`);
+      assert(d.roster.all.length >= 8, `${key}: the roll mustered ${d.roster.all.length}`);
+      /**
+       * THE COMPOSED WAVE, NOT A CENSUS OF THE FIELD.
+       *
+       * A count of bodies standing after N seconds is a reading of how fast
+       * the fight is going — arrival pacing, the composer's budget, whatever a
+       * tuning lane last moved. Measured across the roster while one was
+       * mid-edit it swung from 37 to 0 on the same ground in an afternoon, and
+       * a check that swings with tuning is a check nobody can act on.
+       *
+       * What this file is about is whether the ground is a LEGAL SEED: can the
+       * mode compose a fight out of this pool at all. The queue the director
+       * builds on `start` is exactly that and nothing else.
+       */
+      const queued = d.spawnQueue.length;
+      const seen = new Set();
+      for (let i = 0; i < Math.round(20 / STEP); i++) {
+        world.update(STEP, input);
+        for (const e of world.enemies) if (e.team !== 0) seen.add(e);
+      }
+      const mine = d.roster.living.filter((t) => t.body && !t.body.dead).length;
+      const fielded = Math.max(queued, seen.size);
+      assert(mine >= 6, `${key}: only ${mine} of the line were standing twenty seconds in`);
+      /**
+       * LEGAL, WHICH IS WHAT §13.5 PROMISES — and the bar is deliberately at
+       * the floor rather than at a wave size.
+       *
+       * MEASURED, opening wave of area 1 on every ground at one seed, and the
+       * spread is the finding: **colosseum 2 · scoria 3 · four grounds 8 ·
+       * geonosis 49.** All seven are handed the same budget of 8.0. Two things
+       * make the spread: the levy is geonosis-only, which is 40 of that 49;
+       * and a pool with expensive bodies in its unlocked set spends the whole
+       * budget on two or three of them — the Colosseum opens on a stalker.
+       *
+       * A bar of 8 here would be a bar on the wave composer, which is another
+       * lane's file and moves every session; and a mode about a LINE opening
+       * against two bodies is a real defect that belongs in `NEXT.md` as a
+       * number, not hidden inside a red check nobody can act on. So this
+       * asserts legality — the ground puts a fight on at all — and reports the
+       * spread so the number stays visible.
+       */
+      assert(fielded >= 1,
+        `${key}: the mode composed nothing at all for this ground — it is not a legal seed`);
+      if (!worst || fielded < worst[1]) worst = [key, fielded];
+      world.unload();
+    }
+    return `${LEVEL_ORDER.length} grounds, all legal · 200 seeds reach all ${drawn.size} `
+      + `· thinnest opening ${worst[0]} at ${worst[1]} bodies`;
   });
 
   check('theline.10 nothing arrives closer than you could have watched it come', async () => {

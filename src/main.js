@@ -593,7 +593,11 @@ async function deploy() {
    * and moved the player to the Colosseum on the next frame. `theatreFor` is
    * the clamp for all three cases and it is the same list `_syncTheatre` bars
    * the column with, so the ground the card shows is the ground that loads. */
-  const levelKey = theatreFor(sessionOr('mode'), sessionOr('level'));
+  /* THE RUN'S NUMBER IS THE THIRD ARGUMENT, and it has to be: a mode whose
+   * ground is a seed roll cannot be resolved without the seed. `world.runSeed`
+   * is minted above this line and before the level loads, which is the whole
+   * reason it lives there — see its own note. */
+  const levelKey = theatreFor(sessionOr('mode'), sessionOr('level'), world.runSeed);
   try {
     /* AWAITED, so the build yields between its stages instead of freezing the
      * tab. The progress callback is the same shape the boot sequence's bar

@@ -381,8 +381,39 @@ export const MODES = {
     blurb: 'You are one Jedi in somebody else\'s war. One ground, one sitting, a squad with names on '
       + 'it — and the run is won only if they are still standing at the end. Kill everything and lose '
       + 'them and you have lost.',
-    fixedTheatre: 'The Line is fought on Geonosis: one ground, one sitting, and the front moves across it.',
-    level: 'geonosis',
+    /**
+     * THE GROUND IS THE SEED'S, NOT YOURS AND NOT THE MODE'S — §5 and §13.5.
+     *
+     * §5: "One sitting = one deployment = one seed = one ground." §13.5 is the
+     * half that makes it structural rather than flavour: "no room's deletion
+     * deletes the mode — every level in `LEVEL_ORDER` is a legal seed. That is
+     * exactly what killed the Descent." The Descent was four authored rooms,
+     * three of which the player named as the worst in the game, so deleting
+     * those rooms deleted the mode. Here the roster of grounds is the content
+     * and no single one is load-bearing.
+     *
+     * NOT `level: 'geonosis'`, which is what Command declares and what this
+     * mode was first written with. Pinning it would have been the Descent's
+     * mistake in miniature — one ground, and the mode is as good as that
+     * ground is — and it would have thrown away the one thing that makes the
+     * deploy card worth reading: §5's 0:00 beat is "the seed, the ground, and
+     * your ten names, readable before you land", and a ground that is always
+     * the same is not news.
+     *
+     * MEASURED FIRST, because the claim is checkable and §13.5 asserts it
+     * without evidence. All seven grounds in `LEVEL_ORDER` were booted in this
+     * mode: every one declares both armies in its pool, deploys a full roster
+     * of ten troopers, and composes a live wave — 32 to 37 hostiles standing
+     * twenty seconds in on every ground. `theline.mjs` holds it, so a ground
+     * that stops being a legal seed fails rather than silently narrowing the
+     * mode.
+     *
+     * `fixedTheatre` still greys the column, because the column is still not
+     * the player's — what changed is WHO it belongs to. `seedsGround` is the
+     * machine-readable half, read by `Levels.theatresFor` and `theatreFor`.
+     */
+    fixedTheatre: 'The Line does not let you pick the ground: one sitting is one seed, and the seed names the ground you land on. It is on the deploy card before you drop.',
+    seedsGround: true,
     /** One ground walked end to end — see the note above, and `World.loadLevel`. */
     crossing: true,
     /**

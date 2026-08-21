@@ -148,6 +148,49 @@ export function planStages(plan, stages) {
  * actually happens — and a warning whose two halves can drift is a warning
  * that will eventually promise something the code does not do.
  */
+/**
+ * WHICH GROUND THIS SEED IS — FLAGSHIP §5 and §13.5.
+ *
+ * §5: "One sitting = one deployment = one seed = one ground." §1: "One planet,
+ * one ground, one sitting." And §13.5, which is the one that makes it
+ * load-bearing rather than flavour: "**No room's deletion deletes the mode** —
+ * every level in `LEVEL_ORDER` is a legal seed. That is exactly what killed the
+ * Descent."
+ *
+ * The Descent was a ladder of four authored rooms, three of which the player
+ * named as the worst rooms in the game, so deleting those rooms deleted the
+ * mode. A mode that rolls its ground off the seed cannot die that way: it is
+ * the roster of grounds that is the content, not any one of them, and a ground
+ * removed is a draw that no longer comes up.
+ *
+ * WHY IT IS A ROLL AND NOT A PICK, which is the same argument `rollSession`
+ * makes about the length: a sitting you choose the ground of is a sitting you
+ * will choose the same ground of, and the mode's subject is a roster you did
+ * not compose meeting a fight you did not choose. It is also what makes the
+ * deploy card worth reading — §5's 0:00 beat is "the seed, the ground, and your
+ * ten names, readable before you land", and two of those three are only news
+ * if nobody typed them.
+ *
+ * A PURE HASH, on its own constant, for the reason `rollSession`'s note gives
+ * at length: a draw taken from `Command.rng` would shift every designation in
+ * the roster by one and mint the same seed's men under different names. This
+ * consumes nothing and can be asked before anything exists — which the menu
+ * needs, because the column is greyed with the answer on it.
+ *
+ * @param {number|null} seed the run's number
+ * @param {string[]} keys the grounds the mode can take, in a stable order
+ * @returns {string|null} one of `keys`, or null when there is no seed to roll
+ */
+export function rollGround(seed, keys) {
+  if (!Array.isArray(keys) || !keys.length) return null;
+  if (seed === null || seed === undefined || !Number.isFinite(Number(seed))) return null;
+  /* The same avalanche the length roll uses, on a THIRD constant — `seedCommand`
+   * has its own and `rollSession` has its own, and two of the three sharing one
+   * would tie a run's ground to its length: every Raid on the same ground. */
+  const h = (Math.imul((Number(seed) | 0) ^ 0x27d4eb2f, 0xc2b2ae35) >>> 0) ^ 0x9e3779b9;
+  return keys[(h >>> 9) % keys.length];
+}
+
 export const NO_HOST_MIGRATION =
   'The host owns this session. If they drop, the run ends — there is no host migration.';
 
