@@ -443,9 +443,40 @@ meshes it replaced after the rig is re-posed and re-placed, the ink (once,
 never twice, never none), the shader read that licenses dropping roughness and
 metalness, and the teardown when a body is cut apart.
 
-**Step 5 — L3 instanced cohorts** beyond 140 m, where a leg is 3.9 px and there
-is no gait to lose. Animation moves to a per-instance phase in the vertex
-shader.
+**Step 5 — L3 instanced cohorts. BUILT AND MEASURED — see
+`src/game/Cohorts.js`.** Beyond the distance the ink reaches, where a leg is
+3.9 px and there is no gait to lose. One `InstancedMesh` per (archetype · elite
+· scale) × material bin, holding every body of that kind in the band.
+
+**The band is 137.8 m, not 140, and it is derived rather than chosen.**
+`OutlinePass.prepass` narrows its own camera to `min(uHaze.y, uEdge.y) · 1.06`
+and `INK.edgeFade[1]` is 130 — so the game already draws **no outline on
+anything past 137.8 m**, which is the one thing an instanced body cannot carry.
+Measured over all 7 levels × 4 tiers, the prepass reaches furthest on
+scoria/low at 127.2 m. The 3.9 px figure above is confirmed exactly: 4.52 px/m
+at that range on a 720 px frame.
+
+**"Animation moves to a per-instance phase in the vertex shader" cannot work in
+this renderer**, and the reason generalises: the ink prepass renders with
+`scene.overrideMaterial`, so a displacement living in a body's own material is
+not in the shader the outline is drawn from — the outline would be drawn at the
+un-walked pose. The animation is in the INSTANCE MATRIX instead: position,
+facing and scale, rewritten every frame. Bodies still march, wheel and close.
+What is dropped is the gait, and it is dropped on a measurement — the frozen
+pose sits **0.98× at worst** of the distance the live body sits from *itself*
+one gait frame later, so a cohort body cannot be told from a frame of the
+animation it replaces.
+
+The whole ladder, three readings of one field one line apart:
+
+| rung | 42 bodies | 84 bodies |
+|---|---|---|
+| cull only (LOD 1) | 1,064 draw calls | 2,130 |
+| merged skins (LOD 2) | 194 | 390 |
+| **cohorts (LOD 3)** | **38** | **38** |
+
+L2 is ~4.6 calls a body; L3 is ~4.4 calls an *archetype*. Bound by
+`tools/checks/frame-budget.mjs` §7.
 
 **Then, and only then, the mode.** ~1,100 lines of spine against ~12,000 lines
 of existing machinery.

@@ -114,7 +114,7 @@ they change what to build; read it before starting anything here.
 | 6.3 | §14 Step 2 — the Dead Jedi test | Flagship | ✅ run; verdict in `NEXT.md` |
 | 6.4 | §14 Step 3 — the Puppet Line: 40 inert bodies on a hand-authored 60-second timeline, no AI. Isolates whether the OUTPUT reads as a battle | Flagship | ✅ **YES**, and SILHOUETTE is what carries it. Nine plates and a beat sheet in `assets/flagship/step3/`; the deliverable is the six-role, ten-posture taxonomy in `tools/_puppetline.mjs`. Four findings the plates gave unasked: the line reads as one flat black silhouette with no rank or faction legible; §4's compression claim confirmed; a casualty is not yet an event; a hand-authored advance walks the line into the level's own dressing |
 | 6.5 | §14 Step 4 — **L2, the merged rigid-skin rung.** The single highest-value engineering item: 42 bodies = 1,040 draw calls today, 394 with it | Flagship | ✅ built. Measured, not taken: 42 mixed bodies at 100–154 m on geonosis cost **1,064** and cost **194** with it — 5.5×, where the estimate promised 2.6×. `src/game/MergedSkin.js`; bound by `frame-budget.mjs` §6 |
-| 6.6 | §14 Step 5 — L3 instanced cohorts past 140 m | Flagship | **in flight** — the lane that built 6.5 |
+| 6.6 | §14 Step 5 — L3 instanced cohorts past 140 m | Flagship | ✅ built. The band is **137.8 m**, derived from the ink prepass's own far plane rather than typed. Same field as 6.5, three readings one line apart: cull **1,064** → merged **194** → cohorts **38**, and 84 bodies cost the same 38. `src/game/Cohorts.js`; bound by `frame-budget.mjs` §7 |
 | 6.7 | The mode itself, after the rungs above | Flagship | open |
 
 ---
