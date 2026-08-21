@@ -18,7 +18,7 @@
 
 import * as THREE from 'three';
 import { clamp, makeRng } from './MathUtil.js';
-import { utterance, peakGain } from './Voice.js';
+import { utterance, peakGain, contourFor, nextForceLine, forcePool } from './Voice.js';
 import { Score } from './Score.js';
 
 /** Finite-or-default. WebAudio params throw on NaN; game maths produces it. */
@@ -252,7 +252,23 @@ export function linesFor(kind) { return LINES_BY_KIND.get(kind) || []; }
  */
 export function wordsFor(kind, pick = null) {
   const list = linesFor(kind);
-  if (!list.length) return '';
+  /**
+   * A FORCE LINE CARRIES ITS OWN WORDS, and this is the fall-through.
+   *
+   * The table above is several lines per SITUATION, chosen at random, because
+   * 'kill' is one event with four things a Jedi might say about it. A Force
+   * line is the other shape: the pool has already been chosen from by the time
+   * anything gets here — `AudioEngine.forceLine` picked `push.2` out of four —
+   * so the words are one-to-one with the contour and belong ON it, beside the
+   * syllables they are the same sentence as. Two tables would be exactly the
+   * hand-maintained twin HANDOFF §2.3 is a section about, and the drift would
+   * be silent: a pool reordered here and not there says "Come here" while it
+   * shoves.
+   */
+  if (!list.length) {
+    const c = contourFor(kind);
+    return c && c.words ? c.words : '';
+  }
   const i = pick === null ? Math.floor(rng() * list.length) : Math.abs(Math.round(pick)) % list.length;
   return list[i].text;
 }
@@ -456,6 +472,18 @@ export class AudioEngine {
      */
     this.speechMode = 'synth';
     this._spokeAt = 0;
+    /**
+     * WHICH LINE EACH FORCE POWER SAID LAST. See forceLine().
+     *
+     * One string per power and nothing else, because that is the whole of what
+     * "not the same thing twice in a row" needs to remember. It lives on the
+     * engine rather than at module scope in Voice.js so that
+     * tools/checks/_shared.mjs puts it back between suites along with the rest
+     * of this object's own properties — a picker with a hidden module-level
+     * memory is a picker whose second suite of the run draws differently from
+     * its first, which is the class of defect that file exists for.
+     */
+    this._forceSaid = {};
   }
 
   /** How many lines are being spoken right now. */
@@ -1248,6 +1276,40 @@ export class AudioEngine {
     this.speechMode = (mode === 'spoken' || mode === 'both') ? mode : 'synth';
     if (this.speechMode === 'synth') this.stopWords();
     return this.speechMode;
+  }
+
+  /**
+   * THE NEXT THING THIS POWER SAYS — the anti-staleness half of the note.
+   *
+   * "maybe there's a pool of 3-4 things you can say for every force ability so
+   * it doesnt get stale and you hear the same thing over and over".
+   *
+   * The pools and the rule for drawing from them are in src/engine/Voice.js,
+   * beside the syllables — `nextForceLine` is pure and draws uniformly from the
+   * n−1 lines that are NOT the one just said, so an immediate repeat is
+   * impossible rather than merely unlikely. This is the memory that makes it
+   * mean anything: one id per power, updated on the way out.
+   *
+   * IT SITS IN THE AUDIO ENGINE and not in Player.js, for the same reason
+   * `wordsFor` does: the draw needs a seeded stream (`rng` at the head of this
+   * file, seeded 4242) and the game needs exactly one of them, so that a run
+   * replayed under the same seed says the same lines in the same order. A
+   * `Math.random()` inside the picker would be a stream nothing can seed and
+   * every measurement taken through it would move between runs.
+   *
+   * The memory advances even when the line is then refused by the announcer's
+   * budget, and that is deliberate: what the player must not hear is the same
+   * utterance twice IN A ROW, and a line nobody heard is not one of the two.
+   *
+   * @returns the contour id, or '' for a power with no pool — which is a power
+   *          that was added to POWER_COST and not to FORCE_LINES, and the
+   *          caller then says nothing rather than grunting.
+   */
+  forceLine(power) {
+    if (!forcePool(power).length) return '';
+    const id = nextForceLine(power, this._forceSaid[power] || '', rng());
+    if (id) this._forceSaid[power] = id;
+    return id;
   }
 
   /** Cancel anything the browser is part-way through saying. */

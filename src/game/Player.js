@@ -5207,6 +5207,72 @@ export class Player {
   }
 
   /**
+   * THE POWER SAYS SOMETHING — player note, 21 Aug, and it is the whole of it:
+   *
+   *   "the character should say something everytime he uses a particular force
+   *    ability, perhaps he says the name of the attack, or maybe there's a pool
+   *    of 3-4 things you can say for every force ability so it doesnt get stale
+   *    and you hear the same thing over and over? i like the robotic voice
+   *    sound things you do I never use the version where the computer says the
+   *    actual words"
+   *
+   * ── WHERE THE CALL GOES, and it is not `audio.speak` ────────────────────
+   *
+   * Through the announcer, which already owns the budget that stops this game
+   * babbling: one quip per QUIP_GAP whatever happens, and `say()` is the
+   * FORCED door into it — a rate limit written to stop the game talking over
+   * itself may not swallow a key the player pressed. It skips the gap and then
+   * SETS it, so the kill line from whatever this power just threw waits its
+   * turn instead of landing on top of the shout that threw it. `forceUnleash`
+   * has taken exactly that route since it was written and its note says why;
+   * this is that note applied to the other ten powers.
+   *
+   * Under the announcer sits `AudioEngine.speak`'s own hard cap of three
+   * concurrent utterances with the newest ducking the rest, and PRIO.critical,
+   * which `opts.self` buys. Not one number of any of that is restated here.
+   *
+   * ── WHERE IT IS CALLED FROM, which is the part a refusal depends on ─────
+   *
+   * AFTER THE LAST REFUSAL, at every one of the eleven sites, and that is the
+   * whole of "a refused power must not produce a line". Every power in this
+   * file opens with its refusals — not attuned, recovering, nothing in your
+   * sights, too heavy, and `_refuse` quoting the price the gate really charges
+   * — and each of them returns. The gate is `_spend` for the eight powers that
+   * are billed and `_canSpend` for the three that are thresholds (sense, the
+   * heal and the grip's first look), so this cannot be phrased as "after the
+   * spend"; what it is, is after the last `return` in the method. A line
+   * raised before one of those would be the player announcing something that
+   * did not happen, which is worse than silence: it is the game lying about
+   * its own state. Nothing at all is said on the OTHER half of a toggle — a
+   * saber recalled, sense switched off, a grip let go, a stasis field fired —
+   * for the same reason: none of them is a power going off.
+   *
+   * A HELD POWER SAYS IT ONCE. Lightning, the grip, the heal and the stasis
+   * field are channels: they are OPENED here and then run from their own
+   * per-frame tick, and the call is on the opening. `forceLightning` cannot
+   * even be re-entered while its channel is up (`if (this.channel?.kind ===
+   * 'lightning') return`), so "once per cast" is structural rather than a
+   * timer — which is what stops a two-second channel being 120 lines.
+   *
+   * @returns true only if a line actually reached the engine.
+   */
+  _forceVoice(power) {
+    /* THE SWITCH. Read live off the settings blob, like every other voice
+     * control in the game, so unticking the box on the pause card is silent on
+     * the very next power rather than on the next deploy. Default ON: the note
+     * asked for this, and a feature the player asked for that ships off is a
+     * feature they will never find. */
+    if (this.world?.settings?.forceVoice === false) return false;
+    const announcer = this.world?.hud?.announcer;
+    if (!announcer) return false;
+    /* WHICH of the pool, and never the one this power said last — the memory
+     * is `AudioEngine.forceLine`, drawn off the one seeded stream the audio
+     * engine keeps. See its note for why it is not in this file. */
+    const line = audio.forceLine(power);
+    return line ? announcer.say(this.world.settings, line, this.chest) === true : false;
+  }
+
+  /**
    * The colour the Force comes out at.
    *
    * One reader for three sites — the lightning arc, the plasma flash and the
@@ -5510,6 +5576,7 @@ export class Player {
     }
     this.cooldowns.push = 0.55;
     this._gesture('push');
+    this._forceVoice('push');
     audio.force(this.chest, 'push');
     this.camera.addShake(0.3);
     this.cloak?.impulse(_v5.copy(this.aimDir).negate().setY(0.4), 2.6); this.skirt?.impulse(_v5.copy(this.aimDir).negate().setY(0.4), 2.6);
@@ -5589,6 +5656,7 @@ export class Player {
     }
     this.cooldowns.pull = 0.6;
     this._gesture('pull');
+    this._forceVoice('pull');
     audio.force(this.chest, 'pull');
     this.cloak?.impulse(_v5.copy(this.aimDir).setY(0.3), 1.8); this.skirt?.impulse(_v5.copy(this.aimDir).setY(0.3), 1.8);
     // Reach scales with the setting, same law as push and grip. A pull that
@@ -5908,6 +5976,7 @@ export class Player {
       return this._refuse('force grip', `${this._priceOf(POWER_COST.grip)} Force needed, you have ${Math.round(this.force)}`);
     }
     this._gesture('grip');
+    this._forceVoice('grip');
     const lead = this.camera.pos.distanceTo(this.chest);
     this.gripDistance = clamp(target.distance, lead + 1.4, lead + this.forceReach);
     if (target.enemy) {
@@ -6426,6 +6495,7 @@ export class Player {
       }
       this.cooldowns.throw = 0.4;
       this._gesture('cast');
+      this._forceVoice('throw');
       this.throwState = 'flying';
       this.throwPos.copy(this.saber.base);
       this.throwVel.copy(this.aimDir).multiplyScalar(26);
@@ -6527,6 +6597,7 @@ export class Player {
     // fight, and a sustained gesture would have the off hand raised — and the
     // blade one-handed — for the entire duration of it.
     this._gesture('sense');
+    this._forceVoice('sense');
     this.world.setTimeScale(0.42);
     this.world.engine.setSense(1);
     audio.force(this.chest, 'sense');
@@ -6554,6 +6625,7 @@ export class Player {
         `${this._priceOf(POWER_COST.lightning)} Force needed, you have ${Math.round(this.force)}`);
     }
     this._gesture('lightning');
+    this._forceVoice('lightning');
     audio.force(this.chest, 'lightning');
     /** The live channel. `t` is how long it has been open, `tick` is the fuse
      *  on the next damage application, and `hit` is what has already been
@@ -6771,8 +6843,19 @@ export class Player {
      * `audio.speak` so it takes the quip budget with it — otherwise the kill
      * lines from everything this just threw land on top of the shout that
      * threw them. `force: true` because this one is never suppressed: the
-     * player pressed a button and has to hear that it happened. */
-    this.world.hud?.announcer?.say(this.world.settings, 'streak', this.chest);
+     * player pressed a button and has to hear that it happened.
+     *
+     * IT SAYS ITS OWN LINE NOW AND NOT 'streak'. The killstreak contour was
+     * borrowed here because it was the loudest thing in LINES and this power's
+     * own note asks for "you like yell really loud" — but it is the line the
+     * announcer says when you kill three men in one breath, so the loudest
+     * moment in the game announced itself with somebody else's sentence, and a
+     * player who heard it after a genuine streak heard the same three
+     * syllables mean two different things. `unleash` has four contours of its
+     * own now, and they are the longest and loudest in the table because that
+     * is what this power is. See `_forceVoice`, and FORCE_LINES in
+     * src/engine/Voice.js. */
+    this._forceVoice('unleash');
     audio.force(this.chest, 'push');
     audio.explosion(this.position, 0.7);
     this.camera.addShake(0.62);
@@ -6859,6 +6942,7 @@ export class Player {
     this._healFrom = this.hp;
     this._mendFrom = ally ? ally.hp : this.hp;
     this._gesture('mend');
+    this._forceVoice('heal');
     audio.force(this.chest, 'pull');
     if (ally) {
       this.world?.notify?.('MENDING', ally.trooper?.name || ally.A?.label || 'a wounded ally');
@@ -6998,6 +7082,7 @@ export class Player {
     this._spend(COMPEL_COST);
     this.cooldowns.compel = 7;
     this._gesture('reach');
+    this._forceVoice('compel');
     best.compelled = { target: victim, t: COMPEL_TIME };
     // Whatever it was doing, it is not doing any more: the reload, the burst
     // counter and the cover crouch all belong to the fight it was in.
@@ -7234,6 +7319,7 @@ export class Player {
     S.target = null;
     S.vfx = 0;
     this._gesture('stasis');
+    this._forceVoice('stasis');
     const refused = [];
     const taken = this._stasisCapture(ctx, refused);
     if (refused.length) this._refuseStasis(ctx, refused);
@@ -7746,6 +7832,7 @@ export class Player {
 
     this.cooldowns.rend = 2.4;
     this._gesture('rend', centre);
+    this._forceVoice('rend');
 
     // How far it comes apart. round(1.6·P + 0.6) is 1 joint at 0.25x, 2 at 1x,
     // 4 at 2x and 7 at 4x — and seven joints off a humanoid frame is both arms

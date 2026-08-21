@@ -670,6 +670,29 @@ export const DEFAULT_SETTINGS = {
   musicIndex: 0,
   voiceLevel: 0.9,
   voiceLines: true,
+  /**
+   * …AND WHETHER A FORCE POWER SAYS ANYTHING AT ALL.
+   *
+   * "the character should say something everytime he uses a particular force
+   * ability… so it doesnt get stale and you hear the same thing over and over".
+   * Eleven powers, three or four contours each, drawn so that the same one is
+   * never heard twice running — FORCE_LINES in src/engine/Voice.js.
+   *
+   * ITS OWN BOX AND NOT A CLAUSE OF `voiceLines`, because the two answer
+   * different questions. `voiceLines` is "does my Jedi grunt and quip", which
+   * is about the body reacting to a fight it is in; this is "does my Jedi
+   * shout when I press a key", which is eleven bound keys and therefore as
+   * frequent as the player's own hands. A player who wants the grunts and not
+   * the shouting has no way to say so if it is one tick, and folding it in
+   * would be the same mistake the letterbox and the death drain are kept out
+   * of the `shake` gate to avoid.
+   *
+   * DEFAULT ON. The player asked for it by name, and a feature that ships off
+   * is a feature they have to be told about before it exists for them. Read
+   * live off `world.settings` by src/game/Player.js at the moment the power
+   * fires, so unticking it on the pause card is silent on the very next press.
+   */
+  forceVoice: true,
   enemyVoices: true,
   enemyBody: true,
   /** Killstreak and event popups in the HUD's score column. */
@@ -874,6 +897,11 @@ export const SETTING_READERS = {
   musicIndex:      ['engine/Audio.js', 'trackAt(this.musicIndex)'],
   voiceLevel:      ['ui/Announcer.js', 'Number.isFinite(settings.voiceLevel)'],
   voiceLines:      ['ui/Announcer.js', 'settings.voiceLines !== false'],
+  /* Read in Player.js and not here, because the question is asked at the
+   * moment a POWER fires rather than once a frame: `_forceVoice` is the single
+   * gate all eleven call sites go through, so there is one place to consult
+   * the player's answer and one place this entry can point at. */
+  forceVoice:      ['game/Player.js', 'settings?.forceVoice === false'],
   enemyVoices:     ['ui/Announcer.js', 'settings.enemyVoices !== false'],
   enemyBody:       ['engine/Presence.js', 's.enemyBody !== false'],
   popups:          ['ui/HUD.js', 'world.settings.popups !== false'],
@@ -5827,6 +5855,11 @@ export class Menu {
     });
     this._buildSpeechModes();
     this._check('opt-voicelines', 'voiceLines');
+    /* No hook, for the reason the block above states: `Player._forceVoice`
+     * asks `world.settings` on the frame the power fires, and that is this
+     * object. A hook here would be a message to a system already reading the
+     * answer. */
+    this._check('opt-forcevoice', 'forceVoice');
     this._check('opt-enemyvoices', 'enemyVoices');
     this._check('opt-enemybody', 'enemyBody');
     this._check('opt-popups', 'popups');

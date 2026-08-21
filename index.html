@@ -605,9 +605,15 @@
           speech synthesiser saying the same lines the larynx says wordlessly, which is real words at
           no download on a game that ships no audio but the score.</p>
         <label class="check"><input type="checkbox" id="opt-voicelines" checked> Your own voice</label>
+        <!-- Its own box rather than a clause of the one above: that one is the
+             grunts and quips a body makes about the fight it is in, this one is
+             eleven bound keys. See forceVoice in Menu.DEFAULT_SETTINGS. -->
+        <label class="check"><input type="checkbox" id="opt-forcevoice" checked> Force powers speak</label>
         <label class="check"><input type="checkbox" id="opt-enemyvoices" checked> Enemy voices</label>
         <label class="check"><input type="checkbox" id="opt-enemybody" checked> Enemy footfall, servos &amp; breath</label>
-        <p class="hint">Nothing here is a recording. Every voice is built from an oscillator, two formant
+        <p class="hint">Every Force power has three or four lines of its own and never says the same
+          one twice running &mdash; a shove falls, a pull rises, a rend is wrenched down almost an octave.
+          Nothing here is a recording. Every voice is built from an oscillator, two formant
           filters and a breath of noise at the moment it is needed — which is why they can be told apart
           by measuring them, and why turning the last box off is worth a few frames on a slow machine.</p>
       </div>

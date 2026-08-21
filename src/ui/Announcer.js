@@ -32,7 +32,7 @@
  */
 
 import { audio as defaultAudio } from '../engine/Audio.js';
-import { ENEMY_VOICES, voiceAt, LINE_KINDS, EACH_LINES, ENEMY_LINES } from '../engine/Voice.js';
+import { ENEMY_VOICES, voiceAt, EACH_LINES, ENEMY_LINES, hasLine } from '../engine/Voice.js';
 import { bodyOf } from '../engine/Presence.js';
 import { clamp } from '../engine/MathUtil.js';
 
@@ -45,8 +45,19 @@ import { clamp } from '../engine/MathUtil.js';
  * pointing at a contour that has been renamed would silently play the grunt for
  * every emote, and every one of them would sound identical, which is precisely
  * the failure src/engine/Voice.js is shaped around.
+ *
+ * IT ASKS Voice.js RATHER THAN `LINE_KINDS`, AND THE DIFFERENCE IS THE FORCE
+ * POOLS. `LINE_KINDS` is the announcer's and the emote wheel's shared
+ * vocabulary — src/ui/HUD.js builds one wheel slot per member of it — and the
+ * thirty-seven lines a Force power can say are deliberately NOT in it, because
+ * thirty-seven wheel slots is not an emote wheel. `hasLine` answers for both
+ * tables, which is what lets `say()` carry `push.2` for `Player._forceVoice`
+ * — on the same forced quip budget as an emote, for the same reason: a rate
+ * limit written to stop the game talking over itself may not swallow a key the
+ * player pressed — without the wheel growing a slot for every one of them. See
+ * `contourFor` in src/engine/Voice.js for why they are a second table.
  */
-const LINES_HAS = (kind) => LINE_KINDS.includes(kind);
+const LINES_HAS = (kind) => hasLine(kind);
 
 /**
  * The two questions a room line is asked, both answered off src/engine/Voice.js
