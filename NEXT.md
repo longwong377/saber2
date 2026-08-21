@@ -217,6 +217,17 @@ Gate at the end: **1718 passed, 0 failed.**
   and a live bug found underneath the second — turning allies on made a Sith
   fight their own Confederacy hardware on 6 of 7 grounds.
 
+- ~~**The composite grade crushes dark levels.**~~ Closed in `a446c5c`, and the
+  diagnosis is worth carrying: the tone curve had no TOE under it. A black
+  point that subtracts, a hermite S inflected at 0.5 and a contrast pivoted on
+  0.5, all applied over the whole range, take more of a pixel the darker it is
+  — 0.20× at 0.06 against 1.04× at 0.71. That is not a curve that is too
+  strong; it is a curve whose strength is a function of how dark the level is
+  authored, and the exposure meter deliberately leaves each level as dark as it
+  was authored, so the two compound. Near-field gain across the seven levels
+  went 0.54–0.97× to 0.86–0.99×. The Ember Shelf was losing a third of its whole
+  ground; the Colosseum was losing three per cent.
+
 ### Still open
 
 - **A Jedi in the line costs the roster 7.5 men.** Still the most consequential
@@ -229,9 +240,6 @@ Gate at the end: **1718 passed, 0 failed.**
   player arms rest at the same 0.84, because `JEDI_NEAR` is a step at 14 m and
   both arms have a Jedi inside it. Whether it should fall off with distance is
   the next question, and it is now a question the arithmetic can answer.
-- **The composite grade crushes dark levels** — mustafar's near ground ×0.49. A
-  lane was measuring this when the line above it was written; check `git log`
-  before repeating it.
 - **First person should be one-handed**, and `HANDOFF.md` §6.0 says to ASK
   before doing it, because it is a decision about what a first-person grip IS.
   The wrist lane's sweep this session is the strongest evidence yet: first
