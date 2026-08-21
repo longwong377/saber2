@@ -8365,6 +8365,14 @@ export const BODY_KITS = {
   b2: {},
   magna: { kit: 'guard' },
   bodyguard: { kit: 'general' },
+  /* THE ARENA'S OWN SPECIES. One chassis and one rung, like the B2 above: a
+   * Geonosian warrior is a caste rather than a kit, and there is nothing for a
+   * second row to say. It is here rather than absent because absent is exactly
+   * what `characters.mjs` forbids — "a humanoid added to the roster with no row
+   * in BODY_KITS looks exactly like an archetype that deliberately wears
+   * nothing, and the last time that happened three archetypes went a whole
+   * session without a body of their own." */
+  geonosian: {},
 };
 
 /** What an archetype wears, or null if it is not a body this file dresses. */
