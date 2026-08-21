@@ -977,69 +977,54 @@ list grows by measurement rather than by somebody deciding it looks fine.
 
 ### Attrition is tuned, and the spread is the finding
 
-> **UNDER RE-MEASUREMENT — do not act on the tuning numbers below.** The
-> before/after tables in this section were **not a controlled comparison**.
-> Every arm was a separate process, `World.js` holds one module-level `rng`
-> with no reseeder, and two processes that differ in any earlier draw diverge
-> completely — `theline` and `command` differ in exactly one such draw, because
-> a crossing rolls a session plan and Command does not, so **the mode string
-> alone shifts the whole stream**. That is why the same change read 5.4 in one
-> mode and 3.0 in the other.
->
-> Run properly — both arms from a fresh process, identical module-init phase,
-> the generated ground pinned off in both, the only difference being the two
-> constants — five seeds give **stock 1.8 `[5 1 2 1 0]` against tuned 3.0
-> `[1 5 5 1 3]`**: +1.2 with a standard error near 1.3, **not distinguishable
-> from zero**. It is chaotic rather than merely noisy — seed 1 goes 5 → 1 and
-> seed 2 goes 1 → 5 under a change of one bolt's damage from 10 to 5 — so
-> paired seeds stop being paired within seconds.
->
-> Twenty seeds an arm are running. If they say the lever does nothing, the two
-> constants come back out and every note quoting them is corrected.
->
-> **ONE THING IS ALREADY SETTLED AND IT IS THE ONE THAT MATTERS: THE TARGET IS
-> NOT MET.** The user set it at about half a ten-man line. The best controlled
-> reading is somewhere between 1.5 and 3 survivors, so an engagement fought
-> without the Jedi still costs **seven or eight of ten, not five** — and that
-> holds whichever way the twenty seeds fall, because both arms of the controlled
-> comparison are under the target. What is still open is only whether the two
-> constants moved it at all.
->
-> **What survives is method, not tuning:** the muster is invisible to a poll; an
-> idle Jedi is worse for the line than no Jedi, five seeds of five; and
-> `theline.12`'s four readings of ONE build span 1.3 to 6.0, which is why its
-> band is ±4 and why it can only catch catastrophe.
+**Settled, twenty seeds an arm, both from fresh processes at an identical
+module-init phase with the contours pinned in both and the only difference being
+the two constants:**
 
+    as shipped before this session   1.35 of 10   sd 1.73   10 of 20 reached a muster
+    with both halved                 2.80 of 10   sd 2.33   16 of 20 reached a muster
+                                     +1.45, se 0.65, z 2.24
+
+**The lever is real, it is small, and the target is not met.** An engagement
+fought without the Jedi costs **7.2 of ten**, not the five the target asks for.
+The constants stay — `GUN.every` 14.0 and the conscript's round at 5 — because
++1.45 at z 2.24 is a real move in the right direction, but nobody should read
+this as the attrition question being answered.
+
+**The second column is the better sentence, and nobody expected it.** What the
+halving buys is not really survivors: it is that **four engagements in five
+reach their muster instead of one in two.** That is a proportion rather than a
+mean, so it carries the same significance with far less variance — and it is the
+difference between a mode that has a between-areas beat and a mode that does
+not. The muster is where the roster is rebuilt, where the promotions are read
+and where §5 says the run becomes a story; an engagement that never reaches one
+is an engagement that only subtracts.
+
+**How the earlier numbers went wrong, because it is the transferable part.**
+This tuning was reported three times before this one — 5.4, then a ±3.0 band,
+then 4.1 pooled — and every one of them was an artefact. `World.js` holds one
+module-level `rng` for the process and exported no reseeder, so runs are not
+reproducible across a code change and arms taken in one process share a phase
+rather than sampling independently. Worse, `theline` and `command` differ in one
+earlier draw — a crossing rolls a session plan and Command does not — so **the
+mode string alone shifts the whole stream**, which is why one change read 5.4 in
+one mode and 3.0 in the other. It is chaotic rather than noisy: seed 1 goes
+5 → 1 while seed 2 goes 1 → 5 under a change of one bolt's damage from 10 to 5.
+
+`seedWorld` exists now, `HANDOFF` §2.5b carries the rules and the arithmetic
+(five seeds gives se ≈ 1.3 men, so **treat anything under 1.5 men at five seeds
+as unmeasured**), the tuning instrument is `tools/_linehold.mjs` with all three
+streams pinned, and `theline.12` is a **catastrophe tripwire rather than a
+tuning bind** — four of its readings of one build spanned 1.3 to 6.0 before the
+reseeder existed, so its band is wide on purpose and it catches only the two
+failures that make this a different game: an army gone before its first muster,
+and an engagement in which nobody dies.
 
 The user set the target: an engagement fought without the Jedi should cost about
-half a ten-man line. It measures **5.4 of 10 over five seeds** on authored
-contours and 5.7–6.0 on generated ones — the same mean inside the noise, so the
-generated layer moves the SPREAD and not the level.
-
-**The spread is the part worth knowing, and the first two attempts to state it
-were both too confident.** The tuning was first reported at 5.4, then at a
-±3.0 band derived from a within-process sd. Both were wrong in the same way:
-
-    five INDEPENDENT runs of the same arm, identical code:  5.4 · 6.0 · 5.7 · 3.0 · 2.5
-    seventeen engagements pooled:                           mean 4.1, sd 3.0
-
-That is a swing in the **mean**, not in a seed. `World.js` holds one
-module-level `rng` for the whole process and exports no reseeder, so the phase a
-run starts from is whatever ran before it — the twelve checks above it in a
-suite, or nothing at all in a bench. Five-seed arms taken inside one process
-share that phase and do not sample independently, so a standard error computed
-from them is an underestimate of the real one. Reseeding `enemyRng` and `Waves`
-does not reach it.
-
-**So the honest headline is that a no-Jedi engagement went from about 2.0 to
-about 4.1, and 5.4 was one good draw.** The check's band is ±4.0 and its note
-says plainly what that means: it will not catch a two-name drift, and it is not
-the tuning instrument. What it catches is the two failures that make this a
-different game — an army gone before its first muster, and an engagement in
-which nobody dies.
-
-One composed wave meeting one formation is a coin with ten faces: a grenade or a
-Hailfire arriving early is two or three names.
+half a ten-man line. **It is not met** — see the settled figures above. One
+composed wave meeting one formation is a coin with ten faces: a grenade or a
+Hailfire arriving early is two or three names, which is why the spread is wider
+than the effect and why five seeds cannot see a lever this size.
 
 The lever was the two sources of fire **the wave's threat budget never pays
 for** — `GUN.every` 7.0 → 14.0 on the emplacement and the conscript's round
