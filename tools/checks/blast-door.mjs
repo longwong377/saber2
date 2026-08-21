@@ -154,6 +154,29 @@ const facing = (dx, dz) => Math.atan2(-dx, -dz);
 /** Put the door back the way the level built it, so the next case starts from
  *  an unburned plate. Only the kerf and the breach state are touched — the
  *  geometry, the collider and the level around it are the shipped ones. */
+/**
+ * HOW MANY TEXELS A BREACH IS WORTH ON THIS DOOR — asked of the door rather
+ * than typed.
+ *
+ * It used to be `res² × breachFraction`, and `breachFraction` was the whole
+ * rule: melt 5.5% of the plate, anywhere, and it opens. That rule was replaced
+ * because it could not be reached by the play the design rewards — a tidy loop
+ * inside one arm's reach re-burns metal it has already melted, so the counter
+ * plateaus (measured: 840 of the 901 it wanted, held for seventy-five seconds,
+ * door shut). `BlastDoor.burn` now opens on either a CLOSED LOOP (`slugArea`)
+ * or a quantity of melted metal (`meltArea`), both in square metres so that
+ * resizing a door does not reprice the mechanic.
+ *
+ * This is the second of those two, in the texels this suite counts in, and it
+ * is derived from the door's own dimensions — so it follows a retune instead of
+ * disagreeing with one.
+ */
+function breachTexels(door) {
+  const cellArea = (door.width * door.height) / (door.res * door.res);
+  if (door.breachFraction != null) return Math.round(door.res * door.res * door.breachFraction);
+  return Math.round(door.meltArea / cellArea);
+}
+
 function rearm(world, door) {
   door.kerfData.fill(0);
   door.cutArea = 0;
@@ -423,7 +446,7 @@ export async function run({ check, assert }) {
       rearm(world, door);
       const r = holdFree(world, door, { ...drive, secs: 75 });
       assert(r.opened,
-        `${name} loop: 75 s of held blade burned ${r.cut} of the ${Math.round(door.res * door.res * door.breachFraction)} `
+        `${name} loop: 75 s of held blade burned ${r.cut} of the ${breachTexels(door)} `
         + 'texels a breach needs and never opened the door');
       rows.push([name, r.t]);
     }
@@ -475,7 +498,7 @@ export async function run({ check, assert }) {
       world.update(1 / 60, input);
       if (door.opened) break;
     }
-    const need = Math.round(door.res * door.res * door.breachFraction);
+    const need = breachTexels(door);
     assert(!door.opened,
       `${swings} overhead swings opened a blast door — the design's whole point is that speed is `
       + 'not the way through one');

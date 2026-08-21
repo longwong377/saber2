@@ -2309,6 +2309,36 @@ const KERF_FRAG = /* glsl */`
  */
 const MELT_RATE = 6.0;
 
+/**
+ * HOW BIG A HOLE HAS TO BE BEFORE THE SLUG FALLS OUT, in square metres — see
+ * `_slug`, and the note in `burn` about why this replaced a quota of texels.
+ *
+ * 0.34 m² is a panel about 58 cm on a side. A body's shoulders are 45 cm, so it
+ * is a hole you get through rather than a hole you look through, and it is
+ * close to the piece the old quota's 0.60 m² of kerf would have traced round
+ * anyway — a loop a little over a metre a side. In metres rather than in texels
+ * so that resizing a door does not silently reprice the mechanic, which is
+ * exactly what happened to the last one.
+ */
+const SLUG_AREA = 0.34;
+
+/**
+ * …AND HOW MUCH METAL OPENS ONE THE OTHER WAY, in square metres.
+ *
+ * The second door, for a player who never closes a loop: melt this much of the
+ * plate anywhere and the rest of it gives. It is the OLD rule — 5.5% of a
+ * 3.24 × 3.34 m plate, which is 0.60 m² — expressed in metal rather than in a
+ * share, so that a bigger door is not a proportionally longer job and a
+ * smaller one is not a shortcut. 0.55 is a shade under that measured figure
+ * because a tight loop held inside one arm's reach plateaus at about 840 of
+ * the 901 texels the share wanted: it re-burns metal it has already melted, so
+ * the quota was unreachable by exactly the play the design says to reward.
+ */
+const MELT_AREA = 0.55;
+
+/** How much fresh kerf earns another flood. See `_slug` for the cost. */
+const SLUG_EVERY = 24;
+
 export class BlastDoor {
   constructor(world, opts = {}) {
     this.world = world;
@@ -2333,7 +2363,11 @@ export class BlastDoor {
      * above, which is the other half of it. A caller that wants a heavier door
      * says so here rather than editing this file.
      */
-    this.breachFraction = opts.breachFraction ?? 0.055;
+    /* `null` unless a caller names one — see `burn`, where the default path is
+     * two rules in square metres and this one is the override. */
+    this.breachFraction = opts.breachFraction ?? null;
+    this.slugArea = opts.slugArea ?? SLUG_AREA;
+    this.meltArea = opts.meltArea ?? MELT_AREA;
     /** Kerf units burned per second of contact, out of the 220 of 255 a texel
      *  must reach to be melted through. See the long note in `burn`. */
     this.meltRate = opts.meltRate ?? MELT_RATE;
@@ -2577,9 +2611,100 @@ export class BlastDoor {
       this.world.particles.slag(worldPoint, _v2, 0xffa030);
     }
 
+    /**
+     * ── WHEN THE SLUG FALLS OUT, AND WHY IT IS NOT A QUOTA OF TEXELS ──────
+     *
+     * This read `cutArea / total > breachFraction`: burn 5.5% of the plate,
+     * anywhere, and the door opens. That is a QUOTA, and DESIGN.md does not
+     * describe a quota — it describes tracing a loop and the loop closing.
+     *
+     * The quota has a failure the design does not, and it is the one this
+     * check caught: a texel already at 220 cannot be melted twice, so a player
+     * tracing a tidy circle inside their own reach re-burns the same metal and
+     * `cutArea` STOPS GROWING. Measured on the shipped magazine, a tight loop
+     * held for seventy-five seconds: 840 of the 901 texels the quota wants,
+     * plateaued, door shut. Seventy-five seconds of correct play and nothing to
+     * show for it — and it is the tidy loop, the thing the design says to
+     * reward, that fails. A door and a plate size where it happened to work was
+     * the only thing holding the mechanic up: the lane before this one had to
+     * shrink the doors from 4.0 × 4.4 m to 3.3 × 3.4 to get two of nine runs
+     * over the line.
+     *
+     * WHAT OPENS IT NOW IS AN ENCLOSED HOLE. `_slug` floods the uncut metal in
+     * from the border; anything the flood cannot reach is metal your kerf has
+     * cut off from the rest of the plate — which is exactly the slug `breach`
+     * drops on the floor a few lines down. Close a loop and the piece inside it
+     * falls out, whatever size the door is and wherever on it you worked.
+     *
+     * `SLUG_AREA` is what counts as a hole worth walking through and it is in
+     * SQUARE METRES rather than in texels, so it no longer moves when somebody
+     * resizes a door. The old quota is kept as a second door — see
+     * `breachFraction` — because a player who scribbles the whole plate to slag
+     * has plainly got through it even if they never closed a loop.
+     *
+     * THE COST IS BOUNDED. The flood is 16,384 cells and it is only run when
+     * the kerf has actually grown by `SLUG_EVERY` texels since the last one, so
+     * a twenty-second breach pays for it about thirty times.
+     */
     const total = RES * RES;
-    if (this.cutArea / total > (this.breachFraction ?? 0.055)) { this.breach(); return true; }
+    const cellArea = (this.width * this.height) / total;
+    /* THE SECOND DOOR, and it is the old rule expressed in metal rather than
+     * in a share of the plate: a player who has melted this much of it has
+     * plainly got through, whatever shape they did it in. In square metres so
+     * that resizing a door does not reprice it — `breachFraction` is still
+     * honoured for any caller that passes one, and nothing in src/ does. */
+    const melted = this.cutArea * cellArea;
+    if (this.breachFraction != null
+      ? this.cutArea / total > this.breachFraction
+      : melted >= this.meltArea) { this.breach(); return true; }
+    if (this.cutArea - (this._slugAt ?? 0) >= SLUG_EVERY) {
+      this._slugAt = this.cutArea;
+      const cells = this._slug();
+      if (cells * cellArea >= this.slugArea) { this.breach(); return true; }
+    }
     return false;
+  }
+
+  /**
+   * HOW MUCH METAL THE KERF HAS CUT OFF FROM THE REST OF THE PLATE, in cells.
+   *
+   * A flood over the UNCUT texels starting from every border cell: whatever it
+   * cannot reach is enclosed. Iterative and on a reused Uint8Array, because a
+   * recursive flood over 16k cells is a stack the browser will not give us and
+   * an allocation here is one per burn.
+   *
+   * A kerf that touches the edge of the plate encloses nothing by this measure,
+   * which is correct: a cut from the middle to the rim does not drop a slug,
+   * it makes a slot.
+   */
+  _slug() {
+    /* `res` is the instance's own — `RES` is a local in the constructor and in
+     * `burn`, and the kerf is an RGBA buffer, so a texel's melt depth is at
+     * `(y * res + x) * 4`. Both details are load-bearing and both were wrong in
+     * the first draft of this method. */
+    const N = this.res, total = N * N;
+    const seen = (this._floodSeen ||= new Uint8Array(total));
+    seen.fill(0);
+    const stack = (this._floodStack ||= new Int32Array(total));
+    let top = 0;
+    const cut = (i) => this.kerfData[i * 4] >= 220;
+    for (let x = 0; x < N; x++) {
+      for (const i of [x, (N - 1) * N + x, x * N, x * N + N - 1]) {
+        if (!seen[i] && !cut(i)) { seen[i] = 1; stack[top++] = i; }
+      }
+    }
+    let reached = 0;
+    while (top > 0) {
+      const i = stack[--top];
+      reached++;
+      const x = i % N, y = (i / N) | 0;
+      if (x > 0) { const j = i - 1; if (!seen[j] && !cut(j)) { seen[j] = 1; stack[top++] = j; } }
+      if (x < N - 1) { const j = i + 1; if (!seen[j] && !cut(j)) { seen[j] = 1; stack[top++] = j; } }
+      if (y > 0) { const j = i - N; if (!seen[j] && !cut(j)) { seen[j] = 1; stack[top++] = j; } }
+      if (y < N - 1) { const j = i + N; if (!seen[j] && !cut(j)) { seen[j] = 1; stack[top++] = j; } }
+    }
+    /* Everything that is neither melted through nor reachable from the rim. */
+    return total - this.cutArea - reached;
   }
 
   breach() {
