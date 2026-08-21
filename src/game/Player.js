@@ -10,7 +10,7 @@
 import * as THREE from 'three';
 import { Saber, SABER_COLORS } from './Saber.js';
 import { SaberController, THRUST_STANDING_SPEED, SPIN } from './SaberController.js';
-import { buildJedi } from './Bodies.js';
+import { buildJedi, buildShieldBubble } from './Bodies.js';
 import { SKIN_TONES, HAIR_COLORS } from '../ui/Menu.js';
 import { speciesOf } from './Bodies.js';
 import { Rig, BipedAnimator, aimY, limbScale } from './Rig.js';
@@ -123,6 +123,38 @@ const LIFT_EXPONENT = 1.5;
  * this repository's signature defect.
  */
 export const HOLD_COST = { prop: { base: 7, rise: 6 }, person: { base: 11, rise: 9 } };
+
+/**
+ * THE FORCE BARRIER — what it costs to hold and what it costs to be shot at.
+ *
+ * "did you already add the force shield/bubble in the game? i'd already asked
+ *  for it but I could have missed it."
+ *
+ * They had not missed it: `POWER_COST` held eleven verbs and not one of them
+ * shielded anything. This is the whole of the power's economy and every number
+ * in it answers a way the obvious version is bad:
+ *
+ *   `hold`   6 a second. A barrier that cost nothing to keep up would be a
+ *            barrier you never lower, and a player standing inside a permanent
+ *            bubble is a player who has stopped playing this game. At 6 a full
+ *            base pool holds it about sixteen seconds with nothing hitting it,
+ *            which is long enough to cross a street under fire and far too
+ *            short to live in.
+ *   `bolt`   4 a bolt, and this is the interesting number. A single rifle is
+ *            noise; a FIRING LINE is what a shield is for, and eight droids at
+ *            a bolt a second each is 32 Force a second — the pool empties in
+ *            three. So the barrier answers a volley and cannot outlast one,
+ *            which is exactly the shape the player asked for when they asked
+ *            for a Force resource that means something.
+ *   `blunt`  what a blast keeps. An explosion is not stopped by it, it is
+ *            SOFTENED — 0.35 of the damage still arrives — because a bubble
+ *            that made you immune to the thing you called down on yourself
+ *            would delete the one decision stratagems are made of.
+ *   `radius` 2.1 m. Wide enough to cover somebody standing next to you, which
+ *            is what makes it worth raising over a wounded man you are mending;
+ *            narrow enough that a squad cannot shelter in it.
+ */
+export const SHIELD = { hold: 6, bolt: 4, blunt: 0.35, radius: 2.1, rise: 0.18, fall: 0.3 };
 /**
  * 11 / 7 = 1.571 — a living body against an object, read off HOLD_COST.
  *
@@ -2526,6 +2558,12 @@ export class Player {
     this.climbing = false;
     /** Who the mend channel is being spent on, or null for yourself. */
     this.healTarget = null;
+    /**
+     * THE BARRIER. `t` is how long it has been up, `power` is what the shader
+     * draws (0 down, 1 up) and is eased so it never pops, and `stopped` counts
+     * what it has eaten this raise — see `SHIELD` and `shieldSphere`.
+     */
+    this.shield = { up: false, t: 0, power: 0, stopped: 0, lastHit: -99 };
     this.dashDir = new THREE.Vector3();
     /** Seconds left of an air dodge's somersault, and the horizontal axis it
      *  turns about. Zero on the ground: a dodge with a foot down is a step. */
@@ -3021,6 +3059,11 @@ export class Player {
     else if (this.channel?.kind === 'lightning' && !input.act('lightning')) this.endLightning();
     if (input.actHit('stasis')) this.toggleStasis(ctx);
     if (input.actHit('heal')) this.forceHeal(ctx);
+    /* A TOGGLE, not a hold-to-keep. `forceShield` puts it up and puts it down
+     * again on the second press — the same shape `stasis` and the mend already
+     * use — because a barrier you must keep a finger on is a barrier you cannot
+     * fight from, and everything else in this game is done with the same hand. */
+    if (input.actHit('shield')) this.forceShield(ctx);
     if (input.actHit('rend')) this.forceDisassemble(ctx);
     if (input.actHit('compel')) this.forceCompel(ctx);
     if (input.actHit('unleash')) this.forceUnleash(ctx);
@@ -5311,7 +5354,15 @@ export class Player {
      * the dash cooldown it is measured against. */
     if (this.staminaHold > 0) this.staminaHold = Math.max(0, this.staminaHold - dt);
     else this.stamina = Math.min(this.maxStamina, this.stamina + (16 + 10 * (1 - combatHot)) * dt * this.boonMods.staminaRegen);
-    this.force = Math.min(this.maxForce, this.force + (this.senseActive ? 0 : 7.5) * dt);
+    /* THE BARRIER PAUSES REGEN, exactly as Sense does, and it is not a second
+     * price — it is what makes the first one real. Measured before this line
+     * existed: a raised barrier with nothing shooting at it ran a NET GAIN of
+     * 2.82 Force a second, because the 7.5 regen outran the 6 hold. A power
+     * that refills the bar it is draining has no cost and therefore no
+     * decision in it, and "how long can I afford to stand here" is the only
+     * question this power asks. tools/checks/barrier.mjs measures the slope. */
+    const channelling = this.senseActive || this.shield.up;
+    this.force = Math.min(this.maxForce, this.force + (channelling ? 0 : 7.5) * dt);
     // Flow bleeds unless you keep earning it
     this.flow = clamp(this.flow - dt * 0.085, 0, 1);
     if (this.senseActive) {
@@ -7011,6 +7062,142 @@ export class Player {
   }
 
   /**
+   * THE FORCE BARRIER — raise it, hold it, and pay for what it stops.
+   *
+   * The player asked for this twice, the second time to check whether they had
+   * simply missed it: "did you already add the force shield/bubble in the game?
+   * i'd already asked for it but I could have missed it." They had not. There
+   * were eleven Force verbs and none of them shielded anything.
+   *
+   * ── WHY IT IS A HELD BARRIER AND NOT A BUFF ─────────────────────────────
+   *
+   * The cheap version of this power is a timer: press it, take no damage for
+   * four seconds, press it again in twenty. That is a cooldown wearing a
+   * bubble, and it makes the fight worse — the player learns a rotation and
+   * stops reading the room. This one is a CHANNEL, like the lightning and the
+   * mend: it is up while you hold it, it drains while it is up, and every bolt
+   * that dies on it costs you more (see `SHIELD`). So the question it asks is
+   * the one a barrier should ask — how long can I afford to stand here — and
+   * the answer changes with how many rifles are pointed at you.
+   *
+   * IT DOES NOT STOP A BLADE. Nothing here touches `bladeTargets` or the
+   * contact solver: a lightsabre goes through it, and so does anything that
+   * reaches you by walking — blunted by SHIELD.blunt in `damage` and no more
+   * than that. A wall against everything is a wall against having to move, and
+   * moving is the game.
+   */
+  forceShield(ctx) {
+    if (this.shield.up) { this._endShield(); return; }
+    if (this.cooldowns.shield > 0) {
+      return this._refuse('force barrier', `recovering — ${this.cooldowns.shield.toFixed(1)}s`);
+    }
+    if (!this._spend(POWER_COST.shield)) {
+      return this._refuse('force barrier',
+        `${this._priceOf(POWER_COST.shield)} Force needed, you have ${Math.round(this.force)}`);
+    }
+    this.shield.up = true;
+    this.shield.t = 0;
+    this.shield.stopped = 0;
+    this._gesture('guard');
+    this._forceVoice?.('shield');
+    audio.force(this.chest, 'pull');
+    audio.tone({ freq: 180, freqEnd: 520, dur: 0.35, gain: 0.12, type: 'sine', pos: this.chest });
+  }
+
+  /** Down, however it ended. Idempotent. */
+  _endShield(why = null) {
+    if (!this.shield.up) return;
+    this.shield.up = false;
+    /* A SHORT RECOVERY AND NOT A LONG ONE. The cost of this power is the drain
+     * while it is up, not a lockout after it: a cooldown long enough to matter
+     * would turn "when do I lower it" — the only interesting question here —
+     * into "it lowered itself". */
+    this.cooldowns.shield = 1.2;
+    this._endGesture('guard');
+    if (why) this.world?.notify?.('BARRIER DOWN', why);
+  }
+
+  /**
+   * WHERE THE BARRIER IS, for anything that has to test against it — or null.
+   *
+   * A sphere at the chest rather than at the feet, because that is what a body
+   * shelters behind, and it is READ rather than stored so a moving player's
+   * barrier moves with them exactly. `World._boltHitTest` is the one caller
+   * that matters; it is deliberately the same shape of reader as `shieldBody`
+   * one method up, which is the held-body cover this game already had.
+   */
+  shieldSphere() {
+    if (!this.shield.up || this.shield.power < 0.25) return null;
+    return { c: this.chest, r: SHIELD.radius };
+  }
+
+  /**
+   * A BOLT DIED ON IT — called by the world's own hit test, which is the only
+   * thing that knows a bolt was going to reach you.
+   *
+   * The Force is spent HERE rather than per second, because what a barrier
+   * costs is what it is asked to do. Running the pool dry drops it, which is
+   * the loud, legible failure a player can plan around: the bubble goes out
+   * and the next round in the burst arrives.
+   */
+  shieldAbsorb(point) {
+    if (!this.shield.up) return false;
+    this.shield.stopped++;
+    this.shield.lastHit = this.world?.time ?? 0;
+    if (point) this._shieldFlash(point);
+    if (!this._spend(SHIELD.bolt, true)) { this._endShield('the Force ran out'); return true; }
+    return true;
+  }
+
+  _shieldFlash(point) {
+    audio.tone({ freq: 900, freqEnd: 300, dur: 0.12, gain: 0.10, type: 'triangle', pos: point });
+    const p = this.world?.particles;
+    if (!p) return;
+    for (let i = 0; i < 4; i++) {
+      _g1.set((rng() - 0.5) * 2, (rng() - 0.5) * 2, (rng() - 0.5) * 2).normalize().multiplyScalar(1.6);
+      p.plasma.spawn(point, _g1, { life: 0.22, size: 0.30, drag: 3, gravity: 0, color: 0x66ddff, alpha: 0.5 });
+    }
+  }
+
+  /** One frame of it. Called from `update` while the barrier exists. */
+  _updateShield(dt, ctx) {
+    const S = this.shield;
+    /* THE MESH IS BUILT ON FIRST USE, so a player who never raises one never
+     * pays for the geometry — and it is the droideka's own bubble, from
+     * `buildShieldBubble`, so the two cannot drift apart. */
+    if (S.up && !this._shieldMesh && this.world?.scene) {
+      const b = buildShieldBubble({ radius: SHIELD.radius, color: 0x8fd8ff });
+      this._shieldMesh = b.mesh;
+      this._shieldMat = b.mat;
+      this.world.scene.add(b.mesh);
+    }
+    if (S.up) {
+      S.t += dt;
+      if (!this._spend(SHIELD.hold * dt, true)) { this._endShield('the Force ran out'); }
+    }
+    /* EASED BOTH WAYS. `rise` and `fall` are what stop it popping into
+     * existence, and `shieldSphere` refuses to answer under a quarter power —
+     * so the thing that stops bolts and the thing you can see agree. */
+    const want = S.up ? 1 : 0;
+    const rate = S.up ? 1 / SHIELD.rise : 1 / SHIELD.fall;
+    S.power = want > S.power ? Math.min(1, S.power + dt * rate) : Math.max(0, S.power - dt * rate);
+    if (this._shieldMesh) {
+      const live = S.power > 0.002;
+      this._shieldMesh.visible = live;
+      if (live) {
+        this._shieldMesh.position.copy(this.chest);
+        const u = this._shieldMat.uniforms;
+        u.uTime.value = ctx?.time ?? (u.uTime.value + dt);
+        /* IT FLARES WHERE IT IS BEING HIT. A barrier that looked the same under
+         * a volley as it does in silence would be telling the player nothing
+         * about the one thing they are deciding. */
+        const since = (this.world?.time ?? 0) - S.lastHit;
+        u.uPower.value = S.power * (0.7 + 0.6 * Math.exp(-since * 6));
+      }
+    }
+  }
+
+  /**
    * FORCE COMPEL — turn a mind, not a body.
    *
    * Note 44: "make an enemy fire on itself or its allies." Every other power in
@@ -7913,6 +8100,9 @@ export class Player {
     this._advanceGesture(dt);
     if (this.gripBody || this.gripEnemy) this._updateGrip(dt, ctx);
     if (this.healing !== null) this._updateHeal(dt, ctx);
+    /* Stepped whenever it EXISTS rather than only while it is up, so the fade
+     * out finishes and the mesh is hidden — `power` is what the shader draws. */
+    if (this.shield.up || this.shield.power > 0) this._updateShield(dt, ctx);
     if (this.stasis.active || this.stasis.firing.length) this._updateStasis(dt, ctx);
     if (this.hurled.length) this._updateHurled(dt, ctx);
   }
@@ -7954,6 +8144,19 @@ export class Player {
      * The other order would make a Master's lightning cost more pool on Padawan
      * than on Knight for landing less.
      */
+    /**
+     * AND THE BARRIER TAKES ITS SHARE OF WHAT WALKS IN.
+     *
+     * A bolt never reaches this line while the bubble is up — `World.
+     * _boltHitTest` kills it on the surface — so everything arriving here with
+     * a barrier raised got here some other way: a blade, a blast, a body. The
+     * barrier does not STOP any of those. It blunts them by SHIELD.blunt and
+     * lets the rest through, because a wall against everything is a wall
+     * against having to move, and moving is the game.
+     *
+     * A fall is not a blow, and a barrier is not a parachute.
+     */
+    if (this.shield.up && kind !== 'fall') amount *= 1 - SHIELD.blunt;
     if (!preResisted) amount = Math.max(0, amount - this.resistForce(amount, kind, source));
     const scale = this.difficulty ? this.difficulty.damageTaken : 1;
     const dmg = amount * scale;
@@ -8285,6 +8488,16 @@ export class Player {
      * now cycles a real World rather than reading one as text.
      */
     this.skirt?.dispose(); this.skirt = null;
+    /* THE BARRIER'S BUBBLE. Built lazily into `world.scene` on the first raise
+     * and parented to nothing, so removing the rig does not take it: the exact
+     * shape of leak the skirt note above is about, written down before it could
+     * happen a second time. */
+    if (this._shieldMesh) {
+      this.world.scene.remove(this._shieldMesh);
+      this._shieldMesh.geometry?.dispose();
+      this._shieldMat?.dispose();
+      this._shieldMesh = null; this._shieldMat = null;
+    }
     this.saber.dispose();
     if (this.actor) this.actor.dispose();
     else { this.world.scene.remove(this.rig.root); this.rig.dispose(); }

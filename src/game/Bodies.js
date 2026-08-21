@@ -6839,10 +6839,42 @@ export function buildDroideka(opts = {}) {
     arms.push({ arm, muzzle, side: sx });
   }
 
-  // deflector shield bubble
-  const shieldGeo = new THREE.SphereGeometry(1.15 * S, 24, 18);
-  const shieldMat = new THREE.ShaderMaterial({
-    uniforms: { uColor: { value: new THREE.Color(0x66ddff) }, uTime: { value: 0 }, uPower: { value: 0 } },
+  // deflector shield bubble — the same one the player's Force barrier uses
+  const { mesh: shield, mat: shieldMat } = buildShieldBubble({ radius: 1.15 * S });
+  shield.position.y = 0.75 * S;
+  group.add(shield);
+
+  return { group, core, headG, legs, arms, shield, shieldMat, palette: { shell, dark, scorch, eye }, scale: S };
+}
+
+/**
+ * A DEFLECTOR BUBBLE — one implementation, two owners.
+ *
+ * It was written inline inside `buildDroideka` and it is lifted out here
+ * because the player has one now: "did you already add the force shield/bubble
+ * in the game? i'd already asked for it but I could have missed it." They had
+ * not missed it. It was not there, and the shader that draws exactly this
+ * thing had been sitting in a droid's constructor the whole time.
+ *
+ * Two owners with one shader is the point. A player who has learned to read a
+ * droideka's bubble — the fresnel rim that brightens where you are looking
+ * through it edge-on, the hex weave, the slow vertical ripple — reads their own
+ * the same way, and a change to how a deflector looks is one edit rather than
+ * two that drift.
+ *
+ * `uPower` is the only thing a caller animates: 0 is down, 1 is up, and every
+ * term in the fragment is multiplied by it, so a shield fading in fades in
+ * whole rather than appearing at full strength and then growing.
+ */
+export function buildShieldBubble(opts = {}) {
+  const radius = opts.radius ?? 1.15;
+  const geo = new THREE.SphereGeometry(radius, opts.segments ?? 24, opts.rings ?? 18);
+  const mat = new THREE.ShaderMaterial({
+    uniforms: {
+      uColor: { value: new THREE.Color(opts.color ?? 0x66ddff) },
+      uTime: { value: 0 },
+      uPower: { value: 0 },
+    },
     vertexShader: `varying vec3 vN; varying vec3 vV; varying vec3 vP;
       void main(){ vec4 mv = modelViewMatrix*vec4(position,1.); vN = normalize(normalMatrix*normal);
         vV = normalize(-mv.xyz); vP = position; gl_Position = projectionMatrix*mv; }`,
@@ -6857,12 +6889,14 @@ export function buildDroideka(opts = {}) {
       }`,
     transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
   });
-  const shield = new THREE.Mesh(shieldGeo, shieldMat);
-  shield.position.y = 0.75 * S;
-  shield.visible = false;
-  group.add(shield);
-
-  return { group, core, headG, legs, arms, shield, shieldMat, palette: { shell, dark, scorch, eye }, scale: S };
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.visible = false;
+  /* NOT INKED. `Ink.js` hides anything transparent for its prepass and shows it
+   * again; a bubble drawn into the normal buffer would put a hard outline round
+   * the player's own head. See `cutsItsOwnSilhouette`. */
+  mat.userData.saberNoInk = true;
+  mesh.frustumCulled = false;
+  return { mesh, mat };
 }
 
 /* ── spider walker (mini-boss) ───────────────────────────────────────── */

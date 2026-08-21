@@ -152,6 +152,9 @@ export const POWERS = [
   ['push', 'push'], ['pull', 'pull'], ['grip', 'grip'], ['throw', 'throw'],
   ['sense', 'sense'], ['lightning', 'lightning'], ['stasis', 'stasis'],
   ['heal', 'heal'], ['compel', 'compel'], ['rend', 'rend'],
+  /* The barrier — the twelfth, and it went in with its slot rather than after
+     an audit found it drawn nowhere, which is what happened to rend. */
+  ['shield', 'shield'],
   /* Unleash — the 360° repulse. This LIST is what builds the slots; `_power`
    * only repaints one that already exists, so adding a price and a `_power`
    * call without a row here draws nothing and prices eleven against ten
@@ -200,6 +203,9 @@ const POWER_ICONS = {
   compel: '<svg viewBox="0 0 24 24"><path d="M6 9h9a4 4 0 0 1 0 8H9"/><path d="M12 14l-3 3 3 3"/></svg>',
   // A chassis coming apart: a core with four plates pulling off it.
   rend:   '<svg viewBox="0 0 24 24"><rect x="10" y="10" width="4" height="4"/><path d="M8 8L4 4M16 8l4-4M8 16l-4 4M16 16l4 4"/></svg>',
+  /* A dome over a figure: the one power in the row that is drawn around the
+     player rather than thrown away from them. */
+  shield: '<svg viewBox="0 0 24 24"><path d="M4 15a8 8 0 0 1 16 0"/><path d="M12 11v6M9.5 17h5"/></svg>',
   /* A ring with arrows leaving it in every direction: the icon has to say
      "outward, all of it" at 21 px, which is the one thing that separates this
      from push in the row. */
@@ -1735,6 +1741,12 @@ export class HUD {
      * hud-events counts the wheel against POWER_COST so a new price without a
      * new slot fails rather than shipping quiet. */
     this._power('unleash', cd.unleash, this._afford(player, 'unleash'));
+    /* The barrier is the only slot whose "on" state costs money every frame it
+     * stays on, so the lit border is the readout that matters most in the row:
+     * it is what tells the player the bar is draining. `up` and not `power`,
+     * because `power` is the visual ease and lingers for a third of a second
+     * after the barrier is down. */
+    this._power('shield', cd.shield, this._afford(player, 'shield'), !!player.shield?.up);
 
     // ── reticle & blade cursor
     const firstPerson = !!player.camera.firstPerson;

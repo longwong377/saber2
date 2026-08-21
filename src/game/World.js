@@ -3970,6 +3970,30 @@ export class World {
          * cover is being shot to pieces while you hold it, which is the whole
          * bargain and is why this cannot simply be an invulnerability window.
          */
+        /**
+         * THE FORCE BARRIER — the sphere, not the held body.
+         *
+         * Tested FIRST and tested from the outside in: `segmentSphere` hands
+         * back the ENTRY point so the flash lands on the surface of the bubble
+         * rather than on the player inside it, and it refuses a bolt whose
+         * muzzle is already inside the radius. That refusal is the rule that
+         * makes the power a barrier instead of an invulnerability window — a
+         * droid that walks the two metres in and fires point blank is shooting
+         * a man, and the bubble is behind its gun.
+         *
+         * `shieldAbsorb` is what charges for it: every bolt that dies here
+         * costs SHIELD.bolt on top of the per-second hold, and the raise ends
+         * the moment the bar cannot pay. See Player.SHIELD.
+         */
+        const bubble = p.shieldSphere?.();
+        if (bubble) {
+          const at = segmentSphere(from, to, bubble.c, bubble.r);
+          if (at) {
+            p.shieldAbsorb(at);
+            this.particles.sparkBurst(at, null, 10, { speed: 6, color: 0x8fd8ff });
+            return { point: at, normal: _v3.subVectors(from, to).normalize().clone(), victim: null };
+          }
+        }
         const shield = p.shieldBody?.();
         if (shield) {
           const hit = segmentNear(from, to, shield.p0, shield.p1, shield.r);
@@ -6044,6 +6068,34 @@ const DEFLECT_WHY = [
 /* ── helper: closest approach between two segments ───────────────────── */
 
 const _a = new THREE.Vector3(), _b = new THREE.Vector3();
+/**
+ * Where a segment ENTERS a sphere, or null.
+ *
+ * Deliberately not `segmentNear` with a point for a capsule: that returns the
+ * CLOSEST point on the segment, which for a bolt fired through a bubble is a
+ * point somewhere near the middle of the player, and a barrier that flashes
+ * inside itself reads as a barrier that failed. This returns the first
+ * crossing of the surface.
+ *
+ * A segment that STARTS inside the sphere returns null — see the call site in
+ * `_boltHitTest` for why that is the rule and not an oversight.
+ */
+function segmentSphere(p0, p1, c, radius) {
+  const d = _v4.subVectors(p1, p0);
+  const m = _v5.subVectors(p0, c);
+  if (m.lengthSq() <= radius * radius) return null;      // muzzle is inside
+  const a = d.dot(d);
+  if (a <= 1e-8) return null;
+  const b = m.dot(d);
+  const cc = m.dot(m) - radius * radius;
+  if (b > 0 && cc > 0) return null;                      // pointing away
+  const disc = b * b - a * cc;
+  if (disc < 0) return null;
+  const t = (-b - Math.sqrt(disc)) / a;
+  if (t < 0 || t > 1) return null;
+  return _a.copy(p0).addScaledVector(d, t).clone();
+}
+
 function segmentNear(p0, p1, c0, c1, radius) {
   const d1 = _v4.subVectors(p1, p0);
   const d2 = _v5.subVectors(c1, c0);

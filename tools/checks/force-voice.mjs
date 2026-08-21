@@ -305,6 +305,7 @@ const FIRE = {
   lightning: (b) => b.p.forceLightning(b.ctx),
   stasis: (b) => b.p.toggleStasis(b.ctx),
   heal: (b) => b.p.forceHeal(b.ctx),
+  shield: (b) => b.p.forceShield(b.ctx),
   compel: (b) => b.p.forceCompel(b.ctx),
   rend: (b) => b.p.forceDisassemble(b.ctx),
   unleash: (b) => b.p.forceUnleash(b.ctx),
@@ -330,6 +331,10 @@ function rearm(b) {
   p.stasis.active = false; p.stasis.held.length = 0; p.stasis.firing.length = 0;
   p.stasis.bodies.clear();
   p.throwState = 'held';
+  /* A barrier ALREADY UP makes `forceShield` a toggle-down, which spends
+   * nothing and says nothing — so the bench would read the one defensive
+   * power in the game as silent. Put it away between casts. */
+  p.shield.up = false; p.shield.power = 0; p.shield.t = 0;
   p.hp = p.maxHp * 0.5;                       // so a self-heal is not "already whole"
   b.announcer.quipT = 0;
   b.announcer.effortT = 0;

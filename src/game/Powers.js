@@ -45,6 +45,23 @@ export const POWER_COST = {
    * which is what makes it a decision rather than a rotation.
    */
   unleash: 52,
+  /**
+   * THE BARRIER, and it is priced as a THRESHOLD rather than as a cost.
+   *
+   * The player asked for this and then asked again, and the honest answer the
+   * second time was that it had never been built: "did you already add the
+   * force shield/bubble in the game? i'd already asked for it but I could have
+   * missed it." They had not missed it.
+   *
+   * 18 is deliberately cheap to RAISE — cheaper than a push — because a shield
+   * you cannot afford to put up in the moment you need it is a shield that is
+   * never used. What it costs is the HOLDING (see `SHIELD_HOLD`) and, most of
+   * all, what it stops: every bolt that dies on it is paid for out of the same
+   * pool, so a firing line drains you at the rate it is shooting. That is the
+   * decision the power is made of — a barrier is not a wall, it is a bank
+   * balance between you and the volley.
+   */
+  shield: 18,
 };
 
 /**

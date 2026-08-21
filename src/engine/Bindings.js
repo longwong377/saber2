@@ -355,6 +355,23 @@ export const ACTIONS = [
   // under the same hand. Every letter within reach of WASD is already spoken
   // for, and findConflict is what proves it rather than anyone's memory.
   { id: 'compel',     group: 'Force',    label: 'Force compel',      keys: ['Digit4'], pad: 'PadLB+PadL3' },
+  /**
+   * KEYJ, AND THE THREE KEYS I TRIED FIRST ARE WHY THIS COMMENT EXISTS.
+   *
+   * The barrier wants to sit beside the other Force digits — heal on 3, compel
+   * on 4 — and the whole digit row is spoken for twice over. Digit5 is the
+   * emote wheel; LB+R3 is the free camera; and Digit6 onward belong to the
+   * FORMATION keys, which are not typed in this table at all but derived from
+   * the order list, so grepping the file for them finds nothing. `controls.mjs`
+   * caught each attempt within one run — "one press, two systems: Digit5 →
+   * shield + emote", then "Digit6 → shield + form.circle", then a saved blob
+   * booting straight into the same clash.
+   *
+   * So it is a letter, and `KeyJ` is the nearest free one to the hand that is
+   * already on WASD. That suite is the reason nobody has to remember any of
+   * this, and it is worth more than the tidy adjacency I wanted.
+   */
+  { id: 'shield',     group: 'Force',    label: 'Force barrier',     keys: ['KeyJ'], pad: 'PadRB+PadUp' },
   { id: 'scoreboard', group: 'Interface', label: 'Scoreboard',       keys: ['Tab'],        hold: true, pad: 'PadBack+PadY' },
   { id: 'view',       group: 'Interface', label: 'First / third person', keys: ['KeyV'], pad: 'PadBack+PadA' },
   // Digit5 for the wheel, on the same argument the guard stance made for

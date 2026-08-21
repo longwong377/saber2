@@ -516,6 +516,26 @@ export const FORCE_LINES = {
     { gain: 0.60, words: 'Stay with me.', syll: [[1.20, 1.10, 0.9], [1.02, 1.30, 0.6], [0.84, 1.70, 0.45]] },
   ],
   /**
+   * SHIELD — the only line the player says that is not aimed at an enemy at
+   * all: it is said to the people BEHIND them. So it is the one contour in the
+   * table that does not move — the beats sit on the same note — and it is the
+   * LONGEST two-beat line the game has, because a barrier is a thing you hold
+   * rather than a thing you do. `grip` is the other level contour and it is a
+   * strain a fifth lower and half the length; the two are told apart on pitch
+   * centre and on duration rather than on shape, which is why both numbers are
+   * pushed rather than one.
+   */
+  shield: [
+    /* the call back — level, weight on the held second beat */
+    { gain: 0.78, words: 'Behind me.', syll: [[1.10, 0.62, 0.7], [1.08, 1.05, 1.0]] },
+    /* the refusal — three beats that settle rather than climb, the longest */
+    { gain: 0.82, words: 'Nothing gets through.', syll: [[1.22, 0.66, 0.8], [1.16, 0.72, 0.9], [1.08, 2.10, 1.0]] },
+    /* the brace — the only one of the four that leans on its FIRST beat */
+    { gain: 0.86, words: 'Not through this.', syll: [[1.34, 1.30, 1.0], [1.30, 0.95, 0.72]] },
+    /* the order — lowest of the four and the longest tail in it */
+    { gain: 0.80, words: 'Stand fast.', syll: [[0.88, 0.75, 0.85], [0.86, 1.85, 1.0]] },
+  ],
+  /**
    * COMPEL — low, level and QUIET, and quiet is the point: this is the one
    * power that is done to a mind rather than to a body, and a shout is the
    * wrong register for it. It shares `grip`'s flatness and sits a third under
