@@ -39,6 +39,21 @@ for (const seed of seeds) {
   const { world } = await H.bootWorld({ level: 'geonosis',
     settings: { mode, level: 'geonosis', order: 'jedi' }, runSeed: seed });
   const d = world.command;
+  /**
+   * THE MUSTER IS HELD OPEN, OR THIS TALLY RUNS PAST THE ENGAGEMENT IT MEANT
+   * TO MEASURE.
+   *
+   * The loop below stops on `d.mustering`, and that flag is true for less than
+   * one frame: `_areaClear` ends with "no screen wired: muster for the player
+   * and press on" — `autoMuster()` then `closeMuster()`, both inside the same
+   * `payWave` call — so the boundary opens and shuts between two
+   * `world.update` calls and the poll never fires. Every reading taken here
+   * therefore ran on into area 2 and 3 and reported the roster at whatever
+   * wipe it eventually hit, which is where "the roster is wiped in wave 1 and
+   * the muster is unreachable" came from. A no-op `onMuster` is what a
+   * player's screen is to the director. See tools/_linehold.mjs.
+   */
+  d.onMuster = () => {};
   d.start(1);
   const input = H.idleInput();
   const n0 = d.roster.all.length;
