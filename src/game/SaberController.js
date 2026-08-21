@@ -449,10 +449,9 @@ export const SLASH = {
    * you took one body a press. `GX_MAX` is 1.0, so the guard box is 2.0 units
    * wide and the old cut used 63% of it.
    *
-   * 0.98 → 1.00 is 1.98 units, 98% of everything the guard has, and the drop is
-   * cut to 0.46 — enough tilt that the blade is not a spirit level, little
-   * enough that it reads as a horizontal sweep. Measured on the rig, the tip
-   * travels 56% further across the frame than it did.
+   * It is a level sweep across most of the guard box now — see the width note
+   * below for why it is 0.80/0.82 rather than the 0.98/1.00 this first became,
+   * and what the difference buys.
    *
    * AND THE CAMERA DOES NOT MOVE. It never did on this attack — `_slX`/`_slY`
    * are guard offsets and only `overflowTurn` and the spin write `cam.yaw` —
@@ -460,7 +459,47 @@ export const SLASH = {
    * the reason to sweep the mouse through the cut, which is what was actually
    * turning the view.
    */
-  rise: 0.98, drop: 1.00, lift: 0.16, fall: 0.30,
+  /**
+   * …AND IT IS AIMED AT A MAN, NOT AT THE SKY — the half of "wide and level"
+   * that the first pass got wrong.
+   *
+   * `lift 0.16 → fall 0.30` is a level sweep, and it was level at the WRONG
+   * HEIGHT: the ready guard holds the blade pointing up, so a stroke that
+   * leaves the pitch alone carries the tip over a standing man's head.
+   * Measured on the rig, the lowest the tip ever reached through a full cut:
+   *
+   *     lift  0.16 / fall 0.30     tip bottoms at 2.15 m   ← over their heads
+   *     lift -0.30 / fall 0.42                     1.97 m
+   *     lift -0.55 / fall 0.65                     1.69 m
+   *     lift -0.70 / fall 0.80                     1.48 m   ← through a chest
+   *
+   * A trooper's chest is about 1.4 m and its head is 1.7. So the shipped cut
+   * passed cleanly above every body it was aimed at, which is a wide graceful
+   * arc that hits nothing — the player's own complaint arriving by a different
+   * road than the one it was fixed on.
+   *
+   * `-0.70 → 0.80` moves the WHOLE ARC DOWN and keeps it level: the vertical
+   * span across the cut is 0.10 of a guard unit, so it is still a horizontal
+   * sweep and not the descending diagonal this replaced.
+   *
+   * AND THE WIDTH PAYS FOR THE HEIGHT, which is the trade and is worth the
+   * paragraph. Down at chest height the same guard travel is a LONGER path in
+   * world space, so the blade comes out faster: at the full 0.98/1.00 the tip
+   * peaked at 18.5 m/s, against a charged overhead's ~17.3, and damage in this
+   * game IS blade speed — a light attack quicker than the charged heavy makes
+   * the heavy a decoration, which `animation.mjs` holds a bound against for
+   * exactly that reason. Measured across the width:
+   *
+   *     rise/drop 0.98/1.00   tip 18.5 m/s   1.94 units across   bottoms 1.48 m
+   *     rise/drop 0.80/0.82       16.9        1.59               1.25 m
+   *     rise/drop 0.65/0.67       13.2        1.29               0.99 m
+   *
+   * 0.80/0.82 is 1.59 units — 80% of everything the guard has, still a sweep
+   * you can see from across the room — at a speed that leaves the charged
+   * overhead the heaviest blade in the game, and it reaches a foot LOWER than
+   * the widest version did.
+   */
+  rise: 0.80, drop: 0.82, lift: -0.70, fall: 0.80,
   lunge: 0.30, cooldown: 0.30,
   /**
    * THE CHAIN WINDOW. "obviously pressing it closely in succession will do like

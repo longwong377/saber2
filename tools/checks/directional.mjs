@@ -1170,10 +1170,27 @@ export async function run({ check, assert }) {
       for (let i = 0; i < 90; i++) { c.applyInput(input, 1 / 60, { stamina: 1 }); c.update(1 / 60, CHEST, aim, {}); }
       return { c, aim, input };
     };
-    /** Fire one press and run the swing out, reporting the guard's extent. */
+    /**
+     * Fire one press and run the swing out, reporting the guard's extent —
+     * SEPARATELY FOR THE CHAMBER AND FOR THE CUT, and that distinction is the
+     * whole of what "level" means.
+     *
+     * This measured the envelope end to end and called the total vertical
+     * range "down". A horizontal slash CHAMBERS at the height it is about to
+     * sweep at — the arm drops to shoulder-and-below and then goes across —
+     * so once the cut was moved down to where a man's chest is (see SLASH's
+     * own note, and the 2.15 m the tip used to bottom out at), the wind-up
+     * legitimately travels a metre of guard and the cut travels a tenth. Rolled
+     * into one number that reads as a chop, and the instrument would have been
+     * demanding the blade go back over their heads.
+     *
+     * `cutAcross`/`cutDown` are the CUT WINDOW only — `SLASH.wind` to
+     * `wind + cut` — which is the phase the player's sentence is about.
+     */
     const swing = ({ c, aim, input }, frames = 40) => {
       input._hit.add('thrust');
       let xlo = 9, xhi = -9, ylo = 9, yhi = -9, n = 0;
+      let cxlo = 9, cxhi = -9, cylo = 9, cyhi = -9;
       for (let i = 0; i < frames; i++) {
         c.applyInput(input, 1 / 60, { stamina: 1 });
         input._hit.clear();
@@ -1182,9 +1199,14 @@ export async function run({ check, assert }) {
           n++;
           xhi = Math.max(xhi, c.gx); xlo = Math.min(xlo, c.gx);
           yhi = Math.max(yhi, c.gy); ylo = Math.min(ylo, c.gy);
+          if (c.slashT >= SLASH.wind && c.slashT <= SLASH.wind + SLASH.cut) {
+            cxhi = Math.max(cxhi, c.gx); cxlo = Math.min(cxlo, c.gx);
+            cyhi = Math.max(cyhi, c.gy); cylo = Math.min(cylo, c.gy);
+          }
         }
       }
-      return { across: xhi - xlo, down: yhi - ylo, frames: n };
+      return { across: xhi - xlo, down: yhi - ylo, frames: n,
+        cutAcross: cxhi - cxlo, cutDown: cyhi - cylo };
     };
 
     /* ── WIDE AND LEVEL ────────────────────────────────────────────────── */
@@ -1193,9 +1215,15 @@ export async function run({ check, assert }) {
     assert(one.across > GX_MAX * 1.5,
       `the cut travelled ${one.across.toFixed(2)} units across a ${(GX_MAX * 2).toFixed(1)}-unit guard — `
       + '"it needs to cut horizontally in a wide arc"');
-    assert(one.across > one.down * 2.2,
-      `the cut moved ${one.across.toFixed(2)} across and ${one.down.toFixed(2)} down — that is a chop, not `
-      + 'a horizontal arc');
+    assert(one.cutAcross > one.cutDown * 2.2,
+      `the cut itself moved ${one.cutAcross.toFixed(2)} across and ${one.cutDown.toFixed(2)} down — that `
+      + 'is a chop, not a horizontal arc');
+    /* AND THE CHAMBER IS A CHAMBER: the blade may drop into the stroke, but it
+     * must have STOPPED dropping before the stroke begins, or "level" is being
+     * claimed for a diagonal with a pause in the middle of it. */
+    assert(one.cutDown < 0.25,
+      `the blade travelled ${one.cutDown.toFixed(2)} units vertically DURING the cut window — the drop `
+      + 'belongs to the wind-up, not to the stroke');
 
     /* ── THE SEQUENCE ──────────────────────────────────────────────────── */
     const r = fresh();

@@ -184,7 +184,7 @@ const stubWorld = () => ({
     sN = Math.max(0, Math.min(1, (b * tN - c) / a));
     return p1.clone().addScaledVector(d1, sN).distanceTo(q1.clone().addScaledVector(d2, tN));
   };
-  let tip = 0, contact = 0, yawTurned = 0, lowest = 9;
+  let tip = 0, contact = 0, yawTurned = 0, bodyTurned = 0, lowest = 9;
   let prevYaw = p.camera.yaw;
   let gxLo = 9, gxHi = -9, gyLo = 9, gyHi = -9;
   for (let i = 0; i < frames; i++) {
@@ -201,6 +201,14 @@ const stubWorld = () => ({
     while (d > Math.PI) d -= Math.PI * 2;
     while (d < -Math.PI) d += Math.PI * 2;
     yawTurned += Math.abs(d); prevYaw = p.camera.yaw;
+    /* THE BODY'S OWN TURN, WHICH IS NOT THE CAMERA'S — and reading one for the
+     * other is what made this bench say "the spin turned the body" about a
+     * number that came off `camera.yaw`. `SaberController.bodyYaw` is the
+     * frame's own delta for the trunk and `spinYaw` is the share of it that
+     * reaches the view; the spin was deliberately rebuilt so those two are
+     * different, because spending the whole revolution on the camera is the
+     * thing the player called "it just moves your camera". */
+    bodyTurned += Math.abs(p.control.bodyYaw ?? 0);
     const b0 = p.saber.base.clone(), b1 = p.saber.pointAt(1, V3());
     lowest = Math.min(lowest, b1.y - p.position.y);
     for (const cap of RING) {
@@ -226,7 +234,7 @@ const stubWorld = () => ({
     far: Math.max(...hand.map((h) => h.length())),
     /* THE BLADE'S OWN SIDE OF THE STORY. The body half above was already
      * healthy on the left button — it is these that were not. */
-    tip, contact, yaw: yawTurned, lowest,
+    tip, contact, yaw: yawTurned, body: bodyTurned, lowest,
     across: gxHi - gxLo, up: gyHi - gyLo,
     ring: RING.filter((c) => c.hit).length,
     front: RING.filter((c) => c.hit && (c.a <= 4 || c.a >= 14)).length,
@@ -758,9 +766,30 @@ export function run({ check, assert, near, THREE: T }) {
     assert(cut.spine > 20 && cut.clav > 15,
       `the cut turns ${cut.spine.toFixed(1)}° of spine and ${cut.clav.toFixed(1)}° of shoulder girdle`);
 
-    // ── 2. THE SPIN IS A WHOLE BODY, AND IT GOES ALL THE WAY ROUND.
-    assert(spin.yaw > 6.0,
-      `the spin turned the body ${spin.yaw.toFixed(2)} rad — it was 0.62, which is a glance, not a spin`);
+    /**
+     * ── 2. THE SPIN IS A WHOLE BODY, AND IT GOES ALL THE WAY ROUND.
+     *
+     * THIS CLAUSE'S PREMISE EXPIRED AND THAT IS THE ONLY REASON IT IS EDITED.
+     * It read `spin.yaw > 6.0` off a counter that accumulates `camera.yaw`,
+     * and called the result "the body" — fair when it was written, because
+     * every radian of the turn went to the view. The spin has since been
+     * rebuilt against the player's other sentence about it, "it just moves
+     * your camera": the BODY takes the whole revolution and `SPIN.viewShare`
+     * decides how much of it the view is allowed to have.
+     *
+     * Measured on the rebuilt move: 16.33 rad of body against 5.55 of camera,
+     * which is 2.6 turns of trunk and 0.88 of view. The old bound, read off
+     * the camera, therefore failed on a spin that turns nearly three times —
+     * the check would have been demanding the defect back.
+     *
+     * So it is asserted where it belongs: the BODY goes all the way round, and
+     * the camera is held to a minority of it.
+     */
+    assert(spin.body > 6.0,
+      `the spin turned the body ${spin.body.toFixed(2)} rad — it was 0.62, which is a glance, not a spin`);
+    assert(spin.yaw < spin.body * 0.5,
+      `${spin.yaw.toFixed(2)} of the spin's ${spin.body.toFixed(2)} rad went to the CAMERA — that is `
+      + 'the "it just moves your camera" this move was rebuilt to stop being');
     assert(spin.ring >= 12,
       `one spin crossed ${spin.ring} of the 18 bodies standing round the player — it was 2, exactly what a `
       + 'downward chop reaches');
@@ -783,7 +812,8 @@ export function run({ check, assert, near, THREE: T }) {
 
     return `cut ${cut.tip.toFixed(1)} m/s over ${cut.across.toFixed(2)} units, ${cut.front}/9 in front, `
       + `spine ${cut.spine.toFixed(0)}°; spin ${spin.yaw.toFixed(2)} rad, ${spin.ring}/18 of the ring, `
-      + `spine ${spin.spine.toFixed(0)}° girdle ${spin.clav.toFixed(0)}°; `
+      + `spine ${spin.spine.toFixed(0)}° girdle ${spin.clav.toFixed(0)}°, `
+      + `body ${spin.body.toFixed(1)} rad / view ${spin.yaw.toFixed(1)}; `
       + `overhead reference ${over.tip.toFixed(1)} m/s, ${over.front}/9`;
   });
 
