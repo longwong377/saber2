@@ -113,7 +113,7 @@ they change what to build; read it before starting anything here.
 | 6.2 | §14 Step 1 — the marching front | Flagship | ✅ run; verdict in `NEXT.md` |
 | 6.3 | §14 Step 2 — the Dead Jedi test | Flagship | ✅ run; verdict in `NEXT.md` |
 | 6.4 | §14 Step 3 — the Puppet Line: 40 inert bodies on a hand-authored 60-second timeline, no AI. Isolates whether the OUTPUT reads as a battle | Flagship | open |
-| 6.5 | §14 Step 4 — **L2, the merged rigid-skin rung.** The single highest-value engineering item: 42 bodies = 1,040 draw calls today, 394 with it | Flagship | open |
+| 6.5 | §14 Step 4 — **L2, the merged rigid-skin rung.** The single highest-value engineering item: 42 bodies = 1,040 draw calls today, 394 with it | Flagship | ✅ built. Measured, not taken: 42 mixed bodies at 100–154 m on geonosis cost **1,064** and cost **194** with it — 5.5×, where the estimate promised 2.6×. `src/game/MergedSkin.js`; bound by `frame-budget.mjs` §6 |
 | 6.6 | §14 Step 5 — L3 instanced cohorts past 140 m | Flagship | open |
 | 6.7 | The mode itself, after the rungs above | Flagship | open |
 

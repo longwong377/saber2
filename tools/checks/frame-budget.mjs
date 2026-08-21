@@ -902,6 +902,20 @@ export async function run({ check, assert }) {
       `${drawn} of ${replaced} meshes the merged skins were baked from are STILL VISIBLE beside `
       + 'them — the same triangles submitted twice and inked twice');
 
+    /* AND THE PREPASS HAS TO BE ABLE TO DRAW A SKINNED MESH AT ALL. It renders
+     * the scene with `overrideMaterial = MeshNormalMaterial`, and three picks
+     * the skinning define off the OBJECT (`skinning: object.isSkinnedMesh`) but
+     * the shader off the MATERIAL. A normal material without the skinning
+     * chunks would compile without them and put every merged body's outline at
+     * its BIND pose while its colour walked away from it — silently, and only
+     * for the bodies this rung touches. */
+    const nv = THREE.ShaderLib.normal.vertexShader;
+    for (const chunk of ['skinning_pars_vertex', 'skinbase_vertex', 'skinning_vertex']) {
+      assert(nv.includes(chunk),
+        `three's normal material no longer includes <${chunk}>, so the ink prepass draws every `
+        + 'merged body at its bind pose while the colour pass draws it walking');
+    }
+
     let cut = 0;
     for (const e of world.enemies) {
       const inSkin = new Set(e._l2.skin.replaced);

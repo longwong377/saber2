@@ -418,12 +418,30 @@ Play three engagements. **Did you have anything to do?**
 the *output* read as a battle: posture, silhouette, timing. **The script that
 reads well IS the role taxonomy, written as acceptance criteria.**
 
-**Step 4 — L2, the merged rigid-skin rung.** The single highest-value
-engineering item. `_collectLodParts` already partitions each body into
-primary/silhouette and detail; L2 merges the kept set into one `SkinnedMesh`
-with weight 1.0 per vertex, derivable from the existing rig with **no
-re-authoring, and the silhouette identical by construction so the 30 m seam is
-invisible**. 42 bodies today = 1,040 draw calls; with L2 = **394**.
+**Step 4 — L2, the merged rigid-skin rung. BUILT AND MEASURED — see
+`src/game/MergedSkin.js`.** The single highest-value engineering item.
+`_collectLodParts` already partitions each body into primary/silhouette and
+detail; L2 merges the kept set into a `SkinnedMesh` with weight 1.0 per vertex,
+derivable from the existing rig with **no re-authoring, and the silhouette
+identical by construction so the seam is invisible**.
+
+The estimate said 42 bodies = 1,040 draw calls today, 394 with it. Measured on
+a real `high` World on geonosis, 42 mixed bodies at 100–154 m: **1,064 today
+and 194 with it**, a 5.5× cut. The "today" figure was honest to 2%. The "with
+it" was pessimistic by 2×, and the reason is the one thing this paragraph got
+wrong: the merge is **one SkinnedMesh per MATERIAL BIN, not one per body**. A
+trooper's 26 kept meshes wear four distinct materials, so a trooper is four
+calls and not one — and one call was never reachable, because the four bins
+differ by which of the texture foundry's maps they sample. `color` folds into a
+per-vertex attribute exactly; `roughness` and `metalness` are dropped because
+the cel model deletes every term that reads them. Whole rigged roster: 796 kept
+meshes → 136 calls.
+
+Bound by `tools/checks/frame-budget.mjs` §6, five checks — the draw-call cut on
+a real World at a real distance, a vertex-for-vertex identity against the
+meshes it replaced after the rig is re-posed and re-placed, the ink (once,
+never twice, never none), the shader read that licenses dropping roughness and
+metalness, and the teardown when a body is cut apart.
 
 **Step 5 — L3 instanced cohorts** beyond 140 m, where a leg is 3.9 px and there
 is no gait to lose. Animation moves to a per-instance phase in the vertex
