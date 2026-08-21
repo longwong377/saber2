@@ -5830,7 +5830,12 @@ export class World {
       const base = e._netHp;
       if (base === undefined) continue;
       const lost = base - e.hp;
-      const killed = e.dead && !e._netDead;
+      /* …UNLESS THE HOST'S OWN FIRE IS WHAT PUT IT DOWN HERE. See
+       * `_netBoltBilled`: the snapshot rewrites `_netDead` at 18 Hz, so a
+       * mirror killed locally by a replicated bolt that the host's own copy
+       * survived would re-claim its whole remaining health on every tick,
+       * forever. `_netHostKill` is the fact the snapshot cannot overwrite. */
+      const killed = e.dead && !e._netDead && !e._netHostKill;
       if (lost < 0.05 && !killed) continue;
       // A body this machine has killed that the host still has standing is
       // worth the whole rest of its health, or the host keeps it alive and

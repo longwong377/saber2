@@ -46,6 +46,9 @@ export class BoltPool {
         active: false, pos: new THREE.Vector3(), prev: new THREE.Vector3(),
         vel: new THREE.Vector3(), color: new THREE.Color(), life: 0, damage: 10,
         owner: null, team: 1, deflected: false, turned: false, deflector: null, speed: 90,
+        // Fired off the wire rather than by anything on this machine. See
+        // `World._spawnNetBolts` and the billing rule in `World._boltHurt`.
+        replicated: false,
         length: 1.1, radius: 0.05, homing: 0, target: null, big: false,
         // How much cloud this bolt has crossed so far. See the smoke block in
         // update(): optical depth accumulates along a path and so does this.
@@ -129,6 +132,16 @@ export class BoltPool {
     // Fired by a mind that is not its owner's. See Player.forceCompel and the
     // friendly-fire branch in World._boltHitTest.
     b.turned = !!opts.turned;
+    /**
+     * SOMEBODY ELSE'S MACHINE ALREADY FIRED THIS ONE.
+     *
+     * Reset here rather than only set at the one call site that raises it,
+     * because a bolt is a POOLED object: `deflected` is cleared two lines up
+     * for exactly this reason, and a flag that survived into the next shot out
+     * of the same slot would tell `World._boltHurt` that a local trooper's
+     * round belongs to the host.
+     */
+    b.replicated = !!opts.replicated;
     b.deflector = null;
     b.big = !!opts.big;
     b.length = opts.length ?? (b.big ? 2.0 : 1.15);
