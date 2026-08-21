@@ -1064,7 +1064,23 @@ export class Stratagems {
    * it — the hole is still there next wave.
    */
   blast(ctx, site, radius, force, damage, opts = {}) {
-    const p = this.owner;
+    /**
+     * WHO GETS THE CREDIT, and it is not always the person holding the comm.
+     *
+     * `this.owner` is the Player, which is right for every call that arrives
+     * through a stratagem code: the Jedi spelled it, the Jedi is answerable for
+     * it, and `onFriendlyHit` reading their own troops out of it is the whole
+     * of "spelling eight directions and holding it on your own men is a
+     * decision". It is WRONG for a blast this class did not choose — a grenade
+     * a trooper threw, whose kills belong to that trooper's own record and
+     * whose friendly fire is his mistake and not yours. Measured before it: ten
+     * grenades thrown by an army over one wave, every kill credited to a Jedi
+     * who was standing still.
+     *
+     * `opts.source` is that body. It changes attribution only: the arithmetic,
+     * the falloff, the Force answer and the crater are the same call.
+     */
+    const p = opts.source ?? this.owner;
     const core = clamp(opts.core ?? 0, 0, 0.95);
     const size = opts.size ?? clamp(radius / 5, 0.6, 2.2);
     /* THE GROUND REMEMBERS. `crater` is a depth in metres and it is the number
@@ -1108,9 +1124,13 @@ export class Stratagems {
      * melee; it is a decision, and it is exactly the decision that table's
      * "the Jedi used a Force power ON one of their own" was written for.
      */
-    if (p && !p.dead) {
-      const k = falloff(p.position.distanceTo(site));
-      if (k > 0) p.damage?.(damage * k * 0.5, site, null, 'explosion');
+    /* THE HALVING IS THE CALLER'S, not the source's: "you knew it was coming"
+     * is true of the person who spelled the code and false of a man standing
+     * next to a grenade somebody else threw. `this.owner` therefore, always. */
+    const caller = this.owner;
+    if (caller && !caller.dead && caller !== opts.source) {
+      const k = falloff(caller.position.distanceTo(site));
+      if (k > 0) caller.damage?.(damage * k * 0.5, site, null, 'explosion');
     }
     if (ctx?.physics) {
       for (const b of ctx.physics.bodies) {

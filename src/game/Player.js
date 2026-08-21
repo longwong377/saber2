@@ -3738,7 +3738,15 @@ export class Player {
      * remaining rise drops under STEP_UP the ordinary snap claims it, so a
      * climb that is smooth for eight frames ends in exactly the jolt the rate
      * exists to remove. Measured on a 0.81 m log: 0.057, 0.057, …, 0.425. */
-    if (support > gh + 0.05 && support > this.position.y + (this.climbing ? 1e-3 : STEP_UP)) {
+    /* A BODY THAT IS FALLING IS NOT CLIMBING, and this cost `standing`'s
+     * fall-through check to find: a dive from 60 m crosses a roof at 30 m/s,
+     * the support query answers with the roof, and rate-limiting that rise is
+     * rate-limiting a LANDING — the body sinks past the roof at 5.7 cm a frame
+     * while gravity takes it down at half a metre. Measured: a dive from 25 m
+     * rested on the roof at 22.80 and one from 60 m went through it to 0.00.
+     * `wasGrounded` is the whole distinction: a climb starts from the floor. */
+    if (wasGrounded && support > gh + 0.05
+        && support > this.position.y + (this.climbing ? 1e-3 : STEP_UP)) {
       /* FROM THE FEET, not from the feet plus a step: adding STEP_UP back in
        * would let the first frame of a climb take 0.45 m in one go, which is
        * the jolt this whole clause exists to remove. An ordinary step is

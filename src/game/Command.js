@@ -98,6 +98,7 @@ import { clamp, lerp, makeRng, TAU } from '../engine/MathUtil.js';
  * direction as MathUtil above: game reaches into engine, never the reverse. */
 import { audio } from '../engine/Audio.js';
 import { nudgeFromSwing, bladeClear, SWING_REACH } from './Spawn.js';
+import { findCasualty, startDrag } from './Reactions.js';
 
 /**
  * The stream every roll in this mode comes off.
@@ -210,6 +211,10 @@ export const COMMAND_UNITS = {
     speed: 5.0, toughness: TOUGHNESS.plastoid, ranged: true, weapon: 'dc15',
     fireRate: 0.95, burst: 3, burstGap: 0.09, spread: 0.035, damage: 15,
     preferred: [4, 11], boltColor: BOLT_COLORS.blue, score: 900, threat: 6,
+    /* AN ARC THROWS ONE AND LANDS IT. `threat: 6` divides the scatter hardest
+     * of anything on either roster, which is the whole content of "he is
+     * better at it" — see `Enemy._maybeGrenade`. */
+    grenades: true,
     hipHeight: 0.95, unlockAt: 7,
   },
 
@@ -1257,6 +1262,12 @@ export const AREAS = [
  * table: standing with your line is the cheapest thing a Jedi can do for it
  * and it should be worth doing.
  */
+/** How long before the same soldier will go back for somebody again, in
+ *  seconds. Long, because a rifleman who spends the battle carrying people is
+ *  a rifleman who is not shooting, and the point of the behaviour is that it
+ *  costs the line something. */
+const DRAG_AGAIN = 26;
+
 export const MORALE = {
   /** A squadmate goes down in front of them. */
   COMRADE_FELL: -0.16,
@@ -3629,6 +3640,22 @@ export class CommandDirector extends WaveDirector {
    */
   steer(e, dt) {
     if (!e.trooper) return;
+    /**
+     * A MAN DEALING WITH A GRENADE IS NOT HOLDING A FORMATION.
+     *
+     * `Enemy.update` runs `stepReaction` before the brain and this is the other
+     * half of the same rule: everything below writes `wish`, `speed` and
+     * `crouch` from the slot he is supposed to be standing in, and a body that
+     * has just thrown itself flat would be walked back into the line while it
+     * lay there. One frame of that is a man sliding along the ground; a second
+     * of it is the reaction not existing at all.
+     *
+     * See src/game/Reactions.js. Dragging a casualty comes through here too —
+     * that one is not an emergency, it is a job, and a squad that keeps
+     * dressing the line while a man is being pulled out of it is the picture
+     * the player asked us to replace.
+     */
+    if (e.reaction) return;
     const c = this.commanderOf(e);
     /**
      * A BROKEN MAN DOES NOT HOLD THE LINE — the first of morale's two
@@ -3698,6 +3725,39 @@ export class CommandDirector extends WaveDirector {
        * behind something instead, and stays low while it is there. */
       this._goToGround(e, dt, c, false);
       return;
+    }
+    /**
+     * A MAN DOWN IN FRONT OF HIM — "or dragging their friends to safety".
+     *
+     * Below the two break branches on purpose: a soldier who has lost his nerve
+     * is not the one who goes back for somebody, and a squad in rout is not
+     * dragging anybody anywhere. Above the formation for the same reason a
+     * grenade is: this is a job that takes him out of the line, and a line that
+     * kept dressing itself around him would make it invisible.
+     *
+     * A casualty here is a body that is LIMP AND ALIVE — the state
+     * `Enemy._tickGetUp` stands up after a second and a third of lying still,
+     * which is what a man who has been blasted, shoved or thrown spends that
+     * second in. Until now every soldier beside him carried on shooting past
+     * him. `beingDragged` on the casualty is the claim, so ten men do not all
+     * grab the same one.
+     *
+     * ONE AT A TIME AND NOT EVERYBODY: `_dragCd` keeps a squad from emptying
+     * itself into a rescue, and the nerve gate means the man who goes is a man
+     * the player could have picked out from his nameplate. Both are the same
+     * shape as the smother gate in Reactions.js and for the same reason.
+     */
+    e._dragCd = Math.max(0, (e._dragCd ?? 0) - dt);
+    if (!e.reaction && e._dragCd <= 0 && t.morale > MORALE.BREAK + 0.12) {
+      const hurt = findCasualty(e, this.world?._frameCtx);
+      if (hurt && startDrag(e, hurt, this.world?._frameCtx)) {
+        e._dragCd = DRAG_AGAIN;
+        this.world?.notifyFloating?.(e.position, 'MAN DOWN', 0x9bb862);
+        return;
+      }
+      /* A refused attempt still costs him the look, or every frame is a scan
+       * of the whole field. */
+      if (!hurt) e._dragCd = 0.8;
     }
     const F = FORMATIONS[c.formation] || FORMATIONS[DEFAULT_FORMATION];
     /* A live target it is allowed to engage buys it the whole leash; otherwise

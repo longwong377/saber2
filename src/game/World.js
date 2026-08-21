@@ -12,6 +12,7 @@ import { RapierWorld, Body, LAYER, LOOSE_MASK, box, ball, hullFromGeometry, boxF
 import { Terrain } from '../world/Terrain.js';
 import { Particles } from '../world/Particles.js';
 import { LightningVfx } from '../world/Lightning.js';
+import { GrenadeField } from './Reactions.js';
 import { WarSupport } from './Support.js';
 import { GrassField, Water, Atmosphere, weather } from '../world/Scenery.js';
 import { BoltPool } from './Bolts.js';
@@ -626,6 +627,24 @@ export class World {
      * scene stops existing.
      */
     this.lightning = new LightningVfx(this.scene);
+    /**
+     * LIVE GRENADES, and the reason they are a WORLD system rather than a
+     * stratagem or an enemy's private toy.
+     *
+     * The player: "I haven't seen any troops diving or having any dynamic
+     * movements… diving out of the way of a grenade or picking one up and
+     * throwing it back (sometimes killing themselves) or diving on a grenade to
+     * save their friends". Every one of those is a decision taken during the
+     * second and a half a grenade spends lying on the ground — and nothing in
+     * this game had ever occupied a piece of ground for a second and a half.
+     * `Stratagems.blast` is instantaneous: it lands, it hurts, the frame moves
+     * on. So the thing to build first was the object, not the behaviour.
+     *
+     * It sits here beside `bolts` because it is the same kind of thing: a
+     * shared, world-owned list of live hazards that every body on both sides
+     * reads and none of them owns. See src/game/Reactions.js.
+     */
+    this.grenades = new GrenadeField(this);
     this.bolts = new BoltPool(this.scene, 460);
     this.bolts.onDeflect = (b, entry, hit, pt) => this._onBoltDeflect(b, entry, hit, pt);
     this.bolts.onImpact = (b, res) => this._onBoltImpact(b, res);
@@ -1258,6 +1277,7 @@ export class World {
     this.bolts?.dispose();
     this.particles?.dispose();
     this.lightning?.dispose();
+    this.grenades?.dispose();
     this.lightning = null;
     this.grass?.dispose(); this.grass = null;
     this.water?.dispose(); this.water = null;
@@ -2874,6 +2894,13 @@ export class World {
       pickSpawn: (t) => this.pickSpawn(t),
       spawnEnemy: (t, p) => this.spawnEnemy(t, p),
     };
+    /* THE SAME CONTEXT, REACHABLE FROM LATER IN THE FRAME. `grenades.update`
+     * runs with the particles and the debris — after the bodies, because a
+     * blast has to land on where they ARE — and it needs the terrain and the
+     * enemy list this object already carries. Kept as a field rather than
+     * rebuilt, because two ctx objects in one frame is two answers to "who is
+     * on the field". */
+    this._frameCtx = ctx;
 
     /**
      * BEFORE EVERYTHING, because a passenger's seat has to be written before
@@ -2952,6 +2979,7 @@ export class World {
     updateCauterisation(dt);
     this.particles.update(dt);
     this.lightning?.update(dt);
+    this.grenades?.update(dt, this._frameCtx ?? this);
     this.support?.update(dt);
     this.terrain.flush();
 

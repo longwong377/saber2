@@ -29,6 +29,7 @@ import { BOLT_COLORS } from './Bolts.js';
 import { weather } from '../world/Scenery.js';
 import { clamp, lerp, damp, smoothstep, makeRng, TAU, dampVec } from '../engine/MathUtil.js';
 import { POWER_COST } from './Powers.js';
+import { senseDanger, stepReaction, findCasualty, startDrag, GRENADE } from './Reactions.js';
 import { audio } from '../engine/Audio.js';
 
 /**
@@ -650,6 +651,14 @@ export const ARCHETYPES = {
     speed: 2.6, toughness: TOUGHNESS.armour, ranged: true, weapon: null,
     fireRate: 1.9, burst: 4, burstGap: 0.1, spread: 0.05, damage: 13,
     preferred: [6, 13], boltColor: BOLT_COLORS.red, score: 300, threat: 3,
+    /* THE WRIST LAUNCHER, which is the B2's one piece of source-material kit
+     * and the reason it is the droid line's grenadier rather than the B1: a
+     * wave with nobody in it who can throw one is a wave your troops never
+     * have to react to, and the reactions in src/game/Reactions.js are a
+     * feature of the ARMY rather than of the clones. Its `threat` of 3 divides
+     * `GRENADE_SPREAD` into a wide throw — see `_maybeGrenade` — so a droid
+     * lands one near you and a clone veteran lands one on you. */
+    grenades: true,
     armored: true, hipHeight: 1.1,
   },
   trooper: {
@@ -657,19 +666,23 @@ export const ARCHETYPES = {
     speed: 4.1, toughness: TOUGHNESS.plastoid, ranged: true, weapon: 'dc15',
     fireRate: 1.35, burst: 3, burstGap: 0.11, spread: 0.045, damage: 12,
     preferred: [9, 19], boltColor: BOLT_COLORS.blue, score: 180, threat: 2,
-    /* NO `grenades: true`, AND IT WAS HERE FOR THE WHOLE OF THIS BODY'S LIFE.
-     * Nothing in `src/` ever read the field — not Enemy, not Waves, not
-     * Command — so it was `Enemy.grippable` and `Run.bestTier` a third time:
-     * written once, read never, and indistinguishable in a diff from a
-     * feature. What made it worth deleting rather than leaving is that the
-     * Databank was SELLING it: the clone's page named "grenades, cover, and
-     * the judgement to use both" as the thing that separates a clone from a
-     * droid, so a player who read the codex was told about a verb no clone in
-     * the game has. The page names what it does now, and
-     * `roster: every field an archetype declares is a field something reads`
-     * is what stops the next one. A trooper grenade is a real thing to build —
+    /**
+     * AND NOW HE HAS THEM, WHICH IS THE END OF A LONG STORY ABOUT THIS FIELD.
+     *
+     * `grenades: true` sat on this archetype for the whole of its life with no
+     * reader anywhere in src/ — written once, read never, and indistinguishable
+     * in a diff from a feature. It was deleted with a note that said what it
+     * would take to earn it back: "A trooper grenade is a real thing to build —
      * `Stratagems.blast` is the primitive and `dodgeable.mjs` is the bar it
-     * would have to clear — and it is a feature, not a field. */
+     * would have to clear — and it is a feature, not a field."
+     *
+     * `Enemy._maybeGrenade` is the reader and `src/game/Reactions.js` is the
+     * feature: a live object with a fuse, and four things a soldier can do
+     * about one. The Databank's clone page has been selling "grenades, cover,
+     * and the judgement to use both" for a very long time; two thirds of that
+     * sentence is now true.
+     */
+    grenades: true,
     hipHeight: 0.95,
   },
   sniper: {
@@ -1018,6 +1031,25 @@ export const FORCE_KINDS = /^(force|lightning|choke|grip|rend)$/;
  *  the other direction, and the whole value of a Force throw is the second in
  *  which the thing you threw is out of the fight. Long enough to be worth
  *  doing, short enough that a squad you shoved does not stay shoved. */
+/**
+ * HOW OFTEN A BODY THAT CARRIES GRENADES USES ONE, in seconds, and how far it
+ * can throw.
+ *
+ * `first` is a lead-in so a wave does not open with eight grenades in the air
+ * — the thing that makes them frightening is that they are occasional. `every`
+ * against a 2.6 s fuse means a grenadier is a rifleman who interrupts himself
+ * about twice a minute, which is what a soldier with two on his belt is.
+ *
+ * 26 m is a hard throw and it is under every ranged archetype's own reach, so
+ * a grenade is what a rifleman does when the rifle is not working rather than a
+ * second, longer weapon.
+ */
+const GRENADE_CD = { first: 9, every: 22 };
+const GRENADE_THROW = 26;
+/** How wide a hurried throw scatters, in metres, before the thrower's quality
+ *  divides it. A B1 puts one four metres wide and a commando lands it. */
+const GRENADE_SPREAD = 5.2;
+
 const GET_UP = 1.35;
 
 /**
@@ -3575,6 +3607,26 @@ export class Enemy {
     return false;
   }
 
+  /**
+   * STOP SHOOTING, NOW — the body's own answer, and the only implementation.
+   *
+   * `Waves.holdFire` is the name the rest of the game calls this by (the HOLD
+   * FIRE order, the arrival walk-in, the slider that switches a training remote
+   * off) and it delegates here. It lives on the body because Enemy.js cannot
+   * import Waves.js — Waves imports Enemy — and a second copy of these four
+   * lines is exactly the twin this repository keeps deleting.
+   *
+   * Zeroing `burstLeft` is the load-bearing part: a droideka with six rounds
+   * queued would otherwise finish them out of a body that has just thrown
+   * itself flat.
+   */
+  stopFiring() {
+    this.burstLeft = 0;
+    this.burstTimer = 0;
+    if (!(this.attackTimer > 0.5)) this.attackTimer = 0.5;
+    if (this.aimCharge > 0) { this.aimCharge = 0; this._endTelegraph?.(); }
+  }
+
   _tickGetUp(dt) {
     /* THE LEASE FIRST, and outside the ragdoll guard: a body can be marked
      * held without having been ragdolled yet (`_move` does that on its next
@@ -3583,6 +3635,16 @@ export class Enemy {
     if (this.gripped) {
       this.gripLease -= dt;
       if (this.gripLease <= 0) this.releaseHold();
+    }
+    /* AND THE SAME RULE FOR A MAN SOMEBODY IS CARRYING. `Reactions.startDrag`
+     * claims a casualty so ten men do not grab one; the claim is renewed every
+     * frame by `stepDrag` and lapses here if the man doing it stops — because
+     * he died, because a grenade landed next to him, or because anything else
+     * replaced his reaction. A casualty nobody can ever help again is worse
+     * than one nobody helped. */
+    if (this.beingDragged) {
+      this.dragLease = (this.dragLease ?? 0) - dt;
+      if (this.dragLease <= 0) { this.beingDragged = null; this.dragLease = 0; }
     }
     if (this.dead || !this.actor?.ragdolled) { this._recoverAt = 0; return; }
     if (this.gripped || (this.toppled && this.legsLost)) { this._recoverAt = 0; return; }
@@ -4140,7 +4202,32 @@ export class Enemy {
       return true;
     }
 
-    this._think(dt, ctx);
+    /**
+     * SOMETHING IS ROLLING TOWARD HIM — and it comes before the brain, because
+     * a man diving away from a grenade is not also holding a formation.
+     *
+     * `senseDanger` is one distance test against the nearest live grenade and
+     * nothing at all when the field is empty, which is every frame of every
+     * fight that does not have one in it. `stepReaction` owns the body while it
+     * returns true: the brain is skipped, the steering is skipped (see
+     * `CommandDirector.steer`, which defers to `reaction` at its own top), and
+     * `_move` and `_pose` still run so the body travels and animates.
+     *
+     * See src/game/Reactions.js for the four answers and who gives which.
+     */
+    senseDanger(this, dt, ctx);
+    if (!stepReaction(this, dt, ctx)) {
+      this._think(dt, ctx);
+    } else {
+      /* A reaction drives `wish`, `speed` and `crouch` itself and must not be
+       * overwritten by the brain's own idea of where to stand. Firing stops for
+       * the same reason a man on his face is not shooting — through `holdFire`,
+       * through `stopFiring`, which is the body's own and the same door the
+       * HOLD FIRE order and the arrival walk-in reach through `Waves.holdFire`
+       * — so a burst in flight is dropped rather than finished a second later
+       * out of a body that is lying on its face. */
+      this.stopFiring();
+    }
     this._move(dt, ctx);
     this._pose(dt, ctx);
     return true;
@@ -4329,6 +4416,11 @@ export class Enemy {
     const A = this.A;
     const diff = this.world.difficulty;
 
+    /* A GRENADE IS A DIFFERENT DECISION FROM A RIFLE and it is taken first,
+     * because the reason to throw one is that shooting is not working. See
+     * `_maybeGrenade`. */
+    if (A.grenades) this._maybeGrenade(dt, ctx, dist);
+
     if (A.shield) {
       this.deployTimer = Math.max(0, this.deployTimer - dt);
       const wantShield = dist < 22 && this.deployTimer <= 0 && this.shieldHp > 0;
@@ -4374,6 +4466,71 @@ export class Enemy {
         this.attackTimer = rally * A.fireRate * (0.7 + rng() * 0.6) / (diff ? diff.enemyAggression * (diff.fireRate ?? 1) : 1);
       }
     }
+  }
+
+  /**
+   * THROW ONE — and the archetype field that says a body can was DELETED from
+   * this file once for being read by nothing.
+   *
+   * `trooper` carried `grenades: true` for the whole of its life with no reader
+   * anywhere in src/, and the note that removed it said, in as many words: "A
+   * trooper grenade is a real thing to build — `Stratagems.blast` is the
+   * primitive and `dodgeable.mjs` is the bar it would have to clear — and it is
+   * a feature, not a field." This is the feature. The field is back, and this
+   * method is what reads it.
+   *
+   * ── WHEN A SOLDIER REACHES FOR ONE, and none of these is a die roll ──────
+   *
+   *   THE TARGET IS IN COVER OR HULLED DOWN — a rifle is not answering, which
+   *     is the whole reason grenades exist. Expressed as line of sight: no
+   *     sight, no bullets, so try the thing that goes over.
+   *   THEY ARE CLUMPED — two or more inside a blast is what makes it worth a
+   *     grenade rather than a magazine, and it is the same test a player makes
+   *     by eye.
+   *   AND NOT TOO CLOSE. `GRENADE.radius` plus a margin, because a body that
+   *     lobs one at its own feet is a comedy and this roster has enough of
+   *     those. Under that range it fights with what it is holding.
+   *
+   * The aim is deliberately imperfect and the error is the thrower's own
+   * quality: a clone veteran lands one at the feet of the man he wants and a B1
+   * puts it four metres wide, which is what makes the reaction system have
+   * anything to do. `world.grenades` owns the object from here on.
+   */
+  _maybeGrenade(dt, ctx, dist) {
+    this.grenadeCd = Math.max(0, (this.grenadeCd ?? GRENADE_CD.first) - dt);
+    if (this.grenadeCd > 0 || this.dead || this.reaction) return;
+    const field = this.world?.grenades;
+    const t = this.target;
+    if (!field || !t || !t.alive && t.dead) return;
+    if (dist < GRENADE.radius + 3 || dist > GRENADE_THROW) return;
+    /* WORTH IT? Either they are behind something, or there are several of them
+     * standing together. */
+    const blind = !this._hasLineOfSight(ctx);
+    let clumped = 0;
+    const r2 = (GRENADE.radius * 0.8) ** 2;
+    for (const o of (ctx.enemies || [])) {
+      if (o.dead || o.team === this.team) continue;
+      if (o.position.distanceToSquared(t.position) <= r2) clumped++;
+    }
+    const p = this.world?.player;
+    if (p && p.alive && p.team !== this.team
+        && p.position.distanceToSquared(t.position) <= r2) clumped++;
+    if (!blind && clumped < 2) return;
+
+    /* THE THROW. Aimed at where they are, not where they will be — a soldier
+     * leading a target with a grenade is a soldier with a computer — and
+     * scattered by his own quality. */
+    const err = GRENADE_SPREAD * (this.rallyTimer > 0 ? 0.7 : 1) / Math.max(0.5, (this.A.threat ?? 2) * 0.5);
+    const to = _v1.copy(t.position);
+    to.x += (rng() - 0.5) * err;
+    to.z += (rng() - 0.5) * err;
+    if (ctx.terrain) to.y = ctx.terrain.height(to.x, to.z);
+    const from = _v2.copy(this.position);
+    from.y += (this.A.hipHeight ?? 0.95) + 0.4;
+    field.throw(from, to, { owner: this, team: this.team });
+    this.grenadeCd = GRENADE_CD.every * (0.7 + rng() * 0.6);
+    this.attackTimer = Math.max(this.attackTimer, 0.6);   // he is not also firing
+    this.world?.notifyFloating?.(this.position, 'GRENADE', 0xffb347);
   }
 
   _remoteBrain(dt, ctx, dist) {
@@ -5744,7 +5901,11 @@ export class Enemy {
      * above its feet every frame — and rate-limiting that is rate-limiting
      * walking uphill. Measured as two watchdog rescues of a line standing
      * exactly where it was ordered to stand. */
-    if (support > gh + 0.05 && support > this.position.y + (this.climbing ? 1e-3 : STEP_UP)) {
+    /* …AND ONLY FROM THE FLOOR. A body falling onto a surface is LANDING, and
+     * a landing taken at a climb's rate sinks through what it landed on. See
+     * the same guard in `Player._collide`. */
+    if (this.grounded && support > gh + 0.05
+        && support > this.position.y + (this.climbing ? 1e-3 : STEP_UP)) {
       support = Math.max(this.position.y, Math.min(support, this.position.y + CLIMB_RATE * dt));
       this.climbing = true;
     } else this.climbing = false;

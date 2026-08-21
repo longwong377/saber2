@@ -201,11 +201,36 @@ export async function run({ check, assert }) {
     assert(shove > 1, `a point-blank force push moved the other player at ${shove.toFixed(3)} m/s`);
     assert(b.hp < b.maxHp, 'a force push into another player does no damage at all');
 
-    // 3 — lightning. Measured at 100 hp → 100 hp before this lane.
+    /**
+     * 3 — lightning. Measured at 100 hp → 100 hp before this lane.
+     *
+     * THIS STEP'S PREMISE EXPIRED AND THAT IS THE ONLY REASON IT IS EDITED.
+     * `forceLightning` used to resolve in ONE CALL — press, gather, damage,
+     * done — so a single call and an immediate assertion measured the whole
+     * power. It is a CHANNEL now, because the player's own note is that it was
+     * "nothing in the air": it opens, it holds, it bills per second and it
+     * strikes on a tick. Opening it and reading the health on the same frame
+     * therefore measures the opening and nothing else, and would report zero on
+     * a perfectly working power.
+     *
+     * The property is unchanged and so is the number it is measured in: after a
+     * second of channel aimed at another player, that player has lost health.
+     * See tools/checks/lightning.mjs for the channel's own clock.
+     */
     b.invuln = 0;
     const before = b.hp;
-    a.force = a.maxForce; a.cooldowns.lightning = 0; a.boonMods.lightning = true;
+    a.force = a.maxForce = 4000; a.cooldowns.lightning = 0; a.boonMods.lightning = true;
+    a.aimDir.subVectors(b.chest, a.chest).normalize();
     a.forceLightning(ctx);
+    assert(a.channel?.kind === 'lightning', 'the lightning channel did not open at all');
+    /* HELD: `act` is the level and `actHit` the edge, so a probe that only
+     * pressed would close the channel on the very next frame. */
+    const H2 = await import('./_coop.mjs');
+    const held = { ...H2.idleInput(), act: (k) => k === 'lightning', actHit: () => false };
+    for (let i = 0; i < 60 && a.channel; i++) {
+      b.invuln = 0;
+      world.update(1 / 60, held);
+    }
     assert(b.hp < before, `force lightning at ${a.chest.distanceTo(b.chest).toFixed(1)} m took `
       + `${before.toFixed(1)} hp to ${b.hp.toFixed(1)} — the power cannot see a player`);
 

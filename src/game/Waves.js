@@ -695,6 +695,14 @@ export function skirmishConfig(picks) {
  */
 export function holdFire(e) {
   if (!e) return;
+  /* THE BODY OWNS IT NOW — `Enemy.stopFiring`. This name stays because it is
+   * what the order wheel, the arrival walk-in and the training slider call, and
+   * because Enemy.js cannot import this file (the edge runs the other way), so
+   * a body that needs to stop shooting from inside its own update reaches its
+   * own method and everything out here reaches this one. Two callers, one
+   * implementation. The fallback is for the stand-in objects the checks hold
+   * up, which have the fields and not the class. */
+  if (e.stopFiring) { e.stopFiring(); return; }
   e.burstLeft = 0;
   e.burstTimer = 0;
   if (!(e.attackTimer > 0.5)) e.attackTimer = 0.5;
