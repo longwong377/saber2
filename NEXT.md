@@ -977,6 +977,32 @@ list grows by measurement rather than by somebody deciding it looks fine.
 
 ### Attrition is tuned, and the spread is the finding
 
+> **UNDER RE-MEASUREMENT — do not act on the tuning numbers below.** The
+> before/after tables in this section were **not a controlled comparison**.
+> Every arm was a separate process, `World.js` holds one module-level `rng`
+> with no reseeder, and two processes that differ in any earlier draw diverge
+> completely — `theline` and `command` differ in exactly one such draw, because
+> a crossing rolls a session plan and Command does not, so **the mode string
+> alone shifts the whole stream**. That is why the same change read 5.4 in one
+> mode and 3.0 in the other.
+>
+> Run properly — both arms from a fresh process, identical module-init phase,
+> the generated ground pinned off in both, the only difference being the two
+> constants — five seeds give **stock 1.8 `[5 1 2 1 0]` against tuned 3.0
+> `[1 5 5 1 3]`**: +1.2 with a standard error near 1.3, **not distinguishable
+> from zero**. It is chaotic rather than merely noisy — seed 1 goes 5 → 1 and
+> seed 2 goes 1 → 5 under a change of one bolt's damage from 10 to 5 — so
+> paired seeds stop being paired within seconds.
+>
+> Twenty seeds an arm are running. If they say the lever does nothing, the two
+> constants come back out and every note quoting them is corrected.
+>
+> **What survives is method, not tuning:** the muster is invisible to a poll; an
+> idle Jedi is worse for the line than no Jedi, five seeds of five; and
+> `theline.12`'s four readings of ONE build span 1.3 to 6.0, which is why its
+> band is ±4 and why it can only catch catastrophe.
+
+
 The user set the target: an engagement fought without the Jedi should cost about
 half a ten-man line. It measures **5.4 of 10 over five seeds** on authored
 contours and 5.7–6.0 on generated ones — the same mean inside the noise, so the
