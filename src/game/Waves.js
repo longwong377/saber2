@@ -1029,6 +1029,48 @@ export const ROUT_PER_FRAME = 8;
 export const BODY_MAX = 42;
 export const BODY_KNEE = 18;
 /**
+ * THE FEWEST BODIES A WAVE IS ALLOWED TO BE.
+ *
+ * `bodyCap` is the ceiling; this is the floor, and until it existed there was
+ * none. Measured through the shipped composer, opening wave of THE LINE on
+ * every ground in `LEVEL_ORDER` at one seed, all seven handed the same budget
+ * of 8:
+ *
+ *     scoria      2 bodies   1×b1 + 1×sentinel(threat 7)
+ *     colosseum   2 bodies   1×stalker(7) + 1×b1
+ *     mustafar / wood / drifts / alpine   8 bodies, all b1
+ *     geonosis   49 bodies  (42 of them the levy — Levy.js, not this)
+ *
+ * The five-body spread is not five different pools being generous or thin. It
+ * is ONE rule: the fill draws uniformly from everything it can afford, so a
+ * pool holding a seven-threat body in its opening set spends seven eighths of
+ * the wave on one of them, and what the player meets is a stalker and a droid.
+ * A mode about a LINE cannot open against two bodies, and no mode's first wave
+ * should be a single elite — the player has met no ordinary body yet to read it
+ * against.
+ *
+ * ── A CEILING ON ONE BODY, DERIVED FROM THE FLOOR RATHER THAN TYPED ────────
+ *
+ * The rule is stated as the count, because the count is the thing that was
+ * wrong; the ceiling `_composeUnder` actually applies is `budget / WAVE_FLOOR`,
+ * which IS the floor rearranged — a wave that may not spend more than a third
+ * of itself on any one body can always buy three. One number, one statement,
+ * and the arithmetic that connects them written once at the call site.
+ *
+ * THREE AND NOT FOUR, and the difference is where it stops binding. Every
+ * ordinary archetype is threat 16 or under, so a third binds up to a budget of
+ * 48 and a quarter up to 64 — and the crossing's deepest wave is 56. At a
+ * quarter the Core Ship's last wave could not field the heaviest thing on the
+ * roster at all, which is a difficulty change wearing a body-count fix's coat.
+ * At a third the rule is what it says it is: it shapes the SHALLOW waves, where
+ * one expensive draw is most of the budget, and is inert everywhere else.
+ *
+ * It is a FLOOR AND NOT A GUARANTEE. `_composeUnder` keeps every fallback it
+ * had — nothing affordable at all still buys the cheapest body in the narrowed
+ * roster, because "a filter never empties the field" outranks this.
+ */
+export const WAVE_FLOOR = 3;
+/**
  * What share of the budget ADDED past the knee may go on more bodies.
  *
  * This replaces `BODY_CREEP = 1.6`, which was 1.6 more BODIES per wave — and
@@ -3041,6 +3083,11 @@ export class WaveDirector {
     // Charged up front and out of the same budget the bodies are bought with,
     // exactly as `_promote` charges a modifier. See CONDITIONS.
     let budget = this.budgetFor(w) - this.conditionCost(w, keys);
+    /* WHAT ONE BODY OF THE FILL MAY COST, off the wave's own budget before the
+     * set-piece and the head are reserved out of it — both of those ARE single
+     * expensive bodies on purpose, and charging them against a rule written to
+     * stop accidental ones would delete them. See WAVE_FLOOR. */
+    const ceiling = budget / WAVE_FLOOR;
     const queue = [];
 
     if (this.isBossWave(w)) {
@@ -3113,8 +3160,18 @@ export class WaveDirector {
        * exact `<=` on an accumulated float is a coin toss, not a rule. */
       const EPS = 1e-9;
       const affordable = shape.types.filter((t) => (ARCHETYPES[t]?.threat ?? Infinity) <= budget + EPS);
+      /* …AND NO ONE BODY TAKES MORE THAN ITS SHARE. See WAVE_FLOOR: the fill
+       * drew uniformly from everything it could afford, so an opening wave with
+       * a seven-threat body in its unlocked set spent seven of its eight on one
+       * of them and the player met a stalker and a droid. `ceiling` is the
+       * floor rearranged, and it is taken off the wave's OWN budget rather than
+       * off `budget`, which is a running subtraction — a share of what is left
+       * would shrink with every body bought and make the last pick of a wave
+       * the most constrained instead of the least. */
+      const spread = affordable.filter((t) => ARCHETYPES[t].threat <= ceiling + EPS);
       let t;
-      if (affordable.length) t = this._pickType(affordable, w, bigLeft);
+      if (spread.length) t = this._pickType(spread, w, bigLeft);
+      else if (affordable.length) t = this._pickType(affordable, w, bigLeft);
       else if (queue.length) break;
       else {
         t = shape.types.slice()
