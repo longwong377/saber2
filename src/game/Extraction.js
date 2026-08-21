@@ -804,13 +804,16 @@ export class ExtractionDirector {
    * leading the army their order does not imply. Reading the order in that
    * case would fly the wrong hull into a mode that had already decided.
    *
-   * THEN THE ORDER, through `Databank.armyForOrder`. `Command.sideForOrder` is
-   * the same question and this file cannot ask it: `Command.js` imports
-   * `Waves.js`, which reaches `Arrivals.js`, and the cycle that closes is the
-   * one `Arrivals.setDropshipModel`'s own note records being sprung — the
-   * whole suite failing to load, not a warning. `Databank.js` imports nothing
-   * at all and is the file `Command.ARMIES` takes its `order` field FROM, so
-   * this reads the same mapping one link closer to the source.
+   * THEN THE ORDER, through `Databank.armyForOrder`. That is not a second
+   * statement of the mapping standing beside `Command.sideForOrder` — it is
+   * the SAME CALL: `sideForOrder` is `ARMIES[armyForOrder(orderId) ||
+   * 'republic']`, the army record wrapped around this answer, and the record
+   * is the half this file has no use for. Asking Command for it directly is
+   * not available anyway: `Command.js` imports `Waves.js`, which reaches
+   * `Arrivals.js`, and the cycle that closes is the one
+   * `Arrivals.setDropshipModel`'s own note records being sprung — the whole
+   * suite failing to load, not a warning. `Databank.js` imports nothing at
+   * all, which is why both callers can reach it.
    *
    * AND A GREY GETS THE REPUBLIC, which is not a default invented here —
    * `sideForOrder` documents the identical fallback for the identical reason:

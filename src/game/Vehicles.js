@@ -1802,7 +1802,16 @@ export function buildRepublicTransport(opts = {}) {
    * FLOWN hull which army it belongs to without reading a table back, and
    * `buildDroidTransport` publishes it too so the pair is symmetrical. */
   g.userData.side = 'republic';
-  if (S === 1 && !opts.fresh) _transportTemplate = g;
+  /* THE TEMPLATE IS NEVER HANDED OUT — the first caller gets a clone of it like
+   * every later one, and the recursion is how, because the clone branch above
+   * is the only correct way to build one and there must not be a second copy of
+   * it. Returning `g` itself was cheaper by one clone and cost more than that:
+   * `Extraction._makeShip` parents an exhaust cone to every engine anchor of
+   * the hull it is given, so the FIRST flight of a session was decorating the
+   * template. Every hull built after it cloned those eight cones and then had
+   * eight live ones added on top — sixteen meshes where eight were animated,
+   * for the rest of the process, on the one ship the player is inside. */
+  if (S === 1 && !opts.fresh) { _transportTemplate = g; return buildRepublicTransport(opts); }
   return g;
 }
 
@@ -1835,8 +1844,8 @@ export function buildRepublicTransport(opts = {}) {
  * squad's ride, and the obvious pick is the wrong one:
  *
  *   THE C-9979 LANDING CRAFT is the ship everybody pictures and it is out by
- *     two orders of magnitude. It is 210 m across the wing — half again the
- *     length of the whole battlefield this game fights on — and what it
+ *     two orders of magnitude. It is 210 m across the wing — half the width
+ *     of the whole battlefield this game fights on — and what it
  *     unloads is ELEVEN MTTs, each of which is itself carrying a hundred and
  *     twelve droids. It is the ship that carries the ship. Ten bodies riding
  *     one would be ten bodies rattling around inside a hangar bigger than the
@@ -1910,8 +1919,8 @@ export function buildRepublicTransport(opts = {}) {
  *            hang the same four flares and "I don't see any engines working"
  *            is answered the same way on both sides.
  *   lamp     the landing light, forward and under.
- *   ramp     a group hinged at the aft lip of the bay floor with a 2.58 m leaf
- *            — the SAME leaf length the Republic hull carries, because
+ *   ramp     a group hinged at the aft lip of the bay floor with a 2.56 m leaf
+ *            — the Republic hull's 2.58 m to within 2 cm, because
  *            `_hatch` computes the hinge angle as asin(drop / 2.6) and
  *            `_deckHeight` walks a body up a leaf of that length. A shorter
  *            ramp would not have failed anything; it would have put a trooper
@@ -2231,7 +2240,8 @@ export function buildDroidTransport(opts = {}) {
   g.userData.length = bs.z;
   g.userData.height = bs.y;
   g.userData.side = 'separatist';
-  if (S === 1 && !opts.fresh) _droidTemplate = g;
+  /* See `buildRepublicTransport`'s note: the template is never handed out. */
+  if (S === 1 && !opts.fresh) { _droidTemplate = g; return buildDroidTransport(opts); }
   return g;
 }
 
@@ -2304,7 +2314,11 @@ export function buildRepublicCapital(opts = {}) {
 
   g.traverse((o) => { if (o.isMesh) { o.frustumCulled = false; o.castShadow = false; o.receiveShadow = false; } });
   g.userData.side = 'republic';
-  if (!opts.fresh) _capitalTemplate = g;
+  /* Never handed out, for `buildRepublicTransport`'s reason one hull along:
+   * `_placeCapital` writes position, scale, rotation and visibility onto the
+   * ship it is given every frame, and a template carrying the last flight's
+   * transform is a template that is no longer a rest pose. */
+  if (!opts.fresh) { _capitalTemplate = g; return _capitalTemplate.clone(true); }
   return g;
 }
 
@@ -2395,7 +2409,7 @@ export function buildDroidCapital(opts = {}) {
 
   g.traverse((o) => { if (o.isMesh) { o.frustumCulled = false; o.castShadow = false; o.receiveShadow = false; } });
   g.userData.side = 'separatist';
-  if (!opts.fresh) _droidCapitalTemplate = g;
+  if (!opts.fresh) { _droidCapitalTemplate = g; return _droidCapitalTemplate.clone(true); }
   return g;
 }
 
