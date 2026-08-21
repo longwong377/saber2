@@ -1502,6 +1502,169 @@ export function buildGunship(opts = {}) {
   return g;
 }
 
+let _hmpM = null;
+function hmpMaterials() {
+  if (_hmpM) return _hmpM;
+  return (_hmpM = {
+    /* A droid gunship is not painted, it is FINISHED — the Confederacy's
+     * hardware wears the same bronze-grey alloy as its battle droids, because
+     * the whole army was ordered out of one foundry. Read against the clone
+     * gunship's bone-white shell and maroon flashes, which is a machine
+     * somebody's air force keeps. */
+    shell: armorMat(0x8f8271, 0.07, 0.62, 0.9),
+    plate: armorMat(0x6f6455, 0.05, 0.68, 1.2),
+    dark: metalMat(0x2f2c28, 0.5, 0.9, 2.0),
+    lens: metalMat(0x8a1f16, 0.6, 0.4, 3.0),
+  });
+}
+
+let _hmpTemplate = null;
+
+/**
+ * THE CONFEDERACY'S GUNSHIP — an HMP droid gunship, and why that one.
+ *
+ * The lane that gave the Sith their own TRANSPORT left this seam open and said
+ * so: the ship that delivers ENEMIES was one hull for both sides, so a Jedi's
+ * droid enemies came down out of a Republic gunship. That is the same defect
+ * as "sith side still gets picked up by the same transports that belong to the
+ * republic canonically", one scene over and pointed at the other player.
+ *
+ * The Heavy Missile Platform is the Confederacy's answer to a LAAT and it is
+ * the right one for what this ship is asked to do here: it is a GUNSHIP that
+ * carries droids, it deploys them off external racks rather than out of a bay,
+ * and it is unmanned — which is the silhouette decision that matters. There is
+ * no canopy on it anywhere, because there is nobody in it. A clone gunship has
+ * two stepped canopies with a pilot behind each, and a player who has learned
+ * that reads "crewed" and "not crewed" at three hundred metres without being
+ * told.
+ *
+ * IT IS BUILT TO THE SAME CONTRACT and deliberately not to the same shape:
+ * `engines`, `lamp`, `span`, `length`, `height`, so `ArrivalDirector` flies it
+ * with no branch. Flat and wide against the clone ship's tall boxy fuselage —
+ * a lifting body with two downturned wings and a chin turret, about 12 m across
+ * and 2.4 m deep, against 10 × 4.3.
+ */
+export function buildDroidGunship(opts = {}) {
+  const S = opts.scale ?? 1.0;
+  if (S === 1 && !opts.fresh && _hmpTemplate) {
+    const c = _hmpTemplate.clone(true);
+    /* Re-resolve the anchors on the CLONE. `Object3D.clone` copies the tree and
+     * shares geometry and materials, but `userData` is copied by reference — so
+     * a clone that kept the template's `engines` and `lamp` would drive the
+     * template's own Object3Ds and every ship in the sky would light the same
+     * lamp. The same note sits over `buildGunship`. */
+    c.userData = {
+      ..._hmpTemplate.userData,
+      engines: ['engineL', 'engineC', 'engineR'].map((n) => c.getObjectByName(n)),
+      lamp: c.getObjectByName('lamp'),
+      turret: c.getObjectByName('turret'),
+    };
+    return c;
+  }
+  const M = hmpMaterials();
+  const g = new THREE.Group();
+  g.name = 'hmp';
+
+  /* ── the lifting body: a flat wedge, widest across the middle ─────── */
+  const kf = new Kit();
+  kf.add(M.shell, plateGeo(3.20 * S, 0.86 * S, 4.60 * S, 0.34 * S, 2), [0, 0, 0.20 * S]);
+  // the nose tapers to the chin gun rather than to a cockpit
+  kf.add(M.shell, plateGeo(2.10 * S, 0.66 * S, 2.20 * S, 0.26 * S, 2), [0, -0.06 * S, -2.60 * S], [0.13, 0, 0]);
+  kf.add(M.plate, plateGeo(1.20 * S, 0.44 * S, 1.10 * S, 0.16 * S, 1), [0, -0.24 * S, -3.60 * S], [0.22, 0, 0]);
+  /* THE SENSOR BAND where a canopy would be — a dark strip with two lenses in
+   * it, which is what an unmanned machine has instead of a face. */
+  kf.add(M.dark, plateGeo(1.44 * S, 0.16 * S, 0.30 * S, 0.05 * S, 1), [0, 0.30 * S, -3.20 * S], [0.20, 0, 0]);
+  kf.pair((sx) => {
+    kf.add(M.lens, plateGeo(0.20 * S, 0.12 * S, 0.16 * S, 0.04 * S, 1), [sx * 0.42 * S, 0.32 * S, -3.28 * S], [0.20, 0, 0]);
+  });
+
+  /* ── the two downturned wings, and the racks the droids ride ─────── */
+  kf.pair((sx) => {
+    kf.add(M.shell, plateGeo(2.90 * S, 0.42 * S, 3.10 * S, 0.22 * S, 2),
+      [sx * 2.70 * S, -0.10 * S, 0.30 * S], [0, 0, sx * -0.22]);
+    // the outboard tip, canted further down — the HMP's own profile
+    kf.add(M.plate, plateGeo(1.30 * S, 0.34 * S, 2.10 * S, 0.18 * S, 1),
+      [sx * 4.40 * S, -0.52 * S, 0.40 * S], [0, 0, sx * -0.46]);
+    /* THE RACKS. A droid gunship does not have a troop bay: the infantry rides
+     * OUTSIDE, folded onto the wing, which is why the Confederacy can put a
+     * squad on a craft with no interior at all. Two rails and four clamps a
+     * side, and they are the thing to look at when it flares. */
+    kf.add(M.dark, plateGeo(0.14 * S, 0.14 * S, 2.60 * S, 0.04 * S, 1), [sx * 2.10 * S, -0.44 * S, 0.30 * S]);
+    kf.add(M.dark, plateGeo(0.14 * S, 0.14 * S, 2.60 * S, 0.04 * S, 1), [sx * 3.30 * S, -0.52 * S, 0.30 * S]);
+    for (let i = 0; i < 4; i++) {
+      kf.add(M.plate, plateGeo(1.30 * S, 0.12 * S, 0.22 * S, 0.05 * S, 1),
+        [sx * 2.70 * S, -0.48 * S, (-0.90 + i * 0.62) * S]);
+    }
+    // missile tubes under the wing root, which is what the thing is named for
+    kf.add(M.dark, plateGeo(0.46 * S, 0.40 * S, 1.60 * S, 0.14 * S, 1), [sx * 1.70 * S, -0.46 * S, -1.30 * S]);
+  });
+
+  /* ── the chin turret, the one thing on it that traverses ─────────── */
+  const turret = new THREE.Group();
+  turret.name = 'turret';
+  const kt = new Kit();
+  kt.add(M.plate, plateGeo(0.70 * S, 0.44 * S, 0.70 * S, 0.16 * S, 1), [0, 0, 0]);
+  kt.pair((sx) => {
+    kt.add(M.dark, plateGeo(0.12 * S, 0.12 * S, 1.30 * S, 0.04 * S, 1), [sx * 0.20 * S, -0.06 * S, -0.80 * S]);
+  });
+  kt.bake(turret);
+  turret.position.set(0, -0.52 * S, -3.30 * S);
+  g.add(turret);
+
+  kf.bake(g);
+
+  /* ── the engines: three, in a row across the tail ────────────────── */
+  const engines = [];
+  const nacelle = (x) => {
+    const e = new THREE.Object3D();
+    e.name = engines.length === 0 ? 'engineL' : (engines.length === 1 ? 'engineC' : 'engineR');
+    e.position.set(x, -0.02 * S, 2.70 * S);
+    g.add(e);
+    engines.push(e);
+    return e;
+  };
+  const ke = new Kit();
+  for (const x of [-1.70, 0, 1.70]) {
+    ke.add(M.plate, plateGeo(1.06 * S, 0.72 * S, 1.30 * S, 0.24 * S, 1), [x * S, -0.02 * S, 2.40 * S]);
+    ke.add(M.dark, plateGeo(0.78 * S, 0.52 * S, 0.22 * S, 0.08 * S, 1), [x * S, -0.02 * S, 3.06 * S]);
+    nacelle(x * S);
+  }
+  ke.bake(g);
+
+  /* THE LAMP is the same anchor the clone ship publishes and it is under the
+   * nose for the same reason: it is what the ground is lit by on the way in. */
+  const lamp = new THREE.Object3D();
+  lamp.name = 'lamp';
+  lamp.position.set(0, -0.70 * S, -3.20 * S);
+  g.add(lamp);
+
+  g.userData.engines = engines;
+  g.userData.lamp = lamp;
+  g.userData.turret = turret;
+  g.userData.side = 'separatist';
+  const bs = new THREE.Box3().setFromObject(g).getSize(new THREE.Vector3());
+  g.userData.span = bs.x;
+  g.userData.length = bs.z;
+  g.userData.height = bs.y;
+  /* THE TEMPLATE IS NEVER HANDED OUT — see `buildRepublicTransport`, where the
+   * same line cost eight permanent exhaust cones on every hull in the game. The
+   * first caller gets a clone of it like everybody else. */
+  if (S === 1 && !opts.fresh) { _hmpTemplate = g; return buildDroidGunship(opts); }
+  return g;
+}
+
+/**
+ * WHICH GUNSHIP AN ARMY SENDS. The same seam, the same table shape and the same
+ * fallback as `TRANSPORT_BY_SIDE` — see the note there.
+ */
+export const GUNSHIP_BY_SIDE = {
+  republic: buildGunship,
+  separatist: buildDroidGunship,
+};
+
+/** The gunship the given army flies. Registered by `Levels.js`. */
+export function buildSideGunship(opts = {}) { return hullFor(GUNSHIP_BY_SIDE, opts.side)(opts); }
+
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  The transport — the one ship the player is INSIDE                     */
 /* ══════════════════════════════════════════════════════════════════════ */

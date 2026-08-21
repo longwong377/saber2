@@ -56,6 +56,7 @@ import * as THREE from 'three';
 import { clamp, lerp, damp, smoothstep, makeRng, TAU } from '../engine/MathUtil.js';
 import { audio } from '../engine/Audio.js';
 import { spawnClear, bladeClear } from './Spawn.js';
+import { armyForOrder, opposingArmy } from './Databank.js';
 
 /**
  * THE SHIP'S MODEL, INJECTED — and the direction of the arrow is the whole
@@ -122,9 +123,13 @@ export function capitalModel(side) {
  * Returns null when nothing is registered, which is every headless check that
  * does not import `Levels.js`; the caller falls back to primitives.
  */
-export function dropshipModel() {
+export function dropshipModel(side) {
   if (!_shipModel) return null;
-  try { return _shipModel(); } catch (e) { return null; }
+  /* `side` IS PASSED ON RATHER THAN BRANCHED ON — the same rule the transport
+   * door below states in full. There are two gunships now and this file
+   * resolves neither: `Vehicles.js` owns the table, and a lookup here would be
+   * a second copy of it (HANDOFF §2.3). */
+  try { return _shipModel({ side }); } catch (e) { return null; }
 }
 
 /**
@@ -386,8 +391,28 @@ class Arrival {
      * produce its wave, and a model that throws must not take the arrival with
      * it.
      */
+    /**
+     * WHOSE GUNSHIP IS THIS? THE ENEMY'S — and it used to be everybody's.
+     *
+     * This ship delivers the WAVE, so it belongs to whoever the wave belongs
+     * to, which is the army the player is not leading. Before this there was
+     * one hull and both sides flew it: a Jedi's droid enemies came down out of
+     * a Republic gunship, which is the player's own complaint about transports
+     * ("sith side still gets picked up by the same transports that belong to
+     * the republic canonically") pointed at the other player and one scene
+     * over. The lane that gave the Confederacy a transport left this seam
+     * ready and said so.
+     *
+     * `armyForOrder` is the same single statement of the mapping that
+     * `Command.sideForOrder` and `WaveDirector.myArmy` both read; `opposingArmy`
+     * is the other side of the war. A Grey leads neither, so `opposingArmy`
+     * answers null and the builder's own default hull arrives — which is
+     * correct rather than lazy: there is no side to be wrong about.
+     */
+    const mine = armyForOrder(this.world?.settings?.order ?? null);
+    const foe = opposingArmy(mine);
     let ship = null;
-    try { ship = _shipModel ? _shipModel() : null; } catch (e) { ship = null; }
+    try { ship = _shipModel ? _shipModel({ side: foe }) : null; } catch (e) { ship = null; }
     if (ship) {
       g.add(ship);
       this._model = ship;

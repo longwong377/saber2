@@ -71,7 +71,7 @@ import { COMMAND_UNITS } from './Command.js';
  * `SABER_CHECK_ORDER=reverse` would fail. Naming them in a pool is what makes
  * both orders agree.
  */
-import { buildGunship, buildTransport, buildCapitalShip } from './Vehicles.js';
+import { buildTransport, buildCapitalShip, buildSideGunship } from './Vehicles.js';
 import { setDropshipModel, setTransportModel, setCapitalModel } from './Arrivals.js';
 
 /* …and the gunship the arrival director flies. Handed IN rather than imported
@@ -79,7 +79,10 @@ import { setDropshipModel, setTransportModel, setCapitalModel } from './Arrivals
  * so an edge from it to Vehicles.js closes a cycle and runs Vehicles'
  * `Object.assign(ARCHETYPES, …)` inside ARCHETYPES' own temporal dead zone. It
  * was tried; it is a ReferenceError on boot. See `setDropshipModel`. */
-setDropshipModel(buildGunship);
+/* `buildSideGunship` and not `buildGunship`: there are two now — the clone
+ * gunship and the Confederacy's HMP — and the ARMY decides which arrives. See
+ * `Arrivals._makeDropship`, which asks for the side the player is NOT on. */
+setDropshipModel(buildSideGunship);
 /* …AND THE ONE THE PLAYER RIDES IN, which is a different hull for a reason
  * `setTransportModel`'s own note gives: a gunship's troop bay is a dark plate
  * between two rails and the player's note is that you cannot see out of it. */

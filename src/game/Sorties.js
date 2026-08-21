@@ -54,6 +54,7 @@ import * as THREE from 'three';
 import { clamp, lerp, smoothstep, TAU } from '../engine/MathUtil.js';
 import { audio } from '../engine/Audio.js';
 import { dropshipModel } from './Arrivals.js';
+import { armyForOrder } from './Databank.js';
 
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 
@@ -147,7 +148,12 @@ class Sortie {
      * in it — so the run still happens, with nothing to look at, rather than
      * throwing inside a frame. */
     let ship = null;
-    try { ship = dropshipModel(); } catch { ship = null; }
+    /* YOUR OWN AIR FORCE, and this is the one caller of this door where that is
+     * the answer: a support pass is a ship you called, so it wears the hull of
+     * the army you lead. The wave's gunship — `Arrivals._makeDropship` — asks
+     * for the opposite side, from the same table. */
+    const side = armyForOrder(this.world?.settings?.order ?? null);
+    try { ship = dropshipModel(side); } catch { ship = null; }
     if (ship) { this.group.add(ship); this._model = ship; }
     const away = _v1.set(Math.sin(this.bearing), 0, Math.cos(this.bearing));
     this.from = this.site.clone().addScaledVector(away, PASS_START).setY(this.site.y + P.height);
