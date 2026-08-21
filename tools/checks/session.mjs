@@ -480,4 +480,178 @@ export async function run({ check, assert }) {
     return `seed 91125 → ${card.planName}, ${card.stages.length} stages on ${card.ground}; `
       + `${card.roll.length} names on the card, ${names.size} distinct, ${rows} rows drawn`;
   });
+
+  check('session: what crosses a session boundary is a record and a plan, never a run', async () => {
+    /**
+     * §5's LAST PARAGRAPH, AS A CHECK.
+     *
+     *   "Nothing carries between sessions. That is `Progress.js`'s written law —
+     *   'no cross-run power … the hundredth run starts exactly where the first
+     *   did.' What crosses is a record and a plan. NO RESUME: a run you can put
+     *   down is a campaign, and this is not a campaign."
+     *
+     * The law was written and never asserted, and the tempting version of this
+     * feature is exactly the one that breaks it: the mode now has a length, a
+     * route, a seed and a roster of named people you are trying to keep alive,
+     * which is a save file asking to be written. So the property is checked
+     * where it can actually fail — at the only door in the tree that writes
+     * anything durable.
+     *
+     * TWO CLAUSES, and the second is the one that matters:
+     *
+     *   THE STORE HOLDS NOTHING A RUN COULD BE REBUILT FROM. A seed is a plan
+     *     and a depth is a record; an area index, a roster, an hp fraction or a
+     *     wave number is a saved game. Driven through the shipped `recordRun`
+     *     with a summary carrying all of them, because a check that only passed
+     *     the fields the game happens to send today would pass on the day
+     *     somebody adds one.
+     *   NOTHING ELSE WRITES. `localStorage` is the whole of durable state in
+     *     this game, so the set of keys IS the set of things that can cross,
+     *     and it is three: the settings, the keybinds and the record.
+     */
+    const { readFile } = await import('node:fs/promises');
+    const KEY = 'saber.progress.v1';
+    const { recordRun } = await import('../../src/game/Progress.js');
+
+    const had = localStorage.getItem(KEY);
+    localStorage.removeItem(KEY);
+    let entry;
+    try {
+      /* Everything a resume would need, offered. The mode is `command` so the
+       * record is actually taken — `RECORDED` gates on it. */
+      const p = recordRun({
+        mode: 'command', depth: 3, score: 4200, kills: 88, won: false, seed: 91125,
+        order: 'jedi', species: 'human', boons: ['vitality'], rules: [],
+        /* …and the shape of a saved game, every field of it. */
+        areaIndex: 2, area: 3, wave: 7, hp: 0.42, hpFrac: 0.42, strength: 6,
+        points: 26, stages: ['landing', 'plain'], plan: 'push',
+        roster: { roll: [{ name: 'CT-1234', alive: true }] },
+        roll: [{ name: 'CT-1234' }], position: { x: 1, y: 2, z: 3 },
+      });
+      entry = p.recent[0];
+    } finally {
+      if (had == null) localStorage.removeItem(KEY); else localStorage.setItem(KEY, had);
+    }
+
+    const RESUMABLE = ['areaIndex', 'area', 'wave', 'hp', 'hpFrac', 'strength', 'points',
+      'stages', 'plan', 'roster', 'roll', 'position'];
+    const kept = RESUMABLE.filter((k) => entry[k] !== undefined);
+    assert(!kept.length,
+      `the record kept ${kept.join(', ')} — that is a saved game, and §5 says "a run you can put `
+      + 'down is a campaign, and this is not a campaign"');
+    /* …and the two things that ARE supposed to cross did. */
+    assert(entry.seed === 91125, 'the seed did not reach the record — a run is not shareable');
+    assert(entry.depth === 3 && entry.mode === 'command', 'the record does not say what it was');
+
+    /* THE ONLY DURABLE KEYS IN THE TREE. A fourth is a new thing that crosses,
+     * and whoever adds one has to argue it here. */
+    const files = ['src/game/Progress.js', 'src/ui/Menu.js', 'src/main.js',
+      'src/engine/Bindings.js', 'src/game/World.js'];
+    const keys = new Set();
+    for (const f of files) {
+      const text = await readFile(new URL(`../../${f}`, import.meta.url), 'utf8');
+      for (const m of text.matchAll(/localStorage\.setItem\(\s*([A-Za-z_$][\w$]*|['"][^'"]+['"])/g)) {
+        keys.add(m[1].replace(/['"]/g, ''));
+      }
+    }
+    /* The identifiers resolve to the three string constants beside them; what
+     * is asserted is the COUNT, because a fourth writer is the event. */
+    assert(keys.size <= 3,
+      `${keys.size} things write to durable storage (${[...keys].join(', ')}) — one of them is new, `
+      + 'and §5 says what crosses a session is a record and a plan');
+    return `the record keeps depth/score/won/mode/seed/order/species/rules/boons and none of `
+      + `${RESUMABLE.length} resume fields; ${keys.size} durable writers in the tree`;
+  });
+
+
+  check('session: a whole sitting, end to end — card, engagements, musters, an ending', async () => {
+    /**
+     * THE ONE CHECK THAT IS ABOUT THE RUN RATHER THAN ABOUT A PART OF IT.
+     *
+     * Everything above measures one rung. This walks a sitting from 0:00 to the
+     * ending and asserts the SHAPE of it, because the shape is the thing that
+     * did not exist: the mode had a roster, ranks, permadeath, a muster and
+     * gunships, and no answer at all to "how long is this and what happens
+     * between the fights".
+     *
+     * Driven on the shipped director. Every boundary is the game's own call —
+     * `_areaClear` is reached by paying waves, not by writing `areaIndex` — so
+     * what is asserted is that the ladder the player actually climbs has a
+     * card at the bottom, a report at every rung and an ending at the top.
+     */
+    const H = await import('./_coop.mjs');
+    const { deployCard } = await S();
+    const seed = 20260821;
+    const { world } = await H.bootWorld({ level: 'geonosis', settings: { mode: 'command' }, runSeed: seed });
+    const d = world.command;
+    assert(d?.crossing, 'the command world is not a crossing');
+
+    /* 0:00 — the card, before a shot is fired. */
+    const card = deployCard({ seed, plan: d.plan, stages: d.stages, ground: world.level.name,
+      roster: d.roster.summary(), networked: false });
+    assert(card.roll.length === d.roster.strength, 'the card does not name the line');
+    const opened = card.roll.length;
+
+    /* The run itself. `onMuster` stands in for the screen; `closeMuster` is the
+     * button. Waves are paid the way `payWave` is paid in a fight. */
+    const musters = [];
+    d.onMuster = (offer) => musters.push(offer);
+    let ended = null;
+    world.onGameOver = (summary) => { ended ??= summary; };
+    d.start(1);
+
+    const engagements = [];
+    for (let guard = 0; guard < 60 && !d.done; guard++) {
+      const before = d.areaIndex;
+      const stage = d.area;
+      /* Pay this area's waves. `payWave` is the door `_areaClear` hangs off, and
+       * a wave is paid once (`wave > _paid`), so the counter moves with it. */
+      while (d.areaIndex === before && !d.done) {
+        d.wave = (d.wave | 0) + 1;
+        d.payWave(d.wave);
+      }
+      engagements.push(stage.name);
+      if (d.mustering) {
+        const offer = musters[musters.length - 1];
+        assert(offer, 'an area was held and no muster was raised');
+        assert(offer.interlude && offer.interlude.beats.length,
+          `the muster after ${stage.name} carried no report`);
+        d.closeMuster();
+      }
+    }
+
+    assert(d.done, `the sitting never ended — ${d.areaIndex + 1} of ${d.stages.length} stages in`);
+    assert(engagements.length === d.stages.length,
+      `${engagements.length} engagements were fought of a ${d.plan.id}'s ${d.stages.length}`);
+    assert(musters.length === d.stages.length - 1,
+      `${musters.length} musters between ${engagements.length} engagements`);
+    assert(ended, 'the sitting ended and nothing was told about it');
+    assert(ended.won === true, `the crossing ended won=${ended.won}`);
+    assert(engagements[0] === d.stages[0].name && engagements[engagements.length - 1] === d.stages[d.stages.length - 1].name,
+      `the route ran ${engagements.join(' → ')}`);
+
+    /* AND THE ROLL ONLY EVER SHRANK — §3's one-way variable, over a whole run.
+     * The dead are kept, which is the feature: a roll you can only read the
+     * survivors off does not make you careful. */
+    const roll = d.roster.summary().roll;
+    assert(roll.length >= opened, 'names left the roll — the fallen are not being kept');
+    /* MATCHED ON THE DESIGNATION, because a name GROWS and never changes: a
+     * trooper who reaches Sergeant earns a nickname and prints as
+     * `CT-3567 "Boil"` from then on (see `Trooper.name`). That is the mode
+     * working — the man you read off the card at 0:00 is the man you can still
+     * pick out of the list an hour later, wearing what the line calls him. */
+    let earned = 0;
+    for (const t of card.roll) {
+      const hit = roll.find((r) => r.name === t.name || r.name.startsWith(`${t.name} `));
+      assert(hit, `${t.name} was on the deploy card and is off the roll`);
+      if (hit.name !== t.name) earned++;
+    }
+
+    world.dispose();
+    return `seed ${seed} → ${card.planName}: ${engagements.join(' → ')}; `
+      + `${musters.length} musters, ${musters.map((o) => o.interlude.beats.length).join('/')} beats; `
+      + `landed with ${opened}, ended with ${d.roster.strength} standing of ${roll.length} named `
+      + `(${earned} of the original ten earned a nickname), won`;
+  });
+
 }
