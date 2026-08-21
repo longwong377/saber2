@@ -909,6 +909,93 @@ export function gradeDeflection(bolt, saber, hit, ctx) {
  */
 export const GRADE_DAMAGE = [1.0, 1.0, 1.5, 2.5];
 
+/**
+ * WHAT ANSWERING A BOLT COSTS THE GUARD — FLAGSHIP §6, and it is the answer to
+ * Jedi-versus-infantry.
+ *
+ * ── THE PROBLEM, MEASURED BEFORE ANY OF THIS EXISTED ────────────────────
+ *
+ * One B1 does 2.17 dps to a moving player: forty-six seconds to kill you.
+ * Wave 20 does 353.8 raw dps: 0.28 seconds. There is no middle, and deflection
+ * is a PERCENTAGE, so it scales the problem instead of solving it — a wall of
+ * fire that 90% deflection turns into a survivable trickle at twenty rifles is
+ * still lethal at two hundred, and the tuning knob has no setting that makes
+ * both interesting.
+ *
+ * So a bolt does not cost the HEALTH. It costs the GUARD.
+ *
+ *   BLOCK    1.2 stamina   the blade was nearly still; you got it in the way
+ *   DEFLECT  0.4           the blade was driven at it
+ *   RETURN   0             you met it properly
+ *   PERFECT  0
+ *
+ * Twenty B1s fire about 18 bolts a second. At 1.2 that is 21.6 stamina/s
+ * against a 16/s regen and a 100 pool — underwater in roughly twelve seconds,
+ * and at zero stamina there is no dash (18), no dive (18) and no sprint. The
+ * crowd does not kill you; it nails your feet to the floor, and then the B2s
+ * do. VOLUME OF FIRE BECOMES TERRAIN: a beaten zone is a place you cannot
+ * stand, which is what a battlefield is.
+ *
+ * Every rung of the ladder is fully answerable by skill — a PERFECT costs
+ * nothing at all, so a good player is never suppressed by fire they can meet —
+ * and it is legible, because the bar it spends is already on the screen.
+ *
+ * ── WHY THE REGEN IS NOT PAUSED, WHICH IS THE WHOLE ARITHMETIC ──────────
+ *
+ * `Player`'s dash, dive and sprint all set `staminaHold`, so the bar stops
+ * refilling for 0.6 s after they are spent. Answering a bolt deliberately does
+ * NOT: the design above is a drain of 21.6/s racing a regen of 16/s, and a
+ * guard cost that also switched the regen off would be 21.6 against nothing —
+ * a bar that empties in under five seconds and can never come back while
+ * anybody is shooting. The margin between the two rates IS the mechanic, and
+ * pausing the regen deletes it.
+ *
+ * ── AND THE FOURTH ROW IS NOT STAMINA AT ALL ────────────────────────────
+ *
+ * A bolt that arrives inside the auto-guard cone off a parked blade was
+ * answered by the SYSTEM and not by the player — `CATCH.autoGuard` exists so
+ * the follow-up shots of a burst you already answered do not kill you while
+ * your wrist is committed. It was free. Free is what makes a stream of fire
+ * answerable by one good deflect and then nothing, which is the failure
+ * `CATCH.autoGuard`'s own comment says the cone must not become.
+ *
+ * It costs FORCE instead of stamina, and that is a different sentence rather
+ * than a smaller number: the cone is the Force keeping you alive while your
+ * hands are busy, so it spends the pool that every other version of that
+ * sentence spends. It also means the two bars drain in different fights — a
+ * player meeting fire head-on spends stamina, a player working through it with
+ * their back half-turned spends Force — and a player with neither left is a
+ * player who has to leave.
+ *
+ * `unanswered` is charged only when the blade was NOT driven at the bolt
+ * (`snap.driven`), so a player who turned and met a bolt the cone happened to
+ * cover pays the ordinary grade for it and not both.
+ */
+export const GUARD_COST = {
+  /** Stamina, indexed by GRADE. Parallel to GRADE_DAMAGE and GRADE_NAME. */
+  stamina: [1.2, 0.4, 0, 0],
+  /** Force, for a bolt the auto-guard cone answered off a blade you did not drive. */
+  unanswered: 0.5,
+};
+
+/**
+ * What one bolt costs a fighter, given the grade it was answered at and the
+ * contact that produced it.
+ *
+ * ONE FUNCTION SO THERE IS ONE RULE. The block path and the catch-and-throw
+ * path bill at different moments in the frame — a caught bolt is graded up to
+ * 250 ms after it landed — and two call sites reading the table separately is
+ * two places for a fifth grade or a changed row to be missed.
+ *
+ * @param grade  a value of GRADE
+ * @param snap   the frozen contact (`captureSnapshot`), or null
+ * @returns { stamina, force }
+ */
+export function guardCost(grade, snap = null) {
+  if (snap && snap.auto === true && !snap.driven) return { stamina: 0, force: GUARD_COST.unanswered };
+  return { stamina: GUARD_COST.stamina[grade] ?? 0, force: 0 };
+}
+
 export function gradeCaught(snap, ctx) {
   const { bladeT, bladeSpeed, closing, boltDir } = snap;
   const _v4 = snap.normal;

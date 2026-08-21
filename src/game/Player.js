@@ -2715,6 +2715,20 @@ export class Player {
     this.score = 0;
     this.kills = 0;
     this.deflects = 0;
+    /**
+     * STAMINA AND FORCE THIS BLADE HAS SPENT ANSWERING BOLTS, cumulative and
+     * monotone. Written by `World._creditDeflect` off `Combat.guardCost`.
+     *
+     * It exists because FLAGSHIP §6's whole argument is about a RATE — 21.6
+     * stamina a second against a 16/s regen — and a rate cannot be read off a
+     * pool that four other things also spend. It is what
+     * `tools/checks/suppression.mjs` measures the beaten zone with, and it is
+     * what the Bastion boon hands back: "turning it aside costs you nothing"
+     * is exactly true when the card refunds the counter's own delta rather
+     * than a flat number that has to be kept in step with the cost table.
+     */
+    this.guardSpent = 0;
+    this.guardForceSpent = 0;
     this.perfects = 0;
     this.limbsRemoved = 0;
 

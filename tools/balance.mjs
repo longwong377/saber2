@@ -1610,6 +1610,13 @@ export function simulateRun(opts) {
             // That is the whole answer to "what about the second bolt of the
             // burst", and World says an auto catch is aimed and worth 1.0x.
             if (e.auto > 0) {
+              /* AND THE CONE IS NOT FREE ANY MORE — FLAGSHIP §6's fourth row.
+               * A bolt the auto-guard answered off a parked blade costs Force
+               * rather than stamina, which is the one drain in this model that
+               * fires while the player is doing nothing at all. Asked of
+               * `guardCost` with a contact that says the cone caught it. */
+              const gc = Combat.guardCost(Combat.GRADE.DEFLECT, { auto: true, driven: false });
+              p.force = Math.max(0, (p.force ?? 0) - gc.force);
               const back = bp.damage * 1.0 * mods.deflectDamage * lerp(0.6, 1.9, MODEL.returnVital);
               if (e.shield > 0) e.shield -= back; else e.hp -= back;
               if (e.hp <= 0) {
@@ -1627,9 +1634,20 @@ export function simulateRun(opts) {
               if (r < g.perfect) { mul = 2.5; aimed = true; }
               else if (r < g.perfect + g.return) { mul = 1.5; aimed = true; }
               else if (r < g.perfect + g.return + g.deflect) { mul = 1.0; aimed = false; }
-              // A BLOCK costs 4 stamina, per World._creditDeflect. Bastion's
-              // guardRefund hands some of it back through its own tick.
-              else { mul = 0; p.stamina = Math.max(0, p.stamina - 4); }
+              else { mul = 0; }
+              /* WHAT THE GUARD PAYS, ASKED OF THE GAME AND NOT RESTATED HERE.
+               * This used to charge a flat 4 on a block and nothing on the
+               * other three rungs, which is what `World._creditDeflect` did
+               * before FLAGSHIP §6 — and a model carrying a copy of a price
+               * eventually disagrees with the price (HANDOFF §2.4). Every rung
+               * has one now, and `guardCost` is the only place they live.
+               * `guardSpent` is what Bastion's own tick refunds. */
+              const grade = mul === 2.5 ? Combat.GRADE.PERFECT : mul === 1.5 ? Combat.GRADE.RETURN
+                : mul === 1.0 ? Combat.GRADE.DEFLECT : Combat.GRADE.BLOCK;
+              const gc = Combat.guardCost(grade);
+              const paid = Math.min(gc.stamina, p.stamina);
+              p.stamina = Math.max(0, p.stamina - gc.stamina);
+              p.guardSpent = (p.guardSpent || 0) + paid;
               p.deflects++;
               if (mul > 0) {
                 const back = bp.damage * mul * p.boonMods.deflectDamage

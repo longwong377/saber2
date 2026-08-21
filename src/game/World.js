@@ -17,7 +17,7 @@ import { CohortField } from './Cohorts.js';
 import { WarSupport } from './Support.js';
 import { GrassField, Water, Atmosphere, weather } from '../world/Scenery.js';
 import { BoltPool } from './Bolts.js';
-import { BladeContactSolver, captureSnapshot, gradeCaught, resolveBladeClash, GRADE, GRADE_DAMAGE, GRADE_NAME, DIFFICULTY, CatchWindow, openness } from './Combat.js';
+import { BladeContactSolver, captureSnapshot, gradeCaught, resolveBladeClash, GRADE, GRADE_DAMAGE, GRADE_NAME, DIFFICULTY, CatchWindow, openness, guardCost } from './Combat.js';
 import { assignSides, DuelMatch, Player, asTeam, bladeTargets, canHarm, hostileTo, pvpRules, sideTeam, TEAM } from './Player.js';
 import { ageDropped } from './Dropped.js';
 import { Enemy, ARCHETYPES, applyModifier, ENEMY_POWERS, FORCE_KINDS, IMPULSE_AS_HP } from './Enemy.js';
@@ -3172,7 +3172,7 @@ export class World {
       });
       const from = bolt.pos.clone();
       this.bolts.release(bolt, res.dir, bolt.speed * (res.grade >= GRADE.RETURN ? 1.25 : 1));
-      this._creditDeflect(player, bolt, res, from);
+      this._creditDeflect(player, bolt, res, from, h.snap);
       if (res.grade > best) { best = res.grade; bestPoint = from; }
     }
     cw.clear();
@@ -3189,7 +3189,7 @@ export class World {
   }
 
   /** Score, flow, strain and sparks for one bolt that has just left the blade. */
-  _creditDeflect(owner, bolt, res, point) {
+  _creditDeflect(owner, bolt, res, point, snap = null) {
     /**
      * REMEMBER THE BASE, CAP THE PRODUCT.
      *
@@ -3237,7 +3237,38 @@ export class World {
     // RemoteAvatar's is one of them. See the note over `_applyBladeEvent`.
     owner.camera?.addShake(0.03 + res.grade * 0.02);
     if (res.grade === GRADE.PERFECT) owner.perfects++;
-    else if (res.grade === GRADE.BLOCK) owner.stamina = Math.max(0, owner.stamina - 4);
+    /**
+     * ── AND THE GUARD PAYS FOR IT. FLAGSHIP §6, and see `GUARD_COST`.
+     *
+     * This was one line — `else if (res.grade === GRADE.BLOCK) owner.stamina
+     * -= 4` — a flat charge on the bottom rung and nothing on the other three.
+     * At four a block was expensive enough to be felt once and the ladder said
+     * nothing at all about the difference between a driven blade and a met
+     * one, which is the difference the whole grade exists to measure.
+     *
+     * Now every rung has a price and the top two are free, so volume of fire
+     * is a drain a good player can zero and a poor one cannot. `guardCost`
+     * owns the table and the auto-guard clause; nothing here restates either.
+     *
+     * `staminaHold` is deliberately NOT set — see the note over GUARD_COST.
+     * The mechanic is a drain racing a regen, and pausing the regen deletes
+     * the race.
+     *
+     * The counters are cumulative and monotone because a RATE cannot be read
+     * off a pool four other things spend; `guardSpent`'s own note says who
+     * reads them.
+     */
+    const cost = guardCost(res.grade, snap);
+    if (cost.stamina > 0) {
+      const paid = Math.min(cost.stamina, owner.stamina);
+      owner.stamina = Math.max(0, owner.stamina - cost.stamina);
+      owner.guardSpent = (owner.guardSpent || 0) + paid;
+    }
+    if (cost.force > 0 && typeof owner.force === 'number') {
+      const paid = Math.min(cost.force, owner.force);
+      owner.force = Math.max(0, owner.force - cost.force);
+      owner.guardForceSpent = (owner.guardForceSpent || 0) + paid;
+    }
     this.report({ type: 'deflect', grade: res.grade });
   }
 
@@ -3913,7 +3944,7 @@ export class World {
     bolt.pos.copy(bladePoint);
     bolt.prev.copy(bladePoint);
     bolt.vel.copy(res.dir).multiplyScalar(bolt.speed * (res.grade >= GRADE.RETURN ? 1.25 : 1));
-    this._creditDeflect(owner, bolt, res, bladePoint);
+    this._creditDeflect(owner, bolt, res, bladePoint, snap);
     audio.deflect(bladePoint, res.grade);
     /* A BOLT LANDING ON YOUR BLADE IS THE MOST TACTILE EVENT IN THE GAME and it
      * reached the pad through nothing at all. Scaled by the grade so a lucky

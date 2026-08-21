@@ -4437,14 +4437,32 @@ function wardGuard(amount) {
   return amount * Math.max(WARD_FLOOR, this.boonMods.ward ?? 1);
 }
 
-/** Bastion — a guard that pays for itself. See the honesty note under BOONS. */
+/**
+ * Bastion — a guard that pays for itself. See the honesty note under BOONS.
+ *
+ * ── IT REFUNDS WHAT WAS SPENT, NOT A NUMBER THAT HAS TO MATCH IT ────────
+ *
+ * This counted DEFLECTS and handed back a flat 4 for each, because a block
+ * cost a flat 4 and nothing else cost anything. FLAGSHIP §6 gave every rung of
+ * the ladder its own price (`Combat.GUARD_COST`: 1.2 / 0.4 / 0 / 0), and the
+ * moment it did, a flat 4 per bolt turned aside stopped being a refund and
+ * became a stamina GENERATOR — three and a bit points of profit on every
+ * BLOCK and four on every PERFECT, which costs nothing to begin with.
+ *
+ * `Player.guardSpent` is the cumulative stamina the guard has actually paid,
+ * written where the charge is made. Refunding its own delta makes the card's
+ * claim exactly true at every rung, for every future price, without this
+ * function ever naming a cost — which is the twin this repository keeps
+ * deleting (HANDOFF §2.3). `guardRefund` is therefore a SHARE now, and 1 is
+ * "costs you nothing".
+ */
 function bastionGuardRefund() {
-  const back = this.boonMods.guardRefund ?? 0;
-  const n = this.deflects || 0;
-  const prev = this._bastionDeflects ?? n;
-  this._bastionDeflects = n;
-  if (back <= 0 || n <= prev || typeof this.stamina !== 'number') return;
-  this.stamina = Math.min(this.maxStamina ?? this.stamina, this.stamina + back * (n - prev));
+  const share = this.boonMods.guardRefund ?? 0;
+  const n = this.guardSpent || 0;
+  const prev = this._bastionSpent ?? n;
+  this._bastionSpent = n;
+  if (share <= 0 || n <= prev || typeof this.stamina !== 'number') return;
+  this.stamina = Math.min(this.maxStamina ?? this.stamina, this.stamina + share * (n - prev));
 }
 
 /** Tempest — Flow is the fuel, so the deeper it runs the less the Force costs. */
@@ -5484,7 +5502,11 @@ export const BOONS = [
     text: 'Everything you turn aside comes back twice as hard, and turning it aside costs you nothing.',
     apply(p) {
       p.boonMods.deflectDamage *= 2.0;
-      p.boonMods.guardRefund = 4;
+      /* A SHARE OF WHAT THE GUARD SPENT, not a flat number per bolt — see
+       * `bastionGuardRefund`, which is where the flat 4 stopped being a refund
+       * the moment §6 gave each rung its own price. 1 is the card's own word:
+       * "turning it aside costs you nothing". */
+      p.boonMods.guardRefund = 1;
       boonTick(p, 'bastion', bastionGuardRefund);
     },
   },
