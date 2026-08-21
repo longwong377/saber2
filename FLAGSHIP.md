@@ -659,6 +659,14 @@ Two faults were in it, and both flattered the catastrophe:
 > Twenty seeds an arm are running. If they say the lever does nothing, the two
 > constants come back out and every note quoting them is corrected.
 >
+> **ONE THING IS ALREADY SETTLED AND IT IS THE ONE THAT MATTERS: THE TARGET IS
+> NOT MET.** The user set it at about half a ten-man line. The best controlled
+> reading is somewhere between 1.5 and 3 survivors, so an engagement fought
+> without the Jedi still costs **seven or eight of ten, not five** — and that
+> holds whichever way the twenty seeds fall, because both arms of the controlled
+> comparison are under the target. What is still open is only whether the two
+> constants moved it at all.
+>
 > **What survives is method, not tuning:** the muster is invisible to a poll; an
 > idle Jedi is worse for the line than no Jedi, five seeds of five; and
 > `theline.12`'s four readings of ONE build span 1.3 to 6.0, which is why its
