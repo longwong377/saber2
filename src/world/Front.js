@@ -258,6 +258,59 @@ export function burnBand(terrain, front, opts = {}) {
 }
 
 /**
+ * THE FRONT THIS ENGAGEMENT IS FOUGHT ON — AND IT IS THE GENERATED ONE WHEN
+ * THERE IS ONE.
+ *
+ * `World._groundKeyFor` publishes `world.battlefield`: the bezier the ground
+ * under this run was derived from, its reason, its axis of advance and its
+ * one chokepoint. Until now nothing read it. The mode raised a generated
+ * heightfield around a curve and then dressed it with a straight line drawn
+ * off an unrelated seed, so the burn, the barrage and the dead landed
+ * wherever `frontAt` happened to point — which on a generated ground is a
+ * front that has nothing to do with the ground it is on. §12.1's whole claim
+ * is "generate the battle, then the ground that explains it"; a battle
+ * nothing dresses is scenery.
+ *
+ * THE SCHEDULE IS THE SAME SCHEDULE, MEASURED FROM THE PLAN'S OWN LINE.
+ * §14's front closes 40 m an engagement over 160 m of ground, and on a
+ * generated ground the place it closes ONTO is the one the plan named: the
+ * line starts `FRONT_MARCH` metres beyond the chokepoint and arrives on it
+ * at the last engagement. Expressed as an OFFSET of the curve along its own
+ * normal, so the front keeps its shape and moves — one battle progressing
+ * instead of a different one drawn five times.
+ *
+ * ABSOLUTE METRES FROM THE DEPLOY POINT IS WHAT IT WAS, AND IT WAS WRONG.
+ * `frontAt`'s 180 m is a distance from the PLAYER, which on a generated
+ * ground is a line with no relation to the ground under it — and the shelf
+ * that stands a sea room's battle out of its own lava is built around the
+ * plan's line, so an absolute schedule walked the front straight off it.
+ * Measured on the Ember Shelf: **352 of 352 burn marks under the sheet.** `frontLine` reads `offset`; nothing else here knows it exists.
+ *
+ * `opts.front` overrides both, and an authored level with no plan gets the
+ * straight schedule it always got.
+ *
+ * ── AND IT IS EXPORTED, BECAUSE THE DRESSING IS NOT THE ONLY READER ─────
+ *
+ * `MODES.theline.lineAdvances` takes an area when a quorum of the living is up
+ * with the line, and it measures that against the COMMANDER's own position —
+ * "your men are near you" rather than "your men are on the ground this
+ * engagement is about". The honest version is the front, and which front an
+ * engagement is fought on is decided here and in one place: a caller that
+ * wants it asks this and then asks `frontLine(front).side(x, z)`, rather than
+ * restating the schedule (HANDOFF §2.4) or reading `world.battlefield.choke`
+ * and forgetting that the line has marched off it.
+ */
+export function engagementFront(world, engagement, opts = {}) {
+  const n = Math.max(1, engagement | 0);
+  const plan = opts.plan ?? world?.battlefield ?? null;
+  if (!plan) return frontAt(n, opts);
+  const offset = Math.max(0, FRONT_MARCH - (n - 1) * (opts.step ?? FRONT_STEP));
+  return { ...frontAtChoke(plan, n), distance: plan.distance + offset,
+    offset, engagement: n };
+}
+
+
+/**
  * DRESS THE GROUND FOR ENGAGEMENT n.
  *
  * Additive on purpose: a battlefield accumulates, and the plates are meant to
@@ -275,46 +328,7 @@ export function burnBand(terrain, front, opts = {}) {
 export function marchFront(world, opts = {}) {
   const n = Math.max(1, opts.engagement | 0);
   const seed = opts.seed ?? 1;
-  /**
-   * THE FRONT THIS ENGAGEMENT IS FOUGHT ON — AND IT IS THE GENERATED ONE WHEN
-   * THERE IS ONE.
-   *
-   * `World._groundKeyFor` publishes `world.battlefield`: the bezier the ground
-   * under this run was derived from, its reason, its axis of advance and its
-   * one chokepoint. Until now nothing read it. The mode raised a generated
-   * heightfield around a curve and then dressed it with a straight line drawn
-   * off an unrelated seed, so the burn, the barrage and the dead landed
-   * wherever `frontAt` happened to point — which on a generated ground is a
-   * front that has nothing to do with the ground it is on. §12.1's whole claim
-   * is "generate the battle, then the ground that explains it"; a battle
-   * nothing dresses is scenery.
-   *
-   * THE SCHEDULE IS THE SAME SCHEDULE, MEASURED FROM THE PLAN'S OWN LINE.
-   * §14's front closes 40 m an engagement over 160 m of ground, and on a
-   * generated ground the place it closes ONTO is the one the plan named: the
-   * line starts `FRONT_MARCH` metres beyond the chokepoint and arrives on it
-   * at the last engagement. Expressed as an OFFSET of the curve along its own
-   * normal, so the front keeps its shape and moves — one battle progressing
-   * instead of a different one drawn five times.
-   *
-   * ABSOLUTE METRES FROM THE DEPLOY POINT IS WHAT IT WAS, AND IT WAS WRONG.
-   * `frontAt`'s 180 m is a distance from the PLAYER, which on a generated
-   * ground is a line with no relation to the ground under it — and the shelf
-   * that stands a sea room's battle out of its own lava is built around the
-   * plan's line, so an absolute schedule walked the front straight off it.
-   * Measured on the Ember Shelf: **352 of 352 burn marks under the sheet.** `frontLine` reads `offset`; nothing else here knows it exists.
-   *
-   * `opts.front` overrides both, and an authored level with no plan gets the
-   * straight schedule it always got.
-   */
-  const plan = opts.plan ?? world.battlefield ?? null;
-  const front = opts.front || (plan
-    ? (() => {
-      const offset = Math.max(0, FRONT_MARCH - (n - 1) * (opts.step ?? FRONT_STEP));
-      return { ...frontAtChoke(plan, n), distance: plan.distance + offset,
-        offset, engagement: n };
-    })()
-    : frontAt(n, opts));
+  const front = opts.front || engagementFront(world, n, opts);
   const line = frontLine(front);
   const T = world.terrain;
   const out = { engagement: n, bearing: front.bearing, distance: front.distance,
