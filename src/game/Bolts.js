@@ -564,8 +564,15 @@ export function guardIntercept(from, to, guard, out = new THREE.Vector3()) {
  *   1. the swept segment crosses the sphere of radius `reach` about `origin` —
  *      the same ray/sphere solve `guardIntercept` uses, for the same reason it
  *      is a solve rather than a distance test: a bolt covers a metre a frame.
- *   2. the crossing is inside `sector` of `axis`. You cannot bring a guard
- *      behind you, and the arc handed in is the guard's own.
+ *   2. THE MAN is inside `sector` of `axis`. You cannot bring a guard behind
+ *      you and you cannot screen behind you; the arc handed in is the guard's
+ *      own. It is the man's bearing and NOT the bolt's crossing point, and
+ *      that is not a nicety — measured on a real Command battle, testing the
+ *      crossing took the screen from a mechanic to a curiosity: **16 bolts in
+ *      a 250-second battle.** The fire that kills your line comes from INSIDE
+ *      the line, so it enters the reach at the muzzle of the man who fired it,
+ *      and half the rank is standing behind you. The honest question is which
+ *      men you are covering, and a man is covered when you are facing him.
  *   3. AND IT IS ACTUALLY GOING TO HIT SOMEBODY. Each entry of `bodies` is a
  *      sphere the caller measured off a real body, and clearing it only makes
  *      the bolt a CANDIDATE: `screen.hits` then asks the body itself. This is
@@ -611,18 +618,17 @@ export function screenIntercept(from, to, screen, out = new THREE.Vector3()) {
     if (t < 0 || t > len) return 0;                    // does not get there this frame
   }
   out.copy(from).addScaledVector(_s1, t);
-  const crossed = out.distanceTo(o);
-  // 2 — in front of you, by the arc a guard covers.
-  if (crossed > 1e-6) {
-    _s3.subVectors(out, o).multiplyScalar(1 / crossed);
-    if (_s3.dot(screen.axis) < Math.cos(screen.sector)) return 0;
-  }
-  // 3 — and on its way into one of them. The line is followed from the contact
-  // rather than from the muzzle: a bolt that has already passed a man is not on
-  // its way into him.
+  // 2 and 3 are asked together, per man: he has to be in front of you AND the
+  // bolt has to be on its way into him. The line is followed from the contact
+  // rather than from the muzzle, so a bolt that has already passed a man is not
+  // on its way into him.
   const margin = screen.margin || 0;
   const hits = screen.hits;
+  const cosArc = Math.cos(screen.sector);
   for (const m of bodies) {
+    _s3.set(m.x - o.x, m.y - o.y, m.z - o.z);
+    const reach = _s3.length();
+    if (reach > 1e-6 && _s3.multiplyScalar(1 / reach).dot(screen.axis) < cosArc) continue;
     _s2.set(m.x - out.x, m.y - out.y, m.z - out.z);
     const along = _s2.dot(_s1);
     if (along <= 0) continue;                          // behind the contact
