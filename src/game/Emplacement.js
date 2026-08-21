@@ -78,6 +78,19 @@ import * as THREE from 'three';
 import { BOLT_COLORS } from './Bolts.js';
 import { propMaterials } from '../world/Props.js';
 import { audio } from '../engine/Audio.js';
+/**
+ * THE SPREAD COMES OFF THE GAME'S OWN STREAM AND NOT OFF `Math.random`.
+ *
+ * `tools/register.mjs` pins `__SABER_SEED` before a single module is loaded
+ * precisely so that two module-level streams — `rand` here and `rng` in
+ * World.js — are the same on every run; its own note lists what a
+ * `Math.random()` seed cost the project (an escalation check that failed in a
+ * sequence and passed alone, a blast-door suite that failed a different check
+ * on each of four consecutive runs). A gun that dispersed off the wall clock
+ * would put this file straight back on that list, and it would do it in the
+ * one check whose subject is how many men a gun takes off a roster.
+ */
+import { rand } from '../engine/MathUtil.js';
 
 /**
  * THE GUN, PRICED AGAINST THE LINE IT IS SHOOTING AT.
@@ -333,9 +346,9 @@ export class GunPit {
     const range = _v.distanceTo(this.muzzle);
     if (t.velocity) _v.addScaledVector(t.velocity, range / GUN.speed);
     _d.subVectors(_v, this.muzzle).normalize();
-    _d.x += (Math.random() - 0.5) * GUN.spread;
-    _d.y += (Math.random() - 0.5) * GUN.spread * 0.7;
-    _d.z += (Math.random() - 0.5) * GUN.spread;
+    _d.x += (rand() - 0.5) * GUN.spread;
+    _d.y += (rand() - 0.5) * GUN.spread * 0.7;
+    _d.z += (rand() - 0.5) * GUN.spread;
     _d.normalize();
     bolts.fire(this.muzzle, _d, {
       speed: GUN.speed, damage: GUN.damage, color: BOLT_COLORS.red,
