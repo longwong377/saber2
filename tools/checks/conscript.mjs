@@ -25,8 +25,50 @@ import { DATABANK, factionOf } from '../../src/game/Databank.js';
 import { LEVELS } from '../../src/game/Levels.js';
 import { clocked } from './_shared.mjs';
 
-/** §6's own pair, as a ratio so it can be checked without a moving player. */
-const B1_DPS = 2.17, CONSCRIPT_DPS = 1.4;
+/**
+ * §6's own pair, as a ratio so it can be checked without a moving player.
+ *
+ * THE CONSCRIPT'S HALF MOVED, 1.4 -> 0.7, AND IT IS THE ONE NUMBER IN THIS FILE
+ * THAT IS NOT §6's ANY MORE. What follows is the whole of why, because a check
+ * that quietly re-points at a new target is a check nobody can argue with.
+ *
+ * §6 prices BOTH of these against A MOVING PLAYER — a player with a guard, a
+ * dash and a dive. Until this session that was the only reader there was:
+ * `World._boltHitTest` opened its enemy loop with an early-out over every
+ * hostile bolt in the game and your own troopers live in `world.enemies`, so
+ * no rifle on the other side could touch your army (FLAGSHIP §16.3). The same
+ * `damage` field now serves a second case its author never priced — a clone
+ * trooper with 46 hit points and a slot to stand in, who cannot dash, dive or
+ * block — and the two readings disagree about what the number should be.
+ *
+ * MEASURED on the case §6 did not price: one engagement of the flagship mode
+ * on its own ground, driven to its muster with no Jedi on the field, five seeds
+ * (`tools/_linehold.mjs`). Taking the levy off the field moves the survivors
+ * from 1.8 of 10 to 4.0 of 10 — **two of the eight names an engagement costs
+ * are the weather's**, and the player's target for that engagement is five men
+ * left standing. The levy is charged no threat by design and its exemption is
+ * argued at length in src/game/Levy.js, every word of it about the PLAYER's two
+ * ledgers.
+ *
+ * WHAT DOES NOT MOVE IS §6's ARGUMENT, and this is the part that makes the
+ * halving safe rather than a nerf. §6's answer to a crowd is not damage, it is
+ * SUPPRESSION — "the crowd does not kill you. It nails your feet to the floor,
+ * and then the four B2s at 5.85 dps each kill you" — and suppression is billed
+ * PER BOLT: `GUARD.stamina` is [1.2, 0.4, 0, 0] by grade and an unanswered bolt
+ * in the guard cone costs Force. Not one of those numbers reads `damage`. The
+ * same forty bodies arrive at the same cadence firing the same bolts and
+ * draining the same bar; a conscript is now MORE purely the thing §6 says it
+ * is, not less.
+ *
+ * And the band below still guards what this check was written to guard — its
+ * own note says it: "a conscript that drifted to a tenth of a B1 would be
+ * harmless furniture, and one that drifted to a B1's equal would be a B1 you
+ * get for free." A third of a B1 is neither. The round was 10 against a B1's 9,
+ * which is to say the body defined by being worth nothing carried the heaviest
+ * small-arms round on the Confederate roster and reached §6's dps ratio by
+ * firing fewer, bigger ones — the wrong shape for weather twice over.
+ */
+const B1_DPS = 2.17, CONSCRIPT_DPS = 0.7;
 
 export async function run({ check, assert }) {
   check = await clocked(check);
