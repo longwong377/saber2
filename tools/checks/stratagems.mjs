@@ -303,13 +303,36 @@ export async function run({ check, assert, THREE: T }) {
     const c2 = bench();
     const S2 = c2.p.stratagems;
     S2.setArming(true);
-    const wrong = [...strike.code];
-    wrong[1] = DIRS.find(d => d !== wrong[1] && !STRATAGEMS.some(s => s.code.startsWith(wrong[0] + d)));
-    assert(wrong[1], 'every second letter leads somewhere — this fixture needs a dead one');
-    assert(S2.feed(wrong[0], c2.ctx) === null, 'the first letter of a real code went nowhere');
-    assert(S2.feed(wrong[1], c2.ctx) === false, 'a letter that leads nowhere was accepted');
+    /**
+     * THE DEAD BRANCH IS SEARCHED FOR, NOT ASSUMED TO BE AT DEPTH ONE.
+     *
+     * It used to take the orbital strike's first letter and look for a second
+     * direction that no row continues. That held while the table was seven
+     * rows and stopped holding at eighteen: at seed 1 all four directions after
+     * the lance's opening letter now lead somewhere, and the fixture failed
+     * with "every second letter leads somewhere" — which is a property of the
+     * table having got denser, not a defect in the entry machine.
+     *
+     * So it walks the whole tree for the SHORTEST live prefix with a dead
+     * continuation. One exists by construction: eighteen codes cannot fill
+     * 4^5 spellings, let alone 4^8. What is being measured is unchanged — a
+     * letter that leads nowhere is refused and clears the entry.
+     */
+    let live = '', dead = '';
+    outer: for (const row of STRATAGEMS) {
+      for (let k = 1; k < row.code.length; k++) {
+        const pre = row.code.slice(0, k);
+        const d = DIRS.find(x => !STRATAGEMS.some(o => o.code.startsWith(pre + x)));
+        if (d) { live = pre; dead = d; break outer; }
+      }
+    }
+    assert(dead, `no dead branch anywhere in ${STRATAGEMS.length} codes — the space is full`);
+    for (const c of live) {
+      assert(S2.feed(c, c2.ctx) === null, `${live} is a live prefix and ${c} went nowhere`);
+    }
+    assert(S2.feed(dead, c2.ctx) === false, 'a letter that leads nowhere was accepted');
     assert(S2.entry === '', 'a failed code left the entry standing');
-    return `${strike.code} → designation → release → queued; ${wrong[0]}${wrong[1]} → refused and cleared`;
+    return `${strike.code} → designation → release → queued; ${spell(live + dead)} → refused and cleared`;
   });
 
   check('stratagems: letting go abandons the code, and so does silence', () => {

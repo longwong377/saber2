@@ -1,5 +1,18 @@
 /**
- * BATTLEFIELD BORZ — WAR SUPPORT, the thing a stratagem actually costs.
+ * BATTLEFIELD BORZ — WAR SUPPORT, the thing a SUPPORT CALL actually costs.
+ *
+ * ── THE WORD ─────────────────────────────────────────────────────────────
+ *
+ * These were called stratagems. That word is Helldivers', the player said so
+ * ("they should not be called strategems in game obviously as that's a
+ * helldiver's thing"), and nothing a player can read says it any more: a
+ * Jedi general holds up a comm and makes a SUPPORT CALL, and this file is the
+ * pool it is drawn from. The two names are one sentence — you spend WAR
+ * SUPPORT on a SUPPORT CALL — which is the whole reason that pairing was
+ * chosen over anything more decorative. The module is still `Stratagems.js`
+ * and the DOM node is still `#stratagem`; renaming an identifier a player
+ * cannot see buys nothing and renaming the saved binding key would silently
+ * discard every player's rebind of it.
  *
  * ── THE NOTE ─────────────────────────────────────────────────────────────
  *
@@ -49,14 +62,36 @@ import { clamp } from '../engine/MathUtil.js';
  * THE CEILING, and everything below is priced against it.
  *
  * 100 is the whole of what your side can put behind you at once. `supportCost`
- * scales every row so the dearest call on the table lands at half the bar —
- * measured, the orbital strike is 40 Force and 50 support — so the bar holds
- * two heavy calls or four light ones, and a smoke screen at 15 is something you
- * can always afford. That is the shape the note asks for: "different strategems
- * cost more obviously but when you use them it depletes your side's support
- * resources".
+ * scales every row so the dearest call on the table lands at `DEAREST_SHARE` of
+ * the bar — measured off the shipped eighteen rows, the orbital bombardment is
+ * 60 Force and 80 support and the smoke screen is 12 and 16 — so the bar holds
+ * one of the enormous calls, or two of the middle, or six screens. That is the
+ * shape the note asks for: "different strategems cost more obviously but when
+ * you use them it depletes your side's support resources".
  */
 export const SUPPORT_MAX = 100;
+
+/**
+ * WHAT THE DEAREST CALL ON THE TABLE TAKES OF THE BAR, as a share of it.
+ *
+ * It was a half, and a half was right when the table was seven rows long and
+ * the orbital strike was the top of it: the bar held two heavy calls, which is
+ * a rhythm rather than a decision. The table is eighteen rows now and the top
+ * of it is an orbital bombardment — twenty-two detonations across forty-two
+ * metres over nine seconds — and a call that clears most of a deep wave must
+ * not be a thing you can afford twice in a row.
+ *
+ * 0.8, so the biggest call takes FOUR FIFTHS of everything your side has spare
+ * and you cannot make it at all at the opening of a battle (`SUPPORT_START` is
+ * 55). What that buys, measured off the shipped table: the bar holds one of the
+ * top four, or two of the middle, or six smoke screens — and the rearm below is
+ * proportional, so the bombardment also takes 12.8 s of the supply line's
+ * recovery with it. That is the "real decision" the eighteen-row table is for.
+ *
+ * `Stratagems.supportCost` derives every price off this and each row's own
+ * Force cost, so re-pricing a row moves its support price and nothing else.
+ */
+export const DEAREST_SHARE = 0.8;
 
 /** Where a battle opens. Enough for one heavy call or two light ones, so the
  *  first minute is a choice rather than a wait. */
@@ -107,6 +142,37 @@ export class WarSupport {
     /** Total credited and spent this battle, which the readout uses. */
     this.earned = 0;
     this.spent = 0;
+    /**
+     * THE WAR EFFORT — what this side has DONE this battle, and the ladder the
+     * heavier support calls are released along.
+     *
+     * ── WHY THERE IS A SECOND NUMBER BESIDE `earned` ────────────────────
+     *
+     * `earned` is what the pool actually TOOK, so it stops moving the instant
+     * the bar is full: `credit` clamps at the ceiling and reports the
+     * difference. That is right for a readout of the supply line and exactly
+     * wrong for a measure of how the battle is going, because it freezes for
+     * the player who is doing best — a side holding a full bar and killing
+     * everything in front of it would never release another call. Measured on
+     * a colosseum wave with the pool parked at 100: eleven kills and a cleared
+     * wave credited 0.0 to `earned` and 15.05 to this field.
+     *
+     * So this is the credit OFFERED, ceiling or no ceiling: every kill, every
+     * cleared wave, every piece of ground held, summed for the battle. It is
+     * the one honest answer to "how far into this fight are you", it needs no
+     * new hook anywhere — `credit` is already called from the four places the
+     * score is — and it works identically in a horde run, a campaign and a
+     * skirmish, none of which count waves the same way.
+     *
+     * ── AND IT DIES WITH THE BATTLE ─────────────────────────────────────
+     *
+     * A `WarSupport` is built per World and serialised nowhere, which is what
+     * makes releasing calls off it an UNLOCK WITHIN A RUN rather than the
+     * cross-run power `Progress.js` is the written law against. The hundredth
+     * run opens with the same seven calls the first one did, and earns the
+     * other eleven the same way.
+     */
+    this.effort = 0;
   }
 
   get frac() { return this.max > 0 ? this.value / this.max : 0; }
@@ -141,6 +207,10 @@ export class WarSupport {
   credit(kind, n = 1) {
     const v = typeof kind === 'number' ? kind : (SUPPORT_EARN[kind] ?? 0) * n;
     if (!(v > 0)) return 0;
+    /* THE WAR EFFORT TAKES THE WHOLE OFFER, BEFORE THE CEILING. See `effort`:
+     * this is the record of what the side did, and a full bar does not undo a
+     * kill. It is deliberately the only line in this method above the clamp. */
+    this.effort += v;
     const before = this.value;
     this.value = clamp(this.value + v, 0, this.max);
     const got = this.value - before;
@@ -168,6 +238,9 @@ export class WarSupport {
       rearm: this.rearm,
       earned: this.earned,
       spent: this.spent,
+      /* The ladder the heavier calls are released along — read by the HUD's
+       * panel, which prints what the next one is still waiting on. */
+      effort: this.effort,
     };
   }
 }
