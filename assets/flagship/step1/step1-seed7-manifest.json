@@ -1,0 +1,87 @@
+{
+  "step": "step1",
+  "seed": 7,
+  "quality": "medium",
+  "settle": 8,
+  "camera": {
+    "bearing": 1.9913817606549786,
+    "x": 6.532718981368332,
+    "z": -14.605601073234538,
+    "y": 8.309376195376446
+  },
+  "plates": [
+    {
+      "file": "plate-alpha.png",
+      "engagement": 1
+    },
+    {
+      "file": "plate-charlie.png",
+      "engagement": 3
+    },
+    {
+      "file": "plate-bravo.png",
+      "engagement": 5
+    }
+  ],
+  "march": [
+    {
+      "engagement": 1,
+      "bearing": 1.9913817606549786,
+      "distance": 180,
+      "replayed": 342,
+      "replayMs": 7.5,
+      "barrage": 8,
+      "smoke": 5,
+      "wrecks": 4,
+      "statics": 193,
+      "file": "/tmp/flagship-lane/.flagship/plates/plate-alpha.png"
+    },
+    {
+      "engagement": 2,
+      "bearing": 1.9913817606549786,
+      "distance": 140,
+      "replayed": 233,
+      "replayMs": 3.099999999627471,
+      "barrage": 8,
+      "smoke": 6,
+      "wrecks": 5,
+      "statics": 234
+    },
+    {
+      "engagement": 3,
+      "bearing": 1.9913817606549786,
+      "distance": 100,
+      "replayed": 102,
+      "replayMs": 1.3999999985098839,
+      "barrage": 8,
+      "smoke": 9,
+      "wrecks": 5,
+      "statics": 277,
+      "file": "/tmp/flagship-lane/.flagship/plates/plate-charlie.png"
+    },
+    {
+      "engagement": 4,
+      "bearing": 1.9913817606549786,
+      "distance": 60,
+      "replayed": 190,
+      "replayMs": 2.5,
+      "barrage": 8,
+      "smoke": 9,
+      "wrecks": 5,
+      "statics": 317
+    },
+    {
+      "engagement": 5,
+      "bearing": 1.9913817606549786,
+      "distance": 20,
+      "replayed": 403,
+      "replayMs": 5.199999999254942,
+      "barrage": 8,
+      "smoke": 9,
+      "wrecks": 4,
+      "statics": 349,
+      "file": "/tmp/flagship-lane/.flagship/plates/plate-bravo.png"
+    }
+  ],
+  "errors": []
+}

@@ -1023,12 +1023,23 @@ function strewSwampFloor(world, opts = {}) {
  * band an empty level is missing. Placed as clusters, because a hull plate does
  * not land on its own — whatever tore it off scattered the rest of it nearby.
  */
-function strewWrecks(world, opts = {}) {
+/* EXPORTED, AND IT TAKES A BEARING. Both halves are FLAGSHIP.md §12.4's
+ * sentence — "wrecks belong on the fighting line" — expressed as the two
+ * things the function could not previously say. `angle` is forwarded to
+ * `findSite`, which already accepts one and fixes the sample's bearing while
+ * letting the radius fall where it likes; without it every wreck this function
+ * has ever placed was drawn from a full 360 degrees, which is a wreck FIELD
+ * and not a fighting line. The export is what lets the front dressing in
+ * src/world/Front.js grow hulls on the burnt side only without holding a
+ * second copy of the placement rule (HANDOFF §2.3). Nothing about the default
+ * behaviour changes: `opts.angle` undefined is the random bearing it always
+ * drew. */
+export function strewWrecks(world, opts = {}) {
   const n = opts.count ?? 5;
   let placed = 0;
   for (let k = 0; k < n; k++) {
     const site = findSite(world, opts.rmin ?? 55, opts.rmax ?? 150, {
-      clearance: 11, maxSlope: opts.maxSlope ?? 0.42, tries: 20,
+      clearance: 11, maxSlope: opts.maxSlope ?? 0.42, tries: 20, angle: opts.angle,
     });
     if (!site) continue;
     placed++;
