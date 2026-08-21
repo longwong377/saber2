@@ -74,8 +74,7 @@ biggest-visual-defect, confirmed live).
 ask them to put the three in order.** That is the test; it has not been run on
 a person yet.
 
-### Step 2 — the Dead Jedi test: **presence carries real weight, and its sign
-is negative**
+### Step 2 — the Dead Jedi test: **the channel it was measured through was pinned shut, and is not any more**
 
 15 driven Command worlds, 5 seeds × 3 arms × 3 engagements:
 
@@ -95,18 +94,31 @@ loses the area in 3 of 5 seeds.
 
 Two caveats, both real and both in the probe's header: the player is a
 **script**, and **morale reads 1.000 in both player arms** — §10's `JEDI_NEAR`
-saturation is LIVE, so the channel §7's BREAK verb needs is pinned shut and
-cannot be what presence pays through. **Unsaturating `JEDI_NEAR` is the first
-thing to try before believing this table.**
+saturation was LIVE, so the channel §7's BREAK verb needs was pinned shut and
+could not be what presence paid through.
+
+**THE SECOND CAVEAT IS FIXED, AND IT MATTERS MORE THAN THE TABLE.** Morale now
+reads **0.87 / 0.84 / 0.84** across the three arms, on the same tree and the
+same seeds — see "Closed since this list was written" below for the two terms
+that did it. What that means for the numbers above: **the table was taken
+through a saturated instrument and has not been re-taken.** On two seeds
+afterwards the FALLEN column had flipped sign (no player 8, with blade 2.5–3),
+which would reverse the whole reading — but two seeds is not a table, and the
+muster lane re-priced allies in the same window, so the arms are not the arms
+this table was measured on either. Re-run it before quoting any row of it:
+
+    node --import ./tools/register.mjs tools/_flagship.mjs step2 --seeds 3,5,7,11,13
 
 ---
 
 ## Where the tree is
 
-- **7 levels, 8 modes, 1 campaign, 31 archetypes.** Run `tools/state.mjs`
-  rather than believing that sentence.
-- Gate was ~1553 before this session and is **~1620** now. **Re-run it before
-  trusting anything.**
+- **7 levels, 8 modes, 1 campaign, 35 archetypes.** Run `tools/state.mjs`
+  rather than believing that sentence — it printed those four numbers a moment
+  before this line was written, and four more archetypes arrived since the last
+  time somebody typed them here.
+- Gate was ~1553 two sessions ago, ~1620 one session ago, and **1718 passed / 0
+  failed** at the end of this one. **Re-run it before trusting anything.**
 - **The live link follows the default branch.** This session's work is on
   `claude/borz-menu-transport-ship-r29efk`. If it has not been merged, the
   player has not seen any of it.
@@ -116,7 +128,42 @@ thing to try before believing this table.**
 
 ---
 
-## What the last session did
+## What this session did — V5, and everything under it
+
+**The V5 list is closed.** Fourteen notes, each with the measurement that
+settles it, in `PLAYTEST.md`'s newest "what came of it" table. The two worth
+knowing about:
+
+- **The Force barrier had never been built.** The player asked for it in an
+  earlier list and asked again — *"i'd already asked for it but I could have
+  missed it"* — and they had not: there were eleven Force verbs in `POWER_COST`
+  and none of them shielded anything. It exists now, as a held channel rather
+  than a timer: 18 to raise, 6/s to hold, 4 a bolt, regen paused while it is up.
+  Bolts die on the SURFACE of the sphere, a muzzle already inside the radius
+  still shoots the man in it, and blades come through blunted by 35%.
+- **The saber catch was 38 centimetres of arithmetic between two correct
+  files.** The pick-up measured to `player.position` — the FEET — while
+  `_updateGrip` clamps what it holds to 1.4 m in front of the CHEST. 1.98 m
+  against a 1.6 m reach: the closest the Force could ever bring your own weapon
+  was permanently, and silently, out of your hand. This is the shape of defect
+  this repository keeps finding, and it is worth more than the fix.
+
+Also landed: the giants (five machines at canon dimensions, each with a derived
+weak point); eighteen support calls, renamed off Helldivers' word and released
+along a ladder inside one run; the Separatist transport; drivable vehicles —
+the four with a CREW, because a hailfire has nobody in it to displace; a line
+for every Force power through the synthesised larynx; and the whole of the
+muster, the blast door, the puppet line and the L2 rung.
+
+Four things came out of `NEXT.md`'s own open list rather than the player's:
+grenades on the wire, morale unpinned, a felled trunk giving a floor (0 of 9
+did), and a `boxTopAt` that is exact for a rotated box.
+
+Gate at the end: **1718 passed, 0 failed.**
+
+---
+
+## What the session before it did
 
 **Stream A — the player's list, finished.** Every item, with the numbers, is in
 `PLAYTEST.md`'s "what came of it" table. The four that were repeats:
@@ -141,26 +188,64 @@ thing to try before believing this table.**
 
 ## Open, and worth a decision
 
-- **Grenades are not networked.** `GrenadeField` is host-side only, so a co-op
-  client sees no grenade, no shout and no crater. Not a desync — a gap.
-- **`JEDI_NEAR` saturates morale at 1.000** whenever the player is anywhere
-  near the line, which pins shut the channel §7's whole presence argument
-  depends on. See Step 2 above.
-- **A Jedi in the line costs the roster 7.5 men.** If that is not intended, it
-  is the most consequential number in this document.
-- **`works()` and `BlastDoor`** — the only door hold in the game, on no level.
-  A lane was mid-way through siting one on Geonosis when this was written;
-  check `git log` before repeating it.
+### Closed since this list was written
+
+- ~~**Grenades are not networked.**~~ They cross now, as events rather than as
+  state — recorded at `GrenadeField.throw`, replayed at the far end, and the
+  guest's copy is a PICTURE: it flies, it bangs, men dive from it, it leaves the
+  hole, and it does no damage, because the host already did that and the result
+  arrives as hp. `coop.mjs` measures both halves.
+- ~~**`JEDI_NEAR` saturates morale at 1.000.**~~ Two terms, and the first was
+  not enough on its own. Presence tapers out at a ceiling of `1 + COMRADE_FELL`
+  — so the ordinary worst thing that happens to a man lands on the steadiest
+  soldier in the line IN FULL rather than being clipped — and elation wears off
+  ABOVE that ceiling, because morale was a one-way ratchet in a battle you are
+  winning (`WAVE_CLEAR` +0.34, `AREA_HELD` +0.5, and nothing ever took any of it
+  back). With only the taper in, the probe still read 0.98/0.96/0.92 including
+  the arm with no player in it, which is what says the ceiling was never really
+  about the Jedi. `Enemy.aimQuality` was re-anchored on the resting point at the
+  same time, or unpinning morale would have made every allied trooper 12.5%
+  worse for free.
+- ~~**`works()` and `BlastDoor` on no level.**~~ Sited, and the drive is stable:
+  tight 19.1 s · natural 18.8 s · wide 21.7 s, five byte-identical runs. The
+  flap was neither the streams nor the door — `Destruction._prepare` does as
+  much pre-fracture as fits in a REAL-TIME budget per frame, so the frame the
+  revetment finished, a fact about the machine, moved every number. The closed-
+  loop breach rule was then measured at **0 enclosed area on all 24 samples** and
+  deleted: a blade across a plate lays a bar, not a line.
+- ~~**Muster-anywhere is the small honest version.**~~ All three gaps closed,
+  and a live bug found underneath the second — turning allies on made a Sith
+  fight their own Confederacy hardware on 6 of 7 grounds.
+
+### Still open
+
+- **A Jedi in the line costs the roster 7.5 men.** Still the most consequential
+  number in this document, and it may no longer be the number: on two seeds
+  after the morale fix and the muster lane's ally re-pricing, the SIGN had
+  flipped (fallen: no player 8, with blade 2.5–3). Two seeds is not a table —
+  re-run `tools/_flagship.mjs step2 --seeds 3,5,7,11,13` before believing
+  either version.
+- **Presence is a FLOOR, not a gradient.** Now that morale is unpinned, both
+  player arms rest at the same 0.84, because `JEDI_NEAR` is a step at 14 m and
+  both arms have a Jedi inside it. Whether it should fall off with distance is
+  the next question, and it is now a question the arithmetic can answer.
 - **The composite grade crushes dark levels** — mustafar's near ground ×0.49. A
-  lane was measuring this when this was written; same caution.
-- **First person should be one-handed.** Two independent confirmations.
-- **Muster-anywhere is the small honest version.** A full one needs a shelf, a
-  score ladder that knows how many men you brought, and a co-op run with allies
-  that nobody has driven.
+  lane was measuring this when the line above it was written; check `git log`
+  before repeating it.
+- **First person should be one-handed**, and `HANDOFF.md` §6.0 says to ASK
+  before doing it, because it is a decision about what a first-person grip IS.
+  The wrist lane's sweep this session is the strongest evidence yet: first
+  person barely improves and the elbow cannot reach it, because the arm is
+  near-straight and the swivel cone collapses. It has been put to the player and
+  is waiting on them.
 - **A Command wave was seen sitting `active` with an empty queue, no inbound
   arrival and zero hostiles standing, from 200 s to 350 s.** FLAGSHIP §16's bug
   3. A watchdog in the flagship probe fired zero times across 15 recorded runs,
   so it is reported as seen once and not as reproducible.
+- **`topOfProps`' sibling problem, unfixed:** a log that has settled BELOW the
+  ground it fell on. Of nine trunks realised in the wood, four had surfaces
+  under the terrain and one had fallen to −179 m. The floor query is right about
+  all of them; the solver put them there.
 
 ---
 
