@@ -54,7 +54,7 @@ import { ArrivalDirector, seedArrivals } from './Arrivals.js';
 /* The one table in the game that says which side a body fights for. It imports
  * nothing, deliberately — see its header — so this edge costs no cycle and no
  * canvas. */
-import { FACTIONS, factionOf } from './Databank.js';
+import { FACTIONS, factionOf, armyForOrder, opposingArmy } from './Databank.js';
 import { makeRng, clamp, lerp, TAU } from '../engine/MathUtil.js';
 
 const rng = makeRng((Math.random() * 1e9) | 0);
@@ -1915,7 +1915,49 @@ export class WaveDirector {
    * That is the same law `_shapeUnder` states about conditions — "a condition
    * never empties the field" — and it is what makes a stall impossible.
    */
+  /**
+   * THE ARMY THE PLAYER IS LEADING, or null when nothing says.
+   *
+   * Read off the settings through `armyForOrder`, which is the single statement
+   * of that mapping — `Command.sideForOrder` reads the same one. A Grey leads
+   * neither and gets null, and every caller below treats null as "no rule",
+   * which is exactly what a Grey should get: everybody's war is their business.
+   */
+  myArmy() {
+    return armyForOrder(this._order ?? this.world?.settings?.order ?? null);
+  }
+
+  /**
+   * WHO IS ON THE OTHER SIDE OF THIS WAVE, and it is never you.
+   *
+   * The player: "when you're playing as the republic you shouldnt be fighting
+   * against things that are canonically on your side, that goes for single npcs
+   * too." Measured before this: SEVEN OF SEVEN shipped levels fielded bodies
+   * against the side they belong to — a Sith met B1s, B2s and droidekas on
+   * every ground in the game.
+   *
+   * This replaces an ALTERNATION. The old rule made each wave one army's push
+   * and swapped sides every wave, so that "you meet both inside any two waves"
+   * was a property rather than a probability — a good rule, written before the
+   * player's own army existed on the field. Its premise is gone: on a level
+   * with two armies one of them is now YOURS, so the wave that used to be the
+   * other half of the alternation is a wave of your own men marching at you.
+   * What survives is the good half — a wave is one army's push, which is what
+   * makes a firing line read as a firing line — with the side no longer drawn
+   * but simply the one you are not on.
+   */
+  enemyArmy() {
+    return opposingArmy(this.myArmy());
+  }
+
   sideFor(wave, open = null) {
+    /* THE ENEMY'S ARMY OUTRANKS THE LEVEL'S OWN QUESTION. `levelArmies` says
+     * which armies this GROUND has; when the player leads one of them there is
+     * nothing left to decide, and this holds on every level rather than only
+     * the ones that declare two — see `unlockedAt`, which is where the six
+     * levels that declare none get the same rule. */
+    const foe = this.enemyArmy();
+    if (foe) return foe;
     const armies = this.levelArmies();
     if (armies.length < 2) return null;
     /* The class that filters the pool is the class that declines this — see
@@ -1933,15 +1975,68 @@ export class WaveDirector {
   /** Is this body allowed on the field this wave, given whose push it is? */
   _sideAllows(type, wave) {
     const side = this.sideFor(wave);
-    return !side || factionOf(type) === side;
+    if (!side) return true;
+    const f = factionOf(type);
+    /* Its own side's, or nobody's — see `unlockedAt` for why the second clause
+     * is not a loophole: the Jedi and the menagerie are in neither army, and a
+     * rule that only admitted the enemy's roster would delete both. */
+    return f === side || !FACTIONS[f]?.army;
   }
 
   unlockedAt(wave) {
     const open = this._openTypes(wave);
     const side = this.sideFor(wave, open);
     if (!side) return open;
-    const mine = open.filter((t) => factionOf(t) === side);
-    return mine.length ? mine : open;
+    let mine = open.filter((t) => factionOf(t) === side);
+    /**
+     * …AND EVERYTHING THAT IS NOBODY'S FIGHTS ANYWAY.
+     *
+     * `factionOf` puts a body in one of four camps and only two of them are
+     * armies: `order` (the Jedi themselves) and `wild` (the Colosseum's
+     * menagerie) belong to neither. Filtering to one army's roster dropped both
+     * — which on the Colosseum, a level whose entire premise is exotic
+     * creatures, is the beast that took twenty waves to appear once being
+     * removed altogether, and on any level it is a Sith who can no longer be
+     * sent a Jedi.
+     *
+     * So the rule is stated as it is meant: nothing of YOUR OWN army, rather
+     * than only the enemy's.
+     */
+    const mine2 = open.filter((t) => {
+      const f = factionOf(t);
+      return f === side || !FACTIONS[f]?.army;
+    });
+    mine = mine2.length ? mine2 : mine;
+    if (mine.length) return mine;
+    /**
+     * A FILTER NEVER EMPTIES THE FIELD — the same law `_shapeUnder` states
+     * about conditions — BUT IT MUST NOT FALL BACK ONTO YOUR OWN MEN, which is
+     * what the first version of this did and it produced the defect in its
+     * purest form. Measured: on Geonosis at wave 1 the ladder has opened
+     * exactly one rung, `b1`, so a Sith's filter emptied and the fallback
+     * handed back the unfiltered set — the player's own battle droids charging
+     * the player, on the opening wave of the mode's own ground.
+     *
+     * So the fallback WIDENS THE DEPTH rather than dropping the rule: the whole
+     * pool is searched for anything that is not yours, and the lightest of
+     * those by threat is fielded. A body arriving a wave or two before the
+     * ladder meant it is a smaller wrong than an army fighting itself, and it
+     * is bounded by the pool the level authored.
+     *
+     * Only a level whose ENTIRE pool is the player's own army reaches the last
+     * line, and that is an authoring error rather than a runtime one — the
+     * check names it, and there is no such level today.
+     */
+    const anywhere = this.pool.filter((t) => {
+      const f = factionOf(t);
+      return f === side || !FACTIONS[f]?.army;
+    });
+    if (anywhere.length) {
+      const light = [...new Set(anywhere)]
+        .sort((a, b) => (ARCHETYPES[a]?.threat ?? 9) - (ARCHETYPES[b]?.threat ?? 9));
+      return [light[0]];
+    }
+    return open;
   }
 
   /** Every pool member this depth has earned, both armies and all. */
@@ -3188,7 +3283,15 @@ export class WaveDirector {
   _sandboxType(cfg) {
     if (cfg.type !== 'mixed') return cfg.type;
     if (!this.pool.length) return 'b1';
-    return this.pool[Math.floor(rng() * this.pool.length)];
+    /**
+     * AND NOT ONE OF YOUR OWN. This is the last door into the field — every
+     * other path composes through `unlockedAt`, and this one is the fallback
+     * draw — so a body of the player's own army reaching it would be a clone
+     * trooper charging a Jedi with everything else on the level filtered.
+     */
+    const ok = this.pool.filter((t) => this._sideAllows(t, this.wave));
+    const from = ok.length ? ok : this.pool;
+    return from[Math.floor(rng() * from.length)];
   }
 
   /**

@@ -99,6 +99,7 @@ import { clamp, lerp, makeRng, TAU } from '../engine/MathUtil.js';
 import { audio } from '../engine/Audio.js';
 import { nudgeFromSwing, bladeClear, SWING_REACH } from './Spawn.js';
 import { findCasualty, startDrag } from './Reactions.js';
+import { armyForOrder } from './Databank.js';
 
 /**
  * The stream every roll in this mode comes off.
@@ -379,8 +380,10 @@ export const ARMIES = {
   republic: {
     id: 'republic',
     name: 'The Republic',
-    /* A Jedi leads clones. The order IS the faction — see `sideForOrder`. */
-    order: 'jedi',
+    /* A Jedi leads clones — and WHICH order leads which army is declared in
+     * `Databank.FACTIONS` rather than here, because `Waves.js` has to ask the
+     * same question and cannot import this file (Command imports Waves). See
+     * `sideForOrder` below, which reads it from there. */
     leader: 'Jedi General',
     /* What the muster calls one of your people, and what a squad is called. */
     unit: 'trooper',
@@ -409,7 +412,6 @@ export const ARMIES = {
   separatist: {
     id: 'separatist',
     name: 'The Confederacy',
-    order: 'sith',
     leader: 'Dark Lord',
     unit: 'droid',
     squadWord: 'Unit',
@@ -436,8 +438,10 @@ export const ARMY_IDS = Object.keys(ARMIES);
  * somebody has to be at the head of the column; the mode says so on the card.
  */
 export function sideForOrder(orderId) {
-  const found = ARMY_IDS.find((k) => ARMIES[k].order === orderId);
-  return ARMIES[found || 'republic'];
+  /* `armyForOrder` is the one statement of this mapping — see the note on it in
+   * Databank.js, and the measurement that made it worth moving: seven of seven
+   * levels were fielding bodies against the side they belong to. */
+  return ARMIES[armyForOrder(orderId) || 'republic'];
 }
 
 /** The army opposing this one. Two of them, so this cannot be a lookup table. */

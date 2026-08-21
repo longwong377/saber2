@@ -63,6 +63,12 @@ export const FACTIONS = {
     name: 'The Galactic Republic',
     short: 'Republic',
     army: true,
+    /* WHICH ORDER LEADS IT, and it lives here rather than in Command.js so that
+     * `Waves.js` can ask the question too. Command imports Waves, so Waves
+     * cannot import Command; this file is the one both of them already read,
+     * and a second copy of this mapping in each is the hand-maintained twin
+     * HANDOFF §2.3 is about. `Command.ARMIES` reads it from here. */
+    order: 'jedi',
     note: 'A thousand years without a standing army, and then an army that was '
       + 'already grown and paid for by the time anybody voted on it. Its soldiers '
       + 'are one man copied a million times; its generals are monks.',
@@ -71,6 +77,7 @@ export const FACTIONS = {
     name: 'The Confederacy of Independent Systems',
     short: 'Confederacy',
     army: true,
+    order: 'sith',
     note: 'A trade alliance with a fleet. Every soldier it fields was built to a '
       + 'unit cost, which is its whole strategy and its whole weakness: the '
       + 'Confederacy does not lose a droid, it spends one.',
@@ -512,6 +519,38 @@ export const DATABANK = {
  */
 export function factionOf(type) {
   return DATABANK[type]?.faction ?? null;
+}
+
+/**
+ * WHICH ARMY A PLAYER OF THIS ORDER LEADS, or null for one that leads neither.
+ *
+ * The player, having played it: "Ive noticed that many times when as a sith
+ * i'll be fighting against mechs that are associated with the separtists which
+ * doesnt' make sense, make sure that doesn't happen and also the other way
+ * around too like when you're playing as the republic you shouldnt be fighting
+ * against things that are canonically on your side, that goes for single npcs
+ * too."
+ *
+ * Measured before the fix, over the shipped levels: SEVEN OF SEVEN fielded
+ * bodies against the side they belong to. A Sith met B1s, B2s and droidekas on
+ * every ground in the game, and a Jedi met clone troopers and marksmen.
+ *
+ * A Grey leads neither and gets null, which every caller has to handle — see
+ * `factionOf`'s note about why a plausible default is worse than a null here.
+ */
+export function armyForOrder(orderId) {
+  if (!orderId) return null;
+  for (const [id, F] of Object.entries(FACTIONS)) {
+    if (F.army && F.order === orderId) return id;
+  }
+  return null;
+}
+
+/** The army on the other side of the war from this one, or null. */
+export function opposingArmy(armyId) {
+  if (!armyId || !FACTIONS[armyId]?.army) return null;
+  const others = Object.keys(FACTIONS).filter((id) => FACTIONS[id].army && id !== armyId);
+  return others.length === 1 ? others[0] : null;
 }
 
 /** Is this body one of the two that fight a war, rather than a Jedi or a beast? */
