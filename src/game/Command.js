@@ -2601,12 +2601,18 @@ export class CommandDirector extends WaveDirector {
   /* ── the muster ────────────────────────────────────────────────────── */
 
   /**
-   * THE ARMY YOU START WITH.
+   * THE ARMY YOU START WITH — and it is two different questions now.
    *
-   * Ten bodies in two squads, all of them rung 1, all of them nameless numbers.
-   * That is deliberate: the roster screen at the top of a campaign should be ten
-   * identical strangers, so that the three names in it four areas later are
-   * something the player earned rather than something the mode handed them.
+   * A CAMPAIGN opens with ten bodies in two squads, all of them rung 1, all of
+   * them nameless numbers. That is deliberate: the roster screen at the top of
+   * a campaign should be ten identical strangers, so that the three names in it
+   * four areas later are something the player earned rather than something the
+   * mode handed them. The campaign composes its army at the muster screen,
+   * between areas, out of a purse an area paid — that IS its composition, and
+   * it is why the branch below is a contingent's alone.
+   *
+   * A CONTINGENT opens with a purse and the shape the player asked for. See
+   * the note on the branch.
    */
   _musterOpening(c = this.commander) {
     const tiers = c.army.tiers;
@@ -2678,10 +2684,10 @@ export class CommandDirector extends WaveDirector {
        * for ten men and been handed one walker and a dead 18 points.
        *
        * For `CONTINGENT_MIXED` they ARE the composition — half the purse on the
-       * line, the rest on the heaviest rungs it will carry, which at ten
-       * Republic allies is five troopers, an officer and a jet trooper for 47
-       * of 50 and at ten Confederate allies is five B1s, a MagnaGuard and a
-       * rocket droid for 29 of 30.
+       * line, the rest on the heaviest rungs it will carry — measured, that is
+       * five clone troopers, an officer and a jet trooper for 47 of 50 points
+       * at ten Republic allies, and five B1s and a MagnaGuard for 29 of 30 at
+       * ten Confederate ones.
        */
       const line = want ? this.opening : Math.max(1, Math.floor(this.opening / 2));
       for (let i = 0; i < line && this.recruit(cheapest, c); i++);

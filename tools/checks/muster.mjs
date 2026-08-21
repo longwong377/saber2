@@ -276,7 +276,32 @@ export async function run({ check, assert }) {
     assert(d.roster.strength === 5, `twelve clears left the line at ${d.roster.strength} of 5`);
     assert(clears >= 2 * CONTINGENT_WAVES_PER_BODY,
       `two replacements arrived in ${clears} clears, and the rate says ${2 * CONTINGENT_WAVES_PER_BODY}`);
-    return `5 held over 60 clears · 2 lost, back to 5 in ${clears} clears`;
+
+    /**
+     * …AND THEY REFILL THE SHAPE, NOT THE HEAD COUNT — which is a distinction
+     * that did not exist until the player could compose a contingent.
+     *
+     * `_reinforce` used to be `while (strength < opening) recruit(cheapest)`,
+     * and while every contingent was ten identical clone troopers that was the
+     * same sentence. It stops being it the moment the line is four ARCs: the
+     * first casualty comes back as a trooper, and over a long run four ARCs
+     * become eight troopers with nothing anywhere reporting the drift. A
+     * replacement is measured against `lineup` — the roll the opening muster
+     * actually bought — so an ARC is replaced by an ARC at an ARC's price.
+     */
+    await import('../../src/game/Levels.js');
+    const arcs = new CommandDirector(bench(),
+      { mode: 'waves', seed: 1, campaign: false, strength: 10, unit: 4 });
+    const opened = arcs.roster.living.map((t) => t.type).join(',');
+    assert(arcs.roster.living.every((t) => t.type === 'arc'),
+      `a contingent of ARCs opened as ${opened}`);
+    arcs.roster.living[0].alive = false;
+    for (let i = 0; i < 40 && arcs.roster.strength < 4; i++) arcs._reinforce();
+    const back = arcs.roster.living.map((t) => t.type);
+    assert(back.length === 4 && back.every((t) => t === 'arc'),
+      `a fallen ARC was replaced and the line came back as ${back.join(',')}`);
+    return `5 held over 60 clears · 2 lost, back to 5 in ${clears} clears · `
+      + `a fallen ARC comes back an ARC (${back.join('+')})`;
   });
 
   /**
