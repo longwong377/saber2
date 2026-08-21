@@ -44,24 +44,34 @@
  * and this file is the one that could break it, so the guard is here rather
  * than only in a check.
  *
- * ── WHAT IS NOT HERE, SAID PLAINLY ──────────────────────────────────────
+ * ── WHO CALLS THIS, AND WHAT EACH ONE TAKES ─────────────────────────────
  *
- * NOTHING IN THE GAME CALLS THIS YET. Same standing as `Front.js`, which says
- * the same thing at the top of itself: no mode builds a generated ground and
- * no level names one. The door is two lines —
+ * This section used to read "NOTHING IN THE GAME CALLS THIS YET". Three
+ * readers now, and they are worth naming because between them they are the
+ * whole of "generate the battle, then the ground that explains it":
  *
- *     const g = battlefieldGround('geonosis', world.runSeed);
- *     installGround(g.key, g.preset);   // then load a level whose terrain is g.key
+ *   THE GROUND. `World._groundKeyFor` raises `battlefieldGround` for a mode
+ *     that declares `generatedGround` — THE LINE does — on a level that
+ *     declares `battlefield`, which all seven now do. It hands in the two
+ *     things the generator cannot know: `deploy`, the point the player lands
+ *     on, and `keep`, the room's own fight radius.
+ *   THE FRONT. `Front.engagementFront` reads the published plan and returns
+ *     the line THIS engagement is fought on, and `marchFront` dresses it.
+ *     Before that the mode raised a heightfield around a bezier and then
+ *     dressed it with a straight line drawn off an unrelated seed.
+ *   THE SIDE. `frontLine` is the one reader of "which side of the front is
+ *     this, and how far from it" for every dressing function in the game,
+ *     curved or straight. See the long note over it.
  *
- * — and the third line is the one that is not written: `World.loadLevel`
- * builds its `Terrain` from `LEVELS[key].terrain`, so a mode that wants this
- * needs a level row pointing at the installed key, and a level row is a thing
- * §13.5 has opinions about. That decision belongs to whoever wires the mode,
- * not to the generator, and making it here would be making it for them.
+ * What is STILL not wired is the gameplay: nothing places an objective, a
+ * spawn or a quorum at `plan.choke`. `MODES.theline.lineAdvances` is the
+ * obvious taker — "the line is up when your men are on the ground the plan
+ * says this engagement is about" — and `engagementFront` exists so it can ask
+ * without restating the schedule.
  *
- * What IS wired is the measurement: `tools/checks/battlefield.mjs` builds a
- * real `Terrain` off a generated preset and holds every clause of §12.3 to a
- * number, so the ground is known to be right before anything stands on it.
+ * The measurement is `tools/checks/battlefield.mjs`, which builds a real
+ * `Terrain` off a generated preset and holds every clause of §12.3 to a
+ * number, and `theline.13`, which drives every room on one.
  */
 
 import { makeRng, clamp, lerp, smoothstep, fbm2, ridged2 } from '../engine/MathUtil.js';

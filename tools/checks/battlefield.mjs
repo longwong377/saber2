@@ -716,6 +716,15 @@ export function run({ check, assert, near }) {
       dir: front.dir, count: 520, half: 150, depth: 6.5, seed: 4211 });
     const pts = [], m4 = new THREE.Matrix4();
     for (const im of f.meshes) for (let i = 0; i < im.count; i++) { im.getMatrixAt(i, m4); pts.push([m4.elements[12], m4.elements[14]]); }
+    /* §12's banding statistic sweeps 36 bearings and projects onto the normal,
+     * so it is a statistic about a STRAIGHT band and a curved one necessarily
+     * scores lower: the same field read 20.3 when the dead were laid across
+     * the tangent and reads 8.7 laid along the curve. That is the statistic
+     * being right, not the band being worse — it still clears the floor §12
+     * quotes for a front (6-7, and the correction beside `banding` records
+     * that a Poisson field measures 1.15-1.44 while the isotropic CLUMP
+     * control is what sits at ≈2). The clause below is the one that says the
+     * band is on the FRONT, which banding cannot see at all. */
     const b = banding(pts);
     assert(b.ratio > 5, `the fallen band measures ${b.ratio.toFixed(1)} on the banding statistic — it is not a line`);
     /* ON THE LINE, not merely banded: a band is a band wherever it lies, and

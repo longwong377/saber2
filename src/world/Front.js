@@ -1,12 +1,14 @@
 /**
  * BATTLEFRONT BORZ — THE MARCHING FRONT, as the five things you can see of it.
  *
- * This is `FLAGSHIP.md` §14 Step 1's debug path and nothing more. It is NOT
- * wired to a mode, no level calls it, and it is reached only from
- * `tools/_flagship.mjs` and `tools/_frontshot.mjs`. It exists so that the kill
- * test can be run at all — three screenshots from the same spot at engagements
- * 1, 3 and 5, shuffled, and the player either puts them in order or the front
- * is not a visible variable and §14's ~600-line fallback is the mode.
+ * This was `FLAGSHIP.md` §14 Step 1's debug path and nothing more, and the two
+ * sentences that used to stand here — "it is NOT wired to a mode, no level
+ * calls it" — are both discharged. `CommandDirector.marchTo` calls
+ * `marchFront` once per engagement of THE LINE, so this is the ground the
+ * flagship mode is fought on. It is still what the kill test drives: three
+ * screenshots from the same spot at engagements 1, 3 and 5, shuffled, and the
+ * player either puts them in order or the front is not a visible variable and
+ * §14's ~600-line fallback is the mode.
  *
  * ── WHAT THE FRONT *IS*, GEOMETRICALLY ──────────────────────────────────
  *
@@ -18,6 +20,15 @@
  * cannot either.
  *
  *     burnt(p)  ⟺  (p − origin) · θ̂  >  d(n)
+ *
+ * …AND IT IS THE DEGENERATE CASE OF A CURVE, WHICH THE GENERATED GROUND
+ * ACTUALLY USES. `Battlefield.planBattle` draws a bezier and the ground under
+ * a generated run is derived from it, so the four dressing functions below ask
+ * `Battlefield.frontLine` — ONE reader, `side(x, z)` and `place(u, depth)` —
+ * and the half-plane is what that object collapses to when there is no curve.
+ * Nothing below knows which it was handed. Measured: a swath laid across a
+ * bezier by the tangent at its chokepoint put 30% of itself on the burnt side
+ * at worst; through the reader it is 100% on every seed.
  *
  * θ̂ is the axis of advance, fixed for the whole deployment. `d` starts at
  * 180 m and closes 40 m an engagement to 20 m, which is the same schedule
