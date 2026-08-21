@@ -146,6 +146,34 @@ for before and did not get.
   blade, I don't understand the difference"*
 - *"remind me how you heal your allies (I've probably just missed it)"*
 
+### What came of it
+
+Written after the work, one line each, with the number that decided it. Both
+questions above turned out to be defects rather than lapses: the two mode cards
+never mentioned each other, and there was no way to heal an ally at all.
+
+| Finding | What it was, and what happened |
+|---|---|
+| Menu/loading background, and the logo | The player's own art, prepared by `tools/uiart.mjs`: the plate fitted to width and cropped 39/61, the mark unpremultiplied off white to straight alpha. 127 KB and 141 KB. |
+| Transports, from orbit, on every map | `ExtractionDirector.beginInsertion`. A fresh start opens in the bay leaving a capital ship; the rotate between grounds happens inside the flight. |
+| Transport quality — ramp, doors, sitting, boarding | `buildTransport` publishes bay, seats, ramp, doors, engines and pilots; boarding is a walk to a seat, not a teleport, and the saber has to come down in the bay. |
+| Left click: a wide arc and a combo | Two lights into a held heavy. The old left click had 0.00 m of lateral blade travel. |
+| Spin and stab, merged | One steerable drill you point where you like. |
+| Stratagems should not cost Force | `WarSupport`: a side's supply line, credited by kills, waves and ground held, with a rearm hold after every call. |
+| Force lightning must BE lightning | `src/world/Lightning.js`. It drew nothing when it hit nothing, which is what a player tries first — the check that would have caught it fires at open ground. |
+| Smoke: bigger, and it blinds both sides | 12 m → 26 m radius, six canisters, and `seeThrough` is in every body's aim. |
+| Skirmish cleared instantly; campaign froze after wave 1 | A skirmish is `SKIRMISH.waves` waves now; the freeze was an auto-open racing a pending ground change. |
+| Droids holding lightsabres | `weaponStyle`: a vibrosword and an electrostaff that cut exactly as a blade of the same length does. |
+| The attunement star chart | Deleted. Six plates of rungs in its place, and `LivingForce` no longer carries 46 pairs of chart coordinates. |
+| The whole main menu palette | Warm, off the new art. Every cool hex in the front end rotated. |
+| Troops invisible with names above them | A hold was a latch: nothing but `releaseGrip` ever cleared it, so a gripper who died left a body limp, brainless and invisible for the rest of the level. It is a lease now, and `Enemy._auditVisible` asks three times a second whether a living body is drawing anything at all. |
+| Forest invisible walls (repeat) | `STEP_UP` is 0.45 m and the median trunk in that wood lies 0.55 m off the ground: half the timber was a wall by ten centimetres. A felled trunk is climbable now, and its collider is the shape of the wood rather than a square beam of the butt radius. 61 of 88 stalls were logs; 3 afterwards. |
+| Fighting other Force users | Every counter already existed and none was visible. A Codex section, a reserve bar and a cast readout under their name, and their regen scaled to their own pool so strength means what you can spend rather than how long you are quiet. |
+| Hoods | Four, on the head bone, in the creator. One extra draw call. |
+| Reactive troops | `src/game/Reactions.js`: a live grenade with a fuse, and four answers — shout, dive, throw it back, lie on it — plus dragging a hurt man out. |
+| How do you heal allies? | You could not. The same channel mends the man under your reticle now, and stands him up if he is down. |
+| Trial of Waves vs Path of the Blade? | The cards never mentioned each other. Both now name the axis: where your power comes from. |
+
 ---
 
 ## 20 Aug — first play of the post-audit build
