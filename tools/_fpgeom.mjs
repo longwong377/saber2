@@ -41,19 +41,12 @@
  *     hilt on screen        38.5% of frame height, 31 of 31 samples
  *     behind the fists                                       32%
  *
- * The way out was the one the reference itself shows: ONE HAND on the hilt in
- * first person. That is a design decision about what a first-person grip IS
- * rather than a tuning pass, so it was the player's call, and the player made
- * it — "no half measures".
- *
- * Both halves were needed and the split is worth keeping, because either one
- * alone looks like a failure. Taking the off hand off the hilt and changing
- * nothing else is 91% → 71%: the remaining fist still straddles the middle.
- * Sliding that fist to the pommel takes it to 32%, and it is only affordable
- * BECAUSE the off hand has gone — the rise needed to keep a low grip in frame
- * used to push elbowL inside the 100 mm the deltoid needs against a 45 mm near
- * plane, and swept as a pair (grip −0.020…−0.105 against rise +0…+0.070) with
- * two hands on the hilt, nothing satisfied both checks.
+ * The way out was the one the reference itself shows: ONE HAND on the hilt,
+ * with the fist slid down to the pommel. Both halves were needed and the split
+ * is worth keeping, because either one alone looks like a failure. Taking the
+ * off hand off the hilt and changing nothing else is 91% → 71%: the remaining
+ * fist still straddles the middle. Sliding that fist to the pommel takes it to
+ * 32%.
  *
  * WHAT IT COST is 1.5 cm of first-person reach — the anchor had to rise 0.26 →
  * 0.32 to bring the pommel back inside the frame, and `armMax` measures the
@@ -61,9 +54,29 @@
  * 1.276 to 1.293 against its 1.30 bound. The bound was not moved. See the note
  * over HILT in Player.js for the sweep.
  *
- * The bounds are now checked rather than merely printed here:
- * tools/checks/first-person.mjs, "the hilt is ON SCREEN and not behind your own
- * fist", at three pitches.
+ * ── AND ONE HAND IS NOT WHAT FIRST PERSON IS. IT IS WHAT A GRIP IS ─────────
+ *
+ * The paragraph above used to end "that is a design decision about what a
+ * first-person grip IS, so it was the player's call, and the player made it".
+ * The player then made a different one, about the question rather than the
+ * answer: *"Why the fuck would it be either or, both should be modeled and
+ * reflect how many hands you're holding it with"*. So the hand count is
+ * `Player.handsOnHilt()` — the one-hand key, a Force power in the off hand, a
+ * thrown blade, a dropped one — and this tool reports whichever the body is
+ * holding. `FPHANDS=one` holds the key, which is the only way to ask.
+ *
+ * Measured here at the default two-handed guard: 65% of the hilt behind a
+ * glove, against 29% with the key held. Both are checked at three pitches in
+ * tools/checks/first-person.mjs, "how many hands are on the hilt is what you
+ * SEE", each against a ceiling derived from its own fists.
+ *
+ * The near plane is no longer part of the argument and the note above is left
+ * as it was because it was true when written: two low fists used to push
+ * elbowL inside the 100 mm the deltoid needs. Measured on the finished anchor
+ * (rise 0.32), the nearest arm joint is `shoulderL` at 115 mm in every
+ * condition — idle, walking, looking up, looking down, one hand and two — so
+ * the pair that "nothing satisfied" is satisfied by both grips now, and what
+ * separates them is occlusion alone.
  */
 // The DOM shim FIRST, and before anything that reaches Textures.js: the
 // procedural texture foundry bakes onto a canvas, and there is no document
@@ -80,7 +93,12 @@ const p = world.player;
 p.camera.firstPerson = true;
 p._applyViewMode?.();
 p.saber.lit = true;
-for (let i = 0; i < 120; i++) world.update(1 / 60, idleInput());
+/* HOW MANY HANDS, ASKED FOR THE WAY A PLAYER ASKS — the one-hand key, which is
+ * the whole of `control.grip` and therefore of `handsOnHilt`. */
+const input = idleInput();
+if (process.env.FPHANDS === 'one') input.act = (id) => id === 'grip2';
+for (let i = 0; i < 120; i++) world.update(1 / 60, input);
+console.log(`\n  ${p.handsOnHilt()} hand(s) on the hilt`);
 
 const cam = world.engine.camera;
 cam.fov = Number(process.env.FPFOV || 60);

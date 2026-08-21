@@ -891,16 +891,64 @@ with TWO hands ends at −0.74. Both fists are under a hilt held in the eyeline,
 so the two wrists are 7° apart round the shaft, and the palms can only come
 round together as the wrists separate — swept, `pair` 0.05→3.2 takes the wrists
 7°→152° apart and the palms −0.74→+0.22, but by 3.2 the fists are level with
-the hilt instead of under it and the framing checks §6.0 names go red. **That is
-a second, independent confirmation of §6.0's conclusion that first person should
-be ONE-handed**, which is what `fpHands` already defaults to. The two-handed
-first-person option cannot be made anatomically clean while both fists stay
-under the shaft, and nobody has yet asked whether it should exist.
+the hilt instead of under it and the framing checks §6.0 names go red.
+
+That used to read "a second, independent confirmation that first person should
+be ONE-handed". **It is not, and the argument was the one the player threw out**
+— see §6.0. −0.74 is what a two-handed grip in your own eyeline COSTS, not an
+argument for taking a hand off a hilt the player is holding with two. It is
+still open on its own terms and it is still the shipped default's number.
 
 Check: `tools/checks/viewmodel.mjs`, "arms: two hands on one hilt hold it the
 SAME way round" — proven to fail on `968b575` and pass here.
 
-### 6.0 The first-person grip is OVER-CONSTRAINED — and this is the live one
+### 6.0 The first-person grip is OVER-CONSTRAINED — **CLOSED, AND THE ANSWER WAS NOT THE ONE BELOW**
+
+> **THE QUESTION WAS WRONG AND THE PLAYER SAID SO.** The section below ends
+> "the way out is ONE HAND on the hilt in first person… that is a decision
+> about what a first-person grip IS. Ask before doing it." It was asked, as a
+> choice between a one-handed grip and a two-handed one, and the answer was:
+>
+> > *"Why the fuck would it be either or, both should be modeled and reflect
+> > how many hands you're holding it with"*
+>
+> **The grip is not a property of the camera.** `Player.handsOnHilt()` is the
+> one reader now — 0, 1 or 2, from `saberDown`, `driving`, `throwState`,
+> `control.grip` and `gesture.kind` — the poser calls it and restates none of
+> it, and the `fpHands` card row on the Interface panel is gone with its
+> markup and its entry in the menu's read map.
+>
+> **What that costs is the number this section is named for, and it is paid
+> knowingly.** At half a metre from the lens one fist leaves 32% of the shaft
+> behind a glove and two leave 65% — measured, at three pitches, in
+> `first-person: how many hands are on the hilt is what you SEE`. 65% is
+> close to what two closed hands on a 25 cm hilt CAN leave: the two bores sit
+> 65 mm apart on the shaft and a fist is 108 mm across, so 74% is the ceiling
+> and the pose is 9 points under it. The clear view is one keypress away, on
+> the key that means the same thing everywhere else in the game.
+>
+> **Two of the three constraints this section called unsatisfiable together
+> are discharged rather than traded.** The near plane is no longer one of
+> them: on the finished anchor (rise 0.32) the nearest arm joint is
+> `shoulderL` at 115 mm against the 100 the deltoid needs, in every condition
+> — idle, walking, looking up and down, one hand and two. The sweep that found
+> "nothing satisfies both" was run at rise 0.26 with the grip still being
+> chosen; the anchor moved afterwards and nobody re-ran it.
+>
+> **AND THE ONE-HANDED GRIP HAD NEVER BEEN MEASURED AT ALL.** No bench in this
+> repo had ever pressed the one-hand key — every one of them reached for
+> `fpHands`, which moved the ARMS and left the blade on `GRIPS.two`, a state a
+> player cannot enter. The state a player CAN enter read wrist 167.6° and
+> forearm 3002 °/s in first person, past both of the ratchet's bounds, and had
+> been shipping that way: `FP_TUNE.roll`'s 60° was swept on the state the
+> option produced. The roll is a pair now, 60° for two hands and 30° for one,
+> and the four arms come out 89.4 / 79.0 / 115.1 / 102.3 degrees worst.
+>
+> The rest of the section is left exactly as it was. Every measurement in it is
+> still true and it is the best record of how the wrong question was arrived
+> at.
+
+
 
 Third report of "the first person hand/hilt looks like jumbled garbage", and
 the first one with a number against it. `tools/_fpgeom.mjs` (new) projects
