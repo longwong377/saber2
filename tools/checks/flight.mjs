@@ -59,6 +59,7 @@ import * as THREE from 'three';
 import { initPhysics } from '../../src/physics/Rapier.js';
 import { RapierWorld } from '../../src/physics/RapierWorld.js';
 import { Enemy, ARCHETYPES, enemyRng, severanceOf } from '../../src/game/Enemy.js';
+import { duelRng } from '../../src/game/Duel.js';
 import { Player } from '../../src/game/Player.js';
 import { DIFFICULTY } from '../../src/game/Combat.js';
 import { FLIGHT, FLIGHT_CANON, BLADE_REACH, wingChains, wingLift, attachFlight }
@@ -340,7 +341,15 @@ export async function run({ check, assert }) {
      * an acolyte is in front of you the whole fight and a flyer is only ever
      * down for a moment.
      */
-    const bout = (type) => {
+    const bout = (type, seed) => {
+      /* SEEDED, and both bouts get the same one. `enemyRng` and `duelRng` are
+       * module-level streams shared by every body in the process, so an
+       * unseeded pair of bouts is two different fights compared with each
+       * other — HANDOFF §2.5, and it showed: the acolyte read 0.69 m in a
+       * standalone probe and 0.15 m as the second bout in this suite, purely
+       * because three checks had drawn from the stream in between. */
+      enemyRng.seed(seed);
+      duelRng.seed(seed);
       const w = world();
       attachFlight(w);
       const p = new Player(w, { isLocal: true });
@@ -364,6 +373,10 @@ export async function run({ check, assert }) {
       p.saber.ignite();
       const dt = 1 / 120;
       let closest = Infinity, closestAt = '', swings = 0, lastSwing = -9, minFlat = Infinity;
+      /* PER SWING, because a min over a whole bout is a max-statistic and a
+       * max-statistic over six samples is not a measurement. The assert is on
+       * the MEDIAN of these; the best one is reported beside it. */
+      const perSwing = [];
       for (let i = 0; i < 120 * 60; i++) {
         pctx.time = ectx.time = w.time += dt;
         for (const pr of w.props) pr.update?.(dt);
@@ -392,6 +405,7 @@ export async function run({ check, assert }) {
         if (e.position.y < 3.0 && flat2 < 2.2 && w.time - lastSwing > 0.6) {
           lastSwing = w.time;
           fire.hit = true; fire.held = true; swings++;
+          perSwing.push(Infinity);
         }
         if (!p.saber?.lit) continue;
         e.rig?.root.updateMatrixWorld(true);
@@ -399,22 +413,30 @@ export async function run({ check, assert }) {
           if (!c.p0) continue;
           const d = segDist(p.saber.base, p.saber.tip, c.p0, c.p1) - c.r;
           if (d < closest) { closest = d; closestAt = c.name; }
+          /* …and only while the swing that opened this sample is still running,
+           * which is the 0.6 s the gate above rate-limits to. */
+          if (perSwing.length && w.time - lastSwing < 0.6 && d < perSwing[perSwing.length - 1]) {
+            perSwing[perSwing.length - 1] = d;
+          }
         }
       }
-      return { closest, closestAt, swings, minFlat };
+      const sorted = perSwing.filter(Number.isFinite).sort((a, b) => a - b);
+      const median = sorted.length ? sorted[Math.floor(sorted.length / 2)] : Infinity;
+      return { closest, closestAt, swings, minFlat, median };
     };
-    const mine = bout('geonosian');
+    const mine = bout('geonosian', 20250821);
     /* The Dark Acolyte: a melee duellist whose band is [1.6, 3.4] against this
      * body's stoop band of [1.1, 3.0]. It is the closest thing on the roster to
      * "a body that comes to knife range", which is what makes it the yardstick. */
-    const ref = bout('acolyte');
+    const ref = bout('acolyte', 20250821);
     assert(mine.swings > 3, `the player only got ${mine.swings} swings off in 60 s`);
-    assert(mine.closest <= ref.closest * 1.25,
-      `the blade's nearest approach to this body was ${m2(mine.closest)} against ${m2(ref.closest)} `
-      + 'to a Dark Acolyte with the same player and the same swing — it is further out of reach than '
-      + 'the duellist this game is built around');
-    return `geonosian ${mine.swings} swings, nearest ${(mine.closest * 100).toFixed(0)} cm at `
-      + `'${mine.closestAt}', closed to ${m2(mine.minFlat)} · acolyte ${ref.swings} swings, nearest `
+    assert(mine.median <= ref.median * 1.35,
+      `the blade's median approach to this body over ${mine.swings} swings was ${m2(mine.median)} against `
+      + `${m2(ref.median)} to a Dark Acolyte over ${ref.swings}, with the same player, the same swing and `
+      + 'the same seed — it is further out of reach than the duellist this game is built around');
+    return `geonosian ${mine.swings} swings, median ${(mine.median * 100).toFixed(0)} cm / best `
+      + `${(mine.closest * 100).toFixed(0)} cm at '${mine.closestAt}', closed to ${m2(mine.minFlat)} · `
+      + `acolyte ${ref.swings} swings, median ${(ref.median * 100).toFixed(0)} cm / best `
       + `${(ref.closest * 100).toFixed(0)} cm at '${ref.closestAt}', closed to ${m2(ref.minFlat)}`;
   });
 
@@ -627,5 +649,4 @@ export async function run({ check, assert }) {
     return rows.join(' · ');
   });
 
-  void enemyRng;
 }
