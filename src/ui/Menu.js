@@ -15,7 +15,7 @@ import { BipedAnimator, limbScale } from '../game/Rig.js';
 // binding at module scope — `handPoseOnHilt` is a hoisted function declaration
 // and GRIP_AT is only ever read inside poseSaberArm, long after both modules
 // have finished evaluating, whichever of the two the browser reaches first.
-import { handPoseOnHilt, GRIP_AT, UNLEASH } from '../game/Player.js';
+import { handPoseOnHilt, GRIP_AT, UNLEASH, SHIELD } from '../game/Player.js';
 import { ORDERS, getOrder, crystalPalette, crystalForOrder, hiltsForOrder } from '../game/Order.js';
 import { ROBE_CUTS, attachCloak, attachSkirt, attachLekku,
          CAPE_CUTS, TABARD_CUTS, SASH_CUTS, GARMENT_TONES, WARDROBE, wardrobeOf, tintWardrobe,
@@ -67,7 +67,7 @@ import { RESIST_CAP, RESIST_BEATEN, RESIST_PER_FORCE, CAST_WIND,
  *
  * `STRATAGEM_BY_ID`'s own comment in that file says what it is for — "by id,
  * for the HUD and the Codex. Derived, so a row cannot be missed" — and the
- * table's header says "adding a stratagem should be adding a ROW". This is the
+ * table's header says "adding a support call should be adding a ROW". This is the
  * Codex end of that promise: the rows below are mapped off `STRATAGEMS`, so a
  * seventh call is documented, priced and spelled on this page the day it is
  * authored, with nothing typed here.
@@ -81,7 +81,7 @@ import { RESIST_CAP, RESIST_BEATEN, RESIST_PER_FORCE, CAST_WIND,
  * be bound to on one device.
  *
  * The binding half of the fact is not lost, it is moved to where it belongs:
- * the row above the stratagems names the key you hold and the four movement
+ * the row above the support calls names the key you hold and the four movement
  * actions you spell with, and that clause IS printed from the live bindings, so
  * a player on ESDF is told so once instead of six times.
  *
@@ -90,7 +90,8 @@ import { RESIST_CAP, RESIST_BEATEN, RESIST_PER_FORCE, CAST_WIND,
  * Menu already imports Player.js, which imports this module, so nothing new
  * enters the graph.
  */
-import { STRATAGEMS, DIR_ACTION, CODE_GAP, spell } from '../game/Stratagems.js';
+import { STRATAGEMS, DIR_ACTION, CODE_GAP, spell, supportCost, RELEASE_NAME }
+  from '../game/Stratagems.js';
 /**
  * THE INSIGHT ECONOMY, so the Codex can state it rather than the player having
  * to infer it from a number that ticks up after a wave.
@@ -119,8 +120,9 @@ import { ACTIONS, MOUSE, WHEEL, keyLabel, loadBindings, saveBindings, defaultBin
  * the Jedi orders a crystal belongs to — and the two are unrelated. This one is
  * `{...FORMATIONS, ...COMMAND_FORCE}`: what the order WHEEL is handed, which is
  * the set the block below has to count. */
-import { AREAS, FORMATIONS, COMMAND_FORCE, ORDERS as COMMAND_ORDERS,
-         MAX_STRENGTH, OPENING_STRENGTH, TEAM_DAMAGE_DEFAULT, DEFAULT_FORMATION } from '../game/Command.js';
+import { AREAS, ARMIES, ARMY_IDS, FORMATIONS, COMMAND_FORCE, ORDERS as COMMAND_ORDERS,
+         MAX_STRENGTH, OPENING_STRENGTH, TEAM_DAMAGE_DEFAULT, DEFAULT_FORMATION,
+         LADDER_RUNGS, CONTINGENT_MIXED } from '../game/Command.js';
 // THE DATABANK. `ARCHETYPES` is the roster — the page list is enumerated off it
 // and never typed — and Databank.js carries the one thing a roster cannot hold:
 // which side a body fights for, what it is carrying, and who it is.
@@ -461,6 +463,34 @@ export const DEFAULT_SETTINGS = {
    */
   allies: 0,
   /**
+   * WHAT THE CONTINGENT IS MADE OF — a rung of your army's own muster ladder,
+   * or `CONTINGENT_MIXED` for a line that spends its purse across the shelf.
+   *
+   * Read by `commandConfig` and by nothing else, exactly as `allies` above.
+   * The default is 0 — the cheapest rung — because 0 is what shipped: six
+   * allies was six clone troopers and still is, so a player who never finds
+   * this control gets the platoon they already had, body for body.
+   *
+   * AN INDEX AND NOT A UNIT NAME, because the ladder it indexes is not known
+   * when the choice is made — `trooper` means nothing to a Sith and `b1`
+   * nothing to a Jedi. See the note over `commandConfig`'s `unit`.
+   */
+  allyUnit: 0,
+  /**
+   * WHOSE MEN — an index into `ARMY_IDS`, or −1 for "the army my order leads".
+   *
+   * −1 is the default and is what every player who never touches it gets: a
+   * Jedi leads clones, a Sith leads droids, and a Grey — who leads neither —
+   * gets the army the GROUND declares before the Republic is invented for
+   * them. See `Command.armyToLead` for the three-clause rule and for the
+   * measurement that says why the level cannot simply be asked.
+   *
+   * A CONTINGENT ONLY. Command, Skirmish and Campaign never pass the choice in:
+   * their army is the mode's whole fiction and a Jedi at the head of a droid
+   * column there is a bug wearing a menu.
+   */
+  allyArmy: -1,
+  /**
    * TWO SIDES COMMAND TWO DIFFERENT ARMIES AND MEET ON THE BATTLEFIELD.
    *
    * `commandConfig` reads it and nothing else may, exactly as for the two
@@ -791,6 +821,30 @@ export const LIGHTNING_COLORS = [
   { name: 'Amethyst',   hex: 0xc08cff },
 ];
 
+/**
+ * THE CONTINGENT'S TWO NEW CONTROLS SAY WHAT THE TABLE SAYS.
+ *
+ * Both read `ARMIES` and neither restates it. `allyUnit` is a rung INDEX, so a
+ * position on that slider has two names — a clone trooper and a battle droid
+ * are the same rung of two ladders — and the row prints both, because the
+ * player picking it may not have chosen an order yet and the army follows the
+ * order. `allyArmy`'s −1 is the same "no answer" `commandConfig` turns into
+ * null and `Command.armyToLead` turns into the order's own army.
+ */
+function contingentUnitName(i) {
+  if (i < 0) return 'mixed — the purse spread across the shelf';
+  const names = ARMY_IDS.map((id) => {
+    const t = ARMIES[id].tiers[i];
+    return (t && (ARCHETYPES[t.type]?.label ?? t.type)) || '—';
+  });
+  return names.join(' / ');
+}
+
+function contingentArmyName(i) {
+  const id = ARMY_IDS[i];
+  return id ? ARMIES[id].name : "your order's own";
+}
+
 export const SETTING_READERS = {
   level:           ['main.js', 'settings.level'],
   playerName:      ['main.js', 'settings.playerName'],
@@ -844,6 +898,11 @@ export const SETTING_READERS = {
   commandFormation: ['game/Command.js', 'const f = s.commandFormation'],
   commandVersus:   ['game/Command.js', 'versus: !!s.commandVersus'],
   allies:          ['game/Command.js', 'Number(s.allies)'],
+  /* The contingent's shape and its side. Same rule as `allies` directly above
+   * and for the same reason: `commandConfig` is the one function allowed to
+   * decide what a free-form number off this screen means. */
+  allyUnit:        ['game/Command.js', 'Number(s.allyUnit)'],
+  allyArmy:        ['game/Command.js', 'Number(s.allyArmy)'],
   /* The duel switch, read where every world's rules are decided. One reader,
    * one object: `pvpRules` is the only thing allowed to say what the key means
    * and `world.rules` is the only place the answer lives — see `canHarm`. */
@@ -1458,7 +1517,16 @@ export const CODEX = [
   { keys: ['pull'], text: () => 'Force pull.' },
   { keys: ['grip'],
     text: k => `Grip an object — then aim to swing it, ${k('hurl')} to hurl it.` },
-  { keys: ['throw'], text: () => 'Throw the saber. Press again to recall it.' },
+  { keys: ['throw'],
+    /* THE THIRD STATE WAS NOWHERE ON THIS PAGE. "Press again to recall it" was
+     * the whole card, and the blade could be TAKEN HOLD OF in mid-air — the
+     * one control in the game that is a second key on a power you are already
+     * running. A player who never presses grip while the blade is out would
+     * never learn it existed. */
+    text: k => `Throw the saber — it flies where you look. Press ${k('throw')} again to recall it, `
+      + `or ${k('grip')} while it is out and your Force takes hold of it: the blade hangs at your `
+      + `reticle, cutting, until you recall it or the bar runs dry. Holding it out there is the `
+      + `most expensive thing the Force does, and the wheel pushes it further off.` },
   { keys: ['sense'], text: () => 'Force sense — see through walls.' },
   { keys: ['stasis'],
     /* "bolts included" said bolts were an ADDITION to a broader set and they
@@ -1474,10 +1542,20 @@ export const CODEX = [
     /* THE ALLY HALF WAS MISSING FROM THE GAME AND THEREFORE FROM THE CARD.
      * The player asked "remind me how to heal allies", and the honest answer
      * was that you could not: the only thing that mended a trooper was the
-     * Resupply stratagem. It is the same key now — aim at the man. */
+     * Resupply support call. It is the same key now — aim at the man. */
     text: () => 'Force heal — three seconds of standing still, and a hit breaks it. Press again to '
       + 'stop. AIM AT A WOUNDED ALLY and it mends them instead of you, and stands them up if they '
       + 'are down.' },
+  { keys: ['shield'],
+    /* THE POWER THE PLAYER ASKED FOR TWICE. The card leads with the price per
+     * second rather than the price to raise, because raising it is cheap on
+     * purpose and HOLDING it is the whole decision — a row that printed only
+     * the 18 would teach the wrong half of the economy. */
+    text: k => `Force barrier — a sphere of Force around you that bolts die on. Costs `
+      + `${SHIELD.hold} Force a second to hold and ${SHIELD.bolt} more for every bolt it eats, so `
+      + `it is cover you are paying for by the second. It stops blaster fire, not blades: a melee `
+      + `swing comes through at ${Math.round((1 - SHIELD.blunt) * 100)}% force. Press ${k('shield')} `
+      + `again to drop it.` },
   { keys: ['rend'], text: () => 'Rend apart. Takes a mechanical enemy to pieces where it stands.' },
   { keys: ['lightning'], text: () => 'Force lightning — an arc that jumps between bodies.' },
   { keys: ['unleash'],
@@ -1490,8 +1568,14 @@ export const CODEX = [
   { keys: ['compel'],
     text: () => 'Force compel — the unit you are looking at turns on its own, or, alone, on itself.' },
   { keys: ['swap'],
-    text: () => 'Standing over a fallen hilt, take it — crystal, hilt and all, so a friend\'s '
-      + 'blade is theirs in your hand. Standing over nothing, put yours down.' },
+    /* WHAT THE FORCE HALF OF THIS KEY DOES, which was true of nothing until the
+     * catch went in and is now three of the four things it can do. The card
+     * leads with the hands because that is the case a player meets first. */
+    text: k => `Standing over a fallen hilt, take it — crystal, hilt and all, so a friend's `
+      + `blade is theirs in your hand. Standing over nothing, put yours down. A hilt your `
+      + `Force is HOLDING comes to the hand at any distance, and reeling one in with an empty `
+      + `hand catches it out of the air on its own — and ${k('ignite')} lights or douses a hilt `
+      + `your Force is holding, wherever it is.` },
   { keys: ['view'], text: () => 'Toggle first / third person.' },
   { keys: ['scoreboard'], hold: true, text: () => 'Scoreboard &amp; run boons.' },
   // The slot count is read off the table, so a ninth emote changes this line.
@@ -1556,18 +1640,19 @@ export const CODEX = [
   })),
 
   /**
-   * THE STRATAGEMS, GENERATED — the same argument as the orders above, and one
-   * more on top of it.
+   * THE SUPPORT CALLS, GENERATED — the same argument as the orders above, and
+   * one more on top of it.
    *
-   * A stratagem is not a binding. There is ONE binding (`stratagem`) and the
-   * calls are told apart by a CODE spelled in movement directions, which is
-   * why the rows below carry `code` where every other row carries `keys`.
-   * `codexHtml` renders a code by asking the bindings table what each direction
-   * is bound to, so these rows print live bindings exactly as the rest of the
-   * page does — there is no third kind of row that gets to type a key.
+   * A support call is not a binding. There is ONE binding and the calls are
+   * told apart by a CODE spelled in movement directions, which is why the rows
+   * below carry `code` where every other row carries `keys`. `codexHtml`
+   * renders a code by asking the bindings table what each direction is bound
+   * to, so these rows print live bindings exactly as the rest of the page does
+   * — there is no third kind of row that gets to type a key.
    *
    * Everything on the row comes off the table: the name, the sentence, the
-   * price and whether it needs an army. Nothing is written here.
+   * price, whether it needs an army and what it has to be EARNED with.
+   * Nothing is written here.
    */
   { head: 'Calling for support' },
   { keys: ['stratagem'], hold: true,
@@ -1578,8 +1663,19 @@ export const CODEX = [
       + `directions: ${k('moveF')}${k('moveL')}${k('moveB')}${k('moveR')} are what they are on `
       + `yours. Pause for ${CODE_GAP}&nbsp;s and the entry is abandoned. Every code is DEALT `
       + 'FRESH each run, so read them here or off the panel while you hold the key — nobody is '
-      + 'entering these from memory. A call bills the same Force pool a power does, and it '
-      + 'arrives after you asked for it, not when.' },
+      + 'entering these from memory. A call bills your side\'s WAR SUPPORT and not your Force, '
+      + 'and it arrives after you asked for it, not when.' },
+  /* THE LADDER HAS TO BE ON THE CARD. Eleven of the eighteen are held until
+   * the battle has got somewhere, and a player who never reads this page would
+   * only ever learn that from the one notice that announces a rung. See
+   * RELEASE in src/game/Stratagems.js for the numbers and for why they are
+   * spent inside a run rather than saved between them. */
+  { keys: ['stratagem'], hold: true,
+    text: () => 'Seven of these you have from the first minute. The other '
+      + `${STRATAGEMS.filter(S => (S.earn ?? 0) > 0).length} are RELEASED as the battle goes `
+      + 'your way — every kill, every wave cleared and every piece of ground held counts '
+      + 'toward it, and the fleet says so when a new one arrives. It resets with the battle: '
+      + 'nothing here is saved between runs and nothing here can be bought.' },
   /* THE SECOND BEAT HAS TO BE ON THE CARD. Finishing the code does not fire
    * anything any more — it opens the DESIGNATION — and a control whose second
    * half is only discoverable by accident is the same defect as a bound key
@@ -1595,8 +1691,9 @@ export const CODEX = [
   ...STRATAGEMS.map(S => ({
     code: S.code,
     text: () => `<b>${S.name}</b> — ${S.blurb}`,
-    /* Read by `powerChips`, which prices the Force rows the same way. A
-     * stratagem's price is `cost` on its own row; there is no second table. */
+    /* Read by `powerChips`, which prices the Force rows the same way. A support
+     * call's price is derived from `cost` on its own row; there is no second
+     * table. */
     strat: S,
   })),
 ];
@@ -1692,16 +1789,34 @@ export function keyChips(bindings, id, hold = false, pad = null) {
  * Waves.js renames itself here.
  */
 function powerChips(row) {
-  /* A stratagem carries its own row off `STRATAGEMS`, so its price is on the
+  /**
+   * A SUPPORT CALL CARRIES ITS OWN ROW off `STRATAGEMS`, so its price is on the
    * record it was generated from rather than in a table keyed by action id —
-   * it has no action id of its own to be keyed by. Same two chips either way. */
+   * it has no action id of its own to be keyed by.
+   *
+   * AND THE PRICE IS IN SUPPORT, WHICH IS WHAT IT IS ACTUALLY CHARGED IN. This
+   * chip read "40 Force" for as long as the calls were paid for out of the
+   * Jedi's own pool, and it went on reading it after they stopped: the player
+   * asked for that change by name — "strategems should not cost force how does
+   * that even fucking make sense?" — `Stratagems._open` spends
+   * `world.support` and nothing spends `s.cost` any more. A page quoting a
+   * currency the game does not charge in is the hand-maintained twin this file
+   * keeps deleting, so it asks `supportCost`, which is the one derivation.
+   *
+   * THE THIRD CHIP IS THE RELEASE RUNG, for the eleven calls that are held
+   * until the battle has been earned. It is not "the call is expensive", and it
+   * is not "you need an army" — it is a different fact from both, and the card
+   * has to be able to say all three of them at once.
+   */
   if (row.strat) {
-    return `<em class="cost">${row.strat.cost} Force</em>`
-      + (row.strat.commandOnly ? '<em class="cost gate">needs an army</em>' : '');
+    const rung = row.strat.earn ?? 0;
+    return `<em class="cost">${supportCost(row.strat)} support</em>`
+      + (row.strat.commandOnly ? '<em class="cost gate">needs an army</em>' : '')
+      + (rung > 0 ? `<em class="cost gate">${RELEASE_NAME[rung] || 'released'} — ${rung} effort</em>` : '');
   }
-  /* A COMMAND_FORCE verb carries its own record for the same reason a
-   * stratagem does: it is cast off the order wheel and has no action id of its
-   * own for POWER_COST to be keyed by. */
+  /* A COMMAND_FORCE verb carries its own record for the same reason a support
+   * call does: it is cast off the order wheel and has no action id of its own
+   * for POWER_COST to be keyed by. */
   if (row.force) {
     return `<em class="cost">${row.force.cost} Force</em><em class="cost gate">needs an army</em>`;
   }
@@ -1733,7 +1848,7 @@ export function codexHtml(bindings, pad = null) {
     // been told nothing. See CODEX's `device` rows.
     /* THREE KINDS OF LEAD, and only one of them may contain a literal.
      *   `device` — the mouse's own MOTION, which is not a binding at all.
-     *   `code`   — a stratagem's spelling, in ARROWS.
+     *   `code`   — a support call's spelling, in ARROWS.
      *   `keys`   — everything else, printed from the live bindings.
      *
      * THE CODE ROW IS THE ODD ONE AND IT IS ODD ON PURPOSE. It used to print
@@ -1742,7 +1857,7 @@ export function codexHtml(bindings, pad = null) {
      * instinct here. It is the wrong one: a code is one word made of
      * directions, and four separate key chips make it look like four separate
      * controls. W is not what the code is made of, it is what a direction
-     * happens to be bound to. The row above the stratagems names the key you
+     * happens to be bound to. The row above the support calls names the key you
      * hold and the directions you spell with, and that clause is a binding and
      * does follow a rebind — which is where that fact belongs. */
     const lead = row.device
@@ -5545,6 +5660,67 @@ export class Menu {
     return value;
   }
 
+  /**
+   * THE TWO CONTINGENT ROWS, BUILT FROM THE MUSTER LADDERS.
+   *
+   * They go in beside `#opt-allies` — after its own hint paragraph, so the
+   * three rows read as one block — rather than into index.html, for the reason
+   * the call site gives: every word in them is a fact about `ARMIES`, and the
+   * markup would be a second copy of a table that already exists. It is the
+   * same argument `_cardRow('command-list', …)` makes about the formations.
+   *
+   * Idempotent, because `_buildPickers` runs on every options rebuild and two
+   * copies of a slider bound to one setting is two controls that disagree the
+   * moment either moves. Silent when the anchor is missing, which is every
+   * headless check: `document.getElementById` returns null under the DOM shim
+   * and `_slider`/`_range` already return quietly for an element that is not
+   * there, so the settings stay reachable and nothing is drawn.
+   */
+  _buildContingentControls() {
+    const anchor = document.getElementById('opt-allies');
+    if (!anchor || document.getElementById('opt-ally-unit')) return;
+    const label = anchor.parentElement;
+    const host = label && label.parentElement;
+    if (!host) return;
+    /* BY `children` AND `insertBefore`, not by `insertAdjacentHTML`. The second
+     * is the shorter spelling and it is not available everywhere this runs:
+     * `tools/checks/_page.mjs` is a real enough document to render the whole
+     * options screen and index its ids — which is what makes twenty-two menu
+     * checks able to press these controls — and it implements the tree verbs
+     * and an `innerHTML` that PARSES, not the convenience ones. Building into a
+     * detached node and moving the rows across uses only what both have.
+     *
+     * Past the hint paragraph that belongs to the allies slider, so the new
+     * rows land under the whole of it rather than between a control and its
+     * own prose. */
+    const kids = [...host.children];
+    let at = kids.indexOf(label);
+    if (at < 0) return;
+    while (at + 1 < kids.length && kids[at + 1].tagName === 'P') at++;
+    const before = kids[at + 1] || null;
+    const ladder = [];
+    for (let i = 0; i < LADDER_RUNGS; i++) ladder.push(`${i} ${contingentUnitName(i)}`);
+    const block = document.createElement('div');
+    block.innerHTML = `
+      <label class="slider">Contingent unit <input type="range" id="opt-ally-unit"><b></b></label>
+      <p class="hint">What the contingent is made <b>of</b>. The number above is a purse, not a head
+        count: the allies you asked for are priced at the muster's own rate, and the same points buy
+        ten of the line, or four ARCs, or one walker and three men to walk beside it. A heavier
+        contingent is a <b>smaller</b> one, and the wave is composed against what your side is worth
+        rather than how many of you there are — so this changes the shape of the battle and not how
+        hard it is. The ladder, cheapest first: ${ladder.join(' · ')}. At the bottom of the travel is
+        <b>mixed</b>, which spends half the purse on the line and the rest on the heaviest rungs it
+        will carry.</p>
+      <label class="slider">Contingent army <input type="range" id="opt-ally-army"><b></b></label>
+      <p class="hint">Whose men these are. The default is <b>your order's own</b> — a Jedi leads
+        clones, a Sith leads droids — and a commander who leads neither is given the army the ground
+        itself declares before the Republic is assumed for them. Naming one here overrides that, and
+        it overrides it for a <b>contingent only</b>: Command, Skirmish and Campaign always field the
+        army your order leads, because that war is what those modes are about. The enemy follows —
+        bring droids and it is clones that come at you.</p>`;
+    for (const row of [...block.children]) host.insertBefore(row, before);
+  }
+
   /** Note #16 — whose name is over whose head. See DEFAULT_SETTINGS.troopNames. */
   _buildTroopNames() {
     const host = document.getElementById('opt-troopnames');
@@ -5719,6 +5895,19 @@ export class Menu {
     this._range('opt-allies', 0, MAX_STRENGTH, 1, 'allies');
     this._slider('opt-allies', 'allies',
       v => (v <= 0 ? 'none' : `${Math.round(v)} of ${MAX_STRENGTH}`));
+    /* WHAT THE CONTINGENT IS MADE OF, AND WHOSE IT IS — the two halves the
+     * shipped control could not say. Both rows are built HERE rather than in
+     * index.html, off `ARMIES`, because every word in them is a fact about the
+     * two muster ladders: the rung names, how many rungs there are, and which
+     * two armies exist. A pair of hand-typed rows beside the table that decides
+     * them is the twin this repository has paid for nine times (§2.3) — and it
+     * would be wrong on the day a ladder grows a rung, which is exactly the day
+     * nobody is looking at this file. */
+    this._buildContingentControls();
+    this._range('opt-ally-unit', CONTINGENT_MIXED, LADDER_RUNGS - 1, 1, 'allyUnit');
+    this._slider('opt-ally-unit', 'allyUnit', v => contingentUnitName(Math.round(v)));
+    this._range('opt-ally-army', -1, ARMY_IDS.length - 1, 1, 'allyArmy');
+    this._slider('opt-ally-army', 'allyArmy', v => contingentArmyName(Math.round(v)));
     this._check('opt-command-versus', 'commandVersus');
     /* The battle, for Skirmish. Read by `deploy()` at world build like the
      * three above, so the value written here is the one the next battle gets
