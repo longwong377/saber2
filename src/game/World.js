@@ -304,6 +304,18 @@ export class World {
     this.hitstop = 0;
     this.time = 0;
     this.score = 0;
+    /**
+     * HOW MANY BODIES THIS RUN HAD TO BE PUT BACK ON SCREEN. See
+     * `Enemy._auditVisible`, which is the only writer.
+     *
+     * It is a COUNTER and not a log line because the number is the useful
+     * thing: in a healthy run it is 0 for the whole battle, and any other
+     * value is a body that was drawing nothing while it was alive — the defect
+     * the player reported as "troops go completely invisible a lot". A check
+     * asserts the zero; a repair that happened silently would be a defect that
+     * had been hidden rather than fixed.
+     */
+    this.ghostFixes = 0;
     this.combatIntensity = 0;
     this.paused = false;
     this.running = false;
@@ -5771,7 +5783,12 @@ export class World {
        */
       const at = msg.g ? asVec(msg.p) : null;
       if (at) {
-        e.gripped = true;
+        /* Through the same door a local grip uses, and with a lease long
+         * enough to outlive the gap between claim ticks — see `Enemy.hold`.
+         * `_netGripLeases` below is still the authority on a peer that has
+         * gone quiet; this stops a body being stranded in the window where a
+         * host's own copy of the gripper goes away underneath it. */
+        e.hold(NET_GRIP_LEASE * 2);
         e.liftTarget = (e._netLift ||= new THREE.Vector3()).copy(at);
         /**
          * A LEASE, because a held body is the one state a lost connection can
@@ -5784,7 +5801,7 @@ export class World {
          */
         e._netGripUntil = this.time + NET_GRIP_LEASE;
       } else {
-        e.gripped = false; e.liftTarget = null; e.chokeT = 0;
+        e.releaseHold();
         e._netGripUntil = 0;
       }
     }
@@ -5803,7 +5820,7 @@ export class World {
     for (const e of this.enemies) {
       if (!e._netGripUntil || this.time < e._netGripUntil) continue;
       e._netGripUntil = 0;
-      e.gripped = false; e.liftTarget = null; e.chokeT = 0;
+      e.releaseHold();
     }
   }
 

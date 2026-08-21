@@ -94,7 +94,7 @@ function swing({ rigid = false, seconds = 2.2, still = false } = {}) {
   e.update(1 / 60, ctx);                    // one frame, so the rig is posed
 
   const hold = new THREE.Vector3(0, 2.2, -3);
-  e.gripped = true;
+  e.hold();                     // the shipped door — see Enemy.hold and ghosts.mjs
   e.liftTarget = hold;
   if (!rigid && e.actor && !e.actor.ragdolled) e.actor.goRagdoll(e.velocity, null);
 

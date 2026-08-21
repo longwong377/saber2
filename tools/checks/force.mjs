@@ -1018,12 +1018,12 @@ export async function run({ check, assert, near }) {
 
     // 2. the grip takes it. One arrest, one bill, and the grip is the hold that
     //    can also walk it about.
-    b.p.gripEnemy = taken; taken.gripped = true;
+    b.p.gripEnemy = taken; taken.hold();
     pump(b, 2);
     assert(!taken.stasisHeld, 'a gripped body is still marked as held by the field');
     assert(!b.p.stasis.held.some(h => h.enemy === taken), 'the field and the grip are both holding one body');
     assert(b.p.stasis.held.length === n0 - 2, `the field holds ${b.p.stasis.held.length} of an expected ${n0 - 2}`);
-    b.p.gripEnemy = null; taken.gripped = false;
+    b.p.gripEnemy = null; taken.releaseHold();
 
     // 3. the holder dies. A corpse is not holding a stasis field, and a body
     //    left marked would stand there for the rest of the level.

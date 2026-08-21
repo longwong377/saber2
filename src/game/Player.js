@@ -5778,7 +5778,11 @@ export class Player {
     this.gripDistance = clamp(target.distance, lead + 1.4, lead + this.forceReach);
     if (target.enemy) {
       this.gripEnemy = target.enemy;
-      target.enemy.gripped = true;
+      /* THE LEASE, not the latch. See `Enemy.hold`: the hold is renewed every
+       * frame by `_updateGrip` below, and a gripper that stops renewing —
+       * because it died, because the level rotated, because the whole Player
+       * was disposed — drops the body instead of stranding it. */
+      target.enemy.hold();
       this._liftPoint.copy(target.enemy.position);
     } else {
       this.gripBody = target.body;
@@ -5810,7 +5814,7 @@ export class Player {
   releaseGrip() {
     this._holdT = 0;
     if (this.gripBody) { this.gripBody.gravityScale = 1; this.gripBody = null; }
-    if (this.gripEnemy) { this.gripEnemy.gripped = false; this.gripEnemy.liftTarget = null; this.gripEnemy.chokeT = 0; this.gripEnemy = null; }
+    if (this.gripEnemy) { this.gripEnemy.releaseHold(); this.gripEnemy = null; }
     this._endGesture('grip');
   }
 
@@ -5952,8 +5956,7 @@ export class Player {
     // Whichever hold had it, it does not have it any more. Both are cleared
     // because the volley throws bodies the FIELD held while the grip may hold
     // one of its own, and a body must not leave with a mark still on it.
-    e.gripped = false;
-    e.liftTarget = null;
+    e.releaseHold();
     this._freeStasisEnemy(e);
     _v2.subVectors(at, e.position);
     if (_v2.lengthSq() < 1e-8) _v2.copy(this.aimDir);
@@ -6212,6 +6215,10 @@ export class Player {
       const e = this.gripEnemy;
       const m = e.A ? e.A.mass : 80;
       if (e.dead || m > cap) { this.releaseGrip(); return; }
+      /* SAY IT AGAIN, EVERY FRAME. This line is the whole of the lease: while
+       * it runs the body stays held, and the frame it stops running for any
+       * reason at all is the frame the body starts coming back. */
+      e.hold();
       if (!this._spend((HOLD_COST.person.base + HOLD_COST.person.rise * clamp(m / cap, 0, 1)) * effort * dt)) { this.releaseGrip(); return; }
       // Enemy.update damps its own position toward liftTarget at a fixed rate,
       // so the only place a heavy body can be made to FEEL heavy from here is

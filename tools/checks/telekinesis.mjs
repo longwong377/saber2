@@ -179,7 +179,7 @@ export async function run({ check, assert, THREE: T }) {
       const b = bench({ force: 100000, forcePower });
       const e = standing(b, out);
       b.p.aimDir.set(0, 0, -1);
-      b.p.gripEnemy = e; e.gripped = true;
+      b.p.gripEnemy = e; e.hold();
       b.p._liftPoint.copy(e.position);
       b.p.gripDistance = b.p.camera.pos.distanceTo(b.p.chest) + out;
       b.p._holdT = warm;
@@ -310,7 +310,7 @@ export async function run({ check, assert, THREE: T }) {
       const hp0 = mark.hp, x0 = mark.position.x, z0 = mark.position.z;
       b.p.aimDir.set(0, 0, -1);
       b.p.gripEnemy = held;
-      held.gripped = true;
+      held.hold();
       b.p._liftPoint.copy(held.position);
       b.p.hurlGripped(b.ctx);
       assert(b.p.hurled.length === 1,
@@ -349,7 +349,7 @@ export async function run({ check, assert, THREE: T }) {
      * throw's, because the read is the LINE COMING APART and not the number. */
     const b = bench({ force: 2000, forcePower: 1 });
     const held = standing(b, 2.5, 'trooper');
-    held.gripped = true;
+    held.hold();
     b.p.gripEnemy = held;
     b.p._liftPoint.copy(held.position);
     const rank = [];
@@ -391,7 +391,7 @@ export async function run({ check, assert, THREE: T }) {
     const e = standing(b, 4, 'trooper');
     b.p.aimDir.set(0, 0, -1);
     b.p.gripEnemy = e;
-    e.gripped = true;
+    e.hold();
     b.p._liftPoint.set(0, 2.2, -4);
     e.liftTarget = b.p._liftPoint;
     const dt = 1 / 60;

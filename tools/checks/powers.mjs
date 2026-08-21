@@ -463,7 +463,13 @@ export async function run({ check, assert }) {
       assert(e._castTimer > 0, 'the fixture never reached a wind-up, so it proves nothing');
       if (counter === 'stun') e.stun(0.5, V(0, 0, 1), 1);
       else if (counter === 'push') e.applyKnockback(V(0, 0, 14).setY(6), 9, null);
-      else if (counter === 'grip') e.gripped = true;
+      /* THROUGH THE DOOR, and this is not a cosmetic edit. `gripped` used to be
+       * a latch anyone could set; it is a LEASE now (`Enemy.hold`), because a
+       * hold whose holder went away stranded the body limp and invisible for
+       * the rest of the level — tools/checks/ghosts.mjs has the whole account.
+       * A raw `= true` here expires on the very next `_tickGetUp`, so the
+       * fixture would be measuring a grip that had already been let go of. */
+      else if (counter === 'grip') e.hold();
       else if (counter === 'lightning') e.damage(46, e.position, null, 'lightning');
       else e.applyKnockback(V(0, 0, 22).setY(9), 14, null);
       let arrived = false;
@@ -621,7 +627,7 @@ export async function run({ check, assert }) {
       const { e } = bench('master');
       if (open === 'stun') e.stun(0.6, V(0, 0, 1), 1.4);
       else if (open === 'topple') e.topple();
-      else if (open === 'gripped') e.gripped = true;
+      else if (open === 'gripped') e.hold();
       else e.disarmed = true;
       cutOnce(e, torsoCap(e));
       rows.push({ open, dead: e.dead });

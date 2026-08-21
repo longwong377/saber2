@@ -823,7 +823,10 @@ export async function run({ check, assert }) {
       const seen = [];
       for (const s of OPEN_STATES) {
         Object.assign(foe, { gripped: false, yankT: 0, toppled: false, stunTimer: 0 });
-        if (s.key === 'held') foe.gripped = true;
+        /* `hold()` when the fixture is a real body — a hold is a LEASE now
+         * (see Enemy.hold) — and the flag itself when it is the stub this
+         * check builds, which has no clock to expire one. */
+        if (s.key === 'held') { if (foe.hold) foe.hold(); else foe.gripped = true; }
         else if (s.key === 'yanked') foe.yankT = 0.4;
         else if (s.key === 'downed') foe.toppled = true;
         assert(openState(foe) === s,

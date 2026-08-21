@@ -977,6 +977,55 @@ export const FORCE_KINDS = /^(force|lightning|choke|grip|rend)$/;
 const GET_UP = 1.35;
 
 /**
+ * HOW LONG A HOLD SURVIVES ITS HOLDER — the lease on `gripped`.
+ *
+ * "troops go completely invisible a lot like I see their names above their
+ *  heads but they're invisible, I can still throw them around though."
+ *
+ * `gripped` was a LATCH, and it was written true in three places and false in
+ * one: `Player.releaseGrip`. Everything else that can end a hold — the gripper
+ * dying with a body in the air, a level rotating under it, a co-op peer's
+ * `Player` being disposed, a power interrupted between the two halves of a
+ * frame — left it true FOR EVER, and a body carrying it is:
+ *
+ *   out of its brain          `_think` returns on `gripped`
+ *   out of `_tickGetUp`       so it is limp for the rest of the level
+ *   still suspended           `_move`'s held branch damps it at `liftTarget`,
+ *                             which is the gripper's own live `_liftPoint`
+ *                             vector, so it follows the NEXT thing that player
+ *                             lifts around the field
+ *   still a body              the capsule is in the physics world, so it can
+ *                             still be shot, shoved and thrown
+ *   still on the roster       `roster.living` has it, so its nameplate is
+ *                             drawn over it wherever the capsule has got to
+ *
+ * which is every symptom in that sentence at once.
+ *
+ * A LEASE RATHER THAN ANOTHER `= false`, because the defect is the shape and
+ * not any one of its call sites: adding `releaseGrip()` to `Player.die` fixes
+ * a death and not a disposal, and the next way to abandon a hold would arrive
+ * with nobody having thought to clear it. A holder now has to keep SAYING it
+ * is holding — `Enemy.hold()`, called from the grip's own update — and a hold
+ * nobody is asserting expires on its own. `World._netGripLeases` already had
+ * exactly this reasoning for a peer that goes quiet ("a held body is the one
+ * state a lost connection can strand"); this is the same rule applied to the
+ * machine the hold is running on.
+ *
+ * 0.55 s: comfortably longer than a dropped frame or a hitch (`main.js` clamps
+ * dt at 0.1 s) and short enough that a body whose holder has genuinely gone is
+ * back on its feet inside `GET_UP` of the moment it should have been.
+ */
+const GRIP_LEASE = 0.55;
+
+/** How often a body is asked whether it is drawing anything. See
+ *  `Enemy._auditVisible` — three times a second is far more often than a
+ *  player could notice a body missing, and cheap enough not to matter. */
+const AUDIT_EVERY = 0.33;
+
+/** Rolling phase for the audit above, so bodies do not audit in lockstep. */
+let _auditPhase = 0;
+
+/**
  * What a rank is worth to a soldier's AIM, as a multiplier on their own spread.
  *
  * Derived from RANKS' shape rather than authored beside it: the ladder buys
@@ -1906,7 +1955,16 @@ export class Enemy {
      * ANATOMY: where its chest is, how wide it stands, how long its cape is.
      */
     this.bodyScale = A.scale ?? 1;
+    /* Jittered so a wave that spawns together does not audit together — off a
+     * counter and NOT off `rng()`, which is the seeded stream every composed
+     * wave, form roll and gait phase in the game is drawn from. One extra call
+     * per body constructed would shift all of it, and the failure that
+     * produces is a check somewhere else disagreeing about a number nobody
+     * touched (HANDOFF §2.4, and `held.mjs` has the same note in full). */
+    this._auditT = (_auditPhase = (_auditPhase + 0.137) % AUDIT_EVERY);
     this.gripped = false;
+    /** Seconds of hold left before the lease lapses. See GRIP_LEASE. */
+    this.gripLease = 0;
     this.liftTarget = null;
     /**
      * ARRESTED BY A FORCE STOP — the field has this body, and this is the only
@@ -3337,7 +3395,139 @@ export class Enemy {
    * the CONDITION rather than by each of the four call sites that can cause
    * it, because a fifth will be added and would not have known to arm a timer.
    */
+  /**
+   * SOMEBODY IS HOLDING THIS, AND IS STILL SAYING SO. See GRIP_LEASE.
+   *
+   * The one door into `gripped`. Called every frame by whatever has the body —
+   * `Player._updateGrip` locally, `World.applyClaim` for a peer's lift — and
+   * the flag lapses on its own the moment those stop calling, whatever the
+   * reason they stopped.
+   *
+   * `Math.max` rather than an assignment so two holders cannot shorten each
+   * other's lease, and so a caller that renews at less than frame rate (the
+   * net path claims at the snapshot tick) is not fighting one that renews
+   * every frame.
+   */
+  hold(seconds = GRIP_LEASE) {
+    this.gripped = true;
+    this.gripLease = Math.max(this.gripLease, seconds);
+  }
+
+  /** Let go, from either end. Idempotent, and it is the only way out. */
+  releaseHold() {
+    if (!this.gripped && !this.liftTarget) return false;
+    this.gripped = false;
+    this.gripLease = 0;
+    this.liftTarget = null;
+    this.chokeT = 0;
+    return true;
+  }
+
+  /**
+   * IS THERE ANYTHING OF THIS BODY ON SCREEN? — the ghost audit.
+   *
+   * "troops go completely invisible a lot like I see their names above their
+   *  heads but they're invisible, I can still throw them around though."
+   *
+   * The grip lease above is one road to that; it is not the only one, and the
+   * report has come back across builds in which each individual road was
+   * closed. A body's visibility is written by six systems that do not know
+   * about each other — the ragdoll swaps the rig for holders and back, the LOD
+   * hides detail by range, a cut hides a severed subtree, `Corpses.fade` turns
+   * every material transparent and winds its opacity to zero, `Ink`'s prepass
+   * hides transparent objects for one render and shows them again, and first
+   * person hides parts of a body you are inside — and EVERY ONE of them is a
+   * hide with a matching show somewhere else in the file. A missed show is
+   * therefore not one bug, it is a shape of bug, and the sixth of them will be
+   * written by somebody who has not read this comment.
+   *
+   * So the invariant is checked rather than argued: A LIVING BODY DRAWS
+   * SOMETHING. Nothing else in this method has an opinion about which meshes
+   * should be visible — that is exactly the mistake that would break LOD and
+   * un-sever severed limbs — it asks only whether the total is zero, and only
+   * then puts back the minimum that makes the body exist: the bone primaries,
+   * which are the silhouette (`_collectLodParts` keeps them at every range),
+   * skipping any bone that has genuinely been cut off.
+   *
+   * Three repairs, in the order the causes actually happen:
+   *
+   *   THE ROOT'S OWN SWITCH. `rig.root.visible` belongs to the ragdoll and is
+   *     `!ragdolled`, always. A body limp with the switch left down is the
+   *     invisible half of the player's sentence, and the capsule that is
+   *     "still throwable" is the other half.
+   *   AN ORPHANED SUBTREE. A root or a holder with no parent draws nothing
+   *     wherever its own flags are. Re-added to the scene it was built for.
+   *   A FADE NOBODY FINISHED. `Corpses.fade` writes `transparent` and an
+   *     opacity on a body's own materials and has no inverse; anything that
+   *     hands a body back to the living after that leaves it a clear pane.
+   *
+   * COST. `AUDIT_EVERY` seconds per body, jittered at construction so twenty
+   * of them do not land on one frame, and the traverse stops at the first
+   * visible mesh it finds — which for a healthy body is the first bone it
+   * looks at. Measured on a 42-body field: under 0.05 ms a frame.
+   */
+  _auditVisible(dt) {
+    if (this.dead || !this.rig?.root) return;
+    this._auditT -= dt;
+    if (this._auditT > 0) return;
+    this._auditT = AUDIT_EVERY;
+
+    const ragdolled = !!this.actor?.ragdolled;
+    let fixed = false;
+    /* 1. THE SWITCH. Cheap, and on its own it is most of the defect. */
+    if (this.rig.root.visible === ragdolled) { this.rig.root.visible = !ragdolled; fixed = true; }
+    /* 2. ORPHANS. */
+    const scene = this.world?.scene;
+    if (scene && !this.rig.root.parent) { scene.add(this.rig.root); fixed = true; }
+    if (scene && ragdolled && this.actor?.holders) {
+      for (const h of this.actor.holders.values()) if (!h.parent) { scene.add(h); fixed = true; }
+    }
+    /* 3. NOTHING IS DRAWING AT ALL. Put the silhouette back. One traverse,
+     * after the two cheap repairs above, because either of them may already
+     * have been the reason nothing was drawing. */
+    if (!this._anyVisibleMesh()) {
+      for (const b of this.rig.list) {
+        if (b.severed || !b.primary) continue;
+        b.primary.visible = true;
+        for (let o = b.primary.parent; o && o !== scene; o = o.parent) o.visible = true;
+        const mats = Array.isArray(b.primary.material) ? b.primary.material : [b.primary.material];
+        for (const m of mats) { if (m && m.transparent && m.opacity < 0.999) m.opacity = 1; }
+      }
+      fixed = true;
+    }
+    if (fixed && this.world) this.world.ghostFixes = (this.world.ghostFixes || 0) + 1;
+  }
+
+  /** The first drawn triangle wins — see `_auditVisible`. */
+  _anyVisibleMesh() {
+    const drawn = (o) => {
+      if (!o.visible) return false;
+      if (o.isMesh && o.geometry) {
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        /* A mesh at zero opacity is a mesh nobody can see. The player is not
+         * making a distinction between "hidden" and "clear" and neither is
+         * this. */
+        if (mats.some((m) => m && (!m.transparent || m.opacity > 0.02))) return true;
+      }
+      for (const c of o.children) if (drawn(c)) return true;
+      return false;
+    };
+    if (this.rig?.root?.parent && drawn(this.rig.root)) return true;
+    if (this.actor?.holders) {
+      for (const h of this.actor.holders.values()) if (h.parent && drawn(h)) return true;
+    }
+    return false;
+  }
+
   _tickGetUp(dt) {
+    /* THE LEASE FIRST, and outside the ragdoll guard: a body can be marked
+     * held without having been ragdolled yet (`_move` does that on its next
+     * frame), and one abandoned in that window would keep the flag with
+     * nothing here ever looking at it again. */
+    if (this.gripped) {
+      this.gripLease -= dt;
+      if (this.gripLease <= 0) this.releaseHold();
+    }
     if (this.dead || !this.actor?.ragdolled) { this._recoverAt = 0; return; }
     if (this.gripped || (this.toppled && this.legsLost)) { this._recoverAt = 0; return; }
     /* Wait for it to be still first. Getting up mid-flight is the other
@@ -3840,6 +4030,8 @@ export class Enemy {
     // A living body that is limp and still puts itself back together. See
     // `_tickGetUp`; before this, nothing in the game ever un-ragdolled.
     this._tickGetUp(dt);
+    // …and a living body draws something. See `_auditVisible`.
+    this._auditVisible(dt);
     this.stunTimer = Math.max(0, this.stunTimer - dt);
     this.knockTimer = Math.max(0, this.knockTimer - dt);
     this.yankT = Math.max(0, this.yankT - dt);
