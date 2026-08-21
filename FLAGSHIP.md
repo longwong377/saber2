@@ -190,9 +190,50 @@ arrive alone on an empty bar. Killing stays fast and fun and advances nothing.
 Measured, and nobody designed it: walking 35 m forward drags the whole formation
 with you and costs **4 of 10 men**.
 
-**Third body class: the conscript.** 6 hp, 1.4 dps, one pass, **worth 0 score
-and 0 Insight**. The lawnmower is only a lawnmower when mowing pays. Forty
-conscripts that pay nothing are weather.
+**Third body class: the conscript.** 6 hp, **0.7 dps**, one pass, **worth 0
+score and 0 Insight**. The lawnmower is only a lawnmower when mowing pays.
+Forty conscripts that pay nothing are weather.
+
+> **THE GUN WAS 1.4 AND IT IS HALVED, AND THE PARAGRAPH ABOVE IS WHY THE
+> HALVING COSTS NOTHING.** Every price on this page is quoted against A MOVING
+> PLAYER — one with a guard, a dash and a dive — and until §16.3 was fixed that
+> was the only reader there was: `World._boltHitTest` skipped its whole enemy
+> loop for hostile bolts and your own troopers live in that array, so no rifle
+> on the other side could touch your army. The same field now also prices what
+> a round does to a clone trooper with 46 hit points and a slot to stand in,
+> who can do none of those three things, and the two readings want different
+> numbers. What does NOT move is the argument: this section's answer to a crowd
+> is suppression, and suppression is billed PER BOLT — `GUARD.stamina` is
+> `[1.2, 0.4, 0, 0]` by grade and an unanswered bolt costs Force, and not one
+> of those numbers reads `damage`. Same forty bodies, same cadence, same bolts,
+> same bar. A conscript is now more purely the thing this section says it is.
+>
+> **AND THE LEVY BEING FREE OF THE THREAT BUDGET IS HALF A SENTENCE.** The
+> budget is the mechanism that keeps a wave honest, and it is honest about the
+> PLAYER's two ledgers only: `src/game/Levy.js` argues the exemption at length
+> and every word of that argument is about score and about threat. A body that
+> costs the wave nothing still shoots your men. Measured on the flagship mode's
+> own ground, one engagement driven to its muster with no Jedi on the field,
+> five seeds — the two sources of fire the budget never pays for are **five of
+> the eight names an engagement costs**, and they are the only two whose output
+> does not shrink as the line shrinks:
+>
+> | | survivors of ten, at the muster |
+> |---|---|
+> | as shipped | **1.8** |
+> | the levy off the field | 4.0 |
+> | the gun pit silenced | 4.8 |
+> | every hostile bolt ×0.65 on a man with a roster record | **2.8**, two seeds of five WIPED |
+>
+> That last row is the one to read. Fifty-four per cent more effective health
+> on every man bought one survivor and lost two runs, because
+> `CommandDirector.allyScale` prices the wave per LIVING body: **a line that
+> lives longer meets a wave composed for a line that lived.** Everything on the
+> ledger behaves that way from either end — deleting the army surcharge
+> outright is the same 2.8 — so the only levers that move this number are the
+> two the ledger cannot see. Both are halved (`GUN.every` 7.0 → 14.0 and the
+> round above), which takes an engagement fought without the Jedi from 1.8 of
+> ten to **5.4**, and `theline.12` holds it there.
 
 ---
 
