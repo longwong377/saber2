@@ -186,8 +186,15 @@ export function noInk(material) {
  *
  * Cached on the material, because the `discard` test reads shader source and
  * this question is asked of every visible object every frame.
+ *
+ * Exported because the L2 merged skin (src/game/MergedSkin.js) has to ask it
+ * of every mesh it is about to fold into one opaque body: a material whose
+ * drawn edge is not its geometry must keep its own draw call, or the merge
+ * would hand the prepass an outline that is not the one on screen. A second
+ * copy of the test in that file is HANDOFF §2.4 exactly — the two would
+ * disagree the first time a fifth exclusion was added here.
  */
-function cutsItsOwnSilhouette(m) {
+export function cutsItsOwnSilhouette(m) {
   if (m.userData.saberNoInk) return true;
   if (m.userData._inkCut !== undefined) return m.userData._inkCut;
   const cut = !!(m.transparent || m.alphaTest > 0
