@@ -76,6 +76,36 @@ async function army(seed, mode = 'command', level = 'geonosis') {
   world.difficulty = DIFFICULTY[s.difficulty] || DIFFICULTY.knight;
   await world.loadLevel(level);
   world.spawnPlayer({ name: 'Jedi', isLocal: true });
+  /**
+   * …AND WITHOUT FLAGSHIP §6's LEVY, WHICH IS A STATEMENT ABOUT THIS BENCH AND
+   * NOT ABOUT THE MODE.
+   *
+   * Every check in this file drives a Command world with an IDLE player — no
+   * blade, no dash, no orders — for up to seventy seconds, and reads morale off
+   * whoever is still standing. `CommandDirector` now fields forty conscripts a
+   * wave on this ground (src/game/Levy.js), and forty extra rifles against ten
+   * men whose Jedi does nothing is a wipe: measured on this exact bench, an
+   * idle run goes 10 → 6 at 30 s → 0 at 60 s with the levy and 10 → 8 → 5 → 2
+   * over ninety seconds without it. "morale is a channel and not a ceiling"
+   * failed with `only 0 men left to read`.
+   *
+   * That is not this file's question. These checks are about what a morale
+   * NUMBER does — whether it saturates, whether presence tapers, whether a
+   * broken man keeps moving — and they need a line to read it off. The levy is
+   * a wave composition and belongs to `tools/checks/levy.mjs`, which measures
+   * it against a control the same way. Suppressed by handing the director the
+   * base composer, which is exactly what that file's own control arm does.
+   *
+   * THE ATTRITION ITSELF IS NOT A DEFECT AND IS NOT BEING HIDDEN. Until this
+   * session no rifle on the other side could touch your army at all — see
+   * FLAGSHIP §16.3 — so every one of these benches has always run against a
+   * line that could not be shot. What is open is how much of a ten-man roster
+   * one engagement should cost, and that is a balance question with a number
+   * on it rather than something to be answered by a morale check.
+   */
+  const Waves = await import('../../src/game/Waves.js');
+  const d = world.command;
+  if (d) d._composeUnder = Waves.WaveDirector.prototype._composeUnder.bind(d);
   return world;
 }
 

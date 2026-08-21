@@ -265,6 +265,48 @@ export function applyLevy(out, director, wave = director?.wave ?? 1) {
  * ground with no levy is one early return.
  */
 
+/**
+ * ── WHAT FORTY EXTRA RIFLES DO TO YOUR LINE, AND THE ANSWER THAT DID NOT WORK
+ *
+ * MEASURED, on a real Command world on geonosis with an IDLE player — no
+ * blade, no dash, no orders — ninety seconds, a roster of ten:
+ *
+ *     no levy    10 → 8 at 30 s → 5 at 60 s → 2 at 90 s, player alive
+ *     levy 40    10 → 6 at 30 s → 0 at 60 s → 0,          player dead
+ *
+ * Forty extra rifles is forty extra rifles. §6 prices a conscript at 1.4 dps
+ * "against a MOVING PLAYER" — a player with a guard, a dash and a dive — and a
+ * clone trooper has none of those: he has 46 hit points and a slot to stand in.
+ * (Both columns are new. Until this session no hostile bolt could touch a body
+ * in `world.enemies` at all, your own troopers included — FLAGSHIP §16.3 — so
+ * the honest comparison is not "before the levy" but "the first time the line
+ * could be shot".)
+ *
+ * THE ANSWER THAT LOOKED RIGHT AND MEASURED AS NOTHING, kept because the next
+ * person will think of it too. §6's paragraph is about the PLAYER throughout —
+ * "Twenty B1s fire 18 bolts/s… The crowd does not kill you. It nails your feet
+ * to the floor" — so the levy was made to AIM AT THE JEDI: one instance wrapper
+ * round `_think` that substituted `ctx.pickTarget` for that body only, the same
+ * seam `Flight.installFlight` uses, so the body walked at and shot at the same
+ * thing. Twenty lines, and the fill of the wave went on fighting the line while
+ * the weather came for you, which is exactly the sentence §6 makes.
+ *
+ * It moved the number from 6 to 7 at thirty seconds and not at all at sixty,
+ * and it is easy to see why once measured: forty bodies converging on a player
+ * who does not move kill the player, and a levy with no blade left to walk at
+ * falls back on the line anyway. The mechanism was fine; the premise — that
+ * where the levy AIMS is what decides the roster's losses — was wrong. It was
+ * taken back out rather than left in as an unvalidated behaviour change on the
+ * strength of an argument.
+ *
+ * WHAT IS ACTUALLY OPEN, stated so the next lane does not re-derive it: how
+ * much of a ten-man roster one engagement should cost, now that the roster can
+ * be shot at all. That is a balance question with a number on it — the muster
+ * between areas is what refills a line, and §13 wants the name list to shrink —
+ * and it is not answerable from a bench whose Jedi does nothing for ninety
+ * seconds. It wants a driven player.
+ */
+
 class LevyPack {
   constructor(world) {
     this.id = 'levy';
