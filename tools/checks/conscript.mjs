@@ -153,7 +153,7 @@ export async function run({ check, assert }) {
     } finally { world.unload?.(); }
   });
 
-  check('conscript: it is about two thirds of a B1\'s gun, measured on one field', async () => {
+  check('conscript: its gun is a third of a B1\'s, measured on one field', async () => {
     const { mixedLine } = await import('../_beaten.mjs');
     /**
      * §6 PRICES BOTH BODIES AGAINST A MOVING PLAYER — 2.17 dps for a B1 and
