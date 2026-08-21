@@ -1682,7 +1682,28 @@ export const MODIFIERS = {
     tell: 'a red targeting line on your chest, and most of a second to leave it',
     since: 7,
     threat: { mul: 0.9, flat: 2.8 },
-    allow: (A) => A.ranged && !A.custom && !A.telegraph && !A.training,
+    /**
+     * …AND NOT ON ANYTHING THAT FLIES, which is `!A.flight`.
+     *
+     * The whole content of this modifier is the STAND-OFF: `preferred: [20, 38]`
+     * plus a targeting line you are meant to walk out of. Both halves fail on a
+     * flyer, and they fail in opposite directions.
+     *
+     * The band is overwritten. `Flight.flightStep` writes `A.preferred` every
+     * frame — the cycle's whole point is that the body closes when it stoops —
+     * so this `set` would be a field written at promotion and never read again,
+     * which is HANDOFF §2.3's close relative wearing an elite's colours.
+     *
+     * And if it were not overwritten it would be worse: a sniper holding 38 m
+     * at five and a half metres of altitude is the one body in the game with no
+     * counter at all, which is the "weather" this roster's newest archetype was
+     * built specifically to avoid being.
+     *
+     * `escalation: every modifier is charged for at least the pressure it adds`
+     * agrees from the pricing side — a marksman Geonosian came out at 0.89× of
+     * what it is worth, the only undercharge on the roster.
+     */
+    allow: (A) => A.ranged && !A.custom && !A.telegraph && !A.training && !A.flight,
     scale: { damage: 2.4, fireRate: 1.4, score: 1.5 },
     set: { telegraph: 0.9, burst: 1, spread: 0.006, boltColor: BOLT_COLORS.gold, preferred: [20, 38] },
     install: (e) => { tintBones(e, 0xff8a10, 0.45); addScope(e); },
@@ -6452,10 +6473,41 @@ export class Enemy {
        * acceleration the way anything on a pack does. `_move` derives the two
        * angles; this only spends them.
        */
+      /**
+       * …AND THE LEAN HAS TO PIVOT ON THE BODY, WHICH IT DID NOT.
+       *
+       * `BipedAnimator.update` writes the pelvis in WORLD coordinates
+       * (`hips.position.set(hipX, hipY, hipZ)`, src/game/Rig.js) onto a bone
+       * that is a child of this root — which is correct only while the root is
+       * an identity transform. Rotating it turns the whole skeleton about the
+       * WORLD ORIGIN instead of about the man, so the drawn body swings away
+       * from its own `position` by roughly the distance to the origin times the
+       * angle, and everything that reads `position` — the muzzle, the brain's
+       * range, a Force grip's pick, `Waves.positionIsValid` — is then talking
+       * about a place the body is not.
+       *
+       * Measured on the SHIPPED Jet Trooper before this, three spawns, worst
+       * horizontal gap between the drawn pelvis and `position` over eight
+       * seconds: 1.83 m at x=2, 1.36 m at x=14, 1.79 m at x=30. It was
+       * invisible because `jet` is the only rigged body in the roster that
+       * floats and it is usually within a few metres of a player who is
+       * themselves near the origin; on a body that cruises at five and a half
+       * metres of altitude it is metres of altitude, which is how it was found.
+       *
+       * The fix is the standard pivot: rotate about P by translating the root
+       * to `P - R·P`, so the point P maps to itself and everything near it
+       * turns about it. The attitude is unchanged — the same two angles, the
+       * same order — and nothing else in the frame moves.
+       */
       if (A.float && rigRootOf(this)) {
         const root = rigRootOf(this);
         root.rotation.x = this.jetLean ?? 0;
         root.rotation.z = this.jetRoll ?? 0;
+        /* `root.quaternion` is already the euler above — Object3D keeps the two
+         * in step through `rotation`'s own change callback — so this is a read
+         * of what was just written and not a second way of writing it. */
+        root.position.copy(this.position)
+          .sub(_v4.copy(this.position).applyQuaternion(root.quaternion));
       }
     } else if (this.rig) {
       this._poseWalker(dt, ctx);

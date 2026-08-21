@@ -7917,6 +7917,225 @@ export const BODYGUARD_KITS = {
  * and `Actor.goRagdoll` re-homes it — the same path every rivet and armour
  * plate in this file already travels.
  */
+/**
+ * THE GEONOSIAN WARRIOR — the first body in this game with wings on it.
+ *
+ * Built off `assets/reference/units/creatures/Geonosian*.png`, the plates
+ * `src/world/Props.js` already names for the arena's crowd, and the one
+ * dimension the reference actually states: **1.75 m**, the Geonosian average
+ * height. `scale` is the claim and `tools/checks/flight.mjs` is what turns it
+ * into a measurement — see FLIGHT_CANON in src/game/Flight.js, which is where
+ * the figure lives, for the same reason GIANT_CANON is not in giants.mjs.
+ *
+ * ── WHAT MAKES IT NOT A TROOPER WITH A DIFFERENT HAT ────────────────────
+ *
+ * Four things, and each of them is a number on this page rather than a note:
+ *
+ *   THE FRAME     `legLen: 1.10`, `armLen: 1.12` and a chest radius of 0.098
+ *                 against a clone's 0.155. A Geonosian is 1.75 m of which
+ *                 most is limb: the silhouette is a narrow trunk slung
+ *                 between long thin legs, which is the opposite proportion to
+ *                 every other biped on the roster.
+ *   THE STOOP     `pitch` leans the whole trunk forward. A winged insect does
+ *                 not stand upright; it hangs off its own thorax. This is the
+ *                 one part of the outline that reads at forty metres with the
+ *                 wings furled.
+ *   THE HEAD      an elongated skull with a bony crest running back off it,
+ *                 two large lenses and a pair of mandibles. It is the head
+ *                 the reference is entirely about and it is `headGeo`, so it
+ *                 REPLACES the default ball rather than hiding inside one.
+ *   THE WINGS     two bones a side, dressed here, and the only meshes in the
+ *                 game hanging off a `wing` role. They are marked
+ *                 `silhouette` because a Geonosian at thirty metres with its
+ *                 wings culled is a thin man, and the wings are the whole
+ *                 reason you know what you are looking at.
+ *
+ * ── THE MEMBRANE IS TWO TRIANGLES OF CHITIN AND NOT A CLOTH SIM ────────
+ *
+ * `Cloth.js` costs what `cloth-cost` measures, and a swarm is the wrong place
+ * to spend it: the flight model already moves these wings sixty times a
+ * second (src/game/Flight.js beats them off the body's own climb rate), so
+ * what a sim would add is drape on a surface that is under tension whenever
+ * it matters. Rigid panels on a moving bone, at two draw calls a body.
+ */
+export function buildGeonosian(opts = {}) {
+  const S = opts.scale ?? 0.97;
+  /* Long limbs on a short trunk. `legLen`/`armLen` are the only two knobs the
+   * skeleton has for proportion and both are pushed the same way, which is
+   * what makes the trunk read as small without any bone being shortened. */
+  const rig = new Rig(humanoidSkeleton(S, { armLen: 1.12, legLen: 1.10, wings: true }), { scale: S });
+
+  const chitin = chitinMat(opts.color ?? 0x8a6f4e, 0.52);
+  const dark = chitinMat(0x4e3d2a, 0.40);
+  const membrane = chitinMat(0x6f5636, 0.30);
+  const lens = glassMat(0x14100c, 0.10);
+  const tooth = boneMat(0xd8c9a4, 0.36);
+
+  /**
+   * THE SKULL. A long braincase raked back over a short snout, a crest that
+   * carries on past the back of the head, and a jaw hung under it. Authored as
+   * one geometry so the whole head is one draw call at every range.
+   */
+  const headShell = (s) => assemble([
+    // braincase: an egg on its side, tipped back
+    [(() => { const g = new THREE.SphereGeometry(0.062 * s, 10, 8); g.scale(0.86, 1.02, 1.34); return g; })(),
+      [0, 0.100 * s, -0.020 * s]],
+    // the crest, running back and up off the crown — the read from the side
+    [plateGeo(0.026 * s, 0.150 * s, 0.100 * s, 0.008 * s, 1), [0, 0.150 * s, -0.078 * s], [-0.62, 0, 0]],
+    // brow shelf over the lenses
+    [plateGeo(0.104 * s, 0.030 * s, 0.062 * s, 0.008 * s, 1), [0, 0.128 * s, 0.030 * s], [0.24, 0, 0]],
+    // snout and the jaw under it
+    [limbGeo(0.098 * s, 0.040 * s, 0.026 * s, 8, true, { rings: 3, bulge: 0.05, bulgeAt: 0.2, capN: 2 }),
+      [0, 0.086 * s, 0.024 * s], [1.42, 0, 0]],
+    [plateGeo(0.052 * s, 0.060 * s, 0.048 * s, 0.010 * s, 1), [0, 0.052 * s, 0.048 * s], [0.34, 0, 0]],
+    // the neck's own collar ring
+    [bandGeo(0.026 * s, 0.038 * s, 0.028 * s, 0.042 * s, 0.030 * s, 10), [0, -0.008 * s, 0]],
+  ], 'head');
+
+  dressHumanoid(rig, {
+    scale: S,
+    body: chitin, arm: chitin, leg: chitin, hand: dark, boot: dark, head: chitin,
+    /* No deltoid. An insect's shoulder is a socket in a plate, not a muscle,
+     * and the swell would put a bicep on a body that has none. */
+    deltoid: false,
+    sections: false,
+    /**
+     * THE PROPORTIONS, AND THE ONE THAT DOES THE WORK IS `chestR`.
+     *
+     * 0.098 against the clone's 0.155 and the B2's 0.19. Everything else
+     * follows from it — a body this narrow needs thin arms and a small head or
+     * it reads as a child rather than as an insect.
+     */
+    parts: {
+      chestR: 0.098, shoulderR: 0.082, hipR: 0.086, waistR: 0.070,
+      armR: 0.030, clavR: 0.040, thighR: 0.048, neckR: 0.034,
+      torsoDepth: 0.82, shoulderDome: 0.30, headR: 0.070,
+    },
+    seg: { torso: 10, arm: 8, leg: 8, clav: 6, neck: 8 },
+    limbOpts: {
+      arm: { rings: 3, bulge: 0.05, bulgeAt: 0.28, capN: 2 },
+      fore: { rings: 3, bulge: 0.06, bulgeAt: 0.20, capN: 2 },
+      thigh: { rings: 3, bulge: 0.07, bulgeAt: 0.26, capN: 2 },
+      shin: { rings: 3, bulge: 0.04, bulgeAt: 0.14, capN: 2 },
+    },
+    headGeo: headShell,
+    handGeo: (side, s) => droidHandGeo(side, s, { curl: 0.72 }),
+    feet: { w: 0.060, len: 0.150, h: 0.052 },
+
+    buildHead(headObj, s, hg) {
+      const k = new Kit();
+      /* The two lenses, seated on the shell the shell decides. `onSurface`
+       * with the braincase's own centre means they sit ON the skull at
+       * whatever angle the skull happens to have, rather than at two
+       * coordinates that were right for the sphere before it was scaled. */
+      const core = new THREE.Vector3(0, 0.100 * s, -0.020 * s);
+      const d = new THREE.Vector3();
+      k.pair((sx) => {
+        d.set(sx * 0.62, 0.34, 0.71).normalize();
+        k.aim(lens, (() => { const g = new THREE.SphereGeometry(0.026 * s, 8, 6); g.scale(1, 0.72, 1); return g; })(),
+          onSurface(hg, d, -0.004 * s, core), d);
+        // the mandible: a curved tooth hung off the jaw, pointing in
+        k.add(tooth, clawGeo(0.058 * s, 0.011 * s, 0.003 * s, sx * 0.9, 5, 4),
+          [sx * 0.030 * s, 0.048 * s, 0.062 * s], [0.6, 0, sx * -0.5]);
+      });
+      // the crest's ridge line, and the two horn stubs at its root
+      k.add(dark, plateGeo(0.010 * s, 0.140 * s, 0.026 * s, 0.003 * s, 1), [0, 0.156 * s, -0.082 * s], [-0.62, 0, 0]);
+      k.pair((sx) => k.add(dark, plateGeo(0.014 * s, 0.044 * s, 0.020 * s, 0.005 * s, 1),
+        [sx * 0.032 * s, 0.148 * s, -0.040 * s], [-0.5, 0, sx * 0.3]));
+      /* The crest and the lenses are the head's whole read, so they survive
+       * the LOD cull the way a rancor's horns do. */
+      for (const m of k.bake(headObj)) markSilhouette(m);
+    },
+
+    dress(r, s) {
+      /* ── the thorax: a hard dorsal shell with the wing roots in it ── */
+      const chest = r.get('chest');
+      if (chest) {
+        const k = new Kit();
+        // dorsal carapace, three overlapping plates down the back
+        k.row(3, (i, t) => k.add(dark,
+          plateGeo((0.118 - i * 0.016) * s, 0.070 * s, 0.052 * s, 0.010 * s, 1),
+          [0, (0.030 + t * 0.150) * s, -0.052 * s], [0.16, 0, 0]));
+        // a thin sternum keel
+        k.add(chitin, plateGeo(0.070 * s, 0.190 * s, 0.036 * s, 0.010 * s, 1), [0, 0.088 * s, 0.048 * s]);
+        // the two wing sockets, where the spars actually leave the body
+        k.pair((sx) => k.add(dark, new THREE.CylinderGeometry(0.024 * s, 0.030 * s, 0.026 * s, 8),
+          [sx * 0.050 * s, 0.148 * s, -0.058 * s], [1.2, 0, sx * 0.4]));
+        for (const m of k.bake(chest.obj)) markSilhouette(m);
+      }
+
+      /* ── the abdomen ── */
+      const hips = r.get('hips');
+      if (hips) {
+        const k = new Kit();
+        k.row(3, (i, t) => k.add(chitin,
+          plateGeo((0.096 - i * 0.010) * s, 0.052 * s, (0.086 - i * 0.008) * s, 0.014 * s, 1),
+          [0, (0.010 - t * 0.090) * s, -0.026 * s], [-0.20, 0, 0]));
+        k.bake(hips.obj);
+      }
+
+      /**
+       * ── THE WINGS ──────────────────────────────────────────────────
+       *
+       * Four bones, dressed by hand rather than by `dressHumanoid` — that
+       * function knows the humanoid's fifteen bone names and nothing else, and
+       * a wing is not one of them.
+       *
+       * `primary`, `radius` and `parts` are set the way `addLimb` sets them,
+       * because they are not decoration: `Enemy.capsules` builds the blade's
+       * contact set off `bone.parts` and `bone.radius`, so a wing with meshes
+       * and no radius is a wing the blade passes through.
+       */
+      for (const side of ['L', 'R']) {
+        const sx = side === 'L' ? 1 : -1;
+        for (const [name, w0, w1, len] of [
+          ['wing' + side, 0.20, 0.26, 0.40],
+          ['wingTip' + side, 0.26, 0.13, 0.34],
+        ]) {
+          const b = r.get(name);
+          if (!b) continue;
+          const k = new Kit();
+          /* The membrane: one panel along the bone, widening away from the
+           * body on the inner pair and tapering to a point on the outer. Two
+           * millimetres thick at 1:1 — it is a film with veins in it. */
+          k.add(membrane, plateGeo(w1 * s, b.length, 0.004 * s, 0.004 * s, 1),
+            [sx * (w1 - w0) * 0.30 * s, b.length * 0.5, 0]);
+          // the leading spar, which is the edge the eye actually follows
+          k.add(dark, limbGeo(b.length, 0.011 * s, 0.007 * s, 5, true, { rings: 2, capN: 1 }),
+            [sx * w0 * 0.42 * s, 0, 0.004 * s]);
+          // two veins across the film
+          k.row(2, (i, t) => k.add(dark,
+            plateGeo(w1 * 0.92 * s, 0.005 * s, 0.005 * s, 0.002 * s, 1),
+            [sx * (w1 - w0) * 0.30 * s, (0.26 + t * 0.46) * b.length, 0.001 * s], [0, 0, sx * 0.22]));
+          const made = k.bake(b.obj);
+          for (const m of made) { b.parts.push(m); markSilhouette(m); }
+          b.primary = made[0] || null;
+          b.radius = Math.max(b.radius, w1 * 0.5 * s);
+        }
+      }
+    },
+  });
+
+  /* The trunk's forward lean, applied to the REST POSE rather than to the
+   * group: `rig.pose` is what the animator blends toward, so leaning the group
+   * would lean the feet and the aim with it. */
+  for (const n of ['spine', 'chest']) {
+    const b = rig.get(n);
+    if (!b) continue;
+    b.restQuat.multiply(_geoLean);
+    b.obj.quaternion.copy(b.restQuat);
+    rig.pose[n].copy(b.restQuat);
+  }
+
+  return {
+    rig, group: rig.root, scale: S,
+    palette: { chitin, dark, membrane, lens, tooth },
+    /** Which bones hold this body up in the air. Read by src/game/Flight.js. */
+    wings: ['wingL', 'wingTipL', 'wingR', 'wingTipR'],
+  };
+}
+const _geoLean = new THREE.Quaternion().setFromEuler(new THREE.Euler(0.13, 0, 0));
+
 export function buildBodyguard(opts = {}) {
   /** See BODYGUARD_KITS — `banner` may also be passed directly. */
   const K = { ...(BODYGUARD_KITS[opts.kit] || BODYGUARD_KITS.chassis), ...opts };
@@ -8030,6 +8249,29 @@ export function buildBlaster(kind = 'e5') {
     k.add(dark, plateGeo(0.010, 0.026, 0.014, 0.003, 1), [0, 0.056, 0.40]);
     k.add(glow, new THREE.CylinderGeometry(0.013, 0.016, 0.04, 8), [0, 0.030, 0.425], [1.5708, 0, 0]);
     g.userData.muzzle = new THREE.Vector3(0, 0.030, 0.45);
+  } else if (kind === 'sonic') {
+    /**
+     * THE GEONOSIAN SONIC BLASTER — a horn, not a barrel.
+     *
+     * It is a third silhouette rather than an `e5` repaint because the whole
+     * point of the weapon is that it does not look like a rifle: the reference
+     * is a stubby body with a wide flared emitter bell on the front and a
+     * spherical sonic charge slung underneath. At the range these are met from
+     * (see `preferred`) the bell is the only part of the gun the eye resolves,
+     * and it is the part an E-5 does not have.
+     */
+    k.add(body, plateGeo(0.052, 0.058, 0.20, 0.010, 1), [0, 0, 0.02]);
+    // the bell: two rings opening out to a 9 cm mouth
+    k.add(body, new THREE.CylinderGeometry(0.030, 0.020, 0.07, 10), [0, 0.012, 0.15], [1.5708, 0, 0]);
+    k.add(body, new THREE.CylinderGeometry(0.046, 0.030, 0.06, 12), [0, 0.012, 0.21], [1.5708, 0, 0]);
+    // the charge sphere under the receiver, and the yoke holding it
+    k.add(dark, new THREE.SphereGeometry(0.030, 8, 6), [0, -0.048, 0.02]);
+    k.add(dark, plateGeo(0.018, 0.040, 0.020, 0.005, 1), [0, -0.022, 0.02]);
+    // pistol grip and a short shoulder brace
+    k.add(dark, plateGeo(0.024, 0.090, 0.038, 0.008, 1), [0, -0.070, -0.06], [0.26, 0, 0]);
+    k.add(dark, plateGeo(0.026, 0.044, 0.10, 0.008, 1), [0, -0.010, -0.14]);
+    k.add(glow, new THREE.CylinderGeometry(0.034, 0.040, 0.02, 12), [0, 0.012, 0.243], [1.5708, 0, 0]);
+    g.userData.muzzle = new THREE.Vector3(0, 0.012, 0.26);
   } else {
     // heavy repeater: three barrels in a shroud, drum magazine, carry handle
     k.add(body, plateGeo(0.070, 0.088, 0.44, 0.014, 1), [0, 0, 0.10]);

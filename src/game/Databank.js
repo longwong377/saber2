@@ -501,6 +501,22 @@ export const DATABANK = {
       + 'taught a different blade every visit.',
   },
 
+  geonosian: {
+    faction: 'separatist',
+    weapon: 'Sonic blaster',
+    text: 'The species whose planet this is, and the only thing you will fight here '
+      + 'that is not standing on the ground. A warrior-caste Geonosian is 1.75 metres '
+      + 'of chitin on a frame that is mostly limb, and it fights from five and a half '
+      + 'metres up where nothing you are holding can reach it — until it stoops. It '
+      + 'cannot stay up: every few seconds it drops to head height, empties its '
+      + 'blaster into you at knife range and labours back up, and the climb is three '
+      + 'times slower than the dive. That window is the fight. Take a WING off it in '
+      + 'that window and it never leaves the sand again; it flies on two and it does '
+      + 'not fly on one. Failing that, it weighs 68 kilos — less than a clone trooper '
+      + '— so the Force will simply pull it down, and it stays down for six seconds '
+      + 'afterwards, which is longer than it takes to kill.',
+  },
+
   /* ── the menagerie ────────────────────────────────────────────────── */
 
   beast: {

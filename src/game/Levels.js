@@ -32,6 +32,11 @@ import { MODES, SET_PIECE } from './Waves.js';
 import { TOUGHNESS } from './Combat.js';
 import { buildBodyguard, buildQuadruped } from './Bodies.js';
 import { attachRiders, saddleThreat } from './Riders.js';
+/* The winged rung and the model that flies it. `GEONOSIAN_UNITS` is
+ * assigned into ARCHETYPES beside COMMAND_UNITS below, for the reason that
+ * assignment already gives: this is the module that decides what bodies
+ * exist for everything not declared in Enemy.js. */
+import { GEONOSIAN_UNITS, attachFlight } from './Flight.js';
 import { attachForest } from '../world/Trees.js';
 import { attachHazard } from '../world/Hazard.js';
 import { addSmokeColumns, smokeSites } from '../world/Smoke.js';
@@ -3232,6 +3237,35 @@ export const LEVELS = {
      * thing that opens the gates and shoots you if the animals fail — and they
      * are thin on purpose: this is not a horde level, it is three or four very
      * large problems at once with a screen of gunfire behind them. */
+    /**
+     * NO GEONOSIAN HERE, AND IT IS A MEASUREMENT RATHER THAN A PREFERENCE.
+     *
+     * This arena IS the Petranaki arena and the reference plates of it are full
+     * of the species that built it, so the winged rung belongs here on every
+     * argument except the one that decides: `escalation: the escalation does
+     * not flatten once the roster runs out` counts DISTINCT WAVE SHAPES over 24
+     * seeds and requires a deep wave to be at least as varied as a shallow one.
+     * Measured on this pool, before and after adding one `geonosian` entry:
+     *
+     *              w20   w40   w70   w100  w140
+     *   as shipped  10    12    10     12    11
+     *   + geonosian 17    11     9     12    11
+     *
+     * The gain is real and it is all at the SHALLOW end: this pool composes so
+     * few distinct wave shapes at wave 20 that one more affordable type nearly
+     * doubles them, while wave 70 is pinned where it is by `_upgrade`'s
+     * convergence — it trades every light body for the heaviest the level
+     * fields, and `heavyLimit` then caps those. Two and three entries were
+     * measured too (20 and 17 at w20), and so were threats of 7 and 9 (18 and
+     * 18): nothing about the archetype moves the shallow number, because the
+     * cause is the pool's own narrowness and not this body.
+     *
+     * So the check is right and it is catching a real property of the composer
+     * rather than a defect in the unit — this arena cannot take ANY new light
+     * archetype until deep-wave convergence is answered. Carried as an argued
+     * item in BACKLOG.md §4.5 rather than forced through, and the Geonosian
+     * reaches the field on the ground it is named after.
+     */
     pool: ['charger', 'stalker', 'brute', 'b1', 'beast', 'pouncer', 'b2', 'stalker', 'droideka', 'sniper'],
     groundColor: 0xc9a970,
     spawnRadius: [30, 50],
@@ -3936,6 +3970,19 @@ export const LEVELS = {
  * layer up. `tools/checks/factions.mjs` holds that line.
  */
 Object.assign(ARCHETYPES, COMMAND_UNITS);
+/**
+ * …AND THE ARENA'S OWN SPECIES, which is neither an army rung nor a beast.
+ *
+ * A Geonosian warrior is Confederate infantry that happens to have wings, so
+ * it is registered here rather than in COMMAND_UNITS (it is not a rung a
+ * commander can buy — see src/game/Flight.js) and not with the menagerie
+ * (it is a soldier with a gun, not something an arena shipped in a crate).
+ * It lands before the two pools that name it, which is the whole ordering
+ * requirement: an archetype no pool names is unreachable and `roster.mjs`
+ * fails on it, and a pool naming an archetype that does not exist yet is a
+ * pool entry that resolves to undefined.
+ */
+Object.assign(ARCHETYPES, GEONOSIAN_UNITS);
 
 LEVELS.geonosis = {
   name: 'Geonosis',
@@ -3947,6 +3994,13 @@ LEVELS.geonosis = {
     'trooper', 'trooper', 'trooper', 'heavy', 'sniper', 'jet', 'arc', 'officer',
     // The Confederacy's, weighted the same way.
     'b1', 'b1', 'b1', 'b1', 'b2', 'rocket', 'droideka', 'bx', 'magna',
+    /* THE HOSTS. This is their planet and the Confederacy's line here is
+     * theirs before it is anybody's — two entries, the same weight as the B2
+     * rung, because the reference wide shots of this battle have Geonosians in
+     * the air over the droid ranks rather than instead of them. It is also the
+     * only ground in the game wide enough for the cruise band (9-20 m) to mean
+     * anything: see the note on the giants below. */
+    'geonosian', 'geonosian',
     // …and the armour. `walker` is this game's Spider Walker and it is exactly
     // the OG-9 homing spider droid of the reference plates: a sphere on four
     // very tall thin legs with a single beam off the top. It is the silhouette
@@ -4160,6 +4214,9 @@ LEVELS.geonosis = {
   dress(world) {
     const M = propMaterials();
     beginDressing(world, 20250805 + 91);
+    /* The winged rung is in this level's pool, so the thing that installs the
+     * flight model on one has to exist here. See src/game/Flight.js. */
+    attachFlight(world);
     /* THE FAR SIDE. Three layers, the outermost at 380 m — further than any
      * other level, because the whole promise of this ground is that you can see
      * across it. Low and long rather than tall and jagged: these are mesas and
