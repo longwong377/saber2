@@ -259,6 +259,24 @@ async function boot() {
 
 async function buildWorld(levelKey, onProgress = null) {
   if (world) { world.dispose(); world = null; }
+  /**
+   * PHYSICS BEFORE ANYTHING, AND IT IS AWAITED HERE RATHER THAN ASSUMED.
+   *
+   * `boot()` warms Rapier with the textures — see the `settling the world`
+   * step — so by the time a player can press Deploy it is normally long ready,
+   * and this call is then a resolved promise and free (`initPhysics` hands
+   * every caller the same one).
+   *
+   * It is here because `RapierWorld`'s constructor THROWS on a null module and
+   * the throw lands in `deploy()`'s catch, which puts the player back on the
+   * menu with a notice and no game. Measured in a browser driving the shipped
+   * page: a Deploy that reached this line before the warm-up had finished died
+   * with "Rapier is not initialised — await initPhysics() first", and the
+   * button did nothing for the rest of the session. One await removes the whole
+   * class — the retry path, a slow first load, and any future caller that
+   * builds a world without going through boot at all.
+   */
+  await initPhysics();
   audio.init();
   audio.resume();
 
