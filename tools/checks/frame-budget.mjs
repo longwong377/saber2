@@ -978,6 +978,7 @@ export async function run({ check, assert }) {
      * `Actor.cut` rather than by poking the counter that watches it.
      */
     const { world } = await line;
+    const input = idleInput();
     const e = world.enemies.find((x) => x.actor && x.rig && x._l2?.on);
     assert(e, 'no merged body on the field to cut');
 
@@ -998,7 +999,22 @@ export async function run({ check, assert }) {
     e.actor.cut(arm.name, at, new THREE.Vector3(0, 0, 1), 0.5);
     assert(e.actor.severedCount > wasCut, `Actor.cut refused ${arm.name} on a ${e.type}`);
 
-    e._applyLod(2);
+    /* ONE ORDINARY FRAME, and not a forced `_applyLod` — with the count of
+     * `_applyLod` calls taken during it, because that count is the whole
+     * argument. `_applyLod` runs on a LOD BAND CHANGE and a cut is not one, so
+     * a teardown that only happened inside `_applyLod` would never fire in the
+     * game and this check, forcing the call, would be green about a path a
+     * player cannot reach. Asserting the count is ZERO is what makes the frame
+     * below evidence rather than a re-statement of the fix. */
+    const realApply = e._applyLod.bind(e);
+    let applied = 0;
+    e._applyLod = (l) => { applied++; return realApply(l); };
+    world.update(1 / 60, input);
+    delete e._applyLod;
+    assert(e.lod === 2, `the cut body left the band (${e.lod}), so the frame proves nothing`);
+    assert(applied === 0,
+      `_applyLod ran ${applied} times on the frame the body was cut, so this check cannot tell a `
+      + 'teardown that fires on a cut from one that only fires when the body changes LOD band');
     assert(!e._l2 || !e._l2.on,
       `${e.type} kept its merged skin after losing a ${arm.name}. Every vertex of that limb is still `
       + 'in the merged geometry, riding a bone the rig has marked severed — the body walks off '
@@ -1006,6 +1022,7 @@ export async function run({ check, assert }) {
     let stillDrawing = 0;
     e.rig.root.traverse((o) => { if (o.isMesh && o.visible && o.userData.mergedSkinL2) stillDrawing++; });
     assert(stillDrawing === 0, `${stillDrawing} merged skins still drawing on a cut body`);
-    return `LOD 0 off, LOD 1 off, LOD 2 on, and a cut ${arm.name} gave the skin back`;
+    return `LOD 0 off, LOD 1 off, LOD 2 on, and a cut ${arm.name} gave the skin back on an `
+      + 'ordinary frame that never entered _applyLod';
   });
 }

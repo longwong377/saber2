@@ -4269,12 +4269,20 @@ export class Enemy {
     const camDist = ctx.camera.position.distanceTo(this.position);
     const lod = camDist > 62 ? 2 : camDist > 30 ? 1 : 0;
     if (lod !== this.lod) { this.lod = lod; this._applyLod(lod); }
-    /* …and a DEFERRED L2 bake is retried. `_applyLod` is EDGE-triggered, and
-     * MergedSkin.js caps the bake at one body a frame because forty of them at
-     * once is 116 ms. Without this line a body refused the budget on its one
-     * edge waits for an edge that never comes: measured, 42 bodies deployed
-     * past 62 m and stepped for 300 frames, exactly ONE of them ever merged. */
-    else if (this._l2Wait) this._applyLod(lod);
+    /* …and the L2 merged skin is asked EVERY frame, because the two things it
+     * answers to do not move on a LOD edge and `_applyLod` is edge-triggered.
+     *
+     * A DEFERRED BAKE needs a retry: MergedSkin.js caps the bake at one body a
+     * frame because forty at once is 116 ms, so a body refused the budget on
+     * its one edge would wait for an edge that never comes. Measured before
+     * this line existed — 42 bodies deployed past 62 m, stepped 300 frames,
+     * exactly ONE of them ever merged.
+     *
+     * And a body CUT or RAGDOLLED while it is merged has to give the skin back
+     * on the frame it happens: the bake is a photograph of a rig with all its
+     * bones, so until it is dropped the body walks around still wearing the arm
+     * the player just took off it, for as long as it stays in this band. */
+    else if (this._l2 || this._l2Wait) applyMergedSkin(this, lod);
     /**
      * …and cloth gets its own cut, from the quality tier.
      *
