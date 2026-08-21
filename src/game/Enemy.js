@@ -4589,11 +4589,25 @@ export class Enemy {
      * machine on the field does not move at all.
      */
     if (A.plant) {
+      /* IN BAND AND IN SIGHT IS THE WHOLE CONDITION, and it is what makes the
+       * duty cycle measurable rather than rhetorical: a siege gun that can see
+       * its target stops, and one that cannot walks. Circling was the first
+       * version and it does not work — the brain above hands every ranged body
+       * a lateral wish inside its own band, so a machine that must be still to
+       * shoot would have strolled sideways at its full pace resetting its own
+       * plant tally forever, and fired nothing. Measured that way: 0 shells in
+       * sixty seconds against a stationary target 60 m away.
+       *
+       * `_hasLineOfSight` in the condition is the other half and it is the
+       * reposition the reference describes. Break the line — a spire, a
+       * revetment, the far side of a ridge — and the machine gets up, walks,
+       * and has to bank its stillness again from zero at the other end. */
+      const settle = this.aimCharge > 0 || this.burstLeft > 0
+        || (dist < A.preferred[1] && this._hasLineOfSight(ctx));
+      if (settle) this.wish = null;
       const moving = Math.hypot(this.velocity.x, this.velocity.z) > this.speed * 0.2;
       this.plantTimer = moving ? 0 : (this.plantTimer || 0) + dt;
-      const committed = this.aimCharge > 0 || this.burstLeft > 0;
-      if (committed) this.wish = null;
-      this.planted = damp(this.planted ?? 0, committed || this.plantTimer >= A.plant ? 1 : 0, 3.2, dt);
+      this.planted = damp(this.planted ?? 0, settle && this.plantTimer >= A.plant * 0.5 ? 1 : 0, 3.2, dt);
     }
 
     this.attackTimer -= dt;

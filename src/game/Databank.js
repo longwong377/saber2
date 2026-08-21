@@ -254,6 +254,30 @@ export const DATABANK = {
       + 'fired. Then 4.2 seconds of reload. That is the only window it gives and '
       + 'the whole answer to it.',
   },
+  tridroid: {
+    faction: 'separatist',
+    weapon: 'Three chain-fed laser cannons, one a facing',
+    text: 'Techno Union artillery, and the tallest thing either army walks onto '
+      + 'a field: a bulbous head fourteen and a half metres up on three enormously '
+      + 'long thin legs, with the ammunition stored inside the head itself. Three '
+      + 'photoreceptors and three cannons, both sets a third of a turn apart, so it '
+      + 'has no front and no blind spot and never needs to face you — it shoots '
+      + 'DOWN, from twelve metres, while you walk to it. And then it goes over. One '
+      + 'leg is enough. A tripod that loses a leg is not a tripod, and this is the '
+      + 'only body of its size on the roster that a single pass brings down.',
+  },
+  snailtank: {
+    faction: 'separatist',
+    weapon: 'Twin heavy repeating blasters and concussion launchers',
+    text: 'A Corporate Alliance droid tank, and the only machine in the war that '
+      + 'runs on ONE tread — a single high-traction belt down its own centreline '
+      + 'with two outrigger pontoons on arms to stop it tipping. Sixty kilometres '
+      + 'an hour in a straight line and eleven and a half seconds to turn round, '
+      + 'which is the whole fight: it picks a line, it commits to it, and stepping '
+      + 'off that line buys you longer than anything else on the field will give '
+      + 'you. Take the tread. The pontoons look like the same target and are not — '
+      + 'they carry nothing, and cutting one changes nothing.',
+  },
   bodyguard: {
     faction: 'separatist',
     weapon: 'Electrostaff',
@@ -362,11 +386,41 @@ export const DATABANK = {
     weapon: 'Mass-driver siege cannon',
     text: 'All Terrain Tactical Enforcer — thirteen metres of six-legged siege '
       + 'armour, walked off a gunship\'s undercarriage straight into '
-      + 'a droid line that outnumbers it. One shell every 4.6 seconds at 58 damage, '
-      + 'the heaviest single hit in the game, behind a 1.1 second telegraph that is '
-      + 'the only warning of that size anybody gets. It is too heavy for the Force '
-      + 'to lift and the grip says so out loud rather than doing nothing. Take the '
-      + 'legs: three of the six and it comes down.',
+      + 'a droid line that outnumbers it. One shell every 4.6 seconds at 58 damage — '
+      + 'over half a Jedi in one round, and only the siege artillery behind it hits '
+      + 'harder — behind a 1.1 second telegraph. It is too heavy for the Force '
+      + 'to lift and the grip says so out loud rather than doing nothing. Its '
+      + 'footpads are magnetised, which is why it walks up things nothing else on '
+      + 'tracks or wheels can follow it onto. Take the legs: three of the six and it '
+      + 'comes down.',
+  },
+
+  spha: {
+    faction: 'republic',
+    weapon: 'Heavy turbolaser, one shell every fourteen seconds',
+    text: 'Self-Propelled Heavy Artillery — the largest ground weapon the Republic '
+      + 'owns, and a gun with a chassis under it rather than a vehicle carrying a '
+      + 'gun. Twelve legs, and the reference is blunt about what they are for: it '
+      + 'walks between firing positions and it stands still to shoot, because a '
+      + 'turbolaser that size is aimed by not moving. It is the heaviest single hit '
+      + 'in the game and it gives the longest warning of anything on the field: two '
+      + 'and a half seconds of charge. That is the opening. While it '
+      + 'is charging it cannot walk, cannot come about and cannot depress the gun, '
+      + 'and there are three metres of clearance under the hull with twelve legs '
+      + 'standing in it. Five of them and the whole thing comes down. Thirty clone '
+      + 'gunners crew one.',
+  },
+  juggernaut: {
+    faction: 'republic',
+    weapon: 'Dorsal heavy laser turret, ten rounds a burst',
+    text: 'The HAVw A6, and everyone calls it the Turbo Tank: forty-nine metres of '
+      + 'ten-wheeled assault transport with three hundred troopers inside it, a '
+      + 'cockpit at each end so it never has to turn round, and an observation '
+      + 'tower over the spine that is the tallest structure on the field. It is '
+      + 'also the fastest heavy in the game — you cannot outrun it in the open, so '
+      + 'do not try. It cannot climb and it cannot come about. Anything you can put '
+      + 'between you and it is a wall it has to drive the long way round, and while '
+      + 'it does that it is showing you five wheels at knee height.',
   },
 
   /* ── the Order ────────────────────────────────────────────────────── */

@@ -431,10 +431,40 @@ function chassisSkeleton(S, P) {
     out.push({ name: 'stern', parent: 'hips', offset: [0, P.stern[0] * S, P.stern[1] * S], length: P.stern[2] * S, rest: [0, 1, 0], role: 'hull' });
   }
   out.push({ name: 'head', parent: 'body', offset: [0, P.head[0] * S, P.head[1] * S], length: P.head[2] * S, rest: P.head[3] || [0, 1, 0], role: 'head' });
-  for (let i = 0; i < (P.legs || 0); i++) {
+  /**
+   * ── A LEG THAT IS NOT ONE OF A PAIR IN A ROW ──────────────────────────
+   *
+   * Everything above lays legs out as `side = i % 2 ? -1 : 1` over rows of two,
+   * which is every machine in this file up to the giants and is wrong for two
+   * of the five that came after. A TRIPOD has no pairs and no rows: the
+   * Octuptarra magna tri-droid's three legs are 120° apart around a hub, and
+   * forcing them through the row arithmetic gives two legs on one axis and a
+   * third one somewhere with no partner — a body plan that cannot stand.
+   *
+   * `legPlan` is the escape hatch and it is deliberately RAW: an array of
+   * `{ x, z, rest }` in units of scale, one per leg, replacing the pair layout
+   * and nothing else. The chain below it — femur → tibia → tarsus, the naming
+   * `_poseWalker` solves on, the `leg` role `severanceOf` and `toppleAt` price
+   * off — is identical either way, which is the point. A machine that lays its
+   * hips out differently is still a machine this file's one pose path can walk.
+   *
+   * `stance.limbs` has to agree with it and is authored beside it in the
+   * builder rather than derived here, for `chassisStance`'s own reason: where a
+   * foot PLANTS is a fact about the gait and not about where the hip is.
+   */
+  const plan = P.legPlan || null;
+  const nLegs = plan ? plan.length : (P.legs || 0);
+  for (let i = 0; i < nLegs; i++) {
     const side = i % 2 === 0 ? 1 : -1;
     const row = Math.floor(i / 2);
-    const z = P.rows[row] * S;
+    const z = plan ? plan[i].z * S : P.rows[row] * S;
+    if (plan) {
+      const L = plan[i];
+      out.push({ name: `femur${i}`, parent: 'hips', offset: [L.x * S, (P.hipY ?? 0) * S, z], length: P.femur * S, rest: L.rest, role: 'leg' });
+      out.push({ name: `tibia${i}`, parent: `femur${i}`, offset: [0, P.femur * S, 0], length: P.tibia * S, rest: [L.rest[0] * 0.14, -1, L.rest[2] * 0.14], role: 'leg' });
+      out.push({ name: `tarsus${i}`, parent: `tibia${i}`, offset: [0, P.tibia * S, 0], length: P.tarsus * S, rest: [0, -0.45, 0.55], role: 'leg' });
+      continue;
+    }
     out.push({ name: `femur${i}`, parent: 'hips', offset: [side * P.hipX * S, P.hipY * S, z], length: P.femur * S, rest: [side * P.splay, P.rise, 0], role: 'leg' });
     out.push({ name: `tibia${i}`, parent: `femur${i}`, offset: [0, P.femur * S, 0], length: P.tibia * S, rest: [side * 0.12, -1, 0], role: 'leg' });
     out.push({ name: `tarsus${i}`, parent: `tibia${i}`, offset: [0, P.tibia * S, 0], length: P.tarsus * S, rest: [0, -0.45, 0.55], role: 'leg' });
@@ -452,6 +482,25 @@ function chassisSkeleton(S, P) {
      * only offers the blade bones that carry geometry. */
     if (w.rim) out.push({ name: w.name.replace('wheel', 'rim'), parent: w.name, offset: [0, w.len * S, 0], length: w.rim * S, rest: [0, -1, 0], role: 'leg' });
   }
+  /**
+   * ── AND SOMETHING THAT CARRIES NOTHING, WHICH IS NOT A LEG ────────────
+   *
+   * The note over `wheels` says a wheel is a leg because it carries the
+   * machine's weight. The converse has a body too: the NR-N99's outrigger
+   * pylons hang off the flanks of a tank that runs on ONE central tread, and
+   * they stabilise it rather than drive it. Priced as legs they would make a
+   * snail tank a tripod — cut a pontoon and the machine falls over, which is
+   * exactly backwards, because the whole design of the thing is that the tread
+   * is the single point of failure and the outriggers are there to stop it
+   * tipping while the tread does the work.
+   *
+   * `struts` are `hull`, and that one word is what makes `toppleAt` count the
+   * tread alone: one chain, so the clamp asks for one, so severing the tread
+   * beaches the tank and severing a pontoon does not.
+   */
+  for (const s of (P.struts || [])) {
+    out.push({ name: s.name, parent: s.parent || 'hips', offset: [s.x * S, s.y * S, s.z * S], length: s.len * S, rest: s.rest, role: s.role || 'hull' });
+  }
   return out;
 }
 
@@ -465,6 +514,22 @@ function chassisSkeleton(S, P) {
  */
 function chassisStance(S, P) {
   const limbs = [];
+  /* `plantPlan` is `legPlan`'s other half — see the note over it. Where a foot
+   * plants is a fact about the GAIT rather than about where the hip is, so a
+   * tripod says both, in the same two places every rowed machine says them. */
+  if (P.plantPlan) {
+    for (const L of P.plantPlan) {
+      limbs.push({
+        arm: false, x: L.x * S, z: L.z * S,
+        ankle: P.ankle * S, toe: P.toe,
+        pole: [L.pole[0] * S, L.pole[1] * S, L.pole[2] * S], hand: null,
+      });
+    }
+    return {
+      hipHeight: P.hipHeight * S, step: P.step * S, lift: P.lift * S,
+      rear: P.rear * S, bob: P.bob * S, limbs,
+    };
+  }
   for (let i = 0; i < (P.legs || 0); i++) {
     const side = i % 2 === 0 ? 1 : -1;
     const row = Math.floor(i / 2);
@@ -594,7 +659,18 @@ const _wp = new THREE.Vector3();
  * turn its wheels the wrong way, and that is a smaller lie than wheels that do
  * not turn at all.
  */
+/**
+ * …AND ONE DRIVER MAY TURN A WHOLE TRAIN OF THEM, which is the Juggernaut.
+ *
+ * `hoop` takes an array as readily as a single object. A ten-wheeled tank
+ * cannot afford ten callbacks integrating the same displacement separately —
+ * the note below about the tread coming off the tyre is the same failure at
+ * five times the scale, and it would show as the near wheels turning while the
+ * far ones stood still the moment one of the ten was culled. One reading of the
+ * hub, one angle, ten wheels turning through it.
+ */
 function rollByOdometry(driver, hoop, radius) {
+  const spun = Array.isArray(hoop) ? hoop : [hoop];
   let init = false;
   const last = new THREE.Vector3();
   driver.onBeforeRender = function () {
@@ -606,7 +682,7 @@ function rollByOdometry(driver, hoop, radius) {
      * first call has no previous position at all. Either way the reading is
      * discarded and the wheel picks up from where it is. */
     if (!init || d > 5) { last.copy(_wp); init = true; return; }
-    if (d > 1e-5) { hoop.rotation.y += d / radius; last.copy(_wp); }
+    if (d > 1e-5) { for (const h of spun) h.rotation.y += d / radius; last.copy(_wp); }
   };
 }
 
@@ -783,8 +859,8 @@ export function buildATTE(opts = {}) {
     prow: [0.30, 2.05, 0.55],
     stern: [0.38, -2.05, 0.60],
     head: [0.62, 0.30, 0.46],
-    legs: 6, rows: [1.42, 0.02, -1.40], hipX: 0.86, hipY: 0.14,
-    femur: 0.78, tibia: 0.92, tarsus: 0.26, splay: 0.70, rise: 0.62,
+    legs: 6, rows: [1.42, 0.02, -1.40], hipX: 1.00, hipY: 0.14,
+    femur: 0.78, tibia: 0.92, tarsus: 0.26, splay: 0.86, rise: 0.62,
   }), { scale: S });
 
   const shell = armorMat(0xb6ab92, 0.08, 0.58, 1.5);
@@ -962,10 +1038,34 @@ export function buildATTE(opts = {}) {
     primary(tarsus, assemble([[padGeo(0.36 * S, 0.28 * S, 4), [0, P, 0], [Math.PI, 0, 0]]]), shell, 0.22 * S);
   }
 
+  /**
+   * ── THE STANCE IS 0.76 m WIDER A SIDE THAN IT WAS, AND THAT IS AN ACCURACY
+   *    FIX RATHER THAN A TASTE ONE ───────────────────────────────────────
+   *
+   * The player gave the figures with the request: "13.2 meters long, 10.2
+   * meters wide, and 5.02 meters tall". Measured against the shipped hull, two
+   * of the three were already met and one was not:
+   *
+   *     canon 13.2 m long   built 13.5   +2%
+   *     canon  5.02 m tall  built  5.7   +14%  (the mass driver is what is over)
+   *     canon 10.2 m wide   built  7.9   -23%  ← this
+   *
+   * An AT-TE's width is its FOOT SPAN — the hull is narrow and the legs stand
+   * well outboard of it, which is the whole reason clones shelter under one —
+   * so the fix is `plantX` and nothing about the hull. 1.34 to 2.10 of scale
+   * takes the pads to ±4.2 m and the machine to 10.0 m across, within 2% of
+   * the figure, and `poleX` goes with it so the knee still breaks outward
+   * instead of the leg going straight.
+   *
+   * It is not free: the leg now reaches 94% of its own length to plant, where
+   * it reached 85%. That is checked rather than asserted — `giants.mjs` drives
+   * the gait and measures where the pads land, and `vehicles.mjs` already held
+   * the line that nothing sinks through the floor.
+   */
   const stance = chassisStance(S, {
       legs: 6, hipHeight: 1.30, step: 0.86, lift: 0.26, rear: 0.22, bob: 0.018,
-      plantX: 1.34, plantZ: [1.70, 0.02, -1.62], ankle: 0.259, toe: 0.08,
-      poleX: 1.05, poleY: 1.45, poleZ: 0,
+      plantX: 2.10, plantZ: [1.70, 0.02, -1.62], ankle: 0.259, toe: 0.08,
+      poleX: 1.62, poleY: 1.45, poleZ: 0,
   });
   return {
     rig, muzzles: [muzzle], scale: S, stance,
@@ -2628,6 +2728,951 @@ export function buildTransport(opts = {}) { return hullFor(TRANSPORT_BY_SIDE, op
 export function buildCapitalShip(opts = {}) { return hullFor(CAPITAL_BY_SIDE, opts.side)(opts); }
 
 /* ══════════════════════════════════════════════════════════════════════ */
+/*  THE GIANTS                                                            */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * "I WANT SOME VEHICLES AND/OR CREATURES THAT ARE TRULY LARGE AND GIANT."
+ *
+ * The player, in full, because every decision in the six hundred lines below
+ * answers one clause of it:
+ *
+ *   "I want some vehicles and/or creatures that are truly large and giant like
+ *    AT-AT or AT-M6 sized but obviously not those since they werent in the
+ *    prequels, if needed come up with your own, they should be incredibly
+ *    deadly and dangerous and difficult to take down, some piloted obvously…
+ *    all of these need to be accurate and act/move/fire differently as canon"
+ *
+ * ── WHAT "AT-AT SIZED" ACTUALLY ASKS FOR, WHICH IS NOT WHAT THE NUMBERS SAY ─
+ *
+ * An AT-AT is 20 m long and 22.5 m tall and an AT-M6 is 35 m tall, so the
+ * player's own yardstick is a machine somewhere between twenty and thirty-five
+ * metres. Four of the five subjects they named come in under that at 1:1 and
+ * ONE of them is 140.2 m, which is 35% of the width of every playfield in this
+ * game, four times the shadow cascade and twice the far edge of the widest
+ * spawn ring. Built at 1:1 it would not be a machine, it would be the map.
+ *
+ * The reference is not unanimous about that figure either, and the disagreement
+ * is the way out. 140.2 m is the databank length; a scaling analysis taken off
+ * the Geonosis footage puts the SPHA at 34-38 m long and about 20 m tall, which
+ * is a factor of four out and is also exactly the size the player asked for. So
+ * the SPHA is built at 1:4 of the databank figure — 35.0 m — where those two
+ * readings agree, and `tools/checks/giants.mjs` states the ratio in its output
+ * every run rather than leaving it as a decision somebody has to find.
+ *
+ * The Juggernaut gets the same treatment for the same reason at half the depth:
+ * 49.4 m at 1:1 is longer than the Colosseum's floor is wide, so it is built at
+ * 1:2. The other three are built at 1:1, because at 1:1 they are already the
+ * size the note asks for:
+ *
+ *   MACHINE            CANON                       BUILT      SCALE
+ *   SPHA               140.2 m long, 12 legs       35.0 m     1:4
+ *   HAVw A6 Juggernaut 49.4 × 19.6 × 30.4, 10 wh   24.7 m     1:2
+ *   Octuptarra magna   14.59 m tall, 3 legs        14.6 m     1:1
+ *   NR-N99 Persuader   10.96 × 6.2, one tread      11.0 m     1:1
+ *   AT-TE              13.2 × 10.2 × 5.02, 6 legs  13.5 m     1:1  (already here)
+ *
+ * ── THE AT-TE WAS ALREADY HERE AND IT WAS RIGHT ABOUT TWO THINGS IN THREE ──
+ *
+ * "(might already be in the game idk)". It is, and the audit is worth recording
+ * because two of the three numbers the player quoted were already met and the
+ * third was not:
+ *
+ *     canon 13.2 m long   built 13.5   +2%
+ *     canon  5.02 m tall  built  5.7   +14%   (the mass driver is what is over)
+ *     canon 10.2 m wide   built  7.9   -23%   ← wrong, and fixed below
+ *
+ * Its six laser turrets were already right (four in spherical housings on the
+ * prow, two aft), and so was the dorsal mass driver on a ring behind a
+ * triangular shield plate. What it had never had is the machine's single most
+ * quoted property: MAGNETISED FOOTPADS, which is why an AT-TE climbs a cliff
+ * and drives up the outside of a Venator. That is `grade: 1` now, and it is
+ * the only body in the game that declares it.
+ *
+ * The 13.2 / 5.02 figures come from the Cross-Sections, which measures the hull
+ * at 12.4 and the machine at 13.2 with the guns. A later databank entry gives
+ * 22.02 × 9.7 instead — a genuinely disputed machine — and the pair the player
+ * quoted is the pair this file builds to, both because they asked for it and
+ * because the shipped hull was already within 2% of the length.
+ *
+ * ── EACH ONE MOVES DIFFERENTLY, AND THE DIFFERENCE IS FOUR NUMBERS ────────
+ *
+ * This is the clause the whole item turns on, and "a twelve-legged artillery
+ * platform that walks like the six-legged one" is a real risk rather than a
+ * rhetorical one: every big body in this game goes through one `_poseWalker`
+ * and one `_move`, and until the giants landed those two functions knew exactly
+ * two facts about a machine — how fast it walks, and whether it is `big`.
+ *
+ * Four fields in `Enemy.js` carry the rest, and every one of them is a NUMBER a
+ * suite can read off a driven body rather than a state name:
+ *
+ *   CONTACTS   what the machine stands on. 12 legs / 10 wheels / 3 legs / one
+ *              tread / 6 legs. Counted off the rig, never off a list.
+ *   plant      the SPHA banks 1.6 s of stillness before it may fire and holds
+ *              station through the whole 2.6 s charge, so the fraction of its
+ *              life spent moving inside its own band is near zero where every
+ *              other machine's is near one.
+ *   turnRate   seconds to come about. 0.45 for a tank on one tread (11.6 s),
+ *              9.0 for a tri-droid on a rotating hub (0.58 s) — the reference
+ *              says "almost instantly" and that is the number that means it.
+ *   grade      the steepest ground it is built for. 1.0 for magnetised
+ *              footpads, 0.22 for ten wheels, which is the difference between
+ *              climbing the crate in front of you and going round it.
+ *
+ * ── AND HOW EACH ONE DIES, WHICH IS THE OTHER HALF OF "DIFFICULT" ─────────
+ *
+ * "Deadly and dangerous and difficult to take down" is easy to build badly:
+ * multiply the health pool and the player learns nothing. Every one of these
+ * has a STATED answer, it is written in the builder's own header, and
+ * `giants.mjs` asserts that the answer is reachable — that the bone it names is
+ * a bone a standing player's blade can meet, and that the number of them the
+ * chassis needs to lose is under the number it has.
+ *
+ *     SPHA        five legs of twelve, and the window is its own charge: it
+ *                 cannot move for 2.6 s and its gun cannot depress.
+ *     Juggernaut  four wheels of ten. It cannot climb and cannot come about, so
+ *                 anything you can put between you and it is cover it has to
+ *                 drive the long way round.
+ *     Tri-droid   ONE leg. Straight out of the reference — "if one was damaged,
+ *                 the entire droid would topple over" — and it is the fastest
+ *                 kill on the roster against a body 14.6 m tall.
+ *     Snail tank  the tread. One chain, so one cut beaches it; the outriggers
+ *                 are `hull` and cutting one buys nothing.
+ *     AT-TE       three legs of six, unchanged.
+ *
+ * ── WHAT THEY COST, BECAUSE A 35 m MACHINE IS NOT ALLOWED TO COST 35 m ────
+ *
+ * Everything below goes through `Kit`, which merges one mesh per material per
+ * bone, exactly like every other hull in this file. The draw calls that remain
+ * are the ones `Enemy.capsules()` needs: it emits ONE capsule per bone that
+ * carries geometry, so merging the SPHA's twelve legs into the hull would
+ * delete the only way the machine can be killed. That is why the artillery is
+ * the most expensive body in the game and why nothing else here is near it —
+ * `giants.mjs` prints the count for all five every run, and `heavyLimit` is
+ * what bounds how many are on the field at once.
+ *
+ * ── WHAT WAS LOOKED AT AND DELIBERATELY NOT BUILT ────────────────────────
+ *
+ * "Look up other vehicles/mechs/monsters that we could be mssing." Four came
+ * close and each was refused for a reason rather than for a budget:
+ *
+ *   AT-AP     a three-legged Republic gun platform with a retractable third leg
+ *             it plants to fire. It is the SPHA's mechanic at a tenth of the
+ *             size and the tri-droid's silhouette at half of it, which makes it
+ *             the one addition that would have been a reskin of two machines at
+ *             once.
+ *   AT-OT     an eight-legged open troop transport. It is an AT-TE with the
+ *             guns off and no mechanic of its own.
+ *   Zillo     a hundred-metre armoured reptile off Malastare, and the one
+ *             CREATURE at this scale in the era. It is a genuine gap and it is
+ *             not a vehicle: it belongs with the menagerie in Bodies.js and
+ *             `BEAST_MOVES`, not in a file about chassis, and half of what
+ *             makes it interesting is that it cannot be hurt from the front.
+ *   Core ship a Trade Federation sphere. It is scenery, and this game already
+ *             learned what happens when a level is an interior.
+ */
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  5. SPHA — the Republic's siege gun                                    */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * A GUN WITH A CHASSIS UNDER IT, AND THE CHASSIS IS THE SMALL PART.
+ *
+ * Everything else in this file is a vehicle carrying a weapon. The SPHA is the
+ * other way round: the turbolaser is the machine and the twelve legs are, in
+ * the reference's own words, "mobile support structures" — they exist to walk
+ * the gun between firing positions and to hold it still while it shoots. So
+ * the proportions are decided by that and not by taste:
+ *
+ *   THE LEGS ARE TINY. Twelve of them, in six rows a side, each 3.2 m of a
+ *     35 m machine — under a tenth of its length, where an AT-TE's are a
+ *     quarter of its. They read as a centipede's rather than as a walker's,
+ *     which is the only silhouette in this game that could not be mistaken for
+ *     the six-legged one at any distance.
+ *   THE BELLY IS WALKABLE. 3.1 m of clearance under a hull 11.6 m wide, which
+ *     is the counter-play: the one place a siege gun cannot shoot is directly
+ *     under itself, and twelve legs at ground level is what you find there.
+ *   THE GUN ASSEMBLY IS A THIRD OF THE HEIGHT. A deep cradle, a ribbed
+ *     accelerator running most of the hull's length, and the emitter bell out
+ *     over the prow. Nothing on this machine is a turret: a turbolaser this
+ *     size traverses by walking, which is why `turnRate` is 0.85 and why
+ *     getting behind it is worth doing.
+ *
+ * IT IS PILOTED, and the plates say so in the one way this file can build: a
+ * glazed gunnery house sits on the deck behind the cradle with a lit interior.
+ * The reference puts "no less than 30 clone troopers" inside one.
+ */
+export function buildSPHA(opts = {}) {
+  const S = opts.scale ?? 4.0;
+  const rig = new Rig(chassisSkeleton(S, {
+    body: [0.34, 0, 0.62],
+    prow: [0.30, 2.30, 0.55],
+    stern: [0.30, -2.30, 0.55],
+    head: [1.00, 0.10, 0.90],
+    legs: 12, rows: [4.05, 2.50, 0.95, -0.60, -2.15, -3.70],
+    hipX: 0.74, hipY: 0.06,
+    /* No tarsus worth the name, and that is a draw-call decision stated out
+     * loud. Twelve legs is twenty-four bones with geometry on them already; a
+     * third bone a leg would be thirty-six meshes of foot on a body that has
+     * to share a frame with a wave. The pad is merged into the SHANK instead,
+     * at the tip where the tarsus would have been, so the blade still meets a
+     * foot and the stance plants the tibia on the floor (`ankle: 0`). */
+    femur: 0.36, tibia: 0.44, tarsus: 0.02, splay: 0.90, rise: 0.28,
+  }), { scale: S });
+
+  const shell = armorMat(0xb2a892, 0.08, 0.60, 1.1);
+  const dark = metalMat(0x3a3934, 0.46, 0.9, 1.8);
+  const mark = armorMat(0x7c3226, 0.06, 0.62, 1.4);
+  const glass = glassMat(0x16202a, 0.14);
+  const hot = emissiveMat(0x6fd0ff, 2.2);
+  const scorch = scorchMat();
+
+  chassis(rig, dark, 1.1, 0.24, 7.4, S);
+
+  /* ── the mid hull: a long flat weapons deck ── */
+  const body = rig.get('body');
+  const mid = assemble([
+    [plateGeo(2.90 * S, 0.86 * S, 2.60 * S, 0.16 * S, 2), [0, 0.14 * S, 0]],
+    // the raised spine the accelerator lies in
+    [plateGeo(1.30 * S, 0.44 * S, 2.40 * S, 0.10 * S, 1), [0, 0.72 * S, 0.10 * S]],
+    // the belly, deliberately flat and high — this is the part you walk under
+    [plateGeo(2.50 * S, 0.26 * S, 2.20 * S, 0.10 * S, 1), [0, -0.34 * S, 0]],
+  ]);
+  primary(body, mid, shell, 1.55 * S);
+
+  const km = new Kit();
+  km.pair((sx) => {
+    // the six radiator stacks a side that a machine drawing this much power has
+    km.row(6, (i, t) => km.add(dark, ventGeo(0.36 * S, 0.42 * S, 0.06 * S, 4),
+      [sx * 1.47 * S, 0.18 * S, (t - 0.5) * 2.20 * S], [0, sx * 1.5708, 0]));
+    km.add(mark, plateGeo(0.02 * S, 0.26 * S, 0.90 * S, 0.006 * S, 1), [sx * 1.48 * S, 0.52 * S, 0.90 * S]);
+    // the walkway rail down each flank, which is what says "thirty crew"
+    km.add(dark, new THREE.CylinderGeometry(0.025 * S, 0.025 * S, 4.60 * S, 5), [sx * 1.46 * S, 0.74 * S, 0], [1.5708, 0, 0]);
+  });
+  for (let i = 0; i < 5; i++) {
+    const sx = rng() < 0.5 ? -1 : 1;
+    const w = (0.20 + rng() * 0.34) * S;
+    km.add(scorch, plateGeo(0.006 * S, w, w * 0.8, 0.002 * S, 1),
+      [sx * 1.46 * S, (0.02 + rng() * 0.50) * S, (rng() - 0.5) * 2.4 * S]);
+  }
+  km.bake(body.obj);
+
+  /* ── the prow: the emitter end, and the gunnery house ── */
+  const prow = rig.get('prow');
+  const front = assemble([
+    [plateGeo(2.70 * S, 0.78 * S, 2.60 * S, 0.16 * S, 2), [0, 0.10 * S, -0.10 * S]],
+    [plateGeo(2.10 * S, 0.50 * S, 1.10 * S, 0.14 * S, 1), [0, -0.06 * S, 1.60 * S], [0.20, 0, 0]],
+    [plateGeo(2.40 * S, 0.24 * S, 2.20 * S, 0.10 * S, 1), [0, -0.34 * S, -0.10 * S]],
+  ]);
+  primary(prow, front, shell, 1.45 * S);
+
+  const kp = new Kit();
+  // THE GUNNERY HOUSE — the piloted part, glazed on three sides
+  kp.add(shell, plateGeo(1.40 * S, 0.62 * S, 1.10 * S, 0.12 * S, 1), [0, 0.78 * S, -0.50 * S]);
+  kp.add(glass, plateGeo(1.24 * S, 0.26 * S, 0.96 * S, 0.05 * S, 1), [0, 0.86 * S, -0.50 * S]);
+  kp.add(mark, plateGeo(1.30 * S, 0.10 * S, 0.04 * S, 0.01 * S, 1), [0, 1.06 * S, 0.06 * S]);
+  kp.pair((sx) => {
+    // the two anti-personnel barbettes that keep infantry off the legs
+    kp.add(dark, new THREE.SphereGeometry(0.22 * S, 10, 7), [sx * 1.10 * S, 0.30 * S, 1.10 * S]);
+    kp.add(dark, new THREE.CylinderGeometry(0.045 * S, 0.055 * S, 0.90 * S, 7), [sx * 1.10 * S, 0.30 * S, 1.52 * S], [1.5708, 0, 0]);
+    kp.add(shell, plateGeo(0.30 * S, 0.44 * S, 1.60 * S, 0.08 * S, 1), [sx * 1.16 * S, 0.24 * S, -0.30 * S]);
+  });
+  /* NOT tagged silhouette, and that is a budget decision with a reason. The
+   * gunnery house, the barbettes and the flank sponsons are 1.4 m of detail on
+   * a 35 m machine — at the range this thing is fought at (its own band opens
+   * at 45 m) they are four draw calls of nothing. The GUN is the outline and
+   * it is the only thing here that is kept. */
+  kp.bake(prow.obj);
+
+  /* ── the stern: the reactor block ── */
+  const stern = rig.get('stern');
+  primary(stern, assemble([
+    [plateGeo(2.80 * S, 0.92 * S, 2.50 * S, 0.16 * S, 2), [0, 0.16 * S, 0.10 * S]],
+    [plateGeo(2.30 * S, 0.70 * S, 0.80 * S, 0.12 * S, 1), [0, 0.10 * S, -1.30 * S], [0.24, 0, 0]],
+    [plateGeo(2.40 * S, 0.24 * S, 2.10 * S, 0.10 * S, 1), [0, -0.34 * S, 0.10 * S]],
+  ]), shell, 1.50 * S);
+  const ks = new Kit();
+  ks.add(dark, ventGeo(2.00 * S, 0.60 * S, 0.08 * S, 7), [0, 0.28 * S, -1.60 * S], [0.24, Math.PI, 0]);
+  ks.pair((sx) => {
+    ks.add(dark, new THREE.CylinderGeometry(0.20 * S, 0.22 * S, 0.60 * S, 10), [sx * 0.90 * S, 0.86 * S, -0.90 * S], [0.24, 0, 0]);
+    ks.add(hot, new THREE.CylinderGeometry(0.16 * S, 0.17 * S, 0.06 * S, 10), [sx * 0.90 * S, 1.14 * S, -0.98 * S], [0.24, 0, 0]);
+  });
+  ks.bake(stern.obj);
+
+  /* ── the gun ──
+   * A deep cradle on the head bone, a ribbed accelerator lying along the spine,
+   * and the emitter bell out over the prow. It is tagged silhouette entire,
+   * because at a hundred and fifteen metres — which is where this machine
+   * fights — the gun IS the machine and the hull under it is a smudge. */
+  const head = rig.get('head');
+  const cradle = assemble([
+    [plateGeo(1.70 * S, 1.00 * S, 1.50 * S, 0.14 * S, 1), [0, 0.42 * S, 0]],
+    [new THREE.CylinderGeometry(0.52 * S, 0.58 * S, 1.20 * S, 12), [0, 0.42 * S, 0], [0, 0, 1.5708]],
+  ]);
+  primary(head, cradle, shell, 0.90 * S);
+
+  const kg = new Kit();
+  // the accelerator: a long ribbed tube running forward out of the cradle
+  kg.add(dark, new THREE.CylinderGeometry(0.34 * S, 0.40 * S, 3.40 * S, 12), [0, 0.62 * S, 1.90 * S], [1.5708, 0, 0]);
+  kg.row(9, (i, t) => kg.add(shell, new THREE.CylinderGeometry(0.46 * S, 0.46 * S, 0.10 * S, 12),
+    [0, 0.62 * S, (0.55 + t * 2.70) * S], [1.5708, 0, 0]));
+  // the emitter bell
+  kg.add(dark, new THREE.CylinderGeometry(0.62 * S, 0.36 * S, 0.62 * S, 12), [0, 0.62 * S, 3.90 * S], [1.5708, 0, 0]);
+  kg.add(hot, new THREE.CylinderGeometry(0.40 * S, 0.40 * S, 0.06 * S, 12), [0, 0.62 * S, 4.20 * S], [1.5708, 0, 0]);
+  // the two capacitor banks flanking the cradle, and the rangefinder mast that
+  // is the tallest thing on the machine
+  kg.pair((sx) => {
+    kg.add(shell, plateGeo(0.44 * S, 0.90 * S, 2.20 * S, 0.10 * S, 1), [sx * 1.00 * S, 0.44 * S, 0.70 * S]);
+    kg.add(hot, plateGeo(0.06 * S, 0.50 * S, 0.10 * S, 0.02 * S, 1), [sx * 1.23 * S, 0.44 * S, 0.30 * S]);
+  });
+  kg.add(dark, new THREE.CylinderGeometry(0.03 * S, 0.05 * S, 1.30 * S, 6), [0, 1.42 * S, -0.60 * S]);
+  kg.add(dark, plateGeo(0.60 * S, 0.06 * S, 0.24 * S, 0.02 * S, 1), [0, 2.02 * S, -0.60 * S]);
+  kg.bake(head.obj, { silhouette: true });
+  const muzzle = mesh(new THREE.CylinderGeometry(0.30 * S, 0.26 * S, 0.14 * S, 10), dark, head.obj,
+    [0, 0.62 * S, 4.42 * S], [1.5708, 0, 0]);
+
+  /* ── twelve legs ──
+   * One merged mesh per bone and no Kit on either, which is the whole of how a
+   * twelve-legged machine stays affordable: 24 draw calls of leg instead of 60.
+   * The knee housing, the hip yoke and the foot pad are all inside those two
+   * merges rather than beside them. */
+  for (let i = 0; i < 12; i++) {
+    const femur = rig.get(`femur${i}`);
+    const tibia = rig.get(`tibia${i}`);
+    const sx = i % 2 === 0 ? 1 : -1;
+    const F = femur.length, T = tibia.length;
+
+    primary(femur, assemble([
+      // the hip yoke, standing proud of the hull like a rowlock
+      [new THREE.CylinderGeometry(0.20 * S, 0.20 * S, 0.22 * S, 10), [sx * 0.04 * S, 0, 0], [0, 0, 1.5708]],
+      [plateGeo(0.16 * S, F * 0.92, 0.24 * S, 0.05 * S, 1), [0, F * 0.48, 0]],
+      [new THREE.CylinderGeometry(0.15 * S, 0.15 * S, 0.20 * S, 10), [0, F, 0], [0, 0, 1.5708]],
+    ]), dark, 0.19 * S);
+
+    primary(tibia, assemble([
+      [plateGeo(0.20 * S, T * 0.88, 0.20 * S, 0.05 * S, 1), [0, T * 0.44, 0]],
+      // the hydraulic ram down the back of the shank
+      [new THREE.CylinderGeometry(0.06 * S, 0.06 * S, T * 0.62, 6), [0, T * 0.40, -0.13 * S]],
+      /* THE PAD, merged in BELOW the shank's tip where a tarsus would have
+       * been. A machine that weighs what this one does spreads its load, so it
+       * is a rectangular shoe rather than a claw — and it hangs off the end of
+       * the bone rather than sitting up it, which is the half that decides
+       * whether it goes through the floor.
+       *
+       * IT IS A BALL AND NOT A PLATE, and that is arithmetic rather than
+       * taste. A flat pad on a leg that is not vertical dips its downhill
+       * corner by half its own width times the sine of the lean, and these legs
+       * lean about 25° to reach their plant radius: measured, a 1.8 m plate put
+       * 0.23 m of itself through the sand on five legs of twelve, and lifting
+       * the whole foot to clear that left the pad visibly floating on the legs
+       * that were NOT leaning. A sphere's lowest point does not move when you
+       * tilt it, so the ball is what touches the ground and the shoe above it
+       * never reaches. `ankle` in the stance below is the ball's own drop. */
+      [new THREE.CylinderGeometry(0.20 * S, 0.15 * S, 0.10 * S, 10), [0, T - 0.01 * S, 0]],
+      [new THREE.SphereGeometry(0.13 * S, 10, 8), [0, T + 0.05 * S, 0]],
+    ]), shell, 0.22 * S);
+  }
+
+  const stance = chassisStance(S, {
+    legs: 12, hipHeight: 0.72, step: 0.24, lift: 0.08, rear: 0.30, bob: 0.006,
+    plantX: 1.00, plantZ: [4.20, 2.60, 0.98, -0.62, -2.24, -3.86],
+    /* `ankle` LIFTS THE TARGET BY HOWEVER FAR THE SOLE HANGS BELOW THE TIP, and
+     * on this machine there is no tarsus to hang — the pad is inside the
+     * shank's own merge, seated 0.11 of scale past the end of the bone. So the
+     * number is the pad's own reach plus the margin the lean costs it (see the
+     * note on the pad), and it is the same field the AT-TE uses for the same
+     * arithmetic on a bone that does exist. */
+    ankle: 0.18, toe: 0.04,
+    poleX: 1.45, poleY: 0.55, poleZ: 0,
+  });
+  return {
+    rig, muzzles: [muzzle], scale: S, stance,
+    palette: { shell, dark, mark, scorch, eye: hot },
+    proxy: hullProxy(rig, stance.hipHeight, ['body', 'prow', 'stern']),
+  };
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  6. HAVw A6 Juggernaut — the Clone Turbo Tank                          */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * TEN WHEELS, TWO COCKPITS AND A TOWER — AND IT IS THE FASTEST THING ON THE
+ * FIELD THAT WEIGHS ANYTHING.
+ *
+ * Canon: 49.4 m long, 19.6 m wide, 30.4 m tall, ten wheels, 160 km/h, twelve
+ * crew, three hundred passengers. Built at 1:2 for the reason the header gives
+ * — 49.4 m is longer than the Colosseum's floor — so 24.7 × 9.8 × 15.2, and
+ * every one of those three ratios is held rather than just the length. The
+ * tower being 62% of the machine's own length is the proportion that reads
+ * from a kilometre away and it is the first thing to go if only the footprint
+ * is checked, so `giants.mjs` checks all three.
+ *
+ * ── THE FOUR CUES, AND WHY EACH IS A CUE AND NOT A DETAIL ────────────────
+ *
+ *   TEN WHEELS IN FIVE ROWS, all the same diameter, all outboard of the hull
+ *     and all TALLER than the belly is high. That is the whole reason a Turbo
+ *     Tank does not read as a box on tracks: you can see the ground through it
+ *     between the axles.
+ *   TWO COCKPITS, one at each end, both glazed, both facing outward. The
+ *     machine drives either way without turning round, which is the design's
+ *     own answer to a 25 m wheelbase that cannot come about — and it is why
+ *     `turnRate` is 0.90 and why the hull is symmetric fore and aft where the
+ *     AT-TE's very deliberately is not.
+ *   THE OBSERVATION TOWER, a boxed mast off the spine with a glazed cab on top
+ *     and a dish above that. It is the tallest thing in the game and it is a
+ *     `hull` bone, so a blade can take it off.
+ *   THE DORSAL TURRET, the one thing on it that traverses, and the only weapon
+ *     of the several it carries that this file gives a barrel to.
+ *
+ * ── HOW A PLAYER KILLS IT ────────────────────────────────────────────────
+ *
+ * FOUR WHEELS OF TEN, and the way you get to them is that it cannot climb and
+ * cannot turn. `grade: 0.22` refuses it any prop taller than a step, so a crate,
+ * a spire or a felled trunk is cover it has to drive the long way round; while
+ * it is doing that it is presenting a flank of five wheels at knee height, and
+ * every one of them is a `leg` chain. It is the only machine on the roster
+ * whose counter-play is the LEVEL rather than the body.
+ */
+export function buildJuggernaut(opts = {}) {
+  const S = opts.scale ?? 2.6;
+  const WR = 0.80 * S;                     // road-wheel radius — 2.08 m at 1:2
+  const rig = new Rig(chassisSkeleton(S, {
+    body: [0.34, 0, 0.70],
+    prow: [0.30, 2.78, 0.62],
+    stern: [0.30, -2.78, 0.62],
+    head: [1.05, 0.30, 0.55],
+    legs: 0,
+    struts: [
+      /* THE OBSERVATION TOWER IS A BONE, not a decoration on the hull, and the
+       * reason is `Enemy.capsules()`: a bone with geometry gets a capsule, and
+       * a fifteen-metre mast that no blade can touch is fifteen metres of lie.
+       * `hull` rather than `leg` — losing the tower blinds the tank, it does
+       * not drop it. */
+      { name: 'tower', parent: 'body', x: 0, y: 1.02, z: -1.10, len: 2.40, rest: [0, 1, 0] },
+    ],
+    wheels: [
+      { name: 'wheel0', x: 1.28, y: 0.05, z: 2.45, len: 0.34, dir: 1 },
+      { name: 'wheel1', x: -1.28, y: 0.05, z: 2.45, len: 0.34, dir: -1 },
+      { name: 'wheel2', x: 1.28, y: 0.05, z: 1.25, len: 0.34, dir: 1 },
+      { name: 'wheel3', x: -1.28, y: 0.05, z: 1.25, len: 0.34, dir: -1 },
+      { name: 'wheel4', x: 1.28, y: 0.05, z: 0.05, len: 0.34, dir: 1 },
+      { name: 'wheel5', x: -1.28, y: 0.05, z: 0.05, len: 0.34, dir: -1 },
+      { name: 'wheel6', x: 1.28, y: 0.05, z: -1.15, len: 0.34, dir: 1 },
+      { name: 'wheel7', x: -1.28, y: 0.05, z: -1.15, len: 0.34, dir: -1 },
+      { name: 'wheel8', x: 1.28, y: 0.05, z: -2.35, len: 0.34, dir: 1 },
+      { name: 'wheel9', x: -1.28, y: 0.05, z: -2.35, len: 0.34, dir: -1 },
+    ],
+  }), { scale: S });
+
+  const shell = armorMat(0xb8ad95, 0.08, 0.58, 1.2);
+  const dark = metalMat(0x3b3a35, 0.48, 0.9, 2.0);
+  const mark = armorMat(0x7c3226, 0.06, 0.62, 1.6);
+  const glass = glassMat(0x141c22, 0.15);
+  const tread = metalMat(0x2c2924, 0.72, 0.86, 4.4);
+  const hot = emissiveMat(0xff8a30, 1.3);
+
+  chassis(rig, dark, 1.0, 0.26, 5.6, S);
+
+  /* ── the mid hull: a deep slab-sided box with a stepped deck ── */
+  const body = rig.get('body');
+  primary(body, assemble([
+    [plateGeo(3.00 * S, 1.50 * S, 2.40 * S, 0.18 * S, 2), [0, 0.30 * S, 0]],
+    [plateGeo(2.50 * S, 0.34 * S, 2.20 * S, 0.10 * S, 1), [0, 1.16 * S, -0.10 * S]],
+    [plateGeo(3.20 * S, 0.30 * S, 2.00 * S, 0.12 * S, 1), [0, -0.30 * S, 0]],
+  ]), shell, 1.70 * S);
+
+  const km = new Kit();
+  km.pair((sx) => {
+    // the mudguard shelf over the wheel bays — the line that makes ten wheels
+    // read as ten wheels rather than as a skirt
+    km.add(shell, plateGeo(0.70 * S, 0.16 * S, 2.40 * S, 0.05 * S, 1), [sx * 1.52 * S, 0.62 * S, 0]);
+    km.add(mark, plateGeo(0.02 * S, 0.22 * S, 0.80 * S, 0.006 * S, 1), [sx * 1.51 * S, 0.90 * S, 0.60 * S]);
+    km.add(dark, ventGeo(0.80 * S, 0.44 * S, 0.06 * S, 5), [sx * 1.51 * S, 0.24 * S, -0.90 * S], [0, sx * 1.5708, 0]);
+    // the anti-personnel repeaters along the flank, which is what a tank
+    // carrying three hundred troopers actually spends its ammunition on
+    km.row(3, (i, t) => km.add(dark, new THREE.CylinderGeometry(0.05 * S, 0.06 * S, 0.50 * S, 6),
+      [sx * 1.56 * S, 0.86 * S, (t - 0.5) * 1.80 * S], [0, sx * 1.5708, 0]));
+  });
+  km.bake(body.obj);
+
+  /* ── the two cockpits: prow and stern, and they are the SAME ──
+   * A Juggernaut drives either way. The forward and aft ends differ only in
+   * what is bolted on behind the glass, which is the opposite of every other
+   * hull in this file and is the cue that says which machine this is. */
+  const cab = (bone, sign) => {
+    primary(bone, assemble([
+      [plateGeo(2.80 * S, 1.34 * S, 2.40 * S, 0.20 * S, 2), [0, 0.26 * S, 0]],
+      [plateGeo(2.20 * S, 0.90 * S, 1.00 * S, 0.18 * S, 1), [0, 0.34 * S, sign * 1.25 * S], [sign * -0.24, 0, 0]],
+    ]), shell, 1.55 * S);
+    const k = new Kit();
+    k.add(glass, plateGeo(1.90 * S, 0.40 * S, 0.06 * S, 0.02 * S, 1), [0, 0.56 * S, sign * 1.70 * S], [sign * -0.24, 0, 0]);
+    k.add(mark, plateGeo(2.00 * S, 0.16 * S, 0.05 * S, 0.015 * S, 1), [0, 0.92 * S, sign * 1.62 * S], [sign * -0.24, 0, 0]);
+    k.add(dark, plateGeo(1.20 * S, 0.26 * S, 0.30 * S, 0.06 * S, 1), [0, -0.30 * S, sign * 1.60 * S], [sign * 0.30, 0, 0]);
+    k.pair((sx) => {
+      k.add(dark, new THREE.CylinderGeometry(0.05 * S, 0.06 * S, 0.80 * S, 6),
+        [sx * 0.86 * S, -0.16 * S, sign * 1.70 * S], [sign * 1.5708, 0, 0]);
+      k.add(shell, plateGeo(0.26 * S, 0.70 * S, 1.90 * S, 0.06 * S, 1), [sx * 1.44 * S, 0.30 * S, 0]);
+    });
+    k.bake(bone.obj, { silhouette: true });
+  };
+  cab(rig.get('prow'), 1);
+  cab(rig.get('stern'), -1);
+
+  /* ── the dorsal heavy laser turret ── */
+  const head = rig.get('head');
+  primary(head, assemble([
+    [new THREE.CylinderGeometry(0.62 * S, 0.70 * S, 0.24 * S, 14), [0, 0.04 * S, 0]],
+    [plateGeo(1.00 * S, 0.56 * S, 1.10 * S, 0.14 * S, 1), [0, 0.36 * S, 0]],
+  ]), shell, 0.72 * S);
+  const kt = new Kit();
+  kt.add(dark, new THREE.CylinderGeometry(0.20 * S, 0.20 * S, 0.50 * S, 10), [0, 0.40 * S, 0.44 * S], [1.5708, 0, 0]);
+  kt.pair((sx) => {
+    kt.add(dark, new THREE.CylinderGeometry(0.07 * S, 0.085 * S, 1.60 * S, 8), [sx * 0.20 * S, 0.40 * S, 1.32 * S], [1.5708, 0, 0]);
+    kt.add(mark, new THREE.CylinderGeometry(0.10 * S, 0.10 * S, 0.14 * S, 8), [sx * 0.20 * S, 0.40 * S, 0.86 * S], [1.5708, 0, 0]);
+  });
+  kt.add(glass, plateGeo(0.60 * S, 0.16 * S, 0.05 * S, 0.015 * S, 1), [0, 0.52 * S, -0.56 * S]);
+  kt.bake(head.obj, { silhouette: true });
+  const muzzles = [1, -1].map((sx) => mesh(new THREE.CylinderGeometry(0.075 * S, 0.065 * S, 0.12 * S, 8), dark, head.obj,
+    [sx * 0.20 * S, 0.40 * S, 2.16 * S], [1.5708, 0, 0]));
+
+  /* ── the tower ── */
+  const tower = rig.get('tower');
+  const TW = tower.length;
+  primary(tower, assemble([
+    [plateGeo(0.62 * S, TW, 0.62 * S, 0.08 * S, 1), [0, TW * 0.5, 0]],
+    // the glazed cab on top, wider than the mast under it
+    [plateGeo(1.10 * S, 0.60 * S, 1.10 * S, 0.14 * S, 1), [0, TW + 0.28 * S, 0]],
+  ]), shell, 0.44 * S);
+  const kw = new Kit();
+  kw.row(4, (i, t) => kw.add(dark, plateGeo(0.68 * S, 0.07 * S, 0.68 * S, 0.02 * S, 1), [0, TW * (0.14 + t * 0.62), 0]));
+  kw.pair((sx) => kw.add(glass, plateGeo(0.05 * S, 0.28 * S, 0.90 * S, 0.02 * S, 1), [sx * 0.55 * S, TW + 0.30 * S, 0]));
+  kw.add(glass, plateGeo(0.90 * S, 0.28 * S, 0.05 * S, 0.02 * S, 1), [0, TW + 0.30 * S, 0.55 * S]);
+  // the dish above the cab, which is the top of the tallest body in the game
+  kw.add(dark, new THREE.CylinderGeometry(0.035 * S, 0.05 * S, 0.50 * S, 6), [0, TW + 0.80 * S, 0]);
+  kw.add(shell, new THREE.SphereGeometry(0.34 * S, 12, 6, 0, TAU, 0, Math.PI * 0.5), [0, TW + 1.02 * S, 0], [0.5, 0, 0], [1, 0.5, 1]);
+  kw.bake(tower.obj, { silhouette: true });
+
+  /* ── ten road wheels ──
+   * ONE MESH EACH, and the mesh is the bone's own primary rather than a hoop in
+   * a child group. That is what keeps a ten-wheeled machine at ten draw calls
+   * of wheel instead of twenty, and it works because a road wheel's axle IS the
+   * bone's local +Y: the bone points outboard, a cylinder's axis is +Y, so
+   * turning the mesh about its own y is exactly rolling.
+   *
+   * ONE DRIVER for all ten (see `rollByOdometry`). Ten callbacks integrating
+   * the same displacement separately would come apart the first time one of
+   * them was culled, and on a machine this long several of them always are. */
+  const wheels = [];
+  for (let i = 0; i < 10; i++) {
+    const bone = rig.get(`wheel${i}`);
+    const A = bone.length;
+    const tyre = primary(bone, assemble([
+      [new THREE.CylinderGeometry(WR, WR, 0.44 * S, 14), [0, 0, 0]],
+      [new THREE.CylinderGeometry(WR * 0.42, WR * 0.42, 0.50 * S, 10), [0, 0, 0]],
+      ...Array.from({ length: 12 }, (_, j) => {
+        const a = (j / 12) * TAU;
+        /* 0.92 and not 0.99. A 0.10-of-scale block centred on the rim reaches
+         * half its own thickness PAST it, and at 0.99 that put 11 cm of every
+         * tyre through the floor — a machine on ten wheels sunk into the sand
+         * by the width of a tread block, on every wheel, forever. */
+        return [plateGeo(0.30 * S, 0.46 * S, 0.10 * S, 0.02 * S, 1),
+          [Math.sin(a) * WR * 0.92, 0, Math.cos(a) * WR * 0.92], [0, a, 0]];
+      }),
+      ...Array.from({ length: 5 }, (_, j) => {
+        const a = (j / 5) * TAU;
+        return [plateGeo(0.06 * S, 0.30 * S, WR * 0.90, 0.02 * S, 1),
+          [Math.sin(a) * WR * 0.48, 0, Math.cos(a) * WR * 0.48], [0, a, 0]];
+      }),
+    ]), tread, WR);
+    tyre.position.y = A;
+    wheels.push({ bone, hoop: tyre, radius: WR });
+  }
+  rollByOdometry(wheels[0].hoop, wheels.map((w) => w.hoop), WR);
+
+  const stance = chassisStance(S, {
+    legs: 0, hipHeight: 0.75, step: 0, lift: 0, rear: 0.22, bob: 0.014,
+    plantX: 0, plantZ: [], ankle: 0, toe: 0, poleX: 0, poleY: 0, poleZ: 0,
+  });
+  return {
+    rig, muzzles, wheels, scale: S, wheelRadius: WR, stance,
+    palette: { shell, dark, mark, scorch: tread, eye: hot },
+    proxy: hullProxy(rig, stance.hipHeight, ['body', 'prow', 'stern']),
+  };
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  7. Octuptarra magna tri-droid — the Techno Union's artillery          */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * THREE LEGS, AND THAT IS THE MACHINE AND ALSO THE WAY TO KILL IT.
+ *
+ * 14.59 m tall, built at 1:1, and the only body in this game whose height is
+ * three times its own width. Everything about it is decided by the fact that
+ * almost all of that height is EMPTY: a bulbous head on three enormously long
+ * thin legs, with nothing in between. Read against the hailfire, which is the
+ * other machine here made mostly of air — that one is 5.7 m of wheel with the
+ * pod slung low, this is 11 m of leg with the mass at the very top.
+ *
+ *   THE HEAD IS A SPHERE AND IT IS FULL. Cognitive modules and the ammunition
+ *     for the launchers both live inside it, which is why a magna tri-droid's
+ *     head is fat where the small combat tri-droid's is a ball on a stalk.
+ *   THREE PHOTORECEPTORS, 120° apart around the equator. The reference is
+ *     explicit about what they buy: "no blind spots… almost impossible for
+ *     enemy troopers to attack by surprise from behind."
+ *   THREE CANNONS, likewise 120° apart, likewise pointing everywhere at once,
+ *     so the machine never needs to face you — which is why `turnRate` is 9.0
+ *     and not because it is nimble. It is a hub that rotates, on legs that
+ *     never have to reposition.
+ *   IT FIRES DOWN. The cannons are 12 m up and its band opens at 10 m, so a
+ *     player standing under one is shot at from 50° above the horizontal. It
+ *     is the only body in the game whose bolts arrive from overhead, and
+ *     `giants.mjs` measures the angle rather than asserting the intent.
+ *
+ * ── HOW A PLAYER KILLS IT: ONE LEG ───────────────────────────────────────
+ *
+ * Straight out of the reference — "its three-legged design was its primary
+ * weakness, as if one was damaged, the entire droid would topple over" — and
+ * it is `toppleAt: 1`, which is a number nothing else on the roster carries
+ * with more than one leg. Fourteen and a half metres of artillery goes down to
+ * a single pass through a shin, and the shins are 0.30 m thick and standing on
+ * the floor. It is the fastest kill in the game against anything this size and
+ * it is meant to be: the machine's answer is that it fires at you from ten
+ * metres up while you walk to it.
+ */
+export function buildTriDroid(opts = {}) {
+  const S = opts.scale ?? 2.2;
+  const HIP_R = 0.34, PLANT_R = 1.75;
+  const legAt = (i) => (i / 3) * TAU;                      // 0°, 120°, 240°
+  const rig = new Rig(chassisSkeleton(S, {
+    body: [0.85, 0, 0.90],
+    head: [0.02, 0, 0.62],
+    legPlan: [0, 1, 2].map((i) => {
+      const a = legAt(i);
+      return {
+        x: Math.sin(a) * HIP_R, z: Math.cos(a) * HIP_R,
+        rest: [Math.sin(a) * 0.86, 0.50, Math.cos(a) * 0.86],
+      };
+    }),
+    hipY: 0.02, femur: 2.45, tibia: 2.70, tarsus: 0.26,
+  }), { scale: S });
+
+  /* Techno Union hardware is finished rather than painted — the same argument
+   * `hmpMaterials` makes one hull along — but a shade cooler and greener than
+   * the Confederacy's foundry bronze, because the Skakoans built this one and
+   * the plates of a magna tri-droid are a pale grey-green over bare alloy. */
+  const shell = armorMat(0x8e9385, 0.10, 0.60, 1.4);
+  const dark = metalMat(0x33352f, 0.52, 0.9, 2.6);
+  const alloy = metalMat(0x6d6f63, 0.44, 0.88, 2.2);
+  const eye = emissiveMat(0xff2418, 3.6);
+  const scorch = scorchMat();
+
+  chassis(rig, dark, 0.50, 0.20, 0.50, S);
+
+  /* ── the head ──
+   * A sphere with a heavy equatorial band, a flattened crown and a machined
+   * underside where the three legs socket in. */
+  const body = rig.get('body');
+  primary(body, assemble([
+    [new THREE.SphereGeometry(0.95 * S, 18, 12), [0, 0, 0], null, [1, 1.02, 1]],
+    [bandGeo(0.90 * S, 1.00 * S, 0.90 * S, 1.00 * S, 0.22 * S, 18), [0, -0.10 * S, 0]],
+    [new THREE.CylinderGeometry(0.52 * S, 0.62 * S, 0.26 * S, 14), [0, -0.90 * S, 0]],
+  ]), shell, 1.00 * S);
+
+  const kb = new Kit();
+  for (let i = 0; i < 3; i++) {
+    const a = legAt(i) + Math.PI / 3;      // between the legs, not over them
+    const sx = Math.sin(a), cz = Math.cos(a);
+    // THE PHOTORECEPTOR — housing, lens, and a hood over it
+    kb.add(dark, new THREE.CylinderGeometry(0.30 * S, 0.28 * S, 0.10 * S, 14),
+      [sx * 0.90 * S, 0.10 * S, cz * 0.90 * S], [1.5708, a, 0]);
+    kb.add(eye, new THREE.SphereGeometry(0.24 * S, 12, 9),
+      [sx * 0.95 * S, 0.10 * S, cz * 0.95 * S], null, [1, 1, 0.55]);
+    kb.add(shell, plateGeo(0.60 * S, 0.10 * S, 0.26 * S, 0.03 * S, 1),
+      [sx * 0.92 * S, 0.32 * S, cz * 0.92 * S], [0.42, a, 0]);
+    // the hip socket each leg comes out of
+    const b = legAt(i);
+    kb.add(alloy, new THREE.SphereGeometry(0.26 * S, 10, 8),
+      [Math.sin(b) * 0.62 * S, -0.72 * S, Math.cos(b) * 0.62 * S]);
+  }
+  kb.add(alloy, new THREE.CylinderGeometry(0.40 * S, 0.46 * S, 0.16 * S, 14), [0, 0.92 * S, 0]);
+  for (let i = 0; i < 3; i++) {
+    const a = rng() * TAU, w = (0.16 + rng() * 0.18) * S;
+    kb.add(scorch, plateGeo(w, 0.006 * S, w * 0.8, 0.002 * S, 1),
+      [Math.sin(a) * 0.92 * S, (rng() - 0.4) * 0.9 * S, Math.cos(a) * 0.92 * S], [1.1, a, 0]);
+  }
+  kb.bake(body.obj);
+
+  /* ── the three cannons ──
+   * On the HEAD bone, which `_poseWalker` yaws onto the target — so the whole
+   * ring turns and whichever barrel is nearest the line is the one facing you.
+   * That is the reference's "rotating multi-jointed assemblies" built out of
+   * the one mechanism this file has, and it is why the machine reads as having
+   * no front. */
+  const head = rig.get('head');
+  primary(head, assemble([
+    [new THREE.CylinderGeometry(0.56 * S, 0.62 * S, 0.30 * S, 16), [0, 0, 0]],
+  ]), alloy, 0.62 * S);
+  const kh = new Kit();
+  const muzzles = [];
+  for (let i = 0; i < 3; i++) {
+    const a = legAt(i) + Math.PI / 3;
+    const sx = Math.sin(a), cz = Math.cos(a);
+    kh.add(dark, plateGeo(0.34 * S, 0.30 * S, 0.44 * S, 0.06 * S, 1),
+      [sx * 0.62 * S, 0, cz * 0.62 * S], [0, a, 0]);
+    kh.add(dark, new THREE.CylinderGeometry(0.09 * S, 0.11 * S, 1.20 * S, 8),
+      [sx * 1.30 * S, -0.10 * S, cz * 1.30 * S], [1.5708, a, 0]);
+    kh.add(alloy, new THREE.CylinderGeometry(0.15 * S, 0.15 * S, 0.14 * S, 8),
+      [sx * 0.92 * S, -0.10 * S, cz * 0.92 * S], [1.5708, a, 0]);
+    muzzles.push(mesh(new THREE.CylinderGeometry(0.095 * S, 0.085 * S, 0.12 * S, 8), dark, head.obj,
+      [sx * 1.92 * S, -0.10 * S, cz * 1.92 * S], [1.5708, a, 0]));
+  }
+  kh.bake(head.obj, { silhouette: true });
+
+  /* ── the three legs ──
+   * Long, thin, and made of two tubes with a visible knee. They are 0.30 m
+   * across on a machine 14.6 m tall — the thinnest load-bearing thing in the
+   * game — and that is both why the silhouette reads as legs-and-a-ball and
+   * why one pass takes one off. */
+  for (let i = 0; i < 3; i++) {
+    const femur = rig.get(`femur${i}`);
+    const tibia = rig.get(`tibia${i}`);
+    const tarsus = rig.get(`tarsus${i}`);
+    const F = femur.length, T = tibia.length, P = tarsus.length;
+
+    const fm = primary(femur, limbGeo(F, 0.15 * S, 0.12 * S, 8, true, { rings: 5, bulge: 0.08, bulgeAt: 0.16 }), alloy, 0.16 * S);
+    fm.userData.limb = { r0: 0.15 * S, r1: 0.12 * S, seg: 8 };
+    const kf = new Kit();
+    kf.add(dark, new THREE.CylinderGeometry(0.17 * S, 0.17 * S, 0.20 * S, 10), [0, F, 0], [0, 0, 1.5708]);
+    // the plate strapped down the outside of the thigh, and the two joints it
+    // deliberately leaves bare — see `platedSpan` and player note 35
+    kf.add(shell, plateGeo(0.13 * S, F * 0.70, 0.20 * S, 0.04 * S, 1), [0, F * 0.46, 0.05 * S]);
+    platedSpan(femur, F * 0.11, F * 0.81);
+    kf.bake(femur.obj);
+
+    const tm = primary(tibia, limbGeo(T, 0.12 * S, 0.09 * S, 8, true, { rings: 5, bulge: 0.07, bulgeAt: 0.20 }), dark, 0.13 * S);
+    tm.userData.limb = { r0: 0.12 * S, r1: 0.09 * S, seg: 8 };
+    const kt2 = new Kit();
+    kt2.add(alloy, new THREE.CylinderGeometry(0.028 * S, 0.028 * S, T * 0.70, 6), [0, T * 0.44, -0.10 * S]);
+    kt2.add(shell, plateGeo(0.11 * S, T * 0.56, 0.16 * S, 0.03 * S, 1), [0, T * 0.40, 0.04 * S]);
+    platedSpan(tibia, T * 0.12, T * 0.68);
+    kt2.bake(tibia.obj);
+
+    /* A NARROW SPIKED FOOT — this machine does not spread its load, it stands
+     * on three points. Built at the tarsus tip and flipped, with the stance's
+     * `ankle` lifting the target by however far the tarsus drops, exactly as
+     * the AT-TE's pad is. */
+    primary(tarsus, assemble([
+      [new THREE.CylinderGeometry(0.22 * S, 0.07 * S, 0.30 * S, 8), [0, P - 0.15 * S, 0]],
+      [plateGeo(0.34 * S, 0.05 * S, 0.34 * S, 0.02 * S, 1), [0, P - 0.28 * S, 0]],
+    ]), alloy, 0.16 * S);
+  }
+
+  const stance = chassisStance(S, {
+    hipHeight: 4.75, step: 1.20, lift: 0.52, rear: 0.40, bob: 0.030,
+    ankle: 0.26, toe: 0.10,
+    plantPlan: [0, 1, 2].map((i) => {
+      const a = legAt(i);
+      return {
+        x: Math.sin(a) * PLANT_R, z: Math.cos(a) * PLANT_R,
+        pole: [Math.sin(a) * 2.4, 1.9, Math.cos(a) * 2.4],
+      };
+    }),
+  });
+  return {
+    rig, muzzles, scale: S, stance,
+    palette: { shell, dark, mark: alloy, scorch, eye },
+    proxy: hullProxy(rig, stance.hipHeight, ['body']),
+  };
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  8. NR-N99 Persuader-class droid enforcer — the snail tank             */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ONE TREAD, AND EVERYTHING ELSE IS AN OUTRIGGER.
+ *
+ * 10.96 m long, 6.2 m tall, 60 km/h, built at 1:1. The Corporate Alliance's
+ * droid tank is the only ground machine in either army that runs on a SINGLE
+ * high-traction tread down its own centreline, with two outrigger pylons
+ * carrying small pontoon treads to stop it tipping over. Everything
+ * interesting about how it fights follows from that:
+ *
+ *   IT CANNOT TURN. One tread means it pivots by dragging, and `turnRate: 0.45`
+ *     is the slowest number in the game — half a turn takes 11.6 s, where a
+ *     man does it in 0.65. So it commits: it picks a line, it drives it at
+ *     5.4 m/s, and a player who steps off that line has several seconds before
+ *     it can do anything about it. The AAT hovers and can face any way it
+ *     likes; this is the opposite machine at the same job.
+ *   IT COMES TO YOU. Its band is 4-18 m, the closest of any Confederate
+ *     machine except the dwarf spider droid, because heavy repeating blasters
+ *     and concussion launchers are short-ranged and because a tank that cannot
+ *     turn has to be pointed at something.
+ *   IT IS TALL FOR ITS LENGTH. 6.2 m on 10.96 — the tread alone is over half
+ *     the height, which is what makes the silhouette a wheel with a hull
+ *     balanced on it rather than a tank.
+ *
+ * ── HOW A PLAYER KILLS IT: THE TREAD ─────────────────────────────────────
+ *
+ * The outriggers are `struts` and carry the role `hull`, so the machine has
+ * exactly ONE leg chain and `toppleAt` clamps to one: a single pass through
+ * the tread beaches it. Cutting a pontoon buys nothing and is supposed to buy
+ * nothing — it is the mistake the shape invites, and the difference between
+ * the two is legible because the tread is the thing under the middle of the
+ * machine and the pontoons are the two little ones out on arms.
+ */
+export function buildSnailTank(opts = {}) {
+  const S = opts.scale ?? 1.55;
+  const rig = new Rig(chassisSkeleton(S, {
+    body: [0.30, 0, 0.55],
+    head: [0.88, 0.10, 0.50],
+    legs: 0,
+    struts: [
+      /* THE TREAD, and it is the one `leg` on the machine. It hangs from the
+       * hull to the floor as an UPRIGHT bone placed by its offset — see the
+       * long note over `chassisSkeleton` about why nothing here points along
+       * ±Z — so the track geometry is authored in the identity frame with +Z
+       * forward, which is what a fore-and-aft track needs. */
+      { name: 'wheelC', parent: 'hips', x: 0, y: -2.28, z: 0, len: 2.28, rest: [0, 1, 0], role: 'leg' },
+      { name: 'outL', parent: 'hips', x: 0.72, y: -0.30, z: 0.55, len: 0.90, rest: [0.94, -0.34, 0] },
+      { name: 'outR', parent: 'hips', x: -0.72, y: -0.30, z: 0.55, len: 0.90, rest: [-0.94, -0.34, 0] },
+    ],
+  }), { scale: S });
+
+  const shell = armorMat(0x8a7f6c, 0.18, 0.62, 2.0);
+  const dark = metalMat(0x3c352b, 0.52, 0.9, 2.6);
+  const rust = armorMat(0x76432a, 0.10, 0.74, 3.2);
+  const track = metalMat(0x2b2823, 0.74, 0.86, 5.2);
+  const eye = emissiveMat(0xff3010, 3.2);
+  const scorch = scorchMat();
+
+  chassis(rig, dark, 0.60, 0.22, 2.60, S);
+
+  /* ── the hull: a hunched shell riding the tread ── */
+  const body = rig.get('body');
+  primary(body, assemble([
+    [plateGeo(2.30 * S, 1.10 * S, 3.00 * S, 0.30 * S, 2), [0, 0.14 * S, 0]],
+    [plateGeo(1.70 * S, 0.50 * S, 2.20 * S, 0.22 * S, 1), [0, 0.76 * S, -0.10 * S], [-0.10, 0, 0]],
+    [plateGeo(1.90 * S, 0.40 * S, 1.20 * S, 0.20 * S, 1), [0, -0.06 * S, 1.60 * S], [0.34, 0, 0]],
+  ]), shell, 1.30 * S);
+
+  const kb = new Kit();
+  kb.pair((sx) => {
+    kb.add(dark, ventGeo(0.70 * S, 0.44 * S, 0.06 * S, 4), [sx * 1.16 * S, 0.16 * S, -0.80 * S], [0, sx * 1.5708, 0]);
+    kb.add(rust, plateGeo(0.02 * S, 0.34 * S, 0.90 * S, 0.006 * S, 1), [sx * 1.17 * S, 0.44 * S, 0.50 * S]);
+    // the concussion missile box on each shoulder, four tubes visible
+    kb.add(dark, plateGeo(0.40 * S, 0.44 * S, 0.80 * S, 0.08 * S, 1), [sx * 0.94 * S, 0.72 * S, -0.60 * S]);
+    kb.row(2, (i, t) => kb.add(track, new THREE.CylinderGeometry(0.09 * S, 0.09 * S, 0.30 * S, 7),
+      [sx * (0.84 + t * 0.20) * S, 0.80 * S, -0.28 * S], [1.5708, 0, 0]));
+  });
+  for (let i = 0; i < 3; i++) {
+    const sx = rng() < 0.5 ? -1 : 1, w = (0.14 + rng() * 0.22) * S;
+    kb.add(scorch, plateGeo(0.006 * S, w, w * 0.8, 0.002 * S, 1),
+      [sx * 1.17 * S, (rng() - 0.2) * 0.8 * S, (rng() - 0.5) * 2.4 * S]);
+  }
+  kb.bake(body.obj);
+
+  /* ── the gun mount: twin heavy repeaters and the droid's own eye ── */
+  const head = rig.get('head');
+  primary(head, assemble([
+    [plateGeo(1.10 * S, 0.60 * S, 0.90 * S, 0.16 * S, 1), [0, 0.10 * S, 0]],
+    [new THREE.CylinderGeometry(0.34 * S, 0.38 * S, 0.24 * S, 12), [0, -0.16 * S, 0]],
+  ]), shell, 0.58 * S);
+  const kh = new Kit();
+  const muzzles = [];
+  kh.pair((sx) => {
+    kh.add(dark, new THREE.CylinderGeometry(0.07 * S, 0.085 * S, 1.50 * S, 8), [sx * 0.30 * S, 0.06 * S, 0.90 * S], [1.5708, 0, 0]);
+    kh.add(dark, new THREE.CylinderGeometry(0.13 * S, 0.13 * S, 0.26 * S, 8), [sx * 0.30 * S, 0.06 * S, 0.30 * S], [1.5708, 0, 0]);
+    muzzles.push(mesh(new THREE.CylinderGeometry(0.075 * S, 0.065 * S, 0.10 * S, 8), dark, head.obj,
+      [sx * 0.30 * S, 0.06 * S, 1.70 * S], [1.5708, 0, 0]));
+  });
+  kh.add(eye, new THREE.SphereGeometry(0.12 * S, 9, 7), [0, 0.30 * S, 0.42 * S]);
+  kh.add(shell, plateGeo(0.50 * S, 0.14 * S, 0.20 * S, 0.04 * S, 1), [0, 0.44 * S, 0.36 * S], [0.4, 0, 0]);
+  kh.bake(head.obj, { silhouette: true });
+
+  /* ── the tread ──
+   * A long lozenge: two drive sprockets at the ends, a flat run between them,
+   * and the track belt wrapped round the outside. The belt is one merged mesh;
+   * the sprockets spin off the same odometry the Juggernaut's wheels do, so a
+   * tank that is moving looks like one and a beached tank does not. */
+  const tread = rig.get('wheelC');
+  const TH = tread.length;                       // hull height above the floor
+  const RR = TH * 0.48;                          // sprocket radius
+  primary(tread, assemble([
+    [plateGeo(1.10 * S, RR * 1.60, 6.20 * S, 0.20 * S, 1), [0, RR, 0]],
+    ...Array.from({ length: 22 }, (_, i) => {
+      /* the belt: shoes laid round a lozenge — a half circle at each end and a
+       * straight run top and bottom. Authored as one merge, so the whole track
+       * is one draw call. */
+      const t = i / 22, a = t * TAU;
+      const z = Math.sin(a) * 3.42 * S;
+      /* The y radius is short by half a shoe, because a shoe lying flat at the
+       * BOTTOM of the belt spans its own thickness either side of the line it
+       * is centred on — laid on the radius itself, every track on the machine
+       * cuts 10 cm into the ground. */
+      const y = RR + Math.cos(a) * (RR - 0.09 * S);
+      return [plateGeo(1.24 * S, 0.16 * S, 0.42 * S, 0.03 * S, 1), [0, y, z], [-a, 0, 0]];
+    }),
+  ]), track, 1.10 * S);
+
+  const kc = new Kit();
+  kc.pair((sx) => kc.add(dark, plateGeo(0.10 * S, RR * 1.30, 5.90 * S, 0.05 * S, 1), [sx * 0.58 * S, RR, 0]));
+  kc.bake(tread.obj);
+
+  /* The two sprockets, each in a group laid over by a quarter turn so the
+   * group's local +Y lies along the machine's X — which makes the mesh inside
+   * roll about its own y and lets `rollByOdometry` drive it with no second
+   * code path. */
+  const sprockets = [];
+  for (const z of [2.545, -2.545]) {
+    const g = new THREE.Group();
+    g.position.set(0, RR, z * S);
+    g.rotation.z = Math.PI / 2;
+    tread.obj.add(g);
+    const spin = new THREE.Group();
+    g.add(spin);
+    const ks = new Kit();
+    ks.add(dark, new THREE.CylinderGeometry(RR * 0.80, RR * 0.80, 0.92 * S, 12));
+    // six teeth, so a turning sprocket reads as turning rather than as a disc
+    ks.row(6, (i, t) => ks.add(track, plateGeo(0.10 * S, 0.96 * S, RR * 0.34, 0.02 * S, 1),
+      [Math.sin(t * TAU) * RR * 0.82, 0, Math.cos(t * TAU) * RR * 0.82], [0, t * TAU, 0]));
+    ks.bake(spin, { silhouette: true });
+    sprockets.push(spin);
+  }
+  rollByOdometry(sprockets[0].children[0], sprockets, RR * 0.80);
+
+  /* ── the two outrigger pylons ── */
+  for (const name of ['outL', 'outR']) {
+    const bone = rig.get(name);
+    const L = bone.length;
+    const sx = name === 'outL' ? 1 : -1;
+    primary(bone, assemble([
+      [plateGeo(0.22 * S, L * 0.94, 0.44 * S, 0.06 * S, 1), [0, L * 0.47, 0]],
+      // the pontoon track at the tip: a small lozenge lying fore and aft
+      [plateGeo(0.44 * S, 0.50 * S, 1.60 * S, 0.16 * S, 1), [0, L + 0.10 * S, -0.55 * S]],
+      [new THREE.CylinderGeometry(0.25 * S, 0.25 * S, 0.46 * S, 10), [0, L + 0.10 * S, 0.25 * S], [0, 0, 1.5708]],
+    ]), track, 0.30 * S);
+    const ko = new Kit();
+    ko.add(rust, plateGeo(0.26 * S, 0.30 * S, 0.30 * S, 0.05 * S, 1), [sx * 0.02 * S, L * 0.12, 0]);
+    ko.bake(bone.obj);
+  }
+
+  const stance = chassisStance(S, {
+    legs: 0, hipHeight: 2.28, step: 0, lift: 0, rear: 0.18, bob: 0.020,
+    plantX: 0, plantZ: [], ankle: 0, toe: 0, poleX: 0, poleY: 0, poleZ: 0,
+  });
+  return {
+    rig, muzzles, scale: S, stance, sprockets, wheelRadius: RR * 0.80,
+    palette: { shell, dark, mark: rust, scorch, eye },
+    proxy: hullProxy(rig, stance.hipHeight, ['body']),
+  };
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
 /*  Registration                                                          */
 /* ══════════════════════════════════════════════════════════════════════ */
 
@@ -2723,6 +3768,186 @@ Object.assign(ARCHETYPES, {
   },
 });
 
+
+/**
+ * ── THE FIVE GIANTS, AND WHY NO TWO OF THEM ARE THE SAME FIGHT ───────────
+ *
+ * The four rows above are the line vehicles; these are the machines the player
+ * asked for by name, and the rule they are held to is the same one plus a
+ * clause. `vehicles.mjs` says no two of the four may share a silhouette or a
+ * cadence; `tools/checks/giants.mjs` says no two of the FIVE may share a
+ * silhouette, a cadence OR A MOVEMENT SIGNATURE, and it measures the third one
+ * as four numbers off a driven body rather than as a state name:
+ *
+ *   contacts   what it stands on and how many         12 / 10 / 3 / 1 / 6
+ *   duty       share of a second in band spent moving  ~0 / 1 / 1 / 1 / 1
+ *   turn       seconds to swing half a turn          6.1 / 5.8 / 0.58 / 11.6 / 1.6
+ *   grade      the steepest ground it will take      0.30 / 0.22 / 0.75 / 0.26 / 1.0
+ *
+ * ── WHY NONE OF THEM DECLARES `armored` ──────────────────────────────────
+ *
+ * The AAT and the AT-TE do and it costs them. `_boneToughness` tests
+ * `A.armored` BEFORE `A.custom === 'walker'`, and the walker rule is the
+ * stronger one — durasteel on `body` and `hips` against the armour flag's
+ * heavy — so a `walker` that also says `armored` downgrades its own hips one
+ * rung. That is a defect in two rows this workstream did not write and is not
+ * going to fix from inside a new one; what it can do is not repeat it. Every
+ * giant here is `custom: 'walker'` and nothing else, which is the durasteel
+ * hull, `_poseWalker`, and a chassis that needs legs taken off it.
+ *
+ * ── AND EVERY ONE IS `grippable: false`, WHICH IS A MASS TEST AND NOT A SIZE
+ *
+ * `force.mjs` holds the line the flag could otherwise be used to dodge: an
+ * excluded body must be HEAVIER than the top of the Force slider, so nothing
+ * the cap ought to have cleared can hide behind it. The lightest thing here is
+ * the tri-droid at 2 600 kg against an AAT's 2 400, which is already excluded,
+ * and the SPHA is 9 800. A spider walker at 900 kg and a hailfire at 1 500 are
+ * still liftable and still should be — picking a walker up and putting it down
+ * on its back is what the slider is for. Nine tonnes of siege artillery is not
+ * a heavy enemy, it is terrain that shoots.
+ */
+Object.assign(ARCHETYPES, {
+  spha: {
+    /* Its real name, and the variant matters: SPHA-T is the turbolaser, which
+     * is the one that shot down core ships over Geonosis. The M, C, I, R and V
+     * carried missiles, concussion, ion, rail and a variable mount on the same
+     * twelve-legged chassis. */
+    label: 'SPHA-T Siege Artillery', build: buildSPHA, scale: 4.0,
+    hp: 3200, mass: 9800, speed: 1.1, toughness: TOUGHNESS.heavy,
+    ranged: true, custom: 'walker', weapon: null,
+    /* ONE SHELL EVERY FOURTEEN SECONDS AT 96, behind a 2.6 s telegraph. 96 and
+     * not 100: a player at full health survives a direct hit with four points
+     * left, learns exactly what happened, and is given a reason to respect the
+     * next one. An instant kill from ninety metres teaches nothing, and this is
+     * the longest warning in the game. Spread 0.004 is the tightest on the
+     * roster — a gun that has stopped moving to aim does not miss. */
+    fireRate: 11.0, burst: 1, burstGap: 0.20, spread: 0.004, damage: 96, telegraph: 2.6,
+    preferred: [40, 90], boltColor: BOLT_COLORS.blue,
+    plant: 1.6, turnRate: 0.85, grade: 0.30, toppleAt: 5,
+    score: 7600, threat: 30, big: true, grippable: false, unlockAt: 14,
+  },
+  juggernaut: {
+    label: 'HAVw A6 Juggernaut', build: buildJuggernaut, scale: 2.6,
+    /* 160 km/h in the reference, and the fastest heavy in this game by a wide
+     * margin — 7.2 m/s against an AAT's 3.6 and an AT-TE's 1.6. A player cannot
+     * outrun it in the open, which is the entire reason `grade: 0.22` matters:
+     * the answer is not distance, it is anything it has to drive round. */
+    hp: 2400, mass: 6200, speed: 7.2, toughness: TOUGHNESS.heavy,
+    ranged: true, custom: 'walker', weapon: null,
+    /* TEN BOLTS IN SIX HUNDREDTHS OF A SECOND EACH at 9 apiece. The longest
+     * burst on the roster against the hailfire's seven, and it is a stream
+     * rather than a salvo — the tank rakes as it drives past, so what it costs
+     * depends on how long you are in the beam and not on being hit once. */
+    fireRate: 2.6, burst: 10, burstGap: 0.06, spread: 0.05, damage: 9,
+    preferred: [14, 38], boltColor: BOLT_COLORS.blue,
+    turnRate: 0.90, grade: 0.22, toppleAt: 4,
+    score: 5200, threat: 22, big: true, grippable: false, unlockAt: 10,
+  },
+  tridroid: {
+    label: 'Octuptarra Magna Tri-Droid', build: buildTriDroid, scale: 2.2,
+    /* THE THINNEST HEALTH POOL OF THE FIVE, deliberately. Its defence is not
+     * armour, it is fourteen metres of altitude and three legs a blade has to
+     * walk to; once you are at one it comes apart, and that is the trade the
+     * reference describes. */
+    hp: 1300, mass: 2600, speed: 3.4, toughness: TOUGHNESS.heavy,
+    ranged: true, custom: 'walker', weapon: null,
+    /* THREE ROUNDS, ONE PER CANNON, 0.28 s apart. The gap is what tells it from
+     * everything else by ear: slow enough to hear three separate reports from
+     * three separate barrels going round the hub, where the Juggernaut's ten
+     * are one noise and the AAT's two are one event repeated. */
+    fireRate: 1.9, burst: 3, burstGap: 0.28, spread: 0.035, damage: 22,
+    preferred: [10, 46], boltColor: BOLT_COLORS.red,
+    turnRate: 9.0, grade: 0.75, toppleAt: 1,
+    score: 3200, threat: 16, big: true, grippable: false, unlockAt: 8,
+  },
+  snailtank: {
+    label: 'NR-N99 Persuader Droid Enforcer', build: buildSnailTank, scale: 1.55,
+    hp: 1150, mass: 2900, speed: 5.4, toughness: TOUGHNESS.heavy,
+    ranged: true, custom: 'walker', weapon: null,
+    /* FOUR ROUNDS AT 12, close in. It is the Confederate machine you can
+     * actually reach — its band opens at 4 m, inside a blade's walk — and the
+     * whole exchange is that it cannot turn to keep you in front of it. */
+    fireRate: 1.7, burst: 4, burstGap: 0.14, spread: 0.03, damage: 12,
+    preferred: [4, 18], boltColor: BOLT_COLORS.red,
+    turnRate: 0.45, grade: 0.26, toppleAt: 1,
+    score: 2600, threat: 14, big: true, grippable: false, unlockAt: 6,
+  },
+});
+
+/**
+ * THE FIVE, FOR ANYTHING THAT WANTS TO NAME THEM ALL — and it is a SECOND list
+ * rather than four more entries on `VEHICLE_TYPES`, which is a measurement
+ * decision and not a taxonomy one.
+ *
+ * `vehicles.mjs` rasterises every machine on that list into ONE ABSOLUTE WORLD
+ * FRAME, 20 m wide by 12 m tall, deliberately shared rather than normalised so
+ * that a 2.8 m dwarf spider and a 13.5 m AT-TE are not called identical for
+ * having the same proportions. A 34 m SPHA does not fit in that frame: it
+ * clips to the full raster, so does the Juggernaut, and every pair involving
+ * one of them comes out at an overlap near 1.0 — the suite would fail on four
+ * machines that could not look less alike. Widening the frame to hold the SPHA
+ * shrinks the four small ones to a handful of pixels and breaks the reading it
+ * was built for at the other end.
+ *
+ * So the giants get their own list and their own suite with its own frame, and
+ * the AT-TE appears on BOTH: it is a line vehicle by size and a giant by the
+ * player's own request to check it. Nothing is duplicated by that — both lists
+ * are read, never written, and `ARCHETYPES` is the single table underneath.
+ */
+export const GIANT_TYPES = ['spha', 'juggernaut', 'tridroid', 'snailtank', 'atte'];
+
+/**
+ * WHAT EACH ONE IS BUILT TO, AND WHAT IT IS BUILT AT — the canon figures in one
+ * place, read by `giants.mjs` and by nothing else.
+ *
+ * It is here rather than in the check for HANDOFF §2.3's reason turned round: a
+ * table of reference dimensions kept in a test file is a table the builder
+ * cannot be measured against by anything else, and the first person to change
+ * a scale would change it in one of the two places. The `scale` column is the
+ * claim — "this hull is 1:4 of the databank length" — and the check is what
+ * turns the claim into a measurement.
+ *
+ * `l/w/h` are METRES AT 1:1, exactly as the reference states them, and `built`
+ * is the divisor. Where a source disagrees with itself the note says so and
+ * says which reading this file took; `null` means the reference does not give
+ * that dimension and nothing is asserted about it.
+ */
+export const GIANT_CANON = {
+  spha: {
+    name: 'Self-Propelled Heavy Artillery (turbolaser)', side: 'republic',
+    l: 140.2, w: null, h: null, built: 4, contacts: 12, contactKind: 'legs',
+    /* 140.2 m is the databank length. A scaling analysis off the Geonosis
+     * footage puts the same machine at 34-38 m long and about 20 m tall, which
+     * is where 1:4 comes from: the two readings agree there, and 35 m is the
+     * size the player's own yardstick ("AT-AT or AT-M6 sized") asks for. */
+    ratio: 38 / 20, note: '140.2 m databank; 34-38 m long by 20 m tall on screen',
+  },
+  juggernaut: {
+    name: 'HAVw A6 Juggernaut', side: 'republic',
+    l: 49.4, w: 19.6, h: 30.4, built: 2, contacts: 10, contactKind: 'wheels',
+    ratio: 49.4 / 30.4, note: 'ten wheels, 160 km/h, two cockpits, 300 troops',
+  },
+  tridroid: {
+    name: 'Octuptarra magna tri-droid', side: 'separatist',
+    l: null, w: null, h: 14.59, built: 1, contacts: 3, contactKind: 'legs',
+    ratio: null, note: 'three legs, three photoreceptors, no blind spot',
+  },
+  snailtank: {
+    name: 'NR-N99 Persuader-class droid enforcer', side: 'separatist',
+    l: 10.96, w: null, h: 6.2, built: 1, contacts: 1, contactKind: 'tread',
+    ratio: 10.96 / 6.2, note: 'one central tread, outriggers, 60 km/h',
+  },
+  atte: {
+    name: 'All Terrain Tactical Enforcer', side: 'republic',
+    l: 13.2, w: 10.2, h: 5.02, built: 1, contacts: 6, contactKind: 'legs',
+    /* The figures the player quoted, which are the Cross-Sections' (12.4 m of
+     * hull, 13.2 m over the guns, 5.32 m tall). A later databank entry gives
+     * 22.02 x 9.7 for the same machine — genuinely disputed — and this file
+     * builds to the pair that was asked for. */
+    ratio: 13.2 / 5.02, note: 'six legs, magnetised footpads, dorsal mass driver',
+  },
+};
+
 /** The keys this module registers, for anything that wants to name them all. */
 export const VEHICLE_TYPES = ['dwarfspider', 'atte', 'aat', 'hailfire'];
 
@@ -2732,4 +3957,13 @@ export const VEHICLE_SIDE = {
   atte: 'republic',
   aat: 'separatist',
   hailfire: 'separatist',
+  /* THE GIANTS ARE IN THE SAME TABLE and not in a second one, deliberately.
+   * `factions.mjs` walks `Object.entries(VEHICLE_SIDE)` and fails on any entry
+   * whose side disagrees with the databank, so a machine that is in here is a
+   * machine whose faction is pinned in two files at once — which is the whole
+   * of what item 4.1 bought and the reason the giants were ordered after it. */
+  spha: 'republic',
+  juggernaut: 'republic',
+  tridroid: 'separatist',
+  snailtank: 'separatist',
 };
