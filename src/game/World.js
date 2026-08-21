@@ -2163,7 +2163,25 @@ export class World {
        * makes it right the day that changes. */
       const where = this.level?.name || 'the field';
       const all = d.roster?.all?.length ?? 0;
-      title = won ? 'THE ADVANCE IS OVER' : 'THE ADVANCE IS LOST';
+      /**
+       * THE MODE THAT IS WON BY ITS LINE SAYS SO — `MODES.theline.holdTheLine`.
+       *
+       * "THE ADVANCE IS LOST" is Command's sentence and it is right there: that
+       * mode is won by taking the ground, so the ground is what was lost. In
+       * THE LINE the ground is not the win condition and the roster is, and the
+       * card the player is about to read says **"The line did not hold"**
+       * (`Menu.LINE_LOST_TITLE`). Two announcements of one ending disagreeing
+       * about what the ending WAS is the same defect as a victory card over a
+       * table of casualties, which is what `Menu.VICTORY_TITLE` exists to have
+       * fixed.
+       *
+       * Read off `holdTheLine` rather than off the mode's name, so the sentence
+       * follows the RULE — a second mode that is won by its line gets it, and
+       * Command keeps its own words unchanged.
+       */
+      const line = !!d.holdTheLine;
+      title = won ? (line ? 'THE LINE HOLDS' : 'THE ADVANCE IS OVER')
+        : (line ? 'THE LINE IS BROKEN' : 'THE ADVANCE IS LOST');
       sub = won ? `${d.roster?.strength ?? 0} of ${all} walked off ${where}`
         : `${d.areasTaken} of ${AREAS.length} areas · ${d.roster?.fallen?.length ?? 0} of ${all} lost`;
     } else if (MODES[this.settings?.mode]?.ladder && w?.duelTop) {

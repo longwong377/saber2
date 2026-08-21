@@ -50,6 +50,48 @@ async function boot(mode, level = 'colosseum', seed = 31) {
  * the cue. All three are wrapped rather than re-implemented — the words are
  * whatever the game says, and what is asserted is that it says them.
  */
+/**
+ * ── THESE CHECKS MAY NOT OVERLAP, AND NOTHING IN THE RUNNER STOPS THEM ───
+ *
+ * `listen` swaps the process-global `audio.runWon` for a recorder that pushes
+ * into a per-check array. `audio` is a module singleton, and **`check()` does
+ * not await** — both runners collect async checks and settle them together
+ * after the suite's `run()` returns, so every check in this file is in flight
+ * at once, and two of them drive worlds to an ENDING. The defeat arm's
+ * `runWon(false)` therefore went through the victory arm's wrapper and landed
+ * in its array, and the victory arm read `sounded = [false, true]` and reported
+ * that a won battle had played the losing cue.
+ *
+ * It survived standalone runs and every pair anybody tried, because whether the
+ * two arms overlap at the moment of an ending depends on how long each takes.
+ * It appeared only in a full gate, 725 checks in, where the load is different.
+ * **A green standalone run proved nothing here, and was believed twice.**
+ *
+ * ── THE FIX, AND THE ONE THAT LOOKED RIGHT AND WAS NOT ───────────────────
+ *
+ * The tempting fix is to record something that belongs to the WORLD rather than
+ * to the process — wrap `world._announceBattle`, which is a method on the
+ * instance and is where the cue is played. It fails, and the way it fails is
+ * worth keeping: **`_announceBattle` is not the only door.** The duel's ladder
+ * top announces its verdict and plays its cue by another path, so the per-world
+ * spy recorded `0 cue(s)` on an ending that had played one. The suite's own
+ * source scan says there are two `audio.runWon` call sites in World.js and it
+ * is right; a per-world wrapper on one of them is blind to the other.
+ *
+ * So the singleton stays and the OVERLAP goes. `lane()` is a promise chain in
+ * this file: each check's body waits for the previous one to finish, so exactly
+ * one of them owns `audio.runWon` at a time. It costs nothing — these three
+ * checks are minutes of driving either way — and it needs nothing from the
+ * runner, which is right, because "my checks may not run beside each other" is
+ * a fact about this suite and not a feature the gate should grow for it.
+ *
+ * §2.9 says a suite that borrows a singleton must hand all of it back. This is
+ * the other half: handing it back is not enough when two holders are live at
+ * the same time.
+ */
+let lane = Promise.resolve();
+const serial = (fn) => (lane = lane.then(fn, fn));
+
 function listen(world, audio) {
   const said = [];
   const notify = world.notify.bind(world);
@@ -60,11 +102,27 @@ function listen(world, audio) {
   audio.runWon = (w) => { state.sounded.push(!!w); return state.restoreAudio?.call(audio, w); };
   return state;
 }
-const VERDICT = /\b(WON|LOST|DEFEAT|OVER|CLIMBED|YOURS)\b/;
+/**
+ * The words a run may end on, and WHICH OF THEM MEAN IT WENT BADLY.
+ *
+ * `BROKEN` and `HOLDS` are THE LINE's. That mode is won by its line rather than
+ * by the ground, so "THE ADVANCE IS LOST" is Command's sentence and not its own
+ * — see `World._announceBattle`, which reads `holdTheLine` to choose.
+ *
+ * DEFEAT is derived from VERDICT rather than written beside it. They were two
+ * literals, and a word added to one and not the other is a mode that announces
+ * a real defeat and reads here either as a mode that said nothing at all or as
+ * a mode that lost and called it a victory — which is exactly what "THE LINE IS
+ * BROKEN" did on its first run, twice, for the two different reasons.
+ */
+const LOSS_WORDS = ['LOST', 'DEFEAT', 'BROKEN'];
+const WIN_WORDS = ['WON', 'OVER', 'CLIMBED', 'YOURS', 'HOLDS'];
+const DEFEAT = new RegExp(`\\b(${LOSS_WORDS.join('|')})\\b`);
+const VERDICT = new RegExp(`\\b(${[...LOSS_WORDS, ...WIN_WORDS].join('|')})\\b`);
 
 export async function run({ check, assert }) {
 
-  check('endings: every mode a player can lose ends, and the loss is on screen', async () => {
+  check('endings: every mode a player can lose ends, and the loss is on screen', () => serial(async () => {
     /**
      * ONE DRIVE PER SHIPPED MODE, to the same event: the player goes down.
      *
@@ -132,7 +190,7 @@ export async function run({ check, assert }) {
             gave.push(mode);
             assert(verdict.length === 1,
               `${mode} announced the end ${verdict.length} times: ${verdict.map(([t]) => t).join(' / ')}`);
-            assert(/\b(LOST|DEFEAT)\b/.test(verdict[0][0]),
+            assert(DEFEAT.test(verdict[0][0]),
               `${mode} lost and the line reads "${verdict[0][0]}"`);
             assert(verdict[0][1].length > 0, `${mode}'s verdict has no second line to say how far you got`);
             assert(heard.sounded.length === 1 && heard.sounded[0] === false,
@@ -168,9 +226,9 @@ export async function run({ check, assert }) {
       assert(owes.length >= 4, `only ${owes.length} modes can be decided — the detector is wrong`);
       return `${rows.join(', ')}; ${owes.length} of ${Object.keys(MODES).length} decidable, all announced`;
     } finally { audio.runWon = real; S.restoreShared(snap); }
-  });
+  }));
 
-  check('endings: a run that is WON says a different thing, and there is one place that says it', async () => {
+  check('endings: a run that is WON says a different thing, and there is one place that says it', () => serial(async () => {
     /**
      * The other half. Two victories driven here — the ladder and the battle —
      * because they are the two cheapest; `tools/checks/command.mjs` and
@@ -222,7 +280,7 @@ export async function run({ check, assert }) {
           }
           assert(world.over, `the duel cleared wave ${top}, the top of its own ladder, and carried on`);
           const verdict = heard.said.filter(([t]) => VERDICT.test(t));
-          assert(verdict.length === 1 && !/\b(LOST|DEFEAT)\b/.test(verdict[0][0]),
+          assert(verdict.length === 1 && !DEFEAT.test(verdict[0][0]),
             `the top of the ladder was announced as ${JSON.stringify(verdict.map(([t]) => t))}`);
           assert(heard.sounded.length === 1 && heard.sounded[0] === true,
             `a climbed ladder played runWon(${heard.sounded.join(',')})`);
@@ -325,9 +383,9 @@ export async function run({ check, assert }) {
       }
       return `${rows.join('; ')}; ${cues} cue call sites in World.js, 0 in Command.js`;
     } finally { audio.runWon = real; S.restoreShared(snap); }
-  });
+  }));
 
-  check('endings: the duel ladder has a last rung, and past it nothing changes', async () => {
+  check('endings: the duel ladder has a last rung, and past it nothing changes', () => serial(async () => {
     /**
      * WHY THE DUEL NEEDED AN ENDING AT ALL, stated as the measurement that
      * found it rather than as an opinion about the mode.
@@ -382,5 +440,5 @@ export async function run({ check, assert }) {
     return `${rungs.length} rungs + ${bosses.length} bosses; the climb runs out at wave ${top} `
       + `(${d.duelWindow(top).join(', ')} × ${d.duelSize(top)}, ${d.duelElites(top)} promoted, set piece), `
       + `and ${Waves.DUEL_RUNG * rungs.length * 3} waves past it compose identically`;
-  });
+  }));
 }
