@@ -4329,10 +4329,16 @@ LEVELS.geonosis = {
     /* THE SMOKE. See src/world/Smoke.js: seven columns, one draw call, leaning
      * downwind on the preset's own wind vector so they agree with the drifted
      * sand and the shadows. The tip colour is the fog's, so a column dissolves
-     * into the haze at its top rather than ending in mid-air. */
-    addSmokeColumns(world, smokeSites(rng, 7, { rmin: 62, rmax: 244, phase: 1.1 }), {
-      wind: [0.94, 0.34], color: 0x33261f, tip: 0xd0a473, lean: 0.55, spread: 0.22,
-    });
+     * into the haze at its top rather than ending in mid-air.
+     *
+     * THE AIR IS PUBLISHED, not typed twice. `Front.marchFront` raises columns
+     * of its own for every engagement after the first — its note says "the
+     * caller owns its level's air" — and a second copy of these five numbers
+     * beside this one is HANDOFF §2.3 with a rendering change behind it: the
+     * day somebody warms the tip here, the front's columns would go on
+     * dissolving into last week's fog. One table, on the world, read by both. */
+    world.smokeAir = { wind: [0.94, 0.34], color: 0x33261f, tip: 0xd0a473, lean: 0.55, spread: 0.22 };
+    addSmokeColumns(world, smokeSites(rng, 7, { rmin: 62, rmax: 244, phase: 1.1 }), world.smokeAir);
 
     /* Cover, such as it is. A deflation plain has boulder fields and low
      * outcrops and nothing else, and the sparseness is the point: `take cover`

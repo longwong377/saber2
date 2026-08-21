@@ -101,6 +101,7 @@ import { nudgeFromSwing, bladeClear, placementClear, SWING_REACH } from './Spawn
 import { MORALE } from './Morale.js';
 import { shakeNerve } from './Nerve.js';
 import { findCasualty, startDrag } from './Reactions.js';
+import { marchFront } from '../world/Front.js';
 /* THE SHAPE OF ONE SITTING — how long it is and which ground it crosses.
  * A leaf: Session.js imports nothing from here, which is what lets the
  * constructor below call into it. See its header. */
@@ -5109,6 +5110,10 @@ export class CommandDirector extends WaveDirector {
      * the ramp with you, so a gunship queued for them would be a second
      * aircraft delivering passengers who are already aboard the first. */
     if (this.roster.living.some((t) => (!t.body || t.body.dead) && !this._inbound.has(t))) this.deploy();
+    /* AND THE GROUND SHOWS ENGAGEMENT ONE. §5's 0:24 — "you can see the front"
+     * — is a fact about the ground the moment the camera opens, not something
+     * that appears after the first muster. See `marchTo`. */
+    this.marchTo(this.areaNumber);
   }
 
   /**
@@ -5962,6 +5967,10 @@ export class CommandDirector extends WaveDirector {
      * is `deployAll` and not a second loop over `commanders`, and it is
      * identical for the one-commander campaign it was written for. */
     this.deployAll({ byShip: true });
+    /* AND THE FRONT HAS MOVED. This is the one frame in a run where the ground
+     * changes under a player who is standing on it, which is §1's fifth line
+     * and the mode's one-way visible variable. See `marchTo`. */
+    this.marchTo(this.areaNumber);
     /* The card comes down on every OTHER machine too, and this is the half a
      * client cannot do for itself: the host's player pressing Done is the only
      * thing that ends the muster, so a peer sitting on an open card would sit
@@ -5970,6 +5979,75 @@ export class CommandDirector extends WaveDirector {
     this.world?.notify?.(this.area.name.toUpperCase(), this.area.brief);
     this.intermission = 4.0;
     return true;
+  }
+
+  /**
+   * THE FRONT MOVES ACROSS THE GROUND YOU ARE STANDING ON.
+   *
+   * `FLAGSHIP.md` §1's fifth line, and until this method existed the ground
+   * did not know a campaign was happening on it. `Front.marchFront` was built,
+   * measured and plated — the engagement plates go 20.5% / 28.8% / 45.2% of
+   * pixels moved between 1↔3, 3↔5 and 1↔5 — and its own lane's report ended
+   * "`marchFront` is still the debug path only — no mode calls it". This is the
+   * mode calling it.
+   *
+   * ── ADDITIVE, AND CALLED FOR EVERY ENGAGEMENT IN ORDER ──────────────────
+   *
+   * `marchFront`'s contract says so in its own header: "calling this for 1, 2,
+   * 3… in order is what a session does; calling it once for 4 would give
+   * ground that has the fourth engagement's front on it and none of the first
+   * three's history". So this is called once per engagement and never
+   * catches up — `_marched` is the high-water mark, and a client that receives
+   * an area change it did not compute walks the same ladder rather than
+   * jumping to the end of it.
+   *
+   * ── WHY THE HOST ONLY, AND WHY IT IS STILL RIGHT ON A CLIENT ────────────
+   *
+   * The dressing is a pure function of the seed and the engagement number.
+   * Both ends compute the same ground from the same two numbers without a byte
+   * crossing the wire — which is the same argument `CraterLog` makes for
+   * replaying a log rather than shipping a heightfield, and the reason a front
+   * is affordable in co-op at all.
+   *
+   * ── AND THE LEVEL OWNS ITS OWN AIR ─────────────────────────────────────
+   *
+   * `world.smokeAir` is published by the level beside its own
+   * `addSmokeColumns` call, so the columns this raises dissolve into the same
+   * fog the level's do. A second copy of those five numbers here is HANDOFF
+   * §2.3 with a rendering change behind it.
+   */
+  marchTo(n) {
+    const w = this.world;
+    if (!w?.terrain || w.frontOff) return 0;
+    const want = Math.max(1, n | 0);
+    if ((this._marched | 0) >= want) return 0;
+    let did = 0;
+    for (let e = (this._marched | 0) + 1; e <= want; e++) {
+      try {
+        const out = marchFront(w, {
+          engagement: e,
+          /* The DEPLOYMENT seed, not the wave's: one ground, one sitting, one
+           * seed — §5. `runSeed` is what the deploy card printed. */
+          seed: w.runSeed ?? w.settings?.seed ?? 1,
+          log: w.craterLog ?? null,
+          air: w.smokeAir ?? null,
+        });
+        did += (out?.barrage | 0) + (out?.smoke | 0) + (out?.wrecks | 0);
+      } catch (err) {
+        /* A DRESSING THAT THREW MUST NOT TAKE THE ENGAGEMENT WITH IT. This runs
+         * on the frame a muster closes and the next area opens; a level with no
+         * terrain features to site a wreck on is a worse picture, not a broken
+         * run. Reported once rather than swallowed, because a front that
+         * silently stops advancing is the defect this whole system exists to
+         * make visible. */
+        if (!CommandDirector._warnedMarch) {
+          CommandDirector._warnedMarch = true;
+          console.error('marchFront failed for engagement', e, err);
+        }
+      }
+      this._marched = e;
+    }
+    return did;
   }
 
   /**
