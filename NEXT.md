@@ -831,6 +831,45 @@ idle or scripted player, which is a corpse with a delay. That measurement is
 the next thing anybody should take: `tools/_linetoll.mjs` is the bench and
 takes `<mode> <seeds>`.
 
+**AND THE TOTAL DID NOT MOVE WHEN BOTH SHARES WERE FIXED, which is the part
+that makes this a design question and not a bug hunt.** Re-taken on the branch
+head after the levy was retargeted and the pit's cadence halved:
+
+    1266 damage onto the line · 20 killing blows · bolt 99.3% · force 0.7%
+    by dealer: b1 38.2%   GunPit 34.8%   conscript 26.3%   trooper 0.7%
+
+against the 1248 above. Each fix worked on its own share and the sum is
+unchanged, so **there is no single culprit left to remove** — three sides of a
+three-way split are not three bugs, they are an exchange rate. Ruled out
+alongside it, on the same build: the engagement band (median 14.6 m, which is
+inside both sides' preferred bands), friendly fire (0.7%), and the formation
+coming apart (50–100% of the living inside `MORALE.NEAR`).
+
+**What a LIVE commander is worth, and it is the number this question was
+missing.** Both `command` checks that failed on the roster toll were measuring
+worlds whose commander had already died — `World.update` gates `director.update`
+on `!this.over`, so a run that ends takes the orders, the steering and the
+watchdog with it. Held alive, on the same drives:
+
+    HOLD FIRE, idle commander, 45 s   0 of 10 lost   (mortal: the run ended at s32.7)
+    TAKE COVER, walking, 90 s         0 of 10 lost   (mortal: the run ended at s52.9, 2 lost)
+
+That is NOT a contradiction of the 0/10 wipes above and must not be read as
+one: those are `theline`, 105–240 s, an idle Jedi standing where he spawned;
+these are 45 and 90 s with a Jedi who is either in the formation or walking the
+line across the field. What the pair says is only that **the toll is steep in
+the window where the commander is absent and shallow in the window where he is
+present**, which is the presence loop pulling its weight in exactly the mode
+that was built to price it — and it means any figure quoted for "what an
+engagement costs a roster" has to state whether the Jedi was alive for it.
+
+**The decision that is still nobody's to take unilaterally: how much of a
+ten-man roster one engagement should cost.** It is load-bearing now (The Line
+loses the run on a wipe) and it belongs to the player, not to a constant in the
+composer. Until it is taken, no check asserts a survival rate: `command.mjs`
+holds the commander so its two drives measure fire discipline and the watchdog
+rather than this, and says so where it does it.
+
 ### A contradiction two lanes should resolve before either number is used
 
 The presence lane reports **19.7% of living men inside `MORALE.NEAR`, and the
