@@ -4076,6 +4076,49 @@ LEVELS.geonosis = {
      * model in range and the ORANGE comes from the sun, the cloud deck and the
      * grade, which is where a colour that is not physics belongs. */
     turbidity: 10.0, rayleigh: 2.0, mie: 0.016, mieG: 0.85,
+    /**
+     * …AND THE GRADE THAT SENTENCE PROMISES, WHICH WAS NEVER WRITTEN.
+     *
+     * The paragraph above says the orange comes from "the sun, the cloud deck
+     * and the grade". There was no grade. This level authored `skyColor
+     * d9a058` and `fogColor d0a473` — a gold sky over dust — and then shipped
+     * with `gain` undefined, so the composite fell back to its near-neutral
+     * default and Preetham drew what Preetham draws.
+     *
+     * Measured on the shipped atmospheres, the hue the DRAWN skyline lands at
+     * against the hue the level authored for its own sky:
+     *
+     *     drifts     authored 220°  drawn 202°   Δ  18°
+     *     colosseum  authored 220°  drawn 205°   Δ  15°
+     *     scoria     authored  10°  drawn  62°   Δ  52°
+     *     mustafar   authored   6°  drawn  59°   Δ  52°
+     *     geonosis   authored  25°  drawn 205°   Δ 180°
+     *
+     * Every other level lands within 52° of its own sky. This one landed on
+     * the opposite side of the wheel — a cold blue-grey over a dust planet,
+     * which `FLAGSHIP.md` §11 names as the biggest visual defect in the game
+     * and which the marching-front plates confirmed live: the smoke columns'
+     * tips take the fog's colour, so at 100 m a battle read as pale haze.
+     *
+     * WHY A GRADE AND NOT A ROTATION ON THE FOG. `uGain` is a composite pass
+     * over the whole frame, so it moves the drawn dome and what distance
+     * converges on TOGETHER and they cannot disagree — measured here, every
+     * level's haze tracks its own skyline within 6°. Turning the haze alone
+     * was tried and `cel.mjs` refused it correctly: a veil with a colour the
+     * sky does not have is the "grey fog" rule 3 of src/toon/REFERENCE.md
+     * forbids. `skyProbeTurn`'s own note says the same thing in advance —
+     * the drawn dome, the fog and the aerial tint "have to match what is
+     * actually painted on screen", and the Ember Shelf's orange comes from
+     * exactly this field.
+     *
+     * At [1.18, 1.00, 0.68] the skyline lands at 54° and the haze at 47° — a
+     * 29° miss against its own sky, better than either of the two levels that
+     * already had a grade — and luminance moves 0.414 to 0.416, which is
+     * inside the noise of the meter that reads it. Stronger than mustafar's
+     * [1.15, 0.99, 0.72] on purpose: this is a planet whose entire identity is
+     * the dust in the air.
+     */
+    gain: [1.18, 1.00, 0.68],
     /* The wind on this preset runs along (0.94, 0.34) — 20° — and the sun sits
      * anti-parallel to it at 200°, which is the same rule the dune sea derives
      * for its dune train: the windward faces of the stacks are lit and their lee
