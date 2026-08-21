@@ -282,30 +282,89 @@ export function applyLevy(out, director, wave = director?.wave ?? 1) {
  * the honest comparison is not "before the levy" but "the first time the line
  * could be shot".)
  *
- * THE ANSWER THAT LOOKED RIGHT AND MEASURED AS NOTHING, kept because the next
- * person will think of it too. §6's paragraph is about the PLAYER throughout —
- * "Twenty B1s fire 18 bolts/s… The crowd does not kill you. It nails your feet
- * to the floor" — so the levy was made to AIM AT THE JEDI: one instance wrapper
- * round `_think` that substituted `ctx.pickTarget` for that body only, the same
- * seam `Flight.installFlight` uses, so the body walked at and shot at the same
- * thing. Twenty lines, and the fill of the wave went on fighting the line while
- * the weather came for you, which is exactly the sentence §6 makes.
+ * THE ANSWER, AND THE MEASUREMENT THAT NEARLY THREW IT AWAY. §6's paragraph is
+ * about the PLAYER throughout — "Twenty B1s fire 18 bolts/s… The crowd does not
+ * kill you. It nails your feet to the floor, and then the four B2s at 5.85 dps
+ * each kill you" — so the levy AIMS AT THE JEDI. `installLevyAim` below is the
+ * whole of it: one instance wrapper round `_think` that substitutes
+ * `ctx.pickTarget` for that body only, so the fill of the wave goes on fighting
+ * your line while the weather comes for you.
  *
- * It moved the number from 6 to 7 at thirty seconds and not at all at sixty,
- * and it is easy to see why once measured: forty bodies converging on a player
- * who does not move kill the player, and a levy with no blade left to walk at
- * falls back on the line anyway. The mechanism was fine; the premise — that
- * where the levy AIMS is what decides the roster's losses — was wrong. It was
- * taken back out rather than left in as an unvalidated behaviour change on the
- * strength of an argument.
+ * It was written, measured, REMOVED as useless, and put back — and the reason
+ * is worth more than the rule. Measured on the idle-player bench above it moved
+ * the roster from 6 to 7 at thirty seconds and not at all at sixty, which reads
+ * as a rule that does nothing. **The bench was the problem.** Forty bodies
+ * converging on a player who never moves kill the player in under a minute, and
+ * a levy with no blade left to walk at falls back on the line anyway — so the
+ * arm that was supposed to show the levy pointed away from the line spent most
+ * of its window pointed straight back at it. An idle Jedi is not a Jedi; it is
+ * a corpse with a delay.
  *
- * WHAT IS ACTUALLY OPEN, stated so the next lane does not re-derive it: how
- * much of a ten-man roster one engagement should cost, now that the roster can
- * be shot at all. That is a balance question with a number on it — the muster
- * between areas is what refills a line, and §13 wants the name list to shrink —
- * and it is not answerable from a bench whose Jedi does nothing for ninety
- * seconds. It wants a driven player.
+ * `tools/_linetoll.mjs` is the bench that can see it: it holds the player
+ * unkillable, which is the honest stand-in for a player who is playing, and
+ * tallies every point of damage that lands on a party-team trooper by the
+ * archetype that dealt it. That is the instrument any future tuning of this
+ * number should use.
+ *
+ * WHAT IS STILL OPEN, stated so the next lane does not re-derive it: how much
+ * of a ten-man roster one engagement should cost, now that the roster can be
+ * shot at all (FLAGSHIP §16.3 — until this session it could not be). The muster
+ * between areas is what refills a line and §13 wants the name list to shrink;
+ * what nobody has set is the rate.
  */
+function installLevyAim(e) {
+  if (!e || e._levyAim) return false;
+  const base = e._think;
+  if (typeof base !== 'function') return false;
+  e._levyAim = true;
+  e._think = function (dt, ctx) {
+    const pick = ctx.pickTarget;
+    if (typeof pick !== 'function') return base.call(this, dt, ctx);
+    /* THE SUBSTITUTION HAS TO HAPPEN WHERE THE PICK HAPPENS. `Enemy._think`
+     * opens with `this.target = this.compelled?.target ?? ctx.pickTarget(this)`
+     * and everything below it — `wish`, the cover hunt, `_shoot` — reads that
+     * one field, so a target written from a prop tick is both overwritten next
+     * frame and, in the frame it survives, a body walking toward one thing and
+     * shooting at another. `ctx` is the world's single per-frame context
+     * object, so it goes back in a `finally`. */
+    ctx.pickTarget = (b) => {
+      if (b !== this) return pick(b);
+      /**
+       * THE SAME PICKER, ASKED WITH THE OTHER ARMY OUT OF THE ROOM.
+       *
+       * `World.pickTarget` runs two passes: every player this body is allowed
+       * to fight, and then — only `if (this.command)` — every cross-army body.
+       * What a levy wants is the first pass and not the second, and the honest
+       * way to get it is to ask the shipped function rather than to write a
+       * second copy of "who may this body shoot at" (HANDOFF §2.4: an
+       * instrument that restates a rule eventually disagrees with it, and it
+       * fails by manufacturing defects). `hostileTo` and `canHarm` are the one
+       * gate in the game, they live in Player.js, and importing them from here
+       * closes an initialisation cycle — Levy is imported by Command, which is
+       * imported by Levels — that throws `Cannot access 'COMMAND_UNITS' before
+       * initialization` for any entry point reaching Command.js first.
+       *
+       * So the field the second pass is gated on is taken away for the length
+       * of ONE synchronous call and put back in a `finally`. Nothing else runs
+       * in between: `pickTarget` is a loop over two arrays with no awaits, no
+       * events and no callbacks.
+       */
+      const w = this.world;
+      let best = null;
+      if (w) {
+        const cmd = w.command;
+        w.command = null;
+        try { best = pick(b); } finally { w.command = cmd; }
+      }
+      /* No blade left to walk at — a levy on a field with no Jedi standing
+       * still has to do something, and what it does is whatever it would have
+       * done. That is also every mode with no player on the party's team. */
+      return best || pick(b);
+    };
+    try { return base.call(this, dt, ctx); } finally { ctx.pickTarget = pick; }
+  };
+  return true;
+}
 
 class LevyPack {
   constructor(world) {
@@ -355,6 +414,10 @@ class LevyPack {
       if (paysOut(e.A)) paying++;
       else levy.push(e);
     }
+    /* THE AIM, INSTALLED ONCE A BODY, on the same one-pass-over-the-enemies
+     * `FlightPack` makes. Its whole cost on a ground with no levy is the early
+     * return above. */
+    for (const e of levy) installLevyAim(e);
     if (!levy.length) { this.broke = false; return; }
     /* Anything still queued or in the air counts as the wave not being over —
      * `delivered` is the director's own word for it, and asking it is what

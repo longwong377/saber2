@@ -41,12 +41,27 @@
  *     kills, because ten rifles beat one gun; the casemate is what makes the
  *     answer a Jedi rather than arithmetic.
  *
- *   THE COST OF IGNORING IT IS NAMES. It shoots the roster, and the roster is
- *     Command's whole subject: a record dies once and is on the fallen list
- *     forever. It does NOT shoot the player unless there is nobody else in
- *     reach, which is a real emplacement's behaviour — a casemate gun engages
- *     the mass, not the one man running at it — and it is also the only way
- *     the cost can be a cost. A gun that shot at you would be a gun you dodge.
+ *   THE COST OF IGNORING IT IS NAMES, AND ONLY NAMES. It shoots the roster and
+ *     nothing else — a record dies once and is on the fallen list forever, and
+ *     that is Command's whole subject. It never shoots the PLAYER, which is a
+ *     real emplacement's behaviour (a casemate gun laid on a formation engages
+ *     the mass, not the one man running at it) and is also the only way the
+ *     cost can be a cost: a gun that shot at you would be a gun you dodge.
+ *
+ *     THE FIRST CUT TOOK THE PLAYER AS A FALLBACK — "if there is no line left
+ *     in the arc, shoot whoever is there" — and it broke five checks in
+ *     `blast-door.mjs` on a ground it has no business being armed on. `dress`
+ *     runs on every mode, so in the Trial of Waves, a roguelite, a duel or the
+ *     sandbox there IS no line, the fallback fired, and an untouchable gun was
+ *     putting 30-damage bursts into a lone player from 69 m. Measured: a real
+ *     Player walking from the muster ground "never got within 2.4 m of the
+ *     door in 45 s — closest 9.8 m", and a 75-second hold burned 41 of the 515
+ *     texels a breach needs. It was not the door. It was the gun shooting the
+ *     tester.
+ *
+ *     So the arc is the ARMY, and a gun with no army in front of it is silent
+ *     — see `update`, which declines outright on a world that leads no army.
+ *     That is the same line `World.loadLevel` already draws with `command`.
  *
  *   THE COST OF ANSWERING IT IS THE TWENTY SECONDS. That price is NOT
  *     re-implemented here and no bar is drained by this file. It is already
@@ -100,12 +115,25 @@ import { rand } from '../engine/MathUtil.js';
  *   have: every burst that lands is half a man, so the ledger moves visibly
  *   and never in one step. A one-shot gun would make the cost a coin toss.
  *
- * `every` 3.4 s — the cadence is what turns damage into a RATE, and the rate is
- *   what the choice is made of. Measured on the shipped magazine against a real
- *   Command line formed up on the muster ground at 76.7 m (tools/checks/
- *   breach.mjs): at this cadence the gun takes a name off the roster about
- *   every fifteen seconds of sustained fire. An area is four waves; left
- *   standing for one it is most of a ten-man force.
+ * `every` 7.0 s — the cadence is what turns damage into a RATE, and the rate is
+ *   what the choice is made of. IT WAS 3.4 AND THAT WAS FAR TOO MUCH, measured
+ *   by the mode lane on a full engagement rather than on this file's own bench:
+ *   wrapping `Enemy.damage` and tallying every point that lands on a party-team
+ *   trooper over two seeds of the flagship mode, **one gun pit was 42.8% of all
+ *   damage onto the line** against forty conscripts' 46.0% and the whole
+ *   Confederate fill's 11.2% — on runs where it was never breached and the
+ *   roster reached 0 of 10 in 62 seconds. One emplacement doing very nearly
+ *   what forty bodies do is not a prize for breaching, it is the main cause of
+ *   death, and a player who never finds it loses the run to something they
+ *   never saw.
+ *
+ *   Halving the cadence halves that share. What it is sized against now is the
+ *   PLAYER'S CLOCK and not the gun's: the plate is 69 m from where the line
+ *   forms up, which `blast-door.mjs` measures as about twenty seconds on foot,
+ *   and the hold is another twenty-two. So the round trip is the better part of
+ *   a minute, and a gun that takes a name every minute of sustained fire costs
+ *   the player about one man to answer it and the rest of the area if they do
+ *   not. That is a price with an answer, which is what §7 asks a verb to be.
  *
  * `reach` 120 m — the magazine is 76.7 m from the muster ground and the level's
  *   spawn ring is 58-96 m, so a gun that could not reach past 100 m would be a
@@ -139,7 +167,7 @@ import { rand } from '../engine/MathUtil.js';
  *   trebles the rounds without moving what a single round is worth.
  */
 export const GUN = {
-  damage: 30, every: 3.4, reach: 120, spread: 0.028, speed: 118, warmup: 2.2,
+  damage: 30, every: 7.0, reach: 120, spread: 0.028, speed: 118, warmup: 2.2,
   burst: 3, burstGap: 0.14,
 };
 
@@ -298,21 +326,18 @@ export class GunPit {
       const d = e.position.distanceToSquared(this.muzzle);
       if (d < bestD) { bestD = d; best = e; }
     }
-    if (best) return best;
-    /* Nobody's line left standing in the arc. A gun with no line to shoot at
-     * does not stop being a gun — but a player who has killed or outlived
-     * their whole roster is already in the failure state this mode is about,
-     * and the emplacement should not be what finishes them off from 80 m
-     * through a wall. It takes the shot only if they are inside its own
-     * designed band. */
-    for (const p of (w.players || [])) {
-      if (p?.alive && p.position.distanceToSquared(this.muzzle) < bestD) return p;
-    }
-    return null;
+    return best;
   }
 
   update(dt) {
     if (!(dt > 0) || this.taken || this.dead) return;
+    /* NO ARMY, NO GUN. `world.command` is the director when the mode leads one
+     * — Command, a skirmish, a campaign or a contingent — and it is null in
+     * every other mode. The emplacement is FLAGSHIP §7's verb and §7's verb
+     * belongs to the mode with a line in it; on a ground being fought over by
+     * a lone Jedi there is nothing here for a gun to be laid on. See the note
+     * at the head of this file for the five checks that taught it. */
+    if (!this.world?.command) return;
     if (this.door?.opened) { this.silence(); return; }
     const t = (this.target && !this.target.dead && (this.target.alive ?? true)
       && this.target.position.distanceToSquared(this.muzzle) < GUN.reach * GUN.reach)
@@ -389,6 +414,16 @@ export class GunPit {
        * nothing at all would be refused. The gun is its own shooter. */
       owner: this, team: this.team, big: true, length: 2.4, radius: 0.1,
     });
+    /* THE TELL, ONCE. A gun the player never finds is a gun the player loses
+     * the run to without ever seeing it — the mode lane's tally had this
+     * emplacement at 42.8% of everything that killed the line on runs where
+     * nobody went near it. The first round it fires says so, and it says WHERE,
+     * because the whole of §7's fourth verb is a thing you have to go and do
+     * something about. Once: a line of HUD text every seven seconds is not a
+     * tell, it is a nag. */
+    if (!this.shots) {
+      this.world?.notify?.('EMPLACED GUN', 'the revetment is firing on your line');
+    }
     this.shots++;
     audio.blaster?.(this.muzzle, true);
     this.world.particles?.plasma?.spawn(this.muzzle, _v.set(0, 0, 0), {
