@@ -3948,8 +3948,13 @@ export class Player {
           d2 = 1e-4;
         }
         const d = Math.sqrt(d2);
-        // outward, in the world: from the prop's surface toward the chest
-        _v4.multiplyScalar(1 / d).applyQuaternion(b.quaternion);
+        /* Outward, in the world: from the prop's surface toward the chest.
+         * `normalize()` and not `multiplyScalar(1 / d)` — on the branch above,
+         * `_v4` is ALREADY a unit face normal while `d` has been forced to
+         * 0.01, so dividing would hand the impulse below a vector a hundred
+         * times too long and fire a body across the level. The two spellings
+         * agree everywhere else. */
+        _v4.normalize().applyQuaternion(b.quaternion);
         b.wake();
         b.applyImpulse(_v5.copy(_v4).multiplyScalar(-Math.min(b.mass, 40) * (rr - d) * 2.4), _v1);
         _v4.y = 0;

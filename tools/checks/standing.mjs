@@ -387,8 +387,27 @@ export async function run({ check, assert, THREE: T }) {
     /* …and it is still SOLID. Reaching the axis would mean walking through it. */
     assert(closest > 0.70,
       `the body reached ${closest.toFixed(2)} m from the log's axis — it walked into the wood`);
+    /**
+     * …AND THE DEEP BRANCH IS BOUNDED. When the chest ends up INSIDE the wood —
+     * a body shoved into a trunk, a trunk that rolls onto a body — the shove
+     * has no offset to take a direction from and leaves by the nearest face
+     * instead, with the depth forced to a centimetre. The impulse handed to the
+     * prop rides the same vector, so a unit face normal scaled by 1/0.01 is a
+     * hundredfold kick. `min(mass, 40) * radius * 2.4` is the most the shipped
+     * expression can legitimately ask for.
+     */
+    let worstImpulse = 0;
+    log.applyImpulse = (imp) => { worstImpulse = Math.max(worstImpulse, imp.length()); };
+    p.position.set(0, 0, 0);
+    p.velocity.set(0, 0, 0);
+    for (let i = 0; i < 30; i++) { ctx.time = w.time = i / 60; p.update(1 / 60, ctx); }
+    const cap = Math.min(log.mass, 40) * p.radius * 2.4;
+    assert(worstImpulse <= cap * 1.05,
+      `standing inside the wood handed the log a ${worstImpulse.toFixed(1)} N·s impulse against a `
+      + `${cap.toFixed(1)} N·s ceiling — the deep branch is scaling a unit normal by 1/depth`);
     return `walked to ${closest.toFixed(2)} m of a 12 m log's axis (touching is 0.89; `
-      + `its half-diagonal is ${log.boundingRadius.toFixed(2)})`;
+      + `its half-diagonal is ${log.boundingRadius.toFixed(2)}), worst impulse from inside it `
+      + `${worstImpulse.toFixed(1)} of ${cap.toFixed(1)} N·s`;
   });
 
   check('standing: you land ON a spider walker instead of falling through it', () => {

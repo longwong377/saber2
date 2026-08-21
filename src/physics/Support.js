@@ -99,6 +99,30 @@ export function supportHeight(terrain, boxes, props, x, z, feetY, radius, stepUp
  * interchangeable everywhere else: a crate is a body the player also shoves,
  * and the deck of a spider walker is a surface they can only stand on. Both are
  * floor; only one of them moves when you walk into it. See Player._gatherNear.
+ *
+ * ── OPEN, AND MEASURED: `b.position.y + e.y` IS AN AXIS-ALIGNED ANSWER ──────
+ *
+ * `e` is the body's half-extents in its OWN frame, and nothing here asks which
+ * way the body is turned. For a crate, a barrel or a walker's deck that is
+ * exactly right and costs nothing. For a FELLED TRUNK it is not: a log's long
+ * axis is its local +Y, so a twelve-metre trunk lying flat claims to be
+ * `0.55 + 6.00 = 6.55 m` tall. Measured, feet at 0.00 / 0.70 / 1.00 against
+ * wood the eye sees topping out at 1.10, the query answers 0.00 / 0.70 / 1.00
+ * — it never sees the log at all, because 6.55 is above every ceiling. So a
+ * trunk inside `LIFT_RING` of its own stump, which is every trunk near enough
+ * for a player to be walking on, gives NO FLOOR.
+ *
+ * It is the same defect BACKLOG 8.1 closed one function away — the shove half
+ * of `Player._collide` reading `boundingRadius`, the box's half-diagonal, where
+ * this half reads the box — and it is left open on purpose rather than patched
+ * here, because the fix is a shape question and not a line: the two record
+ * kinds this function serves do not agree about what `position` and `extent`
+ * MEAN. A body has a centre and half-extents and a quaternion;
+ * `Enemy.platform()` hands back `position` at the feet with `extent.y` as the
+ * height above them and no orientation at all. `Player._supportAt` already
+ * calls this twice, once per kind, so the seam to split them along exists —
+ * but guessing an orientation from a record that has none is exactly the "one
+ * rule with two meanings" that `ceilingHeight`'s note below refuses to do.
  */
 export function topOfProps(props, x, z, feetY, radius, stepUp, best) {
   if (!props) return best;
