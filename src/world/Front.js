@@ -62,6 +62,13 @@ import * as THREE from 'three';
 import { makeRng, TAU } from '../engine/MathUtil.js';
 import { addSmokeColumns, smokeSites } from './Smoke.js';
 import { addFallen } from './Fallen.js';
+/* THE ONE READER. `Battlefield.js` owns the front's geometry — it is where the
+ * bezier is flattened into an arc-length table — so "which side of the front is
+ * this, and how far from it" is asked there and nowhere else. A half-plane is
+ * the degenerate case and `frontLine` builds it as one, so every function below
+ * dresses a curve and a straight line with the same body. See the long note
+ * over `frontLine`. */
+import { frontLine, frontAtChoke } from './Battlefield.js';
 
 /** Where the line stands before the first engagement, in metres from the spot
  *  the player is standing on. */
@@ -86,9 +93,10 @@ export function frontAt(engagement, opts = {}) {
     dir: { x: Math.cos(bearing), z: Math.sin(bearing) } };
 }
 
-/** Has the line already crossed this point? */
+/** Has the line already crossed this point? One question, one reader — and on
+ *  a half-plane it is the dot product this function has always taken. */
 export function burnt(front, x, z) {
-  return x * front.dir.x + z * front.dir.z > front.distance;
+  return frontLine(front).side(x, z).d > 0;
 }
 
 /**
@@ -105,6 +113,16 @@ export function burnt(front, x, z) {
  * in the game. The jitter is ±18% on the radius and ±2.2 m across the track,
  * because eight identical circles perfectly collinear reads as a decal.
  *
+ * ── AND IT WALKS ALONG THE FRONT WHEN IT IS GIVEN ONE ────────────────────
+ *
+ * A battery fires along its own front, so the track of a walking barrage IS
+ * the line — which on a bezier is not a bearing. `opts.front` hands this the
+ * one reader and the track becomes eight craters at 14 m of ARC, starting
+ * `opts.from` metres along it from the centre and `opts.depth` into the burnt
+ * side. Without it the signature is the one it has always had, a point and a
+ * bearing, and the arithmetic below is unchanged — which is what a straight
+ * front is anyway.
+ *
  * @returns {number} craters laid
  */
 export function walkingBarrage(terrain, from, bearing, opts = {}) {
@@ -113,12 +131,18 @@ export function walkingBarrage(terrain, from, bearing, opts = {}) {
   const step = opts.step ?? 14;
   const rng = makeRng(opts.seed ?? 991);
   const cx = Math.cos(bearing), cz = Math.sin(bearing);
+  const line = opts.front ? frontLine(opts.front) : null;
+  const u0 = opts.from ?? 0, depth = opts.depth ?? 0;
   let laid = 0;
   for (let i = 0; i < n; i++) {
     const along = i * step;
     const side = (rng() - 0.5) * 4.4;
-    const x = from.x + cx * along - cz * side;
-    const z = from.z + cz * along + cx * side;
+    /* `side` is the jitter ACROSS the track either way — across the line's own
+     * normal on a curve, and across the bearing on a straight one, which is
+     * the same vector. */
+    const p = line ? line.place(u0 + along, depth + side) : null;
+    const x = p ? p.x : from.x + cx * along - cz * side;
+    const z = p ? p.z : from.z + cz * along + cx * side;
     if (terrain.inBounds && !terrain.inBounds(x, z)) continue;
     terrain.crater(x, z, (opts.radius ?? 2.6) * (0.82 + rng() * 0.36), opts.depth ?? 0.55);
     laid++;
@@ -155,19 +179,36 @@ export function walkingBarrage(terrain, from, bearing, opts = {}) {
  * the scar field is for — its burns stack, so where the discs overlap the
  * ground goes black on its own rather than by being told to.
  *
+ * ── AND IT FOLLOWS THE LINE, WHATEVER SHAPE THE LINE IS ──────────────────
+ *
+ * This function used to build its points as `dir·along + across·k`, which is a
+ * half-plane written out. MEASURED on a pass at seed 3 — one of the tighter
+ * curves the generator draws — asking for the default ±260 m across a bezier
+ * front: **26% of the swath landed on the burnt side.** Three quarters of a
+ * burn that is supposed to say "the line came through here" was laid on ground
+ * the line has not reached. The stand-in for the curve was the tangent at the
+ * chokepoint, and a tangent is good for 80 m on that seed.
+ *
+ * `frontLine` is the fix and it is one object rather than four: `place(u,
+ * depth)` is the point `depth` metres into the burnt side at `u` metres ALONG
+ * the line, which on a straight front is exactly the expression this function
+ * used to write inline and on a curve is the curve. Nothing else here changed
+ * — the same rows, the same thinning, the same draws from `rng` in the same
+ * order, so a seeded swath on an authored level is the swath it always was.
+ *
  * @returns {number} marks laid
  */
 export function burnBand(terrain, front, opts = {}) {
   if (!terrain?.scorch) return 0;
   const rng = makeRng(opts.seed ?? 7717);
-  const dx = front.dir.x, dz = front.dir.z;
-  /* ACROSS the advance, not along it. The line is the set of points at
-   * `distance` along the bearing, so it runs along the perpendicular — and it
-   * has to run out past the frame, or the swath ends in mid-air at the edge of
-   * shot and reads as a rug. 260 m each way covers a 60° frame at the far end
-   * of the schedule with room over. */
-  const ax = -dz, az = dx;
-  const half = opts.half ?? 260;
+  const line = frontLine(front);
+  /* ACROSS the advance, not along it — and it has to run out past the frame,
+   * or the swath ends in mid-air at the edge of shot and reads as a rug. 260 m
+   * each way covers a 60° frame at the far end of the schedule with room over.
+   * On a curve the line runs out of map before it runs out of swath, so the
+   * reach either way is whatever is left of the arc. */
+  const want = opts.half ?? 260;
+  const half = want;
   const step = opts.step ?? 5.5;
   /* HOW FAR BEHIND THE LINE THE FIGHTING REACHED. `rows` bands at `rowStep`
    * past it, each thinner and paler than the last: a front is not a line, it
@@ -181,12 +222,21 @@ export function burnBand(terrain, front, opts = {}) {
      * itself and is nearly continuous; the far row is a scatter. */
     const t = r / Math.max(1, rows - 1);
     const density = 1 - t * 0.72;
-    const along = front.distance + r * rowStep + (rng() - 0.5) * rowStep;
+    /* DEPTH INTO THE BURNT SIDE, measured FROM THE LINE rather than from the
+     * deploy point. On a half-plane the two differ by `front.distance`, which
+     * is where the line is, so this is the same number it always was. */
+    const depth = r * rowStep + (rng() - 0.5) * rowStep;
     for (let k = -half; k <= half; k += step) {
       if (rng() > density) continue;
       const across = k + (rng() - 0.5) * step * 1.6;
-      const x = dx * along + ax * across;
-      const z = dz * along + az * across;
+      /* PAST THE END OF THE LINE IS NOT ON THE LINE. `place` clamps, so a
+       * swath asked for wider than the arc would pile every mark past the end
+       * on the last point of it — a blot at the map edge. Dropped instead,
+       * which is the same thing `marchFront` does to a smoke column that lands
+       * on the clean side and for the same reason. */
+      if (across < -line.back || across > line.ahead) continue;
+      const p = line.place(across, depth);
+      const x = p.x, z = p.z;
       if (terrain.inBounds && !terrain.inBounds(x, z)) continue;
       /* The radius is the level's own crater at `size = 1` and a bit over —
        * 2.6 m is what an artillery round does to this ground everywhere else
@@ -219,7 +269,39 @@ export function burnBand(terrain, front, opts = {}) {
 export function marchFront(world, opts = {}) {
   const n = Math.max(1, opts.engagement | 0);
   const seed = opts.seed ?? 1;
-  const front = frontAt(n, opts);
+  /**
+   * THE FRONT THIS ENGAGEMENT IS FOUGHT ON — AND IT IS THE GENERATED ONE WHEN
+   * THERE IS ONE.
+   *
+   * `World._groundKeyFor` publishes `world.battlefield`: the bezier the ground
+   * under this run was derived from, its reason, its axis of advance and its
+   * one chokepoint. Until now nothing read it. The mode raised a generated
+   * heightfield around a curve and then dressed it with a straight line drawn
+   * off an unrelated seed, so the burn, the barrage and the dead landed
+   * wherever `frontAt` happened to point — which on a generated ground is a
+   * front that has nothing to do with the ground it is on. §12.1's whole claim
+   * is "generate the battle, then the ground that explains it"; a battle
+   * nothing dresses is scenery.
+   *
+   * THE SCHEDULE IS THE SAME SCHEDULE. §14's line starts 180 m out and closes
+   * 40 m an engagement, and a curve expresses that as an OFFSET along its own
+   * normal rather than as a new `distance`: the front keeps its shape and
+   * moves, which is one battle progressing instead of a different one drawn
+   * five times. `frontLine` reads `offset`; nothing else here knows it exists.
+   *
+   * `opts.front` overrides both, and an authored level with no plan gets the
+   * straight schedule it always got.
+   */
+  const plan = opts.plan ?? world.battlefield ?? null;
+  const front = opts.front || (plan
+    ? (() => {
+      const scheduled = Math.max(opts.min ?? 20,
+        (opts.start ?? FRONT_START) - (n - 1) * (opts.step ?? FRONT_STEP));
+      return { ...frontAtChoke(plan, n), distance: scheduled,
+        offset: scheduled - plan.distance, engagement: n };
+    })()
+    : frontAt(n, opts));
+  const line = frontLine(front);
   const T = world.terrain;
   const out = { engagement: n, bearing: front.bearing, distance: front.distance,
     replayed: 0, replayMs: 0, barrage: 0, burns: 0, smoke: 0, wrecks: 0, fallen: 0 };
@@ -237,11 +319,14 @@ export function marchFront(world, opts = {}) {
    * enemy's line of approach. Laid just past the line, on the burnt side. */
   const across = front.bearing + Math.PI / 2;
   const rng = makeRng(seed + n * 7919);
-  const start = {
-    x: front.dir.x * (front.distance + 6 + rng() * 20) - Math.cos(across) * 52,
-    z: front.dir.z * (front.distance + 6 + rng() * 20) - Math.sin(across) * 52,
-  };
-  out.barrage = walkingBarrage(T, start, across, { seed: seed + n * 31 });
+  /* WHERE THE BATTERY'S FIRE STARTED: 52 m back along the line from the centre
+   * of it, a few metres onto the burnt side. Written as an arc offset and a
+   * depth rather than as a point, so it is the same sentence on a curve — the
+   * fire walks along the front instead of along a chord of it. */
+  const barrageDepth = 6 + rng() * 20;
+  const start = line.place(-52, barrageDepth);
+  out.barrage = walkingBarrage(T, start, across,
+    { seed: seed + n * 31, front, from: -52, depth: barrageDepth });
 
   /* ── 2b. THE SWATH. The barrage is a SENTENCE — a thing happened, in a
    * direction, at a time — and this is the paragraph around it: the whole
@@ -295,6 +380,7 @@ export function marchFront(world, opts = {}) {
    * additive: this is a record of what happened, not a picture redrawn. */
   if (opts.fallen !== false) {
     const f = addFallen(world, {
+      front,
       origin: { x: front.dir.x * front.distance, z: front.dir.z * front.distance },
       dir: front.dir, count: opts.fallen ?? 110, half: 150, depth: 6.5,
       seed: seed + n * 4211,
@@ -307,6 +393,15 @@ export function marchFront(world, opts = {}) {
   if (strew) {
     for (let k = 0; k < (opts.wrecks ?? 3); k++) {
       const a = front.bearing + (rng() - 0.5) * 1.25;
+      /* ON THE LINE, WHEREVER THE LINE IS. `findSite` draws a radius band round
+       * a centre; the centre used to be the origin, which puts a hull on the
+       * front only if the front is a straight line through the deploy point.
+       * On a curve the band is measured from a point ON it, drawn along the
+       * arc, and the radius band then straddles the line the same way it did.
+       * `at` is undefined on a straight front, which is the origin — the
+       * behaviour every authored level has. */
+      const site = line.curved
+        ? line.place((rng() - 0.5) * 260, 0) : null;
       /* ON the line, not beyond it. The first pass sited hulls from the line
        * out to 120 m past it, which at engagement 1 is 188–300 m — past the
        * range this level's haze resolves anything at, so the wrecks were
@@ -314,8 +409,9 @@ export function marchFront(world, opts = {}) {
        * "wrecks belong on the fighting line", and a band straddling the line
        * is what that sentence means. */
       out.wrecks += strew(world, {
-        count: 1, angle: a, rmin: Math.max(24, front.distance - 18),
-        rmax: front.distance + 60, maxSlope: 0.34, seed: seed + n * 100 + k,
+        count: 1, angle: a, at: site,
+        rmin: site ? 0 : Math.max(24, front.distance - 18),
+        rmax: site ? 40 : front.distance + 60, maxSlope: 0.34, seed: seed + n * 100 + k,
       });
     }
   }

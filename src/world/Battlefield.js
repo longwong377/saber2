@@ -675,6 +675,121 @@ export function makeBattlefield(plan) {
   return { plan, height, ridge, amplitude, at, gapAt, shore };
 }
 
+
+/**
+ * ── THE ONE READER: WHICH SIDE OF THE FRONT IS THIS, AND HOW FAR FROM IT ──
+ *
+ * `Front.js`'s dressing asks one question of a front and it asks it four
+ * times: `burnt` asks which side a smoke column is on, `burnBand` asks for a
+ * point a given depth behind the line at a given position along it,
+ * `walkingBarrage` walks a battery's fire along it and `addFallen` lays a band
+ * across it. All four were written against a HALF-PLANE — a bearing and a
+ * distance — because that is all a front was when they were written.
+ *
+ * `frontAtChoke` below bridged the bezier to that by taking the curve's
+ * tangent at the chokepoint, and the cost of the linearisation was measured
+ * rather than assumed: the tangent has a REACH, 80 m on a tight seed and 296
+ * on a lazy one, and asked for `burnBand`'s default 260 m it laid three
+ * quarters of the swath on the clean side. The note there argued that teaching
+ * the four dressing functions about the curve would be four copies of the
+ * curve, and that is true — of four copies. It is not true of one.
+ *
+ * THIS IS THE ONE. Every caller asks the same two questions of it and neither
+ * of them mentions a shape:
+ *
+ *     side(x, z)      → { d, u }   signed metres from the line — POSITIVE on
+ *                                  the burnt side, always — and metres along
+ *                                  it from the point the dressing centres on.
+ *     place(u, depth) → { x, z, tx, tz, nx, nz }   the point `depth` metres
+ *                                  into the burnt side at `u` along the line,
+ *                                  with the local frame there.
+ *
+ * The two are inverses of each other to within the flattening, which is what
+ * makes them one object and not two: `side(place(u, d))` is `{ d, u }`.
+ *
+ * A HALF-PLANE IS THE DEGENERATE CASE AND IS BUILT AS ONE. Given a front with
+ * no curve, `at(u)` is `origin + dir·distance + across·u` and `side` is the
+ * dot product `burnt` has always taken — the same arithmetic, in the same
+ * order, so an authored level that dresses a straight front gets the identical
+ * ground it got before. `crater-log.mjs` asserts that rather than assuming it.
+ *
+ * IT DOES NOT FLATTEN ANYTHING. `plan.curve` was flattened once, by
+ * `planBattle`, and `atArc` and `nearestOn` above are the readers of it. A
+ * second flattening written in `Front.js` is HANDOFF §2.4's defect exactly: it
+ * would agree for a while and then dress a line the ground was not built from.
+ *
+ * @param {object} front  either `{ bearing, distance, dir }` (a half-plane, as
+ *        `Front.frontAt` returns) or one carrying `plan` (as `frontAtChoke`
+ *        returns), or a plan itself.
+ */
+const LINES = new WeakMap();
+
+export function frontLine(front) {
+  if (!front) throw new Error('Battlefield: there is no front to read');
+  const had = LINES.get(front);
+  if (had) return had;
+  const plan = front.curve ? front : front.plan;
+  /* HOW FAR THE LINE HAS COME SINCE THE PLAN WAS DRAWN. The bezier is where
+   * the battle is; the ENGAGEMENT is where the line has got to, and §14's
+   * schedule closes it 40 m at a time. Offsetting the curve along its own
+   * normal is the same advance a half-plane expresses by changing `distance`,
+   * and it keeps the shape of the front — a front that advanced by being
+   * redrawn would be a different battle each engagement, which is exactly the
+   * failure §13 records against the Spire. */
+  const line = plan && plan.curve ? curvedLine(plan, front.offset ?? 0) : flatLine(front);
+  LINES.set(front, line);
+  return line;
+}
+
+/** THE CURVE, read through the arc-length table `planBattle` already built.
+ *  `u` is metres along the line FROM THE CHOKEPOINT — signed, so the dressing
+ *  centres on the one place §12.3 allows and runs both ways from it, which is
+ *  the same convention the half-plane has (u = 0 at the foot of the bearing). */
+function curvedLine(plan, offset) {
+  const C = plan.curve, mid = plan.choke.s, o = plan.orient;
+  const at = (u) => {
+    const p = atArc(C, mid + u);
+    /* The burnt-side normal: the tangent turned a quarter, with the sign the
+     * plan settled once for every reader. */
+    return { x: p.x, z: p.z, tx: p.tx, tz: p.tz, nx: -p.tz * o, nz: p.tx * o };
+  };
+  return {
+    curved: true,
+    /** How far the line runs each way from the centre before it leaves the map. */
+    back: mid, ahead: C.length - mid, length: C.length,
+    at,
+    place: (u, depth) => {
+      const f = at(clamp(u, -mid, C.length - mid));
+      const k = depth + offset;
+      return { x: f.x + f.nx * k, z: f.z + f.nz * k,
+        tx: f.tx, tz: f.tz, nx: f.nx, nz: f.nz };
+    },
+    side: (x, z) => { const q = nearestOn(C, x, z); return { d: q.d * o - offset, u: q.s - mid }; },
+  };
+}
+
+/** THE HALF-PLANE, i.e. the same object with the curvature set to zero. */
+function flatLine(front) {
+  const dx = front.dir.x, dz = front.dir.z;
+  /* ACROSS the advance: the line is the set of points at `distance` along the
+   * bearing, so it runs along the perpendicular. `Front.burnBand` has always
+   * built this pair as `(-dz, dx)` and the sign matters — it is what makes
+   * `u` increase in the same rotational direction as the curve's arc length. */
+  const ax = -dz, az = dx;
+  const ox = front.origin?.x ?? 0, oz = front.origin?.z ?? 0;
+  const bx = ox + dx * front.distance, bz = oz + dz * front.distance;
+  const at = (u) => ({ x: bx + ax * u, z: bz + az * u, tx: ax, tz: az, nx: dx, nz: dz });
+  return {
+    curved: false,
+    back: Infinity, ahead: Infinity, length: Infinity,
+    at,
+    place: (u, depth) => ({ x: bx + ax * u + dx * depth, z: bz + az * u + dz * depth,
+      tx: ax, tz: az, nx: dx, nz: dz }),
+    side: (x, z) => ({ d: (x - ox) * dx + (z - oz) * dz - front.distance,
+      u: (x - ox) * ax + (z - oz) * az }),
+  };
+}
+
 /**
  * ── 5. THE PALETTE IS NOT GENERATED ─────────────────────────────────────
  *
@@ -812,5 +927,16 @@ export function frontAtChoke(plan, engagement = 1, tol = 20) {
     reach = Math.min(reach, k);
   }
   return { bearing: plan.bearing, distance: plan.distance, engagement, reach,
-    dir: { x: plan.dir.x, z: plan.dir.z } };
+    dir: { x: plan.dir.x, z: plan.dir.z },
+    /* WHERE THE HALF-PLANE IS MEASURED FROM. `planBattle` takes a deploy point
+     * and `distance` is measured from it, so a front handed to a dressing
+     * function that works in world coordinates has to say so. `Front.frontAt`
+     * leaves this undefined and `flatLine` reads that as the origin, which is
+     * the convention it has always had. */
+    origin: { x: plan.deploy.x, z: plan.deploy.z },
+    /** THE CURVE ITSELF, so `frontLine` can read the front the ground was
+     *  built from rather than the tangent that stands in for it. The four
+     *  fields above remain exact and remain what `frontCamera` and the smoke
+     *  schedule read; what they are no longer is the only thing on offer. */
+    plan };
 }

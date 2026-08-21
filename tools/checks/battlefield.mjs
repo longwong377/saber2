@@ -54,7 +54,7 @@ import * as THREE from 'three';
 import { Terrain, TERRAIN_PRESETS } from '../../src/world/Terrain.js';
 import {
   REASONS, REASON_ORDER, planBattle, makeBattlefield, battlefieldGround,
-  installGround, removeGround, alongFront, frontAtChoke,
+  installGround, removeGround, alongFront, frontAtChoke, frontLine,
 } from '../../src/world/Battlefield.js';
 import { burnBand, walkingBarrage, burnt } from '../../src/world/Front.js';
 import { addFallen } from '../../src/world/Fallen.js';
@@ -562,90 +562,238 @@ export function run({ check, assert, near }) {
     return `seed 21 twice: identical; seed 21 against 22: ${diff.toFixed(0)} m apart`;
   });
 
-  check('battlefield.9 the dressing lands on the generated line', () => {
+  check('battlefield.9 the dressing follows the line, whatever shape the line is', () => {
     /**
-     * §12.4's marks are built and they take a STRAIGHT front — a bearing and a
-     * distance. `frontAtChoke` is the one conversion from the bezier to that,
-     * the tangent at the chokepoint, and this is the measurement of what the
-     * linearisation costs: where do the burn marks actually fall relative to
-     * the curve they are supposed to be drawn on?
+     * §12.4's marks were built against a HALF-PLANE — a bearing and a distance
+     * — because that is all a front was when they were written. `frontAtChoke`
+     * bridged the bezier to that with the tangent at the chokepoint, and this
+     * check used to measure what the linearisation cost: the tangent has a
+     * REACH, and asked for `burnBand`'s default ±260 m it laid three quarters
+     * of the swath on the clean side.
      *
-     * MEASURED on a pass at seed 3, whose curve is one of the tighter ones in
-     * the roster: the tangent is good for 80 m either side of the choke, and
-     * inside that the burn lands within a few tens of metres of the curve and
-     * on the right side of it. Asked for `burnBand`'s own default of ±260 m
-     * instead, three quarters of the swath came down on the CLEAN side — so
-     * `reach` is not a refinement, it is the thing that makes the bridge
-     * usable at all. The dead, laid in a ±150 m band, are the same object
-     * §12's banding statistic is calibrated on, so the band is measured with
-     * it here rather than by eye.
+     * `Battlefield.frontLine` is the answer and it is ONE object, not four:
+     * `side(x, z)` and `place(u, depth)`, with a half-plane built as the
+     * degenerate case of the same two. So the statistic changes from "how far
+     * can the stand-in be trusted" to the thing that was always wanted:
+     *
+     *     WHAT FRACTION OF THE BURNT SWATH LANDS ON THE BURNT SIDE?
+     *
+     * measured against `field.at(x, z).d`, which is the ground's OWN signed
+     * distance to the curve — the same query the heightfield was built from,
+     * so this is not a second opinion about where the line is.
+     *
+     * ONE ALLOWANCE, AND IT IS THE SWATH'S OWN. `burnBand` draws one depth
+     * jitter per row, so its near row — the one meant to lie ON the line —
+     * falls whole onto one side or the other, ±3.25 m. A mark 3 m short of the
+     * line is the swath straddling it, which is what the swath is for; a mark
+     * 150 m short is the stand-in having left the curve. `rowStep` is the
+     * boundary between the two and it is the function's own number.
      */
+    const ROWSTEP = 6.5;
+    /** `burnBand` needs `scorch` and `inBounds` and nothing else, so the sweep
+     *  below costs no heightfields at all — twenty-five fronts for the price
+     *  of twenty-five plans. */
+    const spy = (half) => {
+      const marks = [];
+      return { marks, inBounds: (x, z) => Math.abs(x) < half - 8 && Math.abs(z) < half - 8,
+        scorch: (x, z) => { marks.push([x, z]); } };
+    };
+    const lay = (g, front, opts) => {
+      const t = spy(g.plan.scale / 2);
+      const n = burnBand(t, front, { seed: 613, ...opts });
+      assert(n === t.marks.length, `${n} burns laid, ${t.marks.length} seen`);
+      const d = t.marks.map(([x, z]) => g.field.at(x, z).d);
+      return { n, on: d.filter((v) => v > 0).length / Math.max(1, n),
+        onOrAt: d.filter((v) => v > -ROWSTEP).length / Math.max(1, n),
+        p95: d.map(Math.abs).sort((a, b) => a - b)[Math.floor(n * 0.95)] ?? 0 };
+    };
+
+    /* TWENTY-FIVE DISTINCT FRONTS. The curve is a function of the SEED ALONE —
+     * the reason picks the heights, not the line — so forcing each reason in
+     * turn over one seed list would measure five curves and report twenty-five
+     * answers. The seeds are drawn wide and the reason each one rolled is
+     * counted, which covers the table honestly. */
+    const rows = [];
+    for (let i = 0; i < 25; i++) {
+      const seed = 1 + i * 7;
+      const g = battlefieldGround(BASE, seed);
+      const front = frontAtChoke(g.plan);
+      /* THE TANGENT ARM: the half-plane the bridge used to hand over, with the
+       * curve taken off it so `frontLine` builds the degenerate case. */
+      const flat = { bearing: front.bearing, distance: front.distance,
+        dir: front.dir, origin: front.origin };
+      rows.push({ seed, reason: g.plan.reason, reach: front.reach,
+        wide: lay(g, flat, {}), reach_: lay(g, flat, { half: front.reach }),
+        curve: lay(g, front, {}) });
+    }
+    const mean = (k) => rows.reduce((a, r) => a + r[k].onOrAt, 0) / rows.length;
+    const worst = (k) => Math.min(...rows.map((r) => r[k].onOrAt));
+    const reasons = new Set(rows.map((r) => r.reason));
+
+    /* THE BIND. The curve arm has to be ON the front on every seed — there is
+     * no linearisation left to fail — and the two tangent arms are kept beside
+     * it as the measurement of what was there before, not as a bound. */
+    assert(worst('curve') > 0.995,
+      `the swath laid on the curve puts ${(worst('curve') * 100).toFixed(1)}% on the burnt side at worst`);
+    assert(worst('wide') < 0.6,
+      `the tangent at ±260 m scores ${(worst('wide') * 100).toFixed(1)}% at worst — the comparison is not `
+      + 'measuring a linearisation any more and this check has stopped meaning anything');
+    assert(mean('curve') > mean('reach_') && mean('reach_') > mean('wide'),
+      `curve ${mean('curve').toFixed(3)} / tangent@reach ${mean('reach_').toFixed(3)} / tangent@260 `
+      + `${mean('wide').toFixed(3)} — the ordering is not what the reader is for`);
+    /* AND IT IS NOT BOUGHT BY LAYING FEWER MARKS. The tangent's `reach` arm
+     * gets its score by shrinking the swath to whatever the stand-in can carry
+     * — 207 marks against 360 — which is a narrower burn, not a better one. */
+    const laidCurve = rows.reduce((a, r) => a + r.curve.n, 0) / rows.length;
+    const laidWide = rows.reduce((a, r) => a + r.wide.n, 0) / rows.length;
+    const laidReach = rows.reduce((a, r) => a + r.reach_.n, 0) / rows.length;
+    assert(laidCurve > laidReach * 1.3,
+      `the curve lays ${laidCurve.toFixed(0)} marks against the tangent's ${laidReach.toFixed(0)} — `
+      + 'the swath is not the full width any more');
+    assert(reasons.size >= 4, `${reasons.size} reasons over 25 seeds`);
+
+    /* ── AND THE OTHER THREE MARKS, on a ground that exists ──────────────── */
     const g = battlefieldGround(BASE, 3, { reason: 'pass' });
     installGround(g.key, g.preset);
     let t;
     try { t = new Terrain(new THREE.Scene(), g.key, Q); } finally { removeGround(g.key); }
     const front = frontAtChoke(g.plan);
-    /* A SPY, AND PUT BACK. The scar field is a texture and the marks are not
-     * readable out of it; what is readable is where they were asked for.
-     * HANDOFF §2.9's rule applies to one method as much as to a singleton. */
-    const marks = [];
-    const real = t.scorch.bind(t);
-    t.scorch = (x, z, r, a) => { marks.push([x, z]); return real(x, z, r, a); };
-    const laid = burnBand(t, front, { seed: 613, half: front.reach });
-    t.scorch = real;
-    assert(laid > 100 && marks.length === laid, `${laid} burns laid, ${marks.length} seen`);
-    /* AND THE SAME CALL WITHOUT `reach`, so the comparison is a measurement
-     * and not a bound somebody chose. This is the only place in the file where
-     * a number is asserted against another number from the same run. */
-    const wide = [];
-    t.scorch = (x, z, r, a) => { wide.push([x, z]); return real(x, z, r, a); };
-    burnBand(t, front, { seed: 613 });
-    t.scorch = real;
 
-    const spread = (ms) => {
-      const v = ms.map(([x, z]) => g.field.at(x, z).d).sort((a, b) => a - b);
-      return { med: v[v.length >> 1], worst: Math.max(Math.abs(v[0]), Math.abs(v[v.length - 1])),
-        p95: [...v].map(Math.abs).sort((a, b) => a - b)[Math.floor(v.length * 0.95)] };
-    };
-    const near = spread(marks), far = spread(wide);
-    /* THE SWATH STRADDLES THE LINE. `burnBand` lays its near row ON the line
-     * and thins out behind it, so the median wants to be within a row or two
-     * of zero — measured, +1 m — and nothing in it wants to be a hundred
-     * metres out on the clean side, which is what the tangent does past its
-     * reach. MEASURED: ±34 m worst with `reach`, 157 m without. */
-    assert(Math.abs(near.med) < 20,
-      `the burn's median lands ${near.med.toFixed(0)} m from the line — the swath is not on the front`);
-    assert(near.worst < 70,
-      `a burn mark falls ${near.worst.toFixed(0)} m from the line`);
-    assert(near.p95 * 2 < far.p95,
-      `the tangent's reach buys nothing: 95% of the swath within ${near.p95.toFixed(0)} m of the line `
-      + `against ${far.p95.toFixed(0)} m when the whole 260 m band is asked for`);
-
-    /* The craters walk, and they walk on ground the line has crossed. */
-    const across = front.bearing + Math.PI / 2;
-    const from = { x: front.dir.x * (front.distance + 10) - Math.cos(across) * 52,
-      z: front.dir.z * (front.distance + 10) - Math.sin(across) * 52 };
-    const n = walkingBarrage(t, from, across, { seed: 31 });
+    /* THE CRATERS WALK, AND THEY WALK ALONG THE LINE. `opts.front` turns the
+     * track from a chord into an arc; the assertion is that every hole is on
+     * ground the line has crossed, which a chord of a bent curve is not. */
+    const holes = [];
+    const realCrater = t.crater.bind(t);
+    t.crater = (x, z, r, d) => { holes.push([x, z]); return realCrater(x, z, r, d); };
+    const n = walkingBarrage(t, { x: 0, z: 0 }, front.bearing + Math.PI / 2,
+      { seed: 31, front, from: -52, depth: 10 });
+    t.crater = realCrater;
     assert(n >= 6, `${n} craters of a walking barrage landed on the map`);
+    const offLine = holes.filter(([x, z]) => g.field.at(x, z).d < 0).length;
+    assert(offLine === 0, `${offLine} of ${holes.length} craters of the barrage fell on the clean side`);
 
-    /* And the dead: §12.4's band, on the generated front, measured with §12's
-     * own statistic rather than looked at. */
+    /* And the dead: §12.4's band, following the generated front rather than a
+     * tangent to it, measured with §12's own statistic rather than looked at. */
     const world = { scene: new THREE.Scene(), statics: [], terrain: t };
-    const f = addFallen(world, { origin: { x: g.plan.choke.x, z: g.plan.choke.z },
+    const f = addFallen(world, { front, origin: { x: g.plan.choke.x, z: g.plan.choke.z },
       dir: front.dir, count: 520, half: 150, depth: 6.5, seed: 4211 });
     const pts = [], m4 = new THREE.Matrix4();
     for (const im of f.meshes) for (let i = 0; i < im.count; i++) { im.getMatrixAt(i, m4); pts.push([m4.elements[12], m4.elements[14]]); }
     const b = banding(pts);
     assert(b.ratio > 5, `the fallen band measures ${b.ratio.toFixed(1)} on the banding statistic — it is not a line`);
-    const bearOff = Math.abs(b.at - g.plan.bearing) % Math.PI;
-    assert(Math.min(bearOff, Math.PI - bearOff) < 0.35,
-      `the dead lie across a bearing ${(b.at * 180 / Math.PI).toFixed(0)}° against an advance of `
-      + `${(g.plan.bearing * 180 / Math.PI).toFixed(0)}°`);
+    /* ON THE LINE, not merely banded: a band is a band wherever it lies, and
+     * the whole subject of this check is whether it lies on the front. §12.4's
+     * band is 26 m deep, so 2σ either side of the line is where it belongs. */
+    const off = pts.map(([x, z]) => Math.abs(g.field.at(x, z).d)).sort((a, b2) => a - b2);
+    const p95 = off[Math.floor(off.length * 0.95)];
+    assert(p95 < 26, `95% of the dead lie within ${p95.toFixed(0)} m of the line, against a 26 m band`);
     for (const im of f.meshes) im.geometry.dispose();
     t.dispose();
-    return `tangent good for ±${front.reach} m; ${laid} burns, median ${near.med.toFixed(0)} m off the line `
-      + `and 95% inside ${near.p95.toFixed(0)} m (against ${far.p95.toFixed(0)} m unbounded); `
-      + `${n} craters; the dead band at ${b.ratio.toFixed(1)}`;
+    return `25 fronts over ${reasons.size} reasons, burnt-side fraction: curve ${(mean('curve') * 100).toFixed(1)}% `
+      + `(worst ${(worst('curve') * 100).toFixed(1)}%) against tangent@reach ${(mean('reach_') * 100).toFixed(1)}% `
+      + `and tangent@260 ${(mean('wide') * 100).toFixed(1)}% (worst ${(worst('wide') * 100).toFixed(1)}%); `
+      + `marks ${laidCurve.toFixed(0)} vs ${laidReach.toFixed(0)} vs ${laidWide.toFixed(0)}; `
+      + `${n} craters all burnt-side; the dead band ${b.ratio.toFixed(1)}, 95% within ${p95.toFixed(0)} m`;
+  });
+
+  check('battlefield.11 a generated ground stands out of the sea it borrowed', () => {
+    /**
+     * §12.5 borrows the authored palette whole. Every field it borrows is a
+     * colour or a texture key and cannot disagree with a heightfield —
+     * EXCEPT `waterLevel`, which is a number in the same metres the height
+     * function returns. The level's `water` sheet is drawn at it,
+     * `Spawn.spawnClear` refuses any point under it on a sheet that burns, and
+     * `Hazard` charges 52 HP a second to anything standing in one.
+     *
+     * That unstated coupling is the whole of why the Ember Shelf could not
+     * carry a generated ground. Measured on the deploy ring at seed 3, before
+     * the shelf existed: 44% of it under the lava against the authored
+     * ground's 0%, and the line went from 10 of 10 standing to 0 with four of
+     * the ten unplaceable. `theline.13` drives that; this measures the ground.
+     *
+     * THREE THINGS, and the third is the one a lift would fail:
+     *   the fight is DRY — nothing inside the room's own `spawnRadius` is
+     *     under the sheet, which is where both armies put bodies;
+     *   the LINE is dry, end to end over the band the dressing covers, or
+     *     §12.4's marks are laid under lava where nobody can see them;
+     *   the SEA IS STILL THERE. Raising the whole field until nothing is wet
+     *     also works, and it deletes the hazard the room is named for, priced
+     *     around and lit by.
+     */
+    const SEA_BASES = LEVEL_ORDER
+      .map((k) => [k, LEVELS[k]])
+      .filter(([, L]) => (TERRAIN_PRESETS[L.terrain]?.waterLevel ?? -999) > -900);
+    assert(SEA_BASES.length >= 2,
+      `${SEA_BASES.length} of the game's grounds carry a water sheet — this check has nothing to measure`);
+    const out = [];
+    for (const [key, L] of SEA_BASES) {
+      const base = TERRAIN_PRESETS[L.terrain];
+      const sea = base.waterLevel;
+      const keep = L.spawnRadius?.[1] ?? 56;
+      const start = { x: L.start?.[0] ?? 0, z: L.start?.[1] ?? 8 };
+      for (const seed of SEEDS) {
+        const g = battlefieldGround(L.terrain, seed, { deploy: L.start, keep });
+        assert(g.field.shore, `${key}: a ground with a sheet at ${sea} m built no shore`);
+        installGround(g.key, g.preset);
+        let t;
+        try { t = new Terrain(new THREE.Scene(), g.key, Q); } finally { removeGround(g.key); }
+
+        /* THE FIGHT, DRY. Every bearing at every radius out to the room's own
+         * spawn ring — the disc both armies place bodies in. */
+        let wet = 0, n = 0, worst = Infinity;
+        for (let a = 0; a < 72; a++) {
+          for (let r = 0; r <= keep; r += 3) {
+            const x = start.x + Math.cos(a / 72 * Math.PI * 2) * r;
+            const z = start.z + Math.sin(a / 72 * Math.PI * 2) * r;
+            if (!t.inBounds(x, z, 6)) continue;
+            const h = t.height(x, z);
+            n++; worst = Math.min(worst, h - sea);
+            if (h < sea) wet++;
+          }
+        }
+        assert(wet === 0,
+          `${key} seed ${seed}: ${wet} of ${n} points inside the ${keep} m fight ring are under the sheet `
+          + `(worst ${worst.toFixed(2)} m) — a body placed there is refused or burnt`);
+
+        /* THE LINE, DRY, over the band the dressing covers. `burnBand` reaches
+         * ±260 m of arc and `addFallen` ±150; the causeway is measured on the
+         * wider of the two. */
+        const line = frontLine(frontAtChoke(g.plan));
+        let lineWet = 0, lineN = 0;
+        for (let u = -260; u <= 260; u += 8) {
+          if (u < -line.back || u > line.ahead) continue;
+          const p = line.place(u, 0);
+          if (!t.inBounds(p.x, p.z, 6)) continue;
+          lineN++;
+          if (t.height(p.x, p.z) < sea) lineWet++;
+        }
+        assert(lineWet / Math.max(1, lineN) < 0.06,
+          `${key} seed ${seed}: ${lineWet} of ${lineN} points on the line are under the sheet — `
+          + '§12.4\'s marks would be laid where nobody can see them');
+
+        /* AND THE SEA IS STILL A SEA. */
+        let mapWet = 0, mapN = 0;
+        for (let j = 2; j < t.res - 2; j += 2) {
+          for (let i = 2; i < t.res - 2; i += 2) {
+            mapN++;
+            if (t.height(-t.half + i * t.step, -t.half + j * t.step) < sea) mapWet++;
+          }
+        }
+        const frac = mapWet / mapN;
+        assert(frac > 0.04,
+          `${key} seed ${seed}: ${(frac * 100).toFixed(1)}% of the map is under the sheet — the ground was `
+          + 'lifted clear of the hazard rather than standing out of it, and the level has lost the thing it is named for');
+        out.push(`${key}/${seed} ${(frac * 100).toFixed(0)}% sea`);
+        t.dispose();
+      }
+    }
+    /* AND A GROUND WITH NO SHEET GETS NONE OF IT — the height function five of
+     * the seven theatres stand on is the one §12.3 was measured on, term for
+     * term. */
+    assert(makeBattlefield(planBattle(3, { scale: 620 })).shore === null,
+      'a ground with no water sheet built a shore anyway');
+    return `${out.length} generated grounds over ${SEA_BASES.length} rooms with a sheet: `
+      + `fight ring and line dry, sea kept — ${out.join(' · ')}`;
   });
 
   check('battlefield.10 five reasons are five grounds', () => {

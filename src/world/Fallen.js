@@ -53,6 +53,10 @@
  */
 
 import * as THREE from 'three';
+/* One reader for "which side of the front, and how far" — see the note over
+ * `frontLine`. A band across a curve is the same two numbers as a band across
+ * a bearing, so this file holds no copy of either. */
+import { frontLine } from './Battlefield.js';
 import { makeRng, clamp, lerp, TAU } from '../engine/MathUtil.js';
 import { mergeGeos } from './Props.js';
 
@@ -147,7 +151,18 @@ function fallenMaterial() {
 /**
  * SCATTER THE FALLEN ALONG A LINE.
  *
+ * ── AND THE LINE IS NOT NECESSARILY STRAIGHT ─────────────────────────────
+ *
+ * `opts.origin` + `opts.dir` is a half-plane, which is what a front was when
+ * this was written. `opts.front` hands it the one reader instead
+ * (`Battlefield.frontLine`) and every body is placed by `place(along,
+ * across)`, so the band follows a bezier the same way it follows a bearing —
+ * and §12.4's "thickest at the choke" becomes true of the choke rather than of
+ * a point that stands in for it. Neither of the two draws per body moves, so a
+ * seeded field on a straight front is the field it was.
+ *
  * @param world        needs `scene`, `statics`, and `terrain` to lie on
+ * @param opts.front   the front to follow, or null for the half-plane below
  * @param opts.origin  {x,z} a point ON the line
  * @param opts.dir     {x,z} unit, the axis of advance; the band runs ACROSS it
  * @param opts.count   how many bodies
@@ -166,6 +181,7 @@ export function addFallen(world, opts = {}) {
   const o = opts.origin || { x: 0, z: 0 };
   const d = opts.dir || { x: 1, z: 0 };
   const ax = -d.z, az = d.x;
+  const line = opts.front ? frontLine(opts.front) : null;
   const half = opts.half ?? 150;
   const depth = opts.depth ?? 6.5;
   /* THE THREE FLAT TONES §11 ASKS FOR, and they are the armies' own: clone
@@ -198,8 +214,18 @@ export function addFallen(world, opts = {}) {
      * ones who fell taking it are past. 0.35 of a sigma is what that bias is
      * worth; anything more and the band stops straddling the line at all. */
     const across = (rng() + rng() + rng() - 1.5) * depth * 1.4 + depth * 0.35;
-    const x = o.x + d.x * across + ax * along;
-    const z = o.z + d.z * across + az * along;
+    /* `place` takes (along the line, into the burnt side), which is the pair
+     * the two draws above already are. The straight branch is the same
+     * expression written out. */
+    /* NOT `p` — that name is the reusable `Vector3` this loop composes its
+     * matrix out of, twenty lines down, and shadowing it made every body's
+     * `p.set(x, y, z)` a call on null. It threw inside `marchFront`, which
+     * catches and warns, so the mode kept running with a front that never
+     * marched: a caught exception that only warns is the shape that survives
+     * a gate. */
+    const site = line ? line.place(along, across) : null;
+    const x = site ? site.x : o.x + d.x * across + ax * along;
+    const z = site ? site.z : o.z + d.z * across + az * along;
     if (T?.inBounds && !T.inBounds(x, z)) continue;
     /* SUNK. A body on sand is IN it by a few centimetres, and — more to the
      * point — a prone box sitting exactly on a heightfield reads as furniture.

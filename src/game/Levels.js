@@ -128,10 +128,18 @@ let rng = makeRng(20250805);
 const _p = new THREE.Vector3();
 
 /** Polar sample with a density exponent: <1 crowds the centre, >1 the rim. */
-export function polar(rmin, rmax, bias = 1, angle = null) {
+/* AND IT CAN BE DRAWN ROUND SOMEWHERE THAT IS NOT THE ORIGIN. Every level's
+ * dressing is composed round the deploy point and says so by leaving `at`
+ * undefined, which is the origin and is what this has always drawn. What needs
+ * the fourth argument is `src/world/Front.js`: §12.4 puts wrecks "on the
+ * fighting line", and on a bezier front the fighting line is not a bearing
+ * from the origin — it is a point on a curve, and the hulls belong round THAT.
+ * The alternative was a second placement rule inside the front dressing, which
+ * is HANDOFF §2.3 exactly. */
+export function polar(rmin, rmax, bias = 1, angle = null, at = null) {
   const a = angle ?? rng() * TAU;
   const r = lerp(rmin, rmax, Math.pow(rng(), bias));
-  return { x: Math.cos(a) * r, z: Math.sin(a) * r, a, r };
+  return { x: (at?.x ?? 0) + Math.cos(a) * r, z: (at?.z ?? 0) + Math.sin(a) * r, a, r };
 }
 
 /**
@@ -181,7 +189,7 @@ export { spawnClear } from './Spawn.js';
 /** Find a site that passes, or give up rather than force a bad one. */
 export function findSite(world, rmin, rmax, opts = {}) {
   for (let i = 0; i < (opts.tries ?? 14); i++) {
-    const q = polar(rmin, rmax, opts.bias ?? 1, opts.angle);
+    const q = polar(rmin, rmax, opts.bias ?? 1, opts.angle, opts.at);
     if (siteOk(world, q.x, q.z, opts)) {
       _p.set(q.x, world.terrain ? world.terrain.height(q.x, q.z) : 0, q.z);
       return { pos: _p.clone(), a: q.a, r: q.r };
@@ -1062,6 +1070,9 @@ export function strewWrecks(world, opts = {}) {
   for (let k = 0; k < n; k++) {
     const site = findSite(world, opts.rmin ?? 55, opts.rmax ?? 150, {
       clearance: 11, maxSlope: opts.maxSlope ?? 0.42, tries: 20, angle: opts.angle,
+      /* `at` is where the radius band is measured from — the origin unless the
+       * caller is dressing a front that does not pass through it. */
+      at: opts.at,
     });
     if (!site) continue;
     placed++;
@@ -2555,6 +2566,32 @@ export const LEVELS = {
      * side rather than a balcony over one.
      */
     start: [-22, 68],
+    /**
+     * AND THIS ROOM CAN CARRY A GENERATED HEIGHTFIELD NOW — `FLAGSHIP.md` §12,
+     * `World._groundKeyFor` the reader, and it is the last of the seven to say
+     * so, which means the mode's ground is generated on every seed rather than
+     * on six sevenths of them.
+     *
+     * IT COULD NOT, AND THE RECORDED CAUSE WAS WRONG. `NEXT.md` and the note
+     * on `LEVELS.geonosis` both had it as "scoria's rocks and wrecks take the
+     * standing room with them when the ground moves under them". Measured on
+     * the deploy ring at seed 3, 288 candidate points, attributing every
+     * rejection to its clause:
+     *
+     *     authored    static boxes refuse   3   the lava refuses     0   10/10 up
+     *     generated   static boxes refuse  10   the lava refuses   126    0/10 up, 4 unplaced
+     *
+     * The dressing was worth seven points. **The sea was worth a hundred and
+     * twenty-six.** `water.level` here is 0.55 and it burns at 52 HP a second;
+     * the generated field was written about a datum of zero, so the basalt
+     * shelf this level is named for came out as a lava plain with the deploy
+     * ring in it. `Battlefield.js` raises a shelf against the borrowed
+     * `waterLevel` now — see the note over `SHELF_FREEBOARD` there — and the
+     * fight ring comes back 0% wet, the fight disc 7.2% against the authored
+     * room's 9.4%, and the line 10 of 10 standing at twenty seconds on seeds
+     * 1, 3 and 7.
+     */
+    battlefield: true,
     // A duelling map wants blades in it. The pool is weighted to the one
     // sabered archetype this game has and thinned of hordes: half of what
     // walks out of the ash is something that will meet your guard.
@@ -4077,15 +4114,18 @@ LEVELS.geonosis = {
    * authored against the contours it replaces, so whether a room survives that
    * is a fact about the room. Measured at seed 3, twenty seconds of a real
    * engagement: geonosis deploys **10 of 10 with a full wave**, generated or
-   * authored, while scoria goes from 10 of 10 and 47 hostiles to **six dead,
-   * four unplaceable and 2 hostiles** — its rocks and wrecks take the standing
-   * room with them when the ground moves under them.
+   * authored.
    *
-   * Six of the seven theatres do not declare this yet, and that costs the mode
-   * nothing: they stay authored, the seed still rolls them, and §13.5 still
-   * holds. `theline.mjs` measures every ground either way and reports which
-   * ones would survive, so the list grows by measurement rather than by
-   * somebody deciding it looks fine.
+   * THIS NOTE USED TO CARRY THE ONE ROOM THAT COULD NOT, AND THE CAUSE IT GAVE
+   * WAS WRONG. It read "scoria goes from 10 of 10 to six dead, four
+   * unplaceable — its rocks and wrecks take the standing room with them when
+   * the ground moves under them". They do not: on the deploy ring at that
+   * seed, static boxes refuse 10 of 288 candidate points against the authored
+   * ground's 3, and scoria's **lava sea refuses 126**. The generated height
+   * was written about a datum of zero under a sheet that sits at +0.55 and
+   * burns. `Battlefield.js` stands the battle on a shelf against the borrowed
+   * `waterLevel` now, and all seven theatres declare it — see
+   * `LEVELS.scoria.battlefield` for that measurement in full.
    */
   battlefield: true,
   armies: ['republic', 'separatist'],
