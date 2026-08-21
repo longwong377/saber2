@@ -137,6 +137,33 @@ what a body standing in a formation and swinging is worth, not what a person
 is. Three to five seeds. And the `none` arm is genuinely an easier fight,
 which is the thing the `far` arm exists to control for rather than to deny.
 
+### …and then §7's OPEN verb was wired, and it CANNOT be scored yet
+
+`grep -rn 'openness(' src/` returned one call site — the blade's own slash
+rate — so "the Force is a multiplier on other people's guns" had never been
+wired to a gun. It is wired now, at `World._boltHitTest`, and the mechanism is
+proven directly: same bolt, same body, two droids side by side, **38.0 hp
+standing against 114.0 hp held — 3.00× against a stated 3.00×** (`force.mjs`).
+
+**What it is worth at campaign scale is NOT known, and the re-run does not
+answer it.** Same three seeds, before and after:
+
+| | none | blade | dead | far |
+|---|---|---|---|---|
+| fallen, before | 0 | 6.33 | 7 | 6.33 |
+| fallen, after | 0.67 | 5.33 | 4.67 | 6.00 |
+| enemies killed, before | 37.3 | 34.3 | 36.7 | 34.0 |
+| enemies killed, after | 32.7 | 30.7 | 30.3 | 26.7 |
+
+**Look at the `none` column.** That arm has no player and no Force in it, so
+OPEN cannot reach it — and it moved anyway, by 4.7 kills and by two thirds of
+a man. The two runs are therefore not comparable: the roster lane landed new
+archetypes between them, which changes what the waves are made of.
+
+So the mechanism is real and measured; the outcome effect is unmeasured. It
+needs a controlled pair on a FROZEN tree, and the tree is not frozen while
+lanes are landing. Do not quote the "after" row as evidence for anything.
+
     node --import ./tools/register.mjs tools/_flagship.mjs step2 --seeds 3,5,7,11,13
 
 ---
@@ -277,9 +304,14 @@ Gate at the end: **1718 passed, 0 failed.**
   the line the same 6.33 men as a Jedi standing in it, so presence is not the
   mechanism — a player on the field is. What presence costs is 117 seconds.
 - **Standing with your line is strictly worse than fighting away from it**, on
-  the numbers as they are: same men lost, half again the time, nothing bought.
+  the numbers as they were: same men lost, half again the time, nothing bought.
   That is §7's problem stated as sharply as this instrument can state it, and it
   is the thing to answer before the mode is built.
+- **Score the OPEN verb on a frozen tree.** It is wired and the mechanism is
+  measured at 3.00×, but the before/after pair that would say what it is worth
+  to a battle was taken across a roster change and cannot be read. One run of
+  `step2 --seeds 3,5,7,11,13` with nothing else landing, on the commit before
+  the wiring and the commit after it, settles it.
 - **First person should be one-handed**, and `HANDOFF.md` §6.0 says to ASK
   before doing it, because it is a decision about what a first-person grip IS.
   The wrist lane's sweep this session is the strongest evidence yet: first
