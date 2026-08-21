@@ -57,7 +57,7 @@
  * the Holocron exactly as it gets you out of a draft, and `guarded` has to be
  * able to fall back to the pause card from inside it.
  */
-export const LIVE = ['playing', 'paused', 'draft', 'dead', 'meditation', 'muster'];
+export const LIVE = ['playing', 'paused', 'draft', 'dead', 'meditation', 'muster', 'deploy'];
 
 /**
  * The states in which an overlay owns the screen and the world is stopped, and
@@ -72,7 +72,7 @@ export const LIVE = ['playing', 'paused', 'draft', 'dead', 'meditation', 'muster
  * consumed by a check that constructs each state through Menu's own show/hide
  * pair, and there is no Menu pair to construct.
  */
-export const OVERLAY_STATES = ['draft', 'dead', 'muster'];
+export const OVERLAY_STATES = ['draft', 'dead', 'muster', 'deploy'];
 
 export class Screens {
   /**
@@ -140,6 +140,7 @@ export class Screens {
      * moment a rotation lands, and that is the only thing that ends a load. */
     this.hideLoading();
     m.hidePause?.(); m.hideDraft?.(); m.hideMuster?.(); m.hideDeath?.();
+    m.hideDeploy?.();
     for (const hide of this.cards.values()) hide();
     this.overlay = null;
   }
@@ -257,6 +258,42 @@ export class Screens {
   }
 
   /**
+   * THE DEPLOY CARD — FLAGSHIP §5's 0:00, raised the way the muster is.
+   *
+   * It is the same shape of problem as the muster and it gets the same
+   * guarantees rather than a second arrangement of them: an overlay that stops
+   * the world and owns the screen is a state you can be stranded in, and every
+   * defence against that lives in `take` — remembered as it is raised, put back
+   * by resume, escapable, and its one button wrapped so a throw lands on the
+   * pause card instead of on a frozen field.
+   *
+   * THE FALLBACK IS THE SAME ONE AND IT MATTERS MORE HERE. `io.drop` is what
+   * starts the run — the insertion flight, or the notify that stands in for it.
+   * A markup-less build that raised this state and could not draw the card
+   * would leave a player paused on the first frame of a session with nothing to
+   * press. So a card that does not go up hands the screen straight back and
+   * returns false, and the caller's answer is to drop without one.
+   *
+   * @param {object} card `Session.deployCard()`
+   * @param {{drop:() => void}} io
+   */
+  deploy(card, io = {}) {
+    const menu = this.io.menu;
+    if (typeof menu.showDeploy !== 'function') return false;
+    let up = true;
+    this.take('deploy', () => {
+      up = menu.showDeploy(card, {
+        drop: this.guarded('dropping in', () => io.drop?.()),
+      }) !== false;
+    });
+    if (up) return true;
+    this.overlay = null;
+    this.state = 'paused';
+    this.resume();
+    return false;
+  }
+
+  /**
    * Anything an overlay button calls.
    *
    * A throw in one of these used to strand the game in a state with nothing on
@@ -344,6 +381,7 @@ export class Screens {
     const m = this.io.menu;
     if (name === 'draft') m.hideDraft?.();
     else if (name === 'muster') m.hideMuster?.();
+    else if (name === 'deploy') m.hideDeploy?.();
     else if (name === 'dead') m.hideDeath?.();
   }
 }

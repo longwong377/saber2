@@ -226,7 +226,21 @@ async function defaultLevel() {
   return LEVEL_ORDER[0];
 }
 
-export async function bootWorld({ level = null, settings = {}, spawn = true } = {}) {
+/**
+ * `runSeed` IS A FACT ABOUT A SESSION AND NOT ABOUT A WORLD — which is why it
+ * is a parameter here rather than a setting.
+ *
+ * `main.js` assigns `world.runSeed` before `loadLevel` runs, and its own note
+ * says why it lives there: "a seed is a fact about a SESSION, and this is the
+ * one place that knows whether the session is the player's own or a host's."
+ * Every director built inside `loadLevel` reads it in its constructor —
+ * `seedWaves`, `enemyRng`, `duelRng`, `seedArrivals`, `seedCommand`, and now
+ * `Session.rollSession` — so a harness that wants a SEEDED run has to set it in
+ * the same window main.js does. Left null, which is what every existing caller
+ * gets and what every one of those streams already treats as "nobody has stated
+ * a number".
+ */
+export async function bootWorld({ level = null, settings = {}, spawn = true, runSeed = null } = {}) {
   level = level || await defaultLevel();
   const { World } = await import('../../src/game/World.js');
   const { DEFAULT_SETTINGS } = await import('../../src/ui/Menu.js');
@@ -237,6 +251,18 @@ export async function bootWorld({ level = null, settings = {}, spawn = true } = 
   const s = { ...DEFAULT_SETTINGS, quality: 'low', ...settings };
   const world = new World(engine, s);
   world.difficulty = DIFFICULTY[s.difficulty] || DIFFICULTY.knight;
+  /* `Number(null)` IS 0 AND `Number.isFinite(0)` IS TRUE, which is the whole
+   * reason this reads the value before it converts it: the finite test alone
+   * turned the default of `null` — "nobody has stated a number" — into the
+   * perfectly good seed 0, and every headless World in the suite silently
+   * became a seeded run. Measured before the guard: `director.seed` 0 rather
+   * than null on every `bootWorld`, which rolled a Raid in `Session` and put
+   * the muster shelf on the Core Ship's rung in a check that had asked for
+   * area 1. The same "a missing thing answered with a plausible default"
+   * §2.3 names, in a harness. */
+  if (runSeed !== null && runSeed !== undefined && Number.isFinite(Number(runSeed))) {
+    world.runSeed = (Number(runSeed) | 0) >>> 0;
+  }
   await world.loadLevel(level);
   if (spawn) world.spawnPlayer({ name: s.playerName || 'Jedi', isLocal: true });
   return { world, engine, settings: s };

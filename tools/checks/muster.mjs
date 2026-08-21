@@ -665,4 +665,234 @@ export async function run({ check, assert }) {
     assert(d.undeployed === 6, 'a spawn that returns nothing is not counted as unplaced');
     return `${said[0]} · cleared: 6 of 6 attempted`;
   });
+
+  /* ══════════════════════════════════════════════════════════════════════ */
+  /*  THE INTERLUDE                                                         */
+  /* ══════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * THE MUSTER HAD A SHOP AND NOT A STORY — FLAGSHIP §5.
+   *
+   *   "Between engagements: the muster. 60–90 s. Points in, bodies out, the
+   *   roll of who lived, who was promoted, and who is on the fallen list. This
+   *   quiet is where the run becomes a story. It must be real and it must have
+   *   no input."
+   *
+   * The screen the checks above drive is the right screen for the DECISION and
+   * it is the wrong one for that paragraph: it opens with the shelf, the purse,
+   * the strength and the roll all on at once, the instant the area ends, so
+   * everything that happened in the engagement you just fought arrives already
+   * summed. Six men held, two did not, and one of them was the sergeant you had
+   * been protecting for three areas — all of it one number going 9 → 7 in a
+   * corner of a shop.
+   *
+   * `Session.interludeBeats` reads the director's own ledger and returns the
+   * beats; `Menu._runInterlude` lands them one at a time with the shelf inert.
+   * The three checks below are the three claims: it is REAL (every beat is an
+   * event that was written down when it happened), it takes NO INPUT while it
+   * runs, and it is BOUNDED.
+   */
+  await check('the quiet between engagements is read off the ledger, not assembled beside it', async () => {
+    const { w } = await world('command', 'geonosis');
+    const d = w.command;
+    const { interludeBeats } = await import('../../src/game/Session.js');
+    assert(d && d.crossing, 'the command world is not a crossing');
+
+    /* Three men die through the shipped door — `onDeath` is what World calls
+     * from `onEnemyKilled`, and it is the only thing that writes a `fell`. */
+    const doomed = d.roster.living.slice(0, 3);
+    for (const t of doomed) {
+      const body = t.body || { trooper: t, position: w.player.position, team: 0, dead: false };
+      body.trooper = t; body.dead = true;
+      d.onDeath(body, null);
+    }
+    const fellNames = doomed.map((t) => t.name);
+
+    /**
+     * …and the area is held, which is the call that builds the interlude.
+     *
+     * A HANDLER IS INSTALLED FIRST, and that is not scaffolding — it is the
+     * behaviour under test in the negative. With no `onMuster` the director
+     * takes its documented fallback (`autoMuster` then `closeMuster`), and
+     * `closeMuster` is the door that OPENS the next engagement, so it drops the
+     * report on its way past. A run with no muster screen must not be left
+     * holding a story nobody was told.
+     */
+    let handed = null;
+    d.onMuster = (offer) => { handed = offer; };
+    d._areaClear();
+    const res = d._interlude;
+    assert(handed && handed.interlude === res, 'the muster handler was not handed the report');
+    assert(res && res.beats.length, 'holding an area produced no interlude at all');
+
+    const kinds = res.beats.map((b) => b.kind);
+    assert(kinds[0] === 'head', `the report opens on a ${kinds[0]} beat`);
+    const told = res.beats.filter((b) => b.kind === 'fell').map((b) => b.text);
+    for (const n of fellNames) {
+      assert(told.includes(n), `${n} is on the fallen list and was never named`);
+    }
+    assert(told.length === fellNames.length,
+      `${told.length} casualties told against ${fellNames.length} on the roll`);
+    /* NOTHING IS INVENTED. Every beat that names a man names one on the roll,
+     * and every `fell` beat has a log entry behind it. */
+    const onRoll = new Set(d.roster.all.map((t) => t.name));
+    for (const b of res.beats) {
+      if (b.kind === 'head' || b.kind === 'tally') continue;
+      assert(onRoll.has(b.text), `the report names ${b.text}, who is not on the roll`);
+    }
+    const logged = d.log.filter((e) => e.t === 'fell').map((e) => e.name);
+    for (const n of told) assert(logged.includes(n), `${n} was reported dead and the ledger says otherwise`);
+
+    /* THE TALLY IS THE PURSE AND THE LINE, and both are the roster's own. */
+    const tally = res.beats.filter((b) => b.kind === 'tally');
+    assert(tally.length === 2, `${tally.length} tally beats`);
+    assert(tally[0].sub.includes(String(d.roster.points)),
+      `the purse beat reads "${tally[0].sub}" against ${d.roster.points} points`);
+    assert(tally[1].text.startsWith(String(d.roster.strength)),
+      `the strength beat reads "${tally[1].text}" against ${d.roster.strength} standing`);
+
+    /* AND IT CROSSES THE WIRE ON THE OFFER, so a peer tells the same story. */
+    assert(d.musterOffer().interlude === res, 'the muster offer carries no interlude');
+
+    /* THE LEDGER MARK MOVES. A second engagement must not re-tell the first. */
+    d.closeMuster();
+    assert(d._interlude === null, 'closing the muster left the last report standing');
+    d._areaClear();
+    const again = d._interlude;
+    assert(!again.beats.some((b) => b.kind === 'fell' && fellNames.includes(b.text)),
+      'the second interlude re-told the first engagement’s dead');
+
+    w.dispose?.();
+    return `${res.beats.length} beats over ${res.seconds}s: ${kinds.join(', ')}; `
+      + `${told.length} named dead, all three off the ledger; the mark moves at closeMuster`;
+  });
+
+  await check('the quiet takes no input, and the shelf is on screen while it does', async () => {
+    /**
+     * "IT MUST HAVE NO INPUT" — driven on the real Menu and the real markup,
+     * on an injected clock so the whole reveal runs without a real second
+     * going by.
+     *
+     * The claim is not "the shop is hidden". It is deliberately visible and
+     * inert: `.muster-units.waiting` is `pointer-events:none` and Advance is
+     * `disabled`, so you can see what you are about to be allowed to spend and
+     * you cannot spend it yet. Hiding it would make the report an interstitial
+     * rather than the opening of the decision.
+     *
+     * WHAT IS DELIBERATELY NOT BLOCKED is Escape — `Screens` rule 1 — and the
+     * check for that is in tools/checks/screens.mjs, which walks every state in
+     * `LIVE` including this one.
+     */
+    const { interludeBeats } = await import('../../src/game/Session.js');
+    const { makeDocument } = await import('./_page.mjs');
+    const { Menu, DEFAULT_SETTINGS } = await import('../../src/ui/Menu.js');
+    const { readFile } = await import('node:fs/promises');
+    const html = await readFile(new URL('../../index.html', import.meta.url), 'utf8');
+    const css = await readFile(new URL('../../styles.css', import.meta.url), 'utf8');
+
+    /* The CSS half of "no input" — a class the stylesheet does not act on is a
+     * dimming with a live shop underneath it. */
+    assert(/\.muster-units\.waiting\{[^}]*pointer-events:\s*none/.test(css),
+      '.muster-units.waiting does not stop the pointer — the shelf is live under the report');
+
+    const beats = interludeBeats(
+      [{ t: 'fell', name: 'CT-1234', unit: 'Clone Trooper', rank: 'Cpl' },
+       { t: 'promote', name: 'CT-5678', rank: 'Sgt' }],
+      0, { name: 'The Open Plain', brief: 'flat ochre' },
+      { got: 14, points: 22, strength: 9, max: 24 });
+
+    const offer = {
+      areaName: 'The Open Plain', next: { name: 'The Hailfire Line', brief: 'armour on the ridge' },
+      points: 22, strength: 9, max: 24, area: 2, interlude: beats,
+      roster: { army: 'republic', points: 22, strength: 9, fallen: 1,
+                roll: [{ id: 't1', name: 'CT-5678', unit: 'Clone Trooper', rank: 'Sgt', rankTitle: 'Sergeant',
+                         xp: 6, kills: 2, areas: 1, alive: true, diedIn: null }] },
+      units: [{ type: 'trooper', label: 'Clone Trooper', cost: 5, threat: 1, have: 9, afford: true }],
+    };
+
+    let bought = 0, seconds = 0;
+    const pending = [];
+    const doc = makeDocument(html);
+    const restore = doc.install();
+    let told = 0, waitingAt0 = false, disabledAt0 = false, waitingAtEnd = true, disabledAtEnd = true;
+    try {
+      const menu = new Menu({ ...structuredClone(DEFAULT_SETTINGS) }, {});
+      /* THE INJECTED CLOCK. Every beat is queued with the ms it asked for and
+       * run by hand, so this measures the ORDER and the GATE rather than the
+       * wall clock — which is the §2.6 rule about frames and seconds arriving
+       * in a UI. */
+      menu.showMuster(offer, {
+        recruit: () => { bought++; return { offer, refused: null }; },
+        done: () => {},
+        schedule: (fn, ms) => { pending.push([ms, fn]); seconds = Math.max(seconds, ms); return pending.length; },
+      });
+      const units = doc.getElementById('muster-units');
+      const advance = doc.getElementById('btn-muster-done');
+      const list = doc.getElementById('muster-interlude');
+      waitingAt0 = units.classList.contains('waiting');
+      disabledAt0 = !!advance.disabled;
+      assert(waitingAt0, 'the shelf was live from the first frame of the report');
+      assert(disabledAt0, 'Advance was pressable before the report had said anything');
+      assert(!list.classList.contains('hidden'), 'the report was drawn hidden');
+
+      /* A CLICK ON THE SHELF WHILE THE REPORT RUNS BUYS NOTHING. The card is
+       * only made activatable when it is affordable, so the honest test is the
+       * one a player performs: press it. */
+      const card = units.children[0];
+      assert(card, 'the shelf drew no unit card');
+      card.click();
+      assert(bought === 0,
+        `a unit was bought ${bought} time(s) during the quiet — the muster took input`);
+
+      /* Now let the clock run. */
+      pending.sort((a, b) => a[0] - b[0]);
+      for (const [, fn] of pending) fn();
+      told = list.children.length;
+      waitingAtEnd = units.classList.contains('waiting');
+      disabledAtEnd = !!advance.disabled;
+      assert(told === beats.beats.length, `${told} beats landed of ${beats.beats.length}`);
+      assert(!waitingAtEnd, 'the shelf never woke up');
+      assert(!disabledAtEnd, 'Advance is still disabled after the last beat');
+      card.click();
+      assert(bought === 1, `after the report a purchase bought ${bought} time(s)`);
+    } finally { restore(); }
+
+    return `${told} beats over ${(seconds / 1000).toFixed(1)}s: shelf inert and Advance dead throughout `
+      + `(0 purchases), both live on the last beat (1 purchase)`;
+  });
+
+  await check('the report is bounded — a wipe tells every name and still ends', async () => {
+    /**
+     * A quiet engagement and a massacre are not the same story and must not
+     * take the same time to tell, so the length is derived. But a report that
+     * scaled without limit would hold the screen for a minute and a half on the
+     * run that has just gone worst, and one that TRUNCATED would drop exactly
+     * the names the player is owed. `INTERLUDE.window` scales the holds
+     * together instead: every beat is still told, a long report is faster
+     * rather than shorter.
+     */
+    const { interludeBeats, INTERLUDE } = await import('../../src/game/Session.js');
+    const area = { name: 'The Spire Approach', brief: 'under the spires' };
+    const tally = { got: 26, points: 40, strength: 4, max: 24 };
+    const rows = [];
+    for (const n of [0, 1, 3, 6, 12, 24]) {
+      const log = [];
+      for (let i = 0; i < n; i++) log.push({ t: 'fell', name: `CT-${1000 + i}`, unit: 'Clone Trooper', rank: 'Trp' });
+      const res = interludeBeats(log, 0, area, tally);
+      const named = res.beats.filter((b) => b.kind === 'fell');
+      assert(named.length === Math.max(1, n),
+        `${n} casualties produced ${named.length} beats — a name was dropped`);
+      assert(res.seconds >= INTERLUDE.window[0] - 1e-6 && res.seconds <= INTERLUDE.window[1] + 1e-6,
+        `${n} casualties ran ${res.seconds}s, outside ${INTERLUDE.window.join('–')}s`);
+      /* Monotonic and gapless: beat k starts where beat k-1 ended. */
+      let t = 0;
+      for (const b of res.beats) {
+        assert(Math.abs(b.at - t) < 0.01, `a beat starts at ${b.at}s with ${t}s told`);
+        t += b.hold;
+      }
+      rows.push(`${n}→${res.seconds}s/${res.beats.length}`);
+    }
+    return `${rows.join(' · ')} — every name told, all inside ${INTERLUDE.window.join('–')}s`;
+  });
+
 }

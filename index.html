@@ -1060,6 +1060,50 @@
   </div>
 </div>
 
+<!-- ══ THE DEPLOY CARD ══
+     FLAGSHIP §5, 0:00: "the seed, the ground, and your ten names, readable
+     before you land." It is the first thing a session shows and the last thing
+     between the player and the gunship — `main.js` raises it after the world is
+     built and the army is mustered, and pressing Drop is what starts the flight
+     in.
+
+     THE NAMES ARE THE POINT. §3's fourth convergence is that the roll is the
+     mode's second one-way variable: it only ever shrinks, and a list that only
+     shrinks has to have been read once at full length or a casualty has nothing
+     to be measured against. Everything else on this card is context for that
+     column.
+
+     Every string is written by Menu.showDeployCard out of `Session.deployCard`.
+     The classes are the muster's on purpose — same field, same stamp, same
+     two-column body — because this is the same screen at the other end of the
+     run and one owner for that look is one place to change it. -->
+<div id="deploy-card" class="screen hidden">
+  <div class="muster-wrap deploy-wrap">
+    <p class="muster-held" id="deploy-plan">—</p>
+    <h2 id="deploy-ground">Deployment</h2>
+    <p class="hint" id="deploy-blurb"></p>
+    <div class="muster-body">
+      <div class="muster-shop">
+        <h3 id="deploy-stage-head">Where you land</h3>
+        <p class="hint deploy-brief" id="deploy-stage"></p>
+        <ol id="deploy-stages" class="deploy-stages"></ol>
+        <p class="hint deploy-host" id="deploy-host"></p>
+      </div>
+      <div class="muster-roll">
+        <h3 id="deploy-roll-head">The roll</h3>
+        <div id="deploy-list" class="rp-list muster-list"></div>
+      </div>
+    </div>
+    <div class="muster-foot">
+      <div class="muster-tally">
+        <div><span>Seed</span><b id="deploy-seed">—</b></div>
+        <div><span>Standing</span><b id="deploy-strength">0</b></div>
+      </div>
+      <button id="btn-deploy-drop" class="primary">Drop</button>
+    </div>
+  </div>
+</div>
+
 <!-- ══ THE MUSTER ══
      Between two areas of the Geonosis advance you are handed reinforcement
      points and a shelf of units to spend them on. `CommandDirector.musterOffer()`
@@ -1080,7 +1124,15 @@
     <p class="hint" id="muster-brief"></p>
     <div class="muster-body">
       <div class="muster-shop">
-        <h3>Reinforcements</h3>
+        <h3 id="muster-shop-head">Reinforcements</h3>
+        <!-- THE INTERLUDE. §5: "this quiet is where the run becomes a story. It
+             must be real and it must have no input." The beats are read off the
+             director's own ledger by `Session.interludeBeats` and land one at a
+             time; until the last one has, `.muster-units` carries `.waiting`
+             and Advance is disabled, so the shop is on screen and inert. It is
+             the same card because the report and the decision are about the
+             same ten people. -->
+        <ol id="muster-interlude" class="muster-interlude hidden"></ol>
         <div id="muster-units" class="muster-units"></div>
         <p class="hint muster-refused" id="muster-refused"></p>
       </div>

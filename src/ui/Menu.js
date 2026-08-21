@@ -6462,6 +6462,7 @@ export class Menu {
       refused: document.getElementById('muster-refused'),
       rollHead: document.getElementById('muster-roll-head'),
       list: document.getElementById('muster-list'),
+      interlude: document.getElementById('muster-interlude'),
       points: document.getElementById('muster-points'),
       strength: document.getElementById('muster-strength'),
       done: document.getElementById('btn-muster-done'),
@@ -6518,6 +6519,8 @@ export class Menu {
     };
 
     const buy = (type) => {
+      // The quiet takes no input. See `_runInterlude`.
+      if (this._interludeLive) { audio.ui('bad'); return; }
       const res = this._musterIo?.recruit?.(type);
       if (el.refused) el.refused.textContent = res?.refused || '';
       audio.ui(res?.refused ? 'bad' : 'click');
@@ -6526,6 +6529,14 @@ export class Menu {
 
     if (el.refused) el.refused.textContent = '';
     draw(offer);
+    /* …AND THEN THE QUIET, over the top of a shelf that is already drawn. See
+     * `_runInterlude`: the shop is on screen and inert until the last beat has
+     * landed, because what you are being told and what you are about to spend
+     * are about the same ten people and hiding one of them would make the
+     * report an interstitial. `io.schedule` is the injected clock — nothing in
+     * the game passes one, and `tools/checks/muster.mjs` passes a fake so the
+     * whole reveal can be driven without a real second going by. */
+    this._runInterlude(el, offer?.interlude, io.schedule);
 
     if (el.done && !el.done.dataset.musterBound) {
       el.done.dataset.musterBound = '1';
@@ -6533,6 +6544,10 @@ export class Menu {
       // which is the reason Screens.guarded exists — a throw inside `done`
       // lands the player on the pause card instead of on a frozen field.
       this._activate(el.done, () => {
+        /* …AND NEITHER DOES ADVANCE. `disabled` is the browser's half of this;
+         * a report you can skip is not a report, and the button is the one
+         * control on the screen a player will hammer. */
+        if (this._interludeLive) { audio.ui('bad'); return; }
         audio.ui('good');
         this.hideMuster();
         this._musterIo?.done?.();
@@ -6543,7 +6558,187 @@ export class Menu {
     return true;
   }
 
-  hideMuster() { document.getElementById('muster')?.classList.add('hidden'); }
+  hideMuster() {
+    /* THE TIMERS DIE WITH THE CARD. The interlude schedules one callback per
+     * beat, and a card taken down mid-report — by Escape onto the pause screen,
+     * by `Screens.clear()` at the end of a run, by a rotation — would otherwise
+     * go on writing into a hidden list and, at the last beat, ENABLE A BUTTON
+     * that is no longer on screen. `resume()` calls `show` again and the report
+     * restarts from the top, which is right: it is the same story and the
+     * player was interrupted in the middle of it. */
+    this._clearInterlude();
+    document.getElementById('muster')?.classList.add('hidden');
+  }
+
+  /** Drop every pending beat. Safe to call when none are outstanding. */
+  _clearInterlude() {
+    for (const h of (this._interludeTimers || [])) { try { clearTimeout(h); } catch {} }
+    this._interludeTimers = [];
+    this._interludeLive = false;
+  }
+
+  /**
+   * THE QUIET BETWEEN TWO ENGAGEMENTS — FLAGSHIP §5, and it is a quotation:
+   * "points in, bodies out, the roll of who lived, who was promoted, and who is
+   * on the fallen list. This quiet is where the run becomes a story. It must be
+   * real and it must have no input."
+   *
+   * REAL is `Session.interludeBeats`' problem and it solves it by reading the
+   * director's own ledger — nothing is drawn here that did not happen and get
+   * written down when it did. NO INPUT is this method's, and it is two things:
+   * the shelf carries `.waiting` (dimmed, `pointer-events:none`) and Advance is
+   * `disabled`, from the first beat until the last one has landed.
+   *
+   * WHAT "NO INPUT" DOES NOT MEAN is that the player is locked in a room.
+   * `Screens` rule 1 — Escape is never a dead key — holds here unchanged: the
+   * muster is an ordinary overlay state and Escape still raises the pause card
+   * over it. A quiet you cannot leave is a freeze, and src/ui/Screens.js exists
+   * because of one.
+   *
+   * @param {object} res `{ beats, seconds }` from `interludeBeats`.
+   * @param {(fn:Function, ms:number) => any} schedule  injected so a check can
+   *        drive the whole reveal on its own clock; `setTimeout` by default.
+   * @returns the number of beats that will be told.
+   */
+  _runInterlude(el, res, schedule = null) {
+    this._clearInterlude();
+    const list = el.interlude, shop = el.units, go = el.done;
+    if (!list) return 0;
+    list.innerHTML = '';
+    const beats = res?.beats || [];
+    if (!beats.length) {
+      list.classList.add('hidden');
+      shop?.classList.remove('waiting');
+      if (go) go.disabled = false;
+      return 0;
+    }
+    list.classList.remove('hidden');
+    shop?.classList.add('waiting');
+    if (go) go.disabled = true;
+    /**
+     * THE GATE IS IN THE CODE, NOT ONLY IN THE STYLESHEET.
+     *
+     * `.muster-units.waiting` is `pointer-events:none` and Advance is
+     * `disabled`, and both of those are a BROWSER enforcing a rule for us. A
+     * rule the game does not itself hold is a rule that is true of one renderer
+     * — it was already false of the headless page every check in this repo
+     * runs on, where a click on a dimmed card bought a trooper — and it would
+     * be false of any other. So the flag is the authority and the CSS is what
+     * says so on screen. Read by `buy` and by Advance in `showMuster`.
+     */
+    this._interludeLive = true;
+    const at = schedule || ((fn, ms) => setTimeout(fn, ms));
+    for (const b of beats) {
+      this._interludeTimers.push(at(() => {
+        const li = document.createElement('li');
+        li.className = `b-${b.kind}`;
+        li.innerHTML = `<b>${escKey(b.text)}</b><span>${escKey(b.sub)}</span>`;
+        list.appendChild(li);
+        /* A casualty is the only thing on this screen that makes a noise. The
+         * rest is read, which is what a report is. */
+        if (b.kind === 'fell' && b.sub) audio.ui('bad');
+      }, Math.round(b.at * 1000)));
+    }
+    /* THE SHELF LIGHTS AFTER THE LAST BEAT, not with it: the point of the beat
+     * is that it is the last thing said, and a shop that woke up underneath it
+     * would take the eye off the name. */
+    this._interludeTimers.push(at(() => {
+      this._interludeLive = false;
+      shop?.classList.remove('waiting');
+      if (go) { go.disabled = false; go.focus?.(); }
+    }, Math.round(res.seconds * 1000)));
+    return beats.length;
+  }
+
+  /**
+   * THE DEPLOY CARD — FLAGSHIP §5's 0:00, and the cheapest thing in the whole
+   * mode that makes a run feel like a run.
+   *
+   * "The seed, the ground, and your ten names, readable before you land."
+   *
+   * The names are what this card is for. §3's fourth convergence is that the
+   * roll is the mode's second one-way visible variable — it only ever shrinks —
+   * and a variable that only shrinks has to have been READ ONCE at full length
+   * or there is nothing for a casualty to be measured against. Ten strangers is
+   * exactly the right amount of nothing to start from: `_musterOpening`'s own
+   * note says the opening roster is "ten identical strangers, so that the three
+   * names in it four areas later are something the player earned", and this is
+   * the screen that shows you the ten so the three can mean something.
+   *
+   * NOTHING IS COMPUTED HERE. `Session.deployCard` assembles the record off the
+   * seed, the plan, the stages and the roster summary; this draws it. The same
+   * split `musterOffer`/`showMuster` has, for the same reason — a card that
+   * worked out its own length or its own ground would be a second authority for
+   * what the run is.
+   *
+   * Returns whether the card actually went up, exactly as `showMuster` does:
+   * `Screens.deploy` reads it, and a card that cannot be drawn must not leave a
+   * session stopped on a state with no overlay on the screen.
+   *
+   * @param {object} card `Session.deployCard()`, verbatim.
+   * @param {{drop:() => void}} io
+   */
+  /* NAMED FOR THE STATE, and that is a contract rather than a taste:
+   * tools/checks/screens.mjs derives the Menu method from the overlay state in
+   * `OVERLAY_STATES` — `show` + the capitalised name — so that the next
+   * overlay somebody adds cannot be raised through `take` and drawn by a
+   * method nothing can find. The state is 'deploy'; the method is this. */
+  showDeploy(card, io = {}) {
+    const el = {
+      root: document.getElementById('deploy-card'),
+      plan: document.getElementById('deploy-plan'),
+      ground: document.getElementById('deploy-ground'),
+      blurb: document.getElementById('deploy-blurb'),
+      stage: document.getElementById('deploy-stage'),
+      stages: document.getElementById('deploy-stages'),
+      host: document.getElementById('deploy-host'),
+      rollHead: document.getElementById('deploy-roll-head'),
+      list: document.getElementById('deploy-list'),
+      seed: document.getElementById('deploy-seed'),
+      strength: document.getElementById('deploy-strength'),
+      drop: document.getElementById('btn-deploy-drop'),
+    };
+    if (!el.root || !card) return false;
+    this._deployIo = io;
+
+    if (el.plan) el.plan.textContent = `${card.planName} · ${card.length}`;
+    if (el.ground) el.ground.textContent = card.ground || 'Deployment';
+    if (el.blurb) el.blurb.textContent = card.blurb || '';
+    if (el.stage) el.stage.textContent = card.stageBrief || '';
+    if (el.stages) {
+      el.stages.innerHTML = (card.stages || [])
+        .map((n) => `<li>${escKey(n)}</li>`).join('');
+    }
+    /* Said or not said, never blank-and-present: `.deploy-host:empty` takes its
+     * own margin back out of the column. */
+    if (el.host) el.host.textContent = card.hostNote || '';
+    if (el.seed) el.seed.textContent = card.seed === null ? '—' : String(card.seed);
+    if (el.strength) el.strength.textContent = String(card.strength | 0);
+    if (el.rollHead) {
+      el.rollHead.textContent = `Your ${card.strength | 0} — every one of them by name`;
+    }
+    if (el.list) {
+      el.list.innerHTML = (card.roll || []).map((t) =>
+        `<div class="dep-row"><i></i><b>${escKey(t.name)}</b><span>${escKey(t.unit)}</span></div>`).join('');
+    }
+
+    if (el.drop && !el.drop.dataset.deployBound) {
+      el.drop.dataset.deployBound = '1';
+      /* The card comes down BEFORE the callback, exactly as the draft's and the
+       * muster's do — see `Screens.guarded`, whose recovery is the pause card
+       * and which cannot help a player looking at a card that is still up. */
+      this._activate(el.drop, () => {
+        audio.ui('good');
+        this.hideDeploy();
+        this._deployIo?.drop?.();
+      });
+    }
+    el.root.classList.remove('hidden');
+    el.drop?.focus?.();
+    return true;
+  }
+
+  hideDeploy() { document.getElementById('deploy-card')?.classList.add('hidden'); }
 
   /**
    * The two sandbox numbers, repeated where you can actually reach them.

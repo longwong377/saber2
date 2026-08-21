@@ -18,6 +18,10 @@ import { Menu, loadSettings, saveSettings, applyFeelSettings, VICTORY_TITLE } fr
 import { Net, RemoteAvatar, packLook, sessionPart } from './net/Net.js';
 import { boonById, drawBoons, BOSS_EVERY, MODES } from './game/Waves.js';
 import { theatreFor } from './game/Levels.js';
+/* THE SHAPE OF ONE SITTING — FLAGSHIP §5. A leaf that imports nothing of the
+ * game's, so the deploy card can be assembled here without this file reaching
+ * into the director for anything but the record it already publishes. */
+import { deployCard } from './game/Session.js';
 // No `FORMATIONS` import any more: the orders reach this file as ordinary
 // bindings through `ORDER_ACTIONS` below, which is the point of the seam.
 import { recordRun, loadProgress } from './game/Progress.js';
@@ -676,8 +680,60 @@ async function deploy() {
    * exactly as it was — a commander standing on a spawn point, which is what
    * every mode in this game did until now.
    */
-  const flew = world.extraction?.beginInsertion?.({ name: world.level.name });
-  if (!flew) world.notify('MAY THE FORCE BE WITH YOU', world.level.name);
+  /**
+   * 0:00 — THE DEPLOY CARD, and then 0:12, which is the gunship.
+   *
+   * FLAGSHIP §5 opens the session with "the seed, the ground, and your ten
+   * names, readable before you land", and the mode had none of it: a Command
+   * run began with a notify that faded in two seconds, over a roster panel in
+   * the corner nobody had been told to read. The names are the mode's second
+   * one-way variable and this is the only moment in a run when all ten of them
+   * are still on it.
+   *
+   * IT IS RAISED FOR THE CROSSING AND NOTHING ELSE. `director.crossing` is the
+   * field that means "this run is a session" — true for Command, false for a
+   * skirmish, a campaign and a contingent, all of which are a bounded battle
+   * with an army in it rather than a sitting with a length. A card in front of
+   * every Trial of Waves would be a loading screen with prose on it.
+   *
+   * THE FLIGHT IS THE CALLBACK. `beginInsertion` is the last line of the deploy
+   * path for the reason its own note gives — everything above it has to have
+   * happened first — and the card goes in FRONT of it, not instead of it: the
+   * world is stopped behind an overlay, the player reads their ten names, and
+   * pressing Drop is what puts them in the air. A card that flew first would be
+   * a card the player reads while the LAAT is already on approach.
+   *
+   * `screens.deploy` returns false when the markup is missing, which is the
+   * same fallback the muster takes: drop without one rather than leave a
+   * session stopped on a state with nothing on screen.
+   */
+  const insert = () => {
+    const flew = world.extraction?.beginInsertion?.({ name: world.level.name });
+    if (!flew) world.notify('MAY THE FORCE BE WITH YOU', world.level.name);
+  };
+  const cmd = world.command;
+  if (cmd?.crossing && !world.training) {
+    const card = deployCard({
+      seed: world.runSeed,
+      plan: cmd.plan,
+      stages: cmd.stages,
+      ground: world.level.name,
+      roster: cmd.roster.summary(),
+      networked: net.enabled && net.connected,
+    });
+    const up = screens.deploy(card, {
+      drop: () => {
+        screens.overlay = null;
+        /* 'paused' so `resume()` takes the playing branch — the same ordering
+         * the muster's Done uses, and the same reason: everything risky has
+         * already run by the time the state moves. */
+        screens.state = 'paused';
+        resume();
+        insert();
+      },
+    });
+    if (!up) insert();
+  } else insert();
 }
 
 /**
@@ -1355,6 +1411,23 @@ function wireNet() {
     // against it, and `damage` kept addressing a closed connection.
     const i = world.players.indexOf(r);
     if (i >= 0) world.players.splice(i, 1);
+    /**
+     * …AND OUT OF `commanders`, WHICH IS FLAGSHIP §9'S SECOND DEFECT.
+     *
+     * "`peer-left` removes the RemoteAvatar and nothing removes its
+     * `Commander`, so its army goes on being steered off a disposed body."
+     * Exactly that: the avatar is disposed two lines up and its Commander went
+     * on sitting in the director's list, solving a formation in the frame of a
+     * body nothing updates and measuring the follow speed of a corpse of a
+     * drawing. `CommandDirector.census` carried a guard against the one
+     * consequence anybody had noticed — a departed general's army could win the
+     * match — which is the shape of the bug rather than a fix for it.
+     *
+     * `dismissCommander` is where what happens to their men is decided, and
+     * with one roster the answer is mostly "nothing": their squads are re-dealt
+     * to whoever is left on the same roll. See its note.
+     */
+    world.command?.dismissCommander?.(r);
     world.notify('A JEDI HAS FALLEN AWAY', `${r.name} left the fight`);
   });
   /**
@@ -1522,9 +1595,23 @@ function wireNet() {
         look: entry?.look || null, team: entry?.team });
       world.remotes.set(peerId, r);
       world.players.push(r);
-      /* A new body on the field is a new commander to be given an army, if this
-       * is a meeting. Idempotent — see World.beginVersus. */
-      if (world.command?.versus && world.netMode === 'host') world.beginVersus();
+      /**
+       * A NEW BODY ON THE FIELD IS A NEW COMMANDER TO BE GIVEN SOMETHING TO
+       * LEAD, and there are two answers to what.
+       *
+       * A MEETING hands them an army of their own, 120 m away, facing you.
+       * ANYTHING ELSE seats them on YOUR side, out of YOUR roster, holding one
+       * of the squads that is already standing — FLAGSHIP §9's "four players
+       * take four squads out of one roster of up to 24". Until this line a peer
+       * joining a Command run got a blade and no army at all: nothing outside
+       * `beginVersus` had ever called `enlistCommander`.
+       *
+       * Both are idempotent per player and both are the host's alone.
+       */
+      if (world.netMode === 'host') {
+        if (world.command?.versus) world.beginVersus();
+        else world.seatAlly?.(r);
+      }
     }
     r.push(msg, performance.now() / 1000);
   });

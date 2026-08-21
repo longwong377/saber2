@@ -1488,6 +1488,57 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
   .muster-list{max-height:38vh}
   .muster-units{max-height:38vh}
 }
+
+/* ══════════════════ the interlude ══════════════════
+   The quiet between two engagements. It is a REPORT, not a feed: one line at a
+   time, dead first, and nothing on this screen takes a click until the last of
+   them has landed. So the beats are typographically the loudest thing in the
+   column and the shelf behind them is dimmed rather than hidden — you can see
+   what you are about to be allowed to spend, and you cannot spend it yet. */
+.muster-interlude{list-style:none;margin:0 0 18px;padding:0;display:flex;flex-direction:column;gap:2px}
+.muster-interlude li{display:flex;align-items:baseline;gap:12px;padding:6px 0;
+  border-bottom:2px solid var(--panel-hi);opacity:0;transform:translateX(-10px);
+  animation:beatIn .34s cubic-bezier(.22,1,.36,1) both}
+.muster-interlude li b{flex:none;font-size:14px;font-weight:800;letter-spacing:.03em;
+  text-transform:uppercase}
+.muster-interlude li span{flex:1;min-width:0;font:var(--mono);font-size:10px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* The three that carry the story. A casualty is the only red on the screen. */
+.muster-interlude li.b-head b{color:var(--accent-warm)}
+.muster-interlude li.b-fell b{color:var(--danger)}
+.muster-interlude li.b-promote b,.muster-interlude li.b-steps-up b{color:var(--accent)}
+@keyframes beatIn{from{opacity:0;transform:translateX(-10px)}to{opacity:1;transform:none}}
+/* Inert while the report is running. `pointer-events:none` is the half that
+   makes "no input" true; the dimming is the half that says so. */
+.muster-units.waiting{opacity:.3;pointer-events:none;filter:saturate(.3)}
+.muster-foot .primary[disabled]{opacity:.35;cursor:default;pointer-events:none}
+
+/* ══════════════════ the deploy card ══════════════════
+   0:00. Built on the muster's own wrap — same field, same two columns, same
+   foot — because it is the same screen at the other end of the run. What is
+   different is the right-hand column: at the muster it is a casualty list, and
+   here it is a manifest of people all of whom are still alive. */
+.deploy-stages{list-style:none;margin:14px 0 0;padding:0;display:flex;flex-direction:column;gap:6px;
+  counter-reset:stage}
+.deploy-stages li{counter-increment:stage;display:flex;align-items:baseline;gap:10px;
+  font:var(--mono);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
+.deploy-stages li::before{content:counter(stage);flex:none;width:20px;height:20px;
+  display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;
+  color:var(--stroke);background:var(--panel-hi);clip-path:var(--cut-sm)}
+.deploy-stages li:first-child{color:var(--ink)}
+.deploy-stages li:first-child::before{background:var(--accent-warm)}
+.deploy-brief{max-width:56ch}
+.deploy-host{margin-top:18px;color:var(--accent-warm);max-width:56ch}
+.deploy-host:empty{display:none}
+/* One name. The unit is beside it and not under it, so ten of them are ten
+   lines and the column can be read in one pass — which is the whole ask. */
+.dep-row{display:flex;align-items:baseline;gap:9px;padding:3px 11px;
+  font:var(--mono);font-size:10.5px;letter-spacing:.1em}
+.dep-row i{flex:none;width:10px;height:10px;background:var(--panel-hi);border:2px solid var(--stroke);
+  align-self:center}
+.dep-row b{flex:none;font-weight:800;letter-spacing:.06em;text-transform:uppercase}
+.dep-row span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  text-transform:uppercase;color:var(--dim);text-align:right}
 .dc.att{position:relative}
 .dc.att:hover{box-shadow:9px 9px 0 var(--stroke),0 0 34px -10px var(--accent-warm)}
 .dc.att em{color:var(--accent-warm)}

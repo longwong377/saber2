@@ -981,13 +981,73 @@ export function run({ check, assert }) {
     assert(Math.abs(gap(cs[1], cs[3]) - PAIR_SPACING) < 0.5,
       `the other pair is ${gap(cs[1], cs[3]).toFixed(1)} m apart`);
 
-    /* FOUR ARMIES ON THE FIELD, each wearing its commander's side. */
+    /**
+     * TWO ARMIES ON THE FIELD, FOUR SQUADS — FLAGSHIP §9, and this is the
+     * assertion that used to read "four armies" and measured the defect.
+     *
+     * It was `counts.every(n => n >= 8)`, and it passed: four commanders, four
+     * `CommandRoster`s, four private lines of ten. Driven at four commanders on
+     * this fixture, before one roster:
+     *
+     *     commanders 4 · rosters 4 · named bodies 40 · DISTINCT NAMES 39
+     *
+     * One duplicate, in the one mode whose entire subject is names you
+     * recognise. `designate` loops against `roster.taken` to keep the promise
+     * "every ally has a unique name you can see", `taken` is per roster, and
+     * all four draw out of ONE seeded stream — so two commanders on the same
+     * side mint the same `CT-####` and neither Set can see the other. It is not
+     * a rare collision either: it is 40 draws from 8999 numbers across four
+     * independent sets, which is a duplicate about half the time.
+     *
+     * After, on the identical fixture:
+     *
+     *     commanders 4 · rosters 2 · named bodies 30 · distinct names 30
+     *     led per commander 10/10/5/5 · purses 11 and 11 (one a side)
+     *
+     * Two rosters, because a meeting is two armies and must be. Thirty rather
+     * than forty because a side is now ONE line — `OPENING_STRENGTH` and one
+     * `SQUAD` more for the second commander on it (see `_musterJoin`) — instead
+     * of two private tens, and the odd squad stays with the commander who
+     * brought the line. Zero collisions by construction rather than by care:
+     * there is one `taken` per side and nothing left to keep in step.
+     */
     const bodies = (c) => host.enemies.filter((e) => e.cmdr === c && !e.dead);
     const counts = cs.map((c) => bodies(c).length);
-    assert(counts.every((n) => n >= 8), `the four armies deployed ${counts.join('/')} bodies`);
+    const rosters = new Set(cs.map((c) => c.roster));
+    assert(rosters.size === 2,
+      `four commanders hold ${rosters.size} rosters — allies on one side are two private armies, `
+      + 'two `taken` sets, and two purses');
+    assert(cs[0].roster === cs[2].roster && cs[1].roster === cs[3].roster,
+      'the allies are not sharing a roll');
+    assert(cs[0].roster !== cs[1].roster, 'both sides are drawing off one roll');
+    const all = [];
+    for (const r of rosters) for (const t of r.all) all.push(t);
+    const distinct = new Set(all.map((t) => t.name));
+    assert(distinct.size === all.length,
+      `${all.length} named bodies and ${distinct.size} distinct names — two of your men answer to `
+      + 'the same designation, in the mode whose subject is names you recognise');
+    assert(counts.every((n) => n >= 5),
+      `the four commanders lead ${counts.join('/')} bodies — somebody was dealt no squad at all`);
+    assert(counts[0] + counts[2] === cs[0].roster.strength,
+      `the ${sides[0]} side leads ${counts[0] + counts[2]} of its ${cs[0].roster.strength} men`);
+    /* THE PURSE IS SHARED — §9's actual co-op mechanic. */
+    cs[0].roster.points = 40;
+    assert(cs[2].roster.points === 40, 'two allies are shopping in two different shops');
+    cs[0].roster.points = 11;
     for (let i = 0; i < 4; i++) {
       assert(bodies(cs[i]).every((e) => e.team === sides[i]),
         `an army of ${cs[i].army.id} is standing on a side its commander is not on`);
+    }
+    /* AND EACH SIDE MUSTERED ITS OWN ARMY'S BODIES. `formUp` used to build the
+     * second commander with the defaults, muster ten of the FIRST army's
+     * cheapest rung into it, and only then reassign `c.army` — so both ends of
+     * every meeting fielded `Clone Trooper` and both rolls read `CT-####`. */
+    for (const c of cs) {
+      const kinds = [...new Set(c.roster.all.map((t) => t.type))];
+      const rung = c.army.tiers.map((t) => t.type);
+      const wrong = kinds.filter((k) => !rung.includes(k));
+      assert(!wrong.length,
+        `${c.army.id}'s roll holds ${wrong.join('/')}, which is not on its own muster ladder`);
     }
     /* Two rings 20 m apart do not interleave: an allied body is nearer its own
      * anchor than its ally's, which is what makes an order readable. */
