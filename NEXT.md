@@ -913,6 +913,59 @@ bigger. It is **whether the mode gives a player any reason to stand still**, and
 today it does not: killing is fast, killing is where the targets are, and the
 line arrives afterwards.
 
+### The ground is generated now — and scoria cannot carry it
+
+`FLAGSHIP.md` §12's generator (`src/world/Battlefield.js`) has a caller:
+`World._groundKeyFor` raises it for a mode that declares `generatedGround`, and
+THE LINE declares it. The heightfield you land on is laid out around a bezier
+front for the run's seed — a reason drawn from a table of five, high ground that
+flanks the line and never sits on it, exactly one chokepoint.
+
+It is a **layer over the rolled theatre and never a theatre of its own**: the
+pool, dressing, arrivals, sky and whole palette stay the authored room's (§12.5)
+and only the height is replaced, which is what keeps §13.5 true — nothing
+generated is reachable except through a room that exists.
+
+**And one room cannot carry it.** Every ground was booted with the layer forced
+on and driven for twenty seconds of a real engagement:
+
+    mustafar 9/10 · colosseum 10/10 · wood 10/10 · drifts 10/10 · alpine 10/10 · geonosis 10/10
+    scoria   0/10 — and four of the ten could not be placed at all
+
+Scoria's rocks and wrecks take the standing room with them when the ground moves
+under them. It does not declare `battlefield`, so it keeps its authored contours
+and the mode is safe on it — **but the mode rolls its ground off the seed, so
+roughly one run in seven is a run whose ground was not generated.** That is a
+real inconsistency in what a sitting is, and the honest options are to find what
+scoria's dressing does and fix it, or to say in the design that some rooms are
+authored ground and mean it. Nobody has chosen.
+
+The declaration is the LEVEL's, not the mode's, for the reason `pool` and
+`terrain` are the level's: whether a room survives having its contours replaced
+is a fact about that room. `theline.13` measures all seven either way, so the
+list grows by measurement rather than by somebody deciding it looks fine.
+
+### Attrition is tuned, and the spread is the finding
+
+The user set the target: an engagement fought without the Jedi should cost about
+half a ten-man line. It measures **5.4 of 10 over five seeds** on authored
+contours and 5.7–6.0 on generated ones — the same mean inside the noise, so the
+generated layer moves the SPREAD and not the level.
+
+**The spread is the part worth knowing.** Thirteen runs of the same arm on the
+tuned build come back `4 6 6 3 8 · 7 10 0 · 1 1 3 5 5` — mean 4.5, **sd 2.9**,
+with one engagement in which nobody died at all and one in which the line was
+wiped out. One composed wave meeting one formation is a coin with ten faces: a
+grenade or a Hailfire arriving early is two or three names. So the check's band
+is ±3.0 derived from that sd rather than from taste, and a single red is worth
+re-running before it is believed.
+
+The lever was the two sources of fire **the wave's threat budget never pays
+for** — `GUN.every` 7.0 → 14.0 on the emplacement and the conscript's round
+10 → 5 — which were five of the eight names an engagement cost. It moves an
+engagement's clock by about 5% (mean wave 69 s → 70.5 s), so it is not an answer
+to the length problem in either direction.
+
 ### And the opening wave is 2 bodies on one ground and 49 on another
 
 `theline.11` boots every ground in the mode and reports what area 1 composes at
