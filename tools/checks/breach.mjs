@@ -147,7 +147,34 @@ export async function run({ check, assert }) {
      * a different question and one `command.mjs` already asks. Two arms on two
      * fresh worlds: the gun live, and the gun silenced on frame one. The
      * difference is what the twenty seconds buys.
+     *
+     * ── THE TALLY IS INSTALLED BEFORE A SINGLE BODY IS DEPLOYED ────────────
+     *
+     * `Command.installTeamDamage` puts a PER-INSTANCE `damage` on every body
+     * the mode deploys, capturing `base = e.damage` as the prototype stands at
+     * that moment — so a wrapper installed after `d.start(1)` is never reached
+     * by one of them. The first cut of this read **0 hits and 0 hp while five
+     * names died**, which looks precisely like a gun that cannot shoot.
+     * `tools/_linetoll.mjs` wraps at module scope and that is why its tally was
+     * right. HANDOFF §2.9's rule from the other end: the whole method is put
+     * back, in a `finally`, and `TALLY` is the mutable binding both arms share.
+     *
+     * DYNAMIC IMPORT, like every other import in this file and for HANDOFF
+     * §2.1's reason: a static edge from a check into the game's module graph is
+     * linked before `dom-shim` can map `three` onto `vendor/three`.
      */
+    const { Enemy } = await import('../../src/game/Enemy.js');
+    let TALLY = null;
+    const realDamage = Enemy.prototype.damage;
+    Enemy.prototype.damage = function (amount, point, source, kind, ...rest) {
+      const before = this.hp;
+      const out = realDamage.call(this, amount, point, source, kind, ...rest);
+      if (TALLY && source === TALLY.pit) {
+        const took = Math.max(0, before - this.hp);
+        if (took > 0) { TALLY.gun.hits++; TALLY.gun.hp += took; if (this.hp <= 0) TALLY.gun.killed++; }
+      }
+      return out;
+    };
     const arm = async (silent) => {
       const { world } = await field();
       const d = world.director;
@@ -191,23 +218,10 @@ export async function run({ check, assert }) {
        * than a field of it — HANDOFF §2.9, which is 38 checks' worth of reason.
        */
       const gun = { hits: 0, hp: 0, killed: 0 };
-      /* DYNAMIC, like every other import in this file and for HANDOFF §2.1's
-       * reason: a static edge from a check into the game's module graph is
-       * linked before `dom-shim` can map `three` onto `vendor/three`. */
-      const { Enemy } = await import('../../src/game/Enemy.js');
-      const real = Enemy.prototype.damage;
-      Enemy.prototype.damage = function (amount, point, source, kind, ...rest) {
-        const before = this.hp;
-        const out = real.call(this, amount, point, source, kind, ...rest);
-        if (source === pit) {
-          const took = Math.max(0, before - this.hp);
-          if (took > 0) { gun.hits++; gun.hp += took; if (this.hp <= 0) gun.killed++; }
-        }
-        return out;
-      };
+      TALLY = { pit, gun };
       try {
         for (let f = 0; f < 60 * SECONDS; f++) world.update(1 / 60, input);
-      } finally { Enemy.prototype.damage = real; }
+      } finally { TALLY = null; }
       /* A MAN'S OWN HEALTH, off a body standing in this line rather than a
        * number typed here (HANDOFF §2.4). It is the unit the bar below is
        * stated in. */
@@ -215,8 +229,11 @@ export async function run({ check, assert }) {
       return { start, left: d.roster.living.length, shots: pit.shots, taken: pit.taken,
         gun, manHp: man?.maxHp ?? 0 };
     };
-    const live = await arm(false);
-    const off = await arm(true);
+    let live, off;
+    try {
+      live = await arm(false);
+      off = await arm(true);
+    } finally { Enemy.prototype.damage = realDamage; }
     assert(off.shots === 0, `a silenced gun fired ${off.shots} times`);
     assert(live.shots > 10,
       `the gun fired ${live.shots} times in ${SECONDS} s at a cadence of ${GUN.every} s — it is not `
@@ -257,13 +274,13 @@ export async function run({ check, assert }) {
      */
     const perMin = live.gun.hp / (SECONDS / 60);
     assert(perMin >= live.manHp,
-      `${live.shots * GUN.burst} rounds over ${SECONDS} s put ${live.gun.hits} hits and `
+      `${live.shots} rounds over ${SECONDS} s put ${live.gun.hits} hits and `
       + `${live.gun.hp.toFixed(0)} hp into a formed-up line with nothing else on the field — `
       + `${perMin.toFixed(0)} hp a minute against a body that carries ${live.manHp}. The gun is `
       + 'priced at about one name a minute of its own fire (see GUN.every); below that it is an '
       + 'errand, and §7 asks for a verb.');
     return `${SECONDS} s of one emplacement against a formed-up line, nothing else on the field: `
-      + `${live.shots} bursts (${live.shots * GUN.burst} rounds), ${live.gun.hits} hits, `
+      + `${live.shots} rounds in bursts of ${GUN.burst}, ${live.gun.hits} hits, `
       + `${live.gun.hp.toFixed(0)} hp — ${(perMin / live.manHp).toFixed(2)} men a minute of its own `
       + `fire, ${lost} of ${live.start} names actually down; silenced, `
       + `${off.gun.hp.toFixed(0)} hp and ${off.start - off.left} names`;
