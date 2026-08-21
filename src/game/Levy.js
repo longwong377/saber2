@@ -69,17 +69,30 @@
  * which is HANDOFF §2.3's defect with a new coat.
  */
 
-import { ARCHETYPES } from './Enemy.js';
+import * as THREE from 'three';
+import { ARCHETYPES, paysOut } from './Enemy.js';
 /**
- * `paysOut` IS A CYCLE AND IT IS A SAFE ONE, which is worth stating because
- * `MORALE` had to move out of Command.js for the opposite reason. Levy → World
- * → Levels → Command → Levy is a real import cycle; what makes it harmless is
- * that this is a hoisted function DECLARATION called at runtime, never a
- * constant read at module scope, so there is no frame on which the binding can
- * be `undefined`. It is imported rather than restated because it is the one
- * statement in the tree of what a body is worth (HANDOFF §2.4).
+ * `paysOut` CAME FROM `World.js` AND THE CYCLE WAS NOT SAFE.
+ *
+ * The note that stood here argued that Levy → World → … → Levy was harmless
+ * because `paysOut` is a hoisted function declaration read at runtime rather
+ * than a constant read at module scope. That is true of `paysOut` and it is
+ * not what broke: the cycle it closed was
+ *
+ *     Command → Levy → World → Player → ui/Menu → Command
+ *
+ * and `ui/Menu.js` line 174 calls `registerOrders(FORMATIONS)` AT MODULE
+ * SCOPE, off a `const` in the half-evaluated Command.js. Importing
+ * `Command.js`, `Levels.js` or `tools/_flagship.mjs` as the first module of a
+ * process threw `Cannot access 'FORMATIONS' before initialization` — the
+ * flagship instrument would not load at all. A cycle is safe or unsafe because
+ * of what is at module scope ANYWHERE around it, not because of the shape of
+ * the one binding you are importing.
+ *
+ * So `paysOut` moved to `Enemy.js`, beside the `ARCHETYPES` row it asks about,
+ * and this file reads it from there — still one statement in the tree of what
+ * a body is worth (HANDOFF §2.4), one hop shorter, and out of ui/'s way.
  */
-import { paysOut } from './World.js';
 import { ROUT_PER_FRAME } from './Waves.js';
 
 /** The body class the levy is made of. FLAGSHIP §6's third class. */
@@ -250,8 +263,13 @@ class LevyPack {
     this.hp = Infinity;
     this.broke = false;
     this.body = {
-      position: { x: 0, y: 0, z: 0 }, quaternion: { x: 0, y: 0, z: 0, w: 1 },
-      velocity: { x: 0, y: 0, z: 0 }, angularVelocity: { x: 0, y: 0, z: 0 },
+      /* REAL VECTORS, and it cost a run to learn: `World._resolveBlades` walks
+       * `world.props` and calls `pr.body.position.distanceToSquared(...)` on
+       * every one of them before it looks at anything else, so a duck-typed
+       * body carrying plain `{x,y,z}` throws on the first frame a blade is
+       * lit. `FlightPack` had this right; the shape is copied from it. */
+      position: new THREE.Vector3(), quaternion: new THREE.Quaternion(),
+      velocity: new THREE.Vector3(), angularVelocity: new THREE.Vector3(),
       boundingRadius: 0, mass: 0, invMass: 0, static: true,
       applyImpulse() {}, wake() {},
     };

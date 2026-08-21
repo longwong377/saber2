@@ -17,10 +17,14 @@ import { CohortField } from './Cohorts.js';
 import { WarSupport } from './Support.js';
 import { GrassField, Water, Atmosphere, weather } from '../world/Scenery.js';
 import { BoltPool } from './Bolts.js';
-import { BladeContactSolver, captureSnapshot, gradeCaught, resolveBladeClash, GRADE, GRADE_DAMAGE, GRADE_NAME, DIFFICULTY, CatchWindow, openness, guardCost } from './Combat.js';
+import { BladeContactSolver, captureSnapshot, gradeCaught, resolveBladeClash, GRADE, GRADE_DAMAGE, GRADE_NAME, DIFFICULTY, CatchWindow, openness, guardCost, SCREEN, screenReach } from './Combat.js';
+/* GUARD, for the arc a screen covers. SaberController imports nothing out of
+ * game/ at all, so this edge cannot close a cycle — and the alternative was a
+ * second copy of the shoulder line, which is the twin §2.3 keeps deleting. */
+import { GUARD } from './SaberController.js';
 import { assignSides, DuelMatch, Player, asTeam, bladeTargets, canHarm, hostileTo, pvpRules, sideTeam, TEAM } from './Player.js';
 import { ageDropped } from './Dropped.js';
-import { Enemy, ARCHETYPES, applyModifier, ENEMY_POWERS, FORCE_KINDS, IMPULSE_AS_HP } from './Enemy.js';
+import { Enemy, ARCHETYPES, applyModifier, ENEMY_POWERS, FORCE_KINDS, IMPULSE_AS_HP, paysOut } from './Enemy.js';
 import { WaveDirector, RankSet, boonTick, boonGuard, bondReceive, bondGuardIn, bondGive, BOND, boonById, MODES,
   skirmishConfig, SKIRMISH } from './Waves.js';
 import { Communion, FACETS, insightRate } from './LivingForce.js';
@@ -237,16 +241,14 @@ export function grindWorth(cap) {
 /**
  * WHETHER KILLING THIS BODY IS WORTH ANYTHING — FLAGSHIP §6's third class.
  *
- * The conscript is "worth 0 score and 0 Insight", and the point of it is that
- * a crowd which pays nothing cannot be answered by mowing it. That is one
- * question about a roster row, so it is one function and one field, called by
- * `onEnemyKilled` and available to a check. See `ARCHETYPES.conscript`.
- *
- * A missing `score` reads as unpaid rather than as a plausible default, which
- * is the other half of HANDOFF §2.3: an archetype that forgot to say what it
- * is worth should be visibly worth nothing, not quietly worth something.
+ * MOVED TO `Enemy.js`, beside the table it asks about, and re-exported here so
+ * that every reader of `World.paysOut` is unchanged. The move is not tidying:
+ * `Levy.js` is reached from `Command.js` and imported this from `World.js`,
+ * which closed Command → Levy → World → Player → ui/Menu → Command and made
+ * `Command.js`, `Levels.js` and `tools/_flagship.mjs` unloadable as the first
+ * module of a process. The whole argument is over the definition.
  */
-export function paysOut(A) { return (A?.score ?? 0) > 0; }
+export { paysOut };
 /** Stamina a lost exchange costs, before the attack's tier scales it. */
 const GUARD_COST = 22;
 /**
@@ -3130,10 +3132,110 @@ export class World {
       // on `b.team === entry.team`, and in PvP a duellist is on side 2, 3 or 4.
       // Stamping every player's blade with the party's number told that test
       // the wrong side for three of the four. Same rule as `_onBoltDeflect`.
-      out.push({ saber: p.saber, owner: p, team: asTeam(p.team), guard: p.boltCatch ? p.boltCatch.guard() : null });
+      out.push({ saber: p.saber, owner: p, team: asTeam(p.team), guard: p.boltCatch ? p.boltCatch.guard() : null,
+        screen: this._screenFor(p) });
     }
+    /* NO `screen` ON AN ENEMY BLADE, and it is a rule rather than an omission.
+     * `_onBoltDeflect`'s enemy branch bats a bolt away with no grading and no
+     * bill at all — there is no bar on that body to spend — so a screen there
+     * would be exactly the free damage-reduction aura `SCREEN`'s own note says
+     * the mechanic must not be, handed to every duellist the horde fields. The
+     * day an enemy Jedi is meant to shield ITS line, it needs a pool to pay
+     * from first. */
     for (const e of this.enemies) if (!e.dead && e.saber && e.saber.ignition > 0.5) out.push({ saber: e.saber, owner: e, team: asTeam(e.team) });
     return out;
+  }
+
+  /**
+   * THE GROUND THIS JEDI IS COVERING FOR HIS OWN MEN, or null.
+   *
+   * FLAGSHIP §6's suppression aimed at the man beside you — the whole argument
+   * is over `SCREEN` in Combat.js. This is where the four gates are assembled;
+   * `Bolts.screenIntercept` enforces three of them per bolt and this one owns
+   * the fourth, which is the bar:
+   *
+   *   `screenReach(p.force)` IS THE REACH. The price is Force by the metre, so
+   *   the radius a player is granted is the price solved the other way — and
+   *   that means the screen narrows as the bar empties and widens as it comes
+   *   back, with no second rule to keep in step with the first and nothing new
+   *   on the HUD. An empty bar returns 0 and this returns null.
+   *
+   * `bladeHeld` and not `control.guard.active`: a raised zone only exists under
+   * the `directional` scheme, and a mechanic that vanished for a player who
+   * picked one of the continuous-aim schemes would be a feature with a
+   * settings-menu switch nobody was told about. Holding the blade is what
+   * "I am guarding" means in every scheme.
+   *
+   * The body list is rebuilt in place each frame rather than allocated: this
+   * runs twice a frame per player (here and in the nerve pass), and the fan in
+   * `_boltHitTest` is the one place in this file where allocation per frame has
+   * already been measured to cost.
+   */
+  _screenFor(p) {
+    if (!p.control || !p.control.bladeHeld) return null;
+    const reach = screenReach(p.force);
+    if (!(reach > 0.5)) return null;
+    const side = asTeam(p.team);
+    const pool = this._screenPool || (this._screenPool = []);
+    const desc = this._screenDesc || (this._screenDesc = {
+      origin: new THREE.Vector3(), axis: new THREE.Vector3(), reach: 0,
+      sector: GUARD.reach, margin: SCREEN.margin, bodies: [],
+      /**
+       * ── AND THE BONE TEST, WHICH IS WHAT MAKES IT A SCREEN ──────────────
+       *
+       * The bound sphere in `screenIntercept` is a reject and nothing more.
+       * Measured on a real Command battle with the sphere as the whole test:
+       * **128 bolts screened for 8 fewer arriving in the rank** — the bound
+       * wraps every capsule a body presents, so it stands about a metre off
+       * the chest and sixteen near misses were answered for every shot that
+       * was going to land. That is precisely the aura `SCREEN`'s own note says
+       * the mechanic must not be, and it had it.
+       *
+       * So the question is put to the body: the same `capsules()` fan
+       * `_boltHitTest` resolves a bolt through, against a segment run forward
+       * along the bolt's own line as far as the candidate can be. One reader
+       * for "would this bolt have hit that man", rather than a second, looser
+       * model of it standing next to the real one (HANDOFF §2.4).
+       *
+       * Cheap because of where it sits: only bolts that already crossed the
+       * reach, arrived inside the arc and cleared a body's bound get here, and
+       * `capsules()` is the same call the bolt is about to make anyway if the
+       * screen lets it through.
+       */
+      hits: (rec, from, dir, len) => {
+        const e = rec.e;
+        if (!e || e.dead) return false;
+        _screenEnd.copy(from).addScaledVector(dir, len);
+        for (const c of e.capsules()) {
+          if (segmentNear(from, _screenEnd, c.p0, c.p1, c.r)) return true;
+        }
+        return false;
+      },
+    });
+    desc.origin.copy(p.chest);
+    desc.axis.copy(p.aimDir);
+    desc.reach = reach;
+    desc.bodies.length = 0;
+    const r2 = reach * reach;
+    let n = 0;
+    for (const e of this.enemies) {
+      if (e.dead || asTeam(e.team) !== side) continue;
+      const dx = e.position.x - desc.origin.x, dz = e.position.z - desc.origin.z;
+      if (dx * dx + dz * dz > r2) continue;
+      /* THE SAME SPHERE `_boltHitTest` REJECTS ON. `boltBound` wraps what the
+       * body actually presents — the dwarf spider's legs stand its capsules
+       * 2.7 m up and well outside its hull radius — so a screen built off
+       * `radius` and `chestY` would have been blind to exactly the bodies that
+       * note was written about. A ragdoll answers null and is skipped: a man
+       * already on the ground is not one you are covering. */
+      const b = boltBound(e);
+      if (!b) continue;
+      const rec = pool[n] || (pool[n] = { x: 0, y: 0, z: 0, r: 0, e: null });
+      rec.x = e.position.x; rec.y = e.position.y + b.y; rec.z = e.position.z; rec.r = b.r; rec.e = e;
+      desc.bodies.push(rec);
+      n++;
+    }
+    return desc.bodies.length ? desc : null;
   }
 
   /* ── catch and throw ─────────────────────────────────────────────── */
@@ -3324,6 +3426,12 @@ export class World {
      * read it, so nothing said so; charging on every rung instead of one makes
      * it forty times as likely and `guardSpent` would carry the NaN outward.
      */
+    /* AND THE ONE THAT WAS NOT FOR HIM AT ALL, COUNTED. `screened` is
+     * cumulative and monotone for the reason `guardSpent`'s own note gives: a
+     * rate cannot be read off a pool that four other things spend. It is the
+     * only number that separates a Jedi who is covering his line from one who
+     * is merely standing in it, and `tools/checks/screen.mjs` reads it. */
+    if (snap && snap.screen > 0) owner.screened = (owner.screened || 0) + 1;
     const cost = guardCost(res.grade, snap);
     if (cost.stamina > 0 && typeof owner.stamina === 'number') {
       const paid = Math.min(cost.stamina, owner.stamina);
@@ -3965,7 +4073,7 @@ export class World {
     }
 
     // Freeze the blade half of the grade NOW; the aim half waits for the throw.
-    const snap = captureSnapshot(bolt, owner.saber, { bladeT: hit.bladeT, point: bladePoint, auto: hit.auto });
+    const snap = captureSnapshot(bolt, owner.saber, { bladeT: hit.bladeT, point: bladePoint, auto: hit.auto, screen: hit.screen });
     const cw = owner.boltCatch;
 
     // ── CAUGHT. Only a driven blade takes hold of a bolt: `snap.caught` is the
@@ -3973,7 +4081,13 @@ export class World {
     // A blade you merely parked in the way still blocks, and a block still
     // scatters — which is precisely what stops catch-and-throw from collapsing
     // into hold-the-button-and-win.
-    if (cw && snap.caught) {
+    /* `!snap.screen` — A SCREENED BOLT CANNOT BE CAUGHT AND HELD. The catch
+     * window pins the bolt onto the blade (`bolts.hold`), and this contact
+     * happened up to fourteen metres from it: the bolt would jump the width of
+     * a rank to stick to a weapon that was never near it. Turning it aside
+     * where it is is both the honest picture and the one the mechanic is named
+     * after. */
+    if (cw && snap.caught && !snap.screen) {
       // Stack them along the blade so three caught in a flurry are three
       // visible objects and not one. add() has to come FIRST: it is the thing
       // that can refuse (the blade is already carrying maxHeld), and a bolt
@@ -6427,6 +6541,11 @@ const _bolt4 = new THREE.Vector3();
  * there is honest, and there are few enough loose corpses that the saving is
  * not worth a wrong answer.
  */
+/* The far end of the segment `_screenDesc.hits` runs forward along a bolt's
+ * line. Module scope for the reason every other scratch here is: the test runs
+ * per candidate body per screened bolt and must not allocate. */
+const _screenEnd = new THREE.Vector3();
+
 function boltBound(e) {
   if (e.actor?.ragdolled) return null;
   /* The bubble is a capsule too, so a shield coming up or going down changes

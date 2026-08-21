@@ -987,6 +987,37 @@ export const ARCHETYPES = {
   },
 };
 
+/**
+ * WHETHER KILLING THIS BODY IS WORTH ANYTHING — FLAGSHIP §6's third class.
+ *
+ * The conscript is "worth 0 score and 0 Insight", and the point of it is that
+ * a crowd which pays nothing cannot be answered by mowing it. That is one
+ * question about a roster row, so it is one function and one field, called by
+ * `World.onEnemyKilled`, by `Levy` and by a check.
+ *
+ * A missing `score` reads as unpaid rather than as a plausible default, which
+ * is the other half of HANDOFF §2.3: an archetype that forgot to say what it
+ * is worth should be visibly worth nothing, not quietly worth something.
+ *
+ * ── AND IT LIVES BESIDE THE TABLE IT ASKS ABOUT, WHICH IT DID NOT ───────
+ *
+ * It was `World.paysOut`, and `Levy.js` — reached from `Command.js` — imported
+ * it from there. That closed a cycle nobody could see until it fired:
+ * Command → Levy → World → Player → ui/Menu → Command, and importing
+ * `Command.js`, `Levels.js` or `tools/_flagship.mjs` as the FIRST module of a
+ * process then threw `Cannot access 'FORMATIONS' before initialization` at
+ * Menu.js:174 — the very line whose own comment records having measured that
+ * all eight entry points evaluate clean, because "Command imports Enemy,
+ * Bodies, Combat, Bolts, Waves and MathUtil, and none of those reaches back
+ * into ui/". Levy did, one hop further on.
+ *
+ * The rule this is an instance of: a predicate about a TABLE belongs in the
+ * module that owns the table. `World.js` re-exports it, so every existing
+ * reader is unchanged.
+ */
+export function paysOut(A) { return (A?.score ?? 0) > 0; }
+
+
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  The other side's Force                                                */
 /* ══════════════════════════════════════════════════════════════════════ */
