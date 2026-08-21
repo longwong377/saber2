@@ -31,14 +31,23 @@ import * as THREE from 'three';
 const FP = process.env.PALM_TP !== '1';
 const { world } = await bootWorld({
   level: 'drifts',
-  settings: { mode: 'sandbox', difficulty: 'knight', firstPerson: FP,
-    fpHands: process.env.PALM_HANDS || 'one' },
+  settings: { mode: 'sandbox', difficulty: 'knight', firstPerson: FP },
 });
 const p = world.player;
 p.camera.firstPerson = FP;
 p._applyViewMode?.();
 p.saber.lit = true;
-for (let i = 0; i < 120; i++) world.update(1 / 60, idleInput());
+/* HOW MANY HANDS, ASKED FOR THE WAY A PLAYER ASKS. `PALM_HANDS=one` used to
+ * write the `fpHands` setting, which is gone: the count is a fact about the
+ * body (`Player.handsOnHilt`) and the only thing that makes it one is the
+ * one-hand key. Holding the key is also the only way to get the state the
+ * game can actually reach — the setting moved the arms and left `GRIPS.one`
+ * unasked-for, so every palm reading taken through it was of a hand on a
+ * two-handed guard. */
+const ONE = process.env.PALM_HANDS === 'one';
+const input = idleInput();
+if (ONE) input.act = (id) => id === 'grip2';
+for (let i = 0; i < 120; i++) world.update(1 / 60, input);
 
 const cam = world.engine.camera;
 cam.updateMatrixWorld(true);
@@ -87,12 +96,17 @@ for (const [bone, side] of [['handR', 'R'], ['handL', 'L']]) {
   toShaft.normalize();
   grip.push([side, palm.dot(toShaft), knuck.dot(toShaft), r, palm.clone(), knuck.clone()]);
 }
-console.log(`\n  ${FP ? 'FIRST' : 'THIRD'} PERSON, hands=${process.env.PALM_HANDS || 'one'}`);
+console.log(`\n  ${FP ? 'FIRST' : 'THIRD'} PERSON, ${p.handsOnHilt()} hand(s) on the hilt`);
 console.log('   palm·(wrist→shaft)   knuckles·(wrist→shaft)   wrist off the axis');
 for (const [side, pd, kd, r] of grip) {
   console.log(`   ${side}   ${pd.toFixed(2).padStart(6)}              ${kd.toFixed(2).padStart(6)}            ${(r * 1000).toFixed(0)} mm`);
 }
-if (grip.length === 2) {
+/* …AND ONLY WHEN THERE ARE TWO HANDS ON THE SHAFT. The agreement between the
+ * palms is a property of a shared grip; printed against a hand that is down by
+ * the hip it is a dot product between two unrelated directions, and it read
+ * −0.69 there — which is indistinguishable from the −1.00 defect this whole
+ * tool was written to catch. */
+if (grip.length === 2 && p.handsOnHilt() === 2) {
   console.log(`   the two palms agree to ${grip[0][4].dot(grip[1][4]).toFixed(2)}, `
     + `the two knuckle axes to ${grip[0][5].dot(grip[1][5]).toFixed(2)}`);
 }

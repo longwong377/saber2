@@ -419,11 +419,6 @@ export const DEFAULT_SETTINGS = {
   // chose it, so without the bump the new default would reach nobody who had
   // opened the menu once.
   scheme: 'directional',
-  /* ONE HAND OR TWO, in first person only — see the note over `twoHanded` in
-   * Player._updateBody for why this is a player's decision and not a tuning
-   * number. It changes where the ARMS go and nothing about the blade's grip
-   * model, so neither reach, stiffness nor inertia moves with it. */
-  fpHands: 'one',
   deflectAim: 'reticle',
   forcePower: 1,
   forceDrain: 1,
@@ -907,7 +902,6 @@ export const SETTING_READERS = {
   fov:             ['main.js', 'settings.fov'],
   invertY:         ['main.js', 'input.invertY = settings.invertY'],
   firstPerson:     ['game/World.js', '!!this.settings.firstPerson'],
-  fpHands:         ['game/Player.js', "this.world.settings?.fpHands === 'two'"],
   scheme:          ['game/World.js', 'scheme: this.settings.scheme'],
   deflectAim:      ['game/World.js', 'this.settings.deflectAim'],
   forcePower:      ['game/Player.js', 'this.world.settings?.forcePower'],
@@ -5778,45 +5772,6 @@ export class Menu {
     }
   }
 
-  /**
-   * HOW MANY HANDS ARE ON THE HILT WHEN YOU ARE LOOKING DOWN IT.
-   *
-   * This was decided once, in code, and the decision is defensible enough that
-   * its note in Player._updateBody runs to a page: two fists on a 25 cm shaft
-   * at half a metre from the lens hid 91% of the hilt, and taking the off hand
-   * off removed both the second occluder and the folded left arm the near
-   * plane was slicing. Then the same player who asked for one hand said "you
-   * hold it only with one hand in 1st person and it's a weird awkward reverse
-   * grip", which is two complaints wearing one sentence — the reverse grip was
-   * real and is fixed (see FP_GRIP_SIDE), and the hand count was never a fault
-   * at all, it was a taste.
-   *
-   * A taste belongs on the options screen. Both poses are built, both are
-   * measured by tools/checks/first-person.mjs, and the player picks.
-   */
-  _buildFpHands() {
-    const host = document.getElementById('opt-fphands');
-    if (!host) return;
-    const modes = [
-      ['one', 'One hand', 'The off hand stays down. You see the whole hilt and the emitter, '
-        + 'and nothing folds across the near plane.'],
-      ['two', 'Both hands', 'The off hand joins the grip below the first. Closer to the '
-        + 'third-person guard, at the cost of some of the hilt behind a glove.'],
-    ];
-    host.innerHTML = '';
-    for (const [key, name, blurb] of modes) {
-      const d = document.createElement('div');
-      d.className = 'diff' + (this.s.fpHands === key ? ' sel' : '');
-      d.innerHTML = `<i class="dot"></i><div class="txt"><b>${name}</b><span>${blurb}</span></div>`;
-      this._activate(d, () => {
-        audio.ui('click');
-        this._pick('fpHands', key);
-        [...host.children].forEach(c => c.classList.toggle('sel', c === d));
-      });
-      host.appendChild(d);
-    }
-  }
-
   _buildOptions() {
     /* FOUR of these sliders index a TABLE, and the tables can grow. Their
      * `max` is taken from the table rather than typed into index.html, so
@@ -6093,7 +6048,6 @@ export class Menu {
     // Same shape and the same reason as the box above it: HUD.Minimap asks
     // `world.settings` on the frame it draws, and that is this object.
     this._buildTroopNames();
-    this._buildFpHands();
     this._check('opt-minimap-sense', 'minimapSense');
     const test = document.getElementById('btn-voice-test');
     if (test) test.addEventListener('click', () => this._auditionVoice(this.s.voiceIndex));

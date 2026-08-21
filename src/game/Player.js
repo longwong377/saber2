@@ -1377,7 +1377,45 @@ export const GRIP_ROLL_L = new THREE.Quaternion().setFromAxisAngle(new THREE.Vec
  * is derived per weapon rather than typed once, and the nine other hilts get
  * their own. See `fpGripOn`.
  */
-export const GRIP_AT = { R: 0.050, L: -0.015, FP: -0.075 };
+const GRIP_PAIR = { R: 0.050, L: -0.015 };
+/**
+ * `ONE` IS WHERE A SINGLE FIST CLOSES, and it is the middle of the pair rather
+ * than a fourth number, because that is what the pair is FOR: the leading hand
+ * sits at the top of the grip section to leave a hand's width of it below for
+ * the other one. Take the other one away and the reason to sit high goes with
+ * it — a one-handed hold centres on the grip, and a fist parked at the emitter
+ * end of it with 65 mm of bare metal underneath is the two-handed pose missing
+ * a hand.
+ *
+ * Derived, so it cannot drift from the pair it is the middle of. What it buys
+ * is measured in tools/_wristsweep.mjs (`--one`), against the wrist and the
+ * forearm the whole arm solve is ratcheted on, with the one-hand key actually
+ * held down:
+ *
+ *     GRIP_AT.ONE   third person, one hand on the hilt
+ *                   worst   median   fore °/s
+ *       −0.015       73.4     9.2      1554      (the pair's OFF grip)
+ *        0.000       75.6    11.8      1107
+ *        0.0175      79.0    14.7      1112      <- ships, the middle of the pair
+ *        0.035       79.6    17.7      1117
+ *        0.050       80.6    20.2      1122      (the pair's LEADING grip — what
+ *                                                 one hand used to hold)
+ *
+ * IT IS A SMALL LEVER AND THE COLUMN IS MONOTONE, which is worth saying
+ * plainly: the middle buys 1.6° of worst wrist and 5.5° of median over holding
+ * the leading grip, and further down the shaft buys more of both until the
+ * forearm starts paying for it at the pair's own bottom end (1554 °/s). What
+ * moves this arm is the GRIP MODEL — one hand takes the third-person wrist
+ * from 89.4/36.7 to 79.0/14.7 — and this is the last few degrees of it. The
+ * middle is chosen because it is where the hand belongs rather than because it
+ * won a sweep; the sweep is here to show it costs nothing.
+ *
+ * It moves the FIST along a shaft the controller has already placed, not the
+ * shaft: `control.handPos` is the saber root's anchor and nothing here writes
+ * it, so the blade reaches exactly as far as it did and only the arm's posture
+ * under it changes.
+ */
+export const GRIP_AT = { ...GRIP_PAIR, FP: -0.075, ONE: (GRIP_PAIR.R + GRIP_PAIR.L) / 2 };
 
 /**
  * …AND THE FIRST-PERSON GRIP IS THE HILT'S, NOT THE GAME'S.
@@ -1484,8 +1522,46 @@ const FP_HAND_GAP = 0.065;
  *
  * An object rather than a constant so a render can sweep it without an edit:
  * `tools/shot.mjs --pose` sets the value it is testing.
+ *
+ * ── AND THERE ARE TWO OF THEM, BECAUSE THERE ARE TWO GRIPS ─────────────────
+ *
+ * The table above was taken with the off hand off the hilt and the blade's
+ * grip model still `GRIPS.two` — which is a state the game could reach only
+ * through the `fpHands` option, because that option moved the ARMS and left
+ * the weapon alone. It is gone (see `handsOnHilt`), and with it the pretence
+ * that one first-person roll could serve both grips: a player who presses the
+ * one-hand key gets `GRIPS.one`, whose hilt sits 185 mm outboard of the view
+ * axis against 55 and reaches 0.36 from the anchor against 0.29, and the fist
+ * has to come round the shaft from somewhere else entirely.
+ *
+ * Swept on the ratchet's own bench with the one-hand key actually held
+ * (`tools/_wristsweep.mjs --fproll`), worst wrist / worst forearm, and beside
+ * them the two readings the 60° above was chosen on:
+ *
+ *     roll      two hands on the hilt            one hand on the hilt
+ *            wrist  fore°/s  under  out  eye   wrist  fore°/s  under  out  eye
+ *       0°   111.8    6448   −22 mm −0.34 −0.03  108.8   2773  −31 mm −0.02 0.56
+ *      15°   114.9    3852   −31    −0.37 −0.04  109.9   2382  −38    −0.04 0.62
+ *      30°   116.6    1912   −38    −0.38 −0.06  102.3   2429  −43    −0.05 0.65  <- one
+ *      45°   116.6    1719   −42    −0.36 −0.06  112.5   3520  −45    −0.07 0.63
+ *      60°   115.1    1605   −44    −0.31 −0.07  167.6   3002  −46    −0.07 0.56  <- two
+ *      90°   108.0    2225   −39    −0.16 −0.06  150.7   3621  −40    −0.07 0.33
+ *
+ * SIXTY IS THE WORST VALUE IN THE ONE-HANDED COLUMN — 167.6° is a wrist folded
+ * further back than the 145 the ratchet allows and 3002 °/s is past its 2700,
+ * and both were live and unmeasured, because no bench in this repo had ever
+ * pressed the one-hand key. The three quantities do not fight over the fix:
+ * 30° is simultaneously the best wrist, the highest `eye` (the palm turned
+ * back at the lens, which is the inside of the wrist a real one-handed guard
+ * shows), and 43 of the 46 mm of clearance the fist can get under the grip
+ * point. It is one of only two rows in that column inside both ratchet bounds.
+ *
+ * 60° stays for two hands, where it is still the best forearm in the sweep and
+ * the deepest under the grip. The two numbers being different is the whole
+ * finding: a fist that shares a shaft with another fist and a fist alone on it
+ * do not come round it the same way.
  */
-export const FP_TUNE = { roll: 60 * Math.PI / 180 };
+export const FP_TUNE = { roll: { two: 60 * Math.PI / 180, one: 30 * Math.PI / 180 } };
 export function fpGripOn(saber) {
   const lo = saber?.hiltFloor;
   return typeof lo === 'number' && Number.isFinite(lo) ? lo + FIST_CLEAR : GRIP_AT.FP;
@@ -2930,6 +3006,54 @@ export class Player {
    * and a player who puts theirs down are in one state, not two.
    */
   get disarmed() { return !!this.saberDown; }
+
+  /**
+   * HOW MANY HANDS ARE ON THE HILT — 0, 1 or 2, and it is a FACT about the
+   * body rather than a setting.
+   *
+   *   "Why the fuck would it be either or, both should be modeled and reflect
+   *    how many hands you're holding it with"
+   *
+   * It used to be half a fact. `_poseArms` composed four true things — the
+   * grip model, the throw state, whether a gesture had borrowed the off arm,
+   * whether the hilt was on the floor — and then ANDed a fifth term onto them
+   * that was neither about the hands nor about the weapon: which camera you
+   * were in, through a `fpHands` option on the Interface panel. So the same
+   * body, in the same state, had a different number of hands on its sword
+   * depending on where the lens was, and the settings screen could put a
+   * second fist onto a hilt the player had just taken a hand off.
+   *
+   * Every clause below is something the player DID, and each one is read from
+   * the state that already carries it rather than restated here:
+   *
+   *   `saberDown`      the hilt is on the ground — nothing in either hand
+   *   `driving`        both hands are on a machine's controls, and the blade
+   *                    is on your belt (Driving.js's `Crew` retracts and hides
+   *                    it without setting `saberDown`, because you have not
+   *                    dropped it)
+   *   `throwState`     anything but `held` is a blade in the air: thrown,
+   *                    flown by the Force (`piloted`), or on its way home
+   *   `control.grip`   the blade's own grip model, which `_readInput` sets to
+   *                    'one' for the one-hand key, a live telekinetic grip on
+   *                    a body or an enemy, a stasis field, and a thrown saber
+   *   `gesture.kind`   the off arm is mid-cast — a push, a pull, a hurl, an
+   *                    unleash, lightning, a rend, sense, heal, the stratagem
+   *                    comm, a designator. Thirteen of them, and each takes
+   *                    the hand off the hilt for as long as it runs
+   *
+   * ZERO IS NOT REACHABLE BY THE POSER TODAY and is still what this returns,
+   * because it is what is true: `Player.update` hands the whole frame to
+   * `Crew` and returns before `_updateBody` ever runs, so a man at the
+   * controls keeps whatever pose he climbed in with. That is a defect in the
+   * DRIVING pose and not in this answer, and writing 1 here to match the
+   * pose would be the hand-maintained table beside its generated twin that
+   * HANDOFF §2.3 is about.
+   */
+  handsOnHilt() {
+    if (this.saberDown || this.driving || this.throwState !== 'held') return 0;
+    if (this.control.grip !== 'two' || this.gesture.kind) return 1;
+    return 2;
+  }
 
   /**
    * THIS BODY, AS SOMETHING A BLADE CAN FIND.
@@ -5178,39 +5302,43 @@ export class Player {
     // A gesture takes the off hand off the hilt without touching the blade's
     // grip model — see the note in _readInput on why those are separate.
     /**
-     * FIRST PERSON IS ONE-HANDED, AND THAT IS A DECISION ABOUT WHAT A
-     * FIRST-PERSON GRIP IS — not a tuning pass. It is the player's call and the
-     * player made it ("no half measures").
+     * THE POSE FOLLOWS THE HAND COUNT, AND THE HAND COUNT IS NOT THE CAMERA'S.
      *
-     * Three separate reports of "the first person hand/hilt looks like jumbled
-     * garbage" were answered by moving the shoulders off the ribcage and by
-     * raising the blade anchor. Both were real faults, both are fixed, and the
-     * complaint survived them — because the fault was never the pose. It was
-     * OCCLUSION, and nothing had ever measured it: 91% of the on-screen hilt was
-     * behind a glove, with two fists on a 25 cm shaft at 0.5 m from the lens.
+     * `handsOnHilt` is the whole of the decision and it names every fact it
+     * reads; there is no second copy of it here and there is no per-camera
+     * boolean. What used to stand in this line was `… && (!firstPerson ||
+     * settings.fpHands === 'two')`, so a player who was demonstrably holding
+     * the hilt with both hands watched one of them let go when they pressed
+     * the view key — and the options screen carried a card row that could put
+     * a fist back onto a hilt the game had just taken a hand off.
      *
-     * Taking the off hand off the hilt removes BOTH halves of that in one move —
-     * the second occluder, and the folded left arm that the near plane was
-     * slicing whenever the fists were low enough for the first to matter. It is
-     * also what the reference the player supplied actually shows.
+     * WHAT IT COSTS IN FIRST PERSON IS THE HILT, and it is measured rather
+     * than argued (tools/checks/first-person.mjs, "how many hands are on the
+     * hilt is what you see"): at half a metre from the lens ONE fist leaves
+     * 32% of the shaft behind a glove and TWO leave 65%. That is not a defect
+     * to be tuned out — two closed hands are 180 mm of the 233 mm of shaft
+     * this samples, so 65% is most of what two fists on a hilt can possibly
+     * leave visible. The player who wanted both grips modelled has the clear
+     * view one keypress away, on the key that means what it does everywhere
+     * else in the game: the one-hand grip.
      *
-     * Third person is untouched: at 3.5 m the second hand costs nothing and a
-     * two-handed guard is the form the whole controller is tuned around
-     * (`GRIPS.two` vs `GRIPS.one` move handExtend 0.29 → 0.36). This changes
-     * where the ARMS go, and nothing about the blade's grip model — `control.grip`
-     * is not touched, so first person keeps the two-handed guard's reach,
-     * stiffness and inertia and does not silently become a different weapon.
+     * Nothing about the blade's grip MODEL is decided here — `control.grip` is
+     * read and never written — so neither reach, stiffness nor inertia moves
+     * with the arms. See GRIPS in SaberController.
      */
-    const twoHanded = this.control.grip === 'two' && this.throwState === 'held'
-      && !this.gesture.kind && !this.saberDown
-      && (!this.camera.firstPerson || this.world.settings?.fpHands === 'two');
+    const hands = this.handsOnHilt();
+    const twoHanded = hands === 2;
     // In first person the arms hang off the VIEW, not off the ribcage, and
     // `chest` — which is the frame every elbow pole below is built in — becomes
     // the point midway between the two viewmodel shoulders. See _anchorViewArms.
     const chest = this.camera.firstPerson
       ? this._anchorViewArms(_v1) : rig.worldPos('chest', _v1);
 
-    if (this.throwState === 'held' && !this.saberDown) {
+    /* …and the same reader decides WHETHER there is a hilt in a hand at all,
+     * rather than a second spelling of two of its clauses. It read
+     * `throwState === 'held' && !saberDown` here, which is `handsOnHilt() > 0`
+     * with the driving clause missing — HANDOFF §2.4. */
+    if (hands > 0) {
       const fp = this.camera.firstPerson;
       /* GRIP_AT IS A PLACE ON THE HILT, so it moves with the hilt. The offsets
        * are in the saber ROOT's frame and `setGripScale` scales the hilt group
@@ -5227,7 +5355,11 @@ export class Player {
        * third-person pair, whose upper fist is 12 cm nearer the blade and put
        * a glove across the emitter at 0.5 m from the lens. */
       const fpPair = fp && twoHanded ? FP_HAND_GAP * 0.5 : 0;
-      const fpR = fp ? fpGripOn(this.saber) + fpPair : GRIP_AT.R;
+      /* …AND THE THIRD-PERSON FIST MOVES TOO WHEN IT IS THE ONLY ONE. First
+       * person already had a grip of its own for one hand and third person did
+       * not: it held `GRIP_AT.R`, which is the top half of a two-handed pair,
+       * with the whole lower grip section empty under it. See `GRIP_AT.ONE`. */
+      const fpR = fp ? fpGripOn(this.saber) + fpPair : (twoHanded ? GRIP_AT.R : GRIP_AT.ONE);
       const gripR = this.saber.root.localToWorld(_v2.set(0, fpR * gs, 0));
       const gripL = this.saber.root.localToWorld(
         _v3.set(0, (fp ? fpR - FP_HAND_GAP : GRIP_AT.L) * gs, 0));
@@ -5306,13 +5438,18 @@ export class Player {
        * untouched — the arm solve is correct there and has its own sweep
        * behind it.
        */
+      /* …AND THE ROLL IS THE GRIP'S, NOT THE VIEW'S. One fist on a shaft and
+       * two fists on it come round it from different places — see the sweep
+       * over FP_TUNE, where the value that is best for two hands is the WORST
+       * row in the one-handed column. */
+      const fpRoll = FP_TUNE.roll[twoHanded ? 'two' : 'one'];
       if (fp) {
         _v10.set(FP_GRIP_SIDE, 1, 0).normalize().applyQuaternion(this.camera.aimQuat);
         /* …AND THEN ROLLED ROUND THE SHAFT. `toward` fixes where the fist sits
          * on the circle about the hilt, and up-and-inboard is only one point on
          * it. See FP_TUNE for the sweep this is picked from. */
-        if (FP_TUNE.roll) {
-          _v10.applyAxisAngle(_v9.set(0, 1, 0).applyQuaternion(_q1), FP_TUNE.roll);
+        if (fpRoll) {
+          _v10.applyAxisAngle(_v9.set(0, 1, 0).applyQuaternion(_q1), fpRoll);
         }
       } else {
         _v10.subVectors(gripR, rig.worldPos('armR', _v9));
@@ -5333,8 +5470,8 @@ export class Player {
        * leading hand reads, mirrored only in the side the arm comes from. */
       if (fp) {
         _v10.set(-FP_GRIP_SIDE, 1, 0).normalize().applyQuaternion(this.camera.aimQuat);
-        if (FP_TUNE.roll) {
-          _v10.applyAxisAngle(_v9.set(0, 1, 0).applyQuaternion(_q1), FP_TUNE.roll);
+        if (fpRoll) {
+          _v10.applyAxisAngle(_v9.set(0, 1, 0).applyQuaternion(_q1), fpRoll);
         }
       } else _v10.subVectors(gripL, rig.worldPos('armL', _v9));
       handPoseOnHilt('L', _q1, _v10, _q3, _v9, hs);
