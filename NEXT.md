@@ -587,6 +587,26 @@ Gate at the end: **1718 passed, 0 failed.**
   ground it fell on. Of nine trunks realised in the wood, four had surfaces
   under the terrain and one had fallen to −179 m. The floor query is right about
   all of them; the solver put them there.
+- **A joining player bills the host for the HOST'S OWN bolts, and the horde
+  pays a ~50% surcharge for it.** Found while chasing a `command-pvp` flake and
+  NOT fixed — it is pre-existing, it is core net code, and it moves attrition,
+  which another lane is tuning. The road: `_spawnNetBolts` fires the host's
+  replicated bolts into the client's own pool as real bolts (deliberately — a
+  guest must be able to deflect them), `_boltHitTest` resolves them against the
+  client's own mirrors, and `_reconcileClaims` then bills the host for every
+  hp its mirror lost "whatever dealt it". So one round fired by a host trooper
+  is simulated on both machines and charged twice. Measured on a real co-op
+  Command pair on geonosis, 45 s, **the joining player holding `idleInput` and
+  firing nothing**: 813 claims reaching the host asking for 15 787 hp, and on
+  the horde the host applied **110.6 hp of its own bolt damage and 57.0 hp more
+  on the peer's word**. Your own named troopers are spared only because
+  `applyClaim`'s `canHarm` gate refuses a peer who may not harm them — 0.0 hp
+  of the same road landed on a trooper in the same run, which is the gate
+  working. The shape of a fix is that a bolt whose owner is a replicated body
+  and which no local blade has touched is the host's own fire and its damage is
+  not this machine's to claim; `deflected`/`turned` already mark the bolts that
+  ARE. Sizing it first matters: co-op is currently about 50% easier than the
+  single-machine numbers every tuning pass was taken on.
 
 ---
 
