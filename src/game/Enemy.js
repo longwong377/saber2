@@ -1307,8 +1307,37 @@ const keepsWind = (A) => !!(A.boss || A.custom === 'beast');
  * Rancor on the sand — and why a Hailfire goes down on its first wheel, which
  * `Rig.js` had already said in as many words ("losing one is losing the pair").
  */
+/**
+ * ── AND A MACHINE MAY STATE ITS OWN NUMBER, WHICH THREE OF THEM HAVE TO ───
+ *
+ * `3 for a walker, 1 for everything else` is the right default and it is wrong
+ * at both ends of the roster the giants added. It is derived from a body plan
+ * nobody declared — four to six legs, lose half of them — and it does not
+ * survive a leg count of three or of twelve:
+ *
+ *   OCTUPTARRA MAGNA TRI-DROID. Three legs, and the reference is explicit that
+ *     this is the machine's defect rather than a balance choice: "its
+ *     three-legged design was its primary weakness, as if one was damaged, the
+ *     entire droid would topple over." The clamp would have asked for two,
+ *     which is a tripod standing on one leg — a pose that cannot exist.
+ *   SPHA. TWELVE legs under a gun platform. Three of twelve is a quarter of
+ *     the machine's support and it would fall over; five is a load path that
+ *     has actually failed, and it is still by far the cheapest kill on the
+ *     roster measured in metres of leg.
+ *   NR-N99 SNAIL TANK. ONE tread. `chains - 1` is zero there and the `max(1,…)`
+ *     already rescued it, so the field changes nothing for this body — it is
+ *     named here because it is the case that proves the clamp is a floor and
+ *     not a rule, and because a reader who finds `toppleAt: 1` on the tri-droid
+ *     will want to know why the tank does not carry one.
+ *
+ * The clamp stays and is applied to the declared number as well, because the
+ * reason it exists is unchanged: nothing may be asked for more legs than it
+ * has. A machine that declares five and grows a sixth leg tomorrow is asked
+ * for five; one that declares five and loses six of its twelve to a redesign
+ * is asked for five and not for a number it can never reach.
+ */
 export function toppleAt(A, rig) {
-  const authored = A?.custom === 'walker' || A?.custom === 'beast' ? 3 : 1;
+  const authored = A?.toppleAt ?? (A?.custom === 'walker' || A?.custom === 'beast' ? 3 : 1);
   let chains = 0;
   for (const b of (rig?.list ?? [])) {
     if (b.role === 'leg' && b.parent?.role !== 'leg') chains++;
@@ -4524,6 +4553,49 @@ export class Enemy {
       }
     }
 
+    /**
+     * ── A SIEGE GUN HAS TO STOP TO SHOOT, AND STAYING STOPPED IS THE WHOLE
+     *    OF WHAT MAKES IT A DIFFERENT ENEMY ───────────────────────────────
+     *
+     * The reference for the SPHA is unusually specific about this and it is the
+     * only interesting thing about how the machine moves: it "only used its
+     * twelve legs when maneuvering between firing positions; when attacking an
+     * enemy target, a SPHA-T remained motionless to give its gunners added
+     * precision". So the artillery does not walk and shoot. It walks, it stops,
+     * it settles, it charges, it fires, and only then does it walk again.
+     *
+     * Three states out of two fields, and every one of them is something the
+     * player can see from across the field:
+     *
+     *   `plant`  seconds of stillness the machine must bank before it is
+     *            allowed to begin its telegraph. Wander inside that window and
+     *            the tally resets — which is what makes shoving one, gripping
+     *            one or simply making it re-path a real defensive act rather
+     *            than a scratch on a health bar.
+     *   `planted` 0 → 1, smoothed, read by `_poseWalker` (it squats onto its
+     *            legs) and by nothing else. It is the tell.
+     *
+     * AND IT HOLDS STATION THROUGH THE SHOT. `wish = null` while the charge is
+     * running or the shell is in the queue: the brain above has already decided
+     * where it would like to be and this overrides it, because a two-and-a-half
+     * second wind-up that the machine strolls through is a wind-up that does
+     * not mean anything. It is the same statement `BEAST_MOVES`' `plant` makes
+     * to an animal mid-lunge, made to a gun instead.
+     *
+     * The counter-play this buys is stated once, here, because it is the
+     * answer to a body a player otherwise cannot reach: a planted SPHA is a
+     * stationary target with a fixed elevation and twelve legs at ground level,
+     * and the charge is a two-and-a-half-second window in which the largest
+     * machine on the field does not move at all.
+     */
+    if (A.plant) {
+      const moving = Math.hypot(this.velocity.x, this.velocity.z) > this.speed * 0.2;
+      this.plantTimer = moving ? 0 : (this.plantTimer || 0) + dt;
+      const committed = this.aimCharge > 0 || this.burstLeft > 0;
+      if (committed) this.wish = null;
+      this.planted = damp(this.planted ?? 0, committed || this.plantTimer >= A.plant ? 1 : 0, 3.2, dt);
+    }
+
     this.attackTimer -= dt;
     // A rallied shooter reloads faster; the leader's ring is what tells you so.
     const rally = this.rallyTimer > 0 ? RALLY.rate : 1;
@@ -4539,6 +4611,11 @@ export class Enemy {
       }
       return;
     }
+    /* …and the plant is a condition on OPENING fire, not on continuing it: a
+     * machine that has already begun its charge finishes it, because the
+     * clause above has stopped it moving and rescinding permission mid-charge
+     * would leave the gun cycling silently forever. */
+    if (A.plant && this.aimCharge <= 0 && (this.plantTimer || 0) < A.plant) return;
     if (this.attackTimer <= 0 && dist < (A.preferred[1] + 12) && this._hasLineOfSight(ctx)) {
       if (A.telegraph) {
         if (this.aimCharge <= 0) {
@@ -5790,6 +5867,7 @@ export class Enemy {
 
   _move(dt, ctx) {
     const terrain = ctx.terrain;
+    const A = this.A;
 
     if (this.gripped && this.liftTarget) {
       /**
@@ -5872,7 +5950,34 @@ export class Enemy {
 
     const canMove = this.stunTimer <= 0 && this.knockTimer <= 0 && !this.gripped;
     if (canMove && this.wish) {
-      const speed = this.speed * (this.legsLost ? 0.45 : 1) * (this.rallyTimer > 0 ? RALLY.speed : 1);
+      /**
+       * ── WHAT THE GROUND UNDER IT COSTS, WHICH FOR MOST OF THE ROSTER IS
+       *    NOTHING AND FOR A WHEEL IS THE WHOLE FIGHT ────────────────────
+       *
+       * Every body in this game climbs identically: `slopeAt` is read by the
+       * spawner, by Arrivals and by the extraction's landing-site search, and
+       * by NOTHING that moves a body once it is on the field. So a ten-wheeled
+       * 25-metre transport took a one-in-two bank at the same pace an acklay
+       * did, and an AT-TE — whose one famous feature is that its footpads are
+       * MAGNETISED and it climbs vertical rock with them — took it at the same
+       * pace as the wheels.
+       *
+       * `grade` is the steepest ground the machine is built for, in `slopeAt`'s
+       * own units (1 − n.y, so 0 is a table and 1 is a wall). Pace falls off
+       * over the top 45% of it rather than at a threshold, for the reason the
+       * yielding band in `_brain` gives: a number that switches on one frame
+       * reads as the machine being shoved rather than as it labouring.
+       *
+       * IT IS OPT-IN AND THE DEFAULT IS THE OLD BEHAVIOUR. A body that declares
+       * no grade is a body nothing about this changed, which is twenty-nine of
+       * the thirty-six archetypes and every measurement anybody has taken of
+       * them.
+       */
+      let speed = this.speed * (this.legsLost ? 0.45 : 1) * (this.rallyTimer > 0 ? RALLY.speed : 1);
+      if (A.grade != null && terrain?.slopeAt) {
+        const s = terrain.slopeAt(this.position.x, this.position.z);
+        speed *= 1 - smoothstep(A.grade * 0.55, A.grade, s);
+      }
       /**
        * NAVIGATION, SUCH AS IT IS — AND THERE WAS NONE.
        *
@@ -6026,8 +6131,37 @@ export class Enemy {
      * the same guard in `Player._collide`. */
     if (this.grounded && support > gh + 0.05
         && support > this.position.y + (this.climbing ? 1e-3 : STEP_UP)) {
-      support = Math.max(this.position.y, Math.min(support, this.position.y + CLIMB_RATE * dt));
-      this.climbing = true;
+      /**
+       * …AND A WHEEL DOES NOT CLIMB, which is the second half of `grade` and
+       * the half a slope term cannot express.
+       *
+       * The condition guarding this branch already says the support is above
+       * the terrain — that is what `support > gh + 0.05` means — so what is
+       * being climbed here is always a PROP: a crate, a felled trunk, a slab of
+       * ruined architecture. Walking up the ground itself never reaches this
+       * line and is priced by the pace term above instead, which is the split
+       * that keeps a machine from being stranded on a hill by a rule about
+       * logs.
+       *
+       * A body built for anything under a vertical face refuses the step
+       * outright rather than climbing it slowly. It then walks into the thing,
+       * fails to move, and `_stuckT` swings it round the side within half a
+       * second — the navigation this class already has, answering the question
+       * it was written for. Going ROUND is the correct behaviour for a
+       * ten-wheeled transport and it is the behaviour the player can see.
+       *
+       * `grade >= 1` is the one value that means "anything", and exactly one
+       * body in the game declares it: the AT-TE, whose magnetised footpads are
+       * the single most quoted fact about the machine and which had until now
+       * climbed a crate at precisely the rate a battle droid does.
+       */
+      if (A.grade != null && A.grade < 1) {
+        support = Math.max(gh, this.position.y);
+        this.climbing = false;
+      } else {
+        support = Math.max(this.position.y, Math.min(support, this.position.y + CLIMB_RATE * dt));
+        this.climbing = true;
+      }
     } else this.climbing = false;
     if (this.position.y < support) this.position.y = support;
     if (this.position.y <= support + GROUND_SNAP && this.velocity.y <= 0.1) {
@@ -6100,7 +6234,39 @@ export class Enemy {
     let d = want - this.facing;
     while (d > Math.PI) d -= TAU;
     while (d < -Math.PI) d += TAU;
-    this.facing += d * Math.min(1, dt * (this.A.big ? 3.2 : 8));
+    /**
+     * HOW FAST A THING CAN COME ABOUT, and until the giants it was two numbers
+     * for the whole game: 8 for a man, 3.2 for anything flagged `big`.
+     *
+     * That is one gain shared by a 2.8 m dwarf spider droid, a 13.5 m
+     * six-legged walker and an 11 m tank carried on a SINGLE central tread, and
+     * it is the field where the difference is most visible and cost nothing to
+     * state. A snail tank that pivots like a spider droid is a spider droid
+     * with a different hull on it — which is player note 26 wearing a new coat,
+     * and this time in the axis the note is actually about ("they all attack
+     * the same way" is half of it; the other half is that they all MOVE the
+     * same way).
+     *
+     * It is an exponential gain and not a rate cap, so the honest way to read
+     * it is in seconds to come about: `dt * gain` is the fraction of the
+     * remaining error closed per frame, and half a turn is closed to within a
+     * degree in roughly `5.2 / gain` seconds. Measured on the shipped bodies
+     * through `tools/checks/giants.mjs`, which prints the number per machine
+     * every run rather than restating this arithmetic.
+     *
+     *     8.0   a man                          0.65 s
+     *     3.2   the default heavy              1.6 s
+     *     0.90  ten wheels on a 25 m wheelbase 5.8 s
+     *     0.45  one tread                      11.6 s
+     *     9.0   three legs on a rotating hub   0.58 s — faster than a man, and
+     *           it is the one number on the tri-droid taken straight out of the
+     *           reference: "their rotating multi-jointed assemblies allowed
+     *           them to change facing almost instantly".
+     *
+     * The default is unchanged for every body that does not declare one, so
+     * nothing in the roster moved when this line did.
+     */
+    this.facing += d * Math.min(1, dt * (this.A.turnRate ?? (this.A.big ? 3.2 : 8)));
 
     this._syncBody();
   }
@@ -6520,6 +6686,24 @@ export class Enemy {
       // …and being winded reads as being winded: the head drops to the floor.
       rise = -0.5; pitch = 0.5;
     }
+    /**
+     * A PLANTED GUN SITS DOWN ON ITS LEGS, and this one line is the entire
+     * visible half of `plant`.
+     *
+     * `planted` runs 0 → 1 in `_rangedBrain` and is read here and nowhere else.
+     * A machine settling before it fires drops onto its supports — the legs
+     * take the recoil rather than the hip actuators — and a machine that gets
+     * up to walk rises again. Without it a SPHA holding station through a
+     * two-and-a-half-second charge is a SPHA standing still, which is
+     * indistinguishable at a hundred metres from a SPHA that has lost its
+     * target.
+     *
+     * It rides on `rear`, which is metres of hip travel per unit of rise and is
+     * already the channel every wind-up in this function uses, so a body that
+     * plants and a body that rears use one code path and cannot disagree about
+     * where the hips are. Negative, because settling is the opposite of rearing.
+     */
+    if (this.planted) rise -= this.planted;
     /* The hip height and the rear-up are the ANIMAL's, not a constant times
      * its scale. A reek stands at 0.88 of scale and a rancor at 1.15, where
      * both used to stand at 1.5; `rear` is metres of hip travel per unit of
