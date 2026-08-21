@@ -81,16 +81,43 @@
  */
 const FIELDS = 6;
 
+/**
+ * ONE MARK THAT WAS ONLY EVER DRAWN, as the four numbers `Terrain.scorch` is a
+ * function of: x, z, radius, amount.
+ *
+ * `NEXT.md`'s Step 0 verdict is the whole reason this second list exists.
+ * Craters replay to `max |Δh| = 0` and cannot be seen, because 520 of 539 of
+ * them are a bolt hitting sand and the heightfield's cell is 2.5-3.4 m — so
+ * the battlefield's visible marks were never in the heightfield at all. They
+ * were in `Surface`, a 29 m window that follows the player and forgets, and in
+ * the decal ring, which holds a hundred and ten quads and recycles them. The
+ * log carried neither. **Persist what is DRAWN, not only what is dented.**
+ *
+ * Craters are NOT on this list and do not need to be: `Terrain.crater` writes
+ * its own soot and its own turned ground into the scar field, so replaying a
+ * crater replays its mark by construction. What is here is the burn that had
+ * no hole under it — the bolt that scorched the sand without moving it, the
+ * front's own burnt swath, the ash a wreck leaves — which is a class of event
+ * the crater log could not express at all.
+ */
+const BURN_FIELDS = 4;
+
 export class CraterLog {
-  constructor(entries = []) {
+  constructor(entries = [], burns = []) {
     /** Flat, `FIELDS` numbers per crater: x, z, radius, depth, rim, might. */
     this.entries = entries;
+    /** Flat, `BURN_FIELDS` numbers per mark: x, z, radius, amount. */
+    this.burns = burns;
     this._terrain = null;
     this._prev = null;
+    this._prevScorch = null;
   }
 
   /** How many craters are on the log. */
   get length() { return this.entries.length / FIELDS; }
+
+  /** How many drawn-only marks are on the log. */
+  get burnCount() { return this.burns.length / BURN_FIELDS; }
 
   /**
    * START RECORDING whatever breaks this ground.
@@ -108,6 +135,19 @@ export class CraterLog {
     this._terrain = terrain;
     this._prev = prev;
     terrain._craterLog = this;
+    /* THE SECOND METHOD, WRAPPED FOR THE SAME REASON AS THE FIRST. Every site
+     * that burns this ground goes through `Terrain.burn`, which goes through
+     * `Terrain.scorch` — so wrapping the one method catches the bolt impact,
+     * the slag, the blade laid against the sand and the front's own swath
+     * without any of them knowing a recording is running. Wrapping `burn`
+     * instead would miss `scorch`'s direct callers; wrapping both would log
+     * every bolt twice. */
+    const prevScorch = terrain.scorch.bind(terrain);
+    this._prevScorch = prevScorch;
+    terrain.scorch = function scorchRecorded(x, z, radius, amount = 1) {
+      log.burns.push(x, z, radius, amount);
+      return prevScorch(x, z, radius, amount);
+    };
     terrain.crater = function craterRecorded(x, z, radius, depth, rim = 0.22) {
       /* RECORDED BEFORE IT IS APPLIED, and with the `might` in force at the
        * moment of the call. `Terrain.crater` multiplies the radius by
@@ -127,9 +167,10 @@ export class CraterLog {
     const t = this._terrain;
     if (t && t._craterLog === this) {
       t.crater = this._prev;
+      if (this._prevScorch) t.scorch = this._prevScorch;
       delete t._craterLog;
     }
-    this._terrain = null; this._prev = null;
+    this._terrain = null; this._prev = null; this._prevScorch = null;
     return this;
   }
 
@@ -160,6 +201,8 @@ export class CraterLog {
      * reloaded. */
     const apply = (terrain._craterLog === this && this._prev)
       ? this._prev : terrain.crater.bind(terrain);
+    const paint = (terrain._craterLog === this && this._prevScorch)
+      ? this._prevScorch : terrain.scorch?.bind(terrain);
     const was = terrain.might ?? 1;
     const e = this.entries;
     for (let i = 0; i < e.length; i += FIELDS) {
@@ -167,8 +210,16 @@ export class CraterLog {
       apply(e[i], e[i + 1], e[i + 2], e[i + 3], e[i + 4]);
     }
     terrain.might = was;
+    /* THE DRAWN MARKS AFTER THE DUG ONES, and the order is not arbitrary: a
+     * crater's own soot is laid by `crater`, so replaying the burns second
+     * puts the small-arms scorch on top of the shelling exactly as the battle
+     * did. Both are stacking adds into the same channel, so the sum commutes —
+     * what does not commute is the turned-ground colour underneath, and the
+     * ground was turned before it was shot over. */
+    const b = this.burns;
+    if (paint) for (let i = 0; i < b.length; i += BURN_FIELDS) paint(b[i], b[i + 1], b[i + 2], b[i + 3]);
     terrain.flush?.();
-    return { craters: this.length, ms: performance.now() - t0 };
+    return { craters: this.length, burns: this.burnCount, ms: performance.now() - t0 };
   }
 
   /**
@@ -182,6 +233,15 @@ export class CraterLog {
   trim(max) {
     const keep = Math.max(0, max | 0) * FIELDS;
     if (this.entries.length > keep) this.entries.splice(0, this.entries.length - keep);
+    /* THE BURN LIST IS TRIMMED IN THE SAME PROPORTION rather than to the same
+     * count, because the two lists are not the same kind of thing and a shared
+     * cap would silently drop one of them: a battle logs 539 craters and about
+     * as many burns, but a front's dressing lays hundreds of scorches and digs
+     * nothing. Trimming to the same FRACTION of each keeps "the oldest marks
+     * go first" true of the battlefield as a whole. */
+    const frac = this.entries.length ? keep / Math.max(keep, this.entries.length) : 1;
+    const keepB = Math.floor(this.burnCount * Math.min(1, frac)) * BURN_FIELDS;
+    if (this.burns.length > keepB) this.burns.splice(0, this.burns.length - keepB);
     return this;
   }
 
@@ -189,7 +249,13 @@ export class CraterLog {
   toJSON() {
     const out = new Array(this.entries.length);
     for (let i = 0; i < this.entries.length; i++) out[i] = Math.round(this.entries[i] * 100) / 100;
-    return { v: 1, n: this.length, e: out };
+    const bo = new Array(this.burns.length);
+    for (let i = 0; i < this.burns.length; i++) bo[i] = Math.round(this.burns[i] * 100) / 100;
+    /* v2 ADDS A KEY AND CHANGES NOTHING THAT WAS THERE. A v1 file has no `b`
+     * and loads as a log with no drawn marks, which is exactly what it is —
+     * the ground it describes had none recorded. A v2 file read by anything
+     * that only knows `e` still gets every crater. */
+    return { v: 2, n: this.length, e: out, b: bo };
   }
 
   static fromJSON(j) {
@@ -199,9 +265,13 @@ export class CraterLog {
      * object both come back to the same place rather than one of them silently
      * loading an empty ground. */
     const e = Array.isArray(j) ? j : (j.e || []);
-    return new CraterLog(e.slice(0, e.length - (e.length % FIELDS)));
+    const b = Array.isArray(j) ? [] : (j.b || []);
+    return new CraterLog(e.slice(0, e.length - (e.length % FIELDS)),
+      b.slice(0, b.length - (b.length % BURN_FIELDS)));
   }
 }
 
 /** Fields per crater, exported so a check cannot hold a second copy of 6. */
 export const CRATER_FIELDS = FIELDS;
+/** Fields per drawn-only mark, for the same reason. */
+export const BURN_LOG_FIELDS = BURN_FIELDS;

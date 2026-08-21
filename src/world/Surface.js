@@ -88,6 +88,19 @@ export class SurfaceField {
    * @param {number} [opts.size]    metres across the window
    * @param {number} [opts.depth]   metres of depth the byte's 255 stands for
    * @param {number} [opts.refill]  e-folding time of the fill-in, seconds
+   * @param {boolean} [opts.whole]  the field IS the map: it never scrolls, it
+   *   covers the whole square rather than a window inside one, and its period
+   *   is the map, so the toroidal addressing lands every world point on its own
+   *   texel exactly once. See `Terrain.scars`.
+   * @param {boolean} [opts.ages]   false freezes it — nothing fills in, nothing
+   *   cools. A battlefield's memory is not a decay with a very long tau; it is
+   *   the absence of one, and a tau of "the rest of the session" costs the same
+   *   arithmetic every tick to move nothing.
+   * @param {number} [opts.stack]   0 keeps `burn`'s rule that a mark is the
+   *   HOTTEST thing that hit it. Above 0, heats ADD at this gain — which is
+   *   what a hundred bolt scuffs on one patch of ground actually are, and the
+   *   difference between a field that saturates on its first hit and one that
+   *   darkens as it is fought over.
    */
   constructor(opts = {}) {
     this.res = Math.max(32, Math.round(opts.res ?? SURFACE_RES));
@@ -101,6 +114,9 @@ export class SurfaceField {
     this.refill = Math.max(1, opts.refill ?? 120);
     this.scorchGlow = opts.scorchGlow ?? 1.7;    // seconds, molten → dull
     this.scorchChar = opts.scorchChar ?? 26;     // seconds, char → gone
+    this.whole = !!opts.whole;
+    this.ages = opts.ages !== false;
+    this.stack = Math.max(0, opts.stack ?? 0);
 
     const n = this.res * this.res;
     /** Depth in METRES, the authority. The texture is a lossy view of this. */
@@ -134,7 +150,14 @@ export class SurfaceField {
 
   /** True when (x, z) is inside the window and a mark there means anything. */
   covers(x, z) {
-    return Math.max(Math.abs(x - this.center.x), Math.abs(z - this.center.y)) <= this.size * 0.47;
+    /* A WHOLE-MAP FIELD HAS NO EDGE TO FADE OUT OVER, and the half-size is the
+     * exact bound rather than 0.47 of it: the field's period IS the map, so the
+     * corner of the plate is the corner of the texture and there is no ground
+     * one period away for a mark to be printed on by mistake. The 0.47 below is
+     * the window's fade margin (see `uSurf.w`) and it would silently drop
+     * everything in the outer 3% of a map that has no fade. */
+    const half = this.whole ? this.size * 0.5 : this.size * 0.47;
+    return Math.max(Math.abs(x - this.center.x), Math.abs(z - this.center.y)) <= half;
   }
 
   _touch(i0, j0, i1, j1) {
@@ -156,6 +179,10 @@ export class SurfaceField {
    * printed on a hillside 48 m away.
    */
   follow(x, z) {
+    /* A whole-map field does not follow anybody. Scrolling it would clear the
+     * column that just left, which for this field is not "ground nobody has
+     * been near" — it is ground that was fought over an hour ago. */
+    if (this.whole) return;
     this.center.set(x, z);
     const N = this.res;
     const ni = this._cellOf(x), nj = this._cellOf(z);
@@ -302,7 +329,14 @@ export class SurfaceField {
         const d = Math.hypot(wx, wz) / r;
         if (d > 1) continue;
         const k = this._k(i, j);
-        const v = clamp(heat * Math.min(1, (1 - d * d) * 1.5), 0, 1);
+        const lay = heat * Math.min(1, (1 - d * d) * 1.5);
+        /* STACKED OR HOTTEST. The live window wants the hottest — a saber cut
+         * across a patch a bolt already scuffed is a saber cut, and adding the
+         * two would put it above molten. A persistent field wants the sum,
+         * because what it is recording is not a temperature at all: it is how
+         * much of this square metre has been burnt, and the answer after two
+         * hundred bolts is "more than after one". */
+        const v = clamp(this.stack > 0 ? this.scorch[k] + lay * this.stack : lay, 0, 1);
         if (v > this.scorch[k]) {
           if (this.scorch[k] < EPS && v >= EPS) this._live++;
           this.scorch[k] = v;
@@ -362,7 +396,7 @@ export class SurfaceField {
    */
   update(dt) {
     if (this._dirty) this._encode();
-    if (this._live === 0) return;
+    if (!this.ages || this._live === 0) return;
     this._accum += dt;
     if (this._accum < SURFACE_TICK) return;
     const step = this._accum;
@@ -370,6 +404,17 @@ export class SurfaceField {
     this._age(step);
     this._encodeAll();
   }
+
+  /**
+   * Push whatever has been written since the last call, and age nothing.
+   *
+   * The frozen twin of `update`. A field that never decays still has to reach
+   * the GPU, and it wants to do that ONCE after a batch — a crater log replay
+   * is three hundred marks, and encoding per mark is three hundred uploads of
+   * overlapping ground for one frame's worth of visible result (the same
+   * measurement `CraterLog.replay` makes about `Terrain.flush`).
+   */
+  flush() { if (this._dirty) this._encode(); }
 
   _age(dt) {
     /* THE FILL-IN IS NOT ONE EXPONENTIAL. A pure `v *= exp(-dt/tau)` never
