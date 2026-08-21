@@ -585,6 +585,42 @@ async function runArm(arm, seed, engagements) {
     const inner = world.onEnemyKilled ? world.onEnemyKilled.bind(world) : null;
     world.onEnemyKilled = (...a) => { killed.n++; return inner ? inner(...a) : undefined; };
   }
+  /**
+   * ── WHAT THE LINE ACTUALLY TOOK, BECAUSE `fallen` HAS RUN OUT OF ROOM ───
+   *
+   * Measured on this tree, three seeds, both conditions of the screen A/B:
+   * **every arm loses exactly 10 of 14 and ends with exactly 4 standing** — the
+   * arm with no player in it, the arm with a Jedi in the line, and the arm with
+   * a Jedi a hundred metres away. `fallen` was the axis §14 named and on the
+   * tree it was written for it moved (0 / 7.2 / 7.4); it does not any more, and
+   * a saturated channel carries no information — which is the same sentence
+   * `MORALE.PRESENCE_CAP`'s note had to write about morale reading 1.000.
+   *
+   * So the same question is asked of a channel with room in it: how much fire
+   * reached your men, and how much damage it did. Counted at `_boltHitTest`,
+   * the one door every bolt goes through, and the victim is identified by
+   * IDENTITY against `world.players` before team — a `Player` carries `hp` and
+   * `team` exactly as a body does, and a team test alone put every bolt the
+   * Jedi took into the column for his men.
+   *
+   * `screened` is read off the player at the end: it is the mechanic's own
+   * counter, so an arm that reports zero of them is an arm the screen did not
+   * touch, and no other number here can be read as being about the screen
+   * until that one is not zero.
+   */
+  const line = { bolts: 0, damage: 0 };
+  {
+    const inner = world._boltHitTest.bind(world);
+    const mine = world.player ? world.player.team : 0;
+    world._boltHitTest = (b, from, to) => {
+      const res = inner(b, from, to);
+      const v = res && res.victim;
+      if (v && !world.players.includes(v) && v.team === mine && v.hp !== undefined) {
+        line.bolts++; line.damage += b.damage;
+      }
+      return res;
+    };
+  }
   let stalled = 0, stallAt = null;
   const secs = drive(world, CAP * engagements, input, (t) => {
     /* THE STALL, WATCHED RATHER THAN WAITED OUT. The condition is the base
@@ -633,6 +669,10 @@ async function runArm(arm, seed, engagements) {
      * confused with, kept because it is a real and different question.
      */
     foeKilled: killed.n,
+    boltsIntoLine: line.bolts,
+    damageIntoLine: +line.damage.toFixed(1),
+    screened: world.player ? (world.player.screened || 0) : null,
+    screenForceSpent: world.player ? +((world.player.guardForceSpent || 0)).toFixed(1) : null,
     foeDown: world.enemies.filter((e) => e.dead).length,
     foeAlive: world.enemies.filter((e) => !e.dead).length,
     /* AND THE NERVE OF THE LINE, averaged over the squads that still exist.
@@ -693,6 +733,8 @@ async function step2() {
       console.log(`  seed ${String(seed).padStart(3)}  ${arm.padEnd(5)}  `
         + `fallen ${String(r.fallen).padStart(2)}  standing ${String(r.standing).padStart(2)}  `
         + `waves ${r.waveClears}  areas ${r.areasTaken}  foeKilled ${String(r.foeKilled).padStart(3)}  `
+        + `intoLine ${String(r.boltsIntoLine).padStart(3)}/${String(r.damageIntoLine).padStart(6)}hp  `
+        + `screened ${String(r.screened ?? '—').padStart(3)}  `
         + `bladeDmg ${String(r.bladeDamage ?? '—').padStart(7)}  morale ${r.morale}  `
         + `${(r.wallMs / 1000).toFixed(0)}s`);
     }
@@ -720,7 +762,8 @@ async function step2() {
     return Math.sqrt(v.reduce((a, b) => a + (b - m) ** 2, 0) / Math.max(1, v.length - 1));
   };
   const verdict = {};
-  for (const k of ['fallen', 'areasTaken', 'foeKilled', 'waveClears', 'morale', 'gameSeconds']) {
+  for (const k of ['fallen', 'damageIntoLine', 'boltsIntoLine', 'areasTaken', 'foeKilled',
+    'waveClears', 'morale', 'gameSeconds']) {
     const none = mean('none', k), blade = mean('blade', k), dead = mean('dead', k);
     const far = mean('far', k);
     const span = blade - none;
