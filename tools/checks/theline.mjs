@@ -626,10 +626,23 @@ export async function run({ check, assert }) {
     const said = world.notes?.some?.(([t]) => /LINE/i.test(String(t)));
     assert(said !== false, 'nothing on screen says why the ground has not been taken');
 
-    /* …AND THE MOMENT THEY ARRIVE. Not at the next wave — `payWave` is the only
+    /**
+     * …AND THE MOMENT THEY ARRIVE. Not at the next wave — `payWave` is the only
      * other caller of `_areaClear`, and a run that waited for one would sit on
-     * won ground until a fight that is over composed another. */
-    for (const t of living) t.body.position.x -= away;
+     * won ground until a fight that is over composed another.
+     *
+     * THEY ARE PUT ON THE PLAYER, not moved back by the offset they were moved
+     * out by. The first version subtracted `away` again and failed: the world
+     * ran six seconds between the two writes and a trooper has a brain, so the
+     * men had walked. Undoing a displacement that something else has since
+     * added to is not a restore, and the check reported "the line is back and
+     * still does not read as up" about a line that was not back.
+     */
+    const p = world.player.position;
+    living.forEach((t, i) => {
+      const a = (i / living.length) * Math.PI * 2;
+      t.body.position.set(p.x + Math.cos(a) * 2.5, p.y, p.z + Math.sin(a) * 2.5);
+    });
     assert(d.lineIsUp(), 'the line is back and still does not read as up');
     for (let i = 0; i < Math.round(3 / STEP) && !taken(); i++) world.update(STEP, input);
     assert(taken(), 'the line came up and the ground was still not taken — the rule is a dead end');
