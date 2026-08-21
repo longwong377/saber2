@@ -4345,8 +4345,10 @@ export class World {
     this._netEnemyIndex = new Map();
     this._netPack = { packAvatar, packSnapshot };
     this._netFires = [];
+    /* …and the grenades, on the same wire and for the same reason. */
+    this._netNades = [];
     this._netWave = { w: this.director?.wave ?? 1, act: 0, started: false };
-    if (mode === 'host') this._recordFires();
+    if (mode === 'host') { this._recordFires(); this._recordNades(); }
     if (mode === 'client') this._netDirector();
   }
 
@@ -4364,6 +4366,68 @@ export class World {
    * cannot miss a caller, and a new kind of shooter is replicated the day it is
    * written rather than the day somebody remembers to add it here.
    */
+  /**
+   * EVERY GRENADE THE FIELD THROWS, AS AN EVENT — the same shape as the bolts
+   * one below it, and for the same reason.
+   *
+   * A snapshot is a set of STATES, and a grenade is not a state either: it is
+   * an arc, a shout, a body diving away from it and a hole in the ground, all
+   * of which happen and are over. `NEXT.md` had it as an open gap in exactly
+   * those words — *"GrenadeField is host-side only, so a co-op client sees no
+   * grenade, no shout and no crater. Not a desync — a gap."*
+   *
+   * RECORDED AT THE FIELD rather than at the thrower, because
+   * `GrenadeField.throw` is the one seam every grenade in the game passes
+   * through — `Enemy._maybeGrenade` throws one, `Reactions.stepReaction`
+   * throws one back, and anything written next month goes through the same
+   * door. That is the argument `_recordFires` makes and it is the reason
+   * neither of these can miss a caller.
+   *
+   * WHAT CROSSES: where it left, where it was aimed, whose it is and how long
+   * is left on the fuse. The client rebuilds the arc from those four rather
+   * than being streamed a position every frame — `LiveGrenade` derives its
+   * flight time and its apex from the throw alone, so the two ends agree
+   * without a byte per frame, and a grenade that has been thrown BACK is
+   * simply a second event.
+   */
+  _recordNades() {
+    const field = this.grenades;
+    if (!field || field._netRecorder) return;
+    const inner = field.throw.bind(field);
+    field._netRecorder = true;
+    field.throw = (from, to, opts = {}, ...rest) => {
+      const g = inner(from, to, opts, ...rest);
+      if (g && this._netNades && this.netMode === 'host' && !opts.ghost) {
+        this._netNades.push([
+          r2(from.x), r2(from.y), r2(from.z),
+          r2(to.x), r2(to.y), r2(to.z),
+          opts.owner?.team ?? opts.team ?? 1,
+          Math.round((g.fuse - g.t) * 100) / 100,
+        ]);
+      }
+      return g;
+    };
+  }
+
+  /**
+   * …AND THE CLIENT'S COPY IS A PICTURE. See `Reactions.LiveGrenade`'s `ghost`.
+   *
+   * It flies the same arc, makes the same noise, is dived away from by the
+   * same men and leaves the same hole — and it does no damage at all, because
+   * the host already did it and the result arrives as hp in the next snapshot.
+   * A client that also applied the blast would kill the same droid twice on
+   * its own screen and then be corrected, which is the visible version of a
+   * desync.
+   */
+  _spawnNetNades(nades) {
+    if (!nades || !nades.length || !this.grenades) return;
+    for (const n of nades) {
+      const [x, y, z, tx, ty, tz, team, fuse] = n;
+      _v1.set(x, y, z); _v2.set(tx, ty, tz);
+      this.grenades.throw(_v1, _v2, { team, fuse, ghost: true });
+    }
+  }
+
   _recordFires() {
     const pool = this.bolts;
     if (!pool || pool._netRecorder) return;
@@ -5230,6 +5294,7 @@ export class World {
       if (dead && !e.dead) e.die(e.position.clone(), null, 'net');
     }
     this._spawnNetBolts(msg.bf);
+    this._spawnNetNades(msg.gn);
     /**
      * AN ID THE HOST HAS STOPPED SENDING IS GONE, dead or not.
      *

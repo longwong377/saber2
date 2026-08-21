@@ -1801,6 +1801,22 @@ export class Stratagems {
     if (ctx?.terrain?.crater) ctx.terrain.crater(site.x, site.z, radius * 0.5, opts.crater ?? 0.34);
     if (ctx?.terrain?.burn) ctx.terrain.burn(site.x, site.z, radius * 0.6, 1);
     audio.explosion(site, clamp(size, 0.6, 3.6));
+    /**
+     * `cosmetic` — THE PICTURE AND NOTHING ELSE, and it stops HERE.
+     *
+     * One caller: a co-op client's copy of a grenade somebody else's machine
+     * already resolved (`Reactions.LiveGrenade.ghost`). The hole, the scorch
+     * and the bang are what a client is missing and what it has to draw; the
+     * damage is the HOST's and arrives as hp in the next snapshot. Applying it
+     * at both ends would kill the same droid twice on the guest's screen and
+     * then correct it, which is what a desync looks like from the sofa.
+     *
+     * It is a flag rather than "pass damage 0 and force 0" because a zero blow
+     * still walks every body on the field, still calls `applyKnockback`, and
+     * still asks the Force to answer a blow of nothing — a bill of zero paid
+     * out of a real pool. This returns before any of that.
+     */
+    if (opts.cosmetic) return;
     /** The fraction of the blow a body at `d` takes. See `core`. */
     const falloff = (d) => {
       if (d > radius) return 0;

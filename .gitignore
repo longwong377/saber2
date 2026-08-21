@@ -15,3 +15,4 @@ node_modules
 # base64 and is regenerated on demand, so it is an output and not a source.
 borz-play.html
 .art/
+.flagship/

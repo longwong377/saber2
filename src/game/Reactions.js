@@ -178,6 +178,19 @@ class LiveGrenade {
   constructor(field, from, to, opts = {}) {
     this.field = field;
     this.owner = opts.owner ?? null;
+    /**
+     * A CLIENT'S COPY OF SOMEBODY ELSE'S GRENADE, and it is a PICTURE.
+     *
+     * `NEXT.md` carried this as an open gap: *"GrenadeField is host-side only,
+     * so a co-op client sees no grenade, no shout and no crater."* A ghost
+     * flies the same arc, makes the same noise, is dived away from by the same
+     * men and leaves the same hole — and does no damage at all, because the
+     * host has already done it and the result arrives as hp in the next
+     * snapshot. A client that applied the blast as well would kill the same
+     * droid twice on its own screen and then be corrected, which is what a
+     * desync looks like from the sofa. See `World._recordNades`.
+     */
+    this.ghost = !!opts.ghost;
     /** Whose grenade it is. Reactions only ever come from the other side. */
     this.team = opts.team ?? (this.owner?.team ?? 1);
     this.from = from.clone();
@@ -278,6 +291,16 @@ class LiveGrenade {
     this.dead = true;
     const S = this.field.stratagems;
     const site = this.position.clone();
+    if (this.ghost) {
+      /* THE PICTURE AND NOTHING ELSE — the sound, the light and the hole, with
+       * `cosmetic` telling `Stratagems.blast` to stop before it reaches a
+       * single body. See `ghost` in the constructor. */
+      S?.blast?.(ctx, site, GRENADE.radius, 0, 0,
+        { core: 0, crater: GRENADE.crater, source: null, cosmetic: true });
+      this.field.stats.blown++;
+      this.dispose();
+      return;
+    }
     if (this.smotheredBy && !this.smotheredBy.dead) {
       /**
        * A BODY ON TOP OF IT. The man takes it whole and everybody else takes

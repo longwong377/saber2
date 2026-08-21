@@ -331,6 +331,69 @@ export async function run({ check, assert }) {
     return line;
   });
 
+  check('co-op: a grenade the host throws is a grenade the guest can run from', async () => {
+    /**
+     * `NEXT.md` carried this as an open gap in exactly these words: *"Grenades
+     * are not networked. `GrenadeField` is host-side only, so a co-op client
+     * sees no grenade, no shout and no crater. Not a desync — a gap."*
+     *
+     * A grenade is not a STATE, which is why no arrangement of position and hp
+     * fields ever contained one: it is an arc, a shout, a body diving away and
+     * a hole in the ground, and all of it happens and is over between two
+     * packets. So it crosses the way a bolt does — as an event, recorded at the
+     * one seam every grenade passes through.
+     *
+     * WHAT THIS HOLDS, and the second half is the one worth having:
+     *
+     *   1. the guest sees it — an arc in their world, at the host's own
+     *      geometry, from the host's own throw;
+     *   2. the guest's copy does NO DAMAGE. The host already resolved it and
+     *      the result arrives as hp in the next snapshot; a client that applied
+     *      the blast as well would kill the same droid twice on its own screen
+     *      and then be corrected, which is what a desync looks like from the
+     *      sofa.
+     */
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const { host, client, pump } = await H.bootPair({ level: 'colosseum' });
+    const at = new THREE.Vector3(0, 0, 8);
+    /* A body on the guest's side of the wire, standing where the grenade is
+     * going, so "did the client's copy hurt anybody" has somebody to hurt. */
+    const victim = client.spawnEnemy('b1', at.clone());
+    assert(victim, 'setup: nothing on the client to stand in the blast');
+    pump(1 / 60);
+    const hp0 = victim.hp;
+
+    const before = client.grenades.stats.thrown;
+    host.grenades.throw(new THREE.Vector3(0, 1.4, 0), at.clone(), { team: 1 });
+    assert(host.grenades.list.length === 1, 'the host is not holding the grenade it just threw');
+
+    /* Long enough for the fuse and the packet: FUSE is 2.6 s and the snapshot
+     * rate is well inside that. */
+    let sawArc = 0;
+    for (let i = 0; i < 4 * 60; i++) {
+      pump(1 / 60);
+      if (client.grenades.list.length) sawArc++;
+    }
+
+    assert(client.grenades.stats.thrown > before,
+      'the host threw a grenade and the joining player never saw one at all — no arc, no shout, no crater');
+    assert(sawArc > 20,
+      `the guest's copy existed for ${sawArc} frames — it arrived and vanished rather than flying`);
+    assert(client.grenades.stats.blown > 0, "the guest's copy never went off");
+    assert(!client.grenades.list.length, 'a replicated grenade is still hanging about after its fuse');
+
+    /* AND IT DID NOTHING. The victim's hp on the client moves only when the
+     * host's snapshot says so, and the host has no such body. */
+    assert(victim.hp === hp0,
+      `the guest's own copy of the blast took ${(hp0 - victim.hp).toFixed(1)} hp off a body the host `
+      + 'never touched — the same droid is being killed at both ends');
+    const line = `host 1 thrown → guest ${client.grenades.stats.thrown - before} `
+      + `(${sawArc} frames of arc, ${client.grenades.stats.blown} detonation), 0 damage applied locally`;
+    host.unload(); client.unload();
+    return line;
+  });
+
   check('co-op: an elite arrives on a joining player\'s screen wearing its tells', async () => {
     /**
      * EVERY ELITE IN THE GAME WAS A PLAIN BODY OFF-HOST.
