@@ -607,8 +607,24 @@ function hullProxy(rig, hipHeight, names) {
      * segment does not need a hundred spheres to cover itself.
      */
     const r = Math.max(0.12, _ps.y * 0.5, Math.min(_ps.x, _ps.z) * 0.25);
-    const cols = clamp(Math.round(_ps.x / (r * 1.4)), 1, 3);
-    const rows = clamp(Math.round(_ps.z / (r * 1.4)), 1, 4);
+    /**
+     * ODD COUNTS ONLY, AND THAT IS THE SAME BUG THE NOTE ABOVE IS ABOUT.
+     *
+     * The grid exists because a chain down the long axis left a hole exactly
+     * where a player walks — and a grid of TWO columns does the identical
+     * thing. The layout puts column i at `(i/(cols-1) - 0.5) * (extent - r)`,
+     * so two columns are placed at the two edges and there is nothing between
+     * them; on the NR-N99, 3.57 m of hull came out at cols 2, spheres at
+     * x = +/-1.24 with r 1.10, and the centreline passed between them
+     * untouched. Measured coverage of its own hull: 0%.
+     *
+     * An odd count always has a middle one. It costs at most one extra sphere a
+     * row on a hull that was going to be two and the contact solver already
+     * walks an arbitrary list.
+     */
+    const odd = (n) => (n % 2 === 0 ? n + 1 : n);
+    const cols = clamp(odd(Math.round(_ps.x / (r * 1.4))), 1, 3);
+    const rows = clamp(odd(Math.round(_ps.z / (r * 1.4))), 1, 5);
     for (let ix = 0; ix < cols; ix++) {
       for (let iz = 0; iz < rows; iz++) {
         const c = _pc.clone();
@@ -2806,8 +2822,9 @@ export function buildCapitalShip(opts = {}) { return hullFor(CAPITAL_BY_SIDE, op
  * Four fields in `Enemy.js` carry the rest, and every one of them is a NUMBER a
  * suite can read off a driven body rather than a state name:
  *
- *   CONTACTS   what the machine stands on. 12 legs / 10 wheels / 3 legs / one
- *              tread / 6 legs. Counted off the rig, never off a list.
+ *   CONTACTS   what the machine stands on. 12 legs / 10 wheels / 3 legs / a
+ *              tread and two pontoons / 6 legs. Counted off the rig, never off
+ *              a list.
  *   plant      the SPHA banks 1.6 s of stillness before it may fire and holds
  *              station through the whole 2.6 s charge, so the fraction of its
  *              life spent moving inside its own band is near zero where every
@@ -2896,7 +2913,8 @@ export function buildCapitalShip(opts = {}) { return hullFor(CAPITAL_BY_SIDE, op
  *   THE GUN ASSEMBLY IS A THIRD OF THE HEIGHT. A deep cradle, a ribbed
  *     accelerator running most of the hull's length, and the emitter bell out
  *     over the prow. Nothing on this machine is a turret: a turbolaser this
- *     size traverses by walking, which is why `turnRate` is 0.85 and why
+ *     size traverses by walking, which is why `turnRate` is 0.62 — the slowest
+ *     thing on the roster except a tank on one tread — and why
  *     getting behind it is worth doing.
  *
  * IT IS PILOTED, and the plates say so in the one way this file can build: a
@@ -3560,7 +3578,7 @@ export function buildTriDroid(opts = {}) {
  *   IT CANNOT TURN. One tread means it pivots by dragging, and `turnRate: 0.45`
  *     is the slowest number in the game — half a turn takes 11.6 s, where a
  *     man does it in 0.65. So it commits: it picks a line, it drives it at
- *     5.4 m/s, and a player who steps off that line has several seconds before
+ *     5 m/s, and a player who steps off that line has several seconds before
  *     it can do anything about it. The AAT hovers and can face any way it
  *     likes; this is the opposite machine at the same job.
  *   IT COMES TO YOU. Its band is 4-18 m, the closest of any Confederate
@@ -3830,6 +3848,28 @@ export function buildSnailTank(opts = {}) {
  * here must be HEAVIER than the top of the slider, so the flag can never become
  * a way to hide a body the cap ought to have cleared.
  */
+/**
+ * ── `crew`, AND WHAT DECLARING IT COSTS YOU ──────────────────────────────
+ *
+ * The player: *"I think we should be able to drive the vehicles it makes sense
+ * to drive."* `crew` is the canon number of bodies inside a machine, and its
+ * PRESENCE is the whole of the rule — `Driving.isCrewed` reads it and nothing
+ * else decides. There is no second list of drivable things to fall out of step
+ * with this one, which is the HANDOFF §2.3 trap in its usual clothes.
+ *
+ * Declared here: the AT-TE (six, plus a spotter's cupola), the AAT (four battle
+ * droids in a hull with a hatch — which is why the films are full of droids
+ * riding on top of one), the Juggernaut (twelve, in a driver's cabin at EACH
+ * end so it never has to turn round) and the SPHA (twenty-five gunners walking
+ * a gun the length of a street).
+ *
+ * Not declared, and this is the interesting half: the dwarf spider, the
+ * hailfire, the Octuptarra tri-droid and the Persuader snail tank have NOBODY
+ * IN THEM. There is no seat to take and nobody to displace — the brain is the
+ * machine. A game rule that let you drive one would contradict the thing the
+ * model is of, and "it makes sense" has to mean the player can tell which is
+ * which by looking at it.
+ */
 Object.assign(ARCHETYPES, {
   dwarfspider: {
     label: 'Dwarf Spider Droid', build: buildDwarfSpider, scale: 1.5,
@@ -3840,7 +3880,7 @@ Object.assign(ARCHETYPES, {
     score: 900, threat: 7, big: true, unlockAt: 3,
   },
   atte: {
-    label: 'AT-TE Walker', build: buildATTE, scale: 2.0,
+    label: 'AT-TE Walker', build: buildATTE, scale: 2.0, crew: 6,
     hp: 1500, mass: 3600, speed: 1.6, toughness: TOUGHNESS.heavy,
     ranged: true, custom: 'walker', weapon: null,
     fireRate: 4.6, burst: 1, burstGap: 0.2, spread: 0.012, damage: 58, telegraph: 1.1,
@@ -3848,7 +3888,7 @@ Object.assign(ARCHETYPES, {
     score: 3400, threat: 17, big: true, armored: true, grippable: false, unlockAt: 8,
   },
   aat: {
-    label: 'Armoured Assault Tank', build: buildAAT, scale: 1.7,
+    label: 'Armoured Assault Tank', build: buildAAT, scale: 1.7, crew: 4,
     hp: 1050, mass: 2400, speed: 3.6, toughness: TOUGHNESS.heavy,
     ranged: true, custom: 'walker', weapon: null,
     fireRate: 3.0, burst: 2, burstGap: 0.44, spread: 0.022, damage: 52,
@@ -3876,10 +3916,18 @@ Object.assign(ARCHETYPES, {
  * silhouette, a cadence OR A MOVEMENT SIGNATURE, and it measures the third one
  * as four numbers off a driven body rather than as a state name:
  *
- *   contacts   what it stands on and how many         12 / 10 / 3 / 1 / 6
- *   duty       share of a second in band spent moving  ~0 / 1 / 1 / 1 / 1
- *   turn       seconds to swing half a turn          6.1 / 5.8 / 0.58 / 11.6 / 1.6
- *   grade      the steepest ground it will take      0.30 / 0.22 / 0.75 / 0.26 / 1.0
+ * As `tools/checks/giants.mjs` measures them — spha / juggernaut / tridroid /
+ * snailtank / atte, every one off a driven body and none of them read back out
+ * of the table that declared it:
+ *
+ *   contacts   leg chains counted off the rig       12 / 10 / 3 / 3 / 6
+ *   duty       share of a driven 14 s in band spent
+ *              above a fifth of top pace         0.00 / 0.98 / 0.98 / 0.98 / 0.98
+ *   turn       seconds to close half a turn to
+ *              within five degrees                 5.8 / 4.0 / 0.4 / 8.0 / 1.1
+ *   slope      steepest bank it still makes half
+ *              pace on, binary-searched           0.26 / 0.17 / 0.58 / 0.26 / 1.00
+ *   pace       metres a second                      1.1 / 7.6 / 3.4 / 5.0 / 1.6
  *
  * ── WHY NONE OF THEM DECLARES `armored` ──────────────────────────────────
  *
@@ -3909,7 +3957,7 @@ Object.assign(ARCHETYPES, {
      * is the one that shot down core ships over Geonosis. The M, C, I, R and V
      * carried missiles, concussion, ion, rail and a variable mount on the same
      * twelve-legged chassis. */
-    label: 'SPHA-T Siege Artillery', build: buildSPHA, scale: 4.0,
+    label: 'SPHA-T Siege Artillery', build: buildSPHA, scale: 4.0, crew: 25,
     hp: 3200, mass: 9800, speed: 1.1, toughness: TOUGHNESS.heavy,
     ranged: true, custom: 'walker', weapon: null,
     /* ONE SHELL EVERY FOURTEEN SECONDS AT 96, behind a 2.6 s telegraph. 96 and
@@ -3920,16 +3968,16 @@ Object.assign(ARCHETYPES, {
      * roster — a gun that has stopped moving to aim does not miss. */
     fireRate: 11.0, burst: 1, burstGap: 0.20, spread: 0.004, damage: 96, telegraph: 2.6,
     preferred: [40, 90], boltColor: BOLT_COLORS.blue,
-    plant: 1.6, turnRate: 0.85, grade: 0.30, toppleAt: 5,
+    plant: 1.6, turnRate: 0.62, grade: 0.34, toppleAt: 5,
     score: 7600, threat: 30, big: true, grippable: false, unlockAt: 14,
   },
   juggernaut: {
-    label: 'HAVw A6 Juggernaut', build: buildJuggernaut, scale: 2.6,
+    label: 'HAVw A6 Juggernaut', build: buildJuggernaut, scale: 2.6, crew: 12,
     /* 160 km/h in the reference, and the fastest heavy in this game by a wide
-     * margin — 7.2 m/s against an AAT's 3.6 and an AT-TE's 1.6. A player cannot
+     * margin — 7.6 m/s against an AAT's 3.6 and an AT-TE's 1.6. A player cannot
      * outrun it in the open, which is the entire reason `grade: 0.22` matters:
      * the answer is not distance, it is anything it has to drive round. */
-    hp: 2400, mass: 6200, speed: 7.2, toughness: TOUGHNESS.heavy,
+    hp: 2400, mass: 6200, speed: 7.6, toughness: TOUGHNESS.heavy,
     ranged: true, custom: 'walker', weapon: null,
     /* TEN BOLTS IN SIX HUNDREDTHS OF A SECOND EACH at 9 apiece. The longest
      * burst on the roster against the hailfire's seven, and it is a stream
@@ -3959,14 +4007,18 @@ Object.assign(ARCHETYPES, {
   },
   snailtank: {
     label: 'NR-N99 Persuader Droid Enforcer', build: buildSnailTank, scale: 1.55,
-    hp: 1150, mass: 2900, speed: 5.4, toughness: TOUGHNESS.heavy,
+    hp: 1150, mass: 2900, speed: 5.0, toughness: TOUGHNESS.heavy,
     ranged: true, custom: 'walker', weapon: null,
     /* FOUR ROUNDS AT 12, close in. It is the Confederate machine you can
      * actually reach — its band opens at 4 m, inside a blade's walk — and the
      * whole exchange is that it cannot turn to keep you in front of it. */
     fireRate: 1.7, burst: 4, burstGap: 0.14, spread: 0.03, damage: 12,
     preferred: [4, 18], boltColor: BOLT_COLORS.red,
-    turnRate: 0.45, grade: 0.26, toppleAt: 1,
+    /* 0.34 OF GRADE AND NOT 0.26, and it is the one number here where a tread
+     * beats a wheel: the reference calls it "a high-traction huge central
+     * tread", which is what a single wide belt buys and what ten hard road
+     * wheels do not have. It is still half of what magnetised footpads take. */
+    turnRate: 0.45, grade: 0.34, toppleAt: 1,
     score: 2600, threat: 14, big: true, grippable: false, unlockAt: 6,
   },
 });
@@ -4013,6 +4065,13 @@ export const GIANT_CANON = {
   spha: {
     name: 'Self-Propelled Heavy Artillery (turbolaser)', side: 'republic',
     l: 140.2, w: null, h: null, built: 4, contacts: 12, contactKind: 'legs',
+    /* HOW IT IS MEANT TO DIE, stated so it can be held against the game rather
+     * than against a comment. `chains` and `lose` are compared to what the rig
+     * has and to what `toppleAt` computes — they are never READ by anything,
+     * which is what keeps this from being HANDOFF §2.3's twin — and `says` is
+     * the phrase the machine's own databank page has to contain, because an
+     * answer the player is never told is not an answer. */
+    kill: { chains: 12, lose: 5, at: 'legs', says: ['five', 'legs'] },
     /* 140.2 m is the databank length. A scaling analysis off the Geonosis
      * footage puts the same machine at 34-38 m long and about 20 m tall, which
      * is where 1:4 comes from: the two readings agree there, and 35 m is the
@@ -4022,21 +4081,35 @@ export const GIANT_CANON = {
   juggernaut: {
     name: 'HAVw A6 Juggernaut', side: 'republic',
     l: 49.4, w: 19.6, h: 30.4, built: 2, contacts: 10, contactKind: 'wheels',
+    kill: { chains: 10, lose: 4, at: 'wheels', says: ['wheel'] },
     ratio: 49.4 / 30.4, note: 'ten wheels, 160 km/h, two cockpits, 300 troops',
   },
   tridroid: {
     name: 'Octuptarra magna tri-droid', side: 'separatist',
     l: null, w: null, h: 14.59, built: 1, contacts: 3, contactKind: 'legs',
+    kill: { chains: 3, lose: 1, at: 'legs', says: ['one leg'] },
     ratio: null, note: 'three legs, three photoreceptors, no blind spot',
   },
   snailtank: {
     name: 'NR-N99 Persuader-class droid enforcer', side: 'separatist',
-    l: 10.96, w: null, h: 6.2, built: 1, contacts: 1, contactKind: 'tread',
+    /* THREE GROUND CONTACTS AND NOT ONE, which is what the reference actually
+     * describes: "a high-traction huge central tread, augmented on either side
+     * by forward-mounted outrigger wheels on a pontoon tread for additional
+     * stability". One of the three drives and all three carry, and the builder
+     * prices all three as `leg` for the reason its own `struts` note gives. */
+    l: 10.96, w: null, h: 6.2, built: 1, contacts: 3, contactKind: 'tread and outriggers',
+    /* AND THE HEIGHT IS OVER THE GUN. 6.2 m is the whole machine including the
+     * blaster mount on top, where an AT-TE's 5.02 m is a hull with a mass
+     * driver on a ring above it. `hFrom` is which of the two a check compares
+     * against, and it is stated per machine because the references are. */
+    hFrom: 'all',
+    kill: { chains: 3, lose: 1, at: 'ground contacts', says: ['pontoon', 'tread'] },
     ratio: 10.96 / 6.2, note: 'one central tread, outriggers, 60 km/h',
   },
   atte: {
     name: 'All Terrain Tactical Enforcer', side: 'republic',
     l: 13.2, w: 10.2, h: 5.02, built: 1, contacts: 6, contactKind: 'legs',
+    kill: { chains: 6, lose: 3, at: 'legs', says: ['three of the six'] },
     /* The figures the player quoted, which are the Cross-Sections' (12.4 m of
      * hull, 13.2 m over the guns, 5.32 m tall). A later databank entry gives
      * 22.02 x 9.7 for the same machine — genuinely disputed — and this file

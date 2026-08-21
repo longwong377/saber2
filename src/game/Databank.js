@@ -421,7 +421,8 @@ export const DATABANK = {
       + 'also the fastest heavy in the game — you cannot outrun it in the open, so '
       + 'do not try. It cannot climb and it cannot come about. Anything you can put '
       + 'between you and it is a wall it has to drive the long way round, and while '
-      + 'it does that it is showing you five wheels at knee height.',
+      + 'it does that it is showing you five wheels at knee height. Four of the ten '
+      + 'and it is off them.',
   },
 
   /* ── the Order ────────────────────────────────────────────────────── */
