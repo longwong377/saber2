@@ -497,10 +497,11 @@ export async function run({ check, assert }) {
      *
      * They can, and the way they do it is the scheme's own verb: flick a new
      * guard, which moves the blade to a different quarter of the plate, and
-     * work sideways along the door in between. Measured with nothing but
-     * flicks and a step: the blade reaches u 0.12–0.84 and v 0.19–0.70 of the
-     * plate — where a single held zone reaches v 0.44–0.70 and saturates at
-     * 521 texels however long you stand there — and the door opens.
+     * work sideways along the door in between. That the flicks are the load-
+     * bearing part was measured before this drive had any: held in ONE zone,
+     * the blade sweeps a band about 1.1 m tall and no more, and the burn
+     * saturates there — 521 texels after 150 s of standing at the plate, still
+     * climbing by two texels a minute. Four zones and a step open it.
      *
      * It is SLOWER than the mouse-blade schemes, and that is the honest
      * result: the scheme that gives you the blade gives you the door faster.
