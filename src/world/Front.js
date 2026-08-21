@@ -224,8 +224,7 @@ export function burnBand(terrain, front, opts = {}) {
    * each way covers a 60° frame at the far end of the schedule with room over.
    * On a curve the line runs out of map before it runs out of swath, so the
    * reach either way is whatever is left of the arc. */
-  const want = opts.half ?? 260;
-  const half = want;
+  const half = opts.half ?? 260;
   const step = opts.step ?? 5.5;
   /* HOW FAR BEHIND THE LINE THE FIGHTING REACHED. `rows` bands at `rowStep`
    * past it, each thinner and paler than the last: a front is not a line, it
