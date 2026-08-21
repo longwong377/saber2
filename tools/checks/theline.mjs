@@ -1229,7 +1229,6 @@ export async function run({ check, assert }) {
     const { SESSION_PLANS } = await import('../../src/game/Session.js');
     const { dutyInput } = await import('../_flagship.mjs');
     const SEED = 11;
-    const CAP = 3600;
     const { world, d } = await lineWorld({ seed: SEED });
     const raid = SESSION_PLANS.find((p) => p.id === 'raid');
     assert(d.plan.id === raid.id,
@@ -1241,11 +1240,20 @@ export async function run({ check, assert }) {
      * sitting nobody would play. Three benches in three lanes had exactly that
      * omission on one afternoon. */
     const input = dutyInput(world);
+    /* THE CAP IS THE PROMISE, WHICH IS WHAT MAKES THIS AFFORDABLE TO RUN.
+     * Driving to a generous cap and then comparing the clock would spend an
+     * hour of game time to report a failure it knew about after fifteen
+     * minutes. The band's own top IS the deadline, so the check costs exactly
+     * what the card offers and a mode that has drifted long fails fast instead
+     * of holding the gate open — which is the whole lesson of `cloth-cost`
+     * (HANDOFF §2.6). The upper assertion is therefore "it ended", not a
+     * comparison. */
+    const [lo, hi] = raid.minutes;
     let t = 0, over = null, waves = 0, wave = d.wave;
     const marks = [];
     world.onGameOver = (s) => { over = s; };
     try {
-      for (let i = 0; i < CAP / STEP && !over; i++) {
+      for (let i = 0; i < (hi * 60) / STEP && !over; i++) {
         input.tick(STEP);
         /* IMMORTAL, BOTH SIDES OF THE PLAYER'S ARMY — see the note above. */
         if (world.player) world.player.hp = world.player.maxHp;
@@ -1259,18 +1267,14 @@ export async function run({ check, assert }) {
       }
     } finally { world.unload(); }
     const mins = t / 60;
-    const [lo, hi] = raid.minutes;
     const per = marks.map((m, k) => ((m - (marks[k - 1] || 0)) / 60).toFixed(1)).join('/');
     assert(over,
-      `a ${raid.name} was still going after ${mins.toFixed(1)} minutes of game time and ${waves} `
-      + `waves — its card promises ${lo}-${hi} min, and a sitting that does not end inside an hour `
-      + 'is not a sitting whatever the card says');
-    assert(mins <= hi,
-      `a ${raid.name} floors at ${mins.toFixed(1)} min against a card that promises ${lo}-${hi}. `
-      + 'The army was held unkillable throughout, so that is the FASTEST this build can clear these '
-      + 'waves and a played sitting cannot be shorter. Either the plan changes — AREAS[*].waves, '
-      + "AREAS[*].budget, CommandDirector.rampWave — or SESSION_PLANS' band does, but a card that "
-      + 'promises what the mode cannot deliver is the defect either way.');
+      `a ${raid.name} was still being fought when its own card said it was over: ${waves} waves and `
+      + `${mins.toFixed(1)} minutes against a promise of ${lo}-${hi}, with the army held unkillable `
+      + 'throughout — so that is the FASTEST this build can clear these waves and a played sitting '
+      + 'cannot be shorter. Either the plan changes (AREAS[*].waves, AREAS[*].budget, '
+      + "CommandDirector.rampWave) or SESSION_PLANS' band does, but a card that promises what the "
+      + 'mode cannot deliver is the defect either way.');
     assert(mins >= lo * 0.5,
       `a ${raid.name} floors at only ${mins.toFixed(1)} min against a card promising ${lo}-${hi}. `
       + 'A sitting this far under its own floor has had the fight made trivial rather than the '
