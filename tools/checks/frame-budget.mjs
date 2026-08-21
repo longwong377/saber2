@@ -77,6 +77,7 @@ import * as THREE from 'three';
 import { OutlinePass, cutsItsOwnSilhouette } from '../../src/toon/Ink.js';
 import { QUALITY } from '../../src/engine/Engine.js';
 import { celInstall } from '../../src/toon/Cel.js';
+import { BAKES_PER_FRAME } from '../../src/game/MergedSkin.js';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
 import { clocked } from './_shared.mjs';
 
@@ -688,13 +689,14 @@ export async function run({ check, assert }) {
      * a rung that silently stopped engaging fails rather than reporting a
      * flattering number off a shorter run. */
     const input = idleInput();
+    const budget = Math.ceil(L2.n / BAKES_PER_FRAME);
     let frames = 0;
-    while (frames < L2.n * 4) {
+    while (frames < budget * 4) {
       world.update(1 / 60, input);
       frames++;
       if (world.enemies.every((e) => e._l2 && e._l2.on)) break;
     }
-    return { world, engine, frames, centre };
+    return { world, engine, frames, budget, centre };
   })();
 
   /** Visible meshes under every body on the field. */
@@ -705,7 +707,7 @@ export async function run({ check, assert }) {
   };
 
   check('frame: forty-two bodies past the L2 cut cost a draw call a MATERIAL, not one a mesh', async () => {
-    const { world, engine, frames } = await line;
+    const { world, engine, frames, budget } = await line;
     const dists = world.enemies.map((e) => engine.camera.position.distanceTo(e.position));
     const near = Math.min(...dists), far = Math.max(...dists);
 
@@ -713,10 +715,18 @@ export async function run({ check, assert }) {
     assert(world.enemies.every((e) => e.lod === 2),
       `not every body is at LOD 2 — distances run ${near.toFixed(0)}-${far.toFixed(0)} m and this `
       + 'rung is the far band. Nothing below would be measuring what it says it is.');
-    assert(frames < L2.n * 4,
-      `${frames} frames and the rung never fully engaged. MergedSkin caps the bake at one body a `
-      + 'frame and Enemy.update retries a deferred one; a body that is never retried draws its '
-      + 'LOD-1 set forever, which is what this measured before that retry existed — 1 of 42.');
+    assert(frames < budget * 4,
+      `${frames} frames and the rung never fully engaged. MergedSkin caps the bake at `
+      + `${BAKES_PER_FRAME} a frame and Enemy.update retries a deferred one; a body that is never `
+      + 'retried draws its LOD-1 set forever, which is what this measured before that retry '
+      + 'existed — 1 of 42.');
+    /* …and the cap is REAL. `BAKES_PER_FRAME` is read here rather than
+     * transcribed, so a cap raised to make this loop shorter shows up as the
+     * 116 ms lurch it buys back rather than as a faster check. */
+    assert(frames >= budget,
+      `${L2.n} bodies all merged inside ${frames} frames against a cap of ${BAKES_PER_FRAME} a `
+      + `frame, which needs ${budget}. The cap is not binding, so a wave that crosses 62 m `
+      + 'together pays every bake on one frame.');
 
     /* BOTH READINGS OFF THE SAME WORLD, one line apart, through the shipped
      * `_applyLod`. A separately built control World is a different seed, a

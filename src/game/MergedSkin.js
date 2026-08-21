@@ -7,16 +7,19 @@
  * thirty metres. What it cannot throw away is the SILHOUETTE — one primary
  * mesh per bone, plus whatever `markSilhouette` tagged — because that is the
  * thing you fight by. So a body has a floor, and the floor is high: measured
- * on a real `high` World on geonosis, 42 mixed bodies standing 72-127 m out
- * cost **1071 visible meshes**, 21 to 31 each, at every distance forever.
+ * on a real `high` World on geonosis, 42 mixed bodies standing 100-154 m out
+ * cost **1064 visible meshes**, 21 to 31 each, at every distance forever.
  * FLAGSHIP §4 states the same fact from the other side — "a trooper who walks,
  * shoots, takes cover and can be cut in half costs 26 draw calls at every
  * distance, forever" — and calls it the whole architecture.
  *
  * The floor is not made of geometry. It is made of MATERIAL BOUNDARIES. A
  * trooper's kept set is 26 meshes wearing 6 materials, and those 6 differ from
- * each other in `color`, `roughness` and `metalness` and in **nothing else**;
- * they share three textures between them. Six bins, not twenty-six.
+ * each other in `color`, `roughness` and `metalness` and in **nothing else**.
+ * Two pairs of them sample the same texture at the same repeat, so a trooper
+ * comes out at FOUR draw calls — and not at one either, because the four
+ * remaining bins each read a different map. Whole rigged roster: 796 kept
+ * meshes, 136 calls.
  *
  * ── WHAT THIS DOES ────────────────────────────────────────────────────────
  *
