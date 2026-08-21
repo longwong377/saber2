@@ -70,6 +70,17 @@
  */
 
 import { ARCHETYPES } from './Enemy.js';
+/**
+ * `paysOut` IS A CYCLE AND IT IS A SAFE ONE, which is worth stating because
+ * `MORALE` had to move out of Command.js for the opposite reason. Levy → World
+ * → Levels → Command → Levy is a real import cycle; what makes it harmless is
+ * that this is a hoisted function DECLARATION called at runtime, never a
+ * constant read at module scope, so there is no frame on which the binding can
+ * be `undefined`. It is imported rather than restated because it is the one
+ * statement in the tree of what a body is worth (HANDOFF §2.4).
+ */
+import { paysOut } from './World.js';
+import { ROUT_PER_FRAME } from './Waves.js';
 
 /** The body class the levy is made of. FLAGSHIP §6's third class. */
 export const LEVY_TYPE = 'conscript';
@@ -163,5 +174,159 @@ export function applyLevy(out, director, wave = director?.wave ?? 1) {
   out.shape.alive = (out.shape.alive ?? 26) + n;
   out.shape.pace = (out.shape.pace ?? 1) * (paying / (paying + n));
   out.shape.levy = n;
+  /* The pack that takes them off again. Made here rather than at level load,
+   * because the only world that needs one is a world whose director has just
+   * composed a levy. */
+  attachLevy(director?.world);
   return out;
 }
+
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  When the levy stops being on the field                                */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * THE DEFECT THE FIRST FIELDING HAD, WHICH IS WORTH THE WHOLE OF THIS SECTION.
+ *
+ * Measured, on a real Command world on geonosis at wave 3, an idle player and
+ * the shipped composer, 90 seconds:
+ *
+ *     no levy    the wave cleared at s72
+ *     levy 42    still wave 3 at s90, with 26 conscripts standing
+ *
+ * `WaveDirector.update` ends a wave when nothing that `blocksWaveEnd` is alive,
+ * and `blocksWaveEnd` is "not dead, and not on your team". A conscript is both,
+ * so forty of them are forty bodies the player has to KILL before the wave can
+ * end — which is the precise inversion of the design. §6's sentence is that
+ * mowing does not pay; a levy that gates the wave makes mowing not merely
+ * profitable but COMPULSORY, and the mode would have shipped with the one
+ * mechanic that was supposed to stop the lawnmower being the thing that hands
+ * the player the lawnmower.
+ *
+ * ── AND THE FIX IS NOT `blocksWaveEnd` ───────────────────────────────────
+ *
+ * The obvious repair is to override it so an unpaid body does not gate the
+ * wave. It is wrong, and the reason is that ONE METHOD IS ANSWERING TWO
+ * QUESTIONS. `update` computes `alive` off `blocksWaveEnd` once and uses it
+ * both for "is the wave over" and for "may another body be let onto the field"
+ * (`alive + inbound < maxAlive`). Take the levy out of it and the second
+ * question loses its answer: the concurrency cap stops seeing forty of the
+ * bodies on the field and the director dumps the whole queue as fast as the
+ * spawn timer allows, which is the frame budget this file spent its whole
+ * `LEVY_STRENGTH` note measuring, thrown away in one line.
+ *
+ * ── SO THE LEVY BREAKS ───────────────────────────────────────────────────
+ *
+ * When the last PAYING body of the wave is down and there are no more coming,
+ * the conscripts break and run — the levy is not something you clear, it is
+ * something that stops being there once the regulars it was standing behind
+ * are dead. That is FLAGSHIP §7's first verb told from the other side, it is
+ * what a levy has always done in every battle anyone has written down, and it
+ * needs no change to the base director at all.
+ *
+ * Withdrawn a few a frame off `ROUT_PER_FRAME` for the reason `_rout` gives
+ * about itself: "a line that collapses over two seconds is something you watch
+ * break; a line that all falls on the same frame is a bug that happens to be
+ * intentional."
+ *
+ * ── WHY IT IS A PROP AND NOT A LINE IN THE DIRECTOR ──────────────────────
+ *
+ * `World.update` steps every entry of `world.props` once a frame, so a prop is
+ * a per-frame tick that costs no edit to World.js and none to Waves.js — the
+ * same seam `Flight.js` and `Riders.js` both take, and its whole cost on a
+ * ground with no levy is one early return.
+ */
+
+class LevyPack {
+  constructor(world) {
+    this.id = 'levy';
+    this.world = world;
+    this.dead = false;
+    this.kind = 'levy';
+    this.grippable = false;
+    this.generation = 0;
+    this.toughness = Infinity;
+    this.hp = Infinity;
+    this.broke = false;
+    this.body = {
+      position: { x: 0, y: 0, z: 0 }, quaternion: { x: 0, y: 0, z: 0, w: 1 },
+      velocity: { x: 0, y: 0, z: 0 }, angularVelocity: { x: 0, y: 0, z: 0 },
+      boundingRadius: 0, mass: 0, invMass: 0, static: true,
+      applyImpulse() {}, wake() {},
+    };
+    this.mesh = null;
+  }
+
+  capsules(out = []) { out.length = 0; return out; }
+  cut() { return []; }
+  shatter() {}
+  damage() { return false; }
+
+  /**
+   * `paysOut` and `blocksWaveEnd` are both ASKED rather than restated (HANDOFF
+   * §2.4). The first is World's one statement of "is this body worth anything";
+   * the second is the director's one statement of "is this body the wave". A
+   * second copy of either here would eventually disagree with the thing it is
+   * describing, and it would disagree silently.
+   */
+  update() {
+    const w = this.world;
+    const d = w?.director;
+    if (!d || !d.active || !w.enemies) { this.broke = false; return; }
+    let paying = 0;
+    const levy = [];
+    for (const e of w.enemies) {
+      if (!d.blocksWaveEnd(e)) continue;
+      if (paysOut(e.A)) paying++;
+      else levy.push(e);
+    }
+    if (!levy.length) { this.broke = false; return; }
+    /* Anything still queued or in the air counts as the wave not being over —
+     * `delivered` is the director's own word for it, and asking it is what
+     * stops a levy breaking in the gap between two gunships. A queue holding
+     * nothing but levy entries is not a wave still coming, so those are
+     * dropped rather than waited for. */
+    if (!this.broke) {
+      if (paying > 0) return;
+      const queued = d.spawnQueue.filter((e) => paysOut(ARCHETYPES[String(e).split('|')[0]]));
+      if (queued.length || d.arrivals?.pending) return;
+      d.spawnQueue.length = 0;
+      this.broke = true;
+      w.notify?.('THE LEVY BREAKS', `${levy.length} conscripts run — they were never the wave`);
+    }
+    let n = 0;
+    for (const e of levy) {
+      if (n >= ROUT_PER_FRAME) break;
+      e.dead = true;
+      e.dying = 0;
+      /* Null source, exactly as `_rout` and `_retire` do it: nobody killed
+       * these and nobody is credited with them. `paysOut` is false for a
+       * conscript anyway, so this cannot pay — the null is there so that the
+       * day a levy is made of something else, it still cannot. */
+      w.onEnemyKilled?.(e, null, 'rout');
+      n++;
+    }
+  }
+
+  destroy() {
+    if (this.dead) return;
+    this.dead = true;
+    const i = this.world.props.indexOf(this);
+    if (i >= 0) this.world.props.splice(i, 1);
+  }
+  dispose() { this.destroy(); }
+}
+
+/** The world's levy pack, made on demand by the first wave that fields one. */
+export function attachLevy(world) {
+  if (!world) return null;
+  if (world.levy && !world.levy.dead) return world.levy;
+  const pack = new LevyPack(world);
+  world.levy = pack;
+  if (world.addProp) world.addProp(pack);
+  else if (world.props) world.props.push(pack);
+  return pack;
+}
+
+export { LevyPack };
