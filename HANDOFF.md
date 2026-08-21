@@ -171,6 +171,18 @@ refrain from one convenient command.
   is the signal, and it is exactly what a path-scoped `git add` is prone to
   missing.
 
+**IT HAPPENED A THIRD TIME, IN THE NARROW CASE, AND THE NARROW CASE IS STILL
+NOT AN EXCEPTION.** A lane ran `git checkout HEAD -- tools/_linehold.mjs` to
+drop one experimental hunk from a file it had created and committed thirty
+seconds earlier. `git status` afterwards showed only an untracked peer file, so
+nothing was lost and nothing could have been — the path was unambiguously its
+own. It reported the breach itself, unprompted, at the top of its own report.
+That is the behaviour to want and the ban still holds as written: the reason it
+is a ban and not a guideline is that "I am sure this path is mine" is exactly
+what the agent that took 1,825 lines also believed. The safe version of the
+same intent is `git show HEAD:<path> > <path>`, which is a read and cannot
+reach a path you did not name.
+
 **AND `git commit --amend` IS A TREE-WIDE VERB TOO** — the third round found
 this one, and it is the subtlest of the three because the lane did everything
 right. It ran a path-scoped `git add`, checked `git diff --cached --stat`, saw
@@ -224,6 +236,47 @@ retreating run opened with eight enemies alive, which a fresh wave cannot do.
 
 **Four of one day's apparent game defects were harnesses lying.** Two-copies-of-
 three, the draft cadence, the smoke probes, and this. Budget for it.
+
+### 2.5b THREE module-level streams, and until recently only two could be pinned
+
+The most expensive version of §2.5 this repository has produced, because the
+harness was not lying — it was answering a question nobody had asked it.
+
+`enemyRng.seed(n)` (Enemy.js) and `seedWaves(n)` (Waves.js) have existed for a
+long time. `World.js` held a third, `const rng = makeRng(moduleSeed(2))`, drawn
+by `pickSpawn`, `spawnDebris`, the dressing and a dozen per-frame callers — and
+it had **no reseeder**, so a bench could pin two of three and believe it had
+pinned the world. It is `seedWorld(n)` now; `makeRng` already carried the
+method, so the fix was an export and a name.
+
+What the gap cost, on one number — survivors of a ten-man line at the end of one
+engagement of the flagship mode:
+
+- Two arms differing **only in the mode string** read **5.4 and 3.0 of ten** on
+  the same director and the same change. A crossing rolls a session plan
+  (`rollSession`) and Command does not; that one extra draw moves everything
+  after it. A whole tuning conclusion was drawn from the gap and was wrong.
+- **Four consecutive readings of ONE build by one check spanned 1.3 to 6.0**,
+  on nothing but where the eleven checks above it had left the stream.
+
+Three rules follow, and they are written into `tools/_linehold.mjs`'s header
+where the next person will meet them:
+
+- **Both arms from FRESH PROCESSES**, one invocation each, same seed list. Two
+  arms inside one process are not comparable — the second starts wherever the
+  first stopped.
+- **Never compare across mode strings.** Compare theline against theline.
+- **Pin anything else that is a roll**, e.g. `LEVELS[*].battlefield`, which
+  raises a generated heightfield per seed under a level's own dressing.
+
+**AND SOME OF THESE QUANTITIES ARE CHAOTIC, NOT MERELY NOISY**, which is the
+part that survives even a perfectly pinned harness. Two arms differing only in
+one bolt's damage — 10 against 5 — took the same seed from **5 survivors to 1**
+and the next seed from **1 to 5**. A perturbation of a few hit points diverges a
+three-wave engagement inside seconds, so a per-seed pair means nothing and only
+a mean over many seeds does: five seeds carry a standard error near 1.3 on a
+ten-man roster, twenty carry about 0.65. Treat any difference under about 1.5
+men at five seeds as **unmeasured**, and size the sample before the lever.
 
 ### 2.6 Frames are not seconds — there is no GPU here
 
