@@ -36,6 +36,9 @@ const seeds = (process.argv[3] || '1,2,3,5,7').split(',').map(Number);
 const arms = (process.argv[4] || 'none,idle,blade').split(',');
 const level = process.argv[5] || 'geonosis';
 
+/** The run's clock, read by the wave-timing hook below. One per run. */
+let tNow = 0;
+
 async function run(arm, seed) {
   const { world } = await H.bootWorld({
     level, spawn: arm !== 'none',
@@ -54,20 +57,50 @@ async function run(arm, seed) {
    * and it is also what stops the reading being taken after the replacements.
    */
   d.onMuster = () => {};
+  /**
+   * AND HOW LONG EACH WAVE OF THE ENGAGEMENT TOOK, from the same run.
+   *
+   * A lever picked for attrition moves the sitting's LENGTH with it, because
+   * both come off the same quantity — how many bodies a wave puts on the
+   * ground. `tools/_linewave.mjs` times a whole sitting with everybody held on
+   * their feet; this is the cheap half of that number, taken from the run that
+   * is already happening, so a tuning pass can never move the clock without
+   * saying so. Hung off the director's own clear event rather than off a wave
+   * counter, so a wave that is closed out counts exactly once.
+   */
+  const waves = [];
+  let lastClear = 0;
+  const onClear = d.onWaveClear;
+  d.onWaveClear = function (...a) { waves.push(+(tNow - lastClear).toFixed(1)); lastClear = tNow;
+    return onClear?.apply(this, a); };
   d.start(1);
   const n0 = d.roster.all.length;
   const input = arm === 'blade' ? dutyInput(world) : H.idleInput();
   let t = 0, ended = 'cap';
+  tNow = 0;
   for (let i = 0; i < CAP / STEP; i++) {
     /* UNKILLABLE IN BOTH PLAYER ARMS, and identically, so the survival of the
      * Jedi is not a variable in a reading about the survival of the line. */
     if (world.player) world.player.hp = world.player.maxHp;
-    world.update(STEP, input); t += STEP;
+    /**
+     * `tick` FIRST, AND THE FIRST CUT OF THIS BENCH DID NOT CALL IT.
+     *
+     * `dutyInput` is a SCRIPT: `input.tick(dt)` is where it reads the world,
+     * points the move axis at the nearest enemy, presses the swing and holds
+     * station on the line's centroid. `world.update` does not call it —
+     * `tools/_flagship.mjs`'s own `drive` does, one line above its step — so a
+     * bench that steps the world and never ticks the input has a Jedi standing
+     * on the deploy mark with the guard up and nothing else. That is the IDLE
+     * arm wearing the BLADE arm's name, and it would have been reported as
+     * "a fighting Jedi is worth nothing".
+     */
+    input.tick?.(STEP);
+    world.update(STEP, input); t += STEP; tNow = t;
     if (d.mustering) { ended = 'cleared'; break; }
     if (world.over) { ended = 'over'; break; }
     if (d.roster.strength === 0) { ended = 'wiped'; break; }
   }
-  const out = { arm, seed, left: d.roster.strength, n0, t, wave: d.wave, ended };
+  const out = { arm, seed, left: d.roster.strength, n0, t, wave: d.wave, ended, waves };
   world.unload();
   return out;
 }
@@ -77,7 +110,8 @@ for (const arm of arms) for (const seed of seeds) {
   const r = await run(arm, seed);
   rows.push(r);
   console.log(`  ${arm.padEnd(5)} seed ${String(r.seed).padStart(2)}  `
-    + `${r.left}/${r.n0} left  ${r.t.toFixed(0)}s  wave ${r.wave}  ${r.ended}`);
+    + `${r.left}/${r.n0} left  ${r.t.toFixed(0)}s  wave ${r.wave}  ${r.ended}  `
+    + `waves [${r.waves.join(' ')}]s`);
 }
 console.log(`\n${mode} · ${level} · area 1 = ${AREAS[0].waves} waves · n=${seeds.length} seeds`);
 for (const arm of arms) {
@@ -88,5 +122,7 @@ for (const arm of arms) {
   console.log(`${arm.padEnd(5)} survivors mean ${mean.toFixed(1)}/10  `
     + `min ${left[0]} max ${left[left.length - 1]}  [${left.join(' ')}]  `
     + `cleared ${cleared}/${a.length}  `
-    + `median ${(a.map((r) => r.t).sort((x, y) => x - y)[a.length >> 1]).toFixed(0)}s`);
+    + `median ${(a.map((r) => r.t).sort((x, y) => x - y)[a.length >> 1]).toFixed(0)}s  `
+    + `mean wave ${(() => { const w = a.flatMap((r) => r.waves);
+      return w.length ? (w.reduce((x, y) => x + y, 0) / w.length).toFixed(0) : '—'; })()}s`);
 }
