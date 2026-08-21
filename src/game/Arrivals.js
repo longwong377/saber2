@@ -103,9 +103,9 @@ export function setTransportModel(fn) { _transportModel = typeof fn === 'functio
 /** And the capital ship the insertion leaves. Same seam, same reason. */
 let _capitalModel = null;
 export function setCapitalModel(fn) { _capitalModel = typeof fn === 'function' ? fn : null; }
-export function capitalModel() {
+export function capitalModel(side) {
   if (!_capitalModel) return null;
-  try { return _capitalModel(); } catch (e) { return null; }
+  try { return _capitalModel({ side }); } catch (e) { return null; }
 }
 
 /**
@@ -132,11 +132,26 @@ export function dropshipModel() {
  * primitives when nothing is registered — a check that has imported Vehicles
  * but not Levels still gets a hull — and to null after that, which is every
  * headless suite and which the director already handles.
+ *
+ * ── `side` IS THE ONLY ARGUMENT, AND IT IS PASSED ON RATHER THAN BRANCHED ON
+ *
+ * The player, having played a Sith: "sith side still gets picked up by the
+ * same transports that belong to the republic canonically". There are two
+ * hulls now and this file resolves neither of them — it hands the army id
+ * through to the registered builder and lets `Vehicles.js` pick, because that
+ * is where the hulls are and because a lookup here would be the second copy of
+ * a table that already exists there (HANDOFF §2.3). An `undefined` side is a
+ * legal call and gets whatever the builder's own default is, which is what
+ * every headless check that asks for a hull without a world will do.
+ *
+ * The gunship fallback ignores it. That is correct rather than sloppy: the
+ * fallback exists for a tree with no transport registered at all, and a
+ * faction-correct hull is not something it can offer.
  */
-export function transportModel() {
+export function transportModel(side) {
   for (const fn of [_transportModel, _shipModel]) {
     if (!fn) continue;
-    try { const m = fn(); if (m) return m; } catch (e) { /* try the next */ }
+    try { const m = fn({ side }); if (m) return m; } catch (e) { /* try the next */ }
   }
   return null;
 }

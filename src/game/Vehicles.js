@@ -1598,7 +1598,7 @@ function pilotBody(M, s = 1) {
   return g;
 }
 
-export function buildTransport(opts = {}) {
+export function buildRepublicTransport(opts = {}) {
   const S = opts.scale ?? 1.0;
   if (S === 1 && _transportTemplate && !opts.fresh) {
     const c = _transportTemplate.clone(true);
@@ -1798,7 +1798,440 @@ export function buildTransport(opts = {}) {
   g.userData.span = bs.x;
   g.userData.length = bs.z;
   g.userData.height = bs.y;
+  /* WHOSE SHIP THIS IS. Not read by the director — it is how a check can ask a
+   * FLOWN hull which army it belongs to without reading a table back, and
+   * `buildDroidTransport` publishes it too so the pair is symmetrical. */
+  g.userData.side = 'republic';
   if (S === 1 && !opts.fresh) _transportTemplate = g;
+  return g;
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  The Confederacy's own hulls                                           */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * THE DROID SHUTTLE — the ship a Sith's line rides, and why it is a different
+ * ship rather than a repaint of the one above.
+ *
+ * The player, having played the dark side of a build that only had one
+ * transport in it:
+ *
+ *   "Ive noticed that sith side still gets picked up by the same transports
+ *    that belong to the republic canonically, so fix that the bad guys need
+ *    their own unique transports too look it up but functionally they should
+ *    not be differernt like you should be able to sit/stand in it and see
+ *    through it, ramp, opening doors, etc."
+ *
+ * Two halves, and they pull in opposite directions: the hull has to be
+ * SOMEBODY ELSE'S and the ride has to be THE SAME RIDE. So the silhouette is
+ * argued from the references and everything `ExtractionDirector` touches is
+ * argued from `buildRepublicTransport` — see THE CONTRACT below, which is the
+ * part that has to be identical to the field name.
+ *
+ * ── WHICH CRAFT, AND WHY NOT THE FAMOUS ONE ───────────────────────────────
+ *
+ * Three Separatist craft move droids in this era. Only one of them is a
+ * squad's ride, and the obvious pick is the wrong one:
+ *
+ *   THE C-9979 LANDING CRAFT is the ship everybody pictures and it is out by
+ *     two orders of magnitude. It is 210 m across the wing — half again the
+ *     length of the whole battlefield this game fights on — and what it
+ *     unloads is ELEVEN MTTs, each of which is itself carrying a hundred and
+ *     twelve droids. It is the ship that carries the ship. Ten bodies riding
+ *     one would be ten bodies rattling around inside a hangar bigger than the
+ *     level, and the note above asks for a bay you can stand in, not a bay you
+ *     could lose a squad in.
+ *   THE MTT — the tracked Multi-Troop Transport — is a ground vehicle, and its
+ *     droids do not ride in a bay at all: they are folded onto a rack that
+ *     telescopes out of the bow. There is nothing to stand in, nothing to sit
+ *     on and nothing to see out of, so every clause of the player's note would
+ *     have to be invented instead of built.
+ *   THE SHEATHIPEDE-CLASS TRANSPORT SHUTTLE is the one that fits, and it fits
+ *     to the number. 14.4 m long, 9.5 m across, a crew of two, and TEN
+ *     PASSENGERS — which is exactly the number of places the Republic hull
+ *     publishes, so the two bays hold the same stick and neither had to be
+ *     padded or trimmed to make the boarding code come out even. It has an
+ *     egress hatchway at the STERN, which is already the ramp. It flew for the
+ *     Trade Federation and then for the Confederacy through the whole war,
+ *     which is the faction the note is about.
+ *
+ * ── THE SILHOUETTE, AND THE FIVE CUES THAT CARRY IT ───────────────────────
+ *
+ * A droid transport must not read as a gunship at four hundred metres, so the
+ * shape is held to cues a bounding box can be asked about rather than to a
+ * taste — the same discipline `buildGunship`'s own note takes:
+ *
+ *   A CURVED CARAPACE. The reference shape is a Neimoidian soldier beetle, so
+ *     the roof is a five-plate faceted arch on an ellipse rather than the flat
+ *     lid the Republic hull carries, and the belly is a three-plate arch under
+ *     it. Nothing on this ship is a box with a chamfer.
+ *   ONE TALL DORSAL FIN, which the references call its defining feature — the
+ *     thing it banks on. It is 3.1 m of fin standing on a hull whose roof is
+ *     at 1.86, and it is what takes this ship to 7.34 m tall against the
+ *     Republic hull's 4.43.
+ *   TWO ELYTRA TAILS splayed up and out off the aft shoulders, flanking the
+ *     hatchway. They are the whole of the span — there are no wings.
+ *   PINCER LANDING LEGS that fold down out of the rounded belly, two a side,
+ *     each an outward-raking thigh and an inward-hooking claw. The Republic
+ *     hull stands on four straight legs and a flat pad.
+ *   A BLIND SNOUT — a wide beetle head on a long thorax. Three nested
+ *     ellipsoids and a mandible band, with the canopy let INTO the shell
+ *     rather than stepped up out of it.
+ *
+ * Measured, whole box, this hull against the one above:
+ *
+ *     Republic     8.86 m span   4.43 m tall   11.54 m long
+ *     Confederacy  8.06 m span   7.34 m tall   12.64 m long
+ *
+ * The beam is the reference's to within 3%: the plates give 14.4 x 9.5 x 10.75
+ * m, which is 1 : 0.66 : 0.75, and this is 1 : 0.638 : 0.581. The fin is the
+ * one place the ship is deliberately short of its own reference — a
+ * proportionate one would put 9.5 m of sail over a bay the player's camera is
+ * sitting in, and the cue it carries is already the tallest thing in the shot.
+ *
+ * `tools/checks/transports.mjs` measures the two OUTLINES against each other
+ * rather than the two boxes, because two different boxes can still hold the
+ * same shape: three silhouettes are rasterised at 10 cm and intersected, and
+ * they come out at 0.437 flank, 0.641 plan and 0.391 head-on. The plan view is
+ * the loosest and it is loose for a reason the check writes down — both ships
+ * are a 2.4 m bay on the same centreline with a 2.6 m ramp at the same place,
+ * so the shared functional core is about a third of either footprint and no
+ * amount of shaping can take it out.
+ *
+ * ── THE CONTRACT, WHICH IS THE OTHER HALF OF THE NOTE ─────────────────────
+ *
+ * "functionally they should not be differernt". `ExtractionDirector` drives a
+ * transport through nine `userData` names and must not learn a tenth or grow a
+ * branch per hull, so this publishes all nine and means the same thing by each:
+ *
+ *   engines  four nozzle anchors, as above. The references say two engines and
+ *            this has two pods; each pod carries two nozzles, so both hulls
+ *            hang the same four flares and "I don't see any engines working"
+ *            is answered the same way on both sides.
+ *   lamp     the landing light, forward and under.
+ *   ramp     a group hinged at the aft lip of the bay floor with a 2.58 m leaf
+ *            — the SAME leaf length the Republic hull carries, because
+ *            `_hatch` computes the hinge angle as asin(drop / 2.6) and
+ *            `_deckHeight` walks a body up a leaf of that length. A shorter
+ *            ramp would not have failed anything; it would have put a trooper
+ *            through the deck.
+ *   doorL/R  two panels on rails, each clearing the aperture inside the 2.0 m
+ *            of aft travel `_hatch` gives them.
+ *   bay      the box a body may stand in, 2.44 m wide and 2.08 m from deck to
+ *            roof, so a standing trooper has head clearance rather than a
+ *            pose.
+ *   seats    TEN places, six on the benches facing inboard and four standing
+ *            on the centreline under the rail — the same six-and-four the
+ *            Republic hull fills, derived from `BAY` here for the reason its
+ *            note gives: a bay that moved and a seat table that did not is a
+ *            passenger standing in a wall.
+ *   span/length/height  measured off the built hull's own box, never typed.
+ *
+ * It publishes one thing the Republic hull did not: `userData.side`. That is
+ * not read by the director — it is how a check can ask a FLOWN ship which army
+ * it belongs to without reading a table, and `buildRepublicTransport`
+ * publishes it too so the pair is symmetrical.
+ */
+let _droidM = null;
+function droidTransportMaterials() {
+  if (_droidM) return _droidM;
+  return (_droidM = {
+    /* THE CONFEDERACY'S OWN PAINT, and it is the army's rather than a taste.
+     * `Command.ARMIES.separatist.plate` is 0xb9a077 — the tan every droid this
+     * ship carries is plated in — so the hull wears it as its markings and a
+     * cold blue-grey shell under them. The Republic hull is bone with maroon
+     * flashes; nothing here shares a swatch with it, which matters at the one
+     * range this ship is mostly seen at, which is inside it. */
+    shell: armorMat(0x78827f, 0.09, 0.58, 0.9),
+    mark: armorMat(0xb9a077, 0.06, 0.64, 1.1),
+    dark: metalMat(0x2b2e31, 0.5, 0.9, 2.0),
+    deck: metalMat(0x3f4347, 0.44, 0.86, 2.4),
+    glass: glassMat(0x0f1a1e, 0.10),
+    belly: armorMat(0x4c5450, 0.05, 0.74, 1.4),
+    droid: metalMat(0x9a8560, 0.46, 0.88, 2.2),
+    eye: emissiveMat(0xd83a2a, 2.6),
+  });
+}
+
+/**
+ * ONE SEATED DROID PILOT — and it is a droid, which is the point of it.
+ *
+ * The player asked to see the pilots and got two clones in the Republic hull.
+ * Two clones flying a Confederacy shuttle would be the defect this whole file
+ * is answering, one seat forward of where it was reported. So this is built to
+ * a different set of bones from `pilotBody`: a narrow drum torso instead of a
+ * blocky one, a long forward-raked skull on a stalk neck instead of a helmet
+ * sphere, thin rod arms, and a lit photoreceptor band — which is the only part
+ * of it that reads at all through tinted glass from behind, and is therefore
+ * the only part it is worth spending a material on.
+ */
+function droidPilotBody(M, s = 1) {
+  const g = new THREE.Group();
+  const k = new Kit();
+  k.add(M.droid, new THREE.CylinderGeometry(0.17 * s, 0.20 * s, 0.52 * s, 8), [0, 0.30 * s, 0]);
+  k.add(M.dark, plateGeo(0.34 * s, 0.24 * s, 0.40 * s, 0.05 * s, 1), [0, 0.02 * s, 0.12 * s]);
+  // the stalk neck and the long raked skull
+  k.add(M.dark, new THREE.CylinderGeometry(0.05 * s, 0.05 * s, 0.16 * s, 6), [0, 0.62 * s, 0]);
+  k.add(M.droid, plateGeo(0.19 * s, 0.17 * s, 0.46 * s, 0.05 * s, 1), [0, 0.72 * s, -0.10 * s], [0.34, 0, 0]);
+  k.add(M.eye, plateGeo(0.13 * s, 0.05 * s, 0.05 * s, 0.01 * s, 1), [0, 0.70 * s, -0.30 * s]);
+  // thin rod arms onto the stick
+  k.pair((sx) => {
+    k.add(M.droid, new THREE.CylinderGeometry(0.035 * s, 0.030 * s, 0.44 * s, 6),
+      [sx * 0.20 * s, 0.34 * s, -0.16 * s], [1.18, 0, 0]);
+    k.add(M.dark, new THREE.SphereGeometry(0.045 * s, 6, 5), [sx * 0.20 * s, 0.27 * s, -0.36 * s]);
+  });
+  k.bake(g);
+  return g;
+}
+
+let _droidTemplate = null;
+
+export function buildDroidTransport(opts = {}) {
+  const S = opts.scale ?? 1.0;
+  if (S === 1 && _droidTemplate && !opts.fresh) {
+    const c = _droidTemplate.clone(true);
+    c.userData = {
+      ..._droidTemplate.userData,
+      engines: (_droidTemplate.userData.engines || []).map((e) => c.getObjectByName(e.name)),
+      ramp: c.getObjectByName('ramp'),
+      doorL: c.getObjectByName('doorL'),
+      doorR: c.getObjectByName('doorR'),
+      lamp: c.getObjectByName('lamp'),
+    };
+    return c;
+  }
+  const M = droidTransportMaterials();
+  const g = new THREE.Group();
+  g.name = 'transport';
+
+  /* THE BAY, in the ship's own space, and −Z is FORWARD for every craft in
+   * this file — so the hatchway is at +Z and the snout at −Z. It is 4 cm wider
+   * and 3 cm taller than the Republic bay and 30 cm longer; those are not
+   * matching numbers and they are not meant to be. What has to match is what
+   * the bay can HOLD, and that is asserted on the seat count and the head
+   * clearance rather than on the box. */
+  const BAY = { halfW: 1.22, floor: -0.92, roof: 1.16, front: -2.30, back: 3.30 };
+
+  /* ── the carapace ───────────────────────────────────────────────────
+   * A FACETED ARCH, NOT A LID. Five plates on an ellipse of half-width 1.45
+   * and half-height 0.70 seated on the bay roof, plus a three-plate arch under
+   * the floor. This is the cue that costs the most and earns it: every plate
+   * of the reference is a curved shell modelled on a beetle, and the one thing
+   * that would make this ship read as the Republic's with different paint is a
+   * flat roof. Five is the fewest that reads as a curve at the range the ship
+   * is seen from outside; the crown plate carries the fin. */
+  const kf = new Kit();
+  const ARCH = [-1.10, -0.55, 0, 0.55, 1.10];
+  for (const a of ARCH) {
+    kf.add(M.shell, plateGeo(0.88 * S, 0.19 * S, 6.10 * S, 0.07 * S, 1),
+      [Math.sin(a) * 1.45 * S, (BAY.roof + 0.70 * Math.cos(a)) * S, 0.52 * S], [0, 0, -a]);
+  }
+  for (const a of [-0.70, 0, 0.70]) {
+    kf.add(M.belly, plateGeo(1.16 * S, 0.22 * S, 7.00 * S, 0.09 * S, 1),
+      [Math.sin(a) * 1.36 * S, (BAY.floor - 0.62 * Math.cos(a)) * S, -0.10 * S], [0, 0, a]);
+  }
+  // the deck itself, and the shoulder rails the arch sits on
+  kf.add(M.deck, plateGeo(2.84 * S, 0.22 * S, 5.84 * S, 0.06 * S, 1), [0, (BAY.floor - 0.11) * S, 0.50 * S]);
+  kf.pair((sx) => {
+    kf.add(M.shell, new THREE.CylinderGeometry(0.20 * S, 0.20 * S, 6.10 * S, 8),
+      [sx * 1.45 * S, (BAY.roof + 0.06) * S, 0.52 * S], [1.5708, 0, 0]);
+    /* the side walls, ABOVE and BELOW the door aperture only — the aperture
+     * itself is empty, which is the whole of "you should be able to see
+     * through it" and is the one thing this hull copies outright */
+    kf.add(M.shell, plateGeo(0.16 * S, 0.30 * S, 5.60 * S, 0.05 * S, 1), [sx * 1.32 * S, (BAY.roof - 0.10) * S, 0.52 * S]);
+    kf.add(M.shell, plateGeo(0.16 * S, 0.38 * S, 5.60 * S, 0.05 * S, 1), [sx * 1.32 * S, (BAY.floor + 0.16) * S, 0.52 * S]);
+    // ribs fore and aft of the aperture, and the rails the panels ride
+    kf.add(M.dark, plateGeo(0.13 * S, 2.08 * S, 0.28 * S, 0.03 * S, 1), [sx * 1.32 * S, 0.12 * S, -2.12 * S]);
+    kf.add(M.dark, plateGeo(0.13 * S, 2.08 * S, 0.28 * S, 0.03 * S, 1), [sx * 1.32 * S, 0.12 * S, 3.10 * S]);
+    kf.add(M.dark, plateGeo(0.09 * S, 0.09 * S, 5.90 * S, 0.02 * S, 1), [sx * 1.40 * S, (BAY.roof - 0.02) * S, 0.52 * S]);
+    kf.add(M.dark, plateGeo(0.09 * S, 0.09 * S, 5.90 * S, 0.02 * S, 1), [sx * 1.40 * S, (BAY.floor + 0.02) * S, 0.52 * S]);
+  });
+  // aft bulkhead over the hatchway, so the bay is a room and not a tube
+  kf.add(M.shell, plateGeo(2.56 * S, 0.72 * S, 0.22 * S, 0.06 * S, 1), [0, 0.82 * S, 3.36 * S]);
+
+  /* ── the snout: two nested ellipsoids and a mandible ────────────────
+   * BLIND AND ROUNDED. A gunship has a stepped greenhouse over a bulbous nose;
+   * this has a drooping shell with the canopy let into it, which is what the
+   * plates show and what makes the two ships tell apart head-on. */
+  kf.add(M.shell, new THREE.SphereGeometry(1.10 * S, 12, 9), [0, 0.06 * S, -3.30 * S], null, [1.42, 0.94, 1.55]);
+  kf.add(M.shell, new THREE.SphereGeometry(0.80 * S, 10, 8), [0, -0.20 * S, -5.10 * S], null, [1.08, 0.74, 1.45]);
+  kf.add(M.shell, new THREE.SphereGeometry(0.50 * S, 9, 7), [0, -0.34 * S, -6.10 * S], null, [0.94, 0.62, 1.40]);
+  kf.add(M.mark, bandGeo(0.62 * S, 0.78 * S, 0.54 * S, 0.70 * S, 0.16 * S, 12), [0, -0.76 * S, -4.90 * S], [1.5708, 0, 0]);
+
+  /* ── THE DORSAL FIN, which the references call its defining feature ──
+   * 2.30 m of it standing on a hull whose roof is at 1.86, which is what takes
+   * this ship to 5.94 m tall against the Republic hull's 4.43 while being
+   * 0.68 m shorter nose to tail. It is the cue that survives at any range and
+   * in any light, because it is the only thing on either ship that breaks the
+   * skyline. */
+  kf.add(M.shell, plateGeo(0.24 * S, 3.10 * S, 3.70 * S, 0.08 * S, 1), [0, 3.20 * S, 0.86 * S], [-0.13, 0, 0]);
+  kf.add(M.mark, plateGeo(0.28 * S, 0.32 * S, 2.60 * S, 0.04 * S, 1), [0, 4.54 * S, 0.66 * S], [-0.13, 0, 0]);
+  kf.add(M.dark, new THREE.CylinderGeometry(0.035 * S, 0.02 * S, 0.50 * S, 5), [0, 4.86 * S, 1.66 * S], [-0.30, 0, 0]);
+
+  /* ── THE TWO ELYTRA TAILS, splayed up and out off the aft shoulders ──
+   * There are no wings on this ship; these are the whole of the span, and they
+   * flank the hatchway rather than shading the door aperture. The cant is
+   * `sx * 0.78` about Z, which carries the outboard end UP — a beetle opening
+   * its wing cases, which is the reference the hull is named for. */
+  kf.pair((sx) => {
+    kf.add(M.shell, plateGeo(3.00 * S, 0.22 * S, 2.20 * S, 0.09 * S, 1),
+      [sx * 2.55 * S, 1.20 * S, 3.10 * S], [0, sx * -0.42, sx * 0.72]);
+    kf.add(M.mark, plateGeo(2.40 * S, 0.06 * S, 0.42 * S, 0.02 * S, 1),
+      [sx * 2.52 * S, 1.36 * S, 2.60 * S], [0, sx * -0.42, sx * 0.72]);
+  });
+  kf.bake(g, { silhouette: true });
+
+  /* ── the bay's furniture: benches down each side and the overhead rail ─
+   * The droids sit. That is not a joke about droids — the player rides in this
+   * bay and "you can either sit or stand" is the clause, so the same six
+   * inboard-facing places and the same rail to hold are here, in tan rather
+   * than in webbing. */
+  const kb = new Kit();
+  kb.pair((sx) => {
+    kb.add(M.dark, plateGeo(0.54 * S, 0.10 * S, 4.40 * S, 0.03 * S, 1), [sx * 0.87 * S, -0.44 * S, 0.72 * S]);
+    kb.add(M.dark, plateGeo(0.10 * S, 0.48 * S, 4.40 * S, 0.02 * S, 1), [sx * 1.16 * S, -0.20 * S, 0.72 * S]);
+    kb.add(M.dark, new THREE.CylinderGeometry(0.035 * S, 0.035 * S, 4.50 * S, 6),
+      [sx * 0.54 * S, (BAY.roof - 0.18) * S, 0.72 * S], [1.5708, 0, 0]);
+    kb.row(5, (i, t) => {
+      kb.add(M.mark, plateGeo(0.07 * S, 0.26 * S, 0.05 * S, 0.01 * S, 1),
+        [sx * 0.54 * S, (BAY.roof - 0.34) * S, (-1.20 + t * 3.9) * S]);
+    });
+  });
+  kb.bake(g);
+
+  /* ── the ramp: the stern hatchway, its own group, hinged at the floor lip ─
+   * THE LEAF IS 2.58 m, WHICH IS THE REPUBLIC HULL'S LEAF TO THE CENTIMETRE,
+   * and that is a hard constraint rather than a coincidence. `_hatch` sets the
+   * hinge angle to asin(drop / 2.6) and `_deckHeight` walks a body up a leaf
+   * of length 2.6 — both constants live in Extraction.js, which does not know
+   * there are two ships. A shorter leaf here would have failed nothing and put
+   * a trooper through the deck. */
+  const ramp = new THREE.Group();
+  ramp.name = 'ramp';
+  ramp.position.set(0, (BAY.floor - 0.02) * S, BAY.back * S);
+  {
+    const kr = new Kit();
+    kr.add(M.deck, plateGeo(2.26 * S, 0.16 * S, 2.58 * S, 0.05 * S, 1), [0, 0, 1.29 * S]);
+    kr.row(6, (i, t) => {
+      kr.add(M.dark, plateGeo(2.06 * S, 0.05 * S, 0.10 * S, 0.01 * S, 1), [0, 0.10 * S, (0.32 + t * 1.96) * S]);
+    });
+    kr.pair((sx) => kr.add(M.mark, plateGeo(0.09 * S, 0.22 * S, 2.58 * S, 0.02 * S, 1), [sx * 1.09 * S, 0.10 * S, 1.29 * S]));
+    kr.bake(ramp);
+  }
+  g.add(ramp);
+
+  /* ── the two side doors, sliding aft on the rails ─────────────────── */
+  const doors = [];
+  for (const sx of [1, -1]) {
+    const d = new THREE.Group();
+    d.name = sx > 0 ? 'doorL' : 'doorR';
+    const kd = new Kit();
+    kd.add(M.shell, plateGeo(0.14 * S, 1.96 * S, 2.30 * S, 0.05 * S, 1), [sx * 1.32 * S, 0.12 * S, 0.72 * S]);
+    kd.add(M.mark, plateGeo(0.06 * S, 0.34 * S, 1.10 * S, 0.02 * S, 1), [sx * 1.40 * S, 0.62 * S, 0.72 * S]);
+    kd.add(M.dark, plateGeo(0.08 * S, 0.14 * S, 0.36 * S, 0.02 * S, 1), [sx * 1.40 * S, -0.18 * S, 1.58 * S]);
+    kd.bake(d);
+    g.add(d);
+    doors.push(d);
+  }
+
+  /* ── the canopy, and two droid pilots you can see ──────────────────── */
+  const kc = new Kit();
+  kc.add(M.glass, plateGeo(1.86 * S, 0.72 * S, 1.50 * S, 0.22 * S, 2), [0, 0.44 * S, -3.00 * S], [0.26, 0, 0]);
+  kc.pair((sx) => kc.add(M.glass, plateGeo(0.12 * S, 0.66 * S, 1.30 * S, 0.08 * S, 1), [sx * 0.92 * S, 0.24 * S, -2.76 * S]));
+  kc.add(M.dark, plateGeo(2.00 * S, 0.12 * S, 0.30 * S, 0.04 * S, 1), [0, 0.86 * S, -2.34 * S]);
+  kc.add(M.dark, plateGeo(1.70 * S, 0.12 * S, 0.28 * S, 0.04 * S, 1), [0, 0.02 * S, -3.94 * S], [0.26, 0, 0]);
+  kc.bake(g);
+  for (const sx of [1, -1]) {
+    const p = droidPilotBody(M, 0.94 * S);
+    p.position.set(sx * 0.44 * S, -0.06 * S, -2.94 * S);
+    p.name = sx > 0 ? 'pilotL' : 'pilotR';
+    g.add(p);
+    const seat = new Kit();
+    seat.add(M.dark, plateGeo(0.48 * S, 0.66 * S, 0.16 * S, 0.04 * S, 1), [sx * 0.44 * S, 0.24 * S, -2.70 * S]);
+    seat.bake(g);
+  }
+
+  /* ── two engine pods, four nozzles, and the pincer legs ────────────── */
+  const kw = new Kit();
+  kw.pair((sx) => {
+    kw.add(M.shell, new THREE.CylinderGeometry(0.40 * S, 0.48 * S, 2.30 * S, 10),
+      [sx * 1.62 * S, -0.34 * S, 2.00 * S], [1.5708, 0, 0]);
+    kw.add(M.mark, new THREE.CylinderGeometry(0.50 * S, 0.50 * S, 0.24 * S, 10),
+      [sx * 1.62 * S, -0.34 * S, 1.10 * S], [1.5708, 0, 0]);
+    kw.add(M.dark, new THREE.CylinderGeometry(0.36 * S, 0.36 * S, 0.26 * S, 10),
+      [sx * 1.62 * S, -0.34 * S, 0.86 * S], [1.5708, 0, 0]);
+    // the pylon that hangs the pod off the carapace
+    kw.add(M.shell, plateGeo(0.30 * S, 0.72 * S, 1.30 * S, 0.08 * S, 1), [sx * 1.46 * S, 0.06 * S, 2.00 * S], [0, 0, sx * 0.22]);
+    for (const oy of [0.19, -0.19]) {
+      kw.add(M.dark, new THREE.CylinderGeometry(0.20 * S, 0.24 * S, 0.42 * S, 8),
+        [sx * 1.62 * S, (-0.34 + oy) * S, 3.02 * S], [1.5708, 0, 0]);
+    }
+    /* PINCER LEGS, two a side, and the two segments are the whole cue: a thigh
+     * that rakes OUT as it goes down and a claw that hooks back IN under it.
+     * The Republic hull stands on a straight leg and a flat pad; this stands
+     * on something that looks like it grips. */
+    for (const gz of [-2.30, 2.20]) {
+      kw.add(M.dark, new THREE.CylinderGeometry(0.12 * S, 0.10 * S, 0.86 * S, 7),
+        [sx * 1.22 * S, -1.50 * S, gz * S], [0, 0, sx * 0.42]);
+      kw.add(M.dark, new THREE.CylinderGeometry(0.09 * S, 0.07 * S, 0.62 * S, 6),
+        [sx * 1.60 * S, -1.94 * S, gz * S], [0, 0, sx * -0.62]);
+      kw.add(M.dark, plateGeo(0.44 * S, 0.11 * S, 0.52 * S, 0.03 * S, 1), [sx * 1.42 * S, -2.16 * S, gz * S]);
+    }
+  });
+  kw.bake(g, { silhouette: true });
+
+  /* ── the engine anchors the director hangs its flares on ───────────── */
+  const engines = [];
+  for (const sx of [1, -1]) {
+    for (const oy of [0.19, -0.19]) {
+      const e = new THREE.Object3D();
+      e.name = `engine${sx > 0 ? 'L' : 'R'}${oy > 0 ? 'U' : 'D'}`;
+      e.position.set(sx * 1.62 * S, (-0.34 + oy) * S, 3.28 * S);
+      g.add(e);
+      engines.push(e);
+    }
+  }
+  const lamp = new THREE.Object3D();
+  lamp.name = 'lamp';
+  lamp.position.set(0, -1.10 * S, -3.90 * S);
+  g.add(lamp);
+
+  g.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; } });
+  g.updateMatrixWorld(true);
+  const bb = new THREE.Box3().setFromObject(g), bs = new THREE.Vector3();
+  bb.getSize(bs);
+  g.userData.engines = engines;
+  g.userData.lamp = lamp;
+  g.userData.ramp = ramp;
+  g.userData.doorL = doors[0];
+  g.userData.doorR = doors[1];
+  g.userData.bay = {
+    halfW: BAY.halfW * S, floor: BAY.floor * S, roof: BAY.roof * S,
+    front: BAY.front * S, back: BAY.back * S,
+  };
+  /* SEATS, BENCH FIRST AND THEN THE FLOOR — six and four, the same order and
+   * the same count as the Republic hull, because `_seat` fills the benches for
+   * the line and gives the commander the first STANDING place by the open
+   * door. Get the counts wrong on one side and a Sith's tenth trooper is left
+   * on the sand while a Jedi's boards. */
+  const seats = [];
+  for (let i = 0; i < 3; i++) {
+    for (const sx of [-1, 1]) {
+      seats.push({ x: sx * 0.87 * S, y: (BAY.floor + 0.56) * S, z: (-0.70 + i * 1.40) * S,
+        yaw: sx < 0 ? Math.PI / 2 : -Math.PI / 2, sit: true });
+    }
+  }
+  for (let i = 0; i < 4; i++) {
+    seats.push({ x: (i % 2 ? 0.34 : -0.34) * S, y: (BAY.floor + 0.02) * S,
+      z: (-1.0 + Math.floor(i / 2) * 1.5) * S, yaw: 0, sit: false });
+  }
+  g.userData.seats = seats;
+  g.userData.span = bs.x;
+  g.userData.length = bs.z;
+  g.userData.height = bs.y;
+  g.userData.side = 'separatist';
+  if (S === 1 && !opts.fresh) _droidTemplate = g;
   return g;
 }
 
@@ -1828,7 +2261,7 @@ export function buildTransport(opts = {}) {
  *     and shadow cascade in the engine.
  */
 let _capitalTemplate = null;
-export function buildCapitalShip(opts = {}) {
+export function buildRepublicCapital(opts = {}) {
   if (_capitalTemplate && !opts.fresh) return _capitalTemplate.clone(true);
   const g = new THREE.Group();
   g.name = 'capital';
@@ -1870,9 +2303,152 @@ export function buildCapitalShip(opts = {}) {
   ke.bake(g, { silhouette: true });
 
   g.traverse((o) => { if (o.isMesh) { o.frustumCulled = false; o.castShadow = false; o.receiveShadow = false; } });
+  g.userData.side = 'republic';
   if (!opts.fresh) _capitalTemplate = g;
   return g;
 }
+
+/**
+ * THE CONFEDERACY'S CAPITAL SHIP — the same defect one scene earlier.
+ *
+ * `beginInsertion` opens every deploy in the bay of a transport falling away
+ * from a warship, and until now there was one warship. A Sith leaving a
+ * Republic assault ship is the player's note about the transports, moved
+ * thirty seconds earlier in the same sequence and two kilometres further away
+ * — and it is worse there, not better, because the capital ship is the ONLY
+ * thing in that shot: stars, a planet, and one hull receding.
+ *
+ * So the Confederacy gets a PROVIDENCE-CLASS CARRIER, and the pick is decided
+ * by the shot rather than by preference. It is the warship the droid army
+ * actually deploys from through the war; at 1,088 m it is within 1% of the
+ * length the Republic hull is built to, so the 1/100 scale and the
+ * CAPITAL_NEAR / CAPITAL_FAR distances `_placeCapital` interpolates between
+ * are unchanged and nothing about the shot's framing had to be re-tuned; and
+ * seen from astern against black it is nothing like a wedge:
+ *
+ *   A SLENDER RIBBED CIGAR that tapers to a point at the bow, where the
+ *     Republic hull is a flat triangle widest at the stern. In plan the two
+ *     are the same length and the Confederacy hull is HALF THE WIDTH.
+ *   THE BRIDGE IS AFT, a narrow blade of superstructure over the engine block,
+ *     rather than a stepped tower amidships.
+ *   TWO HANGAR ARMS off the flanks at the stern, which is what a carrier is
+ *     and is where this transport just came out of.
+ *   SEVEN ENGINES IN A ROSETTE — one large disc with six around it — against
+ *     the Republic hull's bank of eight in a 4 x 2 grid. That is the only
+ *     lit thing on either ship and it is the first thing the eye counts, so
+ *     it is where the two are made to differ most.
+ *
+ * Everything else about it is `buildRepublicCapital`'s argument unchanged and
+ * it is repeated here rather than referred to, because it is what decides the
+ * detail: this is seen ONCE, from behind, from four hundred metres to four
+ * kilometres, receding. Nothing on it is smaller than about four metres,
+ * because at four hundred metres four metres is a pixel.
+ */
+let _droidCapitalTemplate = null;
+export function buildDroidCapital(opts = {}) {
+  if (_droidCapitalTemplate && !opts.fresh) return _droidCapitalTemplate.clone(true);
+  const g = new THREE.Group();
+  g.name = 'capital';
+  const hull = armorMat(0x5c6166, 0.06, 0.74, 0.6);
+  const dark = metalMat(0x24262a, 0.55, 0.9, 1.2);
+  const trim = armorMat(0x8a7f6a, 0.05, 0.8, 0.9);
+  const glow = new THREE.MeshBasicMaterial({ color: 0xaef0ff, transparent: true, opacity: 0.9,
+    depthWrite: false, blending: THREE.AdditiveBlending });
+
+  const k = new Kit();
+  /* the spine: five cylinder sections along Z, swelling aft. A cylinder's axis
+   * is +Y, so every one of these is laid over by a quarter turn about X. */
+  const SEG = [[-6.6, 1.90, 0.30, 0.42], [-4.9, 1.70, 0.42, 0.62], [-2.6, 3.40, 0.62, 0.76],
+    [0.9, 3.60, 0.76, 0.84], [4.0, 2.60, 0.84, 0.70]];
+  for (const [z, len, r0, r1] of SEG) {
+    k.add(hull, new THREE.CylinderGeometry(r0, r1, len, 12), [0, 0, z], [1.5708, 0, 0]);
+  }
+  /* the bow, a long point rather than a wedge tip */
+  k.add(hull, new THREE.ConeGeometry(0.32, 1.40, 12), [0, 0, -7.25], [-1.5708, 0, 0]);
+  /* the ribs — nine bands down the hull, which is what makes a cigar read as a
+   * ship rather than as a tube at two kilometres */
+  k.row(9, (i, t) => {
+    k.add(dark, new THREE.CylinderGeometry(0.86, 0.86, 0.14, 12), [0, 0, -5.6 + t * 10.6], [1.5708, 0, 0]);
+  });
+  /* the bridge blade, aft and narrow */
+  k.add(trim, plateGeo(0.36, 0.70, 2.20, 0.08, 1), [0, 1.02, 3.4]);
+  k.add(dark, plateGeo(0.30, 0.22, 0.70, 0.05, 1), [0, 1.46, 3.2]);
+  /* the two hangar arms — the mouths this transport came out of */
+  k.pair((sx) => {
+    k.add(trim, plateGeo(0.60, 0.34, 2.60, 0.10, 1), [sx * 0.86, -0.10, 3.5], [0, 0, sx * 0.20]);
+    k.add(dark, plateGeo(0.40, 0.24, 0.30, 0.04, 1), [sx * 0.90, -0.14, 4.9]);
+  });
+  k.bake(g, { silhouette: true });
+
+  /* THE ENGINE ROSETTE — one large disc and six around it, against the
+   * Republic bank's 4 x 2 grid. Seen from astern against black this is the
+   * whole ship, and counting it is how a player knows whose fleet they left. */
+  const ke = new Kit();
+  ke.add(dark, new THREE.CylinderGeometry(0.34, 0.34, 0.34, 12), [0, 0, 5.30], [1.5708, 0, 0]);
+  ke.add(glow, new THREE.CircleGeometry(0.28, 14), [0, 0, 5.50]);
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * TAU, x = Math.cos(a) * 0.62, y = Math.sin(a) * 0.44;
+    ke.add(dark, new THREE.CylinderGeometry(0.17, 0.17, 0.30, 10), [x, y, 5.26], [1.5708, 0, 0]);
+    ke.add(glow, new THREE.CircleGeometry(0.13, 12), [x, y, 5.46]);
+  }
+  ke.bake(g, { silhouette: true });
+
+  g.traverse((o) => { if (o.isMesh) { o.frustumCulled = false; o.castShadow = false; o.receiveShadow = false; } });
+  g.userData.side = 'separatist';
+  if (!opts.fresh) _droidCapitalTemplate = g;
+  return g;
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  Which army rides which hull — ONE table, and the only place it is asked */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * THE SINGLE DECISION, AND WHY IT IS HERE RATHER THAN AT THE CALL SITES.
+ *
+ * There are two places in the game that put the player inside a hull —
+ * `ExtractionDirector._makeShip` and `_makeSpace` — and both of them reach a
+ * builder through `Arrivals.js`'s injection seam, which `Levels.js` registers
+ * exactly once with `setTransportModel(buildTransport)`. The obvious way to
+ * add a second hull is `side === 'separatist' ? a : b` at each of those, which
+ * is two copies of one rule and is the ninth instance of HANDOFF §2.3 waiting
+ * to happen: the day a third army or a second capital ship arrives, one of the
+ * two branches is updated and the other is not, and nothing says so.
+ *
+ * So the branch is a TABLE, it is here beside the hulls it names, and the
+ * registration in `Levels.js` does not change: `buildTransport` is still the
+ * one exported builder and still takes one options object. It gained a `side`.
+ * A caller that does not pass one gets the Republic hull, which is what every
+ * headless check and every unaligned mode got before this existed and is the
+ * same fallback `Command.sideForOrder` documents for a Grey — "somebody has to
+ * be at the head of the column".
+ *
+ * The other end of the decision — WHICH army the player is leading — is
+ * likewise one place: `ExtractionDirector._side`. See its note for why it
+ * reads `Databank.armyForOrder` rather than `Command.sideForOrder`, which is
+ * the same mapping on the same field with an import cycle in front of it.
+ */
+export const TRANSPORT_BY_SIDE = {
+  republic: buildRepublicTransport,
+  separatist: buildDroidTransport,
+};
+
+export const CAPITAL_BY_SIDE = {
+  republic: buildRepublicCapital,
+  separatist: buildDroidCapital,
+};
+
+/** The hull an unaligned caller gets. See the note above `TRANSPORT_BY_SIDE`. */
+export const DEFAULT_HULL_SIDE = 'republic';
+
+/** One lookup, one fallback, both tables — so neither can drift from the other. */
+function hullFor(table, side) { return table[side] || table[DEFAULT_HULL_SIDE]; }
+
+/** The troop transport the given army rides. Registered by `Levels.js`. */
+export function buildTransport(opts = {}) { return hullFor(TRANSPORT_BY_SIDE, opts.side)(opts); }
+
+/** The warship it falls away from. Same seam, same table, same fallback. */
+export function buildCapitalShip(opts = {}) { return hullFor(CAPITAL_BY_SIDE, opts.side)(opts); }
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  Registration                                                          */

@@ -100,6 +100,7 @@ import { clamp, lerp, damp, smoothstep, makeRng, TAU } from '../engine/MathUtil.
 import { audio } from '../engine/Audio.js';
 import { spawnClear, bladeClear, nudgeFromSwing } from './Spawn.js';
 import { transportModel, capitalModel } from './Arrivals.js';
+import { armyForOrder } from './Databank.js';
 
 const rng = makeRng(48221);
 export function seedExtraction(seed) { rng.seed(seed); }
@@ -519,7 +520,7 @@ export class ExtractionDirector {
     this._stars.renderOrder = -2;
     g.add(this._stars);
 
-    const cap = capitalModel();
+    const cap = capitalModel(this._side());
     if (cap) {
       this._capital = cap;
       cap.frustumCulled = false;
@@ -781,6 +782,48 @@ export class ExtractionDirector {
   /* ── 3. the ship ──────────────────────────────────────────────────── */
 
   /**
+   * WHOSE SHIP COMES — AND THIS IS THE ONLY PLACE THAT ASKS.
+   *
+   * The player, having played the dark side: "Ive noticed that sith side still
+   * gets picked up by the same transports that belong to the republic
+   * canonically". Two things had to happen for that: a Confederacy hull had to
+   * exist, which is `Vehicles.js`'s business, and something had to know which
+   * army the commander is leading, which is this.
+   *
+   * There are exactly two consumers — `_makeShip` picks the transport and
+   * `_makeSpace` picks the warship it falls away from — and both call this,
+   * because a side resolved twice is a side that can be resolved two different
+   * ways. The other end of the decision is one table in one file; see
+   * `TRANSPORT_BY_SIDE` there for why the branch is not written here.
+   *
+   * ── WHERE THE ANSWER COMES FROM, IN PRIORITY ORDER
+   *
+   * A LIVE COMMANDER'S OWN ARMY FIRST. `CommandDirector` derives it from the
+   * order at construction, but a mirror match and a two-commander session
+   * ASSIGN armies (`c.army = armies[i]`), so a player can legitimately be
+   * leading the army their order does not imply. Reading the order in that
+   * case would fly the wrong hull into a mode that had already decided.
+   *
+   * THEN THE ORDER, through `Databank.armyForOrder`. `Command.sideForOrder` is
+   * the same question and this file cannot ask it: `Command.js` imports
+   * `Waves.js`, which reaches `Arrivals.js`, and the cycle that closes is the
+   * one `Arrivals.setDropshipModel`'s own note records being sprung — the
+   * whole suite failing to load, not a warning. `Databank.js` imports nothing
+   * at all and is the file `Command.ARMIES` takes its `order` field FROM, so
+   * this reads the same mapping one link closer to the source.
+   *
+   * AND A GREY GETS THE REPUBLIC, which is not a default invented here —
+   * `sideForOrder` documents the identical fallback for the identical reason:
+   * "somebody has to be at the head of the column".
+   */
+  _side() {
+    const w = this.world;
+    const led = w?.command?.commander?.army?.id;
+    if (led) return led;
+    return armyForOrder(w?.settings?.order ?? w?.player?.order) || 'republic';
+  }
+
+  /**
    * ONE SHIP, ADDED TO THE SCENE AND NOT TO `statics`.
    *
    * That single line is what makes the journey continuous across a planet
@@ -797,7 +840,7 @@ export class ExtractionDirector {
     const g = new THREE.Group();
     g.name = 'extraction';
     g.frustumCulled = false;
-    let model = transportModel();
+    let model = transportModel(this._side());
     if (model) {
       g.add(model);
       this._model = model;
