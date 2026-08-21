@@ -2370,7 +2370,12 @@ export class World {
     const seed = Number.isFinite(this.runSeed) ? this.runSeed : null;
     if (seed === null) return key;
     try {
-      const made = battlefieldGround(key, seed);
+      /* AND WHERE THE PLAYER ACTUALLY LANDS. The generated front is pulled
+       * through the deploy point and the shelf that stands it out of a
+       * borrowed sea is measured from it; `planBattle`'s default is the
+       * origin, which is true of five of the seven theatres and 71 m wrong on
+       * the Ember Shelf. `L.start` is the same array `_playerSpawn` reads. */
+      const made = battlefieldGround(key, seed, { deploy: L.start, keep: L.spawnRadius?.[1] });
       installGround(made.key, made.preset);
       this._genGround = made.key;
       /** The plan, published for anything that wants the front rather than the
@@ -4356,6 +4361,92 @@ export class World {
     this.onDeflectFeedback?.(res.grade, bladePoint, DEFLECT_WHY[res.grade]);
   }
 
+  /**
+   * ── A BOLT INTO A BODY, AND THE QUESTION OF WHO BILLS IT ────────────────
+   *
+   * Every hostile round is fired on BOTH machines. `_spawnNetBolts` puts the
+   * host's shots into the client's own pool as real bolts, deliberately and for
+   * a reason DESIGN.md is about — a guest has to be able to deflect one, catch
+   * it, and send it home — and this hit test then resolves them against the
+   * client's own mirrors of the horde. `_reconcileClaims` measures a claim as
+   * whatever hp a mirror has lost since the last snapshot "whatever dealt it",
+   * so without this the host was billed a second time for its own fire: one
+   * round fired by one host trooper, simulated twice and charged twice.
+   *
+   * Measured before the rule, on a real co-op Command pair on geonosis with the
+   * joining player holding `idleInput` and firing nothing: the client's copies
+   * of the horde lost 273.1 hp to bolts nobody on that machine had fired, 317
+   * claims went back up the wire, and the host applied 42.2 hp of them to the
+   * horde ON TOP of the 187.8 hp of the same bolts it had already applied
+   * itself — a 22% surcharge on the horde's whole bolt attrition, paid by
+   * nothing anybody did.
+   *
+   * THE RULE IS NOT "DO NOT SIMULATE IT". That would delete the deflection the
+   * replication exists to allow. It is:
+   *
+   *   a replicated bolt that no local hand has touched resolves here exactly as
+   *   it resolved on the host, so the host has already billed it — move the
+   *   baseline by what it took and claim nothing;
+   *
+   *   a replicated bolt the local player DEFLECTED, caught and threw, or pulled
+   *   out of the air is a bolt whose path only this machine knows about, and
+   *   the host cannot have applied it — bill it exactly like any other blow.
+   *
+   * The discriminator is the OWNER, asked at the moment of the hit rather than
+   * stamped by whoever changed it. Every door that takes a bolt off its course
+   * — `_creditDeflect`, the catch-and-throw, `Player._launchStasisItem` —
+   * writes the new holder into `bolt.owner`, and on a client the only owner
+   * that is not a mirror of something the host is simulating is this machine's
+   * own player. A list of call sites clearing a flag would be one more list
+   * waiting to be forgotten, which is the defect `_reconcileClaims` itself
+   * exists to have already fixed.
+   *
+   * This is the same move `_stepNetEnemies` makes for a shove the host is also
+   * integrating, and the mirror image of the rule `RemoteAvatar._tellHit`
+   * already applies in the other direction: the host does not bill a peer for a
+   * bolt, because the peer is resolving that one itself.
+   */
+  _boltHurt(e, dmg, hit, bolt) {
+    const hp0 = e.hp;
+    const killed = e.damage(dmg, hit, bolt.owner, 'bolt');
+    this._netBoltBilled(e, hp0, bolt);
+    return killed;
+  }
+
+  /**
+   * The half of `_boltHurt` that is about the wire, split out because the
+   * grip-shield's bite is the one bolt hit in this file that does not go
+   * through `Enemy.damage` here — it is taken by a closure in Player.js — and
+   * a held body is being shot to pieces on the host at the same time.
+   *
+   * @param hp0  the body's health BEFORE the blow, so this measures what the
+   *   game decided rather than what the caller asked for: resistances, armour
+   *   and a body already at 3 hp all make those different numbers.
+   */
+  _netBoltBilled(e, hp0, bolt) {
+    if (this.netMode !== 'client' || !bolt.replicated || bolt.owner?.isLocal) return;
+    if (!e || e._netHp === undefined) return;
+    e._netHp -= Math.max(0, hp0 - e.hp);
+    /**
+     * …AND A BODY THE HOST'S OWN ROUND PUT DOWN HERE IS NOT A KILL TO CLAIM.
+     *
+     * `_reconcileClaims` bills a mirror this machine has killed and the host
+     * still has standing for the WHOLE rest of its health, and that clause is
+     * where most of the surcharge actually came from — not from the hp, from
+     * the deaths. Rounding puts the two copies a point or two apart, so the
+     * client's copy goes down on a round the host's copy survives; the next
+     * snapshot writes the host's hp back over a body that is already dead here
+     * and resets `_netDead`, and the mirror then claims its own full health
+     * every tick for the rest of the session. Measured on the pair: one B1
+     * claiming 28 hp and then 0 hp, over and over, off one bolt.
+     *
+     * A flag rather than `_netDead`, because the snapshot owns that field and
+     * rewrites it 18 times a second. This one is a fact about how this copy
+     * died and nothing later can make it untrue.
+     */
+    if (e.dead) { e._netDead = true; e._netHostKill = true; }
+  }
+
   _boltHitTest(bolt, from, to) {
     // players
     {
@@ -4424,7 +4515,12 @@ export class World {
         if (shield) {
           const hit = segmentNear(from, to, shield.p0, shield.p1, shield.r);
           if (hit) {
+            /* The bite is a bolt into a body the host also owns, so it is the
+             * same billing question the enemy loop below asks. See
+             * `_netBoltBilled`. */
+            const held = shield.victim, heldHp = held ? held.hp : 0;
             shield.take(bolt.damage, hit, bolt.owner);
+            this._netBoltBilled(held, heldHp, bolt);
             this.particles.sparkBurst(hit, null, 8, { speed: 5, color: 0xffc070 });
             return { point: hit, normal: _v3.subVectors(from, to).normalize().clone(), victim: shield.victim };
           }
@@ -4600,7 +4696,7 @@ export class World {
         if (c.shield) {
           const hit = segmentNear(from, to, c.p0, c.p1, c.r);
           if (hit) {
-            e.damage(bolt.damage * open, hit, bolt.owner, 'bolt');
+            this._boltHurt(e, bolt.damage * open, hit, bolt);
             this.particles.sparkBurst(hit, null, 10, { speed: 5, color: 0x88ffcc });
             return { point: hit, normal: _v3.subVectors(from, to).normalize().clone(), victim: e, bone: 'shield' };
           }
@@ -4610,7 +4706,7 @@ export class World {
         if (!hit) continue;
         const vital = c.vital ?? 0.4;
         const dmg = bolt.damage * lerp(0.6, 1.9, vital) * open;
-        const killed = e.damage(dmg, hit, bolt.owner, 'bolt');
+        const killed = this._boltHurt(e, dmg, hit, bolt);
         /**
          * ── AND A BOLT SENT HOME BREAKS A NERVE. FLAGSHIP §7's SECOND VERB ──
          *
@@ -6255,9 +6351,21 @@ export class World {
        * literal said and what an unattributed bolt in this game has always
        * been.
        */
+      /**
+       * `replicated` IS WHAT KEEPS THIS SHOT OFF THE CLIENT'S BILL.
+       *
+       * The bolt is real here and has to be — it is the whole reason this
+       * method exists — so it resolves against this machine's copy of the
+       * horde and takes hp off it. That hp is not this machine's to claim: the
+       * host fired the same round on its own field and has already applied it.
+       * One flag, set at the ONE door a bolt off the wire comes through, is
+       * what `_boltHurt` reads to tell the two apart. It is deliberately not
+       * derived from the owner — an emplacement's rounds are nobody's body and
+       * arrive here with `owner` null.
+       */
       this.bolts.fire(_v1, _v2, {
         speed, damage, color, owner, team: owner ? asTeam(owner.team) : TEAM.HORDE,
-        big: !!big, turned: !!turned,
+        big: !!big, turned: !!turned, replicated: true,
         length: big ? 2.4 : 1.15, radius: big ? 0.1 : 0.05,
       });
       audio.blaster(_v1, !!big);

@@ -154,6 +154,104 @@ export const REASONS = {
  */
 const RIDGE_FLOOR = 0.45;
 
+/**
+ * ── THE SHORE, AND IT IS THE ONE FIELD OF THE BORROWED ROW THE HEIGHT HAS TO
+ *    ANSWER TO ────────────────────────────────────────────────────────────
+ *
+ * `battlefieldGround` spreads an authored preset and replaces `height`. Every
+ * other field it borrows is a COLOUR or a texture key and cannot disagree with
+ * a heightfield. **`waterLevel` is not.** It is a number in the same metres the
+ * height function returns, and the level's own `water` sheet is drawn at it,
+ * `Spawn.spawnClear` refuses any point under it on a sheet that burns, and
+ * `Hazard` charges 52 HP a second to anything standing in it.
+ *
+ * That coupling was unstated, and it is the whole of why the Ember Shelf could
+ * not carry a generated ground. Measured, scoria at seed 3, the deploy ring:
+ *
+ *     authored   ring 0% under the lava, ground 3.4-19.9 m, mean 12.8   10/10 up
+ *     generated  ring 44% under the lava, ground -0.6-6.1 m, mean 1.2    0/10 up
+ *
+ * The generated field is written about a datum of zero — swell, swale and
+ * micro are all signed and small — and scoria's lava sits at +0.55, so the
+ * shelf the level is named for came out as a lava plain with the deploy ring
+ * in it. `NEXT.md` and `LEVELS.geonosis`' note both recorded the cause as
+ * scoria's rocks and wrecks taking the standing room with them; they are worth
+ * 10 of 288 ring points against the authored ground's 3, and the lava is worth
+ * 126. Mustafar's 9/10 is the same arithmetic one notch down: 8% of its ring
+ * under a 56 HP/s sheet is the one man it loses.
+ *
+ * ── WHAT THE ANSWER IS, AND WHY IT IS A SHELF AND NOT A LIFT ────────────
+ *
+ * The cheap fix is to raise the whole field until nothing is under the sheet.
+ * That works and it deletes the sea: `waterLevel` would still be borrowed and
+ * no ground would ever reach it, so the Ember Shelf's hazard — the thing the
+ * room is named for, priced around and lit by — would be off the map on the
+ * one run in seven that generates its ground.
+ *
+ * So the battle stands on a SHELF instead, which is the shape scoria's own
+ * preset note describes ("a basalt shelf standing out of a lava sea"): land
+ * out to `SHELF_IN` of the deploy point, falling to `SEA_DEPTH` below the
+ * sheet by `SHELF_OUT`, with the radius itself perturbed so the coast comes
+ * out as bays and headlands rather than as a circle cut round the fight. The
+ * flank crests ride on top of it, so a ridge that reaches past the coast is
+ * left standing offshore as a stack — which is again what the authored room
+ * does.
+ *
+ * A GROUND WITH NO SHEET (`waterLevel` −999, which is five of the seven) GETS
+ * NONE OF THIS. `shore` is null and the height function is the one that was
+ * measured, term for term — see the guard in `makeBattlefield`.
+ */
+/** How far the battle's datum stands clear of the borrowed sheet, on top of
+ *  the deepest the field digs below that datum. A step, not a cliff. */
+const SHELF_FREEBOARD = 1.2;
+/** How deep the borrowed sea is off the shelf. Scoria's authored median depth
+ *  over its own fight disc is 7.8 m (`Levels.js`'s `strewGround` note). */
+const SEA_DEPTH = 7.5;
+/**
+ * WHERE THE WATERLINE GOES, AND IT IS DERIVED FROM THE FIGHT RATHER THAN
+ * PICKED. `LEVELS[*].spawnRadius[1]` is how far out that room puts a hostile —
+ * 48 m on scoria, 54 on mustafar, 46 in the Drowned Wood — and `opts.keep` is
+ * how the caller states it. The coast stands one deployment ring (30 m) beyond
+ * it, so every body either army places is on land by construction and the
+ * shore is still inside the fight: scoria's own note prices its authored
+ * coast at 30 m from the deploy point with 9.7% of the fight disc under the
+ * sheet, and a generated coast at 78 m is the same room, not a lagoon at the
+ * horizon. The first version put the shelf's edge at 0.60 of the map's half
+ * width and measured the coast 152 m away, which is a hazard you can only see.
+ */
+const SHELF_MARGIN = 30;
+/** …and the room's fight radius when the caller does not say. The median of
+ *  the seven authored rooms. */
+const SHELF_KEEP = 56;
+/** How far it takes to climb from the waterline onto the shelf, and to fall
+ *  from it to the sea floor. */
+const SHORE_RUN_IN = 55;
+const SHORE_RUN_OUT = 60;
+/**
+ * …AND THE LINE ITSELF IS LAND, END TO END.
+ *
+ * A shelf that is only a disc round the deploy point drowns the front 80 m out
+ * of it, and the front is where §12.4's marks go: `burnBand` lays its swath
+ * ±260 m ACROSS the line, `addFallen` a ±150 m band, and `strewWrecks` sites
+ * hulls along it. All of that under lava is dressing nobody can see, on the
+ * one variable §13.3 says has to be a fact you can stand on.
+ *
+ * So the land is the disc OR a band along the front — a causeway across the
+ * sea with the fight at the middle of it, which is a shape that says what the
+ * battle is about rather than one that gets the water out of the way. 62 m of
+ * half-width carries the burn swath's whole depth (`rows × rowStep` ≈ 39 m)
+ * and the dead band with room over.
+ */
+const CAUSEWAY_HALF = 62;
+/** A BEACH PROFILE: steepest at the water and flattening onto the shelf.
+ *  `smoothstep` is the obvious curve here and is the wrong one — its gradient
+ *  is zero at BOTH ends, so the ground leaves the waterline flat and the coast
+ *  comes out as a wide band of ground within a few centimetres of the sheet.
+ *  On a sheet that burns, that band is a lagoon of ankle-deep lava that still
+ *  kills at 52 HP a second. This one has slope 2 at the water and 0 on the
+ *  shelf. */
+const beach = (k) => { const t = 1 - Math.min(1, Math.max(0, k)); return 1 - t * t; };
+
 /** In a fixed order, because a seeded pick over `Object.keys` is a pick over
  *  whatever order the file happens to be written in. */
 export const REASON_ORDER = ['pass', 'ford', 'landing', 'gunline', 'wreckfield'];
@@ -210,12 +308,28 @@ function perimeter(u, half) {
  * it. The line is still edge to edge and still seeded in shape; what is not
  * left to the seed is whether you can see it.
  *
+ * ── AND THE DEPLOY POINT IS NOT ALWAYS THE ORIGIN ───────────────────────
+ *
+ * Every paragraph above says "the deploy point" and the first version wrote
+ * `(0, 0)` for it, which is true of five of the seven theatres and false of
+ * the two that matter. `LEVELS.scoria.start` is `(-22, 68)` — the Ember
+ * Shelf moved its opening 71 m off the origin so the lava sea would be inside
+ * the fight — so the curve was being pulled through a point the player does
+ * not stand on, the chokepoint was anchored to it, and the shelf below is
+ * measured from it. `opts.deploy` is how a caller says where its player
+ * actually lands; the default is the origin, which is what every check and
+ * five of the seven levels mean anyway.
+ *
  * @param {number} seed   the deployment seed
- * @param {object} opts   `scale` (map side, metres) and optional `reason`
+ * @param {object} opts   `scale` (map side, metres), optional `reason`,
+ *                        optional `deploy` ({x,z}, where the player lands) and
+ *                        optional `sea` (the borrowed ground's `waterLevel`)
  */
 export function planBattle(seed, opts = {}) {
   const scale = opts.scale ?? 620;
   const half = scale / 2;
+  const deploy = { x: opts.deploy?.x ?? opts.deploy?.[0] ?? 0,
+    z: opts.deploy?.z ?? opts.deploy?.[1] ?? 0 };
   /* ONE STREAM, OWNED, AND NOT A MODULE-SCOPE ONE. HANDOFF §2.11: a shared
    * generator makes a plan depend on what else drew this process. A plan is a
    * pure function of its seed or it is not a seed. */
@@ -242,7 +356,7 @@ export function planBattle(seed, opts = {}) {
    * two interior controls both sit at lateral `q` passes through lateral
    * 0.75·q at the midpoint, so the pull is over-corrected by 4/3 to land the
    * midpoint ON the origin rather than three quarters of the way to it. */
-  const miss = -(P0.x * px + P0.z * pz) * (4 / 3);
+  const miss = ((deploy.x - P0.x) * px + (deploy.z - P0.z) * pz) * (4 / 3);
   const swing = clen * 0.16;
   const lat1 = miss + (n[2] - 0.5) * 2 * swing;
   const lat2 = miss + (n[3] - 0.5) * 2 * swing;
@@ -258,7 +372,7 @@ export function planBattle(seed, opts = {}) {
    * m up the line would be a chokepoint the player never crosses. The seed
    * moves it ±14% of the line's length either side of the nearest point on the
    * line to where the player stands. */
-  const nearOrigin = nearestOn(curve, 0, 0);
+  const nearOrigin = nearestOn(curve, deploy.x, deploy.z);
   const chokeS = clamp(nearOrigin.s + (n[4] - 0.5) * 0.28 * curve.length,
     curve.length * 0.12, curve.length * 0.88);
   const choke = atArc(curve, chokeS);
@@ -269,7 +383,7 @@ export function planBattle(seed, opts = {}) {
    * backwards points the whole battle at the empty half of the map, which is
    * exactly the failure `Front.frontCamera`'s note records for the yaw. */
   let nx = -choke.tz, nz = choke.tx;
-  if (nx * choke.x + nz * choke.z < 0) { nx = -nx; nz = -nz; }
+  if (nx * (choke.x - deploy.x) + nz * (choke.z - deploy.z) < 0) { nx = -nx; nz = -nz; }
   const bearing = Math.atan2(nz, nx);
   /* TWO AXES OF ADVANCE CROSSING IT (§12.2), and they are not one axis drawn
    * twice: each army comes in off the normal by `skew`, so the two thrusts
@@ -279,9 +393,30 @@ export function planBattle(seed, opts = {}) {
    * pick a favourite army. */
   const skew = lerp(0.16, 0.52, n[5]);
 
+  /* WHICH OF THE CURVE'S TWO SIDES IS THE ADVANCE SIDE, DECIDED ONCE AND
+   * CARRIED ON THE PLAN. `segDist` reports left-or-right of the segment it
+   * hit, and which of those is "toward the enemy" depends on which end of the
+   * perimeter the seed started drawing from — so on half the seeds it comes
+   * back inverted. It used to be re-derived inside `makeBattlefield`, which
+   * was fine while the height function was the only reader; `frontLine` below
+   * is a second reader and a second probe would be HANDOFF §2.4 exactly. One
+   * probe 30 m up the advance from the choke settles it for every reader.
+   * (The first version fixed the sign per sample against the choke's tangent
+   * plane instead, which is a different surface from the curve: on a bezier
+   * with any bend in it the two disagree in a wedge behind the bend, and the
+   * ground there took the far side's standoff while sitting on the near
+   * side.) */
+  const orient = nearestOn(curve, choke.x + nx * 30, choke.z + nz * 30).d >= 0 ? 1 : -1;
+
   return {
     seed: seed | 0, scale, reason, shape: R, numbers: n,
-    control: [P0, P1, P2, P3], curve,
+    control: [P0, P1, P2, P3], curve, orient, deploy,
+    /** How far out this room puts a body — `LEVELS[*].spawnRadius[1]`. The
+     *  shore below stands clear of it; see `SHELF_MARGIN`. */
+    keep: Number.isFinite(opts.keep) ? opts.keep : SHELF_KEEP,
+    /** The borrowed ground's water line, or null where there is no sheet.
+     *  `makeBattlefield`'s shore reads it; see the note there. */
+    sea: Number.isFinite(opts.sea) && opts.sea > -900 ? opts.sea : null,
     choke: { x: choke.x, z: choke.z, s: chokeS, t: chokeS / curve.length,
       tx: choke.tx, tz: choke.tz },
     /** The axis of advance: unit, pointing from the deploy point across the line. */
@@ -291,7 +426,7 @@ export function planBattle(seed, opts = {}) {
     advance: [bearing + skew, bearing + Math.PI - skew],
     skew,
     /** How far the tangent at the choke stands from the deploy point. */
-    distance: choke.x * nx + choke.z * nz,
+    distance: (choke.x - deploy.x) * nx + (choke.z - deploy.z) * nz,
   };
 }
 
@@ -419,17 +554,9 @@ export function makeBattlefield(plan) {
   const rng = makeRng((plan.seed | 0) ^ 0x2b1a77c3);
   const ox = rng() * 256, oz = rng() * 256, oy = rng() * 256;
 
-  /* WHICH OF THE CURVE'S TWO SIDES IS THE ADVANCE SIDE, decided ONCE.
-   * `segDist` reports left-or-right of the segment it hit, and which of those
-   * is "toward the enemy" depends on which end of the perimeter the seed
-   * started drawing from — so on half the seeds it comes back inverted. The
-   * first version fixed the sign per sample against the choke's tangent plane
-   * instead, which is a different surface from the curve: on a bezier with any
-   * bend in it the two disagree in a wedge behind the bend, and the ground
-   * there took the far side's standoff while sitting on the near side. One
-   * probe 30 m up the advance from the choke settles it for the whole field. */
-  const probe = nearestOn(C, plan.choke.x + plan.dir.x * 30, plan.choke.z + plan.dir.z * 30);
-  const orient = probe.d >= 0 ? 1 : -1;
+  /* WHICH OF THE CURVE'S TWO SIDES IS THE ADVANCE SIDE — off the plan, which
+   * decided it once for every reader (see the note at `planBattle`). */
+  const orient = plan.orient;
 
   /** Signed distance to the line — positive on the advance side, always — with
    *  the arc length of the nearest point on it. */
@@ -482,6 +609,43 @@ export function makeBattlefield(plan) {
    *  `crest` metres out on the flanks. */
   const amplitude = (x, z) => envelope(x, z, at(x, z));
 
+  /**
+   * THE SHELF THE BATTLE STANDS ON, or null where the borrowed ground has no
+   * sheet to stand out of. See the long note over `SHELF_FREEBOARD`.
+   *
+   * `draft` is how far below its own datum the rest of the height function can
+   * dig — `swell` is an fbm in [−1, 1] scaled by `R.swell`, the swale cuts
+   * `R.swale` and the micro term 9 cm — so a datum of `sea + draft +
+   * freeboard` is dry ON THE SHELF BY CONSTRUCTION rather than by measurement.
+   * The crest is added on top and is signed positive, so it cannot drown what
+   * the datum lifted.
+   */
+  const shore = plan.sea === null ? null : (() => {
+    const draft = R.swale + R.swell + 0.1;
+    const rise = draft + SHELF_FREEBOARD;
+    const sea = plan.sea;
+    const rWater = Math.min(plan.keep + SHELF_MARGIN, plan.scale * 0.42);
+    const d = plan.deploy;
+    /** Metres above the sheet, given metres of dry ground still to spare.
+     *  Positive inland, negative out to sea. */
+    const above = (k) => (k >= 0 ? rise * beach(k / SHORE_RUN_IN)
+      : -SEA_DEPTH * beach(-k / SHORE_RUN_OUT));
+    return (x, z, q) => {
+      /* THE COAST IS NOT A CIRCLE. ±18% on the radius at a 190 m wavelength is
+       * what turns the shelf's edge into bays and headlands; a clean circle
+       * reads as an arena boundary, which is the one thing a coastline must
+       * not read as. The perturbation is on the RADIUS and not on the height,
+       * so it moves where the water reaches without moving the datum the
+       * battle stands on. */
+      const wob = 1 + 0.18 * fbm2(x * 0.0053 + ox, z * 0.0053 - oz, 2);
+      const r = Math.hypot(x - d.x, z - d.z) * wob;
+      const w = Math.abs(q.d) * (1 + 0.22 * fbm2(x * 0.0061 - oz, z * 0.0061 + oy, 2));
+      /* The higher of the two shores wins, which is what "the land is the disc
+       * OR the causeway" means as arithmetic. */
+      return sea + Math.max(above(rWater - r), above(CAUSEWAY_HALF - w));
+    };
+  })();
+
   const height = (x, z) => {
     const q = at(x, z);
     const ad = Math.abs(q.d);
@@ -501,10 +665,14 @@ export function makeBattlefield(plan) {
     /* And a micro term, because the loose layer and the footfall sampler both
      * read gradients at well under a metre. 9 cm, geonosis' own figure. */
     const micro = fbm2(x * 0.14 + ox, z * 0.14 + oz, 3) * 0.09;
-    return swell + swale + micro + envelope(x, z, q) * (RIDGE_FLOOR + (1 - RIDGE_FLOOR) * Math.pow(ridge(x, z), 1.15));
+    /* THE SHELF, and it is a DATUM the four terms above ride on rather than a
+     * sixth term added beside them: on a ground with no sheet it is exactly
+     * zero and the expression is the one §12.3 was measured on. */
+    const base = shore ? shore(x, z, q) : 0;
+    return base + swell + swale + micro + envelope(x, z, q) * (RIDGE_FLOOR + (1 - RIDGE_FLOOR) * Math.pow(ridge(x, z), 1.15));
   };
 
-  return { plan, height, ridge, amplitude, at, gapAt };
+  return { plan, height, ridge, amplitude, at, gapAt, shore };
 }
 
 /**
@@ -549,7 +717,15 @@ export function battlefieldGround(baseKey, seed, opts = {}) {
     throw new Error(`Battlefield: '${baseKey}' is a floor, not a field — `
       + 'a front cannot be derived on ground that has a roof over it');
   }
-  const plan = planBattle(seed, { scale: base.scale, ...opts });
+  /* THE BORROWED SHEET GOES IN WITH THE SCALE, because it is the one field of
+   * the row a height function can contradict — see `SHELF_FREEBOARD`. A caller
+   * that overrides it in `opts` is asking for a different sea, which is its
+   * business; nothing in the game does. */
+  const plan = planBattle(seed, { scale: base.scale, sea: base.waterLevel, ...opts });
+  /* THE SHELF STANDS OUT OF THE SHEET ONLY IF IT IS ABOVE IT EVERYWHERE THE
+   * FIGHT REACHES, and that is arithmetic rather than a hope: `rise` is the
+   * deepest the field digs below its datum plus a step. Asserted here rather
+   * than in a check because the caller is what decides `keep`. */
   const field = makeBattlefield(plan);
   /** The name says what it borrowed. A generated ground that named itself
    *  `geonosis` would shadow the authored one in every diagnostic that prints
