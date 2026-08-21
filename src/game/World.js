@@ -4059,7 +4059,40 @@ export class World {
      * One gate, asked of the deflector's own side.
      */
     const side = asTeam(owner.team);
-    if (bolt.team === side) return;
+    /**
+     * ── AND THE ONE THING THAT IS ALLOWED TO BE OURS ALREADY: A STRAY ──────
+     *
+     * The screen answers a bolt on its way into one of YOUR OWN MEN, and
+     * measured on a real Command battle every such bolt was fired by your own
+     * line — 47 hits, 569.8 damage, seed 3, and not one of them hostile. So
+     * the gate above, which is right about every other contact in the game,
+     * would refuse the only fire the mechanic exists to stop.
+     *
+     * A stray is KNOCKED DOWN rather than turned, and that is the honest
+     * picture as well as the safe one. There is nothing to send it back at —
+     * it is your own man's shot — and `_creditDeflect` would raise its damage
+     * by the grade and push its life back to 2.2 s, so a batted stray would go
+     * on through the rank harder and for longer than it arrived. It costs the
+     * same Force by the metre as any other screened bolt, through the same
+     * `guardCost`, and it is counted in the same place.
+     */
+    if (bolt.team === side) {
+      if (!(hit.screen > 0)) return;
+      const cost = guardCost(GRADE.BLOCK, { screen: hit.screen });
+      if (typeof owner.force === 'number' && cost.force > 0) {
+        const paid = Math.min(cost.force, owner.force);
+        owner.force = Math.max(0, owner.force - cost.force);
+        owner.guardForceSpent = (owner.guardForceSpent || 0) + paid;
+      }
+      owner.screened = (owner.screened || 0) + 1;
+      owner.strayed = (owner.strayed || 0) + 1;
+      bolt.active = false;
+      owner.saber.strain(0.3);
+      this.particles.sparkBurst(bladePoint, null, 8, { speed: 6 });
+      audio.deflect(bladePoint, 0);
+      this.onDeflectFeedback?.(GRADE.BLOCK, bladePoint, 'a stray off your own line, stopped');
+      return;
+    }
 
     if (!isPlayer) {
       // an enemy duelist batting a bolt away — no grading, just a deflection
@@ -4247,8 +4280,39 @@ export class World {
        * enemy fire on itself" is half of what the note asks for, and a shot
        * that cannot hit the thing that fired it cannot do that. */
       const friendly = bolt.deflected || bolt.turned;
-      if (bolt.team === 1 && !friendly) continue;
-      if (bolt.team === 1 && bolt.owner === e && !bolt.turned) continue;
+      /**
+       * ── AND THIS LINE MADE YOUR ARMY BULLETPROOF. MEASURED. ─────────────
+       *
+       * It read `if (bolt.team === 1 && !friendly) continue;` — an early-out
+       * over the WHOLE loop for every hostile bolt in the game, on the premise
+       * the `canHarm` clause below already writes down and contradicts: "the
+       * two rules above sort bolts by the literal team 1, which is right for as
+       * long as everything in `this.enemies` is on it. Command puts your troops
+       * in that same array on the PARTY's team."
+       *
+       * They do, and this line skipped them too. So in the one mode whose whole
+       * subject is a list of names that only shrinks, **the enemy's rifles
+       * could not touch it.** Measured on a real Command world on geonosis,
+       * ten troopers formed up with a wave shooting at them: 90 seconds, roster
+       * 10 of 10, every man at full health, and a synthetic bolt driven
+       * straight through a trooper's own capsule mid-line by `_boltHitTest`
+       * returns NO HIT while the identical segment through a droid returns the
+       * droid. Your line could be killed by a blade, a grenade or a stratagem
+       * and by nothing that was fired at it.
+       *
+       * The `canHarm` call thirty lines down is the real gate and it already
+       * gets every one of these cases right — a droid's bolt into a droid is
+       * refused for the same team, a droid's bolt into a trooper is allowed
+       * because the teams differ. What this line is for is the CHEAP reject
+       * that keeps that call off the hot path, so it is restated as the
+       * cheap half of the same question: skip only when the bolt and the body
+       * are on the same side. It is no longer a statement about the number 1.
+       *
+       * The owner clause loses its `team === 1` for the same reason — "a body
+       * cannot shoot itself" was never a fact about one team.
+       */
+      if (bolt.team === (e.team ?? 1) && !friendly) continue;
+      if (bolt.owner === e && !bolt.turned) continue;
       /**
        * …AND THE THIRD WAY, WHICH IS AN ARMY OF YOUR OWN.
        *

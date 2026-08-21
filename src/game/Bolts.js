@@ -21,6 +21,11 @@ const _q = new THREE.Quaternion(), _m = new THREE.Matrix4(), _s = new THREE.Vect
 // is deciding about.
 const _g1 = new THREE.Vector3(), _g2 = new THREE.Vector3(), _g3 = new THREE.Vector3();
 const _s1 = new THREE.Vector3(), _s2 = new THREE.Vector3(), _s3 = new THREE.Vector3();
+/* The screen's contact, kept apart from `_v4`: `guardIntercept` is asked
+ * AFTER the screen on the same bolt and writes its own answer into `_v4`,
+ * so a shared scratch would hand the screen the guard's point on every
+ * bolt that reached both. */
+const _screenPt = new THREE.Vector3();
 const _gA = new THREE.Vector3(), _gB = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
 
@@ -272,26 +277,63 @@ export class BoltPool {
           //   which stays pointing down the line the last bolt came in on
           //   precisely so that it keeps covering you while you look away.
           //
+          /* ── THE SCREEN IS ASKED BEFORE THE SIDE TEST, AND THAT IS THE
+           * WHOLE OF WHAT IT IS FOR ─────────────────────────────────────
+           *
+           * The two guards below are hostile-only, and rightly: they answer
+           * fire aimed at the man holding the blade, and your own returns must
+           * be free to leave. The screen answers fire aimed at somebody ELSE
+           * on your side, and there a bolt is a bolt.
+           *
+           * MEASURED, and it is the reason this line moved. One Command
+           * battle on Geonosis, seed 3, 150 game-seconds, every hit on a body
+           * of the player's own side counted at `_boltHitTest` with the
+           * owner's team read off the bolt: **47 hits, 569.8 damage, and every
+           * single one of them fired by a body on the player's OWN team.** Not
+           * one hostile bolt reached a trooper. The seven men FLAGSHIP §7's
+           * whole argument is about are killed by their own line, because a
+           * Jedi standing in a rank is what brings the horde in among it and
+           * a rank firing into a melee fires through its own men.
+           *
+           * So a screen that only answered hostile fire would have answered
+           * none of the fire that was killing anybody. `screenIntercept`'s
+           * third gate is what keeps this honest — the bolt has to be going
+           * INTO one of his men — so a trooper firing outward is untouched and
+           * only the crossfire is caught.
+           */
+          let screenAt = 0;
+          if (entry.screen && !(b.deflected && b.deflector === entry.owner)) {
+            screenAt = screenIntercept(b.prev, b.pos, entry.screen, _screenPt);
+          }
           // Hostile bolts only — your own returns must be free to leave.
-          if (b.team === entry.team) continue;
+          const hostile = b.team !== entry.team;
+          if (!screenAt && !hostile) continue;
           // The controller is reached through the owner rather than handed in,
           // so no caller has to remember to publish it and an owner without one
           // (every enemy) simply has no zone.
           const zone = entry.owner && entry.owner.control ? entry.owner.control.guard : null;
           let g = null;
-          if (zone && zone.active && guardIntercept(b.prev, b.pos, zone, _v4)) g = zone;
-          else if (entry.guard && guardIntercept(b.prev, b.pos, entry.guard, _v4)) g = entry.guard;
-          /* ── AND LAST, THE SCREEN: a bolt going into one of HIS men rather
-           * than into him. LAST because it is the only one of the three that
-           * answers a bolt the blade could never have reached, so a contact
-           * that can be met properly is met properly and billed on the
-           * ordinary ladder. `entry.screen` is absent for every blade whose
-           * owner has no bar to pay with — see World._bladeEntries — which is
-           * what keeps this from being a free aura round every enemy duellist
-           * on the field. */
-          let screenAt = 0;
-          if (!g && entry.screen) screenAt = screenIntercept(b.prev, b.pos, entry.screen, _v4);
-          if (!g && !screenAt) continue;
+          /* THE TWO GUARDS ARE NOT ASKED ABOUT A FRIENDLY BOLT AT ALL, and a
+           * version that let them answer one would be worse than a no-op:
+           * `_onBoltDeflect` stands down on "already ours" and returns, but
+           * `consumed` is set for the frame by then — so the bolt phases
+           * through the guard AND skips its own hit test. That is the exact
+           * defect the note over that early return records having found in
+           * PvP, and reaching this block with a same-side bolt is a new way
+           * into it. */
+          if (hostile) {
+            if (zone && zone.active && guardIntercept(b.prev, b.pos, zone, _v4)) g = zone;
+            else if (entry.guard && guardIntercept(b.prev, b.pos, entry.guard, _v4)) g = entry.guard;
+          }
+          /* THE ORDINARY GUARDS WIN. A contact the blade could actually have
+           * met is met, and billed on the ordinary ladder; the screen is only
+           * the answer for a bolt that was never coming here at all.
+           * `entry.screen` is absent for every blade whose owner has no bar to
+           * pay with — see World._bladeEntries — which is what keeps this from
+           * being a free aura round every enemy duellist on the field. */
+          if (g) screenAt = 0;
+          else if (!screenAt) continue;
+          else _v4.copy(_screenPt);
           /* `auto` is FALSE for a screen and that is not a detail: the
            * auto-guard cone answers off a parked blade by design, and a screen
            * that inherited that would grade every contact a DEFLECT whatever

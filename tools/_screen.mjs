@@ -183,7 +183,7 @@ async function runArm(arm, seed) {
  * one-variable A/B.
  */
 export async function screenLine({ mates = 4, spacing = 2.4, standOff = 0, range = 16,
-  ratePerMate = 1.5, seconds = 12, force = null, hold = true, damage = 9 } = {}) {
+  ratePerMate = 1.5, seconds = 12, force = null, hold = true, damage = 9, boltTeam = 2 } = {}) {
   const THREE = await import('three');
   const { world } = await bootWorld({
     level: 'geonosis',
@@ -253,7 +253,17 @@ export async function screenLine({ mates = 4, spacing = 2.4, standOff = 0, range
         aim.copy(m.position).setY(m.chestY);
         muzzle.set(aim.x, aim.y, range);
         dir.subVectors(aim, muzzle).normalize();
-        world.bolts.fire(muzzle, dir, { speed: 60, team: 1, damage });
+        /* `team` 2 BY DEFAULT AND NOT 1, and the literal matters. The enemy
+         * branch of `_boltHitTest` opens with `if (bolt.team === 1 && !friendly)
+         * continue` — team 1 IS the horde, and a team-1 bolt is forbidden from
+         * touching anything in `world.enemies` at all, which is where your own
+         * men live. A first cut of this harness fired at team 1 and measured
+         * **zero bolts into the men in both arms**, which reads exactly like a
+         * screen that works perfectly and is a harness that cannot land a shot.
+         * Team 2 is the other army's side, which is what Command actually
+         * gives a hostile commander. `boltTeam: 0` fires the OTHER case this
+         * mechanic exists for: a stray off your own line. */
+        world.bolts.fire(muzzle, dir, { speed: 60, team: boltTeam, damage });
         tally.aimed++;
       }
     }
@@ -267,13 +277,14 @@ export async function screenLine({ mates = 4, spacing = 2.4, standOff = 0, range
   let hp1 = 0, standing = 0;
   for (const m of mateList) { hp1 += Math.max(0, m.hp); if (!m.dead) standing++; }
   const out = {
-    mates: mateList.length, standOff, seconds, ratePerMate,
+    mates: mateList.length, standOff, seconds, ratePerMate, boltTeam,
     force: force === null ? 'full' : force,
     aimedAtMen: tally.aimed,
     boltsIntoMates: tally.intoMates,
     mateHpLost: +(hp0 - hp1).toFixed(1),
     mateStanding: standing,
     screened: p.screened || 0,
+    strays: p.strayed || 0,
     guardForceSpent: +(p.guardForceSpent || 0).toFixed(2),
     guardSpent: +(p.guardSpent || 0).toFixed(1),
     deflects: p.deflects,
