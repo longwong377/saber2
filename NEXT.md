@@ -74,38 +74,53 @@ biggest-visual-defect, confirmed live).
 ask them to put the three in order.** That is the test; it has not been run on
 a person yet.
 
-### Step 2 — the Dead Jedi test: **the channel it was measured through was pinned shut, and is not any more**
+### Step 2 — the Dead Jedi test, RE-TAKEN: **the presence loop is, in the numbers, a pure cost**
 
-15 driven Command worlds, 5 seeds × 3 arms × 3 engagements:
+The original table was measured through two broken instruments and both are
+fixed. `foeDown` was a **corpse census** — `world.enemies.filter(e => e.dead)`
+at the sampling instant, with `Corpses` disposing bodies as the run went on and
+the three arms running for wildly different lengths, so the shortest arm was
+reported as killing three times more when all it had was fresher bodies. And
+morale read a saturated **1.000** in both player arms, so the channel §7's
+whole argument depends on could not move at all.
+
+Re-run on the same five seeds with kills counted at `onEnemyKilled` and morale
+unpinned. **15 of 15 rows, every seed, every arm:**
 
 | | no player | with blade | blade disabled |
 |---|---|---|---|
-| fallen (your men) | 0.2 | 7.8 | **8.6** |
-| areas taken | 1.0 | 1.0 | 0.4 |
-| waves cleared of 3 | 3.0 | 3.0 | 2.4 |
-| game-seconds | 198 | 308 | 588 |
+| waves cleared of 3 | **3** | **3** | **3** |
+| areas taken | **1** | **1** | **1** |
+| enemies killed | 37.4 | 36.8 | 36.4 |
+| fallen (your men) | **0** | **7.2** | **7.4** |
+| game-seconds | 207 | 321 | 467 |
+| morale | 0.87 | 0.84 | 0.84 |
 
-"Dead" sits at **1.11** on the none→blade axis — past blade, nearer blade. By
-§14's stated criterion the presence loop carries weight, so §7 survives the
-letter of the test. It does not survive the spirit: **a Jedi standing in the
-line costs the roster 7.5 men** against a line fighting alone. Take the blade
-away and it costs one more, doubles the time to clear the same three waves, and
-loses the area in 3 of 5 seeds.
+**The outcome is identical in all three arms and it is identical on every
+single seed** — same three waves, same area, same number of enemies dead. What
+changes is that the fight takes half again as long with a Jedi in it, more than
+twice as long with one who cannot cut, and that **seven of your men die who
+would otherwise have lived**.
 
-Two caveats, both real and both in the probe's header: the player is a
-**script**, and **morale reads 1.000 in both player arms** — §10's `JEDI_NEAR`
-saturation was LIVE, so the channel §7's BREAK verb needs was pinned shut and
-could not be what presence paid through.
+The sharpest way to say it: the script Jedi does real work — 867 to 2,177
+points of blade damage a run — and the enemy body count does not move. **Its
+kills SUBSTITUTE for the line's rather than adding to them.** Take the blade
+away entirely and the body count still does not move; only the clock and the
+casualty list do.
 
-**THE SECOND CAVEAT IS FIXED, AND IT MATTERS MORE THAN THE TABLE.** Morale now
-reads **0.87 / 0.84 / 0.84** across the three arms, on the same tree and the
-same seeds — see "Closed since this list was written" below for the two terms
-that did it. What that means for the numbers above: **the table was taken
-through a saturated instrument and has not been re-taken.** On two seeds
-afterwards the FALLEN column had flipped sign (no player 8, with blade 2.5–3),
-which would reverse the whole reading — but two seeds is not a table, and the
-muster lane re-priced allies in the same window, so the arms are not the arms
-this table was measured on either. Re-run it before quoting any row of it:
+That is a far stronger statement of §7's problem than "costs 7.5 men", and it
+is the thing to answer before building the mode. Presence has to buy the line
+something a number can see — faster, or further, or fewer of them dead — and at
+the moment it buys none of the three.
+
+**Caveats, and they are real.** The player is a **script**, so this measures
+what a body standing in a formation and swinging is worth, not what a person
+is. Five seeds. And a line with no player on the field is fighting a horde with
+nobody to walk toward, which is part of why it wins in 27 seconds without
+losses — the arms are not equally hard, and nothing here separates "a Jedi
+costs you men" from "a Jedi drags the fight out and the men near you are
+standing in fire aimed at you". Distinguishing those two is the next
+measurement, not a rewrite of §7.
 
     node --import ./tools/register.mjs tools/_flagship.mjs step2 --seeds 3,5,7,11,13
 
@@ -230,16 +245,25 @@ Gate at the end: **1718 passed, 0 failed.**
 
 ### Still open
 
-- **A Jedi in the line costs the roster 7.5 men.** Still the most consequential
-  number in this document, and it may no longer be the number: on two seeds
-  after the morale fix and the muster lane's ally re-pricing, the SIGN had
-  flipped (fallen: no player 8, with blade 2.5–3). Two seeds is not a table —
-  re-run `tools/_flagship.mjs step2 --seeds 3,5,7,11,13` before believing
-  either version.
-- **Presence is a FLOOR, not a gradient.** Now that morale is unpinned, both
-  player arms rest at the same 0.84, because `JEDI_NEAR` is a step at 14 m and
-  both arms have a Jedi inside it. Whether it should fall off with distance is
-  the next question, and it is now a question the arithmetic can answer.
+- **The presence loop buys the line nothing a number can see.** Re-measured on
+  a corrected instrument, five seeds, fifteen rows: the outcome is IDENTICAL in
+  all three arms and on every seed — same three waves, same area, same 37
+  enemies dead — while a Jedi in the line makes the fight half again as long
+  and gets seven of your men killed. The Jedi's kills substitute for the
+  line's. This is now the most consequential thing in this document, it is
+  `FLAGSHIP.md` §7's central claim, and it has to be answered before the mode
+  is built. See Step 2 above for the table and its caveats.
+- ~~**Presence is a FLOOR, not a gradient.**~~ It falls off with distance now:
+  full at the shoulder, `MORALE.EDGE` (0.35) at the rim of `NEAR`, nothing past
+  it, linear in metres rather than in area. 0.085/s at the shoulder against
+  0.030 at fourteen metres. It did not move the Dead Jedi outcome, which is
+  itself worth knowing — the problem there is not the shape of the term.
+- **Is a Jedi expensive, or merely a magnet?** Nothing yet separates "a Jedi
+  costs the line men" from "a Jedi drags the fight out, and the men near you are
+  standing in fire that was aimed at you". A line with no player is fighting a
+  horde with nobody to walk toward, so the three arms are not equally hard. The
+  measurement that would settle it: a player on the field but a hundred metres
+  from the line.
 - **First person should be one-handed**, and `HANDOFF.md` §6.0 says to ASK
   before doing it, because it is a decision about what a first-person grip IS.
   The wrist lane's sweep this session is the strongest evidence yet: first
