@@ -299,6 +299,48 @@ export async function run({ check, assert }) {
     return `both losing doors say "${LINE_LOST_TITLE}"; a win says nothing`;
   });
 
+  check('theline.10 nothing arrives closer than you could have watched it come', async () => {
+    /**
+     * FLAGSHIP §5, the 0:32 beat: "First contact walks in over the far edge.
+     * Nothing spawns near you that you could not have watched arrive."
+     *
+     * This is the single property that separates a battlefield from a wave
+     * arena, and it is the one a composer change can silently break — a pool
+     * gaining a body whose spawn ring is written for a colosseum, a queue that
+     * falls back to "near the player" when a placement fails. Neither would
+     * fail any other check in the suite.
+     *
+     * The bar is 40 m and the shipped run clears it by a wide margin: measured
+     * over a real minute of a seeded Line on geonosis, 49 hostiles appeared,
+     * the NEAREST at 70.0 m and the median at 147.1 m. The bar is set well
+     * under the measurement on purpose — what is being defended is the
+     * property, not the tuning, and a check pinned at 70 would fail the day
+     * somebody moves a spawn ring by a metre.
+     */
+    const NEAR = 40;
+    const { world, d, input } = await lineWorld({ seed: 7 });
+    const seen = new Set();
+    let closest = Infinity, worst = null, n = 0, total = 0;
+    const watch = () => {
+      for (const e of world.enemies) {
+        if (seen.has(e) || e.team === 0) continue;
+        seen.add(e); n++;
+        const p = world.player.position;
+        const dist = Math.hypot(e.position.x - p.x, e.position.z - p.z);
+        total += dist;
+        if (dist < closest) { closest = dist; worst = e.type; }
+      }
+    };
+    for (let i = 0; i < Math.round(60 / STEP); i++) { world.update(STEP, input); watch(); }
+    assert(n >= 20, `only ${n} hostiles appeared in a minute — nothing was measured`);
+    assert(closest >= NEAR,
+      `a ${worst} appeared ${closest.toFixed(1)} m from the player — inside ${NEAR} m is a body `
+      + 'that did not walk in from anywhere');
+    const mean = total / n;
+    world.unload();
+    return `${n} hostiles · nearest ${closest.toFixed(1)} m · mean ${mean.toFixed(0)} m`;
+  });
+
   /* ══════════════════════════════════════════════════════════════════ */
   /*  The run leaves a record                                           */
   /* ══════════════════════════════════════════════════════════════════ */
