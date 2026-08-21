@@ -30,6 +30,50 @@
  *
  * The arms are `_flagship.mjs`'s, driven by its own scripted Jedi, so this
  * number is taken on the same fight the Dead Jedi table was taken on.
+ *
+ * ── THE ANSWER, AND IT IS THE 2% CASE ───────────────────────────────────
+ *
+ * Five seeds, three engagements each, `blade` and `none`:
+ *
+ *     MEAN open share of enemy-seconds            0.90%
+ *       with a Jedi in the line                   1.1 - 2.7%
+ *       with no player on the field               0.13 - 0.32%
+ *     of bolts landing on a body, share open      10.7%
+ *     extra damage the multiplier bought          +5.4%
+ *
+ *     held    0.000%      yanked  0.000%      downed  0.897%
+ *
+ * `held` and `yanked` are EXACTLY zero because the scripted Jedi does not grip,
+ * pull or hurl — deliberately, see `dutyInput`'s own note — so the whole of the
+ * `blade` arm's open share is `downed`, bodies YOUR OWN LINE toppled or
+ * stunned. That is a real reading and it is not §7's claim, which is about the
+ * x3.0 rung. Hence the `grip` arm.
+ *
+ * ── AND WITH A JEDI GRIPPING CONTINUOUSLY, SOMETHING ELSE IS EATING IT ──
+ *
+ * Three seeds, two engagements, `grip` against `blade`:
+ *
+ *     state    share of enemy-seconds   fire concentration
+ *     held               1.85%                 0.08
+ *     yanked             0.00%                    —
+ *     downed             1.00%                11.22
+ *
+ * A body held off the ground draws EIGHT PER CENT of its fair share of the
+ * line's fire. §7 says "grip a B2 and the ten riflemen who needed 17 seconds
+ * need six"; measured, gripping a B2 is the most reliable way to stop the ten
+ * riflemen shooting it at all. The mechanism is not a bug in `openness` — it is
+ * `targetFor`, which picks the NEAREST hostile, and a grip drags its victim ten
+ * metres toward the Jedi and out of the line's engagement envelope.
+ *
+ * The other half of the same table is why the verb LOOKS live in a battle:
+ * `downed` draws eleven times its share, and the causality runs backwards —
+ * a body is toppled and stunned BY the fire that is already pointed at it, so
+ * the 1.5x is paid on bodies that were going to die anyway.
+ *
+ * So the share is ~1-3% and the concentration on the one rung worth 3.0x is
+ * 0.08. On these numbers OPEN cannot pay at battle scale as written, and the
+ * cheapest thing that would change that is a target preference rather than a
+ * bigger multiplier.
  */
 
 import './dom-shim.mjs';
