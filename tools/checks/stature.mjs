@@ -318,6 +318,100 @@ export function run({ check, assert }) {
     return `${small} of ${n} small — ${rows[0]}`;
   });
 
+  check('stature: every body publishes a chest, and no reader answers from the world origin', async () => {
+    /**
+     * ══ ONLY THE PLAYER HAD A CHEST, AND EVERY BOLT IN THE GAME KNEW IT ══
+     *
+     * `Enemy._shoot` leads its aim on `target.chest ?? target.position`, and so
+     * do the telegraph, the line-of-sight test, the off blade, the laser, the
+     * rifle pose and both turret head-tracks. `Player.chest` is a real field and
+     * nothing else in the game had one — so every one of those fell through to
+     * `position`, which is at the FEET, for your named troopers and for the
+     * whole horde. It surfaced from the wrong end: a "men crouch under fire"
+     * lever measured worse than nothing, because crouching pulls a man toward
+     * an aim point that is on the floor.
+     *
+     * TWO PROPERTIES, and the second is the one that made a single reader
+     * unsafe to have before now:
+     *
+     *   THE CHEST IS ON THE BODY. `chest` is `chestY` in a vector and `chestY`
+     *     is `position.y + 1.15 * bodyScale`, so it is true from the moment a
+     *     body is PLACED — before anything has posed it.
+     *
+     *   AND `aimPoint` IS TOO. It walks the rig for a torso bone, and
+     *     `Rig.worldPos` reads `bone.obj.matrixWorld`, which is the IDENTITY
+     *     until something has updated that body. So on the frame a wave spawns
+     *     every one of those bones is at (0, 0, 0), and a query about a droid
+     *     90 m out used to answer with the middle of the map.
+     *     `Player._enemyPoint` carried a paragraph about exactly that hazard
+     *     and dodged it by keeping a third opinion of where a chest is — which
+     *     is HANDOFF §2.3's defect, and the way out of it is to make the one
+     *     reader safe rather than to keep a second.
+     *
+     * DRIVEN ON THE FRESH SPAWN, WHICH IS THE CASE THAT WAS BROKEN. Nothing
+     * below poses anything before it asks: this is the state a body is in on
+     * the frame it arrives, and the whole roster is asked in it. The stand is
+     * deliberately far from the origin and off the floor, because a body at
+     * (0,0,0) cannot tell a right answer from the failure.
+     */
+    const { initPhysics } = await import('../../src/physics/Rapier.js');
+    const { RapierWorld } = await import('../../src/physics/RapierWorld.js');
+    const { Enemy, ARCHETYPES } = await import('../../src/game/Enemy.js');
+    const { aimAt } = await import('../../src/game/Combat.js');
+    await initPhysics();
+
+    const STAND = new THREE.Vector3(63.5, 7.25, -48.75);
+    const terrain = { height: () => STAND.y, normalAt: (x, z, o) => o.set(0, 1, 0), raycast: () => null,
+      size: 400, half: 200, inBounds: () => true, surfaceAt: () => 'sand',
+      crater() {}, flush() {}, slopeAt: () => 0 };
+    const physics = new RapierWorld({ gravity: -24, iterations: 4, maxBodies: 256 });
+    physics.terrain = terrain;
+    const particles = { sandPuff() {}, sparkBurst() {}, cutFlare() {}, slag() {}, plasma: { spawn() {} } };
+    const w = { scene: new THREE.Scene(), physics, terrain, statics: [], settings: { fov: 60 },
+      players: [], enemies: [], props: [], particles, time: 0, groundColor: 0xcfae82,
+      bolts: { fire() {} }, engine: { flash() {}, camera: new THREE.PerspectiveCamera() },
+      report() {}, notify() {}, notifyFloating() {}, addHitstop() {} };
+
+    const out = v();
+    let n = 0, worstAim = 0, worstName = '';
+    for (const type of Object.keys(ARCHETYPES)) {
+      const e = new Enemy(w, type, STAND.clone());
+      e.position.copy(STAND);
+      n++;
+      /* THE CHEST IS THE HEIGHT `chestY` PUBLISHES, IN THE BODY'S OWN COLUMN.
+       * Asserted against `chestY` rather than against 1.15 · bodyScale, which
+       * would be this file keeping its own copy of the number it is checking
+       * (HANDOFF §2.4). */
+      assert(e.chest.x === e.position.x && e.chest.z === e.position.z && e.chest.y === e.chestY,
+        `${type}: chest (${e.chest.x.toFixed(2)}, ${e.chest.y.toFixed(2)}, ${e.chest.z.toFixed(2)}) `
+        + `is not the body's own column at chestY ${e.chestY.toFixed(2)}`);
+      /* …AND IT IS ABOVE THE FEET, which is the whole finding: a shooter that
+       * leads on `position` leads on the floor. */
+      assert(e.chest.y > e.position.y + 0.2,
+        `${type}: its chest is ${(e.chest.y - e.position.y).toFixed(2)} m off its own feet`);
+      /* AND EVERY READER LANDS ON THE BODY ON THE SPAWN FRAME. The bound is the
+       * body's own — `chestY` is 1.15 · bodyScale up, so 3 · bodyScale + 1 is
+       * comfortably outside any pose and nowhere near 90 m of map. */
+      const reach = 3 * e.bodyScale + 1;
+      for (const [who, p] of [['aimPoint', e.aimPoint(out)], ['aimAt', aimAt(e, out)]]) {
+        const d = p.distanceTo(e.position);
+        assert(d <= reach,
+          `${type}: ${who} answers ${d.toFixed(1)} m from a body that has not been posed yet — `
+          + `(${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}) against a body standing at `
+          + `(${e.position.x.toFixed(1)}, ${e.position.y.toFixed(1)}, ${e.position.z.toFixed(1)}). `
+          + 'An unposed bone matrix is the identity, so this is the world origin wearing a '
+          + 'coordinate.');
+        if (d > worstAim) { worstAim = d; worstName = `${type}.${who}`; }
+      }
+      e.dispose?.();
+    }
+    physics.dispose?.();
+    assert(n > 20, `only ${n} archetypes were asked — the roster did not load (HANDOFF §1)`);
+    return `${n} archetypes, each asked on the frame it spawned and before anything posed it: `
+      + `every chest on its own column, worst reader ${worstName} ${worstAim.toFixed(2)} m off the `
+      + 'feet';
+  });
+
   check('stature: a figure is measured off its own bones, and the reference reads exactly 1', () => {
     /* The four scales are DERIVED from `humanoidSkeleton` rather than typed
      * beside it, which is the only thing that keeps a bone-length change from

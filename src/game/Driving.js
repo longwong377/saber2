@@ -206,13 +206,23 @@ export class Crew {
       `${vehicle.A?.label ?? 'the machine'} — ${crewOf(vehicle.type)} crew, and you are all of them`);
   }
 
-  /** Where the driver sits, in world space: on top of the hull, at the nose. */
+  /**
+   * Where the driver sits, in world space: on top of the hull, at the nose.
+   *
+   * `v.chestY` IS AN ABSOLUTE WORLD HEIGHT and this added it to `position.y`,
+   * so the terrain under the machine was counted twice: a tank parked 4 m up a
+   * slope seated its driver 4 m in the air, and `aimPoint` below put the gun's
+   * aim on the same doubled height. `chestY` is `position.y + 1.15 * bodyScale`
+   * — see Enemy.js — so the height IS the answer and nothing may be added to
+   * it. The 1.4 stays as the fallback for a machine with no chest at all, and
+   * it is now a fallback for the whole expression rather than for half of it.
+   */
   seat(out = _v1) {
     const v = this.vehicle;
     const s = v.A?.scale ?? 1;
     return out.set(
       v.position.x + Math.sin(v.facing) * 0.35 * s,
-      v.position.y + (v.chestY ?? 1.4),
+      v.chestY ?? (v.position.y + 1.4),
       v.position.z + Math.cos(v.facing) * 0.35 * s);
   }
 
@@ -305,7 +315,7 @@ export class Crew {
     const v = this.vehicle;
     return out.set(
       v.position.x + Math.sin(this.gun) * 60,
-      v.position.y + (v.chestY ?? 1.4) + this.player.aimDir.y * 60,
+      (v.chestY ?? (v.position.y + 1.4)) + this.player.aimDir.y * 60,
       v.position.z + Math.cos(this.gun) * 60);
   }
 

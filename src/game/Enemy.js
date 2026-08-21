@@ -21,7 +21,7 @@ import { buildRemote } from './Dojo.js';
 import { attachCloak, attachSkirt } from './Cloth.js';
 import { LAYER, Body, capsuleSpheres, capsule } from '../physics/RapierWorld.js';
 import { supportHeight, STEP_UP, GROUND_SNAP, CLIMB_RATE } from '../physics/Support.js';
-import { TOUGHNESS, thinner, bladesTouching } from './Combat.js';
+import { TOUGHNESS, thinner, bladesTouching, aimAt } from './Combat.js';
 import { seeThrough } from './Smoke.js';
 import { segmentSegment } from '../physics/Physics.js';
 import { BOLT_COLORS } from './Bolts.js';
@@ -201,6 +201,11 @@ const _stag = new THREE.Vector3();
  *  its own rather than writing through a Player's `_v2`. */
 const _res = new THREE.Vector3();
 const _oq = new THREE.Quaternion();
+/**
+ * WHERE A BODY IS AIMED AT — its own scratch, because the callers below hold
+ * the answer across a terrain raycast that borrows `_v1` and `_v2`.
+ */
+const _aim = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
 /** The pitch axis for a body already yawed to `facing` — see _poseWalker. */
 const RIGHT = new THREE.Vector3(1, 0, 0);
@@ -3036,15 +3041,47 @@ export class Enemy {
    * being drawn at the world origin. The chain ends at the body's own position
    * rather than at a bone, so a rig with no torso at all still lands somewhere
    * real.
+   *
+   * ── AND A BONE THAT HAS NOT BEEN POSED ANSWERS FROM THE WORLD ORIGIN ─────
+   *
+   * `Rig.worldPos` reads `bone.obj.matrixWorld`, which is the IDENTITY until
+   * something has updated the body — so on the frame a wave spawns, every one
+   * of these bones is at (0, 0, 0) and a query about a droid standing 90 m out
+   * answers with the middle of the map. `Player._enemyPoint` carries a whole
+   * paragraph about that hazard and dodges it by keeping a THIRD opinion of
+   * where a chest is (`1.12 · A.scale`), which is HANDOFF §2.3's defect wearing
+   * its usual coat: the way to have one answer is to make the one answer safe.
+   *
+   * So the bone is used only when it is ON THE BODY. `chest` below is
+   * `position` plus `1.15 · bodyScale`, so a torso bone more than
+   * `3 · bodyScale + 1` metres from this body's own feet is not this body's
+   * torso — it is an unposed matrix — and the derived point is the honest
+   * answer. Everything that aims, leads, floats a notice or asks for a centre
+   * of mass now goes through here or through `chest`, and the two cannot
+   * disagree by more than the animation between them.
    */
   aimPoint(out = new THREE.Vector3()) {
+    /* ON THE BODY, OR IT IS NOT THIS BODY'S ANSWER. `chestY` is
+     * 1.15 · bodyScale above the feet, so anything past three of those plus a
+     * metre is outside any pose this roster can strike. Both branches below are
+     * guarded by it and NOT just the rig one: the droideka has no torso bone
+     * and takes the `group` branch, and a group's `position` is (0,0,0) until
+     * `_pose` puts it on the body — measured, `stature.mjs` caught it on this
+     * guard's first run, answering 80.3 m away from a body it had been handed. */
+    const reach = 3 * this.bodyScale + 1;
+    const onBody = () => out.distanceToSquared(this.position) <= reach * reach;
     if (this.rig && !this.actor?.ragdolled) {
       for (const name of ['chest', 'body', 'spine', 'hips']) {
-        if (this.rig.get(name)) return this.rig.worldPos(name, out);
+        if (!this.rig.get(name)) continue;
+        this.rig.worldPos(name, out);
+        return onBody() ? out : out.copy(this.chest);
       }
     }
-    if (this.group) return out.copy(this.group.position).addScaledVector(UP, 0.8 * this.bodyScale);
-    return out.copy(this.position).setY(this.position.y + 1.1 * this.bodyScale);
+    if (this.group) {
+      out.copy(this.group.position).addScaledVector(UP, 0.8 * this.bodyScale);
+      return onBody() ? out : out.copy(this.chest);
+    }
+    return out.copy(this.chest);
   }
 
   /**
@@ -3068,6 +3105,39 @@ export class Enemy {
    * chest 0.45 m above the top of its head — the point every floating notice,
    * every aim assist and every "centre of mass" query in the game reads. */
   get chestY() { return this.position.y + 1.15 * this.bodyScale; }
+
+  /**
+   * ── EVERY BODY IN THE GAME HAS A CHEST NOW, AND ONLY THE PLAYER DID ──────
+   *
+   * `Enemy._shoot` leads its aim on `target.chest ?? target.position`, and so
+   * do `_beginTelegraph`, `_hasLineOfSight`, the off blade, the laser, the
+   * rifle pose and both turret head-tracks. `Player.chest` is a real field;
+   * NOTHING ELSE HAD ONE. So every one of those fell through to `position` —
+   * which is at the FEET — for your named troopers, for the horde, and for
+   * every body on the field except the one the player is standing in.
+   *
+   * It was found from the wrong end. A "men crouch under fire" lever measured
+   * WORSE THAN NOTHING — 0.6 survivors against 1.8 — because crouching pulls a
+   * man DOWN, which on a shooter aiming at his boots is walking into the shot.
+   *
+   * The quantity was already here: `chestY` above, and its own comment calls it
+   * "the point every aim assist and every centre-of-mass query in the game
+   * reads". The shooter was the one reader not using it. This is that number in
+   * a vector, so that a body is asked where its chest is in exactly the way a
+   * Player is asked, and no call site has to know which of the two it holds.
+   *
+   * ITS OWN VECTOR PER BODY, and derived on every read rather than written once
+   * a frame. A module-scope scratch would alias the moment two bodies' chests
+   * were read into one expression (`lerpVectors(a.chest, b.chest, …)` is
+   * already in Duel.js). A field updated in `update()` would be stale on the
+   * frame a wave spawns — which is the exact hazard the note on `aimPoint`
+   * above is about, and this is the reader that is safe from it: `position` is
+   * true from the moment a body is placed.
+   */
+  get chest() {
+    return (this._chest ??= new THREE.Vector3())
+      .set(this.position.x, this.chestY, this.position.z);
+  }
 
   /** Capsules the blade solver tests against — one per living bone. */
   capsules() {
@@ -5273,7 +5343,7 @@ export class Enemy {
   _beginTelegraph(ctx) {
     const t = this.target;
     if (t) {
-      this.telegraphAim = (this.telegraphAim || new THREE.Vector3()).copy(t.chest ?? t.position);
+      this.telegraphAim = aimAt(t, this.telegraphAim || new THREE.Vector3());
     }
     if (!this.laser) {
       const g = new THREE.CylinderGeometry(0.006, 0.006, 1, 4);
@@ -5291,7 +5361,7 @@ export class Enemy {
   _hasLineOfSight(ctx) {
     if (!this.target) return false;
     const from = this._muzzleWorld(_v5);
-    const at = this.target.chest ?? this.target.position;
+    const at = aimAt(this.target, _aim);
     _v6.subVectors(at, from);
     const d = _v6.length();
     _v6.multiplyScalar(1 / d);
@@ -5361,10 +5431,10 @@ export class Enemy {
     // the player was given a second to leave has to leave from where the line
     // was, not from where they ended up.
     const aimed = !!this.telegraphAim;
-    const aimAt = _v2.copy(aimed ? this.telegraphAim : (target.chest ?? target.position));
+    const at = aimed ? _v2.copy(this.telegraphAim) : aimAt(target, _v2);
     /* SHOOTING ITSELF is aimed at the chest like everything else, but the
      * muzzle is already past it — a rifle held at the shoulder has its barrel
-     * end a good half metre in FRONT of the ribs — so `aimAt - from` points
+     * end a good half metre in FRONT of the ribs — so `at - from` points
      * backwards and the shot goes over the droid's shoulder into the sky. The
      * bolt has to start behind the chest and travel through it. Dropping the
      * muzzle to the hip and aiming up under the chin is the pose a unit turning
@@ -5373,20 +5443,20 @@ export class Enemy {
     if (target === this) {
       from.set(this.position.x, this.position.y + 0.55 * (A.scale ?? 1), this.position.z)
         .addScaledVector(_v5.set(Math.sin(this.facing), 0, Math.cos(this.facing)), 0.26 * (A.scale ?? 1));
-      aimAt.set(this.position.x, this.position.y + 1.35 * (A.scale ?? 1), this.position.z);
+      at.set(this.position.x, this.position.y + 1.35 * (A.scale ?? 1), this.position.z);
     }
 
     const diff = this.world.difficulty;
     const acc = diff ? diff.enemyAccuracy : 0.7;
     // lead the shot, then throw it off by however good this difficulty is
     const speed = 88 * (diff ? diff.boltSpeed : 1) * (A.big ? 1.2 : 1);
-    const tof = from.distanceTo(aimAt) / speed;
+    const tof = from.distanceTo(at) / speed;
     /* …and a committed shot does not lead. Leading a fixed point by the
      * target's CURRENT velocity would put the bolt back on the player and off
      * the line that was drawn, which is the same defect one layer down. */
-    if (target.velocity && !aimed) aimAt.addScaledVector(target.velocity, tof * acc);
+    if (target.velocity && !aimed) at.addScaledVector(target.velocity, tof * acc);
 
-    _v3.subVectors(aimAt, from).normalize();
+    _v3.subVectors(at, from).normalize();
     /* AIM IS A SKILL AND A CIRCUMSTANCE, not a difficulty slider. See
      * `aimQuality` — the whole of note #20 goes through this one multiply. */
     /**
@@ -5411,9 +5481,9 @@ export class Enemy {
      * SYMMETRIC, like everything else about the cloud: this runs on every body
      * with a weapon, and in Command your own line are Enemy instances too.
      */
-    const see = seeThrough(from, aimAt);
+    const see = seeThrough(from, at);
     const murk = clamp(1 / Math.max(see, 0.02), 1, 4.5);
-    const spread = (A.spread ?? 0.06) * (2 - acc) * this.aimQuality(from.distanceTo(aimAt)) * murk;
+    const spread = (A.spread ?? 0.06) * (2 - acc) * this.aimQuality(from.distanceTo(at)) * murk;
     _v3.x += (rng() - 0.5) * spread; _v3.y += (rng() - 0.5) * spread * 0.7; _v3.z += (rng() - 0.5) * spread;
     _v3.normalize();
 
@@ -5927,7 +5997,7 @@ export class Enemy {
      * 35% roll: three sparks, no embers.
      */
     if (rng() < 0.35) {
-      this.world.particles?.sparkBurst?.(t.chest ?? t.position, null, 3,
+      this.world.particles?.sparkBurst?.(aimAt(t, _aim), null, 3,
         { speed: 5, embers: false, color: this.casting === 'lightning' ? 0x9fd8ff : 0xff6a6a });
     }
   }
@@ -5992,7 +6062,7 @@ export class Enemy {
      */
     if (t.saber && this.offSaber && bladesTouching(t.saber, this.offSaber)) return;
     const reach = 1.05 * (this.A.scale ?? 1) + 0.55;
-    _v1.copy(t.chest ?? t.position);
+    aimAt(t, _v1);
     _v3.subVectors(_v1, this.offHand).setY(0);
     const d = _v3.length();
     if (d > reach) return;
@@ -6000,7 +6070,7 @@ export class Enemy {
     // still swings at whatever the wielder is facing.
     _v4.set(Math.sin(this.facing), 0, Math.cos(this.facing));
     if (d > 0.05 && _v3.divideScalar(d).dot(_v4) < Math.cos(1.0)) return;
-    _v1.copy(t.chest ?? t.position);
+    aimAt(t, _v1);
     t.damage?.(this.attackDamage * 0.55 * duel.damageScale, _v1.clone(), this, 'saber');
     _v2.subVectors(t.position, this.position).setY(0.25).normalize().multiplyScalar(4.5);
     t.velocity?.add(_v2);
@@ -6938,7 +7008,7 @@ export class Enemy {
       // The COMMITTED point, not a live read of the chest. This line used to
       // track the player, which made "leave the line" impossible: the line went
       // with them. See `_beginTelegraph`.
-      _v2.subVectors(this.telegraphAim ?? this.target.chest ?? this.target.position, from);
+      _v2.subVectors(this.telegraphAim ?? aimAt(this.target, _aim), from);
       const len = _v2.length();
       this.laser.position.copy(from);
       this.laser.quaternion.setFromUnitVectors(_v3.set(0, 0, 1), _v2.normalize());
@@ -6981,7 +7051,7 @@ export class Enemy {
      * elbows DOWN. What was here had the two hands on opposite sides of the
      * centreline, which is why the weapon lay across the chest.
      */
-    const aim = this.target ? _v4.copy(this.target.chest ?? this.target.position).sub(chest).normalize()
+    const aim = this.target ? aimAt(this.target, _v4).sub(chest).normalize()
                             : _v4.copy(fwd);
     /* The bore line: offset to the shooting side and just under the chin, so
      * both hands hang off ONE line instead of straddling the body. */
@@ -7358,7 +7428,7 @@ export class Enemy {
     // authored facing +Z rather than along the bone axis
     const headBone = rig.get('head');
     if (this.target && headBone && !headBone.severed) {
-      _v3.subVectors(this.target.chest ?? this.target.position, rig.worldPos('head', _v4));
+      _v3.subVectors(aimAt(this.target, _aim), rig.worldPos('head', _v4));
       /**
        * `atan2(x, z) - facing` IS the local bearing. The `- Math.PI` that used
        * to close this line put it half a turn out, and the symptom was hidden
@@ -7397,7 +7467,7 @@ export class Enemy {
       leg.lower.rotation.x = -0.2 + Math.cos(ph * TAU) * 0.2;
     });
     if (this.target) {
-      _v1.subVectors(this.target.chest ?? this.target.position, b.headG.getWorldPosition(_v2));
+      _v1.subVectors(aimAt(this.target, _aim), b.headG.getWorldPosition(_v2));
       const pitch = Math.atan2(_v1.y, Math.hypot(_v1.x, _v1.z));
       b.headG.rotation.x = clamp(-pitch, -0.5, 0.5);
       for (const arm of b.arms) arm.arm.rotation.x = clamp(-pitch * 0.6, -0.5, 0.5);

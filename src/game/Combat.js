@@ -1244,12 +1244,41 @@ export function gradeCaught(snap, ctx) {
   return { grade, dir: out, damageMul, target, bladeSpeed, normal: _v4.clone(), bladeT };
 }
 
+/**
+ * WHERE A BODY IS AIMED AT. One reader, for every shooter in the game.
+ *
+ * It lives here because this is the file that already had to answer the
+ * question — `pickReturnTarget` below has asked it since a returned bolt first
+ * needed somewhere to go — and because it is a leaf: THREE, Physics, MathUtil,
+ * Bolts and Morale, none of which reaches back to a shooter.
+ *
+ * `aimPoint` first, because a body that publishes one is a body that has an
+ * opinion about its own centre of mass: `Enemy` walks its rig for a torso bone
+ * and falls back to `chest`, `Player` and a remote player answer with their own
+ * `chest` field, and a driven vehicle answers with the point its gun is laid
+ * on. `chest` second, so that a duck-typed target — the object `Driving.fire`
+ * hands the machine, the fixtures in half the checks — is read the same way.
+ * `position` last, and it is now only ever reached by something with no body
+ * at all: it is at the FEET, and aiming there is the defect this function was
+ * written to end.
+ *
+ * NO DEFAULT `out`. Two shooters resolving their aim in one expression through
+ * a module-scope scratch is the aliasing bug this repository has already paid
+ * for once in `World._bolt4`; the caller owns the vector.
+ */
+export function aimAt(body, out) {
+  if (!body) return null;
+  if (body.aimPoint) return body.aimPoint(out);
+  if (body.chest) return out.copy(body.chest);
+  return body.position ? out.copy(body.position) : null;
+}
+
 /** Nearest valid enemy inside the aim cone. */
 export function pickReturnTarget(origin, aimDir, candidates, cone = 0.42) {
   let best = null, bestScore = -1;
   for (const c of candidates) {
     if (!c || c.dead) continue;
-    const p = c.aimPoint ? c.aimPoint(_v6) : (c.position ? _v6.copy(c.position) : null);
+    const p = aimAt(c, _v6);
     if (!p) continue;
     _v1.subVectors(p, origin);
     const dist = _v1.length();

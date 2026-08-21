@@ -106,6 +106,11 @@ import { audio } from '../engine/Audio.js';
  * one check whose subject is how many men a gun takes off a roster.
  */
 import { rand } from '../engine/MathUtil.js';
+/* WHERE A BODY IS AIMED AT — one reader for the whole game, in the leaf module
+ * that already owned "which point on this thing does a bolt go to". Combat.js
+ * imports THREE, Physics, MathUtil, Bolts and Morale and nothing that reaches
+ * back here, so this edge cannot be part of a cycle. */
+import { aimAt } from './Combat.js';
 
 /**
  * THE GUN, PRICED AGAINST THE LINE IT IS SHOOTING AT.
@@ -441,7 +446,7 @@ export class GunPit {
      * be stopped by the body's own physics proxy.
      */
     const w = this.world;
-    _v.copy(t.position); _v.y += (t.chestY ?? 1.1);
+    aimAt(t, _v);
     _d.subVectors(_v, this.muzzle);
     const range = _d.length();
     _d.multiplyScalar(1 / range);
@@ -456,11 +461,56 @@ export class GunPit {
   _fire(t) {
     const bolts = this.world?.bolts;
     if (!bolts) return;
+    /**
+     * ── THE TELL IS EVERY MACHINE'S; THE ROUND IS THE HOST'S ────────────────
+     *
+     * This gun is built by the LEVEL, so every machine in a session has one and
+     * every machine was firing it. That is the same defect `World._boltHurt` is
+     * about, one layer further out: the host's rounds already cross as events
+     * in the snapshot and are spawned into the client's own pool, so a client
+     * that also fired its own copy put TWO guns on one embrasure — a second
+     * burst nobody on the host had fired, laid on a target its own copy of the
+     * line had chosen, and then billed back to the host as damage by
+     * `_reconcileClaims`. Measured on a co-op Command pair with the joining
+     * player idle: a 30.5 hp claim against a named trooper, from a gun the
+     * host's own copy had already fired at somebody else.
+     *
+     * The BARREL still tracks off-host — that is in `update` and it is what the
+     * gun looks like — and the tell still fires, because a gun the player never
+     * finds is a gun the player loses the run to without ever seeing it (the
+     * mode lane's tally had this emplacement at 42.8% of everything that killed
+     * the line on runs where nobody went near it) and a joining player is a
+     * player. What stops here is the round, the noise and the flash, all three
+     * of which arrive from the host as a replicated bolt.
+     *
+     * ONCE, off `_told` rather than off `shots`: a line of HUD text every seven
+     * seconds is not a tell, it is a nag, and `shots` has to stay the count of
+     * rounds this gun actually fired — `tools/checks/breach.mjs` reads it.
+     */
+    if (!this._told) {
+      this._told = true;
+      this.world?.notify?.('EMPLACED GUN', 'the revetment is firing on your line');
+    }
+    if (this.world.netMode === 'client') return;
     /* Aim at the chest and lead the target, exactly as `Enemy._shoot` does:
      * a fixed gun that fired at a man's feet where he was standing last frame
-     * would never hit a line that is walking. */
-    _v.copy(t.position);
-    _v.y += (t.chestY ?? 1.1);
+     * would never hit a line that is walking.
+     *
+     * ── AND IT WAS FIRING OVER THEIR HEADS BY THE HEIGHT OF THE GROUND ──────
+     *
+     * This read `_v.copy(t.position); _v.y += (t.chestY ?? 1.1)`. `chestY` is
+     * `position.y + 1.15 * bodyScale` — an ABSOLUTE world height, not an offset
+     * — so adding it to `position.y` counted the terrain under the man TWICE.
+     * On a flat floor at y = 0 that is exactly right and on nothing else is it
+     * right at all: the mode generates a heightfield per seed
+     * (`Battlefield.js`), and a line standing 3 m up was being shot at 3 m over
+     * its own heads. That is one half of why an isolated arm of `breach.mjs`
+     * scored 1 of 10 names in 90 s and flaked on the next run.
+     *
+     * `aimAt` is the reader, called and not restated (HANDOFF §2.4); the same
+     * arithmetic written out a second time here is what got it wrong.
+     */
+    aimAt(t, _v);
     const range = _v.distanceTo(this.muzzle);
     if (t.velocity) _v.addScaledVector(t.velocity, range / GUN.speed);
     _d.subVectors(_v, this.muzzle).normalize();
@@ -477,16 +527,6 @@ export class GunPit {
        * nothing at all would be refused. The gun is its own shooter. */
       owner: this, team: this.team, big: true, length: 2.4, radius: 0.1,
     });
-    /* THE TELL, ONCE. A gun the player never finds is a gun the player loses
-     * the run to without ever seeing it — the mode lane's tally had this
-     * emplacement at 42.8% of everything that killed the line on runs where
-     * nobody went near it. The first round it fires says so, and it says WHERE,
-     * because the whole of §7's fourth verb is a thing you have to go and do
-     * something about. Once: a line of HUD text every seven seconds is not a
-     * tell, it is a nag. */
-    if (!this.shots) {
-      this.world?.notify?.('EMPLACED GUN', 'the revetment is firing on your line');
-    }
     this.shots++;
     audio.blaster?.(this.muzzle, true);
     this.world.particles?.plasma?.spawn(this.muzzle, _v.set(0, 0, 0), {

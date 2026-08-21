@@ -5973,6 +5973,17 @@ export class Player {
    * enemy has been through one update — and the player runs before the enemies
    * do, so on the frame a wave spawns every Force power would have aimed at the
    * world origin. Position plus chest height is always true.
+   *
+   * THE HAZARD IS REAL AND THE SECOND OPINION WAS NOT THE ANSWER. This method
+   * used to answer `position.y + 1.12 * A.scale`, a third statement of a height
+   * the body already publishes — and it was `A.scale` rather than `bodyScale`,
+   * which is precisely the bug `Enemy.chestY`'s own comment records: on a
+   * smallfolk frame `A.scale` puts the chest 0.45 m above the top of the head.
+   * So every Force power in the game reached for a point off the body of
+   * anything whose rig rescaled it. `Enemy.chest` is the same position-derived
+   * quantity, safe on the spawn frame for the same reason this note gives, and
+   * `aimPoint` now falls back to it rather than answering from the origin — so
+   * there is one number and no reader has to be careful.
    */
   /**
    * WHERE A HELD THING IS — bolt, loose body, or person.
@@ -5990,7 +6001,7 @@ export class Player {
   }
 
   _enemyPoint(e, out) {
-    return out.set(e.position.x, e.position.y + 1.12 * (e.A ? e.A.scale : 1), e.position.z);
+    return e.chest ? out.copy(e.chest) : out.copy(e.position);
   }
 
   /* ── gestures ────────────────────────────────────────────────────── */
