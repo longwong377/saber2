@@ -8042,9 +8042,14 @@ export function buildGeonosian(opts = {}) {
       k.add(dark, plateGeo(0.010 * s, 0.140 * s, 0.026 * s, 0.003 * s, 1), [0, 0.156 * s, -0.082 * s], [-0.62, 0, 0]);
       k.pair((sx) => k.add(dark, plateGeo(0.014 * s, 0.044 * s, 0.020 * s, 0.005 * s, 1),
         [sx * 0.032 * s, 0.148 * s, -0.040 * s], [-0.5, 0, sx * 0.3]));
-      /* The crest and the lenses are the head's whole read, so they survive
-       * the LOD cull the way a rancor's horns do. */
-      for (const m of k.bake(headObj)) markSilhouette(m);
+      /* THE CREST SURVIVES THE CULL AND THE LENSES DO NOT, which is a draw-call
+       * decision and not a taste one. `_applyLod` keeps one primary per bone
+       * plus anything tagged `silhouette`, and `characters.mjs` caps a humanoid
+       * at 32 kept meshes because twenty of them can be on screen at once — a
+       * swarm unit is exactly the wrong body to spend that on. Marking
+       * everything here measured 34. The crest is the outline; a 2.6 cm lens
+       * and a mandible are not. */
+      for (const m of k.bake(headObj)) { if (m.material === dark) markSilhouette(m); }
     },
 
     dress(r, s) {
@@ -8061,7 +8066,9 @@ export function buildGeonosian(opts = {}) {
         // the two wing sockets, where the spars actually leave the body
         k.pair((sx) => k.add(dark, new THREE.CylinderGeometry(0.024 * s, 0.030 * s, 0.026 * s, 8),
           [sx * 0.050 * s, 0.148 * s, -0.058 * s], [1.2, 0, sx * 0.4]));
-        for (const m of k.bake(chest.obj)) markSilhouette(m);
+        /* The carapace and the wing sockets are shape; the sternum keel is a
+         * panel line on the front. Same argument as the head above. */
+        for (const m of k.bake(chest.obj)) { if (m.material === dark) markSilhouette(m); }
       }
 
       /* ── the abdomen ── */

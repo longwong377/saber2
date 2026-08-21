@@ -353,6 +353,15 @@ export async function run({ check, assert, near, THREE: T }) {
     acolyte: (o) => B.buildAcolyte(o), sparring: (o) => B.buildAcolyte(o),
     b2: (o) => B.buildB2(o), magna: (o) => B.buildBodyguard(o),
     bodyguard: (o) => B.buildBodyguard(o),
+    /* The roster's first winged body, and the one the two rules below were
+     * about when it was authored: it keeps 31 of 36 meshes past thirty metres
+     * (the ceiling is 32, and marking its lenses and mandibles as outline as
+     * well measured 34) and its worst pair is 0.540 against the training
+     * droid, the lowest on this table but one. Both are consequences of the
+     * wings, which is the argument for putting them on `wing` bones and
+     * tagging them `silhouette`: a Geonosian at thirty metres with its wings
+     * culled is a thin man. */
+    geonosian: (o) => B.buildGeonosian(o),
   };
   /** The archetype's own scale, so a 1.06 heavy is not normalised into a 1.00. */
   const KIT_SCALE = {
@@ -360,6 +369,7 @@ export async function run({ check, assert, near, THREE: T }) {
     jedi: 1.0, sentinel: 1.02, guardian: 1.05, master: 1.03,
     b1: 1.02, rocket: 1.04, bx: 1.06, dummy: 1.02,
     acolyte: 1.04, sparring: 1.04, b2: 1.18, magna: 1.18, bodyguard: 1.3,
+    geonosian: 0.928,
   };
 
   /**
