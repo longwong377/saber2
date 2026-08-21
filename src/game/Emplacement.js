@@ -175,15 +175,26 @@ export class GunPit {
      * A gun that fired from behind its own sealed blast door would put every
      * bolt into the inside face of the plate. Real emplaced guns do not fire
      * through their access door; they fire through an embrasure and the door is
-     * how the crew gets in. So the barrel sits over the lintel, 1.35 m above
-     * the top of the plate and 0.55 m proud of it, on the outward normal of
-     * the door itself — derived from the door's own quaternion, so the gun
-     * cannot end up pointing into the hill if the magazine is ever re-sited.
+     * how the crew gets in. So the barrel comes out of the lintel band over the
+     * plate, on the outward normal of the door itself — derived from the door's
+     * own quaternion, so the gun cannot end up pointing into the hill if the
+     * magazine is ever re-sited.
+     *
+     * BOTH OFFSETS ARE MEASURED AND THE FIRST ONE WAS WRONG. At 0.55 m proud
+     * the muzzle sits INSIDE the 1.4 m lintel slab the magazine's face is made
+     * of — the plate stands in the middle of the reveal, so the wall is 0.7 m
+     * of duracrete on either side of it — and the line-of-sight raycast below
+     * therefore started inside a static box and reported no line of sight to
+     * anything, ever. Measured: 60 s of a real Command world with ten troopers
+     * formed up 69 m away and a live target acquired every frame, **0 shots
+     * fired**. A gun that cannot see out of its own wall is a silent prop, and
+     * nothing in the check that only asks whether it EXISTS would have caught
+     * it. 0.95 m puts the muzzle 0.2 m clear of the outside face.
      */
     const n = _d.set(0, 0, 1).applyQuaternion(door.mesh.quaternion).normalize();
     this.muzzle = door.mesh.position.clone()
-      .addScaledVector(n, 0.55)
-      .add(_v.set(0, door.height * 0.5 + 1.35, 0));
+      .addScaledVector(n, 0.95)
+      .add(_v.set(0, door.height * 0.5 + 0.8, 0));
     this.facing = n.clone();
 
     this.group = new THREE.Group();
