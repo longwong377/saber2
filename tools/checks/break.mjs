@@ -444,4 +444,99 @@ export async function run({ check, assert }) {
     return `under a blade ${NERVE.BLADE}/s inside ${NERVE.BLADE_REACH} m (net ${perSecond.toFixed(3)}/s) · `
       + `out of contact +${MORALE.RALLY_PER_S}/s · records skipped`;
   });
+
+  /* ══════════════════════════════════════════════════════════════════ */
+  /*  …AND WHAT IT COMES TO IN A BATTLE, WHICH IS NOT WHAT IT LOOKS     */
+  /* ══════════════════════════════════════════════════════════════════ */
+
+  check('break: the ledger is on the wire in a real battle — and the horde almost never breaks in one', async () => {
+    /**
+     * EVERY CHECK ABOVE IS A HAND-BUILT FIELD, and every one of them passes:
+     * a rank frozen inside `BLADE_REACH` comes apart in the eleven seconds the
+     * table says it should, a death takes the nerve of the men who could see
+     * it, a bolt sent home costs four times as much. What none of them can say
+     * is what SHARE of a real battle a real horde spends broken, and that is
+     * the number §7's first verb is actually a claim about.
+     *
+     * Measured — `tools/_screen.mjs`, Geonosis, Command, the flagship probe's
+     * scripted Jedi holding station in his own line, seeds 3 and 5, two
+     * engagements each, integrated over every hostile body-second on the field:
+     *
+     *     broken   0.00 %      refusing   0.00 %      steadiest body 0.325
+     *
+     * Not small. NONE. This check runs the condition that ought to be even
+     * kinder — the Jedi walked onto his own line's centroid every frame with
+     * the blade lit and never leaving it — and reads the same 0.00 % off a
+     * steadiest-shaken body around 0.86, because a Jedi who stands still is a
+     * Jedi nothing has to walk to within 6.5 m of. The arithmetic is the table's own and it is not subtle:
+     * `BLADE` is -0.115/s against a +0.05 rally, so a full-nerve body needs
+     * ELEVEN AND A HALF SECONDS standing inside 6.5 m of a lit blade to cross
+     * `BREAK` — and a body that stands inside 6.5 m of a Jedi for eleven
+     * seconds is a body the Jedi has killed. `COMRADE_FELL` is -0.055 against
+     * a rally that erases it in 1.1 s, so it takes fourteen deaths inside 11 m
+     * inside about a second to break the man beside them, and a wave does not
+     * die like that.
+     *
+     * SO THIS CHECK ASSERTS THE WIRING AND REPORTS THE SHARE. That the ledger
+     * MOVES at all in a live world is a real claim and it was false until the
+     * tick, the death and the read were put in the update loop — but a bound
+     * on the share would be a bound on the wave composer, the spawn cadence
+     * and the script's tactics all at once, and it would be a bound asserting
+     * that a thing which does not pay goes on not paying. The number goes in
+     * the message, where the next person will read it.
+     */
+    const { bootWorld, idleInput } = await import('./_coop.mjs');
+    const { world } = await bootWorld({
+      level: 'geonosis',
+      settings: { mode: 'command', level: 'geonosis', order: 'jedi', seed: 3, difficulty: 'knight' },
+    });
+    try {
+      world.director.start(1);
+      const p = world.player;
+      p.saber.ignite(); p.saber.ignition = 1;
+      const idle = idleInput();
+      /* THE JEDI IS PUT IN THE RANK AND KEPT THERE. Not the flagship probe's
+       * script — this is measuring the ledger, so the player is walked onto
+       * the centroid of his own line each frame and left standing in it, which
+       * is the single most favourable condition `NERVE.BLADE` can be given. */
+      let secs = 0, hostileSeconds = 0, brokenSeconds = 0, refusingSeconds = 0, worst = 1, ticked = 0;
+      for (let i = 0; i < 2700; i++) {
+        let ax = 0, az = 0, n = 0;
+        for (const t of (world.command?.commander?.roster.living || [])) {
+          const b = t.body;
+          if (!b || b.dead) continue;
+          ax += b.position.x; az += b.position.z; n++;
+        }
+        if (n) {
+          p.position.x = ax / n; p.position.z = az / n;
+          p.position.y = (world.terrain?.height(p.position.x, p.position.z) ?? 0) + 0.05;
+        }
+        if (p.saber.ignition < 1) p.saber.ignition = 1;
+        world.update(STEP, idle);
+        secs += STEP;
+        for (const e of world.enemies) {
+          if (e.dead || e.trooper || e.team === p.team) continue;
+          hostileSeconds += STEP;
+          if (typeof e.nerve === 'number') ticked++;
+          if (nerveOf(e) < MORALE.BREAK) brokenSeconds += STEP;
+          if (nerveOf(e) < MORALE.REFUSE) refusingSeconds += STEP;
+          worst = Math.min(worst, nerveOf(e));
+        }
+      }
+      assert(hostileSeconds > 100,
+        `only ${hostileSeconds.toFixed(0)} hostile body-seconds in ${secs.toFixed(0)} game-seconds — `
+        + 'there was no battle to measure');
+      assert(ticked > 0,
+        'not one hostile body on the field carries a nerve at all — `nerveTick` is not reaching the '
+        + 'live roster, so §7\'s first verb is a module nothing calls');
+      assert(worst < 1 - 1e-6,
+        `the steadiest-shaken body on the field after ${secs.toFixed(0)} game-seconds of a lit blade `
+        + `standing in the line still reads ${worst.toFixed(3)} — the ledger is wired but nothing in `
+        + 'the battle moves it, and the verb is decorative');
+      const bp = 100 * brokenSeconds / hostileSeconds, rp = 100 * refusingSeconds / hostileSeconds;
+      return `${hostileSeconds.toFixed(0)} hostile body-seconds · broken ${bp.toFixed(2)}% · `
+        + `refusing ${rp.toFixed(2)}% · steadiest-shaken body ${worst.toFixed(3)} · `
+        + `${MORALE.BREAK} is the line`;
+    } finally { world.unload?.(); }
+  });
 }
