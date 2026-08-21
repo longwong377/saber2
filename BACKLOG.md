@@ -56,8 +56,8 @@ Four rules decided it, in this priority:
 |---|---|---|---|
 | 1.1 | A dead duellist's blade hangs in the air instead of falling | V5 | ✅ `Enemy.die` drops it as a real prop, 2 in 5 still lit; `dropped.mjs` ×3 |
 | 1.2 | **You fight your own side's canon hardware** — a Sith fighting Separatist walkers, a Republic player fighting clones. Applies to single NPCs as well as vehicles | V5 | ✅ measured 7 of 7 levels wrong; the enemy side is now the one you are not on. `factions.mjs` ×3 |
-| 1.3 | **The Separatists ride Republic transports.** They need their own hull, functionally identical — sit or stand, see out, ramp, side doors, pilots | V5 | **in flight** |
-| 1.4 | A recalled saber cannot be caught in the air even at closest approach | V5 | open — part of 3.1 |
+| 1.3 | **The Separatists ride Republic transports.** They need their own hull, functionally identical — sit or stand, see out, ramp, side doors, pilots | V5 | ✅ a Sheathipede-line hull with the same interior contract, plus a Providence overhead; `transports.mjs` |
+| 1.4 | A recalled saber cannot be caught in the air even at closest approach | V5 | ✅ see 3.1 — it was 38 cm of arithmetic between two files |
 
 ---
 
@@ -65,8 +65,8 @@ Four rules decided it, in this priority:
 
 | # | Item | Source | State |
 |---|---|---|---|
-| 2.1 | **A line for every Force power**, 3–4 per power so it does not go stale, through the SYNTHESISED voice — the player never uses the spoken-words version | V5 | **in flight** |
-| 2.2 | **The Force shield / bubble** (see 0.2). A held bubble that stops bolts, costs Force per second, visible from inside and out | V5 | open |
+| 2.1 | **A line for every Force power**, 3–4 per power so it does not go stale, through the SYNTHESISED voice — the player never uses the spoken-words version | V5 | ✅ `Voice.js` `FORCE_LINES`, 12 pools / 41 lines, all through the larynx; `force-voice.mjs` measures every pair 18% apart in five throats |
+| 2.2 | **The Force shield / bubble** (see 0.2). A held bubble that stops bolts, costs Force per second, visible from inside and out | V5 | ✅ `Player.forceShield`, KeyJ / RB+↑. 18 to raise, 6/s to hold, 4 a bolt, regen paused. Bolts die on the SURFACE; a muzzle inside the radius still shoots you; blades come through at 65%. `barrier.mjs`, 5 checks |
 
 ---
 
@@ -74,8 +74,8 @@ Four rules decided it, in this priority:
 
 | # | Item | Source | State |
 |---|---|---|---|
-| 3.1 | **Catch a recalled saber out of the air**; and get staggered into dropping it when you are hit with no stamina | V5 | open |
-| 3.2 | **Fly the saber with the Force** — lift it, ignite or retract it remotely, and steer it around the battlefield within a radius, at a heavy Force cost | V5 | open |
+| 3.1 | **Catch a recalled saber out of the air**; and get staggered into dropping it when you are hit with no stamina | V5 | ✅ the pick-up measured to the FEET while the grip clamps to 1.4 m off the CHEST — 1.98 m against a 1.6 m reach, out of range for ever. `hiltDistanceSq` measures to the standing axis; reeling in with an empty hand auto-catches. Disarm at <12 stamina on a >14 blow, never on a fall, never twice in 6 s. `telekinesis.mjs` |
+| 3.2 | **Fly the saber with the Force** — lift it, ignite or retract it remotely, and steer it around the battlefield within a radius, at a heavy Force cost | V5 | ✅ two ways. A gripped hilt lights on the ignite key (10 to strike, 9/s to hold) and CUTS on the blade, one cut per 0.4 s; and your own thrown blade takes a third state, `piloted` — press grip in flight and it hangs at the reticle until you recall it or the bar runs dry. `telekinesis.mjs` |
 
 ---
 
@@ -87,9 +87,9 @@ defect and has to be revisited.
 | # | Item | Source | State |
 |---|---|---|---|
 | 4.1 | Every archetype and vehicle carries a canon faction, and the composer never fields one against its own side (= 1.2) | V5 | ✅ see 1.2 — all 31 archetypes were already sorted; nothing asked whose side the player was on |
-| 4.2 | **The giants.** SPHA (140.2 m, 12 legs), HAVw A6 Juggernaut / Clone Turbo Tank (49.4 m, 10 wheels), Octuptarra Magna Tri-Droid, AT-TE (check the one we have is right), NR-N99 Persuader snail tank. Each accurate, each moving and firing differently. Research what else we are missing. No AT-AT/AT-M6 — wrong era | V5 | open |
+| 4.2 | **The giants.** SPHA (140.2 m, 12 legs), HAVw A6 Juggernaut / Clone Turbo Tank (49.4 m, 10 wheels), Octuptarra Magna Tri-Droid, AT-TE (check the one we have is right), NR-N99 Persuader snail tank. Each accurate, each moving and firing differently. Research what else we are missing. No AT-AT/AT-M6 — wrong era | V5 | ✅ four new machines at their canon dimensions, each with a weak point you can aim at that is derived rather than typed; the AT-TE measured against its own plates |
 | 4.3 | **Drive the vehicles it makes sense to drive**, contextually | V5 | open |
-| 4.4 | The Separatist transport (= 1.3) | V5 | **in flight** |
+| 4.4 | The Separatist transport (= 1.3) | V5 | ✅ see 1.3 |
 
 ---
 
@@ -97,8 +97,8 @@ defect and has to be revisited.
 
 | # | Item | Source | State |
 |---|---|---|---|
-| 5.1 | **Rename them.** "Stratagem" is Helldivers'. Find our own word and make sure nothing in game says stratagem — every string, not just the code | V5 | open |
-| 5.2 | **Many more of them**, unlockable through a run, deadly or genuinely useful, and none of them puny | V5 | open |
+| 5.1 | **Rename them.** "Stratagem" is Helldivers'. Find our own word and make sure nothing in game says stratagem — every string, not just the code | V5 | ✅ **support calls**. Every rendered string swept, the last being the bindings row; the action id, module and DOM node keep `stratagem` deliberately — it is the key a rebind is saved under |
+| 5.2 | **Many more of them**, unlockable through a run, deadly or genuinely useful, and none of them puny | V5 | ✅ eighteen calls, eleven of them released along a ladder inside one run; the Codex prices them in SUPPORT, which is the currency the game actually charges |
 
 ---
 
@@ -127,9 +127,9 @@ shipped code, and they are here so they are not lost.
 | # | Item | Found by | State |
 |---|---|---|---|
 | 8.1 | **Crossing a felled trunk is not finished.** The climb works — a body gets onto a log and stalls there. On the pinned deck, 24 ten-second walks in the wood: 71 stalls, 21 of them logs, worst 4.22 s against wood 0.85 m high with the body's feet ALREADY at that height. One attempt at a fix (widening the support sample for a climbable box by 0.25 m) made it worse — 71 stalls to 88 — so it is open rather than half-done | V3 audit | open |
-| 8.2 | **Muster-anywhere is wired everywhere and is thin.** Three gaps, named by `muster.mjs`'s own header and confirmed: you cannot compose the contingent (it is `opening` bodies of the cheapest rung); allies are always the side your ORDER names, so the Wood and the Drifts get a Republic platoon whatever the ground is; and on small ground `deploy` silently drops men — four asked, two placed on the Colosseum | V3 audit | open |
+| 8.2 | ✅ **Muster-anywhere is wired everywhere and is thin.** Three gaps, named by `muster.mjs`'s own header and confirmed: you cannot compose the contingent (it is `opening` bodies of the cheapest rung); allies are always the side your ORDER names, so the Wood and the Drifts get a Republic platoon whatever the ground is; and on small ground `deploy` silently drops men — four asked, two placed on the Colosseum | V3 audit | ✅ compose the contingent, name the army, and ground that takes them |
 | 8.3 | **The first-person wrist BEND is still unfixed.** The roll was fixed — palms agree at 0.65, up from −1.00, thumbs both up the blade — and the check names the residue itself: "the wrist reaches 114.4° from rest, down from 179.7". If the player says the hands still look wrong, this is where it is | V3 audit | open |
-| 8.4 | **The blast-door suite flaps.** 7 passed / 2 failed at HEAD, with different failure text nearly every run, before and after any change. Pinning the module RNG streams did not settle it; the remaining suspect is that a suite's checks run concurrently over shared module state. The door's own breach rule was changed on top of this and is therefore UNVALIDATED against the twenty seconds | this session | open |
+| 8.4 | ✅ **The blast-door suite flaps.** 7 passed / 2 failed at HEAD, with different failure text nearly every run, before and after any change. Pinning the module RNG streams did not settle it; the remaining suspect is that a suite's checks run concurrently over shared module state. The door's own breach rule was changed on top of this and is therefore UNVALIDATED against the twenty seconds | this session | ✅ and the cause was neither. `Destruction._prepare` does as much pre-fracture as fits in `prepareBudgetMs` of REAL TIME per frame, and `Structure.bladeCapsules` publishes a different contact set once cells exist — so the frame the revetment finished pre-fracturing, a fact about the machine, moved every number. Pinning the budget and freezing `performance.now` each make the drive bit-identical; the bench pins it. The closed-loop rule was then measured at **0 enclosed area on all 24 samples** and deleted — a blade across a plate lays a bar, not a line. Area rule, `MELT_AREA` 0.34 m²: tight 19.1 s · natural 18.8 s · wide 21.7 s, five byte-identical runs |
 
 ---
 

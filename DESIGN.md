@@ -126,7 +126,7 @@ position, so it never needs the mouse held anywhere:
 
 **Severance drives physics.** Cutting a joint removes the constraint. The distal ragdoll inherits the parent's velocity plus the blade's impulse. A leg cut mid-stride sends the body tumbling exactly as it should, because nothing about that was authored.
 
-**Material resistance.** Cut rate is `bladeSpeed × sharpness / material.toughness`. Flesh and plastoid part instantly. Durasteel takes a slow, deliberate push. A **blast door** is a hold: you drive the blade in, a molten kerf traces the exact path you carve, slag runs down the metal, and when your traced loop closes the slug falls out and clangs. Twenty seconds of tension, entirely player-driven.
+**Material resistance.** Cut rate is `bladeSpeed × sharpness / material.toughness`. Flesh and plastoid part instantly. Durasteel takes a slow, deliberate push. A **blast door** is a hold: you drive the blade in, a molten kerf traces the exact path you carve, slag runs down the metal, and when you have melted enough of the plate away the slug falls out and clangs. Twenty seconds of tension, entirely player-driven. (The rule is AREA and not a closed loop: this line said "when your traced loop closes" for a long time and a closed loop was measured at 0 on all 24 samples — a blade lying across a plate lays a bar, not a line, so what a player actually carves is five horizontal bars stacked up the door. `MELT_AREA` is 0.34 m², two thirds of the tightest saturation plateau, and the shipped door opens in a median 19.1 s.)
 
 ---
 
