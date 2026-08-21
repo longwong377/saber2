@@ -558,10 +558,29 @@ It is a thing lying on the ground because the man holding it is lying next to it
 
 Not flagship work — these are wrong today.
 
-1. **`capsules()` has no broad phase** — 39% of the frame at 213 bodies. ~15
-   lines.
-2. **Morale is inert while the player stands in the formation** — `JEDI_NEAR`
-   pins every record at 1.000 in four seconds.
+1. ~~**`capsules()` has no broad phase**~~ — **FIXED, and it was worse than
+   this line.** Measured at a FIFTH of the body count: 39 live bodies on a lit
+   field cost **463 `capsules()` calls a frame, 8,797 entries and 16.43 ms** —
+   a quarter of a 60 Hz frame — because `World._boltHitTest` rebuilt every
+   enemy's whole skeleton for every bolt in flight. A sphere per body, measured
+   off the capsules the body actually presents and cached, takes it to **10.6
+   calls, 201 entries, 0.57 ms**. The first attempt built the sphere out of
+   `radius` and `chestY` and was silently wrong: those are a hull width and a
+   chest height, neither is a bound, and a fan of 13,320 bolts through 37
+   archetypes lost 134 answers, led by the dwarf spider standing its capsules
+   2.70 m up. The fan is `tools/checks/bolts.mjs` and it is what licenses the
+   optimisation at all — a broad phase that is slightly too small does not
+   crash, it deletes hits, and nobody reports that as a bug.
+   **It also found a live one.** A droideka's `walkPhase` was initialised in a
+   branch it does not take, so `_poseDroideka` ran `undefined + dt` on frame
+   one and NaN fed back into itself forever: every droideka in the game
+   presented three leg capsules with a non-finite endpoint, `segmentNear`
+   answers those with a miss, so **its legs could not be shot off or cut off**
+   and the topple at two legs lost was unreachable.
+2. ~~**Morale is inert while the player stands in the formation**~~ — **FIXED.**
+   `JEDI_NEAR` is unsaturated and presence is a distance gradient rather than a
+   floor: full at the shoulder, `MORALE.EDGE` at the rim of `NEAR`, nothing
+   past it. 0.085/s at the shoulder against 0.030 at fourteen metres.
 3. **Two lines stood 30 m apart for 35 seconds and neither took a casualty.**
    ~~Leash, preferred band, or line of sight — unknown.~~ **FOUND, AND IT IS
    NONE OF THE THREE — FIXED.** `World._boltHitTest` opened its enemy loop with
@@ -582,8 +601,26 @@ Not flagship work — these are wrong today.
    already answers — skip only when the bolt and the body are on the same side.
    **A war that will not fight itself cannot be a war you are a raindrop in**,
    and every number in this document sat on top of it.
-4. **`_cullOldestDebris` spends debris only**, so the 1,100 body cap is *missed*
-   rather than enforced — measured 1,140 with 60 ragdolls in flight.
-5. **The orphaned `Commander` on `peer-left`** (§9).
-6. **`attune-force` measures Δ0.000** and 17 of 40 boons read UNMODELLED,
-   because `balance.mjs` has no Force powers in it.
+4. ~~**`_cullOldestDebris` spends debris only**~~ — **ANSWERED, and the answer
+   is that it should.** Debris is the only unbounded producer; everything else
+   in the world has an owner that knows how to take it away WHOLE, and a budget
+   that evicts one bone of a live corpse is not enforcing a bound, it is
+   corrupting an object another system still holds. So the overshoot stands and
+   is made visible instead: `stats.overBudget` counts the refusals, and
+   `Corpses` drains the batch within a second at every tier.
+5. ~~**The orphaned `Commander` on `peer-left`**~~ — **FIXED**, and it was worse
+   than an orphan: a departed player's leaderless army kept its standing order,
+   kept fighting and kept counting in the census, so on a real pair the peer
+   removed at 5 v 9 **wiped the host's line and took the field**. Quitting a
+   meeting was the strongest move in it. See `dismissCommander`.
+6. ~~**`attune-force` measures Δ0.000**~~ — **ANSWERED with the second axis §8
+   asked for.** `tools/balance.mjs` now stands a line of `OPENING_STRENGTH`
+   troopers beside the modelled player and reports `Δline` beside `Δdepth`, so
+   a build whose whole output is other people's survival is ranked on it rather
+   than scored zero. It prints the cards that are below the median on depth and
+   above it on the line — which is the list a one-axis ranking called worthless.
+
+**All six are closed.** This section is kept as written rather than deleted:
+what it records is that a design exercise found six live defects in a shipped
+game by asking what the game would have to be true for, and four of the six
+were invisible to every check in the tree until something needed them.
