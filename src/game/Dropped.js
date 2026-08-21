@@ -131,19 +131,15 @@ export function dropSaber(world, opts = {}) {
    * A physical weapon is never lit, because a vibrosword does not have a blade
    * to leave on.
    */
-  if (opts.lit && !opts.weaponStyle) {
-    const len = opts.bladeLength ?? 1.06;
-    const blade = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.026, 0.022, len, 7, 1),
-      new THREE.MeshBasicMaterial({ color: new THREE.Color(crystal.hex) }));
-    /* Up the hilt's own axis from the emitter, which is where `buildHiltGroup`
-     * puts the muzzle — the group has just been re-centred about its own
-     * bounding box, so the emitter is at the top of it. */
-    blade.position.y = half.y + len * 0.5;
-    blade.userData.saberNoInk = true;      // see Ink.js: a glow is not an edge
-    built.group.add(blade);
-    prop.saberLit = true;
-  }
+  /* WHAT IT WOULD TAKE TO LIGHT THIS ONE, kept on the prop rather than closed
+   * over here, because the hilt can be lit long after it hits the ground: the
+   * player's Force can pick it up and switch it on from across the field. See
+   * `igniteHilt`, which is the only other place these three numbers are read. */
+  prop.hiltGroup = built.group;
+  prop.bladeLength = opts.weaponStyle ? 0 : (opts.bladeLength ?? 1.06);
+  prop.bladeOffset = half.y;
+  prop.bladeColor = crystal.hex;
+  if (opts.lit) igniteHilt(prop, true);
 
   prop.saber = { colorIndex, hiltStyle: opts.hiltStyle, order: opts.order ?? null };
   prop.droppedBy = opts.owner ?? null;
@@ -173,10 +169,99 @@ export function hiltWithinReach(world, actor, reach = PICKUP_REACH) {
   for (const p of world.props) {
     if (p.dead || !p.saber) continue;
     if (p.droppedBy === actor && p.dropAge < PICKUP_DELAY) continue;
-    const d = p.body.position.distanceToSquared(actor.position);
+    const d = hiltDistanceSq(p, actor);
     if (d < bestD) { bestD = d; best = p; }
   }
   return best;
+}
+
+/**
+ * HOW FAR A HILT IS FROM A BODY — and the body is not a point.
+ *
+ * The player: *"if you force picked up the saber off the ground and called it
+ * back to you even at the closest distance you could not pick it up in the
+ * air."* This measured to `actor.position`, which is the FEET, and the Force
+ * grip's own floor parks what it holds 1.4 m in front of the CHEST. Measured
+ * on that geometry: a hilt reeled all the way in sits about 1.98 m from the
+ * feet against a 1.6 m reach, so the closest the Force could bring your own
+ * weapon was permanently, and by 38 cm, out of arm's reach — with no message,
+ * because nothing had failed.
+ *
+ * So the reach is to the STANDING AXIS: the segment from the feet to the top
+ * of the chest. A hilt at your boots and a hilt at your shoulder are both
+ * within arm's reach of you and neither is any longer a special case.
+ */
+export function hiltDistanceSq(prop, actor) {
+  const p = prop.body ? prop.body.position : prop.position;
+  const foot = actor.position;
+  const top = actor.chest ? actor.chest.y : foot.y + 1.35;
+  _v.set(p.x - foot.x, p.y - Math.min(Math.max(p.y, foot.y), top), p.z - foot.z);
+  return _v.lengthSq();
+}
+
+/**
+ * LIGHT A HILT THAT NOBODY IS HOLDING, or put it out.
+ *
+ * Two callers and one of them is the reason this is a function at all: a hilt
+ * dropped by a dying duellist is sometimes lit when it lands, and a hilt the
+ * player's Force has picked up off the ground can be lit BY the Force, from
+ * anywhere inside the reach — *"it should be possible to pick up the lightsaber
+ * with the force, turn it on or off using the force."*
+ *
+ * A BLADE AND NOT A `Saber`, for the reason the drop note gives: the real class
+ * carries a trail, a bloom contribution, a light, a hum voice and a per-frame
+ * update, and a cleared duel can leave half a dozen hilts about. What a blade
+ * off the hand has to be is bright, the right colour and the right length. It
+ * is built once, on the first ignition, and then only shown and hidden — so a
+ * hilt switched on and off a dozen times machines one cylinder.
+ *
+ * A vibrosword has no blade to leave on: `bladeLength` is 0 for a physical
+ * weapon and this refuses it rather than growing a plasma edge on a hunk of
+ * metal.
+ */
+export function igniteHilt(prop, on = true) {
+  if (!prop || prop.dead) return false;
+  if (on && !(prop.bladeLength > 0)) return false;
+  if (on && !prop.saberBlade) {
+    const len = prop.bladeLength;
+    const blade = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.026, 0.022, len, 7, 1),
+      new THREE.MeshBasicMaterial({ color: new THREE.Color(prop.bladeColor ?? 0xffffff) }));
+    /* Up the hilt's own axis from the emitter, which is where `buildHiltGroup`
+     * puts the muzzle — the group has been re-centred about its own bounding
+     * box, so the emitter is at the top of it. */
+    blade.position.y = (prop.bladeOffset ?? 0) + len * 0.5;
+    blade.userData.saberNoInk = true;      // see Ink.js: a glow is not an edge
+    (prop.hiltGroup ?? prop.mesh).add(blade);
+    prop.saberBlade = blade;
+  }
+  if (prop.saberBlade) prop.saberBlade.visible = !!on;
+  prop.saberLit = !!on;
+  return true;
+}
+
+/**
+ * The two ends of a loose hilt's blade in world space, or null if it is dark.
+ *
+ * Written out of the prop's own transform rather than from the body's rotation
+ * by hand, because the hilt group is re-centred inside the mesh and the blade
+ * is offset inside that: one `updateMatrixWorld` gets both without this file
+ * carrying a second copy of the offsets `igniteHilt` just applied.
+ */
+export function hiltBlade(prop, base, tip) {
+  if (!prop || prop.dead || !prop.saberLit || !prop.saberBlade) return null;
+  const b = prop.saberBlade;
+  /* FROM THE PROP'S ROOT DOWN, and not from the blade up. `updateMatrixWorld`
+   * recomputes an object's world matrix from its PARENT's, which nothing has
+   * refreshed: `Prop._syncMesh` writes `mesh.position` every frame but the
+   * matrices behind it are only rebuilt by the renderer's own scene walk, which
+   * never happens headless. Called on the blade alone this read the identity
+   * and put every loose blade in the game at the world origin — measured, on a
+   * hilt seven metres away that cut nothing because its blade was at (0,0,0). */
+  (prop.mesh ?? b).updateMatrixWorld(true);
+  base.set(0, -prop.bladeLength * 0.5, 0).applyMatrix4(b.matrixWorld);
+  tip.set(0, prop.bladeLength * 0.5, 0).applyMatrix4(b.matrixWorld);
+  return tip;
 }
 
 /** Age every dropped hilt, so the delay above means something. */

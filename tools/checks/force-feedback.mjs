@@ -92,7 +92,14 @@ export async function run({ check, assert, THREE: T }) {
     // 3. on cooldown
     {
       const b = bench({ force: 100, boons: { lightning: true } });
-      b.p.forceLightning(b.ctx);                       // fires, and starts the cooldown
+      b.p.forceLightning(b.ctx);                       // fires, and OPENS THE CHANNEL
+      /* AND THEN LET GO, which is what `Player.update` does on the release
+       * frame and what starts the cooldown this case is about. Without it the
+       * bench pressed the key with its own channel still open, `forceLightning`
+       * returned on `channel?.kind === 'lightning'`, and the failure printed
+       * "pressing lightning again during its own cooldown said nothing" — for
+       * a state that was not the cooldown. See HANDOFF §2.4. */
+      b.p.endLightning();
       const fired = b.notices.length;
       b.world.time = 0.1;
       b.p.forceLightning(b.ctx);
@@ -181,7 +188,18 @@ export async function run({ check, assert, THREE: T }) {
       const b = bench({ force: 1e6 });
       let hp = maxHp;
       const e = {
-        maxHp, dead: false, gripped: false, liftTarget: null, chokeT: 0,
+        maxHp, dead: false, gripped: false, gripLease: 0, liftTarget: null, chokeT: 0,
+        /* THE LEASE, and it is the real one rather than a bare flag. A held
+         * body is held because the gripper SAYS SO every frame — `Enemy.hold`
+         * is what `_updateGrip` calls, and a stand-in without it took the whole
+         * choke measurement down with `e.hold is not a function`. Copied in
+         * shape from src/game/Enemy.js, which is the only place it is defined. */
+        hold(seconds = 0.55) { this.gripped = true; this.gripLease = Math.max(this.gripLease, seconds); },
+        releaseHold() {
+          if (!this.gripped && !this.liftTarget) return false;
+          this.gripped = false; this.gripLease = 0; this.liftTarget = null; this.chokeT = 0;
+          return true;
+        },
         position: new THREE.Vector3(2, 0, 0),
         A: { mass: 80, big }, rig: null,
         damage: (v) => { hp -= v; },
@@ -201,7 +219,18 @@ export async function run({ check, assert, THREE: T }) {
       `a big body took ${c}% where the half-rate rule says about ${(a / 2).toFixed(0)}% — the rate is not a fraction of max hp`);
     // and letting go clears it
     const b2 = bench();
-    const e2 = { maxHp: 100, dead: false, gripped: true, chokeT: 4, liftTarget: {}, position: new THREE.Vector3(), A: { mass: 80 }, damage() {} };
+    const e2 = { maxHp: 100, dead: false, gripped: true, gripLease: 0.55, chokeT: 4,
+      liftTarget: {}, position: new THREE.Vector3(), A: { mass: 80 }, damage() {},
+      /* The other half of the lease — `releaseGrip` ends it by NAME, not by
+       * clearing a flag, so a stand-in without the method is a crash. Copied
+       * whole from `Enemy.releaseHold`, choke timer and lift target included:
+       * a stand-in that clears only the flag makes "letting go left the victim
+       * mid-choke" a fact about the stand-in. */
+      releaseHold() {
+        if (!this.gripped && !this.liftTarget) return false;
+        this.gripped = false; this.gripLease = 0; this.liftTarget = null; this.chokeT = 0;
+        return true;
+      } };
     b2.p.gripEnemy = e2;
     b2.p.releaseGrip();
     assert(e2.chokeT === 0 && !e2.gripped, 'letting go left the victim mid-choke');

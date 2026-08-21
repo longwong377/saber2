@@ -1,436 +1,412 @@
 /**
- * BATTLEFRONT BORZ — what the Force does when it takes hold of something.
+ * BATTLEFIELD BORZ — THE SABER OFF THE HAND.
  *
- * Three of the player's notes are one mechanic seen from three sides:
+ * The player, on the three things a lightsabre could not do:
  *
- *   42 "force pull should bring things fully to melee range, let me impale or
- *       cut them while held, and let me use a held body as a shield that
- *       actually stops bolts"
- *   41 "force drain should scale with mass, distance and hold time, and grow
- *       with power"
- *   48 "held bodies should have real limb physics as you swing them"
+ *   "if you force picked up the saber off the ground and called it back to you
+ *    even at the closest distance you could not pick it up in the air so I
+ *    think it could be cool that once you bring it and retract it as close to
+ *    yourself as possible you just pick it up from the air I think that would
+ *    be really cool, in that same vein it should be possible to pick up the
+ *    lightsaber with the force, turn it on or off using the force, and then
+ *    with the force being able your turn/maniulate the saber anywhere you want
+ *    on the battlefield within a certain distance (uses a lot of force power up
+ *    etc. obviously)"
  *
- * The shield half was built and checked earlier. This file is the other two,
- * and both of them failed on the tree they were written against for the same
- * underlying reason: THE GRIP KNEW ABOUT MASS AND NOTHING ELSE.
+ * …and on how you come to be without it in the first place:
  *
- *   · a pull was `impulse = -min(d * 3.2, 22)` along the line to the player. It
- *     is a shove with no idea where the player is, so it overshoots at close
- *     range and falls short at long. Measured on the tree before this change,
- *     against a target that should end 2.2 m in front of the chest: from 4 m it
- *     ended up 5.6 m PAST the player; from 16 m it stopped 9.8 m short. There
- *     is exactly one distance at which "bring it to melee" was true.
- *   · a hold cost `(7 + 6·mass/cap)` per second whether the thing was at arm's
- *     length or at thirty-six metres, and whether it had been held for a tenth
- *     of a second or a minute. Distance and time did not appear at all, so
- *     there was never a reason to pull something closer and never a moment at
- *     which continuing to hold it became a decision.
- *   · and a held body was no easier to cut than one standing up, so "impale
- *     them while held" was not a thing the cut model could express.
+ *   "maybe if you get hit when you're out of stamina you get staggered and drop
+ *    your lightsaber"
  *
- * Every number below is measured through the real Player, the real Enemy
- * damping and the real BladeContactSolver rather than asserted about the
- * source, because all three of these are claims about where a body ENDS UP.
+ * ── THE ONE WORTH READING TWICE ─────────────────────────────────────────
+ *
+ * The catch was not a missing feature. Every piece of it shipped: hilts are
+ * real props, the Force can grip them, the pick-up key works, and the reach is
+ * a generous 1.6 m. It could not happen because the pick-up measured to
+ * `player.position` — the FEET — while `_updateGrip` clamps what it holds to a
+ * floor of 1.4 m in front of the CHEST. Two correct numbers, in two files,
+ * describing two different points on the same body, and the gap between them
+ * was 38 cm of permanent, silent failure.
+ *
+ * So the first check below is arithmetic on the shipped constants rather than a
+ * behaviour test, because the bug was arithmetic. The rest drive a real World.
  */
 
-import { Player } from '../../src/game/Player.js';
-import { Enemy } from '../../src/game/Enemy.js';
-import { openness } from '../../src/game/Combat.js';
 import { clocked } from './_shared.mjs';
 
-let THREE = null;
-
-function bench({ force = 400, forcePower = 1 } = {}) {
-  const world = {
-    scene: new THREE.Scene(),
-    settings: { fov: 60, bloom: false, forcePower, forceDrain: 1 },
-    terrain: {
-      height: () => 0, normalAt: (x, z, o) => o.set(0, 1, 0),
-      inBounds: () => true, half: 200, crater() {}, surfaceAt: () => 'sand',
-    },
-    particles: null, bolts: null, time: 0, combatIntensity: 0,
-    physics: { add() {}, remove() {}, raycast: () => null, bodies: [], staticBoxes: [],
-      // A choke kills, a kill ragdolls, and a ragdoll builds joints. Without
-      // these two the grip checks die on the frame their victim does, which
-      // reads as a bug in the grip.
-      addJoint() {}, removeJoint() {} },
-    engine: { addHeat() {}, camera: new THREE.PerspectiveCamera(60, 16 / 9, 0.045, 1000) },
-    notify() {}, report() {},
-  };
-  const p = new Player(world, { isLocal: true });
-  p.position.set(0, 0, 0);
-  p.force = force;
-  const ctx = { input: null, terrain: world.terrain, physics: world.physics, particles: null,
-    camera: world.engine.camera, time: 0, groundColor: 0, enemies: [] };
-  return { p, world, ctx };
-}
-
-/** A droid standing `d` metres in front of the player, in the player's own world. */
-function standing(b, d, type = 'b1') {
-  const e = new Enemy(b.world, type, new THREE.Vector3(0, 0, -d));
-  e.position.set(0, 0, -d);
-  b.ctx.enemies.push(e);
-  return e;
-}
-
-/**
- * Where a body comes to rest after being pulled, and how long it took to get
- * there, integrated through Enemy's own damping rather than guessed at. Only
- * the horizontal is followed: the arc is the arc, and what "melee range" means
- * is a distance across the ground.
- *
- * "Arrived" is the first frame it is inside 3.5 m of the player rather than the
- * frame it stops, because a body that skids to a halt has arrived when it gets
- * there and not when it settles.
- */
-function settle(b, e, seconds = 4) {
-  const dt = 1 / 60;
-  let arrived = null;
-  for (let i = 0; i < seconds / dt; i++) {
-    b.world.time += dt;
-    // The mover, without the AI: `_move` is what carries the knockback, and
-    // running the full update would have the droid walk back toward the player
-    // and hide the thing being measured.
-    e._move(dt, b.ctx);
-    e.knockTimer = Math.max(0, e.knockTimer - dt);
-    const r = Math.hypot(e.position.x, e.position.z);
-    // Melee range is measured to the BODY, not to the origin of a coordinate
-    // system: an Acklay's flank is a metre and a half from its own centre, and
-    // a big creature that gets its bulk to within arm's reach has arrived.
-    if (arrived === null && r < 3.5 + (e.radius || 0)) arrived = i * dt;
-    if (e.velocity.lengthSq() < 1e-4 && i * dt > 0.4) break;
-  }
-  return { end: Math.hypot(e.position.x, e.position.z), arrived };
-}
-
-export async function run({ check, assert, THREE: T }) {
-  /* Every check in this file is wrapped, so the shared module state goes back
-   * before each body as well as after it. What that state IS lives in
-   * tools/checks/_shared.mjs and is deliberately not restated here — a list
-   * copied into thirty-three files is a list that drifts from thirty-three.
-   */
+export async function run({ check, assert }) {
   check = await clocked(check);
-  THREE = T;
 
-  check('force pull: things arrive at the end of your blade, from any distance', () => {
-    /* The bar is a BAND rather than a point, and it is deliberately generous
-     * at the top: 3.5 m is still inside a swing, and a pull that stopped
-     * everything dead at exactly 2.2 would look like a tractor beam. What it
-     * may not do is either of the two things it used to do — arrive behind the
-     * player, or not arrive at all.
-     *
-     * "Behind" is the sharper failure and it needs its own statement: a body
-     * that ends up on the far side of you has been pulled THROUGH you, which
-     * no amount of correct physics makes look right. */
-    const rows = [];
-    let worst = 0;
-    // Within the reach at the shipped Force Power, plus one at the top of the
-    // slider: the far end is where a speed-capped pull would give up, and
-    // 30 m is inside `17·√4` but well outside anything the low end can do.
-    for (const [d, P] of [[4, 1], [8, 1], [12, 1], [16, 1], [30, 4]]) {
-      const b = bench({ force: 400, forcePower: P });
-      const e = standing(b, d);
-      b.p.aimDir.set(0, 0, -1);
-      b.p.forcePull(b.ctx);
-      const { end } = settle(b, e);
-      // …and which side of the player it stopped on.
-      assert(e.position.z < 0.4,
-        `pulled from ${d} m and it ended up ${(-e.position.z).toFixed(1)} m BEHIND the player`);
-      assert(end < 4.2, `pulled from ${d} m and it stopped ${end.toFixed(1)} m away — that is not melee range`);
-      assert(end > 1.0, `pulled from ${d} m and it ended ${end.toFixed(1)} m away, inside the player`);
-      worst = Math.max(worst, Math.abs(end - 2.2));
-      rows.push(`${d}m${P > 1 ? `@P${P}` : ''} → ${end.toFixed(1)}m`);
-    }
-    assert(worst < 2.0, `the worst arrival misses the mark by ${worst.toFixed(1)} m`);
-    return rows.join(', ') + ` (worst error ${worst.toFixed(1)} m)`;
-  });
-
-  check('force pull: mass shows itself as TIME, not as falling short', () => {
-    /* The heft law is already in the code and this is the check it never had.
-     *
-     * It measures the clock rather than the distance, and that is a design
-     * decision worth stating: something that stops two thirds of the way to you
-     * does not read as heavy, it reads as the power having missed. What reads
-     * as heavy is a thing that comes, and takes its time coming. Both still
-     * arrive; the beast takes several times as long over the same ground. */
-    const rows = [];
-    const run = (type) => {
-      const b = bench({ force: 400 });
-      const e = standing(b, 14, type);
-      b.p.aimDir.set(0, 0, -1);
-      b.p.forcePull(b.ctx);
-      const { end, arrived } = settle(b, e, 8);
-      assert(arrived !== null, `a ${type} pulled from 14 m never arrived at all (stopped ${end.toFixed(1)} m out)`);
-      rows.push(`${type} ${arrived.toFixed(2)}s → ${end.toFixed(1)}m`);
-      return arrived;
-    };
-    const light = run('b1'), heavy = run('beast');
-    assert(heavy > light * 1.5,
-      `a b1 arrives in ${light.toFixed(2)}s and a beast in ${heavy.toFixed(2)}s — mass is not being felt`);
-    return rows.join(', ') + `, ${(heavy / Math.max(light, 0.01)).toFixed(1)}× slower`;
-  });
-
-  check('force grip: what a hold costs rises with distance, with time, and falls with power', () => {
-    /* Three separate claims, each measured by holding the same body under one
-     * changed condition and reading the Force actually spent. The absolute
-     * numbers are not pinned — they are balance and they will move — but the
-     * ORDERING and the size of each effect are the mechanic. */
-    const spend = ({ out = 3, seconds = 1, forcePower = 1, warm = 0 } = {}) => {
-      const b = bench({ force: 100000, forcePower });
-      const e = standing(b, out);
-      b.p.aimDir.set(0, 0, -1);
-      b.p.gripEnemy = e; e.hold();
-      b.p._liftPoint.copy(e.position);
-      b.p.gripDistance = b.p.camera.pos.distanceTo(b.p.chest) + out;
-      b.p._holdT = warm;
-      const dt = 1 / 60;
-      const before = b.p.force;
-      for (let i = 0; i < seconds / dt; i++) {
-        b.world.time += dt;
-        b.p._wheel = 0;
-        b.p._updateGrip(dt, b.ctx);
-      }
-      return before - b.p.force;
-    };
-
-    const near = spend({ out: 2 });
-    const far = spend({ out: 30 });
-    assert(far > near * 1.25,
-      `holding at 30 m costs ${far.toFixed(1)} and at 2 m ${near.toFixed(1)} — distance is not in the price`);
-
-    const fresh = spend({ warm: 0 });
-    const tired = spend({ warm: 20 });
-    assert(tired > fresh * 1.25,
-      `a hold costs ${fresh.toFixed(1)}/s new and ${tired.toFixed(1)}/s after twenty seconds — time is not in the price`);
-
-    const weak = spend({ forcePower: 1 });
-    const strong = spend({ forcePower: 4 });
-    assert(strong < weak * 0.8,
-      `forcePower 4 pays ${strong.toFixed(1)} against ${weak.toFixed(1)} at 1 — power buys nothing`);
-
-    return `near ${near.toFixed(1)} far ${far.toFixed(1)} (${(far / near).toFixed(2)}×), `
-      + `fresh ${fresh.toFixed(1)} tired ${tired.toFixed(1)} (${(tired / fresh).toFixed(2)}×), `
-      + `P1 ${weak.toFixed(1)} P4 ${strong.toFixed(1)} (${(strong / weak).toFixed(2)}×)`;
-  });
-
-  check('force grip: the wear clock runs only while something is held', () => {
-    /* Two failure modes, and the tree had the second one.
-     *
-     * It would be a bug rather than a mechanic if wear accumulated across
-     * separate holds — a player five minutes into a fight would find their
-     * first grip of the sixth minute already exhausted — so releasing has to
-     * clear it. And `_updateGrip` runs every frame the key is down whether or
-     * not the pick found anything, so an empty hand must not age the clock
-     * either: the first version did, and five seconds of grabbing at air made
-     * the next real hold cost 60% more.
-     *
-     * The victim is a CRATE rather than a droid, deliberately. Holding a living
-     * thing is a choke and a B1 dies of it in about four seconds, so a check
-     * that held one for five would be measuring the choke. */
-    const b = bench({ force: 100000 });
-    const crate = {
-      mass: 40, dead: false, gravityScale: 1, boundingRadius: 0.5, invMass: 1 / 40,
-      position: new THREE.Vector3(0, 1, -3), velocity: new THREE.Vector3(),
-      angularVelocity: new THREE.Vector3(), wake() {},
-    };
-    b.p.gripBody = crate;
-    for (let i = 0; i < 300; i++) { b.world.time += 1 / 60; b.p._updateGrip(1 / 60, b.ctx); }
-    const warmed = b.p._holdT;
-    assert(warmed > 4.5, `five seconds of holding only clocked ${warmed.toFixed(1)}s`);
-
-    b.p.releaseGrip();
-    assert(b.p._holdT === 0, `releasing left the hold clock at ${b.p._holdT}`);
-
-    for (let i = 0; i < 300; i++) { b.world.time += 1 / 60; b.p._updateGrip(1 / 60, b.ctx); }
-    assert(b.p._holdT === 0,
-      `five seconds of holding NOTHING aged the wear clock to ${b.p._holdT.toFixed(1)}s`);
-    return `${warmed.toFixed(1)}s held → cleared on release → ${b.p._holdT}s for an empty hand`;
-  });
-
-  check('cutting: a body that cannot set itself parts faster, and a boss does not', () => {
-    /* `openness` is a multiplier on cutting WORK, so it shortens the road to a
-     * sever rather than inventing a damage number the cut model does not have.
-     * The three states have to be ordered — held is the most helpless thing
-     * that can happen to a body — and the boss exemption has to hold, or
-     * "grab the boss" becomes the whole fight. */
-    const mk = (props) => Object.assign({ dead: false, gripped: false, yankT: 0,
-      toppled: false, stunTimer: 0, A: {} }, props);
-    const held = openness(mk({ gripped: true }));
-    const yanked = openness(mk({ yankT: 0.2 }));
-    const downed = openness(mk({ stunTimer: 0.5 }));
-    const standing_ = openness(mk({}));
-    const boss = openness(mk({ gripped: true, A: { boss: true } }));
-
-    assert(standing_ === 1, `a droid on its feet cuts at ${standing_}×`);
-    assert(held > yanked && yanked > downed && downed > standing_,
-      `the states are out of order: held ${held}, yanked ${yanked}, downed ${downed}`);
-    assert(held >= 2.5, `a body held off the ground only parts ${held}× faster — that is not an impale`);
-    assert(boss < held * 0.6, `a held boss parts at ${boss}× against a droid's ${held}× — hold-to-kill`);
-    assert(openness(mk({ gripped: true, dead: true })) === 1, 'a corpse is still being counted as helpless');
-    assert(openness(null) === 1, 'openness(null) has to be neutral — every prop and door goes through it');
-    return `held ${held}×, yanked ${yanked}×, downed ${downed}×, standing ${standing_}×, held boss ${boss}×`;
-  });
-
-  check('force pull: the window it opens closes on its own', () => {
-    // A yank that never expired would make the first pull of a fight a
-    // permanent 2× on that target.
-    const b = bench();
-    const e = standing(b, 10);
-    b.p.aimDir.set(0, 0, -1);
-    b.p.forcePull(b.ctx);
-    assert(e.yankT > 0, 'a pull left no window at all');
-    const opened = openness(e);
-    let t = 0;
-    const dt = 1 / 60;
-    while (e.yankT > 0 && t < 5) { e.yankT = Math.max(0, e.yankT - dt); t += dt; }
-    assert(t > 0.15 && t < 1.0, `the window lasted ${t.toFixed(2)}s — that is not one swing`);
-    assert(openness(e) === 1, 'the window closed and the bonus did not');
-    return `${opened}× for ${t.toFixed(2)}s, then ${openness(e)}×`;
-  });
+  const P = await import('../../src/game/Player.js');
+  const D = await import('../../src/game/Dropped.js');
+  const { TK, HOLD_COST } = P;
 
   /**
-   * NOTE #9, BOTH HALVES. "when I pick something up and throw it doesnt do
-   * damage or physcially interact with the thing it's hitting… like if I pick
-   * up a trooper and move him through a collumn of other men it doesnt hit
-   * them or move them passively it's like not a real object."
-   *
-   * Measured through the real throw, the real `_updateHurled` and a real
-   * bystander, because the claim is about what happens to the BYSTANDER and
-   * nothing about the source could say whether it does.
+   * A player on the colosseum floor with a full bar, and a droid seven metres
+   * out to cut. `bootWorld` gives the real World, so `_updateGrip`, the blade
+   * and the damage path are all the shipped ones.
    */
-  check('force throw: a thrown body damages and shoves what it lands on', () => {
-    const rows = [];
-    for (const type of ['b1', 'trooper', 'b2']) {
-      const b = bench({ force: 900, forcePower: 1 });
-      const held = standing(b, 3, type);
-      /* The bystander is directly along the throw line, four metres past the
-       * held body, and it is a `b1` in every row so the damage is comparable
-       * across the three throwers. */
-      const mark = standing(b, 9, 'b1');
-      const hp0 = mark.hp, x0 = mark.position.x, z0 = mark.position.z;
-      b.p.aimDir.set(0, 0, -1);
-      b.p.gripEnemy = held;
-      held.hold();
-      b.p._liftPoint.copy(held.position);
-      b.p.hurlGripped(b.ctx);
-      assert(b.p.hurled.length === 1,
-        `${type}: throwing a BODY tracked ${b.p.hurled.length} projectiles — the prop branch has `
-        + 'called _trackHurl since it was written and the body branch never did');
-      const dt = 1 / 60;
-      for (let i = 0; i < 150; i++) {
-        b.world.time += dt;
-        held._move(dt, b.ctx);
-        b.p._updateHurled(dt, b.ctx);
-        if (mark.hp < hp0) break;
+  const boot = async (opts = {}) => {
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const { enemyRng } = await import('../../src/game/Enemy.js');
+    enemyRng.seed(7);
+    const { world } = await H.bootWorld({
+      level: 'colosseum', settings: { mode: 'waves', quality: 'low', instantSpawn: true },
+    });
+    const p = world.player;
+    const input = H.idleInput();
+    for (let i = 0; i < 10; i++) world.update(1 / 60, input);
+    p.force = p.maxForce; p.hp = p.maxHp; p.stamina = p.maxStamina;
+    p.aimDir.set(0, 0, -1);
+    const ctx = { input, terrain: world.terrain, physics: world.physics,
+      particles: world.particles, bolts: world.bolts, camera: world.engine.camera,
+      time: world.time, enemies: world.enemies, players: world.players };
+    const step = (n = 30) => { for (let i = 0; i < n; i++) world.update(1 / 60, input); };
+    /**
+     * Put the hilt in the Force directly rather than through `toggleGrip`.
+     *
+     * `toggleGrip` picks off the aim ray, and a check that had to line a 25 cm
+     * cylinder up under the reticle would be measuring the aim cone. The pick
+     * is exercised where it belongs — tools/checks/force.mjs — and what is
+     * being measured here is what happens ONCE the Force has hold of a hilt.
+     */
+    const grab = (prop) => {
+      p.gripBody = prop.body;
+      p.gripDistance = p.camera.pos.distanceTo(prop.body.position);
+      p._holdT = 0;
+      prop.body.gravityScale = 0;
+    };
+    return { world, p, ctx, input, THREE, step, grab, H };
+  };
+
+  /* ────────────────────────────────────────────────────────────────────
+   * 1. THE 38 CENTIMETRES
+   * ──────────────────────────────────────────────────────────────────── */
+
+  check('telekinesis: the closest the Force can hold a hilt is inside the catch, and was not', () => {
+    /**
+     * The two numbers that never met. `_updateGrip` clamps the hold point to
+     * `out = clamp(out, 1.4, forceReach)` where `out` is measured IN FRONT OF
+     * THE CHEST; the pick-up measured from the feet. So the reeled-in hilt sits
+     * at the hypotenuse of (1.4 m out, 1.35 m up) from the boots.
+     */
+    const CHEST = 1.35, FLOOR = 1.4;
+    const fromFeet = Math.hypot(FLOOR, CHEST);
+    assert(fromFeet > D.PICKUP_REACH,
+      `the arithmetic that made this a bug no longer holds: a reeled-in hilt is ${fromFeet.toFixed(2)} m `
+      + `from the feet against a ${D.PICKUP_REACH} m reach, so it was already catchable`);
+    // …and the standing-axis measure is what closes it.
+    const actor = { position: { x: 0, y: 0, z: 0 }, chest: { y: CHEST } };
+    const hilt = { body: { position: { x: 0, y: CHEST, z: -FLOOR } } };
+    const axis = Math.sqrt(D.hiltDistanceSq(hilt, actor));
+    assert(Math.abs(axis - FLOOR) < 1e-6,
+      `measured to the standing axis a hilt at chest height and ${FLOOR} m out is ${axis.toFixed(2)} m away`);
+    assert(axis <= TK.reach,
+      `the catch reach is ${TK.reach} m and the closest the Force can bring a hilt is ${axis.toFixed(2)} m — `
+      + 'still out of reach, which is the whole bug');
+    // and a hilt lying at the boots is still catchable, which the old measure got right
+    const onFloor = Math.sqrt(D.hiltDistanceSq({ body: { position: { x: 0.4, y: 0.1, z: 0 } } }, actor));
+    assert(onFloor <= TK.reach, `a hilt at the boots measures ${onFloor.toFixed(2)} m — the floor case broke`);
+    return `feet ${fromFeet.toFixed(2)} m vs reach ${D.PICKUP_REACH}; axis ${axis.toFixed(2)} m vs catch ${TK.reach}`;
+  });
+
+  /* ────────────────────────────────────────────────────────────────────
+   * 2. YOU CATCH IT OUT OF THE AIR
+   * ──────────────────────────────────────────────────────────────────── */
+
+  check('telekinesis: reeling your own hilt in with an empty hand catches it', async () => {
+    const b = await boot();
+    const { p } = b;
+    p.swapSaber(b.ctx);                                   // put it down
+    assert(p.saberDown, 'setup: the saber is still in the hand');
+    const hilt = b.world.props.find(x => x.saber && !x.dead);
+    assert(hilt, 'setup: nothing was dropped');
+    hilt.dropAge = 9;                                     // past PICKUP_DELAY
+
+    /* Held out at eight metres and then reeled all the way in, which is the
+     * gesture the note describes: "bring it and retract it as close to yourself
+     * as possible". */
+    hilt.body.position.copy(p.chest).addScaledVector(p.aimDir, 8);
+    b.grab(hilt);
+    p.gripDistance = p.camera.pos.distanceTo(p.chest) + 1.4;   // all the way in
+    for (let i = 0; i < 120 && p.saberDown; i++) { p._updateGrip(1 / 60, b.ctx); b.step(1); }
+
+    assert(!p.saberDown, 'the hilt was reeled to the closest the Force can hold it and never reached the hand');
+    assert(!p.gripBody, 'the hand took it and the Force is still paying to hold it');
+    assert(hilt.dead || !b.world.props.includes(hilt), 'the hilt is in the hand AND on the ground');
+    return 'reeled in from 8 m, caught out of the air, grip released';
+  });
+
+  check('telekinesis: a hilt your Force holds comes to the hand at any distance', async () => {
+    const b = await boot();
+    const { p } = b;
+    p.swapSaber(b.ctx);
+    const hilt = b.world.props.find(x => x.saber && !x.dead);
+    hilt.dropAge = 9;
+    hilt.body.position.copy(p.chest).addScaledVector(p.aimDir, 14);
+    b.grab(hilt);
+    /* Fourteen metres is well outside `TK.reach`, so the auto-catch will not
+     * fire — this is the KEY doing it, which is the case where the player has
+     * decided rather than the game noticing. */
+    assert(Math.sqrt(D.hiltDistanceSq(hilt, p)) > TK.reach, 'setup: the hilt is already within the catch');
+    p.swapSaber(b.ctx);
+    assert(!p.saberDown, 'pressing the key on a hilt the Force was holding 14 m out did nothing');
+    assert(!p.gripBody, 'the grip is still holding a hilt that is in the hand');
+    return 'taken from 14 m out, in one press';
+  });
+
+  /* ────────────────────────────────────────────────────────────────────
+   * 3. YOU LIGHT IT WITHOUT TOUCHING IT
+   * ──────────────────────────────────────────────────────────────────── */
+
+  check('telekinesis: the Force lights the hilt it is holding, and pays to keep it burning', async () => {
+    const b = await boot();
+    const { p } = b;
+    p.swapSaber(b.ctx);
+    const hilt = b.world.props.find(x => x.saber && !x.dead);
+    hilt.dropAge = 9;
+    hilt.body.position.copy(p.chest).addScaledVector(p.aimDir, 6);
+    b.grab(hilt);
+    assert(!hilt.saberLit, 'setup: the dropped hilt is already lit');
+
+    const before = p.force;
+    assert(p.igniteHeldHilt(b.ctx), 'the ignite key did nothing to a hilt the Force was holding');
+    assert(hilt.saberLit, 'the hilt did not light');
+    assert(hilt.saberBlade && hilt.saberBlade.visible, 'it is "lit" and there is no blade drawn');
+    const paid = before - p.force;
+    assert(Math.abs(paid - p._priceOf(TK.ignite)) < 0.51,
+      `striking it cost ${paid.toFixed(1)} against a quoted ${p._priceOf(TK.ignite)}`);
+
+    /* AND IT DRAINS. One second of holding a burning hilt against one second of
+     * holding a dark one, same distance, same clock — the difference is the
+     * surcharge and nothing else. */
+    p.force = p.maxForce;
+    const litFrom = p.force;
+    for (let i = 0; i < 60; i++) p._updateGrip(1 / 60, b.ctx);
+    const litCost = litFrom - p.force;
+
+    p.igniteHeldHilt(b.ctx);
+    assert(!hilt.saberLit, 'a second press did not put it out');
+    assert(!hilt.saberBlade.visible, 'it is out and the blade is still drawn');
+    p.force = p.maxForce;
+    p._holdT = 0;
+    const darkFrom = p.force;
+    for (let i = 0; i < 60; i++) p._updateGrip(1 / 60, b.ctx);
+    const darkCost = darkFrom - p.force;
+
+    assert(litCost > darkCost * 1.5,
+      `a burning hilt cost ${litCost.toFixed(1)} a second against ${darkCost.toFixed(1)} for a dark one — `
+      + 'the note asks for "uses a lot of force power up" and this is a rounding error');
+
+    /* AND RUNNING DRY PUTS THE LIGHT OUT RATHER THAN DROPPING THE HILT. */
+    p.igniteHeldHilt(b.ctx);
+    assert(hilt.saberLit, 'setup: it did not relight');
+    /* RUN IT DRY rather than guessing a number: hold it, paying for both, until
+     * one of the two prices cannot be met. `TK.lit` is the larger of the two
+     * and is charged first, so the light must be what goes — see the note in
+     * `_updateGrip`. A frame count and not a hand-picked balance, because the
+     * balance is exactly what a tuning pass moves. */
+    p.force = 6;
+    /* THE HOLD'S OWN CLOCK BACK TO ZERO. `_holdT` has been running through
+     * three drain passes above and `wear` is 1.75 at six seconds, which makes
+     * one frame's charge large enough to cross BOTH thresholds at once — so
+     * the douse and the drop land on the same frame and the ordering this is
+     * about becomes unmeasurable. A fresh grip is the case being described. */
+    p._holdT = 0;
+    let frames = 0;
+    while (hilt.saberLit && frames < 900) { p._updateGrip(1 / 60, b.ctx); frames++; }
+    assert(!hilt.saberLit, 'the blade never went out at all');
+    assert(p.gripBody, 'the grip ran out of Force before the blade did — a burning hilt fell to the floor');
+    // …and the grip does go, after: the ordering is what matters, not that the
+    // hold is free.
+    let more = 0;
+    while (p.gripBody && more < 900) { p._updateGrip(1 / 60, b.ctx); more++; }
+    assert(!p.gripBody, 'the hilt hung in the air on an empty bar for ever');
+    return `strike ${paid.toFixed(1)}; burning ${litCost.toFixed(1)}/s vs dark ${darkCost.toFixed(1)}/s; `
+      + 'empty bar douses it';
+  });
+
+  check('telekinesis: a blade flown on the Force cuts, and a dark hilt does not', async () => {
+    /**
+     * TWO RUNS, TWO WORLDS, ONE DIFFERENCE.
+     *
+     * The first version of this did both passes in one world, dark then lit,
+     * and measured the lit pass at zero — because sixty frames of flying the
+     * dark hilt had already carried it past the droid, so what it recorded was
+     * a blade nowhere near anybody rather than a blade that does not cut. Same
+     * seed, same geometry, same frame count; the only thing that differs
+     * between the two numbers below is whether the hilt is burning.
+     *
+     * A SECOND HILT, and the player keeps their own: dropping theirs would fire
+     * the auto-catch on the first frame — a drop leaves it 25 cm from the hand,
+     * inside `TK.reach` — and this would measure a pick-up. It is also the more
+     * interesting case, which is somebody else's fallen blade flown by your
+     * Force at the man standing next to it.
+     */
+    const run = async (light) => {
+      const b = await boot();
+      const { p, THREE } = b;
+      const foe = b.world.spawnEnemy('b1', new THREE.Vector3(p.position.x, p.position.y, p.position.z - 7));
+      assert(foe, 'setup: no droid');
+      b.step(10);
+      const D2 = await import('../../src/game/Dropped.js');
+      const chest = foe.position.clone().setY(foe.position.y + 0.9);
+      p.aimDir.copy(chest).sub(p.camera.pos).normalize();
+      const hilt = D2.dropSaber(b.world, { position: chest.clone(), colorIndex: 2, hiltStyle: 'graflex' });
+      assert(hilt, 'setup: no hilt on the ground');
+      hilt.dropAge = 9;
+      b.grab(hilt);
+      if (light) {
+        assert(p.igniteHeldHilt(b.ctx), 'setup: the hilt would not light');
+        assert(hilt.saberLit, 'setup: it is not lit');
       }
-      const took = hp0 - mark.hp;
-      const moved = Math.hypot(mark.position.x - x0, mark.position.z - z0)
-        + Math.abs(mark.velocity.y) * 0.001;
-      assert(took > 0, `${type}: a body thrown through a droid took ${took.toFixed(1)} hp off it`);
-      /* THE CEILING IS THE POINT OF THE SEPARATE COEFFICIENT. A body is three
-       * to ten times a crate's mass, so on the crate's rate every throw would
-       * saturate the 140 cap and one throw would clear a squad. */
-      assert(took < 60, `${type}: a single thrown body took ${took.toFixed(0)} hp — that is a crowd-clear`);
-      assert(mark.knockTimer > 0 || moved > 0.05,
-        `${type}: the droid took ${took.toFixed(1)} hp and did not move at all`);
-      /* AND THE THROWN BODY PAYS. Spending the thing you are holding is what
-       * makes a living projectile a decision. */
-      assert(held.hp < held.maxHp,
-        `${type}: the body that was thrown into a droid took nothing for it`);
-      rows.push(`${type} (${(held.A?.mass ?? 80)} kg) → ${took.toFixed(0)} hp, `
-        + `thrower kept ${Math.max(0, 100 * held.hp / held.maxHp).toFixed(0)}%`);
-    }
-    return rows.join('; ');
+      const hp0 = foe.hp;
+      /* Held ON the droid by the GRIP, frame by frame — `_updateGrip` flies it
+       * to the hold point and `Prop._syncMesh` carries the mesh with it, which
+       * is what `hiltBlade` reads off. Teleporting the body instead leaves the
+       * mesh behind and measures a blade at the world origin. */
+      for (let i = 0; i < 60; i++) {
+        p.gripDistance = p.camera.pos.distanceTo(chest);
+        b.step(1);
+        p.force = p.maxForce;
+      }
+      return { took: hp0 - foe.hp, dead: foe.dead, lit: hilt.saberLit };
+    };
+
+    /* …DARK IS NOT ZERO, ON PURPOSE. A hilt driven through a droid at speed is
+     * `_sweepHeld`, the shove every held object gives, and its own note caps it
+     * at 18 so that waving furniture at a rank staggers rather than kills. What
+     * this measures is that lighting the thing is a different order of event. */
+    const dark = await run(false);
+    assert(dark.took <= 20,
+      `an UNLIT hilt did ${dark.took.toFixed(1)} hp in a second — past the sweep's own 18 cap, so `
+      + 'something is cutting with a torch handle');
+
+    const lit = await run(true);
+    assert(lit.took > dark.took * 3,
+      `lighting it took the damage from ${dark.took.toFixed(1)} to ${lit.took.toFixed(1)} — a lightsabre `
+      + 'and a thrown hilt should not be the same event');
+    /* ONE CUT PER `TK.cutGap`, not one a frame. A second at a 0.4 s gap is two
+     * or three landings, and the ceiling is what stops a parked blade being
+     * sixty times a lightsabre. */
+    const most = TK.cut * (1 / TK.cutGap + 1) * 1.35;
+    assert(lit.took <= most,
+      `a second of a flown blade did ${lit.took.toFixed(0)} damage — over the ${most.toFixed(0)} that `
+      + `${TK.cutGap}s between cuts allows, so it is billing per frame`);
+    return `dark ${dark.took.toFixed(0)} hp, lit ${lit.took.toFixed(0)} hp in a second `
+      + `(cap ${most.toFixed(0)}${lit.dead ? ', and it killed it' : ''})`;
   });
 
-  check('force grip: a body swung through a rank shoves the rank', () => {
-    /* The continuous half. A held body moving at speed sweeps the field and
-     * staggers what it crosses; the damage is deliberately a tenth of a
-     * throw's, because the read is the LINE COMING APART and not the number. */
-    const b = bench({ force: 2000, forcePower: 1 });
-    const held = standing(b, 2.5, 'trooper');
-    held.hold();
-    b.p.gripEnemy = held;
-    b.p._liftPoint.copy(held.position);
-    const rank = [];
-    for (let i = 0; i < 5; i++) {
-      const e = new Enemy(b.world, 'b1', new THREE.Vector3(-4 + i * 2, 0, -6));
-      e.position.set(-4 + i * 2, 0, -6);
-      b.ctx.enemies.push(e); rank.push({ e, hp: e.hp, x: e.position.x, z: e.position.z });
-    }
-    /* Swing it across the rank by driving the sweep directly with a real
-     * velocity — the hold's own solver is measured by the checks above, and
-     * what this one is about is whether a moving held body TOUCHES anything. */
-    const dt = 1 / 60;
-    const vel = new THREE.Vector3(9, 0, 0);
-    for (let i = 0; i < 120; i++) {
-      held.position.set(-5.5 + i * dt * 9, 1.0, -6);
-      b.p._sweepHeld(dt, b.ctx, held.position, 0.55, vel);
-    }
-    const hit = rank.filter((r) => r.e.hp < r.hp).length;
-    const shoved = rank.filter((r) => Math.hypot(r.e.position.x - r.x, r.e.position.z - r.z) > 0.02
-      || r.e.knockTimer > 0).length;
-    assert(hit >= 4, `a body swung through five men touched ${hit} of them`);
-    assert(shoved >= 4, `${shoved} of five were actually moved — damage without a shove is a number, not an object`);
-    const worst = Math.max(...rank.map((r) => r.hp - r.e.hp));
-    assert(worst < 25, `one sweep took ${worst.toFixed(0)} hp — swinging a body must not out-damage throwing it`);
-    return `${hit}/5 struck, ${shoved}/5 shoved, worst ${worst.toFixed(1)} hp`;
+  /* ────────────────────────────────────────────────────────────────────
+   * 4. AND YOU FLY THE ONE IN YOUR HAND
+   * ──────────────────────────────────────────────────────────────────── */
+
+  check('telekinesis: the thrown blade can be taken hold of and parked at the reticle', async () => {
+    const b = await boot();
+    const { p } = b;
+    p.saber.ignite(); p.saber.ignition = 1;
+    p.throwOrRecall(b.ctx);
+    assert(p.throwState === 'flying', `the throw did not leave: ${p.throwState}`);
+
+    p.force = p.maxForce;
+    assert(p.pilotThrown(b.ctx), 'pressing grip on a blade in flight did nothing');
+    assert(p.throwState === 'piloted', `grip left the blade in ${p.throwState}`);
+
+    /* IT STAYS OUT. `flying` returns on its own after 1.5 s; this must not —
+     * that is the entire difference between the two states. */
+    for (let i = 0; i < 180; i++) { p._updateThrow(1 / 60, b.ctx); p.force = p.maxForce; }
+    assert(p.throwState === 'piloted', `three seconds in, the held blade went to ${p.throwState}`);
+
+    /* AND IT FOLLOWS THE SIGHTLINE. Look somewhere else; the blade goes there. */
+    const was = p.throwPos.clone();
+    p.aimDir.set(1, 0, 0).normalize();
+    for (let i = 0; i < 90; i++) { p._updateThrow(1 / 60, b.ctx); p.force = p.maxForce; }
+    const moved = was.distanceTo(p.throwPos);
+    assert(moved > 3, `the blade moved ${moved.toFixed(1)} m for a 90° turn — it is not steering`);
+    const want = p.camera.pos.clone().addScaledVector(p.aimDir, p.throwDist);
+    assert(p.throwPos.distanceTo(want) < 1.5,
+      `it settled ${p.throwPos.distanceTo(want).toFixed(1)} m off the point it is being held at`);
+
+    /* IT COSTS. One second of holding it out there against nothing else moving. */
+    p.force = p.maxForce;
+    const from = p.force;
+    for (let i = 0; i < 60; i++) p._updateThrow(1 / 60, b.ctx);
+    const cost = from - p.force;
+    assert(cost > (TK.lit + HOLD_COST.prop.base) * 0.4,
+      `a second of holding your own blade across the arena cost ${cost.toFixed(1)} Force`);
+
+    /* AND AN EMPTY BAR BRINGS IT HOME rather than dropping it on the floor. */
+    p.force = 0;
+    p._updateThrow(1 / 60, b.ctx);
+    assert(p.throwState === 'returning', `an empty bar left the blade ${p.throwState}`);
+    return `held ${'3'}s at the reticle, steered 90°, ${cost.toFixed(1)} Force a second, empty bar recalls`;
   });
 
-  /**
-   * NOTE #6. "every time you force control someone and ragdoll them when you
-   * release them they are dead."
-   *
-   * They were not dead. Nothing in the game un-ragdolled — `Actor.ragdolled`
-   * was written `true` in one place and `false` only in the constructor — so a
-   * released body kept its walking capsule and its AI while its meshes hung
-   * off loose physics bodies and slid along the floor behind it.
-   */
-  check('force grip: a body released alive gets back up, where it landed', () => {
-    const b = bench({ force: 900, forcePower: 1 });
-    const e = standing(b, 4, 'trooper');
-    b.p.aimDir.set(0, 0, -1);
-    b.p.gripEnemy = e;
-    e.hold();
-    b.p._liftPoint.set(0, 2.2, -4);
-    e.liftTarget = b.p._liftPoint;
-    const dt = 1 / 60;
-    for (let i = 0; i < 30; i++) { e._move(dt, b.ctx); }
-    assert(e.actor?.ragdolled, 'holding a living body did not ragdoll it — the premise has expired');
-    // release without killing it
-    b.p.releaseGrip();
-    assert(!e.dead, 'the fixture killed its own subject');
-    const where = e.actor.centre(new THREE.Vector3());
-    let recovered = -1;
-    for (let i = 0; i < 60 * 6; i++) {
-      b.world.time += dt;
-      /* THE BENCH'S PHYSICS IS A STUB, so nothing integrates or damps a
-       * ragdoll body on its own and the chest keeps whatever velocity the
-       * suspend spring last commanded — forever. A real world bleeds that off
-       * in a few tenths against the ground. Standing in for that here is the
-       * one thing this fixture has to do that the game does for itself, and
-       * without it the stillness gate in `_tickGetUp` can never open. */
-      for (const bd of e.actor.bodies.values()) bd.velocity.multiplyScalar(0.86);
-      // `_tickGetUp` is the subject; the brain is not, and driving it here
-      // would need a target picker this bench has no reason to own.
-      e._tickGetUp(dt);
-      e._move(dt, b.ctx);
-      if (!e.actor.ragdolled) { recovered = i * dt; break; }
-    }
-    assert(recovered > 0,
-      'a living body released from a grip never got up — six seconds and still limp');
-    assert(recovered < 5, `it took ${recovered.toFixed(1)}s to get up`);
-    /* WHERE IT LANDED, not where it was picked up. Everything in Enemy reads
-     * `position`, so a body that recovers to its old spot teleports across the
-     * room — which is the failure this clause exists to catch. */
-    const gap = Math.hypot(e.position.x - where.x, e.position.z - where.z);
-    assert(gap < 1.5,
-      `it stood up ${gap.toFixed(1)} m from where the ragdoll came to rest`);
-    assert(!e.bodyRemoved, 'it got up with no collider in the world');
-    // …and it is animating again rather than walking while ragdolled
-    e._tickGetUp(dt); e._move(dt, b.ctx);
-    assert(!e.actor.ragdolled, 'it went limp again on the very next frame');
-    return `up in ${recovered.toFixed(2)}s, ${gap.toFixed(2)} m from where it landed`;
+  check('telekinesis: the recall still works from the held state, and grip throws it on', async () => {
+    const b = await boot();
+    const { p } = b;
+    p.saber.ignite(); p.saber.ignition = 1;
+    p.throwOrRecall(b.ctx);
+    p.force = p.maxForce;
+    p.pilotThrown(b.ctx);
+    assert(p.throwState === 'piloted', 'setup: not piloted');
+
+    /* THE CONTROL THE PLAYER ALREADY HAS MUST NOT STOP WORKING. `throw` means
+     * recall from every state that is not `held`, and adding a third state is
+     * exactly the sort of change that quietly makes one of them an exception. */
+    p.throwOrRecall(b.ctx);
+    assert(p.throwState === 'returning', `throw from piloted gave ${p.throwState}`);
+
+    // …and grip again, from piloted, sends it on rather than recalling it.
+    p.throwState = 'piloted';
+    p.pilotThrown(b.ctx);
+    assert(p.throwState === 'flying', `a second grip gave ${p.throwState}, not a throw`);
+
+    // it comes home in the end, from wherever it is
+    let f = 0;
+    while (p.throwState !== 'held' && f < 1200) { p._updateThrow(1 / 60, b.ctx); f++; }
+    assert(p.throwState === 'held', 'the blade never came home');
+    return `piloted → recall; piloted → thrown on; home in ${(f / 60).toFixed(1)}s`;
   });
 
+  /* ────────────────────────────────────────────────────────────────────
+   * 5. AND THIS IS HOW YOU COME TO BE WITHOUT IT
+   * ──────────────────────────────────────────────────────────────────── */
+
+  check('telekinesis: a real blow on an empty stamina bar takes the weapon out of your hand', async () => {
+    const b = await boot();
+    const { p } = b;
+
+    /* THE CONTROL. The same blow with stamina in the bar keeps the weapon,
+     * because otherwise this check passes on a game that disarms you on every
+     * hit — which is not a mechanic, it is a bug. */
+    p.stamina = p.maxStamina; p.invuln = 0;
+    p.damage(30, p.chest, null, 'saber');
+    assert(!p.saberDown, 'a hit with a full stamina bar disarmed the player');
+
+    p.stamina = 2; p.invuln = 0; p.hp = p.maxHp;
+    p.damage(30, p.chest, null, 'saber');
+    assert(p.saberDown, 'a solid blow on an empty stamina bar left the weapon in the hand');
+    assert(p.staggerTimer > 0.4, `the disarm staggered for ${p.staggerTimer.toFixed(2)}s`);
+    const hilt = b.world.props.find(x => x.saber && !x.dead);
+    assert(hilt, 'the player is disarmed and there is no hilt on the ground');
+
+    /* AND NOT TWICE. A disarm you cannot walk back from is a death with extra
+     * steps, so the gap is longer than it takes to reach the hilt. */
+    p.saberDown = false;
+    p.invuln = 0;
+    p.damage(30, p.chest, null, 'saber');
+    assert(!p.saberDown, `disarmed twice inside ${TK.disarmGap}s — there is no recovering from that`);
+
+    /* A FALL IS NOT A DISARM: nobody knocked it out of your hand. */
+    b.world.time += TK.disarmGap + 1;
+    p.invuln = 0; p.hp = p.maxHp; p.stamina = 1;
+    p.damage(40, null, null, 'fall');
+    assert(!p.saberDown, 'falling over knocked the weapon out of the player\'s own hand');
+    return `full bar keeps it; empty bar drops it and staggers ${p.staggerTimer.toFixed(2)}s; `
+      + `no second inside ${TK.disarmGap}s; a fall never`;
+  });
+
+  return;
 }

@@ -14,7 +14,8 @@ import { buildJedi, buildShieldBubble } from './Bodies.js';
 import { SKIN_TONES, HAIR_COLORS } from '../ui/Menu.js';
 import { speciesOf } from './Bodies.js';
 import { Rig, BipedAnimator, aimY, limbScale } from './Rig.js';
-import { dropSaber, hiltWithinReach, ageDropped } from './Dropped.js';
+import { dropSaber, hiltWithinReach, hiltDistanceSq, igniteHilt, hiltBlade,
+         ageDropped } from './Dropped.js';
 import { attachCloak, attachSkirt } from './Cloth.js';
 import { Body, LAYER, capsuleSpheres, capsule } from '../physics/RapierWorld.js';
 import { supportHeight, topOfProps, ceilingHeight, STEP_UP, GROUND_SNAP, CLIMB_RATE } from '../physics/Support.js';
@@ -68,6 +69,21 @@ const _v12Q = new THREE.Quaternion(), _q5 = new THREE.Quaternion();
 // gesture that borrowed one of them would corrupt whichever of those ran next —
 // the exact class of bug that is invisible until an arm folds inside out.
 const _g1 = new THREE.Vector3(), _g2 = new THREE.Vector3(), _g3 = new THREE.Vector3();
+/* The flown blade's own three, and they are its own on purpose: `_cutWithHeld`
+ * holds a segment across a loop that calls out to `Enemy.damage`, and every
+ * shared scratch vector in this file is fair game for anything downstream. */
+const _tk1 = new THREE.Vector3(), _tk2 = new THREE.Vector3(), _tk3 = new THREE.Vector3();
+const _tkA = new THREE.Vector3();
+
+/** Squared distance from a point to a segment. */
+function segmentPointSq(p0, p1, pt) {
+  _tkA.subVectors(p1, p0);
+  const len = _tkA.lengthSq();
+  if (len <= 1e-9) return p0.distanceToSquared(pt);
+  let t = (pt.x - p0.x) * _tkA.x + (pt.y - p0.y) * _tkA.y + (pt.z - p0.z) * _tkA.z;
+  t = clamp(t / len, 0, 1);
+  return _tkA.multiplyScalar(t).add(p0).distanceToSquared(pt);
+}
 const _g4 = new THREE.Vector3(), _g5 = new THREE.Vector3();
 /** `applyKnockback` scales the shove when the pool blunts it, and the vector it
  *  is handed is somebody ELSE's scratch (`Enemy._castPower` passes its `_v2`) —
@@ -155,6 +171,56 @@ export const HOLD_COST = { prop: { base: 7, rise: 6 }, person: { base: 11, rise:
  *            narrow enough that a squad cannot shelter in it.
  */
 export const SHIELD = { hold: 6, bolt: 4, blunt: 0.35, radius: 2.1, rise: 0.18, fall: 0.3 };
+
+/**
+ * THE SABER, OFF THE HAND — catching it, lighting it, and flying it.
+ *
+ * The player, at length:
+ *
+ *   "if you force picked up the saber off the ground and called it back to you
+ *    even at the closest distance you could not pick it up in the air so I
+ *    think it could be cool that once you bring it and retract it as close to
+ *    yourself as possible you just pick it up from the air… in that same vein
+ *    it should be possible to pick up the lightsaber with the force, turn it on
+ *    or off using the force, and then with the force being able your
+ *    turn/manipulate the saber anywhere you want on the battlefield within a
+ *    certain distance (uses a lot of force power up etc. obviously)"
+ *
+ * Three separate things, and only the third of them is new machinery:
+ *
+ *   THE CATCH was a measurement bug and not a missing feature. The Force grip
+ *   parks what it holds a floor of 1.4 m in FRONT of the chest and the pick-up
+ *   test measured to `position`, which is the feet — 1.98 m against a 1.6 m
+ *   reach, so the closest the Force could ever bring your own weapon was 38 cm
+ *   outside your hand, silently, for ever. `Dropped.hiltDistanceSq` measures to
+ *   the standing axis now, and `reach` here is a hand's reach off it.
+ *
+ *   LIGHTING IT is `Dropped.igniteHilt`, which was already most of the way
+ *   there for the hilt a dying duellist drops still burning.
+ *
+ *   FLYING IT is the grip, which already moves a loose object anywhere inside
+ *   `forceReach` and already charges for mass, distance and time. What a lit
+ *   hilt adds is the CUT — a blade that goes through a droid is not a crate
+ *   bumping into one — and the surcharge the note asks for: `lit` a second on
+ *   top of whatever the hold already costs, which roughly triples the price of
+ *   holding a hilt and makes a blade you are flying across the field the most
+ *   expensive thing the Force can be doing.
+ */
+export const TK = {
+  /** How far off the standing axis a hilt can be taken out of the air. */
+  reach: 2.2,
+  /** To strike a light at a distance, once. */
+  ignite: 10,
+  /** …and to keep it burning out there, a second, on top of the hold. */
+  lit: 9,
+  /** What the flying blade does to what it crosses, and how often it may. */
+  cut: 34,
+  cutGap: 0.4,
+  /** Under this much stamina, a solid hit takes the weapon out of your hand. */
+  staggerStamina: 12,
+  /** …and not twice in a row: a disarm you cannot recover from is a death. */
+  disarmGap: 6,
+};
 /**
  * 11 / 7 = 1.571 — a living body against an object, read off HOLD_COST.
  *
@@ -2960,7 +3026,10 @@ export class Player {
     // distance control read to the player as "there isn't any". Claim it while
     // a grip or a stasis field is live and hand it straight back otherwise.
     this._wheel = 0;
-    if (this.gripBody || this.gripEnemy || this.stasis.active) {
+    /* `piloted` is in this list for the same reason the grip is: the wheel is
+     * how you push a held thing out and pull it in, and a blade you are flying
+     * across the arena is a held thing. See `_updateThrow`. */
+    if (this.gripBody || this.gripEnemy || this.stasis.active || this.throwState === 'piloted') {
       this._wheel = input.mouse.wheel;
       input.mouse.wheel = 0;
     }
@@ -3020,7 +3089,12 @@ export class Player {
       // …and NOT `return`: this sits above the view toggle, the grip and all
       // eleven powers, so an early exit here would make an empty hand cost the
       // player the rest of their controls for that frame.
-      if (this.saberDown) this._refuse('ignite', 'your hands are empty');
+      /* THE SAME KEY, FOR THE BLADE IN YOUR FORCE. Tried first, and it answers
+       * only when the grip is actually holding a hilt — so this is not a mode
+       * the player has to know about, it is the ignite key doing the obvious
+       * thing with the only saber they are touching. */
+      if (this.igniteHeldHilt(ctx)) { /* lit or doused at range */ }
+      else if (this.saberDown) this._refuse('ignite', 'your hands are empty');
       else {
         this.saber.toggle();
         if (this.saber.lit) { this.hum.ignite(); audio.tone({ freq: 180, freqEnd: 900, dur: 0.4, gain: 0.22, type: 'sawtooth', pos: this.saber.base }); }
@@ -5937,6 +6011,13 @@ export class Player {
 
   toggleGrip(ctx) {
     if (this.gripBody || this.gripEnemy) { this.releaseGrip(); return; }
+    /* A BLADE IN THE AIR IS THE FIRST THING YOUR FORCE REACHES FOR. Tried
+     * before the aim pick, because a player whose own saber is out there and
+     * who presses grip means that saber — and the pick would otherwise hand
+     * them whichever crate happened to be under the reticle. See `pilotThrown`. */
+    if (this.throwState === 'flying' || this.throwState === 'piloted') {
+      if (this.pilotThrown(ctx)) return;
+    }
     /* AND IT SAYS SO. A bare `return` here was the second of the file's two
      * silent refusals — see `_refuse`'s own header, which all eleven powers
      * obey and this one did not. `_priceOf` rather than the list number,
@@ -6389,6 +6470,99 @@ export class Player {
     }
   }
 
+  /**
+   * THE HILT THE FORCE IS HOLDING, or null.
+   *
+   * One reader for a question four places ask, and it goes through the body's
+   * own `userData.prop` — the same door the blade and the bolt test use to get
+   * from a physics body back to the thing it belongs to — so there is no second
+   * register of "which prop is which body" to fall out of step.
+   */
+  _grippedHilt() {
+    const b = this.gripBody;
+    const prop = b && b.userData ? b.userData.prop : null;
+    return prop && !prop.dead && prop.saber ? prop : null;
+  }
+
+  /**
+   * STRIKE A LIGHT AT A DISTANCE — *"turn it on or off using the force."*
+   *
+   * The ignite key already means "the blade in my hand"; this is the same key
+   * meaning "the blade in my Force", and it is unambiguous because the two
+   * cannot both be true — `_takeSaber` releases the grip and `swapSaber` takes
+   * what the grip holds, so a hilt is either in the hand or in the air.
+   *
+   * A one-off price to strike it and a per-second one to keep it burning. That
+   * split is the whole of what stops this being a free light switch: flicking
+   * a blade on across the field is cheap, and LEAVING it on out there is what
+   * the note means by "uses a lot of force power up".
+   */
+  igniteHeldHilt(ctx) {
+    const prop = this._grippedHilt();
+    if (!prop) return false;
+    if (prop.saberLit) {
+      igniteHilt(prop, false);
+      audio.tone({ freq: 900, freqEnd: 120, dur: 0.35, gain: 0.18, type: 'sawtooth', pos: prop.body.position });
+      return true;
+    }
+    if (!(prop.bladeLength > 0)) {
+      this._refuse('ignite', 'that is a blade of metal — there is nothing to light');
+      return false;
+    }
+    if (!this._spend(TK.ignite)) {
+      this._refuse('ignite at range',
+        `${this._priceOf(TK.ignite)} Force needed, you have ${Math.round(this.force)}`);
+      return false;
+    }
+    igniteHilt(prop, true);
+    audio.tone({ freq: 180, freqEnd: 900, dur: 0.4, gain: 0.2, type: 'sawtooth', pos: prop.body.position });
+    this.world?.notify?.('LIT', 'the blade burns where you are holding it');
+    return true;
+  }
+
+  /**
+   * A BLADE FLYING ON THE FORCE CUTS WHAT IT CROSSES.
+   *
+   * `_sweepHeld` is the shove a held OBJECT gives, and it is deliberately
+   * feeble — a tenth of a throw's rate, capped at 18 — because waving a droid
+   * through a rank should stagger it rather than kill it. A lit hilt is not
+   * that: it is a lightsabre, and a lightsabre that bumped people for 9 points
+   * would be the least dangerous thing on the field while costing the most
+   * Force in the game to fly.
+   *
+   * So this is its own pass, on the BLADE rather than on the hilt's bounding
+   * sphere — `Dropped.hiltBlade` reads the two ends out of the mesh's own
+   * transform — and it bills a per-victim gap for the same reason the sweep
+   * does: a hold is a thing you can keep, and a raw per-frame test would charge
+   * sixty cuts a second.
+   *
+   * IT DOES NOT NEED THE BLADE TO BE MOVING. A sweep is priced on speed because
+   * a stationary crate is not hitting anybody; a plasma edge parked inside a
+   * droid is.
+   */
+  _cutWithHeld(dt, ctx, prop) {
+    if (!hiltBlade(prop, _tk1, _tk2)) return 0;
+    const cd = this._tkCut || (this._tkCut = new Map());
+    for (const [id, t] of cd) { const n = t - dt; if (n <= 0) cd.delete(id); else cd.set(id, n); }
+    let hits = 0;
+    for (const e of ctx.enemies || []) {
+      if (e.dead || cd.has(e.id)) continue;
+      /* The same "is this mine to hit" gate the blade in the hand consults —
+       * one rule, one reader. A flown blade is still your blade. */
+      if (!canHarm(this, e)) continue;
+      const r = (e.radius ?? 0.4) + 0.24;
+      _tk3.copy(e.position).setY(e.position.y + (e.A && e.A.big ? 1.4 : 0.9));
+      if (segmentPointSq(_tk1, _tk2, _tk3) > r * r) continue;
+      cd.set(e.id, TK.cutGap);
+      hits++;
+      const at = _tk3.clone();
+      e.damage(TK.cut, at, this, 'saber');
+      audio.clash(at, 0.5);
+      ctx.particles?.sparkBurst(at, null, 12, { speed: 7, color: prop.bladeColor ?? 0xffd08a });
+    }
+    return hits;
+  }
+
   _updateGrip(dt, ctx) {
     const cap = this.liftCapacity;
 
@@ -6452,7 +6626,31 @@ export class Player {
       // Heavy things cost more to hold, which is what stops the top of the
       // slider from being free. Only drop it when the Force actually ran out —
       // with drain disabled the bar sits wherever it was and this must not fire.
-      if (!this._spend((HOLD_COST.prop.base + HOLD_COST.prop.rise * clamp(b.mass / cap, 0, 1)) * effort * dt)) { this.releaseGrip(); return; }
+      /**
+       * WHAT THIS FRAME COSTS — the hold, and the blade if it is burning.
+       *
+       * A BURNING HILT IS THE THIRD OF THE THREE THINGS THE NOTE ASKS FOR and
+       * the expensive one, and the two prices are weighed TOGETHER rather than
+       * charged one after the other. Charged in sequence, a bar with enough for
+       * the blade but not for both paid the surcharge and then failed the hold
+       * — so the light went out and the hilt hit the floor on the same frame,
+       * which tells the player nothing about which price they could not meet.
+       *
+       * Weighed together the failure is ordered and legible: the light is the
+       * luxury and goes first, in mid-air, in front of you, with the hilt still
+       * in your Force; the grip is the basic and only goes when even that
+       * cannot be paid.
+       */
+      const hilt = this._grippedHilt();
+      const holdCost = (HOLD_COST.prop.base + HOLD_COST.prop.rise * clamp(b.mass / cap, 0, 1)) * effort * dt;
+      const litCost = hilt && hilt.saberLit ? TK.lit * effort * dt : 0;
+      if (litCost > 0 && !this._canSpend(holdCost + litCost)) {
+        igniteHilt(hilt, false);
+        this.world?.notify?.('BLADE OUT', 'not enough Force to keep it burning out there');
+      } else if (litCost > 0) {
+        this._spend(litCost);
+      }
+      if (!this._spend(holdCost)) { this.releaseGrip(); return; }
       const heft = this._heft(b.mass);
       b.wake();
       _v2.subVectors(hold, b.position);
@@ -6465,6 +6663,24 @@ export class Player {
       }
       // …and while it moves it is a real object. See `_sweepHeld`.
       this._sweepHeld(dt, ctx, b.position, b.boundingRadius, b.velocity);
+      if (hilt) {
+        if (hilt.saberLit) this._cutWithHeld(dt, ctx, hilt);
+        /**
+         * AND IT COMES BACK TO THE HAND ON ITS OWN once you have reeled it in.
+         *
+         * *"once you bring it and retract it as close to yourself as possible
+         * you just pick it up from the air."* Not a key: the player has already
+         * spent one bringing it in, and asking for a second press at exactly
+         * the moment the weapon is floating in front of their face is the shape
+         * of thing that reads as the pick-up having failed. Only into an EMPTY
+         * hand — with a blade already in it this would silently swap your
+         * weapon for whatever you happened to reel past.
+         */
+        if (this.saberDown && hiltDistanceSq(hilt, this) < TK.reach * TK.reach) {
+          this._takeSaber(hilt, ctx);
+          return;
+        }
+      }
     } else if (this.gripEnemy) {
       const e = this.gripEnemy;
       const m = e.A ? e.A.mass : 80;
@@ -6559,11 +6775,84 @@ export class Player {
     }
   }
 
+  /**
+   * TAKE HOLD OF YOUR OWN BLADE IN MID-AIR — *"with the force being able your
+   * turn/manipulate the saber anywhere you want on the battlefield within a
+   * certain distance (uses a lot of force power up etc. obviously)."*
+   *
+   * A THIRD STATE IN A MACHINE THAT ALREADY HAD TWO, and not a new mechanic:
+   * `flying` is a disc on a 1.5 s fuse and `returning` is it coming home. What
+   * was missing between them is the blade STAYING where you sent it, and that
+   * is what "manipulate it anywhere on the battlefield" means — it hangs at the
+   * end of your sightline, spinning, cutting whatever wanders into it, for
+   * exactly as long as you can pay for it.
+   *
+   * THE GRIP KEY, because the fiction is the mechanic: your Force is holding
+   * it, and the key that means "my Force is holding that" is `grip`. It is also
+   * the only free key at that moment — the blade is out, so `hurl` and `throw`
+   * both already mean something.
+   *
+   * The recall is unchanged: `throw` brings it home from `piloted` exactly as
+   * it does from `flying`, so the control a player already has never stops
+   * working.
+   */
+  pilotThrown(ctx) {
+    if (this.throwState === 'piloted') { this.throwState = 'flying'; this.throwTimer = 0; return true; }
+    if (this.throwState !== 'flying') return false;
+    if (!this._spend(POWER_COST.grip)) {
+      this._refuse('hold the blade',
+        `${this._priceOf(POWER_COST.grip)} Force needed, you have ${Math.round(this.force)}`);
+      return false;
+    }
+    this.throwState = 'piloted';
+    /* Where it is NOW, in front-of-the-chest terms, so taking hold of a blade
+     * thirty metres out does not yank it to arm's length on the first frame.
+     * The same conversion `_updateGrip` uses and for the same reason: the hold
+     * point is measured from the CAMERA, which is not where the player is. */
+    const lead = this.camera.pos.distanceTo(this.chest);
+    this.throwDist = clamp(this.camera.pos.distanceTo(this.throwPos), lead + 1.4, lead + this.forceReach);
+    this._gesture('grip');
+    audio.force(this.throwPos, 'pull');
+    this.world?.notify?.('BLADE HELD', 'your Force has it — steer with the reticle, throw to recall');
+    return true;
+  }
+
   _updateThrow(dt, ctx) {
     this.throwTimer += dt;
     this.throwSpin += dt * 27;
 
-    if (this.throwState === 'flying') {
+    if (this.throwState === 'piloted') {
+      /**
+       * WHAT IT COSTS, and it is meant to be the most expensive thing the Force
+       * does. `TK.lit` is the burning-blade surcharge a Force-held hilt pays;
+       * `HOLD_COST.prop.base` is what holding any object costs; and both are
+       * scaled by DISTANCE, so parking your blade across the arena costs
+       * roughly double parking it in front of you. Running out does not drop it
+       * on the floor — it comes home, which is the failure a player can live
+       * with in the middle of a fight.
+       */
+      const lead = this.camera.pos.distanceTo(this.chest);
+      if (this._wheel) this.throwDist *= Math.pow(0.88, this._wheel);
+      this.throwDist = clamp(this.throwDist, lead + 1.4, lead + this.forceReach);
+      const far = 0.70 + 0.90 * clamp((this.throwDist - lead) / Math.max(this.forceReach, 1e-3), 0, 1);
+      const effort = far / Math.sqrt(Math.max(this.forceScale, 0.05));
+      if (!this._spend((TK.lit + HOLD_COST.prop.base) * effort * dt, true)) {
+        this.throwState = 'returning';
+        this.world?.notify?.('BLADE RECALLED', 'not enough Force to keep holding it out there');
+      } else {
+        _v1.copy(this.camera.pos).addScaledVector(this.aimDir, this.throwDist);
+        /* Damped rather than snapped: a blade that teleports to the reticle is
+         * a cursor, and the weight is the whole reason this reads as the Force
+         * carrying something heavy rather than as a flying pointer. */
+        _v2.subVectors(_v1, this.throwPos);
+        this.throwVel.lerp(_v2.multiplyScalar(6), clamp(dt * 8, 0, 1));
+        this.throwPos.addScaledVector(this.throwVel, dt);
+        if (ctx.particles && rng() < 0.35) {
+          ctx.particles.plasma.spawn(this.throwPos, _v3.set(0, 0, 0),
+            { life: 0.3, size: 0.55, drag: 1, gravity: 0, color: 0x88bbff, alpha: 0.14 });
+        }
+      }
+    } else if (this.throwState === 'flying') {
       // steerable: the blade drifts toward where you are looking
       _v1.copy(this.aimDir).multiplyScalar(26);
       this.throwVel.lerp(_v1, clamp(dt * 1.4, 0, 1));
@@ -6670,7 +6959,12 @@ export class Player {
     if (this.cooldowns.lightning > 0) {
       return this._refuse('force lightning', `recovering — ${this.cooldowns.lightning.toFixed(1)}s`);
     }
-    if (this.channel?.kind === 'lightning') return;
+    /* ALREADY RUNNING, AND SAY SO. This was a bare `return`, which is the
+     * shape of silence the whole of `_refuse` exists to delete: three states
+     * that all did nothing and looked identical from the keyboard. */
+    if (this.channel?.kind === 'lightning') {
+      return this._refuse('force lightning', 'already channelling — let go of the key first');
+    }
     if (!this._spend(POWER_COST.lightning)) {
       return this._refuse('force lightning',
         `${this._priceOf(POWER_COST.lightning)} Force needed, you have ${Math.round(this.force)}`);
@@ -7306,7 +7600,19 @@ export class Player {
    */
   swapSaber(ctx) {
     if (!this.alive) return;
-    const near = hiltWithinReach(this.world, this);
+    /**
+     * WHAT YOUR OWN FORCE IS HOLDING IS ALREADY IN YOUR HAND, as far as this
+     * key is concerned, and at any distance.
+     *
+     * The reach test below is about ARMS. A hilt the Force has hold of is not
+     * being reached for — it is being called, and a player who has gone to the
+     * trouble of picking their weapon up off the ground from across the field
+     * should not then have to walk to it. `_takeSaber` releases the grip, so
+     * the two states cannot both be true afterwards.
+     */
+    const held = this._grippedHilt();
+    if (held) return this._takeSaber(held, ctx);
+    const near = hiltWithinReach(this.world, this, TK.reach);
     if (near) return this._takeSaber(near, ctx);
     if (this.throwState !== 'held') {
       return this._refuse('drop', 'your blade is not in your hand');
@@ -7396,6 +7702,11 @@ export class Player {
   _takeSaber(prop, ctx) {
     const id = prop.saber;
     if (!id) return false;
+    /* IF THE FORCE WAS HOLDING THIS ONE, IT IS NOT ANY MORE. Without this the
+     * grip goes on paying `HOLD_COST` every frame for a body that has been
+     * destroyed two lines down, and `_updateGrip` only notices on the frame it
+     * happens to read `b.dead`. */
+    if (this._grippedHilt() === prop) this.releaseGrip();
     // yours goes down first, so a swap never destroys a weapon
     if (this.throwState === 'held' && !this.saberDown) this._dropSaber(ctx);
     const s = this.saber;
@@ -8194,8 +8505,56 @@ export class Player {
     }
     audio.boltHit(point || this.chest);
     if (dmg > 14) this.staggerTimer = Math.max(this.staggerTimer, 0.28);
+    this._maybeDisarm(dmg, kind, point);
     if (this.hp <= 0) { this.hp = 0; this.die(source); return true; }
     return false;
+  }
+
+  /**
+   * HIT WITH NOTHING LEFT, AND THE WEAPON GOES.
+   *
+   * The player's own suggestion, and it is the half of "dropping your saber"
+   * that was never a thing the GAME did to you: *"maybe if you get hit when
+   * you're out of stamina you get staggered and drop your lightsaber."* Before
+   * this the only way a hilt left your hand was you pressing the key for it, so
+   * every dropped-weapon mechanic in the build — the pick-up, the swap, the
+   * Force catch, lighting one in mid-air — was reachable only on purpose.
+   *
+   * WHAT MAKES IT FAIR RATHER THAN INFURIATING, and each of the four is doing
+   * work:
+   *
+   *   • it takes a real blow. A bolt that grazes you for four points with an
+   *     empty bar is not a disarm; `dmg > 14` is the same bar the extra stagger
+   *     two lines up is already set at.
+   *   • it takes an EMPTY bar. Stamina under TK.staggerStamina is a state the
+   *     player put themselves in by sprinting, dashing or diving, which is what
+   *     makes this a consequence rather than a dice roll.
+   *   • a fall is not a disarm. `kind` 'fall' is the ground, and nobody knocked
+   *     the weapon out of your hand.
+   *   • it cannot happen twice in a row. TK.disarmGap is longer than it takes
+   *     to walk back to the hilt, because a disarm you cannot recover from is
+   *     just a slower death.
+   *
+   * The hilt goes SIDEWAYS out of the hand and not forwards — a weapon knocked
+   * loose is not a weapon put down, and it should land somewhere you have to
+   * turn for.
+   */
+  _maybeDisarm(dmg, kind, point) {
+    if (dmg <= 14 || kind === 'fall') return false;
+    if (this.saberDown || this.throwState !== 'held') return false;
+    if (this.stamina > TK.staggerStamina) return false;
+    const now = this.world?.time ?? 0;
+    if (this._lastDisarm !== undefined && now - this._lastDisarm < TK.disarmGap) return false;
+    this._lastDisarm = now;
+    this.staggerTimer = Math.max(this.staggerTimer, 0.55);
+    _v3.crossVectors(this.aimDir, UP).normalize();
+    if (!Number.isFinite(_v3.x)) _v3.set(1, 0, 0);
+    this._dropSaber(null, {
+      velocity: _v3.multiplyScalar(rng() < 0.5 ? 3.4 : -3.4).setY(2.2).add(this.velocity),
+    });
+    this.world?.notify?.('DISARMED', 'no strength left to hold it — your blade is on the ground');
+    audio.clash(point || this.chest, 0.7);
+    return true;
   }
 
   heal(v) { this.hp = Math.min(this.maxHp, this.hp + v); }

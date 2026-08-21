@@ -132,6 +132,10 @@ function livePlayer(world, over = {}) {
     camera: { addShake() {} },
     control: { deadzone: 0.24, sensitivity: 1 },
     saber: { bladeLength: 1.15, coreWidth: 1 },
+    /* THE BARRIER, DOWN — `Player.damage` asks it whether the blow is being
+     * blunted, so a fixture without the state throws on every hit. Shape from
+     * the constructor in src/game/Player.js; see `SHIELD` there. */
+    shield: { up: false, t: 0, power: 0, stopped: 0, lastHit: -99 },
     boonMods: defaultBoonMods(),
     update() {},
     ...over,
