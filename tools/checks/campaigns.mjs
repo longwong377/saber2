@@ -18,10 +18,15 @@
  *
  * WHAT THAT COST IS WRITTEN DOWN RATHER THAN QUIETLY ABSORBED, because the
  * ships were built to reach unreachable content and deleting them un-reaches
- * some of it. `works()` in Levels.js — 300 lines, and the only `BlastDoor`
- * construction in a game whose DESIGN.md calls the twenty-second door hold a
- * signature mechanic — has no caller again, and the `warship` preset has no
- * level again. The IG-100 general survives: `drifts` names `bodyguard` in its
+ * some of it. `works()` in Levels.js — 300 lines of bulkhead-and-gantry
+ * vocabulary — has no caller again, and the `warship` preset has no level
+ * again. The half of that loss that mattered has since been recovered
+ * elsewhere: the twenty-second door hold DESIGN.md calls a signature mechanic
+ * is back as `magazine()` on Geonosis, outdoors, which is what FLAGSHIP.md §4
+ * means by "an interior may exist as a feature on an outdoor field — a bunker
+ * you breach". `tools/checks/blast-door.mjs` measures it. What is still
+ * un-reached by this deletion is the ROOM and the `warship` ground, not the
+ * mechanic. The IG-100 general survives: `drifts` names `bodyguard` in its
  * pool, which the check below is the standing proof of. The last check in this
  * file is the tripwire that counts the orphaned grounds.
  *

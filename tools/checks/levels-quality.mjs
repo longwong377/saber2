@@ -675,19 +675,19 @@ export async function run({ check, assert }) {
      * when the bulkheads move to a new level rather than silently measuring
      * LEVEL_ORDER[0].
      *
-     * AND THE FLOOR IS GONE, WHICH IS A LOSS AND IS RECORDED AS ONE. This
-     * asserted `doorLevels.length >= 1` and its message said "unreachable
-     * content is the defect here, not this assertion". That assertion was red
-     * while the Foundry was deleted, green while the Providence stood, and is
-     * unsatisfiable now that the Providence has been deleted too — the player
-     * played both ship levels and asked for them gone, and `works()` in
-     * Levels.js is once again the only `BlastDoor` construction in the tree
-     * with no caller. A check that cannot pass is a check that gets deleted or
-     * ignored, and neither of those keeps the fact visible. So the floor is
-     * replaced by a REPORT: the machinery half is still asserted, every door a
-     * level does build is still validated, and the return line says out loud
-     * that nothing builds one. DESIGN.md §3 calls the twenty-second door hold a
-     * signature mechanic, so somebody reading this run should see it said. */
+     * AND THE FLOOR IS BACK. It was here, then it was demoted to a REPORT —
+     * "a check that cannot pass is a check that gets deleted or ignored" —
+     * because the Foundry and then the Providence were both deleted and
+     * `works()` in Levels.js was left as the only `BlastDoor` construction in
+     * the tree with no caller. It is satisfiable again: `magazine()` in
+     * Levels.js hangs a rank of three on Geonosis, outdoors, in a revetment cut
+     * into the toe of a stack, which is what FLAGSHIP.md §4 permits an interior
+     * to be. So the assertion goes back, and with it the sentence it always
+     * carried: unreachable content is the defect, not this assertion.
+     *
+     * `tools/checks/blast-door.mjs` is where the MECHANIC is measured — the
+     * seconds of the hold, what a swing does not do, what is behind the door.
+     * This clause only holds the line that a shipped level builds one. */
     const doorLevels = [];
     for (const key of LEVEL_ORDER) {
       const { world } = await level(key);
@@ -706,12 +706,12 @@ export async function run({ check, assert }) {
           `${key}: a door the blade solver cannot find (${d.capsules().length} capsules)`);
       }
     }
-    if (!doorLevels.length) {
-      return 'NO LEVEL IN THE GAME BUILDS A BLAST DOOR — `BlastDoor` (kerf texture, discard-through '
-        + 'hole, static collider, blade capsules, a breach that drops the slug) and `works()` in '
-        + 'Levels.js are finished content with no caller since the Providence was deleted. World.addDoor '
-        + `is live on all ${LEVEL_ORDER.length} levels and nothing calls it`;
-    }
+    assert(doorLevels.length >= 1,
+      'NO LEVEL IN THE GAME BUILDS A BLAST DOOR — `BlastDoor` (kerf texture, discard-through hole, '
+      + 'static collider, blade capsules, a breach that drops the slug) is finished content, '
+      + 'DESIGN.md calls the twenty-second hold a signature mechanic, and `World.addDoor` is live on '
+      + `all ${LEVEL_ORDER.length} levels with nothing calling it. Unreachable content is the defect `
+      + 'here, not this assertion');
     const { world } = await level(doorLevels[0]);
     return `${world.doors.length} blast doors on ${doorLevels[0]}, each a collider and `
       + `${world.doors[0].capsules().length} blade capsules`;

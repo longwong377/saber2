@@ -1182,10 +1182,21 @@ function works(world, opts = {}) {
    * IT IS ORPHANED AGAIN. The Providence was deleted at the player's request
    * along with the Boarding Bay — "I just tried the boarding bay and the
    * providence and hated them… just remove them" — so this function has no
-   * caller once more and `levels-quality`'s door check reports the fact in its
-   * pass line rather than asserting against it. The arguments below stay as
-   * arguments: they are what a SECOND caller costs, already paid, so the next
-   * room that wants bulkheads reuses this instead of rewriting it.
+   * caller once more. The arguments below stay as arguments: they are what a
+   * SECOND caller costs, already paid, so the next room that wants bulkheads
+   * reuses this instead of rewriting it.
+   *
+   * IT IS NO LONGER THE ONLY BLAST DOOR, AND THAT IS THE PART THAT MATTERED.
+   * `magazine()` below hangs a rank of three on Geonosis — outdoors, in a
+   * revetment cut into the toe of a stack, which is what FLAGSHIP.md §4 means
+   * by "an interior may exist as a feature on an outdoor field — a bunker you
+   * breach". `levels-quality`'s door check asserts again instead of reporting
+   * a hole, and the twenty-second hold DESIGN.md calls a signature mechanic is
+   * reachable in normal play for the first time. What is left orphaned here is
+   * the ROOM, not the mechanic, and this function is deliberately kept: it is
+   * the only bulkhead-and-gantry vocabulary in the tree, it is the sole call
+   * site left for `addGantry`, `addCableRun` and `roof`, and §4's own list of
+   * permitted interiors still includes "a downed cruiser you fight through".
    *
    * The Providence's deck is a
    * different size from the works' floor: its hull closes at 72 m in beam
@@ -1557,6 +1568,249 @@ function works(world, opts = {}) {
 
   if (opts.banner) world.notify(opts.banner, opts.note || '');
   return bays;
+}
+
+/**
+ * A HARDENED MAGAZINE DRIVEN INTO THE TOE OF A STACK — and it is where the
+ * twenty-second door hold went when the two ship levels were deleted.
+ *
+ * ── WHAT WAS WRONG ─────────────────────────────────────────────────────
+ *
+ * DESIGN.md names the hold twice and calls it a signature mechanic: "a blast
+ * door takes twenty seconds of held blade and a shower of molten slag — because
+ * that is how long it should take", and "you drive the blade in, a molten kerf
+ * traces the exact path you carve, slag runs down the metal, and when your
+ * traced loop closes the slug falls out and clangs. Twenty seconds of tension,
+ * entirely player-driven."
+ *
+ * NO LEVEL IN THE GAME HAD ONE. `works()` above is the only `BlastDoor`
+ * construction in the tree and it has had no caller since the Providence was
+ * deleted on the player's word; `levels-quality`'s door check has been printing
+ * "NO LEVEL IN THE GAME BUILDS A BLAST DOOR" in its pass line rather than
+ * asserting, because a check that cannot pass is a check that gets ignored.
+ * `World.doors` was allocated, stepped and handed to the blade solver every
+ * frame of every level and was empty on all seven of them.
+ *
+ * AND THE MECHANIC WOULD NOT HAVE WORKED IF ONE HAD BEEN BUILT. See the note
+ * over `BlastDoor.capsules` in src/world/Props.js: those capsules published
+ * `toughness: Infinity`, which is the solver's word for "unbreakable", so a
+ * blade held against a blast door raised a `clang` on every frame and could
+ * never raise the `grind` that `World._applyBladeEvent` turns into `burn()`.
+ * Every line of the kerf, the slag, the hole and the falling slug was
+ * unreachable. That is fixed there rather than worked around here.
+ *
+ * ── WHY OUTDOORS, AND WHY HERE ─────────────────────────────────────────
+ *
+ * FLAGSHIP.md §4 is the standing rule and the player's own words are in it:
+ * "No completely indoor places. Ever." The clause that follows is this
+ * function's whole licence — "An interior may exist as a *feature on an
+ * outdoor field* — a bunker you breach, a downed cruiser you fight through, a
+ * gun emplacement — but the player must always be able to see out, and no
+ * engagement may take place in a sealed room." So the cells are 5 m deep and
+ * 3.3 m open at the mouth: you step in, the plain and both armies are still
+ * behind you, and there is no door between you and the sky. Measured, a real
+ * Player who walks in through a breached door ends 4.2 m past the plate with
+ * the whole apron behind them.
+ *
+ * ── THE SITE IS THE GROUND'S, NOT AN INVENTION ─────────────────────────
+ *
+ * Geonosis is a deflation plain and its heightfield says so in one line:
+ * `open = smoothstep(66, 106, d)` gates every landform on the map, so NOTHING
+ * on this level rises inside 66 m by construction. Measured over the whole
+ * disc inside 66 m, total relief is 1.75 m (−1.26 at (27, 1) to +0.49 at
+ * (−66, −1)) and the steepest fall anywhere in it is 0.85 m over 11 m. There
+ * is no bank to dig into closer in, and a bunker standing on a berm of its own
+ * invention on a flat plain is a box on a table.
+ *
+ * The toe of the stack north-east of the muster ground is the nearest real
+ * face. Swept over 25 000 placements — face position, face bearing — this one,
+ * and every figure below is off the BUILT heightfield rather than off the
+ * preset's `height()` (the grid is 1.82 m a cell here, which moves a steep toe
+ * by more than a metre — the raw function reads the cut at 2.5 m and the ground
+ * the player stands on has it at 4.1):
+ *
+ *     origin (16, 75), bearing 165°, ground −0.21 m
+ *     relief along the 13.7 m the doors stand on  0.10 m  (dead level)
+ *     ground 5.5 m INTO the hill                 +4.15 m  (the cut)
+ *     ground 10 m into the hill                 +19.2 m   (the butte over it)
+ *     relief across the apron 8 m out             0.11 m  (a floor to fight on)
+ *     range from the muster ground               76.7 m   (inside the walkable
+ *                                                          90 m disc, outside
+ *                                                          the 40 m the level
+ *                                                          keeps clear to form
+ *                                                          up on)
+ *
+ * The cells are 5 m deep because that is where the hill starts: the floor of a
+ * cell is the RAW GROUND, flat at −0.2 m for the first 3 m and then climbing —
+ * +0.3, +0.8 and +1.3 m at the back of the three cells — which is what being
+ * cut into a toe looks like from the inside. Nothing here levels the terrain.
+ *
+ * ── IT DRAWS NOTHING FROM THE LEVEL'S RANDOM STREAM ────────────────────
+ *
+ * Deliberately, and it is why this call sits at the END of `dress` with fixed
+ * coordinates and its own `makeRng`. Every other feature on this level is
+ * placed through `findSite`, which draws from the module `rng` on every
+ * attempt; a new call that reserved a footprint or drew a site would shift
+ * every subsequent draw and move all 41 props and 14 wrecks on Geonosis. The
+ * whole existing layout is byte-for-byte what it was. Measured on the shipped
+ * dressing, the nearest thing already standing is a single loose crate 4.6 m
+ * from the middle of the face, which lands 1.7 m in FRONT of the left-hand
+ * door — ordnance already carried out, and clear of every collider here.
+ *
+ * ── WHAT MAKES IT A FIGHT AND NOT A CHORE ──────────────────────────────
+ *
+ * Three doors, not one. `levels-quality` states the rule — "a level that
+ * builds bulkheads builds a rank of them" — and it is also the better play: a
+ * magazine has cells, each cell is its own twenty seconds, and you choose
+ * whether to spend a second twenty with the field the way it is. Each holds a
+ * cache: a crate stack, drums, and `WarSupport.credit('objective')` on breach,
+ * which is 14 of the 100-point bar. That is the diegetic reading of the
+ * player's own note about the bar — "the level of outside support and
+ * resources that have built up" — taking the other side's stores raises yours.
+ *
+ * The two wing walls on the apron are the shape of the fight. They stand 11 m
+ * out on either flank at 40°, so the ground in front of the doors is a defile:
+ * while you are stood facing a wall for twenty seconds with your back open, the
+ * arc that back is open to is the one you can see over your shoulder rather
+ * than 360°. Take them away and the hold is a mugging.
+ *
+ * The roof deck is the other half. Its top is 5.34 m over the apron, and a full
+ * double Force jump was measured headless at 6.18 m above the take-off point,
+ * so it is 0.84 m inside the highest jump in the game — the same margin the
+ * gantry note above derives, and for the same reason: a deck you cannot reach
+ * is furniture. From it you can see over the wing walls and down onto anything
+ * working its way up the defile.
+ *
+ * @returns the doors it hung, so the caller can say how many there are.
+ */
+function magazine(world, opts = {}) {
+  const T = world.terrain;
+  const M = propMaterials();
+  const seed = opts.seed ?? 9180;
+  const rr = makeRng(seed * 5 + 3);
+  const V = (x, y, z) => new THREE.Vector3(x, y, z);
+
+  /* THE FACE, AND EVERY NUMBER ON IT IS ONE OF FOUR.
+   *
+   * A door is 3.3 × 3.4 — a magazine door, well under `BlastDoor`'s own
+   * 4.4 × 5.0 default, because this one stands in a revetment and not in a
+   * ship's frame. The piers between and either side of the three of them are
+   * 1.9, which is what carries an 18 m deck, so the face is
+   * 4 × 1.9 + 3 × 3.3 = 17.5 m and the two ends of it land at ±8.75.
+   *
+   * THE SIZE IS ALSO WHAT MAKES THE HOLD FINISHABLE, which is not obvious and
+   * cost a measurement. `breachFraction` is a fraction of the PLATE, while the
+   * loop a standing player can trace is a fixed patch of about 2.3 × 1.4 m —
+   * the blade's own reach, and no bigger on a bigger door. At 4.0 × 4.4 the
+   * breach wanted 29% of everything the player could reach melted right
+   * through, and it sat on a knife edge: measured over three loop shapes on the
+   * three doors of one build, two of the nine runs saturated just short (879
+   * and 772 of the 901 texels) and never opened at all. At 3.3 × 3.4 the same
+   * loop has to melt 17% of its own reach and all nine open. A door a player
+   * can only sometimes get through is worse than one they never can, because
+   * the failure looks like their fault. */
+  const DOOR_W = 3.3, DOOR_H = 3.4, DOOR_T = 0.42;
+  const PIER = 1.9, FACE_H = 5.0, WALL_D = 1.4, CELL_D = 5.0;
+  const HW = PIER * 2 + DOOR_W * 1.5;                 // 8.75
+  const bays = [-(DOOR_W + PIER), 0, DOOR_W + PIER];  // −5.2, 0, +5.2
+
+  const pos = V(opts.x ?? 16, 0, opts.z ?? 75);
+  pos.y = T.height(pos.x, pos.z);
+  const yaw = opts.yaw ?? (165 * Math.PI / 180);
+  /* KIT SPACE INTO WORLD SPACE, the same rotation `island` applies to the
+   * geometry it is handed — local +z is the way the doors look, local +x runs
+   * along the face. Written out once here because the doors and the caches are
+   * placed as WORLD objects after the shell is emitted, and a second copy of
+   * this transform that disagreed with `island`'s would put them somewhere
+   * else entirely. */
+  const cs = Math.cos(yaw), sn = Math.sin(yaw);
+  const at = (x, z, dy = 0) => {
+    const wx = pos.x + x * cs + z * sn, wz = pos.z - x * sn + z * cs;
+    return V(wx, T.height(wx, wz) + dy, wz);
+  };
+
+  island(world, pos, { seed, yaw, span: 24, maker: 'magazine', destructible: 'duracrete' },
+    (kit) => {
+      // the four piers, and each one is also the side wall of the cells beside
+      // it: one box does both jobs, which is why a cell needs no wall of its own
+      for (const px of [-(HW - PIER / 2), -(DOOR_W + PIER) / 2, (DOOR_W + PIER) / 2, HW - PIER / 2]) {
+        kit.slab(M.duracrete, PIER, FACE_H, CELL_D, px, FACE_H / 2, -CELL_D / 2,
+          { tile: 2.6, seg: 3 });
+      }
+      // the lintel over all three openings — the band that makes it a face
+      kit.slab(M.duracrete, HW * 2, FACE_H - DOOR_H, WALL_D, 0, (FACE_H + DOOR_H) / 2, -WALL_D / 2,
+        { tile: 2.6, seg: 3 });
+      // the back of the magazine, half swallowed by the hill it is cut into
+      kit.slab(M.duracrete, HW * 2, FACE_H, 0.6, 0, FACE_H / 2, -CELL_D - 0.3, { tile: 2.6, seg: 3 });
+      // …and the deck over the lot, which is the roof of the cells and the
+      // firing step on top of them
+      kit.slab(M.hull, HW * 2 + 0.8, 0.34, CELL_D + 1.2, 0, FACE_H + 0.17, -CELL_D / 2 + 0.3,
+        { tile: 2.4, seg: 3 });
+      // a course of bleached facing along the deck edge, so the top reads as a
+      // parapet rather than as a lid
+      kit.slab(M.duracreteWarm, HW * 2 + 0.8, 0.22, 0.5, 0, FACE_H + 0.45, 0.6,
+        { tile: 1.8, collide: false });
+
+      /* THE WING WALLS. 11.4 m out on each flank, turned 40° so they close the
+       * approach into a defile rather than standing as two loose slabs. Height
+       * 2.4: over a standing body and under a Force jump, which is the height
+       * every blast wall in this file is. */
+      for (const side of [-1, 1]) {
+        kit.slab(M.duracrete, 6.0, 2.4, 0.7, side * 11.4, 1.1, 3.0,
+          { tile: 2.4, seg: 3, ry: side * 0.70 });
+        kit.slab(M.duracreteWarm, 6.2, 0.2, 0.9, side * 11.4, 2.36, 3.0,
+          { tile: 1.8, ry: side * 0.70, collide: false });
+      }
+
+      /* The spoil. A cut this size leaves its own rubble banked at the foot,
+       * and it is what beds a straight-edged revetment into a plain. */
+      addScree(world, V(0, 0, 2.6), { kit, radius: 13.5, inner: 8.5, count: 150,
+        seed: seed + 40, size: 0.20, mat: M.duracreteDark });
+      addSign(world, V(-(DOOR_W + PIER) / 2, 0, 0.85), { kit, width: 1.7, mount: 2.6, seed: seed + 60 });
+    });
+
+  /* ── THE DOORS, AND WHAT IS BEHIND EACH ONE ──────────────────────────
+   *
+   * Hung as world objects after the shell is emitted, because a `BlastDoor` is
+   * not kit geometry — it owns a shader, a data texture, a collider and a
+   * per-frame update, and `World.addDoor` is what puts it in front of the blade
+   * solver. The plate stands in the middle of the 1.4 m reveal at z = −0.7, so
+   * the merged jamb is buried in the pier on both sides and the wall's own
+   * colliders stop at the jamb rather than running through the doorway.
+   */
+  const doors = [];
+  for (let i = 0; i < bays.length; i++) {
+    const cx = bays[i];
+    const g = at(cx, -0.7);
+    const door = new BlastDoor(world, {
+      position: V(g.x, g.y + DOOR_H / 2, g.z),
+      quaternion: new THREE.Quaternion().setFromAxisAngle(V(0, 1, 0), yaw),
+      width: DOOR_W - 0.06, height: DOOR_H - 0.06, thickness: DOOR_T, color: 0x6a6f78,
+      onBreach: () => {
+        /* WHAT THE TWENTY SECONDS BUY. `SUPPORT_EARN.objective` is 14 of the
+         * 100-point bar — a quarter of what an orbital strike costs — and it is
+         * credited to the SIDE rather than to the body, which is the whole
+         * point of the pool: "it shows the level of outside support and
+         * resources that have built up". Taking the other army's magazine is
+         * the most literal instance of that sentence in the game. */
+        world.support?.credit('objective');
+        world.notify('MAGAZINE BREACHED', 'ordnance taken — support up');
+      },
+    });
+    world.addDoor(door);
+    doors.push(door);
+
+    /* …and the cache it is a door for, on the flat part of the cell floor
+     * 2.8 m in, where the ground has not started to climb yet. Ammunition
+     * crates and drums: `makeBarrel` builds an explosive prop, so a stray bolt
+     * into an open cell does what a stray bolt into a magazine should. */
+    addCrateStack(world, at(cx - 0.75, -3.0), { seed: seed + 100 + i * 7, count: 6,
+      tiers: 3, columns: 2, dynamic: 3, yaw: yaw + rr() * 0.4 - 0.2 });
+    makeBarrel(world, at(cx + 1.2, -1.9));
+    makeBarrel(world, at(cx + 1.15, -2.8));
+    makeBarrel(world, at(cx + 0.55, -3.5));
+  }
+  return doors;
 }
 
 /**
@@ -3965,6 +4219,24 @@ LEVELS.geonosis = {
      */
     strewGround(world, { seed: 9140, radius: 235, spread: 0.30, mat: M.stone,
       landmarks: 3.4, boulders: 1.3, cobble: 1.2 });
+
+    /**
+     * AND THE ONE PLACE ON THE MAP YOU HAVE TO CUT YOUR WAY INTO.
+     *
+     * See `magazine()` above for the site, the measurements and the mechanic it
+     * carries. It is LAST in this pass and it takes nothing from the module
+     * random stream, so every other object on this level stands exactly where
+     * it stood before there was a magazine on it — which is what made this
+     * addable to a shipped level at all.
+     *
+     * It is on Geonosis and not on one of the other six because this is the
+     * only level whose fiction is a war that was already running before you
+     * arrived — "the hulls are the level's own history" — and a magazine
+     * somebody else stocked is the same sentence. It is also the only ground
+     * with a real face to drive one into inside the walkable disc: see the
+     * relief figures in that note.
+     */
+    magazine(world, { seed: 9180 });
     return 12;
   },
 };

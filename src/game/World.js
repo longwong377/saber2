@@ -3601,6 +3601,29 @@ export class World {
       this.onHitmark?.(ev.point, t.player.alive ? 'cut' : 'kill', ev.bone);
       P.cutFlare(ev.point, null, player.saber.color.getHex(), 18);
       audio.cut(ev.point, false);
+    } else if (t.door) {
+      /**
+       * A DOOR'S "CUT" IS STILL A BURN — otherwise a frame of the hold is
+       * thrown away every five seconds.
+       *
+       * A blast door's capsules are `structure` capsules with
+       * `TOUGHNESS.blastdoor` on them (see `BlastDoor.capsules`), so the solver
+       * accumulates press work against them exactly as it does against a
+       * column: `dWork = speed·dt·WORK_RATE`, and `cutNeed` for a blast-door
+       * capsule is 110 — a few seconds of a swing's contact, and reachable by a
+       * long hold too. On the frame that budget fills the solver emits `cut`
+       * INSTEAD of `grind`, and the grind branch above is where `burn()` lives,
+       * so the door lost that frame's melt and took a 0.14 s cooldown on the
+       * capsule on top of it.
+       *
+       * There is nothing to sever here: a door is one plate and the thing that
+       * happens when you get through it is `breach()`, which `burn()` decides
+       * for itself off the kerf map. So the frame's work is spent the same way
+       * every other frame of the hold spends it, and the fall-through below
+       * (which did nothing at all for a door) is gone.
+       */
+      t.door.burn(ev.point, ev.speed * player.boonMods.cutPower, dt);
+      P.slag(ev.point, _v1.subVectors(ev.point, player.saber.base).normalize(), 0xffb040);
     } else if (t.prop) {
       const halves = t.prop.cut(ev.point, ev.normal, ev.impulse);
       if (!halves) t.prop.shatter(ev.impulse, ev.point);
