@@ -628,5 +628,134 @@ export async function run({ check, assert }) {
       + ` of ${SESSION_PLANS.length} plans`;
   });
 
+  /* ══════════════════════════════════════════════════════════════════ */
+  /*  What one engagement costs                                         */
+  /* ══════════════════════════════════════════════════════════════════ */
+
+  check('theline.12 an engagement fought without the Jedi costs about half the line', async () => {
+    /**
+     * THE TARGET IS THE PLAYER'S, IN THEIR OWN WORDS: "an engagement fought
+     * with no help from the Jedi should cost roughly HALF a ten-man line —
+     * about 5 of 10. So the muster matters, and the player's presence is the
+     * difference between holding and folding."
+     *
+     * This is the only thing in the tree that binds it. Until §16.3 was fixed
+     * `World._boltHitTest` skipped its entire enemy loop for hostile bolts and
+     * your own troopers live in that array, so no rifle on the other side could
+     * touch your army and every number ever taken about the line's survival
+     * described a line that could not be shot. The rate at which it can now be
+     * shot is a tuning surface with nothing standing on it, and a mode scored
+     * on survivors cannot afford that: at one end the roster is gone before the
+     * first muster and the mode is unwinnable, at the other nobody dies and the
+     * name list — §13's second spine, "it only shrinks and it is on the HUD
+     * every second" — never moves.
+     *
+     * ── FOUR THINGS THE FIXTURE HAS TO GET RIGHT, EACH OF WHICH WAS WRONG
+     *    IN AN EARLIER READING ───────────────────────────────────────────
+     *
+     * ONE ENGAGEMENT IS ONE AREA. `stages[0]` is three waves and the muster is
+     *   what an area boundary opens; a per-wave reading prices a third of the
+     *   thing the target is about.
+     *
+     * THE MUSTER MUST BE HELD OPEN TO BE SEEN AT ALL. `_areaClear` ends with
+     *   "no screen wired: muster for the player and press on" — `autoMuster()`
+     *   then `closeMuster()`, both inside one `payWave` call — so `mustering`
+     *   is true for less than a frame and a poll for it never fires. Every
+     *   reading taken that way ran on into area 2 and reported the roster at
+     *   whatever wipe it eventually hit, which is where "the roster is wiped in
+     *   wave 1 and the muster is unreachable" came from. A no-op `onMuster` is
+     *   what a player's screen is to the director.
+     *
+     * THE ARM IS NO PLAYER AT ALL, AND NOT AN IDLE ONE. Measured over the same
+     *   five seeds: a line with nobody on the field holds four areas of five;
+     *   the same line with an idle player standing in it is wiped on five of
+     *   five. An idle Jedi held on his feet is an unkillable target on the
+     *   deploy mark and `Levy.installLevyAim` points forty conscripts at
+     *   whatever blade is on the field, so that arm measures a magnet rather
+     *   than an absence. Levy.js: "an idle Jedi is not a Jedi; it is a corpse
+     *   with a delay."
+     *
+     * GEONOSIS, NAMED. The mode rolls its ground off the seed (theline.11) and
+     *   this is the only one carrying the levy and the gun pit — the two
+     *   sources of fire the wave's threat budget never pays for, and five of
+     *   the eight names an engagement costs. A check that let the seed choose
+     *   would average seven different fights and report the mean as one.
+     *
+     * ── WHY THE BAND IS THIS WIDE, WHICH IS A MEASUREMENT AND NOT A HEDGE ──
+     *
+     * Run-to-run spread on this fixture is enormous and it is not the harness:
+     * a single engagement is one composed wave meeting one formation, and one
+     * grenade or one Hailfire arriving early is two or three names. Across
+     * every five-seed arm taken on this ground the per-run spread of survivors
+     * ran 0 to 7 with a standard deviation near two, so a three-seed mean
+     * carries a standard error of about 1.2. `HALF` is the target and `SLACK`
+     * is a shade over two of those standard errors either side of it: wide
+     * enough that a build on target passes essentially always, narrow enough
+     * that the two failures worth catching cannot hide in it — a mode whose
+     * army is gone before its first muster, and one where nobody dies.
+     *
+     * The three seeds are named rather than rolled for the reason
+     * `theline.11`'s ground sweep names its own: a check that draws a fresh
+     * seed each run reports a different number every time it is looked at.
+     * Their absolute values are NOT reproducible against `tools/_linehold.mjs`
+     * seed for seed — `World.js` holds one module-level `rng` for the whole
+     * process with no reseeder, so the phase depends on what ran before — which
+     * is the other half of why this asserts a band on a mean rather than a
+     * figure on a run.
+     */
+    const HALF = Cmd.OPENING_STRENGTH / 2;
+    const SLACK = 2.5;
+    const SEEDS = [1, 2, 3];
+    const { enemyRng } = await import('../../src/game/Enemy.js');
+    const rows = [];
+    for (const seed of SEEDS) {
+      /* From a stated phase, the same way `levy.mjs` does it, so this check at
+       * least agrees with itself between runs of the suite. XORed with a large
+       * constant because the seeds are literally 1, 2, 3 and adjacent small
+       * seeds put this stream in nearly the same place. */
+      enemyRng.seed((20260821 ^ Math.imul(seed, 2654435761)) >>> 0);
+      Waves.seedWaves((20260821 ^ Math.imul(seed, 40503)) >>> 0);
+      const { world, d, input } = await lineWorld({ seed, spawn: false });
+      d.onMuster = () => {};
+      assert(d.roster.strength === Cmd.OPENING_STRENGTH,
+        `seed ${seed}: the roll mustered ${d.roster.strength}`);
+      const t = drive(world, 600, input,
+        () => d.mustering || world.over || d.roster.strength === 0);
+      const kills = d.roster.all.reduce((n, x) => n + x.kills, 0);
+      /* THE LINE HAS TO HAVE FOUGHT. A survivor count off a line nothing
+       * reached is a reading about a quiet corner, which is the same trap
+       * `command.mjs`'s fire-discipline check names when it insists its
+       * reference condition is a firefight at all. */
+      assert(kills > 0,
+        `seed ${seed}: ${d.roster.strength} of ${Cmd.OPENING_STRENGTH} stood for ${t.toFixed(0)}s `
+        + 'without the line killing anything — this fixture is not an engagement');
+      rows.push({ seed, left: d.roster.strength, t, kills, held: !!d.mustering });
+      world.unload();
+    }
+    const left = rows.map((r) => r.left);
+    const mean = left.reduce((a, b) => a + b, 0) / left.length;
+    const held = rows.filter((r) => r.held).length;
+    assert(mean >= HALF - SLACK,
+      `${SEEDS.length} engagements fought with no Jedi on the field left ${mean.toFixed(1)} of `
+      + `${Cmd.OPENING_STRENGTH} standing on average [${left.join(' ')}] — the target is about half `
+      + 'a line, and a line this far under it means the muster is never reached and the mode cannot '
+      + 'be won. The two things to look at first are the sources of fire the wave\'s threat budget '
+      + 'does not pay for: src/game/Emplacement.js and src/game/Levy.js.');
+    assert(mean <= HALF + SLACK,
+      `${SEEDS.length} engagements with no Jedi on the field left ${mean.toFixed(1)} of `
+      + `${Cmd.OPENING_STRENGTH} standing [${left.join(' ')}] — an engagement nobody dies in makes `
+      + 'the name list decoration and the muster a screen with nothing on it. FLAGSHIP §13 calls '
+      + 'that list the mode\'s second spine on the grounds that it only ever shrinks.');
+    /* AND THE AREA HAS TO BE REACHABLE, which is the half of the target the
+     * mean cannot state: a run that is wiped in wave 2 and one that holds the
+     * ground with two men both leave a small number standing. */
+    assert(held >= 1,
+      `none of ${SEEDS.length} engagements reached its muster — the between-areas beat the mode is `
+      + 'built around is unreachable in play whatever the survivor count says');
+    return rows.map((r) => `seed ${r.seed}: ${r.left}/${Cmd.OPENING_STRENGTH} in ${r.t.toFixed(0)}s`
+      + `${r.held ? '' : ' (wiped)'}`).join(' · ')
+      + ` — mean ${mean.toFixed(1)} against a target of ${HALF} ± ${SLACK}, ${held}/${SEEDS.length} held`;
+  });
+
   return;
 }
