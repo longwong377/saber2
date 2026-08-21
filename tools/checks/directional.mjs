@@ -22,7 +22,7 @@ import * as THREE from 'three';
 import { Saber } from '../../src/game/Saber.js';
 import {
   SaberController, ZONE, ZONE_POSE, ZONE_ROSE, ZONE_ORDER, GUARD, PARRY,
-  SPIN, SLASH, CHARGE, aimAngles, zoneOfRose, zoneOfDir, roseDelta,
+  SPIN, SLASH, CHARGE, HEAVY, GX_MAX, aimAngles, zoneOfRose, zoneOfDir, roseDelta,
 } from '../../src/game/SaberController.js';
 import { BoltPool, guardIntercept, guardZoneOf } from '../../src/game/Bolts.js';
 import {
@@ -1001,24 +1001,34 @@ export async function run({ check, assert }) {
     return `${rows.join(', ')}; every one lands back on its own zone`;
   });
 
-  check('attack: a spin sweeps SIDEWAYS and turns the body through the cut', () => {
+  check('attack: the spin is a DRILL — the blade is out in front and the body turns round it', () => {
     /**
-     * THE SPIN IS THE OVERHEAD WITH THE AXES EXCHANGED, and the two claims
-     * that make it a different attack rather than a second button are both
-     * measured here.
+     * WHAT THIS CHECK USED TO ASSERT, AND WHY IT IS THE OPPOSITE NOW.
      *
-     * IT IS LATERAL. If the sweep showed up on `gy` it would be an overhead
-     * with a longer cooldown. The travel is compared against the overhead's
-     * own on the SAME rig, so this cannot pass by the spin being feeble in
-     * both axes.
+     * It held the spin to being a LATERAL SWEEP that turned the camera through
+     * one full revolution: `across > up * 3` on the guard, and `yaw` summing to
+     * exactly `SPIN.yaw`. Both were the right assertions for the attack that
+     * existed — the overhead's arc laid on its side, with the carrier turning
+     * through it.
      *
-     * IT TURNS YOU. A horizontal sweep with the feet planted is a slash, and
-     * the controller already has one. `cam.yaw` accumulated over the cut is
-     * what makes the blade reach what is BESIDE you, and it has to be spent on
-     * the cut and nowhere else — a wind-up that moved the view would read as a
-     * shove on the mouse.
+     * The player's verdict on that attack: "the spin attack just moves your
+     * camera and is mostly ineffective in battle, I've already told you what
+     * this needs to be multiple times" — and, in the same breath, "since your
+     * stab attack also currently sucks right now I want you to merge the spin
+     * and the stab together, so the spin/stab will be like you hold the saber
+     * out in front of you and spin like a missile for a short duration in any
+     * direction you choose".
      *
-     * And it gives the guard back, for the reason the overhead's note gives.
+     * So the move is a DRILL and every claim inverts:
+     *
+     *   THE BLADE DOES NOT SWEEP. It goes to the centreline and is held there,
+     *     extended, for the whole move — a lance, not a windmill. A sweep is
+     *     what put the point a metre off the hip and reached two of eighteen.
+     *   THE BODY TURNS AND THE VIEW MOSTLY DOES NOT. `bodyYaw` carries the
+     *     revolutions; `spinYaw` is `SPIN.viewShare` of it. Spending the whole
+     *     turn on the camera is the defect being removed.
+     *   AND THE ARM EXTENDS, which is the stab half of the merge and is the
+     *     thing that makes the point the leading edge of the travel.
      */
     const r = rig('directional');
     const s = blade();
@@ -1029,34 +1039,48 @@ export async function run({ check, assert }) {
     const gx0 = r.c.gx, gy0 = r.c.gy;
 
     r.input._hit.add('attackSpin');
-    let tip = 0, xlo = 9, xhi = -9, ylo = 9, yhi = -9, yaw = 0, windYaw = 0, frames = 0;
-    for (let i = 0; i < 80; i++) {
-      const cam = r.step();
+    let xlo = 9, xhi = -9, body = 0, view = 0, windView = 0, frames = 0, reach = 0, centre = 0;
+    for (let i = 0; i < 90; i++) {
+      r.step();
       s.setHiltPose(r.c.handPos, r.c.quat); s.update(1 / 60, (80 + i) / 60);
-      tip = Math.max(tip, s.speedAt(1));
       if (r.c.spinT >= 0) {
         frames++;
         xhi = Math.max(xhi, r.c.gx); xlo = Math.min(xlo, r.c.gx);
-        yhi = Math.max(yhi, r.c.gy); ylo = Math.min(ylo, r.c.gy);
-        yaw += Math.abs(r.c.spinYaw);
-        if (r.c.spinT < SPIN.wind) windYaw += Math.abs(r.c.spinYaw);
+        body += Math.abs(r.c.bodyYaw);
+        view += Math.abs(r.c.spinYaw);
+        if (r.c.spinT < SPIN.wind) windView += Math.abs(r.c.spinYaw);
+        reach = Math.max(reach, r.c.thrust * r.c.thrustGain);
+        /* How far off the centreline the guard sits at the height of the move.
+         * A drill holds it ON the line; a sweep is defined by not doing that. */
+        if (r.c.spin > 0.6) centre = Math.max(centre, Math.abs(r.c.gx));
       }
     }
     assert(frames > 0, 'the spin never started');
-    assert(tip > 8, `the spin peaked the tip at ${tip.toFixed(1)} m/s, under the 8 m/s a swing needs`);
-    const across = xhi - xlo, up = yhi - ylo;
-    assert(across > 1.2, `the spin only travelled ${across.toFixed(2)} units across`);
-    assert(across > up * 3,
-      `the spin moved ${across.toFixed(2)} across and ${up.toFixed(2)} up — that is not a lateral sweep`);
-    assert(Math.abs(yaw - SPIN.yaw) < 0.05,
-      `the body turned ${yaw.toFixed(2)} rad through the spin against SPIN.yaw ${SPIN.yaw}`);
-    assert(windYaw < 1e-6,
-      `${windYaw.toFixed(3)} rad of the turn was spent winding up — the view must not move before the cut`);
+    /* THE BLADE IS ON THE CENTRELINE. `GX_MAX` is 1.0, so a sweep reaches ±1;
+     * a quarter of that at the height of the move is a lance. */
+    assert(centre < 0.30,
+      `the guard sat ${centre.toFixed(2)} off the centreline at full commitment — this is the windmill again`);
+    const across = xhi - xlo;
+    assert(across < 0.9, `the guard travelled ${across.toFixed(2)} units across — a drill does not sweep`);
+    /* THE BODY TURNS, SEVERAL TIMES. */
+    assert(body > SPIN.yaw * 1.5,
+      `the body turned ${body.toFixed(2)} rad against ${(SPIN.yaw * SPIN.turns).toFixed(2)} asked for`);
+    /* AND THE VIEW TAKES A FRACTION OF IT. */
+    assert(view < body * 0.6,
+      `the view took ${(view / Math.max(1e-6, body) * 100).toFixed(0)}% of the body's turn — that is the `
+      + '"just moves your camera" the move was rebuilt to stop being');
+    assert(windView < 1e-6,
+      `${windView.toFixed(3)} rad of the turn was spent winding up — the view must not move before the cut`);
+    /* AND THE ARM IS OUT. `SPIN.reach` is the drill's own thrust gain, past the
+     * light cut's 0.30, so the point leads the travel. */
+    assert(reach > SPIN.reach * 0.8,
+      `the blade reached ${reach.toFixed(2)} of extension against SPIN.reach ${SPIN.reach} — "you hold the `
+      + 'saber out in front of you"');
     assert(Math.abs(r.c.gx - gx0) < 0.02 && Math.abs(r.c.gy - gy0) < 0.02,
       `the spin left the guard at (${r.c.gx.toFixed(3)}, ${r.c.gy.toFixed(3)}) instead of back on `
       + `(${gx0.toFixed(3)}, ${gy0.toFixed(3)})`);
-    return `${tip.toFixed(1)} m/s over ${across.toFixed(2)} units across and ${up.toFixed(2)} up, `
-      + `${yaw.toFixed(2)} rad of body turn, all of it inside the cut`;
+    return `${body.toFixed(2)} rad of body turn against ${view.toFixed(2)} of view, guard `
+      + `${centre.toFixed(2)} off centre, blade out to ${reach.toFixed(2)}`;
   });
 
   check('attack: holding the overhead makes the blade genuinely faster', () => {
@@ -1117,27 +1141,136 @@ export async function run({ check, assert }) {
       + `held ${held.tip.toFixed(1)} m/s over ${held.arc.toFixed(2)} units in ${held.dur.toFixed(2)}s`;
   });
 
-  check('attack: both attack inputs run ONE lunge envelope, and only the button cuts', () => {
+  check('attack: the left cut is WIDE and LEVEL, and three presses are a sequence', () => {
     /**
-     * THE PREMISE OF THIS CHECK EXPIRED, and the measurement that expired it
-     * is the one the player made by playing:
+     * TWO CLAUSES OF ONE NOTE, and neither was true of the attack that existed.
      *
-     *   "the left click attacks barely do anything, like it's the slightest
-     *    movement of the saber"
+     *   "the left click slash is better and more violent but it needs to cut
+     *    horizontally in a wide arc (without moving your camera), obviously
+     *    pressing it closely in succession will do like an attack sequence of
+     *    some sort, maybe like three clicks will be two light attacks and then a
+     *    heavy slash you can hold and release for more power idk"
      *
-     * It used to assert that `thrust` and `attackStab` reached the same TIP
-     * DISTANCE, under the title "a stab is a stab, not a directional feature",
-     * and that was right while the left button was a stab and nothing else.
-     * The left button is a CUT now (`SLASH`) with the lunge inside it, so tip
-     * distance can no longer be the instrument: measured across the change,
-     * the wheel reaches 53 cm and the button 158 cm, and 105 cm of that is the
-     * cut the button is supposed to have.
+     * WIDE AND LEVEL. The cut was a descending diagonal — 1.27 units across
+     * against 1.20 DOWN, very nearly 45°, which is a chop. `GX_MAX` is 1.0 so
+     * the guard box is 2.0 wide and the old cut used 63% of it. It is measured
+     * here as a RATIO rather than as an absolute, so a future guard that grows
+     * cannot make a narrow cut pass by growing the box under it.
      *
-     * The claim underneath it has NOT expired and is asserted harder here, on
-     * the envelope itself rather than on a proxy that a second attack can move:
-     * there is ONE thrust envelope in this file and both inputs run it, frame
-     * for frame. What differs is `thrustGain` — how much of that envelope the
-     * hands are given — and whether a cut runs alongside.
+     * A SEQUENCE. Three presses inside `SLASH.chain` are light, light, HEAVY —
+     * and the third does not swing on the press. It chambers, and it goes when
+     * the button comes up, which is the only part of the note that is a state
+     * rather than a number.
+     */
+    const fresh = () => {
+      const c = new SaberController({ scheme: 'directional' });
+      const aim = new THREE.Quaternion();
+      c.reset(CHEST, aim);
+      const input = mkInput();
+      for (let i = 0; i < 90; i++) { c.applyInput(input, 1 / 60, { stamina: 1 }); c.update(1 / 60, CHEST, aim, {}); }
+      return { c, aim, input };
+    };
+    /** Fire one press and run the swing out, reporting the guard's extent. */
+    const swing = ({ c, aim, input }, frames = 40) => {
+      input._hit.add('thrust');
+      let xlo = 9, xhi = -9, ylo = 9, yhi = -9, n = 0;
+      for (let i = 0; i < frames; i++) {
+        c.applyInput(input, 1 / 60, { stamina: 1 });
+        input._hit.clear();
+        c.update(1 / 60, CHEST, aim, {});
+        if (c.slashT >= 0) {
+          n++;
+          xhi = Math.max(xhi, c.gx); xlo = Math.min(xlo, c.gx);
+          yhi = Math.max(yhi, c.gy); ylo = Math.min(ylo, c.gy);
+        }
+      }
+      return { across: xhi - xlo, down: yhi - ylo, frames: n };
+    };
+
+    /* ── WIDE AND LEVEL ────────────────────────────────────────────────── */
+    const one = swing(fresh());
+    assert(one.frames > 6, `the cut ran ${one.frames} frames`);
+    assert(one.across > GX_MAX * 1.5,
+      `the cut travelled ${one.across.toFixed(2)} units across a ${(GX_MAX * 2).toFixed(1)}-unit guard — `
+      + '"it needs to cut horizontally in a wide arc"');
+    assert(one.across > one.down * 2.2,
+      `the cut moved ${one.across.toFixed(2)} across and ${one.down.toFixed(2)} down — that is a chop, not `
+      + 'a horizontal arc');
+
+    /* ── THE SEQUENCE ──────────────────────────────────────────────────── */
+    const r = fresh();
+    const press = (held) => {
+      r.input._hit.add('thrust');
+      if (held) r.input._held.add('thrust'); else r.input._held.delete('thrust');
+      r.c.applyInput(r.input, 1 / 60, { stamina: 1 });
+      r.input._hit.clear();
+      r.c.update(1 / 60, CHEST, r.aim, {});
+    };
+    const idle = (n, held = false) => {
+      if (held) r.input._held.add('thrust'); else r.input._held.delete('thrust');
+      for (let i = 0; i < n; i++) {
+        r.c.applyInput(r.input, 1 / 60, { stamina: 1 });
+        r.c.update(1 / 60, CHEST, r.aim, {});
+      }
+    };
+    press(false); assert(r.c.comboStep === 0, `press 1 opened at step ${r.c.comboStep}`);
+    assert(r.c.slashT >= 0 && !r.c.isHeavy, 'press 1 did not swing a light cut');
+    idle(20);
+    press(false); assert(r.c.comboStep === 1, `press 2 landed on step ${r.c.comboStep}`);
+    assert(r.c.slashT >= 0 && !r.c.isHeavy, 'press 2 did not swing a light cut');
+    idle(20);
+    /* PRESS 3 CHAMBERS AND DOES NOT SWING. */
+    press(true);
+    assert(r.c.comboStep === 2, `press 3 landed on step ${r.c.comboStep}`);
+    assert(r.c.heavyArmed, 'press 3 did not chamber the heavy');
+    assert(r.c.slashT < 0, 'press 3 swung immediately — the heavy is supposed to be held');
+    idle(40, true);
+    assert(r.c.heavyArmed, 'the heavy fired itself while the button was still down');
+    assert(r.c.heavyCharge > 0.2, `the heavy charged to ${r.c.heavyCharge.toFixed(2)} over two thirds of a second`);
+    const charge = r.c.heavyCharge;
+    /* AND IT GOES ON RELEASE. */
+    idle(1, false);
+    assert(!r.c.heavyArmed && r.c.isHeavy && r.c.slashT >= 0,
+      'letting go of the third press did not swing the heavy');
+
+    /* AND THE WINDOW CLOSES. A press outside `SLASH.chain` starts again. */
+    const q = fresh();
+    q.input._hit.add('thrust');
+    q.c.applyInput(q.input, 1 / 60, { stamina: 1 }); q.input._hit.clear();
+    q.c.update(1 / 60, CHEST, q.aim, {});
+    for (let i = 0; i < Math.ceil((SLASH.chain + SLASH.dur + 0.2) * 60); i++) {
+      q.c.applyInput(q.input, 1 / 60, { stamina: 1 });
+      q.c.update(1 / 60, CHEST, q.aim, {});
+    }
+    q.input._hit.add('thrust');
+    q.c.applyInput(q.input, 1 / 60, { stamina: 1 }); q.input._hit.clear();
+    q.c.update(1 / 60, CHEST, q.aim, {});
+    assert(q.c.comboStep === 0,
+      `a press ${(SLASH.chain + SLASH.dur + 0.2).toFixed(2)} s after the last one landed on step `
+      + `${q.c.comboStep} — the chain window is supposed to have closed`);
+
+    return `${one.across.toFixed(2)} across × ${one.down.toFixed(2)} down; light → light → chamber `
+      + `(${charge.toFixed(2)} charge) → heavy on release; window closes after ${SLASH.chain}s`;
+  });
+
+  check('attack: the left button cuts and the wheel drills — two moves, no bare stab', () => {
+    /**
+     * WHAT THIS CHECK USED TO BE. "a stab is a stab, not a directional feature"
+     * — `thrust` and `attackStab` had to run ONE lunge envelope, frame for
+     * frame, differing only in `thrustGain` and in whether a cut ran alongside.
+     * That was exactly right while the wheel was a bare fencing thrust.
+     *
+     * THERE IS NO BARE STAB ANY MORE, on the player's instruction: "since your
+     * stab attack also currently sucks right now I want you to merge the spin
+     * and the stab together, so the spin/stab will be like you hold the saber
+     * out in front of you and spin like a missile for a short duration in any
+     * direction you choose". Both `attackSpin` and `attackStab` now fire the
+     * drill, and the drill holds its own extension for its whole duration —
+     * which is a completely different envelope from a jab, deliberately.
+     *
+     * So the property under test moves up a level: the two inputs are two
+     * DIFFERENT moves, each is the move it claims to be, and neither has
+     * quietly become the other.
      */
     const run = (fire) => {
       const c = new SaberController({ scheme: 'directional' });
@@ -1147,46 +1280,46 @@ export async function run({ check, assert }) {
       for (let i = 0; i < 120; i++) { c.applyInput(input, 1 / 60, { stamina: 1 }); c.update(1 / 60, CHEST, aim, {}); }
       const tip0 = c.handPos.clone().addScaledVector(c._bladeDir, 1.15);
       fire(input);
-      let max = 0, slashFrames = 0;
-      const env = [];
-      for (let i = 0; i < 90; i++) {
+      let max = 0, slashFrames = 0, spinFrames = 0, reach = 0, body = 0;
+      for (let i = 0; i < 120; i++) {
         c.applyInput(input, 1 / 60, { stamina: 1 });
         input._hit.clear();
         c.update(1 / 60, CHEST, aim, {});
-        env.push(c.thrust);
         if (c.slashT >= 0) slashFrames++;
+        if (c.spinT >= 0) spinFrames++;
+        reach = Math.max(reach, c.thrust * c.thrustGain);
+        body += Math.abs(c.bodyYaw || 0);
         max = Math.max(max, c.handPos.clone().addScaledVector(c._bladeDir, 1.15).distanceTo(tip0));
       }
-      return { max, env, slashFrames, gain: c.thrustGain };
+      return { max, slashFrames, spinFrames, reach, body };
     };
     const wheel = run((i) => i._hit.add('attackStab'));
     const button = run((i) => i._hit.add('thrust'));
+    const spinKey = run((i) => i._hit.add('attackSpin'));
 
-    // ONE envelope. Not "similar" — the same numbers, because it is the same
-    // three lines of code reached from two keys.
-    let worst = 0;
-    for (let i = 0; i < wheel.env.length; i++) worst = Math.max(worst, Math.abs(wheel.env[i] - button.env[i]));
-    assert(worst < 1e-9,
-      `the two inputs traced different thrust envelopes — worst frame differs by ${worst.toFixed(6)}`);
-    assert(wheel.env.some((v) => v > 0.99), 'the wheel stab never reached a full lunge');
-
-    // …and only ONE of them cuts.
-    assert(wheel.slashFrames === 0, `the wheel stab also ran ${wheel.slashFrames} frames of cut`);
+    /* THE LEFT BUTTON CUTS AND DOES NOT DRILL. */
     assert(button.slashFrames > 6, `the left button ran only ${button.slashFrames} frames of cut`);
-    assert(button.gain === SLASH.lunge && wheel.gain === 1,
-      `thrustGain came out ${button.gain} on the button and ${wheel.gain} on the wheel`);
-    // The cut is the difference, and it is most of the reach.
-    assert(button.max > wheel.max * 1.8,
-      `the left button reached ${(button.max * 100).toFixed(0)} cm against the bare stab's `
-      + `${(wheel.max * 100).toFixed(0)} cm — the cut is not adding a cut`);
-    return `one envelope to 1e-9; wheel ${(wheel.max * 100).toFixed(0)} cm and no cut, `
-      + `button ${(button.max * 100).toFixed(0)} cm over ${button.slashFrames} frames of cut `
-      + `at ${SLASH.lunge}x lunge`;
-  });
+    assert(button.spinFrames === 0, `the left button also ran ${button.spinFrames} frames of drill`);
+    assert(button.reach > 0.2 && button.reach < 0.6,
+      `the left button's step reached ${button.reach.toFixed(2)} — it carries SLASH.lunge, not the drill's`);
 
-  /* ══════════════════════════════════════════════════════════════════ */
-  /*  8. The poses are guards, and the blade is really in them          */
-  /* ══════════════════════════════════════════════════════════════════ */
+    /* THE WHEEL DRILLS AND DOES NOT CUT. */
+    assert(wheel.spinFrames > 20, `the wheel ran only ${wheel.spinFrames} frames of drill`);
+    assert(wheel.slashFrames === 0, `the wheel also ran ${wheel.slashFrames} frames of the lateral cut`);
+    assert(wheel.reach > SPIN.reach * 0.8,
+      `the wheel's blade reached ${wheel.reach.toFixed(2)} against SPIN.reach ${SPIN.reach}`);
+    assert(wheel.body > SPIN.yaw, `the wheel turned the body ${wheel.body.toFixed(2)} rad`);
+
+    /* AND THE TWO KEYS THAT WERE MERGED ARE THE SAME MOVE. Not "similar" — the
+     * same numbers, because it is the same branch reached from two keys, which
+     * is what "merge the spin and the stab together" means as an assertion. */
+    assert(wheel.spinFrames === spinKey.spinFrames && Math.abs(wheel.body - spinKey.body) < 1e-9,
+      `attackStab and attackSpin traced different moves — ${wheel.spinFrames}/${wheel.body.toFixed(3)} `
+      + `against ${spinKey.spinFrames}/${spinKey.body.toFixed(3)}`);
+    return `button ${button.slashFrames} cut frames at ${button.reach.toFixed(2)} reach; wheel `
+      + `${wheel.spinFrames} drill frames at ${wheel.reach.toFixed(2)} reach and `
+      + `${wheel.body.toFixed(1)} rad; stab === spin`;
+  });
 
   check('zones: the blade really goes where the zone says, and blocks read off it', () => {
     /**

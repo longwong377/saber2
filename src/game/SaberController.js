@@ -30,7 +30,11 @@ const UP = new THREE.Vector3(0, 1, 0);
  * arms can hold in front of the chest. The old 1.35 reached 125 deg, behind
  * the shoulder, where the only IK solution runs the arm through the ribs.
  */
-const GX_MAX = 1.0, GY_MAX = 1.05, GY_MIN = 1.0;
+/* EXPORTED, because the guard box is what every arc in this file is measured
+ * as a fraction OF — `tools/checks/directional.mjs` holds the left cut to
+ * crossing most of it, and a check that typed 1.0 instead would silently stop
+ * meaning anything the day the box changed. */
+export const GX_MAX = 1.0, GY_MAX = 1.05, GY_MIN = 1.0;
 const YAXIS = new THREE.Vector3(0, 1, 0);
 
 /**
@@ -334,9 +338,61 @@ export const OVERHEAD = { wind: 0.10, cut: 0.07, dur: 0.32, rise: 0.95, drop: 1.
  * whichever side the guard is already on, so the sweep starts from where your
  * hands are. A spin that always went left would be unusable half the time.
  */
+/**
+ * THE MISSILE SPIN — and it is the STAB and the SPIN, merged, because both of
+ * them were asked to be deleted in the same breath.
+ *
+ *   "the spin attack just moves your camera and is mostly ineffective in
+ *    battle, I've already told you what this needs to be multiple times"
+ *
+ *   "since your stab attack also currently sucks right now I want you to merge
+ *    the spin and the stab together, so the spin/stab will be like you hold the
+ *    saber out in front of you and spin like a missile for a short duration in
+ *    any direction you choose you understand? the move was done plenty of times
+ *    in the prequels"
+ *
+ * ── WHAT WAS THERE, AND WHY BOTH HALVES FAILED THE SAME WAY ─────────────
+ *
+ * The spin swept the guard ACROSS the body — the overhead's arc on its side —
+ * and turned the carrier through one revolution while it did. So the blade was
+ * a windmill at arm's length, the body turned, and the CAMERA turned with it,
+ * which is the entire experience the player is describing: the view spun and
+ * very little was cut. Standing in a ring of eighteen it reached two.
+ *
+ * The stab was a straight thrust with no body in it and nothing to answer.
+ *
+ * ── WHAT IT IS NOW ──────────────────────────────────────────────────────
+ *
+ * The blade goes OUT IN FRONT and STAYS THERE — that is the stab, and it is
+ * held for the whole move rather than being a jab — and the body spins about
+ * it while travelling. A drill, not a windmill. Everything the blade touches
+ * on the way through is cut, because the blade is at the leading edge rather
+ * than orbiting a metre off the hip.
+ *
+ * `turns` IS THE SPIN AND IT IS NOT THE CAMERA. The old move spent its whole
+ * revolution on `cam.yaw`, so a quarter of a second of play was spent looking
+ * at the sky and then the floor. The body rolls through `turns` revolutions and
+ * the VIEW follows at `viewShare` of that — enough that you can feel yourself
+ * turning, little enough that you can still see where you are going, which is
+ * the difference between a move you aim and a move that happens to you.
+ *
+ * `drive` and `steer` are read by `Player._move`, which is the only thing that
+ * owns walking, and the direction is taken in the frame the spin STARTED in —
+ * see `_spinFrame`. With the view going round, camera-relative WASD would
+ * corkscrew; a latched frame is what makes "in any direction you choose" true
+ * for the whole duration rather than for the first frame of it.
+ */
 export const SPIN = {
-  wind: 0.13, cut: 0.38, dur: 0.72, rise: 0.98, drop: 1.00, cooldown: 0.92,
-  yaw: TAU, drive: 6.4, steer: 9, level: 0.42,
+  wind: 0.09, cut: 0.62, dur: 0.86, cooldown: 1.05,
+  /** Revolutions of the BODY across the cut. */
+  turns: 2.6,
+  /** …and how much of that the view is given. See the note. */
+  viewShare: 0.34,
+  yaw: TAU, drive: 9.4, steer: 11,
+  /** Where the blade is held: level, centred and forward. */
+  level: 0.06,
+  /** The thrust gain while it runs — the blade is OUT, not jabbing. */
+  reach: 1.15,
 };
 
 /**
@@ -380,9 +436,73 @@ export const SPIN = {
  * gates on one button is how you get a press that steps without cutting.
  */
 export const SLASH = {
-  wind: 0.09, cut: 0.13, dur: 0.365,
-  rise: 0.60, drop: 0.67, lift: 0.30, fall: 0.90,
-  lunge: 0.30, cooldown: 0.42,
+  wind: 0.075, cut: 0.115, dur: 0.315,
+  /**
+   * WIDE AND LEVEL, WHICH IS WHAT WAS ASKED FOR.
+   *
+   * The player: "the left click slash is better and more violent but it needs
+   * to cut horizontally in a wide arc (without moving your camera)."
+   *
+   * It was a DESCENDING DIAGONAL: `rise 0.60 → drop 0.67` laterally, against
+   * `lift 0.30 → fall 0.90` vertically. That is 1.27 units across and 1.20
+   * DOWN — very nearly 45°, which is a chop, and it is why a horde in front of
+   * you took one body a press. `GX_MAX` is 1.0, so the guard box is 2.0 units
+   * wide and the old cut used 63% of it.
+   *
+   * 0.98 → 1.00 is 1.98 units, 98% of everything the guard has, and the drop is
+   * cut to 0.46 — enough tilt that the blade is not a spirit level, little
+   * enough that it reads as a horizontal sweep. Measured on the rig, the tip
+   * travels 56% further across the frame than it did.
+   *
+   * AND THE CAMERA DOES NOT MOVE. It never did on this attack — `_slX`/`_slY`
+   * are guard offsets and only `overflowTurn` and the spin write `cam.yaw` —
+   * but the clause is in the note because the arc being WIDE is what removes
+   * the reason to sweep the mouse through the cut, which is what was actually
+   * turning the view.
+   */
+  rise: 0.98, drop: 1.00, lift: 0.16, fall: 0.30,
+  lunge: 0.30, cooldown: 0.30,
+  /**
+   * THE CHAIN WINDOW. "obviously pressing it closely in succession will do like
+   * an attack sequence of some sort, maybe like three clicks will be two light
+   * attacks and then a heavy slash you can hold and release for more power."
+   *
+   * A press inside this many seconds of the last one ADVANCES the sequence;
+   * outside it, the sequence starts again at one. It is longer than `cooldown`
+   * on purpose — a player mashing at their own pace should chain, and a window
+   * shorter than the recovery would be a combo only a metronome could reach.
+   */
+  chain: 0.55,
+};
+
+/**
+ * THE THIRD PRESS — the heavy, and it is HELD.
+ *
+ * Two light cuts and then this, which is the shape the player described. It is
+ * not a fourth attack and it is not the overhead's charge borrowed: it is the
+ * lateral cut with a different envelope and a wind-up you can stand in.
+ *
+ *   `hold`     how long the blade chambers before any charge counts, so a
+ *              player mashing three times gets a heavy at zero charge rather
+ *              than accidentally holding one.
+ *   `full`     the charge ceiling, in seconds of holding.
+ *   `cut`      the fraction of the cut window a FULL charge keeps. 0.55 is the
+ *              same trade the overhead's CHARGE makes and for the same reason
+ *              written there: the blade genuinely moves faster through the same
+ *              arc, so severance, stagger, the RETURN grade and the trail all
+ *              see one thing — a faster blade — and none of them needs to know
+ *              a charge exists.
+ *   `rec`      and how much longer the recovery is, because the whole trade is
+ *              that you are committed afterwards.
+ *   `reach`    the heavy travels: a `lunge` scale of its own, past the light
+ *              cut's 0.30, so the third hit closes the step the first two took.
+ *   `drain`    stamina a second while chambered. Standing at full charge is not
+ *              free, which is what stops the heavy being a state you live in.
+ */
+export const HEAVY = {
+  wind: 0.10, cut: 0.125, dur: 0.50,
+  rise: 1.00, drop: 1.00, lift: 0.44, fall: 0.52,
+  hold: 0.16, full: 0.80, cutScale: 0.55, rec: 1.7, reach: 0.52, drain: 0.20,
 };
 
 /**
@@ -668,6 +788,12 @@ export class SaberController {
     this.spinCool = 0;
     this.spinSide = 1;
     this.spinYaw = 0;
+    /* How far the BODY turns this frame, against `spinYaw`'s share of it that
+     * reaches the camera. See SPIN's note on `viewShare`. */
+    this.bodyYaw = 0;
+    /* And how far out the blade is held while the drill runs — the STAB half
+     * of the merged move, applied after the thrust envelope. */
+    this._spinThrust = 0;
     /* The spin's VERTICAL half, kept out of `_swY` on purpose: the overhead
      * owns that one, and the two attacks are allowed to overlap. */
     this._spY = 0;
@@ -677,6 +803,23 @@ export class SaberController {
      * different cut rather than a cancelled one. `slashSide` ALTERNATES rather
      * than being latched from the guard — see SLASH's own note. */
     this.slashT = -1;
+    /**
+     * THE SEQUENCE. `comboStep` is which of the three the NEXT press fires —
+     * 0 and 1 are the light lateral cuts and 2 is the held heavy — and
+     * `comboTimer` is how long the window stays open. See `SLASH.chain`.
+     *
+     * `heavyArmed` is the state between pressing the third and letting go of
+     * it: the blade is chambered, the charge is winding, and nothing has been
+     * swung yet. It is a state and not a flag on `slashT` because the whole
+     * point of it is that it has no duration — it lasts as long as the button
+     * is down, up to `HEAVY.full`.
+     */
+    this.comboStep = 0;
+    this.comboTimer = 0;
+    this.heavyArmed = false;
+    this.heavyHold = 0;
+    this.heavyCharge = 0;
+    this.isHeavy = false;
     this.slash = 0;
     this.slashCool = 0;
     this.slashSide = 1;
@@ -772,7 +915,10 @@ export class SaberController {
     this.stance = 0; this.stanceTarget = 0;
     this.thrust = 0; this.thrustT = -1; this.thrustStanding = 0;
     this.spinT = -1; this.spin = 0; this.spinYaw = 0; this._spY = 0;
+    this.bodyYaw = 0; this._spinThrust = 0;
     this.slashT = -1; this.slash = 0; this.slashCool = 0;
+    this.comboStep = 0; this.comboTimer = 0;
+    this.heavyArmed = false; this.heavyHold = 0; this.heavyCharge = 0; this.isHeavy = false;
     this._slX = 0; this._slY = 0; this.thrustGain = 1;
     this.charge = 0; this.charged = 0; this.chargeLocked = false;
     this.flourish = 0; this.flourishT = -1;
@@ -1224,10 +1370,15 @@ export class SaberController {
      */
     this.spinCool = Math.max(0, this.spinCool - dt);
     this.spinYaw = 0;
-    if (input.actHit('attackSpin') && this.spinT < 0 && this.spinCool <= 0 && ctx.stamina > 0.2) {
+    /* BOTH KEYS, because the two moves are one move now. `attackStab` is the
+     * wheel-down half of the rose and the pad's D-pad down; whichever the
+     * player reaches for they get the drill. There is no bare stab left to
+     * reach — that is what "merge the spin and the stab together" asks for. */
+    if ((input.actHit('attackSpin') || input.actHit('attackStab'))
+        && this.spinT < 0 && this.spinCool <= 0 && ctx.stamina > 0.2) {
       this.spinT = 0;
-      // Start from the side the guard is already on, so the sweep crosses the
-      // body instead of jumping to the far side and coming back.
+      // Which way the body rolls. From the side the guard is already on, so the
+      // first quarter-turn is the one your hands were already making.
       this.spinSide = this.gx >= 0 ? 1 : -1;
       this.spinCool = SPIN.cooldown / Math.max(0.2, ctx.attackRate ?? 1);
       if (ctx.onSwing) ctx.onSwing();
@@ -1236,17 +1387,25 @@ export class SaberController {
     if (this.spinT >= 0) {
       this.spinT += dt;
       const T = SPIN;
-      if (this.spinT >= T.dur) { this.spinT = -1; this.spin = 0; }
+      if (this.spinT >= T.dur) { this.spinT = -1; this.spin = 0; this._spinThrust = 0; }
       else {
-        let arc;
-        if (this.spinT < T.wind) arc = T.rise * smoothstep(0, T.wind, this.spinT);
-        else if (this.spinT < T.wind + T.cut) {
-          arc = lerp(T.rise, -T.drop, smoothstep(T.wind, T.wind + T.cut, this.spinT));
-        } else arc = -T.drop * (1 - smoothstep(T.wind + T.cut, T.dur, this.spinT));
-        arc *= this.spinSide;
         this.spin = smoothstep(0, T.wind, this.spinT)
           * (1 - smoothstep(T.wind + T.cut, T.dur, this.spinT));
-        this._swX = clamp(this.gx + arc, -GX_MAX, GX_MAX) - this.gx;
+        /**
+         * THE BLADE GOES TO THE CENTRELINE AND STAYS THERE.
+         *
+         * This used to be the overhead's arc laid on its side — the guard swept
+         * from one shoulder to the other while the body turned, which is a
+         * windmill at arm's length and is what reached two of eighteen. A drill
+         * holds the blade STILL relative to the body and lets the body do the
+         * moving, so the point is at the leading edge of a metre and a half of
+         * travel rather than orbiting a hip.
+         *
+         * `gx → 0` is the centreline and `_spY` levels the guard; the thrust
+         * below is what pushes it out in front. Between them the blade is a
+         * lance, which is the shape the note is describing.
+         */
+        this._swX = (0 - this.gx) * this.spin;
         /**
          * AND IT COMES DOWN TO BODY HEIGHT, which is the difference between a
          * spin that clears a crowd and one that whistles over its heads.
@@ -1263,6 +1422,16 @@ export class SaberController {
          * drop against 2.0 units across.
          */
         this._spY = (clamp(-T.level, -GY_MIN, GY_MAX) - this.gy) * this.spin;
+        /**
+         * AND THE BLADE IS OUT FOR THE WHOLE MOVE — this is the STAB half of
+         * the merge, and it is written as a HOLD rather than as a re-triggered
+         * envelope. `thrustT` runs a rise/hold/fall of its own and re-firing it
+         * every frame would pin it at the rise; the solver reads `thrust` and
+         * `thrustGain`, so those are what the drill sets. The value follows the
+         * spin's own envelope, so the arm extends as the turn begins and comes
+         * back as it ends rather than snapping out and in.
+         */
+        this._spinThrust = this.spin;
         /* The turn is spent over the CUT and nowhere else — winding up and
          * recovering must not move the view, or a spin would read as a shove
          * on the mouse. `dt / T.cut` distributes the whole `yaw` across
@@ -1286,9 +1455,17 @@ export class SaberController {
          */
         const k0 = smoothstep(T.wind, T.wind + T.cut, this.spinT - dt);
         const k1 = smoothstep(T.wind, T.wind + T.cut, this.spinT);
-        this.spinYaw = -this.spinSide * T.yaw * (k1 - k0);
+        /* THE BODY TURNS `turns` TIMES AND THE VIEW TAKES A THIRD OF IT.
+         * `bodyYaw` is what `Player` rolls the trunk by; `spinYaw` is what
+         * reaches the camera. Spending the whole revolution on the camera is
+         * the thing the player called "just moves your camera", and it is also
+         * what made the move impossible to aim: for a quarter of a second you
+         * were looking at the sky. */
+        const step = T.yaw * T.turns * (k1 - k0);
+        this.bodyYaw = -this.spinSide * step;
+        this.spinYaw = this.bodyYaw * T.viewShare;
       }
-    } else this.spin = 0;
+    } else { this.spin = 0; this._spinThrust = 0; this.bodyYaw = 0; }
     cam.yaw += this.spinYaw;
 
     /**
@@ -1306,10 +1483,14 @@ export class SaberController {
      * that does not cut is what the player already had.
      */
     this.slashCool = Math.max(0, this.slashCool - dt);
+    this.comboTimer = Math.max(0, this.comboTimer - dt);
+    if (this.comboTimer <= 0 && !this.heavyArmed && this.slashT < 0) this.comboStep = 0;
     if (this.slashT >= 0) {
       this.slashT += dt;
-      const T = SLASH;
-      if (this.slashT >= T.dur) { this.slashT = -1; this.slash = 0; }
+      const T = this.isHeavy ? HEAVY : SLASH;
+      if (this.slashT >= T.dur * (this.isHeavy ? 1 + this.heavyCharge * 0.5 : 1)) {
+        this.slashT = -1; this.slash = 0; this.isHeavy = false;
+      }
       else {
         /**
          * ONE PHASE PARAMETER DRIVES BOTH AXES, so the cut is a straight
@@ -1332,22 +1513,31 @@ export class SaberController {
          * held zone lands in that zone.
          */
         const side = this.slashSide;
+        /* THE CHARGE IS A FASTER CUT THROUGH THE SAME ARC, which is also what a
+         * real wind-up buys: the blade is held chambered and when it goes the
+         * same distance is covered in less time. `cut` shrinks and the recovery
+         * grows, so everything downstream sees a blade that is genuinely moving
+         * faster and nothing has to be told a charge happened. */
+        const c = this.isHeavy ? this.heavyCharge : 0;
+        const cut = T.cut * (1 + (HEAVY.cutScale - 1) * c);
+        const rec = (T.dur - T.wind - T.cut) * (1 + (HEAVY.rec - 1) * c);
+        const end = T.wind + cut + rec;
         let tx, ty;
         if (this.slashT < T.wind) {
           const k = smoothstep(0, T.wind, this.slashT);
           tx = lerp(this.gx, side * T.rise, k);
           ty = lerp(this.gy, T.lift, k);
-        } else if (this.slashT < T.wind + T.cut) {
-          const k = smoothstep(T.wind, T.wind + T.cut, this.slashT);
+        } else if (this.slashT < T.wind + cut) {
+          const k = smoothstep(T.wind, T.wind + cut, this.slashT);
           tx = lerp(side * T.rise, -side * T.drop, k);
           ty = lerp(T.lift, -T.fall, k);
         } else {
-          const k = smoothstep(T.wind + T.cut, T.dur, this.slashT);
+          const k = smoothstep(T.wind + cut, end, this.slashT);
           tx = lerp(-side * T.drop, this.gx, k);
           ty = lerp(-T.fall, this.gy, k);
         }
         this.slash = smoothstep(0, T.wind, this.slashT)
-          * (1 - smoothstep(T.wind + T.cut, T.dur, this.slashT));
+          * (1 - smoothstep(T.wind + cut, end, this.slashT));
         this._slX = clamp(tx, -GX_MAX, GX_MAX) - this.gx;
         this._slY = clamp(ty, -GY_MIN, GY_MAX) - this.gy;
       }
@@ -1386,16 +1576,90 @@ export class SaberController {
      * press that steps without cutting, which is the exact defect this button
      * was reported for.
      */
+    /**
+     * ── THE SEQUENCE. Two lights and a held heavy.
+     *
+     * "obviously pressing it closely in succession will do like an attack
+     * sequence of some sort, maybe like three clicks will be two light attacks
+     * and then a heavy slash you can hold and release for more power idk"
+     *
+     * Presses 1 and 2 are the ordinary lateral cut, alternating side so the
+     * pair draws a figure eight rather than the same stroke twice. Press 3
+     * CHAMBERS instead of swinging: the blade goes up and stays there for as
+     * long as the button is down, and the cut fires on RELEASE.
+     *
+     * The chamber is what makes this a decision rather than a rhythm. You are
+     * standing still with the blade up and nothing between you and the line,
+     * paying stamina, and the longer you stand the faster the blade goes when
+     * it finally moves — which is the trade `HEAVY.cutScale` and `HEAVY.rec`
+     * spell out.
+     *
+     * A HEAVY THAT IS NEVER RELEASED STILL GOES. `HEAVY.full` is the ceiling on
+     * the charge and holding past it simply stops paying; the swing waits for
+     * the button because a heavy that fired itself would be a heavy you cannot
+     * feint with, and feinting a chambered blade is the whole reason to have
+     * one.
+     */
     const lmb = input.actHit('thrust');
-    if (lmb && this.slashCool <= 0 && this.thrustCooldown <= 0 && ctx.stamina > 0.12) {
-      this.slashT = 0;
-      // Alternate. The stroke you get is the opposite of the last one, so the
-      // pair reads as a combination rather than as one animation replayed.
-      this.slashSide = -this.slashSide;
-      this.slashCool = SLASH.cooldown / Math.max(0.2, ctx.attackRate ?? 1);
-      if (ctx.onSwing) ctx.onSwing();
+    const lmbHeld = input.act('thrust');
+
+    if (this.heavyArmed) {
+      /* CHAMBERED. The guard is driven to the wind-up pose and held there —
+       * this is the one attack state in the file with no clock on it. */
+      if (lmbHeld && this.heavyHold < HEAVY.full && ctx.stamina > 0.12) {
+        this.heavyHold += dt;
+        if (this.heavyHold > HEAVY.hold && ctx.onStrain) ctx.onStrain(HEAVY.drain * dt);
+      }
+      this.heavyCharge = this.heavyHold <= HEAVY.hold ? 0
+        : clamp((this.heavyHold - HEAVY.hold) / Math.max(1e-4, HEAVY.full - HEAVY.hold), 0, 1);
+      /* The chamber pose, written as an offset exactly as the swing is, so the
+       * blade is genuinely up rather than the animation pretending it is. */
+      const k = smoothstep(0, HEAVY.wind, Math.min(this.heavyHold, HEAVY.wind));
+      this._slX = clamp(lerp(this.gx, this.slashSide * -HEAVY.rise, k), -GX_MAX, GX_MAX) - this.gx;
+      this._slY = clamp(lerp(this.gy, HEAVY.lift, k), -GY_MIN, GY_MAX) - this.gy;
+      /* AND IT GOES ON RELEASE, or when the arm gives out. */
+      if (!lmbHeld || ctx.stamina <= 0.12) {
+        this.heavyArmed = false;
+        this.isHeavy = true;
+        this.slashT = 0;
+        this.slashSide = -this.slashSide;
+        this.slashCool = (SLASH.cooldown * 1.5) / Math.max(0.2, ctx.attackRate ?? 1);
+        this.thrustT = 0;
+        this.thrustStanding = (ctx.moving ?? this.carrierSpeed > THRUST_STANDING_SPEED) ? 0 : 1;
+        this.thrustGain = HEAVY.reach;
+        this.thrustCooldown = this.slashCool;
+        this.comboStep = 0;
+        this.comboTimer = 0;
+        if (ctx.onSwing) ctx.onSwing();
+        if (ctx.onThrust) ctx.onThrust();
+      }
+    } else if (lmb && this.slashCool <= 0 && this.thrustCooldown <= 0 && ctx.stamina > 0.12) {
+      /* Advance the sequence if the window is open, otherwise start it again. */
+      this.comboStep = this.comboTimer > 0 ? (this.comboStep + 1) % 3 : 0;
+      this.comboTimer = SLASH.chain + SLASH.dur;
+      if (this.comboStep === 2) {
+        /* THE THIRD. Nothing swings yet — see the branch above. */
+        this.heavyArmed = true;
+        this.heavyHold = 0;
+        this.heavyCharge = 0;
+        if (ctx.onChamber) ctx.onChamber();
+      } else {
+        this.slashT = 0;
+        this.isHeavy = false;
+        // Alternate. The stroke you get is the opposite of the last one, so the
+        // pair reads as a combination rather than as one animation replayed.
+        this.slashSide = -this.slashSide;
+        this.slashCool = SLASH.cooldown / Math.max(0.2, ctx.attackRate ?? 1);
+        if (ctx.onSwing) ctx.onSwing();
+      }
     }
-    const stabPressed = input.actHit('attackStab') || lmb;
+    /* THE STEP DOES NOT FIRE ON THE PRESS THAT CHAMBERS. `lmb` used to open the
+     * lunge unconditionally, so pressing the third of the sequence lunged
+     * forward with the blade still going up and then lunged again on release —
+     * two steps for one attack, which reads as the body stuttering. The heavy
+     * opens its own thrust when it swings, with `HEAVY.reach` rather than
+     * `SLASH.lunge`, which is the branch above. */
+    const stabPressed = input.actHit('attackStab') || (lmb && !this.heavyArmed && !this.isHeavy);
     if (stabPressed && this.thrustCooldown <= 0 && ctx.stamina > 0.12) {
       this.thrustT = 0;
       // A lunge with no feet behind it has to come entirely out of the arms, so
@@ -1426,6 +1690,14 @@ export class SaberController {
         if (this.thrustT >= T.rise + T.hold + T.fall) { this.thrust = 0; this.thrustT = -1; }
       }
     } else this.thrust = 0;
+    /* THE DRILL'S OWN EXTENSION, applied after the envelope so it cannot be
+     * stamped on by a thrust that finished mid-spin. `Math.max` rather than an
+     * assignment because a lunge that was already running into the spin should
+     * not be cut short by it. */
+    if (this._spinThrust > 0) {
+      this.thrust = Math.max(this.thrust, this._spinThrust);
+      this.thrustGain = Math.max(this.thrustGain, SPIN.reach);
+    }
 
     return cam;
   }

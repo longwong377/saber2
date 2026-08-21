@@ -3412,16 +3412,38 @@ export class Player {
     // ── collide
     this._collide(dt, ctx);
 
-    // ── facing: toward the blade in combat, toward movement otherwise
-    const wantFace = this.camera.yaw + Math.PI;
-    let target = wantFace;
-    if (!this.saber.lit && this.velocity.lengthSq() > 1.5) {
-      target = Math.atan2(this.velocity.x, this.velocity.z);
+    /**
+     * ── FACING. Toward the blade in combat, toward movement otherwise — AND
+     * THE BODY OWNS ITS OWN TURN DURING A DRILL.
+     *
+     * `bodyYaw` is `SaberController`'s: how far the trunk turns this frame,
+     * against `spinYaw`'s much smaller share of it that reaches the camera. The
+     * two are separate because of the player's verdict on the old spin — "the
+     * spin attack just moves your camera and is mostly ineffective in battle" —
+     * and the split is the fix: spending the whole revolution on `camera.yaw`
+     * is what made a quarter of a second of play a look at the sky.
+     *
+     * Applied as an ADD rather than through the easing solve below, because the
+     * easing is a spring toward the camera and the camera is deliberately NOT
+     * where the body is going during the move. It is also why the solve is
+     * skipped entirely while it runs: a spring pulling the trunk back to the
+     * view every frame would eat the spin.
+     */
+    if (this.control?.bodyYaw) {
+      this.facing += this.control.bodyYaw;
+      while (this.facing > Math.PI) this.facing -= TAU;
+      while (this.facing < -Math.PI) this.facing += TAU;
+    } else {
+      const wantFace = this.camera.yaw + Math.PI;
+      let target = wantFace;
+      if (!this.saber.lit && this.velocity.lengthSq() > 1.5) {
+        target = Math.atan2(this.velocity.x, this.velocity.z);
+      }
+      let d = target - this.facing;
+      while (d > Math.PI) d -= TAU;
+      while (d < -Math.PI) d += TAU;
+      this.facing += d * Math.min(1, dt * 13);
     }
-    let d = target - this.facing;
-    while (d > Math.PI) d -= TAU;
-    while (d < -Math.PI) d += TAU;
-    this.facing += d * Math.min(1, dt * 13);
 
     // stamina from sprinting — and the bar does not refill while it is going
     // out. See STAMINA_HOLD: without this the regen ceiling of 26/s paid the
