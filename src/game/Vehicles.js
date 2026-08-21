@@ -3033,16 +3033,28 @@ export function buildSPHA(opts = {}) {
     [0, 0.62 * S, 4.42 * S], [1.5708, 0, 0]);
 
   /* ── twelve legs ──
-   * One merged mesh per bone and no Kit on either, which is the whole of how a
-   * twelve-legged machine stays affordable: 24 draw calls of leg instead of 60.
-   * The knee housing, the hip yoke and the foot pad are all inside those two
-   * merges rather than beside them. */
+   * One merged mesh per bone, plus ONE more on the shank for the armour plate
+   * that has to be a different colour from what it covers. That is 36 draw
+   * calls of leg instead of the sixty a Kit per bone would have cost, and it is
+   * why the largest machine in the game is cheaper to draw than the AT-TE. The
+   * knee housing, the hip yoke, the hydraulic ram and the foot are all inside
+   * the merges rather than beside them. */
   for (let i = 0; i < 12; i++) {
     const femur = rig.get(`femur${i}`);
     const tibia = rig.get(`tibia${i}`);
     const sx = i % 2 === 0 ? 1 : -1;
     const F = femur.length, T = tibia.length;
 
+    /* THE THIGH IS ONE MERGED STRUT AND CARRIES NO WEAK POINT, which is a
+     * budget decision taken deliberately and in one direction. A weak point has
+     * to be VISIBLE — `weakpoints.mjs` holds every spot to being at least half
+     * an albedo band away from the tube it is a hole in, or a five-band
+     * posterise renders the gap and the plate as one flat field and there is
+     * nothing on screen to aim at — and two colours on a bone means two meshes
+     * on it. Twelve thighs plated is twelve more draw calls for a joint three
+     * metres up under the hull's own shadow. The SHANK is the part a player
+     * standing beside this machine is actually looking at, and it is where the
+     * twelve go instead. */
     primary(femur, assemble([
       // the hip yoke, standing proud of the hull like a rowlock
       [new THREE.CylinderGeometry(0.20 * S, 0.20 * S, 0.22 * S, 10), [sx * 0.04 * S, 0, 0], [0, 0, 1.5708]],
@@ -3050,8 +3062,9 @@ export function buildSPHA(opts = {}) {
       [new THREE.CylinderGeometry(0.15 * S, 0.15 * S, 0.20 * S, 10), [0, F, 0], [0, 0, 1.5708]],
     ]), dark, 0.19 * S);
 
-    primary(tibia, assemble([
-      [plateGeo(0.20 * S, T * 0.88, 0.20 * S, 0.05 * S, 1), [0, T * 0.44, 0]],
+    const tm = primary(tibia, assemble([
+      // the bare shank itself — this is the tube the plate is cover OVER
+      [new THREE.CylinderGeometry(0.17 * S, 0.14 * S, T, 8), [0, T * 0.5, 0]],
       // the hydraulic ram down the back of the shank
       [new THREE.CylinderGeometry(0.06 * S, 0.06 * S, T * 0.62, 6), [0, T * 0.40, -0.13 * S]],
       /* THE PAD, merged in BELOW the shank's tip where a tarsus would have
@@ -3071,7 +3084,18 @@ export function buildSPHA(opts = {}) {
        * never reaches. `ankle` in the stance below is the ball's own drop. */
       [new THREE.CylinderGeometry(0.20 * S, 0.15 * S, 0.10 * S, 10), [0, T - 0.01 * S, 0]],
       [new THREE.SphereGeometry(0.13 * S, 10, 8), [0, T + 0.05 * S, 0]],
-    ]), shell, 0.22 * S);
+    ]), dark, 0.22 * S);
+    tm.userData.limb = { r0: 0.17 * S, r1: 0.14 * S, seg: 8 };
+    /* THE PLATE IS ITS OWN MESH IN ITS OWN COLOUR, and that is the whole cost
+     * of the twelve joints this machine's counter-play runs through: bone-white
+     * armour over a dark shank, so the two ends the plate does not reach read
+     * as gaps rather than as more leg. A 0.80T plate centred at 0.46T spans
+     * 0.06T to 0.86T — short of the knee housing and short of the ankle,
+     * because a leg swings at both. */
+    const kl = new Kit();
+    kl.add(shell, plateGeo(0.42 * S, T * 0.80, 0.30 * S, 0.05 * S, 1), [0, T * 0.46, 0]);
+    kl.bake(tibia.obj);
+    platedSpan(tibia, T * 0.06, T * 0.86);
   }
 
   const stance = chassisStance(S, {
@@ -3288,6 +3312,37 @@ export function buildJuggernaut(opts = {}) {
       }),
     ]), tread, WR);
     tyre.position.y = A;
+    /**
+     * THE AXLE IS THE SOFT PART, and it is declared rather than derived because
+     * there is no limb plate here to leave a gap: a road wheel is not a limb
+     * with armour strapped to it, it is a wheel on a stub.
+     *
+     * The bone runs OUTBOARD from the hull and the tyre is a single mesh at its
+     * tip, so the whole run between the two — the axle housing, the hub carrier,
+     * the brake — is bare metal a player standing beside the tank is looking
+     * straight at. Declared out of the same `A` that positions the tyre, so it
+     * cannot drift from the geometry (`weakSpotsOf` and player note 35).
+     *
+     * It is on a `leg` bone, so `_turnCut` does not turn a pass that lands in
+     * it — unlike the AAT's intakes, which sit on an axial bone and only buy
+     * speed. This is a real opening, and it is the one the Juggernaut's own
+     * counter-play depends on: four wheels of ten, and each of them is a
+     * one-pass job at the axle instead of a five-pass job through the tyre.
+     */
+    weakSpot(bone, {
+      key: 'axle', label: 'AXLE',
+      p0: [0, 0.10 * A, 0], p1: [0, 0.74 * A, 0],
+      r: 0.26 * S, at0: 0.10, at1: 0.74,
+    });
+    /* …AND IT IS PAINTED SO THE PLAYER CAN FIND IT. `weakpoints.mjs` holds
+     * every spot to being at least half an albedo band away from the surface it
+     * is a hole in, because the cel pass quantises to five flat fields and two
+     * near colours posterise into one. A dark axle against a dark tyre is a
+     * weak point nobody can see; a bone-white hub carrier in the wheel bay is
+     * the same part, visible, and it is one merged mesh a wheel. */
+    const ka = new Kit();
+    ka.add(shell, new THREE.CylinderGeometry(0.26 * S, 0.21 * S, 0.52 * A, 10), [0, 0.42 * A, 0]);
+    ka.bake(bone.obj);
     wheels.push({ bone, hoop: tyre, radius: WR });
   }
   rollByOdometry(wheels[0].hoop, wheels.map((w) => w.hoop), WR);
@@ -3516,14 +3571,20 @@ export function buildTriDroid(opts = {}) {
  *     the height, which is what makes the silhouette a wheel with a hull
  *     balanced on it rather than a tank.
  *
- * ── HOW A PLAYER KILLS IT: THE TREAD ─────────────────────────────────────
+ * ── HOW A PLAYER KILLS IT: ANY ONE OF ITS THREE GROUND CONTACTS ─────────
  *
- * The outriggers are `struts` and carry the role `hull`, so the machine has
- * exactly ONE leg chain and `toppleAt` clamps to one: a single pass through
- * the tread beaches it. Cutting a pontoon buys nothing and is supposed to buy
- * nothing — it is the mistake the shape invites, and the difference between
- * the two is legible because the tread is the thing under the middle of the
- * machine and the pontoons are the two little ones out on arms.
+ * `toppleAt: 1` against three chains — the tread and the two outrigger
+ * pontoons — so the FIRST one lost puts the machine on its side, permanently,
+ * because `Enemy.recover` will not stand a walker back up that has lost a leg.
+ * That is the whole design of a single-tread vehicle stated as a rule: the
+ * pontoons exist to stop it tipping, so taking one is how you tip it, and the
+ * two out on arms are lower and closer than the tread is. The two drive
+ * sprockets are the fast way through the tread itself if you would rather have
+ * that one — they are the only place the belt is not lying flat against
+ * armour, and a pass there is one swing where the belt is four.
+ *
+ * See the note on `struts` below for what this cost to get right and for the
+ * measurement that changed it.
  */
 export function buildSnailTank(opts = {}) {
   const S = opts.scale ?? 1.55;
@@ -3538,8 +3599,30 @@ export function buildSnailTank(opts = {}) {
        * ±Z — so the track geometry is authored in the identity frame with +Z
        * forward, which is what a fore-and-aft track needs. */
       { name: 'wheelC', parent: 'hips', x: 0, y: -2.28, z: 0, len: 2.28, rest: [0, 1, 0], role: 'leg' },
-      { name: 'outL', parent: 'hips', x: 0.72, y: -0.30, z: 0.55, len: 0.90, rest: [0.94, -0.34, 0] },
-      { name: 'outR', parent: 'hips', x: -0.72, y: -0.30, z: 0.55, len: 0.90, rest: [-0.94, -0.34, 0] },
+      /**
+       * ── AND THE OUTRIGGERS ARE `leg` TOO, WHICH IS THE OPPOSITE OF WHAT
+       *    THIS FILE FIRST WROTE AND IS WHAT MEASURING IT SETTLED ─────────
+       *
+       * They were `hull` on the argument that a pontoon carries nothing and
+       * only the tread does the work, so the tank should have exactly one leg
+       * chain and one cut should beach it. Driven, that is not what one chain
+       * buys: `severance` prices a leg at `1.10 x share / of`, `of` is the
+       * number of leg BONES on the body, and one bone makes the tread worth
+       * 1.10 — over the 0.9 at which `takeCut` kills outright. So the machine
+       * the header called "difficult to take down" died to a single pass, and
+       * `weakpoints.mjs` printed it: `snailtank joint 1p/0t/0L`, one pass, no
+       * legs lost, no topple, because there was no body left to topple.
+       *
+       * Three chains prices the tread at 0.367 — a wound rather than a kill —
+       * and `toppleAt: 1` still clamps the chassis to going down on the FIRST
+       * one lost. That is both the better fight and the better reading of the
+       * machine: an outrigger on a single-tread vehicle is there to stop it
+       * tipping over, so taking one is exactly how you tip it over. The tank
+       * has three points on the ground, any one of them ends it, and the two
+       * out on arms are the ones a blade reaches first.
+       */
+      { name: 'outL', parent: 'hips', x: 0.72, y: -0.30, z: 0.55, len: 0.90, rest: [0.94, -0.34, 0], role: 'leg' },
+      { name: 'outR', parent: 'hips', x: -0.72, y: -0.30, z: 0.55, len: 0.90, rest: [-0.94, -0.34, 0], role: 'leg' },
     ],
   }), { scale: S });
 
@@ -3620,7 +3703,10 @@ export function buildSnailTank(opts = {}) {
   ]), track, 1.10 * S);
 
   const kc = new Kit();
-  kc.pair((sx) => kc.add(dark, plateGeo(0.10 * S, RR * 1.30, 5.90 * S, 0.05 * S, 1), [sx * 0.58 * S, RR, 0]));
+  /* The track guard down each side of the belt, in HULL colour rather than
+   * track colour — it is what the sprocket weak point is read against, and a
+   * dark guard over a dark belt is a spot the cel pass posterises away. */
+  kc.pair((sx) => kc.add(shell, plateGeo(0.10 * S, RR * 1.30, 5.90 * S, 0.05 * S, 1), [sx * 0.58 * S, RR, 0]));
   kc.bake(tread.obj);
 
   /* The two sprockets, each in a group laid over by a quarter turn so the
@@ -3628,6 +3714,12 @@ export function buildSnailTank(opts = {}) {
    * roll about its own y and lets `rollByOdometry` drive it with no second
    * code path. */
   const sprockets = [];
+  /* THE SPROCKETS ARE WHERE THE BELT IS THIN, and they are the tank's only
+   * weak point because they are the only place the track is not lying flat
+   * against armour. Declared here, off the same z the sprocket group is placed
+   * at, so the capsule cannot drift from the wheel it is a hole in — and on
+   * the `leg` bone, so a pass through one is not turned. Cutting the tread is
+   * what beaches this machine (`toppleAt: 1`); this is where you do it. */
   for (const z of [2.545, -2.545]) {
     const g = new THREE.Group();
     g.position.set(0, RR, z * S);
@@ -3641,6 +3733,11 @@ export function buildSnailTank(opts = {}) {
     ks.row(6, (i, t) => ks.add(track, plateGeo(0.10 * S, 0.96 * S, RR * 0.34, 0.02 * S, 1),
       [Math.sin(t * TAU) * RR * 0.82, 0, Math.cos(t * TAU) * RR * 0.82], [0, t * TAU, 0]));
     ks.bake(spin, { silhouette: true });
+    weakSpot(tread, {
+      key: z > 0 ? 'sprocketF' : 'sprocketA', label: 'SPROCKET',
+      p0: [-0.50 * S, RR, z * S], p1: [0.50 * S, RR, z * S],
+      r: RR * 0.62, at0: RR / TH, at1: RR / TH,
+    });
     sprockets.push(spin);
   }
   rollByOdometry(sprockets[0].children[0], sprockets, RR * 0.80);

@@ -275,8 +275,9 @@ export const DATABANK = {
       + 'an hour in a straight line and eleven and a half seconds to turn round, '
       + 'which is the whole fight: it picks a line, it commits to it, and stepping '
       + 'off that line buys you longer than anything else on the field will give '
-      + 'you. Take the tread. The pontoons look like the same target and are not — '
-      + 'they carry nothing, and cutting one changes nothing.',
+      + 'you. And it is balanced on three points — the tread and two pontoons on '
+      + 'arms — so any one of them puts it on its side and stops it for good. The '
+      + 'pontoons are the low ones.',
   },
   bodyguard: {
     faction: 'separatist',
