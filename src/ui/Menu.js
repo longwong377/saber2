@@ -57,6 +57,11 @@ import { MODES, sandboxUnits, SANDBOX_MAX_ENEMIES, sandboxConfig, SKIRMISH,
  * leaf module (it imports nothing), so there is no cycle to pay for.
  */
 import { POWER_COST, POWER_BOON } from '../game/Powers.js';
+/* The Codex teaches how to fight a Force user, so it quotes THEIR numbers —
+ * read off Enemy.js rather than transcribed, which is the hand-written-twin
+ * defect HANDOFF §2.3 is about. */
+import { RESIST_CAP, RESIST_BEATEN, RESIST_PER_FORCE, CAST_WIND,
+         FORCE_REGEN_FRAC } from '../game/Enemy.js';
 /**
  * THE SUPPORT CALLS, so the page that documents controls documents these too.
  *
@@ -1922,6 +1927,49 @@ export function codexTeaching({ difficulty = 'knight', director = null } = {}) {
       : `<p class="hint codex-note">Not in <b>${modeName}</b>, though: Insight is paid for clearing
           a wave and this mode never clears one. Open the Holocron from the Temple to read the
           lattice, and take a plan into a mode that fights waves.</p>`}
+
+    <h3 class="stacked">Fighting someone who has the Force too</h3>
+    <!--
+      THE PAGE THE PLAYER ASKED FOR, in their own words: "have you explained
+      anywhere in the instructions or codex how force vs force user combat
+      works? I still don't know how to counter or fight against other force
+      users when they are using their force powers against me like I'm just
+      being manipulated and thrown around like a ragdoll being unable to do
+      anything."
+
+      Nothing here is new mechanics. Every one of these four answers was
+      already in the simulation and none of it was written down anywhere a
+      player could read, which is the same thing as not existing. Every number
+      is read off Enemy.js rather than typed.
+    -->
+    <p class="hint codex-note">They are not weather. A Force user spends out of a pool exactly as you
+      do, pays for every verb, waits out a cooldown, and shows you a call over their head before
+      anything lands. All four of your answers are timed against something you can see — and the
+      bar under their name is the one to watch: <b>a body with an empty reserve cannot touch you
+      with the Force at all.</b></p>
+    <ol class="codex-list">
+      <li><b>Keep Force in the bank, and it blunts theirs.</b> Anything of the Force that reaches you
+        — a shove, a lift, a choke, lightning — is answered out of your own pool before it lands, up
+        to ${Math.round(RESIST_CAP * 100)}% of the blow, at ${RESIST_PER_FORCE} points of it
+        stopped per point of Force spent. It is automatic and it is the reason to hold a reserve
+        rather than spend to the floor. Get <i>staggered</i> first and that collapses to
+        ${Math.round(RESIST_CAP * RESIST_BEATEN * 100)}% — which is why the throw that hurts is
+        always the second one.</li>
+      <li><b>Break the call.</b> A power is declared ${CAST_WIND.toFixed(2)}&nbsp;s before it lands
+        and its name is drawn over the caster for every frame of it. Anything that beats their guard
+        in that window — a stagger, a shove, a grip — kills the cast outright, and they have
+        <i>already paid for it</i>: the price comes out of their pool when the call goes up, not when
+        it arrives. A plain blow has to be worth flinching at, so your blade breaks a cast and a
+        stray bolt does not.</li>
+      <li><b>Make them spend, then close.</b> Their pool recovers at
+        ${Math.round(FORCE_REGEN_FRAC * 100)}% of its own size a second — about
+        ${Math.round(1 / FORCE_REGEN_FRAC)}&nbsp;seconds from empty to full for anyone, so a
+        stronger opponent holds more rather than recovering faster. Bait the expensive verbs at
+        range, watch the reserve fall, and take the ground while it is low.</li>
+      <li><b>Their limits are your limits.</b> The same table prices both sides: they cannot cast
+        while stunned, held, or mid-strike, they carry cooldowns per verb, and a body that has spent
+        everything fights you with a blade like anyone else.</li>
+    </ol>
 
     <h3 class="stacked">Two things with no number behind them</h3>
     <ol class="codex-list">

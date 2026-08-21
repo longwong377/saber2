@@ -1535,6 +1535,15 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
 .boss-name em{font:var(--mono);font-size:10px;letter-spacing:.2em;color:var(--accent-warm);font-style:normal}
 .boss-track{height:12px;background:var(--void);border:2px solid var(--stroke);overflow:hidden;
   box-shadow:var(--stamp)}
+/* The Force reserve rides under the health, thinner and in the Force's own
+   colour, so the two are never mistaken for each other at a glance. */
+.boss-track.force{height:6px;margin-top:3px}
+.boss-track.force i{background:var(--accent);box-shadow:0 0 12px rgba(224,139,82,.7)}
+.boss-track.hidden{display:none}
+/* What they are casting, while they are casting it — the telegraph in words. */
+.boss-cast{margin-top:5px;font:var(--mono);font-size:10px;letter-spacing:.22em;
+  color:var(--accent-warm);text-transform:uppercase}
+.boss-cast.hidden{display:none}
 .boss-track i{display:block;height:100%;width:100%;transform-origin:left;
   background:var(--danger);box-shadow:0 0 16px rgba(255,85,64,.85);
   transition:transform .18s cubic-bezier(.22,1,.36,1)}

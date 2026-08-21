@@ -930,6 +930,46 @@ export const ARCHETYPES = {
  */
 export const FORCE_REGEN = 3.0;
 
+/**
+ * …AND THE SAME LIMIT SCALED TO THE BODY, which is the player's other half.
+ *
+ * "they need to be subject to the same force resources and limitations that
+ *  effect me based on how strong they are"
+ *
+ * They were subject to the resources — a pool, a price per verb, a cooldown, a
+ * telegraph, and `resistForce` billing them for every blow they answer — but
+ * not to them AS A FUNCTION OF STRENGTH, because the regen was one flat number
+ * for the whole roster. Measured across the five force users as shipped, time
+ * to refill an empty pool at 3.0/s:
+ *
+ *     sentinel   40 force    13 s
+ *     jedi       44          15 s
+ *     guardian   48          16 s
+ *     acolyte    62          21 s
+ *     master    150          50 s
+ *
+ * which is backwards. The strongest body in the game had the LONGEST road back
+ * to being able to act, so a Master emptied by its own opening was the most
+ * limited thing on the field for the next minute — and the difference between
+ * a sentinel and a Master, from the outside, was how long the quiet part
+ * lasted rather than what they could do with what they had.
+ *
+ * A FRACTION OF THEIR OWN POOL puts every one of them on the same clock: 5.5%
+ * a second is a little over eighteen seconds from empty to full whoever you
+ * are. Strength then means exactly one thing — how much you can spend before
+ * that clock starts — which is the thing the player can see, plan against and
+ * bait out. The floor keeps the smallest pools from being a trickle and the
+ * flat rate is kept as the floor's own value, so nothing that was quick before
+ * became slow.
+ */
+export const FORCE_REGEN_FRAC = 0.055;
+
+/** What a body's pool recovers per second: the larger of the flat rate and its
+ *  own share. See FORCE_REGEN_FRAC. */
+export function forceRegenFor(forceMax) {
+  return Math.max(FORCE_REGEN, (forceMax || 0) * FORCE_REGEN_FRAC);
+}
+
 /** How long a held power's drain accumulates before it is billed. Slightly
  * longer than `Player.invuln` (0.18 s), so no tick is ever refused — see
  * `_sustain`, where a per-frame bill was losing 55 of every 60 payments. */
@@ -961,9 +1001,13 @@ const SUSTAIN_TICK = 0.20;
  *                     to break their guard BEFORE you spend 30 on lightning,
  *                     and it is the same rule `_turnCut` uses for the blade.
  */
-const RESIST_PER_FORCE = 1.4;
-const RESIST_CAP = 0.55;
-const RESIST_BEATEN = 0.35;
+/* EXPORTED because the Codex teaches them. The page that explains how to fight
+ * a Force user has to quote the real numbers or it is a hand-written twin of
+ * this table (HANDOFF §2.3), and the one thing worse than a player who does not
+ * know the counter is a player taught a counter the game no longer has. */
+export const RESIST_PER_FORCE = 1.4;
+export const RESIST_CAP = 0.55;
+export const RESIST_BEATEN = 0.35;
 /** The kinds that are the Force, and are therefore answerable by it. */
 export const FORCE_KINDS = /^(force|lightning|choke|grip|rend)$/;
 
@@ -1100,6 +1144,16 @@ export const IMPULSE_AS_HP = 1.2;
  * Jedi's concentration and a blaster bolt (9–13) through nobody's but a
  * B1-tier body's, which is the right shape: the blade is the answer.
  */
+/**
+ * THE TELEGRAPH, in seconds — how long a power is visible before it lands.
+ *
+ * Exported, and it was a literal at its one call site until the Codex needed
+ * to teach it. This is the window the player's counter lives in: 0.45 s is
+ * about one blade swing at the reach a duellist casts from, so "hit them while
+ * the call is over their head" is an instruction that can actually be followed
+ * rather than a reflex test.
+ */
+export const CAST_WIND = 0.45;
 const CAST_FLINCH_FLOOR = 8;
 const CAST_FLINCH_FRAC = 0.05;
 /**
@@ -4630,7 +4684,7 @@ export class Enemy {
    */
   _forceBrain(dt, ctx, dist) {
     const t = this.target;
-    this.force = Math.min(this.forceMax, this.force + FORCE_REGEN * dt);
+    this.force = Math.min(this.forceMax, this.force + forceRegenFor(this.forceMax) * dt);
     for (const k in this.powerCd) this.powerCd[k] = Math.max(0, this.powerCd[k] - dt);
 
     // a power already running — pay for it by the second, or it stops
@@ -4727,7 +4781,7 @@ export class Enemy {
       this.force -= P.cost;
       this.powerCd[key] = P.cd;
       this._castKey = key;
-      this._castTimer = 0.45;
+      this._castTimer = CAST_WIND;
       this.world.notifyFloating?.(this.aimPoint(_v1), P.label, P.color);
       audio.tone({ freq: 180, freqEnd: 900, dur: 0.45, gain: 0.10, type: 'sine', pos: this.position });
       return;

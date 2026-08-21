@@ -979,6 +979,9 @@ export class HUD {
       lockFill: root.getElementById('lock-fill'),
       why: root.getElementById('deflect-why'),
       boss: root.getElementById('bossbar'),
+      bossForceTrack: root.getElementById('boss-force-track'),
+      bossForce: root.getElementById('boss-force'),
+      bossCast: root.getElementById('boss-cast'),
       bossLabel: root.getElementById('boss-label'),
       bossPhase: root.getElementById('boss-phase'),
       bossFill: root.getElementById('boss-fill'),
@@ -1860,14 +1863,55 @@ export class HUD {
      * given `A.big` was picked by this loop and named on the bar. */
     let boss = null;
     for (const e of world.enemies) {
-      if (!isHostile(world, e) || !e.A.boss && !e.A.big) continue;
-      if (!boss || e.position.distanceToSquared(player.position) < boss.position.distanceToSquared(player.position)) boss = e;
+      if (!isHostile(world, e)) continue;
+      /* …AND A FORCE USER IS A BOSS FOR THE PURPOSES OF THIS BAR.
+       *
+       * The player: "I still don't know how to counter or fight against other
+       * force users… I'm just being manipulated and thrown around like a
+       * ragdoll being unable to do anything." Every counter this game has is
+       * timed against something the enemy is doing — a pool that empties, a
+       * 0.45 s telegraph, a cast that breaks when you hit it hard enough — and
+       * a duellist that was not `boss` or `big` put none of it on screen. A
+       * Sith acolyte throwing you across a room was, from the player's side, a
+       * body with no state at all.
+       *
+       * Nearest-first, and a real boss outranks a duellist at the same range,
+       * so walking into a set-piece still shows you the set-piece. */
+      const isCaster = e.forceMax > 0 && (e.A.powers?.length > 0);
+      if (!e.A.boss && !e.A.big && !isCaster) continue;
+      if (!boss) { boss = e; continue; }
+      const rank = (x) => (x.A.boss || x.A.big ? 0 : 1);
+      const dNew = e.position.distanceToSquared(player.position);
+      const dOld = boss.position.distanceToSquared(player.position);
+      if (rank(e) < rank(boss) || (rank(e) === rank(boss) && dNew < dOld)) boss = e;
     }
     if (boss) {
       el.boss.classList.remove('hidden');
       el.bossLabel.textContent = boss.A.label;
       el.bossPhase.textContent = boss.bossPhase ? `PHASE ${boss.bossPhase}` : '';
       el.bossFill.style.transform = `scaleX(${clamp(boss.hp / boss.maxHp, 0, 1)})`;
+      /* THE RESERVE, and the point of drawing it is that it EMPTIES: a body
+       * with nothing left in the bar cannot push, cannot pull and cannot
+       * lightning you, and that is the moment to close. */
+      const pool = boss.forceMax > 0;
+      if (el.bossForceTrack) el.bossForceTrack.classList.toggle('hidden', !pool);
+      if (pool && el.bossForce) {
+        el.bossForce.style.transform = `scaleX(${clamp(boss.force / boss.forceMax, 0, 1)})`;
+      }
+      /* AND THE TELEGRAPH IN WORDS. `_castTimer` is the 0.45 s wind-up and
+       * `casting` is a power already running; both are windows the player can
+       * act inside, and neither had any presence on screen. */
+      if (el.bossCast) {
+        const key = boss.casting || (boss._castTimer > 0 ? boss._castKey : null);
+        if (key && this._bossCast !== key) {
+          this._bossCast = key;
+          el.bossCast.textContent = `${key} — BREAK IT`;
+          el.bossCast.classList.remove('hidden');
+        } else if (!key && this._bossCast !== null) {
+          this._bossCast = null;
+          el.bossCast.classList.add('hidden');
+        }
+      }
     } else el.boss.classList.add('hidden');
 
     // ── blade lock: a bar that runs out from the centre either way
