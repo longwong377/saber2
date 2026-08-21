@@ -43,7 +43,7 @@ import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
  * same tables rather than a transcription of what they said on the day. */
 import { DIFFICULTY, GRADE_NAME, SPEED_GRADE, PARRY_GRADE, parryScale, CATCH } from '../../src/game/Combat.js';
 import { POWER_COST, POWER_BOON } from '../../src/game/Powers.js';
-import { STRATAGEMS, CODE_GAP } from '../../src/game/Stratagems.js';
+import { STRATAGEMS, CODE_GAP, supportCost } from '../../src/game/Stratagems.js';
 import { insightRate, insightAfter, COST as FACET_COST, COST_STEP } from '../../src/game/LivingForce.js';
 
 const read = (p) => readFile(new URL('../../' + p, import.meta.url), 'utf8');
@@ -877,9 +877,21 @@ export async function run({ check, assert }) {
       .filter(([, cost]) => !chips.includes(`${cost} Force`));
     assert(!missing.length,
       `powers the Codex documents with no price: ${missing.map(([id]) => id).join(', ')}`);
-    const strats = STRATAGEMS.filter((S) => !chips.includes(`${S.cost} Force`));
+    /**
+     * A SUPPORT CALL IS PRICED IN SUPPORT AND NOT IN FORCE, and this check used
+     * to demand the opposite.
+     *
+     * `Stratagems._open` has spent `world.support` since the player asked for
+     * it by name — "strategems should not cost force how does that even
+     * fucking make sense?" — and the Codex chip went on printing `s.cost`
+     * followed by the word Force for a currency nothing charges. That is a page
+     * quoting a price list the game does not use, which is the exact failure
+     * this check's own header is about, pointing the other way. `supportCost`
+     * is the one derivation and is asked rather than re-derived here.
+     */
+    const strats = STRATAGEMS.filter((S) => !chips.includes(`${supportCost(S)} support`));
     assert(!strats.length,
-      `stratagems the Codex documents with no price: ${strats.map((S) => S.id).join(', ')}`);
+      `support calls the Codex documents with no price: ${strats.map((S) => S.id).join(', ')}`);
     /* THE THIRD PRICED TABLE. `COMMAND_FORCE`'s two verbs — Rally and Dread —
      * were in NO list a player could read: they exist only as captions on the
      * order wheel, and the Codex's own Command block counted `ORDER_ACTIONS`
@@ -891,20 +903,28 @@ export async function run({ check, assert }) {
     assert(!verbs.length,
       `command Force orders the Codex does not price: ${verbs.map((P) => P.id).join(', ')}`);
     /* Nothing typed: every chip's number is somebody's `cost` field. */
-    const priced = new Set([...Object.values(POWER_COST), ...STRATAGEMS.map((S) => S.cost),
-      ...Object.values(COMMAND_FORCE).map((P) => P.cost)].map((c) => `${c} Force`));
+    const priced = new Set([
+      ...[...Object.values(POWER_COST),
+        ...Object.values(COMMAND_FORCE).map((P) => P.cost)].map((c) => `${c} Force`),
+      ...STRATAGEMS.map((S) => `${supportCost(S)} support`),
+    ]);
     const stray = chips.filter((c) => !priced.has(c));
     assert(!stray.length, `price chips that came from no table: ${[...new Set(stray)].join(', ')}`);
     const want = Object.keys(POWER_COST).length + STRATAGEMS.length + Object.keys(COMMAND_FORCE).length;
     assert(chips.length === want,
       `${chips.length} price chips against ${Object.keys(POWER_COST).length} powers, `
-      + `${STRATAGEMS.length} stratagems and ${Object.keys(COMMAND_FORCE).length} Force orders — `
+      + `${STRATAGEMS.length} support calls and ${Object.keys(COMMAND_FORCE).length} Force orders — `
       + 'one of them is priced twice or not at all');
 
-    /* The gates are the two boon-locked powers plus whatever the stratagem
-     * table marks `commandOnly`, and they name the CARD rather than a string. */
+    /* The gates are the two boon-locked powers plus whatever the support-call
+     * table marks `commandOnly`, and they name the CARD rather than a string.
+     * A THIRD KIND joined them with the release ladder: eleven of the eighteen
+     * calls are held until the battle has earned them, which is neither "it is
+     * expensive" nor "you need an army" and needs a chip of its own. See
+     * RELEASE in src/game/Stratagems.js. */
     const wantGates = Object.values(POWER_BOON).length
       + STRATAGEMS.filter((S) => S.commandOnly).length
+      + STRATAGEMS.filter((S) => (S.earn ?? 0) > 0).length
       // …and both Force orders, which need an army by definition: there is
       // nobody to rally and nothing to lead without one.
       + Object.keys(COMMAND_FORCE).length;

@@ -1,5 +1,5 @@
 /**
- * BATTLEFIELD BORZ — WHAT A STRATAGEM COSTS.
+ * BATTLEFIELD BORZ — WHAT A SUPPORT CALL COSTS.
  *
  * "strategems should not cost force how does that even fucking make sense?
  *  maybe there's a bar and it shows the level of outside support and resources
@@ -10,11 +10,14 @@
  * It made none. `Stratagems._open` called `player._spend(s.cost)` — the pool
  * that buys a Force push — so an orbital strike was paid for out of a Jedi's
  * connection to the Force. Past the fiction it cost something real in play:
- * the comm and the powers drew on one bar, so a run that leaned on stratagems
+ * the comm and the powers drew on one bar, so a run that leaned on the comm
  * could not lift a walker, and two systems meant to be different ways of
  * fighting were one resource with two spouts.
  *
- * Four properties, and each is a clause of the note.
+ * Five properties now, and each is a clause of the note. The fifth arrived
+ * with the table's growth from seven calls to eighteen: "different strategems
+ * cost more obviously" is a statement about the SHAPE of the price list, and
+ * a list whose top is half the bar has no top.
  */
 
 import { clocked } from './_shared.mjs';
@@ -38,6 +41,18 @@ export async function run({ check, assert }) {
     const sup = world.support;
     assert(sup, 'the world has no war support pool');
     const heavy = [...STRATAGEMS].sort((a, b) => (b.cost ?? 0) - (a.cost ?? 0))[0];
+    /**
+     * THE BAR IS FILLED FIRST, AND THAT IS A STATEMENT ABOUT THE PRICE LIST.
+     *
+     * It was not, and this check passed for as long as the dearest call was
+     * half the bar against a battle that opens at 55. The dearest call is four
+     * fifths of the bar now (`DEAREST_SHARE`) — deliberately: a saturation
+     * bombardment must not be affordable in the first minute of a fight — so
+     * "the opening call was refused on a full pool" was this fixture reporting
+     * the design rather than a defect. What it is here to measure is which
+     * POCKET the money comes out of, so it gives the side a full one.
+     */
+    sup.value = sup.max;
     const force0 = player.force;
     const pool0 = sup.value;
     const ok = player.stratagems._open(heavy, { world, enemies: [] });
@@ -51,27 +66,58 @@ export async function run({ check, assert }) {
     return `${heavy.id}: ${supportCost(heavy)} support, 0 Force (pool ${pool0.toFixed(0)} → ${sup.value.toFixed(0)})`;
   });
 
-  check('support: the calls are priced apart, and the dearest is half the bar', async () => {
+  check('support: the calls are priced apart, and the dearest is most of the bar', async () => {
     /* "different strategems cost more obviously". Derived from each row's own
      * `cost` rather than a second table — that field also decides how long the
      * CODE is, so a hand-kept support price beside it is HANDOFF §2.3 in the one
      * file that can least afford one. */
     const { STRATAGEMS, supportCost } = await import('../../src/game/Stratagems.js');
-    const { SUPPORT_MAX } = await import('../../src/game/Support.js');
+    const { SUPPORT_MAX, DEAREST_SHARE, SUPPORT_START } = await import('../../src/game/Support.js');
     const rows = STRATAGEMS.map((s) => ({ id: s.id, force: s.cost ?? 0, sup: supportCost(s) }));
     const dear = rows.reduce((m, r) => (r.sup > m.sup ? r : m));
     const cheap = rows.reduce((m, r) => (r.sup < m.sup ? r : m));
     assert(dear.sup > cheap.sup * 2.5,
       `the dearest call is ${dear.sup} and the cheapest ${cheap.sup} — that is not "costs more obviously"`);
-    assert(Math.abs(dear.sup - SUPPORT_MAX / 2) < 1,
-      `the dearest call is ${dear.sup} of ${SUPPORT_MAX} — the bar is meant to hold two of them`);
+    /**
+     * IT WAS HALF THE BAR AND IT IS `DEAREST_SHARE` NOW, and the reason is the
+     * table's growth from seven rows to eighteen.
+     *
+     * At half, the bar held two of anything and the top of the price list was
+     * not a decision — it was a rhythm. Four fifths makes it one: the dearest
+     * call cannot be paid for at the OPENING of a battle, which starts at
+     * `SUPPORT_START`, so the biggest thing in the game has to be earned inside
+     * the fight even after its release rung is passed. Both halves of that are
+     * asserted, because the second is the one that makes it a decision.
+     */
+    assert(Math.abs(dear.sup - SUPPORT_MAX * DEAREST_SHARE) < 1,
+      `the dearest call is ${dear.sup} of ${SUPPORT_MAX} against a declared share of `
+      + `${DEAREST_SHARE} — the price list and the bar disagree`);
+    assert(dear.sup > SUPPORT_START,
+      `the dearest call is ${dear.sup} and a battle opens at ${SUPPORT_START} — the biggest thing `
+      + 'in the game is affordable before the fight has started');
+    /* AND ONE OF THEM IS ALL YOU GET. A full bar has to refuse a second. */
+    assert(dear.sup * 2 > SUPPORT_MAX,
+      `two of the dearest call cost ${dear.sup * 2} of ${SUPPORT_MAX} — the bar holds both`);
+    /* …WHILE THE CHEAPEST IS ALWAYS AVAILABLE. A screen you cannot afford on a
+     * full bar is a call nobody uses. */
+    assert(cheap.sup < SUPPORT_MAX * 0.2,
+      `the cheapest call is ${cheap.sup} of ${SUPPORT_MAX} — nothing here is a reflex`);
     /* AND THE ORDER IS THE FORCE TABLE'S ORDER, because the balance of the whole
      * table was struck on those numbers and this is a change of currency. */
     const byForce = [...rows].sort((a, b) => a.force - b.force).map((r) => r.id);
     const bySup = [...rows].sort((a, b) => a.sup - b.sup).map((r) => r.id);
     assert(byForce.join() === bySup.join(),
       `the support prices reorder the table: ${byForce.join(',')} against ${bySup.join(',')}`);
-    return `${cheap.id} ${cheap.sup} … ${dear.id} ${dear.sup} of ${SUPPORT_MAX}, same order as the Force table`;
+    /* EVERY PRICE DISTINCT, which is what makes the column readable down the
+     * panel: two rows at the same number teach nothing about which is which,
+     * and with eighteen rows a collision is easy to author by accident. */
+    const dupes = rows.filter((r, i) => rows.findIndex((o) => o.sup === r.sup) !== i);
+    assert(!dupes.length,
+      `${dupes.map((d) => d.id).join(', ')} share a price with another call — the panel's cost `
+      + 'column stops telling one from the other');
+    return `${rows.length} calls: ${cheap.id} ${cheap.sup} … ${dear.id} ${dear.sup} of `
+      + `${SUPPORT_MAX} (${DEAREST_SHARE} of the bar, unaffordable at the ${SUPPORT_START} a battle `
+      + 'opens with), all distinct, same order as the Force table';
   });
 
   check('support: carriers rearm — the bar does not start refilling the moment it is spent', async () => {
@@ -87,6 +133,9 @@ export async function run({ check, assert }) {
     const { REARM, SUPPORT_MAX } = await import('../../src/game/Support.js');
     const sup = world.support;
     const heavy = [...STRATAGEMS].sort((a, b) => (b.cost ?? 0) - (a.cost ?? 0))[0];
+    /* A full bar, for the reason the check above gives at length: the dearest
+     * call is 80 of 100 and a battle opens at 55. */
+    sup.value = sup.max;
     world.player.stratagems._open(heavy, { world, enemies: [] });
     const after = sup.value;
     assert(sup.rearming, 'the supply line is not rearming the frame after a heavy call');
@@ -146,6 +195,23 @@ export async function run({ check, assert }) {
     const prog = await readFile(new URL('../../src/game/Progress.js', import.meta.url), 'utf8');
     assert(!/support/i.test(prog.replace(/\/\*[\s\S]*?\*\//g, ' ')),
       'Progress.js mentions support — the pool is being written into the profile');
+    /**
+     * AND THE WAR EFFORT IS A SECOND FIELD FOR A REASON THAT IS MEASURABLE.
+     *
+     * `earned` is what the pool TOOK and stops moving at the ceiling; `effort`
+     * is what it was OFFERED and does not. The heavier support calls are
+     * released along `effort` (see RELEASE in src/game/Stratagems.js), and had
+     * they been released along `earned` the ladder would have frozen for
+     * exactly the player who is doing best: a full bar and a cleared wave
+     * credits nothing.
+     */
+    const full = new WarSupport();
+    full.value = full.max;
+    const took = full.credit('kill', 11) + full.credit('wave');
+    assert(took === 0, `a full bar took ${took} — the fixture is not measuring the ceiling`);
+    assert(full.effort > 15,
+      `eleven kills and a cleared wave against a full bar recorded ${full.effort} of war effort — `
+      + 'the ladder would freeze for the side that is winning');
     return `kill ${SUPPORT_EARN.kill} · wave ${SUPPORT_EARN.wave} · area ${SUPPORT_EARN.area}; `
       + `every battle opens at ${SUPPORT_START}`;
   });

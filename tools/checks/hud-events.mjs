@@ -234,7 +234,7 @@ export async function run({ check, assert }) {
     } finally { restore(); }
   });
 
-  check('hud: the stratagem panel is the STRATAGEMS table and not a copy of it', () => {
+  check('hud: the support-call panel is the STRATAGEMS table and not a copy of it', () => {
     /**
      * A CODE SYSTEM WITH NO READOUT IS A MANUAL YOU KEEP BESIDE THE KEYBOARD.
      * The panel is the whole of this mechanic's discoverability, so what it
@@ -257,14 +257,32 @@ export async function run({ check, assert }) {
 
       // key up: nothing on screen at all
       hud._stratagemPanel(p);
-      assert(!host.innerHTML, 'the panel is painted with the stratagem key up');
+      assert(!host.innerHTML, 'the panel is painted with the comm key up');
 
-      // key down: every call the table offers, and nothing else
+      /**
+       * KEY DOWN: THE FIRST TEN THE TABLE OFFERS, AND A COUNT OF THE REST.
+       *
+       * It used to be all of them, and that was right when the table was seven
+       * rows. It is eighteen now, of which fifteen are offered to a lone Jedi,
+       * and fifteen rows at this size is 430 px of list down the left of the
+       * screen at the one moment the player has typed nothing and the panel is
+       * at its longest — see `_stratagemPanel`'s own note on the cap. What has
+       * to hold is unchanged and is asserted the same way: the panel is a VIEW
+       * of the table, in the table's own order, and a row added to
+       * `STRATAGEMS` appears on it without this file naming the row.
+       */
       p.stratagems.setArming(true);
       hud._stratagemPanel(p);
       const solo = STRATAGEMS.filter((s) => !s.commandOnly);
-      for (const s of solo) {
+      const CAP = 10;
+      for (const s of solo.slice(0, CAP)) {
         assert(host.innerHTML.includes(s.name), `${s.id} is in the table and not on the panel`);
+      }
+      if (solo.length > CAP) {
+        assert(new RegExp(`\\+${solo.length - CAP} more`).test(host.innerHTML),
+          `${solo.length} calls are offered, ${CAP} are shown, and the panel does not say that `
+          + `${solo.length - CAP} of them are missing — a list that silently truncates is worse `
+          + 'than a long one');
       }
       for (const s of STRATAGEMS.filter((s) => s.commandOnly)) {
         assert(!host.innerHTML.includes(s.name),
@@ -284,8 +302,12 @@ export async function run({ check, assert }) {
       }
       assert(host.innerHTML.includes(still[0].name), 'the panel dropped a call that is still live');
       const lit = (host.innerHTML.match(/class="sg-d on"/g) || []).length;
-      assert(lit === still.length,
-        `${lit} letters are lit across ${still.length} live rows — one per row is how far in you are`);
+      /* ONE LIT LETTER PER ROW ON SCREEN. The cap applies here too — with
+       * eighteen rows a single opening direction can still leave more than ten
+       * live — so the expectation is the shown count and not the live one. */
+      const shown = Math.min(still.length, CAP);
+      assert(lit === shown,
+        `${lit} letters are lit across ${shown} rows on screen — one per row is how far in you are`);
       /* AND EXACTLY ONE ARROW IS MARKED AS THE NEXT ONE TO PRESS. The codes
        * are dealt per run, so nobody enters one from memory and the panel has
        * to be an instruction rather than a reference — but marking the next
@@ -301,11 +323,14 @@ export async function run({ check, assert }) {
       p.stratagems.entry = '';
       p.force = 0;
       hud._stratagemPanel(p);
-      for (const s of solo) assert(host.innerHTML.includes(s.name), `${s.id} vanished when the purse emptied`);
-      assert((host.innerHTML.match(/sg-row off/g) || []).length >= solo.length,
+      for (const s of solo.slice(0, CAP)) {
+        assert(host.innerHTML.includes(s.name), `${s.id} vanished when the purse emptied`);
+      }
+      assert((host.innerHTML.match(/sg-row off/g) || []).length >= Math.min(solo.length, CAP),
         'nothing is greyed with no Force at all');
-      return `${solo.length} calls offered solo, ${gone.length} dropped by one letter, `
-        + `${lit} matched letters lit, all greyed at 0 Force`;
+      return `${solo.length} calls offered solo, ${Math.min(solo.length, CAP)} on screen with the `
+        + `rest counted, ${gone.length} dropped by one letter, ${lit} matched letters lit, `
+        + 'all greyed at 0 Force';
     } finally { restore(); }
   });
 

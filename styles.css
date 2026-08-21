@@ -1287,17 +1287,25 @@ button{font-family:inherit}
    blurb is a sentence rather than a noise; and the order you are ALREADY
    giving is marked, because a wheel that does not say where you are makes you
    guess whether the flick took. */
-/* ── the stratagem panel ─────────────────────────────────────────────
+/* ── the support-call panel (the node id is #stratagem; nothing readable is)
    Left of centre and vertically middled, where the code is being typed with
    the left hand and where nothing else on the HUD lives: the vitals are
    bottom-left, the power wheel bottom-right, the wave counter top-left. It is
-   only ever up while a key is held, so it may sit over the world. */
+   only ever up while a key is held, so it may sit over the world.
+
+   THE GAP IS TIGHTER THAN IT WAS. Seven rows became eighteen, ten of which the
+   panel will show at once (HUD._stratagemPanel caps it), and at the old 5 px
+   gap those ten plus the phrase line plus the held line came to 430 px of list
+   down a 720 px screen. 3 px and a slimmer row hold the whole of it inside
+   340 px, which leaves the middle of the screen — where the fight is —
+   uncovered. */
 #stratagem{position:absolute;left:34px;top:50%;transform:translateY(-50%);
-  display:flex;flex-direction:column;gap:5px;pointer-events:none;z-index:6;
-  animation:riseIn .12s ease-out both}
+  display:flex;flex-direction:column;gap:3px;pointer-events:none;z-index:6;
+  max-height:74vh;animation:riseIn .12s ease-out both}
 #stratagem.hidden{display:none}
 /* THE PHRASE, under the leading row. Every keystroke is a word (see
-   Stratagems.callPhrase); this is the script the player is reading aloud, so
+   callPhrase in src/game/Stratagems.js); this is the script the player is
+   reading aloud, so
    the word already said is dim, the next one is lit, and the rest wait. */
 #stratagem .sg-words{margin:1px 0 5px 0;font-size:11px;letter-spacing:.02em;line-height:1.35;
   opacity:.9;padding-left:2px}
@@ -1316,8 +1324,8 @@ button{font-family:inherit}
    list that reordered itself as the Force came back would be unreadable. */
 .sg-row.off{opacity:.38}
 .sg-code{display:flex;gap:3px}
-/* A stratagem code in the Codex: one word, not a row of separate controls.
-   Wider tracking than a key chip because it is read as a sequence. */
+/* A support call's code in the Codex: one word, not a row of separate
+   controls. Wider tracking than a key chip because it is read as a sequence. */
 kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
 .sg-d{display:grid;place-items:center;width:15px;height:15px;font-style:normal;
   font-size:10px;font-weight:700;color:var(--muted);
@@ -1336,6 +1344,11 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
 .sg-said{margin-top:3px;padding:4px 11px;font:var(--mono);font-size:11px;
   color:var(--accent-warm);background:rgba(10,13,26,.82);
   border:2px solid var(--stroke);box-shadow:var(--stamp-sm)}
+/* WHAT THE FLEET HAS NOT RELEASED YET. Cool and dim rather than warm, because
+   it is not an answer to anything the player just did — it is the one line
+   that says the ladder exists, and it must not compete with the refusal above
+   it for the same eye. See Stratagems' RELEASE. */
+.sg-said.sg-locked{color:var(--muted);letter-spacing:.02em}
 
 /* A commander's Force verb that is cooling or unaffordable, on the order
    wheel. Same reading as .sg-row.off and for the same reason. */

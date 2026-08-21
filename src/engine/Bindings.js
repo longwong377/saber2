@@ -403,11 +403,13 @@ export const ACTIONS = [
    *
    * Hold it and the movement keys stop moving you and start SPELLING — see
    * src/game/Stratagems.js for why a code and not a key, and for the part that
-   * matters here: a stratagem costs this table exactly one row however many
+   * matters here: a support call costs this table exactly one row however many
    * calls are authored. That is the only shape that fits. The keyboard has no
    * free letter under the left hand and the pad has forty-six places and had
    * filled all of them; a sixth support call on the sixth spare button was
-   * never going to happen, and a sixth code costs nothing.
+   * never going to happen, and a sixth code costs nothing — the table is
+   * EIGHTEEN calls now and this is still one row, which is the shape being
+   * paid off.
    *
    * A HOLD, and the hold is load-bearing rather than a style: it is what tells
    * `moveF` apart from the letter W. Nothing about movement changes when it is
@@ -419,7 +421,15 @@ export const ACTIONS = [
    * keyboard does, so the codes read identically on both devices without the
    * table knowing that either exists.
    */
-  { id: 'stratagem',  group: 'Command',   label: 'Call a stratagem', keys: ['CapsLock'],   hold: true, pad: 'PadBack+PadUp' },
+  /* THE LABEL IS THE ONE STRING ON THIS ROW A PLAYER READS, and it said "Call
+   * a stratagem" — the last visible use of a word that belongs to Helldivers
+   * and not to this game (the player: "they should not be called strategems in
+   * game obviously"). The ACTION ID stays `stratagem` deliberately: it is the
+   * key a rebind is saved under in localStorage, so renaming it would silently
+   * discard the binding of every player who has ever moved this off CapsLock,
+   * and nothing renders it. `tools/checks/stratagems.mjs` scans every string a
+   * player can read for the word and names the four identifiers that keep it. */
+  { id: 'stratagem',  group: 'Command',   label: 'Call for support', keys: ['CapsLock'],   hold: true, pad: 'PadBack+PadUp' },
   // P for photo. This one may live under the right hand precisely BECAUSE it
   // is a press and not a hold: you take the mouse off the game the moment it
   // is on, and everything you do afterwards is flown with the movement keys.

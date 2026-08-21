@@ -355,17 +355,24 @@ export const SIEGE_N = 22, SIEGE_R = 21, SIEGE_TIME = 9;
  *     OPEN       0    the seven calls this game shipped with. Nothing the
  *                     player already had is taken away and put behind a gate —
  *                     the opening minute of a run is exactly what it was.
- *     FORWARD   55    about wave 4. The first three you EARN, and they are the
- *                     three that change how you hold ground rather than how
- *                     much damage you do.
- *     HEAVY    130    about wave 9. The ordnance that discriminates: a carpet
- *                     that shreds infantry, a spike that kills one enormous
- *                     thing, a beam that gathers a wave into one circle.
- *     DEEP     230    about wave 14, or an area held plus a good wave count.
- *                     The calls that persist — a gunship that stays, a landing
- *                     on ground you are not standing on, a storm over the field.
- *     SIEGE    360    about wave 20. One call, and it is the biggest thing in
- *                     the game.
+ *     FORWARD   55    wave 4. The first three you EARN, and they are the three
+ *                     that change how you hold ground rather than how much
+ *                     damage you do.
+ *     HEAVY    130    wave 9. The ordnance that discriminates: a carpet that
+ *                     shreds infantry, a spike that kills one enormous thing, a
+ *                     beam that gathers a wave into one circle.
+ *     DEEP     230    wave 15, or an area held plus a good wave count. The
+ *                     calls that persist — a gunship that stays, a landing on
+ *                     ground you are not standing on, a storm over the field.
+ *     SIEGE    360    wave 22. One call, and it is the biggest thing in the
+ *                     game.
+ *
+ * The four wave numbers are measured rather than guessed: `tools/checks/
+ * stratagems.mjs` walks a run through the real `WarSupport` at the body counts
+ * the escalation actually produces (eight at wave one rising to twenty-two) and
+ * prints where each rung landed. It also asserts they arrive in order and at
+ * least two waves apart, so the ladder is a staircase with landings rather
+ * than four notices in one minute.
  *
  * A run that ends at wave 8 sees three of the eleven. A run that reaches the
  * twenties sees all of them, once, late, and has to have earned each. That is

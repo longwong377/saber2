@@ -894,7 +894,7 @@
         <div class="bar st"><i id="bar-stam"></i></div>
       </div>
       <!--
-        WAR SUPPORT — what a stratagem costs, and it is not the Force.
+        WAR SUPPORT — what a support call costs, and it is not the Force.
 
         "strategems should not cost force how does that even fucking make
          sense? maybe there's a bar and it shows the level of outside support
@@ -1011,7 +1011,9 @@
        HUD._stratagemPanel from the STRATAGEMS table itself, so a call
        authored in src/game/Stratagems.js is on this panel the same day and
        there is nothing here to fall out of step with it. Empty and hidden
-       until the stratagem key goes down. -->
+       until the comm key goes down. (The node id is still `stratagem`: it is
+       an identifier nobody renders, and it is what HUD.js and styles.css both
+       key off.) -->
   <div id="stratagem" class="hidden"></div>
   <div id="dmg-vignette"></div>
   <div id="flow-vignette"></div>

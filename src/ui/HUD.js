@@ -1182,7 +1182,25 @@ export class HUD {
      * one is the instruction. That is what turns the panel from a reference
      * you have to find your place in into a script you are reading aloud.
      */
-    host.innerHTML = rows.map((r) => {
+    /**
+     * TEN ROWS AT MOST, AND THE REST AS A COUNT.
+     *
+     * The table was seven rows and is eighteen, and the panel opens with the
+     * whole of it before a single letter has been entered. Eighteen rows at
+     * this size is 430 px of list down the left of the screen while somebody
+     * is shooting at you — which is not a reference, it is a wall — and the
+     * first letter cuts it to about five anyway, so the long list is only ever
+     * on screen at the one moment the player has not yet chosen anything.
+     *
+     * Ten, in the table's own order, which is the release ladder: the calls
+     * you have had since the first minute are at the top and the ones you
+     * earned are under them. The tail is a COUNT and not a scroll, because a
+     * panel you have to scroll while holding a key with the same hand you
+     * spell with is a panel nobody reads.
+     */
+    const SHOWN = 10;
+    const spill = rows.length - SHOWN;
+    host.innerHTML = rows.slice(0, SHOWN).map((r) => {
       const cd = Math.ceil(S.cooldowns[r.id] ?? 0);
       const price = support ? supportCost(r) : r.cost;
       const off = cd > 0 || purse < price;
@@ -1211,6 +1229,35 @@ export class HUD {
       return `<div class="sg-row${off ? ' off' : ''}"><span class="sg-code">${code}</span>`
         + `<b>${r.name}</b><span class="sg-cost">${note}</span></div>${words}`;
     }).join('') || '<div class="sg-row off"><b>no such call</b></div>';
+    if (spill > 0) {
+      host.innerHTML += `<div class="sg-row off"><b>+${spill} more — keep spelling</b></div>`;
+    }
+    /**
+     * WHAT THE FLEET HAS NOT RELEASED YET, as one line under the list.
+     *
+     * The heavier calls are held until the side has earned them (see
+     * `RELEASE` in src/game/Stratagems.js), and a locked call is ABSENT from
+     * this panel rather than greyed in it — a code that can be spelled and
+     * then refuses is a menu item that lies, which is the rule the
+     * command-only calls already follow. That leaves the player with no way to
+     * know the ladder exists between the notice that announces a rung and the
+     * next time they open the Codex, so the panel carries the next rung: what
+     * it is and how much more war effort it wants.
+     *
+     * It reads `Stratagems.locked`, which is the one derivation of that list —
+     * a second filter here would be the private duplicate this file's own
+     * price note is about.
+     */
+    const locked = S.locked ? S.locked(ctx) : [];
+    if (locked.length && support) {
+      const next = locked[0];
+      const want = Math.max(0, Math.ceil((next.earn ?? 0) - (support.effort ?? 0)));
+      const also = locked.filter(r => (r.earn ?? 0) === (next.earn ?? 0)).length - 1;
+      const el = document.createElement('div');
+      el.className = 'sg-said sg-locked';
+      el.textContent = `held: ${next.name}${also > 0 ? ` +${also}` : ''} — ${want} more war effort`;
+      host.appendChild(el);
+    }
     /* WHAT THE LAST ENTRY DID, under the list. The panel says what you CAN
      * still spell; this says what happened to the thing you just spelled — a
      * call made and how long until it lands, a refusal and why. Without it a
