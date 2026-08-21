@@ -246,6 +246,169 @@ and the mechanism is correct. What is wrong is the expectation §7 sets for it.
 
 ---
 
+### …and then SUPPRESSION was built, and it does not pay either — but the reason is new, and it is the answer
+
+`FLAGSHIP.md` §6 hands the presence problem one candidate: a bolt answered by
+the player is a bolt that did not arrive, and today a bolt is only answerable if
+it is aimed at the PLAYER. A Jedi standing in a rank could answer exactly one
+bolt in the whole battle — the one aimed at his own chest — and the men either
+side of him were on their own. That is built now (**THE SCREEN**, `SCREEN` in
+`src/game/Combat.js`, `screenIntercept` in `Bolts.js`, `World._screenFor`, eight
+checks in `tools/checks/screen.mjs`), it works, and it changes nothing at battle
+scale. Three measurements say why, and they are worth more than the mechanic.
+
+**1. THE FIRE THAT KILLS YOUR MEN IS YOUR OWN.** One Command battle on Geonosis,
+seed 3, 150 game-seconds, every hit on a body of the player's own side counted at
+`World._boltHitTest` with the owner's team read off the bolt:
+
+    47 hits · 569.8 damage · every one of them fired by the player's OWN team
+    0 hostile bolts reached a trooper at all
+
+Taken three times on three builds, 47 / 30 / 22 hits, always 100% own-team. This
+re-reads the whole Dead Jedi table. The seven men are not hostile fire the Jedi
+failed to stop; they are **your own rank shooting through itself**, because a
+Jedi standing in a formation is what brings the horde in among it and a rank
+firing into a melee fires through its own men. It is also why the arm with no
+player loses fewest: with nothing to walk toward, the fight stays a firing line
+at range and no man is ever between another man and a target.
+`TEAM_DAMAGE_DEFAULT` is 0.35 and Command has had friendly fire on by design
+since the mode was written; nobody had counted what it was doing.
+
+**2. AND THE MEN WHO DIE ARE NOT NEAR THE JEDI.** The screen's reach is
+`MORALE.NEAR` — the radius the game already owns for "this Jedi is with these
+men". Of **30 casualty-bolts in a 150-second battle, 3 had the victim inside
+that radius, 2 inside the arc a guard covers, and ZERO inside both.** The sorted
+distances of the victim from the Jedi:
+
+    11 · 11.4 · 11.5 · 14.5 · 19 · 23 · 23.5 · 25 · 27.4 · 29.2 · 29.9 · 30.1
+    30.9 · 33.4 · 36 · 36.3 · 37.7 · 37.9 · 39.3 · 40.3 · 42.4 · 42.7 · 46.1
+    46.2 · 46.5 · 46.6 · 47.7 · 48.7 · 50.4 · 58.1
+
+**3. BECAUSE THE LINE IS NOT WITH HIM.** Sampled every five game-seconds over
+the same battle, the share of your LIVING men standing inside 14 m of the Jedi
+is **19.7%**, and the median man goes 12.6 m → 16.1 → 17.4 → 23.3 → 31.2 →
+45.7 m over the first thirty seconds. The Jedi holds station on the centroid of
+his own roster and the roster walks away from itself.
+
+**So the presence loop cannot be fixed by making presence worth more.** Every
+term in it — `MORALE.JEDI_NEAR`, `NERVE.BLADE`, the screen — is a local good
+inside a radius, and four fifths of the line is never inside any radius. A
+mechanic that pays out at fourteen metres pays out to two men of ten. Widening
+the radius until it covers the line is the flat aura all three constraints
+forbid, and it would not be presence any more: it would be a passive.
+
+**The thing to answer next is therefore not "what should a Jedi do for the
+line", it is "why is the line thirty metres wide".** One of the two obvious
+candidates is already dead: it is NOT the arrivals. Tagging every own-team body
+the frame it first appears and reading the tag at `onEnemyKilled` — same battle,
+same seed — **ten bodies ever existed, no reinforcement ever arrived, and all
+ten died**, at these ages and distances from the Jedi:
+
+    14s@13m · 23s@25m · 35s@16m · 40s@22m · 42s@26m
+    44s@27m · 50s@26m · 65s@34m · 67s@26m · 68s@15m
+
+The men who die are the men who started the battle, and by the time they die the
+median one is **26 m from the Jedi**, against a presence radius of 14. So the
+line does not arrive strung out; it comes apart while it fights. That leaves the
+formation slots and the steering — `FORMATIONS.line` puts ten men over 24 m
+before anybody moves, and every formation carries a `leash` multiplier that lets
+them go and get it. Until that is answered, §7's four verbs are all being asked
+to pay out to a formation that is not there.
+
+**THE VERDICT ON THE INSTRUMENT §14 NAMES.** Two `git worktree`s pinned to one
+commit, differing by one line — `World._screenFor` returning `null` in the
+control — six seeds, one engagement, four arms, 24 rows each, run side by side
+so nothing could land in the tree between them. Mean `fallen` ± population sd:
+
+| | none | blade | dead | far | screened, blade arm |
+|---|---|---|---|---|---|
+| **screen ON** | 3.50 | **6.67** ±3.14 | 5.50 ±3.25 | 5.33 | 6.3 |
+| **screen OFF** | 3.50 | **4.50** ±2.50 | 6.83 ±2.91 | 5.67 | 0 |
+
+The two no-player arms land on the same 3.50, which is the control working. The
+blade arm does not improve; it reads worse by 2.2 men against a standard error
+of about 1.2, while the `dead` arm moves 1.3 in the opposite direction. **The
+screen's effect at battle scale is not distinguishable from the noise, and the
+mechanic only fires six times in a battle.** Stated plainly: on the axis
+FLAGSHIP §14 asks for, the mechanism has failed, and the three measurements
+above are why.
+
+**What the screen actually is, for whoever picks it up.** It is not reverted,
+because the mechanic is correct, priced, bound and legible, and it is the right
+answer to a line that stands together:
+
+- A bolt on its way into one of your own men, crossing ground you are standing
+  on, inside the arc a guard covers, is a bolt you can take. Four gates, all
+  four required.
+- The price is Force **by the metre**, derived rather than chosen:
+  `GUARD_COST.unanswered` already prices one bolt the Force answered for you at
+  `CATCH.autoRadius`, and this is the same event further out. Measured through
+  the shipped bill, 1.18 Force for a man at 2.9 m against 4.81 at 12 m.
+- `screenReach` is that formula solved the other way, so **the reach IS the
+  bar**: the screen collapses toward the Jedi as the Force drains and comes
+  back as it refills. No new HUD element — the Force bar is the readout.
+- It is not an aura. A bolt aimed two metres wide of a man is not answered and
+  not charged for, tested against the body's own `capsules()` fan. The first cut
+  used the body's bound sphere, which stands a metre off the chest, and that was
+  **128 bolts screened for 8 fewer arriving** — sixteen near misses answered for
+  every shot that was going to land.
+- On a rank that DOES stand together it is decisive. Four men, 1.5 aimed bolts a
+  second each, twelve seconds, one variable between the arms — a full Force bar
+  against an empty one:
+
+  | | bolts that arrived | men standing |
+  |---|---|---|
+  | full bar | **0%** | **4 of 4** |
+  | empty bar | 40% | 1 of 4 |
+
+### The Dead Jedi instrument has lost its axis, and it is worth knowing before the next run
+
+Two things about `tools/_flagship.mjs` step 2 on this tree, both measured while
+running the A/B above in two `git worktree`s pinned to one commit and differing
+by one line:
+
+- **`fallen` is saturated at three engagements.** Every arm loses exactly 10 of
+  14 and ends with exactly 4 standing — no player, a Jedi in the line, a Jedi a
+  hundred metres off. It moved when §14 was written (0 / 7.2 / 7.4); it does not
+  now. So the probe grew `boltsIntoLine` and `damageIntoLine`, counted at
+  `_boltHitTest`, and reports `screened` beside them.
+- **The arms are no longer reproducible seed for seed.** Two `none` arms — no
+  player in the world at all, identical code, identical seed — read `fallen` 5
+  against 8, and 2 against 4, and `damageIntoLine` 307 against 373. Whatever
+  used to make this probe deterministic per seed is gone, and three or five
+  seeds can no longer resolve a difference of one or two men. Anybody reading a
+  step-2 table from here on needs that number in front of them.
+
+### FLAGSHIP §7's BREAK verb is on the wire, and it is 0.00% of a battle
+
+`Nerve.js` was built last session and nothing called it. It is called now —
+`nerveTick` in `World.update`'s per-frame pass over the roster, `witnessDeath`
+at `onEnemyKilled`, `turnedHome` at `World._boltHitTest`, and `nerveAim` /
+`nerveBroken` / `nerveRefusing` read by `Enemy.aimQuality` and `Enemy`'s steering
+— and every unit-scale check of it passes: a rank frozen inside `BLADE_REACH`
+comes apart in the eleven seconds the table says it should.
+
+What none of those can say is what share of a real battle a real horde spends
+broken. Measured, Geonosis, Command, the Jedi walked onto his own line's
+centroid every frame with the blade lit and never leaving it — the kindest
+condition `NERVE.BLADE` can be given:
+
+    2043 hostile body-seconds · broken 0.00% · refusing 0.00%
+    steadiest-shaken body on the field 0.863, against a 0.24 line
+
+Not small. None. The arithmetic is the table's own: `BLADE` is −0.115/s against
+a +0.05 rally, so a full-nerve body needs **eleven and a half seconds standing
+inside 6.5 m of a lit blade** to cross `BREAK` — and a body that stands inside
+6.5 m of a Jedi for eleven seconds is a body the Jedi has killed.
+`COMRADE_FELL` is −0.055 against a rally that erases it in 1.1 s, so it takes
+fourteen deaths inside 11 m inside about a second to break the man beside them,
+and a wave does not die like that. The check
+(`tools/checks/break.mjs`) asserts the wiring and reports the share, because a
+bound on the share would be a bound on the wave composer and the spawn cadence
+at once.
+
+---
+
 ## Where the tree is
 
 - **7 levels, 8 modes, 1 campaign, 35 archetypes.** Run `tools/state.mjs`
@@ -365,14 +528,20 @@ Gate at the end: **1718 passed, 0 failed.**
 
 ### Still open
 
-- **The presence loop buys the line nothing a number can see.** Re-measured on
-  a corrected instrument, five seeds, fifteen rows: the outcome is IDENTICAL in
-  all three arms and on every seed — same three waves, same area, same 37
-  enemies dead — while a Jedi in the line makes the fight half again as long
-  and gets seven of your men killed. The Jedi's kills substitute for the
-  line's. This is now the most consequential thing in this document, it is
-  `FLAGSHIP.md` §7's central claim, and it has to be answered before the mode
-  is built. See Step 2 above for the table and its caveats.
+- **The presence loop buys the line nothing a number can see — and the reason
+  is now measured.** It is not that presence is worth too little; it is that
+  **four fifths of the line is never inside any presence radius.** 19.7% of your
+  living men are within `MORALE.NEAR` of the Jedi at any moment, the median
+  casualty dies 26 m from him, and of 30 casualty-bolts in one battle ZERO were
+  fired at a man both inside that radius and inside the arc a guard covers. Two
+  mechanics have now been built and scored against this and neither paid — OPEN
+  (3.00× on almost none of the fight) and the SCREEN (six intercepts a battle) —
+  and both failed the same way, by being local goods in a fight that is not
+  local. **The question to answer is no longer "what should a Jedi do for the
+  line". It is "why does the line come apart to thirty metres wide".** It is not
+  the arrivals: ten bodies start the battle, no reinforcement ever arrives, and
+  all ten die spread from 13 m to 34 m. That leaves the formation slots and the
+  steering. See the suppression section above.
 - ~~**Presence is a FLOOR, not a gradient.**~~ It falls off with distance now:
   full at the shoulder, `MORALE.EDGE` (0.35) at the rim of `NEAR`, nothing past
   it, linear in metres rather than in area. 0.085/s at the shoulder against
@@ -384,7 +553,17 @@ Gate at the end: **1718 passed, 0 failed.**
 - **Standing with your line is strictly worse than fighting away from it**, on
   the numbers as they were: same men lost, half again the time, nothing bought.
   That is §7's problem stated as sharply as this instrument can state it, and it
-  is the thing to answer before the mode is built.
+  is the thing to answer before the mode is built. **On this tree the instrument
+  can no longer state it at all** — `fallen` saturates at 10 of 14 in every arm
+  over three engagements, and two `none` arms off identical code and one seed
+  read 5 against 8. Step 2 grew `damageIntoLine` for that reason; read the note
+  in the suppression section before trusting any step-2 table.
+- **The horde's nerve is on the wire and spends 0.00% of a battle broken.**
+  2043 hostile body-seconds, the Jedi held on his own line's centroid with the
+  blade lit throughout, steadiest-shaken body 0.863 against a 0.24 line.
+  `NERVE.BLADE` needs 11.5 s inside 6.5 m and a body that stands there that long
+  is a body the Jedi has killed. FLAGSHIP §7's first verb is wired, checked and
+  inert; it needs a different shape, not a bigger number.
 - ~~**OPEN is wired, measured at 3.00×, and does not pay at battle scale**, and
   the cheap fix is a target preference.~~ **Answered, and the diagnosis was an
   instrument fault.** The share of enemy-seconds is **0.90%** — the 2% case, so
