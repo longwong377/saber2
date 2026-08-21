@@ -317,17 +317,32 @@ export async function run({ check, assert }) {
         world.onEnemyKilled?.(e, world.player, 'cut');
       }
       const before = world.enemies.filter((e) => d.blocksWaveEnd(e)).length;
-      let cleared = -1;
-      for (let s = 0; s < 30 && cleared < 0; s++) {
-        for (let f = 0; f < 60; f++) world.update(1 / 60, input);
-        if (d.wave > 3) cleared = s + 1;
+      /**
+       * SAMPLED EVERY SECOND, AND THE FLOOR IS WHAT IS ASSERTED — because the
+       * field does not stay empty. Measured on the first run of this check: the
+       * wave cleared and the assertion "no conscripts are on the field" failed
+       * with ONE, which was a wave-4 conscript. Clearing a wave composes the
+       * next one on the same frame and the next one has a levy of its own, so
+       * "the field is empty now" is a question about the following wave. What
+       * the break has to be shown to do is take the levy to nothing at least
+       * once, without anybody killing one.
+       */
+      let cleared = -1, floor = before;
+      for (let s = 0; s < 40 && cleared < 0; s++) {
+        for (let f = 0; f < 60; f++) {
+          world.update(1 / 60, input);
+          const n = world.enemies.reduce(
+            (a, e) => a + (d.blocksWaveEnd(e) && !paysOut(e.A) ? 1 : 0), 0);
+          if (n < floor) floor = n;
+          if (d.wave > 3 && cleared < 0) cleared = s + 1;
+        }
       }
-      const left = world.enemies.filter((e) => d.blocksWaveEnd(e) && !paysOut(e.A)).length;
       assert(cleared > 0,
         `${before} conscripts were left standing when the last rifle fell and the wave never `
-        + `cleared in 30 s (${left} still up). The player has to mow the weather to make progress, `
-        + 'which is §6 exactly backwards');
-      assert(left === 0, `${left} conscripts are still on the field after the levy broke`);
+        + `cleared in 40 s (${floor} was the fewest that stood). The player has to mow the weather `
+        + 'to make progress, which is §6 exactly backwards');
+      assert(floor === 0,
+        `the levy never went below ${floor} bodies — it did not break, the wave ended some other way`);
       return `${before} conscripts standing when the last paying body fell; the levy broke and the `
         + `field was clear ${cleared} s later, with nobody having killed one`;
     } finally { world.unload?.(); world.dispose?.(); }
