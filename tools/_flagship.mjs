@@ -543,6 +543,20 @@ async function runArm(arm, seed, engagements) {
    * "three engagements", and `cappedOut` says which rows did not get three.
    */
   const CAP = 220;
+  /**
+   * EVERY ENEMY THAT DIES, COUNTED WHEN IT DIES.
+   *
+   * Wrapped on the world's own kill callback rather than counted off the
+   * roster at the end, for the reason the note over `foeKilled` gives: bodies
+   * leave `world.enemies` and a census cannot see the ones that already have.
+   * Variadic past the argument it reads, so a signature change downstream does
+   * not silently drop the tail.
+   */
+  const killed = { n: 0 };
+  {
+    const inner = world.onEnemyKilled ? world.onEnemyKilled.bind(world) : null;
+    world.onEnemyKilled = (...a) => { killed.n++; return inner ? inner(...a) : undefined; };
+  }
   let stalled = 0, stallAt = null;
   const secs = drive(world, CAP * engagements, input, (t) => {
     /* THE STALL, WATCHED RATHER THAN WAITED OUT. The condition is the base
@@ -570,10 +584,27 @@ async function runArm(arm, seed, engagements) {
     bladeKills: blade ? blade.kills : null,
     bladeEventsOnEnemies: blade ? blade.onEnemies : null,
     enemiesBlockedFromBlade: dis ? dis.blocked() : null,
-    /* THE OTHER SIDE'S LOSSES, which `fallen` says nothing about. A Jedi that
+    /**
+     * THE OTHER SIDE'S LOSSES, which `fallen` says nothing about. A Jedi that
      * cannot cut may still be killing droids by returning bolts and by handing
      * ten riflemen an opened target, and if it is, that is §7's OPEN and TURN
-     * verbs showing up in a number. */
+     * verbs showing up in a number.
+     *
+     * ── AND THIS COULD NOT BEAR THAT READING, MEASURED ─────────────────────
+     *
+     * It was `world.enemies.filter(e => e.dead).length`, which is a CORPSE
+     * CENSUS at the sampling instant and not a count of kills: `Corpses`
+     * settles and disposes bodies as the run goes on, and the three arms do not
+     * run for the same length of time — five seeds, means of 22 s with no
+     * player against 56 s with a blade and 95 s with the blade disabled. So the
+     * short arm was reported as killing THREE TIMES more (7.6 against 2.4)
+     * when what it had was fresher corpses.
+     *
+     * Counted at the door instead. `foeKilled` is cumulative and monotone;
+     * `foeStanding` is what is left alive, which is the census this used to be
+     * confused with, kept because it is a real and different question.
+     */
+    foeKilled: killed.n,
     foeDown: world.enemies.filter((e) => e.dead).length,
     foeAlive: world.enemies.filter((e) => !e.dead).length,
     /* AND THE NERVE OF THE LINE, averaged over the squads that still exist.
@@ -633,7 +664,7 @@ async function step2() {
       write('step2-partial.json', { rows });
       console.log(`  seed ${String(seed).padStart(3)}  ${arm.padEnd(5)}  `
         + `fallen ${String(r.fallen).padStart(2)}  standing ${String(r.standing).padStart(2)}  `
-        + `waves ${r.waveClears}  areas ${r.areasTaken}  foeDown ${String(r.foeDown).padStart(3)}  `
+        + `waves ${r.waveClears}  areas ${r.areasTaken}  foeKilled ${String(r.foeKilled).padStart(3)}  `
         + `bladeDmg ${String(r.bladeDamage ?? '—').padStart(7)}  morale ${r.morale}  `
         + `${(r.wallMs / 1000).toFixed(0)}s`);
     }
@@ -661,7 +692,7 @@ async function step2() {
     return Math.sqrt(v.reduce((a, b) => a + (b - m) ** 2, 0) / Math.max(1, v.length - 1));
   };
   const verdict = {};
-  for (const k of ['fallen', 'areasTaken', 'foeDown', 'waveClears', 'morale']) {
+  for (const k of ['fallen', 'areasTaken', 'foeKilled', 'waveClears', 'morale', 'gameSeconds']) {
     const none = mean('none', k), blade = mean('blade', k), dead = mean('dead', k);
     const span = blade - none;
     verdict[k] = {
