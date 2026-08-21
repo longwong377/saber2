@@ -102,7 +102,11 @@ for (const seed of (process.argv[2] || '1').split(',').map(Number)) {
       console.log(`      t+${(t - cur.at).toFixed(0)}s  queue ${d.spawnQueue.length}`
         + ` staging ${d.arrivals.staging.length} inbound ${inbound} host ${host}`);
     }
-    if (d.wave !== cur.w || d.areaIndex + 1 !== cur.area) {
+    /* ON THE WAVE NUMBER ALONE. `areaIndex` advances a frame apart from `wave`
+     * at a stage boundary, so closing on either of them split the boundary wave
+     * into two rows and read its queue a second time half-drained — the time
+     * still partitioned correctly but the hit points did not. */
+    if (d.wave !== cur.w) {
       cur.total = t - cur.at;
       /* THE LINE ON ITS FEET as the wave closed — the other half of the ratio
        * `hp / seconds` is measuring, and the half the muster moves. */
