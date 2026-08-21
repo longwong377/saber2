@@ -289,6 +289,16 @@ function polyline(P, n) {
   return { xs, zs, cum, n, length: cum[n - 1] };
 }
 
+/**
+ * THE POINT AT ARC LENGTH `s` ON THE LINE, with the unit tangent there.
+ *
+ * Exported because a check that wants to walk the front has to walk THE front:
+ * a second flattening of the same bezier written in a tool is HANDOFF §2.4's
+ * defect waiting to happen — it would agree for a while and then measure a
+ * line the ground was not built from.
+ */
+export function alongFront(plan, s) { return atArc(plan.curve, s); }
+
 /** The point at arc length `s`, with the unit tangent there. */
 function atArc(C, s) {
   const want = clamp(s, 0, C.length);
@@ -581,7 +591,31 @@ export function removeGround(key) {
  * and the alternative, teaching four dressing functions about a curve, is four
  * copies of the curve. One conversion, named, beats four.
  */
-export function frontAtChoke(plan, engagement = 1) {
-  return { bearing: plan.bearing, distance: plan.distance, engagement,
+export function frontAtChoke(plan, engagement = 1, tol = 20) {
+  /* HOW FAR THE STAND-IN IS GOOD FOR, computed rather than assumed, because
+   * the answer moves with the seed: a nearly straight line is good to the map
+   * edge and a hard S is good for 90 m. Walk out along the tangent both ways
+   * until the curve has drifted `tol` from it, and hand the caller the smaller
+   * of the two as `reach`. `burnBand`'s `half` defaults to 260 m, and MEASURED
+   * on a pass at seed 3 that put the far end of the swath 157 m on the CLEAN
+   * side of the curve — three quarters of the burn on ground the line has not
+   * crossed. With `half: reach` it is on the burnt side by construction.
+   *
+   * 20 m of tolerance is the burn band's own depth (`rows × rowStep` ≈ 39 m,
+   * so half of it): inside that the swath still straddles the line, which is
+   * what the swath is for. */
+  const step = 8, cap = plan.scale * 0.5;
+  let reach = cap;
+  for (const sign of [1, -1]) {
+    let k = 0;
+    while (k < cap) {
+      const x = plan.choke.x + plan.choke.tx * sign * (k + step);
+      const z = plan.choke.z + plan.choke.tz * sign * (k + step);
+      if (Math.abs(nearestOn(plan.curve, x, z).d) > tol) break;
+      k += step;
+    }
+    reach = Math.min(reach, k);
+  }
+  return { bearing: plan.bearing, distance: plan.distance, engagement, reach,
     dir: { x: plan.dir.x, z: plan.dir.z } };
 }
