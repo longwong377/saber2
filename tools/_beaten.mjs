@@ -21,6 +21,7 @@
 
 import './dom-shim.mjs';
 import * as THREE from 'three';
+import { resolve } from 'node:path';
 import { bootWorld } from './checks/_coop.mjs';
 
 const argv = process.argv.slice(2);
@@ -64,7 +65,14 @@ async function firingLine({ n = 20, range = 14, spread = 1.2, seconds = 30 } = {
 
   const input = guardInput();
   const trace = [];
-  let shots = 0, answered = 0, arrivals = 0;
+  let fired = 0, answered = 0, arrivals = 0;
+  /* EVERY BOLT THE LINE PUT IN THE AIR. §6's arithmetic starts from "twenty
+   * B1s fire 18 bolts a second", which is a claim about the ARCHETYPE's
+   * fireRate and burst read off the table; what a firing line at a range
+   * actually emits is a different number and it is the denominator every share
+   * below is taken against. */
+  const fire = world.bolts.fire.bind(world.bolts);
+  world.bolts.fire = (...a) => { const b = fire(...a); if (b && b.team === 1) fired++; return b; };
   /* EVERY BOLT THE GUARD ANSWERED, counted at the shipped callback rather than
    * off the deflect counter, so a bolt that is caught and thrown later is one
    * answer and not two. HANDOFF §2.4: the game says what an answer is. */
@@ -86,12 +94,17 @@ async function firingLine({ n = 20, range = 14, spread = 1.2, seconds = 30 } = {
     void before;
     if (!p.alive) break;
   }
-  for (const e of world.enemies) shots += e.shotsFired || 0;
-
   const out = {
     rifles: n, range, seconds: +t.toFixed(1),
+    fired, firedPerS: +(fired / t).toFixed(2),
+    answeredShare: fired ? +(answered / fired).toFixed(3) : 0,
     alive: p.alive,
     stamina: +p.stamina.toFixed(1), force: +p.force.toFixed(1),
+    /* WHETHER THE REFILL IS STILL RUNNING. `Player._regen` pauses on
+     * `staminaHold`, and §6's whole arithmetic is a drain racing that refill —
+     * so a guard cost that set it would be a different mechanic wearing the
+     * same numbers. Read off the player, not asserted from the constant. */
+    staminaHold: +(p.staminaHold || 0).toFixed(3),
     hpLost: +(hp0 - p.hp).toFixed(1),
     guardSpent: +(p.guardSpent || 0).toFixed(1),
     guardForceSpent: +(p.guardForceSpent || 0).toFixed(1),
@@ -107,7 +120,18 @@ async function firingLine({ n = 20, range = 14, spread = 1.2, seconds = 30 } = {
   return out;
 }
 
-if (CMD === 'one') {
+/**
+ * ONLY WHEN THIS FILE IS THE ONE THAT WAS RUN — the same guard, and for the
+ * same reason, as `tools/_flagship.mjs`'s. `tools/checks/suppression.mjs`
+ * imports `firingLine` so the gate measures the line the probe measures rather
+ * than a second copy of it; a module that runs a sweep at import time makes
+ * that impossible.
+ */
+const ENTRY = process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname);
+export { firingLine, guardInput, STEP };
+
+if (!ENTRY) { /* imported: the CLI below is not this module's business */ }
+else if (CMD === 'one') {
   const r = await firingLine({ n: flag('rifles', 20), range: flag('range', 14), seconds: flag('seconds', 30) });
   console.log(JSON.stringify({ ...r, trace: undefined }, null, 2));
   console.log('\n  t   stamina  force   hp');
@@ -115,11 +139,11 @@ if (CMD === 'one') {
 } else if (CMD === 'sweep') {
   const range = flag('range', 14);
   console.log(`  rifles at ${range} m · guard held, nothing else`);
-  console.log('  n    answered/s  drain/s  net/s   stamina@30s  empty at   hp lost');
+  console.log('  n    fired/s  answered/s  drain/s  net/s   stamina@30s  empty at   hp lost');
   for (const n of [1, 4, 8, 12, 16, 20, 28]) {
     const r = await firingLine({ n, range, seconds: 30 });
     const net = +(16 - r.drainPerS).toFixed(2);
-    console.log(`  ${String(n).padStart(2)}   ${String(r.answeredPerS).padStart(9)}  ${String(r.drainPerS).padStart(7)}  `
+    console.log(`  ${String(n).padStart(2)}   ${String(r.firedPerS).padStart(7)}  ${String(r.answeredPerS).padStart(9)}  ${String(r.drainPerS).padStart(7)}  `
       + `${String(net).padStart(6)}  ${String(r.stamina).padStart(10)}  ${String(r.emptyAt ?? '—').padStart(8)}  ${String(r.hpLost).padStart(7)}`);
   }
 } else if (CMD === 'ranges') {
