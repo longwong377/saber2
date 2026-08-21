@@ -20,6 +20,7 @@ const _q = new THREE.Quaternion(), _m = new THREE.Matrix4(), _s = new THREE.Vect
 // vectors above — so it gets its own, or it would overwrite the very point it
 // is deciding about.
 const _g1 = new THREE.Vector3(), _g2 = new THREE.Vector3(), _g3 = new THREE.Vector3();
+const _s1 = new THREE.Vector3(), _s2 = new THREE.Vector3(), _s3 = new THREE.Vector3();
 const _gA = new THREE.Vector3(), _gB = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
 
@@ -280,8 +281,23 @@ export class BoltPool {
           let g = null;
           if (zone && zone.active && guardIntercept(b.prev, b.pos, zone, _v4)) g = zone;
           else if (entry.guard && guardIntercept(b.prev, b.pos, entry.guard, _v4)) g = entry.guard;
-          if (!g) continue;
-          let bladeT = 0.55, auto = true;
+          /* ── AND LAST, THE SCREEN: a bolt going into one of HIS men rather
+           * than into him. LAST because it is the only one of the three that
+           * answers a bolt the blade could never have reached, so a contact
+           * that can be met properly is met properly and billed on the
+           * ordinary ladder. `entry.screen` is absent for every blade whose
+           * owner has no bar to pay with — see World._bladeEntries — which is
+           * what keeps this from being a free aura round every enemy duellist
+           * on the field. */
+          let screenAt = 0;
+          if (!g && entry.screen) screenAt = screenIntercept(b.prev, b.pos, entry.screen, _v4);
+          if (!g && !screenAt) continue;
+          /* `auto` is FALSE for a screen and that is not a detail: the
+           * auto-guard cone answers off a parked blade by design, and a screen
+           * that inherited that would grade every contact a DEFLECT whatever
+           * the player was doing. A screened bolt earns its rung the ordinary
+           * way, off `driven`. */
+          let bladeT = 0.55, auto = !screenAt;
           _gA.copy(_v4);
           if (g === zone) {
             // Report the contact ON THE BLADE, not out on the guard sphere. The
@@ -299,7 +315,7 @@ export class BoltPool {
             b.guardZone = { zone: zone.zone, parry: auto, age: zone.parryAge ?? 0 };
           } else b.guardZone = null;
           if (this.onDeflect) {
-            this.onDeflect(b, entry, { bladeT, point: _gA.clone(), auto }, _gA.clone());
+            this.onDeflect(b, entry, { bladeT, point: _gA.clone(), auto, screen: screenAt }, _gA.clone());
           }
           // The stamp lives for exactly one callback and not a frame longer.
           // captureSnapshot reads it synchronously inside onDeflect and copies
@@ -489,6 +505,86 @@ export function guardIntercept(from, to, guard, out = new THREE.Vector3()) {
   if (d < 1e-6) return out;                           // dead centre is inside every cone
   _v3.multiplyScalar(1 / d);
   return _v3.dot(guard.axis) >= Math.cos(guard.cone) ? out : null;
+}
+
+/**
+ * WHERE A BOLT ON ITS WAY INTO ONE OF YOUR OWN MEN CROSSES YOUR REACH, or null.
+ *
+ * FLAGSHIP §6's suppression, pointed at the man beside you instead of at your
+ * own chest — see `SCREEN` in Combat.js for why this exists at all and what it
+ * costs. This half is pure geometry and knows nothing about a bar: the caller
+ * hands over a reach it has already decided it can afford, which is what keeps
+ * this file free of any dependency on Player, Combat or the controller (the
+ * same rule `ZONE_ROSE_ENTRIES` below is duplicated under).
+ *
+ * Three tests, in the order that rejects most bolts soonest:
+ *
+ *   1. the swept segment crosses the sphere of radius `reach` about `origin` —
+ *      the same ray/sphere solve `guardIntercept` uses, for the same reason it
+ *      is a solve rather than a distance test: a bolt covers a metre a frame.
+ *   2. the crossing is inside `sector` of `axis`. You cannot bring a guard
+ *      behind you, and the arc handed in is the guard's own.
+ *   3. AND IT IS ACTUALLY GOING TO HIT SOMEBODY. Each entry of `bodies` is a
+ *      sphere the caller measured off a real body, and clearing it only makes
+ *      the bolt a CANDIDATE: `screen.hits` then asks the body itself. This is
+ *      the test that makes the mechanic a screen and not an aura, and the
+ *      sphere alone was not enough to make it — measured on a real Command
+ *      battle, the bound sphere wraps every capsule a body presents and so
+ *      stands about a metre off the chest, which took **128 bolts screened for
+ *      8 fewer arriving**. Sixteen near misses answered for every shot that
+ *      was going to land is the aura wearing the mechanic's name.
+ *
+ * @returns the distance from `origin` to the contact, in metres, or 0 for no
+ *          intercept — a distance rather than a boolean because the price is a
+ *          distance, and asking for the geometry a second time at billing time
+ *          would read it off a body that has moved.
+ */
+export function screenIntercept(from, to, screen, out = new THREE.Vector3()) {
+  const R = screen.reach;
+  const bodies = screen.bodies;
+  if (!(R > 0) || !bodies || !bodies.length) return 0;
+  const o = screen.origin;
+  _s1.subVectors(to, from);
+  const len = _s1.length();
+  if (len < 1e-9) return 0;
+  _s1.multiplyScalar(1 / len);
+  _s2.subVectors(from, o);
+  const b = _s2.dot(_s1);
+  const c = _s2.lengthSq() - R * R;
+  let t;
+  if (c <= 0) t = 0;                                   // already inside the reach
+  else {
+    if (b > 0) return 0;                               // travelling away
+    const disc = b * b - c;
+    if (disc < 0) return 0;
+    t = -b - Math.sqrt(disc);
+    if (t < 0 || t > len) return 0;                    // does not get there this frame
+  }
+  out.copy(from).addScaledVector(_s1, t);
+  const dist = out.distanceTo(o);
+  // 2 — in front of you, by the arc a guard covers.
+  if (dist > 1e-6) {
+    _s3.subVectors(out, o).multiplyScalar(1 / dist);
+    if (_s3.dot(screen.axis) < Math.cos(screen.sector)) return 0;
+  }
+  // 3 — and on its way into one of them. The line is followed from the contact
+  // rather than from the muzzle: a bolt that has already passed a man is not on
+  // its way into him.
+  const margin = screen.margin || 0;
+  const hits = screen.hits;
+  for (const m of bodies) {
+    _s2.set(m.x - out.x, m.y - out.y, m.z - out.z);
+    const along = _s2.dot(_s1);
+    if (along <= 0) continue;                          // behind the contact
+    const r = m.r + margin;
+    if (_s2.lengthSq() - along * along > r * r) continue;
+    /* The sphere said maybe; the body says yes or no. `hits` is the caller's
+     * own bone test — the same one that will resolve this bolt if the screen
+     * lets it through — held on the descriptor rather than passed per call so
+     * this stays allocation-free on the hot path. */
+    if (!hits || hits(m, out, _s1, along + r)) return dist;
+  }
+  return 0;
 }
 
 /**

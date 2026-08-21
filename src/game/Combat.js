@@ -12,6 +12,10 @@ import * as THREE from 'three';
 import { segmentSegment } from '../physics/Physics.js';
 import { clamp, lerp, smoothstep } from '../engine/MathUtil.js';
 import { segmentCapsule } from './Bolts.js';
+/* MORALE is a leaf table (it imports nothing at all — see its own header), so
+ * this edge cannot be part of a cycle. SCREEN.reach reads `MORALE.NEAR` rather
+ * than repeating it: one radius for "this Jedi is with these men". */
+import { MORALE } from './Morale.js';
 
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _v4 = new THREE.Vector3(), _v5 = new THREE.Vector3(), _v6 = new THREE.Vector3();
@@ -876,6 +880,11 @@ export function captureSnapshot(bolt, saber, hit) {
     point: new THREE.Vector3().copy(hit.point),
     caught: hit.auto === true || driven,
     auto: hit.auto === true,
+    /* HOW FAR FROM THE CHEST THE SCREEN TOOK IT, in metres, or 0 for every
+     * contact that is not a screen. It is a DISTANCE and not a flag because
+     * the price is a distance (see SCREEN) — a flag would need the geometry
+     * fetched again at billing time, off a body that has moved since. */
+    screen: hit.screen > 0 ? hit.screen : 0,
   };
 }
 
@@ -979,6 +988,118 @@ export const GUARD_COST = {
 };
 
 /**
+ * ── THE SCREEN: THE OTHER HALF OF §6, AND THE ANSWER TO §7's FAILURE ─────
+ *
+ * Everything above prices a bolt that was coming for YOU. `NEXT.md` measures
+ * what that is worth to the line and the answer is nothing: five seeds, four
+ * arms, the outcome IDENTICAL in all of them — same three waves, same area,
+ * the same 37 enemies dead — while a Jedi standing in the formation makes the
+ * fight half again as long and gets seven of your men killed. The fourth arm
+ * settles what the seven are: a Jedi holding station a HUNDRED METRES OFF
+ * costs the line the same 6.33 men, so it is not presence that kills them, it
+ * is a player existing on the field for the horde to walk toward. Standing
+ * with your own line was, on those numbers, strictly worse than fighting away
+ * from it.
+ *
+ * A Jedi in a rank could answer exactly one bolt in the whole battle: the one
+ * aimed at his own chest. The men either side of him were on their own.
+ * **That is the defect.** It is what a Jedi in a line is FOR, it is the picture
+ * every frame of the reference material is made of, and nothing in the tree
+ * implemented it.
+ *
+ * So: a bolt on its way into one of your own men, crossing the ground you are
+ * standing on, inside the arc you can bring a blade through, is a bolt you can
+ * take. FLAGSHIP §8 already has the playstyle — the Sentinel, "guard + bond,
+ * 5-25 m, spends the guard flick, job: TURN" — and this is the mechanic that
+ * playstyle was a description of.
+ *
+ * ── WHY IT IS NOT AN AURA, WHICH IS THE ONE THING IT MUST NOT BE ────────
+ *
+ * Four gates, and a bolt has to pass all four:
+ *
+ *   · it must actually be about to hit one of your men. A bolt that would have
+ *     missed him is not screened, so the mechanic never touches fire that was
+ *     never going to cost anything. This is measured against the body's own
+ *     bolt bound — the same sphere `World._boltHitTest` rejects on — and not
+ *     against a radius round a name.
+ *   · it must cross ground you are standing on, inside `reach`.
+ *   · it must arrive inside the arc a guard covers. You cannot bring a guard
+ *     behind you, and you cannot screen behind you either.
+ *   · YOU MUST BE ABLE TO PAY FOR IT, and the price is by the metre.
+ *
+ * ── THE PRICE IS PER METRE, AND IT IS DERIVED ───────────────────────────
+ *
+ * `GUARD_COST.unanswered` already prices one bolt the Force answered for you
+ * off a blade you never drove, at the auto-guard's own radius of
+ * `CATCH.autoRadius`. A screened bolt is the same event further out — the
+ * Force reaching for something your hands cannot get to — so it is the same
+ * price BY THE METRE and not a new number:
+ *
+ *     perMetre = GUARD_COST.unanswered / CATCH.autoRadius = 0.4 Force / m
+ *
+ * That is the whole economy, and three things fall out of it that a flat price
+ * would not have given:
+ *
+ *   · The man at your shoulder is nearly free and the man at fourteen metres
+ *     costs 5.6. Standing WITH your line is cheaper than gesturing at it from
+ *     the flank, which is precisely the behaviour §7 wants and the `far` arm
+ *     proves the game did not previously reward.
+ *   · Your reach is bought, not granted. `screenReach` is this formula solved
+ *     the other way: the screen is exactly as wide as the Force in the bar,
+ *     capped at `SCREEN.reach`, so it COLLAPSES TOWARD YOU as the bar empties
+ *     and comes back as it refills. Nothing new is on the HUD; the Force bar
+ *     that was already there is the readout.
+ *   · Volume of fire is still terrain. At a 7.5/s regen a player can hold a
+ *     screen over about 1.3 bolts a second at the rim and six at his shoulder,
+ *     and a heavier beaten zone than that empties the bar and shrinks the
+ *     screen to nothing — the same sentence §6 makes about stamina, in the
+ *     other bar.
+ *
+ * ── AND THE REACH IS `MORALE.NEAR`, WHICH IS NOT A NEW NUMBER EITHER ────
+ *
+ * The game already owns a radius for "this Jedi is with these men": it is what
+ * `MORALE.JEDI_NEAR` pays out to and what `CommandDirector` measures presence
+ * on. A screen with its own radius would be the twin this repository keeps
+ * deleting (HANDOFF §2.3) — two numbers for one fact, drifting apart the first
+ * time either is tuned. If a man is near enough for your presence to steady
+ * him, he is near enough for you to take a bolt for him.
+ */
+export const SCREEN = {
+  /** The furthest a full bar can cover, in metres. One radius, not two. */
+  reach: MORALE.NEAR,
+  /** Force per metre of reach, derived above rather than chosen. */
+  perMetre: GUARD_COST.unanswered / CATCH.autoRadius,
+  /**
+   * HOW WIDE OF THE MAN A BOLT MAY BE AND STILL COUNT AS ON ITS WAY INTO HIM.
+   *
+   * Zero: the test is against the body's own measured bolt bound and nothing
+   * is added to it. A margin here would be the aura the gates above exist to
+   * prevent — every near miss in the battle would become a bolt you "saved"
+   * somebody from, and the mechanic would pay for fire that was never going to
+   * land. The bound is already generous in the honest direction: it wraps what
+   * the body actually presents, so a bolt inside it would have hit a bone or
+   * grazed one.
+   */
+  margin: 0,
+};
+
+/** What one screened bolt costs, in Force, taken `dist` metres from the chest. */
+export function screenForce(dist) { return Math.max(0, dist) * SCREEN.perMetre; }
+
+/**
+ * …AND THE SAME RULE READ THE OTHER WAY: how far out this much Force can cover.
+ *
+ * The inverse of `screenForce` and deliberately written as one, so the reach a
+ * player is granted and the price they are charged cannot disagree. A screen
+ * wider than the bar can pay for would refuse bolts at the moment of billing
+ * instead — a rule that fires in one place and is enforced in another, which
+ * is HANDOFF §2.4's defect with the two halves swapped.
+ */
+export function screenReach(force, cap = SCREEN.reach) {
+  return Math.min(cap, Math.max(0, force || 0) / SCREEN.perMetre);
+}
+
+/**
  * What one bolt costs a fighter, given the grade it was answered at and the
  * contact that produced it.
  *
@@ -992,6 +1113,15 @@ export const GUARD_COST = {
  * @returns { stamina, force }
  */
 export function guardCost(grade, snap = null) {
+  /* A SCREENED BOLT IS PAID FOR IN FORCE AND IN NOTHING ELSE, and that is the
+   * same sentence the `unanswered` row makes rather than a second one: your
+   * blade never met this bolt, the Force did, so the Force pays. Charging the
+   * stamina rung as well would bill one event twice and would make the reach
+   * scale with the wrong bar — a player screening a rank would run out of dash
+   * rather than out of Force, and the readout on the screen would be the one
+   * that is not moving. First, because it is the more specific claim: a
+   * screened bolt can also be one the cone happened to cover. */
+  if (snap && snap.screen > 0) return { stamina: 0, force: screenForce(snap.screen) };
   if (snap && snap.auto === true && !snap.driven) return { stamina: 0, force: GUARD_COST.unanswered };
   return { stamina: GUARD_COST.stamina[grade] ?? 0, force: 0 };
 }

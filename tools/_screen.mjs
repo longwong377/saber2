@@ -161,6 +161,141 @@ async function runArm(arm, seed) {
   return out;
 }
 
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  A rank under fire, with a Jedi standing in it                         */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * `tools/_beaten.mjs`'s firing line with the thing it is missing: MEN.
+ *
+ * That probe stands one player in front of `n` rifles and reads what the guard
+ * costs him, which is the half of FLAGSHIP §6 that was already built. This one
+ * stands men either side of him and reads what the guard costs THEM — the
+ * screen, and the number the Dead Jedi test says nobody has ever been able to
+ * see.
+ *
+ * The control arm is a Jedi WITH AN EMPTY FORCE BAR, and that is the
+ * mechanism's own off switch rather than a test hook in shipped code: the
+ * screen's reach IS the Force in the bar (`Combat.screenReach`), so a player
+ * at zero covers nothing and everything else about the two arms — the guard,
+ * the blade, the body standing in the way, the auto-guard cone — is identical.
+ * Nothing in this harness spends Force on anything else, so the arm is a
+ * one-variable A/B.
+ */
+export async function screenLine({ mates = 4, spacing = 2.4, standOff = 0, range = 16,
+  ratePerMate = 1.5, seconds = 12, force = null, hold = true, damage = 9 } = {}) {
+  const THREE = await import('three');
+  const { world } = await bootWorld({
+    level: 'geonosis',
+    settings: { mode: 'waves', level: 'geonosis', difficulty: 'knight' },
+  });
+  const p = world.player;
+  const ground = (x, z) => (world.terrain?.height(x, z) ?? 0);
+  p.position.set(standOff, ground(standOff, 0) + 0.05, 0);
+  p.saber.ignite(); p.saber.ignition = 1;
+  p.camera.yaw = Math.PI;                          // looking down +z, at the fire
+
+  /* THE RANK. Either side of the Jedi at the `line` formation's own spacing,
+   * one step forward, so a bolt aimed at a man crosses the ground the Jedi is
+   * standing on rather than arriving behind him. */
+  const mateList = [];
+  for (let i = 0; i < mates; i++) {
+    const off = (Math.floor(i / 2) + 1) * spacing * (i % 2 ? 1 : -1);
+    const e = world.spawnEnemy('trooper', new THREE.Vector3(off, 0, 1.6));
+    if (!e) continue;
+    e.position.y = ground(off, 1.6) + 0.02;
+    e.team = p.team;
+    mateList.push(e);
+  }
+
+  const mateSet = new Set(mateList);
+  const tally = { intoMates: 0, mateDamage: 0, aimed: 0 };
+  const inner = world._boltHitTest.bind(world);
+  world._boltHitTest = (b, from, to) => {
+    const res = inner(b, from, to);
+    if (res && mateSet.has(res.victim)) { tally.intoMates++; tally.mateDamage += b.damage; }
+    return res;
+  };
+
+  const input = {
+    keys: new Set(), buttons: [false, false, false],
+    mouse: { dx: 0, dy: 0, wheel: 0, left: false, right: false },
+    delta: { x: 0, y: 0 }, accel: { x: 0, y: 0 }, bindings: null,
+    moveAxis: (o) => { if (o) { o.x = 0; o.y = 0; return o; } return { x: 0, y: 0 }; },
+    act: (id) => hold && id === 'blade',
+    actHit: () => false, actDown: () => false, end() {},
+  };
+  const frames = Math.round(seconds / STEP);
+  const every = 1 / Math.max(1e-6, ratePerMate);
+  let hp0 = 0;
+  for (const m of mateList) hp0 += m.hp;
+  const muzzle = new THREE.Vector3(), dir = new THREE.Vector3(), aim = new THREE.Vector3();
+  let next = 0.4, t = 0;
+  for (let i = 0; i < frames; i++) {
+    if (force !== null) p.force = force;
+    /**
+     * THE FIRE IS SCRIPTED, AND THE FIRST VERSION'S WAS NOT.
+     *
+     * A real firing line was tried first — eight B1s at 16 m, the same shape
+     * `tools/_beaten.mjs` uses. Measured: **0 bolts into the men, in both
+     * arms.** Every rifle on the field picked the Jedi, which is the honest
+     * behaviour of the target selection and makes a firing line useless as an
+     * instrument for this question: there is nothing aimed at the rank to
+     * screen. So the bolts are placed by hand, one stream per man, aimed at
+     * the chest of the man it belongs to. The denominator is then exact —
+     * every bolt in the air was going into somebody — which is the property
+     * the whole measurement rests on.
+     */
+    if (t >= next) {
+      next += every;
+      for (const m of mateList) {
+        if (m.dead) continue;
+        aim.copy(m.position).setY(m.chestY);
+        muzzle.set(aim.x, aim.y, range);
+        dir.subVectors(aim, muzzle).normalize();
+        world.bolts.fire(muzzle, dir, { speed: 60, team: 1, damage });
+        tally.aimed++;
+      }
+    }
+    world.update(STEP, input);
+    t += STEP;
+    /* The Jedi is topped up before he can die, for `_beaten.mjs`'s reason: the
+     * death path drops the guard, and a run that measured a body with no
+     * answer in it would be measuring the death and not the screen. */
+    if (p.hp < p.maxHp * 0.35) p.hp = p.maxHp;
+  }
+  let hp1 = 0, standing = 0;
+  for (const m of mateList) { hp1 += Math.max(0, m.hp); if (!m.dead) standing++; }
+  const out = {
+    mates: mateList.length, standOff, seconds, ratePerMate,
+    force: force === null ? 'full' : force,
+    aimedAtMen: tally.aimed,
+    boltsIntoMates: tally.intoMates,
+    mateHpLost: +(hp0 - hp1).toFixed(1),
+    mateStanding: standing,
+    screened: p.screened || 0,
+    guardForceSpent: +(p.guardForceSpent || 0).toFixed(2),
+    guardSpent: +(p.guardSpent || 0).toFixed(1),
+    deflects: p.deflects,
+    forceLeft: +p.force.toFixed(1),
+  };
+  world.unload?.();
+  return out;
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ONLY WHEN THIS FILE IS THE ONE THAT WAS RUN — the same guard, and the same
+ * reason, as `tools/_flagship.mjs`'s: `tools/checks/screen.mjs` imports
+ * `screenLine`, and a module that drives fifteen Command worlds at import time
+ * makes that impossible.
+ */
+const ENTRY = process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname);
+
+if (ENTRY) await main();
+
+async function main() {
 const rows = [];
 for (const seed of SEEDS) {
   for (const arm of ARMS) {
@@ -179,3 +314,4 @@ mkdirSync(OUT, { recursive: true });
 const f = resolve(OUT, 'screen.json');
 writeFileSync(f, JSON.stringify({ seeds: SEEDS, arms: ARMS, engagements: ENGAGEMENTS, rows }, null, 2));
 console.log('\nwrote', f);
+}
