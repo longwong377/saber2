@@ -5,6 +5,17 @@ Everything it points at is long.
 
 ---
 
+## The master list is `BACKLOG.md`
+
+Everything outstanding — the unfinished part of V3, all of V5, and the Flagship
+rungs — is merged into one ordered list in **`BACKLOG.md`**, with the reasoning
+for the order and the evidence for anything already ticked. The player asked for
+exactly that: *"maybe it wouldn't hurt to get them all on the same list for
+future easy reference (in smart order). We will make sure nothing is missed."*
+Read it after this file and work from it.
+
+---
+
 ## Read these five, in this order
 
 1. **`HANDOFF.md` §2** — the traps. §2.1 will silently invalidate every
