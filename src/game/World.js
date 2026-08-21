@@ -161,6 +161,34 @@ import { ExtractionDirector } from './Extraction.js';
 /* Random per session, FIXED under the gate — see `moduleSeed`. The salt keeps
  * this stream from being the same sequence as MathUtil's `rand`. */
 const rng = makeRng(moduleSeed(2));
+
+/**
+ * PUT THIS FILE'S STREAM BACK TO A STATED PLACE.
+ *
+ * `enemyRng.seed(n)` and `Waves.seedWaves(n)` have existed for a long time and
+ * this stream had no equivalent, so a harness could pin two of the game's
+ * three module-level streams and not the third. That is not a small gap: this
+ * one is drawn by `pickSpawn`, `spawnDebris`, the dressing and a dozen other
+ * per-frame callers, so its position after one run is a function of everything
+ * that happened in it, and every run after the first in a process starts
+ * somewhere nobody chose.
+ *
+ * WHAT IT COST, MEASURED, because "runs are not reproducible" is too weak a
+ * sentence for it. Driving one engagement of the flagship mode to its muster
+ * and counting survivors: two arms that differed ONLY in the mode string —
+ * `theline` rolls a session plan (`rollSession`) and `command` does not, which
+ * is a single extra draw — read **5.4 and 3.0 of ten** on the same director
+ * and the same change. A whole tuning conclusion was drawn from that gap and
+ * was wrong. Four consecutive readings of one build by one check spanned
+ * **1.3 to 6.0**, purely on where the eleven checks above it had left this
+ * stream.
+ *
+ * So it is exported the same way the other two are, `makeRng` already carries
+ * the method, and a bench or a check that wants a comparison it can trust
+ * calls all three. It changes nothing about a real session: `moduleSeed` still
+ * decides where the stream opens, and nothing in `src/` calls this.
+ */
+export function seedWorld(seed) { rng.seed(seed >>> 0); return rng; }
 /** Finite-or-default. Level data and game maths both produce NaN; WebAudio throws on it. */
 const num = (v, d) => (Number.isFinite(v) ? v : d);
 

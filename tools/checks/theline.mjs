@@ -704,12 +704,17 @@ export async function run({ check, assert }) {
      *
      *     5.4 · 6.0 · 5.7 · 3.0 · 2.5          the MEAN, sd 1.6
      *
-     * — 6.0 and 2.5 an hour apart with nothing changed between them. `World.js`
-     * holds one module-level `rng` for the whole process and exports no
-     * reseeder, so the phase this check starts from is whatever the twelve
-     * checks above it left behind, and reseeding `enemyRng` and `Waves` per
-     * seed (below) does not reach it. That is not noise this file can remove;
-     * it is the width the quantity has from where this file stands.
+     * — 6.0 and 2.5 an hour apart with nothing changed between them, because
+     * `World.js` held one module-level `rng` for the whole process and exported
+     * no reseeder, so the phase this check started from was whatever the eleven
+     * checks above it had left behind.
+     *
+     * THAT ONE IS FIXED AT THE SOURCE rather than absorbed here: `seedWorld`
+     * exists now and the loop below pins all THREE of the game's streams per
+     * seed. What is left in the band is the spread this fixture has when it is
+     * genuinely repeated, and the quantity is chaotic rather than merely
+     * noisy — two arms differing only in one bolt's damage, 10 against 5, took
+     * the same seed from five survivors to one and the next from one to five.
      *
      * So `HALF` is the target and `SLACK` is a little over two standard errors
      * either side. The band is wide, and saying what it therefore does NOT
@@ -734,6 +739,10 @@ export async function run({ check, assert }) {
     const SLACK = 4.0;
     const SEEDS = [1, 2, 3, 5];
     const { enemyRng } = await import('../../src/game/Enemy.js');
+    /* DYNAMIC, for the reason HANDOFF §2.1 gives about this file in
+     * particular: a static edge from a check to World.js patches the copy of
+     * three that verify.mjs's own graph resolved. */
+    const { seedWorld } = await import('../../src/game/World.js');
     /**
      * …AND THE CONTOURS ARE HELD STILL, which is the one thing this fixture
      * takes off the shipped configuration and the reason is that this check is
@@ -766,6 +775,7 @@ export async function run({ check, assert }) {
        * seeds put this stream in nearly the same place. */
       enemyRng.seed((20260821 ^ Math.imul(seed, 2654435761)) >>> 0);
       Waves.seedWaves((20260821 ^ Math.imul(seed, 40503)) >>> 0);
+      seedWorld((20260821 ^ Math.imul(seed, 2246822519)) >>> 0);
       const { world, d, input } = await lineWorld({ seed, spawn: false });
       d.onMuster = () => {};
       assert(d.roster.strength === Cmd.OPENING_STRENGTH,

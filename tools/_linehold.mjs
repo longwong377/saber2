@@ -23,12 +23,43 @@
  *          The floor of what a present Jedi is worth; a person is worth more.
  *
  *   node --import ./tools/register.mjs tools/_linehold.mjs [mode] [seeds] [arms]
+ *
+ * ── HOW TO COMPARE TWO BUILDS WITH THIS, AND IT IS NOT OBVIOUS ───────────
+ *
+ * `World.js` holds ONE module-level `rng` for the whole process and exports no
+ * reseeder — `const rng = makeRng(moduleSeed(2))` — so a run's stream position
+ * is whatever every draw before it left behind. The per-run reseeding below
+ * reaches `enemyRng` and `Waves`' stream and cannot reach that one. Three
+ * consequences, each of which cost a wrong conclusion before it was written
+ * down:
+ *
+ *   BOTH ARMS FROM FRESH PROCESSES, one invocation each, same seed list. Two
+ *     arms inside one process are not comparable: the second starts wherever
+ *     the first stopped.
+ *
+ *   NEVER COMPARE ACROSS MODE STRINGS. A crossing rolls a session plan
+ *     (`rollSession`) and Command does not, so `theline` and `command` diverge
+ *     on the first draw and stay diverged. The same director and the same
+ *     change read 5.4 and 3.0 purely on that. Compare theline against theline.
+ *
+ *   PIN THE CONTOURS. `LEVELS.geonosis.battlefield` raises a generated
+ *     heightfield per run seed, which is a second variable inside a number
+ *     whose standard deviation is already three.
+ *
+ * AND THE QUANTITY IS CHAOTIC, NOT MERELY NOISY. Two arms differing ONLY in
+ * one bolt's damage — 10 against 5 — took the same seed from 5 survivors to 1
+ * and the next seed from 1 to 5. A perturbation of a few hit points diverges
+ * the whole engagement inside seconds, so a per-seed pair means nothing and
+ * only the mean over many seeds does. Five seeds carry a standard error near
+ * 1.3 on a ten-man roster; twenty carry about 0.65. Budget accordingly, and
+ * treat any difference under about 1.5 men at five seeds as unmeasured.
  */
 import './dom-shim.mjs';
 const H = await import('./checks/_coop.mjs');
 const { dutyInput } = await import('./_flagship.mjs');
 const { enemyRng } = await import('../src/game/Enemy.js');
 const { seedWaves } = await import('../src/game/Waves.js');
+const { seedWorld } = await import('../src/game/World.js');
 
 const STEP = 1 / 30;
 const CAP = 600;                                  // game-seconds before we call it stuck
@@ -66,13 +97,18 @@ let tNow = 0;
  * seeds put a linear-congruential-ish stream in nearly the same place, and the
  * seeds this is driven with are literally 1, 2, 3.
  *
- * `World.js`'s own `rng` has no reseeder and is NOT covered — see the report
- * line about it. It is seeded once from `__SABER_SEED` by tools/register.mjs,
- * so it is stable across processes and drifts only within one.
+ * All THREE module-level streams are covered — `enemyRng`, `Waves`' own, and
+ * `World.js`'s, which had no reseeder until this session and is the one whose
+ * absence made every cross-process comparison in this file's first afternoon
+ * worthless. See `seedWorld`.
  */
 const phase = (seed) => {
   enemyRng.seed((20260821 ^ Math.imul(seed, 2654435761)) >>> 0);
   seedWaves((20260821 ^ Math.imul(seed, 40503)) >>> 0);
+  /* THE THIRD STREAM, and it is the one that was missing. See `seedWorld` in
+   * World.js for what its absence cost: two arms differing only in the mode
+   * string read 5.4 and 3.0 of ten on the same change. */
+  seedWorld((20260821 ^ Math.imul(seed, 2246822519)) >>> 0);
 };
 
 async function run(arm, seed) {
