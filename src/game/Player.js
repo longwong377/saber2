@@ -572,6 +572,39 @@ export const DIVE_SPEED = 30, DIVE_CLEAR = 1.2, DIVE_STAMINA = DASH_STAMINA;
  */
 const SPRINT_DRAIN = 11, SPRINT_FLOOR = 4, SPRINT_START = 20, STAMINA_HOLD = 0.6;
 
+/**
+ * HOW FAST THE BLADE HAS TO MOVE BEFORE THE AIR NOTICES, in m/s.
+ *
+ * It was a literal 11 at its one call site and `NEXT.md` had the consequence
+ * written down without the fix: "The overhead attack has never made a swing
+ * sound. It peaks at 10.8 m/s against an 11 m/s whoosh threshold. One number."
+ * The heaviest-looking attack in the game — the one the player singled out as
+ * the one that feels real — was the only one that swung in silence.
+ *
+ * Measured on the shipped controller, every attack driven through a real
+ * Player, peak `swingSpeed` in m/s:
+ *
+ *     walking with the blade out      0.03
+ *     running with the blade out      0.02
+ *     left click, one cut            14.34
+ *     left click, three-hit combo    19.46
+ *     overhead, tapped               10.79   ← silent at 11
+ *     overhead, charged              17.20
+ *     spin                           23.68
+ *
+ * `swingSpeed` is the blade's motion with the carrier's own velocity taken
+ * out, which is why walking reads 0.03 and not 4: the number this threshold
+ * separates from an attack is not a run, it is a body standing still. So the
+ * bar was never doing the job the comment claimed and 11 was simply the
+ * fastest attack of the day minus a little.
+ *
+ * 8.5 is set from the table rather than from feel: it is two hundred times the
+ * fastest thing that is not a swing and a fifth below the slowest thing that
+ * is, so every deliberate attack sounds and nothing else does. The 0.19 s
+ * spacing beside it is what stops a combo becoming one long hiss.
+ */
+const SWING_WHOOSH = 8.5;
+
 /** How much bigger a dive's landing is than the same speed arrived at by
  *  accident. Radius and impulse take it once, damage twice — the blade is what
  *  makes the difference and the blade is a damage term. */
@@ -4204,7 +4237,7 @@ export class Player {
 
     // swing whoosh when the blade crosses a speed threshold
     const now = ctx.time;
-    if (swing > 11 && now - this._lastSwingSound > 0.19) {
+    if (swing > SWING_WHOOSH && now - this._lastSwingSound > 0.19) {
       this._lastSwingSound = now;
       audio.swing(swing, this.saber.pointAt(0.7, _v1));
       this.world.report?.({ type: 'swing', speed: swing });
