@@ -927,9 +927,30 @@ that cannot die. §5's promise — "20–40 min", Raid 10–15 · Push 18–25 �
 30–45 — is printed on the deploy card as a promise to the player, and the mode
 cannot keep it.
 
-It is **not** the fight being hard: this arm's line is immortal, so what is long
-is the number of waves an area asks for, not how long each takes to win. The
-lever is `AREAS[*].waves` and the escalation under it, and the honest fix is
-either fewer waves an area or a card that stops naming minutes. Nobody should
-tune the length and the attrition in the same pass — fewer casualties means more
-rifles firing, which shortens every wave, so the two move each other.
+**And it is not the wave COUNT either — it is the waves.** `tools/_linewave.mjs`
+times every wave of the same sitting from the frame it opens to the frame it is
+paid, army immortal throughout, and the distribution is the finding:
+
+    seed 1 · push · 11 waves · 42.5 min · mean 232 s a wave
+      area 1  wave 1   86s     area 2  wave 3   94s     area 3  wave 7   191s
+              wave 2   81s             wave 4  135s             wave 8   606s
+                                       wave 5  129s             wave 9   443s
+                                       wave 6  133s             wave 10  317s
+                                                                wave 11  337s
+
+Every wave ends with the field cleared, so nothing is stalling. **The last area
+is 1,894 s — 31.6 of the 42.5 minutes — and wave 8 alone is ten minutes.** An
+opening wave is 81 s and a late one is seven times that.
+
+`planStages` is not the culprit and should not be changed: a Push being the
+landing, a middle and the end is exactly §5, and its own note argues why the
+last stage must always be the last. What a plan does NOT scale is how big the
+waves in those stages are, so a Push inherits the crossing's hardest area at
+full size without the ramp that earns it.
+
+**Correction to an earlier reading in this file.** It said length and attrition
+should not be tuned in the same pass because they move each other. That was
+wrong, and the wave table is why: both are driven by the same quantity — how
+many bodies a late wave puts on the field — so they are one lever and not two,
+and tuning either one blind will move the other. Whoever takes the attrition
+target should have this table in front of them.
