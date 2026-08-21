@@ -1136,7 +1136,14 @@
         <i id="med-purse"></i></div>
     </header>
     <div class="med-body">
-      <svg id="med-field" viewBox="0 0 1000 720" preserveAspectRatio="xMidYMid meet" aria-label="the Holocron"></svg>
+      <!-- A DIV AND NOT AN <svg>. It was a 1000x720 viewBox holding a node
+           graph; the graph is gone (see SkillTree._draw — the player asked for
+           the star chart to be deleted three times) and what stands here is six
+           plates of rungs, which is rows in columns and therefore the box
+           model's job. An HTML child appended to an <svg> is created in the SVG
+           namespace and renders as nothing at all, which is exactly what the
+           first attempt at this did. -->
+      <div id="med-field" role="group" aria-label="the Holocron"></div>
       <aside class="med-side">
         <div id="med-detail" class="med-detail"></div>
         <button id="btn-med-buy" class="primary" disabled>Commune</button>

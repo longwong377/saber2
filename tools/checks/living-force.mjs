@@ -246,57 +246,70 @@ export async function run({ check, assert }) {
     return rows.join(' ');
   });
 
-  check('living force: the map is readable — nothing overlaps and nothing falls off the lattice', () => {
+  check('holocron: every facet is reachable from its own root, and the plate reads top to bottom', () => {
     assert(Tree, 'no Living Force module');
     /**
-     * THE LATTICE IS A DRAWING, and a drawing has a correctness condition: two
-     * facets on top of each other are one facet you cannot click, and a facet
-     * outside the viewBox is a node that exists, is priced, and cannot be
-     * reached by a mouse. The first hand-placed version of this table had four
-     * cross-current pairs within 40 px and put `darkside` sixty pixels
-     * below the bottom edge — invisible, buyable by nothing, and impossible to
-     * see in review because the table looked perfectly reasonable as source.
+     * WHAT THIS CHECK USED TO BE, AND WHY IT IS NOT THAT ANY MORE.
      *
-     * So the lattice is DIVIDED first and the shapes are fitted into it, and
-     * this is the assertion that keeps that true as facets are added.
+     * There were two here, and both were assertions about a DRAWING: no two
+     * facets within 44 px of each other, none outside its current's zone, and
+     * a `viewBox` in index.html that had to equal `LATTICE`. All three were the
+     * right assertions while the Holocron was a node graph with hand-placed
+     * coordinates — the first hand-placed table had four cross-current pairs
+     * within 40 px and put one facet sixty pixels below the bottom edge,
+     * invisible and buyable by nothing.
+     *
+     * The graph is gone. The player asked three times ("get fucking rid of it
+     * and redo the whole thing, also make it less confusing") and the Holocron
+     * is six PLATES of stacked rungs — rows in a column. Rows cannot overlap
+     * and a row cannot fall off a plate, so every failure mode those checks
+     * guarded is gone by construction rather than by assertion, and `LATTICE`,
+     * `ZONE`, `zoneOf`, `positionOf` and the `dx`/`dy` on every facet went with
+     * them.
+     *
+     * WHAT SURVIVES IS THE PROPERTY UNDER THE GEOMETRY, and it is the one that
+     * actually mattered: a facet nothing joins is a facet no player can ever
+     * reach — priced, drawn, and unbuyable. The old check caught that case by
+     * accident, as "drawn in the wrong place". This asks it directly, by
+     * walking the join graph the way `SkillTree._tiers` walks it.
      */
-    const pts = Tree.FACETS.map((s) => ({ id: s.id, axis: s.axis, ...Tree.positionOf(s) }));
-    const M = 30;                                  // the halo radius, plus room
-    const off = pts.filter((p) => p.x < M || p.x > Tree.LATTICE.w - M || p.y < 40 || p.y > Tree.LATTICE.h - 34);
-    assert(!off.length,
-      `facets off the lattice: ${off.map((p) => `${p.id} (${p.x | 0},${p.y | 0})`).join(', ')}`);
-    let worst = Infinity, pair = '';
-    for (let i = 0; i < pts.length; i++) {
-      for (let j = i + 1; j < pts.length; j++) {
-        const d = Math.hypot(pts[i].x - pts[j].x, pts[i].y - pts[j].y);
-        if (d < worst) { worst = d; pair = `${pts[i].id}/${pts[j].id}`; }
+    const byId = new Map(Tree.FACETS.map((f) => [f.id, f]));
+    const rows = [];
+    for (const c of Tree.CURRENTS) {
+      const mine = Tree.FACETS.filter((f) => f.axis === c.axis);
+      assert(mine.length >= 3, `${c.axis} holds ${mine.length} facet(s) — a current is a teaching, not a card`);
+      const roots = mine.filter((f) => Tree.isRoot(f.id));
+      assert(roots.length === 1,
+        `${c.axis} has ${roots.length} roots — exactly one facet per current needs no neighbour`);
+      /* Breadth-first, exactly as the drawing does it, so the depth this
+       * reports is the depth the player sees as indentation. */
+      const seen = new Set([roots[0].id]);
+      const queue = [roots[0].id];
+      const depth = new Map([[roots[0].id, 0]]);
+      let deepest = 0;
+      while (queue.length) {
+        const id = queue.shift();
+        for (const to of Tree.neighboursOf(id)) {
+          if (seen.has(to) || !byId.has(to) || byId.get(to).axis !== c.axis) continue;
+          seen.add(to);
+          depth.set(to, depth.get(id) + 1);
+          deepest = Math.max(deepest, depth.get(to));
+          queue.push(to);
+        }
       }
+      const stranded = mine.filter((f) => !seen.has(f.id));
+      assert(!stranded.length,
+        `${stranded.map((f) => f.id).join(', ')} cannot be reached from ${c.axis}'s root by any chain of `
+        + 'joins — they are priced, drawn, and unbuyable for ever');
+      /* AND THE PLATE HAS TO FIT. `SkillTree` clamps indentation at four
+       * levels, so a current eight joins deep would draw its tail as a flat
+       * list and lose the shape it is drawn to show. Six is the ceiling that
+       * leaves the clamp as a mercy rather than a lie. */
+      assert(deepest <= 6,
+        `${c.axis} runs ${deepest} joins deep — the plate indents four and then stops distinguishing`);
+      rows.push(`${c.axis} ${mine.length}/${deepest}`);
     }
-    // 44 px is two 15 px discs with 14 px between them; below that the labels
-    // collide and the map stops being a map.
-    assert(worst >= 44, `${pair} are ${worst.toFixed(0)} px apart — they overlap on screen`);
-    // …and no current may wander into another's zone, which is the
-    // property that makes adding a facet to one of them safe.
-    for (const p of pts) {
-      const z = Tree.zoneOf(p.axis);
-      assert(z && Math.abs(p.x - z.x) <= z.halfW + 1 && Math.abs(p.y - z.y) <= z.halfH + 1,
-        `${p.id} is drawn outside ${p.axis}'s own zone`);
-    }
-    return `${pts.length} facets inside ${Tree.LATTICE.w}×${Tree.LATTICE.h}, closest pair ${worst.toFixed(0)} px (${pair})`;
-  });
-
-  check('living force: the page and the lattice agree on how big it is', async () => {
-    assert(Tree, 'no Living Force module');
-    // Two places, one truth. `LATTICE` is what positionOf lays out into and the
-    // viewBox is what the browser scales — and they are in different files, so
-    // a lattice that grew in one of them would draw every facet in the wrong
-    // place (or off the edge) with nothing anywhere reporting an error.
-    const html = await readFile(new URL('../../index.html', import.meta.url), 'utf8');
-    const m = /id="med-field"[^>]*viewBox="0 0 (\d+) (\d+)"/.exec(html);
-    assert(m, 'the Holocron has no viewBox in index.html');
-    assert(+m[1] === Tree.LATTICE.w && +m[2] === Tree.LATTICE.h,
-      `the page draws a ${m[1]}×${m[2]} lattice and LivingForce.js lays out a ${Tree.LATTICE.w}×${Tree.LATTICE.h} one`);
-    return `viewBox and LATTICE agree at ${Tree.LATTICE.w}×${Tree.LATTICE.h}`;
+    return `6 currents, every facet reachable from its root — ${rows.join(' · ')}`;
   });
 
   /* ══════════════════════════════════════════════════════════════════ */
@@ -1303,11 +1316,15 @@ export async function run({ check, assert }) {
       const tree = new SkillTree(doc, { onBuy: (id) => bought.push(id) });
       const taken = new Waves.RankSet([]);
       tree.show({ taken, ledger: new Tree.Communion({ insight: 999 }), wave: 9, order: 'jedi', live: true });
-      const nodes = doc.querySelectorAll('#med-field .facet');
-      assert(nodes.length > 10, `${nodes.length} nodes drew`);
+      /* `.hol-rung` and not `.facet`: the star chart is gone (see
+       * SkillTree._draw) and a facet is a RUNG on a plate now. The property
+       * this check is about — a thing that claims to be a button behaves like
+       * one — is unchanged and is exactly as easy to break in the new drawing. */
+      const nodes = doc.querySelectorAll('#med-field .hol-rung');
+      assert(nodes.length > 10, `${nodes.length} rungs drew`);
       const deaf = nodes.filter(g => g.listenerCount('keydown') === 0);
       assert(!deaf.length,
-        `${deaf.length}/${nodes.length} nodes carry tabindex="0" role="button" and no key listener at all`);
+        `${deaf.length}/${nodes.length} rungs carry tabindex="0" role="button" and no key listener at all`);
       const focusable = nodes.filter(g => g.getAttribute('tabindex') === '0');
       assert(focusable.length === nodes.length, 'a facet lost its place in the tab order');
       // Enter selects, exactly as a click does…
@@ -1320,28 +1337,38 @@ export async function run({ check, assert }) {
       assert(bought.length === before + 1,
         'Enter on the selected facet did not buy it — the keyboard can look and never spend');
       assert(bought[0] === tree.selected, `it bought ${bought[0]} with ${tree.selected} selected`);
-      return `${nodes.length} facets, all focusable and listening; Enter selects then buys (${bought[0]})`;
+      return `${nodes.length} rungs, all focusable and listening; Enter selects then buys (${bought[0]})`;
     } finally { restore(); }
   });
 
-  check('holocron: every price the purse could ever meet is on the map', async () => {
+  check('holocron: every facet carries its own price, and every number is the ledger\'s', async () => {
     /**
-     * THE SHOP HID ITS PRICE TAGS ON EVERYTHING YOU COULD NOT AFFORD.
+     * THE SHOP HID ITS PRICE TAGS ON EVERYTHING YOU COULD NOT AFFORD, and the
+     * fix has since gone further than the first version of this check asked
+     * for.
      *
-     * `SkillTree._draw` drew a cost badge under `!v.held && v.can && live`, and
-     * `can` is affordable AND reachable AND ungated. So on the first open of a
-     * run — purse 0, empty hand, six hearts at 9 — the lattice carried NOT ONE
-     * NUMBER, and the player was asked to plan against forty-six unlabelled
-     * circles. That is the legible form of "the Insight economy does not feel
-     * like it does anything": the economy is sound (three checks above measure
-     * it) and it was invisible at the one moment the player was standing in
-     * front of it deciding.
+     * ROUND ONE. `SkillTree._draw` drew a cost badge under `!v.held && v.can &&
+     * live`, and `can` is affordable AND reachable AND ungated — so on the
+     * first open of a run, purse 0 against six hearts at 9, the lattice carried
+     * NOT ONE NUMBER. This check demanded a price on everything the purse alone
+     * stood between the player and.
      *
-     * Driven through the real SkillTree on the real markup, and every number it
-     * prints is compared against `Communion` rather than against a second copy
-     * of the price series — the whole point of `facetView` is that the rules
-     * have one implementation, and a check that re-derived them would agree
-     * with itself and nothing else.
+     * ROUND TWO is the drawing itself. The player: "get fucking rid of it and
+     * redo the whole thing, also make it less confusing." The star chart is
+     * gone and a facet is a RUNG on a plate, which is a row of text — so there
+     * is no longer any reason to ration numbers to the ones a label solver
+     * could fit. EVERY rung carries its price, always, including the ones three
+     * joins away, because that is what makes the screen plannable rather than
+     * merely honest about the next purchase.
+     *
+     * So the property is stronger than it was: not "every price the purse could
+     * meet" but "every price", with the STATE — affordable, short, gated,
+     * already yours — carried by the tag rather than by its absence.
+     *
+     * Every number it prints is still compared against `Communion` rather than
+     * against a second copy of the price series: the whole point of `facetView`
+     * is that the rules have one implementation, and a check that re-derived
+     * them would agree with itself and nothing else.
      */
     const html = await readFile(new URL('../../index.html', import.meta.url), 'utf8');
     const { SkillTree } = await import('../../src/ui/SkillTree.js');
@@ -1349,26 +1376,34 @@ export async function run({ check, assert }) {
     const restore = doc.install();
     try {
       const tree = new SkillTree(doc, {});
-      const priced = (t) => [...t._nodes].flatMap(([id, g]) => {
-        const c = g.querySelector('.cost');
-        return c ? [{ id, cost: Number(c.textContent), short: c.classList.contains('short') }] : [];
+      const tagged = (t) => [...t._nodes].map(([id, g]) => {
+        const c = g.querySelector('.hol-cost');
+        return { id, text: c ? c.textContent : null, cost: Number(c?.textContent),
+          short: !!c?.classList.contains('short') };
       });
+      /* The ones showing an actual number — a held-out facet reads '✓' and a
+       * gated mastery reads '—', and neither is a price. */
+      const priced = (t) => tagged(t).filter((p) => Number.isFinite(p.cost));
 
       /* ── the opening of a run, which is where it was worst ─────────── */
       const taken = new Waves.RankSet();
       const led = new Tree.Communion();
       tree.show({ taken, ledger: led, wave: 1, order: 'jedi', live: true });
+      const all = tagged(tree);
       const open = priced(tree);
-      assert(open.length > 0,
-        'a run opens on a lattice with no price on it anywhere — the purse has nothing to be short of');
-      /* And the set is exactly the hearts, because from an empty hand nothing
-       * else is reachable. Derived from the ledger, not named. */
-      const reachable = Tree.FACETS
-        .filter((f) => led.reasonLocked(f.id, taken, 1) === Tree.LOCKED.insight
-          || led.canBuy(f.id, taken, 1));
-      assert(open.length === reachable.length,
-        `${open.length} prices drawn against ${reachable.length} facets the purse alone stands `
-        + 'between the player and');
+      assert(all.length > 10, `${all.length} rungs drew`);
+      const blank = all.filter((p) => !p.text);
+      assert(!blank.length,
+        `${blank.length} rungs carry no tag at all — every one is supposed to say a price, a tick or a dash`);
+      /* EVERY facet the ledger will ever quote a number for has that number on
+       * it, including the ones three joins out of reach. The set is derived
+       * from the ledger rather than named: anything not gated and not already
+       * maxed has a price. */
+      const quotable = Tree.FACETS.filter((f) =>
+        led.reasonLocked(f.id, taken, 1) !== Tree.LOCKED.gated && Number.isFinite(led.costOf(f.id, taken)));
+      assert(open.length === quotable.length,
+        `${open.length} prices drawn against ${quotable.length} facets the ledger can quote — a rung `
+        + 'without its number is a circle the player has to guess at');
       assert(open.every((p) => p.short),
         'a facet is drawn as affordable on an empty purse');
 
@@ -1379,7 +1414,15 @@ export async function run({ check, assert }) {
           + `against ${led.costOf(p.id, taken)}`).join('; ')}`);
 
       /* ── and the purse line names the exact shortfall ──────────────── */
-      const cheapest = Math.min(...open.map((p) => p.cost));
+      /* WITHIN REACH, which is not the same set as "has a price on it" any
+       * more. `_purseLine` names the cheapest thing the purse alone stands
+       * between the player and; the rack now also prices facets three joins
+       * away, and the minimum over ALL of them is a number the purse line is
+       * right not to quote. */
+      const inReach = open.filter((p) =>
+        led.reasonLocked(p.id, taken, 1) === Tree.LOCKED.insight || led.canBuy(p.id, taken, 1));
+      assert(inReach.length, 'nothing at all is within reach on an empty lattice');
+      const cheapest = Math.min(...inReach.map((p) => p.cost));
       const line = doc.getElementById('med-purse').textContent;
       assert(line.includes(String(cheapest)),
         `the purse says "${line}" and the cheapest thing within reach is ${cheapest}`);
@@ -1392,8 +1435,17 @@ export async function run({ check, assert }) {
       const mid = priced(tree);
       const bad = mid.filter((p) => p.cost !== led2.costOf(p.id, t2));
       assert(!bad.length, `mid-run prices disagree with the ledger: ${bad.map((p) => p.id).join(', ')}`);
-      assert(mid.every((p) => p.short === !led2.canBuy(p.id, t2, 20)),
-        'a price is lit as affordable that the ledger refuses, or dimmed on one it would take');
+      /* `short` is now the answer to "is there anything at all between you and
+       * this", which on a rack that prices the whole lattice is exactly
+       * `!canBuy` — money, reach and gating together. It used to be read on a
+       * set that was already filtered to the reachable, where the two questions
+       * happened to coincide. */
+      const lit = mid.filter((p) => !p.short && !led2.canBuy(p.id, t2, 20));
+      assert(!lit.length,
+        `lit as affordable but the ledger refuses: ${lit.map((p) => p.id).join(', ')}`);
+      const dimmed = mid.filter((p) => p.short && led2.canBuy(p.id, t2, 20));
+      assert(!dimmed.length,
+        `dimmed but the ledger would take it: ${dimmed.map((p) => p.id).join(', ')}`);
 
       const foot = doc.getElementById('med-hint').textContent;
       const surcharge = led2.bought.length * Tree.COST_STEP;

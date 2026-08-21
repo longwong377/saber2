@@ -30,12 +30,27 @@
    the Force bar, a woken facet.
    ──────────────────────────────────────────────────────────── */
 :root{
-  /* ── the ground ── */
-  --void:#0a0b14;          /* the page, and the darkest thing in the product */
-  --ink:#f4ecdc;           /* type. Warm off-white: this game has no pure white */
-  --dim:#a9a4bd;
-  --dimmer:#7c7694;
-  --stroke:#05060c;        /* THE INK. Every outline in the interface is this */
+  /* ── the ground ──
+     WARM, AND THAT IS THE WHOLE CHANGE. The player: "I want you to redo all the
+     main menu UI to be more aesthetically sable like and in keeping with the
+     new background and logo, the dark blue, light blue shit just doesn't work."
+
+     The old palette was built for a night render — a violet-blue page, blue-grey
+     panels and a cyan blade accent — and every one of those decisions was
+     correct against the plate it was drawn on. The plate is the player's own
+     painting now: cream sky, ochre plain, terracotta rock, burnt-umber ink,
+     coral. A blue-grey panel on that is a different product's interface laid on
+     top of this one's art.
+
+     So every neutral in this file has been rotated warm and the two blues are
+     gone. Nothing about the STRUCTURE moved — the four laws in this header
+     still hold, the ink is still the darkest thing, the panels still come up to
+     meet it — because the structure was never the problem. */
+  --void:#17100c;          /* the page, and the darkest thing in the product */
+  --ink:#f6ecda;           /* type. Warm off-white: this game has no pure white */
+  --dim:#c3a88f;
+  --dimmer:#95765e;
+  --stroke:#150b06;        /* THE INK. Every outline in the interface is this */
   /* THE PANELS ARE LIT, and that is the correction that made the whole thing
      work. First cut had them at #171a2c against a #05060c ink, and the ink was
      invisible — 2 px of near-black on near-black is not an outline, it is a
@@ -47,23 +62,29 @@
      meet the panels — which also puts them in the same family as the level
      cards' own art, which was the only part of the old front end that already
      looked like this game. */
-  --panel:#252b48;
-  --panel-2:#30375c;
-  --panel-hi:#404a79;
+  --panel:#2c211a;
+  --panel-2:#3a2c22;
+  --panel-hi:#54402f;
   --line:var(--stroke);
-  --line-hot:#48d8ff;
+  --line-hot:var(--accent);
 
   /* ── the palette, and it is the world's ──
      Four hues, each with a job, taken off the levels themselves: the blade,
      the Ember Shelf's sky, the Colosseum's sand, the Force. A fifth would be
      a fifth thing competing to be looked at. */
-  --accent:#48d8ff;        /* THE BLADE. Selection, focus, anything live */
-  --accent-warm:#ffb020;   /* SAND. Cost, mastery, a permanent choice */
+  /* THE ACCENT IS NO LONGER THE BLADE, and that is a real loss taken on
+     purpose. Cyan tied the interface to the one object the game is about; it
+     also tied it to a colour that does not exist anywhere in the art the front
+     end now sits on. Hot metal replaces it — the colour of the plain at the
+     hour the plate is painted at — and the blade keeps its own colour where it
+     belongs, which is on the blade. */
+  --accent:#e08b52;        /* HOT METAL. Selection, focus, anything live */
+  --accent-warm:#d9a441;   /* BRASS. Cost, mastery, a permanent choice */
   --borz:#cf7f66;          /* THE MARK. The second word of the logo, and only
                               ever that: it is the one colour in this file that
                               names a thing rather than a role */
-  --danger:#ff5540;        /* EMBER. Damage, a boss, a mistake */
-  --good:#5fe0a0;
+  --danger:#d2452c;        /* EMBER. Damage, a boss, a mistake */
+  --good:#9bb862;
   --force:#a07dff;         /* the Force itself — the pool, the Holocron */
   /* `--blade` was here, a second name for `--accent`'s exact value, and its
      last reader was `.logo-blade` — the lit saber bar beside the wordmark,
@@ -126,7 +147,7 @@ b{font-weight:800}
   background:
     linear-gradient(118deg,rgba(72,216,255,.055) 0%,transparent 38%),
     linear-gradient(300deg,rgba(255,176,32,.05) 0%,transparent 42%),
-    linear-gradient(180deg,#161a35 0%,var(--void) 66%);
+    linear-gradient(180deg,#231a13 0%,var(--void) 66%);
   animation:fadeIn .34s cubic-bezier(.22,1,.36,1) both}
 @keyframes fadeIn{from{opacity:0}to{opacity:1}}
 @keyframes riseIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
@@ -360,7 +381,7 @@ b{font-weight:800}
 .tab:hover{color:var(--ink);background:var(--panel-2)}
 .tab.active{color:var(--stroke);background:var(--accent)}
 .panel{display:none;flex:1;gap:24px;padding:22px;overflow:hidden;
-  background:#12162b;border:2px solid var(--stroke);box-shadow:var(--stamp-lg)}
+  background:#231a14;border:2px solid var(--stroke);box-shadow:var(--stamp-lg)}
 .panel.active{display:flex;animation:stampIn .3s cubic-bezier(.22,1,.36,1) both}
 .col{flex:1;min-width:0;overflow-y:auto;overflow-x:hidden;padding-right:8px;scrollbar-width:thin;
   scrollbar-color:var(--panel-hi) transparent;
@@ -444,9 +465,9 @@ b{font-weight:800}
 .col.narrow.pinned.less.more>.col-scroll{
   -webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 26px),transparent);
   mask-image:linear-gradient(to bottom,#000 calc(100% - 26px),transparent)}
-/* #12162b is `.panel`'s own field — the heading has to be opaque against the
+/* #231a14 is `.panel`'s own field — the heading has to be opaque against the
    cards passing under it, and it is the same surface it is drawn on. */
-.col.narrow.pinned>.col-scroll h3{position:sticky;top:0;z-index:2;background:#12162b;
+.col.narrow.pinned>.col-scroll h3{position:sticky;top:0;z-index:2;background:#231a14;
   padding:5px 0 3px;margin-bottom:8px}
 .col.narrow.pinned.less>.col-scroll h3{box-shadow:0 6px 0 -4px var(--panel-hi)}
 .col.narrow.pinned>.primary{position:static;flex:none;margin-top:14px;
@@ -532,7 +553,7 @@ h3::after{content:"";flex:1;height:2px;background:var(--panel-hi)}
 
 /* swatches ────────────────────────────────────────────────────────────
    These ARE the colour, so the ink around them is the whole design: a flat
-   patch of #48d8ff on a dark panel with no outline is a div, and the same
+   patch of var(--accent) on a dark panel with no outline is a div, and the same
    patch inside 2 px of near-black is a chip of paint. */
 .swatches{display:flex;flex-wrap:wrap;gap:10px}
 /* THE WARDROBE'S TONE ROWS. Nine of them stack under the cut cards, so they
@@ -569,7 +590,7 @@ h3::after{content:"";flex:1;height:2px;background:var(--panel-hi)}
    Warm rather than accent-blue on purpose: blue is what `.sel` already means
    here, and "which one is selected" and "which one am I about to activate" have
    to be two different answers. Measured against the ground these sit on
-   (--panel over the menu's radial, ≈#080c14) #ffb64a is 11.2:1, well past the
+   (--panel over the menu's radial, ≈#080c14) #e0a552 is 11.2:1, well past the
    3:1 WCAG asks of a non-text indicator; :focus-visible rather than :focus so a
    mouse click never paints one. */
 .card:focus-visible,.diff:focus-visible,.sw:focus-visible,.dc:focus-visible,
@@ -577,7 +598,6 @@ h3::after{content:"";flex:1;height:2px;background:var(--panel-hi)}
 .bindrow .keys b:focus-visible,.slider input:focus-visible,.check input:focus-visible,
 .netname input:focus-visible,#join-code:focus-visible{
   outline:3px solid var(--accent-warm);outline-offset:3px;border-radius:0}
-#med-field .facet:focus-visible .halo{stroke:var(--accent-warm);stroke-width:2}
 
 /* The Theatre column when the mode owns the theatre — see Menu._syncTheatre.
    Inert rather than hidden: the places are still worth looking at, they are
@@ -690,7 +710,7 @@ button{font-family:inherit}
   transition:transform .12s cubic-bezier(.22,1,.36,1),box-shadow .12s,background .14s}
 .primary{margin-top:auto;background:var(--accent);color:var(--stroke);
   box-shadow:var(--stamp-lg),0 0 30px -8px var(--accent)}
-.primary:hover{background:#7ee6ff;transform:translate(-2px,-2px);
+.primary:hover{background:#eda765;transform:translate(-2px,-2px);
   box-shadow:7px 7px 0 var(--stroke),0 0 40px -6px var(--accent)}
 .primary:active{transform:translate(3px,3px);box-shadow:0 0 0 var(--stroke),0 0 24px -8px var(--accent)}
 .secondary{background:var(--panel-2);color:var(--ink);margin-top:9px;box-shadow:var(--stamp)}
@@ -705,7 +725,7 @@ button{font-family:inherit}
    into an instrument — the same device the reticle uses — and they cost four
    gradients on one pseudo-element. */
 .preview{position:relative;flex:1;min-height:240px;border:2px solid var(--stroke);
-  background:linear-gradient(170deg,#1b2136,var(--void) 72%);overflow:hidden;cursor:grab;
+  background:linear-gradient(170deg,#241a13,var(--void) 72%);overflow:hidden;cursor:grab;
   clip-path:var(--cut);box-shadow:var(--stamp)}
 .preview:active{cursor:grabbing}
 .preview canvas{width:100%;height:100%;display:block}
@@ -738,7 +758,7 @@ button{font-family:inherit}
 #join-code{width:100%;padding:14px 16px;background:var(--void);border:2px solid var(--stroke);
   color:var(--accent);font:var(--mono);font-size:18px;font-weight:800;letter-spacing:.34em;
   text-align:center;text-transform:uppercase;outline:none;clip-path:var(--cut-sm)}
-#join-code:focus{background:#0d1120;box-shadow:inset 0 0 0 2px var(--accent)}
+#join-code:focus{background:#1a120d;box-shadow:inset 0 0 0 2px var(--accent)}
 .netname{display:flex;flex-direction:column;gap:7px;font:var(--mono);font-size:10px;font-weight:800;
   letter-spacing:.2em;text-transform:uppercase;color:var(--dim)}
 .netname input{width:100%;padding:12px 14px;background:var(--void);border:2px solid var(--stroke);
@@ -938,7 +958,7 @@ button{font-family:inherit}
 .wave-line{display:inline-flex;align-items:center;gap:9px;font:var(--mono);font-size:10px;
   font-weight:800;letter-spacing:.2em;text-transform:uppercase;color:var(--stroke);
   background:var(--ink);padding:3px 10px 4px;clip-path:var(--cut-sm);text-shadow:none}
-.wave-line em{font-style:normal;color:#8a5a00}
+.wave-line em{font-style:normal;color:#6b4a12}
 .wave-big{font-size:11px;font-weight:800;letter-spacing:.28em;color:var(--ink);margin-top:7px;
   text-transform:uppercase}
 .wave-big b{font-size:38px;font-weight:800;letter-spacing:-.01em;color:#fff;margin-left:8px;
@@ -999,11 +1019,11 @@ button{font-family:inherit}
 /* One colour per kind. Streaks are the blade's own accent, returns are the
    cool defensive blue the deflection grades already use, a boss is danger. */
 #event-feed .ev-streak{border-right-color:var(--accent-warm)}
-#event-feed .ev-streak b{color:#ffe0a8}
-#event-feed .ev-return b,#event-feed .ev-perfect b{color:#bfeaff}
-#event-feed .ev-perfect{border-right-color:#8fe8ff}
+#event-feed .ev-streak b{color:#f2d6a6}
+#event-feed .ev-return b,#event-feed .ev-perfect b{color:#f0d3ba}
+#event-feed .ev-perfect{border-right-color:#f0b984}
 #event-feed .ev-boss{border-right-color:var(--danger)}
-#event-feed .ev-boss b{color:#ffc2c6}
+#event-feed .ev-boss b{color:#f0bda6}
 #event-feed .ev-danger{border-right-color:var(--danger)}
 #event-feed .ev-danger b{color:var(--danger)}
 @keyframes evIn{from{opacity:0;transform:translateX(18px)}to{opacity:1;transform:none}}
@@ -1243,7 +1263,7 @@ button{font-family:inherit}
 .em{position:absolute;transform:translate(-50%,-50%);width:118px;text-align:center;
   padding:7px 4px;border-radius:9px;transition:.11s;opacity:.9}
 .em b{display:block;font:var(--mono);font-size:11px;font-weight:700;letter-spacing:.22em;
-  text-transform:uppercase;color:#cdd9e8}
+  text-transform:uppercase;color:#e4cdb4}
 .em span{display:block;margin-top:3px;font:var(--mono);font-size:8.5px;letter-spacing:.1em;
   color:var(--dim)}
 /* The chosen slot. It lights rather than growing, because a wheel whose slots
@@ -1251,13 +1271,13 @@ button{font-family:inherit}
 .em.sel{opacity:1;background:var(--accent);clip-path:var(--cut-sm);box-shadow:var(--stamp)}
 .em.sel b{color:var(--stroke)}
 .em.sel span{color:rgba(5,6,12,.72)}
-.em.sel span{color:#a9b8cc}
+.em.sel span{color:#cbae92}
 @keyframes emoteIn{from{opacity:0;transform:translate(-50%,-50%) scale(.94)}
   to{opacity:1;transform:translate(-50%,-50%) scale(1)}}
 /* An emote in the event feed is the player's own doing, so it reads in the
    blade's colour rather than in a streak's warm one or a boss's red. */
 #event-feed .ev-emote{border-right-color:var(--accent)}
-#event-feed .ev-emote b{color:#bfeaff}
+#event-feed .ev-emote b{color:#f0d3ba}
 
 /* The order wheel is the emote wheel with the mode's own table in it — same
    geometry, same hit test, same class (see RadialWheel). Two differences and
@@ -1279,12 +1299,12 @@ button{font-family:inherit}
    the word already said is dim, the next one is lit, and the rest wait. */
 #stratagem .sg-words{margin:1px 0 5px 0;font-size:11px;letter-spacing:.02em;line-height:1.35;
   opacity:.9;padding-left:2px}
-#stratagem .sg-words em{font-style:normal;color:#6f7c88}
-#stratagem .sg-words em.on{color:#cfe4f5}
-#stratagem .sg-words em.next{color:#ffce50;text-shadow:0 0 6px rgba(255,206,80,.55)}
+#stratagem .sg-words em{font-style:normal;color:#8e7460}
+#stratagem .sg-words em.on{color:#ecd2b8}
+#stratagem .sg-words em.next{color:#e5be5a;text-shadow:0 0 6px rgba(255,206,80,.55)}
 /* …and the second phase, which is one line and a state. */
-#stratagem .sg-row.sg-mark b{color:#ffce50}
-#stratagem .sg-row.sg-mark .sg-cost{color:#ff6a4a;letter-spacing:.10em}
+#stratagem .sg-row.sg-mark b{color:#e5be5a}
+#stratagem .sg-row.sg-mark .sg-cost{color:#d95f42;letter-spacing:.10em}
 
 .sg-row{display:flex;align-items:center;gap:10px;padding:5px 11px;
   background:rgba(10,13,26,.82);border:2px solid var(--stroke);
@@ -1573,7 +1593,7 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
   padding: 6px 9px;
   font: 11px/1.45 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   font-variant-numeric: tabular-nums;
-  color: #c8f0ff;
+  color: #f4dcc0;
   background: var(--panel);
   border: 2px solid var(--stroke);
   border-radius: 0;
@@ -1632,9 +1652,76 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
 .med-insight i{display:block;margin-top:4px;font:var(--mono);font-style:normal;
   color:var(--dimmer);max-width:30ch;line-height:1.45;text-transform:none;letter-spacing:.02em}
 .med-body{flex:1;min-height:0;display:flex;gap:16px}
-#med-field{flex:1;min-width:0;height:100%;display:block;
+/* ── THE HOLOCRON IS A RACK OF PLATES ─────────────────────────────────────
+   It was an <svg> holding 190 motes, 46 discs and the lines between them — a
+   star chart, which is what the player has now asked three times to be rid of
+   ("get fucking rid of it and redo the whole thing, also make it less
+   confusing"). It is a grid of six PLATES now, one per current, each a stack of
+   rungs; the argument is in SkillTree._draw and the reason it is HTML rather
+   than SVG is that rows do not collide and text in a box wraps.
+
+   AUTO-FIT rather than a fixed three columns: the panel is 284 px narrower than
+   the meditation when the sidebar is up, and at a narrow viewport six plates in
+   three columns are three columns of one word. */
+#med-field{flex:1;min-width:0;height:100%;overflow-y:auto;padding:12px;
+  display:grid;gap:12px;align-content:start;
+  grid-template-columns:repeat(auto-fit,minmax(238px,1fr));
   border:2px solid var(--stroke);clip-path:var(--cut);
-  background:linear-gradient(170deg,rgba(22,18,46,.62),rgba(4,5,12,.78) 72%)}
+  background:linear-gradient(170deg,rgba(58,44,34,.62),rgba(21,11,6,.82) 72%);
+  scrollbar-width:thin;scrollbar-color:var(--panel-hi) transparent}
+.hol-plate{border:2px solid var(--stroke);background:var(--panel);clip-path:var(--cut);
+  box-shadow:var(--stamp);padding:9px 9px 10px;min-width:0}
+.hol-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.hol-name{font:var(--ui);font-weight:800;font-size:10px;letter-spacing:.22em;color:var(--ink)}
+.hol-count{font:var(--mono);font-size:9px;font-weight:800;color:var(--dimmer)}
+/* How much of the current is yours, as a bar rather than as a second number.
+   It is the only meter on the screen and it is the one thing a player scanning
+   six plates wants first: which of these have I actually committed to. */
+.hol-bar{height:5px;margin:6px 0 8px;background:var(--void);border:2px solid var(--stroke)}
+.hol-fill{height:100%;background:var(--force);box-shadow:0 0 7px rgba(160,125,255,.7)}
+.hol-rungs{display:flex;flex-direction:column;gap:4px}
+
+/* A RUNG. Indented by its depth in the join graph, which is how far you must
+   walk to reach it, and joined to the rung above by an elbow — the bracket that
+   replaces the line the chart used to draw, and which cannot cross another one.
+   `--depth` is written by SkillTree and clamped there at 4, so a deep branch
+   cannot indent a rung off its own plate. */
+.hol-rung{position:relative;display:flex;align-items:center;gap:7px;cursor:pointer;
+  margin-left:calc(var(--depth,0) * 13px);padding:5px 7px 6px;
+  border:2px solid var(--stroke);background:var(--panel-2);clip-path:var(--cut-sm);
+  transition:background .12s,color .12s}
+.hol-elbow{position:absolute;left:-9px;top:-4px;width:7px;height:calc(50% + 4px);
+  border-left:2px solid var(--stroke);border-bottom:2px solid var(--stroke);pointer-events:none}
+.hol-glyph{flex:none;width:15px;text-align:center;font-size:12px;color:var(--dimmer)}
+.hol-body{flex:1;min-width:0}
+.hol-label{font:var(--ui);font-size:11px;font-weight:700;color:var(--dim);line-height:1.25}
+.hol-meta{font:var(--mono);font-size:8.5px;letter-spacing:.06em;color:var(--dimmer);margin-top:1px}
+/* THE PRICE IS ALWAYS THERE. The old chart drew one only when the purse was
+   the sole obstacle, so a run opened on forty-six unlabelled circles. */
+.hol-cost{flex:none;min-width:17px;text-align:right;font:var(--mono);font-size:11px;font-weight:800;
+  color:var(--accent-warm)}
+.hol-cost.short{color:var(--dimmer)}
+.hol-cost.chart{color:var(--dimmer)}
+
+.hol-rung:hover{background:var(--panel-hi)}
+.hol-rung:hover .hol-label{color:var(--ink)}
+.hol-rung.root{background:var(--panel-hi)}
+.hol-rung.root .hol-label{color:var(--ink);letter-spacing:.04em}
+.hol-rung.mastery{border-style:dashed}
+.hol-rung.can .hol-label{color:var(--ink)}
+.hol-rung.can .hol-glyph{color:var(--accent)}
+.hol-rung.held{background:var(--force);border-color:var(--stroke)}
+.hol-rung.held .hol-label,.hol-rung.held .hol-glyph{color:var(--stroke)}
+.hol-rung.held .hol-meta{color:rgba(21,11,6,.66)}
+.hol-rung.held .hol-cost{color:var(--stroke)}
+.hol-rung.held.mastery{background:var(--accent-warm)}
+/* Out of reach entirely — not a price problem. Drawn back rather than hidden,
+   because a plan needs to see where it is going. */
+.hol-rung.far{opacity:.55}
+.hol-rung.spent{border-style:dotted}
+.hol-rung.sel{outline:2px solid var(--accent);outline-offset:2px}
+.hol-rung:focus{outline:none}
+.hol-rung:focus-visible{outline:2px solid var(--accent-warm);outline-offset:2px}
 .med-side{width:284px;flex:none;display:flex;flex-direction:column;gap:10px}
 .med-detail{flex:1;min-height:0;overflow-y:auto;padding:13px 14px;border:2px solid var(--stroke);
   background:var(--panel);clip-path:var(--cut);box-shadow:var(--stamp)}
@@ -1656,50 +1743,6 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
 .med-row em{font-style:normal;color:var(--dimmer)}
 .med-empty{font:var(--mono);color:var(--dimmer);line-height:1.6}
 .med-foot{display:flex;align-items:center;justify-content:space-between;gap:16px}
-
-/* the lattice itself */
-#med-field .med-motes circle{fill:#cfe6ff}
-#med-field .cname{font:600 10px/1 ui-sans-serif,system-ui,sans-serif;letter-spacing:.34em;
-  fill:rgba(150,190,235,.30)}
-#med-field .med-links line{stroke-width:1.2}
-#med-field .med-links line.dim{stroke:rgba(140,175,215,.13)}
-#med-field .med-links line.open{stroke:rgba(120,200,255,.42);stroke-dasharray:4 5}
-#med-field .med-links line.woken{stroke:var(--force);stroke-width:2.4;
-  filter:drop-shadow(0 0 6px rgba(160,125,255,.7))}
-#med-field .facet{cursor:pointer}
-#med-field .facet .halo{fill:rgba(160,125,255,.06);stroke:none}
-#med-field .facet .disc{fill:#12142a;stroke:var(--stroke);stroke-width:2}
-#med-field .facet .glyph{font-size:13px;fill:rgba(190,210,235,.42)}
-#med-field .facet .label{font:500 10px/1 ui-sans-serif,system-ui,sans-serif;fill:rgba(160,185,215,.42);
-  letter-spacing:.02em;
-  /* A ground under the type, drawn BEHIND it by paint-order, so a label that
-     still crosses a link or the edge of a disc stays readable. SkillTree.js
-     picks each label's side and clears the collisions it can; this is what
-     covers the ones it cannot, and it costs nothing when there are none. */
-  stroke:var(--void);stroke-width:3;paint-order:stroke fill}
-#med-field .facet .cost{font:600 10px/1 ui-monospace,monospace;fill:var(--accent-warm)}
-/* A PRICE YOU CANNOT YET MEET, and it is drawn rather than withheld — see the
-   note above the badge in SkillTree.js. Same warm hue at a third of the weight
-   of the affordable one: the eye reads the lit numbers as the shortlist and the
-   faint ones as the map of what saving buys, which is the distinction the
-   screen exists to make and previously made by showing nothing at all. */
-#med-field .facet .cost.short{fill:rgba(255,176,32,.34)}
-#med-field .facet .pip{fill:var(--force);filter:drop-shadow(0 0 4px rgba(160,125,255,.95))}
-#med-field .facet.root .disc{stroke-dasharray:3 3}
-#med-field .facet.mastery .disc{stroke:var(--stroke);stroke-dasharray:5 3}
-#med-field .facet.can .disc{stroke:var(--stroke);fill:#241f4a}
-#med-field .facet.can .glyph,#med-field .facet.can .label{fill:rgba(220,238,255,.9)}
-#med-field .facet.can .halo{fill:rgba(160,125,255,.12)}
-#med-field .facet.held .disc{fill:var(--force);stroke:var(--stroke);stroke-width:2;
-  filter:drop-shadow(0 0 10px rgba(160,125,255,.7))}
-#med-field .facet.held .glyph{fill:var(--stroke)}
-#med-field .facet.held .label{fill:rgba(215,236,255,.92)}
-#med-field .facet.held.mastery .disc{fill:var(--accent-warm);filter:drop-shadow(0 0 12px rgba(255,176,32,.7))}
-#med-field .facet.spent .disc{stroke-dasharray:2 3}
-#med-field .facet.sel .halo{fill:rgba(160,125,255,.24);stroke:var(--force);stroke-width:2}
-#med-field .facet:hover .halo{fill:rgba(160,125,255,.18)}
-#med-field .facet:focus{outline:none}
-#med-field .facet:focus .halo{stroke:var(--accent);stroke-width:1}
 
 /* ── the kneel ────────────────────────────────────────────────────────
    A prompt, not a button: it appears when a communion is actually possible
@@ -1742,9 +1785,9 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
   clip-path:var(--cut-sm);box-shadow:2px 2px 0 var(--stroke)}
 .commune-entry:hover{color:var(--stroke);background:var(--force);border-color:var(--stroke)}
 /* A facet this player has carried in an earlier run — the record, drawn on the
-   chart. Fainter than "can be woken", because it buys nothing: see Progress.js. */
-#med-field .facet.known .disc{stroke:rgba(190,170,120,.42)}
-#med-field .facet.known .label{fill:rgba(200,190,160,.55)}
+   rack. Marked rather than lit, because it buys nothing: see Progress.js. */
+.hol-rung.known .hol-glyph{color:#b5a06a}
+.hol-rung.known .hol-label::after{content:' ·';color:#b5a06a}
 #commune em{font-style:normal;color:var(--accent-warm);letter-spacing:.1em;font-weight:800}
 
 
@@ -1787,13 +1830,13 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
 .tplate .tp-hp i,.tplate .tp-mor i{display:block;height:100%;width:100%}
 .tplate .tp-hp i{background:var(--accent)}
 .tplate .tp-mor i{background:var(--accent-warm)}
-.tplate.hurt .tp-hp i{background:#e2553a}
-.tplate.shaken .tp-mor i{background:#e2553a}
+.tplate.hurt .tp-hp i{background:#cf4d33}
+.tplate.shaken .tp-mor i{background:#cf4d33}
 /* The one under your reticle is the one you are talking to. */
 .tplate.aimed .tp-name{color:var(--accent)}
 .tplate.aimed{font-size:11px}
 /* Broken men are named in the colour of the thing that is happening to them. */
-.tplate.broken .tp-name{color:#ff8c6b}
+.tplate.broken .tp-name{color:#e2846a}
 
 /* ── THE BOOT SCREEN'S TYPE, ON DAYLIGHT ──────────────────────────────────
    The bar and its caption were cyan on a violet night. The art is the plate's

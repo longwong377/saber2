@@ -25,28 +25,13 @@
  * happens instead of it.
  */
 
-import { latticeView, facetView, shapeOf, currentName, creedOf, CURRENTS, LATTICE, LOCKED, COST_STEP, zoneOf }
+/* `LATTICE` and `zoneOf` are gone from this import and that is deliberate:
+ * they are the coordinate space of the star chart, and a rack has no
+ * coordinates. They still exist in LivingForce.js because `facetView` publishes
+ * an x/y off them and two checks read it; nothing here does. */
+import { latticeView, facetView, shapeOf, currentName, creedOf, CURRENTS, LOCKED, COST_STEP }
   from '../game/LivingForce.js';
 import { audio } from '../engine/Audio.js';
-
-const NS = 'http://www.w3.org/2000/svg';
-
-/** A deterministic little PRNG, so the motes behind the lattice never move. */
-function seeded(seed) {
-  let s = seed >>> 0 || 1;
-  return () => {
-    s ^= s << 13; s >>>= 0;
-    s ^= s >> 17;
-    s ^= s << 5; s >>>= 0;
-    return s / 4294967296;
-  };
-}
-
-const svg = (name, attrs = {}) => {
-  const el = document.createElementNS(NS, name);
-  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, String(v));
-  return el;
-};
 
 export class SkillTree {
   /**
@@ -129,8 +114,116 @@ export class SkillTree {
   /** Redraw in place — after a purchase, the lattice has changed shape. */
   refresh() { if (this.open) { this._draw(); this._select(this.selected); } }
 
+  /**
+   * ONE CURRENT'S FACETS, IN READING ORDER, WITH THEIR DEPTH.
+   *
+   * The lattice is a GRAPH and a plate is a STACK, so this is the flattening,
+   * and it is the only place the two shapes meet. Breadth-first from the root,
+   * which is the right traversal for exactly one reason: the depth it assigns
+   * is the SHORTEST number of facets you must wake to reach this one, which is
+   * the number a player planning a purchase is actually asking for. A
+   * depth-first walk would put a facet two joins away at indent five because of
+   * the order the table happens to list it in.
+   *
+   * `via` is what a stack loses and a graph keeps. A facet joined to two
+   * already-woken neighbours is reachable through either, and the drawing can
+   * only hang it under one of them — so the others are named on the rung as
+   * words. There are four such facets in the shipped table and every one of
+   * them is a mastery, which is the case where knowing the second route
+   * matters most.
+   *
+   * A facet with no path to the root at all still appears, at depth 0, after
+   * everything reachable. That is a table error rather than a state — a facet
+   * nothing joins is unreachable for ever — and the old drawing hid it by
+   * placing it wherever its dx/dy said. Here it is simply on the plate with no
+   * bracket, visibly hanging off nothing.
+   */
+  _tiers(mine, byId) {
+    const here = new Set(mine.map((v) => v.id));
+    const out = [];
+    const depth = new Map();
+    const parent = new Map();
+    const roots = mine.filter((v) => v.root);
+    const queue = [];
+    for (const r of roots) { depth.set(r.id, 0); queue.push(r); }
+    while (queue.length) {
+      const v = queue.shift();
+      out.push(v);
+      for (const id of v.to) {
+        if (!here.has(id) || depth.has(id)) continue;
+        const w = byId.get(id);
+        if (!w) continue;
+        depth.set(id, depth.get(v.id) + 1);
+        parent.set(id, v.id);
+        queue.push(w);
+      }
+    }
+    for (const v of mine) if (!depth.has(v.id)) { depth.set(v.id, 0); out.push(v); }
+    return out.map((v) => {
+      const p = parent.get(v.id);
+      const via = v.to
+        .filter((id) => id !== p && here.has(id) && depth.get(id) <= depth.get(v.id))
+        .map((id) => byId.get(id)?.name.replace(/^Mastery — /, ''))
+        .filter(Boolean);
+      return { v, depth: Math.min(depth.get(v.id) ?? 0, 4), via };
+    });
+  }
+
   /* ── drawing ───────────────────────────────────────────────────────── */
 
+  /**
+   * THE HOLOCRON, DRAWN AS A RACK OF PLATES — and the constellation is gone.
+   *
+   * The player, for at least the third time: "I've already told you a million
+   * times to completely get rid of the attunement star chart shit and start
+   * from scratch with something that has nothing to do with stars and is more
+   * in keeping with the game's aesthetic and I still see the same exact star
+   * chart bullshit… get fucking rid of it and redo the whole thing, also make
+   * it less confusing."
+   *
+   * WHY IT SURVIVED THREE RENAMINGS. `LivingForce.js`'s own header says it
+   * plainly and is worth quoting, because it is the whole diagnosis: "This was
+   * a CONSTELLATION… The player asked what stars had to do with becoming
+   * attuned to the Force, which was a fair question with an embarrassing answer
+   * — a node graph happens to look like a star chart, so the picture was chosen
+   * first and the fiction was bent around it. THE DRAWING DID NOT CHANGE; every
+   * word around it did." Stars became facets, the sky became a lattice, and the
+   * SVG still drew 190 motes, 46 discs and the lines between them. Renaming a
+   * star chart does not stop it being one.
+   *
+   * ── WHAT IT IS NOW ────────────────────────────────────────────────────
+   *
+   * Six PLATES, one per current, each a stack of RUNGS. A rung is a cut-corner
+   * bar carrying the facet's name, its rank, and its price, drawn in the same
+   * flat-and-inked language as every other box in this interface. Depth in the
+   * join graph is INDENTATION, and a bracket joins a rung to the rung it hangs
+   * off — so the reachability rule ("a facet may be woken if it is the root of
+   * its current, or if a facet it is joined to is already woken") is not a rule
+   * you have to be told, it is the shape of the drawing.
+   *
+   * ── AND WHY THAT IS THE "LESS CONFUSING" HALF ─────────────────────────
+   *
+   * The old drawing put the name UNDER the disc in 9 px type and the price
+   * ABOVE it, and had a 60-line label solver whose whole job was stopping
+   * forty-six of those from landing on each other. A price was drawn only for
+   * facets the purse alone stood between you and — so on the first open of a
+   * run, purse 0 against six roots at 9, the chart carried NOT ONE NUMBER.
+   *
+   * A rung is a row. Rows do not collide, so there is no solver; every rung
+   * carries its name and price at a readable size ALWAYS, including the ones
+   * you cannot reach, because "9, and you have 4" is a plan and a blank circle
+   * is not. The one thing the graph could show that a stack cannot is a facet
+   * joined to two parents — `_tiers` lists those on the rung itself ("or via
+   * …"), which is a sentence rather than a line you have to trace.
+   *
+   * ── AND IT IS HTML, NOT SVG ───────────────────────────────────────────
+   *
+   * The old field was an SVG because a node graph needs arbitrary coordinates.
+   * A rack is rows in columns, which is what the box model is for: the type
+   * hyphenates, the panels take the same `--cut` clip as every other panel in
+   * the product, and the whole thing reflows at a narrow viewport instead of
+   * scaling a 1000x720 viewBox down until the labels vanish.
+   */
   _draw() {
     const { taken, ledger, wave = 1, order = null, live = true, history = null } = this.ctx || {};
     const field = this.el.field;
@@ -143,289 +236,120 @@ export class SkillTree {
     // or the chart you read between runs.
     if (this.el.title) this.el.title.textContent = live ? 'Commune with the Holocron' : 'The Holocron';
 
-    /* the motes suspended in the crystal — atmosphere, and nothing reads them */
-    const rnd = seeded(0x5ABE7);
-    const motes = svg('g', { class: 'med-motes' });
-    for (let i = 0; i < 190; i++) {
-      const r = 0.4 + rnd() * 1.5;
-      motes.appendChild(svg('circle', {
-        cx: (rnd() * LATTICE.w).toFixed(1), cy: (rnd() * LATTICE.h).toFixed(1),
-        r: r.toFixed(2), opacity: (0.12 + rnd() * 0.5).toFixed(2),
-      }));
-    }
-    field.appendChild(motes);
-
-    /* the teachings' names, behind their facets */
-    // At the TOP OF THE ZONE, not near the current's own centre: a current
-    // fills its zone, so anything drawn at the middle of it lands on a facet.
-    const labels = svg('g', { class: 'med-cnames' });
-    const cnames = [];
-    for (const c of CURRENTS) {
-      const z = zoneOf(c.axis);
-      if (!z) continue;
-      /*
-       * −28 AND NOT −18, WHICH IS WHERE THE FACET LABELS GET THEIR ROOM BACK.
-       * The topmost facet of a current sits just under its heading and its own
-       * label hangs below it, so at −18 the heading and that label were in the
-       * same 10 px of the drawing. Teaching the label solver to avoid headings
-       * did not fix it — it only moved the collision, 2 / 3 / 4 across the
-       * three window sizes before and 2 / 3 / 4 after, because the label was
-       * pushed off the heading straight into a neighbour. The heading is the
-       * thing with somewhere to go: it is the only mark above the zone.
-       */
-      const cy = z.y - z.halfH - 28;
-      const t = svg('text', { x: z.x, y: cy, 'text-anchor': 'middle', class: 'cname' });
-      t.textContent = currentName(c.axis, order).toUpperCase();
-      labels.appendChild(t);
-      // Kept so a facet's own label can be placed around them. A current name
-      // is 10px type at .34em tracking, which is wide for its character count,
-      // so its box is measured with the rest rather than guessed at.
-      cnames.push({ el: t, x: z.x, y: cy, text: t.textContent });
-    }
-    field.appendChild(labels);
-
-    /* the lines, drawn once per pair and under every node */
-    const lines = svg('g', { class: 'med-links' });
-    const seen = new Set();
-    for (const v of this.view) {
-      for (const other of v.to) {
-        const key = v.id < other ? `${v.id}|${other}` : `${other}|${v.id}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        const w = byId.get(other);
-        if (!w) continue;
-        const cls = v.held && w.held ? 'woken' : (v.held || w.held) ? 'open' : 'dim';
-        lines.appendChild(svg('line', { x1: v.x, y1: v.y, x2: w.x, y2: w.y, class: cls }));
-      }
-    }
-    field.appendChild(lines);
-
-    /*
-     * WHICH SIDE OF ITS NODE A LABEL SITS ON.
-     *
-     * Every label used to hang below its node at a fixed offset, and for
-     * forty-one of the forty-six that is fine. The five that are not are all
-     * the same shape of problem: the longest names in the game belong to the
-     * ATTUNEMENTS, the attunements are the roots, and a root is the hub its
-     * current is drawn around — so the one label that needs the most room is
-     * the one with neighbours on every side. Measured in a browser before
-     * this, identically at 1600×900, 1200×760 and 900×620:
-     *
-     *   Attunement of the Guard   under the Form III — Soresu node
-     *   Attunement of the Force   under the Wellspring node
-     *   Attunement of the Shadow  under the Sustenance node
-     *   Attunement of the Shadow  under the Form VII — Vaapad Unbound node
-     *   Focusing Crystal          across The Unbroken Stroke
-     *
-     * Moving the NODES is the wrong fix: their positions are the shape of the
-     * current, `positionOf` fits that shape to its zone deliberately, and
-     * there is already a check on how close two of them may come. The label is
-     * the free variable, so it picks its side — below unless below is busier,
-     * counting both the other nodes and the labels already placed.
-     *
-     * THE FIELD IS NOT A FIXED viewBox, and the first version of this said it
-     * was. The three sizes above happened to produce the same five collisions,
-     * which read as resolution-independence and is not: the field's aspect
-     * ratio follows its container, so the drawing is re-fitted and a placement
-     * that clears at 1200×760 can foul at 900×620. That is exactly what
-     * happened — flipping The Unbroken Stroke up cleared Focusing Crystal at
-     * two sizes and met Form VII — Vaapad at the third. So the candidates are
-     * a set rather than a pair, and the first with nothing in it wins.
-     *
-     * AND THE WIDTHS ARE MEASURED, NOT ESTIMATED. `text.length × 2.7` was the
-     * first version and it is wrong in the one place it matters: the names
-     * that collide are the long ones, and the long ones are full of em-dashes
-     * and capitals that no per-character average describes. Under-estimating a
-     * width by a few units is enough to call a box clear that is not, which is
-     * why one collision survived two rounds of this. The labels are drawn
-     * first, `getComputedTextLength` is asked what they actually are, and only
-     * then are they placed — `svg` is in the document by that point, so the
-     * measurement is real. The estimate stays as the fallback for a DOM that
-     * has no text metrics, which is what every check in tools/ runs under.
-     *
-     * Greedy and in draw order, which is enough: this is five collisions out
-     * of 1035 pairs, not a general label-placement problem. Above clears the
-     * cost badge at −22 and the rank pips at −20 by construction.
-     *
-     * WHERE IT ACTUALLY LANDS. The before figure above — five, at all three
-     * sizes — counts label on label and label on node, which are the two kinds
-     * the first probe measured. Label on current HEADING is a third kind, and
-     * it was not measured until placement had already changed, so there is no
-     * honest before number for it; what is known is that at least Tutaminis
-     * and The Unforgivable Word sat on their headings in the original build,
-     * because both are legible doing so in the screenshot that started this.
-     *
-     * Counting all three kinds, after: 1 collision at 1600×900, 1 at 1200×760,
-     * 2 at 900×620.
-     *
-     * The survivor at every size is The Refused Lightning against The
-     * Unforgivable Word: two long names on nodes stacked vertically, where
-     * none of the six candidate positions is clear. It is left overlapping
-     * rather than solved, because solving it properly means a real label
-     * placement pass and this is not one. The halo in styles.css is what makes
-     * the remainder readable, and it is why that halo is not decoration.
-     */
-    const overlaps = (a, b) => a.x < b.r && b.x < a.r && a.y < b.bo && b.y < a.bo;
-    const pending = [];
-    const placeLabels = () => {
-      const spec = pending.map(({ v, el, text }) => {
-        const halfW = (typeof el.getComputedTextLength === 'function' && el.getComputedTextLength()
-          ? el.getComputedTextLength() : text.length * 5.4) / 2 + 3;
-        const down = v.root ? 34 : 28, up = v.root ? -34 : -30, side = halfW + 12;
-        return {
-          v, el, halfW,
-          box: (dx, dy) => ({ x: v.x + dx - halfW, r: v.x + dx + halfW, y: v.y + dy - 9, bo: v.y + dy + 2 }),
-          // Ordered by how much each disturbs the drawing, so the layout is
-          // unchanged wherever there was nothing wrong with it.
-          tries: [[0, down], [0, up], [side, down], [-side, down], [side / 2, down], [-side / 2, down],
-            [side, up], [-side, up]],
-          at: [0, down],
-        };
-      });
-
-      /*
-       * Fixed obstacles: the nodes, which never move, and the CURRENT NAMES,
-       * which were not in this list at first and should have been. A current
-       * name sits above the top of its zone, and the topmost facet of that
-       * current is right under it — so "Tutaminis" and "The Unforgivable Word"
-       * were placed into their own headings by a solver that could not see
-       * them. Nothing else on the field takes space, and the halo in
-       * styles.css covers whatever this still cannot separate.
-       */
-      const nodeBoxes = this.view.map((w) => {
-        const rw = w.root ? 15 : w.mastery ? 13 : 11;
-        return { id: w.id, x: w.x - rw, r: w.x + rw, y: w.y - rw, bo: w.y + rw };
-      });
-      for (const c of cnames) {
-        const halfW = (typeof c.el.getComputedTextLength === 'function' && c.el.getComputedTextLength()
-          ? c.el.getComputedTextLength() : c.text.length * 6.2) / 2 + 3;
-        nodeBoxes.push({ id: null, x: c.x - halfW, r: c.x + halfW, y: c.y - 9, bo: c.y + 3 });
-      }
-
-      /*
-       * ONE PASS, GREEDY, IN DRAW ORDER — and the second pass was tried and
-       * REMOVED. The argument for it is sound: an early label can take a slot
-       * a later one needed, so re-solving against the finished layout should
-       * only help. Measured, it did the opposite — 0 / 0 / 1 collisions at
-       * 1600×900, 1200×760 and 900×620 became 1 / 1 / 1, because a second pass
-       * re-solves each label against a layout that is still moving underneath
-       * it and a settled pair can be walked back into each other. A stable
-       * greedy answer beats an unstable better-argued one.
-       */
-      {
-        for (let i = 0; i < spec.length; i++) {
-          const s = spec[i];
-          const crowd = ([dx, dy]) => {
-            const b = s.box(dx, dy);
-            let n = 0;
-            for (const nb of nodeBoxes) if (nb.id !== s.v.id && overlaps(b, nb)) n++;
-            /*
-             * ONLY LABELS ALREADY SETTLED COUNT. Counting the ones still to
-             * come — each sitting at its provisional default — was tried and
-             * is worse: a label steps aside for a neighbour that then moves
-             * away, and it is left displaced for a collision that never
-             * happened. Measured, that turned 0 / 0 / 1 into 1 / 1 / 1.
-             */
-            for (let j = 0; j < i; j++) {
-              const o = spec[j];
-              if (overlaps(b, o.box(o.at[0], o.at[1]))) n++;
-            }
-            return n;
-          };
-          let best = s.tries[0], bestN = Infinity;
-          for (const t of s.tries) {
-            const n = crowd(t);
-            if (n === 0) { best = t; bestN = 0; break; }
-            if (n < bestN) { best = t; bestN = n; }
-          }
-          s.at = best;
-        }
-      }
-      for (const s of spec) { s.el.setAttribute('x', s.at[0]); s.el.setAttribute('y', s.at[1]); }
+    const doc = this.doc;
+    const div = (cls, text) => {
+      const el = doc.createElement('div');
+      if (cls) el.className = cls;
+      if (text != null) el.textContent = text;
+      return el;
     };
 
-    /* and the facets themselves */
-    const facets = svg('g', { class: 'med-facets' });
-    for (const v of this.view) {
-      const g = svg('g', {
-        class: ['facet', v.held ? 'held' : '', v.can && live ? 'can' : '', v.root ? 'root' : '',
-          v.mastery ? 'mastery' : '', v.locked === LOCKED.spent ? 'spent' : '',
-          history?.get(v.id) ? 'known' : ''].filter(Boolean).join(' '),
-        transform: `translate(${v.x} ${v.y})`,
-        tabindex: '0', role: 'button',
-      });
-      g.appendChild(svg('circle', { class: 'halo', r: v.root ? 21 : v.mastery ? 18 : 15 }));
-      g.appendChild(svg('circle', { class: 'disc', r: v.root ? 15 : v.mastery ? 13 : 11 }));
-      const icon = svg('text', { class: 'glyph', y: 5, 'text-anchor': 'middle' });
-      icon.textContent = v.icon || '·';
-      g.appendChild(icon);
-      const text = v.name.replace(/^Mastery — /, '');
-      const label = svg('text', { class: 'label', x: 0, y: (v.root ? 34 : 28), 'text-anchor': 'middle' });
-      label.textContent = text;
-      g.appendChild(label);
-      pending.push({ v, el: label, text });
-      // rank pips: how many times this facet has been woken, drawn rather than
-      // written, because "×3" in 9px type at this scale is unreadable.
-      for (let i = 0; i < Math.min(v.rank, 5); i++) {
-        g.appendChild(svg('circle', { class: 'pip', cx: (i - (Math.min(v.rank, 5) - 1) / 2) * 7, cy: -20, r: 2 }));
-      }
-      /**
-       * THE SHOP HID ITS PRICE TAGS ON EVERYTHING YOU COULD NOT AFFORD.
-       *
-       * This was `!v.held && v.can && live`, and `can` means affordable AND
-       * reachable AND ungated — so on the first open of a run, with a purse of
-       * 0 against six hearts at 9, the lattice carried NOT ONE NUMBER. The
-       * player was shown forty-six circles and asked to plan against them with
-       * no idea what any of them cost or how far off it was. That is the honest
-       * form of "the Insight economy does not feel like it does anything": the
-       * economy is fine (see the arithmetic in LivingForce.js and the bound in
-       * living-force.mjs) and it was invisible at the exact moment the player
-       * was standing in front of it deciding.
-       *
-       * A price is drawn for anything the purse is the ONLY thing standing
-       * between the player and — `can`, or locked on Insight alone — and the
-       * ones out of reach are marked `short` and drawn back rather than hidden,
-       * because "9, and you have 4" is a plan and a blank circle is not.
-       *
-       * The other three reasons stay silent on the map deliberately. `reach`
-       * and `spent` are not prices, and a `gated` mastery quoting a number
-       * would be advertising something no amount of Insight buys.
-       */
-      const priced = !v.held && live && (v.can || v.locked === LOCKED.insight);
-      if (priced) {
-        const c = svg('text', {
-          class: 'cost' + (v.can ? '' : ' short'), y: -22, 'text-anchor': 'middle',
+    for (const c of CURRENTS) {
+      const mine = this.view.filter((v) => v.axis === c.axis);
+      if (!mine.length) continue;
+      const plate = div('hol-plate');
+      plate.dataset.axis = c.axis;
+
+      /* ── the plate's head: what the current is, and how much of it is yours ─
+       * `shapeOf` already counts this for the sidebar; counting it again here
+       * would be HANDOFF §2.3, so the numbers come off the same view the rungs
+       * are drawn from. */
+      const woken = mine.filter((v) => v.held).length;
+      const head = div('hol-head');
+      head.appendChild(div('hol-name', currentName(c.axis, order).toUpperCase()));
+      head.appendChild(div('hol-count', `${woken}/${mine.length}`));
+      plate.appendChild(head);
+
+      const bar = div('hol-bar');
+      const fill = div('hol-fill');
+      fill.style.width = `${Math.round((woken / mine.length) * 100)}%`;
+      bar.appendChild(fill);
+      plate.appendChild(bar);
+
+      const rungs = div('hol-rungs');
+      for (const { v, depth, via } of this._tiers(mine, byId)) {
+        const cls = ['hol-rung'];
+        if (v.held) cls.push('held');
+        if (v.can && live) cls.push('can');
+        if (v.root) cls.push('root');
+        if (v.mastery) cls.push('mastery');
+        if (v.locked === LOCKED.spent) cls.push('spent');
+        if (v.locked === LOCKED.reach) cls.push('far');
+        if (history?.get(v.id)) cls.push('known');
+        const el = div(cls.join(' '));
+        el.style.setProperty('--depth', String(depth));
+        /* setAttribute AND NOT `el.tabIndex = 0`. The property and the
+         * attribute are the same thing in a browser and are not in
+         * `tools/checks/_page.mjs`'s DOM, which reads attributes — and that
+         * stub is what drives the keyboard check. Writing the attribute is
+         * correct in both. */
+        el.setAttribute('tabindex', '0');
+        el.setAttribute('role', 'button');
+
+        /* THE BRACKET. A short elbow drawn in CSS off `--depth`, standing in
+         * for the line the graph used to draw — the difference being that this
+         * one cannot cross another one. A root has none: it hangs off nothing,
+         * which is exactly what makes it a root. */
+        if (depth > 0) el.appendChild(div('hol-elbow'));
+
+        el.appendChild(div('hol-glyph', v.icon || '·'));
+        const body = div('hol-body');
+        body.appendChild(div('hol-label', v.name.replace(/^Mastery — /, '')));
+        const meta = [];
+        if (v.mastery) meta.push('mastery');
+        /* AN ATTUNEMENT HAS NO CEILING, and `maxRank` says so with `Infinity`.
+         * Printed straight, that read "to rank Infinity" on all six roots —
+         * which is the truth stated in the one way that makes it look like a
+         * bug. It is the defining property of a current's heart, so it gets a
+         * word: a root can never be exhausted, which is why a current can never
+         * close. */
+        if (!Number.isFinite(v.max)) meta.push(v.rank > 0 ? `rank ${v.rank} · repeatable` : 'repeatable');
+        else if (v.max > 1) meta.push(v.rank > 0 ? `rank ${v.rank}/${v.max}` : `to rank ${v.max}`);
+        else if (v.held) meta.push('woken');
+        if (via.length) meta.push(`or via ${via.join(', ')}`);
+        if (meta.length) body.appendChild(div('hol-meta', meta.join(' · ')));
+        el.appendChild(body);
+
+        /**
+         * THE PRICE IS ALWAYS ON THE RUNG, which is the change the "make it
+         * less confusing" half of the note is mostly about. The old chart drew
+         * one only when the purse was the sole obstacle; everything else was a
+         * bare circle. Here the number is always there and the STATE is what
+         * changes — struck through when it is already yours, greyed when the
+         * thing standing in the way is not money.
+         */
+        const tag = div('hol-cost');
+        /* BETWEEN RUNS THERE IS NO PURSE, so there are no prices. `live` is the
+         * same flag that decides the title and the backdrop: the Temple's
+         * Holocron is a chart of what a run reached, and quoting a price on a
+         * screen that cannot sell anything is the one thing on it that would
+         * be a lie. It carries the holding instead. */
+        if (v.held && (v.rank >= v.max || !live)) tag.textContent = '✓';
+        else if (!live) { tag.textContent = '·'; tag.classList.add('chart'); }
+        else if (v.locked === LOCKED.gated) tag.textContent = '—';
+        else tag.textContent = Number.isFinite(v.cost) ? String(v.cost) : '—';
+        /* `!v.can` ALONE, and not `!v.can && !v.held`. A facet you already
+         * hold can still be un-buyable — it may be maxed, or already bought
+         * this run — and the second clause lit those as if the purse would take
+         * them. `can` is the ledger's own single answer to "would this go
+         * through", which is the only question the tag is asking. */
+        if (!v.can) tag.classList.add('short');
+        el.appendChild(tag);
+
+        const select = () => { audio.ui('hover'); this._select(v.id); };
+        el.addEventListener('click', select);
+        el.addEventListener('dblclick', () => this._buy(v.id));
+        el.addEventListener('keydown', (e) => {
+          if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar' && e.code !== 'Space') return;
+          e.preventDefault();
+          if (this.selected === v.id) this._buy(v.id); else select();
         });
-        c.textContent = String(v.cost);
-        g.appendChild(c);
+        rungs.appendChild(el);
+        this._nodes.set(v.id, el);
       }
-      /* A FACET ALREADY CLAIMED TO BE A BUTTON. NOW IT BEHAVES LIKE ONE.
-       *
-       * `tabindex: '0', role: 'button'` above (and the `#med-field .facet:focus`
-       * rule in styles.css) make every facet focusable and announce it to a
-       * screen reader as a button — and the only listeners were `click` and
-       * `dblclick`, so Enter and Space did nothing at all. That is worse than
-       * an unreachable control: it is the interface promising a keyboard path
-       * it never built, and it was the ONE place in the whole front end that
-       * had bothered to set tabindex. Enter selects, exactly as a click does;
-       * Enter on the facet already selected buys it, which is the keyboard's
-       * version of the double-click. */
-      const select = () => { audio.ui('hover'); this._select(v.id); };
-      g.addEventListener('click', select);
-      g.addEventListener('dblclick', () => this._buy(v.id));
-      g.addEventListener('keydown', (e) => {
-        if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar' && e.code !== 'Space') return;
-        e.preventDefault();
-        if (this.selected === v.id) this._buy(v.id); else select();
-      });
-      facets.appendChild(g);
-      this._nodes.set(v.id, g);
+      plate.appendChild(rungs);
+      field.appendChild(plate);
     }
-    field.appendChild(facets);
-    // Only now are the labels in the document and their widths real. Placing
-    // them before this would be placing them against an estimate, which is the
-    // thing that let one collision survive two attempts at this.
-    placeLabels();
 
     /* the ledger line */
     if (this.el.insight) this.el.insight.textContent = String(Math.floor(ledger?.insight ?? 0));
