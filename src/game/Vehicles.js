@@ -3639,8 +3639,19 @@ export function buildSnailTank(opts = {}) {
        * has three points on the ground, any one of them ends it, and the two
        * out on arms are the ones a blade reaches first.
        */
-      { name: 'outL', parent: 'hips', x: 0.72, y: -0.30, z: 0.55, len: 0.90, rest: [0.94, -0.34, 0], role: 'leg' },
-      { name: 'outR', parent: 'hips', x: -0.72, y: -0.30, z: 0.55, len: 0.90, rest: [-0.94, -0.34, 0], role: 'leg' },
+      /* THE ARMS REACH DOWN AND NOT OUT, and that is an accuracy fix as well as
+       * a reachability one. Every plate of an NR-N99 has the outrigger pontoons
+       * running on the GROUND beside the tread — they are a third and fourth
+       * contact patch, not sponsons — and the first cut of this hung them at
+       * 2.7 m on short arms angled slightly down. Measured through
+       * `tools/balance.mjs`, which filters every capsule to what a standing
+       * player's blade can actually reach: at 2.7 m they were above the
+       * ceiling, so the ONLY thing on the machine a player could touch was the
+       * tread, worth 0.37 of it, and the model reported the tank as unkillable
+       * over its own plate. The databank page had already promised the
+       * opposite in as many words — "the pontoons are the low ones". */
+      { name: 'outL', parent: 'hips', x: 0.72, y: -0.30, z: 0.55, len: 2.00, rest: [0.62, -0.78, 0], role: 'leg' },
+      { name: 'outR', parent: 'hips', x: -0.72, y: -0.30, z: 0.55, len: 2.00, rest: [-0.62, -0.78, 0], role: 'leg' },
     ],
   }), { scale: S });
 

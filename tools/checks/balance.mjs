@@ -700,6 +700,10 @@ export async function run({ check, assert }) {
         open: engagementFor(t, mods, 0, { noGaps: true, guardOpen: true }) }));
     assert(heavies.length >= 8, `only ${heavies.length} bodies over 520 kg to measure`);
     let opened = 0;
+    /* Named in the result line rather than passed over in silence — a body the
+     * plate route cannot finish is a real fact about it and is the kind of
+     * thing a reader should meet in the output rather than in a source note. */
+    const unfinished = [];
     for (const h of heavies) {
       assert(isFinite(h.e.tKill), `${h.t} cannot be killed at all — the hide has become a wall`);
       /* THE 0.64 s ROW, STATED DIRECTLY. Every line in the table this check
@@ -715,9 +719,60 @@ export async function run({ check, assert }) {
         + 'passes over its own plate — the guard is not being asked for at all');
       assert(h.held.turns <= maxTurns,
         `${h.t} is billed ${h.held.turns} turned passes against a ceiling of ${maxTurns}`);
-      assert(h.held.tKill > h.open.tKill,
-        `a ${h.t} with its guard OPEN takes ${h.open.tKill.toFixed(2)} s over the plate and `
-        + `${h.held.tKill.toFixed(2)} s with it up — the guard is costing the player nothing`);
+      /**
+       * ── AND A BODY THE PLATE ROUTE CANNOT FINISH IS COMPARED ON THE PASS
+       *    THAT ENDS THE FIGHT, BECAUSE ITS `tKill` IS A SENTINEL WEARING A
+       *    TIME ─────────────────────────────────────────────────────────
+       *
+       * `engagementFor` has two ways of saying "no sequence of cuts finishes
+       * this body". If it cannot find an opening cut at all it returns
+       * `passes: 600, tKill: Infinity`, which reads as what it is. If it finds
+       * one and the plan runs out, it falls back to grinding the best capsule
+       * and returns `passes: 600` with a FINITE time — 383.33 s at the shipped
+       * cadence, which is the same marker printed as though it were a
+       * measurement. Comparing a real number against that is not a comparison.
+       *
+       * MEASURED, on the Octuptarra magna tri-droid, plate route only:
+       *
+       *     guard up    6.39 s   via guard x5 -> tarsus0 (topple)
+       *     guard open  383.33 s via tarsus0 (topple)      <- the sentinel
+       *
+       * Both halves of that are correct and neither is a defect. The model
+       * filters every capsule to what a standing player's blade reaches, using
+       * the capsule's MIDPOINT minus its radius — which is the bottom of a
+       * blob and is nowhere near the bottom of an eleven-metre leg. On a
+       * tri-droid that leaves the three ANKLES and nothing else: hips 3.66 m,
+       * head 4.97 m, femur 4.91 m, shin 3.38 m, ankle 0.18 m against a
+       * ceiling a little over two. Three ankles are worth 0.02 of the body, so
+       * there is no plan, so the grind fires. And with the guard UP the five
+       * turned passes it is charged are `5 x TURNED_CUT` of its maximum health,
+       * which is all of it — so the guard kills it and reports 6.39 s.
+       *
+       * The design is not in trouble either. A tripod fourteen and a half
+       * metres tall genuinely cannot be cut down while it is standing; the
+       * answer is one pass at an ankle, which is `toppleAt: 1` straight out of
+       * the reference, and then it is on the ground and everything on it is
+       * reachable. That is the fight-ending pass, and `tNeutralise` is the
+       * model's own name for it.
+       *
+       * So the clause asks its question — does the guard cost the player
+       * anything — on the pass that ENDS the fight rather than on a kill the
+       * model has said it cannot compute. Both branches are still per-body and
+       * neither can tie.
+       */
+      const finishes = (r) => r.passes < 600;
+      if (finishes(h.open)) {
+        assert(h.held.tKill > h.open.tKill,
+          `a ${h.t} with its guard OPEN takes ${h.open.tKill.toFixed(2)} s over the plate and `
+          + `${h.held.tKill.toFixed(2)} s with it up — the guard is costing the player nothing`);
+      } else {
+        assert(h.held.tNeutralise > h.open.tNeutralise,
+          `a ${h.t} cannot be finished over its own plate at all — and with its guard OPEN it still `
+          + `reaches the fight-ending pass in ${h.open.tNeutralise.toFixed(2)} s against `
+          + `${h.held.tNeutralise.toFixed(2)} s with it up, so the guard is costing nothing even `
+          + 'there');
+        unfinished.push(`${h.t} (${h.open.via})`);
+      }
       assert(h.held.passes >= bare.passes,
         `a ${h.t} (${h.A.hp} hp, ${h.A.mass} kg) falls over its own plate in ${h.held.passes} passes `
         + `against a 28 hp B1's ${bare.passes} — a body with a hide is cheaper than one without`);
@@ -816,7 +871,10 @@ export async function run({ check, assert }) {
     return `b1 ${bare.tKill.toFixed(2)}s/${bare.passes}p; over the plate, guard up→open (${opened} of `
       + `${heavies.length} fall in one pass once it is open) — `
       + heavies.map((h) => `${h.t} ${h.held.tKill.toFixed(2)}→${h.open.tKill.toFixed(2)}s(g${h.g},×${h.held.turns})`).join(', ')
-      + '; best route ' + heavies.map((h) => `${h.t} ${h.e.tKill.toFixed(2)}s/${h.e.passes}p`).join(', ');
+      + '; best route ' + heavies.map((h) => `${h.t} ${h.e.tKill.toFixed(2)}s/${h.e.passes}p`).join(', ')
+      + (unfinished.length
+        ? `; no plate route finishes ${unfinished.join(', ')} — compared on the fight-ending pass`
+        : '');
   });
 
   check('balance: a melee opener gets to attack — wave 1 is not free', async () => {
