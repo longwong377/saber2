@@ -262,7 +262,32 @@ async function boot() {
 /*  Session control                                                       */
 /* ══════════════════════════════════════════════════════════════════════ */
 
-async function buildWorld(levelKey, onProgress = null) {
+/**
+ * THE RUN'S NUMBER, MINTED WHERE BOTH READERS CAN SEE IT — and it had one
+ * reader too many for the place it used to live.
+ *
+ * `deploy()` reads the seed to resolve the GROUND (`theatreFor`, for a mode
+ * whose theatre is a roll) and `buildWorld` reads it to seed the streams, and
+ * the mint sat inside `buildWorld`. So `deploy` read `world.runSeed` off a
+ * `world` that its very next line was about to build: on the first press after
+ * boot `world` is null, and the whole deploy died in a TypeError caught by its
+ * own guard, which put the menu back with a notice. Measured with
+ * `tools/_deployprobe.mjs` — "deploy failed TypeError: Cannot read properties
+ * of null (reading 'runSeed')", every time, from a cold page.
+ *
+ * One function, called once per deploy, and the number is then HANDED to the
+ * build rather than fetched back out of it. Two mint sites would be worse than
+ * the crash — the ground would be resolved on one roll and the waves seeded on
+ * another, and nothing would ever say so.
+ */
+function mintRunSeed() {
+  const asked = session && session.seed !== undefined ? session.seed : settings.seed;
+  return Number.isFinite(Number(asked)) && asked !== null && asked !== ''
+    ? (Number(asked) | 0) >>> 0
+    : (Math.random() * 0xffffffff) >>> 0;
+}
+
+async function buildWorld(levelKey, onProgress = null, runSeed = null) {
   if (world) { world.dispose(); world = null; }
   /**
    * PHYSICS BEFORE ANYTHING, AND IT IS AWAITED HERE RATHER THAN ASSUMED.
@@ -313,10 +338,7 @@ async function buildWorld(levelKey, onProgress = null) {
   // line below gives: `settings.seed` is the named reader Menu.SETTING_READERS
   // points at, and a setting whose only reader is behind an indirection is a
   // setting the "every control reaches the game" check can no longer see.
-  const asked = session && session.seed !== undefined ? session.seed : settings.seed;
-  world.runSeed = Number.isFinite(Number(asked)) && asked !== null && asked !== ''
-    ? (Number(asked) | 0) >>> 0
-    : (Math.random() * 0xffffffff) >>> 0;
+  world.runSeed = runSeed ?? mintRunSeed();
   // The player's own difficulty — and then the host's over the top of it, if
   // this is their session. Two statements rather than one `sessionOr`, because
   // `settings.difficulty` is the named reader Menu.SETTING_READERS points at
@@ -597,13 +619,16 @@ async function deploy() {
    * ground is a seed roll cannot be resolved without the seed. `world.runSeed`
    * is minted above this line and before the level loads, which is the whole
    * reason it lives there — see its own note. */
-  const levelKey = theatreFor(sessionOr('mode'), sessionOr('level'), world.runSeed);
+  /* MINTED HERE, USED TWICE, BUILT ONCE. See `mintRunSeed`: this line used to
+   * read `world.runSeed`, and `world` is not built until six lines below. */
+  const runSeed = mintRunSeed();
+  const levelKey = theatreFor(sessionOr('mode'), sessionOr('level'), runSeed);
   try {
     /* AWAITED, so the build yields between its stages instead of freezing the
      * tab. The progress callback is the same shape the boot sequence's bar
      * already takes; `screens.loading` renders it if it exists, and a build
      * that finishes before the first paint simply never shows one. */
-    await buildWorld(levelKey, (frac, label) => screens.loading?.(frac, label));
+    await buildWorld(levelKey, (frac, label) => screens.loading?.(frac, label), runSeed);
   } catch (e) {
     console.error('deploy failed', e);
     if (world) { try { world.dispose(); } catch {} world = null; }
