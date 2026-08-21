@@ -451,6 +451,29 @@ export const MODES = {
      * branch on a string.
      */
     holdTheLine: true,
+    /**
+     * …AND THE GROUND IS TAKEN BY THE LINE, WHICH IS THE OTHER HALF OF IT.
+     *
+     * §6, verbatim: "the objective advances at the pace of the slowest friendly
+     * inside 14 m. You can sprint 200 m into their rear; the line does not come
+     * with you, and you arrive alone on an empty bar. **Killing stays fast and
+     * fun and advances nothing.**"
+     *
+     * That last sentence was never true. `payWave` took an area on
+     * `areaWaves >= area.waves` — a count of cleared waves — so killing
+     * everything alone two hundred metres ahead of your men took the ground,
+     * and every mechanism built to make a Jedi worth something to his line
+     * measured as not paying. `CommandDirector.lineIsUp` carries the argument
+     * at length; the short version is that four local goods failed because the
+     * player is the one body on the field that does not stay local, and a fifth
+     * would have failed the same way. What was missing was not a reward for
+     * standing still — it is that standing with the line was not how the run
+     * advanced.
+     *
+     * Separate from `holdTheLine` because they are two rules: that one is how a
+     * run is SCORED, this is how it ADVANCES, and a mode could want either.
+     */
+    lineAdvances: true,
   },
   /**
    * SKIRMISH — the one run in this game that can be WON, anywhere.

@@ -2328,6 +2328,16 @@ export class CommandDirector extends WaveDirector {
      */
     this.holdTheLine = !!MODES[this.mode]?.holdTheLine;
     /**
+     * WHETHER THE GROUND IS TAKEN BY THE LINE OR BY THE KILL COUNT — see
+     * `lineIsUp`, which is where the whole argument is.
+     *
+     * A second field rather than reading `holdTheLine`, because they are two
+     * different rules and a mode may want either: one is about how a run is
+     * SCORED and the other about how it ADVANCES. Command declares neither and
+     * is untouched by both.
+     */
+    this.lineAdvances = !!MODES[this.mode]?.lineAdvances;
+    /**
      * THE ROSTERS THIS DIRECTOR KEEPS — one per side-and-army. See `_rosterFor`
      * and `Commander.roster`.
      * @type {Map<string, CommandRoster>}
@@ -5256,6 +5266,11 @@ export class CommandDirector extends WaveDirector {
      * start wave 22 five and a half seconds after the campaign ended. */
     if (this.done) return;
     if (this._checkLine()) return;
+    /* THE GROUND IS TAKEN THE MOMENT THE LINE ARRIVES, and not at the next
+     * wave — `payWave` is the only other caller of `_areaClear` and it does not
+     * run again until a wave is composed and cleared, so without this the
+     * player would stand on won ground waiting for a fight that is over. */
+    if (this.awaitingLine && this.lineIsUp()) { this.awaitingLine = false; this._areaClear(); return; }
     this._updateClosing(ctx);
     /* A meeting has no queue, no arrivals and no wave to clear — see `start`.
      * The army half of the frame is identical, which is the point: two players'
@@ -5746,8 +5761,95 @@ export class CommandDirector extends WaveDirector {
      * contingent's, and neither mode runs the other's.
      */
     if (!this.campaign) { this._reinforce(); return fresh; }
-    if (this.areaWaves >= this.area.waves) this._areaClear();
+    /* THE GROUND IS TAKEN BY THE LINE, NOT BY THE KILL COUNT — see
+     * `lineIsUp` and `MODES.theline.lineAdvances`. In Command this is `true`
+     * every time and the line below is the sentence it always was. */
+    if (this.areaWaves >= this.area.waves) {
+      if (this.lineIsUp()) this._areaClear();
+      else this._awaitLine();
+    }
     return fresh;
+  }
+
+  /**
+   * IS THE LINE UP? — and this method is the answer to `FLAGSHIP.md` §7's
+   * central claim, which was measured FALSE and stayed false through four
+   * attempts to fix it somewhere else.
+   *
+   * ── WHAT WAS ACTUALLY WRONG ──────────────────────────────────────────
+   *
+   * §1: "your job is not to kill everything — it is to be the reason the line
+   * is still standing when it takes the ridge." §6 says how that is supposed to
+   * hold: "the objective advances at the pace of the slowest friendly inside
+   * 14 m. You can sprint 200 m into their rear; the line does not come with
+   * you… **Killing stays fast and fun and advances nothing.**"
+   *
+   * That last sentence was never implemented. `payWave` took the ground when
+   * `areaWaves >= area.waves` — a count of cleared waves, and nothing else.
+   * So killing everything, alone, two hundred metres in front of your men,
+   * TOOK THE AREA. `advancePace` was built and is correct and moves the
+   * formation anchor at the slowest man's speed, but the anchor decided where
+   * the line stood, not whether the run advanced.
+   *
+   * Four mechanisms were built to make a Jedi worth something to his line —
+   * presence as a morale term, `openness` as a multiplier on other people's
+   * guns, a bolt screen for the man beside you, and the attrition tuning — and
+   * every one of them measured as not paying. The diagnosis in `NEXT.md` is
+   * that each was a local good handed to the one body on the field that does
+   * not stay local: measured, the line holds together to about seven metres and
+   * **the player is the one who leaves**, up to 26 m ahead of his own men.
+   *
+   * A fifth local good would have failed the same way. What was missing is not
+   * a reward for standing still; it is that **standing with the line was not
+   * how the run advanced**. Killing was.
+   *
+   * ── THE RULE ─────────────────────────────────────────────────────────
+   *
+   * A quorum of the living inside `MORALE.NEAR` — the same radius presence,
+   * the pace rule and the nerve ledger already use, so a player learns one
+   * distance and not four. Half, because a line that has lost men is still a
+   * line and a rule that wanted all of them would make one straggler a wall.
+   *
+   * It needs no new number, no new HUD element and no new verb. It makes every
+   * one of those four mechanisms pay at once, because each of them keeps men
+   * alive and near you and that is now the thing that advances the run.
+   *
+   * NOT a timer, and not a walk-back penalty: both punish the player for
+   * having left. This does not punish anything. It declines to advance until
+   * the army that is supposed to be taking this ground is standing on it,
+   * which is what "the line takes the ridge" means.
+   */
+  lineIsUp(c = this.commander) {
+    if (!this.lineAdvances) return true;
+    const p = c?.player;
+    /* No body to measure from — a headless director, or a commander who has
+     * fallen — cannot hold the ground open. `census`'s note argues the same
+     * for orders: losing your general costs you your orders, not the battle. */
+    if (!p || !p.position) return true;
+    const living = (c?.roster?.living) || [];
+    let alive = 0, near = 0;
+    const r2 = MORALE.NEAR * MORALE.NEAR;
+    for (const t of living) {
+      const e = t.body;
+      if (!e || e.dead) continue;
+      alive++;
+      if (dist2(e.position, p.position) <= r2) near++;
+    }
+    /* An army that no longer exists cannot come up, and a run that waited for
+     * it would hang instead of ending. `_checkLine` is the door for that. */
+    if (!alive) return true;
+    return near * 2 >= alive;
+  }
+
+  /**
+   * The ground is won and the line is not on it yet. Said once, and then the
+   * frame keeps asking — see `update`.
+   */
+  _awaitLine() {
+    if (this.awaitingLine) return;
+    this.awaitingLine = true;
+    this.world?.notify?.('THE LINE IS COMING UP',
+      'the ground is not yours until your men are standing on it');
   }
 
   /**
@@ -5850,6 +5952,7 @@ export class CommandDirector extends WaveDirector {
    */
   _areaClear() {
     if (this.done) return;
+    this.awaitingLine = false;
     for (const t of this.roster.living) {
       t.areas++;
       const p = t.award(2);
