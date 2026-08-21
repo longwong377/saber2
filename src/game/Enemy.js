@@ -10,7 +10,7 @@
 import * as THREE from 'three';
 import { Actor } from './Ragdoll.js';
 import { Rig, BipedAnimator, aimY } from './Rig.js';
-import { applyMergedSkin } from './MergedSkin.js';
+import { applyBodyLod, undarken, L3_AT } from './Cohorts.js';
 import { buildB1, buildB2, buildTrooper, buildAcolyte, buildDroideka, buildWalker, buildBeast, buildBlaster, plateGeo,
   buildJedi, bodyOptsFor, weakSpotsOf, coverSpotOf, SPECIES, HAIR_STYLES, BEARD_STYLES, ROBE_COLORS } from './Bodies.js';
 import { Saber } from './Saber.js';
@@ -2304,15 +2304,27 @@ export class Enemy {
    * …AND AT LOD 2 THE SURVIVORS ARE ONE MESH. See src/game/MergedSkin.js: the
    * kept set is baked into one SkinnedMesh per material bin, weight 1.0 per
    * vertex, which is the rigid parenting the scene graph was already doing
-   * written as a draw call instead of twenty-six. Measured on a `high` World
-   * on geonosis with 42 bodies at 72-127 m, this line takes the field from
-   * 1071 visible meshes to 149.
+   * written as a draw call instead of twenty-six.
+   *
+   * …AND AT LOD 3 THE BODY STOPS DRAWING ITSELF ALTOGETHER. See
+   * src/game/Cohorts.js: past the distance the ink prepass reaches, every body
+   * of one kind is an instance in one shared mesh, so the cost stops depending
+   * on how many of them there are. `undarken` is first here because the cohort
+   * is the only thing that hides a body wholesale, and every rung below it has
+   * to start from a body that owns its own meshes again.
+   *
+   * Measured on a `high` World on geonosis, the same 42 bodies at each rung:
+   *
+   *     LOD 1 / 2 cull only     1064 draw calls
+   *     LOD 2 merged skins       194
+   *     LOD 3 cohorts             27
    */
   _applyLod(lod) {
     if (!this.rig || !this._lodParts) return;
     const showDetail = lod === 0;
+    undarken(this);
     for (const m of this._lodParts) m.visible = showDetail;
-    applyMergedSkin(this, lod);
+    applyBodyLod(this, lod);
     // far away, drop the shadow pass too — a 60m silhouette contributes
     // nothing to a shadow map that covers 34m
     if (this._lodShadow !== (lod < 2)) {
@@ -3643,6 +3655,11 @@ export class Enemy {
 
   /** The first drawn triangle wins — see `_auditVisible`. */
   _anyVisibleMesh() {
+    /* AN INSTANCE IS DRAWING. Past L3_AT this body's own meshes are all hidden
+     * on purpose and its triangles are submitted by a shared InstancedMesh
+     * (src/game/Cohorts.js) — so the audit below would find nothing, put the
+     * bone primaries back, and draw the body twice. */
+    if (this._l3) return true;
     const drawn = (o) => {
       if (!o.visible) return false;
       if (o.isMesh && o.geometry) {
@@ -4291,10 +4308,11 @@ export class Enemy {
 
     // level of detail: distant enemies skip the expensive solves
     const camDist = ctx.camera.position.distanceTo(this.position);
-    const lod = camDist > 62 ? 2 : camDist > 30 ? 1 : 0;
+    const lod = camDist > L3_AT ? 3 : camDist > 62 ? 2 : camDist > 30 ? 1 : 0;
     if (lod !== this.lod) { this.lod = lod; this._applyLod(lod); }
-    /* …and the L2 merged skin is asked EVERY frame, because the two things it
-     * answers to do not move on a LOD edge and `_applyLod` is edge-triggered.
+    /* …and the merged skin and the cohort are asked EVERY frame, because the
+     * things they answer to do not move on a LOD edge and `_applyLod` is
+     * edge-triggered. A cohort member's steady state is one matrix write.
      *
      * A DEFERRED BAKE needs a retry: MergedSkin.js caps the bake at one body a
      * frame because forty at once is 116 ms, so a body refused the budget on
@@ -4306,7 +4324,7 @@ export class Enemy {
      * on the frame it happens: the bake is a photograph of a rig with all its
      * bones, so until it is dropped the body walks around still wearing the arm
      * the player just took off it, for as long as it stays in this band. */
-    else if (this._l2 || this._l2Wait) applyMergedSkin(this, lod);
+    else if (this._l2 || this._l2Wait || this._l3 || this._l3Wait) applyBodyLod(this, lod);
     /**
      * …and cloth gets its own cut, from the quality tier.
      *

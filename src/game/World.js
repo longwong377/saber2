@@ -13,6 +13,7 @@ import { Terrain } from '../world/Terrain.js';
 import { Particles } from '../world/Particles.js';
 import { LightningVfx } from '../world/Lightning.js';
 import { GrenadeField } from './Reactions.js';
+import { CohortField } from './Cohorts.js';
 import { WarSupport } from './Support.js';
 import { GrassField, Water, Atmosphere, weather } from '../world/Scenery.js';
 import { BoltPool } from './Bolts.js';
@@ -647,6 +648,10 @@ export class World {
      * reads and none of them owns. See src/game/Reactions.js.
      */
     this.grenades = new GrenadeField(this);
+    /* …and the far end of the rendering ladder, for the same reason it sits
+     * here: a shared, world-owned thing that every body past L3_AT draws
+     * through and none of them owns. See src/game/Cohorts.js. */
+    this.cohorts = new CohortField(this.scene);
     this.bolts = new BoltPool(this.scene, 460);
     this.bolts.onDeflect = (b, entry, hit, pt) => this._onBoltDeflect(b, entry, hit, pt);
     this.bolts.onImpact = (b, res) => this._onBoltImpact(b, res);
@@ -1280,6 +1285,7 @@ export class World {
     this.particles?.dispose();
     this.lightning?.dispose();
     this.grenades?.dispose();
+    this.cohorts?.dispose();
     this.lightning = null;
     this.grass?.dispose(); this.grass = null;
     this.water?.dispose(); this.water = null;

@@ -474,7 +474,12 @@ export function applyMergedSkin(owner, lod) {
   const fresh = staleness(owner);
   if (L && L.skin && L.stale !== fresh) { disposeMergedSkin(owner); L = owner._l2 = null; }
 
-  const want = lod === L2_LOD && !owner.actor?.ragdolled && !(owner.actor?.severedCount > 0);
+  /* `>=`, not `===`. Past the L2 band the body belongs to a cohort
+   * (src/game/Cohorts.js) — but a body waiting for a cohort slot, or one a
+   * cohort refused, has to draw SOMETHING, and the merged skin is the cheapest
+   * set it has. So L2 is the floor for everything beyond 62 m and the cohort
+   * hides it when it takes the body. */
+  const want = lod >= L2_LOD && !owner.actor?.ragdolled && !(owner.actor?.severedCount > 0);
 
   if (!want) {
     owner._l2Wait = false;
