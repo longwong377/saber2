@@ -99,6 +99,7 @@ import { clamp, lerp, makeRng, TAU } from '../engine/MathUtil.js';
 import { audio } from '../engine/Audio.js';
 import { nudgeFromSwing, bladeClear, placementClear, SWING_REACH } from './Spawn.js';
 import { MORALE } from './Morale.js';
+import { applyLevy } from './Levy.js';
 import { shakeNerve } from './Nerve.js';
 import { findCasualty, startDrag } from './Reactions.js';
 import { marchFront } from '../world/Front.js';
@@ -2884,6 +2885,27 @@ export class CommandDirector extends WaveDirector {
   /** How hard this area leans on the heavy end, on top of the depth's own lean. */
   heavyBias(wave) {
     return clamp(super.heavyBias(wave) + (this.campaign ? this.area.heavy : 0), 0, 1.3);
+  }
+
+  /**
+   * …AND THE LEVY GOES IN BEHIND EVERY ONE OF THEM. FLAGSHIP §6.
+   *
+   * "Forty conscripts that pay nothing are weather." The rule, the argument for
+   * why the levy is free of the threat budget, and the pace correction that
+   * keeps the paying bodies arriving at the rate the composer meant, are all in
+   * src/game/Levy.js — a leaf, for the reason `MORALE` is one: `_composeUnder`
+   * is the base director's arithmetic and this class has no business restating
+   * any of it.
+   *
+   * IT WRAPS `_composeUnder` AND NOT `_compose`, which is the whole of why this
+   * is two lines. `_compose` re-composes in a loop, reading `left` to decide
+   * whether the wave can afford another condition; a levy applied once at the
+   * end of `_compose` would be applied to the last recomposition only, and a
+   * levy that charged the budget would change how many conditions a wave buys.
+   * Applied here it rides every recomposition and moves neither number.
+   */
+  _composeUnder(wave, keys) {
+    return applyLevy(super._composeUnder(wave, keys), this, wave);
   }
 
   /* ── the muster ────────────────────────────────────────────────────── */
