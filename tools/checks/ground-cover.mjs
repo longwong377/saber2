@@ -557,10 +557,16 @@ export function run({ check, assert, near }) {
      *
      * Three point sets, and only one of them is synthetic twice over:
      *
-     *   THE FRONT is `Fallen.addFallen`, the shipped object — §12.4's own
-     *     "520 prone instanced figures in a 26 m band", read back out of the
-     *     `InstancedMesh` it builds. Not a model of the game's front: the
-     *     game's front.
+     *   THE FRONT is `Fallen.addFallen`, the shipped object, read back out of
+     *     the `InstancedMesh` it builds — not a model of the game's front, the
+     *     game's front. At a band DELIBERATELY WIDER than §12.4's, and that
+     *     is the experiment rather than a slip: the shipped band (`depth`
+     *     6.5, §12.4's "520 prone figures in a 26 m band") measures
+     *     Clark–Evans 0.317 and bands at 21, which is the easy case — no
+     *     statistic is needed to tell that from a clump field. Four times the
+     *     depth puts the front exactly where Clark–Evans stops being able to
+     *     see it, which is the pair §12 quotes and the only pair worth
+     *     calibrating against.
      *   THE CLUMPS are seven knots in a disc with the points drawn round them,
      *     matched to the front on COUNT and tuned on σ until Clark–Evans
      *     cannot tell them apart. That matching is the experiment — it is no

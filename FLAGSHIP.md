@@ -379,6 +379,26 @@ Generate the battle, then the ground that explains it.
    High ground *flanks* the front and never sits on it; exactly one chokepoint
    (two reads as a maze); the ridge field goes anisotropic along the advance
    bearing, which turns noise into *ground that moves in a direction*.
+
+   *(1–3 are BUILT — `src/world/Battlefield.js`, bound by
+   `tools/checks/battlefield.mjs`, which builds a real `Terrain` off the
+   generated preset and measures each clause on the baked grid. It is a
+   **layer, not an eighth seed**: the preset row is an authored one spread
+   whole with `height` replaced, which makes §5 a construction rather than a
+   discipline and means §13.5 cannot break — the generated key is never in
+   `LEVEL_ORDER` and `installGround` refuses to shadow an authored name.
+   Measured over five reasons × two seeds: the nearest high ground is 63–166 m
+   from the line against standoffs of 38–58; the crossing notch is 9–28 m
+   below the median climb against a next-best way through of 0.3–8.8 m, a
+   ratio of 2.4–34; the ridge field's directional variogram bottoms 0–7° off
+   the advance bearing at 2.5–18× max/min. Two things the measurements moved,
+   both argued at their call sites: a flank built as `crest × ridge` is not a
+   wall but a row of hills with a draw between every pair — and the draws run
+   toward the line, because that is what the anisotropy asks for — so 45% of
+   the crest is upland the ridges ride on; and a choke notched in arc length
+   along the line is a notch in the near wall rather than a way through, which
+   put the lowest crossing on a gun line 262 m from the chokepoint the plan
+   had named.)*
 4. **Dressing follows the front, not the disc.** `strewGround` must take a
    **density, not a count** — that deletes the `landmarks: 3.4` magic number on
    every level at once. `strewWrecks` has no density field at all and is the
@@ -399,6 +419,21 @@ isotropic clumps R = 0.664, a battle front R = 0.668 — indistinguishable. The
 new statistic is directional banding: sweep 36 bearings, project onto the
 normal, histogram in 16 m bins, take max/min of the coefficient of variation.
 Uniform ≈ 2, a front ≈ 6–7.
+
+*(Built — `banding()` in `tools/checks/ground-cover.mjs`, beside `clarkEvans`,
+and the two quoted figures were checked on this build rather than trusted. The
+claim holds; one figure needs a correction. Over eight seeds, with the front
+taken from the shipped `addFallen` and the clumps matched to it on count and
+tuned on σ until Clark–Evans could not separate them: **Clark–Evans is blind
+exactly as claimed** — front 0.631, clumps 0.638, ranges overlapping on every
+seed. **A front bands at 7.1–11.7**, so "≈6–7" reproduces at its floor and
+runs higher. **But "uniform ≈ 2" is not a uniform scatter** — a Poisson field
+on the same disc measures 1.15–1.44 and never reaches 2; what sits at ≈2
+(1.66–2.20, median 1.91) is the isotropic CLUMP control, which is the thing a
+front actually has to be told apart from. The one convention this paragraph
+leaves open — what range the 16 m bins cover — decides the whole statistic and
+is argued at the function: binning each bearing over its own span makes the
+one bearing that carries the whole signal report none of it.)*
 
 ---
 

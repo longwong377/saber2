@@ -43,6 +43,25 @@
  * overwrite a name the table already holds. §13.5 is a property of a table,
  * and this file is the one that could break it, so the guard is here rather
  * than only in a check.
+ *
+ * ── WHAT IS NOT HERE, SAID PLAINLY ──────────────────────────────────────
+ *
+ * NOTHING IN THE GAME CALLS THIS YET. Same standing as `Front.js`, which says
+ * the same thing at the top of itself: no mode builds a generated ground and
+ * no level names one. The door is two lines —
+ *
+ *     const g = battlefieldGround('geonosis', world.runSeed);
+ *     installGround(g.key, g.preset);   // then load a level whose terrain is g.key
+ *
+ * — and the third line is the one that is not written: `World.loadLevel`
+ * builds its `Terrain` from `LEVELS[key].terrain`, so a mode that wants this
+ * needs a level row pointing at the installed key, and a level row is a thing
+ * §13.5 has opinions about. That decision belongs to whoever wires the mode,
+ * not to the generator, and making it here would be making it for them.
+ *
+ * What IS wired is the measurement: `tools/checks/battlefield.mjs` builds a
+ * real `Terrain` off a generated preset and holds every clause of §12.3 to a
+ * number, so the ground is known to be right before anything stands on it.
  */
 
 import { makeRng, clamp, lerp, smoothstep, fbm2, ridged2 } from '../engine/MathUtil.js';
