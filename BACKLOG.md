@@ -55,8 +55,8 @@ Four rules decided it, in this priority:
 | # | Item | Source | State |
 |---|---|---|---|
 | 1.1 | A dead duellist's blade hangs in the air instead of falling | V5 | ✅ `Enemy.die` drops it as a real prop, 2 in 5 still lit; `dropped.mjs` ×3 |
-| 1.2 | **You fight your own side's canon hardware** — a Sith fighting Separatist walkers, a Republic player fighting clones. Applies to single NPCs as well as vehicles | V5 | open |
-| 1.3 | **The Separatists ride Republic transports.** They need their own hull, functionally identical — sit or stand, see out, ramp, side doors, pilots | V5 | open |
+| 1.2 | **You fight your own side's canon hardware** — a Sith fighting Separatist walkers, a Republic player fighting clones. Applies to single NPCs as well as vehicles | V5 | ✅ measured 7 of 7 levels wrong; the enemy side is now the one you are not on. `factions.mjs` ×3 |
+| 1.3 | **The Separatists ride Republic transports.** They need their own hull, functionally identical — sit or stand, see out, ramp, side doors, pilots | V5 | **in flight** |
 | 1.4 | A recalled saber cannot be caught in the air even at closest approach | V5 | open — part of 3.1 |
 
 ---
@@ -86,10 +86,10 @@ defect and has to be revisited.
 
 | # | Item | Source | State |
 |---|---|---|---|
-| 4.1 | Every archetype and vehicle carries a canon faction, and the composer never fields one against its own side (= 1.2) | V5 | open |
+| 4.1 | Every archetype and vehicle carries a canon faction, and the composer never fields one against its own side (= 1.2) | V5 | ✅ see 1.2 — all 31 archetypes were already sorted; nothing asked whose side the player was on |
 | 4.2 | **The giants.** SPHA (140.2 m, 12 legs), HAVw A6 Juggernaut / Clone Turbo Tank (49.4 m, 10 wheels), Octuptarra Magna Tri-Droid, AT-TE (check the one we have is right), NR-N99 Persuader snail tank. Each accurate, each moving and firing differently. Research what else we are missing. No AT-AT/AT-M6 — wrong era | V5 | open |
 | 4.3 | **Drive the vehicles it makes sense to drive**, contextually | V5 | open |
-| 4.4 | The Separatist transport (= 1.3) | V5 | open |
+| 4.4 | The Separatist transport (= 1.3) | V5 | **in flight** |
 
 ---
 
