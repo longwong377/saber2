@@ -28,7 +28,7 @@ import { parryScale, TOUGHNESS, impactDamage } from './Combat.js';
  * `forceResistance` in Enemy.js, and one contest read out of two rulebooks is
  * exactly the drift `Powers.js` exists to have ended (HANDOFF §2.3/§2.4).
  * Enemy.js imports nothing from this file, so the edge is one-way. */
-import { forceResistance, IMPULSE_AS_HP, limitBackpedal } from './Enemy.js';
+import { forceResistance, IMPULSE_AS_HP, limitBackpedal, addShove, newShoveFrame } from './Enemy.js';
 import { POWER_COST } from './Powers.js';
 /* FLAGSHIP §7's BREAK verb, and both are leaves — see the header of each. */
 import { MORALE } from './Morale.js';
@@ -3027,69 +3027,13 @@ export class Player {
       dmg *= k;
       if (impulse) impulse = _res.copy(impulse).multiplyScalar(k);
     }
-    /**
-     * ── AND THE SHOVES DO NOT STACK. A crowd cannot move a body faster than
-     * the hardest single thing in it.
-     *
-     * `velocity.add(impulse)` alone is unbounded, and the population that
-     * finds that out is a RING. Measured on the colosseum, twenty acolytes
-     * spawned together against a player standing still: all twenty reach
-     * `pressed` on the same frame and nineteen shoves land inside frame 166.
-     * The ring is symmetric so the horizontal halves cancel exactly and the
-     * `PUSH_LIFT` halves add — 19 x 10 m/s of pure lift. The player leaves at
-     * 190 m/s and tops out at **718 m**, twelve seconds of fall away from the
-     * fight it was standing in. tools/checks/cloth-cost.mjs reported it as "0
-     * of 20 enemies inside the cloth cut": the camera follows the player, so
-     * every garment in the world was distance-gated off and a 400-frame timing
-     * loop measured an empty field.
-     *
-     * IT IS NOT A FIXTURE'S POPULATION. `PUSH_SPEED`'s own note sizes the
-     * shove so that an unbraced target flies 6.84 m and says why that number
-     * and no other — "6.84 m sits inside [the push's] own band, [0, 7.5], so
-     * even an unbraced target lands somewhere the caster can still reach." TWO
-     * shoves from the same side already break that property (13.7 m, outside
-     * the band); this restores it for any number of them.
-     *
-     * THE RULE IS ONE SENTENCE WITH TWO HALVES, and it took both — the first
-     * attempt had only the second half and it is written down here because it
-     * measures well and is still wrong.
-     *
-     *   · SPEED. `clampLength` to the largest thing acting on the body,
-     *     whatever it was already doing or this shove, whichever is bigger.
-     *     On its own this fixes the firing line — two shoves from one side no
-     *     longer carry 13.7 m — and leaves the RING almost untouched, because
-     *     a ring's horizontals cancel to nothing and its 190 m/s of lift
-     *     survives the clamp as 27.9 m/s of lift, a 16 m launch off a move
-     *     whose whole apex is 2.1 m. Bounded and still not a shove.
-     *   · LIFT. So the vertical share is bounded the same way and separately:
-     *     no crowd may throw a body UP faster than the hardest single one of
-     *     them does. A ring is now one shove's lift, which is what the ring
-     *     ought to feel like.
-     *
-     * Neither half alone is the rule; `velocity.y` alone was the answer tried
-     * first and it is the symptom this particular ring happens to produce,
-     * not the defect.
-     *
-     * A single shove is arithmetically unchanged by both halves, so every
-     * figure in `PUSH_SPEED`'s note still holds. A shove ACROSS a body's
-     * motion still turns it, because it barely lengthens a vector it is
-     * perpendicular to. A body already falling is not slowed by being shoved
-     * sideways, and one already rising faster than a shove lifts is not
-     * dragged down to it — `max(wasUp, impulse.y)` is a ceiling on the
-     * addition, never a floor imposed on the body.
-     *
-     * PRE-EXISTING, and `2ed3d65` only moved the dice. At `d736f60` the same
-     * twenty-body fixture launches on four of five `enemyRng` seeds and stays
-     * on the floor on the one the suite happened to use; adding one `rng()`
-     * draw per body (the droideka's `walkPhase`) moved it off that seed. The
-     * mirror of this bound is in `Enemy.applyKnockback`, because the contest
-     * is symmetric and a body the army surrounds is in the same ring.
-     */
+    /* AND THE SHOVES DO NOT STACK — the rule, and the twenty-acolyte ring that
+     * found it 718 m up, are written down over `addShove` in Enemy.js. It
+     * lives there rather than here for the reason `forceResistance` does: this
+     * is one contest seen from two sides, and the day the two copies disagree
+     * is the day a shove means something different depending on who took it. */
     if (impulse) {
-      const was = this.velocity.length(), wasUp = this.velocity.y;
-      this.velocity.add(impulse);
-      this.velocity.clampLength(0, Math.max(was, impulse.length()));
-      this.velocity.y = Math.min(this.velocity.y, Math.max(wasUp, impulse.y));
+      addShove(this, impulse);
       this.grounded = false;
     }
     if (!gentle) this.staggerTimer = Math.max(this.staggerTimer, 0.22);
@@ -3107,6 +3051,8 @@ export class Player {
 
   update(dt, ctx) {
     const input = ctx.input;
+    // A new frame opens a new shove account. See `addShove` in Enemy.js.
+    newShoveFrame(this);
     this.comboTimer -= dt;
     if (this.comboTimer <= 0 && this.combo > 0) { this.combo = 0; }
     for (const k in this.cooldowns) this.cooldowns[k] = Math.max(0, this.cooldowns[k] - dt);

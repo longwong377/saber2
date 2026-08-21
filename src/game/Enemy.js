@@ -1324,6 +1324,85 @@ export function forceResistance(pool, amount, kind, beaten) {
 export const IMPULSE_AS_HP = 1.2;
 
 /**
+ * ── A CROWD OF SHOVES IS STILL ONE SHOVE ──────────────────────────────────
+ *
+ * `velocity.add(impulse)` is what both `applyKnockback`s did and it is
+ * unbounded, so N shoves landing together are N times the shove. The
+ * population that finds that out is a RING, which the game fields every wave.
+ *
+ * MEASURED, on the colosseum, twenty acolytes spawned together against a
+ * player standing still: twenty identical bodies run one brain in lockstep, so
+ * they all reach `pressed` on the same frame and nineteen pushes land inside
+ * frame 166. The ring is symmetric, its horizontal halves cancel exactly, and
+ * its `PUSH_LIFT` halves ADD — 19 x 10 m/s of pure lift, out at 190 m/s, apex
+ * **718 m**, twelve seconds of fall away from the fight it was standing in.
+ * tools/checks/cloth-cost.mjs met it as "0 of 20 enemies inside the cloth cut"
+ * and two sessions went into blaming the harness for holding two Worlds.
+ *
+ * It is not a fixture's population. `PUSH_SPEED`'s own note sizes the shove so
+ * that an unbraced target flies 6.84 m and argues that number from the push's
+ * band: "6.84 m sits inside it, so even an unbraced target lands somewhere the
+ * caster can still reach." TWO shoves from one side already broke it at 13.7 m.
+ *
+ * THE RULE, and it is one sentence with two halves because a ring answers the
+ * first half for free:
+ *
+ *   · SPEED. The shoves that land in one frame carry the body no faster than
+ *     the hardest single one of them. On its own this fixes the firing line
+ *     and barely touches the ring — a symmetric ring has nothing left to spend
+ *     its length on but UP, so 190 m/s survived the clamp as 27.9 m/s of lift
+ *     and a 16 m launch off a move whose whole apex is 2.10 m.
+ *   · LIFT. So the vertical share is bounded the same way and separately.
+ *     Clamping `velocity.y` was in fact the answer tried FIRST, and alone it
+ *     is the symptom this particular ring produces rather than the defect: a
+ *     ring cancels its horizontals and a firing line does not.
+ *
+ * AND IT BOUNDS THE CROWD'S CONTRIBUTION, NOT THE BODY'S OWN MOTION — which is
+ * the second wrong answer, and it was wrong in a way that only a full run
+ * showed. Clamping the whole velocity against `max(what it was doing, this
+ * shove)` reads correctly and quietly re-prices every shove landing on a body
+ * that was already moving: a player walking away at 4.6 m/s took 27.9 m/s
+ * instead of 30.6. `footwork: retreating is priced, not removed` inverted on
+ * it (still 8.15 hp/s against a walk's 8.83, where the whole design is
+ * still > walk > dash) and `physicality` lost two tree colliders to the
+ * knock-on. So the account is kept per body per FRAME and the body's own
+ * velocity is never in it: `sub(applied).add(want)` re-applies the bounded
+ * crowd on top of whatever the body was doing, and a single shove is
+ * arithmetically identical to `velocity.add(impulse)` — sum is the impulse,
+ * both bounds are no-ops, and every figure in `PUSH_SPEED`'s note still holds.
+ *
+ * The frame is the boundary because that is what "at once" means to a body:
+ * shoves a frame apart still stack, which is two pushes doing what two pushes
+ * should.
+ */
+const _shoveWant = new THREE.Vector3();
+export function addShove(body, impulse) {
+  const s = body._shove || (body._shove = {
+    sum: new THREE.Vector3(), applied: new THREE.Vector3(), up: 0, down: 0, top: 0,
+  });
+  s.sum.add(impulse);
+  s.top = Math.max(s.top, impulse.length());
+  s.up = Math.max(s.up, impulse.y);
+  s.down = Math.min(s.down, impulse.y);
+  const want = _shoveWant.copy(s.sum).clampLength(0, s.top);
+  want.y = Math.min(Math.max(want.y, s.down), s.up);
+  body.velocity.sub(s.applied).add(want);
+  s.applied.copy(want);
+}
+
+/**
+ * A new frame opens a new account. Called at the top of both `update`s rather
+ * than off a clock, because `applyKnockback` is reached from a dozen places
+ * and none of them is handed the time.
+ */
+export function newShoveFrame(body) {
+  const s = body._shove;
+  if (!s) return;
+  s.sum.set(0, 0, 0); s.applied.set(0, 0, 0);
+  s.up = 0; s.down = 0; s.top = 0;
+}
+
+/**
  * ── HOW HARD YOU HAVE TO HIT TO BREAK A CAST ───────────────────────────
  *
  * Anything that beats the guard (`stun`, a grip, a real shove) breaks a cast
@@ -4141,19 +4220,13 @@ export class Enemy {
       dmg *= k;
       if (impulse) impulse = _res.copy(impulse).multiplyScalar(k);
     }
-    /* AND THE SHOVES DO NOT STACK — the mirror of the bound in
-     * `Player.applyKnockback`, where the whole argument and the 718 m
-     * measurement behind it are written down. A body cannot be moved faster by
-     * a crowd of shoves than by the hardest single one of them. It is here as
-     * well as there because the contest is symmetric and an enemy the player's
-     * army surrounds stands in the same ring the player does: `unleash` alone
-     * puts every body inside 9 m through this door on one frame. */
-    if (impulse) {
-      const was = this.velocity.length(), wasUp = this.velocity.y;
-      this.velocity.add(impulse);
-      this.velocity.clampLength(0, Math.max(was, impulse.length()));
-      this.velocity.y = Math.min(this.velocity.y, Math.max(wasUp, impulse.y));
-    }
+    /* AND THE SHOVES DO NOT STACK — see `addShove` above, which is where the
+     * rule and the 718 m measurement behind it are written down. It is on this
+     * side of the contest as well as the player's because the contest IS
+     * symmetric and a body the player's army surrounds stands in the same ring:
+     * `unleash` alone puts every body inside 9 m through this door on one
+     * frame. */
+    if (impulse) addShove(this, impulse);
     this.knockTimer = gentle ? 0.35 : 0.7;
     this.grounded = false;
     // A real shove beats a guard, so it beats whatever that guard was holding
@@ -4488,6 +4561,8 @@ export class Enemy {
     // before destruction had its turn, so the first query of the frame
     // rebuilds it. See NEAR_REACH.
     this._nearStale = true;
+    // …and a new frame opens a new shove account. See `addShove`.
+    newShoveFrame(this);
     this._updateElite(dt, ctx);
     if (this.rallyTimer > 0) this.rallyTimer = Math.max(0, this.rallyTimer - dt);
     if (this.dread > 0) this.dread = Math.max(0, this.dread - dt);
