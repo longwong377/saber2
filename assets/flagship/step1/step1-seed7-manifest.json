@@ -2,7 +2,7 @@
   "step": "step1",
   "seed": 7,
   "quality": "medium",
-  "settle": 8,
+  "settle": 5,
   "camera": {
     "bearing": 1.9913817606549786,
     "x": 6.532718981368332,
@@ -29,58 +29,73 @@
       "bearing": 1.9913817606549786,
       "distance": 180,
       "replayed": 342,
-      "replayMs": 7.5,
+      "replayMs": 11.599999999627471,
       "barrage": 8,
+      "burns": 365,
       "smoke": 5,
       "wrecks": 4,
-      "statics": 193,
-      "file": "/tmp/flagship-lane/.flagship/plates/plate-alpha.png"
+      "fallen": 110,
+      "fallenCalls": 2,
+      "statics": 209,
+      "file": "/home/user/saber2/.flagship/plates/plate-alpha.png"
     },
     {
       "engagement": 2,
       "bearing": 1.9913817606549786,
       "distance": 140,
       "replayed": 233,
-      "replayMs": 3.099999999627471,
+      "replayMs": 5.2999999998137355,
       "barrage": 8,
+      "burns": 355,
       "smoke": 6,
       "wrecks": 5,
-      "statics": 234
+      "fallen": 110,
+      "fallenCalls": 2,
+      "statics": 252
     },
     {
       "engagement": 3,
       "bearing": 1.9913817606549786,
       "distance": 100,
       "replayed": 102,
-      "replayMs": 1.3999999985098839,
+      "replayMs": 1.6000000000931323,
       "barrage": 8,
+      "burns": 364,
       "smoke": 9,
       "wrecks": 5,
-      "statics": 277,
-      "file": "/tmp/flagship-lane/.flagship/plates/plate-charlie.png"
+      "fallen": 110,
+      "fallenCalls": 2,
+      "statics": 297,
+      "file": "/home/user/saber2/.flagship/plates/plate-charlie.png"
     },
     {
       "engagement": 4,
       "bearing": 1.9913817606549786,
       "distance": 60,
       "replayed": 190,
-      "replayMs": 2.5,
+      "replayMs": 3,
       "barrage": 8,
+      "burns": 358,
       "smoke": 9,
       "wrecks": 5,
-      "statics": 317
+      "fallen": 110,
+      "fallenCalls": 2,
+      "statics": 339
     },
     {
       "engagement": 5,
       "bearing": 1.9913817606549786,
       "distance": 20,
       "replayed": 403,
-      "replayMs": 5.199999999254942,
+      "replayMs": 8.200000000186265,
       "barrage": 8,
+      "burns": 358,
       "smoke": 9,
       "wrecks": 4,
-      "statics": 349,
-      "file": "/tmp/flagship-lane/.flagship/plates/plate-bravo.png"
+      "fallen": 110,
+      "fallenCalls": 2,
+      "statics": 373,
+      "file": "/home/user/saber2/.flagship/plates/plate-bravo.png"
     }
   ],
   "errors": []

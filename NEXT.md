@@ -61,6 +61,34 @@ that follows the player — and in decals, and the crater log carries neither.
 That is the thing to fix if this is worth another day: persist what is DRAWN,
 not only what is dented.
 
+> **DONE, AND THE VERDICT TURNS OVER.** `Terrain.scars` is a second
+> `SurfaceField` with three of its rules inverted — it is the whole map rather
+> than a 29 m window, it never ages, and its burns STACK — so a square metre
+> hit forty times is black where one hit once is a scuff. It costs one extra
+> `texture2D` on the ground and 1.77 MB a Terrain at a 1.6 m cell that does not
+> move with the quality tier (what the ground remembers is not allowed to be a
+> settings slider, for the same reason `CraterLog` refuses to snapshot a grid).
+> `Terrain.burn` and `Terrain.crater` feed it by construction, so every call
+> site that already marks this ground got the permanent half for free, and
+> `Terrain.scorch` is the new verb for a mark with no fire behind it.
+>
+> The same log, the same seed, the same camera:
+>
+> | | before | after |
+> |---|---|---|
+> | wide shot, one fought area | 1.9% | **13.2%** |
+> | eye height, one fought area | 0.5% | **11.0%** |
+> | eye height, twenty sorties | — | **33.4%** against the one-area plate |
+>
+> The log grew a second list for the marks that were only ever DRAWN — the bolt
+> that scorched the sand without moving it — and `CraterLog` wraps `scorch` the
+> way it already wrapped `crater`. v2 files carry both lists and a v1 file still
+> loads. Replaying from the live log is exact to the bit on BOTH channels; the
+> JSON round trip's centimetre of rounding flips four cells in sixteen hundred
+> at a bowl rim, which is a number the check reports rather than hides.
+>
+> **Ask a person again.** `assets/flagship/step0/` has the new plates.
+
 ### Step 1 — the marching front: **qualified YES**
 
 Pixels differing between plates: **1↔3 = 7.0%, 3↔5 = 17.2%, 1↔5 = 21.0%.**
@@ -73,6 +101,37 @@ biggest-visual-defect, confirmed live).
 **Hand `assets/flagship/step1/plate-alpha|bravo|charlie.png` to the player and
 ask them to put the three in order.** That is the test; it has not been run on
 a person yet.
+
+> **RE-TAKEN. The weakest pair tripled and the variable is now on the GROUND.**
+>
+> | pixels differing | before | after |
+> |---|---|---|
+> | 1 ↔ 3 | 7.0% | **20.5%** |
+> | 3 ↔ 5 | 17.2% | **28.8%** |
+> | 1 ↔ 5 | 21.0% | **45.2%** |
+>
+> Four changes on the ground and one in the air. The craters paint as well as
+> dig (Step 0 above). `Front.burnBand` lays the line's own burnt swath into the
+> scar field, additive per engagement — so ground beyond engagement 1's line
+> carries five bands by engagement 5 and ground just past engagement 5's carries
+> one, and that gradient is not authored, it is what *fought over five times*
+> means. `src/world/Fallen.js` is §12.4's 520 prone instanced figures, the one
+> of `Front.js`'s five ground marks that was listed as **absent and not faked**:
+> two poses, two draw calls, per-instance tone, 103 triangles a body. And the
+> smoke's alpha is banded into five steps, which is §11's third named art
+> defect ("the one un-cel thing in the frame").
+>
+> **What is NOT fixed, and it is §11's biggest one.** Measured live on
+> Geonosis: the authored `fogColor` is `#d0a473` at hue 26°, and what actually
+> renders is `#a6adb2` at **207°** — a cold blue-grey, 181° round the wheel
+> from the level's own dust, at luminance 0.676 against a smoke body at 0.023.
+> The cause is `Engine.hazeRadiance`, which takes 88% of the haze's hue from
+> the DRAWN sky, and the drawn dome is a Preetham blue held at `uSkyTurn`
+> identity on purpose — Engine.js argues in place that the dome must match what
+> is painted and that a level's `gain` is where its author put the orange.
+> §11 says to turn the dome, the fog and the aerial tint together. **That is a
+> lighting-layer decision across all seven levels and it was left alone.** The
+> front now reads without it.
 
 ### Step 2 — the Dead Jedi test, RE-TAKEN: **the presence loop is, in the numbers, a pure cost**
 

@@ -2,7 +2,7 @@
   "step": "step0",
   "seed": 7,
   "quality": "medium",
-  "settle": 8,
+  "settle": 5,
   "camera": {
     "bearing": 1.9913817606549786,
     "x": 6.532718981368332,
@@ -11,66 +11,63 @@
   },
   "plates": [
     {
-      "file": "/tmp/flagship-lane/.flagship/plates/step0-a-visit-one-arrival.png",
+      "file": "/home/user/saber2/.flagship/plates/step0-a-visit-one-arrival.png",
       "state": "pristine"
     },
     {
-      "file": "/tmp/flagship-lane/.flagship/plates/step0-b-visit-two-arrival.png",
+      "file": "/home/user/saber2/.flagship/plates/step0-c-near-pristine.png",
+      "state": "pristine, eye height"
+    },
+    {
+      "file": "/home/user/saber2/.flagship/plates/step0-b-visit-two-arrival.png",
       "state": "after one area",
       "craters": 539
     },
     {
-      "file": "/tmp/flagship-lane/.flagship/plates/step0-d-near-after.png",
+      "file": "/home/user/saber2/.flagship/plates/step0-d-near-after.png",
       "state": "after one area, eye height"
     },
     {
-      "file": "/tmp/flagship-lane/.flagship/plates/step0-c-near-pristine.png",
-      "state": "craters lifted, eye height"
-    },
-    {
-      "file": "/tmp/flagship-lane/.flagship/plates/step0-e-near-twenty-sorties.png",
+      "file": "/home/user/saber2/.flagship/plates/step0-e-near-twenty-sorties.png",
       "state": "twenty sorties, eye height"
     }
   ],
-  "replay": {
-    "craters": 539,
-    "ms": 23.4,
-    "res": 252
-  },
   "nearCamera": {
     "x": -12.2,
     "z": 27.4,
     "y": 1.61
   },
-  "lifted": {
-    "lifted": 539
+  "replay": {
+    "craters": 539,
+    "ms": 34.1,
+    "res": 252
   },
   "twenty": {
     "craters": 13490,
-    "ms": 59,
-    "cellsMoved": 1320,
-    "cellsMovedPct": 2.08,
+    "ms": 195,
+    "cellsMoved": 1354,
+    "cellsMovedPct": 2.13,
     "deepestM": -4.499,
     "res": 252,
     "cellM": 2.47
   },
   "wideDelta": {
     "pixels": 921600,
-    "changed": 17812,
-    "changedPct": 1.933,
-    "worstChannelDelta": 163
+    "changed": 122042,
+    "changedPct": 13.242,
+    "worstChannelDelta": 160
   },
   "nearDelta": {
     "pixels": 921600,
-    "changed": 4695,
-    "changedPct": 0.509,
-    "worstChannelDelta": 143
+    "changed": 101497,
+    "changedPct": 11.013,
+    "worstChannelDelta": 159
   },
   "twentyDelta": {
     "pixels": 921600,
-    "changed": 144153,
-    "changedPct": 15.642,
-    "worstChannelDelta": 172
+    "changed": 308022,
+    "changedPct": 33.423,
+    "worstChannelDelta": 171
   },
   "errors": []
 }

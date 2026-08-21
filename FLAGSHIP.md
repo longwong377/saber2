@@ -101,6 +101,17 @@ are walked linearly per body per frame: 1,608 boxes = 16.14 ms of sim with
 nothing rendered. Ceiling ~1,000 boxes. **Persist the silhouette, never the
 debris.**
 
+> **AND THE SILHOUETTE IS NOT IN THE HEIGHTFIELD.** This paragraph was measured
+> on WALKABILITY, which is a fact about the grid, and §14 Step 0 then found the
+> grid is the wrong place to look: 520 of 539 marks are a bolt hitting sand, the
+> cell is 2.5-3.4 m, and `crater` widens anything under 1.35 cells and shallows
+> it to conserve volume — so twenty sorties of exact replay read as dunes. The
+> mark that shows is ALBEDO, and albedo has no minimum feature size.
+> `Terrain.scars` is a whole-map, non-decaying, stacking scar field at a 1.6 m
+> cell: one extra texture tap, 1.77 MB a Terrain, and it takes the wide plate
+> from 1.9% to 13.2% of pixels moved on the same log. The saturation warning
+> still holds for the DENT; it never applied to the stain.
+
 **No completely indoor places. Ever.** Player instruction, 20 Aug, after
 playing them: *"I just tried the boarding bay and the providence and hated them,
 you completely missed the ball so just remove them. your outside work is much
@@ -298,9 +309,16 @@ aerial tint by the same rotation and every derived thing follows.
 
 - **Value, not hue, at scale.** At 6–19 px only value survives. Three bands with
   ≥0.18 luma separation; scale carries rank (officers 1.15×).
-- **Quantise the smoke.** `Smoke.js` uses a soft vertex-alpha gradient — the one
-  un-cel thing in the frame. At 7 columns you get away with it; at 20 it
-  dominates the sky. `CEL_BAND_GLSL` is already imported into `SkyDome`.
+- **Quantise the smoke. DONE.** `Smoke.js` used a soft vertex-alpha gradient —
+  the one un-cel thing in the frame. At 7 columns you get away with it; at 20 it
+  dominates the sky, and the marching front puts 9-10 up by engagement 5. The
+  alpha is snapped to five nodes now, on `saberCelQuant` and not
+  `saberCelBand1`: the plateau-centre form never returns 0, so a transparent tip
+  would come back 10% opaque and veil the whole sky. The hook WRAPS `makeSoft`'s
+  rather than replacing it, and `CEL_BAND_GLSL` is *not* pasted in —
+  `installCelShading` already appends it to three's `<common>`, which a
+  MeshBasicMaterial includes, so a second copy is a duplicate definition and the
+  column would not compile at all.
 - **Never extend the ink for the crowd.** At 138 m a figure is 8.5 px and a 1 px
   outline is 12% of its height. The ink prepass far plane is 138 m and must
   stay: everything beyond is drawn once, flat, **so the far battle costs one
@@ -342,7 +360,12 @@ Generate the battle, then the ground that explains it.
    fighting line. A **walking barrage** is 8 craters at 14 m on one azimuth, and
    says *a thing happened, in a direction, at a time* — which a thousand
    scattered rocks cannot. **The dead mark the front**: 520 prone instanced
-   figures in a 26 m band, thickest at the choke, one draw call.
+   figures in a 26 m band, thickest at the choke, one draw call. *(Built —
+   `src/world/Fallen.js`. It is TWO calls and not one, and the second is the
+   honest price of not repeating one silhouette four hundred times: two poses,
+   103 triangles a body, per-instance tone, and 100% of them inside the 26 m
+   band. `Front.burnBand` is the burnt swath the same paragraph implies and
+   does not name.)*
 5. **Do not generate the palette.** Pick from authored sets.
 
 **Clark–Evans cannot see a line, and that is a hole in our checks.** Measured:
