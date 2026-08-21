@@ -46,7 +46,7 @@ Four rules decided it, in this priority:
 | # | Item | Source | State |
 |---|---|---|---|
 | 0.1 | **Audit the V3 list item by item.** The player asked by name: *"make sure that everything on that list actually got done… and let me know if we missed anything on it"* | V5 | ✅ **17 items, nothing missing.** 14 DONE with a measurement each, 2 PARTIAL (items 10 and 17 — now §8.1 and §8.2), 1 DONE with a named residue (item 7 — now §8.3). All three "do not regress" items hold. Three items were superseded by later lists and are flagged as such rather than counted done |
-| 0.2 | **The Force shield / bubble.** Asked for in an earlier list and never built — confirmed: `POWER_COST` has push, pull, grip, throw, sense, lightning, stasis, heal, compel, rend, unleash, and nothing that shields | V5 | **MISSING — confirmed** |
+| 0.2 | **The Force shield / bubble.** Asked for in an earlier list and never built — confirmed: `POWER_COST` has push, pull, grip, throw, sense, lightning, stasis, heal, compel, rend, unleash, and nothing that shields | V5 | ✅ answered and then built — see 2.2 |
 
 ---
 
@@ -88,7 +88,7 @@ defect and has to be revisited.
 |---|---|---|---|
 | 4.1 | Every archetype and vehicle carries a canon faction, and the composer never fields one against its own side (= 1.2) | V5 | ✅ see 1.2 — all 31 archetypes were already sorted; nothing asked whose side the player was on |
 | 4.2 | **The giants.** SPHA (140.2 m, 12 legs), HAVw A6 Juggernaut / Clone Turbo Tank (49.4 m, 10 wheels), Octuptarra Magna Tri-Droid, AT-TE (check the one we have is right), NR-N99 Persuader snail tank. Each accurate, each moving and firing differently. Research what else we are missing. No AT-AT/AT-M6 — wrong era | V5 | ✅ four new machines at their canon dimensions, each with a weak point you can aim at that is derived rather than typed; the AT-TE measured against its own plates |
-| 4.3 | **Drive the vehicles it makes sense to drive**, contextually | V5 | open |
+| 4.3 | **Drive the vehicles it makes sense to drive**, contextually | V5 | ✅ `crew` on the archetype is the whole rule — the AT-TE (6), the AAT (4), the Juggernaut (12) and the SPHA (25); the four droid vehicles have nobody in them and are refused by name. Yours any time, the enemy's under 25%. The machine stays an ordinary `Enemy`: own legs, own grade, own gun, own death. `driving.mjs`, 6 checks |
 | 4.4 | The Separatist transport (= 1.3) | V5 | ✅ see 1.3 |
 
 ---

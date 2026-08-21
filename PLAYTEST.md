@@ -109,6 +109,30 @@ the rule at the top of this file.
 > thing so in case we ever said strategem in game you need to come up with
 > something appropriate to our game if you already have not)"*
 
+### What came of it
+
+Every item, with the evidence. Nothing is struck when it is done — the player
+has twice asked for an audit of an older list, and a record that deletes its own
+history cannot answer one. The master list is `BACKLOG.md`; this table is the V5
+slice of it.
+
+| The note | What came of it |
+|---|---|
+| A line for every Force power, 3–4 each, in the SYNTHESISED voice | ✅ `FORCE_LINES` in `src/engine/Voice.js` — 12 pools, 41 lines, every one carried by the wordless larynx rather than the speech synthesiser. `force-voice.mjs` renders every line through the offline synthesiser and holds every pair 18% apart on length, pitch centre, direction or emphasis, in all five throats. |
+| Catch the saber out of the air when you reel it in | ✅ and it was arithmetic, not a missing feature: the pick-up measured to the FEET while the Force grip clamps what it holds to 1.4 m in front of the CHEST — 1.98 m against a 1.6 m reach, so the closest the Force could bring your own weapon was 38 cm outside your hand, silently, for ever. `Dropped.hiltDistanceSq` measures to the standing axis now. |
+| Get staggered into dropping it when you are hit with no stamina | ✅ a blow over 14 on a bar under 12 takes it sideways out of your hand. Never on a fall, never twice inside six seconds. |
+| Pick the saber up with the Force, turn it on and off with the Force | ✅ the ignite key means "the blade in my Force" when the Force is holding one. 10 to strike, 9 a second to keep burning; the two prices are weighed with the hold so the light goes out in mid-air before the hilt falls. |
+| Fly it anywhere on the battlefield, at a heavy Force cost | ✅ two ways. A gripped hilt cuts on the BLADE, one cut per 0.4 s; and your own thrown blade takes a third state — press grip while it is out and it hangs at your reticle until you recall it or the bar runs dry. |
+| A dead duellist's saber falls instead of hanging in the air | ✅ `Enemy.die` drops a real prop, two in five still lit. `dropped.mjs` ×3. |
+| The giants: SPHA, Turbo Tank, Octuptarra, AT-TE, snail tank | ✅ four new machines at their canon dimensions, each with a weak point you can aim at that is derived from the model rather than typed, and the AT-TE measured against its own plates. `giants.mjs` holds no two of the five to the same silhouette, cadence OR movement signature. |
+| Never fight your own side's canon hardware — vehicles and single NPCs | ✅ measured 7 of 7 levels wrong: nothing anywhere asked whose side the player was on. `factions.mjs` ×3. |
+| The Separatists need their own transport | ✅ their own hull with the same interior contract — sit or stand, see out, ramp, side doors, pilots — plus a Providence overhead. |
+| Did the Force shield/bubble ever get built? | ✅ **it had not.** There were eleven Force verbs and none of them shielded anything. Built: 18 to raise, 6 a second to hold, 4 a bolt, regen paused while it is up. Bolts die on the SURFACE; a muzzle inside the radius still shoots you; blades come through at 65%. `barrier.mjs` ×5. |
+| Audit the V3 list item by item and say what was missed | ✅ 17 items — 14 done with a measurement each, 2 partial, 1 done with a named residue. All three are carried as `BACKLOG.md` §8 rather than being quietly closed. |
+| Drive the vehicles it makes sense to drive | ✅ the ones with somebody in them: AT-TE (6 crew), AAT (4), Juggernaut (12), SPHA (25). The four droid vehicles have nobody to displace and are refused by name. Yours any time, the enemy's once it is under 25%. |
+| Many more support calls, unlockable, none of them puny | ✅ 7 → 18, eleven released along a ladder climbed inside one run. The orbital bombardment takes 21 of 22 bodies and 9 265 hp on a packed field and costs 80 of a 100-point bar. |
+| Do not call them stratagems — that is Helldivers' | ✅ **support calls**, made on **the comm**, paid out of **war support**. Every rendered string swept; the module and action id keep the old name deliberately, because the action id is the key a rebind is saved under in `localStorage`. |
+
 ---
 
 ## 20 Aug — second play, and the flagship list
