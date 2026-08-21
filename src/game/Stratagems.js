@@ -2371,7 +2371,9 @@ export class Stratagems {
    * of those over three seconds would be sixteen screams and a permanent stun,
    * which is a different and much stronger call than the one this is priced as.
    *
-   * ZERO DAMAGE. The whole worth of it is the number in `tractorReach`.
+   * ZERO DAMAGE. The whole worth of it is the mean radius of the enemy, which
+   * `tools/checks/stratagems.mjs` measures on a spread line: sixteen bodies
+   * from 17.8 m to 2.4 m in 3.4 s, and not one hit point taken.
    */
   tractor(ctx, site, radius) {
     audio.noise({ dur: TRACTOR_TIME, gain: 0.3, type: 'bandpass', freq: 140, q: 2.2,
