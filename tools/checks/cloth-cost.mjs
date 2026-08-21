@@ -269,21 +269,50 @@ export async function run({ check, assert, THREE }) {
      * the day the roster went from 36 entries to 37, and it is not that
      * archetype's doing: censusing `gunship` ALONE leaves the player on the
      * floor and censusing `conscript` alone, or `atte` alone, puts it at 720 m.
-     * What changes is the ORDER two Worlds interleave in, and one of them then
-     * lifts the other's player 724 m in the 400-frame loop. Two Worlds loading
-     * the same level side by side is not enough on its own — driven directly,
-     * two concurrent `loadLevel('colosseum')` calls give two independent
-     * terrains, two independent physics worlds and two players at y = -0.4.
      *
-     * WHAT IS FIXED HERE IS THE SUITE, AND WHAT IS NOT IS WRITTEN DOWN: the
-     * mechanism that lifts the body is not identified, and until it is, this
-     * is a hazard for any check that holds two Worlds at once. §2.7 of
-     * HANDOFF.md is the same file learning the same lesson from the other end
-     * — "the two suites that hold the most Worlds ALIVE AT ONCE" — and the
-     * answer there was the same one: stop holding them at once.
+     * ── AND THE MECHANISM IS NAMED NOW. It was never one World reaching into
+     * another World's player, which is what the two paragraphs that used to
+     * stand here supposed and could not demonstrate. It is TWO ordinary things
+     * and neither of them needs a second World at all.
      *
-     * One `await`. Serialised, this suite is 6/6 on every run; parallel it is
-     * 5/6 on every run.
+     * WHAT LIFTS THE BODY is a stack of shoves. Twenty acolytes spawned on one
+     * frame are twenty identical bodies running one brain in lockstep: they all
+     * reach `pressed` together, and nineteen `push` casts land inside frame
+     * 166. The ring is symmetric so the horizontal halves cancel exactly and
+     * the `PUSH_LIFT` halves ADD — 19 x 10 m/s of pure lift, out at 190 m/s,
+     * apex 718 m. `applyKnockback` did `velocity.add(impulse)` with no bound.
+     * It is a game defect and it is fixed in `Player.applyKnockback`, where the
+     * whole argument is written down: no combination of shoves may leave a body
+     * moving faster than the hardest single one of them.
+     *
+     * WHAT MAKES IT A KNIFE-EDGE is the SHARED RANDOM STREAM, not the shared
+     * level. `rng` in Enemy.js IS `enemyRng` (Enemy.js:59-60) — one stream for
+     * every body in the process. This fixture seeds it and then spawns, so it
+     * is only seeded if nothing else draws in between; run beside the census,
+     * the census's own spawns land an unknown number of draws in that gap, and
+     * the number of draws is the number of archetypes. Measured at `d736f60`,
+     * the commit before the launch became unconditional, by drawing N times
+     * from `enemyRng` between the seed and these twenty bodies:
+     *
+     *     N = 0    player -0.34 m,  20 of 20 inside the cut
+     *     N = 1    player  612 m,    0 of 20
+     *     N = 2    player -0.35 m,  20 of 20
+     *     N = 5    player  722 m,    0 of 20
+     *
+     * ONE DRAW is the whole knife edge, and that is the entire content of "the
+     * count of archetypes is the knife". `2ed3d65` then added one `rng()` call
+     * per body — the droideka's `walkPhase` — and moved this fixture off the
+     * offset that happened to be quiet, which is why serialising stopped being
+     * enough. With the shove bounded, all four of those offsets keep 20 of 20
+     * inside the cut.
+     *
+     * THE `await` STAYS, and now for a reason it can state: a check that seeds
+     * a stream and then spawns is measuring a fight nobody chose unless it owns
+     * the stream for the whole distance between the two. That is HANDOFF §2.5
+     * and `_shared.mjs`'s own note about `enemyRng`, met from a third
+     * direction. What it is NOT is a defence against holding two Worlds at
+     * once — that was the wrong lesson drawn from the right symptom, and §2.7
+     * of HANDOFF.md drew it too.
      */
     await built;
     const { World } = await import('../../src/game/World.js');
