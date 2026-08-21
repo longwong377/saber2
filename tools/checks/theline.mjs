@@ -685,21 +685,41 @@ export async function run({ check, assert }) {
      *
      * Run-to-run spread on this fixture is enormous and it is not the harness:
      * a single engagement is one composed wave meeting one formation, and one
-     * grenade or one Hailfire arriving early is two or three names. Thirteen
-     * runs of this arm on the tuned build — five from `tools/_linehold.mjs`,
-     * five of Command's, and the first three this check ever took — came back
+     * grenade or one Hailfire arriving early is two or three names. Seventeen
+     * engagements of this arm on the tuned build — five from
+     * `tools/_linehold.mjs`, five of Command's, and every one this check has
+     * itself taken — came back
      *
-     *     4 6 6 3 8 · 7 10 0 · 1 1 3 5 5      mean 4.5, sd 2.9
+     *     4 6 6 3 8 · 7 10 0 · 1 1 3 5 5 · 0 0 3 7    mean 4.1, sd 3.0
      *
-     * with one engagement in which nobody died at all and one wiped out. So a
-     * FOUR-seed mean carries a standard error near 1.5, `HALF` is the target
-     * and `SLACK` is two of those either side. That band is not a hedge, it is
-     * the width the quantity actually has: narrower and the check goes red on
-     * a build nobody touched, wider and it stops saying anything. What it
-     * still catches are the two failures that matter and both are far outside
-     * it — a mode whose army is gone before its first muster, and one where
-     * nobody dies. **A single red here is worth re-running before it is
-     * believed** (HANDOFF §2.5, from the other side).
+     * with two engagements in which nobody died at all and four wiped out. A
+     * four-seed mean therefore carries a standard error near 1.5.
+     *
+     * ── AND THE MEAN ITSELF SWINGS, WHICH IS THE FACT THAT SET THIS BAND ───
+     *
+     * The first cut of this check asserted ±2.5 on a standard error estimated
+     * at 1.2 from five-seed arms taken inside ONE process, and that estimate
+     * was of the wrong population. Five independent runs of this arm on the
+     * same code read
+     *
+     *     5.4 · 6.0 · 5.7 · 3.0 · 2.5          the MEAN, sd 1.6
+     *
+     * — 6.0 and 2.5 an hour apart with nothing changed between them. `World.js`
+     * holds one module-level `rng` for the whole process and exports no
+     * reseeder, so the phase this check starts from is whatever the twelve
+     * checks above it left behind, and reseeding `enemyRng` and `Waves` per
+     * seed (below) does not reach it. That is not noise this file can remove;
+     * it is the width the quantity has from where this file stands.
+     *
+     * So `HALF` is the target and `SLACK` is a little over two standard errors
+     * either side. The band is wide, and saying what it therefore does NOT
+     * catch is more useful than pretending otherwise: it will not see a
+     * two-name drift, and it is not the instrument for tuning — that is
+     * `tools/_linehold.mjs`, five seeds, one arm, one process. What it does
+     * catch is the pair of failures that make the mode a different game, and
+     * both sit far outside it: an army gone before its first muster, and an
+     * engagement nobody dies in. **A single red here is worth re-running
+     * before it is believed** (HANDOFF §2.5, from the other side).
      *
      * The seeds are named rather than rolled for the reason `theline.11`'s
      * ground sweep names its own: a check that draws a fresh seed each run
@@ -711,7 +731,7 @@ export async function run({ check, assert }) {
      * figure on a run.
      */
     const HALF = Cmd.OPENING_STRENGTH / 2;
-    const SLACK = 3.0;
+    const SLACK = 4.0;
     const SEEDS = [1, 2, 3, 5];
     const { enemyRng } = await import('../../src/game/Enemy.js');
     /**
