@@ -85,6 +85,40 @@ const F = {
 };
 export const STANDING = 0, FALLING = 1, DOWN = 2;
 
+/**
+ * THE TRUNK'S OWN SHAPE, as two numbers the colliders share with the drawing.
+ *
+ * `TAPER` is the radius at the top as a fraction of the butt, and it is the
+ * same 0.52 `taperedGeo` is called with in `plant()` — one number for what a
+ * trunk looks like and what it feels like, rather than a copy in each.
+ *
+ * `SQUARE_FIT` is why a box round a round trunk is not the trunk's radius: a
+ * square whose half-width is r circumscribes the circle by 41% at the corners,
+ * so a player brushing past the corner of a box catches on nothing. 0.82 is
+ * what `_standBox` has always used and its note is the long form.
+ */
+const TAPER = 0.52;
+const SQUARE_FIT = 0.82;
+
+/**
+ * HOW HIGH A FELLED TRUNK YOU CAN CLIMB OVER, in metres — and the whole of
+ * the second half of the invisible-wall report.
+ *
+ * Measured on the wood's own 1,800 trees: butt radius p50 0.27 m, p90 0.45,
+ * max 0.63 — so a felled trunk stands 0.55 m off the ground at the median and
+ * 1.26 at the very largest. `STEP_UP` is 0.45. HALF THE TIMBER IN THIS WOOD IS
+ * A WALL BY TEN CENTIMETRES, and the player's own reading of that is the right
+ * one: you cut trees down and the ground fills with barriers you cannot see a
+ * reason for.
+ *
+ * 1.35 clears every tree the generator can make, with room for one lying on a
+ * rise. It is not a general climb: it rides on the LOG boxes only, so nothing
+ * about a wall, a crate or a standing trunk changes — and `Player._collide`
+ * takes it at a bounded rate rather than in one frame, so it reads as
+ * clambering over a log rather than as being teleported on top of one.
+ */
+export const CLIMB_LOG = 1.35;
+
 /** Gravity, as the falling-chimney model uses it. */
 const G = 9.81;
 /** How far past horizontal a trunk swings before it is called down. */
@@ -468,7 +502,7 @@ export class Forest {
      * tapering to 0.52 r at the top, and a square whose half-width is the butt
      * radius circumscribes it by 41% at the corners — which is the difference
      * between a trunk you brush past and one you catch on nothing. */
-    const w = Math.max(0.12, D[k + F.R] * 0.82);
+    const w = Math.max(0.12, D[k + F.R] * SQUARE_FIT);
     return phys.addStaticBox(
       new THREE.Vector3(D[k + F.X], D[k + F.Y] + hh, D[k + F.Z]),
       new THREE.Vector3(w, hh, w), undefined,
@@ -573,12 +607,46 @@ export class Forest {
     const boxes = [];
     let runFrom = -1;
     const mid = new THREE.Vector3();
+    /**
+     * THE COLLIDER IS THE SHAPE OF THE WOOD, and it was not.
+     *
+     * `new Vector3(r, r, span/2)` is a square-section beam of the BUTT radius
+     * running the whole length of a trunk that is drawn as a six-sided lathe
+     * tapering to 0.52 r — so the box was too big at both ends of that
+     * sentence. At the tip it is 1.9× the drawn wood, and at every point along
+     * it the square circumscribes the round section by 41% at the corners.
+     * `_standBox` had already worked this out for the standing trunks and took
+     * 0.82 of the radius for exactly this reason; the log did not get the same
+     * treatment, so a felled tree claimed a corridor of ground half a metre
+     * wider than the log you can see lying in it, along twelve to twenty-six
+     * metres, and every one of those metres is the player's own sentence: "the
+     * forest map still has a shit ton of invisible walls blocking you, I think
+     * maybe only when you cut trees down".
+     *
+     * Each RUN takes the radius at its own midpoint, so the collider narrows
+     * with the trunk instead of carrying the butt all the way to the top.
+     */
+    const radiusAt = (t) => r * (1 - t * (1 - TAPER)) * SQUARE_FIT;
     const lay = (t0, t1) => {
       const span = (t1 - t0) * len;
       if (span < 0.4) return;                    // shorter than the log is thick
       mid.lerpVectors(a, b, (t0 + t1) * 0.5);
-      const box = phys.addStaticBox(mid.clone(), new THREE.Vector3(r, r, span * 0.5), q,
-        { friction: 0.86, userData: { log: i, forest: this } });
+      const rr = radiusAt((t0 + t1) * 0.5);
+      const box = phys.addStaticBox(mid.clone(), new THREE.Vector3(rr, rr, span * 0.5), q,
+        { friction: 0.86,
+          /**
+           * …AND A LOG IS SOMETHING YOU CLIMB OVER. See CLIMB_LOG.
+           *
+           * The other half of the same report, and the half the numbers make
+           * unarguable: `STEP_UP` is 0.45 m and the MEDIAN tree in this wood is
+           * 0.27 m in the radius, so the median felled trunk stands 0.55 m off
+           * the ground and every movement solver in the game calls it a wall by
+           * ten centimetres. Fell forty trees and the ground you are fighting
+           * on is fenced by knee-high timber you cannot cross — invisible in
+           * the sense that matters, which is that you cannot see any reason for
+           * it. `Support.js` reads this number per box.
+           */
+          userData: { log: i, forest: this, climb: CLIMB_LOG } });
       if (box) boxes.push(box);
     };
     for (let s = 0; s < n; s++) {
@@ -588,7 +656,7 @@ export class Forest {
         mid.lerpVectors(a, b, (t0 + t1) * 0.5);
         // the TOP of the log against the ground: buried is buried, and a trunk
         // half in the mud is still something you climb over.
-        showing = mid.y + r > T.height(mid.x, mid.z) + 0.05;
+        showing = mid.y + radiusAt((t0 + t1) * 0.5) > T.height(mid.x, mid.z) + 0.05;
       }
       if (showing && runFrom < 0) runFrom = t0;
       if (!showing && runFrom >= 0) { lay(runFrom, t0); runFrom = -1; }

@@ -596,4 +596,186 @@ export async function run({ check, assert }) {
       + `${realNear}/${near.length} nearby logs are cuttable objects`;
   });
 
+  /* ══════════════════════════════════════════════════════════════════ */
+  /*  THE INVISIBLE WALLS, WHICH ARE THE LOGS                           */
+  /* ══════════════════════════════════════════════════════════════════ */
+
+  check('wood: a felled trunk is something you walk over, not a wall', async () => {
+    /**
+     * THE PLAYER, TWICE: "the forest map still has a shit ton of invisible
+     * walls blocking you, I think maybe only when you cut trees down."
+     *
+     * Three probes for this audited the tree system against itself — are the
+     * colliders where the records say, is anything drawn where the colliders
+     * are — and all three came back clean, because the defect is not a stale
+     * collider. It is ONE NUMBER against another:
+     *
+     *     STEP_UP                                 0.45 m
+     *     the median trunk in this wood, radius   0.27 m
+     *     …so a log lying on the ground stands    0.55 m
+     *
+     * Half the timber in the level is a wall by ten centimetres, and a wall
+     * that is knee-high and twenty metres long is one you cannot see a reason
+     * for. Measured by walking the real Player across a felled stand, 24 runs
+     * of ten seconds: 61 of 88 stalls were against logs; 3 afterwards.
+     *
+     * THE FIXTURE IS BUILT RATHER THAN FOUND, and the first three attempts at
+     * finding one in the wood are why. A crossing measured on the shipped
+     * level is a crossing measured through everything else the level is doing:
+     * the site the check picked first was a hillside, where `blockClimb`'s
+     * slide carried the standing body 7.6 m downhill in a second; the second
+     * had standing trunks in the path; and beside the log's middle `_realise`
+     * turned it into a 24 m Prop that arrived on top of the player and threw
+     * them 25 m/s. One tree, on flat ground, is the claim.
+     */
+    const { bootWorld, idleInput } = await import('./_coop.mjs');
+    const { CLIMB_LOG } = await import('../../src/world/Trees.js');
+    const { world } = await bootWorld({
+      level: 'colosseum', settings: { mode: 'waves', quality: 'low', instantSpawn: true },
+    });
+    const p = world.player;
+    const M = propMaterials();
+    /* Well clear of the player, so nothing is realised into a Prop and the log
+     * stays what this check is about: a static box. LIFT_RING is 14 m. */
+    const O = new THREE.Vector3(p.position.x + 26, 0, p.position.z);
+    const f = attachForest(world, { seed: 7 });
+    f.plant([{ x: O.x, z: O.z, y: world.terrain.height(O.x, O.z), yaw: 0, tone: 1,
+               height: 22, radius: 0.62 }],
+      { materials: { bark: M.wood, leaf: M.patina, core: M.duracreteDark } });
+
+    const wish = { x: 0, y: 0 };
+    const input = { ...idleInput(), moveAxis: (o) => { if (o) { o.x = wish.x; o.y = wish.y; return o; } return { ...wish }; } };
+    const step = (n) => { for (let i = 0; i < n; i++) { p.hp = p.maxHp; p.alive = true; world.update(1 / 60, input); } };
+
+    /* Down it goes, along +z — square across the path the player will walk. */
+    f.fell(0, 0, 1, 0.6);
+    step(60 * 10);
+    assert(f.down.has(0), 'the tree never came down');
+    const a = f.hinge(0, new THREE.Vector3());
+    const b = f.tip(0, new THREE.Vector3());
+    /* Crossed 16 m along its own length: past LIFT_RING of its stump, so the
+     * wood on the ground is a collider rather than a Prop with a body. */
+    const along = new THREE.Vector3().subVectors(b, a).setY(0).normalize();
+    const mid = a.clone().addScaledVector(along, 16);
+    const into = new THREE.Vector3(-along.z, 0, along.x);
+    const from = mid.clone().addScaledVector(into, -2.4);
+
+    /**
+     * THE COLLIDER IS LAID BY THE SHIPPED CODE AND THEN LEFT ALONE.
+     *
+     * `_syncLogBoxes` gives a log a collider only while somebody is within
+     * RING_LOG (16 m) OF THE STUMP, and `_realise` turns it into a Prop inside
+     * LIFT_RING (14 m) of the same point — so the static-box regime this check
+     * is about lives in a two-metre annulus around a tree that may be twenty
+     * metres long. Chasing that annulus with a walking body is a check on two
+     * radii rather than on the thing under test.
+     *
+     * So the box is laid through `_layLog` — the shipped call, with the shipped
+     * geometry — and the ring's own bookkeeping is then held still for the
+     * crossing. Nothing about the collider, the player or the movement solver
+     * is stubbed; what is frozen is the question of whether this log is near
+     * enough to be worth a collider, which this check has already answered.
+     */
+    f._layLog(0);
+    f.update = () => {};
+
+    const place = () => {
+      p.position.set(from.x, world.terrain.height(from.x, from.z) + 0.2, from.z);
+      p.velocity.set(0, 0, 0);
+      p.aimDir.copy(into);
+      /* The camera's yaw is what the stick is resolved against — `Player` has
+       * no yaw of its own. */
+      if (p.camera) { p.camera.yaw = Math.atan2(-into.x, -into.z); p.camera.pitch = 0; }
+      wish.x = 0; wish.y = 0;
+      step(30);
+      p.position.set(from.x, world.terrain.height(from.x, from.z) + 0.2, from.z);
+      p.velocity.set(0, 0, 0);
+    };
+    const reach = () => new THREE.Vector3().subVectors(p.position, mid).setY(0).dot(into);
+
+    /* WHICH WAY IS FORWARD. The stick's sign convention belongs to the input
+     * layer; a check that hard-codes it is a check on the convention. */
+    place();
+    const probe = (y) => { wish.y = y; step(20); const d = reach(); place(); return d; };
+    const plus = probe(1), minus = probe(-1);
+    assert(Math.max(plus, minus) > -2.0,
+      `the body moved to ${plus.toFixed(2)} m one way and ${minus.toFixed(2)} m the other from 2.4 m `
+      + 'out — this fixture is not driving it at all');
+    wish.y = plus > minus ? 1 : -1;
+
+    const boxes = f.logs.get(0);
+    assert(boxes && boxes.length, 'the felled trunk beside the player carries no collider at all');
+
+    let crossed = 0, climbFrames = 0, worstJump = 0, lastY = p.position.y;
+    for (let i = 0; i < 60 * 8; i++) {
+      step(1);
+      if (p.climbing) climbFrames++;
+      worstJump = Math.max(worstJump, p.position.y - lastY);
+      lastY = p.position.y;
+      if (reach() > 0.7) { crossed = i; break; }
+    }
+    assert(crossed > 0,
+      `the player walked into a felled trunk for eight seconds and finished ${reach().toFixed(2)} m `
+      + 'from its far side — a log lying on the ground is a wall. That is the player\'s own report: '
+      + '"a shit ton of invisible walls blocking you, I think maybe only when you cut trees down"');
+    assert(climbFrames > 0, 'the player got across without ever climbing — the log had no collider at all');
+    /* AND IT IS A CLAMBER, NOT A LIFT. See CLIMB_RATE: the rise is rate-limited
+     * because first person copies the body's height exactly rather than damping
+     * toward it, so a metre taken in one frame is a jolt straight up. */
+    assert(worstJump < 0.12,
+      `the body rose ${worstJump.toFixed(2)} m in a single frame getting over the log — that is a `
+      + 'teleport, not a climb');
+    return `climbed a ${(2 * 0.62 * 0.82).toFixed(2)} m log in ${(crossed / 60).toFixed(2)} s `
+      + `(${climbFrames} climbing frames, worst frame ${(worstJump * 100).toFixed(0)} cm, `
+      + `ceiling ${CLIMB_LOG} m)`;
+  });
+
+  check('wood: a log claims only the ground the wood is lying on', () => {
+    /**
+     * THE OTHER HALF, and it is the literal reading of "invisible": the
+     * collider used to be a SQUARE BEAM OF THE BUTT RADIUS along the whole
+     * trunk, on a trunk that is drawn as a lathe tapering to 0.52 r. At the tip
+     * that is 1.9× the wood you can see, and at every point along it a square
+     * of half-width r circumscribes the round section by 41% at the corners.
+     * `_standBox` had already worked this out for the standing trunks — its
+     * note is the long form — and the log did not get the same treatment.
+     *
+     * Measured against the DRAWN radius at each box's own midpoint, which is
+     * the only authority on what the player can see.
+     */
+    const list = [{ x: 0, z: 0, height: 24, radius: 0.6 }];
+    const { world, f } = stand(list);
+    /* FIFTEEN METRES: inside RING_LOG (16), which is what lays a collider under
+     * a log, and outside LIFT_RING (14), which turns one into a Prop with a
+     * body of its own and no static box at all. A player standing on top of it
+     * measures the Prop path and says nothing about the collider. */
+    world.players = [{ position: V(15, 0, 0), alive: true }];
+    f.fell(0, 1, 0, 0.6);
+    sim(f, 14);
+    f.update(1 / 60);
+    const boxes = f.logs.get(0);
+    assert(boxes && boxes.length, 'a 24 m trunk lying beside the player carries no collider at all');
+    const a = f.hinge(0, new THREE.Vector3());
+    const b = f.tip(0, new THREE.Vector3());
+    const len = a.distanceTo(b);
+    const r0 = f.data[4];
+    let worst = 0, worstT = 0;
+    for (const box of boxes) {
+      /* Where along the trunk this box sits, and how thick the DRAWING is
+       * there: `plant()` builds the trunk with taperedGeo(…, 0.52, …). */
+      const t = new THREE.Vector3().subVectors(box.center, a).dot(
+        new THREE.Vector3().subVectors(b, a).normalize()) / Math.max(len, 1e-6);
+      const drawn = r0 * (1 - Math.max(0, Math.min(1, t)) * (1 - 0.52));
+      const over = box.halfExtents.x / drawn;
+      if (over > worst) { worst = over; worstT = t; }
+    }
+    /* 1.0 would be a box inscribed in the drawing, which catches nothing; the
+     * bound is that the collider never claims more ground than the wood does.
+     * The shipped figure is 0.82 — see SQUARE_FIT. */
+    assert(worst <= 1.0,
+      `a log collider is ${worst.toFixed(2)}× the drawn trunk at ${(worstT * 100).toFixed(0)}% of its `
+      + 'length — that surplus is invisible wall, all the way along the log');
+    return `${boxes.length} boxes on a 24 m log, worst ${worst.toFixed(2)}× the drawn wood`;
+  });
+
 }

@@ -19,7 +19,7 @@ import { DuelBrain, Telegraph, FORMS, FORM_KEYS, TIER, ATTACKS, ATTACK_KEYS,
 import { buildRemote } from './Dojo.js';
 import { attachCloak, attachSkirt } from './Cloth.js';
 import { LAYER, Body, capsuleSpheres, capsule } from '../physics/RapierWorld.js';
-import { supportHeight, STEP_UP, GROUND_SNAP } from '../physics/Support.js';
+import { supportHeight, STEP_UP, GROUND_SNAP, CLIMB_RATE } from '../physics/Support.js';
 import { TOUGHNESS, thinner, bladesTouching } from './Combat.js';
 import { seeThrough } from './Smoke.js';
 import { segmentSegment } from '../physics/Physics.js';
@@ -1962,6 +1962,8 @@ export class Enemy {
      * produces is a check somewhere else disagreeing about a number nobody
      * touched (HANDOFF §2.4, and `held.mjs` has the same note in full). */
     this._auditT = (_auditPhase = (_auditPhase + 0.137) % AUDIT_EVERY);
+    /** On its way up something taller than a step — see CLIMB_RATE. */
+    this.climbing = false;
     this.gripped = false;
     /** Seconds of hold left before the lease lapses. See GRIP_LEASE. */
     this.gripLease = 0;
@@ -5675,7 +5677,23 @@ export class Enemy {
     // the player's did. See src/physics/Support.js.
     const gh = terrain ? terrain.height(this.position.x, this.position.z) : 0;
     this._gatherNear(ctx);
-    const support = this._groundAt(ctx, this.position.x, this.position.z);
+    let support = this._groundAt(ctx, this.position.x, this.position.z);
+    /* AND A DROID CLIMBS A LOG THE WAY THE PLAYER DOES. See CLIMB_RATE: the
+     * support query answers with a felled trunk's top now, and taking it in one
+     * frame would stand a trooper on top of a log with no time passing. The
+     * animator's own foot query goes through the same `_groundAt`, so the feet
+     * find the wood while the body is still coming up over it.
+     *
+     * NOT THE GROUND ITSELF, and this cost a run of Command's own suite to
+     * find: `supportHeight` caps what a BOX may raise you by and does not cap
+     * the terrain, so a body walking up anything steep gets a support well
+     * above its feet every frame — and rate-limiting that is rate-limiting
+     * walking uphill. Measured as two watchdog rescues of a line standing
+     * exactly where it was ordered to stand. */
+    if (support > gh + 0.05 && support > this.position.y + (this.climbing ? 1e-3 : STEP_UP)) {
+      support = Math.max(this.position.y, Math.min(support, this.position.y + CLIMB_RATE * dt));
+      this.climbing = true;
+    } else this.climbing = false;
     if (this.position.y < support) this.position.y = support;
     if (this.position.y <= support + GROUND_SNAP && this.velocity.y <= 0.1) {
       if (this.velocity.y < -9) {

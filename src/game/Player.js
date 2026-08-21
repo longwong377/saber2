@@ -17,7 +17,7 @@ import { Rig, BipedAnimator, aimY, limbScale } from './Rig.js';
 import { dropSaber, hiltWithinReach, ageDropped } from './Dropped.js';
 import { attachCloak, attachSkirt } from './Cloth.js';
 import { Body, LAYER, capsuleSpheres, capsule } from '../physics/RapierWorld.js';
-import { supportHeight, topOfProps, ceilingHeight, STEP_UP, GROUND_SNAP } from '../physics/Support.js';
+import { supportHeight, topOfProps, ceilingHeight, STEP_UP, GROUND_SNAP, CLIMB_RATE } from '../physics/Support.js';
 import { walkScale } from '../engine/Bindings.js';
 import { RankSet, rankScale } from './Waves.js';
 import { parryScale, TOUGHNESS, impactDamage } from './Combat.js';
@@ -571,6 +571,7 @@ export const DIVE_SPEED = 30, DIVE_CLEAR = 1.2, DIVE_STAMINA = DASH_STAMINA;
  * the last of it.
  */
 const SPRINT_DRAIN = 11, SPRINT_FLOOR = 4, SPRINT_START = 20, STAMINA_HOLD = 0.6;
+
 /** How much bigger a dive's landing is than the same speed arrived at by
  *  accident. Radius and impulse take it once, damage twice — the blade is what
  *  makes the difference and the blade is a damage term. */
@@ -2452,6 +2453,8 @@ export class Player {
     this._sweepFromY = this.position.y;
     /** Committed to a slam. Set by `_tryDive`, cleared by `_land`. */
     this.diving = false;
+    /** Getting over something taller than a step — see CLIMB_RATE. */
+    this.climbing = false;
     this.dashDir = new THREE.Vector3();
     /** Seconds left of an air dodge's somersault, and the horizontal axis it
      *  turns about. Zero on the ground: a dodge with a foot down is a step. */
@@ -3569,6 +3572,25 @@ export class Player {
       for (let iter = 0; iter < 2; iter++) {
         for (const box of this._nearBoxes) {
           if (box.disabled) continue;
+          /**
+           * A LEDGE YOU CAN CLIMB IS NOT A WALL, and this is the line that
+           * decides it. See `Support.js`'s `climb` note and `Trees.CLIMB_LOG`.
+           *
+           * Without it the two halves of the movement solver work against each
+           * other and the log wins: the push-out resolves against the CHEST,
+           * which for a metre-high log lying on the ground is a side face and
+           * therefore a horizontal normal, so the body is held 0.42 m off the
+           * timber — while `supportHeight` reaches only the standing radius,
+           * 0.40 m, and so never sees the top it is supposed to lift you onto.
+           * Two centimetres, and the player is stopped dead by a log they are
+           * meant to walk over. Measured: 1.65 m of approach and then nothing,
+           * for eight seconds.
+           *
+           * Skipping it hands the surface to the support query, which is where
+           * every other floor in the game is resolved.
+           */
+          const climb = box.userData?.climb;
+          if (climb > 0 && box.center.y + box.halfExtents.y <= this.position.y + climb) continue;
           _v1.set(this.position.x, this.position.y + this.height * 0.5, this.position.z);
           if (_v1.distanceToSquared(box.center) > (box.radius + 1.4) ** 2) continue;
           _v2.subVectors(_v1, box.center).applyQuaternion(box.invQuat);
@@ -3637,7 +3659,6 @@ export class Player {
      * and the numbers are all in Terrain.blockClimb.
      */
     terrain?.blockClimb?.(this.position, this.velocity);
-    const gh = terrain ? terrain.height(this.position.x, this.position.z) : 0;
     /**
      * THE QUERY COVERS THE WHOLE STEP, not the end of it.
      *
@@ -3656,8 +3677,42 @@ export class Player {
      * the max is the current position — which is the old behaviour exactly,
      * so a jump past a ledge still cannot be snatched onto it.
      */
+    const gh = terrain ? terrain.height(this.position.x, this.position.z) : 0;
     const sweepFrom = Math.max(this.position.y, this._sweepFromY ?? this.position.y);
-    const support = this._supportAt(ctx, this.position.x, this.position.z, sweepFrom);
+    let support = this._supportAt(ctx, this.position.x, this.position.z, sweepFrom);
+    /**
+     * A LOG IS CLIMBED, NOT TELEPORTED ONTO.
+     *
+     * `Support.js` now lets a box say it is climbable and a felled trunk says
+     * so — see CLIMB_LOG, and the measurement that half the wood was a wall by
+     * ten centimetres. But the line below plants the feet on whatever the query
+     * answered, in one frame, and a 1.2 m trunk answered that way is the body
+     * jumping a metre with no time passing: in third person it is a hitch and
+     * in first person, where the eye copies the target exactly rather than
+     * damping it, it is a jolt straight up.
+     *
+     * So anything more than an ordinary step is taken at a RATE. 3.4 m/s puts
+     * the median log (0.55 m) under you in 0.16 s and the largest (1.26 m) in
+     * 0.37 — long enough to read as clambering, short enough that it never
+     * feels like being stuck on the thing. It only ever applies while the
+     * surface is above the feet, so nothing about walking, falling or landing
+     * changes.
+     */
+    /* ONCE IT HAS STARTED, IT FINISHES. `this.climbing` lowers the threshold to
+     * nothing for as long as the body is on its way up, and without that the
+     * last 0.42 m of a metre-high log is taken in ONE FRAME — the moment the
+     * remaining rise drops under STEP_UP the ordinary snap claims it, so a
+     * climb that is smooth for eight frames ends in exactly the jolt the rate
+     * exists to remove. Measured on a 0.81 m log: 0.057, 0.057, …, 0.425. */
+    if (support > gh + 0.05 && support > this.position.y + (this.climbing ? 1e-3 : STEP_UP)) {
+      /* FROM THE FEET, not from the feet plus a step: adding STEP_UP back in
+       * would let the first frame of a climb take 0.45 m in one go, which is
+       * the jolt this whole clause exists to remove. An ordinary step is
+       * untouched — the branch is only entered for something TALLER than one. */
+      const reach = this.position.y + CLIMB_RATE * dt;
+      if (support > reach) support = Math.max(this.position.y, reach);
+      this.climbing = true;
+    } else this.climbing = false;
     // Never inside it: a body below the surface it is standing on is the
     // "phase into it" the player described, and it is unconditional.
     if (this.position.y < support) this.position.y = support;

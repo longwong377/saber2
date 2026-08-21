@@ -49,6 +49,21 @@ export function boxTopAt(box, x, z, radius) {
  * Anything above `feetY + stepUp` is a wall, not a floor, and is ignored — or
  * jumping past a ledge would snatch you onto it in mid-air.
  *
+ * ── EXCEPT WHAT SAYS IT IS CLIMBABLE ──────────────────────────────────────
+ *
+ * One `stepUp` for every surface in the game is a rule that reads well and is
+ * wrong about one thing in particular: a FELLED TREE. `Trees.js` measured its
+ * own wood — median trunk radius 0.27 m, so a log lying on the ground stands
+ * 0.55 m off it — against a step of 0.45, and half the timber in the level is
+ * therefore a wall by ten centimetres. That is the whole of the player's
+ * "invisible walls… I think maybe only when you cut trees down".
+ *
+ * So a box may declare `userData.climb`: the height, in metres above the feet,
+ * at which THAT box stops being a floor. Nothing else changes — a wall, a
+ * crate, a hull, a standing trunk all keep the one rule — and a body that
+ * cannot climb (see `stepUp` callers passing a smaller number) is unaffected,
+ * because the allowance is only ever taken as the LARGER of the two.
+ *
  * @param {object|null} terrain   anything with height(x, z)
  * @param {Array}  boxes  static boxes; pass a pre-filtered short list if you have one
  * @param {Array}  props  dynamic bodies carrying `position` and `extent`
@@ -61,7 +76,9 @@ export function supportHeight(terrain, boxes, props, x, z, feetY, radius, stepUp
       const box = boxes[i];
       if (box.disabled) continue;
       const y = boxTopAt(box, x, z, radius);
-      if (y > best && y <= ceil) best = y;
+      if (y <= best) continue;
+      const climb = box.userData?.climb;
+      if (y <= (climb > stepUp ? feetY + climb : ceil)) best = y;
     }
   }
   return topOfProps(props, x, z, feetY, radius, stepUp, best);
@@ -100,6 +117,23 @@ export function topOfProps(props, x, z, feetY, radius, stepUp, best) {
  */
 export const STEP_UP = 0.45;
 export const GROUND_SNAP = 0.12;
+
+/**
+ * HOW FAST A BODY GETS OVER SOMETHING TALLER THAN A STEP, in m/s.
+ *
+ * Reached only for a surface that declared itself climbable — today a felled
+ * trunk and nothing else, see the `climb` note above. The rate is what makes it
+ * a clamber rather than a lift: the median log in the wood (0.55 m over the
+ * ground) is under you in 0.16 s and the largest (1.26 m) in 0.37. Without it
+ * the body arrives on top of the log in one frame, which in first person —
+ * where the eye copies the body rather than damping toward it — is a jolt
+ * straight up.
+ *
+ * Here rather than in Player.js because the droids climb the same logs, and a
+ * second copy of this number is the shape of defect this repository keeps
+ * deleting.
+ */
+export const CLIMB_RATE = 3.4;
 
 /**
  * The BOTTOM of one static box in the column through (x, z), or +Infinity if
