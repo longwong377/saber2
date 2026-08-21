@@ -772,7 +772,45 @@ export const ARCHETYPES = {
     }),
     scale: 0.96, hp: 6, mass: 44,
     speed: 3.2, toughness: TOUGHNESS.droid, ranged: true, weapon: 'e5',
-    fireRate: 1.45, burst: 2, burstGap: 0.13, spread: 0.075, damage: 10,
+    fireRate: 1.45, burst: 2, burstGap: 0.13, spread: 0.075,
+    /**
+     * `damage` 5, HALVED — AND THE HALVING IS ABOUT THE LINE, NOT ABOUT YOU.
+     *
+     * FLAGSHIP §6 prices this gun at "1.4 dps AGAINST A MOVING PLAYER" — a
+     * player with a guard, a dash and a dive — and src/game/Levy.js says what
+     * that leaves out in one sentence: "a clone trooper has none of those: he
+     * has 46 hit points and a slot to stand in." Until this session it did not
+     * matter, because `World._boltHitTest` skipped its whole enemy loop for
+     * hostile bolts and your own troopers live in that array (FLAGSHIP §16.3),
+     * so no rifle on the other side could touch your army at all. It can now,
+     * and forty free rifles are forty free rifles.
+     *
+     * MEASURED over a whole engagement rather than a window — area 1 of the
+     * flagship mode on Geonosis, held open at the muster, no player on the
+     * field, five seeds (`tools/_linehold.mjs`): taking the levy off the field
+     * moves the survivors from **1.8 of 10 to 4.0 of 10**. Two of the eight
+     * names an engagement costs are the weather's. §6's own sentence is that
+     * "forty conscripts that pay nothing are weather"; weather that takes a
+     * fifth of your line is a second wave you were not charged for, and the
+     * levy is charged nothing by design — Levy.js argues its exemption from
+     * the threat budget at length, and every word of that argument is about
+     * the PLAYER's two ledgers.
+     *
+     * WHAT THE HALVING DOES NOT TOUCH IS WHAT THE LEVY IS FOR. §6's answer to
+     * a crowd is suppression, and suppression is billed PER BOLT: `GUARD.stamina`
+     * is `[1.2, 0.4, 0, 0]` by grade and the unanswered bolt costs Force, and
+     * not one of those four numbers reads `damage`. So the round comes down
+     * and the beaten zone does not: the same forty bodies arrive, at the same
+     * cadence, firing the same number of bolts, draining the same guard. What
+     * moves is only what an unblockable round does to a man who cannot block.
+     *
+     * The round WAS 10 against a B1's 9 — the body that is supposed to be
+     * worth nothing carried the heaviest small-arms round on the Confederate
+     * roster, reaching §6's dps ratio by firing fewer, bigger rounds. That is
+     * the wrong shape for weather twice over: fewer bolts is less suppression
+     * and a bigger round is more killing.
+     */
+    damage: 5,
     preferred: [7, 15], boltColor: BOLT_COLORS.red,
     /** THE FIELD THE WHOLE CLASS IS. See the note above and `World.paysOut`. */
     score: 0, threat: 0.5,

@@ -115,8 +115,46 @@ import { rand } from '../engine/MathUtil.js';
  *   have: every burst that lands is half a man, so the ledger moves visibly
  *   and never in one step. A one-shot gun would make the cost a coin toss.
  *
- * `every` 7.0 s — the cadence is what turns damage into a RATE, and the rate is
- *   what the choice is made of. IT WAS 3.4 AND THAT WAS FAR TOO MUCH, measured
+ * `every` 14.0 s — the cadence is what turns damage into a RATE, and the rate is
+ *   what the choice is made of. IT WAS 3.4, THEN 7.0, AND BOTH READINGS THAT
+ *   SET IT COULD NOT SEE AN ENGAGEMENT END.
+ *
+ *   Every earlier tally of this gun stopped on a poll for `director.mustering`,
+ *   and that flag is true for less than one frame: `_areaClear` ends with "no
+ *   screen wired: muster for the player and press on", so `autoMuster()` and
+ *   `closeMuster()` both run inside the same `payWave` call. The window a
+ *   number about this gun has to be taken over is ONE ENGAGEMENT — an area, to
+ *   its muster — and nothing could see one.
+ *
+ *   Held open (`tools/_linehold.mjs`), area 1 of the flagship mode on this
+ *   ground, no player on the field so the gun is never breached, five seeds:
+ *   **silencing this one emplacement takes the survivors from 1.8 of 10 to
+ *   4.8 of 10.** Three of the eight names an engagement costs are this gun's,
+ *   which is what forty conscripts and the whole Confederate fill cost between
+ *   them. The note below states the price it is MEANT to charge — "about one
+ *   man to answer it" — and the delivered price was three times that.
+ *
+ *   AND IT IS THIS NUMBER RATHER THAN THE LINE'S HEALTH, which is the part
+ *   worth writing down because the obvious lever was measured and refused.
+ *   Billing a body with a roster record 0.65 of every hostile bolt — 54% more
+ *   effective health on every man — moved the same five seeds from 1.8 to 2.8
+ *   and WIPED two of them, because `CommandDirector.allyScale` prices the wave
+ *   against the army that is standing: a line that lives longer meets a wave
+ *   composed for a line that lived. Everything on the threat ledger is
+ *   self-correcting that way. This gun is not on it — it is a prop and it is
+ *   not in `world.enemies` at all — so its output is the same whether you have
+ *   ten men or two, and it is one of exactly two sources of fire on this ground
+ *   that the wave's budget never paid for. The other is the levy, and the two
+ *   of them are five of the eight names.
+ *
+ *   Halving the cadence does NOT halve what it is: the round trip to breach it
+ *   is still the better part of a minute, the plate is still 69 m from where
+ *   the line forms up, and a burst that lands is still half a man. What
+ *   changes is that ignoring it for a whole engagement costs about a name and
+ *   a half instead of three.
+ *
+ *   The earlier note, kept because the measurement in it is sound and only its
+ *   window was short: IT WAS 3.4 AND THAT WAS FAR TOO MUCH, measured
  *   by the mode lane on a full engagement rather than on this file's own bench:
  *   wrapping `Enemy.damage` and tallying every point that lands on a party-team
  *   trooper over two seeds of the flagship mode, **one gun pit was 42.8% of all
@@ -167,7 +205,7 @@ import { rand } from '../engine/MathUtil.js';
  *   trebles the rounds without moving what a single round is worth.
  */
 export const GUN = {
-  damage: 30, every: 7.0, reach: 120, spread: 0.028, speed: 118, warmup: 2.2,
+  damage: 30, every: 14.0, reach: 120, spread: 0.028, speed: 118, warmup: 2.2,
   burst: 3, burstGap: 0.14,
 };
 

@@ -42,6 +42,11 @@ async function lineWorld(opts = {}) {
   const ground = opts.level || 'geonosis';
   const { world } = await bootWorld({
     level: ground,
+    /* `spawn: false` PUTS NO JEDI ON THE FIELD AT ALL, which is one of the two
+     * arms `theline.12` needs and is not the same thing as an idle one — see
+     * the note there, and Levy.js's "an idle Jedi is not a Jedi; it is a corpse
+     * with a delay". */
+    spawn: opts.spawn !== false,
     settings: { mode: opts.mode || 'theline', level: ground, order: opts.order || 'jedi' },
     /* `runSeed` and not `settings.seed`: the run's number is a property of the
      * SITTING and main.js writes it onto the world before the level loads,
@@ -346,6 +351,12 @@ export async function run({ check, assert }) {
     let worst = null;
     for (const key of LEVEL_ORDER) {
       const { world, d, input } = await lineWorld({ level: key, seed: 3 });
+      /* UNLOADED WHATEVER HAPPENS. A generated ground is a row in a
+       * process-global preset table and `unload` is what takes it back out, so
+       * a ground that fails an assertion below used to leave its row behind and
+       * fail `theline.12` as well — one defect reported twice, with the second
+       * report pointing at the wrong thing. */
+      try {
       assert(d, `${key}: the mode built no army`);
       assert(d.roster.all.length >= 8, `${key}: the roll mustered ${d.roster.all.length}`);
       /**
@@ -391,10 +402,122 @@ export async function run({ check, assert }) {
       assert(fielded >= 1,
         `${key}: the mode composed nothing at all for this ground — it is not a legal seed`);
       if (!worst || fielded < worst[1]) worst = [key, fielded];
-      world.unload();
+      } finally { world.unload(); }
     }
     return `${LEVEL_ORDER.length} grounds, all legal · 200 seeds reach all ${drawn.size} `
       + `· thinnest opening ${worst[0]} at ${worst[1]} bodies`;
+  });
+
+  check('theline.12 the ground under the run is generated around a front', async () => {
+    /**
+     * FLAGSHIP §12: "generate the battle, then the ground that explains it."
+     * `src/world/Battlefield.js` builds the battle — a reason from a table of
+     * five, a bezier front from six seeded numbers, and a height closure whose
+     * properties `battlefield.mjs` measures. This is the wiring, and the wiring
+     * is what that module spent its life without: it had no caller.
+     *
+     * ── WHAT THIS ASSERTS THAT `battlefield.mjs` CANNOT ─────────────────────
+     *
+     * That file measures the generator. This one measures the RUN: that the
+     * mode reaches it at all, that different seeds stand on different ground,
+     * that a mode which did not ask for it is untouched, and — the one that
+     * actually bit — that the process-global preset table does not leak.
+     *
+     * THE LEAK IS THE REASON THIS CHECK IS WORTH ITS SECONDS. `TERRAIN_PRESETS`
+     * is module state, `installGround` refuses to shadow an existing key, and
+     * `unload` did not take the generated row back out. So the FIRST world got
+     * its generated ground and every world after it was refused and stood on
+     * the authored one — measured, seeds 2 and 3 both came back "already a
+     * ground" while seed 1 was 18.37 m up. Nothing about that is visible in a
+     * single-world check, and the fallback is deliberately silent-but-warned
+     * rather than fatal, so nothing would ever have failed.
+     */
+    const { LEVELS, LEVEL_ORDER } = await import('../../src/game/Levels.js');
+    const authored = [];
+    const generated = [];
+    const probe = (w) => [[60, -40], [-70, 30], [0, 90]]
+      .map(([x, z]) => w.terrain.height(x, z));
+
+    /* The control first: a mode that does not declare `generatedGround` stands
+     * on the authored contours, whatever seed it is given. */
+    for (const seed of [1, 2, 3]) {
+      const { world } = await lineWorld({ start: false, mode: 'command', seed });
+      assert(!world.battlefield, `command was handed a battlefield plan on seed ${seed}`);
+      authored.push(probe(world));
+      world.unload();
+    }
+    assert(authored.every((h) => h.every((v, i) => Math.abs(v - authored[0][i]) < 1e-9)),
+      'the authored ground is not the same ground on every seed — the control is meaningless');
+
+    /**
+     * WHICH ROOMS DECLARE THEY CAN CARRY ONE, AND WHAT IT COSTS THE ONES THAT
+     * DO NOT — measured rather than trusted, both ways.
+     *
+     * A generated heightfield is raised under a level's own dressing, and the
+     * dressing was authored against the contours it replaces. `LEVELS[*]
+     * .battlefield` is the room's own declaration that it survives that, and a
+     * declaration nothing measures is a comment. So every ground is booted with
+     * the layer FORCED on, deployed, and driven — and the two sets are required
+     * to be what they say they are: a room that declares it must deploy its
+     * line, and the report names any room that does not declare it but could.
+     */
+    const carries = [], breaks = [];
+    for (const key of LEVEL_ORDER) {
+      const L = LEVELS[key];
+      const declared = !!L.battlefield;
+      const was = L.battlefield;
+      L.battlefield = true;
+      try {
+        const { world, d, input } = await lineWorld({ level: key, seed: 3 });
+        try {
+          assert(world.battlefield, `${key}: forcing the layer on produced no plan`);
+          for (let i = 0; i < Math.round(20 / STEP); i++) world.update(STEP, input);
+          const up = d.roster.living.filter((t) => t.body && !t.body.dead).length;
+          (up >= 6 ? carries : breaks).push(`${key} ${up}/10`);
+          if (declared) {
+            assert(up >= 6,
+              `${key} declares it can carry a generated ground and only ${up} of the line were `
+              + 'standing twenty seconds in — the declaration is false');
+          }
+        } finally { world.unload(); }
+      } finally { L.battlefield = was; }
+    }
+    assert(carries.length >= 1, 'no ground in the game can carry a generated heightfield');
+
+    const reasons = new Set();
+    for (const seed of [1, 2, 3, 4, 5]) {
+      const { world } = await lineWorld({ start: false, seed });
+      const plan = world.battlefield;
+      assert(plan, `seed ${seed} got no battlefield plan — the mode is standing on authored ground`);
+      assert(plan.reason && plan.curve, `seed ${seed}'s plan has no reason or no front`);
+      reasons.add(plan.reason.id ?? String(plan.reason));
+      const h = probe(world);
+      assert(h.some((v, i) => Math.abs(v - authored[0][i]) > 0.5),
+        `seed ${seed} generated a ground indistinguishable from the authored one`);
+      generated.push(h);
+      /* THE LEVEL IS STILL THE LEVEL. §12.5 and §13.5 together: only the height
+       * is replaced, so the pool, the name and the dressing are the authored
+       * room's and nothing generated is reachable except through it. */
+      assert(world.level === LEVELS.geonosis,
+        `seed ${seed} landed on something that is not the authored level`);
+      world.unload();
+    }
+    assert(reasons.size >= 2,
+      `five seeds drew ${reasons.size} distinct reason(s) — the table of five is not being drawn from`);
+    /* Different seeds, different ground. Without this the leak above passes:
+     * every world would report a plan and stand on identical contours. */
+    const distinct = new Set(generated.map((h) => h.map((v) => v.toFixed(3)).join()));
+    assert(distinct.size === generated.length,
+      `${generated.length} seeds produced ${distinct.size} distinct grounds — the preset table is leaking `
+      + 'between worlds and all but the first fell back');
+
+    /* …AND IT IS TAKEN BACK OUT. A row left in a process-global table outlives
+     * the world that made it, which is what caused the leak in the first place. */
+    const { TERRAIN_PRESETS } = await import('../../src/world/Terrain.js');
+    const left = Object.keys(TERRAIN_PRESETS).filter((k) => k.startsWith('front:'));
+    assert(!left.length, `unload left ${left.join(', ')} in the shared preset table`);
+    return `${reasons.size} reasons over 5 seeds, ${distinct.size} distinct grounds, table clean · `
+      + `carries: ${carries.join(' ')} · breaks: ${breaks.join(' ') || 'none'}`;
   });
 
   check('theline.10 nothing arrives closer than you could have watched it come', async () => {

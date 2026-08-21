@@ -27,6 +27,8 @@
 import './dom-shim.mjs';
 const H = await import('./checks/_coop.mjs');
 const { dutyInput } = await import('./_flagship.mjs');
+const { enemyRng } = await import('../src/game/Enemy.js');
+const { seedWaves } = await import('../src/game/Waves.js');
 
 const STEP = 1 / 30;
 const CAP = 600;                                  // game-seconds before we call it stuck
@@ -47,7 +49,34 @@ const at = Math.max(1, Number(process.argv[6] || 1));
 /** The run's clock, read by the wave-timing hook below. One per run. */
 let tNow = 0;
 
+/**
+ * EVERY RUN STARTS FROM A STATED PHASE, and the first cut of this bench did
+ * not — which cost a whole afternoon's comparability.
+ *
+ * `Enemy.js` and `Waves.js` each hold ONE module-level stream for the whole
+ * process (`enemyRng`, and `Waves`' own), so run five of a sweep begins
+ * wherever run four left off. Two runs of the same arm at the same seed, from
+ * two processes, came back 201 s and 155 s — same code, same seed, different
+ * history — because a code edit anywhere above changed how much of those
+ * streams module init and the earlier runs had drawn. A bench whose answer
+ * depends on what ran before it cannot compare a before against an after,
+ * which is the only thing this bench exists to do.
+ *
+ * XORed with a large constant rather than seeded with 1, 2, 3: adjacent small
+ * seeds put a linear-congruential-ish stream in nearly the same place, and the
+ * seeds this is driven with are literally 1, 2, 3.
+ *
+ * `World.js`'s own `rng` has no reseeder and is NOT covered — see the report
+ * line about it. It is seeded once from `__SABER_SEED` by tools/register.mjs,
+ * so it is stable across processes and drifts only within one.
+ */
+const phase = (seed) => {
+  enemyRng.seed((20260821 ^ Math.imul(seed, 2654435761)) >>> 0);
+  seedWaves((20260821 ^ Math.imul(seed, 40503)) >>> 0);
+};
+
 async function run(arm, seed) {
+  phase(seed);
   const { world } = await H.bootWorld({
     level, spawn: arm !== 'none',
     settings: { mode, level, order: 'jedi' }, runSeed: seed });
