@@ -2335,7 +2335,29 @@ export class Player {
       skinColor: skinHex(opts.species, opts.skinIndex),
       hairColor: HAIR_COLORS[opts.hairIndex ?? 1]?.hex,
       build: opts.build, species: opts.species, face: opts.face,
+      /**
+       * THE HOOD, and it is read off the world's settings rather than off
+       * `opts` — which is the ONE argument on this call that is.
+       *
+       * `World.spawnPlayer` composes `opts` and does not carry the wardrobe;
+       * `respawn()` below reads every appearance value straight off
+       * `world.settings` for exactly the same reason, so this is that file's
+       * own idiom applied one line earlier. Reading both means a hood survives
+       * a co-op revive as well as a deploy, which is the case the wardrobe
+       * seam in ui/Menu.js cannot cover on its own: `applyWardrobe` runs when
+       * the player changes something, and a body rebuilt mid-run by
+       * `respawn()` is a body it was never told about.
+       *
+       * A hood is a BUILD argument and not a garment hung on afterwards
+       * because it is rigid geometry parented to the head bone — see HOOD_CUTS
+       * in Bodies.js. The default of every path is `'none'`, so a player who
+       * has never opened the row gets exactly the head they always had.
+       */
+      hood: opts.hood ?? world.settings?.wardrobe?.hood,
     });
+    /* What this body is actually wearing on its head, so the wardrobe seam can
+     * tell whether a pick changed anything. See applyWardrobe in ui/Menu.js. */
+    this.hood = opts.hood ?? world.settings?.wardrobe?.hood ?? 'none';
     this.rig = built.rig;
     this.palette = built.palette;
     this.built = built;
@@ -8018,7 +8040,12 @@ export class Player {
       hairColor: HAIR_COLORS[this.world.settings.hairIndex ?? 1]?.hex,
       build: this.world.settings.build,
       species: this.world.settings.species, face: this.world.settings.face,
+      // …and the hood, for the reason written at the constructor's copy of
+      // this call: a body rebuilt by a revive has to come back wearing what
+      // the player chose, and this is the only line that can say so.
+      hood: this.world.settings.wardrobe?.hood,
     });
+    this.hood = this.world.settings.wardrobe?.hood ?? 'none';
     this.rig = built.rig;
     this.palette = built.palette;
     this.built = built;          // _makeCloak needs robeSkirt on a respawn too

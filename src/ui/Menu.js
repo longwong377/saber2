@@ -8,7 +8,7 @@
 import * as THREE from 'three';
 import { SABER_COLORS, HILT_STYLES, Saber } from '../game/Saber.js';
 import { ROBE_COLORS, buildJedi, SPECIES, FACE_PRESETS, speciesOf,
-         HAIR_STYLES, BEARD_STYLES } from '../game/Bodies.js';
+         HAIR_STYLES, BEARD_STYLES, HOOD_CUTS, attachHood } from '../game/Bodies.js';
 import { BipedAnimator, limbScale } from '../game/Rig.js';
 // Player.js imports SKIN_TONES and HAIR_COLORS from this file, so this edge
 // closes a cycle. It is safe and it is checked: nothing here reads a Player
@@ -1046,7 +1046,7 @@ function disposeGarment(g) {
 export function applyWardrobe(world, s = DEFAULT_SETTINGS) {
   if (!world || !world.scene) return 0;
   const w = wardrobeOf(s.wardrobe);
-  const key = JSON.stringify([w.cape, w.tabard, w.sash, s.robeCut]);
+  const key = JSON.stringify([w.cape, w.tabard, w.sash, w.hood, s.robeCut]);
   let n = 0;
   for (const p of world.players || []) {
     if (!p || p.isRemote || p.isLocal === false || !p.built || !p.rig || !p.palette) continue;
@@ -1061,7 +1061,16 @@ export function applyWardrobe(world, s = DEFAULT_SETTINGS) {
      * down 287 particles of cloth and build the same 287 again.
      */
     if (p._wardrobeKey === undefined) {
-      p._wardrobeKey = JSON.stringify([WARDROBE.cape, WARDROBE.tabard, WARDROBE.sash, p.robeCut ?? s.robeCut]);
+      /* `p.hood`, not `WARDROBE.hood`: the player's body is BUILT wearing the
+       * hood it was spawned with (Player passes `settings.wardrobe.hood` to
+       * buildJedi, because a hood is geometry on the head bone and not cloth
+       * hung on afterwards), so the seed has to say what is on the head rather
+       * than what the shipped default is. Seeded with the default instead,
+       * every deploy in a hood would tear the hood off and build the same one
+       * again — and every deploy WITHOUT one would rebuild nothing, which is
+       * the case that hid this: `none` and the default agree. */
+      p._wardrobeKey = JSON.stringify([WARDROBE.cape, WARDROBE.tabard, WARDROBE.sash,
+        p.hood ?? WARDROBE.hood, p.robeCut ?? s.robeCut]);
     }
     if (p._wardrobeKey !== key) {
       p._wardrobeKey = key;
@@ -1091,6 +1100,22 @@ export function applyWardrobe(world, s = DEFAULT_SETTINGS) {
         tabard: w.tabard, tabardMaterial: tmat,
       });
       if (p.cloak) p.cloak.outer = p.skirt || null;
+      /*
+       * AND THE HOOD, which is the one piece here that is not cloth.
+       *
+       * `attachHood` takes what `buildJedi` returned rather than a rig,
+       * because it needs the over-robe material and the scale the HEAD was
+       * authored at, and neither is on the rig — `rig.scale` is the BODY's,
+       * and the two differ by 1.85 on the small-folk row. It is idempotent by
+       * construction: it removes and disposes whatever hood is already on the
+       * head before it builds, so the only thing this seam has to get right is
+       * calling it when the choice changed, which the key above decides.
+       *
+       * `p.hood` is recorded so the seeding above can tell what the body was
+       * built wearing. Nothing else reads it.
+       */
+      attachHood(p.built, w.hood);
+      p.hood = w.hood;
     }
     tintWardrobe(p.built, w, { skirt: p.skirt, cape: p.cloak });
     n++;
@@ -3918,6 +3943,15 @@ export class Menu {
     this._wardrobeCards('tabard-list', 'h-tabard', 'tabard', TABARD_CUTS);
     this._wardrobeTones('tabard-tone-list', 'tabardTone', 'over');
     this._wardrobeTones('tunic-tone-list', 'tunicTone', 'inner');
+    /* THE HOODS, which is the row this whole workstream was asked for: "I want
+     * hoods, wearable hoods that go over your head, a few different kinds,
+     * they should look really cool". Built out of HOOD_CUTS exactly as the
+     * three rows above are built out of their own tables, so a fifth hood is a
+     * row in src/game/Bodies.js and nothing here. It sits directly under the
+     * cape because the two are one garment in every reference — a travelling
+     * cloak's hood IS its collar — and because they are the two pieces that
+     * change the outline of the figure rather than its colour. */
+    this._wardrobeCards('hood-list', 'h-hood', 'hood', HOOD_CUTS);
     this._wardrobeCards('sash-list', 'h-sash', 'sash', SASH_CUTS);
     this._wardrobeTones('sash-tone-list', 'sashTone', 'trim');
     this._wardrobeTones('boot-tone-list', 'bootTone', 'leather');
@@ -4441,6 +4475,13 @@ export class Menu {
           build: this.s.build,
           species: this.s.species,
           face: this.s.face,
+          /* The hood is a BUILD argument and not a garment hung on afterwards,
+           * because it is rigid geometry on the head bone rather than cloth —
+           * see HOOD_CUTS in Bodies.js. `_wear` calls `_refreshPreview(true)`,
+           * which is a full rebuild, so picking one shows it immediately; the
+           * live bodies in a running world are re-hooded by `applyWardrobe`
+           * instead, which does not have the luxury of rebuilding the figure. */
+          hood: wardrobeOf(this.s.wardrobe).hood,
           scale: 1,
         });
         p.figure = built;
