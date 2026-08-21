@@ -60,9 +60,16 @@ export function boxTopAt(box, x, z, radius) {
  *
  * So a box may declare `userData.climb`: the height, in metres above the feet,
  * at which THAT box stops being a floor. Nothing else changes — a wall, a
- * crate, a hull, a standing trunk all keep the one rule — and a body that
- * cannot climb (see `stepUp` callers passing a smaller number) is unaffected,
- * because the allowance is only ever taken as the LARGER of the two.
+ * crate, a hull, a standing trunk all keep the one rule.
+ *
+ * THE ALLOWANCE IS THE LARGER OF THE TWO, always, and this sentence used to
+ * claim both that and that a caller passing a smaller `stepUp` would be
+ * unaffected. Both cannot be true. The larger wins: a box that says it is
+ * climbable is making a statement about ITSELF — this is a log, you get over a
+ * log — and a caller with a shorter step does not make the log taller. Every
+ * caller passes `STEP_UP` today, so the question is currently theoretical, and
+ * a comment that answers a theoretical question two ways is how the next
+ * reader gets it wrong.
  *
  * @param {object|null} terrain   anything with height(x, z)
  * @param {Array}  boxes  static boxes; pass a pre-filtered short list if you have one

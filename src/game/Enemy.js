@@ -29,7 +29,12 @@ import { BOLT_COLORS } from './Bolts.js';
 import { weather } from '../world/Scenery.js';
 import { clamp, lerp, damp, smoothstep, makeRng, TAU, dampVec } from '../engine/MathUtil.js';
 import { POWER_COST } from './Powers.js';
-import { senseDanger, stepReaction, findCasualty, startDrag, GRENADE } from './Reactions.js';
+/* `findCasualty` and `startDrag` are NOT imported here: the drag is a
+ * commander's decision and `CommandDirector.steer` is where it is taken. They
+ * were on this line for a while and called by nothing in the file, which is the
+ * dead field this session put back on the clone trooper for the opposite
+ * reason — see `_maybeGrenade`. */
+import { senseDanger, stepReaction, GRENADE } from './Reactions.js';
 import { audio } from '../engine/Audio.js';
 
 /**

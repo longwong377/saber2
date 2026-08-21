@@ -506,11 +506,24 @@ export async function run({ check, assert }) {
     /**
      * THE BUDGET CLAUSE, and it is not a formality: `senseDanger` runs on every
      * body every frame for the whole life of the game, and the overwhelming
-     * majority of those frames have no grenade in the world at all. It has to
-     * cost nothing measurable on that path or it is a tax on every fight in
-     * order to pay for a rare one.
+     * majority of those frames have no grenade in the world at all.
+     *
+     * IT IS COUNTED, NOT TIMED, and the first version of this check was timed —
+     * a 12 ms-a-frame bound that failed at 19 to 30 ms whenever the box was
+     * busy and passed at 7 when it was quiet, on identical code. That is a
+     * check measuring the machine (HANDOFF §2.6): this gate runs a hundred and
+     * twenty suites, several of them driving browsers, and a wall clock inside
+     * one of them is a coin toss.
+     *
+     * What the quiet path is supposed to cost is ONE `list.length` test per
+     * body per frame and nothing else. So the instrument counts the calls that
+     * are not that: the nearest-threat search, which walks the field, and the
+     * decision, which walks the enemy list. Both must be exactly zero with an
+     * empty field, and both must be non-zero the moment a grenade is thrown —
+     * or the check is passing because the system is switched off.
      */
     const { world, input } = await boot();
+    const R = await import('../../src/game/Reactions.js');
     const p = world.player;
     for (let i = 0; i < 24; i++) {
       const x = p.position.x - 12 + i, z = p.position.z - 14;
@@ -518,16 +531,32 @@ export async function run({ check, assert }) {
     }
     for (let i = 0; i < 30; i++) world.update(1 / 60, input);
     assert(world.grenades.list.length === 0, 'the field is not empty, so this measures the wrong path');
-    const t0 = Date.now();
-    for (let i = 0; i < 120; i++) world.update(1 / 60, input);
-    const quiet = Date.now() - t0;
+
+    /* COUNTED THROUGH THE SHIPPED OBJECT: `nearest` is the field's own method
+     * and the only way into the expensive half of `senseDanger`. */
+    const real = world.grenades.nearest.bind(world.grenades);
+    let searches = 0;
+    world.grenades.nearest = (...a) => { searches++; return real(...a); };
     const bodies = world.enemies.filter((e) => !e.dead).length;
-    /* An empty field is one `list.length` test per body per frame. The bound is
-     * deliberately loose — this box is shared and headless — and its job is to
-     * catch a scan of the world creeping into the quiet path, not to police
-     * milliseconds. */
-    assert(quiet / 120 < 12,
-      `${(quiet / 120).toFixed(2)} ms a frame with ${bodies} bodies and no grenade on the field`);
-    return `${bodies} bodies, ${(quiet / 120).toFixed(2)} ms/frame with an empty field`;
+    const FRAMES = 120;
+    for (let i = 0; i < FRAMES; i++) world.update(1 / 60, input);
+    const quiet = searches;
+    assert(quiet === 0,
+      `${quiet} nearest-threat searches over ${FRAMES} frames with ${bodies} bodies and an empty field `
+      + '— the quiet path is supposed to be one length test per body');
+
+    /* AND THE OTHER HALF: it is zero because there is nothing there, not
+     * because nothing is looking. */
+    searches = 0;
+    const at = new THREE.Vector3(p.position.x, p.position.y, p.position.z - 12);
+    at.y = world.terrain.height(at.x, at.z);
+    world.grenades.throw(at.clone().setY(at.y + 8), at, { team: 1 });
+    for (let i = 0; i < 20; i++) world.update(1 / 60, input);
+    assert(searches > 0,
+      'a live grenade on the field and not one body looked for it — the quiet path is cheap because '
+      + 'the whole system is asleep');
+    world.grenades.nearest = real;
+    return `${bodies} bodies, ${quiet} searches over ${FRAMES} empty frames, ${searches} in the 20 `
+      + 'after a grenade landed';
   });
 }

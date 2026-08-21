@@ -370,9 +370,12 @@ export class GrenadeField {
   /**
    * THE NEAREST LIVE THREAT TO THIS BODY, or null.
    *
-   * `team` is the body's own: a soldier reacts to a grenade whoever threw it,
-   * INCLUDING one of his own side's that has been thrown back at him, which is
-   * the second half of what makes throwing one back a real decision.
+   * IT DOES NOT TAKE A SIDE, and that is deliberate rather than an omission:
+   * a soldier reacts to a grenade whoever threw it, including one of his own
+   * army's that has just been thrown back at him — which is the second half of
+   * what makes throwing one back a real decision. An earlier version of this
+   * comment described a `team` parameter that the signature never had, which
+   * is the same defect as a field nothing reads, written the other way round.
    */
   nearest(position, within = NOTICE) {
     let best = null, bestD = within;
@@ -661,7 +664,25 @@ export function stepReaction(body, dt, ctx) {
  * also the only reaction with no clock: he stops when the casualty is on his
  * feet, when the ground he is heading for is behind him, or when he is hit.
  */
-const DRAG = { reach: 1.4, speed: 0.34, safe: 9, look: 11 };
+/** `haul` is the strength `Ragdoll.suspend` drives the casualty's chest at.
+ *  Far gentler than a Force grip's 12: this is a man with a fistful of collar,
+ *  and at 12 the body arrives ahead of the person pulling it. */
+/**
+ * `speed` is the fraction of a walk the pair move at and `haul` is the
+ * strength `Ragdoll.suspend` drives the casualty's chest at.
+ *
+ * BOTH WENT UP WHEN THE DRAG STOPPED WORKING BY ACCIDENT. While the body was
+ * being shoved along by its own collision capsule (see `stepDrag`, and the
+ * `dragTo` that never existed) the casualty travelled rigidly at whatever pace
+ * the dragger walked; hauled properly through the joint solve it lags, which
+ * is what it should look like and is also slower. Measured over the same eight
+ * seconds: 2.38 m at 0.34 and 3.6 m at 0.45.
+ *
+ * `haul` is far gentler than a Force grip's 12 on purpose — this is a man with
+ * a fistful of collar, and at 12 the body arrives ahead of the person pulling
+ * it.
+ */
+const DRAG = { reach: 1.4, speed: 0.45, safe: 9, look: 11, haul: 4.2 };
 /** How long a claim on a casualty survives its claimant. See `startDrag`. */
 export const DRAG_LEASE = 0.5;
 /** How hurt a man has to be before somebody goes back for him. See
@@ -750,12 +771,38 @@ function stepDrag(body, dt, ctx, R) {
   body.wish.normalize();
   body.speed = (body.A?.speed ?? 4) * DRAG.speed;
   body.crouch = 0.45;
+  /**
+   * AND THE BODY COMES WITH HIM — through `Ragdoll.suspend`, which is the
+   * shipped way to move a limp body and the same call `Player`'s Force grip
+   * uses.
+   *
+   * THIS LINE READ `c.actor?.dragTo?.(c.position)` AND `dragTo` DOES NOT
+   * EXIST. One grep hit in the whole repository, and it was the call site: the
+   * optional chain swallowed it and the drag appeared to work, because
+   * `Enemy._syncBody` teleports the collision capsule to `this.position` every
+   * frame and the capsule shoves the ragdoll along behind it. That is this
+   * project's signature defect — a missing thing answered with a plausible
+   * default (HANDOFF §2.3) — and it had a consequence you could see: measured
+   * over a 2.60 m drag, the man stood up 1.90 m from where the ragdoll actually
+   * lay, because `Enemy.recover` puts a body where its bones are and the bones
+   * were being dragged by accident rather than on purpose.
+   *
+   * `suspend` drives the chest and lets the joints carry the rest, so the limbs
+   * trail — which is also what makes it look like a man being pulled rather
+   * than a second man walking.
+   */
   _v2.subVectors(body.position, c.position).setY(0);
   const gap = _v2.length();
-  if (gap > 0.9) {
-    _v2.normalize().multiplyScalar(gap - 0.9);
-    c.position.add(_v2);
-    c.actor?.dragTo?.(c.position);
+  if (gap > DRAG.reach * 0.65) {
+    _v3.copy(body.position).addScaledVector(_v2.normalize(), -DRAG.reach * 0.65);
+    _v3.y = c.position.y;
+    if (!c.actor?.suspend?.(_v3, dt, DRAG.haul)) {
+      /* No ragdoll to drive — a stand-in in a check, or a body whose actor has
+       * gone. The capsule still moves, which is the old behaviour and is
+       * better than the drag silently doing nothing. */
+      c.position.addScaledVector(_v2, gap - DRAG.reach * 0.65);
+    }
+    c.actor?.centre?.(c.position);
   }
   return true;
 }
@@ -775,7 +822,12 @@ export function senseDanger(body, dt, ctx) {
    * IS the feature, which cannot be measured by clearing `reaction` every
    * frame (that leaves the body mid-leap with its velocity already spent). */
   if (body.noReact) return;
-  if (!field || !field.list.length) { body._dangerT = 0; return; }
+  /* `_sawG` GOES WITH IT. Clearing only the clock left every body on the field
+   * holding a pointer to the last grenade that went off, for the rest of its
+   * life — a retained reference to a disposed object, and worse, a body whose
+   * `_sawG` still matches would skip its own reaction time if that object were
+   * ever reused. */
+  if (!field || !field.list.length) { body._dangerT = 0; body._sawG = null; return; }
   const g = field.nearest(body.position, NOTICE);
   if (!g || g.dead) { body._dangerT = 0; body._sawG = null; return; }
   if (body._sawG !== g) {
@@ -795,8 +847,14 @@ export function senseDanger(body, dt, ctx) {
   /* THE SHOUT. The first man to act on it yells, and everybody of his side who
    * can hear him has their own lag cut to `LAG.heard`. One shout per grenade,
    * so a squad of eight does not produce eight. */
-  if (!g._shouted) {
-    g._shouted = true;
+  /* ONE SHOUT PER SIDE, NOT PER GRENADE. `_shouted` was a single latch on the
+   * object, so a grenade landing between two lines cued whichever of them
+   * noticed first and left the other one standing — while the comment claimed
+   * "everybody of his side". A Set of team numbers is the same rule actually
+   * expressed: each side gets its own warning, once. */
+  if (!g._shouted) g._shouted = new Set();
+  if (!g._shouted.has(body.team)) {
+    g._shouted.add(body.team);
     const list = ctx?.enemies || body.world?.enemies || [];
     const t = ctx?.time ?? 0;
     for (const o of list) {
