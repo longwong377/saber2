@@ -2861,7 +2861,85 @@ export class CommandDirector extends WaveDirector {
      * that army came from, which is the whole reason allies do not trivialise
      * a mode that never had them. */
     const area = this.campaign ? this.area.budget : 1;
-    return Math.floor(super.budgetFor(wave) * area * this.allyScale());
+    return Math.floor(super.budgetFor(this.rampWave(wave)) * area * this.allyScale());
+  }
+
+  /**
+   * ══ WHICH WAVE OF THE ADVANCE THIS IS, AND IT IS NOT THE RUN'S COUNTER ══
+   *
+   * **A fresh ten-man line was wiped out in one wave at engagement 3.** 0 of 10
+   * on five seeds and on twenty, in about 110 seconds, before and after every
+   * attrition constant this mode has been tuned with — and tuning engagement 1
+   * cannot reach it, because what is wrong is not a constant. It is this line.
+   *
+   * `WaveDirector.budgetFor` is `4 + 2.6w + 0.65 · w^1.62`, and `w` was the
+   * RUN's wave counter. That curve is the roguelite's, and it is honest there
+   * for a stated reason: the Trial of Waves drafts a card every other wave, so
+   * a player at wave 8 is a different player from the one at wave 1 and the
+   * wave has to grow with them. **A crossing drafts nothing.** Its army grows
+   * by `AREAS[*].muster` — eleven points, then fourteen, then seventeen: two
+   * or three bodies an area against a ceiling of `MAX_STRENGTH` — and its
+   * player grows not at all.
+   *
+   * So the two curves were multiplied. Measured on the shipped numbers with a
+   * full ten-man line standing (`allyScale` 1.55):
+   *
+   *     area 1, wave 1     base 7.25 × 0.75 × 1.55 =   8
+   *     area 3, wave 8     base 43.7 × 1.10 × 1.55 =  74
+   *     area 5, wave 21    base 148.8 × 1.45 × 1.55 = 334
+   *
+   * **Forty-two times the opening wave, against the same ten men.** That is
+   * also what `tools/_linewave.mjs` was reading from the other end when it
+   * timed an opening wave at 81 s and wave 8 at 606 — one lever, seen twice
+   * (NEXT.md: "both are driven by the same quantity, how many bodies a late
+   * wave puts on the field").
+   *
+   * ── THE RAMP IS THE ADVANCE'S, SO THE COUNTER IS THE ADVANCE'S ──────────
+   *
+   * An area is an engagement: a fresh line forms up, fights its three to five
+   * waves and musters. So the wave curve runs WITHIN the area — a stage builds
+   * from its first wave to its last — and the escalation BETWEEN areas is the
+   * two dials `AREAS` already declares for it, `budget` (0.75 → 1.45) and
+   * `heavy` (0.0 → 0.45), plus the areas getting longer (3, 4, 4, 5, 5). The
+   * same shipped numbers under this rule:
+   *
+   *     area 1, wave 3 of 3      18        area 3, wave 4 of 4      35
+   *     area 2, wave 4 of 4      30        area 5, wave 5 of 5      58
+   *
+   * — a sawtooth that resets a little lower and climbs a little higher every
+   * area, which is what a five-engagement advance is, against a monotone climb
+   * to 334 that only ever described a Jedi holding twenty boon cards.
+   *
+   * `AREAS[*].budget`'s own note calls itself "a multiplier on the ordinary
+   * wave budget… the escalation curve in Waves.js is tuned for a lone Jedi",
+   * which is the correction it was written as. This makes it the ramp instead,
+   * and that is the point: TWO AUTHORITIES FOR ONE QUANTITY is HANDOFF §2.3,
+   * and here the two were not merely disagreeing, they were multiplying.
+   *
+   * DERIVED FROM THE PLAN AND NOT FROM `areaWaves`, which is the counter that
+   * would have been easy and wrong. `budgetFor` is asked about waves that are
+   * not the one being fought — `bodyLimit` asks it about `BODY_KNEE`,
+   * `conditionCost` about the wave it is pricing — so an answer that ignored
+   * its argument would make those two comparisons identities. This walks the
+   * same sum `payWave` walks one clear at a time, so a plan with fewer stages
+   * (`planStages` runs a Raid at two and a Grind at five) maps correctly and
+   * no second table exists to drift.
+   *
+   * A CONTINGENT IS UNCHANGED. It has no areas — `payWave` says so at length —
+   * so `stages` is not its ledger and the run's own counter is the only ramp it
+   * has. `theline` and `command` are the crossings.
+   */
+  rampWave(wave) {
+    if (!this.campaign) return wave;
+    let w = Math.max(1, Math.round(wave));
+    for (const st of this.stages) {
+      if (w <= st.waves) return w;
+      w -= st.waves;
+    }
+    /* Past the last stage. A crossing normally ends there, but an area whose
+     * line is not up does not clear (`_awaitLine`), so the last stage is
+     * allowed to keep climbing rather than wrapping back to its first wave. */
+    return w + this.stages[this.stages.length - 1].waves;
   }
 
   /**

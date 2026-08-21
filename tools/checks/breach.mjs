@@ -39,6 +39,11 @@ import * as THREE from 'three';
 import { GUN } from '../../src/game/Emplacement.js';
 import { clocked } from './_shared.mjs';
 
+/** How long the isolated arm below watches the gun. Long enough that the
+ *  cadence gets several bursts off at any setting this dial is likely to take,
+ *  and stated once so the rate and the message cannot disagree. */
+const SECONDS = 90;
+
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 /** Face a world direction. The same conversion `blast-door.mjs` measured off
  *  the shipped controller: `moveAxis {0,1}` at yaw 0 walks a Player to −z. */
@@ -172,45 +177,96 @@ export async function run({ check, assert }) {
       d.intermission = Infinity;
       const input = idle();
       const start = d.roster.living.length;
-      for (let f = 0; f < 60 * 90; f++) world.update(1 / 60, input);
-      return { start, left: d.roster.living.length, shots: pit.shots, taken: pit.taken };
+      /**
+       * ── WHAT THE GUN DELIVERS, AND NOT WHETHER SOMEBODY HAPPENED TO DIE ────
+       *
+       * The whole gun's output is billed to `pit` — `_fire` passes
+       * `owner: this`, which is what makes the shot legal through `canHarm` —
+       * so wrapping `damage` and testing the SOURCE tallies this emplacement
+       * and nothing else on the field. Rounds, hits and hit points are counts
+       * with distributions; a name is a threshold that one dispersion roll
+       * crosses. See the note on the assertion below.
+       *
+       * THE PROTOTYPE IS PUT BACK IN A `finally`, and the whole method rather
+       * than a field of it — HANDOFF §2.9, which is 38 checks' worth of reason.
+       */
+      const gun = { hits: 0, hp: 0, killed: 0 };
+      /* DYNAMIC, like every other import in this file and for HANDOFF §2.1's
+       * reason: a static edge from a check into the game's module graph is
+       * linked before `dom-shim` can map `three` onto `vendor/three`. */
+      const { Enemy } = await import('../../src/game/Enemy.js');
+      const real = Enemy.prototype.damage;
+      Enemy.prototype.damage = function (amount, point, source, kind, ...rest) {
+        const before = this.hp;
+        const out = real.call(this, amount, point, source, kind, ...rest);
+        if (source === pit) {
+          const took = Math.max(0, before - this.hp);
+          if (took > 0) { gun.hits++; gun.hp += took; if (this.hp <= 0) gun.killed++; }
+        }
+        return out;
+      };
+      try {
+        for (let f = 0; f < 60 * SECONDS; f++) world.update(1 / 60, input);
+      } finally { Enemy.prototype.damage = real; }
+      /* A MAN'S OWN HEALTH, off a body standing in this line rather than a
+       * number typed here (HANDOFF §2.4). It is the unit the bar below is
+       * stated in. */
+      const man = d.roster.living[0]?.body || d.roster.all[0]?.body;
+      return { start, left: d.roster.living.length, shots: pit.shots, taken: pit.taken,
+        gun, manHp: man?.maxHp ?? 0 };
     };
     const live = await arm(false);
     const off = await arm(true);
     assert(off.shots === 0, `a silenced gun fired ${off.shots} times`);
     assert(live.shots > 10,
-      `the gun fired ${live.shots} times in 90 s at a cadence of ${GUN.every} s — it is not `
+      `the gun fired ${live.shots} times in ${SECONDS} s at a cadence of ${GUN.every} s — it is not `
       + 'shooting, and a gun that cannot see out of its own wall is a silent prop');
-    assert(off.left === off.start,
-      `the control arm lost ${off.start - off.left} men with the gun silent and nothing else on the `
-      + 'field, so the live arm below is not measuring the gun');
+    assert(off.left === off.start && off.gun.hp === 0,
+      `the control arm lost ${off.start - off.left} men and ${off.gun.hp.toFixed(0)} hp with the gun `
+      + 'silent and nothing else on the field, so the live arm below is not measuring the gun');
     const lost = live.start - live.left;
     /**
-     * ONE NAME IS THE BAR, AND THE BENCH IS WHY IT IS NOT MORE.
+     * ── `lost >= 1` IS GONE, AND WHY IT HAD TO GO ────────────────────────
      *
-     * This arm is deliberately the gun ALONE — nothing else on the field, a
-     * full-health line, ninety seconds — so every point of damage it does has
-     * to kill a man from 46 hit points by itself. In a battle it does not have
-     * to: the mode lane's tally over two seeds of a real engagement puts this
-     * one emplacement at **36.9% of every point of damage that lands on the
-     * line**, second only to the whole Confederate fill, because most of its
-     * rounds are finishing men the wave has already opened.
+     * It asked a YES/NO question of a quantity that has a distribution, and it
+     * asked it of the one arm least able to answer: nothing else on the field,
+     * a full-health line, and a gun that has to kill a man from `manHp` all by
+     * itself. At `GUN.spread` over the 69 m to the muster ground the gun needs
+     * TWO hits on the same trooper to take a name, so whether this arm scored
+     * 1 or 0 was a dispersion roll — it failed one run and passed 4 of 4 on the
+     * next, on the same commit, and no setting of the cadence stops that.
+     * "The line loses nothing" and "the line loses one" were the same coin.
      *
-     * So the isolated figure UNDERSTATES the gun by design and the assertion is
-     * set against what the isolated bench can honestly see. It is a bar on the
-     * gun being a threat at all — the first cut of this file fired single
-     * rounds and measured 26 shots for 1 man, which is a thing you walk past —
-     * and the tuning is done on `_linetoll.mjs`, which can see the other 90%.
+     * WHAT REPLACES IT IS A RATE, and the argument is the one the attrition
+     * tuning arrived at from the other end: a proportion or a count over many
+     * events does not inherit the variance of one chaotic draw. This bench
+     * produces `shots · burst` rounds; every round either lands or does not,
+     * and every hit delivers `GUN.damage`. So the gun's output over the window
+     * is a sum of dozens of Bernoulli draws rather than one, and the bar is on
+     * that sum.
+     *
+     * THE UNIT IS A MAN AND THE BAR IS THE DESIGN'S OWN SENTENCE. The note on
+     * `GUN.every` says what this gun is priced to be: "a gun that takes a name
+     * every minute of sustained fire costs the player about one man to answer
+     * it and the rest of the area if they do not." One man's worth of health
+     * per minute of its own fire is that sentence as a number, taken in the
+     * health a body of this line actually carries rather than in a literal.
+     * A gun below it is scenery with a sound effect; the check does not bound
+     * it from above, because the arm above (`off`) already proves the gun is
+     * the only thing shooting and `theline.12` owns how much the LINE may lose.
      */
-    assert(lost >= 1,
-      `${live.shots} rounds over 90 s took ${lost} men off a roster of ${live.start} with nothing `
-      + 'else on the field. A gun that can be ignored is not a price, and §7 asks for a verb '
-      + 'rather than an errand.');
-    return `90 s of one emplacement against a formed-up line, nothing else on the field: `
-      + `${live.shots} rounds, ${lost} of ${live.start} names gone `
-      + `(one every ${(90 / lost).toFixed(0)} s of ITS fire alone; in a real engagement the mode `
-      + `lane's tally puts it at 36.9% of everything that hits the line); silenced, `
-      + `${off.start - off.left}`;
+    const perMin = live.gun.hp / (SECONDS / 60);
+    assert(perMin >= live.manHp,
+      `${live.shots * GUN.burst} rounds over ${SECONDS} s put ${live.gun.hits} hits and `
+      + `${live.gun.hp.toFixed(0)} hp into a formed-up line with nothing else on the field — `
+      + `${perMin.toFixed(0)} hp a minute against a body that carries ${live.manHp}. The gun is `
+      + 'priced at about one name a minute of its own fire (see GUN.every); below that it is an '
+      + 'errand, and §7 asks for a verb.');
+    return `${SECONDS} s of one emplacement against a formed-up line, nothing else on the field: `
+      + `${live.shots} bursts (${live.shots * GUN.burst} rounds), ${live.gun.hits} hits, `
+      + `${live.gun.hp.toFixed(0)} hp — ${(perMin / live.manHp).toFixed(2)} men a minute of its own `
+      + `fire, ${lost} of ${live.start} names actually down; silenced, `
+      + `${off.gun.hp.toFixed(0)} hp and ${off.start - off.left} names`;
   });
 
   /* ── 3. the twenty seconds, and what the line pays for them ───────── */

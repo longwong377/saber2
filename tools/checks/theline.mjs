@@ -954,5 +954,78 @@ export async function run({ check, assert }) {
       + 'cancels';
   });
 
+  check('theline.15 the advance ramps by its own areas, not by the roguelite\'s wave counter', async () => {
+    /**
+     * ══ WHY A FRESH TEN-MAN LINE WAS WIPED OUT IN ONE WAVE AT ENGAGEMENT 3 ══
+     *
+     * 0 of 10 on five seeds and on twenty, in about 110 seconds, before and
+     * after every attrition constant this mode has been tuned with. Tuning
+     * engagement 1 could not reach it, because what was wrong was not a
+     * constant: `budgetFor` was charging the crossing TWO escalations at once.
+     *
+     * `WaveDirector.budgetFor` grows as `w^1.62` on the RUN's wave counter, and
+     * it is honest in the mode it was written for — the Trial of Waves drafts a
+     * card every other wave, so the player at wave 8 is a different player. A
+     * crossing drafts nothing: its army grows by two or three bodies an area
+     * and its player not at all. On top of that curve the crossing then applied
+     * `AREAS[*].budget`, which is its own ramp. Wave 1 of area 1 came to 8;
+     * wave 8, the opening of engagement 3, to 74; wave 21 to 334.
+     *
+     * `CommandDirector.rampWave` is the fix and its note carries the argument.
+     * What is asserted here is the SHAPE, because the shape is the claim and a
+     * number would be this file keeping a copy of the curve (HANDOFF §2.4):
+     *
+     *   AN AREA BUILDS. Its last wave is bigger than its first — an engagement
+     *     that opens at its own hardest is not an engagement, it is an ambush.
+     *   EVERY AREA IS HARDER THAN THE ONE BEFORE IT, compared at the same
+     *     position in each, which is what `AREAS[*].budget` running 0.75 → 1.45
+     *     is for.
+     *   AND THE RUN'S COUNTER CANNOT LEAK IN. `rampWave` never answers past the
+     *     longest stage in the plan, whatever absolute wave it is handed. That
+     *     is the one property the old code could not have: it is what made wave
+     *     21 forty-two times wave 1.
+     *
+     * NOTHING IS STEPPED. This is arithmetic on a director the mode built, so
+     * it costs a boot and no game-seconds.
+     */
+    const { world, d } = await lineWorld({ seed: 4, spawn: false, start: false });
+    assert(d && d.crossing, 'the mode did not build a crossing, so it has no areas to ramp by');
+    /* THE TABLE, walked exactly as `payWave` walks it: absolute wave 1 upward,
+     * `areaIndex` moved by hand because nothing is being fought. The roster is
+     * empty and identical for every row, so `allyScale` is one constant across
+     * the whole table and what varies is the ramp alone. */
+    const table = [];
+    let w = 1;
+    for (let i = 0; i < d.stages.length; i++) {
+      d.areaIndex = i;
+      const row = [];
+      for (let j = 0; j < d.stages[i].waves; j++, w++) {
+        assert(d.rampWave(w) <= d.stages[i].waves,
+          `wave ${w} is wave ${d.rampWave(w)} of an area that is ${d.stages[i].waves} waves long — `
+          + "the run's own counter has leaked into the ramp, which is what made the last area of a "
+          + 'crossing forty-two times its first');
+        row.push(d.budgetFor(w));
+      }
+      table.push(row);
+    }
+    d.areaIndex = 0;
+    world.unload();
+
+    for (let i = 0; i < table.length; i++) {
+      const r = table[i];
+      assert(r[r.length - 1] > r[0],
+        `area ${i + 1} opens at ${r[0]} and ends at ${r[r.length - 1]} — an engagement that does not `
+        + 'build is not an engagement');
+      if (i === 0) continue;
+      assert(table[i][0] >= table[i - 1][0],
+        `area ${i + 1} opens at ${table[i][0]} against area ${i}'s ${table[i - 1][0]} — the advance `
+        + 'is meant to get harder as it crosses the ground, which is what AREAS[*].budget is');
+    }
+    const flat = table.flat();
+    const span = Math.max(...flat) / Math.min(...flat);
+    return table.map((r, i) => `area ${i + 1}: ${r.join(' ')}`).join(' · ')
+      + ` — hardest wave is ${span.toFixed(1)}× the opening (it was 42× on the run counter)`;
+  });
+
   return;
 }
