@@ -778,4 +778,74 @@ export async function run({ check, assert }) {
     return `${boxes.length} boxes on a 24 m log, worst ${worst.toFixed(2)}× the drawn wood`;
   });
 
+  check('wood: what is left standing after a cut is solid', async () => {
+    /**
+     * `NEXT.md` carried this as an open item and it understated it: "A stump
+     * gets a drawn instance and never a collider, so a lopped tree can leave a
+     * 20 m spar you walk through."
+     *
+     * `fell` clamps the cut at 92% of the trunk's height, so a blade taken high
+     * up a big tree is an ordinary, legal cut that leaves almost the whole
+     * trunk standing. Measured on the wood before the fix: a 25.1 m trunk cut
+     * at 23.1 m left a 23.1 m spar, drawn and lit and completely intangible,
+     * and the player walked from three metres short of it to 14.4 m past its
+     * axis without touching anything.
+     *
+     * The cause was one word in `_gatherRing`: it collected `STANDING` trees
+     * and a felled tree is `DOWN` from the moment it starts to topple —
+     * including the part of it that never went anywhere.
+     */
+    const { bootWorld, idleInput } = await import('./_coop.mjs');
+    const { world } = await bootWorld({
+      level: 'wood', settings: { mode: 'waves', quality: 'low', instantSpawn: true },
+    });
+    const f = world.forest, p = world.player;
+    const input = idleInput();
+    const S = 15, X = 0, Z = 1, H = 3, CUT = 11;
+    const step = (n, drive = input) => {
+      for (let i = 0; i < n; i++) { p.hp = p.maxHp; p.alive = true; world.update(1 / 60, drive); }
+    };
+    /* The tallest trunk within reach, cut as high as the clamp allows. */
+    let pick = -1, best = 0;
+    for (let i = 0; i < f.count; i++) {
+      const d = Math.hypot(f.data[i * S + X] - p.position.x, f.data[i * S + Z] - p.position.z);
+      if (d > 26 || f.data[i * S + H] < best) continue;
+      best = f.data[i * S + H]; pick = i;
+    }
+    assert(pick >= 0, 'no tree within twenty-six metres of the player');
+    const h = f.data[pick * S + H];
+    f.fell(pick, 1, 0, h * 0.92);
+    step(60 * 6);
+    const cut = f.data[pick * S + CUT];
+    assert(cut > 6, `the cut clamped to ${cut.toFixed(1)} m, so this measures a kerb and not a spar`);
+    assert(f.stumpMesh.count > 0, 'nothing is drawn where the standing part of the trunk is');
+
+    const x = f.data[pick * S + X], z = f.data[pick * S + Z];
+    /* NEAR IT FIRST: the colliders are a ring around the bodies on the field,
+     * so a column test taken from across the wood measures the ring's radius. */
+    p.position.set(x - 4, world.terrain.height(x - 4, z) + 0.2, z);
+    p.velocity.set(0, 0, 0);
+    step(40);
+    const box = world.physics.staticBoxes.find((b) => b.userData?.tree === pick && b.userData?.stump);
+    assert(box, `a ${cut.toFixed(1)} m spar is drawn where the trunk was and nothing solid is under it`);
+    assert(Math.abs(box.halfExtents.y * 2 - cut) < 0.5,
+      `the stump's collider is ${(box.halfExtents.y * 2).toFixed(1)} m against ${cut.toFixed(1)} m of `
+      + 'drawn wood — a box the height of the whole tree is the invisible wall this file keeps deleting');
+
+    /* AND THE READING THAT MATTERS: walk into it. */
+    const into = new THREE.Vector3(1, 0, 0);
+    p.position.set(x - 3, world.terrain.height(x - 3, z) + 0.2, z);
+    p.velocity.set(0, 0, 0);
+    p.aimDir.copy(into);
+    if (p.camera) { p.camera.yaw = Math.atan2(-into.x, -into.z); p.camera.pitch = 0; }
+    const wish = { x: 0, y: 1 };
+    const drive = { ...input, moveAxis: (o) => { if (o) { o.x = wish.x; o.y = wish.y; return o; } return { ...wish }; } };
+    step(60 * 4, drive);
+    const past = p.position.x - x;
+    assert(past < 0,
+      `the player walked ${past.toFixed(2)} m past the axis of a ${cut.toFixed(1)} m spar — straight `
+      + 'through it');
+    return `a ${h.toFixed(1)} m trunk cut at ${cut.toFixed(1)} m leaves a solid spar `
+      + `(${(box.halfExtents.y * 2).toFixed(1)} m of collider); the player stopped ${(-past).toFixed(2)} m short`;
+  });
 }

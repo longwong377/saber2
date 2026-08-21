@@ -97,6 +97,15 @@ export const STANDING = 0, FALLING = 1, DOWN = 2;
  * so a player brushing past the corner of a box catches on nothing. 0.82 is
  * what `_standBox` has always used and its note is the long form.
  */
+/**
+ * HOW MUCH OF A TRUNK HAS TO BE LEFT BEFORE THE STUMP IS AN OBSTACLE, in
+ * metres. Below this it is a kerb: `STEP_UP` is 0.45, so anything under about
+ * half a metre is something a body walks over without noticing and a collider
+ * there would be a trip hazard nobody can see. Above it, it is a post — and a
+ * cut taken high up a big trunk can legally leave twenty-three metres of one.
+ */
+const STUMP_SOLID = 0.55;
+
 const TAPER = 0.52;
 const SQUARE_FIT = 0.82;
 
@@ -472,7 +481,22 @@ export class Forest {
     return (Math.floor(x / CELL) + 4096) * 8192 + (Math.floor(z / CELL) + 4096);
   }
 
-  /** Standing trees within `r` of (x, z), into `out`. */
+  /**
+   * Standing trees within `r` of (x, z) — AND THE STUMPS OF FELLED ONES.
+   *
+   * `NEXT.md` had the second half written down as an open item: "A stump gets a
+   * drawn instance and never a collider, so a lopped tree can leave a 20 m spar
+   * you walk through." Measured on the wood before this line existed: a 25.1 m
+   * trunk cut at 23.1 m — `fell` clamps the cut at 92% of the height, so that
+   * is a legal and ordinary cut — left a 23.1 m spar drawn, standing, and
+   * completely intangible. The player walked from three metres short of it to
+   * 14.4 m past its axis without touching anything.
+   *
+   * The cause is one word: this gathered `STATE !== STANDING` and returned, and
+   * a felled tree is `DOWN` from the moment it starts to topple — including the
+   * part of it that never went anywhere. `STUMP_SOLID` is the height at which
+   * what is left is an obstacle rather than a kerb.
+   */
   _gatherRing(x, z, r, out) {
     const D = this.data;
     const i0 = Math.floor((x - r) / CELL), i1 = Math.floor((x + r) / CELL);
@@ -484,7 +508,8 @@ export class Forest {
         if (!cell) continue;
         for (const i of cell) {
           const k = i * F.N;
-          if (D[k + F.STATE] !== STANDING) continue;
+          const standing = D[k + F.STATE] === STANDING;
+          if (!standing && !(D[k + F.STATE] === DOWN && D[k + F.CUT] >= STUMP_SOLID)) continue;
           const dx = D[k + F.X] - x, dz = D[k + F.Z] - z;
           if (dx * dx + dz * dz <= r2) out.add(i);
         }
@@ -497,7 +522,12 @@ export class Forest {
     const D = this.data, k = i * F.N;
     const phys = this.world.physics;
     if (!phys || !phys.addStaticBox) return null;
-    const hh = Math.min(D[k + F.H], COLLIDER_H) * 0.5;
+    /* A FELLED TREE'S BOX IS ITS STUMP, not its old height: the trunk above the
+     * cut is lying somewhere else and has colliders of its own (`_layLog`).
+     * See `_gatherRing` for the 23.1 m spar that made this necessary. */
+    const stump = D[k + F.STATE] !== STANDING;
+    const tall = stump ? D[k + F.CUT] : Math.min(D[k + F.H], COLLIDER_H);
+    const hh = tall * 0.5;
     /* 0.82 of the butt radius, not 1.0: the drawn trunk is a six-sided lathe
      * tapering to 0.52 r at the top, and a square whose half-width is the butt
      * radius circumscribes it by 41% at the corners — which is the difference
@@ -506,7 +536,13 @@ export class Forest {
     return phys.addStaticBox(
       new THREE.Vector3(D[k + F.X], D[k + F.Y] + hh, D[k + F.Z]),
       new THREE.Vector3(w, hh, w), undefined,
-      { friction: 0.9, userData: { tree: i, forest: this } });
+      /* A SHORT STUMP IS SOMETHING YOU STEP OVER, on the same rule a felled log
+       * carries — see CLIMB_LOG and `Support.js`. A tall one is a post and gets
+       * no `climb`, because clambering up a twenty-metre spar is not a thing a
+       * man does by walking into it. */
+      { friction: 0.9,
+        userData: { tree: i, forest: this, stump,
+          climb: stump && tall <= CLIMB_LOG ? CLIMB_LOG : undefined } });
   }
 
   /** Bring the live set into line with where the bodies are. */
@@ -524,7 +560,13 @@ export class Forest {
       }
     }
     for (const [i, box] of this.live) {
-      if (want.has(i)) continue;
+      /* A TREE THAT HAS BEEN FELLED SINCE ITS BOX WAS BUILT NEEDS A NEW ONE.
+       * The box is the whole trunk while it stands and the stump once it is
+       * down — see `_standBox` — and `want` holds the index in both cases, so
+       * without this test the collider a tree had while standing survives the
+       * felling and the invisible wall is back, twenty-five metres of it. */
+      const stump = this.data[i * F.N + F.STATE] !== STANDING;
+      if (want.has(i) && !!box.userData?.stump === stump) continue;
       phys.removeStaticBox(box);
       this.live.delete(i);
     }
