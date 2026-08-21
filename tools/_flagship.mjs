@@ -210,6 +210,26 @@ function dutyInput(world, opts = {}) {
       ax += b.position.x; az += b.position.z; n++;
     }
     const anchor = n ? { x: ax / n, z: az / n } : { x: 0, z: 0 };
+    /**
+     * …AND `standOff` PUTS THE JEDI ON THE FIELD BUT NOT IN THE LINE.
+     *
+     * The fourth arm exists to separate two explanations of the same result.
+     * Step 2 measures a line that loses seven men with a Jedi in it and none
+     * without, and nothing in the first three arms tells "a Jedi COSTS the
+     * line men" apart from "a Jedi drags the fight out, and the men standing
+     * near him are standing in fire that was aimed at him".
+     *
+     * So: a player who is alive, armed, fighting whatever reaches him, and a
+     * hundred metres away. Same script, same guard, same keep-alive — the only
+     * thing that moves is where he holds station. If the line still loses its
+     * seven, presence is not what is killing them.
+     *
+     * The offset is a fixed bearing rather than a random one so the arm is as
+     * repeatable as the other three, and it is applied to the ANCHOR rather
+     * than clamped on the player, so `LEASH` keeps measuring distance from the
+     * station the script is actually holding.
+     */
+    if (opts.standOff) { anchor.x += opts.standOff; }
 
     /* The nearest living HOSTILE, and the team test is not optional: in Command
      * your own troopers are `Enemy`s in `world.enemies` with another team on
@@ -511,11 +531,19 @@ function watchBlade(world) {
   return tally;
 }
 
-const ARMS = ['none', 'blade', 'dead'];
+/**
+ * `far` IS THE CONTROL THE FIRST THREE ARMS DO NOT HAVE. See `standOff` in
+ * `dutyInput`: a Jedi on the field, armed and fighting, a hundred metres from
+ * the line. It separates the cost of PRESENCE from the cost of a player
+ * existing for the horde to walk toward.
+ */
+const ARMS = ['none', 'blade', 'dead', 'far'];
+const STAND_OFF = 100;
 
 async function runArm(arm, seed, engagements) {
   const world = await commandWorld(seed, { player: arm !== 'none' });
-  const input = arm === 'none' ? idleInput() : dutyInput(world);
+  const input = arm === 'none' ? idleInput()
+    : dutyInput(world, arm === 'far' ? { standOff: STAND_OFF } : {});
   const blade = arm === 'none' ? null : watchBlade(world);
   const dis = arm === 'dead' ? disarm(world) : null;
   if (arm === 'dead') {
@@ -694,11 +722,18 @@ async function step2() {
   const verdict = {};
   for (const k of ['fallen', 'areasTaken', 'foeKilled', 'waveClears', 'morale', 'gameSeconds']) {
     const none = mean('none', k), blade = mean('blade', k), dead = mean('dead', k);
+    const far = mean('far', k);
     const span = blade - none;
     verdict[k] = {
       none: +none.toFixed(2), blade: +blade.toFixed(2), dead: +dead.toFixed(2),
+      far: +far.toFixed(2),
       sdNone: +sd('none', k).toFixed(2), sdBlade: +sd('blade', k).toFixed(2),
-      sdDead: +sd('dead', k).toFixed(2),
+      sdDead: +sd('dead', k).toFixed(2), sdFar: +sd('far', k).toFixed(2),
+      /* WHERE `far` SITS ON THE SAME AXIS, and it is the number the fourth arm
+       * was added for: near 1 means a Jedi a hundred metres away costs the line
+       * what a Jedi standing in it costs, so PRESENCE is not the mechanism;
+       * near 0 means it is. */
+      farPosition: Math.abs(span) < 1e-9 ? null : +((far - none) / span).toFixed(2),
       position: Math.abs(span) < 1e-9 ? null : +((dead - none) / span).toFixed(2),
       nearer: Math.abs(span) < 1e-9 ? 'arms are identical'
         : (Math.abs(dead - blade) < Math.abs(dead - none) ? 'BLADE' : 'NONE'),
