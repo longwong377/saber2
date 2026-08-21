@@ -249,6 +249,43 @@ export async function run({ check, assert, THREE }) {
    * fixed. Bounding the damage must never be able to silence the defect.
    */
   const timed = (async () => {
+    /**
+     * AFTER THE CENSUS, NOT BESIDE IT — and this is a measurement, not tidying.
+     *
+     * Both fixtures are module-scope IIFEs, so they used to build their Worlds
+     * CONCURRENTLY: `built` spawns one of every archetype into an `ultra`
+     * colosseum while this one loads its own colosseum and stands a player on
+     * it. Measured, with the two overlapping:
+     *
+     *     player [0.3, 724.3, -2.9]      camera follows it to 722 m
+     *     the twenty acolytes            still on the floor at y = -0.4
+     *     nearest body to the camera     722.4 m against a 30 m cloth cut
+     *
+     * — so every garment was gated off by distance and this suite timed an
+     * empty loop, which is the SECOND time that has happened here and the
+     * reason the camera line below exists at all.
+     *
+     * IT IS A KNIFE-EDGE AND THE COUNT OF ARCHETYPES IS THE KNIFE. It appeared
+     * the day the roster went from 36 entries to 37, and it is not that
+     * archetype's doing: censusing `gunship` ALONE leaves the player on the
+     * floor and censusing `conscript` alone, or `atte` alone, puts it at 720 m.
+     * What changes is the ORDER two Worlds interleave in, and one of them then
+     * lifts the other's player 724 m in the 400-frame loop. Two Worlds loading
+     * the same level side by side is not enough on its own — driven directly,
+     * two concurrent `loadLevel('colosseum')` calls give two independent
+     * terrains, two independent physics worlds and two players at y = -0.4.
+     *
+     * WHAT IS FIXED HERE IS THE SUITE, AND WHAT IS NOT IS WRITTEN DOWN: the
+     * mechanism that lifts the body is not identified, and until it is, this
+     * is a hazard for any check that holds two Worlds at once. §2.7 of
+     * HANDOFF.md is the same file learning the same lesson from the other end
+     * — "the two suites that hold the most Worlds ALIVE AT ONCE" — and the
+     * answer there was the same one: stop holding them at once.
+     *
+     * One `await`. Serialised, this suite is 6/6 on every run; parallel it is
+     * 5/6 on every run.
+     */
+    await built;
     const { World } = await import('../../src/game/World.js');
     const { DEFAULT_SETTINGS } = await import('../../src/ui/Menu.js');
     const { enemyRng } = await import('../../src/game/Enemy.js');
