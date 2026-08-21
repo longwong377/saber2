@@ -1177,3 +1177,38 @@ honest options are roughly: make leaving cost something the player feels
 immediately; make standing pay something that scales with how many men are
 beside you; or accept §8's four playstyles and let the Vanguard be the build
 that leaves. Nobody has chosen, and no further instrument work will choose it.
+
+### A dead commander lifts every standing order, and stops the watchdog
+
+`holdFire` is not a flag — `_troops` pushes every trooper's fuse back up every
+frame, so it is a POKE — and `World.update` gates `director.update` on
+`!this.over`. Put together: **the frame a run ends, every standing order lifts
+and the casualty watchdog stops looking.** Measured on real worlds:
+
+    HOLD FIRE, 45 s    mortal commander: run over at 32.7 s, 43-121 bolts out, ALL of it after 32.7 s
+                       commander held:   0 bolts out, 10/10 standing
+    TAKE COVER, 90 s   mortal commander: over at 52.9 s, 21 rescues, 2 names lost
+                       commander held:   no end, 56 rescues, 0 names lost
+
+Two things follow. The small one is that two `command` checks were red for this
+and are now driven with the commander's hp held, the way `_linetoll.mjs` already
+did. The large one is that **it is not only a post-run artefact**: the TAKE COVER
+pair is a mid-fight reading, and a line whose commander has fallen loses its
+rescues and its cover order along with him. Whether that is right is a design
+question — `census`'s own note argues that losing your general should cost you
+your orders and not the battle — but nothing anywhere says the watchdog goes
+with him, and the watchdog is what stops a trooper being quietly retired.
+
+### BREACH and attrition are one dial and want one decision
+
+`breach.mjs`'s "twenty seconds at the plate, and the line pays for every one of
+them" is red: the line lost nothing in the 23.2 s the player spent cutting. That
+is the mirror image of the attrition work — the emplacement's cadence was halved
+to stop the line dying, and halving it is exactly what made standing away from
+the line free.
+
+They are the same constant pulled from opposite ends, and tuning either one
+alone will keep breaking the other. Whoever settles the attrition target should
+settle this in the same pass: §7 wants BREACH to cost the line something real
+while the Jedi is away from it, and §6 wants the line to survive an engagement,
+and one number cannot be chosen for one of those and checked against the other.
