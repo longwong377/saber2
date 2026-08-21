@@ -408,7 +408,7 @@ export async function run({ check, assert }) {
       + `· thinnest opening ${worst[0]} at ${worst[1]} bodies`;
   });
 
-  check('theline.12 the ground under the run is generated around a front', async () => {
+  check('theline.13 the ground under the run is generated around a front', async () => {
     /**
      * FLAGSHIP §12: "generate the battle, then the ground that explains it."
      * `src/world/Battlefield.js` builds the battle — a reason from a table of
@@ -685,27 +685,34 @@ export async function run({ check, assert }) {
      *
      * Run-to-run spread on this fixture is enormous and it is not the harness:
      * a single engagement is one composed wave meeting one formation, and one
-     * grenade or one Hailfire arriving early is two or three names. Across
-     * every five-seed arm taken on this ground the per-run spread of survivors
-     * ran 0 to 7 with a standard deviation near two, so a three-seed mean
-     * carries a standard error of about 1.2. `HALF` is the target and `SLACK`
-     * is a shade over two of those standard errors either side of it: wide
-     * enough that a build on target passes essentially always, narrow enough
-     * that the two failures worth catching cannot hide in it — a mode whose
-     * army is gone before its first muster, and one where nobody dies.
+     * grenade or one Hailfire arriving early is two or three names. Thirteen
+     * runs of this arm on the tuned build — five from `tools/_linehold.mjs`,
+     * five of Command's, and the first three this check ever took — came back
      *
-     * The three seeds are named rather than rolled for the reason
-     * `theline.11`'s ground sweep names its own: a check that draws a fresh
-     * seed each run reports a different number every time it is looked at.
-     * Their absolute values are NOT reproducible against `tools/_linehold.mjs`
-     * seed for seed — `World.js` holds one module-level `rng` for the whole
-     * process with no reseeder, so the phase depends on what ran before — which
+     *     4 6 6 3 8 · 7 10 0 · 1 1 3 5 5      mean 4.5, sd 2.9
+     *
+     * with one engagement in which nobody died at all and one wiped out. So a
+     * FOUR-seed mean carries a standard error near 1.5, `HALF` is the target
+     * and `SLACK` is two of those either side. That band is not a hedge, it is
+     * the width the quantity actually has: narrower and the check goes red on
+     * a build nobody touched, wider and it stops saying anything. What it
+     * still catches are the two failures that matter and both are far outside
+     * it — a mode whose army is gone before its first muster, and one where
+     * nobody dies. **A single red here is worth re-running before it is
+     * believed** (HANDOFF §2.5, from the other side).
+     *
+     * The seeds are named rather than rolled for the reason `theline.11`'s
+     * ground sweep names its own: a check that draws a fresh seed each run
+     * reports a different number every time it is looked at. Their absolute
+     * values are NOT reproducible against `tools/_linehold.mjs` seed for seed —
+     * `World.js` holds one module-level `rng` for the whole process and exports
+     * no reseeder, so the phase depends on everything that ran before — which
      * is the other half of why this asserts a band on a mean rather than a
      * figure on a run.
      */
     const HALF = Cmd.OPENING_STRENGTH / 2;
-    const SLACK = 2.5;
-    const SEEDS = [1, 2, 3];
+    const SLACK = 3.0;
+    const SEEDS = [1, 2, 3, 5];
     const { enemyRng } = await import('../../src/game/Enemy.js');
     const rows = [];
     for (const seed of SEEDS) {
