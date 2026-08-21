@@ -5060,7 +5060,24 @@ Object.assign(ARCHETYPES, {
      * It stays in the menagerie rather than moving to the White Pass: an arena
      * that ships in creatures is exactly where a cold-world predator turns up,
      * and moving it is a pool-composition change with its own measurements to
-     * make. `pouncer` is still the key everything reads. */
+     * make. `pouncer` is still the key everything reads.
+     *
+     * ── AND ON THE ERA RULE, BECAUSE THIS KEEPS GETTING RE-OPENED ─────────
+     *
+     * The player's rule is explicit and it is about HARDWARE: *"obviously not
+     * those since they werent in the prequels"*, said of the AT-AT and the
+     * AT-M6. An AT-AT in a Clone Wars battle is an anachronism because the
+     * machine had not been designed yet. A wampa is an ANIMAL native to a
+     * planet that already exists, and nothing about the Clone Wars period
+     * un-invents it — it is simply not on screen in those three films.
+     *
+     * So this is not the same class of thing as an Imperial walker, and it is
+     * left standing deliberately rather than by oversight. A roster audit
+     * flagged it as "the one era wart"; that judgement is recorded here, and
+     * so is the argument against it, so the next reader is arguing with a
+     * position rather than re-discovering the question. If the player wants
+     * the roster to be only what the films SHOWED, this is the body to cut and
+     * it is one label and one page. */
     label: 'Wampa', build: (o) => buildQuadruped({ ...o, kind: 'pouncer' }),
     scale: 2.0, hp: 560, mass: 520,
     speed: 7.2, toughness: TOUGHNESS.flesh, melee: true, custom: 'beast',
