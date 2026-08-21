@@ -759,16 +759,63 @@ export async function run({ check, assert }) {
      * of the cell ended it at −0.14 m having passed the plate. The question the
      * flag-versus-collider regression asks is whether the doorway PASSES a
      * rigid body at all: with the collider merely flagged the crate never
-     * reaches the plane, it bounces off it at 0.92 m and stays there. */
+     * reaches the plane, it bounces off it at 0.92 m and stays there.
+     *
+     * ── AND IT IS AIMED THROUGH THE PART OF THE OPENING THE BREACH DID NOT
+     *    FILL, WHICH IS THE WHOLE OF WHY THIS CHECK USED TO FLAP ──────────
+     *
+     * It was launched at `terrain + 0.55 m` — knee height, dead centre — and it
+     * failed on some runs and passed on others with nothing about the door
+     * changed. The failure is older than the gun pit behind this same door:
+     * `2c092f9~1` in a throwaway worktree fails it identically, deepest
+     * −0.04 m, so nothing that landed today put it there.
+     *
+     * WHAT IS IN THE WAY IS THE BREACH'S OWN SLUG. Read out of `physics.bodies`
+     * after the breach, in the door's frame: a 1.58 × 1.46 × 0.34 m plate
+     * standing at 0.21 m INSIDE the plane, spanning −0.19 to 1.39 m across the
+     * 3.24 m opening and 0.22 to 1.68 m up it. The crate was being spawned
+     * inside it. On the first stepped frame it left at 4.6 m/s on a bearing
+     * 60° off the one it was given, with 2.9 m/s of lift — a crate `shoved at
+     * 9 m/s` that was never shoved at 9 m/s, which is why the numbers made no
+     * sense as a statement about a doorway.
+     *
+     * WHERE THE SLUG LANDS IS A DRAW, and off a stream nothing puts back:
+     * `Props.js`'s module-scope `rng` (`makeCrate` alone takes two of it, a
+     * ±18% size and a full-circle yaw) is not in `_shared.mjs`'s snapshot —
+     * HANDOFF §2.11's one stream, one process. Burning N crates' worth of draws
+     * before the shove walks the answer straight across the threshold:
+     *
+     *     deepest, over eight stream states:  −0.19  0.04  0.09  0.21
+     *                                          0.89  0.98  1.06  1.36
+     *
+     * TWO WRONG ANSWERS FIRST, both of which read as the obvious fix. Pinning
+     * the crate's size (`makeCrate`'s own `exactSize`) and squaring it to the
+     * door left the swing at −0.65 to +1.21: the variance was never the crate,
+     * it was which corner of a steel plate the crate happened to meet. The
+     * shut control went dead stable at −0.61 under both, which is what said so.
+     *
+     * So the crate goes through the opening ABOVE the debris — the slug tops
+     * out at 1.68 m and the lintel is at 3.17, so a quarter of the door's own
+     * height over its centre is clear ground and is still the doorway. Eight
+     * stream states, bit-identical every one: shut −0.61 m, breached +2.57 m,
+     * and the shove reads 8.99 m/s on the first frame in both. */
     const from = door.mesh.position.clone().addScaledVector(out, 0.9);
-    from.y = T.height(from.x, from.z) + 0.55;
+    from.y = door.mesh.position.y + door.height * 0.25;
     const crate = makeCrate(world, from, 0.8);
     crate.body.velocity.copy(inward).multiplyScalar(9);
-    let went = -Infinity;
+    let went = -Infinity, shoved = 0;
     for (let f = 0; f < 90; f++) {
       world.update(1 / 60, idle());
+      if (f === 0) shoved = crate.body.velocity.dot(inward);
       went = Math.max(went, crate.body.position.clone().sub(door.mesh.position).dot(inward));
     }
+    /* THE PREMISE, ASSERTED RATHER THAN ASSUMED. The sentence below says "a
+     * crate shoved at 9 m/s" and for three sessions it was not one: a crate
+     * spawned inside the slug is ejected by the solver on frame one and what
+     * the next assertion then reports is a fact about that ejection. */
+    assert(shoved > 8,
+      `the crate was doing ${shoved.toFixed(2)} m/s at the doorway one frame after being given 9 — `
+      + 'it was spawned inside something and squirted out, so nothing below is about the door');
     assert(went > 0,
       `a crate shoved at 9 m/s through a breached doorway never got past the plane — deepest `
       + `${went.toFixed(2)} m — the door is gone and its collider is not`);
