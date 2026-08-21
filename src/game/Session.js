@@ -308,7 +308,11 @@ export function interludeBeats(log, since, area, tally = {}) {
     if (e.unit) bits.push(e.unit);
     at('fell', e.name, bits.join(' · '), INTERLUDE.fell);
   }
-  if (!fell.length) at('fell', 'No names on the list', 'Everyone who landed is still standing', INTERLUDE.fell);
+  /* A CLEAN ENGAGEMENT IS STILL A BEAT, AND IT IS NOT A CASUALTY. Its own kind
+   * rather than an empty `fell`: the fallen beat is the only red on the screen
+   * and the only one that makes a noise, and "everybody lived" wearing that
+   * costume would sound like a death every time nobody died. */
+  if (!fell.length) at('none', 'No names on the list', 'Everyone who landed is still standing', INTERLUDE.fell);
 
   for (const e of slice.filter((x) => x.t === 'steps-up')) {
     at('steps-up', e.name, `takes the squad after ${e.after}`, INTERLUDE.stepsUp);

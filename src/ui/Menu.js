@@ -6636,7 +6636,7 @@ export class Menu {
         list.appendChild(li);
         /* A casualty is the only thing on this screen that makes a noise. The
          * rest is read, which is what a report is. */
-        if (b.kind === 'fell' && b.sub) audio.ui('bad');
+        if (b.kind === 'fell') audio.ui('bad');
       }, Math.round(b.at * 1000)));
     }
     /* THE SHELF LIGHTS AFTER THE LAST BEAT, not with it: the point of the beat

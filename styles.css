@@ -1506,6 +1506,9 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
 /* The three that carry the story. A casualty is the only red on the screen. */
 .muster-interlude li.b-head b{color:var(--accent-warm)}
 .muster-interlude li.b-fell b{color:var(--danger)}
+/* The beat a clean engagement gets. Deliberately the plain ink: it is the one
+   line in the report that is good news, and colouring it would make it an event. */
+.muster-interlude li.b-none b{color:var(--ink)}
 .muster-interlude li.b-promote b,.muster-interlude li.b-steps-up b{color:var(--accent)}
 @keyframes beatIn{from{opacity:0;transform:translateX(-10px)}to{opacity:1;transform:none}}
 /* Inert while the report is running. `pointer-events:none` is the half that

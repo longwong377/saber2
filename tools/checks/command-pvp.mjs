@@ -261,6 +261,110 @@ export function run({ check, assert }) {
       + `${fightable.length}/${horde.length} of the horde still are`;
   });
 
+  check('command/coop: four players, ONE roster, four squads — and one purse', async () => {
+    /**
+     * FLAGSHIP §9, DRIVEN ON THE SIDE IT IS ACTUALLY ABOUT.
+     *
+     * "`SQUAD = 5` is already the unit and `CommandRoster.squads()` already
+     * slices the living list into fives. Four players take four squads out of
+     * one roster of up to 24."
+     *
+     * The 2v2 check further down measures the same machinery on OPPOSED
+     * commanders, where two rosters are correct. This is the co-op case — four
+     * people on one side — and until `World.seatAlly` existed it was not
+     * reachable at all: nothing outside `beginVersus` had ever called
+     * `enlistCommander`, so a peer joining a Command run got a blade, a body
+     * and no army.
+     *
+     * Four properties, and each of them is a thing four private rosters got
+     * wrong:
+     *
+     *   ONE ROLL, so `taken` is one set and two men cannot answer to one name.
+     *   ONE PURSE, which is §9's actual co-op mechanic — "a Heavy for your
+     *     squad or an ARC for mine" is only a conversation if it is one shop.
+     *   A PARTITION. Every living man is led by exactly one commander: no body
+     *     is steered by two frames and none is steered by none.
+     *   IT RE-DEALS. A player leaving is the second defect §9 names, and with
+     *     one roster the answer is that their squads are simply somebody
+     *     else's on the next call.
+     */
+    const { SIDES } = await import('../../src/game/Player.js');
+    const Cmd = await import('../../src/game/Command.js');
+    const { host } = await commandPair({ start: false });
+    const d = host.command;
+    assert(d && !d.versus, 'this fixture is not a co-op world');
+
+    const solo = d.roster.strength;
+    const players = [];
+    for (const n of ['B', 'C', 'D']) {
+      const p = { name: n, isLocal: false, alive: true, dead: false, hp: 100,
+        team: d.commander.side, order: 'jedi', position: host.player.position.clone(),
+        actor: { setPosition() {} } };
+      players.push(p);
+      host.players.push(p);
+      const c = d.enlistCommander({ player: p, side: d.commander.side, army: d.commander.army });
+      assert(c, `${n} was seated with no commander`);
+    }
+    const cs = d.commanders;
+    assert(cs.length === 4, `four players produced ${cs.length} commanders`);
+
+    /* ONE ROLL. */
+    const rosters = new Set(cs.map((c) => c.roster));
+    assert(rosters.size === 1,
+      `four players on one side hold ${rosters.size} rosters — that is four private armies`);
+    const roll = d.roster.all;
+    const names = new Set(roll.map((t) => t.name));
+    assert(names.size === roll.length,
+      `${roll.length} named bodies and ${names.size} distinct names`);
+
+    /* THE LINE GREW BY A SQUAD A PLAYER, capped by the mode's own ceiling. */
+    const want = Math.min(Cmd.MAX_STRENGTH, solo + 3 * Cmd.SQUAD);
+    assert(d.roster.strength === want,
+      `four players field ${d.roster.strength} men; one opened with ${solo} and each joiner brings `
+      + `${Cmd.SQUAD} up to ${Cmd.MAX_STRENGTH}, so it should be ${want}`);
+
+    /* ONE PURSE. */
+    d.roster.points = 37;
+    for (const c of cs) {
+      assert(c.roster.points === 37, 'two allies are shopping in two different shops');
+    }
+
+    /* A PARTITION: every living man led exactly once. */
+    const seen = new Map();
+    const per = cs.map((c) => {
+      const mine = d.led(c);
+      for (const t of mine) seen.set(t, (seen.get(t) || 0) + 1);
+      return mine.length;
+    });
+    const twice = [...seen].filter(([, n]) => n > 1);
+    assert(!twice.length,
+      `${twice.length} men are being led by two commanders at once — two formations solving one body`);
+    const orphans = d.roster.living.filter((t) => !seen.has(t));
+    assert(!orphans.length, `${orphans.length} living men are led by nobody`);
+    assert(per.reduce((a, b) => a + b, 0) === d.roster.strength, 'the shares do not sum to the line');
+    assert(per.every((n) => n > 0), `the shares came out ${per.join('/')} — somebody leads nothing`);
+
+    /* AND A PLAYER LEAVES. The avatar goes out of `world.players` exactly as
+     * main.js does it, and the Commander goes with it. */
+    const gone = players[0];
+    host.players.splice(host.players.indexOf(gone), 1);
+    const dropped = d.dismissCommander(gone);
+    assert(dropped, 'the departed player kept their Commander');
+    assert(d.commanders.length === 3, `${d.commanders.length} commanders after one left`);
+    assert(!d.commanders.some((c) => c.player === gone), 'the orphan is still in the list');
+    assert(d.roster.strength === want, `${want} men before the peer left and ${d.roster.strength} after`);
+    const seen2 = new Map();
+    for (const c of d.commanders) for (const t of d.led(c)) seen2.set(t, (seen2.get(t) || 0) + 1);
+    const stranded = d.roster.living.filter((t) => !seen2.has(t));
+    assert(!stranded.length,
+      `${stranded.length} of the departed player's men are led by nobody — the squads did not re-deal`);
+    assert(![...seen2.values()].some((n) => n > 1), 'a man is led twice after the re-deal');
+
+    return `4 commanders · 1 roster · ${roll.length} names, ${names.size} distinct · `
+      + `${d.roster.squads().length} squads dealt ${per.join('/')} · one purse · `
+      + `after a peer left: 3 commanders, 0 orphans, every man re-dealt`;
+  });
+
   check('command/net: your army\'s rifles do not shoot the joining player', async () => {
     /**
      * THE HALF THAT FIRES WITH NOBODY AIMING AT ANYTHING.

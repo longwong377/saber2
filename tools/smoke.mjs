@@ -285,6 +285,39 @@ await step('deploy', async () => {
 
 if (has('shots')) await page.screenshot({ path: join(OUT, '03-deployed.png') });
 
+/**
+ * …AND THE DEPLOY CARD, WHICH STOPS THE WORLD ON PURPOSE.
+ *
+ * FLAGSHIP §5's 0:00 raises an overlay in front of the flagship mode — the
+ * seed, the ground and your ten names, read before you land — and `Screens.take`
+ * pauses the world behind it. Every step below this line measures a world that
+ * is running, so a smoke run with the card up measures NOTHING and says so in
+ * the friendliest possible way: identical screenshots, zero enemies, zero
+ * damage, all green. Measured on `--mode command` before this: 03-deployed.png
+ * and 04-combat.png came out byte-identical at 264 952 bytes.
+ *
+ * So the card is pressed, exactly as a player presses it, AFTER the screenshot
+ * that exists to show it. Silent in every other mode — no card, no button, no
+ * click — which is every mode this tool is normally run in.
+ *
+ * §2.6's rule applies here as everywhere: the settle is counted in RENDERED
+ * FRAMES and not in milliseconds, because one frame on this box is four
+ * seconds.
+ */
+await step('drop in', async () => {
+  const took = await page.evaluate(async (ceil) => {
+    const btn = document.getElementById('btn-deploy-drop');
+    const card = document.getElementById('deploy-card');
+    if (!btn || !card || card.classList.contains('hidden')) return 'no card — not the flagship mode';
+    btn.click();
+    await window.__frame(ceil);
+    if (!card.classList.contains('hidden')) throw new Error('Drop did not take the card down');
+    if (window.SABER?.world?.paused) throw new Error('the world is still paused after Drop');
+    return 'the card is down and the world is running';
+  }, FRAME_CEIL_MS);
+  return took;
+}, FRAME_CEIL_MS * 3 + 20000);
+
 await step('report boot diagnostics', async () => {
   const info = await page.evaluate(() => {
     const w = window.SABER?.world;

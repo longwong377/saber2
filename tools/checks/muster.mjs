@@ -879,9 +879,13 @@ export async function run({ check, assert }) {
       const log = [];
       for (let i = 0; i < n; i++) log.push({ t: 'fell', name: `CT-${1000 + i}`, unit: 'Clone Trooper', rank: 'Trp' });
       const res = interludeBeats(log, 0, area, tally);
-      const named = res.beats.filter((b) => b.kind === 'fell');
+      /* `none` is the beat a clean engagement gets in place of a casualty — its
+       * own kind, so it is neither red nor audible. See `interludeBeats`. */
+      const named = res.beats.filter((b) => b.kind === 'fell' || b.kind === 'none');
       assert(named.length === Math.max(1, n),
         `${n} casualties produced ${named.length} beats — a name was dropped`);
+      assert(res.beats.filter((b) => b.kind === 'fell').length === n,
+        `${n} casualties and ${res.beats.filter((b) => b.kind === 'fell').length} fallen beats`);
       assert(res.seconds >= INTERLUDE.window[0] - 1e-6 && res.seconds <= INTERLUDE.window[1] + 1e-6,
         `${n} casualties ran ${res.seconds}s, outside ${INTERLUDE.window.join('–')}s`);
       /* Monotonic and gapless: beat k starts where beat k-1 ended. */
