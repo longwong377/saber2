@@ -622,9 +622,11 @@ export async function run({ check, assert }) {
     // implies, capped by `ELBOW.swivel` and rate-limited by `ELBOW.rate`, and
     // both of those numbers are the output of `tools/_wristsweep.mjs`:
     //
-    //                        worst        median       forearm
-    //     third person    114.4 → 89.4   83.6 → 36.7   2487 → 2476 deg/s
-    //     first person    124.2 → 115.8  82.5 → 64.1
+    //                          worst         median       forearm
+    //     third, two hands  114.4 → 89.4   83.6 → 36.7   2487 → 2476 deg/s
+    //     third, one hand   107.8 → 79.0   62.8 → 14.7   1221 → 1112
+    //     first, two hands  131.1 → 115.1  88.6 → 65.8   1099 → 1605
+    //     first, one hand   112.0 → 102.3  83.4 → 76.7   2747 → 2429
     //
     // Nothing the player has approved moves: the hand does not move, the hilt
     // does not move and the blade's envelope does not move. Only the elbow

@@ -1189,14 +1189,23 @@ export const FOREARM = { cone: Math.sin(12 * Math.PI / 180), rate: 40 };
  * ratchet — the forearm's own angular speed — beside them, because this trades
  * one against the other and a fix that breaks the neighbour is not a fix.
  *
- *   swivel, at rate 30      third person, two hands    first person, one hand
- *                           worst  median  fore °/s    worst  median  fore °/s
- *        0° (was)           114.4    83.6      2487    124.2    82.5       905
- *       45                   89.4    56.7      2476    123.5    68.5      1295
- *       75                   89.4    43.5      2476    123.5    65.0      1810
- *      110                   89.4    36.8      2476    115.8    64.1      1841
- *      120  <- ships         89.4    36.7      2476    115.8    64.1      1841
- *      180                   89.4    36.7      2476    115.8    64.1      1841
+ *   swivel      third, two hands     third, one hand    first, two hands    first, one hand
+ *   at rate 30  worst  med  fore    worst  med  fore   worst  med  fore   worst  med  fore
+ *      0° (was) 114.4  83.6  2487   107.8  62.8  1221  131.1  88.6  1099  112.0  83.4  2747
+ *     45         89.4  56.7  2476   107.4  23.9  1646  121.6  72.2  1605  106.9  81.1  2464
+ *     75         89.4  43.5  2476   105.2  14.7  1528  121.6  68.0  1871  102.3  81.1  2429
+ *    110         89.4  36.8  2476    80.6  14.7  1264  115.1  66.0  1591  101.4  76.7  2429
+ *    120 <-ships 89.4  36.7  2476    79.0  14.7  1112  115.1  65.8  1605  102.3  76.7  2429
+ *    180         89.4  36.7  2476    74.5  14.7  1112  115.1  65.8  1605  105.4  75.1  2429
+ *
+ * FOUR COLUMNS AND NOT TWO, AND THE OLD PAIR WAS NOT WHAT IT SAID. The column
+ * headed "first person, one hand" used to be taken with the `fpHands` option,
+ * which took the off hand off the arms and left the blade on `GRIPS.two` — a
+ * guard no player can hold. Held for real, by the key, first person is the
+ * worst arm of the four and one hand is worth 115.1 → 102.3 on the worst frame
+ * while the median goes the other way, 65.8 → 76.7. In THIRD person the same
+ * key is worth 89.4 → 79.0 worst and 36.7 → 14.7 median, which is the largest
+ * single step in this table.
  *
  *   rate, at swivel 120     third person, two hands
  *      20 rad/s              97.9    36.7      2335
@@ -1215,6 +1224,12 @@ export const FOREARM = { cone: Math.sin(12 * Math.PI / 180), rate: 40 };
  * the sample, since a cap tuned to one mouse sweep is a cap tuned to one mouse
  * sweep. A shoulder rotates internally and externally through rather more than
  * that.
+ *
+ * 120 survives the two columns that did not exist when it was chosen: it is
+ * where three of the four saturate, and the fourth — third person, one hand —
+ * would take another 4.5° of wrist at 180 and is the only one that would. A
+ * cap chosen for one of four arms is the shape of mistake this whole file
+ * keeps deleting, so it stays where the other three put it.
  */
 export const ELBOW = { swivel: 120 * Math.PI / 180, rate: 30 };
 
@@ -5115,10 +5130,17 @@ export class Player {
    *
    * MEASURED, same bench, `ELBOW` carries the sweep the two numbers come from:
    *
-   *                          worst    median    forearm
-   *     third person         114.4 → 89.4   83.6 → 36.7   2487 → 2476 °/s
-   *     first person, 1 hand 124.2 → 115.8  82.5 → 64.1    905 → 1841
-   *     first person, 2 hands 131.1 → 115.1 88.6 → 65.8   1099 → 1605
+   *                            worst          median        forearm
+   *     third, two hands     114.4 →  89.4  83.6 → 36.7   2487 → 2476 °/s
+   *     third, one hand      107.8 →  79.0  62.8 → 14.7   1221 → 1112
+   *     first, two hands     131.1 → 115.1  88.6 → 65.8   1099 → 1605
+   *     first, one hand      112.0 → 102.3  83.4 → 76.7   2747 → 2429
+   *
+   * (The one-hand rows are the state a player reaches by holding the one-hand
+   * key. A row that read 124.2 → 115.8 stood here for "first person, 1 hand"
+   * and was taken through the `fpHands` option instead, which moved the arms
+   * and left the blade on `GRIPS.two` — see `handsOnHilt`. It is not the same
+   * arm and the number is not comparable, so it is replaced rather than kept.)
    *
    * A wrist's own limits are about 80° of flexion and 70° of extension, with
    * 20-30° of deviation across them, so ~85° is the most a real one reaches at
