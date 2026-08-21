@@ -17,7 +17,7 @@ import { CohortField } from './Cohorts.js';
 import { WarSupport } from './Support.js';
 import { GrassField, Water, Atmosphere, weather } from '../world/Scenery.js';
 import { BoltPool } from './Bolts.js';
-import { BladeContactSolver, captureSnapshot, gradeCaught, resolveBladeClash, GRADE, GRADE_DAMAGE, GRADE_NAME, DIFFICULTY, CatchWindow } from './Combat.js';
+import { BladeContactSolver, captureSnapshot, gradeCaught, resolveBladeClash, GRADE, GRADE_DAMAGE, GRADE_NAME, DIFFICULTY, CatchWindow, openness } from './Combat.js';
 import { assignSides, DuelMatch, Player, asTeam, bladeTargets, canHarm, hostileTo, pvpRules, sideTeam, TEAM } from './Player.js';
 import { ageDropped } from './Dropped.js';
 import { Enemy, ARCHETYPES, applyModifier, ENEMY_POWERS, FORCE_KINDS, IMPULSE_AS_HP } from './Enemy.js';
@@ -4073,12 +4073,40 @@ export class World {
        * other is just a bolt that changed hands.
        */
       if (bolt.owner && !bolt.turned && !canHarm(bolt.owner, e, this.rules)) continue;
+      /**
+       * ── THE FORCE IS A MULTIPLIER ON OTHER PEOPLE'S GUNS ────────────────
+       *
+       * FLAGSHIP §7's third verb, and until this line it did not exist:
+       *
+       *   "OPEN — `openness()` is the most under-used system in the tree (held
+       *    ×3.0, yanked ×2.0, downed ×1.5) and its own comment says it is
+       *    invisible. Grip a B2 and the ten riflemen who needed 17 seconds need
+       *    six. The Force is a multiplier on other people's guns."
+       *
+       * `grep -rn 'openness(' src/` returned ONE call site — `Combat.js`, the
+       * blade's own slash rate — and a comment in the HUD. So a body held off
+       * the floor, yanked off balance or toppled was easier for YOUR BLADE to
+       * cut and no easier for anybody else to shoot, and the sentence above was
+       * a description of a system that had never been wired to a gun.
+       *
+       * It is exactly why the Dead Jedi test reads the way it does: five seeds,
+       * three arms, and the enemy body count does not move (37.4 / 36.8 / 36.4)
+       * whatever the Jedi does. The Force could not help the line's guns
+       * because nothing asked it to.
+       *
+       * THE ENEMY BRANCH ONLY, and that is not an oversight. `OPEN_STATES`
+       * tests `gripped`, `yankT` and `toppled || stunTimer` — fields a body
+       * that the FORCE has taken hold of carries. The player's own bad moments
+       * are already priced by the stagger, and multiplying incoming fire while
+       * they are staggered is a death spiral rather than a mechanic.
+       */
+      const open = openness(e);
       const caps = e.capsules();
       for (const c of caps) {
         if (c.shield) {
           const hit = segmentNear(from, to, c.p0, c.p1, c.r);
           if (hit) {
-            e.damage(bolt.damage, hit, bolt.owner, 'bolt');
+            e.damage(bolt.damage * open, hit, bolt.owner, 'bolt');
             this.particles.sparkBurst(hit, null, 10, { speed: 5, color: 0x88ffcc });
             return { point: hit, normal: _v3.subVectors(from, to).normalize().clone(), victim: e, bone: 'shield' };
           }
@@ -4087,7 +4115,7 @@ export class World {
         const hit = segmentNear(from, to, c.p0, c.p1, c.r);
         if (!hit) continue;
         const vital = c.vital ?? 0.4;
-        const dmg = bolt.damage * lerp(0.6, 1.9, vital);
+        const dmg = bolt.damage * lerp(0.6, 1.9, vital) * open;
         const killed = e.damage(dmg, hit, bolt.owner, 'bolt');
         if (bolt.owner instanceof Player) {
           bolt.owner.score += killed ? 150 : 25;
