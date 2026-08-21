@@ -241,6 +241,151 @@ export async function run({ check, assert }) {
       + `regen ${REGEN}/s is beaten at ${crossover.toFixed(1)} rifles`;
   });
 
+  /* ══════════════════════════════════════════════════════════════════ */
+  /*  …and the line moves at the pace of its slowest man                */
+  /* ══════════════════════════════════════════════════════════════════ */
+
+  check('suppression: the objective advances at the pace of the slowest friendly inside 14 m', async () => {
+    /**
+     * FLAGSHIP §6's second half, and it is the one rule in that section that
+     * was already HAPPENING and had never been designed:
+     *
+     *   "The objective advances at the pace of the slowest friendly inside
+     *    14 m. You can sprint 200 m into their rear; the line does not come
+     *    with you, and you arrive alone on an empty bar. Killing stays fast and
+     *    fun and advances nothing. Measured, and nobody designed it: walking
+     *    35 m forward drags the whole formation with you and costs 4 of 10
+     *    men."
+     *
+     * `CommandDirector._frame` used to return the commander's LIVE POSITION as
+     * the frame every slot is solved in, so a Jedi at a sprint handed twelve
+     * men a destination they could not reach and they strung out behind it one
+     * at a time. `_paceAnchor` is the same point with a speed limit on it.
+     *
+     * THE A/B IS INSIDE ONE CHECK because the alternative is a claim. Two fresh
+     * worlds, the same seed, the same walk; one runs the shipped `advancePace`
+     * and the other has it stubbed to `Infinity`, which IS the old behaviour
+     * exactly — an unlimited chase is a chase that arrives every frame. So the
+     * two arms differ by one number and nothing else.
+     */
+    const { bootWorld } = await import('./_coop.mjs');
+    const { MORALE } = await import('../../src/game/Morale.js');
+
+    const walk = async (unlimited) => {
+      const { world } = await bootWorld({
+        level: 'geonosis',
+        settings: { mode: 'command', level: 'geonosis', order: 'jedi', seed: 7, difficulty: 'knight' },
+      });
+      try {
+        const d = world.command;
+        const p = world.player;
+        /**
+         * THE ARMY HAS TO BE ON THE GROUND. `bootWorld` builds the director and
+         * the roster; `start` is what puts bodies under the names. Without it
+         * `roster.living` carries records with no `body`, `advancePace` finds
+         * nobody alive at all, and its own degenerate case — "no line exists,
+         * so nothing paces the objective" — correctly returns Infinity. The
+         * first version of this check missed that and read a lag of exactly
+         * 0.0 m in BOTH arms, which reads like the rule being unwired and was
+         * the harness measuring an army that had not landed.
+         *
+         * The spawn queue is then emptied: this measures the WALK, and a fight
+         * would put reactions, cover and casualties between the rule and the
+         * reading.
+         */
+        world.director.start(1);
+        d.spawnQueue.length = 0;
+        for (let i = 0; i < 60; i++) world.update(1 / 30, { act: () => false, actHit: () => false,
+          actDown: () => false, moveAxis: (o) => (o ? (o.x = 0, o.y = 0, o) : { x: 0, y: 0 }),
+          mouse: { dx: 0, dy: 0, wheel: 0, left: false, right: false },
+          delta: { x: 0, y: 0 }, accel: { x: 0, y: 0 }, end() {} });
+        const standingAtStart = d.commander.roster.living.filter((t) => t.body && !t.body.dead).length;
+        if (!(standingAtStart > 1)) throw new Error(`only ${standingAtStart} bodies stood up`);
+        if (unlimited) d.advancePace = () => Infinity;
+        const input = {
+          keys: new Set(), buttons: [false, false, false],
+          mouse: { dx: 0, dy: 0, wheel: 0, left: false, right: false },
+          delta: { x: 0, y: 0 }, accel: { x: 0, y: 0 },
+          moveAxis: (o) => (o ? (o.x = 0, o.y = 1, o) : { x: 0, y: 1 }),
+          act: () => false, actHit: () => false, actDown: () => false, end() {},
+        };
+        const from = p.position.clone();
+        let worstLag = 0, frames = 0;
+        for (let i = 0; i < 900; i++) {
+          world.update(1 / 30, input);
+          frames++;
+          const a = d.commander._paceAnchor;
+          if (a) worstLag = Math.max(worstLag, Math.hypot(p.position.x - a.x, p.position.z - a.z));
+          if (p.position.distanceTo(from) >= 35) break;
+        }
+        /* HOW FAR THE LINE IS STRUNG OUT: the furthest living body from the
+         * anchor its slots are solved against. That is the number §6's "costs
+         * 4 of 10 men" is about — men alone in the open, one at a time. */
+        let strung = 0, standing = 0;
+        const a = d.commander._paceAnchor || p.position;
+        for (const t of d.commander.roster.living) {
+          const e = t.body;
+          if (!e || e.dead) continue;
+          standing++;
+          strung = Math.max(strung, Math.hypot(e.position.x - a.x, e.position.z - a.z));
+        }
+        return {
+          walked: +p.position.distanceTo(from).toFixed(1), frames,
+          worstLag: +worstLag.toFixed(1), strung: +strung.toFixed(1), standing,
+          pace: d.advancePace(d.commander),
+        };
+      } finally { world.unload?.(); }
+    };
+
+    const paced = await walk(false);
+    const old = await walk(true);
+
+    assert(paced.walked > 20, `the player only walked ${paced.walked} m, so nothing was measured`);
+    assert(old.worstLag < 1.0,
+      `with the pace unlimited the anchor still lagged ${old.worstLag} m — the control arm is not `
+      + 'the old behaviour, so the comparison below is between two unknown things');
+    assert(paced.worstLag > 1.5,
+      `walking ${paced.walked} m, the formation's anchor never fell more than ${paced.worstLag} m `
+      + 'behind the commander — the line is still being dragged at whatever pace the player chooses');
+    /**
+     * AND IT MUST NOT MAKE THE STRINGING-OUT WORSE, which is the weaker claim
+     * and the honest one to bind. Measured on this seed: 36.8 m against 39.4 m,
+     * a 7% difference, and a 7% difference between two 35 m walks is not a
+     * number to hang a gate on. The rule's direct effect is the LAG asserted
+     * above — 3.9 m against 0.0 — and how much of the formation's dispersal
+     * that saves depends on the deploy pattern, the terrain and how far the men
+     * started from their slots, none of which this rule touches. So the bound
+     * here is one-sided: pacing the anchor may not cost the line its cohesion.
+     */
+    assert(paced.strung <= old.strung + 1,
+      `the line ended ${paced.strung} m strung out with the rule and ${old.strung} m without it — `
+      + 'pacing the anchor has made the formation MORE dispersed, which is the opposite of §6');
+    /* AND THE RULE'S OWN TWO EDGES, asked of the function rather than the walk. */
+    const { world } = await bootWorld({
+      level: 'geonosis',
+      settings: { mode: 'command', level: 'geonosis', order: 'jedi', seed: 7 },
+    });
+    try {
+      const d = world.command;
+      const p = world.player;
+      world.director.start(1);
+      d.spawnQueue.length = 0;
+      const speeds = d.commander.roster.living.map((t) => t.body?.speed).filter((v) => v > 0);
+      assert(speeds.length > 1, 'the roster stood up fewer than two bodies');
+      const slowest = Math.min(...speeds);
+      assert(Math.abs(d.advancePace(d.commander) - slowest) < 1e-6,
+        `the line advances at ${d.advancePace(d.commander).toFixed(2)} m/s against its slowest man's `
+        + `${slowest.toFixed(2)} — the pace is not the slowest friendly's`);
+      p.position.x += MORALE.NEAR * 20;
+      assert(d.advancePace(d.commander) === 0,
+        `a commander who has outrun every man he has still advances the line at `
+        + `${d.advancePace(d.commander).toFixed(2)} m/s — §6's "the line does not come with you"`);
+      return `35 m walk: anchor lagged ${paced.worstLag} m and the line ended ${paced.strung} m `
+        + `strung out, against ${old.worstLag} m / ${old.strung} m unpaced · pace is the slowest `
+        + `man's ${slowest.toFixed(2)} m/s, and 0 once nobody is inside ${MORALE.NEAR} m`;
+    } finally { world.unload?.(); }
+  });
+
   check('suppression: at zero stamina there is no dash and no dive — the floor §6 nails your feet to', async () => {
     /**
      * THE SECOND HALF OF §6, and the reason the first half is worth anything:

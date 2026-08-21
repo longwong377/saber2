@@ -1884,11 +1884,60 @@ export async function run({ check, assert }) {
     for (let i = 0; i < plantedAt.length; i++) drift = Math.max(drift, plantedAt[i].distanceTo(stillThere[i]));
     assert(drift < 0.5,
       `the commander walked 47 m and a held slot followed ${drift.toFixed(1)} m of it`);
+    /**
+     * …AND RELEASED IT COMES BACK — AT THE LINE'S OWN PACE, NOT AT ONCE.
+     *
+     * THE PREMISE OF THIS CLAUSE EXPIRED, and the expiry is the feature. It
+     * used to read the slots on the frame `hold(false)` was called and require
+     * them to have moved 20 m already, which was true because `_frame` returned
+     * the commander's LIVE POSITION: the formation's anchor teleported wherever
+     * the player was, every frame, at any speed.
+     *
+     * FLAGSHIP §6 makes that a rule instead of an accident — "the objective
+     * advances at the pace of the slowest friendly inside 14 m … walking 35 m
+     * forward drags the whole formation with you and costs 4 of 10 men" — so
+     * the anchor is now speed-limited (`CommandDirector.advancePace`). Both
+     * halves are checked: it does NOT arrive in one frame, and it DOES arrive.
+     */
     d.hold(false);
+    const atRelease = slots();
+    let instant = 0;
+    for (let i = 0; i < plantedAt.length; i++) instant = Math.max(instant, plantedAt[i].distanceTo(atRelease[i]));
+    assert(instant < 20,
+      `the formation crossed ${instant.toFixed(1)} m in the frame the hold was released — the anchor `
+      + 'is still teleporting to the commander, which is the accident §6 replaces');
+    /* AND IT DOES NOT COME AT ALL WHILE HE IS 47 m AWAY, which is the other
+     * half of the same rule and the reason this clause could not simply be
+     * given a longer window: with no living friendly inside `MORALE.NEAR` the
+     * pace is zero and the line holds the ground it is on. That is §6 in one
+     * sentence — "you can sprint 200 m into their rear; the line does not come
+     * with you" — so the commander has to come back to be followed. */
+    assert(d.advancePace(d.commander) === 0,
+      `a commander 47 m from every man he has still advances the line at `
+      + `${d.advancePace(d.commander).toFixed(1)} m/s`);
+    for (let i = 0; i < 600; i++) d._troops(1 / 60, {});
+    const abandoned = slots();
+    let crept = 0;
+    for (let i = 0; i < plantedAt.length; i++) crept = Math.max(crept, plantedAt[i].distanceTo(abandoned[i]));
+    assert(crept < 20,
+      `ten seconds after the release the formation had crossed ${crept.toFixed(1)} m toward a `
+      + 'commander it has nobody within 14 m of — the pace rule is not holding the line');
+
+    /* …AND IT DOES COME when he is back among them. Long enough for the walk
+     * at the line's own pace and no longer: a generous wall-clock window is a
+     * check that passes whatever the rule says. */
+    const anchorNow = d.commander._paceAnchor.clone();
+    me.position.set(anchorNow.x + 9, 0, anchorNow.z);
+    const pace = d.advancePace(d.commander);
+    assert(pace > 0, 'a commander standing 9 m from his line still cannot advance it');
+    const need = Math.ceil((9 / pace) * 60) + 120;
+    for (let i = 0; i < need; i++) d._troops(1 / 60, {});
     const released = slots();
     let came = 0;
     for (let i = 0; i < plantedAt.length; i++) came = Math.max(came, plantedAt[i].distanceTo(released[i]));
-    assert(came > 20, `released, the formation moved ${came.toFixed(1)} m toward a commander 47 m away`);
+    assert(came > 6,
+      `released, and given ${(need / 60).toFixed(0)}s at the line's own ${pace.toFixed(1)} m/s with `
+      + `the commander 9 m away, the formation moved ${came.toFixed(1)} m`);
     return `aim sweep moved a slot ${moved.toFixed(2)} m, a body turn ${swung.toFixed(1)} m; `
       + `blade room ${closest.toFixed(2)} m; held drift ${drift.toFixed(2)} m, released ${came.toFixed(0)} m`;
   });

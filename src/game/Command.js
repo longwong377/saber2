@@ -3998,8 +3998,102 @@ export class CommandDirector extends WaveDirector {
      * stepping the turn in here would multiply the slew rate by the size of
      * the army, and a twelve-man line would track the commander twelve times
      * faster than a four-man one. */
+    /**
+     * …AND THE POSITION IS THE LINE'S, NOT THE PLAYER'S — FLAGSHIP §6.
+     *
+     *   "The objective advances at the pace of the slowest friendly inside
+     *    14 m. You can sprint 200 m into their rear; the line does not come
+     *    with you, and you arrive alone on an empty bar. Killing stays fast and
+     *    fun and advances nothing. Measured, and nobody designed it: walking
+     *    35 m forward drags the whole formation with you and costs 4 of 10
+     *    men."
+     *
+     * `outPos.copy(p.position)` above is that accident, in one line: the frame
+     * every slot is solved in WAS the player, live, at whatever pace the player
+     * chose, so a Jedi at a sprint handed twelve men a destination they could
+     * not reach and they strung out behind it in the open, one at a time, until
+     * four of them were dead. Nobody designed that; it fell out of a
+     * dereference.
+     *
+     * `_paceAnchor` is the same point with a speed limit on it, stepped once a
+     * frame in `_advanceAnchor` at `advancePace(c)` metres a second. It is a
+     * RULE now: your line moves at the pace of its slowest man, the objective
+     * moves with your line, and outrunning both is a thing you may do and gain
+     * nothing by.
+     */
     if (c._heldYaw === null || c._heldYaw === undefined) c._heldYaw = headingOf(p);
+    if (c._paceAnchor) outPos.copy(c._paceAnchor);
     return { pos: outPos.clone(), yaw: c._heldYaw };
+  }
+
+  /**
+   * HOW FAST THIS COMMANDER'S LINE MAY ADVANCE, in metres a second.
+   *
+   * The slowest LIVING friendly inside `MORALE.NEAR` of the commander, which is
+   * the same radius presence pays through — deliberately, because it is the
+   * same claim from two sides: a man close enough for your presence to steady
+   * him is a man close enough to be part of your advance.
+   *
+   * `e.speed` and not the body's measured velocity. A man who has stopped to
+   * shoot has a velocity of zero and has not stopped being able to walk, so
+   * pacing an advance on observed speed would freeze the line every time it
+   * fired. This is a CAPABILITY: a heavy gunner's 3.0 against an ARC's 4.6, as
+   * the rank multipliers left them.
+   *
+   * TWO DEGENERATE CASES, and each is a decision:
+   *
+   *   NOBODY LEFT ALIVE — the line does not exist, so nothing paces the
+   *     objective and it keeps up with the player. A rule that froze a lone
+   *     survivor in place would be punishing them for the deaths.
+   *   NOBODY INSIDE THE RADIUS — zero. This is the whole of §6: you have
+   *     outrun your line and the advance stops until you are back among them.
+   *     It cannot deadlock, because the anchor stops where the men are, so
+   *     walking back toward them is always available and always restarts it.
+   */
+  advancePace(c = this.commander) {
+    const p = c?.player;
+    if (!p || !p.position) return Infinity;
+    const living = c.roster?.living || [];
+    const r2 = MORALE.NEAR * MORALE.NEAR;
+    let slowest = Infinity, anyAlive = false;
+    for (const t of living) {
+      const e = t.body;
+      if (!e || e.dead) continue;
+      anyAlive = true;
+      if (dist2(e.position, p.position) > r2) continue;
+      const v = e.speed || 0;
+      if (v < slowest) slowest = v;
+    }
+    if (!anyAlive) return Infinity;
+    return slowest === Infinity ? 0 : slowest;
+  }
+
+  /**
+   * Step one commander's formation anchor toward them, at `advancePace`.
+   *
+   * ONCE A FRAME PER COMMANDER, beside `_slewFrame`, and for the identical
+   * reason its own note gives: `_frame` is a pure reader called once per
+   * trooper per frame, so stepping the chase in there would multiply the pace
+   * by the size of the army and a twelve-man line would advance twelve times
+   * faster than a four-man one.
+   */
+  _advanceAnchor(c, dt) {
+    const p = c?.player;
+    if (!p || !p.position) return;
+    if (!c._paceAnchor) { c._paceAnchor = p.position.clone(); return; }
+    /* The height is the player's outright. Only x and z are paced: a formation
+     * anchor is a place on the ground, and `slotFor` re-solves the standing
+     * height off the terrain anyway. Lagging the y would put the whole line
+     * underground on a slope. */
+    c._paceAnchor.y = p.position.y;
+    const dx = p.position.x - c._paceAnchor.x, dz = p.position.z - c._paceAnchor.z;
+    const d = Math.hypot(dx, dz);
+    if (d < 1e-4) return;
+    const step = this.advancePace(c) * dt;
+    if (!(step > 0)) return;
+    if (step >= d) { c._paceAnchor.x = p.position.x; c._paceAnchor.z = p.position.z; return; }
+    c._paceAnchor.x += dx / d * step;
+    c._paceAnchor.z += dz / d * step;
   }
 
   /**
@@ -5423,6 +5517,7 @@ export class CommandDirector extends WaveDirector {
      * have the second one solving its slots against the first one's count. */
     for (const c of this.commanders) {
       this._slewFrame(c, dt);
+      this._advanceAnchor(c, dt);
       this._morale(dt, c);
       /* The commander's own Force, one clock per verb per army. Here rather
        * than in `update` because this is the loop that already runs once a
