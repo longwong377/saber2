@@ -566,5 +566,8 @@ four that pays at the scale its own paragraph claims.**
   terrain, cover, bodies in the way, or a target that has moved. Nobody has
   looked, and every fire-share number in this document would change if it
   turned out to be one thing.
-- **6 of 39 bolts a trooper fired at a held body struck one of our own men.**
-  Seen while classifying what the misses hit, on one seed, not chased.
+- ~~**6 of 39 bolts a trooper fired at a held body struck one of our own men.**~~
+  Seen while classifying what the misses hit; the screen lane took the same
+  census properly the same day — 47 hits on your own side in 150 s, **every one
+  of them fired by your own team** — and answered it. Both readings were taken
+  independently, which is the only reason either is worth trusting.
