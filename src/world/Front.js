@@ -68,13 +68,19 @@ import { addFallen } from './Fallen.js';
  * the degenerate case and `frontLine` builds it as one, so every function below
  * dresses a curve and a straight line with the same body. See the long note
  * over `frontLine`. */
-import { frontLine, frontAtChoke } from './Battlefield.js';
+import { frontLine, frontAtChoke, FRONT_START, FRONT_STEP, FRONT_MIN, FRONT_MARCH } from './Battlefield.js';
 
-/** Where the line stands before the first engagement, in metres from the spot
- *  the player is standing on. */
-export const FRONT_START = 180;
-/** How much ground it takes each engagement. §14: `rmin: 220 − 40·n`. */
-export const FRONT_STEP = 40;
+/**
+ * §14's schedule: the line stands 180 m from the spot the player is standing on
+ * before the first engagement and takes 40 m of it each time, down to 20.
+ *
+ * DECLARED IN `Battlefield.js` AND RE-EXPORTED HERE, which is the wrong way
+ * round until you see what depends on it: a generated ground has to be BUILT to
+ * carry the march, and a terrain generator cannot import the dressing. The
+ * failure that moved them is recorded over the constants there — 352 of 352
+ * burn marks under a lava sheet. Every caller still reads them from here.
+ */
+export { FRONT_START, FRONT_STEP, FRONT_MIN, FRONT_MARCH };
 
 /**
  * THE LINE AT ENGAGEMENT n (1-based).
@@ -283,11 +289,20 @@ export function marchFront(world, opts = {}) {
    * is "generate the battle, then the ground that explains it"; a battle
    * nothing dresses is scenery.
    *
-   * THE SCHEDULE IS THE SAME SCHEDULE. §14's line starts 180 m out and closes
-   * 40 m an engagement, and a curve expresses that as an OFFSET along its own
-   * normal rather than as a new `distance`: the front keeps its shape and
-   * moves, which is one battle progressing instead of a different one drawn
-   * five times. `frontLine` reads `offset`; nothing else here knows it exists.
+   * THE SCHEDULE IS THE SAME SCHEDULE, MEASURED FROM THE PLAN'S OWN LINE.
+   * §14's front closes 40 m an engagement over 160 m of ground, and on a
+   * generated ground the place it closes ONTO is the one the plan named: the
+   * line starts `FRONT_MARCH` metres beyond the chokepoint and arrives on it
+   * at the last engagement. Expressed as an OFFSET of the curve along its own
+   * normal, so the front keeps its shape and moves — one battle progressing
+   * instead of a different one drawn five times.
+   *
+   * ABSOLUTE METRES FROM THE DEPLOY POINT IS WHAT IT WAS, AND IT WAS WRONG.
+   * `frontAt`'s 180 m is a distance from the PLAYER, which on a generated
+   * ground is a line with no relation to the ground under it — and the shelf
+   * that stands a sea room's battle out of its own lava is built around the
+   * plan's line, so an absolute schedule walked the front straight off it.
+   * Measured on the Ember Shelf: **352 of 352 burn marks under the sheet.** `frontLine` reads `offset`; nothing else here knows it exists.
    *
    * `opts.front` overrides both, and an authored level with no plan gets the
    * straight schedule it always got.
@@ -295,10 +310,9 @@ export function marchFront(world, opts = {}) {
   const plan = opts.plan ?? world.battlefield ?? null;
   const front = opts.front || (plan
     ? (() => {
-      const scheduled = Math.max(opts.min ?? 20,
-        (opts.start ?? FRONT_START) - (n - 1) * (opts.step ?? FRONT_STEP));
-      return { ...frontAtChoke(plan, n), distance: scheduled,
-        offset: scheduled - plan.distance, engagement: n };
+      const offset = Math.max(0, FRONT_MARCH - (n - 1) * (opts.step ?? FRONT_STEP));
+      return { ...frontAtChoke(plan, n), distance: plan.distance + offset,
+        offset, engagement: n };
     })()
     : frontAt(n, opts));
   const line = frontLine(front);

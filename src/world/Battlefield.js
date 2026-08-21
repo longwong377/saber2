@@ -68,6 +68,29 @@ import { makeRng, clamp, lerp, smoothstep, fbm2, ridged2 } from '../engine/MathU
 import { TERRAIN_PRESETS } from './Terrain.js';
 
 /**
+ * ── THE SCHEDULE THE FRONT MARCHES ON, AND WHY IT LIVES HERE ────────────
+ *
+ * `FLAGSHIP.md` §14: the line starts 180 m out and closes 40 m an engagement
+ * to 20. `Front.js` owns the dressing and re-exports these, which is where
+ * every caller still reads them from — but the numbers are DECLARED here,
+ * because the GROUND has to be built to carry the march.
+ *
+ * That is not tidiness. Driven on the Ember Shelf before this moved: the mode
+ * dressed engagement 1 at an absolute 180 m from the deploy point, the shelf
+ * that stands a sea room's battle out of its own lava was built to carry the
+ * front where the PLAN put it, and **352 of 352 burn marks landed under the
+ * sheet.** A schedule the terrain generator cannot see is a schedule that
+ * walks the battle off its own battlefield, and two files holding one number
+ * each is HANDOFF §2.3.
+ */
+export const FRONT_START = 180;
+export const FRONT_STEP = 40;
+export const FRONT_MIN = 20;
+/** How far the front travels over a whole deployment. The shelf below has to
+ *  be land over all of it, and `marchFront` closes exactly this much. */
+export const FRONT_MARCH = FRONT_START - FRONT_MIN;
+
+/**
  * ── 1. THE REASON THERE IS A BATTLE HERE ────────────────────────────────
  *
  * §12.1, verbatim: *"A reason, from a table of five — a pass, a ford, a
@@ -241,6 +264,13 @@ const SHORE_RUN_OUT = 60;
  * battle is about rather than one that gets the water out of the way. 62 m of
  * half-width carries the burn swath's whole depth (`rows × rowStep` ≈ 39 m)
  * and the dead band with room over.
+ *
+ * AND IT IS NOT SYMMETRIC, because the march is not. The front starts
+ * `FRONT_MARCH` metres out on the burnt side and closes onto the plan's own
+ * line over the deployment, so every metre of ground it crosses is on that
+ * side. The causeway is `CAUSEWAY_HALF` on the clean side and the whole march
+ * plus that again on the burnt one — which is to say: **the shelf is every
+ * metre of ground this battle is ever fought on, and nothing else.**
  */
 const CAUSEWAY_HALF = 62;
 /** A BEACH PROFILE: steepest at the water and flattening onto the shelf.
@@ -639,7 +669,11 @@ export function makeBattlefield(plan) {
        * battle stands on. */
       const wob = 1 + 0.18 * fbm2(x * 0.0053 + ox, z * 0.0053 - oz, 2);
       const r = Math.hypot(x - d.x, z - d.z) * wob;
-      const w = Math.abs(q.d) * (1 + 0.22 * fbm2(x * 0.0061 - oz, z * 0.0061 + oy, 2));
+      /* How far outside the causeway's band this point is, in whichever
+       * direction it left: the band runs from `-CAUSEWAY_HALF` on the clean
+       * side to `FRONT_MARCH` on the burnt one. */
+      const sd = q.d * (1 + 0.22 * fbm2(x * 0.0061 - oz, z * 0.0061 + oy, 2));
+      const w = sd < 0 ? -sd : Math.max(0, sd - FRONT_MARCH);
       /* The higher of the two shores wins, which is what "the land is the disc
        * OR the causeway" means as arithmetic. */
       return sea + Math.max(above(rWater - r), above(CAUSEWAY_HALF - w));
@@ -729,13 +763,27 @@ export function frontLine(front) {
   const had = LINES.get(front);
   if (had) return had;
   const plan = front.curve ? front : front.plan;
-  /* HOW FAR THE LINE HAS COME SINCE THE PLAN WAS DRAWN. The bezier is where
+  /**
+   * HOW FAR THE LINE HAS COME SINCE THE PLAN WAS DRAWN. The bezier is where
    * the battle is; the ENGAGEMENT is where the line has got to, and §14's
-   * schedule closes it 40 m at a time. Offsetting the curve along its own
-   * normal is the same advance a half-plane expresses by changing `distance`,
-   * and it keeps the shape of the front — a front that advanced by being
-   * redrawn would be a different battle each engagement, which is exactly the
-   * failure §13 records against the Spire. */
+   * schedule closes it 40 m at a time. The front keeps its SHAPE while it
+   * moves — a front that advanced by being redrawn would be a different battle
+   * each engagement, which is exactly the failure §13 records against the
+   * Spire.
+   *
+   * IT IS A TRANSLATION ALONG THE ADVANCE AND NOT AN OFFSET ALONG THE NORMAL,
+   * and the difference is the whole reason `side` and `place` can be called
+   * inverses. A curve pushed out along its own normal is a PARALLEL curve, and
+   * a parallel curve is not a rigid copy: past the radius of curvature it
+   * compresses on the concave side and swings wide on the convex one, so the
+   * point `place` puts 160 m out is not 160 m from the line when `side` is
+   * asked about it. Measured on the Ember Shelf at 160 m of march, before this
+   * was a translation: the swath's own marks read from −41 m to +36 m of the
+   * line they had just been laid on, i.e. **38% of them on the clean side of
+   * the front that drew them.** A translation cannot do that — it is the same
+   * curve at a different place, so the two are exact inverses of each other by
+   * construction and the check that says so cannot become decorative.
+   */
   const line = plan && plan.curve ? curvedLine(plan, front.offset ?? 0) : flatLine(front);
   LINES.set(front, line);
   return line;
@@ -747,11 +795,14 @@ export function frontLine(front) {
  *  the same convention the half-plane has (u = 0 at the foot of the bearing). */
 function curvedLine(plan, offset) {
   const C = plan.curve, mid = plan.choke.s, o = plan.orient;
+  /** Where the whole line has been carried to, along the axis of advance. */
+  const mx = plan.dir.x * offset, mz = plan.dir.z * offset;
   const at = (u) => {
     const p = atArc(C, mid + u);
     /* The burnt-side normal: the tangent turned a quarter, with the sign the
      * plan settled once for every reader. */
-    return { x: p.x, z: p.z, tx: p.tx, tz: p.tz, nx: -p.tz * o, nz: p.tx * o };
+    return { x: p.x + mx, z: p.z + mz, tx: p.tx, tz: p.tz,
+      nx: -p.tz * o, nz: p.tx * o };
   };
   return {
     curved: true,
@@ -760,11 +811,13 @@ function curvedLine(plan, offset) {
     at,
     place: (u, depth) => {
       const f = at(clamp(u, -mid, C.length - mid));
-      const k = depth + offset;
-      return { x: f.x + f.nx * k, z: f.z + f.nz * k,
+      return { x: f.x + f.nx * depth, z: f.z + f.nz * depth,
         tx: f.tx, tz: f.tz, nx: f.nx, nz: f.nz };
     },
-    side: (x, z) => { const q = nearestOn(C, x, z); return { d: q.d * o - offset, u: q.s - mid }; },
+    side: (x, z) => {
+      const q = nearestOn(C, x - mx, z - mz);
+      return { d: q.d * o, u: q.s - mid };
+    },
   };
 }
 

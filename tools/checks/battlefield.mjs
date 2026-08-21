@@ -652,6 +652,43 @@ export function run({ check, assert, near }) {
       + 'the swath is not the full width any more');
     assert(reasons.size >= 4, `${reasons.size} reasons over 25 seeds`);
 
+    /**
+     * ── `side` AND `place` ARE INVERSES, WHICH IS WHAT MAKES THEM ONE OBJECT
+     *
+     * Every number above rests on it: a swath is "on the burnt side" because
+     * `place(u, depth)` put it `depth` into the burnt side and `side` agrees.
+     * The first version of the advance broke exactly this and nothing here
+     * could see it — the front was carried by offsetting the curve along its
+     * own NORMAL, which is a parallel curve and not a rigid copy, so past the
+     * radius of curvature it compressed on the concave side. Driven on the
+     * Ember Shelf at §14's 160 m of march, the swath's own marks read from
+     * −41 m to +36 m of the line that had just drawn them: 38% of a burn on
+     * the clean side of its own front. The advance is a translation now and
+     * this is the clause that says so.
+     */
+    for (const seed of [3, 29]) {
+      const gg = battlefieldGround(BASE, seed);
+      for (const march of [0, 80, 160]) {
+        const L = frontLine({ ...frontAtChoke(gg.plan), offset: march });
+        let worstD = 0, worstU = 0;
+        for (let u = -200; u <= 200; u += 20) {
+          for (const depth of [-6, 0, 12, 39]) {
+            const q = L.place(u, depth);
+            const back = L.side(q.x, q.z);
+            worstD = Math.max(worstD, Math.abs(back.d - depth));
+            worstU = Math.max(worstU, Math.abs(back.u - u));
+          }
+        }
+        /* The tolerance is the flattening's, not a fudge: `polyline` cuts the
+         * bezier into 128 segments, so a nearest-point query is a chord away
+         * from the curve — sub-metre on a 620 m map. */
+        assert(worstD < 1.0 && worstU < 1.5,
+          `seed ${seed} at ${march} m of march: place/side disagree by ${worstD.toFixed(1)} m across `
+          + `the line and ${worstU.toFixed(1)} m along it — the two are not inverses and every `
+          + 'burnt-side fraction in this check is measuring itself');
+      }
+    }
+
     /* ── AND THE OTHER THREE MARKS, on a ground that exists ──────────────── */
     const g = battlefieldGround(BASE, 3, { reason: 'pass' });
     installGround(g.key, g.preset);
@@ -780,8 +817,16 @@ export function run({ check, assert, near }) {
           }
         }
         const frac = mapWet / mapN;
-        assert(frac > 0.04,
-          `${key} seed ${seed}: ${(frac * 100).toFixed(1)}% of the map is under the sheet — the ground was `
+        /* 2%, and the bar is low ON PURPOSE. What it is guarding against is a
+         * datum LIFT — a ground raised until nothing is wet, which passes the
+         * two clauses above and deletes the hazard. How much sea is left is a
+         * property of where the seed drew the line: the causeway is land over
+         * the front's whole march, so a curve that runs diagonally across the
+         * map leaves corners and one that clips it leaves half. Measured over
+         * twelve seeds on each of the three rooms: 3% to 60%, thinnest on a
+         * `pass` and widest on a `landing`. */
+        assert(frac > 0.02,
+              `${key} seed ${seed}: ${(frac * 100).toFixed(1)}% of the map is under the sheet — the ground was `
           + 'lifted clear of the hazard rather than standing out of it, and the level has lost the thing it is named for');
         out.push(`${key}/${seed} ${(frac * 100).toFixed(0)}% sea`);
         t.dispose();
