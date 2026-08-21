@@ -234,21 +234,84 @@ export async function run({ check, assert }) {
         } finally { audio.runWon = heard.restoreAudio; world.unload?.(); }
       }
 
-      /* THE BATTLE. Two engagements, both cleared by killing the field. */
+      /**
+       * THE BATTLE. Two engagements, both cleared by killing the field.
+       *
+       * THIS CHECK'S PREMISE EXPIRED, AND THAT IS THE ONLY REASON IT IS EDITED.
+       * The drive was 260 outer rounds of 30 frames — 130.0 game-seconds — and
+       * it asserted the battle had resolved by the end of them. That was a fair
+       * budget on a tree where an engagement was ONE cleared wave and the ground
+       * under it changed in the same frame it was decided. Both of those moved,
+       * and neither of them is what this check is about:
+       *
+       *   AN ENGAGEMENT IS `SKIRMISH.waves` CLEARED WAVES, three by default,
+       *     because one was the defect the player found in ten seconds — "in
+       *     skirmish mode I'll start the map will immediately say cleared and we
+       *     leave like there were never any enemies". Two engagements is now six
+       *     cleared waves rather than two.
+       *   THE GROUND CHANGE IS FLOWN. `Extraction.extractionSeconds()` reports
+       *     45.95 s of aftermath, call, inbound, ramp, boarding, seal, liftoff,
+       *     transit, descent and unload between engagement 1 and engagement 2 —
+       *     and this drive holds an idle input, so nobody walks to the ramp and
+       *     `_boarding` waits out `LAST_CALL` (22.0 s) before the crew hauls the
+       *     commander aboard. Measured here: the flight ran 75.0 s.
+       *
+       * Driving the shipped code, seeds 4242, 7 and 31, the battle is announced
+       * WON at **192.0 s, 164.5 s and 185.0 s**. The old budget stopped at
+       * 130.0 s — inside the descent of that flight, `sk.cleared` at 1 of 2 and
+       * nothing ended — which is exactly the "the battle did not resolve: null"
+       * this check reported. THE GAME WAS RIGHT THROUGHOUT.
+       *
+       * SO THE DRIVE IS NOT GIVEN A NUMBER OF FRAMES ANY MORE. It runs until the
+       * battle resolves and fails when the battle STOPS MOVING. That is a
+       * stronger property than "it fitted in 130 s" and it is the one the player
+       * actually reported — "in campaign mode the game completely freezes when
+       * you finish the first wave, never unfreezes" — where a frame budget can
+       * only ever say that something was slower than a number somebody typed,
+       * and has to be re-typed every time an engagement gets longer.
+       */
       {
         const { world, input } = await boot('skirmish', 'colosseum', 4242);
         const heard = listen(world, audio);
         try {
-          world.beginSkirmish({ engagements: 2, strength: 10, pressure: 1 });
-          for (let t = 0; t < 260 && !world.over; t++) {
+          const { LAST_CALL, extractionSeconds } = await import('../../src/game/Extraction.js');
+          const sk = world.beginSkirmish({ engagements: 2, strength: 10, pressure: 1 });
+          /* WHAT PROGRESS IS, in the five fields a battle moves: which
+           * engagement has been won, which wave of the one being fought, the
+           * escalation's own number, the phase of the flight while one is up,
+           * and the score. Every one of them read off the game — the frozen
+           * campaign the player reported moves none of them. */
+          const mark = () => [sk.cleared, sk.waveCount, world.director?.wave,
+            world.extraction?.active ? world.extraction.phase : '-', world.score].join('/');
+          /* THE LONGEST A BATTLE MAY HOLD STILL IS ASKED FOR, NOT TYPED. The
+           * only stretch in this drive where nothing at all moves is the ship
+           * waiting on a commander who never walks, and `LAST_CALL` is the
+           * shipped bound on it: the three seeds above all measure their longest
+           * quiet window at 23.0 s, which is LAST_CALL plus one 0.5 s sample.
+           * Twice it is a hold nothing in the sequence can produce. */
+          const STALL = LAST_CALL * 2;
+          /* A BACKSTOP AND NOT THE GATE — the stall detector is what catches a
+           * freeze. This bounds only a battle that keeps moving and never ends,
+           * at three times the 192.0 s longest of the three seeds. */
+          const CEILING = 600;
+          let last = mark(), still = 0, t = 0;
+          while (t < CEILING && !world.over) {
             for (let i = 0; i < 30 && !world.over; i++) {
               if (world.player) world.player.hp = world.player.maxHp;
               world.update(STEP, input);
+              t += STEP;
             }
             for (const e of world.enemies) if (e.team !== world.partyTeam && !e.dead) e.damage?.(1e9, null, 'probe');
+            const now = mark();
+            still = now === last ? still + 0.5 : 0;
+            last = now;
+            assert(still < STALL,
+              `the battle stopped moving for ${still.toFixed(1)} s at t=${t.toFixed(1)} s, on engagement `
+              + `${sk.cleared + 1} of ${sk.engagements}, wave ${sk.waveCount + 1} of ${sk.waves}`
+              + `${world.extraction?.active ? `, in the ${world.extraction.phase} of the flight` : ''}`);
           }
           assert(world.over && heard.stats?.won === true,
-            `the battle did not resolve: ${JSON.stringify(heard.stats)}`);
+            `the battle did not resolve in ${t.toFixed(1)} s of play: ${JSON.stringify(heard.stats)}`);
           const verdict = heard.said.filter(([t]) => VERDICT.test(t));
           assert(verdict.length === 1 && /\bWON\b/.test(verdict[0][0]),
             `a won battle was announced as ${JSON.stringify(verdict.map(([t]) => t))}`);
@@ -256,7 +319,8 @@ export async function run({ check, assert }) {
             `a won battle played runWon(${heard.sounded.join(',')})`);
           assert(heard.stats.taken === 2,
             `two engagements were cleared and the card reports ${heard.stats.taken}`);
-          rows.push(`skirmish "${verdict[0][0]}", taken ${heard.stats.taken}`);
+          rows.push(`skirmish "${verdict[0][0]}", taken ${heard.stats.taken} × ${sk.waves} waves `
+            + `and one ${extractionSeconds().toFixed(1)} s flight, resolved at ${t.toFixed(1)} s`);
         } finally { audio.runWon = heard.restoreAudio; world.unload?.(); }
       }
       return `${rows.join('; ')}; ${cues} cue call sites in World.js, 0 in Command.js`;
