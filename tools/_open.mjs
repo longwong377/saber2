@@ -22,58 +22,59 @@
  * an instrument that restates a rule eventually disagrees with it (HANDOFF
  * §2.4) — and this one would disagree in the direction that flatters the verb.
  *
- * IT ALSO WEIGHS THE SECONDS BY THE FIRE THEY DREW. A body that is open while
- * nobody is shooting at it is worth nothing to the line whatever the share
- * says, so `openHits` / `hits` counts the bolts that actually LANDED on an
- * open body against every bolt that landed on anybody — the same quantity one
- * layer closer to the damage. `_boltHitTest` is wrapped, not restated.
+ * IT ALSO WEIGHS THE SECONDS BY THE FIRE THEY DREW, TWICE. A body that is open
+ * while nobody is shooting at it is worth nothing to the line whatever the
+ * share says, so this counts the line's SHOTS by what they were aimed at
+ * (`owner.target` at the moment of firing) and the bolts that actually LANDED
+ * on a hostile body. Both are read off the shipped path — `bolts.fire` and
+ * `_boltHitTest` are wrapped, not restated.
+ *
+ * The two are separate because the gap between them is where a diagnosis went
+ * wrong: "the line is not shooting at the body you opened" is a claim about
+ * AIM, and only a claim about aim can be answered by a target preference.
  *
  * The arms are `_flagship.mjs`'s, driven by its own scripted Jedi, so this
  * number is taken on the same fight the Dead Jedi table was taken on.
  *
- * ── THE ANSWER, AND IT IS THE 2% CASE ───────────────────────────────────
+ * ── THE ANSWER, AND IT IS THE 1% CASE ───────────────────────────────────
  *
- * Five seeds, three engagements each, `blade` and `none`:
+ * Two seeds, two engagements each, `grip` and `blade`:
  *
- *     MEAN open share of enemy-seconds            0.90%
- *       with a Jedi in the line                   1.1 - 2.7%
- *       with no player on the field               0.13 - 0.32%
- *     of bolts landing on a body, share open      10.7%
- *     extra damage the multiplier bought          +5.4%
+ *     MEAN open share of enemy-seconds                 0.90%
+ *     of the LINE's shots, share aimed at an open body 9.03%
+ *     of bolts landing on a hostile body, share open   7.38%
+ *     extra damage the multiplier bought              +5.09%
  *
- *     held    0.000%      yanked  0.000%      downed  0.897%
+ *     state    share of enemy-seconds   aimed at   landed on
+ *     held               0.513%           9.12x       1.95x
+ *     yanked             0.000%              —           —
+ *     downed             0.388%          11.97x      17.65x
  *
- * `held` and `yanked` are EXACTLY zero because the scripted Jedi does not grip,
- * pull or hurl — deliberately, see `dutyInput`'s own note — so the whole of the
- * `blade` arm's open share is `downed`, bodies YOUR OWN LINE toppled or
- * stunned. That is a real reading and it is not §7's claim, which is about the
- * x3.0 rung. Hence the `grip` arm.
+ * The `grip` arm holds a body whenever it can afford to, so 0.51% of
+ * enemy-seconds is the CEILING of the x3.0 rung and not a playstyle: one pair
+ * of hands holds one body, and the choke kills it in about four and a half
+ * seconds. `yanked` is exactly zero because the scripted Jedi does not pull —
+ * see `dutyInput`'s own note.
  *
- * ── AND WITH A JEDI GRIPPING CONTINUOUSLY, SOMETHING ELSE IS EATING IT ──
+ * ── WHAT THIS FILE USED TO SAY, AND WHY IT WAS WRONG ────────────────────
  *
- * Three seeds, two engagements, `grip` against `blade`:
+ * It reported a `held` fire concentration of **0.08** — "a body held off the
+ * ground draws eight per cent of its fair share of the line's fire" — and that
+ * number went into NEXT.md as a diagnosis of `targetFor`, which picks the
+ * nearest hostile and was said to be dragging the line's attention off the one
+ * body the Jedi had just made three times as killable.
  *
- *     state    share of enemy-seconds   fire concentration
- *     held               1.85%                 0.08
- *     yanked             0.00%                    —
- *     downed             1.00%                11.22
+ * It was an instrument fault, and it is HANDOFF §2.3's shape: the denominator
+ * counted every bolt that landed on ANY body while the numerator counted only
+ * the horde's seconds. In Command your own line stands in `world.enemies` and
+ * the droids shoot at it all battle — measured on seed 3, 123 bolts landed on a
+ * body and 19 of them were your line's landing on the horde. Five sixths of the
+ * ratio was fire going the other way.
  *
- * A body held off the ground draws EIGHT PER CENT of its fair share of the
- * line's fire. §7 says "grip a B2 and the ten riflemen who needed 17 seconds
- * need six"; measured, gripping a B2 is the most reliable way to stop the ten
- * riflemen shooting it at all. The mechanism is not a bug in `openness` — it is
- * `targetFor`, which picks the NEAREST hostile, and a grip drags its victim ten
- * metres toward the Jedi and out of the line's engagement envelope.
- *
- * The other half of the same table is why the verb LOOKS live in a battle:
- * `downed` draws eleven times its share, and the causality runs backwards —
- * a body is toppled and stunned BY the fire that is already pointed at it, so
- * the 1.5x is paid on bodies that were going to die anyway.
- *
- * So the share is ~1-3% and the concentration on the one rung worth 3.0x is
- * 0.08. On these numbers OPEN cannot pay at battle scale as written, and the
- * cheapest thing that would change that is a target preference rather than a
- * bigger multiplier.
+ * Counted against the horde alone, `held` draws 1.95x its fair share of the
+ * bolts that land and is AIMED AT 9.12x its share. The line was never starved
+ * of the target; it was over-committed to it. A target preference had nothing
+ * to buy, and the thing that bounds the verb is the window — see NEXT.md.
  */
 
 import './dom-shim.mjs';
@@ -149,18 +150,68 @@ async function runArm(arm, seed, engagements) {
     };
   }
 
-  const tally = { enemySeconds: 0, open: {}, bodies: 0, hits: 0, openHits: 0, openHitStates: {} };
-  for (const s of OPEN_STATES) { tally.open[s.key] = 0; tally.openHitStates[s.key] = 0; }
+  const tally = { enemySeconds: 0, open: {}, bodies: 0, hits: 0, openHits: 0, openHitStates: {},
+                  shots: 0, openShots: 0, openShotStates: {} };
+  for (const s of OPEN_STATES) {
+    tally.open[s.key] = 0; tally.openHitStates[s.key] = 0; tally.openShotStates[s.key] = 0;
+  }
 
-  /* EVERY BOLT THAT LANDED ON A BODY, ASKED WHAT STATE THAT BODY WAS IN — off
-   * the shipped hit test rather than off a second copy of it. Variadic past
-   * the arguments it reads, so a signature change downstream is not silently
-   * dropped (HANDOFF §6.1a). */
+  /**
+   * …AND WHAT THE LINE WAS AIMING AT WHEN IT PULLED THE TRIGGER.
+   *
+   * The landed-bolt share below and this one are two different questions and
+   * the gap between them is where a diagnosis went wrong. "The line is not
+   * shooting at the body you opened" is a claim about AIM; a bolt that is
+   * aimed at a held body and hits a rock is a fact about the ground. Only the
+   * first can be fixed by a target preference, and it is the one that had never
+   * been measured — the earlier reading inferred it from landed bolts, in a
+   * denominator that was five sixths the horde's own fire (see below).
+   *
+   * `owner.target` is the shipped field `Enemy._shoot` aims at, read at the
+   * moment of firing, so this is the line's own decision and not a second
+   * opinion about it.
+   */
+  const firePool = world.bolts.fire.bind(world.bolts);
+  world.bolts.fire = (from, dir, o) => {
+    const owner = o && o.owner;
+    if (owner && owner.trooper && owner.target) {
+      tally.shots++;
+      const s = openState(owner.target);
+      if (s) { tally.openShots++; tally.openShotStates[s.key]++; }
+    }
+    return firePool(from, dir, o);
+  };
+
+  /**
+   * EVERY BOLT THAT LANDED ON A HOSTILE BODY, ASKED WHAT STATE THAT BODY WAS
+   * IN — off the shipped hit test rather than off a second copy of it.
+   * Variadic past the arguments it reads, so a signature change downstream is
+   * not silently dropped (HANDOFF §6.1a).
+   *
+   * ── `victim.team === mine` USED TO BE COUNTED, AND IT INVENTED A DEFECT ──
+   *
+   * This said `if (victim && victim.capsules)` — every bolt landing on ANY
+   * body. In Command your own line stands in `world.enemies`, and the droids
+   * shoot at it all battle: measured on seed 3, 123 bolts landed on a body and
+   * only 19 of them were YOUR line's bolts landing on the horde. So five sixths
+   * of the denominator was fire going the other way, while `enemySeconds` below
+   * counts only the horde. The ratio of the two is what this probe prints as
+   * `concentration`, and it therefore read 0.08 for `held` — "a body held off
+   * the ground draws eight per cent of its fair share of the line's fire",
+   * which was written into NEXT.md as a diagnosis of `targetFor` and is not a
+   * fact about the game at all.
+   *
+   * Counted against the horde alone, on the same seed: your line puts 18% of
+   * its shots and 16% of its landed bolts on bodies that are open 5% of the
+   * time. The line was never starved of the target; see NEXT.md for what
+   * actually bounds the verb.
+   */
   const hitTest = world._boltHitTest.bind(world);
   world._boltHitTest = (...a) => {
     const res = hitTest(...a);
     const victim = res && res.victim;
-    if (victim && victim.capsules) {
+    const side = world.player ? world.player.team : (world.command?.commander?.team ?? 0);
+    if (victim && victim.capsules && victim.team !== side) {
       tally.hits++;
       const s = openState(victim);
       if (s) { tally.openHits++; tally.openHitStates[s.key]++; }
@@ -203,6 +254,8 @@ async function runArm(arm, seed, engagements) {
     gripTakes: grip.takes || null, gripSeconds: +grip.heldSeconds.toFixed(1) || null,
     hits: tally.hits, openHits: tally.openHits,
     openHitShare: tally.hits > 0 ? +(tally.openHits / tally.hits).toFixed(5) : 0,
+    shots: tally.shots, openShots: tally.openShots,
+    openShotShare: tally.shots > 0 ? +(tally.openShots / tally.shots).toFixed(5) : 0,
     /**
      * …AND WHETHER THE LINE IS ACTUALLY SHOOTING AT THE THING YOU OPENED.
      *
@@ -218,6 +271,14 @@ async function runArm(arm, seed, engagements) {
       const secs = tally.open[k] / Math.max(tally.enemySeconds, 1e-9);
       const shots = tally.openHitStates[k] / Math.max(tally.hits, 1);
       return [k, secs > 1e-6 ? +(shots / secs).toFixed(2) : null];
+    })),
+    /* THE SAME RATIO ON AIM RATHER THAN ON ARRIVAL — the one a target
+     * preference could move. Above 1 the line is already choosing the body you
+     * opened over a nearer one, and a preference has nothing left to buy. */
+    aimConcentration: Object.fromEntries(Object.keys(tally.open).map((k) => {
+      const secs = tally.open[k] / Math.max(tally.enemySeconds, 1e-9);
+      const sh = tally.openShotStates[k] / Math.max(tally.shots, 1);
+      return [k, secs > 1e-6 ? +(sh / secs).toFixed(2) : null];
     })),
     /* WHAT THE VERB IS WORTH IF THE SHARE IS ALL THERE IS TO IT: the extra
      * damage the multiplier bought, as a share of what an un-opened field
@@ -245,6 +306,7 @@ for (const seed of seeds) {
     console.log(`  seed ${String(seed).padStart(3)}  ${arm.padEnd(5)}  `
       + `enemy-s ${String(r.enemySeconds).padStart(7)}  open-s ${String(r.openSeconds).padStart(6)}  `
       + `share ${(r.openShare * 100).toFixed(2)}%  `
+      + `line shots ${String(r.shots).padStart(4)} at open ${(r.openShotShare * 100).toFixed(2)}%  `
       + `hits ${String(r.hits).padStart(4)} of which open ${(r.openHitShare * 100).toFixed(2)}%  `
       + `worth +${(r.worthOnHits * 100).toFixed(2)}%  waves ${r.waveClears}`);
   }
@@ -253,9 +315,15 @@ const mean = (f) => rows.reduce((a, r) => a + f(r), 0) / Math.max(1, rows.length
 console.log(`\n  MEAN open share ${(mean((r) => r.openShare) * 100).toFixed(2)}%  `
   + `· of bolts landing on an open body ${(mean((r) => r.openHitShare) * 100).toFixed(2)}%  `
   + `· extra damage the multiplier bought +${(mean((r) => r.worthOnHits) * 100).toFixed(2)}%`);
-console.log('    state    share of enemy-seconds   fire concentration (1 = its fair share)');
+console.log(`  MEAN of the LINE's shots aimed at an open body `
+  + `${(mean((r) => r.openShotShare) * 100).toFixed(2)}%`);
+console.log('    state    share of enemy-seconds   aimed at    landed on   (1 = its fair share)');
 for (const k of Object.keys(rows[0]?.byState || {})) {
-  const c = rows.map((r) => r.concentration[k]).filter((v) => v !== null);
-  const cm = c.length ? (c.reduce((a, b) => a + b, 0) / c.length).toFixed(2) : '—';
-  console.log(`    ${k.padEnd(7)}  ${(mean((r) => r.byState[k]) * 100).toFixed(3)}%   ${String(cm).padStart(22)}`);
+  const col = (f) => {
+    const c = rows.map(f).filter((v) => v !== null && v !== undefined);
+    return c.length ? (c.reduce((a, b) => a + b, 0) / c.length).toFixed(2) : '—';
+  };
+  console.log(`    ${k.padEnd(7)}  ${(mean((r) => r.byState[k]) * 100).toFixed(3)}%`
+    + `${String(col((r) => r.aimConcentration[k])).padStart(16)}`
+    + `${String(col((r) => r.concentration[k])).padStart(12)}`);
 }
