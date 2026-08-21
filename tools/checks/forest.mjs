@@ -616,8 +616,33 @@ export async function run({ check, assert }) {
      *
      * Half the timber in the level is a wall by ten centimetres, and a wall
      * that is knee-high and twenty metres long is one you cannot see a reason
-     * for. Measured by walking the real Player across a felled stand, 24 runs
-     * of ten seconds: 61 of 88 stalls were against logs; 3 afterwards.
+     * for.
+     *
+     * ── THE NUMBER THIS COMMENT USED TO CARRY WAS WRONG, AND SAYING SO IS
+     *    WORTH MORE THAN THE NUMBER ────────────────────────────────────────
+     *
+     * It read: "Measured by walking the real Player across a felled stand, 24
+     * runs of ten seconds: 61 of 88 stalls were against logs; 3 afterwards."
+     * The 61 was real. The 3 was taken on a wood that no longer exists: at the
+     * time, `rand` in MathUtil.js and `rng` in World.js were both seeded from
+     * `Math.random()` at import, so EVERY RUN OF THE GATE DEALT A DIFFERENT
+     * FOREST and any figure read off one of them was a figure about that
+     * afternoon. Pinning those streams under `tools/register.mjs` is what made
+     * the measurement repeatable, and the honest reading on the pinned deck,
+     * taken twice and identical both times, is:
+     *
+     *     71 stalls over 24 walks — 38 standing timber, 21 logs, 12 level boxes
+     *
+     * So the climb took the logs from most of the stalls to under a third of
+     * them, and the ones left are real: a body that has climbed ONTO a trunk
+     * and is crossing it, which is a step-over that has not been finished
+     * rather than a wall. That is written down as an open item in BACKLOG.md
+     * rather than rounded off here — one attempt at widening the support
+     * sample for a climbable box made it worse (71 stalls to 88), which is
+     * exactly the kind of thing a wrong number in a comment stops you finding.
+     *
+     * A comment that states a measurement is a claim, and this file exists
+     * because claims in this repository are held to the code.
      *
      * THE FIXTURE IS BUILT RATHER THAN FOUND, and the first three attempts at
      * finding one in the wood are why. A crossing measured on the shipped

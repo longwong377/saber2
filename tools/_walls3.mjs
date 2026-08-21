@@ -88,6 +88,7 @@ const distToSeg = (p, a, b) => {
 };
 
 const tally = {};
+const logStalls = [];
 /** Distance from a point to a box, in the box's own frame. */
 const boxDist = (b, p) => {
   const q = new THREE.Vector3().subVectors(p, b.center).applyQuaternion(b.invQuat);
@@ -145,6 +146,36 @@ for (let w = 0; w < 24; w++) {
         }
         const ground = world.terrain.height(foot.x, foot.z);
         tally[who.split(' ')[0]] = (tally[who.split(' ')[0]] || 0) + 1;
+        /* WHY THE CLIMB DID NOT ENGAGE, for a stall against a log. Everything
+         * the three gates in `Player._collide` read, at the moment the body
+         * gave up: how high the wood is over the ground it is standing on,
+         * whether the support query is answering with the box at all, and
+         * whether the body thinks it is climbing. */
+        if (who.startsWith('log')) {
+          const { supportHeight, STEP_UP } = await import('../src/physics/Support.js');
+          const sup = supportHeight(world.terrain, P._nearBoxes, null, foot.x, foot.z, foot.y, P.radius, STEP_UP);
+          /* AND THE BOX ITSELF, because everything above is downstream of it. */
+          const { boxTopAt } = await import('../src/physics/Support.js');
+          let box = null, bd = Infinity;
+          for (const [, arr] of F.logs) for (const b of arr) {
+            const d = boxDist(b, foot);
+            if (d < bd) { bd = d; box = b; }
+          }
+          const inNear = P._nearBoxes.includes(box);
+          const topAt = box ? boxTopAt(box, foot.x, foot.z, P.radius) : null;
+          logStalls.push({
+            climbFlag: box?.userData?.climb ?? null,
+            inNear,
+            topAt: topAt === -Infinity ? '-inf' : +(topAt - foot.y).toFixed(2),
+            disabled: !!box?.disabled,
+            top: +(top - ground).toFixed(2),
+            gap: +gap.toFixed(2),
+            support: +(sup - foot.y).toFixed(2),
+            climbing: !!P.climbing,
+            grounded: !!P.grounded,
+            slope: +(world.terrain.height(foot.x + 1, foot.z + 1) - ground).toFixed(2),
+          });
+        }
         if (hits.length < 15) {
           hits.push(`  at ${foot.toArray().map((v) => v.toFixed(1)).join(',')} — nearest drawn ${d.toFixed(2)} m; blocker ${who} ${gap.toFixed(2)} m away, its top ${(top - ground).toFixed(2)} m over the ground`);
         }
@@ -156,3 +187,5 @@ console.log(`felled ${felled} (chained to ${F.stats.felled}); ${walks} walks, ${
 console.log(`stalls: ${blocked}; stalls with nothing drawn within 1.2 m: ${hits.length}`);
 for (const h of hits) console.log(h);
 console.log('blockers:', JSON.stringify(tally));
+console.log('log stalls, why the climb did not engage:');
+for (const L of logStalls.slice(0, 14)) console.log(' ', JSON.stringify(L));

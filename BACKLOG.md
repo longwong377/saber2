@@ -45,7 +45,7 @@ Four rules decided it, in this priority:
 
 | # | Item | Source | State |
 |---|---|---|---|
-| 0.1 | **Audit the V3 list item by item** and report what is DONE / PARTIAL / MISSING / SUPERSEDED, with evidence for each. The player asked by name: *"make sure that everything on that list actually got done… and let me know if we missed anything on it"* | V5 | **in flight** |
+| 0.1 | **Audit the V3 list item by item.** The player asked by name: *"make sure that everything on that list actually got done… and let me know if we missed anything on it"* | V5 | ✅ **17 items, nothing missing.** 14 DONE with a measurement each, 2 PARTIAL (items 10 and 17 — now §8.1 and §8.2), 1 DONE with a named residue (item 7 — now §8.3). All three "do not regress" items hold. Three items were superseded by later lists and are flagged as such rather than counted done |
 | 0.2 | **The Force shield / bubble.** Asked for in an earlier list and never built — confirmed: `POWER_COST` has push, pull, grip, throw, sense, lightning, stasis, heal, compel, rend, unleash, and nothing that shields | V5 | **MISSING — confirmed** |
 
 ---
@@ -116,6 +116,20 @@ they change what to build; read it before starting anything here.
 | 6.5 | §14 Step 4 — **L2, the merged rigid-skin rung.** The single highest-value engineering item: 42 bodies = 1,040 draw calls today, 394 with it | Flagship | open |
 | 6.6 | §14 Step 5 — L3 instanced cohorts past 140 m | Flagship | open |
 | 6.7 | The mode itself, after the rungs above | Flagship | open |
+
+---
+
+## §8 — Open, found by audit rather than by the player
+
+Neither of these is on a list. Both came out of auditing the V3 list against the
+shipped code, and they are here so they are not lost.
+
+| # | Item | Found by | State |
+|---|---|---|---|
+| 8.1 | **Crossing a felled trunk is not finished.** The climb works — a body gets onto a log and stalls there. On the pinned deck, 24 ten-second walks in the wood: 71 stalls, 21 of them logs, worst 4.22 s against wood 0.85 m high with the body's feet ALREADY at that height. One attempt at a fix (widening the support sample for a climbable box by 0.25 m) made it worse — 71 stalls to 88 — so it is open rather than half-done | V3 audit | open |
+| 8.2 | **Muster-anywhere is wired everywhere and is thin.** Three gaps, named by `muster.mjs`'s own header and confirmed: you cannot compose the contingent (it is `opening` bodies of the cheapest rung); allies are always the side your ORDER names, so the Wood and the Drifts get a Republic platoon whatever the ground is; and on small ground `deploy` silently drops men — four asked, two placed on the Colosseum | V3 audit | open |
+| 8.3 | **The first-person wrist BEND is still unfixed.** The roll was fixed — palms agree at 0.65, up from −1.00, thumbs both up the blade — and the check names the residue itself: "the wrist reaches 114.4° from rest, down from 179.7". If the player says the hands still look wrong, this is where it is | V3 audit | open |
+| 8.4 | **The blast-door suite flaps.** 7 passed / 2 failed at HEAD, with different failure text nearly every run, before and after any change. Pinning the module RNG streams did not settle it; the remaining suspect is that a suite's checks run concurrently over shared module state. The door's own breach rule was changed on top of this and is therefore UNVALIDATED against the twenty seconds | this session | open |
 
 ---
 
