@@ -1,3 +1,18 @@
+/**
+ * HOW MANY DISTINCT WAVE SHAPES A POOL COMPOSES, AT FIVE DEPTHS.
+ *
+ *   node --import ./tools/register.mjs tools/_shapeprobe.mjs
+ *
+ * The same count `escalation: the escalation does not flatten once the roster
+ * runs out` asserts on — the condition set plus the distinct archetypes, over
+ * 24 seeds — printed rather than compared, so a pool change can be measured
+ * before it is made.
+ *
+ * It exists because adding one light archetype to the Colosseum nearly doubles
+ * that pool's wave-20 variety and leaves wave 70 where it was, which fails the
+ * check for a reason that is about `_upgrade`'s convergence and not about the
+ * body being added. See BACKLOG.md §4.5.
+ */
 import './dom-shim.mjs';
 import * as THREE from 'three';
 const Waves = await import('../src/game/Waves.js');

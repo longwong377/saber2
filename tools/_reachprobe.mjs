@@ -1,4 +1,18 @@
-/* scratch probe: how high does a standing player's blade actually get? */
+/**
+ * HOW HIGH A STANDING PLAYER'S BLADE ACTUALLY GETS.
+ *
+ *   node --import ./tools/register.mjs tools/_reachprobe.mjs
+ *
+ * Four attacks, driven through the real `Player.update` with a stub input
+ * holding one binding, sampled over the whole swing. Measured: overhead tip
+ * 3.047 m / hilt 1.953, thrust 2.227, spin and stab 2.204. It is the number
+ * every altitude in `src/game/Flight.js` is authored against, and
+ * `tools/checks/flight.mjs` re-measures it every run rather than trusting the
+ * constant.
+ *
+ * The first version of this measured 1.953 m for all four and did not notice:
+ * an unlit saber's tip IS its hilt, and nothing had called `ignite`.
+ */
 import './dom-shim.mjs';
 import * as THREE from 'three';
 import { initPhysics } from '../src/physics/Rapier.js';

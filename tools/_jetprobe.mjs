@@ -1,3 +1,19 @@
+/**
+ * IS A FLOATING BODY DRAWN WHERE ITS `position` SAYS IT IS?
+ *
+ *   node --import ./tools/register.mjs tools/_jetprobe.mjs
+ *
+ * The probe that found it. `BipedAnimator.update` writes the pelvis in WORLD
+ * coordinates onto a bone parented to the rig root, so the root may only ever
+ * be an identity transform — and `Enemy._pose`'s jet lean rotates it, which
+ * swings the drawn body about the WORLD ORIGIN. Measured on the shipped Jet
+ * Trooper before the fix: 1.83 m at x=2, 1.36 at x=14, 1.79 at x=30. After:
+ * 0.33 / 0.30 / 0.33, and no longer scaling with distance from the origin.
+ *
+ * `tools/checks/flight.mjs` guards it now; this is the readable version, and
+ * the three spawn distances are the point — the tell was that the error GREW
+ * with the distance to the origin.
+ */
 import './dom-shim.mjs';
 import * as THREE from 'three';
 import { initPhysics } from '../src/physics/Rapier.js';

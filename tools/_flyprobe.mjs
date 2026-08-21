@@ -1,3 +1,14 @@
+/**
+ * WHAT ONE GEONOSIAN'S CYCLE LOOKS LIKE, SECOND BY SECOND.
+ *
+ *   node --import ./tools/register.mjs tools/_flyprobe.mjs
+ *
+ * `tools/checks/flight.mjs` asserts the properties; this prints the trace they
+ * come off, which is what you want when a number moves and you need to see
+ * WHERE in the cycle it moved. One flyer, one stationary target, flat ground,
+ * sixty seconds: altitude, flight state, the lowest live capsule, the range to
+ * the target and the running shot count every half second.
+ */
 import './dom-shim.mjs';
 import * as THREE from 'three';
 import { initPhysics } from '../src/physics/Rapier.js';
@@ -73,12 +84,6 @@ for (let i = 0; i < 60 * 60; i++) {
       const c = new THREE.Vector3().setFromMatrixPosition(ch.obj.matrixWorld);
       tipMin = Math.min(tipMin, v.y - c.y); tipMax = Math.max(tipMax, v.y - c.y);
     }
-  }
-  if (i === 150 || i === 300) {
-    e.rig.root.updateMatrixWorld(true);
-    const cs = e.capsules();
-    console.log('--- frame', i, 'y', e.position.y.toFixed(2), 'state', e._flightState, 'caps', cs.length);
-    console.log(cs.map((c) => `${c.name} ${c.p0.y.toFixed(2)}/${c.p1.y.toFixed(2)} r${c.r.toFixed(2)}`).join('  '));
   }
   if (i % 30 === 0) trace.push(`${(i/60).toFixed(1)}s y=${e.position.y.toFixed(2)} st=${e._flightState} low=${low<90?low.toFixed(2):'-'} d=${Math.hypot(e.position.x, e.position.z).toFixed(1)} shots=${shots}`);
 }
