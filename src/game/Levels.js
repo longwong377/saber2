@@ -37,6 +37,7 @@ import { attachRiders, saddleThreat } from './Riders.js';
  * assignment already gives: this is the module that decides what bodies
  * exist for everything not declared in Enemy.js. */
 import { GEONOSIAN_UNITS, attachFlight } from './Flight.js';
+import { emplaceGun } from './Emplacement.js';
 import { attachForest } from '../world/Trees.js';
 import { attachHazard } from '../world/Hazard.js';
 import { addSmokeColumns, smokeSites } from '../world/Smoke.js';
@@ -1846,6 +1847,33 @@ function magazine(world, opts = {}) {
     makeBarrel(world, at(cx + 1.15, -3.3));
     makeBarrel(world, at(cx + 1.25, -4.0));
   }
+
+  /**
+   * …AND THE MIDDLE CELL IS A GUN PIT. FLAGSHIP §7's BREACH, made into a verb.
+   *
+   * The rank of three has been an ERRAND since it was hung: each door holds a
+   * cache and fourteen points of war support, so nothing on the field changes
+   * if you walk past all three. §7 does not describe an errand — "the one thing
+   * on the field only a Jedi can touch… twenty seconds of held blade,
+   * deflecting nothing, away from your line, both bars draining" is a price,
+   * and a price is only a price when not paying it costs something.
+   *
+   * So the middle bay is a casemate with a heavy gun in it, laid on the muster
+   * ground 76.7 m away, shooting your named men. It cannot be shot back at, or
+   * gripped, or charged — see src/game/Emplacement.js, where the whole argument
+   * for that lives — and the door is the only way in. THE FLANKING TWO ARE
+   * UNCHANGED and are still caches, which is what makes the rank a decision
+   * rather than a queue: one of these twenty seconds you have to spend, and two
+   * of them you may.
+   *
+   * The MIDDLE one, and not an end one, because the wing walls close the
+   * approach into a defile that is narrowest on the centre line — the note over
+   * this function already says the defile is "the shape of the fight", and the
+   * door the battle forces you to stand at should be the one with the least
+   * ground behind your back.
+   */
+  if (doors[1]) emplaceGun(world, doors[1]);
+
   return doors;
 }
 
