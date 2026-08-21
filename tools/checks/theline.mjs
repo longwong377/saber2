@@ -41,21 +41,34 @@ async function lineWorld(opts = {}) {
   const { bootWorld, idleInput } = await import('./_coop.mjs');
   const { world } = await bootWorld({
     level: 'geonosis',
-    settings: { mode: opts.mode || 'theline', level: 'geonosis', order: opts.order || 'jedi',
-      ...(opts.seed !== undefined ? { seed: opts.seed } : {}) },
+    settings: { mode: opts.mode || 'theline', level: 'geonosis', order: opts.order || 'jedi' },
+    /* `runSeed` and not `settings.seed`: the run's number is a property of the
+     * SITTING and main.js writes it onto the world before the level loads,
+     * which is the door the director reads it through. See `bootWorld`. */
+    runSeed: opts.seed ?? null,
   });
   const d = world.command;
   if (d && opts.start !== false) {
     d.start(1);
-    if (opts.trim) d.spawnQueue.length = Math.min(d.spawnQueue.length, opts.trim);
+    if (opts.trim !== undefined) d.spawnQueue.length = Math.min(d.spawnQueue.length, opts.trim);
   }
   return { world, d, input: idleInput() };
 }
 
-function drive(world, seconds, input, until = null) {
+function drive(world, seconds, input, until = null, keepAlive = false) {
   const n = Math.round(seconds / STEP);
   let t = 0;
-  for (let i = 0; i < n; i++) { world.update(STEP, input); t += STEP; if (until && until(t)) break; }
+  for (let i = 0; i < n; i++) {
+    /* KEEPING THE JEDI ON THEIR FEET IS NOT CHEATING HERE, it is what makes
+     * the arm mean anything. An arm that empties the roster and then drives a
+     * lone Jedi through a composed wave measures whether that Jedi survives,
+     * and when they do not the run ends through `World._checkWipe` with
+     * `won: false` — which reads exactly like the verdict under test and is a
+     * different fact entirely. Measured: the Command arm ended on wave 1 with
+     * the campaign untouched and `director.done` still false. */
+    if (keepAlive && world.player) world.player.hp = world.player.maxHp;
+    world.update(STEP, input); t += STEP; if (until && until(t)) break;
+  }
   return t;
 }
 
@@ -145,6 +158,10 @@ export async function run({ check, assert }) {
       + 'that is FLAGSHIP §2 read backwards');
     assert(d.done, 'the director does not know the run is over');
     assert(world.over, 'the world is still running waves at a finished run');
+    /* THROUGH THIS MODE'S OWN DOOR, and not because a lone Jedi was killed —
+     * `World._checkWipe` also reports `won: false`, so without this the arm
+     * would pass on a run that never tested the rule at all. */
+    assert(d.log.some((r) => r.t === 'lost'), 'the run ended without this mode logging a verdict');
     world.unload();
     return `ended once at ${t.toFixed(0)}s, won=false with 0 of ${d.roster.all.length} standing`;
   });
@@ -205,14 +222,20 @@ export async function run({ check, assert }) {
      * the verdict of a mode people have already played. Same emptied roster,
      * same last area, other mode: it must still come back won.
      */
-    const { world, d, input } = await lineWorld({ trim: 2, mode: 'command' });
+    /* AN EMPTY QUEUE, so the last area clears without anybody having to fight
+     * it. The roster is dead and the Jedi is held on their feet, so there is
+     * nobody left on the field to kill a wave: with the shipped two-body queue
+     * the campaign simply never finished, and a check that times out proves
+     * nothing about a verdict. */
+    const { world, d, input } = await lineWorld({ trim: 0, mode: 'command' });
     d.areaIndex = d.stages.length - 1;
     d.areaWaves = d.area.waves - 1;
     for (const t of d.roster.all) { t.alive = false; if (t.body) t.body.dead = true; }
     const overs = [];
     world.onGameOver = (s) => overs.push(s);
-    const t = drive(world, 180, input, () => overs.length > 0);
+    const t = drive(world, 180, input, () => overs.length > 0, true);
     assert(overs.length === 1, `${overs.length} endings from one Command campaign after ${t.toFixed(0)}s`);
+    assert(d.done, `the Command campaign never reached its own ending — it ended on wave ${overs[0].wave}`);
     assert(overs[0].won === true,
       'Command stopped scoring a finished crossing as a victory — the new rule leaked into a shipped mode');
     world.unload();
@@ -233,15 +256,15 @@ export async function run({ check, assert }) {
      * in permanent storage.
      */
     const Progress = await import('../../src/game/Progress.js');
-    const before = Progress.load();
+    const before = Progress.loadProgress();
     const wins0 = before.wins | 0, runs0 = before.runs | 0;
     Progress.recordRun({ mode: 'theline', won: false, wave: 3, score: 10, kills: 5, time: 200 });
-    const mid = Progress.load();
+    const mid = Progress.loadProgress();
     assert((mid.runs | 0) === runs0 + 1,
       `a finished run of the flagship mode was not recorded at all (${runs0} → ${mid.runs | 0})`);
     assert((mid.wins | 0) === wins0, `a LOST run was banked as a win (${wins0} → ${mid.wins | 0})`);
     Progress.recordRun({ mode: 'theline', won: true, wave: 5, score: 20, kills: 9, time: 400 });
-    const after = Progress.load();
+    const after = Progress.loadProgress();
     assert((after.wins | 0) === wins0 + 1, 'a won run of the flagship mode was not counted as a win');
     return `runs ${runs0} → ${after.runs | 0}, wins ${wins0} → ${after.wins | 0}`;
   });
