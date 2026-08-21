@@ -16,6 +16,7 @@ import { speciesOf } from './Bodies.js';
 import { Rig, BipedAnimator, aimY, limbScale } from './Rig.js';
 import { dropSaber, hiltWithinReach, hiltDistanceSq, igniteHilt, hiltBlade,
          ageDropped } from './Dropped.js';
+import { Crew, drivableNear, whyNotDrive, crewOf } from './Driving.js';
 import { attachCloak, attachSkirt } from './Cloth.js';
 import { Body, LAYER, capsuleSpheres, capsule } from '../physics/RapierWorld.js';
 import { supportHeight, topOfProps, ceilingHeight, STEP_UP, GROUND_SNAP, CLIMB_RATE } from '../physics/Support.js';
@@ -2630,6 +2631,8 @@ export class Player {
      * what it has eaten this raise — see `SHIELD` and `shieldSphere`.
      */
     this.shield = { up: false, t: 0, power: 0, stopped: 0, lastHit: -99 };
+    /** The `Crew` this player is at the controls of, or null. See Driving.js. */
+    this.driving = null;
     this.dashDir = new THREE.Vector3();
     /** Seconds left of an air dodge's somersault, and the horizontal axis it
      *  turns about. Zero on the ground: a dodge with a foot down is a step. */
@@ -2990,6 +2993,22 @@ export class Player {
     // The aim the input just wrote, available to everything solved this frame
     // rather than only to the camera at the end of it — see syncAim.
     this.camera.syncAim();
+    /**
+     * AND IF YOU ARE DRIVING SOMETHING, THAT IS THE WHOLE FRAME.
+     *
+     * Everything below this line is a body on its feet — the walk, the Force,
+     * the gait, the blade, the collision — and none of it applies to a man at
+     * the controls of a tank. Placed after the input and the aim because the
+     * crew READS both: the aim is where the gun goes and the move axis is the
+     * throttle. See src/game/Driving.js.
+     */
+    if (this.driving) {
+      if (this.driving.update(dt, ctx)) {
+        this.saber.carrierVel = this.velocity;
+        this._regen(dt);
+        return;
+      }
+    }
     /* AFTER the aim and not before it: a stratagem aimed at the ground reads
      * `aimDir`, and a call placed on last frame's aim would land where you
      * were looking rather than where you are. */
@@ -3142,6 +3161,10 @@ export class Player {
     if (input.actHit('compel')) this.forceCompel(ctx);
     if (input.actHit('unleash')) this.forceUnleash(ctx);
     if (input.actHit('swap')) this.swapSaber(ctx);
+    /* IN, OR OUT — one key, decided by whether you are already at a set of
+     * controls, for the same reason `swap` is one key: the state is on screen
+     * and the player does not have to keep two of them straight. */
+    if (input.actHit('drive')) this.takeControls(ctx);
     // One meaning for `hurl` whichever way the Force is currently full: send
     // what I am holding at what I am looking at. (It said "Mouse2" here until
     // the key moved off Mouse2 — which is why comments name the ACTION.)
@@ -3290,7 +3313,7 @@ export class Player {
    * the run carries the arc forward and lets a dive be aimed at something.
    */
   _tryDive(ctx) {
-    if (this._spelling()) return this._refuse('dive', 'you are calling in a stratagem');
+    if (this._spelling()) return this._refuse('dive', 'you are calling for support');
     if (this.grounded || this.diving || this.dashTimer > 0) return false;
     if (this.velocity.y > 2) return false;              // still going up: that is a jump
     const ground = ctx.terrain ? ctx.terrain.height(this.position.x, this.position.z) : 0;
@@ -3539,7 +3562,7 @@ export class Player {
          * stop, in the open, for as long as the code takes". The jump was not
          * in the lock at all: measured, arming + jump was a 4.70 m apex while
          * arming + run was 0.00 m of travel. */
-        if (this._spelling()) this._refuse('jump', 'you are calling in a stratagem');
+        if (this._spelling()) this._refuse('jump', 'you are calling for support');
         else if (this.coyote > 0) {
           this.velocity.y = 7.4 * this.boonMods.jumpPower;
           this.grounded = false; this.coyote = 0;
@@ -4103,7 +4126,7 @@ export class Player {
      * somersault, with 0.28 s of invulnerability, for 36 stamina. A commitment
      * you can steer out of is not one.
      */
-    if (this._spelling()) return this._refuse('dash', 'you are calling in a stratagem');
+    if (this._spelling()) return this._refuse('dash', 'you are calling for support');
     if (this.diving) return this._refuse('dash', 'committed to the dive');
     if (this.stamina < DASH_STAMINA) {
       return this._refuse('dash', `${DASH_STAMINA} stamina needed, you have ${Math.round(this.stamina)}`);
@@ -7639,6 +7662,36 @@ export class Player {
     return true;
   }
 
+  /**
+   * TAKE THE CONTROLS OF THE MACHINE IN FRONT OF YOU, or leave the ones you
+   * are at.
+   *
+   * The V5 note is one line — *"I think we should be able to drive the vehicles
+   * it makes sense to drive"* — and the whole of the design is in which ones
+   * those are. `Driving.isCrewed` answers it off the archetype's `crew` count,
+   * so a droid tank is refused BY NAME rather than by silence: there is nobody
+   * in a hailfire to displace, and being told that is the difference between a
+   * rule and a bug.
+   */
+  takeControls(ctx) {
+    if (this.driving) { this.driving.leave('you climbed down'); return true; }
+    if (!this.alive) return false;
+    const near = drivableNear(this.world, this);
+    if (!near) {
+      /* NOT SILENT WHEN THERE IS NOTHING THERE, and not silent when the only
+       * thing there is a droid either — `drivableNear` deliberately does not
+       * filter by crew, so this can say which of the two it was. */
+      const any = (this.world?.enemies || []).find(e => !e.dead
+        && e.position.distanceToSquared(this.position) < 36);
+      return this._refuse('take the controls',
+        any ? whyNotDrive(this.world, this, any) : 'nothing here to drive');
+    }
+    const why = whyNotDrive(this.world, this, near);
+    if (why) return this._refuse('take the controls', why);
+    new Crew(this, near);
+    return true;
+  }
+
   /** Let go of what is in the hand. */
   _dropSaber(ctx, opts = {}) {
     const s = this.saber;
@@ -8438,6 +8491,31 @@ export class Player {
      * explosions are untouched by this.
      */
     if (!canHarm(source, this)) return false;
+    /**
+     * A MAN INSIDE A TANK IS NOT SHOT AT — THE TANK IS.
+     *
+     * Everything that reaches a player goes through this method (see the note
+     * above it), so this is the one line that has to know about driving, and
+     * putting it here rather than at each of the sources is the same argument
+     * the friendly-fire gate one line up makes: a new hazard written next month
+     * inherits it without knowing it exists.
+     *
+     * It is a redirect and not an immunity. The hull takes the blow on its own
+     * armour table, and when the hull is finished `Crew.update` puts you out on
+     * the ground — so the trade for the armour is that you cannot heal it, you
+     * cannot dodge in it, and everything on the field is now aiming at a
+     * fourteen-metre target with you sitting on top of it.
+     *
+     * A FALL IS STILL YOURS. `Crew.ride` pins you to the seat, so a 'fall' that
+     * arrives here while driving is the tank's landing being billed to the
+     * driver twice — the hull already took it.
+     */
+    if (this.driving) {
+      if (kind === 'fall') return false;
+      this.driving.vehicle.damage?.(amount, point, source, kind);
+      this.hitFlash = 1;
+      return false;
+    }
     /**
      * THE FORCE ANSWERS THE FORCE — one call, at the SINK, so a blow is blunted
      * exactly once however it was thrown. `Enemy.damage` carries the identical

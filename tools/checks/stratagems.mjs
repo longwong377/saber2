@@ -514,7 +514,12 @@ export async function run({ check, assert, THREE: T }) {
      * dead checkbox — and a player pressing dash in a panic while spelling has
      * to be told which of the two the game is honouring. */
     for (const verb of ['dash', 'jump']) {
-      assert(runs[verb].notices.some((n) => /stratagem/i.test(n)),
+      /* `support` and not `stratagem`: the word the player reads was swept, and
+       * an instrument still grepping for the old one would have gone red on the
+       * fix rather than on a regression. It matches the REASON the refusal
+       * gives — "you are calling for support" — which is the thing being
+       * asserted, and not the name of the module it came out of. */
+      assert(runs[verb].notices.some((n) => /calling for support/i.test(n)),
         `${verb} was refused in silence while spelling: ${JSON.stringify(runs[verb].notices)}`);
     }
     return `spelling: run ${runs.run.moved.toFixed(2)} m, dash ${runs.dash.moved.toFixed(2)} m `
@@ -1872,28 +1877,22 @@ export async function run({ check, assert, THREE: T }) {
     };
     walk('src/');
     /**
-     * THE ONE RESIDUE, DECLARED, AND IT IS IN A FILE THIS LANE MAY NOT EDIT.
+     * AND NOW THERE IS NO RESIDUE AT ALL.
      *
-     * `Player._refuse` raises `world.notify(name.toUpperCase(), reason)` — a
-     * card on the screen — and three of its reasons still read "you are calling
-     * in a stratagem": the dive, the jump and the dash, all refused while a
-     * code is being spelled. The fix is one word in three places:
+     * This clause used to declare three: `Player._refuse` raises
+     * `world.notify(name.toUpperCase(), reason)` — a card on the screen — and
+     * the dive, the jump and the dash all refused a body mid-code with "you are
+     * calling in a stratagem". The lane that swept the word could not edit that
+     * file, so it declared them and asserted the list was EXACTLY those three,
+     * on the argument that fixing them would turn this red and get the
+     * declaration deleted along with the bug. That is what happened.
      *
-     *     'you are calling in a stratagem' → 'you are calling for support'
-     *
-     * It is declared here rather than silently allowed, and the assertion is
-     * that the list is EXACTLY these three: a fourth turns this red, and so
-     * does fixing them, which is what gets the declaration deleted with the
-     * bug. Same shape as `heldMesh` in Databank.js, and for the same reason.
+     * The assertion left behind is the stronger one and the one worth keeping:
+     * NOTHING a player can read says it. A new one turns this red with the
+     * file and the string it found.
      */
-    const OWNED_ELSEWHERE = [
-      'src/game/Player.js: "you are calling in a stratagem"',
-      'src/game/Player.js: "you are calling in a stratagem"',
-      'src/game/Player.js: "you are calling in a stratagem"',
-    ];
-    assert(found.length === OWNED_ELSEWHERE.length && found.every((f, i) => f === OWNED_ELSEWHERE[i]),
-      `the readable residue moved. Expected exactly:\n  ${OWNED_ELSEWHERE.join('\n  ')}\nand found:\n  `
-      + `${found.join('\n  ') || '(nothing — delete OWNED_ELSEWHERE and this clause)'}`);
+    assert(!found.length,
+      `a player-facing string says it again:\n  ${found.join('\n  ')}`);
 
     /* ── THE PAGE ITSELF, AND THE STYLESHEET ───────────────────────────── */
     /* index.html outside its comments: markup a player never sees is fine, TEXT
@@ -1910,8 +1909,7 @@ export async function run({ check, assert, THREE: T }) {
     }
 
     return `the Codex renders ${STRATAGEMS.length} calls and the word appears in none of it; `
-      + `${strings.length} table and binding strings clean; one declared residue in Player.js, `
-      + 'which this lane does not own';
+      + `${strings.length} table and binding strings clean, and no residue anywhere in src/`;
   });
 
   check('stratagems: a call needing an army is not offered without one', () => {
