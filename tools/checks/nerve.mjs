@@ -309,8 +309,33 @@ export async function run({ check, assert }) {
     const { idleInput } = await import('./_coop.mjs');
     const world = await army(20260821);
     try {
+      const { MAX_STRENGTH } = await import('../../src/game/Command.js');
       const d = world.command;
       const input = idleInput();
+      /**
+       * THE FULL ROSTER, BECAUSE THIS WINDOW IS LONGER THAN A TEN-MAN LINE
+       * LASTS — and that is new information rather than a nicety.
+       *
+       * Seventy seconds of a Command engagement with an idle Jedi used to cost
+       * the line nothing at all: no hostile bolt could reach a body in
+       * `world.enemies`, your own troopers included (FLAGSHIP §16.3). With that
+       * fixed, the same bench reads 10 → 8 at 30 s → 5 at 60 s → 2 at 90 s, and
+       * this check failed on `only 3 men left to read`. Shortening the window
+       * would have been the cheap repair and it is the wrong one: the seventy
+       * seconds is what makes this "a line that has been WINNING", which is the
+       * premise every assertion below rests on.
+       *
+       * So the bench musters the mode's own maximum instead. `MAX_STRENGTH` is
+       * asked for rather than typed, so a roster ceiling that moves moves this
+       * with it.
+       */
+      /* ENLISTED, not `opening` — that field is read by `_musterOpening` and
+       * `_musterOpening` runs in the CONSTRUCTOR, so writing it here is writing
+       * it after the muster it governs. Measured: the roster came back at ten
+       * either way. The records are added through `CommandRoster.enlist`, the
+       * same call the muster screen makes, off the army's own cheapest rung. */
+      const cheapest = d.commander.army.tiers[0].type;
+      while (d.roster.all.length < MAX_STRENGTH) d.roster.enlist(cheapest);
       d.start(1);
       /* Long enough for every one-shot event a winning line collects — a wave
        * cleared is +0.34 and an area held +0.5 — to have landed and settled.
