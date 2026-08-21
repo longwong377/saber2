@@ -1059,6 +1059,11 @@ const GRENADE_SPREAD = 5.2;
  *  there to stop. */
 const GRENADE_LOOK = 0.25;
 
+/** How often a dead duellist's blade is still burning when it hits the floor.
+ *  See `die` — the player asked for both, and two in five is enough of one to
+ *  be a sight on a cleared field without every corpse glowing. */
+const DEAD_BLADE_LIT = 0.4;
+
 const GET_UP = 1.35;
 
 /**
@@ -4015,9 +4020,51 @@ export class Enemy {
     if (this.cloak) { this.cloak.dispose(); this.cloak = null; }
     if (this.skirt) { this.skirt.dispose(); this.skirt = null; }
     if (this.saber) {
-      // the blade falls with them, then goes out
+      /**
+       * THE BLADE LEAVES THE HAND — and it used to be DELETED instead.
+       *
+       * The player, on the last build: "when lightsaber having enemies died
+       * their sabers would stay suspended on and in the air, they should fall
+       * to the ground their user is dead, sometimes retracting automatically,
+       * sometimes staying on and on the floor."
+       *
+       * What shipped was `retract()` and then `setVisible(false)` on a 900 ms
+       * `setTimeout`: the blade went out and the HILT CEASED TO EXIST, which is
+       * the same complaint from the other side — a Jedi's weapon, the one
+       * object in this game a player would cross a field for, evaporating on
+       * the frame its owner fell. `Dropped.js` has existed the whole time for
+       * exactly this ("drop and pick up sabers, including a friend's") and
+       * `Enemy.cut` already reaches for it when an arm comes off; a death did
+       * not.
+       *
+       * And a `setTimeout` was doing gameplay. It does not stop for the pause
+       * menu, it does not stop for a level unload, and it fires into a world
+       * that may no longer exist — the hilt is a prop now and the world's own
+       * clock owns it.
+       *
+       * SOMETIMES IT GOES OUT AND SOMETIMES IT DOES NOT, which is the player's
+       * own sentence and is worth more than either rule on its own: a field
+       * after a duel has a couple of blades still burning on it and the rest
+       * gone dark, so walking up to one is a decision rather than a formality.
+       * Two in five stay lit — enough to be a sight, few enough to stay one.
+       */
+      const lit = !this.saber.physical && rng() < DEAD_BLADE_LIT;
+      const hand = this.actor?.bodies?.get('handR') || this.actor?.bodies?.get('foreR');
+      _v1.copy(hand?.position || this.saber.base || this.position);
+      _v2.copy(this.velocity).multiplyScalar(0.5);
+      _v2.x += (rng() - 0.5) * 1.6; _v2.y += 1.1; _v2.z += (rng() - 0.5) * 1.6;
+      dropSaber(this.world, {
+        position: _v1,
+        velocity: _v2,
+        colorIndex: this.saber.colorIndex,
+        hiltStyle: this.saber.hiltStyle,
+        order: this.saber._order ?? null,
+        owner: this,
+        lit,
+        weaponStyle: this.A.weaponStyle ?? null,
+      });
       this.saber.retract();
-      setTimeout(() => this.saber && this.saber.setVisible(false), 900);
+      this.saber.setVisible(false);
     }
     if (this.actor && !this.actor.ragdolled) {
       _v1.copy(this.velocity).multiplyScalar(0.6);

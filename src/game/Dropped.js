@@ -113,6 +113,38 @@ export function dropSaber(world, opts = {}) {
       { c: new THREE.Vector3(0, -half.y * 0.6, 0), r: Math.max(half.x, half.z, 0.03) }],
   });
 
+  /**
+   * …AND SOMETIMES IT IS STILL BURNING.
+   *
+   * The player, on what should happen when a duellist falls: "they should fall
+   * to the ground their user is dead, sometimes retracting automatically,
+   * sometimes staying on and on the floor." A hilt on the ground was always
+   * dark, so the second half of that sentence had nothing behind it.
+   *
+   * A BLADE AND NOT A `Saber`. The real class carries a trail, a bloom
+   * contribution, a dynamic light, a hum voice and a per-frame update, and a
+   * cleared duel can leave half a dozen of these lying about — six of that is
+   * six of everything, for an object nobody is swinging. What a blade on the
+   * floor has to be is BRIGHT AND THE RIGHT COLOUR, so it is one emissive
+   * cylinder on the hilt's own group, and it dies with the prop.
+   *
+   * A physical weapon is never lit, because a vibrosword does not have a blade
+   * to leave on.
+   */
+  if (opts.lit && !opts.weaponStyle) {
+    const len = opts.bladeLength ?? 1.06;
+    const blade = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.026, 0.022, len, 7, 1),
+      new THREE.MeshBasicMaterial({ color: new THREE.Color(crystal.hex) }));
+    /* Up the hilt's own axis from the emitter, which is where `buildHiltGroup`
+     * puts the muzzle — the group has just been re-centred about its own
+     * bounding box, so the emitter is at the top of it. */
+    blade.position.y = half.y + len * 0.5;
+    blade.userData.saberNoInk = true;      // see Ink.js: a glow is not an edge
+    built.group.add(blade);
+    prop.saberLit = true;
+  }
+
   prop.saber = { colorIndex, hiltStyle: opts.hiltStyle, order: opts.order ?? null };
   prop.droppedBy = opts.owner ?? null;
   prop.dropAge = 0;
