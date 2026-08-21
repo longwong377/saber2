@@ -898,4 +898,104 @@ export async function run({ check, assert }) {
     return `a ${h.toFixed(1)} m trunk cut at ${cut.toFixed(1)} m leaves a solid spar `
       + `(${(box.halfExtents.y * 2).toFixed(1)} m of collider); the player stopped ${(-past).toFixed(2)} m short`;
   });
+
+  /* ────────────────────────────────────────────────────────────────────
+   * A FELLED TRUNK IS SOMETHING TO STAND ON — BACKLOG 8.5
+   * ──────────────────────────────────────────────────────────────────── */
+
+  check('forest: a trunk lying beside you gives a floor, and it is the log\'s own top', async () => {
+    /**
+     * `topOfProps` read `position.y + extent.y` with no orientation, and a
+     * lying log's long axis is its LOCAL +Y — so a twelve-metre trunk claimed
+     * to be six metres tall and was a wall at every foot height. Its broad
+     * phase was worse: `max(e.x, e.z) + radius` is the trunk's RADIUS, so the
+     * column never reached it at all.
+     *
+     * Measured on the real wood before the fix with `tools/_logfloor.mjs` — 24
+     * trees felled, 9 realised as props — **0 of 9 gave any floor**, the query
+     * answering the terrain height under every one of them. Afterwards 3 of 9,
+     * which is the right number: of the other six, two are legitimately walls
+     * (their tops are over `CLIMB_LOG`) and four have settled below the ground
+     * they fell on or under another surface.
+     *
+     * THIS CHECK IS THE GEOMETRY RATHER THAN THAT DRIVE, because a felling and
+     * nine seconds of solver is a scene and not a rule. Three rods, hand-placed:
+     * flat, leaning, and axis-aligned — the last one is the control that says
+     * nothing that already worked has moved.
+     */
+    const THREE = await import('three');
+    const { topOfProps, boxTopAt, STEP_UP } = await import('../../src/physics/Support.js');
+    const { CLIMB_LOG } = await import('../../src/world/Trees.js');
+
+    /** A rod of `len` × `r`, lying with its long axis along `axis`. */
+    const rod = (len, r, axis, at, climb = CLIMB_LOG) => ({
+      position: at,
+      extent: new THREE.Vector3(r, len / 2, r),
+      quaternion: new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), axis.clone().normalize()),
+      boundingRadius: Math.hypot(r, len / 2, r),
+      userData: { climb },
+    });
+
+    const FEET = 0, RAD = 0.36;
+    /* FLAT. A 12 m trunk 0.30 m thick, its middle 0.30 m off the ground, so its
+     * own surface is 0.60 m up — over `STEP_UP` and well under `CLIMB_LOG`. */
+    const flat = rod(12, 0.3, new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0.3, 0));
+    const gotFlat = topOfProps([flat], 0, 0, FEET, RAD, STEP_UP, FEET);
+    assert(Math.abs(gotFlat - 0.6) < 0.02,
+      `a flat 12 m trunk whose surface is 0.60 m up answered ${gotFlat.toFixed(2)} — `
+      + `${gotFlat <= FEET ? 'no floor at all' : 'not its own top'}`);
+
+    /* …AND FROM ALONG ITS LENGTH, not only over its middle. Five metres down a
+     * twelve-metre log is still the log. */
+    const along = topOfProps([flat], 5, 0, FEET, RAD, STEP_UP, FEET);
+    assert(Math.abs(along - 0.6) < 0.02,
+      `five metres along the same trunk answered ${along.toFixed(2)} — the broad phase is the `
+      + 'radius rather than the length');
+    /* …and past the end of it there is nothing, which is the other half. */
+    const past = topOfProps([flat], 9, 0, FEET, RAD, STEP_UP, FEET);
+    assert(past === FEET, `two metres past the end of the log the query still found ${past.toFixed(2)}`);
+
+    /* LEANING is the case the clamp got wrong: transforming "straight up" into
+     * a tilted rod's frame gives a direction with a large component along the
+     * rod's own length, so the old solve landed near the log's END and answered
+     * -Infinity over its middle. */
+    const lean = rod(12, 0.3, new THREE.Vector3(1, 0.45, 0), new THREE.Vector3(0, 0.9, 0));
+    const qi = lean.quaternion.clone().invert();
+    const box = { center: lean.position, halfExtents: lean.extent, quat: lean.quaternion,
+      invQuat: qi, radius: lean.boundingRadius };
+    const top = boxTopAt(box, 0, 0, RAD);
+    assert(Number.isFinite(top),
+      'the top of a LEANING trunk over its own middle is -Infinity — the clamp is landing on its end');
+    assert(Math.abs(top - 1.23) < 0.12,
+      `a leaning trunk whose middle is 0.90 m up and which is 0.30 m thick answered ${top.toFixed(2)}`);
+
+    /* THE CONTROL. An axis-aligned crate must answer exactly what it always
+     * did: where the column passes through such a box, a downward ray and the
+     * old clamp agree, so nothing that worked can have moved. */
+    const crate = { position: new THREE.Vector3(0, 0.5, 0), extent: new THREE.Vector3(0.4, 0.4, 0.4),
+      quaternion: new THREE.Quaternion(), boundingRadius: 0.69, userData: {} };
+    const onCrate = topOfProps([crate], 0.1, 0.1, 0.55, RAD, STEP_UP, 0);
+    assert(Math.abs(onCrate - 0.9) < 1e-6,
+      `a 0.8 m crate at y 0.5 answered ${onCrate.toFixed(3)} instead of 0.900`);
+
+    /* AND A DECK IS NOT A BODY. `Enemy.platform()` hands back `position` at the
+     * FEET with `extent.y` as the height above them and no orientation at all —
+     * axis-aligned by construction — so it keeps the sum it always had. A
+     * record with no quaternion must not be run through the oriented solve. */
+    const deck = { position: new THREE.Vector3(0, 0, 0), extent: new THREE.Vector3(1.2, 0.25, 1.2) };
+    const onDeck = topOfProps([deck], 0, 0, 0, RAD, STEP_UP, -1);
+    assert(Math.abs(onDeck - 0.25) < 1e-6,
+      `a walker's deck 0.25 m over the feet answered ${onDeck.toFixed(3)}`);
+
+    /* …AND A LOG TOO HIGH IS STILL A WALL. `climb` widens the allowance; it
+     * does not remove it. */
+    const tall = rod(12, 0.3, new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, CLIMB_LOG + 0.9, 0));
+    const wall = topOfProps([tall], 0, 0, FEET, RAD, STEP_UP, FEET);
+    assert(wall === FEET,
+      `a trunk ${(CLIMB_LOG + 1.2).toFixed(2)} m up answered ${wall.toFixed(2)} — CLIMB_LOG is `
+      + 'an allowance, not a removal');
+
+    return `flat 0.60 · along 0.60 · past the end none · leaning ${top.toFixed(2)} · `
+      + `crate 0.900 unchanged · deck 0.250 unchanged · over CLIMB_LOG still a wall`;
+  });
 }

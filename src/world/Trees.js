@@ -809,6 +809,12 @@ export class Forest {
     });
     prop.body.position.copy(mid);
     prop.body.quaternion.copy(quat);
+    /* A LOG YOU CAN GET ONTO, AND IT IS THE SAME LOG EITHER WAY. The static box
+     * this prop replaces carries `climb: CLIMB_LOG` (see `_liftLog` and the
+     * note over the constant); without the same tag here, a trunk was climbable
+     * at twenty metres and a wall at ten — which is the invisible wall the
+     * player reported twice, wearing a distance. `topOfProps` reads it. */
+    prop.body.userData.climb = CLIMB_LOG;
     // the instanced copy steps aside, and so does the static box under it
     _s.setScalar(0);
     this.trunkMesh.setMatrixAt(i, _m.compose(mid, quat, _s));
