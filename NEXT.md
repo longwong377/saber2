@@ -113,14 +113,29 @@ is the thing to answer before building the mode. Presence has to buy the line
 something a number can see — faster, or further, or fewer of them dead — and at
 the moment it buys none of the three.
 
+**AND THE FOURTH ARM SEPARATES THE TWO EXPLANATIONS.** A Jedi alive, armed,
+fighting whatever reaches him, holding station **a hundred metres from the
+line** — same script, same guard, only the station moves. Three seeds:
+
+| | no player | with blade | blade disabled | **a hundred metres off** |
+|---|---|---|---|---|
+| fallen (your men) | 0 | 6.33 | 7 | **6.33** |
+| game-seconds | 196 | 362 | 445 | **245** |
+| waves / areas | 3 / 1 | 3 / 1 | 3 / 1 | 3 / 1 |
+
+**A Jedi a hundred metres away costs the line exactly as many men as a Jedi
+standing in it** — 6.33 against 6.33, which puts `far` at 1.00 on the
+none→blade axis. So the seven men are **not** the price of presence. They are
+the price of a player EXISTING on the field for the horde to walk toward.
+
+What standing WITH the line actually costs is **117 seconds** (362 against
+245) and it buys nothing measurable. On these numbers, holding station on your
+own formation is strictly worse than fighting away from it.
+
 **Caveats, and they are real.** The player is a **script**, so this measures
 what a body standing in a formation and swinging is worth, not what a person
-is. Five seeds. And a line with no player on the field is fighting a horde with
-nobody to walk toward, which is part of why it wins in 27 seconds without
-losses — the arms are not equally hard, and nothing here separates "a Jedi
-costs you men" from "a Jedi drags the fight out and the men near you are
-standing in fire aimed at you". Distinguishing those two is the next
-measurement, not a rewrite of §7.
+is. Three to five seeds. And the `none` arm is genuinely an easier fight,
+which is the thing the `far` arm exists to control for rather than to deny.
 
     node --import ./tools/register.mjs tools/_flagship.mjs step2 --seeds 3,5,7,11,13
 
@@ -258,12 +273,13 @@ Gate at the end: **1718 passed, 0 failed.**
   it, linear in metres rather than in area. 0.085/s at the shoulder against
   0.030 at fourteen metres. It did not move the Dead Jedi outcome, which is
   itself worth knowing — the problem there is not the shape of the term.
-- **Is a Jedi expensive, or merely a magnet?** Nothing yet separates "a Jedi
-  costs the line men" from "a Jedi drags the fight out, and the men near you are
-  standing in fire that was aimed at you". A line with no player is fighting a
-  horde with nobody to walk toward, so the three arms are not equally hard. The
-  measurement that would settle it: a player on the field but a hundred metres
-  from the line.
+- ~~**Is a Jedi expensive, or merely a magnet?**~~ A magnet. The `far` arm costs
+  the line the same 6.33 men as a Jedi standing in it, so presence is not the
+  mechanism — a player on the field is. What presence costs is 117 seconds.
+- **Standing with your line is strictly worse than fighting away from it**, on
+  the numbers as they are: same men lost, half again the time, nothing bought.
+  That is §7's problem stated as sharply as this instrument can state it, and it
+  is the thing to answer before the mode is built.
 - **First person should be one-handed**, and `HANDOFF.md` §6.0 says to ASK
   before doing it, because it is a decision about what a first-person grip IS.
   The wrist lane's sweep this session is the strongest evidence yet: first
