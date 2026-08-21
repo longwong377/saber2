@@ -1187,10 +1187,33 @@ with him, and the watchdog is what stops a trooper being quietly retired.
 ### BREACH and attrition are one dial and want one decision
 
 `breach.mjs`'s "twenty seconds at the plate, and the line pays for every one of
-them" is red: the line lost nothing in the 23.2 s the player spent cutting. That
-is the mirror image of the attrition work — the emplacement's cadence was halved
-to stop the line dying, and halving it is exactly what made standing away from
-the line free.
+them" is the mirror image of the attrition work: the emplacement's cadence was
+halved to stop the line dying, and halving it is exactly what made standing away
+from the line free.
+
+**And it is MARGINAL rather than red, which is a worse state.** Run once it
+fails, run again on the same commit it comes back 4 of 4. The two numbers that
+say why:
+
+    isolated arm   one gun, nothing else on the field, 90 s   21 rounds, 1 of 10 names gone
+                   against an assertion of `lost >= 1` — passing by exactly one man
+    plate arm      1 of 10 lost in 24.9 s at the plate, and 1 of 10 over the same
+                   seconds standing in the formation — the control matches
+
+At 0.028 rad of dispersion over 69 m the gun needs two hits on the SAME trooper
+to kill one, so whether either arm scores 1 or 0 is a dispersion roll. "The line
+loses nothing at the plate" and "the line loses one" are the same coin landing
+either way.
+
+**So a second thing is owed besides the dial: `lost >= 1` has to go.** It asks a
+yes/no question of a quantity that has no business being yes/no, and no setting
+of the dial will stop it flaking — rounds on target, or hits, or names per
+minute of its fire, any of which is a count with a distribution rather than a
+threshold one roll can cross. That is the same lesson the attrition tuning
+arrived at from the other end: **the muster RATE turned out to be a better
+instrument than the survivor MEAN**, because a proportion over many runs does
+not inherit the variance of a single chaotic draw. Where a check in this game
+can be built on a rate or a count rather than on a threshold, it should be.
 
 They are the same constant pulled from opposite ends, and tuning either one
 alone will keep breaking the other. Whoever settles the attrition target should
