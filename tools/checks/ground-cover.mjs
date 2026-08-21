@@ -57,6 +57,10 @@ import {
   bladeSideAxis, bladeVisibleWidth, grassShade,
 } from '../../src/world/Scenery.js';
 import { LEVELS, LEVEL_ORDER, siteOk, drift, beginDressing, stoneField } from '../../src/game/Levels.js';
+/* §12's banding statistic needs a real front to measure and a stream to draw a
+ * control from; both are the shipped ones. */
+import { addFallen } from '../../src/world/Fallen.js';
+import { makeRng } from '../../src/engine/MathUtil.js';
 
 /**
  * WHICH LEVELS THESE CHECKS TALK ABOUT, and why the list changed.
@@ -238,7 +242,7 @@ function stones(world, { minCount = 40, wide = false } = {}) {
  * The last case matters here: a mutual-exclusion radius pushes R ABOVE 1, so
  * this one statistic catches both failure modes the file is about.
  */
-function clarkEvans(pts, R) {
+export function clarkEvans(pts, R) {
   const inside = pts.filter((p) => p[0] * p[0] + p[1] * p[1] <= R * R);
   const n = inside.length;
   if (n < 40) return null;
@@ -273,6 +277,78 @@ function clarkEvans(pts, R) {
   const expected = 0.5 / Math.sqrt(n / (Math.PI * R * R));
   d.sort((a, b) => a - b);
   return { n, mean, expected, R: mean / expected, p90: d[(d.length * 0.9) | 0] };
+}
+
+/**
+ * DIRECTIONAL BANDING — THE STATISTIC CLARK–EVANS CANNOT BE.
+ *
+ * `FLAGSHIP.md` §12's closing paragraph, and it is a hole in this file rather
+ * than in the game: *"Clark–Evans cannot see a line, and that is a hole in our
+ * checks. Measured: isotropic clumps R = 0.664, a battle front R = 0.668 —
+ * indistinguishable. The new statistic is directional banding: sweep 36
+ * bearings, project onto the normal, histogram in 16 m bins, take max/min of
+ * the coefficient of variation."*
+ *
+ * The reason the hole exists is structural and not a bug in `clarkEvans`:
+ * nearest-neighbour distance is a scalar taken over an unordered set, and
+ * rotating one point about another does not change it. A statistic with no
+ * bearing in it cannot answer a question about a bearing. Both statistics are
+ * kept, because they answer different questions — "is this clumped" and "is
+ * this clumped IN A DIRECTION" — and a scatter can be either without being
+ * the other.
+ *
+ * ── THE ONE CONVENTION §12 DOES NOT FIX, AND WHY IT IS THIS ONE ─────────
+ *
+ * "Histogram in 16 m bins" does not say over WHAT RANGE, and the choice is the
+ * whole statistic. Binning each bearing over its own span was tried first and
+ * is wrong: a 26 m band projected onto its own normal spans 26 m, so it lands
+ * in two bins that hold half the points each and reads as PERFECTLY EVEN —
+ * the one bearing that carries the entire signal is the one that reports none
+ * of it. The bins therefore run over a common extent for all 36 bearings, the
+ * pattern's own circumradius about its centroid, so the only thing that
+ * changes between bearings is the direction and the count per bin is
+ * comparable across them. Empty bins are counted: a bearing on which the
+ * points reach a fifth of the extent is banded, and dropping its empty bins
+ * would be dropping the evidence.
+ *
+ * @param {Array<[number,number]>} pts
+ * @param {object} opts  `bearings` (36), `bin` (16 m)
+ * @returns {{ratio:number, max:number, min:number, at:number, extent:number, bins:number}}
+ *          `ratio` is §12's max/min of the coefficient of variation; `at` is
+ *          the bearing of the MAXIMUM, i.e. the normal of the banding, which
+ *          is a fact about the pattern worth having as well as the ratio.
+ */
+export function banding(pts, opts = {}) {
+  const bearings = opts.bearings ?? 36, bin = opts.bin ?? 16;
+  if (!pts.length) return null;
+  let cx = 0, cz = 0;
+  for (const p of pts) { cx += p[0]; cz += p[1]; }
+  cx /= pts.length; cz /= pts.length;
+  let extent = 0;
+  for (const p of pts) extent = Math.max(extent, Math.hypot(p[0] - cx, p[1] - cz));
+  const nb = Math.max(2, Math.ceil(2 * extent / bin));
+  let best = null, worst = null;
+  for (let k = 0; k < bearings; k++) {
+    /* HALF A TURN, NOT A WHOLE ONE. A normal and its opposite give the same
+     * histogram reversed and the same CV, so sweeping 36 bearings over 360°
+     * measures 18 of them twice. */
+    const th = k * Math.PI / bearings, nx = Math.cos(th), nz = Math.sin(th);
+    const h = new Float64Array(nb);
+    for (const p of pts) {
+      let b = Math.floor(((p[0] - cx) * nx + (p[1] - cz) * nz + extent) / bin);
+      if (b < 0) b = 0; else if (b >= nb) b = nb - 1;
+      h[b]++;
+    }
+    let m = 0;
+    for (const v of h) m += v;
+    m /= nb;
+    let s = 0;
+    for (const v of h) s += (v - m) * (v - m);
+    const cv = Math.sqrt(s / nb) / m;
+    if (!best || cv < best.cv) best = { th, cv };
+    if (!worst || cv > worst.cv) worst = { th, cv };
+  }
+  return { ratio: worst.cv / best.cv, max: worst.cv, min: best.cv, at: worst.th, extent, bins: nb };
 }
 
 let DRESSED = null;
@@ -469,6 +545,145 @@ export function run({ check, assert, near }) {
       `only ${bulk} levels carry enough stone for the estimator to be quiet — `
       + 'thinning every level is not a way past this check');
     return `Poisson control R=${ctrl.R.toFixed(3)}; ${rows.join(', ')}`;
+  });
+
+  check('scatter: Clark-Evans cannot see a line, and directional banding can', () => {
+    /**
+     * THE HOLE §12 NAMES, CLOSED, AND THE TWO NUMBERS IT QUOTES CHECKED
+     * RATHER THAN BELIEVED.
+     *
+     * §12: *"Measured: isotropic clumps R = 0.664, a battle front R = 0.668 —
+     * indistinguishable… Uniform ≈ 2, a front ≈ 6–7."*
+     *
+     * Three point sets, and only one of them is synthetic twice over:
+     *
+     *   THE FRONT is `Fallen.addFallen`, the shipped object — §12.4's own
+     *     "520 prone instanced figures in a 26 m band", read back out of the
+     *     `InstancedMesh` it builds. Not a model of the game's front: the
+     *     game's front.
+     *   THE CLUMPS are seven knots in a disc with the points drawn round them,
+     *     matched to the front on COUNT and tuned on σ until Clark–Evans
+     *     cannot tell them apart. That matching is the experiment — it is no
+     *     use showing that two arbitrary patterns differ on a new statistic.
+     *   THE UNIFORM CONTROL is Poisson on the same disc, because a statistic
+     *     whose floor nobody has measured is a statistic with no floor.
+     *
+     * MEASURED HERE, EIGHT SEEDS EACH (and this is the finding):
+     *
+     *              Clark–Evans        banding
+     *   uniform    0.99 – 1.04        1.15 – 1.44
+     *   clumps     0.54 – 0.70        1.66 – 2.20
+     *   front      0.60 – 0.66        7.09 – 11.68
+     *
+     * So §12's central claim REPRODUCES, and one of its two figures needs a
+     * correction:
+     *
+     *   · Clark–Evans is blind to the line exactly as claimed. The two
+     *     distributions overlap across every seed; the means are 0.631 and
+     *     0.638 against the quoted 0.668 and 0.664 — four hundredths out on a
+     *     statistic whose whole content here is that the two are the same
+     *     number, and they are.
+     *   · "A front ≈ 6–7" reproduces at its lower edge and runs higher: the
+     *     floor over eight seeds is 7.1 and the median is 9.0.
+     *   · **"Uniform ≈ 2" is not a uniform scatter.** A Poisson field on this
+     *     disc measures 1.15–1.44 and never reaches 2. What measures ≈2 is the
+     *     ISOTROPIC CLUMP control — 1.66–2.20, median 1.91 — which is what the front
+     *     actually has to be told apart from, and is presumably what was
+     *     measured. Left as it stands with the number named, because the
+     *     working bound is the clump control either way and a uniform field is
+     *     the easier case.
+     *
+     * The bounds below are those measured ranges with the gap between them
+     * split, and the separation is asserted as a RATIO of the two so that a
+     * future change to either generator cannot pass by moving both.
+     */
+    const SEEDS = [1, 2, 3, 4, 5, 6, 7, 8];
+    const N = 520, HALF = 150, DISC = 130;
+
+    /** §12.4's band, out of the shipped builder. */
+    const front = (seed) => {
+      const world = { scene: new THREE.Scene(), statics: [] };
+      const f = addFallen(world, { origin: { x: 0, z: 0 }, dir: { x: 1, z: 0 },
+        count: N, half: HALF, depth: 26, seed });
+      const out = [], m = new THREE.Matrix4();
+      for (const im of f.meshes) {
+        for (let i = 0; i < im.count; i++) { im.getMatrixAt(i, m); out.push([m.elements[12], m.elements[14]]); }
+        im.geometry.dispose();
+      }
+      return out;
+    };
+    /** Isotropic clumps: seven knots, σ tuned to sit on the front's R. */
+    const clumps = (seed) => {
+      const rng = makeRng(seed);
+      const knots = [];
+      for (let i = 0; i < 7; i++) {
+        const a = rng() * Math.PI * 2, r = Math.sqrt(rng()) * HALF;
+        knots.push([Math.cos(a) * r, Math.sin(a) * r]);
+      }
+      const out = [];
+      for (let i = 0; i < N; i++) {
+        const c = knots[Math.floor(rng() * knots.length) % knots.length];
+        out.push([c[0] + rng.gauss() * 16, c[1] + rng.gauss() * 16]);
+      }
+      return out;
+    };
+    const uniform = (seed) => {
+      const rng = makeRng(seed);
+      const out = [];
+      for (let i = 0; i < N; i++) {
+        const a = rng() * Math.PI * 2, r = Math.sqrt(rng()) * HALF;
+        out.push([Math.cos(a) * r, Math.sin(a) * r]);
+      }
+      return out;
+    };
+
+    const stat = (make, off) => {
+      const ce = [], bd = [];
+      for (const s of SEEDS) {
+        const pts = make(s * 1013 + off);
+        ce.push(clarkEvans(pts, DISC).R);
+        bd.push(banding(pts).ratio);
+      }
+      return { ce, bd, ceMin: Math.min(...ce), ceMax: Math.max(...ce),
+        ceMean: ce.reduce((a, b) => a + b, 0) / ce.length,
+        bdMin: Math.min(...bd), bdMax: Math.max(...bd) };
+    };
+    const U = stat(uniform, 7), C = stat(clumps, 31), F = stat(front, 4211);
+
+    /* 1. THE HOLE ITSELF. Not "the two are close" — the two RANGES OVERLAP,
+     *    which is the strong form: no threshold on Clark–Evans separates them
+     *    at all, so there is no bound a check could have been written with. */
+    assert(F.ceMin < C.ceMax && C.ceMin < F.ceMax,
+      `Clark–Evans puts the front at ${F.ceMin.toFixed(3)}–${F.ceMax.toFixed(3)} and the clumps at `
+      + `${C.ceMin.toFixed(3)}–${C.ceMax.toFixed(3)} — they no longer overlap, so the pair is not matched `
+      + 'and this check is not measuring what it says');
+    assert(Math.abs(F.ceMean - C.ceMean) < 0.05,
+      `the matched pair has drifted apart: front R = ${F.ceMean.toFixed(3)}, clumps R = ${C.ceMean.toFixed(3)}`);
+    assert(U.ceMin > 0.9, `the Poisson control measures R = ${U.ceMin.toFixed(3)} — the estimator is biased`);
+
+    /* 2. AND THE STATISTIC THAT CAN SEE IT. Every front seed above every
+     *    clump seed, by a factor of two, with no overlap to argue about. */
+    assert(F.bdMin > 5, `the least banded front measures ${F.bdMin.toFixed(2)}`);
+    assert(C.bdMax < 3, `an isotropic clump field measures ${C.bdMax.toFixed(2)} — the statistic is seeing something that is not a line`);
+    assert(U.bdMax < 2, `a Poisson field measures ${U.bdMax.toFixed(2)}`);
+    assert(F.bdMin / C.bdMax > 2,
+      `the front/clump separation is only ${(F.bdMin / C.bdMax).toFixed(2)}×`);
+
+    /* 3. AND IT POINTS. The maximum CV is on the band's own normal, and
+     *    `addFallen` lays its band ACROSS the advance it is handed — so for
+     *    `dir = +x` the bodies run along z and the normal is x, a bearing of
+     *    0. That is the axis of advance, which is the useful thing to get back
+     *    out: a ratio with no bearing attached would call a chessboard a
+     *    front. Asserted mod π, because a normal and its opposite are one
+     *    axis. */
+    const b = banding(front(4211));
+    const off = Math.abs(b.at) % Math.PI;
+    assert(Math.min(off, Math.PI - off) < 0.3,
+      `the banding normal came out at ${(b.at * 180 / Math.PI).toFixed(0)}° for a front advancing along x`);
+
+    return `Clark–Evans front ${F.ceMean.toFixed(3)} vs clumps ${C.ceMean.toFixed(3)} (blind); `
+      + `banding uniform ${U.bdMin.toFixed(2)}–${U.bdMax.toFixed(2)}, clumps ${C.bdMin.toFixed(2)}–${C.bdMax.toFixed(2)}, `
+      + `front ${F.bdMin.toFixed(2)}–${F.bdMax.toFixed(2)}`;
   });
 
   check('scatter: the drifts land where the cover is not', () => {
