@@ -581,6 +581,52 @@ touched, including what I did not know I was touching".
 
 ---
 
+### 2.11 ONE rng STREAM, ONE PROCESS — a fixture owns its draws only if nothing else draws
+
+`rng` in `Enemy.js` **is** `enemyRng` (Enemy.js:59-60). It is one stream for the
+whole process, not one per World. So a fixture that does
+
+```js
+enemyRng.seed(4711);
+for (…) world.spawnEnemy('acolyte', …);
+```
+
+owns its fight **only if nothing else spawns a body between those two lines**.
+Anything that does — another fixture in the same file, a module-scope IIFE that
+has not finished, a peer suite in the same process — shifts every draw the
+fixture takes by N, where N is however many the other party used.
+
+This is not theoretical and it is not a slow leak. `cloth-cost.mjs` spent three
+sessions being diagnosed as "two Worlds alive at once" and serialised twice, and
+the real chain was:
+
+> twenty identical acolytes spawned on one frame run one brain in lockstep →
+> nineteen of them force-push inside a single frame → the ring is symmetric so
+> the horizontals cancel exactly and the lifts add → `applyKnockback` did
+> `velocity.add(impulse)` with no bound → the player left at 190 m/s and topped
+> out at **718 m** → the camera follows the player, so every garment fell
+> outside the 30 m cloth cut and the suite timed an empty field.
+
+**One draw is the whole knife-edge.** Measured by drawing N times by hand before
+the fixture: N=0 floor, N=1 **612 m**, N=2 floor, N=5 **722 m**. Which is why it
+looked like an ordering problem and why it came back every time the roster grew
+by one archetype — this session it was the droideka's `walkPhase`, one `rng()`
+call added to fix NaN legs.
+
+Two things follow, and the second is the important one:
+
+- **A check that seeds a shared stream must own the process at that moment.**
+  If you cannot guarantee that, do not seed — measure something that does not
+  depend on the draw.
+- **A harness symptom that survives three "fixes" is a game defect wearing a
+  harness costume.** The launch was real: any crowd that pushes together could
+  do it to a player, and nothing in the game bounded it. The fix is in
+  `Enemy.js`'s `addShove` — the shoves that land in one frame carry a body no
+  faster than the hardest single one of them — and a single shove is
+  arithmetically identical to what it replaced.
+
+---
+
 ### 2.10 A gate run inside a `git worktree` has no `node_modules`
 
 Two suites drive a real browser — `front-screen`'s layout check and
