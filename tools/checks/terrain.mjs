@@ -344,6 +344,51 @@ export function run({ check, assert, near }) {
   /*  Ground material                                                   */
   /* ══════════════════════════════════════════════════════════════════ */
 
+  check('terrain: a raycast answers "did it hit" without being handed somewhere to write', async () => {
+    /**
+     * A LIVE CRASH, and the shape of it generalises.
+     *
+     * `Terrain.raycast(origin, dir, maxDist, outPoint, outNormal)` returns the
+     * distance and writes the hit into the last two. Half of what asks a
+     * terrain for a ray does not want the hit — it wants to know whether there
+     * IS one. `Emplacement.GunPit.update` asks exactly that, one line under the
+     * identical question put to `physics.raycast`: "is the ground between my
+     * muzzle and that man". It called this with three arguments, which is fine
+     * on every frame the ray MISSES and throws `Cannot read properties of
+     * undefined (reading 'set')` on the first frame it hits — so the crash
+     * waits in the game until a gun pit's target walks behind a rise.
+     *
+     * Found by a probe driving a whole sitting, not by a check: no suite had a
+     * terrain ray that hit while being asked as a predicate. That is the hole
+     * this closes, and it is asserted from the CALLER's end — both forms are
+     * driven against the same ray and required to agree about the distance, so
+     * an optional parameter that quietly changed the answer would fail too.
+     */
+    const H = await import('./_coop.mjs');
+    const { world } = await H.bootWorld({ level: 'geonosis', settings: { mode: 'waves' } });
+    const t = world.terrain;
+    const from = new THREE.Vector3(0, 40, 0), dir = new THREE.Vector3(0, -1, 0);
+    const p = new THREE.Vector3(), n = new THREE.Vector3();
+    let bare = null;
+    /* The hit is what matters: a MISS never reaches the write and would pass
+     * this check while the crash stayed armed. Asserted, not assumed. */
+    const full = t.raycast(from, dir, 200, p, n);
+    assert(full !== null, 'the fixture ray missed the ground — the crashing branch was never entered');
+    try { bare = t.raycast(from, dir, 200); } catch (e) {
+      assert(false, `asking whether the ground is in the way, without somewhere to write the hit, threw: ${e.message}`);
+    }
+    assert(bare === full,
+      `the two call forms disagree about the same ray: ${bare} against ${full}`);
+    /* …and the normal is optional on its own, which is the other arity a
+     * caller that wants the POINT but not the facing would use. */
+    const p2 = new THREE.Vector3();
+    const noNormal = t.raycast(from, dir, 200, p2);
+    assert(noNormal === full && p2.distanceTo(p) < 1e-9,
+      'passing a point but no normal changed the answer');
+    world.unload();
+    return `hit at ${full.toFixed(2)} m, same answer with 3, 4 and 5 arguments`;
+  });
+
   check('terrain: no level composes to one colour at three brightnesses', () => {
     // The failure this replaces was not subtle and did not look like a bug: the
     // dune sea spent 46% of its area on the bare base coat and varied by 12% in

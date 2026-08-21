@@ -22,6 +22,15 @@ for (const seed of (process.argv[3] || '1,2').split(',').map(Number)) {
   const rows = [];
   for (let i = 0; i < 120 / STEP; i++) {
     if (world.player) world.player.hp = world.player.maxHp;
+    /* `input.tick(STEP)` BEFORE the step, and this line is the whole bench.
+     * `dutyInput` is a script whose entire body is `tick(dt)` — it reads the
+     * world there, points the move axis, presses the swing and holds station.
+     * `world.update` does not call it; `_flagship.mjs`'s own `drive` does, one
+     * line above its step. A loop that steps without ticking has an unkillable
+     * STATUE on the deploy mark, not a Jedi, and every number it takes is a
+     * number about a sitting nobody would play. Three benches in three lanes
+     * had this same omission on the same afternoon. */
+    input.tick?.(STEP);
     world.update(STEP, input);
     if (i % 150 !== 0) continue;
     const p = world.player.position;

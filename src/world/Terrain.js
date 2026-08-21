@@ -3697,6 +3697,25 @@ export class Terrain {
     return this.slopeAt(x, z) > (this.preset.stoneSlope ?? 0.42) ? 'stone' : 'sand';
   }
 
+  /**
+   * `outPoint` AND `outNormal` ARE OPTIONAL, and that is a fix rather than a
+   * convenience.
+   *
+   * Half the callers of a terrain raycast do not want the hit — they want to
+   * know whether there IS one. `Emplacement.GunPit.update` asks exactly that,
+   * one line under the identical question asked of `physics.raycast`, which
+   * takes a predicate and returns a body: "is the ground between my muzzle and
+   * that man". It called this with three arguments, and the moment the answer
+   * was YES this threw `Cannot read properties of undefined (reading 'set')`
+   * and took the frame down with it. Found by a probe driving a whole sitting;
+   * it is a live crash in the shipped game, on the one path that only runs when
+   * a gun pit's target walks behind a rise.
+   *
+   * Guarding at the call site would have fixed one caller and left the trap
+   * armed for the next; making the out parameters optional here answers "did it
+   * hit, and how far" for everybody, which is what the return value has always
+   * been. `Enemy.js`'s caller passes both and is unchanged.
+   */
   raycast(origin, dir, maxDist, outPoint, outNormal) {
     // Coarse march then bisect — plenty accurate for a heightfield.
     let t = 0, lastT = 0;
@@ -3715,8 +3734,12 @@ export class Terrain {
           const mx = origin.x + dir.x * mid, my = origin.y + dir.y * mid, mz = origin.z + dir.z * mid;
           if (my - this.height(mx, mz) > 0) lo = mid; else hi = mid;
         }
-        outPoint.set(origin.x + dir.x * hi, origin.y + dir.y * hi, origin.z + dir.z * hi);
-        this.normalAt(outPoint.x, outPoint.z, outNormal);
+        if (outPoint) {
+          outPoint.set(origin.x + dir.x * hi, origin.y + dir.y * hi, origin.z + dir.z * hi);
+          /* Only with a point to read it at: `normalAt` is asked for the
+           * normal AT the hit, and there is no hit to stand on without one. */
+          if (outNormal) this.normalAt(outPoint.x, outPoint.z, outNormal);
+        }
         return hi;
       }
       lastAbove = above; lastT = t;
