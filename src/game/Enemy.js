@@ -4141,7 +4141,18 @@ export class Enemy {
       dmg *= k;
       if (impulse) impulse = _res.copy(impulse).multiplyScalar(k);
     }
-    if (impulse) this.velocity.add(impulse);
+    /* AND THE SHOVES DO NOT STACK — the mirror of the bound in
+     * `Player.applyKnockback`, where the whole argument and the 718 m
+     * measurement behind it are written down. A body cannot be moved faster by
+     * a crowd of shoves than by the hardest single one of them. It is here as
+     * well as there because the contest is symmetric and an enemy the player's
+     * army surrounds stands in the same ring the player does: `unleash` alone
+     * puts every body inside 9 m through this door on one frame. */
+    if (impulse) {
+      const was = this.velocity.length();
+      this.velocity.add(impulse);
+      this.velocity.clampLength(0, Math.max(was, impulse.length()));
+    }
     this.knockTimer = gentle ? 0.35 : 0.7;
     this.grounded = false;
     // A real shove beats a guard, so it beats whatever that guard was holding

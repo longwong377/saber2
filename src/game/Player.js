@@ -3027,8 +3027,52 @@ export class Player {
       dmg *= k;
       if (impulse) impulse = _res.copy(impulse).multiplyScalar(k);
     }
+    /**
+     * ── AND THE SHOVES DO NOT STACK. A crowd cannot move a body faster than
+     * the hardest single thing in it.
+     *
+     * `velocity.add(impulse)` alone is unbounded, and the population that
+     * finds that out is a RING. Measured on the colosseum, twenty acolytes
+     * spawned together against a player standing still: all twenty reach
+     * `pressed` on the same frame and nineteen shoves land inside frame 166.
+     * The ring is symmetric so the horizontal halves cancel exactly and the
+     * `PUSH_LIFT` halves add — 19 x 10 m/s of pure lift. The player leaves at
+     * 190 m/s and tops out at **718 m**, twelve seconds of fall away from the
+     * fight it was standing in. tools/checks/cloth-cost.mjs reported it as "0
+     * of 20 enemies inside the cloth cut": the camera follows the player, so
+     * every garment in the world was distance-gated off and a 400-frame timing
+     * loop measured an empty field.
+     *
+     * IT IS NOT A FIXTURE'S POPULATION. `PUSH_SPEED`'s own note sizes the
+     * shove so that an unbraced target flies 6.84 m and says why that number
+     * and no other — "6.84 m sits inside [the push's] own band, [0, 7.5], so
+     * even an unbraced target lands somewhere the caster can still reach." TWO
+     * shoves from the same side already break that property (13.7 m, outside
+     * the band); this restores it for any number of them.
+     *
+     * THE WRONG ANSWER TRIED FIRST was clamping `velocity.y`, which is the
+     * symptom this particular ring produces and not the defect: a ring cancels
+     * its horizontals, a firing line does not, and the two-from-one-side case
+     * above would have sailed straight through it. So the bound is on the
+     * SPEED, and the ceiling is the largest thing acting on the body —
+     * whatever it was already doing, or this shove, whichever is bigger.
+     * A single shove is arithmetically unchanged, so every figure in
+     * `PUSH_SPEED`'s note still holds; a shove ACROSS a body's motion still
+     * turns it, because it barely lengthens a vector it is perpendicular to;
+     * and a body already falling faster than a shove is not slowed by being
+     * shoved sideways.
+     *
+     * PRE-EXISTING, and `2ed3d65` only moved the dice. At `d736f60` the same
+     * twenty-body fixture launches on four of five `enemyRng` seeds and stays
+     * on the floor on the one the suite happened to use; adding one `rng()`
+     * draw per body (the droideka's `walkPhase`) moved it off that seed. The
+     * mirror of this bound is in `Enemy.applyKnockback`, because the contest
+     * is symmetric and a body the army surrounds is in the same ring.
+     */
     if (impulse) {
+      const was = this.velocity.length();
       this.velocity.add(impulse);
+      this.velocity.clampLength(0, Math.max(was, impulse.length()));
       this.grounded = false;
     }
     if (!gentle) this.staggerTimer = Math.max(this.staggerTimer, 0.22);
