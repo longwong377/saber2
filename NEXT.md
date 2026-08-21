@@ -873,3 +873,24 @@ body count §16 measured, now **0.57 ms**. The 13,320-bolt fan that licenses the
 optimisation found a live bug of its own: every droideka in the game presented
 **three leg capsules with a non-finite endpoint**, so its legs could not be shot
 off or cut off and the topple at two legs lost was unreachable.
+
+### And the sitting is more than twice as long as the card promises
+
+`tools/_linelength.mjs` holds both the Jedi and every named trooper on their
+feet and drives a whole sitting. That is not a prediction of how long a run
+takes — it is a **lower bound**, because an army that cannot be killed clears
+waves as fast as this build can clear them.
+
+    seed 1 · push · 3 stages · the deploy card says 18-25 min · FLOOR 45.7 min · ended WON
+
+So a Push cannot be played inside the band its own card prints, even by an army
+that cannot die. §5's promise — "20–40 min", Raid 10–15 · Push 18–25 · Grind
+30–45 — is printed on the deploy card as a promise to the player, and the mode
+cannot keep it.
+
+It is **not** the fight being hard: this arm's line is immortal, so what is long
+is the number of waves an area asks for, not how long each takes to win. The
+lever is `AREAS[*].waves` and the escalation under it, and the honest fix is
+either fewer waves an area or a card that stops naming minutes. Nobody should
+tune the length and the attrition in the same pass — fewer casualties means more
+rifles firing, which shortens every wave, so the two move each other.
