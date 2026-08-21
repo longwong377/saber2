@@ -163,6 +163,12 @@ export function limitBackpedal(vel, toTarget, factor = BACKPEDAL) {
 }
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _v4 = new THREE.Vector3(), _v5 = new THREE.Vector3(), _v6 = new THREE.Vector3();
+/* Where a suspended body's centre was LAST frame — see the held branch of
+ * `_move`. Its own vector and not one of the six above: the line between the
+ * two reads is `Ragdoll.centre`, and handing a shared scratch to a method that
+ * may one day want one is the defect World.js's `_bolt4` note already paid for
+ * once (5,585 of 13,320 fanned bolts changed their answer). */
+const _wasAt = new THREE.Vector3();
 const _v7 = new THREE.Vector3();
 
 /** The object a rig's pose hangs off, or null. Used only by the hover lean. */
@@ -6210,36 +6216,41 @@ export class Enemy {
       if (this.actor && !this.dead) {
         if (!this.actor.ragdolled) this.actor.goRagdoll(this.velocity, null);
         if (this.actor.suspend?.(this.liftTarget, dt)) {
-          this.actor.centre(this.position);
           /**
-           * …AND HOW FAST IT IS BEING DRAGGED. This line said `set(0, 0, 0)`.
+           * …AND HOW FAST IT IS BEING DRAGGED. This branch answered `0, 0, 0`.
            *
            * The LIMP branch forty lines down — a ragdolled body nobody is
-           * holding — answers the same question with `velocity.copy(chest.
-           * velocity)`. Two branches of one method, opposite answers to "how
-           * fast is this body moving", and the held one was the lie: measured
+           * holding — answers the same question with the ragdoll's own chest
+           * velocity. Two branches of one method, opposite answers to "how fast
+           * is this body moving", and the held one was a flat lie: measured
            * over a Geonosis Command wave with a Jedi gripping continuously, a
-           * held body travels 4.75 m/s while `velocity` reads 0.00.
+           * held body travels 4.75 m/s while `velocity` read 0.00. `Enemy.
+           * _shoot` leads its aim by `target.velocity * tof`, so a held body
+           * was the one target on the field nobody in either army led.
            *
-           * `Enemy._shoot` leads its aim by `target.velocity * tof`, so every
-           * rifle in your line aimed at exactly where a body being dragged had
-           * already left — the one target on the field the line does not lead,
-           * and it is the one FLAGSHIP §7 says the Force is supposed to hand
-           * them. `Player._updateGrip` had already met the same lie and worked
-           * around it in place ("the velocity is read off the ragdoll's own
-           * chest rather than off `e.velocity`, which a limp body does not
-           * drive"); one workaround and one silent miss is the signature of a
-           * field that is wrong rather than of two callers that are.
+           * IT IS THE DISPLACEMENT AND NOT THE CHEST'S VELOCITY, and that is
+           * the whole content of this note. Copying the chest the way the limp
+           * branch does was tried first and is a second lie in the other
+           * direction: `Ragdoll.suspend` COMMANDS that body at `(target − pos)
+           * × 12` every frame, and a hanging body sits at a steady sag under
+           * that command — measured on a stationary hold point, the chest
+           * carries 2.01 m/s while the body's centre moves 0.09. A lead built
+           * on it aims two metres past a body that is not going anywhere.
            *
-           * Measured against the miss it was supposed to explain: the line's
-           * hit rate on a held body is 4.1% against 4.8% on a body that is
-           * not, so the lead is NOT what starves the verb — see NEXT.md. It is
-           * fixed because a field that reports 0.00 for a body crossing the
-           * field at five metres a second is wrong whatever reads it.
+           * So: where the centre was, where it is now, over dt. It is the
+           * definition of the quantity rather than any solver's idea of it, and
+           * it costs one vector subtract on the at-most-four bodies a pair of
+           * hands can hold.
+           *
+           * The line's hit rate on a held body is 4.1% against 4.8% on a body
+           * that is not, so this is NOT what starves FLAGSHIP §7's third verb —
+           * see NEXT.md for what does. It is fixed because a field that reports
+           * 0.00 for a body crossing the field at five metres a second is wrong
+           * whatever happens to read it.
            */
-          const chest = this.actor.bodies.get('chest') || this.actor.bodies.get('spine')
-            || this.actor.bodies.get('hips');
-          if (chest && chest.velocity) this.velocity.copy(chest.velocity);
+          _wasAt.copy(this.position);
+          this.actor.centre(this.position);
+          if (dt > 0) this.velocity.subVectors(this.position, _wasAt).multiplyScalar(1 / dt);
           else this.velocity.set(0, 0, 0);
           this.grounded = false;
           this._syncBody();
