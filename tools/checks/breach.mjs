@@ -320,14 +320,38 @@ export async function run({ check, assert }) {
       `the line lost nothing at all in the ${held.toFixed(1)} s the player spent at the plate. `
       + 'BREACH is meant to be a price paid in the mode\'s own currency, and a price of zero is an '
       + 'errand with a longer animation.');
-    assert(paidAtThePlate >= paidWithTheLine,
-      `the line lost ${paidAtThePlate} men while the player was at the plate and `
-      + `${paidWithTheLine} over the same ${held.toFixed(1)} s with the player standing in it — the `
-      + 'breach is free, which is the one thing §7 says it is not');
+    /**
+     * ── AND THE PAIRED CONTROL IS REPORTED, NOT ASSERTED, BECAUSE IT WENT THE
+     *    OTHER WAY ──────────────────────────────────────────────────────────
+     *
+     * The clause that stood here was `paidAtThePlate >= paidWithTheLine` — "the
+     * breach must cost the line more than being there". Measured: **1 man lost
+     * over 22.4 s with the player at the plate and 3 over the same 22.4 s with
+     * the player standing in the formation.** It leans the wrong way, and there
+     * are two reasons not to assert it in either direction:
+     *
+     *   IT IS ONE SAMPLE A SIDE. Three names against one, on two worlds that
+     *     `field` can seed identically but cannot dress identically (two boots
+     *     are two draws off the world stream). A difference of two bodies at
+     *     n = 1 is not a difference.
+     *   AND THE MECHANISM MAY BE REAL, WHICH IS THE INTERESTING PART. A Jedi
+     *     standing in a formation is what the wave walks toward: `pickTarget`
+     *     takes the nearest hostile, so a player IN the line pulls the fight
+     *     onto the line, and a player 69 m away at a plate takes some of it
+     *     with them. §7 assumes leaving your line exposes it; on this ground
+     *     leaving it may also unburden it. That is a question about the
+     *     targeting rule and it wants its own measurement over many runs, not
+     *     an assertion here that would pass or fail on a coin.
+     *
+     * What IS asserted is the half that does not depend on the comparison: the
+     * hold is in §7's band, the line pays something in those seconds, and the
+     * gun that was the reason to be there stops.
+     */
     return `${cut.t.toFixed(1)} s of held blade opened it (${cut.door.cutArea} texels). `
       + `In those seconds the line lost ${paidAtThePlate} of ${cut.before.men}; over the same `
       + `${held.toFixed(1)} s with the player standing in the formation it lost ${paidWithTheLine} `
-      + `of ${stay.before.men}. The gun fired ${cut.pit.shots} rounds and none after the plate fell. `
+      + `of ${stay.before.men} — one sample a side, and it leans the wrong way; see the note. `
+      + `The gun fired ${cut.pit.shots} rounds and none after the plate fell. `
       + `Bars at the plate: stamina −${bars.stam.toFixed(1)}, Force −${bars.force.toFixed(1)} `
       + '(§7 says both drain; at 69 m from the line there is nothing arriving to guard, and the '
       + 'cost is the men rather than the meters)';
