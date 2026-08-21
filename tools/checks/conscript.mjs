@@ -111,8 +111,8 @@ export async function run({ check, assert }) {
     } finally { world.unload?.(); }
   });
 
-  check('conscript: it is two thirds of a B1\'s gun, measured on the same ground', async () => {
-    const { firingLine } = await import('../_beaten.mjs');
+  check('conscript: it is about two thirds of a B1\'s gun, measured on one field', async () => {
+    const { mixedLine } = await import('../_beaten.mjs');
     /**
      * §6 PRICES BOTH BODIES AGAINST A MOVING PLAYER — 2.17 dps for a B1 and
      * 1.4 for a conscript. Reproducing "a moving player" inside a check would
@@ -120,28 +120,43 @@ export async function run({ check, assert }) {
      * 1.4 / 2.17 = 0.645, which is a fact about two roster rows and survives
      * any harness that measures both the same way.
      *
-     * Blade down, one shooter, same range, same seconds. The blade is down
-     * because with a guard up what reaches the player is what the guard
-     * missed, and that is a measurement of the guard.
+     * ── AND THE FIRST HARNESS DID NOT MEASURE THEM THE SAME WAY ───────────
      *
-     * The band is wide (±0.18 of the ratio) and it is honest rather than lax:
-     * two 90-second samples of a stochastic gun land 0.50 and 0.69 apart on
-     * the same numbers. What the check is for is the class staying a class —
-     * a conscript that drifted to a tenth of a B1 would be harmless furniture,
-     * and one that drifted to a B1's equal would be a B1 you get for free.
+     * It booted a world per archetype and compared the two. That is comparing
+     * two WORLDS: the same B1 arm read 3.485, 3.468 and 2.805 hp/s over three
+     * runs of the identical call — a 24% spread on the control, larger than the
+     * difference the check exists to see — because two boots are two dressings,
+     * two prop layouts and two skies. It passed twice and then failed in a full
+     * gate run at 0.842, which is the worst way for a check to be wrong: green
+     * often enough to be believed.
+     *
+     * `mixedLine` puts four of each on ONE arc, interleaved, shooting one
+     * player under one sky, and attributes every point of damage to the body
+     * that fired it — off `Player.damage`'s own `source`. There are no longer
+     * two arms to differ; there is one measurement with two columns. Measured
+     * twice: 0.721 at 90 s and 0.707 at 150 s.
+     *
+     * THE BAND IS SIZED ON THAT PAIR AND ON THE GAP TO THE TARGET. The shipped
+     * conscript sits at 0.71 against §6's 0.645 — a little hotter than asked,
+     * and the cadence is not the dial that moves it (1.45 s to 1.62 s between
+     * bursts moved it 1.459 to 1.473, inside the noise, because at twelve
+     * bodies on one arc line of sight decides how often a rifle speaks). What
+     * the check is for is the class staying a class: a conscript that drifted
+     * to a tenth of a B1 would be harmless furniture, and one that drifted to a
+     * B1's equal would be a B1 you get for free.
      */
-    const secs = 90;
-    const b1 = await firingLine({ n: 1, range: 12, seconds: secs, type: 'b1', guard: false });
-    const con = await firingLine({ n: 1, range: 12, seconds: secs, type: 'conscript', guard: false });
-    assert(b1.dpsPerRifle > 0.5,
-      `a B1 did ${b1.dpsPerRifle} hp/s to a standing player in ${secs}s — the control arm is broken`);
-    const ratio = con.dpsPerRifle / b1.dpsPerRifle;
+    const r = await mixedLine({ types: ['b1', 'conscript'], each: 4, range: 12, seconds: 90 });
+    assert(r.dps.b1 > 0.5,
+      `a B1 did ${r.dps.b1} hp/s to a standing player in ${r.seconds}s — the control column is broken`);
+    const ratio = r.dps.conscript / r.dps.b1;
     const want = CONSCRIPT_DPS / B1_DPS;
-    assert(Math.abs(ratio - want) < 0.18,
+    assert(Math.abs(ratio - want) < 0.12,
       `a conscript does ${ratio.toFixed(3)} of a B1's damage against §6's ${want.toFixed(3)} `
-      + `(${con.dpsPerRifle} hp/s against ${b1.dpsPerRifle}). §6 does not ask for a harmless body: `
-      + 'what makes forty of them weather is that killing them pays nothing.');
-    return `b1 ${b1.dpsPerRifle} hp/s · conscript ${con.dpsPerRifle} hp/s · ratio ${ratio.toFixed(3)} `
-      + `against §6's ${want.toFixed(3)} → ${(B1_DPS * ratio).toFixed(2)} dps on §6's own scale`;
+      + `(${r.dps.conscript} hp/s against ${r.dps.b1}, four of each on one field for ${r.seconds}s). `
+      + '§6 does not ask for a harmless body: what makes forty of them weather is that killing '
+      + 'them pays nothing.');
+    return `on one field, ${r.each} of each for ${r.seconds}s: b1 ${r.dps.b1} hp/s · conscript `
+      + `${r.dps.conscript} hp/s · ratio ${ratio.toFixed(3)} against §6's ${want.toFixed(3)} → `
+      + `${(B1_DPS * ratio).toFixed(2)} dps on §6's own scale`;
   });
 }

@@ -3301,9 +3301,20 @@ export class World {
      * The counters are cumulative and monotone because a RATE cannot be read
      * off a pool four other things spend; `guardSpent`'s own note says who
      * reads them.
+     *
+     * `typeof owner.stamina === 'number'` GUARDS BOTH, and it is a live defect
+     * rather than belt-and-braces. `_creditDeflect` is reached by every lit
+     * blade in `world.players`, and a `RemoteAvatar` is one of them: it carries
+     * `kills`, `score`, `deflects` and `combo` and it deliberately carries no
+     * bars at all, because a peer owns its own health. The line this replaces
+     * was `owner.stamina = Math.max(0, owner.stamina - 4)` — `undefined - 4` is
+     * NaN, `Math.max(0, NaN)` is NaN, and the peer's local copy has carried a
+     * NaN stamina since the day a remote avatar could hold a blade. Nothing
+     * read it, so nothing said so; charging on every rung instead of one makes
+     * it forty times as likely and `guardSpent` would carry the NaN outward.
      */
     const cost = guardCost(res.grade, snap);
-    if (cost.stamina > 0) {
+    if (cost.stamina > 0 && typeof owner.stamina === 'number') {
       const paid = Math.min(cost.stamina, owner.stamina);
       owner.stamina = Math.max(0, owner.stamina - cost.stamina);
       owner.guardSpent = (owner.guardSpent || 0) + paid;

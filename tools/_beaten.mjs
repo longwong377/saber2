@@ -29,6 +29,80 @@ const CMD = argv[0] && !argv[0].startsWith('--') ? argv[0] : 'one';
 const flag = (n, d) => { const i = argv.indexOf('--' + n); return i >= 0 ? Number(argv[i + 1]) : d; };
 const STEP = 1 / 60;
 
+/**
+ * TWO KINDS OF SHOOTER IN ONE WORLD, and every point of damage attributed to
+ * the archetype that fired it.
+ *
+ * WHY IT EXISTS AND `firingLine` DOES NOT ANSWER THIS. Comparing two roster
+ * rows by booting a world for each is comparing two worlds: measured, the same
+ * B1 arm read 3.485, 3.468 and 2.805 hp/s across three runs of the identical
+ * call — a 24% spread on the CONTROL, which is more than the difference the
+ * comparison is trying to see. Level dressing, prop placement and the weather
+ * are not the same between two boots, and a gun's own scatter needs a long
+ * sample before it settles.
+ *
+ * So both kinds stand on one field, at one range, under one sky, shooting one
+ * player, and the tally is taken off `Player.damage`'s `source` — which is the
+ * body that fired the bolt. Every confound between the two arms is gone by
+ * construction, because there are no longer two arms: there is one measurement
+ * with two columns.
+ */
+async function mixedLine({ types = ['b1', 'conscript'], each = 4, range = 12, seconds = 90 } = {}) {
+  const { world } = await bootWorld({
+    level: 'geonosis',
+    settings: { mode: 'waves', level: 'geonosis', difficulty: 'knight' },
+  });
+  const p = world.player;
+  p.position.set(0, (world.terrain?.height(0, 0) ?? 0) + 0.05, 0);
+  /* Blade down: with a guard up, what reaches the player is what the guard
+   * missed, and that is a measurement of the guard. */
+  p.saber.ignition = 0;
+  p.camera.yaw = Math.PI;
+
+  /* INTERLEAVED ROUND THE ARC, not one type to a side: a body's range, its
+   * line of sight and the ground under it all vary along the arc, and blocking
+   * the two types would hand one of them the better half of the field. */
+  const n = types.length * each;
+  const spread = 1.4;
+  for (let i = 0; i < n; i++) {
+    const a = -spread / 2 + (n > 1 ? spread * i / (n - 1) : 0);
+    const x = Math.sin(a) * range, z = Math.cos(a) * range;
+    const e = world.spawnEnemy(types[i % types.length], new THREE.Vector3(x, 0, z));
+    if (e) { e.position.y = (world.terrain?.height(x, z) ?? 0) + 0.02; e.hp = 1e6; }
+  }
+
+  const took = new Map(types.map((t) => [t, 0]));
+  const damage = p.damage.bind(p);
+  /* Variadic past the two arguments it reads (HANDOFF §6.1a): `Player.damage`
+   * has grown an argument once already and a wrapper that names the list drops
+   * the next one silently. */
+  p.damage = (amount, point, source, ...rest) => {
+    const before = p.hp;
+    const out = damage(amount, point, source, ...rest);
+    const lost = before - p.hp;
+    if (lost > 0 && source && took.has(source.type)) took.set(source.type, took.get(source.type) + lost);
+    return out;
+  };
+
+  const input = guardInput();
+  input.act = () => false;
+  const frames = Math.round(seconds / STEP);
+  let t = 0;
+  for (let i = 0; i < frames; i++) {
+    world.update(STEP, input);
+    t += STEP;
+    /* Topped up before it can die, for `firingLine`'s reason: the death path
+     * must not run inside a measurement. Nothing is added to the tally here —
+     * the tally is taken at the door, per blow. */
+    if (p.hp < p.maxHp * 0.35) p.hp = p.maxHp;
+  }
+  world.unload?.();
+  return {
+    seconds: +t.toFixed(1), each,
+    dps: Object.fromEntries(types.map((k) => [k, +(took.get(k) / t / each).toFixed(3)])),
+  };
+}
+
 /** Holds the guard and nothing else. See the header. */
 function guardInput() {
   return {
@@ -153,7 +227,7 @@ async function firingLine({ n = 20, range = 14, spread = 1.2, seconds = 30, type
  * that impossible.
  */
 const ENTRY = process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname);
-export { firingLine, guardInput, STEP };
+export { firingLine, mixedLine, guardInput, STEP };
 
 if (!ENTRY) { /* imported: the CLI below is not this module's business */ }
 else if (CMD === 'one') {
@@ -171,6 +245,9 @@ else if (CMD === 'one') {
     console.log(`  ${String(n).padStart(2)}   ${String(r.firedPerS).padStart(7)}  ${String(r.answeredPerS).padStart(9)}  ${String(r.drainPerS).padStart(7)}  `
       + `${String(net).padStart(6)}  ${String(r.stamina).padStart(10)}  ${String(r.emptyAt ?? '—').padStart(8)}  ${String(r.hpLost).padStart(7)}`);
   }
+} else if (CMD === 'mixed') {
+  const r = await mixedLine({ seconds: flag('seconds', 90), each: flag('each', 4) });
+  console.log(JSON.stringify(r, null, 2));
 } else if (CMD === 'class') {
   /* THE THIRD BODY CLASS AGAINST THE ONE IT IS A WORSE COPY OF. Same harness,
    * same range, same seconds, blade down — so the ratio is a fact about the

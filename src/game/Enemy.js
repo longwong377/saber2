@@ -723,6 +723,25 @@ export const ARCHETYPES = {
    *                 which puts the conscript between 1.35 and 1.49 dps on §6's
    *                 own scale, against the 1.4 it asked for.
    *
+   *                 AND THAT PAIR IS THE WEAKER INSTRUMENT, because it is two
+   *                 WORLDS. The same B1 arm read 3.485, 3.468 and 2.805 hp/s
+   *                 over three runs of the identical call — a 24% spread on the
+   *                 CONTROL, larger than the difference being measured, because
+   *                 two boots are two dressings, two prop layouts and two
+   *                 skies. `tools/_beaten.mjs mixed` stands four of each on ONE
+   *                 arc and attributes every blow to the body that fired it,
+   *                 and it is stable to two per cent:
+   *
+   *                      90 s   b1 1.998   conscript 1.440   0.721
+   *                     150 s   b1 2.065   conscript 1.459   0.707
+   *
+   *                 So the honest figure is 0.71 of a B1 against §6's 0.645 —
+   *                 a little hotter than asked. The cadence is not the dial
+   *                 that would move it: at twelve bodies on one arc it is line
+   *                 of sight and not the fire timer that decides how often a
+   *                 rifle speaks, and the same run repeated reads 1.459 and
+   *                 1.473 without anything changing at all.
+   *
    *                 THE AUTHORED NUMBERS THAT GET THERE ARE THE B1'S, minus
    *                 one round a burst: same rifle, same spread, same band, two
    *                 bolts instead of three. Four earlier attempts made it a
