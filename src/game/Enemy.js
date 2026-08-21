@@ -10,6 +10,7 @@
 import * as THREE from 'three';
 import { Actor } from './Ragdoll.js';
 import { Rig, BipedAnimator, aimY } from './Rig.js';
+import { applyMergedSkin } from './MergedSkin.js';
 import { buildB1, buildB2, buildTrooper, buildAcolyte, buildDroideka, buildWalker, buildBeast, buildBlaster, plateGeo,
   buildJedi, bodyOptsFor, weakSpotsOf, coverSpotOf, SPECIES, HAIR_STYLES, BEARD_STYLES, ROBE_COLORS } from './Bodies.js';
 import { Saber } from './Saber.js';
@@ -2094,6 +2095,8 @@ export class Enemy {
     /** On its way up something taller than a step — see CLIMB_RATE. */
     this.climbing = false;
     this.gripped = false;
+    /** The `Crew` at this machine's controls, or null. See src/game/Driving.js. */
+    this.driven = null;
     /** Seconds of hold left before the lease lapses. See GRIP_LEASE. */
     this.gripLease = 0;
     this.liftTarget = null;
@@ -2296,11 +2299,19 @@ export class Enemy {
    * limb tubes the rig builds (bone.primary) always stay, because they are the
    * silhouette and the silhouette is what you fight by; everything else goes.
    * Measured on an acolyte: 56 meshes at LOD 0, 20 at LOD 1, 20 at LOD 2.
+   *
+   * …AND AT LOD 2 THE SURVIVORS ARE ONE MESH. See src/game/MergedSkin.js: the
+   * kept set is baked into one SkinnedMesh per material bin, weight 1.0 per
+   * vertex, which is the rigid parenting the scene graph was already doing
+   * written as a draw call instead of twenty-six. Measured on a `high` World
+   * on geonosis with 42 bodies at 72-127 m, this line takes the field from
+   * 1071 visible meshes to 149.
    */
   _applyLod(lod) {
     if (!this.rig || !this._lodParts) return;
     const showDetail = lod === 0;
     for (const m of this._lodParts) m.visible = showDetail;
+    applyMergedSkin(this, lod);
     // far away, drop the shadow pass too — a 60m silhouette contributes
     // nothing to a shadow map that covers 34m
     if (this._lodShadow !== (lod < 2)) {
@@ -4325,7 +4336,32 @@ export class Enemy {
      * restore that lives with the writer is a restore every future writer has
      * to remember. This one is the same idiom one level out.
      */
+    /**
+     * SOMEBODY IS DRIVING THIS ONE — and then the brain does not run at all.
+     *
+     * `Crew.update` has already set `wish`, `speed` and `facing` from the
+     * player's controls by the time this frame reaches here, so all this has to
+     * do is not overwrite them. `_move` and `_pose` still run below, which is
+     * the whole design: a driven AT-TE walks on its own legs, takes its own
+     * grade limit, loses them to a blade at three, and dies its own death. See
+     * src/game/Driving.js.
+     *
+     * A grenade under a tank is not a thing the tank dives away from, so
+     * `senseDanger` is skipped with the brain rather than beside it.
+     */
     const paceWas = this.speed;
+    if (this.driven) {
+      this.stopFiring();
+      this._move(dt, ctx);
+      this._pose(dt, ctx);
+      /* …AND THE DRIVER RIDES, here rather than in `Player.update`. Players are
+       * step 1 of World's frame and enemies are step 2, so a seat written on
+       * the player's own tick is a seat one frame behind the hull it is bolted
+       * to — which at a Juggernaut's 7.2 m/s is 12 cm of the driver hanging off
+       * the back at every speed change. */
+      this.driven.ride();
+      return true;
+    }
     senseDanger(this, dt, ctx);
     const reacting = stepReaction(this, dt, ctx);
     if (!reacting) {
@@ -6243,7 +6279,18 @@ export class Enemy {
 
     // face the target while fighting, face travel otherwise
     let want = this.facing;
-    if (this.toTarget && this.stunTimer <= 0) want = Math.atan2(this.toTarget.x, this.toTarget.z);
+    /**
+     * …AND NEITHER, IF SOMEBODY IS DRIVING. `Crew.update` writes `facing`
+     * directly from the steering axis, and this block was quietly undoing it:
+     * `toTarget` is whatever the brain last wanted to look at and survives the
+     * brain being switched off, so a driver hauling on the stick was fighting
+     * the machine's own idea of where to point. Measured before this line: a
+     * full second of full steer swung an AAT 0.24 rad against the 0.90 the
+     * driver's own rate asks for — a quarter of the turn, for no reason a
+     * player could see. See src/game/Driving.js.
+     */
+    if (this.driven) { /* the driver owns the heading */ }
+    else if (this.toTarget && this.stunTimer <= 0) want = Math.atan2(this.toTarget.x, this.toTarget.z);
     else if (this.velocity.lengthSq() > 1) want = Math.atan2(this.velocity.x, this.velocity.z);
     let d = want - this.facing;
     while (d > Math.PI) d -= TAU;

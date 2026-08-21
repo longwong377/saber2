@@ -57,6 +57,19 @@ import { MODES, sandboxUnits, SANDBOX_MAX_ENEMIES, sandboxConfig, SKIRMISH,
  * leaf module (it imports nothing), so there is no cycle to pay for.
  */
 import { POWER_COST, POWER_BOON } from '../game/Powers.js';
+import { DRIVE, crewOf } from '../game/Driving.js';
+
+/**
+ * The machines you may take the controls of, named, DERIVED.
+ *
+ * Typed here it would be a second list beside `crew` on the archetypes and one
+ * roster change from being a lie — HANDOFF §2.3. Read off the same field
+ * `Driving.isCrewed` reads, so the card and the rule cannot disagree.
+ */
+const DRIVABLE = () => Object.keys(ARCHETYPES)
+  .filter(k => crewOf(k) > 0)
+  .map(k => `${ARCHETYPES[k].label} (${crewOf(k)} crew)`)
+  .join(', ') || 'nothing on this roster';
 /* The Codex teaches how to fight a Force user, so it quotes THEIR numbers —
  * read off Enemy.js rather than transcribed, which is the hand-written-twin
  * defect HANDOFF §2.3 is about. */
@@ -1576,6 +1589,18 @@ export const CODEX = [
       + `Force is HOLDING comes to the hand at any distance, and reeling one in with an empty `
       + `hand catches it out of the air on its own — and ${k('ignite')} lights or douses a hilt `
       + `your Force is holding, wherever it is.` },
+  { keys: ['drive'],
+    /* THE RULE IS THE INTERESTING PART and it belongs on the card, because a
+     * player who presses this at a hailfire and is refused should already know
+     * why. `crewOf` is read live off the archetypes rather than typed, so the
+     * four names cannot outlive a roster change. */
+    text: k => `Take the controls of the machine you are standing at — and ${k('drive')} again `
+      + `to climb down. Only the ones with somebody in them: ${DRIVABLE()}. A dwarf spider, a `
+      + `hailfire, a tri-droid and a snail tank are DROIDS — there is no seat and nobody to `
+      + `displace. Your own side's any time; the enemy's only once you have put it under `
+      + `${Math.round(DRIVE.wreck * 100)}% and the crew is dead. Move to drive, aim to lay the gun `
+      + `(it turns faster than the hull, inside an arc off the nose), attack to fire. The hull `
+      + `takes the hits while you are in it, and when it dies you are put out on the ground.` },
   { keys: ['view'], text: () => 'Toggle first / third person.' },
   { keys: ['scoreboard'], hold: true, text: () => 'Scoreboard &amp; run boons.' },
   // The slot count is read off the table, so a ninth emote changes this line.

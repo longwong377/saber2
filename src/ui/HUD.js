@@ -10,6 +10,7 @@ import { clamp, lerp } from '../engine/MathUtil.js';
 import { Announcer } from './Announcer.js';
 import { Presence } from '../engine/Presence.js';
 import { keyLabel, walkScale, ORDER_ACTIONS, codesFor } from '../engine/Bindings.js';
+import { drivableNear, whyNotDrive, crewOf } from '../game/Driving.js';
 /**
  * The two lookup tables the roster panel draws WITH, never a copy of them.
  *
@@ -969,6 +970,7 @@ export class HUD {
       targetOpen: root.getElementById('target-open'),
       mendCue: root.getElementById('mend-cue'),
       center: root.getElementById('hud-center-msg'),
+      drivePrompt: root.getElementById('drive-prompt'),
       hitmarks: root.getElementById('hitmarks'),
       troopnames: root.getElementById('troopnames'),
       stratagem: root.getElementById('stratagem'),
@@ -1428,6 +1430,59 @@ export class HUD {
     return keyLabel(codesFor(b, 'heal', dev)[0], (this._pad && this._pad.family) || 'xbox') || 'HEAL';
   }
 
+  /**
+   * THE BOARD PROMPT — *"drive the vehicles it makes sense to drive"*, and the
+   * half of that sentence this method is for is "it makes sense".
+   *
+   * A PERSISTENT LINE AND NOT A NOTICE CARD, because what it says is a fact
+   * about where you are standing rather than an event: a card that faded after
+   * two seconds would leave a player next to a tank with nothing on screen and
+   * no way to find out whether they may have it.
+   *
+   * AND IT PRINTS THE REFUSAL TOO. `Driving.drivableNear` deliberately does not
+   * filter out the machines it will then refuse, so this can say WHICH of them
+   * it is — a hailfire is a droid and there is nobody in it to displace, and an
+   * enemy tank with its crew alive has to be put under a quarter first. Being
+   * told that is the difference between a rule and a bug, and it is the same
+   * argument `Player._refuse` makes for every Force key.
+   *
+   * The key name comes off the live bindings, never typed — see the note over
+   * `setBindings`, and tools/checks/controls.mjs, which fails any surface that
+   * types one.
+   */
+  _drivePrompt(world, player) {
+    const el = this.el.drivePrompt;
+    if (!el) return;
+    let text = '', bad = false;
+    if (player.driving) {
+      const v = player.driving.vehicle;
+      const hull = Math.max(0, Math.round((v.hp / Math.max(1, v.maxHp)) * 100));
+      text = `<b>${this._chip('drive')}</b> climb down · ${esc(v.A?.label ?? 'machine')} · hull ${hull}%`;
+    } else {
+      const near = drivableNear(world, player);
+      if (near) {
+        const why = whyNotDrive(world, player, near);
+        bad = !!why;
+        text = why
+          ? `${esc(near.A?.label ?? 'it')} — ${esc(why)}`
+          : `<b>${this._chip('drive')}</b> take the controls · `
+            + `${esc(near.A?.label ?? 'machine')}, ${crewOf(near.type)} crew`;
+      }
+    }
+    el.classList.toggle('on', !!text);
+    el.classList.toggle('no', bad);
+    if (text !== this._driveText) { el.innerHTML = text; this._driveText = text; }
+  }
+
+  /** One binding, as the player's own device names it. */
+  _chip(id) {
+    const b = this._bindings;
+    if (!b) return String(id).toUpperCase();
+    const dev = this._pad && this._pad.device === 'pad' ? 'pad' : 'key';
+    return keyLabel(codesFor(b, id, dev)[0], (this._pad && this._pad.family) || 'xbox')
+      || String(id).toUpperCase();
+  }
+
   setBindings(bindings, pad = this._pad) {
     this._bindings = bindings;
     this._pad = pad || null;
@@ -1796,6 +1851,7 @@ export class HUD {
     this._power('shield', cd.shield, this._afford(player, 'shield'), !!player.shield?.up);
 
     // ── reticle & blade cursor
+    this._drivePrompt(world, player);
     const firstPerson = !!player.camera.firstPerson;
     /* THE SAME MISSING FILTER, AND IT PINNED THE WARNING ON FOR ALL OF COMMAND.
      * Every formation parks your squads inside 5 m by construction: measured on

@@ -1221,6 +1221,19 @@ button{font-family:inherit}
    banner that leaves the frame is an announcement nobody reads. The size is
    clamped rather than fixed for the same reason: 38 px is right at 1280 and
    is four words on three lines at 360. */
+/* The board prompt. Low and centred, under the reticle rather than over it:
+   it is a thing you read when you are NOT fighting, and a panel across the
+   middle of the screen while a tank is shooting at you is worse than nothing.
+   `.no` is the refusal — same box, the colour the HUD already uses for a
+   price you cannot pay. */
+.driveprompt{position:absolute;left:50%;bottom:20%;transform:translateX(-50%);text-align:center;
+  opacity:0;transition:opacity .16s;pointer-events:none;max-width:min(560px,72vw);
+  font-size:clamp(11px,1.5vw,15px);letter-spacing:.05em;text-transform:uppercase;
+  padding:.42em .9em;border:1px solid rgba(150,210,255,.45);border-radius:3px;
+  background:rgba(6,12,20,.62);color:#cfe8ff;text-shadow:0 1px 2px #000}
+.driveprompt.on{opacity:.95}
+.driveprompt.no{border-color:rgba(255,150,120,.45);color:#ffd0c0}
+.driveprompt b{color:#fff;font-weight:800}
 .centermsg{position:absolute;left:50%;top:31%;transform:translateX(-50%);text-align:center;opacity:0;
   transition:opacity .3s;pointer-events:none;white-space:normal;
   max-width:min(760px,calc(100vw - 32px))}

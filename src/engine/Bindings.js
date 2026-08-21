@@ -315,6 +315,20 @@ export const ACTIONS = [
   // up off the ground is a deliberate act rather than a combat reflex, so it
   // does not need to be the nearest key left.
   { id: 'swap',       group: 'Blade',    label: 'Drop / take a saber', keys: ['KeyM'], pad: 'PadBack+PadX' },
+  /**
+   * TAKE THE CONTROLS — the V5 note, *"drive the vehicles it makes sense to
+   * drive"*.
+   *
+   * `KeyO` and `PadBack+PadDown` because both were free and neither is next to
+   * anything you press in a fight: boarding a tank is not a combat input, and a
+   * key that sat under a finger already on the stick would be pressed by
+   * accident at the exact moment a player is running past a hull.
+   *
+   * It is in the Blade group rather than a group of its own for the same reason
+   * `swap` is: the Codex prints one card per group and a group of one is a
+   * heading with a single line under it.
+   */
+  { id: 'drive',      group: 'Blade',    label: 'Take / leave the controls', keys: ['KeyO'], pad: 'PadBack+PadDown' },
 
   /* KeyT WENT TO THE ORDER WHEEL, and this is the trade. Focus keeps Mouse3,
    * which is where it is actually pressed — the second bind was a courtesy for
