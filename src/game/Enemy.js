@@ -1049,6 +1049,10 @@ const GRENADE_THROW = 26;
 /** How wide a hurried throw scatters, in metres, before the thrower's quality
  *  divides it. A B1 puts one four metres wide and a commando lands it. */
 const GRENADE_SPREAD = 5.2;
+/** How long a body that decided AGAINST throwing one waits before deciding
+ *  again, in seconds. See the note in `_maybeGrenade` and the 167x it is
+ *  there to stop. */
+const GRENADE_LOOK = 0.25;
 
 const GET_UP = 1.35;
 
@@ -4215,8 +4219,35 @@ export class Enemy {
      *
      * See src/game/Reactions.js for the four answers and who gives which.
      */
+    /**
+     * `speed` IS A WISH FOR ONE FRAME HERE, AND IT HAS TO BE PUT BACK.
+     *
+     * `this.speed` is not a per-frame field: the constructor rolls it once
+     * (archetype speed × a 0.9–1.1 shake × the difficulty's aggression) and
+     * nothing writes it again for the body's whole life except an elite
+     * changing phase. Everything that wants to move at a different pace for a
+     * moment writes it, uses it and hands it back — `Command.installCommand`
+     * wraps `_move` to do exactly that, with the note "leaving it on the body
+     * would compound … a promotion would silently become a permanent sprint".
+     *
+     * `stepReaction` is OUTSIDE that wrapper's window, because it runs before
+     * `_move` and the wrapper captures its `was` on the way in. So a reaction's
+     * pace was captured as the body's own and restored on top of itself:
+     * `stepDrag` writes `A.speed × 0.34` and `installCommand` faithfully put
+     * `× 0.34` back. Measured on a trooper who pulled one casualty out — 4.465
+     * m/s before, 1.394 after, and it never came back, so a man who went back
+     * for a mate once walked at a third of a walk for the rest of the level.
+     * The throw-back has the same shape in the other direction (×1.35, kept).
+     *
+     * The save is here rather than inside Reactions.js because the reaction is
+     * not the only thing in the span that may want a pace for one frame, and a
+     * restore that lives with the writer is a restore every future writer has
+     * to remember. This one is the same idiom one level out.
+     */
+    const paceWas = this.speed;
     senseDanger(this, dt, ctx);
-    if (!stepReaction(this, dt, ctx)) {
+    const reacting = stepReaction(this, dt, ctx);
+    if (!reacting) {
       this._think(dt, ctx);
     } else {
       /* A reaction drives `wish`, `speed` and `crouch` itself and must not be
@@ -4229,6 +4260,15 @@ export class Enemy {
       this.stopFiring();
     }
     this._move(dt, ctx);
+    /* ONLY WHEN A REACTION DROVE THE FRAME, and the narrowness is the point: a
+     * kill landed inside `_think` can promote this body, and `promote` writes
+     * `e.speed *= R.speed / prev.speed` on the spot. An unconditional restore
+     * here would wipe a rank the man had just earned. A body that is diving,
+     * dragging or carrying a live grenade is not shooting — `stopFiring` above
+     * is that same sentence — so it cannot have made a kill in this span, and
+     * `CommandDirector.steer` returns at its own top on `e.reaction`. Nothing
+     * else in the span writes `speed`. */
+    if (reacting) this.speed = paceWas;
     this._pose(dt, ctx);
     return true;
   }
@@ -4504,8 +4544,13 @@ export class Enemy {
     if (!field || !t || !t.alive && t.dead) return;
     if (dist < GRENADE.radius + 3 || dist > GRENADE_THROW) return;
     /* WORTH IT? Either they are behind something, or there are several of them
-     * standing together. */
-    const blind = !this._hasLineOfSight(ctx);
+     * standing together — and the CHEAP ONE IS ASKED FIRST.
+     *
+     * `_hasLineOfSight` is a physics raycast, a terrain raycast and a smoke
+     * integral; the clump test is a squared distance per body. Asking for
+     * sight first meant every grenadier bought the expensive answer even in
+     * the case that does not need it, which is the case a fight is mostly
+     * made of. */
     let clumped = 0;
     const r2 = (GRENADE.radius * 0.8) ** 2;
     for (const o of (ctx.enemies || [])) {
@@ -4515,7 +4560,30 @@ export class Enemy {
     const p = this.world?.player;
     if (p && p.alive && p.team !== this.team
         && p.position.distanceToSquared(t.position) <= r2) clumped++;
-    if (!blind && clumped < 2) return;
+    if (clumped < 2 && this._hasLineOfSight(ctx)) {
+      /**
+       * HE LOOKED, AND THE ANSWER WAS NO — AND THAT HAS TO COST HIM THE LOOK.
+       *
+       * `grenadeCd` at 0 is "ready", not "asked", so a body whose target is
+       * alone and in the open re-took this entire decision — the enemy scan
+       * AND the two raycasts — on EVERY FRAME, for as long as it stood in the
+       * 9.5-26 m band. Measured on twelve troopers ringing a lone target:
+       * 0.930 sight raycasts per body per frame against 0.006 with the
+       * cooldown held, a 167x multiplier on the one query in this class that
+       * costs real work. The rifle's own sight test at `attackTimer <= 0` is
+       * where that 0.006 comes from; it asks about once a fire cycle, which is
+       * what a body deciding something ought to cost.
+       *
+       * `GRENADE_LOOK` is the interval between looks. It is short enough that a
+       * squad bunching up in front of him is answered inside a quarter of a
+       * second — far quicker than the 2.6 s a grenade takes to matter — and it
+       * is the same answer `CommandDirector.steer` gives for the same shape:
+       * "a refused attempt still costs him the look, or every frame is a scan
+       * of the whole field".
+       */
+      this.grenadeCd = GRENADE_LOOK;
+      return;
+    }
 
     /* THE THROW. Aimed at where they are, not where they will be — a soldier
      * leading a target with a grenade is a soldier with a computer — and

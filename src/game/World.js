@@ -1328,6 +1328,14 @@ export class World {
      *                puts the bars away; a non-zero timer left behind also
      *                suppresses the NEXT boss's entrance, because `spawnEnemy`
      *                frames one only when this is falsy.
+     *   `_frameCtx`  the frame context, kept as a field so `grenades.update`
+     *                can reach it later in the same frame. It is the departed
+     *                level in one object: measured after an `unload`, it still
+     *                held the disposed Terrain (`world.terrain` is null and
+     *                `world._frameCtx.terrain` is not), the physics world, the
+     *                particle system, the bolt pool and the camera. Every one
+     *                of those is exactly what the list above exists to catch,
+     *                and this one arrives with a whole heightfield attached.
      *
      * `rotating` is deliberately NOT in this list: `loadLevelAsync` yields
      * between stages and that flag is what stops `update` stepping a half-built
@@ -1345,6 +1353,7 @@ export class World {
     this.match = null;
     this._matchSent = '';
     this._aloneAt = false;
+    this._frameCtx = null;
     this.running = false;
     this.over = false;
   }

@@ -692,6 +692,10 @@ const REND_COST = POWER_COST.rend;
  * mercy, not a shot.
  */
 const MEND_REACH = 15, MEND_CONE = 0.94;
+/** How much angle a man who is ON THE FLOOR is worth over one who is on his
+ *  feet, when both are under the reticle. See `_mendTarget`: it is added to
+ *  his own score and not taken off the cone, which is the bug it replaces. */
+const MEND_LIMP_EDGE = 0.05;
 const HEAL_TIME = 3.0;
 const HEAL_FRACTION = 0.45;
 
@@ -6878,7 +6882,7 @@ export class Player {
     const list = ctx?.enemies || this.world?.enemies;
     if (!list) return null;
     const rules = ctx?.rules ?? this.world?.rules ?? null;
-    let best = null, bestScore = MEND_CONE;
+    let best = null, bestScore = -Infinity;
     for (const e of list) {
       if (!e || e.dead || e === this) continue;
       /* Friendly, by the same rule every other list in this file is built
@@ -6889,10 +6893,34 @@ export class Player {
       const d = _v1.length();
       if (d > MEND_REACH || d < 1e-3) continue;
       const dot = _v1.divideScalar(d).dot(this.aimDir);
-      if (dot < bestScore) continue;
+      /* THE CONE IS THE ADMISSION TEST AND IT IS NOT THE RANKING, and running
+       * the two through one variable is what got this backwards.
+       *
+       * It used to be one number: `bestScore` started at `MEND_CONE`, every
+       * candidate had to beat it, and the winner then wrote
+       * `bestScore = dot - (ragdolled ? 0.05 : 0)`. Read as a ranking that is
+       * the wrong sign — subtracting from the bar LOWERS it, so choosing the
+       * limp man made him 0.05 EASIER for the next upright body to displace,
+       * which is the exact opposite of the sentence above it.
+       *
+       * Measured: a limp trooper dead ahead at dot 0.9856, first in the list,
+       * against an upright one at 0.9775 — a strictly worse angle — and the
+       * upright one won. So the man lying on the floor could not be picked at
+       * all while anybody standing was within 0.05 of him, and the ONE case
+       * the preference exists for is the one where somebody else is standing
+       * over the casualty.
+       *
+       * Two numbers now. `MEND_CONE` admits, `score` ranks, and the limp man's
+       * edge is added to HIS score rather than taken off everyone else's bar —
+       * so he wins a tie and wins by `MEND_LIMP_EDGE` of angle, and he still
+       * has to be inside the cone the player aimed. `<=` keeps the first body
+       * in the list on an exact tie, which is what the old test did. */
+      if (dot < MEND_CONE) continue;
       /* A LIMP MAN OUTRANKS A HURT ONE at the same angle: he is the one who is
        * out of the fight entirely. */
-      bestScore = dot - (e.actor?.ragdolled ? 0.05 : 0);
+      const score = dot + (e.actor?.ragdolled ? MEND_LIMP_EDGE : 0);
+      if (score <= bestScore) continue;
+      bestScore = score;
       best = e;
     }
     return best;

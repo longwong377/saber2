@@ -925,6 +925,73 @@ export async function run({ check, assert }) {
       + `self ${mine.toFixed(0)} → ${p.hp.toFixed(0)}`;
   });
 
+  check('powers: with two hurt men under the reticle the mend takes the one on the floor', async () => {
+    /**
+     * THE PREFERENCE THE PICKER ALREADY CLAIMED AND DID NOT HAVE.
+     *
+     * `_mendTarget` carries the sentence "A LIMP MAN OUTRANKS A HURT ONE at
+     * the same angle: he is the one who is out of the fight entirely", and it
+     * is the right rule — a man on the floor is out of the battle and a man on
+     * his feet is still in it, and the mend is the only thing either of them
+     * can be given. The code under that sentence read
+     * `bestScore = dot - (ragdolled ? 0.05 : 0)`, which is the rule with the
+     * sign the wrong way round: `bestScore` is the BAR the next candidate must
+     * clear, so taking 0.05 off it made the limp man easier to displace rather
+     * than harder to beat.
+     *
+     * Measured as a CHOICE and not as an arithmetic: two wounded troopers under
+     * one reticle, the limp one at the BETTER angle and first in the list, and
+     * the upright one was picked anyway. So in the only situation the
+     * preference exists for — somebody standing over a casualty — the casualty
+     * could not be reached at all.
+     */
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const { world } = await H.bootWorld({
+      level: 'colosseum', settings: { mode: 'waves', quality: 'low', instantSpawn: true },
+    });
+    const input = H.idleInput();
+    const p = world.player;
+    const ctx = { input, physics: world.physics, terrain: world.terrain, particles: world.particles,
+      enemies: world.enemies, players: world.players };
+    const put = (dx, dz) => {
+      const e = world.spawnEnemy('trooper',
+        new THREE.Vector3(p.position.x + dx, p.position.y, p.position.z + dz));
+      assert(e, 'no trooper spawned');
+      e.team = p.team;
+      e.hp = e.maxHp * 0.4;
+      return e;
+    };
+    /* DEAD AHEAD, and the man beside him a little off it. */
+    const limp = put(0, -8);
+    const upright = put(1.0, -8);
+    for (let i = 0; i < 20; i++) world.update(1 / 60, input);
+    limp.actor?.goRagdoll?.(new THREE.Vector3(), null);
+    /* The ragdoll settles a body wherever its limbs land; put him back on the
+     * line so this measures the PREFERENCE and not where he rolled to. */
+    limp.position.set(p.position.x, limp.position.y, p.position.z - 8);
+    p.aimDir.set(0, 0, -1).normalize();
+
+    const dotOf = (e) => e.position.clone().sub(p.chest).normalize().dot(p.aimDir);
+    const dLimp = dotOf(limp), dUp = dotOf(upright);
+    assert(dLimp > dUp,
+      `the limp man is not the better-aimed of the two (${dLimp.toFixed(4)} vs ${dUp.toFixed(4)}) — `
+      + 'this check cannot say anything about preference until he is');
+    assert(limp.actor?.ragdolled, 'the man who is supposed to be on the floor is standing');
+
+    const pick = p._mendTarget(ctx);
+    assert(pick === limp,
+      `the mend chose the man on his FEET at ${dUp.toFixed(4)} over the one on the floor at `
+      + `${dLimp.toFixed(4)} — see _mendTarget: the cone admits, the score ranks, and the limp `
+      + "man's edge belongs on his own score rather than off everybody else's bar");
+    /* AND THE UPRIGHT MAN IS STILL REACHABLE when he is the only one there —
+     * a preference that swallowed the ordinary case would be worse. */
+    limp.hp = limp.maxHp;
+    assert(p._mendTarget(ctx) === upright,
+      'with the limp man whole again the mend found nobody, so the preference is a filter');
+    return `limp at ${dLimp.toFixed(4)} beats upright at ${dUp.toFixed(4)}; upright still picked alone`;
+  });
+
   check('powers: a mend cannot be spent on an enemy, and breaks when you are hit', async () => {
     /* THE TWO REFUSALS. A heal that reached hostiles would be a bug you could
      * see from the menu; a heal that could not be interrupted would make the

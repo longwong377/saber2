@@ -158,6 +158,61 @@ export async function run({ check, assert }) {
       + `${marks[2].meshes} meshes, ${marks[2].geometries} geometries, ${marks[2].bodies} bodies`;
   });
 
+  check('lifecycle: an unloaded World does not still hold the frame it was on', async () => {
+    /**
+     * THE ONE OBJECT THAT HOLDS THE WHOLE LEVEL AT ONCE.
+     *
+     * `World.update` builds a `ctx` — terrain, physics, particles, bolts, the
+     * camera, both body lists — and hands it down the frame. It used to be a
+     * local; it is now a field, `_frameCtx`, because `grenades.update` runs
+     * later in the same frame than the loop that builds it and needs the same
+     * answer to "who is on the field" rather than a second one.
+     *
+     * A field is a different thing from a local, and `unload()` carries a long
+     * list of them for exactly this reason — "everything above frees an object;
+     * these are FIELDS, and every one of them was found by diffing what the
+     * constructor sets against what this method mentions". `_frameCtx` was not
+     * on it. Measured after an unload: `world.terrain` is null and
+     * `world._frameCtx.terrain` is the disposed Terrain — a whole heightfield,
+     * its mesh and its baked maps — with the physics world, the particle
+     * system, the bolt pool and the camera beside it.
+     *
+     * The census above cannot see this: it walks the SCENE, and a retained
+     * reference to something already removed from the scene is invisible to it.
+     * This asks the World directly instead, and it asks it as a RULE rather
+     * than as a field name — nothing `unload` has nulled may still be reachable
+     * from the frame context, whatever that context is called next year.
+     */
+    const engine = stubEngine();
+    const world = new World(engine, { ...DEFAULT_SETTINGS, quality: 'low' });
+    await world.loadLevel(LEVEL_ORDER[0]);
+    world.spawnPlayer?.();
+    const input = idleInput();
+    for (let f = 0; f < 20; f++) world.update(1 / 60, input);
+    assert(world._frameCtx && world._frameCtx.terrain,
+      'the frame context never carried a terrain, so this check is measuring nothing');
+    world.unload();
+
+    const ctx = world._frameCtx;
+    const held = [];
+    if (ctx) {
+      /* Whatever `unload` put back to null must not be reachable through here.
+       * Read off the World rather than listed by hand, so a field added to one
+       * side and not the other is caught the next time this runs. */
+      for (const k of ['terrain', 'player']) {
+        if (world[k] === null && ctx[k]) held.push(k);
+      }
+      if (ctx.physics && !world.physics) held.push('physics');
+    }
+    assert(!held.length,
+      `an unloaded World still reaches the departed level through _frameCtx: ${held.join(', ')} — `
+      + 'that is a whole heightfield and a physics world held for as long as anything holds the '
+      + 'World, and unload()\'s own field list is where it belongs');
+    world.dispose?.();
+    return `_frameCtx is ${ctx === null ? 'null' : 'still an object'} after unload; `
+      + 'nothing nulled by unload is reachable through it';
+  });
+
   check('lifecycle: a level re-loaded frees the textures it baked for the one before', async () => {
     /**
      * THE CHECK ABOVE COULD NOT SEE THIS, AND THE REASON IS THE FINDING.

@@ -335,6 +335,135 @@ export async function run({ check, assert }) {
     return `dragged ${moved.toFixed(1)} m`;
   });
 
+  check('reactions: a man who went back for a mate walks at his own pace afterwards', async () => {
+    /**
+     * THE PACE A REACTION BORROWS HAS TO BE GIVEN BACK.
+     *
+     * `Enemy.speed` is not a per-frame field. The constructor rolls it once —
+     * archetype speed, a shake, the difficulty's aggression — and nothing
+     * writes it again for the body's whole life. Everything that wants a
+     * different pace for a moment writes it, uses it and hands it back;
+     * `Command.installCommand` wraps `_move` to do exactly that, and says why:
+     * "leaving it on the body would compound with the rank multipliers …
+     * a promotion would silently become a permanent sprint".
+     *
+     * `stepReaction` runs BEFORE `_move` and therefore outside that wrapper's
+     * window, so the wrapper captured the reaction's borrowed pace as if it
+     * were the body's own and dutifully restored it on top of itself.
+     * `stepDrag` asks for a third of a walk, which is the whole content of the
+     * behaviour — and measured, a trooper who pulled one casualty out went from
+     * 4.465 m/s to 1.394 and stayed there. One rescue, and a man walks at a
+     * third of a walk for the rest of the level.
+     *
+     * Measured as GROUND COVERED and not as the field, and against a mate who
+     * did nothing, because a pace is only ever visible as distance: both bodies
+     * are walked the same way through the shipped `_move` after the drag is
+     * over.
+     */
+    const { world, input, men } = await squad(3);
+    const { startDrag } = await import('../../src/game/Reactions.js');
+    const hurt = men[0], helper = men[1], mate = men[2];
+    if (helper.trooper) helper.trooper.morale = 1;
+    hurt.hp = hurt.maxHp * 0.3;
+    hurt.actor?.goRagdoll?.(hurt.velocity.clone(), null);
+    for (let i = 0; i < 30; i++) world.update(1 / 60, input);
+
+    assert(startDrag(helper, hurt, { enemies: world.enemies }), 'the drag would not start');
+    let n = 0;
+    for (; n < 60 * 14 && helper.reaction; n++) { hurt.actor.ragdolled = true; world.update(1 / 60, input); }
+    assert(!helper.reaction, `the drag was still running after ${(n / 60).toFixed(1)} s`);
+
+    /* BOTH OF THEM, THE SAME WAY, THROUGH THE SHIPPED MOVER. `_move` is the one
+     * thing that reads `speed`, so driving it directly with the same wish is
+     * the consequence with nothing restated. */
+    const ctx = world._frameCtx;
+    const walk = (e) => {
+      const from = e.position.clone();
+      for (let i = 0; i < 120; i++) {
+        if (!e.wish) e.wish = new THREE.Vector3();
+        e.wish.set(1, 0, 0);
+        e.stunTimer = 0; e.knockTimer = 0;
+        e._move(1 / 60, ctx);
+      }
+      return e.position.distanceTo(from);
+    };
+    const dHelper = walk(helper);
+    const dMate = walk(mate);
+    assert(dMate > 1, `the control trooper covered ${dMate.toFixed(2)} m in 2 s — nothing walked, `
+      + 'so this check cannot say anything about pace');
+    const ratio = dHelper / dMate;
+    assert(ratio > 0.85,
+      `the man who did the dragging covered ${dHelper.toFixed(2)} m where his mate covered `
+      + `${dMate.toFixed(2)} (${(ratio * 100).toFixed(0)}%) — DRAG.speed is still on his body, and `
+      + 'Enemy.speed is a field that lasts a lifetime, not a frame');
+    return `after the drag he covers ${dHelper.toFixed(2)} m against a mate's ${dMate.toFixed(2)} `
+      + `(${(ratio * 100).toFixed(0)}%)`;
+  });
+
+  check('reactions: a grenadier who decides against it does not decide again next frame', async () => {
+    /**
+     * THE COST OF A DECISION NOBODY TAKES.
+     *
+     * `_maybeGrenade` runs on every grenade-carrying body every frame, and
+     * `grenadeCd` at 0 means READY rather than ASKED — so a body whose target
+     * is alone and in the open re-took the whole decision on every frame it
+     * stood in the 9.5-26 m band: an O(bodies) clump scan and, worse,
+     * `_hasLineOfSight`, which is a physics raycast, a terrain raycast and a
+     * smoke integral. That is the most expensive question this class asks and
+     * the rifle only asks it about once a fire cycle.
+     *
+     * Counted rather than timed, because this box is shared and a stopwatch on
+     * it measures the neighbours (HANDOFF 2.6). Twelve troopers ringing a lone
+     * target at 15 m, over 180 frames: 0.930 sight rays per body per frame with
+     * the gate open against 0.006 with the cooldown held down — a 167x
+     * multiplier bought by a feature nobody could see happening.
+     *
+     * The bound below is on the RATIO and is deliberately loose: its job is to
+     * catch the whole decision creeping back onto the every-frame path, not to
+     * police a constant.
+     */
+    const { Enemy } = await import('../../src/game/Enemy.js');
+    const trial = async (armed) => {
+      const { world, input } = await boot();
+      const p = world.player;
+      const men = [];
+      const n = 12;
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2;
+        const x = p.position.x + Math.cos(a) * 15, z = p.position.z + Math.sin(a) * 15;
+        const e = world.spawnEnemy('trooper', new THREE.Vector3(x, world.terrain.height(x, z), z));
+        if (e) men.push(e);
+      }
+      for (let i = 0; i < 30; i++) world.update(1 / 60, input);
+      const base = Enemy.prototype._hasLineOfSight;
+      let calls = 0;
+      Enemy.prototype._hasLineOfSight = function (...a) { calls++; return base.apply(this, a); };
+      const frames = 180;
+      try {
+        /* Once, not every frame: `armed` is a grenadier whose lead-in has run
+         * out on its own, which is the state every one of them reaches nine
+         * seconds into a fight. */
+        for (const e of men) e.grenadeCd = armed ? 0 : 1e9;
+        for (let i = 0; i < frames; i++) world.update(1 / 60, input);
+      } finally { Enemy.prototype._hasLineOfSight = base; }
+      const alive = men.filter((e) => !e.dead).length;
+      return { per: calls / frames / Math.max(1, alive), calls, alive };
+    };
+    const held = await trial(false);
+    const open = await trial(true);
+    assert(held.alive > 6 && open.alive > 6,
+      `only ${held.alive}/${open.alive} bodies survived the two runs — the scene is not the one `
+      + 'this check describes');
+    const mult = open.per / Math.max(1e-6, held.per);
+    assert(mult < 40,
+      `a grenadier who is not going to throw one costs ${open.per.toFixed(3)} sight raycasts per `
+      + `body per frame against ${held.per.toFixed(3)} with the cooldown held — ${mult.toFixed(0)}x, `
+      + 'and the rifle asks the same question about once a fire cycle. A refused throw has to cost '
+      + 'him the look (GRENADE_LOOK), or every frame is two raycasts and a scan of the field');
+    return `${open.per.toFixed(3)} sight rays per body per frame with the gate open against `
+      + `${held.per.toFixed(3)} held — ${mult.toFixed(1)}x`;
+  });
+
   check('reactions: somebody on the field actually throws one', async () => {
     /**
      * THE FIELD THAT WAS DELETED FOR HAVING NO READER. `trooper` carried
