@@ -879,9 +879,54 @@ export async function run({ check, assert }) {
      * whose whole subject is one. */
     assert(armyless, 'the wipe was driven in a mode that DOES lead an army — the branch below is meaningless');
     assert(w2.command, 'the campaign victory was driven without a CommandDirector');
+    /**
+     * …AND THE NULL RULE IS ABOUT COUNTS, WHICH IS NARROWER THAN "FIELDS".
+     *
+     * The rule below says a field that is null in a mode with no army owes a
+     * NUMBER in the mode that leads one, and the defect it was written against
+     * is exactly that shape: `taken` and `fallen` are counts, and a campaign
+     * that cannot count its own casualties is the hole the null describes.
+     *
+     * `ended` is not a count. It is the reason a run stopped, and null is its
+     * correct value in both arms here because neither of them stopped for a
+     * reason worth a different card — one is a party wipe and the other is a
+     * victory. Held to the count rule it reads as drift, and "the mode with an
+     * army owes a number for why it ended" is not a sentence anybody means.
+     *
+     * The discriminator is DERIVED rather than a name: a field the ending card
+     * prints as a ROW is a count, and a field it reads outside the rows is a
+     * discriminator that picks which card to print. `rows` is lifted out of
+     * main.js's own source, exactly as `skirmish.mjs` lifts the card's whole
+     * field list from it — so this file cannot disagree with the card about
+     * what a row is.
+     */
+    const { readFile } = await import('node:fs/promises');
+    const mainSrc = await readFile(new URL('../../src/main.js', import.meta.url), 'utf8');
+    const rowsSrc = (() => {
+      const j = mainSrc.indexOf('  const rows = ');
+      const k = mainSrc.indexOf('  const card = ', j);
+      assert(j > 0 && k > j, 'main.js no longer builds the ending card as `const rows` — this lift is describing a file that is gone');
+      /* CODE ONLY: the block comment over the rows quotes two field names it is
+       * an account of, and a scan that counts prose finds rows the card does
+       * not print — an instrument manufacturing its own defect (§2.4). */
+      return mainSrc.slice(j, k).replace(/\/\*[\s\S]*?\*\//g, ' ');
+    })();
+    const printed = new Set([...rowsSrc.matchAll(/\bstats\.(\w+)/g)].map((m) => m[1]));
+    assert(printed.size >= 5,
+      `only ${printed.size} fields lifted out of the card's rows — the lift is wrong`);
+
     const absent = [];
     for (const k of a) {
       if (wipe[k] === null) {
+        if (!printed.has(k)) {
+          /* Not a row, so nothing below applies. It still may not DIFFER in
+           * kind between the two endings — that is the drift this check is
+           * for — and both being null is the agreement it wants. */
+          assert(win[k] === null,
+            `${k} is not a row on the card, is null after a wipe and ${JSON.stringify(win[k])} `
+            + 'after a victory — two endings disagree about a field neither prints');
+          continue;
+        }
         absent.push(k);
         assert(typeof win[k] === 'number',
           `${k} is null in a mode with no army and ${JSON.stringify(win[k])} in the mode that leads one — `
