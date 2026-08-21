@@ -668,6 +668,87 @@ export const ARCHETYPES = {
     grenades: true,
     armored: true, hipHeight: 1.1,
   },
+  /**
+   * THE THIRD BODY CLASS — FLAGSHIP §6's CONSCRIPT.
+   *
+   * "6 hp, 1.4 dps, one pass, worth 0 score and 0 Insight. The lawnmower is
+   * only a lawnmower when mowing pays. Forty conscripts that pay nothing are
+   * weather."
+   *
+   * The roster had two classes of body and no third: something you fight (a
+   * B1, 28 hp, worth 100) and something you fight harder (a B2, 96 hp, worth
+   * 300). Both PAY, so a hundred of either is a hundred rewards and the honest
+   * player answer to a crowd is to mow it. §7's four verbs all describe things
+   * you do INSTEAD of killing everything, and none of them can compete with a
+   * body that hands you score for walking through it.
+   *
+   * So this one hands you nothing at all. `score: 0` is not a small number, it
+   * is the whole design: `World.onEnemyKilled` derives the entire payout —
+   * score, flow, combo and war support — off `score > 0`, so a conscript is
+   * the one thing on the field that killing does not advance. What it can
+   * still do is stand between you and somewhere, shoot at you while you are
+   * busy, and cost your guard a bolt at a time. It is TERRAIN with legs, which
+   * is the same sentence §6 makes about volume of fire.
+   *
+   * WHY IT IS A DROID AND WHY IT IS THIS ONE. The Databank's own line about
+   * the Confederacy is "it does not lose a droid, it spends one" — a conscript
+   * is the cheapest thing it spends. Built on `buildB1` at a smaller scale
+   * with the paint left off and a dim eye, so it reads at a glance as a B1
+   * that came off the line unfinished rather than as a new silhouette to
+   * learn: a player must be able to tell in one look that this one is not
+   * worth their time.
+   *
+   * EVERY NUMBER HERE IS DERIVED FROM THE B1'S, so the class is a RATIO and
+   * not a second set of authored constants:
+   *
+   *   hp 6          §6's figure, and `guardFor` gives anything this light zero
+   *                 turned passes, so it dies to one pass exactly as stated.
+   *   1.4 dps       MEASURED, not derived from the table. §6 prices a B1 at
+   *                 2.17 dps against a moving player and a conscript at 1.4,
+   *                 which is 0.645 of it — a ratio, so it can be checked
+   *                 without reproducing "a moving player". Driven through
+   *                 `tools/_beaten.mjs class`, one shooter, blade down, real
+   *                 frames on the same ground at the same range. A gun is
+   *                 stochastic, so two sample lengths, and the spread between
+   *                 them is what `tools/checks/conscript.mjs`'s band is sized
+   *                 on rather than a tolerance picked to fit:
+   *
+   *                     150 s   b1 3.468   conscript 2.380   0.686 of it
+   *                      90 s   b1 3.485   conscript 2.172   0.623 of it
+   *
+   *                 which puts the conscript between 1.35 and 1.49 dps on §6's
+   *                 own scale, against the 1.4 it asked for.
+   *
+   *                 THE AUTHORED NUMBERS THAT GET THERE ARE THE B1'S, minus
+   *                 one round a burst: same rifle, same spread, same band, two
+   *                 bolts instead of three. Four earlier attempts made it a
+   *                 slow inaccurate single-shot body — spread 0.19, one round
+   *                 every 2.85 s — and measured 0.17 hp/s, a twentieth of a
+   *                 B1 rather than two thirds. §6 does NOT ask for a harmless
+   *                 body: at 1.4 each, forty conscripts are a real threat and
+   *                 the thing that makes them weather is that killing them
+   *                 pays nothing, not that they cannot hurt you.
+   *   spread 0.075  the B1's, exactly. It shoots as well as a B1 and there is
+   *                 a third less of it.
+   *   threat 0.5    the floor `_openTypes` weighs against, so a wave that
+   *                 fields these pays something for them and cannot field an
+   *                 unbounded number for free.
+   */
+  conscript: {
+    label: 'Conscript Droid', build: (o) => buildB1({
+      ...o,
+      /* Unpainted foundry shell, no unit flash, and an eye that has not been
+       * brought up to full charge. Not a new mesh — see the note above. */
+      color: o.color ?? 0x8f8574, markColor: o.markColor ?? 0x6d6355, eyeColor: o.eyeColor ?? 0xc0421f,
+    }),
+    scale: 0.96, hp: 6, mass: 44,
+    speed: 3.2, toughness: TOUGHNESS.droid, ranged: true, weapon: 'e5',
+    fireRate: 1.45, burst: 2, burstGap: 0.13, spread: 0.075, damage: 10,
+    preferred: [7, 15], boltColor: BOLT_COLORS.red,
+    /** THE FIELD THE WHOLE CLASS IS. See the note above and `World.paysOut`. */
+    score: 0, threat: 0.5,
+    hipHeight: 0.92, unlockAt: 1,
+  },
   trooper: {
     label: 'Clone Trooper', build: buildTrooper, scale: 1.0, hp: 46, mass: 78,
     speed: 4.1, toughness: TOUGHNESS.plastoid, ranged: true, weapon: 'dc15',

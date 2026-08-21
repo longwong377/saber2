@@ -8362,6 +8362,12 @@ export const BODY_KITS = {
   master: { rank: 'master' },
   /* the separatist chassis — see B1_KITS */
   b1: { kit: 'line' },
+  /* FLAGSHIP §6's third body class, on the B1 chassis and the B1 kit. The
+   * conscript differs from a B1 in its NUMBERS and its paint, not in what it
+   * carries — see `ARCHETYPES.conscript`, which passes the colours through to
+   * `buildB1` — so the row exists to say "line kit, deliberately", which is
+   * what this table is for. */
+  conscript: { kit: 'line' },
   rocket: { kit: 'rocket' },
   bx: { kit: 'commando' },
   dummy: { kit: 'target' },

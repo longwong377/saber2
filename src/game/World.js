@@ -232,6 +232,20 @@ export function grindWorth(cap) {
   if (!cap || cap.shield) return 0;
   return typeof cap.vital === 'number' ? cap.vital : 0;
 }
+
+/**
+ * WHETHER KILLING THIS BODY IS WORTH ANYTHING — FLAGSHIP §6's third class.
+ *
+ * The conscript is "worth 0 score and 0 Insight", and the point of it is that
+ * a crowd which pays nothing cannot be answered by mowing it. That is one
+ * question about a roster row, so it is one function and one field, called by
+ * `onEnemyKilled` and available to a check. See `ARCHETYPES.conscript`.
+ *
+ * A missing `score` reads as unpaid rather than as a plausible default, which
+ * is the other half of HANDOFF §2.3: an archetype that forgot to say what it
+ * is worth should be visibly worth nothing, not quietly worth something.
+ */
+export function paysOut(A) { return (A?.score ?? 0) > 0; }
 /** Stamina a lost exchange costs, before the attack's tier scales it. */
 const GUARD_COST = 22;
 /**
@@ -4219,6 +4233,32 @@ export class World {
      * killing something on the other side, and it must not pay out for losing
      * one of your own. */
     if (enemy.team !== undefined && enemy.team !== 1 && this.command) return;
+    /**
+     * …AND A CONSCRIPT PAYS NOTHING AT ALL. FLAGSHIP §6's third body class.
+     *
+     * "6 hp, 1.4 dps, one pass, worth 0 score and 0 Insight. The lawnmower is
+     * only a lawnmower when mowing pays. Forty conscripts that pay nothing are
+     * weather."
+     *
+     * Zero score alone does not make that true: the four lines below this one
+     * hand out war support, flow, a combo and a kill-feed entry, and every one
+     * of them is a reward for the same act. A body worth no score that still
+     * fed the Flow meter would be worth MORE than a B1 per second of blade
+     * time, which is the exact opposite of the design.
+     *
+     * DERIVED FROM `score`, not from a second flag. One field says whether a
+     * body is worth killing, so a future archetype cannot be half-conscript by
+     * forgetting the other one — the class is a property of the roster row and
+     * the roster row is one number. `paysOut` is exported so a check can ask
+     * the same question the game asks (HANDOFF §2.4).
+     *
+     * WHAT IT DOES NOT TOUCH: `kills`, because a body that went down went
+     * down and the run summary is a record rather than a reward; the corpse
+     * budget and the Command roster above, because a conscript's death is
+     * still a death on the field; and `_killFelt`, because a body hitting the
+     * ground three metres away has to make the sound whatever it was worth.
+     */
+    if (!paysOut(A)) { if (source instanceof Player || source?.isRemote) source.kills++; return; }
     this.score += A.score;
     /* AND THE FLEET NOTICES. War support is what stratagems cost now, and it
      * builds off the side doing well — see src/game/Support.js. Hung here
@@ -4679,6 +4719,45 @@ export class World {
    *
    * Returns the commanders, so a caller can say who is leading what.
    */
+  /**
+   * A SECOND PLAYER ON YOUR SIDE, TAKING A SQUAD OUT OF YOUR ROSTER.
+   *
+   * FLAGSHIP §9: "`SQUAD = 5` is already the unit and `CommandRoster.squads()`
+   * already slices the living list into fives. Four players take four squads
+   * out of one roster of up to 24."
+   *
+   * `beginVersus` above is the OTHER answer to a second player — two armies
+   * facing each other — and it was the only one that existed: a peer joining a
+   * Command run got a body, a blade and no army at all, because nothing
+   * anywhere called `enlistCommander` outside a meeting. So co-op in the
+   * flagship mode was one general and up to three tourists.
+   *
+   * ONE ROSTER IS WHAT MAKES IT ONE LINE RATHER THAN FOUR. The commander is
+   * enlisted on the local commander's side and army, which is the key
+   * `CommandDirector._rosterFor` deals on, so the joining player shares the
+   * roll, shares the purse — §9's actual co-op mechanic, "a Heavy for your
+   * squad or an ARC for mine" — and musters nobody new. `squadsOf` deals the
+   * squads that already exist between however many people are holding them.
+   *
+   * HOST ONLY, like every other authority in this file: a client's director is
+   * a shell that says what it was told (`_netShell`), and a shell that enlisted
+   * commanders of its own would be inventing an army the host does not have.
+   *
+   * @returns the Commander, or null when this is not that kind of session.
+   */
+  seatAlly(player) {
+    const d = this.command;
+    if (!d || d.versus || !player) return null;
+    if (this.netMode !== 'host') return null;
+    const mine = d.commander;
+    if (!mine) return null;
+    /* THE SAME SIDE. `canHarm` is the one gate every damage path consults and
+     * it reads the number — a co-op ally on side 0 while the host is on side 2
+     * is a friendly fire incident waiting for the first sweep. */
+    player.team = mine.side;
+    return d.enlistCommander({ player, side: mine.side, army: mine.army });
+  }
+
   beginVersus(players = null) {
     const d = this.command;
     if (!d || !d.versus) return null;

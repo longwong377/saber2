@@ -143,6 +143,18 @@ export const DATABANK = {
       + 'thing that makes one of them matter. Meeting a B1 is nothing. Meeting '
       + 'forty at once is the Confederacy\'s entire argument.',
   },
+  conscript: {
+    faction: 'separatist',
+    weapon: 'E-5 blaster rifle',
+    text: 'A B1 that never finished being built. No unit flash, no paint, half a '
+      + 'charge in the eye and a rifle it fires once every three seconds at nothing '
+      + 'in particular. The foundries turn these out when a front needs a number '
+      + 'rather than an army, and the number is the whole of the point: a conscript '
+      + 'is not sent to win the ground, it is sent to be standing on it. Six points '
+      + 'of health, one pass, and it is worth nothing — no bounty, no study, no '
+      + 'record. Cutting through forty of them costs you the time it takes and buys '
+      + 'you the time it takes. They are not an enemy. They are weather with legs.',
+  },
   b2: {
     faction: 'separatist',
     weapon: 'Integrated wrist blaster',

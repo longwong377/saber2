@@ -62,6 +62,49 @@ async function runArm(arm, seed, engagements) {
   const world = await commandWorld(seed, { player: arm !== 'none' });
   const input = arm === 'none' ? idleInput() : dutyInput(world);
 
+  /**
+   * THE GRIP ARM, AND WITHOUT IT THIS PROBE ANSWERS A NARROWER QUESTION THAN
+   * IT LOOKS LIKE IT DOES.
+   *
+   * `_flagship.mjs`'s scripted Jedi deliberately does not grip, pull or hurl —
+   * "every one of those is a decision, and a script that makes them is a script
+   * whose author has decided the answer". Measured, that means `held` and
+   * `yanked` read EXACTLY 0.000% of enemy-seconds across five seeds, so the
+   * whole of the open share in the `blade` arm is `downed` — bodies YOUR OWN
+   * LINE toppled or stunned. Which is a real reading, and it is not the one
+   * §7 makes: "grip a B2 and the ten riflemen who needed 17 seconds need six"
+   * is a claim about the x3.0 rung, and nothing in that arm ever visits it.
+   *
+   * So this arm holds a body whenever it can afford to. It is the CEILING of
+   * the verb rather than a playstyle: `toggleGrip` takes whatever is under the
+   * reticle, the script re-takes as soon as the last one dies or is dropped,
+   * and it does nothing else differently. If the share is still small with a
+   * Jedi gripping continuously, it is small because one pair of hands can only
+   * hold one body — which is an argument about the verb and not about the
+   * script.
+   */
+  const grip = { takes: 0, heldSeconds: 0 };
+  if (arm === 'grip') {
+    const tick = input.tick;
+    const baseHit = input.actHit;
+    let want = false, re = 0;
+    /* WRAPPED, NOT REPLACED. `dutyInput`'s own `actHit` reads a set its `tick`
+     * clears every frame, and assigning over it deletes the script's swings —
+     * which would make this arm a measurement of a Jedi who grips instead of
+     * fighting rather than one who does both. */
+    input.actHit = (id) => (id === 'grip' && want) || baseHit(id);
+    input.tick = (dt) => {
+      tick(dt);
+      want = false;
+      const p = world.player;
+      if (!p || !p.alive) return;
+      const holding = !!(p.gripEnemy && !p.gripEnemy.dead);
+      if (holding) { grip.heldSeconds += dt; re = 0; return; }
+      re -= dt;
+      if (re <= 0) { re = 0.5; want = true; grip.takes++; }
+    };
+  }
+
   const tally = { enemySeconds: 0, open: {}, bodies: 0, hits: 0, openHits: 0, openHitStates: {} };
   for (const s of OPEN_STATES) { tally.open[s.key] = 0; tally.openHitStates[s.key] = 0; }
 
@@ -113,8 +156,25 @@ async function runArm(arm, seed, engagements) {
     openShare: tally.enemySeconds > 0 ? +(openSeconds / tally.enemySeconds).toFixed(5) : 0,
     byState: Object.fromEntries(Object.entries(tally.open).map(([k, v]) =>
       [k, tally.enemySeconds > 0 ? +(v / tally.enemySeconds).toFixed(5) : 0])),
+    gripTakes: grip.takes || null, gripSeconds: +grip.heldSeconds.toFixed(1) || null,
     hits: tally.hits, openHits: tally.openHits,
     openHitShare: tally.hits > 0 ? +(tally.openHits / tally.hits).toFixed(5) : 0,
+    /**
+     * …AND WHETHER THE LINE IS ACTUALLY SHOOTING AT THE THING YOU OPENED.
+     *
+     * The share of SECONDS and the share of HITS are two different questions
+     * and the ratio between them is the one §7 rests on. "Grip a B2 and the
+     * ten riflemen who needed 17 seconds need six" needs those riflemen to
+     * keep shooting the B2 while it is off the ground. A concentration of 1
+     * means an open body draws its fair share of fire; below 1 the line is
+     * shooting at something else, and a multiplier on fire that never arrives
+     * is worth nothing however large it is.
+     */
+    concentration: Object.fromEntries(Object.keys(tally.open).map((k) => {
+      const secs = tally.open[k] / Math.max(tally.enemySeconds, 1e-9);
+      const shots = tally.openHitStates[k] / Math.max(tally.hits, 1);
+      return [k, secs > 1e-6 ? +(shots / secs).toFixed(2) : null];
+    })),
     /* WHAT THE VERB IS WORTH IF THE SHARE IS ALL THERE IS TO IT: the extra
      * damage the multiplier bought, as a share of what an un-opened field
      * would have taken. Derived from the hit shares this run measured, and
@@ -149,6 +209,9 @@ const mean = (f) => rows.reduce((a, r) => a + f(r), 0) / Math.max(1, rows.length
 console.log(`\n  MEAN open share ${(mean((r) => r.openShare) * 100).toFixed(2)}%  `
   + `· of bolts landing on an open body ${(mean((r) => r.openHitShare) * 100).toFixed(2)}%  `
   + `· extra damage the multiplier bought +${(mean((r) => r.worthOnHits) * 100).toFixed(2)}%`);
+console.log('    state    share of enemy-seconds   fire concentration (1 = its fair share)');
 for (const k of Object.keys(rows[0]?.byState || {})) {
-  console.log(`    ${k.padEnd(7)} ${(mean((r) => r.byState[k]) * 100).toFixed(3)}%`);
+  const c = rows.map((r) => r.concentration[k]).filter((v) => v !== null);
+  const cm = c.length ? (c.reduce((a, b) => a + b, 0) / c.length).toFixed(2) : '—';
+  console.log(`    ${k.padEnd(7)}  ${(mean((r) => r.byState[k]) * 100).toFixed(3)}%   ${String(cm).padStart(22)}`);
 }

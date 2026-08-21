@@ -3993,7 +3993,13 @@ LEVELS.geonosis = {
     // The Republic's five rungs, weighted toward the line.
     'trooper', 'trooper', 'trooper', 'heavy', 'sniper', 'jet', 'arc', 'officer',
     // The Confederacy's, weighted the same way.
-    'b1', 'b1', 'b1', 'b1', 'b2', 'rocket', 'droideka', 'bx', 'magna',
+    /* …and the line under the line. `conscript` is FLAGSHIP §6's third body
+     * class and it is weighted like the B1 rung it is a worse copy of: a front
+     * whose Confederate half is half conscripts is the picture the reference
+     * plates of this battle actually show, and it is the only pool entry on
+     * the roster that pays a player nothing for killing it. See
+     * `ARCHETYPES.conscript` and `World.paysOut`. */
+    'b1', 'b1', 'b1', 'b1', 'conscript', 'conscript', 'b2', 'rocket', 'droideka', 'bx', 'magna',
     /* THE HOSTS. This is their planet and the Confederacy's line here is
      * theirs before it is anybody's — two entries, the same weight as the B2
      * rung, because the reference wide shots of this battle have Geonosians in

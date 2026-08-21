@@ -45,7 +45,7 @@ function guardInput() {
  * A firing line of `n` B1s on an arc of `spread` radians at `range` metres,
  * every one of them looking at the player.
  */
-async function firingLine({ n = 20, range = 14, spread = 1.2, seconds = 30 } = {}) {
+async function firingLine({ n = 20, range = 14, spread = 1.2, seconds = 30, type = 'b1', guard = true } = {}) {
   const { world } = await bootWorld({
     level: 'geonosis',
     settings: { mode: 'waves', level: 'geonosis', difficulty: 'knight' },
@@ -59,13 +59,13 @@ async function firingLine({ n = 20, range = 14, spread = 1.2, seconds = 30 } = {
   for (let i = 0; i < n; i++) {
     const a = -spread / 2 + (n > 1 ? spread * i / (n - 1) : 0);
     const x = Math.sin(a) * range, z = Math.cos(a) * range;
-    const e = world.spawnEnemy('b1', new THREE.Vector3(x, 0, z));
+    const e = world.spawnEnemy(type, new THREE.Vector3(x, 0, z));
     if (e) e.position.y = (world.terrain?.height(x, z) ?? 0) + 0.02;
   }
 
   const input = guardInput();
   const trace = [];
-  let fired = 0, answered = 0, arrivals = 0;
+  let fired = 0, answered = 0, arrivals = 0, revived = 0, topUps = 0;
   /* EVERY BOLT THE LINE PUT IN THE AIR. §6's arithmetic starts from "twenty
    * B1s fire 18 bolts a second", which is a claim about the ARCHETYPE's
    * fireRate and burst read off the table; what a firing line at a range
@@ -84,28 +84,53 @@ async function firingLine({ n = 20, range = 14, spread = 1.2, seconds = 30 } = {
   const frames = Math.round(seconds / STEP);
   let emptyAt = null, t = 0;
   const hp0 = p.hp;
+  /* `guard: false` PUTS THE BLADE DOWN, which is the only honest way to read a
+   * body's raw damage: with a guard up, what reaches the player is what the
+   * blade missed, and that is a measurement of the guard. */
+  if (!guard) { input.act = () => false; p.saber.ignition = 0; }
   for (let i = 0; i < frames; i++) {
     const before = p.stamina;
-    input.act = (id) => id === 'blade';
+    if (guard) input.act = (id) => id === 'blade';
     world.update(STEP, input);
     t += STEP;
     if (p.stamina <= 0.001 && emptyAt === null) emptyAt = +t.toFixed(2);
     if (i % 30 === 0) trace.push({ t: +t.toFixed(1), stam: +p.stamina.toFixed(1), force: +p.force.toFixed(1), hp: +p.hp.toFixed(1) });
     void before;
-    if (!p.alive) break;
+    /**
+     * A DEAD PLAYER MEASURES NOTHING — AND A REVIVED ONE MEASURES THE WRONG
+     * THING, which cost a reading before it was written down.
+     *
+     * The first version let the player die and stood it back up. Measured, that
+     * takes the answered share of a twenty-rifle line from 68% to 47% and the
+     * drain from 10.8/s to 7.0/s, because `Player.die` puts the blade out and
+     * drops the guard: what came back up was a body with no answer in it, and
+     * the run went on billing seconds against a guard that was not there.
+     *
+     * So the body is topped up BEFORE it can die, at the same 35% floor
+     * `tools/_flagship.mjs` uses and for the same reason — the death path
+     * never runs, so nothing about the guard changes mid-measurement. Every
+     * point handed back is added to the tally, or the damage rate would be
+     * under-reported by exactly the interventions.
+     */
+    if (p.hp < p.maxHp * 0.35) { topUps++; revived += p.maxHp - p.hp; p.hp = p.maxHp; }
   }
   const out = {
-    rifles: n, range, seconds: +t.toFixed(1),
+    type, rifles: n, range, seconds: +t.toFixed(1),
+    /* HEALTH A SECOND, per shooter. §6 prices a B1 at 2.17 dps against a
+     * MOVING player and a conscript at 1.4; this player is standing still, so
+     * both figures here are higher than either and only their RATIO is
+     * comparable across the two. */
+    dpsPerRifle: +((hp0 - p.hp + revived) / t / Math.max(1, n)).toFixed(3),
     fired, firedPerS: +(fired / t).toFixed(2),
     answeredShare: fired ? +(answered / fired).toFixed(3) : 0,
-    alive: p.alive,
+    topUps, revived: +revived.toFixed(1),
     stamina: +p.stamina.toFixed(1), force: +p.force.toFixed(1),
     /* WHETHER THE REFILL IS STILL RUNNING. `Player._regen` pauses on
      * `staminaHold`, and §6's whole arithmetic is a drain racing that refill —
      * so a guard cost that set it would be a different mechanic wearing the
      * same numbers. Read off the player, not asserted from the constant. */
     staminaHold: +(p.staminaHold || 0).toFixed(3),
-    hpLost: +(hp0 - p.hp).toFixed(1),
+    hpLost: +(hp0 - p.hp + revived).toFixed(1),
     guardSpent: +(p.guardSpent || 0).toFixed(1),
     guardForceSpent: +(p.guardForceSpent || 0).toFixed(1),
     answered, answeredPerS: +(answered / t).toFixed(2),
@@ -145,6 +170,20 @@ else if (CMD === 'one') {
     const net = +(16 - r.drainPerS).toFixed(2);
     console.log(`  ${String(n).padStart(2)}   ${String(r.firedPerS).padStart(7)}  ${String(r.answeredPerS).padStart(9)}  ${String(r.drainPerS).padStart(7)}  `
       + `${String(net).padStart(6)}  ${String(r.stamina).padStart(10)}  ${String(r.emptyAt ?? '—').padStart(8)}  ${String(r.hpLost).padStart(7)}`);
+  }
+} else if (CMD === 'class') {
+  /* THE THIRD BODY CLASS AGAINST THE ONE IT IS A WORSE COPY OF. Same harness,
+   * same range, same seconds, blade down — so the ratio is a fact about the
+   * two roster rows and not about the guard. */
+  const secs = flag('seconds', 40);
+  console.log(`  one shooter, blade down, ${secs} s`);
+  console.log('  type        hp/s   hp   score   threat   turned passes');
+  const { ARCHETYPES, guardFor } = await import('../src/game/Enemy.js');
+  for (const type of ['b1', 'conscript']) {
+    const r = await firingLine({ n: 1, range: 12, seconds: secs, type, guard: false });
+    const A = ARCHETYPES[type];
+    console.log(`  ${type.padEnd(10)}  ${String(r.dpsPerRifle).padStart(5)}  ${String(A.hp).padStart(3)}  `
+      + `${String(A.score).padStart(5)}  ${String(A.threat).padStart(6)}  ${String(guardFor(A)).padStart(13)}`);
   }
 } else if (CMD === 'ranges') {
   const n = flag('rifles', 20);

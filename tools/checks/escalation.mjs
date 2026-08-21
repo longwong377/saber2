@@ -33,7 +33,7 @@ import { RapierWorld } from '../../src/physics/RapierWorld.js';
 import * as Waves from '../../src/game/Waves.js';
 import * as Foe from '../../src/game/Enemy.js';
 import { Player } from '../../src/game/Player.js';
-import { TOUGHNESS } from '../../src/game/Combat.js';
+import { TOUGHNESS, GUARD_COST, GRADE } from '../../src/game/Combat.js';
 import { TAU } from '../../src/engine/MathUtil.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
@@ -2006,10 +2006,26 @@ export async function run({ check, assert }) {
       const before = p.boonMods.deflectDamage;
       takeBoon(p, 'bastion');
       assert(p.boonMods.deflectDamage > before * 1.5, 'Bastion does not strengthen a return');
+      /**
+       * WHAT BASTION WATCHES MOVED, and the card's claim is sharper for it.
+       *
+       * It counted DEFLECTS and handed back a flat 4 apiece, because a block
+       * cost a flat 4 and nothing else cost anything. FLAGSHIP §6 gave every
+       * rung of the ladder its own price (`Combat.GUARD_COST`), so a flat
+       * refund per bolt became a stamina generator; the card refunds
+       * `Player.guardSpent` — what the guard actually paid — and the claim
+       * "turning it aside costs you nothing" is now exactly true at every rung.
+       *
+       * So this arranges the CAUSE rather than the counter: three blocks'
+       * worth of guard spending, priced by the game's own table, and the
+       * assertion is that all of it comes back. */
+      const paid = 3 * GUARD_COST.stamina[GRADE.BLOCK];
       p.stamina = 50; tick(p);
-      p.deflects += 3; tick(p);
-      assert(p.stamina > 50, `three deflections refunded ${(p.stamina - 50).toFixed(0)} stamina`);
-      rows.push(`bastion +${(p.stamina - 50).toFixed(0)} stamina / 3 blocks`);
+      p.stamina -= paid; p.guardSpent = (p.guardSpent || 0) + paid; tick(p);
+      assert(Math.abs(p.stamina - 50) < 1e-6,
+        `three blocks cost ${paid} and Bastion gave back ${(p.stamina - (50 - paid)).toFixed(2)} — `
+        + 'the card says turning a bolt aside costs you nothing');
+      rows.push(`bastion refunds ${paid.toFixed(1)} / 3 blocks`);
     }
     // ── Tempest: Flow buys the discount
     {
