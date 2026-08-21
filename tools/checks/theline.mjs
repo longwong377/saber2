@@ -580,6 +580,86 @@ export async function run({ check, assert }) {
     return `${n} hostiles · nearest ${closest.toFixed(1)} m · mean ${mean.toFixed(0)} m`;
   });
 
+  check('theline.16 the ground is taken by the line, not by the kill count', async () => {
+    /**
+     * `FLAGSHIP.md` §6: "You can sprint 200 m into their rear; the line does
+     * not come with you… **Killing stays fast and fun and advances nothing.**"
+     *
+     * That sentence was never implemented. `payWave` took an area on
+     * `areaWaves >= area.waves` — a count of cleared waves and nothing else —
+     * so killing everything alone, far from your men, took the ground. The
+     * whole of `CommandDirector.lineIsUp`'s note is the argument; what is
+     * asserted here is the behaviour, driven, in both directions.
+     *
+     * BOTH DIRECTIONS IS THE POINT. A rule that only refuses is a rule that can
+     * deadlock a run, and this one is refusing on a condition the PLAYER has to
+     * resolve by walking back — `advancePace` returns 0 when nobody is inside
+     * `MORALE.NEAR`, so a line whose Jedi has left does not come and cannot.
+     * So the second arm below puts the men back and requires the ground to be
+     * taken immediately, which is what makes the first arm a delay rather than
+     * a dead end.
+     */
+    const { world, d, input } = await lineWorld({ trim: 1 });
+    const { MORALE } = await import('../../src/game/Morale.js');
+    assert(d.lineAdvances, 'the mode does not declare that the line takes the ground');
+    for (let i = 0; i < Math.round(3 / STEP); i++) world.update(STEP, input);
+
+    /* THE MEN ARE PUT FAR AWAY rather than the player walked off, and that is
+     * deliberate: what is under test is the RULE, and marching a scripted Jedi
+     * two hundred metres would measure the script's pathing as well. Far is
+     * four times `NEAR`, so no quorum is even close. */
+    const away = MORALE.NEAR * 4;
+    const living = d.roster.living.filter((t) => t.body && !t.body.dead);
+    assert(living.length >= 4, `only ${living.length} of the line were standing to move`);
+    for (const t of living) t.body.position.x += away;
+    assert(!d.lineIsUp(), 'the line reads as up with every man four times NEAR away');
+
+    /* The ground is won: the waves are met and every hostile is dead. */
+    d.areaWaves = d.area.waves;
+    for (const e of world.enemies) if (!e.dead && e.team !== 0) { e.hp = 0; e.dead = true; }
+    const taken = () => d.log.some((r) => r.t === 'area');
+    d.payWave(d.wave + 1);
+    for (let i = 0; i < Math.round(6 / STEP) && !taken(); i++) world.update(STEP, input);
+    assert(!taken(),
+      'the area was taken with the whole line four times NEAR away — killing still advances the run');
+    assert(d.awaitingLine, 'the run is not waiting for the line, it simply did not clear');
+    const said = world.notes?.some?.(([t]) => /LINE/i.test(String(t)));
+    assert(said !== false, 'nothing on screen says why the ground has not been taken');
+
+    /* …AND THE MOMENT THEY ARRIVE. Not at the next wave — `payWave` is the only
+     * other caller of `_areaClear`, and a run that waited for one would sit on
+     * won ground until a fight that is over composed another. */
+    for (const t of living) t.body.position.x -= away;
+    assert(d.lineIsUp(), 'the line is back and still does not read as up');
+    for (let i = 0; i < Math.round(3 / STEP) && !taken(); i++) world.update(STEP, input);
+    assert(taken(), 'the line came up and the ground was still not taken — the rule is a dead end');
+    assert(!d.awaitingLine, 'the run is still waiting for a line that is standing on the ground');
+    world.unload();
+    return `refused with the line ${away} m off, taken within 3 s of its return`;
+  });
+
+  check('theline.17 …and Command still takes ground by clearing it', async () => {
+    /* THE REGRESSION THIS COULD CAUSE. Command is a shipped mode won by taking
+     * the ground, and a rule added for a new mode that leaked into it would
+     * change how a mode people have already played advances. Same fixture,
+     * same men moved off, other mode. */
+    const { world, d, input } = await lineWorld({ trim: 1, mode: 'command' });
+    const { MORALE } = await import('../../src/game/Morale.js');
+    assert(!d.lineAdvances, 'Command took The Line\'s advance rule');
+    for (let i = 0; i < Math.round(3 / STEP); i++) world.update(STEP, input);
+    const living = d.roster.living.filter((t) => t.body && !t.body.dead);
+    for (const t of living) t.body.position.x += MORALE.NEAR * 4;
+    assert(d.lineIsUp(), 'lineIsUp is answering for a mode that did not ask for it');
+    d.areaWaves = d.area.waves;
+    for (const e of world.enemies) if (!e.dead && e.team !== 0) { e.hp = 0; e.dead = true; }
+    d.payWave(d.wave + 1);
+    for (let i = 0; i < Math.round(4 / STEP); i++) world.update(STEP, input);
+    assert(d.log.some((r) => r.t === 'area'),
+      'Command did not take an area it had cleared — the new rule leaked into a shipped mode');
+    world.unload();
+    return 'the kill count is still the win in Command';
+  });
+
   /* ══════════════════════════════════════════════════════════════════ */
   /*  The run leaves a record                                           */
   /* ══════════════════════════════════════════════════════════════════ */

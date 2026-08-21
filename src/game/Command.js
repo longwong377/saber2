@@ -5843,7 +5843,24 @@ export class CommandDirector extends WaveDirector {
      * `lineIsUp` and `MODES.theline.lineAdvances`. In Command this is `true`
      * every time and the line below is the sentence it always was. */
     if (this.areaWaves >= this.area.waves) {
-      if (this.lineIsUp()) this._areaClear();
+      /**
+       * AN ARMY THAT NO LONGER EXISTS DID NOT TAKE THIS GROUND.
+       *
+       * `lineIsUp` answers TRUE for an empty roster, and it has to: a rule that
+       * waited for a line that cannot come is a rule that hangs the run. But
+       * `payWave` calls `_areaClear` synchronously, and `_checkLine` — the door
+       * that ends a run whose army is gone — does not get its frame until the
+       * next `update`. So the last wave paid by a dead line logged an `area`
+       * record on the way out, and `areasTaken` reads that log: the defeat card
+       * would credit the player with ground their army was not alive to hold.
+       *
+       * Doing nothing here is right rather than lazy. The run is over, the very
+       * next frame ends it, and the only question was whether it ends with an
+       * honest ledger.
+       */
+      if (this.holdTheLine && this._landed && this.roster.strength === 0) {
+        /* over — `_checkLine` ends it next frame */
+      } else if (this.lineIsUp()) this._areaClear();
       else this._awaitLine();
     }
     return fresh;
