@@ -296,14 +296,40 @@ that keeps it dramatic rather than annoying: **a retreat can never be refused.**
 **The crowd holds.** Two flat tones and an ink line make a 140-triangle figure
 convincing at 24 m. A photoreal renderer would need ten times the geometry.
 
-**The sky is blue and the ground is orange, and this is the biggest visual
-defect in the game.** Measured live fog on Geonosis: `#a6adb2`, cold grey-blue.
-The base sky is a physical Preetham dome and stays blue at turbidity 10. **The
-fix already exists in the shader and is held at identity** — `uSkyTurn`, a
-luminance-preserving hue rotation, with `skyProbeTurn` already computing the
-rotation that carries the model sky onto the level's authored `skyColor`.
-Geonosis already authors `skyColor: 0xd9a058`. Turn the dome, the fog and the
-aerial tint by the same rotation and every derived thing follows.
+**The sky was blue and the ground orange, and it was the biggest visual defect
+in the game. FIXED — but NOT by the mechanism this paragraph proposed, so read
+the rest of this before touching `uSkyTurn`.**
+
+The diagnosis was right: measured live fog on Geonosis `#a6adb2`, a cold
+grey-blue, from a physical Preetham dome that stays blue at turbidity 10. The
+proposed fix was to turn the dome, the fog and the aerial tint by
+`skyProbeTurn`'s rotation.
+
+**That was tried on the haze and `cel.mjs` refused it, correctly.** `uGain` is a
+composite pass over the WHOLE FRAME, so a level's grade already moves the drawn
+dome and what distance converges on together — measured, every level's haze
+tracks its own skyline within 6°. Turning one of them alone makes a veil with a
+colour the sky does not have, which is the "grey fog" rule 3 of
+`src/toon/REFERENCE.md` forbids. `skyProbeTurn`'s own note says so in advance:
+the drawn dome, the fog and the aerial tint "have to match what is actually
+painted on screen", and the Ember Shelf's orange comes from its `gain`.
+
+**The real defect was that Geonosis had no grade at all**, while its own
+atmosphere block promised one — *"the ORANGE comes from the sun, the cloud deck
+and the grade"*. The drawn skyline's hue against the hue each level authored:
+
+    drifts     authored 220°  drawn 202°   Δ  18°
+    colosseum  authored 220°  drawn 205°   Δ  15°
+    scoria     authored  10°  drawn  62°   Δ  52°
+    mustafar   authored   6°  drawn  59°   Δ  52°
+    geonosis   authored  25°  drawn 205°   Δ 180°
+
+Every other level within 52° of its own sky; this one on the opposite side of
+the wheel. `gain: [1.18, 1.00, 0.68]` puts the skyline at 54° and the haze at
+47°, with luminance moving 0.414 → 0.416.
+
+**So `uSkyTurn` stays at identity for the drawn dome, deliberately.** It turns
+the environment probe and nothing else, which is the half no grade can reach.
 
 **Three more, in order:**
 
