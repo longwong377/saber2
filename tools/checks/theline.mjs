@@ -756,12 +756,15 @@ export async function run({ check, assert }) {
      * and read as their fault.
      *
      * MEASURED BOTH WAYS BEFORE PINNING, so the pin is not hiding anything:
-     * the tuned build reads 5.4 of 10 over five seeds on the authored contours
-     * (`tools/_linehold.mjs`) against 5.7 and 6.0 over three seeds apiece on
-     * generated ones — the same mean inside the noise. What the layer moves is
-     * the SPREAD, not the level, so pinning costs this check no fidelity about
-     * the thing it is measuring and buys it a fixture that does not move under
-     * somebody else's work.
+     * the tuned build reads **2.80 of 10 over twenty seeds** on the authored
+     * contours, from a fresh process at a stated phase (`tools/_linehold.mjs`
+     * and the paired A/B beside it), against 5.7 and 6.0 over three seeds
+     * apiece on generated ones. Those two are NOT evidence that the layer is
+     * kinder — they were taken across processes before `seedWorld` existed and
+     * are not comparable to anything. What the pin buys is a fixture that does
+     * not move under the terrain lane's work; what it costs is unknown and
+     * small, and the honest version of that sentence is this one rather than
+     * the "same mean inside the noise" that stood here before.
      */
     const GROUND = LEVELS.geonosis;
     const wasField = GROUND.battlefield;

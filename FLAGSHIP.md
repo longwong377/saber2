@@ -225,6 +225,26 @@ Forty conscripts that pay nothing are weather.
 > | the gun pit silenced | 4.8 |
 > | every hostile bolt ×0.65 on a man with a roster record | **2.8**, two seeds of five WIPED |
 >
+> **AND THE TABLE ABOVE IS SUPERSEDED, THOUGH ITS RANKING IS NOT.** Every row
+> in it was taken across processes, and `World.js` had no reseeder for its
+> module-level `rng` at the time — the same change read 5.4 and 3.0 of ten on
+> nothing but the mode string, because a crossing rolls a session plan and
+> Command does not. Re-taken with both arms from fresh processes at an
+> identical phase, the contours pinned, **twenty seeds apiece**, the only
+> difference being the two constants:
+>
+> | | survivors of ten | engagements that reached their muster |
+> |---|---|---|
+> | as shipped before this session | **1.35** (sd 1.73) | 10 of 20 |
+> | with both halved | **2.80** (sd 2.33) | **16 of 20** |
+>
+> +1.45 with a standard error of 0.65 — real, and small. **THE TARGET IS NOT
+> MET.** An engagement fought without the Jedi costs **7.2 of ten**, not five.
+> What the halving buys is that four engagements in five now reach the muster
+> at all instead of one in two, which is the difference between a mode with a
+> between-areas beat and a mode without one — but the line is still far too
+> cheap, and the lever that would make it cost five is not in this section yet.
+>
 > That last row is the one to read. Fifty-four per cent more effective health
 > on every man bought one survivor and lost two runs, because
 > `CommandDirector.allyScale` prices the wave per LIVING body: **a line that

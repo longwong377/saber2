@@ -115,6 +115,31 @@ import { rand } from '../engine/MathUtil.js';
  *   have: every burst that lands is half a man, so the ledger moves visibly
  *   and never in one step. A one-shot gun would make the cost a coin toss.
  *
+ * ── SUPERSEDED IN PART — THE CONTROLLED NUMBER IS AT THE TOP ─────────────
+ *
+ * Every figure in the note below was taken ACROSS PROCESSES and is therefore
+ * not a comparison. `World.js` had no reseeder for its module-level `rng`
+ * when they were taken — it has `seedWorld` now — so two runs differing in
+ * any earlier draw diverge completely, and `theline` and `command` differ in
+ * one because a crossing rolls a session plan and Command does not. The same
+ * change read 5.4 and 3.0 of ten on that alone.
+ *
+ * RE-TAKEN PROPERLY. Both arms from fresh processes, identical module-init
+ * phase, `LEVELS.geonosis.battlefield` pinned off in both, the only
+ * difference being the two constants this session moved, 20 seeds apiece:
+ *
+ *     as shipped before this session   1.35 of 10   (sd 1.73)
+ *     with both halved                 2.80 of 10   (sd 2.33)
+ *                                      +1.45, se 0.65, z 2.24
+ *
+ * So the lever is real and it is SMALL — and **the target is not met**. The
+ * player asked for an engagement fought without the Jedi to cost about half
+ * a ten-man line; it costs 7.2 of 10. What the figures below are still good
+ * for is the RANKING they establish, which the controlled run does not
+ * contradict: the two sources of fire the wave's threat budget never pays
+ * for are the two that move this number at all. No single figure in them
+ * should be quoted.
+ *
  * `every` 14.0 s — the cadence is what turns damage into a RATE, and the rate is
  *   what the choice is made of. IT WAS 3.4, THEN 7.0, AND BOTH READINGS THAT
  *   SET IT COULD NOT SEE AN ENGAGEMENT END.
