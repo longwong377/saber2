@@ -822,5 +822,137 @@ export async function run({ check, assert }) {
       + ` — mean ${mean.toFixed(1)} against a target of ${HALF} ± ${SLACK}, ${held}/${SEEDS.length} held`;
   });
 
+  check('theline.14 the bolts on this field are aimed at chests, and every one used to be aimed at boots', async () => {
+    /**
+     * ══ THE LARGEST SINGLE THING THAT WAS WRONG WITH THE COMBAT MODEL ══
+     *
+     * `Enemy._shoot` leads on `Combat.aimAt(target)`, which used to be spelled
+     * `target.chest ?? target.position`. Only `Player` has a `chest`, so on a
+     * field whose whole subject is a list of NAMES, every bolt fired at one of
+     * those names — and every bolt they fired back, because your line are
+     * `Enemy` instances shooting through the same method — was led onto
+     * `position`, which is at the FEET.
+     *
+     * It was found from the wrong end and that is the part worth keeping: a
+     * "men crouch under fire" lever measured WORSE THAN NOTHING, 0.6 survivors
+     * against 1.8, because crouching pulls a man DOWN and down was where the
+     * shot already was.
+     *
+     * ── WHAT IS MEASURED, AND WHY IT IS A HEIGHT AND NOT A HIT RATE ────────
+     *
+     * A hit rate would fold the aim together with the dispersion, the lead, the
+     * range model and the terrain, so it would move for a dozen reasons and
+     * name none of them. This drives the shipped `_shoot` on a real World and
+     * asks one question of each bolt it produces: at the point where the bolt's
+     * line passes the target's own vertical column, HOW HIGH IS IT? The answer
+     * is compared against the height the body itself publishes (`chestY`) and
+     * against its feet. Dispersion is symmetric about the aim, so the MEDIAN of
+     * many rounds is the aim with the spread taken out of it — which is also
+     * why the count is large and the bound is on the median rather than on any
+     * one round.
+     *
+     * BOTH DIRECTIONS, because the defect was symmetric and so is the fix: the
+     * horde onto your line, and your line onto the horde. A change that fixed
+     * one and not the other would double the lethality of one side only, and
+     * nothing else in the tree would say so.
+     *
+     * NOTHING ELSE ON THE FIELD. The director is put into its own idle state —
+     * `active` false with an endless intermission, which is what
+     * `breach.mjs` uses and is the state the mode is in between two waves — so
+     * the two bodies below are the only things shooting and no wave arrives to
+     * move anybody. Nothing is stepped: `_shoot` is called directly, so the
+     * reading is of the aim and not of a fight.
+     */
+    const { enemyRng } = await import('../../src/game/Enemy.js');
+    const THREE = await import('three');
+    enemyRng.seed(20260821);
+    Waves.seedWaves(20260821);
+    const { world, d } = await lineWorld({ seed: 3, spawn: false });
+    d.onMuster = () => {};
+    /* THE TYPE IS TAKEN OFF THE WAVE THE DIRECTOR COMPOSED, before the queue is
+     * emptied — a literal 'b1' here would be this check keeping its own copy of
+     * the ground's roster (HANDOFF §2.3). Queue entries are `type` or
+     * `type|modifier`. */
+    const hostileType = String(d.spawnQueue[0] || '').split('|')[0];
+    assert(hostileType, 'the director composed an empty wave, so there is no horde to be shot by');
+    d.spawnQueue.length = 0;
+    d.active = false;
+    d.intermission = Infinity;
+
+    const mine = d.roster.living.map((t) => t.body).filter((b) => b && !b.dead);
+    assert(mine.length > 0, 'the mode deployed no line, so there is nobody to be shot at');
+    const man = mine[0];
+
+    /* Stood 45 m out — inside the marksman's 42 m band and well outside a
+     * blade's — so the shot has to be aimed and led rather than pointed. */
+    const RANGE = 45;
+    const hostile = world.spawnEnemy(hostileType,
+      new THREE.Vector3(man.position.x + RANGE, man.position.y, man.position.z));
+    assert(hostile && hostile.team !== man.team,
+      `a ${hostileType} spawned onto the line's own team, so this measures a man shooting himself`);
+    hostile.position.set(man.position.x + RANGE, man.position.y, man.position.z);
+
+    /** Where a fired bolt's line crosses the target's own vertical column. */
+    const crossing = (from, dir, at) => {
+      const wx = at.x - from.x, wz = at.z - from.z;
+      const dd = dir.x * dir.x + dir.z * dir.z;
+      if (dd < 1e-9) return from.y;
+      return from.y + dir.y * ((wx * dir.x + wz * dir.z) / dd);
+    };
+
+    const ROUNDS = 60;
+    const volley = (shooter, target) => {
+      const heights = [];
+      const real = world.bolts.fire;
+      /* NOT FIRED FOR REAL. A live bolt would kill the target inside the volley
+       * and the rest of the rounds would be aimed at a corpse. */
+      world.bolts.fire = (from, dir) => {
+        heights.push(crossing(from, dir, target.position) - target.position.y);
+        return null;
+      };
+      const was = { target: shooter.target, tele: shooter.telegraphAim };
+      try {
+        shooter.target = target;
+        shooter.telegraphAim = null;
+        target.velocity?.set(0, 0, 0);
+        for (let i = 0; i < ROUNDS; i++) shooter._shoot({ bolts: world.bolts });
+      } finally {
+        world.bolts.fire = real;
+        shooter.target = was.target; shooter.telegraphAim = was.tele;
+      }
+      heights.sort((a, b) => a - b);
+      return heights;
+    };
+
+    const rows = [];
+    for (const [name, shooter, target] of [
+      ['the horde onto your line', hostile, man],
+      ['your line onto the horde', man, hostile],
+    ]) {
+      const h = volley(shooter, target);
+      assert(h.length === ROUNDS,
+        `${name}: ${h.length} of ${ROUNDS} rounds reached the bolt pool`);
+      const med = h[h.length >> 1];
+      /* THE BODY'S OWN NUMBER, never a literal: `chestY` is where this body says
+       * its chest is, and 1.15 · bodyScale is not restated here. */
+      const chest = target.chestY - target.position.y;
+      rows.push(`${name}: median ${med.toFixed(2)} m up a body whose chest is at ${chest.toFixed(2)} m`);
+      /* HALF A CHEST EITHER WAY. The lead, the muzzle height and the ground
+       * under the two bodies each move this by tens of centimetres and none of
+       * them is the thing under test; a failure here means the aim has come off
+       * the chest ENTIRELY, which is a whole chest-height away. */
+      assert(Math.abs(med - chest) < chest * 0.5,
+        `${name}: the median round crosses this body at ${med.toFixed(2)} m and its chest is at `
+        + `${chest.toFixed(2)} m. A shooter that leads on \`position\` leads on the FEET — see `
+        + 'Combat.aimAt, which is the one reader every aiming site in the game now calls.');
+      assert(med > chest * 0.45,
+        `${name}: the median round crosses at ${med.toFixed(2)} m on a body whose chest is `
+        + `${chest.toFixed(2)} m up — that is the boots`);
+    }
+    world.unload();
+    return rows.join(' · ') + ` — ${ROUNDS} rounds a side at ${RANGE} m, median so the dispersion `
+      + 'cancels';
+  });
+
   return;
 }
