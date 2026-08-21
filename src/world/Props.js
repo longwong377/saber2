@@ -2290,15 +2290,18 @@ const KERF_FRAG = /* glsl */`
  * these three), against `MELT_AREA` 0.34 m²:
  *
  *     MELT_RATE      tight loop     natural loop    wide loop    median
- *       3.6            17.5 s          21.8 s        25.1 s      21.8
- *       3.9            15.0 s          21.6 s        22.1 s      21.6
- *       4.0            14.6 s          18.9 s        21.7 s      18.9   ← ships
- *       4.2            12.0 s          19.2 s        21.3 s      19.2
+ *       3.6            20.1 s          21.6 s        25.0 s      21.6
+ *       3.9            19.3 s          19.1 s        22.0 s      19.3
+ *       4.0            17.6 s          18.8 s        21.7 s      18.8   ← ships
+ *       4.2            12.0 s          21.1 s        21.3 s      21.1
  *
  * DESIGN.md prices the door at "twenty seconds of held blade". Four puts the
- * median at 18.9 with the whole band inside 15–22, and a player who traces a
+ * median at 18.8 with the whole band inside 17–22, and a player who traces a
  * tidier loop is rewarded with a faster breach, which is the "entirely
- * player-driven" half of the same sentence.
+ * player-driven" half of the same sentence. The sweep above drives the three
+ * doors of one build in one process; the shipped suite runs its other six
+ * checks first, which moves the module streams under it, and reads 19.1 · 18.8
+ * · 21.7 s, median 19.1. Either way the answer is twenty seconds.
  *
  * ── AND EVERY NUMBER ABOVE THIS LINE USED TO BE FICTION, which is worth a
  * paragraph because it is the reason to distrust a measured comment. The table
@@ -2336,7 +2339,8 @@ const MELT_RATE = 4.0;
  * does not melt metal at a constant rate: they saturate the patch their blade
  * can reach and then creep. Measured on the shipped door, fresh World per case,
  * `free` scheme, breach suppressed so the curve can be read past the point it
- * would have opened — the melted area after two minutes of unbroken hold:
+ * would have opened and the melt left at the 6.0 it shipped with so that two
+ * minutes is enough to see the top — the melted area against time:
  *
  *     loop radius      20 s      39 s      59 s      119 s
  *       0.25          0.242     0.536     0.547     0.550 m²
@@ -2353,10 +2357,17 @@ const MELT_RATE = 4.0;
  *
  * 0.34 m² is 62–74% of the tightest of those plateaus, so every loop measured
  * opens the door and the time answers to how the player traced it rather than
- * to whether they cleared a knee: 0.25 → 32.1 s, 0.35 → 23.7 s, 0.50 → 14.6 s,
- * 0.70 → 18.9 s, 0.85 → 21.7 s, and the default control scheme's four guard
- * zones → 40.9 s. `MELT_RATE` is what puts that band on twenty seconds; this is
- * what keeps a tidier player from being punished for being tidy.
+ * to whether they cleared a knee. The shipped pair, fresh World per case:
+ *
+ *     loop radius   0.25    0.35    0.50    0.70    0.85    1.00
+ *     breach       32.4 s  22.0 s  17.6 s  23.9 s  33.9 s  46.4 s
+ *
+ * — a bowl with its floor at the loop a standing body traces most easily, a
+ * tidier loop faster than a sloppy one either side of it, and no radius that
+ * cannot finish. The default control scheme, which has no loop at all and works
+ * four guard zones instead, comes in at 53.0 s. `MELT_RATE` is what puts that
+ * band on twenty seconds; this is what keeps a tidier player from being
+ * punished for being tidy.
  */
 const MELT_AREA = 0.34;
 

@@ -1701,17 +1701,23 @@ function magazine(world, opts = {}) {
    * 1.9, which is what carries an 18 m deck, so the face is
    * 4 × 1.9 + 3 × 3.3 = 17.5 m and the two ends of it land at ±8.75.
    *
-   * THE SIZE IS ALSO WHAT MAKES THE HOLD FINISHABLE, which is not obvious and
-   * cost a measurement. `breachFraction` is a fraction of the PLATE, while the
-   * loop a standing player can trace is a fixed patch of about 2.3 × 1.4 m —
-   * the blade's own reach, and no bigger on a bigger door. At 4.0 × 4.4 the
-   * breach wanted 29% of everything the player could reach melted right
-   * through, and it sat on a knife edge: measured over three loop shapes on the
-   * three doors of one build, two of the nine runs saturated just short (879
-   * and 772 of the 901 texels) and never opened at all. At 3.3 × 3.4 the same
-   * loop has to melt 17% of its own reach and all nine open. A door a player
-   * can only sometimes get through is worse than one they never can, because
-   * the failure looks like their fault. */
+   * THE SIZE USED TO BE WHAT MADE THE HOLD FINISHABLE, AND IT IS NOT ANY MORE
+   * — which is worth recording, because the paragraph that stood here was a
+   * level file compensating for a rule in another file.
+   *
+   * `breachFraction` was a fraction of the PLATE, while the patch a standing
+   * player can reach is a fixed 0.46–0.56 m² of melt whatever the door
+   * measures. So a bigger door was a proportionally longer job for no reason a
+   * player could see, and the doors were cut from 4.0 × 4.4 to 3.3 × 3.4 to get
+   * the breach back inside that patch. `BlastDoor` prices a breach in SQUARE
+   * METRES now (see `MELT_AREA`), so these dimensions answer to the revetment
+   * and to nothing else: the piers, the deck they carry and the 17.5 m of face
+   * they add up to. A door twice this size would take the same twenty seconds.
+   *
+   * The measurement that forced the old shrink is also worth distrusting on its
+   * own terms — "two of nine runs saturated just short and never opened" was
+   * taken on a bench that gave a different answer on every run, for the reason
+   * `MELT_RATE` in src/world/Props.js sets out. */
   const DOOR_W = 3.3, DOOR_H = 3.4, DOOR_T = 0.42;
   const PIER = 1.9, FACE_H = 5.0, WALL_D = 1.4, CELL_D = 5.0;
   const HW = PIER * 2 + DOOR_W * 1.5;                 // 8.75
@@ -3963,6 +3969,32 @@ LEVELS.geonosis = {
      * of this battle has hundreds of infantry and three or four machines.
      */
     'dwarfspider', 'hailfire', 'aat', 'atte',
+    /**
+     * …AND THE GIANTS, WHICH REACH THIS GROUND AND NO OTHER.
+     *
+     * Four machines the player asked for by name — a 34 m twelve-legged siege
+     * gun, a 25 m ten-wheeled transport, a 14.6 m tri-droid and a tank on one
+     * tread — and this is the only level in the game they belong on, which is
+     * a statement about the GROUND rather than about the machines:
+     *
+     *   IT IS THE ONLY TWO-ARMY FIELD. Two of these are Republic and two are
+     *     Confederate, and `armies` above is what stops a Jedi meeting an
+     *     SPHA. On any other level the pool is one horde and the faction
+     *     rotation does not run.
+     *   IT IS THE ONLY GROUND WIDE ENOUGH. The spawn ring here is 58-96 m,
+     *     where everywhere else is 26-60. The SPHA's band is 40-90 m: on a
+     *     level whose ring closes at 60 it would arrive already inside its own
+     *     minimum, plant, and shell a player standing next to it.
+     *   IT IS OPEN. `grade` refuses a wheel anything steeper than a step, and
+     *     the wood and the alpine shelf are made of exactly that.
+     *
+     * Unweighted, one entry each, against seventeen infantry entries and four
+     * machines — so a giant is roughly one draw in twenty-five and
+     * `heavyLimit` caps how many stand at once regardless. The reference plates
+     * of this battle are the argument: hundreds of infantry, a handful of
+     * armour, and one artillery piece somewhere at the back of it.
+     */
+    'spha', 'juggernaut', 'tridroid', 'snailtank',
   ],
   /* The ochre the whole level is graded around: dust puffs, footfall grit, the
    * hemisphere's lower half and the smoke's own tip all derive from it. */
