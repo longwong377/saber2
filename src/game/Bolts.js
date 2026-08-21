@@ -576,10 +576,18 @@ export function guardIntercept(from, to, guard, out = new THREE.Vector3()) {
  *      8 fewer arriving**. Sixteen near misses answered for every shot that
  *      was going to land is the aura wearing the mechanic's name.
  *
- * @returns the distance from `origin` to the contact, in metres, or 0 for no
- *          intercept — a distance rather than a boolean because the price is a
- *          distance, and asking for the geometry a second time at billing time
- *          would read it off a body that has moved.
+ * @returns the distance from `origin` to THE MAN IT SAVED, in metres, or 0 for
+ *          no intercept — a distance rather than a boolean because the price is
+ *          a distance, and asking for the geometry a second time at billing
+ *          time would read it off a body that has moved.
+ *
+ * THE MAN AND NOT THE CONTACT, and the first cut had it the other way. A bolt
+ * arrives from outside the reach, so it crosses the sphere AT THE RIM: measured
+ * through the shipped path, every screened bolt in a one-bolt test billed 5.6
+ * Force — `SCREEN.reach` times the rate, the maximum, whoever it was for and
+ * wherever he was standing. That deletes the whole economy the price by the
+ * metre exists to create. What the Force is reaching for is the MAN, so his
+ * distance is what it costs, and the man at your shoulder is cheap again.
  */
 export function screenIntercept(from, to, screen, out = new THREE.Vector3()) {
   const R = screen.reach;
@@ -603,10 +611,10 @@ export function screenIntercept(from, to, screen, out = new THREE.Vector3()) {
     if (t < 0 || t > len) return 0;                    // does not get there this frame
   }
   out.copy(from).addScaledVector(_s1, t);
-  const dist = out.distanceTo(o);
+  const crossed = out.distanceTo(o);
   // 2 — in front of you, by the arc a guard covers.
-  if (dist > 1e-6) {
-    _s3.subVectors(out, o).multiplyScalar(1 / dist);
+  if (crossed > 1e-6) {
+    _s3.subVectors(out, o).multiplyScalar(1 / crossed);
     if (_s3.dot(screen.axis) < Math.cos(screen.sector)) return 0;
   }
   // 3 — and on its way into one of them. The line is followed from the contact
@@ -624,7 +632,10 @@ export function screenIntercept(from, to, screen, out = new THREE.Vector3()) {
      * own bone test — the same one that will resolve this bolt if the screen
      * lets it through — held on the descriptor rather than passed per call so
      * this stays allocation-free on the hot path. */
-    if (!hits || hits(m, out, _s1, along + r)) return dist;
+    if (!hits || hits(m, out, _s1, along + r)) {
+      const dx = m.x - o.x, dy = m.y - o.y, dz = m.z - o.z;
+      return Math.max(1e-3, Math.sqrt(dx * dx + dy * dy + dz * dz));
+    }
   }
   return 0;
 }

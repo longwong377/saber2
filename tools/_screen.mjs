@@ -294,6 +294,80 @@ export async function screenLine({ mates = 4, spacing = 2.4, standOff = 0, range
   return out;
 }
 
+/**
+ * ONE MAN, ONE BOLT, ONE JEDI — the smallest thing the screen can be asked.
+ *
+ * `screenLine` above measures the mechanic at the scale it is meant to matter
+ * at; this measures whether it fired at all, and it is what the gate asks the
+ * four gates of `SCREEN` with, one at a time. Everything below the `fire` call
+ * is shipped code: `Bolts.update` finds the screen, `World._onBoltDeflect`
+ * grades or knocks it down, `_creditDeflect` bills it.
+ *
+ * @param mateAt   where the man stands, relative to the Jedi, in metres
+ * @param aimAt    where the bolt is actually pointed, relative to the MAN —
+ *                 (0,0,0) is his chest, and pushing it sideways is how the
+ *                 "would have missed him anyway" case is asked
+ * @param range    how far up the bolt's own line the muzzle sits
+ */
+export async function oneScreen({ mateAt = [2.4, 0, 1.6], aimAt = [0, 0, 0], range = 18,
+  boltTeam = 2, force = null, hold = true, damage = 12, frames = 60 } = {}) {
+  const THREE = await import('three');
+  const { world } = await bootWorld({
+    level: 'geonosis',
+    settings: { mode: 'waves', level: 'geonosis', difficulty: 'knight' },
+  });
+  try {
+    const p = world.player;
+    const ground = (x, z) => (world.terrain?.height(x, z) ?? 0);
+    p.position.set(0, ground(0, 0) + 0.05, 0);
+    p.saber.ignite(); p.saber.ignition = 1;
+    p.camera.yaw = Math.PI;                        // looking down +z
+    const mate = world.spawnEnemy('trooper', new THREE.Vector3(mateAt[0], 0, mateAt[2]));
+    if (!mate) throw new Error('no trooper spawned — the screen cannot be asked about a man who is not there');
+    mate.position.y = ground(mateAt[0], mateAt[2]) + 0.02;
+    mate.team = p.team;
+
+    const input = {
+      keys: new Set(), buttons: [false, false, false],
+      mouse: { dx: 0, dy: 0, wheel: 0, left: false, right: false },
+      delta: { x: 0, y: 0 }, accel: { x: 0, y: 0 }, bindings: null,
+      moveAxis: (o) => { if (o) { o.x = 0; o.y = 0; return o; } return { x: 0, y: 0 }; },
+      act: (id) => hold && id === 'blade',
+      actHit: () => false, actDown: () => false, end() {},
+    };
+    /* Two frames with the blade parked before anything is fired, so the rig
+     * has settled and the contact cannot be graded off a blade the solver is
+     * still moving into place. */
+    for (let i = 0; i < 2; i++) { if (force !== null) p.force = force; world.update(STEP, input); }
+
+    const target = new THREE.Vector3(mate.position.x + aimAt[0], mate.chestY + aimAt[1], mate.position.z + aimAt[2]);
+    const muzzle = new THREE.Vector3(target.x, target.y, target.z + range);
+    const dir = new THREE.Vector3().subVectors(target, muzzle).normalize();
+    /* HOW FAR THE BOLT'S LINE PASSES FROM THE CHEST, measured off the geometry
+     * the check set up rather than read back out of the mechanic — so a price
+     * assertion is against a distance the check knows and not against one the
+     * thing under test reported. */
+    const miss = missDistance(muzzle, target, p.chest);
+    const hp0 = mate.hp, force0 = p.force, screened0 = p.screened || 0;
+    world.bolts.fire(muzzle, dir, { speed: 60, team: boltTeam, damage });
+    let arrived = false;
+    const inner = world._boltHitTest.bind(world);
+    world._boltHitTest = (b, f, t) => { const r = inner(b, f, t); if (r && r.victim === mate) arrived = true; return r; };
+    for (let i = 0; i < frames; i++) { if (force !== null) p.force = force; world.update(STEP, input); }
+    return {
+      screened: (p.screened || 0) - screened0,
+      arrived,
+      mateHpLost: +(hp0 - mate.hp).toFixed(2),
+      forceSpent: +((p.guardForceSpent || 0)).toFixed(3),
+      staminaSpent: +((p.guardSpent || 0)).toFixed(3),
+      poolLeft: +p.force.toFixed(2),
+      forceBefore: +force0.toFixed(2),
+      miss: +miss.toFixed(2),
+      boltTeam,
+    };
+  } finally { world.unload?.(); }
+}
+
 /* ══════════════════════════════════════════════════════════════════════ */
 
 /**
