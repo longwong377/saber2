@@ -714,7 +714,31 @@ export async function run({ check, assert }) {
     const SLACK = 3.0;
     const SEEDS = [1, 2, 3, 5];
     const { enemyRng } = await import('../../src/game/Enemy.js');
+    /**
+     * …AND THE CONTOURS ARE HELD STILL, which is the one thing this fixture
+     * takes off the shipped configuration and the reason is that this check is
+     * about ATTRITION and not about ground.
+     *
+     * `LEVELS.geonosis.battlefield` raises a heightfield generated around a
+     * bezier front for the run seed under the level's own dressing (FLAGSHIP
+     * §12, `theline.13`), so with it on, the ground a seed stands on is a
+     * second variable inside a number that already has a standard deviation of
+     * three. It would also make this check fail on the terrain lane's commits
+     * and read as their fault.
+     *
+     * MEASURED BOTH WAYS BEFORE PINNING, so the pin is not hiding anything:
+     * the tuned build reads 5.4 of 10 over five seeds on the authored contours
+     * (`tools/_linehold.mjs`) against 5.7 and 6.0 over three seeds apiece on
+     * generated ones — the same mean inside the noise. What the layer moves is
+     * the SPREAD, not the level, so pinning costs this check no fidelity about
+     * the thing it is measuring and buys it a fixture that does not move under
+     * somebody else's work.
+     */
+    const GROUND = LEVELS.geonosis;
+    const wasField = GROUND.battlefield;
+    GROUND.battlefield = false;
     const rows = [];
+    try {
     for (const seed of SEEDS) {
       /* From a stated phase, the same way `levy.mjs` does it, so this check at
        * least agrees with itself between runs of the suite. XORed with a large
@@ -739,6 +763,7 @@ export async function run({ check, assert }) {
       rows.push({ seed, left: d.roster.strength, t, kills, held: !!d.mustering });
       world.unload();
     }
+    } finally { GROUND.battlefield = wasField; }
     const left = rows.map((r) => r.left);
     const mean = left.reduce((a, b) => a + b, 0) / left.length;
     const held = rows.filter((r) => r.held).length;
