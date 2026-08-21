@@ -781,7 +781,7 @@ export async function run({ check, assert }) {
       report() {}, notify() {}, notifyFloating() {}, addHitstop() {} };
     Foe.enemyRng.seed(20260821);
 
-    let worst = 0, worstAt = '', bodies = 0, merged = 0, kept = 0, vertices = 0;
+    let worst = 0, worstAt = '', bodies = 0, merged = 0, kept = 0, vertices = 0, freed = '';
     const refusals = new Map();
     for (const type of Object.keys(Foe.ARCHETYPES)) {
       const e = new Foe.Enemy(world, type, new THREE.Vector3(0, 0, 0));
@@ -837,6 +837,31 @@ export async function run({ check, assert }) {
           `${type} bin ${b} covered ${cursor} of its ${P.count} vertices — the bake and the source `
           + 'list disagree about what went in, so the comparison above is off by an offset');
       }
+
+      /* AND THE BAKE IS GIVEN BACK, measured on the first body rather than
+       * argued from where the meshes are parented. 10 MB of baked geometry
+       * across the roster is a real allocation, and `Rig.dispose` walking
+       * `rig.root` is the only thing that frees it — a merged skin parented
+       * anywhere else would be invisible to that walk and to lifecycle.mjs,
+       * whose corpse-leak assertions are all about meshes on the rig. */
+      if (!freed) {
+        const seen = new Set(), seenM = new Set();
+        const realG = THREE.BufferGeometry.prototype.dispose;
+        const realM = THREE.Material.prototype.dispose;
+        THREE.BufferGeometry.prototype.dispose = function () { seen.add(this); return realG.call(this); };
+        THREE.Material.prototype.dispose = function () { seenM.add(this); return realM.call(this); };
+        try { e.dispose?.(); } finally {
+          THREE.BufferGeometry.prototype.dispose = realG;
+          THREE.Material.prototype.dispose = realM;
+        }
+        const g = skin.meshes.filter((m) => seen.has(m.geometry)).length;
+        const mt = skin.meshes.filter((m) => seenM.has(m.material)).length;
+        assert(g === skin.meshes.length && mt === skin.meshes.length,
+          `disposing a ${type} freed ${g} of ${skin.meshes.length} merged geometries and ${mt} of `
+          + `${skin.meshes.length} merged materials — the baked skin outlives the body that wore it`);
+        freed = `${type} ${g}/${skin.meshes.length}`;
+        continue;
+      }
       e.dispose?.();
     }
 
@@ -852,7 +877,7 @@ export async function run({ check, assert }) {
     physics.dispose?.();
     return `${bodies} rigged archetypes, ${kept} meshes -> ${merged} (${(kept / merged).toFixed(1)}x), `
       + `${vertices} vertices compared after re-posing and re-placing, worst drift `
-      + `${worst.toExponential(1)} m; left out: `
+      + `${worst.toExponential(1)} m, dispose freed ${freed}; left out: `
       + `${[...refusals].map(([k, n]) => `${n} ${k}`).join(', ') || 'nothing'}`;
   });
 
