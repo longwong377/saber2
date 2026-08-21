@@ -982,13 +982,30 @@ half a ten-man line. It measures **5.4 of 10 over five seeds** on authored
 contours and 5.7–6.0 on generated ones — the same mean inside the noise, so the
 generated layer moves the SPREAD and not the level.
 
-**The spread is the part worth knowing.** Thirteen runs of the same arm on the
-tuned build come back `4 6 6 3 8 · 7 10 0 · 1 1 3 5 5` — mean 4.5, **sd 2.9**,
-with one engagement in which nobody died at all and one in which the line was
-wiped out. One composed wave meeting one formation is a coin with ten faces: a
-grenade or a Hailfire arriving early is two or three names. So the check's band
-is ±3.0 derived from that sd rather than from taste, and a single red is worth
-re-running before it is believed.
+**The spread is the part worth knowing, and the first two attempts to state it
+were both too confident.** The tuning was first reported at 5.4, then at a
+±3.0 band derived from a within-process sd. Both were wrong in the same way:
+
+    five INDEPENDENT runs of the same arm, identical code:  5.4 · 6.0 · 5.7 · 3.0 · 2.5
+    seventeen engagements pooled:                           mean 4.1, sd 3.0
+
+That is a swing in the **mean**, not in a seed. `World.js` holds one
+module-level `rng` for the whole process and exports no reseeder, so the phase a
+run starts from is whatever ran before it — the twelve checks above it in a
+suite, or nothing at all in a bench. Five-seed arms taken inside one process
+share that phase and do not sample independently, so a standard error computed
+from them is an underestimate of the real one. Reseeding `enemyRng` and `Waves`
+does not reach it.
+
+**So the honest headline is that a no-Jedi engagement went from about 2.0 to
+about 4.1, and 5.4 was one good draw.** The check's band is ±4.0 and its note
+says plainly what that means: it will not catch a two-name drift, and it is not
+the tuning instrument. What it catches is the two failures that make this a
+different game — an army gone before its first muster, and an engagement in
+which nobody dies.
+
+One composed wave meeting one formation is a coin with ten faces: a grenade or a
+Hailfire arriving early is two or three names.
 
 The lever was the two sources of fire **the wave's threat budget never pays
 for** — `GUN.every` 7.0 → 14.0 on the emplacement and the conscript's round
@@ -1091,3 +1108,38 @@ compare, which is why every attrition number in this document is a five- or
 thirteen-run spread rather than a seed-for-seed A/B. This is the same shape as
 `HANDOFF` §2.11 (one stream, one process) seen from the other end, and it is
 worth a reseeder the day somebody wants a true paired test.
+
+### §7's central claim is still false, and now it is the ONLY thing left
+
+With attrition tuned and every arm reaching its muster, the three-arm reading is:
+
+    no player at all              5.4 survivors · 5/5 areas held · 211 s engagement · 71 s/wave
+    a scripted Jedi who fights    5.0 survivors · 5/5 areas held · 341 s engagement · 112 s/wave
+
+**A Jedi who plays is worth nothing to the line and makes the engagement 60%
+longer.** That is `FLAGSHIP.md` §1's sentence — "your job is not to kill
+everything, it is to be the reason the line is still standing when it takes the
+ridge" — measured, and false. It has now survived every attempt to make it true:
+
+- **presence** as a morale term: a Jedi a hundred metres away costs the line the
+  same men as a Jedi standing in it, so presence is not the mechanism;
+- **OPEN**, the Force as a multiplier on other people's guns: the line already
+  aims 9× its fair share at a body you are holding, and the verb still reaches
+  0.5% of enemy-seconds;
+- **the SCREEN**, taking bolts aimed at the man beside you: 0 of 30
+  casualty-bolts landed on a man inside both its reach and its arc;
+- **the attrition tuning above**: no lever on the threat ledger moves it, and
+  the two levers off the ledger move both arms equally.
+
+The common thread across all four is in the spread reading: the line holds
+together to about seven metres and **the player is the one who leaves**, up to
+26 m ahead of his own men, because killing is fast and killing is where the
+targets are. Every mechanism tried so far has been a local good handed to
+somebody who is not local.
+
+**So the question is no longer what a Jedi does for the line. It is what makes a
+Jedi stand in it** — and that is a design decision, not a measurement. The
+honest options are roughly: make leaving cost something the player feels
+immediately; make standing pay something that scales with how many men are
+beside you; or accept §8's four playstyles and let the Vanguard be the build
+that leaves. Nobody has chosen, and no further instrument work will choose it.

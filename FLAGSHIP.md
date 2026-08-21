@@ -641,10 +641,19 @@ Two faults were in it, and both flattered the catastrophe:
 
 **The line was still far too cheap, and that is the real result.** Corrected
 instrument, no player, survivors at the muster: **1.8 of ten**. The user set the
-target at about half a ten-man line, and it now measures **5.4, five seeds of
-five holding the area** — with a spread that is the more useful number: thirteen
-runs read `4 6 6 3 8 · 7 10 0 · 1 1 3 5 5`, mean 4.5, **sd 2.9**, one engagement
-losing nobody and one wiped out.
+target at about half a ten-man line, and it now measures **4.1 pooled over
+seventeen engagements, sd 3.0** — every arm reaching its muster on every seed,
+where before four of five did.
+
+**A third instrument fault is folded into that number and is worth its own
+line.** The first report of this tuning said 5.4, and 5.4 was one good draw.
+Five independent runs of the same arm on identical code read `5.4 · 6.0 · 5.7 ·
+3.0 · 2.5` — a swing in the MEAN, not in a seed. `World.js` holds one
+module-level `rng` for the whole process and exports no reseeder, so the phase a
+run starts from is whatever ran before it, and five-seed arms taken inside one
+process share that phase rather than sampling independently. **No run in this
+game is reproducible across a code change; only distributions compare.** Every
+number in this section is a pooled spread for that reason.
 
 **The lever chose itself by measurement, and it says something about the
 budget.** Effective health is self-cancelling — `allyScale` prices the wave per
