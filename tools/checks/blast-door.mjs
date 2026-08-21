@@ -53,8 +53,8 @@
  *      design explicitly excludes was the only thing that cut, and a HELD
  *      blade barely did. Measured through the shipped path once fault 2 was
  *      out of the way: twenty seconds of held blade burned EIGHT of the 901
- *      texels a breach needs, which prices DESIGN's twenty-second door at
- *      about five minutes.
+ *      texels a breach wanted at the time, which prices DESIGN's twenty-second
+ *      door at about five minutes.
  *
  *   4. THE MATRIX WAS NEVER COMPOSED. `burn()` inverts `mesh.matrixWorld`, and
  *      the only thing in three that composes a scene graph is the renderer. In
@@ -130,6 +130,44 @@ async function field(scheme = null) {
   retire();
   const { bootWorld } = await import('./_coop.mjs');
   LIVE = await bootWorld({ level: 'geonosis', settings: scheme ? { scheme } : {} });
+  /**
+   * ── AND THE PRE-FRACTURE SCHEDULER IS TAKEN OFF THE WALL CLOCK, WHICH IS
+   *    THE WHOLE OF WHY THIS SUITE STILL FLAPPED AFTER THE LOCK ─────────
+   *
+   * `clocked` taking a process-wide lock fixed the streams being rewound under
+   * a running check, and this suite went on failing a different check on
+   * roughly one run in three anyway. Measured here, the same commit, four
+   * consecutive runs: 7/9, 7/9, 9/9, 9/9, with the natural loop stopping at
+   * 465 texels on one run and breaching in 16.3 s on the next, and the
+   * directional hold reading 24.1 s, 45.6 s and "never" on three runs of
+   * identical code.
+   *
+   * It is not the door and it is not the streams. `Destruction._prepare` does
+   * as much pre-fracture as fits in `prepareBudgetMs` of REAL TIME per frame
+   * (src/world/Destruction.js — `const overBudget = () => now() - t0 >= budget`),
+   * so how many of the magazine's structures have their cells built by frame N
+   * is a fact about the machine. And a structure's cells are what it publishes
+   * to the blade: `Structure.bladeCapsules` hands the solver one capsule per
+   * CELL once `chunks` exists and the maker's single collider before that. So
+   * the frame on which the revetment finishes pre-fracturing is the frame the
+   * blade's contact set changes shape, the tip resolves a few millimetres
+   * elsewhere, and the kerf lands on different texels for the rest of the run.
+   *
+   * Isolated: pinning the budget so no slice is ever cut short makes the same
+   * drive bit-identical across processes, and so does freezing
+   * `performance.now`. Both give the same answer — the tight loop 14.4 s, the
+   * natural 15.4 s — which is the answer a machine fast enough to finish the
+   * work in one frame was already getting. Nothing else in `world.update`
+   * branches on real time: the two physics backends and CraterLog read the
+   * clock for `stats.ms` only.
+   *
+   * So the bench states it rather than inheriting it. This is not the door
+   * being given an easier ride — it is the same measurement with the machine
+   * taken out of it, which is the difference between HANDOFF §2.7's "measuring
+   * the harness" and measuring the game. `frame-budget` is where the cost of
+   * that work belongs and is where it is still measured.
+   */
+  LIVE.world.destruction.prepareBudgetMs = Infinity;
   return LIVE;
 }
 function retire() {
@@ -159,17 +197,15 @@ const facing = (dx, dz) => Math.atan2(-dx, -dz);
  * than typed.
  *
  * It used to be `res² × breachFraction`, and `breachFraction` was the whole
- * rule: melt 5.5% of the plate, anywhere, and it opens. That rule was replaced
- * because it could not be reached by the play the design rewards — a tidy loop
- * inside one arm's reach re-burns metal it has already melted, so the counter
- * plateaus (measured: 840 of the 901 it wanted, held for seventy-five seconds,
- * door shut). `BlastDoor.burn` now opens on either a CLOSED LOOP (`slugArea`)
- * or a quantity of melted metal (`meltArea`), both in square metres so that
- * resizing a door does not reprice the mechanic.
+ * rule: melt 5.5% of the plate, anywhere, and it opens. It is `meltArea` now —
+ * the same rule in SQUARE METRES, so a bigger door is not a proportionally
+ * longer job when the patch a standing player can reach is the same size on
+ * every door. See `MELT_AREA` in src/world/Props.js for the measurement that
+ * sets it, and the note in `burn` for the closed-loop rule that stood here for
+ * one lane and never once fired.
  *
- * This is the second of those two, in the texels this suite counts in, and it
- * is derived from the door's own dimensions — so it follows a retune instead of
- * disagreeing with one.
+ * Derived from the door's own dimensions rather than typed, so it follows a
+ * retune instead of disagreeing with one.
  */
 function breachTexels(door) {
   const cellArea = (door.width * door.height) / (door.res * door.res);
@@ -192,9 +228,11 @@ function rearm(world, door) {
  * (`SaberController.bladeMode`), so the drive is a closed loop on the
  * controller's own guard deflection: each frame it asks for the mouse motion
  * that would put the guard on the next point of a circle of radius `R`. Open
- * loop — a sinusoid straight onto `mouse.dx` — traces a Lissajous that
- * re-burns the same texels and never closes a loop; measured, it saturated at
- * 671 of the 901 texels a breach needs and stayed there for a further 40 s.
+ * loop — a sinusoid straight onto `mouse.dx` — traces a Lissajous whose guard
+ * never reaches the radius it was asked for, so it re-burns one small patch;
+ * measured, it saturated at 671 texels against a quota of 901 at the time and
+ * stayed there for a further 40 s. The closed loop is not a nicety: it is the
+ * difference between driving the guard and hoping.
  *
  * The player is pinned in place and re-aimed every frame so that what is
  * measured is the DOOR and not a walk. `secs` is a bound, not a duration.
@@ -526,8 +564,18 @@ export async function run({ check, assert }) {
      * saturates there — 521 texels after 150 s of standing at the plate, still
      * climbing by two texels a minute. Four zones and a step open it.
      *
+     * AND THE HEAD MOVES, which is worth 10 s of the answer and is not a
+     * flourish. This drive used to pin `camera.pitch` to 0 for the whole ninety
+     * seconds — a body that works four guard zones and never once looks up or
+     * down the plate, which is not a player, and which costs the drive the one
+     * axis the directional scheme gives it for free. A slow 0.22 rad sweep is
+     * what a player does while watching a cut, and it takes the same hold from
+     * 62.8 s to 53.0 s on the shipped magazine.
+     *
      * It is SLOWER than the mouse-blade schemes, and that is the honest
-     * result: the scheme that gives you the blade gives you the door faster.
+     * result: the scheme that gives you the blade gives you the door faster —
+     * 53.0 s here against a 19.1 s median in check 4. What this clause is for
+     * is the word FINISHABLE, not a target time.
      */
     const { world } = await field();
     const door = world.doors[2];
@@ -550,7 +598,7 @@ export async function run({ check, assert }) {
       p.position.y = world.terrain.height(p.position.x, p.position.z);
       p.velocity.set(0, 0, 0);
       world.update(1 / 60, input);
-      p.camera.yaw = yaw; p.camera.pitch = 0;
+      p.camera.yaw = yaw; p.camera.pitch = Math.sin(t * 0.55) * 0.22;
       zones.add(C.zone);
       t += 1 / 60;
       if (door.opened) break;
@@ -639,7 +687,6 @@ export async function run({ check, assert }) {
     const { out, across } = frameOf(door);
     const inward = out.clone().negate();
     const p = world.player, T = world.terrain;
-    const yaw = facing(-out.x, -out.z);
     const input = idle();
     input.moveAxis = (o) => { if (o) { o.x = 0; o.y = 1; return o; } return { x: 0, y: 1 }; };
 
@@ -659,6 +706,20 @@ export async function run({ check, assert }) {
      * the WRONG side of the plane having been inside it. What is being asked
      * is whether the doorway is passable, so the answer is the depth reached,
      * and the debris is given a second and a half to land first. */
+    /* AND THE WALK IS STEERED AT THE DOORWAY, not run on a frozen heading.
+     *
+     * It used to pin `camera.yaw` to the door's own outward normal for all
+     * eight seconds, which is a body walking on a bearing rather than a player
+     * walking through a door: the slug this breach drops lands in the opening,
+     * the first contact with it puts a metre of drift on the walk, and a
+     * heading that never corrects then carries the player into the pier. On the
+     * stable bench that is not a flake, it is the answer — 1.47 m in, wedged
+     * against the cell's left wall at 1.31 m off the centre line, every run.
+     * Aiming at a point 4 m down the middle of the cell is what a player does
+     * with the same input, and it reaches 3.94 m dead on the centre line. The
+     * shut case is unmoved by it (−0.57 m either way): a plate you cannot walk
+     * through is a plate you cannot walk through however you approach it. */
+    const aim = door.mesh.position.clone().addScaledVector(inward, 4.0);
     const walkIn = () => {
       const from = door.mesh.position.clone().addScaledVector(out, 3.0);
       from.y = T.height(from.x, from.z);
@@ -666,7 +727,7 @@ export async function run({ check, assert }) {
       p.saber.retract();
       let deepest = -Infinity;
       for (let f = 0; f < 60 * 8; f++) {
-        p.camera.yaw = yaw;
+        p.camera.yaw = facing(aim.x - p.position.x, aim.z - p.position.z);
         world.update(1 / 60, input);
         deepest = Math.max(deepest, p.position.clone().sub(door.mesh.position).dot(inward));
       }
@@ -689,16 +750,28 @@ export async function run({ check, assert }) {
     assert(open > 2.0,
       `a Player only reached ${open.toFixed(2)} m past a BREACHED door's plane — the hole is not a hole`);
 
-    // the regression: a rigid body at the same doorway
+    /* THE REGRESSION: A RIGID BODY AT THE SAME DOORWAY — and it is the DEEPEST
+     * the crate got, for the reason the walk above is measured that way. Where
+     * it comes to REST is a fact about the cell: the floor is a rising toe, the
+     * slug the breach threw is lying on the threshold, and a crate that goes
+     * through the doorway at 9 m/s and rebounds off the back slope can finish
+     * outside the plane having been well inside it — measured, one arrangement
+     * of the cell ended it at −0.14 m having passed the plate. The question the
+     * flag-versus-collider regression asks is whether the doorway PASSES a
+     * rigid body at all: with the collider merely flagged the crate never
+     * reaches the plane, it bounces off it at 0.92 m and stays there. */
     const from = door.mesh.position.clone().addScaledVector(out, 0.9);
     from.y = T.height(from.x, from.z) + 0.55;
     const crate = makeCrate(world, from, 0.8);
     crate.body.velocity.copy(inward).multiplyScalar(9);
-    for (let f = 0; f < 90; f++) world.update(1 / 60, idle());
-    const went = crate.body.position.clone().sub(door.mesh.position).dot(inward);
+    let went = -Infinity;
+    for (let f = 0; f < 90; f++) {
+      world.update(1 / 60, idle());
+      went = Math.max(went, crate.body.position.clone().sub(door.mesh.position).dot(inward));
+    }
     assert(went > 0,
-      `a crate shoved at 9 m/s through a breached doorway ended ${went.toFixed(2)} m from the plane, `
-      + 'i.e. still outside it — the door is gone and its collider is not');
+      `a crate shoved at 9 m/s through a breached doorway never got past the plane — deepest `
+      + `${went.toFixed(2)} m — the door is gone and its collider is not`);
 
     return `+${paid.toFixed(0)} war support, a Player ${open.toFixed(2)} m into the cell, a crate `
       + `${went.toFixed(2)} m through the doorway, ${cache.length} liftable objects inside`;

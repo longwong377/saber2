@@ -2280,64 +2280,85 @@ const KERF_FRAG = /* glsl */`
  *
  * Kerf units a second of contact at the centre of the kerf, out of the 220 of
  * 255 a texel must reach to be melted through. At a resting press — the speed
- * term in `burn` is 0.667 there — that is 6 × 0.667 × 255 = 1021 units a
- * second, so ONE texel of plate opens in 0.216 s of dwell, and the twenty
- * seconds is that dwell times the loop you have to trace: `breachFraction`
- * 0.055 of a 128² map is 901 texels, and on the shipped 3.24 × 3.34 m plate
- * that is 0.60 m² of metal — about 4.6 m of traced kerf at the width this blade
- * melts, which is a loop a little over a metre a side and about the panel
- * `breach()` drops as the slug.
+ * term in `burn` is 0.667 there — that is 4 × 0.667 × 255 = 680 units a
+ * second, so ONE texel of plate opens in 0.32 s of dwell, and the twenty
+ * seconds is that dwell times the metal `MELT_AREA` asks for.
  *
  * MEASURED, not chosen. A real Player on the shipped magazine, `free` scheme,
  * blade laid on the plate and the guard walked round a circle, three loop
  * sizes, one per door of the rank (tools/checks/blast-door.mjs drives exactly
- * these three):
+ * these three), against `MELT_AREA` 0.34 m²:
  *
- *     MELT_RATE      tight loop     natural loop    wide loop
- *        4             34.2 s          26.9 s        36.6 s
- *        5             17.3 s          22.2 s        28.9 s
- *        6             14.9 s          18.5 s        22.6 s      ← ships
- *        7             11.8 s          15.2 s        20.9 s
+ *     MELT_RATE      tight loop     natural loop    wide loop    median
+ *       3.6            17.5 s          21.8 s        25.1 s      21.8
+ *       3.9            15.0 s          21.6 s        22.1 s      21.6
+ *       4.0            14.6 s          18.9 s        21.7 s      18.9   ← ships
+ *       4.2            12.0 s          19.2 s        21.3 s      19.2
  *
- * DESIGN.md prices the door at "twenty seconds of held blade". Six puts the
- * median at 18.5 and the whole band inside 15–23, and a player who traces a
+ * DESIGN.md prices the door at "twenty seconds of held blade". Four puts the
+ * median at 18.9 with the whole band inside 15–22, and a player who traces a
  * tidier loop is rewarded with a faster breach, which is the "entirely
- * player-driven" half of the same sentence. The table above reuses one World
- * across the twelve runs, which is what makes a sweep affordable; the shipped
- * suite builds a fresh one per case and reports 19.7 · 18.5 · 22.6 s, median
- * 19.7. Either way the answer is twenty seconds.
+ * player-driven" half of the same sentence.
+ *
+ * ── AND EVERY NUMBER ABOVE THIS LINE USED TO BE FICTION, which is worth a
+ * paragraph because it is the reason to distrust a measured comment. The table
+ * that stood here read 4 → 34.2 s and 6 → 14.9 s and was taken on a bench that
+ * gave a different answer on every run of identical code: the pre-fracture
+ * scheduler in src/world/Destruction.js does as much work as fits in
+ * `prepareBudgetMs` of REAL TIME per frame, and a structure's cells are what it
+ * publishes to the blade solver, so the frame the revetment finished
+ * pre-fracturing — a fact about the machine — changed the blade's contact set
+ * and moved every seconds figure this file quotes. Four consecutive runs of the
+ * suite on one commit: 7/9, 7/9, 9/9, 9/9, with the same natural loop reading
+ * 465 texels and never opening on one run and 16.3 s on the next. The bench
+ * pins that scheduler now (see `field` in tools/checks/blast-door.mjs) and the
+ * suite has been bit-identical since.
  */
-const MELT_RATE = 6.0;
+const MELT_RATE = 4.0;
 
 /**
- * HOW BIG A HOLE HAS TO BE BEFORE THE SLUG FALLS OUT, in square metres — see
- * `_slug`, and the note in `burn` about why this replaced a quota of texels.
+ * HOW MUCH METAL HAS TO BE GONE BEFORE THE PLATE GIVES, in square metres.
  *
  * 0.34 m² is a panel about 58 cm on a side. A body's shoulders are 45 cm, so it
- * is a hole you get through rather than a hole you look through, and it is
- * close to the piece the old quota's 0.60 m² of kerf would have traced round
- * anyway — a loop a little over a metre a side. In metres rather than in texels
- * so that resizing a door does not silently reprice the mechanic, which is
- * exactly what happened to the last one.
- */
-const SLUG_AREA = 0.34;
-
-/**
- * …AND HOW MUCH METAL OPENS ONE THE OTHER WAY, in square metres.
+ * is a hole you get through rather than a hole you look through. In SQUARE
+ * METRES and not in a share of the plate, which is the one part of the previous
+ * lane's rewrite that was right and stays: `breachFraction` 0.055 of a 128² map
+ * is 901 texels whatever the door measures, so resizing a door silently
+ * repriced the mechanic — that is what forced the magazine's doors down from
+ * 4.0 × 4.4 m to 3.3 × 3.4 to get two of nine runs over the line. A number in
+ * metal cannot do that. `breachFraction` is still honoured for any caller that
+ * passes one, and nothing in src/ does.
  *
- * The second door, for a player who never closes a loop: melt this much of the
- * plate anywhere and the rest of it gives. It is the OLD rule — 5.5% of a
- * 3.24 × 3.34 m plate, which is 0.60 m² — expressed in metal rather than in a
- * share, so that a bigger door is not a proportionally longer job and a
- * smaller one is not a shortcut. 0.55 is a shade under that measured figure
- * because a tight loop held inside one arm's reach plateaus at about 840 of
- * the 901 texels the share wanted: it re-burns metal it has already melted, so
- * the quota was unreachable by exactly the play the design says to reward.
+ * ── WHY 0.34 AND NOT 0.55, WHICH IS THE WHOLE OF WHY THIS MECHANIC KEPT
+ *    ARRIVING ON A KNIFE EDGE ──────────────────────────────────────────
+ *
+ * A texel already melted through cannot be melted twice, so a standing player
+ * does not melt metal at a constant rate: they saturate the patch their blade
+ * can reach and then creep. Measured on the shipped door, fresh World per case,
+ * `free` scheme, breach suppressed so the curve can be read past the point it
+ * would have opened — the melted area after two minutes of unbroken hold:
+ *
+ *     loop radius      20 s      39 s      59 s      119 s
+ *       0.25          0.242     0.536     0.547     0.550 m²
+ *       0.35          0.371     0.431     0.457     0.468 m²
+ *       0.50          0.552     0.552     0.553     0.560 m²
+ *
+ * Every drive levels off between 0.46 and 0.56 m², because that is the patch
+ * the blade can reach from one standing position and no drive reaches further.
+ * A quota of 0.55 m² therefore sat ON that knee: the 0.50 loop cleared it with
+ * 1% to spare, the 0.35 loop SATURATES 17% SHORT AND NEVER OPENS THE DOOR AT
+ * ALL, and the 0.25 loop needs a hundred and nineteen seconds. That is the
+ * exact defect the metres rewrite was meant to cure — a tidy loop that plateaus
+ * below the bar — moved from 901 texels to 833 and left there.
+ *
+ * 0.34 m² is 62–74% of the tightest of those plateaus, so every loop measured
+ * opens the door and the time answers to how the player traced it rather than
+ * to whether they cleared a knee: 0.25 → 32.1 s, 0.35 → 23.7 s, 0.50 → 14.6 s,
+ * 0.70 → 18.9 s, 0.85 → 21.7 s, and the default control scheme's four guard
+ * zones → 40.9 s. `MELT_RATE` is what puts that band on twenty seconds; this is
+ * what keeps a tidier player from being punished for being tidy.
  */
-const MELT_AREA = 0.55;
-
-/** How much fresh kerf earns another flood. See `_slug` for the cost. */
-const SLUG_EVERY = 24;
+const MELT_AREA = 0.34;
 
 export class BlastDoor {
   constructor(world, opts = {}) {
@@ -2359,14 +2380,18 @@ export class BlastDoor {
      * `addCrateStack`'s dropped `count` two thousand lines down — an option a
      * call site can write, that reads correctly, and that does nothing.
      *
-     * It matters because this number IS the twenty seconds — see `MELT_RATE`
-     * above, which is the other half of it. A caller that wants a heavier door
-     * says so here rather than editing this file.
+     * It matters because a number like this one IS the twenty seconds — see
+     * `MELT_RATE` above, which is the other half of it. A caller that wants a
+     * heavier door says so here rather than editing this file.
+     *
+     * It is no longer the DEFAULT rule, only the override: a share of the plate
+     * makes a bigger door a proportionally longer job while the patch a
+     * standing player can reach stays the same size, and `MELT_AREA` carries
+     * the measurement of what that cost. Nothing in src/ passes one.
      */
-    /* `null` unless a caller names one — see `burn`, where the default path is
-     * two rules in square metres and this one is the override. */
+    /* `null` unless a caller names one — see `burn`, where the default rule is
+     * melted metal in square metres and this one is the override. */
     this.breachFraction = opts.breachFraction ?? null;
-    this.slugArea = opts.slugArea ?? SLUG_AREA;
     this.meltArea = opts.meltArea ?? MELT_AREA;
     /** Kerf units burned per second of contact, out of the 220 of 255 a texel
      *  must reach to be melted through. See the long note in `burn`. */
@@ -2561,7 +2586,7 @@ export class BlastDoor {
      * ONE: A HELD BLADE BARELY CUT. Measured on a real Player, real World,
      * shipped solver, blade laid on the plate and traced in a slow loop —
      * contact on 99% of frames, blade speed 0.7 to 1.5 m/s — twenty seconds
-     * burned EIGHT of the 901 texels a breach needs. Extrapolated, the door
+     * burned EIGHT of the 901 texels a breach wanted then. Extrapolated, the door
      * DESIGN.md prices at twenty seconds of held blade came out at about five
      * minutes. Nobody had ever seen that, because until the capsule fix above
      * no blade had ever raised a contact on a door at all.
@@ -2579,8 +2604,10 @@ export class BlastDoor {
      * as a resting press, and no faster. A swing still cuts — it simply spends
      * a fiftieth of a second on each texel where opening one takes a fifth, so
      * it scores the plate and does not open it, which is what a blast door is
-     * for. Measured: 60 overhead attacks over thirty seconds burn 220 of the
-     * 901 texels a breach needs and the plate holds.
+     * for. Measured on the shipped magazine: 60 overhead attacks over thirty
+     * seconds burn 262 of the 515 texels a breach needs and the plate holds —
+     * half a breach for half a minute of mashing, and the second half is not
+     * coming, because a swing lands its dose on metal it has already scored.
      *
      * `meltRate` is the number the twenty seconds is set by, and it is measured
      * rather than guessed: see tools/checks/blast-door.mjs, which drives the
@@ -2612,99 +2639,48 @@ export class BlastDoor {
     }
 
     /**
-     * ── WHEN THE SLUG FALLS OUT, AND WHY IT IS NOT A QUOTA OF TEXELS ──────
+     * ── WHEN THE SLUG FALLS OUT, AND WHY IT IS METAL AND NOT A SHARE ──────
      *
-     * This read `cutArea / total > breachFraction`: burn 5.5% of the plate,
-     * anywhere, and the door opens. That is a QUOTA, and DESIGN.md does not
-     * describe a quota — it describes tracing a loop and the loop closing.
+     * This read `cutArea / total > breachFraction`: melt 5.5% of the plate,
+     * anywhere, and the door opens. Two things were wrong with that and only
+     * one of them has been fixed twice.
      *
-     * The quota has a failure the design does not, and it is the one this
-     * check caught: a texel already at 220 cannot be melted twice, so a player
-     * tracing a tidy circle inside their own reach re-burns the same metal and
-     * `cutArea` STOPS GROWING. Measured on the shipped magazine, a tight loop
-     * held for seventy-five seconds: 840 of the 901 texels the quota wants,
-     * plateaued, door shut. Seventy-five seconds of correct play and nothing to
-     * show for it — and it is the tidy loop, the thing the design says to
-     * reward, that fails. A door and a plate size where it happened to work was
-     * the only thing holding the mechanic up: the lane before this one had to
-     * shrink the doors from 4.0 × 4.4 m to 3.3 × 3.4 to get two of nine runs
-     * over the line.
+     * WHAT WAS RIGHT TO CHANGE: the rule was a SHARE OF THE PLATE, so a bigger
+     * door was a proportionally longer job while the patch a standing player
+     * can reach stayed the same size. That is what forced the magazine's doors
+     * down from 4.0 × 4.4 m to 3.3 × 3.4 to get two of nine runs over the line
+     * — a mechanic held up by a plate dimension. The rule is in SQUARE METRES
+     * now (`MELT_AREA`), so resizing a door does not reprice it.
      *
-     * WHAT OPENS IT NOW IS AN ENCLOSED HOLE. `_slug` floods the uncut metal in
-     * from the border; anything the flood cannot reach is metal your kerf has
-     * cut off from the rest of the plate — which is exactly the slug `breach`
-     * drops on the floor a few lines down. Close a loop and the piece inside it
-     * falls out, whatever size the door is and wherever on it you worked.
+     * WHAT THE FIRST REWRITE GOT WRONG, and it cost a whole lane: it decided
+     * the quota itself was the defect and replaced it with a CLOSED LOOP —
+     * `_slug()` flooded the uncut metal in from the rim and opened the door on
+     * whatever the flood could not reach, on the reading that DESIGN.md's "when
+     * your traced loop closes the slug falls out" is a rule rather than a
+     * description of what a breach looks like. It never once fired. Measured on
+     * the shipped magazine with the flood sampled every five seconds — three
+     * `free`-scheme loops held for seventy-five seconds each and the default
+     * scheme's four guard zones held for ninety — the enclosed area was ZERO on
+     * all twenty-four samples, and the reason is in the kerf itself: the blade
+     * lies ACROSS the plate, so a contact does not draw a line, it lays a bar.
+     * A picture of the kerf after twenty seconds of the natural loop is five
+     * horizontal bars stacked up the plate, spanning u 0.10–0.87 and v
+     * 0.25–0.91 — a ladder, with nothing enclosed anywhere in it. A rule that
+     * cannot fire is the same fault as `toughness: Infinity` up in `capsules`,
+     * one layer further in, so the flood is gone and the quota is the rule.
      *
-     * `SLUG_AREA` is what counts as a hole worth walking through and it is in
-     * SQUARE METRES rather than in texels, so it no longer moves when somebody
-     * resizes a door. The old quota is kept as a second door — see
-     * `breachFraction` — because a player who scribbles the whole plate to slag
-     * has plainly got through it even if they never closed a loop.
-     *
-     * THE COST IS BOUNDED. The flood is 16,384 cells and it is only run when
-     * the kerf has actually grown by `SLUG_EVERY` texels since the last one, so
-     * a twenty-second breach pays for it about thirty times.
+     * WHAT OPENS IT IS MELTED METAL, in square metres, and `MELT_AREA` carries
+     * the measurement that says why 0.34 rather than the 0.55 this arrived at.
+     * `breachFraction` stays as the override for a caller that genuinely wants
+     * a share of a plate; nothing in src/ passes one.
      */
     const total = RES * RES;
     const cellArea = (this.width * this.height) / total;
-    /* THE SECOND DOOR, and it is the old rule expressed in metal rather than
-     * in a share of the plate: a player who has melted this much of it has
-     * plainly got through, whatever shape they did it in. In square metres so
-     * that resizing a door does not reprice it — `breachFraction` is still
-     * honoured for any caller that passes one, and nothing in src/ does. */
     const melted = this.cutArea * cellArea;
     if (this.breachFraction != null
       ? this.cutArea / total > this.breachFraction
       : melted >= this.meltArea) { this.breach(); return true; }
-    if (this.cutArea - (this._slugAt ?? 0) >= SLUG_EVERY) {
-      this._slugAt = this.cutArea;
-      const cells = this._slug();
-      if (cells * cellArea >= this.slugArea) { this.breach(); return true; }
-    }
     return false;
-  }
-
-  /**
-   * HOW MUCH METAL THE KERF HAS CUT OFF FROM THE REST OF THE PLATE, in cells.
-   *
-   * A flood over the UNCUT texels starting from every border cell: whatever it
-   * cannot reach is enclosed. Iterative and on a reused Uint8Array, because a
-   * recursive flood over 16k cells is a stack the browser will not give us and
-   * an allocation here is one per burn.
-   *
-   * A kerf that touches the edge of the plate encloses nothing by this measure,
-   * which is correct: a cut from the middle to the rim does not drop a slug,
-   * it makes a slot.
-   */
-  _slug() {
-    /* `res` is the instance's own — `RES` is a local in the constructor and in
-     * `burn`, and the kerf is an RGBA buffer, so a texel's melt depth is at
-     * `(y * res + x) * 4`. Both details are load-bearing and both were wrong in
-     * the first draft of this method. */
-    const N = this.res, total = N * N;
-    const seen = (this._floodSeen ||= new Uint8Array(total));
-    seen.fill(0);
-    const stack = (this._floodStack ||= new Int32Array(total));
-    let top = 0;
-    const cut = (i) => this.kerfData[i * 4] >= 220;
-    for (let x = 0; x < N; x++) {
-      for (const i of [x, (N - 1) * N + x, x * N, x * N + N - 1]) {
-        if (!seen[i] && !cut(i)) { seen[i] = 1; stack[top++] = i; }
-      }
-    }
-    let reached = 0;
-    while (top > 0) {
-      const i = stack[--top];
-      reached++;
-      const x = i % N, y = (i / N) | 0;
-      if (x > 0) { const j = i - 1; if (!seen[j] && !cut(j)) { seen[j] = 1; stack[top++] = j; } }
-      if (x < N - 1) { const j = i + 1; if (!seen[j] && !cut(j)) { seen[j] = 1; stack[top++] = j; } }
-      if (y > 0) { const j = i - N; if (!seen[j] && !cut(j)) { seen[j] = 1; stack[top++] = j; } }
-      if (y < N - 1) { const j = i + N; if (!seen[j] && !cut(j)) { seen[j] = 1; stack[top++] = j; } }
-    }
-    /* Everything that is neither melted through nor reachable from the rim. */
-    return total - this.cutArea - reached;
   }
 
   breach() {

@@ -1803,15 +1803,37 @@ function magazine(world, opts = {}) {
     world.addDoor(door);
     doors.push(door);
 
-    /* …and the cache it is a door for, on the flat part of the cell floor
-     * 2.8 m in, where the ground has not started to climb yet. Ammunition
-     * crates and drums: `makeBarrel` builds an explosive prop, so a stray bolt
-     * into an open cell does what a stray bolt into a magazine should. */
-    addCrateStack(world, at(cx - 0.75, -3.0), { seed: seed + 100 + i * 7, count: 6,
+    /* …and the cache it is a door for, STACKED DOWN THE SIDES AND NOT IN THE
+     * MOUTH, which is a fix and not a preference.
+     *
+     * The comment that stood here said the cache was "on the flat part of the
+     * cell floor 2.8 m in, where the ground has not started to climb yet", and
+     * the ground disagrees with both halves. Sampled down the axis of the
+     * middle cell, height relative to the sill: 0.5 m in −0.01, 1.0 m +0.14,
+     * 1.5 m +0.29, 2.0 m +0.46, 2.8 m +0.78, 4.0 m +1.34. The cut is into a
+     * rising toe, so the flat runs out about a metre inside the door and the
+     * back of the cell is a ramp — which is right for a revetment dug into a
+     * stack and is why the deck over it is only 5.34 m up.
+     *
+     * The barrels stood at 1.2 m in, which is the DOORWAY. `breach()` sets off
+     * an explosion at the plate, that rolls them another half metre outward,
+     * and a player walking in then meets a drum on the threshold: measured
+     * before this line moved, the walk stopped 1.68 m past the plane with a
+     * barrel resting 0.80 m off the shoulder — the exact clearance of a body
+     * and a drum, so it was a squeeze and not a doorway. Stores belong against
+     * the side walls at the back of a cell anyway; nobody keeps ordnance where
+     * the door swings. Both files of drums are now 2.6 m in or deeper and
+     * 1.15–1.3 m off the centre line, which leaves the lane a body walks in on
+     * clear and reads as a cell that has been LOADED rather than one that has
+     * been tipped into. Measured after: 3.94 m in, dead on the centre line.
+     *
+     * `makeBarrel` builds an explosive prop, so a stray bolt into an open cell
+     * still does what a stray bolt into a magazine should. */
+    addCrateStack(world, at(cx - 1.05, -3.2), { seed: seed + 100 + i * 7, count: 6,
       tiers: 3, columns: 2, dynamic: 3, yaw: yaw + rr() * 0.4 - 0.2 });
-    makeBarrel(world, at(cx + 1.2, -1.9));
-    makeBarrel(world, at(cx + 1.15, -2.8));
-    makeBarrel(world, at(cx + 0.55, -3.5));
+    makeBarrel(world, at(cx + 1.3, -2.6));
+    makeBarrel(world, at(cx + 1.15, -3.3));
+    makeBarrel(world, at(cx + 1.25, -4.0));
   }
   return doors;
 }
