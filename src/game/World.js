@@ -12,6 +12,7 @@ import { RapierWorld, Body, LAYER, LOOSE_MASK, box, ball, hullFromGeometry, boxF
 import { Terrain } from '../world/Terrain.js';
 import { Particles } from '../world/Particles.js';
 import { LightningVfx } from '../world/Lightning.js';
+import { WarSupport } from './Support.js';
 import { GrassField, Water, Atmosphere, weather } from '../world/Scenery.js';
 import { BoltPool } from './Bolts.js';
 import { BladeContactSolver, captureSnapshot, gradeCaught, resolveBladeClash, GRADE, GRADE_DAMAGE, GRADE_NAME, DIFFICULTY, CatchWindow } from './Combat.js';
@@ -383,6 +384,19 @@ export class World {
      * it runs spans one. `unload()` therefore does not touch it and neither
      * does `_loadSteps`; `dispose()` does, and so does the run ending.
      */
+    /**
+     * WAR SUPPORT — what a stratagem costs, and it is not the player's Force.
+     *
+     * The player: "strategems should not cost force how does that even fucking
+     * make sense? maybe there's a bar and it shows the level of outside support
+     * and resources that have built up… when you use them it depletes your
+     * side's support resources so like carriers rearming".
+     *
+     * It is on the WORLD and not on the Player because a side has one supply
+     * line: in co-op the party shares it, which is what makes spending it a
+     * thing to talk about. See src/game/Support.js.
+     */
+    this.support = new WarSupport();
     this.extraction = new ExtractionDirector(this);
   }
 
@@ -896,6 +910,10 @@ export class World {
          * where the ground is told.
          */
         this.terrain?.setMight?.(groundMight(this));
+        /* A CLEARED WAVE IS THE BIGGEST THING THAT HAPPENS TO THE SUPPLY LINE
+         * short of holding ground. Behind `fresh` with the rest of the payouts,
+         * so `restartWave` cannot farm it. */
+        this.support?.credit('wave');
       }
       cleared(w);
       this._reviveDowned();
@@ -2922,6 +2940,7 @@ export class World {
     updateCauterisation(dt);
     this.particles.update(dt);
     this.lightning?.update(dt);
+    this.support?.update(dt);
     this.terrain.flush();
 
     // 7 — scenery
@@ -4038,6 +4057,11 @@ export class World {
      * one of your own. */
     if (enemy.team !== undefined && enemy.team !== 1 && this.command) return;
     this.score += A.score;
+    /* AND THE FLEET NOTICES. War support is what stratagems cost now, and it
+     * builds off the side doing well — see src/game/Support.js. Hung here
+     * beside the score because they are the same event answered twice: a body
+     * on the other side is down. */
+    this.support?.credit('kill');
     /**
      * `instanceof Player` OR a peer's avatar.
      *

@@ -40,6 +40,11 @@
 
 import * as THREE from 'three';
 import { audio } from '../engine/Audio.js';
+import { SUPPORT_MAX } from './Support.js';
+
+/** How many canisters a smoke screen lays. Named once: `canisters` walks them
+ *  and the check counts them, and two numbers for one payload is §2.3. */
+export const SMOKE_CANS = 6;
 import { clamp } from '../engine/MathUtil.js';
 import { addSmoke, updateSmoke, clearSmoke } from './Smoke.js';
 import { SortieDirector } from './Sorties.js';
@@ -262,10 +267,18 @@ export const STRATAGEMS = [
   },
   {
     id: 'smoke', name: 'Smoke screen',
-    cost: 12, cooldown: 14, at: 'aim', radius: 14,
+    /**
+     * WAY BIGGER, on the player's word: "the smoke screen needs to be way
+     * bigger and more useful". The radius here is the DESIGNATION ring — how
+     * much ground the reticle paints — and it moves with the payload: six
+     * canisters at 12 m across a 9 m spacing is a bank about 57 m long and 24
+     * deep, against the four-at-8.5-on-7 that made a 31 m one. See `canisters`.
+     */
+    cost: 12, cooldown: 14, at: 'aim', radius: 26,
     deliver: 'smoke', words: ['smoke', 'screen'],
-    blurb: 'A gunship lays four canisters across the ground you painted. Nothing '
-      + 'on either side can shoot what it cannot see.',
+    blurb: 'A gunship walks six canisters across the ground you painted — a bank '
+      + 'you cannot see over. Nothing on either side shoots what it cannot see, '
+      + 'and anything half-blinded by it sprays.',
     cadence: (ctx, site, S) => S.canisters(ctx, site),
   },
   {
@@ -480,6 +493,26 @@ export function codeFaults(rows = STRATAGEMS) {
  * One per player. `feed(dir)` takes a direction the input layer resolved,
  * `update(dt, ctx)` runs the pending calls, and `entry` is what the HUD paints.
  */
+/**
+ * WHAT A CALL COSTS IN SUPPORT, DERIVED FROM ITS FORCE PRICE.
+ *
+ * The `cost` on every row is kept — it is also what decides how LONG the code
+ * is (`codeLen` reads it, and that is the mechanic the whole table is balanced
+ * around), so replacing it with a second number would be HANDOFF §2.3's
+ * hand-maintained twin in the one file that can least afford one.
+ *
+ * The scale is chosen so the most expensive call on the table lands just under
+ * half the bar: `SUPPORT_MAX / (2 * dearest)`. That gives the shape the player
+ * asked for — "different strategems cost more obviously" — with the bar holding
+ * two heavy calls or four light ones, and it re-derives itself if a row's price
+ * ever moves.
+ */
+let _dearest = 0;
+export function supportCost(s) {
+  if (!_dearest) _dearest = STRATAGEMS.reduce((m, x) => Math.max(m, x.cost ?? 0), 1);
+  return Math.round((s.cost ?? 0) * (SUPPORT_MAX / (2 * _dearest)) * 2) / 2;
+}
+
 export class Stratagems {
   constructor(owner) {
     this.owner = owner;
@@ -669,7 +702,36 @@ export class Stratagems {
       audio.ui('bad');
       return false;
     }
-    if (p?._spend && !p._spend(s.cost)) {
+    /**
+     * IT COSTS WAR SUPPORT, NOT FORCE — and the player's question about the old
+     * arrangement answers itself: "strategems should not cost force how does
+     * that even fucking make sense?"
+     *
+     * It did not. `p._spend(s.cost)` is the Jedi's own pool, the one that buys
+     * a push and a lift, so calling in an orbital strike was paid for out of a
+     * connection to the Force. Beyond the fiction it had a real cost in play:
+     * the comm and the powers competed for one bar, so a run that leaned on
+     * stratagems could not lift a walker, and two systems meant to be different
+     * ways of fighting were one resource with two spouts.
+     *
+     * `world.support` is the side's supply line — see src/game/Support.js. It
+     * builds by itself, builds faster when the battle is going your way, and
+     * stops building for a while after every call, which is the "carriers
+     * rearming" the note asks for.
+     *
+     * THE FALLBACK IS THE OLD PATH and it is not dead code: `Stratagems` is
+     * constructed by the character creator and by the Codex preview, neither of
+     * which has a World, and a call there must still be refusable.
+     */
+    const support = p?.world?.support;
+    const cost = supportCost(s);
+    if (support) {
+      if (!support.spend(cost)) {
+        this._say(`${s.name}: ${Math.ceil(cost - support.value)} more support`);
+        audio.ui('bad');
+        return false;
+      }
+    } else if (p?._spend && !p._spend(s.cost)) {
       this._say(`${s.name}: not enough Force`);
       audio.ui('bad');
       return false;
@@ -1219,11 +1281,18 @@ export class Stratagems {
     // Own vectors, for the reason `gunRun` gives above.
     const across = new THREE.Vector3(Math.cos(b), 0, -Math.sin(b));
     const out = [];
-    for (let i = 0; i < 4; i++) {
-      const at = site.clone().addScaledVector(across, (i - 1.5) * 7.0);
+    /* SIX AT 12 m ON A 9 m PITCH — a 57 m bank, against the 31 m the four-at-
+     * 8.5 laid. The pitch is deliberately less than the diameter so consecutive
+     * canisters OVERLAP: two clouds' optical depths add (see Smoke.js), so the
+     * seams between them are the thickest part of the wall rather than the gaps
+     * a line can shoot through. Twenty-two seconds rather than thirteen,
+     * because a screen you have to re-lay before you have crossed it is a
+     * screen that never did its job. */
+    for (let i = 0; i < SMOKE_CANS; i++) {
+      const at = site.clone().addScaledVector(across, (i - (SMOKE_CANS - 1) / 2) * 9.0);
       out.push({
-        t: i * 0.28 - 0.42,
-        fn: (from, c) => { at.y = this._groundAt(c, at); this.smoke(c, at, 8.5, 13); },
+        t: i * 0.22 - 0.55,
+        fn: (from, c) => { at.y = this._groundAt(c, at); this.smoke(c, at, 12, 22); },
       });
     }
     return out;

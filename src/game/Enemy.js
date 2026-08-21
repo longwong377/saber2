@@ -4280,7 +4280,31 @@ export class Enemy {
     _v3.subVectors(aimAt, from).normalize();
     /* AIM IS A SKILL AND A CIRCUMSTANCE, not a difficulty slider. See
      * `aimQuality` — the whole of note #20 goes through this one multiply. */
-    const spread = (A.spread ?? 0.06) * (2 - acc) * this.aimQuality(from.distanceTo(aimAt));
+    /**
+     * …AND HALF-BLIND IS NOT THE SAME AS BLIND.
+     *
+     * The player: "the smoke screen needs to be way bigger and more useful, it
+     * should effect your allies and your enemies ability to aim obviously if it
+     * does not right now." It did not. `_canSee` gates ACQUISITION at
+     * `SMOKE_SEE` — below that transmittance you cannot pick a target at all —
+     * and the bolt loses damage on the way through. Between those two there was
+     * nothing: a shooter looking through a thinning bank, or clipping the edge
+     * of one, aimed exactly as well as one in clear air right up to the moment
+     * it could not see at all.
+     *
+     * So the same integral both of those already read now widens the CONE. A
+     * shooter with half the light getting through shoots at twice the spread;
+     * one at the acquisition threshold shoots at four times it and is spraying.
+     * `seeThrough` is transmittance, so `1/see` is the natural scale and the
+     * clamp is what stops a body at the very edge of the gate from firing into
+     * the next postcode.
+     *
+     * SYMMETRIC, like everything else about the cloud: this runs on every body
+     * with a weapon, and in Command your own line are Enemy instances too.
+     */
+    const see = seeThrough(from, aimAt);
+    const murk = clamp(1 / Math.max(see, 0.02), 1, 4.5);
+    const spread = (A.spread ?? 0.06) * (2 - acc) * this.aimQuality(from.distanceTo(aimAt)) * murk;
     _v3.x += (rng() - 0.5) * spread; _v3.y += (rng() - 0.5) * spread * 0.7; _v3.z += (rng() - 0.5) * spread;
     _v3.normalize();
 

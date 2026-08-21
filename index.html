@@ -871,6 +871,27 @@
         <div class="bar-cap"><label>Stamina</label><b id="bar-stam-num">100</b></div>
         <div class="bar st"><i id="bar-stam"></i></div>
       </div>
+      <!--
+        WAR SUPPORT — what a stratagem costs, and it is not the Force.
+
+        "strategems should not cost force how does that even fucking make
+         sense? maybe there's a bar and it shows the level of outside support
+         and resources that have built up… when you use them it depletes your
+         side's support resources so like carriers rearming, etc."
+
+        This is that bar. It is fourth rather than second because the first
+        three are YOURS — vitality, Force, stamina, all facts about your body —
+        and this one is a fact about the fleet: `.barline.side` marks that, and
+        the rule in styles.css gives it a rule above it so the eye reads the
+        break rather than a fourth of the same thing.
+
+        `.rearm` is set by HUD.update while the ships are turning round, which
+        is the one state the bar has that a level alone cannot show.
+      -->
+      <div class="barline side">
+        <div class="bar-cap"><label>Support</label><b id="bar-support-num">55</b></div>
+        <div class="bar sp"><i id="bar-support"></i></div>
+      </div>
     </div>
     <div id="boon-strip" class="boons"></div>
   </div>

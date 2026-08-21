@@ -4741,6 +4741,9 @@ export class CommandDirector extends WaveDirector {
     // Holding a whole area is the biggest thing that happens to a line's nerve.
     for (const c of this.commanders) this.shake(null, 'AREA_HELD', c);
     this.roster.points += this.area.muster;
+    /* HOLDING GROUND IS WHAT EARNS A FLEET'S ATTENTION. The largest single
+     * credit on the table — see SUPPORT_EARN. */
+    this.world?.support?.credit('area');
     this.log.push({ t: 'area', area: this.areaNumber, name: this.area.name,
                     strength: this.roster.strength, fallen: this.roster.fallen.length });
 

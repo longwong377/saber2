@@ -23,6 +23,7 @@ import { keyLabel, walkScale, ORDER_ACTIONS, codesFor } from '../engine/Bindings
 import { RANKS, ARMIES, ORDERS } from '../game/Command.js';
 import { DIR_GLYPH, callPhrase } from '../game/Stratagems.js';
 import { POWER_COST, POWER_BOON } from '../game/Powers.js';
+import { supportCost } from '../game/Stratagems.js';
 // The words a slot is about to say, and whether this browser can say them
 // at all. Audio.js owns both the table and the speaking; the wheel prints.
 import { wordsFor, canSpeakWords } from '../engine/Audio.js';
@@ -964,6 +965,8 @@ export class HUD {
       hitmarks: root.getElementById('hitmarks'),
       troopnames: root.getElementById('troopnames'),
       stratagem: root.getElementById('stratagem'),
+      support: root.getElementById('bar-support'),
+      supportNum: root.getElementById('bar-support-num'),
       killfeed: root.getElementById('killfeed'),
       coach: root.getElementById('coach'),
       coachTitle: root.getElementById('coach-title'),
@@ -1137,7 +1140,13 @@ export class HUD {
     this._stratKey = key;
     this._stratOpen = true;
     host.classList.remove('hidden');
-    const force = player.force ?? 0;
+    /* AFFORDABILITY IS ASKED OF THE SUPPLY LINE, not of the Force pool. A
+     * panel that greyed a row against `player.force` after the price moved to
+     * war support would light calls you cannot make and grey ones you can —
+     * which is the exact defect `Powers.js`'s own header records the HUD having
+     * had once already, from its private copy of the price table. */
+    const support = player.world?.support;
+    const purse = support ? support.value : (player.force ?? 0);
     /**
      * THE SECOND PHASE HAS ITS OWN PANEL, because it is a different question.
      *
@@ -1165,7 +1174,8 @@ export class HUD {
      */
     host.innerHTML = rows.map((r) => {
       const cd = Math.ceil(S.cooldowns[r.id] ?? 0);
-      const off = cd > 0 || force < r.cost;
+      const price = support ? supportCost(r) : r.cost;
+      const off = cd > 0 || purse < price;
       /* ARROWS, not the letters. A code is made of DIRECTIONS and W is only
        * what one happens to be bound to on a keyboard — see DIR_GLYPH.
        *
@@ -1182,7 +1192,7 @@ export class HUD {
         const cls = i < S.entry.length ? ' on' : (lead && i === S.entry.length ? ' next' : '');
         return `<i class="sg-d${cls}">${DIR_GLYPH[c] || c}</i>`;
       }).join('');
-      const note = cd > 0 ? `${cd}s` : `${r.cost}`;
+      const note = cd > 0 ? `${cd}s` : `${price}`;
       const words = lead
         ? `<div class="sg-words">${phrase.map((w, i) => {
           const cls = i < S.entry.length ? 'on' : (i === S.entry.length ? 'next' : '');
@@ -1603,6 +1613,29 @@ export class HUD {
     el.stam.style.transform = `scaleX(${clamp(stam, 0, 1)})`;
     el.stam.parentElement.classList.toggle('low', stam < 0.25);
     this._num(el.stamNum, player.stamina);
+    /**
+     * WAR SUPPORT — the side's, not yours. See src/game/Support.js.
+     *
+     * `?.` on every reach because a check drives `HUD.update` against a stub
+     * world, and because the bar has to be honest about a world that has no
+     * supply line rather than drawing a full one: it hides.
+     */
+    const sup = world?.support;
+    if (el.support) {
+      const line = el.support.parentElement?.parentElement;
+      if (!sup) { if (line) line.classList.add('hidden'); }
+      else {
+        if (line) line.classList.remove('hidden');
+        el.support.style.transform = `scaleX(${clamp(sup.frac, 0, 1)})`;
+        /* THE ONE STATE A LEVEL CANNOT SHOW. While the ships are turning round
+         * the bar is not merely low, it is not filling — and a player watching
+         * a bar that has stopped moving needs to be told that is the rule and
+         * not a bug. */
+        el.support.parentElement.classList.toggle('rearm', sup.rearming);
+        el.support.parentElement.classList.toggle('low', sup.frac < 0.2);
+        this._num(el.supportNum, sup.value);
+      }
+    }
 
     // ── flow
     el.flowFill.style.width = `${clamp(player.flow, 0, 1) * 100}%`;

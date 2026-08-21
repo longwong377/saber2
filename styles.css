@@ -1846,3 +1846,20 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
 #boot .boot-msg{color:#5a2c17;text-shadow:0 1px 0 rgba(255,246,230,.55)}
 #boot .boot-bar{background:rgba(90,44,23,.22);border-color:#5a2c17}
 #boot .boot-bar i{background:#a4653f}
+
+/* ── WAR SUPPORT, the fourth bar ──────────────────────────────────────────
+   "maybe there's a bar and it shows the level of outside support and resources
+   that have built up… when you use them it depletes your side's support
+   resources so like carriers rearming, etc."
+
+   It is separated from the three above it by a rule, because those three are
+   facts about YOUR BODY and this one is a fact about the fleet. Brass rather
+   than the accent: it is a supply, not a live thing.
+
+   `.rearm` is the one state a level cannot show. A bar that has stopped filling
+   looks broken unless the interface says it is holding, so it pulses. */
+.barline.side{margin-top:7px;padding-top:7px;border-top:2px solid var(--stroke)}
+.bar.sp i{background:var(--accent-warm)}
+.bar.sp.low i{background:var(--danger)}
+.bar.sp.rearm i{animation:rearm 1.1s ease-in-out infinite}
+@keyframes rearm{0%,100%{opacity:1}50%{opacity:.42}}
