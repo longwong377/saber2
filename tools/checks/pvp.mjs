@@ -1292,6 +1292,17 @@ export async function run({ check, assert }) {
       _creditDeflect: World.prototype._creditDeflect,
       _onBoltDeflect: World.prototype._onBoltDeflect,
       _bladeEntries: World.prototype._bladeEntries,
+      /* AND `_screenFor` WITH IT, because borrowing a method borrows everything
+       * it calls. `_bladeEntries` stamps each entry with the screen the owner is
+       * holding (World._screenFor), and a fixture that borrows the first without
+       * the second throws `this._screenFor is not a function` on the line that
+       * builds the entry — which is what this check did the day the screen
+       * landed. A stub `this` is a hand-copy of a class's dependency set; the
+       * cost of that is one line per method the borrowed one reaches. Here it
+       * returns null on the first statement anyway — these duellists carry
+       * `control: null`, and no blade is being held — but null is the answer the
+       * game gives, and the check has to get it from the game. */
+      _screenFor: World.prototype._screenFor,
     };
     const mk = (saber, team) => Object.assign(Object.create(Player.prototype), {
       alive: true, saber, isLocal: true, team, flow: 1, score: 0, stamina: 100,
