@@ -221,9 +221,22 @@ export async function run({ check, assert }) {
       const at = (nerve, shadow = false) => {
         const [e] = rank(world, 1, RANGE, 'b1');
         e.hp = 1e6;
-        let shots = 0;
+        /* THE SUBJECT'S BOLTS, NOT THE WORLD'S — and the difference is not
+         * hypothetical. `BoltPool.fire` is the one door every blaster round in
+         * the game leaves by, so an unfiltered counter here reads any shooter
+         * that happens to be on this ground: a wave the director let in, a
+         * body left over from an earlier arm of this same drive, an emplaced
+         * gun in the level's own dressing. The sentence the assertion below
+         * makes is about ONE BODY, so `opts.owner === e` is what it has to
+         * count, and a red that does appear then names a body that fired
+         * rather than a number nobody can attribute. `Enemy._shoot` is the
+         * only caller that stamps an owner, and it stamps `this`. */
+        let shots = 0, elsewhere = 0;
         const fire = world.bolts.fire.bind(world.bolts);
-        world.bolts.fire = (...a) => { shots++; return fire(...a); };
+        world.bolts.fire = (from, dir, opts = {}) => {
+          if (opts.owner === e) shots++; else elsewhere++;
+          return fire(from, dir, opts);
+        };
         let closing = 0, n = 0;
         for (let i = 0; i < 120; i++) {
           e.nerve = nerve;                       // held, so the drift does not move the arm
@@ -239,7 +252,8 @@ export async function run({ check, assert }) {
           if (e.wish && e.toTarget) { closing += e.wish.dot(e.toTarget); n++; }
         }
         world.bolts.fire = fire;
-        const out = { closing: n ? closing / n : 0, shots, at: +e.position.distanceTo(p.position).toFixed(1) };
+        const out = { closing: n ? closing / n : 0, shots, elsewhere,
+          at: +e.position.distanceTo(p.position).toFixed(1) };
         e.dead = true; e.dispose?.();
         const ix = world.enemies.indexOf(e); if (ix >= 0) world.enemies.splice(ix, 1);
         return out;
@@ -269,9 +283,11 @@ export async function run({ check, assert }) {
       assert(gunBroken.shots > 0,
         'a merely BROKEN body held at its own range has stopped firing too — a line falling back '
         + 'while shooting is the difference between breaking a formation and switching it off');
+      const stray = gunSteady.elsewhere + gunBroken.elsewhere + gunRefusing.elsewhere;
       return `feet: steady ${steady.closing.toFixed(2)} (ends ${steady.at} m) · broken `
         + `${broken.closing.toFixed(2)} (ends ${broken.at} m) · gun at a held ${RANGE} m: steady `
-        + `${gunSteady.shots} · broken ${gunBroken.shots} · refusing ${gunRefusing.shots}`;
+        + `${gunSteady.shots} · broken ${gunBroken.shots} · refusing ${gunRefusing.shots}`
+        + ` · ${stray} bolts on this ground came from somewhere else`;
     } finally { world.unload?.(); }
   });
 
