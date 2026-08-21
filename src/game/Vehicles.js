@@ -1503,6 +1503,306 @@ export function buildGunship(opts = {}) {
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
+/*  The transport — the one ship the player is INSIDE                     */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * THE TROOP TRANSPORT, AND WHY IT IS NOT `buildGunship`.
+ *
+ * The player, for the third time, and the whole of it is one complaint about
+ * one object:
+ *
+ *   "the transports are closed at the sides, you can't see yourself or your
+ *    troops it's completely blocked and also incredibly janky, like you don't
+ *    even walk into the ship you touch it and teleport in I guess?… also the
+ *    models are still pretty crude considering how good of references you have,
+ *    also they fly backwards a lot, I don't see any engines working, a lot of
+ *    troops have trouble getting inside… Maybe like the transports land, you
+ *    see a large ramp come out, then the side doors slide open, the troops file
+ *    in, you can either sit or stand… then you land, and can only disembark
+ *    when the ramp comes back out, then the ramp retracts once the troops are
+ *    out, the side doors close, then the ships leave."
+ *
+ * `buildGunship` cannot answer any of that, and the reason is structural rather
+ * than a matter of detail. Its "open troop bay" is a DARK PLATE:
+ *
+ *     kf.add(M.dark, plateGeo(0.10, 1.00, 2.60, …), [±1.42, -0.04, 0.90])
+ *
+ * — a 10 cm slab standing where a doorway would be, with a rail above and
+ * below it. There is no aperture, no interior, and no volume a body could
+ * stand in; the whole hull is one merged mesh, so nothing on it can move. A
+ * passenger was therefore placed ON THE SILL, half a body outboard of the
+ * belly, which is what `Extraction._seat`'s own note describes as the fix for
+ * an earlier version of the same problem. It is a gunship, and it is a good
+ * one — it still flies every ARRIVAL in the game.
+ *
+ * This is the ship you ride, and everything about it is decided by that:
+ *
+ *   A REAL BAY. Floor, roof, two ribbed side walls and a bulkhead, with a
+ *     hollow between them 2.4 m wide and 2.05 m tall — head clearance for a
+ *     standing trooper, which is what makes "you can either sit or stand" a
+ *     thing the geometry supports rather than a pose.
+ *   PARTS THAT MOVE, so they are their own groups and NOT baked into the hull
+ *     merge: `ramp` hinges at the aft floor edge, `doorL`/`doorR` slide aft
+ *     along the rails. Everything else is merged, because a bay you can see
+ *     into is already the most expensive ship in the game.
+ *   ENGINES YOU CAN SEE WORKING. Four nozzles on two nacelles, each with an
+ *     anchor the director hangs a flare on, plus the housing and the intake —
+ *     "I don't see any engines working" is answered by a lit thing in a shaped
+ *     hole rather than by a glow sprite in space.
+ *   PILOTS. Two seats forward under a canopy that is glass on three sides,
+ *     with two bodies in them. They are simple — a torso, a head, two arms on
+ *     a stick — because they are seen through tinted glass from behind, and
+ *     because two more rigs per transport is a cost this mode cannot pay.
+ *
+ * ── WHAT THE BAY PUBLISHES ────────────────────────────────────────────
+ *
+ * `userData.bay` is the box a body may stand in, in the ship's own space, and
+ * `userData.seats` is where they stand or sit in it. Both are read by
+ * `Extraction`, and they are here rather than there for the reason every
+ * measured number in this file is derived: a bay that moved and a seat table
+ * that did not is a passenger standing in a wall.
+ */
+let _transportTemplate = null;
+
+function transportMaterials() {
+  if (_transportM) return _transportM;
+  return (_transportM = {
+    shell: armorMat(0xcfc7b0, 0.08, 0.6, 0.8),
+    mark: armorMat(0x7b2f2c, 0.06, 0.62, 1.0),
+    dark: metalMat(0x34363a, 0.5, 0.9, 2.0),
+    deck: metalMat(0x4a4d52, 0.42, 0.85, 2.4),
+    glass: glassMat(0x1b2a30, 0.12),
+    belly: armorMat(0x6e714a, 0.05, 0.72, 1.4),
+    cloth: armorMat(0x2c2f36, 0.04, 0.8, 1.0),
+    skin: armorMat(0xb98d6a, 0.03, 0.85, 1.0),
+  });
+}
+let _transportM = null;
+
+/** One simple seated pilot. Seen through tinted glass from behind, always. */
+function pilotBody(M, s = 1) {
+  const g = new THREE.Group();
+  const k = new Kit();
+  k.add(M.cloth, plateGeo(0.44 * s, 0.52 * s, 0.30 * s, 0.06 * s, 1), [0, 0.30 * s, 0]);
+  k.add(M.cloth, plateGeo(0.40 * s, 0.26 * s, 0.44 * s, 0.06 * s, 1), [0, 0.02 * s, 0.14 * s]);
+  k.add(M.shell, new THREE.SphereGeometry(0.15 * s, 10, 8), [0, 0.66 * s, 0.01 * s]);
+  k.add(M.dark, plateGeo(0.30 * s, 0.13 * s, 0.20 * s, 0.03 * s, 1), [0, 0.66 * s, -0.10 * s]);
+  // both arms forward onto the stick
+  k.pair((sx) => {
+    k.add(M.cloth, new THREE.CylinderGeometry(0.055 * s, 0.05 * s, 0.40 * s, 6),
+      [sx * 0.22 * s, 0.36 * s, -0.16 * s], [1.15, 0, 0]);
+    k.add(M.skin, new THREE.SphereGeometry(0.055 * s, 7, 6), [sx * 0.22 * s, 0.30 * s, -0.34 * s]);
+  });
+  k.bake(g);
+  return g;
+}
+
+export function buildTransport(opts = {}) {
+  const S = opts.scale ?? 1.0;
+  if (S === 1 && _transportTemplate && !opts.fresh) {
+    const c = _transportTemplate.clone(true);
+    c.userData = {
+      ..._transportTemplate.userData,
+      engines: (_transportTemplate.userData.engines || []).map((e) => c.getObjectByName(e.name)),
+      ramp: c.getObjectByName('ramp'),
+      doorL: c.getObjectByName('doorL'),
+      doorR: c.getObjectByName('doorR'),
+      lamp: c.getObjectByName('lamp'),
+    };
+    return c;
+  }
+  const M = transportMaterials();
+  const g = new THREE.Group();
+  g.name = 'transport';
+
+  /* THE BAY, in the ship's own space. −Z is FORWARD for every craft in this
+   * file, so the ramp is at +Z and the cockpit at −Z. */
+  const BAY = { halfW: 1.20, floor: -0.95, roof: 1.10, front: -1.60, back: 3.30 };
+
+  /* ── hull: a boxy fuselage around the bay, with a raked nose ────────── */
+  const kf = new Kit();
+  // floor and roof of the bay
+  kf.add(M.deck, plateGeo(2.72 * S, 0.22 * S, 5.10 * S, 0.06 * S, 1), [0, (BAY.floor - 0.11) * S, 0.85 * S]);
+  kf.add(M.shell, plateGeo(2.86 * S, 0.24 * S, 5.10 * S, 0.08 * S, 1), [0, (BAY.roof + 0.12) * S, 0.85 * S]);
+  // the two side walls, ABOVE and BELOW the door aperture only — the aperture
+  // itself is empty, which is the entire point of this ship
+  kf.pair((sx) => {
+    kf.add(M.shell, plateGeo(0.16 * S, 0.34 * S, 5.10 * S, 0.05 * S, 1), [sx * 1.30 * S, (BAY.roof - 0.10) * S, 0.85 * S]);
+    kf.add(M.shell, plateGeo(0.16 * S, 0.40 * S, 5.10 * S, 0.05 * S, 1), [sx * 1.30 * S, (BAY.floor + 0.16) * S, 0.85 * S]);
+    // ribs between the rails, fore and aft of the aperture
+    kf.add(M.dark, plateGeo(0.12 * S, 2.05 * S, 0.26 * S, 0.03 * S, 1), [sx * 1.30 * S, 0.05 * S, -1.42 * S]);
+    kf.add(M.dark, plateGeo(0.12 * S, 2.05 * S, 0.26 * S, 0.03 * S, 1), [sx * 1.30 * S, 0.05 * S, 3.12 * S]);
+    // the door rails the panels ride on
+    kf.add(M.dark, plateGeo(0.09 * S, 0.09 * S, 5.30 * S, 0.02 * S, 1), [sx * 1.38 * S, (BAY.roof - 0.02) * S, 0.85 * S]);
+    kf.add(M.dark, plateGeo(0.09 * S, 0.09 * S, 5.30 * S, 0.02 * S, 1), [sx * 1.38 * S, (BAY.floor + 0.02) * S, 0.85 * S]);
+  });
+  // aft bulkhead above the ramp opening, so the bay is not a tube
+  kf.add(M.shell, plateGeo(2.60 * S, 0.70 * S, 0.20 * S, 0.05 * S, 1), [0, 0.80 * S, 3.36 * S]);
+  // the nose: a raked wedge forward of the bay, with the cockpit floor in it
+  kf.add(M.shell, plateGeo(2.46 * S, 1.86 * S, 1.90 * S, 0.30 * S, 2), [0, 0.02 * S, -2.60 * S]);
+  kf.add(M.shell, plateGeo(2.00 * S, 1.34 * S, 1.60 * S, 0.34 * S, 2), [0, -0.18 * S, -4.02 * S], [0.14, 0, 0]);
+  kf.add(M.shell, plateGeo(1.40 * S, 0.78 * S, 1.30 * S, 0.30 * S, 2), [0, -0.42 * S, -5.02 * S], [0.24, 0, 0]);
+  kf.add(M.belly, plateGeo(2.56 * S, 0.40 * S, 7.60 * S, 0.22 * S, 1), [0, -1.22 * S, -0.20 * S]);
+  /* THE TAIL. A dorsal fin and two canted stabilisers off the aft roof — the
+   * one thing that stops a boxy hull with a hole in its side reading as a van,
+   * and the shape the eye uses to tell which way the ship is pointing at four
+   * hundred metres. */
+  kf.add(M.shell, plateGeo(0.16 * S, 0.98 * S, 1.10 * S, 0.06 * S, 1), [0, 1.78 * S, 3.24 * S], [-0.26, 0, 0]);
+  kf.add(M.mark, plateGeo(0.20 * S, 0.26 * S, 0.44 * S, 0.03 * S, 1), [0, 2.06 * S, 3.38 * S], [-0.26, 0, 0]);
+  kf.pair((sx) => kf.add(M.shell, plateGeo(0.86 * S, 0.11 * S, 0.62 * S, 0.05 * S, 1),
+    [sx * 0.62 * S, 1.50 * S, 3.36 * S], [0, 0, sx * 0.34]));
+  kf.add(M.mark, plateGeo(0.34 * S, 0.06 * S, 4.60 * S, 0.02 * S, 1), [0, (BAY.roof + 0.25) * S, 0.85 * S]);
+  kf.bake(g, { silhouette: true });
+
+  /* ── the bay's furniture: benches down each side and grab rails ─────── */
+  const kb = new Kit();
+  kb.pair((sx) => {
+    kb.add(M.dark, plateGeo(0.52 * S, 0.10 * S, 4.30 * S, 0.03 * S, 1), [sx * 0.86 * S, -0.48 * S, 0.90 * S]);
+    kb.add(M.dark, plateGeo(0.10 * S, 0.46 * S, 4.30 * S, 0.02 * S, 1), [sx * 1.14 * S, -0.25 * S, 0.90 * S]);
+    // the overhead rail a standing trooper holds
+    kb.add(M.dark, new THREE.CylinderGeometry(0.035 * S, 0.035 * S, 4.40 * S, 6),
+      [sx * 0.52 * S, (BAY.roof - 0.18) * S, 0.90 * S], [1.5708, 0, 0]);
+    // and the straps hanging off it
+    kb.row(5, (i, t) => {
+      kb.add(M.cloth, plateGeo(0.05 * S, 0.30 * S, 0.02 * S, 0.005 * S, 1),
+        [sx * 0.52 * S, (BAY.roof - 0.36) * S, (-1.05 + t * 3.9) * S]);
+    });
+  });
+  kb.bake(g);
+
+  /* ── the ramp. Its own group, hinged at the aft lip of the floor ───── */
+  const ramp = new THREE.Group();
+  ramp.name = 'ramp';
+  ramp.position.set(0, (BAY.floor - 0.02) * S, BAY.back * S);
+  {
+    const kr = new Kit();
+    kr.add(M.deck, plateGeo(2.30 * S, 0.16 * S, 2.60 * S, 0.05 * S, 1), [0, 0, 1.30 * S]);
+    // cleats, so it reads as something you walk UP
+    kr.row(6, (i, t) => {
+      kr.add(M.dark, plateGeo(2.10 * S, 0.05 * S, 0.10 * S, 0.01 * S, 1), [0, 0.10 * S, (0.32 + t * 2.0) * S]);
+    });
+    kr.pair((sx) => kr.add(M.dark, plateGeo(0.08 * S, 0.22 * S, 2.60 * S, 0.02 * S, 1), [sx * 1.11 * S, 0.10 * S, 1.30 * S]));
+    kr.bake(ramp);
+  }
+  g.add(ramp);
+
+  /* ── the two side doors, each its own group, sliding aft on the rails ─ */
+  const doors = [];
+  for (const sx of [1, -1]) {
+    const d = new THREE.Group();
+    d.name = sx > 0 ? 'doorL' : 'doorR';
+    const kd = new Kit();
+    kd.add(M.shell, plateGeo(0.14 * S, 1.94 * S, 2.30 * S, 0.05 * S, 1), [sx * 1.30 * S, 0.05 * S, 0.85 * S]);
+    kd.add(M.mark, plateGeo(0.06 * S, 0.30 * S, 0.90 * S, 0.02 * S, 1), [sx * 1.38 * S, 0.55 * S, 0.85 * S]);
+    kd.add(M.dark, plateGeo(0.08 * S, 0.14 * S, 0.34 * S, 0.02 * S, 1), [sx * 1.38 * S, -0.20 * S, 1.70 * S]);
+    kd.bake(d);
+    g.add(d);
+    doors.push(d);
+  }
+
+  /* ── the cockpit, and two pilots you can see ───────────────────────── */
+  const kc = new Kit();
+  kc.add(M.glass, plateGeo(2.02 * S, 0.94 * S, 1.56 * S, 0.16 * S, 1), [0, 0.46 * S, -3.16 * S], [0.20, 0, 0]);
+  kc.pair((sx) => kc.add(M.glass, plateGeo(0.10 * S, 0.80 * S, 1.60 * S, 0.06 * S, 1), [sx * 1.00 * S, 0.30 * S, -2.94 * S]));
+  kc.add(M.dark, plateGeo(2.20 * S, 0.13 * S, 0.34 * S, 0.04 * S, 1), [0, 1.02 * S, -2.44 * S]);
+  kc.add(M.dark, plateGeo(2.00 * S, 0.13 * S, 0.30 * S, 0.04 * S, 1), [0, 0.06 * S, -4.22 * S], [0.24, 0, 0]);
+  kc.bake(g);
+  for (const sx of [1, -1]) {
+    const p = pilotBody(M, 0.92 * S);
+    p.position.set(sx * 0.46 * S, -0.02 * S, -3.10 * S);
+    p.name = sx > 0 ? 'pilotL' : 'pilotR';
+    g.add(p);
+    const seat = new Kit();
+    seat.add(M.dark, plateGeo(0.52 * S, 0.70 * S, 0.16 * S, 0.04 * S, 1), [sx * 0.46 * S, 0.26 * S, -2.86 * S]);
+    seat.bake(g);
+  }
+
+  /* ── wings, gear and the four engines ──────────────────────────────── */
+  const kw = new Kit();
+  kw.pair((sx) => {
+    /* SWEPT BACK, and the sign of that rotation is the whole of it: +y on the
+      * +x side carries the outboard edge FORWARD, which put the wing over the
+      * nose and hid the cockpit. Negative sweeps it aft, off the bay's door
+      * aperture, which is the one part of this ship that must never be
+      * occluded. */
+    kw.add(M.shell, plateGeo(3.30 * S, 0.24 * S, 1.70 * S, 0.10 * S, 1),
+      [sx * 2.66 * S, 0.26 * S, 1.50 * S], [0, sx * -0.30, sx * -0.12]);
+    kw.add(M.mark, plateGeo(2.70 * S, 0.05 * S, 0.34 * S, 0.02 * S, 1),
+      [sx * 2.62 * S, 0.39 * S, 1.20 * S], [0, sx * -0.30, sx * -0.12]);
+    // the nacelle: a housing with an intake at the front and two nozzles aft
+    kw.add(M.shell, new THREE.CylinderGeometry(0.36 * S, 0.42 * S, 2.10 * S, 10),
+      [sx * 3.00 * S, 0.14 * S, 1.70 * S], [1.5708, 0, 0]);
+    kw.add(M.dark, new THREE.CylinderGeometry(0.33 * S, 0.33 * S, 0.26 * S, 10),
+      [sx * 3.00 * S, 0.14 * S, 0.62 * S], [1.5708, 0, 0]);
+    for (const oy of [0.19, -0.19]) {
+      kw.add(M.dark, new THREE.CylinderGeometry(0.20 * S, 0.24 * S, 0.40 * S, 8),
+        [sx * 3.00 * S, (0.14 + oy) * S, 2.74 * S], [1.5708, 0, 0]);
+    }
+    // landing gear, down: a leg and a pad
+    for (const gz of [-2.6, 2.4]) {
+      kw.add(M.dark, new THREE.CylinderGeometry(0.09 * S, 0.09 * S, 0.86 * S, 6), [sx * 1.05 * S, -1.62 * S, gz * S]);
+      kw.add(M.dark, plateGeo(0.46 * S, 0.12 * S, 0.60 * S, 0.03 * S, 1), [sx * 1.05 * S, -2.02 * S, gz * S]);
+    }
+  });
+  kw.bake(g, { silhouette: true });
+
+  /* ── the engine anchors the director hangs its flares on ───────────── */
+  const engines = [];
+  for (const sx of [1, -1]) {
+    for (const oy of [0.19, -0.19]) {
+      const e = new THREE.Object3D();
+      e.name = `engine${sx > 0 ? 'L' : 'R'}${oy > 0 ? 'U' : 'D'}`;
+      e.position.set(sx * 3.00 * S, (0.14 + oy) * S, 3.02 * S);
+      g.add(e);
+      engines.push(e);
+    }
+  }
+  const lamp = new THREE.Object3D();
+  lamp.name = 'lamp';
+  lamp.position.set(0, -1.20 * S, -3.90 * S);
+  g.add(lamp);
+
+  g.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; } });
+  g.updateMatrixWorld(true);
+  const bb = new THREE.Box3().setFromObject(g), bs = new THREE.Vector3();
+  bb.getSize(bs);
+  g.userData.engines = engines;
+  g.userData.lamp = lamp;
+  g.userData.ramp = ramp;
+  g.userData.doorL = doors[0];
+  g.userData.doorR = doors[1];
+  /* THE BAY AND ITS SEATS, PUBLISHED BY THE SHIP. See the header: a bay that
+   * moved and a seat table that did not is a passenger standing in a wall, so
+   * both are derived from `BAY` here and read by `Extraction` there. */
+  g.userData.bay = {
+    halfW: BAY.halfW * S, floor: BAY.floor * S, roof: BAY.roof * S,
+    front: BAY.front * S, back: BAY.back * S,
+  };
+  /* SEATS, BENCH FIRST AND THEN THE FLOOR. Six on the benches (three a side,
+   * facing inboard) and four standing down the middle holding the overhead
+   * rail — which is the "you can either sit or stand" the note asks for, in the
+   * order a real stick fills: the seats go first and the late arrivals stand. */
+  const seats = [];
+  for (let i = 0; i < 3; i++) {
+    for (const sx of [-1, 1]) {
+      seats.push({ x: sx * 0.86 * S, y: (BAY.floor + 0.55) * S, z: (-0.55 + i * 1.35) * S,
+        yaw: sx < 0 ? Math.PI / 2 : -Math.PI / 2, sit: true });
+    }
+  }
+  for (let i = 0; i < 4; i++) {
+    seats.push({ x: (i % 2 ? 0.34 : -0.34) * S, y: (BAY.floor + 0.02) * S,
+      z: (-0.9 + Math.floor(i / 2) * 1.5) * S, yaw: 0, sit: false });
+  }
+  g.userData.seats = seats;
+  g.userData.span = bs.x;
+  g.userData.length = bs.z;
+  g.userData.height = bs.y;
+  if (S === 1 && !opts.fresh) _transportTemplate = g;
+  return g;
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
 /*  Registration                                                          */
 /* ══════════════════════════════════════════════════════════════════════ */
 
