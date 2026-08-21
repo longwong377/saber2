@@ -1413,7 +1413,13 @@ export const CODEX = [
       + `already in flight. ${k('hurl')} fires the whole field; pressing ${k('stasis')} again `
       + `throws the whole field again, with every bolt going back to whoever fired it.` },
   { keys: ['heal'],
-    text: () => 'Force heal — three seconds of standing still, and a hit breaks it. Press again to stop.' },
+    /* THE ALLY HALF WAS MISSING FROM THE GAME AND THEREFORE FROM THE CARD.
+     * The player asked "remind me how to heal allies", and the honest answer
+     * was that you could not: the only thing that mended a trooper was the
+     * Resupply stratagem. It is the same key now — aim at the man. */
+    text: () => 'Force heal — three seconds of standing still, and a hit breaks it. Press again to '
+      + 'stop. AIM AT A WOUNDED ALLY and it mends them instead of you, and stands them up if they '
+      + 'are down.' },
   { keys: ['rend'], text: () => 'Rend apart. Takes a mechanical enemy to pieces where it stands.' },
   { keys: ['lightning'], text: () => 'Force lightning — an arc that jumps between bodies.' },
   { keys: ['unleash'],

@@ -994,6 +994,8 @@ button{font-family:inherit}
 .targetopen b{font-weight:600}
 .targetopen i{font-style:normal;opacity:.7}
 .targetopen.hidden{display:none}
+/* The mend cue reads as help rather than as damage — see #mend-cue. */
+.targetopen.mend b{color:var(--good)}
 
 /* ── event feed ──────────────────────────────────────────
    Killstreaks, deflection runs, a boss walking in.

@@ -113,12 +113,43 @@ export const MODES = {
    * draft: `World._earnInsight` hangs off the wave-clear signal in every mode,
    * so the tree is the Trial's whole progression and always has been.
    */
+  /**
+   * TWO MODES ON ONE AXIS, AND THE CARDS HAVE TO SAY WHICH AXIS.
+   *
+   * The player, having played both: "explain the difference between trail of
+   * waves and path of the blade". That is a menu defect and not a memory
+   * lapse — the two blurbs were written years apart and against different
+   * questions, so neither mentioned the other and neither named the thing that
+   * separates them. "Endless escalation" and "waves, boons and a run that ends
+   * when you do" describe the same evening.
+   *
+   * They differ in ONE thing: WHERE YOUR POWER COMES FROM. Path of the Blade
+   * deals you a boon every DRAFT_EVERY waves and you keep it for the run; the
+   * Trial deals none at all and hands you the Holocron instead, which is
+   * permanent and is the same tree in every mode. Everything else about them —
+   * the ladder, the composer, the bosses — is the same code with the same
+   * numbers, and `budgetFor` even reads `this.drafts` so the ramp itself is
+   * derived from that one difference rather than tuned twice.
+   *
+   * So each card now names the axis and the other mode's answer to it. The
+   * cadences are typed rather than interpolated — `DRAFT_EVERY` and `TRIAL`
+   * are declared further down this file and reading them here would be a
+   * temporal-dead-zone crash on import — and `tools/checks/claims.mjs` holds
+   * both numbers to the constants instead, which is what that suite is for: a
+   * blurb with a figure in it is a claim, and a claim nothing checks is a
+   * sentence that drifts one tuning pass later.
+   */
   waves: {
     name: 'Trial of Waves',
-    blurb: 'Endless escalation, and no cards to soften it. The Force sets the terms of every second wave; '
-      + 'what you build, you build in the Holocron.',
+    blurb: 'The same waves with NO boons: nothing is drafted and nothing softens the ramp. Your '
+      + 'power comes from the Holocron, which is permanent — and the Force renames the terms of '
+      + 'every 2nd wave from wave 4.',
   },
-  roguelite: { name: 'Path of the Blade', blurb: 'Waves, boons and a run that ends when you do.' },
+  roguelite: {
+    name: 'Path of the Blade',
+    blurb: 'One life and one build: a boon drafted every 2nd wave, kept until you die. The run '
+      + 'makes you stronger; the Trial next door does not.',
+  },
   /**
    * THE BLURB IS A CLAIM, AND IT USED TO BE THE ONLY TRUE THING HERE.
    *

@@ -649,6 +649,16 @@ const COMPEL_SPREAD = 14;
 const HEAL_COST = POWER_COST.heal;
 /** Force Rend. Priced in the same table as every other power — see Powers.js. */
 const REND_COST = POWER_COST.rend;
+/**
+ * HOW FAR A MEND REACHES AND HOW WIDE IT LOOKS, for healing somebody else.
+ *
+ * 15 m is a shout across a firing line rather than a touch: a commander should
+ * not have to walk into the beaten zone to help the man in it, and anything
+ * much longer would be healing people you cannot see. The cone is 0.94 —
+ * about 20° — because a trooper is a small target at that range and this is a
+ * mercy, not a shot.
+ */
+const MEND_REACH = 15, MEND_CONE = 0.94;
 const HEAL_TIME = 3.0;
 const HEAL_FRACTION = 0.45;
 
@@ -2455,6 +2465,8 @@ export class Player {
     this.diving = false;
     /** Getting over something taller than a step — see CLIMB_RATE. */
     this.climbing = false;
+    /** Who the mend channel is being spent on, or null for yourself. */
+    this.healTarget = null;
     this.dashDir = new THREE.Vector3();
     /** Seconds left of an air dodge's somersault, and the horizontal axis it
      *  turns about. Zero on the ground: a dodge with a foot down is a step. */
@@ -6749,17 +6761,78 @@ export class Player {
    */
   forceHeal(ctx) {
     if (this.healing) { this._endHeal(false); return; }
-    if (this.hp >= this.maxHp) return this._refuse('force heal', 'already whole');
+    /**
+     * …AND THE SAME CHANNEL MENDS THE MAN IN FRONT OF YOU.
+     *
+     * The player: "remind me how to heal allies". They were right to ask and
+     * the honest answer was that you could not, quite: the only thing in the
+     * game that put a wounded trooper back on their feet was the Resupply
+     * stratagem's `reviveNear` — a call you spell out on the WASD codes, fly
+     * in, and land in a radius — and nothing you could do with your hands. A
+     * commander who has to call an orbital pod to help one man is a commander
+     * who does not help him.
+     *
+     * It is the SAME power rather than a new one, because the design question
+     * it answers is already solved: three seconds of standing still with your
+     * hands down is what a heal costs in a game about deflecting things, and
+     * that cost is exactly as interesting spent on somebody else. Aim at a
+     * hurt ally inside `MEND_REACH` and the channel goes to them; aim at
+     * nothing and it goes to you, which is what it always did.
+     */
+    const ally = this._mendTarget(ctx);
+    if (!ally && this.hp >= this.maxHp) return this._refuse('force heal', 'already whole');
     if (this.cooldowns.heal > 0) {
       return this._refuse('force heal', `recovering — ${this.cooldowns.heal.toFixed(1)}s`);
     }
     if (!this._canSpend(HEAL_COST)) {
       return this._refuse('force heal', `${this._priceOf(HEAL_COST)} Force needed, you have ${Math.round(this.force)}`);
     }
+    this.healTarget = ally;
     this.healing = 0;
     this._healFrom = this.hp;
+    this._mendFrom = ally ? ally.hp : this.hp;
     this._gesture('mend');
     audio.force(this.chest, 'pull');
+    if (ally) {
+      this.world?.notify?.('MENDING', ally.trooper?.name || ally.A?.label || 'a wounded ally');
+    }
+  }
+
+  /**
+   * THE WOUNDED ALLY UNDER THE RETICLE, or null for "heal yourself".
+   *
+   * Under the RETICLE and not "the nearest hurt friend", because a heal that
+   * picks its own patient is a heal you cannot aim at the man who needs it.
+   * The cone is generous — `MEND_CONE` is about 20° — since a trooper is a
+   * small thing at fifteen metres and this is a mercy rather than a shot.
+   *
+   * A body already at full health is not a target: without that clause,
+   * standing in your own line and pressing the key would mend a whole man and
+   * refuse to mend you. Downed men come first — see `_updateHeal`, which
+   * stands a limp one up when the channel completes.
+   */
+  _mendTarget(ctx) {
+    const list = ctx?.enemies || this.world?.enemies;
+    if (!list) return null;
+    const rules = ctx?.rules ?? this.world?.rules ?? null;
+    let best = null, bestScore = MEND_CONE;
+    for (const e of list) {
+      if (!e || e.dead || e === this) continue;
+      /* Friendly, by the same rule every other list in this file is built
+       * from: anything the powers are allowed to HARM is not an ally. */
+      if (canHarm(this, e, rules)) continue;
+      if (!(e.hp < (e.maxHp ?? 0))) continue;
+      _v1.subVectors(e.position, this.chest);
+      const d = _v1.length();
+      if (d > MEND_REACH || d < 1e-3) continue;
+      const dot = _v1.divideScalar(d).dot(this.aimDir);
+      if (dot < bestScore) continue;
+      /* A LIMP MAN OUTRANKS A HURT ONE at the same angle: he is the one who is
+       * out of the fight entirely. */
+      bestScore = dot - (e.actor?.ragdolled ? 0.05 : 0);
+      best = e;
+    }
+    return best;
   }
 
   /**
@@ -6994,25 +7067,48 @@ export class Player {
   _updateHeal(dt, ctx) {
     if (this.healing === null) return;
     // Interrupted by damage — checked against the hp we started with, so a
-    // single bolt ends it rather than being outrun by the heal itself.
+    // single bolt ends it rather than being outrun by the heal itself. It is
+    // YOUR concentration either way: a bolt that lands on you ends a heal you
+    // were giving somebody else too.
     if (this.hp < this._healFrom - 0.01) { this._endHeal(false); return; }
     if (!this._spend(HEAL_COST / HEAL_TIME * dt)) { this._endHeal(false); return; }
+    const T = this.healTarget;
+    if (T) {
+      /* THE THREE WAYS A MEND ENDS BADLY, and each is a thing the player can
+       * see happening: he died, he was carried out of reach, or he was hit
+       * again while you were working on him. */
+      if (T.dead) { this._endHeal(false, 'they were killed'); return; }
+      if (T.position.distanceTo(this.chest) > MEND_REACH + 3) { this._endHeal(false, 'out of reach'); return; }
+      if (T.hp < this._mendFrom - 0.01) { this._endHeal(false, 'they were hit'); return; }
+    }
     this.healing += dt;
-    this.hp = Math.min(this.maxHp, this.hp + this.maxHp * HEAL_FRACTION / HEAL_TIME * dt);
-    this._healFrom = this.hp;
+    const body = T || this;
+    body.hp = Math.min(body.maxHp, body.hp + body.maxHp * HEAL_FRACTION / HEAL_TIME * dt);
+    if (T) this._mendFrom = T.hp; else this._healFrom = this.hp;
     if (ctx.particles && rng() < 0.5) {
-      _v1.copy(this.chest).addScalar(0);
+      _v1.copy(T ? T.position : this.chest);
+      if (T) _v1.y += (T.A?.hipHeight ?? 0.95) + 0.3;
       ctx.particles.plasma.spawn(_v1, _v2.set((rng() - 0.5) * 0.6, 0.8, (rng() - 0.5) * 0.6),
         { life: 0.5, size: 0.35, drag: 2, gravity: -0.2, color: 0x9fffd0, alpha: 0.35 });
     }
     if (this.healing >= HEAL_TIME) this._endHeal(true);
   }
 
-  _endHeal(completed) {
+  _endHeal(completed, why = 'you were hit') {
+    const T = this.healTarget;
+    this.healTarget = null;
     this.healing = null;
     this._endGesture('mend');
     this.cooldowns.heal = completed ? 9 : 3;
-    if (!completed) this.world?.notify?.('HEAL BROKEN', 'you were hit');
+    if (!completed) this.world?.notify?.('HEAL BROKEN', why);
+    else if (T) {
+      /* AND A MAN WHO WAS LYING DOWN IS STANDING UP. `Enemy.recover` is the
+       * one door for that — `_tickGetUp` is the other caller — and it is what
+       * `Command.reviveNear` reaches for too, so a mend and a support pod put
+       * a body back on its feet the same way. */
+      if (T.actor?.ragdolled) T.recover?.();
+      this.world?.notify?.('MENDED', T.trooper?.name || T.A?.label || 'an ally');
+    }
   }
 
   /* ── force stop ──────────────────────────────────────────────────── */

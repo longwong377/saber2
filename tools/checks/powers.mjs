@@ -862,4 +862,106 @@ export async function run({ check, assert }) {
     return `${Object.keys(ENEMY_POWERS).length} verbs priced off POWER_COST; regen ${FORCE_REGEN}/s `
       + `against a cheapest verb of ${cheapest}`;
   });
+
+  check('powers: the mend goes to the man you are aiming at, and stands him up', async () => {
+    /**
+     * The player: "remind me how to heal allies."
+     *
+     * The honest answer was that you could not. `forceHeal` healed exactly one
+     * body — yours — and the only thing in the whole game that mended a
+     * trooper was `Command.reviveNear`, reachable through the Resupply
+     * stratagem: a code you spell out on the movement keys, a pod that flies
+     * in, and a radius. A commander who has to call orbital support to help the
+     * man next to him is a commander who does not help him.
+     *
+     * It is the same channel now — three seconds of standing still, the same
+     * cost, the same interrupt — pointed at somebody else. Three properties,
+     * and the third is the one that makes it worth having in a fight rather
+     * than after one.
+     */
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const { world } = await H.bootWorld({
+      level: 'colosseum', settings: { mode: 'waves', quality: 'low', instantSpawn: true },
+    });
+    const input = H.idleInput();
+    const p = world.player;
+    const ctx = { input, physics: world.physics, terrain: world.terrain, particles: world.particles,
+      enemies: world.enemies, players: world.players };
+    const at = new THREE.Vector3(p.position.x, p.position.y, p.position.z - 6);
+    const mate = world.spawnEnemy('trooper', at);
+    assert(mate, 'no trooper spawned');
+    mate.team = p.team;                                  // one of yours
+    for (let i = 0; i < 20; i++) world.update(1 / 60, input);
+
+    /* HURT, AND DOWN. Both halves of what a player means by a man who needs
+     * help, and the ragdoll is the half `reviveNear` handles too. */
+    mate.hp = mate.maxHp * 0.3;
+    mate.actor?.goRagdoll?.(mate.velocity.clone(), null);
+    const before = mate.hp;
+    p.force = p.maxForce = 500;
+    p.aimDir.subVectors(mate.position, p.chest).normalize();
+    p.forceHeal(ctx);
+    assert(p.healTarget === mate,
+      'the channel opened on the player rather than on the wounded ally under the reticle');
+    let n = 0;
+    while (n < 60 * 6 && p.healing !== null) { world.update(1 / 60, input); n++; }
+    assert(mate.hp > before + 1,
+      `the ally went ${before.toFixed(0)} → ${mate.hp.toFixed(0)} hp — the mend paid for itself and `
+      + 'did nothing');
+    assert(!mate.actor?.ragdolled, 'the mend finished and left the man lying on the ground');
+
+    /* AND AIMED AT NOTHING IT IS STILL YOUR OWN HEAL. */
+    p.cooldowns.heal = 0;
+    p.hp = p.maxHp * 0.5;
+    p.aimDir.set(0, 0.6, 1).normalize();                 // at the sky, away from him
+    p.forceHeal(ctx);
+    assert(p.healing !== null, 'the heal refused to open on the player with nobody in front of them');
+    assert(!p.healTarget, 'aimed at empty sky, the channel picked a patient anyway');
+    const mine = p.hp;
+    for (let i = 0; i < 60 * 4 && p.healing !== null; i++) world.update(1 / 60, input);
+    assert(p.hp > mine + 1, `the player's own heal went ${mine.toFixed(0)} → ${p.hp.toFixed(0)}`);
+    return `ally ${before.toFixed(0)} → ${mate.hp.toFixed(0)} hp and back on his feet; `
+      + `self ${mine.toFixed(0)} → ${p.hp.toFixed(0)}`;
+  });
+
+  check('powers: a mend cannot be spent on an enemy, and breaks when you are hit', async () => {
+    /* THE TWO REFUSALS. A heal that reached hostiles would be a bug you could
+     * see from the menu; a heal that could not be interrupted would make the
+     * three seconds free, and the three seconds ARE the design. */
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const { world } = await H.bootWorld({
+      level: 'colosseum', settings: { mode: 'waves', quality: 'low', instantSpawn: true },
+    });
+    const input = H.idleInput();
+    const p = world.player;
+    const ctx = { input, physics: world.physics, terrain: world.terrain, particles: world.particles,
+      enemies: world.enemies, players: world.players };
+    const foe = world.spawnEnemy('b1', new THREE.Vector3(p.position.x, p.position.y, p.position.z - 5));
+    for (let i = 0; i < 20; i++) world.update(1 / 60, input);
+    foe.hp = foe.maxHp * 0.2;
+    p.force = p.maxForce = 500;
+    p.hp = p.maxHp * 0.5;
+    p.aimDir.subVectors(foe.position, p.chest).normalize();
+    p.forceHeal(ctx);
+    assert(!p.healTarget, 'the mend picked a HOSTILE as its patient');
+    assert(p.healing !== null, 'and it did not fall back to healing the player');
+
+    /* Now the interrupt, on an ally: one bolt's worth of damage to YOU. */
+    const mate = world.spawnEnemy('trooper', new THREE.Vector3(p.position.x + 2, p.position.y, p.position.z - 4));
+    mate.team = p.team;
+    for (let i = 0; i < 10; i++) world.update(1 / 60, input);
+    p._endHeal(false);
+    p.cooldowns.heal = 0;
+    mate.hp = mate.maxHp * 0.4;
+    p.aimDir.subVectors(mate.position, p.chest).normalize();
+    p.forceHeal(ctx);
+    assert(p.healTarget === mate, 'the mend did not open on the ally');
+    for (let i = 0; i < 12; i++) world.update(1 / 60, input);
+    p.damage(6, p.position, foe, 'bolt');
+    world.update(1 / 60, input);
+    assert(p.healing === null, 'a hit landed on the healer and the mend carried on regardless');
+    return 'a hostile is not a patient; a hit on the healer ends it';
+  });
 }

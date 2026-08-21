@@ -17,7 +17,13 @@
  * Four properties, and each is a clause of the note.
  */
 
+import { clocked } from './_shared.mjs';
+
 export async function run({ check, assert }) {
+  /* Every check in this file drives a real World, which advances the wind
+   * clock and both seeded random streams — `tools/checks/determinism.mjs`
+   * fails a suite that leaves them where it found them. See _shared.mjs. */
+  check = await clocked(check);
   const boot = async () => {
     const H = await import('./_coop.mjs');
     const { world } = await H.bootWorld({

@@ -961,6 +961,7 @@ export class HUD {
       combo: root.getElementById('hud-combo'),
       score: root.getElementById('hud-score'),
       targetOpen: root.getElementById('target-open'),
+      mendCue: root.getElementById('mend-cue'),
       center: root.getElementById('hud-center-msg'),
       hitmarks: root.getElementById('hitmarks'),
       troopnames: root.getElementById('troopnames'),
@@ -1363,6 +1364,14 @@ export class HUD {
    * formation change) and a device the HUD had forgotten would silently
    * repaint half the screen back to keyboard letters.
    */
+  /** The key the player would actually press to mend, from the live bindings. */
+  _mendKeyLabel() {
+    const b = this._bindings;
+    if (!b) return 'HEAL';
+    const dev = this._pad && this._pad.device === 'pad' ? 'pad' : 'key';
+    return keyLabel(codesFor(b, 'heal', dev)[0], (this._pad && this._pad.family) || 'xbox') || 'HEAL';
+  }
+
   setBindings(bindings, pad = this._pad) {
     this._bindings = bindings;
     this._pad = pad || null;
@@ -1763,6 +1772,29 @@ export class HUD {
      * unambiguously talking about; otherwise the nearest open body inside the
      * reach a cut could plausibly follow a pull with.
      */
+    /**
+     * …AND THE ONE YOU CAN HELP.
+     *
+     * The player: "remind me how to heal allies". The reminder is worth
+     * nothing on a card in a menu — it is worth something while you are
+     * looking at a bleeding trooper, which is the only moment the question
+     * gets asked. `Player._mendTarget` is the authority on who that is, so
+     * this draws what the power would actually do rather than a second opinion
+     * about who is in range (HANDOFF §2.4).
+     */
+    if (el.mendCue) {
+      const t = player.healTarget || player._mendTarget?.({ enemies: world.enemies });
+      const key = t ? `${t.hp < t.maxHp * 0.35 ? 2 : 1}${player.healing != null ? 'h' : ''}` : null;
+      if (t && this._mendKey !== key) {
+        this._mendKey = key;
+        el.mendCue.firstChild.textContent = player.healing != null ? 'MENDING' : 'WOUNDED ALLY';
+        el.mendCue.lastChild.textContent = player.healing != null ? 'HOLD STILL' : `${this._mendKeyLabel()} TO MEND`;
+        el.mendCue.classList.remove('hidden');
+      } else if (!t && this._mendKey !== null) {
+        this._mendKey = null;
+        el.mendCue.classList.add('hidden');
+      }
+    }
     if (el.targetOpen) {
       let best = null, bestState = null, bestD = Infinity;
       for (const e of world.enemies) {
