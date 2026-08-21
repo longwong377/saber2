@@ -619,15 +619,49 @@ ending door (`_checkLine`), with a third card for the ending neither "you won"
 nor "you died" describes: the run is over, the army is gone, and you are still
 standing there.
 
-**And the mode's first honest measurement is a hard one.** With the Jedi held
-unkillable so survival is not a variable, a ten-man roster is wiped out in
-105–170 seconds of the FIRST engagement, on every seed, in both army modes —
-so the muster is unreachable in play and the mode cannot currently be won. That
-is not a regression: it is what §16.3 looked like from the other side. Until
-this exercise, **no hostile bolt could touch your own army at all**, so every
-number ever taken about the line was fiction and there is no earlier state to
-restore. What one engagement should cost a ten-man roster is now a live design
-question with a run-losing consequence attached, and nobody has set it.
+**And the mode's first honest measurement was half instrument, which is worth
+recording as carefully as the number was.** The first reading said a ten-man
+roster is wiped out in 105–170 seconds of the FIRST engagement, on every seed,
+in both army modes — so the muster is unreachable and the mode cannot be won.
+Two faults were in it, and both flattered the catastrophe:
+
+- **The muster window was invisible.** `_areaClear` ends with "no screen wired
+  — muster and press on", so `autoMuster()` and `closeMuster()` both run inside
+  one `payWave` call and `director.mustering` is true for **less than a frame**.
+  Every bench polled for it, never saw it, and ran on into areas two and three,
+  reporting the roster at whatever wipe it eventually reached. Held open with a
+  no-op `onMuster`, a line with **no player on the field takes four areas of
+  five**.
+- **The idle arm was measuring a magnet.** A Jedi held on his feet and not
+  playing is an unkillable target standing on the deploy mark, and
+  `Levy.installLevyAim` points forty conscripts at whatever blade is on the
+  field. Measured five seeds of five: **an idle Jedi is worse for the line than
+  no Jedi at all** — 0.0 survivors against 1.8. The reference arm is *no
+  player*.
+
+**The line was still far too cheap, and that is the real result.** Corrected
+instrument, no player, survivors at the muster: **1.8 of ten**. The user set the
+target at about half a ten-man line, and it now measures **5.4, five seeds of
+five holding the area** — with a spread that is the more useful number: thirteen
+runs read `4 6 6 3 8 · 7 10 0 · 1 1 3 5 5`, mean 4.5, **sd 2.9**, one engagement
+losing nobody and one wiped out.
+
+**The lever chose itself by measurement, and it says something about the
+budget.** Effective health is self-cancelling — `allyScale` prices the wave per
+*living* body, so 54% more health on every man bought one survivor and lost two
+runs to a wave composed for the line that lived. Everything on the threat ledger
+behaves that way. The two things NOT on it are the emplacement (a prop, never in
+`world.enemies`) and the levy (exempt by §6's own argument, every word of which
+is about the *player's* ledgers) — and between them they were **five of the
+eight names an engagement cost**. Halving both reaches the target; neither does
+alone, because survival is a threshold. Neither halving touches what either
+thing is for: the levy's job is suppression, which is billed per bolt and reads
+no damage at all.
+
+None of this is a regression. It is what §16.3 looked like from the other side:
+until this exercise **no hostile bolt could touch your own army at all**, so
+every number ever taken about the line was fiction and there was no earlier
+state to restore.
 
 ---
 

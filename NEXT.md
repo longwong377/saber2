@@ -795,19 +795,38 @@ Three things came with it and each closed a hole of its own:
 Eleven checks in `tools/checks/theline.mjs`, and every verdict one drives a real
 run to a real ending and reads the summary `onGameOver` delivered.
 
-### The mode's own open question, and it is the biggest thing on this list
+### The mode's own open question — ANSWERED, and the premise was half instrument
 
-**A ten-man roster is wiped out inside the first engagement, on every seed, in
-both army modes.** Measured with the Jedi held unkillable so survival is not a
-variable:
+> **CORRECTION, and the passage below is kept because the wrong reading is
+> instructive.** This section opened by saying a ten-man roster is wiped out
+> inside the first engagement on every seed, that the muster is never reached,
+> and that the mode cannot be won. **Two faults were in that measurement and
+> both flattered the catastrophe.**
+>
+> **The muster window was invisible.** `_areaClear` ends with "no screen wired
+> — muster and press on", so `autoMuster()` and `closeMuster()` both run inside
+> one `payWave` call and `director.mustering` is true for **less than a frame**.
+> Every bench polled for it, never saw it, and ran on into areas two and three,
+> reporting the roster at whatever wipe it eventually reached. Held open with a
+> no-op `onMuster`, a line with **no player on the field takes four areas of
+> five**. The muster was always reachable; nothing could see it.
+>
+> **The idle arm was measuring a magnet.** A Jedi held on his feet and not
+> playing is an unkillable target on the deploy mark, and `installLevyAim`
+> points forty conscripts at whatever blade is on the field. Five seeds of
+> five: **an idle Jedi is worse for the line than no Jedi at all**, 0.0
+> survivors against 1.8. The reference arm is *no player*, and every reading
+> below that says "idle player held unkillable" is a reading of a magnet.
+>
+> **The line was still far too cheap, which is the real result**, and it is now
+> tuned — see "Attrition is tuned, and the spread is the finding" above. The
+> paragraphs that follow are left as they were written.
+
+**The original reading.** A ten-man roster wiped out inside the first
+engagement, on every seed, in both army modes, with the Jedi held unkillable:
 
     theline  seed 1  155s   roster 0/10   theline  seed 2  113s  0/10
     command  seed 1  ~120s  roster 0/10   command  seed 3  ~180s 0/10
-
-— and the muster is never reached, so the mode's whole between-engagements beat
-is unreachable in play. This was always true of Command; nothing surfaced it,
-because losing the army ended nothing. The Line makes it a loss, which is the
-point of the inversion, and it also means **the mode cannot currently be won**.
 
 **What kills them**, wrapping `Enemy.prototype.damage` at runtime over two
 seeds, idle player, geonosis:
@@ -827,9 +846,10 @@ Three separate causes stack, and all three are correct in isolation:
    nobody has opened — since halved, and 36.9% after.
 
 **Nobody has measured it with a Jedi who plays.** Every reading above is an
-idle or scripted player, which is a corpse with a delay. That measurement is
-the next thing anybody should take: `tools/_linetoll.mjs` is the bench and
-takes `<mode> <seeds>`.
+idle or scripted player, which is a corpse with a delay. *(Taken since, with
+the muster window held open and three arms: no player **1.8** survivors, idle
+player **0.0**, a fighting `dutyInput` **3.0**. The idle arm is the outlier and
+it is the magnet effect above, not a floor.)*
 
 **AND THE TOTAL DID NOT MOVE WHEN BOTH SHARES WERE FIXED, which is the part
 that makes this a design question and not a bug hunt.** Re-taken on the branch
@@ -843,7 +863,17 @@ unchanged, so **there is no single culprit left to remove** — three sides of a
 three-way split are not three bugs, they are an exchange rate. Ruled out
 alongside it, on the same build: the engagement band (median 14.6 m, which is
 inside both sides' preferred bands), friendly fire (0.7%), and the formation
-coming apart (50–100% of the living inside `MORALE.NEAR`).
+coming apart (see the resolution above — the line holds to seven metres and it
+is the player who leaves).
+
+*(And the "no single culprit" reading was right about the sum and wrong about
+what to do with it. The culprit was not on either side of the split: it was that
+two of the three sources are **not on the wave's threat ledger at all** — the
+emplacement is a prop and never in `world.enemies`, and the levy is exempt by
+its own argument — so their output is identical whether you have ten men or two.
+Halving both hits the target; effective health does not, because `allyScale`
+prices the wave per living body and a line that lives longer meets a wave
+composed for the line that lived.)*
 
 **What a LIVE commander is worth, and it is the number this question was
 missing.** Both `command` checks that failed on the roster toll were measuring
@@ -1032,3 +1062,32 @@ wrong, and the wave table is why: both are driven by the same quantity — how
 many bodies a late wave puts on the field — so they are one lever and not two,
 and tuning either one blind will move the other. Whoever takes the attrition
 target should have this table in front of them.
+
+### Two live defects the attrition work found and did not fix
+
+**Every bolt fired at one of your men is aimed at his FEET.** `Enemy._shoot`
+leads on `target.chest ?? target.position`, and **only `Player` has a `chest`** —
+every other body in the game falls through to `position`, which is at the feet.
+It surfaced because a "men crouch under fire" lever measured *worse than
+nothing* (0.6 survivors against 1.8): crouching pulls a man toward the aim point.
+
+It is deliberately unfixed, and the reason is the size of it: giving `Enemy` a
+chest would roughly double every line's lethality overnight, on both sides, in
+every mode, and none of the tuning anywhere in this document was measured
+against that. It is the largest single unclaimed change in the combat model and
+it should be taken on its own, with the whole balance pass in front of it.
+
+**Engagement 3 wipes a fresh ten-man line in one wave**, before the attrition
+tuning and after it: 0 of 10 on five seeds, at about 100 s. Tuning engagement 1
+does not reach it. That is the mode's economy rather than a constant — the
+muster's replacement rate against a wave budget that keeps climbing — and it is
+the next thing between the mode and a run somebody can finish.
+
+### And a process note, because it is the second time
+
+`World.js` holds one module-level `rng` for the process and exports no
+reseeder, so **no run is reproducible across a code change**. Only distributions
+compare, which is why every attrition number in this document is a five- or
+thirteen-run spread rather than a seed-for-seed A/B. This is the same shape as
+`HANDOFF` §2.11 (one stream, one process) seen from the other end, and it is
+worth a reseeder the day somebody wants a true paired test.
