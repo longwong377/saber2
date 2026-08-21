@@ -747,10 +747,26 @@ async function step2() {
 
 /* ══════════════════════════════════════════════════════════════════════ */
 
-if (CMD === 'step0') await step0();
-else if (CMD === 'step1') await step1();
-else if (CMD === 'step2') await step2();
-else { console.error('usage: _flagship.mjs step0|step1|step2'); process.exit(2); }
+/**
+ * ONLY WHEN THIS FILE IS THE ONE THAT WAS RUN.
+ *
+ * `dutyInput` and `drive` are exported below and `tools/_open.mjs` imports
+ * them, so that this repository has ONE scripted Jedi rather than two — and a
+ * module that runs a step at import time makes that impossible: the importer's
+ * own argv reaches `CMD`, misses all three names, and the import exits the
+ * process with status 2 before the importer has done anything at all.
+ *
+ * `process.argv[1]` is the script node was handed; comparing it to this
+ * module's own path is the standard test and it is a fact about the process
+ * rather than a rule restated (HANDOFF §2.4).
+ */
+const ENTRY = process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname);
+if (ENTRY) {
+  if (CMD === 'step0') await step0();
+  else if (CMD === 'step1') await step1();
+  else if (CMD === 'step2') await step2();
+  else { console.error('usage: _flagship.mjs step0|step1|step2'); process.exit(2); }
+}
 
 /* Exported so `tools/_frontshot.mjs` and any future check can dress a world the
  * same way this one does rather than holding a second copy of the schedule. */
