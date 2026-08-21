@@ -137,34 +137,47 @@ what a body standing in a formation and swinging is worth, not what a person
 is. Three to five seeds. And the `none` arm is genuinely an easier fight,
 which is the thing the `far` arm exists to control for rather than to deny.
 
-### …and then §7's OPEN verb was wired, and it CANNOT be scored yet
+### …and then §7's OPEN verb was wired, and SCORED — it does not pay
 
-`grep -rn 'openness(' src/` returned one call site — the blade's own slash
-rate — so "the Force is a multiplier on other people's guns" had never been
-wired to a gun. It is wired now, at `World._boltHitTest`, and the mechanism is
-proven directly: same bolt, same body, two droids side by side, **38.0 hp
-standing against 114.0 hp held — 3.00× against a stated 3.00×** (`force.mjs`).
+`grep -rn 'openness(' src/` returned one call site — the blade's own slash rate
+— so "the Force is a multiplier on other people's guns" had never been wired to
+a gun. It is wired now, at `World._boltHitTest`, and the mechanism is proven
+directly: same bolt, same body, two droids side by side, **38.0 hp standing
+against 114.0 hp held — 3.00× against a stated 3.00×** (`force.mjs`).
 
-**What it is worth at campaign scale is NOT known, and the re-run does not
-answer it.** Same three seeds, before and after:
+**It does not show up in a battle.** Two worktrees off the SAME commit,
+differing by one line — `const open = openness(e)` against `const open = 1` —
+same five seeds, nothing landing in the tree while they ran. Values are
+`OPEN off → OPEN on`:
 
-| | none | blade | dead | far |
+| | no player | with blade | blade disabled | a hundred metres off |
 |---|---|---|---|---|
-| fallen, before | 0 | 6.33 | 7 | 6.33 |
-| fallen, after | 0.67 | 5.33 | 4.67 | 6.00 |
-| enemies killed, before | 37.3 | 34.3 | 36.7 | 34.0 |
-| enemies killed, after | 32.7 | 30.7 | 30.3 | 26.7 |
+| fallen | 0.2 → 0.4 | 7.0 → 6.8 | 8.2 → 8.0 | 5.8 → 6.2 |
+| enemies killed | 35.2 → 31.6 | 30.4 → 29.0 | 29.8 → 29.0 | 31.2 → 31.0 |
+| game-seconds | 192 → 181 | 270 → 344 | 466 → 451 | 245 → 248 |
+| areas taken | 1 → 1 | 1 → 0.8 | 0.8 → 0.8 | 1 → 1 |
 
-**Look at the `none` column.** That arm has no player and no Force in it, so
-OPEN cannot reach it — and it moved anyway, by 4.7 kills and by two thirds of
-a man. The two runs are therefore not comparable: the roster lane landed new
-archetypes between them, which changes what the waves are made of.
+**No arm improves beyond noise, and the only movement worth a sentence is in
+the wrong direction** — the `blade` arm got 27% longer and lost an area in one
+seed of five.
 
-So the mechanism is real and measured; the outcome effect is unmeasured. It
-needs a controlled pair on a FROZEN tree, and the tree is not frozen while
-lanes are landing. Do not quote the "after" row as evidence for anything.
+**Why it cannot pay, and this is the useful part.** `OPEN_STATES` fires while a
+body is `gripped`, `yankT > 0`, or `toppled || stunTimer > 0`. In a
+270-second battle a script Jedi holds one droid at a time for a few seconds
+each, so the share of enemy-seconds spent open is tiny — a 3× multiplier on
+almost none of the fight. The verb is not wrong; it is too rare to matter at
+the scale §7 wants it to matter at. **The measurement that would settle it is
+open-seconds as a fraction of enemy-seconds**, and it has not been taken.
 
-    node --import ./tools/register.mjs tools/_flagship.mjs step2 --seeds 3,5,7,11,13
+**A correction to an earlier reading in this file.** When the `none` arm moved
+between two runs, that was put down to a roster change landing in between. It
+is simpler than that: `stunTimer > 0` is an open state, your own troopers stun
+droids all battle, and **OPEN is symmetric** — it reaches the arm with no
+player in it. The no-player arm moving is evidence the verb is live, not
+evidence the runs were uncontrolled.
+
+Left standing rather than reverted: it implements a documented design intent
+and the mechanism is correct. What is wrong is the expectation §7 sets for it.
 
 ---
 
@@ -307,11 +320,11 @@ Gate at the end: **1718 passed, 0 failed.**
   the numbers as they were: same men lost, half again the time, nothing bought.
   That is §7's problem stated as sharply as this instrument can state it, and it
   is the thing to answer before the mode is built.
-- **Score the OPEN verb on a frozen tree.** It is wired and the mechanism is
-  measured at 3.00×, but the before/after pair that would say what it is worth
-  to a battle was taken across a roster change and cannot be read. One run of
-  `step2 --seeds 3,5,7,11,13` with nothing else landing, on the commit before
-  the wiring and the commit after it, settles it.
+- **OPEN is wired, measured at 3.00×, and does not pay at battle scale.** The
+  controlled pair is in Step 2 above. The open question it leaves is narrow and
+  worth answering: **what share of enemy-seconds is spent in an open state?** If
+  it is 2%, a 3× multiplier on it is worth 6% and §7 needs a different verb; if
+  it is 20%, the multiplier is worth having and something else is eating it.
 - **First person should be one-handed**, and `HANDOFF.md` §6.0 says to ASK
   before doing it, because it is a decision about what a first-person grip IS.
   The wrist lane's sweep this session is the strongest evidence yet: first
