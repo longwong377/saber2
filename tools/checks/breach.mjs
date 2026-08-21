@@ -149,13 +149,27 @@ export async function run({ check, assert }) {
       d.start(1);
       const pit = world.gunPits[0];
       if (silent) pit.silence();
-      /* NOTHING ELSE ON THE FIELD. The queue is emptied and what has already
-       * landed is swept, through the director's own path, so the roster is
-       * only ever losing men to the gun. */
+      /**
+       * NOTHING ELSE ON THE FIELD, AND NOTHING ELSE COMING.
+       *
+       * Emptying the queue and sweeping what had landed was not enough and the
+       * first run said so: the control arm lost its WHOLE roster with the gun
+       * silent, because an emptied wave CLEARS, and a cleared wave starts the
+       * next one — which arrived with a full levy and killed the line the
+       * check was trying to leave alone.
+       *
+       * `active` false with an endless intermission is the director's own idle
+       * state, read at the top of `WaveDirector.update`: the arrivals still
+       * fly, the watchdog still runs, and no wave is ever composed or started.
+       * The army stays deployed because nothing recalls it. It is the state
+       * the mode is in between two waves, held open.
+       */
       d.spawnQueue.length = 0;
       for (const e of world.enemies.slice()) {
         if (d.blocksWaveEnd(e)) { e.dead = true; e.dying = 0; world.onEnemyKilled?.(e, null, 'rout'); }
       }
+      d.active = false;
+      d.intermission = Infinity;
       const input = idle();
       const start = d.roster.living.length;
       for (let f = 0; f < 60 * 90; f++) world.update(1 / 60, input);
@@ -203,41 +217,72 @@ export async function run({ check, assert }) {
      * because it is a DRIVE and not a rule: two harnesses may steer a player
      * differently, and neither is the authority on anything.
      */
-    const secondsOfBreach = async (withWave) => {
+    /**
+     * BOTH ARMS RUN THE SAME ENGAGEMENT AND DIFFER ONLY IN WHERE THE PLAYER IS.
+     *
+     * `field` re-seeds `enemyRng` and `seedWaves` before each boot, so the two
+     * arms compose the same wave; what it cannot make identical is the
+     * dressing, because two boots are two draws off the world stream (HANDOFF
+     * §2.6's "two boots are two dressings"). That is why the reading is a
+     * COUNT OF NAMES over a fixed window rather than a difference of hit points.
+     *
+     * WARMED UP FIRST, AND AT A REAL DEPTH. The first cut of this measured
+     * wave 1 from its first frame and read 0 against 1 — a fight that had not
+     * started yet, in which standing anywhere costs the same nothing. The
+     * window opens after `WARM` seconds of a wave-3 engagement, which is where
+     * `AREAS` says the mode spends its time.
+     *
+     * THE PLAYER IS PINNED RATHER THAN WALKED, in both arms. `blast-door.mjs`
+     * already owns the walk — a Player on foot from the muster ground reaches
+     * the plate in about twenty seconds — and including it here would make the
+     * two arms differ by a walk as well as by a place.
+     */
+    const WARM = 20;
+    const arm = async (breaches, seconds) => {
       const { world } = await field({ scheme: 'free' });
       const d = world.director;
       d.start(1);
+      d.wave = 3; d._compose();
       const pit = world.gunPits[0], door = pit.door;
-      if (!withWave) {
-        d.spawnQueue.length = 0;
-        for (const e of world.enemies.slice()) {
-          if (d.blocksWaveEnd(e)) { e.dead = true; e.dying = 0; world.onEnemyKilled?.(e, null, 'rout'); }
-        }
-      }
-      const p = world.player, C = p.control, out = outOf(door);
-      const yaw = facing(-out.x, -out.z);
-      const stand = door.mesh.position.clone().addScaledVector(out, 0.95);
-      stand.y = world.terrain.height(stand.x, stand.z);
+      const p = world.player, C = p.control;
       p.saber.ignite(); p.saber.ignition = 1;
+      const anchor = p.position.clone();
       const input = idle();
+      /* The warm-up, with the player in the formation in both arms. */
+      for (let f = 0; f < WARM * 60; f++) {
+        p.position.copy(anchor); p.velocity.set(0, 0, 0);
+        world.update(1 / 60, input);
+      }
       const before = { men: d.roster.living.length, stam: p.stamina, force: p.force };
       let t = 0;
-      for (let f = 0; f < 60 * 75; f++) {
-        p.position.copy(stand); p.velocity.set(0, 0, 0);
-        p.camera.yaw = yaw; p.camera.pitch = 0;
-        const th = t * 0.8, gain = C.sensitivity * C.bladeGain, R = 0.70;
-        input.mouse.dx = (Math.cos(th) * R - C.gx) / gain;
-        input.mouse.dy = -(Math.sin(th) * R - C.gy) / gain * (C.maxPitch / C.maxYaw);
-        world.update(1 / 60, input);
-        t += 1 / 60;
-        if (door.opened) break;
+      if (breaches) {
+        const out = outOf(door);
+        const yaw = facing(-out.x, -out.z);
+        const stand = door.mesh.position.clone().addScaledVector(out, 0.95);
+        stand.y = world.terrain.height(stand.x, stand.z);
+        for (let f = 0; f < 60 * 75; f++) {
+          p.position.copy(stand); p.velocity.set(0, 0, 0);
+          p.camera.yaw = yaw; p.camera.pitch = 0;
+          const th = t * 0.8, gain = C.sensitivity * C.bladeGain, R = 0.70;
+          input.mouse.dx = (Math.cos(th) * R - C.gx) / gain;
+          input.mouse.dy = -(Math.sin(th) * R - C.gy) / gain * (C.maxPitch / C.maxYaw);
+          world.update(1 / 60, input);
+          t += 1 / 60;
+          if (door.opened) break;
+        }
+      } else {
+        for (let f = 0; f < Math.round(seconds * 60); f++) {
+          p.position.copy(anchor); p.velocity.set(0, 0, 0);
+          world.update(1 / 60, input);
+          t += 1 / 60;
+        }
       }
       return { world, d, pit, door, p, t, before,
         after: { men: d.roster.living.length, stam: p.stamina, force: p.force } };
     };
 
     /* ARM 1 — the breach, with the battle running. */
-    const cut = await secondsOfBreach(true);
+    const cut = await arm(true);
     assert(cut.door.opened,
       `75 s of held blade on the emplacement's door burned ${cut.door.cutArea} texels and never `
       + 'opened it — the one door in the game the battle forces you to cut is the one that cannot '
@@ -255,48 +300,39 @@ export async function run({ check, assert }) {
     const paidAtThePlate = cut.before.men - cut.after.men;
     const bars = { stam: cut.before.stam - cut.after.stam, force: cut.before.force - cut.after.force };
 
-    /* ARM 2 — the same seconds, standing with the line instead. The control for
-     * "away from your line": the same engagement, the same clock, the player in
-     * the formation doing what a Jedi in a formation does. */
+    /* ARM 2 — the same seconds, standing with the line instead. */
     const held = cut.t;
-    const { world: w2 } = await field();
-    const d2 = w2.director;
-    d2.start(1);
-    const p2 = w2.player;
-    const before2 = d2.roster.living.length;
-    const anchor = p2.position.clone();
-    const input2 = idle();
-    p2.saber.ignite(); p2.saber.ignition = 1;
-    for (let f = 0; f < Math.round(held * 60); f++) {
-      /* Pinned to the muster ground rather than driven: what the arm is a
-       * control for is WHERE the player is, and a walk would make it a control
-       * for a walk. The blade is lit, so the auto-guard is up and everything
-       * §6's table charges for is charged. */
-      p2.position.copy(anchor); p2.velocity.set(0, 0, 0);
-      w2.update(1 / 60, input2);
-    }
-    const paidWithTheLine = before2 - d2.roster.living.length;
+    const stay = await arm(false, held);
+    const paidWithTheLine = stay.before.men - stay.after.men;
 
+    assert(paidAtThePlate > 0,
+      `the line lost nothing at all in the ${held.toFixed(1)} s the player spent at the plate. `
+      + 'BREACH is meant to be a price paid in the mode\'s own currency, and a price of zero is an '
+      + 'errand with a longer animation.');
     assert(paidAtThePlate >= paidWithTheLine,
       `the line lost ${paidAtThePlate} men while the player was at the plate and `
       + `${paidWithTheLine} over the same ${held.toFixed(1)} s with the player standing in it — the `
       + 'breach is free, which is the one thing §7 says it is not');
     return `${cut.t.toFixed(1)} s of held blade opened it (${cut.door.cutArea} texels). `
       + `In those seconds the line lost ${paidAtThePlate} of ${cut.before.men}; over the same `
-      + `${held.toFixed(1)} s with the player standing in the formation it lost ${paidWithTheLine}. `
-      + `The gun fired ${cut.pit.shots} rounds and none after the plate fell. `
+      + `${held.toFixed(1)} s with the player standing in the formation it lost ${paidWithTheLine} `
+      + `of ${stay.before.men}. The gun fired ${cut.pit.shots} rounds and none after the plate fell. `
       + `Bars at the plate: stamina −${bars.stam.toFixed(1)}, Force −${bars.force.toFixed(1)} `
-      + '(§7 says both drain; at 76.7 m from the line there is nothing arriving to guard, and the '
+      + '(§7 says both drain; at 69 m from the line there is nothing arriving to guard, and the '
       + 'cost is the men rather than the meters)';
   });
 
-  check('breach: the two flanking doors are still caches, so the rank is a choice', async () => {
+  acheck('breach: the two flanking doors are still caches, so the rank is a choice', async () => {
     /* THE OTHER HALF OF THE DESIGN, and it is one assertion: if all three doors
      * became emplacements the rank would be a queue of three compulsory
      * twenty-seconds. One you must spend and two you may is what makes it a
-     * decision. Awaited on the same chain so it does not build a fourth World
-     * beside the three above. */
-    await gate;
+     * decision.
+     *
+     * ON THE SAME CHAIN, which is not tidiness. As a plain `check` it started
+     * immediately and read `LIVE` in a race with the teardown at the foot of
+     * this file — and it would also have been a fourth simultaneous World if it
+     * had built its own, which is the count HANDOFF §2.7 says is what kills
+     * these runs. Serialised, it asks the ground the check above left standing. */
     const world = LIVE?.world;
     assert(world, 'no world left standing to ask');
     assert(world.gunPits.length === 1,
