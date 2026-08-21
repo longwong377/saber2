@@ -81,6 +81,13 @@ export function aimY(dir, ref, out = new THREE.Quaternion()) {
  *   leg    a limb the body stands and moves on. A hailfire's wheels are legs:
  *          two of them, weight-bearing, and losing one is losing the pair.
  *   arm    a limb that reaches rather than carries.
+ *   wing   a limb that does neither — it holds the body OFF the ground. It is
+ *          its own role and not an `arm` for a reason the roster can measure:
+ *          `roleOf` counts limb ROOTS per role, so calling a Geonosian's two
+ *          wings arms would make it a four-armed body and quarter the price of
+ *          the two limbs it actually fights with. It is not a `leg` either —
+ *          `toppleAt` counts leg chains, and a body that topples when a wing
+ *          goes is a body that falls over while standing still.
  *
  * A limb is a CHAIN, and where a bone sits along it is read off the bones —
  * a cut takes everything below it — so `femur` needs no entry separate from
@@ -95,7 +102,7 @@ export function aimY(dir, ref, out = new THREE.Quaternion()) {
  * it decides TOPPLING, not lethality — but it is the next thing to route
  * through `bone.role`.
  */
-export const BONE_ROLES = ['core', 'neck', 'head', 'hull', 'leg', 'arm'];
+export const BONE_ROLES = ['core', 'neck', 'head', 'hull', 'leg', 'arm', 'wing'];
 
 /**
  * offset  — position relative to the parent bone's tip frame
@@ -107,6 +114,37 @@ export function humanoidSkeleton(scale = 1, opts = {}) {
   const s = scale;
   const armLen = opts.armLen ?? 1;
   const legLen = opts.legLen ?? 1;
+  /**
+   * WINGS, AND ONLY IF THE CALLER ASKS FOR THEM.
+   *
+   * Behind an option rather than always present because `_REF` below is
+   * `humanoidSkeleton(1)` and every metre-authored constant in the game is
+   * measured against it: a pair of bones that appeared unconditionally would
+   * be two more names in the reference figure and two more limbs in every
+   * `roleOf` count on the roster, for the twenty-nine bodies that have no
+   * wings.
+   *
+   * TWO BONES A SIDE, not one, and that is `roleShare` doing its job: a cut at
+   * the root takes the whole wing and a cut past the elbow takes the fan, so
+   * where the blade meets it decides what it costs — the same rule a thigh and
+   * a shin already obey, with nothing new written to enforce it.
+   *
+   * They hang off `chest` and not off `clav`: a wing root that moved with the
+   * shoulder would swing every time the body raised its gun.
+   */
+  const wings = opts.wings
+    ? [1, -1].flatMap((side) => {
+      const L = side > 0 ? 'L' : 'R';
+      return [
+        { name: `wing${L}`, parent: 'chest',
+          offset: [side * 0.052 * s, 0.150 * s, -0.062 * s], length: 0.40 * s,
+          rest: [side * 0.62, 0.46, -0.64], role: 'wing' },
+        { name: `wingTip${L}`, parent: `wing${L}`,
+          offset: [0, 0.40 * s, 0], length: 0.34 * s,
+          rest: [side * 0.74, 0.20, -0.64], role: 'wing' },
+      ];
+    })
+    : [];
   return [
     { name: 'hips',      parent: null,      offset: [0, 0, 0],                 length: 0.14 * s, rest: [0, 1, 0], role: 'core' },
     { name: 'spine',     parent: 'hips',    offset: [0, 0.10 * s, 0],          length: 0.19 * s, rest: [0, 1, 0.06], role: 'core' },
@@ -131,6 +169,7 @@ export function humanoidSkeleton(scale = 1, opts = {}) {
     { name: 'thighR',    parent: 'hips',    offset: [-0.095 * s, -0.02 * s, 0], length: 0.44 * s * legLen, rest: [-0.04, -1, 0], role: 'leg' },
     { name: 'shinR',     parent: 'thighR',  offset: [0, 0.44 * s * legLen, 0],  length: 0.42 * s * legLen, rest: [0, -1, 0.02], role: 'leg' },
     { name: 'footR',     parent: 'shinR',   offset: [0, 0.42 * s * legLen, 0],  length: 0.20 * s, rest: [0, -0.2, 1], role: 'leg' },
+    ...wings,
   ];
 }
 

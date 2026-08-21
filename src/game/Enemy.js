@@ -7086,6 +7086,21 @@ const SEVERANCE = {
   hull: { budget: 1.00 },
   leg: { budget: 1.10 },
   arm: { budget: 1.00 },
+  /**
+   * A WING, AND IT IS PRICED UNDER AN ARM ON PURPOSE.
+   *
+   * `budget` is what the whole PAIR is worth, divided by how many of them the
+   * body has, so 0.80 says two wings together are four fifths of what two legs
+   * are — a wing is a spar and a membrane, not a load path. What makes taking
+   * one worth more than the number is that it is not only damage: the body it
+   * belongs to cannot fly on one, and everything a flyer is good for is in the
+   * air. See src/game/Flight.js, which owns that consequence; this table owns
+   * only the health.
+   *
+   * A role with no price throws (see `severance`), which is why this line was
+   * written on the same day the first winged body was, and not after it.
+   */
+  wing: { budget: 0.80 },
 };
 
 /**
