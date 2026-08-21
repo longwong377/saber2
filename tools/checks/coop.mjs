@@ -915,6 +915,182 @@ export async function run({ check, assert }) {
     return `claimed: ${Object.entries(claims).map(([k, d]) => `${k} ${d.toFixed(0)}`).join(', ')}; no double billing`;
   });
 
+  /**
+   * ── ONE ROUND, TWO MACHINES, AND THE QUESTION OF WHO PAYS FOR IT ────────
+   *
+   * These two checks are one rule seen from both sides, and neither half means
+   * anything alone. `_spawnNetBolts` puts the host's fire into the client's own
+   * pool as REAL bolts — that is the design, and DESIGN.md is about what it
+   * buys: a guest can deflect a host's bolt, catch it, and send it home. The
+   * cost is that every such round is simulated twice, and `_reconcileClaims`
+   * bills the host for whatever hp a mirror has lost "whatever dealt it".
+   *
+   * Measured before the rule existed, on a real co-op Command pair on geonosis,
+   * 45 s, the joining player holding `idleInput` and firing nothing: 317 claims
+   * up the wire, 273.1 hp taken off the client's mirrors by bolts nobody on
+   * that machine had fired, and 42.2 hp of it applied by the host on top of the
+   * 187.8 hp of the same bolts it had already applied itself. Co-op was
+   * measurably easier than the single-machine numbers every tuning pass in this
+   * project was taken on.
+   *
+   * A fix that stopped the client resolving replicated bolts would pass the
+   * first of these two and delete the mechanic the second one is about. So both
+   * are here, they share one fixture, and the fixture differs between them by
+   * exactly one thing: whether the guest's blade touched the bolt.
+   */
+
+  /**
+   * A PAIR, ONE HOST BODY SHOOTING AND ONE HOST BODY BEING SHOT AT.
+   *
+   * Everything crosses the way it crosses in a session: the shot is taken with
+   * the shipped `BoltPool.fire` on the HOST, so `_recordFires` puts it in the
+   * snapshot, and `_spawnNetBolts` on the far end is what makes the client's
+   * copy. Nothing here hand-writes a packet.
+   *
+   * @param side  the victim's team on the host. `0` is what `enlistBody` does
+   *   to a named trooper in Command — a body in `world.enemies` on the PARTY's
+   *   side, which is the only arrangement in which the horde's own rifles have
+   *   anything in that array to hit. `1` leaves it in the horde, which is what
+   *   a returned bolt needs to be aimed at.
+   */
+  const boltPair = async (side) => {
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const pair = await H.bootPair({ level: 'geonosis' });
+    const at = pair.host.player.position;
+    const shooter = pair.host.spawnEnemy('b1', new THREE.Vector3(at.x + 8, at.y, at.z));
+    const victim = pair.host.spawnEnemy('b1', new THREE.Vector3(at.x + 14, at.y, at.z));
+    victim.team = side;
+    /* Off their brains: the only fire in this session is the one round fired
+     * below, and a b1 that decides to shoot on its own would be a second
+     * replicated bolt in the same pool. */
+    shooter._think = () => {}; victim._think = () => {};
+    pair.pump(0.4);
+    const mirror = pair.client._netEnemyIndex.get(victim.id);
+    if (!mirror) throw new Error('the client never received a mirror of the host\'s body');
+
+    /**
+     * The host fires one round; the client's copy of it, off the wire.
+     *
+     * FIRED STRAIGHT UP, and that is the fixture's own correction rather than
+     * decoration. Aimed along the ground the round is a live bolt for the six
+     * frames it takes the snapshot to cross, and in the arm where the victim is
+     * on the party's side it can REACH that victim on its own — so the pool had
+     * already consumed it by the time this looked, and the check failed reading
+     * `spawned 0` with everything under test working. Up there is nothing to
+     * hit; `drive` below is what puts the bolt through a body, and it takes the
+     * segment as an argument.
+     */
+    const round = (damage) => {
+      const before = new Set(pair.client.bolts.bolts.filter((b) => b.active));
+      pair.host.bolts.fire(shooter.aimPoint(new THREE.Vector3()),
+        new THREE.Vector3(0, 1, 0), { owner: shooter, damage, speed: 90 });
+      pair.pump(0.12);
+      const fresh = pair.client.bolts.bolts.filter((b) => b.active && !before.has(b));
+      if (fresh.length !== 1) {
+        throw new Error(`the host fired one round and the client spawned ${fresh.length}`);
+      }
+      return fresh[0];
+    };
+
+    /**
+     * The bolt, driven through the body, through the SHIPPED resolver.
+     *
+     * `_boltHitTest` is what `Bolts.update` hands every bolt in the air (see
+     * the `hitTest` member of the ctx it is stepped with), so this is the same
+     * line a bolt that flew there would reach. Standing in for the FLIGHT and
+     * not for the rule: a check that walked the bolt itself would be measuring
+     * whether this fixture can aim.
+     */
+    const drive = (bolt) => {
+      const V = (x, y, z) => new THREE.Vector3(x, y, z);
+      const from = mirror.position.clone().add(V(0, 1.1, -2));
+      const to = mirror.position.clone().add(V(0, 1.1, 2));
+      const hp0 = mirror.hp, base0 = mirror._netHp;
+      const res = pair.client._boltHitTest(bolt, from, to);
+      /* READ BEFORE THE NEXT SNAPSHOT, and this is not fastidiousness: the
+       * host's hp is authoritative and `applySnapshot` writes it straight over
+       * `e.hp` 18 times a second, so a reading taken after the pump below is
+       * the HOST's number and not what this machine did. Measured the wrong way
+       * round first: the arm where nothing is claimed read `took 0.0` — the
+       * host's copy was untouched, so it wrote 28 back over a mirror that had
+       * just lost 28 — and the check failed saying the bolt never landed while
+       * everything under test worked. */
+      const took = hp0 - mirror.hp, moved = base0 - mirror._netHp;
+      pair.seen.toHost.length = 0;
+      pair.pump(0.3);
+      const claimed = pair.seen.toHost.filter((m) => m.t === 'claim' && m.id === victim.id)
+        .reduce((a, m) => a + (Number(m.d) || 0), 0);
+      return { hit: res?.victim === mirror, took, moved, claimed, hadLeft: base0 };
+    };
+    return { ...pair, mirror, victim, round, drive };
+  };
+
+  check('co-op: a guest does not bill the host for the host\'s own bolts', async () => {
+    /**
+     * The bolt is REAL on the client and has to be — this asserts that it hits,
+     * before it asserts that nothing is claimed for it. A fix that stopped the
+     * client spawning replicated bolts would satisfy the second half of this
+     * check and fail the first, which is why the first is here.
+     */
+    const P = await boltPair(0);
+    const r = P.drive(P.round(20));
+    P.host.unload(); P.client.unload();
+    assert(r.hit && r.took > 0,
+      'the host\'s replicated round did not touch the client\'s copy of the body at all — '
+      + 'there is nothing here for a guest to deflect, which is the mechanic _spawnNetBolts exists for');
+    assert(r.claimed === 0,
+      `the guest billed the host ${r.claimed.toFixed(1)} hp for a round the host fired itself — `
+      + `one trooper's shot is simulated on both machines and charged twice, and the horde pays the difference`);
+    assert(Math.abs(r.moved - r.took) < 0.05,
+      `the mirror lost ${r.took.toFixed(1)} hp and its baseline moved ${r.moved.toFixed(1)} — the gap is `
+      + 'what _reconcileClaims bills, so anything but zero comes back as a claim on a later tick');
+    return `a replicated round took ${r.took.toFixed(1)} hp off the mirror, moved the baseline with it, and claimed nothing`;
+  });
+
+  check('co-op: a bolt the guest DEFLECTED is still the guest\'s to claim', async () => {
+    /**
+     * THE OTHER HALF, and the one that makes the first hard.
+     *
+     * The host cannot know this bolt changed course — the deflection happened
+     * on a machine it does not simulate — so what it does to the horde is the
+     * guest's and nobody else can bill it. Same fixture, same round, one
+     * difference: `_onBoltDeflect` is called first, with the client's own blade
+     * entry off `_bladeEntries`, which is the object `Bolts.update` hands that
+     * method when a lit blade crosses a bolt.
+     */
+    const P = await boltPair(1);
+    const p = P.client.player;
+    p.saber.ignite(); p.saber.ignition = 1;
+    const bolt = P.round(20);
+    const entry = P.client._bladeEntries().find((e) => e.owner === p);
+    assert(!!entry, 'the guest\'s own lit blade is not among the blades a bolt is tested against');
+    const pt = p.chest.clone();
+    P.client._onBoltDeflect(bolt, entry, { bladeT: 0.6, point: pt }, pt.clone());
+    const deflects = p.deflects;
+    const mine = bolt.owner === p;
+    const r = P.drive(bolt);
+    P.host.unload(); P.client.unload();
+    assert(deflects === 1 && mine,
+      `the guest's blade met a replicated bolt and ${deflects === 1 ? 'the bolt is not theirs afterwards' : 'nothing was deflected'} — `
+      + 'a guest who cannot deflect the host\'s fire is the reason those bolts are replicated at all');
+    assert(r.hit && r.took > 0,
+      'the bolt the guest sent back did not reach the body it was driven through');
+    /* BOUNDED BY WHAT THE BODY HAD LEFT, not by what the blow was worth.
+     * `_reconcileClaims` bills a body this machine has killed for the whole
+     * rest of its health — which is the right number, because the host has to
+     * stop fighting a corpse — and the overkill past that is nobody's. Read the
+     * other way round this asserted 38 against a claim of 28 with the whole
+     * mechanism working. */
+    const due = Math.min(r.took, r.hadLeft);
+    assert(r.claimed >= due - 0.05,
+      `the guest returned a bolt into a body with ${r.hadLeft.toFixed(1)} hp left, took ${r.took.toFixed(1)} `
+      + `off it and claimed ${r.claimed.toFixed(1)} — the host cannot have applied this one, so anything `
+      + 'the guest does not claim never happened');
+    return `a deflected round took ${r.took.toFixed(1)} hp off a body holding ${r.hadLeft.toFixed(1)}, `
+      + `and was claimed at ${r.claimed.toFixed(1)}`;
+  });
+
   check('co-op: a joining player\'s Force moves the body, not only its health bar', async () => {
     /**
      * A GUEST'S FORCE DID NOTHING PHYSICAL. ONLY THE NUMBER CROSSED.

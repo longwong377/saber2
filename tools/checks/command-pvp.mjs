@@ -643,6 +643,66 @@ export function run({ check, assert }) {
       + (alsoFell.length ? `; the horde took ${alsoFell.join(' ')} in the same five seconds` : '');
   });
 
+  check('command/net: a joining player who fires nothing bills the host for nothing', async () => {
+    /**
+     * ── THE SURCHARGE THE HORDE WAS PAYING FOR HAVING A SECOND PLAYER ──────
+     *
+     * `_reconcileClaims` bills the host for whatever hp a mirror has lost since
+     * the last snapshot, "whatever dealt it" — which is the right seam and the
+     * reason a guest's lightning, choke and rend all reach the host without a
+     * call site each. What it cannot tell apart on its own is damage this
+     * machine DEALT from damage this machine merely WATCHED, and a co-op client
+     * watches a great deal: `_spawnNetBolts` puts the host's fire into the
+     * client's own pool as real bolts so a guest can deflect one, and the
+     * client then resolves them against its own mirrors.
+     *
+     * In Command that is the whole battle. Your named troopers stand in
+     * `world.enemies` on the party's side, so the horde's rifles have something
+     * in that array to hit and your line's rifles have the horde — every round
+     * either way was simulated on both machines and charged twice. Measured on
+     * this fixture before the rule, 45 s, the joining player holding
+     * `idleInput` and firing nothing: **317 claims, and the host applied 42.2
+     * hp of them on top of the 187.8 hp of the same bolts it had already
+     * applied itself.** Co-op was roughly half again easier than the
+     * single-machine numbers every tuning pass in this project was taken on.
+     *
+     * Two roads fed it and the second is a different defect with the same
+     * shape. The gun emplacement is built by the LEVEL, so both machines had
+     * one and both were firing it — a second gun on one embrasure, laid on the
+     * client's own copy of the line, billed back to the host (`GunPit._fire`).
+     * The deaths were the larger half of both: rounding puts the two copies a
+     * point apart, the client's mirror goes down on a round the host's
+     * survives, and `_reconcileClaims`' kill clause then claims that body's
+     * whole remaining health every tick for the rest of the session.
+     *
+     * WHAT IS ASSERTED IS ZERO, which is the one figure in this file that is
+     * not a coin toss: a player pressing nothing has dealt no damage, so a
+     * claim with anything in it is this defect and nothing else. The battle
+     * around it is reported and not scored — see the note over the casualty
+     * check for why a head-count across a live battle is not an assertion.
+     *
+     * The second half of the rule — a guest's genuine deflection still lands
+     * and is still billed — is in `tools/checks/coop.mjs`, and neither half
+     * means anything without the other: a fix that stopped the client resolving
+     * replicated bolts would pass this check and delete the mechanic.
+     */
+    const { host, client, pump, seen } = await commandPair();
+    pump(20);
+    const claims = seen.toHost.filter((m) => m.t === 'claim');
+    const asked = claims.reduce((a, m) => a + (Number(m.d) || 0), 0);
+    const fired = seen.toClient.reduce((a, m) => a + (m.bf?.length || 0), 0);
+    const mirrors = client._netEnemyIndex.size;
+    assert(fired > 0 && mirrors > 0,
+      `the host replicated ${fired} bolts to ${mirrors} mirrors — with no fire crossing there is `
+      + 'nothing here for a client to double-bill and this check proves nothing');
+    assert(asked === 0,
+      `a joining player holding idleInput asked the host for ${asked.toFixed(1)} hp across `
+      + `${claims.length} claims — that is the host's own fire, resolved a second time on the `
+      + 'guest\'s machine and charged back, and the horde pays the difference');
+    host.unload(); client.unload();
+    return `${fired} replicated rounds over ${mirrors} mirrors, and an idle guest claimed nothing`;
+  });
+
   check('command/net: a joining player\'s order reaches the army', async () => {
     /**
      * AN ORDER IS THE WHOLE COMMAND INTERFACE, and on a client it went nowhere.
