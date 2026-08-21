@@ -285,6 +285,61 @@ export async function run({ check, assert }) {
     return `out on the same key, side ${wasTeam} restored, pace restored, ${clear.toFixed(1)} m clear`;
   });
 
+  check('driving: both hands are on the controls — no Force, no blade, no saber throw', async () => {
+    /**
+     * `Player.update` reads the input BEFORE it hands the frame to `Crew`,
+     * because the crew needs the aim and the move axis that read writes. Which
+     * meant, until `_readInput` learned to return early, that every key in the
+     * game was live inside a hull: you could throw your saber out of a driven
+     * AT-TE, raise a Force barrier in a cockpit, or grip a crate while
+     * steering.
+     *
+     * The throw is the one that is worse than silly rather than merely wrong:
+     * `_updateThrow` poses the saber at `throwPos` while `Crew.ride` pins the
+     * player to the seat, so the blade and the man whose blade it is would be
+     * in two places at once.
+     *
+     * Driven through `Player.update` with the keys HELD DOWN, rather than by
+     * calling the methods — calling them would measure the methods, and what
+     * is being asserted is that the input never reaches them.
+     */
+    const b = await boot();
+    const { p } = b;
+    const tank = b.park('aat');
+    tank.team = p.team;
+    p.saber.ignite(); p.saber.ignition = 1;
+    p.force = p.maxForce;
+    assert(p.takeControls(b.ctx), 'setup: could not board');
+
+    /* Every action a player could press, held, for a second. `drive` and `view`
+     * are the two that are meant to answer; everything else must not. */
+    const pressed = [];
+    b.input.actHit = (id) => { pressed.push(id); return id !== 'drive' && id !== 'view'; };
+    b.input.act = (id) => id !== 'drive' && id !== 'view';
+    b.step(60);
+
+    assert(p.driving, 'a key press while driving got the player out of the tank');
+    assert(!p.shield.up, 'a Force barrier went up inside a hull');
+    assert(p.throwState === 'held', `the saber was thrown from inside a tank: ${p.throwState}`);
+    assert(!p.gripBody && !p.gripEnemy, 'the Force gripped something while both hands were on the controls');
+    assert(!p.stasis.active, 'a stasis field opened from the driver\'s seat');
+    assert(p.healing == null, 'a mend was channelled while driving');
+    assert(!p.senseActive, 'Force sense came on inside a tank');
+    /* NOT "the bar did not move" — the pool ALSO answers what is thrown AT
+     * you (`resistForce`), and a colosseum with a live wave in it throws
+     * things. What is being asserted is that no power FIRED, and every power
+     * in the file stamps its own cooldown on the way out, so the cooldown
+     * table is the honest reader. */
+    const fired = Object.entries(p.cooldowns).filter(([, v]) => v > 0).map(([k]) => k);
+    assert(!fired.length, `these powers went off from the driver's seat: ${fired.join(', ')}`);
+    /* …and the keys really were being offered, or this passes on an input that
+     * was never asked anything. */
+    assert(pressed.length > 30,
+      `only ${pressed.length} actions were polled in a second — the check is not pressing anything`);
+    return `${new Set(pressed).size} distinct actions held for a second inside a hull, `
+      + '0 powers fired, blade in its hand, barrier down';
+  });
+
   /* ────────────────────────────────────────────────────────────────────
    * AND A GUEST SEES IT
    * ──────────────────────────────────────────────────────────────────── */

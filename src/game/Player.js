@@ -3092,6 +3092,42 @@ export class Player {
   _readInput(dt, ctx) {
     const input = ctx.input;
     if (!this.isLocal) return;
+    /**
+     * A MAN AT THE CONTROLS OF A TANK HAS BOTH HANDS ON THEM.
+     *
+     * `update` runs this BEFORE it hands the frame to `Crew`, because the crew
+     * reads the aim and the move axis this method writes — so without this line
+     * every key below was live inside a hull: you could throw your saber out of
+     * a driven AT-TE, raise a Force barrier in a cockpit, or grip a crate while
+     * steering. Each of those is a body doing two things with the same hands,
+     * and the throw is worse than silly — `_updateThrow` poses the saber at
+     * `throwPos` and `Crew.ride` pins the player to the seat, so the blade and
+     * the man it belongs to would be in two places.
+     *
+     * The camera and the aim are ABOVE this and still run: looking around is
+     * how you lay the gun. The drive key itself is handled in `Crew`'s own
+     * frame — see `takeControls`, which is a toggle — so the way out is never
+     * a key this returns before reading.
+     */
+    if (this.driving) {
+      this._wheel = input.mouse.wheel;
+      input.mouse.wheel = 0;
+      /* The look, through the same door it always goes through — the blade
+       * controller owns the mouse and hands back the camera's share of it, and
+       * a second reader of `mouse.dx` here would be the two-copies-of-one-rule
+       * defect this file keeps deleting. `bladeHeld` false because there is no
+       * blade in the hand to hold. */
+      const look = this.control.applyInput(input, dt, {
+        stamina: this.stamina / this.maxStamina,
+        attackRate: this.boonMods.attackRate,
+        grounded: true, moving: 0,
+      });
+      this.camera.addYaw(look.yaw);
+      this.camera.addPitch(look.pitch);
+      if (input.actHit('drive')) this.takeControls(ctx);
+      if (input.actHit('view')) { this.camera.firstPerson = !this.camera.firstPerson; this._applyViewMode(); }
+      return;
+    }
 
     // ── the wheel belongs to whatever is actually being held.
     // SaberController spends it on wrist roll (`rollInput += mouse.wheel*0.55`)
@@ -8912,6 +8948,11 @@ export class Player {
   die(source) {
     if (!this.alive) return;
     this.alive = false;
+    /* OUT OF THE TANK FIRST. `Crew.update` would notice on its next frame, but
+     * `die` tears down the rig and the saber below and a corpse pinned to a
+     * seat by `Crew.ride` is a body in two states. `leave` puts back the
+     * machine's side and its pace, which must happen whoever is dying. */
+    this.driving?.leave(null);
     this.releaseGrip();
     // A corpse is not holding a stasis field. Dropped rather than fired: the
     // bolts were never aimed, and a dying player should not get a free volley.
@@ -9146,6 +9187,10 @@ export class Player {
      * disposed on the frame it died builds its Actor into a torn-down world
      * one task later. */
     this.disposed = true;
+    // …and the same for a machine this body is at the controls of: a level
+    // change with a driver still bound to a tank leaves the tank on the wrong
+    // side, at a driver's pace, holding a reference to a disposed player.
+    this.driving?.leave(null);
     // Anything the Force is holding has its gravity switched off and its bolt
     // pinned to an anchor. Leaving on a level change would strand both.
     this.releaseGrip();
