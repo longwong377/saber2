@@ -6211,7 +6211,36 @@ export class Enemy {
         if (!this.actor.ragdolled) this.actor.goRagdoll(this.velocity, null);
         if (this.actor.suspend?.(this.liftTarget, dt)) {
           this.actor.centre(this.position);
-          this.velocity.set(0, 0, 0);
+          /**
+           * …AND HOW FAST IT IS BEING DRAGGED. This line said `set(0, 0, 0)`.
+           *
+           * The LIMP branch forty lines down — a ragdolled body nobody is
+           * holding — answers the same question with `velocity.copy(chest.
+           * velocity)`. Two branches of one method, opposite answers to "how
+           * fast is this body moving", and the held one was the lie: measured
+           * over a Geonosis Command wave with a Jedi gripping continuously, a
+           * held body travels 4.75 m/s while `velocity` reads 0.00.
+           *
+           * `Enemy._shoot` leads its aim by `target.velocity * tof`, so every
+           * rifle in your line aimed at exactly where a body being dragged had
+           * already left — the one target on the field the line does not lead,
+           * and it is the one FLAGSHIP §7 says the Force is supposed to hand
+           * them. `Player._updateGrip` had already met the same lie and worked
+           * around it in place ("the velocity is read off the ragdoll's own
+           * chest rather than off `e.velocity`, which a limp body does not
+           * drive"); one workaround and one silent miss is the signature of a
+           * field that is wrong rather than of two callers that are.
+           *
+           * Measured against the miss it was supposed to explain: the line's
+           * hit rate on a held body is 4.1% against 4.8% on a body that is
+           * not, so the lead is NOT what starves the verb — see NEXT.md. It is
+           * fixed because a field that reports 0.00 for a body crossing the
+           * field at five metres a second is wrong whatever reads it.
+           */
+          const chest = this.actor.bodies.get('chest') || this.actor.bodies.get('spine')
+            || this.actor.bodies.get('hips');
+          if (chest && chest.velocity) this.velocity.copy(chest.velocity);
+          else this.velocity.set(0, 0, 0);
           this.grounded = false;
           this._syncBody();
           return;
