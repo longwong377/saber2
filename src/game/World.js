@@ -2251,6 +2251,20 @@ export class World {
        * getter over the records themselves. Null where there is no army, so
        * "Troops lost" leaves the card in the modes that have no troops. */
       fallen: d?.roster?.fallen?.length ?? null,
+      /**
+       * HOW a run ended, where "you died" is not the answer — see `main.js`'s
+       * `gameOver`, which picks a third card off it.
+       *
+       * REPORTED HERE AND NOT ONLY PASSED IN `extra`, and the difference is
+       * the whole point of this method. `skirmish.mjs` lifts every
+       * `stats.<field>` the card reads out of main.js's own source and requires
+       * it to be a field `runStats` REPORTS; a field that exists only on the
+       * two endings that happen to pass it is exactly the "Areas taken 5"
+       * shape — a card asking for something most endings do not send, and a
+       * value invented at the reader to cover it. Null is the honest answer
+       * for the four endings that have no such reason: you died, or you won.
+       */
+      ended: (extra && 'ended' in extra) ? (extra.ended ?? null) : null,
     };
   }
 

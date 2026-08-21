@@ -5968,7 +5968,7 @@ export class CommandDirector extends WaveDirector {
     /* WHY, and not only WHETHER. A crossing walked end to end and lost anyway
      * is a different sentence from a Jedi killed on wave three, and `main.js`
      * has exactly one field to tell them apart with — see `ended` there. */
-    const ended = won ? undefined : 'line';
+    const ended = won ? null : 'line';
     this.log.push({ t: won ? 'won' : 'lost', area: this.areaNumber, strength,
                     fallen: this.roster.fallen.length,
                     ...(won ? {} : { why: 'the line did not survive the crossing' }) });

@@ -293,7 +293,7 @@ export async function run({ check, assert }) {
     c.world.onGameOver = (s) => { win = s; };
     drive(c.world, 180, c.input, () => !!win);
     assert(win && win.won === true, 'the winning arm did not win');
-    assert(win.ended === undefined,
+    assert(win.ended == null,
       `a won run carries ended=${JSON.stringify(win.ended)} — the card would print a defeat`);
     c.world.unload();
     return `both losing doors say "${LINE_LOST_TITLE}"; a win says nothing`;
