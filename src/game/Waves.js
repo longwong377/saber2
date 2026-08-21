@@ -414,6 +414,32 @@ export const MODES = {
      */
     fixedTheatre: 'The Line does not let you pick the ground: one sitting is one seed, and the seed names the ground you land on. It is on the deploy card before you drop.',
     seedsGround: true,
+    /**
+     * …AND THE SHAPE OF THAT GROUND IS THE SEED'S TOO — §12.
+     *
+     * `seedsGround` above says WHICH of the seven authored theatres you land
+     * on. This says the heightfield you land on is generated around a front for
+     * this run: `src/world/Battlefield.js` draws a reason from a table of five,
+     * lays a bezier front edge to edge from six seeded numbers, and returns a
+     * height closure in which the high ground FLANKS the line and never sits on
+     * it, with exactly one chokepoint and a ridge field running along the
+     * advance. Measured across five reasons and two seeds: nearest high ground
+     * 63–166 m from the line against standoffs of 38–58 m, zero exceptions.
+     *
+     * TWO FIELDS AND NOT ONE, because they are two decisions and a mode may
+     * want either without the other. A mode could roll its theatre and keep
+     * every authored contour; a mode could generate ground on a theatre the
+     * player picked. Folding them into one field would make the second
+     * impossible to express and the first impossible to turn off.
+     *
+     * It is a LAYER over the rolled theatre, never a theatre of its own — the
+     * pool, the dressing, the arrivals, the sky and the whole palette are the
+     * authored level's (§12.5, "do not generate the palette"), and only the
+     * height is replaced. That is what keeps §13.5 true: nothing generated is
+     * reachable except through a room that exists, so deleting a room still
+     * costs the mode exactly that room's draw and no more.
+     */
+    generatedGround: true,
     /** One ground walked end to end — see the note above, and `World.loadLevel`. */
     crossing: true,
     /**

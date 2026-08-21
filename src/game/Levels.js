@@ -2210,6 +2210,14 @@ export const LEVELS = {
     name: 'The Shifting Waste',
     blurb: 'Dunes twice the height of the sea, and a storm that comes for you every ninety seconds.',
     terrain: 'drifts',
+    /* CARRIES A GENERATED HEIGHTFIELD — `FLAGSHIP.md` §12, read by
+     * `World._groundKeyFor`, and the number is `theline.mjs`'s. Every ground
+     * was booted with the layer forced on and driven for twenty seconds of a
+     * real engagement: this one deployed and held 10 of its ten. Scoria is the
+     * one room that does not declare it — it comes back **0 of 10, four of them
+     * unplaceable** — because its rocks and wrecks take the standing room with
+     * them when the ground moves under them. The list grows by measurement. */
+    battlefield: true,
     /* `bodyguard` is here to open the SET-PIECE door and for no other reason —
      * see its registration at the bottom of this file. A boss archetype is
      * filtered out of ordinary fill by `unlockedAt`, so one entry in a pool of
@@ -2316,6 +2324,14 @@ export const LEVELS = {
     name: 'The White Pass',
     blurb: 'A cirque above the treeline, in weather that arrives sideways.',
     terrain: 'alpine',
+    /* CARRIES A GENERATED HEIGHTFIELD — `FLAGSHIP.md` §12, read by
+     * `World._groundKeyFor`, and the number is `theline.mjs`'s. Every ground
+     * was booted with the layer forced on and driven for twenty seconds of a
+     * real engagement: this one deployed and held 10 of its ten. Scoria is the
+     * one room that does not declare it — it comes back **0 of 10, four of them
+     * unplaceable** — because its rocks and wrecks take the standing room with
+     * them when the ground moves under them. The list grows by measurement. */
+    battlefield: true,
     pool: ['b1', 'trooper', 'b2', 'sniper', 'droideka', 'acolyte'],
     groundColor: 0xe2dcce,
     spawnRadius: [30, 52],
@@ -2865,6 +2881,14 @@ export const LEVELS = {
     name: 'Mustafar',
     blurb: 'Rivers of melt braided through black rock, under a sky the colour of a wound. The ground is lit from below.',
     terrain: 'mustafar',
+    /* CARRIES A GENERATED HEIGHTFIELD — `FLAGSHIP.md` §12, read by
+     * `World._groundKeyFor`, and the number is `theline.mjs`'s. Every ground
+     * was booted with the layer forced on and driven for twenty seconds of a
+     * real engagement: this one deployed and held 9 of its ten. Scoria is the
+     * one room that does not declare it — it comes back **0 of 10, four of them
+     * unplaceable** — because its rocks and wrecks take the standing room with
+     * them when the ground moves under them. The list grows by measurement. */
+    battlefield: true,
     pool: ['b1', 'trooper', 'b2', 'acolyte', 'droideka', 'b1', 'sniper', 'acolyte', 'walker'],
     groundColor: 0x2b2622,
     spawnRadius: [30, 54],
@@ -3274,6 +3298,14 @@ export const LEVELS = {
      * rotted here in the first place. */
     blurb: 'Raked sand under seven thousand people. They did not come to watch you win.',
     terrain: 'colosseum',
+    /* CARRIES A GENERATED HEIGHTFIELD — `FLAGSHIP.md` §12, read by
+     * `World._groundKeyFor`, and the number is `theline.mjs`'s. Every ground
+     * was booted with the layer forced on and driven for twenty seconds of a
+     * real engagement: this one deployed and held 10 of its ten. Scoria is the
+     * one room that does not declare it — it comes back **0 of 10, four of them
+     * unplaceable** — because its rocks and wrecks take the standing room with
+     * them when the ground moves under them. The list grows by measurement. */
+    battlefield: true,
     /* THE HANDLERS AND THE MENAGERIE. The droids are the arena's staff — the
      * thing that opens the gates and shoots you if the animals fail — and they
      * are thin on purpose: this is not a horde level, it is three or four very
@@ -3639,6 +3671,14 @@ export const LEVELS = {
     name: 'The Drowned Wood',
     blurb: 'Standing water under a canopy that never opens. Everything here is older than the war, and most of it can be cut down.',
     terrain: 'bog',
+    /* CARRIES A GENERATED HEIGHTFIELD — `FLAGSHIP.md` §12, read by
+     * `World._groundKeyFor`, and the number is `theline.mjs`'s. Every ground
+     * was booted with the layer forced on and driven for twenty seconds of a
+     * real engagement: this one deployed and held 10 of its ten. Scoria is the
+     * one room that does not declare it — it comes back **0 of 10, four of them
+     * unplaceable** — because its rocks and wrecks take the standing room with
+     * them when the ground moves under them. The list grows by measurement. */
+    battlefield: true,
     // A wood is an ambush, so the pool is what ambushes well: things that
     // close, and one marksman for the gaps between the trunks.
     pool: ['b1', 'acolyte', 'b1', 'b2', 'acolyte', 'trooper', 'sniper', 'droideka'],
@@ -4029,6 +4069,25 @@ LEVELS.geonosis = {
   name: 'Geonosis',
   blurb: 'A red plain under a dust sky, two armies on it, and nothing between them but the ground you have to cross.',
   terrain: 'geonosis',
+  /**
+   * THIS ROOM CAN CARRY A GENERATED HEIGHTFIELD — `FLAGSHIP.md` §12, and
+   * `World._groundKeyFor` is the reader.
+   *
+   * A generated ground is raised under a level's own dressing, which was
+   * authored against the contours it replaces, so whether a room survives that
+   * is a fact about the room. Measured at seed 3, twenty seconds of a real
+   * engagement: geonosis deploys **10 of 10 with a full wave**, generated or
+   * authored, while scoria goes from 10 of 10 and 47 hostiles to **six dead,
+   * four unplaceable and 2 hostiles** — its rocks and wrecks take the standing
+   * room with them when the ground moves under them.
+   *
+   * Six of the seven theatres do not declare this yet, and that costs the mode
+   * nothing: they stay authored, the seed still rolls them, and §13.5 still
+   * holds. `theline.mjs` measures every ground either way and reports which
+   * ones would survive, so the list grows by measurement rather than by
+   * somebody deciding it looks fine.
+   */
+  battlefield: true,
   armies: ['republic', 'separatist'],
   pool: [
     // The Republic's five rungs, weighted toward the line.

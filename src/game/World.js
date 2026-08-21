@@ -10,6 +10,9 @@
 import * as THREE from 'three';
 import { RapierWorld, Body, LAYER, LOOSE_MASK, box, ball, hullFromGeometry, boxFromObject } from '../physics/RapierWorld.js';
 import { Terrain } from '../world/Terrain.js';
+/* §12's generated ground. A leaf over Terrain.js — it borrows an authored
+ * preset and replaces one field — so importing it here closes no cycle. */
+import { battlefieldGround, installGround, removeGround } from '../world/Battlefield.js';
 import { Particles } from '../world/Particles.js';
 import { LightningVfx } from '../world/Lightning.js';
 import { GrenadeField } from './Reactions.js';
@@ -624,7 +627,7 @@ export class World {
        * expensive thing a level build does, and the reason the tab used to
        * stop answering for half a second before anything appeared. */
       { name: 'raising the ground', run: () => {
-    this.terrain = new Terrain(this.scene, L.terrain, detail);
+    this.terrain = new Terrain(this.scene, this._groundKeyFor(L), detail);
     this.physics.terrain = this.terrain;
       } },
 
@@ -1252,6 +1255,15 @@ export class World {
   }
 
   unload() {
+    /* THE PRESET TABLE IS PROCESS-GLOBAL and a generated ground is a row this
+     * world put in it, so leaving it there outlives the world that made it. It
+     * is not merely untidy: `installGround` refuses to shadow an existing key,
+     * so the SECOND world to generate a front on the same base gets a refusal
+     * and silently falls back to the authored ground. Measured before this
+     * line — seed 1 generated, seeds 2 and 3 both came back "already a ground"
+     * and stood on stock geonosis. See `_groundKeyFor`, which takes the same
+     * precaution from the other end for a world that never unloaded. */
+    this._dropGeneratedGround();
     // The level's wind and drone are level state; without this they kept
     // playing under the main menu after quitting.
     audio.setAmbience?.({ wind: 0, drone: 0 });
@@ -2235,6 +2247,110 @@ export class World {
    * skirmish first would report the engagements of its current mission as the
    * missions of its run.
    */
+  /**
+   * WHICH HEIGHTFIELD THIS RUN STANDS ON — the authored one, or one generated
+   * around a front for this seed.
+   *
+   * `FLAGSHIP.md` §12's first line is "generate the battle, then the ground
+   * that explains it", and `src/world/Battlefield.js` builds that: a reason
+   * drawn from a table of five, a bezier front from six seeded numbers, and a
+   * height closure in which high ground FLANKS the front and never sits on it,
+   * with exactly one chokepoint and a ridge field running along the advance.
+   * It had no caller. This is the caller.
+   *
+   * ── IT IS A LAYER, WHICH IS WHAT KEEPS §13.5 TRUE ───────────────────────
+   *
+   * §13.5: "no room's deletion deletes the mode — every level in `LEVEL_ORDER`
+   * is a legal seed. That is exactly what killed the Descent." So the generated
+   * ground is NOT a new theatre a seed can land on. The mode still rolls one of
+   * the seven authored theatres (`Session.rollGround`), keeps its pool, its
+   * dressing, its arrivals, its sky and its whole palette — §12.5, "do not
+   * generate the palette" — and only the HEIGHT is replaced. Delete a room and
+   * the mode loses that room's draw, exactly as before; nothing generated is
+   * reachable except through a room that exists.
+   *
+   * ── WHY IT FALLS BACK RATHER THAN THROWS ────────────────────────────────
+   *
+   * `battlefieldGround` refuses a ground with a roof over it — a front cannot
+   * be derived on a floor — and refuses to shadow an authored preset key. Both
+   * refusals are correct and neither is a reason to fail to load a level: the
+   * honest answer to "this ground cannot carry a generated front" is the ground
+   * as authored, which is what every other mode gets. It is reported once so it
+   * cannot be silent (§2.3's relative — a missing thing answered with a
+   * plausible default is how a literal survives).
+   *
+   * A SEEDLESS RUN GETS THE AUTHORED GROUND, and that is the same rule the
+   * ground roll already follows: `null` means nobody has stated a number, which
+   * is every headless check that builds a World by hand.
+   */
+  _groundKeyFor(L) {
+    const key = L.terrain;
+    /* THE MODE IS READ OFF SETTINGS HERE and not taken as an argument: the
+     * ground is raised in an early stage of `loadLevel`'s list and the local
+     * `mode` is not declared until the director stage, a hundred lines further
+     * down. Taking it as a parameter compiled and threw `mode is not defined`
+     * on the first boot. `settings.mode` is what that local reads anyway. */
+    const mode = this.settings?.mode ?? 'roguelite';
+    /* Taken down first: `installGround` refuses to overwrite, so a second run
+     * on the same base would throw on its own leftovers. `rotateTo` re-enters
+     * this whole list for every engagement. */
+    this._dropGeneratedGround();
+    if (!MODES[mode]?.generatedGround) return key;
+    /**
+     * …AND THE LEVEL HAS TO SAY IT CAN CARRY ONE.
+     *
+     * A generated heightfield is raised UNDER a level's own dressing, and the
+     * dressing was authored against the contours it replaces. Measured, scoria
+     * at seed 3: with the authored ground the line deploys 10 of 10 and the
+     * wave puts 47 hostiles on the field; with a generated one **6 of the ten
+     * are dead inside twenty seconds, the other four cannot be placed at all,
+     * and the wave manages 2 bodies.** Geonosis at the same seed is 10 of 10
+     * and unaffected. Whatever scoria's rocks and wrecks do on new contours,
+     * they take the ground a body needs to stand on with them.
+     *
+     * So it is the LEVEL's declaration and not the mode's, for the reason
+     * `LEVELS[*].pool` and `terrain` are the level's: it is a fact about that
+     * room. A ground that has not been measured stays authored, which costs the
+     * mode nothing — it still rolls that theatre, and §13.5 still holds — and a
+     * room lights this the day somebody measures it. The alternative was a list
+     * of level keys in this file, which is the twin-table defect (§2.3) and
+     * would have been wrong about scoria in exactly the same way.
+     */
+    if (!L.battlefield) return key;
+    /* …AND ANYBODY ELSE'S LEFTOVER on this exact base, for a world that was
+     * dropped without unloading. `removeGround` refuses an authored preset, so
+     * this can only ever take back something this file installed. */
+    try { removeGround(`front:${key}`); } catch { /* authored: not ours */ }
+    const seed = Number.isFinite(this.runSeed) ? this.runSeed : null;
+    if (seed === null) return key;
+    try {
+      const made = battlefieldGround(key, seed);
+      installGround(made.key, made.preset);
+      this._genGround = made.key;
+      /** The plan, published for anything that wants the front rather than the
+       *  ground: the curve, the reason, the chokepoint and the advance bearing.
+       *  `Front.js`'s dressing takes a half-plane and `frontAtChoke` is the
+       *  bridge — see its note there. */
+      this.battlefield = made.plan;
+      return made.key;
+    } catch (err) {
+      if (!this._genWarned) {
+        this._genWarned = true;
+        console.warn(`[battlefield] ${key} keeps its authored ground: ${err.message}`);
+      }
+      this.battlefield = null;
+      return key;
+    }
+  }
+
+  /** Take this world's generated ground back out of the shared preset table. */
+  _dropGeneratedGround() {
+    if (!this._genGround) return;
+    try { removeGround(this._genGround); } catch { /* authored: not ours to take */ }
+    this._genGround = null;
+    this.battlefield = null;
+  }
+
   runStats(extra = null) {
     const sum = (f) => (this.players || []).reduce((a, p) => a + (p[f] || 0), 0);
     const c = this.campaign, sk = this.skirmish, d = this.command;
