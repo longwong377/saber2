@@ -142,7 +142,21 @@ export const LEVY_STRENGTH = 40;
  * geonosis and only geonosis, which is the mode's own ground.
  */
 export function levies(director) {
-  return !!ARCHETYPES[LEVY_TYPE] && !!director?.pool?.includes(LEVY_TYPE);
+  if (!director || !ARCHETYPES[LEVY_TYPE]) return false;
+  /**
+   * …AND IT IS THE CROSSING'S, NOT A CONTINGENT'S.
+   *
+   * `CommandDirector` runs four things: Command, a skirmish, a campaign, and a
+   * CONTINGENT — the same roster and ranks and permadeath dropped into a mode
+   * that has its own escalation and its own ending. `campaign` is the field
+   * that already draws exactly that line and is read by `budgetFor`,
+   * `heavyBias`, `payWave` and `unlockAt` for the same reason: a second
+   * escalation on top of an endless one ends the Trial of Waves on wave 21 and
+   * calls it a victory. Forty free bodies a wave, forever, is that mistake
+   * spelled in bodies — and it is the one version of it the frame would notice.
+   */
+  if (director.campaign === false) return false;
+  return !!director.pool?.includes(LEVY_TYPE);
 }
 
 /**
