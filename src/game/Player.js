@@ -56,6 +56,9 @@ const _q1 = new THREE.Quaternion(), _q2 = new THREE.Quaternion();
 const _q3 = new THREE.Quaternion(), _q4 = new THREE.Quaternion();
 /** The two wrist targets, which have to survive the whole arm solve, and their scratch. */
 const _v7 = new THREE.Vector3(), _v8 = new THREE.Vector3(), _v9 = new THREE.Vector3();
+/** One colour object for every `lightUp` request the channel posts — the pool
+ *  reads it and does not keep it, so a fresh Color per frame is garbage. */
+const _COL_LIGHT = new THREE.Color(0x9fd8ff);
 /** _gripPole's own, so it cannot tread on the arm solve running around it. */
 const _v10 = new THREE.Vector3(), _v11 = new THREE.Vector3();
 const _v12 = new THREE.Vector3(), _v13 = new THREE.Vector3();
@@ -586,9 +589,37 @@ const DIVE_LAND = 1.45;
  * metre of arc, how far one step of the walk may stray, and the chance a sample
  * throws a dead-end branch.
  */
-const LIGHTNING_RANGE = 16, LIGHTNING_DAMAGE = 46;
+const LIGHTNING_RANGE = 22, LIGHTNING_DAMAGE = 46;
 const LIGHTNING_CHAIN = 3, LIGHTNING_REACH = 6.5, LIGHTNING_FALLOFF = 0.62;
 const LIGHTNING_STEPS_PER_M = 3.2, LIGHTNING_WANDER = 0.55, LIGHTNING_FORK = 0.16;
+/**
+ * IT IS A CHANNEL NOW, AND THAT IS THE FIX.
+ *
+ * The player, many times over: "force lightning needs to be fucking LIGHTNING
+ * that comes out of your hands like I need to be able to fucking see the
+ * lightning come out and travel to where I'm aiming… for the millionth time
+ * it's nothing in the air right now like there's no VFX or anything".
+ *
+ * Three separate defects made that true and only one of them was the drawing:
+ *
+ *   IT ONLY DREW WHEN IT HIT. `forceLightning` gathered the enemies inside a
+ *     0.8-dot cone at 16 m and drew one arc per body it found. With that list
+ *     empty — aiming at a wall, at a line 20 m off, at a body two metres wide
+ *     of the cone — the whole method ran to completion and drew NOTHING. That
+ *     is exactly and literally "there's nothing in the air".
+ *   IT LASTED ONE FRAME. Press, resolve, done. Nothing travelled and nothing
+ *     could be swept across a line, which is the other half of the note.
+ *   IT WAS DRAWN OUT OF THE SPARK RING, a shared pool of 6 cm point sprites
+ *     sized for blade hits. Forty of them in a row is a dotted rule.
+ *
+ * So: `HOLD` seconds of continuous discharge while the key is down, `TICK`
+ * seconds between damage applications, `DRAIN` Force a second on top of the
+ * opening cost, and a bolt that is drawn EVERY frame from the hands to
+ * whatever the aim ray reaches — a body, the ground, a wall, or the end of its
+ * own range. `src/world/Lightning.js` is what draws it, and it draws ribbons
+ * rather than particles.
+ */
+const LIGHTNING_HOLD = 2.4, LIGHTNING_TICK = 0.22, LIGHTNING_DRAIN = 14;
 /**
  * …and how high above the feet it turns. 1.02 m on a 1.75 m figure is 58% of
  * standing height, which is where a tucked gymnast's centre of mass actually
@@ -2769,8 +2800,13 @@ export class Player {
     this.riposteTimer = Math.max(0, this.riposteTimer - dt);
     this.staggerTimer = Math.max(0, this.staggerTimer - dt);
     this.hitFlash = damp(this.hitFlash, 0, 5, dt);
+    /* THE CHANNEL IS STEPPED HERE and not in `_move`, because it has to run
+     * whether or not the body can walk — a commander channelling in a troop
+     * bay, or one pinned by a stagger, is still discharging. Death ends it a
+     * line below, through the same door a release does. */
+    if (this.channel?.kind === 'lightning') this._lightningTick(ctx, dt);
 
-    if (!this.alive) { this._updateDead(dt, ctx); return; }
+    if (!this.alive) { this.endLightning?.(); this._updateDead(dt, ctx); return; }
 
     this._readInput(dt, ctx);
     // The aim the input just wrote, available to everything solved this frame
@@ -2904,7 +2940,11 @@ export class Player {
     if (input.actHit('grip')) this.toggleGrip(ctx);
     if (input.actHit('throw')) this.throwOrRecall(ctx);
     if (input.actHit('sense')) this.toggleSense(ctx);
+    /* PRESS OPENS IT, RELEASE CLOSES IT — see `forceLightning`. `actHit` is
+     * the edge and `act` is the level, and both are needed: a channel that
+     * only ever ended on its own clock could not be tapped. */
     if (input.actHit('lightning')) this.forceLightning(ctx);
+    else if (this.channel?.kind === 'lightning' && !input.act('lightning')) this.endLightning();
     if (input.actHit('stasis')) this.toggleStasis(ctx);
     if (input.actHit('heal')) this.forceHeal(ctx);
     if (input.actHit('rend')) this.forceDisassemble(ctx);
@@ -4965,11 +5005,21 @@ export class Player {
    * throwing rocks around should not have to fight a resource meter for it.
    */
   get forceScale() { return this.world.settings?.forcePower ?? 1; }
-  _spend(cost) {
+  _spend(cost, partial = false) {
     const drain = this.world.settings?.forceDrain ?? 1;
     if (drain <= 0) return true;                   // unlimited
     const c = cost * drain * this.boonMods.forceCost;
-    if (this.force < c) return false;
+    if (this.force < c) {
+      /* A SUSTAINED DRAIN TAKES WHAT IS LEFT AND SAYS SO, which a one-shot
+       * must not: refusing a per-frame charge outright would let a channel run
+       * for ever on the last 0.4 Force in the pool, because the frame's charge
+       * is small enough to be refused for ever without the pool moving. Only
+       * `Player._lightningTick` passes true, and this is the same shape
+       * `_regen`'s Sense hold already uses. */
+      if (!partial) return false;
+      this.force = 0;
+      return false;
+    }
     this.force -= c;
     return true;
   }
@@ -6319,6 +6369,15 @@ export class Player {
     audio.force(this.chest, 'sense');
   }
 
+  /**
+   * FORCE LIGHTNING — pressed, and then HELD.
+   *
+   * This opens the channel. Everything that happens while it is open is
+   * `_lightningTick`, which runs every frame from `_move`'s caller, and the
+   * whole reason the power is split in two is the player's own note: the old
+   * version resolved in one call, so there was nothing to see travel and
+   * nothing to sweep. See LIGHTNING_HOLD.
+   */
   forceLightning(ctx) {
     if (!this.boonMods.lightning) {
       return this._refuse('force lightning', 'not attuned — it comes from a boon, and the draft offers it');
@@ -6326,129 +6385,172 @@ export class Player {
     if (this.cooldowns.lightning > 0) {
       return this._refuse('force lightning', `recovering — ${this.cooldowns.lightning.toFixed(1)}s`);
     }
-    /* This one applied the boon multiplier by hand and the drain not at all,
-     * which is the half-wired version of the same bug the throw had. */
+    if (this.channel?.kind === 'lightning') return;
     if (!this._spend(POWER_COST.lightning)) {
-      const cost = POWER_COST.lightning * (this.world.settings?.forceDrain ?? 1) * this.boonMods.forceCost;
       return this._refuse('force lightning',
-        `${Math.round(cost)} Force needed, you have ${Math.round(this.force)}`);
+        `${this._priceOf(POWER_COST.lightning)} Force needed, you have ${Math.round(this.force)}`);
     }
-    this.cooldowns.lightning = 1.5;
     this._gesture('lightning');
     audio.force(this.chest, 'lightning');
-    const origin = _v1.copy(this.chest).addScaledVector(this.aimDir, 0.4);
-    /**
-     * IT ARCS. Player note #13 asked for a lightning ARC and what was here was
-     * a cone that damaged everything inside it, each target joined to the hand
-     * by twelve points lerped along a straight line with a little jitter. Two
-     * separate things were missing from that and this fixes both.
-     *
-     * IT JUMPS. A bolt earths itself through the nearest conductor and then
-     * through the next one, which is the whole reason lightning is the crowd
-     * power and not a second push: you point it at the front of a line and it
-     * walks down the line. `LIGHTNING_CHAIN` hops, `LIGHTNING_REACH` metres a
-     * hop, and each hop keeps `LIGHTNING_FALLOFF` of the last one's damage so
-     * the fourth body in a chain is singed rather than killed.
-     *
-     * `hit` is a Set and not a list, and it is what stops the arc from
-     * bouncing between two bodies forever — a chain that could revisit is not
-     * a chain, it is a loop with a damage multiplier.
-     *
-     * The cone still decides where it STARTS. Everything the hand can see is a
-     * root, and the chain grows from each root independently, so pointing into
-     * a crowd is different from pointing at one straggler — which is the
-     * choice the power is for.
-     */
-    const hit = new Set();
-    const roots = [];
-    for (const e of this._foes(ctx)) {
-      if (e.dead) continue;
-      _v2.subVectors(e.position, origin);
-      const d = _v2.length();
-      if (d > LIGHTNING_RANGE) continue;
-      if (_v2.normalize().dot(this.aimDir) < 0.8) continue;
-      roots.push(e);
-    }
-    for (const root of roots) {
-      let from = origin, node = root, power = 1;
-      for (let hop = 0; hop <= LIGHTNING_CHAIN && node; hop++) {
-        if (hit.has(node)) break;
-        hit.add(node);
-        this._lightningArc(ctx, from, node.position, power);
-        node.damage(LIGHTNING_DAMAGE * power, node.position, this, 'lightning');
-        // `?.` because a player is never taken off the controls — there is no
-        // `Player.stun` and there should not be one. The stagger a player gets
-        // instead is applied by `damage()` itself, at its own threshold.
-        node.stun?.(1.4 * power, _v2.subVectors(node.position, from).normalize(), 1.4 * power);
-        from = node.position;
-        power *= LIGHTNING_FALLOFF;
-        // the next conductor: nearest unhit body inside a hop
-        let best = null, bestD = LIGHTNING_REACH * LIGHTNING_REACH;
-        for (const e of this._foes(ctx)) {
-          if (e.dead || hit.has(e)) continue;
-          const dd = e.position.distanceToSquared(from);
-          if (dd < bestD) { bestD = dd; best = e; }
-        }
-        node = best;
-      }
-    }
+    /** The live channel. `t` is how long it has been open, `tick` is the fuse
+     *  on the next damage application, and `hit` is what has already been
+     *  struck THIS TICK — a chain that could revisit is a loop with a damage
+     *  multiplier, which is the note the old chain carried and is still true. */
+    this.channel = { kind: 'lightning', t: 0, tick: 0, hits: 0 };
+    this._lightningTick(ctx, 0);
+  }
+
+  /** Shut the channel and start the recovery. Idempotent. */
+  endLightning() {
+    if (this.channel?.kind !== 'lightning') return;
+    this.channel = null;
+    this.cooldowns.lightning = 1.1;
+    this._endGesture?.('lightning');
+    this.world?.lightning?.clear?.();
   }
 
   /**
-   * ONE ARC, DRAWN — and it is drawn as a WALK rather than as a line.
+   * WHERE THE DISCHARGE ENDS — and it ALWAYS ends somewhere.
    *
-   * The old geometry was `lerp(origin, target, i/12)` with an independent
-   * ±0.3 m jitter on each point, which is a straight line of unrelated dots:
-   * every sample forgets where the last one was, so what the eye reads is a
-   * dotted rule between two things and not a discharge.
+   * This is the single most important line of the whole rewrite. The old power
+   * drew between the hand and each body it hit, so when it hit nothing it drew
+   * nothing; the player pressed the key at an empty stretch of ground and the
+   * game did not visibly respond. The answer is that lightning does not need a
+   * victim to exist — it needs a PLACE TO EARTH.
    *
-   * A discharge is a RANDOM WALK that has to arrive: the offset carries from
-   * one step to the next, so the path stays continuous, and it is multiplied
-   * by `sin(pi t)` so it is pinned at the hand and at the body and free in the
-   * middle — which is what makes the shape read as a bolt whipping between two
-   * fixed ends. The step count follows the LENGTH rather than being a constant,
-   * so a 2 m arc is not made of the same twelve fat dots as a 16 m one.
-   *
-   * FORKS are the second half of it. A bolt that reaches a body has usually
-   * thrown two or three that did not, and those dead ends are most of what a
-   * lightning strike looks like. They branch off a point on the walk, run a
-   * fraction of the remaining distance in a direction that is mostly the
-   * bolt's own, and stop.
+   * Four candidates, in order, and one of them is always true:
+   *   a body inside the cone, which is the aim assist the power always had;
+   *   whatever the physics ray hits, which is the wall or the crate;
+   *   the ground under the ray, if the ray is heading down into it;
+   *   and failing all three, the end of `LIGHTNING_RANGE` in the air, because
+   *     a bolt into open sky is still a bolt and is still the answer to
+   *     "I need to be able to see the lightning come out".
    */
-  _lightningArc(ctx, from, to, power = 1) {
-    const P = ctx.particles;
-    if (!P) return;
-    const colour = this._lightningColor();
-    const span = _v2.subVectors(to, from);
-    const len = span.length();
-    if (len < 1e-3) return;
-    const steps = clamp(Math.round(len * LIGHTNING_STEPS_PER_M), 6, 48);
-    const wander = _v3.set(0, 0, 0);
-    const at = _v4;
-    for (let i = 0; i <= steps; i++) {
-      const t = i / steps;
-      // the walk: the offset persists, so consecutive samples are neighbours
-      wander.x += (rng() - 0.5) * LIGHTNING_WANDER;
-      wander.y += (rng() - 0.5) * LIGHTNING_WANDER;
-      wander.z += (rng() - 0.5) * LIGHTNING_WANDER;
-      wander.multiplyScalar(0.72);                       // …and it is damped, or it runs away
-      const pin = Math.sin(Math.PI * t);                 // zero at both ends
-      at.copy(from).addScaledVector(span, t).addScaledVector(wander, pin);
-      P.sparks.spawn(at, _v5.set((rng() - .5) * 3, (rng() - .5) * 3, (rng() - .5) * 3),
-        { life: 0.2, size: 0.06 * power, drag: 1, gravity: 0, color: colour, alpha: power });
-      // a fork, off a point that is not an end
-      if (i > 1 && i < steps - 1 && rng() < LIGHTNING_FORK) {
-        const branch = _v6.copy(span).normalize()
-          .addScaledVector(_v7.set(rng() - 0.5, rng() - 0.5, rng() - 0.5).normalize(), 1.15)
-          .normalize().multiplyScalar(len * (0.12 + rng() * 0.18));
-        const n = 4;
-        for (let j = 1; j <= n; j++) {
-          _v8.copy(at).addScaledVector(branch, j / n);
-          _v8.x += (rng() - 0.5) * 0.12; _v8.y += (rng() - 0.5) * 0.12; _v8.z += (rng() - 0.5) * 0.12;
-          P.sparks.spawn(_v8, _v5.set((rng() - .5) * 2, (rng() - .5) * 2, (rng() - .5) * 2),
-            { life: 0.14, size: 0.045 * power, drag: 1, gravity: 0, color: colour, alpha: 0.75 * power });
+  _lightningEnd(ctx, origin, out) {
+    let best = null, bestD = Infinity;
+    for (const e of this._foes(ctx)) {
+      if (e.dead) continue;
+      _v2.subVectors(this._enemyPoint(e, _v3), origin);
+      const d = _v2.length();
+      if (d > LIGHTNING_RANGE) continue;
+      /* 0.965 of a dot is about 15°, which is a generous but honest cone —
+       * the old 0.8 was 37° and swallowed bodies the player was plainly not
+       * pointing at, which is its own kind of "it does nothing". */
+      if (_v2.normalize().dot(this.aimDir) < 0.955) continue;
+      if (d < bestD) { bestD = d; best = e; }
+    }
+    if (best) { this._enemyPoint(best, out); return best; }
+    const to = _v3.copy(origin).addScaledVector(this.aimDir, LIGHTNING_RANGE);
+    /* STATICS AND PROPS ONLY. A null filter earths the bolt on the FIRST
+     * collider the ray meets, and at 35 cm in front of the chest that is
+     * reliably the player's own capsule — measured at 2.5 m of reach against a
+     * 22 m range, which looks exactly like the power being weak rather than the
+     * ray being wrong. The same predicate the camera's own occlusion cast
+     * uses, for the same reason. */
+    const hit = ctx.physics?.raycast?.(origin, this.aimDir, LIGHTNING_RANGE,
+      (b) => b.static || b.layer === LAYER.PROP);
+    if (hit && hit.point) { out.copy(hit.point); return null; }
+    if (ctx.terrain && this.aimDir.y < -0.02) {
+      /* Walk the ray until it is under the ground, then take that point. Ten
+       * samples over 22 m is a little over two metres of resolution, which is
+       * inside the width of the bolt itself. */
+      for (let i = 1; i <= 10; i++) {
+        const t = (i / 10) * LIGHTNING_RANGE;
+        _v4.copy(origin).addScaledVector(this.aimDir, t);
+        const h = ctx.terrain.height(_v4.x, _v4.z);
+        if (_v4.y <= h) { out.set(_v4.x, h + 0.05, _v4.z); return null; }
+      }
+    }
+    out.copy(to);
+    return null;
+  }
+
+  /**
+   * THE CHANNEL, ONE FRAME OF IT.
+   *
+   * Drawn every frame and damaging every `LIGHTNING_TICK`, which is the split
+   * that lets it look continuous and cost what it always cost. Both hands
+   * throw, because the reference is two hands and because a bolt from one hand
+   * reads as a gun.
+   *
+   * THE CHAIN IS UNCHANGED IN RULE and rebuilt every tick rather than once:
+   * `LIGHTNING_CHAIN` hops of `LIGHTNING_REACH` metres, each keeping
+   * `LIGHTNING_FALLOFF` of the last one's damage, so the fourth body in a line
+   * is singed rather than killed. What is new is that the chain is re-found
+   * every tick, so sweeping the channel across a line walks the discharge down
+   * it — which is the thing a one-frame power could not do.
+   */
+  _lightningTick(ctx, dt) {
+    const ch = this.channel;
+    if (!ch || ch.kind !== 'lightning') return;
+    ch.t += dt;
+    if (ch.t >= LIGHTNING_HOLD) { this.endLightning(); return; }
+    /* THE HOLD COSTS. `_spend` refuses rather than overdrawing, and a refusal
+     * here is a channel that has run the pool dry — which ends it, with the
+     * hands still up, exactly as running out of Force should. */
+    if (dt > 0 && !this._spend(LIGHTNING_DRAIN * dt, true)) { this.endLightning(); return; }
+
+    const vfx = this.world?.lightning;
+    const origin = _v1.copy(this.chest).addScaledVector(this.aimDir, 0.35);
+    const target = new THREE.Vector3();
+    const struck = this._lightningEnd(ctx, origin, target);
+
+    /* ── the drawing ─────────────────────────────────────────────────── */
+    if (vfx) {
+      vfx.setColor?.(this._lightningColor());
+      /* FROM THE HANDS. `handR`/`handL` are the rig's own bones, so the bolts
+       * leave the palms wherever the gesture has actually put them rather than
+       * from a point near the chest — which is the difference between "it comes
+       * out of your hands" and a beam that starts inside your ribcage. */
+      const rig = this.rig;
+      for (const bone of ['handR', 'handL']) {
+        const h = rig?.get?.(bone);
+        const from = _v5;
+        if (h?.obj) h.obj.getWorldPosition(from); else from.copy(origin);
+        /* The two hands' bolts meet a little in front of the chest and then run
+         * on as one, which is the shape of the reference: two arcs converging
+         * into a single discharge. */
+        vfx.strike(from, target, { power: 1, life: 0.10, chaos: 1 });
+        if (rng() < 0.5) {
+          _v6.subVectors(target, from);
+          vfx.fork(_v7.lerpVectors(from, target, 0.3 + rng() * 0.5), _v6, 1.0 + rng() * 2.2, { power: 1 });
         }
       }
+      /* AND IT LIGHTS THE WORLD. A discharge that leaves the ground unlit is a
+       * decal; `Engine.lightUp` is the same eight-slot pool the blades use, so
+       * this competes for a slot rather than recompiling every lit material. */
+      this.world.engine?.lightUp?.(target, _COL_LIGHT.setHex(this._lightningColor()),
+        7.5 + Math.sin(ch.t * 40) * 2.5, 12, 2);
+      this.world.engine?.lightUp?.(origin, _COL_LIGHT, 4.0, 7, 2);
+    }
+    /* THE CRACKLE, re-struck rather than looped: `audio.force` is a one-shot
+     * and a channel that fired it once was silent for two seconds. */
+    if (ch.t - (ch.said ?? -1) > 0.18) { ch.said = ch.t; audio.force?.(this.chest, 'lightning'); }
+
+    /* ── the damage ──────────────────────────────────────────────────── */
+    ch.tick -= dt;
+    if (ch.tick > 0) return;
+    ch.tick = LIGHTNING_TICK;
+    if (!struck) return;
+    const scale = LIGHTNING_TICK / 0.55;      // per-tick share of a full jolt
+    const hit = new Set();
+    let from = target, node = struck, power = 1;
+    for (let hop = 0; hop <= LIGHTNING_CHAIN && node; hop++) {
+      if (hit.has(node)) break;
+      hit.add(node);
+      ch.hits++;
+      if (hop > 0 && vfx) vfx.strike(from, this._enemyPoint(node, _v6), { power: power * 0.8, life: 0.12 });
+      node.damage(LIGHTNING_DAMAGE * power * scale, node.position, this, 'lightning');
+      node.stun?.(0.5 * power, _v2.subVectors(node.position, from).normalize(), 0.7 * power);
+      from = this._enemyPoint(node, _v4).clone();
+      power *= LIGHTNING_FALLOFF;
+      let best = null, bestD = LIGHTNING_REACH * LIGHTNING_REACH;
+      for (const e of this._foes(ctx)) {
+        if (e.dead || hit.has(e)) continue;
+        const dd = e.position.distanceToSquared(from);
+        if (dd < bestD) { bestD = dd; best = e; }
+      }
+      node = best;
     }
   }
 

@@ -11,6 +11,7 @@ import * as THREE from 'three';
 import { RapierWorld, Body, LAYER, LOOSE_MASK, box, ball, hullFromGeometry, boxFromObject } from '../physics/RapierWorld.js';
 import { Terrain } from '../world/Terrain.js';
 import { Particles } from '../world/Particles.js';
+import { LightningVfx } from '../world/Lightning.js';
 import { GrassField, Water, Atmosphere, weather } from '../world/Scenery.js';
 import { BoltPool } from './Bolts.js';
 import { BladeContactSolver, captureSnapshot, gradeCaught, resolveBladeClash, GRADE, GRADE_DAMAGE, GRADE_NAME, DIFFICULTY, CatchWindow } from './Combat.js';
@@ -582,6 +583,23 @@ export class World {
 
       { name: 'lighting the sky', run: () => {
     this.particles = new Particles(this.scene, particleScale);
+    /**
+     * FORCE LIGHTNING HAS ITS OWN POOL, and that is the whole answer to a note
+     * the player has now made many times: "it's nothing in the air right now
+     * like there's no VFX or anything".
+     *
+     * It used to be drawn out of `particles.sparks` — a shared ring of 6 cm
+     * point sprites sized for blade hits — so a bolt was forty dots in a line
+     * competing with every cut in the fight for the same ring. `LightningVfx`
+     * draws camera-facing RIBBONS: one continuous strip whose width is in
+     * world units, so it is a bright filament at two metres and at twenty
+     * rather than a row of dots that thins as you back away.
+     *
+     * It lives on the World rather than on the Player because two players in
+     * co-op share it, and because `unload` is the one place that knows when a
+     * scene stops existing.
+     */
+    this.lightning = new LightningVfx(this.scene);
     this.bolts = new BoltPool(this.scene, 460);
     this.bolts.onDeflect = (b, entry, hit, pt) => this._onBoltDeflect(b, entry, hit, pt);
     this.bolts.onImpact = (b, res) => this._onBoltImpact(b, res);
@@ -1209,6 +1227,8 @@ export class World {
     this.player = null;
     this.bolts?.dispose();
     this.particles?.dispose();
+    this.lightning?.dispose();
+    this.lightning = null;
     this.grass?.dispose(); this.grass = null;
     this.water?.dispose(); this.water = null;
     this.atmosphere?.dispose(); this.atmosphere = null;
@@ -2901,6 +2921,7 @@ export class World {
     }
     updateCauterisation(dt);
     this.particles.update(dt);
+    this.lightning?.update(dt);
     this.terrain.flush();
 
     // 7 — scenery

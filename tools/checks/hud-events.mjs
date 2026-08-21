@@ -202,13 +202,30 @@ export async function run({ check, assert }) {
     const { hud, doc, restore } = hudOnPage(INDEX);
     try {
       const HOSTILE = '<img src="/nope" onerror="globalThis.__pwned = 1">';
+      /**
+       * COUNTED AS A DELTA, AND IT USED TO BE COUNTED ABSOLUTELY.
+       *
+       * `querySelectorAll('img')` over the whole document was right while the
+       * page contained no images at all — every asset in this product is
+       * generated in code, so any `<img>` had to be one the attack built. That
+       * stopped being true the moment the front end started loading the
+       * player's own logo file: index.html now carries three legitimate
+       * `<img class="wordmark">`, on the boot screen, the menu and the loading
+       * screen, and the check reported them as three successful injections.
+       *
+       * A red result that names a real file as an attack is worse than no
+       * check, because the next reader deletes the check. The question was
+       * always "did these three calls BUILD anything", so it is asked that way:
+       * the count before, the count after, and the difference.
+       */
+      const before = doc.documentElement.querySelectorAll('img').length;
       hud.popupsOn = true;
       hud.message('A JEDI HAS FALLEN AWAY', `${HOSTILE} left the fight`);
       hud.popup('A JEDI HAS FALLEN AWAY', `${HOSTILE} left the fight`, 'event');
       hud.killFeed(HOSTILE, 'a droideka', 'cut');
-      const injected = doc.documentElement.querySelectorAll('img');
-      assert(injected.length === 0,
-        `${injected.length} element(s) were parsed out of a peer's name — `
+      const injected = doc.documentElement.querySelectorAll('img').length - before;
+      assert(injected === 0,
+        `${injected} element(s) were parsed out of a peer's name — `
         + 'a remote machine is writing markup into this page');
       // and the name still has to READ, so the text must survive the escaping
       assert(hud.el.center.textContent.includes('left the fight'),
