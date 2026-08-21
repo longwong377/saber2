@@ -750,3 +750,126 @@ four that pays at the scale its own paragraph claims.**
   census properly the same day — 47 hits on your own side in 150 s, **every one
   of them fired by your own team** — and answered it. Both readings were taken
   independently, which is the only reason either is worth trusting.
+
+---
+
+## THE LINE is built — BACKLOG 6.7, the last row on the master list
+
+`MODES.theline`. Command and it share a director on purpose — `FLAGSHIP.md`
+§14 prices the mode at "~1,100 lines of spine against ~12,000 lines of existing
+machinery", and a mode that reimplemented the machinery would be the 12,000
+written twice. **One rule separates them**, and it is the rule the whole design
+document is an argument for:
+
+> **Command is won by taking the ground. The Line is won by the line.**
+
+`_endCampaign` wrote `won: true` the moment the last area was behind you and
+never looked at the roster, so a crossing finished with every name on the
+fallen list scored as a victory and read as one. And an emptied roster ended
+NOTHING — the only other ending in the game is `World._checkWipe`, which counts
+PLAYERS — so a Jedi standing over ten graves kept fighting, took the ridge, and
+got the victory card. §2's "a run that kills three hundred droids and loses the
+squad is a loss" was a slogan, not a field. `holdTheLine` computes the verdict
+off the survivors; `_checkLine` is a second door for a run whose army has ceased
+to exist, and it is deliberately a second door, because `_endCampaign` awards
+the muster, promotes the living and recalls the survivors — every one of which
+is a lie about a run that ended because there are none.
+
+Three things came with it and each closed a hole of its own:
+
+- **A third ending card.** This game had two — you won, you died. The Line has
+  one neither describes: the run is over, the army is gone, and **you are still
+  standing there**. Telling that player "You are one with the Force" over a row
+  reading "Wave reached 4" reports a death that did not happen and asks the
+  endless modes' question of a mode that answers a different one.
+- **The ground is a seed roll**, across all seven theatres. §13.5: "no room's
+  deletion deletes the mode — every level in `LEVEL_ORDER` is a legal seed. That
+  is exactly what killed the Descent." The mode was first written with
+  `level: 'geonosis'`, which is the Descent's mistake in miniature.
+- **`MODES.crossing`** replacing `mode === 'command'` in `World.loadLevel` — a
+  mode-name literal in the file whose own notes complain about mode-name
+  literals three times on one page. Without it the flagship mode would have been
+  handed a plain `WaveDirector`: no roster, no names, no muster, no ending, with
+  every menu card still lit.
+
+Eleven checks in `tools/checks/theline.mjs`, and every verdict one drives a real
+run to a real ending and reads the summary `onGameOver` delivered.
+
+### The mode's own open question, and it is the biggest thing on this list
+
+**A ten-man roster is wiped out inside the first engagement, on every seed, in
+both army modes.** Measured with the Jedi held unkillable so survival is not a
+variable:
+
+    theline  seed 1  155s   roster 0/10   theline  seed 2  113s  0/10
+    command  seed 1  ~120s  roster 0/10   command  seed 3  ~180s 0/10
+
+— and the muster is never reached, so the mode's whole between-engagements beat
+is unreachable in play. This was always true of Command; nothing surfaced it,
+because losing the army ended nothing. The Line makes it a loss, which is the
+point of the inversion, and it also means **the mode cannot currently be won**.
+
+**What kills them**, wrapping `Enemy.prototype.damage` at runtime over two
+seeds, idle player, geonosis:
+
+    1248 damage onto the line · 20 killing blows
+    by kind:   bolt 100.0%
+    by dealer: conscript 46.0%   GunPit 42.8%   b1 11.2%
+    nearest hostile to a living trooper: median 18.4 m, p10 9.9 m
+
+Three separate causes stack, and all three are correct in isolation:
+
+1. `World._boltHitTest`'s early-out was fixed, so hostile bolts can reach your
+   own troops **for the first time** (§16.3). Before that the line was immortal
+   to gunfire and every number about it was fiction.
+2. The levy puts forty extra rifles on the field, free of the threat budget.
+3. The emplacement gun does 43% of all damage onto the line from behind a door
+   nobody has opened — since halved, and 36.9% after.
+
+**Nobody has measured it with a Jedi who plays.** Every reading above is an
+idle or scripted player, which is a corpse with a delay. That measurement is
+the next thing anybody should take: `tools/_linetoll.mjs` is the bench and
+takes `<mode> <seeds>`.
+
+### A contradiction two lanes should resolve before either number is used
+
+The presence lane reports **19.7% of living men inside `MORALE.NEAR`, and the
+median man going 12.6 m → 45.7 m in thirty seconds** — and builds its whole
+conclusion on it ("the question is no longer what a Jedi does for the line, it's
+why the line comes apart to thirty metres wide").
+
+Measured on the mainline the same afternoon, both modes, idle and scripted
+players, sampling every five seconds for two minutes: **the median man is
+6–19 m from the player and 50–100% of the living are inside `NEAR`.** The
+maximum reaches 22–38 m in bursts and settles back. The line does not come
+apart here.
+
+The two readings cannot both describe the same build. Until somebody says which
+build each was taken on, **neither is safe to design against** — and the
+presence lane's negative result does not depend on it, so the conclusion stands
+either way.
+
+### And the opening wave is 2 bodies on one ground and 49 on another
+
+`theline.11` boots every ground in the mode and reports what area 1 composes at
+one seed:
+
+    colosseum 2 · scoria 3 · mustafar/wood/drifts/alpine 8 · geonosis 49
+
+All seven are handed the same budget of **8.0**. Two things make the spread:
+the levy is geonosis-only, which is 40 of that 49; and a pool with expensive
+bodies in its unlocked set spends the whole budget on two or three of them —
+the Colosseum opens on a stalker. A mode about a LINE opening against two
+bodies is a defect, and it is a composer question rather than a mode question,
+which is why the check asserts legality and reports the spread rather than
+hiding the number inside a red bar.
+
+### FLAGSHIP §16 is closed
+
+All six live bugs the design exercise found in the shipped game. The last open
+one was the bolt broad phase, and it was worse than the document said —
+**16.43 ms a frame at 39 bodies**, a quarter of a 60 Hz frame at a fifth of the
+body count §16 measured, now **0.57 ms**. The 13,320-bolt fan that licenses the
+optimisation found a live bug of its own: every droideka in the game presented
+**three leg capsules with a non-finite endpoint**, so its legs could not be shot
+off or cut off and the topple at two legs lost was unreachable.
