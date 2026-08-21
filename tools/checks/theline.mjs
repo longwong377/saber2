@@ -483,6 +483,24 @@ export async function run({ check, assert }) {
       } finally { L.battlefield = was; }
     }
     assert(carries.length >= 1, 'no ground in the game can carry a generated heightfield');
+    /**
+     * …AND EVERY ROOM DECLARES IT, WHICH IS WHAT MAKES A SITTING ONE THING.
+     *
+     * The mode rolls its ground off the run seed, so a room that keeps its
+     * authored contours is not a smaller feature — it is a fraction of all
+     * runs whose ground was not generated at all. At six of seven that was
+     * one run in seven, and the honest options were to fix the room or to say
+     * in the design that some rooms are authored ground. The room was fixed:
+     * scoria's failure was never its dressing, it was that the generated
+     * height was written about a datum of zero under a lava sheet at +0.55
+     * (`LEVELS.scoria.battlefield` carries the attribution). This bar is what
+     * stops the seventh room quietly dropping out again.
+     */
+    const undeclared = LEVEL_ORDER.filter((k) => !LEVELS[k].battlefield);
+    assert(!undeclared.length,
+      `${undeclared.join(', ')} do not declare \`battlefield\`, so ${undeclared.length} of `
+      + `${LEVEL_ORDER.length} rolls of the mode's ground stand on authored contours — either the `
+      + 'room carries a generated heightfield or the design says some rooms do not, and it says neither');
 
     const reasons = new Set();
     for (const seed of [1, 2, 3, 4, 5]) {

@@ -976,24 +976,96 @@ pool, dressing, arrivals, sky and whole palette stay the authored room's (§12.5
 and only the height is replaced, which is what keeps §13.5 true — nothing
 generated is reachable except through a room that exists.
 
-**And one room cannot carry it.** Every ground was booted with the layer forced
-on and driven for twenty seconds of a real engagement:
+**One room could not carry it, and the recorded cause was wrong.** Every ground
+was booted with the layer forced on and driven for twenty seconds of a real
+engagement:
 
     mustafar 9/10 · colosseum 10/10 · wood 10/10 · drifts 10/10 · alpine 10/10 · geonosis 10/10
     scoria   0/10 — and four of the ten could not be placed at all
 
-Scoria's rocks and wrecks take the standing room with them when the ground moves
-under them. It does not declare `battlefield`, so it keeps its authored contours
-and the mode is safe on it — **but the mode rolls its ground off the seed, so
-roughly one run in seven is a run whose ground was not generated.** That is a
-real inconsistency in what a sitting is, and the honest options are to find what
-scoria's dressing does and fix it, or to say in the design that some rooms are
-authored ground and mean it. Nobody has chosen.
+This paragraph used to read "scoria's rocks and wrecks take the standing room
+with them when the ground moves under them". **They do not.** Every candidate
+point of the deploy ring at seed 3 was attributed to the clause that refused it:
 
-The declaration is the LEVEL's, not the mode's, for the reason `pool` and
-`terrain` are the level's: whether a room survives having its contours replaced
-is a fact about that room. `theline.13` measures all seven either way, so the
-list grows by measurement rather than by somebody deciding it looks fine.
+    authored    static boxes refuse   3 of 288   the lava refuses     0    10/10 up
+    generated   static boxes refuse  10 of 288   the lava refuses   126     0/10 up
+
+The dressing was worth seven points. **The sea was worth a hundred and
+twenty-six.** `battlefieldGround` spreads an authored preset and replaces
+`height`; every other field it borrows is a colour or a texture key and cannot
+disagree with a heightfield, and `waterLevel` is the one that can — it is a
+number in the same metres the height returns, `Spawn.spawnClear` refuses any
+point under it on a sheet that burns, and `Hazard` charges 52 HP a second to
+anything standing in one. The generated field was written about a datum of zero
+under scoria's lava at +0.55, so the basalt shelf the level is named for came
+out as a lava plain with the deploy ring in it. Mustafar's 9/10 was the same
+arithmetic one notch down: 8% of its ring under a 56 HP/s sheet is the one man
+it lost.
+
+**Fixed, and the fix is a shelf rather than a lift.** Raising the whole field
+until nothing is wet also works and it deletes the hazard the room is named
+for, priced around and lit by. So the battle stands out of the borrowed sheet:
+land to one deployment ring beyond the room's own `spawnRadius`, falling to
+7.5 m below it, with the radius perturbed into bays and headlands — and the
+LINE is land end to end, a causeway, because §12.4's marks go on the front and
+dressing under lava is dressing nobody can see. A ground with no sheet gets
+none of it and its height function is unchanged term for term. Measured after,
+seeds 1/3/7: deploy ring 0% wet, **10/10 standing**, fight disc 7.2% under the
+sheet against the authored room's 9.4%, coast 75-85 m out.
+
+**All seven rooms declare `battlefield` now**, so the mode's ground is generated
+on every seed rather than on six in seven, and `theline.13` fails if a room
+drops out again. The declaration is still the LEVEL's, not the mode's, for the
+reason `pool` and `terrain` are the level's: whether a room survives having its
+contours replaced is a fact about that room.
+
+Two things the fix needed that the generator could not know and now takes from
+its caller: **the deploy point** — scoria opens at (−22, 68) and the front was
+being pulled through the origin, 71 m from where anybody stands — and the
+room's own fight radius. `battlefield.11` measures all three sea rooms.
+
+### The dressing knows the front is a curve now — one reader, not four
+
+`planBattle` produces a bezier; `Front.js`'s four dressing functions took a
+half-plane, and `frontAtChoke` bridged them with the tangent at the chokepoint.
+The cost was measured and recorded: the tangent has a reach — 80 m on a tight
+seed, 296 on a lazy one — and asked for `burnBand`'s default 260 m it laid three
+quarters of the swath on the clean side. Teaching four functions the curve is
+four copies of the curve.
+
+**`Battlefield.frontLine` is one copy.** `side(x, z)` gives signed metres from
+the line — positive on the burnt side, always — and metres along it; `place(u,
+depth)` is the inverse. A half-plane is built as the degenerate case of the same
+two, so an authored level dressing a straight front gets the identical ground:
+same expression, same `rng` draws in the same order, `crater-log` 18/18
+unchanged. It flattens nothing — `plan.curve` was flattened once by
+`planBattle` and this reads that table (HANDOFF §2.4).
+
+The burnt-side fraction of the swath, 25 distinct fronts over all five reasons,
+measured against the ground's own signed distance:
+
+    tangent at ±260 m    mean  80.0%   worst  30.0%   360 marks
+    tangent at ±reach    mean  88.1%   worst  58.4%   207 marks
+    the curve at ±260    mean 100.0%   worst 100.0%   356 marks
+
+The middle row buys its score by shrinking the swath, which is a narrower burn
+and not a better one. `battlefield.9` binds the third row and reports all three.
+
+**And the chokepoint has a reader.** `World._groundKeyFor` published
+`world.battlefield` and nothing in the game read it: `marchFront` dressed the
+ground with `frontAt` — a straight line off an unrelated seed — while standing
+on a heightfield derived from a bezier, so the burn, the barrage and the dead
+landed nowhere near the front the ground was built to explain. It defaults to
+the published plan now, with §14's schedule expressed as an **offset of the
+curve along its own normal**: the front keeps its shape and advances, rather
+than being redrawn each engagement.
+
+What still does not read it is the **gameplay** side. `lineAdvances` measures its
+quorum against the commander's own position; the honest version is the
+chokepoint — "the line is up when your men are on the ground the plan says this
+engagement is about" — and `world.battlefield.choke` is sitting there for it.
+`marchTo` also does not pass `strewWrecks`, so the hulls §12.4 puts on the
+fighting line are the one mark of the five the mode never lays.
 
 ### Attrition is tuned, and the spread is the finding
 
