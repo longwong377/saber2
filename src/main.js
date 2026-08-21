@@ -14,7 +14,8 @@ import { sandMaps, rockMaps, metalMaps, clothMaps, armorMaps, duracreteMaps,
 import { World } from './game/World.js';
 import { DIFFICULTY } from './game/Combat.js';
 import { HUD } from './ui/HUD.js';
-import { Menu, loadSettings, saveSettings, applyFeelSettings, VICTORY_TITLE } from './ui/Menu.js';
+import { Menu, loadSettings, saveSettings, applyFeelSettings, VICTORY_TITLE,
+  LINE_LOST_TITLE } from './ui/Menu.js';
 import { Net, RemoteAvatar, packLook, sessionPart } from './net/Net.js';
 import { boonById, drawBoons, BOSS_EVERY, MODES } from './game/Waves.js';
 import { theatreFor } from './game/Levels.js';
@@ -1204,9 +1205,27 @@ function gameOver(stats) {
    * every field read here to being a field `runStats` reports.
    */
   const TAKEN = { campaign: 'Missions taken', skirmish: 'Engagements won', command: 'Areas taken',
-                  duel: 'Forms faced' };
+                  theline: 'Ground taken', duel: 'Forms faced' };
   const row = (label, v) => (v == null ? null : [label, v]);
-  const rows = won
+  /**
+   * A THIRD CARD, BECAUSE THE LINE HAS A THIRD ENDING.
+   *
+   * The two above are "you won" and "you died", and they were the only two
+   * endings this game had. THE LINE has one neither describes: the run is over,
+   * the army is gone, and **you are still standing there**. Telling a player
+   * who is alive "You are one with the Force" over a row that reads "Wave
+   * reached 4" is wrong twice — it reports a death that did not happen, and it
+   * asks the endless modes' question of a mode that answers a different one.
+   *
+   * `stats.ended` is the discriminator and it is set by the two doors that know
+   * — `CommandDirector._checkLine` and `_endCampaign` — rather than inferred
+   * here from `won === false` plus a guess at whether the player is breathing.
+   * The rows are the won card's rows: the ground you took and the men it cost
+   * are the right questions whichever way the verdict went, and they are the
+   * only rows on either card that are about the ARMY.
+   */
+  const lostLine = !won && stats.ended === 'line';
+  const rows = (won || lostLine)
     ? [
       row(TAKEN[sessionOr('mode')] ?? 'Ground taken', stats.taken),
       ['Score', Math.floor(stats.score).toLocaleString()],
@@ -1223,7 +1242,8 @@ function gameOver(stats) {
       ['Perfect returns', stats.perfects],
       ['Limbs taken', stats.limbs],
     ];
-  const card = () => menu.showDeath(rows, won ? VICTORY_TITLE : undefined);
+  const card = () => menu.showDeath(rows,
+    won ? VICTORY_TITLE : (lostLine ? LINE_LOST_TITLE : undefined));
   // Remembered before it is shown: 2.6 seconds is a long time for the only exit
   // from a state to be in flight, and a throw in there used to leave the player
   // watching their own corpse with nothing on screen. Escape asks for it again.

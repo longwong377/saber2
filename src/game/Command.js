@@ -5965,6 +5965,10 @@ export class CommandDirector extends WaveDirector {
      * when it takes the ridge", and a line with a man in it is standing.
      */
     const won = !this.holdTheLine || strength > 0;
+    /* WHY, and not only WHETHER. A crossing walked end to end and lost anyway
+     * is a different sentence from a Jedi killed on wave three, and `main.js`
+     * has exactly one field to tell them apart with — see `ended` there. */
+    const ended = won ? undefined : 'line';
     this.log.push({ t: won ? 'won' : 'lost', area: this.areaNumber, strength,
                     fallen: this.roster.fallen.length,
                     ...(won ? {} : { why: 'the line did not survive the crossing' }) });
@@ -6007,7 +6011,7 @@ export class CommandDirector extends WaveDirector {
      * was printed on the mode that names its dead. `this.wave` is what
      * `runStats` reads off `world.director.wave`, which is this director.
      */
-    w.onGameOver?.(w.runStats({ won }));
+    w.onGameOver?.(w.runStats({ won, ended }));
     return true;
   }
 
@@ -6051,7 +6055,7 @@ export class CommandDirector extends WaveDirector {
     if (!w) return true;
     w._announceBattle(false);
     w.over = true;
-    w.onGameOver?.(w.runStats({ won: false }));
+    w.onGameOver?.(w.runStats({ won: false, ended: 'line' }));
     return true;
   }
 

@@ -242,6 +242,63 @@ export async function run({ check, assert }) {
     return 'the ground is still the win in Command';
   });
 
+  check('theline.9 a run that ends alive says so, and not "you died"', async () => {
+    /**
+     * THE THIRD ENDING. This game had two — you won, you died — and The Line
+     * has one neither describes: the run is over, the army is gone, and the
+     * player is still standing on the field. `main.js` used to answer that with
+     * the death card, which reports a death that did not happen over a row
+     * reading "Wave reached", which is the endless modes' question.
+     *
+     * The discriminator is a field on the summary, set by the two doors that
+     * KNOW, rather than inferred at the card from `won === false` plus a guess
+     * at whether the player is breathing. Both doors are driven here, because a
+     * field set by one of them and not the other is the half-wired case that
+     * would show up as the wrong card in exactly the situation the mode is
+     * about.
+     */
+    const { LINE_LOST_TITLE, VICTORY_TITLE } = await import('../../src/ui/Menu.js');
+    assert(LINE_LOST_TITLE && LINE_LOST_TITLE !== VICTORY_TITLE,
+      'the mode has no ending sentence of its own');
+
+    // Door one: the army lost mid-crossing.
+    const a = await lineWorld({ trim: 2 });
+    let mid = null;
+    a.world.onGameOver = (s) => { mid = s; };
+    for (const t of a.d.roster.all) { t.alive = false; if (t.body) t.body.dead = true; }
+    drive(a.world, 20, a.input, () => !!mid);
+    assert(mid, 'losing the army produced no summary');
+    assert(mid.ended === 'line', `the mid-crossing loss carries ended=${JSON.stringify(mid.ended)}`);
+    assert(a.world.player && !a.world.player.dead,
+      'the fixture killed the player too — this cannot tell the third ending from the second');
+    a.world.unload();
+
+    // Door two: the crossing finished, and finished empty.
+    const b = await lineWorld({ trim: 0 });
+    b.d.areaIndex = b.d.stages.length - 1;
+    b.d.areaWaves = b.d.area.waves - 1;
+    for (const t of b.d.roster.all) { t.alive = false; if (t.body) t.body.dead = true; }
+    let end = null;
+    b.world.onGameOver = (s) => { end = s; };
+    drive(b.world, 180, b.input, () => !!end, true);
+    assert(end, 'the empty crossing produced no summary');
+    assert(end.ended === 'line', `the finished-empty loss carries ended=${JSON.stringify(end.ended)}`);
+    b.world.unload();
+
+    // …and a WIN carries no such field, or every card would be the wrong one.
+    const c = await lineWorld({ trim: 2 });
+    c.d.areaIndex = c.d.stages.length - 1;
+    c.d.areaWaves = c.d.area.waves - 1;
+    let win = null;
+    c.world.onGameOver = (s) => { win = s; };
+    drive(c.world, 180, c.input, () => !!win);
+    assert(win && win.won === true, 'the winning arm did not win');
+    assert(win.ended === undefined,
+      `a won run carries ended=${JSON.stringify(win.ended)} — the card would print a defeat`);
+    c.world.unload();
+    return `both losing doors say "${LINE_LOST_TITLE}"; a win says nothing`;
+  });
+
   /* ══════════════════════════════════════════════════════════════════ */
   /*  The run leaves a record                                           */
   /* ══════════════════════════════════════════════════════════════════ */

@@ -229,6 +229,15 @@ export const DEATH_TITLE = 'You are one with the Force';
  * a victory. The advance is the only thing in this game that can be WON.
  */
 export const VICTORY_TITLE = 'The advance is yours';
+/**
+ * THE LINE'S OWN ENDING — the run is over, the army is gone, and the Jedi is
+ * still standing. `main.js`'s `gameOver` reads `stats.ended === 'line'` to
+ * choose it; it is here beside the victory title because the two are the same
+ * kind of thing, a sentence a run ends on, and a string typed into main.js is a
+ * string no check can hold. FLAGSHIP §1: "your job is not to kill everything —
+ * it is to be the reason the line is still standing when it takes the ridge."
+ */
+export const LINE_LOST_TITLE = 'The line did not hold';
 
 export const BLADE_CAP = 1.45;
 export const BLADE_MAX = 4.0;
