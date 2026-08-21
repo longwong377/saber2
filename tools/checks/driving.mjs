@@ -285,5 +285,69 @@ export async function run({ check, assert }) {
     return `out on the same key, side ${wasTeam} restored, pace restored, ${clear.toFixed(1)} m clear`;
   });
 
+  /* ────────────────────────────────────────────────────────────────────
+   * AND A GUEST SEES IT
+   * ──────────────────────────────────────────────────────────────────── */
+
+  check('driving: a tank the host is driving is a tank the guest sees moving, on the right side', async () => {
+    /**
+     * The grenades needed a new event on the wire because a grenade is not a
+     * STATE. A driven vehicle is the opposite case and it is worth pinning
+     * rather than assuming: it stays an ordinary `Enemy`, so its position, its
+     * facing, its hp and — the one that matters — its TEAM are already in every
+     * snapshot. Taking the controls flips `vehicle.team` to the driver's, which
+     * is what stops your own line shooting at it, and that flip has to reach
+     * the far end or a guest watches their host's tank being shot to pieces by
+     * their own troops.
+     *
+     * If this ever fails, the fix is not a new packet — it is that something
+     * stopped packing `e.team`.
+     */
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const { host, client, pump, input } = await H.bootPair({ level: 'colosseum' });
+    const p = host.player;
+    const at = new THREE.Vector3(p.position.x + 3, p.position.y, p.position.z);
+    const tank = host.spawnEnemy('aat', at);
+    assert(tank, 'setup: no tank on the host');
+    pump(1 / 60);
+    tank.position.copy(at);
+    const foeTeam = tank.team;
+
+    const mirror = () => client.enemies.find(e => e.id === tank.id) || null;
+    for (let i = 0; i < 40; i++) pump(1 / 60);
+    assert(mirror(), 'the tank never reached the guest at all');
+    assert(mirror().team === foeTeam, 'the guest has the tank on the wrong side before anybody boards it');
+
+    tank.team = p.team;                       // …so it is takeable
+    assert(p.takeControls({ input, enemies: host.enemies, players: host.players,
+      terrain: host.terrain, physics: host.physics, bolts: host.bolts,
+      camera: host.engine.camera, particles: host.particles, time: host.time }),
+    `the host could not board: ${whyNotDrive(host, p, tank)}`);
+
+    const from = mirror().position.clone();
+    /* Drive it. `pump` closes over ONE input object and both worlds read it, so
+     * the throttle goes on that object rather than on a second one handed to a
+     * parameter `pump` does not have — which is how this first read 0.63 m of
+     * drift and reported it as a wire fault. The host's own input is what moves
+     * the tank either way: this is the shipped path, not a position written by
+     * the check. */
+    input.moveAxis = (o) => { if (o) { o.x = 0; o.y = 1; return o; } return { x: 0, y: 1 }; };
+    pump(2);
+    input.moveAxis = (o) => { if (o) { o.x = 0; o.y = 0; return o; } return { x: 0, y: 0 }; };
+    pump(0.5);
+
+    const moved = mirror().position.distanceTo(from);
+    assert(moved > 1.5,
+      `the host drove its tank ${tank.position.distanceTo(at).toFixed(1)} m and the guest saw it move `
+      + `${moved.toFixed(2)} m`);
+    assert(mirror().team === p.team,
+      'the guest still has the tank on the enemy side while a player is driving it — their own line '
+      + 'will shoot it to pieces');
+    const line = `guest saw ${moved.toFixed(1)} m of driving, side ${foeTeam} → ${mirror().team}`;
+    host.unload(); client.unload();
+    return line;
+  });
+
   return;
 }
