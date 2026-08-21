@@ -527,8 +527,31 @@ The whole ladder, three readings of one field one line apart:
 L2 is ~4.6 calls a body; L3 is ~4.4 calls an *archetype*. Bound by
 `tools/checks/frame-budget.mjs` §7.
 
-**Then, and only then, the mode.** ~1,100 lines of spine against ~12,000 lines
-of existing machinery.
+**Then, and only then, the mode. BUILT — `MODES.theline`, and the estimate was
+close.** ~1,100 lines of spine against ~12,000 lines of existing machinery, and
+the spine came in well under that because the rungs above it had already been
+built against this document: the seeded length, the deploy card, the marching
+front and the muster were all in Command before the mode existed.
+
+**One rule is the whole difference between the two modes**, and it is the rule
+§2 is an argument for: Command is won by taking the ground, The Line is won by
+the line. `_endCampaign` wrote `won: true` off reaching the last area and never
+looked at the roster, and an emptied roster ended NOTHING — the only other
+ending in the game counts PLAYERS — so a Jedi standing over ten graves took the
+ridge and got the victory card. It is a field now (`holdTheLine`) and a second
+ending door (`_checkLine`), with a third card for the ending neither "you won"
+nor "you died" describes: the run is over, the army is gone, and you are still
+standing there.
+
+**And the mode's first honest measurement is a hard one.** With the Jedi held
+unkillable so survival is not a variable, a ten-man roster is wiped out in
+105–170 seconds of the FIRST engagement, on every seed, in both army modes —
+so the muster is unreachable in play and the mode cannot currently be won. That
+is not a regression: it is what §16.3 looked like from the other side. Until
+this exercise, **no hostile bolt could touch your own army at all**, so every
+number ever taken about the line was fiction and there is no earlier state to
+restore. What one engagement should cost a ten-man roster is now a live design
+question with a run-losing consequence attached, and nobody has set it.
 
 ---
 
