@@ -327,19 +327,22 @@ export async function run({ check, assert }) {
      *
      * It is a RATIO against the Dark Acolyte rather than an absolute distance
      * because the absolute number is a property of THIS HARNESS and not of the
-     * game: measured, the same player over 88 swings gets no nearer than
-     * 0.69 m to an acolyte standing at knife range, because a stub input
+     * game: measured, the same player over 99 swings gets no nearer than
+     * 0.57 m to an acolyte standing at knife range, because a stub input
      * cannot aim the guard the way a hand on a mouse does (`p.pitch` is not
-     * even the field — the look angle lives on `Player.camera`). An absolute
-     * bar here would be a bar on the probe. What the ratio says is the thing
-     * that matters and is not an artefact: with the same player, the same
-     * swing and the same gate, this body is at least as reachable as the
-     * duellist the whole game is built around.
+     * even the field — the look angle lives on `Player.camera`, and see the
+     * note in the loop, where the same sentence turned out to be true of the
+     * yaw and had not been carried across). An absolute bar here would be a
+     * bar on the probe. What the ratio says is the thing that matters and is
+     * not an artefact: with the same player, the same swing and the same gate,
+     * this body is at least as reachable as the duellist the whole game is
+     * built around.
      *
      * The two counts are the real difference and they are reported rather than
-     * asserted: 88 swings against an acolyte in 60 s and 6 against this, because
-     * an acolyte is in front of you the whole fight and a flyer is only ever
-     * down for a moment.
+     * asserted: 99 swings against an acolyte in 60 s and 48 against this,
+     * because an acolyte is in front of you the whole fight and a flyer is only
+     * ever down for a moment — 3080 of 7200 frames of stoop against an acolyte
+     * that never leaves the ground.
      */
     const bout = (type, seed) => {
       /* SEEDED, and both bouts get the same one. `enemyRng` and `duelRng` are
@@ -400,7 +403,35 @@ export async function run({ check, assert }) {
          */
         const down = e._flightState ? e._flightState === 'stoop' : true;
         drive.advance = down && flat2 > 0.9 ? -1 : 0;
-        p.yaw = Math.atan2(e.position.x - p.position.x, e.position.z - p.position.z);
+        /**
+         * TURNED WITH `camera.yaw`, WHICH IS THE FIELD THE WALK READS.
+         *
+         * This line wrote `p.yaw`, and the note above already knew why that is
+         * the wrong answer — it says so about the pitch, one paragraph up:
+         * "`p.pitch` is not even the field — the look angle lives on
+         * `Player.camera`." The same is true of the yaw and it was not carried
+         * across. `Player._move` builds its basis from `this.camera.yaw`
+         * (Player.js, `heading`), so `p.yaw` — the AIM yaw, read by `syncAim`
+         * for a gun this player is not carrying — steered nothing at all.
+         *
+         * The arithmetic was never wrong: `axis.y = -1` drives along
+         * `+(sin heading, 0, cos heading)`, so `atan2(dx, dz)` is exactly the
+         * heading that walks at the body. It was written to a field nobody
+         * reads, and the fixture therefore walked in one fixed world direction
+         * for the whole minute while facing the thing it was supposed to be
+         * chasing. Measured, one bout each way:
+         *
+         *     p.yaw          3 swings, closed to 1.79 m, 69 of 7200 frames
+         *                    with the body inside the 2.2 m swing gate
+         *     p.camera.yaw   48 swings, closed to 0.75 m, 2981 frames
+         *
+         * — and the 3356 frames the body spent below 3 m are the SAME in both,
+         * so the flyer was always coming down inside reach and the player was
+         * never brought to it. Setting both fields is measurably identical to
+         * setting this one, which is how it is known that `p.yaw` is dead
+         * weight here rather than a second half of the turn.
+         */
+        p.camera.yaw = Math.atan2(e.position.x - p.position.x, e.position.z - p.position.z);
         if (down) minFlat = Math.min(minFlat, flat2);
         if (e.position.y < 3.0 && flat2 < 2.2 && w.time - lastSwing > 0.6) {
           lastSwing = w.time;
