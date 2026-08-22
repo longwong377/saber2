@@ -587,26 +587,54 @@ Gate at the end: **1718 passed, 0 failed.**
   ground it fell on. Of nine trunks realised in the wood, four had surfaces
   under the terrain and one had fallen to −179 m. The floor query is right about
   all of them; the solver put them there.
-- **A joining player bills the host for the HOST'S OWN bolts, and the horde
-  pays a ~50% surcharge for it.** Found while chasing a `command-pvp` flake and
-  NOT fixed — it is pre-existing, it is core net code, and it moves attrition,
-  which another lane is tuning. The road: `_spawnNetBolts` fires the host's
-  replicated bolts into the client's own pool as real bolts (deliberately — a
-  guest must be able to deflect them), `_boltHitTest` resolves them against the
-  client's own mirrors, and `_reconcileClaims` then bills the host for every
-  hp its mirror lost "whatever dealt it". So one round fired by a host trooper
-  is simulated on both machines and charged twice. Measured on a real co-op
-  Command pair on geonosis, 45 s, **the joining player holding `idleInput` and
-  firing nothing**: 813 claims reaching the host asking for 15 787 hp, and on
-  the horde the host applied **110.6 hp of its own bolt damage and 57.0 hp more
-  on the peer's word**. Your own named troopers are spared only because
-  `applyClaim`'s `canHarm` gate refuses a peer who may not harm them — 0.0 hp
-  of the same road landed on a trooper in the same run, which is the gate
-  working. The shape of a fix is that a bolt whose owner is a replicated body
-  and which no local blade has touched is the host's own fire and its damage is
-  not this machine's to claim; `deflected`/`turned` already mark the bolts that
-  ARE. Sizing it first matters: co-op is currently about 50% easier than the
-  single-machine numbers every tuning pass was taken on.
+- ~~**A joining player bills the host for the HOST'S OWN bolts.**~~ **FIXED,
+  and the class turned out to have three members.** Reproduced first on the
+  same fixture the finding used — a co-op Command pair on geonosis, 45 s, the
+  joining player holding `idleInput` and firing nothing: **317 claims, 273.1 hp
+  taken off the client's mirrors by bolts nobody on that machine had fired, and
+  42.2 hp of it applied by the host on top of the 187.8 hp of the same bolts it
+  had already applied itself.** The deaths were the larger half and are the part
+  the original write-up's 15 787 hp is: rounding puts the two copies a point
+  apart, so the client's mirror goes down on a round the host's survives, the
+  next snapshot writes the host's hp back over a body that is already dead here
+  and resets `_netDead`, and the mirror then claims its whole remaining health
+  every tick for the rest of the session.
+
+  The rule is NOT "do not simulate it" — that deletes the deflection the
+  replication exists for. `Bolts.fire` carries a `replicated` flag set at the
+  one door a bolt off the wire comes through, and `World._boltHurt` reads it
+  together with the bolt's OWNER: a replicated bolt no local hand has touched
+  resolved here exactly as it resolved on the host, so the baseline moves by
+  what it took and nothing is claimed; a replicated bolt the local player
+  deflected, threw or pulled out of the air carries that player as its owner
+  and bills like any other blow. `_netHostKill` is the same fact for the death.
+  Both halves are bound in `tools/checks/coop.mjs`, and neither means anything
+  alone.
+
+  **Two siblings of the same shape, both live, both fixed.** The gun
+  emplacement is built by the LEVEL, so both machines had one and both were
+  firing it — a second gun on one embrasure, billed back to the host
+  (`GunPit._fire`). So is a `Hazard`: measured on mustafar, one body standing
+  in the lava for two seconds was burned 14.0 hp by the host and another 14.0
+  by the client's copy of the same sheet, and all 14.0 came back as a claim —
+  a 28 hp body dead in half the time.
+
+  **And the sizing question is answered: co-op is no longer easier, and it is
+  not harder either.** Fifteen seeds, fresh process per arm, same seed list,
+  same mode string, 45 s of Command on geonosis with the guest idle — the
+  line's survivors read **7.20 of ten single-machine against 7.13 in co-op,
+  paired delta −0.07 ± 0.42 men**, and the horde's dead +1.07 ± 0.75. Both
+  inside the noise this instrument can see. Single-machine tuning numbers are
+  good for co-op again.
+
+  **Still open, and it cannot be closed by a billing rule:** explosive PROPS
+  are not on the wire at all. Both machines hold the same barrel and both
+  detonate it off the same replicated bolt, and `World.onExplosion` hurts every
+  body in the radius — so the client bills its half of a blast the host also
+  dealt. The other direction is worse and is why a rule like `_boltHurt`'s
+  cannot answer it: a barrel the guest destroys with its own blade is a blast
+  the host's copy never has, so refusing to claim it would delete real damage.
+  The prop layer needs an owner before this has a right answer.
 
 ---
 
