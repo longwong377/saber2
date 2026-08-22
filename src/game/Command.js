@@ -6387,14 +6387,31 @@ export class CommandDirector extends WaveDirector {
         /* A DRESSING THAT THREW MUST NOT TAKE THE ENGAGEMENT WITH IT. This runs
          * on the frame a muster closes and the next area opens; a level with no
          * terrain features to site a wreck on is a worse picture, not a broken
-         * run. Reported once rather than swallowed, because a front that
-         * silently stops advancing is the defect this whole system exists to
-         * make visible. */
-        if (!CommandDirector._warnedMarch) {
-          CommandDirector._warnedMarch = true;
-          console.error('marchFront failed for engagement', e, err);
-        }
+         * run.
+         *
+         * ── ONCE PER PROCESS WAS TOO QUIET, AND IT COST A WHOLE FRONT ──────
+         *
+         * This used to warn behind a static `_warnedMarch` flag: the FIRST
+         * failure in the process printed and every one after it was silent.
+         * Measured on `runrules.mjs`, whose rule-drive builds a real
+         * `CommandDirector` on a hand-made world with no `statics` list: nine
+         * modes × every rule, each losing its front on every engagement, and
+         * the whole of it was one line about `push` from inside `Smoke.js`. A
+         * guard that logs once and continues is how a mode silently loses its
+         * front — which is the thing this system exists to make visible.
+         *
+         * So: one line per ENGAGEMENT, and a count on the director, because a
+         * console line is not something a check can assert on and this is the
+         * one failure in the mode with no other symptom. `marchFront` names the
+         * missing field at its own door now, so the line says what to fix. */
+        this.marchFailures = (this.marchFailures | 0) + 1;
+        (this.marchErrors ||= []).push(`engagement ${e}: ${err.message}`);
+        console.error(`marchFront failed for engagement ${e}: ${err.message}`);
       }
+      /* ADVANCED EVEN ON A FAILURE, deliberately: `_marched` is a high-water
+       * mark and not a success count, so a ground that cannot be dressed does
+       * not re-throw once a frame for the rest of the run. `marchFailures` is
+       * what says it happened. */
       this._marched = e;
     }
     return did;

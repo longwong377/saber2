@@ -479,15 +479,91 @@ export function run({ check, assert, near }) {
         `${key} dresses itself and publishes no hull builder, so the front it is rolled onto `
         + 'lays four of §12.4\'s five marks and no wrecks');
       const before = world.statics.length;
-      /* ONE ENGAGEMENT, ONE CLUSTER, and the smoke turned off: what is being
-       * measured is whether the callback is reached, and a full sitting's five
-       * engagements would be five heightfields' worth of cratering for the
-       * same yes-or-no. */
-      const out = marchFront(world, { engagement: 1, seed: 3,
-        strewWrecks: world.strewWrecks, wrecks: 1, columns: 4, fallen: 20 });
-      assert(out.wrecks > 0,
-        `${key}: the front was handed a hull builder and laid ${out.wrecks} clusters`);
-      rows.push(`${key} ${out.wrecks}× +${world.statics.length - before} statics`);
+      /* THE WHOLE SCHEDULE, in order, because `marchFront` is additive and its
+       * own note says calling it once for 4 gives ground with none of the
+       * first three's history. It is also the only honest denominator: the
+       * Ember Shelf lays NOTHING at engagements 1 and 2 and one cluster at 3,
+       * because its authored ground at 180 and 140 m is under the lava (see
+       * the sheet bound below) — a two-engagement sample would read that as a
+       * front that lays no hulls at all. Five engagements over seven grounds
+       * is about eighty seconds. */
+      let wrecks = 0;
+      for (const e of [1, 2, 3, 4, 5]) {
+        /* THE MODE'S OWN DEFAULTS — no `wrecks`, `columns` or `fallen`
+         * override. `CommandDirector.marchTo` passes none of them, and a
+         * thinned-out arm is a different dressing: the counts feed the same
+         * `rng` in order, so asking for one cluster instead of three does not
+         * scale the answer down, it moves every bearing after it. */
+        const out = marchFront(world, { engagement: e, seed: 3,
+          strewWrecks: world.strewWrecks });
+        wrecks += out.wrecks;
+      }
+      assert(wrecks > 0,
+        `${key}: the front was handed a hull builder and laid ${wrecks} clusters over five `
+        + 'engagements — the callback is present and never reached, which is the same defect '
+        + 'one level in');
+      /* ── AND NOTHING IT LAID IS UNDER THE LEVEL'S OWN SHEET ────────────
+       *
+       * The march schedule is a number about the BATTLE and knows nothing
+       * about what is at 180 m. On the Ember Shelf that is ground 38-45 m
+       * below a lava sheet at +0.55 which charges 52 HP a second: measured
+       * before the guard, engagement 1 laid **12 of 12 hull pieces under it**,
+       * the whole band of the fallen with them, and the smoke rising off the
+       * sea floor. `siteOk` takes a `minHeight` and nothing passed one.
+       *
+       * The three marks that put OBJECTS on the ground are checked where they
+       * ended up — the hull statics, the base of every smoke column, and the
+       * instance matrices of the fallen — rather than the option being read
+       * back off the call (HANDOFF §2.4). */
+      /**
+       * THE SHEET AS THE LEVEL DRAWS IT, and the bound is the level's own
+       * answer to "may a body stand here":
+       *
+       *   a sheet that BURNS  — scoria at 52 HP/s, mustafar at 56 — takes
+       *     nothing at all. A hull frame in lava is not half-swallowed
+       *     wreckage, it is a mark inside a hazard.
+       *   a sheet that does not — the Drowned Wood's channels — takes marks in
+       *     the shallows and not below them. A body lying ankle-deep in a
+       *     swamp is the picture; one a metre under is drowned scenery.
+       *
+       * Stated from `LEVELS[*].water` rather than from `Spawn.dryFloor`, which
+       * is what the dressing calls: a check that evaluates the same expression
+       * as the code cannot disagree with it (HANDOFF §2.4).
+       */
+      const w = L.water;
+      const sheet = w ? (w.level ?? 0) : -999;
+      const allow = w && !(w.damage > 0) ? 0.5 : 0;
+      let wet = 0, deepest = 0, placed = 0;
+      const note = (y) => { placed++; if (y < sheet - allow) { wet++; deepest = Math.min(deepest, y - sheet); } };
+      if (sheet > -900) {
+        /* THE SMOKE AND THE FALLEN GO ON `statics` TOO, and their `position` is
+         * the ORIGIN — both build one merged/instanced mesh whose vertices and
+         * matrices carry world coordinates. Reading `mesh.position.y` on those
+         * measures the scene graph, not the ground: it reported 7 marks under
+         * the Ember Shelf's sheet that were three container meshes sitting at
+         * y = 0. They are measured below, where they actually are. */
+        for (const m2 of world.statics.slice(before)) {
+          if (m2.name === 'smoke-columns' || m2.name === 'fallen') continue;
+          if (m2.position) note(m2.position.y);
+        }
+        const _v = new THREE.Vector3(), _m = new THREE.Matrix4();
+        world.scene.traverse((o) => {
+          if (o.isInstancedMesh && o.name === 'fallen') {
+            for (let i = 0; i < o.count; i++) { o.getMatrixAt(i, _m); note(_m.elements[13]); }
+          } else if (o.isMesh && o.name === 'smoke-columns') {
+            const pos = o.geometry.attributes.position;
+            let lo = Infinity;
+            for (let i = 0; i < pos.count; i++) lo = Math.min(lo, pos.getY(i));
+            note(lo);
+          }
+        });
+        assert(wet === 0,
+          `${key}: ${wet} of ${placed} of the front's marks stand more than ${allow} m under a `
+          + `${w.damage > 0 ? `sheet that burns at ${w.damage} HP/s` : 'sheet'} at ${sheet} m, `
+          + `the deepest ${(-deepest).toFixed(2)} m below it`);
+      }
+      rows.push(`${key} ${wrecks}× +${world.statics.length - before} statics`
+        + (sheet > -900 ? `, ${placed} marks all within ${allow} m of a ${sheet} m sheet` : ''));
       terrain.dispose();
     }
     assert(rows.length >= 6, `only ${rows.length} grounds surveyed`);

@@ -170,6 +170,8 @@ function fallenMaterial() {
  * @param opts.depth   the band's 1σ across the line, metres. §12.4's 26 m band
  *                     is 2σ ≈ 26, so 6.5 either side of the line.
  * @param opts.palette per-army tones, picked per body
+ * @param opts.minHeight  ground below this carries no body — the level's own
+ *                     water/lava line, handed in by the caller
  * @returns {{meshes: THREE.InstancedMesh[], count: number, calls: number}|null}
  */
 export function addFallen(world, opts = {}) {
@@ -231,6 +233,14 @@ export function addFallen(world, opts = {}) {
      * point — a prone box sitting exactly on a heightfield reads as furniture.
      * The sink is what makes it read as lying rather than as placed. */
     const y = (T ? T.height(x, z) : 0) - 0.045;
+    /* NOT UNDER THE SHEET. A level's sea is a number in the same metres this
+     * height is, and nothing here knew about it: on the Ember Shelf the
+     * marching front's engagement 1 stands 180 m out over ground 45 m BELOW a
+     * lava sheet at +0.55, so the whole band was laid on the sea floor —
+     * invisible, and inside a hazard that charges 52 HP a second to anything
+     * that stands in it. The caller passes the sheet (`Front.marchFront`), so
+     * a field with no sea is unchanged term for term. */
+    if (opts.minHeight !== undefined && y < opts.minHeight) continue;
     if (T?.normalAt) T.normalAt(x, z, nrm); else nrm.copy(up);
     q.setFromUnitVectors(up, nrm);
     qy.setFromAxisAngle(up, rng() * TAU);

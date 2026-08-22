@@ -1114,6 +1114,14 @@ export function strewWrecks(world, opts = {}) {
   for (let k = 0; k < n; k++) {
     const site = findSite(world, opts.rmin ?? 55, opts.rmax ?? 150, {
       clearance: 11, maxSlope: opts.maxSlope ?? 0.42, tries: 20, angle: opts.angle,
+      /* FORWARDED, because `siteOk` has no sheet of its own and this is the
+       * one caller that sites on ground it did not choose. `Front.marchFront`
+       * lays hulls wherever the schedule puts the line, and on the Ember Shelf
+       * engagement 1 is 180 m out over ground 45 m BELOW a lava sheet that
+       * sits at +0.55: measured, 12 of 12 hull pieces under it. `findSite`'s
+       * own note says "find a site that passes, or give up rather than force a
+       * bad one", and a hull inside a burning sea is a bad one. */
+      minHeight: opts.minHeight,
       /* `at` is where the radius band is measured from — the origin unless the
        * caller is dressing a front that does not pass through it. */
       at: opts.at,
@@ -1127,6 +1135,13 @@ export function strewWrecks(world, opts = {}) {
       const d = (i - 1.5) * (2.2 + rng() * 1.6);
       const px = site.pos.x + Math.cos(yaw) * d, pz = site.pos.z + Math.sin(yaw) * d;
       const y = world.terrain ? world.terrain.height(px, pz) : 0;
+      /* AND A FRAME SPILLING OFF THE SHORE IS STILL A FRAME IN THE LAVA. The
+       * SITE passes `minHeight`; the frames stand up to 5.7 m either side of
+       * it, and on a coast that is enough to put the end of a ribcage under
+       * the sheet — measured on the Ember Shelf's front, 7 of 226 marks up to
+       * 0.6 m under a sheet that burns. Only when the caller asked for a floor,
+       * so a level's own dressing is unchanged term for term. */
+      if (opts.minHeight !== undefined && y < opts.minHeight) continue;
       const h = 1.4 + rng() * 2.6;
       const len = 3.0 + rng() * 2.4;
       /* Buried to a quarter of its height and tilted no more than 0.16 rad
@@ -5074,7 +5089,36 @@ export function theatreFor(mode, want, seed = null) {
    * the seed is missing, because that is the leak this whole file exists to
    * close — a card that is lit, written to settings and then thrown away.
    */
-  if (MODES[mode]?.seedsGround) return rollGround(seed, live) ?? live[0];
+  /**
+   * …AND A MODE THAT GENERATES ITS GROUND MAY ONLY ROLL A ROOM THAT CAN CARRY
+   * ONE, which is the residue of the scoria item wearing a different room.
+   *
+   * `seedsGround` and `generatedGround` are two flags and they were being read
+   * by two different pieces of code that did not agree. The roll offered all
+   * seven theatres; `World._groundKeyFor` installs the `front:<terrain>` preset
+   * only where `LEVELS[x].battlefield` is true, and the colosseum states false
+   * on purpose — its cavea IS its heightfield, so a generated one deletes the
+   * building. Measured over 400 seeds, `rollGround` returned the colosseum 54
+   * times: **about one THE LINE sitting in seven landed on a ground the mode's
+   * whole spatial design had not been applied to** — no bezier front, no high
+   * ground flanking the line, no chokepoint — and nothing said so.
+   *
+   * That is the same defect the scoria row already carried, and the fix is not
+   * to make the colosseum a battlefield (it is not one, and the note in its
+   * entry is the reason). It is that the pool the seed draws from and the
+   * predicate the installer reads have to be ONE fact. `battlefield` is that
+   * fact; this asks it rather than keeping a second list beside it (§2.3).
+   *
+   * The filter is skipped if it would empty the pool, for the reason every
+   * filter in this file is: a mode with no ground at all is worse than a mode
+   * on the wrong one, and "a filter never empties the field" outranks this.
+   */
+  if (MODES[mode]?.seedsGround) {
+    const pool = MODES[mode]?.generatedGround
+      ? (live.filter((k) => LEVELS[k]?.battlefield).length ? live.filter((k) => LEVELS[k]?.battlefield) : live)
+      : live;
+    return rollGround(seed, pool) ?? pool[0];
+  }
   return live.includes(want) ? want : live[0];
 }
 

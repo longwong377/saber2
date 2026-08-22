@@ -73,6 +73,11 @@ import * as THREE from 'three';
 import { makeRng, TAU } from '../engine/MathUtil.js';
 import { addSmokeColumns, smokeSites, smokeAir } from './Smoke.js';
 import { addFallen } from './Fallen.js';
+/* THE SHEET'S OWN FLOOR, from the module that already owns the rule for a body
+ * arriving. `Spawn.js` is a leaf and says so in its header — it exists exactly
+ * so both of the places that pick a spot can reach one predicate — and a mark
+ * standing in lava is the same question as a trooper standing in it. */
+import { dryFloor } from '../game/Spawn.js';
 /* THE ONE READER. `Battlefield.js` owns the front's geometry — it is where the
  * bezier is flattened into an arc-length table — so "which side of the front is
  * this, and how far from it" is asked there and nowhere else. A half-plane is
@@ -353,6 +358,26 @@ export function engagementFront(world, engagement, opts = {}) {
  * @param opts.wrecks      how many wreck clusters to grow on the burnt side
  */
 export function marchFront(world, opts = {}) {
+  /**
+   * THE WORLD HAS TO BE ABLE TO CARRY A MARK, and this used to be found out
+   * forty lines in, as `TypeError: Cannot read properties of undefined
+   * (reading 'push')` from inside `Smoke.js`.
+   *
+   * `CommandDirector.marchTo` wraps this call in a `try` that warned ONCE for
+   * the whole process and then carried on, so a caller whose world was missing
+   * `statics` — `runrules.mjs`'s rule-drive stub, which builds a real
+   * `CommandDirector` on a hand-made world — lost its front on every
+   * engagement of every mode and said so once, in a line about `push`.
+   *
+   * A named refusal at the door is worth more than a deep TypeError: it says
+   * which field, and the message is the only thing the caller ever sees.
+   */
+  const missing = ['scene', 'statics', 'terrain'].filter((k) => !world?.[k]);
+  if (missing.length) {
+    throw new Error(`marchFront: this world cannot carry the front's marks — no ${missing.join(', ')}. `
+      + 'The five marks are added to `scene` and tracked on `statics`, and the ground they lie on '
+      + 'is `terrain`.');
+  }
   const n = Math.max(1, opts.engagement | 0);
   const seed = opts.seed ?? 1;
   const front = opts.front || engagementFront(world, n, opts);
@@ -360,6 +385,42 @@ export function marchFront(world, opts = {}) {
   const T = world.terrain;
   const out = { engagement: n, bearing: front.bearing, distance: front.distance,
     replayed: 0, replayMs: 0, barrage: 0, burns: 0, smoke: 0, wrecks: 0, fallen: 0 };
+  /**
+   * ── THE SHEET, AND IT IS THE ONE THING THE SCHEDULE CANNOT SEE ─────────
+   *
+   * The line opens 180 m out and closes 40 m an engagement. That distance is a
+   * number about the BATTLE; it knows nothing about what is at 180 m. On the
+   * Ember Shelf, engagement 1 lands on ground 38-45 m BELOW a lava sheet that
+   * sits at +0.55 and charges 52 HP a second — measured with the authored
+   * ground, engagement 1, seed 3: **12 of 12 hull pieces under the sheet**,
+   * the whole band of the fallen with them, and the smoke columns rising out
+   * of a sea floor nobody can see.
+   *
+   * `Battlefield.js` already names this coupling — "`waterLevel` is the one
+   * field of the borrowed row a height function can contradict" — and it is
+   * the same coupling one layer up: a mark is placed in metres and a sheet is
+   * drawn in metres, and the three marks that put OBJECTS on the ground had no
+   * idea the sea existed. `siteOk` has no sheet of its own either; it takes a
+   * `minHeight` and nothing was passing one.
+   *
+   * THE FLOOR IS `Spawn.dryFloor` AND NOT A SECOND OPINION ABOUT THE SHALLOWS:
+   * never inside a hazard, never deeper than wading anywhere else, which is the
+   * rule the game already applies to a body arriving. The wood's ankle-deep
+   * channels keep their dead.
+   *
+   * A ground with no sheet (`waterLevel` −999, four of the seven) is unchanged
+   * term for term: `dry` is undefined and every guard below is a no-op.
+   *
+   * REFUSING IS THE RIGHT ANSWER AND NOT A SHRUG. `findSite`'s own note — "find
+   * a site that passes, or give up rather than force a bad one" — is the rule
+   * here too: where the line falls in the sea there is no ground for a hull to
+   * stand on, and an engagement that lays four marks instead of five is a
+   * truer picture than one that lays the fifth underwater. Moving the line is
+   * a different job and belongs to the schedule, not to the dressing.
+   */
+  const floor = dryFloor(world);
+  const dry = floor > -Infinity ? floor + 0.25 : undefined;
+  const onLand = (x, z) => dry === undefined || T.height(x, z) > dry;
 
   /* ── 1. THE GROUND'S OWN MEMORY, first, because everything else is placed
    * on top of it and `findSite` reads `terrain.slopeAt`. A wreck sited before
@@ -413,7 +474,7 @@ export function marchFront(world, opts = {}) {
    * 7–10 out, which is the level's own density on the half of the map that is
    * burning, and stays under the twenty §11 warns "dominates the sky". */
   const sites = smokeSites(rng, opts.columns ?? 24, { rmin, rmax: rmin + 130, phase: 1.1 + n })
-    .filter((s) => burnt(front, s.x, s.z));
+    .filter((s) => burnt(front, s.x, s.z) && onLand(s.x, s.z));
   if (sites.length) {
     /* THE LEVEL'S AIR, DERIVED, AND NOT A COPY OF GEONOSIS'. The literal that
      * stood here was Geonosis' `world.smokeAir` written out a second time, and
@@ -443,7 +504,7 @@ export function marchFront(world, opts = {}) {
       front,
       origin: { x: front.dir.x * front.distance, z: front.dir.z * front.distance },
       dir: front.dir, count: opts.fallen ?? 110, half: 150, depth: 6.5,
-      seed: seed + n * 4211,
+      seed: seed + n * 4211, minHeight: dry,
     });
     out.fallen = f ? f.count : 0;
     out.fallenCalls = f ? f.calls : 0;
@@ -451,7 +512,27 @@ export function marchFront(world, opts = {}) {
 
   const strew = opts.strewWrecks;
   if (strew) {
-    for (let k = 0; k < (opts.wrecks ?? 3); k++) {
+    /**
+     * A QUOTA, NOT A FIXED NUMBER OF ATTEMPTS — and the difference is a whole
+     * mark on a level with a sea across its front.
+     *
+     * `strewWrecks` fixes the BEARING and lets only the radius fall where it
+     * likes, which is what puts a hull ON the line rather than in a field
+     * round it. The cost is that one unlucky bearing spends one of the three
+     * clusters: `findSite` gives up after 20 tries on the same azimuth, and on
+     * the Ember Shelf most azimuths at 180 m are lava. Measured there over the
+     * whole five-engagement schedule, three clusters an engagement: **0
+     * hulls** at one seed and 2 at another, on a ground whose front is real
+     * for part of its width. That is not a decision about the ground, it is a
+     * coin toss about which bearing came out of `rng` first.
+     *
+     * So the loop counts what it PLACED and takes up to three passes at the
+     * quota, each with a fresh bearing. A ground with room is unaffected —
+     * geonosis fills its quota on the first pass every time — and a ground
+     * whose line is half in the sea gets the half that is not.
+     */
+    const want = opts.wrecks ?? 3;
+    for (let k = 0; out.wrecks < want && k < want * 3; k++) {
       const a = front.bearing + (rng() - 0.5) * 1.25;
       /* ON THE LINE, WHEREVER THE LINE IS. `findSite` draws a radius band round
        * a centre; the centre used to be the origin, which puts a hull on the
@@ -472,6 +553,7 @@ export function marchFront(world, opts = {}) {
         count: 1, angle: a, at: site,
         rmin: site ? 0 : Math.max(24, front.distance - 18),
         rmax: site ? 40 : front.distance + 60, maxSlope: 0.34, seed: seed + n * 100 + k,
+        minHeight: dry,
       });
     }
   }
