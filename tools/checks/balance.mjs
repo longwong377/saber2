@@ -1092,13 +1092,46 @@ export async function run({ check, assert }) {
         + `${rows[i - 1].line.toFixed(3)} → ${rows[i].line.toFixed(3)} of the line — the axis does not `
         + 'respond to the only thing in this model that protects it');
     }
-    /* AND IT IS NOT SATURATED AT EITHER END, which is the failure mode that
-     * would leave it ordered and useless: an axis pinned at 0 or 1 ranks
-     * nothing. `MODEL.lineShare` is what calibrates this and says so. */
-    assert(rows[0].line > 0.02 && rows[rows.length - 1].line < 0.98,
+    /**
+     * AND IT IS NOT SATURATED, which is the failure mode that would leave it
+     * ordered and useless: an axis pinned at 0 or 1 ranks nothing.
+     *
+     * ── THE FLOOR AT THE BOTTOM RUNG WAS A THRESHOLD ON A COIN ──────────────
+     *
+     * This read `rows[0].line > 0.02` — a bar on the CLUMSIEST rung, which is
+     * the one rung of the three that sits against zero by construction: at
+     * σ110 the modelled player is bad enough that the line is very nearly wiped
+     * whatever happens, so the mean over 32 runs is a small number a hair above
+     * its own floor. And this file's header says why that cannot be pinned:
+     * `Math.random` is only pinned around the Waves.js import, so under a full
+     * gate the composition a seed draws MOVES BETWEEN PROCESSES and nothing
+     * here may depend on one. Measured, four runs of this one check on two
+     * trees:
+     *
+     *     0.138 → 0.656      0.181 → 0.484 … 0.703
+     *     0.000 → 0.528      0.091 → 0.281 … 0.588
+     *
+     * The bottom rung spans 0.000 to 0.181 across processes with the bar at
+     * 0.02, so it fails on a draw. Two of those four runs are the same tree.
+     *
+     * THE SPAN IS THE STATISTIC AND IT IS THE STABLE ONE — 0.518, 0.522, 0.528
+     * and 0.497 over the same four runs, a spread of 0.03 where the endpoint it
+     * was read off spans 0.18. It is also the quantity the assertion is really
+     * about: an axis ranks builds if a better hand preserves MEASURABLY more
+     * line than a worse one, and how far above zero the worst hand lands is not
+     * that question. The ordering clause above still owns the direction; this
+     * owns the resolution.
+     *
+     * The top is still bounded, because a ceiling at 1.0 is a real saturation
+     * and does not sit against a floor.
+     */
+    const span = rows[rows.length - 1].line - rows[0].line;
+    assert(span > 0.2 && rows[rows.length - 1].line < 0.98,
       `the axis runs ${rows[0].line.toFixed(3)} → ${rows[rows.length - 1].line.toFixed(3)} across the `
-      + 'whole skill ladder — it is saturated and cannot rank anything');
-    return rows.map(r => `σ${r.sigma} depth ${r.depth.toFixed(2)} line ${r.line.toFixed(3)}`).join(' · ');
+      + `whole skill ladder — a span of ${span.toFixed(3)} of the roster is too little to rank `
+      + 'anything with');
+    return rows.map(r => `σ${r.sigma} depth ${r.depth.toFixed(2)} line ${r.line.toFixed(3)}`).join(' · ')
+      + ` — span ${span.toFixed(3)}`;
   });
 
   check('balance: a dead Jedi is a lost line — dying early does not score well', () => {
