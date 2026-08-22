@@ -4019,6 +4019,25 @@ export class Menu {
     // question: the Trial pays four times what Path of the Blade pays and
     // drafts nothing, so the page moves with the mode or it is wrong in one.
     this._buildCodexTeaching();
+    /**
+     * …AND THE CARD YOU JUST CHOSE HAS TO BE ONE YOU CAN READ.
+     *
+     * `_revealMode` existed and ran from `_onPanelShown` alone — so the column
+     * was put right when the panel opened and never again. Every other route to
+     * a mode left the chosen card wherever it happened to sit: the Codex's
+     * `selectMode('training')` and `selectMode('sandbox')`, a restored setting
+     * applied after layout, and a click on a card whose lower half is already
+     * under the fade. Measured at 1280x720 by `lineseen.1`: **eight of the nine
+     * modes** ended outside the 365 px column's usable band, bottoms at
+     * 330–354 against a limit of 339 — the mode you are about to deploy into
+     * sitting under the gradient of the list you are reading.
+     *
+     * Safe to call on a click, because `_revealMode` scrolls only when the card
+     * is actually outside the band minus the fade, so a card already in view
+     * moves nothing. That is the whole of what its own note means by "without
+     * moving anything that already is".
+     */
+    this._revealMode();
     saveSettings(this.s);
   }
 

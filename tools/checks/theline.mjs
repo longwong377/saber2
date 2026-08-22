@@ -328,20 +328,36 @@ export async function run({ check, assert }) {
      */
     const { LEVEL_ORDER } = await import('../../src/game/Levels.js');
     const { rollGround } = await import('../../src/game/Session.js');
-    const { theatreFor, theatresFor } = await import('../../src/game/Levels.js');
+    const { theatreFor, theatresFor, LEVELS } = await import('../../src/game/Levels.js');
 
     assert(theatresFor('theline').length === LEVEL_ORDER.length,
       `the mode offers ${theatresFor('theline').length} of ${LEVEL_ORDER.length} grounds`);
+    /**
+     * THE POOL IS THE GROUNDS THAT CAN CARRY THE DESIGN, and it is six of the
+     * seven the mode OFFERS. Both assertions here used to read `LEVEL_ORDER`,
+     * which was right until the mode's two flags were made to agree: a mode
+     * that declares `generatedGround` may only roll a room declaring
+     * `battlefield`, and the colosseum declares false on purpose because its
+     * cavea IS its heightfield. See `theline.20`, which binds that rule, and
+     * the note in `Levels.theatreFor`.
+     *
+     * Derived from the same predicate the installer reads rather than typed as
+     * six, so this cannot drift from the rule the day a room changes its mind
+     * (§2.3).
+     */
+    const POOL = LEVEL_ORDER.filter((k) => LEVELS[k]?.battlefield);
+    assert(POOL.length >= 4,
+      `only ${POOL.length} ground(s) declare battlefield — the roll has collapsed`);
     const drawn = new Map();
     for (let seed = 1; seed <= 200; seed++) {
       const g = theatreFor('theline', 'geonosis', seed);
-      assert(LEVEL_ORDER.includes(g), `seed ${seed} rolled "${g}", which is not a ground`);
+      assert(POOL.includes(g), `seed ${seed} rolled "${g}", which cannot carry a generated ground`);
       /* The player's `want` is ignored — every seed above asked for geonosis. */
       drawn.set(g, (drawn.get(g) | 0) + 1);
-      assert(rollGround(seed, LEVEL_ORDER) === g, `theatreFor and rollGround disagree on seed ${seed}`);
+      assert(rollGround(seed, POOL) === g, `theatreFor and rollGround disagree on seed ${seed}`);
     }
-    assert(drawn.size === LEVEL_ORDER.length,
-      `200 seeds reached ${drawn.size} of ${LEVEL_ORDER.length} grounds — the roll does not reach them all`);
+    assert(drawn.size === POOL.length,
+      `200 seeds reached ${drawn.size} of ${POOL.length} grounds — the roll does not reach them all`);
     /* Seedless is not the player's pick either: a mode that says the seed owns
      * the ground must not honour a stored pick when there is no seed, which is
      * the leak `theatreFor`'s own note is about. */
