@@ -255,6 +255,63 @@ export async function run({ check, assert }) {
       + `(${Object.entries(paid).map(([k, v]) => `${k} ${v.toFixed(0)}`).join(' ')}), 0 at drain 0`;
   });
 
+  check('force-economy: no boon makes a held channel pay for itself', async () => {
+    /**
+     * `_regen` pauses the base 7.5 a second while the barrier or Force sense is
+     * up, and its own note says why: measured before that line existed, a raised
+     * barrier with nothing shooting at it ran a NET GAIN of 2.82 Force a second,
+     * and a power that refills the bar it is draining has no decision in it.
+     *
+     * The rule was a local `const` inside `_regen`, which made it a rule with
+     * one obeyer — and there are two writers of this pool's regeneration. The
+     * other is `wellspringFlow`, a boon tick in Waves.js adding
+     * `7.5 × (forceRegen − 1)` a second, which never asked. Driven on a real
+     * World, net Force per second with the barrier up and nothing shooting:
+     *
+     *     no cards                      −4.25/s
+     *     Wellspring                    −0.18/s
+     *     Wellspring + Attunement ×4    +6.15/s
+     *     Attunement of the Force ×8    +6.26/s
+     *
+     * The property is the SIGN, over the worst stack the run can reach, and it
+     * is stated for both channels. It deliberately does not name a slope: the
+     * numbers above are what the tuning happens to be, and the thing that must
+     * never be true is that holding one of these makes you richer.
+     */
+    const { BOONS, ATTUNEMENTS } = await import('../../src/game/Waves.js');
+    const card = (id) => BOONS.find(c => c.id === id) || ATTUNEMENTS.find(c => c.id === id);
+    /* The two Force-regeneration cards, and both are `stack: Infinity` or
+     * stackable epics offered on every set-piece — so this stack is a late run
+     * rather than a corner. Read from the tables so a third such card is
+     * covered without this check being told about it. */
+    const givers = [...BOONS, ...ATTUNEMENTS].filter(c => /forceRegen/.test(String(c.apply)));
+    assert(givers.length, 'nothing in the boon tables writes forceRegen — this check is looking at the wrong field');
+
+    const rows = [];
+    for (const which of ['barrier', 'sense']) {
+      const b = await boot();
+      const { p, world } = b;
+      /* Every regeneration card the tables carry, four deep, which is what a
+       * long run with a Force build actually holds. */
+      for (const c of givers) for (let i = 0; i < 4; i++) c.apply(p, 1);
+      p.force = p.maxForce * 0.5;
+      for (const k of Object.keys(p.cooldowns)) p.cooldowns[k] = 0;
+      if (which === 'barrier') p.forceShield(world); else p.toggleSense(world);
+      assert(which === 'barrier' ? p.shield.up : p.senseActive, `the ${which} would not come up`);
+      const f0 = p.force;
+      b.step(240);
+      const slope = (p.force - f0) / 4;
+      assert(which === 'barrier' ? p.shield.up : p.senseActive,
+        `the ${which} came down inside four seconds; the slope below is about the wrong thing`);
+      assert(slope < 0,
+        `holding the ${which} with every Force-regeneration card in the game ran `
+        + `${slope >= 0 ? '+' : ''}${slope.toFixed(2)} Force a second — it pays for itself, `
+        + 'so there is no decision left in how long you hold it');
+      rows.push(`${which} ${slope.toFixed(2)}/s at forceRegen ×${(p.boonMods.forceRegen ?? 1).toFixed(2)}`);
+    }
+    return rows.join(', ');
+  });
+
   /* ────────────────────────────────────────────────────────────────────
    * A POWER THAT DECLINES SAYS WHY — DRIVEN, NOT GREPPED
    * ──────────────────────────────────────────────────────────────────── */
@@ -401,6 +458,36 @@ export async function run({ check, assert }) {
     assert(/ignite|blade/i.test(p.notices[0].s), `the refusal says "${p.notices[0].s}"`);
     assert(p.force === before, 'a refused throw took Force');
     rows.push(`unlit throw → "${p.notices[0].s}"`);
+
+    /**
+     * AND A FIELD THAT CAUGHT NOTHING SOUNDS LIKE ONE.
+     *
+     * `releaseStasis` played its falling note only on the DROP — the bar
+     * running out — and the other way into the same branch is a field the
+     * player FIRED that had caught nothing. That path made no sound, raised no
+     * gesture and threw nothing: you paid 26, stood in it, pressed the key, and
+     * the game did not respond. Same silence, different door.
+     */
+    const { audio } = await import('../../src/engine/Audio.js');
+    const heard = [];
+    const tone = audio.tone.bind(audio);
+    audio.tone = (...a) => { heard.push('tone'); return tone(...a); };
+    try {
+      p.notices.length = 0;
+      world.time += 1;
+      for (const k of Object.keys(p.cooldowns)) p.cooldowns[k] = 0;
+      p.force = p.maxForce;
+      p.stasis.active = false; p.stasis.held.length = 0; p.stasis.firing.length = 0;
+      p.toggleStasis(world);
+      assert(p.stasis.active, 'the field would not go up');
+      assert(!p.stasis.held.length, 'the bench caught something; this arm needs an empty field');
+      heard.length = 0;
+      p.toggleStasis(world);                     // fire it, with nothing in it
+      assert(!p.stasis.active, 'the field would not come down');
+      assert(heard.length > 0,
+        'a stasis field fired with nothing in it made no sound at all — 26 Force and no answer');
+      rows.push(`empty field fired → ${heard.length} sound(s)`);
+    } finally { audio.tone = tone; }
 
     return rows.join('; ');
   });

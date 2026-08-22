@@ -2884,7 +2884,17 @@ export class Player {
      */
     this.hurled = [];
     this._wheel = 0;
-    this.cooldowns = { push: 0, pull: 0, throw: 0, sense: 0, dash: 0, lightning: 0, stasis: 0, rend: 0, heal: 0, compel: 0, unleash: 0 };
+    /* `shield` WAS NOT IN THIS OBJECT and the barrier worked anyway, which is
+     * the only reason nobody noticed: `undefined > 0` is false, so the refusal
+     * never fired on a fresh player, and `_endShield`'s assignment then CREATED
+     * the key, after which `_tick`'s `for (const k in …)` counted it down like
+     * any other. So the barrier's cooldown existed from the first time it came
+     * down and not before — and anything that walks this table by name to clear
+     * cooldowns (force-voice.mjs's `rearm`, force-economy.mjs's loop) silently
+     * skipped it until then. Twelve powers have a cooldown; twelve keys.
+     * `grip` has none by design — a hold you can re-take at once is what makes
+     * the throw-and-catch reachable — and `sense` is a toggle. */
+    this.cooldowns = { push: 0, pull: 0, throw: 0, sense: 0, dash: 0, lightning: 0, stasis: 0, rend: 0, heal: 0, compel: 0, unleash: 0, shield: 0 };
     /* The support calls. One per player, constructed here rather than lazily,
      * so `hud` and the checks can read the entry state on frame one instead of
      * guarding for its absence. */
@@ -3320,10 +3330,11 @@ export class Player {
        *
        * `SPIN`'s own note has always said "it is the reason this costs a third
        * more stamina and recovers half as fast", and the recovery was real —
-       * `SPIN.cooldown` is 0.92 against the overhead's 0.46 — while the stamina
-       * half was never wired: `ctx.onSpin` was called by the controller and no
-       * caller had ever supplied it. The only price was whatever the whoosh
-       * drain happened to take.
+       * `SPIN.cooldown` is 1.05 s against the overhead's 0.46, read off the
+       * table rather than typed here, and it was 0.92 when this paragraph was
+       * written — while the stamina half was never wired: `ctx.onSpin` was
+       * called by the controller and no caller had ever supplied it. The only
+       * price was whatever the whoosh drain happened to take.
        *
        * That was survivable while the spin was a 35° glance that crossed two
        * bodies. It stopped being survivable the moment it became a full
@@ -3340,6 +3351,40 @@ export class Player {
         this.stamina = Math.max(0, this.stamina - 18);
         this.staminaHold = STAMINA_HOLD;
         audio.swing(26, this.saber.base);
+      },
+      /**
+       * WHAT HOLDING A BLADE CHAMBERED COSTS — and it is the SAME defect the
+       * spin's note above records, one attack over and still live.
+       *
+       * `CHARGE.drain` (0.22) and `HEAVY.drain` (0.20) are authored in
+       * SaberController and spent through `ctx.onStrain`, and NO CALLER HAS
+       * EVER SUPPLIED ONE — grep `onStrain` across src/ and tools/ and the
+       * only hits are the two calls that raise it. Both notes there say the
+       * same thing in the same words: "Standing at full charge is not free,
+       * which is what stops the heavy from being a state you enter once and
+       * swing out of forever." It was free, so it was exactly that state:
+       * chamber the third press, walk around behind a full charge, and swing
+       * a faster blade whenever you like at no price at all.
+       *
+       * The amount arrives as a FRACTION OF THE BAR PER SECOND, which is the
+       * unit the controller already reads back (`ctx.stamina` is
+       * `stamina / maxStamina`), so a full overhead charge costs
+       * (0.85 − 0.28) × 0.22 = 12.5 of a 100 bar and a full heavy
+       * (0.80 − 0.16) × 0.20 = 12.8. Both a little under a dash's 18, which is
+       * the right order: chambering is a commitment, not a movement.
+       *
+       * `staminaHold` for the reason STAMINA_HOLD's own note gives — a bar
+       * does not refill while it is being spent. Without it the regen (16/s
+       * and up) simply outpaces a 22/s drain that only runs for half a second
+       * and the price is a rounding error. It is deliberately NOT what
+       * `guardCost` does: answering a bolt is something done TO you and its
+       * whole arithmetic is a drain racing a live regen (see GUARD_COST), and
+       * chambering is something you choose.
+       */
+      onStrain: (fraction) => {
+        if (!(fraction > 0)) return;
+        this.stamina = Math.max(0, this.stamina - fraction * this.maxStamina);
+        this.staminaHold = STAMINA_HOLD;
       },
       /* WHETHER THE FEET ARE UNDER THE LUNGE, from the body's OWN velocity.
        * The controller can otherwise only infer it from how fast the anchor it
@@ -5910,6 +5955,34 @@ export class Player {
     return Math.round(cost * (this.world.settings?.forceDrain ?? 1) * this.boonMods.forceCost);
   }
 
+  /**
+   * IS A CHANNEL HOLDING THE BAR OPEN — the one reader of the rule `_regen`
+   * used to keep to itself.
+   *
+   * The rule is `_regen`'s own and its note says why it exists: a power that
+   * refills the bar it is draining has no cost and therefore no decision in it.
+   * It was a local `const` inside `_regen`, which made it a rule with exactly
+   * one obeyer — and there are two writers of this pool's regeneration. The
+   * other is `wellspringFlow` in src/game/Waves.js, a boon tick that adds
+   * `7.5 × (forceRegen − 1)` a second and never asked. Measured on a real
+   * World, net Force per second with a barrier up and nothing shooting:
+   *
+   *     no cards                      −4.25/s   (the price the power is made of)
+   *     Wellspring                    −0.18/s   (96% of it cancelled, one common)
+   *     Wellspring + Attunement ×4    +6.15/s   (a barrier that PAYS to hold)
+   *     Attunement of the Force ×8    +6.26/s
+   *
+   * The last two are worse than the 2.82/s net gain the note above was written
+   * to delete, and the same stack takes a held Force Sense — 22 a second, the
+   * most expensive hold on the wheel — to +0.03/s, which is a power you leave
+   * on for the rest of the run. Both cards are `stack: Infinity` epics offered
+   * on every set-piece, so this is a late run rather than a corner.
+   *
+   * A getter rather than a second copy of the condition: the day a third
+   * channel pauses regeneration, it is named here and every writer inherits it.
+   */
+  get forceChannelling() { return !!(this.senseActive || this.shield?.up); }
+
   _regen(dt) {
     const combatHot = this.world.combatIntensity ?? 0;
     /* THE BAR DOES NOT REFILL WHILE IT IS GOING OUT. See STAMINA_HOLD for the
@@ -5923,9 +5996,10 @@ export class Player {
      * 2.82 Force a second, because the 7.5 regen outran the 6 hold. A power
      * that refills the bar it is draining has no cost and therefore no
      * decision in it, and "how long can I afford to stand here" is the only
-     * question this power asks. tools/checks/barrier.mjs measures the slope. */
-    const channelling = this.senseActive || this.shield.up;
-    this.force = Math.min(this.maxForce, this.force + (channelling ? 0 : 7.5) * dt);
+     * question this power asks. tools/checks/barrier.mjs measures the slope.
+     * `forceChannelling` is the getter above; it was a local here, which is how
+     * the boon that also writes this pool came to not know about it. */
+    this.force = Math.min(this.maxForce, this.force + (this.forceChannelling ? 0 : 7.5) * dt);
     // Flow bleeds unless you keep earning it
     this.flow = clamp(this.flow - dt * 0.085, 0, 1);
     if (this.senseActive) {
@@ -8791,7 +8865,20 @@ export class Player {
       }
       S.held.length = 0;
       S.bodies.clear();
-      if (!fire) audio.tone({ freq: 400, freqEnd: 90, dur: 0.4, gain: 0.14, type: 'sine', pos: this.chest });
+      /* THE FALLING NOTE IS FOR BOTH WAYS OF ENDING WITH NOTHING, and it used
+       * to be for one. `!fire` is the field DROPPED — the bar ran out, or the
+       * level was torn down. The other way into this branch is a field the
+       * player fired that had caught nothing, and that made no sound at all:
+       * you paid 26, stood in it, pressed the key and the game did not respond,
+       * which is the same silence the whole of `_refuse` exists to delete. It
+       * is the same note either way because it is the same fact — the field
+       * ended and threw nothing — and a second sound for it would be a second
+       * thing to learn about a non-event. */
+      audio.tone({ freq: 400, freqEnd: 90, dur: 0.4, gain: 0.14, type: 'sine', pos: this.chest });
+      /* And the DROP says why, as the barrier's does. Only the drop: a field
+       * you emptied by pressing the key is a thing you did, and a notice for it
+       * would be the game telling you what you just decided. */
+      if (!fire) this.world?.notify?.('FIELD DOWN', 'the Force ran out');
       return;
     }
 
@@ -9001,8 +9088,10 @@ export class Player {
     }
 
     this.cooldowns.rend = 2.4;
+    /* The ARM goes out here and the LINE does not — see below. Reaching for a
+     * chassis and having it hold is a thing that happened to you, and the
+     * gesture is the reaching. */
     this._gesture('rend', centre);
-    this._forceVoice('rend');
 
     // How far it comes apart. round(1.6·P + 0.6) is 1 joint at 0.25x, 2 at 1x,
     // 4 at 2x and 7 at 4x — and seven joints off a humanoid frame is both arms
@@ -9089,6 +9178,15 @@ export class Player {
       return this._refuse('rend apart',
         `${e.A?.label ?? 'it'} held together — nothing came away`);
     }
+
+    /* AND THE LINE IS SAID HERE, not at the top with the gesture, because the
+     * gate above is a refusal and `_forceVoice`'s own header is exact about it:
+     * every one of the twelve sites is AFTER the last `return` in its method,
+     * and a line raised before one of them is the player announcing something
+     * that did not happen. Rend is the only power whose last refusal is not at
+     * the top, so it is the only one where that sentence means moving the call
+     * rather than writing it in the obvious place. */
+    this._forceVoice('rend');
 
     if (!e.dead) e.stun(1.6, this.aimDir, 1.4);
     this.score += 40 * cut;

@@ -4504,10 +4504,37 @@ function riposteEdge() {
   boonFactor(this, 'cutPower', 'counterstroke', k);
 }
 
-/** Wellspring — the extra share of the Force's own regeneration. */
+/**
+ * Wellspring — the extra share of the Force's own regeneration.
+ *
+ * IT IS AN EXTRA SHARE OF `Player._regen`'S RATE AND IT HAS TO KEEP `_regen`'S
+ * RULE, which it did not. The base 7.5 a second is paused while a channel is
+ * holding the bar open — the barrier and Force sense — and that pause is not
+ * decoration: `_regen`'s own note records a raised barrier running a NET GAIN
+ * of 2.82 Force a second before it existed, and says why a power that refills
+ * the bar it is draining has no decision in it. This tick wrote to the same
+ * pool from outside and asked nothing. Measured on a real World, net Force per
+ * second with a barrier up and nothing shooting at it:
+ *
+ *     no cards                        −4.25/s
+ *     Wellspring                      −0.18/s   96% of the price cancelled
+ *     Wellspring + Attunement ×4      +6.15/s   a barrier that pays to hold
+ *     Attunement of the Force ×8      +6.26/s
+ *
+ * Worse than the number the rule was written to delete, and the same stack puts
+ * a held Force Sense — 22 a second, the most expensive hold on the wheel — at
+ * +0.03/s. Both cards are `stack: Infinity` epics offered on every set-piece.
+ *
+ * `Player.forceChannelling` is the gate, asked rather than restated: a second
+ * copy of `senseActive || shield.up` here is how the two came apart in the
+ * first place, and it would come apart again the day a third channel is added.
+ * A player with no such getter — the stand-ins some checks hold up — is not
+ * channelling anything, so the tick runs as it always did.
+ */
 function wellspringFlow(dt) {
   const extra = (this.boonMods.forceRegen ?? 1) - 1;
   if (extra <= 0 || typeof this.force !== 'number') return;
+  if (this.forceChannelling) return;
   this.force = Math.min(this.maxForce ?? this.force, this.force + 7.5 * extra * dt);
 }
 
