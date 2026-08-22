@@ -887,6 +887,27 @@ export const FORMATIONS = {
    * everything else off this row — the options screen, the pad slot, the label
    * — so nothing below this line is typed twice.
    *
+   * ── WHAT IT COSTS THE LINE, WHICH IS THE QUESTION THAT DECIDES IT ──────
+   *
+   * A rank standing 8.6 m in FRONT of the commander is a rank eating fire the
+   * column was not in the path of, and attrition was tuned to its target the
+   * commit before this one. Measured rather than argued: `tools/_linehold.mjs`,
+   * mode `theline`, geonosis, engagement 1, the IDLE arm, six seeds, both arms
+   * from FRESH PROCESSES on trees identical but for this table (HANDOFF §2.5b).
+   *
+   *     seed        1    2    3    5    7   11     mean   cleared
+   *     behind      6    0    5    0    7    0      3.0     3 of 6
+   *     rank        0    0    6    0    5    2      2.2     3 of 6
+   *     Δ          -6    0   +1    0   -2   +2     -0.8
+   *
+   * **−0.8 of ten, standard error 1.17 — unmeasured.** §2.5b prices five seeds
+   * at a standard error near 1.3 on a ten-man roster and says to treat anything
+   * under about 1.5 men as unmeasured; this is under it, both arms clear the
+   * same three engagements of six, and the two distributions have the same
+   * shape. It is not evidence that the shape is free and it is not evidence
+   * that it costs the target. Six seeds is what the box would give; twenty
+   * would carry about 0.65 and is what settling it needs.
+   *
    * `leash: 1.5` — and it is NOT `line`'s 1.35, for a reason that is a rule
    * rather than a taste. `command: the leashes spread across the table` wants
    * distinct leashes on at least 80% of the formations, so an eighth entry
