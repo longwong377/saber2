@@ -1836,12 +1836,24 @@ which are still the only two levers that move this number:
 | before the chest (the tree as it stood) | 5.10 (sd 2.45) | 19 of 20 |
 | after the chest, constants untouched | **1.65** (sd 2.56) | 12 of 20 |
 | after the chest, `GUN.every` 34.0 and the conscript's round 2 | **4.55** (sd 2.72) | **18 of 20** |
+| **as shipped** — `GUN.every` 34.0, the round at 4 | **4.10** (sd 2.73, n=10) | **8 of 10** |
 
-Twenty seeds, se 0.61 — **the target is met inside one standard error.** The
-alternative split that was measured beside it, `GUN.every` 44.0 with the round
-at 1.5, reads 4.15 (sd 2.66) and 16 of 20, so the shipped pair is the better of
-the two on both columns as well as the one that leaves the gun the bigger and
-more answerable of the two threats.
+**Twenty seeds at a round of 2 read 4.55, se 0.61 — the target met inside one
+standard error — and then §6 took the round back off me, which is the right
+outcome.** `conscript.mjs` binds this body to 0.7 dps against a B1's 2.17, a
+ratio of 0.323 ± 0.12 measured with four of each on ONE field; at a round of 2
+it reads 0.145, a tenth of a B1, which is the harmless furniture that check
+exists to refuse. At 4 it reads 0.290 — inside the band, and a little under
+§6's number rather than over it, which is the direction the "the line cannot
+dodge" argument licenses.
+
+**And it costs almost nothing:** 4.10 against 4.55, half a man apart on a
+standard error of 0.86, so the in-band value is free. The other settings
+measured beside it, all at the round of 4: `GUN.every` 50.0 reads **6.10** with
+9 of 10 musters — over the target and a further cut to §7 — and the earlier
+split at `GUN.every` 44.0 with the round at 1.5 read 4.15 with 16 of 20. The
+shipped pair is the one that meets the target while leaving the gun the bigger
+and more answerable of the two threats **and** leaving §6 its conscript.
 
 **The muster rate is the sentence to read, as it was last time.** 12 of 20
 against 13 of 14 is the difference between a mode with a between-areas beat and
@@ -1899,7 +1911,7 @@ Measured, engagement 3, a fresh ten-man line, no Jedi:
 |---|---|---|---|
 | chest fixed, ramp not | 0.00 of 20 seeds | 0 of 20 | one wave, ~110 s |
 | chest and ramp, constants untouched | 1.26 (n=19) | 4 of 19 | three or four waves, 177-286 s |
-| chest, ramp and the tuned constants | 1.22 (n=9) | 2 of 9 | three or four waves |
+| chest, ramp and the tuned constants | 1.75 (sd 3.04) | 4 of 20 | three or four waves |
 
 **It is an engagement now rather than an execution** — the area is fought
 through instead of ending in its first wave, and its muster is reachable on
@@ -1989,5 +2001,34 @@ must is that the quantity's own spread reaches the bar.
 - **`GUN.every` is a weak dial on its own ground** — see §4. If the emplacement
   ever needs to be worth materially more or less than it is, the honest lever is
   its arc and its sight, not its timer.
-- **The reference arm is still a line with no Jedi in it.** Nothing in this
-  session touched FLAGSHIP §7's central claim; the chest fix moves both arms.
+- **The reference arm is still a line with no Jedi in it** — but §7's central
+  claim moved, and it moved the right way. Six seeds on the tuned build, the
+  same seeds, engagement 1, the scripted `dutyInput` Jedi held on his feet:
+
+      no player at all              4.5 of ten   (seeds 1-6 of the 20-seed arm)
+      a scripted Jedi who fights    5.5 of ten   ·  and 8 of ten on four of six
+
+  and the mechanism is in the columns beside it: with the Jedi on the field the
+  fire arriving on the LINE halves — 0.94-1.72 hp/s without him against
+  0.43-0.97 with — while his own output runs 5.9 to 10.1 hp/s against the
+  line's 2.5 to 5.2. **He is removing bodies before they fire.** That is
+  FLAGSHIP §1's sentence, and until the aim was fixed it measured false through
+  four attempts (5.4 without a Jedi against 5.0 with one). Six seeds is not a
+  result — the spread is 0 to 8 — but it is the first time the sign has been
+  positive, and it is now worth twenty seeds from somebody.
+
+### And a caution for whoever re-runs `tools/_stand.mjs`
+
+That bench reads `line 0/10` on six of six seeds on the tuned build with a
+scripted Jedi, which is not what the arms above read on the same build and the
+same seeds. Three things separate them and they are worth ruling out in this
+order: **an engagement here IS an area** — `_lethality`/`_linehold` stop on
+`d.mustering`, which is what `_areaClear` sets, and every row prints all three
+of area 1's wave times, so the 4.10 is not a per-wave figure; **the muster is
+held OPEN and not taken**, so the reading is before replacements, and
+`tools/_muster.mjs` shows what those are worth (8/10, 6/10, 6/10, 2/10, 4/10,
+1/10 at the boundary → 11, 10, 10, 6, 8, 5 of ten after the director's own
+`autoMuster`, a purse of 22 points against a trooper's 5); and **a MORTAL Jedi
+is a different arm from a Jedi held on his feet** — the same six seeds read 0,
+9, 8, 6, 6 with the healing off, and the one that read 0 ran to 349 s and a
+fourth wave where the arms that cleared took 206-287 s.
