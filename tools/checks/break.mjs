@@ -489,6 +489,95 @@ export async function run({ check, assert }) {
       + `-${MORALE.RALLY_PER_S}/s · one runner in four does nothing · ${NERVE.SEE} m is the reach`;
   });
 
+  check('break: a rank that trades fire with a guarded Jedi breaks itself, through the shipped bolt path', async () => {
+    /**
+     * THE VERB END TO END, IN A REAL WORLD, AT THE RANGE THE HORDE ACTUALLY
+     * STANDS AT — and that last clause is the whole point of this check.
+     *
+     * Every other driven check in this file stands its subjects inside
+     * `NERVE.BLADE_REACH`, which measured over two Geonosis battles is a place
+     * 25% of the horde ever visits, for 0.44 s of a 32-second life. This one
+     * stands them at NINE METRES: inside a B1's own `preferred` band of [7, 15]
+     * and comfortably outside the 6.5 m the per-second term can reach, so the
+     * blade term is a rounding error and every bit of nerve that moves came out
+     * of the rank's own fire being answered. The bodies are NOT frozen and
+     * their positions are NOT written back — both are how this file's other
+     * driven checks stop a rank walking out of the measurement, and both are
+     * wrong here: a frozen brain does not fire, and a body stood back in its
+     * spawn point casts line of sight from a muzzle in the dirt. So the blade
+     * term is not excluded by construction, it is MEASURED and shown to be
+     * small: the body-seconds spent inside `BLADE_REACH` bound what it could
+     * possibly have taken, and that bound has to be a fraction of what the
+     * answered bolts took.
+     *
+     * Nothing is hand-driven but the guard: the bodies think for themselves,
+     * aim for themselves and fire through `BoltPool`, the bolts travel, and
+     * whatever the blade meets goes through `World._onBoltDeflect`. The player
+     * holds `blade` — one zone, never chosen, which is a mediocre player — and
+     * is kept on his feet and facing them, because a check whose subject dies
+     * is measuring the script.
+     */
+    const { bootWorld, idleInput } = await import('./_coop.mjs');
+    const { world } = await bootWorld({ level: 'geonosis', settings: { mode: 'waves', level: 'geonosis' } });
+    try {
+      const p = world.player;
+      p.position.set(0, (world.terrain?.height(0, 0) ?? 0) + 0.05, 0);
+      p.saber.ignite(); p.saber.ignition = 1;
+      const RANGE = 9;
+      const rankOf = rank(world, 6, RANGE, 'b1', 1.1);
+      assert(rankOf.length === 6, `only ${rankOf.length} of 6 stood up`);
+      for (const e of rankOf) e.hp = 1e6;          // the subject is the ledger, not the kill
+      const guard = { ...idleInput(), act: (id) => id === 'blade' };
+
+      let answered = 0;
+      const od = world._onBoltDeflect.bind(world);
+      world._onBoltDeflect = (b, entry, hit, at) => {
+        if (entry && entry.owner === p && b.owner && b.owner.team !== p.team) answered++;
+        return od(b, entry, hit, at);
+      };
+
+      let firstBreak = null, closest = 1e9, bladeSeconds = 0;
+      for (let i = 0; i < 1500; i++) {
+        /* FACING THEM AND ON HIS FEET. `Player` builds forward as
+         * `-(sin yaw, 0, cos yaw)` — Player.js — which is the same line
+         * `tools/_flagship.mjs`'s script uses to point its own Jedi. */
+        let ax = 0, az = 0, n = 0;
+        for (const e of rankOf) { if (e.dead) continue; ax += e.position.x; az += e.position.z; n++; }
+        if (n) p.camera.yaw = Math.atan2(-(ax / n - p.position.x), -(az / n - p.position.z));
+        p.hp = p.maxHp;
+        if (p.saber.ignition < 1) p.saber.ignition = 1;
+        world.update(STEP, guard);
+        for (const e of rankOf) {
+          if (e.dead) continue;
+          const d = e.position.distanceTo(p.position);
+          closest = Math.min(closest, d);
+          if (d <= NERVE.BLADE_REACH) bladeSeconds += STEP;
+          if (firstBreak === null && nerveBroken(e)) firstBreak = +((i + 1) * STEP).toFixed(1);
+        }
+        if (firstBreak !== null) break;
+      }
+      const worst = Math.min(...rankOf.filter((e) => !e.dead).map(nerveOf));
+      assert(answered >= NERVE.ANSWERED_TO_BREAK,
+        `the blade answered ${answered} bolts in fifty game-seconds against a rank of six firing at `
+        + `it from ${RANGE} m — fewer than the ${NERVE.ANSWERED_TO_BREAK} one break costs, so this `
+        + 'check cannot say anything about the ledger and the guard or the fire is the defect');
+      const bladeCould = bladeSeconds * Math.abs(NERVE.BLADE);
+      const answeredTook = answered * Math.abs(NERVE.ANSWERED);
+      assert(answeredTook > bladeCould * 5,
+        `the rank spent ${bladeSeconds.toFixed(1)} body-seconds inside BLADE_REACH, worth up to `
+        + `${bladeCould.toFixed(2)} of nerve, against ${answeredTook.toFixed(2)} from ${answered} `
+        + 'answered bolts — the per-second term is carrying this reading and it is no longer a '
+        + 'measurement of answered fire');
+      assert(firstBreak !== null,
+        `fifty game-seconds of a rank of six firing into a held guard from ${RANGE} m left the `
+        + `steadiest-shaken of them at ${worst.toFixed(3)} against a ${MORALE.BREAK} line, on `
+        + `${answered} bolts answered — §7's first verb does not fire through the shipped path`);
+      return `6 B1s at ${RANGE} m · ${answered} of their bolts answered (-${answeredTook.toFixed(2)}) `
+        + `against ${bladeSeconds.toFixed(1)} body-seconds inside BLADE_REACH (-${bladeCould.toFixed(2)} `
+        + `at most, closest ${closest.toFixed(1)} m) · first body broke at ${firstBreak}s`;
+    } finally { world.unload?.(); }
+  });
+
   /* ══════════════════════════════════════════════════════════════════ */
   /*  TURN                                                              */
   /* ══════════════════════════════════════════════════════════════════ */
