@@ -176,10 +176,21 @@ import { aimAt } from './Combat.js';
  *       reads 1.65 of ten survivors with the gun at 14.0 and about 5 of ten
  *       with it at 34.0 and the conscript's round at 2.0 — which is the target
  *       the player set, and it is not met at any setting of this dial alone.
- *     §7 keeps a verb. The gun still delivers a quarter to a third of a name a
- *       minute of its own fire and still takes four of ten names over ten
- *       minutes of it, so BREACH removes something real; what it no longer does
- *       is decide the engagement on its own for a player who never finds it.
+ *     §7 keeps a verb, and MEASURED RATHER THAN ASSUMED, because the obvious
+ *       arithmetic is wrong here. Halving the cadence does NOT halve what an
+ *       isolated gun delivers: `tools/_gunpit.mjs` reads 0.64 and 0.74 men a
+ *       minute at 14.0 and 0.62, 0.86 and 0.12 at 34.0 on the same seeds, and
+ *       `tools/checks/breach.mjs`'s own fixed ground reads 1.51 men a minute
+ *       and four of ten names in four minutes at 34.0. Two things are in front
+ *       of the timer there — see the paragraph below on sight, and the fact
+ *       that a man who is being shot at GOES TO GROUND, so a faster gun
+ *       suppresses its own targets (93 rounds for 6 hits at 14.0 against 48
+ *       rounds for 8 at 34.0 on one seed). What the cadence does set is what a
+ *       whole ENGAGEMENT costs, where the line is in the open and the gun has
+ *       continuous sight of it; that is where this dial was measured and that
+ *       is the only claim it makes. BREACH still removes a gun that is worth a
+ *       name every forty seconds of its own fire; what it no longer does is
+ *       decide the engagement by itself for a player who never finds it.
  *       `tools/checks/breach.mjs` holds it on a RATE now rather than on
  *       `lost >= 1`, which is the other half of the same decision.
  *
