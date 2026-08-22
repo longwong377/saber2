@@ -389,6 +389,42 @@ Two rules, and the second is the one people skip:
 The same applies to any bench with a wall-clock term in it. Counts, hit rates
 and hp are safe under load; seconds are not.
 
+### 2.6d THE GATE NO LONGER FINISHES ON A BUSY BOX, AND FOUR SUITES ARE MOST OF IT
+
+Three separate lanes failed to complete a full `verify.mjs` in one session —
+one capped at 25 minutes having reached 14 of ~111 suites, one still on its
+tenth after 95 minutes, one killed at ~50 minutes. That is not three unlucky
+runs; it is the gate having grown past what a contended box can carry, and the
+consequence is worse than slowness: **a gate nobody can finish is a gate whose
+reds nobody triages**, so every lane falls back to running the six suites it
+happens to have touched.
+
+Wall-clock from one such run (inflated by contention — see 2.6b — but the
+RANKING is stable, and the ranking is the point):
+
+    frontdoor.mjs      1961 s   for ONE check
+    extraction.mjs     1135 s
+    footwork.mjs        843 s
+    command.mjs         659 s
+    levels-quality      567 s
+    command-pvp         555 s
+
+Two rules follow.
+
+1. **Before adding a check that drives a whole sitting, price it.** `theline.19`
+   already made this argument for itself — it caps its drive at the deploy
+   card's own top *"which is what makes this affordable to run"* — and it is the
+   right instinct applied to one check while the file around it grew. A drive
+   that cannot state a bound on its own length does not belong in the gate; put
+   it in `tools/` as a bench and cite the bench from a cheap check.
+2. **Do not start a gate you are not going to read.** An orphaned `verify.mjs`
+   ran for 2 h 48 m in this session against a build that was 36 commits stale by
+   the time it was noticed — node caches modules at import, so a long gate
+   measures the tree as it was when it STARTED. It was burning a core the live
+   lanes needed and its output would have been fiction if it had ever finished.
+   Check `ps -eo etime,args | grep [v]erify.mjs` before launching one, and kill
+   any gate older than the last batch of commits it was meant to cover.
+
 ### 2.6c …AND YOU CAN MEASURE A MILLISECOND ON A LOADED BOX AFTER ALL
 
 The two rules above are right and they stop one step short. "Do not quote the
