@@ -754,15 +754,6 @@ function designate(army, taken) {
  * tactic it delivers, and the numbers now mean something in a roster where one
  * body's reach is six times another's.
  */
-/**
- * How far ahead of the commander `rank` stands, in metres. Derived rather than
- * chosen — see the note on `FORMATIONS.rank`: it is the largest stand that
- * keeps every man of a ten-man rank inside `MORALE.NEAR` (14 m), which caps it
- * at 8.9, and at 8.6 the whole rank is 42.9° off the camera against a
- * half-frame of 45.7°.
- */
-export const RANK_STAND = 8.6;
-
 export const FORMATIONS = {
   circle: {
     id: 'circle', name: 'Circle', key: 'Digit6',
@@ -807,103 +798,6 @@ export const FORMATIONS = {
       // which is what a line does rather than leaving a gap where you stand.
       const off = i - (n - 1) / 2;
       return out.set(off * 2.4, 0, (k % 2) * -1.8);
-    },
-  },
-  /**
-   * RANK AHEAD — the order the mode this game is named for could not give.
-   *
-   * ── WHAT THE FIRST PLATES OF THE LINE SHOWED ────────────────────────────
-   *
-   * The roster panel reading TEN STANDING over empty ground with not one
-   * trooper in shot. Measured against the RENDERER'S OWN frustum
-   * (`tools/_linelook.mjs`) on the first stepped frame after Drop, seed 5,
-   * geonosis: all ten alive, 4.0–8.4 m away, LOD 0, rigs parented, none merged
-   * and none cohorted — and every one of them between 83° and 180° off the
-   * camera's centre line. **Zero in frame.** Nothing is missing and nothing is
-   * culled. They are behind you.
-   *
-   * That is `DEFAULT_FORMATION` doing exactly what its blurb says. `behind`
-   * seats every man at `z = -(3.0 + rank·2.2)`; the formation's frame is the
-   * commander's held BODY heading, not the aim; and `Player` opens its rig at
-   * `yaw = Math.PI` with nothing on the solo path writing it again. So at 0:00
-   * the arc the column occupies is the arc the camera does not cover. Half the
-   * horizontal frame is 45.7° at the shipped `fov: 60` on 16:9.
-   *
-   * ── AND NO SHIPPED ORDER FIXED IT, WHICH WAS MEASURED RATHER THAN ASSUMED
-   *
-   * Every formation in this table, one world, the wave emptied so the shape is
-   * the only variable, six game-seconds to walk to the new slots. |bearing|
-   * off the camera's centre line, ten men:
-   *
-   *     circle    19–179°       behind*  125–179°      front     6–74°
-   *     line       2–146°       cover     56–179°      charge   64–147°
-   *     holdfire  61–138°
-   *
-   * `line` is the closest in spirit and wraps to 146°, because "one rank
-   * EITHER SIDE of you" is 21.6 m of frontage centred ON the commander. `front`
-   * reads, and its premise is the opposite of this mode's: "a screen in front
-   * of you, they take it first" is the men shielding the Jedi, and §1 of
-   * FLAGSHIP.md is "your job is to be the reason the line is still standing".
-   *
-   * ── SO: THE SAME RANK, MOVED BODILY FORWARD ─────────────────────────────
-   *
-   * `line`'s 2.4 m spacing, standing `STAND` metres ahead, with the commander
-   * behind its centre. Two numbers decide `STAND` and they pull opposite ways:
-   *
-   *   IT MUST FIT THE FRAME. Ten men at 2.4 m is 21.6 m of frontage, so the
-   *     outermost man is 10.8 m across. The camera sits `distance` 3.05 m
-   *     behind the player, so the bearing that matters is atan(10.8 / (STAND +
-   *     3.05)) and it has to stay under 45.7°.
-   *   AS MANY MEN AS POSSIBLE INSIDE `MORALE.NEAR`. 14 m, and it is what
-   *     `JEDI_NEAR` pays through — a rank whose ends are outside it is a rank
-   *     the Jedi is only half standing with. hypot(10.8, STAND) ≤ 14 gives
-   *     STAND ≤ 8.9 for the slot, and the slot is not where a man ends up.
-   *
-   * 8.6 is the answer, and the SLOT arithmetic says 42.9° from the camera and
-   * 13.8 m to the furthest man. MEASURED on the ground rather than trusted —
-   * `tools/_linelook.mjs`, seed 5, ten seconds after the drop — the rank comes
-   * out at 11.1–15.6 m and −60°…+41°, **ten of ten inside the renderer's own
-   * frustum** against zero for the column. So the framing claim holds with room
-   * and the morale claim holds for eight of the ten: `_clearBlade`, the terrain
-   * and the walk itself move a man off his slot by a metre or two, and the ends
-   * of the rank sit just outside 14 m. Stating it that way round rather than
-   * quoting the slot, because the slot is not where anybody stands.
-   *
-   * The second squad stands 1.6 m nearer so two squads are not one machined
-   * row, which is the same argument `line`'s own stagger makes.
-   *
-   * A roster grown to `MAX_STRENGTH` is 55 m of frontage and ±72°, which is a
-   * real line seen from the middle of it and not a defect: the order says one
-   * rank, and one rank of 24 men is that wide.
-   *
-   * `Semicolon` AND NOT THE NEXT KEY ALONG THE RUN, because there is no next
-   * key along the run. `holdfire`'s own note is the record: the orders are
-   * Digit6…Minus and Equal "so the seven are one unbroken run under the left
-   * hand", and the eighth has nowhere on that row to go — `BracketLeft` is
-   * `lessonBack`, `BracketRight` and `Backslash` are taken, and Digit1–Digit5
-   * are not the order row's. `;` is free, it is under the right hand, and the
-   * cost is stated rather than hidden: this is the order a run OPENS on and the
-   * least likely of the eight to be re-given mid-fight. `registerOrders` deals
-   * everything else off this row — the options screen, the pad slot, the label
-   * — so nothing below this line is typed twice.
-   *
-   * `leash: 1.5` — and it is NOT `line`'s 1.35, for a reason that is a rule
-   * rather than a taste. `command: the leashes spread across the table` wants
-   * distinct leashes on at least 80% of the formations, so an eighth entry
-   * repeating an existing number takes the spread from 6-of-7 to 6-of-8 and
-   * fails a check that is measuring something real. 1.5 is also the honest
-   * number for the shape: a rank told to hold ground ahead of you engages what
-   * its weapons reach and half again, and does not go and get it.
-   */
-  rank: {
-    id: 'rank', name: 'Rank ahead', key: 'Semicolon',
-    blurb: 'One rank across your front. You stand behind the line you are holding up.',
-    leash: 1.5, advance: true, fire: 1,
-    slot(i, n, k, out) {
-      /* Centred on the commander ACROSS and ahead of them along, so an odd
-       * roster puts one more man on the left exactly as `line` does. */
-      const off = i - (n - 1) / 2;
-      return out.set(off * 2.4, 0, RANK_STAND - (k % 2) * 1.6);
     },
   },
   cover: {
@@ -1006,22 +900,6 @@ export const DEFAULT_FORMATION = 'behind';
  * for the measurement that put it here.
  */
 export const MEETING_FORMATION = 'charge';
-
-/**
- * …AND THE ONE THE CROSSING OPENS ON, which is a third question again.
- *
- * `behind` is right for a campaign in the abstract and wrong for the opening
- * frame of the mode that is NAMED after its line: measured against the
- * renderer's frustum, it puts 0 of 10 troopers on screen at the moment the
- * player first sees the game. See `FORMATIONS.rank` for the plates, the sweep
- * of every other order, and the arithmetic that picked the stand.
- *
- * It is the OPENING and not an override — see `_openOnRank`, which gives it
- * only when the player has not already ordered something of their own, and
- * gives it through `order()` so the planting, the log entry and the HUD
- * indicator all happen the way they do for a key press.
- */
-export const CROSSING_FORMATION = 'rank';
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  The commander's own Force — what a Jedi does for an ARMY              */
@@ -5360,12 +5238,6 @@ export class CommandDirector extends WaveDirector {
       return;
     }
     super.start(wave);
-    /* AND THE LINE IS IN FRONT OF YOU BEFORE A BODY IS PLACED. Before
-     * `deploy()`, not after: the slots are solved from the formation, so an
-     * order given afterwards would place ten men in column and walk them round
-     * over the next few seconds — and the frame this is about is the first
-     * one. See `_openOnRank`. */
-    this._openOnRank();
     /* NO SHIP HERE, AND THAT IS NOT AN OVERSIGHT — see `deploy`'s own note.
      * `start` is the battle OPENING: either the level has just loaded, or
      * `_afterRotate` has just run inside an extraction flight and the commander
@@ -5379,34 +5251,6 @@ export class CommandDirector extends WaveDirector {
      * — is a fact about the ground the moment the camera opens, not something
      * that appears after the first muster. See `marchTo`. */
     this.marchTo(this.areaNumber);
-  }
-
-  /**
-   * THE CROSSING OPENS ON A RANK, NOT A COLUMN.
-   *
-   * `CROSSING_FORMATION` carries the argument and `FORMATIONS.rank` carries the
-   * measurements. This is the wiring, and every clause in it is deliberate:
-   *
-   *   OFF THE MODE'S OWN FIELD, not its name. `holdTheLine` is what separates
-   *     this mode from Command, and it is already the field `_endCampaign` and
-   *     `_checkLine` read. A campaign, a skirmish and a contingent keep the
-   *     column they were designed around.
-   *   AT THE OPENING ONLY. `start` runs at the top of every engagement, and a
-   *     clause that fired at each of them would take the order back off a
-   *     player who had chosen the column on purpose in area 3.
-   *   ONLY IF NOTHING HAS BEEN ORDERED. `DEFAULT_FORMATION` is the untouched
-   *     state; anything else is a decision somebody made.
-   *   THROUGH `order()`. Exactly as `enlistCommander`'s meeting clause does,
-   *     and for the same reason: the planting, the log entry and the HUD
-   *     indicator all happen the way they do for a key press. An assignment to
-   *     `commander.formation` would move the men and tell nobody.
-   */
-  _openOnRank() {
-    if (!this.holdTheLine || this.areaNumber !== 1) return false;
-    const c = this.commander;
-    if (!c || c.formation !== DEFAULT_FORMATION || !FORMATIONS[CROSSING_FORMATION]) return false;
-    this.order(CROSSING_FORMATION, c);
-    return true;
   }
 
   /**
