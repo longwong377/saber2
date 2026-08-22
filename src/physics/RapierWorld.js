@@ -1013,11 +1013,39 @@ export class RapierWorld {
 
   /* ── bodies ──────────────────────────────────────────────────────── */
 
+  /**
+   * …AND A BODY THAT IS IN THE WORLD IS NOT DEAD.
+   *
+   * `remove` sets `body.dead = true` and this never cleared it, so the flag
+   * meant "has been removed at least once" rather than "is not simulated" —
+   * and every reader believes the second sentence. A body can come back:
+   * `Enemy._tickGetUp` takes the walking capsule out when a droid is knocked
+   * flat (`bodyRemoved = true`) and calls `add` again when it stands up.
+   *
+   * Measured with `tools/_deadflag.mjs`, one B1, knocked down and recovered:
+   *
+   *     standing   dead=false  inWorld=true   forceSeen=true
+   *     knocked    dead=true   inWorld=false
+   *     back up    dead=true   inWorld=true   forceSeen=FALSE
+   *
+   * `Player._grippableBody` opens `if (!b || b === this.body || b.dead) return
+   * false`, and `_forceSeen` is what the aim ray asks. So a droid the player
+   * had already put on its back could never be gripped, pulled or thrown
+   * again: the ray passed straight through it to whatever stood behind, for
+   * the rest of that body's life. Every enemy in the game becomes one of these
+   * the first time a push lands.
+   *
+   * One line, and it belongs here rather than at the call site — `add` is the
+   * only place that knows the body is now simulated, and a caller that has to
+   * remember to clear a flag the world set is the same defect waiting for the
+   * next caller.
+   */
   add(body) {
     if (this.dead) { if (body) body.dead = true; return body; }
     if (!body.isRapier) throw new Error('RapierWorld.add: not a Rapier body — pass a `shape:`.');
     if (this.bodies.length >= this.maxBodies) this._cullOldestDebris();
     this.bodies.push(body);
+    body.dead = false;
     body._bind(this);
     return body;
   }

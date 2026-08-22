@@ -172,6 +172,61 @@ export async function run({ check, assert }) {
     return 'a disposed body takes its unfinished grind with it';
   });
 
+  check('undertaker: a body put back into the world is not still flagged dead', async () => {
+    /**
+     * `RapierWorld.remove` sets `body.dead = true`; `add` never cleared it. So
+     * the flag meant "has been removed at least once" while every reader takes
+     * it to mean "is not simulated", and a body CAN come back —
+     * `Enemy._tickGetUp` takes the walking capsule out when a droid is knocked
+     * flat and calls `add` again when it stands up.
+     *
+     * Measured with `tools/_deadflag.mjs`, one B1:
+     *
+     *     standing   dead=false  inWorld=true   forceSeen=true
+     *     knocked    dead=true   inWorld=false
+     *     back up    dead=true   inWorld=true   forceSeen=FALSE
+     *
+     * `Player._grippableBody` refuses anything with `b.dead`, and `_forceSeen`
+     * is what the aim ray asks — so a droid the player had already put on its
+     * back could never be gripped, pulled or thrown again for the rest of its
+     * life. The ray went straight through it to whatever stood behind.
+     *
+     * Asserted as the INVARIANT rather than as the one path, because the flag
+     * is read in five files and the next caller to remove-and-re-add a body
+     * will not know about this note.
+     */
+    const { world } = await bootWorld({
+      level: 'colosseum', settings: { mode: 'sandbox', level: 'colosseum', quality: 'low' }, runSeed: 7,
+    });
+    const input = idleInput();
+    const e = stand(world, 'b1', 7, 0);
+    assert(e, 'no body');
+    drive(world, 1, input);
+    assert(e.body.dead === false, 'a freshly spawned body is already flagged dead');
+
+    e.knockFlat?.(new THREE.Vector3(0, 6, -6));
+    drive(world, 0.5, input);
+    assert(e.bodyRemoved, 'knocking the body flat did not take its capsule out of the world, '
+      + 'so this check is measuring nothing');
+
+    /* Up again: GET_UP plus the recover beat, and it is not a fixed number of
+     * seconds — the same time-scale trap the corpse check above documents. */
+    let waited = 0;
+    while (waited < 40 && e.bodyRemoved) { drive(world, 1, input); waited += 1; }
+    assert(!e.bodyRemoved, `the body never stood back up inside ${waited} s`);
+    assert(world.physics.bodies.includes(e.body), 'the capsule was not put back into the world');
+    assert(e.body.dead === false,
+      'a body that is standing, alive and simulated is flagged dead — every reader of the flag '
+      + 'treats it as gone, and the Force aim ray is one of them');
+
+    /* …and the invariant, over everything the world is stepping. */
+    const lying = world.physics.bodies.filter((b) => b.dead);
+    assert(lying.length === 0,
+      `${lying.length} of ${world.physics.bodies.length} bodies in the world are flagged dead`);
+    world.dispose?.();
+    return `knocked flat, back up inside ${waited} s, and the flag tells the truth at both ends`;
+  });
+
   /* ══════════════════════════════════════════════════════════════════ */
   /*  The distant living                                                */
   /* ══════════════════════════════════════════════════════════════════ */

@@ -129,6 +129,21 @@ function census(engine, world) {
   }
   for (const j of (P.joints || [])) if (!j.joint) orphanJoint++;
 
+  /* …AND THE CAPSULES, which is where a NaN actually costs the player: a
+   * non-finite endpoint is answered by `segmentNear` with a MISS, so the limb
+   * simply cannot be shot or cut and nothing anywhere says so. `bolts.mjs`
+   * scans the roster twenty frames after a spawn; this asks the same question
+   * of bodies that have been fighting, ragdolled and cut. */
+  let capNan = 0, capSeen = 0;
+  for (const e of world.enemies) {
+    let caps;
+    try { caps = e.capsules?.(); } catch { capNan++; continue; }
+    for (const c of (caps || [])) {
+      capSeen++;
+      if (![c.p0?.x, c.p0?.y, c.p0?.z, c.p1?.x, c.p1?.y, c.p1?.z, c.r].every(Number.isFinite)) capNan++;
+    }
+  }
+
   let corpseBodies = 0, corpseGhosts = 0, corpseInPhys = 0, pieces = 0;
   const live = new Set(world.enemies);
   for (const c of (world.corpses?.list || [])) {
@@ -157,7 +172,7 @@ function census(engine, world) {
     sceneKids: engine.scene.children.length,
     settled: world.corpses?.settled ?? 0, retired: world.corpses?.retired ?? 0,
     overBudget: P.stats?.overBudget ?? 0,
-    nan, underground, far, orphanJoint, deadInList,
+    nan, underground, far, orphanJoint, deadInList, capNan, capSeen,
     grind: world.bladeSolver?.progress?.size ?? 0,
     touched: world.bladeSolver?.touched?.size ?? 0,
     cooldown: world.bladeSolver?.cooldown?.size ?? 0,
