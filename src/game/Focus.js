@@ -106,8 +106,16 @@ export class FocusSystem {
     // The player should run at `playerScale` of real time while the world runs
     // at `heldScale`, so the factor that turns world-dt into player-dt is
     // (player's own held factor) / (world's held factor). At full Focus that is
-    // 0.85 / 0.35 = 2.43, which lands the player at 0.85x real time; at zero it
-    // is exactly 1 and costs nothing.
+    // `playerScale / heldScale` — 0.85 / 0.18 = 4.72 — which lands the player
+    // at 0.85x real time; at zero it is exactly 1 and costs nothing.
+    //
+    // The arithmetic used to be written out as `0.85 / 0.35 = 2.43`, and it
+    // stopped being true the round `heldScale` went from 0.35 to 0.18 — the
+    // same edit whose own note, twenty lines up, explains why 0.35 was not deep
+    // enough. Two numbers in one file disagreeing about one field is exactly
+    // the drift the Codex row for this power was already caught in
+    // (src/ui/Menu.js said "slows to a third"), so the ratio is named rather
+    // than multiplied out.
     const hPlayer = 1 - this.held * (1 - this.playerScale);
     this.playerCompensation = clamp(hPlayer / h, 1, 1 / this.heldScale);
 

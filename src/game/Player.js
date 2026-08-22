@@ -29,7 +29,7 @@ import { parryScale, TOUGHNESS, impactDamage } from './Combat.js';
  * exactly the drift `Powers.js` exists to have ended (HANDOFF §2.3/§2.4).
  * Enemy.js imports nothing from this file, so the edge is one-way. */
 import { forceResistance, IMPULSE_AS_HP, limitBackpedal, addShove, newShoveFrame } from './Enemy.js';
-import { POWER_COST } from './Powers.js';
+import { POWER_COST, SENSE_DRAIN } from './Powers.js';
 /* FLAGSHIP §7's BREAK verb, and both are leaves — see the header of each. */
 import { MORALE } from './Morale.js';
 import { shakeNerve } from './Nerve.js';
@@ -4417,7 +4417,7 @@ export class Player {
      * THREE REFUSALS, AND ALL THREE SAY SO.
      *
      * `_refuse`'s own header is the rule — "a bound key that does nothing and
-     * does not say why is the same lie as a dead checkbox" — and all eleven
+     * does not say why is the same lie as a dead checkbox" — and all twelve
      * Force powers obey it. The dash opened with a bare `return` on the
      * stamina.
      *
@@ -5829,7 +5829,7 @@ export class Player {
    * SETS it, so the kill line from whatever this power just threw waits its
    * turn instead of landing on top of the shout that threw it. `forceUnleash`
    * has taken exactly that route since it was written and its note says why;
-   * this is that note applied to the other ten powers.
+   * this is that note applied to the other eleven powers.
    *
    * Under the announcer sits `AudioEngine.speak`'s own hard cap of three
    * concurrent utterances with the newest ducking the rest, and PRIO.critical,
@@ -5837,7 +5837,9 @@ export class Player {
    *
    * ── WHERE IT IS CALLED FROM, which is the part a refusal depends on ─────
    *
-   * AFTER THE LAST REFUSAL, at every one of the eleven sites, and that is the
+   * AFTER THE LAST REFUSAL, at every one of the twelve sites — one per entry
+   * in `POWER_COST`, which is where tools/checks/force-voice.mjs derives its
+   * census from — and that is the
    * whole of "a refused power must not produce a line". Every power in this
    * file opens with its refusals — not attuned, recovering, nothing in your
    * sights, too heavy, and `_refuse` quoting the price the gate really charges
@@ -5927,17 +5929,35 @@ export class Player {
     // Flow bleeds unless you keep earning it
     this.flow = clamp(this.flow - dt * 0.085, 0, 1);
     if (this.senseActive) {
-      /* THE POOL HAS A FLOOR AND THIS LINE WENT THROUGH IT. `force -= 22 * dt`
+      /**
+       * THE POOL HAS A FLOOR AND THIS LINE WENT THROUGH IT. `force -= 22 * dt`
        * was unclamped and the shutdown below fires a frame AFTER the pool is
        * already under: measured -0.3333 at 1/60 from a full-price Sense, and a
        * 22-verb randomised fuzz across all nine levels turned up seven
        * negatives (-0.1405, -0.0110, -0.1170, -0.1529, -0.0721, -0.1038,
-       * -0.0462). Every other drain in the file goes through `_spend`, which
-       * refuses rather than overdraws; this one is a per-frame hold, so it
-       * takes what is left and stops. A negative pool is a HUD bar drawn below
-       * zero and a `_canSpend` answered against a debt. */
-      this.force = Math.max(0, this.force - 22 * dt);
-      if (this.force <= 0) this.toggleSense(this.world);
+       * -0.0462). A negative pool is a HUD bar drawn below zero and a
+       * `_canSpend` answered against a debt.
+       *
+       * …AND CLAMPING IT WAS HALF THE FIX. The clamp made the number legal; it
+       * did not make it a PRICE. `Math.max(0, force - 22 * dt)` reads neither
+       * the Force Drain slider nor `boonMods.forceCost`, so the one power in
+       * `POWER_COST` whose bill is per-frame was the one power outside the
+       * economy that gates it. Measured on a real World, holding Sense open
+       * from a full bar under three different economies:
+       *
+       *     Force Drain 1 (default)           125 → 47.4, off at 5.67 s
+       *     Force Drain 0 ("unlimited Force") 125 → 47.4, off at 5.67 s
+       *     forceCost 0.05 (Tempest, flow 1)  125 → 47.4, off at 5.67 s
+       *
+       * Three economies, one answer. A player who sets Drain to 0 — the slider
+       * whose own label in index.html reads "Drain at 0 is unlimited Force" —
+       * gets eleven free powers and a Sense that still shuts itself off in
+       * under six seconds, which reads as the toggle being broken rather than
+       * as a rule. `_spend` with `partial` is what the lightning channel and
+       * the barrier already do: it takes what is left and stops, it refuses to
+       * overdraw, and at Drain 0 it charges nothing at all.
+       */
+      if (!this._spend(SENSE_DRAIN * dt, true)) this.toggleSense(this.world);
     }
   }
 
@@ -6282,6 +6302,45 @@ export class Player {
     this._forceVoice('pull');
     audio.force(this.chest, 'pull');
     this.cloak?.impulse(_v5.copy(this.aimDir).setY(0.3), 1.8); this.skirt?.impulse(_v5.copy(this.aimDir).setY(0.3), 1.8);
+    /**
+     * AND YOU CAN SEE IT LEAVE YOUR HAND — which, alone of the aimed powers,
+     * you could not.
+     *
+     * Driven through a real World with every emitter counted, one cast each:
+     *
+     *     push      3 sounds  45 particles  shake 0.30  1 radial
+     *     unleash   7 sounds  26 particles  shake 0.62  2
+     *     stasis    4 sounds  26 particles  shake 0.14  1
+     *     rend     15 sounds  20 particles  shake 0.34  0
+     *     compel    3 sounds  14 particles  shake 0.00  0
+     *     pull      3 sounds   0 particles  shake 0.00  0
+     *
+     * A gesture, a grunt and a cloak — and if nothing happens to be inside the
+     * cone, nothing at all. Its opposite number spends sixteen Force and throws
+     * up a wall of dust, a crater and a lens squeeze, so the pair read as two
+     * different KINDS of thing rather than as two directions of one thing.
+     *
+     * The shape is push's, reversed and smaller. The dust is spawned OUT along
+     * the reach and given a velocity back toward the chest, so it reads as air
+     * coming in rather than as an explosion; the shake is 0.18 against push's
+     * 0.30, because a pull is a haul and not a blow; and the radial is 0.22
+     * against 0.35 for the same reason. No crater: a pull does not drive
+     * anything into the ground.
+     */
+    this.camera.addShake(0.18);
+    if (ctx.particles) {
+      const back = _v6.copy(this.aimDir).negate();
+      for (let i = 0; i < 22; i++) {
+        // out along the pull, scattered, then hauled home
+        _v2.copy(this.chest).addScaledVector(this.aimDir, 2.5 + rng() * 7);
+        _v2.x += (rng() - 0.5) * 3.2; _v2.y += (rng() - 0.5) * 2.2; _v2.z += (rng() - 0.5) * 3.2;
+        _v1.copy(back).multiplyScalar(7 + rng() * 9);
+        _v1.x += (rng() - 0.5) * 3; _v1.y += (rng() - 0.5) * 2 + 0.8; _v1.z += (rng() - 0.5) * 3;
+        ctx.particles.dust.spawn(_v2, _v1, { life: 0.6, size: 0.32, drag: 3.2, gravity: 0.15,
+          color: 0xe0e8f0, alpha: 0.11 });
+      }
+    }
+    this.world.engine.setRadial?.(0.22);
     // Reach scales with the setting, same law as push and grip. A pull that
     // stayed at 17 m while the grip reached 36 was the odd one out.
     const P = this.forceScale;
@@ -6517,7 +6576,7 @@ export class Player {
       if (this.pilotThrown(ctx)) return;
     }
     /* AND IT SAYS SO. A bare `return` here was the second of the file's two
-     * silent refusals — see `_refuse`'s own header, which all eleven powers
+     * silent refusals — see `_refuse`'s own header, which all twelve powers
      * obey and this one did not. `_priceOf` rather than the list number,
      * because the gate below charges `cost * forceDrain * forceCost`. */
     if (!this._canSpend(POWER_COST.grip)) {
@@ -6526,7 +6585,16 @@ export class Player {
 
     const target = this._pickGripTarget(ctx);
     this.lastGripRefusal = null;
-    if (!target) return;
+    /* AND AN EMPTY HAND IS A REASON TOO. This was the third bare `return` in
+     * the method, sitting two lines under the note that says a bare `return`
+     * here is the bug — and it is the one a player meets most, because
+     * `_pickGripTarget` answers null for "the cone held nothing" as well as for
+     * "you are pointing at the sky". `forceCompel` has said exactly this
+     * sentence for the same miss since it was written; there is no argument for
+     * the two aimed holds answering the same question differently. */
+    if (!target) {
+      return this._refuse('force grip', 'nothing in your sights within reach');
+    }
 
     const cap = this.liftCapacity;
 
@@ -7250,7 +7318,20 @@ export class Player {
       // accident — a dropped blade is out — but only by accident, and the
       // silence was indistinguishable from a bug. Say so.
       if (this.saberDown) return this._refuse('saber throw', 'your hands are empty');
-      if (!this.saber.lit || this.cooldowns.throw > 0) return;
+      /* THE OTHER TWO STATES, AND THEY WERE ONE BARE `return` BETWEEN THEM.
+       * The comment above says the silence was indistinguishable from a bug and
+       * then this line kept two more of it. An UNLIT blade is the one that
+       * matters: a player who has just retracted the blade and presses throw is
+       * holding a hilt, not a weapon, and there is nothing on screen to say so
+       * — the arm does not even move. The cooldown is short (0.4 s) and the
+       * refusal is rate-limited to one in 0.7 s anyway, so it costs at most one
+       * line for a key held down. */
+      if (!this.saber.lit) {
+        return this._refuse('saber throw', 'the blade is out — ignite it first');
+      }
+      if (this.cooldowns.throw > 0) {
+        return this._refuse('saber throw', `recovering — ${this.cooldowns.throw.toFixed(1)}s`);
+      }
       /* Through `_spend`, not `this.force -= …`. The hand-rolled version
        * applied the boon multiplier and ignored the drain slider entirely, so
        * Force Drain at 0 — the setting whose own label reads "unlimited Force"
@@ -8837,10 +8918,43 @@ export class Player {
    * reads as disassembly, whereas going for the chest first reads as an
    * execution and is over before you can see it.
    */
+  /**
+   * …AND IT SAYS WHY NOT, WHICH IT DID NOT.
+   *
+   * `_refuse`'s own header is the rule the whole file obeys — "a bound key that
+   * does nothing and does not say why is the same lie as a dead checkbox" — and
+   * rend broke it four times over in a method that already imports `_refuse`
+   * for its price. `tools/checks/force-feedback.mjs` lists `forceDisassemble`
+   * among its spenders and passed anyway, because the property it tested was
+   * "does this body contain `_refuse(` at all"; one of five gates having a
+   * sentence is enough to satisfy that and is not enough for a player.
+   *
+   * The four that were silent, and what each looks like from the keyboard:
+   *
+   *   the COOLDOWN — 2.4 s, the longest recovery on any aimed power, and the
+   *     one a player is most likely to press through. Push, pull, lightning,
+   *     stasis, unleash, the mend and the barrier all count it down out loud.
+   *   NOTHING MECHANICAL under the aim. Rend is the only power in the game
+   *     restricted by what a body is MADE of (`isMechanical`, i.e. `A.droid`),
+   *     so a player pointing at a clone trooper and pressing it gets the exact
+   *     experience of a broken key — and there is no other way to learn the
+   *     rule, because nothing on the wheel says "droids only".
+   *   NOTHING LEFT to take off, which is a droid you have already rent.
+   *   NOTHING CAME OFF — see the foot of the method, which is the one that had
+   *     taken the Force first.
+   */
   forceDisassemble(ctx) {
-    if (this.cooldowns.rend > 0) return;
+    if (this.cooldowns.rend > 0) {
+      return this._refuse('rend apart', `recovering — ${this.cooldowns.rend.toFixed(1)}s`);
+    }
     const e = this._pickMechanical(ctx);
-    if (!e || !e.capsules) return;
+    if (!e || !e.capsules) {
+      /* The counter-play is in the sentence, for the same reason TOO HEAVY
+       * carries the slider: "no" with nothing after it is a dead end, and the
+       * answer here is a real one the player already owns. */
+      return this._refuse('rend apart',
+        'nothing mechanical in your sights — the Force pulls droids apart, not men');
+    }
 
     const P = this.forceScale;
     const centre = this._enemyPoint(e, _g1).clone();
@@ -8862,11 +8976,25 @@ export class Player {
       .map(c => ({ c, d: _g2.lerpVectors(c.p0, c.p1, 0.5).distanceTo(centre), k: depth(c.name) }))
       .sort((a, b) => (b.d - a.d) || (b.k - a.k))
       .map(x => x.c);
-    if (!live.length) return;
+    if (!live.length) {
+      /* Every joint this body had is already on the floor, which is a fact
+       * about a droid you already rent and not about the power. Named, because
+       * "nothing happened" twice in a row is how a player concludes the key is
+       * dead — and the price is NOT taken for it, same as every refusal above. */
+      return this._refuse('rend apart',
+        `${e.A?.label ?? 'it'} has nothing left to take off`);
+    }
     /* `rend apart`, not `sundering`: Sundering is the name of an unrelated epic
      * boon (Waves.js), and a refusal naming the wrong thing sends a player to
      * look for a card they never took. REND_COST rather than a bare 38 twice
      * over, so the sentence and the charge cannot drift. */
+    /* What the bar read before the charge, kept so the "nothing came away"
+     * case at the foot of this method can hand it back EXACTLY rather than by
+     * re-deriving `cost × drain × forceCost` — a second copy of `_spend`'s own
+     * arithmetic is the twin this repository keeps deleting, and it would drift
+     * the first time a boon touches the sum. Nothing runs between the two lines
+     * that can move the pool. */
+    const paid = this.force;
     if (!this._spend(REND_COST)) {
       return this._refuse('rend apart',
         `${this._priceOf(REND_COST)} Force needed, you have ${Math.round(this.force)}`);
@@ -8937,7 +9065,30 @@ export class Player {
       this.limbsRemoved++;
       cut++;
     }
-    if (!cut) return;
+    /**
+     * NOTHING CAME OFF — AND THIS IS THE ONE THAT HAD ALREADY TAKEN THE MONEY.
+     *
+     * Every other gate in this method returns before `_spend`. This one cannot:
+     * whether a joint comes off is `Enemy.takeCut`'s answer and there is no way
+     * to ask it without asking it. So the bare `return` here was the whole of
+     * `POWER_COST.rend` — 38, the third most expensive thing the Force does —
+     * plus a 2.4 s lockout, spent on a frame with no sound, no spark, no shake
+     * and no sentence. A power that is priced and then does nothing is worse
+     * than one that refuses, because the bar moved and the player watched it.
+     *
+     * Handed back rather than kept, and the lockout with it. `takeCut` returns
+     * `'turned'` before it touches the actor (see its own note — the check is
+     * `isSevered`, and `_turnCut` declines a `force: true` pass outright), so a
+     * pass that took nothing changed nothing and there is no consequence to
+     * unwind: the bar goes back to the reading it had, the 2.4 s never starts,
+     * and the player is exactly where they were with a sentence explaining it.
+     */
+    if (!cut) {
+      this.force = paid;
+      this.cooldowns.rend = 0;
+      return this._refuse('rend apart',
+        `${e.A?.label ?? 'it'} held together — nothing came away`);
+    }
 
     if (!e.dead) e.stun(1.6, this.aimDir, 1.4);
     this.score += 40 * cut;
