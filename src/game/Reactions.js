@@ -480,8 +480,9 @@ export class GrenadeField {
  * the same argument `NERVE.START`'s own note makes.
  *
  * The rally term is in both branches now for the same reason it was in one: a
- * `leader` elite writes `rallyTimer` onto every body inside its ring, horde or
- * roster, and a man being led is a man who will try something.
+ * `leader` elite writes `rallyTimer` onto every body of its OWN side inside its
+ * ring, horde or roster alike, and a man being led is a man who will try
+ * something.
  */
 export function braveryOf(body) {
   const t = body.trooper;
