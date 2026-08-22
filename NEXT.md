@@ -573,12 +573,22 @@ Gate at the end: **1718 passed, 0 failed.**
   the recorded next step and it has nothing left to buy. What bounds the verb is
   the WINDOW, and widening it is a design change, not a tuning one. Full
   numbers at the end of this file.
-- **First person should be one-handed**, and `HANDOFF.md` §6.0 says to ASK
-  before doing it, because it is a decision about what a first-person grip IS.
-  The wrist lane's sweep this session is the strongest evidence yet: first
-  person barely improves and the elbow cannot reach it, because the arm is
-  near-straight and the swivel cone collapses. It has been put to the player and
-  is waiting on them.
+- ~~**First person should be one-handed**, and `HANDOFF.md` §6.0 says to ASK
+  before doing it.~~ **ASKED AND ANSWERED, and the question was the wrong
+  shape.** It was put to the player as one-handed *or* two-handed and the answer
+  was neither: *"why would it be either or, both should be modeled and reflect
+  how many hands you're holding it with"*. So the camera does not decide the
+  grip at all. `Player.handsOnHilt()` is the single reader, it names every fact
+  it reads, and the pose follows it in both cameras — what used to stand in
+  `_updateBody` was `… && (!firstPerson || settings.fpHands === 'two')`, which
+  took a hand off a hilt the player was demonstrably holding with two the moment
+  they pressed the view key, and put a card row in the options screen that could
+  put the fist back. Both are gone. The cost is measured rather than argued
+  (`first-person.mjs`, *"how many hands are on the hilt is what you see"*): at
+  half a metre from the lens one fist hides 32% of the shaft and two hide 65% —
+  and 65% is very nearly all that two closed hands over 180 mm of a 233 mm grip
+  CAN hide, so it is not a defect to tune out. The clear view is one keypress
+  away, on the key that means the same thing everywhere else in the game.
 - **A Command wave was seen sitting `active` with an empty queue, no inbound
   arrival and zero hostiles standing, from 200 s to 350 s.** FLAGSHIP §16's bug
   3. A watchdog in the flagship probe fired zero times across 15 recorded runs,
