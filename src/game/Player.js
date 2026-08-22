@@ -727,6 +727,18 @@ const DIVE_LAND = 1.45;
  */
 const LIGHTNING_RANGE = 22, LIGHTNING_DAMAGE = 46;
 const LIGHTNING_CHAIN = 3, LIGHTNING_REACH = 6.5, LIGHTNING_FALLOFF = 0.62;
+/**
+ * How far off the aim a body may stand and still be the thing the discharge
+ * earths on, as a dot product. 0.955 is 17.3°.
+ *
+ * A NAME BECAUSE THE PROSE HAD ALREADY DRIFTED FROM IT. `_lightningEnd` carried
+ * the number as a literal with a comment beside it reading "0.965 of a dot is
+ * about 15°" — a claim about a value the line under it had stopped using. Small,
+ * and exactly the shape §2.3 is a section about: the next person to widen this
+ * cone reads the sentence, not the expression. One home, and the angle is
+ * derived in the note rather than asserted twice.
+ */
+const LIGHTNING_CONE = 0.955;
 const LIGHTNING_STEPS_PER_M = 3.2, LIGHTNING_WANDER = 0.55, LIGHTNING_FORK = 0.16;
 /**
  * IT IS A CHANNEL NOW, AND THAT IS THE FIX.
@@ -7666,10 +7678,10 @@ export class Player {
       _v2.subVectors(this._enemyPoint(e, _v3), origin);
       const d = _v2.length();
       if (d > LIGHTNING_RANGE) continue;
-      /* 0.965 of a dot is about 15°, which is a generous but honest cone —
-       * the old 0.8 was 37° and swallowed bodies the player was plainly not
+      /* `LIGHTNING_CONE` is 17.3°, which is a generous but honest cone — the
+       * old 0.8 was 37° and swallowed bodies the player was plainly not
        * pointing at, which is its own kind of "it does nothing". */
-      if (_v2.normalize().dot(this.aimDir) < 0.955) continue;
+      if (_v2.normalize().dot(this.aimDir) < LIGHTNING_CONE) continue;
       if (d < bestD) { bestD = d; best = e; }
     }
     if (best) { this._enemyPoint(best, out); return best; }
