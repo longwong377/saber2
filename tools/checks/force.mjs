@@ -1705,6 +1705,25 @@ export async function run({ check, assert, near }) {
       ring.push({ e, a });
     }
     assert(ring.length >= 6, `only ${ring.length} of 8 bodies could be seeded`);
+    /**
+     * …AND THE RING IS POSED BEFORE IT IS THROWN. Six frames, the same beat
+     * this file's `openness` check already spends after its own spawn.
+     *
+     * `Enemy.knockFlat` puts a shoved body on the floor — `Actor.goRagdoll`,
+     * which builds the ragdoll out of the RIG'S WORLD MATRICES. A body that
+     * has been constructed and never stepped has never been posed, so its rig
+     * root is still at the origin and the ragdoll is built there: measured on
+     * this exact fixture, eight bodies seeded on a 6 m ring all read
+     * `position` (0, 0.4, 0.01) one frame after the cast and travelled 0.00 m
+     * for the rest of the check, which reads as a power that moved nothing.
+     *
+     * Stepped first, the same cast throws one body **10.96 m**. Nothing about
+     * the power changed; the fixture was measuring a ragdoll assembled out of
+     * an unposed skeleton. `topple()` has carried the same exposure since it
+     * was written and no play can reach it — `_pose` runs on every body on
+     * every frame — so the guard belongs in the harness and not in the game.
+     */
+    for (let i = 0; i < 6; i++) world.update(1 / 60, H.idleInput());
     const before = ring.map(({ e }) => e.position.clone());
 
     const ctx = { enemies: world.enemies, physics: world.physics, particles: world.particles,
