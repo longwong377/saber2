@@ -119,6 +119,18 @@ for (const seed of (process.argv[2] || '1').split(',').map(Number)) {
       cur = openRow();
     }
   }
+  /* THE LAST WAVE IS PART OF THE SITTING. The loop leaves on `over`, which is
+   * raised by the wave that ends the crossing — so the wave the run was WON on
+   * never saw a wave-number change and its rows, its hit points and its
+   * seconds were all dropped. Measured on a Raid: 624 s reported against 744 s
+   * actually driven, which is the whole of the last engagement's climax
+   * missing from a table about length. */
+  if (cur.frames) {
+    cur.total = t - cur.at;
+    cur.line = d.roster.living.length;
+    rows.push(cur);
+    console.log(row(cur));
+  }
   const tot = rows.reduce((n, r) => n + r.total, 0);
   const hp = rows.reduce((n, r) => n + r.hp, 0);
   console.log(`  seed ${seed}  ${d.plan.id}  ${rows.length} waves  ${(tot / 60).toFixed(1)} min`
