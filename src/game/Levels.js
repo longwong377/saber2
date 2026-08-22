@@ -2885,6 +2885,34 @@ export const LEVELS = {
       const T = world.terrain;
       const M = propMaterials();
       beginDressing(world, 20250805 + 71);
+      /* ── THE WORLD PAST THE EDGE OF THE WORLD ──────────────────────────
+       *
+       * "If you look down you can see the giant square of the map with hard
+       * lines — you can tell that you're descending into a localized map. I
+       * need you to fill in the rest for every map… it should look like you're
+       * coming down into a small part of a much bigger world."
+       *
+       * The terrain is a square `PlaneGeometry` with no skirt and nothing
+       * beyond it, and this level had NO horizon at all: `atmosphere.horizon`
+       * is false, which turns off the sky dome's painted silhouette, and
+       * `addHorizon` — the three ranges of real, parallaxing geometry that
+       * drifts, alpine and geonosis have carried for a while — was never called
+       * here. So past the last vertex there was sky.
+       *
+       * Every radius below is OUTSIDE this level's own half-extent (230 m),
+       * which is the whole point: a range inside the playable square is a hill
+       * you can walk to, and what is wanted is ground you cannot. Three depths
+       * because the parallax between them is what stops it reading as a
+       * backdrop, and 3 draw calls and ~2.3k triangles is what it costs.
+       */
+      addHorizon(world, {
+        seed: 8817,
+        layers: [
+          { radius: 258, low: 12, high: 34, shade: 0.58 },
+          { radius: 338, low: 22, high: 62, shade: 0.66 },
+          { radius: 438, low: 38, high: 104, shade: 0.74 },
+        ],
+      });
       const V = (x, y, z) => new THREE.Vector3(x, y, z);
       const at = (x, z, dy = 0) => V(x, T.height(x, z) + dy, z);
       const sea = world.level?.water?.level ?? 0.55;
@@ -3190,6 +3218,34 @@ export const LEVELS = {
       const T = world.terrain;
       const M = propMaterials();
       beginDressing(world, 20250805 + 109);
+      /* ── THE WORLD PAST THE EDGE OF THE WORLD ──────────────────────────
+       *
+       * "If you look down you can see the giant square of the map with hard
+       * lines — you can tell that you're descending into a localized map. I
+       * need you to fill in the rest for every map… it should look like you're
+       * coming down into a small part of a much bigger world."
+       *
+       * The terrain is a square `PlaneGeometry` with no skirt and nothing
+       * beyond it, and this level had NO horizon at all: `atmosphere.horizon`
+       * is false, which turns off the sky dome's painted silhouette, and
+       * `addHorizon` — the three ranges of real, parallaxing geometry that
+       * drifts, alpine and geonosis have carried for a while — was never called
+       * here. So past the last vertex there was sky.
+       *
+       * Every radius below is OUTSIDE this level's own half-extent (250 m),
+       * which is the whole point: a range inside the playable square is a hill
+       * you can walk to, and what is wanted is ground you cannot. Three depths
+       * because the parallax between them is what stops it reading as a
+       * backdrop, and 3 draw calls and ~2.3k triangles is what it costs.
+       */
+      addHorizon(world, {
+        seed: 8819,
+        layers: [
+          { radius: 278, low: 14, high: 40, shade: 0.52 },
+          { radius: 360, low: 26, high: 72, shade: 0.6 },
+          { radius: 462, low: 44, high: 118, shade: 0.68 },
+        ],
+      });
       const V = (x, y, z) => new THREE.Vector3(x, y, z);
       const at = (x, z, dy = 0) => V(x, T.height(x, z) + dy, z);
       const melt = world.level?.water?.level ?? 0;
@@ -3603,6 +3659,34 @@ export const LEVELS = {
       const T = world.terrain;
       const M = propMaterials();
       beginDressing(world, 20250805 + 97);
+      /* ── THE WORLD PAST THE EDGE OF THE WORLD ──────────────────────────
+       *
+       * "If you look down you can see the giant square of the map with hard
+       * lines — you can tell that you're descending into a localized map. I
+       * need you to fill in the rest for every map… it should look like you're
+       * coming down into a small part of a much bigger world."
+       *
+       * The terrain is a square `PlaneGeometry` with no skirt and nothing
+       * beyond it, and this level had NO horizon at all: `atmosphere.horizon`
+       * is false, which turns off the sky dome's painted silhouette, and
+       * `addHorizon` — the three ranges of real, parallaxing geometry that
+       * drifts, alpine and geonosis have carried for a while — was never called
+       * here. So past the last vertex there was sky.
+       *
+       * Every radius below is OUTSIDE this level's own half-extent (200 m),
+       * which is the whole point: a range inside the playable square is a hill
+       * you can walk to, and what is wanted is ground you cannot. Three depths
+       * because the parallax between them is what stops it reading as a
+       * backdrop, and 3 draw calls and ~2.3k triangles is what it costs.
+       */
+      addHorizon(world, {
+        seed: 8821,
+        layers: [
+          { radius: 232, low: 10, high: 26, shade: 0.6 },
+          { radius: 312, low: 20, high: 50, shade: 0.68 },
+          { radius: 412, low: 34, high: 86, shade: 0.76 },
+        ],
+      });
       const V = (x, y, z) => new THREE.Vector3(x, y, z);
       const at = (x, z, dy = 0) => V(x, T.height(x, z) + dy, z);
       attachRiders(world);
@@ -4035,6 +4119,34 @@ export const LEVELS = {
       const T = world.terrain;
       const M = propMaterials();
       beginDressing(world, 20250805 + 101);
+      /* ── THE WORLD PAST THE EDGE OF THE WORLD ──────────────────────────
+       *
+       * "If you look down you can see the giant square of the map with hard
+       * lines — you can tell that you're descending into a localized map. I
+       * need you to fill in the rest for every map… it should look like you're
+       * coming down into a small part of a much bigger world."
+       *
+       * The terrain is a square `PlaneGeometry` with no skirt and nothing
+       * beyond it, and this level had NO horizon at all: `atmosphere.horizon`
+       * is false, which turns off the sky dome's painted silhouette, and
+       * `addHorizon` — the three ranges of real, parallaxing geometry that
+       * drifts, alpine and geonosis have carried for a while — was never called
+       * here. So past the last vertex there was sky.
+       *
+       * Every radius below is OUTSIDE this level's own half-extent (240 m),
+       * which is the whole point: a range inside the playable square is a hill
+       * you can walk to, and what is wanted is ground you cannot. Three depths
+       * because the parallax between them is what stops it reading as a
+       * backdrop, and 3 draw calls and ~2.3k triangles is what it costs.
+       */
+      addHorizon(world, {
+        seed: 8823,
+        layers: [
+          { radius: 268, low: 11, high: 30, shade: 0.5 },
+          { radius: 348, low: 20, high: 54, shade: 0.58 },
+          { radius: 448, low: 34, high: 92, shade: 0.66 },
+        ],
+      });
       const V = (x, y, z) => new THREE.Vector3(x, y, z);
       const at = (x, z, dy = 0) => V(x, T.height(x, z) + dy, z);
       const wet = world.level?.water?.level ?? 0;
