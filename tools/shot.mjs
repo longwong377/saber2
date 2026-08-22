@@ -88,7 +88,13 @@ await page.evaluate(([level, quality, mode, scale]) => {
 await page.reload({ waitUntil: 'domcontentloaded' });
 await page.waitForSelector('#menu:not(.hidden)', { timeout: 90000 });
 await page.click('#btn-deploy');
-await page.waitForSelector('#hud:not(.hidden)', { timeout: 60000 });
+/* SIXTY SECONDS IS ABOUT FOURTEEN FRAMES (HANDOFF §2.6 measures one at up to
+ * 4151 ms through swiftshader) and a deploy costs more than that on a level
+ * that dresses seven thousand instances: the colosseum timed out here twice
+ * with nothing wrong but the clock. `_level.mjs` says the same about the five
+ * tools that wait on a wall clock. Raised rather than re-plumbed onto
+ * `waitFramesFor`, because this tool's whole contract is one screenshot. */
+await page.waitForSelector('#hud:not(.hidden)', { timeout: 300000 });
 
 const applied = await page.evaluate(async ([pose, settle]) => {
   const S = window.SABER, w = S.world, p = w.player;

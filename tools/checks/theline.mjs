@@ -484,23 +484,42 @@ export async function run({ check, assert }) {
     }
     assert(carries.length >= 1, 'no ground in the game can carry a generated heightfield');
     /**
-     * …AND EVERY ROOM DECLARES IT, WHICH IS WHAT MAKES A SITTING ONE THING.
+     * …AND EVERY ROOM SAYS ONE THING OR THE OTHER, WHICH IS WHAT MAKES A
+     * SITTING ONE THING.
      *
      * The mode rolls its ground off the run seed, so a room that keeps its
      * authored contours is not a smaller feature — it is a fraction of all
      * runs whose ground was not generated at all. At six of seven that was
      * one run in seven, and the honest options were to fix the room or to say
-     * in the design that some rooms are authored ground. The room was fixed:
-     * scoria's failure was never its dressing, it was that the generated
-     * height was written about a datum of zero under a lava sheet at +0.55
-     * (`LEVELS.scoria.battlefield` carries the attribution). This bar is what
-     * stops the seventh room quietly dropping out again.
+     * in the design that some rooms are authored ground. Scoria was fixed:
+     * its failure was never its dressing, it was that the generated height was
+     * written about a datum of zero under a lava sheet at +0.55
+     * (`LEVELS.scoria.battlefield` carries the attribution).
+     *
+     * THE DESIGN NOW SAYS ONE ROOM DOES NOT, AND THIS BAR MOVED RATHER THAN
+     * LOOSENED. It used to read "no room may be undeclared", and the room that
+     * broke it passes every bar in THIS file: the colosseum deploys and holds
+     * 10 of 10 on a generated ground on every seed. What it does not survive is
+     * the DRESSING — the cavea is its heightfield, so a generated ground leaves
+     * two rings of masonry hanging 16 m and 27 m over seven thousand spectators
+     * sitting on an open plain. That is a bar on the picture, this suite has no
+     * instrument for it, and `prop-seating` does: it holds BOTH directions of
+     * `battlefield` against its own seating survey on a generated ground.
+     *
+     * So what is asserted here is what this file can see and what §13.5 needs:
+     * a room must have STATED something. `undefined` is a room that nobody
+     * measured quietly dropping out of the ground roll; `false` is a decision
+     * with a note on it and a check somewhere holding the note to a number.
      */
-    const undeclared = LEVEL_ORDER.filter((k) => !LEVELS[k].battlefield);
-    assert(!undeclared.length,
-      `${undeclared.join(', ')} do not declare \`battlefield\`, so ${undeclared.length} of `
-      + `${LEVEL_ORDER.length} rolls of the mode's ground stand on authored contours — either the `
-      + 'room carries a generated heightfield or the design says some rooms do not, and it says neither');
+    const silent = LEVEL_ORDER.filter((k) => LEVELS[k].battlefield === undefined);
+    assert(!silent.length,
+      `${silent.join(', ')} say nothing about \`battlefield\`, so ${silent.length} of `
+      + `${LEVEL_ORDER.length} rolls of the mode's ground stand on authored contours by omission — `
+      + 'either the room carries a generated heightfield or it states that it does not and why');
+    const authoredRooms = LEVEL_ORDER.filter((k) => !LEVELS[k].battlefield);
+    assert(authoredRooms.length < LEVEL_ORDER.length / 2,
+      `${authoredRooms.join(', ')} keep their authored contours — ${authoredRooms.length} of `
+      + `${LEVEL_ORDER.length} rolls, which is no longer a layer over the roster but half of it`);
 
     const reasons = new Set();
     for (const seed of [1, 2, 3, 4, 5]) {

@@ -52,9 +52,11 @@
  *
  *   THE GROUND. `World._groundKeyFor` raises `battlefieldGround` for a mode
  *     that declares `generatedGround` — THE LINE does — on a level that
- *     declares `battlefield`, which all seven now do. It hands in the two
- *     things the generator cannot know: `deploy`, the point the player lands
- *     on, and `keep`, the room's own fight radius.
+ *     declares `battlefield`, which six of the seven do — the colosseum is
+ *     the one that states `false`, because its cavea IS its heightfield and a
+ *     generated ground deletes the building the room is about. It hands in the
+ *     two things the generator cannot know: `deploy`, the point the player
+ *     lands on, and `keep`, the room's own fight radius.
  *   THE FRONT. `Front.engagementFront` reads the published plan and returns
  *     the line THIS engagement is fought on, and `marchFront` dresses it.
  *     Before that the mode raised a heightfield around a bezier and then

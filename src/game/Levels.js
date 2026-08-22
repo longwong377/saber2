@@ -2224,10 +2224,18 @@ export const LEVELS = {
     /* CARRIES A GENERATED HEIGHTFIELD — `FLAGSHIP.md` §12, read by
      * `World._groundKeyFor`, and the number is `theline.mjs`'s. Every ground
      * was booted with the layer forced on and driven for twenty seconds of a
-     * real engagement: this one deployed and held 10 of its ten. Scoria is the
-     * one room that does not declare it — it comes back **0 of 10, four of them
-     * unplaceable** — because its rocks and wrecks take the standing room with
-     * them when the ground moves under them. The list grows by measurement. */
+     * real engagement: this one deployed and held 10 of its ten, and
+     * `prop-seating` then raised its whole dressing on the generated ground and
+     * found nothing standing on nothing.
+     *
+     * THE SENTENCE THAT USED TO CLOSE THIS NOTE WAS FOUR COPIES OF A FACT THAT
+     * HAD MOVED. It read "scoria is the one room that does not declare it", and
+     * scoria has declared it since `Battlefield.js` learned to stand its shelf
+     * out of a borrowed sea — `LEVELS.scoria.battlefield` carries that
+     * measurement. The room that does not declare it is the colosseum, for a
+     * different reason entirely: see the note there. Four rooms each keeping
+     * their own copy of a fact about a fifth is HANDOFF §2.3, and the copies
+     * now say only what is true of THIS room. */
     battlefield: true,
     /* `bodyguard` is here to open the SET-PIECE door and for no other reason —
      * see its registration at the bottom of this file. A boss archetype is
@@ -2338,10 +2346,18 @@ export const LEVELS = {
     /* CARRIES A GENERATED HEIGHTFIELD — `FLAGSHIP.md` §12, read by
      * `World._groundKeyFor`, and the number is `theline.mjs`'s. Every ground
      * was booted with the layer forced on and driven for twenty seconds of a
-     * real engagement: this one deployed and held 10 of its ten. Scoria is the
-     * one room that does not declare it — it comes back **0 of 10, four of them
-     * unplaceable** — because its rocks and wrecks take the standing room with
-     * them when the ground moves under them. The list grows by measurement. */
+     * real engagement: this one deployed and held 10 of its ten, and
+     * `prop-seating` then raised its whole dressing on the generated ground and
+     * found nothing standing on nothing.
+     *
+     * THE SENTENCE THAT USED TO CLOSE THIS NOTE WAS FOUR COPIES OF A FACT THAT
+     * HAD MOVED. It read "scoria is the one room that does not declare it", and
+     * scoria has declared it since `Battlefield.js` learned to stand its shelf
+     * out of a borrowed sea — `LEVELS.scoria.battlefield` carries that
+     * measurement. The room that does not declare it is the colosseum, for a
+     * different reason entirely: see the note there. Four rooms each keeping
+     * their own copy of a fact about a fifth is HANDOFF §2.3, and the copies
+     * now say only what is true of THIS room. */
     battlefield: true,
     pool: ['b1', 'trooper', 'b2', 'sniper', 'droideka', 'acolyte'],
     groundColor: 0xe2dcce,
@@ -2568,9 +2584,10 @@ export const LEVELS = {
     start: [-22, 68],
     /**
      * AND THIS ROOM CAN CARRY A GENERATED HEIGHTFIELD NOW — `FLAGSHIP.md` §12,
-     * `World._groundKeyFor` the reader, and it is the last of the seven to say
-     * so, which means the mode's ground is generated on every seed rather than
-     * on six sevenths of them.
+     * `World._groundKeyFor` the reader, and it was the last of the seven to say
+     * so. Six of the seven do; the colosseum states `false` and carries the
+     * reason (its cavea is its heightfield, and the fight bar could not see
+     * that the building had gone).
      *
      * IT COULD NOT, AND THE RECORDED CAUSE WAS WRONG. `NEXT.md` and the note
      * on `LEVELS.geonosis` both had it as "scoria's rocks and wrecks take the
@@ -2921,10 +2938,18 @@ export const LEVELS = {
     /* CARRIES A GENERATED HEIGHTFIELD — `FLAGSHIP.md` §12, read by
      * `World._groundKeyFor`, and the number is `theline.mjs`'s. Every ground
      * was booted with the layer forced on and driven for twenty seconds of a
-     * real engagement: this one deployed and held 9 of its ten. Scoria is the
-     * one room that does not declare it — it comes back **0 of 10, four of them
-     * unplaceable** — because its rocks and wrecks take the standing room with
-     * them when the ground moves under them. The list grows by measurement. */
+     * real engagement: this one deployed and held 9 of its ten, and
+     * `prop-seating` then raised its whole dressing on the generated ground and
+     * found nothing standing on nothing.
+     *
+     * THE SENTENCE THAT USED TO CLOSE THIS NOTE WAS FOUR COPIES OF A FACT THAT
+     * HAD MOVED. It read "scoria is the one room that does not declare it", and
+     * scoria has declared it since `Battlefield.js` learned to stand its shelf
+     * out of a borrowed sea — `LEVELS.scoria.battlefield` carries that
+     * measurement. The room that does not declare it is the colosseum, for a
+     * different reason entirely: see the note there. Four rooms each keeping
+     * their own copy of a fact about a fifth is HANDOFF §2.3, and the copies
+     * now say only what is true of THIS room. */
     battlefield: true,
     pool: ['b1', 'trooper', 'b2', 'acolyte', 'droideka', 'b1', 'sniper', 'acolyte', 'walker'],
     groundColor: 0x2b2622,
@@ -3335,14 +3360,56 @@ export const LEVELS = {
      * rotted here in the first place. */
     blurb: 'Raked sand under seven thousand people. They did not come to watch you win.',
     terrain: 'colosseum',
-    /* CARRIES A GENERATED HEIGHTFIELD — `FLAGSHIP.md` §12, read by
-     * `World._groundKeyFor`, and the number is `theline.mjs`'s. Every ground
-     * was booted with the layer forced on and driven for twenty seconds of a
-     * real engagement: this one deployed and held 10 of its ten. Scoria is the
-     * one room that does not declare it — it comes back **0 of 10, four of them
-     * unplaceable** — because its rocks and wrecks take the standing room with
-     * them when the ground moves under them. The list grows by measurement. */
-    battlefield: true,
+    /**
+     * THE ONE ROOM THAT KEEPS ITS AUTHORED CONTOURS — `FLAGSHIP.md` §12,
+     * `World._groundKeyFor` the reader, and `false` here is a statement rather
+     * than a silence: `theline.mjs` requires every room in `LEVEL_ORDER` to
+     * say one thing or the other.
+     *
+     * IT DECLARED `true` AND THE DECLARATION WAS MEASURED ON THE WRONG BAR.
+     * The bar was `theline.mjs`'s — boot the ground with the layer forced on,
+     * drive twenty seconds of a real engagement, count the line still up — and
+     * on that bar this room reads **10 of 10 on every seed**, which is why it
+     * declared. That is a bar on the FIGHT. There was none on the PICTURE, and
+     * this is the room where the two come apart, because the cavea IS the
+     * heightfield — `dress` says so in those words, beside the crowd it seats
+     * off `T.height`.
+     *
+     * Measured over the dressed room, `prop-seating`'s own survey, seeds 1/3/7:
+     *
+     *     authored    7921 assemblies, p99 seat −0.04 m, worst  0.00 m
+     *     generated   7921 assemblies, p99 seat  0.00 m, worst 27.97 m
+     *                 31–33 standing on nothing, all but one a praecinctio
+     *
+     * The authored ground climbs 0 → 54.1 m between the sand and the arcade;
+     * a generated one climbs 0 → 13.1 m. RMS difference over the fight disc:
+     * **41.2 m**, against 20.1 on alpine, 17.2 on drifts and 9.7 on geonosis —
+     * the largest of the seven by a factor of two. So the two praecinctiones
+     * that ride the bank stay at the height the bank used to be, seven thousand
+     * spectators sit in rings on an open plain, the 54 m arcade this level's
+     * `horizon: false` is written around ("the one level whose horizon is a
+     * building") is not there, and the fight is fine throughout.
+     *
+     * THE PLATE IS `assets/flagship/colosseum-on-a-generated-ground.png`, taken
+     * at seed 3 through the shipped renderer: seven thousand spectators seated
+     * in rings on open sand, with two rings of masonry hanging over them and
+     * nothing under either. It is one screenshot and it settles the question
+     * that three green checks could not.
+     *
+     * SEATING THE WALLS ON THE NEW GROUND WOULD PASS THE CHECK AND MAKE THE
+     * PICTURE WORSE: it would put the dividing walls of an amphitheatre flat on
+     * a plain with no amphitheatre. There is no version of "derive the ground
+     * from the front" that also builds a bowl, and a room whose subject is a
+     * building cannot borrow a ground that has none.
+     *
+     * WHAT IT COSTS THE MODE IS ONE SEVENTH OF ITS ROLLS AND NOTHING ELSE.
+     * §13.5 is untouched — the colosseum is still a legal seed, still rolled,
+     * still played; `_groundKeyFor` returns its authored key, which is the same
+     * answer every other mode gets. `prop-seating` holds both directions of
+     * this now: a room that declares `true` must stand its dressing on a
+     * generated ground, and a room that declares `false` must fail to.
+     */
+    battlefield: false,
     /* THE HANDLERS AND THE MENAGERIE. The droids are the arena's staff — the
      * thing that opens the gates and shoots you if the animals fail — and they
      * are thin on purpose: this is not a horde level, it is three or four very
@@ -3711,10 +3778,18 @@ export const LEVELS = {
     /* CARRIES A GENERATED HEIGHTFIELD — `FLAGSHIP.md` §12, read by
      * `World._groundKeyFor`, and the number is `theline.mjs`'s. Every ground
      * was booted with the layer forced on and driven for twenty seconds of a
-     * real engagement: this one deployed and held 10 of its ten. Scoria is the
-     * one room that does not declare it — it comes back **0 of 10, four of them
-     * unplaceable** — because its rocks and wrecks take the standing room with
-     * them when the ground moves under them. The list grows by measurement. */
+     * real engagement: this one deployed and held 10 of its ten, and
+     * `prop-seating` then raised its whole dressing on the generated ground and
+     * found nothing standing on nothing.
+     *
+     * THE SENTENCE THAT USED TO CLOSE THIS NOTE WAS FOUR COPIES OF A FACT THAT
+     * HAD MOVED. It read "scoria is the one room that does not declare it", and
+     * scoria has declared it since `Battlefield.js` learned to stand its shelf
+     * out of a borrowed sea — `LEVELS.scoria.battlefield` carries that
+     * measurement. The room that does not declare it is the colosseum, for a
+     * different reason entirely: see the note there. Four rooms each keeping
+     * their own copy of a fact about a fifth is HANDOFF §2.3, and the copies
+     * now say only what is true of THIS room. */
     battlefield: true,
     // A wood is an ambush, so the pool is what ambushes well: things that
     // close, and one marksman for the gaps between the trunks.
@@ -4124,8 +4199,9 @@ LEVELS.geonosis = {
    * ground's 3, and scoria's **lava sea refuses 126**. The generated height
    * was written about a datum of zero under a sheet that sits at +0.55 and
    * burns. `Battlefield.js` stands the battle on a shelf against the borrowed
-   * `waterLevel` now, and all seven theatres declare it — see
-   * `LEVELS.scoria.battlefield` for that measurement in full.
+   * `waterLevel` now, and six of the seven theatres declare it — see
+   * `LEVELS.scoria.battlefield` for that measurement in full, and
+   * `LEVELS.colosseum.battlefield` for the one that does not and why.
    */
   battlefield: true,
   armies: ['republic', 'separatist'],

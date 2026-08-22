@@ -110,6 +110,7 @@ import * as THREE from 'three';
 import * as P from '../../src/world/Props.js';
 import { Terrain } from '../../src/world/Terrain.js';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
+import { battlefieldGround, installGround, removeGround } from '../../src/world/Battlefield.js';
 import { GrassField } from '../../src/world/Scenery.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
@@ -529,6 +530,35 @@ export function nearestTo(a, all) {
   return { at: best, d: bd };
 }
 
+/**
+ * THE SEATING RULE ITSELF, in one place, because it has TWO callers now.
+ *
+ * A thing is either STANDING on something or FIXED to something; `carried` is
+ * the second half and `seat` the first. Extracted when the generated-ground
+ * clause was added — a second copy of "seat > TOL and nothing is carrying it"
+ * is HANDOFF §2.4 exactly, an instrument restating a rule until the two
+ * disagree, and the two would have had to be edited together forever.
+ *
+ * `lamp` assemblies are dropped by both callers for the reason the first one
+ * gives: a light fitting is bolted under a truss and is not standing on
+ * anything at all.
+ */
+export const SEAT_TOL = 0.05;
+export function standing(rows) {
+  const ground = rows.filter((r) => !r.lamp);
+  const bad = [];
+  const fixed = [];
+  for (const r of ground) {
+    if (r.seat <= SEAT_TOL) continue;
+    const by = carried(r, rows);
+    if (by) { fixed.push([r, by]); continue; }
+    bad.push(r);
+  }
+  bad.sort((a, b) => b.seat - a.seat);
+  fixed.sort((a, b) => b[0].seat - a[0].seat);
+  return { ground, bad, fixed };
+}
+
 let SEATED = null;
 /**
  * Dress every level once and measure how everything in it sits.
@@ -537,14 +567,23 @@ let SEATED = null;
  * second one: `tools/_seating.mjs` prints what the checks below only assert
  * on, and a copy of the survey would be a copy of the seating rule with it.
  */
-export function seating() {
-  if (SEATED) return SEATED;
-  SEATED = new Map();
+export function seating(groundFor = null) {
+  if (SEATED && !groundFor) return SEATED;
+  /* A CALLER MAY NAME THE GROUND. `groundFor(key, L)` returns the terrain
+   * preset the level's dressing is to be measured on, defaulting to the one
+   * the level authored. THE LINE raises a GENERATED heightfield under the same
+   * dressing (`World._groundKeyFor`), so "does this prop stand on the ground"
+   * has a second answer per level and this survey is the only thing that can
+   * give it. A named ground is never cached: the preset table is mutable and
+   * a generated row is installed and removed around the call. */
+  const out = new Map();
   P.propMaterials();
   for (const key of LEVEL_ORDER) {
     const L = LEVELS[key];
     if (!L || typeof L.dress !== 'function') continue;
-    const terrain = new Terrain(new THREE.Scene(), L.terrain, 0.5);
+    const ground = groundFor ? groundFor(key, L) : L.terrain;
+    if (!ground) continue;
+    const terrain = new Terrain(new THREE.Scene(), ground, 0.5);
     const world = stubWorld(terrain, L);
     /* The level's OWN cover field, built the way World.loadLevel builds it and
      * BEFORE dress(), because the stone drifts bias themselves away from it —
@@ -556,10 +595,12 @@ export function seating() {
     // seat FIRST: seatOf also records the ground relief under the contact
     // patch, and a spread evaluated before the call would not carry it
     for (const a of all) { const seat = seatOf(a, all, terrain); rows.push({ ...a, seat }); }
-    SEATED.set(key, rows);
+    out.set(key, rows);
     grass?.dispose();
     terrain.dispose();
   }
+  if (groundFor) return out;
+  SEATED = out;
   return SEATED;
 }
 
@@ -786,7 +827,6 @@ export function run({ check, assert }) {
      * on something or FIXED to something. A roof truss spans between the
      * hangar's walls and touches them; a lamp fitting is bolted under a truss.
      * Anything that touches no other assembly at all has to be standing. */
-    const TOL = 0.05;
     const lines = [];
     /* EVERY LEVEL IS RAISED TOGETHER. This used to `assert` inside the loop, so
      * the first theatre to fail was the only one anybody ever saw — and that is
@@ -796,17 +836,7 @@ export function run({ check, assert }) {
      * two failures and the second had been red the whole time. */
     const failed = [];
     for (const [key, rows] of seating()) {
-      const ground = rows.filter((r) => !r.lamp);
-      const bad = [];
-      const fixed = [];
-      for (const r of ground) {
-        if (r.seat <= TOL) continue;
-        const by = carried(r, rows);
-        if (by) { fixed.push([r, by]); continue; }
-        bad.push(r);
-      }
-      bad.sort((a, b) => b.seat - a.seat);
-      fixed.sort((a, b) => b[0].seat - a[0].seat);
+      const { ground, bad, fixed } = standing(rows);
       const seats = ground.map((r) => r.seat);
       /* EVERY EXEMPTION, NAMED. `fixed` is the whole of the reason this check
        * passes on a level with a ten-metre positive seat in it, so it belongs
@@ -832,6 +862,108 @@ export function run({ check, assert }) {
      * detail — the very numbers that say whether the level that failed is the
      * only one near the line — and the next reader had to re-run the survey by
      * hand to get them back. */
+    assert(failed.length === 0, failed.join('\n    ') + '\n    ' + lines.join('; '));
+    return lines.join('; ');
+  });
+
+  /* ══ …AND ON THE GROUND THE FLAGSHIP MODE ACTUALLY PLAYS ON ═════════ */
+
+  check('props: a room that declares a generated ground still stands its dressing on it', () => {
+    /**
+     * EVERY SURVEY ABOVE THIS LINE MEASURES A HEIGHTFIELD THE LINE DOES NOT USE.
+     *
+     * `World._groundKeyFor` installs a `front:<terrain>` preset off the run
+     * seed for any mode declaring `generatedGround` — THE LINE does — on any
+     * level declaring `battlefield`, and then raises THE SAME DRESSING on it.
+     * `LEVELS[*].battlefield` is the room's own statement that it survives
+     * that, and until this clause the only thing measuring the statement was
+     * `theline.mjs`, which asks whether ten men are still standing after twenty
+     * seconds. That is a gameplay bar. It is not a bar on the picture, and the
+     * two came apart on the one room whose ARCHITECTURE IS ITS HEIGHTFIELD:
+     *
+     *     colosseum, seeds 1/3/7, forced on
+     *       authored    7921 assemblies, p99 seat −0.04 m, worst  0.00 m
+     *       generated   7921 assemblies, p99 seat  0.00 m, worst 27.97 m
+     *                   31–33 of them standing on nothing, all but one a
+     *                   praecinctio, hanging 16 m and 27 m over open ground
+     *
+     * The cause is one line of the level and it is not a bug in the level: the
+     * cavea IS the heightfield (`LEVELS.colosseum.dress` says so in those
+     * words, beside the crowd it seats off `T.height`). The authored ground
+     * climbs 0 → 54.1 m between the sand and the arcade; the generated one
+     * climbs 0 → 13.1 m, an RMS difference of 41.2 m over the fight disc — the
+     * largest of the seven by a factor of two — so the two dividing walls that
+     * ride the bank stay at the height the bank used to be and seven thousand
+     * spectators sit in rings on an open plain. The room passes the men-
+     * standing bar at 10 of 10 the whole time.
+     *
+     * So the bar this file owns is the second one, and the fix was the room's
+     * declaration — see `LEVELS.colosseum.battlefield` for the note.
+     *
+     * TWO SEEDS AND NOT ONE. The height is a roll: seed 1 hung 31 assemblies
+     * and seed 7 hung 33, and a single seed is a sample of a distribution this
+     * clause is trying to bound. Not more than two, because each one dresses
+     * every declaring level again and the colosseum alone is 7 921 assemblies.
+     */
+    const SEEDS = [1, 3];
+    const lines = [];
+    const failed = [];
+    for (const key of LEVEL_ORDER) {
+      const L = LEVELS[key];
+      /* BOTH DIRECTIONS, so `battlefield` is a measured fact and not a hand-
+       * maintained table beside its generated twin (HANDOFF §2.3). A room that
+       * says `true` has to stand its dressing; a room that says `false` has to
+       * fail to, or the `false` is a room quietly dropping out of the mode's
+       * ground roll for no reason anybody can see. */
+      const declared = !!L?.battlefield;
+      let seated = 0;
+      for (const seed of SEEDS) {
+        /* THE SAME TWO NUMBERS THE GAME HANDS IN, and they are not decoration:
+         * `deploy` is where the shelf that stands a borrowed sea is measured
+         * from, and scoria opens 71 m off the origin. Restating the call site
+         * with different arguments would measure a ground nobody plays. */
+        let made = null;
+        try {
+          made = battlefieldGround(L.terrain, seed, { deploy: L.start, keep: L.spawnRadius?.[1] });
+        } catch (err) {
+          /* THE GENERATOR'S OWN REFUSAL IS A REASON, and it is the one
+           * `battlefieldGround` already documents: a floor with a roof over it
+           * cannot carry a front. A room on such a ground is entitled to
+           * `false` without this survey having anything to say. */
+          lines.push(`${key}@${seed} refused: ${err.message}`);
+          if (declared) failed.push(`${key} declares \`battlefield\` and the generator refuses its ground: ${err.message}`);
+          seated = -1;
+          continue;
+        }
+        installGround(made.key, made.preset);
+        try {
+          const rows = seating((k) => (k === key ? made.key : null)).get(key) || [];
+          const { ground, bad, fixed } = standing(rows);
+          const seats = ground.map((r) => r.seat);
+          if (!bad.length) seated++;
+          lines.push(`${key}@${seed} ${declared ? 'declares' : 'authored'} n=${rows.length} `
+            + `p99=${pct(seats, 0.99).toFixed(2)} worst=${Math.max(...seats).toFixed(2)} `
+            + `loose=${bad.length}${fixed.length ? ` (${fixed.length} fixed)` : ''}`);
+          if (declared && bad.length) {
+            failed.push(`${key} declares \`battlefield\` and on its generated ground at seed ${seed} `
+              + `${bad.length} of ${ground.length} assemblies stand on nothing — `
+              + bad.slice(0, 3).map((b) => `${b.maker} +${b.seat.toFixed(2)} m at `
+                + `(${b.cx0.toFixed(0)}, ${b.minY.toFixed(1)}, ${b.cz0.toFixed(0)})`).join('; '));
+          }
+        } finally {
+          /* HANDOFF §2.9. `TERRAIN_PRESETS` is a module singleton and a row
+           * left in it is a ground nobody authored, handed to every later
+           * suite in the process — and `installGround` would then throw on
+           * the next seed of the same room rather than on the leak. */
+          removeGround(made.key);
+        }
+      }
+      if (!declared && seated === SEEDS.length) {
+        failed.push(`${key} declares \`battlefield: false\` and its dressing seats cleanly on a `
+          + `generated ground at every one of ${SEEDS.join(', ')} — the room is keeping its authored `
+          + 'contours for no reason this survey can see, which costs the mode a seventh of its ground roll');
+      }
+    }
     assert(failed.length === 0, failed.join('\n    ') + '\n    ' + lines.join('; '));
     return lines.join('; ');
   });
