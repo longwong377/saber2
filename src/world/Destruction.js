@@ -2500,8 +2500,17 @@ export class Destruction {
     // they were missing was somewhere to send the damage.
     const prev = world.onExplosion;
     if (typeof prev === 'function' && !prev.__destruction) {
-      const wrapped = (centre, size = 1) => {
-        prev.call(world, centre, size);
+      /* Variadic past the two it reads, for the reason `World._recordFires`
+       * states: a wrapper that names the whole argument list has taken a
+       * position on a signature it does not own. `onExplosion` grew a third
+       * `opts` — the ghost flag a co-op client's blast carries — and this
+       * wrapper is on the property, so dropping it would have made every
+       * networked blast bill damage on the client after all. */
+      const wrapped = (centre, size = 1, ...rest) => {
+        prev.call(world, centre, size, ...rest);
+        /* The structural half runs on BOTH ends: no wall is in the snapshot,
+         * so a client that skipped this would keep standing behind cover the
+         * host had already blown apart. */
         this.explosion(centre, size);
       };
       wrapped.__destruction = true;

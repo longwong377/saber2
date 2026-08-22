@@ -394,6 +394,64 @@ export async function run({ check, assert }) {
     return line;
   });
 
+  check('co-op: a blast the host raises is a blast the guest is standing in', async () => {
+    /**
+     * THE SAME GAP THE GRENADE HAD, one door further in. `World.onExplosion` is
+     * where an exploding barrel, a droideka's death and every structure charge
+     * arrive, and none of it was on the wire: a joining player watched a barrel
+     * vanish in silence, took damage from nowhere, and walked over ground the
+     * host had already cratered.
+     *
+     * WHAT THIS HOLDS, and the second half is again the one worth having:
+     *
+     *   1. the guest gets the blast — the sound, the fireball, the hole;
+     *   2. the guest's copy bills NOTHING. Same argument as the grenade: the
+     *      host resolved it and the hp arrives in the next snapshot.
+     *
+     * And the third clause, which is the one that broke while this was written:
+     * Destruction REPLACES `world.onExplosion` with a wrapper at level load, so
+     * the ghost flag has to survive a function that was written before it
+     * existed. A wrapper that names its arguments drops it and the client bills
+     * the damage after all — which is why the wrapper is variadic and why this
+     * check runs on a level with Destruction installed.
+     */
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const { host, client, pump } = await H.bootPair({ level: 'colosseum' });
+    const at = new THREE.Vector3(0, 0, 8);
+    const victim = client.spawnEnemy('b1', at.clone());
+    assert(victim, 'setup: nothing on the client to stand in the blast');
+    pump(1 / 60);
+    const hp0 = victim.hp;
+    /* Ground under the blast, before, so the crater has something to cut. */
+    const h0 = client.terrain ? client.terrain.height(at.x, at.z) : null;
+
+    let heard = 0;
+    const inner = client.particles?.explosion?.bind(client.particles);
+    if (inner) client.particles.explosion = (...a) => { heard++; return inner(...a); };
+
+    host.onExplosion(at.clone(), 1.35);
+    for (let i = 0; i < 30; i++) pump(1 / 60);
+
+    assert(heard > 0,
+      'the host raised a blast and the joining player got nothing — no bang, no fireball, no hole');
+    assert(victim.hp === hp0,
+      `the guest's own copy of the blast took ${(hp0 - victim.hp).toFixed(1)} hp off a body the host `
+      + 'never touched — the same droid is being killed at both ends');
+    const h1 = client.terrain ? client.terrain.height(at.x, at.z) : null;
+    assert(h0 === null || h1 < h0 - 0.05,
+      `the guest's ground is unmarked (${h0?.toFixed(2)} → ${h1?.toFixed(2)}) — the crater did not cross`);
+
+    /* AND IT DOES NOT ECHO. A client that recorded its own ghost would put it
+     * back on the wire the moment that client ever became a host. */
+    assert(!(client._netBlasts || []).length,
+      'the guest recorded the blast it was told about — a replayed picture is being replicated');
+
+    const line = `host 1 blast → guest ${heard} drawn, ground ${h0?.toFixed(2)} → ${h1?.toFixed(2)}, 0 hp billed locally`;
+    host.unload(); client.unload();
+    return line;
+  });
+
   check('co-op: an elite arrives on a joining player\'s screen wearing its tells', async () => {
     /**
      * EVERY ELITE IN THE GAME WAS A PLAIN BODY OFF-HOST.

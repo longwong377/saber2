@@ -1247,6 +1247,9 @@ export function packSnapshot(world) {
    * there is no arrangement of position and hp fields that can contain one.
    * See `World._recordNades`. */
   const nades = world._netNades || [];
+  /* …and the blasts, for the reason the grenades are here: a fireball, a bang,
+   * a shove and a crater are things that HAPPEN. See `World.onExplosion`. */
+  const blasts = world._netBlasts || [];
   const snap = {
     t: 'snapshot',
     /**
@@ -1272,6 +1275,7 @@ export function packSnapshot(world) {
     e: enemies,
     bf: fires.slice(),
     gn: nades.slice(),
+    ex: blasts.slice(),
     w: world.director.wave,
     act: world.director.active ? 1 : 0,
     rem: world.director.remaining,
@@ -1284,6 +1288,7 @@ export function packSnapshot(world) {
   };
   fires.length = 0;
   nades.length = 0;
+  blasts.length = 0;
   return snap;
 }
 
