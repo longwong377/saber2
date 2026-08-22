@@ -70,6 +70,26 @@ const DRIVABLE = () => Object.keys(ARCHETYPES)
   .filter(k => crewOf(k) > 0)
   .map(k => `${ARCHETYPES[k].label} (${crewOf(k)} crew)`)
   .join(', ') || 'nothing on this roster';
+
+/**
+ * ONE SENTENCE OF A BLURB, for the hover tips on the mode rows.
+ *
+ * DERIVED rather than authored as a second field, and that is the whole point.
+ * A `tip:` column beside `blurb:` is two descriptions of one mode kept in step
+ * by hand, which is the drift HANDOFF §2.3 is about and which this file has
+ * removed four times already. The blurb stays the single source; this takes its
+ * first sentence and nothing else.
+ *
+ * The split is on a full stop followed by a space, so the em-dashed clauses and
+ * the decimal numbers that appear in these strings ("0.5x", "1.5 m") survive.
+ * A blurb that is already one sentence comes back whole.
+ */
+function firstSentence(text) {
+  const t = String(text || '').trim();
+  if (!t) return '';
+  const cut = t.search(/\.\s/);
+  return cut < 0 ? t : t.slice(0, cut + 1);
+}
 /* The Codex teaches how to fight a Force user, so it quotes THEIR numbers —
  * read off Enemy.js rather than transcribed, which is the hand-written-twin
  * defect HANDOFF §2.3 is about. */
@@ -3741,7 +3761,7 @@ export class Menu {
       card.innerHTML = `
         <div class="art" style="background-image:url(${this._levelArt(key)});background-size:cover"></div>
         <div class="tagpill">${this._poolTypes(L)} unit types</div>
-        <div class="meta"><b>${L.name}</b><span>${L.blurb}</span><span class="why hidden"></span></div>`;
+        <div class="meta"><b>${L.name}</b><span class="why hidden"></span></div>`;
       this._activate(card, () => {
         // Ignored in the modes that choose their own place — see _syncTheatre.
         // The guard is here as well as on pointer-events because a card the
@@ -4006,7 +4026,15 @@ export class Menu {
     for (const [key, M] of Object.entries(MODES)) {
       const d = document.createElement('div');
       d.className = 'diff' + (this.s.mode === key ? ' sel' : '');
-      d.innerHTML = `<i class="dot"></i><div class="txt"><b>${M.name}</b><span>${M.blurb}</span></div>`;
+      /* THE BLURB IS A TOOLTIP NOW, not a paragraph under every row. Nine modes
+       * each carrying two or three lines of prose is a wall of text you read
+       * once and then scroll past forever; the NAME is what you are choosing
+       * between. `data-tip` renders on hover (styles.css) and the string stays
+       * on the MODES row untouched, because `tools/checks/claims.mjs` parses
+       * these blurbs and holds the numbers in them to the constants — moving
+       * the text off the table would take that check's subject away. */
+      d.dataset.tip = firstSentence(M.blurb);
+      d.innerHTML = `<i class="dot"></i><div class="txt"><b>${M.name}</b></div>`;
       this._activate(d, () => { audio.ui('click'); this.selectMode(key); });
       this._modeCards.set(key, d);
       this.el.modes.appendChild(d);

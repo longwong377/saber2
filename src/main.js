@@ -1964,10 +1964,43 @@ window.addEventListener('keydown', (e) => {
  * scan because a static host has no directory listing to scan.
  */
 const TRACKS = ['theme.mp3'].map(f => new URL(`../assets/music/${f}`, import.meta.url).href);
+/**
+ * THE SCORE IS ARMED AT LOAD AND UNLOCKED ON THE GESTURE — two steps, and it
+ * used to be one.
+ *
+ * Everything here used to hang off the first pointerdown: the AudioContext was
+ * built, the graph was wired, the element was created and only then did the
+ * 28 MB file start coming down. So the first click bought a connection, a
+ * decode and a buffer before it bought a note, and the score audibly arrived
+ * late — "there's a lag with the soundtrack, it doesn't actually start playing
+ * on the main menu until you click a button, it needs to play as early as you
+ * can".
+ *
+ * WHAT IS ACTUALLY GESTURE-GATED IS NARROWER THAN THAT. A browser blocks
+ * `play()` and it blocks `AudioContext.resume()`. It does not block
+ * CONSTRUCTING a context — a fresh one is merely born suspended — and it does
+ * not block fetching. So all of the slow work is legal before anyone touches
+ * anything, and only the unlock has to wait.
+ *
+ * `armScore` therefore runs immediately: context, graph, element, and (with
+ * `preload='auto'` in Audio._startMusic) the file already streaming while the
+ * menu is being read. `_startMusic` tries `play()` once and, when the autoplay
+ * gate refuses, re-arms itself on the first gesture — so on a page the player
+ * has interacted with before, the music simply starts with the menu.
+ *
+ * `startScore` stays bound for the unlock, and is now cheap: resume the
+ * context, and let the retry inside `_startMusic` do the rest. Both listeners
+ * stay in the capture phase so no handler can swallow the gesture first.
+ */
+const armScore = () => {
+  audio.init();
+  audio.playMusic(TRACKS, { loop: true });
+};
 const startScore = () => {
   audio.init(); audio.resume();
   audio.playMusic(TRACKS, { loop: true });
 };
+armScore();
 window.addEventListener('pointerdown', startScore, true);
 window.addEventListener('keydown', startScore, true);
 

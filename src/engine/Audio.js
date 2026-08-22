@@ -891,9 +891,26 @@ export class AudioEngine {
       // cannot — the element has to be handed the next url when this one ends —
       // so `loop` is the single-file case only.
       el.loop = list.length === 1 && opts.loop !== false;
-      // 'auto' is "pull the whole file now whether or not it is ever heard".
-      // play() drives the fetch on its own, and only as far as it is playing.
-      el.preload = 'metadata';
+      /* 'auto' — PULL IT NOW, and that is a reversal with a reason.
+       *
+       * This was 'metadata' on the argument that `play()` drives the fetch on
+       * its own and only as far as it is playing, which is true and which is
+       * why the score arrived late every single time: nothing was fetched
+       * until the first click, so the gesture had to pay for the connection,
+       * the decode AND the buffer before a note came out. Reported as "there
+       * is a lag with the soundtrack, it doesn't actually start playing until
+       * you click a button — it needs to play as early as you can".
+       *
+       * `main.js` now arms the score at module load instead of on the gesture,
+       * so with 'auto' the file is already buffering while the player is
+       * reading the menu and `play()` has something to play the instant the
+       * autoplay gate lifts. The bytes are the same bytes either way — this
+       * only moves WHEN they are asked for.
+       *
+       * It is still not a fetch nobody asked for: `_applyTrack` refuses to
+       * build this element at all while the Music slider is at 0, so a player
+       * who does not want the score never pays for it. */
+      el.preload = 'auto';
       el.crossOrigin = 'anonymous';
       // The element's own volume stays at 1: the musicBus is the only place
       // loudness is decided, or the slider and the element would fight and the

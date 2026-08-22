@@ -470,9 +470,38 @@ export async function run({ check, assert }) {
         `the boot art names ${what} — this screen is what a player looks at while the modules load and it must `
         + 'not be waiting on anything itself');
     }
-    assert(!/title\.webp/.test(bootHtml),
-      'the boot screen names the title plate. `.menu-bg` gets away with it because `#menu` is display:none until '
-      + 'the boot finishes; `#boot` is not, so this puts 96 KB in front of the modules the boot is waiting on');
+    /*
+     * …AND THE PLATE IS ALLOWED ON TOP OF THE DRAWING, WHICH THIS USED TO BAN.
+     *
+     * The ban was `!/title\.webp/.test(bootHtml)`, and the argument for it was
+     * sound: a VISIBLE element naming the plate puts 96 KB in front of the
+     * modules the boot is waiting on. What the argument missed is that the
+     * page ALREADY names it, on line 32, as `rel=preload fetchpriority=low` —
+     * so those bytes are on the wire during the boot whether or not `#boot`
+     * mentions them, and the only question left is whether anything WAITS on
+     * them. Asked for twice by the player: "the background on the very first
+     * loading screen is not the same as the one in the main menu — replace it
+     * with the one in the main menu (I've said this to you before)."
+     *
+     * So the rule is no longer "do not name it". It is: the drawing must still
+     * be there and must still be first (asserted above), and the plate may
+     * only arrive as a layer that nothing blocks on. That means an <img> which
+     * starts transparent and is faded in by its own load event — never a CSS
+     * background, which cannot say when it is ready, and never on `.boot-art`
+     * itself, which is the thing that has to paint immediately.
+     */
+    const plate = /<img[^>]*class="boot-plate"[^>]*>/.exec(bootHtml)?.[0] || '';
+    if (/title\.webp/.test(bootHtml)) {
+      assert(plate, 'the boot screen names the title plate somewhere other than the `.boot-plate` layer — '
+        + 'the drawn art is what paints first and nothing else on this screen may reach for the network');
+      assert(/\bonload=/.test(plate) && /classList\.add\('in'\)/.test(plate),
+        'the boot plate does not fade itself in on load — without that it either pops or is timed, and a timed '
+        + 'fade shows the half-decoded state');
+      assert(/opacity:0/.test(CSS_C.replace(/\s+/g, '').replace(/;/g, ';')) || /\.boot-plate\{[^}]*opacity:0/.test(CSS_C.replace(/\s+/g, '')),
+        '`.boot-plate` does not start transparent, so it is not layering over the drawing — it is replacing it');
+      assert(/rel="preload"[^>]*title\.webp|title\.webp[^>]*rel="preload"/.test(HTML_C.replace(/\s+/g, ' ')),
+        'the plate is shown on the boot screen without being preloaded, so it now IS a new request on the boot path');
+    }
     /* And it is a picture rather than three rectangles: the plate next door has
      * a per-pixel floor for the same reason. */
     const shapes = (art.match(/<(path|rect|circle|polygon|use)\b/g) || []).length;

@@ -165,6 +165,18 @@ b{font-weight:800}
    flat polygons is in the first paint and costs no request at all.
    `slice` rather than `meet` so it covers every viewport the way `cover` does. */
 .boot-art{position:absolute;inset:0;width:100%;height:100%;z-index:0;pointer-events:none}
+/* THE MENU'S OWN PLATE, FADED IN OVER THE DRAWING. See index.html for why it
+   layers rather than replaces. The wash matches `.menu-bg`'s exactly — the same
+   cream veil at .22 — so the boot screen and the menu behind it are one picture
+   and not two crops of one. `object-fit:cover` is the `50% 50%/cover` the
+   background shorthand does over there. */
+.boot-plate{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;
+  z-index:1;pointer-events:none;opacity:0;transition:opacity .5s ease-out}
+.boot-plate.in{opacity:1}
+/* The veil, as its own layer so it sits over the photograph and under the type
+   exactly as it does on `.menu-bg`. */
+#boot::after{content:'';position:absolute;inset:0;z-index:1;pointer-events:none;
+  background:rgba(248,240,222,.22)}
 /* 660 and not 460: the mark is 620 px wide with 24 px of padding either side.
    The bar and the message underneath keep their own widths. */
 /* A WIDTH AND NOT A MAX-WIDTH, and this is the same trap `.logo` fell into one
@@ -550,6 +562,37 @@ h3::after{content:"";flex:1;height:2px;background:var(--panel-hi)}
 .diff.sel .dot{background:var(--accent);box-shadow:0 0 10px var(--accent)}
 .diff .txt b{display:block;font-size:12.5px;font-weight:800;letter-spacing:.04em}
 .diff .txt span{font-size:10.5px;color:var(--dim);line-height:1.35;display:block}
+
+/* THE MODE'S ONE LINE, ON HOVER ────────────────────────────────────────
+   Nine modes each carrying a paragraph under its name is a wall of prose you
+   read once and scroll past forever, and the NAME is what you are choosing
+   between. The sentence still exists — `_buildModes` puts it on `data-tip` —
+   it just waits until you ask for it.
+
+   BELOW the row and left-aligned, deliberately: above clips the first mode in
+   the column against the panel's top edge, and right-aligned runs a 260 px box
+   off a narrow column. `pointer-events:none` so the tip can never eat the
+   click on the row it is describing, and it is drawn on `::after` so no extra
+   node lands in a list the keyboard walks. */
+.diff[data-tip]{position:relative}
+/* Plain `:focus` here, and the reason is a real trap rather than a preference.
+   tools/checks/menu.mjs finds the FIRST focus-ring rule in this file by regex
+   and asserts it covers .card/.diff/.sw/.dc — so any earlier rule of that kind
+   shadows the real one and the focus-ring check silently starts measuring a
+   tooltip instead. Note the regex reads the raw file, so even NAMING that
+   pseudo-class in a comment above this line is enough to break it. Keyboard
+   focus still raises the tip; the ring itself is untouched, further down. */
+.diff[data-tip]:hover::after,.diff[data-tip]:focus::after{
+  content:attr(data-tip);position:absolute;left:-2px;top:calc(100% + 5px);z-index:40;
+  max-width:260px;width:max-content;padding:7px 9px;
+  font-size:10.5px;line-height:1.36;font-weight:600;letter-spacing:.01em;
+  color:var(--ink);background:var(--panel-hi);border:2px solid var(--stroke);
+  box-shadow:var(--stamp);clip-path:var(--cut-sm);pointer-events:none;
+  white-space:normal;text-align:left}
+/* The row lifts 1-2 px on hover and on select; the tip must not ride that or it
+   detaches from the row underneath it. */
+.diff[data-tip]:hover::after{transform:translate(1px,1px)}
+.diff.sel[data-tip]:hover::after{transform:translate(2px,2px)}
 
 /* swatches ────────────────────────────────────────────────────────────
    These ARE the colour, so the ink around them is the whole design: a flat
@@ -1312,9 +1355,14 @@ button{font-family:inherit}
    down a 720 px screen. 3 px and a slimmer row hold the whole of it inside
    340 px, which leaves the middle of the screen — where the fight is —
    uncovered. */
-#stratagem{position:absolute;left:34px;top:50%;transform:translateY(-50%);
-  display:flex;flex-direction:column;gap:3px;pointer-events:none;z-index:6;
-  max-height:74vh;animation:riseIn .12s ease-out both}
+/* IN THE FLOW OF `.hud-bl`, not pinned to the viewport. index.html says why.
+   No `left`/`top`/`transform`: the column places it, and it stacks above the
+   roll instead of across it. `margin-bottom` is the gap to the roll; the
+   max-height keeps a long call list off the top of the screen on a short
+   viewport, and it scrolls nothing because the panel is only up while the key
+   is held. */
+#stratagem{display:flex;flex-direction:column;gap:3px;pointer-events:none;z-index:6;
+  margin-bottom:14px;max-height:62vh;animation:riseIn .12s ease-out both}
 #stratagem.hidden{display:none}
 /* THE PHRASE, under the leading row. Every keystroke is a word (see
    callPhrase in src/game/Stratagems.js); this is the script the player is

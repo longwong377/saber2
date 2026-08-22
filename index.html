@@ -174,6 +174,27 @@
          straight onto this and nothing else stands between them. -->
     <rect width="1600" height="900" fill="#f6ecda" opacity=".20"/>
   </svg>
+  <!-- AND THE REAL PLATE OVER THE TOP OF IT, ONCE IT HAS ARRIVED.
+
+       Asked for twice: "the background on the very first loading screen you see
+       when you boot the game is not the same background as the one in the main
+       menu, so replace the background of that first loading screen with the one
+       in the main menu (I've said this to you before)".
+
+       The comment above argues the plate must not be on the first-paint path,
+       and that argument is still right — so this does not replace the drawn
+       art, it LAYERS over it. The SVG paints instantly as it always did; the
+       plate is already `rel=preload`ed on line 32, so naming it here adds no
+       request, and when it decodes it fades in over the drawing. First paint is
+       unchanged and the screen ends up wearing the menu's own background, which
+       is what was actually asked for both times.
+
+       An `<img>` with an inline `onload` rather than a CSS background, because
+       a background cannot tell you when it is ready and a fade started on a
+       timer would flash the half-loaded state. z-index 1: over `.boot-art`'s 0,
+       under `.boot-inner`'s 2. -->
+  <img class="boot-plate" src="./assets/menu/title.webp" alt="" aria-hidden="true"
+       decoding="async" onload="this.classList.add('in')">
   <div class="boot-inner">
     <!-- THE SABER GLYPH IS GONE FROM HERE TOO. It was removed from the menu's
          header on instruction and stayed on the boot screen, which is the
@@ -860,6 +881,23 @@
   </div>
 
   <div class="hud-bl">
+    <!-- THE SUPPORT-CALL PANEL LIVES IN THIS COLUMN NOW, ABOVE THE ROLL.
+
+         It used to be its own absolutely-positioned box at left:34px, top:50%,
+         vertically middled and up to 74vh tall, on the argument that "nothing
+         else on the HUD lives there". Something else does: `#roster` grows
+         UPWARD from bottom:28px and reaches about 400 px with a full roll, so
+         on a 720-1080 px viewport the two boxes intersect over the lower-left
+         third and the upper stratagems are the half you lose. Reported as
+         exactly that — "the stratagem menu and the troop ui menu would overlap
+         and obscure each other on the left side of the screen".
+
+         Two boxes pinned to the same corner eventually collide at SOME
+         viewport; two boxes in one column cannot collide at any. This column is
+         bottom-anchored, so the panel opening pushes the stack upward and never
+         moves the roll under it. Same rule the event feed and the kill feed
+         already follow on the right (see .hud-tr above). -->
+    <div id="stratagem" class="hidden"></div>
     <!--
       YOUR ARMY, WHICH THE GAME HAS ALWAYS HAD AND NEVER SHOWN.
 
@@ -1045,7 +1083,6 @@
        until the comm key goes down. (The node id is still `stratagem`: it is
        an identifier nobody renders, and it is what HUD.js and styles.css both
        key off.) -->
-  <div id="stratagem" class="hidden"></div>
   <div id="dmg-vignette"></div>
   <div id="flow-vignette"></div>
 </div>
