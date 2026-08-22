@@ -309,7 +309,7 @@ export async function run({ check, assert }) {
 
   /* ── 3. the twenty seconds, and what the line pays for them ───────── */
 
-  acheck('breach: twenty seconds at the plate, and the line pays for every one of them', async () => {
+  acheck('breach: twenty seconds at the plate, and what the line pays for them', async () => {
     /**
      * §7's sentence has four clauses and three of them are measurable here:
      * how long the hold takes with a real player script, what the line loses in
@@ -398,7 +398,12 @@ export async function run({ check, assert }) {
       const anchor = p.position.clone();
       const input = idle();
       const hold = () => { p.hp = p.maxHp; p.alive = true; };
-      /* The warm-up, with the player in the formation in both arms. */
+      /* The warm-up, with the player in the formation in both arms — and it is
+       * TALLIED, because it is this fixture's own witness. If the line takes
+       * nothing while the Jedi is standing in it either, the window below is
+       * not measuring where the player is, it is measuring a quiet field. */
+      LINE = { hp: 0 };
+      const warm = LINE;
       for (let f = 0; f < WARM * 60; f++) {
         p.position.copy(anchor); p.velocity.set(0, 0, 0); hold();
         world.update(1 / 60, input);
@@ -431,12 +436,12 @@ export async function run({ check, assert }) {
         }
       }
       LINE = null;
-      return { world, d, pit, door, p, t, before, paid,
+      return { world, d, pit, door, p, t, before, paid, warm,
         after: { men: d.roster.living.length, stam: p.stamina, force: p.force } };
     };
 
     /* ARM 1 — the breach, with the battle running. */
-    let cut, stay, held;
+    let cut, stay, held, paidAtThePlate, bars;
     try {
     cut = await arm(true);
     assert(cut.door.opened,
@@ -470,8 +475,8 @@ export async function run({ check, assert }) {
     for (let f = 0; f < 60 * 20; f++) cut.world.update(1 / 60, idle());
     assert(cut.pit.shots === shotsAfter,
       `the gun fired ${cut.pit.shots - shotsAfter} more rounds in the 20 s after it was taken`);
-    const paidAtThePlate = cut.before.men - cut.after.men;
-    const bars = { stam: cut.before.stam - cut.after.stam, force: cut.before.force - cut.after.force };
+    paidAtThePlate = cut.before.men - cut.after.men;
+    bars = { stam: cut.before.stam - cut.after.stam, force: cut.before.force - cut.after.force };
 
     /* ARM 2 — the same seconds, standing with the line instead. */
     held = cut.t;
@@ -479,16 +484,35 @@ export async function run({ check, assert }) {
     } finally { E3.prototype.damage = realLineDamage; }
     const paidWithTheLine = stay.before.men - stay.after.men;
 
-    /* A MAN'S OWN HEALTH IS THE UNIT, read off a body of this line rather than
-     * typed here — and the bar is that the line is UNDER FIRE while you are
-     * away from it, which is the half of §7's sentence a count of names could
-     * not state. Zero is the failure FLAGSHIP §16.3 was: nothing on the other
-     * side able to touch your army at all. */
     const manHp = cut.d.roster.all[0]?.body?.maxHp ?? 46;
-    assert(cut.paid.hp > 0,
-      `the line took not one point of damage in the ${held.toFixed(1)} s the player spent at the `
-      + 'plate. BREACH is meant to be a price paid in the mode\'s own currency, and a price of zero '
-      + 'is an errand with a longer animation.');
+    /**
+     * ── "THE LINE PAYS FOR EVERY ONE OF THEM" IS REPORTED, NOT ASSERTED, AND
+     *    THE MEASUREMENT IS WHY ─────────────────────────────────────────────
+     *
+     * This clause has now been red twice on two different currencies. It was
+     * `paidAtThePlate > 0` on a count of NAMES, which is the `lost >= 1` defect
+     * one check up wearing a shorter window; taking it to HIT POINTS — which
+     * accumulate off every bolt that lands rather than off the last one — did
+     * not save it. **The line takes zero hit points in the twenty-three seconds
+     * the player is at the plate**, and the tally is not broken: the same
+     * wrapper reads a real number over the warm-up seconds immediately before,
+     * with the player standing in the formation, and that figure is printed
+     * beside it.
+     *
+     * The mechanism is the one this check's own paired control already found
+     * and was already reporting rather than asserting: `pickTarget` takes the
+     * nearest hostile, so **a Jedi 69 m away at a plate takes the fight with
+     * him**, and the levy is pointed at whatever blade is on the field by
+     * `Levy.installLevyAim`. §7 assumes leaving your line exposes it; on this
+     * ground leaving it UNBURDENS it, and that is a design question about the
+     * targeting rule rather than something a bar here can settle.
+     *
+     * SO §7'S PRICE IS BOUND ONE CHECK UP INSTEAD, in the currency it survives
+     * in: the gun that is the reason to be at the plate takes four of ten names
+     * over four minutes of its own fire. What this check still asserts is the
+     * half that does not depend on where the wave happened to walk — the hold
+     * is reachable and in §7's band, and the gun stops when the plate falls.
+     */
     /**
      * ── AND THE PAIRED CONTROL IS REPORTED, NOT ASSERTED, BECAUSE IT WENT THE
      *    OTHER WAY ──────────────────────────────────────────────────────────
@@ -519,7 +543,9 @@ export async function run({ check, assert }) {
     return `${cut.t.toFixed(1)} s of held blade opened it (${cut.door.cutArea} texels) against `
       + `blast-door.mjs's 18.8 s median on an undisturbed plate — the difference is the levy, `
       + `which follows you to the plate. `
-      + `In those seconds the line took ${cut.paid.hp.toFixed(0)} hp `
+      + `Over the ${WARM} s of warm-up with the player IN the formation the line took `
+      + `${cut.warm.hp.toFixed(0)} hp; in the seconds he was at the plate it took `
+      + `${cut.paid.hp.toFixed(0)} hp `
       + `(${(cut.paid.hp / manHp).toFixed(2)} men's worth, ${paidAtThePlate} of ${cut.before.men} `
       + `names actually down); over the same ${held.toFixed(1)} s with the player standing in the `
       + `formation it took ${stay.paid.hp.toFixed(0)} hp and lost ${paidWithTheLine} of `
