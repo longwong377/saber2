@@ -1686,6 +1686,33 @@ had to learn the hard way and the next bench will too:
   one B2 standing 34 m out shooting into a raised guard, and the last 480
   game-seconds were a still frame. `_bodyaudit` carries its own `hunterInput`.
 
+**AND THE ONE NEXT.md HAD OPEN, which is the same shape a fifth time.** "A
+felled trunk that has settled BELOW the ground it fell on. Of nine trunks
+realised in the wood, four had surfaces under the terrain and one had fallen to
+−179 m." −179 is one metre off `RapierWorld.killY`, and the cause is upstream of
+the solver rather than in it: the fall is a hinge that does not know about the
+ground. `Forest.update` integrates θ̈ = 3g/2L·sin θ to horizontal about a pivot
+at the CUT FACE, so a trunk rests at the height of its own stump however the
+ground runs away underneath it — `_layLog`'s own note has that measured already
+("34 of the 83 had some part of themselves buried… 13.2 m under at the deep
+end") and takes the right precaution for a STATIC box, laying none along the
+buried stretches.
+
+**A Prop is not a static box.** `_realise` built a DYNAMIC body at exactly that
+pose, so a trunk lying in a bank was a rigid body born inside a heightfield —
+the one state Rapier has no correct answer for. Measured with
+`tools/_logsweep.mjs`, twelve stops across the wood, fourteen trees felled at
+each: **9 of 21 realised logs were born with their underside below the terrain**,
+deepest 1.53 m, p90 0.75. Afterwards, same sweep: **1 of 19, deepest 0.09 m**,
+which is the seat's own eight-sample granularity.
+
+The kill-plane end is permanent and worth knowing about on its own: a log that
+reaches −180 is removed from the physics world and KEEPS its Prop and its mesh;
+it is 180 m from `home`, so `_syncLogs` marks it `moved` and then reads its x/z
+off the body — barely changed — so it is never far enough away to be released
+either. The tree is gone from the wood for the rest of the level, its instance
+collapsed to zero scale, and one of the nine `LIFT_CAP` slots gone with it.
+
 **What is left, and why.** `Prop.destroy` frees materials only where the prop
 says `ownsMaterials` (today: a dropped hilt, whose five metals `buildHiltGroup`
 machines per hilt). Every other prop kind draws from shared tables and freeing
@@ -1694,6 +1721,12 @@ one of those takes the paint off everything still standing — the same
 to commit. Whether any of those tables are per-prop after all is unmeasured.
 `Player.dispose` still does not dispose `p.injury`, which owns two materials;
 that is ~2 per respawn and it is not what any of the numbers above are about.
+And a log that is born ON the ground can still SETTLE a little into it — the
+first draft of the wood check asserted the resting place and read 0.72 m and
+0.32 m on two of nine after fourteen seconds. The check asserts the BIRTH
+instead, deliberately: where a log ends up once it has been dropped, shoved or
+rolled down a bank is the solver's business, and a check that pinned it would
+be pinning a scene rather than holding a rule.
 
 ---
 

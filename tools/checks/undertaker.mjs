@@ -298,6 +298,109 @@ export async function run({ check, assert }) {
   });
 
   /* ══════════════════════════════════════════════════════════════════ */
+  /*  The wood                                                          */
+  /* ══════════════════════════════════════════════════════════════════ */
+
+  check('undertaker: a felled trunk is never handed to the solver inside the hill', async () => {
+    /**
+     * NEXT.md, open: "a log that has settled BELOW the ground it fell on. Of
+     * nine trunks realised in the wood, four had surfaces under the terrain
+     * and one had fallen to −179 m. The floor query is right about all of
+     * them; the solver put them there."
+     *
+     * −179 m is one metre off `RapierWorld.killY`. The fall is a hinge that
+     * does not know about the ground — `Forest.update` integrates a rod to
+     * horizontal about a pivot at the cut face — so a trunk rests at the
+     * height of its own stump however the ground runs away under it, and
+     * `_realise` built a DYNAMIC body at that pose. Measured over the wood
+     * with `tools/_logsweep.mjs`, twelve stops, fourteen trees felled at each:
+     * **9 of 21 realised logs were born with their underside below the
+     * terrain**, deepest 1.53 m, p90 0.75 m.
+     *
+     * THE RULE IS THE BIRTH AND NOT THE RESTING PLACE, deliberately. Where a
+     * log ends up after it has been shoved, cut, thrown or rolled down a bank
+     * is the solver's business and a check that pinned it would be pinning a
+     * scene. What may not happen is a rigid body being CREATED inside a
+     * heightfield, because that is the one state Rapier has no correct answer
+     * for — and it is the state every one of those nine was created in.
+     *
+     * Driven through `_realise` itself rather than through a fifteen-second
+     * walk: the walk is what found it, and one realisation is what the rule is
+     * about.
+     */
+    const { world } = await bootWorld({
+      level: 'wood', settings: { mode: 'sandbox', level: 'wood', quality: 'low' }, runSeed: 7,
+    });
+    const input = idleInput();
+    const f = world.forest;
+    assert(f && f.data, 'the wood has no forest, so this check measures nothing');
+    const N = Math.floor(f.data.length / 15);
+    const T = world.terrain;
+    const P = world.player.position;
+
+    /* THE BIRTH IS WHAT IS CAUGHT, so `_realise` is wrapped rather than the
+     * field being read afterwards. Where a log ends up once it has been
+     * dropped, shoved or rolled down a bank is the solver's business and a
+     * check that pinned it would be pinning a scene. */
+    const births = [];
+    const realise = f._realise.bind(f);
+    f._realise = (i) => {
+      realise(i);
+      const rec = f.real.get(i);
+      if (!rec) return;                       // refused: it is in the hill
+      const b = rec.prop.body;
+      const r = f.data[i * 15 + 4];
+      const half = b.extent ? b.extent.y : 0;
+      const ax = new THREE.Vector3(0, 1, 0).applyQuaternion(b.quaternion);
+      let deep = 0;
+      for (let s = -6; s <= 6; s++) {
+        const q = b.position.clone().addScaledVector(ax, (s / 6) * half);
+        const d = T.height(q.x, q.z) - (q.y - r);
+        if (d > deep) deep = d;
+      }
+      births.push({ i, deep });
+    };
+
+    /* Fell everything near the player so there is a choice of logs, then let
+     * them land and let `_syncLogs` realise the ones inside `LIFT_RING`. */
+    const order = [];
+    for (let i = 0; i < N; i++) {
+      const dx = f.data[i * 15] - P.x, dz = f.data[i * 15 + 1] - P.z;
+      order.push([i, dx * dx + dz * dz]);
+    }
+    order.sort((a, b) => a[1] - b[1]);
+    let felled = 0;
+    for (const [i] of order.slice(0, 40)) {
+      const a = (i * 2.399963) % (Math.PI * 2);
+      if (f.fell(i, Math.cos(a), Math.sin(a), 0.6)) felled++;
+    }
+    assert(felled > 8, `only ${felled} trees came down`);
+    drive(world, 14, input);
+    assert(births.length > 0, 'no log was realised at all, so this check measures nothing');
+
+    /* The seat samples the log at eight points along its length, so a ridge
+     * BETWEEN two samples can leave a few centimetres — 10 cm is that, and it
+     * is inside the solver's own contact tolerance. Anything at the scale the
+     * sweep measured before the fix (0.75 m at p90, 1.53 m deepest) is a body
+     * born inside a heightfield. */
+    const buried = births.filter((b) => b.deep > 0.10);
+    assert(buried.length === 0,
+      `${buried.length} of ${births.length} logs were CREATED inside the ground: `
+      + buried.slice(0, 4).map((b) => `tree ${b.i} ${b.deep.toFixed(2)} m`).join(', ')
+      + ' — Rapier pushes a shallow one out and cannot resolve a deep one at all');
+
+    /* …and nothing that was handed to the solver has left the world. A log at
+     * the kill plane keeps its Prop, is marked `moved`, and is then never
+     * released either, so the tree is gone from the wood for good. */
+    for (const [i, rec] of f.real) {
+      const y = rec.prop.body.position.y;
+      assert(Number.isFinite(y) && y > -50, `log ${i} is at y ${y} — it has left the world`);
+    }
+    const worst = births.reduce((m, b) => Math.max(m, b.deep), 0);
+        return `${felled} trees felled, ${births.length} logs handed to the solver, deepest born ${worst.toFixed(2)} m in`;
+  });
+
+  /* ══════════════════════════════════════════════════════════════════ */
   /*  The floor                                                         */
   /* ══════════════════════════════════════════════════════════════════ */
 
