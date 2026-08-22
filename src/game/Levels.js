@@ -4477,6 +4477,16 @@ LEVELS.geonosis = {
      * beside this one is HANDOFF §2.3 with a rendering change behind it: the
      * day somebody warms the tip here, the front's columns would go on
      * dissolving into last week's fog. One table, on the world, read by both. */
+    /* THE HULL BUILDER, published beside the air for the same reason: a level
+     * says what its ground can do, and `Front.marchFront` grows wreck clusters
+     * only when it is handed the function that builds them. `CommandDirector
+     * .marchTo` never passed one, so the mode laid the barrage, the burn, the
+     * smoke and the fallen and never a hull — §12.4's "wrecks belong on the
+     * fighting line", and the biggest line item on this ground at 112 of 225
+     * draw calls. It is handed over rather than imported because `Levels.js`
+     * imports `COMMAND_UNITS` from `Command.js` and the reverse edge is the
+     * initialisation cycle this session already tripped once. */
+    world.strewWrecks = strewWrecks;
     world.smokeAir = { wind: [0.94, 0.34], color: 0x33261f, tip: 0xd0a473, lean: 0.55, spread: 0.22 };
     addSmokeColumns(world, smokeSites(rng, 7, { rmin: 62, rmax: 244, phase: 1.1 }), world.smokeAir);
 

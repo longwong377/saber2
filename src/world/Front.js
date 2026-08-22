@@ -302,13 +302,30 @@ export function burnBand(terrain, front, opts = {}) {
  * ── AND IT IS EXPORTED, BECAUSE THE DRESSING IS NOT THE ONLY READER ─────
  *
  * `MODES.theline.lineAdvances` takes an area when a quorum of the living is up
- * with the line, and it measures that against the COMMANDER's own position —
- * "your men are near you" rather than "your men are on the ground this
- * engagement is about". The honest version is the front, and which front an
- * engagement is fought on is decided here and in one place: a caller that
- * wants it asks this and then asks `frontLine(front).side(x, z)`, rather than
- * restating the schedule (HANDOFF §2.4) or reading `world.battlefield.choke`
- * and forgetting that the line has marched off it.
+ * with the line, and it measures that against the COMMANDER's own position.
+ * This paragraph used to propose the front instead — "your men are on the
+ * ground this engagement is about" rather than "your men are near you" — and
+ * said a caller should ask this and then `frontLine(front).side(x, z)`.
+ *
+ * **MEASURED, AND IT WOULD DEADLOCK THE MODE.** `tools/_frontside.mjs` reads
+ * the signed distance from each engagement's front to the player and to every
+ * man, three seeds, geonosis:
+ *
+ *     engagement 1   player -182.5 m   men -192 … -183
+ *     engagement 2   player -147.1 m   men -156 … -147
+ *     engagement 3   player -110.4 m   men -119 … -111
+ *
+ * The line stands 165–200 m BEHIND the front and is supposed to: the front is
+ * the war, it closes `FRONT_STEP` a time across the whole crossing, and a
+ * quorum inside `MORALE.NEAR` of it is unreachable at every engagement a
+ * sitting actually contains. A rule keyed on it would refuse to take any
+ * ground, ever.
+ *
+ * So the front is not the objective the squad walks onto — it is §3's one-way
+ * VISIBLE variable, a fact about the place, and `lineIsUp` keeps the
+ * commander-relative quorum. This is left as a correction rather than deleted
+ * because the suggestion is a good-sounding one that the next reader would
+ * make again.
  */
 export function engagementFront(world, engagement, opts = {}) {
   const n = Math.max(1, engagement | 0);

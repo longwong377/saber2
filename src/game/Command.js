@@ -5914,6 +5914,13 @@ export class CommandDirector extends WaveDirector {
    * the army that is supposed to be taking this ground is standing on it,
    * which is what "the line takes the ridge" means.
    */
+  /* AND NOT AGAINST THE FRONT, which is the obvious-looking alternative and is
+   * refuted by measurement — see the note over `Front.engagementFront`. The
+   * line stands 165–200 m behind the engagement's front on every seed, because
+   * the front is the war closing `FRONT_STEP` at a time and not the ground this
+   * squad is standing on. A quorum inside `MORALE.NEAR` of it is unreachable at
+   * every engagement a sitting contains, so that rule would never take an area
+   * at all. */
   lineIsUp(c = this.commander) {
     if (!this.lineAdvances) return true;
     const p = c?.player;
@@ -6339,6 +6346,28 @@ export class CommandDirector extends WaveDirector {
       try {
         const out = marchFront(w, {
           engagement: e,
+          /**
+           * THE HULLS — the one mark of the five the mode never laid.
+           *
+           * `Front.marchFront` grows wreck clusters only when it is handed the
+           * function that builds them, and this caller never passed it: the
+           * barrage, the burn, the smoke and the fallen all landed and the
+           * hulls did not. §12.4 names them specifically — "wrecks belong on
+           * the fighting line" — and prices them as the biggest line item on
+           * Geonosis at 112 of 225 draw calls, so they are the mark that
+           * carries the picture rather than a garnish.
+           *
+           * READ OFF THE WORLD, and that is not laziness — it is the only
+           * direction that does not close a cycle. `Front.js` is a leaf and
+           * cannot import `Levels.js`; and THIS file cannot either, because
+           * `Levels.js` imports `COMMAND_UNITS` from here. A static import in
+           * either direction is the initialisation cycle that threw
+           * `Cannot access 'COMMAND_UNITS' before initialization` for every
+           * entry point reaching Command.js first, earlier in this same
+           * session. The level publishes what the ground can do, exactly as it
+           * already publishes `smokeAir` on the line above its own call.
+           */
+          strewWrecks: w.strewWrecks ?? null,
           /* The DEPLOYMENT seed, not the wave's: one ground, one sitting, one
            * seed — §5. `runSeed` is what the deploy card printed. */
           seed: w.runSeed ?? w.settings?.seed ?? 1,
