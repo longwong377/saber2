@@ -35,7 +35,7 @@
  */
 
 import * as THREE from 'three';
-import { NERVE, nerveOf, nerveBroken, shakeNerve, witnessDeath, turnedHome, nerveAim, nerveTick }
+import { NERVE, nerveOf, nerveBroken, shakeNerve, witnessDeath, turnedHome, nerveAim, nerveTick, boltAnswered }
   from '../../src/game/Nerve.js';
 import { MORALE } from '../../src/game/Morale.js';
 import { clocked } from './_shared.mjs';
@@ -315,6 +315,162 @@ export async function run({ check, assert }) {
   });
 
   /* ══════════════════════════════════════════════════════════════════ */
+  /*  ANSWERED FIRE — the term the verb is carried by                   */
+  /* ══════════════════════════════════════════════════════════════════ */
+
+  check('break: six of a body\'s own bolts, answered, breaks it — and the constant is derived off that count', () => {
+    /**
+     * WHY THE VERB HAS THIS TERM AT ALL, in one line of arithmetic: the two
+     * proximity terms are billed by how many bodies are near a point, and
+     * measured over two Geonosis Command battles the horde puts 0.4 bodies
+     * inside `BLADE_REACH` and 1.1 witnesses inside `SEE` of a body going down.
+     * `NERVE.ANSWERED`'s own note carries the whole table. This check holds the
+     * arithmetic that note is written around.
+     */
+    const need = Math.ceil((1 - MORALE.BREAK) / Math.abs(NERVE.ANSWERED));
+    assert(need === NERVE.ANSWERED_TO_BREAK,
+      `${need} answered bolts breaks a man against the ${NERVE.ANSWERED_TO_BREAK} the table says — `
+      + 'the constant has stopped being derived off the count, which is how a tuning pass moves one '
+      + 'and leaves the other');
+    assert(Math.abs(NERVE.ANSWERED) > Math.abs(NERVE.COMRADE_FELL),
+      `a bolt of his own coming back costs ${Math.abs(NERVE.ANSWERED).toFixed(3)} against the man `
+      + `beside him falling at ${Math.abs(NERVE.COMRADE_FELL)} — it is happening TO him, not near him`);
+    /* …AND LESS THAN A TURNED KILL COSTS, which is the whole of what a turned
+     * kill costs a witness — `COMRADE_FELL` and `TURNED` stack, see the TURN
+     * check below — because nothing died here. The comparison is against the
+     * SUM and not against `TURNED` alone: `TURNED` is what a witness pays and
+     * this is what the firer pays, and two different subjects do not order. */
+    const turnedKill = Math.abs(NERVE.COMRADE_FELL) + Math.abs(NERVE.TURNED);
+    assert(Math.abs(NERVE.ANSWERED) < turnedKill,
+      `an answered bolt costs ${Math.abs(NERVE.ANSWERED).toFixed(3)} against the ${turnedKill.toFixed(3)} `
+      + 'a bolt sent home that KILLS costs — a bolt that hurt nobody is worth as much as one that '
+      + 'deleted a rifle');
+    /* …and it is the one term in this table that does not ask where anybody is
+     * standing. Six calls, no positions, no radius. */
+    const firer = { team: 1, dead: false };
+    let crossed = null;
+    for (let i = 1; i <= NERVE.ANSWERED_TO_BREAK + 2; i++) {
+      assert(boltAnswered(firer), `boltAnswered refused the ledger on bolt ${i}`);
+      if (crossed === null && nerveBroken(firer)) crossed = i;
+    }
+    assert(crossed === NERVE.ANSWERED_TO_BREAK,
+      `it took ${crossed} answered bolts to cross ${MORALE.BREAK}, not ${NERVE.ANSWERED_TO_BREAK}`);
+    const named = { team: 1, dead: false, trooper: { morale: 0.9 } };
+    assert(!boltAnswered(named), 'boltAnswered wrote a body that has a roster record');
+    assert(named.trooper.morale === 0.9, 'a name on a roll was rewritten from outside CommandDirector.shake');
+    return `${NERVE.ANSWERED.toFixed(3)} a bolt · ${NERVE.ANSWERED_TO_BREAK} of them breaks a man · `
+      + `a turned kill costs a witness ${turnedKill.toFixed(3)}`;
+  });
+
+  check('break: the shipped deflection path bills the man whose shot it was', async () => {
+    const { bootWorld, idleInput } = await import('./_coop.mjs');
+    const { world } = await bootWorld({ level: 'geonosis', settings: { mode: 'waves', level: 'geonosis' } });
+    try {
+      const p = world.player;
+      p.position.set(0, (world.terrain?.height(0, 0) ?? 0) + 0.05, 0);
+      p.saber.ignite(); p.saber.ignition = 1;
+      const idle = idleInput();
+      world.update(1 / 60, idle); world.update(1 / 60, idle);
+      const [shooter] = rank(world, 1, 9, 'b1');
+      assert(shooter, 'nothing stood up to fire');
+      shooter.hp = 1e6;
+
+      /**
+       * THROUGH `World._onBoltDeflect`, WHICH IS THE ONE DOOR EVERY TURNED BOLT
+       * IN THE GAME ARRIVES AT — blade sweep, guard zone, auto-guard cone and
+       * screen all call it. Nothing here re-implements the rule: the bolt comes
+       * out of the shipped pool with the shipped owner stamp, the blade entry
+       * is the world's own (`_bladeEntries`), and the assertion is that the
+       * path reaches the ledger with the right body on the end of it.
+       */
+      const entry = world._bladeEntries().find((b) => b.owner === p);
+      assert(entry, 'the player has no blade entry, so there is nothing to deflect with');
+      const before = nerveOf(shooter);
+      const bolt = world.bolts.fire(
+        new THREE.Vector3(0, p.position.y + 1.2, 6), new THREE.Vector3(0, 0, -1),
+        { speed: 90, team: 1, damage: 9, owner: shooter });
+      assert(bolt, 'no bolt came out of the pool');
+      const at = new THREE.Vector3(0, p.position.y + 1.2, 1.1);
+      world._onBoltDeflect(bolt, entry, { bladeT: 0.5, point: at.clone(), auto: true, screen: 0 }, at.clone());
+      const cost = before - nerveOf(shooter);
+      assert(Math.abs(cost - Math.abs(NERVE.ANSWERED)) < 1e-6,
+        `the body that fired it lost ${cost.toFixed(4)} against NERVE.ANSWERED's `
+        + `${Math.abs(NERVE.ANSWERED).toFixed(4)} — the shipped door is not reaching the ledger, so `
+        + '§7\'s first verb is a constant nothing writes');
+      /* …AND THE PLAYER IS NOT A BODY WITH A LEDGER. His own bolt, turned by
+       * something else, must not give HIM a nerve — `Player` has no `trooper`
+       * to route on, so the only thing standing between it and a stray field
+       * on the player is the side test at the call site. */
+      const mine = world.bolts.fire(
+        new THREE.Vector3(0, p.position.y + 1.2, 1), new THREE.Vector3(0, 0, 1),
+        { speed: 90, team: 0, damage: 9, owner: p });
+      world._onBoltDeflect(mine, entry, { bladeT: 0.5, point: at.clone(), auto: true, screen: 0 }, at.clone());
+      assert(p.nerve === undefined, `the player picked up a nerve of ${p.nerve} off his own bolt`);
+      return `one bolt answered → the body that fired it ${before.toFixed(3)} → `
+        + `${nerveOf(shooter).toFixed(3)} (-${cost.toFixed(3)}) · the player has no ledger`;
+    } finally { world.unload?.(); }
+  });
+
+  check('break: a rank more than half of which is running takes the rest with it, and one runner does not', () => {
+    /**
+     * THE CARRIER WHOSE RADIUS IS THE FORMATION. Every other term in this table
+     * is billed at a point the PLAYER chose, and the horde does not stand near
+     * the player: measured, 0.4 bodies inside `BLADE_REACH` and 1.1 witnesses
+     * per death. This is the one term whose reach is the rank's own.
+     *
+     * NO POSITIONS ARE INVENTED BEYOND A METRE APART — the subject is the share,
+     * and `MORALE.ROUT` is the threshold the roster already uses for exactly
+     * this sentence on the other side of the field.
+     */
+    const at = (x, nerve) => ({ position: new THREE.Vector3(x, 0, 0), team: 1, dead: false, nerve });
+    const blades = [];
+
+    /* ONE RUNNER AMONG THREE STEADY MEN IS NOT A ROUT — a quarter of what the
+     * steady ones can see, against a half. They rally exactly as if he were
+     * not there. */
+    const calm = [at(0, MORALE.BREAK - 0.05), at(1, 0.5), at(2, 0.5), at(3, 0.5)];
+    nerveTick(calm, blades, 1);
+    for (let i = 1; i < calm.length; i++) {
+      assert(Math.abs(calm[i].nerve - (0.5 + MORALE.RALLY_PER_S)) < 1e-9,
+        `a steady man beside ONE runner lost ${(0.5 - calm[i].nerve).toFixed(4)} — a single broken `
+        + 'body is taking a rank with it, which is an army evaporating rather than a formation '
+        + 'coming apart');
+    }
+
+    /* …AND THREE OF FOUR IS. The rally does not merely stop, it turns over: the
+     * rate is the rally's own with the sign changed, so the sentence is the
+     * exact inverse of the one out-of-contact recovery makes. */
+    const rout = [at(0, 0.1), at(1, 0.1), at(2, 0.1), at(3, 0.5)];
+    nerveTick(rout, blades, 1);
+    assert(Math.abs(rout[3].nerve - (0.5 - MORALE.RALLY_PER_S)) < 1e-9,
+      `the last steady man in a rank three quarters of which is running read ${rout[3].nerve.toFixed(4)} `
+      + `against the ${(0.5 - MORALE.RALLY_PER_S).toFixed(4)} the rally's own rate turned over gives`);
+
+    /* …AND A MAN WHO CANNOT SEE THEM IS NOT IN THAT RANK. `SEE` is the radius,
+     * the same one a death travels through. */
+    const away = [at(0, 0.1), at(1, 0.1), at(2, 0.1), at(NERVE.SEE + 5, 0.5)];
+    nerveTick(away, blades, 1);
+    assert(Math.abs(away[3].nerve - (0.5 + MORALE.RALLY_PER_S)) < 1e-9,
+      `a body ${NERVE.SEE + 5} m from a rout was carried by it — the carrier has no radius, which `
+      + 'makes it the flat aura this whole table is written to avoid');
+
+    /* …AND THE OTHER ARMY IS NOT HIS RANK. */
+    const other = [at(0, 0.1), at(1, 0.1), at(2, 0.1), { ...at(3, 0.5), team: 0 }];
+    nerveTick(other, blades, 1);
+    assert(Math.abs(other[3].nerve - (0.5 + MORALE.RALLY_PER_S)) < 1e-9,
+      'a body was routed by the men opposite breaking, which is something good happening to it');
+
+    /* …AND NOTHING IS PAID FOR THE CENSUS WHILE NOBODY IS RUNNING. The O(n²)
+     * pass is skipped outright, which is what keeps this off the frame of every
+     * wave in the shipped game — the same inertness the whole table has. */
+    const steady = [at(0, 1), at(1, 1), at(2, 1)];
+    nerveTick(steady, blades, 1);
+    for (const e of steady) assert(e.nerve === 1, `a full-nerve rank with nobody running drifted to ${e.nerve}`);
+    return `> ${MORALE.ROUT} of what a body can see, running → its rally turns over to `
+      + `-${MORALE.RALLY_PER_S}/s · one runner in four does nothing · ${NERVE.SEE} m is the reach`;
+  });
+
+  /* ══════════════════════════════════════════════════════════════════ */
   /*  TURN                                                              */
   /* ══════════════════════════════════════════════════════════════════ */
 
@@ -465,41 +621,55 @@ export async function run({ check, assert }) {
   /*  …AND WHAT IT COMES TO IN A BATTLE, WHICH IS NOT WHAT IT LOOKS     */
   /* ══════════════════════════════════════════════════════════════════ */
 
-  check('break: the ledger is on the wire in a real battle — and the horde almost never breaks in one', async () => {
+  check('break: what share of a real battle the horde spends broken, and what the player had to do for it', async () => {
     /**
-     * EVERY CHECK ABOVE IS A HAND-BUILT FIELD, and every one of them passes:
-     * a rank frozen inside `BLADE_REACH` comes apart in the eleven seconds the
-     * table says it should, a death takes the nerve of the men who could see
-     * it, a bolt sent home costs four times as much. What none of them can say
-     * is what SHARE of a real battle a real horde spends broken, and that is
-     * the number §7's first verb is actually a claim about.
+     * EVERY CHECK ABOVE IS A HAND-BUILT FIELD, and every one of them passes.
+     * What none of them can say is what SHARE of a real battle a real horde
+     * spends broken, and that is the number §7's first verb is a claim about.
      *
-     * Measured — `tools/_screen.mjs`, Geonosis, Command, the flagship probe's
-     * scripted Jedi holding station in his own line, seeds 3 and 5, two
-     * engagements each, integrated over every hostile body-second on the field:
+     * ── WHAT IT USED TO READ, AND WHY ───────────────────────────────────────
      *
-     *     broken   0.00 %      refusing   0.00 %      steadiest body 0.325
+     *     2043 hostile body-seconds · broken 0.00% · refusing 0.00%
+     *     steadiest-shaken body on the field 0.863, against a 0.24 line
      *
-     * Not small. NONE. This check runs the condition that ought to be even
-     * kinder — the Jedi walked onto his own line's centroid every frame with
-     * the blade lit and never leaving it — and reads the same 0.00 % off a
-     * steadiest-shaken body around 0.86, because a Jedi who stands still is a
-     * Jedi nothing has to walk to within 6.5 m of. The arithmetic is the table's own and it is not subtle:
-     * `BLADE` is -0.115/s against a +0.05 rally, so a full-nerve body needs
-     * ELEVEN AND A HALF SECONDS standing inside 6.5 m of a lit blade to cross
-     * `BREAK` — and a body that stands inside 6.5 m of a Jedi for eleven
-     * seconds is a body the Jedi has killed. `COMRADE_FELL` is -0.055 against
-     * a rally that erases it in 1.1 s, so it takes fourteen deaths inside 11 m
-     * inside about a second to break the man beside them, and a wave does not
-     * die like that.
+     * Not small. NONE — with the Jedi walked onto his own line's centroid every
+     * frame, blade lit, never leaving. The cause was not the tuning of the two
+     * terms that existed; it was their SHAPE. Both are billed by how many
+     * bodies are near a point, the blade or the corpse, and measured over two
+     * Geonosis Command battles (`tools/_nervewhy.mjs`) the horde puts
      *
-     * SO THIS CHECK ASSERTS THE WIRING AND REPORTS THE SHARE. That the ledger
-     * MOVES at all in a live world is a real claim and it was false until the
-     * tick, the death and the read were put in the update loop — but a bound
-     * on the share would be a bound on the wave composer, the spawn cadence
-     * and the script's tactics all at once, and it would be a bound asserting
-     * that a thing which does not pay goes on not paying. The number goes in
-     * the message, where the next person will read it.
+     *     0.4 bodies inside `BLADE_REACH` of the Jedi at any instant
+     *     0.44 s of a 32-second life inside it, and 25% of bodies ever enter
+     *     1.1 witnesses inside `SEE` of a body going down
+     *     ONE of its own side inside `SEE` of any given body
+     *
+     * — so the death channel's entire budget over a body's whole life is 0.037
+     * against the 0.76 a break costs, and the blade channel's is 0.05. That
+     * last line is the one that matters most and it is the one nobody had
+     * taken: THE HORDE IS NOT A FORMATION. A body can see one of its own men.
+     * §7's sentence — "walk into the front of a formation and it comes apart" —
+     * describes a thing that is not on the field, and no radius reaches it: at
+     * 30 m, which is the whole engagement, the mean body still only accumulates
+     * 4.5 seconds of dwell, and teleporting the Jedi onto the horde's centroid
+     * every frame reads 2.82% and 0.12%.
+     *
+     * ── SO THE VERB IS CARRIED BY THE BOLTS INSTEAD ─────────────────────────
+     *
+     * `NERVE.ANSWERED` — see its note. It is not a radius, so it does not care
+     * where the player stands; it works at 7-42 m, which is where every ranged
+     * archetype's `preferred` band puts the horde; and it is billed to the
+     * player on `Combat.GUARD_COST`'s ladder and by having to be the thing the
+     * horde is shooting at.
+     *
+     * ── AND THIS CHECK ASSERTS THE WIRING AND REPORTS THE SHARE ─────────────
+     *
+     * A bound on the share would be a bound on the wave composer, the spawn
+     * cadence and the script's tactics at once — and the script is a MEDIOCRE
+     * PLAYER, which is the single biggest term in the number below: it holds
+     * one guard and never chooses a zone, and it answers about a quarter of the
+     * fire aimed at it. The message carries `aimed` and `answered` beside the
+     * share for exactly that reason, because the ratio between them is the
+     * player's, not the ledger's, and it is what the verb pays out of.
      */
     const { bootWorld, idleInput } = await import('./_coop.mjs');
     const { world } = await bootWorld({
@@ -515,7 +685,30 @@ export async function run({ check, assert }) {
        * script — this is measuring the ledger, so the player is walked onto
        * the centroid of his own line each frame and left standing in it, which
        * is the single most favourable condition `NERVE.BLADE` can be given. */
+      /* WHAT THE PLAYER HAD TO DO FOR IT, at the game's own two doors: the
+       * pool stamps the owner of every bolt and `Enemy.target` is who its brain
+       * picked, so `aimed` is fire the horde chose to send at the Jedi rather
+       * than a geometric guess; `_onBoltDeflect` is the one door a turned bolt
+       * arrives at. The ratio is the deflection rate the number below is paid
+       * out of. */
+      let aimed = 0, answered = 0;
+      const fire = world.bolts.fire.bind(world.bolts);
+      world.bolts.fire = (from, dir, o = {}) => {
+        if (o.owner && o.owner.team !== p.team && o.owner.target === p) aimed++;
+        return fire(from, dir, o);
+      };
+      const od = world._onBoltDeflect.bind(world);
+      world._onBoltDeflect = (b, entry, hit, at) => {
+        if (entry && entry.owner === p && b.owner && b.owner.team !== p.team) answered++;
+        return od(b, entry, hit, at);
+      };
+      /* …AND HOW MANY OF ITS OWN SIDE A BODY CAN SEE, which is the formation's
+       * own density and the reason the two proximity terms cannot reach.
+       * Sampled rather than integrated: it is a picture of the field, not a
+       * quantity anything is billed against. */
+      let seenSum = 0, seenN = 0;
       let secs = 0, hostileSeconds = 0, brokenSeconds = 0, refusingSeconds = 0, worst = 1, ticked = 0;
+      const brokeEver = new Set(), sawBodies = new Set();
       for (let i = 0; i < 2700; i++) {
         let ax = 0, az = 0, n = 0;
         for (const t of (world.command?.commander?.roster.living || [])) {
@@ -533,10 +726,20 @@ export async function run({ check, assert }) {
         for (const e of world.enemies) {
           if (e.dead || e.trooper || e.team === p.team) continue;
           hostileSeconds += STEP;
+          sawBodies.add(e);
           if (typeof e.nerve === 'number') ticked++;
-          if (nerveOf(e) < MORALE.BREAK) brokenSeconds += STEP;
+          if (nerveOf(e) < MORALE.BREAK) { brokenSeconds += STEP; brokeEver.add(e); }
           if (nerveOf(e) < MORALE.REFUSE) refusingSeconds += STEP;
           worst = Math.min(worst, nerveOf(e));
+          if (i % 60 === 0) {
+            let seen = 0;
+            for (const o of world.enemies) {
+              if (o === e || o.dead || o.team !== e.team) continue;
+              const dx = o.position.x - e.position.x, dz = o.position.z - e.position.z;
+              if (dx * dx + dz * dz <= NERVE.SEE * NERVE.SEE) seen++;
+            }
+            seenSum += seen; seenN++;
+          }
         }
       }
       assert(hostileSeconds > 100,
@@ -550,9 +753,13 @@ export async function run({ check, assert }) {
         + `standing in the line still reads ${worst.toFixed(3)} — the ledger is wired but nothing in `
         + 'the battle moves it, and the verb is decorative');
       const bp = 100 * brokenSeconds / hostileSeconds, rp = 100 * refusingSeconds / hostileSeconds;
+      const seen = seenSum / Math.max(1, seenN);
       return `${hostileSeconds.toFixed(0)} hostile body-seconds · broken ${bp.toFixed(2)}% · `
-        + `refusing ${rp.toFixed(2)}% · steadiest-shaken body ${worst.toFixed(3)} · `
-        + `${MORALE.BREAK} is the line`;
+        + `refusing ${rp.toFixed(2)}% · ${brokeEver.size} of ${sawBodies.size} bodies broke at least `
+        + `once · steadiest-shaken ${worst.toFixed(3)} against a ${MORALE.BREAK} line · the player `
+        + `answered ${answered} of ${aimed} bolts aimed at him `
+        + `(${(100 * answered / Math.max(1, aimed)).toFixed(0)}%) · a body can see ${seen.toFixed(1)} `
+        + 'of its own side';
     } finally { world.unload?.(); }
   });
 }
