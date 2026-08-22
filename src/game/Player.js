@@ -5584,10 +5584,38 @@ export class Player {
        * next postcode, and solveIK aims the whole limb at it. See limbScale. */
       const A = this.limbs.arm;
       const side = clamp(_v6.subVectors(this.control.handPos, chest).dot(right) * 1.3, -0.62 * A, 0.62 * A);
-      const lift = clamp(_v6.subVectors(this.control.handPos, chest).dot(UP) * 0.5, -0.1 * A, 0.42 * A);
+      /**
+       * ── THE LIFT COULD RISE FOUR TIMES FURTHER THAN IT COULD FALL ────────
+       *
+       * The clamp was `[-0.10A, +0.42A]`. With a 0.285 m upper arm that is
+       * 12 cm of travel up against 3 cm down, so the elbow basin spent almost
+       * all of its range climbing: at full lift `poleR` sits only 9 cm under
+       * the chest, and a pole level with the shoulder is a pole `solveIK` aims
+       * the whole upper arm at. That is the chicken wing — "the right
+       * arm/shoulder when holding the lightsaber with 2 hands looks abnormal,
+       * it's like you're constantly holding it up with your elbow raised".
+       *
+       * It is now `[-0.30A, +0.18A]` — still able to follow a high guard, but
+       * the basin can drop for a low one instead of merely failing to rise, and
+       * the top of the range no longer reaches shoulder height. A raised elbow
+       * is a real pose a high parry wants; it was the RESTING pose that was
+       * wrong.
+       */
+      const lift = clamp(_v6.subVectors(this.control.handPos, chest).dot(UP) * 0.5, -0.30 * A, 0.18 * A);
 
-      const poleR = _v6.copy(chest).addScaledVector(right, 0.75 * A + side)
-        .addScaledVector(UP, -0.75 * A + lift).addScaledVector(fwd, -0.2 * A);
+      /* AND A SECOND HAND ON THE HILT PULLS THE RIGHT ELBOW DOWN AND IN.
+       *
+       * Both poles were built from one basin, and `side`/`lift` are computed
+       * from the PRIMARY hand — so in a two-handed grip the off arm was steered
+       * by the right hand's position and the right arm got no acknowledgement
+       * that it was no longer holding the weapon alone. Bringing a second hand
+       * onto a hilt in front of your chest physically drops and tucks the
+       * driving elbow; a quarter of an arm down and a fifth in is that, and it
+       * is applied only while the grip is actually two-handed so the one-handed
+       * pose is bit-for-bit what it was. */
+      const tuck = twoHanded ? A : 0;
+      const poleR = _v6.copy(chest).addScaledVector(right, 0.75 * A + side - 0.20 * tuck)
+        .addScaledVector(UP, -0.75 * A + lift - 0.25 * tuck).addScaledVector(fwd, -0.2 * A);
       this._wristPole('armR', 'foreR', 'handR', _q2, wristR, poleR, dt);
       rig.solveIK('armR', 'foreR', wristR, poleR);
       this._rollForearm('foreR', 'handR', _q2, dt);
