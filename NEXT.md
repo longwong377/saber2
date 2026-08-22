@@ -1124,20 +1124,45 @@ for** — `GUN.every` 7.0 → 14.0 on the emplacement and the conscript's round
 engagement's clock by about 5% (mean wave 69 s → 70.5 s), so it is not an answer
 to the length problem in either direction.
 
-### And the opening wave is 2 bodies on one ground and 49 on another
+### The opening wave is a wave now, on every ground
 
-`theline.11` boots every ground in the mode and reports what area 1 composes at
-one seed:
+`Waves.WAVE_FLOOR` closes it. Composed through the shipped composer, opening
+wave of the mode on all seven grounds at one seed, every one of them handed the
+same budget of **8.0**:
 
-    colosseum 2 · scoria 3 · mustafar/wood/drifts/alpine 8 · geonosis 49
+    before   scoria 2 · colosseum 2 · mustafar/wood/drifts/alpine 8 · geonosis 49
+    after    every ground 8 · geonosis 49
 
-All seven are handed the same budget of **8.0**. Two things make the spread:
-the levy is geonosis-only, which is 40 of that 49; and a pool with expensive
-bodies in its unlocked set spends the whole budget on two or three of them —
-the Colosseum opens on a stalker. A mode about a LINE opening against two
-bodies is a defect, and it is a composer question rather than a mode question,
-which is why the check asserts legality and reports the spread rather than
-hiding the number inside a red bar.
+It was never five pools being generous or thin — it was ONE rule. The fill drew
+uniformly from everything it could afford, so a pool holding a seven-threat body
+in its opening set spent seven eighths of the wave on one of them: the Colosseum
+opened on a stalker and a droid, and scoria on a sentinel and a droid. The floor
+is stated as the COUNT, because the count is what was wrong, and applied as the
+same number rearranged — one body of the FILL may not cost more than
+`budget / WAVE_FLOOR`, so a wave can always buy three of them. Off the wave's own
+budget rather than the running remainder, or a share of what is left would shrink
+with every body bought.
+
+**Three and not four**, and the difference is where it stops binding: every
+ordinary archetype is threat 16 or under, so a third is inert past a budget of 48
+and a quarter past 64 — and the crossing's deepest wave is 56. At a quarter the
+Core Ship's last wave could not field the heaviest body on the roster, which is a
+difficulty change wearing a body-count fix's coat. The set-piece and the head are
+exempt: both ARE single expensive bodies on purpose and both are reserved before
+the fill. Every fallback `_composeUnder` had is kept, because "a filter never
+empties the field" outranks this.
+
+`theline.18` binds it on every ground in `LEVEL_ORDER` and imports `WAVE_FLOOR`
+rather than keeping a copy of the number. `tools/_lineopen.mjs` is the probe and
+composes only, so it is seconds. `escalation.mjs` is 30/30 with it in.
+
+**And it took a fifth of the crossing's bulk with it**, which nobody predicted
+and which is why it is also half the answer to the section below: the same threat
+spent on lighter bodies buys fewer HIT POINTS — a walker is 52 hp per threat
+point against a B1's 28 — and hit points are seconds. Same seeds, nothing else
+changed, composed bulk of a whole sitting:
+
+    push   14,016 → 10,984 hp        grind   24,604 → 19,324 hp
 
 ### FLAGSHIP §16 is closed
 
@@ -1149,47 +1174,107 @@ optimisation found a live bug of its own: every droideka in the game presented
 **three leg capsules with a non-finite endpoint**, so its legs could not be shot
 off or cut off and the topple at two legs lost was unreachable.
 
-### And the sitting is more than twice as long as the card promises
+### The sitting fits its card now, and the card was never what was wrong
 
-`tools/_linelength.mjs` holds both the Jedi and every named trooper on their
-feet and drives a whole sitting. That is not a prediction of how long a run
-takes — it is a **lower bound**, because an army that cannot be killed clears
-waves as fast as this build can clear them.
+**Where the ten-minute wave actually went, because two of the three plausible
+answers are wrong.** A wave that takes ten minutes is either a wave with a great
+many bodies in it, a wave only allowed to put a few of them on the field at a
+time, or a wave whose bodies take a long time to die. `tools/_lineclock.mjs`
+samples all three while the wave runs. On the crossing's LAST wave — area 5,
+wave 21 of a Grind, army immortal:
 
-    seed 1 · push · 3 stages · the deploy card says 18-25 min · FLOOR 45.7 min · ended WON
+    t+0    queue 63  staging  0  inbound  0  standing  0
+    t+9    queue  0  staging 23  inbound 23  standing 20
+    t+15   queue  0  staging  0  inbound  1  standing 42
+    t+18 … t+120   queue 0, staging 0, inbound 0, standing 41 → 0
+    WAVE 21: 124 s total · everything delivered by t+15s · 1,826 hp · 14.7 hp/s
 
-So a Push cannot be played inside the band its own card prints, even by an army
-that cannot die. §5's promise — "20–40 min", Raid 10–15 · Push 18–25 · Grind
-30–45 — is printed on the deploy card as a promise to the player, and the mode
-cannot keep it.
+**The whole wave is on the ground in the first fifteen seconds.** The queue
+drains in nine, the arrival staging in twelve, and `sat%` — the share of frames
+in which `alive + inbound >= maxAlive` was what held the queue back — is **0 on
+every wave of every sitting measured**, at either end of a crossing. It is not
+the spawn ring, not `MAX_CONCURRENT`, not the 58–96 m march and not the
+conveyor. Everything after t+15 is the line killing what arrived.
 
-**And it is not the wave COUNT either — it is the waves.** `tools/_linewave.mjs`
-times every wave of the same sitting from the frame it opens to the frame it is
-paid, army immortal throughout, and the distribution is the finding:
+So **a wave of this mode is its HIT POINTS over the line's throughput**, and
+throughput runs 4.7 → 22.2 hp/s across a sitting as the muster takes the line
+from nine bodies to thirteen. Which makes the bulk the whole clock, and the bulk
+was the escalation: as it stood, an opening wave was 448 hp and the last wave of
+a Push 6,166 — **fourteen times** — against a body count that only went 49 to 63,
+because `bodyCap` saturates at `BODY_MAX` and every threat point past that goes
+through `_upgrade` into a heavier chassis. A walker is 52 hp per threat point
+against a B1's 28.
 
-    seed 1 · push · 11 waves · 42.5 min · mean 232 s a wave
-      area 1  wave 1   86s     area 2  wave 3   94s     area 3  wave 7   191s
-              wave 2   81s             wave 4  135s             wave 8   606s
-                                       wave 5  129s             wave 9   443s
-                                       wave 6  133s             wave 10  317s
-                                                                wave 11  337s
+**Two levers, from two lanes, on the same defect.**
+`CommandDirector.rampWave` (the attrition lane, arrived at from the wipe at
+engagement 3) put the `w^1.62` ramp inside the area instead of across the run.
+`Waves.WAVE_FLOOR` (the length lane, above) spends the same threat on more and
+lighter bodies. Composed bulk of a whole sitting, same seeds, hit points:
 
-Every wave ends with the field cleared, so nothing is stalling. **The last area
-is 1,894 s — 31.6 of the 42.5 minutes — and wave 8 alone is ten minutes.** An
-opening wave is 81 s and a late one is seven times that.
+    plan          as it stood    + rampWave    + WAVE_FLOOR
+    raid  s11              —          9,162          8,430
+    push  s1          30,762         14,016         10,984
+    grind s2          88,266         24,604         19,324
 
-`planStages` is not the culprit and should not be changed: a Push being the
-landing, a middle and the end is exactly §5, and its own note argues why the
-last stage must always be the last. What a plan does NOT scale is how big the
-waves in those stages are, so a Push inherits the crossing's hardest area at
-full size without the ramp that earns it.
+and on three seeds a plan, the current build is tight: raid 8,092–8,454 ·
+push 10,472–10,984 · grind 17,022–19,324.
 
-**Correction to an earlier reading in this file.** It said length and attrition
-should not be tuned in the same pass because they move each other. That was
-wrong, and the wave table is why: both are driven by the same quantity — how
-many bodies a late wave puts on the field — so they are one lever and not two,
-and tuning either one blind will move the other. Whoever takes the attrition
-target should have this table in front of them.
+**What the clock says now** — `tools/_lineclock.mjs`, one seed a plan, fresh
+process each, both sides of the player's army held on their feet so every figure
+is a FLOOR and a played sitting cannot be shorter:
+
+    raid  seed 11    8 waves   10.4 min of closed waves   card 10-15   ended WON
+    push  seed  1   12 waves   15.3 min of closed waves   card 18-25   ended WON
+
+Both totals are SHORT BY ONE WAVE and the omission is the bench's, now fixed:
+the drive leaves on `over`, which is raised by the wave that wins the crossing,
+so that wave never saw a wave-number change and its seconds were dropped. The
+raid's foundry waves ran 70 / 89 / 71 / 99 s, so the honest floors are about
+**12½ and 17½ minutes** against cards of 10-15 and 18-25. A Grind has not been
+clocked end to end — 21 waves is half an hour of game time and this box was
+carrying five other lanes — but its composed bulk is **1.67× a Push's**, which
+puts its floor near the bottom of its own 30-45.
+
+**The three levers that were NOT taken, and why each was worse.**
+
+  · **Waves per area.** They are already right. 8/12/21 waves against bands of
+    12.5/21.5/37.5 minutes is 94/108/107 seconds a wave, and a measured wave of
+    this mode is 51–120 s. Cutting the last area from five waves to four fixes a
+    Raid and takes a third off a Push, which puts the Push under its own floor —
+    the areas are shared and the plans are not.
+  · **`AREAS[*].budget`.** It is the mode's only statement of what an area IS,
+    `rampWave` has just promoted it to being the whole between-area escalation,
+    and cutting it reaches area 1 — which measures ON TARGET already (engagement
+    1 is 3.6–4.9 min against a per-engagement share of 5–7.5) and is the fixture
+    the attrition lane tunes against.
+  · **`planStages`.** Forbidden, and correct: a Push being the landing, a middle
+    and the end is exactly §5.
+
+**What it cost in men, measured, because the other lane's number is the one that
+must not move.** `tools/_linehold.mjs theline 1,2,3,5,7 none geonosis 1`, five
+seeds, one process, all three streams pinned:
+
+    none  survivors mean 2.4/10  [0 0 1 5 6]  3/5 reached a muster  mean wave 66 s
+
+against that lane's settled **2.80 of 10 over twenty seeds**. Five seeds carry
+se ≈ 1.3, so 2.4 against 2.80 is *unmeasured* — nothing moved. The reason is
+visible in the composition rather than the survivors: engagement 1 composed over
+four seeds, before and after `WAVE_FLOOR`, carries **identical threat — 388.0
+both ways** — spread over 580 bodies and 6,572 hp before against 603 bodies and
+6,340 hp after. Same fight, 4% more bodies, 3.5% fewer hit points. `rampWave`
+does not touch engagement 1 at all: area 1's waves are the crossing's waves 1-3
+under either rule.
+
+**The card stands.** `SESSION_PLANS[*].minutes` is unchanged and `deployCard`
+prints it unchanged, because the mode now delivers it. `theline.19` is what
+holds that: it drives a whole Raid to its verdict and the band's own top is the
+loop's deadline, so the check costs exactly what the card offers and a mode that
+drifts long fails fast instead of holding the gate open.
+
+**What is still open.** The floors above are floors — a line that loses men
+kills slower, so a played sitting is longer than these and nobody has measured
+by how much. And `theline.19` binds the Raid only, because it is the only plan
+cheap enough to sit in a gate; a Grind is 21 waves and half an hour of game time.
 
 ### Two live defects the attrition work found and did not fix
 
