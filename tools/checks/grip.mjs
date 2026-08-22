@@ -24,6 +24,7 @@ import { readFile, readdir } from 'node:fs/promises';
 import { Player } from '../../src/game/Player.js';
 import { LAYER } from '../../src/physics/RapierWorld.js';
 import { lines } from './_source.mjs';
+import { clocked } from './_shared.mjs';
 
 /** Every .js under src/, as [relative path, text]. */
 async function sources() {
@@ -51,6 +52,9 @@ function body(opts = {}) {
 }
 
 export async function run({ check, assert }) {
+  /* This file builds enemies, so it draws from the shared rng stream; take the
+   * pair for the whole file rather than seeding each body by hand. */
+  check = await clocked(check);
   check('grip: a prop an author marked ungrippable cannot be gripped', () => {
     const me = { body: {} };
     const g = (b) => Player.prototype._grippableBody.call(me, b);
