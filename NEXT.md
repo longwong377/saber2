@@ -848,18 +848,52 @@ opened by anything. The first reading, which was published and is now withdrawn:
 > `13 * Math.sqrt(P)`. HANDOFF §2.4, in my own instrument.
 >
 > Both are fixed (`runSeed: seed`, every radius off the game's own expression),
-> and the re-taken numbers are below. The same fault is in `_openwin.mjs`, so
+> and the re-taken numbers are below — **and seeding collapsed the spread from
+> 11–24% to ±1.2**, which is the whole of the case that the fault was the
+> instrument. The same fault is in `_openwin.mjs`, so
 > the before/after table above is **five unseeded runs an arm, not five paired
 > seeds** — an unpaired difference of means, 1.392 ±0.144 against 2.887 ±0.246,
 > which is 5.2 σ and survives the correction. The word "paired" does not.
 
-**The shape of the answer is unchanged and its SIZE is not.** The ceiling is a
-function of the Force Power slider by construction — `forceReach` is
-`18 * sqrt(forcePower)`, the pull is `17 * sqrt(...)`, the push `13 * sqrt(...)`
-— so it is something the player buys rather than a property of the fight, and
-only `UNLEASH.radius` (11 m, handed to `_shockwave` with no `P` term) stands
-still. At the bottom of the slider the Jedi's own reach is 9 m, SHORTER than
-unleash's, so down there the ceiling is not even his. The bar was
+**RE-TAKEN, SEEDED, ONE TREE, ONE PROBE: THE CEILING IS A SLIDER SETTING.**
+Three arms differing only in Force Power, fresh process each, the same seed
+list 3/5/7, n=3, ± is the standard error of the mean. The radius is printed
+because two of these four bands ride the slider and two do not:
+
+| Force Power | `forcePush` | `forceUnleash` | `forcePull` | the grip | **ceiling** |
+|---|---|---|---|---|---|
+| **0.25** — bottom | 6.5 m · 1.91% | 11 m · **3.96%** ±0.56 | 8.5 m · 2.67% | 9 m · 2.92% | **3.96%** |
+| **1** — shipped default | 13 m · 5.88% | 11 m · 4.68% | 17 m · 8.94% | 18 m · **9.35%** ±1.21 | **9.35%** |
+| **4** — top | 26 m · 8.52% | 11 m · 2.32% | 34 m · 12.10% | 36 m · **13.04%** ±1.31 | **13.04%** |
+
+Three things in that table are worth more than the numbers.
+
+**It is bought, not given.** `forceReach` is `18 * sqrt(forcePower)`, the pull
+`17 * sqrt(...)`, the push `13 * sqrt(...)`. Only `UNLEASH.radius` stands still
+— `_shockwave` is handed it with no `P` term — which is why unleash's row FALLS
+as the slider rises: the band does not grow and the fight around it changes.
+
+**At the bottom of the slider the ceiling is not even the Jedi's.** His reach is
+9 m there, shorter than unleash's fixed 11 m, so the widest thing he owns is a
+power he presses rather than a hand he extends.
+
+**And reach has heavy diminishing returns.** Doubling the radius from 18 m to
+36 m — the whole top half of the slider — buys ×1.4, not the ×4 the area would
+suggest. The horde is not spread evenly; it comes at you, and the metres past
+eighteen are mostly empty.
+
+So the defensible figure at the **shipped default** is **9.35% ±1.21 (n=3)**,
+and the honest range across the whole slider is **4% to 13%**. The 7.41%
+previously published was one unseeded draw that happened to land near the
+truth; the 17.13% was one unseeded draw on the wrong tree at the wrong n.
+
+**§7's conclusion survives this and is weaker than it was stated.** Even at the
+top of the slider, with a flawless verb costing nothing, **seven-eighths of the
+battle is out of reach** — so a posture-carried OPEN still cannot carry "the ten
+riflemen who needed 17 seconds need six" across a battle, and the argument for
+carrying it on the formation instead stands. But it should be quoted as "a
+tenth of the battle at the shipped slider, an eighth at the top", not as "seven
+per cent, full stop". The bar was
 never the binding constraint: the baseline arm already spends its whole income
 (814 Force in a 108-second engagement against a 7.5/s regen), which is why the
 lever that moved was the exchange rate and not the spend. What bounds OPEN is
@@ -1528,9 +1562,11 @@ ridge" — measured, and false. It has now survived every attempt to make it tru
 - **OPEN**, the Force as a multiplier on other people's guns: the line already
   aims 9× its fair share at a body you are holding, and the verb reaches
   1.5% of enemy-seconds — **2.9% since a shove was made to put bodies on the
-  floor**, against an arithmetic ceiling of 7.4% set by how much of the horde
-  is inside the Force's reach at all. See "The window IS widened" above: it is
-  twice the verb it was and still single digits;
+  floor**, against an arithmetic ceiling of **9.4% at the shipped Force Power
+  slider, 4% at its bottom and 13% at its top**, set by how much of the horde is
+  inside the Force's reach at all. See "The window IS widened" above: it is
+  twice the verb it was, it is about a third of its own ceiling, and that
+  ceiling is a slider setting rather than a property of the fight;
 - **the SCREEN**, taking bolts aimed at the man beside you: 0 of 30
   casualty-bolts landed on a man inside both its reach and its arc;
 - **the attrition tuning above**: no lever on the threat ledger moves it, and
