@@ -102,6 +102,24 @@ survived only because it was already on `origin`.
 
 ### 2.2b Parallel agents share ONE working tree — git verbs that take the whole tree are loaded guns
 
+> **AND AN EXPLICIT PATH IS NOT ENOUGH WHEN TWO LANES ARE IN THE SAME FILE.**
+> The rule below — name your paths — assumes the partition holds. It stops
+> holding the moment two lanes both have edits in one file, because `git add
+> <path>` stages **the file**, not your hunks: the first lane to commit takes
+> the other's half-finished work with it, under its own message.
+>
+> Measured tonight: a co-op lane's changes to `World.js` and `Emplacement.js`
+> were swept into two commits by peers who had named those exact paths, and
+> **those commits describe a fraction of their own diff**. Nothing was lost and
+> nothing was corrupted — what was lost was the record, which on this project is
+> most of the value.
+>
+> So the partition has to be at the FILE, not at the feature. If two lanes
+> genuinely need the same file, one of them takes it and the other sends a patch
+> or waits; and if you commit a file you share, read `git diff --cached` before
+> you write the message and say in it what is not yours.
+
+
 Five agents were run in parallel on this branch, each owning a disjoint set of
 files. That partitioning is sound for *editing* — two agents never touched the
 same file — and it is **completely undone by any git command whose unit is the
