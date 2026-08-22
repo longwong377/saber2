@@ -27,8 +27,7 @@ best-dressed, not its typical.
 | `02-the-line-picked.png` | The Line selected. The Theatre column greys and prints the mode's own sentence; the seed box holds 5. |
 | `03-deploy-card.png` | FLAGSHIP §5's 0:00, and it is all there: `GRIND · 5 ENGAGEMENTS · 30–45 MIN`, `GEONOSIS`, the five stages, the ten names, `SEED 5`, `STANDING 10`. |
 | `04-first-frame-on-the-ground.png` | the first frame after Drop. The HUD is right and the roster panel carries all ten names. **The frame contains none of the mode's content**: no trooper (0 of 10 are inside it — they stand 83–179° off centre at 4–8.4 m), no burn band, no smoke, no wrecks, no fallen. The front is 171 m away and **151° behind the camera**. |
-| `05-look-front.png` | the same instant, the camera turned to face the front through `Front.frontCamera`. |
-| `06-look-right.png` · `07-look-back.png` · `08-look-left.png` | and the other three quarters, so where the mode's content is standing is a picture rather than a number. |
+| `05-look-front.png` … `08-look-left.png` | *(pending — the horizon sweep, four quarters from the same spot with the camera turned through `Front.frontCamera`, so where the mode's content is standing is a picture rather than a number. The run that takes them is queued behind a box carrying a load average of 60; the numbers below are what they will show.)* |
 
 ## the one number the plates are about
 
