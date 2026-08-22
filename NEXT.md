@@ -781,20 +781,36 @@ still on its feet"*): **standing 11.4 hp, down 17.1 hp — 1.50× against a stat
 **Before and after.** Two worktrees off the same commit differing only in those
 three sites, `tools/_openwin.mjs`, one Command engagement on Geonosis at
 `knight`, `_flagship.mjs`'s scripted Jedi gripping continuously — the arm the
-0.51% was taken on. Four paired seeds, ± is the standard error of the mean:
+0.51% was taken on. Five paired seeds, ± is the standard error of the mean:
 
 | share of enemy body-seconds | before | after | |
 |---|---|---|---|
-| all open states | 1.455% ±0.167 | **2.932% ±0.313** | ×2.02 |
-| `held` | 1.053% | 1.258% | ×1.19 |
-| `downed` | 0.402% | **1.674%** | ×4.17 |
-| limp and in NO open state | 1.345% | 0.000% | the hole, closed |
-| open body-seconds per point of Force | 0.0435 | **0.0863** | ×1.99 |
+| all open states | 1.392% ±0.144 | **2.887% ±0.246** | ×2.07 |
+| `held` | 0.993% | 1.228% | ×1.24 |
+| `downed` | 0.398% | **1.660%** | ×4.17 |
+| limp and in NO open state | 1.347% | 0.000% | the hole, closed |
+| open body-seconds per point of Force | 0.0419 | **0.0833** | ×1.99 |
 
 `yanked` is 0.000% in both arms because the scripted Jedi does not pull — see
-`dutyInput`'s own note. **The extra damage the multiplier buys on landed bolts
-is UNMEASURED at this sample**: 7.3% ±2.7 before against 4.2% ±1.7 after, on
-about 110 landed bolts a run. Do not quote it either way without twenty seeds.
+`dutyInput`'s own note.
+
+**AND ONE READING GOES THE OTHER WAY, WHICH IS THE NEXT THING TO CHASE.** The
+extra damage the multiplier actually buys on the bolts that LAND
+(`worthOnHits`) reads **8.2% ±2.3 before against 3.7% ±1.4 after** — the wrong
+direction, on about 110 landed bolts a run, so it is 1.7 σ and not a result.
+Two candidate explanations and they are testable against each other:
+
+- the mix moved. `held` pays 3.0× and `downed` pays 1.5×, and what grew by
+  4.17× is `downed`, so more open SECONDS at half the rung can buy less;
+- **or the line shoots over them.** A felled body is a prone ragdoll, and
+  `_boltHitTest` measures against the capsules that body actually presents. If
+  a rifleman's aim is at a standing chest, knocking the target flat may take
+  it out of the bolt's path — which would be the verb eating itself, and it is
+  exactly the shape §7's sentence cannot survive.
+
+Neither has been measured. `tools/_openwin.mjs` already counts shots aimed and
+bolts landed per state; the discriminating number is the hit rate against a
+`downed` body versus a standing one, which nothing has taken.
 
 **And here is where it stops.** `tools/_openreach.mjs` counts the share of enemy
 body-seconds spent inside each Force reach band at all — the arithmetic ceiling
