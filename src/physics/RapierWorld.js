@@ -43,6 +43,7 @@
 import * as THREE from 'three';
 import { rapier } from './Rapier.js';
 import { LAYER, LOOSE_MASK, boxSpheres, capsuleSpheres } from './Physics.js';
+import { BoxIndex } from './BoxIndex.js';
 
 export { LAYER, LOOSE_MASK, boxSpheres, capsuleSpheres };
 
@@ -914,6 +915,24 @@ export class RapierWorld {
      * walk directly — see addStaticBox.
      */
     this.staticBoxes = [];
+    /**
+     * WHAT CHANGED IN `staticBoxes`, AS A NUMBER RATHER THAN AS A LENGTH.
+     *
+     * Every consumer of the array that wants to cache anything about it needs
+     * to know when it has moved, and `length` cannot say: a `removeStaticBox`
+     * and an `addStaticBox` in one frame — a door that swings, a wall that
+     * breaks into chunks — leaves the length identical and the contents
+     * different. §2.3's "a missing thing answered with a plausible default"
+     * wearing its cache hat. Bumped by add, remove and clear, and by nothing
+     * else, because nothing else changes which records are in the array.
+     */
+    this.boxVersion = 0;
+    /**
+     * The broad phase over it. Built lazily on the first query and rebuilt only
+     * when `boxVersion` moves; see src/physics/BoxIndex.js for the correctness
+     * argument, which is the reason that file is longer than this line.
+     */
+    this.boxIndex = new BoxIndex();
 
     this._terrain = null;
     this._hf = null;                 // heightfield collider
@@ -1332,12 +1351,26 @@ export class RapierWorld {
     // One array, shared with the sphere solver, so a ragdoll still piles up
     // against architecture and removeStaticBox still reaches both.
     this.staticBoxes.push(rec);
+    this.boxVersion++;
     return rec;
+  }
+
+  /**
+   * Every static box whose own circle could reach within `reach` of (x, z),
+   * appended to `out`. A SUPERSET — the caller keeps its own distance test.
+   *
+   * This is the one place `staticBoxes` is meant to be searched from. Sweeping
+   * the array by hand still works and still gives the same answer; it costs
+   * O(every box in the level) per body per frame, which is what the three notes
+   * quoted in BoxIndex.js are each a local workaround for.
+   */
+  nearBoxes(x, z, reach, out) {
+    return this.boxIndex.query(this.staticBoxes, this.boxVersion, x, z, reach, out);
   }
 
   removeStaticBox(box) {
     const i = this.staticBoxes.indexOf(box);
-    if (i >= 0) this.staticBoxes.splice(i, 1);
+    if (i >= 0) { this.staticBoxes.splice(i, 1); this.boxVersion++; }
     if (box && box.collider) {
       this._byCollider.delete(box.collider.handle);
       this.world.removeCollider(box.collider, false);
@@ -1562,6 +1595,8 @@ export class RapierWorld {
     this.bodies.length = 0;
     this.joints.length = 0;
     this.staticBoxes.length = 0;
+    this.boxVersion++;
+    this.boxIndex.reset();
     this._byCollider.clear();
     this._hf = null;
     this._hfSeq = -1;
