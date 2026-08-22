@@ -6,7 +6,7 @@
  */
 
 import * as THREE from 'three';
-import { SABER_COLORS, HILT_STYLES, Saber } from '../game/Saber.js';
+import { SABER_COLORS, HILT_STYLES, HILT_SPECS, Saber } from '../game/Saber.js';
 import { ROBE_COLORS, buildJedi, SPECIES, FACE_PRESETS, speciesOf,
          HAIR_STYLES, BEARD_STYLES, HOOD_CUTS, attachHood } from '../game/Bodies.js';
 import { BipedAnimator, limbScale } from '../game/Rig.js';
@@ -3417,6 +3417,107 @@ export class Menu {
    * as a hue shift TOWARD THE SKY rather than a wash of grey, an ink line
    * around each shape, and nothing shiny.
    */
+  /**
+   * A PICTURE OF THE HILT, DRAWN FROM THE HILT.
+   *
+   * Every one of these cards used to be the same hardcoded near-black box:
+   * `background:linear-gradient(160deg,#20262f,#0b0e13)`, fourteen times, under
+   * a live 3D saber preview. "You have a little black cube with a lightsaber
+   * coming out of it — scrap that."
+   *
+   * It is drawn off `HILT_SPECS` for the same reason `_levelArt` is drawn off
+   * `atmosphere`: the data that decides what the weapon IS is already there,
+   * and a card painted from anything else is a second description of the hilt
+   * that can disagree with the first. Change a grip from ribbed to wrapped in
+   * Saber.js and this card changes with it, with nothing here to update.
+   *
+   * Flat bands and an ink line, per src/toon/REFERENCE.md — the same language
+   * the level cards and the game itself are drawn in — and 2x for the same
+   * reason they are: an ink line that is not crisp is not an ink line.
+   */
+  _hiltArt(name) {
+    const W = 168, H = 54, SS = 2;
+    const c = document.createElement('canvas');
+    c.width = W * SS; c.height = H * SS;
+    const g = c.getContext('2d');
+    g.scale(SS, SS);
+    const S = HILT_SPECS[name];
+    const INK = '#150b06';
+    // The ground the chip of metal sits on, so the card is a photograph of an
+    // object rather than a floating shape.
+    g.fillStyle = '#241a13'; g.fillRect(0, 0, W, H);
+    g.fillStyle = '#2c211a'; g.fillRect(0, H * 0.62, W, H);
+    if (!S) return c.toDataURL();
+
+    const METAL = {
+      steel: ['#9aa1ab', '#6f7681', '#4a5058'],
+      dark: ['#5d6068', '#43464d', '#2c2e33'],
+      brass: ['#c39a52', '#8f6f38', '#5e4923'],
+      black: ['#4a4a4d', '#333335', '#1f1f21'],
+    };
+    const [lit, mid, dark] = METAL[S.metal] || METAL.steel;
+
+    // The hilt lies across the card with the emitter to the right, scaled so
+    // the longest hilt in the table just fits.
+    const L = 118, x0 = 14, cy = H * 0.52;
+    const rad = (S.r / 0.019) * 6.4;                 // the Graflex is the 1.0 reference
+    const band = (x, w, h, fill) => {
+      g.fillStyle = fill;
+      g.fillRect(x, cy - h, w, h * 2);
+      g.strokeStyle = INK; g.lineWidth = 1.4;
+      g.strokeRect(x, cy - h, w, h * 2);
+    };
+
+    // pommel, grip, body, neck, emitter — the five pieces every spec has
+    const gripW = (S.grip?.len ?? 0.06) / 0.24 * L;
+    const pomW = 9;
+    band(x0, pomW, rad * (S.pommel === 'sphere' ? 1.25 : 1.05), dark);
+    band(x0 + pomW, gripW, rad * (S.grip?.r ?? 1), mid);
+    // the grip's own texture, which is the thing that tells two hilts apart
+    g.strokeStyle = INK; g.lineWidth = 1;
+    const kind = S.grip?.kind;
+    for (let i = 1; i < 9; i++) {
+      const gx = x0 + pomW + (gripW * i) / 9;
+      g.beginPath();
+      if (kind === 'wrapped') { g.moveTo(gx - 2, cy + rad); g.lineTo(gx + 2, cy - rad); }
+      else { g.moveTo(gx, cy - rad); g.lineTo(gx, cy + rad); }
+      g.stroke();
+    }
+    const bodyX = x0 + pomW + gripW;
+    const bodyW = L - pomW - gripW - 16;
+    band(bodyX, bodyW, rad, lit);
+    // the control box, the studs and the rings — the jewellery each spec lists
+    if (S.box) {
+      g.fillStyle = dark;
+      const bw = (S.box[1] / 0.05) * 14;
+      g.fillRect(bodyX + 4, cy - rad - 5, bw, 5);
+      g.strokeStyle = INK; g.lineWidth = 1.3;
+      g.strokeRect(bodyX + 4, cy - rad - 5, bw, 5);
+      for (let i = 0; i < (S.studs || 0); i++) {
+        g.fillStyle = '#c25a3a';
+        g.beginPath(); g.arc(bodyX + 9 + i * 7, cy - rad - 2.5, 1.7, 0, Math.PI * 2); g.fill();
+      }
+    }
+    if (S.rings) {
+      for (let i = 0; i < S.rings[0]; i++) {
+        const rx = bodyX + bodyW - 20 + i * 5;
+        band(rx, 3, rad * (S.rings[2] ?? 1.02), mid);
+      }
+    }
+    // the shroud and the emitter the blade leaves from
+    const shW = 14;
+    band(bodyX + bodyW, shW, rad * (S.shroud?.[0] ?? 1.2), dark);
+    // …and a stub of the player's own blade, so the card says what it is for
+    const hue = SABER_COLORS[this.s.colorIndex % SABER_COLORS.length]?.hex ?? 0x53b6ff;
+    const col = `#${(hue & 0xffffff).toString(16).padStart(6, '0')}`;
+    g.fillStyle = col; g.globalAlpha = 0.35;
+    g.fillRect(bodyX + bodyW + shW, cy - rad * 0.9, W - (bodyX + bodyW + shW), rad * 1.8);
+    g.globalAlpha = 1;
+    g.fillStyle = '#fdf6e8';
+    g.fillRect(bodyX + bodyW + shW, cy - rad * 0.32, W - (bodyX + bodyW + shW), rad * 0.64);
+    return c.toDataURL();
+  }
+
   _levelArt(key) {
     /* 320x112 rather than 320x140, and the composition kept between y=26 and
      * y=100. `.card .art` is a 96 px box filled with `background-size:cover`,
@@ -3427,9 +3528,29 @@ export class Menu {
      * fissure and the Foundry's pour were both authored at y=121 and neither
      * was ever on screen. */
     const W = 320, H = 112;
+    /**
+     * DRAWN AT 2x AND SHOWN AT 1x, which is most of what read as "crude".
+     *
+     * Every coordinate below is authored in the 320x112 space this composition
+     * was designed in, and every one of them is still in that space — the
+     * backing store is simply twice the size and the context is scaled to
+     * match. The cards are ~300 px wide in CSS, so on any hidpi display a
+     * 320-wide bitmap was being blown up before it ever reached the screen:
+     * flat cel colour survives that, but every ink line, every cloud seam and
+     * every ridge edge — which is the entire language this picture is drawn in
+     * — arrives soft. A hard edge that is not hard is the one thing this style
+     * cannot afford.
+     *
+     * 2x rather than `devicePixelRatio` because these are cached as data URLs
+     * on the card and a display-dependent cache is a cache that is wrong the
+     * moment a window moves between monitors. 4x is 16x the bytes for a card
+     * 100 px tall.
+     */
+    const SS = 2;
     const c = document.createElement('canvas');
-    c.width = W; c.height = H;
+    c.width = W * SS; c.height = H * SS;
     const g = c.getContext('2d');
+    g.scale(SS, SS);
     const L = LEVELS[key];
     if (!L) return c.toDataURL();
     const A = L.atmosphere || {};
@@ -3587,11 +3708,44 @@ export class Menu {
      * near band is the one carrying the level's own colour. Composed at 96 it
      * came out a ten-pixel sliver and every sand, snow and grass level read as
      * the same pale wash of far-distance blue. */
+    /* FOUR BANDS, AND THE LAND GETS THE FRAME.
+     *
+     * Three bands based at 58/70/84 of 112 put two thirds of every card in the
+     * sky, and each band was mixed hard toward that sky — 62% on the far one —
+     * so the levels whose own ground is pale came out as a wash of the same
+     * blue-grey and the Shifting Waste, which is a warm sand desert, read as a
+     * cold one. Every card looked like every other card, which is most of what
+     * "crude and dumb, redo them entirely" is about: not the drawing, the
+     * COMPOSITION.
+     *
+     * The horizon comes up (bands based at 46/60/74/92), which is a landscape
+     * painter's answer and costs nothing: more of the picture is now the place
+     * being described. The far mixing is eased 0.62 → 0.52 so distance still
+     * reads as distance without bleaching the hue out of it, and a FOURTH band
+     * is added at the bottom in the ground's own colour, undiluted by sky and
+     * darkened — the foreground you are standing on, which is the one part of
+     * the card that should be the level's actual colour and never the air's.
+     */
     const ranges = indoor
-      ? [[0.34, 66, 0.40], [0.00, 84, 0.56]]
-      : [[0.62, 58, 0.08], [0.32, 70, 0.18], [0.04, 84, 0.28]];
+      ? [[0.30, 58, 0.34], [0.10, 74, 0.48], [0.00, 92, 0.62]]
+      : [[0.52, 46, 0.06], [0.28, 60, 0.16], [0.08, 74, 0.26], [0.00, 92, 0.42]];
+    /* HOW MUCH A BAND MAY BE DARKENED DEPENDS ON WHAT IT IS MADE OF.
+     *
+     * `shade(ground, dark)` took a flat 8–42% out of every band, and on a dark
+     * ground that is depth while on a bright one it is destruction: the Shifting
+     * Waste's sand is #d2bd92 and the White Pass's snow is #e2dcce — genuinely
+     * warm, genuinely bright — and darkening them 42% produced the dull grey-
+     * brown both cards were wearing. A desert that reads as a slate quarry is
+     * not a distance cue, it is a wrong colour.
+     *
+     * Snow in shadow is still brighter than rock in sun, so the darkening is
+     * scaled by how much room the colour has to give: near-full on mustafar's
+     * 0.15 ground, almost nothing on alpine's 0.86.
+     */
+    const gLum = (ground[0] * 0.2126 + ground[1] * 0.7152 + ground[2] * 0.0722) / 255;
+    const room = 1 - gLum * 0.85;
     ranges.forEach(([air, base, dark], i) => {
-      const tint = mix(shade(ground, dark), indoor ? horizon : sky, air);
+      const tint = mix(shade(ground, dark * room), indoor ? horizon : sky, air);
       g.fillStyle = css(tint);
       g.beginPath();
       g.moveTo(-2, H);
@@ -3640,19 +3794,19 @@ export class Menu {
       }
     }
 
-    /* ── the blade, in the crystal the player actually chose ───────────── */
-    const cry = SABER_COLORS[this.s?.colorIndex ?? 0] || SABER_COLORS[0];
-    const blade = rgb(cry.hex), glow = rgb(cry.glow);
-    g.strokeStyle = css(glow, 0.95);
-    g.lineWidth = 3;
-    g.shadowColor = css(blade, 0.95); g.shadowBlur = 14;
-    g.beginPath(); g.moveTo(172, 88); g.lineTo(188, 40); g.stroke();
-    g.shadowBlur = 0;
-    g.strokeStyle = css(mix(glow, [255, 255, 255], 0.8), 1);
-    g.lineWidth = 1.2;
-    g.beginPath(); g.moveTo(172, 88); g.lineTo(188, 40); g.stroke();
-    g.fillStyle = 'rgba(10,12,16,0.92)';
-    g.fillRect(168, 86, 8, 14);
+    /* ── AND NO SABER PLANTED IN THE MIDDLE OF IT ──────────────────────
+     *
+     * There used to be one here: a three-pixel glowing stroke from (172,88) to
+     * (188,40) and, under it, `fillRect(168, 86, 8, 14)` in near-black. On
+     * every theatre card in the game. "You have a little black cube with a
+     * lightsaber coming out of it — scrap that."
+     *
+     * It was there to say which crystal the player had chosen, which the live
+     * saber preview in the Jedi tab already says, in three dimensions, with the
+     * actual hilt on it. What it did to the CARD was put an eight-pixel black
+     * rectangle in the middle of a landscape at every resolution — the one
+     * element in the composition that is not part of the place being drawn.
+     * A theatre card is a picture of a theatre. */
     return c.toDataURL();
   }
 
@@ -4144,7 +4298,7 @@ export class Menu {
     for (const h of HILT_STYLES) {
       const card = document.createElement('div');
       card.className = 'card small' + (this.s.hiltStyle === h ? ' sel' : '');
-      card.innerHTML = `<div class="art" style="background:linear-gradient(160deg,#20262f,#0b0e13)"></div>
+      card.innerHTML = `<div class="art" style="background-image:url(${this._hiltArt(h)});background-size:cover"></div>
                         <div class="meta"><b>${h}</b></div>`;
       this._activate(card, () => {
         audio.ui('click');
