@@ -58,9 +58,12 @@
 import './dom-shim.mjs';
 import * as THREE from 'three';
 
-const SEED = Number(process.argv[2] || 5);
-const LEVEL = process.argv[3] || 'geonosis';
-const AT = (process.argv[4] || '0,10,30').split(',').map(Number);
+const argv = process.argv.slice(2);
+const SWEEP = argv.includes('--sweep');
+const rest = argv.filter((a) => !a.startsWith('--'));
+const SEED = Number(rest[0] || 5);
+const LEVEL = rest[1] || 'geonosis';
+const AT = (rest[2] || '0,10,30').split(',').map(Number);
 
 const { bootWorld, idleInput } = await import('./checks/_coop.mjs');
 const { L3_AT } = await import('../src/game/Cohorts.js');
@@ -131,13 +134,52 @@ function census(label) {
   }
 }
 
-/* ONE STEP FIRST — see the header. */
-world.update(STEP, input);
-census(`t = ${world.time.toFixed(2)} s, the first stepped frame after Drop`);
-for (const target of AT) {
-  if (target <= world.time) continue;
-  const n = Math.round((target - world.time) / STEP);
-  for (let i = 0; i < n; i++) world.update(STEP, input);
-  census(`t = ${target} s`);
+/**
+ * ── `--sweep`: WHICH SHIPPED ORDER PUTS THE LINE IN THE FRAME ────────────
+ *
+ * Every formation measured in ONE world with the wave EMPTIED, so the only
+ * variable is the shape. A sweep that let the fight run would measure each
+ * order against a field with fewer men on it than the last one had — arms that
+ * differ in more than the thing under test (HANDOFF §2.5), and on a quantity
+ * that is chaotic to begin with (§2.5b).
+ *
+ * Six game-seconds to walk to the new slots before the reading is taken.
+ * `order()` is the shipped verb — the same one a key press calls — so the
+ * planting, the log entry and the HUD indicator happen as they would.
+ */
+if (SWEEP) {
+  const { FORMATIONS, DEFAULT_FORMATION } = await import('../src/game/Command.js');
+  d.spawnQueue.length = 0;
+  for (const e of world.enemies) if (e.team !== world.player.team) e.dead = true;
+  for (const id of Object.keys(FORMATIONS)) {
+    d.order(id, d.commander);
+    for (let i = 0; i < Math.round(6 / STEP); i++) world.update(STEP, input);
+    const me = world.player.position;
+    const yaw = world.player.camera.yaw;
+    const fx = -Math.sin(yaw), fz = -Math.cos(yaw);
+    const bodies = d.roster.living.map((t) => t.body).filter((b) => b && !b.dead);
+    const seen = bodies.filter(inView).length;
+    const bear = bodies.map((b) => {
+      const dx = b.position.x - me.x, dz = b.position.z - me.z;
+      return Math.abs(Math.atan2(dx * fz - dz * fx, dx * fx + dz * fz) * 180 / Math.PI);
+    }).sort((a, b) => a - b);
+    const rng = bodies.map((b) => Math.hypot(b.position.x - me.x, b.position.z - me.z))
+      .sort((a, b) => a - b);
+    console.log(`${id.padEnd(9)}${id === DEFAULT_FORMATION ? '*' : ' '} `
+      + `${String(seen).padStart(2)} of ${bodies.length} in frame   `
+      + `|bearing| ${bear[0].toFixed(0)}–${bear[bear.length - 1].toFixed(0)}°   `
+      + `range ${rng[0].toFixed(1)}–${rng[rng.length - 1].toFixed(1)} m   ${FORMATIONS[id].name}`);
+  }
+  world.unload();
+} else {
+  /* ONE STEP FIRST — see the header. */
+  world.update(STEP, input);
+  census(`t = ${world.time.toFixed(2)} s, the first stepped frame after Drop`);
+  for (const target of AT) {
+    if (target <= world.time) continue;
+    const n = Math.round((target - world.time) / STEP);
+    for (let i = 0; i < n; i++) world.update(STEP, input);
+    census(`t = ${target} s`);
+  }
+  world.unload();
 }
-world.unload();
