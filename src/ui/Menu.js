@@ -56,7 +56,7 @@ import { MODES, sandboxUnits, SANDBOX_MAX_ENEMIES, sandboxConfig, SKIRMISH,
  * eleven rows reading "Force push." with no number on any of them. It is a
  * leaf module (it imports nothing), so there is no cycle to pay for.
  */
-import { POWER_COST, POWER_BOON } from '../game/Powers.js';
+import { POWER_COST, POWER_BOON, SENSE_DRAIN } from '../game/Powers.js';
 import { DRIVE, crewOf } from '../game/Driving.js';
 
 /**
@@ -1561,7 +1561,26 @@ export const CODEX = [
       + `or ${k('grip')} while it is out and your Force takes hold of it: the blade hangs at your `
       + `reticle, cutting, until you recall it or the bar runs dry. Holding it out there is the `
       + `most expensive thing the Force does, and the wheel pushes it further off.` },
-  { keys: ['sense'], text: () => 'Force sense — see through walls.' },
+  { keys: ['sense'],
+    /**
+     * THE ONE CHANNEL WITH NO PRICE ON ITS CARD, and it was the shortest row on
+     * the page: five words for a power that empties a full bar in under six
+     * seconds. Focus prints its drain, the barrier prints both of its numbers,
+     * and this one — which additionally stops regeneration dead, so the true
+     * cost is the drain PLUS the 7.5 a second you are not getting back — said
+     * nothing at all. A player learns it by watching the bar vanish and
+     * concludes the power is broken.
+     *
+     * Both numbers are READ. `POWER_COST.sense` is a threshold rather than a
+     * charge (`toggleSense` calls `_canSpend`, not `_spend`) and the sentence
+     * says so in those words, because "costs 25 to switch on" was already
+     * written into HUD.js's own note on the minimap and was not true there
+     * either.
+     */
+    text: () => `Force sense — see through walls, and the map is what it shows you. Needs `
+      + `${POWER_COST.sense} Force in the bar to open, takes none of it, then burns `
+      + `${SENSE_DRAIN} a second and stops the bar refilling while it is up. Tap it for a `
+      + `reading; hold it and you are paying by the second.` },
   { keys: ['stasis'],
     /* "bolts included" said bolts were an ADDITION to a broader set and they
      * were the whole of it: the sweep skipped LAYER.ENEMY entirely, so five
@@ -4267,7 +4286,7 @@ export class Menu {
          * boxes could not, and that is exactly what a second copy of "Invert
          * blade Y" on the pause card needs.
          */
-        if (input.type === 'checkbox') {
+        if ((input.getAttribute?.('type') || input.type) === 'checkbox') {
           if (input.checked !== !!value) input.checked = !!value;
           continue;
         }
@@ -6839,40 +6858,41 @@ export class Menu {
     const box = document.getElementById('pause-opts-box');
     const list = document.getElementById('pause-opts-list');
     if (!box || !list) { this._pauseOpts = null; return null; }
-    list.innerHTML = '';
 
     /**
-     * One Options control, repeated. Everything except the two ids is read off
-     * the twin: the words in front of it, and — for a slider — the three
-     * numbers that decide what it can say.
+     * Fill one slot off the control it mirrors — the words in front of it, and,
+     * for a slider, the three numbers that decide what it can say. Returns
+     * false when the twin is not on the page, and the row goes with it: an
+     * empty slider with no range is worse than no slider.
      */
-    const mirror = (twinId, id) => {
-      const twin = document.getElementById(twinId);
-      const row = twin?.closest?.('label');
-      if (!twin || !row) return false;
-      const words = [...row.childNodes].filter((n) => n.nodeType === 3)
+    const mirror = (row) => {
+      const twin = document.getElementById(row?.dataset?.twin || '');
+      const src = twin?.closest?.('label');
+      const slot = row?.querySelector?.('span');
+      if (!twin || !src || !slot) { if (row) row.style.display = 'none'; return false; }
+      slot.textContent = [...src.childNodes].filter((n) => n.nodeType === 3)
         .map((n) => n.textContent.trim()).filter(Boolean).join(' ');
-      const copy = document.createElement('label');
-      const box2 = (twin.getAttribute('type') || twin.type) === 'checkbox';
-      copy.className = box2 ? 'check' : 'slider';
-      copy.innerHTML = box2
-        ? `<input type="checkbox" id="${id}"> ${escKey(words)}`
-        : `${escKey(words)} <input type="range" id="${id}" min="${twin.getAttribute('min')}"`
-          + ` max="${twin.getAttribute('max')}" step="${twin.getAttribute('step')}"><b></b>`;
-      list.appendChild(copy);
+      const input = row.querySelector('input');
+      if (input && input.type !== 'checkbox') {
+        for (const a of ['min', 'max', 'step']) {
+          const v = twin.getAttribute(a);
+          if (v !== null && v !== undefined) input.setAttribute(a, v);
+        }
+      }
       return true;
     };
+    const row = (id) => list.querySelector(`[data-twin="${id}"]`);
 
-    /* The ids are literals on both sides on purpose: `controls.mjs` reads this
-     * file for `id="opt-…"` and for `_slider('opt-…', '…'`, and a control
-     * assembled out of variables would be invisible to the check that exists to
-     * catch a control bound to nothing. */
-    if (mirror('opt-vol', 'opt-pause-vol')) this._slider('opt-pause-vol', 'volume');
-    if (mirror('opt-music', 'opt-pause-music')) this._slider('opt-pause-music', 'music');
-    if (mirror('opt-fov', 'opt-pause-fov')) this._slider('opt-pause-fov', 'fov');
-    if (mirror('opt-sens', 'opt-pause-sens')) this._slider('opt-pause-sens', 'sensitivity');
-    if (mirror('opt-invert', 'opt-pause-invert')) this._check('opt-pause-invert', 'invertY');
-    if (mirror('opt-shake', 'opt-pause-shake')) this._check('opt-pause-shake', 'shake');
+    /* The ids are literals on both sides on purpose: `controls.mjs` reads
+     * index.html for `id="opt-…"` and this file for `_slider('opt-…', '…'`, and
+     * a control assembled out of variables would be invisible to the check that
+     * exists to catch a control bound to nothing. */
+    if (mirror(row('opt-vol'))) this._slider('opt-pause-vol', 'volume');
+    if (mirror(row('opt-music'))) this._slider('opt-pause-music', 'music');
+    if (mirror(row('opt-fov'))) this._slider('opt-pause-fov', 'fov');
+    if (mirror(row('opt-sens'))) this._slider('opt-pause-sens', 'sensitivity');
+    if (mirror(row('opt-invert'))) this._check('opt-pause-invert', 'invertY');
+    if (mirror(row('opt-shake'))) this._check('opt-pause-shake', 'shake');
 
     const toggle = document.getElementById('btn-pause-opts');
     if (toggle && !toggle._wired) {

@@ -104,6 +104,21 @@ class Element {
     return node;
   }
   remove() { this.parentNode?.removeChild(this); }
+  /**
+   * `el.after(node)` — the one insertion verb the menu uses that is not
+   * appendChild or insertBefore. `Menu._buildPauseTraining` has always called
+   * it (`this.el.pauseStats.after(box)`), which meant `showPause` threw the
+   * moment it was driven on this page and NOTHING in the suite had ever driven
+   * it: the pause card is the only card in the game that had never been raised
+   * outside a browser. Sibling insertion, so it goes through the parent's own
+   * insertBefore and inherits the indexing with it.
+   */
+  after(node) {
+    const p = this.parentNode;
+    if (!p) return node;
+    const i = p.childNodes.indexOf(this);
+    return p.insertBefore(node, p.childNodes[i + 1] || null);
+  }
 
   /* ── attributes ───────────────────────────────────────────────────── */
   setAttribute(name, value) {
