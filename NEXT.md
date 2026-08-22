@@ -1743,11 +1743,13 @@ which are still the only two levers that move this number:
 |---|---|---|
 | before the chest (the tree as it stood) | 5.10 (sd 2.45) | 19 of 20 |
 | after the chest, constants untouched | **1.65** (sd 2.56) | 12 of 20 |
-| after the chest, `GUN.every` 34.0 and the conscript's round 2 | **4.93** (sd 2.95, n=14) | **13 of 14** |
+| after the chest, `GUN.every` 34.0 and the conscript's round 2 | **4.55** (sd 2.72) | **18 of 20** |
 
-The last row is fourteen seeds and not twenty — the box was carrying two full
-gates and fifteen other jobs and the run did not finish; it is flagged rather
-than rounded up. At n=14 the standard error is 0.79.
+Twenty seeds, se 0.61 — **the target is met inside one standard error.** The
+alternative split that was measured beside it, `GUN.every` 44.0 with the round
+at 1.5, reads 4.15 (sd 2.66) and 16 of 20, so the shipped pair is the better of
+the two on both columns as well as the one that leaves the gun the bigger and
+more answerable of the two threats.
 
 **The muster rate is the sentence to read, as it was last time.** 12 of 20
 against 13 of 14 is the difference between a mode with a between-areas beat and
@@ -1804,12 +1806,24 @@ Measured, engagement 3, a fresh ten-man line, no Jedi:
 | | survivors | reached a muster | how long |
 |---|---|---|---|
 | chest fixed, ramp not | 0.00 of 20 seeds | 0 of 20 | one wave, ~110 s |
-| chest and ramp | 1.38 (n=13) | 3 of 13 | three or four waves, 177-286 s |
+| chest and ramp, constants untouched | 1.26 (n=19) | 4 of 19 | three or four waves, 177-286 s |
+| chest, ramp and the tuned constants | 1.22 (n=9) | 2 of 9 | three or four waves |
 
 **It is an engagement now rather than an execution** — the area is fought
-through instead of ending in its first wave — and it is still the hardest thing
-in the mode. The tuned build's engagement-3 arm had not finished when this was
-written; see below.
+through instead of ending in its first wave, and its muster is reachable on
+about a fifth of seeds where it was reachable on none of twenty. **It is not
+solved.** A fresh ten-man line still usually does not hold engagement 3, and
+the tuned constants do not move it much, because area 3 carries `budget` 1.45
+and four or five waves and the ramp fix only stops the roguelite's counter
+being multiplied into that.
+
+Two things to know before anybody takes the next step. The fixture stands a
+FRESH ten-man line at the top of the area — no promotions, no replacements, no
+accumulated dead — which is deliberate (it is what makes two engagements
+comparable) and is **not what a real run arrives with**; a run reaching area 3
+has been paid two musters. And the remaining lever is the same one, one layer
+up: `AREAS[*].budget` and the areas' lengths are now the crossing's whole ramp,
+so they are where a late area's difficulty is set.
 
 ### 4. The dial: `GUN.every` 34.0, and what it costs both ends
 
@@ -1874,9 +1888,12 @@ must is that the quantity's own spread reaches the bar.
 
 ### 6. Still open after this
 
-- **The tuned engagement-3 arm.** Twenty seeds were launched and three had
-  landed. Engagement 3 is fought through now rather than lost in one wave, and
-  whether a line holds it is not yet a number anybody has.
+- **Engagement 3 is fought through and still not held.** 1.22 of ten at n=9 on
+  the tuned build against 0.00 of twenty before the ramp fix. The next lever is
+  `AREAS[*].budget` and the areas' own lengths, which `rampWave` has just made
+  the crossing's entire escalation — so they are now the only thing setting how
+  hard a late area is, and they were written as a CORRECTION to a curve that no
+  longer applies. That is one table and one measurement.
 - **`GUN.every` is a weak dial on its own ground** — see §4. If the emplacement
   ever needs to be worth materially more or less than it is, the honest lever is
   its arc and its sight, not its timer.
