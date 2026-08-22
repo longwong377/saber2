@@ -285,12 +285,38 @@ Different resource, different range band, different read of the screen.
 | **Consul** | force + bond | 10–40 m | Force (2.63 s of Focus, 13.3 s to refill) | OPEN | an empty bar at the wrong moment |
 | **Shadow** | dark + blade | alone | your own health | BREACH | any loss is 25% of a five-man force |
 
-**Warning, and it is a real one:** `attune-force` measures **Δ0.000** and 17 of
-40 boons read UNMODELLED because `balance.mjs` has no Force powers in it.
-`Soresu` 0.000, `Tutaminis` 0.036, `Aegis` 0.165 are the weakest cards in the
-table *because model depth is the only metric*. **If the Sentinel ships,
-`balance.mjs` needs an "allies preserved" axis**, or the whole playstyle reads
-as the worst build in the game and nobody picks it twice.
+~~**Warning, and it is a real one:** `attune-force` measures Δ0.000 and 17 of 40
+boons read UNMODELLED because `balance.mjs` has no Force powers in it… **If the
+Sentinel ships, `balance.mjs` needs an "allies preserved" axis**~~ — **it has
+one.** `tools/balance.mjs` stands a line of `OPENING_STRENGTH` troopers beside
+the modelled player and reports `Δline` next to `Δdepth`, and prints the cards
+that are below the median on depth and above it on the line: the list a one-axis
+ranking called worthless.
+
+### These are NOT four classes, and nothing in the game picks between them
+
+Worth stating because a reader who greps for `Vanguard` finds nothing and
+concludes a section is missing. **Every column of that table is an axis the game
+already has, and the `job` column is §7's four verbs** — so the four ways to
+play are what a player and a boon draft make out of existing parts, not a
+select screen. That is deliberate and it is the same rule the rest of the mode
+follows: the ground is rolled, the length is rolled, the squad is dealt. A mode
+whose subject is a war you did not start does not open with a class menu.
+
+What the four rest on, and the honest state of each after the verbs were built
+and scored:
+
+| | rests on | its verb | does the verb pay? |
+|---|---|---|---|
+| **Vanguard** | stamina, and `GUARD_COST`'s ladder | BREAK | **no** — 0.00% of enemy-seconds. A body needs 11.5 s inside 6.5 m of a lit blade to break and a body that stands there that long is one the Jedi has killed |
+| **Sentinel** | the guard flick, `CatchWindow`, the auto-guard cone | TURN | **yes, and best of the four** — a bolt sent home costs the rank 8.3× an ordinary casualty, because a return is thrown from inside a formation and `NERVE.SEE` finds four witnesses against about one |
+| **Consul** | Force, `openness`, the grip | OPEN | **no** — 0.5% of enemy-seconds even with a Jedi gripping continuously. The line already aims 9× its fair share at a held body, so the verb is starved by its window and not by the line's attention |
+| **Shadow** | your own health, alone, away from the line | BREACH | **built** — a casemate gun behind the middle of three doors, 69 m out, 57.9 s to cut under fire. What it costs the line is not yet a settled number |
+
+So the table is buildable-by-construction and half-earned in practice: two verbs
+pay, two barely fire. **That is a tuning problem in `Nerve` and in `openness`'s
+window, not a missing feature**, and it is recorded in `NEXT.md` rather than
+here, because §7 is where those two verbs are argued.
 
 ---
 
