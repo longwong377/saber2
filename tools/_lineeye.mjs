@@ -281,13 +281,16 @@ try {
         choke: { x: +w.battlefield.choke.x.toFixed(1), z: +w.battlefield.choke.z.toFixed(1) },
         bearing: +w.battlefield.bearing.toFixed(3),
         distance: +w.battlefield.distance.toFixed(1) } : null,
-      /* WHERE THE PLAYER IS LOOKING, against where the front is. The rig's
-       * yaw is a rotation about +Y on a forward of -Z (`CameraRig.syncAim`
-       * builds the aim from Euler(pitch, yaw, 0, 'YXZ')), so the yaw that faces
-       * the advance is atan2(dir.x, -dir.z) and the difference is how far the
-       * player has to turn to see the one-way visible variable. */
+      /* HOW FAR THE PLAYER HAS TO TURN to see the one-way visible variable. */
       offBy: (() => {
-        const want = Math.atan2(front.dir.x, -front.dir.z);
+        /* NOT A SECOND COPY OF THE CONVENTION. `Front.frontCamera` already owns
+         * "the yaw that looks along a front", and its own note records what
+         * getting it backwards costs: "the camera at the clean half of the
+         * field and the kill test three identical plates of empty ground — a
+         * 'no' that was the instrument's". This probe wrote the inverse by hand
+         * on its first pass and would have shot the sweep 59 degrees off.
+         * HANDOFF §2.4. */
+        const want = F.frontCamera(front).yaw;
         let d = (w.player.camera?.yaw ?? 0) - want;
         while (d > Math.PI) d -= 2 * Math.PI;
         while (d < -Math.PI) d += 2 * Math.PI;
@@ -324,12 +327,12 @@ try {
       const w = window.SABER.world;
       const F = await import('/src/world/Front.js');
       const front = F.engagementFront(w, w.command?.areaNumber ?? 1);
-      /* FACE THE FRONT. The rig's yaw is a rotation about +Y applied to a
-       * forward of -Z, so the yaw that looks along (dx, dz) is atan2(dx, -dz)
-       * — taken from `CameraRig`'s own basis rather than guessed: `syncAim`
-       * builds the aim from Euler(pitch, yaw, 0, 'YXZ'). */
-      const dx = front.dir.x, dz = front.dir.z;
-      w.player.camera.yaw = Math.atan2(dx, -dz) + t;
+      /* FACE THE FRONT, through the shipped function that already knows how.
+       * `Player` builds its forward as -(sin yaw, 0, cos yaw), so the yaw that
+       * looks along a bearing is atan2(-dir.x, -dir.z) and not atan2(dir.x,
+       * -dir.z) — the inverse is 59 degrees off on this seed and puts the
+       * dressing just outside the frame. */
+      w.player.camera.yaw = F.frontCamera(front).yaw + t;
       w.player.camera.pitch = -0.08;
       await window.__frame();
     }, [turn]);
