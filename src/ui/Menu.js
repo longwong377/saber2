@@ -3166,6 +3166,29 @@ export class Menu {
   hideBoot() { this.el.boot.classList.add('hidden'); }
   showMenu() {
     this.el.menu.classList.remove('hidden');
+    /**
+     * THE ONE-SHOT NOTICE IS ONE SHOT.
+     *
+     * `#menu-record` has exactly one writer in the whole game — `deploy()`'s
+     * catch, which says "Could not deploy: …" there when a world fails to
+     * build — and had NOTHING that ever took it back. So a single failed
+     * Ignite left that sentence under the title for the rest of the session:
+     * through a successful deploy on another ground, through the run, through
+     * Abandon, and on every return to the front screen, still reporting a
+     * failure that had been fixed twenty minutes earlier.
+     *
+     * Cleared where the screen is RAISED rather than where the notice is
+     * written, because the notice is about the deploy that just refused and
+     * the screen coming back is the only moment that is over. The catch writes
+     * it AFTER its own `showMenu()`, so the first showing still says it.
+     *
+     * It stays out of main.js on purpose: `tools/checks/keyart.mjs` counts the
+     * writers of this element there and holds it to being the failure notice
+     * and nothing else, which is a rule worth keeping. Clearing is not a
+     * second notice.
+     */
+    const note = document.getElementById('menu-record');
+    if (note) note.textContent = '';
     // The panel had no layout while the screen was hidden, so this is the first
     // frame on which "how much is below the fold" has an answer.
     this._onPanelShown();

@@ -285,6 +285,39 @@ export async function run({ check, assert }) {
     } finally { b.close(); }
   });
 
+  check('pause: a deploy that failed once does not go on saying so', () => {
+    /**
+     * `#menu-record` has exactly one writer in the game — `deploy()`'s catch,
+     * "Could not deploy: …" — and nothing ever took it back. One failed Ignite
+     * left that sentence under the title for the rest of the session: through
+     * a successful deploy on another ground, through the run, through Abandon,
+     * and on every return to the front screen.
+     */
+    const b = menuOn();
+    try {
+      const note = b.doc.getElementById('menu-record');
+      assert(note, '#menu-record is gone from the front screen');
+      // The catch writes it AFTER its own showMenu(), which is what has to
+      // keep working: the first showing still carries the failure.
+      b.menu.showMenu();
+      note.textContent = 'Could not deploy: boom';
+      assert(note.textContent.startsWith('Could not deploy'), 'the notice did not stick');
+      // …and the next time the screen comes back — a good run ending, Abandon,
+      // a retry that worked — it is gone.
+      b.menu.hideMenu();
+      b.menu.showMenu();
+      assert(note.textContent === '',
+        `the front screen still reads "${note.textContent}" after the screen was raised again`);
+      /* AND MAIN.JS STILL HAS ONE WRITER. Clearing is not a second notice, and
+       * keyart.mjs counts writers there; this states the same rule from the
+       * other side so the clear cannot migrate into main.js and quietly turn
+       * that count into a thing that has to be argued about. */
+      const writes = [...MAIN_SRC.matchAll(/getElementById\('menu-record'\)/g)].length;
+      assert(writes === 1, `main.js has ${writes} #menu-record writers — it is the failure notice only`);
+      return 'written by the failed deploy, gone the next time the screen is raised';
+    } finally { b.close(); }
+  });
+
   /* ══════════════════════════════════════════════════════════════════
    *  2. EVERY CONTROL ANSWERS THE PRESS
    * ══════════════════════════════════════════════════════════════════ */
