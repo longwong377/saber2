@@ -108,18 +108,37 @@ export async function run({ check, assert }) {
        * no player caused and no player can see.
        */
       p.position.set(0, (world.terrain?.height(0, 0) ?? 0) + 0.05, 40);
-      p.saber.ignition = 0;
+      /**
+       * `retract()` AND NOT `ignition = 0`, and the difference cost this check
+       * its own premise. `Saber.ignite` returns early on `lit`, so a blade that
+       * was already out and had its extension zeroed simply RAMPS BACK UP over
+       * the next half second — and then the auto-guard cone answered a bolt,
+       * `NERVE.ANSWERED` billed the body that fired it, and the check read a
+       * drift where the real event was a deflection. The blade is put away.
+       */
+      p.saber.retract();
       const bodies = rank(world, 8, 6, 'b1');
       assert(bodies.length === 8, `only ${bodies.length} of 8 bodies stood up`);
+      /* AND THE PREMISE IS ASSERTED RATHER THAN ASSUMED. "The player did
+       * nothing" is not a property of where he is standing — it is a property
+       * of what went through the doors, and `_onBoltDeflect` is the one that
+       * can move this ledger from forty metres away. */
+      let answered = 0;
+      const od = world._onBoltDeflect.bind(world);
+      world._onBoltDeflect = (b, entry, hit, at) => { answered++; return od(b, entry, hit, at); };
       const idle = idleInput();
       for (let i = 0; i < 300; i++) world.update(STEP, idle);
       const live = bodies.filter((e) => !e.dead);
       const worst = Math.min(...live.map(nerveOf));
       assert(live.length > 0, 'the whole rank died with nobody attacking it');
+      assert(answered === 0,
+        `${answered} bolts were turned by a blade this check believes is put away — the condition `
+        + 'below is not "the player did nothing" and the reading means nothing');
       assert(worst >= 1 - 1e-6,
         `after ten seconds with no blade on the field the steadiest-shaken body reads ${worst.toFixed(3)} `
         + '— the ledger drifts on its own, which makes every wave in the game quietly easier');
-      return `${live.length} bodies, 10 game-seconds, no blade lit → nerve ${worst.toFixed(3)}`;
+      return `${live.length} bodies, 10 game-seconds, blade away, ${answered} bolts answered → `
+        + `nerve ${worst.toFixed(3)}`;
     } finally { world.unload?.(); }
   });
 
@@ -680,7 +699,20 @@ export async function run({ check, assert }) {
       world.director.start(1);
       const p = world.player;
       p.saber.ignite(); p.saber.ignition = 1;
-      const idle = idleInput();
+      /**
+       * AND HIS GUARD IS UP, which is the one thing about this condition that
+       * had to change with the verb. `idleInput` presses nothing at all, and a
+       * Jedi who never raises a guard answers no bolts — measured on the
+       * unaltered condition, `0 of 40 bolts aimed at him`, so the term the verb
+       * is now carried by was structurally zero and the check was reporting the
+       * script's hands rather than the ledger. Holding `blade` is what a player
+       * under fire does with their right hand and it is the shipped default
+       * scheme's own verb (Menu.js DEFAULT_SETTINGS: `directional`, where
+       * `blade` RAISES A ZONE). It costs the script nothing it has to decide,
+       * and it is the same intervention `tools/_flagship.mjs`'s scripted Jedi
+       * makes for the same reason.
+       */
+      const idle = { ...idleInput(), act: (id) => id === 'blade' };
       /* THE JEDI IS PUT IN THE RANK AND KEPT THERE. Not the flagship probe's
        * script — this is measuring the ledger, so the player is walked onto
        * the centroid of his own line each frame and left standing in it, which
