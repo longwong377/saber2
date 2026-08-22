@@ -155,23 +155,39 @@ export async function run({ check, assert }) {
      * can reach and no tap can clear.
      */
     const { CHARGE, HEAVY } = await import('../../src/game/SaberController.js');
-    const spend = async (action, holdFrames, combo) => {
-      const r = await armed();
-      const { p } = r;
-      if (combo) { p.control.comboStep = combo; p.control.comboTimer = 1; }
+    /* ONE WORLD, FOUR ARMS. Booting a World is the expensive thing in this file
+     * and HANDOFF §2.7 is about suites that hold several alive at once; what is
+     * measured here is a stamina bar, which no random stream touches, so a
+     * shared rig costs the measurement nothing. `reset` is the controller's own
+     * one door onto its attack state, so no arm inherits the last one's clock. */
+    const rig = await armed();
+    const { p } = rig;
+    const spend = (action, holdFrames, combo) => {
+      /* `reset` is the controller's ONE DOOR onto its attack state and it now
+       * clears all five cooldowns; before it did, this arm read a tapped heavy
+       * as costing 0.0% of the bar — not because the press was free but
+       * because `thrustCooldown`, left armed by the arm above, refused it. A
+       * check that passes on a press that never happened is worse than no
+       * check, so the door is asserted rather than assumed. */
+      p.control.reset(p.chest, p.camera.aimQuat);
+      assert(p.control.thrustCooldown <= 0 && p.control.slashCool <= 0 && p.control.swingCool <= 0
+        && p.control.spinCool <= 0,
+        'reset() left an attack cooldown armed, so the arms below are measuring refused presses');
+      p.control.comboStep = combo; p.control.comboTimer = combo ? 1 : 0;
+      p.staminaHold = 0;
       p.stamina = p.maxStamina;
-      r.press(action);
+      rig.press(action);
       let low = p.stamina;
-      for (let i = 0; i < holdFrames; i++) { r.step(); low = Math.min(low, p.stamina); }
-      r.release(action);
-      for (let i = 0; i < 40; i++) { r.step(); low = Math.min(low, p.stamina); }
+      for (let i = 0; i < holdFrames; i++) { rig.step(); low = Math.min(low, p.stamina); }
+      rig.release(action);
+      for (let i = 0; i < 40; i++) { rig.step(); low = Math.min(low, p.stamina); }
       return (p.maxStamina - low) / p.maxStamina;
     };
 
-    const overFull = await spend('attackOver', 130, 0);
-    const overTap = await spend('attackOver', 2, 0);
-    const heavyFull = await spend('thrust', 130, 1);
-    const heavyTap = await spend('thrust', 2, 1);
+    const overFull = spend('attackOver', 130, 0);
+    const overTap = spend('attackOver', 2, 0);
+    const heavyFull = spend('thrust', 130, 1);
+    const heavyTap = spend('thrust', 2, 1);
 
     const overMax = (CHARGE.full - CHARGE.hold) * CHARGE.drain;
     const heavyMax = (HEAVY.full - HEAVY.hold) * HEAVY.drain;
@@ -187,8 +203,12 @@ export async function run({ check, assert }) {
     assert(overTap < overMax * 0.25,
       `a TAPPED overhead cost ${(overTap * 100).toFixed(1)}% of the bar — CHARGE.hold is supposed to make a `
       + 'tap free');
-    assert(heavyFull > heavyTap,
-      `the third press cost ${(heavyFull * 100).toFixed(1)}% held and ${(heavyTap * 100).toFixed(1)}% tapped`);
+    /* A TAPPED HEAVY IS NOT FREE — it still opens the lunge, which is its own
+     * price — so this is stated as an ORDER and not as a floor of zero, which
+     * is the reading that hid a refused press. */
+    assert(heavyTap > 0 && heavyFull > heavyTap * 1.5,
+      `the third press cost ${(heavyFull * 100).toFixed(1)}% held and ${(heavyTap * 100).toFixed(1)}% `
+      + 'tapped — holding a chambered blade has to cost more than letting it go at once');
     return `overhead ${(overTap * 100).toFixed(1)}% tapped → ${(overFull * 100).toFixed(1)}% wound; `
       + `heavy ${(heavyTap * 100).toFixed(1)}% → ${(heavyFull * 100).toFixed(1)}%`;
   });

@@ -987,7 +987,22 @@ export class SaberController {
     this.handVel.set(0, 0, 0); this.angVel.set(0, 0, 0);
     this.stance = 0; this.stanceTarget = 0;
     this.thrust = 0; this.thrustT = -1; this.thrustStanding = 0;
-    this.spinT = -1; this.spin = 0; this.spinYaw = 0; this._spY = 0;
+    /* AND THE COOLDOWNS, ALL FIVE OF THEM. `slashCool` and `swingCool` were
+     * cleared here and `thrustCooldown` and `spinCool` were not, so two of the
+     * five attack clocks survived a reset — and `thrustCooldown` is the one
+     * that gates the LEFT BUTTON, so a controller reset mid-recovery refused
+     * the whole sequence for up to `SLASH.cooldown × 1.5` afterwards.
+     *
+     * NOT A PLAYER-FACING DEFECT, and saying so is the honest half: `reset` has
+     * no caller in src/ at all — every one is a check or verify.mjs, so what
+     * this actually broke is instruments. It broke one immediately.
+     * tools/checks/sequence.mjs read a tapped heavy as costing 0.0% of the
+     * stamina bar and passed its ordering clause on that, and the press it
+     * believed it was measuring had been refused by a cooldown the arm above
+     * it left armed. There is no reading of a method called `reset` under
+     * which some of the clocks belong to the old life and the rest do not. */
+    this.thrustCooldown = 0;
+    this.spinT = -1; this.spin = 0; this.spinYaw = 0; this.spinCool = 0; this._spY = 0;
     this.bodyYaw = 0; this._spinThrust = 0;
     this.slashT = -1; this.slash = 0; this.slashCool = 0;
     this.comboStep = 0; this.comboTimer = 0;
