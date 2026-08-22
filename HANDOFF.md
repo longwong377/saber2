@@ -359,6 +359,28 @@ both directions at once. Use `window.__play(gameSeconds, …)`, not a frame coun
 Timing checks (`prefracture`, `frame-budget`) will blow if anything else is
 using the CPU. Don't run the suite next to a browser.
 
+### 2.6b …AND TWELVE LANES ON ONE BOX IS "ANYTHING ELSE"
+
+The line above says "don't run the suite next to a browser". The version of it
+that actually bites now is worse, because it is invisible: with a dozen agent
+lanes on this one container, each running its own bench, **`uptime` reported a
+load average of 44 across 24 node processes.** Every millisecond any of them
+measured in that window was fiction, and a full gate under it went red on
+`cloth: 19 enemies' garments cost 6.43 ms` — a check that passes alone.
+
+Two rules, and the second is the one people skip:
+
+1. **Before you quote a millisecond, run `uptime` and `ps -eo args | grep -c
+   "^node --import"`.** Put the number in the report next to the measurement.
+   A timing taken at load 44 is not a slow result, it is no result.
+2. **A red timing check in a shared-box gate is a LEAD, not a fact.** Reproduce
+   it alone before you spend an hour on it — and reproduce it alone before you
+   "fix" it by raising the budget, which is how a real regression gets papered
+   over by a number somebody widened to match a contended run.
+
+The same applies to any bench with a wall-clock term in it. Counts, hit rates
+and hp are safe under load; seconds are not.
+
 > **SOLVED, AND THE HYPOTHESIS BELOW IS REFUTED BY MEASUREMENT — see §2.7b.**
 > The roster's growth to 31 archetypes is **not** why `cloth-cost` never
 > finished: the whole 31-archetype census World builds, spawns and steps in
@@ -1567,6 +1589,103 @@ bite in opposite directions: cutting a sun to soften a shadow drops the cloud
 deck under its own sky (`sky.mjs` calls that smoke), and raising the ambient to
 compensate walks into `lighting.mjs`'s cast-shadow floor. That is how a
 one-level tuning pass becomes a four-suite bisect.
+
+---
+
+## 6.3b A GUARD WHOSE WRITER WAS NEVER WRITTEN — and three more of the same shape
+
+The physics/bodies/lifecycle audit. Everything here was green in every suite
+that mentions it, and every one of them is a system holding an object the game
+had already torn down. The instrument is `tools/_bodyaudit.mjs`: one World, a
+scripted Jedi that actually clears the room, and a full census — the scene
+graph, **Rapier's own counters rather than our mirrors of them**, every
+collection a body can be parked in, non-finite transforms, and bodies at rest
+under the ground — every sixty game-seconds for fifteen minutes.
+
+**A check that reads a guard is not a check that the guard is written.**
+`Corpses.update` opens `if (!e || e.disposed || !e.dead)`. `Enemy.dispose`
+never wrote `disposed`; only `Player` did. `World.restartWave`'s own note says
+in as many words "Both halves are fixed, because either alone leaves the other
+reader wrong" — **one half was fixed**, and `grep -rn '\.disposed' src/` was
+enough to see it. What that cost is not the wave reset the note was about, it
+is ordinary play: `Enemy.update` ends `return this.dying < 40`, so `World`
+tears every corpse down forty seconds after it falls and the ledger held it
+regardless.
+
+    t=120s   20 corpses,  7 already disposed
+    t=240s   20 corpses, 17 already disposed
+    t=420s   20 corpses, 20 already disposed — and it never moves again
+
+Seven minutes in, every slot of a twenty-corpse budget is a body that no longer
+exists, `live.length > budget` is false forever, and **the field a player fights
+on keeps no dead at all** — which is the exact complaint the budget was built
+to answer. Twenty whole Enemy graphs ride behind them until the level unloads.
+
+**Two callers below one early return.** `applyBodyLod` is called from
+`Enemy._applyLod` and from `Enemy.update`, and BOTH sit under `update`'s
+`if (this.dead) … return this.dying < 40`. Both LOD rungs already say a corpse
+is not theirs (`applyCohort`'s `fit` is `lod >= 3 && !owner.dead && !ragdolled`)
+and neither was ever asked again. Measured with `tools/_cohortleak.mjs`, twelve
+B1s stood past `L3_AT` (137.8 m) and killed where they stood: six were still
+cohort MEMBERS forty-five seconds after being disposed, still drawn as standing
+soldiers by the shared InstancedMesh with their ragdolls invisible underneath,
+and the slot never came back — `c.high` climbs with every distant kill and
+`_grow` doubles the instance buffer to hold ghosts.
+
+**A flag that means one thing to its writer and another to its five readers.**
+`RapierWorld.remove` sets `body.dead = true` and `add` never cleared it, so it
+meant "has been removed at least once". A body can come back:
+`Enemy._tickGetUp` takes the walking capsule out when a droid is knocked flat
+and calls `add` again when it stands up. `tools/_deadflag.mjs`, one B1:
+
+    standing   dead=false  inWorld=true   forceSeen=true
+    knocked    dead=true   inWorld=false
+    back up    dead=true   inWorld=true   forceSeen=FALSE
+
+`Player._grippableBody` refuses anything with `b.dead`. **Every enemy in the
+game became ungrippable the first time a push put it on its back** — the aim
+ray passed straight through it to whatever stood behind, for the rest of that
+body's life. `Physics.js` has the identical shape and is deliberately left
+alone: its own header says nothing there runs in a player's frame.
+
+**And one producer with no consumer.** A dropped hilt is an ordinary `Prop`
+with no lifetime; `ageDropped` only ever advanced `dropAge`. `_hiltpile.mjs`,
+eight duellists killed five times over: 8 → 40 hilts, 196 → 983 meshes, one per
+saber-carrying kill forever. A hilt is 24.6 meshes because it is nineteen to
+thirty-six machined pieces, so forty of them is 983 draw calls of hardware in
+the sand against the 520 `world-immersion` holds a whole LEVEL to.
+
+**THE PROTECTION ON A BUDGET LIKE THAT IS A RELATIONSHIP, NOT A RADIUS**, and
+two drafts got it wrong before the measurement said so. A fight happens AROUND
+the player, so every hilt on the field is inside any distance floor worth
+having: at 14 m and again at 4 m the cull refused every candidate and the pile
+still grew five a wave. What is protected now is a hilt in a hand or in the
+Force, one a local player put down themselves, and one dropped inside
+`PICKUP_DELAY`; everything else is ranked exactly as `Corpses.worth` ranks the
+dead, and what fades is what is behind you at thirty metres.
+
+All five are bound by `tools/checks/undertaker.mjs` (7 checks). Two things it
+had to learn the hard way and the next bench will too:
+
+- **`dying` does not advance at one second per second.** `World` scales `dt`
+  for hitstop and kill-time, so 42 s of stepping put `dying` at 37 and the
+  first draft of the corpse check failed on a build where the fix worked.
+  Drive until the thing has happened, with a cap — not for a fixed wall of
+  frames. Same shape as §2.6, one clock further in.
+- **`_flagship.mjs`'s `dutyInput` is not a room-clearer.** It holds station on
+  its line and meets only what comes inside `ENGAGE` (14 m), because it is
+  measuring a formation. Driven with it, the 900 s audit stalled at t=420 with
+  one B2 standing 34 m out shooting into a raised guard, and the last 480
+  game-seconds were a still frame. `_bodyaudit` carries its own `hunterInput`.
+
+**What is left, and why.** `Prop.destroy` frees materials only where the prop
+says `ownsMaterials` (today: a dropped hilt, whose five metals `buildHiltGroup`
+machines per hilt). Every other prop kind draws from shared tables and freeing
+one of those takes the paint off everything still standing — the same
+"corrupting something another system still holds" `_cullOldestDebris` refuses
+to commit. Whether any of those tables are per-prop after all is unmeasured.
+`Player.dispose` still does not dispose `p.injury`, which owns two materials;
+that is ~2 per respawn and it is not what any of the numbers above are about.
 
 ---
 
