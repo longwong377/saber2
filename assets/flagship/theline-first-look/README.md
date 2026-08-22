@@ -47,3 +47,38 @@ on 16:9:
 
 §5's 0:24 beat is "**You can see the front.**" Four runs in five open looking at
 clean ground with it behind them.
+
+## why the frame is empty — measured, not inferred
+
+`tools/_linelook.mjs` prints every body's range and bearing off the camera's own
+centre line, its LOD rung, whether its rig is parented to the scene, whether a
+merged skin or a cohort has it, and whether the **renderer's own frustum**
+contains it. Seed 5, Geonosis, instant arrivals, nobody driving:
+
+    t = 0.03 s   10 alive   4.0–8.4 m    every one 83°–180° off centre
+                 lod 0, 0 detached, 0 merged, 0 cohorted    0 of 10 IN FRAME
+                 1 hostile at 87 m, in frame
+
+    t = 10 s      8 alive   3.5–10.6 m   121°–180° off       0 of 8  IN FRAME
+                 49 hostiles, 30–90 m, 15 in frame, none past L3_AT (137.8 m)
+                 lod census {0:2, 1:24, 2:23}, 0 detached
+
+    t = 30 s      7 alive   8.3–25.9 m                       1 of 7  IN FRAME
+                 20 hostiles, 12–146 m, 13 in frame, 1 past L3_AT
+
+Nothing is missing and nothing is culled. It is **placement**:
+
+- `DEFAULT_FORMATION` is `behind` — *"In column behind you. You are the point of
+  the spear"* — whose slot is `z = -(3.0 + rank·2.2)`, every trooper at negative
+  local Z.
+- The formation's frame is the commander's held **body heading** (`headingOf`,
+  slewed on a 40° deadband), not the aim — so turning the camera does not bring
+  them round; they re-form behind whatever direction the player commits to.
+- `Player` opens its rig at `camera.yaw = Math.PI` and nothing on the solo path
+  writes it again, so at 0:00 the body heading and the camera agree.
+- Half the horizontal frame is 45.7° at the shipped `fov: 60` on 16:9.
+
+The mode's entire named army is in the half of the world the camera does not
+cover, on the frame the player first sees it — and the front is in that half
+too. The "49 remaining" on the wave counter is the QUEUE, not the field: the
+queue drains to 49 standing by t = 10 s.
