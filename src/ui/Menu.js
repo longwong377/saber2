@@ -1494,14 +1494,56 @@ export const CODEX = [
       + `shuts after ${CATCH.maxOpen.toFixed(2)}&nbsp;s, and a catch you made yourself opens a `
       + `${Math.round(CATCH.autoCone * 360 / Math.PI)}&deg; cone in front of you for `
       + `${CATCH.autoGuard.toFixed(2)}&nbsp;s that takes the rest of the burst for free.` },
+  /**
+   * FOUR ROWS THAT DESCRIBED A GAME THAT STOPPED EXISTING, and the grid's own
+   * note two entries down had already named the class: "every number this grid
+   * has ever typed by hand has eventually described a game that stopped
+   * existing". These four were the same defect in prose rather than in
+   * numbers, and they are the page a player reads to learn the attacks.
+   *
+   *   overhead   "the arc grows and the cut slows" — both halves backwards.
+   *              `CHARGE`'s own note records the bigger arc as the FIRST
+   *              ATTEMPT and why it was abandoned ("the guard's travel is
+   *              clamped and the ordinary overhead already saturates it… a
+   *              number that cannot move the thing it multiplies is not a
+   *              tuning value, it is a comment"), and `CHARGE.cut` is 0.62 —
+   *              the cut window SHRINKS, so the blade is faster. The row then
+   *              contradicted itself in its own next clause.
+   *   stab       "Same lunge as the thrust, on the other half of the wheel."
+   *              There has been no bare stab since the spin and the stab were
+   *              merged on the player's instruction; `attackStab` fires the
+   *              drill, frame for frame the same move as `attackSpin`.
+   *              tools/checks/directional.mjs's own check is titled "two
+   *              moves, no bare stab" and this taught the deleted one.
+   *   spin       "the overhead's arc turned on its side… Reaches what is
+   *              beside you, not what is in front of you." That is the
+   *              windmill the drill replaced, and the new move is the exact
+   *              opposite: the blade is held OUT IN FRONT and the body spins
+   *              about it while travelling. Measured on the ring bench in
+   *              tools/checks/animation.mjs, one pass crosses 18 of 18 bodies
+   *              around the player and 7 of the 9 in front of them.
+   *   thrust     "drive the hands forward along the blade" — the left button
+   *              was a pure thrust and is a wide level CUT with the lunge
+   *              inside it, and three presses are a SEQUENCE. The one thing
+   *              the player asked for by name ("three clicks will be two light
+   *              attacks and then a heavy slash you can hold and release") was
+   *              taught nowhere on this page.
+   */
   { keys: ['attackOver'], text: () => 'Overhead attack — wind up over the head and cut down. '
-      + '<b>Hold</b> it and the arc grows and the cut slows: a charged heavy, and the blade is '
-      + 'genuinely moving faster when it lands.' },
-  { keys: ['attackStab'], text: () => 'Stab. Same lunge as the thrust, on the other half of the wheel.' },
-  { keys: ['attackSpin'], text: () => 'Spinning attack — the overhead\u2019s arc turned on its '
-      + 'side, and the body turns through the cut. Reaches what is beside you, not what is in '
-      + 'front of you.' },
-  { keys: ['thrust'], text: () => 'Attack — drive the hands forward along the blade.' },
+      + '<b>Hold</b> it and the blade stays chambered at the top; let go and the same arc is '
+      + 'covered in less time, so it lands genuinely faster. Holding costs stamina.' },
+  { keys: ['attackStab'], text: () => 'The drill — the same move as the spinning attack, on the '
+      + 'other half of the wheel. There is no separate stab: the lunge lives inside the left '
+      + 'button\u2019s cut.' },
+  { keys: ['attackSpin'], text: () => 'The drill — hold the blade out in front and spin like a '
+      + 'missile, in any direction you steer. It cuts everything you pass through, and it is the '
+      + 'answer to being surrounded.' },
+  { keys: ['thrust'], text: () => 'Attack — a wide level cut that steps forward through what it '
+      + 'crosses. Consecutive strokes alternate sides.' },
+  { keys: ['thrust', 'thrust', 'thrust'],
+    text: () => 'Three presses in quick succession are a sequence: two light cuts and then a '
+      + '<b>heavy</b>. The third one chambers instead of swinging — hold it and the cut comes out '
+      + 'faster, at the price of stamina and a longer recovery, and it goes when you let go.' },
   { keys: ['moveF', 'moveL', 'moveB', 'moveR'],
     // The walk's share is READ off WALK_SCALE rather than typed as "a third".
     // Every number this grid has ever typed by hand has eventually described a
