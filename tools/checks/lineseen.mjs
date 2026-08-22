@@ -334,6 +334,23 @@ export async function run({ check, assert }) {
           rosterRows: document.querySelectorAll('#rp-list .rp-row').length,
           front: { distance: +front.distance.toFixed(1), bearing: +front.bearing.toFixed(3) },
           me: +line.side(p.x, p.z).d.toFixed(1),
+          /* HOW FAR THE PLAYER HAS TO TURN TO SEE IT — reported, not asserted.
+           *
+           * `Player`'s rig opens at `yaw = Math.PI` and nothing on the solo
+           * path writes it again; the front's bearing is a seed roll. Measured
+           * over the 169 seeds of 200 that roll a ground with a plan on it,
+           * **38 open with the front inside the frame** — 22% — and the rest
+           * open looking at clean ground with §5's 0:24 behind them. That is a
+           * design decision with an owner (turn the player, or turn the front)
+           * and not a regression this check can hold a bar on, so the number
+           * rides in the message where a gate run will keep printing it.
+           * `frontCamera` owns the yaw conversion; nothing here restates it. */
+          offBy: (() => {
+            let d = (w.player.camera?.yaw ?? 0) - F.frontCamera(front).yaw;
+            while (d > Math.PI) d -= 2 * Math.PI;
+            while (d < -Math.PI) d += 2 * Math.PI;
+            return Math.round(d * 180 / Math.PI);
+          })(),
           fallen, fallenMeshes, smoke,
           wrecks: wrecks.length, onLine: onLine.length, sunk: sunk.length,
           strewWrecks: typeof w.strewWrecks,
@@ -380,7 +397,8 @@ export async function run({ check, assert }) {
 
       return `seed ${SEED} → ${W.level} (${W.generated}, ${W.battlefield}), plan ${shown.plan}, `
         + `${shown.names.length} names on the card; front at ${ground.front.distance} m, player `
-        + `${ground.me} m off it; ${ground.fallen} fallen in ${ground.fallenMeshes} draws, `
+        + `${ground.me} m off it and ${ground.offBy}° from facing it; `
+        + `${ground.fallen} fallen in ${ground.fallenMeshes} draws, `
         + `${ground.smoke} smoke, ${ground.onLine} of ${ground.wrecks} hull pieces on the line `
         + `(${ground.sunk} sunk); `
         + `${ground.draws} draws / ${(ground.tris / 1e6).toFixed(2)} M tris over ${ground.bodies} bodies`;
