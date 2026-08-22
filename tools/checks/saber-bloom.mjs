@@ -65,7 +65,7 @@
 import { readFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { templateAfter, glslUnit } from './_glsl.mjs';
-import { Saber, SABER_COLORS } from '../../src/game/Saber.js';
+import { Saber, SABER_COLORS, FOG_FLOOR, FOG_FLOOR_GLSL } from '../../src/game/Saber.js';
 import { ORDERS } from '../../src/game/Order.js';
 import { LEVELS } from '../../src/game/Levels.js';
 import { HUD } from '../../src/ui/HUD.js';
@@ -107,7 +107,10 @@ const SHIPPED = { width: [0.0110, 0.0330, 0.105], amp: [58.0, 6.50, 1.50], radiu
  *           one. The clamp is measured separately, on its own, below.
  */
 const SABER_SRC = new URL('../../src/game/Saber.js', import.meta.url);
-const FRAG = glslUnit(templateAfter(readFileSync(SABER_SRC, 'utf8'), 'const BLADE_FRAG ='));
+/* The scope is the shader's own interpolations, handed in from the module that
+ * ships them — see FOG_FLOOR_GLSL in Saber.js for why it is exported. */
+const FRAG = glslUnit(templateAfter(readFileSync(SABER_SRC, 'utf8'), 'const BLADE_FRAG =',
+  { FOG_FLOOR_GLSL }));
 
 /** The colour BLADE_FRAG writes, d metres across the blade. [] where it discards. */
 function fragRGB(s, d, { t = 0.5, time = 0, px = 1e-9, len = 1.0 } = {}) {

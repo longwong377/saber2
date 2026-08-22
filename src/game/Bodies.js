@@ -6881,10 +6881,25 @@ export function buildShieldBubble(opts = {}) {
     fragmentShader: `uniform vec3 uColor; uniform float uTime; uniform float uPower;
       varying vec3 vN; varying vec3 vV; varying vec3 vP;
       void main(){
+        /* CEL, LIKE EVERYTHING ELSE. Cel.js works by rewriting three's own
+           ShaderChunks, so it reaches every material that INCLUDES them — and a
+           hand-written ShaderMaterial like this one includes none, which is why
+           the barrier was the one surface in the game still wearing a smooth
+           photographic falloff. The fresnel, the hex weave and the ripple are
+           all kept; they are quantised into flat steps on the way out, per
+           src/toon/REFERENCE.md. The fwidth term antialiases the step edge
+           without softening it — a hard edge that crawls is worse than no hard
+           edge at all on a curved surface this large. */
         float fres = pow(1.0-abs(dot(normalize(vN),normalize(vV))), 2.4);
         float hexes = sin(vP.x*26.0)*sin(vP.y*26.0)*sin(vP.z*26.0);
         float ripple = 0.5+0.5*sin(vP.y*14.0 - uTime*4.0);
-        float a = (fres*0.85 + max(hexes,0.0)*0.14 + ripple*0.05) * uPower;
+        float raw = fres*0.85 + max(hexes,0.0)*0.14 + ripple*0.05;
+        float e = max(fwidth(raw)*0.5, 0.004);
+        float s1 = smoothstep(0.16-e, 0.16+e, raw);
+        float s2 = smoothstep(0.42-e, 0.42+e, raw);
+        float s3 = smoothstep(0.72-e, 0.72+e, raw);
+        float band = (0.10 + s1*0.24 + s2*0.30 + s3*0.36);
+        float a = band * uPower;
         gl_FragColor = vec4(uColor*(a*2.2), a);
       }`,
     transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,

@@ -72,8 +72,9 @@ export const MAX_BOLTS = 24;
 export const MAX_POINTS = 40;
 /** Samples per metre of bolt. A 2 m arc must not be as coarse as a 16 m one. */
 export const STEPS_PER_M = 3.2;
-/** How far the walk may stray, per step, before damping. */
-export const WANDER = 0.5;
+/** How far the walk may stray, per step, before damping. 0.5 → 0.375: see the
+ *  note on the layer widths in the constructor. */
+export const WANDER = 0.375;
 /** The chance a given interior sample throws a dead-end fork. */
 export const FORK_CHANCE = 0.16;
 
@@ -128,11 +129,29 @@ varying float vEdge;
 uniform vec3 uColor;
 uniform float uGain;
 void main() {
-  float across = 1.0 - abs(vEdge);
-  float core = pow(clamp(across, 0.0, 1.0), 1.6);
-  float a = core * vFade * uGain;
+  float across = clamp(1.0 - abs(vEdge), 0.0, 1.0);
+  /* ── CEL, NOT A GRADIENT ──────────────────────────────────────────────
+     This was pow(across, 1.6) — a smooth falloff across the ribbon, which is
+     a photographic filament and not this game's picture of one. Cel.js cannot
+     reach here to fix it: it works by rewriting three's own ShaderChunks, and a
+     hand-written ShaderMaterial like this one includes none of them, so every
+     raw-shader effect in the tree has to carry the look itself.
+
+     src/toon/REFERENCE.md's rule is flat fields with hard edges between them,
+     so the cross-section is three steps rather than a ramp: a white-hot centre,
+     one mid band, one outer band, and nothing in between. The fwidth guard is
+     the one concession — a step edge with no antialiasing crawls badly on a
+     ribbon this thin, and a half-pixel of blend at the boundary is what keeps
+     the band HARD rather than making it soft. */
+  float e = max(fwidth(across) * 0.5, 0.002);
+  float b1 = smoothstep(0.30 - e, 0.30 + e, across);
+  float b2 = smoothstep(0.68 - e, 0.68 + e, across);
+  float band = 0.24 + b1 * 0.38 + b2 * 0.38;
+  float a = band * vFade * uGain;
   if (a < 0.004) discard;
-  gl_FragColor = vec4(uColor * (0.65 + core * 0.9), a);
+  /* The tint steps with the band instead of riding across continuously, or the
+     colour would ramp smoothly across a shape whose alpha does not. */
+  gl_FragColor = vec4(uColor * (0.62 + b1 * 0.34 + b2 * 0.52), a);
 }`;
 
 /** One drawable layer — an envelope or a core. Same spines, different width. */
@@ -203,8 +222,16 @@ export class LightningVfx {
      * wider and the halo detaches from the filament inside it. The gain is what
      * keeps a dozen overlapping bolts from summing to white under additive
      * blending — which is what a channel is, twelve of them at once. */
-    this.envelope = new Layer(scene, { color: this.color, width: 0.15, gain: 0.42 });
-    this.core = new Layer(scene, { color: 0xffffff, width: 0.020, gain: 1.0 });
+    /* A QUARTER NARROWER THAN IT WAS — 0.15/0.020 became 0.1125/0.015 on the
+     * player's note: "can you reduce the overall diameter of the lightning /
+     * space it takes up by like 20-30%". The 7:1 ratio above is preserved
+     * exactly, because that ratio is the thing the paragraph is about; both
+     * numbers simply moved down together, so the halo still surrounds the
+     * filament rather than detaching from it. `WANDER` came down by the same
+     * quarter, since half of the "space it takes up" is how far the walk
+     * strays rather than how fat the ribbon is. */
+    this.envelope = new Layer(scene, { color: this.color, width: 0.1125, gain: 0.42 });
+    this.core = new Layer(scene, { color: 0xffffff, width: 0.015, gain: 1.0 });
     /** Live bolts. Fixed length; `alive` is what makes one real. */
     this.bolts = [];
     for (let i = 0; i < MAX_BOLTS; i++) {

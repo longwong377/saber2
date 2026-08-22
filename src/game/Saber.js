@@ -494,9 +494,32 @@ const BLADE_VERT = /* glsl */`
     gl_Position = projectionMatrix * mvPosition;
   }
 `;
+/**
+ * THE SHARE OF AN EMITTER THE HAZE MAY NEVER TAKE.
+ *
+ * Both blade and trail multiply themselves by (1 - fogFactor), which is right
+ * in principle — haze takes light away from a light source, it does not tint it
+ * — and was wrong at the limit, because nothing stopped the product reaching
+ * zero. On the heavy-weather levels the blade stopped being a colour before it
+ * stopped being on screen.
+ *
+ * Written into the GLSL as a define rather than a uniform: it is one number,
+ * the same for every saber in the world, and a uniform would be a per-material
+ * write every frame to say the same thing. Named in one place so the blade and
+ * the trail cannot drift apart — they are one object to the eye.
+ */
+export const FOG_FLOOR = 0.42;
+
+/* EXPORTED so `tools/checks/_glsl.mjs` can be handed the same string the
+ * shader is built from. That helper evaluates the template it extracts, so an
+ * interpolation it has no binding for is a hard failure — which is the design:
+ * a check reads the SHIPPED number rather than a copy of it. */
+export const FOG_FLOOR_GLSL = `const float FOG_FLOOR = ${FOG_FLOOR.toFixed(3)};`;
+
 const BLADE_FRAG = /* glsl */`
   #include <common>
   #include <fog_pars_fragment>
+  ${FOG_FLOOR_GLSL}
   uniform vec3 uHue;         // the crystal, normalised so its peak channel is 1
   uniform vec3 uWidth;       // gaussian sigma: core, glow, halo
   uniform vec3 uAmp;         // amplitude:      core, glow, halo
@@ -565,18 +588,71 @@ const BLADE_FRAG = /* glsl */`
      * This way the lobe's luminance is identical before and after and the only
      * thing that moves is chroma. */
     vec3 hueN = vec3(dot(uHue, vec3(0.2126, 0.7152, 0.0722)));
+    float fogK = 0.0;
+    #ifdef USE_FOG
+      #ifdef FOG_EXP2
+        fogK = 1.0 - exp(-fogDensity * fogDensity * vFogDepth * vFogDepth);
+      #else
+        fogK = smoothstep(fogNear, fogFar, vFogDepth);
+      #endif
+    #endif
+    /* ── WHY THE COLOUR WASHES OUT IN WEATHER, AND WHICH LEVER IT IS NOT ──
+     *
+     * "Sometimes it's hard to make out your lightsaber colour in game depending
+     * on the weather, it drowns out the colour a little too much."
+     *
+     * THREE CANDIDATE CAUSES WERE MEASURED THROUGH THIS SHADER AND TWO OF THEM
+     * ARE INNOCENT, which is worth writing down because both look guilty:
+     *
+     *   CORE_WHITE is not it. The core lobe runs at amp 58, so far over 1.0
+     *     that ACES clips it to white whatever hue went in. Moving CORE_WHITE
+     *     from 0.85 to 0.55 moved the measured chroma at 8 mm by 0.011 — and
+     *     the core stays clipped at L=1.00 even at 140 m through the heaviest
+     *     shipped fog, so a haze-driven version of the same idea is inert too.
+     *     It was written, measured at zero, and taken back out.
+     *
+     *   THE HALO'S WIDTH is not it either. The band that reads as colour after
+     *     tone mapping already runs from 16 mm to 155 mm — the blade is a white
+     *     filament inside a wide, FULLY SATURATED skirt, because the mix toward
+     *     luminance is weighted by the core's share and that share is nil out
+     *     there. Widening the halo lobe 25% bought 35 mm of band and a fatter
+     *     blade; it is not short of coloured pixels.
+     *
+     * WHAT IS LEFT is the one thing neither number can fix from in here: the
+     * skirt is ADDITIVE, so what it is worth depends on what is behind it. Over
+     * a dark level it is the whole picture. Over a bright hazy one the
+     * background is already near the top of the range and the same added blue
+     * is a smaller fraction of it — the colour is not being removed, it is
+     * being out-voted. That is why it is weather-dependent and why it is a
+     * per-level quantity rather than a constant here.
+     *
+     * So the fix is the amplitude the LEVEL asks for (BLADE_TUNING / the level's
+     * own bloom strength) plus the floor below, and NOT another curve in this
+     * function. Recorded here so the next reader does not re-derive the two
+     * dead ends. */
     vec3 col = mix(uHue, hueN, uCoreWhite * (ec / max(e0, 1e-5)));
     vec3 c = col * e;
     #ifdef USE_FOG
-      #ifdef FOG_EXP2
-        float fogFactor = 1.0 - exp(-fogDensity * fogDensity * vFogDepth * vFogDepth);
-      #else
-        float fogFactor = smoothstep(fogNear, fogFar, vFogDepth);
-      #endif
+      float fogFactor = fogK;
       // Haze takes light AWAY from an emitter. Mixing toward the fog colour —
       // what the stock chunk does — makes a distant blade brighter than a near
       // one, which is how you get a glowing stick on the horizon.
-      c *= 1.0 - fogFactor;
+      //
+      // BUT NOT ALL THE WAY TO NOTHING, and that was the bug. This was a bare
+      // multiply by (1.0 - fogFactor) with no floor at all, so on a heavy
+      // level the blade did not lose SATURATION with distance, it lost all
+      // radiance — "sometimes it's hard to make out your lightsaber colour in
+      // game depending on the weather, like it drowns out the colour a little
+      // too much". A weapon whose colour is its identity cannot be allowed to
+      // reach zero while it is still on screen and still in your hands.
+      //
+      // FOG_FLOOR is the share of the emitter the haze may never take. 0.42
+      // keeps the halo lobe over Engine's 1.8 bloom threshold in the worst
+      // shipped weather, which is what makes it read as COLOUR rather than as a
+      // grey stick; the first 58% of the extinction still applies in full, so a
+      // blade across the valley is still hazed and still dimmer than one at
+      // your feet. It is a floor, not a cancellation.
+      c *= max(1.0 - fogFactor, FOG_FLOOR);
     #endif
     // Additive blending ignores alpha, but the canvas does not: the menu
     // preview composites over the page, and emitting alpha 1 across the whole
@@ -611,6 +687,7 @@ const TRAIL_VERT = /* glsl */`
 const TRAIL_FRAG = /* glsl */`
   #include <common>
   #include <fog_pars_fragment>
+  ${FOG_FLOOR_GLSL}
   uniform vec3 uHue; uniform float uGlow; uniform float uHot;
   uniform float uCoreWhite;  // how far the HOT lobe is neutralised. See CORE_WHITE.
   varying float vAge; varying float vSide; varying float vThick; varying float vPunch;
@@ -655,7 +732,10 @@ const TRAIL_FRAG = /* glsl */`
       #else
         float fogFactor = smoothstep(fogNear, fogFar, vFogDepth);
       #endif
-      c *= 1.0 - fogFactor;
+      // The same floor as the blade's, and for the same reason — a trail that
+      // fades to nothing behind a blade that does not is a smear that detaches
+      // from its own weapon. See BLADE_FRAG.
+      c *= max(1.0 - fogFactor, FOG_FLOOR);
     #endif
     gl_FragColor = vec4(c, clamp(max(max(c.r, c.g), c.b), 0.0, 1.0));
   }
@@ -1271,6 +1351,46 @@ export class Saber {
   static CORE_WHITE = 0.85;
 
   /**
+   * HOW MUCH THE LEVEL'S OWN AIR IS ALLOWED TO ASK FOR, at the top end.
+   *
+   * The bright hazy grounds — the snowfields and the arena, where the sky sits
+   * near the top of the range — are exactly the ones the player named. This is
+   * the most the outer lobes may be lifted on the worst of them; a clear dark
+   * level asks for nothing and gets 1.0.
+   */
+  static ENV_GAIN_MAX = 1.42;
+
+  /**
+   * Tell the blade what air it is being swung in.
+   *
+   * Called by the world when a level's atmosphere is installed. `haze` is the
+   * fog density and `skyLum` the sky's linear luminance — the two things that
+   * decide how much of the additive skirt survives — and both are read off the
+   * level rather than typed here, so this cannot drift from the sky it is
+   * compensating for. Safe to call with nothing: it resets to neutral.
+   */
+  setEnvironment({ haze = 0, skyLum = 0 } = {}) {
+    /* NORMALISED ACROSS THE SHIPPED SPREAD, not against a round number.
+     *
+     * The first cut divided by the default density and by the brightest sky,
+     * and every one of the seven levels came out at the ceiling — which is a
+     * flat brightness rise wearing a per-level costume. These are the measured
+     * ends of what the game actually presents: fog runs 0.0044 (drifts) to
+     * 0.0125 (wood), and sky luminance 0.19 (mustafar) to 0.66 (alpine). A
+     * level at the clear, dark end asks for nothing.
+     *
+     * `** 1.5` biases the middle down so only a genuinely bright or genuinely
+     * thick ground collects most of the lift; `max` rather than a sum because
+     * either condition alone is enough to out-vote an additive skirt, and a
+     * level that is both should not be paid twice. */
+    const span = (v, lo, hi) => Math.min(Math.max((v - lo) / (hi - lo), 0), 1);
+    const want = Math.max(span(haze, 0.0044, 0.0125), span(skyLum, 0.19, 0.66)) ** 1.5;
+    this.envGain = 1 + (Saber.ENV_GAIN_MAX - 1) * want;
+    this._syncWidth?.();
+    return this.envGain;
+  }
+
+  /**
    * The smear's two amplitudes, as FRACTIONS of the blade lobes they are tied to.
    * See _buildTrail for what the tie means and _syncWidth for what keeps it.
    *
@@ -1413,8 +1533,26 @@ export class Saber {
     const T = this._tuning;
     // The two lobes the SMEAR is defined against, computed once here so the
     // blade and the trail cannot be given different exponents by accident.
-    const glow = P.amp[1] * w * T.amp[1] * V.amp[1];
-    const halo = P.amp[2] * w * w * T.amp[2] * V.amp[2];
+    /* AND THE GROUND GETS A SAY, because the skirt is additive.
+     *
+     * BLADE_FRAG's long note works out that the colour "drowning out" in
+     * weather is not a curve in the shader — the halo is already wide and
+     * fully saturated — it is that an ADDITIVE skirt over a bright hazy
+     * background is a smaller fraction of it. That makes it a per-LEVEL
+     * quantity, and this is where a level gets to state it.
+     *
+     * DERIVED, not authored per level: a `bladeGain:` column on seven
+     * atmospheres is seven numbers to keep in step with seven skies, which is
+     * the drift HANDOFF §2.3 is about. `envGain` is computed from the level's
+     * own fog density and sky luminance when the world hands them over, so a
+     * level that is re-lit carries its blade with it. 1.0 when nobody has said
+     * anything, and `x * 1` is exact — an unlit blade is bit-for-bit what it
+     * was. Only the two OUTER lobes take it: the core is already clipped white
+     * at 32x the bloom threshold and lifting it further buys nothing but a
+     * fatter white stick. */
+    const G = this.envGain ?? 1;
+    const glow = P.amp[1] * w * T.amp[1] * V.amp[1] * G;
+    const halo = P.amp[2] * w * w * T.amp[2] * V.amp[2] * G;
     if (this.bladeMat) {
       this.bladeMat.uniforms.uWidth.value.set(
         P.width[0] * w * T.width[0] * V.width[0],

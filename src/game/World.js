@@ -145,6 +145,28 @@ export function roomOf(level, surface = 'sand') {
 import { applyOrder } from './Order.js';
 import { CAMPAIGNS, CAMPAIGN_IDS, LEVELS, LEVEL_ORDER, campaignAt, groundMight, levelRotation,
   spawnClear } from './Levels.js';
+
+/**
+ * WHAT A LEVEL'S AIR ASKS OF A BLADE.
+ *
+ * One place, so `_loadSteps` and `spawnPlayer` cannot answer differently. The
+ * two inputs are the fog density and the sky's luminance because those are the
+ * two things that decide how much of an ADDITIVE skirt survives — see the note
+ * over the lobes in `Saber._syncWidth`. Rec. 709 luma, the same weights the
+ * blade shader neutralises its core with, so "bright" means the same thing in
+ * both files.
+ */
+function bladeEnvFor(a = {}) {
+  const c = a.skyColor ?? 0x000000;
+  const r = ((c >> 16) & 255) / 255, g = ((c >> 8) & 255) / 255, b = (c & 255) / 255;
+  // sRGB → linear, because the atmosphere authors these as display colours and
+  // the amplitude they are being compared against is linear.
+  const lin = (v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+  return {
+    haze: a.fogDensity ?? 0.0035,
+    skyLum: lin(r) * 0.2126 + lin(g) * 0.7152 + lin(b) * 0.0722,
+  };
+}
 import { AREAS, ARMY_IDS, CommandDirector, COMMAND_POWER_RULES, MAX_STRENGTH, OPENING_STRENGTH,
   assignArmies, commandConfig } from './Command.js';
 import { Corpses, CORPSE_BUDGET } from './Corpses.js';
@@ -706,6 +728,17 @@ export class World {
     this.bolts.onImpact = (b, res) => this._onBoltImpact(b, res);
 
     this.engine.applyAtmosphere(L.atmosphere);
+    /* AND THE BLADE IS TOLD WHAT AIR IT IS BEING SWUNG IN.
+     *
+     * `Saber.setEnvironment` lifts the two OUTER lobes on a bright or hazy
+     * ground — see the long note in BLADE_FRAG for why the colour washing out
+     * in weather is a per-level quantity and not a curve in the shader. Read
+     * off `L.atmosphere` here rather than authored per level, so a sky that is
+     * re-lit carries its blade with it and there is no second table to drift.
+     * Stored for `spawnPlayer`, because on a fresh load the player does not
+     * exist yet at this point in `_loadSteps`. */
+    this._bladeEnv = bladeEnvFor(L.atmosphere);
+    this.player?.saber?.setEnvironment?.(this._bladeEnv);
     /**
      * The bed AND the room, out of the one call, because they are the same fact
      * about a place. `surfaceAt(0, 0)` is the level's own centre — the ground
@@ -1263,6 +1296,10 @@ export class World {
     // "Blade holds position": leave the blade where the last flick left it
     // instead of easing back to the ready guard. Off unless asked for.
     p.control.holdPosition = !!this.settings.bladeHold;
+    /* The air this blade is being swung in — see `bladeEnvFor`. `_loadSteps`
+     * computes it before any player exists, so every player picks it up here
+     * rather than the load path reaching forward for one that is not there. */
+    if (this._bladeEnv) p.saber?.setEnvironment?.(this._bladeEnv);
     this.players.push(p);
     if (!this.player) {
       this.player = p;

@@ -739,7 +739,22 @@ const LIGHTNING_CHAIN = 3, LIGHTNING_REACH = 6.5, LIGHTNING_FALLOFF = 0.62;
  * derived in the note rather than asserted twice.
  */
 const LIGHTNING_CONE = 0.955;
-const LIGHTNING_STEPS_PER_M = 3.2, LIGHTNING_WANDER = 0.55, LIGHTNING_FORK = 0.16;
+const LIGHTNING_STEPS_PER_M = 3.2, LIGHTNING_WANDER = 0.41, LIGHTNING_FORK = 0.16;
+/**
+ * HOW FAST THE DISCHARGE CROSSES THE GAP, in metres per second.
+ *
+ * It used to cross it in no time at all: `_lightningEnd` resolves the endpoint
+ * instantly every tick and the damage was applied in the same frame, so the
+ * power was a hitscan wearing an arc. Reported as "make sure it isn't hitscan,
+ * it needs travel time obviously (but small)".
+ *
+ * 120 m/s puts the front at the far end of `LIGHTNING_RANGE` in 0.18 s and at a
+ * duellist's ten metres in 0.08 — long enough to see it leave your hands and
+ * arrive, short enough that it never feels like a projectile you have to lead.
+ * The BOLT is drawn to the front rather than to the target, so what you see is
+ * the thing that has not got there yet; the damage waits for the same front.
+ */
+const LIGHTNING_SPEED = 120;
 /**
  * IT IS A CHANNEL NOW, AND THAT IS THE FIX.
  *
@@ -7740,6 +7755,25 @@ export class Player {
     const target = new THREE.Vector3();
     const struck = this._lightningEnd(ctx, origin, target);
 
+    /* ── THE FRONT, which is what stops this being a hitscan ───────────
+     *
+     * `_lightningEnd` answers instantly and always did; what was missing was
+     * anything between the answer and the consequence. `ch.reach` is how far
+     * the discharge has actually got, growing at LIGHTNING_SPEED and surviving
+     * across ticks, so sweeping the channel onto a NEARER body arrives at once
+     * while swinging it out to a far one has to travel again.
+     *
+     * Clamped to the current distance rather than reset by it: a front that had
+     * already crossed twelve metres has crossed them, and a target that steps
+     * closer does not push the lightning back into your hands. */
+    const dist = origin.distanceTo(target);
+    ch.reach = Math.min(dist, (ch.reach ?? 0) + LIGHTNING_SPEED * dt);
+    const arrived = ch.reach >= dist - 1e-3;
+    /* Where the bolt is drawn TO. While the front is still crossing, this is a
+     * point in mid-air and the arc genuinely stops short of the victim. */
+    const tip = _v8.copy(origin)
+      .addScaledVector(_v9.subVectors(target, origin).normalize(), Math.max(ch.reach, 0.05));
+
     /* ── the drawing ─────────────────────────────────────────────────── */
     if (vfx) {
       vfx.setColor?.(this._lightningColor());
@@ -7755,16 +7789,16 @@ export class Player {
         /* The two hands' bolts meet a little in front of the chest and then run
          * on as one, which is the shape of the reference: two arcs converging
          * into a single discharge. */
-        vfx.strike(from, target, { power: 1, life: 0.10, chaos: 1 });
+        vfx.strike(from, tip, { power: 1, life: 0.10, chaos: 1 });
         if (rng() < 0.5) {
-          _v6.subVectors(target, from);
+          _v6.subVectors(tip, from);
           vfx.fork(_v7.lerpVectors(from, target, 0.3 + rng() * 0.5), _v6, 1.0 + rng() * 2.2, { power: 1 });
         }
       }
       /* AND IT LIGHTS THE WORLD. A discharge that leaves the ground unlit is a
        * decal; `Engine.lightUp` is the same eight-slot pool the blades use, so
        * this competes for a slot rather than recompiling every lit material. */
-      this.world.engine?.lightUp?.(target, _COL_LIGHT.setHex(this._lightningColor()),
+      this.world.engine?.lightUp?.(tip, _COL_LIGHT.setHex(this._lightningColor()),
         7.5 + Math.sin(ch.t * 40) * 2.5, 12, 2);
       this.world.engine?.lightUp?.(origin, _COL_LIGHT, 4.0, 7, 2);
     }
@@ -7777,6 +7811,12 @@ export class Player {
     if (ch.tick > 0) return;
     ch.tick = LIGHTNING_TICK;
     if (!struck) return;
+    /* AND THE DAMAGE WAITS FOR THE FRONT. Without this the arc would be drawn
+     * crossing the gap while the victim was already taking the jolt, which is
+     * a hitscan with an animation in front of it — the exact thing the note
+     * asked to be rid of. The tick clock is not rewound, so a channel held on
+     * one body settles into its ordinary rhythm after the first arrival. */
+    if (!arrived) return;
     const scale = LIGHTNING_TICK / 0.55;      // per-tick share of a full jolt
     const hit = new Set();
     let from = target, node = struck, power = 1;
