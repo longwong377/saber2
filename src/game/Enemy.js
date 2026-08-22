@@ -5598,6 +5598,45 @@ export class Enemy {
           this.aimCharge = A.telegraph;
           this._beginTelegraph(ctx);
         }
+        /**
+         * ── AND IT STANDS STILL TO TAKE THE SHOT ──────────────────────────
+         *
+         * The four bodies that declare a `telegraph` — the sniper (1.0 s), the
+         * rocket droid (0.9), the AT-TE (1.1) and the `marksman` elite (0.9) —
+         * draw a red line from the muzzle to your chest and hold it there for
+         * most of a second. `MODIFIERS.marksman`'s own text calls that line
+         * "the whole of the counter-play". Measured: a sniper travelled at 97%
+         * of its own top speed for every frame its laser was lit. A tell drawn
+         * in the HUD and contradicted by the feet is half a tell.
+         *
+         * This is the same sentence `A.plant` makes to a siege gun eighty lines
+         * up and `BEAST_MOVES.plant` makes to an animal mid-lunge, said to the
+         * other group of bodies that already advertise a wind-up.
+         *
+         * IT DOES NOT MOVE THE COUNTER-PLAY. `_beginTelegraph` commits the aim
+         * to `telegraphAim` at the top of the charge and `_shoot` fires down
+         * it, so a player who steps off the line is missed whatever the
+         * shooter's feet are doing. What planting buys is `aimQuality`'s
+         * MOVEMENT term — worth 1.53x of this body's spread while it strolls —
+         * and it is spent only on a player who ignored a second of warning
+         * painted on their own chest.
+         *
+         * MEASURED OVER TWO CENSUSES (`tools/_horde.mjs`), the mean of that
+         * term at the moment of EVERY shot fired in the game was 1.544 of a
+         * possible 1.55, and zero shots were fired below 15% of the shooter's
+         * own speed: nothing in this brain has ever chosen to stand still
+         * except the one archetype in 37 that declares `plant`. Making every
+         * shooter halt would take the whole horde to ~1.0 — a third off the
+         * spread of every gun in the game — which is a balance change to every
+         * wave budget and is deliberately NOT made here. This is the case
+         * where standing still is the body's own promise.
+         *
+         * A charge that loses its line of sight never reaches this statement
+         * (the sight test above returns first), so a body that cannot see gets
+         * up and repositions rather than standing in the open with a frozen
+         * telegraph.
+         */
+        this.wish = null;
         this.aimCharge -= dt;
         if (this.aimCharge <= 0) {
           this._endTelegraph();

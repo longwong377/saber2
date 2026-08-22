@@ -251,6 +251,80 @@ export async function run({ check, assert }) {
       + `${(per * 30).toFixed(1)} per body-second`;
   });
 
+  check('horde: a body drawing a line on your chest is standing still to do it', async () => {
+    /**
+     * ── THE ONE TERM OF `aimQuality` NOTHING COULD MOVE ──────────────────
+     *
+     * `aimQuality` has five terms and its MOVEMENT term carries a tactical
+     * instruction in its own comment: "a body running is not aiming … troops
+     * that stop shoot better, and it is why HOLD and TAKE COVER are worth
+     * giving." It is worth up to 1.55x of a body's own spread.
+     *
+     * Measured over two censuses through `tools/_horde.mjs` — 120 game-seconds
+     * of Command on geonosis (4 293 body-seconds, peak 56 alive) and 60 of
+     * waves — the mean of that term AT THE MOMENT OF EVERY SHOT FIRED was
+     * **1.544 of a possible 1.55**, and the number of shots fired below 15% of
+     * the shooter's own top speed was **zero**. It is not a term, it is a
+     * constant: nothing in the brain ever chooses to stand still. The one
+     * mechanism that can — `A.plant` — is declared by ONE archetype of 37.
+     *
+     * ── WHAT IS FIXED HERE AND WHAT IS DELIBERATELY NOT ──────────────────
+     *
+     * Making every shooter halt to fire would take the whole horde from 1.544
+     * to ~1.0 — a third off the spread of every gun in the game — and that is
+     * a balance change to every wave budget and every difficulty, not a lane's
+     * to make. What IS fixed is the case where standing still is the BODY'S
+     * OWN PROMISE: the four archetypes that draw a red line on your chest and
+     * hold it there for most of a second. `marksman`'s own text calls that
+     * line the whole of the counter-play, and a sniper that keeps strolling
+     * sideways through its own telegraph is a body whose tell is drawn in the
+     * HUD and contradicted by its feet.
+     *
+     * It is the same sentence `A.plant` makes to a siege gun and `BEAST_MOVES.
+     * plant` to an animal mid-lunge, said to the one other group of bodies
+     * that already advertise a wind-up. The counter-play does not move: the
+     * aim is committed at the top of the telegraph (`telegraphAim`), so a
+     * player who steps off the line is missed whatever the shooter's feet are
+     * doing, and the extra accuracy is spent only on a player who ignored a
+     * second of warning.
+     */
+    const { world, input } = await boot();
+    const mark = world.spawnEnemy('b1', ground(world, 0, 0));
+    mark.team = 0;
+    mark.damage = () => false;
+    const s = world.spawnEnemy('sniper', ground(world, 0, 30));
+    world.pickTarget = (e) => (e === s ? mark : null);
+    let charging = 0, chargeMoving = 0, fired = 0, fireMoving = 0;
+    const { Enemy } = await import('../../src/game/Enemy.js');
+    const P = Enemy.prototype;
+    const wasShoot = P._shoot;
+    P._shoot = function (...a) {
+      if (this === s) { fired++; fireMoving += Math.hypot(this.velocity.x, this.velocity.z) / Math.max(1.5, this.speed || 4); }
+      return wasShoot.apply(this, a);
+    };
+    try {
+      for (let i = 0; i < 30 * 45; i++) {
+        world.update(1 / 30, input);
+        mark.position.copy(ground(world, 0, 0));
+        mark.velocity.set(0, 0, 0);
+        s.hp = s.maxHp;
+        if (s.aimCharge > 0) {
+          charging++;
+          chargeMoving += Math.hypot(s.velocity.x, s.velocity.z) / Math.max(1.5, s.speed || 4);
+        }
+      }
+    } finally { P._shoot = wasShoot; }
+    assert(charging > 40 && fired > 3,
+      `the sniper telegraphed on ${charging} frames and fired ${fired} times — nothing was measured`);
+    const pace = chargeMoving / charging;
+    assert(pace < 0.35,
+      `it travels at ${(pace * 100).toFixed(0)}% of its own top speed while its laser is on your `
+      + 'chest — the tell says "it has stopped to take this shot" and the feet say otherwise, and '
+      + `aimQuality's MOVEMENT term is worth ${(1 + Math.min(pace, 1.4) * 0.55).toFixed(2)}x of its spread for it`);
+    return `${charging} telegraph frames at ${(pace * 100).toFixed(0)}% of top speed, `
+      + `${fired} shots at ${((fireMoving / fired) * 100).toFixed(0)}%`;
+  });
+
   /* ══════════════════════════════════════════════════════════════════ */
   /*  3 — nerve reaches the one place it decides an ACT                 */
   /* ══════════════════════════════════════════════════════════════════ */
