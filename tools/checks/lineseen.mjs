@@ -382,7 +382,16 @@ export async function run({ check, assert }) {
         + 'every mark the engagement laid is behind the player');
       assert(ground.fallen > 0 && ground.fallenMeshes > 0,
         'no prone figures on the line — §12.4\'s "the dead mark the front" drew nothing');
-      assert(ground.smoke > 0, 'no smoke columns on the burnt side');
+      /* TWO, AND THE SECOND ONE IS THE ENGAGEMENT'S. `addSmokeColumns` makes
+       * one mesh per call: `LEVELS.geonosis.dress` calls it once and
+       * `marchFront` calls it once more for the burnt side, so a bar of one
+       * would pass on a front that raised nothing at all. Counted before and
+       * after `director.start(1)` on a real World at this seed: the level lays
+       * 1 mesh / 0 fallen / 55 hull pieces, and the engagement adds 1 mesh,
+       * 110 fallen in 2 draws and 13 hull pieces. */
+      assert(ground.smoke >= 2,
+        `${ground.smoke} smoke column mesh(es) — the level lays one of its own, so fewer than two `
+        + 'means the engagement raised none on the burnt side');
       assert(ground.sunk === 0,
         `${ground.sunk} of ${ground.wrecks} hull pieces are under the terrain they stand on`);
       /* THE PRECONDITION, ASSERTED SEPARATELY FROM THE RESULT, because the two
