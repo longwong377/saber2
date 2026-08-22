@@ -39,7 +39,8 @@ const STEP = 1 / 30;
  *  teleports onto the firing line. */
 const SETTLE = 40;
 
-async function arm(prone) {
+async function arm(mode) {
+  const prone = mode === 'prone', held = mode === 'held';
   const { enemyRng } = await import('../src/game/Enemy.js');
   enemyRng.seed(SEED);
   const { world } = await bootWorld({
@@ -86,15 +87,24 @@ async function arm(prone) {
     if (prone && i >= SETTLE && mark.actor && !mark.actor.ragdolled) {
       mark.actor.goRagdoll(new THREE.Vector3(0, 0, 0), null);
     }
-    if (!prone && mark.actor?.ragdolled) mark.recover(0);
+    /* HELD OFF THE GROUND — the third arm, and the one FLAGSHIP §7's third
+     * verb is about ("held x3.0 … grip a B2 and the ten riflemen who needed
+     * seventeen seconds need six"). `gripped` + `liftTarget` is the state
+     * `_move`'s held branch reads; the grip lease is renewed by hand so the
+     * body stays up for the whole arm. */
+    if (held && i >= SETTLE) {
+      mark.gripped = true;
+      mark.gripLease = 9;
+      mark.liftTarget = mark.liftTarget || new THREE.Vector3(0, g(0, 0) + 2.2, 0);
+    }
+    if (!prone && !held && mark.actor?.ragdolled) mark.recover(0);
     world.update(STEP, input);
     /* IMMORTAL AND STATIONARY, so the arm measures aim and nothing else. */
     mark.hp = mark.maxHp;
     mark.stopFiring();
     mark.wish = null;
     mark._recoverAt = 0;                 // it stays down for the whole arm
-    mark.position.set(0, g(0, 0), 0);
-    mark.velocity.set(0, 0, 0);
+    if (!held) { mark.position.set(0, g(0, 0), 0); mark.velocity.set(0, 0, 0); }
     for (let k = 0; k < guns.length; k++) {
       const e = guns[k];
       const a = (k / GUNS) * Math.PI * 2;
@@ -109,9 +119,10 @@ async function arm(prone) {
     aimY += _a.y; capTop += hi; capBot += lo; range += _a.distanceTo(guns[0].chest); n++;
   }
   return {
-    arm: prone ? 'PRONE' : 'STANDING',
+    arm: prone ? 'PRONE' : held ? 'HELD' : 'STANDING',
     shots, hits, rate: shots ? hits / shots : 0, damage: +dmg.toFixed(1),
     down: !!mark.actor?.ragdolled,
+    up: !!mark.gripped,
     aimY: +(aimY / n).toFixed(3),
     capTop: +(capTop / n).toFixed(3), capBot: +(capBot / n).toFixed(3),
     over: +((aimY / n) - (capTop / n)).toFixed(3),
@@ -120,14 +131,15 @@ async function arm(prone) {
 }
 
 const rows = [];
-rows.push(await arm(false));
-rows.push(await arm(true));
+rows.push(await arm('standing'));
+rows.push(await arm('prone'));
+rows.push(await arm('held'));
 console.log(`\n${GUNS} ${TYPE} guns in a ring at ${RANGE} m on one ${TYPE}, ${SECONDS} game-s per arm, seed ${SEED}`);
-console.log('  arm        shots  hits     rate   aimY   capBot..capTop    over   range  down');
+console.log('  arm        shots  hits     rate   aimY   capBot..capTop    over   range   down   held');
 for (const r of rows) {
   console.log('  ' + r.arm.padEnd(9) + String(r.shots).padStart(6) + String(r.hits).padStart(6)
     + ('  ' + (r.rate * 100).toFixed(1) + '%').padStart(9)
     + String(r.aimY).padStart(7) + ('   ' + r.capBot + '..' + r.capTop).padEnd(18)
-    + String(r.over).padStart(7) + String(r.range).padStart(8) + String(r.down).padStart(7));
+    + String(r.over).padStart(7) + String(r.range).padStart(8) + String(r.down).padStart(7) + String(r.up).padStart(7));
 }
 console.log('');

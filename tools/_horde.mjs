@@ -73,6 +73,8 @@ const T = {
   who: Object.create(null),
   /** which archetypes were on the field at all, and for how many body-seconds */
   roster: Object.create(null),
+  /** dwell, split by archetype */
+  byType: Object.create(null),
 };
 const bump = (k, by = 1, type = null) => {
   T.n[k] = (T.n[k] || 0) + by;
@@ -80,7 +82,14 @@ const bump = (k, by = 1, type = null) => {
 };
 const dwell = (k, by, type = null) => {
   T.s[k] = (T.s[k] || 0) + by;
-  if (type) (T.who[k] = T.who[k] || new Set()).add(type);
+  if (type) {
+    (T.who[k] = T.who[k] || new Set()).add(type);
+    /* PER ARCHETYPE AS WELL AS PER FIELD. A dwell of 13.6% "no target" is a
+     * different finding depending on whether it is one archetype standing
+     * still for the whole battle or every body for a moment. */
+    const m = (T.byType[k] = T.byType[k] || Object.create(null));
+    m[type] = (m[type] || 0) + by;
+  }
 };
 
 /* ── instrumentation ──────────────────────────────────────────────────── */
@@ -276,8 +285,12 @@ async function main() {
       who: [...(T.who[k] || [])].sort().join(',') });
   }
   for (const k of Object.keys(T.s).sort()) {
-    rows.push({ what: k, unit: 'share', n: +T.s[k].toFixed(2), rate: T.s[k] / bs,
-      who: [...(T.who[k] || [])].sort().join(',') });
+    const by = T.byType[k] || {};
+    /* Each archetype's share of ITS OWN time on the field, which is the number
+     * that says whether a body is idle or a wave is. */
+    const per = Object.keys(by).sort((a, b) => by[b] - by[a])
+      .map((t) => `${t} ${(100 * by[t] / (T.roster[t] || 1)).toFixed(0)}%`).join(' ');
+    rows.push({ what: k, unit: 'share', n: +T.s[k].toFixed(2), rate: T.s[k] / bs, who: per });
   }
   const report = {
     mode: MODE, level: LEVEL, seed: SEED, seconds: SECONDS, step: STEP,
