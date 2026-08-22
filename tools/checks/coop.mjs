@@ -1091,6 +1091,78 @@ export async function run({ check, assert }) {
       + `and was claimed at ${r.claimed.toFixed(1)}`;
   });
 
+  check('co-op: the level\'s lava burns a body once, not once per machine', async () => {
+    /**
+     * THE SAME DEFECT IN A SECOND SUBSYSTEM, and it is why this one is a class
+     * and not a bug. A `Hazard` is built by the LEVEL, so every machine in a
+     * session has one, and each was running its own copy over every body on the
+     * field — then `_reconcileClaims` sent the client's half back to the host as
+     * damage the guest had dealt.
+     *
+     * Measured on a real pair on mustafar with one body standing in the lava
+     * for two seconds, before the rule: the host burned it 14.0 hp, the
+     * client's mirror burned 14.0 hp of its own, and all 14.0 came back as a
+     * claim. A 28 hp body was spent half by the host's lava and half by the
+     * client's copy of the same lava — it died in half the time. The player
+     * half runs the other way and is the same defect: the host burns its
+     * `RemoteAvatar` of a guest and posts the number over `hit`, while that
+     * guest's own sheet is burning their real Player at the same moment.
+     *
+     * The GROUND IS SEARCHED rather than named. A hazard is a sheet at a fixed
+     * height over a generated heightfield, so the only honest way to stand a
+     * body in it is to find a place where the ground is under it; a hand-picked
+     * coordinate would be a number that stops being true the day the ground
+     * rolls differently.
+     */
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const pair = await H.bootPair({ level: 'mustafar' });
+    assert(!!pair.host.hazard && !!pair.client.hazard,
+      'both machines were supposed to build the level\'s hazard — with only one of them there is '
+      + 'nothing here to double-count and this check proves nothing');
+    const lvl = pair.host.hazard.level;
+    let spot = null;
+    for (let x = -120; x <= 120 && !spot; x += 4) {
+      for (let z = -120; z <= 120; z += 4) {
+        const h = pair.host.terrain.height(x, z);
+        if (h < lvl - 0.3) { spot = [x, h, z]; break; }
+      }
+    }
+    assert(!!spot, 'no ground on this seed sits under the hazard sheet, so nothing can stand in it');
+
+    const e = pair.host.spawnEnemy('acklay', new THREE.Vector3(spot[0], spot[1], spot[2]));
+    /* Off its brain: a body that walks out of the lava is a body that stops
+     * being burned by either machine. */
+    e._think = () => {};
+    pair.pump(0.2);
+    const m = pair.client._netEnemyIndex.get(e.id);
+    assert(!!m, 'the client never received a mirror of the body in the lava');
+    let host = 0, guest = 0;
+    const hi = e.damage.bind(e), mi = m.damage.bind(m);
+    const burn = (b, add) => (a, p, s, k) => {
+      const was = b.hp; const out = (b === e ? hi : mi)(a, p, s, k);
+      if (b.hp < was) add(was - b.hp, k);
+      return out;
+    };
+    e.damage = burn(e, (d, k) => { if (k === pair.host.hazard.kind) host += d; });
+    m.damage = burn(m, (d, k) => { if (k === pair.client.hazard.kind) guest += d; });
+    pair.seen.toHost.length = 0;
+    pair.pump(2);
+    const claimed = pair.seen.toHost.filter((x) => x.t === 'claim' && x.id === e.id)
+      .reduce((a, x) => a + (Number(x.d) || 0), 0);
+    pair.host.unload(); pair.client.unload();
+
+    assert(host > 0,
+      `the host's own lava took ${host.toFixed(1)} hp off a body standing in it — the hazard is not `
+      + 'biting at all, so nothing below is a measurement of anything');
+    assert(guest === 0,
+      `the joining player's copy of the same lava burned the same body for another ${guest.toFixed(1)} hp — `
+      + 'one sheet, two machines, and the body pays twice');
+    assert(claimed === 0,
+      `${claimed.toFixed(1)} hp of the host's own lava came back to it as a claim`);
+    return `the host's lava took ${host.toFixed(1)} hp; the joining player's copy took 0.0 and claimed 0.0`;
+  });
+
   check('co-op: a joining player\'s Force moves the body, not only its health bar', async () => {
     /**
      * A GUEST'S FORCE DID NOTHING PHYSICAL. ONLY THE NUMBER CROSSED.
