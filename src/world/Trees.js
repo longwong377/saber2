@@ -308,6 +308,14 @@ export class Forest {
     this.down = new Set();
     /** Down trees that have become real liftable objects: index → { prop, box }. */
     this.real = new Map();
+    /**
+     * Down trees that are IN the hill rather than lying on it, and so are
+     * never handed to the solver. See `_realise`: the fall is a hinge that
+     * does not know about the ground, and a dynamic body born inside a
+     * heightfield is the one thing Rapier cannot resolve. A tree's down pose
+     * does not change again once it has landed, so this is decided once.
+     */
+    this._sunk = new Set();
     /** Standing trunks that currently have a collider: index → static box. */
     this.live = new Map();
     /** Standing trunks by grid cell, so the ring is a lookup and not a scan. */
@@ -757,7 +765,7 @@ export class Forest {
     // second and the answer is forty indices out of eighteen hundred.
     for (const i of this.down) {
       if (this.real.size >= LIFT_CAP) break;
-      if (this.real.has(i)) continue;
+      if (this.real.has(i) || this._sunk.has(i)) continue;
       const k = i * F.N;
       for (const p of players) {
         const dx = p.position.x - D[k + F.X], dz = p.position.z - D[k + F.Z];
@@ -774,6 +782,66 @@ export class Forest {
     this.hinge(i, _v1);
     this.tip(i, _v2);
     const mid = _v3.copy(_v1).add(_v2).multiplyScalar(0.5).clone();
+    /**
+     * ── A LOG MAY NOT BE HANDED TO THE SOLVER INSIDE THE HILL ───────────
+     *
+     * The fall is a hinge and it does not know about the ground. `update`
+     * integrates θ̈ = 3g/2L·sin θ to horizontal about a pivot at the CUT FACE,
+     * so a trunk comes to rest at the height of its own stump however the
+     * ground runs away underneath it. `_layLog`'s note has the consequence
+     * already measured — "34 of the 83 had some part of themselves buried and
+     * one was 90% of the way into a hillside, 13.2 m under at the deep end" —
+     * and takes the right precaution for a STATIC box: it lays none along the
+     * stretches that are buried.
+     *
+     * A Prop is not a static box. This method built a DYNAMIC body at exactly
+     * that pose — `centre: true` tells `seatOnGround` to leave the position
+     * alone and the line under the constructor copies `mid` back over it — so
+     * a trunk lying in a bank was a rigid body born inside a heightfield.
+     * Rapier pushes a shallow one out and cannot resolve a deep one at all.
+     * NEXT.md's open finding is the two ends of that: "four had surfaces under
+     * the terrain and one had fallen to −179 m", and −179 is one metre off
+     * `RapierWorld.killY`. Measured on the wood with `tools/_logsink.mjs`,
+     * forty trees felled round a standing player: one of the nine logs
+     * realised was born 0.63 m inside the ground and sank a further 0.56 m
+     * rather than being pushed out of it.
+     *
+     * A log that reaches the kill plane is the expensive end. It is removed
+     * from the physics world and keeps its Prop and its mesh; it is 180 m from
+     * `home`, so `_syncLogs` marks it `moved` and then reads its x/z off the
+     * body — which have barely changed — so it is never far enough away to be
+     * released either. The tree is gone from the wood for the rest of the
+     * level, its instance collapsed to zero scale by the lines below, and one
+     * of the nine `LIFT_CAP` slots is gone with it.
+     *
+     * So the body is born ON the ground: lifted by the deepest its own
+     * underside goes below the terrain along its length, after which it falls
+     * the last few centimetres and lies on the slope, which is what a felled
+     * tree does. `CLIMB_LOG` bounds the lift because that is the height at
+     * which this file already says a log stops being something a body steps
+     * over — a trunk deeper than that is not lying on the hill, it is in it,
+     * and there is nothing there to pick up. Those stay pictures, with
+     * `_layLog`'s partial colliders, which were always right about them.
+     *
+     * AND THE LIFT IS KEPT. `_release` writes a `moved` log's pose back into
+     * the record, so the correction survives the player walking away instead
+     * of the log sinking back into the bank the moment it stops being real.
+     * Without that the same trunk pops up and down every time you cross its
+     * ring.
+     */
+    let lifted = 0;
+    if (this.world.terrain) {
+      const T = this.world.terrain;
+      const probe = new THREE.Vector3();
+      const SAMPLES = 8;
+      for (let s = 0; s <= SAMPLES; s++) {
+        probe.lerpVectors(_v1, _v2, s / SAMPLES);
+        const under = T.height(probe.x, probe.z) - (probe.y - r);
+        if (under > lifted) lifted = under;
+      }
+      if (lifted > CLIMB_LOG) { this._sunk.add(i); return; }
+      if (lifted > 0.02) mid.y += lifted; else lifted = 0;
+    }
     /* The log's own geometry, at its own size — the instanced trunk is a unit
      * rod scaled per instance, and a Prop needs a mesh of its own. Six sides
      * and two rings, exactly as the instance is, so the object the player picks
@@ -824,7 +892,11 @@ export class Forest {
     this._liftLog(i);
     /* NOT registered here: `Prop` puts itself in `world.props` from its own
      * constructor now, and a second push is a second copy. */
-    this.real.set(i, { prop, moved: false, home: mid.clone() });
+    /* `moved` when it was lifted, so `_release` writes the corrected pose back
+     * into the record rather than putting the log back in the bank. `home` is
+     * the LIFTED position, so the lift itself cannot latch the displacement
+     * test in `_syncLogs`. */
+    this.real.set(i, { prop, moved: lifted > 0, home: mid.clone() });
   }
 
   /** Put log `i` back into the instance buffers. */
