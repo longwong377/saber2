@@ -589,10 +589,13 @@ Gate at the end: **1718 passed, 0 failed.**
   and 65% is very nearly all that two closed hands over 180 mm of a 233 mm grip
   CAN hide, so it is not a defect to tune out. The clear view is one keypress
   away, on the key that means the same thing everywhere else in the game.
-- **A Command wave was seen sitting `active` with an empty queue, no inbound
-  arrival and zero hostiles standing, from 200 s to 350 s.** FLAGSHIP §16's bug
-  3. A watchdog in the flagship probe fired zero times across 15 recorded runs,
-  so it is reported as seen once and not as reproducible.
+- ~~**A Command wave was seen sitting `active` with an empty queue, no inbound
+  arrival and zero hostiles standing, from 200 s to 350 s.**~~ FLAGSHIP §16's
+  bug 3, and §16 is closed — all six. It was reported as seen once and never
+  reproduced: a watchdog in the flagship probe fired zero times across 15
+  recorded runs. What now stands behind the same failure is `command.mjs`'s own
+  watchdog checks, which bind the two ways this can actually happen — a body
+  retired mid-flight, and a formation the watchdog dismantles.
 - **`topOfProps`' sibling problem, unfixed:** a log that has settled BELOW the
   ground it fell on. Of nine trunks realised in the wood, four had surfaces
   under the terrain and one had fallen to −179 m. The floor query is right about
