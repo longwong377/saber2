@@ -1449,7 +1449,26 @@ export class ExtractionDirector {
        * mounted rider answer the same way. Riders.js carries a byte-identical
        * copy of these three lines and the same fix.
        */
-      const rootCarries = !!b.rig?.root && b.isLocal === undefined;
+      /* MEASURED: NOBODY'S ROOT TAKES THE DELTA IN A SEAT.
+       *
+       * The first cut of this fix excluded only the Player, on the reasoning
+       * that an Enemy's root carries its body. In a SEAT it does not: with ten
+       * allies aboard a geonosis insertion, every one of their pelvises was
+       * drawn at (-519, 4799, -357) against a body at (-261, 2399, -176) —
+       * exactly double, the same signature the player had. While a body is
+       * riding, its bones are written in world space by the animator and the
+       * root is not re-copied from `position` underneath them, so adding the
+       * delta here is a second full copy of the position for everyone.
+       *
+       * That is the whole of "you and your troops are all invisible other than
+       * my lightsaber": at 2400 m the doubled figures are drawn two and a half
+       * kilometres above the bay, off every screen, while the saber — posed
+       * straight into world space from `control.handPos` — stays exactly where
+       * it should and is the one thing left in shot.
+       *
+       * The `b.group` fallback below still runs: a baked group with no rig has
+       * no bones writing world positions, so it genuinely does need carrying. */
+      const rootCarries = false;
       if (rootCarries) b.rig.root.position.set(
         b.rig.root.position.x + dx, b.rig.root.position.y + dy, b.rig.root.position.z + dz);
       else if (b.group) b.group.position.set(

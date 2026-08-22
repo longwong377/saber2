@@ -740,4 +740,72 @@ export async function run({ check, assert }) {
     assert(t < 30, `a skipped insertion took ${t.toFixed(0)} s`);
     return `skipped in ${t.toFixed(1)} s, still ${log.join(' → ')}`;
   });
+  check('insertion: everybody aboard is DRAWN in the bay, not at twice their own position', async () => {
+    /*
+     * "When you load into a map and are on the transport ship you see through
+     * the inside, but everything inside — you and your troops — is invisible
+     * other than my lightsaber."
+     *
+     * `_flyPassengers` carried the ride's per-frame delta into `rig.root` for
+     * every passenger, on the reasoning that a rig root carries its body. In a
+     * SEAT it does not: while a body is riding, the animator writes its bones in
+     * WORLD space and nothing re-copies the root from `position` underneath
+     * them, so the delta was a second full copy of the position — for the
+     * player AND for all ten allies.
+     *
+     * Measured on a geonosis insertion before the fix: bodies at 2400 m, every
+     * pelvis drawn at (-519, 4799, -357) against a body at (-261, 2399, -176).
+     * Exactly double. Two and a half kilometres above the bay, off every
+     * screen — while the saber, posed straight into world space from
+     * `control.handPos`, stayed exactly where it belonged and was the one thing
+     * left in shot. That is the whole report, including why the blade was the
+     * exception.
+     *
+     * The bar is a metre and a bit because a pelvis sits about 0.9 m over the
+     * feet its `position` is measured at; doubling puts it kilometres out, so
+     * there is no version of this that squeaks past.
+     */
+    const { world, input } = await boot('skirmish', 'geonosis');
+    assert(world.extraction.beginInsertion({ name: 'Geonosis' }), 'beginInsertion declined');
+    for (let i = 0; i < 4; i++) world.update(1 / 60, input);
+
+    const T = (await import('three'));
+    const at = new T.Vector3();
+    const drawnPelvis = (b) => {
+      const bone = b.rig?.get?.('pelvis') || b.rig?.get?.('hips');
+      if (!bone?.obj) return null;
+      bone.obj.getWorldPosition(at);
+      return at.clone();
+    };
+
+    const rows = [];
+    let worst = 0, worstWho = '';
+    const check1 = (b, who) => {
+      const p = drawnPelvis(b);
+      if (!p) return;
+      // horizontal only: the vertical offset IS the pelvis height and is meant.
+      const d = Math.hypot(p.x - b.position.x, p.z - b.position.z);
+      rows.push(`${who} ${d.toFixed(2)} m`);
+      if (d > worst) { worst = d; worstWho = who; }
+    };
+    check1(world.player, 'commander');
+    let allies = 0;
+    for (const e of world.enemies) {
+      if (!e.riding) continue;
+      allies++;
+      check1(e, `ally${allies}`);
+    }
+    assert(allies > 0, 'nobody was seated — the insertion did not load the bay');
+    assert(worst < 1.2,
+      `${worstWho} is drawn ${worst.toFixed(1)} m from its own seat — the root is taking the ride delta again `
+      + 'and the body is at twice its own position, which is the invisible-in-the-bay bug');
+    /* AND THE ROOT ITSELF STAYS AT ZERO, which is the mechanism rather than the
+     * symptom — a body could in principle be drawn correctly by luck. */
+    const roots = [world.player, ...world.enemies.filter((e) => e.riding)]
+      .map((b) => b.rig?.root).filter(Boolean);
+    const moved = roots.filter((r) => r.position.lengthSq() > 1e-6).length;
+    assert(moved === 0, `${moved} of ${roots.length} passengers have a non-zero rig root while seated`);
+    return `${allies} allies + the commander, worst drawn offset ${worst.toFixed(2)} m, all ${roots.length} roots at zero`;
+  });
+
 }
