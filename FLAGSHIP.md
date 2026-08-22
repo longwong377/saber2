@@ -254,6 +254,42 @@ Forty conscripts that pay nothing are weather.
 > two the ledger cannot see. Both are halved (`GUN.every` 7.0 → 14.0 and the
 > round above), which takes an engagement fought without the Jedi from 1.8 of
 > ten to **5.4**, and `theline.12` holds it there.
+>
+> ── AND EVERY NUMBER ABOVE WAS TAKEN AGAINST A GAME AIMING AT PEOPLE'S BOOTS ──
+>
+> `Enemy._shoot` led its aim on `target.chest ?? target.position` and only
+> `Player` had a `chest`. Your named men, the horde, everything else on the
+> field was aimed at by `position`, which is at the FEET — by the emplacement
+> too, which added `chestY` (an absolute world height) to `position.y` and so
+> laid every round 0.80 m low on ground that sits at −0.84 m. The levy's round
+> at 5 and the gun's cadence at 14.0 were both chosen against that.
+>
+> **THE TARGET IS MET NOW, and the arithmetic of this section is unchanged —
+> only the numbers in it are.** Twenty seeds an arm from pinned worktrees, the
+> only difference being the aim:
+>
+> | engagement 1, no Jedi on the field | survivors of ten | reached a muster |
+> |---|---|---|
+> | aimed at the feet | **5.10** (sd 2.45) | 19 of 20 |
+> | aimed at the chest, constants untouched | **1.65** (sd 2.56) | 12 of 20 |
+> | aimed at the chest, `GUN.every` 34.0 and the round at 2 | **4.93** (n=14) | **13 of 14** |
+>
+> **The asymmetry is the finding and this section did not predict it.** The
+> LINE's own output nearly TRIPLED — 1.14 → 3.20 hp a second onto the horde —
+> and it still lost three and a half more men, because the horde outnumbers it
+> and doubling both sides' accuracy favours the bigger side. "It roughly doubles
+> lethality on both sides" says nothing about which way the survivors move.
+>
+> What is unchanged is the sentence this section is built on: **suppression is
+> billed PER BOLT.** `GUARD.stamina` is `[1.2, 0.4, 0, 0]` by grade and an
+> unanswered bolt costs Force; not one of those numbers reads `damage`. The
+> levy's round comes down and the beaten zone does not move at all.
+>
+> The location table, six seeds an arm, is in `NEXT.md`: the emplacement is
+> worth 3.8 of the eight and a half names an engagement was costing, the levy
+> 2.3, and the paid-for wave the remaining 2.7. **With both off the field the
+> ceiling is 7.33 of ten**, so the target is inside the two levers this section
+> already names and no third one was needed.
 
 ---
 
@@ -835,7 +871,37 @@ Not flagship work — these are wrong today.
    than scored zero. It prints the cards that are below the median on depth and
    above it on the line — which is the list a one-axis ranking called worthless.
 
-**All six are closed.** This section is kept as written rather than deleted:
+7. **Every bolt in the game was aimed at people's FEET** — found after this
+   section was written, and it is bigger than anything in it. `Enemy._shoot`
+   leads on `target.chest ?? target.position` and **only `Player` had a
+   `chest`**, so your named troopers, the horde and every other body were aimed
+   at by `position`. So were the telegraph, the line-of-sight test, the off
+   blade, the laser, the rifle pose and both turret head-tracks. It surfaced
+   from the wrong end: a "men crouch under fire" lever measured WORSE THAN
+   NOTHING, 0.6 survivors against 1.8, because crouching pulls a man toward an
+   aim point that is on the floor. Twenty seeds an arm, the only difference
+   being the aim: an engagement fought with no Jedi went from 5.10 of ten
+   survivors to 1.65, and the line's own output onto the horde nearly tripled.
+   `Enemy.chest` publishes `chestY` as a vector and `Combat.aimAt` is the one
+   reader every aiming site now calls. **THREE MORE INSTANCES CAME OUT WITH
+   IT:** `aimPoint` answered from the WORLD ORIGIN on the frame a body spawns
+   (an unposed bone's `matrixWorld` is the identity — measured, a droideka
+   answering 80.3 m from where it stood); the EMPLACEMENT added `chestY`, an
+   absolute world height, to `position.y` and so counted the ground twice,
+   firing 0.80 m under the chest it aimed at; and `Driving.seat`/`aimPoint` did
+   the same, seating a driver in the air on a slope.
+
+8. **A crossing was charged two escalations at once**, which is why a fresh
+   ten-man line was wiped in one wave at engagement 3 on twenty of twenty seeds.
+   `budgetFor` ran the roguelite's `w^1.62` on the run's wave counter — honest
+   in a mode that drafts a card every other wave, and a crossing drafts nothing
+   — and then multiplied it by `AREAS[*].budget`, which is the crossing's own
+   ramp. Engagement 3 opened on a wave of 96 against a wave-1 opening of 8.
+   `CommandDirector.rampWave` runs the curve within an area and lets the area
+   dials carry the escalation between them.
+
+**All six of the original list are closed, and two more were found by the work
+that closed them.** This section is kept as written rather than deleted:
 what it records is that a design exercise found six live defects in a shipped
 game by asking what the game would have to be true for, and four of the six
 were invisible to every check in the tree until something needed them.
