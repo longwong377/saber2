@@ -6347,7 +6347,8 @@ export class CommandDirector extends WaveDirector {
         const out = marchFront(w, {
           engagement: e,
           /**
-           * THE HULLS — the one mark of the five the mode never laid.
+           * THE HULLS — the one mark of the five the mode never laid, and then
+           * laid on exactly one ground.
            *
            * `Front.marchFront` grows wreck clusters only when it is handed the
            * function that builds them, and this caller never passed it: the
@@ -6357,6 +6358,14 @@ export class CommandDirector extends WaveDirector {
            * Geonosis at 112 of 225 draw calls, so they are the mark that
            * carries the picture rather than a garnish.
            *
+           * IT WAS THEN PASSED AND WAS STILL NULL ON SIX GROUNDS OF SEVEN.
+           * `world.strewWrecks` was published by Geonosis' own `dress` and by
+           * nothing else, and THE LINE rolls its theatre off the run seed — so
+           * "the mode lays hulls now" was a sentence about one seventh of the
+           * mode's rolls. `Levels.beginDressing` publishes it for every ground
+           * now, the same door the water hazard is attached through and for the
+           * same reason; that note carries the per-level draw-call price.
+           *
            * READ OFF THE WORLD, and that is not laziness — it is the only
            * direction that does not close a cycle. `Front.js` is a leaf and
            * cannot import `Levels.js`; and THIS file cannot either, because
@@ -6364,8 +6373,7 @@ export class CommandDirector extends WaveDirector {
            * either direction is the initialisation cycle that threw
            * `Cannot access 'COMMAND_UNITS' before initialization` for every
            * entry point reaching Command.js first, earlier in this same
-           * session. The level publishes what the ground can do, exactly as it
-           * already publishes `smokeAir` on the line above its own call.
+           * session.
            */
           strewWrecks: w.strewWrecks ?? null,
           /* The DEPLOYMENT seed, not the wave's: one ground, one sitting, one

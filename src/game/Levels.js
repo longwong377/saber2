@@ -322,6 +322,33 @@ export function beginDressing(world, seed) {
    * line would be a level whose sea is scenery again.
    */
   if (world.level?.water) attachHazard(world, world.level.water);
+  /**
+   * AND THE HULL BUILDER, HERE, FOR EVERY GROUND — same argument as the sea.
+   *
+   * `Front.marchFront` grows the front's wreck clusters ONLY when it is handed
+   * the function that builds them, and `CommandDirector.marchTo` reads that
+   * function off `world.strewWrecks`. Geonosis published one at the bottom of
+   * its own `dress`; nothing else did. So on six of the seven grounds THE LINE
+   * rolls, the barrage, the burn, the smoke and the fallen all landed on the
+   * line and the HULLS did not — §12.4's "wrecks belong on the fighting line",
+   * and the mark that carries the picture rather than garnishes it.
+   *
+   * Measured, a whole sitting's worth (5 engagements × 3 clusters) laid on top
+   * of each level's own dressing:
+   *
+   *     alpine   101 → 217 draw calls    drifts   113 → 226    wood  149 → 251
+   *     colosseum 165 → 278              scoria   170 → 284
+   *     mustafar  224 → 314              geonosis 277 → 375  (already paying)
+   *
+   * — 90 to 116 calls a sitting, against `world-immersion`'s bound of 520.
+   *
+   * Published from here rather than from seven `dress()` bodies for the reason
+   * the paragraph above gives about the water: a level that forgot the line is
+   * a level whose front has no wrecks on it, and nothing would have said so. A
+   * level that wants its own builder can still overwrite this after its own
+   * `beginDressing` call.
+   */
+  world.strewWrecks = strewWrecks;
 }
 
 /**
@@ -4558,16 +4585,18 @@ LEVELS.geonosis = {
      * table term for term; `vfx.mjs`'s "a column dissolves into the level's OWN
      * sky" asserts it off the built MESH — the vertex colours of the top ring
      * and where that ring sits over the base — on every level. */
-    /* THE HULL BUILDER, published beside the air for the same reason: a level
-     * says what its ground can do, and `Front.marchFront` grows wreck clusters
-     * only when it is handed the function that builds them. `CommandDirector
-     * .marchTo` never passed one, so the mode laid the barrage, the burn, the
-     * smoke and the fallen and never a hull — §12.4's "wrecks belong on the
-     * fighting line", and the biggest line item on this ground at 112 of 225
-     * draw calls. It is handed over rather than imported because `Levels.js`
-     * imports `COMMAND_UNITS` from `Command.js` and the reverse edge is the
-     * initialisation cycle this session already tripped once. */
-    world.strewWrecks = strewWrecks;
+    /* THE HULL BUILDER USED TO BE PUBLISHED HERE, AND ONLY HERE, which is why
+     * "the mode lays hulls now" was true of ONE ground. `Front.marchFront`
+     * grows wreck clusters only when it is handed the function that builds
+     * them and `CommandDirector.marchTo` reads it off `world.strewWrecks`; six
+     * of the seven grounds THE LINE rolls never published one, so on six of
+     * seven the barrage, the burn, the smoke and the fallen all landed on the
+     * line and the hulls did not. It is published from `beginDressing` now —
+     * see the note there, with the per-level draw-call price — for exactly the
+     * reason the water hazard is: a level that forgot the line is a level whose
+     * front has no wrecks on it and nothing said so. It is still handed over
+     * rather than imported, because `Levels.js` imports `COMMAND_UNITS` from
+     * `Command.js` and the reverse edge is an initialisation cycle. */
     world.smokeAir = smokeAir(world);
     addSmokeColumns(world, smokeSites(rng, 7, { rmin: 62, rmax: 244, phase: 1.1 }), world.smokeAir);
 

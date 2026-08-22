@@ -437,6 +437,63 @@ export function run({ check, assert, near }) {
       + `${((SOLO - worst) * 100).toFixed(1)} points under the solo bar`;
   });
 
+  check('front: every ground the mode rolls hands the front a hull builder', async () => {
+    /**
+     * §12.4: "wrecks belong on the fighting line", and `Front.js` prices them
+     * as the mark that carries the picture rather than a garnish. The mechanism
+     * is a callback: `marchFront` grows wreck clusters ONLY when it is handed
+     * the function that builds them, and `CommandDirector.marchTo` reads that
+     * function off `world.strewWrecks`.
+     *
+     * IT WAS PUBLISHED BY ONE LEVEL. Geonosis' own `dress` set it at the
+     * bottom; nothing else did. THE LINE rolls its theatre off the run seed
+     * across every ground in `LEVEL_ORDER`, so on six of seven rolls the
+     * barrage, the burn, the smoke and the fallen landed on the line and the
+     * hulls did not — and the note in `Command.js` said "the mode lays hulls
+     * now", which was a sentence about one seventh of the mode.
+     *
+     * `beginDressing` publishes it for every ground now, the same door the
+     * water hazard goes through and for the reason that note gives.
+     *
+     * WHAT IS ASSERTED IS THE HULLS ON THE GROUND, not the field being set: a
+     * callback that is present and never reached is the defect this clause is
+     * about, one level further in. The price is reported beside it, because
+     * this is the most expensive of §12.4's five marks — a whole sitting is
+     * five engagements of three clusters:
+     *
+     *     alpine   101 → 217 draw calls    drifts   113 → 226    wood  149 → 251
+     *     colosseum 165 → 278              scoria   170 → 284
+     *     mustafar  224 → 314              geonosis 277 → 375
+     *
+     * against this file's own bound of 520 for a dressed level.
+     */
+    const { marchFront } = await import('../../src/world/Front.js');
+    const rows = [];
+    for (const key of LEVEL_ORDER) {
+      const L = LEVELS[key];
+      if (!L || typeof L.dress !== 'function' || L.training) continue;
+      const terrain = new Terrain(new THREE.Scene(), L.terrain, 0.5);
+      const world = stubWorld(terrain, L);
+      L.dress(world);
+      assert(typeof world.strewWrecks === 'function',
+        `${key} dresses itself and publishes no hull builder, so the front it is rolled onto `
+        + 'lays four of §12.4\'s five marks and no wrecks');
+      const before = world.statics.length;
+      /* ONE ENGAGEMENT, ONE CLUSTER, and the smoke turned off: what is being
+       * measured is whether the callback is reached, and a full sitting's five
+       * engagements would be five heightfields' worth of cratering for the
+       * same yes-or-no. */
+      const out = marchFront(world, { engagement: 1, seed: 3,
+        strewWrecks: world.strewWrecks, wrecks: 1, columns: 4, fallen: 20 });
+      assert(out.wrecks > 0,
+        `${key}: the front was handed a hull builder and laid ${out.wrecks} clusters`);
+      rows.push(`${key} ${out.wrecks}× +${world.statics.length - before} statics`);
+      terrain.dispose();
+    }
+    assert(rows.length >= 6, `only ${rows.length} grounds surveyed`);
+    return rows.join('; ');
+  });
+
   check('levels: filling the ground did not cost a draw call per pebble', () => {
     /* The obvious way to fill a level is a loop around `addRock`, which is ONE
      * DRAW CALL PER ROCK. The first version of this pass did exactly that and
