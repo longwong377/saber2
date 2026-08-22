@@ -813,10 +813,10 @@ export const ARCHETYPES = {
      * for are the two that move this number at all. No single figure in them
      * should be quoted.
      *
-     * `damage` 2, HALVED AND HALVED AGAIN — AND IT IS ABOUT THE LINE, NOT
-     * ABOUT YOU.
+     * `damage` 4 — AND IT IS ABOUT THE LINE, NOT ABOUT YOU, BUT §6 STILL OWNS
+     * THE NUMBER.
      *
-     * ── THE SECOND HALVING IS THE CHEST'S BILL ────────────────────────────
+     * ── THE CHEST'S BILL, AND THE FLOOR THE DOCUMENT PUTS UNDER IT ─────────
      *
      * `Enemy._shoot` led its aim on `target.chest ?? target.position`, and only
      * `Player` had a `chest`, so until this session every round the levy fired
@@ -831,9 +831,26 @@ export const ARCHETYPES = {
      * constant, everything else held: the round at 5 leaves 1.17 of ten
      * standing, at 2.5 it leaves 2.50, at 2.0 it leaves 2.83, and taking it to
      * zero leaves 3.50 — so the levy alone is worth about 2.3 of the eight and
-     * a half names an engagement was costing. 2 is the setting that, beside the
-     * emplacement's own re-paid cadence, lands the engagement on the target the
-     * player set.
+     * a half names an engagement was costing.
+     *
+     * ── AND §6 PUTS A FLOOR UNDER IT THAT THE ATTRITION TARGET DOES NOT ─────
+     *
+     * This constant was taken to 2 on that arithmetic and `conscript.mjs` went
+     * red for it: §6 prices this body at **0.7 dps against a B1's 2.17**, a
+     * ratio of 0.323, and the check binds it to ±0.12 on ONE field with four of
+     * each shooting one player, which is a fact about two roster rows rather
+     * than about a harness. At 2 the measured ratio is 0.145 — a tenth of a B1,
+     * which is the "harmless furniture" that check exists to refuse. §6 does not
+     * ask for a body that cannot shoot; what makes forty of them weather is
+     * that KILLING them pays nothing.
+     *
+     * So the floor is the document's and the round is 4: ratio about 0.29
+     * against §6's 0.323, inside the band and a little under the number rather
+     * than over it, which is the direction the line-cannot-dodge argument above
+     * licenses. Measured at ten seeds beside the emplacement's re-paid cadence,
+     * an engagement fought with no Jedi leaves **4.10 of ten with 8 of 10
+     * reaching a muster**, against 4.55 at a round of 2 — the two are half a man
+     * apart and the standard error is 0.86, so the in-band number is free.
      *
      * The old argument is unchanged and is below; it is only that the number it
      * argued for was measured against a levy that could not hit anybody.
@@ -872,7 +889,7 @@ export const ARCHETYPES = {
      * the wrong shape for weather twice over: fewer bolts is less suppression
      * and a bigger round is more killing.
      */
-    damage: 2,
+    damage: 4,
     preferred: [7, 15], boltColor: BOLT_COLORS.red,
     /** THE FIELD THE WHOLE CLASS IS. See the note above and `World.paysOut`. */
     score: 0, threat: 0.5,
