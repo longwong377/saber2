@@ -112,6 +112,33 @@ export function run({ check, assert }) {
       const m = new RegExp(`id="opt-sk-${pick}"[^>]*min="(\\d+)"[^>]*max="(\\d+)"`).exec(html);
       assert(m, `the '${pick}' control declares no travel`);
     }
+    /**
+     * …AND EVERY POSITION OF EVERY NUMERIC PICK IS HONOURED.
+     *
+     * `skirmish.mjs` walks three controls through `_planSkirmish` and its list
+     * of three is typed out beside the panel — so the fourth numeric pick was
+     * invisible to it in exactly the way it was invisible to the panel. This
+     * walks whatever bands `SKIRMISH` declares, through `skirmishConfig`, which
+     * is where the clamp lives; a fifth band is walked on the day it is added.
+     *
+     * The edges are pushed as well, for the reason that check gives: a range
+     * that merely MATCHES the table proves nothing, because the two could be
+     * wrong together. One step outside has to come back clamped to the bound.
+     */
+    for (const [pick, band] of Object.entries(SKIRMISH)) {
+      if (typeof band?.min !== 'number' || typeof band?.max !== 'number') continue;
+      for (let v = band.min; v <= band.max; v++) {
+        assert(skirmishConfig({ [pick]: v })[pick] === v,
+          `the panel offers ${pick} ${v} and the plan comes back `
+          + `${skirmishConfig({ [pick]: v })[pick]} — that position of the control is a number `
+          + 'no battle will ever be fought at');
+      }
+      assert(skirmishConfig({ [pick]: band.min - 1 })[pick] === band.min,
+        `${pick} ${band.min - 1} planned as ${skirmishConfig({ [pick]: band.min - 1 })[pick]}`);
+      assert(skirmishConfig({ [pick]: band.max + 1 })[pick] === band.max,
+        `${pick} ${band.max + 1} planned as ${skirmishConfig({ [pick]: band.max + 1 })[pick]}`);
+    }
+
     const longest = SKIRMISH.engagements.max * SKIRMISH.waves.max;
     const shipped = SKIRMISH.engagements.def * SKIRMISH.waves.def;
     assert(longest > shipped * 4,
