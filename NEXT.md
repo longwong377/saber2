@@ -1312,3 +1312,70 @@ alone will keep breaking the other. Whoever settles the attrition target should
 settle this in the same pass: §7 wants BREACH to cost the line something real
 while the Jedi is away from it, and §6 wants the line to survive an engagement,
 and one number cannot be chosen for one of those and checked against the other.
+
+---
+
+## §7's central claim, answered — the ground is taken by the LINE
+
+Four mechanisms were built to make a Jedi worth something to his line and every
+one measured as not paying: presence as a morale term, `openness` as a
+multiplier on other people's guns, a bolt SCREEN for the man beside you, and the
+attrition levers. The diagnosis this file already carried is that **each was a
+local good handed to the one body on the field that does not stay local** — the
+line holds together to about seven metres and the player is the one who leaves,
+up to 26 m ahead of his own men.
+
+A fifth local good would have failed the same way. What was missing is in §6 and
+was never implemented:
+
+> "the objective advances at the pace of the slowest friendly inside 14 m. You
+> can sprint 200 m into their rear; the line does not come with you… **Killing
+> stays fast and fun and advances nothing.**"
+
+`payWave` took an area on `areaWaves >= area.waves` — a count of cleared waves
+and nothing else. So killing everything, alone, two hundred metres in front of
+your men, **took the ground**. `advancePace` was built, is correct, and moves the
+formation anchor at the slowest man's speed — but it decided where the line
+STOOD, not whether the run ADVANCED.
+
+`MODES.theline.lineAdvances` fixes that. `CommandDirector.lineIsUp` asks for a
+quorum of the living inside `MORALE.NEAR` — the same radius presence, the pace
+rule and the nerve ledger already use, so a player learns one distance and not
+four. Half of the living, because a line that has lost men is still a line and a
+rule that wanted all of them would make one straggler a wall.
+
+**It is not a reward for standing still and it does not punish having left.** It
+declines to advance until the army that is supposed to be taking this ground is
+standing on it, which is what "the line takes the ridge" means. And it makes all
+four of the failed mechanisms pay at once without changing any of them, because
+each keeps men alive and near you and that is now what advances the run.
+
+Two things it needed to be safe, both driven by `theline.16`:
+
+- **It must not dead-end a run.** `advancePace` returns 0 when nobody is inside
+  `NEAR`, so a line whose Jedi has left does not come and cannot — the player
+  resolves it by walking back, and the check drives both directions to prove the
+  refusal is a delay and not a wall.
+- **An army that no longer exists did not take this ground.** `lineIsUp` answers
+  true for an empty roster (it must, or a wiped army hangs the run), but
+  `payWave` calls `_areaClear` synchronously and `_checkLine` does not get its
+  frame until the next `update` — so the last wave paid by a dead line logged an
+  `area` record on the way out and the defeat card credited ground the army was
+  not alive to hold.
+
+### What is proven, and what is not
+
+**Proven: the mechanism engages.** `tools/_stand.mjs` is the 2×2 — two player
+scripts (with the line / away from it) × the rule on and off, toggled on the
+DIRECTOR so the mode string and therefore the rng stream stay identical (§2.5b).
+The rule-on arm spends **a mean of 51 s an engagement with the ground won and
+unclaimed**.
+
+**Not proven: that it changes how the mode is played.** Every run of that arm
+also read `line 0/10` — the roster was dead before the area closed, and
+`lineIsUp` steps aside for a dead army rather than hang the run. So on that
+build the rule was mostly bypassed, for exactly the reason the four mechanisms
+before it failed. That bench was pinned to a commit that predates the chest fix
+and the wave-ramp fix, both of which change whether a line survives an
+engagement at all — so **it has to be re-run against the settled tree, and until
+it is, this rule is built and engaging and unproven.**
