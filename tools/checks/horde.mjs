@@ -325,6 +325,44 @@ export async function run({ check, assert }) {
       + `${fired} shots at ${((fireMoving / fired) * 100).toFixed(0)}%`;
   });
 
+  check('horde: a leader rallies its own side and not the men shooting at it', async () => {
+    /**
+     * `_updateElite`'s leader loop had no team test. In waves and roguelite
+     * that is right by accident — `ctx.enemies` holds one side and the player
+     * is not in it — but Command, skirmish and campaign put BOTH armies in
+     * that array, which is the fact `World.pickTarget` and `_hostilesFor` are
+     * built on. So a Confederate leader standing inside `RALLY.radius` of the
+     * Republic line handed those clone troopers a 22% quicker reload, 15% more
+     * pace, 25% more damage and a faster duel tempo. Nine and a half metres is
+     * what a front is.
+     *
+     * It also broke the one promise the code's own note makes to the player:
+     * the ring drawn on the ground "is the set of bodies getting the buff",
+     * and half of them were the ones shooting at it.
+     */
+    const { world, input } = await boot();
+    const { applyModifier, RALLY } = await import('../../src/game/Enemy.js');
+    const boss = world.spawnEnemy('b2', ground(world, 0, 15));
+    assert(applyModifier(boss, 'leader'), 'the leader modifier would not install');
+    const mate = world.spawnEnemy('b1', ground(world, 2, 15));
+    const foe = world.spawnEnemy('trooper', ground(world, -2, 15));
+    foe.team = 0;
+    for (let i = 0; i < 6; i++) world.update(1 / 30, input);
+    const dm = mate.position.distanceTo(boss.position);
+    const df = foe.position.distanceTo(boss.position);
+    assert(dm < RALLY.radius && df < RALLY.radius,
+      `both bodies must stand inside the ring — mate ${dm.toFixed(2)} m, foe ${df.toFixed(2)} m `
+      + `against ${RALLY.radius}`);
+    assert(mate.rallyTimer > 0,
+      'the leader did not rally its own side at all — the aura is off, not mis-aimed');
+    assert(!(foe.rallyTimer > 0),
+      `a leader on the other side rallied a body on team ${foe.team} standing ${df.toFixed(2)} m `
+      + 'away — it is making the army that is shooting at it reload quicker, move faster and hit '
+      + 'harder, and the ring on the ground says it is helping them');
+    return `mate at ${dm.toFixed(2)} m rallied ${mate.rallyTimer}, foe at ${df.toFixed(2)} m `
+      + `rallied ${foe.rallyTimer || 0} (ring ${RALLY.radius} m)`;
+  });
+
   /* ══════════════════════════════════════════════════════════════════ */
   /*  3 — nerve reaches the one place it decides an ACT                 */
   /* ══════════════════════════════════════════════════════════════════ */

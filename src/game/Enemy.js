@@ -4928,10 +4928,31 @@ export class Enemy {
     // The ring above is drawn at RALLY.radius, so the set of bodies inside it
     // is the set of bodies getting the buff — no guessing, and one obvious
     // target if you would rather not fight the buffed version of the wave.
+    /**
+     * ── AND IT WAS MULTIPLYING THE OTHER ARMY ────────────────────────────
+     *
+     * This loop had no team test at all. In waves and roguelite that is right
+     * by accident, because `ctx.enemies` holds one side and the player is not
+     * in it. Command, skirmish and campaign put BOTH armies in that array —
+     * `World.pickTarget` and `_hostilesFor` are built on exactly that fact —
+     * so a Confederate leader droid standing inside 9.5 m of the Republic line
+     * handed those clone troopers `RALLY`: a 22% quicker reload, 15% more
+     * pace, 25% more damage and a faster duel tempo. Lines close to inside
+     * 9.5 m constantly; that is what a front is.
+     *
+     * Measured on a real world — a `leader` B2, an allied B1 1.86 m away and a
+     * hostile trooper 1.72 m away — both came out of one frame with
+     * `rallyTimer` 0.25.
+     *
+     * It is also the one thing the note above promises the player and could
+     * not deliver: the ring says "this is the set of bodies getting the buff",
+     * and half the bodies standing in it were the ones shooting at it.
+     */
     if (this.mod === 'leader' && !this.dead && !this.toppled) {
       const r2 = RALLY.radius * RALLY.radius;
       for (const other of ctx.enemies) {
         if (other === this || other.dead) continue;
+        if (other.team !== this.team) continue;
         if (other.position.distanceToSquared(this.position) > r2) continue;
         other.rallyTimer = RALLY.refresh;
       }
