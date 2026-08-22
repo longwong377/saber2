@@ -284,6 +284,93 @@ export function run({ check, assert }) {
         + `LEVELS: ${shadowed.join(', ')}` : '');
   });
 
+  check('roster: every dressing function Levels.js exports is one a room can reach', () => {
+    /**
+     * A LEVEL DELETED TAKES ITS VOCABULARY WITH IT, AND NOTHING SAYS SO.
+     *
+     * The checks above ask whether anything NAMES a room that is gone. This one
+     * asks the other half: what did the room leave BEHIND. An exported function
+     * with no caller is not a syntax error, does not fail to import, does not
+     * show in a diff, and keeps a header written in the present tense arguing
+     * for its own necessity — which is how this file found three:
+     *
+     *   cluster           "this is the workhorse", 0 call sites
+     *   run               "a line of things", 0 call sites, and its one likely
+     *                     caller is the next row
+     *   templeColonnade   126 lines of instanced order whose own note says
+     *                     "the rule is written out over the Temple below" and
+     *                     "the foundry already spends 386". Both rooms were
+     *                     deleted in the roster cull.
+     *
+     * This is the same class as the 130-line blast-door path and `works()`,
+     * which had "no caller at all" for a whole session before anybody looked.
+     *
+     * THE BAR IS NOT "DELETE IT". Placement vocabulary is worth keeping — the
+     * argument shape is the paid-for part and §4's list of permitted interiors
+     * has not shrunk. The bar is that an orphan must SAY it is one, in its own
+     * doc comment, where the next reader of that function is already looking.
+     * A list of orphan names in this file would be HANDOFF §2.3: a table beside
+     * its generated twin, and it would rot the same way the headers did.
+     *
+     * WHAT COUNTS AS REACHED. A call inside `Levels.js` itself, or a named
+     * import of it by any module under `src/`. Not a bare word: `run`, `drift`,
+     * `bay` and `cluster` are all ordinary English and a word count says
+     * `run` is referenced 862 times in `src/`, none of them this function.
+     */
+    const LEVELS_JS = join(ROOT, 'src/game/Levels.js');
+    const src = readFileSync(LEVELS_JS, 'utf8');
+    /* Every name any module under src/ takes out of Levels.js by name. */
+    const imported = new Set();
+    for (const file of sources(join(ROOT, 'src'))) {
+      if (file === LEVELS_JS) continue;
+      const text = readFileSync(file, 'utf8');
+      const re = /import\s*\{([^}]*)\}\s*from\s*'[^']*Levels\.js'/g;
+      let m;
+      while ((m = re.exec(text))) {
+        for (const part of m[1].split(',')) {
+          const n = part.trim().split(/\s+as\s+/)[0].trim();
+          if (n) imported.add(n);
+        }
+      }
+    }
+    const orphans = [], undeclared = [], reached = [];
+    const re = /^export function ([A-Za-z_$][\w$]*)/gm;
+    let m;
+    while ((m = re.exec(src))) {
+      const name = m[1];
+      /* One of them IS the declaration, so a function called nowhere scores 0. */
+      const calls = (src.match(new RegExp('\\b' + name + '\\s*\\(', 'g')) || []).length - 1;
+      if (calls > 0 || imported.has(name)) { reached.push(name); continue; }
+      orphans.push(name);
+      /* The declaration lives in the doc comment over the function — within
+       * reach of the eye that is reading the signature, and nowhere else.
+       *
+       * The comment is found by its own delimiters and NOT by a fixed window
+       * back from the signature. The first cut looked back 2 200 characters and
+       * missed `templeColonnade`, whose header is longer than that: HANDOFF
+       * §2.3's twin again, a hand-written span standing in for something the
+       * machine can compute, and it fails in the direction that manufactures a
+       * defect (`tools/checks/_source.mjs` was written for the same bug). */
+      const head = src.slice(0, m.index);
+      const end = head.lastIndexOf('*/');
+      const open = end < 0 ? -1 : head.lastIndexOf('/**', end);
+      /* …and the comment has to be THIS function's: anything but whitespace
+       * between the end of the comment and the `export` means the doc belongs
+       * to something else and this signature is bare. */
+      const attached = end >= 0 && head.slice(end + 2).trim() === '';
+      if (!attached || open < 0 || !head.slice(open, end).includes('ORPHANED')) undeclared.push(name);
+    }
+    assert(reached.length >= 10,
+      `only ${reached.length} of Levels.js's exports resolve at all — the scan is not scanning`);
+    assert(!undeclared.length,
+      `${undeclared.join(', ')} — exported by Levels.js, called by nothing in src/, and the doc `
+      + 'comment over it does not say ORPHANED. Either a room lost its vocabulary when it was '
+      + 'deleted, or the function was written for a caller that never landed. Say which, over the '
+      + 'function, so the next reader of that header is not being argued at in the present tense');
+    return `${reached.length} reached, ${orphans.length} declared orphaned`
+      + (orphans.length ? ` (${orphans.join(', ')})` : '');
+  });
+
   check('roster: nothing in the tree names a ground the game does not have', () => {
     /**
      * THE SAME QUESTION IN THE OTHER VOCABULARY, and the header above is the

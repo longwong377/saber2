@@ -199,9 +199,19 @@ export function findSite(world, rmin, rmax, opts = {}) {
 }
 
 /**
- * A cluster: one anchor, then satellites falling off around it. This is the
- * workhorse — a camp, a rockfall, a debris field, a stand of trees. `place` is
- * called with (position, indexInCluster, distanceFromAnchor, clusterAngle).
+ * A cluster: one anchor, then satellites falling off around it — a camp, a
+ * rockfall, a debris field, a stand of trees. `place` is called with
+ * (position, indexInCluster, distanceFromAnchor, clusterAngle).
+ *
+ * ORPHANED. This note used to open "this is the workhorse", and nothing in the
+ * game calls it: `roster.mjs` counts the call sites and there are none, in this
+ * file or in any module that imports it. The workhorse is `island()` at 12 call
+ * sites and `findSite()` at 37; a room that wants a scatter round an anchor
+ * writes the loop inline. It is kept for the same reason `works()` below is —
+ * it is placement vocabulary a new room can reach for, and the argument shape
+ * is the paid-for part — but the sentence claiming it was in use was a claim
+ * about the file as it stood before three levels were deleted, and the check
+ * exists so the next one cannot survive that long.
  */
 export function cluster(world, opts, place) {
   const site = findSite(world, opts.rmin ?? 20, opts.rmax ?? 80, opts);
@@ -272,6 +282,13 @@ export function drift(world, opts, place) {
  * A line of things — a colonnade, a wall run, a ridge of wreckage. Straight
  * scatter never produces one, and a single line does more to make a space feel
  * built than fifty scattered objects.
+ *
+ * ORPHANED, and the sentence above is an argument for a thing no room makes:
+ * nothing in the tree calls this. Its one likely caller, `templeColonnade`
+ * below, is orphaned too — the Temple was deleted in the roster cull — so the
+ * whole "line of things" vocabulary went with that room and nobody noticed,
+ * because an unused export is not a syntax error. Kept as vocabulary; declared
+ * here so `roster.mjs` can hold the declaration rather than the silence.
  */
 export function run(world, from, to, count, place, opts = {}) {
   const jitter = opts.jitter ?? 0;
@@ -2075,6 +2092,20 @@ export function island(world, pos, opts, build) {
  * liftable. What you can cut is what you can stand next to.
  *
  * @returns the number of columns standing.
+ *
+ * ORPHANED — AND THE NOTE ABOVE DESCRIBES A ROOM THAT NO LONGER EXISTS. "The
+ * rule is written out over the Temple below" and "the foundry already spends
+ * 386" were both true when this was written; the Temple and the Foundry were
+ * deleted in the roster cull, and 126 lines of instanced colonnade went from
+ * being the reason an interior was affordable to being unreachable, with a
+ * header still arguing for it in the present tense. Nothing calls it in this
+ * file or in any module that imports it.
+ *
+ * Kept, on the same terms as `works()`: it is the only instanced-order
+ * vocabulary in the tree — shaft, base, capital and entablature in four draw
+ * calls with a real collider per column — and §4's list of permitted interiors
+ * has not shrunk. What is orphaned is the ROOM, not the technique. `roster.mjs`
+ * requires this word so the next orphan has to be declared instead of found.
  */
 export function templeColonnade(world, opts = {}) {
   const M = propMaterials();
