@@ -361,6 +361,31 @@ export async function run({ check, assert }) {
      * a player, and holding one alive on both sides of the comparison removes
      * a variable rather than adding one.
      */
+    /**
+     * ── AND WHAT THE LINE PAYS IS COUNTED IN HIT POINTS, NOT IN NAMES ───────
+     *
+     * The clause below used to be `paidAtThePlate > 0` on a count of NAMES over
+     * a twenty-second window, and it is the same defect as the `lost >= 1` this
+     * file has already lost one check to: whether a body that has taken 40 of
+     * its 46 hit points crosses zero inside a particular twenty seconds is a
+     * dispersion roll, and it went red on exactly that. Hit points into the
+     * line accumulate off every bolt that lands rather than off the last one,
+     * so the same window carries dozens of draws instead of one.
+     *
+     * The wrapper goes on BEFORE any world is built, for the reason check 2
+     * states at length: `Command.installTeamDamage` captures the prototype
+     * method per body at deploy time.
+     */
+    const { Enemy: E3 } = await import('../../src/game/Enemy.js');
+    let LINE = null;
+    const realLineDamage = E3.prototype.damage;
+    E3.prototype.damage = function (amount, point, source, kind, ...rest) {
+      const before = this.hp;
+      const out = realLineDamage.call(this, amount, point, source, kind, ...rest);
+      if (LINE && this.team === 0 && this.trooper) LINE.hp += Math.max(0, before - this.hp);
+      return out;
+    };
+
     const WARM = 20;
     const arm = async (breaches, seconds) => {
       const { world } = await field({ scheme: 'free' });
@@ -379,6 +404,9 @@ export async function run({ check, assert }) {
         world.update(1 / 60, input);
       }
       const before = { men: d.roster.living.length, stam: p.stamina, force: p.force };
+      /* The window opens here: everything the warm-up cost is already spent. */
+      LINE = { hp: 0 };
+      const paid = LINE;
       let t = 0;
       if (breaches) {
         const out = outOf(door);
@@ -402,12 +430,15 @@ export async function run({ check, assert }) {
           t += 1 / 60;
         }
       }
-      return { world, d, pit, door, p, t, before,
+      LINE = null;
+      return { world, d, pit, door, p, t, before, paid,
         after: { men: d.roster.living.length, stam: p.stamina, force: p.force } };
     };
 
     /* ARM 1 — the breach, with the battle running. */
-    const cut = await arm(true);
+    let cut, stay, held;
+    try {
+    cut = await arm(true);
     assert(cut.door.opened,
       `110 s of held blade on the emplacement's door burned ${cut.door.cutArea} texels and never `
       + 'opened it — the one door in the game the battle forces you to cut is the one that cannot '
@@ -443,14 +474,21 @@ export async function run({ check, assert }) {
     const bars = { stam: cut.before.stam - cut.after.stam, force: cut.before.force - cut.after.force };
 
     /* ARM 2 — the same seconds, standing with the line instead. */
-    const held = cut.t;
-    const stay = await arm(false, held);
+    held = cut.t;
+    stay = await arm(false, held);
+    } finally { E3.prototype.damage = realLineDamage; }
     const paidWithTheLine = stay.before.men - stay.after.men;
 
-    assert(paidAtThePlate > 0,
-      `the line lost nothing at all in the ${held.toFixed(1)} s the player spent at the plate. `
-      + 'BREACH is meant to be a price paid in the mode\'s own currency, and a price of zero is an '
-      + 'errand with a longer animation.');
+    /* A MAN'S OWN HEALTH IS THE UNIT, read off a body of this line rather than
+     * typed here — and the bar is that the line is UNDER FIRE while you are
+     * away from it, which is the half of §7's sentence a count of names could
+     * not state. Zero is the failure FLAGSHIP §16.3 was: nothing on the other
+     * side able to touch your army at all. */
+    const manHp = cut.d.roster.all[0]?.body?.maxHp ?? 46;
+    assert(cut.paid.hp > 0,
+      `the line took not one point of damage in the ${held.toFixed(1)} s the player spent at the `
+      + 'plate. BREACH is meant to be a price paid in the mode\'s own currency, and a price of zero '
+      + 'is an errand with a longer animation.');
     /**
      * ── AND THE PAIRED CONTROL IS REPORTED, NOT ASSERTED, BECAUSE IT WENT THE
      *    OTHER WAY ──────────────────────────────────────────────────────────
@@ -481,9 +519,11 @@ export async function run({ check, assert }) {
     return `${cut.t.toFixed(1)} s of held blade opened it (${cut.door.cutArea} texels) against `
       + `blast-door.mjs's 18.8 s median on an undisturbed plate — the difference is the levy, `
       + `which follows you to the plate. `
-      + `In those seconds the line lost ${paidAtThePlate} of ${cut.before.men}; over the same `
-      + `${held.toFixed(1)} s with the player standing in the formation it lost ${paidWithTheLine} `
-      + `of ${stay.before.men} — one sample a side, and it leans the wrong way; see the note. `
+      + `In those seconds the line took ${cut.paid.hp.toFixed(0)} hp `
+      + `(${(cut.paid.hp / manHp).toFixed(2)} men's worth, ${paidAtThePlate} of ${cut.before.men} `
+      + `names actually down); over the same ${held.toFixed(1)} s with the player standing in the `
+      + `formation it took ${stay.paid.hp.toFixed(0)} hp and lost ${paidWithTheLine} of `
+      + `${stay.before.men} — one sample a side, and it leans the wrong way; see the note. `
       + `The gun fired ${cut.pit.shots} rounds and none after the plate fell. `
       + `Bars at the plate: stamina −${bars.stam.toFixed(1)}, Force −${bars.force.toFixed(1)} `
       + '(§7 says both drain; at 69 m from the line there is nothing arriving to guard, and the '
