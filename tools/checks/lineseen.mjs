@@ -136,10 +136,18 @@ export async function run({ check, assert }) {
           const rows = [];
           const was = menu.s.mode;
           for (const key of keys) {
-            /* THE SHIPPED REVEAL, not a re-implementation of it: `selectMode`
-             * is what a click on the card calls, and `_revealMode` inside it is
-             * the thing under test (HANDOFF §2.4). */
+            /* THE SHIPPED REVEAL, not a re-implementation of it — AND IT IS
+             * NOT INSIDE `selectMode`, which is where this check first looked
+             * for it. `selectMode` writes the setting and re-paints the `sel`
+             * class; the only caller of `_revealMode` in the whole file is
+             * `_onPanelShown`. So the property a player actually has is "the
+             * mode I am about to deploy into is on screen WHEN THE PANEL IS
+             * SHOWN", and driving `selectMode` alone would have measured a
+             * column nobody had asked to scroll and reported seven modes off
+             * the list — an instrument restating a rule and manufacturing a
+             * defect out of the difference (HANDOFF §2.4). */
             menu.selectMode(key);
+            menu._onPanelShown();
             const card = menu._modeCards.get(key);
             const cr = card.getBoundingClientRect();
             const br = box.getBoundingClientRect();
@@ -170,6 +178,7 @@ export async function run({ check, assert }) {
               centre, hit: +(hit / n).toFixed(2) });
           }
           menu.selectMode(was);
+          menu._onPanelShown();
           return { band: Math.round(box.clientHeight), content: Math.round(box.scrollHeight),
             more: col.classList.contains('more'), less: col.classList.contains('less'),
             gutter: box.offsetWidth - box.clientWidth, cards: cards.length, rows };
