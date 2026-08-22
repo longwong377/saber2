@@ -48,7 +48,22 @@ f._realise = (i) => {
     const d = g(q.x, q.z) - (q.y - r);
     if (d > deepest) deepest = d;
   }
-  depths.push({ i, deepest, len: half * 2, r });
+  depths.push({ i, deepest, len: half * 2, r, settled: null });
+};
+
+/** The same measurement, on a log that has had time to lie down. */
+const depthOf = (i, rec) => {
+  const b = rec.prop.body;
+  const r = f.data[i * F.N + F.R];
+  const half = b.extent ? b.extent.y : 0;
+  const ax = new THREE.Vector3(0, 1, 0).applyQuaternion(b.quaternion);
+  let deep = 0;
+  for (let s = -6; s <= 6; s++) {
+    const q = b.position.clone().addScaledVector(ax, (s / 6) * half);
+    const d = g(q.x, q.z) - (q.y - r);
+    if (d > deep) deep = d;
+  }
+  return deep;
 };
 
 const P = world.player.position;
@@ -71,10 +86,13 @@ for (let s = 0; s < STOPS; s++) {
     f.fell(i, Math.cos(b), Math.sin(b), 0.6);
   }
   run(12);
-  /* Anything that has left the world while we were standing here. */
-  for (const [, rec] of f.real) {
+  /* Anything that has left the world while we were standing here, and where
+   * the ones that stayed have come to rest. */
+  for (const [i, rec] of f.real) {
     const b = rec.prop.body;
     if (b.position.y < -50 || b.dead) lost++;
+    const e = depths.find((d) => d.i === i);
+    if (e) e.settled = { deep: depthOf(i, rec), v: b.velocity.length() };
   }
 }
 
@@ -86,6 +104,15 @@ console.log(`born with the underside below the terrain: ${under.length} of ${dep
 console.log(`deepest ${q(0).toFixed(2)} m · p90 ${q(0.1).toFixed(2)} · median ${q(0.5).toFixed(2)}`);
 for (const d of depths.slice(0, 10)) {
   console.log(`  tree ${d.i}: ${d.deepest.toFixed(2)} m under, log ${d.len.toFixed(1)} m x r${d.r.toFixed(2)}`);
+}
+const rest = depths.filter((d) => d.settled);
+const restUnder = rest.filter((d) => d.settled.deep > 0.10);
+rest.sort((a, b) => b.settled.deep - a.settled.deep);
+console.log(`\nof ${rest.length} logs seen again after twelve seconds, ${restUnder.length} are more than `
+  + `10 cm into the ground; deepest ${(rest[0]?.settled.deep ?? 0).toFixed(2)} m`);
+for (const d of rest.slice(0, 6)) {
+  console.log(`  tree ${d.i}: born ${d.deepest.toFixed(2)} → settled ${d.settled.deep.toFixed(2)} m `
+    + `(|v| ${d.settled.v.toFixed(2)})`);
 }
 console.log(`logs that had left the world or been culled while we watched: ${lost}`);
 process.exit(0);
