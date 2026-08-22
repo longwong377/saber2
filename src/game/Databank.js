@@ -63,6 +63,12 @@ export const FACTIONS = {
     name: 'The Galactic Republic',
     short: 'Republic',
     army: true,
+    /* WHICH ORDER LEADS IT, and it lives here rather than in Command.js so that
+     * `Waves.js` can ask the question too. Command imports Waves, so Waves
+     * cannot import Command; this file is the one both of them already read,
+     * and a second copy of this mapping in each is the hand-maintained twin
+     * HANDOFF §2.3 is about. `Command.ARMIES` reads it from here. */
+    order: 'jedi',
     note: 'A thousand years without a standing army, and then an army that was '
       + 'already grown and paid for by the time anybody voted on it. Its soldiers '
       + 'are one man copied a million times; its generals are monks.',
@@ -71,6 +77,7 @@ export const FACTIONS = {
     name: 'The Confederacy of Independent Systems',
     short: 'Confederacy',
     army: true,
+    order: 'sith',
     note: 'A trade alliance with a fleet. Every soldier it fields was built to a '
       + 'unit cost, which is its whole strategy and its whole weakness: the '
       + 'Confederacy does not lose a droid, it spends one.',
@@ -135,6 +142,18 @@ export const DATABANK = {
       + 'clones in a decade — and it fights in ranks because a rank is the only '
       + 'thing that makes one of them matter. Meeting a B1 is nothing. Meeting '
       + 'forty at once is the Confederacy\'s entire argument.',
+  },
+  conscript: {
+    faction: 'separatist',
+    weapon: 'E-5 blaster rifle',
+    text: 'A B1 that never finished being built. No unit flash, no paint, half a '
+      + 'charge in the eye and a rifle it fires once every three seconds at nothing '
+      + 'in particular. The foundries turn these out when a front needs a number '
+      + 'rather than an army, and the number is the whole of the point: a conscript '
+      + 'is not sent to win the ground, it is sent to be standing on it. Six points '
+      + 'of health, one pass, and it is worth nothing — no bounty, no study, no '
+      + 'record. Cutting through forty of them costs you the time it takes and buys '
+      + 'you the time it takes. They are not an enemy. They are weather with legs.',
   },
   b2: {
     faction: 'separatist',
@@ -247,6 +266,31 @@ export const DATABANK = {
       + 'fired. Then 4.2 seconds of reload. That is the only window it gives and '
       + 'the whole answer to it.',
   },
+  tridroid: {
+    faction: 'separatist',
+    weapon: 'Three chain-fed laser cannons, one a facing',
+    text: 'Techno Union artillery, and the tallest thing either army walks onto '
+      + 'a field: a bulbous head fourteen and a half metres up on three enormously '
+      + 'long thin legs, with the ammunition stored inside the head itself. Three '
+      + 'photoreceptors and three cannons, both sets a third of a turn apart, so it '
+      + 'has no front and no blind spot and never needs to face you — it shoots '
+      + 'DOWN, from twelve metres, while you walk to it. And then it goes over. One '
+      + 'leg is enough. A tripod that loses a leg is not a tripod, and this is the '
+      + 'only body of its size on the roster that a single pass brings down.',
+  },
+  snailtank: {
+    faction: 'separatist',
+    weapon: 'Twin heavy repeating blasters and concussion launchers',
+    text: 'A Corporate Alliance droid tank, and the only machine in the war that '
+      + 'runs on ONE tread — a single high-traction belt down its own centreline '
+      + 'with two outrigger pontoons on arms to stop it tipping. Sixty kilometres '
+      + 'an hour in a straight line and eleven and a half seconds to turn round, '
+      + 'which is the whole fight: it picks a line, it commits to it, and stepping '
+      + 'off that line buys you longer than anything else on the field will give '
+      + 'you. And it is balanced on three points — the tread and two pontoons on '
+      + 'arms — so any one of them puts it on its side and stops it for good. The '
+      + 'pontoons are the low ones.',
+  },
   bodyguard: {
     faction: 'separatist',
     weapon: 'Electrostaff',
@@ -355,11 +399,42 @@ export const DATABANK = {
     weapon: 'Mass-driver siege cannon',
     text: 'All Terrain Tactical Enforcer — thirteen metres of six-legged siege '
       + 'armour, walked off a gunship\'s undercarriage straight into '
-      + 'a droid line that outnumbers it. One shell every 4.6 seconds at 58 damage, '
-      + 'the heaviest single hit in the game, behind a 1.1 second telegraph that is '
-      + 'the only warning of that size anybody gets. It is too heavy for the Force '
-      + 'to lift and the grip says so out loud rather than doing nothing. Take the '
-      + 'legs: three of the six and it comes down.',
+      + 'a droid line that outnumbers it. One shell every 4.6 seconds at 58 damage — '
+      + 'over half a Jedi in one round, and only the siege artillery behind it hits '
+      + 'harder — behind a 1.1 second telegraph. It is too heavy for the Force '
+      + 'to lift and the grip says so out loud rather than doing nothing. Its '
+      + 'footpads are magnetised, which is why it walks up things nothing else on '
+      + 'tracks or wheels can follow it onto. Take the legs: three of the six and it '
+      + 'comes down.',
+  },
+
+  spha: {
+    faction: 'republic',
+    weapon: 'Heavy turbolaser, one shell every fourteen seconds',
+    text: 'Self-Propelled Heavy Artillery — the largest ground weapon the Republic '
+      + 'owns, and a gun with a chassis under it rather than a vehicle carrying a '
+      + 'gun. Twelve legs, and the reference is blunt about what they are for: it '
+      + 'walks between firing positions and it stands still to shoot, because a '
+      + 'turbolaser that size is aimed by not moving. It is the heaviest single hit '
+      + 'in the game and it gives the longest warning of anything on the field: two '
+      + 'and a half seconds of charge. That is the opening. While it '
+      + 'is charging it cannot walk, cannot come about and cannot depress the gun, '
+      + 'and there are three metres of clearance under the hull with twelve legs '
+      + 'standing in it. Five of them and the whole thing comes down. Thirty clone '
+      + 'gunners crew one.',
+  },
+  juggernaut: {
+    faction: 'republic',
+    weapon: 'Dorsal heavy laser turret, ten rounds a burst',
+    text: 'The HAVw A6, and everyone calls it the Turbo Tank: forty-nine metres of '
+      + 'ten-wheeled assault transport with three hundred troopers inside it, a '
+      + 'cockpit at each end so it never has to turn round, and an observation '
+      + 'tower over the spine that is the tallest structure on the field. It is '
+      + 'also the fastest heavy in the game — you cannot outrun it in the open, so '
+      + 'do not try. It cannot climb and it cannot come about. Anything you can put '
+      + 'between you and it is a wall it has to drive the long way round, and while '
+      + 'it does that it is showing you five wheels at knee height. Four of the ten '
+      + 'and it is off them.',
   },
 
   /* ── the Order ────────────────────────────────────────────────────── */
@@ -438,6 +513,22 @@ export const DATABANK = {
       + 'taught a different blade every visit.',
   },
 
+  geonosian: {
+    faction: 'separatist',
+    weapon: 'Sonic blaster',
+    text: 'The species whose planet this is, and the only thing you will fight here '
+      + 'that is not standing on the ground. A warrior-caste Geonosian is 1.75 metres '
+      + 'of chitin on a frame that is mostly limb, and it fights from five and a half '
+      + 'metres up where nothing you are holding can reach it — until it stoops. It '
+      + 'cannot stay up: every few seconds it drops to head height, empties its '
+      + 'blaster into you at knife range and labours back up, and the climb is three '
+      + 'times slower than the dive. That window is the fight. Take a WING off it in '
+      + 'that window and it never leaves the sand again; it flies on two and it does '
+      + 'not fly on one. Failing that, it weighs 68 kilos — less than a clone trooper '
+      + '— so the Force will simply pull it down, and it stays down for six seconds '
+      + 'afterwards, which is longer than it takes to kill.',
+  },
+
   /* ── the menagerie ────────────────────────────────────────────────── */
 
   beast: {
@@ -512,6 +603,38 @@ export const DATABANK = {
  */
 export function factionOf(type) {
   return DATABANK[type]?.faction ?? null;
+}
+
+/**
+ * WHICH ARMY A PLAYER OF THIS ORDER LEADS, or null for one that leads neither.
+ *
+ * The player, having played it: "Ive noticed that many times when as a sith
+ * i'll be fighting against mechs that are associated with the separtists which
+ * doesnt' make sense, make sure that doesn't happen and also the other way
+ * around too like when you're playing as the republic you shouldnt be fighting
+ * against things that are canonically on your side, that goes for single npcs
+ * too."
+ *
+ * Measured before the fix, over the shipped levels: SEVEN OF SEVEN fielded
+ * bodies against the side they belong to. A Sith met B1s, B2s and droidekas on
+ * every ground in the game, and a Jedi met clone troopers and marksmen.
+ *
+ * A Grey leads neither and gets null, which every caller has to handle — see
+ * `factionOf`'s note about why a plausible default is worse than a null here.
+ */
+export function armyForOrder(orderId) {
+  if (!orderId) return null;
+  for (const [id, F] of Object.entries(FACTIONS)) {
+    if (F.army && F.order === orderId) return id;
+  }
+  return null;
+}
+
+/** The army on the other side of the war from this one, or null. */
+export function opposingArmy(armyId) {
+  if (!armyId || !FACTIONS[armyId]?.army) return null;
+  const others = Object.keys(FACTIONS).filter((id) => FACTIONS[id].army && id !== armyId);
+  return others.length === 1 ? others[0] : null;
 }
 
 /** Is this body one of the two that fight a war, rather than a Jedi or a beast? */

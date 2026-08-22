@@ -700,6 +700,10 @@ export async function run({ check, assert }) {
         open: engagementFor(t, mods, 0, { noGaps: true, guardOpen: true }) }));
     assert(heavies.length >= 8, `only ${heavies.length} bodies over 520 kg to measure`);
     let opened = 0;
+    /* Named in the result line rather than passed over in silence — a body the
+     * plate route cannot finish is a real fact about it and is the kind of
+     * thing a reader should meet in the output rather than in a source note. */
+    const unfinished = [];
     for (const h of heavies) {
       assert(isFinite(h.e.tKill), `${h.t} cannot be killed at all — the hide has become a wall`);
       /* THE 0.64 s ROW, STATED DIRECTLY. Every line in the table this check
@@ -715,9 +719,60 @@ export async function run({ check, assert }) {
         + 'passes over its own plate — the guard is not being asked for at all');
       assert(h.held.turns <= maxTurns,
         `${h.t} is billed ${h.held.turns} turned passes against a ceiling of ${maxTurns}`);
-      assert(h.held.tKill > h.open.tKill,
-        `a ${h.t} with its guard OPEN takes ${h.open.tKill.toFixed(2)} s over the plate and `
-        + `${h.held.tKill.toFixed(2)} s with it up — the guard is costing the player nothing`);
+      /**
+       * ── AND A BODY THE PLATE ROUTE CANNOT FINISH IS COMPARED ON THE PASS
+       *    THAT ENDS THE FIGHT, BECAUSE ITS `tKill` IS A SENTINEL WEARING A
+       *    TIME ─────────────────────────────────────────────────────────
+       *
+       * `engagementFor` has two ways of saying "no sequence of cuts finishes
+       * this body". If it cannot find an opening cut at all it returns
+       * `passes: 600, tKill: Infinity`, which reads as what it is. If it finds
+       * one and the plan runs out, it falls back to grinding the best capsule
+       * and returns `passes: 600` with a FINITE time — 383.33 s at the shipped
+       * cadence, which is the same marker printed as though it were a
+       * measurement. Comparing a real number against that is not a comparison.
+       *
+       * MEASURED, on the Octuptarra magna tri-droid, plate route only:
+       *
+       *     guard up    6.39 s   via guard x5 -> tarsus0 (topple)
+       *     guard open  383.33 s via tarsus0 (topple)      <- the sentinel
+       *
+       * Both halves of that are correct and neither is a defect. The model
+       * filters every capsule to what a standing player's blade reaches, using
+       * the capsule's MIDPOINT minus its radius — which is the bottom of a
+       * blob and is nowhere near the bottom of an eleven-metre leg. On a
+       * tri-droid that leaves the three ANKLES and nothing else: hips 3.66 m,
+       * head 4.97 m, femur 4.91 m, shin 3.38 m, ankle 0.18 m against a
+       * ceiling a little over two. Three ankles are worth 0.02 of the body, so
+       * there is no plan, so the grind fires. And with the guard UP the five
+       * turned passes it is charged are `5 x TURNED_CUT` of its maximum health,
+       * which is all of it — so the guard kills it and reports 6.39 s.
+       *
+       * The design is not in trouble either. A tripod fourteen and a half
+       * metres tall genuinely cannot be cut down while it is standing; the
+       * answer is one pass at an ankle, which is `toppleAt: 1` straight out of
+       * the reference, and then it is on the ground and everything on it is
+       * reachable. That is the fight-ending pass, and `tNeutralise` is the
+       * model's own name for it.
+       *
+       * So the clause asks its question — does the guard cost the player
+       * anything — on the pass that ENDS the fight rather than on a kill the
+       * model has said it cannot compute. Both branches are still per-body and
+       * neither can tie.
+       */
+      const finishes = (r) => r.passes < 600;
+      if (finishes(h.open)) {
+        assert(h.held.tKill > h.open.tKill,
+          `a ${h.t} with its guard OPEN takes ${h.open.tKill.toFixed(2)} s over the plate and `
+          + `${h.held.tKill.toFixed(2)} s with it up — the guard is costing the player nothing`);
+      } else {
+        assert(h.held.tNeutralise > h.open.tNeutralise,
+          `a ${h.t} cannot be finished over its own plate at all — and with its guard OPEN it still `
+          + `reaches the fight-ending pass in ${h.open.tNeutralise.toFixed(2)} s against `
+          + `${h.held.tNeutralise.toFixed(2)} s with it up, so the guard is costing nothing even `
+          + 'there');
+        unfinished.push(`${h.t} (${h.open.via})`);
+      }
       assert(h.held.passes >= bare.passes,
         `a ${h.t} (${h.A.hp} hp, ${h.A.mass} kg) falls over its own plate in ${h.held.passes} passes `
         + `against a 28 hp B1's ${bare.passes} — a body with a hide is cheaper than one without`);
@@ -816,7 +871,10 @@ export async function run({ check, assert }) {
     return `b1 ${bare.tKill.toFixed(2)}s/${bare.passes}p; over the plate, guard up→open (${opened} of `
       + `${heavies.length} fall in one pass once it is open) — `
       + heavies.map((h) => `${h.t} ${h.held.tKill.toFixed(2)}→${h.open.tKill.toFixed(2)}s(g${h.g},×${h.held.turns})`).join(', ')
-      + '; best route ' + heavies.map((h) => `${h.t} ${h.e.tKill.toFixed(2)}s/${h.e.passes}p`).join(', ');
+      + '; best route ' + heavies.map((h) => `${h.t} ${h.e.tKill.toFixed(2)}s/${h.e.passes}p`).join(', ')
+      + (unfinished.length
+        ? `; no plate route finishes ${unfinished.join(', ')} — compared on the fight-ending pass`
+        : '');
   });
 
   check('balance: a melee opener gets to attack — wave 1 is not free', async () => {
@@ -933,4 +991,206 @@ export async function run({ check, assert }) {
     assert(/const q = \(v\)/.test(src), 'the key quantiser is gone, so a continuous key fills the cache every run');
     return 'both continuous-keyed memos are quantised and bounded';
   });
+
+  /* ══ 6. the second axis — FLAGSHIP §8 ══════════════════════════════════ */
+
+  /**
+   * "MODEL DEPTH IS THE ONLY METRIC", AND THAT WAS THE FINDING.
+   *
+   * §8, on the four playstyles: "Soresu 0.000, Tutaminis 0.036, Aegis 0.165 are
+   * the weakest cards in the table *because model depth is the only metric*. If
+   * the Sentinel ships, `balance.mjs` needs an 'allies preserved' axis, or that
+   * whole playstyle reads as the worst build in the game and nobody picks it
+   * twice."
+   *
+   * The objection is not about those three cards. It is that the instrument
+   * measures how far a LONE player gets, and §2's whole inversion is that the
+   * lone player is not the subject — "a run that kills three hundred droids and
+   * loses the squad is a loss". A ranking with one axis cannot express that, so
+   * a build whose entire output is other people's survival scores zero and is
+   * printed as the weakest thing in the game.
+   *
+   * The three checks below are the three properties the axis has to have to be
+   * worth reading: it must not disturb the axis it was added beside, it must be
+   * ORDERED by the thing it claims to measure, and it must not reward dying.
+   */
+
+  check('balance: the line is a second axis and it does not move the first', async () => {
+    /**
+     * THE PROPERTY THAT MADE THIS SAFE TO ADD TO A TUNED INSTRUMENT.
+     *
+     * Every existing number in this file comes off a seeded rng, so ONE extra
+     * draw anywhere in the loop shifts every draw after it and changes the depth
+     * of every run in every table — silently, and in a way that looks like a
+     * balance finding. So the line accounting takes EXPECTED values off
+     * quantities the incoming loop already has and draws nothing.
+     *
+     * Asserted by switching the accrual off (`MODEL.lineWaves = 0`) and
+     * comparing the depth of the identical seeds. Bit-identical, or the axis is
+     * paying for itself out of the other one's pocket.
+     */
+    const before = B.MODEL.lineWaves;
+    const seeds = [7000, 7013, 7026, 7039, 7052, 7065];
+    const withLine = seeds.map((seed) =>
+      B.simulateRun({ difficulty: 'knight', level: 'colosseum', seed, sigma: 75, boonPolicy: () => null }));
+    let without;
+    try {
+      B.MODEL.lineWaves = 0;
+      without = seeds.map((seed) =>
+        B.simulateRun({ difficulty: 'knight', level: 'colosseum', seed, sigma: 75, boonPolicy: () => null }));
+    } finally { B.MODEL.lineWaves = before; }
+
+    for (let i = 0; i < seeds.length; i++) {
+      assert(withLine[i].depth === without[i].depth,
+        `seed ${seeds[i]} reached depth ${withLine[i].depth} with the line accounted and `
+        + `${without[i].depth} without it — the second axis is drawing from the run's rng`);
+      assert(withLine[i].died === without[i].died, `seed ${seeds[i]} died on a different wave`);
+    }
+    /* …and the axis is a fraction, at both exits of the simulation. */
+    for (const r of withLine) {
+      assert(r.linePreserved >= 0 && r.linePreserved <= 1,
+        `linePreserved came back ${r.linePreserved}`);
+      assert(Number.isFinite(r.lineSeconds) && r.lineSeconds >= 0, 'lineSeconds is not a duration');
+    }
+    return `${seeds.length} seeds, depth identical with and without the line `
+      + `(${withLine.map(r => r.depth.toFixed(2)).join(', ')})`;
+  });
+
+  check('balance: the line is preserved by the thing that is supposed to preserve it', async () => {
+    /**
+     * AN AXIS THAT DOES NOT RESPOND TO SKILL IS A COLUMN OF NOISE.
+     *
+     * The only thing that protects the line in this model is the player, in the
+     * four ways the game gives them — kill the rifle, neutralise it, return a
+     * bolt into it, or stay alive. `MODEL.guardSigma` is the whole of "player
+     * skill" here, so the axis has to be ordered by it or it is measuring
+     * nothing. An ORDERING and not a value, for the reason this file's header
+     * gives: a pinned depth fails on honest tuning and on nothing else.
+     */
+    /**
+     * THIRTY-TWO SEEDS AND NOT SIXTEEN, and the number is measured rather than
+     * chosen: the axis is quantised in tenths (ten men), so a sample small
+     * enough to move by one body is a sample that can invert. At sixteen the
+     * ladder read 0.744 → 0.669 from σ75 to σ45 and at thirty-two it reads
+     * 0.388 → 0.525. That is the same property `boonReport`'s own `boonRuns`
+     * default of 14 × 2 tiers × 3 skills is buying.
+     */
+    const ladder = [110, 75, 45];
+    const rows = [];
+    for (const sigma of ladder) {
+      const rs = [];
+      for (let s = 0; s < 32; s++) {
+        rs.push(B.simulateRun({ difficulty: 'knight', level: 'colosseum', seed: 7000 + s * 13, sigma,
+          boonPolicy: () => null }));
+      }
+      rows.push({ sigma, line: rs.reduce((n, r) => n + r.linePreserved, 0) / rs.length,
+        depth: rs.reduce((n, r) => n + r.depth, 0) / rs.length });
+    }
+    for (let i = 1; i < rows.length; i++) {
+      assert(rows[i].line > rows[i - 1].line,
+        `a sharper hand (σ ${rows[i - 1].sigma} → ${rows[i].sigma}) preserved `
+        + `${rows[i - 1].line.toFixed(3)} → ${rows[i].line.toFixed(3)} of the line — the axis does not `
+        + 'respond to the only thing in this model that protects it');
+    }
+    /**
+     * AND IT IS NOT SATURATED, which is the failure mode that would leave it
+     * ordered and useless: an axis pinned at 0 or 1 ranks nothing.
+     *
+     * ── THE FLOOR AT THE BOTTOM RUNG WAS A THRESHOLD ON A COIN ──────────────
+     *
+     * This read `rows[0].line > 0.02` — a bar on the CLUMSIEST rung, which is
+     * the one rung of the three that sits against zero by construction: at
+     * σ110 the modelled player is bad enough that the line is very nearly wiped
+     * whatever happens, so the mean over 32 runs is a small number a hair above
+     * its own floor. And this file's header says why that cannot be pinned:
+     * `Math.random` is only pinned around the Waves.js import, so under a full
+     * gate the composition a seed draws MOVES BETWEEN PROCESSES and nothing
+     * here may depend on one. Measured, four runs of this one check on two
+     * trees:
+     *
+     *     0.138 → 0.656      0.181 → 0.484 … 0.703
+     *     0.000 → 0.528      0.091 → 0.281 … 0.588
+     *
+     * The bottom rung spans 0.000 to 0.181 across processes with the bar at
+     * 0.02, so it fails on a draw. Two of those four runs are the same tree.
+     *
+     * THE SPAN IS THE STATISTIC AND IT IS THE STABLE ONE — 0.518, 0.522, 0.528
+     * and 0.497 over the same four runs, a spread of 0.03 where the endpoint it
+     * was read off spans 0.18. It is also the quantity the assertion is really
+     * about: an axis ranks builds if a better hand preserves MEASURABLY more
+     * line than a worse one, and how far above zero the worst hand lands is not
+     * that question. The ordering clause above still owns the direction; this
+     * owns the resolution.
+     *
+     * The top is still bounded, because a ceiling at 1.0 is a real saturation
+     * and does not sit against a floor.
+     */
+    const span = rows[rows.length - 1].line - rows[0].line;
+    assert(span > 0.2 && rows[rows.length - 1].line < 0.98,
+      `the axis runs ${rows[0].line.toFixed(3)} → ${rows[rows.length - 1].line.toFixed(3)} across the `
+      + `whole skill ladder — a span of ${span.toFixed(3)} of the roster is too little to rank `
+      + 'anything with');
+    return rows.map(r => `σ${r.sigma} depth ${r.depth.toFixed(2)} line ${r.line.toFixed(3)}`).join(' · ')
+      + ` — span ${span.toFixed(3)}`;
+  });
+
+  check('balance: a dead Jedi is a lost line — dying early does not score well', () => {
+    /**
+     * THE INVERSION THE WHOLE AXIS EXISTS FOR, and the way to get it wrong.
+     *
+     * Casualties accrue while the fight lasts, so the naive axis ranks DYING ON
+     * WAVE TWO as the best way to protect your men: a corpse takes no more
+     * losses. §2 says the opposite in as many words — "a run that kills three
+     * hundred droids and loses the squad is a loss" — and §5's whole subject is
+     * a line whose Jedi is the reason it is still standing. So a player who
+     * does not last the exposure window loses whatever was left.
+     *
+     * Driven at a hopeless skill setting, where the model dies early on purpose.
+     */
+    const hopeless = [];
+    for (let s = 0; s < 10; s++) {
+      hopeless.push(B.simulateRun({ difficulty: 'grandmaster', level: 'colosseum', seed: 7000 + s * 13,
+        sigma: 220, boonPolicy: () => null }));
+    }
+    const early = hopeless.filter((r) => r.died <= B.MODEL.lineWaves);
+    assert(early.length,
+      'nothing died inside the exposure window, so this check measured nothing');
+    for (const r of early) {
+      assert(r.linePreserved === 0,
+        `a run that died on wave ${r.died} of a ${B.MODEL.lineWaves}-wave window still reports `
+        + `${(100 * r.linePreserved).toFixed(0)}% of the line standing — the axis rewards dying early`);
+    }
+    return `${early.length} of ${hopeless.length} runs died inside the ${B.MODEL.lineWaves}-wave window; `
+      + 'every one of them lost the whole line';
+  });
+
+  check('balance: the boon table reports both axes, and a card seen by either is not UNMODELLED', async () => {
+    /**
+     * THE HALF OF §8 THAT IS ABOUT THE REPORT RATHER THAN THE MODEL.
+     *
+     * An axis nobody prints is an axis nobody reads, and the specific failure
+     * §8 names is a card being filed under "this instrument cannot see it" when
+     * one of the two axes just measured it. `boonReport`'s three-state rule —
+     * declared channel / measured-but-unnamed / UNMODELLED — has to consult
+     * BOTH sets of paired deltas, or the second axis is decoration.
+     *
+     * Read off the source rather than by running the whole report, which is
+     * ninety seconds of simulation for a question about wiring.
+     */
+    const { readFile } = await import('node:fs/promises');
+    const text = await readFile(new URL('../balance.mjs', import.meta.url), 'utf8');
+    assert(/linePreserved/.test(text), 'nothing in the instrument produces a line figure');
+    const report = text.slice(text.indexOf('export function boonReport'));
+    assert(/lineDeltas/.test(report), 'boonReport never collects the second axis');
+    assert(/mean Δline|Δline/.test(report), 'the boon table has no column for the second axis');
+    assert(/const seen = deltas\.some\(.*\|\| lineDeltas\.some\(/.test(report.replace(/\s+/g, ' ')),
+      'a card is called UNMODELLED on the depth axis alone — a build the line can feel and the '
+      + 'depth cannot is exactly what FLAGSHIP §8 says gets ranked as the worst thing in the game');
+    /* The two axes come off the SAME PAIR of runs, or the noise does not cancel
+     * and the column is a different experiment wearing the same seeds. */
+    assert(/lineDeltas\.push\(b\.linePreserved - a\.linePreserved\)/.test(report),
+      'the line delta is not taken from the same control/treatment pair as the depth delta');
+    return 'both axes off one paired run, both printed, and either one counts as seen';
+  });
+
 }

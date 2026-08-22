@@ -1018,12 +1018,12 @@ export async function run({ check, assert, near }) {
 
     // 2. the grip takes it. One arrest, one bill, and the grip is the hold that
     //    can also walk it about.
-    b.p.gripEnemy = taken; taken.gripped = true;
+    b.p.gripEnemy = taken; taken.hold();
     pump(b, 2);
     assert(!taken.stasisHeld, 'a gripped body is still marked as held by the field');
     assert(!b.p.stasis.held.some(h => h.enemy === taken), 'the field and the grip are both holding one body');
     assert(b.p.stasis.held.length === n0 - 2, `the field holds ${b.p.stasis.held.length} of an expected ${n0 - 2}`);
-    b.p.gripEnemy = null; taken.gripped = false;
+    b.p.gripEnemy = null; taken.releaseHold();
 
     // 3. the holder dies. A corpse is not holding a stasis field, and a body
     //    left marked would stand there for the rest of the level.
@@ -1705,6 +1705,25 @@ export async function run({ check, assert, near }) {
       ring.push({ e, a });
     }
     assert(ring.length >= 6, `only ${ring.length} of 8 bodies could be seeded`);
+    /**
+     * …AND THE RING IS POSED BEFORE IT IS THROWN. Six frames, the same beat
+     * this file's `openness` check already spends after its own spawn.
+     *
+     * `Enemy.knockFlat` puts a shoved body on the floor — `Actor.goRagdoll`,
+     * which builds the ragdoll out of the RIG'S WORLD MATRICES. A body that
+     * has been constructed and never stepped has never been posed, so its rig
+     * root is still at the origin and the ragdoll is built there: measured on
+     * this exact fixture, eight bodies seeded on a 6 m ring all read
+     * `position` (0, 0.4, 0.01) one frame after the cast and travelled 0.00 m
+     * for the rest of the check, which reads as a power that moved nothing.
+     *
+     * Stepped first, the same cast throws one body **10.96 m**. Nothing about
+     * the power changed; the fixture was measuring a ragdoll assembled out of
+     * an unposed skeleton. `topple()` has carried the same exposure since it
+     * was written and no play can reach it — `_pose` runs on every body on
+     * every frame — so the guard belongs in the harness and not in the game.
+     */
+    for (let i = 0; i < 6; i++) world.update(1 / 60, H.idleInput());
     const before = ring.map(({ e }) => e.position.clone());
 
     const ctx = { enemies: world.enemies, physics: world.physics, particles: world.particles,
@@ -1765,6 +1784,93 @@ export async function run({ check, assert, near }) {
     world.unload();
     return `${cost.toFixed(0)} Force · ${ring.length} bodies: front ${fm.toFixed(2)} m, `
       + `behind ${bm.toFixed(2)} m · ${stunned} staggered · ${p.cooldowns.unleash}s cooldown`;
+  });
+
+  /* ────────────────────────────────────────────────────────────────────
+   * THE FORCE IS A MULTIPLIER ON OTHER PEOPLE'S GUNS — FLAGSHIP §7
+   * ──────────────────────────────────────────────────────────────────── */
+
+  await check('force: a body the Force has opened is easier for everyone else to shoot', async () => {
+    /**
+     * §7's third verb, and until it was wired it did not exist:
+     *
+     *   "OPEN — `openness()` is the most under-used system in the tree (held
+     *    x3.0, yanked x2.0, downed x1.5) and its own comment says it is
+     *    invisible. Grip a B2 and the ten riflemen who needed 17 seconds need
+     *    six. The Force is a multiplier on other people's guns."
+     *
+     * `grep -rn 'openness(' src/` returned ONE call site — the BLADE's own
+     * slash rate in Combat.js — and a comment in the HUD. So a body held off
+     * the floor was easier for your sword and no easier for anybody's rifle,
+     * and the sentence above described a system that had never been wired to
+     * a gun.
+     *
+     * It is why the Dead Jedi test reads the way it does: five seeds, three
+     * arms, and the enemy body count does not move (37.4 / 36.8 / 36.4)
+     * whatever the Jedi does. The Force could not help the line's guns because
+     * nothing asked it to.
+     *
+     * Measured through the shipped `World._boltHitTest`: the same bolt, the
+     * same body, once standing and once held.
+     */
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const { OPEN_STATES, openness } = await import('../../src/game/Combat.js');
+    const { world } = await H.bootWorld({
+      level: 'colosseum', settings: { mode: 'waves', quality: 'low', instantSpawn: true },
+    });
+    const input = H.idleInput();
+    for (let i = 0; i < 10; i++) world.update(1 / 60, input);
+
+    /** Fire one bolt through a droid's middle and hand back what it cost him. */
+    const shoot = (e) => {
+      const before = e.hp;
+      const mid = e.position.clone().setY(e.position.y + 0.9);
+      const from = mid.clone().add(new THREE.Vector3(0, 0, -6));
+      const to = mid.clone().add(new THREE.Vector3(0, 0, 6));
+      world._boltHitTest({ damage: 20, owner: null, team: 0, color: { getHex: () => 0 } }, from, to);
+      return before - e.hp;
+    };
+
+    /* TWO BODIES, NOT ONE SHOT TWICE. A B1 has 28 hp and this bolt is worth 38
+     * through the hips, so the first shot KILLS the droid — and `openState`
+     * returns null for a dead body, so re-arming its hp and gripping the corpse
+     * measured a corpse. The first version of this check reported "a held body
+     * reports no openness at all" for a body that was simply dead. */
+    const a = world.spawnEnemy('b1', new THREE.Vector3(0, 0, -8));
+    const b = world.spawnEnemy('b1', new THREE.Vector3(3, 0, -8));
+    assert(a && b, 'setup: two droids did not spawn');
+    for (let i = 0; i < 6; i++) world.update(1 / 60, input);
+    const plain = shoot(a);
+    assert(plain > 0, 'the bolt missed a standing droid — the instrument is wrong, not the game');
+
+    /* HELD. `gripped` is what `OPEN_STATES` tests and `Enemy.hold` is what the
+     * grip renews every frame, so this is the shipped state rather than a
+     * fixture's idea of one. */
+    const e = b;
+    e.hold(2);
+    const want = openness(e);
+    assert(want > 1, 'a held body reports no openness at all');
+    const held = shoot(e);
+
+    assert(Math.abs(held / plain - want) < 0.3,
+      `a held droid took ${(held / plain).toFixed(2)}x the bolt a standing one took, against the `
+      + `${want.toFixed(2)}x its own open state is worth`);
+    assert(held > plain * 1.5,
+      `holding a body off the floor is worth ${(held / plain).toFixed(2)}x to a rifleman — §7 promises `
+      + 'that ten riflemen who needed 17 seconds need six');
+
+    /* AND EVERY OPEN STATE GOES THROUGH THE SAME DOOR, so one added to the
+     * table later is wired to the guns by construction rather than by
+     * somebody remembering this file. */
+    e.releaseHold();
+    for (const st of OPEN_STATES) {
+      assert(typeof st.test === 'function' && st.mul > 1, `${st.key} carries mul ${st.mul}`);
+    }
+    world.unload();
+    return `standing ${plain.toFixed(1)} hp, held ${held.toFixed(1)} hp — `
+      + `${(held / plain).toFixed(2)}x against a stated ${want.toFixed(2)}x, `
+      + `${OPEN_STATES.length} open states`;
   });
 
 }

@@ -94,7 +94,7 @@ function swing({ rigid = false, seconds = 2.2, still = false } = {}) {
   e.update(1 / 60, ctx);                    // one frame, so the rig is posed
 
   const hold = new THREE.Vector3(0, 2.2, -3);
-  e.gripped = true;
+  e.hold();                     // the shipped door — see Enemy.hold and ghosts.mjs
   e.liftTarget = hold;
   if (!rigid && e.actor && !e.actor.ragdolled) e.actor.goRagdoll(e.velocity, null);
 
@@ -242,6 +242,82 @@ export async function run({ check, assert }) {
       `held lag ${(held.lag * 100).toFixed(1)}% against rigid ${(rigid.lag * 100).toFixed(1)}% — no change`);
     return `foot lags the chest by ${(held.lag * 100).toFixed(0)}% of its travel, `
       + `against ${(rigid.lag * 100).toFixed(0)}% carried rigidly`;
+  });
+
+  check('held: a body being dragged through the air reports the speed it is dragged at', () => {
+    /**
+     * ONE METHOD, TWO BRANCHES, OPPOSITE ANSWERS — and the wrong one was the
+     * held branch.
+     *
+     * `Enemy._move` handles a ragdolled body twice. LIMP — ragdolled and
+     * nobody holding it — publishes the ragdoll's own velocity. HELD wrote
+     * `velocity.set(0, 0, 0)`, so a body being dragged across the field by the
+     * Force reported that it was standing still.
+     *
+     * `Enemy._shoot` leads its aim by `target.velocity * tof`. A held body was
+     * therefore the one target on the field that nobody in either army led, and
+     * `Player._updateGrip` had already met the same lie from the other side and
+     * worked around it in place ("the velocity is read off the ragdoll's own
+     * chest rather than off `e.velocity`, which a limp body does not drive").
+     * One workaround and one silent miss.
+     *
+     * MEASURED AGAINST THE DISPLACEMENT, which is what the quantity MEANS —
+     * not against the chest rigid body, which is the other wrong answer:
+     * `Ragdoll.suspend` COMMANDS that body at `(target − pos) × 12` and a
+     * hanging body sits at a steady sag under the command, so the chest reads
+     * 2.01 m/s while the body's centre moves 0.09. This check is what caught
+     * that, and it is why it compares against travel rather than against any
+     * solver's field.
+     */
+    const dt = 1 / 60;
+    enemyRng.seed(4711);
+    duelRng.seed(8123);
+    const w = gameWorld();
+    const e = new Enemy(w, 'acolyte', V(0, 0, -3));
+    e.position.set(0, 0, -3);
+    w.enemies.push(e);
+    const ctx = { enemies: w.enemies, particles: null, terrain: w.terrain, physics: w.physics,
+      bolts: null, time: 0, pickTarget: () => null, camera: w.engine.camera };
+    e.update(dt, ctx);
+    const hold = new THREE.Vector3(0, 2.2, -3);
+    e.hold();
+    e.liftTarget = hold;
+    if (e.actor && !e.actor.ragdolled) e.actor.goRagdoll(e.velocity, null);
+
+    const was = new THREE.Vector3();
+    let worst = 0, moved = 0, reported = 0, n = 0, still = 0;
+    for (let i = 0; i < 200; i++) {
+      /* A HOLD POINT THAT TRAVELS, because that is the case the game has and
+       * a parked one measures nothing: the whole claim is about a body being
+       * carried. Two and a half metres of arc at about a walking pace. */
+      hold.set(Math.sin(i / 22) * 2.5, 2.2, -3 + Math.cos(i / 22) * 1.1);
+      e.hold();
+      e.liftTarget = hold;
+      was.copy(e.position);
+      e._move(dt, ctx);
+      w.physics.step(dt);
+      e.actor?.update?.(dt);
+      if (i < 40) continue;                 // let the body reach the hold point first
+      const travel = was.distanceTo(e.position) / dt;
+      const says = e.velocity ? e.velocity.length() : 0;
+      moved += travel; reported += says; n++;
+      if (travel > 0.6) worst = Math.max(worst, Math.abs(says - travel) / travel);
+      if (says < 1e-6) still++;
+    }
+    const mMoved = moved / Math.max(1, n), mSays = reported / Math.max(1, n);
+    assert(mMoved > 0.5,
+      `the hold point swept an arc and the body only moved ${mMoved.toFixed(2)} m/s — the harness `
+      + 'is not dragging anything, so nothing below is a measurement');
+    assert(still === 0,
+      `${still} of ${n} frames reported a dead stop for a body travelling ${mMoved.toFixed(2)} m/s — `
+      + 'this is the zero the held branch used to write, and `_shoot` leads on it');
+    assert(worst < 0.35,
+      `the reported speed disagreed with the body's own travel by ${(worst * 100).toFixed(0)}% at worst `
+      + `(mean ${mSays.toFixed(2)} m/s reported against ${mMoved.toFixed(2)} measured) — a lead built `
+      + 'on it aims at somewhere the body is not');
+    for (const b of w.enemies) b.dispose?.();
+    return `dragged at ${mMoved.toFixed(2)} m/s, reports ${mSays.toFixed(2)} m/s, `
+      + `worst frame off by ${(worst * 100).toFixed(0)}%`;
   });
 
   check('held: the grip still works — it is suspended, not dropped', () => {

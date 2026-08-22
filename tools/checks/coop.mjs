@@ -331,6 +331,338 @@ export async function run({ check, assert }) {
     return line;
   });
 
+  check('co-op: a grenade the host throws is a grenade the guest can run from', async () => {
+    /**
+     * `NEXT.md` carried this as an open gap in exactly these words: *"Grenades
+     * are not networked. `GrenadeField` is host-side only, so a co-op client
+     * sees no grenade, no shout and no crater. Not a desync — a gap."*
+     *
+     * A grenade is not a STATE, which is why no arrangement of position and hp
+     * fields ever contained one: it is an arc, a shout, a body diving away and
+     * a hole in the ground, and all of it happens and is over between two
+     * packets. So it crosses the way a bolt does — as an event, recorded at the
+     * one seam every grenade passes through.
+     *
+     * WHAT THIS HOLDS, and the second half is the one worth having:
+     *
+     *   1. the guest sees it — an arc in their world, at the host's own
+     *      geometry, from the host's own throw;
+     *   2. the guest's copy does NO DAMAGE. The host already resolved it and
+     *      the result arrives as hp in the next snapshot; a client that applied
+     *      the blast as well would kill the same droid twice on its own screen
+     *      and then be corrected, which is what a desync looks like from the
+     *      sofa.
+     */
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const { host, client, pump } = await H.bootPair({ level: 'colosseum' });
+    const at = new THREE.Vector3(0, 0, 8);
+    /* A body on the guest's side of the wire, standing where the grenade is
+     * going, so "did the client's copy hurt anybody" has somebody to hurt. */
+    const victim = client.spawnEnemy('b1', at.clone());
+    assert(victim, 'setup: nothing on the client to stand in the blast');
+    pump(1 / 60);
+    const hp0 = victim.hp;
+
+    const before = client.grenades.stats.thrown;
+    host.grenades.throw(new THREE.Vector3(0, 1.4, 0), at.clone(), { team: 1 });
+    assert(host.grenades.list.length === 1, 'the host is not holding the grenade it just threw');
+
+    /* Long enough for the fuse and the packet: FUSE is 2.6 s and the snapshot
+     * rate is well inside that. */
+    let sawArc = 0;
+    for (let i = 0; i < 4 * 60; i++) {
+      pump(1 / 60);
+      if (client.grenades.list.length) sawArc++;
+    }
+
+    assert(client.grenades.stats.thrown > before,
+      'the host threw a grenade and the joining player never saw one at all — no arc, no shout, no crater');
+    assert(sawArc > 20,
+      `the guest's copy existed for ${sawArc} frames — it arrived and vanished rather than flying`);
+    assert(client.grenades.stats.blown > 0, "the guest's copy never went off");
+    assert(!client.grenades.list.length, 'a replicated grenade is still hanging about after its fuse');
+
+    /* AND IT DID NOTHING. The victim's hp on the client moves only when the
+     * host's snapshot says so, and the host has no such body. */
+    assert(victim.hp === hp0,
+      `the guest's own copy of the blast took ${(hp0 - victim.hp).toFixed(1)} hp off a body the host `
+      + 'never touched — the same droid is being killed at both ends');
+    const line = `host 1 thrown → guest ${client.grenades.stats.thrown - before} `
+      + `(${sawArc} frames of arc, ${client.grenades.stats.blown} detonation), 0 damage applied locally`;
+    host.unload(); client.unload();
+    return line;
+  });
+
+  check('co-op: a blast the host raises is a blast the guest is standing in', async () => {
+    /**
+     * THE SAME GAP THE GRENADE HAD, one door further in. `World.onExplosion` is
+     * where an exploding barrel, a droideka's death and every structure charge
+     * arrive, and none of it was on the wire: a joining player watched a barrel
+     * vanish in silence, took damage from nowhere, and walked over ground the
+     * host had already cratered.
+     *
+     * WHAT THIS HOLDS, and the second half is again the one worth having:
+     *
+     *   1. the guest gets the blast — the sound, the fireball, the hole;
+     *   2. the guest's copy bills NOTHING. Same argument as the grenade: the
+     *      host resolved it and the hp arrives in the next snapshot.
+     *
+     * And the third clause, which is the one that broke while this was written:
+     * Destruction REPLACES `world.onExplosion` with a wrapper at level load, so
+     * the ghost flag has to survive a function that was written before it
+     * existed. A wrapper that names its arguments drops it and the client bills
+     * the damage after all — which is why the wrapper is variadic and why this
+     * check runs on a level with Destruction installed.
+     */
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const { host, client, pump } = await H.bootPair({ level: 'colosseum' });
+    const at = new THREE.Vector3(0, 0, 8);
+    const victim = client.spawnEnemy('b1', at.clone());
+    assert(victim, 'setup: nothing on the client to stand in the blast');
+    pump(1 / 60);
+    const hp0 = victim.hp;
+    /* Ground under the blast, before, so the crater has something to cut. */
+    const h0 = client.terrain ? client.terrain.height(at.x, at.z) : null;
+
+    let heard = 0;
+    const inner = client.particles?.explosion?.bind(client.particles);
+    if (inner) client.particles.explosion = (...a) => { heard++; return inner(...a); };
+
+    host.onExplosion(at.clone(), 1.35);
+    for (let i = 0; i < 30; i++) pump(1 / 60);
+
+    assert(heard > 0,
+      'the host raised a blast and the joining player got nothing — no bang, no fireball, no hole');
+    assert(victim.hp === hp0,
+      `the guest's own copy of the blast took ${(hp0 - victim.hp).toFixed(1)} hp off a body the host `
+      + 'never touched — the same droid is being killed at both ends');
+    const h1 = client.terrain ? client.terrain.height(at.x, at.z) : null;
+    assert(h0 === null || h1 < h0 - 0.05,
+      `the guest's ground is unmarked (${h0?.toFixed(2)} → ${h1?.toFixed(2)}) — the crater did not cross`);
+
+    /* AND IT DOES NOT ECHO. A client that recorded its own ghost would put it
+     * back on the wire the moment that client ever became a host. */
+    assert(!(client._netBlasts || []).length,
+      'the guest recorded the blast it was told about — a replayed picture is being replicated');
+
+    const line = `host 1 blast → guest ${heard} drawn, ground ${h0?.toFixed(2)} → ${h1?.toFixed(2)}, 0 hp billed locally`;
+    host.unload(); client.unload();
+    return line;
+  });
+
+  /**
+   * A SHARED HELPER FOR THE THREE STRUCTURAL CHECKS BELOW, and it is here
+   * rather than in each of them because a level is fifty pieces and the
+   * question every one of them asks is the same: which pieces are no longer
+   * standing.
+   */
+  const standing = (m) => m.structures.map((s) => s.state === 'intact');
+
+  check('co-op: a wall the host brings down is a wall the guest can be shot through', async () => {
+    /**
+     * NOTHING IN src/world/Destruction.js HAD EVER ASKED `netMode`, and the
+     * whole destructible world was therefore host-only. A blast was on the
+     * wire (`ex`, the check above) and a blast is one of five ways to break
+     * stone; the other four — a blade's cut, a Force cone, a heavy body
+     * arriving, and a blade GRINDING until the piece fails — were not.
+     *
+     * Measured on this harness before the fix, colosseum, 49 destructible
+     * pieces a side: the host cut, pushed, rammed and blew its way through the
+     * level and finished with 11 pieces down. The guest had 3, and those 3 were
+     * exactly the ones a blast caused. EIGHT walls the host had demolished were
+     * still standing on the joining player's screen — cover to hide behind that
+     * is not there, and enemies shooting through stone the guest can see.
+     *
+     * The three arms below are the three seams that were silent. The fourth,
+     * the blast, is the check above and is deliberately not repeated here:
+     * what this one has to hold is that the OTHER ways of breaking a building
+     * cross, and an arm that was already crossing would carry it on its own.
+     */
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const { host, client, pump } = await H.bootPair({ level: 'colosseum' });
+    const hd = host.destruction, cd = client.destruction;
+    assert(hd && cd, 'setup: the level has no destructible world on one of the two machines');
+    assert(hd.structures.length === cd.structures.length,
+      `setup: ${hd.structures.length} pieces on the host against ${cd.structures.length} on the guest`);
+
+    const targets = hd.structures.filter((s) => s.profile.hpPerM2 !== Infinity).slice(0, 9);
+    assert(targets.length >= 6, `setup: only ${targets.length} breakable pieces to aim at`);
+    const norm = new THREE.Vector3(1, 0, 0);
+    const imp = new THREE.Vector3(0, -1, 0).multiplyScalar(30);
+
+    /* THE BLADE, through the door the solver uses — `DestructionProxy.cut` is
+     * what `World._applyBladeEvent` reaches when the thing the blade is in is
+     * a wall, so this is a real swing and not a hand-written call. */
+    for (const s of targets.slice(0, 3)) {
+      for (let k = 0; k < 6; k++) hd.proxy.cut(s.centre.clone(), norm, imp);
+    }
+    /* THE FORCE, through the door `Player.forcePush` uses. */
+    for (const s of targets.slice(3, 6)) {
+      const o = s.centre.clone().add(new THREE.Vector3(0, 0, -8));
+      hd.forceBlast(o, new THREE.Vector3().subVectors(s.centre, o).normalize(), 14, 3);
+      hd.forceBlast(o, new THREE.Vector3().subVectors(s.centre, o).normalize(), 14, 3);
+    }
+    /* SOMETHING HEAVY ARRIVING, through `_impactScan`'s poll — a thrown body,
+     * a rolling barrel, a chunk of somebody else's wall. */
+    for (const s of targets.slice(6, 9)) {
+      const b = { id: 91000 + Math.round(s.centre.x * 7 + s.centre.z), static: false,
+        invMass: 1 / 400, mass: 400, boundingRadius: 0.9,
+        position: s.centre.clone(), velocity: new THREE.Vector3(0, 0, 18), userData: {} };
+      host.physics.bodies.push(b);
+      for (let k = 0; k < 3; k++) { hd._impactCd.clear(); hd._impactScan(1 / 60); }
+      host.physics.bodies.pop();
+    }
+
+    for (let f = 0; f < 40; f++) pump(1 / 60);
+
+    const h = standing(hd), c = standing(cd);
+    const down = h.reduce((n, up) => n + (up ? 0 : 1), 0);
+    assert(down >= 5, `setup: the host only brought ${down} pieces down — nothing to compare`);
+    const missed = h.map((up, i) => (!up && c[i] ? i : -1)).filter((i) => i >= 0);
+    assert(!missed.length,
+      `${missed.length} of ${down} pieces the host demolished are still standing on the joining `
+      + `player's screen (registry ${missed.slice(0, 6).join(', ')}${missed.length > 6 ? '…' : ''}) `
+      + '— they are taking cover behind rubble');
+
+    /* AND IT DOES NOT ECHO, for the reason the blast check gives: a replayed
+     * picture put back on the wire is a client replicating somebody else's
+     * demolition as its own the moment it is ever promoted to host. */
+    assert(!(client._netRubble || []).length,
+      'the guest recorded the demolition it was told about — a replayed picture is being replicated');
+
+    const line = `host ${down} pieces down → guest ${c.reduce((n, up) => n + (up ? 0 : 1), 0)}, 0 left standing`;
+    host.unload(); client.unload();
+    return line;
+  });
+
+  check('co-op: a guest\'s own blade does not demolish a building the host still has standing', async () => {
+    /**
+     * THE OTHER HALF OF THE SAME RULE, and the half that is easy to leave open.
+     *
+     * Replicating the host's demolition is not enough on its own: a client that
+     * goes on breaking stone locally holds a level nobody else is fighting in,
+     * and it double-bills every REPLICATED break on top. Measured before the
+     * fix: the guest's blade took three pieces down on the guest's screen and
+     * zero on the host's, and the guest's copy of a blast that was already on
+     * the wire billed its own stone a second time.
+     *
+     * So `Destruction._netAllows` closes every door on a client except the
+     * replay — the same rule `World.onExplosion` states for a blast and
+     * `Reactions.LiveGrenade` for a grenade. The host bills; every other copy
+     * is a picture.
+     */
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const { host, client, pump } = await H.bootPair({ level: 'colosseum' });
+    const hd = host.destruction, cd = client.destruction;
+    const norm = new THREE.Vector3(1, 0, 0);
+    const imp = new THREE.Vector3(0, -1, 0).multiplyScalar(30);
+    const targets = cd.structures.filter((s) => s.profile.hpPerM2 !== Infinity).slice(0, 4);
+    assert(targets.length >= 3, `setup: only ${targets.length} breakable pieces on the guest`);
+
+    /* Every way a guest can reach architecture, all three from the guest's own
+     * machine: the blade, the Force cone, and a blast the guest raised itself
+     * (a barrel it cut open — `onExplosion` forces `ghost` on a client, and the
+     * structural half used to run anyway). */
+    for (const s of targets) {
+      for (let k = 0; k < 8; k++) cd.proxy.cut(s.centre.clone(), norm, imp);
+      const o = s.centre.clone().add(new THREE.Vector3(0, 0, -7));
+      cd.forceBlast(o, new THREE.Vector3().subVectors(s.centre, o).normalize(), 14, 3);
+      client.onExplosion(s.centre.clone(), 2.4);
+    }
+    for (let f = 0; f < 40; f++) pump(1 / 60);
+
+    const hDown = standing(hd).filter((up) => !up).length;
+    const cDown = standing(cd).filter((up) => !up).length;
+    assert(cDown === 0 && hDown === 0,
+      `the guest brought ${cDown} pieces down on its own screen and the host still has `
+      + `${hDown} of them standing — two machines are fighting in two different levels`);
+    assert(!(client._netRubble || []).length,
+      'the guest queued its own demolition for the wire, which only a host may do');
+
+    const line = `guest swung, pushed and blew up ${targets.length} pieces: 0 down there, 0 down on the host`;
+    host.unload(); client.unload();
+    return line;
+  });
+
+  check('co-op: taking the controls off-host is refused, not a frozen player in a runaway tank', async () => {
+    /**
+     * `src/game/Driving.js` never asked `netMode` either, and off-host the
+     * result was not a desync — it was a SOFT LOCK. Measured on this harness
+     * before the refusal existed, a guest boarding an AT-TE:
+     *
+     *   · `Crew` retracts and hides the blade, and `Player.update` hands every
+     *     frame to `Crew.update` from then on;
+     *   · `Enemy.update` takes its `netDriven` branch BEFORE its `driven` one
+     *     on a client, so the hull is still being written by the host's
+     *     snapshot: the throttle reached nothing, and `Crew.ride` — which is
+     *     called from the `driven` branch — never ran, so the driver was never
+     *     seated;
+     *   · six seconds at full throttle: the guest's body moved **0.00 m** and
+     *     finished **3.58 m** from a hull it was supposed to be sitting on,
+     *     with no blade;
+     *   · and the host was never told, so its copy of the machine kept the
+     *     horde's team and its brain and went on shooting at the player who
+     *     was notionally driving it.
+     *
+     * Replicating the seat is a real feature and is not this pass. What this
+     * check holds is that the game stops offering a control that cannot work,
+     * and says so out loud rather than by silence — which is the rule every
+     * other refusal in Driving.js already follows.
+     */
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const { whyNotDrive } = await import('../../src/game/Driving.js');
+    const { host, client, pump } = await H.bootPair({ level: 'colosseum' });
+    const at = new THREE.Vector3(0, 0, 14);
+    const tank = host.spawnEnemy('atte', at.clone());
+    assert(tank, 'setup: no crewed machine on the field');
+    for (let f = 0; f < 30; f++) pump(1 / 60);
+    const theirs = client.enemies.find((e) => e.id === tank.id);
+    assert(theirs, 'setup: the machine never reached the joining player at all');
+
+    /* Both players standing on the hull, both machines on the party's side, so
+     * the ONLY thing that can separate the two answers is which end of the wire
+     * is asking. */
+    tank.team = host.player.team;
+    theirs.team = client.player.team;
+    host.player.position.copy(tank.position);
+    client.player.position.copy(theirs.position);
+
+    assert(whyNotDrive(host, host.player, tank) === null,
+      'the HOST cannot take the controls of its own machine either — the refusal is too wide');
+    const why = whyNotDrive(client, client.player, theirs);
+    assert(typeof why === 'string' && why.length > 8,
+      'a joining player is allowed to take the controls of a body the host owns — '
+      + 'the throttle reaches nothing, the seat is never taken and the key has to be pressed twice to get out');
+
+    const ctx = { input: H.idleInput(), players: client.players, enemies: client.enemies };
+    const took = client.player.takeControls(ctx);
+    assert(!took && !client.player.driving,
+      'takeControls seated the guest anyway — `driving` is set and every later frame belongs to a Crew '
+      + 'that cannot move the hull');
+
+    /* …and the player is still a player: not frozen, and still holding a
+     * blade. Both are things `Crew`'s constructor takes away. */
+    const p0 = client.player.position.clone();
+    const walk = { ...H.idleInput(), moveAxis: (o) => { if (o) { o.x = 0; o.y = 1; return o; } return { x: 0, y: 1 }; } };
+    for (let f = 0; f < 60; f++) client.update(1 / 60, walk);
+    const moved = client.player.position.distanceTo(p0);
+    assert(moved > 0.5,
+      `the guest moved ${moved.toFixed(2)} m in a second of holding forward — they are standing in a tank they `
+      + 'do not have');
+    assert(client.player.saber?.root?.visible !== false,
+      'the guest\'s blade was hung on their belt by a boarding that was refused — `Crew` retracts and '
+      + 'hides it in its constructor, so a Crew was built after all');
+
+    const line = `guest refused: "${why}"; walked ${moved.toFixed(2)} m, blade still in hand`;
+    host.unload(); client.unload();
+    return line;
+  });
+
   check('co-op: an elite arrives on a joining player\'s screen wearing its tells', async () => {
     /**
      * EVERY ELITE IN THE GAME WAS A PLAIN BODY OFF-HOST.
@@ -850,6 +1182,254 @@ export async function run({ check, assert }) {
       `the same ${first} damage was claimed again on the next tick (${again}) — a client bills the host twice`);
     world.unload(); world.dispose?.();
     return `claimed: ${Object.entries(claims).map(([k, d]) => `${k} ${d.toFixed(0)}`).join(', ')}; no double billing`;
+  });
+
+  /**
+   * ── ONE ROUND, TWO MACHINES, AND THE QUESTION OF WHO PAYS FOR IT ────────
+   *
+   * These two checks are one rule seen from both sides, and neither half means
+   * anything alone. `_spawnNetBolts` puts the host's fire into the client's own
+   * pool as REAL bolts — that is the design, and DESIGN.md is about what it
+   * buys: a guest can deflect a host's bolt, catch it, and send it home. The
+   * cost is that every such round is simulated twice, and `_reconcileClaims`
+   * bills the host for whatever hp a mirror has lost "whatever dealt it".
+   *
+   * Measured before the rule existed, on a real co-op Command pair on geonosis,
+   * 45 s, the joining player holding `idleInput` and firing nothing: 317 claims
+   * up the wire, 273.1 hp taken off the client's mirrors by bolts nobody on
+   * that machine had fired, and 42.2 hp of it applied by the host on top of the
+   * 187.8 hp of the same bolts it had already applied itself. Co-op was
+   * measurably easier than the single-machine numbers every tuning pass in this
+   * project was taken on.
+   *
+   * A fix that stopped the client resolving replicated bolts would pass the
+   * first of these two and delete the mechanic the second one is about. So both
+   * are here, they share one fixture, and the fixture differs between them by
+   * exactly one thing: whether the guest's blade touched the bolt.
+   */
+
+  /**
+   * A PAIR, ONE HOST BODY SHOOTING AND ONE HOST BODY BEING SHOT AT.
+   *
+   * Everything crosses the way it crosses in a session: the shot is taken with
+   * the shipped `BoltPool.fire` on the HOST, so `_recordFires` puts it in the
+   * snapshot, and `_spawnNetBolts` on the far end is what makes the client's
+   * copy. Nothing here hand-writes a packet.
+   *
+   * @param side  the victim's team on the host. `0` is what `enlistBody` does
+   *   to a named trooper in Command — a body in `world.enemies` on the PARTY's
+   *   side, which is the only arrangement in which the horde's own rifles have
+   *   anything in that array to hit. `1` leaves it in the horde, which is what
+   *   a returned bolt needs to be aimed at.
+   */
+  const boltPair = async (side) => {
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const pair = await H.bootPair({ level: 'geonosis' });
+    const at = pair.host.player.position;
+    const shooter = pair.host.spawnEnemy('b1', new THREE.Vector3(at.x + 8, at.y, at.z));
+    const victim = pair.host.spawnEnemy('b1', new THREE.Vector3(at.x + 14, at.y, at.z));
+    victim.team = side;
+    /* Off their brains: the only fire in this session is the one round fired
+     * below, and a b1 that decides to shoot on its own would be a second
+     * replicated bolt in the same pool. */
+    shooter._think = () => {}; victim._think = () => {};
+    pair.pump(0.4);
+    const mirror = pair.client._netEnemyIndex.get(victim.id);
+    if (!mirror) throw new Error('the client never received a mirror of the host\'s body');
+
+    /**
+     * The host fires one round; the client's copy of it, off the wire.
+     *
+     * FIRED STRAIGHT UP, and that is the fixture's own correction rather than
+     * decoration. Aimed along the ground the round is a live bolt for the six
+     * frames it takes the snapshot to cross, and in the arm where the victim is
+     * on the party's side it can REACH that victim on its own — so the pool had
+     * already consumed it by the time this looked, and the check failed reading
+     * `spawned 0` with everything under test working. Up there is nothing to
+     * hit; `drive` below is what puts the bolt through a body, and it takes the
+     * segment as an argument.
+     */
+    const round = (damage) => {
+      const before = new Set(pair.client.bolts.bolts.filter((b) => b.active));
+      pair.host.bolts.fire(shooter.aimPoint(new THREE.Vector3()),
+        new THREE.Vector3(0, 1, 0), { owner: shooter, damage, speed: 90 });
+      pair.pump(0.12);
+      const fresh = pair.client.bolts.bolts.filter((b) => b.active && !before.has(b));
+      if (fresh.length !== 1) {
+        throw new Error(`the host fired one round and the client spawned ${fresh.length}`);
+      }
+      return fresh[0];
+    };
+
+    /**
+     * The bolt, driven through the body, through the SHIPPED resolver.
+     *
+     * `_boltHitTest` is what `Bolts.update` hands every bolt in the air (see
+     * the `hitTest` member of the ctx it is stepped with), so this is the same
+     * line a bolt that flew there would reach. Standing in for the FLIGHT and
+     * not for the rule: a check that walked the bolt itself would be measuring
+     * whether this fixture can aim.
+     */
+    const drive = (bolt) => {
+      const V = (x, y, z) => new THREE.Vector3(x, y, z);
+      const from = mirror.position.clone().add(V(0, 1.1, -2));
+      const to = mirror.position.clone().add(V(0, 1.1, 2));
+      const hp0 = mirror.hp, base0 = mirror._netHp;
+      const res = pair.client._boltHitTest(bolt, from, to);
+      /* READ BEFORE THE NEXT SNAPSHOT, and this is not fastidiousness: the
+       * host's hp is authoritative and `applySnapshot` writes it straight over
+       * `e.hp` 18 times a second, so a reading taken after the pump below is
+       * the HOST's number and not what this machine did. Measured the wrong way
+       * round first: the arm where nothing is claimed read `took 0.0` — the
+       * host's copy was untouched, so it wrote 28 back over a mirror that had
+       * just lost 28 — and the check failed saying the bolt never landed while
+       * everything under test worked. */
+      const took = hp0 - mirror.hp, moved = base0 - mirror._netHp;
+      pair.seen.toHost.length = 0;
+      pair.pump(0.3);
+      const claimed = pair.seen.toHost.filter((m) => m.t === 'claim' && m.id === victim.id)
+        .reduce((a, m) => a + (Number(m.d) || 0), 0);
+      return { hit: res?.victim === mirror, took, moved, claimed, hadLeft: base0 };
+    };
+    return { ...pair, mirror, victim, round, drive };
+  };
+
+  check('co-op: a guest does not bill the host for the host\'s own bolts', async () => {
+    /**
+     * The bolt is REAL on the client and has to be — this asserts that it hits,
+     * before it asserts that nothing is claimed for it. A fix that stopped the
+     * client spawning replicated bolts would satisfy the second half of this
+     * check and fail the first, which is why the first is here.
+     */
+    const P = await boltPair(0);
+    const r = P.drive(P.round(20));
+    P.host.unload(); P.client.unload();
+    assert(r.hit && r.took > 0,
+      'the host\'s replicated round did not touch the client\'s copy of the body at all — '
+      + 'there is nothing here for a guest to deflect, which is the mechanic _spawnNetBolts exists for');
+    assert(r.claimed === 0,
+      `the guest billed the host ${r.claimed.toFixed(1)} hp for a round the host fired itself — `
+      + `one trooper's shot is simulated on both machines and charged twice, and the horde pays the difference`);
+    assert(Math.abs(r.moved - r.took) < 0.05,
+      `the mirror lost ${r.took.toFixed(1)} hp and its baseline moved ${r.moved.toFixed(1)} — the gap is `
+      + 'what _reconcileClaims bills, so anything but zero comes back as a claim on a later tick');
+    return `a replicated round took ${r.took.toFixed(1)} hp off the mirror, moved the baseline with it, and claimed nothing`;
+  });
+
+  check('co-op: a bolt the guest DEFLECTED is still the guest\'s to claim', async () => {
+    /**
+     * THE OTHER HALF, and the one that makes the first hard.
+     *
+     * The host cannot know this bolt changed course — the deflection happened
+     * on a machine it does not simulate — so what it does to the horde is the
+     * guest's and nobody else can bill it. Same fixture, same round, one
+     * difference: `_onBoltDeflect` is called first, with the client's own blade
+     * entry off `_bladeEntries`, which is the object `Bolts.update` hands that
+     * method when a lit blade crosses a bolt.
+     */
+    const P = await boltPair(1);
+    const p = P.client.player;
+    p.saber.ignite(); p.saber.ignition = 1;
+    const bolt = P.round(20);
+    const entry = P.client._bladeEntries().find((e) => e.owner === p);
+    assert(!!entry, 'the guest\'s own lit blade is not among the blades a bolt is tested against');
+    const pt = p.chest.clone();
+    P.client._onBoltDeflect(bolt, entry, { bladeT: 0.6, point: pt }, pt.clone());
+    const deflects = p.deflects;
+    const mine = bolt.owner === p;
+    const r = P.drive(bolt);
+    P.host.unload(); P.client.unload();
+    assert(deflects === 1 && mine,
+      `the guest's blade met a replicated bolt and ${deflects === 1 ? 'the bolt is not theirs afterwards' : 'nothing was deflected'} — `
+      + 'a guest who cannot deflect the host\'s fire is the reason those bolts are replicated at all');
+    assert(r.hit && r.took > 0,
+      'the bolt the guest sent back did not reach the body it was driven through');
+    /* BOUNDED BY WHAT THE BODY HAD LEFT, not by what the blow was worth.
+     * `_reconcileClaims` bills a body this machine has killed for the whole
+     * rest of its health — which is the right number, because the host has to
+     * stop fighting a corpse — and the overkill past that is nobody's. Read the
+     * other way round this asserted 38 against a claim of 28 with the whole
+     * mechanism working. */
+    const due = Math.min(r.took, r.hadLeft);
+    assert(r.claimed >= due - 0.05,
+      `the guest returned a bolt into a body with ${r.hadLeft.toFixed(1)} hp left, took ${r.took.toFixed(1)} `
+      + `off it and claimed ${r.claimed.toFixed(1)} — the host cannot have applied this one, so anything `
+      + 'the guest does not claim never happened');
+    return `a deflected round took ${r.took.toFixed(1)} hp off a body holding ${r.hadLeft.toFixed(1)}, `
+      + `and was claimed at ${r.claimed.toFixed(1)}`;
+  });
+
+  check('co-op: the level\'s lava burns a body once, not once per machine', async () => {
+    /**
+     * THE SAME DEFECT IN A SECOND SUBSYSTEM, and it is why this one is a class
+     * and not a bug. A `Hazard` is built by the LEVEL, so every machine in a
+     * session has one, and each was running its own copy over every body on the
+     * field — then `_reconcileClaims` sent the client's half back to the host as
+     * damage the guest had dealt.
+     *
+     * Measured on a real pair on mustafar with one body standing in the lava
+     * for two seconds, before the rule: the host burned it 14.0 hp, the
+     * client's mirror burned 14.0 hp of its own, and all 14.0 came back as a
+     * claim. A 28 hp body was spent half by the host's lava and half by the
+     * client's copy of the same lava — it died in half the time. The player
+     * half runs the other way and is the same defect: the host burns its
+     * `RemoteAvatar` of a guest and posts the number over `hit`, while that
+     * guest's own sheet is burning their real Player at the same moment.
+     *
+     * The GROUND IS SEARCHED rather than named. A hazard is a sheet at a fixed
+     * height over a generated heightfield, so the only honest way to stand a
+     * body in it is to find a place where the ground is under it; a hand-picked
+     * coordinate would be a number that stops being true the day the ground
+     * rolls differently.
+     */
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const pair = await H.bootPair({ level: 'mustafar' });
+    assert(!!pair.host.hazard && !!pair.client.hazard,
+      'both machines were supposed to build the level\'s hazard — with only one of them there is '
+      + 'nothing here to double-count and this check proves nothing');
+    const lvl = pair.host.hazard.level;
+    let spot = null;
+    for (let x = -120; x <= 120 && !spot; x += 4) {
+      for (let z = -120; z <= 120; z += 4) {
+        const h = pair.host.terrain.height(x, z);
+        if (h < lvl - 0.3) { spot = [x, h, z]; break; }
+      }
+    }
+    assert(!!spot, 'no ground on this seed sits under the hazard sheet, so nothing can stand in it');
+
+    const e = pair.host.spawnEnemy('acklay', new THREE.Vector3(spot[0], spot[1], spot[2]));
+    /* Off its brain: a body that walks out of the lava is a body that stops
+     * being burned by either machine. */
+    e._think = () => {};
+    pair.pump(0.2);
+    const m = pair.client._netEnemyIndex.get(e.id);
+    assert(!!m, 'the client never received a mirror of the body in the lava');
+    let host = 0, guest = 0;
+    const hi = e.damage.bind(e), mi = m.damage.bind(m);
+    const burn = (b, add) => (a, p, s, k) => {
+      const was = b.hp; const out = (b === e ? hi : mi)(a, p, s, k);
+      if (b.hp < was) add(was - b.hp, k);
+      return out;
+    };
+    e.damage = burn(e, (d, k) => { if (k === pair.host.hazard.kind) host += d; });
+    m.damage = burn(m, (d, k) => { if (k === pair.client.hazard.kind) guest += d; });
+    pair.seen.toHost.length = 0;
+    pair.pump(2);
+    const claimed = pair.seen.toHost.filter((x) => x.t === 'claim' && x.id === e.id)
+      .reduce((a, x) => a + (Number(x.d) || 0), 0);
+    pair.host.unload(); pair.client.unload();
+
+    assert(host > 0,
+      `the host's own lava took ${host.toFixed(1)} hp off a body standing in it — the hazard is not `
+      + 'biting at all, so nothing below is a measurement of anything');
+    assert(guest === 0,
+      `the joining player's copy of the same lava burned the same body for another ${guest.toFixed(1)} hp — `
+      + 'one sheet, two machines, and the body pays twice');
+    assert(claimed === 0,
+      `${claimed.toFixed(1)} hp of the host's own lava came back to it as a claim`);
+    return `the host's lava took ${host.toFixed(1)} hp; the joining player's copy took 0.0 and claimed 0.0`;
   });
 
   check('co-op: a joining player\'s Force moves the body, not only its health bar', async () => {

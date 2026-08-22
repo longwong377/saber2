@@ -315,6 +315,20 @@ export const ACTIONS = [
   // up off the ground is a deliberate act rather than a combat reflex, so it
   // does not need to be the nearest key left.
   { id: 'swap',       group: 'Blade',    label: 'Drop / take a saber', keys: ['KeyM'], pad: 'PadBack+PadX' },
+  /**
+   * TAKE THE CONTROLS — the V5 note, *"drive the vehicles it makes sense to
+   * drive"*.
+   *
+   * `KeyO` and `PadBack+PadDown` because both were free and neither is next to
+   * anything you press in a fight: boarding a tank is not a combat input, and a
+   * key that sat under a finger already on the stick would be pressed by
+   * accident at the exact moment a player is running past a hull.
+   *
+   * It is in the Blade group rather than a group of its own for the same reason
+   * `swap` is: the Codex prints one card per group and a group of one is a
+   * heading with a single line under it.
+   */
+  { id: 'drive',      group: 'Blade',    label: 'Take / leave the controls', keys: ['KeyO'], pad: 'PadBack+PadDown' },
 
   /* KeyT WENT TO THE ORDER WHEEL, and this is the trade. Focus keeps Mouse3,
    * which is where it is actually pressed — the second bind was a courtesy for
@@ -355,6 +369,23 @@ export const ACTIONS = [
   // under the same hand. Every letter within reach of WASD is already spoken
   // for, and findConflict is what proves it rather than anyone's memory.
   { id: 'compel',     group: 'Force',    label: 'Force compel',      keys: ['Digit4'], pad: 'PadLB+PadL3' },
+  /**
+   * KEYJ, AND THE THREE KEYS I TRIED FIRST ARE WHY THIS COMMENT EXISTS.
+   *
+   * The barrier wants to sit beside the other Force digits — heal on 3, compel
+   * on 4 — and the whole digit row is spoken for twice over. Digit5 is the
+   * emote wheel; LB+R3 is the free camera; and Digit6 onward belong to the
+   * FORMATION keys, which are not typed in this table at all but derived from
+   * the order list, so grepping the file for them finds nothing. `controls.mjs`
+   * caught each attempt within one run — "one press, two systems: Digit5 →
+   * shield + emote", then "Digit6 → shield + form.circle", then a saved blob
+   * booting straight into the same clash.
+   *
+   * So it is a letter, and `KeyJ` is the nearest free one to the hand that is
+   * already on WASD. That suite is the reason nobody has to remember any of
+   * this, and it is worth more than the tidy adjacency I wanted.
+   */
+  { id: 'shield',     group: 'Force',    label: 'Force barrier',     keys: ['KeyJ'], pad: 'PadRB+PadUp' },
   { id: 'scoreboard', group: 'Interface', label: 'Scoreboard',       keys: ['Tab'],        hold: true, pad: 'PadBack+PadY' },
   { id: 'view',       group: 'Interface', label: 'First / third person', keys: ['KeyV'], pad: 'PadBack+PadA' },
   // Digit5 for the wheel, on the same argument the guard stance made for
@@ -386,11 +417,13 @@ export const ACTIONS = [
    *
    * Hold it and the movement keys stop moving you and start SPELLING — see
    * src/game/Stratagems.js for why a code and not a key, and for the part that
-   * matters here: a stratagem costs this table exactly one row however many
+   * matters here: a support call costs this table exactly one row however many
    * calls are authored. That is the only shape that fits. The keyboard has no
    * free letter under the left hand and the pad has forty-six places and had
    * filled all of them; a sixth support call on the sixth spare button was
-   * never going to happen, and a sixth code costs nothing.
+   * never going to happen, and a sixth code costs nothing — the table is
+   * EIGHTEEN calls now and this is still one row, which is the shape being
+   * paid off.
    *
    * A HOLD, and the hold is load-bearing rather than a style: it is what tells
    * `moveF` apart from the letter W. Nothing about movement changes when it is
@@ -402,7 +435,15 @@ export const ACTIONS = [
    * keyboard does, so the codes read identically on both devices without the
    * table knowing that either exists.
    */
-  { id: 'stratagem',  group: 'Command',   label: 'Call a stratagem', keys: ['CapsLock'],   hold: true, pad: 'PadBack+PadUp' },
+  /* THE LABEL IS THE ONE STRING ON THIS ROW A PLAYER READS, and it said "Call
+   * a stratagem" — the last visible use of a word that belongs to Helldivers
+   * and not to this game (the player: "they should not be called strategems in
+   * game obviously"). The ACTION ID stays `stratagem` deliberately: it is the
+   * key a rebind is saved under in localStorage, so renaming it would silently
+   * discard the binding of every player who has ever moved this off CapsLock,
+   * and nothing renders it. `tools/checks/stratagems.mjs` scans every string a
+   * player can read for the word and names the four identifiers that keep it. */
+  { id: 'stratagem',  group: 'Command',   label: 'Call for support', keys: ['CapsLock'],   hold: true, pad: 'PadBack+PadUp' },
   // P for photo. This one may live under the right hand precisely BECAUSE it
   // is a press and not a hold: you take the mouse off the game the moment it
   // is on, and everything you do afterwards is flown with the movement keys.

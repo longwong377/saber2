@@ -88,13 +88,29 @@ function foe(b, x, z, type = 'b1') {
 }
 
 /** A bolt travelling `from → to`, put through the real hit test. */
+/**
+ * A STAND-IN THAT INHERITS, rather than a hand-typed list of the fields the
+ * method happened to touch the day this was written.
+ *
+ * It was that list, and it went red the moment `_boltHitTest` grew a call to
+ * `this._boltHurt` — a method extracted out of it, in the same file, doing
+ * exactly what the inlined code had done. Nothing about the behaviour changed
+ * and two checks failed with `this._boltHurt is not a function`: the classic
+ * hand-maintained twin (HANDOFF §2.3).
+ *
+ * Off the prototype, the stand-in gets every sibling method for free and only
+ * names what it is deliberately faking — the scene, the physics and the
+ * particles a headless bench has no business owning. `_netBoltBilled` reads
+ * `this.netMode`, which is undefined here, so it returns before it touches
+ * anything.
+ */
 function shootAt(b, bolt, from, to) {
-  const host = {
+  const host = Object.assign(Object.create(World.prototype), {
     players: [b.p], enemies: b.ctx.enemies, props: [],
     physics: { raycast: () => null },
     particles: { sparkBurst() {}, boltImpact() {} },
     onHitmark() {},
-  };
+  });
   return World.prototype._boltHitTest.call(host, bolt, from, to);
 }
 

@@ -1802,6 +1802,28 @@ export class Prop {
      * thirty-six separate pieces — so this threw outright on one and silently
      * leaked the children of every group-shaped prop that ever came through. */
     if (disposeGeo) this.mesh.traverse((o) => o.geometry?.dispose?.());
+    /**
+     * …AND THE MATERIALS, BUT ONLY WHERE THIS PROP OWNS THEM.
+     *
+     * Geometry is safe to free unconditionally — a prop's mesh is built for it
+     * — and a material is NOT: most of the catalogue draws from shared tables,
+     * and freeing one of those takes the paint off every other prop in the
+     * level that is still standing. That is exactly the "enforced by corrupting
+     * something another system still holds" failure `RapierWorld`'s debris
+     * budget refuses to commit, one file over.
+     *
+     * So the flag is set by the builder that KNOWS. `Dropped.dropSaber` is the
+     * one today: `buildHiltGroup` machines five fresh `MeshStandardMaterial`s
+     * per hilt from the weapon's own metals, so a hilt that goes takes exactly
+     * its own five with it. Everything else keeps the old behaviour and the
+     * shared tables are untouched.
+     */
+    if (disposeGeo && this.ownsMaterials) {
+      this.mesh.traverse((o) => {
+        if (!o.material) return;
+        for (const m of (Array.isArray(o.material) ? o.material : [o.material])) m?.dispose?.();
+      });
+    }
     const i = this.world.props.indexOf(this);
     if (i >= 0) this.world.props.splice(i, 1);
   }
@@ -2222,7 +2244,7 @@ const KERF_FRAG = /* glsl */`
   #include <lights_pars_begin>
   #include <shadowmap_pars_fragment>
   #include <shadowmask_pars_fragment>
-  uniform sampler2D uKerf; uniform vec3 uBase; uniform vec3 uHot; uniform float uTime;
+  uniform sampler2D uKerf; uniform vec3 uBase; uniform float uTime;
   varying vec2 vUv; varying vec3 vN; varying vec3 vW;
   void main(){
     vec4 k = texture2D(uKerf, vUv);
@@ -2275,6 +2297,102 @@ const KERF_FRAG = /* glsl */`
   }
 `;
 
+/**
+ * THE MELT RATE EVERY BLAST DOOR SHIPS WITH, AND IT IS THE TWENTY SECONDS.
+ *
+ * Kerf units a second of contact at the centre of the kerf, out of the 220 of
+ * 255 a texel must reach to be melted through. At a resting press — the speed
+ * term in `burn` is 0.667 there — that is 4 × 0.667 × 255 = 680 units a
+ * second, so ONE texel of plate opens in 0.32 s of dwell, and the twenty
+ * seconds is that dwell times the metal `MELT_AREA` asks for.
+ *
+ * MEASURED, not chosen. A real Player on the shipped magazine, `free` scheme,
+ * blade laid on the plate and the guard walked round a circle, three loop
+ * sizes, one per door of the rank (tools/checks/blast-door.mjs drives exactly
+ * these three), against `MELT_AREA` 0.34 m²:
+ *
+ *     MELT_RATE      tight loop     natural loop    wide loop    median
+ *       3.6            20.1 s          21.6 s        25.0 s      21.6
+ *       3.9            19.3 s          19.1 s        22.0 s      19.3
+ *       4.0            17.6 s          18.8 s        21.7 s      18.8   ← ships
+ *       4.2            12.0 s          21.1 s        21.3 s      21.1
+ *
+ * DESIGN.md prices the door at "twenty seconds of held blade". Four puts the
+ * median at 18.8 with the whole band inside 17–22, and a player who traces a
+ * tidier loop is rewarded with a faster breach, which is the "entirely
+ * player-driven" half of the same sentence. The sweep above drives the three
+ * doors of one build in one process; the shipped suite runs its other six
+ * checks first, which moves the module streams under it, and reads 19.1 · 18.8
+ * · 21.7 s, median 19.1. Either way the answer is twenty seconds.
+ *
+ * ── AND EVERY NUMBER ABOVE THIS LINE USED TO BE FICTION, which is worth a
+ * paragraph because it is the reason to distrust a measured comment. The table
+ * that stood here read 4 → 34.2 s and 6 → 14.9 s and was taken on a bench that
+ * gave a different answer on every run of identical code: the pre-fracture
+ * scheduler in src/world/Destruction.js does as much work as fits in
+ * `prepareBudgetMs` of REAL TIME per frame, and a structure's cells are what it
+ * publishes to the blade solver, so the frame the revetment finished
+ * pre-fracturing — a fact about the machine — changed the blade's contact set
+ * and moved every seconds figure this file quotes. Four consecutive runs of the
+ * suite on one commit: 7/9, 7/9, 9/9, 9/9, with the same natural loop reading
+ * 465 texels and never opening on one run and 16.3 s on the next. The bench
+ * pins that scheduler now (see `field` in tools/checks/blast-door.mjs) and the
+ * suite has been bit-identical since.
+ */
+const MELT_RATE = 4.0;
+
+/**
+ * HOW MUCH METAL HAS TO BE GONE BEFORE THE PLATE GIVES, in square metres.
+ *
+ * 0.34 m² is a panel about 58 cm on a side. A body's shoulders are 45 cm, so it
+ * is a hole you get through rather than a hole you look through. In SQUARE
+ * METRES and not in a share of the plate, which is the one part of the previous
+ * lane's rewrite that was right and stays: `breachFraction` 0.055 of a 128² map
+ * is 901 texels whatever the door measures, so resizing a door silently
+ * repriced the mechanic — that is what forced the magazine's doors down from
+ * 4.0 × 4.4 m to 3.3 × 3.4 to get two of nine runs over the line. A number in
+ * metal cannot do that. `breachFraction` is still honoured for any caller that
+ * passes one, and nothing in src/ does.
+ *
+ * ── WHY 0.34 AND NOT 0.55, WHICH IS THE WHOLE OF WHY THIS MECHANIC KEPT
+ *    ARRIVING ON A KNIFE EDGE ──────────────────────────────────────────
+ *
+ * A texel already melted through cannot be melted twice, so a standing player
+ * does not melt metal at a constant rate: they saturate the patch their blade
+ * can reach and then creep. Measured on the shipped door, fresh World per case,
+ * `free` scheme, breach suppressed so the curve can be read past the point it
+ * would have opened and the melt left at the 6.0 it shipped with so that two
+ * minutes is enough to see the top — the melted area against time:
+ *
+ *     loop radius      20 s      39 s      59 s      119 s
+ *       0.25          0.242     0.536     0.547     0.550 m²
+ *       0.35          0.371     0.431     0.457     0.468 m²
+ *       0.50          0.552     0.552     0.553     0.560 m²
+ *
+ * Every drive levels off between 0.46 and 0.56 m², because that is the patch
+ * the blade can reach from one standing position and no drive reaches further.
+ * A quota of 0.55 m² therefore sat ON that knee: the 0.50 loop cleared it with
+ * 1% to spare, the 0.35 loop SATURATES 17% SHORT AND NEVER OPENS THE DOOR AT
+ * ALL, and the 0.25 loop needs a hundred and nineteen seconds. That is the
+ * exact defect the metres rewrite was meant to cure — a tidy loop that plateaus
+ * below the bar — moved from 901 texels to 833 and left there.
+ *
+ * 0.34 m² is 62–74% of the tightest of those plateaus, so every loop measured
+ * opens the door and the time answers to how the player traced it rather than
+ * to whether they cleared a knee. The shipped pair, fresh World per case:
+ *
+ *     loop radius   0.25    0.35    0.50    0.70    0.85    1.00
+ *     breach       32.4 s  22.0 s  17.6 s  23.9 s  33.9 s  46.4 s
+ *
+ * — a bowl with its floor at the loop a standing body traces most easily, a
+ * tidier loop faster than a sloppy one either side of it, and no radius that
+ * cannot finish. The default control scheme, which has no loop at all and works
+ * four guard zones instead, comes in at 53.0 s. `MELT_RATE` is what puts that
+ * band on twenty seconds; this is what keeps a tidier player from being
+ * punished for being tidy.
+ */
+const MELT_AREA = 0.34;
+
 export class BlastDoor {
   constructor(world, opts = {}) {
     this.world = world;
@@ -2284,6 +2402,33 @@ export class BlastDoor {
     this.toughness = opts.toughness ?? TOUGHNESS.blastdoor;
     this.opened = false;
     this.onBreach = opts.onBreach || null;
+    /**
+     * HOW MUCH OF THE PLATE HAS TO BE MELTED THROUGH BEFORE THE SLUG DROPS —
+     * AND IT WAS AN OPTION NOTHING COULD SET.
+     *
+     * `burn()` has always read `this.breachFraction ?? 0.055`, and no line in
+     * this class ever assigned the field: `opts.breachFraction` was dropped on
+     * the floor by the constructor, so every door in the game was pinned at the
+     * default whatever its caller asked for. That is the same defect shape as
+     * `addCrateStack`'s dropped `count` two thousand lines down — an option a
+     * call site can write, that reads correctly, and that does nothing.
+     *
+     * It matters because a number like this one IS the twenty seconds — see
+     * `MELT_RATE` above, which is the other half of it. A caller that wants a
+     * heavier door says so here rather than editing this file.
+     *
+     * It is no longer the DEFAULT rule, only the override: a share of the plate
+     * makes a bigger door a proportionally longer job while the patch a
+     * standing player can reach stays the same size, and `MELT_AREA` carries
+     * the measurement of what that cost. Nothing in src/ passes one.
+     */
+    /* `null` unless a caller names one — see `burn`, where the default rule is
+     * melted metal in square metres and this one is the override. */
+    this.breachFraction = opts.breachFraction ?? null;
+    this.meltArea = opts.meltArea ?? MELT_AREA;
+    /** Kerf units burned per second of contact, out of the 220 of 255 a texel
+     *  must reach to be melted through. See the long note in `burn`. */
+    this.meltRate = opts.meltRate ?? MELT_RATE;
     this.id = 'door' + (_propId++);
 
     const RES = 128;
@@ -2302,7 +2447,6 @@ export class BlastDoor {
       uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.lights, THREE.UniformsLib.fog, {
         uKerf: { value: null },
         uBase: { value: new THREE.Color() },
-        uHot: { value: new THREE.Color(0xff8020) },
         uTime: { value: 0 },
       }]),
       vertexShader: KERF_VERT, fragmentShader: KERF_FRAG, side: THREE.DoubleSide,
@@ -2329,23 +2473,63 @@ export class BlastDoor {
     if (opts.quaternion) this.mesh.quaternion.copy(opts.quaternion);
     this.mesh.castShadow = true;
     this.mesh.receiveShadow = true;
+    /**
+     * AND ITS WORLD MATRIX IS ITS OWN BUSINESS.
+     *
+     * `burn()` inverts `this.mesh.matrixWorld` to find where on the plate the
+     * blade is touching, and nothing in this class ever composed it: the only
+     * thing that walks a scene graph and composes matrices is
+     * `WebGLRenderer.render`. In the game that happens to run first, so the
+     * door works; anywhere without a renderer — every headless harness, and
+     * therefore every check that could have caught any of the other faults
+     * fixed in this class — `matrixWorld` is the IDENTITY, every contact
+     * projects to a `u, v` far outside the plate, and `burn` returns false on
+     * its own bounds test forever. Measured before this line existed: a real
+     * Player holding a real blade on this door for 60 s raised 410 grind
+     * contacts and burned 0 texels.
+     *
+     * A door does not move, so the matrix is composed once here and
+     * `matrixAutoUpdate` goes off — which also takes it out of the renderer's
+     * per-frame traversal. The frame below is set the same way for the same
+     * reason.
+     */
+    this.mesh.matrixAutoUpdate = false;
+    this.mesh.updateMatrix();
+    this.mesh.updateMatrixWorld(true);
     world.scene.add(this.mesh);
 
-    // frame
+    /**
+     * THE JAMB — ONE MESH, AND IT WAS FOUR.
+     *
+     * The four plates round the plate are one material, one shape family and
+     * one rigid frame, and they were four separate `THREE.Mesh` children of a
+     * Group: FOUR DRAW CALLS PER DOOR before the door itself. This file's own
+     * `Kit` exists to stop exactly that — "a machine that uses six materials is
+     * six draw calls however small it is, and `world-immersion` caps a level at
+     * 520" — and the one object in the tree that ignored the rule is the one
+     * that ships in a rank of three. Merged, the magazine's three doors cost
+     * 3 jambs + 3 plates = 6 calls instead of 15.
+     *
+     * It also had four geometries and `dispose()` freed none of them. See the
+     * note there: `lifecycle` counts what a level hands back on unload, and a
+     * door leaked its whole jamb every time you left the ground.
+     */
     const M = propMaterials();
-    const frame = new THREE.Group();
     const t = 0.4;
+    const jamb = [];
     for (const [w, h, x, y] of [[this.width + t * 2, t, 0, this.height / 2 + t / 2],
                                 [this.width + t * 2, t, 0, -this.height / 2 - t / 2],
                                 [t, this.height + t * 2, this.width / 2 + t / 2, 0],
                                 [t, this.height + t * 2, -this.width / 2 - t / 2, 0]]) {
-      const b = new THREE.Mesh(plateGeo(w, h, this.thickness * 1.6, 0.05, 1), M.darkSteel);
-      b.position.set(x, y, 0);
-      b.castShadow = true; b.receiveShadow = true;
-      frame.add(b);
+      jamb.push(plateGeo(w, h, this.thickness * 1.6, 0.05, 1).translate(x, y, 0));
     }
+    const frame = new THREE.Mesh(mergeGeos(jamb), M.darkSteel);
+    frame.castShadow = true; frame.receiveShadow = true;
     frame.position.copy(this.mesh.position);
     frame.quaternion.copy(this.mesh.quaternion);
+    frame.matrixAutoUpdate = false;
+    frame.updateMatrix();
+    frame.updateMatrixWorld(true);
     world.scene.add(frame);
     this.frame = frame;
 
@@ -2360,7 +2544,45 @@ export class BlastDoor {
     this._inv = new THREE.Matrix4();
   }
 
-  /** World-space capsules so the blade solver treats it like anything else. */
+  /**
+   * World-space capsules so the blade solver treats it like anything else.
+   *
+   * ── AND `toughness: Infinity` MEANT THE WHOLE MECHANIC WAS UNREACHABLE ──
+   *
+   * `BladeSolver.solve` opens its per-capsule work with
+   *
+   *     if (tough === Infinity) { events.push({ type: 'clang', … }); continue; }
+   *
+   * so every one of these capsules answered a lit blade with a spark, a clash
+   * and a camera shake, and NOTHING ELSE. `World._applyBladeEvent`'s grind
+   * branch is the only caller of `burn()` in the game —
+   * `if (ev.target.door) … door.burn(ev.point, …)` — and a door that can only
+   * raise a `clang` can never raise a `grind`. So `burn`, `breach`, the kerf
+   * texture, the discard-through hole, the slag, the falling slug and
+   * `onBreach` were 130 lines of finished, unreachable code, and holding a
+   * blade against the only blast door in the game did exactly what holding it
+   * against a mountain does. DESIGN.md's "a blast door takes twenty seconds of
+   * held blade and a shower of molten slag" was never once true in play.
+   *
+   * Three things in the tree already said what the number should be and all
+   * three were ignored by this line:
+   *
+   *   · `TOUGHNESS.blastdoor = 110` (src/game/Combat.js) — a real entry in the
+   *     material table with NO reader anywhere. The constructor stores it as
+   *     `this.toughness` and then handed the solver a different number.
+   *   · the solver's own worked table, twelve lines above the branch that
+   *     bit: "droid torso 16 m/s CUT · blastdoor 40 m/s grinds".
+   *   · `SLASH_CAP = 8  // ceiling: no speed may slash through a blast door` —
+   *     a cap written for a contact that could not occur.
+   *
+   * `structure: true` is the second half of it, and it is the flag that says
+   * this is ARCHITECTURE. It buys three things the solver already gives a wall
+   * and a column: the press is not multiplied by swing speed (a blast door is
+   * not something you can go faster at), the frame's advance is the raw press
+   * rather than a chord through a limb, and accumulated work never fades —
+   * "a kerf cut into stone does not heal", which is precisely what the molten
+   * kerf on this plate is.
+   */
   capsules(out = []) {
     out.length = 0;
     const hw = this.width / 2, hh = this.height / 2;
@@ -2369,7 +2591,7 @@ export class BlastDoor {
       _v1.set(-hw, y, 0).applyQuaternion(this.mesh.quaternion).add(this.mesh.position);
       _v2.set(hw, y, 0).applyQuaternion(this.mesh.quaternion).add(this.mesh.position);
       out.push({ name: 'd' + y.toFixed(2), p0: _v1.clone(), p1: _v2.clone(),
-        r: this.thickness * 0.62, toughness: Infinity, door: this });
+        r: this.thickness * 0.62, toughness: this.toughness, structure: true, door: this });
     }
     return out;
   }
@@ -2386,7 +2608,45 @@ export class BlastDoor {
     const RES = this.res;
     const px = u * RES, py = (1 - v) * RES;
     const radius = RES * 0.030;
-    const rate = clamp(power * dt * 0.55, 0, 1.0) * 255;
+    /**
+     * HOW FAST THE PLATE MELTS — AND IT WAS `power * dt * 0.55`, WHICH IS A
+     * NUMBER NOBODY HAD EVER BEEN ABLE TO MEASURE.
+     *
+     * `power` is `ev.speed`, the blade's speed at the contact, so the old line
+     * made the melt rate strictly PROPORTIONAL TO HOW FAST YOU WAVE THE BLADE.
+     * Two things follow and both are wrong.
+     *
+     * ONE: A HELD BLADE BARELY CUT. Measured on a real Player, real World,
+     * shipped solver, blade laid on the plate and traced in a slow loop —
+     * contact on 99% of frames, blade speed 0.7 to 1.5 m/s — twenty seconds
+     * burned EIGHT of the 901 texels a breach wanted then. Extrapolated, the door
+     * DESIGN.md prices at twenty seconds of held blade came out at about five
+     * minutes. Nobody had ever seen that, because until the capsule fix above
+     * no blade had ever raised a contact on a door at all.
+     *
+     * TWO: THE ONE THING THAT DID CUT WAS A FAST SWING, and that is the exact
+     * opposite of the design. `SLASH_CAP`'s comment in Combat.js — "no speed
+     * may slash through a blast door" — and DESIGN.md's "twenty seconds of
+     * tension, entirely player-driven" both say the hold is the mechanic. A
+     * lightsaber is a torch, not an axe: it melts by CONTACT TIME, and how fast
+     * you drag it decides how much PATH you trace, not how deep each point
+     * goes.
+     *
+     * So the rate is per second of contact, with a mild speed term that
+     * saturates: a swing at 6 m/s and over melts half again as fast per second
+     * as a resting press, and no faster. A swing still cuts — it simply spends
+     * a fiftieth of a second on each texel where opening one takes a fifth, so
+     * it scores the plate and does not open it, which is what a blast door is
+     * for. Measured on the shipped magazine: 60 overhead attacks over thirty
+     * seconds burn 262 of the 515 texels a breach needs and the plate holds —
+     * half a breach for half a minute of mashing, and the second half is not
+     * coming, because a swing lands its dose on metal it has already scored.
+     *
+     * `meltRate` is the number the twenty seconds is set by, and it is measured
+     * rather than guessed: see tools/checks/blast-door.mjs, which drives the
+     * shipped door with a real Player and reports the seconds.
+     */
+    const rate = clamp(dt * this.meltRate * (0.6 + 0.4 * clamp(power / 6, 0, 1)), 0, 1.0) * 255;
 
     const x0 = Math.max(0, Math.floor(px - radius)), x1 = Math.min(RES - 1, Math.ceil(px + radius));
     const y0 = Math.max(0, Math.floor(py - radius)), y1 = Math.min(RES - 1, Math.ceil(py + radius));
@@ -2411,15 +2671,86 @@ export class BlastDoor {
       this.world.particles.slag(worldPoint, _v2, 0xffa030);
     }
 
+    /**
+     * ── WHEN THE SLUG FALLS OUT, AND WHY IT IS METAL AND NOT A SHARE ──────
+     *
+     * This read `cutArea / total > breachFraction`: melt 5.5% of the plate,
+     * anywhere, and the door opens. Two things were wrong with that and only
+     * one of them has been fixed twice.
+     *
+     * WHAT WAS RIGHT TO CHANGE: the rule was a SHARE OF THE PLATE, so a bigger
+     * door was a proportionally longer job while the patch a standing player
+     * can reach stayed the same size. That is what forced the magazine's doors
+     * down from 4.0 × 4.4 m to 3.3 × 3.4 to get two of nine runs over the line
+     * — a mechanic held up by a plate dimension. The rule is in SQUARE METRES
+     * now (`MELT_AREA`), so resizing a door does not reprice it.
+     *
+     * WHAT THE FIRST REWRITE GOT WRONG, and it cost a whole lane: it decided
+     * the quota itself was the defect and replaced it with a CLOSED LOOP —
+     * `_slug()` flooded the uncut metal in from the rim and opened the door on
+     * whatever the flood could not reach, on the reading that DESIGN.md's "when
+     * your traced loop closes the slug falls out" is a rule rather than a
+     * description of what a breach looks like. It never once fired. Measured on
+     * the shipped magazine with the flood sampled every five seconds — three
+     * `free`-scheme loops held for seventy-five seconds each and the default
+     * scheme's four guard zones held for ninety — the enclosed area was ZERO on
+     * all twenty-four samples, and the reason is in the kerf itself: the blade
+     * lies ACROSS the plate, so a contact does not draw a line, it lays a bar.
+     * A picture of the kerf after twenty seconds of the natural loop is five
+     * horizontal bars stacked up the plate, spanning u 0.10–0.87 and v
+     * 0.25–0.91 — a ladder, with nothing enclosed anywhere in it. A rule that
+     * cannot fire is the same fault as `toughness: Infinity` up in `capsules`,
+     * one layer further in, so the flood is gone and the quota is the rule.
+     *
+     * WHAT OPENS IT IS MELTED METAL, in square metres, and `MELT_AREA` carries
+     * the measurement that says why 0.34 rather than the 0.55 this arrived at.
+     * `breachFraction` stays as the override for a caller that genuinely wants
+     * a share of a plate; nothing in src/ passes one.
+     */
     const total = RES * RES;
-    if (this.cutArea / total > (this.breachFraction ?? 0.055)) { this.breach(); return true; }
+    const cellArea = (this.width * this.height) / total;
+    const melted = this.cutArea * cellArea;
+    if (this.breachFraction != null
+      ? this.cutArea / total > this.breachFraction
+      : melted >= this.meltArea) { this.breach(); return true; }
     return false;
   }
 
   breach() {
     if (this.opened) return;
     this.opened = true;
-    this.collider.disabled = true;
+    /**
+     * AND THE DOORWAY HAS TO BE A DOORWAY, WHICH `disabled` ALONE DOES NOT BUY.
+     *
+     * This was one line — `this.collider.disabled = true` — and the flag is
+     * read by exactly the queries that walk `physics.staticBoxes` by hand:
+     * `Player._gatherNear`, the enemy sweeps, `Support.js`, the sphere solver.
+     * The player therefore walked through a breached door and everything else
+     * in the game did not, because `RapierWorld.addStaticBox` also creates a
+     * real Rapier cuboid and NOTHING in `disabled` touches it.
+     *
+     * MEASURED on the shipped magazine (tools/checks/blast-door.mjs), a 0.8 m
+     * crate shoved at 9 m/s from 0.90 m in front of a BREACHED door:
+     *
+     *     flag only          ends 0.92 m in front of it — it never moves
+     *     collider removed   ends 1.28 m INSIDE the cell
+     *
+     * With the flag alone the crate bounces off the plane of the door it just
+     * watched fall out, and so does the slug this method drops.
+     *
+     * That is the exact complaint the player has already made about this game
+     * once ("there are invisible walls or objects for example on geonosis that
+     * block you"), and it would have arrived on the same ground. The collider
+     * is REMOVED, which is what "the door is gone" means to every consumer at
+     * once; the flag is set as well so any near-list already built this frame
+     * drops it before it is rebuilt. `dispose()` calls `removeStaticBox` again
+     * and that is idempotent — it splices on `indexOf` and null-guards the
+     * handle.
+     */
+    if (this.collider) {
+      this.collider.disabled = true;
+      this.world.physics.removeStaticBox(this.collider);
+    }
     if (this.world.particles) {
       this.world.particles.explosion(this.mesh.position.clone(), 0.7);
     }
@@ -2451,6 +2782,14 @@ export class BlastDoor {
   dispose() {
     this.world.scene.remove(this.mesh, this.frame);
     this.mesh.geometry.dispose(); this.mat.dispose();
+    /* THE JAMB WAS NEVER FREED. It was four meshes and four `plateGeo`
+     * geometries and this method named none of them, so every level unload
+     * leaked four buffer geometries per door — `lifecycle.mjs` counts exactly
+     * this and would have said so the first time a level shipped a rank of
+     * them. One mesh now, one geometry, one dispose. The material is
+     * `propMaterials().darkSteel`, which is shared by half the level and is
+     * correctly NOT disposed here. */
+    this.frame.geometry.dispose();
     this.kerfTex.dispose();
     this.world.physics.removeStaticBox(this.collider);
   }

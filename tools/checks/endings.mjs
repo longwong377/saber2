@@ -50,6 +50,48 @@ async function boot(mode, level = 'colosseum', seed = 31) {
  * the cue. All three are wrapped rather than re-implemented — the words are
  * whatever the game says, and what is asserted is that it says them.
  */
+/**
+ * ── THESE CHECKS MAY NOT OVERLAP, AND NOTHING IN THE RUNNER STOPS THEM ───
+ *
+ * `listen` swaps the process-global `audio.runWon` for a recorder that pushes
+ * into a per-check array. `audio` is a module singleton, and **`check()` does
+ * not await** — both runners collect async checks and settle them together
+ * after the suite's `run()` returns, so every check in this file is in flight
+ * at once, and two of them drive worlds to an ENDING. The defeat arm's
+ * `runWon(false)` therefore went through the victory arm's wrapper and landed
+ * in its array, and the victory arm read `sounded = [false, true]` and reported
+ * that a won battle had played the losing cue.
+ *
+ * It survived standalone runs and every pair anybody tried, because whether the
+ * two arms overlap at the moment of an ending depends on how long each takes.
+ * It appeared only in a full gate, 725 checks in, where the load is different.
+ * **A green standalone run proved nothing here, and was believed twice.**
+ *
+ * ── THE FIX, AND THE ONE THAT LOOKED RIGHT AND WAS NOT ───────────────────
+ *
+ * The tempting fix is to record something that belongs to the WORLD rather than
+ * to the process — wrap `world._announceBattle`, which is a method on the
+ * instance and is where the cue is played. It fails, and the way it fails is
+ * worth keeping: **`_announceBattle` is not the only door.** The duel's ladder
+ * top announces its verdict and plays its cue by another path, so the per-world
+ * spy recorded `0 cue(s)` on an ending that had played one. The suite's own
+ * source scan says there are two `audio.runWon` call sites in World.js and it
+ * is right; a per-world wrapper on one of them is blind to the other.
+ *
+ * So the singleton stays and the OVERLAP goes. `lane()` is a promise chain in
+ * this file: each check's body waits for the previous one to finish, so exactly
+ * one of them owns `audio.runWon` at a time. It costs nothing — these three
+ * checks are minutes of driving either way — and it needs nothing from the
+ * runner, which is right, because "my checks may not run beside each other" is
+ * a fact about this suite and not a feature the gate should grow for it.
+ *
+ * §2.9 says a suite that borrows a singleton must hand all of it back. This is
+ * the other half: handing it back is not enough when two holders are live at
+ * the same time.
+ */
+let lane = Promise.resolve();
+const serial = (fn) => (lane = lane.then(fn, fn));
+
 function listen(world, audio) {
   const said = [];
   const notify = world.notify.bind(world);
@@ -60,11 +102,27 @@ function listen(world, audio) {
   audio.runWon = (w) => { state.sounded.push(!!w); return state.restoreAudio?.call(audio, w); };
   return state;
 }
-const VERDICT = /\b(WON|LOST|DEFEAT|OVER|CLIMBED|YOURS)\b/;
+/**
+ * The words a run may end on, and WHICH OF THEM MEAN IT WENT BADLY.
+ *
+ * `BROKEN` and `HOLDS` are THE LINE's. That mode is won by its line rather than
+ * by the ground, so "THE ADVANCE IS LOST" is Command's sentence and not its own
+ * — see `World._announceBattle`, which reads `holdTheLine` to choose.
+ *
+ * DEFEAT is derived from VERDICT rather than written beside it. They were two
+ * literals, and a word added to one and not the other is a mode that announces
+ * a real defeat and reads here either as a mode that said nothing at all or as
+ * a mode that lost and called it a victory — which is exactly what "THE LINE IS
+ * BROKEN" did on its first run, twice, for the two different reasons.
+ */
+const LOSS_WORDS = ['LOST', 'DEFEAT', 'BROKEN'];
+const WIN_WORDS = ['WON', 'OVER', 'CLIMBED', 'YOURS', 'HOLDS'];
+const DEFEAT = new RegExp(`\\b(${LOSS_WORDS.join('|')})\\b`);
+const VERDICT = new RegExp(`\\b(${[...LOSS_WORDS, ...WIN_WORDS].join('|')})\\b`);
 
 export async function run({ check, assert }) {
 
-  check('endings: every mode a player can lose ends, and the loss is on screen', async () => {
+  check('endings: every mode a player can lose ends, and the loss is on screen', () => serial(async () => {
     /**
      * ONE DRIVE PER SHIPPED MODE, to the same event: the player goes down.
      *
@@ -132,7 +190,7 @@ export async function run({ check, assert }) {
             gave.push(mode);
             assert(verdict.length === 1,
               `${mode} announced the end ${verdict.length} times: ${verdict.map(([t]) => t).join(' / ')}`);
-            assert(/\b(LOST|DEFEAT)\b/.test(verdict[0][0]),
+            assert(DEFEAT.test(verdict[0][0]),
               `${mode} lost and the line reads "${verdict[0][0]}"`);
             assert(verdict[0][1].length > 0, `${mode}'s verdict has no second line to say how far you got`);
             assert(heard.sounded.length === 1 && heard.sounded[0] === false,
@@ -168,9 +226,9 @@ export async function run({ check, assert }) {
       assert(owes.length >= 4, `only ${owes.length} modes can be decided — the detector is wrong`);
       return `${rows.join(', ')}; ${owes.length} of ${Object.keys(MODES).length} decidable, all announced`;
     } finally { audio.runWon = real; S.restoreShared(snap); }
-  });
+  }));
 
-  check('endings: a run that is WON says a different thing, and there is one place that says it', async () => {
+  check('endings: a run that is WON says a different thing, and there is one place that says it', () => serial(async () => {
     /**
      * The other half. Two victories driven here — the ladder and the battle —
      * because they are the two cheapest; `tools/checks/command.mjs` and
@@ -222,7 +280,7 @@ export async function run({ check, assert }) {
           }
           assert(world.over, `the duel cleared wave ${top}, the top of its own ladder, and carried on`);
           const verdict = heard.said.filter(([t]) => VERDICT.test(t));
-          assert(verdict.length === 1 && !/\b(LOST|DEFEAT)\b/.test(verdict[0][0]),
+          assert(verdict.length === 1 && !DEFEAT.test(verdict[0][0]),
             `the top of the ladder was announced as ${JSON.stringify(verdict.map(([t]) => t))}`);
           assert(heard.sounded.length === 1 && heard.sounded[0] === true,
             `a climbed ladder played runWon(${heard.sounded.join(',')})`);
@@ -234,21 +292,84 @@ export async function run({ check, assert }) {
         } finally { audio.runWon = heard.restoreAudio; world.unload?.(); }
       }
 
-      /* THE BATTLE. Two engagements, both cleared by killing the field. */
+      /**
+       * THE BATTLE. Two engagements, both cleared by killing the field.
+       *
+       * THIS CHECK'S PREMISE EXPIRED, AND THAT IS THE ONLY REASON IT IS EDITED.
+       * The drive was 260 outer rounds of 30 frames — 130.0 game-seconds — and
+       * it asserted the battle had resolved by the end of them. That was a fair
+       * budget on a tree where an engagement was ONE cleared wave and the ground
+       * under it changed in the same frame it was decided. Both of those moved,
+       * and neither of them is what this check is about:
+       *
+       *   AN ENGAGEMENT IS `SKIRMISH.waves` CLEARED WAVES, three by default,
+       *     because one was the defect the player found in ten seconds — "in
+       *     skirmish mode I'll start the map will immediately say cleared and we
+       *     leave like there were never any enemies". Two engagements is now six
+       *     cleared waves rather than two.
+       *   THE GROUND CHANGE IS FLOWN. `Extraction.extractionSeconds()` reports
+       *     45.95 s of aftermath, call, inbound, ramp, boarding, seal, liftoff,
+       *     transit, descent and unload between engagement 1 and engagement 2 —
+       *     and this drive holds an idle input, so nobody walks to the ramp and
+       *     `_boarding` waits out `LAST_CALL` (22.0 s) before the crew hauls the
+       *     commander aboard. Measured here: the flight ran 75.0 s.
+       *
+       * Driving the shipped code, seeds 4242, 7 and 31, the battle is announced
+       * WON at **192.0 s, 164.5 s and 185.0 s**. The old budget stopped at
+       * 130.0 s — inside the descent of that flight, `sk.cleared` at 1 of 2 and
+       * nothing ended — which is exactly the "the battle did not resolve: null"
+       * this check reported. THE GAME WAS RIGHT THROUGHOUT.
+       *
+       * SO THE DRIVE IS NOT GIVEN A NUMBER OF FRAMES ANY MORE. It runs until the
+       * battle resolves and fails when the battle STOPS MOVING. That is a
+       * stronger property than "it fitted in 130 s" and it is the one the player
+       * actually reported — "in campaign mode the game completely freezes when
+       * you finish the first wave, never unfreezes" — where a frame budget can
+       * only ever say that something was slower than a number somebody typed,
+       * and has to be re-typed every time an engagement gets longer.
+       */
       {
         const { world, input } = await boot('skirmish', 'colosseum', 4242);
         const heard = listen(world, audio);
         try {
-          world.beginSkirmish({ engagements: 2, strength: 10, pressure: 1 });
-          for (let t = 0; t < 260 && !world.over; t++) {
+          const { LAST_CALL, extractionSeconds } = await import('../../src/game/Extraction.js');
+          const sk = world.beginSkirmish({ engagements: 2, strength: 10, pressure: 1 });
+          /* WHAT PROGRESS IS, in the five fields a battle moves: which
+           * engagement has been won, which wave of the one being fought, the
+           * escalation's own number, the phase of the flight while one is up,
+           * and the score. Every one of them read off the game — the frozen
+           * campaign the player reported moves none of them. */
+          const mark = () => [sk.cleared, sk.waveCount, world.director?.wave,
+            world.extraction?.active ? world.extraction.phase : '-', world.score].join('/');
+          /* THE LONGEST A BATTLE MAY HOLD STILL IS ASKED FOR, NOT TYPED. The
+           * only stretch in this drive where nothing at all moves is the ship
+           * waiting on a commander who never walks, and `LAST_CALL` is the
+           * shipped bound on it: the three seeds above all measure their longest
+           * quiet window at 23.0 s, which is LAST_CALL plus one 0.5 s sample.
+           * Twice it is a hold nothing in the sequence can produce. */
+          const STALL = LAST_CALL * 2;
+          /* A BACKSTOP AND NOT THE GATE — the stall detector is what catches a
+           * freeze. This bounds only a battle that keeps moving and never ends,
+           * at three times the 192.0 s longest of the three seeds. */
+          const CEILING = 600;
+          let last = mark(), still = 0, t = 0;
+          while (t < CEILING && !world.over) {
             for (let i = 0; i < 30 && !world.over; i++) {
               if (world.player) world.player.hp = world.player.maxHp;
               world.update(STEP, input);
+              t += STEP;
             }
             for (const e of world.enemies) if (e.team !== world.partyTeam && !e.dead) e.damage?.(1e9, null, 'probe');
+            const now = mark();
+            still = now === last ? still + 0.5 : 0;
+            last = now;
+            assert(still < STALL,
+              `the battle stopped moving for ${still.toFixed(1)} s at t=${t.toFixed(1)} s, on engagement `
+              + `${sk.cleared + 1} of ${sk.engagements}, wave ${sk.waveCount + 1} of ${sk.waves}`
+              + `${world.extraction?.active ? `, in the ${world.extraction.phase} of the flight` : ''}`);
           }
           assert(world.over && heard.stats?.won === true,
-            `the battle did not resolve: ${JSON.stringify(heard.stats)}`);
+            `the battle did not resolve in ${t.toFixed(1)} s of play: ${JSON.stringify(heard.stats)}`);
           const verdict = heard.said.filter(([t]) => VERDICT.test(t));
           assert(verdict.length === 1 && /\bWON\b/.test(verdict[0][0]),
             `a won battle was announced as ${JSON.stringify(verdict.map(([t]) => t))}`);
@@ -256,14 +377,15 @@ export async function run({ check, assert }) {
             `a won battle played runWon(${heard.sounded.join(',')})`);
           assert(heard.stats.taken === 2,
             `two engagements were cleared and the card reports ${heard.stats.taken}`);
-          rows.push(`skirmish "${verdict[0][0]}", taken ${heard.stats.taken}`);
+          rows.push(`skirmish "${verdict[0][0]}", taken ${heard.stats.taken} × ${sk.waves} waves `
+            + `and one ${extractionSeconds().toFixed(1)} s flight, resolved at ${t.toFixed(1)} s`);
         } finally { audio.runWon = heard.restoreAudio; world.unload?.(); }
       }
       return `${rows.join('; ')}; ${cues} cue call sites in World.js, 0 in Command.js`;
     } finally { audio.runWon = real; S.restoreShared(snap); }
-  });
+  }));
 
-  check('endings: the duel ladder has a last rung, and past it nothing changes', async () => {
+  check('endings: the duel ladder has a last rung, and past it nothing changes', () => serial(async () => {
     /**
      * WHY THE DUEL NEEDED AN ENDING AT ALL, stated as the measurement that
      * found it rather than as an opinion about the mode.
@@ -318,5 +440,5 @@ export async function run({ check, assert }) {
     return `${rungs.length} rungs + ${bosses.length} bosses; the climb runs out at wave ${top} `
       + `(${d.duelWindow(top).join(', ')} × ${d.duelSize(top)}, ${d.duelElites(top)} promoted, set piece), `
       + `and ${Waves.DUEL_RUNG * rungs.length * 3} waves past it compose identically`;
-  });
+  }));
 }

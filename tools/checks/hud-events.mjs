@@ -202,13 +202,30 @@ export async function run({ check, assert }) {
     const { hud, doc, restore } = hudOnPage(INDEX);
     try {
       const HOSTILE = '<img src="/nope" onerror="globalThis.__pwned = 1">';
+      /**
+       * COUNTED AS A DELTA, AND IT USED TO BE COUNTED ABSOLUTELY.
+       *
+       * `querySelectorAll('img')` over the whole document was right while the
+       * page contained no images at all — every asset in this product is
+       * generated in code, so any `<img>` had to be one the attack built. That
+       * stopped being true the moment the front end started loading the
+       * player's own logo file: index.html now carries three legitimate
+       * `<img class="wordmark">`, on the boot screen, the menu and the loading
+       * screen, and the check reported them as three successful injections.
+       *
+       * A red result that names a real file as an attack is worse than no
+       * check, because the next reader deletes the check. The question was
+       * always "did these three calls BUILD anything", so it is asked that way:
+       * the count before, the count after, and the difference.
+       */
+      const before = doc.documentElement.querySelectorAll('img').length;
       hud.popupsOn = true;
       hud.message('A JEDI HAS FALLEN AWAY', `${HOSTILE} left the fight`);
       hud.popup('A JEDI HAS FALLEN AWAY', `${HOSTILE} left the fight`, 'event');
       hud.killFeed(HOSTILE, 'a droideka', 'cut');
-      const injected = doc.documentElement.querySelectorAll('img');
-      assert(injected.length === 0,
-        `${injected.length} element(s) were parsed out of a peer's name — `
+      const injected = doc.documentElement.querySelectorAll('img').length - before;
+      assert(injected === 0,
+        `${injected} element(s) were parsed out of a peer's name — `
         + 'a remote machine is writing markup into this page');
       // and the name still has to READ, so the text must survive the escaping
       assert(hud.el.center.textContent.includes('left the fight'),
@@ -217,7 +234,7 @@ export async function run({ check, assert }) {
     } finally { restore(); }
   });
 
-  check('hud: the stratagem panel is the STRATAGEMS table and not a copy of it', () => {
+  check('hud: the support-call panel is the STRATAGEMS table and not a copy of it', () => {
     /**
      * A CODE SYSTEM WITH NO READOUT IS A MANUAL YOU KEEP BESIDE THE KEYBOARD.
      * The panel is the whole of this mechanic's discoverability, so what it
@@ -240,14 +257,32 @@ export async function run({ check, assert }) {
 
       // key up: nothing on screen at all
       hud._stratagemPanel(p);
-      assert(!host.innerHTML, 'the panel is painted with the stratagem key up');
+      assert(!host.innerHTML, 'the panel is painted with the comm key up');
 
-      // key down: every call the table offers, and nothing else
+      /**
+       * KEY DOWN: THE FIRST TEN THE TABLE OFFERS, AND A COUNT OF THE REST.
+       *
+       * It used to be all of them, and that was right when the table was seven
+       * rows. It is eighteen now, of which fifteen are offered to a lone Jedi,
+       * and fifteen rows at this size is 430 px of list down the left of the
+       * screen at the one moment the player has typed nothing and the panel is
+       * at its longest — see `_stratagemPanel`'s own note on the cap. What has
+       * to hold is unchanged and is asserted the same way: the panel is a VIEW
+       * of the table, in the table's own order, and a row added to
+       * `STRATAGEMS` appears on it without this file naming the row.
+       */
       p.stratagems.setArming(true);
       hud._stratagemPanel(p);
       const solo = STRATAGEMS.filter((s) => !s.commandOnly);
-      for (const s of solo) {
+      const CAP = 10;
+      for (const s of solo.slice(0, CAP)) {
         assert(host.innerHTML.includes(s.name), `${s.id} is in the table and not on the panel`);
+      }
+      if (solo.length > CAP) {
+        assert(new RegExp(`\\+${solo.length - CAP} more`).test(host.innerHTML),
+          `${solo.length} calls are offered, ${CAP} are shown, and the panel does not say that `
+          + `${solo.length - CAP} of them are missing — a list that silently truncates is worse `
+          + 'than a long one');
       }
       for (const s of STRATAGEMS.filter((s) => s.commandOnly)) {
         assert(!host.innerHTML.includes(s.name),
@@ -267,8 +302,12 @@ export async function run({ check, assert }) {
       }
       assert(host.innerHTML.includes(still[0].name), 'the panel dropped a call that is still live');
       const lit = (host.innerHTML.match(/class="sg-d on"/g) || []).length;
-      assert(lit === still.length,
-        `${lit} letters are lit across ${still.length} live rows — one per row is how far in you are`);
+      /* ONE LIT LETTER PER ROW ON SCREEN. The cap applies here too — with
+       * eighteen rows a single opening direction can still leave more than ten
+       * live — so the expectation is the shown count and not the live one. */
+      const shown = Math.min(still.length, CAP);
+      assert(lit === shown,
+        `${lit} letters are lit across ${shown} rows on screen — one per row is how far in you are`);
       /* AND EXACTLY ONE ARROW IS MARKED AS THE NEXT ONE TO PRESS. The codes
        * are dealt per run, so nobody enters one from memory and the panel has
        * to be an instruction rather than a reference — but marking the next
@@ -284,11 +323,14 @@ export async function run({ check, assert }) {
       p.stratagems.entry = '';
       p.force = 0;
       hud._stratagemPanel(p);
-      for (const s of solo) assert(host.innerHTML.includes(s.name), `${s.id} vanished when the purse emptied`);
-      assert((host.innerHTML.match(/sg-row off/g) || []).length >= solo.length,
+      for (const s of solo.slice(0, CAP)) {
+        assert(host.innerHTML.includes(s.name), `${s.id} vanished when the purse emptied`);
+      }
+      assert((host.innerHTML.match(/sg-row off/g) || []).length >= Math.min(solo.length, CAP),
         'nothing is greyed with no Force at all');
-      return `${solo.length} calls offered solo, ${gone.length} dropped by one letter, `
-        + `${lit} matched letters lit, all greyed at 0 Force`;
+      return `${solo.length} calls offered solo, ${Math.min(solo.length, CAP)} on screen with the `
+        + `rest counted, ${gone.length} dropped by one letter, ${lit} matched letters lit, `
+        + 'all greyed at 0 Force';
     } finally { restore(); }
   });
 
@@ -806,7 +848,10 @@ export async function run({ check, assert }) {
       const seen = [];
       for (const s of OPEN_STATES) {
         Object.assign(foe, { gripped: false, yankT: 0, toppled: false, stunTimer: 0 });
-        if (s.key === 'held') foe.gripped = true;
+        /* `hold()` when the fixture is a real body — a hold is a LEASE now
+         * (see Enemy.hold) — and the flag itself when it is the stub this
+         * check builds, which has no clock to expire one. */
+        if (s.key === 'held') { if (foe.hold) foe.hold(); else foe.gripped = true; }
         else if (s.key === 'yanked') foe.yankT = 0.4;
         else if (s.key === 'downed') foe.toppled = true;
         assert(openState(foe) === s,

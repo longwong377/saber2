@@ -101,6 +101,17 @@ are walked linearly per body per frame: 1,608 boxes = 16.14 ms of sim with
 nothing rendered. Ceiling ~1,000 boxes. **Persist the silhouette, never the
 debris.**
 
+> **AND THE SILHOUETTE IS NOT IN THE HEIGHTFIELD.** This paragraph was measured
+> on WALKABILITY, which is a fact about the grid, and §14 Step 0 then found the
+> grid is the wrong place to look: 520 of 539 marks are a bolt hitting sand, the
+> cell is 2.5-3.4 m, and `crater` widens anything under 1.35 cells and shallows
+> it to conserve volume — so twenty sorties of exact replay read as dunes. The
+> mark that shows is ALBEDO, and albedo has no minimum feature size.
+> `Terrain.scars` is a whole-map, non-decaying, stacking scar field at a 1.6 m
+> cell: one extra texture tap, 1.77 MB a Terrain, and it takes the wide plate
+> from 1.9% to 13.2% of pixels moved on the same log. The saturation warning
+> still holds for the DENT; it never applied to the stain.
+
 **No completely indoor places. Ever.** Player instruction, 20 Aug, after
 playing them: *"I just tried the boarding bay and the providence and hated them,
 you completely missed the ball so just remove them. your outside work is much
@@ -179,9 +190,106 @@ arrive alone on an empty bar. Killing stays fast and fun and advances nothing.
 Measured, and nobody designed it: walking 35 m forward drags the whole formation
 with you and costs **4 of 10 men**.
 
-**Third body class: the conscript.** 6 hp, 1.4 dps, one pass, **worth 0 score
-and 0 Insight**. The lawnmower is only a lawnmower when mowing pays. Forty
-conscripts that pay nothing are weather.
+**Third body class: the conscript.** 6 hp, **0.7 dps**, one pass, **worth 0
+score and 0 Insight**. The lawnmower is only a lawnmower when mowing pays.
+Forty conscripts that pay nothing are weather.
+
+> **THE GUN WAS 1.4 AND IT IS HALVED, AND THE PARAGRAPH ABOVE IS WHY THE
+> HALVING COSTS NOTHING.** Every price on this page is quoted against A MOVING
+> PLAYER — one with a guard, a dash and a dive — and until §16.3 was fixed that
+> was the only reader there was: `World._boltHitTest` skipped its whole enemy
+> loop for hostile bolts and your own troopers live in that array, so no rifle
+> on the other side could touch your army. The same field now also prices what
+> a round does to a clone trooper with 46 hit points and a slot to stand in,
+> who can do none of those three things, and the two readings want different
+> numbers. What does NOT move is the argument: this section's answer to a crowd
+> is suppression, and suppression is billed PER BOLT — `GUARD.stamina` is
+> `[1.2, 0.4, 0, 0]` by grade and an unanswered bolt costs Force, and not one
+> of those numbers reads `damage`. Same forty bodies, same cadence, same bolts,
+> same bar. A conscript is now more purely the thing this section says it is.
+>
+> **AND THE LEVY BEING FREE OF THE THREAT BUDGET IS HALF A SENTENCE.** The
+> budget is the mechanism that keeps a wave honest, and it is honest about the
+> PLAYER's two ledgers only: `src/game/Levy.js` argues the exemption at length
+> and every word of that argument is about score and about threat. A body that
+> costs the wave nothing still shoots your men. Measured on the flagship mode's
+> own ground, one engagement driven to its muster with no Jedi on the field,
+> five seeds — the two sources of fire the budget never pays for are **five of
+> the eight names an engagement costs**, and they are the only two whose output
+> does not shrink as the line shrinks:
+>
+> | | survivors of ten, at the muster |
+> |---|---|
+> | as shipped | **1.8** |
+> | the levy off the field | 4.0 |
+> | the gun pit silenced | 4.8 |
+> | every hostile bolt ×0.65 on a man with a roster record | **2.8**, two seeds of five WIPED |
+>
+> **AND THE TABLE ABOVE IS SUPERSEDED, THOUGH ITS RANKING IS NOT.** Every row
+> in it was taken across processes, and `World.js` had no reseeder for its
+> module-level `rng` at the time — the same change read 5.4 and 3.0 of ten on
+> nothing but the mode string, because a crossing rolls a session plan and
+> Command does not. Re-taken with both arms from fresh processes at an
+> identical phase, the contours pinned, **twenty seeds apiece**, the only
+> difference being the two constants:
+>
+> | | survivors of ten | engagements that reached their muster |
+> |---|---|---|
+> | as shipped before this session | **1.35** (sd 1.73) | 10 of 20 |
+> | with both halved | **2.80** (sd 2.33) | **16 of 20** |
+>
+> +1.45 with a standard error of 0.65 — real, and small. **THE TARGET IS NOT
+> MET.** An engagement fought without the Jedi costs **7.2 of ten**, not five.
+> What the halving buys is that four engagements in five now reach the muster
+> at all instead of one in two, which is the difference between a mode with a
+> between-areas beat and a mode without one — but the line is still far too
+> cheap, and the lever that would make it cost five is not in this section yet.
+>
+> That last row is the one to read. Fifty-four per cent more effective health
+> on every man bought one survivor and lost two runs, because
+> `CommandDirector.allyScale` prices the wave per LIVING body: **a line that
+> lives longer meets a wave composed for a line that lived.** Everything on the
+> ledger behaves that way from either end — deleting the army surcharge
+> outright is the same 2.8 — so the only levers that move this number are the
+> two the ledger cannot see. Both are halved (`GUN.every` 7.0 → 14.0 and the
+> round above), which takes an engagement fought without the Jedi from 1.8 of
+> ten to **5.4**, and `theline.12` holds it there.
+>
+> ── AND EVERY NUMBER ABOVE WAS TAKEN AGAINST A GAME AIMING AT PEOPLE'S BOOTS ──
+>
+> `Enemy._shoot` led its aim on `target.chest ?? target.position` and only
+> `Player` had a `chest`. Your named men, the horde, everything else on the
+> field was aimed at by `position`, which is at the FEET — by the emplacement
+> too, which added `chestY` (an absolute world height) to `position.y` and so
+> laid every round 0.80 m low on ground that sits at −0.84 m. The levy's round
+> at 5 and the gun's cadence at 14.0 were both chosen against that.
+>
+> **THE TARGET IS MET NOW, and the arithmetic of this section is unchanged —
+> only the numbers in it are.** Twenty seeds an arm from pinned worktrees, the
+> only difference being the aim:
+>
+> | engagement 1, no Jedi on the field | survivors of ten | reached a muster |
+> |---|---|---|
+> | aimed at the feet | **5.10** (sd 2.45) | 19 of 20 |
+> | aimed at the chest, constants untouched | **1.65** (sd 2.56) | 12 of 20 |
+> | aimed at the chest, `GUN.every` 34.0 and the round at 2 | **4.93** (n=14) | **13 of 14** |
+>
+> **The asymmetry is the finding and this section did not predict it.** The
+> LINE's own output nearly TRIPLED — 1.14 → 3.20 hp a second onto the horde —
+> and it still lost three and a half more men, because the horde outnumbers it
+> and doubling both sides' accuracy favours the bigger side. "It roughly doubles
+> lethality on both sides" says nothing about which way the survivors move.
+>
+> What is unchanged is the sentence this section is built on: **suppression is
+> billed PER BOLT.** `GUARD.stamina` is `[1.2, 0.4, 0, 0]` by grade and an
+> unanswered bolt costs Force; not one of those numbers reads `damage`. The
+> levy's round comes down and the beaten zone does not move at all.
+>
+> The location table, six seeds an arm, is in `NEXT.md`: the emplacement is
+> worth 3.8 of the eight and a half names an engagement was costing, the levy
+> 2.3, and the paid-for wave the remaining 2.7. **With both off the field the
+> ceiling is 7.33 of ten**, so the target is inside the two levers this section
+> already names and no third one was needed.
 
 ---
 
@@ -213,12 +321,38 @@ Different resource, different range band, different read of the screen.
 | **Consul** | force + bond | 10–40 m | Force (2.63 s of Focus, 13.3 s to refill) | OPEN | an empty bar at the wrong moment |
 | **Shadow** | dark + blade | alone | your own health | BREACH | any loss is 25% of a five-man force |
 
-**Warning, and it is a real one:** `attune-force` measures **Δ0.000** and 17 of
-40 boons read UNMODELLED because `balance.mjs` has no Force powers in it.
-`Soresu` 0.000, `Tutaminis` 0.036, `Aegis` 0.165 are the weakest cards in the
-table *because model depth is the only metric*. **If the Sentinel ships,
-`balance.mjs` needs an "allies preserved" axis**, or the whole playstyle reads
-as the worst build in the game and nobody picks it twice.
+~~**Warning, and it is a real one:** `attune-force` measures Δ0.000 and 17 of 40
+boons read UNMODELLED because `balance.mjs` has no Force powers in it… **If the
+Sentinel ships, `balance.mjs` needs an "allies preserved" axis**~~ — **it has
+one.** `tools/balance.mjs` stands a line of `OPENING_STRENGTH` troopers beside
+the modelled player and reports `Δline` next to `Δdepth`, and prints the cards
+that are below the median on depth and above it on the line: the list a one-axis
+ranking called worthless.
+
+### These are NOT four classes, and nothing in the game picks between them
+
+Worth stating because a reader who greps for `Vanguard` finds nothing and
+concludes a section is missing. **Every column of that table is an axis the game
+already has, and the `job` column is §7's four verbs** — so the four ways to
+play are what a player and a boon draft make out of existing parts, not a
+select screen. That is deliberate and it is the same rule the rest of the mode
+follows: the ground is rolled, the length is rolled, the squad is dealt. A mode
+whose subject is a war you did not start does not open with a class menu.
+
+What the four rest on, and the honest state of each after the verbs were built
+and scored:
+
+| | rests on | its verb | does the verb pay? |
+|---|---|---|---|
+| **Vanguard** | stamina, and `GUARD_COST`'s ladder | BREAK | **no** — 0.00% of enemy-seconds. A body needs 11.5 s inside 6.5 m of a lit blade to break and a body that stands there that long is one the Jedi has killed |
+| **Sentinel** | the guard flick, `CatchWindow`, the auto-guard cone | TURN | **yes, and best of the four** — a bolt sent home costs the rank 8.3× an ordinary casualty, because a return is thrown from inside a formation and `NERVE.SEE` finds four witnesses against about one |
+| **Consul** | Force, `openness`, the grip | OPEN | **no** — 0.5% of enemy-seconds even with a Jedi gripping continuously. The line already aims 9× its fair share at a held body, so the verb is starved by its window and not by the line's attention |
+| **Shadow** | your own health, alone, away from the line | BREACH | **built** — a casemate gun behind the middle of three doors, 69 m out, 57.9 s to cut under fire. What it costs the line is not yet a settled number |
+
+So the table is buildable-by-construction and half-earned in practice: two verbs
+pay, two barely fire. **That is a tuning problem in `Nerve` and in `openness`'s
+window, not a missing feature**, and it is recorded in `NEXT.md` rather than
+here, because §7 is where those two verbs are argued.
 
 ---
 
@@ -285,22 +419,55 @@ that keeps it dramatic rather than annoying: **a retreat can never be refused.**
 **The crowd holds.** Two flat tones and an ink line make a 140-triangle figure
 convincing at 24 m. A photoreal renderer would need ten times the geometry.
 
-**The sky is blue and the ground is orange, and this is the biggest visual
-defect in the game.** Measured live fog on Geonosis: `#a6adb2`, cold grey-blue.
-The base sky is a physical Preetham dome and stays blue at turbidity 10. **The
-fix already exists in the shader and is held at identity** — `uSkyTurn`, a
-luminance-preserving hue rotation, with `skyProbeTurn` already computing the
-rotation that carries the model sky onto the level's authored `skyColor`.
-Geonosis already authors `skyColor: 0xd9a058`. Turn the dome, the fog and the
-aerial tint by the same rotation and every derived thing follows.
+**The sky was blue and the ground orange, and it was the biggest visual defect
+in the game. FIXED — but NOT by the mechanism this paragraph proposed, so read
+the rest of this before touching `uSkyTurn`.**
+
+The diagnosis was right: measured live fog on Geonosis `#a6adb2`, a cold
+grey-blue, from a physical Preetham dome that stays blue at turbidity 10. The
+proposed fix was to turn the dome, the fog and the aerial tint by
+`skyProbeTurn`'s rotation.
+
+**That was tried on the haze and `cel.mjs` refused it, correctly.** `uGain` is a
+composite pass over the WHOLE FRAME, so a level's grade already moves the drawn
+dome and what distance converges on together — measured, every level's haze
+tracks its own skyline within 6°. Turning one of them alone makes a veil with a
+colour the sky does not have, which is the "grey fog" rule 3 of
+`src/toon/REFERENCE.md` forbids. `skyProbeTurn`'s own note says so in advance:
+the drawn dome, the fog and the aerial tint "have to match what is actually
+painted on screen", and the Ember Shelf's orange comes from its `gain`.
+
+**The real defect was that Geonosis had no grade at all**, while its own
+atmosphere block promised one — *"the ORANGE comes from the sun, the cloud deck
+and the grade"*. The drawn skyline's hue against the hue each level authored:
+
+    drifts     authored 220°  drawn 202°   Δ  18°
+    colosseum  authored 220°  drawn 205°   Δ  15°
+    scoria     authored  10°  drawn  62°   Δ  52°
+    mustafar   authored   6°  drawn  59°   Δ  52°
+    geonosis   authored  25°  drawn 205°   Δ 180°
+
+Every other level within 52° of its own sky; this one on the opposite side of
+the wheel. `gain: [1.18, 1.00, 0.68]` puts the skyline at 54° and the haze at
+47°, with luminance moving 0.414 → 0.416.
+
+**So `uSkyTurn` stays at identity for the drawn dome, deliberately.** It turns
+the environment probe and nothing else, which is the half no grade can reach.
 
 **Three more, in order:**
 
 - **Value, not hue, at scale.** At 6–19 px only value survives. Three bands with
   ≥0.18 luma separation; scale carries rank (officers 1.15×).
-- **Quantise the smoke.** `Smoke.js` uses a soft vertex-alpha gradient — the one
-  un-cel thing in the frame. At 7 columns you get away with it; at 20 it
-  dominates the sky. `CEL_BAND_GLSL` is already imported into `SkyDome`.
+- **Quantise the smoke. DONE.** `Smoke.js` used a soft vertex-alpha gradient —
+  the one un-cel thing in the frame. At 7 columns you get away with it; at 20 it
+  dominates the sky, and the marching front puts 9-10 up by engagement 5. The
+  alpha is snapped to five nodes now, on `saberCelQuant` and not
+  `saberCelBand1`: the plateau-centre form never returns 0, so a transparent tip
+  would come back 10% opaque and veil the whole sky. The hook WRAPS `makeSoft`'s
+  rather than replacing it, and `CEL_BAND_GLSL` is *not* pasted in —
+  `installCelShading` already appends it to three's `<common>`, which a
+  MeshBasicMaterial includes, so a second copy is a duplicate definition and the
+  column would not compile at all.
 - **Never extend the ink for the crowd.** At 138 m a figure is 8.5 px and a 1 px
   outline is 12% of its height. The ink prepass far plane is 138 m and must
   stay: everything beyond is drawn once, flat, **so the far battle costs one
@@ -335,6 +502,26 @@ Generate the battle, then the ground that explains it.
    High ground *flanks* the front and never sits on it; exactly one chokepoint
    (two reads as a maze); the ridge field goes anisotropic along the advance
    bearing, which turns noise into *ground that moves in a direction*.
+
+   *(1–3 are BUILT — `src/world/Battlefield.js`, bound by
+   `tools/checks/battlefield.mjs`, which builds a real `Terrain` off the
+   generated preset and measures each clause on the baked grid. It is a
+   **layer, not an eighth seed**: the preset row is an authored one spread
+   whole with `height` replaced, which makes §5 a construction rather than a
+   discipline and means §13.5 cannot break — the generated key is never in
+   `LEVEL_ORDER` and `installGround` refuses to shadow an authored name.
+   Measured over five reasons × two seeds: the nearest high ground is 63–166 m
+   from the line against standoffs of 38–58; the crossing notch is 9–28 m
+   below the median climb against a next-best way through of 0.3–8.8 m, a
+   ratio of 2.4–34; the ridge field's directional variogram bottoms 0–7° off
+   the advance bearing at 2.5–18× max/min. Two things the measurements moved,
+   both argued at their call sites: a flank built as `crest × ridge` is not a
+   wall but a row of hills with a draw between every pair — and the draws run
+   toward the line, because that is what the anisotropy asks for — so 45% of
+   the crest is upland the ridges ride on; and a choke notched in arc length
+   along the line is a notch in the near wall rather than a way through, which
+   put the lowest crossing on a gun line 262 m from the chokepoint the plan
+   had named.)*
 4. **Dressing follows the front, not the disc.** `strewGround` must take a
    **density, not a count** — that deletes the `landmarks: 3.4` magic number on
    every level at once. `strewWrecks` has no density field at all and is the
@@ -342,7 +529,12 @@ Generate the battle, then the ground that explains it.
    fighting line. A **walking barrage** is 8 craters at 14 m on one azimuth, and
    says *a thing happened, in a direction, at a time* — which a thousand
    scattered rocks cannot. **The dead mark the front**: 520 prone instanced
-   figures in a 26 m band, thickest at the choke, one draw call.
+   figures in a 26 m band, thickest at the choke, one draw call. *(Built —
+   `src/world/Fallen.js`. It is TWO calls and not one, and the second is the
+   honest price of not repeating one silhouette four hundred times: two poses,
+   103 triangles a body, per-instance tone, and 100% of them inside the 26 m
+   band. `Front.burnBand` is the burnt swath the same paragraph implies and
+   does not name.)*
 5. **Do not generate the palette.** Pick from authored sets.
 
 **Clark–Evans cannot see a line, and that is a hole in our checks.** Measured:
@@ -350,6 +542,21 @@ isotropic clumps R = 0.664, a battle front R = 0.668 — indistinguishable. The
 new statistic is directional banding: sweep 36 bearings, project onto the
 normal, histogram in 16 m bins, take max/min of the coefficient of variation.
 Uniform ≈ 2, a front ≈ 6–7.
+
+*(Built — `banding()` in `tools/checks/ground-cover.mjs`, beside `clarkEvans`,
+and the two quoted figures were checked on this build rather than trusted. The
+claim holds; one figure needs a correction. Over eight seeds, with the front
+taken from the shipped `addFallen` and the clumps matched to it on count and
+tuned on σ until Clark–Evans could not separate them: **Clark–Evans is blind
+exactly as claimed** — front 0.631, clumps 0.638, ranges overlapping on every
+seed. **A front bands at 7.1–11.7**, so "≈6–7" reproduces at its floor and
+runs higher. **But "uniform ≈ 2" is not a uniform scatter** — a Poisson field
+on the same disc measures 1.15–1.44 and never reaches 2; what sits at ≈2
+(1.66–2.20, median 1.91) is the isotropic CLUMP control, which is the thing a
+front actually has to be told apart from. The one convention this paragraph
+leaves open — what range the 16 m bins cover — decides the whole statistic and
+is argued at the function: binning each bearing over its own span makes the
+one bearing that carries the whole signal report none of it.)*
 
 ---
 
@@ -418,19 +625,161 @@ Play three engagements. **Did you have anything to do?**
 the *output* read as a battle: posture, silhouette, timing. **The script that
 reads well IS the role taxonomy, written as acceptance criteria.**
 
-**Step 4 — L2, the merged rigid-skin rung.** The single highest-value
-engineering item. `_collectLodParts` already partitions each body into
-primary/silhouette and detail; L2 merges the kept set into one `SkinnedMesh`
-with weight 1.0 per vertex, derivable from the existing rig with **no
-re-authoring, and the silhouette identical by construction so the 30 m seam is
-invisible**. 42 bodies today = 1,040 draw calls; with L2 = **394**.
+**Step 4 — L2, the merged rigid-skin rung. BUILT AND MEASURED — see
+`src/game/MergedSkin.js`.** The single highest-value engineering item.
+`_collectLodParts` already partitions each body into primary/silhouette and
+detail; L2 merges the kept set into a `SkinnedMesh` with weight 1.0 per vertex,
+derivable from the existing rig with **no re-authoring, and the silhouette
+identical by construction so the seam is invisible**.
 
-**Step 5 — L3 instanced cohorts** beyond 140 m, where a leg is 3.9 px and there
-is no gait to lose. Animation moves to a per-instance phase in the vertex
-shader.
+The estimate said 42 bodies = 1,040 draw calls today, 394 with it. Measured on
+a real `high` World on geonosis, 42 mixed bodies at 100–154 m: **1,064 today
+and 194 with it**, a 5.5× cut. The "today" figure was honest to 2%. The "with
+it" was pessimistic by 2×, and the reason is the one thing this paragraph got
+wrong: the merge is **one SkinnedMesh per MATERIAL BIN, not one per body**. A
+trooper's 26 kept meshes wear four distinct materials, so a trooper is four
+calls and not one — and one call was never reachable, because the four bins
+differ by which of the texture foundry's maps they sample. `color` folds into a
+per-vertex attribute exactly; `roughness` and `metalness` are dropped because
+the cel model deletes every term that reads them. Whole rigged roster: 796 kept
+meshes → 136 calls.
 
-**Then, and only then, the mode.** ~1,100 lines of spine against ~12,000 lines
-of existing machinery.
+Bound by `tools/checks/frame-budget.mjs` §6, five checks — the draw-call cut on
+a real World at a real distance, a vertex-for-vertex identity against the
+meshes it replaced after the rig is re-posed and re-placed, the ink (once,
+never twice, never none), the shader read that licenses dropping roughness and
+metalness, and the teardown when a body is cut apart.
+
+**Step 5 — L3 instanced cohorts. BUILT AND MEASURED — see
+`src/game/Cohorts.js`.** Beyond the distance the ink reaches, where a leg is
+3.9 px and there is no gait to lose. One `InstancedMesh` per (archetype · elite
+· scale) × material bin, holding every body of that kind in the band.
+
+**The band is 137.8 m, not 140, and it is derived rather than chosen.**
+`OutlinePass.prepass` narrows its own camera to `min(uHaze.y, uEdge.y) · 1.06`
+and `INK.edgeFade[1]` is 130 — so the game already draws **no outline on
+anything past 137.8 m**, which is the one thing an instanced body cannot carry.
+Measured over all 7 levels × 4 tiers, the prepass reaches furthest on
+scoria/low at 127.2 m. The 3.9 px figure above is confirmed exactly: 4.52 px/m
+at that range on a 720 px frame.
+
+**"Animation moves to a per-instance phase in the vertex shader" cannot work in
+this renderer**, and the reason generalises: the ink prepass renders with
+`scene.overrideMaterial`, so a displacement living in a body's own material is
+not in the shader the outline is drawn from — the outline would be drawn at the
+un-walked pose. The animation is in the INSTANCE MATRIX instead: position,
+facing and scale, rewritten every frame. Bodies still march, wheel and close.
+What is dropped is the gait, and it is dropped on a measurement — the frozen
+pose sits **0.98× at worst** of the distance the live body sits from *itself*
+one gait frame later, so a cohort body cannot be told from a frame of the
+animation it replaces.
+
+The whole ladder, three readings of one field one line apart:
+
+| rung | 42 bodies | 84 bodies |
+|---|---|---|
+| cull only (LOD 1) | 1,064 draw calls | 2,130 |
+| merged skins (LOD 2) | 194 | 390 |
+| **cohorts (LOD 3)** | **38** | **38** |
+
+L2 is ~4.6 calls a body; L3 is ~4.4 calls an *archetype*. Bound by
+`tools/checks/frame-budget.mjs` §7.
+
+**Then, and only then, the mode. BUILT — `MODES.theline`, and the estimate was
+close.** ~1,100 lines of spine against ~12,000 lines of existing machinery, and
+the spine came in well under that because the rungs above it had already been
+built against this document: the seeded length, the deploy card, the marching
+front and the muster were all in Command before the mode existed.
+
+**One rule is the whole difference between the two modes**, and it is the rule
+§2 is an argument for: Command is won by taking the ground, The Line is won by
+the line. `_endCampaign` wrote `won: true` off reaching the last area and never
+looked at the roster, and an emptied roster ended NOTHING — the only other
+ending in the game counts PLAYERS — so a Jedi standing over ten graves took the
+ridge and got the victory card. It is a field now (`holdTheLine`) and a second
+ending door (`_checkLine`), with a third card for the ending neither "you won"
+nor "you died" describes: the run is over, the army is gone, and you are still
+standing there.
+
+**And the mode's first honest measurement was half instrument, which is worth
+recording as carefully as the number was.** The first reading said a ten-man
+roster is wiped out in 105–170 seconds of the FIRST engagement, on every seed,
+in both army modes — so the muster is unreachable and the mode cannot be won.
+Two faults were in it, and both flattered the catastrophe:
+
+- **The muster window was invisible.** `_areaClear` ends with "no screen wired
+  — muster and press on", so `autoMuster()` and `closeMuster()` both run inside
+  one `payWave` call and `director.mustering` is true for **less than a frame**.
+  Every bench polled for it, never saw it, and ran on into areas two and three,
+  reporting the roster at whatever wipe it eventually reached. Held open with a
+  no-op `onMuster`, a line with **no player on the field takes four areas of
+  five**.
+- **The idle arm was measuring a magnet.** A Jedi held on his feet and not
+  playing is an unkillable target standing on the deploy mark, and
+  `Levy.installLevyAim` points forty conscripts at whatever blade is on the
+  field. Measured five seeds of five: **an idle Jedi is worse for the line than
+  no Jedi at all** — 0.0 survivors against 1.8. The reference arm is *no
+  player*.
+
+**Settled, twenty seeds an arm, both from fresh processes at an identical
+module-init phase with the contours pinned in both and the only difference being
+the two constants:**
+
+    as shipped before this session   1.35 of 10   sd 1.73   10 of 20 reached a muster
+    with both halved                 2.80 of 10   sd 2.33   16 of 20 reached a muster
+                                     +1.45, se 0.65, z 2.24
+
+**The lever is real, it is small, and the target is not met.** An engagement
+fought without the Jedi costs **7.2 of ten**, not the five the target asks for.
+The constants stay — `GUN.every` 14.0 and the conscript's round at 5 — because
++1.45 at z 2.24 is a real move in the right direction, but nobody should read
+this as the attrition question being answered.
+
+**The second column is the better sentence, and nobody expected it.** What the
+halving buys is not really survivors: it is that **four engagements in five
+reach their muster instead of one in two.** That is a proportion rather than a
+mean, so it carries the same significance with far less variance — and it is the
+difference between a mode that has a between-areas beat and a mode that does
+not. The muster is where the roster is rebuilt, where the promotions are read
+and where §5 says the run becomes a story; an engagement that never reaches one
+is an engagement that only subtracts.
+
+**How the earlier numbers went wrong, because it is the transferable part.**
+This tuning was reported three times before this one — 5.4, then a ±3.0 band,
+then 4.1 pooled — and every one of them was an artefact. `World.js` holds one
+module-level `rng` for the process and exported no reseeder, so runs are not
+reproducible across a code change and arms taken in one process share a phase
+rather than sampling independently. Worse, `theline` and `command` differ in one
+earlier draw — a crossing rolls a session plan and Command does not — so **the
+mode string alone shifts the whole stream**, which is why one change read 5.4 in
+one mode and 3.0 in the other. It is chaotic rather than noisy: seed 1 goes
+5 → 1 while seed 2 goes 1 → 5 under a change of one bolt's damage from 10 to 5.
+
+`seedWorld` exists now, `HANDOFF` §2.5b carries the rules and the arithmetic
+(five seeds gives se ≈ 1.3 men, so **treat anything under 1.5 men at five seeds
+as unmeasured**), the tuning instrument is `tools/_linehold.mjs` with all three
+streams pinned, and `theline.12` is a **catastrophe tripwire rather than a
+tuning bind** — four of its readings of one build spanned 1.3 to 6.0 before the
+reseeder existed, so its band is wide on purpose and it catches only the two
+failures that make this a different game: an army gone before its first muster,
+and an engagement in which nobody dies.
+
+**The lever chose itself by measurement, and it says something about the
+budget.** Effective health is self-cancelling — `allyScale` prices the wave per
+*living* body, so 54% more health on every man bought one survivor and lost two
+runs to a wave composed for the line that lived. Everything on the threat ledger
+behaves that way. The two things NOT on it are the emplacement (a prop, never in
+`world.enemies`) and the levy (exempt by §6's own argument, every word of which
+is about the *player's* ledgers) — and between them they were **five of the
+eight names an engagement cost**. Halving both reaches the target; neither does
+alone, because survival is a threshold. Neither halving touches what either
+thing is for: the levy's job is suppression, which is billed per bolt and reads
+no damage at all.
+
+None of this is a regression. It is what §16.3 looked like from the other side:
+until this exercise **no hostile bolt could touch your own army at all**, so
+every number ever taken about the line was fiction and there was no earlier
+state to restore.
 
 ---
 
@@ -460,16 +809,99 @@ It is a thing lying on the ground because the man holding it is lying next to it
 
 Not flagship work — these are wrong today.
 
-1. **`capsules()` has no broad phase** — 39% of the frame at 213 bodies. ~15
-   lines.
-2. **Morale is inert while the player stands in the formation** — `JEDI_NEAR`
-   pins every record at 1.000 in four seconds.
+1. ~~**`capsules()` has no broad phase**~~ — **FIXED, and it was worse than
+   this line.** Measured at a FIFTH of the body count: 39 live bodies on a lit
+   field cost **463 `capsules()` calls a frame, 8,797 entries and 16.43 ms** —
+   a quarter of a 60 Hz frame — because `World._boltHitTest` rebuilt every
+   enemy's whole skeleton for every bolt in flight. A sphere per body, measured
+   off the capsules the body actually presents and cached, takes it to **10.6
+   calls, 201 entries, 0.57 ms**. The first attempt built the sphere out of
+   `radius` and `chestY` and was silently wrong: those are a hull width and a
+   chest height, neither is a bound, and a fan of 13,320 bolts through 37
+   archetypes lost 134 answers, led by the dwarf spider standing its capsules
+   2.70 m up. The fan is `tools/checks/bolts.mjs` and it is what licenses the
+   optimisation at all — a broad phase that is slightly too small does not
+   crash, it deletes hits, and nobody reports that as a bug.
+   **It also found a live one.** A droideka's `walkPhase` was initialised in a
+   branch it does not take, so `_poseDroideka` ran `undefined + dt` on frame
+   one and NaN fed back into itself forever: every droideka in the game
+   presented three leg capsules with a non-finite endpoint, `segmentNear`
+   answers those with a miss, so **its legs could not be shot off or cut off**
+   and the topple at two legs lost was unreachable.
+2. ~~**Morale is inert while the player stands in the formation**~~ — **FIXED.**
+   `JEDI_NEAR` is unsaturated and presence is a distance gradient rather than a
+   floor: full at the shoulder, `MORALE.EDGE` at the rim of `NEAR`, nothing
+   past it. 0.085/s at the shoulder against 0.030 at fourteen metres.
 3. **Two lines stood 30 m apart for 35 seconds and neither took a casualty.**
-   Leash, preferred band, or line of sight — unknown. **A war that will not
-   fight itself cannot be a war you are a raindrop in**, and every number in
-   this document sits on top of it.
-4. **`_cullOldestDebris` spends debris only**, so the 1,100 body cap is *missed*
-   rather than enforced — measured 1,140 with 60 ragdolls in flight.
-5. **The orphaned `Commander` on `peer-left`** (§9).
-6. **`attune-force` measures Δ0.000** and 17 of 40 boons read UNMODELLED,
-   because `balance.mjs` has no Force powers in it.
+   ~~Leash, preferred band, or line of sight — unknown.~~ **FOUND, AND IT IS
+   NONE OF THE THREE — FIXED.** `World._boltHitTest` opened its enemy loop with
+   `if (bolt.team === 1 && !friendly) continue`: an early-out over the *whole*
+   loop for every hostile bolt in the game, on a premise the `canHarm` clause
+   thirty lines below it already writes down and contradicts — "Command puts
+   your troops in that same array on the PARTY's team". They do, and it skipped
+   them too. **No rifle on the other side could touch your army.** Measured on
+   a real Command world on Geonosis, ten troopers formed up against a live
+   wave: 90 seconds, roster 10 of 10, every man at full health — and a
+   synthetic bolt driven straight through a trooper's own capsule by
+   `_boltHitTest` returns NO HIT while the identical segment through a droid
+   returns the droid. The line could be killed by a blade, a grenade or a
+   stratagem, and by nothing that was fired at it. §13 calls the name list the
+   mode's second spine, "it only shrinks and it is on the HUD every second";
+   it could not shrink to gunfire. After: same world, idle player, **7 of 10
+   down in 60 s**. The gate is now the cheap half of the question `canHarm`
+   already answers — skip only when the bolt and the body are on the same side.
+   **A war that will not fight itself cannot be a war you are a raindrop in**,
+   and every number in this document sat on top of it.
+4. ~~**`_cullOldestDebris` spends debris only**~~ — **ANSWERED, and the answer
+   is that it should.** Debris is the only unbounded producer; everything else
+   in the world has an owner that knows how to take it away WHOLE, and a budget
+   that evicts one bone of a live corpse is not enforcing a bound, it is
+   corrupting an object another system still holds. So the overshoot stands and
+   is made visible instead: `stats.overBudget` counts the refusals, and
+   `Corpses` drains the batch within a second at every tier.
+5. ~~**The orphaned `Commander` on `peer-left`**~~ — **FIXED**, and it was worse
+   than an orphan: a departed player's leaderless army kept its standing order,
+   kept fighting and kept counting in the census, so on a real pair the peer
+   removed at 5 v 9 **wiped the host's line and took the field**. Quitting a
+   meeting was the strongest move in it. See `dismissCommander`.
+6. ~~**`attune-force` measures Δ0.000**~~ — **ANSWERED with the second axis §8
+   asked for.** `tools/balance.mjs` now stands a line of `OPENING_STRENGTH`
+   troopers beside the modelled player and reports `Δline` beside `Δdepth`, so
+   a build whose whole output is other people's survival is ranked on it rather
+   than scored zero. It prints the cards that are below the median on depth and
+   above it on the line — which is the list a one-axis ranking called worthless.
+
+7. **Every bolt in the game was aimed at people's FEET** — found after this
+   section was written, and it is bigger than anything in it. `Enemy._shoot`
+   leads on `target.chest ?? target.position` and **only `Player` had a
+   `chest`**, so your named troopers, the horde and every other body were aimed
+   at by `position`. So were the telegraph, the line-of-sight test, the off
+   blade, the laser, the rifle pose and both turret head-tracks. It surfaced
+   from the wrong end: a "men crouch under fire" lever measured WORSE THAN
+   NOTHING, 0.6 survivors against 1.8, because crouching pulls a man toward an
+   aim point that is on the floor. Twenty seeds an arm, the only difference
+   being the aim: an engagement fought with no Jedi went from 5.10 of ten
+   survivors to 1.65, and the line's own output onto the horde nearly tripled.
+   `Enemy.chest` publishes `chestY` as a vector and `Combat.aimAt` is the one
+   reader every aiming site now calls. **THREE MORE INSTANCES CAME OUT WITH
+   IT:** `aimPoint` answered from the WORLD ORIGIN on the frame a body spawns
+   (an unposed bone's `matrixWorld` is the identity — measured, a droideka
+   answering 80.3 m from where it stood); the EMPLACEMENT added `chestY`, an
+   absolute world height, to `position.y` and so counted the ground twice,
+   firing 0.80 m under the chest it aimed at; and `Driving.seat`/`aimPoint` did
+   the same, seating a driver in the air on a slope.
+
+8. **A crossing was charged two escalations at once**, which is why a fresh
+   ten-man line was wiped in one wave at engagement 3 on twenty of twenty seeds.
+   `budgetFor` ran the roguelite's `w^1.62` on the run's wave counter — honest
+   in a mode that drafts a card every other wave, and a crossing drafts nothing
+   — and then multiplied it by `AREAS[*].budget`, which is the crossing's own
+   ramp. Engagement 3 opened on a wave of 96 against a wave-1 opening of 8.
+   `CommandDirector.rampWave` runs the curve within an area and lets the area
+   dials carry the escalation between them.
+
+**All six of the original list are closed, and two more were found by the work
+that closed them.** This section is kept as written rather than deleted:
+what it records is that a design exercise found six live defects in a shipped
+game by asking what the game would have to be true for, and four of the six
+were invisible to every check in the tree until something needed them.

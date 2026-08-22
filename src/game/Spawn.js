@@ -33,14 +33,31 @@ import * as THREE from 'three';
 
 const _sp = new THREE.Vector3(), _sq = new THREE.Vector3();
 
+/**
+ * THE LOWEST GROUND THIS LEVEL'S OWN SHEET WILL ACCEPT ANYTHING ON, in the
+ * same metres a heightfield returns. `-Infinity` where there is no sheet.
+ *
+ * Never in a hazard; never deeper than the shallows anywhere else — the wood's
+ * ankle-deep channels stay usable, which is most of that level. That was one
+ * expression inside `spawnClear` and it has a SECOND caller now:
+ * `Front.marchFront` lays craters, a burnt swath, smoke columns, a band of the
+ * fallen and wreck clusters at a distance the march schedule chose, and the
+ * schedule knows nothing about what is at that distance. On the Ember Shelf,
+ * engagement 1 is 180 m out over ground 38-45 m BELOW a lava sheet at +0.55:
+ * measured before this, 12 of 12 hull pieces and the whole band of the dead
+ * were laid on the sea floor, inside a hazard that charges 52 HP a second.
+ *
+ * Exported as a FLOOR rather than as a second predicate so the two callers
+ * cannot disagree about where the shallows end (HANDOFF §2.4).
+ */
+export function dryFloor(world) {
+  const w = world?.level?.water;
+  if (!w) return -Infinity;
+  return (w.level ?? 0) - (w.damage > 0 ? 0 : Math.min(w.wade ?? 0.45, 0.45));
+}
+
 export function spawnClear(world, x, y, z, radius = 0.45) {
-  const w = world.level?.water;
-  if (w) {
-    const depth = (w.level ?? 0) - y;
-    // Never in a hazard; never deeper than the shallows anywhere else. The
-    // wood's ankle-deep channels stay usable, which is most of that level.
-    if (depth > 0 && (w.damage > 0 || depth > Math.min(w.wade ?? 0.45, 0.45))) return false;
-  }
+  if (y < dryFloor(world)) return false;
   const boxes = world.physics?.staticBoxes;
   if (boxes) {
     _sp.set(x, y + 1.0, z);

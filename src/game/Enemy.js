@@ -10,6 +10,7 @@
 import * as THREE from 'three';
 import { Actor } from './Ragdoll.js';
 import { Rig, BipedAnimator, aimY } from './Rig.js';
+import { applyBodyLod, undarken, L3_AT } from './Cohorts.js';
 import { buildB1, buildB2, buildTrooper, buildAcolyte, buildDroideka, buildWalker, buildBeast, buildBlaster, plateGeo,
   buildJedi, bodyOptsFor, weakSpotsOf, coverSpotOf, SPECIES, HAIR_STYLES, BEARD_STYLES, ROBE_COLORS } from './Bodies.js';
 import { Saber } from './Saber.js';
@@ -19,8 +20,8 @@ import { DuelBrain, Telegraph, FORMS, FORM_KEYS, TIER, ATTACKS, ATTACK_KEYS,
 import { buildRemote } from './Dojo.js';
 import { attachCloak, attachSkirt } from './Cloth.js';
 import { LAYER, Body, capsuleSpheres, capsule } from '../physics/RapierWorld.js';
-import { supportHeight, STEP_UP, GROUND_SNAP } from '../physics/Support.js';
-import { TOUGHNESS, thinner, bladesTouching } from './Combat.js';
+import { supportHeight, STEP_UP, GROUND_SNAP, CLIMB_RATE } from '../physics/Support.js';
+import { TOUGHNESS, thinner, bladesTouching, aimAt } from './Combat.js';
 import { seeThrough } from './Smoke.js';
 import { segmentSegment } from '../physics/Physics.js';
 import { BOLT_COLORS } from './Bolts.js';
@@ -28,7 +29,18 @@ import { BOLT_COLORS } from './Bolts.js';
  * `aimQuality` and by nothing else in this file. */
 import { weather } from '../world/Scenery.js';
 import { clamp, lerp, damp, smoothstep, makeRng, TAU, dampVec } from '../engine/MathUtil.js';
+import { MORALE } from './Morale.js';
+/* THE HORDE'S HALF OF THE SAME LEDGER — FLAGSHIP §7's BREAK verb. A leaf, for
+ * the reason Morale.js's own header gives: Command.js imports this file, so
+ * anything this file imports may not reach Command. */
+import { NERVE, nerveAim, nerveBroken, nerveRefusing } from './Nerve.js';
 import { POWER_COST } from './Powers.js';
+/* `findCasualty` and `startDrag` are NOT imported here: the drag is a
+ * commander's decision and `CommandDirector.steer` is where it is taken. They
+ * were on this line for a while and called by nothing in the file, which is the
+ * dead field this session put back on the clone trooper for the opposite
+ * reason — see `_maybeGrenade`. */
+import { senseDanger, stepReaction, GRENADE } from './Reactions.js';
 import { audio } from '../engine/Audio.js';
 
 /**
@@ -138,6 +150,15 @@ const CAP_BITE = 1.12;
 const NEAR_REACH = 2.6;
 
 /**
+ * The broad phase's answer, borrowed for the length of one gather.
+ *
+ * Module scope and not per-body: `_gatherNear` fills it, sweeps it and is done
+ * with it inside one call, so one array serves every body on the field and the
+ * per-frame allocation it replaces was one array per body per gather.
+ */
+const _nearScratch = [];
+
+/**
  * Slow the part of a desired velocity that points AWAY from `toTarget`, leaving
  * everything across that line alone. Exported because it is a numeric law and
  * numeric laws in this codebase get measured, not eyeballed: a sidestep must
@@ -151,6 +172,12 @@ export function limitBackpedal(vel, toTarget, factor = BACKPEDAL) {
 }
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _v4 = new THREE.Vector3(), _v5 = new THREE.Vector3(), _v6 = new THREE.Vector3();
+/* Where a suspended body's centre was LAST frame — see the held branch of
+ * `_move`. Its own vector and not one of the six above: the line between the
+ * two reads is `Ragdoll.centre`, and handing a shared scratch to a method that
+ * may one day want one is the defect World.js's `_bolt4` note already paid for
+ * once (5,585 of 13,320 fanned bolts changed their answer). */
+const _wasAt = new THREE.Vector3();
 const _v7 = new THREE.Vector3();
 
 /** The object a rig's pose hangs off, or null. Used only by the hover lean. */
@@ -183,6 +210,11 @@ const _stag = new THREE.Vector3();
  *  its own rather than writing through a Player's `_v2`. */
 const _res = new THREE.Vector3();
 const _oq = new THREE.Quaternion();
+/**
+ * WHERE A BODY IS AIMED AT — its own scratch, because the callers below hold
+ * the answer across a terrain raycast that borrows `_v1` and `_v2`.
+ */
+const _aim = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
 /** The pitch axis for a body already yawed to `facing` — see _poseWalker. */
 const RIGHT = new THREE.Vector3(1, 0, 0);
@@ -650,26 +682,241 @@ export const ARCHETYPES = {
     speed: 2.6, toughness: TOUGHNESS.armour, ranged: true, weapon: null,
     fireRate: 1.9, burst: 4, burstGap: 0.1, spread: 0.05, damage: 13,
     preferred: [6, 13], boltColor: BOLT_COLORS.red, score: 300, threat: 3,
+    /* THE WRIST LAUNCHER, which is the B2's one piece of source-material kit
+     * and the reason it is the droid line's grenadier rather than the B1: a
+     * wave with nobody in it who can throw one is a wave your troops never
+     * have to react to, and the reactions in src/game/Reactions.js are a
+     * feature of the ARMY rather than of the clones. Its `threat` of 3 divides
+     * `GRENADE_SPREAD` into a wide throw — see `_maybeGrenade` — so a droid
+     * lands one near you and a clone veteran lands one on you. */
+    grenades: true,
     armored: true, hipHeight: 1.1,
+  },
+  /**
+   * THE THIRD BODY CLASS — FLAGSHIP §6's CONSCRIPT.
+   *
+   * "6 hp, 1.4 dps, one pass, worth 0 score and 0 Insight. The lawnmower is
+   * only a lawnmower when mowing pays. Forty conscripts that pay nothing are
+   * weather."
+   *
+   * The roster had two classes of body and no third: something you fight (a
+   * B1, 28 hp, worth 100) and something you fight harder (a B2, 96 hp, worth
+   * 300). Both PAY, so a hundred of either is a hundred rewards and the honest
+   * player answer to a crowd is to mow it. §7's four verbs all describe things
+   * you do INSTEAD of killing everything, and none of them can compete with a
+   * body that hands you score for walking through it.
+   *
+   * So this one hands you nothing at all. `score: 0` is not a small number, it
+   * is the whole design: `World.onEnemyKilled` derives the entire payout —
+   * score, flow, combo and war support — off `score > 0`, so a conscript is
+   * the one thing on the field that killing does not advance. What it can
+   * still do is stand between you and somewhere, shoot at you while you are
+   * busy, and cost your guard a bolt at a time. It is TERRAIN with legs, which
+   * is the same sentence §6 makes about volume of fire.
+   *
+   * WHY IT IS A DROID AND WHY IT IS THIS ONE. The Databank's own line about
+   * the Confederacy is "it does not lose a droid, it spends one" — a conscript
+   * is the cheapest thing it spends. Built on `buildB1` at a smaller scale
+   * with the paint left off and a dim eye, so it reads at a glance as a B1
+   * that came off the line unfinished rather than as a new silhouette to
+   * learn: a player must be able to tell in one look that this one is not
+   * worth their time.
+   *
+   * EVERY NUMBER HERE IS DERIVED FROM THE B1'S, so the class is a RATIO and
+   * not a second set of authored constants:
+   *
+   *   hp 6          §6's figure, and `guardFor` gives anything this light zero
+   *                 turned passes, so it dies to one pass exactly as stated.
+   *   1.4 dps       MEASURED, not derived from the table. §6 prices a B1 at
+   *                 2.17 dps against a moving player and a conscript at 1.4,
+   *                 which is 0.645 of it — a ratio, so it can be checked
+   *                 without reproducing "a moving player". Driven through
+   *                 `tools/_beaten.mjs class`, one shooter, blade down, real
+   *                 frames on the same ground at the same range. A gun is
+   *                 stochastic, so two sample lengths, and the spread between
+   *                 them is what `tools/checks/conscript.mjs`'s band is sized
+   *                 on rather than a tolerance picked to fit:
+   *
+   *                     150 s   b1 3.468   conscript 2.380   0.686 of it
+   *                      90 s   b1 3.485   conscript 2.172   0.623 of it
+   *
+   *                 which puts the conscript between 1.35 and 1.49 dps on §6's
+   *                 own scale, against the 1.4 it asked for.
+   *
+   *                 AND THAT PAIR IS THE WEAKER INSTRUMENT, because it is two
+   *                 WORLDS. The same B1 arm read 3.485, 3.468 and 2.805 hp/s
+   *                 over three runs of the identical call — a 24% spread on the
+   *                 CONTROL, larger than the difference being measured, because
+   *                 two boots are two dressings, two prop layouts and two
+   *                 skies. `tools/_beaten.mjs mixed` stands four of each on ONE
+   *                 arc and attributes every blow to the body that fired it,
+   *                 and it is stable to two per cent:
+   *
+   *                      90 s   b1 1.998   conscript 1.440   0.721
+   *                     150 s   b1 2.065   conscript 1.459   0.707
+   *
+   *                 So the honest figure is 0.71 of a B1 against §6's 0.645 —
+   *                 a little hotter than asked. The cadence is not the dial
+   *                 that would move it: at twelve bodies on one arc it is line
+   *                 of sight and not the fire timer that decides how often a
+   *                 rifle speaks, and the same run repeated reads 1.459 and
+   *                 1.473 without anything changing at all.
+   *
+   *                 THE AUTHORED NUMBERS THAT GET THERE ARE THE B1'S, minus
+   *                 one round a burst: same rifle, same spread, same band, two
+   *                 bolts instead of three. Four earlier attempts made it a
+   *                 slow inaccurate single-shot body — spread 0.19, one round
+   *                 every 2.85 s — and measured 0.17 hp/s, a twentieth of a
+   *                 B1 rather than two thirds. §6 does NOT ask for a harmless
+   *                 body: at 1.4 each, forty conscripts are a real threat and
+   *                 the thing that makes them weather is that killing them
+   *                 pays nothing, not that they cannot hurt you.
+   *   spread 0.075  the B1's, exactly. It shoots as well as a B1 and there is
+   *                 a third less of it.
+   *   threat 0.5    the floor `_openTypes` weighs against, so a wave that
+   *                 fields these pays something for them and cannot field an
+   *                 unbounded number for free.
+   */
+  conscript: {
+    label: 'Conscript Droid', build: (o) => buildB1({
+      ...o,
+      /* Unpainted foundry shell, no unit flash, and an eye that has not been
+       * brought up to full charge. Not a new mesh — see the note above. */
+      color: o.color ?? 0x8f8574, markColor: o.markColor ?? 0x6d6355, eyeColor: o.eyeColor ?? 0xc0421f,
+    }),
+    scale: 0.96, hp: 6, mass: 44,
+    speed: 3.2, toughness: TOUGHNESS.droid, ranged: true, weapon: 'e5',
+    fireRate: 1.45, burst: 2, burstGap: 0.13, spread: 0.075,
+    /**
+     * ── SUPERSEDED IN PART — THE CONTROLLED NUMBER IS AT THE TOP ─────────────
+     *
+     * Every figure in the note below was taken ACROSS PROCESSES and is therefore
+     * not a comparison. `World.js` had no reseeder for its module-level `rng`
+     * when they were taken — it has `seedWorld` now — so two runs differing in
+     * any earlier draw diverge completely, and `theline` and `command` differ in
+     * one because a crossing rolls a session plan and Command does not. The same
+     * change read 5.4 and 3.0 of ten on that alone.
+     *
+     * RE-TAKEN PROPERLY. Both arms from fresh processes, identical module-init
+     * phase, `LEVELS.geonosis.battlefield` pinned off in both, the only
+     * difference being the two constants this session moved, 20 seeds apiece:
+     *
+     *     as shipped before this session   1.35 of 10   (sd 1.73)
+     *     with both halved                 2.80 of 10   (sd 2.33)
+     *                                      +1.45, se 0.65, z 2.24
+     *
+     * So the lever is real and it is SMALL — and **the target is not met**. The
+     * player asked for an engagement fought without the Jedi to cost about half
+     * a ten-man line; it costs 7.2 of 10. What the figures below are still good
+     * for is the RANKING they establish, which the controlled run does not
+     * contradict: the two sources of fire the wave's threat budget never pays
+     * for are the two that move this number at all. No single figure in them
+     * should be quoted.
+     *
+     * `damage` 4 — AND IT IS ABOUT THE LINE, NOT ABOUT YOU, BUT §6 STILL OWNS
+     * THE NUMBER.
+     *
+     * ── THE CHEST'S BILL, AND THE FLOOR THE DOCUMENT PUTS UNDER IT ─────────
+     *
+     * `Enemy._shoot` led its aim on `target.chest ?? target.position`, and only
+     * `Player` had a `chest`, so until this session every round the levy fired
+     * at one of your named men was aimed at his BOOTS. The 5 above was chosen
+     * against that. With the aim corrected, forty free rifles land on forty
+     * chests, and the arithmetic is the same argument arriving twice as hard.
+     *
+     * MEASURED, twenty seeds an arm, fresh processes at an identical phase, the
+     * only difference being the aim: an engagement fought with no Jedi on the
+     * field went from **5.10 of ten survivors to 1.65**, and hostile fire into
+     * the line from 1.18 to 1.71 hp a second. Six seeds apiece on this one
+     * constant, everything else held: the round at 5 leaves 1.17 of ten
+     * standing, at 2.5 it leaves 2.50, at 2.0 it leaves 2.83, and taking it to
+     * zero leaves 3.50 — so the levy alone is worth about 2.3 of the eight and
+     * a half names an engagement was costing.
+     *
+     * ── AND §6 PUTS A FLOOR UNDER IT THAT THE ATTRITION TARGET DOES NOT ─────
+     *
+     * This constant was taken to 2 on that arithmetic and `conscript.mjs` went
+     * red for it: §6 prices this body at **0.7 dps against a B1's 2.17**, a
+     * ratio of 0.323, and the check binds it to ±0.12 on ONE field with four of
+     * each shooting one player, which is a fact about two roster rows rather
+     * than about a harness. At 2 the measured ratio is 0.145 — a tenth of a B1,
+     * which is the "harmless furniture" that check exists to refuse. §6 does not
+     * ask for a body that cannot shoot; what makes forty of them weather is
+     * that KILLING them pays nothing.
+     *
+     * So the floor is the document's and the round is 4: ratio about 0.29
+     * against §6's 0.323, inside the band and a little under the number rather
+     * than over it, which is the direction the line-cannot-dodge argument above
+     * licenses. Measured at ten seeds beside the emplacement's re-paid cadence,
+     * an engagement fought with no Jedi leaves **4.10 of ten with 8 of 10
+     * reaching a muster**, against 4.55 at a round of 2 — the two are half a man
+     * apart and the standard error is 0.86, so the in-band number is free.
+     *
+     * The old argument is unchanged and is below; it is only that the number it
+     * argued for was measured against a levy that could not hit anybody.
+     *
+     * FLAGSHIP §6 prices this gun at "1.4 dps AGAINST A MOVING PLAYER" — a
+     * player with a guard, a dash and a dive — and src/game/Levy.js says what
+     * that leaves out in one sentence: "a clone trooper has none of those: he
+     * has 46 hit points and a slot to stand in." Until this session it did not
+     * matter, because `World._boltHitTest` skipped its whole enemy loop for
+     * hostile bolts and your own troopers live in that array (FLAGSHIP §16.3),
+     * so no rifle on the other side could touch your army at all. It can now,
+     * and forty free rifles are forty free rifles.
+     *
+     * MEASURED over a whole engagement rather than a window — area 1 of the
+     * flagship mode on Geonosis, held open at the muster, no player on the
+     * field, five seeds (`tools/_linehold.mjs`): taking the levy off the field
+     * moves the survivors from **1.8 of 10 to 4.0 of 10**. Two of the eight
+     * names an engagement costs are the weather's. §6's own sentence is that
+     * "forty conscripts that pay nothing are weather"; weather that takes a
+     * fifth of your line is a second wave you were not charged for, and the
+     * levy is charged nothing by design — Levy.js argues its exemption from
+     * the threat budget at length, and every word of that argument is about
+     * the PLAYER's two ledgers.
+     *
+     * WHAT THE HALVING DOES NOT TOUCH IS WHAT THE LEVY IS FOR. §6's answer to
+     * a crowd is suppression, and suppression is billed PER BOLT: `GUARD.stamina`
+     * is `[1.2, 0.4, 0, 0]` by grade and the unanswered bolt costs Force, and
+     * not one of those four numbers reads `damage`. So the round comes down
+     * and the beaten zone does not: the same forty bodies arrive, at the same
+     * cadence, firing the same number of bolts, draining the same guard. What
+     * moves is only what an unblockable round does to a man who cannot block.
+     *
+     * The round WAS 10 against a B1's 9 — the body that is supposed to be
+     * worth nothing carried the heaviest small-arms round on the Confederate
+     * roster, reaching §6's dps ratio by firing fewer, bigger rounds. That is
+     * the wrong shape for weather twice over: fewer bolts is less suppression
+     * and a bigger round is more killing.
+     */
+    damage: 4,
+    preferred: [7, 15], boltColor: BOLT_COLORS.red,
+    /** THE FIELD THE WHOLE CLASS IS. See the note above and `World.paysOut`. */
+    score: 0, threat: 0.5,
+    hipHeight: 0.92, unlockAt: 1,
   },
   trooper: {
     label: 'Clone Trooper', build: buildTrooper, scale: 1.0, hp: 46, mass: 78,
     speed: 4.1, toughness: TOUGHNESS.plastoid, ranged: true, weapon: 'dc15',
     fireRate: 1.35, burst: 3, burstGap: 0.11, spread: 0.045, damage: 12,
     preferred: [9, 19], boltColor: BOLT_COLORS.blue, score: 180, threat: 2,
-    /* NO `grenades: true`, AND IT WAS HERE FOR THE WHOLE OF THIS BODY'S LIFE.
-     * Nothing in `src/` ever read the field — not Enemy, not Waves, not
-     * Command — so it was `Enemy.grippable` and `Run.bestTier` a third time:
-     * written once, read never, and indistinguishable in a diff from a
-     * feature. What made it worth deleting rather than leaving is that the
-     * Databank was SELLING it: the clone's page named "grenades, cover, and
-     * the judgement to use both" as the thing that separates a clone from a
-     * droid, so a player who read the codex was told about a verb no clone in
-     * the game has. The page names what it does now, and
-     * `roster: every field an archetype declares is a field something reads`
-     * is what stops the next one. A trooper grenade is a real thing to build —
+    /**
+     * AND NOW HE HAS THEM, WHICH IS THE END OF A LONG STORY ABOUT THIS FIELD.
+     *
+     * `grenades: true` sat on this archetype for the whole of its life with no
+     * reader anywhere in src/ — written once, read never, and indistinguishable
+     * in a diff from a feature. It was deleted with a note that said what it
+     * would take to earn it back: "A trooper grenade is a real thing to build —
      * `Stratagems.blast` is the primitive and `dodgeable.mjs` is the bar it
-     * would have to clear — and it is a feature, not a field. */
+     * would have to clear — and it is a feature, not a field."
+     *
+     * `Enemy._maybeGrenade` is the reader and `src/game/Reactions.js` is the
+     * feature: a live object with a fuse, and four things a soldier can do
+     * about one. The Databank's clone page has been selling "grenades, cover,
+     * and the judgement to use both" for a very long time; two thirds of that
+     * sentence is now true.
+     */
+    grenades: true,
     hipHeight: 0.95,
   },
   sniper: {
@@ -857,6 +1104,37 @@ export const ARCHETYPES = {
   },
 };
 
+/**
+ * WHETHER KILLING THIS BODY IS WORTH ANYTHING — FLAGSHIP §6's third class.
+ *
+ * The conscript is "worth 0 score and 0 Insight", and the point of it is that
+ * a crowd which pays nothing cannot be answered by mowing it. That is one
+ * question about a roster row, so it is one function and one field, called by
+ * `World.onEnemyKilled`, by `Levy` and by a check.
+ *
+ * A missing `score` reads as unpaid rather than as a plausible default, which
+ * is the other half of HANDOFF §2.3: an archetype that forgot to say what it
+ * is worth should be visibly worth nothing, not quietly worth something.
+ *
+ * ── AND IT LIVES BESIDE THE TABLE IT ASKS ABOUT, WHICH IT DID NOT ───────
+ *
+ * It was `World.paysOut`, and `Levy.js` — reached from `Command.js` — imported
+ * it from there. That closed a cycle nobody could see until it fired:
+ * Command → Levy → World → Player → ui/Menu → Command, and importing
+ * `Command.js`, `Levels.js` or `tools/_flagship.mjs` as the FIRST module of a
+ * process then threw `Cannot access 'FORMATIONS' before initialization` at
+ * Menu.js:174 — the very line whose own comment records having measured that
+ * all eight entry points evaluate clean, because "Command imports Enemy,
+ * Bodies, Combat, Bolts, Waves and MathUtil, and none of those reaches back
+ * into ui/". Levy did, one hop further on.
+ *
+ * The rule this is an instance of: a predicate about a TABLE belongs in the
+ * module that owns the table. `World.js` re-exports it, so every existing
+ * reader is unchanged.
+ */
+export function paysOut(A) { return (A?.score ?? 0) > 0; }
+
+
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  The other side's Force                                                */
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -930,6 +1208,46 @@ export const ARCHETYPES = {
  */
 export const FORCE_REGEN = 3.0;
 
+/**
+ * …AND THE SAME LIMIT SCALED TO THE BODY, which is the player's other half.
+ *
+ * "they need to be subject to the same force resources and limitations that
+ *  effect me based on how strong they are"
+ *
+ * They were subject to the resources — a pool, a price per verb, a cooldown, a
+ * telegraph, and `resistForce` billing them for every blow they answer — but
+ * not to them AS A FUNCTION OF STRENGTH, because the regen was one flat number
+ * for the whole roster. Measured across the five force users as shipped, time
+ * to refill an empty pool at 3.0/s:
+ *
+ *     sentinel   40 force    13 s
+ *     jedi       44          15 s
+ *     guardian   48          16 s
+ *     acolyte    62          21 s
+ *     master    150          50 s
+ *
+ * which is backwards. The strongest body in the game had the LONGEST road back
+ * to being able to act, so a Master emptied by its own opening was the most
+ * limited thing on the field for the next minute — and the difference between
+ * a sentinel and a Master, from the outside, was how long the quiet part
+ * lasted rather than what they could do with what they had.
+ *
+ * A FRACTION OF THEIR OWN POOL puts every one of them on the same clock: 5.5%
+ * a second is a little over eighteen seconds from empty to full whoever you
+ * are. Strength then means exactly one thing — how much you can spend before
+ * that clock starts — which is the thing the player can see, plan against and
+ * bait out. The floor keeps the smallest pools from being a trickle and the
+ * flat rate is kept as the floor's own value, so nothing that was quick before
+ * became slow.
+ */
+export const FORCE_REGEN_FRAC = 0.055;
+
+/** What a body's pool recovers per second: the larger of the flat rate and its
+ *  own share. See FORCE_REGEN_FRAC. */
+export function forceRegenFor(forceMax) {
+  return Math.max(FORCE_REGEN, (forceMax || 0) * FORCE_REGEN_FRAC);
+}
+
 /** How long a held power's drain accumulates before it is billed. Slightly
  * longer than `Player.invuln` (0.18 s), so no tick is ever refused — see
  * `_sustain`, where a per-frame bill was losing 55 of every 60 payments. */
@@ -961,9 +1279,13 @@ const SUSTAIN_TICK = 0.20;
  *                     to break their guard BEFORE you spend 30 on lightning,
  *                     and it is the same rule `_turnCut` uses for the blade.
  */
-const RESIST_PER_FORCE = 1.4;
-const RESIST_CAP = 0.55;
-const RESIST_BEATEN = 0.35;
+/* EXPORTED because the Codex teaches them. The page that explains how to fight
+ * a Force user has to quote the real numbers or it is a hand-written twin of
+ * this table (HANDOFF §2.3), and the one thing worse than a player who does not
+ * know the counter is a player taught a counter the game no longer has. */
+export const RESIST_PER_FORCE = 1.4;
+export const RESIST_CAP = 0.55;
+export const RESIST_BEATEN = 0.35;
 /** The kinds that are the Force, and are therefore answerable by it. */
 export const FORCE_KINDS = /^(force|lightning|choke|grip|rend)$/;
 
@@ -974,7 +1296,100 @@ export const FORCE_KINDS = /^(force|lightning|choke|grip|rend)$/;
  *  the other direction, and the whole value of a Force throw is the second in
  *  which the thing you threw is out of the fight. Long enough to be worth
  *  doing, short enough that a squad you shoved does not stay shoved. */
+/**
+ * HOW OFTEN A BODY THAT CARRIES GRENADES USES ONE, in seconds, and how far it
+ * can throw.
+ *
+ * `first` is a lead-in so a wave does not open with eight grenades in the air
+ * — the thing that makes them frightening is that they are occasional. `every`
+ * against a 2.6 s fuse means a grenadier is a rifleman who interrupts himself
+ * about twice a minute, which is what a soldier with two on his belt is.
+ *
+ * 26 m is a hard throw and it is under every ranged archetype's own reach, so
+ * a grenade is what a rifleman does when the rifle is not working rather than a
+ * second, longer weapon.
+ */
+const GRENADE_CD = { first: 9, every: 22 };
+const GRENADE_THROW = 26;
+/** How wide a hurried throw scatters, in metres, before the thrower's quality
+ *  divides it. A B1 puts one four metres wide and a commando lands it. */
+const GRENADE_SPREAD = 5.2;
+/** How long a body that decided AGAINST throwing one waits before deciding
+ *  again, in seconds. See the note in `_maybeGrenade` and the 167x it is
+ *  there to stop. */
+const GRENADE_LOOK = 0.25;
+/**
+ * …AND THE RIFLE HAS THE SAME LOOK, ten lines from the grenade's inside the
+ * same method. See the note in `_rangedBrain`: a body whose sight is blocked
+ * re-asked the whole query — a physics raycast, a terrain raycast and a smoke
+ * integral — on EVERY FRAME, because nothing on the refusing path moves a
+ * timer. Measured, one B1 in band with the answer held at no: **0.973 sight
+ * tests per body-frame, 29.2 per body-second**, against the 0.006 per frame the
+ * grenade path settled at once it paid for its own look.
+ *
+ * SHORTER THAN `GRENADE_LOOK` BECAUSE IT IS A DIFFERENT DECISION. A grenade
+ * takes 2.6 s to matter, so a quarter of a second either way is nothing; a
+ * rifle answers a sliver of sight opening, and the delay is a beat the player
+ * feels as the wave being slow off the mark. 0.12 s is under a human reaction
+ * time and takes the query to about four a second on a blocked body.
+ */
+const SIGHT_LOOK = 0.12;
+
+/** How often a dead duellist's blade is still burning when it hits the floor.
+ *  See `die` — the player asked for both, and two in five is enough of one to
+ *  be a sight on a cleared field without every corpse glowing. */
+const DEAD_BLADE_LIT = 0.4;
+
 const GET_UP = 1.35;
+
+/**
+ * HOW LONG A HOLD SURVIVES ITS HOLDER — the lease on `gripped`.
+ *
+ * "troops go completely invisible a lot like I see their names above their
+ *  heads but they're invisible, I can still throw them around though."
+ *
+ * `gripped` was a LATCH, and it was written true in three places and false in
+ * one: `Player.releaseGrip`. Everything else that can end a hold — the gripper
+ * dying with a body in the air, a level rotating under it, a co-op peer's
+ * `Player` being disposed, a power interrupted between the two halves of a
+ * frame — left it true FOR EVER, and a body carrying it is:
+ *
+ *   out of its brain          `_think` returns on `gripped`
+ *   out of `_tickGetUp`       so it is limp for the rest of the level
+ *   still suspended           `_move`'s held branch damps it at `liftTarget`,
+ *                             which is the gripper's own live `_liftPoint`
+ *                             vector, so it follows the NEXT thing that player
+ *                             lifts around the field
+ *   still a body              the capsule is in the physics world, so it can
+ *                             still be shot, shoved and thrown
+ *   still on the roster       `roster.living` has it, so its nameplate is
+ *                             drawn over it wherever the capsule has got to
+ *
+ * which is every symptom in that sentence at once.
+ *
+ * A LEASE RATHER THAN ANOTHER `= false`, because the defect is the shape and
+ * not any one of its call sites: adding `releaseGrip()` to `Player.die` fixes
+ * a death and not a disposal, and the next way to abandon a hold would arrive
+ * with nobody having thought to clear it. A holder now has to keep SAYING it
+ * is holding — `Enemy.hold()`, called from the grip's own update — and a hold
+ * nobody is asserting expires on its own. `World._netGripLeases` already had
+ * exactly this reasoning for a peer that goes quiet ("a held body is the one
+ * state a lost connection can strand"); this is the same rule applied to the
+ * machine the hold is running on.
+ *
+ * 0.55 s: comfortably longer than a dropped frame or a hitch (`main.js` clamps
+ * dt at 0.1 s) and short enough that a body whose holder has genuinely gone is
+ * back on its feet inside `GET_UP` of the moment it should have been.
+ */
+const GRIP_LEASE = 0.55;
+
+/** How often a body is asked whether it is drawing anything. See
+ *  `Enemy._auditVisible` — three times a second is far more often than a
+ *  player could notice a body missing, and cheap enough not to matter. */
+const AUDIT_EVERY = 0.33;
+
+/** Rolling phase for the audit above, so bodies do not audit in lockstep. */
+let _auditPhase = 0;
 
 /**
  * What a rank is worth to a soldier's AIM, as a multiplier on their own spread.
@@ -1042,6 +1457,85 @@ export function forceResistance(pool, amount, kind, beaten) {
 export const IMPULSE_AS_HP = 1.2;
 
 /**
+ * ── A CROWD OF SHOVES IS STILL ONE SHOVE ──────────────────────────────────
+ *
+ * `velocity.add(impulse)` is what both `applyKnockback`s did and it is
+ * unbounded, so N shoves landing together are N times the shove. The
+ * population that finds that out is a RING, which the game fields every wave.
+ *
+ * MEASURED, on the colosseum, twenty acolytes spawned together against a
+ * player standing still: twenty identical bodies run one brain in lockstep, so
+ * they all reach `pressed` on the same frame and nineteen pushes land inside
+ * frame 166. The ring is symmetric, its horizontal halves cancel exactly, and
+ * its `PUSH_LIFT` halves ADD — 19 x 10 m/s of pure lift, out at 190 m/s, apex
+ * **718 m**, twelve seconds of fall away from the fight it was standing in.
+ * tools/checks/cloth-cost.mjs met it as "0 of 20 enemies inside the cloth cut"
+ * and two sessions went into blaming the harness for holding two Worlds.
+ *
+ * It is not a fixture's population. `PUSH_SPEED`'s own note sizes the shove so
+ * that an unbraced target flies 6.84 m and argues that number from the push's
+ * band: "6.84 m sits inside it, so even an unbraced target lands somewhere the
+ * caster can still reach." TWO shoves from one side already broke it at 13.7 m.
+ *
+ * THE RULE, and it is one sentence with two halves because a ring answers the
+ * first half for free:
+ *
+ *   · SPEED. The shoves that land in one frame carry the body no faster than
+ *     the hardest single one of them. On its own this fixes the firing line
+ *     and barely touches the ring — a symmetric ring has nothing left to spend
+ *     its length on but UP, so 190 m/s survived the clamp as 27.9 m/s of lift
+ *     and a 16 m launch off a move whose whole apex is 2.10 m.
+ *   · LIFT. So the vertical share is bounded the same way and separately.
+ *     Clamping `velocity.y` was in fact the answer tried FIRST, and alone it
+ *     is the symptom this particular ring produces rather than the defect: a
+ *     ring cancels its horizontals and a firing line does not.
+ *
+ * AND IT BOUNDS THE CROWD'S CONTRIBUTION, NOT THE BODY'S OWN MOTION — which is
+ * the second wrong answer, and it was wrong in a way that only a full run
+ * showed. Clamping the whole velocity against `max(what it was doing, this
+ * shove)` reads correctly and quietly re-prices every shove landing on a body
+ * that was already moving: a player walking away at 4.6 m/s took 27.9 m/s
+ * instead of 30.6. `footwork: retreating is priced, not removed` inverted on
+ * it (still 8.15 hp/s against a walk's 8.83, where the whole design is
+ * still > walk > dash) and `physicality` lost two tree colliders to the
+ * knock-on. So the account is kept per body per FRAME and the body's own
+ * velocity is never in it: `sub(applied).add(want)` re-applies the bounded
+ * crowd on top of whatever the body was doing, and a single shove is
+ * arithmetically identical to `velocity.add(impulse)` — sum is the impulse,
+ * both bounds are no-ops, and every figure in `PUSH_SPEED`'s note still holds.
+ *
+ * The frame is the boundary because that is what "at once" means to a body:
+ * shoves a frame apart still stack, which is two pushes doing what two pushes
+ * should.
+ */
+const _shoveWant = new THREE.Vector3();
+export function addShove(body, impulse) {
+  const s = body._shove || (body._shove = {
+    sum: new THREE.Vector3(), applied: new THREE.Vector3(), up: 0, down: 0, top: 0,
+  });
+  s.sum.add(impulse);
+  s.top = Math.max(s.top, impulse.length());
+  s.up = Math.max(s.up, impulse.y);
+  s.down = Math.min(s.down, impulse.y);
+  const want = _shoveWant.copy(s.sum).clampLength(0, s.top);
+  want.y = Math.min(Math.max(want.y, s.down), s.up);
+  body.velocity.sub(s.applied).add(want);
+  s.applied.copy(want);
+}
+
+/**
+ * A new frame opens a new account. Called at the top of both `update`s rather
+ * than off a clock, because `applyKnockback` is reached from a dozen places
+ * and none of them is handed the time.
+ */
+export function newShoveFrame(body) {
+  const s = body._shove;
+  if (!s) return;
+  s.sum.set(0, 0, 0); s.applied.set(0, 0, 0);
+  s.up = 0; s.down = 0; s.top = 0;
+}
+
+/**
  * ── HOW HARD YOU HAVE TO HIT TO BREAK A CAST ───────────────────────────
  *
  * Anything that beats the guard (`stun`, a grip, a real shove) breaks a cast
@@ -1051,6 +1545,16 @@ export const IMPULSE_AS_HP = 1.2;
  * Jedi's concentration and a blaster bolt (9–13) through nobody's but a
  * B1-tier body's, which is the right shape: the blade is the answer.
  */
+/**
+ * THE TELEGRAPH, in seconds — how long a power is visible before it lands.
+ *
+ * Exported, and it was a literal at its one call site until the Codex needed
+ * to teach it. This is the window the player's counter lives in: 0.45 s is
+ * about one blade swing at the reach a duellist casts from, so "hit them while
+ * the call is over their head" is an instruction that can actually be followed
+ * rather than a reflex test.
+ */
+export const CAST_WIND = 0.45;
 const CAST_FLINCH_FLOOR = 8;
 const CAST_FLINCH_FRAC = 0.05;
 /**
@@ -1158,8 +1662,37 @@ const keepsWind = (A) => !!(A.boss || A.custom === 'beast');
  * Rancor on the sand — and why a Hailfire goes down on its first wheel, which
  * `Rig.js` had already said in as many words ("losing one is losing the pair").
  */
+/**
+ * ── AND A MACHINE MAY STATE ITS OWN NUMBER, WHICH THREE OF THEM HAVE TO ───
+ *
+ * `3 for a walker, 1 for everything else` is the right default and it is wrong
+ * at both ends of the roster the giants added. It is derived from a body plan
+ * nobody declared — four to six legs, lose half of them — and it does not
+ * survive a leg count of three or of twelve:
+ *
+ *   OCTUPTARRA MAGNA TRI-DROID. Three legs, and the reference is explicit that
+ *     this is the machine's defect rather than a balance choice: "its
+ *     three-legged design was its primary weakness, as if one was damaged, the
+ *     entire droid would topple over." The clamp would have asked for two,
+ *     which is a tripod standing on one leg — a pose that cannot exist.
+ *   SPHA. TWELVE legs under a gun platform. Three of twelve is a quarter of
+ *     the machine's support and it would fall over; five is a load path that
+ *     has actually failed, and it is still by far the cheapest kill on the
+ *     roster measured in metres of leg.
+ *   NR-N99 SNAIL TANK. ONE tread. `chains - 1` is zero there and the `max(1,…)`
+ *     already rescued it, so the field changes nothing for this body — it is
+ *     named here because it is the case that proves the clamp is a floor and
+ *     not a rule, and because a reader who finds `toppleAt: 1` on the tri-droid
+ *     will want to know why the tank does not carry one.
+ *
+ * The clamp stays and is applied to the declared number as well, because the
+ * reason it exists is unchanged: nothing may be asked for more legs than it
+ * has. A machine that declares five and grows a sixth leg tomorrow is asked
+ * for five; one that declares five and loses six of its twelve to a redesign
+ * is asked for five and not for a number it can never reach.
+ */
 export function toppleAt(A, rig) {
-  const authored = A?.custom === 'walker' || A?.custom === 'beast' ? 3 : 1;
+  const authored = A?.toppleAt ?? (A?.custom === 'walker' || A?.custom === 'beast' ? 3 : 1);
   let chains = 0;
   for (const b of (rig?.list ?? [])) {
     if (b.role === 'leg' && b.parent?.role !== 'leg') chains++;
@@ -1502,7 +2035,28 @@ export const MODIFIERS = {
     tell: 'a red targeting line on your chest, and most of a second to leave it',
     since: 7,
     threat: { mul: 0.9, flat: 2.8 },
-    allow: (A) => A.ranged && !A.custom && !A.telegraph && !A.training,
+    /**
+     * …AND NOT ON ANYTHING THAT FLIES, which is `!A.flight`.
+     *
+     * The whole content of this modifier is the STAND-OFF: `preferred: [20, 38]`
+     * plus a targeting line you are meant to walk out of. Both halves fail on a
+     * flyer, and they fail in opposite directions.
+     *
+     * The band is overwritten. `Flight.flightStep` writes `A.preferred` every
+     * frame — the cycle's whole point is that the body closes when it stoops —
+     * so this `set` would be a field written at promotion and never read again,
+     * which is HANDOFF §2.3's close relative wearing an elite's colours.
+     *
+     * And if it were not overwritten it would be worse: a sniper holding 38 m
+     * at five and a half metres of altitude is the one body in the game with no
+     * counter at all, which is the "weather" this roster's newest archetype was
+     * built specifically to avoid being.
+     *
+     * `escalation: every modifier is charged for at least the pressure it adds`
+     * agrees from the pricing side — a marksman Geonosian came out at 0.89× of
+     * what it is worth, the only undercharge on the roster.
+     */
+    allow: (A) => A.ranged && !A.custom && !A.telegraph && !A.training && !A.flight,
     scale: { damage: 2.4, fireRate: 1.4, score: 1.5 },
     set: { telegraph: 0.9, burst: 1, spread: 0.006, boltColor: BOLT_COLORS.gold, preferred: [20, 38] },
     install: (e) => { tintBones(e, 0xff8a10, 0.45); addScope(e); },
@@ -1858,6 +2412,8 @@ export class Enemy {
     this.world = world;
     this.team = 1;
     this.dead = false;
+    /** Torn down. Read by `Corpses.update`; written only by `dispose()`. */
+    this.disposed = false;
     this.dying = 0;
     /**
      * Can the Force take hold of this at all?
@@ -1906,7 +2462,20 @@ export class Enemy {
      * ANATOMY: where its chest is, how wide it stands, how long its cape is.
      */
     this.bodyScale = A.scale ?? 1;
+    /* Jittered so a wave that spawns together does not audit together — off a
+     * counter and NOT off `rng()`, which is the seeded stream every composed
+     * wave, form roll and gait phase in the game is drawn from. One extra call
+     * per body constructed would shift all of it, and the failure that
+     * produces is a check somewhere else disagreeing about a number nobody
+     * touched (HANDOFF §2.4, and `held.mjs` has the same note in full). */
+    this._auditT = (_auditPhase = (_auditPhase + 0.137) % AUDIT_EVERY);
+    /** On its way up something taller than a step — see CLIMB_RATE. */
+    this.climbing = false;
     this.gripped = false;
+    /** The `Crew` at this machine's controls, or null. See src/game/Driving.js. */
+    this.driven = null;
+    /** Seconds of hold left before the lease lapses. See GRIP_LEASE. */
+    this.gripLease = 0;
     this.liftTarget = null;
     /**
      * ARRESTED BY A FORCE STOP — the field has this body, and this is the only
@@ -2026,6 +2595,22 @@ export class Enemy {
      * state with a clock on it" is a second thing to keep in step. See DREAD.
      */
     this.dread = 0;
+    /**
+     * THIS BODY'S OWN NERVE, 0..1 — FLAGSHIP §7's BREAK verb, for a body with
+     * no roster record to keep one on.
+     *
+     * `aimQuality`'s own comment used to end "bodies with no morale (the horde)
+     * read 1", which was true and was the whole problem: §7's first verb is
+     * "walk into the front of a formation and it comes apart", and outside a
+     * meeting between two human commanders there was no formation with a nerve
+     * in it to come apart. See src/game/Nerve.js, which owns the table, the
+     * routing and the two thresholds — both of them MORALE's, because a
+     * soldier losing his nerve is one event.
+     *
+     * Starts at 1 and drifts back to 1, so nothing in the shipped game moves
+     * until a player is standing in the rank.
+     */
+    this.nerve = NERVE.START;
     /** Which modifier this body wears, if any — see MODIFIERS. */
     this.mod = null;
     this.fuse = 0;
@@ -2107,11 +2692,31 @@ export class Enemy {
    * limb tubes the rig builds (bone.primary) always stay, because they are the
    * silhouette and the silhouette is what you fight by; everything else goes.
    * Measured on an acolyte: 56 meshes at LOD 0, 20 at LOD 1, 20 at LOD 2.
+   *
+   * …AND AT LOD 2 THE SURVIVORS ARE ONE MESH. See src/game/MergedSkin.js: the
+   * kept set is baked into one SkinnedMesh per material bin, weight 1.0 per
+   * vertex, which is the rigid parenting the scene graph was already doing
+   * written as a draw call instead of twenty-six.
+   *
+   * …AND AT LOD 3 THE BODY STOPS DRAWING ITSELF ALTOGETHER. See
+   * src/game/Cohorts.js: past the distance the ink prepass reaches, every body
+   * of one kind is an instance in one shared mesh, so the cost stops depending
+   * on how many of them there are. `undarken` is first here because the cohort
+   * is the only thing that hides a body wholesale, and every rung below it has
+   * to start from a body that owns its own meshes again.
+   *
+   * Measured on a `high` World on geonosis, the same 42 bodies at each rung:
+   *
+   *     LOD 1 / 2 cull only     1064 draw calls
+   *     LOD 2 merged skins       194
+   *     LOD 3 cohorts             27
    */
   _applyLod(lod) {
     if (!this.rig || !this._lodParts) return;
     const showDetail = lod === 0;
+    undarken(this);
     for (const m of this._lodParts) m.visible = showDetail;
+    applyBodyLod(this, lod);
     // far away, drop the shadow pass too — a 60m silhouette contributes
     // nothing to a shadow map that covers 34m
     if (this._lodShadow !== (lod < 2)) {
@@ -2237,6 +2842,25 @@ export class Enemy {
      */
     if (A.float && this.hoverPhase === undefined) this.hoverPhase = rng() * TAU;
 
+    /**
+     * …AND THE SAME HOLE SWALLOWED THE DROIDEKA'S LEGS.
+     *
+     * `walkPhase` was initialised in the rigged-but-not-biped branch only, and
+     * a droideka is neither: it is the `else` above, a bespoke group. So
+     * `_poseDroideka` ran `(undefined + dt * …) % 1` on its first frame, and
+     * NaN sticks — it feeds back into itself every frame after. The visible
+     * end of it is in `capsules()`, which reads the leg bones' world
+     * positions: every droideka in the game presented THREE LEG CAPSULES WITH
+     * A NON-FINITE ENDPOINT, and `segmentNear` answers a NaN segment with a
+     * miss. Its legs could not be shot off and could not be cut off, so the
+     * topple at two legs lost (`legsLost >= 2`) was unreachable and the only
+     * way to stop one was its core.
+     *
+     * Keyed off having the field rather than off which builder ran, for the
+     * reason the note above gives.
+     */
+    if (this.walkPhase === undefined) this.walkPhase = rng();
+
     // weapon
     if (A.weapon) {
       this.weapon = buildBlaster(A.weapon);
@@ -2244,12 +2868,37 @@ export class Enemy {
       if (hand) { hand.obj.add(this.weapon); this.weapon.position.set(0, 0.06 * this.bodyScale, 0.02); this.weapon.rotation.x = -0.2; }
     }
     if (A.saber) {
+      /**
+       * …AND IT IS NOT ALWAYS A LIGHTSABRE. The player: "sometimes I see my
+       * own troops and they have light sabers and I don't know why, unless
+       * they are other jedi or sith that are helping you it doesn't make sense
+       * for a fucking droid to be holding a lightsaber."
+       *
+       * They were reading the roster correctly. `bx` and `magna` are both
+       * rungs of the SEPARATIST ladder, so a Sith player's own line carries
+       * them, and both were `saber: true` — which is the flag that routes a
+       * body through `DuelBrain`, and which was ALSO deciding what the weapon
+       * looked like. Their own archetype notes had already admitted the gap:
+       * Command.js calls the BX's weapon "a VIBROSWORD… which puts a glowing
+       * blade in a commando droid's hand", and Bodies.js builds the scabbard
+       * for it down the chassis's spine.
+       *
+       * `weapon` is the look and `saber` stays the brain. Everything the fight
+       * reads — length, sweep, `cutPowerAt`, the clash, the duel — is
+       * identical, so a BX cuts exactly as hard as it did and no longer glows.
+       */
       this.saber = new Saber(this.world.scene, {
-        colorIndex: A.saberColor ?? 4, bladeLength: 1.12, hiltStyle: A.hilt ?? 'Sentinel',
+        colorIndex: A.saberColor ?? 4, bladeLength: A.bladeLength ?? 1.12,
+        hiltStyle: A.hilt ?? 'Sentinel', weaponStyle: A.weaponStyle ?? null,
       });
       this.saber.ignite();
-      this.hum = audio.createHum(this.saber.color.getHex());
-      this.hum.ignite();
+      /* A SWORD DOES NOT HUM. `createHum` is the plasma loop, and thirty
+       * commando droids each running one is also thirty oscillators in a mode
+       * built to field thirty of them. */
+      if (!this.saber.physical) {
+        this.hum = audio.createHum(this.saber.color.getHex());
+        this.hum.ignite();
+      }
       this.telegraphArc = new Telegraph(this.world.scene);
       /**
        * THE DIE ROLL IS NOW UNREACHABLE FROM THE SHIPPED ROSTER, and it was
@@ -2459,15 +3108,94 @@ export class Enemy {
    * being drawn at the world origin. The chain ends at the body's own position
    * rather than at a bone, so a rig with no torso at all still lands somewhere
    * real.
+   *
+   * ── AND A BONE THAT HAS NOT BEEN POSED ANSWERS FROM THE WORLD ORIGIN ─────
+   *
+   * `Rig.worldPos` reads `bone.obj.matrixWorld`, which is the IDENTITY until
+   * something has updated the body — so on the frame a wave spawns, every one
+   * of these bones is at (0, 0, 0) and a query about a droid standing 90 m out
+   * answers with the middle of the map. `Player._enemyPoint` carries a whole
+   * paragraph about that hazard and dodges it by keeping a THIRD opinion of
+   * where a chest is (`1.12 · A.scale`), which is HANDOFF §2.3's defect wearing
+   * its usual coat: the way to have one answer is to make the one answer safe.
+   *
+   * So the bone is used only when it is ON THE BODY. `chest` below is
+   * `position` plus `1.15 · bodyScale`, so a torso bone more than
+   * `3 · bodyScale + 1` metres from this body's own feet is not this body's
+   * torso — it is an unposed matrix — and the derived point is the honest
+   * answer. Everything that aims, leads, floats a notice or asks for a centre
+   * of mass now goes through here or through `chest`, and the two cannot
+   * disagree by more than the animation between them.
    */
   aimPoint(out = new THREE.Vector3()) {
+    /* ON THE BODY, OR IT IS NOT THIS BODY'S ANSWER. `chestY` is
+     * 1.15 · bodyScale above the feet, so anything past three of those plus a
+     * metre is outside any pose this roster can strike. Both branches below are
+     * guarded by it and NOT just the rig one: the droideka has no torso bone
+     * and takes the `group` branch, and a group's `position` is (0,0,0) until
+     * `_pose` puts it on the body — measured, `stature.mjs` caught it on this
+     * guard's first run, answering 80.3 m away from a body it had been handed. */
+    const reach = 3 * this.bodyScale + 1;
+    const onBody = () => out.distanceToSquared(this.position) <= reach * reach;
+    /**
+     * ── AND A BODY LYING IN THE SAND IS AIMED AT WHERE IT IS LYING ────────
+     *
+     * `aimAt` is the ONE reader every shooter in this game resolves its aim
+     * through — the rifle, the telegraphed line, the sight test, the rifle
+     * pose, both turret head-tracks — and it asks this method first. The rig
+     * branch below is deliberately switched off while the body is limp (a
+     * ragdolled rig's bones are driven by the solver and were not trusted
+     * here), and what it fell through to is `chest`: `position.y + 1.15 ·
+     * bodyScale`. While a body is limp `_move` writes `position` from the
+     * RAGDOLL'S OWN CENTRE, so `chest` is a metre and a bit of empty air
+     * directly above a man on the floor.
+     *
+     * MEASURED — `tools/_prone.mjs`, eight B1s in a ring at 12 m on one B1,
+     * 60 game-seconds an arm, everything else held identical:
+     *
+     *     standing   453 shots   131 hits   28.9%    aim 0.66 m BELOW the top
+     *     limp       477 shots    10 hits    2.1%    aim 0.92 m ABOVE the top
+     *
+     * A fourteenfold collapse, and the geometry says why rather than the rate:
+     * the point every gun on the field was laying on sat 0.92 m over the
+     * highest thing the body actually presents to a bolt. A felled enemy was
+     * very nearly immune to gunfire.
+     *
+     * That is the exact opposite of what the design says a downed body is
+     * worth. `Combat.OPEN_STATES` prices `downed` — "toppled, stunned or limp
+     * in the sand" — at ×1.5 on every bolt that lands, and FLAGSHIP §7's third
+     * verb is "the Force is a multiplier on other people's guns". The
+     * multiplier was being applied to a stream of bolts that had been aimed
+     * into the air above the target. It went unseen until `knockFlat` started
+     * FELLING bodies instead of stunning them upright, which turned a rare
+     * state into a common one and made the OPEN lane's landed-damage share
+     * move the wrong way (8.2% → 3.7%).
+     *
+     * A prone body is still a smaller target and still harder to hit — that is
+     * honest, it is 0.3 m of silhouette against 1.7 — but it is now shot AT.
+     *
+     * `Actor.centre` is the same answer `_move`'s LIMP branch and `capsules()`
+     * already use for a limp body, so this adds no second opinion about where
+     * a ragdoll is; it stops this method being the one reader that had none.
+     * `onBody` still guards it, so an actor whose bodies have not been placed
+     * yet falls through to the chain below exactly as before.
+     */
+    if (this.actor?.ragdolled) {
+      this.actor.centre(out);
+      if (onBody()) return out;
+    }
     if (this.rig && !this.actor?.ragdolled) {
       for (const name of ['chest', 'body', 'spine', 'hips']) {
-        if (this.rig.get(name)) return this.rig.worldPos(name, out);
+        if (!this.rig.get(name)) continue;
+        this.rig.worldPos(name, out);
+        return onBody() ? out : out.copy(this.chest);
       }
     }
-    if (this.group) return out.copy(this.group.position).addScaledVector(UP, 0.8 * this.bodyScale);
-    return out.copy(this.position).setY(this.position.y + 1.1 * this.bodyScale);
+    if (this.group) {
+      out.copy(this.group.position).addScaledVector(UP, 0.8 * this.bodyScale);
+      return onBody() ? out : out.copy(this.chest);
+    }
+    return out.copy(this.chest);
   }
 
   /**
@@ -2491,6 +3219,39 @@ export class Enemy {
    * chest 0.45 m above the top of its head — the point every floating notice,
    * every aim assist and every "centre of mass" query in the game reads. */
   get chestY() { return this.position.y + 1.15 * this.bodyScale; }
+
+  /**
+   * ── EVERY BODY IN THE GAME HAS A CHEST NOW, AND ONLY THE PLAYER DID ──────
+   *
+   * `Enemy._shoot` leads its aim on `target.chest ?? target.position`, and so
+   * do `_beginTelegraph`, `_hasLineOfSight`, the off blade, the laser, the
+   * rifle pose and both turret head-tracks. `Player.chest` is a real field;
+   * NOTHING ELSE HAD ONE. So every one of those fell through to `position` —
+   * which is at the FEET — for your named troopers, for the horde, and for
+   * every body on the field except the one the player is standing in.
+   *
+   * It was found from the wrong end. A "men crouch under fire" lever measured
+   * WORSE THAN NOTHING — 0.6 survivors against 1.8 — because crouching pulls a
+   * man DOWN, which on a shooter aiming at his boots is walking into the shot.
+   *
+   * The quantity was already here: `chestY` above, and its own comment calls it
+   * "the point every aim assist and every centre-of-mass query in the game
+   * reads". The shooter was the one reader not using it. This is that number in
+   * a vector, so that a body is asked where its chest is in exactly the way a
+   * Player is asked, and no call site has to know which of the two it holds.
+   *
+   * ITS OWN VECTOR PER BODY, and derived on every read rather than written once
+   * a frame. A module-scope scratch would alias the moment two bodies' chests
+   * were read into one expression (`lerpVectors(a.chest, b.chest, …)` is
+   * already in Duel.js). A field updated in `update()` would be stale on the
+   * frame a wave spawns — which is the exact hazard the note on `aimPoint`
+   * above is about, and this is the reader that is safe from it: `position` is
+   * true from the moment a body is placed.
+   */
+  get chest() {
+    return (this._chest ??= new THREE.Vector3())
+      .set(this.position.x, this.chestY, this.position.z);
+  }
 
   /** Capsules the blade solver tests against — one per living bone. */
   capsules() {
@@ -3259,6 +4020,174 @@ export class Enemy {
   }
 
   /**
+   * SHOVED OFF ITS FEET — and until this existed the comment in
+   * `applyKnockback` was the only place it happened.
+   *
+   * ── THE LINE THAT SAID IT AND DID NOT DO IT ────────────────────────────
+   *
+   * `applyKnockback` has carried `// hit hard enough to leave its feet` over
+   * `this.stun(1.2, impulse, 1.4)` for as long as the shove contest has
+   * existed. A stun is a body STANDING STILL. So an eleven-metre Force wave at
+   * impulse 34 threw a dozen droids through the air and every one of them
+   * landed upright, frozen for 1.2 s, and then walked on — which is the
+   * repository's signature defect (a label nothing implements) applied to the
+   * most cinematic thing in the game.
+   *
+   * ── WHY IT IS THE ONE CHANGE THAT MOVES FLAGSHIP §7's THIRD VERB ───────
+   *
+   * §7 says "the Force is a multiplier on other people's guns", and
+   * `openness()` pays that multiplier — 3.0x held, 2.0x yanked, 1.5x downed.
+   * Measured on a real Command battle with a Jedi gripping continuously it
+   * reached **0.5-1.0% of enemy body-seconds**, and the reason is arithmetic
+   * rather than tuning: twenty-six hostile bodies stand on that field, one
+   * pair of hands holds ONE of them, and the choke kills it in four and a half
+   * seconds. The bar is already fully committed — 657 Force spent in 82 game-
+   * seconds against an income of 7.5/s — so the verb cannot be bought more of.
+   * What can move is the EXCHANGE RATE, and the numbers say where:
+   *
+   *     grip     10 Force + the hold drain, 1 body,  ~4.5 s   0.05 open-s/Force
+   *     push     20 Force,        ~3 bodies, 1.2 s of stun    0.18
+   *     push     20 Force,        ~3 bodies, ~3.5 s on the floor
+   *     unleash  52 Force,       ~8 bodies, 1.6 s of stun     0.25
+   *     unleash  52 Force,       ~8 bodies, ~3.5 s on the floor
+   *
+   * A body on the floor is limp for its flight, then `GET_UP` (1.35 s of lying
+   * still), then `recover`'s 1.1 s beat — three times the window a stun opens,
+   * over three to eight bodies at once instead of one. That is the same Force,
+   * spent the same way, buying an order of magnitude more of the thing §7 is
+   * about. It is not a new power, not an aura, and not a local good: what it
+   * buys is paid to whoever is shooting the body, from wherever they stand.
+   *
+   * ── WHAT IT WILL AND WILL NOT PUT DOWN ─────────────────────────────────
+   *
+   * Exactly the population `applyKnockback` already stuns — past impulse 12,
+   * never a boss — MINUS anything `big`. A shove that staggers a spider droid
+   * does not put it on its back, for the same reason `openMul` pays a big body
+   * a quarter of the held bonus: "grab the boss" is not a fight.
+   *
+   * A body already limp, held, or in stasis is left alone: `goRagdoll` on a
+   * ragdoll is a second set of holders, and re-ragdolling a body somebody is
+   * carrying takes it out of their hands.
+   *
+   * The physics capsule goes with it, exactly as in `topple()` above — a body
+   * walking with no collider is the bug from the other side, and `recover()`
+   * is the one place that puts it back.
+   */
+  knockFlat(impulse, source) {
+    if (this.dead || this.gripped || this.stasisHeld || this.beingDragged) return false;
+    if (this.A.boss || this.A.big) return false;
+    if (!this.actor || this.actor.ragdolled) return false;
+    /**
+     * A SHOVE FROM YOUR OWN SIDE ROCKS YOU AND DOES NOT PUT YOU DOWN.
+     *
+     * `Player._shockwave` iterates `ctx.enemies` with NO team test — a Force
+     * wave is physics and does not aim, which is right and is why `unleash`'s
+     * knockback reaches your own rank while the stagger loop beside it filters
+     * through `_foes`. In Command your line stands in `world.enemies` on your
+     * team, so without this clause a panic button pressed every few seconds
+     * would put your own men on the floor for five seconds at a time — and the
+     * mode is about the line still being on its feet when it takes the ridge.
+     *
+     * The existing 1.2 s stun still reaches them, unchanged. This is about the
+     * DIFFERENCE the knockdown adds, and it is the difference between a shove
+     * that shoves your men and one that fells them.
+     */
+    if (source && source.team !== undefined && source.team === this.team) return false;
+    /**
+     * ── AND A FALL BELONGS TO THE MACHINE THAT OWNS THE BODY ─────────────
+     *
+     * TWO RAGDOLLS CANNOT AGREE, and it is not a tuning problem. `goRagdoll`
+     * builds its bodies out of `bone.obj.matrixWorld` — THE POSE THE BODY IS
+     * STANDING IN at the instant it goes limp — and a host and a guest run
+     * independent gait clocks for the same trooper. Same position, same
+     * velocity, same impulse, different arms and legs, and from there two
+     * chaotic solves go their own ways. Measured on a host/client pair off one
+     * push: **4.13 m of flight on the host against 10.06 m on the guest**, with
+     * the guest's copy still in the air at 2.3 m while the host's was down and
+     * sliding. `coop.mjs` calls that "the two machines are simulating different
+     * blows", and it is right.
+     *
+     * So a fall is taken only where the body lives:
+     *
+     *   `netDriven` — a guest's mirror never fells itself. Its position is the
+     *   host's, damped in by `World._stepNetEnemies`, and a local ragdoll would
+     *   be a second simulation fighting that stream.
+     *   `source.isRemote` — a shove that arrived as an `imp` claim is a blow
+     *   the thrower is already drawing on their own machine. The host bills it
+     *   in full (the impulse, the damage, the 1.2 s stun, the scream); it does
+     *   not also fell, because the guest could not follow that fall.
+     *
+     * WHAT IT COSTS, stated rather than hidden: in co-op a guest's push rocks a
+     * body where the host's fells it, so §7's OPEN verb is weaker for everyone
+     * who is not hosting. Closing that needs the FALL on the wire as an event —
+     * `World.onExplosion`'s "the client draws it and the host bills it" — plus
+     * a guest's ragdoll pinned to the host's position rather than free. That is
+     * a protocol change and it is written up in NEXT.md rather than smuggled in
+     * behind a physics fix.
+     */
+    if (this.netDriven || source?.isRemote) return false;
+    /**
+     * ── AND IT GOES LIMP ON THE NEXT STEP, NOT INSIDE THE BLOW ────────────
+     *
+     * This called `goRagdoll` here, and that put nineteen fresh dynamic bodies
+     * into `world.physics` IN THE MIDDLE OF THE SWEEP THAT FELLED IT.
+     * `Player.forcePush` and `_shockwave` both answer the bodies first and then
+     * walk `ctx.physics.bodies` to shove loose furniture — so the same press
+     * hit the same body twice: once as a body, then once per bone, at
+     * `mass * 15 * k * P` each.
+     *
+     * Measured on a host/client pair, one push, the same 15.98 impulse landing
+     * at both ends: the chest launched at **15.86 m/s on the host and 26.64 on
+     * the guest**, and the guest's copy climbed instead of falling and never
+     * decelerated — 18.16 m of flight against the host's 4.17 m. The two ends
+     * differed because the host receives the shove as an `imp` claim, which is
+     * `applyKnockback` ALONE with no furniture sweep behind it, while the guest
+     * ran the whole power locally. Two checks in `coop.mjs` caught it.
+     *
+     * So the fall is RECORDED here and taken in `_move`, which is the one
+     * function both machines run for this body — `Enemy.update` on the owner
+     * and `World._stepNetEnemies` on a guest inside its authority window. By
+     * then the sweep is over and there is nothing loose to double-bill.
+     *
+     * THE TUMBLE IS THE BLOW, NOT A DIE ROLL. `topple()` spins its ragdoll out
+     * of `rng()`, which is right for a machine whose legs went and wrong here:
+     * `rng()` is a module stream, so a host and a guest launching the same body
+     * off the same impulse drew DIFFERENT spins and two chaotic solves went
+     * their own ways. Crossing the impulse with the vertical gives a tumble
+     * about the axis the shove actually turns the body around, and it is the
+     * same on every machine that saw the same blow.
+     */
+    this._flatten = (this._flatten || new THREE.Vector3()).copy(impulse);
+    return true;
+  }
+
+  /**
+   * Take the fall `knockFlat` recorded, once the blow that caused it is over.
+   * Called from `_move` on every machine that steps this body.
+   */
+  _takeFall() {
+    const launch = this._flatten;
+    this._flatten = null;
+    if (!launch) return false;
+    if (this.dead || this.gripped || this.stasisHeld) return false;
+    if (!this.actor || this.actor.ragdolled) return false;
+    /* THE SHOVE IS THE LAUNCH. `addShove` has already put the impulse into
+     * `velocity`, so handing the ragdoll the body's own velocity sends it the
+     * way it was thrown rather than dropping it where it stood. */
+    _v1.crossVectors(launch, UP);
+    const spin = _v1.lengthSq() > 1e-6 ? _v1.normalize().multiplyScalar(2.4) : _v1.set(0, 0, 0);
+    this.actor.goRagdoll(this.velocity.clone(), spin);
+    /* The physics capsule goes with it, exactly as in `topple()` — a body
+     * walking with no collider is the bug from the other side, and `recover()`
+     * is the one place that puts it back. */
+    if (!this.bodyRemoved) {
+      this.world.physics.remove(this.body);
+      this.bodyRemoved = true;
+    }
+    return true;
+  }
+
+  /**
    * GET UP — the other half of `Actor.recover`, and the whole of note #6.
    *
    * A living body that has been ragdolled (gripped and released, thrown,
@@ -3312,7 +4241,174 @@ export class Enemy {
    * the CONDITION rather than by each of the four call sites that can cause
    * it, because a fifth will be added and would not have known to arm a timer.
    */
+  /**
+   * SOMEBODY IS HOLDING THIS, AND IS STILL SAYING SO. See GRIP_LEASE.
+   *
+   * The one door into `gripped`. Called every frame by whatever has the body —
+   * `Player._updateGrip` locally, `World.applyClaim` for a peer's lift — and
+   * the flag lapses on its own the moment those stop calling, whatever the
+   * reason they stopped.
+   *
+   * `Math.max` rather than an assignment so two holders cannot shorten each
+   * other's lease, and so a caller that renews at less than frame rate (the
+   * net path claims at the snapshot tick) is not fighting one that renews
+   * every frame.
+   */
+  hold(seconds = GRIP_LEASE) {
+    this.gripped = true;
+    this.gripLease = Math.max(this.gripLease, seconds);
+  }
+
+  /** Let go, from either end. Idempotent, and it is the only way out. */
+  releaseHold() {
+    if (!this.gripped && !this.liftTarget) return false;
+    this.gripped = false;
+    this.gripLease = 0;
+    this.liftTarget = null;
+    this.chokeT = 0;
+    return true;
+  }
+
+  /**
+   * IS THERE ANYTHING OF THIS BODY ON SCREEN? — the ghost audit.
+   *
+   * "troops go completely invisible a lot like I see their names above their
+   *  heads but they're invisible, I can still throw them around though."
+   *
+   * The grip lease above is one road to that; it is not the only one, and the
+   * report has come back across builds in which each individual road was
+   * closed. A body's visibility is written by six systems that do not know
+   * about each other — the ragdoll swaps the rig for holders and back, the LOD
+   * hides detail by range, a cut hides a severed subtree, `Corpses.fade` turns
+   * every material transparent and winds its opacity to zero, `Ink`'s prepass
+   * hides transparent objects for one render and shows them again, and first
+   * person hides parts of a body you are inside — and EVERY ONE of them is a
+   * hide with a matching show somewhere else in the file. A missed show is
+   * therefore not one bug, it is a shape of bug, and the sixth of them will be
+   * written by somebody who has not read this comment.
+   *
+   * So the invariant is checked rather than argued: A LIVING BODY DRAWS
+   * SOMETHING. Nothing else in this method has an opinion about which meshes
+   * should be visible — that is exactly the mistake that would break LOD and
+   * un-sever severed limbs — it asks only whether the total is zero, and only
+   * then puts back the minimum that makes the body exist: the bone primaries,
+   * which are the silhouette (`_collectLodParts` keeps them at every range),
+   * skipping any bone that has genuinely been cut off.
+   *
+   * Three repairs, in the order the causes actually happen:
+   *
+   *   THE ROOT'S OWN SWITCH. `rig.root.visible` belongs to the ragdoll and is
+   *     `!ragdolled`, always. A body limp with the switch left down is the
+   *     invisible half of the player's sentence, and the capsule that is
+   *     "still throwable" is the other half.
+   *   AN ORPHANED SUBTREE. A root or a holder with no parent draws nothing
+   *     wherever its own flags are. Re-added to the scene it was built for.
+   *   A FADE NOBODY FINISHED. `Corpses.fade` writes `transparent` and an
+   *     opacity on a body's own materials and has no inverse; anything that
+   *     hands a body back to the living after that leaves it a clear pane.
+   *
+   * COST. `AUDIT_EVERY` seconds per body, jittered at construction so twenty
+   * of them do not land on one frame, and the traverse stops at the first
+   * visible mesh it finds — which for a healthy body is the first bone it
+   * looks at. Measured on a 42-body field: under 0.05 ms a frame.
+   */
+  _auditVisible(dt) {
+    if (this.dead || !this.rig?.root) return;
+    this._auditT -= dt;
+    if (this._auditT > 0) return;
+    this._auditT = AUDIT_EVERY;
+
+    const ragdolled = !!this.actor?.ragdolled;
+    let fixed = false;
+    /* 1. THE SWITCH. Cheap, and on its own it is most of the defect. */
+    if (this.rig.root.visible === ragdolled) { this.rig.root.visible = !ragdolled; fixed = true; }
+    /* 2. ORPHANS. */
+    const scene = this.world?.scene;
+    if (scene && !this.rig.root.parent) { scene.add(this.rig.root); fixed = true; }
+    if (scene && ragdolled && this.actor?.holders) {
+      for (const h of this.actor.holders.values()) if (!h.parent) { scene.add(h); fixed = true; }
+    }
+    /* 3. NOTHING IS DRAWING AT ALL. Put the silhouette back. One traverse,
+     * after the two cheap repairs above, because either of them may already
+     * have been the reason nothing was drawing. */
+    if (!this._anyVisibleMesh()) {
+      for (const b of this.rig.list) {
+        if (b.severed || !b.primary) continue;
+        b.primary.visible = true;
+        for (let o = b.primary.parent; o && o !== scene; o = o.parent) o.visible = true;
+        const mats = Array.isArray(b.primary.material) ? b.primary.material : [b.primary.material];
+        for (const m of mats) { if (m && m.transparent && m.opacity < 0.999) m.opacity = 1; }
+      }
+      fixed = true;
+    }
+    if (fixed && this.world) this.world.ghostFixes = (this.world.ghostFixes || 0) + 1;
+  }
+
+  /** The first drawn triangle wins — see `_auditVisible`. */
+  _anyVisibleMesh() {
+    /* AN INSTANCE IS DRAWING. Past L3_AT this body's own meshes are all hidden
+     * on purpose and its triangles are submitted by a shared InstancedMesh
+     * (src/game/Cohorts.js) — so the audit below would find nothing, put the
+     * bone primaries back, and draw the body twice. */
+    if (this._l3) return true;
+    const drawn = (o) => {
+      if (!o.visible) return false;
+      if (o.isMesh && o.geometry) {
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        /* A mesh at zero opacity is a mesh nobody can see. The player is not
+         * making a distinction between "hidden" and "clear" and neither is
+         * this. */
+        if (mats.some((m) => m && (!m.transparent || m.opacity > 0.02))) return true;
+      }
+      for (const c of o.children) if (drawn(c)) return true;
+      return false;
+    };
+    if (this.rig?.root?.parent && drawn(this.rig.root)) return true;
+    if (this.actor?.holders) {
+      for (const h of this.actor.holders.values()) if (h.parent && drawn(h)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * STOP SHOOTING, NOW — the body's own answer, and the only implementation.
+   *
+   * `Waves.holdFire` is the name the rest of the game calls this by (the HOLD
+   * FIRE order, the arrival walk-in, the slider that switches a training remote
+   * off) and it delegates here. It lives on the body because Enemy.js cannot
+   * import Waves.js — Waves imports Enemy — and a second copy of these four
+   * lines is exactly the twin this repository keeps deleting.
+   *
+   * Zeroing `burstLeft` is the load-bearing part: a droideka with six rounds
+   * queued would otherwise finish them out of a body that has just thrown
+   * itself flat.
+   */
+  stopFiring() {
+    this.burstLeft = 0;
+    this.burstTimer = 0;
+    if (!(this.attackTimer > 0.5)) this.attackTimer = 0.5;
+    if (this.aimCharge > 0) { this.aimCharge = 0; this._endTelegraph?.(); }
+  }
+
   _tickGetUp(dt) {
+    /* THE LEASE FIRST, and outside the ragdoll guard: a body can be marked
+     * held without having been ragdolled yet (`_move` does that on its next
+     * frame), and one abandoned in that window would keep the flag with
+     * nothing here ever looking at it again. */
+    if (this.gripped) {
+      this.gripLease -= dt;
+      if (this.gripLease <= 0) this.releaseHold();
+    }
+    /* AND THE SAME RULE FOR A MAN SOMEBODY IS CARRYING. `Reactions.startDrag`
+     * claims a casualty so ten men do not grab one; the claim is renewed every
+     * frame by `stepDrag` and lapses here if the man doing it stops — because
+     * he died, because a grenade landed next to him, or because anything else
+     * replaced his reaction. A casualty nobody can ever help again is worse
+     * than one nobody helped. */
+    if (this.beingDragged) {
+      this.dragLease = (this.dragLease ?? 0) - dt;
+      if (this.dragLease <= 0) { this.beingDragged = null; this.dragLease = 0; }
+    }
     if (this.dead || !this.actor?.ragdolled) { this._recoverAt = 0; return; }
     if (this.gripped || (this.toppled && this.legsLost)) { this._recoverAt = 0; return; }
     /* Wait for it to be still first. Getting up mid-flight is the other
@@ -3404,10 +4500,45 @@ export class Enemy {
      * fire the wave's budget has already been charged for. */
     if (A.elite) q *= 0.86;
 
-    // ── morale
+    /**
+     * ── morale, ANCHORED ON THE RESTING POINT AND NOT ON THE CLAMP
+     *
+     * This was `lerp(1.65, 0.9, morale)` — 0.90 at the top of the scale — and
+     * it was written when every record in a winning line sat pinned at 1.000
+     * (see `MORALE.PRESENCE_CAP`, and NEXT.md on the Dead Jedi table). So 0.90
+     * was in practice a CONSTANT: it is what every allied trooper in the game
+     * has always shot at.
+     *
+     * Unpinning morale would have quietly moved it. A line now settles at the
+     * presence ceiling instead of the clamp, and read off the old curve that is
+     * a 12.5% worse spread on every soldier on your side — a balance change
+     * nobody asked for, arriving as a side effect of a bug fix.
+     *
+     * So the curve is anchored where the line actually rests: `PRESENCE_CAP`
+     * maps to the same 0.90 it always did, 0 maps to the same 1.65, and the
+     * band ABOVE the ceiling — which only exists for a few seconds after a wave
+     * is cleared or an area taken — buys a little more. That is the elation
+     * this game did not previously have anywhere to put.
+     */
     if (this.trooper && this.trooper.morale !== undefined) {
-      q *= lerp(1.65, 0.9, clamp(this.trooper.morale, 0, 1));
+      const m = clamp(this.trooper.morale, 0, 1);
+      const cap = MORALE.PRESENCE_CAP;
+      q *= m <= cap
+        ? lerp(1.65, 0.9, m / Math.max(cap, 1e-3))
+        : lerp(0.9, 0.82, (m - cap) / Math.max(1 - cap, 1e-3));
     }
+
+    /**
+     * ── …AND THE BODY'S OWN NERVE, WHICH IS THE HORDE'S HALF OF THE TERM ABOVE
+     *
+     * The morale clause is gated on `this.trooper`, so it has always been the
+     * ROSTER's number and this line used to be the whole of what a body without
+     * a record had. `nerveAim` is the identity for a body that has one — the
+     * clause above already ran — and for the horde it is the same curve
+     * anchored at 1, so a full-nerve droid is exactly as accurate as it was
+     * before this shipped and a broken one is as bad as a broken trooper.
+     */
+    q *= nerveAim(this);
 
     // ── dread: the same effect, from outside, on a body that has no record
     if (this.dread > 0) q *= DREAD.aim;
@@ -3504,7 +4635,13 @@ export class Enemy {
       dmg *= k;
       if (impulse) impulse = _res.copy(impulse).multiplyScalar(k);
     }
-    if (impulse) this.velocity.add(impulse);
+    /* AND THE SHOVES DO NOT STACK — see `addShove` above, which is where the
+     * rule and the 718 m measurement behind it are written down. It is on this
+     * side of the contest as well as the player's because the contest IS
+     * symmetric and a body the player's army surrounds stands in the same ring:
+     * `unleash` alone puts every body inside 9 m through this door on one
+     * frame. */
+    if (impulse) addShove(this, impulse);
     this.knockTimer = gentle ? 0.35 : 0.7;
     this.grounded = false;
     // A real shove beats a guard, so it beats whatever that guard was holding
@@ -3515,6 +4652,9 @@ export class Enemy {
     if (!gentle && impulse && impulse.length() > 12 && this.actor && !this.A.boss) {
       // hit hard enough to leave its feet — and the impulse IS the direction
       this.stun(1.2, impulse, 1.4);
+      /* …AND THE COMMENT ABOVE WAS THE WHOLE OF IT. See `knockFlat`: the line
+       * said the body leaves its feet and the code left it standing. */
+      this.knockFlat(impulse, source);
     }
     // "I want to hear the enemies scream as they get force thrown" — the throw
     // is the impulse, so the trigger belongs exactly here rather than in
@@ -3673,9 +4813,51 @@ export class Enemy {
     if (this.cloak) { this.cloak.dispose(); this.cloak = null; }
     if (this.skirt) { this.skirt.dispose(); this.skirt = null; }
     if (this.saber) {
-      // the blade falls with them, then goes out
+      /**
+       * THE BLADE LEAVES THE HAND — and it used to be DELETED instead.
+       *
+       * The player, on the last build: "when lightsaber having enemies died
+       * their sabers would stay suspended on and in the air, they should fall
+       * to the ground their user is dead, sometimes retracting automatically,
+       * sometimes staying on and on the floor."
+       *
+       * What shipped was `retract()` and then `setVisible(false)` on a 900 ms
+       * `setTimeout`: the blade went out and the HILT CEASED TO EXIST, which is
+       * the same complaint from the other side — a Jedi's weapon, the one
+       * object in this game a player would cross a field for, evaporating on
+       * the frame its owner fell. `Dropped.js` has existed the whole time for
+       * exactly this ("drop and pick up sabers, including a friend's") and
+       * `Enemy.cut` already reaches for it when an arm comes off; a death did
+       * not.
+       *
+       * And a `setTimeout` was doing gameplay. It does not stop for the pause
+       * menu, it does not stop for a level unload, and it fires into a world
+       * that may no longer exist — the hilt is a prop now and the world's own
+       * clock owns it.
+       *
+       * SOMETIMES IT GOES OUT AND SOMETIMES IT DOES NOT, which is the player's
+       * own sentence and is worth more than either rule on its own: a field
+       * after a duel has a couple of blades still burning on it and the rest
+       * gone dark, so walking up to one is a decision rather than a formality.
+       * Two in five stay lit — enough to be a sight, few enough to stay one.
+       */
+      const lit = !this.saber.physical && rng() < DEAD_BLADE_LIT;
+      const hand = this.actor?.bodies?.get('handR') || this.actor?.bodies?.get('foreR');
+      _v1.copy(hand?.position || this.saber.base || this.position);
+      _v2.copy(this.velocity).multiplyScalar(0.5);
+      _v2.x += (rng() - 0.5) * 1.6; _v2.y += 1.1; _v2.z += (rng() - 0.5) * 1.6;
+      dropSaber(this.world, {
+        position: _v1,
+        velocity: _v2,
+        colorIndex: this.saber.colorIndex,
+        hiltStyle: this.saber.hiltStyle,
+        order: this.saber._order ?? null,
+        owner: this,
+        lit,
+        weaponStyle: this.A.weaponStyle ?? null,
+      });
       this.saber.retract();
-      setTimeout(() => this.saber && this.saber.setVisible(false), 900);
+      this.saber.setVisible(false);
     }
     if (this.actor && !this.actor.ragdolled) {
       _v1.copy(this.velocity).multiplyScalar(0.6);
@@ -3692,6 +4874,39 @@ export class Enemy {
       this.group = null;
     }
     if (!this.bodyRemoved) { this.world.physics.remove(this.body); this.bodyRemoved = true; }
+    /**
+     * ── THE FAR RUNGS HAVE TO GIVE THE BODY BACK, AND `update` CAN NO LONGER
+     *    ASK THEM TO ─────────────────────────────────────────────────────
+     *
+     * `applyBodyLod` is called from exactly two places, `_applyLod` and
+     * `update`, and BOTH of them sit below `update`'s `if (this.dead) … return
+     * this.dying < 40`. So the last word either rung hears about a body is the
+     * one it heard while the body was alive.
+     *
+     * Both rungs already say a corpse is not theirs — `applyCohort`'s `fit` is
+     * `lod >= 3 && !owner.dead && !owner.actor?.ragdolled`, and
+     * `applyMergedSkin`'s `want` carries the same ragdoll clause — and neither
+     * was ever asked again. What that costs, measured with
+     * `tools/_cohortleak.mjs` on geonosis, twelve B1s stood at 163 m (L3_AT is
+     * 137.8) and killed where they stood:
+     *
+     *     all 12 dead        members=9  deadMembers=6  instances=9
+     *     45 s later         members=6  deadMembers=6  instances=6   ← disposed
+     *
+     * Six bodies that no longer exist, still members of a cohort, still drawn
+     * as STANDING SOLDIERS by a shared InstancedMesh at the spot they fell —
+     * while their ragdolls lay invisible underneath, because `darken()` had
+     * hidden every mesh they own. And the slot is never handed back: `leave`
+     * is the only thing that pushes to `c.free`, so `c.high` climbs with every
+     * distant kill and `_grow` doubles the instance buffer to hold ghosts.
+     *
+     * One call, here, once the ragdoll exists so both rungs see `ragdolled`
+     * and refuse: the cohort releases the slot, `undarken` gives the body its
+     * own meshes back, and the merged skin puts the originals back on. The
+     * guard is the same one `update` uses, so a body that was never past 62 m
+     * pays nothing.
+     */
+    if (this._l2 || this._l2Wait || this._l3 || this._l3Wait) applyBodyLod(this, this.lod ?? 0);
     audio.thud(this.position, 1);
   }
 
@@ -3730,10 +4945,31 @@ export class Enemy {
     // The ring above is drawn at RALLY.radius, so the set of bodies inside it
     // is the set of bodies getting the buff — no guessing, and one obvious
     // target if you would rather not fight the buffed version of the wave.
+    /**
+     * ── AND IT WAS MULTIPLYING THE OTHER ARMY ────────────────────────────
+     *
+     * This loop had no team test at all. In waves and roguelite that is right
+     * by accident, because `ctx.enemies` holds one side and the player is not
+     * in it. Command, skirmish and campaign put BOTH armies in that array —
+     * `World.pickTarget` and `_hostilesFor` are built on exactly that fact —
+     * so a Confederate leader droid standing inside 9.5 m of the Republic line
+     * handed those clone troopers `RALLY`: a 22% quicker reload, 15% more
+     * pace, 25% more damage and a faster duel tempo. Lines close to inside
+     * 9.5 m constantly; that is what a front is.
+     *
+     * Measured on a real world — a `leader` B2, an allied B1 1.86 m away and a
+     * hostile trooper 1.72 m away — both came out of one frame with
+     * `rallyTimer` 0.25.
+     *
+     * It is also the one thing the note above promises the player and could
+     * not deliver: the ring says "this is the set of bodies getting the buff",
+     * and half the bodies standing in it were the ones shooting at it.
+     */
     if (this.mod === 'leader' && !this.dead && !this.toppled) {
       const r2 = RALLY.radius * RALLY.radius;
       for (const other of ctx.enemies) {
         if (other === this || other.dead) continue;
+        if (other.team !== this.team) continue;
         if (other.position.distanceToSquared(this.position) > r2) continue;
         other.rallyTimer = RALLY.refresh;
       }
@@ -3765,7 +5001,11 @@ export class Enemy {
     // The corpse's own centre if it has fallen, its torso if it has not — and
     // never a bone name this chassis might not have, which is what aimPoint's
     // fallback chain is for.
-    const point = (this.actor?.ragdolled ? this.actor.centre(_v1) : this.aimPoint(_v1)).clone();
+    /* `aimPoint` KNOWS ABOUT RAGDOLLS NOW — see the note there. This line used
+     * to carry its own `actor?.ragdolled ? actor.centre(…)` clause, which is
+     * the same rule written down twice and was the only call site that had it
+     * right. One reader. */
+    const point = this.aimPoint(_v1).clone();
     this.world.particles?.explosion(point, 1.6);
     this.world.onExplosion?.(point, 1.4);
     audio.explosion(point, 1.3);
@@ -3793,10 +5033,28 @@ export class Enemy {
   }
 
   update(dt, ctx) {
+    /**
+     * A BODY SOMEBODY ELSE HAS ALREADY TORN DOWN IS NOT SOMETHING TO STEP.
+     *
+     * There are two owners of a corpse and they do not talk to each other:
+     * `Corpses` retires one by worth and calls `dispose()` on it, and THIS
+     * method's own `return this.dying < 40` is what takes it out of
+     * `world.enemies`. So a corpse the ledger spent at four seconds was still
+     * stepped for another thirty-six — `actor.update` syncing bones that had
+     * been removed from the physics world onto holders that had been removed
+     * from the scene, and `saber.setHiltPose` posing a disposed blade.
+     *
+     * Returning false is the sentence `World.update` already knows how to
+     * read: it disposes (a no-op now — see `dispose`) and splices, on the very
+     * next frame.
+     */
+    if (this.disposed) return false;
     // A new frame: whatever short list of static boxes we hold was built
     // before destruction had its turn, so the first query of the frame
     // rebuilds it. See NEAR_REACH.
     this._nearStale = true;
+    // …and a new frame opens a new shove account. See `addShove`.
+    newShoveFrame(this);
     this._updateElite(dt, ctx);
     if (this.rallyTimer > 0) this.rallyTimer = Math.max(0, this.rallyTimer - dt);
     if (this.dread > 0) this.dread = Math.max(0, this.dread - dt);
@@ -3815,6 +5073,8 @@ export class Enemy {
     // A living body that is limp and still puts itself back together. See
     // `_tickGetUp`; before this, nothing in the game ever un-ragdolled.
     this._tickGetUp(dt);
+    // …and a living body draws something. See `_auditVisible`.
+    this._auditVisible(dt);
     this.stunTimer = Math.max(0, this.stunTimer - dt);
     this.knockTimer = Math.max(0, this.knockTimer - dt);
     this.yankT = Math.max(0, this.yankT - dt);
@@ -3836,8 +5096,23 @@ export class Enemy {
 
     // level of detail: distant enemies skip the expensive solves
     const camDist = ctx.camera.position.distanceTo(this.position);
-    const lod = camDist > 62 ? 2 : camDist > 30 ? 1 : 0;
+    const lod = camDist > L3_AT ? 3 : camDist > 62 ? 2 : camDist > 30 ? 1 : 0;
     if (lod !== this.lod) { this.lod = lod; this._applyLod(lod); }
+    /* …and the merged skin and the cohort are asked EVERY frame, because the
+     * things they answer to do not move on a LOD edge and `_applyLod` is
+     * edge-triggered. A cohort member's steady state is one matrix write.
+     *
+     * A DEFERRED BAKE needs a retry: MergedSkin.js caps the bake at one body a
+     * frame because forty at once is 116 ms, so a body refused the budget on
+     * its one edge would wait for an edge that never comes. Measured before
+     * this line existed — 42 bodies deployed past 62 m, stepped 300 frames,
+     * exactly ONE of them ever merged.
+     *
+     * And a body CUT or RAGDOLLED while it is merged has to give the skin back
+     * on the frame it happens: the bake is a photograph of a rig with all its
+     * bones, so until it is dropped the body walks around still wearing the arm
+     * the player just took off it, for as long as it stays in this band. */
+    else if (this._l2 || this._l2Wait || this._l3 || this._l3Wait) applyBodyLod(this, lod);
     /**
      * …and cloth gets its own cut, from the quality tier.
      *
@@ -3867,8 +5142,94 @@ export class Enemy {
       return true;
     }
 
-    this._think(dt, ctx);
+    /**
+     * SOMETHING IS ROLLING TOWARD HIM — and it comes before the brain, because
+     * a man diving away from a grenade is not also holding a formation.
+     *
+     * `senseDanger` is one distance test against the nearest live grenade and
+     * nothing at all when the field is empty, which is every frame of every
+     * fight that does not have one in it. `stepReaction` owns the body while it
+     * returns true: the brain is skipped, the steering is skipped (see
+     * `CommandDirector.steer`, which defers to `reaction` at its own top), and
+     * `_move` and `_pose` still run so the body travels and animates.
+     *
+     * See src/game/Reactions.js for the four answers and who gives which.
+     */
+    /**
+     * `speed` IS A WISH FOR ONE FRAME HERE, AND IT HAS TO BE PUT BACK.
+     *
+     * `this.speed` is not a per-frame field: the constructor rolls it once
+     * (archetype speed × a 0.9–1.1 shake × the difficulty's aggression) and
+     * nothing writes it again for the body's whole life except an elite
+     * changing phase. Everything that wants to move at a different pace for a
+     * moment writes it, uses it and hands it back — `Command.installCommand`
+     * wraps `_move` to do exactly that, with the note "leaving it on the body
+     * would compound … a promotion would silently become a permanent sprint".
+     *
+     * `stepReaction` is OUTSIDE that wrapper's window, because it runs before
+     * `_move` and the wrapper captures its `was` on the way in. So a reaction's
+     * pace was captured as the body's own and restored on top of itself:
+     * `stepDrag` writes `A.speed × 0.34` and `installCommand` faithfully put
+     * `× 0.34` back. Measured on a trooper who pulled one casualty out — 4.465
+     * m/s before, 1.394 after, and it never came back, so a man who went back
+     * for a mate once walked at a third of a walk for the rest of the level.
+     * The throw-back has the same shape in the other direction (×1.35, kept).
+     *
+     * The save is here rather than inside Reactions.js because the reaction is
+     * not the only thing in the span that may want a pace for one frame, and a
+     * restore that lives with the writer is a restore every future writer has
+     * to remember. This one is the same idiom one level out.
+     */
+    /**
+     * SOMEBODY IS DRIVING THIS ONE — and then the brain does not run at all.
+     *
+     * `Crew.update` has already set `wish`, `speed` and `facing` from the
+     * player's controls by the time this frame reaches here, so all this has to
+     * do is not overwrite them. `_move` and `_pose` still run below, which is
+     * the whole design: a driven AT-TE walks on its own legs, takes its own
+     * grade limit, loses them to a blade at three, and dies its own death. See
+     * src/game/Driving.js.
+     *
+     * A grenade under a tank is not a thing the tank dives away from, so
+     * `senseDanger` is skipped with the brain rather than beside it.
+     */
+    const paceWas = this.speed;
+    if (this.driven) {
+      this.stopFiring();
+      this._move(dt, ctx);
+      this._pose(dt, ctx);
+      /* …AND THE DRIVER RIDES, here rather than in `Player.update`. Players are
+       * step 1 of World's frame and enemies are step 2, so a seat written on
+       * the player's own tick is a seat one frame behind the hull it is bolted
+       * to — which at a Juggernaut's 7.2 m/s is 12 cm of the driver hanging off
+       * the back at every speed change. */
+      this.driven.ride();
+      return true;
+    }
+    senseDanger(this, dt, ctx);
+    const reacting = stepReaction(this, dt, ctx);
+    if (!reacting) {
+      this._think(dt, ctx);
+    } else {
+      /* A reaction drives `wish`, `speed` and `crouch` itself and must not be
+       * overwritten by the brain's own idea of where to stand. Firing stops for
+       * the same reason a man on his face is not shooting — through `holdFire`,
+       * through `stopFiring`, which is the body's own and the same door the
+       * HOLD FIRE order and the arrival walk-in reach through `Waves.holdFire`
+       * — so a burst in flight is dropped rather than finished a second later
+       * out of a body that is lying on its face. */
+      this.stopFiring();
+    }
     this._move(dt, ctx);
+    /* ONLY WHEN A REACTION DROVE THE FRAME, and the narrowness is the point: a
+     * kill landed inside `_think` can promote this body, and `promote` writes
+     * `e.speed *= R.speed / prev.speed` on the spot. An unconditional restore
+     * here would wipe a rank the man had just earned. A body that is diving,
+     * dragging or carrying a live grenade is not shooting — `stopFiring` above
+     * is that same sentence — so it cannot have made a kill in this span, and
+     * `CommandDirector.steer` returns at its own top on `e.reaction`. Nothing
+     * else in the span writes `speed`. */
+    if (reacting) this.speed = paceWas;
     this._pose(dt, ctx);
     return true;
   }
@@ -3930,8 +5291,27 @@ export class Enemy {
       this.wish = null;
       return;
     }
-    if (this.stunTimer > 0 || this.toppled) {
+    /**
+     * …AND A BODY LYING IN THE SAND IS NOT SHOOTING EITHER.
+     *
+     * `ragdolled` belongs on this line for the same reason it belongs in
+     * `OPEN_STATES` (see Combat.js): limp is the third cause of the condition
+     * the other two name, and it is the one the list kept missing. A dropped
+     * grip leaves a body with `stunTimer` at zero and `toppled` false for the
+     * whole of `GET_UP`, and this brain went on aiming and firing through it —
+     * from `this.position`, which `_move`'s LIMP branch parks on the ragdoll's
+     * centre, so the bolts came out of a chest lying face down.
+     *
+     * Latent before `knockFlat` and not after it: a shove now leaves bodies
+     * limp for about three seconds against a 1.2 s stun, so the window this
+     * closes went from a rounding error to most of it.
+     */
+    if (this.stunTimer > 0 || this.toppled || this.actor?.ragdolled) {
       this.wish = null;
+      /* Nothing limp keeps a trigger held down. `stopFiring` is the body's own
+       * door — the same one the reaction path above uses for "a man on his
+       * face is not shooting". */
+      if (this.actor?.ragdolled) this.stopFiring();
       // A beaten guard has to TRAVEL while the body is reeling. The brain is
       // otherwise frozen for the length of the stun, so the blade would sit
       // exactly where it was parried and only fly wide afterwards — the
@@ -4047,6 +5427,48 @@ export class Enemy {
     if (wish.lengthSq() > 1) wish.normalize();
     this.wish = wish.clone();
 
+    /**
+     * ── AND A BODY THAT HAS LOST ITS NERVE STOPS HOLDING THE LINE ──────────
+     *
+     * FLAGSHIP §7's first verb, and it is the only place in this file where the
+     * ledger changes what a body DOES rather than how well it shoots:
+     *
+     *   "BREAK — walk into the front of a formation and it comes apart."
+     *
+     * TWO THRESHOLDS, BOTH `MORALE`'s, and they are the two `CommandDirector.
+     * steer` already uses on the other side of the field: below `BREAK` a body
+     * gives ground, and below `REFUSE` it has stopped answering altogether.
+     * One rulebook for both armies, which is what makes a Sith leading the
+     * Confederacy and a Jedi leading the Republic the same game.
+     *
+     * `!this.trooper` GATES IT, and that is not a duplicate of `nerveBroken`'s
+     * own routing. A body with a record is steered by `CommandDirector.steer`
+     * — which runs INSIDE `_move`, after this — and it has its own answer to
+     * being broken: it goes to ground behind something and keeps shooting from
+     * there. Letting this clause also fire would give one body two retreats,
+     * and the one that lost would be whichever ran second.
+     *
+     * IT GIVES GROUND AT AN ANGLE, for the reason the yielding band twenty
+     * lines above gives: a wish pointed exactly back down the line the player
+     * came in on reads as a body being shoved rather than one choosing to
+     * leave. The lateral term is the one it was already circling on, so a rank
+     * that breaks peels rather than reversing.
+     */
+    if (!this.trooper && nerveBroken(this)) {
+      _v3.copy(this.toTarget).multiplyScalar(-1).addScaledVector(side, 0.45);
+      if (_v3.lengthSq() > 1e-6) _v3.normalize();
+      this.wish = _v3.clone();
+      /* A body that will not take an order will not take a shot either. Above
+       * `REFUSE` it is still firing — badly, because `nerveAim` is reading the
+       * same number — which is what a line falling back while shooting looks
+       * like, and it is the difference between breaking a formation and
+       * switching it off. */
+      if (nerveRefusing(this)) return;
+      if (A.melee) return;
+      this._rangedBrain(dt, ctx, dist);
+      return;
+    }
+
     if (A.melee) this._meleeBrain(dt, ctx, dist);
     else this._rangedBrain(dt, ctx, dist);
   }
@@ -4056,18 +5478,116 @@ export class Enemy {
     const A = this.A;
     const diff = this.world.difficulty;
 
+    /* A GRENADE IS A DIFFERENT DECISION FROM A RIFLE and it is taken first,
+     * because the reason to throw one is that shooting is not working. See
+     * `_maybeGrenade`. */
+    if (A.grenades) this._maybeGrenade(dt, ctx, dist);
+
+    /**
+     * ── THE GENERATOR CYCLES BACK UP, AND IT COULD NOT ────────────────────
+     *
+     * `dropShield`'s own comment states the rule this block is supposed to
+     * carry: "A droideka's own generator cycles back up; an elite's bubble does
+     * not." It sets `deployTimer = 4.5` to say how long that takes — and it
+     * also sets `shieldHp = 0`, which this line then tested. `shieldHp > 0` is
+     * false for ever after a drop, so the branch was unreachable from the only
+     * state that leads to it, the 4.5 was a tuning constant nothing consumed,
+     * and a droideka that lost its bubble once was a 170 hp body for the rest
+     * of its life.
+     *
+     * Measured before the fix — one droideka, shield dropped at t=2 s, 30 s of
+     * world: `deployTimer` counted 4.5 → 0 by t=8 s and then sat at 0 for
+     * twenty-two seconds with `shieldUp` false and `shieldHp` 0. The timer ran,
+     * expired, and nothing was waiting on it.
+     *
+     * `shieldMax` is the right question — "does this chassis have a generator"
+     * — and it is written once, by `_build`, and never zeroed. The 4.5 s is
+     * what makes the droideka a body you have to keep pressure on rather than
+     * one you chip once: break the bubble and you have four and a half seconds
+     * before it is back, which is the counter-play the archetype was authored
+     * around and is also why a blade (which the bubble does not stop —
+     * `damage` only spends it on `kind !== 'melee'`) is the answer to one.
+     *
+     * THE ELITE'S BUBBLE IS STILL A ONE-SHOT, and now by construction rather
+     * than by the `Infinity` in `dropShield`: `MODIFIERS.shielded.allow`
+     * refuses any archetype that already declares `A.shield`, so a promoted
+     * body never enters this block at all. The `Infinity` stays as the belt to
+     * that brace.
+     */
     if (A.shield) {
       this.deployTimer = Math.max(0, this.deployTimer - dt);
-      const wantShield = dist < 22 && this.deployTimer <= 0 && this.shieldHp > 0;
+      const wantShield = dist < 22 && this.deployTimer <= 0 && this.shieldMax > 0;
       if (wantShield && !this.shieldUp && this.stateTime > 1.2) {
         this.shieldUp = true;
-        this.built.shield.visible = true;
+        if (this.built?.shield) this.built.shield.visible = true;
         this.shieldHp = this.shieldMax;
         audio.tone({ freq: 220, freqEnd: 700, dur: 0.5, gain: 0.16, type: 'sine', pos: this.position });
       }
     }
 
+    /**
+     * ── A SIEGE GUN HAS TO STOP TO SHOOT, AND STAYING STOPPED IS THE WHOLE
+     *    OF WHAT MAKES IT A DIFFERENT ENEMY ───────────────────────────────
+     *
+     * The reference for the SPHA is unusually specific about this and it is the
+     * only interesting thing about how the machine moves: it "only used its
+     * twelve legs when maneuvering between firing positions; when attacking an
+     * enemy target, a SPHA-T remained motionless to give its gunners added
+     * precision". So the artillery does not walk and shoot. It walks, it stops,
+     * it settles, it charges, it fires, and only then does it walk again.
+     *
+     * Three states out of two fields, and every one of them is something the
+     * player can see from across the field:
+     *
+     *   `plant`  seconds of stillness the machine must bank before it is
+     *            allowed to begin its telegraph. Wander inside that window and
+     *            the tally resets — which is what makes shoving one, gripping
+     *            one or simply making it re-path a real defensive act rather
+     *            than a scratch on a health bar.
+     *   `planted` 0 → 1, smoothed, read by `_poseWalker` (it squats onto its
+     *            legs) and by nothing else. It is the tell.
+     *
+     * AND IT HOLDS STATION THROUGH THE SHOT. `wish = null` while the charge is
+     * running or the shell is in the queue: the brain above has already decided
+     * where it would like to be and this overrides it, because a two-and-a-half
+     * second wind-up that the machine strolls through is a wind-up that does
+     * not mean anything. It is the same statement `BEAST_MOVES`' `plant` makes
+     * to an animal mid-lunge, made to a gun instead.
+     *
+     * The counter-play this buys is stated once, here, because it is the
+     * answer to a body a player otherwise cannot reach: a planted SPHA is a
+     * stationary target with a fixed elevation and twelve legs at ground level,
+     * and the charge is a two-and-a-half-second window in which the largest
+     * machine on the field does not move at all.
+     */
+    if (A.plant) {
+      /* IN BAND AND IN SIGHT IS THE WHOLE CONDITION, and it is what makes the
+       * duty cycle measurable rather than rhetorical: a siege gun that can see
+       * its target stops, and one that cannot walks. Circling was the first
+       * version and it does not work — the brain above hands every ranged body
+       * a lateral wish inside its own band, so a machine that must be still to
+       * shoot would have strolled sideways at its full pace resetting its own
+       * plant tally forever, and fired nothing. Measured that way: 0 shells in
+       * sixty seconds against a stationary target 60 m away.
+       *
+       * `_hasLineOfSight` in the condition is the other half and it is the
+       * reposition the reference describes. Break the line — a spire, a
+       * revetment, the far side of a ridge — and the machine gets up, walks,
+       * and has to bank its stillness again from zero at the other end. */
+      const settle = this.aimCharge > 0 || this.burstLeft > 0
+        || (dist < A.preferred[1] && this._hasLineOfSight(ctx));
+      if (settle) this.wish = null;
+      const moving = Math.hypot(this.velocity.x, this.velocity.z) > this.speed * 0.2;
+      this.plantTimer = moving ? 0 : (this.plantTimer || 0) + dt;
+      this.planted = damp(this.planted ?? 0, settle && this.plantTimer >= A.plant * 0.5 ? 1 : 0, 3.2, dt);
+    }
+
     this.attackTimer -= dt;
+    /* The look's own clock — see SIGHT_LOOK. Decremented beside `attackTimer`
+     * rather than at the test, so it keeps running through a burst and a body
+     * that finishes one is not made to wait again for permission it already
+     * had. */
+    this.sightCd = Math.max(0, (this.sightCd || 0) - dt);
     // A rallied shooter reloads faster; the leader's ring is what tells you so.
     const rally = this.rallyTimer > 0 ? RALLY.rate : 1;
     if (this.burstLeft > 0) {
@@ -4082,12 +5602,79 @@ export class Enemy {
       }
       return;
     }
-    if (this.attackTimer <= 0 && dist < (A.preferred[1] + 12) && this._hasLineOfSight(ctx)) {
+    /* …and the plant is a condition on OPENING fire, not on continuing it: a
+     * machine that has already begun its charge finishes it, because the
+     * clause above has stopped it moving and rescinding permission mid-charge
+     * would leave the gun cycling silently forever. */
+    if (A.plant && this.aimCharge <= 0 && (this.plantTimer || 0) < A.plant) return;
+    if (this.attackTimer <= 0 && dist < (A.preferred[1] + 12)) {
+      /**
+       * HE LOOKED, AND THE ANSWER WAS NO — AND THAT HAS TO COST HIM THE LOOK.
+       *
+       * This is the same sentence `_maybeGrenade` writes ten lines up, about
+       * the same query, in the same method, and the rifle did not have it.
+       * `attackTimer` at or below zero is "ready to fire", not "asked", and
+       * nothing on the refusing path moved it — so a body whose sight was
+       * blocked re-took the whole query every frame for as long as it stood in
+       * its band. That is a physics raycast, a terrain raycast and a smoke
+       * integral, and it is the one query in this class that costs real work.
+       *
+       * Measured, one B1 in band with the answer held at no: 0.973 sight tests
+       * per body-frame — 29.2 a second, against the ~4 a second this leaves —
+       * and a level made of rooms is a level where a good share of the wave is
+       * in that state at any moment.
+       *
+       * It is also the better behaviour, which is why the cost is worth
+       * naming rather than hiding: a body does not snap-fire on the frame a
+       * sliver of sight opens. `SIGHT_LOOK` is under a human reaction time so
+       * nothing about a firefight reads differently.
+       */
+      if (this.sightCd > 0) return;
+      if (!this._hasLineOfSight(ctx)) { this.sightCd = SIGHT_LOOK; return; }
       if (A.telegraph) {
         if (this.aimCharge <= 0) {
           this.aimCharge = A.telegraph;
           this._beginTelegraph(ctx);
         }
+        /**
+         * ── AND IT STANDS STILL TO TAKE THE SHOT ──────────────────────────
+         *
+         * The four bodies that declare a `telegraph` — the sniper (1.0 s), the
+         * rocket droid (0.9), the AT-TE (1.1) and the `marksman` elite (0.9) —
+         * draw a red line from the muzzle to your chest and hold it there for
+         * most of a second. `MODIFIERS.marksman`'s own text calls that line
+         * "the whole of the counter-play". Measured: a sniper travelled at 97%
+         * of its own top speed for every frame its laser was lit. A tell drawn
+         * in the HUD and contradicted by the feet is half a tell.
+         *
+         * This is the same sentence `A.plant` makes to a siege gun eighty lines
+         * up and `BEAST_MOVES.plant` makes to an animal mid-lunge, said to the
+         * other group of bodies that already advertise a wind-up.
+         *
+         * IT DOES NOT MOVE THE COUNTER-PLAY. `_beginTelegraph` commits the aim
+         * to `telegraphAim` at the top of the charge and `_shoot` fires down
+         * it, so a player who steps off the line is missed whatever the
+         * shooter's feet are doing. What planting buys is `aimQuality`'s
+         * MOVEMENT term — worth 1.53x of this body's spread while it strolls —
+         * and it is spent only on a player who ignored a second of warning
+         * painted on their own chest.
+         *
+         * MEASURED OVER TWO CENSUSES (`tools/_horde.mjs`), the mean of that
+         * term at the moment of EVERY shot fired in the game was 1.544 of a
+         * possible 1.55, and zero shots were fired below 15% of the shooter's
+         * own speed: nothing in this brain has ever chosen to stand still
+         * except the one archetype in 37 that declares `plant`. Making every
+         * shooter halt would take the whole horde to ~1.0 — a third off the
+         * spread of every gun in the game — which is a balance change to every
+         * wave budget and is deliberately NOT made here. This is the case
+         * where standing still is the body's own promise.
+         *
+         * A charge that loses its line of sight never reaches this statement
+         * (the sight test above returns first), so a body that cannot see gets
+         * up and repositions rather than standing in the open with a frozen
+         * telegraph.
+         */
+        this.wish = null;
         this.aimCharge -= dt;
         if (this.aimCharge <= 0) {
           this._endTelegraph();
@@ -4101,6 +5688,99 @@ export class Enemy {
         this.attackTimer = rally * A.fireRate * (0.7 + rng() * 0.6) / (diff ? diff.enemyAggression * (diff.fireRate ?? 1) : 1);
       }
     }
+  }
+
+  /**
+   * THROW ONE — and the archetype field that says a body can was DELETED from
+   * this file once for being read by nothing.
+   *
+   * `trooper` carried `grenades: true` for the whole of its life with no reader
+   * anywhere in src/, and the note that removed it said, in as many words: "A
+   * trooper grenade is a real thing to build — `Stratagems.blast` is the
+   * primitive and `dodgeable.mjs` is the bar it would have to clear — and it is
+   * a feature, not a field." This is the feature. The field is back, and this
+   * method is what reads it.
+   *
+   * ── WHEN A SOLDIER REACHES FOR ONE, and none of these is a die roll ──────
+   *
+   *   THE TARGET IS IN COVER OR HULLED DOWN — a rifle is not answering, which
+   *     is the whole reason grenades exist. Expressed as line of sight: no
+   *     sight, no bullets, so try the thing that goes over.
+   *   THEY ARE CLUMPED — two or more inside a blast is what makes it worth a
+   *     grenade rather than a magazine, and it is the same test a player makes
+   *     by eye.
+   *   AND NOT TOO CLOSE. `GRENADE.radius` plus a margin, because a body that
+   *     lobs one at its own feet is a comedy and this roster has enough of
+   *     those. Under that range it fights with what it is holding.
+   *
+   * The aim is deliberately imperfect and the error is the thrower's own
+   * quality: a clone veteran lands one at the feet of the man he wants and a B1
+   * puts it four metres wide, which is what makes the reaction system have
+   * anything to do. `world.grenades` owns the object from here on.
+   */
+  _maybeGrenade(dt, ctx, dist) {
+    this.grenadeCd = Math.max(0, (this.grenadeCd ?? GRENADE_CD.first) - dt);
+    if (this.grenadeCd > 0 || this.dead || this.reaction) return;
+    const field = this.world?.grenades;
+    const t = this.target;
+    if (!field || !t || !t.alive && t.dead) return;
+    if (dist < GRENADE.radius + 3 || dist > GRENADE_THROW) return;
+    /* WORTH IT? Either they are behind something, or there are several of them
+     * standing together — and the CHEAP ONE IS ASKED FIRST.
+     *
+     * `_hasLineOfSight` is a physics raycast, a terrain raycast and a smoke
+     * integral; the clump test is a squared distance per body. Asking for
+     * sight first meant every grenadier bought the expensive answer even in
+     * the case that does not need it, which is the case a fight is mostly
+     * made of. */
+    let clumped = 0;
+    const r2 = (GRENADE.radius * 0.8) ** 2;
+    for (const o of (ctx.enemies || [])) {
+      if (o.dead || o.team === this.team) continue;
+      if (o.position.distanceToSquared(t.position) <= r2) clumped++;
+    }
+    const p = this.world?.player;
+    if (p && p.alive && p.team !== this.team
+        && p.position.distanceToSquared(t.position) <= r2) clumped++;
+    if (clumped < 2 && this._hasLineOfSight(ctx)) {
+      /**
+       * HE LOOKED, AND THE ANSWER WAS NO — AND THAT HAS TO COST HIM THE LOOK.
+       *
+       * `grenadeCd` at 0 is "ready", not "asked", so a body whose target is
+       * alone and in the open re-took this entire decision — the enemy scan
+       * AND the two raycasts — on EVERY FRAME, for as long as it stood in the
+       * 9.5-26 m band. Measured on twelve troopers ringing a lone target:
+       * 0.930 sight raycasts per body per frame against 0.006 with the
+       * cooldown held, a 167x multiplier on the one query in this class that
+       * costs real work. The rifle's own sight test at `attackTimer <= 0` is
+       * where that 0.006 comes from; it asks about once a fire cycle, which is
+       * what a body deciding something ought to cost.
+       *
+       * `GRENADE_LOOK` is the interval between looks. It is short enough that a
+       * squad bunching up in front of him is answered inside a quarter of a
+       * second — far quicker than the 2.6 s a grenade takes to matter — and it
+       * is the same answer `CommandDirector.steer` gives for the same shape:
+       * "a refused attempt still costs him the look, or every frame is a scan
+       * of the whole field".
+       */
+      this.grenadeCd = GRENADE_LOOK;
+      return;
+    }
+
+    /* THE THROW. Aimed at where they are, not where they will be — a soldier
+     * leading a target with a grenade is a soldier with a computer — and
+     * scattered by his own quality. */
+    const err = GRENADE_SPREAD * (this.rallyTimer > 0 ? 0.7 : 1) / Math.max(0.5, (this.A.threat ?? 2) * 0.5);
+    const to = _v1.copy(t.position);
+    to.x += (rng() - 0.5) * err;
+    to.z += (rng() - 0.5) * err;
+    if (ctx.terrain) to.y = ctx.terrain.height(to.x, to.z);
+    const from = _v2.copy(this.position);
+    from.y += (this.A.hipHeight ?? 0.95) + 0.4;
+    field.throw(from, to, { owner: this, team: this.team });
+    this.grenadeCd = GRENADE_CD.every * (0.7 + rng() * 0.6);
+    this.attackTimer = Math.max(this.attackTimer, 0.6);   // he is not also firing
+    this.world?.notifyFloating?.(this.position, 'GRENADE', 0xffb347);
   }
 
   _remoteBrain(dt, ctx, dist) {
@@ -4139,7 +5819,7 @@ export class Enemy {
   _beginTelegraph(ctx) {
     const t = this.target;
     if (t) {
-      this.telegraphAim = (this.telegraphAim || new THREE.Vector3()).copy(t.chest ?? t.position);
+      this.telegraphAim = aimAt(t, this.telegraphAim || new THREE.Vector3());
     }
     if (!this.laser) {
       const g = new THREE.CylinderGeometry(0.006, 0.006, 1, 4);
@@ -4157,7 +5837,7 @@ export class Enemy {
   _hasLineOfSight(ctx) {
     if (!this.target) return false;
     const from = this._muzzleWorld(_v5);
-    const at = this.target.chest ?? this.target.position;
+    const at = aimAt(this.target, _aim);
     _v6.subVectors(at, from);
     const d = _v6.length();
     _v6.multiplyScalar(1 / d);
@@ -4227,10 +5907,10 @@ export class Enemy {
     // the player was given a second to leave has to leave from where the line
     // was, not from where they ended up.
     const aimed = !!this.telegraphAim;
-    const aimAt = _v2.copy(aimed ? this.telegraphAim : (target.chest ?? target.position));
+    const at = aimed ? _v2.copy(this.telegraphAim) : aimAt(target, _v2);
     /* SHOOTING ITSELF is aimed at the chest like everything else, but the
      * muzzle is already past it — a rifle held at the shoulder has its barrel
-     * end a good half metre in FRONT of the ribs — so `aimAt - from` points
+     * end a good half metre in FRONT of the ribs — so `at - from` points
      * backwards and the shot goes over the droid's shoulder into the sky. The
      * bolt has to start behind the chest and travel through it. Dropping the
      * muzzle to the hip and aiming up under the chin is the pose a unit turning
@@ -4239,23 +5919,47 @@ export class Enemy {
     if (target === this) {
       from.set(this.position.x, this.position.y + 0.55 * (A.scale ?? 1), this.position.z)
         .addScaledVector(_v5.set(Math.sin(this.facing), 0, Math.cos(this.facing)), 0.26 * (A.scale ?? 1));
-      aimAt.set(this.position.x, this.position.y + 1.35 * (A.scale ?? 1), this.position.z);
+      at.set(this.position.x, this.position.y + 1.35 * (A.scale ?? 1), this.position.z);
     }
 
     const diff = this.world.difficulty;
     const acc = diff ? diff.enemyAccuracy : 0.7;
     // lead the shot, then throw it off by however good this difficulty is
     const speed = 88 * (diff ? diff.boltSpeed : 1) * (A.big ? 1.2 : 1);
-    const tof = from.distanceTo(aimAt) / speed;
+    const tof = from.distanceTo(at) / speed;
     /* …and a committed shot does not lead. Leading a fixed point by the
      * target's CURRENT velocity would put the bolt back on the player and off
      * the line that was drawn, which is the same defect one layer down. */
-    if (target.velocity && !aimed) aimAt.addScaledVector(target.velocity, tof * acc);
+    if (target.velocity && !aimed) at.addScaledVector(target.velocity, tof * acc);
 
-    _v3.subVectors(aimAt, from).normalize();
+    _v3.subVectors(at, from).normalize();
     /* AIM IS A SKILL AND A CIRCUMSTANCE, not a difficulty slider. See
      * `aimQuality` — the whole of note #20 goes through this one multiply. */
-    const spread = (A.spread ?? 0.06) * (2 - acc) * this.aimQuality(from.distanceTo(aimAt));
+    /**
+     * …AND HALF-BLIND IS NOT THE SAME AS BLIND.
+     *
+     * The player: "the smoke screen needs to be way bigger and more useful, it
+     * should effect your allies and your enemies ability to aim obviously if it
+     * does not right now." It did not. `_canSee` gates ACQUISITION at
+     * `SMOKE_SEE` — below that transmittance you cannot pick a target at all —
+     * and the bolt loses damage on the way through. Between those two there was
+     * nothing: a shooter looking through a thinning bank, or clipping the edge
+     * of one, aimed exactly as well as one in clear air right up to the moment
+     * it could not see at all.
+     *
+     * So the same integral both of those already read now widens the CONE. A
+     * shooter with half the light getting through shoots at twice the spread;
+     * one at the acquisition threshold shoots at four times it and is spraying.
+     * `seeThrough` is transmittance, so `1/see` is the natural scale and the
+     * clamp is what stops a body at the very edge of the gate from firing into
+     * the next postcode.
+     *
+     * SYMMETRIC, like everything else about the cloud: this runs on every body
+     * with a weapon, and in Command your own line are Enemy instances too.
+     */
+    const see = seeThrough(from, at);
+    const murk = clamp(1 / Math.max(see, 0.02), 1, 4.5);
+    const spread = (A.spread ?? 0.06) * (2 - acc) * this.aimQuality(from.distanceTo(at)) * murk;
     _v3.x += (rng() - 0.5) * spread; _v3.y += (rng() - 0.5) * spread * 0.7; _v3.z += (rng() - 0.5) * spread;
     _v3.normalize();
 
@@ -4387,7 +6091,7 @@ export class Enemy {
    */
   _forceBrain(dt, ctx, dist) {
     const t = this.target;
-    this.force = Math.min(this.forceMax, this.force + FORCE_REGEN * dt);
+    this.force = Math.min(this.forceMax, this.force + forceRegenFor(this.forceMax) * dt);
     for (const k in this.powerCd) this.powerCd[k] = Math.max(0, this.powerCd[k] - dt);
 
     // a power already running — pay for it by the second, or it stops
@@ -4484,7 +6188,7 @@ export class Enemy {
       this.force -= P.cost;
       this.powerCd[key] = P.cd;
       this._castKey = key;
-      this._castTimer = 0.45;
+      this._castTimer = CAST_WIND;
       this.world.notifyFloating?.(this.aimPoint(_v1), P.label, P.color);
       audio.tone({ freq: 180, freqEnd: 900, dur: 0.45, gain: 0.10, type: 'sine', pos: this.position });
       return;
@@ -4769,7 +6473,7 @@ export class Enemy {
      * 35% roll: three sparks, no embers.
      */
     if (rng() < 0.35) {
-      this.world.particles?.sparkBurst?.(t.chest ?? t.position, null, 3,
+      this.world.particles?.sparkBurst?.(aimAt(t, _aim), null, 3,
         { speed: 5, embers: false, color: this.casting === 'lightning' ? 0x9fd8ff : 0xff6a6a });
     }
   }
@@ -4834,7 +6538,7 @@ export class Enemy {
      */
     if (t.saber && this.offSaber && bladesTouching(t.saber, this.offSaber)) return;
     const reach = 1.05 * (this.A.scale ?? 1) + 0.55;
-    _v1.copy(t.chest ?? t.position);
+    aimAt(t, _v1);
     _v3.subVectors(_v1, this.offHand).setY(0);
     const d = _v3.length();
     if (d > reach) return;
@@ -4842,7 +6546,7 @@ export class Enemy {
     // still swings at whatever the wielder is facing.
     _v4.set(Math.sin(this.facing), 0, Math.cos(this.facing));
     if (d > 0.05 && _v3.divideScalar(d).dot(_v4) < Math.cos(1.0)) return;
-    _v1.copy(t.chest ?? t.position);
+    aimAt(t, _v1);
     t.damage?.(this.attackDamage * 0.55 * duel.damageScale, _v1.clone(), this, 'saber');
     _v2.subVectors(t.position, this.position).setY(0.25).normalize().multiplyScalar(4.5);
     t.velocity?.add(_v2);
@@ -5178,10 +6882,35 @@ export class Enemy {
     this._nearStale = false;
     this._nearAt.copy(p);
     near.length = 0;
-    const boxes = physics.staticBoxes;
     const reach = this.radius + NEAR_REACH;
-    for (let i = 0; i < boxes.length; i++) {
-      const box = boxes[i];
+    /**
+     * THROUGH THE BROAD PHASE, AND THE TEST BELOW IS UNCHANGED.
+     *
+     * This loop used to run over `physics.staticBoxes` in full — every box in
+     * the level, once per body, every frame. The note over NEAR_REACH already
+     * measured what that costs and what it grows to (241 boxes on the temple,
+     * 377 after four minutes of fighting in it, 7.63 us per extra box per
+     * frame), and Trees.js measured the same curve from the other end: 76
+     * boxes 3.18 ms/frame, 1800 boxes 14.09.
+     *
+     * `nearBoxes` answers with a SUPERSET of the array — see the correctness
+     * argument in src/physics/BoxIndex.js — so the distance test that follows
+     * is the same test on a shorter list and the short list that comes out is
+     * identical. `tools/checks/frame-budget.mjs` asserts that identity against
+     * the exhaustive sweep on every level rather than taking it on trust, and
+     * counts the box records touched, which is the machine-independent half of
+     * what this is worth.
+     *
+     * The fallback is the old loop, so a physics world without an index — the
+     * hand-built stubs several checks stand bodies on — behaves exactly as it
+     * did.
+     */
+    _nearScratch.length = 0;
+    const cand = physics.nearBoxes
+      ? physics.nearBoxes(p.x, p.z, reach, _nearScratch)
+      : physics.staticBoxes;
+    for (let i = 0; i < cand.length; i++) {
+      const box = cand[i];
       if (box.disabled) continue;
       const dx = box.center.x - p.x, dz = box.center.z - p.z;
       const rr = box.radius + reach;
@@ -5216,6 +6945,12 @@ export class Enemy {
 
   _move(dt, ctx) {
     const terrain = ctx.terrain;
+    const A = this.A;
+
+    /* THE FALL `knockFlat` RECORDED, taken here because this is the one step
+     * both machines run for this body and because the sweep that caused it is
+     * over by now. See knockFlat. */
+    if (this._flatten) this._takeFall();
 
     if (this.gripped && this.liftTarget) {
       /**
@@ -5238,8 +6973,42 @@ export class Enemy {
       if (this.actor && !this.dead) {
         if (!this.actor.ragdolled) this.actor.goRagdoll(this.velocity, null);
         if (this.actor.suspend?.(this.liftTarget, dt)) {
+          /**
+           * …AND HOW FAST IT IS BEING DRAGGED. This branch answered `0, 0, 0`.
+           *
+           * The LIMP branch forty lines down — a ragdolled body nobody is
+           * holding — answers the same question with the ragdoll's own chest
+           * velocity. Two branches of one method, opposite answers to "how fast
+           * is this body moving", and the held one was a flat lie: measured
+           * over a Geonosis Command wave with a Jedi gripping continuously, a
+           * held body travels 4.75 m/s while `velocity` read 0.00. `Enemy.
+           * _shoot` leads its aim by `target.velocity * tof`, so a held body
+           * was the one target on the field nobody in either army led.
+           *
+           * IT IS THE DISPLACEMENT AND NOT THE CHEST'S VELOCITY, and that is
+           * the whole content of this note. Copying the chest the way the limp
+           * branch does was tried first and is a second lie in the other
+           * direction: `Ragdoll.suspend` COMMANDS that body at `(target − pos)
+           * × 12` every frame, and a hanging body sits at a steady sag under
+           * that command — measured on a stationary hold point, the chest
+           * carries 2.01 m/s while the body's centre moves 0.09. A lead built
+           * on it aims two metres past a body that is not going anywhere.
+           *
+           * So: where the centre was, where it is now, over dt. It is the
+           * definition of the quantity rather than any solver's idea of it, and
+           * it costs one vector subtract on the at-most-four bodies a pair of
+           * hands can hold.
+           *
+           * The line's hit rate on a held body is 4.1% against 4.8% on a body
+           * that is not, so this is NOT what starves FLAGSHIP §7's third verb —
+           * see NEXT.md for what does. It is fixed because a field that reports
+           * 0.00 for a body crossing the field at five metres a second is wrong
+           * whatever happens to read it.
+           */
+          _wasAt.copy(this.position);
           this.actor.centre(this.position);
-          this.velocity.set(0, 0, 0);
+          if (dt > 0) this.velocity.subVectors(this.position, _wasAt).multiplyScalar(1 / dt);
+          else this.velocity.set(0, 0, 0);
           this.grounded = false;
           this._syncBody();
           return;
@@ -5298,7 +7067,34 @@ export class Enemy {
 
     const canMove = this.stunTimer <= 0 && this.knockTimer <= 0 && !this.gripped;
     if (canMove && this.wish) {
-      const speed = this.speed * (this.legsLost ? 0.45 : 1) * (this.rallyTimer > 0 ? RALLY.speed : 1);
+      /**
+       * ── WHAT THE GROUND UNDER IT COSTS, WHICH FOR MOST OF THE ROSTER IS
+       *    NOTHING AND FOR A WHEEL IS THE WHOLE FIGHT ────────────────────
+       *
+       * Every body in this game climbs identically: `slopeAt` is read by the
+       * spawner, by Arrivals and by the extraction's landing-site search, and
+       * by NOTHING that moves a body once it is on the field. So a ten-wheeled
+       * 25-metre transport took a one-in-two bank at the same pace an acklay
+       * did, and an AT-TE — whose one famous feature is that its footpads are
+       * MAGNETISED and it climbs vertical rock with them — took it at the same
+       * pace as the wheels.
+       *
+       * `grade` is the steepest ground the machine is built for, in `slopeAt`'s
+       * own units (1 − n.y, so 0 is a table and 1 is a wall). Pace falls off
+       * over the top 45% of it rather than at a threshold, for the reason the
+       * yielding band in `_brain` gives: a number that switches on one frame
+       * reads as the machine being shoved rather than as it labouring.
+       *
+       * IT IS OPT-IN AND THE DEFAULT IS THE OLD BEHAVIOUR. A body that declares
+       * no grade is a body nothing about this changed, which is twenty-nine of
+       * the thirty-six archetypes and every measurement anybody has taken of
+       * them.
+       */
+      let speed = this.speed * (this.legsLost ? 0.45 : 1) * (this.rallyTimer > 0 ? RALLY.speed : 1);
+      if (A.grade != null && terrain?.slopeAt) {
+        const s = terrain.slopeAt(this.position.x, this.position.z);
+        speed *= 1 - smoothstep(A.grade * 0.55, A.grade, s);
+      }
       /**
        * NAVIGATION, SUCH AS IT IS — AND THERE WAS NONE.
        *
@@ -5434,7 +7230,56 @@ export class Enemy {
     // the player's did. See src/physics/Support.js.
     const gh = terrain ? terrain.height(this.position.x, this.position.z) : 0;
     this._gatherNear(ctx);
-    const support = this._groundAt(ctx, this.position.x, this.position.z);
+    let support = this._groundAt(ctx, this.position.x, this.position.z);
+    /* AND A DROID CLIMBS A LOG THE WAY THE PLAYER DOES. See CLIMB_RATE: the
+     * support query answers with a felled trunk's top now, and taking it in one
+     * frame would stand a trooper on top of a log with no time passing. The
+     * animator's own foot query goes through the same `_groundAt`, so the feet
+     * find the wood while the body is still coming up over it.
+     *
+     * NOT THE GROUND ITSELF, and this cost a run of Command's own suite to
+     * find: `supportHeight` caps what a BOX may raise you by and does not cap
+     * the terrain, so a body walking up anything steep gets a support well
+     * above its feet every frame — and rate-limiting that is rate-limiting
+     * walking uphill. Measured as two watchdog rescues of a line standing
+     * exactly where it was ordered to stand. */
+    /* …AND ONLY FROM THE FLOOR. A body falling onto a surface is LANDING, and
+     * a landing taken at a climb's rate sinks through what it landed on. See
+     * the same guard in `Player._collide`. */
+    if (this.grounded && support > gh + 0.05
+        && support > this.position.y + (this.climbing ? 1e-3 : STEP_UP)) {
+      /**
+       * …AND A WHEEL DOES NOT CLIMB, which is the second half of `grade` and
+       * the half a slope term cannot express.
+       *
+       * The condition guarding this branch already says the support is above
+       * the terrain — that is what `support > gh + 0.05` means — so what is
+       * being climbed here is always a PROP: a crate, a felled trunk, a slab of
+       * ruined architecture. Walking up the ground itself never reaches this
+       * line and is priced by the pace term above instead, which is the split
+       * that keeps a machine from being stranded on a hill by a rule about
+       * logs.
+       *
+       * A body built for anything under a vertical face refuses the step
+       * outright rather than climbing it slowly. It then walks into the thing,
+       * fails to move, and `_stuckT` swings it round the side within half a
+       * second — the navigation this class already has, answering the question
+       * it was written for. Going ROUND is the correct behaviour for a
+       * ten-wheeled transport and it is the behaviour the player can see.
+       *
+       * `grade >= 1` is the one value that means "anything", and exactly one
+       * body in the game declares it: the AT-TE, whose magnetised footpads are
+       * the single most quoted fact about the machine and which had until now
+       * climbed a crate at precisely the rate a battle droid does.
+       */
+      if (A.grade != null && A.grade < 1) {
+        support = Math.max(gh, this.position.y);
+        this.climbing = false;
+      } else {
+        support = Math.max(this.position.y, Math.min(support, this.position.y + CLIMB_RATE * dt));
+        this.climbing = true;
+      }
+    } else this.climbing = false;
     if (this.position.y < support) this.position.y = support;
     if (this.position.y <= support + GROUND_SNAP && this.velocity.y <= 0.1) {
       if (this.velocity.y < -9) {
@@ -5501,12 +7346,55 @@ export class Enemy {
 
     // face the target while fighting, face travel otherwise
     let want = this.facing;
-    if (this.toTarget && this.stunTimer <= 0) want = Math.atan2(this.toTarget.x, this.toTarget.z);
+    /**
+     * …AND NEITHER, IF SOMEBODY IS DRIVING. `Crew.update` writes `facing`
+     * directly from the steering axis, and this block was quietly undoing it:
+     * `toTarget` is whatever the brain last wanted to look at and survives the
+     * brain being switched off, so a driver hauling on the stick was fighting
+     * the machine's own idea of where to point. Measured before this line: a
+     * full second of full steer swung an AAT 0.24 rad against the 0.90 the
+     * driver's own rate asks for — a quarter of the turn, for no reason a
+     * player could see. See src/game/Driving.js.
+     */
+    if (this.driven) { /* the driver owns the heading */ }
+    else if (this.toTarget && this.stunTimer <= 0) want = Math.atan2(this.toTarget.x, this.toTarget.z);
     else if (this.velocity.lengthSq() > 1) want = Math.atan2(this.velocity.x, this.velocity.z);
     let d = want - this.facing;
     while (d > Math.PI) d -= TAU;
     while (d < -Math.PI) d += TAU;
-    this.facing += d * Math.min(1, dt * (this.A.big ? 3.2 : 8));
+    /**
+     * HOW FAST A THING CAN COME ABOUT, and until the giants it was two numbers
+     * for the whole game: 8 for a man, 3.2 for anything flagged `big`.
+     *
+     * That is one gain shared by a 2.8 m dwarf spider droid, a 13.5 m
+     * six-legged walker and an 11 m tank carried on a SINGLE central tread, and
+     * it is the field where the difference is most visible and cost nothing to
+     * state. A snail tank that pivots like a spider droid is a spider droid
+     * with a different hull on it — which is player note 26 wearing a new coat,
+     * and this time in the axis the note is actually about ("they all attack
+     * the same way" is half of it; the other half is that they all MOVE the
+     * same way).
+     *
+     * It is an exponential gain and not a rate cap, so the honest way to read
+     * it is in seconds to come about: `dt * gain` is the fraction of the
+     * remaining error closed per frame, and half a turn is closed to within a
+     * degree in roughly `5.2 / gain` seconds. Measured on the shipped bodies
+     * through `tools/checks/giants.mjs`, which prints the number per machine
+     * every run rather than restating this arithmetic.
+     *
+     *     8.0   a man                          0.65 s
+     *     3.2   the default heavy              1.6 s
+     *     0.90  ten wheels on a 25 m wheelbase 5.8 s
+     *     0.45  one tread                      11.6 s
+     *     9.0   three legs on a rotating hub   0.58 s — faster than a man, and
+     *           it is the one number on the tri-droid taken straight out of the
+     *           reference: "their rotating multi-jointed assemblies allowed
+     *           them to change facing almost instantly".
+     *
+     * The default is unchanged for every body that does not declare one, so
+     * nothing in the roster moved when this line did.
+     */
+    this.facing += d * Math.min(1, dt * (this.A.turnRate ?? (this.A.big ? 3.2 : 8)));
 
     this._syncBody();
   }
@@ -5575,10 +7463,41 @@ export class Enemy {
        * acceleration the way anything on a pack does. `_move` derives the two
        * angles; this only spends them.
        */
+      /**
+       * …AND THE LEAN HAS TO PIVOT ON THE BODY, WHICH IT DID NOT.
+       *
+       * `BipedAnimator.update` writes the pelvis in WORLD coordinates
+       * (`hips.position.set(hipX, hipY, hipZ)`, src/game/Rig.js) onto a bone
+       * that is a child of this root — which is correct only while the root is
+       * an identity transform. Rotating it turns the whole skeleton about the
+       * WORLD ORIGIN instead of about the man, so the drawn body swings away
+       * from its own `position` by roughly the distance to the origin times the
+       * angle, and everything that reads `position` — the muzzle, the brain's
+       * range, a Force grip's pick, `Waves.positionIsValid` — is then talking
+       * about a place the body is not.
+       *
+       * Measured on the SHIPPED Jet Trooper before this, three spawns, worst
+       * horizontal gap between the drawn pelvis and `position` over eight
+       * seconds: 1.83 m at x=2, 1.36 m at x=14, 1.79 m at x=30. It was
+       * invisible because `jet` is the only rigged body in the roster that
+       * floats and it is usually within a few metres of a player who is
+       * themselves near the origin; on a body that cruises at five and a half
+       * metres of altitude it is metres of altitude, which is how it was found.
+       *
+       * The fix is the standard pivot: rotate about P by translating the root
+       * to `P - R·P`, so the point P maps to itself and everything near it
+       * turns about it. The attitude is unchanged — the same two angles, the
+       * same order — and nothing else in the frame moves.
+       */
       if (A.float && rigRootOf(this)) {
         const root = rigRootOf(this);
         root.rotation.x = this.jetLean ?? 0;
         root.rotation.z = this.jetRoll ?? 0;
+        /* `root.quaternion` is already the euler above — Object3D keeps the two
+         * in step through `rotation`'s own change callback — so this is a read
+         * of what was just written and not a second way of writing it. */
+        root.position.copy(this.position)
+          .sub(_v4.copy(this.position).applyQuaternion(root.quaternion));
       }
     } else if (this.rig) {
       this._poseWalker(dt, ctx);
@@ -5595,7 +7514,7 @@ export class Enemy {
       // The COMMITTED point, not a live read of the chest. This line used to
       // track the player, which made "leave the line" impossible: the line went
       // with them. See `_beginTelegraph`.
-      _v2.subVectors(this.telegraphAim ?? this.target.chest ?? this.target.position, from);
+      _v2.subVectors(this.telegraphAim ?? aimAt(this.target, _aim), from);
       const len = _v2.length();
       this.laser.position.copy(from);
       this.laser.quaternion.setFromUnitVectors(_v3.set(0, 0, 1), _v2.normalize());
@@ -5638,7 +7557,7 @@ export class Enemy {
      * elbows DOWN. What was here had the two hands on opposite sides of the
      * centreline, which is why the weapon lay across the chest.
      */
-    const aim = this.target ? _v4.copy(this.target.chest ?? this.target.position).sub(chest).normalize()
+    const aim = this.target ? aimAt(this.target, _v4).sub(chest).normalize()
                             : _v4.copy(fwd);
     /* The bore line: offset to the shooting side and just under the chin, so
      * both hands hang off ONE line instead of straddling the body. */
@@ -5926,6 +7845,24 @@ export class Enemy {
       // …and being winded reads as being winded: the head drops to the floor.
       rise = -0.5; pitch = 0.5;
     }
+    /**
+     * A PLANTED GUN SITS DOWN ON ITS LEGS, and this one line is the entire
+     * visible half of `plant`.
+     *
+     * `planted` runs 0 → 1 in `_rangedBrain` and is read here and nowhere else.
+     * A machine settling before it fires drops onto its supports — the legs
+     * take the recoil rather than the hip actuators — and a machine that gets
+     * up to walk rises again. Without it a SPHA holding station through a
+     * two-and-a-half-second charge is a SPHA standing still, which is
+     * indistinguishable at a hundred metres from a SPHA that has lost its
+     * target.
+     *
+     * It rides on `rear`, which is metres of hip travel per unit of rise and is
+     * already the channel every wind-up in this function uses, so a body that
+     * plants and a body that rears use one code path and cannot disagree about
+     * where the hips are. Negative, because settling is the opposite of rearing.
+     */
+    if (this.planted) rise -= this.planted;
     /* The hip height and the rear-up are the ANIMAL's, not a constant times
      * its scale. A reek stands at 0.88 of scale and a rancor at 1.15, where
      * both used to stand at 1.5; `rear` is metres of hip travel per unit of
@@ -5997,7 +7934,7 @@ export class Enemy {
     // authored facing +Z rather than along the bone axis
     const headBone = rig.get('head');
     if (this.target && headBone && !headBone.severed) {
-      _v3.subVectors(this.target.chest ?? this.target.position, rig.worldPos('head', _v4));
+      _v3.subVectors(aimAt(this.target, _aim), rig.worldPos('head', _v4));
       /**
        * `atan2(x, z) - facing` IS the local bearing. The `- Math.PI` that used
        * to close this line put it half a turn out, and the symptom was hidden
@@ -6036,7 +7973,7 @@ export class Enemy {
       leg.lower.rotation.x = -0.2 + Math.cos(ph * TAU) * 0.2;
     });
     if (this.target) {
-      _v1.subVectors(this.target.chest ?? this.target.position, b.headG.getWorldPosition(_v2));
+      _v1.subVectors(aimAt(this.target, _aim), b.headG.getWorldPosition(_v2));
       const pitch = Math.atan2(_v1.y, Math.hypot(_v1.x, _v1.z));
       b.headG.rotation.x = clamp(-pitch, -0.5, 0.5);
       for (const arm of b.arms) arm.arm.rotation.x = clamp(-pitch * 0.6, -0.5, 0.5);
@@ -6048,7 +7985,60 @@ export class Enemy {
     }
   }
 
+  /**
+   * ── TERMINAL, AND IT HAS TO SAY SO ────────────────────────────────────
+   *
+   * `this.disposed` is not decoration and it is not new: `Corpses.update`
+   * guards every entry on `!e.disposed`, and `World.restartWave`'s own note
+   * says so in as many words — "The ledger has an escape hatch for exactly
+   * this and it was dead code: `Corpses.update` guards on `e.disposed`, and
+   * `Enemy.dispose` never wrote it — only `Player` does. Both halves are
+   * fixed, because either alone leaves the other reader wrong." **ONE HALF
+   * WAS FIXED.** `grep -rn '\.disposed' src/` found the reader in Corpses.js,
+   * the writer in Player.js, and nothing here.
+   *
+   * What the missing line costs, and it is not the wave reset the note was
+   * about — it is ORDINARY PLAY. `update` returns `this.dying < 40`, so
+   * `World.update` disposes every corpse forty seconds after it fell and
+   * splices it out of `world.enemies`. The ledger holds it regardless: `dead`
+   * is still true and `disposed` was undefined, so the entry is immortal.
+   * Measured on colosseum/waves, one scripted Jedi, 900 game-seconds:
+   *
+   *     t=120s   20 corpses,  7 ghosts
+   *     t=240s   20 corpses, 17 ghosts
+   *     t=420s   20 corpses, 20 GHOSTS   — and it never moves again
+   *
+   * Seven minutes in, EVERY slot of a twenty-corpse budget is a body that has
+   * already been torn down. `live.length > this.budget` is then false forever,
+   * so nothing sinks, and each new corpse arrives into a ledger that is
+   * already full: the field a player fights on keeps no dead at all, which is
+   * the exact complaint the budget was built to answer ("bodies vanishing
+   * under your blade" — see Corpses.js's own note on RECENCY). Twenty whole
+   * Enemy graphs — rig, actor, bodies map, saber, garments — are retained
+   * behind them until the level unloads, and every one is `worth()`-ranked
+   * against real corpses on every frame.
+   *
+   * IDEMPOTENT, TOO, because the sink path ends in `e.dispose?.()` and a ghost
+   * that got there had already been disposed once. Everything below either
+   * nulls what it frees or is safe twice, but "safe by inspection at eleven
+   * call sites" is not a contract — this is.
+   */
   dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    /* …and the grind ledger, which is keyed on this body's id and nothing
+     * else. `BladeContactSolver` holds `progress`, `touched` and `cooldown`
+     * for every capsule a blade has ever grazed, and only a COMPLETED cut
+     * clears them (World._applyBladeEvent) — so every bone the player started
+     * on and did not finish is a key that outlives the body. `Waves`'s room
+     * cull already calls this on a body it retires; a body that dies does not
+     * go through that path. */
+    this.world?.bladeSolver?.clearTarget?.(this.id);
+    /* …and the cohort's instance slot, for a body torn down WITHOUT dying —
+     * `World.restartWave` and `Waves`'s room cull both dispose living bodies,
+     * and neither goes through `die()`. `leave` is a no-op on a body that was
+     * never in one. */
+    if (this._l3) this.world?.cohorts?.leave?.(this);
     // Modifier fittings first. The bone-parented ones (plates, core, standard)
     // are freed by the rig's own traverse — they are children of bones — so
     // only the scene-parented ones and the cloned materials are ours to undo.
@@ -6191,6 +8181,21 @@ const SEVERANCE = {
   hull: { budget: 1.00 },
   leg: { budget: 1.10 },
   arm: { budget: 1.00 },
+  /**
+   * A WING, AND IT IS PRICED UNDER AN ARM ON PURPOSE.
+   *
+   * `budget` is what the whole PAIR is worth, divided by how many of them the
+   * body has, so 0.80 says two wings together are four fifths of what two legs
+   * are — a wing is a spar and a membrane, not a load path. What makes taking
+   * one worth more than the number is that it is not only damage: the body it
+   * belongs to cannot fly on one, and everything a flyer is good for is in the
+   * air. See src/game/Flight.js, which owns that consequence; this table owns
+   * only the health.
+   *
+   * A role with no price throws (see `severance`), which is why this line was
+   * written on the same day the first winged body was, and not after it.
+   */
+  wing: { budget: 0.80 },
 };
 
 /**

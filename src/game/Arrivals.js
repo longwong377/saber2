@@ -56,6 +56,7 @@ import * as THREE from 'three';
 import { clamp, lerp, damp, smoothstep, makeRng, TAU } from '../engine/MathUtil.js';
 import { audio } from '../engine/Audio.js';
 import { spawnClear, bladeClear } from './Spawn.js';
+import { armyForOrder, opposingArmy } from './Databank.js';
 
 /**
  * THE SHIP'S MODEL, INJECTED — and the direction of the arrow is the whole
@@ -81,6 +82,34 @@ let _shipModel = null;
 export function setDropshipModel(fn) { _shipModel = typeof fn === 'function' ? fn : null; }
 
 /**
+ * …AND THE OTHER SHIP, WHICH IS A DIFFERENT SHIP ON PURPOSE.
+ *
+ * The gunship above delivers ENEMIES: it comes down, hovers, drops a squad and
+ * climbs away, and nobody is ever inside it. `Extraction` flies the one the
+ * player BOARDS, and the player's note is the whole reason those cannot be the
+ * same hull: "the transports are closed at the sides, you can't see yourself or
+ * your troops it's completely blocked". A gunship's bay is a dark plate between
+ * two rails — see `buildGunship` — with no aperture and no interior, because it
+ * never needed one.
+ *
+ * `buildTransport` has a bay you stand in, a ramp, two sliding doors and two
+ * pilots. It is more than twice the ship in every sense including cost, and
+ * exactly one is ever in the world at a time, which is what makes that
+ * affordable. `Levels.js` registers both, from the same place, for the reason
+ * the note above gives about the direction of the import.
+ */
+let _transportModel = null;
+export function setTransportModel(fn) { _transportModel = typeof fn === 'function' ? fn : null; }
+
+/** And the capital ship the insertion leaves. Same seam, same reason. */
+let _capitalModel = null;
+export function setCapitalModel(fn) { _capitalModel = typeof fn === 'function' ? fn : null; }
+export function capitalModel(side) {
+  if (!_capitalModel) return null;
+  try { return _capitalModel({ side }); } catch (e) { return null; }
+}
+
+/**
  * THE SAME SHIP, FOR THE ONE THING THAT IS NOT AN ARRIVAL.
  *
  * `src/game/Extraction.js` flies the transport the player BOARDS, and it needs
@@ -94,9 +123,42 @@ export function setDropshipModel(fn) { _shipModel = typeof fn === 'function' ? f
  * Returns null when nothing is registered, which is every headless check that
  * does not import `Levels.js`; the caller falls back to primitives.
  */
-export function dropshipModel() {
+export function dropshipModel(side) {
   if (!_shipModel) return null;
-  try { return _shipModel(); } catch (e) { return null; }
+  /* `side` IS PASSED ON RATHER THAN BRANCHED ON — the same rule the transport
+   * door below states in full. There are two gunships now and this file
+   * resolves neither: `Vehicles.js` owns the table, and a lookup here would be
+   * a second copy of it (HANDOFF §2.3). */
+  try { return _shipModel({ side }); } catch (e) { return null; }
+}
+
+/**
+ * The transport, for `Extraction`. Falls back to the gunship rather than to
+ * primitives when nothing is registered — a check that has imported Vehicles
+ * but not Levels still gets a hull — and to null after that, which is every
+ * headless suite and which the director already handles.
+ *
+ * ── `side` IS THE ONLY ARGUMENT, AND IT IS PASSED ON RATHER THAN BRANCHED ON
+ *
+ * The player, having played a Sith: "sith side still gets picked up by the
+ * same transports that belong to the republic canonically". There are two
+ * hulls now and this file resolves neither of them — it hands the army id
+ * through to the registered builder and lets `Vehicles.js` pick, because that
+ * is where the hulls are and because a lookup here would be the second copy of
+ * a table that already exists there (HANDOFF §2.3). An `undefined` side is a
+ * legal call and gets whatever the builder's own default is, which is what
+ * every headless check that asks for a hull without a world will do.
+ *
+ * The gunship fallback ignores it. That is correct rather than sloppy: the
+ * fallback exists for a tree with no transport registered at all, and a
+ * faction-correct hull is not something it can offer.
+ */
+export function transportModel(side) {
+  for (const fn of [_transportModel, _shipModel]) {
+    if (!fn) continue;
+    try { const m = fn({ side }); if (m) return m; } catch (e) { /* try the next */ }
+  }
+  return null;
 }
 
 const rng = makeRng(20931);
@@ -329,8 +391,28 @@ class Arrival {
      * produce its wave, and a model that throws must not take the arrival with
      * it.
      */
+    /**
+     * WHOSE GUNSHIP IS THIS? THE ENEMY'S — and it used to be everybody's.
+     *
+     * This ship delivers the WAVE, so it belongs to whoever the wave belongs
+     * to, which is the army the player is not leading. Before this there was
+     * one hull and both sides flew it: a Jedi's droid enemies came down out of
+     * a Republic gunship, which is the player's own complaint about transports
+     * ("sith side still gets picked up by the same transports that belong to
+     * the republic canonically") pointed at the other player and one scene
+     * over. The lane that gave the Confederacy a transport left this seam
+     * ready and said so.
+     *
+     * `armyForOrder` is the same single statement of the mapping that
+     * `Command.sideForOrder` and `WaveDirector.myArmy` both read; `opposingArmy`
+     * is the other side of the war. A Grey leads neither, so `opposingArmy`
+     * answers null and the builder's own default hull arrives — which is
+     * correct rather than lazy: there is no side to be wrong about.
+     */
+    const mine = armyForOrder(this.world?.settings?.order ?? null);
+    const foe = opposingArmy(mine);
     let ship = null;
-    try { ship = _shipModel ? _shipModel() : null; } catch (e) { ship = null; }
+    try { ship = _shipModel ? _shipModel({ side: foe }) : null; } catch (e) { ship = null; }
     if (ship) {
       g.add(ship);
       this._model = ship;

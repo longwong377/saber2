@@ -450,6 +450,87 @@ export async function run({ check, assert }) {
       + `and a ${ceiling.toFixed(1)} m ceiling`;
   });
 
+  check('powers: a crowd of shoves cannot move a body faster than the hardest one of them', () => {
+    /**
+     * WHAT TWENTY SHOVES ON ONE FRAME COST, AND WHY THE CHECK ABOVE COULD NOT
+     * SEE IT.
+     *
+     * That check pins how far ONE shove carries, and it has to take the push
+     * off the caster — "so the peak is one shove's and not two stacked" — to
+     * get a clean number. The thing it steps around is the defect: nothing
+     * bounded the stack. `applyKnockback` did `velocity.add(impulse)`, so N
+     * shoves in one frame were N times the impulse, and the population that
+     * finds that out is a RING, which the game fields as a matter of course.
+     *
+     * Measured before the bound, on the colosseum with twenty acolytes spawned
+     * together against an idle player: they are twenty identical bodies running
+     * one brain, so they all reach `pressed` on the same frame and nineteen
+     * pushes land inside frame 166. The ring is symmetric, its horizontal
+     * halves cancel exactly, and its `PUSH_LIFT` halves add — 19 x 10 m/s of
+     * pure lift, out at 190 m/s, apex **718 m**. tools/checks/cloth-cost.mjs
+     * met it as "0 of 20 enemies inside the cloth cut" and spent two sessions
+     * blaming the harness for holding two Worlds at once.
+     *
+     * SO THE SUBJECT HERE IS THE RATIO AND NOT A DISTANCE. Both halves of the
+     * bound are asked separately because a ring answers one of them for free:
+     * capping the SPEED alone leaves 27.9 m/s of surviving lift and a 16 m
+     * launch, because the only thing a symmetric ring has left to spend its
+     * length on is up. The comparison is against the same fixture driven with
+     * ONE shove, so nothing here is a constant that can drift away from
+     * `PUSH_SPEED`.
+     */
+    const ring = (n) => {
+      const { w, p, e, ctx } = bench('master', 2.2, 20);
+      e.breakCast();
+      /* An empty bar and a guard that has not already been beaten: the worst
+       * case for the stack, and the one the check above calls "bare". Damage 0
+       * because the subject is the shove — twenty shoves' worth of hp would
+       * kill the fixture and prove nothing about its velocity. */
+      p.staggerTimer = 0;
+      p.force = 0;
+      p.velocity.set(0, 0, 0);
+      const y0 = p.position.y;
+      const at = e.position.clone();
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2;
+        p.applyKnockback(new THREE.Vector3(Math.cos(a), 0, Math.sin(a))
+          .multiplyScalar(PUSH_SPEED).setY(PUSH_LIFT), 0, e);
+      }
+      const speed = p.velocity.length();
+      let apex = 0, carried = 0;
+      for (let i = 0; i < 240; i++) {
+        ctx.time = w.time = i / 60;
+        p.update(1 / 60, ctx);
+        e.position.copy(at); e.velocity.set(0, 0, 0);
+        apex = Math.max(apex, p.position.y - y0);
+        carried = Math.max(carried, Math.hypot(p.position.x, p.position.z));
+      }
+      return { speed, apex, carried };
+    };
+    const one = ring(1), many = ring(20);
+    const hardest = Math.hypot(PUSH_SPEED, PUSH_LIFT);
+
+    assert(many.speed <= hardest + 0.01,
+      `twenty shoves landing on one frame left the body at ${many.speed.toFixed(1)} m/s against the `
+      + `${hardest.toFixed(1)} m/s of a single one. Impulses are stacking: N shoves are N times the `
+      + 'shove, and a ring of duellists is a population the game fields every wave');
+    assert(many.apex <= one.apex * 1.25 + 0.05,
+      `a ring of twenty shoves threw the body ${many.apex.toFixed(2)} m up against ${one.apex.toFixed(2)} m `
+      + 'for one. A symmetric ring cancels its own horizontals, so every metre of a stacked shove is '
+      + 'spent on LIFT — this is the half of the bound a speed clamp alone does not cover, and '
+      + 'unbounded it is 718 m');
+    /* AND THE ONE-SHOVE ROW IS STILL THE ONE THE SIZING WAS DONE ON, which is
+     * what says the bound did not buy this by making every shove smaller. */
+    assert(one.speed > hardest - 0.01 && one.carried > ENEMY_POWERS.pull.band[0],
+      `a single shove now leaves the body at ${one.speed.toFixed(1)} m/s and carries it `
+      + `${one.carried.toFixed(2)} m — the bound has changed what one shove does, and the whole of `
+      + 'the sizing above rests on it not having');
+
+    return `one shove ${one.speed.toFixed(1)} m/s → ${one.carried.toFixed(2)} m out, ${one.apex.toFixed(2)} m up; `
+      + `twenty on one frame ${many.speed.toFixed(1)} m/s → ${many.apex.toFixed(2)} m up `
+      + `(unbounded: 190 m/s and 718 m)`;
+  });
+
   /* ══ 2. can a cast be broken? ══════════════════════════════════════ */
 
   check('powers: a stagger BREAKS a wind-up instead of freezing it', () => {
@@ -463,7 +544,13 @@ export async function run({ check, assert }) {
       assert(e._castTimer > 0, 'the fixture never reached a wind-up, so it proves nothing');
       if (counter === 'stun') e.stun(0.5, V(0, 0, 1), 1);
       else if (counter === 'push') e.applyKnockback(V(0, 0, 14).setY(6), 9, null);
-      else if (counter === 'grip') e.gripped = true;
+      /* THROUGH THE DOOR, and this is not a cosmetic edit. `gripped` used to be
+       * a latch anyone could set; it is a LEASE now (`Enemy.hold`), because a
+       * hold whose holder went away stranded the body limp and invisible for
+       * the rest of the level — tools/checks/ghosts.mjs has the whole account.
+       * A raw `= true` here expires on the very next `_tickGetUp`, so the
+       * fixture would be measuring a grip that had already been let go of. */
+      else if (counter === 'grip') e.hold();
       else if (counter === 'lightning') e.damage(46, e.position, null, 'lightning');
       else e.applyKnockback(V(0, 0, 22).setY(9), 14, null);
       let arrived = false;
@@ -621,7 +708,7 @@ export async function run({ check, assert }) {
       const { e } = bench('master');
       if (open === 'stun') e.stun(0.6, V(0, 0, 1), 1.4);
       else if (open === 'topple') e.topple();
-      else if (open === 'gripped') e.gripped = true;
+      else if (open === 'gripped') e.hold();
       else e.disarmed = true;
       cutOnce(e, torsoCap(e));
       rows.push({ open, dead: e.dead });
@@ -855,5 +942,174 @@ export async function run({ check, assert }) {
     const cheapest = Math.min(...Object.values(ENEMY_POWERS).map(P => P.cost));
     return `${Object.keys(ENEMY_POWERS).length} verbs priced off POWER_COST; regen ${FORCE_REGEN}/s `
       + `against a cheapest verb of ${cheapest}`;
+  });
+
+  check('powers: the mend goes to the man you are aiming at, and stands him up', async () => {
+    /**
+     * The player: "remind me how to heal allies."
+     *
+     * The honest answer was that you could not. `forceHeal` healed exactly one
+     * body — yours — and the only thing in the whole game that mended a
+     * trooper was `Command.reviveNear`, reachable through the Resupply
+     * stratagem: a code you spell out on the movement keys, a pod that flies
+     * in, and a radius. A commander who has to call orbital support to help the
+     * man next to him is a commander who does not help him.
+     *
+     * It is the same channel now — three seconds of standing still, the same
+     * cost, the same interrupt — pointed at somebody else. Three properties,
+     * and the third is the one that makes it worth having in a fight rather
+     * than after one.
+     */
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const { world } = await H.bootWorld({
+      level: 'colosseum', settings: { mode: 'waves', quality: 'low', instantSpawn: true },
+    });
+    const input = H.idleInput();
+    const p = world.player;
+    const ctx = { input, physics: world.physics, terrain: world.terrain, particles: world.particles,
+      enemies: world.enemies, players: world.players };
+    const at = new THREE.Vector3(p.position.x, p.position.y, p.position.z - 6);
+    const mate = world.spawnEnemy('trooper', at);
+    assert(mate, 'no trooper spawned');
+    mate.team = p.team;                                  // one of yours
+    for (let i = 0; i < 20; i++) world.update(1 / 60, input);
+
+    /* HURT, AND DOWN. Both halves of what a player means by a man who needs
+     * help, and the ragdoll is the half `reviveNear` handles too. */
+    mate.hp = mate.maxHp * 0.3;
+    mate.actor?.goRagdoll?.(mate.velocity.clone(), null);
+    const before = mate.hp;
+    p.force = p.maxForce = 500;
+    p.aimDir.subVectors(mate.position, p.chest).normalize();
+    p.forceHeal(ctx);
+    assert(p.healTarget === mate,
+      'the channel opened on the player rather than on the wounded ally under the reticle');
+    let n = 0;
+    while (n < 60 * 6 && p.healing !== null) { world.update(1 / 60, input); n++; }
+    assert(mate.hp > before + 1,
+      `the ally went ${before.toFixed(0)} → ${mate.hp.toFixed(0)} hp — the mend paid for itself and `
+      + 'did nothing');
+    assert(!mate.actor?.ragdolled, 'the mend finished and left the man lying on the ground');
+
+    /* AND AIMED AT NOTHING IT IS STILL YOUR OWN HEAL. */
+    p.cooldowns.heal = 0;
+    p.hp = p.maxHp * 0.5;
+    p.aimDir.set(0, 0.6, 1).normalize();                 // at the sky, away from him
+    p.forceHeal(ctx);
+    assert(p.healing !== null, 'the heal refused to open on the player with nobody in front of them');
+    assert(!p.healTarget, 'aimed at empty sky, the channel picked a patient anyway');
+    const mine = p.hp;
+    for (let i = 0; i < 60 * 4 && p.healing !== null; i++) world.update(1 / 60, input);
+    assert(p.hp > mine + 1, `the player's own heal went ${mine.toFixed(0)} → ${p.hp.toFixed(0)}`);
+    return `ally ${before.toFixed(0)} → ${mate.hp.toFixed(0)} hp and back on his feet; `
+      + `self ${mine.toFixed(0)} → ${p.hp.toFixed(0)}`;
+  });
+
+  check('powers: with two hurt men under the reticle the mend takes the one on the floor', async () => {
+    /**
+     * THE PREFERENCE THE PICKER ALREADY CLAIMED AND DID NOT HAVE.
+     *
+     * `_mendTarget` carries the sentence "A LIMP MAN OUTRANKS A HURT ONE at
+     * the same angle: he is the one who is out of the fight entirely", and it
+     * is the right rule — a man on the floor is out of the battle and a man on
+     * his feet is still in it, and the mend is the only thing either of them
+     * can be given. The code under that sentence read
+     * `bestScore = dot - (ragdolled ? 0.05 : 0)`, which is the rule with the
+     * sign the wrong way round: `bestScore` is the BAR the next candidate must
+     * clear, so taking 0.05 off it made the limp man easier to displace rather
+     * than harder to beat.
+     *
+     * Measured as a CHOICE and not as an arithmetic: two wounded troopers under
+     * one reticle, the limp one at the BETTER angle and first in the list, and
+     * the upright one was picked anyway. So in the only situation the
+     * preference exists for — somebody standing over a casualty — the casualty
+     * could not be reached at all.
+     */
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const { world } = await H.bootWorld({
+      level: 'colosseum', settings: { mode: 'waves', quality: 'low', instantSpawn: true },
+    });
+    const input = H.idleInput();
+    const p = world.player;
+    const ctx = { input, physics: world.physics, terrain: world.terrain, particles: world.particles,
+      enemies: world.enemies, players: world.players };
+    const put = (dx, dz) => {
+      const e = world.spawnEnemy('trooper',
+        new THREE.Vector3(p.position.x + dx, p.position.y, p.position.z + dz));
+      assert(e, 'no trooper spawned');
+      e.team = p.team;
+      e.hp = e.maxHp * 0.4;
+      return e;
+    };
+    /* DEAD AHEAD, and the man beside him a little off it. */
+    const limp = put(0, -8);
+    const upright = put(1.0, -8);
+    for (let i = 0; i < 20; i++) world.update(1 / 60, input);
+    limp.actor?.goRagdoll?.(new THREE.Vector3(), null);
+    /* The ragdoll settles a body wherever its limbs land; put him back on the
+     * line so this measures the PREFERENCE and not where he rolled to. */
+    limp.position.set(p.position.x, limp.position.y, p.position.z - 8);
+    p.aimDir.set(0, 0, -1).normalize();
+
+    const dotOf = (e) => e.position.clone().sub(p.chest).normalize().dot(p.aimDir);
+    const dLimp = dotOf(limp), dUp = dotOf(upright);
+    assert(dLimp > dUp,
+      `the limp man is not the better-aimed of the two (${dLimp.toFixed(4)} vs ${dUp.toFixed(4)}) — `
+      + 'this check cannot say anything about preference until he is');
+    assert(limp.actor?.ragdolled, 'the man who is supposed to be on the floor is standing');
+
+    const pick = p._mendTarget(ctx);
+    assert(pick === limp,
+      `the mend chose the man on his FEET at ${dUp.toFixed(4)} over the one on the floor at `
+      + `${dLimp.toFixed(4)} — see _mendTarget: the cone admits, the score ranks, and the limp `
+      + "man's edge belongs on his own score rather than off everybody else's bar");
+    /* AND THE UPRIGHT MAN IS STILL REACHABLE when he is the only one there —
+     * a preference that swallowed the ordinary case would be worse. */
+    limp.hp = limp.maxHp;
+    assert(p._mendTarget(ctx) === upright,
+      'with the limp man whole again the mend found nobody, so the preference is a filter');
+    return `limp at ${dLimp.toFixed(4)} beats upright at ${dUp.toFixed(4)}; upright still picked alone`;
+  });
+
+  check('powers: a mend cannot be spent on an enemy, and breaks when you are hit', async () => {
+    /* THE TWO REFUSALS. A heal that reached hostiles would be a bug you could
+     * see from the menu; a heal that could not be interrupted would make the
+     * three seconds free, and the three seconds ARE the design. */
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const { world } = await H.bootWorld({
+      level: 'colosseum', settings: { mode: 'waves', quality: 'low', instantSpawn: true },
+    });
+    const input = H.idleInput();
+    const p = world.player;
+    const ctx = { input, physics: world.physics, terrain: world.terrain, particles: world.particles,
+      enemies: world.enemies, players: world.players };
+    const foe = world.spawnEnemy('b1', new THREE.Vector3(p.position.x, p.position.y, p.position.z - 5));
+    for (let i = 0; i < 20; i++) world.update(1 / 60, input);
+    foe.hp = foe.maxHp * 0.2;
+    p.force = p.maxForce = 500;
+    p.hp = p.maxHp * 0.5;
+    p.aimDir.subVectors(foe.position, p.chest).normalize();
+    p.forceHeal(ctx);
+    assert(!p.healTarget, 'the mend picked a HOSTILE as its patient');
+    assert(p.healing !== null, 'and it did not fall back to healing the player');
+
+    /* Now the interrupt, on an ally: one bolt's worth of damage to YOU. */
+    const mate = world.spawnEnemy('trooper', new THREE.Vector3(p.position.x + 2, p.position.y, p.position.z - 4));
+    mate.team = p.team;
+    for (let i = 0; i < 10; i++) world.update(1 / 60, input);
+    p._endHeal(false);
+    p.cooldowns.heal = 0;
+    mate.hp = mate.maxHp * 0.4;
+    p.aimDir.subVectors(mate.position, p.chest).normalize();
+    p.forceHeal(ctx);
+    assert(p.healTarget === mate, 'the mend did not open on the ally');
+    for (let i = 0; i < 12; i++) world.update(1 / 60, input);
+    p.damage(6, p.position, foe, 'bolt');
+    world.update(1 / 60, input);
+    assert(p.healing === null, 'a hit landed on the healer and the mend carried on regardless');
+    return 'a hostile is not a patient; a hit on the healer ends it';
   });
 }

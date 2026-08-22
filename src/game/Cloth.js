@@ -28,6 +28,18 @@
 import * as THREE from 'three';
 import { clamp, lerp, makeRng } from '../engine/MathUtil.js';
 import { limbScale } from './Rig.js';
+/**
+ * THE HOOD IDS, AND ONLY THEM.
+ *
+ * The wardrobe owns the vocabulary (see WARDROBE below) and Bodies.js owns the
+ * geometry, so `wardrobeOf` has to be able to ask which hood ids exist without
+ * this file holding a second list of them — HANDOFF §2.3's hand-maintained
+ * table beside its generated twin, which is the class of defect this project
+ * has now found eight instances of. One import edge is cheaper than that list,
+ * and it does not close a cycle: Bodies.js imports Rig, Textures and MathUtil
+ * and has never imported this file.
+ */
+import { HOOD_CUTS } from './Bodies.js';
 
 /**
  * THE SCALE A GARMENT'S *LENGTH* TAKES, WHICH IS NOT THE ONE ITS WIDTH TAKES.
@@ -1542,6 +1554,12 @@ export const SASH_CUTS = [
 const SASH_BY_ID = new Map(SASH_CUTS.map((c) => [c.id, c]));
 export function sashCut(id) { return SASH_BY_ID.get(id) || null; }
 
+/* The hood cuts are Bodies.js's, because their numbers are geometry and not
+ * cloth parameters — see the import at the top of this file. Indexed here for
+ * the same reason the four tables above are: `wardrobeOf` must be able to
+ * refuse an id nothing recognises. */
+const HOOD_BY_ID = new Map(HOOD_CUTS.map((c) => [c.id, c]));
+
 /**
  * THE TONES A PIECE MAY BE DYED, and why they are not ROBE_COLORS.
  *
@@ -1587,6 +1605,22 @@ export const WARDROBE = {
   cape: 'cloak',
   tabard: 'temple',
   sash: 'obi',
+  /**
+   * THE HOOD, and the default is not having one.
+   *
+   * The note two hundred lines above says a hood is "the one thing this file
+   * cannot fake at all" and that "the anchor belongs to whoever owns the
+   * head". It does now: `HOOD_CUTS` and `hoodOn` in src/game/Bodies.js build
+   * one as rigid geometry on the head BONE, for the reasons written there, and
+   * this key is the id of the row a player picked.
+   *
+   * `'none'` and not a cut, unlike every other piece here, because a hood is
+   * the one garment in the wardrobe that NOTHING in this game wore before it
+   * existed. Defaulting it to cloth would put a hood on every character in
+   * every saved profile, which is not a default — it is a change of costume
+   * applied to people who did not ask for one.
+   */
+  hood: 'none',
   capeTone: -1,
   tunicTone: -1,
   tabardTone: -1,
@@ -1613,6 +1647,7 @@ export function wardrobeOf(w) {
     cape: id(CAPE_BY_ID, src.cape, WARDROBE.cape),
     tabard: id(TABARD_BY_ID, src.tabard, WARDROBE.tabard),
     sash: id(SASH_BY_ID, src.sash, WARDROBE.sash),
+    hood: id(HOOD_BY_ID, src.hood, WARDROBE.hood),
     capeTone: tone(src.capeTone),
     tunicTone: tone(src.tunicTone),
     tabardTone: tone(src.tabardTone),

@@ -174,6 +174,9 @@ function clockWorld(settings) {
     _updateCatch: World.prototype._updateCatch,
     _resolveBlades: World.prototype._resolveBlades,
     _bladeEntries: World.prototype._bladeEntries,
+    // `_bladeEntries` reaches `this._screenFor` for every lit blade — borrow
+    // the one and you have borrowed the other. See pvp.mjs's note.
+    _screenFor: World.prototype._screenFor,
   };
   applyFeelSettings(w, settings);
   return w;
@@ -1917,10 +1920,7 @@ export async function run({ check, assert }) {
       'rules',
       // Whose name is over whose head — a row of cards on the Interface
       // panel, written by `_pick('troopNames', …)` like every other picker.
-      'troopNames',
-      // One hand on the hilt in first person, or both. A two-card row on the
-      // Interface panel, written by `_pick('fpHands', …)`.
-      'fpHands'];
+      'troopNames'];
     /**
      * The settings that are TYPED — a text box rather than a slider, a
      * checkbox or a row of cards. One so far: the co-op name, which is the

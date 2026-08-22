@@ -104,6 +104,21 @@ class Element {
     return node;
   }
   remove() { this.parentNode?.removeChild(this); }
+  /**
+   * `el.after(node)` — the one insertion verb the menu uses that is not
+   * appendChild or insertBefore. `Menu._buildPauseTraining` has always called
+   * it (`this.el.pauseStats.after(box)`), which meant `showPause` threw the
+   * moment it was driven on this page and NOTHING in the suite had ever driven
+   * it: the pause card is the only card in the game that had never been raised
+   * outside a browser. Sibling insertion, so it goes through the parent's own
+   * insertBefore and inherits the indexing with it.
+   */
+  after(node) {
+    const p = this.parentNode;
+    if (!p) return node;
+    const i = p.childNodes.indexOf(this);
+    return p.insertBefore(node, p.childNodes[i + 1] || null);
+  }
 
   /* ── attributes ───────────────────────────────────────────────────── */
   setAttribute(name, value) {
@@ -151,7 +166,24 @@ class Element {
       toString: () => el.className,
     };
   }
-  get tabIndex() { return this.attrs.has('tabindex') ? Number(this.attrs.get('tabindex')) : -1; }
+  /**
+   * −1 EXCEPT WHERE A BROWSER SAYS 0, and the exception is the whole point.
+   *
+   * `tabIndex` answered −1 for every element with no `tabindex` attribute,
+   * which is right for a `<div>` and WRONG for a form control: a browser gives
+   * `<input>`, `<button>`, `<select>`, `<textarea>` and `<a href>` a default of
+   * 0 because they are focusable without being asked. `Menu._padFocusable`
+   * filters on exactly this — `if (el.disabled || el.tabIndex < 0) return
+   * false` — so on this page every slider and every checkbox in the game
+   * dropped out of the pad's walk, and a check driving a controller measured
+   * an empty list and could not tell that from a controller that cannot reach
+   * them. Measured: #menu came back 453 controls and 0 of its 33 sliders.
+   */
+  get tabIndex() {
+    if (this.attrs.has('tabindex')) return Number(this.attrs.get('tabindex'));
+    if (this.localName === 'a') return this.attrs.has('href') ? 0 : -1;
+    return ['input', 'button', 'select', 'textarea'].includes(this.localName) ? 0 : -1;
+  }
   set tabIndex(v) { this.setAttribute('tabindex', String(v)); }
   get title() { return this.attrs.get('title') || ''; }
   set title(v) { this.setAttribute('title', v); }

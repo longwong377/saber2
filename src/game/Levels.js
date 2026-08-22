@@ -7,6 +7,19 @@
  */
 
 import * as THREE from 'three';
+/**
+ * FIRST IN THE LIST, AND THAT IS NOT TIDINESS.
+ *
+ * Session.js imports NOTHING — see its own header, which is the property that
+ * lets the director, the menu and this file all ask it the same question
+ * without any of them reaching through the others. This file sits inside a
+ * cycle with Command.js and Waves.js, and an import added into the middle of
+ * the list below moves where that cycle closes: placed after Waves.js it threw
+ * `Cannot access 'COMMAND_UNITS' before initialization` on the `Object.assign`
+ * that folds the Command roster into ARCHETYPES. A leaf with no edges of its
+ * own cannot do that from the front of the list.
+ */
+import { rollGround } from './Session.js';
 import {
   makeCrate, makeBarrel, makePillar, makeVaporator, makeSpire, makeConsole,
   addWall, addRock, BlastDoor, propMaterials, Kit,
@@ -32,9 +45,15 @@ import { MODES, SET_PIECE } from './Waves.js';
 import { TOUGHNESS } from './Combat.js';
 import { buildBodyguard, buildQuadruped } from './Bodies.js';
 import { attachRiders, saddleThreat } from './Riders.js';
+/* The winged rung and the model that flies it. `GEONOSIAN_UNITS` is
+ * assigned into ARCHETYPES beside COMMAND_UNITS below, for the reason that
+ * assignment already gives: this is the module that decides what bodies
+ * exist for everything not declared in Enemy.js. */
+import { GEONOSIAN_UNITS, attachFlight } from './Flight.js';
+import { emplaceGun } from './Emplacement.js';
 import { attachForest } from '../world/Trees.js';
 import { attachHazard } from '../world/Hazard.js';
-import { addSmokeColumns, smokeSites } from '../world/Smoke.js';
+import { addSmokeColumns, smokeSites, smokeAir } from '../world/Smoke.js';
 /**
  * COMMAND'S SEVEN BODIES, registered from here for exactly the reason the
  * general's set-piece at the foot of this file is: "a level and the set-piece it
@@ -71,15 +90,23 @@ import { COMMAND_UNITS } from './Command.js';
  * `SABER_CHECK_ORDER=reverse` would fail. Naming them in a pool is what makes
  * both orders agree.
  */
-import { buildGunship } from './Vehicles.js';
-import { setDropshipModel } from './Arrivals.js';
+import { buildTransport, buildCapitalShip, buildSideGunship } from './Vehicles.js';
+import { setDropshipModel, setTransportModel, setCapitalModel } from './Arrivals.js';
 
 /* …and the gunship the arrival director flies. Handed IN rather than imported
  * by Arrivals.js: that file is reached from Enemy.js via Dojo.js and Waves.js,
  * so an edge from it to Vehicles.js closes a cycle and runs Vehicles'
  * `Object.assign(ARCHETYPES, …)` inside ARCHETYPES' own temporal dead zone. It
  * was tried; it is a ReferenceError on boot. See `setDropshipModel`. */
-setDropshipModel(buildGunship);
+/* `buildSideGunship` and not `buildGunship`: there are two now — the clone
+ * gunship and the Confederacy's HMP — and the ARMY decides which arrives. See
+ * `Arrivals._makeDropship`, which asks for the side the player is NOT on. */
+setDropshipModel(buildSideGunship);
+/* …AND THE ONE THE PLAYER RIDES IN, which is a different hull for a reason
+ * `setTransportModel`'s own note gives: a gunship's troop bay is a dark plate
+ * between two rails and the player's note is that you cannot see out of it. */
+setTransportModel(buildTransport);
+setCapitalModel(buildCapitalShip);
 
 let rng = makeRng(20250805);
 
@@ -101,10 +128,18 @@ let rng = makeRng(20250805);
 const _p = new THREE.Vector3();
 
 /** Polar sample with a density exponent: <1 crowds the centre, >1 the rim. */
-export function polar(rmin, rmax, bias = 1, angle = null) {
+/* AND IT CAN BE DRAWN ROUND SOMEWHERE THAT IS NOT THE ORIGIN. Every level's
+ * dressing is composed round the deploy point and says so by leaving `at`
+ * undefined, which is the origin and is what this has always drawn. What needs
+ * the fourth argument is `src/world/Front.js`: §12.4 puts wrecks "on the
+ * fighting line", and on a bezier front the fighting line is not a bearing
+ * from the origin — it is a point on a curve, and the hulls belong round THAT.
+ * The alternative was a second placement rule inside the front dressing, which
+ * is HANDOFF §2.3 exactly. */
+export function polar(rmin, rmax, bias = 1, angle = null, at = null) {
   const a = angle ?? rng() * TAU;
   const r = lerp(rmin, rmax, Math.pow(rng(), bias));
-  return { x: Math.cos(a) * r, z: Math.sin(a) * r, a, r };
+  return { x: (at?.x ?? 0) + Math.cos(a) * r, z: (at?.z ?? 0) + Math.sin(a) * r, a, r };
 }
 
 /**
@@ -154,7 +189,7 @@ export { spawnClear } from './Spawn.js';
 /** Find a site that passes, or give up rather than force a bad one. */
 export function findSite(world, rmin, rmax, opts = {}) {
   for (let i = 0; i < (opts.tries ?? 14); i++) {
-    const q = polar(rmin, rmax, opts.bias ?? 1, opts.angle);
+    const q = polar(rmin, rmax, opts.bias ?? 1, opts.angle, opts.at);
     if (siteOk(world, q.x, q.z, opts)) {
       _p.set(q.x, world.terrain ? world.terrain.height(q.x, q.z) : 0, q.z);
       return { pos: _p.clone(), a: q.a, r: q.r };
@@ -164,9 +199,19 @@ export function findSite(world, rmin, rmax, opts = {}) {
 }
 
 /**
- * A cluster: one anchor, then satellites falling off around it. This is the
- * workhorse — a camp, a rockfall, a debris field, a stand of trees. `place` is
- * called with (position, indexInCluster, distanceFromAnchor, clusterAngle).
+ * A cluster: one anchor, then satellites falling off around it — a camp, a
+ * rockfall, a debris field, a stand of trees. `place` is called with
+ * (position, indexInCluster, distanceFromAnchor, clusterAngle).
+ *
+ * ORPHANED. This note used to open "this is the workhorse", and nothing in the
+ * game calls it: `roster.mjs` counts the call sites and there are none, in this
+ * file or in any module that imports it. The workhorse is `island()` at 12 call
+ * sites and `findSite()` at 37; a room that wants a scatter round an anchor
+ * writes the loop inline. It is kept for the same reason `works()` below is —
+ * it is placement vocabulary a new room can reach for, and the argument shape
+ * is the paid-for part — but the sentence claiming it was in use was a claim
+ * about the file as it stood before three levels were deleted, and the check
+ * exists so the next one cannot survive that long.
  */
 export function cluster(world, opts, place) {
   const site = findSite(world, opts.rmin ?? 20, opts.rmax ?? 80, opts);
@@ -237,6 +282,13 @@ export function drift(world, opts, place) {
  * A line of things — a colonnade, a wall run, a ridge of wreckage. Straight
  * scatter never produces one, and a single line does more to make a space feel
  * built than fifty scattered objects.
+ *
+ * ORPHANED, and the sentence above is an argument for a thing no room makes:
+ * nothing in the tree calls this. Its one likely caller, `templeColonnade`
+ * below, is orphaned too — the Temple was deleted in the roster cull — so the
+ * whole "line of things" vocabulary went with that room and nobody noticed,
+ * because an unused export is not a syntax error. Kept as vocabulary; declared
+ * here so `roster.mjs` can hold the declaration rather than the silence.
  */
 export function run(world, from, to, count, place, opts = {}) {
   const jitter = opts.jitter ?? 0;
@@ -287,6 +339,33 @@ export function beginDressing(world, seed) {
    * line would be a level whose sea is scenery again.
    */
   if (world.level?.water) attachHazard(world, world.level.water);
+  /**
+   * AND THE HULL BUILDER, HERE, FOR EVERY GROUND — same argument as the sea.
+   *
+   * `Front.marchFront` grows the front's wreck clusters ONLY when it is handed
+   * the function that builds them, and `CommandDirector.marchTo` reads that
+   * function off `world.strewWrecks`. Geonosis published one at the bottom of
+   * its own `dress`; nothing else did. So on six of the seven grounds THE LINE
+   * rolls, the barrage, the burn, the smoke and the fallen all landed on the
+   * line and the HULLS did not — §12.4's "wrecks belong on the fighting line",
+   * and the mark that carries the picture rather than garnishes it.
+   *
+   * Measured, a whole sitting's worth (5 engagements × 3 clusters) laid on top
+   * of each level's own dressing:
+   *
+   *     alpine   101 → 217 draw calls    drifts   113 → 226    wood  149 → 251
+   *     colosseum 165 → 278              scoria   170 → 284
+   *     mustafar  224 → 314              geonosis 277 → 375  (already paying)
+   *
+   * — 90 to 116 calls a sitting, against `world-immersion`'s bound of 520.
+   *
+   * Published from here rather than from seven `dress()` bodies for the reason
+   * the paragraph above gives about the water: a level that forgot the line is
+   * a level whose front has no wrecks on it, and nothing would have said so. A
+   * level that wants its own builder can still overwrite this after its own
+   * `beginDressing` call.
+   */
+  world.strewWrecks = strewWrecks;
 }
 
 /**
@@ -1018,12 +1097,34 @@ function strewSwampFloor(world, opts = {}) {
  * band an empty level is missing. Placed as clusters, because a hull plate does
  * not land on its own — whatever tore it off scattered the rest of it nearby.
  */
-function strewWrecks(world, opts = {}) {
+/* EXPORTED, AND IT TAKES A BEARING. Both halves are FLAGSHIP.md §12.4's
+ * sentence — "wrecks belong on the fighting line" — expressed as the two
+ * things the function could not previously say. `angle` is forwarded to
+ * `findSite`, which already accepts one and fixes the sample's bearing while
+ * letting the radius fall where it likes; without it every wreck this function
+ * has ever placed was drawn from a full 360 degrees, which is a wreck FIELD
+ * and not a fighting line. The export is what lets the front dressing in
+ * src/world/Front.js grow hulls on the burnt side only without holding a
+ * second copy of the placement rule (HANDOFF §2.3). Nothing about the default
+ * behaviour changes: `opts.angle` undefined is the random bearing it always
+ * drew. */
+export function strewWrecks(world, opts = {}) {
   const n = opts.count ?? 5;
   let placed = 0;
   for (let k = 0; k < n; k++) {
     const site = findSite(world, opts.rmin ?? 55, opts.rmax ?? 150, {
-      clearance: 11, maxSlope: opts.maxSlope ?? 0.42, tries: 20,
+      clearance: 11, maxSlope: opts.maxSlope ?? 0.42, tries: 20, angle: opts.angle,
+      /* FORWARDED, because `siteOk` has no sheet of its own and this is the
+       * one caller that sites on ground it did not choose. `Front.marchFront`
+       * lays hulls wherever the schedule puts the line, and on the Ember Shelf
+       * engagement 1 is 180 m out over ground 45 m BELOW a lava sheet that
+       * sits at +0.55: measured, 12 of 12 hull pieces under it. `findSite`'s
+       * own note says "find a site that passes, or give up rather than force a
+       * bad one", and a hull inside a burning sea is a bad one. */
+      minHeight: opts.minHeight,
+      /* `at` is where the radius band is measured from — the origin unless the
+       * caller is dressing a front that does not pass through it. */
+      at: opts.at,
     });
     if (!site) continue;
     placed++;
@@ -1034,6 +1135,13 @@ function strewWrecks(world, opts = {}) {
       const d = (i - 1.5) * (2.2 + rng() * 1.6);
       const px = site.pos.x + Math.cos(yaw) * d, pz = site.pos.z + Math.sin(yaw) * d;
       const y = world.terrain ? world.terrain.height(px, pz) : 0;
+      /* AND A FRAME SPILLING OFF THE SHORE IS STILL A FRAME IN THE LAVA. The
+       * SITE passes `minHeight`; the frames stand up to 5.7 m either side of
+       * it, and on a coast that is enough to put the end of a ribcage under
+       * the sheet — measured on the Ember Shelf's front, 7 of 226 marks up to
+       * 0.6 m under a sheet that burns. Only when the caller asked for a floor,
+       * so a level's own dressing is unchanged term for term. */
+      if (opts.minHeight !== undefined && y < opts.minHeight) continue;
       const h = 1.4 + rng() * 2.6;
       const len = 3.0 + rng() * 2.4;
       /* Buried to a quarter of its height and tilted no more than 0.16 rad
@@ -1166,10 +1274,21 @@ function works(world, opts = {}) {
    * IT IS ORPHANED AGAIN. The Providence was deleted at the player's request
    * along with the Boarding Bay — "I just tried the boarding bay and the
    * providence and hated them… just remove them" — so this function has no
-   * caller once more and `levels-quality`'s door check reports the fact in its
-   * pass line rather than asserting against it. The arguments below stay as
-   * arguments: they are what a SECOND caller costs, already paid, so the next
-   * room that wants bulkheads reuses this instead of rewriting it.
+   * caller once more. The arguments below stay as arguments: they are what a
+   * SECOND caller costs, already paid, so the next room that wants bulkheads
+   * reuses this instead of rewriting it.
+   *
+   * IT IS NO LONGER THE ONLY BLAST DOOR, AND THAT IS THE PART THAT MATTERED.
+   * `magazine()` below hangs a rank of three on Geonosis — outdoors, in a
+   * revetment cut into the toe of a stack, which is what FLAGSHIP.md §4 means
+   * by "an interior may exist as a feature on an outdoor field — a bunker you
+   * breach". `levels-quality`'s door check asserts again instead of reporting
+   * a hole, and the twenty-second hold DESIGN.md calls a signature mechanic is
+   * reachable in normal play for the first time. What is left orphaned here is
+   * the ROOM, not the mechanic, and this function is deliberately kept: it is
+   * the only bulkhead-and-gantry vocabulary in the tree, it is the sole call
+   * site left for `addGantry`, `addCableRun` and `roof`, and §4's own list of
+   * permitted interiors still includes "a downed cruiser you fight through".
    *
    * The Providence's deck is a
    * different size from the works' floor: its hull closes at 72 m in beam
@@ -1544,6 +1663,304 @@ function works(world, opts = {}) {
 }
 
 /**
+ * A HARDENED MAGAZINE DRIVEN INTO THE TOE OF A STACK — and it is where the
+ * twenty-second door hold went when the two ship levels were deleted.
+ *
+ * ── WHAT WAS WRONG ─────────────────────────────────────────────────────
+ *
+ * DESIGN.md names the hold twice and calls it a signature mechanic: "a blast
+ * door takes twenty seconds of held blade and a shower of molten slag — because
+ * that is how long it should take", and "you drive the blade in, a molten kerf
+ * traces the exact path you carve, slag runs down the metal, and when your
+ * traced loop closes the slug falls out and clangs. Twenty seconds of tension,
+ * entirely player-driven."
+ *
+ * NO LEVEL IN THE GAME HAD ONE. `works()` above is the only `BlastDoor`
+ * construction in the tree and it has had no caller since the Providence was
+ * deleted on the player's word; `levels-quality`'s door check has been printing
+ * "NO LEVEL IN THE GAME BUILDS A BLAST DOOR" in its pass line rather than
+ * asserting, because a check that cannot pass is a check that gets ignored.
+ * `World.doors` was allocated, stepped and handed to the blade solver every
+ * frame of every level and was empty on all seven of them.
+ *
+ * AND THE MECHANIC WOULD NOT HAVE WORKED IF ONE HAD BEEN BUILT. See the note
+ * over `BlastDoor.capsules` in src/world/Props.js: those capsules published
+ * `toughness: Infinity`, which is the solver's word for "unbreakable", so a
+ * blade held against a blast door raised a `clang` on every frame and could
+ * never raise the `grind` that `World._applyBladeEvent` turns into `burn()`.
+ * Every line of the kerf, the slag, the hole and the falling slug was
+ * unreachable. That is fixed there rather than worked around here.
+ *
+ * ── WHY OUTDOORS, AND WHY HERE ─────────────────────────────────────────
+ *
+ * FLAGSHIP.md §4 is the standing rule and the player's own words are in it:
+ * "No completely indoor places. Ever." The clause that follows is this
+ * function's whole licence — "An interior may exist as a *feature on an
+ * outdoor field* — a bunker you breach, a downed cruiser you fight through, a
+ * gun emplacement — but the player must always be able to see out, and no
+ * engagement may take place in a sealed room." So the cells are 5 m deep and
+ * 3.3 m open at the mouth: you step in, the plain and both armies are still
+ * behind you, and there is no door between you and the sky. Measured, a real
+ * Player who walks in through a breached door ends 4.2 m past the plate with
+ * the whole apron behind them.
+ *
+ * ── THE SITE IS THE GROUND'S, NOT AN INVENTION ─────────────────────────
+ *
+ * Geonosis is a deflation plain and its heightfield says so in one line:
+ * `open = smoothstep(66, 106, d)` gates every landform on the map, so NOTHING
+ * on this level rises inside 66 m by construction. Measured over the whole
+ * disc inside 66 m, total relief is 1.75 m (−1.26 at (27, 1) to +0.49 at
+ * (−66, −1)) and the steepest fall anywhere in it is 0.85 m over 11 m. There
+ * is no bank to dig into closer in, and a bunker standing on a berm of its own
+ * invention on a flat plain is a box on a table.
+ *
+ * The toe of the stack north-east of the muster ground is the nearest real
+ * face. Swept over 25 000 placements — face position, face bearing — this one,
+ * and every figure below is off the BUILT heightfield rather than off the
+ * preset's `height()` (the grid is 1.82 m a cell here, which moves a steep toe
+ * by more than a metre — the raw function reads the cut at 2.5 m and the ground
+ * the player stands on has it at 4.1):
+ *
+ *     origin (16, 75), bearing 165°, ground −0.21 m
+ *     relief along the 13.7 m the doors stand on  0.10 m  (dead level)
+ *     ground 5.5 m INTO the hill                 +4.15 m  (the cut)
+ *     ground 10 m into the hill                 +19.2 m   (the butte over it)
+ *     relief across the apron 8 m out             0.11 m  (a floor to fight on)
+ *     range from the muster ground               76.7 m   (inside the walkable
+ *                                                          90 m disc, outside
+ *                                                          the 40 m the level
+ *                                                          keeps clear to form
+ *                                                          up on)
+ *
+ * The cells are 5 m deep because that is where the hill starts: the floor of a
+ * cell is the RAW GROUND, flat at −0.2 m for the first 3 m and then climbing —
+ * +0.3, +0.8 and +1.3 m at the back of the three cells — which is what being
+ * cut into a toe looks like from the inside. Nothing here levels the terrain.
+ *
+ * ── IT DRAWS NOTHING FROM THE LEVEL'S RANDOM STREAM ────────────────────
+ *
+ * Deliberately, and it is why this call sits at the END of `dress` with fixed
+ * coordinates and its own `makeRng`. Every other feature on this level is
+ * placed through `findSite`, which draws from the module `rng` on every
+ * attempt; a new call that reserved a footprint or drew a site would shift
+ * every subsequent draw and move all 41 props and 14 wrecks on Geonosis. The
+ * whole existing layout is byte-for-byte what it was. Measured on the shipped
+ * dressing, the nearest thing already standing is a single loose crate 4.6 m
+ * from the middle of the face, which lands 1.7 m in FRONT of the left-hand
+ * door — ordnance already carried out, and clear of every collider here.
+ *
+ * ── WHAT MAKES IT A FIGHT AND NOT A CHORE ──────────────────────────────
+ *
+ * Three doors, not one. `levels-quality` states the rule — "a level that
+ * builds bulkheads builds a rank of them" — and it is also the better play: a
+ * magazine has cells, each cell is its own twenty seconds, and you choose
+ * whether to spend a second twenty with the field the way it is. Each holds a
+ * cache: a crate stack, drums, and `WarSupport.credit('objective')` on breach,
+ * which is 14 of the 100-point bar. That is the diegetic reading of the
+ * player's own note about the bar — "the level of outside support and
+ * resources that have built up" — taking the other side's stores raises yours.
+ *
+ * The two wing walls on the apron are the shape of the fight. They stand 11 m
+ * out on either flank at 40°, so the ground in front of the doors is a defile:
+ * while you are stood facing a wall for twenty seconds with your back open, the
+ * arc that back is open to is the one you can see over your shoulder rather
+ * than 360°. Take them away and the hold is a mugging.
+ *
+ * The roof deck is the other half. Its top is 5.34 m over the apron, and a full
+ * double Force jump was measured headless at 6.18 m above the take-off point,
+ * so it is 0.84 m inside the highest jump in the game — the same margin the
+ * gantry note above derives, and for the same reason: a deck you cannot reach
+ * is furniture. From it you can see over the wing walls and down onto anything
+ * working its way up the defile.
+ *
+ * @returns the doors it hung, so the caller can say how many there are.
+ */
+function magazine(world, opts = {}) {
+  const T = world.terrain;
+  const M = propMaterials();
+  const seed = opts.seed ?? 9180;
+  const rr = makeRng(seed * 5 + 3);
+  const V = (x, y, z) => new THREE.Vector3(x, y, z);
+
+  /* THE FACE, AND EVERY NUMBER ON IT IS ONE OF FOUR.
+   *
+   * A door is 3.3 × 3.4 — a magazine door, well under `BlastDoor`'s own
+   * 4.4 × 5.0 default, because this one stands in a revetment and not in a
+   * ship's frame. The piers between and either side of the three of them are
+   * 1.9, which is what carries an 18 m deck, so the face is
+   * 4 × 1.9 + 3 × 3.3 = 17.5 m and the two ends of it land at ±8.75.
+   *
+   * THE SIZE USED TO BE WHAT MADE THE HOLD FINISHABLE, AND IT IS NOT ANY MORE
+   * — which is worth recording, because the paragraph that stood here was a
+   * level file compensating for a rule in another file.
+   *
+   * `breachFraction` was a fraction of the PLATE, while the patch a standing
+   * player can reach is a fixed 0.46–0.56 m² of melt whatever the door
+   * measures. So a bigger door was a proportionally longer job for no reason a
+   * player could see, and the doors were cut from 4.0 × 4.4 to 3.3 × 3.4 to get
+   * the breach back inside that patch. `BlastDoor` prices a breach in SQUARE
+   * METRES now (see `MELT_AREA`), so these dimensions answer to the revetment
+   * and to nothing else: the piers, the deck they carry and the 17.5 m of face
+   * they add up to. A door twice this size would take the same twenty seconds.
+   *
+   * The measurement that forced the old shrink is also worth distrusting on its
+   * own terms — "two of nine runs saturated just short and never opened" was
+   * taken on a bench that gave a different answer on every run, for the reason
+   * `MELT_RATE` in src/world/Props.js sets out. */
+  const DOOR_W = 3.3, DOOR_H = 3.4, DOOR_T = 0.42;
+  const PIER = 1.9, FACE_H = 5.0, WALL_D = 1.4, CELL_D = 5.0;
+  const HW = PIER * 2 + DOOR_W * 1.5;                 // 8.75
+  const bays = [-(DOOR_W + PIER), 0, DOOR_W + PIER];  // −5.2, 0, +5.2
+
+  const pos = V(opts.x ?? 16, 0, opts.z ?? 75);
+  pos.y = T.height(pos.x, pos.z);
+  const yaw = opts.yaw ?? (165 * Math.PI / 180);
+  /* KIT SPACE INTO WORLD SPACE, the same rotation `island` applies to the
+   * geometry it is handed — local +z is the way the doors look, local +x runs
+   * along the face. Written out once here because the doors and the caches are
+   * placed as WORLD objects after the shell is emitted, and a second copy of
+   * this transform that disagreed with `island`'s would put them somewhere
+   * else entirely. */
+  const cs = Math.cos(yaw), sn = Math.sin(yaw);
+  const at = (x, z, dy = 0) => {
+    const wx = pos.x + x * cs + z * sn, wz = pos.z - x * sn + z * cs;
+    return V(wx, T.height(wx, wz) + dy, wz);
+  };
+
+  island(world, pos, { seed, yaw, span: 24, maker: 'magazine', destructible: 'duracrete' },
+    (kit) => {
+      // the four piers, and each one is also the side wall of the cells beside
+      // it: one box does both jobs, which is why a cell needs no wall of its own
+      for (const px of [-(HW - PIER / 2), -(DOOR_W + PIER) / 2, (DOOR_W + PIER) / 2, HW - PIER / 2]) {
+        kit.slab(M.duracrete, PIER, FACE_H, CELL_D, px, FACE_H / 2, -CELL_D / 2,
+          { tile: 2.6, seg: 3 });
+      }
+      // the lintel over all three openings — the band that makes it a face
+      kit.slab(M.duracrete, HW * 2, FACE_H - DOOR_H, WALL_D, 0, (FACE_H + DOOR_H) / 2, -WALL_D / 2,
+        { tile: 2.6, seg: 3 });
+      // the back of the magazine, half swallowed by the hill it is cut into
+      kit.slab(M.duracrete, HW * 2, FACE_H, 0.6, 0, FACE_H / 2, -CELL_D - 0.3, { tile: 2.6, seg: 3 });
+      // …and the deck over the lot, which is the roof of the cells and the
+      // firing step on top of them
+      kit.slab(M.hull, HW * 2 + 0.8, 0.34, CELL_D + 1.2, 0, FACE_H + 0.17, -CELL_D / 2 + 0.3,
+        { tile: 2.4, seg: 3 });
+      // a course of bleached facing along the deck edge, so the top reads as a
+      // parapet rather than as a lid
+      kit.slab(M.duracreteWarm, HW * 2 + 0.8, 0.22, 0.5, 0, FACE_H + 0.45, 0.6,
+        { tile: 1.8, collide: false });
+
+      /* THE WING WALLS. 11.4 m out on each flank, turned 40° so they close the
+       * approach into a defile rather than standing as two loose slabs. Height
+       * 2.4: over a standing body and under a Force jump, which is the height
+       * every blast wall in this file is. */
+      for (const side of [-1, 1]) {
+        kit.slab(M.duracrete, 6.0, 2.4, 0.7, side * 11.4, 1.1, 3.0,
+          { tile: 2.4, seg: 3, ry: side * 0.70 });
+        kit.slab(M.duracreteWarm, 6.2, 0.2, 0.9, side * 11.4, 2.36, 3.0,
+          { tile: 1.8, ry: side * 0.70, collide: false });
+      }
+
+      /* The spoil. A cut this size leaves its own rubble banked at the foot,
+       * and it is what beds a straight-edged revetment into a plain. */
+      addScree(world, V(0, 0, 2.6), { kit, radius: 13.5, inner: 8.5, count: 150,
+        seed: seed + 40, size: 0.20, mat: M.duracreteDark });
+      addSign(world, V(-(DOOR_W + PIER) / 2, 0, 0.85), { kit, width: 1.7, mount: 2.6, seed: seed + 60 });
+    });
+
+  /* ── THE DOORS, AND WHAT IS BEHIND EACH ONE ──────────────────────────
+   *
+   * Hung as world objects after the shell is emitted, because a `BlastDoor` is
+   * not kit geometry — it owns a shader, a data texture, a collider and a
+   * per-frame update, and `World.addDoor` is what puts it in front of the blade
+   * solver. The plate stands in the middle of the 1.4 m reveal at z = −0.7, so
+   * the merged jamb is buried in the pier on both sides and the wall's own
+   * colliders stop at the jamb rather than running through the doorway.
+   */
+  const doors = [];
+  for (let i = 0; i < bays.length; i++) {
+    const cx = bays[i];
+    const g = at(cx, -0.7);
+    const door = new BlastDoor(world, {
+      position: V(g.x, g.y + DOOR_H / 2, g.z),
+      quaternion: new THREE.Quaternion().setFromAxisAngle(V(0, 1, 0), yaw),
+      width: DOOR_W - 0.06, height: DOOR_H - 0.06, thickness: DOOR_T, color: 0x6a6f78,
+      onBreach: () => {
+        /* WHAT THE TWENTY SECONDS BUY. `SUPPORT_EARN.objective` is 14 of the
+         * 100-point bar — a quarter of what an orbital strike costs — and it is
+         * credited to the SIDE rather than to the body, which is the whole
+         * point of the pool: "it shows the level of outside support and
+         * resources that have built up". Taking the other army's magazine is
+         * the most literal instance of that sentence in the game. */
+        world.support?.credit('objective');
+        world.notify('MAGAZINE BREACHED', 'ordnance taken — support up');
+      },
+    });
+    world.addDoor(door);
+    doors.push(door);
+
+    /* …and the cache it is a door for, STACKED DOWN THE SIDES AND NOT IN THE
+     * MOUTH, which is a fix and not a preference.
+     *
+     * The comment that stood here said the cache was "on the flat part of the
+     * cell floor 2.8 m in, where the ground has not started to climb yet", and
+     * the ground disagrees with both halves. Sampled down the axis of the
+     * middle cell, height relative to the sill: 0.5 m in −0.01, 1.0 m +0.14,
+     * 1.5 m +0.29, 2.0 m +0.46, 2.8 m +0.78, 4.0 m +1.34. The cut is into a
+     * rising toe, so the flat runs out about a metre inside the door and the
+     * back of the cell is a ramp — which is right for a revetment dug into a
+     * stack and is why the deck over it is only 5.34 m up.
+     *
+     * The barrels stood at 1.2 m in, which is the DOORWAY. `breach()` sets off
+     * an explosion at the plate, that rolls them another half metre outward,
+     * and a player walking in then meets a drum on the threshold: measured
+     * before this line moved, the walk stopped 1.68 m past the plane with a
+     * barrel resting 0.80 m off the shoulder — the exact clearance of a body
+     * and a drum, so it was a squeeze and not a doorway. Stores belong against
+     * the side walls at the back of a cell anyway; nobody keeps ordnance where
+     * the door swings. Both files of drums are now 2.6 m in or deeper and
+     * 1.15–1.3 m off the centre line, which leaves the lane a body walks in on
+     * clear and reads as a cell that has been LOADED rather than one that has
+     * been tipped into. Measured after: 3.94 m in, dead on the centre line.
+     *
+     * `makeBarrel` builds an explosive prop, so a stray bolt into an open cell
+     * still does what a stray bolt into a magazine should. */
+    addCrateStack(world, at(cx - 1.05, -3.2), { seed: seed + 100 + i * 7, count: 6,
+      tiers: 3, columns: 2, dynamic: 3, yaw: yaw + rr() * 0.4 - 0.2 });
+    makeBarrel(world, at(cx + 1.3, -2.6));
+    makeBarrel(world, at(cx + 1.15, -3.3));
+    makeBarrel(world, at(cx + 1.25, -4.0));
+  }
+
+  /**
+   * …AND THE MIDDLE CELL IS A GUN PIT. FLAGSHIP §7's BREACH, made into a verb.
+   *
+   * The rank of three has been an ERRAND since it was hung: each door holds a
+   * cache and fourteen points of war support, so nothing on the field changes
+   * if you walk past all three. §7 does not describe an errand — "the one thing
+   * on the field only a Jedi can touch… twenty seconds of held blade,
+   * deflecting nothing, away from your line, both bars draining" is a price,
+   * and a price is only a price when not paying it costs something.
+   *
+   * So the middle bay is a casemate with a heavy gun in it, laid on the muster
+   * ground 76.7 m away, shooting your named men. It cannot be shot back at, or
+   * gripped, or charged — see src/game/Emplacement.js, where the whole argument
+   * for that lives — and the door is the only way in. THE FLANKING TWO ARE
+   * UNCHANGED and are still caches, which is what makes the rank a decision
+   * rather than a queue: one of these twenty seconds you have to spend, and two
+   * of them you may.
+   *
+   * The MIDDLE one, and not an end one, because the wing walls close the
+   * approach into a defile that is narrowest on the centre line — the note over
+   * this function already says the defile is "the shape of the fight", and the
+   * door the battle forces you to stand at should be the one with the least
+   * ground behind your back.
+   */
+  if (doors[1]) emplaceGun(world, doors[1]);
+
+  return doors;
+}
+
+/**
  * A BAY GRID, and why `drift` is the wrong primitive indoors.
  *
  * Everything above this line is about landscape: things cluster because
@@ -1690,6 +2107,20 @@ export function island(world, pos, opts, build) {
  * liftable. What you can cut is what you can stand next to.
  *
  * @returns the number of columns standing.
+ *
+ * ORPHANED — AND THE NOTE ABOVE DESCRIBES A ROOM THAT NO LONGER EXISTS. "The
+ * rule is written out over the Temple below" and "the foundry already spends
+ * 386" were both true when this was written; the Temple and the Foundry were
+ * deleted in the roster cull, and 126 lines of instanced colonnade went from
+ * being the reason an interior was affordable to being unreachable, with a
+ * header still arguing for it in the present tense. Nothing calls it in this
+ * file or in any module that imports it.
+ *
+ * Kept, on the same terms as `works()`: it is the only instanced-order
+ * vocabulary in the tree — shaft, base, capital and entablature in four draw
+ * calls with a real collider per column — and §4's list of permitted interiors
+ * has not shrunk. What is orphaned is the ROOM, not the technique. `roster.mjs`
+ * requires this word so the next orphan has to be declared instead of found.
  */
 export function templeColonnade(world, opts = {}) {
   const M = propMaterials();
@@ -1863,6 +2294,22 @@ export const LEVELS = {
     name: 'The Shifting Waste',
     blurb: 'Dunes twice the height of the sea, and a storm that comes for you every ninety seconds.',
     terrain: 'drifts',
+    /* CARRIES A GENERATED HEIGHTFIELD — `FLAGSHIP.md` §12, read by
+     * `World._groundKeyFor`, and the number is `theline.mjs`'s. Every ground
+     * was booted with the layer forced on and driven for twenty seconds of a
+     * real engagement: this one deployed and held 10 of its ten, and
+     * `prop-seating` then raised its whole dressing on the generated ground and
+     * found nothing standing on nothing.
+     *
+     * THE SENTENCE THAT USED TO CLOSE THIS NOTE WAS FOUR COPIES OF A FACT THAT
+     * HAD MOVED. It read "scoria is the one room that does not declare it", and
+     * scoria has declared it since `Battlefield.js` learned to stand its shelf
+     * out of a borrowed sea — `LEVELS.scoria.battlefield` carries that
+     * measurement. The room that does not declare it is the colosseum, for a
+     * different reason entirely: see the note there. Four rooms each keeping
+     * their own copy of a fact about a fifth is HANDOFF §2.3, and the copies
+     * now say only what is true of THIS room. */
+    battlefield: true,
     /* `bodyguard` is here to open the SET-PIECE door and for no other reason —
      * see its registration at the bottom of this file. A boss archetype is
      * filtered out of ordinary fill by `unlockedAt`, so one entry in a pool of
@@ -1969,6 +2416,22 @@ export const LEVELS = {
     name: 'The White Pass',
     blurb: 'A cirque above the treeline, in weather that arrives sideways.',
     terrain: 'alpine',
+    /* CARRIES A GENERATED HEIGHTFIELD — `FLAGSHIP.md` §12, read by
+     * `World._groundKeyFor`, and the number is `theline.mjs`'s. Every ground
+     * was booted with the layer forced on and driven for twenty seconds of a
+     * real engagement: this one deployed and held 10 of its ten, and
+     * `prop-seating` then raised its whole dressing on the generated ground and
+     * found nothing standing on nothing.
+     *
+     * THE SENTENCE THAT USED TO CLOSE THIS NOTE WAS FOUR COPIES OF A FACT THAT
+     * HAD MOVED. It read "scoria is the one room that does not declare it", and
+     * scoria has declared it since `Battlefield.js` learned to stand its shelf
+     * out of a borrowed sea — `LEVELS.scoria.battlefield` carries that
+     * measurement. The room that does not declare it is the colosseum, for a
+     * different reason entirely: see the note there. Four rooms each keeping
+     * their own copy of a fact about a fifth is HANDOFF §2.3, and the copies
+     * now say only what is true of THIS room. */
+    battlefield: true,
     pool: ['b1', 'trooper', 'b2', 'sniper', 'droideka', 'acolyte'],
     groundColor: 0xe2dcce,
     spawnRadius: [30, 52],
@@ -2192,6 +2655,33 @@ export const LEVELS = {
      * side rather than a balcony over one.
      */
     start: [-22, 68],
+    /**
+     * AND THIS ROOM CAN CARRY A GENERATED HEIGHTFIELD NOW — `FLAGSHIP.md` §12,
+     * `World._groundKeyFor` the reader, and it was the last of the seven to say
+     * so. Six of the seven do; the colosseum states `false` and carries the
+     * reason (its cavea is its heightfield, and the fight bar could not see
+     * that the building had gone).
+     *
+     * IT COULD NOT, AND THE RECORDED CAUSE WAS WRONG. `NEXT.md` and the note
+     * on `LEVELS.geonosis` both had it as "scoria's rocks and wrecks take the
+     * standing room with them when the ground moves under them". Measured on
+     * the deploy ring at seed 3, 288 candidate points, attributing every
+     * rejection to its clause:
+     *
+     *     authored    static boxes refuse   3   the lava refuses     0   10/10 up
+     *     generated   static boxes refuse  10   the lava refuses   126    0/10 up, 4 unplaced
+     *
+     * The dressing was worth seven points. **The sea was worth a hundred and
+     * twenty-six.** `water.level` here is 0.55 and it burns at 52 HP a second;
+     * the generated field was written about a datum of zero, so the basalt
+     * shelf this level is named for came out as a lava plain with the deploy
+     * ring in it. `Battlefield.js` raises a shelf against the borrowed
+     * `waterLevel` now — see the note over `SHELF_FREEBOARD` there — and the
+     * fight ring comes back 0% wet, the fight disc 7.2% against the authored
+     * room's 9.4%, and the line 10 of 10 standing at twenty seconds on seeds
+     * 1, 3 and 7.
+     */
+    battlefield: true,
     // A duelling map wants blades in it. The pool is weighted to the one
     // sabered archetype this game has and thinned of hordes: half of what
     // walks out of the ash is something that will meet your guard.
@@ -2518,6 +3008,22 @@ export const LEVELS = {
     name: 'Mustafar',
     blurb: 'Rivers of melt braided through black rock, under a sky the colour of a wound. The ground is lit from below.',
     terrain: 'mustafar',
+    /* CARRIES A GENERATED HEIGHTFIELD — `FLAGSHIP.md` §12, read by
+     * `World._groundKeyFor`, and the number is `theline.mjs`'s. Every ground
+     * was booted with the layer forced on and driven for twenty seconds of a
+     * real engagement: this one deployed and held 9 of its ten, and
+     * `prop-seating` then raised its whole dressing on the generated ground and
+     * found nothing standing on nothing.
+     *
+     * THE SENTENCE THAT USED TO CLOSE THIS NOTE WAS FOUR COPIES OF A FACT THAT
+     * HAD MOVED. It read "scoria is the one room that does not declare it", and
+     * scoria has declared it since `Battlefield.js` learned to stand its shelf
+     * out of a borrowed sea — `LEVELS.scoria.battlefield` carries that
+     * measurement. The room that does not declare it is the colosseum, for a
+     * different reason entirely: see the note there. Four rooms each keeping
+     * their own copy of a fact about a fifth is HANDOFF §2.3, and the copies
+     * now say only what is true of THIS room. */
+    battlefield: true,
     pool: ['b1', 'trooper', 'b2', 'acolyte', 'droideka', 'b1', 'sniper', 'acolyte', 'walker'],
     groundColor: 0x2b2622,
     spawnRadius: [30, 54],
@@ -2927,10 +3433,89 @@ export const LEVELS = {
      * rotted here in the first place. */
     blurb: 'Raked sand under seven thousand people. They did not come to watch you win.',
     terrain: 'colosseum',
+    /**
+     * THE ONE ROOM THAT KEEPS ITS AUTHORED CONTOURS — `FLAGSHIP.md` §12,
+     * `World._groundKeyFor` the reader, and `false` here is a statement rather
+     * than a silence: `theline.mjs` requires every room in `LEVEL_ORDER` to
+     * say one thing or the other.
+     *
+     * IT DECLARED `true` AND THE DECLARATION WAS MEASURED ON THE WRONG BAR.
+     * The bar was `theline.mjs`'s — boot the ground with the layer forced on,
+     * drive twenty seconds of a real engagement, count the line still up — and
+     * on that bar this room reads **10 of 10 on every seed**, which is why it
+     * declared. That is a bar on the FIGHT. There was none on the PICTURE, and
+     * this is the room where the two come apart, because the cavea IS the
+     * heightfield — `dress` says so in those words, beside the crowd it seats
+     * off `T.height`.
+     *
+     * Measured over the dressed room, `prop-seating`'s own survey, seeds 1/3/7:
+     *
+     *     authored    7921 assemblies, p99 seat −0.04 m, worst  0.00 m
+     *     generated   7921 assemblies, p99 seat  0.00 m, worst 27.97 m
+     *                 31–33 standing on nothing, all but one a praecinctio
+     *
+     * The authored ground climbs 0 → 54.1 m between the sand and the arcade;
+     * a generated one climbs 0 → 13.1 m. RMS difference over the fight disc:
+     * **41.2 m**, against 20.1 on alpine, 17.2 on drifts and 9.7 on geonosis —
+     * the largest of the seven by a factor of two. So the two praecinctiones
+     * that ride the bank stay at the height the bank used to be, seven thousand
+     * spectators sit in rings on an open plain, the 54 m arcade this level's
+     * `horizon: false` is written around ("the one level whose horizon is a
+     * building") is not there, and the fight is fine throughout.
+     *
+     * THE PLATE IS `assets/flagship/colosseum-on-a-generated-ground.png`, taken
+     * at seed 3 through the shipped renderer: seven thousand spectators seated
+     * in rings on open sand, with two rings of masonry hanging over them and
+     * nothing under either. It is one screenshot and it settles the question
+     * that three green checks could not.
+     *
+     * SEATING THE WALLS ON THE NEW GROUND WOULD PASS THE CHECK AND MAKE THE
+     * PICTURE WORSE: it would put the dividing walls of an amphitheatre flat on
+     * a plain with no amphitheatre. There is no version of "derive the ground
+     * from the front" that also builds a bowl, and a room whose subject is a
+     * building cannot borrow a ground that has none.
+     *
+     * WHAT IT COSTS THE MODE IS ONE SEVENTH OF ITS ROLLS AND NOTHING ELSE.
+     * §13.5 is untouched — the colosseum is still a legal seed, still rolled,
+     * still played; `_groundKeyFor` returns its authored key, which is the same
+     * answer every other mode gets. `prop-seating` holds both directions of
+     * this now: a room that declares `true` must stand its dressing on a
+     * generated ground, and a room that declares `false` must fail to.
+     */
+    battlefield: false,
     /* THE HANDLERS AND THE MENAGERIE. The droids are the arena's staff — the
      * thing that opens the gates and shoots you if the animals fail — and they
      * are thin on purpose: this is not a horde level, it is three or four very
      * large problems at once with a screen of gunfire behind them. */
+    /**
+     * NO GEONOSIAN HERE, AND IT IS A MEASUREMENT RATHER THAN A PREFERENCE.
+     *
+     * This arena IS the Petranaki arena and the reference plates of it are full
+     * of the species that built it, so the winged rung belongs here on every
+     * argument except the one that decides: `escalation: the escalation does
+     * not flatten once the roster runs out` counts DISTINCT WAVE SHAPES over 24
+     * seeds and requires a deep wave to be at least as varied as a shallow one.
+     * Measured on this pool, before and after adding one `geonosian` entry:
+     *
+     *              w20   w40   w70   w100  w140
+     *   as shipped  10    12    10     12    11
+     *   + geonosian 17    11     9     12    11
+     *
+     * The gain is real and it is all at the SHALLOW end: this pool composes so
+     * few distinct wave shapes at wave 20 that one more affordable type nearly
+     * doubles them, while wave 70 is pinned where it is by `_upgrade`'s
+     * convergence — it trades every light body for the heaviest the level
+     * fields, and `heavyLimit` then caps those. Two and three entries were
+     * measured too (20 and 17 at w20), and so were threats of 7 and 9 (18 and
+     * 18): nothing about the archetype moves the shallow number, because the
+     * cause is the pool's own narrowness and not this body.
+     *
+     * So the check is right and it is catching a real property of the composer
+     * rather than a defect in the unit — this arena cannot take ANY new light
+     * archetype until deep-wave convergence is answered. Carried as an argued
+     * item in BACKLOG.md §4.5 rather than forced through, and the Geonosian
+     * reaches the field on the ground it is named after.
+     */
     pool: ['charger', 'stalker', 'brute', 'b1', 'beast', 'pouncer', 'b2', 'stalker', 'droideka', 'sniper'],
     groundColor: 0xc9a970,
     spawnRadius: [30, 50],
@@ -3263,6 +3848,22 @@ export const LEVELS = {
     name: 'The Drowned Wood',
     blurb: 'Standing water under a canopy that never opens. Everything here is older than the war, and most of it can be cut down.',
     terrain: 'bog',
+    /* CARRIES A GENERATED HEIGHTFIELD — `FLAGSHIP.md` §12, read by
+     * `World._groundKeyFor`, and the number is `theline.mjs`'s. Every ground
+     * was booted with the layer forced on and driven for twenty seconds of a
+     * real engagement: this one deployed and held 10 of its ten, and
+     * `prop-seating` then raised its whole dressing on the generated ground and
+     * found nothing standing on nothing.
+     *
+     * THE SENTENCE THAT USED TO CLOSE THIS NOTE WAS FOUR COPIES OF A FACT THAT
+     * HAD MOVED. It read "scoria is the one room that does not declare it", and
+     * scoria has declared it since `Battlefield.js` learned to stand its shelf
+     * out of a borrowed sea — `LEVELS.scoria.battlefield` carries that
+     * measurement. The room that does not declare it is the colosseum, for a
+     * different reason entirely: see the note there. Four rooms each keeping
+     * their own copy of a fact about a fifth is HANDOFF §2.3, and the copies
+     * now say only what is true of THIS room. */
+    battlefield: true,
     // A wood is an ambush, so the pool is what ambushes well: things that
     // close, and one marksman for the gaps between the trunks.
     pool: ['b1', 'acolyte', 'b1', 'b2', 'acolyte', 'trooper', 'sniper', 'droideka'],
@@ -3635,17 +4236,66 @@ export const LEVELS = {
  * layer up. `tools/checks/factions.mjs` holds that line.
  */
 Object.assign(ARCHETYPES, COMMAND_UNITS);
+/**
+ * …AND THE ARENA'S OWN SPECIES, which is neither an army rung nor a beast.
+ *
+ * A Geonosian warrior is Confederate infantry that happens to have wings, so
+ * it is registered here rather than in COMMAND_UNITS (it is not a rung a
+ * commander can buy — see src/game/Flight.js) and not with the menagerie
+ * (it is a soldier with a gun, not something an arena shipped in a crate).
+ * It lands before the two pools that name it, which is the whole ordering
+ * requirement: an archetype no pool names is unreachable and `roster.mjs`
+ * fails on it, and a pool naming an archetype that does not exist yet is a
+ * pool entry that resolves to undefined.
+ */
+Object.assign(ARCHETYPES, GEONOSIAN_UNITS);
 
 LEVELS.geonosis = {
   name: 'Geonosis',
   blurb: 'A red plain under a dust sky, two armies on it, and nothing between them but the ground you have to cross.',
   terrain: 'geonosis',
+  /**
+   * THIS ROOM CAN CARRY A GENERATED HEIGHTFIELD — `FLAGSHIP.md` §12, and
+   * `World._groundKeyFor` is the reader.
+   *
+   * A generated ground is raised under a level's own dressing, which was
+   * authored against the contours it replaces, so whether a room survives that
+   * is a fact about the room. Measured at seed 3, twenty seconds of a real
+   * engagement: geonosis deploys **10 of 10 with a full wave**, generated or
+   * authored.
+   *
+   * THIS NOTE USED TO CARRY THE ONE ROOM THAT COULD NOT, AND THE CAUSE IT GAVE
+   * WAS WRONG. It read "scoria goes from 10 of 10 to six dead, four
+   * unplaceable — its rocks and wrecks take the standing room with them when
+   * the ground moves under them". They do not: on the deploy ring at that
+   * seed, static boxes refuse 10 of 288 candidate points against the authored
+   * ground's 3, and scoria's **lava sea refuses 126**. The generated height
+   * was written about a datum of zero under a sheet that sits at +0.55 and
+   * burns. `Battlefield.js` stands the battle on a shelf against the borrowed
+   * `waterLevel` now, and six of the seven theatres declare it — see
+   * `LEVELS.scoria.battlefield` for that measurement in full, and
+   * `LEVELS.colosseum.battlefield` for the one that does not and why.
+   */
+  battlefield: true,
   armies: ['republic', 'separatist'],
   pool: [
     // The Republic's five rungs, weighted toward the line.
     'trooper', 'trooper', 'trooper', 'heavy', 'sniper', 'jet', 'arc', 'officer',
     // The Confederacy's, weighted the same way.
-    'b1', 'b1', 'b1', 'b1', 'b2', 'rocket', 'droideka', 'bx', 'magna',
+    /* …and the line under the line. `conscript` is FLAGSHIP §6's third body
+     * class and it is weighted like the B1 rung it is a worse copy of: a front
+     * whose Confederate half is half conscripts is the picture the reference
+     * plates of this battle actually show, and it is the only pool entry on
+     * the roster that pays a player nothing for killing it. See
+     * `ARCHETYPES.conscript` and `World.paysOut`. */
+    'b1', 'b1', 'b1', 'b1', 'conscript', 'conscript', 'b2', 'rocket', 'droideka', 'bx', 'magna',
+    /* THE HOSTS. This is their planet and the Confederacy's line here is
+     * theirs before it is anybody's — two entries, the same weight as the B2
+     * rung, because the reference wide shots of this battle have Geonosians in
+     * the air over the droid ranks rather than instead of them. It is also the
+     * only ground in the game wide enough for the cruise band (9-20 m) to mean
+     * anything: see the note on the giants below. */
+    'geonosian', 'geonosian',
     // …and the armour. `walker` is this game's Spider Walker and it is exactly
     // the OG-9 homing spider droid of the reference plates: a sphere on four
     // very tall thin legs with a single beam off the top. It is the silhouette
@@ -3668,6 +4318,32 @@ LEVELS.geonosis = {
      * of this battle has hundreds of infantry and three or four machines.
      */
     'dwarfspider', 'hailfire', 'aat', 'atte',
+    /**
+     * …AND THE GIANTS, WHICH REACH THIS GROUND AND NO OTHER.
+     *
+     * Four machines the player asked for by name — a 34 m twelve-legged siege
+     * gun, a 25 m ten-wheeled transport, a 14.6 m tri-droid and a tank on one
+     * tread — and this is the only level in the game they belong on, which is
+     * a statement about the GROUND rather than about the machines:
+     *
+     *   IT IS THE ONLY TWO-ARMY FIELD. Two of these are Republic and two are
+     *     Confederate, and `armies` above is what stops a Jedi meeting an
+     *     SPHA. On any other level the pool is one horde and the faction
+     *     rotation does not run.
+     *   IT IS THE ONLY GROUND WIDE ENOUGH. The spawn ring here is 58-96 m,
+     *     where everywhere else is 26-60. The SPHA's band is 40-90 m: on a
+     *     level whose ring closes at 60 it would arrive already inside its own
+     *     minimum, plant, and shell a player standing next to it.
+     *   IT IS OPEN. `grade` refuses a wheel anything steeper than a step, and
+     *     the wood and the alpine shelf are made of exactly that.
+     *
+     * Unweighted, one entry each, against seventeen infantry entries and four
+     * machines — so a giant is roughly one draw in twenty-five and
+     * `heavyLimit` caps how many stand at once regardless. The reference plates
+     * of this battle are the argument: hundreds of infantry, a handful of
+     * armour, and one artillery piece somewhere at the back of it.
+     */
+    'spha', 'juggernaut', 'tridroid', 'snailtank',
   ],
   /* The ochre the whole level is graded around: dust puffs, footfall grit, the
    * hemisphere's lower half and the smoke's own tip all derive from it. */
@@ -3689,6 +4365,49 @@ LEVELS.geonosis = {
      * model in range and the ORANGE comes from the sun, the cloud deck and the
      * grade, which is where a colour that is not physics belongs. */
     turbidity: 10.0, rayleigh: 2.0, mie: 0.016, mieG: 0.85,
+    /**
+     * …AND THE GRADE THAT SENTENCE PROMISES, WHICH WAS NEVER WRITTEN.
+     *
+     * The paragraph above says the orange comes from "the sun, the cloud deck
+     * and the grade". There was no grade. This level authored `skyColor
+     * d9a058` and `fogColor d0a473` — a gold sky over dust — and then shipped
+     * with `gain` undefined, so the composite fell back to its near-neutral
+     * default and Preetham drew what Preetham draws.
+     *
+     * Measured on the shipped atmospheres, the hue the DRAWN skyline lands at
+     * against the hue the level authored for its own sky:
+     *
+     *     drifts     authored 220°  drawn 202°   Δ  18°
+     *     colosseum  authored 220°  drawn 205°   Δ  15°
+     *     scoria     authored  10°  drawn  62°   Δ  52°
+     *     mustafar   authored   6°  drawn  59°   Δ  52°
+     *     geonosis   authored  25°  drawn 205°   Δ 180°
+     *
+     * Every other level lands within 52° of its own sky. This one landed on
+     * the opposite side of the wheel — a cold blue-grey over a dust planet,
+     * which `FLAGSHIP.md` §11 names as the biggest visual defect in the game
+     * and which the marching-front plates confirmed live: the smoke columns'
+     * tips take the fog's colour, so at 100 m a battle read as pale haze.
+     *
+     * WHY A GRADE AND NOT A ROTATION ON THE FOG. `uGain` is a composite pass
+     * over the whole frame, so it moves the drawn dome and what distance
+     * converges on TOGETHER and they cannot disagree — measured here, every
+     * level's haze tracks its own skyline within 6°. Turning the haze alone
+     * was tried and `cel.mjs` refused it correctly: a veil with a colour the
+     * sky does not have is the "grey fog" rule 3 of src/toon/REFERENCE.md
+     * forbids. `skyProbeTurn`'s own note says the same thing in advance —
+     * the drawn dome, the fog and the aerial tint "have to match what is
+     * actually painted on screen", and the Ember Shelf's orange comes from
+     * exactly this field.
+     *
+     * At [1.18, 1.00, 0.68] the skyline lands at 54° and the haze at 47° — a
+     * 29° miss against its own sky, better than either of the two levels that
+     * already had a grade — and luminance moves 0.414 to 0.416, which is
+     * inside the noise of the meter that reads it. Stronger than mustafar's
+     * [1.15, 0.99, 0.72] on purpose: this is a planet whose entire identity is
+     * the dust in the air.
+     */
+    gain: [1.18, 1.00, 0.68],
     /* The wind on this preset runs along (0.94, 0.34) — 20° — and the sun sits
      * anti-parallel to it at 200°, which is the same rule the dune sea derives
      * for its dune train: the windward faces of the stacks are lit and their lee
@@ -3833,6 +4552,9 @@ LEVELS.geonosis = {
   dress(world) {
     const M = propMaterials();
     beginDressing(world, 20250805 + 91);
+    /* The winged rung is in this level's pool, so the thing that installs the
+     * flight model on one has to exist here. See src/game/Flight.js. */
+    attachFlight(world);
     /* THE FAR SIDE. Three layers, the outermost at 380 m — further than any
      * other level, because the whole promise of this ground is that you can see
      * across it. Low and long rather than tall and jagged: these are mesas and
@@ -3896,10 +4618,33 @@ LEVELS.geonosis = {
     /* THE SMOKE. See src/world/Smoke.js: seven columns, one draw call, leaning
      * downwind on the preset's own wind vector so they agree with the drifted
      * sand and the shadows. The tip colour is the fog's, so a column dissolves
-     * into the haze at its top rather than ending in mid-air. */
-    addSmokeColumns(world, smokeSites(rng, 7, { rmin: 62, rmax: 244, phase: 1.1 }), {
-      wind: [0.94, 0.34], color: 0x33261f, tip: 0xd0a473, lean: 0.55, spread: 0.22,
-    });
+     * into the haze at its top rather than ending in mid-air.
+     *
+     * THE AIR IS DERIVED, not typed at all. This line used to publish five
+     * literals — `{ wind: [0.94, 0.34], color: 0x33261f, tip: 0xd0a473, lean:
+     * 0.55, spread: 0.22 }` — and two of them were copies of numbers already
+     * in this file: `wind` is `TERRAIN_PRESETS.geonosis.wind` and `tip` is this
+     * level's own `atmosphere.fogColor`. `Front.marchFront` then carried a THIRD copy
+     * as its fallback, so every other ground THE LINE rolls was given
+     * Geonosis' dust tip over its own sky. `Smoke.smokeAir(world)` derives the
+     * record from the terrain preset and the level's fog and reproduces this
+     * table term for term; `vfx.mjs`'s "a column dissolves into the level's OWN
+     * sky" asserts it off the built MESH — the vertex colours of the top ring
+     * and where that ring sits over the base — on every level. */
+    /* THE HULL BUILDER USED TO BE PUBLISHED HERE, AND ONLY HERE, which is why
+     * "the mode lays hulls now" was true of ONE ground. `Front.marchFront`
+     * grows wreck clusters only when it is handed the function that builds
+     * them and `CommandDirector.marchTo` reads it off `world.strewWrecks`; six
+     * of the seven grounds THE LINE rolls never published one, so on six of
+     * seven the barrage, the burn, the smoke and the fallen all landed on the
+     * line and the hulls did not. It is published from `beginDressing` now —
+     * see the note there, with the per-level draw-call price — for exactly the
+     * reason the water hazard is: a level that forgot the line is a level whose
+     * front has no wrecks on it and nothing said so. It is still handed over
+     * rather than imported, because `Levels.js` imports `COMMAND_UNITS` from
+     * `Command.js` and the reverse edge is an initialisation cycle. */
+    world.smokeAir = smokeAir(world);
+    addSmokeColumns(world, smokeSites(rng, 7, { rmin: 62, rmax: 244, phase: 1.1 }), world.smokeAir);
 
     /* Cover, such as it is. A deflation plain has boulder fields and low
      * outcrops and nothing else, and the sparseness is the point: `take cover`
@@ -3949,6 +4694,24 @@ LEVELS.geonosis = {
      */
     strewGround(world, { seed: 9140, radius: 235, spread: 0.30, mat: M.stone,
       landmarks: 3.4, boulders: 1.3, cobble: 1.2 });
+
+    /**
+     * AND THE ONE PLACE ON THE MAP YOU HAVE TO CUT YOUR WAY INTO.
+     *
+     * See `magazine()` above for the site, the measurements and the mechanic it
+     * carries. It is LAST in this pass and it takes nothing from the module
+     * random stream, so every other object on this level stands exactly where
+     * it stood before there was a magazine on it — which is what made this
+     * addable to a shipped level at all.
+     *
+     * It is on Geonosis and not on one of the other six because this is the
+     * only level whose fiction is a war that was already running before you
+     * arrived — "the hulls are the level's own history" — and a magazine
+     * somebody else stocked is the same sentence. It is also the only ground
+     * with a real face to drive one into inside the walkable disc: see the
+     * relief figures in that note.
+     */
+    magazine(world, { seed: 9180 });
     return 12;
   },
 };
@@ -4282,6 +5045,12 @@ export function campaignAt(levelKey) {
  */
 export function theatresFor(mode) {
   const M = MODES[mode] || {};
+  /* …AND A MODE MAY LET THE SEED PICK. Every ground is legal — that is the
+   * whole of FLAGSHIP §13.5, "no room's deletion deletes the mode" — so the
+   * roster is the roster; what the mode owns is that the PLAYER does not
+   * choose from it. `theatreFor` below is where the roll happens, because it
+   * is the only one of the two that is handed the run's number. */
+  if (M.seedsGround) return [...LEVEL_ORDER];
   if (M.level) return LEVELS[M.level] ? [M.level] : [];
   if (M.picksCampaign) {
     const opens = new Set(CAMPAIGN_IDS.map((id) => CAMPAIGNS[id].missions[0]?.level));
@@ -4303,9 +5072,53 @@ export function theatresFor(mode) {
  * take rather than to `LEVEL_ORDER[0]`: falling to the roster's first entry
  * would put a campaign on the Ember Shelf, which opens no campaign.
  */
-export function theatreFor(mode, want) {
+export function theatreFor(mode, want, seed = null) {
   const live = theatresFor(mode);
   if (!live.length) return want;
+  /**
+   * THE FOURTH CASE: THE SEED OWNS THE GROUND.
+   *
+   * `seed` is optional and defaults to null so every existing caller is
+   * unchanged — a mode that does not declare `seedsGround` never reaches this
+   * line, and a `seedsGround` mode with no seed to roll falls through to the
+   * clamp below and takes the roster's first ground, which is the same answer
+   * every seedless run in this file already gets.
+   *
+   * NOT `LEVEL_ORDER[0]` as the fallback, and not the player's `want`: a mode
+   * that says the seed picks the ground must not quietly honour a pick when
+   * the seed is missing, because that is the leak this whole file exists to
+   * close — a card that is lit, written to settings and then thrown away.
+   */
+  /**
+   * …AND A MODE THAT GENERATES ITS GROUND MAY ONLY ROLL A ROOM THAT CAN CARRY
+   * ONE, which is the residue of the scoria item wearing a different room.
+   *
+   * `seedsGround` and `generatedGround` are two flags and they were being read
+   * by two different pieces of code that did not agree. The roll offered all
+   * seven theatres; `World._groundKeyFor` installs the `front:<terrain>` preset
+   * only where `LEVELS[x].battlefield` is true, and the colosseum states false
+   * on purpose — its cavea IS its heightfield, so a generated one deletes the
+   * building. Measured over 400 seeds, `rollGround` returned the colosseum 54
+   * times: **about one THE LINE sitting in seven landed on a ground the mode's
+   * whole spatial design had not been applied to** — no bezier front, no high
+   * ground flanking the line, no chokepoint — and nothing said so.
+   *
+   * That is the same defect the scoria row already carried, and the fix is not
+   * to make the colosseum a battlefield (it is not one, and the note in its
+   * entry is the reason). It is that the pool the seed draws from and the
+   * predicate the installer reads have to be ONE fact. `battlefield` is that
+   * fact; this asks it rather than keeping a second list beside it (§2.3).
+   *
+   * The filter is skipped if it would empty the pool, for the reason every
+   * filter in this file is: a mode with no ground at all is worse than a mode
+   * on the wrong one, and "a filter never empties the field" outranks this.
+   */
+  if (MODES[mode]?.seedsGround) {
+    const pool = MODES[mode]?.generatedGround
+      ? (live.filter((k) => LEVELS[k]?.battlefield).length ? live.filter((k) => LEVELS[k]?.battlefield) : live)
+      : live;
+    return rollGround(seed, pool) ?? pool[0];
+  }
   return live.includes(want) ? want : live[0];
 }
 
@@ -4425,11 +5238,14 @@ Object.assign(ARCHETYPES, {
   bodyguard: {
     label: 'IG Bodyguard Droid', build: buildBodyguard, scale: 1.3, hp: 1050, mass: 240,
     speed: 4.4, toughness: TOUGHNESS.armour, melee: true, saber: true,
-    /* An electrostaff, not a lightsaber, and the game already has the right
-     * knob for that: `saberColor` indexes the crystal table and 5 is the cold
-     * violet-white end of it, which is what an arc weapon looks like against a
-     * ship's warm hazard lighting. The duel brain, the telegraph, the clash
-     * and the blade lock all work off `saber` alone and need nothing else. */
+    /* AN ELECTROSTAFF, AND NOW IT IS ONE. This note used to say the game "has
+     * the right knob for that" and point at `saberColor: 5` — a cold
+     * violet-white crystal. It was a lightsabre in a different colour, which
+     * is what the player saw and said so about. `weaponStyle` is the real
+     * knob: a dark double-ended shaft with the charge at the two claws and
+     * nothing glowing in between. The duel brain, the telegraph, the clash and
+     * the blade lock still work off `saber` alone and still need nothing. */
+    weaponStyle: 'staff', bladeLength: 1.1,
     saberColor: 5, hilt: 'Sentinel', damage: 34, preferred: [1.8, 3.8],
     score: 3200, threat: 13, boss: true, hipHeight: 1.12,
     /**
@@ -4655,7 +5471,24 @@ Object.assign(ARCHETYPES, {
      * It stays in the menagerie rather than moving to the White Pass: an arena
      * that ships in creatures is exactly where a cold-world predator turns up,
      * and moving it is a pool-composition change with its own measurements to
-     * make. `pouncer` is still the key everything reads. */
+     * make. `pouncer` is still the key everything reads.
+     *
+     * ── AND ON THE ERA RULE, BECAUSE THIS KEEPS GETTING RE-OPENED ─────────
+     *
+     * The player's rule is explicit and it is about HARDWARE: *"obviously not
+     * those since they werent in the prequels"*, said of the AT-AT and the
+     * AT-M6. An AT-AT in a Clone Wars battle is an anachronism because the
+     * machine had not been designed yet. A wampa is an ANIMAL native to a
+     * planet that already exists, and nothing about the Clone Wars period
+     * un-invents it — it is simply not on screen in those three films.
+     *
+     * So this is not the same class of thing as an Imperial walker, and it is
+     * left standing deliberately rather than by oversight. A roster audit
+     * flagged it as "the one era wart"; that judgement is recorded here, and
+     * so is the argument against it, so the next reader is arguing with a
+     * position rather than re-discovering the question. If the player wants
+     * the roster to be only what the films SHOWED, this is the body to cut and
+     * it is one label and one page. */
     label: 'Wampa', build: (o) => buildQuadruped({ ...o, kind: 'pouncer' }),
     scale: 2.0, hp: 560, mass: 520,
     speed: 7.2, toughness: TOUGHNESS.flesh, melee: true, custom: 'beast',

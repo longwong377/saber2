@@ -1,8 +1,35 @@
 /**
- * BATTLEFRONT BORZ — STRATAGEMS: the things you call down rather than do.
+ * BATTLEFRONT BORZ — SUPPORT CALLS: the things you call down rather than do.
  *
  * Player note #29: support calls entered as a short WASD code, and abilities
  * directed at a unit.
+ *
+ * ── THE WORD, BECAUSE IT WAS SOMEBODY ELSE'S ────────────────────────────
+ *
+ * These were called stratagems, in the code and on the screen. The player:
+ * *"they should not be called strategems in game obviously as that's a
+ * helldiver's thing so in case we ever said strategem in game you need to come
+ * up with something appropriate to our game"*.
+ *
+ * They are **SUPPORT CALLS**, made on **the comm**, and paid for out of **war
+ * support**. The three names are one sentence and that is why this one was
+ * chosen over anything more decorative: the pool a call is drawn from is
+ * `WarSupport` and has been since the player asked for it, the preamble the
+ * player's own mouth speaks is "Command, this is Borz actual, authenticate",
+ * and the object in the Jedi's hand is a comlink. A word invented for the
+ * category would have had to be taught; this one is already true of everything
+ * on screen. The cool names live where the player asked for them — on the
+ * calls themselves, which is where an orbital bombardment, a tractor beam and
+ * a thermal fence say what they are.
+ *
+ * WHAT IS STILL CALLED A STRATAGEM AND WHY. This file, `STRATAGEMS`, the
+ * `#stratagem` DOM node and the `stratagem` action id in Bindings.js. All four
+ * are identifiers a player cannot see, and the last one is more than that: it
+ * is the KEY a rebind is saved under in `localStorage`, so renaming it would
+ * silently discard the binding of every player who has ever moved it off
+ * CapsLock. `tools/checks/stratagems.mjs` measures the boundary — anything a
+ * player can READ is scanned for the word, and the four identifiers are the
+ * named exceptions.
  *
  * ── WHY A CODE AND NOT A KEY ────────────────────────────────────────────
  *
@@ -40,9 +67,15 @@
 
 import * as THREE from 'three';
 import { audio } from '../engine/Audio.js';
+import { SUPPORT_MAX, DEAREST_SHARE } from './Support.js';
+
+/** How many canisters a smoke screen lays. Named once: `canisters` walks them
+ *  and the check counts them, and two numbers for one payload is §2.3. */
+export const SMOKE_CANS = 6;
 import { clamp } from '../engine/MathUtil.js';
 import { addSmoke, updateSmoke, clearSmoke } from './Smoke.js';
 import { SortieDirector } from './Sorties.js';
+import { TOUGHNESS } from './Combat.js';
 
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const TAU = Math.PI * 2;
@@ -156,6 +189,11 @@ export const MARK_RADIUS = 7.5;
  *             false for a gun run, which is flown along a line and cannot be
  *             re-tasked once the pilot has committed to it.
  *
+ *   earn      HOW MUCH WAR EFFORT THIS SIDE HAS TO HAVE PUT IN before the
+ *             fleet will answer this call at all. See `RELEASE` below, which
+ *             is the ladder, and `WarSupport.effort`, which is the climb.
+ *             Omitted means zero, which is the seven calls you open with.
+ *
  * `commandOnly` marks the calls that only make sense with an army behind you.
  * The reinforcement drop is not a thing a lone Jedi in a horde run can ask
  * for, and offering it there would be a menu item that always refuses.
@@ -199,6 +237,158 @@ export const MARK_RADIUS = 7.5;
  */
 const SHELLS = 12;
 const SHELL_WORD = 'Twelve';
+
+/* ══ THE PAYLOAD NUMBERS, NAMED ONCE EACH ═════════════════════════════════
+ *
+ * Same rule `SHELLS` above already follows and for the same reason: the loop
+ * that fires a payload, the spark allowance it takes of the shared ring, the
+ * blurb the player reads and the check that measures it are four readers, and
+ * two numbers for one payload is HANDOFF §2.3. Every one of these is exported
+ * so `tools/checks/stratagems.mjs` measures the shipped figure rather than a
+ * copy of it.
+ */
+
+/** The concussion wall: five airbursts on a 12 m pitch, 14 m each, so the line
+ *  overlaps and has no gap to walk through. */
+export const WALL_BURSTS = 5;
+
+/** The thermal fence: seven nodes on a 9 m pitch is a 54 m wall; at 5.5 m each
+ *  the nodes overlap, so there is no seam in it. */
+export const FENCE_NODES = 7, FENCE_R = 5.5, FENCE_LIFE = 18;
+/**
+ * 20 hp a second, priced against the ROSTER rather than against the other
+ * calls. Measured: a clone trooper (46 hp) is dead 2.3 s after stepping in, a
+ * B1 (24) in 1.2 s, and a MagnaGuard's 260 would take thirteen — longer than
+ * any body will stand in a fire. That is the fence working as it should: it is
+ * not a damage call, it is a piece of ground nobody uses. A body CROSSING one
+ * node at a walking pace spends about 2.8 s in it and pays 55.
+ */
+export const FENCE_DPS = 20;
+/** …and plate walks through it. See `blast`'s `hard`: a fire does not go
+ *  through 40 mm of durasteel, so an AAT loses 5% of its hull crossing. */
+export const FENCE_HARD = 0.06;
+
+/** The ion pulse: seven seconds of a machine standing still, and 110 off it.
+ *  The stun is the call and the damage is the change — measured, 19 machines
+ *  stopped at once and 3 of 22 bodies killed. */
+export const ION_STUN = 7.0, ION_DAMAGE = 110;
+
+/** Seismic charges: twelve, live for 45 s, armed 1.2 s after they land so one
+ *  cannot go off on the ship that dropped it, and tripped at 3.2 m. Measured
+ *  on the packed Geonosis field, where six of the twelve land within tripping
+ *  distance of something: 2 459 hp and 5 bodies, over the thirty seconds it
+ *  takes them to be walked into. */
+export const MINE_COUNT = 12, MINE_LIFE = 45, MINE_ARM = 1.2, MINE_TRIP = 3.2;
+
+/** Cluster munitions: 26 bomblets, and 12% of the blow to anything plated —
+ *  which is what fragmentation is. See `blast`'s `hard`. Measured: 1 760 hp on
+ *  the packed field, of which 77 came off the 4 810 hp of plate standing in it. */
+export const CLUSTER_N = 26, CLUSTER_HARD = 0.12;
+
+/**
+ * The tractor beam: 3.4 s, 16 pulls, and no damage at all. `TRACTOR_PULL` is
+ * the closing speed the field HOLDS rather than one it adds to — see the servo
+ * in `tractor`, and the 46 m/s that measured before it was one. At 7 m/s a
+ * sixteen-body line spread over a 17.8 m mean radius is at 2.4 m when the beam
+ * lets go, which is the number this call is priced on.
+ */
+export const TRACTOR_TIME = 3.4, TRACTOR_BEATS = 16, TRACTOR_PULL = 7.0, TRACTOR_LIFT = 1.4;
+
+/** The gunship on station: 22 s, 18 bursts, and it will not shoot at anything
+ *  more than 45 m from the ground it was called onto. Measured: 2 727 hp and 6
+ *  bodies, against the strafing run's 1 334 and 3 for 29.5 of support — twice
+ *  the work for not quite twice the price, spread over twenty-two seconds
+ *  during which the player is doing something else. */
+export const STATION_TIME = 22, STATION_BURSTS = 18, STATION_REACH = 45;
+
+/** The ion storm: 18 s at about three strikes a second, each grounding in a 3 m
+ *  circle for 48. Measured: 54 discrete bolts, 8 bodies killed, 2 880 hp — and
+ *  it does not ask what anything is made of, including the caller. */
+export const STORM_HZ = 3, STORM_R = 3.0, STORM_DAMAGE = 48;
+
+/** The bombardment: 22 detonations walked outward across 21 m of radius over
+ *  9 s. The spiral IS the counter-play — see `bombardment`. Measured: 21 of 22
+ *  bodies killed, 9 265 hp and 22 craters. Nothing else in the game clears a
+ *  field. */
+export const SIEGE_N = 22, SIEGE_R = 21, SIEGE_TIME = 9;
+
+/**
+ * ══ THE RELEASE LADDER — WHAT UNLOCKS, AND WHEN, AND WHY IT IS NOT A SAVE ══
+ *
+ * The player: *"expand the available strategems and/or the strategems that you
+ * can unlock as you progress through a run… you should be able to unlock some
+ * really cool shit"*. The two halves of that sentence pull in opposite
+ * directions and the second half is the load-bearing one: **as you progress
+ * through a RUN**, not between them.
+ *
+ * `src/game/Progress.js` is the written law here and it is worth quoting rather
+ * than paraphrasing: "no unlocks — every crystal, cut, species and order is
+ * available from the first run… no currency… no cross-run power — a run is
+ * still built from its own drafts, so the hundredth run starts exactly where
+ * the first did." A ladder of support calls bought with a profile number would
+ * be the exact thing that file exists to refuse, and it would be the worst
+ * instance of it: the calls are the most powerful things in the game.
+ *
+ * So the ladder is climbed INSIDE one battle and reset by the next, and the
+ * thing it is climbed with is `WarSupport.effort` — the total credit the side
+ * has been OFFERED this battle, summed over every kill, every cleared wave,
+ * every piece of ground held and every objective. Three properties make it the
+ * right number and no other candidate has all three:
+ *
+ *  · IT ALREADY EXISTS AND IS ALREADY HOOKED. `World` credits kills and waves,
+ *    `Command` credits held ground; nothing new has to be called from anywhere,
+ *    which is the difference between a ladder that works in all eight modes and
+ *    one that works in the mode somebody remembered.
+ *  · IT IS NOT A WAVE COUNT. A campaign has areas, a skirmish has an ending and
+ *    a horde run has waves; effort is the one quantity all three produce.
+ *  · IT CANNOT BE BANKED. A `WarSupport` is built per World and serialised
+ *    nowhere. Measured: `grep -n support src/game/Progress.js` finds nothing,
+ *    and `tools/checks/support.mjs` asserts that it stays that way.
+ *
+ * ── WHY THESE FIVE NUMBERS ──────────────────────────────────────────────
+ *
+ * Priced against what a wave actually credits, which is `SUPPORT_EARN`: a
+ * cleared wave is 9 and each body in it is 0.55, so a ten-body wave is about
+ * 14.5 of effort and a deep twenty-two-body wave about 21. In Command a held
+ * area is 22 on its own and an objective 14.
+ *
+ *     OPEN       0    the seven calls this game shipped with. Nothing the
+ *                     player already had is taken away and put behind a gate —
+ *                     the opening minute of a run is exactly what it was.
+ *     FORWARD   55    wave 4. The first three you EARN, and they are the three
+ *                     that change how you hold ground rather than how much
+ *                     damage you do.
+ *     HEAVY    130    wave 9. The ordnance that discriminates: a carpet that
+ *                     shreds infantry, a spike that kills one enormous thing, a
+ *                     beam that gathers a wave into one circle.
+ *     DEEP     230    wave 15, or an area held plus a good wave count. The
+ *                     calls that persist — a gunship that stays, a landing on
+ *                     ground you are not standing on, a storm over the field.
+ *     SIEGE    360    wave 22. One call, and it is the biggest thing in the
+ *                     game.
+ *
+ * The four wave numbers are measured rather than guessed: `tools/checks/
+ * stratagems.mjs` walks a run through the real `WarSupport` at the body counts
+ * the escalation actually produces (eight at wave one rising to twenty-two) and
+ * prints where each rung landed. It also asserts they arrive in order and at
+ * least two waves apart, so the ladder is a staircase with landings rather
+ * than four notices in one minute.
+ *
+ * A run that ends at wave 8 sees three of the eleven. A run that reaches the
+ * twenties sees all of them, once, late, and has to have earned each. That is
+ * the shape "unlock as you progress through a run" describes.
+ */
+export const RELEASE = { OPEN: 0, FORWARD: 55, HEAVY: 130, DEEP: 230, SIEGE: 360 };
+
+/** What a rung is called when the fleet announces it. Derived from RELEASE so
+ *  a sixth rung cannot be added without a name. */
+export const RELEASE_NAME = {
+  [RELEASE.OPEN]: 'standing orders',
+  [RELEASE.FORWARD]: 'forward support',
+  [RELEASE.HEAVY]: 'heavy ordnance',
+  [RELEASE.DEEP]: 'fleet assets',
+  [RELEASE.SIEGE]: 'siege authority',
+};
 
 export const STRATAGEMS = [
   {
@@ -262,10 +452,18 @@ export const STRATAGEMS = [
   },
   {
     id: 'smoke', name: 'Smoke screen',
-    cost: 12, cooldown: 14, at: 'aim', radius: 14,
+    /**
+     * WAY BIGGER, on the player's word: "the smoke screen needs to be way
+     * bigger and more useful". The radius here is the DESIGNATION ring — how
+     * much ground the reticle paints — and it moves with the payload: six
+     * canisters at 12 m across a 9 m spacing is a bank about 57 m long and 24
+     * deep, against the four-at-8.5-on-7 that made a 31 m one. See `canisters`.
+     */
+    cost: 12, cooldown: 14, at: 'aim', radius: 26,
     deliver: 'smoke', words: ['smoke', 'screen'],
-    blurb: 'A gunship lays four canisters across the ground you painted. Nothing '
-      + 'on either side can shoot what it cannot see.',
+    blurb: 'A gunship walks six canisters across the ground you painted — a bank '
+      + 'you cannot see over. Nothing on either side shoots what it cannot see, '
+      + 'and anything half-blinded by it sprays.',
     cadence: (ctx, site, S) => S.canisters(ctx, site),
   },
   {
@@ -291,6 +489,316 @@ export const STRATAGEMS = [
     blurb: 'A pod on your position: health for you, and it wakes the wounded around '
       + 'you back onto their feet.',
     fire: (ctx, site, S) => S.resupply(ctx, site, 9),
+  },
+
+  /* ══ FORWARD SUPPORT — released at 55 of war effort, about wave 4 ══════
+   *
+   * Three calls that change WHERE a fight happens rather than how much damage
+   * is in it. None of them is a bigger version of anything above: one moves
+   * bodies and does not hurt them, one makes a piece of ground unusable for
+   * eighteen seconds, and one does nothing at all to a man and takes a droid
+   * army off the field for seven seconds. */
+
+  {
+    id: 'concussion', name: 'Concussion wall', earn: RELEASE.FORWARD,
+    cost: 20, cooldown: 24, at: 'aim', radius: 26,
+    deliver: 'bomb', words: ['concussion', 'wall'],
+    blurb: 'Five airbursts in a line across your front. It barely scratches anything '
+      + 'and it throws everything — a charge broken, a line put on its back, forty '
+      + 'metres of ground given back to you.',
+    /**
+     * THE ONE CALL ON THE TABLE THAT IS NOT TRYING TO KILL ANYTHING, and that
+     * is the whole design of it. `blast` takes `force` and `damage` as two
+     * independent numbers and every other row spends both; this spends 300 of
+     * impulse against 9 of damage, which is a shove of about 19 m/s at the
+     * centre and a bruise.
+     *
+     * Measured on the packed Geonosis field (22 bodies, 15 of them inside
+     * 12 m): the wall throws them away from it at a mean 66.7 m/s — the SAME
+     * mean the orbital strike produces — for 229 hp of damage against the
+     * strike's 3 023, and it kills NOBODY. Half the strike's price, all of its
+     * shove, none of its bodies. That is the answer to a droideka line closing
+     * on you that an orbital strike is not: you cannot afford a strike every
+     * time somebody walks at you, and you can afford this.
+     */
+    cadence: (ctx, site, S) => S.wall(ctx, site),
+  },
+  {
+    id: 'fence', name: 'Thermal fence', earn: RELEASE.FORWARD,
+    cost: 24, cooldown: 30, at: 'aim', radius: 30,
+    deliver: 'smoke', words: ['thermal', 'fence'],
+    blurb: 'A gunship lays a burning line fifty-four metres across the ground you '
+      + 'painted. It stands for eighteen seconds and it kills anything soft that '
+      + 'tries to cross. Armour walks through it.',
+    /**
+     * GROUND DENIAL, and it is denial rather than damage: the number that
+     * matters is not what it kills but for how long a piece of ground cannot be
+     * used. Eighteen seconds is longer than any cooldown on the table below the
+     * orbital calls, so a fence laid across the approach is a decision about
+     * the whole engagement.
+     *
+     * IT DISCRIMINATES, and this is what stops it being "the barrage but
+     * slower". `FENCE_DPS` is charged in full to flesh and plastoid and at
+     * `FENCE_HARD` to anything plated. Measured, one node against one body of
+     * each: a clone trooper (46 hp) is dead 2.3 s after stepping into it, and
+     * an AAT (1 050 hp) standing in it for the whole eighteen seconds loses 21
+     * — two per cent of its hull. A trooper sixty metres away loses nothing,
+     * which is the other thing a fence has to be able to say.
+     *
+     * The fence is the answer to infantry and the mass driver is the answer to
+     * the tank; owning one does not answer the other.
+     */
+    cadence: (ctx, site, S) => S.fenceLine(ctx, site),
+  },
+  {
+    id: 'ion', name: 'Ion pulse', earn: RELEASE.FORWARD,
+    cost: 28, cooldown: 32, at: 'aim', track: true, radius: 22,
+    deliver: 'ion', words: ['ion', 'pulse'],
+    blurb: 'A charge off the ship, straight down. Every machine inside twenty-two '
+      + 'metres stops dead for seven seconds and takes a hundred and ten with it. '
+      + 'Flesh does not notice it at all.',
+    /**
+     * THE CALL WHOSE VALUE DEPENDS ON WHO YOU ARE FIGHTING, which is a thing no
+     * other row on this table does and the reason it is worth 37.5 of support.
+     *
+     * WHAT COUNTS AS A MACHINE IS THE MATERIAL TABLE'S ANSWER and not a list of
+     * type names. `Combat.TOUGHNESS` already says what every body in this game
+     * is made of — flesh 0.9, cloth 0.5, plastoid 1.5 (a clone's armour over a
+     * man), droid 2.0, armour 4.5, heavy 14, durasteel 42 — so "is there a
+     * machine in there" is `toughness >= TOUGHNESS.droid`, and it is right for
+     * every one of the 31 archetypes and for the next one somebody writes. A
+     * regex over `/droid|b1|b2|walker/` would be HANDOFF §2.4's restated rule,
+     * and it is already in Enemy.js once.
+     *
+     * Measured on the packed Geonosis field (22 bodies, every one of them a
+     * machine): 19 of them standing still at once and 2 420 hp removed, for a
+     * call that would do LITERALLY NOTHING on the Republic side of the same
+     * fight. Compare the orbital strike on the same field — 3 023 hp for 53.5
+     * of support — and the trade is legible: the pulse is cheaper, it does not
+     * break the ground, it kills almost nothing (3 bodies), and for seven
+     * seconds the enemy is furniture.
+     */
+    fire: (ctx, site, S, s) => S.ionPulse(ctx, site, s.radius),
+  },
+
+  /* ══ HEAVY ORDNANCE — released at 130, about wave 9 ═══════════════════
+   *
+   * Four calls that each answer ONE kind of target and are wasted on the
+   * others. That is deliberate and it is the argument against a table of
+   * damage numbers: a cluster canister is worthless against a tank, a mass
+   * driver is worthless against a swarm, a minefield does nothing until
+   * something walks, and a tractor beam does no damage at all. */
+
+  {
+    id: 'mines', name: 'Seismic charges', earn: RELEASE.HEAVY,
+    cost: 27, cooldown: 34, at: 'aim', radius: 30,
+    deliver: 'bomb', words: ['seismic', 'charges'],
+    blurb: 'Twelve charges scattered across thirty metres, armed where they land. '
+      + 'They wait forty-five seconds for something to walk within three, and they do '
+      + 'not care whose it is.',
+    /**
+     * THE ONLY CALL THAT DOES NOTHING WHEN IT ARRIVES, and the only one whose
+     * effect is decided by the enemy rather than by the player. Everything else
+     * on this table happens at a time you chose; this happens when something
+     * steps on it, which is what makes it the call for ground you are about to
+     * leave, a flank you cannot watch and a door you want closed behind you.
+     *
+     * FORTY-FIVE SECONDS is deliberately longer than two waves' worth of
+     * cooldown: a minefield that expired before the next push would be a
+     * delayed barrage. It is also why they are visible — see `_paintCharge` —
+     * because a hazard the player forgets they laid is a hazard that kills the
+     * player.
+     */
+    cadence: (ctx, site, S) => S.scatterMines(ctx, site),
+  },
+  {
+    id: 'cluster', name: 'Cluster munitions', earn: RELEASE.HEAVY,
+    cost: 33, cooldown: 30, at: 'aim', radius: 26,
+    deliver: 'bomb', words: ['cluster', 'munitions'],
+    blurb: 'One canister, opened at three hundred metres. Twenty-six bomblets across '
+      + 'twenty-six metres of ground in a second and a half. It empties a line of '
+      + 'infantry and does almost nothing to a hull.',
+    /**
+     * THE ANTI-INFANTRY ANSWER, and the exact inverse of the mass driver.
+     *
+     * Fragmentation is a swarm of small fast pieces: it shreds cloth, flesh and
+     * plastoid and it does not go through 40 mm of durasteel. That is a real
+     * physical statement and it is stated once, as `blast`'s `hard` share, so
+     * every bomblet answers it the same way.
+     *
+     * Measured on the packed Geonosis field: 5 bodies killed and 1 760 hp
+     * removed, of which everything plated on the field — three AATs, a walker
+     * and a hailfire, 4 810 hp between them — contributed 77. The mass driver
+     * on the same field is the mirror image: 2 200 hp out of ONE hull and 77 of
+     * it out of everything plated. Two calls, one field, opposite answers.
+     */
+    cadence: (ctx, site, S) => S.cluster(ctx, site),
+  },
+  {
+    id: 'tractor', name: 'Tractor beam', earn: RELEASE.HEAVY,
+    cost: 31, cooldown: 40, at: 'aim', radius: 26, hold: TRACTOR_TIME,
+    deliver: 'tractor', words: ['tractor', 'beam'],
+    blurb: 'A hold field off the ship. For three and a half seconds everything inside '
+      + 'twenty-six metres is dragged to the middle of it and lifted off its feet. It '
+      + 'does no damage whatsoever. That is what it is for.',
+    /**
+     * THE SET-UP CALL, and the only one on the table whose worth is measured in
+     * what the NEXT call gets to do.
+     *
+     * Zero damage, by design. What it produces is a number no other row moves:
+     * the radius of the enemy. Measured on a SPREAD line — sixteen MagnaGuards
+     * on rings at 11, 15.5, 20 and 24.5 m, which is the formation this call is
+     * for — the mean radius goes from 17.8 m to 2.4 m over the beam's 3.4 s,
+     * closing at a steady 4.8 m/s, and every one of the sixteen ends up inside
+     * the orbital strike's 12 m circle where eight of them started outside it.
+     * Total damage dealt: zero.
+     *
+     * `gentle` on every pull: `applyKnockback`'s hard path breaks a cast, cries
+     * out and stuns past 12 m/s, and a beam applied sixteen times over three
+     * seconds would do all three sixteen times. A tractor field is a steady
+     * pull, not sixteen shoves.
+     */
+    fire: (ctx, site, S, s) => S.tractor(ctx, site, s.radius),
+  },
+  {
+    id: 'driver', name: 'Mass driver', earn: RELEASE.HEAVY,
+    cost: 47, cooldown: 40, at: 'aim', track: true, radius: 4.2,
+    deliver: 'spike', words: ['mass', 'driver'],
+    blurb: 'A tungsten rod dropped from orbit at the one thing you painted. Four metres '
+      + 'wide and nothing inside it survives — a walker, a tank, a general. Wasted on '
+      + 'anything smaller.',
+    /**
+     * ONE ENORMOUS THING, DEAD. The orbital strike is 12 m and 300 damage with a
+     * 0.35 core; this is 5.5 m and 1 700 with a 0.6 core, which is not "the
+     * strike but bigger" — it is a different transaction with a different
+     * failure mode. Measured with both aimed at the SAME AAT on the packed
+     * Geonosis field: the driver kills 3 bodies, puts 2 200 hp into one of
+     * them and the tank is gone; the strike kills 6, its largest single hit is
+     * 300, and the tank drives away. The driver is the only call in the game
+     * that takes a 1 050 hp AAT off the board in one round, and the only one
+     * that leaves a 4.2 m hole in the ground.
+     *
+     * IT TRACKS, because it is fired AT a thing rather than at a place, and the
+     * 4.4 s spike gives that thing time to walk out of five metres. The player
+     * who marks a walker and holds it gets the walker; the player who marks a
+     * B1 has spent 62.5 of support on a B1.
+     */
+    fire: (ctx, site, S, s) => S.blast(ctx, site, s.radius, 300, 2200,
+      { core: 0.70, shake: 1.4, size: 4.0, crater: 4.2 }),
+  },
+
+  /* ══ FLEET ASSETS — released at 230, about wave 14 ════════════════════
+   *
+   * Three calls that do not finish when they land. Each occupies the field for
+   * twenty seconds or more, which is the property none of the ordnance above
+   * has: you call them BEFORE you need them and then fight around them. */
+
+  {
+    id: 'overwatch', name: 'Gunship on station', earn: RELEASE.DEEP,
+    cost: 38, cooldown: 46, at: 'aim', radius: 34, hold: STATION_TIME,
+    deliver: 'loiter', words: ['gunship', 'on', 'station'],
+    blurb: 'A gunship takes up a circle over the ground you painted and stays there '
+      + 'for twenty-two seconds, working down whatever is nearest. It knows whose side '
+      + 'you are on. You do not have to watch it.',
+    /**
+     * THE ONE CALL THAT PICKS ITS OWN TARGETS, and the reason it is worth more
+     * than a strafing run that deals more damage in one second.
+     *
+     * A gun run is 12 impacts along a line the pilot committed to before it
+     * arrived; twelve bodies standing somewhere else take nothing. This is 18
+     * bursts over 22 seconds, each aimed at whatever is closest to the mark at
+     * that moment, which means it follows the fight. Measured on the packed
+     * Geonosis field: the strafing run is 1 334 hp and 3 bodies inside a second
+     * and a half; the station is 2 727 hp and 6 bodies over twenty-two seconds,
+     * 1 779 of it out of the three tanks and the walker, because it kept
+     * picking the thing that was still standing.
+     *
+     * AND IT IS THE ONE PAYLOAD THAT READS TEAMS. `blast`'s own note is that a
+     * gun run "does not know whose side you are on" — correct for a pass that
+     * was aimed by a player. A craft choosing its own targets and choosing your
+     * own troops would not be dangerous, it would be broken, so the target
+     * search asks `e.team !== owner.team`.
+     */
+    cadence: (ctx, site, S) => S.station(ctx, site),
+  },
+  {
+    id: 'beachhead', name: 'Beachhead', commandOnly: true, earn: RELEASE.DEEP,
+    cost: 35, cooldown: 48, lead: 0.4, at: 'aim',
+    words: ['take', 'that', 'ground'],
+    blurb: 'Six of yours off a ramp on the ground you painted, up to ninety metres '
+      + 'away. Not beside you — where you want the line to be.',
+    /**
+     * REINFORCEMENTS ARE 'self' AND THIS IS 'aim', AND THAT IS THE WHOLE
+     * DIFFERENCE. Four more bodies beside you is a way to survive; six bodies
+     * on a ridge you are not standing on is a way to TAKE it, and it is the
+     * only call in the game that moves the line somewhere rather than topping
+     * it up.
+     *
+     * It lands them through `Command.reinforce` — the same verb the order wheel
+     * uses, so the recruitment cost, the point ledger, the gunship and the
+     * muster broadcast are all the ones that already exist. The only thing this
+     * adds is WHERE, and it says so by moving the commander's own `anchor` for
+     * the duration of one synchronous call and putting it straight back. See
+     * `beachhead`.
+     */
+    fire: (ctx, site, S) => S.beachhead(ctx, site, 6),
+  },
+  {
+    id: 'storm', name: 'Ion storm', earn: RELEASE.DEEP,
+    cost: 44, cooldown: 60, lead: 3.2, at: 'aim', radius: 34,
+    words: ['ion', 'storm'],
+    blurb: 'The fleet dumps a charge into the upper atmosphere over the ground you '
+      + 'painted and the sky comes down on it for eighteen seconds. It does not care '
+      + 'what anything is made of, and it does not care where you are standing.',
+    /**
+     * THE WEATHER, WHICH IS A DIFFERENT KIND OF CALL FROM ANYTHING ELSE HERE.
+     *
+     * Nothing flies in for it — there is no craft and no round, which is why it
+     * carries a `lead` rather than a `deliver`; what arrives is the sky
+     * changing. It is drawn through `world.lightning`, the real `LightningVfx`
+     * ribbon pool that Force lightning uses, because a storm drawn out of the
+     * spark ring is the "row of dots" that file's own header is about.
+     *
+     * INDISCRIMINATE, AND THAT IS THE PRICE OF IT. The ion pulse above is
+     * precise and does nothing to flesh; this hits whatever is under it,
+     * including the player and including the player's line, for eighteen
+     * seconds, over ground the player cannot retake in that time. Measured on
+     * the packed Geonosis field: 54 discrete bolts, 8 bodies killed and 2 880
+     * hp removed — comparable to the orbital strike's 3 023, spread over
+     * eighteen seconds instead of one instant, and over ground nothing can
+     * stand on for the duration.
+     */
+    fire: (ctx, site, S, s) => S.ionStorm(ctx, site, s.radius, 18),
+  },
+
+  /* ══ SIEGE AUTHORITY — released at 360, about wave 20 ═════════════════ */
+
+  {
+    id: 'bombard', name: 'Orbital bombardment', earn: RELEASE.SIEGE,
+    cost: 60, cooldown: 75, at: 'aim', radius: 42, hold: SIEGE_TIME,
+    deliver: 'siege', words: ['begin', 'the', 'bombardment'],
+    blurb: 'Everything the ship has, walked across forty-two metres of ground for nine '
+      + 'seconds. Seven seconds of warning, because you will need them too. There is '
+      + 'nothing above this.',
+    /**
+     * THE BIGGEST THING IN THE GAME, and every number on it is chosen so that
+     * it cannot become the answer to everything.
+     *
+     * 80 of a 100-point bar — you cannot make this call at the opening of a
+     * battle, because a battle opens at 55. A 75 s cooldown and 12.8 s of
+     * rearm on top. Released only at 360 of war effort, which is about wave 20.
+     * A player sees it once or twice in a deep run and never in a short one,
+     * which is exactly what "unlock some really cool shit" should mean.
+     *
+     * Measured on the packed Geonosis field: 21 of 22 bodies killed, 9 265 hp
+     * removed and 22 craters left in the ground — the whole of a deep wave, and
+     * about a hundred and ninety seconds of blade work by `tools/balance.mjs`'s
+     * own pricing, delivered in nine. It is the only call in the game that
+     * clears a field. The seven-second lead is the longest here and the ring is
+     * 42 m wide; standing in it when it starts is survivable for about two
+     * seconds.
+     */
+    cadence: (ctx, site, S) => S.bombardment(ctx, site),
   },
 ];
 
@@ -480,6 +988,34 @@ export function codeFaults(rows = STRATAGEMS) {
  * One per player. `feed(dir)` takes a direction the input layer resolved,
  * `update(dt, ctx)` runs the pending calls, and `entry` is what the HUD paints.
  */
+/**
+ * WHAT A CALL COSTS IN SUPPORT, DERIVED FROM ITS FORCE PRICE.
+ *
+ * The `cost` on every row is kept — it is also what decides how LONG the code
+ * is (`codeLen` reads it, and that is the mechanic the whole table is balanced
+ * around), so replacing it with a second number would be HANDOFF §2.3's
+ * hand-maintained twin in the one file that can least afford one.
+ *
+ * The scale is chosen so the most expensive call on the table lands at
+ * `DEAREST_SHARE` of the bar (see src/game/Support.js, which owns that number
+ * because it is a statement about the BAR and not about any one row). That
+ * gives the shape the player asked for — "different strategems cost more
+ * obviously" — and it re-derives itself if a row's price ever moves.
+ *
+ * Measured over the shipped eighteen rows, at `DEAREST_SHARE` 0.8 against a
+ * dearest of 60 Force: smoke 16, resupply 21.5, rally 24, concussion 26.5,
+ * strafe 29.5, fence 32, barrage 34.5, mines 36, ion 37.5, reinforce 40,
+ * tractor 41.5, cluster 44, beachhead 46.5, overwatch 50.5, strike 53.5,
+ * storm 58.5, driver 62.5, bombardment 80. A full bar is ONE of the top four,
+ * or two of the middle, or six screens — and the bombardment cannot be made at
+ * all at the opening of a battle, which starts at 55.
+ */
+let _dearest = 0;
+export function supportCost(s) {
+  if (!_dearest) _dearest = STRATAGEMS.reduce((m, x) => Math.max(m, x.cost ?? 0), 1);
+  return Math.round((s.cost ?? 0) * (SUPPORT_MAX * DEAREST_SHARE / _dearest) * 2) / 2;
+}
+
 export class Stratagems {
   constructor(owner) {
     this.owner = owner;
@@ -531,6 +1067,22 @@ export class Stratagems {
     this.designating = null;
     /** The craft in the air. Built on first use — see `_sorties`. */
     this.sorties = null;
+    /**
+     * THE HIGHEST WAR EFFORT THIS OBJECT HAS SEEN, for `_release`. Not a copy
+     * of the pool — the pool is the authority and is read every frame; this is
+     * only the watermark that turns a continuous number into a discrete event.
+     */
+    this._effort = null;
+    /** Live seismic charges and live fire nodes. Both are lists rather than
+     *  one-shot timers because a pass lays them a fifth of a second apart, and
+     *  one loop walks each list rather than one loop per item — see `sustain`.
+     *  Both die with the level; see `reset`. */
+    this._mines = [];
+    this._fires = [];
+    /** Is a list's loop already running? A second fence must add nodes to the
+     *  list the first one's loop is already walking, not start a second walk. */
+    this._burning = false;
+    this._mining = false;
   }
 
   /**
@@ -556,10 +1108,82 @@ export class Stratagems {
     return this._seed / 4294967296;
   }
 
-  /** Which rows are offerable at all right now. Command-only calls need an army. */
+  /**
+   * WHICH ROWS ARE OFFERABLE AT ALL RIGHT NOW.
+   *
+   * Two gates and they refuse for different reasons. `commandOnly` needs an
+   * army behind you — a lone Jedi in a horde run has nobody to reinforce.
+   * `earn` needs the battle to have got somewhere: see `RELEASE`, and
+   * `WarSupport.effort`, which is the climb.
+   *
+   * A REFUSAL IS A ROW THAT IS NOT THERE, not a row that says no. The existing
+   * check on `commandOnly` states the rule — "a code that can be spelled and
+   * then refuses is a menu item that lies" — and the release ladder is held to
+   * it: a locked call is absent from the panel, absent from `candidates`, and
+   * its code does not resolve. What tells the player it exists is `_release`,
+   * which announces each one at the moment it arrives.
+   *
+   * NO POOL MEANS NO LADDER. The character creator and the Codex preview both
+   * construct a `Stratagems` with no World, and a page that showed a player
+   * seven of eighteen calls because there is no battle running would be
+   * describing a game that does not exist. `effort == null` is "there is no
+   * battle to have progressed through", which is a different fact from zero.
+   */
   available(ctx) {
-    const army = !!(ctx?.world?.command || this.owner?.world?.command);
-    return STRATAGEMS.filter(s => !s.commandOnly || army);
+    const world = ctx?.world || this.owner?.world;
+    const army = !!world?.command;
+    const effort = world?.support?.effort;
+    return STRATAGEMS.filter(s =>
+      (!s.commandOnly || army) && (effort == null || (s.earn ?? 0) <= effort));
+  }
+
+  /**
+   * WHAT THE SIDE HAS EARNED THE RIGHT TO ASK FOR, and what it has not yet.
+   *
+   * Returns the rows still locked, cheapest first, so the HUD can print the
+   * next one and the Codex can print the whole ladder. Exported as a method
+   * rather than recomputed by two readers, for the reason every derived thing
+   * in this file is one.
+   */
+  locked(ctx) {
+    const world = ctx?.world || this.owner?.world;
+    const effort = world?.support?.effort;
+    if (effort == null) return [];
+    return STRATAGEMS.filter(s => (s.earn ?? 0) > effort)
+      .sort((a, b) => (a.earn ?? 0) - (b.earn ?? 0));
+  }
+
+  /**
+   * THE FLEET ANSWERS — one notice, once, at the moment a call is released.
+   *
+   * A ladder nobody is told about is a ladder nobody climbs, and the panel
+   * cannot carry it: the panel only exists while the key is held, and the
+   * moment a call is released is almost never a moment the player is holding
+   * the comm up. So it goes through `World.notify`, which is the same door a
+   * refused Force power and a wave banner already use.
+   *
+   * BY RUNG AND NOT BY ROW. Three calls land at 55 and three at 230; three
+   * notices in one frame is three notices nobody reads, so the rung is
+   * announced with its calls named on the second line. `RELEASE_NAME` is the
+   * rung's own word and comes off the ladder rather than being typed here.
+   */
+  _release(ctx) {
+    const world = ctx?.world || this.owner?.world;
+    const effort = world?.support?.effort;
+    if (effort == null) return;
+    if (this._effort == null) { this._effort = effort; return; }
+    const was = this._effort;
+    this._effort = effort;
+    if (effort <= was) return;
+    const opened = STRATAGEMS.filter(s => {
+      const at = s.earn ?? 0;
+      return at > was && at <= effort;
+    });
+    if (!opened.length) return;
+    const rung = opened[0].earn ?? 0;
+    world?.notify?.(String(RELEASE_NAME[rung] ?? 'support released').toUpperCase(),
+      opened.map(s => s.name).join(' · '));
+    audio.ui('good');
   }
 
   /** The rows still consistent with what has been typed. The HUD's whole job. */
@@ -669,7 +1293,36 @@ export class Stratagems {
       audio.ui('bad');
       return false;
     }
-    if (p?._spend && !p._spend(s.cost)) {
+    /**
+     * IT COSTS WAR SUPPORT, NOT FORCE — and the player's question about the old
+     * arrangement answers itself: "strategems should not cost force how does
+     * that even fucking make sense?"
+     *
+     * It did not. `p._spend(s.cost)` is the Jedi's own pool, the one that buys
+     * a push and a lift, so calling in an orbital strike was paid for out of a
+     * connection to the Force. Beyond the fiction it had a real cost in play:
+     * the comm and the powers competed for one bar, so a run that leaned on
+     * stratagems could not lift a walker, and two systems meant to be different
+     * ways of fighting were one resource with two spouts.
+     *
+     * `world.support` is the side's supply line — see src/game/Support.js. It
+     * builds by itself, builds faster when the battle is going your way, and
+     * stops building for a while after every call, which is the "carriers
+     * rearming" the note asks for.
+     *
+     * THE FALLBACK IS THE OLD PATH and it is not dead code: `Stratagems` is
+     * constructed by the character creator and by the Codex preview, neither of
+     * which has a World, and a call there must still be refusable.
+     */
+    const support = p?.world?.support;
+    const cost = supportCost(s);
+    if (support) {
+      if (!support.spend(cost)) {
+        this._say(`${s.name}: ${Math.ceil(cost - support.value)} more support`);
+        audio.ui('bad');
+        return false;
+      }
+    } else if (p?._spend && !p._spend(s.cost)) {
       this._say(`${s.name}: not enough Force`);
       audio.ui('bad');
       return false;
@@ -723,8 +1376,23 @@ export class Stratagems {
     if (s.deliver) {
       const cad = s.cadence ? s.cadence(ctx, site, this) : [];
       const bearing = this._bearing(site);
+      /**
+       * `hold` IS HOW LONG THE THING STAYS AFTER IT GETS HERE, and the row is
+       * what says so.
+       *
+       * It was `lead + 0.25` for everything, which is right for a lance: the
+       * column opens over the countdown and is gone the instant the ground
+       * goes. It is wrong for every call that OCCUPIES the field. Measured
+       * before the row carried it: the gunship-on-station left after 2.65
+       * seconds of a twenty-two second station and delivered 3 of its 18
+       * bursts (363 hp of a measured 2 090), and the tractor beam's column
+       * vanished a quarter of a second into a three-and-a-half second pull.
+       *
+       * A row that says nothing gets the old number, so the seven calls that
+       * shipped are untouched.
+       */
       this._sorties(ctx).launch(s.deliver, site, bearing, cad,
-        { hold: lead + 0.25, follow: s.track ? () => P.site : null });
+        { hold: lead + 0.25 + (s.hold ?? 0), follow: s.track ? () => P.site : null });
     }
     this._say(lead > 0.2 ? `${s.name} — ${lead.toFixed(1)}s` : s.name);
     audio.force(p.chest ?? p.position, 'push');
@@ -859,11 +1527,86 @@ export class Stratagems {
   /** Run `fn` in `t` seconds. Cleared with everything else on unload. */
   after(t, fn) { this._timers.push({ t, fn }); }
 
+  /**
+   * RUN `fn` EVERY `period` SECONDS FOR `duration`, and then stop.
+   *
+   * Six of the eleven calls added for the release ladder are not events, they
+   * are OCCUPATIONS: a fence burning for eighteen seconds, a beam pulling for
+   * three and a half, a storm for eighteen, a minefield for forty-five. Every
+   * one of them wants the same loop, and six hand-rolled copies of "re-arm a
+   * timer until a counter runs out" is HANDOFF §2.4 waiting to happen — one of
+   * them will eventually forget to stop.
+   *
+   * BUILT ON `after` AND NOT ON A NEW LIST. `_timers` is already stepped by
+   * `update` and already cleared by `reset`, so a sustained effect dies with
+   * the level for free; a second registry would be a second thing to remember
+   * to clear, and this file has a note about exactly that on `clearSmoke`.
+   *
+   * `fn(elapsed, k)` is handed the seconds since it started and the fraction of
+   * its life that has run, so a caller can fade, thin out or accelerate without
+   * keeping its own clock. Returning `false` ends it early.
+   *
+   * ── A DURATION OF 0 MEANS "UNTIL `fn` SAYS STOP", AND TWO CALLS NEED IT ──
+   *
+   * The fence and the minefield do not have one duration; they have a LIST of
+   * things with their own clocks, laid a fifth of a second apart by a craft
+   * flying over. Bounding the loop by a number measured from the FIRST one is
+   * off by however long the pass took, and the failure is silent and
+   * cumulative: measured, the fence's loop stopped 18.5 s after the first node
+   * lit while the last node still had a second of life, so two nodes stayed in
+   * `_fires` for the rest of the level — burning nothing, and holding
+   * `_burning` true, which meant the NEXT fence the player called laid seven
+   * nodes that never caught. The list is the authority for when it is over, so
+   * the list is what ends it.
+   *
+   * Both callers that use it age their own list down and return `false` the
+   * beat it empties, which is what makes the loop terminate. `reset` clears
+   * `_timers` with the level either way, so nothing here can outlive a battle.
+   */
+  sustain(duration, period, fn) {
+    let t = 0;
+    const beat = () => {
+      t += period;
+      const k = duration > 0 ? clamp(t / duration, 0, 1) : 0;
+      let go = true;
+      try { go = fn(t, k) !== false; } catch { go = false; }
+      if (go && (duration <= 0 || t < duration)) this.after(period, beat);
+    };
+    this.after(period, beat);
+  }
+
+  /**
+   * IS THERE A MACHINE IN THERE — and the answer is the MATERIAL table's.
+   *
+   * `Combat.TOUGHNESS` already says what every body in this game is made of,
+   * and `TOUGHNESS.droid` (2.0) is the rung above plastoid (1.5, which is a
+   * clone's armour over a man) and flesh (0.9). So everything at or above it is
+   * a machine — a B1, a B2, a droideka, a MagnaGuard, a BX, a walker, an AAT, a
+   * hailfire, a spider — and everything below it is somebody. It is right for
+   * all 31 archetypes and for the next one somebody writes, which a regex over
+   * type names is not.
+   */
+  static isMachine(e) { return (e?.A?.toughness ?? TOUGHNESS.flesh) >= TOUGHNESS.droid; }
+
+  /** Every living body within `r` of a point. One walk, six callers. */
+  _near(ctx, at, r) {
+    const out = [];
+    const r2 = r * r;
+    for (const e of (ctx?.enemies || [])) {
+      if (e.dead || !e.position) continue;
+      if (e.position.distanceToSquared(at) <= r2) out.push(e);
+    }
+    return out;
+  }
+
   update(dt, ctx) {
-    /* THE CLOUDS AGE HERE, and this is the only caller. A stratagem is the only
-     * thing that lays smoke, so the thing that lays it is the thing that ticks
-     * it — one owner, and no second place to forget. */
+    /* THE CLOUDS AGE HERE, and this is the only caller. A support call is the
+     * only thing that lays smoke, so the thing that lays it is the thing that
+     * ticks it — one owner, and no second place to forget. */
     updateSmoke(dt);
+    /* AND THE LADDER IS WATCHED HERE, for the same reason: this is the one
+     * object that is stepped every frame and already knows the table. */
+    this._release(ctx);
     if (this.sorties) this.sorties.update(dt, ctx);
     for (const id in this.cooldowns) {
       if (this.cooldowns[id] > 0) this.cooldowns[id] = Math.max(0, this.cooldowns[id] - dt);
@@ -968,6 +1711,16 @@ export class Stratagems {
   reset() {
     this.entry = ''; this.pending.length = 0; this._timers.length = 0; this.cooldowns = {};
     this.designating = null;
+    /* THE LADDER'S WATERMARK GOES WITH IT. A new field is a new battle and a
+     * new `WarSupport`, so an old watermark would suppress the announcement of
+     * every rung the last battle had already passed. `null` is "nothing seen
+     * yet", which `_release` reads as "record where we are and say nothing" —
+     * the correct behaviour for the first frame of a battle. */
+    this._effort = null;
+    this._mines.length = 0;
+    this._fires.length = 0;
+    this._burning = false;
+    this._mining = false;
     this.sorties?.clear();
     clearSmoke();
   }
@@ -1002,8 +1755,43 @@ export class Stratagems {
    * it — the hole is still there next wave.
    */
   blast(ctx, site, radius, force, damage, opts = {}) {
-    const p = this.owner;
+    /**
+     * WHO GETS THE CREDIT, and it is not always the person holding the comm.
+     *
+     * `this.owner` is the Player, which is right for every call that arrives
+     * through a stratagem code: the Jedi spelled it, the Jedi is answerable for
+     * it, and `onFriendlyHit` reading their own troops out of it is the whole
+     * of "spelling eight directions and holding it on your own men is a
+     * decision". It is WRONG for a blast this class did not choose — a grenade
+     * a trooper threw, whose kills belong to that trooper's own record and
+     * whose friendly fire is his mistake and not yours. Measured before it: ten
+     * grenades thrown by an army over one wave, every kill credited to a Jedi
+     * who was standing still.
+     *
+     * `opts.source` is that body. It changes attribution only: the arithmetic,
+     * the falloff, the Force answer and the crater are the same call.
+     */
+    const p = opts.source ?? this.owner;
     const core = clamp(opts.core ?? 0, 0, 0.95);
+    /**
+     * `hard` — WHAT FRACTION OF THIS BLOW A PLATED MACHINE TAKES.
+     *
+     * Defaults to 1, so every caller that does not ask for it is unchanged.
+     * Fragmentation is the one that does: a cluster bomblet and a thermal fence
+     * are a swarm of small fast pieces and a fire, and neither goes through
+     * 40 mm of durasteel. That is a statement about the WEAPON and not about
+     * the target, which is why it is a term on the blow rather than a rule
+     * inside `Enemy` — the same bomblet is charged the same way whatever it
+     * lands on, and what changes is what it lands on.
+     *
+     * WHAT COUNTS AS PLATED IS `Combat.TOUGHNESS`, the table that already says
+     * what every body in this game is made of, read at `TOUGHNESS.heavy` — a
+     * walker, a tank, a hailfire, a spider droid. A B1 at `droid` 2.0 and a
+     * clone at `plastoid` 1.5 both take the whole thing, which is right: a
+     * fragment goes through both. A list of type names here would be HANDOFF
+     * §2.4's restated rule and would be wrong the day somebody adds a tank.
+     */
+    const hard = clamp(opts.hard ?? 1, 0, 1);
     const size = opts.size ?? clamp(radius / 5, 0.6, 2.2);
     /* THE GROUND REMEMBERS. `crater` is a depth in metres and it is the number
      * that decides whether a player walks past the hole later and knows what
@@ -1013,6 +1801,22 @@ export class Stratagems {
     if (ctx?.terrain?.crater) ctx.terrain.crater(site.x, site.z, radius * 0.5, opts.crater ?? 0.34);
     if (ctx?.terrain?.burn) ctx.terrain.burn(site.x, site.z, radius * 0.6, 1);
     audio.explosion(site, clamp(size, 0.6, 3.6));
+    /**
+     * `cosmetic` — THE PICTURE AND NOTHING ELSE, and it stops HERE.
+     *
+     * One caller: a co-op client's copy of a grenade somebody else's machine
+     * already resolved (`Reactions.LiveGrenade.ghost`). The hole, the scorch
+     * and the bang are what a client is missing and what it has to draw; the
+     * damage is the HOST's and arrives as hp in the next snapshot. Applying it
+     * at both ends would kill the same droid twice on the guest's screen and
+     * then correct it, which is what a desync looks like from the sofa.
+     *
+     * It is a flag rather than "pass damage 0 and force 0" because a zero blow
+     * still walks every body on the field, still calls `applyKnockback`, and
+     * still asks the Force to answer a blow of nothing — a bill of zero paid
+     * out of a real pool. This returns before any of that.
+     */
+    if (opts.cosmetic) return;
     /** The fraction of the blow a body at `d` takes. See `core`. */
     const falloff = (d) => {
       if (d > radius) return 0;
@@ -1023,8 +1827,12 @@ export class Stratagems {
       if (e.dead) continue;
       const k = falloff(e.position.distanceTo(site));
       if (k <= 0) continue;
+      /* PLATE ANSWERS THE FRAGMENT, once, at the same place the falloff does —
+       * see `hard`. A shove is not blunted by armour and damage is, so the
+       * share is on the damage term alone. */
+      const plated = (e.A?.toughness ?? TOUGHNESS.flesh) >= TOUGHNESS.heavy;
       _v1.subVectors(e.position, site).setY(0.7).normalize().multiplyScalar(force * k);
-      e.applyKnockback(_v1, damage * k, p);
+      e.applyKnockback(_v1, damage * k * (plated ? hard : 1), p);
     }
     /**
      * AND IT DOES NOT SPARE YOU, OR ANYONE OF YOURS.
@@ -1046,9 +1854,13 @@ export class Stratagems {
      * melee; it is a decision, and it is exactly the decision that table's
      * "the Jedi used a Force power ON one of their own" was written for.
      */
-    if (p && !p.dead) {
-      const k = falloff(p.position.distanceTo(site));
-      if (k > 0) p.damage?.(damage * k * 0.5, site, null, 'explosion');
+    /* THE HALVING IS THE CALLER'S, not the source's: "you knew it was coming"
+     * is true of the person who spelled the code and false of a man standing
+     * next to a grenade somebody else threw. `this.owner` therefore, always. */
+    const caller = this.owner;
+    if (caller && !caller.dead && caller !== opts.source) {
+      const k = falloff(caller.position.distanceTo(site));
+      if (k > 0) caller.damage?.(damage * k * 0.5, site, null, 'explosion');
     }
     if (ctx?.physics) {
       for (const b of ctx.physics.bodies) {
@@ -1219,11 +2031,18 @@ export class Stratagems {
     // Own vectors, for the reason `gunRun` gives above.
     const across = new THREE.Vector3(Math.cos(b), 0, -Math.sin(b));
     const out = [];
-    for (let i = 0; i < 4; i++) {
-      const at = site.clone().addScaledVector(across, (i - 1.5) * 7.0);
+    /* SIX AT 12 m ON A 9 m PITCH — a 57 m bank, against the 31 m the four-at-
+     * 8.5 laid. The pitch is deliberately less than the diameter so consecutive
+     * canisters OVERLAP: two clouds' optical depths add (see Smoke.js), so the
+     * seams between them are the thickest part of the wall rather than the gaps
+     * a line can shoot through. Twenty-two seconds rather than thirteen,
+     * because a screen you have to re-lay before you have crossed it is a
+     * screen that never did its job. */
+    for (let i = 0; i < SMOKE_CANS; i++) {
+      const at = site.clone().addScaledVector(across, (i - (SMOKE_CANS - 1) / 2) * 9.0);
       out.push({
-        t: i * 0.28 - 0.42,
-        fn: (from, c) => { at.y = this._groundAt(c, at); this.smoke(c, at, 8.5, 13); },
+        t: i * 0.22 - 0.55,
+        fn: (from, c) => { at.y = this._groundAt(c, at); this.smoke(c, at, 12, 22); },
       });
     }
     return out;
@@ -1266,6 +2085,515 @@ export class Stratagems {
     if (!cmd?.rallyNear) { this._say('nobody to rally'); return; }
     const n = cmd.rallyNear(this.owner.position, radius);
     this._say(n ? `rallied ${n}` : 'nobody in earshot');
+  }
+
+  /* ── the eleven released along the ladder ──────────────────────────── */
+
+  /**
+   * FIVE AIRBURSTS IN A LINE — the concussion wall's payload.
+   *
+   * Laid ACROSS the caller's own bearing, like the smoke bank and for the same
+   * reason: what you want is a line between you and them, and a round pattern
+   * leaves both ends open. 12 m apart at 14 m radius, so the bursts overlap and
+   * there is no gap in the middle of the wall to walk through.
+   *
+   * 300 of impulse against 9 of damage. `blast` takes those as two independent
+   * numbers and this is the one row that spends the first and not the second —
+   * measured on the packed field, 15 bodies leave at a mean 11.4 m/s and one
+   * dies. `sparkShare` is the same 1/sqrt(n) every multi-round call takes.
+   */
+  wall(ctx, site) {
+    const b = this._bearing(site);
+    const across = new THREE.Vector3(Math.cos(b), 0, -Math.sin(b));
+    const out = [];
+    for (let i = 0; i < WALL_BURSTS; i++) {
+      const at = site.clone().addScaledVector(across, (i - (WALL_BURSTS - 1) / 2) * 12.0);
+      out.push({
+        t: i * 0.09 - 0.18,
+        fn: (from, c) => {
+          at.y = this._groundAt(c, at);
+          this.blast(c, at, 14, 140, 9,
+            { core: 0.45, shake: 0.34, size: 1.6, crater: 0.25,
+              sparkShare: 1 / Math.sqrt(WALL_BURSTS) });
+        },
+      });
+    }
+    return out;
+  }
+
+  /**
+   * A BURNING LINE — the thermal fence's payload.
+   *
+   * Seven nodes on a 9 m pitch across the bearing: a 54 m wall of fire and, at
+   * `FENCE_R` 5.5 m each, no gap between them. Each node is registered on
+   * `_fires` and burned by ONE sustained loop rather than seven, because seven
+   * loops each walking the enemy list is seven walks a beat.
+   */
+  fenceLine(ctx, site) {
+    const b = this._bearing(site);
+    const across = new THREE.Vector3(Math.cos(b), 0, -Math.sin(b));
+    const out = [];
+    for (let i = 0; i < FENCE_NODES; i++) {
+      const at = site.clone().addScaledVector(across, (i - (FENCE_NODES - 1) / 2) * 9.0);
+      out.push({
+        t: i * 0.16 - 0.48,
+        fn: (from, c) => { at.y = this._groundAt(c, at); this._lightFire(c, at); },
+      });
+    }
+    return out;
+  }
+
+  /**
+   * ONE NODE OF THE FENCE, ALIGHT.
+   *
+   * The burn loop is started by the FIRST node and not by each of them — see
+   * `_fires`, which is the shared list every node lands in. A body standing in
+   * the fence is billed once a beat whichever node it is nearest, so a man
+   * standing in the overlap between two of them does not take double.
+   */
+  _lightFire(ctx, at) {
+    const node = { at: at.clone(), t: FENCE_LIFE };
+    this._fires.push(node);
+    if (ctx?.terrain?.burn) ctx.terrain.burn(at.x, at.z, FENCE_R * 1.2, 1);
+    audio.noise({ dur: 1.2, gain: 0.24, type: 'lowpass', freq: 900, freqEnd: 260,
+      pink: true, attack: 0.02, pos: at });
+    if (this._burning) return;
+    this._burning = true;
+    /* FOUR BEATS A SECOND for the whole life of the longest node. Not sixty:
+     * the fence is ground denial and a body is either in it or not, and
+     * charging `FENCE_DPS * 0.25` four times a second is the same number of
+     * hit points with a fifteenth of the work. */
+    this.sustain(0, 0.25, () => {
+      for (let i = this._fires.length - 1; i >= 0; i--) {
+        const f = this._fires[i];
+        f.t -= 0.25;
+        if (f.t <= 0) { this._fires.splice(i, 1); continue; }
+      }
+      if (!this._fires.length) { this._burning = false; return false; }
+      /* ONE PASS OVER THE BODIES, not one per node: a body is billed for the
+       * nearest node it is inside and no other. */
+      for (const e of (ctx?.enemies || [])) {
+        if (e.dead || !e.position) continue;
+        let inside = false;
+        for (const f of this._fires) {
+          if (e.position.distanceTo(f.at) <= FENCE_R) { inside = true; break; }
+        }
+        if (!inside) continue;
+        const plated = (e.A?.toughness ?? TOUGHNESS.flesh) >= TOUGHNESS.heavy;
+        e.damage?.(FENCE_DPS * 0.25 * (plated ? FENCE_HARD : 1), e.position, this.owner, 'explosion');
+      }
+      /* AND IT BURNS ITS CALLER. Same rule as `blast`: a hazard that could not
+       * hurt the person who laid it is a button with no downside. Halved,
+       * because you knew where you put it. */
+      const p = this.owner;
+      if (p && !p.dead) {
+        for (const f of this._fires) {
+          if (p.position.distanceTo(f.at) <= FENCE_R) {
+            p.damage?.(FENCE_DPS * 0.25 * 0.5, f.at, null, 'explosion');
+            break;
+          }
+        }
+      }
+      this._paintFire(ctx);
+      return true;
+    });
+  }
+
+  /** The flames, four times a second, out of the shared dust and plasma rings. */
+  _paintFire(ctx) {
+    const P = ctx?.particles;
+    if (!P) return;
+    for (const f of this._fires) {
+      for (let i = 0; i < 3; i++) {
+        const a = this.rand() * TAU, r = Math.sqrt(this.rand()) * FENCE_R;
+        _v1.set(f.at.x + Math.cos(a) * r, f.at.y + 0.15, f.at.z + Math.sin(a) * r);
+        _v2.set((this.rand() - 0.5) * 0.6, 2.2 + this.rand() * 2.4, (this.rand() - 0.5) * 0.6);
+        P.plasma?.spawn?.(_v1, _v2, { life: 0.5, size: 0.34, drag: 1.4, gravity: -1.4,
+          color: 0xff8828, alpha: 0.8 });
+      }
+      _v1.set(f.at.x, f.at.y + 0.4, f.at.z);
+      P.smoke?.spawn?.(_v1, _v2.set((this.rand() - 0.5) * 1.2, 3.0, (this.rand() - 0.5) * 1.2),
+        { life: 1.6, size: 1.5, drag: 1.4, gravity: -1.0, color: 0x2c2c30, alpha: 0.30 });
+    }
+  }
+
+  /**
+   * EVERY MACHINE INSIDE THE CIRCLE, STOPPED — the ion pulse.
+   *
+   * Two things to each machine and one of them is the point. The damage is a
+   * third of a B1 line's health and would not be worth 37.5 of support on its
+   * own; `stun(ION_STUN)` is what the call is for, and seven seconds is longer
+   * than any fight in this game takes to turn around.
+   *
+   * FLESH IS NOT TOUCHED AT ALL, not "touched less". A clone standing in the
+   * middle of it walks out untouched, which is the whole reason this call is a
+   * decision rather than a strictly better strike — against the Republic it is
+   * 37.5 of support spent on nothing.
+   */
+  ionPulse(ctx, site, radius) {
+    audio.explosion(site, 2.0);
+    audio.noise({ dur: 1.4, gain: 0.4, type: 'bandpass', freq: 2600, freqEnd: 420, q: 1.4,
+      attack: 0.01, pos: site });
+    let hit = 0, dealt = 0;
+    for (const e of this._near(ctx, site, radius)) {
+      if (!Stratagems.isMachine(e)) continue;
+      const hp0 = e.hp;
+      /* THROUGH `applyKnockback`, with almost no shove: it is the one door a
+       * blow goes through in this game and it is what answers the target's own
+       * Force pool. A pulse that billed `damage()` directly would be the one
+       * hit in the game a Force user could not resist. */
+      _v1.subVectors(e.position, site).setY(0.2).normalize().multiplyScalar(3);
+      e.applyKnockback(_v1, ION_DAMAGE, this.owner);
+      e.stun?.(ION_STUN);
+      hit++;
+      dealt += Math.max(0, hp0 - e.hp);
+    }
+    /* AND THE PLAYER'S OWN MACHINES TOO — a droid on your side is a droid.
+     * There is nothing to special-case: the loop above is the enemy list, which
+     * in Command mode is where your own line lives. */
+    this._say(hit ? `${hit} disabled` : 'nothing to disable');
+    const P = ctx?.particles;
+    if (!P) return { hit, dealt };
+    /* THE RING, in the pool the lightning uses rather than the spark ring —
+     * an ion pulse is a discharge and the spark ring is 6 cm dots sized for
+     * blade hits. */
+    for (let i = 0; i < 46; i++) {
+      const a = (i / 46) * TAU;
+      _v1.set(Math.cos(a), 0.25 + this.rand() * 0.5, Math.sin(a)).multiplyScalar(radius * 1.4);
+      P.plasma?.spawn?.(_v2.copy(site).setY(site.y + 0.3), _v1,
+        { life: 0.8, size: 0.4, drag: 2.4, gravity: 0, color: 0x7fd0ff, alpha: 0.85 });
+    }
+    const L = (ctx?.world || this.owner?.world)?.lightning;
+    if (L?.strike) {
+      for (let i = 0; i < 7; i++) {
+        const a = this.rand() * TAU, r = Math.sqrt(this.rand()) * radius;
+        _v1.set(site.x + Math.cos(a) * r, site.y + 0.2, site.z + Math.sin(a) * r);
+        L.strike(_v2.copy(site).setY(site.y + 26), _v1, { power: 1.3, life: 0.22, chaos: 1.4 });
+      }
+    }
+    return { hit, dealt };
+  }
+
+  /**
+   * TWELVE CHARGES ON THE GROUND — the seismic scatter's payload.
+   *
+   * The pass drops them; `_armCharge` is what makes each one a hazard. They are
+   * scattered on a spiral rather than at random so the field has no hole in the
+   * middle of it, with a metre of jitter so it does not read as a pattern.
+   */
+  scatterMines(ctx, site) {
+    const out = [];
+    for (let i = 0; i < MINE_COUNT; i++) {
+      const a = i * 2.399, r = 2.0 + (i / MINE_COUNT) * 13.0;
+      const at = site.clone().add(new THREE.Vector3(
+        Math.cos(a) * r + (this.rand() - 0.5) * 2, 0, Math.sin(a) * r + (this.rand() - 0.5) * 2));
+      out.push({
+        t: i * 0.05 - 0.3,
+        fn: (from, c) => { at.y = this._groundAt(c, at); this._armCharge(c, at); },
+      });
+    }
+    return out;
+  }
+
+  /**
+   * ONE CHARGE, ARMED AND WAITING.
+   *
+   * `MINE_ARM` of dead time first, so a charge cannot detonate on the ship that
+   * dropped it or on a player standing where they marked. After that it is
+   * checked five times a second — cheap, because the whole field shares ONE
+   * loop started by the first charge, exactly as the fence does.
+   */
+  _armCharge(ctx, at) {
+    this._mines.push({ at: at.clone(), t: MINE_LIFE, arm: MINE_ARM });
+    audio.thud(at, 0.5);
+    if (this._mining) return;
+    this._mining = true;
+    this.sustain(0, 0.2, () => {
+      for (let i = this._mines.length - 1; i >= 0; i--) {
+        const m = this._mines[i];
+        m.t -= 0.2;
+        if (m.arm > 0) { m.arm -= 0.2; continue; }
+        if (m.t <= 0) { this._mines.splice(i, 1); continue; }
+        /* ANYTHING LIVING, and it does not ask whose. A minefield that stepped
+         * politely over your own troops would be a free wall; the mark told you
+         * where you put it and the charges are visible from the moment they
+         * land. */
+        const trip = this._near(ctx, m.at, MINE_TRIP)[0]
+          || (this.owner && !this.owner.dead
+            && this.owner.position.distanceTo(m.at) <= MINE_TRIP ? this.owner : null);
+        if (!trip) continue;
+        this._mines.splice(i, 1);
+        this.blast(ctx, m.at, 6.4, 150, 170,
+          { core: 0.4, shake: 0.4, size: 1.5, crater: 1.1, sparkShare: 0.6 });
+      }
+      if (!this._mines.length) { this._mining = false; return false; }
+      this._paintCharges(ctx);
+      return true;
+    });
+  }
+
+  /** A slow amber pulse on every live charge. A hazard the player forgot they
+   *  laid is a hazard that kills the player. */
+  _paintCharges(ctx) {
+    const P = ctx?.particles;
+    if (!P) return;
+    for (const m of this._mines) {
+      _v1.set(m.at.x, m.at.y + 0.12, m.at.z);
+      P.sparks.spawn(_v1, _v2.set(0, 0.5, 0),
+        { life: 0.4, size: m.arm > 0 ? 0.07 : 0.12, drag: 1.2, gravity: 0,
+          color: m.arm > 0 ? 0x60a0ff : 0xffa020, alpha: 0.95 });
+    }
+  }
+
+  /**
+   * TWENTY-SIX BOMBLETS — the cluster canister's payload.
+   *
+   * Released 0.7 s before the ship is over the mark, because a canister opened
+   * at height throws its bomblets FORWARD along the track: the pattern is
+   * centred on the mark and the ship is past it by the time the last one lands.
+   *
+   * `hard: CLUSTER_HARD` on every one of them. See `blast`'s note: this is the
+   * anti-infantry answer and it is stated as a property of the weapon, once.
+   */
+  cluster(ctx, site) {
+    const out = [];
+    for (let i = 0; i < CLUSTER_N; i++) {
+      const a = this.rand() * TAU, r = Math.sqrt(this.rand()) * 13.0;
+      const at = site.clone().add(new THREE.Vector3(Math.cos(a) * r, 0, Math.sin(a) * r));
+      out.push({
+        t: -0.7 + (i / CLUSTER_N) * 1.5,
+        fn: (from, c) => {
+          at.y = this._groundAt(c, at);
+          this.blast(c, at, 4.4, 55, 105,
+            { core: 0.35, shake: 0.14, size: 0.9, crater: 0.3, hard: CLUSTER_HARD,
+              sparkShare: 1 / Math.sqrt(CLUSTER_N) });
+        },
+      });
+    }
+    return out;
+  }
+
+  /**
+   * THE HOLD FIELD — everything inside dragged to the middle of it.
+   *
+   * `TRACTOR_BEATS` pulls over `TRACTOR_TIME`. Each pull adds a velocity toward
+   * the centre proportional to how far out the body is, so the far edge closes
+   * faster than the middle and the whole field arrives together rather than the
+   * near bodies piling up first. A little lift on every pull, because a body
+   * dragged along the ground is a body still standing on it.
+   *
+   * `gentle` on every one of them, and that is not a detail: `applyKnockback`'s
+   * hard path breaks a cast, cries out, and stuns anything past 12 m/s. Sixteen
+   * of those over three seconds would be sixteen screams and a permanent stun,
+   * which is a different and much stronger call than the one this is priced as.
+   *
+   * ZERO DAMAGE. The whole worth of it is the mean radius of the enemy, which
+   * `tools/checks/stratagems.mjs` measures on a spread line: sixteen bodies
+   * from 17.8 m to 2.4 m in 3.4 s, and not one hit point taken.
+   */
+  tractor(ctx, site, radius) {
+    audio.noise({ dur: TRACTOR_TIME, gain: 0.3, type: 'bandpass', freq: 140, q: 2.2,
+      attack: 0.3, pos: site });
+    const period = TRACTOR_TIME / TRACTOR_BEATS;
+    this.sustain(TRACTOR_TIME, period, () => {
+      for (const e of this._near(ctx, site, radius)) {
+        const d = e.position.distanceTo(site);
+        if (d < 1.2) continue;
+        /**
+         * A SERVO AND NOT AN ACCUMULATOR, and this is the difference between a
+         * tractor beam and a catapult.
+         *
+         * `applyKnockback` ADDS to velocity, and `Enemy._move` does not damp a
+         * body while its knock timer is live — which the beam refreshes on
+         * every pull by construction. So sixteen pulls of 7 m/s each is a body
+         * leaving at 112 m/s: measured, the field closed on the mark at a mean
+         * 46 m/s and shot out the far side. What a hold field does is carry
+         * things at a speed, so each pull adds only the DIFFERENCE between the
+         * body's current closing speed and the one the beam holds, and a body
+         * already moving in fast is not pushed at all.
+         */
+        _v2.subVectors(site, e.position).setY(0).normalize();
+        const closing = e.velocity.x * _v2.x + e.velocity.z * _v2.z;
+        const want = TRACTOR_PULL * clamp(d / radius, 0.4, 1);
+        _v1.copy(_v2).multiplyScalar(Math.max(0, want - closing));
+        _v1.y = Math.max(0, TRACTOR_LIFT - e.velocity.y);
+        if (_v1.lengthSq() < 1e-4) continue;
+        e.applyKnockback(_v1, 0, this.owner, true);
+      }
+      const P = ctx?.particles;
+      if (P) {
+        for (let i = 0; i < 10; i++) {
+          const a = this.rand() * TAU;
+          _v1.set(site.x + Math.cos(a) * radius, site.y + 0.4 + this.rand() * 6,
+            site.z + Math.sin(a) * radius);
+          _v2.subVectors(site, _v1).setY(3).multiplyScalar(0.5);
+          P.plasma?.spawn?.(_v1, _v2, { life: 0.7, size: 0.3, drag: 0.4, gravity: 0,
+            color: 0x60ffc0, alpha: 0.7 });
+        }
+      }
+      return true;
+    });
+  }
+
+  /**
+   * EIGHTEEN BURSTS OVER TWENTY-TWO SECONDS — the station's payload.
+   *
+   * Each beat picks the nearest LIVING HOSTILE to the mark and puts a pair of
+   * cannon rounds into it out of the same `BoltPool` every other gun in this
+   * game shoots from, then cracks the ground under it with the same `blast`.
+   * Nothing here knows how to shoot or how to break ground.
+   *
+   * IT READS TEAMS, unlike every other payload in this file. `blast`'s note
+   * says a gun run "does not know whose side you are on", which is correct for
+   * a pass a player aimed; a craft choosing its own targets and choosing the
+   * player's own troops would not be a risk, it would be a defect.
+   */
+  station(ctx, site) {
+    const out = [];
+    for (let i = 0; i < STATION_BURSTS; i++) {
+      out.push({
+        t: i * (STATION_TIME / STATION_BURSTS),
+        fn: (from, c) => {
+          const team = this.owner?.team ?? 0;
+          let best = null, bestD = STATION_REACH;
+          for (const e of (c?.enemies || [])) {
+            if (e.dead || !e.position) continue;
+            if (e.team === team) continue;
+            const d = e.position.distanceTo(site);
+            if (d < bestD) { bestD = d; best = e; }
+          }
+          if (!best) return;
+          const at = best.position.clone();
+          at.y = this._groundAt(c, at);
+          this._gunPair(c, from.clone(), at);
+          this.blast(c, at, 4.5, 70, 130,
+            { core: 0.3, shake: 0.18, size: 1.1, crater: 0.5,
+              sparkShare: 1 / Math.sqrt(STATION_BURSTS) });
+        },
+      });
+    }
+    return out;
+  }
+
+  /**
+   * SIX OF YOURS ON THE GROUND YOU PAINTED — the beachhead.
+   *
+   * `Command.reinforce` is the verb and it is not reimplemented: it prices the
+   * bodies out of the roster's own point ledger, flies them in on a gunship,
+   * welds the trooper records to the bodies and broadcasts the muster. What
+   * this adds is WHERE, and the only thing in Command that answers "where" is
+   * the commander's own `anchor` — the field that made opposed deployment
+   * possible, and whose whole meaning is "the ground this line comes down on".
+   *
+   * IT IS MOVED FOR EXACTLY ONE SYNCHRONOUS CALL AND PUT STRAIGHT BACK. The
+   * `finally` is load-bearing: `reinforce` can refuse (no points left) and can
+   * throw, and a commander left permanently anchored to a piece of ground the
+   * player marked once would relocate every later deployment in the battle.
+   */
+  beachhead(ctx, site, n) {
+    const cmd = (ctx?.world || this.owner?.world)?.command;
+    if (!cmd?.reinforce) { this._say('no line to land'); return 0; }
+    const c = cmd.commander;
+    const had = c ? c.anchor : undefined;
+    let got = 0;
+    try {
+      if (c) c.anchor = site.clone();
+      got = cmd.reinforce(n, { byShip: true }) || 0;
+    } finally {
+      if (c) c.anchor = had;
+    }
+    this._say(got ? `${got} on the ground` : 'nobody left to send');
+    return got;
+  }
+
+  /**
+   * EIGHTEEN SECONDS OF SKY — the ion storm.
+   *
+   * Drawn through `world.lightning`, the real `LightningVfx` ribbon pool, for
+   * the reason that file's own header gives at length: forty points out of the
+   * shared spark ring is a dotted rule and not a discharge, and it competes
+   * with every blade hit on the field for the same slots.
+   *
+   * WHAT IT PICKS. A living body inside the circle first — a storm that struck
+   * empty ground while a walker stood in it would read as scenery — and bare
+   * ground when there is nobody, so the thing keeps happening while the enemy
+   * is walking into it. `STORM_HZ` is about three strikes a second, which over
+   * eighteen seconds is roughly fifty-four discrete events.
+   *
+   * IT DOES NOT CARE WHAT ANYTHING IS MADE OF and it does not care where the
+   * caller is standing. That is the price of the biggest area on the table
+   * short of the bombardment.
+   */
+  ionStorm(ctx, site, radius, seconds) {
+    const world = ctx?.world || this.owner?.world;
+    audio.noise({ dur: 3.0, gain: 0.34, type: 'lowpass', freq: 300, freqEnd: 80,
+      pink: true, attack: 0.6, pos: site });
+    let struck = 0;
+    const reached = new Set();
+    this.sustain(seconds, 1 / STORM_HZ, () => {
+      const live = this._near(ctx, site, radius);
+      const target = live.length ? live[(this.rand() * live.length) | 0] : null;
+      const a = this.rand() * TAU, r = Math.sqrt(this.rand()) * radius;
+      _v1.copy(target ? target.position
+        : _v3.set(site.x + Math.cos(a) * r, site.y, site.z + Math.sin(a) * r));
+      _v1.y = this._groundAt(ctx, _v1) + (target ? 1.0 : 0.1);
+      _v2.set(_v1.x + (this.rand() - 0.5) * 8, _v1.y + 60, _v1.z + (this.rand() - 0.5) * 8);
+      world?.lightning?.strike?.(_v2, _v1, { power: 1.7, life: 0.20, chaos: 1.1 });
+      audio.tone?.({ freq: 90 + this.rand() * 60, freqEnd: 40, dur: 0.35, gain: 0.2,
+        type: 'sawtooth' });
+      struck++;
+      /* THE BOLT IS THE DAMAGE, in a 3 m circle around where it grounded, so a
+       * body next to the one that was struck takes it too. Through
+       * `applyKnockback` — one door, and it is what answers a Force pool. */
+      for (const e of this._near(ctx, _v1, STORM_R)) {
+        _v3.subVectors(e.position, _v1).setY(0.6).normalize().multiplyScalar(24);
+        e.applyKnockback(_v3, STORM_DAMAGE, this.owner);
+        e.stun?.(0.5);
+        reached.add(e.id ?? e);
+      }
+      const p = this.owner;
+      if (p && !p.dead && p.position.distanceTo(_v1) <= STORM_R) {
+        p.damage?.(STORM_DAMAGE * 0.5, _v1, null, 'explosion');
+      }
+      if (ctx?.terrain?.burn) ctx.terrain.burn(_v1.x, _v1.z, 2.2, 1);
+      return true;
+    });
+    return { struck, reached };
+  }
+
+  /**
+   * TWENTY-TWO DETONATIONS ACROSS FORTY-TWO METRES — the bombardment.
+   *
+   * The pattern is a spiral out from the mark and NOT a random scatter, and
+   * that is the counter-play: it starts in the middle and walks outward at a
+   * knowable rate, so a body at the rim has most of the nine seconds to be
+   * somewhere else and a body in the middle has none. A random pattern over the
+   * same disc would kill the same number of things and would be nine seconds of
+   * dice.
+   *
+   * `sparkShare` is `1/sqrt(22)` for the same reason the barrage takes
+   * `1/sqrt(12)`: twenty-two of these inside one particle's lifetime would take
+   * the whole of three shared rings and erase every blade hit on the field.
+   */
+  bombardment(ctx, site) {
+    const out = [];
+    for (let i = 0; i < SIEGE_N; i++) {
+      const k = i / (SIEGE_N - 1);
+      const a = i * 2.399;
+      const r = k * SIEGE_R;
+      const at = site.clone().add(new THREE.Vector3(
+        Math.cos(a) * r + (this.rand() - 0.5) * 3, 0, Math.sin(a) * r + (this.rand() - 0.5) * 3));
+      out.push({
+        t: k * SIEGE_TIME,
+        fn: (from, c) => {
+          at.y = this._groundAt(c, at);
+          this.blast(c, at, 13, 190, 240,
+            { core: 0.35, shake: 0.8, size: 2.6, crater: 1.7,
+              sparkShare: 1 / Math.sqrt(SIEGE_N) });
+        },
+      });
+    }
+    return out;
   }
 
   /** A pod: health for the caller, and the wounded around them back up. */

@@ -10,14 +10,16 @@
 import * as THREE from 'three';
 import { Saber, SABER_COLORS } from './Saber.js';
 import { SaberController, THRUST_STANDING_SPEED, SPIN } from './SaberController.js';
-import { buildJedi } from './Bodies.js';
+import { buildJedi, buildShieldBubble } from './Bodies.js';
 import { SKIN_TONES, HAIR_COLORS } from '../ui/Menu.js';
 import { speciesOf } from './Bodies.js';
 import { Rig, BipedAnimator, aimY, limbScale } from './Rig.js';
-import { dropSaber, hiltWithinReach, ageDropped } from './Dropped.js';
+import { dropSaber, hiltWithinReach, hiltDistanceSq, igniteHilt, hiltBlade,
+         ageDropped } from './Dropped.js';
+import { Crew, drivableNear, whyNotDrive, crewOf } from './Driving.js';
 import { attachCloak, attachSkirt } from './Cloth.js';
 import { Body, LAYER, capsuleSpheres, capsule } from '../physics/RapierWorld.js';
-import { supportHeight, topOfProps, ceilingHeight, STEP_UP, GROUND_SNAP } from '../physics/Support.js';
+import { supportHeight, topOfProps, ceilingHeight, STEP_UP, GROUND_SNAP, CLIMB_RATE } from '../physics/Support.js';
 import { walkScale } from '../engine/Bindings.js';
 import { RankSet, rankScale } from './Waves.js';
 import { parryScale, TOUGHNESS, impactDamage } from './Combat.js';
@@ -26,8 +28,11 @@ import { parryScale, TOUGHNESS, impactDamage } from './Combat.js';
  * `forceResistance` in Enemy.js, and one contest read out of two rulebooks is
  * exactly the drift `Powers.js` exists to have ended (HANDOFF §2.3/§2.4).
  * Enemy.js imports nothing from this file, so the edge is one-way. */
-import { forceResistance, IMPULSE_AS_HP, limitBackpedal } from './Enemy.js';
-import { POWER_COST } from './Powers.js';
+import { forceResistance, IMPULSE_AS_HP, limitBackpedal, addShove, newShoveFrame } from './Enemy.js';
+import { POWER_COST, SENSE_DRAIN } from './Powers.js';
+/* FLAGSHIP §7's BREAK verb, and both are leaves — see the header of each. */
+import { MORALE } from './Morale.js';
+import { shakeNerve } from './Nerve.js';
 import { Stratagems, DIRS, DIR_ACTION } from './Stratagems.js';
 import { bodyOf } from '../engine/Presence.js';
 import { clamp, lerp, damp, smoothstep, dampVec, makeRng, TAU } from '../engine/MathUtil.js';
@@ -56,6 +61,9 @@ const _q1 = new THREE.Quaternion(), _q2 = new THREE.Quaternion();
 const _q3 = new THREE.Quaternion(), _q4 = new THREE.Quaternion();
 /** The two wrist targets, which have to survive the whole arm solve, and their scratch. */
 const _v7 = new THREE.Vector3(), _v8 = new THREE.Vector3(), _v9 = new THREE.Vector3();
+/** One colour object for every `lightUp` request the channel posts — the pool
+ *  reads it and does not keep it, so a fresh Color per frame is garbage. */
+const _COL_LIGHT = new THREE.Color(0x9fd8ff);
 /** _gripPole's own, so it cannot tread on the arm solve running around it. */
 const _v10 = new THREE.Vector3(), _v11 = new THREE.Vector3();
 const _v12 = new THREE.Vector3(), _v13 = new THREE.Vector3();
@@ -65,6 +73,21 @@ const _v12Q = new THREE.Quaternion(), _q5 = new THREE.Quaternion();
 // gesture that borrowed one of them would corrupt whichever of those ran next —
 // the exact class of bug that is invisible until an arm folds inside out.
 const _g1 = new THREE.Vector3(), _g2 = new THREE.Vector3(), _g3 = new THREE.Vector3();
+/* The flown blade's own three, and they are its own on purpose: `_cutWithHeld`
+ * holds a segment across a loop that calls out to `Enemy.damage`, and every
+ * shared scratch vector in this file is fair game for anything downstream. */
+const _tk1 = new THREE.Vector3(), _tk2 = new THREE.Vector3(), _tk3 = new THREE.Vector3();
+const _tkA = new THREE.Vector3();
+
+/** Squared distance from a point to a segment. */
+function segmentPointSq(p0, p1, pt) {
+  _tkA.subVectors(p1, p0);
+  const len = _tkA.lengthSq();
+  if (len <= 1e-9) return p0.distanceToSquared(pt);
+  let t = (pt.x - p0.x) * _tkA.x + (pt.y - p0.y) * _tkA.y + (pt.z - p0.z) * _tkA.z;
+  t = clamp(t / len, 0, 1);
+  return _tkA.multiplyScalar(t).add(p0).distanceToSquared(pt);
+}
 const _g4 = new THREE.Vector3(), _g5 = new THREE.Vector3();
 /** `applyKnockback` scales the shove when the pool blunts it, and the vector it
  *  is handed is somebody ELSE's scratch (`Enemy._castPower` passes its `_v2`) —
@@ -120,6 +143,88 @@ const LIFT_EXPONENT = 1.5;
  * this repository's signature defect.
  */
 export const HOLD_COST = { prop: { base: 7, rise: 6 }, person: { base: 11, rise: 9 } };
+
+/**
+ * THE FORCE BARRIER — what it costs to hold and what it costs to be shot at.
+ *
+ * "did you already add the force shield/bubble in the game? i'd already asked
+ *  for it but I could have missed it."
+ *
+ * They had not missed it: `POWER_COST` held eleven verbs and not one of them
+ * shielded anything. This is the whole of the power's economy and every number
+ * in it answers a way the obvious version is bad:
+ *
+ *   `hold`   6 a second. A barrier that cost nothing to keep up would be a
+ *            barrier you never lower, and a player standing inside a permanent
+ *            bubble is a player who has stopped playing this game. At 6 a full
+ *            base pool holds it about sixteen seconds with nothing hitting it,
+ *            which is long enough to cross a street under fire and far too
+ *            short to live in.
+ *   `bolt`   4 a bolt, and this is the interesting number. A single rifle is
+ *            noise; a FIRING LINE is what a shield is for, and eight droids at
+ *            a bolt a second each is 32 Force a second — the pool empties in
+ *            three. So the barrier answers a volley and cannot outlast one,
+ *            which is exactly the shape the player asked for when they asked
+ *            for a Force resource that means something.
+ *   `blunt`  what a blast keeps. An explosion is not stopped by it, it is
+ *            SOFTENED — 0.35 of the damage still arrives — because a bubble
+ *            that made you immune to the thing you called down on yourself
+ *            would delete the one decision stratagems are made of.
+ *   `radius` 2.1 m. Wide enough to cover somebody standing next to you, which
+ *            is what makes it worth raising over a wounded man you are mending;
+ *            narrow enough that a squad cannot shelter in it.
+ */
+export const SHIELD = { hold: 6, bolt: 4, blunt: 0.35, radius: 2.1, rise: 0.18, fall: 0.3 };
+
+/**
+ * THE SABER, OFF THE HAND — catching it, lighting it, and flying it.
+ *
+ * The player, at length:
+ *
+ *   "if you force picked up the saber off the ground and called it back to you
+ *    even at the closest distance you could not pick it up in the air so I
+ *    think it could be cool that once you bring it and retract it as close to
+ *    yourself as possible you just pick it up from the air… in that same vein
+ *    it should be possible to pick up the lightsaber with the force, turn it on
+ *    or off using the force, and then with the force being able your
+ *    turn/manipulate the saber anywhere you want on the battlefield within a
+ *    certain distance (uses a lot of force power up etc. obviously)"
+ *
+ * Three separate things, and only the third of them is new machinery:
+ *
+ *   THE CATCH was a measurement bug and not a missing feature. The Force grip
+ *   parks what it holds a floor of 1.4 m in FRONT of the chest and the pick-up
+ *   test measured to `position`, which is the feet — 1.98 m against a 1.6 m
+ *   reach, so the closest the Force could ever bring your own weapon was 38 cm
+ *   outside your hand, silently, for ever. `Dropped.hiltDistanceSq` measures to
+ *   the standing axis now, and `reach` here is a hand's reach off it.
+ *
+ *   LIGHTING IT is `Dropped.igniteHilt`, which was already most of the way
+ *   there for the hilt a dying duellist drops still burning.
+ *
+ *   FLYING IT is the grip, which already moves a loose object anywhere inside
+ *   `forceReach` and already charges for mass, distance and time. What a lit
+ *   hilt adds is the CUT — a blade that goes through a droid is not a crate
+ *   bumping into one — and the surcharge the note asks for: `lit` a second on
+ *   top of whatever the hold already costs, which roughly triples the price of
+ *   holding a hilt and makes a blade you are flying across the field the most
+ *   expensive thing the Force can be doing.
+ */
+export const TK = {
+  /** How far off the standing axis a hilt can be taken out of the air. */
+  reach: 2.2,
+  /** To strike a light at a distance, once. */
+  ignite: 10,
+  /** …and to keep it burning out there, a second, on top of the hold. */
+  lit: 9,
+  /** What the flying blade does to what it crosses, and how often it may. */
+  cut: 34,
+  cutGap: 0.4,
+  /** Under this much stamina, a solid hit takes the weapon out of your hand. */
+  staggerStamina: 12,
+  /** …and not twice in a row: a disarm you cannot recover from is a death. */
+  disarmGap: 6,
+};
 /**
  * 11 / 7 = 1.571 — a living body against an object, read off HOLD_COST.
  *
@@ -568,6 +673,40 @@ export const DIVE_SPEED = 30, DIVE_CLEAR = 1.2, DIVE_STAMINA = DASH_STAMINA;
  * the last of it.
  */
 const SPRINT_DRAIN = 11, SPRINT_FLOOR = 4, SPRINT_START = 20, STAMINA_HOLD = 0.6;
+
+/**
+ * HOW FAST THE BLADE HAS TO MOVE BEFORE THE AIR NOTICES, in m/s.
+ *
+ * It was a literal 11 at its one call site and `NEXT.md` had the consequence
+ * written down without the fix: "The overhead attack has never made a swing
+ * sound. It peaks at 10.8 m/s against an 11 m/s whoosh threshold. One number."
+ * The heaviest-looking attack in the game — the one the player singled out as
+ * the one that feels real — was the only one that swung in silence.
+ *
+ * Measured on the shipped controller, every attack driven through a real
+ * Player, peak `swingSpeed` in m/s:
+ *
+ *     walking with the blade out      0.03
+ *     running with the blade out      0.02
+ *     left click, one cut            14.34
+ *     left click, three-hit combo    19.46
+ *     overhead, tapped               10.79   ← silent at 11
+ *     overhead, charged              17.20
+ *     spin                           23.68
+ *
+ * `swingSpeed` is the blade's motion with the carrier's own velocity taken
+ * out, which is why walking reads 0.03 and not 4: the number this threshold
+ * separates from an attack is not a run, it is a body standing still. So the
+ * bar was never doing the job the comment claimed and 11 was simply the
+ * fastest attack of the day minus a little.
+ *
+ * 8.5 is set from the table rather than from feel: it is two hundred times the
+ * fastest thing that is not a swing and a fifth below the slowest thing that
+ * is, so every deliberate attack sounds and nothing else does. The 0.19 s
+ * spacing beside it is what stops a combo becoming one long hiss.
+ */
+const SWING_WHOOSH = 8.5;
+
 /** How much bigger a dive's landing is than the same speed arrived at by
  *  accident. Radius and impulse take it once, damage twice — the blade is what
  *  makes the difference and the blade is a damage term. */
@@ -586,9 +725,49 @@ const DIVE_LAND = 1.45;
  * metre of arc, how far one step of the walk may stray, and the chance a sample
  * throws a dead-end branch.
  */
-const LIGHTNING_RANGE = 16, LIGHTNING_DAMAGE = 46;
+const LIGHTNING_RANGE = 22, LIGHTNING_DAMAGE = 46;
 const LIGHTNING_CHAIN = 3, LIGHTNING_REACH = 6.5, LIGHTNING_FALLOFF = 0.62;
+/**
+ * How far off the aim a body may stand and still be the thing the discharge
+ * earths on, as a dot product. 0.955 is 17.3°.
+ *
+ * A NAME BECAUSE THE PROSE HAD ALREADY DRIFTED FROM IT. `_lightningEnd` carried
+ * the number as a literal with a comment beside it reading "0.965 of a dot is
+ * about 15°" — a claim about a value the line under it had stopped using. Small,
+ * and exactly the shape §2.3 is a section about: the next person to widen this
+ * cone reads the sentence, not the expression. One home, and the angle is
+ * derived in the note rather than asserted twice.
+ */
+const LIGHTNING_CONE = 0.955;
 const LIGHTNING_STEPS_PER_M = 3.2, LIGHTNING_WANDER = 0.55, LIGHTNING_FORK = 0.16;
+/**
+ * IT IS A CHANNEL NOW, AND THAT IS THE FIX.
+ *
+ * The player, many times over: "force lightning needs to be fucking LIGHTNING
+ * that comes out of your hands like I need to be able to fucking see the
+ * lightning come out and travel to where I'm aiming… for the millionth time
+ * it's nothing in the air right now like there's no VFX or anything".
+ *
+ * Three separate defects made that true and only one of them was the drawing:
+ *
+ *   IT ONLY DREW WHEN IT HIT. `forceLightning` gathered the enemies inside a
+ *     0.8-dot cone at 16 m and drew one arc per body it found. With that list
+ *     empty — aiming at a wall, at a line 20 m off, at a body two metres wide
+ *     of the cone — the whole method ran to completion and drew NOTHING. That
+ *     is exactly and literally "there's nothing in the air".
+ *   IT LASTED ONE FRAME. Press, resolve, done. Nothing travelled and nothing
+ *     could be swept across a line, which is the other half of the note.
+ *   IT WAS DRAWN OUT OF THE SPARK RING, a shared pool of 6 cm point sprites
+ *     sized for blade hits. Forty of them in a row is a dotted rule.
+ *
+ * So: `HOLD` seconds of continuous discharge while the key is down, `TICK`
+ * seconds between damage applications, `DRAIN` Force a second on top of the
+ * opening cost, and a bolt that is drawn EVERY frame from the hands to
+ * whatever the aim ray reaches — a body, the ground, a wall, or the end of its
+ * own range. `src/world/Lightning.js` is what draws it, and it draws ribbons
+ * rather than particles.
+ */
+const LIGHTNING_HOLD = 2.4, LIGHTNING_TICK = 0.22, LIGHTNING_DRAIN = 14;
 /**
  * …and how high above the feet it turns. 1.02 m on a 1.75 m figure is 58% of
  * standing height, which is where a tucked gymnast's centre of mass actually
@@ -617,6 +796,20 @@ const COMPEL_SPREAD = 14;
 const HEAL_COST = POWER_COST.heal;
 /** Force Rend. Priced in the same table as every other power — see Powers.js. */
 const REND_COST = POWER_COST.rend;
+/**
+ * HOW FAR A MEND REACHES AND HOW WIDE IT LOOKS, for healing somebody else.
+ *
+ * 15 m is a shout across a firing line rather than a touch: a commander should
+ * not have to walk into the beaten zone to help the man in it, and anything
+ * much longer would be healing people you cannot see. The cone is 0.94 —
+ * about 20° — because a trooper is a small target at that range and this is a
+ * mercy, not a shot.
+ */
+const MEND_REACH = 15, MEND_CONE = 0.94;
+/** How much angle a man who is ON THE FLOOR is worth over one who is on his
+ *  feet, when both are under the reticle. See `_mendTarget`: it is added to
+ *  his own score and not taken off the cone, which is the bug it replaces. */
+const MEND_LIMP_EDGE = 0.05;
 const HEAL_TIME = 3.0;
 const HEAL_FRACTION = 0.45;
 
@@ -706,6 +899,9 @@ const HEAL_FRACTION = 0.45;
  * has taken since it was 179.7. Some of that is FOREARM, which repairs a
  * degeneracy that was live on the chest anchor too; most of it is that a hand
  * carried in front of the body is a hand a wrist can hold a sword with.
+ * (The wrist column reads 89.4 now — see `Player._wristPole`, which came
+ * later and by a different route. The 114.4 above is the anchor's own step and
+ * is left as it was taken.)
  *
  * ── RISE 0.32, AND WHY IT IS NOT LOWER ─────────────────────────────────────
  *
@@ -913,6 +1109,11 @@ const _hpM = new THREE.Matrix4();
 const _fv1 = new THREE.Vector3(), _fv2 = new THREE.Vector3(), _fv3 = new THREE.Vector3();
 const _fq1 = new THREE.Quaternion();
 
+/** …and the same again for _wristPole, which runs in the same place. */
+const _wp1 = new THREE.Vector3(), _wp2 = new THREE.Vector3(), _wp3 = new THREE.Vector3();
+const _wp4 = new THREE.Vector3(), _wp5 = new THREE.Vector3(), _wp6 = new THREE.Vector3();
+const _wpQ = new THREE.Quaternion(), _wpQ2 = new THREE.Quaternion();
+
 /**
  * WHAT KEEPS THE FOREARM FROM SPINNING, and why it is one angle and not a
  * quaternion.
@@ -975,14 +1176,74 @@ const _fq1 = new THREE.Quaternion();
  * So the fault this repairs was live before the anchor moved — 10723 deg/s on
  * the shipped tree, on a sweep the ratchet does not run — it is simply not
  * reached by the bench that watches for it, and it is four times smaller now.
- * The wrist column is the outstanding one and it is not this method's to fix;
- * see the ratchet's own note, which has said since it was written that the cure
- * is the CONTROLLER putting the hands where a wrist could hold that blade.
+ *
+ * THE WRIST COLUMN IS ANSWERED NOW AND IT WAS NOT THIS METHOD'S TO ANSWER —
+ * that much this note had right. What it had wrong is where the cure was: it
+ * and the ratchet's own note both said it had to be the CONTROLLER putting the
+ * hands somewhere a wrist could hold that blade. It is the ELBOW. See
+ * `Player._wristPole`: 114.4 -> 89.4 degrees worst, 83.6 -> 36.7 median, with
+ * the forearm column going 2487 -> 2476 rather than paying for it.
  *
  * An object rather than two bare constants for the same reason FP_TUNE is one:
  * so tools/_unify.mjs can sweep them without an edit. The tables are its output.
  */
 export const FOREARM = { cone: Math.sin(12 * Math.PI / 180), rate: 40 };
+
+/**
+ * HOW FAR THE WRIST MAY TURN THE ELBOW ROUND THE ARM'S OWN LINE, and how fast.
+ * Radians and radians per second.
+ *
+ * The long form is on `Player._wristPole`, its only reader. An object rather
+ * than two bare constants for the same reason `FOREARM` is one: so
+ * `tools/_wristsweep.mjs` can sweep them without an edit, and the tables below
+ * are that sweep's output rather than a taste. Worst and median wrist-from-rest
+ * over the ratchet's own bench in tools/checks/viewmodel.mjs, with the OTHER
+ * ratchet — the forearm's own angular speed — beside them, because this trades
+ * one against the other and a fix that breaks the neighbour is not a fix.
+ *
+ *   swivel      third, two hands     third, one hand    first, two hands    first, one hand
+ *   at rate 30  worst  med  fore    worst  med  fore   worst  med  fore   worst  med  fore
+ *      0° (was) 114.4  83.6  2487   107.8  62.8  1221  131.1  88.6  1099  112.0  83.4  2747
+ *     45         89.4  56.7  2476   107.4  23.9  1646  121.6  72.2  1605  106.9  81.1  2464
+ *     75         89.4  43.5  2476   105.2  14.7  1528  121.6  68.0  1871  102.3  81.1  2429
+ *    110         89.4  36.8  2476    80.6  14.7  1264  115.1  66.0  1591  101.4  76.7  2429
+ *    120 <-ships 89.4  36.7  2476    79.0  14.7  1112  115.1  65.8  1605  102.3  76.7  2429
+ *    180         89.4  36.7  2476    74.5  14.7  1112  115.1  65.8  1605  105.4  75.1  2429
+ *
+ * FOUR COLUMNS AND NOT TWO, AND THE OLD PAIR WAS NOT WHAT IT SAID. The column
+ * headed "first person, one hand" used to be taken with the `fpHands` option,
+ * which took the off hand off the arms and left the blade on `GRIPS.two` — a
+ * guard no player can hold. Held for real, by the key, first person is the
+ * worst arm of the four and one hand is worth 115.1 → 102.3 on the worst frame
+ * while the median goes the other way, 65.8 → 76.7. In THIRD person the same
+ * key is worth 89.4 → 79.0 worst and 36.7 → 14.7 median, which is the largest
+ * single step in this table.
+ *
+ *   rate, at swivel 120     third person, two hands
+ *      20 rad/s              97.9    36.7      2335
+ *      30    <- ships        89.4    36.7      2476
+ *      40                    84.3    36.7      2612
+ *      no limit              80.5    36.7      3538
+ *
+ * THE RATE IS WHAT THE FOREARM COSTS. Unlimited it reaches the geometry's own
+ * floor and takes the forearm to 3538 °/s — the elbow snapping through the
+ * chest pole's side, which is `FOREARM.rate`'s lesson one joint up. 30 rad/s
+ * (1719 °/s) is the largest value that leaves the forearm ratchet BETTER than
+ * it was: 2476 against the 2487 this shipped with.
+ *
+ * The swivel saturates at about 110° because that is as far as the wrist ever
+ * asks the elbow to go on this bench; it is left at 120 rather than trimmed to
+ * the sample, since a cap tuned to one mouse sweep is a cap tuned to one mouse
+ * sweep. A shoulder rotates internally and externally through rather more than
+ * that.
+ *
+ * 120 survives the two columns that did not exist when it was chosen: it is
+ * where three of the four saturate, and the fourth — third person, one hand —
+ * would take another 4.5° of wrist at 180 and is the only one that would. A
+ * cap chosen for one of four arms is the shape of mistake this whole file
+ * keeps deleting, so it stays where the other three put it.
+ */
+export const ELBOW = { swivel: 120 * Math.PI / 180, rate: 30 };
 
 /**
  * HOW FAST A FIST CAN ROLL ROUND THE SHAFT, in radians per second.
@@ -1143,7 +1404,45 @@ export const GRIP_ROLL_L = new THREE.Quaternion().setFromAxisAngle(new THREE.Vec
  * is derived per weapon rather than typed once, and the nine other hilts get
  * their own. See `fpGripOn`.
  */
-export const GRIP_AT = { R: 0.050, L: -0.015, FP: -0.075 };
+const GRIP_PAIR = { R: 0.050, L: -0.015 };
+/**
+ * `ONE` IS WHERE A SINGLE FIST CLOSES, and it is the middle of the pair rather
+ * than a fourth number, because that is what the pair is FOR: the leading hand
+ * sits at the top of the grip section to leave a hand's width of it below for
+ * the other one. Take the other one away and the reason to sit high goes with
+ * it — a one-handed hold centres on the grip, and a fist parked at the emitter
+ * end of it with 65 mm of bare metal underneath is the two-handed pose missing
+ * a hand.
+ *
+ * Derived, so it cannot drift from the pair it is the middle of. What it buys
+ * is measured in tools/_wristsweep.mjs (`--one`), against the wrist and the
+ * forearm the whole arm solve is ratcheted on, with the one-hand key actually
+ * held down:
+ *
+ *     GRIP_AT.ONE   third person, one hand on the hilt
+ *                   worst   median   fore °/s
+ *       −0.015       73.4     9.2      1554      (the pair's OFF grip)
+ *        0.000       75.6    11.8      1107
+ *        0.0175      79.0    14.7      1112      <- ships, the middle of the pair
+ *        0.035       79.6    17.7      1117
+ *        0.050       80.6    20.2      1122      (the pair's LEADING grip — what
+ *                                                 one hand used to hold)
+ *
+ * IT IS A SMALL LEVER AND THE COLUMN IS MONOTONE, which is worth saying
+ * plainly: the middle buys 1.6° of worst wrist and 5.5° of median over holding
+ * the leading grip, and further down the shaft buys more of both until the
+ * forearm starts paying for it at the pair's own bottom end (1554 °/s). What
+ * moves this arm is the GRIP MODEL — one hand takes the third-person wrist
+ * from 89.4/36.7 to 79.0/14.7 — and this is the last few degrees of it. The
+ * middle is chosen because it is where the hand belongs rather than because it
+ * won a sweep; the sweep is here to show it costs nothing.
+ *
+ * It moves the FIST along a shaft the controller has already placed, not the
+ * shaft: `control.handPos` is the saber root's anchor and nothing here writes
+ * it, so the blade reaches exactly as far as it did and only the arm's posture
+ * under it changes.
+ */
+export const GRIP_AT = { ...GRIP_PAIR, FP: -0.075, ONE: (GRIP_PAIR.R + GRIP_PAIR.L) / 2 };
 
 /**
  * …AND THE FIRST-PERSON GRIP IS THE HILT'S, NOT THE GAME'S.
@@ -1250,8 +1549,46 @@ const FP_HAND_GAP = 0.065;
  *
  * An object rather than a constant so a render can sweep it without an edit:
  * `tools/shot.mjs --pose` sets the value it is testing.
+ *
+ * ── AND THERE ARE TWO OF THEM, BECAUSE THERE ARE TWO GRIPS ─────────────────
+ *
+ * The table above was taken with the off hand off the hilt and the blade's
+ * grip model still `GRIPS.two` — which is a state the game could reach only
+ * through the `fpHands` option, because that option moved the ARMS and left
+ * the weapon alone. It is gone (see `handsOnHilt`), and with it the pretence
+ * that one first-person roll could serve both grips: a player who presses the
+ * one-hand key gets `GRIPS.one`, whose hilt sits 185 mm outboard of the view
+ * axis against 55 and reaches 0.36 from the anchor against 0.29, and the fist
+ * has to come round the shaft from somewhere else entirely.
+ *
+ * Swept on the ratchet's own bench with the one-hand key actually held
+ * (`tools/_wristsweep.mjs --fproll`), worst wrist / worst forearm, and beside
+ * them the two readings the 60° above was chosen on:
+ *
+ *     roll      two hands on the hilt            one hand on the hilt
+ *            wrist  fore°/s  under  out  eye   wrist  fore°/s  under  out  eye
+ *       0°   111.8    6448   −22 mm −0.34 −0.03  108.8   2773  −31 mm −0.02 0.56
+ *      15°   114.9    3852   −31    −0.37 −0.04  109.9   2382  −38    −0.04 0.62
+ *      30°   116.6    1912   −38    −0.38 −0.06  102.3   2429  −43    −0.05 0.65  <- one
+ *      45°   116.6    1719   −42    −0.36 −0.06  112.5   3520  −45    −0.07 0.63
+ *      60°   115.1    1605   −44    −0.31 −0.07  167.6   3002  −46    −0.07 0.56  <- two
+ *      90°   108.0    2225   −39    −0.16 −0.06  150.7   3621  −40    −0.07 0.33
+ *
+ * SIXTY IS THE WORST VALUE IN THE ONE-HANDED COLUMN — 167.6° is a wrist folded
+ * further back than the 145 the ratchet allows and 3002 °/s is past its 2700,
+ * and both were live and unmeasured, because no bench in this repo had ever
+ * pressed the one-hand key. The three quantities do not fight over the fix:
+ * 30° is simultaneously the best wrist, the highest `eye` (the palm turned
+ * back at the lens, which is the inside of the wrist a real one-handed guard
+ * shows), and 43 of the 46 mm of clearance the fist can get under the grip
+ * point. It is one of only two rows in that column inside both ratchet bounds.
+ *
+ * 60° stays for two hands, where it is still the best forearm in the sweep and
+ * the deepest under the grip. The two numbers being different is the whole
+ * finding: a fist that shares a shaft with another fist and a fist alone on it
+ * do not come round it the same way.
  */
-export const FP_TUNE = { roll: 60 * Math.PI / 180 };
+export const FP_TUNE = { roll: { two: 60 * Math.PI / 180, one: 30 * Math.PI / 180 } };
 export function fpGripOn(saber) {
   const lo = saber?.hiltFloor;
   return typeof lo === 'number' && Number.isFinite(lo) ? lo + FIST_CLEAR : GRIP_AT.FP;
@@ -2293,7 +2630,29 @@ export class Player {
       skinColor: skinHex(opts.species, opts.skinIndex),
       hairColor: HAIR_COLORS[opts.hairIndex ?? 1]?.hex,
       build: opts.build, species: opts.species, face: opts.face,
+      /**
+       * THE HOOD, and it is read off the world's settings rather than off
+       * `opts` — which is the ONE argument on this call that is.
+       *
+       * `World.spawnPlayer` composes `opts` and does not carry the wardrobe;
+       * `respawn()` below reads every appearance value straight off
+       * `world.settings` for exactly the same reason, so this is that file's
+       * own idiom applied one line earlier. Reading both means a hood survives
+       * a co-op revive as well as a deploy, which is the case the wardrobe
+       * seam in ui/Menu.js cannot cover on its own: `applyWardrobe` runs when
+       * the player changes something, and a body rebuilt mid-run by
+       * `respawn()` is a body it was never told about.
+       *
+       * A hood is a BUILD argument and not a garment hung on afterwards
+       * because it is rigid geometry parented to the head bone — see HOOD_CUTS
+       * in Bodies.js. The default of every path is `'none'`, so a player who
+       * has never opened the row gets exactly the head they always had.
+       */
+      hood: opts.hood ?? world.settings?.wardrobe?.hood,
     });
+    /* What this body is actually wearing on its head, so the wardrobe seam can
+     * tell whether a pick changed anything. See applyWardrobe in ui/Menu.js. */
+    this.hood = opts.hood ?? world.settings?.wardrobe?.hood ?? 'none';
     this.rig = built.rig;
     this.palette = built.palette;
     this.built = built;
@@ -2380,6 +2739,8 @@ export class Player {
     /** …and the same for each forearm's own twist. See _rollForearm. */
     this._foreRoll = { foreR: { q: new THREE.Quaternion(), have: false },
       foreL: { q: new THREE.Quaternion(), have: false } };
+    /** …and each elbow's carried swivel. See _wristPole. */
+    this._elbow = { armR: { phi: 0, have: false }, armL: { phi: 0, have: false } };
     this.control = new SaberController({
       sensitivity: opts.sensitivity ?? 1,
       followStrength: opts.followStrength ?? 0,
@@ -2421,6 +2782,18 @@ export class Player {
     this._sweepFromY = this.position.y;
     /** Committed to a slam. Set by `_tryDive`, cleared by `_land`. */
     this.diving = false;
+    /** Getting over something taller than a step — see CLIMB_RATE. */
+    this.climbing = false;
+    /** Who the mend channel is being spent on, or null for yourself. */
+    this.healTarget = null;
+    /**
+     * THE BARRIER. `t` is how long it has been up, `power` is what the shader
+     * draws (0 down, 1 up) and is eased so it never pops, and `stopped` counts
+     * what it has eaten this raise — see `SHIELD` and `shieldSphere`.
+     */
+    this.shield = { up: false, t: 0, power: 0, stopped: 0, lastHit: -99 };
+    /** The `Crew` this player is at the controls of, or null. See Driving.js. */
+    this.driving = null;
     this.dashDir = new THREE.Vector3();
     /** Seconds left of an air dodge's somersault, and the horizontal axis it
      *  turns about. Zero on the ground: a dodge with a foot down is a step. */
@@ -2448,6 +2821,20 @@ export class Player {
     this.score = 0;
     this.kills = 0;
     this.deflects = 0;
+    /**
+     * STAMINA AND FORCE THIS BLADE HAS SPENT ANSWERING BOLTS, cumulative and
+     * monotone. Written by `World._creditDeflect` off `Combat.guardCost`.
+     *
+     * It exists because FLAGSHIP §6's whole argument is about a RATE — 21.6
+     * stamina a second against a 16/s regen — and a rate cannot be read off a
+     * pool that four other things also spend. It is what
+     * `tools/checks/suppression.mjs` measures the beaten zone with, and it is
+     * what the Bastion boon hands back: "turning it aside costs you nothing"
+     * is exactly true when the card refunds the counter's own delta rather
+     * than a flat number that has to be kept in step with the cost table.
+     */
+    this.guardSpent = 0;
+    this.guardForceSpent = 0;
     this.perfects = 0;
     this.limbsRemoved = 0;
 
@@ -2509,7 +2896,17 @@ export class Player {
      */
     this.hurled = [];
     this._wheel = 0;
-    this.cooldowns = { push: 0, pull: 0, throw: 0, sense: 0, dash: 0, lightning: 0, stasis: 0, rend: 0, heal: 0, compel: 0, unleash: 0 };
+    /* `shield` WAS NOT IN THIS OBJECT and the barrier worked anyway, which is
+     * the only reason nobody noticed: `undefined > 0` is false, so the refusal
+     * never fired on a fresh player, and `_endShield`'s assignment then CREATED
+     * the key, after which `_tick`'s `for (const k in …)` counted it down like
+     * any other. So the barrier's cooldown existed from the first time it came
+     * down and not before — and anything that walks this table by name to clear
+     * cooldowns (force-voice.mjs's `rearm`, force-economy.mjs's loop) silently
+     * skipped it until then. Twelve powers have a cooldown; twelve keys.
+     * `grip` has none by design — a hold you can re-take at once is what makes
+     * the throw-and-catch reachable — and `sense` is a toggle. */
+    this.cooldowns = { push: 0, pull: 0, throw: 0, sense: 0, dash: 0, lightning: 0, stasis: 0, rend: 0, heal: 0, compel: 0, unleash: 0, shield: 0 };
     /* The support calls. One per player, constructed here rather than lazily,
      * so `hud` and the checks can read the entry state on frame one instead of
      * guarding for its absence. */
@@ -2648,6 +3045,54 @@ export class Player {
   get disarmed() { return !!this.saberDown; }
 
   /**
+   * HOW MANY HANDS ARE ON THE HILT — 0, 1 or 2, and it is a FACT about the
+   * body rather than a setting.
+   *
+   *   "Why the fuck would it be either or, both should be modeled and reflect
+   *    how many hands you're holding it with"
+   *
+   * It used to be half a fact. `_poseArms` composed four true things — the
+   * grip model, the throw state, whether a gesture had borrowed the off arm,
+   * whether the hilt was on the floor — and then ANDed a fifth term onto them
+   * that was neither about the hands nor about the weapon: which camera you
+   * were in, through a `fpHands` option on the Interface panel. So the same
+   * body, in the same state, had a different number of hands on its sword
+   * depending on where the lens was, and the settings screen could put a
+   * second fist onto a hilt the player had just taken a hand off.
+   *
+   * Every clause below is something the player DID, and each one is read from
+   * the state that already carries it rather than restated here:
+   *
+   *   `saberDown`      the hilt is on the ground — nothing in either hand
+   *   `driving`        both hands are on a machine's controls, and the blade
+   *                    is on your belt (Driving.js's `Crew` retracts and hides
+   *                    it without setting `saberDown`, because you have not
+   *                    dropped it)
+   *   `throwState`     anything but `held` is a blade in the air: thrown,
+   *                    flown by the Force (`piloted`), or on its way home
+   *   `control.grip`   the blade's own grip model, which `_readInput` sets to
+   *                    'one' for the one-hand key, a live telekinetic grip on
+   *                    a body or an enemy, a stasis field, and a thrown saber
+   *   `gesture.kind`   the off arm is mid-cast — a push, a pull, a hurl, an
+   *                    unleash, lightning, a rend, sense, heal, the stratagem
+   *                    comm, a designator. Thirteen of them, and each takes
+   *                    the hand off the hilt for as long as it runs
+   *
+   * ZERO IS NOT REACHABLE BY THE POSER TODAY and is still what this returns,
+   * because it is what is true: `Player.update` hands the whole frame to
+   * `Crew` and returns before `_updateBody` ever runs, so a man at the
+   * controls keeps whatever pose he climbed in with. That is a defect in the
+   * DRIVING pose and not in this answer, and writing 1 here to match the
+   * pose would be the hand-maintained table beside its generated twin that
+   * HANDOFF §2.3 is about.
+   */
+  handsOnHilt() {
+    if (this.saberDown || this.driving || this.throwState !== 'held') return 0;
+    if (this.control.grip !== 'two' || this.gesture.kind) return 1;
+    return 2;
+  }
+
+  /**
    * THIS BODY, AS SOMETHING A BLADE CAN FIND.
    *
    * A Player had no `capsules()` at all, and that single absence is most of why
@@ -2743,8 +3188,13 @@ export class Player {
       dmg *= k;
       if (impulse) impulse = _res.copy(impulse).multiplyScalar(k);
     }
+    /* AND THE SHOVES DO NOT STACK — the rule, and the twenty-acolyte ring that
+     * found it 718 m up, are written down over `addShove` in Enemy.js. It
+     * lives there rather than here for the reason `forceResistance` does: this
+     * is one contest seen from two sides, and the day the two copies disagree
+     * is the day a shove means something different depending on who took it. */
     if (impulse) {
-      this.velocity.add(impulse);
+      addShove(this, impulse);
       this.grounded = false;
     }
     if (!gentle) this.staggerTimer = Math.max(this.staggerTimer, 0.22);
@@ -2762,6 +3212,8 @@ export class Player {
 
   update(dt, ctx) {
     const input = ctx.input;
+    // A new frame opens a new shove account. See `addShove` in Enemy.js.
+    newShoveFrame(this);
     this.comboTimer -= dt;
     if (this.comboTimer <= 0 && this.combo > 0) { this.combo = 0; }
     for (const k in this.cooldowns) this.cooldowns[k] = Math.max(0, this.cooldowns[k] - dt);
@@ -2769,13 +3221,34 @@ export class Player {
     this.riposteTimer = Math.max(0, this.riposteTimer - dt);
     this.staggerTimer = Math.max(0, this.staggerTimer - dt);
     this.hitFlash = damp(this.hitFlash, 0, 5, dt);
+    /* THE CHANNEL IS STEPPED HERE and not in `_move`, because it has to run
+     * whether or not the body can walk — a commander channelling in a troop
+     * bay, or one pinned by a stagger, is still discharging. Death ends it a
+     * line below, through the same door a release does. */
+    if (this.channel?.kind === 'lightning') this._lightningTick(ctx, dt);
 
-    if (!this.alive) { this._updateDead(dt, ctx); return; }
+    if (!this.alive) { this.endLightning?.(); this._updateDead(dt, ctx); return; }
 
     this._readInput(dt, ctx);
     // The aim the input just wrote, available to everything solved this frame
     // rather than only to the camera at the end of it — see syncAim.
     this.camera.syncAim();
+    /**
+     * AND IF YOU ARE DRIVING SOMETHING, THAT IS THE WHOLE FRAME.
+     *
+     * Everything below this line is a body on its feet — the walk, the Force,
+     * the gait, the blade, the collision — and none of it applies to a man at
+     * the controls of a tank. Placed after the input and the aim because the
+     * crew READS both: the aim is where the gun goes and the move axis is the
+     * throttle. See src/game/Driving.js.
+     */
+    if (this.driving) {
+      if (this.driving.update(dt, ctx)) {
+        this.saber.carrierVel = this.velocity;
+        this._regen(dt);
+        return;
+      }
+    }
     /* AFTER the aim and not before it: a stratagem aimed at the ground reads
      * `aimDir`, and a call placed on last frame's aim would land where you
      * were looking rather than where you are. */
@@ -2804,6 +3277,42 @@ export class Player {
   _readInput(dt, ctx) {
     const input = ctx.input;
     if (!this.isLocal) return;
+    /**
+     * A MAN AT THE CONTROLS OF A TANK HAS BOTH HANDS ON THEM.
+     *
+     * `update` runs this BEFORE it hands the frame to `Crew`, because the crew
+     * reads the aim and the move axis this method writes — so without this line
+     * every key below was live inside a hull: you could throw your saber out of
+     * a driven AT-TE, raise a Force barrier in a cockpit, or grip a crate while
+     * steering. Each of those is a body doing two things with the same hands,
+     * and the throw is worse than silly — `_updateThrow` poses the saber at
+     * `throwPos` and `Crew.ride` pins the player to the seat, so the blade and
+     * the man it belongs to would be in two places.
+     *
+     * The camera and the aim are ABOVE this and still run: looking around is
+     * how you lay the gun. The drive key itself is handled in `Crew`'s own
+     * frame — see `takeControls`, which is a toggle — so the way out is never
+     * a key this returns before reading.
+     */
+    if (this.driving) {
+      this._wheel = input.mouse.wheel;
+      input.mouse.wheel = 0;
+      /* The look, through the same door it always goes through — the blade
+       * controller owns the mouse and hands back the camera's share of it, and
+       * a second reader of `mouse.dx` here would be the two-copies-of-one-rule
+       * defect this file keeps deleting. `bladeHeld` false because there is no
+       * blade in the hand to hold. */
+      const look = this.control.applyInput(input, dt, {
+        stamina: this.stamina / this.maxStamina,
+        attackRate: this.boonMods.attackRate,
+        grounded: true, moving: 0,
+      });
+      this.camera.addYaw(look.yaw);
+      this.camera.addPitch(look.pitch);
+      if (input.actHit('drive')) this.takeControls(ctx);
+      if (input.actHit('view')) { this.camera.firstPerson = !this.camera.firstPerson; this._applyViewMode(); }
+      return;
+    }
 
     // ── the wheel belongs to whatever is actually being held.
     // SaberController spends it on wrist roll (`rollInput += mouse.wheel*0.55`)
@@ -2812,7 +3321,10 @@ export class Player {
     // distance control read to the player as "there isn't any". Claim it while
     // a grip or a stasis field is live and hand it straight back otherwise.
     this._wheel = 0;
-    if (this.gripBody || this.gripEnemy || this.stasis.active) {
+    /* `piloted` is in this list for the same reason the grip is: the wheel is
+     * how you push a held thing out and pull it in, and a blade you are flying
+     * across the arena is a held thing. See `_updateThrow`. */
+    if (this.gripBody || this.gripEnemy || this.stasis.active || this.throwState === 'piloted') {
       this._wheel = input.mouse.wheel;
       input.mouse.wheel = 0;
     }
@@ -2830,10 +3342,11 @@ export class Player {
        *
        * `SPIN`'s own note has always said "it is the reason this costs a third
        * more stamina and recovers half as fast", and the recovery was real —
-       * `SPIN.cooldown` is 0.92 against the overhead's 0.46 — while the stamina
-       * half was never wired: `ctx.onSpin` was called by the controller and no
-       * caller had ever supplied it. The only price was whatever the whoosh
-       * drain happened to take.
+       * `SPIN.cooldown` is 1.05 s against the overhead's 0.46, read off the
+       * table rather than typed here, and it was 0.92 when this paragraph was
+       * written — while the stamina half was never wired: `ctx.onSpin` was
+       * called by the controller and no caller had ever supplied it. The only
+       * price was whatever the whoosh drain happened to take.
        *
        * That was survivable while the spin was a 35° glance that crossed two
        * bodies. It stopped being survivable the moment it became a full
@@ -2850,6 +3363,40 @@ export class Player {
         this.stamina = Math.max(0, this.stamina - 18);
         this.staminaHold = STAMINA_HOLD;
         audio.swing(26, this.saber.base);
+      },
+      /**
+       * WHAT HOLDING A BLADE CHAMBERED COSTS — and it is the SAME defect the
+       * spin's note above records, one attack over and still live.
+       *
+       * `CHARGE.drain` (0.22) and `HEAVY.drain` (0.20) are authored in
+       * SaberController and spent through `ctx.onStrain`, and NO CALLER HAS
+       * EVER SUPPLIED ONE — grep `onStrain` across src/ and tools/ and the
+       * only hits are the two calls that raise it. Both notes there say the
+       * same thing in the same words: "Standing at full charge is not free,
+       * which is what stops the heavy from being a state you enter once and
+       * swing out of forever." It was free, so it was exactly that state:
+       * chamber the third press, walk around behind a full charge, and swing
+       * a faster blade whenever you like at no price at all.
+       *
+       * The amount arrives as a FRACTION OF THE BAR PER SECOND, which is the
+       * unit the controller already reads back (`ctx.stamina` is
+       * `stamina / maxStamina`), so a full overhead charge costs
+       * (0.85 − 0.28) × 0.22 = 12.5 of a 100 bar and a full heavy
+       * (0.80 − 0.16) × 0.20 = 12.8. Both a little under a dash's 18, which is
+       * the right order: chambering is a commitment, not a movement.
+       *
+       * `staminaHold` for the reason STAMINA_HOLD's own note gives — a bar
+       * does not refill while it is being spent. Without it the regen (16/s
+       * and up) simply outpaces a 22/s drain that only runs for half a second
+       * and the price is a rounding error. It is deliberately NOT what
+       * `guardCost` does: answering a bolt is something done TO you and its
+       * whole arithmetic is a drain racing a live regen (see GUARD_COST), and
+       * chambering is something you choose.
+       */
+      onStrain: (fraction) => {
+        if (!(fraction > 0)) return;
+        this.stamina = Math.max(0, this.stamina - fraction * this.maxStamina);
+        this.staminaHold = STAMINA_HOLD;
       },
       /* WHETHER THE FEET ARE UNDER THE LUNGE, from the body's OWN velocity.
        * The controller can otherwise only infer it from how fast the anchor it
@@ -2872,7 +3419,12 @@ export class Player {
       // …and NOT `return`: this sits above the view toggle, the grip and all
       // eleven powers, so an early exit here would make an empty hand cost the
       // player the rest of their controls for that frame.
-      if (this.saberDown) this._refuse('ignite', 'your hands are empty');
+      /* THE SAME KEY, FOR THE BLADE IN YOUR FORCE. Tried first, and it answers
+       * only when the grip is actually holding a hilt — so this is not a mode
+       * the player has to know about, it is the ignite key doing the obvious
+       * thing with the only saber they are touching. */
+      if (this.igniteHeldHilt(ctx)) { /* lit or doused at range */ }
+      else if (this.saberDown) this._refuse('ignite', 'your hands are empty');
       else {
         this.saber.toggle();
         if (this.saber.lit) { this.hum.ignite(); audio.tone({ freq: 180, freqEnd: 900, dur: 0.4, gain: 0.22, type: 'sawtooth', pos: this.saber.base }); }
@@ -2904,13 +3456,26 @@ export class Player {
     if (input.actHit('grip')) this.toggleGrip(ctx);
     if (input.actHit('throw')) this.throwOrRecall(ctx);
     if (input.actHit('sense')) this.toggleSense(ctx);
+    /* PRESS OPENS IT, RELEASE CLOSES IT — see `forceLightning`. `actHit` is
+     * the edge and `act` is the level, and both are needed: a channel that
+     * only ever ended on its own clock could not be tapped. */
     if (input.actHit('lightning')) this.forceLightning(ctx);
+    else if (this.channel?.kind === 'lightning' && !input.act('lightning')) this.endLightning();
     if (input.actHit('stasis')) this.toggleStasis(ctx);
     if (input.actHit('heal')) this.forceHeal(ctx);
+    /* A TOGGLE, not a hold-to-keep. `forceShield` puts it up and puts it down
+     * again on the second press — the same shape `stasis` and the mend already
+     * use — because a barrier you must keep a finger on is a barrier you cannot
+     * fight from, and everything else in this game is done with the same hand. */
+    if (input.actHit('shield')) this.forceShield(ctx);
     if (input.actHit('rend')) this.forceDisassemble(ctx);
     if (input.actHit('compel')) this.forceCompel(ctx);
     if (input.actHit('unleash')) this.forceUnleash(ctx);
     if (input.actHit('swap')) this.swapSaber(ctx);
+    /* IN, OR OUT — one key, decided by whether you are already at a set of
+     * controls, for the same reason `swap` is one key: the state is on screen
+     * and the player does not have to keep two of them straight. */
+    if (input.actHit('drive')) this.takeControls(ctx);
     // One meaning for `hurl` whichever way the Force is currently full: send
     // what I am holding at what I am looking at. (It said "Mouse2" here until
     // the key moved off Mouse2 — which is why comments name the ACTION.)
@@ -3059,7 +3624,7 @@ export class Player {
    * the run carries the arc forward and lets a dive be aimed at something.
    */
   _tryDive(ctx) {
-    if (this._spelling()) return this._refuse('dive', 'you are calling in a stratagem');
+    if (this._spelling()) return this._refuse('dive', 'you are calling for support');
     if (this.grounded || this.diving || this.dashTimer > 0) return false;
     if (this.velocity.y > 2) return false;              // still going up: that is a jump
     const ground = ctx.terrain ? ctx.terrain.height(this.position.x, this.position.z) : 0;
@@ -3308,7 +3873,7 @@ export class Player {
          * stop, in the open, for as long as the code takes". The jump was not
          * in the lock at all: measured, arming + jump was a 4.70 m apex while
          * arming + run was 0.00 m of travel. */
-        if (this._spelling()) this._refuse('jump', 'you are calling in a stratagem');
+        if (this._spelling()) this._refuse('jump', 'you are calling for support');
         else if (this.coyote > 0) {
           this.velocity.y = 7.4 * this.boonMods.jumpPower;
           this.grounded = false; this.coyote = 0;
@@ -3372,16 +3937,38 @@ export class Player {
     // ── collide
     this._collide(dt, ctx);
 
-    // ── facing: toward the blade in combat, toward movement otherwise
-    const wantFace = this.camera.yaw + Math.PI;
-    let target = wantFace;
-    if (!this.saber.lit && this.velocity.lengthSq() > 1.5) {
-      target = Math.atan2(this.velocity.x, this.velocity.z);
+    /**
+     * ── FACING. Toward the blade in combat, toward movement otherwise — AND
+     * THE BODY OWNS ITS OWN TURN DURING A DRILL.
+     *
+     * `bodyYaw` is `SaberController`'s: how far the trunk turns this frame,
+     * against `spinYaw`'s much smaller share of it that reaches the camera. The
+     * two are separate because of the player's verdict on the old spin — "the
+     * spin attack just moves your camera and is mostly ineffective in battle" —
+     * and the split is the fix: spending the whole revolution on `camera.yaw`
+     * is what made a quarter of a second of play a look at the sky.
+     *
+     * Applied as an ADD rather than through the easing solve below, because the
+     * easing is a spring toward the camera and the camera is deliberately NOT
+     * where the body is going during the move. It is also why the solve is
+     * skipped entirely while it runs: a spring pulling the trunk back to the
+     * view every frame would eat the spin.
+     */
+    if (this.control?.bodyYaw) {
+      this.facing += this.control.bodyYaw;
+      while (this.facing > Math.PI) this.facing -= TAU;
+      while (this.facing < -Math.PI) this.facing += TAU;
+    } else {
+      const wantFace = this.camera.yaw + Math.PI;
+      let target = wantFace;
+      if (!this.saber.lit && this.velocity.lengthSq() > 1.5) {
+        target = Math.atan2(this.velocity.x, this.velocity.z);
+      }
+      let d = target - this.facing;
+      while (d > Math.PI) d -= TAU;
+      while (d < -Math.PI) d += TAU;
+      this.facing += d * Math.min(1, dt * 13);
     }
-    let d = target - this.facing;
-    while (d > Math.PI) d -= TAU;
-    while (d < -Math.PI) d += TAU;
-    this.facing += d * Math.min(1, dt * 13);
 
     // stamina from sprinting — and the bar does not refill while it is going
     // out. See STAMINA_HOLD: without this the regen ceiling of 26/s paid the
@@ -3507,6 +4094,25 @@ export class Player {
       for (let iter = 0; iter < 2; iter++) {
         for (const box of this._nearBoxes) {
           if (box.disabled) continue;
+          /**
+           * A LEDGE YOU CAN CLIMB IS NOT A WALL, and this is the line that
+           * decides it. See `Support.js`'s `climb` note and `Trees.CLIMB_LOG`.
+           *
+           * Without it the two halves of the movement solver work against each
+           * other and the log wins: the push-out resolves against the CHEST,
+           * which for a metre-high log lying on the ground is a side face and
+           * therefore a horizontal normal, so the body is held 0.42 m off the
+           * timber — while `supportHeight` reaches only the standing radius,
+           * 0.40 m, and so never sees the top it is supposed to lift you onto.
+           * Two centimetres, and the player is stopped dead by a log they are
+           * meant to walk over. Measured: 1.65 m of approach and then nothing,
+           * for eight seconds.
+           *
+           * Skipping it hands the surface to the support query, which is where
+           * every other floor in the game is resolved.
+           */
+          const climb = box.userData?.climb;
+          if (climb > 0 && box.center.y + box.halfExtents.y <= this.position.y + climb) continue;
           _v1.set(this.position.x, this.position.y + this.height * 0.5, this.position.z);
           if (_v1.distanceToSquared(box.center) > (box.radius + 1.4) ** 2) continue;
           _v2.subVectors(_v1, box.center).applyQuaternion(box.invQuat);
@@ -3541,24 +4147,77 @@ export class Player {
           if (vn < 0) this.velocity.addScaledVector(_v5, -vn);
         }
       }
-      // shove dynamic props out of the way — the same short list the support
-      // query uses, so a crate you are standing on and a crate you are walking
-      // into are the same object seen twice, not two different searches
+      /**
+       * SHOVE DYNAMIC PROPS OUT OF THE WAY — AGAINST THE PROP'S OWN BOX, and
+       * for a long time against a SPHERE THE SIZE OF ITS DIAGONAL instead.
+       *
+       * The loop's premise is right and is stated above it: a crate you are
+       * standing on and a crate you are walking into are one object seen
+       * twice. The support query resolves it as a box (`topOfProps` reads
+       * `extent`); this half resolved it as a sphere of radius
+       * `boundingRadius`, which `RapierWorld` documents as the HALF-DIAGONAL of
+       * that same box — and its note there says exactly why that is not a
+       * shape: "guessing it back out of the diagonal either floats you or
+       * sinks you". So the two halves disagreed about what the object IS.
+       *
+       * On a crate the difference is centimetres. On a FELLED TRUNK it is the
+       * whole of BACKLOG 8.1. A realised log is a 12-to-24 m prop, so its
+       * half-diagonal is metres, and the sphere test made every log project a
+       * repulsion bubble round its own middle: measured on the pinned deck,
+       * three logs in the shove list at once with boundingRadius 5.83, 3.95 and
+       * 5.36 m against a body standing ON one of them. The shove is
+       * `(rr − d) · massRatio` per frame with nothing bounding it, so the body
+       * settles where the shove balances the walk — 0.0552 m of walk against
+       * 0.0551 m of shove, measured on the stalling frame — and stops dead six
+       * metres from a log's centre with nothing there. That is the player's
+       * "invisible walls… I think maybe only when you cut trees down", and it
+       * is why a body that climbs onto a trunk then stalls on top of it: being
+       * on the log is being deep inside its own bubble.
+       *
+       * Against the box the same body is pushed out of the WOOD and nothing
+       * else, and standing on top now falls out for free rather than needing a
+       * rule: the nearest point on the box is directly below the chest, the
+       * offset is straight up, and `_v4.y = 0` leaves nothing to push with —
+       * which is the same reasoning the static-box loop above spells as
+       * `if (_v5.y > 0.5) continue`.
+       *
+       * `_q1` is free through the whole of `_collide`; the static boxes carry a
+       * precomputed `invQuat` and a dynamic body does not.
+       */
       for (const b of this._nearProps) {
         _v1.set(this.position.x, this.position.y + 0.9, this.position.z);
-        const rr = this.radius + b.boundingRadius;
-        _v2.subVectors(b.position, _v1);
-        const d2 = _v2.lengthSq();
-        if (d2 > rr * rr || d2 < 1e-8) continue;
+        const e = b.extent;
+        _q1.copy(b.quaternion).invert();
+        _v2.subVectors(_v1, b.position).applyQuaternion(_q1);
+        _v3.set(clamp(_v2.x, -e.x, e.x), clamp(_v2.y, -e.y, e.y), clamp(_v2.z, -e.z, e.z));
+        _v4.subVectors(_v2, _v3);
+        let d2 = _v4.lengthSq();
+        const rr = this.radius;
+        if (d2 > rr * rr) continue;
+        if (d2 < 1e-8) {
+          // the chest is INSIDE the prop: leave by the nearest face, exactly as
+          // the static-box loop does when it lands in the same place
+          const dx = e.x - Math.abs(_v2.x), dy = e.y - Math.abs(_v2.y), dz = e.z - Math.abs(_v2.z);
+          if (dx <= dy && dx <= dz) _v4.set(Math.sign(_v2.x) || 1, 0, 0);
+          else if (dy <= dz) _v4.set(0, Math.sign(_v2.y) || 1, 0);
+          else _v4.set(0, 0, Math.sign(_v2.z) || 1);
+          d2 = 1e-4;
+        }
         const d = Math.sqrt(d2);
-        _v2.multiplyScalar(1 / d);
+        /* Outward, in the world: from the prop's surface toward the chest.
+         * `normalize()` and not `multiplyScalar(1 / d)` — on the branch above,
+         * `_v4` is ALREADY a unit face normal while `d` has been forced to
+         * 0.01, so dividing would hand the impulse below a vector a hundred
+         * times too long and fire a body across the level. The two spellings
+         * agree everywhere else. */
+        _v4.normalize().applyQuaternion(b.quaternion);
         b.wake();
-        b.applyImpulse(_v3.copy(_v2).multiplyScalar(Math.min(b.mass, 40) * (rr - d) * 2.4), _v1);
-        _v2.y = 0;
-        if (_v2.lengthSq() > 1e-6) {
-          _v2.normalize();
+        b.applyImpulse(_v5.copy(_v4).multiplyScalar(-Math.min(b.mass, 40) * (rr - d) * 2.4), _v1);
+        _v4.y = 0;
+        if (_v4.lengthSq() > 1e-6) {
+          _v4.normalize();
           const massRatio = clamp(b.mass / 220, 0, 0.55);
-          this.position.addScaledVector(_v2, -(rr - d) * massRatio);
+          this.position.addScaledVector(_v4, (rr - d) * massRatio);
         }
       }
     }
@@ -3575,7 +4234,6 @@ export class Player {
      * and the numbers are all in Terrain.blockClimb.
      */
     terrain?.blockClimb?.(this.position, this.velocity);
-    const gh = terrain ? terrain.height(this.position.x, this.position.z) : 0;
     /**
      * THE QUERY COVERS THE WHOLE STEP, not the end of it.
      *
@@ -3594,8 +4252,50 @@ export class Player {
      * the max is the current position — which is the old behaviour exactly,
      * so a jump past a ledge still cannot be snatched onto it.
      */
+    const gh = terrain ? terrain.height(this.position.x, this.position.z) : 0;
     const sweepFrom = Math.max(this.position.y, this._sweepFromY ?? this.position.y);
-    const support = this._supportAt(ctx, this.position.x, this.position.z, sweepFrom);
+    let support = this._supportAt(ctx, this.position.x, this.position.z, sweepFrom);
+    /**
+     * A LOG IS CLIMBED, NOT TELEPORTED ONTO.
+     *
+     * `Support.js` now lets a box say it is climbable and a felled trunk says
+     * so — see CLIMB_LOG, and the measurement that half the wood was a wall by
+     * ten centimetres. But the line below plants the feet on whatever the query
+     * answered, in one frame, and a 1.2 m trunk answered that way is the body
+     * jumping a metre with no time passing: in third person it is a hitch and
+     * in first person, where the eye copies the target exactly rather than
+     * damping it, it is a jolt straight up.
+     *
+     * So anything more than an ordinary step is taken at a RATE. 3.4 m/s puts
+     * the median log (0.55 m) under you in 0.16 s and the largest (1.26 m) in
+     * 0.37 — long enough to read as clambering, short enough that it never
+     * feels like being stuck on the thing. It only ever applies while the
+     * surface is above the feet, so nothing about walking, falling or landing
+     * changes.
+     */
+    /* ONCE IT HAS STARTED, IT FINISHES. `this.climbing` lowers the threshold to
+     * nothing for as long as the body is on its way up, and without that the
+     * last 0.42 m of a metre-high log is taken in ONE FRAME — the moment the
+     * remaining rise drops under STEP_UP the ordinary snap claims it, so a
+     * climb that is smooth for eight frames ends in exactly the jolt the rate
+     * exists to remove. Measured on a 0.81 m log: 0.057, 0.057, …, 0.425. */
+    /* A BODY THAT IS FALLING IS NOT CLIMBING, and this cost `standing`'s
+     * fall-through check to find: a dive from 60 m crosses a roof at 30 m/s,
+     * the support query answers with the roof, and rate-limiting that rise is
+     * rate-limiting a LANDING — the body sinks past the roof at 5.7 cm a frame
+     * while gravity takes it down at half a metre. Measured: a dive from 25 m
+     * rested on the roof at 22.80 and one from 60 m went through it to 0.00.
+     * `wasGrounded` is the whole distinction: a climb starts from the floor. */
+    if (wasGrounded && support > gh + 0.05
+        && support > this.position.y + (this.climbing ? 1e-3 : STEP_UP)) {
+      /* FROM THE FEET, not from the feet plus a step: adding STEP_UP back in
+       * would let the first frame of a climb take 0.45 m in one go, which is
+       * the jolt this whole clause exists to remove. An ordinary step is
+       * untouched — the branch is only entered for something TALLER than one. */
+      const reach = this.position.y + CLIMB_RATE * dt;
+      if (support > reach) support = Math.max(this.position.y, reach);
+      this.climbing = true;
+    } else this.climbing = false;
     // Never inside it: a body below the surface it is standing on is the
     // "phase into it" the player described, and it is unconditional.
     if (this.position.y < support) this.position.y = support;
@@ -3774,7 +4474,7 @@ export class Player {
      * THREE REFUSALS, AND ALL THREE SAY SO.
      *
      * `_refuse`'s own header is the rule — "a bound key that does nothing and
-     * does not say why is the same lie as a dead checkbox" — and all eleven
+     * does not say why is the same lie as a dead checkbox" — and all twelve
      * Force powers obey it. The dash opened with a bare `return` on the
      * stamina.
      *
@@ -3790,7 +4490,7 @@ export class Player {
      * somersault, with 0.28 s of invulnerability, for 36 stamina. A commitment
      * you can steer out of is not one.
      */
-    if (this._spelling()) return this._refuse('dash', 'you are calling in a stratagem');
+    if (this._spelling()) return this._refuse('dash', 'you are calling for support');
     if (this.diving) return this._refuse('dash', 'committed to the dive');
     if (this.stamina < DASH_STAMINA) {
       return this._refuse('dash', `${DASH_STAMINA} stamina needed, you have ${Math.round(this.stamina)}`);
@@ -4045,7 +4745,7 @@ export class Player {
 
     // swing whoosh when the blade crosses a speed threshold
     const now = ctx.time;
-    if (swing > 11 && now - this._lastSwingSound > 0.19) {
+    if (swing > SWING_WHOOSH && now - this._lastSwingSound > 0.19) {
       this._lastSwingSound = now;
       audio.swing(swing, this.saber.pointAt(0.7, _v1));
       this.world.report?.({ type: 'swing', speed: swing });
@@ -4434,6 +5134,148 @@ export class Player {
     bone.obj.updateMatrixWorld(true);
   }
 
+  /**
+   * WHERE THE ELBOW GOES IS THE WRIST'S BUSINESS TOO — and nothing had ever
+   * told it.
+   *
+   * This is the BEND half of the grip, the residue `_rollForearm`'s note and
+   * the ratchet in tools/checks/viewmodel.mjs have both been carrying: "the
+   * wrist reaches 114.4° from rest". A human wrist does not bend 114°; the
+   * whole of flexion is about 80° and the whole of extension about 70°, and
+   * every measurement of a *functional* range — the arc people actually use for
+   * work — is well inside half of that. Whatever the number the check reads,
+   * the pose was not one a body can make.
+   *
+   * MEASURED FIRST, because "the wrist is bent" is three different faults
+   * wearing one number. On the ratchet's own bench, over its 170 sampled
+   * frames:
+   *
+   *     wrist from rest      39.2 …  83.6 … 114.4°
+   *     of which BEND        39.2 …  83.6 … 114.4     <- all of it
+   *     of which twist        0.0 …   6.6 …  18.4     <- `_rollForearm` works
+   *     hand's long axis to the blade   90.0 … 90.0 … 90.0
+   *
+   * So it is not roll, `_rollForearm` is doing its job, and the bend is one
+   * angle: between the forearm the IK chose and the forearm the HAND wants —
+   * `handWorld · restQuat⁻¹` pointed along its own +Y, which is the same
+   * quantity `_rollForearm` already builds and swings.
+   *
+   * AND THE FREE PARAMETER THAT DECIDES IT WAS SPENT ON SOMETHING ELSE. Once
+   * the shoulder and the wrist are both fixed — and they are, by the hilt — a
+   * two-bone solve has exactly ONE degree of freedom left: the elbow's swivel
+   * about the line between them. `solveIK` takes it from the pole, and the pole
+   * above is built entirely out of where the hand is relative to the CHEST.
+   * Nothing in it mentions the wrist. Swept through a whole turn at every frame
+   * of the bench, through the shipped `solveIK`, the same wrist reads:
+   *
+   *                          worst      median
+   *     shipped pole         114.4°      83.6°
+   *     best swivel           77.9        36.7
+   *
+   * That is the headroom, and it is free: the hand does not move, the hilt does
+   * not move, the blade's envelope does not move. Only the elbow does, and it
+   * moves to where a real elbow goes — because in a real arm the elbow's
+   * swivel IS driven by the hand's orientation. That is why you turn your
+   * elbow out to pour from a jug.
+   *
+   * So the pole is a HINT and this bends it toward the wrist: `wrist − foreLen ·
+   * wantDir` is the elbow a straight wrist implies, and the swivel between the
+   * two poles is taken up to `ELBOW.swivel` and no further. The cap is what
+   * keeps the note above this — "a pole pinned to the right of the chest folds
+   * the right elbow straight through the ribs" — still true: the chest pole
+   * still chooses the basin, and the wrist is allowed to argue within it.
+   *
+   * MEASURED, same bench, `ELBOW` carries the sweep the two numbers come from:
+   *
+   *                            worst          median        forearm
+   *     third, two hands     114.4 →  89.4  83.6 → 36.7   2487 → 2476 °/s
+   *     third, one hand      107.8 →  79.0  62.8 → 14.7   1221 → 1112
+   *     first, two hands     131.1 → 115.1  88.6 → 65.8   1099 → 1605
+   *     first, one hand      112.0 → 102.3  83.4 → 76.7   2747 → 2429
+   *
+   * (The one-hand rows are the state a player reaches by holding the one-hand
+   * key. A row that read 124.2 → 115.8 stood here for "first person, 1 hand"
+   * and was taken through the `fpHands` option instead, which moved the arms
+   * and left the blade on `GRIPS.two` — see `handsOnHilt`. It is not the same
+   * arm and the number is not comparable, so it is replaced rather than kept.)
+   *
+   * A wrist's own limits are about 80° of flexion and 70° of extension, with
+   * 20-30° of deviation across them, so ~85° is the most a real one reaches at
+   * either end and the arc it WORKS in is half that. The median is the number
+   * that says how the arm reads for the other 169 frames, and it lands inside
+   * the working arc; the worst lands at the anatomical end of the range.
+   *
+   * ── WHAT IS LEFT, AND THE ATTRACTIVE WRONG ANSWER ──────────────────────────
+   *
+   * The residue is not tunable, and the same probe says why. `handPoseOnHilt`
+   * forces the hand's long axis EXACTLY perpendicular to the blade — measured,
+   * 90.0° on every frame of every bench — so the smallest wrist any choice of
+   * elbow can reach is |90° − θ|, where θ is the angle between the forearm and
+   * the blade. The worst frame here is θ = 3.1°: the guard has the blade lying
+   * along the arm, which is a THRUST, and a hand cannot hold a hammer grip
+   * pointing down its own forearm. 89.4° is that frame's floor, not a slack
+   * bound — the check's own note has said since it was written that the last of
+   * this is the CONTROLLER's guard model and it is still right.
+   *
+   * The tempting cure is to say the tunnel a fist makes is OBLIQUE — real hands
+   * do hold a hammer nearer their own axis than across it — and tilt
+   * `GRIP_BORE`'s axis by 25-35°, which would take the floor with it. IT IS NOT
+   * TRUE OF THIS HAND, and `tools/_bore.mjs` is the measurement rather than the
+   * opinion: replaying `buildHand`'s finger construction and fitting the arc
+   * each of the four fingers closes on gives bores at y 64.2 / 66.5 / 65.0 /
+   * 61.7 mm across x +26.7 to −26.2, i.e. a tunnel tilted **2.9°** off the
+   * hand's X toward the knuckles and 4.1° out of the palm. (The middle finger's
+   * joints come out at (87,5) (96,33) (81,51) (63,57) mm, which is
+   * `GRIP_BORE`'s own note to the millimetre, and the four-finger centre is
+   * y 64.4 mm against the 65 it ships.) Three degrees is not thirty. Tilting
+   * the grip axis would mean changing what `buildHand` BUILDS, and that is a
+   * different job with a different owner.
+   */
+  _wristPole(upperName, foreName, handName, handQuat, wrist, pole, dt) {
+    const st = this._elbow[upperName];
+    if (!(ELBOW.swivel > 0) || !st) return pole;
+    const fore = this.rig.get(foreName), hand = this.rig.get(handName);
+    if (!fore || !hand) return pole;
+    const shoulder = this.rig.worldPos(upperName, _wp1);
+    // the forearm a wrist at rest would have, and the elbow it puts behind it
+    _wpQ.copy(handQuat).multiply(_wpQ2.copy(hand.restQuat).invert());
+    _wp2.set(0, 1, 0).applyQuaternion(_wpQ);
+    _wp3.copy(wrist).addScaledVector(_wp2, -fore.length * fore.cutT);
+    // both poles carry a swivel about the shoulder→wrist line and nothing else:
+    // solveIK reads `cross(toTarget, poleDir)`, so only this component is seen
+    _wp4.subVectors(wrist, shoulder);
+    if (_wp4.lengthSq() < 1e-8) return pole;
+    _wp4.normalize();
+    _wp5.subVectors(pole, shoulder);
+    _wp5.addScaledVector(_wp4, -_wp5.dot(_wp4));
+    _wp6.subVectors(_wp3, shoulder);
+    _wp6.addScaledVector(_wp4, -_wp6.dot(_wp4));
+    const len = _wp5.length();
+    if (len < 1e-4 || _wp6.lengthSq() < 1e-8) return pole;
+    _wp5.multiplyScalar(1 / len); _wp6.normalize();
+    let phi = clamp(Math.atan2(_wp2.crossVectors(_wp5, _wp6).dot(_wp4), _wp5.dot(_wp6)),
+      -ELBOW.swivel, ELBOW.swivel);
+    /**
+     * …AND AN ELBOW DOES NOT TELEPORT ROUND THE ARM EITHER, which is the same
+     * lesson `FOREARM.rate` is, one joint further up and found the same way.
+     * Uncapped, this took the forearm ratchet from 2487 to 3538 °/s — the
+     * wrist-implied elbow crosses the chest pole's own side and the whole limb
+     * snaps through. The carried angle is the swivel this arm is holding
+     * RELATIVE TO the chest pole, which is a well-defined quantity while the
+     * chest pole moves; limiting how fast it changes is what makes the elbow
+     * roll round rather than jump.
+     */
+    if (st.have) {
+      let d = phi - st.phi;
+      while (d > Math.PI) d -= 2 * Math.PI;
+      while (d < -Math.PI) d += 2 * Math.PI;
+      phi = st.phi + clamp(d, -ELBOW.rate * dt, ELBOW.rate * dt);
+    }
+    st.phi = phi; st.have = true;
+    _wp5.applyAxisAngle(_wp4, phi);
+    return pole.copy(shoulder).addScaledVector(_wp5, len);
+  }
+
   _updateBody(dt, ctx) {
     const rig = this.rig;
 
@@ -4539,39 +5381,43 @@ export class Player {
     // A gesture takes the off hand off the hilt without touching the blade's
     // grip model — see the note in _readInput on why those are separate.
     /**
-     * FIRST PERSON IS ONE-HANDED, AND THAT IS A DECISION ABOUT WHAT A
-     * FIRST-PERSON GRIP IS — not a tuning pass. It is the player's call and the
-     * player made it ("no half measures").
+     * THE POSE FOLLOWS THE HAND COUNT, AND THE HAND COUNT IS NOT THE CAMERA'S.
      *
-     * Three separate reports of "the first person hand/hilt looks like jumbled
-     * garbage" were answered by moving the shoulders off the ribcage and by
-     * raising the blade anchor. Both were real faults, both are fixed, and the
-     * complaint survived them — because the fault was never the pose. It was
-     * OCCLUSION, and nothing had ever measured it: 91% of the on-screen hilt was
-     * behind a glove, with two fists on a 25 cm shaft at 0.5 m from the lens.
+     * `handsOnHilt` is the whole of the decision and it names every fact it
+     * reads; there is no second copy of it here and there is no per-camera
+     * boolean. What used to stand in this line was `… && (!firstPerson ||
+     * settings.fpHands === 'two')`, so a player who was demonstrably holding
+     * the hilt with both hands watched one of them let go when they pressed
+     * the view key — and the options screen carried a card row that could put
+     * a fist back onto a hilt the game had just taken a hand off.
      *
-     * Taking the off hand off the hilt removes BOTH halves of that in one move —
-     * the second occluder, and the folded left arm that the near plane was
-     * slicing whenever the fists were low enough for the first to matter. It is
-     * also what the reference the player supplied actually shows.
+     * WHAT IT COSTS IN FIRST PERSON IS THE HILT, and it is measured rather
+     * than argued (tools/checks/first-person.mjs, "how many hands are on the
+     * hilt is what you see"): at half a metre from the lens ONE fist leaves
+     * 32% of the shaft behind a glove and TWO leave 65%. That is not a defect
+     * to be tuned out — two closed hands are 180 mm of the 233 mm of shaft
+     * this samples, so 65% is most of what two fists on a hilt can possibly
+     * leave visible. The player who wanted both grips modelled has the clear
+     * view one keypress away, on the key that means what it does everywhere
+     * else in the game: the one-hand grip.
      *
-     * Third person is untouched: at 3.5 m the second hand costs nothing and a
-     * two-handed guard is the form the whole controller is tuned around
-     * (`GRIPS.two` vs `GRIPS.one` move handExtend 0.29 → 0.36). This changes
-     * where the ARMS go, and nothing about the blade's grip model — `control.grip`
-     * is not touched, so first person keeps the two-handed guard's reach,
-     * stiffness and inertia and does not silently become a different weapon.
+     * Nothing about the blade's grip MODEL is decided here — `control.grip` is
+     * read and never written — so neither reach, stiffness nor inertia moves
+     * with the arms. See GRIPS in SaberController.
      */
-    const twoHanded = this.control.grip === 'two' && this.throwState === 'held'
-      && !this.gesture.kind && !this.saberDown
-      && (!this.camera.firstPerson || this.world.settings?.fpHands === 'two');
+    const hands = this.handsOnHilt();
+    const twoHanded = hands === 2;
     // In first person the arms hang off the VIEW, not off the ribcage, and
     // `chest` — which is the frame every elbow pole below is built in — becomes
     // the point midway between the two viewmodel shoulders. See _anchorViewArms.
     const chest = this.camera.firstPerson
       ? this._anchorViewArms(_v1) : rig.worldPos('chest', _v1);
 
-    if (this.throwState === 'held' && !this.saberDown) {
+    /* …and the same reader decides WHETHER there is a hilt in a hand at all,
+     * rather than a second spelling of two of its clauses. It read
+     * `throwState === 'held' && !saberDown` here, which is `handsOnHilt() > 0`
+     * with the driving clause missing — HANDOFF §2.4. */
+    if (hands > 0) {
       const fp = this.camera.firstPerson;
       /* GRIP_AT IS A PLACE ON THE HILT, so it moves with the hilt. The offsets
        * are in the saber ROOT's frame and `setGripScale` scales the hilt group
@@ -4588,7 +5434,11 @@ export class Player {
        * third-person pair, whose upper fist is 12 cm nearer the blade and put
        * a glove across the emitter at 0.5 m from the lens. */
       const fpPair = fp && twoHanded ? FP_HAND_GAP * 0.5 : 0;
-      const fpR = fp ? fpGripOn(this.saber) + fpPair : GRIP_AT.R;
+      /* …AND THE THIRD-PERSON FIST MOVES TOO WHEN IT IS THE ONLY ONE. First
+       * person already had a grip of its own for one hand and third person did
+       * not: it held `GRIP_AT.R`, which is the top half of a two-handed pair,
+       * with the whole lower grip section empty under it. See `GRIP_AT.ONE`. */
+      const fpR = fp ? fpGripOn(this.saber) + fpPair : (twoHanded ? GRIP_AT.R : GRIP_AT.ONE);
       const gripR = this.saber.root.localToWorld(_v2.set(0, fpR * gs, 0));
       const gripL = this.saber.root.localToWorld(
         _v3.set(0, (fp ? fpR - FP_HAND_GAP : GRIP_AT.L) * gs, 0));
@@ -4667,13 +5517,18 @@ export class Player {
        * untouched — the arm solve is correct there and has its own sweep
        * behind it.
        */
+      /* …AND THE ROLL IS THE GRIP'S, NOT THE VIEW'S. One fist on a shaft and
+       * two fists on it come round it from different places — see the sweep
+       * over FP_TUNE, where the value that is best for two hands is the WORST
+       * row in the one-handed column. */
+      const fpRoll = FP_TUNE.roll[twoHanded ? 'two' : 'one'];
       if (fp) {
         _v10.set(FP_GRIP_SIDE, 1, 0).normalize().applyQuaternion(this.camera.aimQuat);
         /* …AND THEN ROLLED ROUND THE SHAFT. `toward` fixes where the fist sits
          * on the circle about the hilt, and up-and-inboard is only one point on
          * it. See FP_TUNE for the sweep this is picked from. */
-        if (FP_TUNE.roll) {
-          _v10.applyAxisAngle(_v9.set(0, 1, 0).applyQuaternion(_q1), FP_TUNE.roll);
+        if (fpRoll) {
+          _v10.applyAxisAngle(_v9.set(0, 1, 0).applyQuaternion(_q1), fpRoll);
         }
       } else {
         _v10.subVectors(gripR, rig.worldPos('armR', _v9));
@@ -4694,8 +5549,8 @@ export class Player {
        * leading hand reads, mirrored only in the side the arm comes from. */
       if (fp) {
         _v10.set(-FP_GRIP_SIDE, 1, 0).normalize().applyQuaternion(this.camera.aimQuat);
-        if (FP_TUNE.roll) {
-          _v10.applyAxisAngle(_v9.set(0, 1, 0).applyQuaternion(_q1), FP_TUNE.roll);
+        if (fpRoll) {
+          _v10.applyAxisAngle(_v9.set(0, 1, 0).applyQuaternion(_q1), fpRoll);
         }
       } else _v10.subVectors(gripL, rig.worldPos('armL', _v9));
       handPoseOnHilt('L', _q1, _v10, _q3, _v9, hs);
@@ -4718,11 +5573,13 @@ export class Player {
 
       const poleR = _v6.copy(chest).addScaledVector(right, 0.75 * A + side)
         .addScaledVector(UP, -0.75 * A + lift).addScaledVector(fwd, -0.2 * A);
+      this._wristPole('armR', 'foreR', 'handR', _q2, wristR, poleR, dt);
       rig.solveIK('armR', 'foreR', wristR, poleR);
       this._rollForearm('foreR', 'handR', _q2, dt);
       if (twoHanded) {
         const poleL = _v6.copy(chest).addScaledVector(right, -0.62 * A + side)
           .addScaledVector(UP, -0.8 * A + lift).addScaledVector(fwd, -0.2 * A);
+        this._wristPole('armL', 'foreL', 'handL', _q3, wristL, poleL, dt);
         rig.solveIK('armL', 'foreL', wristL, poleL);
         this._rollForearm('foreL', 'handL', _q3, dt);
       } else {
@@ -4965,11 +5822,21 @@ export class Player {
    * throwing rocks around should not have to fight a resource meter for it.
    */
   get forceScale() { return this.world.settings?.forcePower ?? 1; }
-  _spend(cost) {
+  _spend(cost, partial = false) {
     const drain = this.world.settings?.forceDrain ?? 1;
     if (drain <= 0) return true;                   // unlimited
     const c = cost * drain * this.boonMods.forceCost;
-    if (this.force < c) return false;
+    if (this.force < c) {
+      /* A SUSTAINED DRAIN TAKES WHAT IS LEFT AND SAYS SO, which a one-shot
+       * must not: refusing a per-frame charge outright would let a channel run
+       * for ever on the last 0.4 Force in the pool, because the frame's charge
+       * is small enough to be refused for ever without the pool moving. Only
+       * `Player._lightningTick` passes true, and this is the same shape
+       * `_regen`'s Sense hold already uses. */
+      if (!partial) return false;
+      this.force = 0;
+      return false;
+    }
     this.force -= c;
     return true;
   }
@@ -4998,6 +5865,74 @@ export class Player {
     this.world?.notify?.(name.toUpperCase(), reason);
     audio.ui('bad');
     return false;
+  }
+
+  /**
+   * THE POWER SAYS SOMETHING — player note, 21 Aug, and it is the whole of it:
+   *
+   *   "the character should say something everytime he uses a particular force
+   *    ability, perhaps he says the name of the attack, or maybe there's a pool
+   *    of 3-4 things you can say for every force ability so it doesnt get stale
+   *    and you hear the same thing over and over? i like the robotic voice
+   *    sound things you do I never use the version where the computer says the
+   *    actual words"
+   *
+   * ── WHERE THE CALL GOES, and it is not `audio.speak` ────────────────────
+   *
+   * Through the announcer, which already owns the budget that stops this game
+   * babbling: one quip per QUIP_GAP whatever happens, and `say()` is the
+   * FORCED door into it — a rate limit written to stop the game talking over
+   * itself may not swallow a key the player pressed. It skips the gap and then
+   * SETS it, so the kill line from whatever this power just threw waits its
+   * turn instead of landing on top of the shout that threw it. `forceUnleash`
+   * has taken exactly that route since it was written and its note says why;
+   * this is that note applied to the other eleven powers.
+   *
+   * Under the announcer sits `AudioEngine.speak`'s own hard cap of three
+   * concurrent utterances with the newest ducking the rest, and PRIO.critical,
+   * which `opts.self` buys. Not one number of any of that is restated here.
+   *
+   * ── WHERE IT IS CALLED FROM, which is the part a refusal depends on ─────
+   *
+   * AFTER THE LAST REFUSAL, at every one of the twelve sites — one per entry
+   * in `POWER_COST`, which is where tools/checks/force-voice.mjs derives its
+   * census from — and that is the
+   * whole of "a refused power must not produce a line". Every power in this
+   * file opens with its refusals — not attuned, recovering, nothing in your
+   * sights, too heavy, and `_refuse` quoting the price the gate really charges
+   * — and each of them returns. The gate is `_spend` for the eight powers that
+   * are billed and `_canSpend` for the three that are thresholds (sense, the
+   * heal and the grip's first look), so this cannot be phrased as "after the
+   * spend"; what it is, is after the last `return` in the method. A line
+   * raised before one of those would be the player announcing something that
+   * did not happen, which is worse than silence: it is the game lying about
+   * its own state. Nothing at all is said on the OTHER half of a toggle — a
+   * saber recalled, sense switched off, a grip let go, a stasis field fired —
+   * for the same reason: none of them is a power going off.
+   *
+   * A HELD POWER SAYS IT ONCE. Lightning, the grip, the heal and the stasis
+   * field are channels: they are OPENED here and then run from their own
+   * per-frame tick, and the call is on the opening. `forceLightning` cannot
+   * even be re-entered while its channel is up (`if (this.channel?.kind ===
+   * 'lightning') return`), so "once per cast" is structural rather than a
+   * timer — which is what stops a two-second channel being 120 lines.
+   *
+   * @returns true only if a line actually reached the engine.
+   */
+  _forceVoice(power) {
+    /* THE SWITCH. Read live off the settings blob, like every other voice
+     * control in the game, so unticking the box on the pause card is silent on
+     * the very next power rather than on the next deploy. Default ON: the note
+     * asked for this, and a feature the player asked for that ships off is a
+     * feature they will never find. */
+    if (this.world?.settings?.forceVoice === false) return false;
+    const announcer = this.world?.hud?.announcer;
+    if (!announcer) return false;
+    /* WHICH of the pool, and never the one this power said last — the memory
+     * is `AudioEngine.forceLine`, drawn off the one seeded stream the audio
+     * engine keeps. See its note for why it is not in this file. */
+    const line = audio.forceLine(power);
+    return line ? announcer.say(this.world.settings, line, this.chest) === true : false;
   }
 
   /**
@@ -5032,6 +5967,34 @@ export class Player {
     return Math.round(cost * (this.world.settings?.forceDrain ?? 1) * this.boonMods.forceCost);
   }
 
+  /**
+   * IS A CHANNEL HOLDING THE BAR OPEN — the one reader of the rule `_regen`
+   * used to keep to itself.
+   *
+   * The rule is `_regen`'s own and its note says why it exists: a power that
+   * refills the bar it is draining has no cost and therefore no decision in it.
+   * It was a local `const` inside `_regen`, which made it a rule with exactly
+   * one obeyer — and there are two writers of this pool's regeneration. The
+   * other is `wellspringFlow` in src/game/Waves.js, a boon tick that adds
+   * `7.5 × (forceRegen − 1)` a second and never asked. Measured on a real
+   * World, net Force per second with a barrier up and nothing shooting:
+   *
+   *     no cards                      −4.25/s   (the price the power is made of)
+   *     Wellspring                    −0.18/s   (96% of it cancelled, one common)
+   *     Wellspring + Attunement ×4    +6.15/s   (a barrier that PAYS to hold)
+   *     Attunement of the Force ×8    +6.26/s
+   *
+   * The last two are worse than the 2.82/s net gain the note above was written
+   * to delete, and the same stack takes a held Force Sense — 22 a second, the
+   * most expensive hold on the wheel — to +0.03/s, which is a power you leave
+   * on for the rest of the run. Both cards are `stack: Infinity` epics offered
+   * on every set-piece, so this is a late run rather than a corner.
+   *
+   * A getter rather than a second copy of the condition: the day a third
+   * channel pauses regeneration, it is named here and every writer inherits it.
+   */
+  get forceChannelling() { return !!(this.senseActive || this.shield?.up); }
+
   _regen(dt) {
     const combatHot = this.world.combatIntensity ?? 0;
     /* THE BAR DOES NOT REFILL WHILE IT IS GOING OUT. See STAMINA_HOLD for the
@@ -5039,21 +6002,48 @@ export class Player {
      * the dash cooldown it is measured against. */
     if (this.staminaHold > 0) this.staminaHold = Math.max(0, this.staminaHold - dt);
     else this.stamina = Math.min(this.maxStamina, this.stamina + (16 + 10 * (1 - combatHot)) * dt * this.boonMods.staminaRegen);
-    this.force = Math.min(this.maxForce, this.force + (this.senseActive ? 0 : 7.5) * dt);
+    /* THE BARRIER PAUSES REGEN, exactly as Sense does, and it is not a second
+     * price — it is what makes the first one real. Measured before this line
+     * existed: a raised barrier with nothing shooting at it ran a NET GAIN of
+     * 2.82 Force a second, because the 7.5 regen outran the 6 hold. A power
+     * that refills the bar it is draining has no cost and therefore no
+     * decision in it, and "how long can I afford to stand here" is the only
+     * question this power asks. tools/checks/barrier.mjs measures the slope.
+     * `forceChannelling` is the getter above; it was a local here, which is how
+     * the boon that also writes this pool came to not know about it. */
+    this.force = Math.min(this.maxForce, this.force + (this.forceChannelling ? 0 : 7.5) * dt);
     // Flow bleeds unless you keep earning it
     this.flow = clamp(this.flow - dt * 0.085, 0, 1);
     if (this.senseActive) {
-      /* THE POOL HAS A FLOOR AND THIS LINE WENT THROUGH IT. `force -= 22 * dt`
+      /**
+       * THE POOL HAS A FLOOR AND THIS LINE WENT THROUGH IT. `force -= 22 * dt`
        * was unclamped and the shutdown below fires a frame AFTER the pool is
        * already under: measured -0.3333 at 1/60 from a full-price Sense, and a
        * 22-verb randomised fuzz across all nine levels turned up seven
        * negatives (-0.1405, -0.0110, -0.1170, -0.1529, -0.0721, -0.1038,
-       * -0.0462). Every other drain in the file goes through `_spend`, which
-       * refuses rather than overdraws; this one is a per-frame hold, so it
-       * takes what is left and stops. A negative pool is a HUD bar drawn below
-       * zero and a `_canSpend` answered against a debt. */
-      this.force = Math.max(0, this.force - 22 * dt);
-      if (this.force <= 0) this.toggleSense(this.world);
+       * -0.0462). A negative pool is a HUD bar drawn below zero and a
+       * `_canSpend` answered against a debt.
+       *
+       * …AND CLAMPING IT WAS HALF THE FIX. The clamp made the number legal; it
+       * did not make it a PRICE. `Math.max(0, force - 22 * dt)` reads neither
+       * the Force Drain slider nor `boonMods.forceCost`, so the one power in
+       * `POWER_COST` whose bill is per-frame was the one power outside the
+       * economy that gates it. Measured on a real World, holding Sense open
+       * from a full bar under three different economies:
+       *
+       *     Force Drain 1 (default)           125 → 47.4, off at 5.67 s
+       *     Force Drain 0 ("unlimited Force") 125 → 47.4, off at 5.67 s
+       *     forceCost 0.05 (Tempest, flow 1)  125 → 47.4, off at 5.67 s
+       *
+       * Three economies, one answer. A player who sets Drain to 0 — the slider
+       * whose own label in index.html reads "Drain at 0 is unlimited Force" —
+       * gets eleven free powers and a Sense that still shuts itself off in
+       * under six seconds, which reads as the toggle being broken rather than
+       * as a rule. `_spend` with `partial` is what the lightning channel and
+       * the barrier already do: it takes what is left and stops, it refuses to
+       * overdraw, and at Drain 0 it charges nothing at all.
+       */
+      if (!this._spend(SENSE_DRAIN * dt, true)) this.toggleSense(this.world);
     }
   }
 
@@ -5089,6 +6079,17 @@ export class Player {
    * enemy has been through one update — and the player runs before the enemies
    * do, so on the frame a wave spawns every Force power would have aimed at the
    * world origin. Position plus chest height is always true.
+   *
+   * THE HAZARD IS REAL AND THE SECOND OPINION WAS NOT THE ANSWER. This method
+   * used to answer `position.y + 1.12 * A.scale`, a third statement of a height
+   * the body already publishes — and it was `A.scale` rather than `bodyScale`,
+   * which is precisely the bug `Enemy.chestY`'s own comment records: on a
+   * smallfolk frame `A.scale` puts the chest 0.45 m above the top of the head.
+   * So every Force power in the game reached for a point off the body of
+   * anything whose rig rescaled it. `Enemy.chest` is the same position-derived
+   * quantity, safe on the spawn frame for the same reason this note gives, and
+   * `aimPoint` now falls back to it rather than answering from the origin — so
+   * there is one number and no reader has to be careful.
    */
   /**
    * WHERE A HELD THING IS — bolt, loose body, or person.
@@ -5106,7 +6107,7 @@ export class Player {
   }
 
   _enemyPoint(e, out) {
-    return out.set(e.position.x, e.position.y + 1.12 * (e.A ? e.A.scale : 1), e.position.z);
+    return e.chest ? out.copy(e.chest) : out.copy(e.position);
   }
 
   /* ── gestures ────────────────────────────────────────────────────── */
@@ -5304,6 +6305,7 @@ export class Player {
     }
     this.cooldowns.push = 0.55;
     this._gesture('push');
+    this._forceVoice('push');
     audio.force(this.chest, 'push');
     this.camera.addShake(0.3);
     this.cloak?.impulse(_v5.copy(this.aimDir).negate().setY(0.4), 2.6); this.skirt?.impulse(_v5.copy(this.aimDir).negate().setY(0.4), 2.6);
@@ -5383,8 +6385,48 @@ export class Player {
     }
     this.cooldowns.pull = 0.6;
     this._gesture('pull');
+    this._forceVoice('pull');
     audio.force(this.chest, 'pull');
     this.cloak?.impulse(_v5.copy(this.aimDir).setY(0.3), 1.8); this.skirt?.impulse(_v5.copy(this.aimDir).setY(0.3), 1.8);
+    /**
+     * AND YOU CAN SEE IT LEAVE YOUR HAND — which, alone of the aimed powers,
+     * you could not.
+     *
+     * Driven through a real World with every emitter counted, one cast each:
+     *
+     *     push      3 sounds  45 particles  shake 0.30  1 radial
+     *     unleash   7 sounds  26 particles  shake 0.62  2
+     *     stasis    4 sounds  26 particles  shake 0.14  1
+     *     rend     15 sounds  20 particles  shake 0.34  0
+     *     compel    3 sounds  14 particles  shake 0.00  0
+     *     pull      3 sounds   0 particles  shake 0.00  0
+     *
+     * A gesture, a grunt and a cloak — and if nothing happens to be inside the
+     * cone, nothing at all. Its opposite number spends sixteen Force and throws
+     * up a wall of dust, a crater and a lens squeeze, so the pair read as two
+     * different KINDS of thing rather than as two directions of one thing.
+     *
+     * The shape is push's, reversed and smaller. The dust is spawned OUT along
+     * the reach and given a velocity back toward the chest, so it reads as air
+     * coming in rather than as an explosion; the shake is 0.18 against push's
+     * 0.30, because a pull is a haul and not a blow; and the radial is 0.22
+     * against 0.35 for the same reason. No crater: a pull does not drive
+     * anything into the ground.
+     */
+    this.camera.addShake(0.18);
+    if (ctx.particles) {
+      const back = _v6.copy(this.aimDir).negate();
+      for (let i = 0; i < 22; i++) {
+        // out along the pull, scattered, then hauled home
+        _v2.copy(this.chest).addScaledVector(this.aimDir, 2.5 + rng() * 7);
+        _v2.x += (rng() - 0.5) * 3.2; _v2.y += (rng() - 0.5) * 2.2; _v2.z += (rng() - 0.5) * 3.2;
+        _v1.copy(back).multiplyScalar(7 + rng() * 9);
+        _v1.x += (rng() - 0.5) * 3; _v1.y += (rng() - 0.5) * 2 + 0.8; _v1.z += (rng() - 0.5) * 3;
+        ctx.particles.dust.spawn(_v2, _v1, { life: 0.6, size: 0.32, drag: 3.2, gravity: 0.15,
+          color: 0xe0e8f0, alpha: 0.11 });
+      }
+    }
+    this.world.engine.setRadial?.(0.22);
     // Reach scales with the setting, same law as push and grip. A pull that
     // stayed at 17 m while the grip reached 36 was the odd one out.
     const P = this.forceScale;
@@ -5612,8 +6654,15 @@ export class Player {
 
   toggleGrip(ctx) {
     if (this.gripBody || this.gripEnemy) { this.releaseGrip(); return; }
+    /* A BLADE IN THE AIR IS THE FIRST THING YOUR FORCE REACHES FOR. Tried
+     * before the aim pick, because a player whose own saber is out there and
+     * who presses grip means that saber — and the pick would otherwise hand
+     * them whichever crate happened to be under the reticle. See `pilotThrown`. */
+    if (this.throwState === 'flying' || this.throwState === 'piloted') {
+      if (this.pilotThrown(ctx)) return;
+    }
     /* AND IT SAYS SO. A bare `return` here was the second of the file's two
-     * silent refusals — see `_refuse`'s own header, which all eleven powers
+     * silent refusals — see `_refuse`'s own header, which all twelve powers
      * obey and this one did not. `_priceOf` rather than the list number,
      * because the gate below charges `cost * forceDrain * forceCost`. */
     if (!this._canSpend(POWER_COST.grip)) {
@@ -5622,7 +6671,16 @@ export class Player {
 
     const target = this._pickGripTarget(ctx);
     this.lastGripRefusal = null;
-    if (!target) return;
+    /* AND AN EMPTY HAND IS A REASON TOO. This was the third bare `return` in
+     * the method, sitting two lines under the note that says a bare `return`
+     * here is the bug — and it is the one a player meets most, because
+     * `_pickGripTarget` answers null for "the cone held nothing" as well as for
+     * "you are pointing at the sky". `forceCompel` has said exactly this
+     * sentence for the same miss since it was written; there is no argument for
+     * the two aimed holds answering the same question differently. */
+    if (!target) {
+      return this._refuse('force grip', 'nothing in your sights within reach');
+    }
 
     const cap = this.liftCapacity;
 
@@ -5702,11 +6760,16 @@ export class Player {
       return this._refuse('force grip', `${this._priceOf(POWER_COST.grip)} Force needed, you have ${Math.round(this.force)}`);
     }
     this._gesture('grip');
+    this._forceVoice('grip');
     const lead = this.camera.pos.distanceTo(this.chest);
     this.gripDistance = clamp(target.distance, lead + 1.4, lead + this.forceReach);
     if (target.enemy) {
       this.gripEnemy = target.enemy;
-      target.enemy.gripped = true;
+      /* THE LEASE, not the latch. See `Enemy.hold`: the hold is renewed every
+       * frame by `_updateGrip` below, and a gripper that stops renewing —
+       * because it died, because the level rotated, because the whole Player
+       * was disposed — drops the body instead of stranding it. */
+      target.enemy.hold();
       this._liftPoint.copy(target.enemy.position);
     } else {
       this.gripBody = target.body;
@@ -5738,7 +6801,7 @@ export class Player {
   releaseGrip() {
     this._holdT = 0;
     if (this.gripBody) { this.gripBody.gravityScale = 1; this.gripBody = null; }
-    if (this.gripEnemy) { this.gripEnemy.gripped = false; this.gripEnemy.liftTarget = null; this.gripEnemy.chokeT = 0; this.gripEnemy = null; }
+    if (this.gripEnemy) { this.gripEnemy.releaseHold(); this.gripEnemy = null; }
     this._endGesture('grip');
   }
 
@@ -5880,8 +6943,7 @@ export class Player {
     // Whichever hold had it, it does not have it any more. Both are cleared
     // because the volley throws bodies the FIELD held while the grip may hold
     // one of its own, and a body must not leave with a mark still on it.
-    e.gripped = false;
-    e.liftTarget = null;
+    e.releaseHold();
     this._freeStasisEnemy(e);
     _v2.subVectors(at, e.position);
     if (_v2.lengthSq() < 1e-8) _v2.copy(this.aimDir);
@@ -6060,6 +7122,99 @@ export class Player {
     }
   }
 
+  /**
+   * THE HILT THE FORCE IS HOLDING, or null.
+   *
+   * One reader for a question four places ask, and it goes through the body's
+   * own `userData.prop` — the same door the blade and the bolt test use to get
+   * from a physics body back to the thing it belongs to — so there is no second
+   * register of "which prop is which body" to fall out of step.
+   */
+  _grippedHilt() {
+    const b = this.gripBody;
+    const prop = b && b.userData ? b.userData.prop : null;
+    return prop && !prop.dead && prop.saber ? prop : null;
+  }
+
+  /**
+   * STRIKE A LIGHT AT A DISTANCE — *"turn it on or off using the force."*
+   *
+   * The ignite key already means "the blade in my hand"; this is the same key
+   * meaning "the blade in my Force", and it is unambiguous because the two
+   * cannot both be true — `_takeSaber` releases the grip and `swapSaber` takes
+   * what the grip holds, so a hilt is either in the hand or in the air.
+   *
+   * A one-off price to strike it and a per-second one to keep it burning. That
+   * split is the whole of what stops this being a free light switch: flicking
+   * a blade on across the field is cheap, and LEAVING it on out there is what
+   * the note means by "uses a lot of force power up".
+   */
+  igniteHeldHilt(ctx) {
+    const prop = this._grippedHilt();
+    if (!prop) return false;
+    if (prop.saberLit) {
+      igniteHilt(prop, false);
+      audio.tone({ freq: 900, freqEnd: 120, dur: 0.35, gain: 0.18, type: 'sawtooth', pos: prop.body.position });
+      return true;
+    }
+    if (!(prop.bladeLength > 0)) {
+      this._refuse('ignite', 'that is a blade of metal — there is nothing to light');
+      return false;
+    }
+    if (!this._spend(TK.ignite)) {
+      this._refuse('ignite at range',
+        `${this._priceOf(TK.ignite)} Force needed, you have ${Math.round(this.force)}`);
+      return false;
+    }
+    igniteHilt(prop, true);
+    audio.tone({ freq: 180, freqEnd: 900, dur: 0.4, gain: 0.2, type: 'sawtooth', pos: prop.body.position });
+    this.world?.notify?.('LIT', 'the blade burns where you are holding it');
+    return true;
+  }
+
+  /**
+   * A BLADE FLYING ON THE FORCE CUTS WHAT IT CROSSES.
+   *
+   * `_sweepHeld` is the shove a held OBJECT gives, and it is deliberately
+   * feeble — a tenth of a throw's rate, capped at 18 — because waving a droid
+   * through a rank should stagger it rather than kill it. A lit hilt is not
+   * that: it is a lightsabre, and a lightsabre that bumped people for 9 points
+   * would be the least dangerous thing on the field while costing the most
+   * Force in the game to fly.
+   *
+   * So this is its own pass, on the BLADE rather than on the hilt's bounding
+   * sphere — `Dropped.hiltBlade` reads the two ends out of the mesh's own
+   * transform — and it bills a per-victim gap for the same reason the sweep
+   * does: a hold is a thing you can keep, and a raw per-frame test would charge
+   * sixty cuts a second.
+   *
+   * IT DOES NOT NEED THE BLADE TO BE MOVING. A sweep is priced on speed because
+   * a stationary crate is not hitting anybody; a plasma edge parked inside a
+   * droid is.
+   */
+  _cutWithHeld(dt, ctx, prop) {
+    if (!hiltBlade(prop, _tk1, _tk2)) return 0;
+    const cd = this._tkCut || (this._tkCut = new Map());
+    for (const [id, t] of cd) { const n = t - dt; if (n <= 0) cd.delete(id); else cd.set(id, n); }
+    let hits = 0;
+    for (const e of ctx.enemies || []) {
+      if (e.dead || cd.has(e.id)) continue;
+      /* The same "is this mine to hit" gate the blade in the hand consults —
+       * one rule, one reader. A flown blade is still your blade. */
+      if (!canHarm(this, e)) continue;
+      const r = (e.radius ?? 0.4) + 0.24;
+      _tk3.copy(e.position).setY(e.position.y + (e.A && e.A.big ? 1.4 : 0.9));
+      if (segmentPointSq(_tk1, _tk2, _tk3) > r * r) continue;
+      cd.set(e.id, TK.cutGap);
+      hits++;
+      const at = _tk3.clone();
+      e.damage(TK.cut, at, this, 'saber');
+      audio.clash(at, 0.5);
+      ctx.particles?.sparkBurst(at, null, 12, { speed: 7, color: prop.bladeColor ?? 0xffd08a });
+    }
+    return hits;
+  }
+
   _updateGrip(dt, ctx) {
     const cap = this.liftCapacity;
 
@@ -6123,7 +7278,31 @@ export class Player {
       // Heavy things cost more to hold, which is what stops the top of the
       // slider from being free. Only drop it when the Force actually ran out —
       // with drain disabled the bar sits wherever it was and this must not fire.
-      if (!this._spend((HOLD_COST.prop.base + HOLD_COST.prop.rise * clamp(b.mass / cap, 0, 1)) * effort * dt)) { this.releaseGrip(); return; }
+      /**
+       * WHAT THIS FRAME COSTS — the hold, and the blade if it is burning.
+       *
+       * A BURNING HILT IS THE THIRD OF THE THREE THINGS THE NOTE ASKS FOR and
+       * the expensive one, and the two prices are weighed TOGETHER rather than
+       * charged one after the other. Charged in sequence, a bar with enough for
+       * the blade but not for both paid the surcharge and then failed the hold
+       * — so the light went out and the hilt hit the floor on the same frame,
+       * which tells the player nothing about which price they could not meet.
+       *
+       * Weighed together the failure is ordered and legible: the light is the
+       * luxury and goes first, in mid-air, in front of you, with the hilt still
+       * in your Force; the grip is the basic and only goes when even that
+       * cannot be paid.
+       */
+      const hilt = this._grippedHilt();
+      const holdCost = (HOLD_COST.prop.base + HOLD_COST.prop.rise * clamp(b.mass / cap, 0, 1)) * effort * dt;
+      const litCost = hilt && hilt.saberLit ? TK.lit * effort * dt : 0;
+      if (litCost > 0 && !this._canSpend(holdCost + litCost)) {
+        igniteHilt(hilt, false);
+        this.world?.notify?.('BLADE OUT', 'not enough Force to keep it burning out there');
+      } else if (litCost > 0) {
+        this._spend(litCost);
+      }
+      if (!this._spend(holdCost)) { this.releaseGrip(); return; }
       const heft = this._heft(b.mass);
       b.wake();
       _v2.subVectors(hold, b.position);
@@ -6136,10 +7315,32 @@ export class Player {
       }
       // …and while it moves it is a real object. See `_sweepHeld`.
       this._sweepHeld(dt, ctx, b.position, b.boundingRadius, b.velocity);
+      if (hilt) {
+        if (hilt.saberLit) this._cutWithHeld(dt, ctx, hilt);
+        /**
+         * AND IT COMES BACK TO THE HAND ON ITS OWN once you have reeled it in.
+         *
+         * *"once you bring it and retract it as close to yourself as possible
+         * you just pick it up from the air."* Not a key: the player has already
+         * spent one bringing it in, and asking for a second press at exactly
+         * the moment the weapon is floating in front of their face is the shape
+         * of thing that reads as the pick-up having failed. Only into an EMPTY
+         * hand — with a blade already in it this would silently swap your
+         * weapon for whatever you happened to reel past.
+         */
+        if (this.saberDown && hiltDistanceSq(hilt, this) < TK.reach * TK.reach) {
+          this._takeSaber(hilt, ctx);
+          return;
+        }
+      }
     } else if (this.gripEnemy) {
       const e = this.gripEnemy;
       const m = e.A ? e.A.mass : 80;
       if (e.dead || m > cap) { this.releaseGrip(); return; }
+      /* SAY IT AGAIN, EVERY FRAME. This line is the whole of the lease: while
+       * it runs the body stays held, and the frame it stops running for any
+       * reason at all is the frame the body starts coming back. */
+      e.hold();
       if (!this._spend((HOLD_COST.person.base + HOLD_COST.person.rise * clamp(m / cap, 0, 1)) * effort * dt)) { this.releaseGrip(); return; }
       // Enemy.update damps its own position toward liftTarget at a fixed rate,
       // so the only place a heavy body can be made to FEEL heavy from here is
@@ -6203,7 +7404,20 @@ export class Player {
       // accident — a dropped blade is out — but only by accident, and the
       // silence was indistinguishable from a bug. Say so.
       if (this.saberDown) return this._refuse('saber throw', 'your hands are empty');
-      if (!this.saber.lit || this.cooldowns.throw > 0) return;
+      /* THE OTHER TWO STATES, AND THEY WERE ONE BARE `return` BETWEEN THEM.
+       * The comment above says the silence was indistinguishable from a bug and
+       * then this line kept two more of it. An UNLIT blade is the one that
+       * matters: a player who has just retracted the blade and presses throw is
+       * holding a hilt, not a weapon, and there is nothing on screen to say so
+       * — the arm does not even move. The cooldown is short (0.4 s) and the
+       * refusal is rate-limited to one in 0.7 s anyway, so it costs at most one
+       * line for a key held down. */
+      if (!this.saber.lit) {
+        return this._refuse('saber throw', 'the blade is out — ignite it first');
+      }
+      if (this.cooldowns.throw > 0) {
+        return this._refuse('saber throw', `recovering — ${this.cooldowns.throw.toFixed(1)}s`);
+      }
       /* Through `_spend`, not `this.force -= …`. The hand-rolled version
        * applied the boon multiplier and ignored the drain slider entirely, so
        * Force Drain at 0 — the setting whose own label reads "unlimited Force"
@@ -6213,6 +7427,7 @@ export class Player {
       }
       this.cooldowns.throw = 0.4;
       this._gesture('cast');
+      this._forceVoice('throw');
       this.throwState = 'flying';
       this.throwPos.copy(this.saber.base);
       this.throwVel.copy(this.aimDir).multiplyScalar(26);
@@ -6225,11 +7440,84 @@ export class Player {
     }
   }
 
+  /**
+   * TAKE HOLD OF YOUR OWN BLADE IN MID-AIR — *"with the force being able your
+   * turn/manipulate the saber anywhere you want on the battlefield within a
+   * certain distance (uses a lot of force power up etc. obviously)."*
+   *
+   * A THIRD STATE IN A MACHINE THAT ALREADY HAD TWO, and not a new mechanic:
+   * `flying` is a disc on a 1.5 s fuse and `returning` is it coming home. What
+   * was missing between them is the blade STAYING where you sent it, and that
+   * is what "manipulate it anywhere on the battlefield" means — it hangs at the
+   * end of your sightline, spinning, cutting whatever wanders into it, for
+   * exactly as long as you can pay for it.
+   *
+   * THE GRIP KEY, because the fiction is the mechanic: your Force is holding
+   * it, and the key that means "my Force is holding that" is `grip`. It is also
+   * the only free key at that moment — the blade is out, so `hurl` and `throw`
+   * both already mean something.
+   *
+   * The recall is unchanged: `throw` brings it home from `piloted` exactly as
+   * it does from `flying`, so the control a player already has never stops
+   * working.
+   */
+  pilotThrown(ctx) {
+    if (this.throwState === 'piloted') { this.throwState = 'flying'; this.throwTimer = 0; return true; }
+    if (this.throwState !== 'flying') return false;
+    if (!this._spend(POWER_COST.grip)) {
+      this._refuse('hold the blade',
+        `${this._priceOf(POWER_COST.grip)} Force needed, you have ${Math.round(this.force)}`);
+      return false;
+    }
+    this.throwState = 'piloted';
+    /* Where it is NOW, in front-of-the-chest terms, so taking hold of a blade
+     * thirty metres out does not yank it to arm's length on the first frame.
+     * The same conversion `_updateGrip` uses and for the same reason: the hold
+     * point is measured from the CAMERA, which is not where the player is. */
+    const lead = this.camera.pos.distanceTo(this.chest);
+    this.throwDist = clamp(this.camera.pos.distanceTo(this.throwPos), lead + 1.4, lead + this.forceReach);
+    this._gesture('grip');
+    audio.force(this.throwPos, 'pull');
+    this.world?.notify?.('BLADE HELD', 'your Force has it — steer with the reticle, throw to recall');
+    return true;
+  }
+
   _updateThrow(dt, ctx) {
     this.throwTimer += dt;
     this.throwSpin += dt * 27;
 
-    if (this.throwState === 'flying') {
+    if (this.throwState === 'piloted') {
+      /**
+       * WHAT IT COSTS, and it is meant to be the most expensive thing the Force
+       * does. `TK.lit` is the burning-blade surcharge a Force-held hilt pays;
+       * `HOLD_COST.prop.base` is what holding any object costs; and both are
+       * scaled by DISTANCE, so parking your blade across the arena costs
+       * roughly double parking it in front of you. Running out does not drop it
+       * on the floor — it comes home, which is the failure a player can live
+       * with in the middle of a fight.
+       */
+      const lead = this.camera.pos.distanceTo(this.chest);
+      if (this._wheel) this.throwDist *= Math.pow(0.88, this._wheel);
+      this.throwDist = clamp(this.throwDist, lead + 1.4, lead + this.forceReach);
+      const far = 0.70 + 0.90 * clamp((this.throwDist - lead) / Math.max(this.forceReach, 1e-3), 0, 1);
+      const effort = far / Math.sqrt(Math.max(this.forceScale, 0.05));
+      if (!this._spend((TK.lit + HOLD_COST.prop.base) * effort * dt, true)) {
+        this.throwState = 'returning';
+        this.world?.notify?.('BLADE RECALLED', 'not enough Force to keep holding it out there');
+      } else {
+        _v1.copy(this.camera.pos).addScaledVector(this.aimDir, this.throwDist);
+        /* Damped rather than snapped: a blade that teleports to the reticle is
+         * a cursor, and the weight is the whole reason this reads as the Force
+         * carrying something heavy rather than as a flying pointer. */
+        _v2.subVectors(_v1, this.throwPos);
+        this.throwVel.lerp(_v2.multiplyScalar(6), clamp(dt * 8, 0, 1));
+        this.throwPos.addScaledVector(this.throwVel, dt);
+        if (ctx.particles && rng() < 0.35) {
+          ctx.particles.plasma.spawn(this.throwPos, _v3.set(0, 0, 0),
+            { life: 0.3, size: 0.55, drag: 1, gravity: 0, color: 0x88bbff, alpha: 0.14 });
+        }
+      }
+    } else if (this.throwState === 'flying') {
       // steerable: the blade drifts toward where you are looking
       _v1.copy(this.aimDir).multiplyScalar(26);
       this.throwVel.lerp(_v1, clamp(dt * 1.4, 0, 1));
@@ -6314,11 +7602,21 @@ export class Player {
     // fight, and a sustained gesture would have the off hand raised — and the
     // blade one-handed — for the entire duration of it.
     this._gesture('sense');
+    this._forceVoice('sense');
     this.world.setTimeScale(0.42);
     this.world.engine.setSense(1);
     audio.force(this.chest, 'sense');
   }
 
+  /**
+   * FORCE LIGHTNING — pressed, and then HELD.
+   *
+   * This opens the channel. Everything that happens while it is open is
+   * `_lightningTick`, which runs every frame from `_move`'s caller, and the
+   * whole reason the power is split in two is the player's own note: the old
+   * version resolved in one call, so there was nothing to see travel and
+   * nothing to sweep. See LIGHTNING_HOLD.
+   */
   forceLightning(ctx) {
     if (!this.boonMods.lightning) {
       return this._refuse('force lightning', 'not attuned — it comes from a boon, and the draft offers it');
@@ -6326,129 +7624,178 @@ export class Player {
     if (this.cooldowns.lightning > 0) {
       return this._refuse('force lightning', `recovering — ${this.cooldowns.lightning.toFixed(1)}s`);
     }
-    /* This one applied the boon multiplier by hand and the drain not at all,
-     * which is the half-wired version of the same bug the throw had. */
+    /* ALREADY RUNNING, AND SAY SO. This was a bare `return`, which is the
+     * shape of silence the whole of `_refuse` exists to delete: three states
+     * that all did nothing and looked identical from the keyboard. */
+    if (this.channel?.kind === 'lightning') {
+      return this._refuse('force lightning', 'already channelling — let go of the key first');
+    }
     if (!this._spend(POWER_COST.lightning)) {
-      const cost = POWER_COST.lightning * (this.world.settings?.forceDrain ?? 1) * this.boonMods.forceCost;
       return this._refuse('force lightning',
-        `${Math.round(cost)} Force needed, you have ${Math.round(this.force)}`);
+        `${this._priceOf(POWER_COST.lightning)} Force needed, you have ${Math.round(this.force)}`);
     }
-    this.cooldowns.lightning = 1.5;
     this._gesture('lightning');
+    this._forceVoice('lightning');
     audio.force(this.chest, 'lightning');
-    const origin = _v1.copy(this.chest).addScaledVector(this.aimDir, 0.4);
-    /**
-     * IT ARCS. Player note #13 asked for a lightning ARC and what was here was
-     * a cone that damaged everything inside it, each target joined to the hand
-     * by twelve points lerped along a straight line with a little jitter. Two
-     * separate things were missing from that and this fixes both.
-     *
-     * IT JUMPS. A bolt earths itself through the nearest conductor and then
-     * through the next one, which is the whole reason lightning is the crowd
-     * power and not a second push: you point it at the front of a line and it
-     * walks down the line. `LIGHTNING_CHAIN` hops, `LIGHTNING_REACH` metres a
-     * hop, and each hop keeps `LIGHTNING_FALLOFF` of the last one's damage so
-     * the fourth body in a chain is singed rather than killed.
-     *
-     * `hit` is a Set and not a list, and it is what stops the arc from
-     * bouncing between two bodies forever — a chain that could revisit is not
-     * a chain, it is a loop with a damage multiplier.
-     *
-     * The cone still decides where it STARTS. Everything the hand can see is a
-     * root, and the chain grows from each root independently, so pointing into
-     * a crowd is different from pointing at one straggler — which is the
-     * choice the power is for.
-     */
-    const hit = new Set();
-    const roots = [];
-    for (const e of this._foes(ctx)) {
-      if (e.dead) continue;
-      _v2.subVectors(e.position, origin);
-      const d = _v2.length();
-      if (d > LIGHTNING_RANGE) continue;
-      if (_v2.normalize().dot(this.aimDir) < 0.8) continue;
-      roots.push(e);
-    }
-    for (const root of roots) {
-      let from = origin, node = root, power = 1;
-      for (let hop = 0; hop <= LIGHTNING_CHAIN && node; hop++) {
-        if (hit.has(node)) break;
-        hit.add(node);
-        this._lightningArc(ctx, from, node.position, power);
-        node.damage(LIGHTNING_DAMAGE * power, node.position, this, 'lightning');
-        // `?.` because a player is never taken off the controls — there is no
-        // `Player.stun` and there should not be one. The stagger a player gets
-        // instead is applied by `damage()` itself, at its own threshold.
-        node.stun?.(1.4 * power, _v2.subVectors(node.position, from).normalize(), 1.4 * power);
-        from = node.position;
-        power *= LIGHTNING_FALLOFF;
-        // the next conductor: nearest unhit body inside a hop
-        let best = null, bestD = LIGHTNING_REACH * LIGHTNING_REACH;
-        for (const e of this._foes(ctx)) {
-          if (e.dead || hit.has(e)) continue;
-          const dd = e.position.distanceToSquared(from);
-          if (dd < bestD) { bestD = dd; best = e; }
-        }
-        node = best;
-      }
-    }
+    /** The live channel. `t` is how long it has been open, `tick` is the fuse
+     *  on the next damage application, and `hit` is what has already been
+     *  struck THIS TICK — a chain that could revisit is a loop with a damage
+     *  multiplier, which is the note the old chain carried and is still true. */
+    this.channel = { kind: 'lightning', t: 0, tick: 0, hits: 0 };
+    this._lightningTick(ctx, 0);
+  }
+
+  /** Shut the channel and start the recovery. Idempotent. */
+  endLightning() {
+    if (this.channel?.kind !== 'lightning') return;
+    this.channel = null;
+    this.cooldowns.lightning = 1.1;
+    this._endGesture?.('lightning');
+    this.world?.lightning?.clear?.();
   }
 
   /**
-   * ONE ARC, DRAWN — and it is drawn as a WALK rather than as a line.
+   * WHERE THE DISCHARGE ENDS — and it ALWAYS ends somewhere.
    *
-   * The old geometry was `lerp(origin, target, i/12)` with an independent
-   * ±0.3 m jitter on each point, which is a straight line of unrelated dots:
-   * every sample forgets where the last one was, so what the eye reads is a
-   * dotted rule between two things and not a discharge.
+   * This is the single most important line of the whole rewrite. The old power
+   * drew between the hand and each body it hit, so when it hit nothing it drew
+   * nothing; the player pressed the key at an empty stretch of ground and the
+   * game did not visibly respond. The answer is that lightning does not need a
+   * victim to exist — it needs a PLACE TO EARTH.
    *
-   * A discharge is a RANDOM WALK that has to arrive: the offset carries from
-   * one step to the next, so the path stays continuous, and it is multiplied
-   * by `sin(pi t)` so it is pinned at the hand and at the body and free in the
-   * middle — which is what makes the shape read as a bolt whipping between two
-   * fixed ends. The step count follows the LENGTH rather than being a constant,
-   * so a 2 m arc is not made of the same twelve fat dots as a 16 m one.
-   *
-   * FORKS are the second half of it. A bolt that reaches a body has usually
-   * thrown two or three that did not, and those dead ends are most of what a
-   * lightning strike looks like. They branch off a point on the walk, run a
-   * fraction of the remaining distance in a direction that is mostly the
-   * bolt's own, and stop.
+   * Four candidates, in order, and one of them is always true:
+   *   a body inside the cone, which is the aim assist the power always had;
+   *   whatever the physics ray hits, which is the wall or the crate;
+   *   the ground under the ray, if the ray is heading down into it;
+   *   and failing all three, the end of `LIGHTNING_RANGE` in the air, because
+   *     a bolt into open sky is still a bolt and is still the answer to
+   *     "I need to be able to see the lightning come out".
    */
-  _lightningArc(ctx, from, to, power = 1) {
-    const P = ctx.particles;
-    if (!P) return;
-    const colour = this._lightningColor();
-    const span = _v2.subVectors(to, from);
-    const len = span.length();
-    if (len < 1e-3) return;
-    const steps = clamp(Math.round(len * LIGHTNING_STEPS_PER_M), 6, 48);
-    const wander = _v3.set(0, 0, 0);
-    const at = _v4;
-    for (let i = 0; i <= steps; i++) {
-      const t = i / steps;
-      // the walk: the offset persists, so consecutive samples are neighbours
-      wander.x += (rng() - 0.5) * LIGHTNING_WANDER;
-      wander.y += (rng() - 0.5) * LIGHTNING_WANDER;
-      wander.z += (rng() - 0.5) * LIGHTNING_WANDER;
-      wander.multiplyScalar(0.72);                       // …and it is damped, or it runs away
-      const pin = Math.sin(Math.PI * t);                 // zero at both ends
-      at.copy(from).addScaledVector(span, t).addScaledVector(wander, pin);
-      P.sparks.spawn(at, _v5.set((rng() - .5) * 3, (rng() - .5) * 3, (rng() - .5) * 3),
-        { life: 0.2, size: 0.06 * power, drag: 1, gravity: 0, color: colour, alpha: power });
-      // a fork, off a point that is not an end
-      if (i > 1 && i < steps - 1 && rng() < LIGHTNING_FORK) {
-        const branch = _v6.copy(span).normalize()
-          .addScaledVector(_v7.set(rng() - 0.5, rng() - 0.5, rng() - 0.5).normalize(), 1.15)
-          .normalize().multiplyScalar(len * (0.12 + rng() * 0.18));
-        const n = 4;
-        for (let j = 1; j <= n; j++) {
-          _v8.copy(at).addScaledVector(branch, j / n);
-          _v8.x += (rng() - 0.5) * 0.12; _v8.y += (rng() - 0.5) * 0.12; _v8.z += (rng() - 0.5) * 0.12;
-          P.sparks.spawn(_v8, _v5.set((rng() - .5) * 2, (rng() - .5) * 2, (rng() - .5) * 2),
-            { life: 0.14, size: 0.045 * power, drag: 1, gravity: 0, color: colour, alpha: 0.75 * power });
+  _lightningEnd(ctx, origin, out) {
+    let best = null, bestD = Infinity;
+    for (const e of this._foes(ctx)) {
+      if (e.dead) continue;
+      _v2.subVectors(this._enemyPoint(e, _v3), origin);
+      const d = _v2.length();
+      if (d > LIGHTNING_RANGE) continue;
+      /* `LIGHTNING_CONE` is 17.3°, which is a generous but honest cone — the
+       * old 0.8 was 37° and swallowed bodies the player was plainly not
+       * pointing at, which is its own kind of "it does nothing". */
+      if (_v2.normalize().dot(this.aimDir) < LIGHTNING_CONE) continue;
+      if (d < bestD) { bestD = d; best = e; }
+    }
+    if (best) { this._enemyPoint(best, out); return best; }
+    const to = _v3.copy(origin).addScaledVector(this.aimDir, LIGHTNING_RANGE);
+    /* STATICS AND PROPS ONLY. A null filter earths the bolt on the FIRST
+     * collider the ray meets, and at 35 cm in front of the chest that is
+     * reliably the player's own capsule — measured at 2.5 m of reach against a
+     * 22 m range, which looks exactly like the power being weak rather than the
+     * ray being wrong. The same predicate the camera's own occlusion cast
+     * uses, for the same reason. */
+    const hit = ctx.physics?.raycast?.(origin, this.aimDir, LIGHTNING_RANGE,
+      (b) => b.static || b.layer === LAYER.PROP);
+    if (hit && hit.point) { out.copy(hit.point); return null; }
+    if (ctx.terrain && this.aimDir.y < -0.02) {
+      /* Walk the ray until it is under the ground, then take that point. Ten
+       * samples over 22 m is a little over two metres of resolution, which is
+       * inside the width of the bolt itself. */
+      for (let i = 1; i <= 10; i++) {
+        const t = (i / 10) * LIGHTNING_RANGE;
+        _v4.copy(origin).addScaledVector(this.aimDir, t);
+        const h = ctx.terrain.height(_v4.x, _v4.z);
+        if (_v4.y <= h) { out.set(_v4.x, h + 0.05, _v4.z); return null; }
+      }
+    }
+    out.copy(to);
+    return null;
+  }
+
+  /**
+   * THE CHANNEL, ONE FRAME OF IT.
+   *
+   * Drawn every frame and damaging every `LIGHTNING_TICK`, which is the split
+   * that lets it look continuous and cost what it always cost. Both hands
+   * throw, because the reference is two hands and because a bolt from one hand
+   * reads as a gun.
+   *
+   * THE CHAIN IS UNCHANGED IN RULE and rebuilt every tick rather than once:
+   * `LIGHTNING_CHAIN` hops of `LIGHTNING_REACH` metres, each keeping
+   * `LIGHTNING_FALLOFF` of the last one's damage, so the fourth body in a line
+   * is singed rather than killed. What is new is that the chain is re-found
+   * every tick, so sweeping the channel across a line walks the discharge down
+   * it — which is the thing a one-frame power could not do.
+   */
+  _lightningTick(ctx, dt) {
+    const ch = this.channel;
+    if (!ch || ch.kind !== 'lightning') return;
+    ch.t += dt;
+    if (ch.t >= LIGHTNING_HOLD) { this.endLightning(); return; }
+    /* THE HOLD COSTS. `_spend` refuses rather than overdrawing, and a refusal
+     * here is a channel that has run the pool dry — which ends it, with the
+     * hands still up, exactly as running out of Force should. */
+    if (dt > 0 && !this._spend(LIGHTNING_DRAIN * dt, true)) { this.endLightning(); return; }
+
+    const vfx = this.world?.lightning;
+    const origin = _v1.copy(this.chest).addScaledVector(this.aimDir, 0.35);
+    const target = new THREE.Vector3();
+    const struck = this._lightningEnd(ctx, origin, target);
+
+    /* ── the drawing ─────────────────────────────────────────────────── */
+    if (vfx) {
+      vfx.setColor?.(this._lightningColor());
+      /* FROM THE HANDS. `handR`/`handL` are the rig's own bones, so the bolts
+       * leave the palms wherever the gesture has actually put them rather than
+       * from a point near the chest — which is the difference between "it comes
+       * out of your hands" and a beam that starts inside your ribcage. */
+      const rig = this.rig;
+      for (const bone of ['handR', 'handL']) {
+        const h = rig?.get?.(bone);
+        const from = _v5;
+        if (h?.obj) h.obj.getWorldPosition(from); else from.copy(origin);
+        /* The two hands' bolts meet a little in front of the chest and then run
+         * on as one, which is the shape of the reference: two arcs converging
+         * into a single discharge. */
+        vfx.strike(from, target, { power: 1, life: 0.10, chaos: 1 });
+        if (rng() < 0.5) {
+          _v6.subVectors(target, from);
+          vfx.fork(_v7.lerpVectors(from, target, 0.3 + rng() * 0.5), _v6, 1.0 + rng() * 2.2, { power: 1 });
         }
       }
+      /* AND IT LIGHTS THE WORLD. A discharge that leaves the ground unlit is a
+       * decal; `Engine.lightUp` is the same eight-slot pool the blades use, so
+       * this competes for a slot rather than recompiling every lit material. */
+      this.world.engine?.lightUp?.(target, _COL_LIGHT.setHex(this._lightningColor()),
+        7.5 + Math.sin(ch.t * 40) * 2.5, 12, 2);
+      this.world.engine?.lightUp?.(origin, _COL_LIGHT, 4.0, 7, 2);
+    }
+    /* THE CRACKLE, re-struck rather than looped: `audio.force` is a one-shot
+     * and a channel that fired it once was silent for two seconds. */
+    if (ch.t - (ch.said ?? -1) > 0.18) { ch.said = ch.t; audio.force?.(this.chest, 'lightning'); }
+
+    /* ── the damage ──────────────────────────────────────────────────── */
+    ch.tick -= dt;
+    if (ch.tick > 0) return;
+    ch.tick = LIGHTNING_TICK;
+    if (!struck) return;
+    const scale = LIGHTNING_TICK / 0.55;      // per-tick share of a full jolt
+    const hit = new Set();
+    let from = target, node = struck, power = 1;
+    for (let hop = 0; hop <= LIGHTNING_CHAIN && node; hop++) {
+      if (hit.has(node)) break;
+      hit.add(node);
+      ch.hits++;
+      if (hop > 0 && vfx) vfx.strike(from, this._enemyPoint(node, _v6), { power: power * 0.8, life: 0.12 });
+      node.damage(LIGHTNING_DAMAGE * power * scale, node.position, this, 'lightning');
+      node.stun?.(0.5 * power, _v2.subVectors(node.position, from).normalize(), 0.7 * power);
+      from = this._enemyPoint(node, _v4).clone();
+      power *= LIGHTNING_FALLOFF;
+      let best = null, bestD = LIGHTNING_REACH * LIGHTNING_REACH;
+      for (const e of this._foes(ctx)) {
+        if (e.dead || hit.has(e)) continue;
+        const dd = e.position.distanceToSquared(from);
+        if (dd < bestD) { bestD = dd; best = e; }
+      }
+      node = best;
     }
   }
 
@@ -6506,8 +7853,19 @@ export class Player {
      * `audio.speak` so it takes the quip budget with it — otherwise the kill
      * lines from everything this just threw land on top of the shout that
      * threw them. `force: true` because this one is never suppressed: the
-     * player pressed a button and has to hear that it happened. */
-    this.world.hud?.announcer?.say(this.world.settings, 'streak', this.chest);
+     * player pressed a button and has to hear that it happened.
+     *
+     * IT SAYS ITS OWN LINE NOW AND NOT 'streak'. The killstreak contour was
+     * borrowed here because it was the loudest thing in LINES and this power's
+     * own note asks for "you like yell really loud" — but it is the line the
+     * announcer says when you kill three men in one breath, so the loudest
+     * moment in the game announced itself with somebody else's sentence, and a
+     * player who heard it after a genuine streak heard the same three
+     * syllables mean two different things. `unleash` has four contours of its
+     * own now, and they are the longest and loudest in the table because that
+     * is what this power is. See `_forceVoice`, and FORCE_LINES in
+     * src/engine/Voice.js. */
+    this._forceVoice('unleash');
     audio.force(this.chest, 'push');
     audio.explosion(this.position, 0.7);
     this.camera.addShake(0.62);
@@ -6529,6 +7887,22 @@ export class Player {
       if (d > UNLEASH.radius) continue;
       _v2.subVectors(e.position, this.position).setY(0.4).normalize();
       e.stun?.(UNLEASH.stun * (1 - 0.4 * d / UNLEASH.radius), _v2, 1.2);
+      /**
+       * …AND IT TAKES THEIR NERVE. FLAGSHIP §7's first verb names this power by
+       * name — "`unleash`, `dread`, then stand there so `JEDI_NEAR` holds your
+       * nerve while theirs goes" — and until the horde had a ledger there was
+       * nothing for the first word of that sentence to write to.
+       *
+       * `MORALE.SHAKEN` and not a number of its own: it is the same event
+       * `CommandDirector`'s DREAD verb causes, which is the table's one entry
+       * for "somebody reached into this body's nerve through the Force", and
+       * two constants for one sentence is the twin this repository keeps
+       * deleting. `shakeNerve` leaves a body with a roster record alone — that
+       * number is the director's — so in a meeting the other player's troopers
+       * are thrown and stunned by this and their morale is not silently
+       * rewritten from outside the one door that writes it.
+       */
+      shakeNerve(e, MORALE.SHAKEN);
     }
     /**
      * BOLTS ARE NOT TOUCHED, and that is a decision rather than an omission.
@@ -6563,17 +7937,239 @@ export class Player {
    */
   forceHeal(ctx) {
     if (this.healing) { this._endHeal(false); return; }
-    if (this.hp >= this.maxHp) return this._refuse('force heal', 'already whole');
+    /**
+     * …AND THE SAME CHANNEL MENDS THE MAN IN FRONT OF YOU.
+     *
+     * The player: "remind me how to heal allies". They were right to ask and
+     * the honest answer was that you could not, quite: the only thing in the
+     * game that put a wounded trooper back on their feet was the Resupply
+     * stratagem's `reviveNear` — a call you spell out on the WASD codes, fly
+     * in, and land in a radius — and nothing you could do with your hands. A
+     * commander who has to call an orbital pod to help one man is a commander
+     * who does not help him.
+     *
+     * It is the SAME power rather than a new one, because the design question
+     * it answers is already solved: three seconds of standing still with your
+     * hands down is what a heal costs in a game about deflecting things, and
+     * that cost is exactly as interesting spent on somebody else. Aim at a
+     * hurt ally inside `MEND_REACH` and the channel goes to them; aim at
+     * nothing and it goes to you, which is what it always did.
+     */
+    const ally = this._mendTarget(ctx);
+    if (!ally && this.hp >= this.maxHp) return this._refuse('force heal', 'already whole');
     if (this.cooldowns.heal > 0) {
       return this._refuse('force heal', `recovering — ${this.cooldowns.heal.toFixed(1)}s`);
     }
     if (!this._canSpend(HEAL_COST)) {
       return this._refuse('force heal', `${this._priceOf(HEAL_COST)} Force needed, you have ${Math.round(this.force)}`);
     }
+    this.healTarget = ally;
     this.healing = 0;
     this._healFrom = this.hp;
+    this._mendFrom = ally ? ally.hp : this.hp;
     this._gesture('mend');
+    this._forceVoice('heal');
     audio.force(this.chest, 'pull');
+    if (ally) {
+      this.world?.notify?.('MENDING', ally.trooper?.name || ally.A?.label || 'a wounded ally');
+    }
+  }
+
+  /**
+   * THE WOUNDED ALLY UNDER THE RETICLE, or null for "heal yourself".
+   *
+   * Under the RETICLE and not "the nearest hurt friend", because a heal that
+   * picks its own patient is a heal you cannot aim at the man who needs it.
+   * The cone is generous — `MEND_CONE` is about 20° — since a trooper is a
+   * small thing at fifteen metres and this is a mercy rather than a shot.
+   *
+   * A body already at full health is not a target: without that clause,
+   * standing in your own line and pressing the key would mend a whole man and
+   * refuse to mend you. Downed men come first — see `_updateHeal`, which
+   * stands a limp one up when the channel completes.
+   */
+  _mendTarget(ctx) {
+    const list = ctx?.enemies || this.world?.enemies;
+    if (!list) return null;
+    const rules = ctx?.rules ?? this.world?.rules ?? null;
+    let best = null, bestScore = -Infinity;
+    for (const e of list) {
+      if (!e || e.dead || e === this) continue;
+      /* Friendly, by the same rule every other list in this file is built
+       * from: anything the powers are allowed to HARM is not an ally. */
+      if (canHarm(this, e, rules)) continue;
+      if (!(e.hp < (e.maxHp ?? 0))) continue;
+      _v1.subVectors(e.position, this.chest);
+      const d = _v1.length();
+      if (d > MEND_REACH || d < 1e-3) continue;
+      const dot = _v1.divideScalar(d).dot(this.aimDir);
+      /* THE CONE IS THE ADMISSION TEST AND IT IS NOT THE RANKING, and running
+       * the two through one variable is what got this backwards.
+       *
+       * It used to be one number: `bestScore` started at `MEND_CONE`, every
+       * candidate had to beat it, and the winner then wrote
+       * `bestScore = dot - (ragdolled ? 0.05 : 0)`. Read as a ranking that is
+       * the wrong sign — subtracting from the bar LOWERS it, so choosing the
+       * limp man made him 0.05 EASIER for the next upright body to displace,
+       * which is the exact opposite of the sentence above it.
+       *
+       * Measured: a limp trooper dead ahead at dot 0.9856, first in the list,
+       * against an upright one at 0.9775 — a strictly worse angle — and the
+       * upright one won. So the man lying on the floor could not be picked at
+       * all while anybody standing was within 0.05 of him, and the ONE case
+       * the preference exists for is the one where somebody else is standing
+       * over the casualty.
+       *
+       * Two numbers now. `MEND_CONE` admits, `score` ranks, and the limp man's
+       * edge is added to HIS score rather than taken off everyone else's bar —
+       * so he wins a tie and wins by `MEND_LIMP_EDGE` of angle, and he still
+       * has to be inside the cone the player aimed. `<=` keeps the first body
+       * in the list on an exact tie, which is what the old test did. */
+      if (dot < MEND_CONE) continue;
+      /* A LIMP MAN OUTRANKS A HURT ONE at the same angle: he is the one who is
+       * out of the fight entirely. */
+      const score = dot + (e.actor?.ragdolled ? MEND_LIMP_EDGE : 0);
+      if (score <= bestScore) continue;
+      bestScore = score;
+      best = e;
+    }
+    return best;
+  }
+
+  /**
+   * THE FORCE BARRIER — raise it, hold it, and pay for what it stops.
+   *
+   * The player asked for this twice, the second time to check whether they had
+   * simply missed it: "did you already add the force shield/bubble in the game?
+   * i'd already asked for it but I could have missed it." They had not. There
+   * were eleven Force verbs and none of them shielded anything.
+   *
+   * ── WHY IT IS A HELD BARRIER AND NOT A BUFF ─────────────────────────────
+   *
+   * The cheap version of this power is a timer: press it, take no damage for
+   * four seconds, press it again in twenty. That is a cooldown wearing a
+   * bubble, and it makes the fight worse — the player learns a rotation and
+   * stops reading the room. This one is a CHANNEL, like the lightning and the
+   * mend: it is up while you hold it, it drains while it is up, and every bolt
+   * that dies on it costs you more (see `SHIELD`). So the question it asks is
+   * the one a barrier should ask — how long can I afford to stand here — and
+   * the answer changes with how many rifles are pointed at you.
+   *
+   * IT DOES NOT STOP A BLADE. Nothing here touches `bladeTargets` or the
+   * contact solver: a lightsabre goes through it, and so does anything that
+   * reaches you by walking — blunted by SHIELD.blunt in `damage` and no more
+   * than that. A wall against everything is a wall against having to move, and
+   * moving is the game.
+   */
+  forceShield(ctx) {
+    if (this.shield.up) { this._endShield(); return; }
+    if (this.cooldowns.shield > 0) {
+      return this._refuse('force barrier', `recovering — ${this.cooldowns.shield.toFixed(1)}s`);
+    }
+    if (!this._spend(POWER_COST.shield)) {
+      return this._refuse('force barrier',
+        `${this._priceOf(POWER_COST.shield)} Force needed, you have ${Math.round(this.force)}`);
+    }
+    this.shield.up = true;
+    this.shield.t = 0;
+    this.shield.stopped = 0;
+    this._gesture('guard');
+    this._forceVoice?.('shield');
+    audio.force(this.chest, 'pull');
+    audio.tone({ freq: 180, freqEnd: 520, dur: 0.35, gain: 0.12, type: 'sine', pos: this.chest });
+  }
+
+  /** Down, however it ended. Idempotent. */
+  _endShield(why = null) {
+    if (!this.shield.up) return;
+    this.shield.up = false;
+    /* A SHORT RECOVERY AND NOT A LONG ONE. The cost of this power is the drain
+     * while it is up, not a lockout after it: a cooldown long enough to matter
+     * would turn "when do I lower it" — the only interesting question here —
+     * into "it lowered itself". */
+    this.cooldowns.shield = 1.2;
+    this._endGesture('guard');
+    if (why) this.world?.notify?.('BARRIER DOWN', why);
+  }
+
+  /**
+   * WHERE THE BARRIER IS, for anything that has to test against it — or null.
+   *
+   * A sphere at the chest rather than at the feet, because that is what a body
+   * shelters behind, and it is READ rather than stored so a moving player's
+   * barrier moves with them exactly. `World._boltHitTest` is the one caller
+   * that matters; it is deliberately the same shape of reader as `shieldBody`
+   * one method up, which is the held-body cover this game already had.
+   */
+  shieldSphere() {
+    if (!this.shield.up || this.shield.power < 0.25) return null;
+    return { c: this.chest, r: SHIELD.radius };
+  }
+
+  /**
+   * A BOLT DIED ON IT — called by the world's own hit test, which is the only
+   * thing that knows a bolt was going to reach you.
+   *
+   * The Force is spent HERE rather than per second, because what a barrier
+   * costs is what it is asked to do. Running the pool dry drops it, which is
+   * the loud, legible failure a player can plan around: the bubble goes out
+   * and the next round in the burst arrives.
+   */
+  shieldAbsorb(point) {
+    if (!this.shield.up) return false;
+    this.shield.stopped++;
+    this.shield.lastHit = this.world?.time ?? 0;
+    if (point) this._shieldFlash(point);
+    if (!this._spend(SHIELD.bolt, true)) { this._endShield('the Force ran out'); return true; }
+    return true;
+  }
+
+  _shieldFlash(point) {
+    audio.tone({ freq: 900, freqEnd: 300, dur: 0.12, gain: 0.10, type: 'triangle', pos: point });
+    const p = this.world?.particles;
+    if (!p) return;
+    for (let i = 0; i < 4; i++) {
+      _g1.set((rng() - 0.5) * 2, (rng() - 0.5) * 2, (rng() - 0.5) * 2).normalize().multiplyScalar(1.6);
+      p.plasma.spawn(point, _g1, { life: 0.22, size: 0.30, drag: 3, gravity: 0, color: 0x66ddff, alpha: 0.5 });
+    }
+  }
+
+  /** One frame of it. Called from `update` while the barrier exists. */
+  _updateShield(dt, ctx) {
+    const S = this.shield;
+    /* THE MESH IS BUILT ON FIRST USE, so a player who never raises one never
+     * pays for the geometry — and it is the droideka's own bubble, from
+     * `buildShieldBubble`, so the two cannot drift apart. */
+    if (S.up && !this._shieldMesh && this.world?.scene) {
+      const b = buildShieldBubble({ radius: SHIELD.radius, color: 0x8fd8ff });
+      this._shieldMesh = b.mesh;
+      this._shieldMat = b.mat;
+      this.world.scene.add(b.mesh);
+    }
+    if (S.up) {
+      S.t += dt;
+      if (!this._spend(SHIELD.hold * dt, true)) { this._endShield('the Force ran out'); }
+    }
+    /* EASED BOTH WAYS. `rise` and `fall` are what stop it popping into
+     * existence, and `shieldSphere` refuses to answer under a quarter power —
+     * so the thing that stops bolts and the thing you can see agree. */
+    const want = S.up ? 1 : 0;
+    const rate = S.up ? 1 / SHIELD.rise : 1 / SHIELD.fall;
+    S.power = want > S.power ? Math.min(1, S.power + dt * rate) : Math.max(0, S.power - dt * rate);
+    if (this._shieldMesh) {
+      const live = S.power > 0.002;
+      this._shieldMesh.visible = live;
+      if (live) {
+        this._shieldMesh.position.copy(this.chest);
+        const u = this._shieldMat.uniforms;
+        u.uTime.value = ctx?.time ?? (u.uTime.value + dt);
+        /* IT FLARES WHERE IT IS BEING HIT. A barrier that looked the same under
+         * a volley as it does in silence would be telling the player nothing
+         * about the one thing they are deciding. */
+        const since = (this.world?.time ?? 0) - S.lastHit;
+        u.uPower.value = S.power * (0.7 + 0.6 * Math.exp(-since * 6));
+      }
+    }
   }
 
   /**
@@ -6648,6 +8244,7 @@ export class Player {
     this._spend(COMPEL_COST);
     this.cooldowns.compel = 7;
     this._gesture('reach');
+    this._forceVoice('compel');
     best.compelled = { target: victim, t: COMPEL_TIME };
     // Whatever it was doing, it is not doing any more: the reload, the burst
     // counter and the cover crouch all belong to the fight it was in.
@@ -6684,7 +8281,19 @@ export class Player {
    */
   swapSaber(ctx) {
     if (!this.alive) return;
-    const near = hiltWithinReach(this.world, this);
+    /**
+     * WHAT YOUR OWN FORCE IS HOLDING IS ALREADY IN YOUR HAND, as far as this
+     * key is concerned, and at any distance.
+     *
+     * The reach test below is about ARMS. A hilt the Force has hold of is not
+     * being reached for — it is being called, and a player who has gone to the
+     * trouble of picking their weapon up off the ground from across the field
+     * should not then have to walk to it. `_takeSaber` releases the grip, so
+     * the two states cannot both be true afterwards.
+     */
+    const held = this._grippedHilt();
+    if (held) return this._takeSaber(held, ctx);
+    const near = hiltWithinReach(this.world, this, TK.reach);
     if (near) return this._takeSaber(near, ctx);
     if (this.throwState !== 'held') {
       return this._refuse('drop', 'your blade is not in your hand');
@@ -6708,6 +8317,36 @@ export class Player {
       return this._refuse('drop', 'your hands are empty — find a hilt');
     }
     this._dropSaber(ctx);
+    return true;
+  }
+
+  /**
+   * TAKE THE CONTROLS OF THE MACHINE IN FRONT OF YOU, or leave the ones you
+   * are at.
+   *
+   * The V5 note is one line — *"I think we should be able to drive the vehicles
+   * it makes sense to drive"* — and the whole of the design is in which ones
+   * those are. `Driving.isCrewed` answers it off the archetype's `crew` count,
+   * so a droid tank is refused BY NAME rather than by silence: there is nobody
+   * in a hailfire to displace, and being told that is the difference between a
+   * rule and a bug.
+   */
+  takeControls(ctx) {
+    if (this.driving) { this.driving.leave('you climbed down'); return true; }
+    if (!this.alive) return false;
+    const near = drivableNear(this.world, this);
+    if (!near) {
+      /* NOT SILENT WHEN THERE IS NOTHING THERE, and not silent when the only
+       * thing there is a droid either — `drivableNear` deliberately does not
+       * filter by crew, so this can say which of the two it was. */
+      const any = (this.world?.enemies || []).find(e => !e.dead
+        && e.position.distanceToSquared(this.position) < 36);
+      return this._refuse('take the controls',
+        any ? whyNotDrive(this.world, this, any) : 'nothing here to drive');
+    }
+    const why = whyNotDrive(this.world, this, near);
+    if (why) return this._refuse('take the controls', why);
+    new Crew(this, near);
     return true;
   }
 
@@ -6774,6 +8413,11 @@ export class Player {
   _takeSaber(prop, ctx) {
     const id = prop.saber;
     if (!id) return false;
+    /* IF THE FORCE WAS HOLDING THIS ONE, IT IS NOT ANY MORE. Without this the
+     * grip goes on paying `HOLD_COST` every frame for a body that has been
+     * destroyed two lines down, and `_updateGrip` only notices on the frame it
+     * happens to read `b.dead`. */
+    if (this._grippedHilt() === prop) this.releaseGrip();
     // yours goes down first, so a swap never destroys a weapon
     if (this.throwState === 'held' && !this.saberDown) this._dropSaber(ctx);
     const s = this.saber;
@@ -6808,25 +8452,48 @@ export class Player {
   _updateHeal(dt, ctx) {
     if (this.healing === null) return;
     // Interrupted by damage — checked against the hp we started with, so a
-    // single bolt ends it rather than being outrun by the heal itself.
+    // single bolt ends it rather than being outrun by the heal itself. It is
+    // YOUR concentration either way: a bolt that lands on you ends a heal you
+    // were giving somebody else too.
     if (this.hp < this._healFrom - 0.01) { this._endHeal(false); return; }
     if (!this._spend(HEAL_COST / HEAL_TIME * dt)) { this._endHeal(false); return; }
+    const T = this.healTarget;
+    if (T) {
+      /* THE THREE WAYS A MEND ENDS BADLY, and each is a thing the player can
+       * see happening: he died, he was carried out of reach, or he was hit
+       * again while you were working on him. */
+      if (T.dead) { this._endHeal(false, 'they were killed'); return; }
+      if (T.position.distanceTo(this.chest) > MEND_REACH + 3) { this._endHeal(false, 'out of reach'); return; }
+      if (T.hp < this._mendFrom - 0.01) { this._endHeal(false, 'they were hit'); return; }
+    }
     this.healing += dt;
-    this.hp = Math.min(this.maxHp, this.hp + this.maxHp * HEAL_FRACTION / HEAL_TIME * dt);
-    this._healFrom = this.hp;
+    const body = T || this;
+    body.hp = Math.min(body.maxHp, body.hp + body.maxHp * HEAL_FRACTION / HEAL_TIME * dt);
+    if (T) this._mendFrom = T.hp; else this._healFrom = this.hp;
     if (ctx.particles && rng() < 0.5) {
-      _v1.copy(this.chest).addScalar(0);
+      _v1.copy(T ? T.position : this.chest);
+      if (T) _v1.y += (T.A?.hipHeight ?? 0.95) + 0.3;
       ctx.particles.plasma.spawn(_v1, _v2.set((rng() - 0.5) * 0.6, 0.8, (rng() - 0.5) * 0.6),
         { life: 0.5, size: 0.35, drag: 2, gravity: -0.2, color: 0x9fffd0, alpha: 0.35 });
     }
     if (this.healing >= HEAL_TIME) this._endHeal(true);
   }
 
-  _endHeal(completed) {
+  _endHeal(completed, why = 'you were hit') {
+    const T = this.healTarget;
+    this.healTarget = null;
     this.healing = null;
     this._endGesture('mend');
     this.cooldowns.heal = completed ? 9 : 3;
-    if (!completed) this.world?.notify?.('HEAL BROKEN', 'you were hit');
+    if (!completed) this.world?.notify?.('HEAL BROKEN', why);
+    else if (T) {
+      /* AND A MAN WHO WAS LYING DOWN IS STANDING UP. `Enemy.recover` is the
+       * one door for that — `_tickGetUp` is the other caller — and it is what
+       * `Command.reviveNear` reaches for too, so a mend and a support pod put
+       * a body back on its feet the same way. */
+      if (T.actor?.ragdolled) T.recover?.();
+      this.world?.notify?.('MENDED', T.trooper?.name || T.A?.label || 'an ally');
+    }
   }
 
   /* ── force stop ──────────────────────────────────────────────────── */
@@ -6861,6 +8528,7 @@ export class Player {
     S.target = null;
     S.vfx = 0;
     this._gesture('stasis');
+    this._forceVoice('stasis');
     const refused = [];
     const taken = this._stasisCapture(ctx, refused);
     if (refused.length) this._refuseStasis(ctx, refused);
@@ -7209,7 +8877,20 @@ export class Player {
       }
       S.held.length = 0;
       S.bodies.clear();
-      if (!fire) audio.tone({ freq: 400, freqEnd: 90, dur: 0.4, gain: 0.14, type: 'sine', pos: this.chest });
+      /* THE FALLING NOTE IS FOR BOTH WAYS OF ENDING WITH NOTHING, and it used
+       * to be for one. `!fire` is the field DROPPED — the bar ran out, or the
+       * level was torn down. The other way into this branch is a field the
+       * player fired that had caught nothing, and that made no sound at all:
+       * you paid 26, stood in it, pressed the key and the game did not respond,
+       * which is the same silence the whole of `_refuse` exists to delete. It
+       * is the same note either way because it is the same fact — the field
+       * ended and threw nothing — and a second sound for it would be a second
+       * thing to learn about a non-event. */
+      audio.tone({ freq: 400, freqEnd: 90, dur: 0.4, gain: 0.14, type: 'sine', pos: this.chest });
+      /* And the DROP says why, as the barrier's does. Only the drop: a field
+       * you emptied by pressing the key is a thing you did, and a notice for it
+       * would be the game telling you what you just decided. */
+      if (!fire) this.world?.notify?.('FIELD DOWN', 'the Force ran out');
       return;
     }
 
@@ -7336,10 +9017,43 @@ export class Player {
    * reads as disassembly, whereas going for the chest first reads as an
    * execution and is over before you can see it.
    */
+  /**
+   * …AND IT SAYS WHY NOT, WHICH IT DID NOT.
+   *
+   * `_refuse`'s own header is the rule the whole file obeys — "a bound key that
+   * does nothing and does not say why is the same lie as a dead checkbox" — and
+   * rend broke it four times over in a method that already imports `_refuse`
+   * for its price. `tools/checks/force-feedback.mjs` lists `forceDisassemble`
+   * among its spenders and passed anyway, because the property it tested was
+   * "does this body contain `_refuse(` at all"; one of five gates having a
+   * sentence is enough to satisfy that and is not enough for a player.
+   *
+   * The four that were silent, and what each looks like from the keyboard:
+   *
+   *   the COOLDOWN — 2.4 s, the longest recovery on any aimed power, and the
+   *     one a player is most likely to press through. Push, pull, lightning,
+   *     stasis, unleash, the mend and the barrier all count it down out loud.
+   *   NOTHING MECHANICAL under the aim. Rend is the only power in the game
+   *     restricted by what a body is MADE of (`isMechanical`, i.e. `A.droid`),
+   *     so a player pointing at a clone trooper and pressing it gets the exact
+   *     experience of a broken key — and there is no other way to learn the
+   *     rule, because nothing on the wheel says "droids only".
+   *   NOTHING LEFT to take off, which is a droid you have already rent.
+   *   NOTHING CAME OFF — see the foot of the method, which is the one that had
+   *     taken the Force first.
+   */
   forceDisassemble(ctx) {
-    if (this.cooldowns.rend > 0) return;
+    if (this.cooldowns.rend > 0) {
+      return this._refuse('rend apart', `recovering — ${this.cooldowns.rend.toFixed(1)}s`);
+    }
     const e = this._pickMechanical(ctx);
-    if (!e || !e.capsules) return;
+    if (!e || !e.capsules) {
+      /* The counter-play is in the sentence, for the same reason TOO HEAVY
+       * carries the slider: "no" with nothing after it is a dead end, and the
+       * answer here is a real one the player already owns. */
+      return this._refuse('rend apart',
+        'nothing mechanical in your sights — the Force pulls droids apart, not men');
+    }
 
     const P = this.forceScale;
     const centre = this._enemyPoint(e, _g1).clone();
@@ -7361,17 +9075,34 @@ export class Player {
       .map(c => ({ c, d: _g2.lerpVectors(c.p0, c.p1, 0.5).distanceTo(centre), k: depth(c.name) }))
       .sort((a, b) => (b.d - a.d) || (b.k - a.k))
       .map(x => x.c);
-    if (!live.length) return;
+    if (!live.length) {
+      /* Every joint this body had is already on the floor, which is a fact
+       * about a droid you already rent and not about the power. Named, because
+       * "nothing happened" twice in a row is how a player concludes the key is
+       * dead — and the price is NOT taken for it, same as every refusal above. */
+      return this._refuse('rend apart',
+        `${e.A?.label ?? 'it'} has nothing left to take off`);
+    }
     /* `rend apart`, not `sundering`: Sundering is the name of an unrelated epic
      * boon (Waves.js), and a refusal naming the wrong thing sends a player to
      * look for a card they never took. REND_COST rather than a bare 38 twice
      * over, so the sentence and the charge cannot drift. */
+    /* What the bar read before the charge, kept so the "nothing came away"
+     * case at the foot of this method can hand it back EXACTLY rather than by
+     * re-deriving `cost × drain × forceCost` — a second copy of `_spend`'s own
+     * arithmetic is the twin this repository keeps deleting, and it would drift
+     * the first time a boon touches the sum. Nothing runs between the two lines
+     * that can move the pool. */
+    const paid = this.force;
     if (!this._spend(REND_COST)) {
       return this._refuse('rend apart',
         `${this._priceOf(REND_COST)} Force needed, you have ${Math.round(this.force)}`);
     }
 
     this.cooldowns.rend = 2.4;
+    /* The ARM goes out here and the LINE does not — see below. Reaching for a
+     * chassis and having it hold is a thing that happened to you, and the
+     * gesture is the reaching. */
     this._gesture('rend', centre);
 
     // How far it comes apart. round(1.6·P + 0.6) is 1 joint at 0.25x, 2 at 1x,
@@ -7435,7 +9166,39 @@ export class Player {
       this.limbsRemoved++;
       cut++;
     }
-    if (!cut) return;
+    /**
+     * NOTHING CAME OFF — AND THIS IS THE ONE THAT HAD ALREADY TAKEN THE MONEY.
+     *
+     * Every other gate in this method returns before `_spend`. This one cannot:
+     * whether a joint comes off is `Enemy.takeCut`'s answer and there is no way
+     * to ask it without asking it. So the bare `return` here was the whole of
+     * `POWER_COST.rend` — 38, the third most expensive thing the Force does —
+     * plus a 2.4 s lockout, spent on a frame with no sound, no spark, no shake
+     * and no sentence. A power that is priced and then does nothing is worse
+     * than one that refuses, because the bar moved and the player watched it.
+     *
+     * Handed back rather than kept, and the lockout with it. `takeCut` returns
+     * `'turned'` before it touches the actor (see its own note — the check is
+     * `isSevered`, and `_turnCut` declines a `force: true` pass outright), so a
+     * pass that took nothing changed nothing and there is no consequence to
+     * unwind: the bar goes back to the reading it had, the 2.4 s never starts,
+     * and the player is exactly where they were with a sentence explaining it.
+     */
+    if (!cut) {
+      this.force = paid;
+      this.cooldowns.rend = 0;
+      return this._refuse('rend apart',
+        `${e.A?.label ?? 'it'} held together — nothing came away`);
+    }
+
+    /* AND THE LINE IS SAID HERE, not at the top with the gesture, because the
+     * gate above is a refusal and `_forceVoice`'s own header is exact about it:
+     * every one of the twelve sites is AFTER the last `return` in its method,
+     * and a line raised before one of them is the player announcing something
+     * that did not happen. Rend is the only power whose last refusal is not at
+     * the top, so it is the only one where that sentence means moving the call
+     * rather than writing it in the obvious place. */
+    this._forceVoice('rend');
 
     if (!e.dead) e.stun(1.6, this.aimDir, 1.4);
     this.score += 40 * cut;
@@ -7453,6 +9216,9 @@ export class Player {
     this._advanceGesture(dt);
     if (this.gripBody || this.gripEnemy) this._updateGrip(dt, ctx);
     if (this.healing !== null) this._updateHeal(dt, ctx);
+    /* Stepped whenever it EXISTS rather than only while it is up, so the fade
+     * out finishes and the mesh is hidden — `power` is what the shader draws. */
+    if (this.shield.up || this.shield.power > 0) this._updateShield(dt, ctx);
     if (this.stasis.active || this.stasis.firing.length) this._updateStasis(dt, ctx);
     if (this.hurled.length) this._updateHurled(dt, ctx);
   }
@@ -7478,6 +9244,31 @@ export class Player {
      */
     if (!canHarm(source, this)) return false;
     /**
+     * A MAN INSIDE A TANK IS NOT SHOT AT — THE TANK IS.
+     *
+     * Everything that reaches a player goes through this method (see the note
+     * above it), so this is the one line that has to know about driving, and
+     * putting it here rather than at each of the sources is the same argument
+     * the friendly-fire gate one line up makes: a new hazard written next month
+     * inherits it without knowing it exists.
+     *
+     * It is a redirect and not an immunity. The hull takes the blow on its own
+     * armour table, and when the hull is finished `Crew.update` puts you out on
+     * the ground — so the trade for the armour is that you cannot heal it, you
+     * cannot dodge in it, and everything on the field is now aiming at a
+     * fourteen-metre target with you sitting on top of it.
+     *
+     * A FALL IS STILL YOURS. `Crew.ride` pins you to the seat, so a 'fall' that
+     * arrives here while driving is the tank's landing being billed to the
+     * driver twice — the hull already took it.
+     */
+    if (this.driving) {
+      if (kind === 'fall') return false;
+      this.driving.vehicle.damage?.(amount, point, source, kind);
+      this.hitFlash = 1;
+      return false;
+    }
+    /**
      * THE FORCE ANSWERS THE FORCE — one call, at the SINK, so a blow is blunted
      * exactly once however it was thrown. `Enemy.damage` carries the identical
      * line for the identical reason: every power in the game arrives through
@@ -7494,6 +9285,19 @@ export class Player {
      * The other order would make a Master's lightning cost more pool on Padawan
      * than on Knight for landing less.
      */
+    /**
+     * AND THE BARRIER TAKES ITS SHARE OF WHAT WALKS IN.
+     *
+     * A bolt never reaches this line while the bubble is up — `World.
+     * _boltHitTest` kills it on the surface — so everything arriving here with
+     * a barrier raised got here some other way: a blade, a blast, a body. The
+     * barrier does not STOP any of those. It blunts them by SHIELD.blunt and
+     * lets the rest through, because a wall against everything is a wall
+     * against having to move, and moving is the game.
+     *
+     * A fall is not a blow, and a barrier is not a parachute.
+     */
+    if (this.shield.up && kind !== 'fall') amount *= 1 - SHIELD.blunt;
     if (!preResisted) amount = Math.max(0, amount - this.resistForce(amount, kind, source));
     const scale = this.difficulty ? this.difficulty.damageTaken : 1;
     const dmg = amount * scale;
@@ -7531,8 +9335,56 @@ export class Player {
     }
     audio.boltHit(point || this.chest);
     if (dmg > 14) this.staggerTimer = Math.max(this.staggerTimer, 0.28);
+    this._maybeDisarm(dmg, kind, point);
     if (this.hp <= 0) { this.hp = 0; this.die(source); return true; }
     return false;
+  }
+
+  /**
+   * HIT WITH NOTHING LEFT, AND THE WEAPON GOES.
+   *
+   * The player's own suggestion, and it is the half of "dropping your saber"
+   * that was never a thing the GAME did to you: *"maybe if you get hit when
+   * you're out of stamina you get staggered and drop your lightsaber."* Before
+   * this the only way a hilt left your hand was you pressing the key for it, so
+   * every dropped-weapon mechanic in the build — the pick-up, the swap, the
+   * Force catch, lighting one in mid-air — was reachable only on purpose.
+   *
+   * WHAT MAKES IT FAIR RATHER THAN INFURIATING, and each of the four is doing
+   * work:
+   *
+   *   • it takes a real blow. A bolt that grazes you for four points with an
+   *     empty bar is not a disarm; `dmg > 14` is the same bar the extra stagger
+   *     two lines up is already set at.
+   *   • it takes an EMPTY bar. Stamina under TK.staggerStamina is a state the
+   *     player put themselves in by sprinting, dashing or diving, which is what
+   *     makes this a consequence rather than a dice roll.
+   *   • a fall is not a disarm. `kind` 'fall' is the ground, and nobody knocked
+   *     the weapon out of your hand.
+   *   • it cannot happen twice in a row. TK.disarmGap is longer than it takes
+   *     to walk back to the hilt, because a disarm you cannot recover from is
+   *     just a slower death.
+   *
+   * The hilt goes SIDEWAYS out of the hand and not forwards — a weapon knocked
+   * loose is not a weapon put down, and it should land somewhere you have to
+   * turn for.
+   */
+  _maybeDisarm(dmg, kind, point) {
+    if (dmg <= 14 || kind === 'fall') return false;
+    if (this.saberDown || this.throwState !== 'held') return false;
+    if (this.stamina > TK.staggerStamina) return false;
+    const now = this.world?.time ?? 0;
+    if (this._lastDisarm !== undefined && now - this._lastDisarm < TK.disarmGap) return false;
+    this._lastDisarm = now;
+    this.staggerTimer = Math.max(this.staggerTimer, 0.55);
+    _v3.crossVectors(this.aimDir, UP).normalize();
+    if (!Number.isFinite(_v3.x)) _v3.set(1, 0, 0);
+    this._dropSaber(null, {
+      velocity: _v3.multiplyScalar(rng() < 0.5 ? 3.4 : -3.4).setY(2.2).add(this.velocity),
+    });
+    this.world?.notify?.('DISARMED', 'no strength left to hold it — your blade is on the ground');
+    audio.clash(point || this.chest, 0.7);
+    return true;
   }
 
   heal(v) { this.hp = Math.min(this.maxHp, this.hp + v); }
@@ -7567,6 +9419,11 @@ export class Player {
   die(source) {
     if (!this.alive) return;
     this.alive = false;
+    /* OUT OF THE TANK FIRST. `Crew.update` would notice on its next frame, but
+     * `die` tears down the rig and the saber below and a corpse pinned to a
+     * seat by `Crew.ride` is a body in two states. `leave` puts back the
+     * machine's side and its pace, which must happen whoever is dying. */
+    this.driving?.leave(null);
     this.releaseGrip();
     // A corpse is not holding a stasis field. Dropped rather than fired: the
     // bolts were never aimed, and a dying player should not get a free volley.
@@ -7678,6 +9535,7 @@ export class Player {
      * makes FOREARM.rate spend a fifth of a second walking the arm back from
      * wherever the corpse left it. See _rollForearm. */
     this._foreRoll.foreR.have = false; this._foreRoll.foreL.have = false;
+    this._elbow.armR.have = false; this._elbow.armL.have = false;
     this.alive = true;
     /* Everything die() took over comes back here, and it has to be here rather
      * than on the death card: co-op's revive puts a player back on their feet
@@ -7736,7 +9594,12 @@ export class Player {
       hairColor: HAIR_COLORS[this.world.settings.hairIndex ?? 1]?.hex,
       build: this.world.settings.build,
       species: this.world.settings.species, face: this.world.settings.face,
+      // …and the hood, for the reason written at the constructor's copy of
+      // this call: a body rebuilt by a revive has to come back wearing what
+      // the player chose, and this is the only line that can say so.
+      hood: this.world.settings.wardrobe?.hood,
     });
+    this.hood = this.world.settings.wardrobe?.hood ?? 'none';
     this.rig = built.rig;
     this.palette = built.palette;
     this.built = built;          // _makeCloak needs robeSkirt on a respawn too
@@ -7795,6 +9658,10 @@ export class Player {
      * disposed on the frame it died builds its Actor into a torn-down world
      * one task later. */
     this.disposed = true;
+    // …and the same for a machine this body is at the controls of: a level
+    // change with a driver still bound to a tank leaves the tank on the wrong
+    // side, at a driver's pace, holding a reference to a disposed player.
+    this.driving?.leave(null);
     // Anything the Force is holding has its gravity switched off and its bolt
     // pinned to an anchor. Leaving on a level change would strand both.
     this.releaseGrip();
@@ -7820,6 +9687,16 @@ export class Player {
      * now cycles a real World rather than reading one as text.
      */
     this.skirt?.dispose(); this.skirt = null;
+    /* THE BARRIER'S BUBBLE. Built lazily into `world.scene` on the first raise
+     * and parented to nothing, so removing the rig does not take it: the exact
+     * shape of leak the skirt note above is about, written down before it could
+     * happen a second time. */
+    if (this._shieldMesh) {
+      this.world.scene.remove(this._shieldMesh);
+      this._shieldMesh.geometry?.dispose();
+      this._shieldMat?.dispose();
+      this._shieldMesh = null; this._shieldMat = null;
+    }
     this.saber.dispose();
     if (this.actor) this.actor.dispose();
     else { this.world.scene.remove(this.rig.root); this.rig.dispose(); }

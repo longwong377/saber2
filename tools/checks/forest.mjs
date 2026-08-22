@@ -596,4 +596,406 @@ export async function run({ check, assert }) {
       + `${realNear}/${near.length} nearby logs are cuttable objects`;
   });
 
+  /* ══════════════════════════════════════════════════════════════════ */
+  /*  THE INVISIBLE WALLS, WHICH ARE THE LOGS                           */
+  /* ══════════════════════════════════════════════════════════════════ */
+
+  check('wood: a felled trunk is something you walk over, not a wall', async () => {
+    /**
+     * THE PLAYER, TWICE: "the forest map still has a shit ton of invisible
+     * walls blocking you, I think maybe only when you cut trees down."
+     *
+     * Three probes for this audited the tree system against itself — are the
+     * colliders where the records say, is anything drawn where the colliders
+     * are — and all three came back clean, because the defect is not a stale
+     * collider. It is ONE NUMBER against another:
+     *
+     *     STEP_UP                                 0.45 m
+     *     the median trunk in this wood, radius   0.27 m
+     *     …so a log lying on the ground stands    0.55 m
+     *
+     * Half the timber in the level is a wall by ten centimetres, and a wall
+     * that is knee-high and twenty metres long is one you cannot see a reason
+     * for.
+     *
+     * ── THE NUMBER THIS COMMENT USED TO CARRY WAS WRONG, AND SAYING SO IS
+     *    WORTH MORE THAN THE NUMBER ────────────────────────────────────────
+     *
+     * It read: "Measured by walking the real Player across a felled stand, 24
+     * runs of ten seconds: 61 of 88 stalls were against logs; 3 afterwards."
+     * The 61 was real. The 3 was taken on a wood that no longer exists: at the
+     * time, `rand` in MathUtil.js and `rng` in World.js were both seeded from
+     * `Math.random()` at import, so EVERY RUN OF THE GATE DEALT A DIFFERENT
+     * FOREST and any figure read off one of them was a figure about that
+     * afternoon. Pinning those streams under `tools/register.mjs` is what made
+     * the measurement repeatable, and the honest reading on the pinned deck,
+     * taken twice and identical both times, is:
+     *
+     *     71 stalls over 24 walks — 38 standing timber, 21 logs, 12 level boxes
+     *
+     * ── AND THE ONES LEFT WERE NOT THE CLIMB EITHER ────────────────────────
+     *
+     * The sentence that stood here said the remaining log stalls were "a body
+     * that has climbed ONTO a trunk and is crossing it, which is a step-over
+     * that has not been finished". Half right: the body IS on the trunk. The
+     * step-over had nothing to do with it. Instrumented frame by frame
+     * (BACKLOG 8.1), on the frame it stops the body is grounded, `climbing` is
+     * false, the support query answers with the log's own top to the
+     * centimetre, the move axis is untouched and the velocity out of `_collide`
+     * is the same 3.31 m/s that went in. What was cancelling it was the SHOVE:
+     * `Player._collide` tested the body against dynamic props as a SPHERE of
+     * radius `boundingRadius`, which is the half-diagonal of the prop's box, so
+     * a realised twelve-metre trunk pushed radially out to six metres of empty
+     * air. Measured on the stalling frame: 0.0552 m of walk against 0.0551 m of
+     * shove, three logs in the list at once at 5.83, 3.95 and 5.36 m.
+     *
+     * Resolved against the prop's own box instead — the shape `topOfProps`
+     * already reads — the same 24 walks on the same seed give:
+     *
+     *     50 stalls — 26 standing timber, 15 logs, 9 level boxes
+     *
+     * and `tools/_wallsaudit.mjs`, which measures the same wood by the longest
+     * unbroken stop rather than by a count: the 4.22 s against a 0.85 m log is
+     * gone, seconds-stopped goes 53.3 → 31.6 over 240 s of walking, and the two
+     * walks that never got 4 m from where they started both get out.
+     * `standing: a felled trunk is a log, not a six-metre bubble` is the guard,
+     * and it reads 5.30 m of clear air on the commit before this one.
+     *
+     * The earlier attempt — widening the support sample for a climbable box —
+     * made it worse (71 stalls to 88) and is left recorded here because it is
+     * exactly the wrong place to have looked, and the wrong number in this
+     * comment is what would have kept the next reader looking there.
+     *
+     * A comment that states a measurement is a claim, and this file exists
+     * because claims in this repository are held to the code.
+     *
+     * THE FIXTURE IS BUILT RATHER THAN FOUND, and the first three attempts at
+     * finding one in the wood are why. A crossing measured on the shipped
+     * level is a crossing measured through everything else the level is doing:
+     * the site the check picked first was a hillside, where `blockClimb`'s
+     * slide carried the standing body 7.6 m downhill in a second; the second
+     * had standing trunks in the path; and beside the log's middle `_realise`
+     * turned it into a 24 m Prop that arrived on top of the player and threw
+     * them 25 m/s. One tree, on flat ground, is the claim.
+     */
+    const { bootWorld, idleInput } = await import('./_coop.mjs');
+    const { CLIMB_LOG } = await import('../../src/world/Trees.js');
+    const { world } = await bootWorld({
+      level: 'colosseum', settings: { mode: 'waves', quality: 'low', instantSpawn: true },
+    });
+    const p = world.player;
+    const M = propMaterials();
+    /* Well clear of the player, so nothing is realised into a Prop and the log
+     * stays what this check is about: a static box. LIFT_RING is 14 m. */
+    const O = new THREE.Vector3(p.position.x + 26, 0, p.position.z);
+    const f = attachForest(world, { seed: 7 });
+    f.plant([{ x: O.x, z: O.z, y: world.terrain.height(O.x, O.z), yaw: 0, tone: 1,
+               height: 22, radius: 0.62 }],
+      { materials: { bark: M.wood, leaf: M.patina, core: M.duracreteDark } });
+
+    const wish = { x: 0, y: 0 };
+    const input = { ...idleInput(), moveAxis: (o) => { if (o) { o.x = wish.x; o.y = wish.y; return o; } return { ...wish }; } };
+    const step = (n) => { for (let i = 0; i < n; i++) { p.hp = p.maxHp; p.alive = true; world.update(1 / 60, input); } };
+
+    /* Down it goes, along +z — square across the path the player will walk. */
+    f.fell(0, 0, 1, 0.6);
+    step(60 * 10);
+    assert(f.down.has(0), 'the tree never came down');
+    const a = f.hinge(0, new THREE.Vector3());
+    const b = f.tip(0, new THREE.Vector3());
+    /* Crossed 16 m along its own length: past LIFT_RING of its stump, so the
+     * wood on the ground is a collider rather than a Prop with a body. */
+    const along = new THREE.Vector3().subVectors(b, a).setY(0).normalize();
+    const mid = a.clone().addScaledVector(along, 16);
+    const into = new THREE.Vector3(-along.z, 0, along.x);
+    const from = mid.clone().addScaledVector(into, -2.4);
+
+    /**
+     * THE COLLIDER IS LAID BY THE SHIPPED CODE AND THEN LEFT ALONE.
+     *
+     * `_syncLogBoxes` gives a log a collider only while somebody is within
+     * RING_LOG (16 m) OF THE STUMP, and `_realise` turns it into a Prop inside
+     * LIFT_RING (14 m) of the same point — so the static-box regime this check
+     * is about lives in a two-metre annulus around a tree that may be twenty
+     * metres long. Chasing that annulus with a walking body is a check on two
+     * radii rather than on the thing under test.
+     *
+     * So the box is laid through `_layLog` — the shipped call, with the shipped
+     * geometry — and the ring's own bookkeeping is then held still for the
+     * crossing. Nothing about the collider, the player or the movement solver
+     * is stubbed; what is frozen is the question of whether this log is near
+     * enough to be worth a collider, which this check has already answered.
+     */
+    f._layLog(0);
+    f.update = () => {};
+
+    const place = () => {
+      p.position.set(from.x, world.terrain.height(from.x, from.z) + 0.2, from.z);
+      p.velocity.set(0, 0, 0);
+      p.aimDir.copy(into);
+      /* The camera's yaw is what the stick is resolved against — `Player` has
+       * no yaw of its own. */
+      if (p.camera) { p.camera.yaw = Math.atan2(-into.x, -into.z); p.camera.pitch = 0; }
+      wish.x = 0; wish.y = 0;
+      step(30);
+      p.position.set(from.x, world.terrain.height(from.x, from.z) + 0.2, from.z);
+      p.velocity.set(0, 0, 0);
+    };
+    const reach = () => new THREE.Vector3().subVectors(p.position, mid).setY(0).dot(into);
+
+    /* WHICH WAY IS FORWARD. The stick's sign convention belongs to the input
+     * layer; a check that hard-codes it is a check on the convention. */
+    place();
+    const probe = (y) => { wish.y = y; step(20); const d = reach(); place(); return d; };
+    const plus = probe(1), minus = probe(-1);
+    assert(Math.max(plus, minus) > -2.0,
+      `the body moved to ${plus.toFixed(2)} m one way and ${minus.toFixed(2)} m the other from 2.4 m `
+      + 'out — this fixture is not driving it at all');
+    wish.y = plus > minus ? 1 : -1;
+
+    const boxes = f.logs.get(0);
+    assert(boxes && boxes.length, 'the felled trunk beside the player carries no collider at all');
+
+    let crossed = 0, climbFrames = 0, worstJump = 0, lastY = p.position.y;
+    for (let i = 0; i < 60 * 8; i++) {
+      step(1);
+      if (p.climbing) climbFrames++;
+      worstJump = Math.max(worstJump, p.position.y - lastY);
+      lastY = p.position.y;
+      if (reach() > 0.7) { crossed = i; break; }
+    }
+    assert(crossed > 0,
+      `the player walked into a felled trunk for eight seconds and finished ${reach().toFixed(2)} m `
+      + 'from its far side — a log lying on the ground is a wall. That is the player\'s own report: '
+      + '"a shit ton of invisible walls blocking you, I think maybe only when you cut trees down"');
+    assert(climbFrames > 0, 'the player got across without ever climbing — the log had no collider at all');
+    /* AND IT IS A CLAMBER, NOT A LIFT. See CLIMB_RATE: the rise is rate-limited
+     * because first person copies the body's height exactly rather than damping
+     * toward it, so a metre taken in one frame is a jolt straight up. */
+    assert(worstJump < 0.12,
+      `the body rose ${worstJump.toFixed(2)} m in a single frame getting over the log — that is a `
+      + 'teleport, not a climb');
+    return `climbed a ${(2 * 0.62 * 0.82).toFixed(2)} m log in ${(crossed / 60).toFixed(2)} s `
+      + `(${climbFrames} climbing frames, worst frame ${(worstJump * 100).toFixed(0)} cm, `
+      + `ceiling ${CLIMB_LOG} m)`;
+  });
+
+  check('wood: a log claims only the ground the wood is lying on', () => {
+    /**
+     * THE OTHER HALF, and it is the literal reading of "invisible": the
+     * collider used to be a SQUARE BEAM OF THE BUTT RADIUS along the whole
+     * trunk, on a trunk that is drawn as a lathe tapering to 0.52 r. At the tip
+     * that is 1.9× the wood you can see, and at every point along it a square
+     * of half-width r circumscribes the round section by 41% at the corners.
+     * `_standBox` had already worked this out for the standing trunks — its
+     * note is the long form — and the log did not get the same treatment.
+     *
+     * Measured against the DRAWN radius at each box's own midpoint, which is
+     * the only authority on what the player can see.
+     */
+    const list = [{ x: 0, z: 0, height: 24, radius: 0.6 }];
+    const { world, f } = stand(list);
+    /* FIFTEEN METRES: inside RING_LOG (16), which is what lays a collider under
+     * a log, and outside LIFT_RING (14), which turns one into a Prop with a
+     * body of its own and no static box at all. A player standing on top of it
+     * measures the Prop path and says nothing about the collider. */
+    world.players = [{ position: V(15, 0, 0), alive: true }];
+    f.fell(0, 1, 0, 0.6);
+    sim(f, 14);
+    f.update(1 / 60);
+    const boxes = f.logs.get(0);
+    assert(boxes && boxes.length, 'a 24 m trunk lying beside the player carries no collider at all');
+    const a = f.hinge(0, new THREE.Vector3());
+    const b = f.tip(0, new THREE.Vector3());
+    const len = a.distanceTo(b);
+    const r0 = f.data[4];
+    let worst = 0, worstT = 0;
+    for (const box of boxes) {
+      /* Where along the trunk this box sits, and how thick the DRAWING is
+       * there: `plant()` builds the trunk with taperedGeo(…, 0.52, …). */
+      const t = new THREE.Vector3().subVectors(box.center, a).dot(
+        new THREE.Vector3().subVectors(b, a).normalize()) / Math.max(len, 1e-6);
+      const drawn = r0 * (1 - Math.max(0, Math.min(1, t)) * (1 - 0.52));
+      const over = box.halfExtents.x / drawn;
+      if (over > worst) { worst = over; worstT = t; }
+    }
+    /* 1.0 would be a box inscribed in the drawing, which catches nothing; the
+     * bound is that the collider never claims more ground than the wood does.
+     * The shipped figure is 0.82 — see SQUARE_FIT. */
+    assert(worst <= 1.0,
+      `a log collider is ${worst.toFixed(2)}× the drawn trunk at ${(worstT * 100).toFixed(0)}% of its `
+      + 'length — that surplus is invisible wall, all the way along the log');
+    return `${boxes.length} boxes on a 24 m log, worst ${worst.toFixed(2)}× the drawn wood`;
+  });
+
+  check('wood: what is left standing after a cut is solid', async () => {
+    /**
+     * `NEXT.md` carried this as an open item and it understated it: "A stump
+     * gets a drawn instance and never a collider, so a lopped tree can leave a
+     * 20 m spar you walk through."
+     *
+     * `fell` clamps the cut at 92% of the trunk's height, so a blade taken high
+     * up a big tree is an ordinary, legal cut that leaves almost the whole
+     * trunk standing. Measured on the wood before the fix: a 25.1 m trunk cut
+     * at 23.1 m left a 23.1 m spar, drawn and lit and completely intangible,
+     * and the player walked from three metres short of it to 14.4 m past its
+     * axis without touching anything.
+     *
+     * The cause was one word in `_gatherRing`: it collected `STANDING` trees
+     * and a felled tree is `DOWN` from the moment it starts to topple —
+     * including the part of it that never went anywhere.
+     */
+    const { bootWorld, idleInput } = await import('./_coop.mjs');
+    const { world } = await bootWorld({
+      level: 'wood', settings: { mode: 'waves', quality: 'low', instantSpawn: true },
+    });
+    const f = world.forest, p = world.player;
+    const input = idleInput();
+    const S = 15, X = 0, Z = 1, H = 3, CUT = 11;
+    const step = (n, drive = input) => {
+      for (let i = 0; i < n; i++) { p.hp = p.maxHp; p.alive = true; world.update(1 / 60, drive); }
+    };
+    /* The tallest trunk within reach, cut as high as the clamp allows. */
+    let pick = -1, best = 0;
+    for (let i = 0; i < f.count; i++) {
+      const d = Math.hypot(f.data[i * S + X] - p.position.x, f.data[i * S + Z] - p.position.z);
+      if (d > 26 || f.data[i * S + H] < best) continue;
+      best = f.data[i * S + H]; pick = i;
+    }
+    assert(pick >= 0, 'no tree within twenty-six metres of the player');
+    const h = f.data[pick * S + H];
+    f.fell(pick, 1, 0, h * 0.92);
+    step(60 * 6);
+    const cut = f.data[pick * S + CUT];
+    assert(cut > 6, `the cut clamped to ${cut.toFixed(1)} m, so this measures a kerb and not a spar`);
+    assert(f.stumpMesh.count > 0, 'nothing is drawn where the standing part of the trunk is');
+
+    const x = f.data[pick * S + X], z = f.data[pick * S + Z];
+    /* NEAR IT FIRST: the colliders are a ring around the bodies on the field,
+     * so a column test taken from across the wood measures the ring's radius. */
+    p.position.set(x - 4, world.terrain.height(x - 4, z) + 0.2, z);
+    p.velocity.set(0, 0, 0);
+    step(40);
+    const box = world.physics.staticBoxes.find((b) => b.userData?.tree === pick && b.userData?.stump);
+    assert(box, `a ${cut.toFixed(1)} m spar is drawn where the trunk was and nothing solid is under it`);
+    assert(Math.abs(box.halfExtents.y * 2 - cut) < 0.5,
+      `the stump's collider is ${(box.halfExtents.y * 2).toFixed(1)} m against ${cut.toFixed(1)} m of `
+      + 'drawn wood — a box the height of the whole tree is the invisible wall this file keeps deleting');
+
+    /* AND THE READING THAT MATTERS: walk into it. */
+    const into = new THREE.Vector3(1, 0, 0);
+    p.position.set(x - 3, world.terrain.height(x - 3, z) + 0.2, z);
+    p.velocity.set(0, 0, 0);
+    p.aimDir.copy(into);
+    if (p.camera) { p.camera.yaw = Math.atan2(-into.x, -into.z); p.camera.pitch = 0; }
+    const wish = { x: 0, y: 1 };
+    const drive = { ...input, moveAxis: (o) => { if (o) { o.x = wish.x; o.y = wish.y; return o; } return { ...wish }; } };
+    step(60 * 4, drive);
+    const past = p.position.x - x;
+    assert(past < 0,
+      `the player walked ${past.toFixed(2)} m past the axis of a ${cut.toFixed(1)} m spar — straight `
+      + 'through it');
+    return `a ${h.toFixed(1)} m trunk cut at ${cut.toFixed(1)} m leaves a solid spar `
+      + `(${(box.halfExtents.y * 2).toFixed(1)} m of collider); the player stopped ${(-past).toFixed(2)} m short`;
+  });
+
+  /* ────────────────────────────────────────────────────────────────────
+   * A FELLED TRUNK IS SOMETHING TO STAND ON — BACKLOG 8.5
+   * ──────────────────────────────────────────────────────────────────── */
+
+  check('forest: a trunk lying beside you gives a floor, and it is the log\'s own top', async () => {
+    /**
+     * `topOfProps` read `position.y + extent.y` with no orientation, and a
+     * lying log's long axis is its LOCAL +Y — so a twelve-metre trunk claimed
+     * to be six metres tall and was a wall at every foot height. Its broad
+     * phase was worse: `max(e.x, e.z) + radius` is the trunk's RADIUS, so the
+     * column never reached it at all.
+     *
+     * Measured on the real wood before the fix with `tools/_logfloor.mjs` — 24
+     * trees felled, 9 realised as props — **0 of 9 gave any floor**, the query
+     * answering the terrain height under every one of them. Afterwards 3 of 9,
+     * which is the right number: of the other six, two are legitimately walls
+     * (their tops are over `CLIMB_LOG`) and four have settled below the ground
+     * they fell on or under another surface.
+     *
+     * THIS CHECK IS THE GEOMETRY RATHER THAN THAT DRIVE, because a felling and
+     * nine seconds of solver is a scene and not a rule. Three rods, hand-placed:
+     * flat, leaning, and axis-aligned — the last one is the control that says
+     * nothing that already worked has moved.
+     */
+    const THREE = await import('three');
+    const { topOfProps, boxTopAt, STEP_UP } = await import('../../src/physics/Support.js');
+    const { CLIMB_LOG } = await import('../../src/world/Trees.js');
+
+    /** A rod of `len` × `r`, lying with its long axis along `axis`. */
+    const rod = (len, r, axis, at, climb = CLIMB_LOG) => ({
+      position: at,
+      extent: new THREE.Vector3(r, len / 2, r),
+      quaternion: new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), axis.clone().normalize()),
+      boundingRadius: Math.hypot(r, len / 2, r),
+      userData: { climb },
+    });
+
+    const FEET = 0, RAD = 0.36;
+    /* FLAT. A 12 m trunk 0.30 m thick, its middle 0.30 m off the ground, so its
+     * own surface is 0.60 m up — over `STEP_UP` and well under `CLIMB_LOG`. */
+    const flat = rod(12, 0.3, new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0.3, 0));
+    const gotFlat = topOfProps([flat], 0, 0, FEET, RAD, STEP_UP, FEET);
+    assert(Math.abs(gotFlat - 0.6) < 0.02,
+      `a flat 12 m trunk whose surface is 0.60 m up answered ${gotFlat.toFixed(2)} — `
+      + `${gotFlat <= FEET ? 'no floor at all' : 'not its own top'}`);
+
+    /* …AND FROM ALONG ITS LENGTH, not only over its middle. Five metres down a
+     * twelve-metre log is still the log. */
+    const along = topOfProps([flat], 5, 0, FEET, RAD, STEP_UP, FEET);
+    assert(Math.abs(along - 0.6) < 0.02,
+      `five metres along the same trunk answered ${along.toFixed(2)} — the broad phase is the `
+      + 'radius rather than the length');
+    /* …and past the end of it there is nothing, which is the other half. */
+    const past = topOfProps([flat], 9, 0, FEET, RAD, STEP_UP, FEET);
+    assert(past === FEET, `two metres past the end of the log the query still found ${past.toFixed(2)}`);
+
+    /* LEANING is the case the clamp got wrong: transforming "straight up" into
+     * a tilted rod's frame gives a direction with a large component along the
+     * rod's own length, so the old solve landed near the log's END and answered
+     * -Infinity over its middle. */
+    const lean = rod(12, 0.3, new THREE.Vector3(1, 0.45, 0), new THREE.Vector3(0, 0.9, 0));
+    const qi = lean.quaternion.clone().invert();
+    const box = { center: lean.position, halfExtents: lean.extent, quat: lean.quaternion,
+      invQuat: qi, radius: lean.boundingRadius };
+    const top = boxTopAt(box, 0, 0, RAD);
+    assert(Number.isFinite(top),
+      'the top of a LEANING trunk over its own middle is -Infinity — the clamp is landing on its end');
+    assert(Math.abs(top - 1.23) < 0.12,
+      `a leaning trunk whose middle is 0.90 m up and which is 0.30 m thick answered ${top.toFixed(2)}`);
+
+    /* THE CONTROL. An axis-aligned crate must answer exactly what it always
+     * did: where the column passes through such a box, a downward ray and the
+     * old clamp agree, so nothing that worked can have moved. */
+    const crate = { position: new THREE.Vector3(0, 0.5, 0), extent: new THREE.Vector3(0.4, 0.4, 0.4),
+      quaternion: new THREE.Quaternion(), boundingRadius: 0.69, userData: {} };
+    const onCrate = topOfProps([crate], 0.1, 0.1, 0.55, RAD, STEP_UP, 0);
+    assert(Math.abs(onCrate - 0.9) < 1e-6,
+      `a 0.8 m crate at y 0.5 answered ${onCrate.toFixed(3)} instead of 0.900`);
+
+    /* AND A DECK IS NOT A BODY. `Enemy.platform()` hands back `position` at the
+     * FEET with `extent.y` as the height above them and no orientation at all —
+     * axis-aligned by construction — so it keeps the sum it always had. A
+     * record with no quaternion must not be run through the oriented solve. */
+    const deck = { position: new THREE.Vector3(0, 0, 0), extent: new THREE.Vector3(1.2, 0.25, 1.2) };
+    const onDeck = topOfProps([deck], 0, 0, 0, RAD, STEP_UP, -1);
+    assert(Math.abs(onDeck - 0.25) < 1e-6,
+      `a walker's deck 0.25 m over the feet answered ${onDeck.toFixed(3)}`);
+
+    /* …AND A LOG TOO HIGH IS STILL A WALL. `climb` widens the allowance; it
+     * does not remove it. */
+    const tall = rod(12, 0.3, new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, CLIMB_LOG + 0.9, 0));
+    const wall = topOfProps([tall], 0, 0, FEET, RAD, STEP_UP, FEET);
+    assert(wall === FEET,
+      `a trunk ${(CLIMB_LOG + 1.2).toFixed(2)} m up answered ${wall.toFixed(2)} — CLIMB_LOG is `
+      + 'an allowance, not a removal');
+
+    return `flat 0.60 · along 0.60 · past the end none · leaning ${top.toFixed(2)} · `
+      + `crate 0.900 unchanged · deck 0.250 unchanged · over CLIMB_LOG still a wall`;
+  });
 }

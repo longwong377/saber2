@@ -10,16 +10,28 @@
 import * as THREE from 'three';
 import { RapierWorld, Body, LAYER, LOOSE_MASK, box, ball, hullFromGeometry, boxFromObject } from '../physics/RapierWorld.js';
 import { Terrain } from '../world/Terrain.js';
+/* §12's generated ground. A leaf over Terrain.js — it borrows an authored
+ * preset and replaces one field — so importing it here closes no cycle. */
+import { battlefieldGround, installGround, removeGround } from '../world/Battlefield.js';
 import { Particles } from '../world/Particles.js';
+import { LightningVfx } from '../world/Lightning.js';
+import { GrenadeField } from './Reactions.js';
+import { CohortField } from './Cohorts.js';
+import { WarSupport } from './Support.js';
 import { GrassField, Water, Atmosphere, weather } from '../world/Scenery.js';
 import { BoltPool } from './Bolts.js';
-import { BladeContactSolver, captureSnapshot, gradeCaught, resolveBladeClash, GRADE, GRADE_DAMAGE, GRADE_NAME, DIFFICULTY, CatchWindow } from './Combat.js';
+import { BladeContactSolver, captureSnapshot, gradeCaught, resolveBladeClash, GRADE, GRADE_DAMAGE, GRADE_NAME, DIFFICULTY, CatchWindow, openness, guardCost, SCREEN, screenReach } from './Combat.js';
+/* GUARD, for the arc a screen covers. SaberController imports nothing out of
+ * game/ at all, so this edge cannot close a cycle — and the alternative was a
+ * second copy of the shoulder line, which is the twin §2.3 keeps deleting. */
+import { GUARD } from './SaberController.js';
 import { assignSides, DuelMatch, Player, asTeam, bladeTargets, canHarm, hostileTo, pvpRules, sideTeam, TEAM } from './Player.js';
 import { ageDropped } from './Dropped.js';
-import { Enemy, ARCHETYPES, applyModifier, ENEMY_POWERS, FORCE_KINDS, IMPULSE_AS_HP } from './Enemy.js';
+import { Enemy, ARCHETYPES, applyModifier, ENEMY_POWERS, FORCE_KINDS, IMPULSE_AS_HP, paysOut } from './Enemy.js';
 import { WaveDirector, RankSet, boonTick, boonGuard, bondReceive, bondGuardIn, bondGive, BOND, boonById, MODES,
-  skirmishConfig } from './Waves.js';
+  skirmishConfig, SKIRMISH } from './Waves.js';
 import { Communion, FACETS, insightRate } from './LivingForce.js';
+import { nerveTick, witnessDeath, turnedHome, shakeNerve, nerveOf, boltAnswered, NERVE } from './Nerve.js';
 /**
  * What "open" is worth, in Insight — and it was a quarter of what it promised.
  *
@@ -142,11 +154,41 @@ import { DojoDirector } from './Dojo.js';
 import { updateCauterisation } from './Ragdoll.js';
 import { packAvatar, packMatch, packSnapshot, sessionPart } from '../net/Net.js';
 import { QUALITY } from '../engine/Engine.js';
-import { clamp, lerp, damp, dampVec, makeRng, TAU } from '../engine/MathUtil.js';
+import { clamp, lerp, damp, dampVec, makeRng, moduleSeed, TAU } from '../engine/MathUtil.js';
 import { audio, PRIO } from '../engine/Audio.js';
 import { ExtractionDirector } from './Extraction.js';
 
-const rng = makeRng((Math.random() * 1e9) | 0);
+/* Random per session, FIXED under the gate — see `moduleSeed`. The salt keeps
+ * this stream from being the same sequence as MathUtil's `rand`. */
+const rng = makeRng(moduleSeed(2));
+
+/**
+ * PUT THIS FILE'S STREAM BACK TO A STATED PLACE.
+ *
+ * `enemyRng.seed(n)` and `Waves.seedWaves(n)` have existed for a long time and
+ * this stream had no equivalent, so a harness could pin two of the game's
+ * three module-level streams and not the third. That is not a small gap: this
+ * one is drawn by `pickSpawn`, `spawnDebris`, the dressing and a dozen other
+ * per-frame callers, so its position after one run is a function of everything
+ * that happened in it, and every run after the first in a process starts
+ * somewhere nobody chose.
+ *
+ * WHAT IT COST, MEASURED, because "runs are not reproducible" is too weak a
+ * sentence for it. Driving one engagement of the flagship mode to its muster
+ * and counting survivors: two arms that differed ONLY in the mode string —
+ * `theline` rolls a session plan (`rollSession`) and `command` does not, which
+ * is a single extra draw — read **5.4 and 3.0 of ten** on the same director
+ * and the same change. A whole tuning conclusion was drawn from that gap and
+ * was wrong. Four consecutive readings of one build by one check spanned
+ * **1.3 to 6.0**, purely on where the eleven checks above it had left this
+ * stream.
+ *
+ * So it is exported the same way the other two are, `makeRng` already carries
+ * the method, and a bench or a check that wants a comparison it can trust
+ * calls all three. It changes nothing about a real session: `moduleSeed` still
+ * decides where the stream opens, and nothing in `src/` calls this.
+ */
+export function seedWorld(seed) { rng.seed(seed >>> 0); return rng; }
 /** Finite-or-default. Level data and game maths both produce NaN; WebAudio throws on it. */
 const num = (v, d) => (Number.isFinite(v) ? v : d);
 
@@ -168,6 +210,7 @@ function nextFrame() {
   return Promise.resolve();
 }
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
+const _blastAt = new THREE.Vector3();
 const _v4 = new THREE.Vector3(), _v5 = new THREE.Vector3();
 /** Wire precision. Centimetres for positions, milli-units for directions. */
 const r2 = (v) => Math.round(v * 100) / 100;
@@ -226,6 +269,18 @@ export function grindWorth(cap) {
   if (!cap || cap.shield) return 0;
   return typeof cap.vital === 'number' ? cap.vital : 0;
 }
+
+/**
+ * WHETHER KILLING THIS BODY IS WORTH ANYTHING — FLAGSHIP §6's third class.
+ *
+ * MOVED TO `Enemy.js`, beside the table it asks about, and re-exported here so
+ * that every reader of `World.paysOut` is unchanged. The move is not tidying:
+ * `Levy.js` is reached from `Command.js` and imported this from `World.js`,
+ * which closed Command → Levy → World → Player → ui/Menu → Command and made
+ * `Command.js`, `Levels.js` and `tools/_flagship.mjs` unloadable as the first
+ * module of a process. The whole argument is over the definition.
+ */
+export { paysOut };
 /** Stamina a lost exchange costs, before the attack's tier scales it. */
 const GUARD_COST = 22;
 /**
@@ -302,6 +357,18 @@ export class World {
     this.hitstop = 0;
     this.time = 0;
     this.score = 0;
+    /**
+     * HOW MANY BODIES THIS RUN HAD TO BE PUT BACK ON SCREEN. See
+     * `Enemy._auditVisible`, which is the only writer.
+     *
+     * It is a COUNTER and not a log line because the number is the useful
+     * thing: in a healthy run it is 0 for the whole battle, and any other
+     * value is a body that was drawing nothing while it was alive — the defect
+     * the player reported as "troops go completely invisible a lot". A check
+     * asserts the zero; a repair that happened silently would be a defect that
+     * had been hidden rather than fixed.
+     */
+    this.ghostFixes = 0;
     this.combatIntensity = 0;
     this.paused = false;
     this.running = false;
@@ -382,6 +449,19 @@ export class World {
      * it runs spans one. `unload()` therefore does not touch it and neither
      * does `_loadSteps`; `dispose()` does, and so does the run ending.
      */
+    /**
+     * WAR SUPPORT — what a stratagem costs, and it is not the player's Force.
+     *
+     * The player: "strategems should not cost force how does that even fucking
+     * make sense? maybe there's a bar and it shows the level of outside support
+     * and resources that have built up… when you use them it depletes your
+     * side's support resources so like carriers rearming".
+     *
+     * It is on the WORLD and not on the Player because a side has one supply
+     * line: in co-op the party shares it, which is what makes spending it a
+     * thing to talk about. See src/game/Support.js.
+     */
+    this.support = new WarSupport();
     this.extraction = new ExtractionDirector(this);
   }
 
@@ -576,12 +656,51 @@ export class World {
        * expensive thing a level build does, and the reason the tab used to
        * stop answering for half a second before anything appeared. */
       { name: 'raising the ground', run: () => {
-    this.terrain = new Terrain(this.scene, L.terrain, detail);
+    this.terrain = new Terrain(this.scene, this._groundKeyFor(L), detail);
     this.physics.terrain = this.terrain;
       } },
 
       { name: 'lighting the sky', run: () => {
     this.particles = new Particles(this.scene, particleScale);
+    /**
+     * FORCE LIGHTNING HAS ITS OWN POOL, and that is the whole answer to a note
+     * the player has now made many times: "it's nothing in the air right now
+     * like there's no VFX or anything".
+     *
+     * It used to be drawn out of `particles.sparks` — a shared ring of 6 cm
+     * point sprites sized for blade hits — so a bolt was forty dots in a line
+     * competing with every cut in the fight for the same ring. `LightningVfx`
+     * draws camera-facing RIBBONS: one continuous strip whose width is in
+     * world units, so it is a bright filament at two metres and at twenty
+     * rather than a row of dots that thins as you back away.
+     *
+     * It lives on the World rather than on the Player because two players in
+     * co-op share it, and because `unload` is the one place that knows when a
+     * scene stops existing.
+     */
+    this.lightning = new LightningVfx(this.scene);
+    /**
+     * LIVE GRENADES, and the reason they are a WORLD system rather than a
+     * stratagem or an enemy's private toy.
+     *
+     * The player: "I haven't seen any troops diving or having any dynamic
+     * movements… diving out of the way of a grenade or picking one up and
+     * throwing it back (sometimes killing themselves) or diving on a grenade to
+     * save their friends". Every one of those is a decision taken during the
+     * second and a half a grenade spends lying on the ground — and nothing in
+     * this game had ever occupied a piece of ground for a second and a half.
+     * `Stratagems.blast` is instantaneous: it lands, it hurts, the frame moves
+     * on. So the thing to build first was the object, not the behaviour.
+     *
+     * It sits here beside `bolts` because it is the same kind of thing: a
+     * shared, world-owned list of live hazards that every body on both sides
+     * reads and none of them owns. See src/game/Reactions.js.
+     */
+    this.grenades = new GrenadeField(this);
+    /* …and the far end of the rendering ladder, for the same reason it sits
+     * here: a shared, world-owned thing that every body past L3_AT draws
+     * through and none of them owns. See src/game/Cohorts.js. */
+    this.cohorts = new CohortField(this.scene);
     this.bolts = new BoltPool(this.scene, 460);
     this.bolts.onDeflect = (b, entry, hit, pt) => this._onBoltDeflect(b, entry, hit, pt);
     this.bolts.onImpact = (b, res) => this._onBoltImpact(b, res);
@@ -695,8 +814,19 @@ export class World {
      * named because it is the one mode with an army that is NOT a bounded
      * battle — it is five areas and its own ending. */
     const battles = !!MODES[mode]?.battles;
-    /** The three modes whose subject IS an army: they get the crossing too. */
-    const campaign = mode === 'command' || battles;
+    /**
+     * The modes whose subject IS an army: they get the crossing too.
+     *
+     * `MODES[mode].crossing` and not `mode === 'command'`, which is what this
+     * line said for the life of the mode. A mode-name literal here is the same
+     * defect the two notes above and below it are each an account of, and it
+     * came due the day THE LINE was authored: the flagship mode is a crossing
+     * of one ground by definition and would have been handed a `campaign` of
+     * false, which takes away the seeded length, the five stages, the muster
+     * and the ending in one line. Command declares the field; so does The
+     * Line; a fourth crossing lights itself.
+     */
+    const campaign = !!MODES[mode]?.crossing || battles;
     /**
      * …AND AN ARMY IS NO LONGER A PROPERTY OF THE MODE.
      *
@@ -878,6 +1008,10 @@ export class World {
          * where the ground is told.
          */
         this.terrain?.setMight?.(groundMight(this));
+        /* A CLEARED WAVE IS THE BIGGEST THING THAT HAPPENS TO THE SUPPLY LINE
+         * short of holding ground. Behind `fresh` with the rest of the payouts,
+         * so `restartWave` cannot farm it. */
+        this.support?.credit('wave');
       }
       cleared(w);
       this._reviveDowned();
@@ -1150,6 +1284,15 @@ export class World {
   }
 
   unload() {
+    /* THE PRESET TABLE IS PROCESS-GLOBAL and a generated ground is a row this
+     * world put in it, so leaving it there outlives the world that made it. It
+     * is not merely untidy: `installGround` refuses to shadow an existing key,
+     * so the SECOND world to generate a front on the same base gets a refusal
+     * and silently falls back to the authored ground. Measured before this
+     * line — seed 1 generated, seeds 2 and 3 both came back "already a ground"
+     * and stood on stock geonosis. See `_groundKeyFor`, which takes the same
+     * precaution from the other end for a world that never unloaded. */
+    this._dropGeneratedGround();
     // The level's wind and drone are level state; without this they kept
     // playing under the main menu after quitting.
     audio.setAmbience?.({ wind: 0, drone: 0 });
@@ -1209,6 +1352,10 @@ export class World {
     this.player = null;
     this.bolts?.dispose();
     this.particles?.dispose();
+    this.lightning?.dispose();
+    this.grenades?.dispose();
+    this.cohorts?.dispose();
+    this.lightning = null;
     this.grass?.dispose(); this.grass = null;
     this.water?.dispose(); this.water = null;
     this.atmosphere?.dispose(); this.atmosphere = null;
@@ -1258,6 +1405,14 @@ export class World {
      *                puts the bars away; a non-zero timer left behind also
      *                suppresses the NEXT boss's entrance, because `spawnEnemy`
      *                frames one only when this is falsy.
+     *   `_frameCtx`  the frame context, kept as a field so `grenades.update`
+     *                can reach it later in the same frame. It is the departed
+     *                level in one object: measured after an `unload`, it still
+     *                held the disposed Terrain (`world.terrain` is null and
+     *                `world._frameCtx.terrain` is not), the physics world, the
+     *                particle system, the bolt pool and the camera. Every one
+     *                of those is exactly what the list above exists to catch,
+     *                and this one arrives with a whole heightfield attached.
      *
      * `rotating` is deliberately NOT in this list: `loadLevelAsync` yields
      * between stages and that flag is what stops `update` stepping a half-built
@@ -1275,6 +1430,7 @@ export class World {
     this.match = null;
     this._matchSent = '';
     this._aloneAt = false;
+    this._frameCtx = null;
     this.running = false;
     this.over = false;
   }
@@ -1570,6 +1726,11 @@ export class World {
       pressure,
       strength,
       rotate: cfg.rotate,
+      /* HOW MANY CLEARED WAVES MAKE ONE ENGAGEMENT, and the counter under it.
+       * See `SKIRMISH.waves`: this was structurally 1, so a skirmish announced
+       * the ground was held after the wave that composes a single body. */
+      waves: cfg.waves,
+      waveCount: 0,
       /* One entry per engagement, so `[cleared]` is where you are going next
        * and index 0 is where you started. Length `engagements` even when the
        * rotation is off, so the readout can name the ground of every round. */
@@ -1630,8 +1791,15 @@ export class World {
     sk.started = true;
     d.areaIndex = sk.pressure;
     d.areaWaves = 0;
+    sk.waveCount = 0;
     this._musterSkirmish();
-    if (!d.active) d.start(wave ?? (this.director.wave + 1));
+    /* …AND THE ESCALATION OPENS WHERE THE PRESSURE SAYS. `pressure` already
+     * moved the budget curve's `areaIndex` and the muster shelf and left the
+     * wave NUMBER at 1, so the heaviest skirmish still opened on the one-body
+     * wave. See `SKIRMISH.pressureWaves`. */
+    const opening = Math.max(this.director.wave + 1,
+      1 + sk.pressure * SKIRMISH.pressureWaves);
+    if (!d.active) d.start(wave ?? opening);
     else d.deploy();
     this._skirmishBanner();
     return sk;
@@ -1849,6 +2017,27 @@ export class World {
      * started on rather than desynchronising. */
     if (this.netMode === 'client') return false;
     if (d) d.areaWaves = 0;
+    /**
+     * AN ENGAGEMENT IS `sk.waves` CLEARED WAVES, NOT ONE.
+     *
+     * The player: "in skirmish mode I'll start the map will immediately say
+     * cleared and we leave like there were never any enemies." That is this
+     * method firing on wave 1, which the escalation composes as ONE body — so
+     * the ground was declared held before the second enemy in the battle had
+     * been bought. Driven in `tools/_stall.mjs --mode skirmish`: engagement 1
+     * closed at t = 6.0 s, one hostile composed, transport called.
+     *
+     * Counted here rather than by reading `director.wave`, because a battle can
+     * open at any wave number (`beginSkirmish` opens it at the pressure's) and
+     * the campaign's own missions restart the count.
+     */
+    sk.waveCount = (sk.waveCount || 0) + 1;
+    if (sk.waveCount < (sk.waves || 1)) {
+      this.notify(`WAVE ${sk.waveCount} OF ${sk.waves} — HOLD`,
+        `${this.command?.roster?.strength ?? 0} of yours still standing`);
+      return false;
+    }
+    sk.waveCount = 0;
     sk.cleared++;
     sk.log.push({
       engagement: sk.cleared, level: this.levelKey, name: this.level?.name,
@@ -1975,7 +2164,25 @@ export class World {
        * makes it right the day that changes. */
       const where = this.level?.name || 'the field';
       const all = d.roster?.all?.length ?? 0;
-      title = won ? 'THE ADVANCE IS OVER' : 'THE ADVANCE IS LOST';
+      /**
+       * THE MODE THAT IS WON BY ITS LINE SAYS SO — `MODES.theline.holdTheLine`.
+       *
+       * "THE ADVANCE IS LOST" is Command's sentence and it is right there: that
+       * mode is won by taking the ground, so the ground is what was lost. In
+       * THE LINE the ground is not the win condition and the roster is, and the
+       * card the player is about to read says **"The line did not hold"**
+       * (`Menu.LINE_LOST_TITLE`). Two announcements of one ending disagreeing
+       * about what the ending WAS is the same defect as a victory card over a
+       * table of casualties, which is what `Menu.VICTORY_TITLE` exists to have
+       * fixed.
+       *
+       * Read off `holdTheLine` rather than off the mode's name, so the sentence
+       * follows the RULE — a second mode that is won by its line gets it, and
+       * Command keeps its own words unchanged.
+       */
+      const line = !!d.holdTheLine;
+      title = won ? (line ? 'THE LINE HOLDS' : 'THE ADVANCE IS OVER')
+        : (line ? 'THE LINE IS BROKEN' : 'THE ADVANCE IS LOST');
       sub = won ? `${d.roster?.strength ?? 0} of ${all} walked off ${where}`
         : `${d.areasTaken} of ${AREAS.length} areas · ${d.roster?.fallen?.length ?? 0} of ${all} lost`;
     } else if (MODES[this.settings?.mode]?.ladder && w?.duelTop) {
@@ -2087,6 +2294,115 @@ export class World {
    * skirmish first would report the engagements of its current mission as the
    * missions of its run.
    */
+  /**
+   * WHICH HEIGHTFIELD THIS RUN STANDS ON — the authored one, or one generated
+   * around a front for this seed.
+   *
+   * `FLAGSHIP.md` §12's first line is "generate the battle, then the ground
+   * that explains it", and `src/world/Battlefield.js` builds that: a reason
+   * drawn from a table of five, a bezier front from six seeded numbers, and a
+   * height closure in which high ground FLANKS the front and never sits on it,
+   * with exactly one chokepoint and a ridge field running along the advance.
+   * It had no caller. This is the caller.
+   *
+   * ── IT IS A LAYER, WHICH IS WHAT KEEPS §13.5 TRUE ───────────────────────
+   *
+   * §13.5: "no room's deletion deletes the mode — every level in `LEVEL_ORDER`
+   * is a legal seed. That is exactly what killed the Descent." So the generated
+   * ground is NOT a new theatre a seed can land on. The mode still rolls one of
+   * the seven authored theatres (`Session.rollGround`), keeps its pool, its
+   * dressing, its arrivals, its sky and its whole palette — §12.5, "do not
+   * generate the palette" — and only the HEIGHT is replaced. Delete a room and
+   * the mode loses that room's draw, exactly as before; nothing generated is
+   * reachable except through a room that exists.
+   *
+   * ── WHY IT FALLS BACK RATHER THAN THROWS ────────────────────────────────
+   *
+   * `battlefieldGround` refuses a ground with a roof over it — a front cannot
+   * be derived on a floor — and refuses to shadow an authored preset key. Both
+   * refusals are correct and neither is a reason to fail to load a level: the
+   * honest answer to "this ground cannot carry a generated front" is the ground
+   * as authored, which is what every other mode gets. It is reported once so it
+   * cannot be silent (§2.3's relative — a missing thing answered with a
+   * plausible default is how a literal survives).
+   *
+   * A SEEDLESS RUN GETS THE AUTHORED GROUND, and that is the same rule the
+   * ground roll already follows: `null` means nobody has stated a number, which
+   * is every headless check that builds a World by hand.
+   */
+  _groundKeyFor(L) {
+    const key = L.terrain;
+    /* THE MODE IS READ OFF SETTINGS HERE and not taken as an argument: the
+     * ground is raised in an early stage of `loadLevel`'s list and the local
+     * `mode` is not declared until the director stage, a hundred lines further
+     * down. Taking it as a parameter compiled and threw `mode is not defined`
+     * on the first boot. `settings.mode` is what that local reads anyway. */
+    const mode = this.settings?.mode ?? 'roguelite';
+    /* Taken down first: `installGround` refuses to overwrite, so a second run
+     * on the same base would throw on its own leftovers. `rotateTo` re-enters
+     * this whole list for every engagement. */
+    this._dropGeneratedGround();
+    if (!MODES[mode]?.generatedGround) return key;
+    /**
+     * …AND THE LEVEL HAS TO SAY IT CAN CARRY ONE.
+     *
+     * A generated heightfield is raised UNDER a level's own dressing, and the
+     * dressing was authored against the contours it replaces. Measured, scoria
+     * at seed 3: with the authored ground the line deploys 10 of 10 and the
+     * wave puts 47 hostiles on the field; with a generated one **6 of the ten
+     * are dead inside twenty seconds, the other four cannot be placed at all,
+     * and the wave manages 2 bodies.** Geonosis at the same seed is 10 of 10
+     * and unaffected. Whatever scoria's rocks and wrecks do on new contours,
+     * they take the ground a body needs to stand on with them.
+     *
+     * So it is the LEVEL's declaration and not the mode's, for the reason
+     * `LEVELS[*].pool` and `terrain` are the level's: it is a fact about that
+     * room. A ground that has not been measured stays authored, which costs the
+     * mode nothing — it still rolls that theatre, and §13.5 still holds — and a
+     * room lights this the day somebody measures it. The alternative was a list
+     * of level keys in this file, which is the twin-table defect (§2.3) and
+     * would have been wrong about scoria in exactly the same way.
+     */
+    if (!L.battlefield) return key;
+    /* …AND ANYBODY ELSE'S LEFTOVER on this exact base, for a world that was
+     * dropped without unloading. `removeGround` refuses an authored preset, so
+     * this can only ever take back something this file installed. */
+    try { removeGround(`front:${key}`); } catch { /* authored: not ours */ }
+    const seed = Number.isFinite(this.runSeed) ? this.runSeed : null;
+    if (seed === null) return key;
+    try {
+      /* AND WHERE THE PLAYER ACTUALLY LANDS. The generated front is pulled
+       * through the deploy point and the shelf that stands it out of a
+       * borrowed sea is measured from it; `planBattle`'s default is the
+       * origin, which is true of five of the seven theatres and 71 m wrong on
+       * the Ember Shelf. `L.start` is the same array `_playerSpawn` reads. */
+      const made = battlefieldGround(key, seed, { deploy: L.start, keep: L.spawnRadius?.[1] });
+      installGround(made.key, made.preset);
+      this._genGround = made.key;
+      /** The plan, published for anything that wants the front rather than the
+       *  ground: the curve, the reason, the chokepoint and the advance bearing.
+       *  `Front.js`'s dressing takes a half-plane and `frontAtChoke` is the
+       *  bridge — see its note there. */
+      this.battlefield = made.plan;
+      return made.key;
+    } catch (err) {
+      if (!this._genWarned) {
+        this._genWarned = true;
+        console.warn(`[battlefield] ${key} keeps its authored ground: ${err.message}`);
+      }
+      this.battlefield = null;
+      return key;
+    }
+  }
+
+  /** Take this world's generated ground back out of the shared preset table. */
+  _dropGeneratedGround() {
+    if (!this._genGround) return;
+    try { removeGround(this._genGround); } catch { /* authored: not ours to take */ }
+    this._genGround = null;
+    this.battlefield = null;
+  }
+
   runStats(extra = null) {
     const sum = (f) => (this.players || []).reduce((a, p) => a + (p[f] || 0), 0);
     const c = this.campaign, sk = this.skirmish, d = this.command;
@@ -2103,6 +2419,20 @@ export class World {
        * getter over the records themselves. Null where there is no army, so
        * "Troops lost" leaves the card in the modes that have no troops. */
       fallen: d?.roster?.fallen?.length ?? null,
+      /**
+       * HOW a run ended, where "you died" is not the answer — see `main.js`'s
+       * `gameOver`, which picks a third card off it.
+       *
+       * REPORTED HERE AND NOT ONLY PASSED IN `extra`, and the difference is
+       * the whole point of this method. `skirmish.mjs` lifts every
+       * `stats.<field>` the card reads out of main.js's own source and requires
+       * it to be a field `runStats` REPORTS; a field that exists only on the
+       * two endings that happen to pass it is exactly the "Areas taken 5"
+       * shape — a card asking for something most endings do not send, and a
+       * value invented at the reader to cover it. Null is the honest answer
+       * for the four endings that have no such reason: you died, or you won.
+       */
+      ended: (extra && 'ended' in extra) ? (extra.ended ?? null) : null,
     };
   }
 
@@ -2361,11 +2691,42 @@ export class World {
     return entry;
   }
 
-  onExplosion(centre, size = 1) {
+  /**
+   * A BLAST IS A THING THAT HAPPENS, so it goes on the wire like the grenade
+   * and the bolt do — see `_recordNades`, which makes the whole argument.
+   *
+   * `GrenadeField.throw` could be wrapped because every grenade in the game
+   * goes through it. This is the same seam for a blast: an exploding barrel
+   * (`Prop.shatter`), a droideka's death (`Enemy.js`) and every structure
+   * charge all reach the world through this one method, and a client that
+   * never hears it sees a barrel vanish in silence, takes damage from nowhere,
+   * and stands on ground with no crater in it while the host's has one.
+   *
+   * `ghost` is the client's copy and it is a PICTURE, for the reason
+   * `_spawnNetNades` states: the host has already billed the damage and it
+   * arrives as hp in the next snapshot, so a client that also billed it would
+   * kill the same droid twice on its own screen and then be corrected.
+   *
+   * It is forced on for anything a CLIENT raises locally, too. A client can
+   * cut an explosive barrel open itself, and before this it applied a full
+   * 55-damage sphere to bodies it does not own — the host disagreed a frame
+   * later and the correction looked like a droid teleporting back to its feet.
+   * The host is the only node that bills; every other copy is a picture.
+   *
+   * What a ghost still does: particles, sound, the flash, the screen shake,
+   * the crater, the shove on loose physics bodies, and (through Destruction's
+   * wrapper) the structural damage — none of which is in the snapshot, and all
+   * of which the client must produce for itself or not have at all.
+   */
+  onExplosion(centre, size = 1, opts = {}) {
+    const ghost = !!opts.ghost || this.netMode === 'client';
+    if (!ghost && this.netMode === 'host' && this._netBlasts) {
+      this._netBlasts.push([r2(centre.x), r2(centre.y), r2(centre.z), r2(size)]);
+    }
     this.particles?.explosion(centre, size);
     audio.explosion(centre, size);
     const radius = 5.5 * size, force = 24 * size, damage = 55 * size;
-    for (const e of this.enemies) {
+    for (const e of ghost ? [] : this.enemies) {
       if (e.dead) continue;
       const d = e.position.distanceTo(centre);
       if (d > radius) continue;
@@ -2378,7 +2739,10 @@ export class World {
       const d = p.position.distanceTo(centre);
       if (d > radius) continue;
       const k = 1 - d / radius;
-      p.damage(damage * 0.4 * k, centre, null, 'explosion');
+      /* The shove, the shake and the crater are the client's to draw; the
+       * damage is the host's to bill and arrives as a `hit`. See the note
+       * over this method. */
+      if (!ghost) p.damage(damage * 0.4 * k, centre, null, 'explosion');
       _v1.subVectors(p.position, centre).setY(0.6).normalize().multiplyScalar(force * 0.35 * k);
       p.velocity.add(_v1);
       /* `?.` — see the note over `_applyBladeEvent`. A RemoteAvatar is in
@@ -2606,8 +2970,41 @@ export class World {
      * mission 1's in a single frame, silently, because its own `_afterRotate`
      * broadcast is host-gated. That is the exact symptom the rotation announce
      * was written to remove, arriving by the other door. */
+    /**
+     * …AND NOT WHILE A JOURNEY IS ALREADY CARRYING THE ANSWER. THIS IS THE
+     * CAMPAIGN FREEZE, and it is a two-line loop between three correct pieces.
+     *
+     * The player: "in campaign mode the game completely freezes when you finish
+     * the first wave, never unfreezes."  Reproduced in
+     * `tools/_stall.mjs --mode campaign`, which is the first thing in the tree
+     * to drive a campaign WITHOUT `instantSpawn` — every campaign check sets
+     * that flag, so the transition the player actually plays had never run
+     * under a harness at all.
+     *
+     *   1. mission 1 ends → `_advanceMission` bumps the index, sets
+     *      `this.skirmish = null` and asks for mission 2's ground.
+     *   2. `_groundPending` is taken below and handed to the extraction, which
+     *      begins its five-second aftermath.
+     *   3. NEXT FRAME, `skirmish` is null, so this block re-opens the campaign,
+     *      which sees mission 2's ground is not the one underfoot and sets
+     *      `_groundPending` AGAIN.
+     *   4. The block below finds it, calls `extraction.begin`, which answers
+     *      "I already own this" — and `return`s.
+     *
+     * That `return` is above `extraction.update`, so the director is never
+     * stepped: `phase` stays `aftermath` and `t` never advances. The whole game
+     * is one frame wide from then on. Measured: 40 s of driven play, `phase`
+     * unchanged, wave 0, nothing else in the world moving.
+     *
+     * A journey in flight IS the pending ground change, so neither door may be
+     * opened while one is running. Both guards are here rather than inside
+     * `beginCampaign`, because the same shape would bite `beginSkirmish` the
+     * moment a mode rotates on it, and because a re-entrancy bug belongs next
+     * to the `return` that makes it fatal.
+     */
     if (this.netMode !== 'client' && MODES[this.settings?.mode]?.battles
-        && !this.skirmish?.started && this.player) {
+        && !this.skirmish?.started && this.player
+        && !this._groundPending && !this.extraction?.active && !this.rotating) {
       if (this.settings.mode === 'campaign') this.beginCampaign();
       else this.beginSkirmish();
     }
@@ -2758,6 +3155,13 @@ export class World {
       pickSpawn: (t) => this.pickSpawn(t),
       spawnEnemy: (t, p) => this.spawnEnemy(t, p),
     };
+    /* THE SAME CONTEXT, REACHABLE FROM LATER IN THE FRAME. `grenades.update`
+     * runs with the particles and the debris — after the bodies, because a
+     * blast has to land on where they ARE — and it needs the terrain and the
+     * enemy list this object already carries. Kept as a field rather than
+     * rebuilt, because two ctx objects in one frame is two answers to "who is
+     * on the field". */
+    this._frameCtx = ctx;
 
     /**
      * BEFORE EVERYTHING, because a passenger's seat has to be written before
@@ -2785,6 +3189,35 @@ export class World {
       if (p.isLocal && this.focus.playerCompensation > 1.0001) {
         p.update(Math.min(dt * this.focus.playerCompensation, 1 / 24), { ...ctx, dt: dt * this.focus.playerCompensation });
       } else p.update(dt, ctx);
+    }
+
+    /**
+     * 1b — THE HORDE'S NERVE. FLAGSHIP §7's BREAK verb, per second.
+     *
+     * BEFORE the bodies think, so a body that broke this frame gives ground on
+     * this frame rather than on the next one — the same ordering argument
+     * `CommandDirector.rallyNear` makes about its own rally ("a man who was
+     * running stops running THIS frame rather than at the top of the next").
+     *
+     * Once for the whole field rather than once per body: the expensive half is
+     * the list of lit blades and there are at most four of them. Bodies with a
+     * roster record are skipped inside `nerveTick`, because `CommandDirector.
+     * _morale` runs its own per-second pass over exactly those.
+     *
+     * ON THE HOST ONLY. A client's bodies are placed from the wire and their
+     * brains do not run (`netDriven`), so a second nerve drifting locally would
+     * be a number the two machines disagree about with nothing to reconcile it.
+     */
+    if (this.netMode !== 'client') {
+      this._nerveBlades = this._nerveBlades || [];
+      this._nerveBlades.length = 0;
+      for (const b of this._bladeEntries()) {
+        if (!b.saber || b.saber.ignition < 0.6) continue;
+        const owner = b.owner;
+        if (!owner || owner.dead || owner.alive === false) continue;
+        this._nerveBlades.push({ position: owner.position, team: asTeam(owner.team) });
+      }
+      nerveTick(this.enemies, this._nerveBlades, dt);
     }
 
     // 2 — enemies. On a client the body is placed from the wire FIRST, so the
@@ -2835,6 +3268,9 @@ export class World {
     }
     updateCauterisation(dt);
     this.particles.update(dt);
+    this.lightning?.update(dt);
+    this.grenades?.update(dt, this._frameCtx ?? this);
+    this.support?.update(dt);
     this.terrain.flush();
 
     // 7 — scenery
@@ -2912,10 +3348,110 @@ export class World {
       // on `b.team === entry.team`, and in PvP a duellist is on side 2, 3 or 4.
       // Stamping every player's blade with the party's number told that test
       // the wrong side for three of the four. Same rule as `_onBoltDeflect`.
-      out.push({ saber: p.saber, owner: p, team: asTeam(p.team), guard: p.boltCatch ? p.boltCatch.guard() : null });
+      out.push({ saber: p.saber, owner: p, team: asTeam(p.team), guard: p.boltCatch ? p.boltCatch.guard() : null,
+        screen: this._screenFor(p) });
     }
+    /* NO `screen` ON AN ENEMY BLADE, and it is a rule rather than an omission.
+     * `_onBoltDeflect`'s enemy branch bats a bolt away with no grading and no
+     * bill at all — there is no bar on that body to spend — so a screen there
+     * would be exactly the free damage-reduction aura `SCREEN`'s own note says
+     * the mechanic must not be, handed to every duellist the horde fields. The
+     * day an enemy Jedi is meant to shield ITS line, it needs a pool to pay
+     * from first. */
     for (const e of this.enemies) if (!e.dead && e.saber && e.saber.ignition > 0.5) out.push({ saber: e.saber, owner: e, team: asTeam(e.team) });
     return out;
+  }
+
+  /**
+   * THE GROUND THIS JEDI IS COVERING FOR HIS OWN MEN, or null.
+   *
+   * FLAGSHIP §6's suppression aimed at the man beside you — the whole argument
+   * is over `SCREEN` in Combat.js. This is where the four gates are assembled;
+   * `Bolts.screenIntercept` enforces three of them per bolt and this one owns
+   * the fourth, which is the bar:
+   *
+   *   `screenReach(p.force)` IS THE REACH. The price is Force by the metre, so
+   *   the radius a player is granted is the price solved the other way — and
+   *   that means the screen narrows as the bar empties and widens as it comes
+   *   back, with no second rule to keep in step with the first and nothing new
+   *   on the HUD. An empty bar returns 0 and this returns null.
+   *
+   * `bladeHeld` and not `control.guard.active`: a raised zone only exists under
+   * the `directional` scheme, and a mechanic that vanished for a player who
+   * picked one of the continuous-aim schemes would be a feature with a
+   * settings-menu switch nobody was told about. Holding the blade is what
+   * "I am guarding" means in every scheme.
+   *
+   * The body list is rebuilt in place each frame rather than allocated: this
+   * runs twice a frame per player (here and in the nerve pass), and the fan in
+   * `_boltHitTest` is the one place in this file where allocation per frame has
+   * already been measured to cost.
+   */
+  _screenFor(p) {
+    if (!p.control || !p.control.bladeHeld) return null;
+    const reach = screenReach(p.force);
+    if (!(reach > 0.5)) return null;
+    const side = asTeam(p.team);
+    const pool = this._screenPool || (this._screenPool = []);
+    const desc = this._screenDesc || (this._screenDesc = {
+      origin: new THREE.Vector3(), axis: new THREE.Vector3(), reach: 0,
+      sector: GUARD.reach, margin: SCREEN.margin, bodies: [],
+      /**
+       * ── AND THE BONE TEST, WHICH IS WHAT MAKES IT A SCREEN ──────────────
+       *
+       * The bound sphere in `screenIntercept` is a reject and nothing more.
+       * Measured on a real Command battle with the sphere as the whole test:
+       * **128 bolts screened for 8 fewer arriving in the rank** — the bound
+       * wraps every capsule a body presents, so it stands about a metre off
+       * the chest and sixteen near misses were answered for every shot that
+       * was going to land. That is precisely the aura `SCREEN`'s own note says
+       * the mechanic must not be, and it had it.
+       *
+       * So the question is put to the body: the same `capsules()` fan
+       * `_boltHitTest` resolves a bolt through, against a segment run forward
+       * along the bolt's own line as far as the candidate can be. One reader
+       * for "would this bolt have hit that man", rather than a second, looser
+       * model of it standing next to the real one (HANDOFF §2.4).
+       *
+       * Cheap because of where it sits: only bolts that already crossed the
+       * reach, arrived inside the arc and cleared a body's bound get here, and
+       * `capsules()` is the same call the bolt is about to make anyway if the
+       * screen lets it through.
+       */
+      hits: (rec, from, dir, len) => {
+        const e = rec.e;
+        if (!e || e.dead) return false;
+        _screenEnd.copy(from).addScaledVector(dir, len);
+        for (const c of e.capsules()) {
+          if (segmentNear(from, _screenEnd, c.p0, c.p1, c.r)) return true;
+        }
+        return false;
+      },
+    });
+    desc.origin.copy(p.chest);
+    desc.axis.copy(p.aimDir);
+    desc.reach = reach;
+    desc.bodies.length = 0;
+    const r2 = reach * reach;
+    let n = 0;
+    for (const e of this.enemies) {
+      if (e.dead || asTeam(e.team) !== side) continue;
+      const dx = e.position.x - desc.origin.x, dz = e.position.z - desc.origin.z;
+      if (dx * dx + dz * dz > r2) continue;
+      /* THE SAME SPHERE `_boltHitTest` REJECTS ON. `boltBound` wraps what the
+       * body actually presents — the dwarf spider's legs stand its capsules
+       * 2.7 m up and well outside its hull radius — so a screen built off
+       * `radius` and `chestY` would have been blind to exactly the bodies that
+       * note was written about. A ragdoll answers null and is skipped: a man
+       * already on the ground is not one you are covering. */
+      const b = boltBound(e);
+      if (!b) continue;
+      const rec = pool[n] || (pool[n] = { x: 0, y: 0, z: 0, r: 0, e: null });
+      rec.x = e.position.x; rec.y = e.position.y + b.y; rec.z = e.position.z; rec.r = b.r; rec.e = e;
+      desc.bodies.push(rec);
+      n++;
+    }
+    return desc.bodies.length ? desc : null;
   }
 
   /* ── catch and throw ─────────────────────────────────────────────── */
@@ -3009,7 +3545,7 @@ export class World {
       });
       const from = bolt.pos.clone();
       this.bolts.release(bolt, res.dir, bolt.speed * (res.grade >= GRADE.RETURN ? 1.25 : 1));
-      this._creditDeflect(player, bolt, res, from);
+      this._creditDeflect(player, bolt, res, from, h.snap);
       if (res.grade > best) { best = res.grade; bestPoint = from; }
     }
     cw.clear();
@@ -3026,7 +3562,7 @@ export class World {
   }
 
   /** Score, flow, strain and sparks for one bolt that has just left the blade. */
-  _creditDeflect(owner, bolt, res, point) {
+  _creditDeflect(owner, bolt, res, point, snap = null) {
     /**
      * REMEMBER THE BASE, CAP THE PRODUCT.
      *
@@ -3074,7 +3610,55 @@ export class World {
     // RemoteAvatar's is one of them. See the note over `_applyBladeEvent`.
     owner.camera?.addShake(0.03 + res.grade * 0.02);
     if (res.grade === GRADE.PERFECT) owner.perfects++;
-    else if (res.grade === GRADE.BLOCK) owner.stamina = Math.max(0, owner.stamina - 4);
+    /**
+     * ── AND THE GUARD PAYS FOR IT. FLAGSHIP §6, and see `GUARD_COST`.
+     *
+     * This was one line — `else if (res.grade === GRADE.BLOCK) owner.stamina
+     * -= 4` — a flat charge on the bottom rung and nothing on the other three.
+     * At four a block was expensive enough to be felt once and the ladder said
+     * nothing at all about the difference between a driven blade and a met
+     * one, which is the difference the whole grade exists to measure.
+     *
+     * Now every rung has a price and the top two are free, so volume of fire
+     * is a drain a good player can zero and a poor one cannot. `guardCost`
+     * owns the table and the auto-guard clause; nothing here restates either.
+     *
+     * `staminaHold` is deliberately NOT set — see the note over GUARD_COST.
+     * The mechanic is a drain racing a regen, and pausing the regen deletes
+     * the race.
+     *
+     * The counters are cumulative and monotone because a RATE cannot be read
+     * off a pool four other things spend; `guardSpent`'s own note says who
+     * reads them.
+     *
+     * `typeof owner.stamina === 'number'` GUARDS BOTH, and it is a live defect
+     * rather than belt-and-braces. `_creditDeflect` is reached by every lit
+     * blade in `world.players`, and a `RemoteAvatar` is one of them: it carries
+     * `kills`, `score`, `deflects` and `combo` and it deliberately carries no
+     * bars at all, because a peer owns its own health. The line this replaces
+     * was `owner.stamina = Math.max(0, owner.stamina - 4)` — `undefined - 4` is
+     * NaN, `Math.max(0, NaN)` is NaN, and the peer's local copy has carried a
+     * NaN stamina since the day a remote avatar could hold a blade. Nothing
+     * read it, so nothing said so; charging on every rung instead of one makes
+     * it forty times as likely and `guardSpent` would carry the NaN outward.
+     */
+    /* AND THE ONE THAT WAS NOT FOR HIM AT ALL, COUNTED. `screened` is
+     * cumulative and monotone for the reason `guardSpent`'s own note gives: a
+     * rate cannot be read off a pool that four other things spend. It is the
+     * only number that separates a Jedi who is covering his line from one who
+     * is merely standing in it, and `tools/checks/screen.mjs` reads it. */
+    if (snap && snap.screen > 0) owner.screened = (owner.screened || 0) + 1;
+    const cost = guardCost(res.grade, snap);
+    if (cost.stamina > 0 && typeof owner.stamina === 'number') {
+      const paid = Math.min(cost.stamina, owner.stamina);
+      owner.stamina = Math.max(0, owner.stamina - cost.stamina);
+      owner.guardSpent = (owner.guardSpent || 0) + paid;
+    }
+    if (cost.force > 0 && typeof owner.force === 'number') {
+      const paid = Math.min(cost.force, owner.force);
+      owner.force = Math.max(0, owner.force - cost.force);
+      owner.guardForceSpent = (owner.guardForceSpent || 0) + paid;
+    }
     this.report({ type: 'deflect', grade: res.grade });
   }
 
@@ -3446,6 +4030,29 @@ export class World {
       this.onHitmark?.(ev.point, t.player.alive ? 'cut' : 'kill', ev.bone);
       P.cutFlare(ev.point, null, player.saber.color.getHex(), 18);
       audio.cut(ev.point, false);
+    } else if (t.door) {
+      /**
+       * A DOOR'S "CUT" IS STILL A BURN — otherwise a frame of the hold is
+       * thrown away every five seconds.
+       *
+       * A blast door's capsules are `structure` capsules with
+       * `TOUGHNESS.blastdoor` on them (see `BlastDoor.capsules`), so the solver
+       * accumulates press work against them exactly as it does against a
+       * column: `dWork = speed·dt·WORK_RATE`, and `cutNeed` for a blast-door
+       * capsule is 110 — a few seconds of a swing's contact, and reachable by a
+       * long hold too. On the frame that budget fills the solver emits `cut`
+       * INSTEAD of `grind`, and the grind branch above is where `burn()` lives,
+       * so the door lost that frame's melt and took a 0.14 s cooldown on the
+       * capsule on top of it.
+       *
+       * There is nothing to sever here: a door is one plate and the thing that
+       * happens when you get through it is `breach()`, which `burn()` decides
+       * for itself off the kerf map. So the frame's work is spent the same way
+       * every other frame of the hold spends it, and the fall-through below
+       * (which did nothing at all for a door) is gone.
+       */
+      t.door.burn(ev.point, ev.speed * player.boonMods.cutPower, dt);
+      P.slag(ev.point, _v1.subVectors(ev.point, player.saber.base).normalize(), 0xffb040);
     } else if (t.prop) {
       const halves = t.prop.cut(ev.point, ev.normal, ev.impulse);
       if (!halves) t.prop.shatter(ev.impulse, ev.point);
@@ -3668,7 +4275,48 @@ export class World {
      * One gate, asked of the deflector's own side.
      */
     const side = asTeam(owner.team);
-    if (bolt.team === side) return;
+    /**
+     * …AND THE MAN WHOSE SHOT IT WAS. FLAGSHIP §7's BREAK verb, billed at the
+     * one door every turned bolt in the game passes through — see
+     * `Nerve.boltAnswered`, which owns the amount, the routing and the reason.
+     * A player is not a body with a ledger, so the deflector's own side is
+     * asked first and `this.players` filters the other end.
+     */
+    if (bolt.team !== side && !this.players.includes(bolt.owner)) boltAnswered(bolt.owner);
+    /**
+     * ── AND THE ONE THING THAT IS ALLOWED TO BE OURS ALREADY: A STRAY ──────
+     *
+     * The screen answers a bolt on its way into one of YOUR OWN MEN, and
+     * measured on a real Command battle every such bolt was fired by your own
+     * line — 47 hits, 569.8 damage, seed 3, and not one of them hostile. So
+     * the gate above, which is right about every other contact in the game,
+     * would refuse the only fire the mechanic exists to stop.
+     *
+     * A stray is KNOCKED DOWN rather than turned, and that is the honest
+     * picture as well as the safe one. There is nothing to send it back at —
+     * it is your own man's shot — and `_creditDeflect` would raise its damage
+     * by the grade and push its life back to 2.2 s, so a batted stray would go
+     * on through the rank harder and for longer than it arrived. It costs the
+     * same Force by the metre as any other screened bolt, through the same
+     * `guardCost`, and it is counted in the same place.
+     */
+    if (bolt.team === side) {
+      if (!(hit.screen > 0)) return;
+      const cost = guardCost(GRADE.BLOCK, { screen: hit.screen });
+      if (typeof owner.force === 'number' && cost.force > 0) {
+        const paid = Math.min(cost.force, owner.force);
+        owner.force = Math.max(0, owner.force - cost.force);
+        owner.guardForceSpent = (owner.guardForceSpent || 0) + paid;
+      }
+      owner.screened = (owner.screened || 0) + 1;
+      owner.strayed = (owner.strayed || 0) + 1;
+      bolt.active = false;
+      owner.saber.strain(0.3);
+      this.particles.sparkBurst(bladePoint, null, 8, { speed: 6 });
+      audio.deflect(bladePoint, 0);
+      this.onDeflectFeedback?.(GRADE.BLOCK, bladePoint, 'a stray off your own line, stopped');
+      return;
+    }
 
     if (!isPlayer) {
       // an enemy duelist batting a bolt away — no grading, just a deflection
@@ -3682,7 +4330,7 @@ export class World {
     }
 
     // Freeze the blade half of the grade NOW; the aim half waits for the throw.
-    const snap = captureSnapshot(bolt, owner.saber, { bladeT: hit.bladeT, point: bladePoint, auto: hit.auto });
+    const snap = captureSnapshot(bolt, owner.saber, { bladeT: hit.bladeT, point: bladePoint, auto: hit.auto, screen: hit.screen });
     const cw = owner.boltCatch;
 
     // ── CAUGHT. Only a driven blade takes hold of a bolt: `snap.caught` is the
@@ -3690,7 +4338,13 @@ export class World {
     // A blade you merely parked in the way still blocks, and a block still
     // scatters — which is precisely what stops catch-and-throw from collapsing
     // into hold-the-button-and-win.
-    if (cw && snap.caught) {
+    /* `!snap.screen` — A SCREENED BOLT CANNOT BE CAUGHT AND HELD. The catch
+     * window pins the bolt onto the blade (`bolts.hold`), and this contact
+     * happened up to fourteen metres from it: the bolt would jump the width of
+     * a rank to stick to a weapon that was never near it. Turning it aside
+     * where it is is both the honest picture and the one the mechanic is named
+     * after. */
+    if (cw && snap.caught && !snap.screen) {
       // Stack them along the blade so three caught in a flurry are three
       // visible objects and not one. add() has to come FIRST: it is the thing
       // that can refuse (the blade is already carrying maxHeld), and a bolt
@@ -3727,7 +4381,7 @@ export class World {
     bolt.pos.copy(bladePoint);
     bolt.prev.copy(bladePoint);
     bolt.vel.copy(res.dir).multiplyScalar(bolt.speed * (res.grade >= GRADE.RETURN ? 1.25 : 1));
-    this._creditDeflect(owner, bolt, res, bladePoint);
+    this._creditDeflect(owner, bolt, res, bladePoint, snap);
     audio.deflect(bladePoint, res.grade);
     /* A BOLT LANDING ON YOUR BLADE IS THE MOST TACTILE EVENT IN THE GAME and it
      * reached the pad through nothing at all. Scaled by the grade so a lucky
@@ -3748,6 +4402,92 @@ export class World {
       if (res.grade === GRADE.PERFECT) { this.addHitstop(0.07); this.engine.flash(0.09); }
     }
     this.onDeflectFeedback?.(res.grade, bladePoint, DEFLECT_WHY[res.grade]);
+  }
+
+  /**
+   * ── A BOLT INTO A BODY, AND THE QUESTION OF WHO BILLS IT ────────────────
+   *
+   * Every hostile round is fired on BOTH machines. `_spawnNetBolts` puts the
+   * host's shots into the client's own pool as real bolts, deliberately and for
+   * a reason DESIGN.md is about — a guest has to be able to deflect one, catch
+   * it, and send it home — and this hit test then resolves them against the
+   * client's own mirrors of the horde. `_reconcileClaims` measures a claim as
+   * whatever hp a mirror has lost since the last snapshot "whatever dealt it",
+   * so without this the host was billed a second time for its own fire: one
+   * round fired by one host trooper, simulated twice and charged twice.
+   *
+   * Measured before the rule, on a real co-op Command pair on geonosis with the
+   * joining player holding `idleInput` and firing nothing: the client's copies
+   * of the horde lost 273.1 hp to bolts nobody on that machine had fired, 317
+   * claims went back up the wire, and the host applied 42.2 hp of them to the
+   * horde ON TOP of the 187.8 hp of the same bolts it had already applied
+   * itself — a 22% surcharge on the horde's whole bolt attrition, paid by
+   * nothing anybody did.
+   *
+   * THE RULE IS NOT "DO NOT SIMULATE IT". That would delete the deflection the
+   * replication exists to allow. It is:
+   *
+   *   a replicated bolt that no local hand has touched resolves here exactly as
+   *   it resolved on the host, so the host has already billed it — move the
+   *   baseline by what it took and claim nothing;
+   *
+   *   a replicated bolt the local player DEFLECTED, caught and threw, or pulled
+   *   out of the air is a bolt whose path only this machine knows about, and
+   *   the host cannot have applied it — bill it exactly like any other blow.
+   *
+   * The discriminator is the OWNER, asked at the moment of the hit rather than
+   * stamped by whoever changed it. Every door that takes a bolt off its course
+   * — `_creditDeflect`, the catch-and-throw, `Player._launchStasisItem` —
+   * writes the new holder into `bolt.owner`, and on a client the only owner
+   * that is not a mirror of something the host is simulating is this machine's
+   * own player. A list of call sites clearing a flag would be one more list
+   * waiting to be forgotten, which is the defect `_reconcileClaims` itself
+   * exists to have already fixed.
+   *
+   * This is the same move `_stepNetEnemies` makes for a shove the host is also
+   * integrating, and the mirror image of the rule `RemoteAvatar._tellHit`
+   * already applies in the other direction: the host does not bill a peer for a
+   * bolt, because the peer is resolving that one itself.
+   */
+  _boltHurt(e, dmg, hit, bolt) {
+    const hp0 = e.hp;
+    const killed = e.damage(dmg, hit, bolt.owner, 'bolt');
+    this._netBoltBilled(e, hp0, bolt);
+    return killed;
+  }
+
+  /**
+   * The half of `_boltHurt` that is about the wire, split out because the
+   * grip-shield's bite is the one bolt hit in this file that does not go
+   * through `Enemy.damage` here — it is taken by a closure in Player.js — and
+   * a held body is being shot to pieces on the host at the same time.
+   *
+   * @param hp0  the body's health BEFORE the blow, so this measures what the
+   *   game decided rather than what the caller asked for: resistances, armour
+   *   and a body already at 3 hp all make those different numbers.
+   */
+  _netBoltBilled(e, hp0, bolt) {
+    if (this.netMode !== 'client' || !bolt.replicated || bolt.owner?.isLocal) return;
+    if (!e || e._netHp === undefined) return;
+    e._netHp -= Math.max(0, hp0 - e.hp);
+    /**
+     * …AND A BODY THE HOST'S OWN ROUND PUT DOWN HERE IS NOT A KILL TO CLAIM.
+     *
+     * `_reconcileClaims` bills a mirror this machine has killed and the host
+     * still has standing for the WHOLE rest of its health, and that clause is
+     * where most of the surcharge actually came from — not from the hp, from
+     * the deaths. Rounding puts the two copies a point or two apart, so the
+     * client's copy goes down on a round the host's copy survives; the next
+     * snapshot writes the host's hp back over a body that is already dead here
+     * and resets `_netDead`, and the mirror then claims its own full health
+     * every tick for the rest of the session. Measured on the pair: one B1
+     * claiming 28 hp and then 0 hp, over and over, off one bolt.
+     *
+     * A flag rather than `_netDead`, because the snapshot owns that field and
+     * rewrites it 18 times a second. This one is a fact about how this copy
+     * died and nothing later can make it untrue.
+     */
+    if (e.dead) { e._netDead = true; e._netHostKill = true; }
   }
 
   _boltHitTest(bolt, from, to) {
@@ -3790,11 +4530,40 @@ export class World {
          * cover is being shot to pieces while you hold it, which is the whole
          * bargain and is why this cannot simply be an invulnerability window.
          */
+        /**
+         * THE FORCE BARRIER — the sphere, not the held body.
+         *
+         * Tested FIRST and tested from the outside in: `segmentSphere` hands
+         * back the ENTRY point so the flash lands on the surface of the bubble
+         * rather than on the player inside it, and it refuses a bolt whose
+         * muzzle is already inside the radius. That refusal is the rule that
+         * makes the power a barrier instead of an invulnerability window — a
+         * droid that walks the two metres in and fires point blank is shooting
+         * a man, and the bubble is behind its gun.
+         *
+         * `shieldAbsorb` is what charges for it: every bolt that dies here
+         * costs SHIELD.bolt on top of the per-second hold, and the raise ends
+         * the moment the bar cannot pay. See Player.SHIELD.
+         */
+        const bubble = p.shieldSphere?.();
+        if (bubble) {
+          const at = segmentSphere(from, to, bubble.c, bubble.r);
+          if (at) {
+            p.shieldAbsorb(at);
+            this.particles.sparkBurst(at, null, 10, { speed: 6, color: 0x8fd8ff });
+            return { point: at, normal: _v3.subVectors(from, to).normalize().clone(), victim: null };
+          }
+        }
         const shield = p.shieldBody?.();
         if (shield) {
           const hit = segmentNear(from, to, shield.p0, shield.p1, shield.r);
           if (hit) {
+            /* The bite is a bolt into a body the host also owns, so it is the
+             * same billing question the enemy loop below asks. See
+             * `_netBoltBilled`. */
+            const held = shield.victim, heldHp = held ? held.hp : 0;
             shield.take(bolt.damage, hit, bolt.owner);
+            this._netBoltBilled(held, heldHp, bolt);
             this.particles.sparkBurst(hit, null, 8, { speed: 5, color: 0xffc070 });
             return { point: hit, normal: _v3.subVectors(from, to).normalize().clone(), victim: shield.victim };
           }
@@ -3826,8 +4595,39 @@ export class World {
        * enemy fire on itself" is half of what the note asks for, and a shot
        * that cannot hit the thing that fired it cannot do that. */
       const friendly = bolt.deflected || bolt.turned;
-      if (bolt.team === 1 && !friendly) continue;
-      if (bolt.team === 1 && bolt.owner === e && !bolt.turned) continue;
+      /**
+       * ── AND THIS LINE MADE YOUR ARMY BULLETPROOF. MEASURED. ─────────────
+       *
+       * It read `if (bolt.team === 1 && !friendly) continue;` — an early-out
+       * over the WHOLE loop for every hostile bolt in the game, on the premise
+       * the `canHarm` clause below already writes down and contradicts: "the
+       * two rules above sort bolts by the literal team 1, which is right for as
+       * long as everything in `this.enemies` is on it. Command puts your troops
+       * in that same array on the PARTY's team."
+       *
+       * They do, and this line skipped them too. So in the one mode whose whole
+       * subject is a list of names that only shrinks, **the enemy's rifles
+       * could not touch it.** Measured on a real Command world on geonosis,
+       * ten troopers formed up with a wave shooting at them: 90 seconds, roster
+       * 10 of 10, every man at full health, and a synthetic bolt driven
+       * straight through a trooper's own capsule mid-line by `_boltHitTest`
+       * returns NO HIT while the identical segment through a droid returns the
+       * droid. Your line could be killed by a blade, a grenade or a stratagem
+       * and by nothing that was fired at it.
+       *
+       * The `canHarm` call thirty lines down is the real gate and it already
+       * gets every one of these cases right — a droid's bolt into a droid is
+       * refused for the same team, a droid's bolt into a trooper is allowed
+       * because the teams differ. What this line is for is the CHEAP reject
+       * that keeps that call off the hot path, so it is restated as the
+       * cheap half of the same question: skip only when the bolt and the body
+       * are on the same side. It is no longer a statement about the number 1.
+       *
+       * The owner clause loses its `team === 1` for the same reason — "a body
+       * cannot shoot itself" was never a fact about one team.
+       */
+      if (bolt.team === (e.team ?? 1) && !friendly) continue;
+      if (bolt.owner === e && !bolt.turned) continue;
       /**
        * …AND THE THIRD WAY, WHICH IS AN ARMY OF YOUR OWN.
        *
@@ -3863,12 +4663,83 @@ export class World {
        * other is just a bolt that changed hands.
        */
       if (bolt.owner && !bolt.turned && !canHarm(bolt.owner, e, this.rules)) continue;
+      /**
+       * ── THE FORCE IS A MULTIPLIER ON OTHER PEOPLE'S GUNS ────────────────
+       *
+       * FLAGSHIP §7's third verb, and until this line it did not exist:
+       *
+       *   "OPEN — `openness()` is the most under-used system in the tree (held
+       *    ×3.0, yanked ×2.0, downed ×1.5) and its own comment says it is
+       *    invisible. Grip a B2 and the ten riflemen who needed 17 seconds need
+       *    six. The Force is a multiplier on other people's guns."
+       *
+       * `grep -rn 'openness(' src/` returned ONE call site — `Combat.js`, the
+       * blade's own slash rate — and a comment in the HUD. So a body held off
+       * the floor, yanked off balance or toppled was easier for YOUR BLADE to
+       * cut and no easier for anybody else to shoot, and the sentence above was
+       * a description of a system that had never been wired to a gun.
+       *
+       * It is exactly why the Dead Jedi test reads the way it does: five seeds,
+       * three arms, and the enemy body count does not move (37.4 / 36.8 / 36.4)
+       * whatever the Jedi does. The Force could not help the line's guns
+       * because nothing asked it to.
+       *
+       * THE ENEMY BRANCH ONLY, and that is not an oversight. `OPEN_STATES`
+       * tests `gripped`, `yankT` and `toppled || stunTimer` — fields a body
+       * that the FORCE has taken hold of carries. The player's own bad moments
+       * are already priced by the stagger, and multiplying incoming fire while
+       * they are staggered is a death spiral rather than a mechanic.
+       */
+      /**
+       * ── A BODY-SPHERE REJECT, BEFORE THE BONES ARE BUILT ──────────────────
+       *
+       * `Enemy.capsules()` rebuilds every bone of a body from its rig, every
+       * time it is asked, and this loop asked it for EVERY enemy on the field
+       * for EVERY bolt in the air. Measured on a real Geonosis with the blade
+       * lit and 39 live bodies: **463 calls a frame, 8,797 capsule entries, and
+       * 16.43 ms** — a quarter of a 60 Hz frame at a fifth of the body count
+       * FLAGSHIP §10 measured its own "39% of the frame" at. §10 lists this as
+       * item 3 and calls it "a live bug today", which it was.
+       *
+       * The blade path above already rejects on distance before it gathers; the
+       * bolt path had nothing. A segment-versus-sphere test on the body's own
+       * bound is the cheapest possible answer and it is exact in the direction
+       * that matters: a bolt that misses the sphere cannot touch a bone inside
+       * it, so nothing that could have been hit is dropped.
+       *
+       * THE SPHERE IS MEASURED, NOT GUESSED. A first attempt built it out of
+       * `radius` and `chestY`, and that is a trunk width and a chest height,
+       * neither of which is a bound: the fan below lost 134 of 13,320 bolts on
+       * the dwarf spider alone, whose legs stand its capsules 2.7 m up and well
+       * outside the hull radius. `boltBound` instead takes one `capsules()`
+       * call and wraps what the body ACTUALLY presents.
+       */
+      /* `_bolt4` and not a shared scratch: `segmentNear` builds its own
+       * working vectors out of `_v4`, `_v5`, `_a` and `_b`, so handing it one
+       * of those AS the point it is measuring to is handing it a variable it
+       * is about to overwrite. Measured with `_v4`: 5,585 of 13,320 fanned
+       * bolts changed their answer, which is a fifth of the roster's hit boxes
+       * going missing rather than an optimisation. */
+      const bound = this._noBoltReject ? null : boltBound(e);
+      if (bound) {
+        _bolt4.copy(e.position).setY(e.position.y + bound.y);
+        /* `segmentNear` with a degenerate second segment IS a segment-to-point
+         * test, and it is the same routine the bone pass below uses — one
+         * reader for "does this bolt come within r of that", rather than a
+         * second distance function that could disagree with it about a
+         * grazing hit. */
+        if (!segmentNear(from, to, _bolt4, _bolt4, bound.r)) continue;
+      }
+      const open = openness(e);
       const caps = e.capsules();
+      /* Every pass that got through re-measures for free, so a pose that
+       * reaches further than the bake widens the sphere for the next bolt. */
+      if (bound) growBoltBound(e, caps);
       for (const c of caps) {
         if (c.shield) {
           const hit = segmentNear(from, to, c.p0, c.p1, c.r);
           if (hit) {
-            e.damage(bolt.damage, hit, bolt.owner, 'bolt');
+            this._boltHurt(e, bolt.damage * open, hit, bolt);
             this.particles.sparkBurst(hit, null, 10, { speed: 5, color: 0x88ffcc });
             return { point: hit, normal: _v3.subVectors(from, to).normalize().clone(), victim: e, bone: 'shield' };
           }
@@ -3877,8 +4748,29 @@ export class World {
         const hit = segmentNear(from, to, c.p0, c.p1, c.r);
         if (!hit) continue;
         const vital = c.vital ?? 0.4;
-        const dmg = bolt.damage * lerp(0.6, 1.9, vital);
-        const killed = e.damage(dmg, hit, bolt.owner, 'bolt');
+        const dmg = bolt.damage * lerp(0.6, 1.9, vital) * open;
+        const killed = this._boltHurt(e, dmg, hit, bolt);
+        /**
+         * ── AND A BOLT SENT HOME BREAKS A NERVE. FLAGSHIP §7's SECOND VERB ──
+         *
+         *   "TURN — a returned bolt that kills its firer counts on THEIR
+         *    morale ledger. Every bolt sent home deletes a rifle and breaks a
+         *    nerve. Only 5% RETURN / 9% PERFECT by speed alone: a hundred hours
+         *    will not exhaust it."
+         *
+         * `witnessDeath` has already run inside `damage` — the rank pays for
+         * the body either way — and this is the SECOND fact: it was their own
+         * fire that did it. Three times the ordinary knock (see NERVE.TURNED),
+         * and it is the only term in that table a player earns by skill.
+         *
+         * `bolt.deflected` AND a deflector, not "the bolt hit the man who fired
+         * it". The design's second sentence is the operative one: what breaks a
+         * rank is watching its own fire come back, and the return goes to
+         * whoever was under the reticle. The strict case — the firer himself —
+         * is a subset and `tools/checks/nerve.mjs` reports its share rather
+         * than the game paying differently for it.
+         */
+        if (killed && bolt.deflected && bolt.deflector) turnedHome(this.enemies, e);
         if (bolt.owner instanceof Player) {
           bolt.owner.score += killed ? 150 : 25;
           this.onHitmark?.(hit, killed ? 'kill' : 'hit');
@@ -3940,6 +4832,21 @@ export class World {
      */
     this.corpses?.take(enemy);
     this.command?.onDeath(enemy, source);
+    /**
+     * …AND THE MEN AROUND HIM SAW IT. FLAGSHIP §7's BREAK verb.
+     *
+     * ABOVE the casualty return below, and deliberately: a body coming apart
+     * eleven metres away is the same event whichever side it belonged to, and
+     * `witnessDeath` reads the side off the corpse so only its own rank pays.
+     * Putting it under the return would mean a formation only broke when the
+     * player was killing the army the composer happened to call the enemy.
+     *
+     * Bodies with a roster record are skipped inside `shakeNerve` — a name on a
+     * roll is `CommandDirector.shake`'s to move, and it does three more things
+     * with the event than this does (the log, the "IS BREAKING" call, the flag
+     * the steering reads). This is the half of the field that has no roll.
+     */
+    witnessDeath(this.enemies, enemy);
     /* BEFORE the casualty return below, and deliberately so: one of your own
      * troopers falling is not a reward, but it is still a body hitting the
      * ground three metres away and it has to make the sound and move the frame.
@@ -3950,7 +4857,38 @@ export class World {
      * killing something on the other side, and it must not pay out for losing
      * one of your own. */
     if (enemy.team !== undefined && enemy.team !== 1 && this.command) return;
+    /**
+     * …AND A CONSCRIPT PAYS NOTHING AT ALL. FLAGSHIP §6's third body class.
+     *
+     * "6 hp, 1.4 dps, one pass, worth 0 score and 0 Insight. The lawnmower is
+     * only a lawnmower when mowing pays. Forty conscripts that pay nothing are
+     * weather."
+     *
+     * Zero score alone does not make that true: the four lines below this one
+     * hand out war support, flow, a combo and a kill-feed entry, and every one
+     * of them is a reward for the same act. A body worth no score that still
+     * fed the Flow meter would be worth MORE than a B1 per second of blade
+     * time, which is the exact opposite of the design.
+     *
+     * DERIVED FROM `score`, not from a second flag. One field says whether a
+     * body is worth killing, so a future archetype cannot be half-conscript by
+     * forgetting the other one — the class is a property of the roster row and
+     * the roster row is one number. `paysOut` is exported so a check can ask
+     * the same question the game asks (HANDOFF §2.4).
+     *
+     * WHAT IT DOES NOT TOUCH: `kills`, because a body that went down went
+     * down and the run summary is a record rather than a reward; the corpse
+     * budget and the Command roster above, because a conscript's death is
+     * still a death on the field; and `_killFelt`, because a body hitting the
+     * ground three metres away has to make the sound whatever it was worth.
+     */
+    if (!paysOut(A)) { if (source instanceof Player || source?.isRemote) source.kills++; return; }
     this.score += A.score;
+    /* AND THE FLEET NOTICES. War support is what stratagems cost now, and it
+     * builds off the side doing well — see src/game/Support.js. Hung here
+     * beside the score because they are the same event answered twice: a body
+     * on the other side is down. */
+    this.support?.credit('kill');
     /**
      * `instanceof Player` OR a peer's avatar.
      *
@@ -4136,8 +5074,19 @@ export class World {
     this._netEnemyIndex = new Map();
     this._netPack = { packAvatar, packSnapshot };
     this._netFires = [];
+    /* …and the grenades, on the same wire and for the same reason. */
+    this._netNades = [];
+    this._netBlasts = [];
+    /* …and the architecture. A wall coming down is a thing that HAPPENS too,
+     * and it was the last big class of them that was not on the wire: measured
+     * over the pair harness, 8 of 11 pieces the host demolished were still
+     * standing on the joining player's screen. Filled by
+     * `Destruction._netRecord`, drained by `packSnapshot`, replayed by
+     * `_spawnNetRubble`. The whole argument is in src/world/Destruction.js's
+     * REPLICATION block. */
+    this._netRubble = [];
     this._netWave = { w: this.director?.wave ?? 1, act: 0, started: false };
-    if (mode === 'host') this._recordFires();
+    if (mode === 'host') { this._recordFires(); this._recordNades(); }
     if (mode === 'client') this._netDirector();
   }
 
@@ -4155,6 +5104,105 @@ export class World {
    * cannot miss a caller, and a new kind of shooter is replicated the day it is
    * written rather than the day somebody remembers to add it here.
    */
+  /**
+   * EVERY GRENADE THE FIELD THROWS, AS AN EVENT — the same shape as the bolts
+   * one below it, and for the same reason.
+   *
+   * A snapshot is a set of STATES, and a grenade is not a state either: it is
+   * an arc, a shout, a body diving away from it and a hole in the ground, all
+   * of which happen and are over. `NEXT.md` had it as an open gap in exactly
+   * those words — *"GrenadeField is host-side only, so a co-op client sees no
+   * grenade, no shout and no crater. Not a desync — a gap."*
+   *
+   * RECORDED AT THE FIELD rather than at the thrower, because
+   * `GrenadeField.throw` is the one seam every grenade in the game passes
+   * through — `Enemy._maybeGrenade` throws one, `Reactions.stepReaction`
+   * throws one back, and anything written next month goes through the same
+   * door. That is the argument `_recordFires` makes and it is the reason
+   * neither of these can miss a caller.
+   *
+   * WHAT CROSSES: where it left, where it was aimed, whose it is and how long
+   * is left on the fuse. The client rebuilds the arc from those four rather
+   * than being streamed a position every frame — `LiveGrenade` derives its
+   * flight time and its apex from the throw alone, so the two ends agree
+   * without a byte per frame, and a grenade that has been thrown BACK is
+   * simply a second event.
+   */
+  _recordNades() {
+    const field = this.grenades;
+    if (!field || field._netRecorder) return;
+    const inner = field.throw.bind(field);
+    field._netRecorder = true;
+    field.throw = (from, to, opts = {}, ...rest) => {
+      const g = inner(from, to, opts, ...rest);
+      if (g && this._netNades && this.netMode === 'host' && !opts.ghost) {
+        this._netNades.push([
+          r2(from.x), r2(from.y), r2(from.z),
+          r2(to.x), r2(to.y), r2(to.z),
+          opts.owner?.team ?? opts.team ?? 1,
+          Math.round((g.fuse - g.t) * 100) / 100,
+        ]);
+      }
+      return g;
+    };
+  }
+
+  /**
+   * …AND THE CLIENT'S COPY IS A PICTURE. See `Reactions.LiveGrenade`'s `ghost`.
+   *
+   * It flies the same arc, makes the same noise, is dived away from by the
+   * same men and leaves the same hole — and it does no damage at all, because
+   * the host already did it and the result arrives as hp in the next snapshot.
+   * A client that also applied the blast would kill the same droid twice on
+   * its own screen and then be corrected, which is the visible version of a
+   * desync.
+   */
+  _spawnNetNades(nades) {
+    if (!nades || !nades.length || !this.grenades) return;
+    for (const n of nades) {
+      const [x, y, z, tx, ty, tz, team, fuse] = n;
+      _v1.set(x, y, z); _v2.set(tx, ty, tz);
+      this.grenades.throw(_v1, _v2, { team, fuse, ghost: true });
+    }
+  }
+
+  /** …and the client's copy of a blast, for the reason `_spawnNetNades` gives. */
+  _spawnNetBlasts(blasts) {
+    if (!blasts || !blasts.length) return;
+    for (const b of blasts) {
+      const [x, y, z, size] = b;
+      /* Through `this.onExplosion` and NOT the World method by name, because
+       * Destruction replaces the property with a wrapper at load and the
+       * structural half of the blast lives in that wrapper.
+       *
+       * That wrapper now REFUSES on a client — every break arrives on `rb`
+       * instead, `_spawnNetRubble` below — and this call still has to go
+       * through it, because a wrapper that is asked and declines is the only
+       * shape that keeps one door for the whole thing. See Destruction's
+       * `_netAllows`. */
+      /* NOT a shared scratch vector: `onExplosion` writes `_v1` in its own
+       * body loop, and passing `_v1` in as `centre` means every body after the
+       * first is shoved away from a point that has already been overwritten. */
+      this.onExplosion(_blastAt.set(x, y, z), size, { ghost: true });
+    }
+  }
+
+  /**
+   * …AND THE CLIENT'S COPY OF A BUILDING COMING DOWN, for the reason
+   * `_spawnNetNades` gives about the grenade: the host has already decided
+   * what fell, and a client that decided for itself would be holding a
+   * different level from the one everybody else is fighting in.
+   *
+   * The whole of the replay is in src/world/Destruction.js — one call rather
+   * than a loop here, because which piece an event names and what it does to
+   * it is that file's business and not this one's, and a second copy of the
+   * decoding beside the encoder is this repository's signature defect.
+   */
+  _spawnNetRubble(list) {
+    if (!list || !list.length) return 0;
+    return this.destruction?.netReplay?.(list) ?? 0;
+  }
+
   _recordFires() {
     const pool = this.bolts;
     if (!pool || pool._netRecorder) return;
@@ -4341,6 +5389,45 @@ export class World {
    *
    * Returns the commanders, so a caller can say who is leading what.
    */
+  /**
+   * A SECOND PLAYER ON YOUR SIDE, TAKING A SQUAD OUT OF YOUR ROSTER.
+   *
+   * FLAGSHIP §9: "`SQUAD = 5` is already the unit and `CommandRoster.squads()`
+   * already slices the living list into fives. Four players take four squads
+   * out of one roster of up to 24."
+   *
+   * `beginVersus` above is the OTHER answer to a second player — two armies
+   * facing each other — and it was the only one that existed: a peer joining a
+   * Command run got a body, a blade and no army at all, because nothing
+   * anywhere called `enlistCommander` outside a meeting. So co-op in the
+   * flagship mode was one general and up to three tourists.
+   *
+   * ONE ROSTER IS WHAT MAKES IT ONE LINE RATHER THAN FOUR. The commander is
+   * enlisted on the local commander's side and army, which is the key
+   * `CommandDirector._rosterFor` deals on, so the joining player shares the
+   * roll, shares the purse — §9's actual co-op mechanic, "a Heavy for your
+   * squad or an ARC for mine" — and musters nobody new. `squadsOf` deals the
+   * squads that already exist between however many people are holding them.
+   *
+   * HOST ONLY, like every other authority in this file: a client's director is
+   * a shell that says what it was told (`_netShell`), and a shell that enlisted
+   * commanders of its own would be inventing an army the host does not have.
+   *
+   * @returns the Commander, or null when this is not that kind of session.
+   */
+  seatAlly(player) {
+    const d = this.command;
+    if (!d || d.versus || !player) return null;
+    if (this.netMode !== 'host') return null;
+    const mine = d.commander;
+    if (!mine) return null;
+    /* THE SAME SIDE. `canHarm` is the one gate every damage path consults and
+     * it reads the number — a co-op ally on side 0 while the host is on side 2
+     * is a friendly fire incident waiting for the first sweep. */
+    player.team = mine.side;
+    return d.enlistCommander({ player, side: mine.side, army: mine.army });
+  }
+
   beginVersus(players = null) {
     const d = this.command;
     if (!d || !d.versus) return null;
@@ -4832,7 +5919,12 @@ export class World {
       const base = e._netHp;
       if (base === undefined) continue;
       const lost = base - e.hp;
-      const killed = e.dead && !e._netDead;
+      /* …UNLESS THE HOST'S OWN FIRE IS WHAT PUT IT DOWN HERE. See
+       * `_netBoltBilled`: the snapshot rewrites `_netDead` at 18 Hz, so a
+       * mirror killed locally by a replicated bolt that the host's own copy
+       * survived would re-claim its whole remaining health on every tick,
+       * forever. `_netHostKill` is the fact the snapshot cannot overwrite. */
+      const killed = e.dead && !e._netDead && !e._netHostKill;
       if (lost < 0.05 && !killed) continue;
       // A body this machine has killed that the host still has standing is
       // worth the whole rest of its health, or the host keeps it alive and
@@ -5021,6 +6113,9 @@ export class World {
       if (dead && !e.dead) e.die(e.position.clone(), null, 'net');
     }
     this._spawnNetBolts(msg.bf);
+    this._spawnNetNades(msg.gn);
+    this._spawnNetBlasts(msg.ex);
+    this._spawnNetRubble(msg.rb);
     /**
      * AN ID THE HOST HAS STOPPED SENDING IS GONE, dead or not.
      *
@@ -5352,9 +6447,21 @@ export class World {
        * literal said and what an unattributed bolt in this game has always
        * been.
        */
+      /**
+       * `replicated` IS WHAT KEEPS THIS SHOT OFF THE CLIENT'S BILL.
+       *
+       * The bolt is real here and has to be — it is the whole reason this
+       * method exists — so it resolves against this machine's copy of the
+       * horde and takes hp off it. That hp is not this machine's to claim: the
+       * host fired the same round on its own field and has already applied it.
+       * One flag, set at the ONE door a bolt off the wire comes through, is
+       * what `_boltHurt` reads to tell the two apart. It is deliberately not
+       * derived from the owner — an emplacement's rounds are nobody's body and
+       * arrive here with `owner` null.
+       */
       this.bolts.fire(_v1, _v2, {
         speed, damage, color, owner, team: owner ? asTeam(owner.team) : TEAM.HORDE,
-        big: !!big, turned: !!turned,
+        big: !!big, turned: !!turned, replicated: true,
         length: big ? 2.4 : 1.15, radius: big ? 0.1 : 0.05,
       });
       audio.blaster(_v1, !!big);
@@ -5660,7 +6767,12 @@ export class World {
        */
       const at = msg.g ? asVec(msg.p) : null;
       if (at) {
-        e.gripped = true;
+        /* Through the same door a local grip uses, and with a lease long
+         * enough to outlive the gap between claim ticks — see `Enemy.hold`.
+         * `_netGripLeases` below is still the authority on a peer that has
+         * gone quiet; this stops a body being stranded in the window where a
+         * host's own copy of the gripper goes away underneath it. */
+        e.hold(NET_GRIP_LEASE * 2);
         e.liftTarget = (e._netLift ||= new THREE.Vector3()).copy(at);
         /**
          * A LEASE, because a held body is the one state a lost connection can
@@ -5673,7 +6785,7 @@ export class World {
          */
         e._netGripUntil = this.time + NET_GRIP_LEASE;
       } else {
-        e.gripped = false; e.liftTarget = null; e.chokeT = 0;
+        e.releaseHold();
         e._netGripUntil = 0;
       }
     }
@@ -5692,7 +6804,7 @@ export class World {
     for (const e of this.enemies) {
       if (!e._netGripUntil || this.time < e._netGripUntil) continue;
       e._netGripUntil = 0;
-      e.gripped = false; e.liftTarget = null; e.chokeT = 0;
+      e.releaseHold();
     }
   }
 
@@ -5854,6 +6966,104 @@ const DEFLECT_WHY = [
 /* ── helper: closest approach between two segments ───────────────────── */
 
 const _a = new THREE.Vector3(), _b = new THREE.Vector3();
+/* The bolt pass's own, for the reason its call site gives: `segmentNear`
+ * consumes `_v4`, `_v5`, `_a` and `_b` itself. */
+const _bolt4 = new THREE.Vector3();
+
+/**
+ * THE SPHERE THE BOLT BROAD PHASE REJECTS AGAINST.
+ *
+ * Baked from one `capsules()` call and cached on the body, as `{ y, r }`
+ * relative to `position`: every capsule endpoint, grown by its own radius, then
+ * a margin for the swing of a pose the bake did not happen to catch. Bolts that
+ * DO get through re-measure through `growBoltBound`, so the sphere only ever
+ * widens and a body that reaches further than its bake fixes itself.
+ *
+ * Returns null — meaning "test every bone, reject nothing" — for a ragdoll.
+ * A ragdoll's capsules are placed by the solver and sprawl metres from
+ * `position`, which is still standing where the body fell; no sphere centred
+ * there is honest, and there are few enough loose corpses that the saving is
+ * not worth a wrong answer.
+ */
+/* The far end of the segment `_screenDesc.hits` runs forward along a bolt's
+ * line. Module scope for the reason every other scratch here is: the test runs
+ * per candidate body per screened bolt and must not allocate. */
+const _screenEnd = new THREE.Vector3();
+
+function boltBound(e) {
+  if (e.actor?.ragdolled) return null;
+  /* The bubble is a capsule too, so a shield coming up or going down changes
+   * what the body presents. Rebake rather than carry a stale bound. */
+  const sh = !!e.shieldUp;
+  let b = e._boltBound;
+  if (!b || b.shield !== sh) {
+    b = e._boltBound = { y: 0, r: 0, shield: sh };
+    const caps = e.capsules();
+    if (!caps.length) { e._boltBound = null; return null; }
+    let lo = Infinity, hi = -Infinity;
+    for (const c of caps) {
+      /* A non-finite endpoint is skipped rather than folded in, because one
+       * NaN would make the whole sphere NaN and a NaN radius rejects EVERY
+       * bolt — the body would stop being shootable entirely. `segmentNear`
+       * already answers a NaN capsule with a miss, so skipping it here agrees
+       * with the bone pass instead of amplifying it. (A live one: the droideka
+       * presented three, see the `walkPhase` note in Enemy.js.) */
+      if (!Number.isFinite(c.p0.y) || !Number.isFinite(c.p1.y)) continue;
+      lo = Math.min(lo, c.p0.y - c.r, c.p1.y - c.r);
+      hi = Math.max(hi, c.p0.y + c.r, c.p1.y + c.r);
+    }
+    if (!Number.isFinite(lo) || !Number.isFinite(hi)) { e._boltBound = null; return null; }
+    b.y = (lo + hi) * 0.5 - e.position.y;
+    b.r = 0;
+    growBoltBound(e, caps);
+  }
+  return b;
+}
+
+/** Widen a baked bound to hold `caps`. Cheap: it is called only where the
+ *  capsules were gathered anyway. `BOLT_BOUND_SLACK` is roughly a forearm —
+ *  enough that an arm thrown out between two frames is inside the sphere
+ *  before the growth below has seen it. */
+const BOLT_BOUND_SLACK = 0.75;
+function growBoltBound(e, caps) {
+  const b = e._boltBound;
+  if (!b) return;
+  _bolt4.copy(e.position).setY(e.position.y + b.y);
+  let far = b.r - BOLT_BOUND_SLACK;
+  for (const c of caps) {
+    if (!Number.isFinite(c.p0.y) || !Number.isFinite(c.p1.y)) continue;
+    far = Math.max(far, _bolt4.distanceTo(c.p0) + c.r, _bolt4.distanceTo(c.p1) + c.r);
+  }
+  b.r = far + BOLT_BOUND_SLACK;
+}
+/**
+ * Where a segment ENTERS a sphere, or null.
+ *
+ * Deliberately not `segmentNear` with a point for a capsule: that returns the
+ * CLOSEST point on the segment, which for a bolt fired through a bubble is a
+ * point somewhere near the middle of the player, and a barrier that flashes
+ * inside itself reads as a barrier that failed. This returns the first
+ * crossing of the surface.
+ *
+ * A segment that STARTS inside the sphere returns null — see the call site in
+ * `_boltHitTest` for why that is the rule and not an oversight.
+ */
+function segmentSphere(p0, p1, c, radius) {
+  const d = _v4.subVectors(p1, p0);
+  const m = _v5.subVectors(p0, c);
+  if (m.lengthSq() <= radius * radius) return null;      // muzzle is inside
+  const a = d.dot(d);
+  if (a <= 1e-8) return null;
+  const b = m.dot(d);
+  const cc = m.dot(m) - radius * radius;
+  if (b > 0 && cc > 0) return null;                      // pointing away
+  const disc = b * b - a * cc;
+  if (disc < 0) return null;
+  const t = (-b - Math.sqrt(disc)) / a;
+  if (t < 0 || t > 1) return null;
+  return _a.copy(p0).addScaledVector(d, t).clone();
+}
+
 function segmentNear(p0, p1, c0, c1, radius) {
   const d1 = _v4.subVectors(p1, p0);
   const d2 = _v5.subVectors(c1, c0);

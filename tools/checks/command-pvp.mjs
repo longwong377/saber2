@@ -123,7 +123,50 @@ async function commandPair(opts = {}) {
      * armies and the two anchors and starts itself; a campaign starts a wave.
      * The branch is the game's — this only reaches for the same door. */
     if (a.world.command?.versus) a.world.beginVersus();
-    else a.world.director.start(1);
+    else {
+      a.world.director.start(1);
+      /**
+       * …AND THE HOST HOLDS A BODY FOR THE PEER, WHICH IT DID NOT.
+       *
+       * `applyClaim(peerId, msg)` resolves the claimant out of `world.remotes`
+       * and then asks `canHarm` whether that player may touch the body being
+       * claimed — and its own note records what the gate is for: "in co-op it
+       * is a peer shooting your named troopers in the back". It also records
+       * the deliberate exception, "a NULL `by` keeps today's behaviour on
+       * purpose: an unattributed claim is the environment".
+       *
+       * This fixture never seated a body for the peer, so every claim it
+       * routed arrived unattributed and took that exception. What came through
+       * the hole was not malice and not a forgery — it was the client's own
+       * honest `_reconcileClaims`, billing the host for damage the host had
+       * already dealt itself. The client fires replicated bolts into its own
+       * pool (`_spawnNetBolts`) and resolves them against its own mirrors, so
+       * a GunPit's round is simulated on BOTH machines; the host applies it,
+       * the client applies it to its copy, and the reconciler sends the
+       * difference back as a claim. Measured on this pair with the joining
+       * player idle and nothing but `idleInput` on either end: **a 39.4 hp
+       * claim against one of the host's own named troopers**, and 5 of 9
+       * unattended trooper deaths over twenty five-second runs were that road
+       * rather than the battle. Seat the body and the shipped gate refuses all
+       * of it — 0.0 hp of `remote` damage to a trooper over the same runs.
+       *
+       * So the pair was quietly proving the opposite of `command/net: a co-op
+       * partner cannot shoot your army`, by a door that check does not look
+       * at. A real host always has this body; `bootPair` in _coop.mjs builds
+       * it on the first avatar packet and says why. Here it is built up front,
+       * because it is not what is being measured — it is the state every
+       * co-op session is already in.
+       *
+       * CO-OP ONLY. A meeting's peers arrive through `joinAsCommander`, which
+       * seats its own body with a side on it and re-runs `beginVersus` around
+       * it; a second `PEER` standing here would be a body with no commander in
+       * the one fixture whose whole subject is which commander leads whom.
+       */
+      const { RemoteAvatar } = await import('../../src/net/Net.js');
+      const peer = new RemoteAvatar(a.world, { id: 'PEER', name: 'ALPHA', team: a.world.partyTeam });
+      (a.world.remotes || (a.world.remotes = new Map())).set(peer.id, peer);
+      a.world.players.push(peer);
+    }
     if (opts.trim && a.world.director.spawnQueue) a.world.director.spawnQueue.length =
       Math.min(a.world.director.spawnQueue.length, opts.trim);
   }
@@ -261,6 +304,110 @@ export function run({ check, assert }) {
       + `${fightable.length}/${horde.length} of the horde still are`;
   });
 
+  check('command/coop: four players, ONE roster, four squads — and one purse', async () => {
+    /**
+     * FLAGSHIP §9, DRIVEN ON THE SIDE IT IS ACTUALLY ABOUT.
+     *
+     * "`SQUAD = 5` is already the unit and `CommandRoster.squads()` already
+     * slices the living list into fives. Four players take four squads out of
+     * one roster of up to 24."
+     *
+     * The 2v2 check further down measures the same machinery on OPPOSED
+     * commanders, where two rosters are correct. This is the co-op case — four
+     * people on one side — and until `World.seatAlly` existed it was not
+     * reachable at all: nothing outside `beginVersus` had ever called
+     * `enlistCommander`, so a peer joining a Command run got a blade, a body
+     * and no army.
+     *
+     * Four properties, and each of them is a thing four private rosters got
+     * wrong:
+     *
+     *   ONE ROLL, so `taken` is one set and two men cannot answer to one name.
+     *   ONE PURSE, which is §9's actual co-op mechanic — "a Heavy for your
+     *     squad or an ARC for mine" is only a conversation if it is one shop.
+     *   A PARTITION. Every living man is led by exactly one commander: no body
+     *     is steered by two frames and none is steered by none.
+     *   IT RE-DEALS. A player leaving is the second defect §9 names, and with
+     *     one roster the answer is that their squads are simply somebody
+     *     else's on the next call.
+     */
+    const { SIDES } = await import('../../src/game/Player.js');
+    const Cmd = await import('../../src/game/Command.js');
+    const { host } = await commandPair({ start: false });
+    const d = host.command;
+    assert(d && !d.versus, 'this fixture is not a co-op world');
+
+    const solo = d.roster.strength;
+    const players = [];
+    for (const n of ['B', 'C', 'D']) {
+      const p = { name: n, isLocal: false, alive: true, dead: false, hp: 100,
+        team: d.commander.side, order: 'jedi', position: host.player.position.clone(),
+        actor: { setPosition() {} } };
+      players.push(p);
+      host.players.push(p);
+      const c = d.enlistCommander({ player: p, side: d.commander.side, army: d.commander.army });
+      assert(c, `${n} was seated with no commander`);
+    }
+    const cs = d.commanders;
+    assert(cs.length === 4, `four players produced ${cs.length} commanders`);
+
+    /* ONE ROLL. */
+    const rosters = new Set(cs.map((c) => c.roster));
+    assert(rosters.size === 1,
+      `four players on one side hold ${rosters.size} rosters — that is four private armies`);
+    const roll = d.roster.all;
+    const names = new Set(roll.map((t) => t.name));
+    assert(names.size === roll.length,
+      `${roll.length} named bodies and ${names.size} distinct names`);
+
+    /* THE LINE GREW BY A SQUAD A PLAYER, capped by the mode's own ceiling. */
+    const want = Math.min(Cmd.MAX_STRENGTH, solo + 3 * Cmd.SQUAD);
+    assert(d.roster.strength === want,
+      `four players field ${d.roster.strength} men; one opened with ${solo} and each joiner brings `
+      + `${Cmd.SQUAD} up to ${Cmd.MAX_STRENGTH}, so it should be ${want}`);
+
+    /* ONE PURSE. */
+    d.roster.points = 37;
+    for (const c of cs) {
+      assert(c.roster.points === 37, 'two allies are shopping in two different shops');
+    }
+
+    /* A PARTITION: every living man led exactly once. */
+    const seen = new Map();
+    const per = cs.map((c) => {
+      const mine = d.led(c);
+      for (const t of mine) seen.set(t, (seen.get(t) || 0) + 1);
+      return mine.length;
+    });
+    const twice = [...seen].filter(([, n]) => n > 1);
+    assert(!twice.length,
+      `${twice.length} men are being led by two commanders at once — two formations solving one body`);
+    const orphans = d.roster.living.filter((t) => !seen.has(t));
+    assert(!orphans.length, `${orphans.length} living men are led by nobody`);
+    assert(per.reduce((a, b) => a + b, 0) === d.roster.strength, 'the shares do not sum to the line');
+    assert(per.every((n) => n > 0), `the shares came out ${per.join('/')} — somebody leads nothing`);
+
+    /* AND A PLAYER LEAVES. The avatar goes out of `world.players` exactly as
+     * main.js does it, and the Commander goes with it. */
+    const gone = players[0];
+    host.players.splice(host.players.indexOf(gone), 1);
+    const dropped = d.dismissCommander(gone);
+    assert(dropped, 'the departed player kept their Commander');
+    assert(d.commanders.length === 3, `${d.commanders.length} commanders after one left`);
+    assert(!d.commanders.some((c) => c.player === gone), 'the orphan is still in the list');
+    assert(d.roster.strength === want, `${want} men before the peer left and ${d.roster.strength} after`);
+    const seen2 = new Map();
+    for (const c of d.commanders) for (const t of d.led(c)) seen2.set(t, (seen2.get(t) || 0) + 1);
+    const stranded = d.roster.living.filter((t) => !seen2.has(t));
+    assert(!stranded.length,
+      `${stranded.length} of the departed player's men are led by nobody — the squads did not re-deal`);
+    assert(![...seen2.values()].some((n) => n > 1), 'a man is led twice after the re-deal');
+
+    return `4 commanders · 1 roster · ${roll.length} names, ${names.size} distinct · `
+      + `${d.roster.squads().length} squads dealt ${per.join('/')} · one purse · `
+      + `after a peer left: 3 commanders, 0 orphans, every man re-dealt`;
+  });
+
   check('command/net: your army\'s rifles do not shoot the joining player', async () => {
     /**
      * THE HALF THAT FIRES WITH NOBODY AIMING AT ANYTHING.
@@ -319,26 +466,51 @@ export function run({ check, assert }) {
       `${wrongSide.length} of ${yours.length} bolts fired by your own troopers are on team `
       + `${[...new Set(wrongSide.map((b) => b.team))].join('/')}, not the party's ${TEAM.PARTY}`);
 
+    /**
+     * THE SUBJECT IS HELD STILL FOR THE REPLAY, and it was not.
+     *
+     * `_boltHitTest`'s player loop opens `if (!p.alive || p.invuln > 0) continue`
+     * — the half second the first landed bolt buys, and the fight itself. Both
+     * belong in the game and neither belongs in a replay of fifty bolts against
+     * one segment: after the first hit the rest of the volley is skipped, and
+     * after thirty seconds of a real battle the joining player can be dead
+     * before the loop starts. The control below then reads ZERO hostile hits and
+     * says the hit test is not answering, which is the check manufacturing a
+     * defect out of its own fixture — seen once in ten runs, as
+     * *"none of the horde's 51 bolts could reach the joining player either"*.
+     *
+     * The question being asked here is geometric and about sides: may this
+     * bolt, fired by this owner, reach this body. So the body is restored
+     * before every single call, in BOTH arms — which also makes the assertion
+     * above strictly stronger, because every allied bolt now gets a live target
+     * with no invulnerability to hide behind rather than one that went numb
+     * after the first contact.
+     */
     const hpBefore = p.hp;
+    const ask = (b) => {
+      p.invuln = 0; p.hp = p.maxHp; p.alive = true;
+      return client._boltHitTest(b, from, to);
+    };
+
     let struck = 0;
     for (const b of yours) {
-      const res = client._boltHitTest(b, from, to);
+      const res = ask(b);
       if (res && res.victim === p) struck++;
     }
     assert(!struck,
       `${struck} of ${yours.length} of your own troopers' bolts hit the joining player `
-      + `through the shipped hit test (hp ${hpBefore} → ${p.hp})`);
+      + `through the shipped hit test (they were on ${hpBefore} hp when the replay began)`);
 
     /**
      * THE CONTROL, AND IT IS WHY THIS IS NOT A CHECK THAT PASSES ON A BROKEN
      * HIT TEST. The horde's bolts go through the same call, on the same
-     * geometry, on the same machine, and at least one has to land — one rather
-     * than all of them, because the first hit sets `invuln` and the rest of the
-     * volley is correctly skipped for the half second that follows.
+     * geometry, on the same machine, and with the same body restored between
+     * each of them — so every one of them has to land, and one that does not is
+     * a bolt that missed a segment drawn through the chest it is aimed at.
      */
     let hordeHits = 0;
     for (const b of theirs) {
-      const res = client._boltHitTest(b, from, to);
+      const res = ask(b);
       if (res && res.victim === p) hordeHits++;
     }
     assert(theirs.length > 0 && hordeHits > 0,
@@ -398,14 +570,52 @@ export function run({ check, assert }) {
      * mode's own permadeath goes through — and read the joining player's list
      * afterwards. `diedIn` is the field the casualty list is made of.
      */
+    /**
+     * IT IS A SET, NOT A COUNT, AND THAT IS THIS SESSION'S CORRECTION.
+     *
+     * This read `after === before + 1` — one hand-dealt kill, one more name on
+     * the list — and it was green for as long as the only man who could die
+     * was the one this check killed. That stopped being true the moment
+     * `_boltHitTest` let a hostile bolt reach a body in `world.enemies`: your
+     * named troopers live in that array, and until then the enemy's rifles
+     * could not touch them. The commit that fixed it measured the difference
+     * on the mode's own ground — "after, same world, idle player: 7 of 10 down
+     * in 60 s" — and a wave with a gun emplacement in it now kills somebody
+     * every eleven seconds with nobody aiming at anything. Measured on this
+     * fixture: **9 of 20 five-second runs lose a man to the horde**, so an
+     * exact delta over the two seconds this check pumps is a coin toss, and it
+     * fails as `0 → 2` with both casualties perfectly real.
+     *
+     * A count also never asserted the thing the label promises. `0 → 2` reads
+     * like one death counted twice and cannot be — `CommandRoster.fall` is
+     * idempotent by construction and one trooper is one row — so the count was
+     * both flaky AND blind to the defect it looked like it was guarding.
+     *
+     * So the property is written out directly, on names:
+     *
+     *   the man this check killed is on the joining player's casualty list;
+     *   nothing is on that list the host does not also have dead — the client
+     *     may lag the host by up to ARMY_INTERVAL and may never lead it, so
+     *     this direction is the race-free one and it is the one a phantom or a
+     *     re-applied death would break;
+     *   one row per name, which is what "counted twice" would actually look
+     *     like on a roll.
+     *
+     * Whatever else the battle took is reported rather than asserted, because
+     * it is the battle.
+     */
     const { host, client, pump } = await commandPair({ trim: 3 });
     pump(3);
     const troops = troopsOf(host);
     assert(troops.length >= 3, `only ${troops.length} troopers on the field`);
 
+    /** The names on a machine's casualty list, off the mode's own readout. */
+    const fallenOn = (w) => w.command.readout().roll.filter((t) => !t.alive).map((t) => t.name);
+
     const doomed = troops[0];
     const name = doomed.trooper.name;
-    const before = client.command.readout().roll.filter((t) => !t.alive).length;
+    const before = new Set(fallenOn(client));
+    assert(!before.has(name), `${name} was already on the joining player's casualty list`);
     doomed.hp = 0;
     doomed.die(doomed.position.clone(), null, 'check');
     pump(2);
@@ -416,10 +626,81 @@ export function run({ check, assert }) {
     assert(rec.alive === false,
       `${name} is dead on the host and still standing on the joining player's roster`);
     assert(rec.diedIn != null, `${name} fell in no area on the joining player's copy`);
-    const after = roll.filter((t) => !t.alive).length;
-    assert(after === before + 1,
-      `the casualty list went ${before} → ${after} on the joining player's machine`);
-    return `${name} fell in area ${rec.diedIn}; the casualty list is ${after} on both machines`;
+
+    const after = fallenOn(client);
+    const seenNames = new Set(after);
+    assert(seenNames.size === after.length,
+      `the joining player's casualty list names ${after.length} men and only ${seenNames.size} of `
+      + `them are distinct — a casualty is on it twice: ${after.join(' ')}`);
+    const dead = new Set(fallenOn(host));
+    const phantom = after.filter((n) => !dead.has(n));
+    assert(!phantom.length,
+      `${phantom.length} man on the joining player's casualty list is alive on the host: `
+      + `${phantom.join(' ')}`);
+    const alsoFell = after.filter((n) => n !== name && !before.has(n));
+    return `${name} fell in area ${rec.diedIn}; ${after.length} on the joining player's list and `
+      + `${dead.size} on the host's, no name twice`
+      + (alsoFell.length ? `; the horde took ${alsoFell.join(' ')} in the same five seconds` : '');
+  });
+
+  check('command/net: a joining player who fires nothing bills the host for nothing', async () => {
+    /**
+     * ── THE SURCHARGE THE HORDE WAS PAYING FOR HAVING A SECOND PLAYER ──────
+     *
+     * `_reconcileClaims` bills the host for whatever hp a mirror has lost since
+     * the last snapshot, "whatever dealt it" — which is the right seam and the
+     * reason a guest's lightning, choke and rend all reach the host without a
+     * call site each. What it cannot tell apart on its own is damage this
+     * machine DEALT from damage this machine merely WATCHED, and a co-op client
+     * watches a great deal: `_spawnNetBolts` puts the host's fire into the
+     * client's own pool as real bolts so a guest can deflect one, and the
+     * client then resolves them against its own mirrors.
+     *
+     * In Command that is the whole battle. Your named troopers stand in
+     * `world.enemies` on the party's side, so the horde's rifles have something
+     * in that array to hit and your line's rifles have the horde — every round
+     * either way was simulated on both machines and charged twice. Measured on
+     * this fixture before the rule, 45 s, the joining player holding
+     * `idleInput` and firing nothing: **317 claims, and the host applied 42.2
+     * hp of them on top of the 187.8 hp of the same bolts it had already
+     * applied itself.** Co-op was roughly half again easier than the
+     * single-machine numbers every tuning pass in this project was taken on.
+     *
+     * Two roads fed it and the second is a different defect with the same
+     * shape. The gun emplacement is built by the LEVEL, so both machines had
+     * one and both were firing it — a second gun on one embrasure, laid on the
+     * client's own copy of the line, billed back to the host (`GunPit._fire`).
+     * The deaths were the larger half of both: rounding puts the two copies a
+     * point apart, the client's mirror goes down on a round the host's
+     * survives, and `_reconcileClaims`' kill clause then claims that body's
+     * whole remaining health every tick for the rest of the session.
+     *
+     * WHAT IS ASSERTED IS ZERO, which is the one figure in this file that is
+     * not a coin toss: a player pressing nothing has dealt no damage, so a
+     * claim with anything in it is this defect and nothing else. The battle
+     * around it is reported and not scored — see the note over the casualty
+     * check for why a head-count across a live battle is not an assertion.
+     *
+     * The second half of the rule — a guest's genuine deflection still lands
+     * and is still billed — is in `tools/checks/coop.mjs`, and neither half
+     * means anything without the other: a fix that stopped the client resolving
+     * replicated bolts would pass this check and delete the mechanic.
+     */
+    const { host, client, pump, seen } = await commandPair();
+    pump(20);
+    const claims = seen.toHost.filter((m) => m.t === 'claim');
+    const asked = claims.reduce((a, m) => a + (Number(m.d) || 0), 0);
+    const fired = seen.toClient.reduce((a, m) => a + (m.bf?.length || 0), 0);
+    const mirrors = client._netEnemyIndex.size;
+    assert(fired > 0 && mirrors > 0,
+      `the host replicated ${fired} bolts to ${mirrors} mirrors — with no fire crossing there is `
+      + 'nothing here for a client to double-bill and this check proves nothing');
+    assert(asked === 0,
+      `a joining player holding idleInput asked the host for ${asked.toFixed(1)} hp across `
+      + `${claims.length} claims — that is the host's own fire, resolved a second time on the `
+      + 'guest\'s machine and charged back, and the horde pays the difference');
+    host.unload(); client.unload();
+    return `${fired} replicated rounds over ${mirrors} mirrors, and an idle guest claimed nothing`;
   });
 
   check('command/net: a joining player\'s order reaches the army', async () => {
@@ -516,6 +797,9 @@ export function run({ check, assert }) {
     const want = offer.units.filter((u) => u.afford).sort((a, b) => b.cost - a.cost)[0];
     assert(want, `nothing on the shelf is affordable at ${offer.points} points, so nothing was bought`);
     const before = { points: d.roster.points, strength: d.roster.strength };
+    /* Who was already on the roll, so the man bought below can be named rather
+     * than counted. See the deployment assertion at the foot of this check. */
+    const enlisted = new Set(d.roster.all.map((t) => t.name));
     const local = client.command.recruit(want.type);
     assert(local === null, 'the joining commander enlisted a trooper of its own, off its own roster');
     assert(d.roster.strength === before.strength,
@@ -548,13 +832,37 @@ export function run({ check, assert }) {
     assert(!client.command.mustering && client.command.musterOffer() === null,
       'the joining commander is still holding an offer for a muster that has closed');
     assert(closes.length === 1, `the joining commander's card came down ${closes.length} times`);
-    assert(troopsOf(host).length >= before.strength + 1,
-      `${troopsOf(host).length} bodies on the field after the muster closed — the army was not deployed`);
+    /**
+     * THE MAN, NOT THE HEAD COUNT — the same correction the casualty check
+     * above carries, and this is where it was found.
+     *
+     * This asserted `troopsOf(host).length >= before.strength + 1`: eleven
+     * bodies standing where ten stood. Fourteen seconds of a live battle
+     * separate that count from the purchase, and since a hostile bolt can
+     * reach a body in `world.enemies` the line loses a man about every eleven
+     * seconds with nobody aiming at anything — so the check failed as "10
+     * bodies on the field after the muster closed — the army was not
+     * deployed", with the reinforcement standing right there and one of his
+     * comrades dead. It failed in one run and passed in the next for that
+     * reason and no other.
+     *
+     * What the assertion is FOR is that a joining commander's purchase reaches
+     * the ground. That is a statement about one man, and he has a name.
+     */
+    const recruit = d.roster.all.find((t) => !enlisted.has(t.name));
+    assert(recruit, 'nothing new is on the host\'s roll at all, so nothing was deployed');
+    const onField = new Set(troopsOf(host).map((e) => e.trooper?.name));
+    /* Or he was deployed and then killed, which is still deployed — a name can
+     * only come off the roll through `onDeath`, and `onDeath` is reached from a
+     * BODY. A reinforcement who never landed cannot die. */
+    assert(onField.has(recruit.name) || !recruit.alive,
+      `${recruit.name} was bought and paid for and has no body on the field — `
+      + `${onField.size} deployed, ${d.roster.strength} on the roll`);
 
     const msgs = seen.toHost.filter((m) => m.t === 'muster').length;
     return `${offer.points} points and ${offer.units.length} rungs to the joining commander, `
       + `one ${want.type} at ${want.cost} bought from there (${before.points} → ${d.roster.points}), `
-      + `${msgs} intents on the wire, ${troopsOf(host).length} deployed`;
+      + `${msgs} intents on the wire, ${recruit.name} deployed among ${onField.size} standing`;
   });
 
   check('command/net: the host holds the purse, and a peer\'s claim about it is worth nothing', async () => {
@@ -981,13 +1289,73 @@ export function run({ check, assert }) {
     assert(Math.abs(gap(cs[1], cs[3]) - PAIR_SPACING) < 0.5,
       `the other pair is ${gap(cs[1], cs[3]).toFixed(1)} m apart`);
 
-    /* FOUR ARMIES ON THE FIELD, each wearing its commander's side. */
+    /**
+     * TWO ARMIES ON THE FIELD, FOUR SQUADS — FLAGSHIP §9, and this is the
+     * assertion that used to read "four armies" and measured the defect.
+     *
+     * It was `counts.every(n => n >= 8)`, and it passed: four commanders, four
+     * `CommandRoster`s, four private lines of ten. Driven at four commanders on
+     * this fixture, before one roster:
+     *
+     *     commanders 4 · rosters 4 · named bodies 40 · DISTINCT NAMES 39
+     *
+     * One duplicate, in the one mode whose entire subject is names you
+     * recognise. `designate` loops against `roster.taken` to keep the promise
+     * "every ally has a unique name you can see", `taken` is per roster, and
+     * all four draw out of ONE seeded stream — so two commanders on the same
+     * side mint the same `CT-####` and neither Set can see the other. It is not
+     * a rare collision either: it is 40 draws from 8999 numbers across four
+     * independent sets, which is a duplicate about half the time.
+     *
+     * After, on the identical fixture:
+     *
+     *     commanders 4 · rosters 2 · named bodies 30 · distinct names 30
+     *     led per commander 10/10/5/5 · purses 11 and 11 (one a side)
+     *
+     * Two rosters, because a meeting is two armies and must be. Thirty rather
+     * than forty because a side is now ONE line — `OPENING_STRENGTH` and one
+     * `SQUAD` more for the second commander on it (see `_musterJoin`) — instead
+     * of two private tens, and the odd squad stays with the commander who
+     * brought the line. Zero collisions by construction rather than by care:
+     * there is one `taken` per side and nothing left to keep in step.
+     */
     const bodies = (c) => host.enemies.filter((e) => e.cmdr === c && !e.dead);
     const counts = cs.map((c) => bodies(c).length);
-    assert(counts.every((n) => n >= 8), `the four armies deployed ${counts.join('/')} bodies`);
+    const rosters = new Set(cs.map((c) => c.roster));
+    assert(rosters.size === 2,
+      `four commanders hold ${rosters.size} rosters — allies on one side are two private armies, `
+      + 'two `taken` sets, and two purses');
+    assert(cs[0].roster === cs[2].roster && cs[1].roster === cs[3].roster,
+      'the allies are not sharing a roll');
+    assert(cs[0].roster !== cs[1].roster, 'both sides are drawing off one roll');
+    const all = [];
+    for (const r of rosters) for (const t of r.all) all.push(t);
+    const distinct = new Set(all.map((t) => t.name));
+    assert(distinct.size === all.length,
+      `${all.length} named bodies and ${distinct.size} distinct names — two of your men answer to `
+      + 'the same designation, in the mode whose subject is names you recognise');
+    assert(counts.every((n) => n >= 5),
+      `the four commanders lead ${counts.join('/')} bodies — somebody was dealt no squad at all`);
+    assert(counts[0] + counts[2] === cs[0].roster.strength,
+      `the ${sides[0]} side leads ${counts[0] + counts[2]} of its ${cs[0].roster.strength} men`);
+    /* THE PURSE IS SHARED — §9's actual co-op mechanic. */
+    cs[0].roster.points = 40;
+    assert(cs[2].roster.points === 40, 'two allies are shopping in two different shops');
+    cs[0].roster.points = 11;
     for (let i = 0; i < 4; i++) {
       assert(bodies(cs[i]).every((e) => e.team === sides[i]),
         `an army of ${cs[i].army.id} is standing on a side its commander is not on`);
+    }
+    /* AND EACH SIDE MUSTERED ITS OWN ARMY'S BODIES. `formUp` used to build the
+     * second commander with the defaults, muster ten of the FIRST army's
+     * cheapest rung into it, and only then reassign `c.army` — so both ends of
+     * every meeting fielded `Clone Trooper` and both rolls read `CT-####`. */
+    for (const c of cs) {
+      const kinds = [...new Set(c.roster.all.map((t) => t.type))];
+      const rung = c.army.tiers.map((t) => t.type);
+      const wrong = kinds.filter((k) => !rung.includes(k));
+      assert(!wrong.length,
+        `${c.army.id}'s roll holds ${wrong.join('/')}, which is not on its own muster ladder`);
     }
     /* Two rings 20 m apart do not interleave: an allied body is nearer its own
      * anchor than its ally's, which is what makes an order readable. */

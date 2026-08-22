@@ -1004,4 +1004,55 @@ export async function run({ check, assert }) {
     return `${LESSONS.length} lessons; ${LESSONS.filter((l) => l.need !== Infinity).length} counted ones all answerable `
       + `from the ${emitted.size} event types the world reports`;
   });
+
+  check('claims: the two wave modes say what separates them, and the numbers are the code\'s', async () => {
+    /**
+     * The player, after playing both: "explain the difference between trail of
+     * waves and path of the blade."
+     *
+     * That is a menu defect. The two blurbs were written years apart against
+     * different questions, so neither mentioned the other and neither named
+     * the axis: "Endless escalation" and "waves, boons and a run that ends when
+     * you do" describe the same evening. They differ in exactly one thing —
+     * where your power comes from — and the cards have to say so, because the
+     * mode card is the only place a player is ever asked to choose.
+     *
+     * Both figures in them are CLAIMS, which is why they are here: `MODES` is
+     * declared above `DRAFT_EVERY` and `TRIAL` in Waves.js and interpolating
+     * them would be a temporal-dead-zone crash on import, so the numbers are
+     * typed — and a typed number in a blurb is one tuning pass from being a
+     * lie.
+     */
+    const { MODES, DRAFT_EVERY, TRIAL } = await import('../../src/game/Waves.js');
+    const trial = MODES.waves.blurb, path = MODES.roguelite.blurb;
+    const ord = (n) => (n === 2 ? '2nd' : n === 3 ? '3rd' : `${n}th`);
+
+    /* EACH NAMES THE OTHER'S ANSWER. A card that only describes itself leaves
+     * the comparison to the player, which is the whole complaint. */
+    assert(/holocron/i.test(trial), `the Trial's card never says where its power comes from: "${trial}"`);
+    assert(/\bno boons?\b/i.test(trial), `the Trial's card never says it has no boons: "${trial}"`);
+    assert(/trial/i.test(path), `Path of the Blade's card never mentions the mode beside it: "${path}"`);
+    assert(/boon/i.test(path), `Path of the Blade's card never says it deals boons: "${path}"`);
+
+    /* AND THE CADENCES ARE THE CONSTANTS. */
+    assert(path.includes(`every ${ord(DRAFT_EVERY)} wave`),
+      `Path of the Blade's card does not quote DRAFT_EVERY (${DRAFT_EVERY}, i.e. "every ${ord(DRAFT_EVERY)} `
+      + `wave"): "${path}"`);
+    assert(trial.includes(`every ${ord(TRIAL.every)} wave`),
+      `the Trial's card does not quote TRIAL.every (${TRIAL.every}): "${trial}"`);
+    assert(trial.includes(`from wave ${TRIAL.from}`),
+      `the Trial's card does not quote TRIAL.from (${TRIAL.from}): "${trial}"`);
+    /* …AND THE CLAIM THAT IT DRAFTS NOTHING IS THE DIRECTOR'S OWN ANSWER. */
+    const { WaveDirector } = await import('../../src/game/Waves.js');
+    /* `drafts` is a getter over DRAFT_MODES, which is the shipped statement of
+     * this claim — read off the prototype rather than by standing up a whole
+     * director, since building one wants a real World. */
+    const { DRAFT_MODES } = await import('../../src/game/Waves.js');
+    assert(!DRAFT_MODES.includes('waves'),
+      'the Trial of Waves card says no boons are drafted and DRAFT_MODES lists it as a mode that does');
+    assert(DRAFT_MODES.includes('roguelite'),
+      'Path of the Blade\'s card says it deals boons and DRAFT_MODES does not list it');
+    return `Trial: no boons, Holocron, every ${ord(TRIAL.every)} wave from ${TRIAL.from} · `
+      + `Path: a boon every ${ord(DRAFT_EVERY)} wave`;
+  });
 }

@@ -437,6 +437,139 @@ export function run({ check, assert, near }) {
       + `${((SOLO - worst) * 100).toFixed(1)} points under the solo bar`;
   });
 
+  check('front: every ground the mode rolls hands the front a hull builder', async () => {
+    /**
+     * §12.4: "wrecks belong on the fighting line", and `Front.js` prices them
+     * as the mark that carries the picture rather than a garnish. The mechanism
+     * is a callback: `marchFront` grows wreck clusters ONLY when it is handed
+     * the function that builds them, and `CommandDirector.marchTo` reads that
+     * function off `world.strewWrecks`.
+     *
+     * IT WAS PUBLISHED BY ONE LEVEL. Geonosis' own `dress` set it at the
+     * bottom; nothing else did. THE LINE rolls its theatre off the run seed
+     * across every ground in `LEVEL_ORDER`, so on six of seven rolls the
+     * barrage, the burn, the smoke and the fallen landed on the line and the
+     * hulls did not — and the note in `Command.js` said "the mode lays hulls
+     * now", which was a sentence about one seventh of the mode.
+     *
+     * `beginDressing` publishes it for every ground now, the same door the
+     * water hazard goes through and for the reason that note gives.
+     *
+     * WHAT IS ASSERTED IS THE HULLS ON THE GROUND, not the field being set: a
+     * callback that is present and never reached is the defect this clause is
+     * about, one level further in. The price is reported beside it, because
+     * this is the most expensive of §12.4's five marks — a whole sitting is
+     * five engagements of three clusters:
+     *
+     *     alpine   101 → 217 draw calls    drifts   113 → 226    wood  149 → 251
+     *     colosseum 165 → 278              scoria   170 → 284
+     *     mustafar  224 → 314              geonosis 277 → 375
+     *
+     * against this file's own bound of 520 for a dressed level.
+     */
+    const { marchFront } = await import('../../src/world/Front.js');
+    const rows = [];
+    for (const key of LEVEL_ORDER) {
+      const L = LEVELS[key];
+      if (!L || typeof L.dress !== 'function' || L.training) continue;
+      const terrain = new Terrain(new THREE.Scene(), L.terrain, 0.5);
+      const world = stubWorld(terrain, L);
+      L.dress(world);
+      assert(typeof world.strewWrecks === 'function',
+        `${key} dresses itself and publishes no hull builder, so the front it is rolled onto `
+        + 'lays four of §12.4\'s five marks and no wrecks');
+      const before = world.statics.length;
+      /* THE WHOLE SCHEDULE, in order, because `marchFront` is additive and its
+       * own note says calling it once for 4 gives ground with none of the
+       * first three's history. It is also the only honest denominator: the
+       * Ember Shelf lays NOTHING at engagements 1 and 2 and one cluster at 3,
+       * because its authored ground at 180 and 140 m is under the lava (see
+       * the sheet bound below) — a two-engagement sample would read that as a
+       * front that lays no hulls at all. Five engagements over seven grounds
+       * is about eighty seconds. */
+      let wrecks = 0;
+      for (const e of [1, 2, 3, 4, 5]) {
+        /* THE MODE'S OWN DEFAULTS — no `wrecks`, `columns` or `fallen`
+         * override. `CommandDirector.marchTo` passes none of them, and a
+         * thinned-out arm is a different dressing: the counts feed the same
+         * `rng` in order, so asking for one cluster instead of three does not
+         * scale the answer down, it moves every bearing after it. */
+        const out = marchFront(world, { engagement: e, seed: 3,
+          strewWrecks: world.strewWrecks });
+        wrecks += out.wrecks;
+      }
+      assert(wrecks > 0,
+        `${key}: the front was handed a hull builder and laid ${wrecks} clusters over five `
+        + 'engagements — the callback is present and never reached, which is the same defect '
+        + 'one level in');
+      /* ── AND NOTHING IT LAID IS UNDER THE LEVEL'S OWN SHEET ────────────
+       *
+       * The march schedule is a number about the BATTLE and knows nothing
+       * about what is at 180 m. On the Ember Shelf that is ground 38-45 m
+       * below a lava sheet at +0.55 which charges 52 HP a second: measured
+       * before the guard, engagement 1 laid **12 of 12 hull pieces under it**,
+       * the whole band of the fallen with them, and the smoke rising off the
+       * sea floor. `siteOk` takes a `minHeight` and nothing passed one.
+       *
+       * The three marks that put OBJECTS on the ground are checked where they
+       * ended up — the hull statics, the base of every smoke column, and the
+       * instance matrices of the fallen — rather than the option being read
+       * back off the call (HANDOFF §2.4). */
+      /**
+       * THE SHEET AS THE LEVEL DRAWS IT, and the bound is the level's own
+       * answer to "may a body stand here":
+       *
+       *   a sheet that BURNS  — scoria at 52 HP/s, mustafar at 56 — takes
+       *     nothing at all. A hull frame in lava is not half-swallowed
+       *     wreckage, it is a mark inside a hazard.
+       *   a sheet that does not — the Drowned Wood's channels — takes marks in
+       *     the shallows and not below them. A body lying ankle-deep in a
+       *     swamp is the picture; one a metre under is drowned scenery.
+       *
+       * Stated from `LEVELS[*].water` rather than from `Spawn.dryFloor`, which
+       * is what the dressing calls: a check that evaluates the same expression
+       * as the code cannot disagree with it (HANDOFF §2.4).
+       */
+      const w = L.water;
+      const sheet = w ? (w.level ?? 0) : -999;
+      const allow = w && !(w.damage > 0) ? 0.5 : 0;
+      let wet = 0, deepest = 0, placed = 0;
+      const note = (y) => { placed++; if (y < sheet - allow) { wet++; deepest = Math.min(deepest, y - sheet); } };
+      if (sheet > -900) {
+        /* THE SMOKE AND THE FALLEN GO ON `statics` TOO, and their `position` is
+         * the ORIGIN — both build one merged/instanced mesh whose vertices and
+         * matrices carry world coordinates. Reading `mesh.position.y` on those
+         * measures the scene graph, not the ground: it reported 7 marks under
+         * the Ember Shelf's sheet that were three container meshes sitting at
+         * y = 0. They are measured below, where they actually are. */
+        for (const m2 of world.statics.slice(before)) {
+          if (m2.name === 'smoke-columns' || m2.name === 'fallen') continue;
+          if (m2.position) note(m2.position.y);
+        }
+        const _v = new THREE.Vector3(), _m = new THREE.Matrix4();
+        world.scene.traverse((o) => {
+          if (o.isInstancedMesh && o.name === 'fallen') {
+            for (let i = 0; i < o.count; i++) { o.getMatrixAt(i, _m); note(_m.elements[13]); }
+          } else if (o.isMesh && o.name === 'smoke-columns') {
+            const pos = o.geometry.attributes.position;
+            let lo = Infinity;
+            for (let i = 0; i < pos.count; i++) lo = Math.min(lo, pos.getY(i));
+            note(lo);
+          }
+        });
+        assert(wet === 0,
+          `${key}: ${wet} of ${placed} of the front's marks stand more than ${allow} m under a `
+          + `${w.damage > 0 ? `sheet that burns at ${w.damage} HP/s` : 'sheet'} at ${sheet} m, `
+          + `the deepest ${(-deepest).toFixed(2)} m below it`);
+      }
+      rows.push(`${key} ${wrecks}× +${world.statics.length - before} statics`
+        + (sheet > -900 ? `, ${placed} marks all within ${allow} m of a ${sheet} m sheet` : ''));
+      terrain.dispose();
+    }
+    assert(rows.length >= 6, `only ${rows.length} grounds surveyed`);
+    return rows.join('; ');
+  });
+
   check('levels: filling the ground did not cost a draw call per pebble', () => {
     /* The obvious way to fill a level is a loop around `addRock`, which is ONE
      * DRAW CALL PER ROCK. The first version of this pass did exactly that and

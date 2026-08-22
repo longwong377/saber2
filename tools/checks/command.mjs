@@ -879,9 +879,54 @@ export async function run({ check, assert }) {
      * whose whole subject is one. */
     assert(armyless, 'the wipe was driven in a mode that DOES lead an army — the branch below is meaningless');
     assert(w2.command, 'the campaign victory was driven without a CommandDirector');
+    /**
+     * …AND THE NULL RULE IS ABOUT COUNTS, WHICH IS NARROWER THAN "FIELDS".
+     *
+     * The rule below says a field that is null in a mode with no army owes a
+     * NUMBER in the mode that leads one, and the defect it was written against
+     * is exactly that shape: `taken` and `fallen` are counts, and a campaign
+     * that cannot count its own casualties is the hole the null describes.
+     *
+     * `ended` is not a count. It is the reason a run stopped, and null is its
+     * correct value in both arms here because neither of them stopped for a
+     * reason worth a different card — one is a party wipe and the other is a
+     * victory. Held to the count rule it reads as drift, and "the mode with an
+     * army owes a number for why it ended" is not a sentence anybody means.
+     *
+     * The discriminator is DERIVED rather than a name: a field the ending card
+     * prints as a ROW is a count, and a field it reads outside the rows is a
+     * discriminator that picks which card to print. `rows` is lifted out of
+     * main.js's own source, exactly as `skirmish.mjs` lifts the card's whole
+     * field list from it — so this file cannot disagree with the card about
+     * what a row is.
+     */
+    const { readFile } = await import('node:fs/promises');
+    const mainSrc = await readFile(new URL('../../src/main.js', import.meta.url), 'utf8');
+    const rowsSrc = (() => {
+      const j = mainSrc.indexOf('  const rows = ');
+      const k = mainSrc.indexOf('  const card = ', j);
+      assert(j > 0 && k > j, 'main.js no longer builds the ending card as `const rows` — this lift is describing a file that is gone');
+      /* CODE ONLY: the block comment over the rows quotes two field names it is
+       * an account of, and a scan that counts prose finds rows the card does
+       * not print — an instrument manufacturing its own defect (§2.4). */
+      return mainSrc.slice(j, k).replace(/\/\*[\s\S]*?\*\//g, ' ');
+    })();
+    const printed = new Set([...rowsSrc.matchAll(/\bstats\.(\w+)/g)].map((m) => m[1]));
+    assert(printed.size >= 5,
+      `only ${printed.size} fields lifted out of the card's rows — the lift is wrong`);
+
     const absent = [];
     for (const k of a) {
       if (wipe[k] === null) {
+        if (!printed.has(k)) {
+          /* Not a row, so nothing below applies. It still may not DIFFER in
+           * kind between the two endings — that is the drift this check is
+           * for — and both being null is the agreement it wants. */
+          assert(win[k] === null,
+            `${k} is not a row on the card, is null after a wipe and ${JSON.stringify(win[k])} `
+            + 'after a victory — two endings disagree about a field neither prints');
+          continue;
+        }
         absent.push(k);
         assert(typeof win[k] === 'number',
           `${k} is null in a mode with no army and ${JSON.stringify(win[k])} in the mode that leads one — `
@@ -962,7 +1007,36 @@ export async function run({ check, assert }) {
     // ~80 m circle at 4.6 m/s and takes the line well outside anything the
     // watchdog's distance-to-a-player clock would call "arrived".
     input.moveAxis = (o) => { if (o) { o.x = 0; o.y = 1; return o; } return { x: 0, y: 1 }; };
-    drive(world, 90, input, () => { world.player.camera.yaw += 0.055 * STEP; return false; });
+    /**
+     * …AND HE HAS TO SURVIVE THE WALK, or the back two thirds of this drive
+     * prove nothing at all.
+     *
+     * `_watchdog` runs inside `CommandDirector.update`, and `World.update`
+     * gates the director on `!this.over`. So the frame the commander dies is
+     * the frame the watchdog stops looking — and `onMine.length === 0`, the
+     * assertion this whole check is named after, becomes true because nothing
+     * is running rather than because nothing intervened. Measured on this exact
+     * scenario, one seed, 90 s:
+     *
+     *     commander mortal      run over at s52.9, 21 rescues, 2 names lost
+     *     commander held        no end, 56 rescues on the horde, 0 names lost
+     *
+     * Fifty-six against twenty-one is the size of the hole: better than half of
+     * the watchdog's work in this window happened after the point the mortal
+     * run had stopped watching, and a check cannot assert the watchdog left
+     * your line alone over ground it never covered.
+     *
+     * Holding the commander is also what takes the ROSTER assertion below off
+     * the attrition question. Ten names went off the roll in one engagement
+     * when this failed; with the commander alive the same drive loses none, and
+     * "how much of a ten-man roster an engagement should cost" is a design call
+     * nobody has made — it is in NEXT.md as a question, not in a constant here.
+     */
+    drive(world, 90, input, () => {
+      world.player.hp = world.player.maxHp;
+      world.player.camera.yaw += 0.055 * STEP;
+      return false;
+    });
 
     const log = d.rescues || [];
     const onMine = log.filter((r) => mine.has(r.type));
@@ -1339,6 +1413,13 @@ export async function run({ check, assert }) {
      *     column (the default)    222-223 out, 60-75 incoming
      *     HOLD FIRE                     0 out, 118-129 incoming
      *
+     * …and again after the §16.3 bolt fix, the levy and the emplacement made
+     * the line something that can be shot at, with the commander held alive
+     * (see the drive):
+     *
+     *     behind (the default)    174 out, 141 incoming, 8 of 10 standing
+     *     HOLD FIRE                 0 out, 196 incoming, 10 of 10 standing
+     *
      * The out column spreads a little between runs and the reason is worth
      * knowing rather than seeding harder: this suite's async checks interleave
      * at their awaits, so a peer check gets to advance `enemyRng` between the
@@ -1366,8 +1447,40 @@ export async function run({ check, assert }) {
        * reported rather than assumed away. */
       let closed = false;
       for (let i = 0; i < Math.round(SECONDS / STEP); i++) {
+        /**
+         * THE COMMANDER IS HELD ALIVE, AND WITHOUT IT THIS CHECK MEASURES A
+         * WORLD WITH NO DIRECTOR IN IT.
+         *
+         * `holdFire` is not a flag on the body. It is a POKE: `_troops` pushes
+         * the fuse back up on every trooper on every frame, so the order exists
+         * for exactly as long as something is calling it. `World.update` gates
+         * `director.update` on `!this.over` — right, and for a stated reason
+         * (a director that keeps spawning at a corpse) — so the frame the run
+         * ends is the frame every standing order silently lifts.
+         *
+         * Measured here, idle commander, HOLD FIRE, geonosis, 45 s:
+         *
+         *     commander dies at s32.7   out 43-121, all of it after s32.7
+         *     commander held alive      out 0, 10 of 10 still standing
+         *
+         * and the reference moved the same way, 222 → 135 → 174, because the
+         * back half of its window was a corpse's army too. So the 43 bolts this
+         * check failed on were not a line disobeying an order; they were a line
+         * with nobody left to give one, counted for twelve seconds after the
+         * run it belonged to was over.
+         *
+         * That the commander now dies inside 45 s of the first engagement at
+         * all is a real change and it is NOT this check's subject — it is the
+         * roster attrition question in NEXT.md, which is a design call nobody
+         * has made. Pinning survival here is the same move `_linetoll.mjs`
+         * makes for the same reason: hold the one variable that is under
+         * argument elsewhere, so this drive measures fire discipline and only
+         * fire discipline. It does not touch a single thing `_troops` reads.
+         */
+        if (world.player) world.player.hp = world.player.maxHp;
         world.update(STEP, input);
         if (d._closing) closed = true;
+        if (world.over) closed = true;
       }
       const standing = d.roster.living.filter((t) => t.body && !t.body.dead).length;
       world.unload();
@@ -1386,8 +1499,8 @@ export async function run({ check, assert }) {
       const r = await drive(F.id);
       rows.push(`${F.name} ${r.out} out/${r.incoming} in`);
       assert(!r.closed,
-        `${F.name}: the wave fell to the close-out inside ${SECONDS} s, which lifts every order — `
-        + 'this drive is measuring `_updateClosing` and not fire discipline');
+        `${F.name}: the wave fell to the close-out inside ${SECONDS} s, or the run ended — both lift `
+        + 'every order, so this drive is measuring `_updateClosing` and not fire discipline');
       assert(r.out === 0,
         `${F.name} declares fire ${F.fire} and its line still put ${r.out} bolts out in ${SECONDS} s `
         + `against ${ref.out} under ${Cmd.DEFAULT_FORMATION} — \`holdFire\` is being called and the `
@@ -1884,11 +1997,60 @@ export async function run({ check, assert }) {
     for (let i = 0; i < plantedAt.length; i++) drift = Math.max(drift, plantedAt[i].distanceTo(stillThere[i]));
     assert(drift < 0.5,
       `the commander walked 47 m and a held slot followed ${drift.toFixed(1)} m of it`);
+    /**
+     * …AND RELEASED IT COMES BACK — AT THE LINE'S OWN PACE, NOT AT ONCE.
+     *
+     * THE PREMISE OF THIS CLAUSE EXPIRED, and the expiry is the feature. It
+     * used to read the slots on the frame `hold(false)` was called and require
+     * them to have moved 20 m already, which was true because `_frame` returned
+     * the commander's LIVE POSITION: the formation's anchor teleported wherever
+     * the player was, every frame, at any speed.
+     *
+     * FLAGSHIP §6 makes that a rule instead of an accident — "the objective
+     * advances at the pace of the slowest friendly inside 14 m … walking 35 m
+     * forward drags the whole formation with you and costs 4 of 10 men" — so
+     * the anchor is now speed-limited (`CommandDirector.advancePace`). Both
+     * halves are checked: it does NOT arrive in one frame, and it DOES arrive.
+     */
     d.hold(false);
+    const atRelease = slots();
+    let instant = 0;
+    for (let i = 0; i < plantedAt.length; i++) instant = Math.max(instant, plantedAt[i].distanceTo(atRelease[i]));
+    assert(instant < 20,
+      `the formation crossed ${instant.toFixed(1)} m in the frame the hold was released — the anchor `
+      + 'is still teleporting to the commander, which is the accident §6 replaces');
+    /* AND IT DOES NOT COME AT ALL WHILE HE IS 47 m AWAY, which is the other
+     * half of the same rule and the reason this clause could not simply be
+     * given a longer window: with no living friendly inside `MORALE.NEAR` the
+     * pace is zero and the line holds the ground it is on. That is §6 in one
+     * sentence — "you can sprint 200 m into their rear; the line does not come
+     * with you" — so the commander has to come back to be followed. */
+    assert(d.advancePace(d.commander) === 0,
+      `a commander 47 m from every man he has still advances the line at `
+      + `${d.advancePace(d.commander).toFixed(1)} m/s`);
+    for (let i = 0; i < 600; i++) d._troops(1 / 60, {});
+    const abandoned = slots();
+    let crept = 0;
+    for (let i = 0; i < plantedAt.length; i++) crept = Math.max(crept, plantedAt[i].distanceTo(abandoned[i]));
+    assert(crept < 20,
+      `ten seconds after the release the formation had crossed ${crept.toFixed(1)} m toward a `
+      + 'commander it has nobody within 14 m of — the pace rule is not holding the line');
+
+    /* …AND IT DOES COME when he is back among them. Long enough for the walk
+     * at the line's own pace and no longer: a generous wall-clock window is a
+     * check that passes whatever the rule says. */
+    const anchorNow = d.commander._paceAnchor.clone();
+    me.position.set(anchorNow.x + 9, 0, anchorNow.z);
+    const pace = d.advancePace(d.commander);
+    assert(pace > 0, 'a commander standing 9 m from his line still cannot advance it');
+    const need = Math.ceil((9 / pace) * 60) + 120;
+    for (let i = 0; i < need; i++) d._troops(1 / 60, {});
     const released = slots();
     let came = 0;
     for (let i = 0; i < plantedAt.length; i++) came = Math.max(came, plantedAt[i].distanceTo(released[i]));
-    assert(came > 20, `released, the formation moved ${came.toFixed(1)} m toward a commander 47 m away`);
+    assert(came > 6,
+      `released, and given ${(need / 60).toFixed(0)}s at the line's own ${pace.toFixed(1)} m/s with `
+      + `the commander 9 m away, the formation moved ${came.toFixed(1)} m`);
     return `aim sweep moved a slot ${moved.toFixed(2)} m, a body turn ${swung.toFixed(1)} m; `
       + `blade room ${closest.toFixed(2)} m; held drift ${drift.toFixed(2)} m, released ${came.toFixed(0)} m`;
   });

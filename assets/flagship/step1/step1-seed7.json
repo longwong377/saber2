@@ -1,0 +1,57 @@
+{
+  "seed": 7,
+  "step": 1,
+  "engagements": [
+    {
+      "n": 1,
+      "gameSeconds": 69.1,
+      "wallMs": 17276,
+      "wave": 2,
+      "front": 180,
+      "craters": 342,
+      "fallen": 1,
+      "standing": 9
+    },
+    {
+      "n": 2,
+      "gameSeconds": 119.3,
+      "wallMs": 26357,
+      "wave": 3,
+      "front": 140,
+      "craters": 575,
+      "fallen": 9,
+      "standing": 1
+    },
+    {
+      "n": 3,
+      "gameSeconds": 89.2,
+      "wallMs": 15308,
+      "wave": 4,
+      "front": 100,
+      "craters": 677,
+      "fallen": 10,
+      "standing": 4
+    },
+    {
+      "n": 4,
+      "gameSeconds": 106.8,
+      "wallMs": 21702,
+      "wave": 5,
+      "front": 60,
+      "craters": 867,
+      "fallen": 13,
+      "standing": 1
+    },
+    {
+      "n": 5,
+      "gameSeconds": 390.4,
+      "wallMs": 50239,
+      "wave": 6,
+      "front": 20,
+      "craters": 1270,
+      "fallen": 13,
+      "standing": 1
+    }
+  ],
+  "bearing": 1.9914
+}

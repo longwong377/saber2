@@ -55,6 +55,15 @@
  * gone for everybody regardless of it.
  */
 
+import * as THREE from 'three';
+
+/**
+ * The one vector this file owns. `Actor.centre` writes into what it is handed,
+ * and a corpse is asked where it is once a frame — so one module scratch, not
+ * an allocation per corpse per frame.
+ */
+const _c = new THREE.Vector3();
+
 /**
  * How many corpses stay on the field, per fidelity tier.
  *
@@ -80,13 +89,68 @@ const SINK_TIME = 1.1;
  * How still a ragdoll has to be, and for how long, before its bodies are
  * taken out of the physics world.
  *
- * `SETTLE_SPEED` is in metres per second and is deliberately generous — a
- * corpse twitching at 4 cm/s is a corpse, and waiting for exact rest means
- * waiting for a solver that never quite gets there. `SETTLE_HOLD` is what
- * stops a body that is being shoved by a crowd from settling mid-shove.
+ * ── THE TEST THAT WAS HERE COULD NOT PASS, AND NOTHING SAID SO ──────────
+ *
+ * It was `SETTLE_SPEED = 0.05` m/s against `ragdollSpeed`, which is the MAXIMUM
+ * over all nineteen of a ragdoll's bodies. Its comment called 4 cm/s "generous"
+ * and warned against "waiting for a solver that never quite gets there" — which
+ * is exactly what it then did, because one twitching hand holds the maximum up
+ * and a corpse has nineteen chances to have one.
+ *
+ * MEASURED in `theline` on geonosis, seed 7, `high`, 300 frames after 45 s of a
+ * real engagement (`tools/_ledger.mjs`): **15 of 21 corpses had never settled**,
+ * the oldest 33.7 seconds after it fell, and the physics world carried 386 rigid
+ * bodies of which 383 were awake and 269 joints — against 40 living enemies. The
+ * fastest bone of each unsettled corpse, sorted:
+ *
+ *     0.03  0.20  0.25  0.26  0.27  0.28  0.56  1.11  1.24  1.72  2.26  3.76
+ *     4.00  5.74  108.37   m/s
+ *
+ * The cluster at 0.20-0.28 is the defect in one line: five bodies lying on the
+ * ground, going nowhere, reading five times the threshold for ever. And the
+ * consequence is the largest single line in the frame ledger — `physics` was
+ * **47% of `world.update`**, spent almost entirely on the dead.
+ *
+ * ── THE TEST NOW, AND WHY IT IS A DISPLACEMENT AND NOT A SPEED ──────────
+ *
+ * How far the body's CENTRE has moved, over how long. A verlet-ish solver
+ * settling a nineteen-body articulation leaves residual velocity that averages
+ * to nothing: a bone jittering in place reads 0.25 m/s and travels 0. Net
+ * displacement is the quantity that actually distinguishes "lying in the sand"
+ * from "sliding down a slope", and it is the same quantity `RapierWorld._stepOnce`
+ * already uses for its own sleep decision (`SLEEP_MOVE` / `SLEEP_TURN`) — so
+ * this is not a second opinion about rest, it is the existing one applied to
+ * the body rather than to each bone.
+ *
+ * `SETTLE_MOVE` is 6 cm, which is under the width of a hand: nothing a player
+ * can see a corpse do. `SETTLE_HOLD` is unchanged and still means what it
+ * always did — it stops a body being shoved by a crowd from settling mid-shove.
+ *
+ * ── AND A CAP, BECAUSE THERE WAS NO UPPER BOUND AT ALL ──────────────────
+ *
+ * Stillness was the ONLY route out. A body that never stops — the 108 m/s
+ * reading above is one falling off the world, and a corpse wedged under a
+ * walker's foot is the commoner case — simulated for as long as the budget kept
+ * it, which on a busy field is minutes. `SETTLE_CAP` bounds that: past it a
+ * corpse stops being simulated whatever the solver thinks.
+ *
+ * A corpse that reaches the cap still MOVING is sunk rather than frozen, and
+ * that distinction is the only reason the cap is safe to have. Freezing a body
+ * mid-tumble stops it dead in the air, which is the one thing a player would
+ * see; fading it out over `SINK_TIME` is what the budget already does to a
+ * corpse it cannot afford, and it looks like what it is. Twelve seconds because
+ * that is comfortably past every settle this was measured making (the slowest
+ * real one took 4.1 s) while still being a bound.
  */
-const SETTLE_SPEED = 0.05;
+const SETTLE_MOVE = 0.06;
 const SETTLE_HOLD = 0.75;
+const SETTLE_CAP = 12.0;
+
+/**
+ * Kept because it is the honest name for "is this thing still travelling", and
+ * the cap above asks exactly that once. It is no longer the settle test.
+ */
+const MOVING_AT = 0.5;
 
 /**
  * The field's undertaker.
@@ -103,12 +167,17 @@ export class Corpses {
     this.list = [];
     this.settled = 0;
     this.retired = 0;
+    /** How many corpses the cap had to end, rather than stillness. */
+    this.capped = 0;
   }
 
   /** A body has died. It is ours now. */
   take(enemy) {
     if (!enemy || this.list.some((c) => c.e === enemy)) return;
-    this.list.push({ e: enemy, t: 0, still: 0, settled: false, sink: 0 });
+    /* `mark` is where the body's centre was when the current still window
+     * opened — see SETTLE_MOVE. Allocated with the record and never again. */
+    this.list.push({ e: enemy, t: 0, still: 0, settled: false, sink: 0,
+      mark: new THREE.Vector3(), marked: false });
   }
 
   /**
@@ -152,13 +221,43 @@ export class Corpses {
       /* ── 1. SETTLE. Free, unrationed, and where the simulation cost is. */
       if (!c.settled) {
         const a = e.actor;
-        const moving = a && a.ragdolled ? ragdollSpeed(a) : 0;
-        c.still = moving < SETTLE_SPEED ? c.still + dt : 0;
+        if (!a || !a.ragdolled) {
+          /* Nothing to simulate: a body that never ragdolled is already as
+           * settled as it is going to get, and the old speed test answered 0
+           * for it and settled it on the next frame. Same outcome, said once. */
+          c.still += dt;
+        } else {
+          a.centre(_c);
+          if (!c.marked) { c.mark.copy(_c); c.marked = true; }
+          if (_c.distanceToSquared(c.mark) > SETTLE_MOVE * SETTLE_MOVE) {
+            c.still = 0;
+            c.mark.copy(_c);
+          } else c.still += dt;
+        }
         if (c.still > SETTLE_HOLD) {
           if (a?.freeze) a.freeze();
           else if (a?.ragdolled) sleepBodies(a, this.world);
           c.settled = true;
           this.settled++;
+        } else if (c.t > SETTLE_CAP) {
+          /**
+           * THE CAP. A corpse gets twelve seconds of solver and no more.
+           *
+           * Which of the two endings it gets depends on whether it is still
+           * travelling, for the reason the note over SETTLE_CAP gives: a body
+           * that has stopped is frozen where it lies and nothing on screen
+           * changes, and a body still in motion is faded out rather than
+           * stopped dead in view.
+           */
+          if (a?.ragdolled && ragdollSpeed(a) > MOVING_AT) {
+            if (c.sink <= 0) { c.sink = SINK_TIME; this.capped++; }
+          } else {
+            if (a?.freeze) a.freeze();
+            else if (a?.ragdolled) sleepBodies(a, this.world);
+            c.settled = true;
+            this.settled++;
+            this.capped++;
+          }
         }
       }
 

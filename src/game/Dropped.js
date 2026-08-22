@@ -113,6 +113,38 @@ export function dropSaber(world, opts = {}) {
       { c: new THREE.Vector3(0, -half.y * 0.6, 0), r: Math.max(half.x, half.z, 0.03) }],
   });
 
+  /**
+   * …AND SOMETIMES IT IS STILL BURNING.
+   *
+   * The player, on what should happen when a duellist falls: "they should fall
+   * to the ground their user is dead, sometimes retracting automatically,
+   * sometimes staying on and on the floor." A hilt on the ground was always
+   * dark, so the second half of that sentence had nothing behind it.
+   *
+   * A BLADE AND NOT A `Saber`. The real class carries a trail, a bloom
+   * contribution, a dynamic light, a hum voice and a per-frame update, and a
+   * cleared duel can leave half a dozen of these lying about — six of that is
+   * six of everything, for an object nobody is swinging. What a blade on the
+   * floor has to be is BRIGHT AND THE RIGHT COLOUR, so it is one emissive
+   * cylinder on the hilt's own group, and it dies with the prop.
+   *
+   * A physical weapon is never lit, because a vibrosword does not have a blade
+   * to leave on.
+   */
+  /* WHAT IT WOULD TAKE TO LIGHT THIS ONE, kept on the prop rather than closed
+   * over here, because the hilt can be lit long after it hits the ground: the
+   * player's Force can pick it up and switch it on from across the field. See
+   * `igniteHilt`, which is the only other place these three numbers are read. */
+  prop.hiltGroup = built.group;
+  prop.bladeLength = opts.weaponStyle ? 0 : (opts.bladeLength ?? 1.06);
+  prop.bladeOffset = half.y;
+  prop.bladeColor = crystal.hex;
+  if (opts.lit) igniteHilt(prop, true);
+
+  /* Its five metals are its own — `buildHiltGroup` machines a fresh set per
+   * hilt from the weapon's tuning — so this hilt may free them when it goes.
+   * See `Prop.destroy`, which will not touch a material without being told. */
+  prop.ownsMaterials = true;
   prop.saber = { colorIndex, hiltStyle: opts.hiltStyle, order: opts.order ?? null };
   prop.droppedBy = opts.owner ?? null;
   prop.dropAge = 0;
@@ -141,14 +173,245 @@ export function hiltWithinReach(world, actor, reach = PICKUP_REACH) {
   for (const p of world.props) {
     if (p.dead || !p.saber) continue;
     if (p.droppedBy === actor && p.dropAge < PICKUP_DELAY) continue;
-    const d = p.body.position.distanceToSquared(actor.position);
+    const d = hiltDistanceSq(p, actor);
     if (d < bestD) { bestD = d; best = p; }
   }
   return best;
 }
 
-/** Age every dropped hilt, so the delay above means something. */
+/**
+ * HOW FAR A HILT IS FROM A BODY — and the body is not a point.
+ *
+ * The player: *"if you force picked up the saber off the ground and called it
+ * back to you even at the closest distance you could not pick it up in the
+ * air."* This measured to `actor.position`, which is the FEET, and the Force
+ * grip's own floor parks what it holds 1.4 m in front of the CHEST. Measured
+ * on that geometry: a hilt reeled all the way in sits about 1.98 m from the
+ * feet against a 1.6 m reach, so the closest the Force could bring your own
+ * weapon was permanently, and by 38 cm, out of arm's reach — with no message,
+ * because nothing had failed.
+ *
+ * So the reach is to the STANDING AXIS: the segment from the feet to the top
+ * of the chest. A hilt at your boots and a hilt at your shoulder are both
+ * within arm's reach of you and neither is any longer a special case.
+ */
+export function hiltDistanceSq(prop, actor) {
+  const p = prop.body ? prop.body.position : prop.position;
+  const foot = actor.position;
+  const top = actor.chest ? actor.chest.y : foot.y + 1.35;
+  _v.set(p.x - foot.x, p.y - Math.min(Math.max(p.y, foot.y), top), p.z - foot.z);
+  return _v.lengthSq();
+}
+
+/**
+ * LIGHT A HILT THAT NOBODY IS HOLDING, or put it out.
+ *
+ * Two callers and one of them is the reason this is a function at all: a hilt
+ * dropped by a dying duellist is sometimes lit when it lands, and a hilt the
+ * player's Force has picked up off the ground can be lit BY the Force, from
+ * anywhere inside the reach — *"it should be possible to pick up the lightsaber
+ * with the force, turn it on or off using the force."*
+ *
+ * A BLADE AND NOT A `Saber`, for the reason the drop note gives: the real class
+ * carries a trail, a bloom contribution, a light, a hum voice and a per-frame
+ * update, and a cleared duel can leave half a dozen hilts about. What a blade
+ * off the hand has to be is bright, the right colour and the right length. It
+ * is built once, on the first ignition, and then only shown and hidden — so a
+ * hilt switched on and off a dozen times machines one cylinder.
+ *
+ * A vibrosword has no blade to leave on: `bladeLength` is 0 for a physical
+ * weapon and this refuses it rather than growing a plasma edge on a hunk of
+ * metal.
+ */
+export function igniteHilt(prop, on = true) {
+  if (!prop || prop.dead) return false;
+  if (on && !(prop.bladeLength > 0)) return false;
+  if (on && !prop.saberBlade) {
+    const len = prop.bladeLength;
+    const blade = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.026, 0.022, len, 7, 1),
+      new THREE.MeshBasicMaterial({ color: new THREE.Color(prop.bladeColor ?? 0xffffff) }));
+    /* Up the hilt's own axis from the emitter, which is where `buildHiltGroup`
+     * puts the muzzle — the group has been re-centred about its own bounding
+     * box, so the emitter is at the top of it. */
+    blade.position.y = (prop.bladeOffset ?? 0) + len * 0.5;
+    blade.userData.saberNoInk = true;      // see Ink.js: a glow is not an edge
+    (prop.hiltGroup ?? prop.mesh).add(blade);
+    prop.saberBlade = blade;
+  }
+  if (prop.saberBlade) prop.saberBlade.visible = !!on;
+  prop.saberLit = !!on;
+  return true;
+}
+
+/**
+ * The two ends of a loose hilt's blade in world space, or null if it is dark.
+ *
+ * Written out of the prop's own transform rather than from the body's rotation
+ * by hand, because the hilt group is re-centred inside the mesh and the blade
+ * is offset inside that: one `updateMatrixWorld` gets both without this file
+ * carrying a second copy of the offsets `igniteHilt` just applied.
+ */
+export function hiltBlade(prop, base, tip) {
+  if (!prop || prop.dead || !prop.saberLit || !prop.saberBlade) return null;
+  const b = prop.saberBlade;
+  /* FROM THE PROP'S ROOT DOWN, and not from the blade up. `updateMatrixWorld`
+   * recomputes an object's world matrix from its PARENT's, which nothing has
+   * refreshed: `Prop._syncMesh` writes `mesh.position` every frame but the
+   * matrices behind it are only rebuilt by the renderer's own scene walk, which
+   * never happens headless. Called on the blade alone this read the identity
+   * and put every loose blade in the game at the world origin — measured, on a
+   * hilt seven metres away that cut nothing because its blade was at (0,0,0). */
+  (prop.mesh ?? b).updateMatrixWorld(true);
+  base.set(0, -prop.bladeLength * 0.5, 0).applyMatrix4(b.matrixWorld);
+  tip.set(0, prop.bladeLength * 0.5, 0).applyMatrix4(b.matrixWorld);
+  return tip;
+}
+
+/**
+ * ══ HOW MANY HILTS THE FLOOR KEEPS ═══════════════════════════════════════
+ *
+ * Nothing bounded this, and the note over `dropSaber` says what the design
+ * wanted: "a field after a duel has a couple of blades still burning on it and
+ * the rest gone dark, so walking up to one is a decision rather than a
+ * formality." A couple. Measured with `tools/_hiltpile.mjs` — eight acolytes
+ * killed five times over, forty-five seconds apart so every corpse has been
+ * cleaned up before the next wave:
+ *
+ *     wave 1   8 hilts    196 meshes    71 rigid bodies
+ *     wave 3  24 hilts    590 meshes    87
+ *     wave 5  40 hilts    983 meshes   103
+ *
+ * Exactly one per saber-carrying kill, forever: `Prop` has no lifetime and
+ * `ageDropped` only ever added to `dropAge`. A hilt is 24.6 meshes — it is
+ * nineteen to thirty-six machined pieces, which is the whole reason it looks
+ * like a weapon — so forty of them is 983 draw calls of hardware lying in the
+ * sand, against the 520 `world-immersion` holds a whole LEVEL to. That is
+ * player note #15's "really really laggy" arriving from the one direction
+ * `Corpses` does not cover.
+ *
+ * ── THE BUDGET, DERIVED FROM THE CORPSE ONE ──────────────────────────────
+ *
+ * A corpse is 81 meshes (Corpses.js measured it); a hilt is 24.6, so a hilt is
+ * a third of a corpse. `CORPSE_BUDGET.high` is 20 bodies ≈ 1620 meshes, and
+ * these numbers are a tenth of that spend at every tier — 10 hilts at `high`
+ * is 246 meshes, which is a scatter of weapons a player can walk between and
+ * not a scrapyard. The tiers rise for the same reason the corpse tiers do and
+ * `low` keeps four, because a duel that leaves nothing behind is worse than a
+ * duel that leaves too much.
+ */
+export const HILT_BUDGET = { low: 4, medium: 6, high: 10, ultra: 14 };
+
+/**
+ * How long a spent hilt takes to go, and what may never be spent.
+ *
+ * The failure to avoid is the one `Corpses.worth` names from the other end —
+ * "bodies vanishing under your blade". A hilt is worse: it is an object the
+ * player may be walking toward in order to pick it up.
+ *
+ * A DISTANCE FLOOR IS THE WRONG GUARANTEE, and the first draft of this used
+ * one (14 m, then 4). Measured with `tools/_hiltpile.mjs`: a fight happens
+ * AROUND the player — eight acolytes charge a standing Jedi and die inside two
+ * metres of it — so every hilt on the field is inside any floor worth having,
+ * and the budget grew by five a wave with the cull refusing every candidate. A
+ * floor big enough to be a safeguard is big enough to be an exemption.
+ *
+ * So the protection is by RELATIONSHIP rather than by radius, which is what a
+ * player actually has with a hilt:
+ *
+ *   · one in a hand or in the Force (`claimed`), including one in flight;
+ *   · one a LOCAL PLAYER put down themselves — `dropSaber` records the owner,
+ *     and `Player._dropSaber` passes `owner: this`. That is the case the
+ *     radius was really for: you drop your weapon to fight bare-handed, walk
+ *     eight metres, and it must be where you left it;
+ *   · one put down inside `PICKUP_DELAY`, mid-swap.
+ *
+ * Everything else is ranked, exactly as `Corpses` ranks the dead, and the
+ * nearest and freshest are the last to go — so the ones that fade are the ones
+ * behind you at thirty metres. And it FADES rather than popping, which is
+ * `Corpses`' SINK step doing the same job for the same reason. A hilt's
+ * materials are its own (`buildHiltGroup` builds them per hilt), so this
+ * cannot reach anything another object is drawing with.
+ */
+const HILT_SINK = 1.0;
+
+/** Is anybody holding this hilt, or is it a local player's own weapon? */
+function claimed(world, prop) {
+  for (const p of (world.players || [])) {
+    if (!p) continue;
+    if (p.gripBody && p.gripBody.userData?.prop === prop) return true;
+    for (const h of (p.hurled || [])) if (h && h.thing === prop) return true;
+    if (prop.droppedBy === p && p.isLocal !== false && p.alive !== false) return true;
+  }
+  return false;
+}
+
+/**
+ * Fade every material a hilt owns. `k` runs 1 → 0, and 1 puts it back.
+ *
+ * `transparent` is remembered rather than left on, unlike `Corpses.fade` —
+ * because a hilt CAN be rescued (see `ageDropped`) and a machined metal
+ * cylinder left in the transparent pass sorts against its own blade glow. A
+ * corpse has no rescue path and so has no reason to carry the flag.
+ */
+function fadeHilt(prop, k) {
+  prop.mesh?.traverse?.((o) => {
+    if (!o.isMesh || !o.material) return;
+    for (const m of (Array.isArray(o.material) ? o.material : [o.material])) {
+      if (!m) continue;
+      if (m.userData.hiltOpaque === undefined) m.userData.hiltOpaque = !m.transparent;
+      m.transparent = k >= 1 ? !m.userData.hiltOpaque : true;
+      m.opacity = k;
+    }
+  });
+}
+
+/**
+ * Age every dropped hilt — so the pickup delay means something — and spend the
+ * ones past the budget.
+ *
+ * Ranked as `Corpses.worth` ranks the dead, and for the same reasons: NEARNESS
+ * as `1/(1+d)` so there is no radius at which hilts pop, and RECENCY so the
+ * weapon of the duellist you just cut down outranks one you walked past two
+ * rooms ago. Nearness is to the NEAREST player rather than to the local one,
+ * because in co-op a hilt your partner is standing over is one somebody can
+ * see.
+ */
 export function ageDropped(world, dt) {
   if (!world || !world.props) return;
-  for (const p of world.props) if (p.saber && p.dropAge !== undefined) p.dropAge += dt;
+  const hilts = [];
+  for (const p of world.props) {
+    if (!p.saber || p.dropAge === undefined) continue;
+    p.dropAge += dt;
+    hilts.push(p);
+  }
+  if (!hilts.length) return;
+
+  /* Whatever is already going, first — and it may be rescued: a hilt somebody
+   * takes hold of stops sinking and comes back to full. */
+  const live = [];
+  for (const p of hilts) {
+    if (!(p._sink > 0)) { live.push(p); continue; }
+    if (claimed(world, p)) { p._sink = 0; fadeHilt(p, 1); live.push(p); continue; }
+    p._sink -= dt;
+    if (p._sink <= 0) { p.destroy(); continue; }
+    fadeHilt(p, p._sink / HILT_SINK);
+  }
+
+  const budget = HILT_BUDGET[world.settings?.quality] ?? HILT_BUDGET.high;
+  if (live.length <= budget) return;
+
+  const eyes = (world.players || []).map((p) => p && p.position).filter(Boolean);
+  const rank = [];
+  for (const p of live) {
+    if (p.dropAge < PICKUP_DELAY || claimed(world, p)) continue;
+    const q = p.body?.position || p.mesh?.position;
+    if (!q) continue;
+    let d = 60;
+    for (const e of eyes) d = Math.min(d, Math.hypot(q.x - e.x, q.z - e.z));
+    rank.push({ p, worth: (1 / (1 + d * 0.08)) * (1 / (1 + p.dropAge * 0.05)) });
+  }
+  rank.sort((a, b) => a.worth - b.worth);
+  const spend = Math.min(rank.length, live.length - budget);
+  for (let i = 0; i < spend; i++) rank[i].p._sink = HILT_SINK;
 }

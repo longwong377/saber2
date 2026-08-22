@@ -1,0 +1,622 @@
+/**
+ * BATTLEFRONT BORZ — THE GUN PIT. FLAGSHIP §7's fourth verb, made into a thing
+ * the battle asks of you.
+ *
+ * §7: "BREACH — the one thing on the field only a Jedi can touch. Twenty
+ * seconds of held blade, deflecting nothing, away from your line, both bars
+ * draining."
+ *
+ * ── WHAT ALREADY EXISTED, AND WHY IT WAS NOT THE VERB ─────────────────────
+ *
+ * The mechanic has been finished for a while: `BlastDoor` (src/world/Props.js)
+ * has the kerf texture, the melt rate measured to a median of 18.8 s, the
+ * discard-through hole, the slug that falls out and `onBreach`;
+ * `magazine()` in Levels.js hangs a rank of three of them on Geonosis at the
+ * toe of the stack, 76.7 m from the muster ground, with a wing wall on each
+ * flank so the twenty seconds is fought in a defile; and `blast-door.mjs`
+ * drives a real Player through all of it.
+ *
+ * What none of that is, is a VERB. Behind each of those three doors is a cache
+ * of ordnance and fourteen points of war support, so the whole rank is an
+ * optional errand: nothing on the field changes if you walk past it. A verb is
+ * something the battle does to you until you answer it. §7 lists BREAK, TURN
+ * and OPEN alongside it and every one of those is a thing you do TO the enemy
+ * in the middle of a fight; BREACH was a chest.
+ *
+ * ── SO: A GUN BEHIND THE MIDDLE DOOR ─────────────────────────────────────
+ *
+ * The middle cell of the magazine holds an emplaced heavy gun. It fires on your
+ * LINE — the named men, not you — from inside a duracrete casemate, through an
+ * embrasure over the lintel. Three properties, and each one is the reason the
+ * verb is the verb:
+ *
+ *   NOTHING BUT A BLADE CAN REACH IT. The gun is a prop, not an Enemy: it is
+ *     not in `world.enemies`, so no bolt hit test, no Force power, no ally's
+ *     rifle and no stratagem has any way to touch it, and `damage()` refuses
+ *     anyway. Your ten troopers can shoot at the face all day. FLAGSHIP §4
+ *     licences exactly this — "an interior may exist as a feature on an
+ *     outdoor field — a bunker you breach, a downed cruiser you fight through,
+ *     A GUN EMPLACEMENT" — and §7 asks for "the one thing on the field only a
+ *     Jedi can touch". A body the line could kill would be a body the line
+ *     kills, because ten rifles beat one gun; the casemate is what makes the
+ *     answer a Jedi rather than arithmetic.
+ *
+ *   THE COST OF IGNORING IT IS NAMES, AND ONLY NAMES. It shoots the roster and
+ *     nothing else — a record dies once and is on the fallen list forever, and
+ *     that is Command's whole subject. It never shoots the PLAYER, which is a
+ *     real emplacement's behaviour (a casemate gun laid on a formation engages
+ *     the mass, not the one man running at it) and is also the only way the
+ *     cost can be a cost: a gun that shot at you would be a gun you dodge.
+ *
+ *     THE FIRST CUT TOOK THE PLAYER AS A FALLBACK — "if there is no line left
+ *     in the arc, shoot whoever is there" — and it broke five checks in
+ *     `blast-door.mjs` on a ground it has no business being armed on. `dress`
+ *     runs on every mode, so in the Trial of Waves, a roguelite, a duel or the
+ *     sandbox there IS no line, the fallback fired, and an untouchable gun was
+ *     putting 30-damage bursts into a lone player from 69 m. Measured: a real
+ *     Player walking from the muster ground "never got within 2.4 m of the
+ *     door in 45 s — closest 9.8 m", and a 75-second hold burned 41 of the 515
+ *     texels a breach needs. It was not the door. It was the gun shooting the
+ *     tester.
+ *
+ *     So the arc is the ARMY, and a gun with no army in front of it is silent
+ *     — see `update`, which declines outright on a world that leads no army.
+ *     That is the same line `World.loadLevel` already draws with `command`.
+ *
+ *   THE COST OF ANSWERING IT IS THE TWENTY SECONDS. That price is NOT
+ *     re-implemented here and no bar is drained by this file. It is already
+ *     what happens: the plate is 76.7 m from where your line forms up, your
+ *     blade is on the metal instead of in your guard, and every bolt that
+ *     arrives in the auto-guard cone while you are facing a wall costs stamina
+ *     to block and Force to leave unanswered (§6's table). "Both bars
+ *     draining" is an emergent consequence of standing still with your back
+ *     open, and a drain written into this file would be a second, quieter
+ *     answer to a question the guard already answers. What this file owes is
+ *     the MEASUREMENT, and tools/checks/breach.mjs takes it.
+ *
+ * ── WHY IT STOPS RATHER THAN DIES ────────────────────────────────────────
+ *
+ * On breach the gun goes silent and stays silent. It is not destroyed, it is
+ * TAKEN: the crew is dead or gone and the position is yours, which is the same
+ * sentence the cache's `credit('objective')` already makes about the two doors
+ * either side of it. A gun that exploded would need a wreck, a corpse and a
+ * kill credit — and a kill credit on the one object in the mode you are not
+ * supposed to be able to kill is exactly the accounting §6 spent a whole
+ * archetype avoiding.
+ *
+ * ── THE NUMBERS, AND WHERE EACH ONE COMES FROM ───────────────────────────
+ *
+ * None of them are taste. See `GUN` below.
+ */
+
+import * as THREE from 'three';
+import { BOLT_COLORS } from './Bolts.js';
+import { propMaterials } from '../world/Props.js';
+import { audio } from '../engine/Audio.js';
+/**
+ * THE SPREAD COMES OFF THE GAME'S OWN STREAM AND NOT OFF `Math.random`.
+ *
+ * `tools/register.mjs` pins `__SABER_SEED` before a single module is loaded
+ * precisely so that two module-level streams — `rand` here and `rng` in
+ * World.js — are the same on every run; its own note lists what a
+ * `Math.random()` seed cost the project (an escalation check that failed in a
+ * sequence and passed alone, a blast-door suite that failed a different check
+ * on each of four consecutive runs). A gun that dispersed off the wall clock
+ * would put this file straight back on that list, and it would do it in the
+ * one check whose subject is how many men a gun takes off a roster.
+ */
+import { rand } from '../engine/MathUtil.js';
+/* WHERE A BODY IS AIMED AT — one reader for the whole game, in the leaf module
+ * that already owned "which point on this thing does a bolt go to". Combat.js
+ * imports THREE, Physics, MathUtil, Bolts and Morale and nothing that reaches
+ * back here, so this edge cannot be part of a cycle. */
+import { aimAt } from './Combat.js';
+
+/**
+ * THE GUN, PRICED AGAINST THE LINE IT IS SHOOTING AT.
+ *
+ * `damage` 30 — a clone trooper is 46 hp (`ARCHETYPES.trooper`), so two hits
+ *   kill one and one hit does not. That is the shape a casemate gun should
+ *   have: every burst that lands is half a man, so the ledger moves visibly
+ *   and never in one step. A one-shot gun would make the cost a coin toss.
+ *
+ * ── SUPERSEDED IN PART — THE CONTROLLED NUMBER IS AT THE TOP ─────────────
+ *
+ * Every figure in the note below was taken ACROSS PROCESSES and is therefore
+ * not a comparison. `World.js` had no reseeder for its module-level `rng`
+ * when they were taken — it has `seedWorld` now — so two runs differing in
+ * any earlier draw diverge completely, and `theline` and `command` differ in
+ * one because a crossing rolls a session plan and Command does not. The same
+ * change read 5.4 and 3.0 of ten on that alone.
+ *
+ * RE-TAKEN PROPERLY. Both arms from fresh processes, identical module-init
+ * phase, `LEVELS.geonosis.battlefield` pinned off in both, the only
+ * difference being the two constants this session moved, 20 seeds apiece:
+ *
+ *     as shipped before this session   1.35 of 10   (sd 1.73)
+ *     with both halved                 2.80 of 10   (sd 2.33)
+ *                                      +1.45, se 0.65, z 2.24
+ *
+ * So the lever is real and it is SMALL — and **the target is not met**. The
+ * player asked for an engagement fought without the Jedi to cost about half
+ * a ten-man line; it costs 7.2 of 10. What the figures below are still good
+ * for is the RANKING they establish, which the controlled run does not
+ * contradict: the two sources of fire the wave's threat budget never pays
+ * for are the two that move this number at all. No single figure in them
+ * should be quoted.
+ *
+ * `every` 34.0 s — the cadence is what turns damage into a RATE, and the rate is
+ *   what the choice is made of. IT WAS 3.4, THEN 7.0, THEN 14.0 — AND EVERY ONE
+ *   OF THOSE WAS SET AGAINST A GUN THAT WAS SHOOTING INTO THE DIRT.
+ *
+ *   ── THE DIAL DID NOT MOVE; THE BUG IT WAS TUNED AROUND DID ───────────────
+ *
+ *   `_fire` read `_v.copy(t.position); _v.y += (t.chestY ?? 1.1)`, and `chestY`
+ *   is an ABSOLUTE world height — `position.y + 1.15 * bodyScale` — so it
+ *   counted the ground under the man twice. The muster formation on this ground
+ *   stands at −0.84 m, so the gun was laying every round 0.80 m under the chest
+ *   it was aiming at. The line-of-sight test above traced to the same wrong
+ *   point, so it also declined shots it could have taken. Measured on
+ *   `tools/_gunpit.mjs` — one gun, a formed-up line, nothing else on the field,
+ *   600 s, the same seeds either side of the fix:
+ *
+ *       aim         0.80 m under the chest        →   0.25 m
+ *       rounds      15 and 57 over ten minutes    →   27 and 93
+ *       delivered   0.33-0.50 men a minute        →   0.64-0.74
+ *       names       2 of 10                       →   5 of 10
+ *
+ *   So the correct aim roughly DOUBLED what this gun delivers, and 14.0 was the
+ *   number chosen for a gun delivering half of that. 34.0 is 14.0 re-paid at
+ *   the corrected rate. It is one number and it is a decision, so here is what
+ *   it costs both ends:
+ *
+ *     THE LINE pays about a name and a half to an emplacement it never
+ *       answers, over an engagement, instead of the 3.8 the corrected aim was
+ *       charging at 14.0. Measured: an engagement fought with no Jedi at all
+ *       reads 1.65 of ten survivors with the gun at 14.0 and about 5 of ten
+ *       with it at 34.0 and the conscript's round at 2.0 — which is the target
+ *       the player set, and it is not met at any setting of this dial alone.
+ *     §7 keeps a verb, and MEASURED RATHER THAN ASSUMED, because the obvious
+ *       arithmetic is wrong here. Halving the cadence does NOT halve what an
+ *       isolated gun delivers: `tools/_gunpit.mjs` reads 0.64 and 0.74 men a
+ *       minute at 14.0 and 0.62, 0.86 and 0.12 at 34.0 on the same seeds, and
+ *       `tools/checks/breach.mjs`'s own fixed ground reads 1.51 men a minute
+ *       and four of ten names in four minutes at 34.0. Two things are in front
+ *       of the timer there — see the paragraph below on sight, and the fact
+ *       that a man who is being shot at GOES TO GROUND, so a faster gun
+ *       suppresses its own targets (93 rounds for 6 hits at 14.0 against 48
+ *       rounds for 8 at 34.0 on one seed). What the cadence does set is what a
+ *       whole ENGAGEMENT costs, where the line is in the open and the gun has
+ *       continuous sight of it; that is where this dial was measured and that
+ *       is the only claim it makes. BREACH still removes a gun that is worth a
+ *       name every forty seconds of its own fire; what it no longer does is
+ *       decide the engagement by itself for a player who never finds it.
+ *       `tools/checks/breach.mjs` holds it on a RATE now rather than on
+ *       `lost >= 1`, which is the other half of the same decision.
+ *
+ *   AND THE CADENCE IS NOT THE WHOLE STORY ON THIS GROUND, which is worth
+ *   knowing before anybody turns it again: `update` decrements `_timer` every
+ *   frame and returns WITHOUT resetting it when the line-of-sight raycasts
+ *   refuse, so the gun fires the instant it can see. Measured, it gets 8-9
+ *   bursts away in ten minutes at 14.0 against a theoretical 43, so for much of
+ *   an engagement LINE OF SIGHT and not `every` is what is limiting it. Turning
+ *   this dial past the point where sight is the binding constraint buys nothing.
+ *
+ *   THE OLD NOTE, kept because its measurements are sound and only their
+ *   subject was a gun firing low:
+ *
+ *   Every earlier tally of this gun stopped on a poll for `director.mustering`,
+ *   and that flag is true for less than one frame: `_areaClear` ends with "no
+ *   screen wired: muster for the player and press on", so `autoMuster()` and
+ *   `closeMuster()` both run inside the same `payWave` call. The window a
+ *   number about this gun has to be taken over is ONE ENGAGEMENT — an area, to
+ *   its muster — and nothing could see one.
+ *
+ *   Held open (`tools/_linehold.mjs`), area 1 of the flagship mode on this
+ *   ground, no player on the field so the gun is never breached, five seeds:
+ *   **silencing this one emplacement takes the survivors from 1.8 of 10 to
+ *   4.8 of 10.** Three of the eight names an engagement costs are this gun's,
+ *   which is what forty conscripts and the whole Confederate fill cost between
+ *   them. The note below states the price it is MEANT to charge — "about one
+ *   man to answer it" — and the delivered price was three times that.
+ *
+ *   AND IT IS THIS NUMBER RATHER THAN THE LINE'S HEALTH, which is the part
+ *   worth writing down because the obvious lever was measured and refused.
+ *   Billing a body with a roster record 0.65 of every hostile bolt — 54% more
+ *   effective health on every man — moved the same five seeds from 1.8 to 2.8
+ *   and WIPED two of them, because `CommandDirector.allyScale` prices the wave
+ *   against the army that is standing: a line that lives longer meets a wave
+ *   composed for a line that lived. Everything on the threat ledger is
+ *   self-correcting that way. This gun is not on it — it is a prop and it is
+ *   not in `world.enemies` at all — so its output is the same whether you have
+ *   ten men or two, and it is one of exactly two sources of fire on this ground
+ *   that the wave's budget never paid for. The other is the levy, and the two
+ *   of them are five of the eight names.
+ *
+ *   Halving the cadence does NOT halve what it is: the round trip to breach it
+ *   is still the better part of a minute, the plate is still 69 m from where
+ *   the line forms up, and a burst that lands is still half a man. What
+ *   changes is that ignoring it for a whole engagement costs about a name and
+ *   a half instead of three.
+ *
+ *   The earlier note, kept because the measurement in it is sound and only its
+ *   window was short: IT WAS 3.4 AND THAT WAS FAR TOO MUCH, measured
+ *   by the mode lane on a full engagement rather than on this file's own bench:
+ *   wrapping `Enemy.damage` and tallying every point that lands on a party-team
+ *   trooper over two seeds of the flagship mode, **one gun pit was 42.8% of all
+ *   damage onto the line** against forty conscripts' 46.0% and the whole
+ *   Confederate fill's 11.2% — on runs where it was never breached and the
+ *   roster reached 0 of 10 in 62 seconds. One emplacement doing very nearly
+ *   what forty bodies do is not a prize for breaching, it is the main cause of
+ *   death, and a player who never finds it loses the run to something they
+ *   never saw.
+ *
+ *   Halving the cadence halves that share. What it is sized against now is the
+ *   PLAYER'S CLOCK and not the gun's: the plate is 69 m from where the line
+ *   forms up, which `blast-door.mjs` measures as about twenty seconds on foot,
+ *   and the hold is another twenty-two. So the round trip is the better part of
+ *   a minute, and a gun that takes a name every minute of sustained fire costs
+ *   the player about one man to answer it and the rest of the area if they do
+ *   not. That is a price with an answer, which is what §7 asks a verb to be.
+ *
+ * `reach` 120 m — the magazine is 76.7 m from the muster ground and the level's
+ *   spawn ring is 58-96 m, so a gun that could not reach past 100 m would be a
+ *   gun that stops mattering the moment your line steps back. It is a fixed
+ *   emplacement; its whole threat is that it covers the ground you have to
+ *   fight on.
+ *
+ * `spread` 0.028 — four times a clone trooper's 0.045? No: HALF of it. A
+ *   tripod-mounted gun laid on a fixed arc is the most accurate thing on this
+ *   field, and it has to be, because at 76 m the ordinary infantry spread
+ *   already misses almost everything (see `Enemy.aimQuality`). A gun that
+ *   missed at its own designed range would be scenery with a sound effect.
+ *
+ * `warmup` 2.2 s — the emplacement does not open fire the instant a body walks
+ *   into its arc. It is the tell: a player who has never met one gets one
+ *   ranging shot's worth of warning before the line starts losing men.
+ *
+ * `burst` 3 — AND THE FIRST CUT OF THIS FIRED SINGLE ROUNDS, WHICH MEASURED AS
+ *   AN ERRAND. Driven against a formed-up line at 69 m with nothing else on the
+ *   field: **26 rounds over 90 seconds took ONE man off a roster of ten.** The
+ *   arithmetic says why and it is dispersion, not damage: 0.028 rad is ±0.97 m
+ *   of lateral error at 69 m against a body 0.4 m wide, so roughly one round in
+ *   five connects and two are needed for a kill. A gun that takes one name a
+ *   minute and a half is a thing you walk past.
+ *
+ *   The fix is what an emplaced automatic weapon actually does — it fires a
+ *   BURST — and not a tighter cone, which would have made it a sniper covering
+ *   the whole plain with no counter but the one door. Three rounds a burst at
+ *   `burstGap` is the same shape every other automatic weapon on the roster
+ *   has (`ARCHETYPES.b1` is 3 at 0.11, the clone trooper 3 at 0.11), and it
+ *   trebles the rounds without moving what a single round is worth.
+ */
+export const GUN = {
+  damage: 30, every: 34.0, reach: 120, spread: 0.028, speed: 118, warmup: 2.2,
+  burst: 3, burstGap: 0.14,
+};
+
+const _v = new THREE.Vector3();
+const _d = new THREE.Vector3();
+const _up = new THREE.Vector3(0, 1, 0);
+
+/**
+ * The emplaced gun, as a prop.
+ *
+ * `FlightPack`'s shape, for the reason Riders.js gives it and Flight.js repeats:
+ * `World.update` steps every entry of `world.props` once a frame, after the
+ * bodies have moved, so a prop buys a per-frame tick without a line of World.js
+ * changing. The duck-typed collider fields are what the blade solver and the
+ * grip both walk the list looking for; every one of them here says "there is
+ * nothing on this object you can interact with", which is the point.
+ */
+export class GunPit {
+  /**
+   * @param world  the World it stands in
+   * @param door   the `BlastDoor` that is the way into it. The gun is silenced
+   *               by that door being breached and by nothing else, so the two
+   *               objects are one mechanism and are wired at construction
+   *               rather than discovered later.
+   */
+  constructor(world, door, opts = {}) {
+    this.id = 'gunpit';
+    this.world = world;
+    this.door = door;
+    this.dead = false;
+    this.kind = 'gunpit';
+    this.grippable = false;
+    this.generation = 0;
+    /* `Infinity` is this solver's word for "unbreakable" — the same value
+     * `BlastDoor.capsules` used to publish and had to stop publishing, because
+     * a blade against an unbreakable capsule raises `clang` and never `grind`.
+     * Here that is the wanted answer: the gun is not a thing you cut. */
+    this.toughness = Infinity;
+    this.hp = Infinity;
+    this.body = {
+      position: new THREE.Vector3(), quaternion: new THREE.Quaternion(),
+      velocity: new THREE.Vector3(), angularVelocity: new THREE.Vector3(),
+      boundingRadius: 0, mass: 0, invMass: 0, static: true,
+      applyImpulse() {}, wake() {},
+    };
+
+    /** Whose side the gun is on. The army that is not the player's. */
+    this.team = opts.team ?? 1;
+    /** Silenced. Set once, by `door.onBreach`, and never cleared. */
+    this.taken = false;
+    /** Seconds of fire delivered, and men taken off the roster. The check
+     *  reads both; the mode reads neither. */
+    this.shots = 0;
+    this.hits = 0;
+    this._timer = GUN.warmup;
+    /** Rounds left in the burst being fired, and the gap between them. */
+    this._left = 0;
+    this._gap = 0;
+    this.target = null;
+
+    /**
+     * THE MUZZLE IS OUTSIDE THE DOOR, and that is a fact about casemates
+     * rather than a convenience.
+     *
+     * A gun that fired from behind its own sealed blast door would put every
+     * bolt into the inside face of the plate. Real emplaced guns do not fire
+     * through their access door; they fire through an embrasure and the door is
+     * how the crew gets in. So the barrel comes out of the lintel band over the
+     * plate, on the outward normal of the door itself — derived from the door's
+     * own quaternion, so the gun cannot end up pointing into the hill if the
+     * magazine is ever re-sited.
+     *
+     * BOTH OFFSETS ARE MEASURED AND THE FIRST ONE WAS WRONG. At 0.55 m proud
+     * the muzzle sits INSIDE the 1.4 m lintel slab the magazine's face is made
+     * of — the plate stands in the middle of the reveal, so the wall is 0.7 m
+     * of duracrete on either side of it — and the line-of-sight raycast below
+     * therefore started inside a static box and reported no line of sight to
+     * anything, ever. Measured: 60 s of a real Command world with ten troopers
+     * formed up 69 m away and a live target acquired every frame, **0 shots
+     * fired**. A gun that cannot see out of its own wall is a silent prop, and
+     * nothing in the check that only asks whether it EXISTS would have caught
+     * it. 0.95 m puts the muzzle 0.2 m clear of the outside face.
+     */
+    const n = _d.set(0, 0, 1).applyQuaternion(door.mesh.quaternion).normalize();
+    this.muzzle = door.mesh.position.clone()
+      .addScaledVector(n, 0.95)
+      .add(_v.set(0, door.height * 0.5 + 0.8, 0));
+    this.facing = n.clone();
+
+    this.group = new THREE.Group();
+    this._build();
+    world.scene?.add(this.group);
+    this.mesh = this.group;
+
+    const prev = door.onBreach;
+    door.onBreach = (d) => { this.silence(); prev?.(d); };
+  }
+
+  /**
+   * The mantlet and the barrel. Two boxes and a cylinder, three meshes, off the
+   * shared prop materials so it bins with the rest of the revetment — a gun
+   * that cost a new material would cost a draw call on a level whose dressing
+   * budget is already the thing `world-immersion` bounds.
+   */
+  _build() {
+    const M = propMaterials();
+    const g = this.group;
+    g.position.copy(this.muzzle);
+    g.quaternion.setFromUnitVectors(_v.set(0, 0, 1), this.facing);
+
+    const mantlet = new THREE.Mesh(new THREE.BoxGeometry(2.2, 1.1, 0.45), M.hull);
+    mantlet.position.set(0, 0, -0.2);
+    mantlet.castShadow = true;
+    g.add(mantlet);
+
+    const cheek = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.28, 0.7), M.duracreteDark || M.hull);
+    cheek.position.set(0, 0.68, -0.15);
+    g.add(cheek);
+
+    this.barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.16, 2.6, 8), M.darkSteel || M.hull);
+    this.barrel.rotation.x = Math.PI / 2;
+    this.barrel.position.set(0, 0, 0.9);
+    this.barrel.castShadow = true;
+    g.add(this.barrel);
+  }
+
+  /* Nothing on this object is a target. Every one of these is the answer the
+   * blade solver, the grip and the bolt sweep need to leave it alone. */
+  capsules(out = []) { out.length = 0; return out; }
+  cut() { return []; }
+  shatter() {}
+  damage() { return false; }
+
+  /** The door is open. The position is taken and the gun never speaks again. */
+  silence() {
+    if (this.taken) return;
+    this.taken = true;
+    this.target = null;
+    this.world?.notify?.('THE GUN IS OURS', 'the emplacement is silent');
+  }
+
+  /**
+   * WHO IT SHOOTS AT — the line, and the player only if the line is not there.
+   *
+   * The roster's LIVING BODIES first, by distance, because the whole content of
+   * the emplacement is that leaving it standing costs you names. `world.enemies`
+   * is the list every body on the field is in — in this mode your own troopers
+   * are Enemy instances too, which is what makes one loop enough.
+   */
+  _acquire() {
+    const w = this.world;
+    const mine = w?.partyTeam ?? 0;
+    let best = null, bestD = GUN.reach * GUN.reach;
+    for (const e of w.enemies) {
+      if (!e || e.dead || (e.team ?? 1) !== mine) continue;
+      const d = e.position.distanceToSquared(this.muzzle);
+      if (d < bestD) { bestD = d; best = e; }
+    }
+    return best;
+  }
+
+  update(dt) {
+    if (!(dt > 0) || this.taken || this.dead) return;
+    /* NO ARMY, NO GUN. `world.command` is the director when the mode leads one
+     * — Command, a skirmish, a campaign or a contingent — and it is null in
+     * every other mode. The emplacement is FLAGSHIP §7's verb and §7's verb
+     * belongs to the mode with a line in it; on a ground being fought over by
+     * a lone Jedi there is nothing here for a gun to be laid on. See the note
+     * at the head of this file for the five checks that taught it. */
+    if (!this.world?.command) return;
+    if (this.door?.opened) { this.silence(); return; }
+    const t = (this.target && !this.target.dead && (this.target.alive ?? true)
+      && this.target.position.distanceToSquared(this.muzzle) < GUN.reach * GUN.reach)
+      ? this.target : this._acquire();
+    this.target = t;
+    if (!t) return;
+
+    /* The barrel tracks whether or not it is about to fire. A gun that only
+     * moved on the frame it shot would read as a decal three seconds out of
+     * every four. */
+    _d.subVectors(t.position, this.muzzle);
+    if (_d.lengthSq() > 1e-4) {
+      _d.normalize();
+      this.group.quaternion.setFromUnitVectors(_v.set(0, 0, 1), _d);
+    }
+
+    /* MID-BURST, and the burst finishes on the target it was laid on. A gun
+     * that re-acquired between rounds would walk its own three across two
+     * different men and hit neither — the whole value of a burst is that the
+     * second and third rounds arrive where the first one was aimed. */
+    if (this._left > 0) {
+      this._gap -= dt;
+      if (this._gap <= 0) { this._gap = GUN.burstGap; this._left--; this._fire(t); }
+      return;
+    }
+    this._timer -= dt;
+    if (this._timer > 0) return;
+    /**
+     * …AND ONLY IF IT CAN SEE. The gun stands over a lintel with a wing wall on
+     * each flank, a butte behind it and a plain in front, and a fixed
+     * emplacement firing every 3.4 seconds into the inside of its own defile
+     * would be spending the mode's whole cost budget on the terrain.
+     *
+     * Both raycasts are the ones `Enemy._hasLineOfSight` uses, in the same
+     * order and for the same reason — the static boxes first because they are
+     * the cheap test, the heightfield second — and the 0.6 m short of the
+     * target is that method's own margin: a ray that ran the whole way would
+     * be stopped by the body's own physics proxy.
+     */
+    const w = this.world;
+    aimAt(t, _v);
+    _d.subVectors(_v, this.muzzle);
+    const range = _d.length();
+    _d.multiplyScalar(1 / range);
+    if (w.physics?.raycast?.(this.muzzle, _d, range - 0.6, (b) => b.static)) return;
+    if (w.terrain && w.terrain.raycast(this.muzzle, _d, range - 0.6) !== null) return;
+    this._timer = GUN.every;
+    this._left = Math.max(1, GUN.burst) - 1;
+    this._gap = GUN.burstGap;
+    this._fire(t);
+  }
+
+  _fire(t) {
+    const bolts = this.world?.bolts;
+    if (!bolts) return;
+    /**
+     * ── THE TELL IS EVERY MACHINE'S; THE ROUND IS THE HOST'S ────────────────
+     *
+     * This gun is built by the LEVEL, so every machine in a session has one and
+     * every machine was firing it. That is the same defect `World._boltHurt` is
+     * about, one layer further out: the host's rounds already cross as events
+     * in the snapshot and are spawned into the client's own pool, so a client
+     * that also fired its own copy put TWO guns on one embrasure — a second
+     * burst nobody on the host had fired, laid on a target its own copy of the
+     * line had chosen, and then billed back to the host as damage by
+     * `_reconcileClaims`. Measured on a co-op Command pair with the joining
+     * player idle: a 30.5 hp claim against a named trooper, from a gun the
+     * host's own copy had already fired at somebody else.
+     *
+     * The BARREL still tracks off-host — that is in `update` and it is what the
+     * gun looks like — and the tell still fires, because a gun the player never
+     * finds is a gun the player loses the run to without ever seeing it (the
+     * mode lane's tally had this emplacement at 42.8% of everything that killed
+     * the line on runs where nobody went near it) and a joining player is a
+     * player. What stops here is the round, the noise and the flash, all three
+     * of which arrive from the host as a replicated bolt.
+     *
+     * ONCE, off `_told` rather than off `shots`: a line of HUD text every seven
+     * seconds is not a tell, it is a nag, and `shots` has to stay the count of
+     * rounds this gun actually fired — `tools/checks/breach.mjs` reads it.
+     */
+    if (!this._told) {
+      this._told = true;
+      this.world?.notify?.('EMPLACED GUN', 'the revetment is firing on your line');
+    }
+    if (this.world.netMode === 'client') return;
+    /* Aim at the chest and lead the target, exactly as `Enemy._shoot` does:
+     * a fixed gun that fired at a man's feet where he was standing last frame
+     * would never hit a line that is walking.
+     *
+     * ── AND IT WAS FIRING OVER THEIR HEADS BY THE HEIGHT OF THE GROUND ──────
+     *
+     * This read `_v.copy(t.position); _v.y += (t.chestY ?? 1.1)`. `chestY` is
+     * `position.y + 1.15 * bodyScale` — an ABSOLUTE world height, not an offset
+     * — so adding it to `position.y` counted the terrain under the man TWICE.
+     * On a flat floor at y = 0 that is exactly right and on nothing else is it
+     * right at all: the mode generates a heightfield per seed
+     * (`Battlefield.js`), and a line standing 3 m up was being shot at 3 m over
+     * its own heads. That is one half of why an isolated arm of `breach.mjs`
+     * scored 1 of 10 names in 90 s and flaked on the next run.
+     *
+     * `aimAt` is the reader, called and not restated (HANDOFF §2.4); the same
+     * arithmetic written out a second time here is what got it wrong.
+     */
+    aimAt(t, _v);
+    const range = _v.distanceTo(this.muzzle);
+    if (t.velocity) _v.addScaledVector(t.velocity, range / GUN.speed);
+    _d.subVectors(_v, this.muzzle).normalize();
+    _d.x += (rand() - 0.5) * GUN.spread;
+    _d.y += (rand() - 0.5) * GUN.spread * 0.7;
+    _d.z += (rand() - 0.5) * GUN.spread;
+    _d.normalize();
+    bolts.fire(this.muzzle, _d, {
+      speed: GUN.speed, damage: GUN.damage, color: BOLT_COLORS.red,
+      /* THE OWNER IS THIS OBJECT, and that is what makes the shot legal.
+       * `World._boltHitTest` asks `canHarm(bolt.owner, victim, rules)`, which
+       * reads a `team` — so a bolt with no owner would be sorted by team alone
+       * and could not be aimed at an ally of the firer, and a bolt owned by
+       * nothing at all would be refused. The gun is its own shooter. */
+      owner: this, team: this.team, big: true, length: 2.4, radius: 0.1,
+    });
+    this.shots++;
+    audio.blaster?.(this.muzzle, true);
+    this.world.particles?.plasma?.spawn(this.muzzle, _v.set(0, 0, 0), {
+      life: 0.09, size: 0.9, drag: 1, gravity: 0, color: 0xff3020, alpha: 1 });
+  }
+
+  destroy() {
+    if (this.dead) return;
+    this.dead = true;
+    this.group.parent?.remove(this.group);
+    this.group.traverse((o) => { if (o.isMesh) o.geometry?.dispose(); });
+    const i = this.world.props.indexOf(this);
+    if (i >= 0) this.world.props.splice(i, 1);
+  }
+  dispose() { this.destroy(); }
+}
+
+/**
+ * Put a gun behind this door.
+ *
+ * Returns the pit, or null if there is no door to put one behind — a level that
+ * hangs no blast doors gets no emplacement and pays nothing for the fact.
+ */
+export function emplaceGun(world, door, opts = {}) {
+  if (!world || !door || !door.mesh) return null;
+  const pit = new GunPit(world, door, opts);
+  if (world.addProp) world.addProp(pit);
+  else if (world.props) world.props.push(pit);
+  /* THE DEAD ONES GO. `World.unload` destroys every prop and a `GunPit`
+   * splices itself out of `world.props`, but this second list is the level's
+   * own and nothing was clearing it — so a World that loaded geonosis twice
+   * would report two emplacements, one of them a disposed object, and the
+   * check that counts them would read the reload rather than the ground. */
+  world.gunPits = (world.gunPits || []).filter((g) => g && !g.dead);
+  world.gunPits.push(pit);
+  return pit;
+}

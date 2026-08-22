@@ -14,10 +14,15 @@ import { sandMaps, rockMaps, metalMaps, clothMaps, armorMaps, duracreteMaps,
 import { World } from './game/World.js';
 import { DIFFICULTY } from './game/Combat.js';
 import { HUD } from './ui/HUD.js';
-import { Menu, loadSettings, saveSettings, applyFeelSettings, VICTORY_TITLE } from './ui/Menu.js';
+import { Menu, loadSettings, saveSettings, applyFeelSettings, VICTORY_TITLE,
+  LINE_LOST_TITLE } from './ui/Menu.js';
 import { Net, RemoteAvatar, packLook, sessionPart } from './net/Net.js';
 import { boonById, drawBoons, BOSS_EVERY, MODES } from './game/Waves.js';
 import { theatreFor } from './game/Levels.js';
+/* THE SHAPE OF ONE SITTING — FLAGSHIP §5. A leaf that imports nothing of the
+ * game's, so the deploy card can be assembled here without this file reaching
+ * into the director for anything but the record it already publishes. */
+import { deployCard } from './game/Session.js';
 // No `FORMATIONS` import any more: the orders reach this file as ordinary
 // bindings through `ORDER_ACTIONS` below, which is the point of the seam.
 import { recordRun, loadProgress } from './game/Progress.js';
@@ -257,8 +262,51 @@ async function boot() {
 /*  Session control                                                       */
 /* ══════════════════════════════════════════════════════════════════════ */
 
-async function buildWorld(levelKey, onProgress = null) {
+/**
+ * THE RUN'S NUMBER, MINTED WHERE BOTH READERS CAN SEE IT — and it had one
+ * reader too many for the place it used to live.
+ *
+ * `deploy()` reads the seed to resolve the GROUND (`theatreFor`, for a mode
+ * whose theatre is a roll) and `buildWorld` reads it to seed the streams, and
+ * the mint sat inside `buildWorld`. So `deploy` read `world.runSeed` off a
+ * `world` that its very next line was about to build: on the first press after
+ * boot `world` is null, and the whole deploy died in a TypeError caught by its
+ * own guard, which put the menu back with a notice. Measured with
+ * `tools/_deployprobe.mjs` — "deploy failed TypeError: Cannot read properties
+ * of null (reading 'runSeed')", every time, from a cold page.
+ *
+ * One function, called once per deploy, and the number is then HANDED to the
+ * build rather than fetched back out of it. Two mint sites would be worse than
+ * the crash — the ground would be resolved on one roll and the waves seeded on
+ * another, and nothing would ever say so.
+ */
+function mintRunSeed() {
+  const asked = session && session.seed !== undefined ? session.seed : settings.seed;
+  return Number.isFinite(Number(asked)) && asked !== null && asked !== ''
+    ? (Number(asked) | 0) >>> 0
+    : (Math.random() * 0xffffffff) >>> 0;
+}
+
+async function buildWorld(levelKey, onProgress = null, runSeed = null) {
   if (world) { world.dispose(); world = null; }
+  /**
+   * PHYSICS BEFORE ANYTHING, AND IT IS AWAITED HERE RATHER THAN ASSUMED.
+   *
+   * `boot()` warms Rapier with the textures — see the `settling the world`
+   * step — so by the time a player can press Deploy it is normally long ready,
+   * and this call is then a resolved promise and free (`initPhysics` hands
+   * every caller the same one).
+   *
+   * It is here because `RapierWorld`'s constructor THROWS on a null module and
+   * the throw lands in `deploy()`'s catch, which puts the player back on the
+   * menu with a notice and no game. Measured in a browser driving the shipped
+   * page: a Deploy that reached this line before the warm-up had finished died
+   * with "Rapier is not initialised — await initPhysics() first", and the
+   * button did nothing for the rest of the session. One await removes the whole
+   * class — the retry path, a slow first load, and any future caller that
+   * builds a world without going through boot at all.
+   */
+  await initPhysics();
   audio.init();
   audio.resume();
 
@@ -290,10 +338,7 @@ async function buildWorld(levelKey, onProgress = null) {
   // line below gives: `settings.seed` is the named reader Menu.SETTING_READERS
   // points at, and a setting whose only reader is behind an indirection is a
   // setting the "every control reaches the game" check can no longer see.
-  const asked = session && session.seed !== undefined ? session.seed : settings.seed;
-  world.runSeed = Number.isFinite(Number(asked)) && asked !== null && asked !== ''
-    ? (Number(asked) | 0) >>> 0
-    : (Math.random() * 0xffffffff) >>> 0;
+  world.runSeed = runSeed ?? mintRunSeed();
   // The player's own difficulty — and then the host's over the top of it, if
   // this is their session. Two statements rather than one `sessionOr`, because
   // `settings.difficulty` is the named reader Menu.SETTING_READERS points at
@@ -570,13 +615,20 @@ async function deploy() {
    * and moved the player to the Colosseum on the next frame. `theatreFor` is
    * the clamp for all three cases and it is the same list `_syncTheatre` bars
    * the column with, so the ground the card shows is the ground that loads. */
-  const levelKey = theatreFor(sessionOr('mode'), sessionOr('level'));
+  /* THE RUN'S NUMBER IS THE THIRD ARGUMENT, and it has to be: a mode whose
+   * ground is a seed roll cannot be resolved without the seed. `world.runSeed`
+   * is minted above this line and before the level loads, which is the whole
+   * reason it lives there — see its own note. */
+  /* MINTED HERE, USED TWICE, BUILT ONCE. See `mintRunSeed`: this line used to
+   * read `world.runSeed`, and `world` is not built until six lines below. */
+  const runSeed = mintRunSeed();
+  const levelKey = theatreFor(sessionOr('mode'), sessionOr('level'), runSeed);
   try {
     /* AWAITED, so the build yields between its stages instead of freezing the
      * tab. The progress callback is the same shape the boot sequence's bar
      * already takes; `screens.loading` renders it if it exists, and a build
      * that finishes before the first paint simply never shows one. */
-    await buildWorld(levelKey, (frac, label) => screens.loading?.(frac, label));
+    await buildWorld(levelKey, (frac, label) => screens.loading?.(frac, label), runSeed);
   } catch (e) {
     console.error('deploy failed', e);
     if (world) { try { world.dispose(); } catch {} world = null; }
@@ -628,6 +680,12 @@ async function deploy() {
     else if (settings.mode === 'skirmish') {
       world.beginSkirmish({
         engagements: settings.skirmishEngagements,
+        /* THE FIFTH PICK, and it was the missing one. `skirmishConfig` has
+         * clamped `waves` since an engagement stopped being one cleared wave;
+         * nothing passed it, so every skirmish ever fought took
+         * `SKIRMISH.waves.def` and the mode's length was one slider instead of
+         * two. See `DEFAULT_SETTINGS.skirmishWaves`. */
+        waves: settings.skirmishWaves,
         strength: settings.skirmishStrength,
         pressure: settings.skirmishPressure,
         rotate: settings.skirmishRotate,
@@ -640,7 +698,78 @@ async function deploy() {
     } else if (MODES[settings.mode]?.picksCampaign) world.beginCampaign();
     else world.director.start(1);
   }
-  world.notify('MAY THE FORCE BE WITH YOU', world.level.name);
+  /**
+   * AND YOU ARRIVE, RATHER THAN APPEAR.
+   *
+   * The player, twice: "you should never just appear, ON ANY MAP, you must
+   * always arrive and leave via transport regardless of if you're with troops
+   * or not… Every mode/map should start like this."
+   *
+   * This is the LAST line of the deploy path on purpose. Everything above it
+   * has to have happened first — the world built, the commander spawned, the
+   * army deployed by `beginSkirmish`/`beginCampaign`/`start(1)` — because
+   * `beginInsertion` lifts whatever is standing on the ground into the bay, and
+   * a line that has not been mustered yet is a line that walks on afterwards.
+   *
+   * It DECLINES rather than throws when it cannot fly: no player, no terrain, a
+   * client, or `instantSpawn`. Every one of those falls through to the world
+   * exactly as it was — a commander standing on a spawn point, which is what
+   * every mode in this game did until now.
+   */
+  /**
+   * 0:00 — THE DEPLOY CARD, and then 0:12, which is the gunship.
+   *
+   * FLAGSHIP §5 opens the session with "the seed, the ground, and your ten
+   * names, readable before you land", and the mode had none of it: a Command
+   * run began with a notify that faded in two seconds, over a roster panel in
+   * the corner nobody had been told to read. The names are the mode's second
+   * one-way variable and this is the only moment in a run when all ten of them
+   * are still on it.
+   *
+   * IT IS RAISED FOR THE CROSSING AND NOTHING ELSE. `director.crossing` is the
+   * field that means "this run is a session" — true for Command, false for a
+   * skirmish, a campaign and a contingent, all of which are a bounded battle
+   * with an army in it rather than a sitting with a length. A card in front of
+   * every Trial of Waves would be a loading screen with prose on it.
+   *
+   * THE FLIGHT IS THE CALLBACK. `beginInsertion` is the last line of the deploy
+   * path for the reason its own note gives — everything above it has to have
+   * happened first — and the card goes in FRONT of it, not instead of it: the
+   * world is stopped behind an overlay, the player reads their ten names, and
+   * pressing Drop is what puts them in the air. A card that flew first would be
+   * a card the player reads while the LAAT is already on approach.
+   *
+   * `screens.deploy` returns false when the markup is missing, which is the
+   * same fallback the muster takes: drop without one rather than leave a
+   * session stopped on a state with nothing on screen.
+   */
+  const insert = () => {
+    const flew = world.extraction?.beginInsertion?.({ name: world.level.name });
+    if (!flew) world.notify('MAY THE FORCE BE WITH YOU', world.level.name);
+  };
+  const cmd = world.command;
+  if (cmd?.crossing && !world.training) {
+    const card = deployCard({
+      seed: world.runSeed,
+      plan: cmd.plan,
+      stages: cmd.stages,
+      ground: world.level.name,
+      roster: cmd.roster.summary(),
+      networked: net.enabled && net.connected,
+    });
+    const up = screens.deploy(card, {
+      drop: () => {
+        screens.overlay = null;
+        /* 'paused' so `resume()` takes the playing branch — the same ordering
+         * the muster's Done uses, and the same reason: everything risky has
+         * already run by the time the state moves. */
+        screens.state = 'paused';
+        resume();
+        insert();
+      },
+    });
+    if (!up) insert();
+  } else insert();
 }
 
 /**
@@ -1044,6 +1173,27 @@ function record(stats = null) {
     won: stats?.won ?? (world.over ? false : null),
     mode: sessionOr('mode'),
     boons: [...(world.takenBoons || [])],
+    /**
+     * WHAT THE RUN WOKE IN THE HOLOCRON — and it was the third field
+     * `recordRun` had always read and nothing had ever passed.
+     *
+     * `Progress.recordRun` does two things with `summary.woken`: it adds its
+     * LENGTH to `p.communed` ("facets woken by communion, all-time"), which
+     * `progressLines` prints as ", N woken in communion", and it stores the
+     * same length on the run's own entry as `facets`. Neither could ever be
+     * anything but zero: `World.runStats()` does not report it and this call
+     * did not add it, so the clause never printed for any player who has ever
+     * run this game, and every one of the forty entries in `recent[]` recorded
+     * `facets: 0` on a run that may have bought six.
+     *
+     * `communion.bought` is the list — the ids woken with Insight, in order,
+     * which is exactly "facets woken by communion" and is NOT `takenBoons`:
+     * that set is fed by the order's grants and by the draft as well, and it is
+     * already carried above as `boons`. The two answer different questions and
+     * the record wants both. `seed` above is the same defect one field along,
+     * fixed one commit earlier.
+     */
+    woken: [...(world.communion?.bought || [])],
     identity: { order: settings.order, species: settings.species },
     /**
      * …AND WHAT THE RUN WAS ACTUALLY FOUGHT UNDER.
@@ -1111,9 +1261,27 @@ function gameOver(stats) {
    * every field read here to being a field `runStats` reports.
    */
   const TAKEN = { campaign: 'Missions taken', skirmish: 'Engagements won', command: 'Areas taken',
-                  duel: 'Forms faced' };
+                  theline: 'Ground taken', duel: 'Forms faced' };
   const row = (label, v) => (v == null ? null : [label, v]);
-  const rows = won
+  /**
+   * A THIRD CARD, BECAUSE THE LINE HAS A THIRD ENDING.
+   *
+   * The two above are "you won" and "you died", and they were the only two
+   * endings this game had. THE LINE has one neither describes: the run is over,
+   * the army is gone, and **you are still standing there**. Telling a player
+   * who is alive "You are one with the Force" over a row that reads "Wave
+   * reached 4" is wrong twice — it reports a death that did not happen, and it
+   * asks the endless modes' question of a mode that answers a different one.
+   *
+   * `stats.ended` is the discriminator and it is set by the two doors that know
+   * — `CommandDirector._checkLine` and `_endCampaign` — rather than inferred
+   * here from `won === false` plus a guess at whether the player is breathing.
+   * The rows are the won card's rows: the ground you took and the men it cost
+   * are the right questions whichever way the verdict went, and they are the
+   * only rows on either card that are about the ARMY.
+   */
+  const lostLine = !won && stats.ended === 'line';
+  const rows = (won || lostLine)
     ? [
       row(TAKEN[sessionOr('mode')] ?? 'Ground taken', stats.taken),
       ['Score', Math.floor(stats.score).toLocaleString()],
@@ -1130,7 +1298,8 @@ function gameOver(stats) {
       ['Perfect returns', stats.perfects],
       ['Limbs taken', stats.limbs],
     ];
-  const card = () => menu.showDeath(rows, won ? VICTORY_TITLE : undefined);
+  const card = () => menu.showDeath(rows,
+    won ? VICTORY_TITLE : (lostLine ? LINE_LOST_TITLE : undefined));
   // Remembered before it is shown: 2.6 seconds is a long time for the only exit
   // from a state to be in flight, and a throw in there used to leave the player
   // watching their own corpse with nothing on screen. Escape asks for it again.
@@ -1318,6 +1487,23 @@ function wireNet() {
     // against it, and `damage` kept addressing a closed connection.
     const i = world.players.indexOf(r);
     if (i >= 0) world.players.splice(i, 1);
+    /**
+     * …AND OUT OF `commanders`, WHICH IS FLAGSHIP §9'S SECOND DEFECT.
+     *
+     * "`peer-left` removes the RemoteAvatar and nothing removes its
+     * `Commander`, so its army goes on being steered off a disposed body."
+     * Exactly that: the avatar is disposed two lines up and its Commander went
+     * on sitting in the director's list, solving a formation in the frame of a
+     * body nothing updates and measuring the follow speed of a corpse of a
+     * drawing. `CommandDirector.census` carried a guard against the one
+     * consequence anybody had noticed — a departed general's army could win the
+     * match — which is the shape of the bug rather than a fix for it.
+     *
+     * `dismissCommander` is where what happens to their men is decided, and
+     * with one roster the answer is mostly "nothing": their squads are re-dealt
+     * to whoever is left on the same roll. See its note.
+     */
+    world.command?.dismissCommander?.(r);
     world.notify('A JEDI HAS FALLEN AWAY', `${r.name} left the fight`);
   });
   /**
@@ -1485,9 +1671,23 @@ function wireNet() {
         look: entry?.look || null, team: entry?.team });
       world.remotes.set(peerId, r);
       world.players.push(r);
-      /* A new body on the field is a new commander to be given an army, if this
-       * is a meeting. Idempotent — see World.beginVersus. */
-      if (world.command?.versus && world.netMode === 'host') world.beginVersus();
+      /**
+       * A NEW BODY ON THE FIELD IS A NEW COMMANDER TO BE GIVEN SOMETHING TO
+       * LEAD, and there are two answers to what.
+       *
+       * A MEETING hands them an army of their own, 120 m away, facing you.
+       * ANYTHING ELSE seats them on YOUR side, out of YOUR roster, holding one
+       * of the squads that is already standing — FLAGSHIP §9's "four players
+       * take four squads out of one roster of up to 24". Until this line a peer
+       * joining a Command run got a blade and no army at all: nothing outside
+       * `beginVersus` had ever called `enlistCommander`.
+       *
+       * Both are idempotent per player and both are the host's alone.
+       */
+      if (world.netMode === 'host') {
+        if (world.command?.versus) world.beginVersus();
+        else world.seatAlly?.(r);
+      }
     }
     r.push(msg, performance.now() / 1000);
   });

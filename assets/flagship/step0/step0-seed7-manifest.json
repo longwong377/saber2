@@ -1,0 +1,73 @@
+{
+  "step": "step0",
+  "seed": 7,
+  "quality": "medium",
+  "settle": 5,
+  "camera": {
+    "bearing": 1.9913817606549786,
+    "x": 6.532718981368332,
+    "z": -14.605601073234538,
+    "y": 8.309376195376446
+  },
+  "plates": [
+    {
+      "file": "/home/user/saber2/.flagship/plates/step0-a-visit-one-arrival.png",
+      "state": "pristine"
+    },
+    {
+      "file": "/home/user/saber2/.flagship/plates/step0-c-near-pristine.png",
+      "state": "pristine, eye height"
+    },
+    {
+      "file": "/home/user/saber2/.flagship/plates/step0-b-visit-two-arrival.png",
+      "state": "after one area",
+      "craters": 539
+    },
+    {
+      "file": "/home/user/saber2/.flagship/plates/step0-d-near-after.png",
+      "state": "after one area, eye height"
+    },
+    {
+      "file": "/home/user/saber2/.flagship/plates/step0-e-near-twenty-sorties.png",
+      "state": "twenty sorties, eye height"
+    }
+  ],
+  "nearCamera": {
+    "x": -12.2,
+    "z": 27.4,
+    "y": 1.61
+  },
+  "replay": {
+    "craters": 539,
+    "ms": 34.1,
+    "res": 252
+  },
+  "twenty": {
+    "craters": 13490,
+    "ms": 195,
+    "cellsMoved": 1354,
+    "cellsMovedPct": 2.13,
+    "deepestM": -4.499,
+    "res": 252,
+    "cellM": 2.47
+  },
+  "wideDelta": {
+    "pixels": 921600,
+    "changed": 122042,
+    "changedPct": 13.242,
+    "worstChannelDelta": 160
+  },
+  "nearDelta": {
+    "pixels": 921600,
+    "changed": 101497,
+    "changedPct": 11.013,
+    "worstChannelDelta": 159
+  },
+  "twentyDelta": {
+    "pixels": 921600,
+    "changed": 308022,
+    "changedPct": 33.423,
+    "worstChannelDelta": 171
+  },
+  "errors": []
+}

@@ -210,17 +210,55 @@ export function restoreShared(snap) {
  * because the seed is part of what it is measuring) and Engine's once-only
  * ShaderChunk flags.
  */
+/**
+ * ── AND THEY HAVE TO RUN ONE AT A TIME, WHICH IS THE OTHER HALF ─────────
+ *
+ * `restoreShared` before the body and after it is only sound if nothing else
+ * is running in between. Checks are not run that way: `check()` pushes every
+ * async body onto one `Promise.all` — `tools/_seq.mjs`'s own header says so —
+ * so a clocked suite's checks INTERLEAVE, and the moment check B starts it
+ * calls `restoreShared` and rewinds the streams underneath check A, halfway
+ * through A's forty seconds of driven world.
+ *
+ * That is not a theory. It is what three separate lanes lost time to in one
+ * session:
+ *
+ *   `blast-door` failed a DIFFERENT check on nearly every run of identical
+ *     code — a tight loop that opened a door in 17 s on one run and saturated
+ *     at 840 of 901 texels on the next;
+ *   `extraction` passes 17/17 alone, twice, and fails "2 body-frames jumped
+ *     further than a walking pace" when it is run after three other suites;
+ *   an `escalation` composition check failed inside a sequence and passed
+ *     alone, on the same commit, and was written off as a flake.
+ *
+ * Pinning the module seeds (`tools/register.mjs`) made every process deal the
+ * same deck and did not touch this: the deck was never the problem, the
+ * SHUFFLING MID-DEAL was.
+ *
+ * So a clocked body takes a lock. One chain for the whole process rather than
+ * one per suite, because `verify.mjs` runs suites concurrently too and a
+ * per-suite lock would leave exactly the same defect between files. It costs
+ * wall-clock on the clocked suites and buys a gate whose answer does not
+ * depend on what else happened to be running.
+ */
+let _lock = Promise.resolve();
+
 export async function clocked(check) {
   const snap = await snapshotShared();
   return (label, fn) => check(label, () => {
-    restoreShared(snap);                        // the body draws from a stated phase
-    let out;
-    try { out = fn(); } catch (e) { restoreShared(snap); throw e; }
-    if (out && typeof out.then === 'function') {
-      return out.then((v) => { restoreShared(snap); return v; },
-        (e) => { restoreShared(snap); throw e; });
-    }
-    restoreShared(snap);
-    return out;
+    /* Queue behind whatever clocked body is running, and hand the lock on when
+     * this one is done however it ends. */
+    const run = _lock.then(async () => {
+      restoreShared(snap);                      // the body draws from a stated phase
+      try {
+        return await fn();
+      } finally {
+        restoreShared(snap);
+      }
+    });
+    /* The chain must not break on a failing check, or every check after it
+     * runs unlocked — so the lock follows the SETTLED promise. */
+    _lock = run.then(() => {}, () => {});
+    return run;
   });
 }

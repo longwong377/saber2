@@ -1,0 +1,54 @@
+{
+  "seed": 7,
+  "step": 0,
+  "visitOne": {
+    "gameSeconds": 258,
+    "wallMs": 48907,
+    "areasTaken": 1,
+    "waves": 3,
+    "fallen": 8,
+    "standing": 6
+  },
+  "craters": {
+    "total": 539,
+    "shelled": 19,
+    "scuffed": 520,
+    "deepest": 0.411,
+    "widest": 2.78
+  },
+  "size": {
+    "logBytes": 15809,
+    "gridBytes": 406272,
+    "ratio": 25.7,
+    "res": 184,
+    "cells": 33856
+  },
+  "logFile": "/tmp/flagship-lane/.flagship/step0-seed7.log.json",
+  "replay": {
+    "craters": 539,
+    "ms": 26.6,
+    "exactMs": 2.5,
+    "baseGroundMaxDelta": 0.000001,
+    "maxDelta": 0.001454,
+    "meanDelta": 6.5e-7,
+    "maxDeltaNoRoundTrip": 0,
+    "cellsMoved": 145,
+    "cellsMovedPct": 0.43,
+    "markedM2": 1664,
+    "pctOfWalkableDisc": 6.54,
+    "cellM": 3.39
+  },
+  "visitTwo": {
+    "gameSeconds": 249.3,
+    "wallMs": 46647,
+    "areasTaken": 1,
+    "waves": 3,
+    "fallen": 9,
+    "standing": 5,
+    "newCraters": 810
+  },
+  "afterTwo": {
+    "craters": 1349,
+    "bytes": 40415
+  }
+}

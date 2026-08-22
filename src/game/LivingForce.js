@@ -33,8 +33,10 @@
  * fiction was bent around it. The drawing did not change; every word around it
  * did:
  *
- *      the LATTICE   the whole drawing, which the player meets as the Holocron:
- *                    a crystal you kneel with and that teaches you.
+ *      the LATTICE   the whole set of facets and the joins between them, which
+ *                    the player meets as the Holocron: a crystal you kneel with
+ *                    and that teaches you. It is a GRAPH and not a picture —
+ *                    see below, where its coordinates used to be.
  *      a CURRENT     one of the six teachings the lattice is grouped into —
  *                    "I feel the currents of the Force", and each one is an
  *                    axis the masteries and the attunements already name.
@@ -199,26 +201,24 @@ export function insightAfter(waves, bossEvery = BOSS_EVERY, rate = null) {
 /*  The lattice                                                           */
 /* ══════════════════════════════════════════════════════════════════════ */
 
-/** The drawing's own coordinate space. index.html's viewBox is the same two
- *  numbers, and a check holds the two to each other. */
-export const LATTICE = { w: 1000, h: 720 };
-
-/**
- * THE LATTICE IS DIVIDED BEFORE IT IS DRAWN.
+/* THE DRAWING'S COORDINATE SPACE USED TO BE HERE, and it is gone.
  *
- * A facet's `dx`/`dy` below are its place in ITS OWN CURRENT and nothing else —
- * a shape, not a coordinate. `positionOf` fits each current's whole shape into
- * its own zone, so two currents can never grow into each other and a facet
- * added to one cannot land on top of a facet in another. The first hand-placed
- * version of this table did exactly that: four pairs from different currents
- * ended up within 40 px of one another and one facet fell 60 px off the bottom
- * of the viewBox.
+ * `LATTICE`, `ZONE`, `zoneOf` and `positionOf` fitted each current's shape into
+ * one of six rectangles on a 1000x720 canvas, and every facet in the table
+ * below carried a `dx`/`dy` to be fitted. All of it existed to place discs on a
+ * star chart, which the player has now asked three times to be rid of — "get
+ * fucking rid of it and redo the whole thing". `src/ui/SkillTree.js` draws six
+ * PLATES of stacked rungs and has no coordinates at all: depth in the join
+ * graph is indentation, and rows cannot collide.
  *
- * Six zones, three across and two down, in the order CURRENTS declares. The
- * word stays "zone" because it is geometry and not fiction — it is a rectangle
- * on a drawing, and the thing it holds is a current.
+ * The coordinates are deleted rather than left unread. An orphaned layout is
+ * exactly the thing a later hand re-attaches, and this one has already survived
+ * one full renaming of everything around it.
+ *
+ * WHAT THE TABLE KEEPS IS THE JOINS, which were always the real structure: a
+ * facet's `to` list is what makes it reachable, what the rack indents off, and
+ * what `tools/checks/living-force.mjs` now walks in place of measuring pixels.
  */
-const ZONE = { cols: 3, rows: 2, halfW: 138, halfH: 120, top: 200, bottom: 520, x: [182, 500, 818] };
 
 /**
  * THE SIX CURRENTS. Five are the axes the masteries and the attunements
@@ -232,9 +232,9 @@ const ZONE = { cols: 3, rows: 2, halfW: 138, halfH: 120, top: 200, bottom: 520, 
  * can never close. It was true of five of them for a while — see the note on
  * `attune-bond` in the facet table for the one that had to be built.
  *
- * Where each one SITS is not in this table: it owns a zone of the lattice, and
- * the shape its facets declare is fitted into that zone. See ZONE and
- * positionOf.
+ * Where each one SITS is not in this table and no longer is anywhere: the
+ * Holocron is a rack of plates and a current is one plate, laid out by the
+ * grid. See the note where the coordinate space used to be.
  */
 export const CURRENTS = [
   { axis: 'blade', root: 'attune-blade', 
@@ -287,75 +287,75 @@ export const AXES = CURRENTS.map((c) => c.axis);
  */
 export const FACETS = [
   /* ── The Blade ─────────────────────────────────────────────────────── */
-  { id: 'attune-blade', axis: 'blade', dx: 0, dy: 0, to: ['cadence', 'djemso', 'longblade'],
+  { id: 'attune-blade', axis: 'blade', to: ['cadence', 'djemso', 'longblade'],
     jedi: 'Attunement of the Blade', sith: 'Hunger of the Blade' },
-  { id: 'cadence', axis: 'blade', dx: -104, dy: -66, to: ['makashi'],
+  { id: 'cadence', axis: 'blade', to: ['makashi'],
     jedi: 'Cadence', sith: 'Relentlessness' },
-  { id: 'djemso', axis: 'blade', dx: 96, dy: -54, to: ['shatterpoint'],
+  { id: 'djemso', axis: 'blade', to: ['shatterpoint'],
     jedi: 'Form V — Shien', sith: 'Form V — Djem So' },
-  { id: 'longblade', axis: 'blade', dx: -18, dy: 96, to: ['dualcrystal', 'saberthrow'],
+  { id: 'longblade', axis: 'blade', to: ['dualcrystal', 'saberthrow'],
     jedi: 'Reach of the Temple', sith: 'The Long Bleed' },
-  { id: 'shatterpoint', axis: 'blade', dx: 152, dy: 36, to: ['sunder'],
+  { id: 'shatterpoint', axis: 'blade', to: ['sunder'],
     jedi: 'Shatterpoint', sith: 'The Flaw in All Things' },
-  { id: 'dualcrystal', axis: 'blade', dx: 74, dy: 146, to: ['sunder'],
+  { id: 'dualcrystal', axis: 'blade', to: ['sunder'],
     jedi: 'Focusing Crystal', sith: 'Bled Crystal' },
-  { id: 'sunder', axis: 'blade', dx: 186, dy: 148, to: [],
+  { id: 'sunder', axis: 'blade', to: [],
     jedi: 'Mastery — The Unbroken Stroke', sith: 'Mastery — Sundering' },
 
   /* ── The Guard ─────────────────────────────────────────────────────── */
-  { id: 'attune-guard', axis: 'guard', dx: 0, dy: 0, to: ['soresu', 'makashi', 'aegis'],
+  { id: 'attune-guard', axis: 'guard', to: ['soresu', 'makashi', 'aegis'],
     jedi: 'Attunement of the Guard', sith: 'Attunement of the Wall' },
-  { id: 'soresu', axis: 'guard', dx: -96, dy: 62, to: ['vaapad', 'encircle'],
+  { id: 'soresu', axis: 'guard', to: ['vaapad', 'encircle'],
     jedi: 'Form III — Soresu', sith: 'Form III — Resilience' },
-  { id: 'makashi', axis: 'guard', dx: 6, dy: 96, to: ['counterstroke'],
+  { id: 'makashi', axis: 'guard', to: ['counterstroke'],
     jedi: 'Form II — Makashi', sith: 'Form II — The Duellist' },
-  { id: 'aegis', axis: 'guard', dx: 104, dy: 54, to: ['thorns', 'steadfast'],
+  { id: 'aegis', axis: 'guard', to: ['thorns', 'steadfast'],
     jedi: 'Aegis', sith: 'Carapace' },
-  { id: 'vaapad', axis: 'guard', dx: -164, dy: 152, to: ['bastion'],
+  { id: 'vaapad', axis: 'guard', to: ['bastion'],
     jedi: 'Form VII — Vaapad', sith: 'Form VII — The Fed Fury' },
-  { id: 'counterstroke', axis: 'guard', dx: -46, dy: 186, to: ['bastion'],
+  { id: 'counterstroke', axis: 'guard', to: ['bastion'],
     jedi: 'Counterstroke', sith: 'Answer in Kind' },
-  { id: 'thorns', axis: 'guard', dx: 176, dy: 128, to: ['steadfast'],
+  { id: 'thorns', axis: 'guard', to: ['steadfast'],
     jedi: 'Reflection', sith: 'Recoil' },
-  { id: 'encircle', axis: 'guard', dx: -196, dy: 44, to: [],
+  { id: 'encircle', axis: 'guard', to: [],
     jedi: 'Encircled', sith: 'Surrounded and Fed' },
-  { id: 'steadfast', axis: 'guard', dx: 122, dy: 196, to: ['bastion'],
+  { id: 'steadfast', axis: 'guard', to: ['bastion'],
     jedi: 'Steadfast', sith: 'Immovable' },
-  { id: 'bastion', axis: 'guard', dx: 26, dy: 256, to: [],
+  { id: 'bastion', axis: 'guard', to: [],
     jedi: 'Mastery — Bastion', sith: 'Mastery — The Iron Wall' },
 
   /* ── The Force ─────────────────────────────────────────────────────── */
-  { id: 'attune-force', axis: 'force', dx: 0, dy: 0, to: ['wellspring', 'ataru', 'tutaminis'],
+  { id: 'attune-force', axis: 'force', to: ['wellspring', 'ataru', 'tutaminis'],
     jedi: 'Attunement of the Force', sith: 'Attunement of Power' },
-  { id: 'wellspring', axis: 'force', dx: 92, dy: 62, to: ['conduit'],
+  { id: 'wellspring', axis: 'force', to: ['conduit'],
     jedi: 'Wellspring', sith: 'The Deep Well' },
-  { id: 'ataru', axis: 'force', dx: -84, dy: 74, to: ['repulse'],
+  { id: 'ataru', axis: 'force', to: ['repulse'],
     jedi: 'Form IV — Ataru', sith: 'Form IV — The Leaping Death' },
-  { id: 'tutaminis', axis: 'force', dx: 26, dy: -84, to: ['detonate'],
+  { id: 'tutaminis', axis: 'force', to: ['detonate'],
     jedi: 'Tutaminis', sith: 'Devour the Bolt' },
-  { id: 'conduit', axis: 'force', dx: 142, dy: 152, to: ['tempest'],
+  { id: 'conduit', axis: 'force', to: ['tempest'],
     jedi: 'Conduit', sith: 'The Taking Channel' },
-  { id: 'repulse', axis: 'force', dx: -128, dy: 168, to: ['tempest'],
+  { id: 'repulse', axis: 'force', to: ['tempest'],
     jedi: 'Force Repulse', sith: 'Shockwave' },
-  { id: 'detonate', axis: 'force', dx: 116, dy: -110, to: [],
+  { id: 'detonate', axis: 'force', to: [],
     jedi: 'Dissolution', sith: 'Detonation' },
-  { id: 'tempest', axis: 'force', dx: 8, dy: 232, to: [],
+  { id: 'tempest', axis: 'force', to: [],
     jedi: 'Mastery — Tempest', sith: 'Mastery — The Storm' },
 
   /* ── The Body ──────────────────────────────────────────────────────── */
-  { id: 'attune-body', axis: 'body', dx: 0, dy: 0, to: ['vitality', 'celerity', 'meditation'],
+  { id: 'attune-body', axis: 'body', to: ['vitality', 'celerity', 'meditation'],
     jedi: 'Attunement of the Body', sith: 'Attunement of the Flesh' },
-  { id: 'vitality', axis: 'body', dx: -108, dy: -58, to: ['secondwind'],
+  { id: 'vitality', axis: 'body', to: ['secondwind'],
     jedi: 'Vitality', sith: 'Spite' },
-  { id: 'celerity', axis: 'body', dx: 96, dy: -66, to: ['momentum'],
+  { id: 'celerity', axis: 'body', to: ['momentum'],
     jedi: 'Celerity', sith: 'The Quickening' },
-  { id: 'meditation', axis: 'body', dx: -22, dy: 96, to: ['undying'],
+  { id: 'meditation', axis: 'body', to: ['undying'],
     jedi: 'Meditation', sith: 'Discipline of Pain' },
-  { id: 'secondwind', axis: 'body', dx: -156, dy: 58, to: ['undying'],
+  { id: 'secondwind', axis: 'body', to: ['undying'],
     jedi: 'Second Wind', sith: 'Refusal' },
-  { id: 'momentum', axis: 'body', dx: 168, dy: 22, to: [],
+  { id: 'momentum', axis: 'body', to: [],
     jedi: 'Momentum', sith: 'Bloodrush' },
-  { id: 'undying', axis: 'body', dx: -66, dy: 168, to: [],
+  { id: 'undying', axis: 'body', to: [],
     jedi: 'Mastery — Undying', sith: 'Mastery — The Unkillable' },
 
   /* ── Communion ─────────────────────────────────────────────────────── */
@@ -363,25 +363,25 @@ export const FACETS = [
    * there WAS one: bond had a mastery and no attunement, so this current was
    * the only one whose heart was a common card capped at three ranks —
    * exactly on the "never runs out" bar rather than comfortably past it. */
-  { id: 'attune-bond', axis: 'bond', dx: 0, dy: -92, to: ['communion'],
+  { id: 'attune-bond', axis: 'bond', to: ['communion'],
     jedi: 'Attunement of the Bond', sith: 'Attunement of the Pact' },
-  { id: 'communion', axis: 'bond', dx: 0, dy: 0, to: ['suffusion', 'vow'],
+  { id: 'communion', axis: 'bond', to: ['suffusion', 'vow'],
     jedi: 'Battle Meditation', sith: 'Dominion' },
-  { id: 'suffusion', axis: 'bond', dx: -102, dy: 74, to: ['unity'],
+  { id: 'suffusion', axis: 'bond', to: ['unity'],
     jedi: 'Force Suffusion', sith: 'Siphoned Vitality' },
-  { id: 'vow', axis: 'bond', dx: 104, dy: 74, to: ['unity'],
+  { id: 'vow', axis: 'bond', to: ['unity'],
     jedi: "Guardian's Vow", sith: 'Blood Pact' },
-  { id: 'unity', axis: 'bond', dx: 0, dy: 154, to: [],
+  { id: 'unity', axis: 'bond', to: [],
     jedi: 'Mastery — The Unifying Force', sith: 'Mastery — The Rule of Two' },
 
   /* ── The Dark ──────────────────────────────────────────────────────── */
-  { id: 'attune-dark', axis: 'dark', dx: 0, dy: 0, to: ['lifesteal', 'juyo', 'lightning'],
+  { id: 'attune-dark', axis: 'dark', to: ['lifesteal', 'juyo', 'lightning'],
     jedi: 'Attunement of the Shadow', sith: 'Attunement of the Dark' },
-  { id: 'lifesteal', axis: 'dark', dx: -104, dy: 52, to: ['execute'],
+  { id: 'lifesteal', axis: 'dark', to: ['execute'],
     jedi: 'Sustenance', sith: 'Dark Sustenance' },
-  { id: 'juyo', axis: 'dark', dx: 100, dy: 48, to: ['fury'],
+  { id: 'juyo', axis: 'dark', to: ['fury'],
     jedi: 'Form VII — Vaapad Unbound', sith: 'Form VII — Juyo' },
-  { id: 'lightning', axis: 'dark', dx: 6, dy: -92, to: ['compel'],
+  { id: 'lightning', axis: 'dark', to: ['compel'],
     jedi: 'The Refused Lightning', sith: 'Force Lightning' },
   /* Hung off lightning rather than off the heart, and further out than any
    * other facet on this axis, because it is the deepest thing the dark side
@@ -389,20 +389,20 @@ export const FACETS = [
    * acts on a decision. Reaching it means having already taken the lightning,
    * which is the point — you do not arrive at taking someone's mind by
    * accident. The Jedi name is the honest one for a Jedi who has done it. */
-  { id: 'compel', axis: 'dark', dx: 12, dy: -186, to: [],
+  { id: 'compel', axis: 'dark', to: [],
     jedi: 'The Unforgivable Word', sith: 'Domination' },
-  { id: 'execute', axis: 'dark', dx: -142, dy: 148, to: ['darkside'],
+  { id: 'execute', axis: 'dark', to: ['darkside'],
     jedi: 'Mercy Stroke', sith: 'Cull the Weak' },
-  { id: 'fury', axis: 'dark', dx: 146, dy: 142, to: ['darkside'],
+  { id: 'fury', axis: 'dark', to: ['darkside'],
     jedi: 'Desperation', sith: 'Fury' },
-  { id: 'darkside', axis: 'dark', dx: 0, dy: 214, to: [],
+  { id: 'darkside', axis: 'dark', to: [],
     jedi: 'Mastery — The Long Fall', sith: 'Mastery — The Dark Side' },
 
   /* ── the two techniques that belong to no discipline ───────────────── */
   // Cleaving Throw and Sundering are both blade, but the throw is the one
   // technique in the game that leaves your hand — it hangs off the outermost
   // facet of the blade current rather than sitting inside the shape.
-  { id: 'saberthrow', axis: 'blade', dx: -142, dy: 150, to: [],
+  { id: 'saberthrow', axis: 'blade', to: [],
     jedi: 'Cleaving Throw', sith: 'The Loosed Blade' },
 ];
 
@@ -435,38 +435,6 @@ export function isRoot(id) { return CURRENTS.some((c) => c.root === id); }
  * shout). So the table can be edited freely, and a facet moved to the edge of
  * its shape pulls the whole current in rather than escaping the lattice.
  */
-const LAYOUT = (() => {
-  const out = new Map();
-  CURRENTS.forEach((c, i) => {
-    const zone = { x: ZONE.x[i % ZONE.cols], y: i < ZONE.cols ? ZONE.top : ZONE.bottom,
-      halfW: ZONE.halfW, halfH: ZONE.halfH };
-    const mine = FACETS.filter((s) => s.axis === c.axis);
-    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
-    for (const s of mine) {
-      x0 = Math.min(x0, s.dx); x1 = Math.max(x1, s.dx);
-      y0 = Math.min(y0, s.dy); y1 = Math.max(y1, s.dy);
-    }
-    if (!mine.length) { x0 = x1 = y0 = y1 = 0; }
-    const w = Math.max(1, x1 - x0), h = Math.max(1, y1 - y0);
-    const scale = Math.min(1, (zone.halfW * 2) / w, (zone.halfH * 2) / h);
-    out.set(c.axis, { zone, scale, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2 });
-  });
-  return out;
-})();
-
-/** The rectangle a current owns, for its name and its own breathing room. */
-export function zoneOf(axis) { return LAYOUT.get(axis)?.zone || null; }
-
-/** Where a facet sits in LATTICE coordinates. */
-export function positionOf(facet) {
-  const L = LAYOUT.get(facet.axis);
-  if (!L) return { x: LATTICE.w / 2, y: LATTICE.h / 2 };
-  return {
-    x: L.zone.x + (facet.dx - L.cx) * L.scale,
-    y: L.zone.y + (facet.dy - L.cy) * L.scale,
-  };
-}
-
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  Names, and the alignment they are read in                             */
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -631,9 +599,8 @@ export function facetView(id, { taken, ledger, wave = 1, order = null }) {
   if (!s || !b) return null;
   const rank = rankOf(taken, id);
   const locked = ledger ? ledger.reasonLocked(id, taken, wave) : LOCKED.reach;
-  const pos = positionOf(s);
   return {
-    id, axis: s.axis, x: pos.x, y: pos.y,
+    id, axis: s.axis,
     name: nameOf(id, order),
     canon: b.name,
     icon: b.icon, tag: b.tag, text: b.text,

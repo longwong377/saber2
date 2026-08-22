@@ -76,6 +76,36 @@ async function army(seed, mode = 'command', level = 'geonosis') {
   world.difficulty = DIFFICULTY[s.difficulty] || DIFFICULTY.knight;
   await world.loadLevel(level);
   world.spawnPlayer({ name: 'Jedi', isLocal: true });
+  /**
+   * …AND WITHOUT FLAGSHIP §6's LEVY, WHICH IS A STATEMENT ABOUT THIS BENCH AND
+   * NOT ABOUT THE MODE.
+   *
+   * Every check in this file drives a Command world with an IDLE player — no
+   * blade, no dash, no orders — for up to seventy seconds, and reads morale off
+   * whoever is still standing. `CommandDirector` now fields forty conscripts a
+   * wave on this ground (src/game/Levy.js), and forty extra rifles against ten
+   * men whose Jedi does nothing is a wipe: measured on this exact bench, an
+   * idle run goes 10 → 6 at 30 s → 0 at 60 s with the levy and 10 → 8 → 5 → 2
+   * over ninety seconds without it. "morale is a channel and not a ceiling"
+   * failed with `only 0 men left to read`.
+   *
+   * That is not this file's question. These checks are about what a morale
+   * NUMBER does — whether it saturates, whether presence tapers, whether a
+   * broken man keeps moving — and they need a line to read it off. The levy is
+   * a wave composition and belongs to `tools/checks/levy.mjs`, which measures
+   * it against a control the same way. Suppressed by handing the director the
+   * base composer, which is exactly what that file's own control arm does.
+   *
+   * THE ATTRITION ITSELF IS NOT A DEFECT AND IS NOT BEING HIDDEN. Until this
+   * session no rifle on the other side could touch your army at all — see
+   * FLAGSHIP §16.3 — so every one of these benches has always run against a
+   * line that could not be shot. What is open is how much of a ten-man roster
+   * one engagement should cost, and that is a balance question with a number
+   * on it rather than something to be answered by a morale check.
+   */
+  const Waves = await import('../../src/game/Waves.js');
+  const d = world.command;
+  if (d) d._composeUnder = Waves.WaveDirector.prototype._composeUnder.bind(d);
   return world;
 }
 
@@ -245,6 +275,168 @@ export async function run({ check, assert }) {
       + `broken frames and ${refuse.pctInLine.toFixed(1)}% of refusing ones`);
     return `refusing 0 shots · posts held: steady ${steady.pctInLine.toFixed(1)}%, `
       + `broken ${broken.pctInLine.toFixed(1)}%, refusing ${refuse.pctInLine.toFixed(1)}%`;
+  });
+
+  /**
+   * ── AND THE CHANNEL HAS ROOM TO MOVE IN, WHICH IT DID NOT ───────────────
+   *
+   * `NEXT.md`, on the Dead Jedi test: *"morale reads 1.000 in both player arms
+   * — §10's `JEDI_NEAR` saturation is LIVE, so the channel §7's BREAK verb
+   * needs is pinned shut and cannot be what presence pays through.
+   * Unsaturating `JEDI_NEAR` is the first thing to try before believing this
+   * table."*
+   *
+   * Measured on `tools/_flagship.mjs step2 --seeds 3,5`, one change, same tree,
+   * same seeds:
+   *
+   *                     before      after
+   *     no player        0.98        0.92
+   *     with blade       1.000       0.89
+   *     blade disabled   1.000       0.45   (sd 0.63 — one seed's line broke)
+   *
+   * Two terms did it and both are in `MORALE`: presence tapers out at
+   * `PRESENCE_CAP` so standing beside a Jedi steadies a man rather than
+   * elating him, and elation itself wears off above that cap so a wave cleared
+   * cannot park a record at the ceiling for the rest of the battle.
+   *
+   * WHAT THIS CHECK HOLDS, and it is deliberately not the numbers above — a
+   * two-seed probe is not a gate. It holds the two structural facts they rest
+   * on: nothing sits pinned at the top, and there is always room left for the
+   * next thing that happens to a man to move him.
+   */
+  await check('morale is a channel and not a ceiling', async () => {
+    const { MORALE } = await import('../../src/game/Command.js');
+    const { idleInput } = await import('./_coop.mjs');
+    const world = await army(20260821);
+    try {
+      const { MAX_STRENGTH } = await import('../../src/game/Command.js');
+      const d = world.command;
+      const input = idleInput();
+      /**
+       * THE FULL ROSTER, BECAUSE THIS WINDOW IS LONGER THAN A TEN-MAN LINE
+       * LASTS — and that is new information rather than a nicety.
+       *
+       * Seventy seconds of a Command engagement with an idle Jedi used to cost
+       * the line nothing at all: no hostile bolt could reach a body in
+       * `world.enemies`, your own troopers included (FLAGSHIP §16.3). With that
+       * fixed, the same bench reads 10 → 8 at 30 s → 5 at 60 s → 2 at 90 s, and
+       * this check failed on `only 3 men left to read`. Shortening the window
+       * would have been the cheap repair and it is the wrong one: the seventy
+       * seconds is what makes this "a line that has been WINNING", which is the
+       * premise every assertion below rests on.
+       *
+       * So the bench musters the mode's own maximum instead. `MAX_STRENGTH` is
+       * asked for rather than typed, so a roster ceiling that moves moves this
+       * with it.
+       */
+      /* ENLISTED, not `opening` — that field is read by `_musterOpening` and
+       * `_musterOpening` runs in the CONSTRUCTOR, so writing it here is writing
+       * it after the muster it governs. Measured: the roster came back at ten
+       * either way. The records are added through `CommandRoster.enlist`, the
+       * same call the muster screen makes, off the army's own cheapest rung. */
+      const cheapest = d.commander.army.tiers[0].type;
+      while (d.roster.all.length < MAX_STRENGTH) d.roster.enlist(cheapest);
+      d.start(1);
+      /* Long enough for every one-shot event a winning line collects — a wave
+       * cleared is +0.34 and an area held +0.5 — to have landed and settled.
+       * Before the cap and the settle, this window is exactly what pinned it. */
+      for (let i = 0; i < 70 * 30; i++) world.update(DT, input);
+      const living = d.roster.living.filter(t => t.alive);
+      assert(living.length >= 4, `only ${living.length} men left to read`);
+      const m = living.map(t => t.morale);
+      const top = Math.max(...m);
+      const mean = m.reduce((a, b) => a + b, 0) / m.length;
+      const pinned = m.filter(v => v >= 0.999).length;
+
+      assert(!pinned,
+        `${pinned} of ${m.length} records sit at 1.000 — a saturated channel carries no `
+        + 'information, and every reader of morale (_pace, aimQuality, broken) is reading it');
+      /* AND THE ROOM IS REAL: a comrade falling is the largest single knock in
+       * the table, and it has to be able to land on the steadiest man there. */
+      assert(top + Math.abs(MORALE.COMRADE_FELL) <= 1.0 + 1e-9,
+        `the steadiest man is at ${top.toFixed(3)}, so a comrade falling (${MORALE.COMRADE_FELL}) `
+        + 'would be partly absorbed by the clamp rather than felt');
+      assert(top <= MORALE.PRESENCE_CAP + 0.02,
+        `morale settled at ${top.toFixed(3)} against a ${MORALE.PRESENCE_CAP} ceiling — `
+        + 'the settle is not taking elation back');
+
+      /* …AND IT IS NOT PINNED AT THE BOTTOM EITHER. A line that has been
+       * winning for seventy seconds is not a broken one, and a "fix" that
+       * simply drove the number down would pass every clause above. */
+      assert(mean > MORALE.BREAK,
+        `the whole line averages ${mean.toFixed(3)}, under BREAK ${MORALE.BREAK} — `
+        + 'unsaturating the top must not empty the bottom');
+      return `${m.length} living: mean ${mean.toFixed(2)}, top ${top.toFixed(2)}, `
+        + `cap ${MORALE.PRESENCE_CAP}, 0 pinned`;
+    } finally { world.dispose?.(); }
+  });
+
+  /**
+   * …AND PRESENCE IS A GRADIENT, WHICH IS WHAT MAKES IT A CHANNEL.
+   *
+   * `NEAR` is a radius, so `JEDI_NEAR` was a step: the man at your shoulder and
+   * the man 13.9 m away drew the identical term, and the man at 14.1 m drew
+   * `ALONE` instead. A cliff a player cannot see, in the one term the whole of
+   * FLAGSHIP §7's presence argument is built on — and, once the ceiling came
+   * off, the reason both arms of the Dead Jedi test rested at the same 0.84:
+   * both had a Jedi somewhere inside a circle.
+   *
+   * Read off the shipped constants rather than re-deriving the curve, because
+   * the shape is the claim and the numbers are the table's.
+   */
+  await check('presence falls off with distance rather than stopping at a rim', async () => {
+    const { MORALE } = await import('../../src/game/Command.js');
+    /* The same arithmetic `_morale` runs, asked at four distances. Written as
+     * one expression so a change to the curve fails here rather than being
+     * quietly re-stated. */
+    const share = (m) => {
+      const d2 = m * m;
+      if (d2 >= MORALE.NEAR * MORALE.NEAR) return 0;
+      return 1 - (1 - MORALE.EDGE) * (m / MORALE.NEAR);
+    };
+    assert(Math.abs(share(0) - 1) < 1e-9, `at the shoulder a man gets ${share(0).toFixed(3)} of the term`);
+    assert(Math.abs(share(MORALE.NEAR * 0.999) - MORALE.EDGE) < 0.01,
+      `at the rim a man gets ${share(MORALE.NEAR * 0.999).toFixed(3)} against a stated ${MORALE.EDGE}`);
+    assert(share(MORALE.NEAR + 0.1) === 0, 'the term reaches past its own radius');
+    /* THE RANGE IS THE POINT. A channel whose ends are within a few per cent of
+     * each other is a step wearing a curve. */
+    const mid = share(MORALE.NEAR / 2);
+    assert(mid > MORALE.EDGE + 0.1 && mid < 0.95,
+      `halfway out a man gets ${mid.toFixed(2)}, which is not between the two ends`);
+    /* AND IT IS NOT A CLIFF AT THE RIM EITHER, which is the thing it exists to
+     * remove: a man who can still see their Jedi keeps most of it. */
+    assert(MORALE.EDGE > 0.15,
+      `the rim keeps ${MORALE.EDGE} of the term — that is a discontinuity put back where one was taken out`);
+    /* …and what it is worth in the number a body reads: the difference between
+     * standing with your line and standing at the edge of it. */
+    const at = (m) => MORALE.JEDI_NEAR * share(m);
+    return `JEDI_NEAR ${at(0).toFixed(3)}/s at the shoulder, ${at(MORALE.NEAR / 2).toFixed(3)} at `
+      + `${(MORALE.NEAR / 2).toFixed(0)} m, ${at(MORALE.NEAR * 0.999).toFixed(3)} at the rim, 0 past it`;
+  });
+
+  /**
+   * …AND NOTHING BELOW THE CAP MOVED, which is the claim that lets every other
+   * measurement in this file stand. The rally out of `BREAK` is the number
+   * `drive`'s own header quotes — "about a second" at +0.085/s — and it is
+   * arithmetic on the shipped table rather than a second copy of it.
+   */
+  await check('the presence taper does not touch a broken man', async () => {
+    const { MORALE } = await import('../../src/game/Command.js');
+    /* A man at 0.15 is below BREAK and a long way below the cap, so the taper
+     * multiplies presence by 1 — the full term applies, exactly as before. */
+    const low = 0.15;
+    const over = (low - (MORALE.PRESENCE_CAP - MORALE.PRESENCE_BAND)) / MORALE.PRESENCE_BAND;
+    const scale = 1 - Math.min(1, Math.max(0, over));
+    assert(scale === 1,
+      `a man at ${low} has his presence term scaled to ${scale.toFixed(2)} — the taper reaches `
+      + 'below BREAK, and the rally this file measures everywhere would be slower');
+    const rally = (MORALE.BREAK - low) / MORALE.JEDI_NEAR;
+    assert(rally < 1.2,
+      `a broken man beside his Jedi takes ${rally.toFixed(2)}s to get out of BREAK`);
+    /* And the settle cannot reach him either: it only exists above the cap. */
+    assert(low <= MORALE.PRESENCE_CAP, 'BREAK is above the presence ceiling, which is nonsense');
+    return `at morale ${low}: presence ×${scale.toFixed(2)}, out of BREAK in ${rally.toFixed(2)}s, `
+      + 'settle does not reach';
   });
 
   /**

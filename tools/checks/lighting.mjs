@@ -18,11 +18,12 @@ import { Sky } from 'three/addons/objects/Sky.js';
 import {
   AERIAL, QUALITY, skyRadiance, skyShoulder, sunDirection, atmosphereMeter, hazeRadiance,
   cascadeBoxes, CASCADE_SPLIT, PMREM_FAR, BOUNCE_RADIUS, diffuseCap,
-  skyProbeTurn, skyTurn, CompositeShader,
+  skyProbeTurn, skyTurn, CompositeShader, GRADE_GLSL,
 } from '../../src/engine/Engine.js';
 import { SkyDome } from '../../src/engine/SkyDome.js';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
 import { celBounce, CEL } from '../../src/toon/Cel.js';
+import { glslFn } from './_glsl.mjs';
 
 const lum = (c) => c.r * 0.2126 + c.g * 0.7152 + c.b * 0.0722;
 const OUTDOOR = LEVEL_ORDER.filter((k) => LEVELS[k].atmosphere.sky !== false);
@@ -1038,38 +1039,37 @@ export function run({ check, assert, near, THREE: T }) {
   /* ══ the grade ════════════════════════════════════════════════════════ */
 
   check('grade: the S-curve deepens shadows without inverting or clipping', () => {
-    /* ── THE CONSTANTS ARE READ, NOT TRANSCRIBED ─────────────────────────
+    /* ── THE SHIPPED GLSL, RUN — THERE IS NO TWIN LEFT ───────────────────
      *
      * This opened `const black = 0.018, curve = 0.32` with a `* 1.04` further
      * down, under a comment that said "modelled exactly as the composite does
      * it". It was a hand-maintained twin of three uniforms in Engine.js
      * (HANDOFF §2.3), and it fails in the direction nobody looks: move a
-     * uniform and this goes on certifying a curve the game no longer has. They
-     * come off `CompositeShader.uniforms` now.
+     * uniform and this goes on certifying a curve the game no longer has.
+     * Reading the constants off `CompositeShader.uniforms` closed half of it.
+     * The other half was still a JS copy of the FORMULA, guarded by three
+     * regexes pinning the source lines it stood for — better than nothing and
+     * exactly the compromise `_glsl.mjs`'s header calls out, because a regex
+     * proves the line is present and never that the model beside it agrees.
      *
-     * The three ARITHMETIC LINES are pinned against the shipped GLSL for the
-     * same reason — reading the right numbers into the wrong formula is the
-     * same defect one level down, and this file has no way to run a shader.
-     * This is what `cel: the shader IS the twin` does for the cel model.
+     * The formula is now its own compilation unit — `GRADE_GLSL` in Engine.js,
+     * four statements of scalar arithmetic with no loop and no sampler in it,
+     * which is inside what `_glsl.mjs` models where `main()` is not. So
+     * `apply` below IS the string the driver is handed, evaluated. What still
+     * has to be pinned is that the FRAME uses it: a compilation unit nothing
+     * calls is a twin again, wearing better clothes.
      */
     const u = CompositeShader.uniforms;
-    const black = u.uBlack.value, curve = u.uCurve.value, contrast = u.uContrast.value;
-    const src = CompositeShader.fragmentShader.replace(/\s+/g, ' ');
-    for (const line of [
-      'col = max(col - uBlack, 0.0) / (1.0 - uBlack);',
-      'col = mix(col, col * col * (3.0 - 2.0 * col), uCurve);',
-      'col = (col - 0.5) * uContrast + 0.5;',
-    ]) {
-      assert(src.includes(line.replace(/\s+/g, ' ')),
-        `the composite no longer contains \`${line}\` — the model below is a copy of a grade `
-        + 'the shader has stopped applying');
-    }
-    const apply = (x) => {
-      let c = Math.max(x - black, 0) / (1 - black);
-      c = c + curve * (c * c * (3 - 2 * c) - c);
-      c = (c - 0.5) * contrast + 0.5;
-      return c;
-    };
+    const env = { uBlack: u.uBlack.value, uCurve: u.uCurve.value,
+      uContrast: u.uContrast.value, uKnee: u.uKnee.value };
+    const src = CompositeShader.fragmentShader;
+    assert(src.includes(GRADE_GLSL),
+      'the composite fragment no longer carries GRADE_GLSL — the curve measured here is not the one '
+      + 'the frame compiles');
+    assert(/col = gradeCurve\(col\);/.test(src),
+      'main() no longer calls gradeCurve() — the grade unit is compiled and never applied');
+    const graded = glslFn(GRADE_GLSL, 'gradeCurve', { env });
+    const apply = (x) => graded([x, x, x])[0];
     let prev = -Infinity;
     for (let i = 0; i <= 200; i++) {
       const v = apply(i / 200);
@@ -1082,29 +1082,176 @@ export function run({ check, assert, near, THREE: T }) {
     // it has to actually add contrast in the region a frame lives in
     const slope = (apply(0.55) - apply(0.45)) / 0.1;
     assert(slope > 1.15, `midtone slope is only ${slope.toFixed(3)} — the curve is doing nothing`);
-    // and pull the shadows down rather than lifting them
+    /* …and pull the shadows down rather than lifting them. This is the bound
+     * the toe below the knee has to live under, and it is what sets where the
+     * knee can be: the toe is a straight line of slope `tone(knee)/knee`, so
+     * raising the knee raises the whole dark end together, and at knee 0.32
+     * the value at 0.14 reaches 0.1192 against the 0.1190 ceiling here. 0.28
+     * lands at 0.1136. The ceiling is the older rule and it wins. */
     assert(apply(0.14) < 0.14 * 0.85, `a shadow at 0.14 only reaches ${apply(0.14).toFixed(3)}`);
-    /* AND WHAT THAT COSTS THE DARKEST GROUND IN THE GAME, printed rather than
-     * bounded, because where the ceiling belongs is a look decision and not
-     * this check's to make. Measured in a real browser at `high`, camera
-     * pitched onto the ground it is standing on, reading the near third of the
-     * frame with the composite ON and with it bypassed:
-     *
-     *   mustafar   27.4 → 14.2 of 255   (0.49x)   95.7% of the near field under L=24
-     *   warship    45.8 → 26.1          (0.57x)   37.6%
-     *   colosseum 181.9 → 177.9         (1.02x)    0.1%
-     *
-     * The same operator at the same strength takes half of one level's floor
-     * and none of another's, because the exposure meter deliberately leaves
-     * each level as dark as it was authored (see `exposure: the meter TRIMS the
-     * authored frame`) and this curve then compounds with it. Both halves are
-     * held — that check measures the spread BEFORE the grade, this one measures
-     * the curve with no level in it — and their PRODUCT, which is the only
-     * thing a player sees, is not. */
     const gain = (x) => apply(x) / x;
     const at = [0.05, 0.11, 0.25, 0.50, 0.71].map((x) => `${x}→${gain(x).toFixed(2)}x`).join(' ');
     return `monotonic over 201 samples, black→${apply(0).toFixed(4)}, `
       + `midtone slope ${slope.toFixed(2)}, 0.14→${apply(0.14).toFixed(3)}; gain ${at}`;
+  });
+
+  check('grade: a level authored dark comes out dark, not crushed', () => {
+    /* ── WHAT THIS NUMBER IS PROTECTING ──────────────────────────────────
+     *
+     * `NEXT.md` carried "the composite grade crushes dark levels — mustafar's
+     * near ground ×0.49" for a whole session as an open LOOK call. The check
+     * above is the reason it could sit there unanswered: every assertion in it
+     * is about the SHAPE of the curve — monotone, black is black, the midtones
+     * have bite — and every one of them was green while the curve was taking
+     * half the value off one level's ground and none off another's.
+     *
+     * The shape assertions cannot see it because the fault is not in the
+     * shape. It is in WHERE EACH LEVEL SITS ON IT. The exposure meter
+     * deliberately leaves a level as dark as it was authored (see `exposure:
+     * the meter TRIMS the authored frame`, and METER_TRIM's note on the meter
+     * inverting the art direction when it did not), so a dark level's ground
+     * arrives at the grade near the bottom of the range — and the bottom of
+     * this curve is where all three of its operators take the most away. The
+     * darker a level is authored, the harder it is crushed. That is the same
+     * inversion the meter was fixed for, one pass further down the chain.
+     *
+     * Measured through the shipped pipeline by `tools/gradeprobe.mjs` — one
+     * pinned frame per level at the player's own eye height and bearing,
+     * tipped 12° down, shot twice, once with the composite on and once with it
+     * bypassed, world frozen so the two frames are the same scene twice. The
+     * near field is the bottom fifth of the frame, centre half: the ground a
+     * third-person camera keeps under the player.
+     *
+     *               what the renderer   what the SHIPPED    the near field's
+     *               drew, of 255        grade made of it    gain, before → after
+     *               near   ground       near   ground
+     *   scoria        23.6    51.8       12.7    44.0        ×0.54 → ×0.88
+     *   mustafar      27.0    27.9       17.0    18.2        ×0.63 → ×0.90
+     *   wood          37.1    44.4       24.9    31.2        ×0.67 → ×0.86
+     *   geonosis      70.6    98.0       59.5    87.7        ×0.84 → ×0.89
+     *   drifts       109.8   125.7      105.5   120.2        ×0.96 → ×0.98
+     *   alpine       114.2   130.7      109.6   124.8        ×0.96 → ×0.98
+     *   colosseum    123.0   151.5      119.4   148.3        ×0.97 → ×0.99
+     *
+     * Read it top to bottom and the fault is the ORDER of the rows. It is not
+     * that the curve is too strong; it is that its strength is a function of
+     * how dark the level is, and it runs from ×0.54 on the darkest ground on
+     * the roster to ×0.97 on the brightest. The Ember Shelf — the level
+     * NEXT.md names — loses a THIRD of its whole ground, and the Colosseum
+     * loses 3%, from one operator with no per-level setting in it at all.
+     *
+     * WHERE THE KNEE GOES falls straight out of the same table. Every level
+     * whose ground is crushed sits under 0.18 (44.4 of 255); every level that
+     * is untouched sits over 0.43 (109.8). The knee has to be in that gap, and
+     * 0.28 is close to its middle. The other end is the shadow bound in the
+     * check above, which caps it at about 0.31. Both agree.
+     *
+     * So the bound below is not a taste number picked to make a level lighter.
+     * It is: WHATEVER THE RENDERER DREW, THE GRADE MAY NOT TAKE MORE THAN A
+     * FIFTH OF IT AWAY, and it may not take any of its colour at all.
+     *
+     * Both halves matter and the second is the one this game is about.
+     * src/toon/REFERENCE.md's first rule is that a surface reads as ONE
+     * DELIBERATE COLOUR; a per-channel curve applied to a dark band does not
+     * darken it, it REPLACES it, because the three channels are near the
+     * bottom of the curve and their ratios are whatever the toe says. Measured
+     * on a dark red band at (0.140, 0.060, 0.040): before, (0.082, 0.012,
+     * −0.004) — the blue channel clipped to zero and the ratios gone from
+     * 1 : 0.43 : 0.29 to 1 : 0.15 : 0.00. That is not a dark red surface any
+     * more. It is a black one with a red edge, and it is what "muddy" means.
+     */
+    const u = CompositeShader.uniforms;
+    const env = { uBlack: u.uBlack.value, uCurve: u.uCurve.value,
+      uContrast: u.uContrast.value, uKnee: u.uKnee.value };
+    const graded = glslFn(GRADE_GLSL, 'gradeCurve', { env });
+    const tone = glslFn(GRADE_GLSL, 'tone', { env });
+    const apply = (x) => graded([x, x, x])[0];
+
+    /* 1. NOTHING IS CRUSHED ONTO BLACK. Every 8-bit code value above zero has
+     * to come out above zero. The old curve went NEGATIVE below 0.043 and
+     * `max(col, 0.0)` at the end of main() caught it, so the bottom ELEVEN of
+     * 255 code values all arrived as the same pixel — a flat band, an ink line
+     * and a cast shadow drawn as three colours, delivered as one. The check
+     * above could not see that either: it asserts `apply(0) < 0.005` and −0.021
+     * passes that bound by being further wrong. */
+    let crushed = 0;
+    for (let i = 1; i <= 255; i++) if (apply(i / 255) <= 0) crushed++;
+    assert(crushed === 0,
+      `${crushed} of the 255 non-black code values come out at or below zero — the bottom of the `
+      + 'frame is being clamped onto one pixel');
+
+    /* 2. THE GAIN FLOOR, and it is the number the whole check exists for.
+     * 0.80 is set from the table above with a little room: the toe's slope is
+     * tone(knee)/knee = 0.811, flat across the whole dark end by construction,
+     * and the darkest ground on the roster is far enough under the knee that
+     * the frame gain follows it. Dropping the knee to 0.26 takes the toe to
+     * 0.788 and this red; the shipped 0.28 clears it by 1.4%. */
+    const DARK = 27.9 / 255;           // the Ember Shelf's whole ground, ungraded
+    for (let i = 1; i <= Math.round(u.uKnee.value * 255); i++) {
+      const x = i / 255;
+      assert(apply(x) / x > 0.80,
+        `the grade multiplies ${x.toFixed(3)} by ${(apply(x) / x).toFixed(3)} — a level authored dark `
+        + 'is being taken further down than it was drawn');
+    }
+    assert(apply(DARK) / DARK > 0.80, `the darkest ground on the roster is graded ×${(apply(DARK) / DARK).toFixed(2)}`);
+
+    /* 3. AND IT KEEPS ITS COLOUR EXACTLY. Below the knee the curve is a
+     * straight line through the origin, which is a SCALE — so all three
+     * channels of a dark band are multiplied by the same number and the band's
+     * ratios, which is its hue and its chroma, survive the grade untouched.
+     * Asserted to 1e-6 rather than "roughly", because the property is exact or
+     * it is not the property: a per-channel curve cannot have it at all. */
+    const band = [0.140, 0.060, 0.040];
+    const out = graded(band);
+    for (let i = 1; i < 3; i++) {
+      near(out[i] / out[0], band[i] / band[0], 1e-6,
+        `a dark band's channel ${i} ratio after the grade`);
+    }
+
+    /* 4. AND NOTHING ABOVE THE KNEE MOVED. `step` selects, it does not blend,
+     * and the two branches meet exactly at the knee — so a bright level's
+     * ground, its lit bands and the midtone slope the frame's contrast is
+     * built on are bit-identical to the curve that shipped. This is what makes
+     * the change provably a change to the dark end alone. */
+    for (let i = Math.ceil(u.uKnee.value * 200); i <= 200; i++) {
+      const x = i / 200;
+      near(apply(x), tone([x, x, x])[0], 1e-12, `the curve above the knee at ${x.toFixed(3)}`);
+    }
+    /* …and the toe has to still BE a toe. A slope of 1 here would be the grade
+     * switched off below the knee, which trades one wrong answer for the
+     * mirror-image one — the shadows stop being deepened at all. */
+    const toe = apply(0.1) / 0.1;
+    assert(toe < 0.95, `the toe's slope is ${toe.toFixed(3)} — the grade has stopped grading the shadows`);
+
+    /* 5. AND EVERY BOUND ABOVE IS SHOWN TO BITE, on the curve that shipped.
+     * `tone` is still in the same GLSL unit — it is the three operators with
+     * no toe under them, which is exactly what the frame ran before this — so
+     * the same three measurements can be taken on it and REQUIRED TO FAIL. A
+     * check that only measures the new behaviour cannot tell you whether it
+     * measured anything, which is the argument cel.mjs's header makes and the
+     * reason `_glsl.mjs` exists at all.
+     *
+     * The middle number below is the one NEXT.md was carrying: the untoed
+     * curve's gain at 27.9/255, the value the Ember Shelf's ground renders at,
+     * is ×0.493. The open item said ×0.49. */
+    const bare = (x) => tone([x, x, x])[0];
+    let wasCrushed = 0;
+    for (let i = 1; i <= 255; i++) if (bare(i / 255) <= 0) wasCrushed++;
+    assert(wasCrushed === 11,
+      `the untoed curve now crushes ${wasCrushed} code values, not 11 — the control this check `
+      + 'proves itself against has moved, so the bounds above are no longer known to bite');
+    assert(bare(DARK) / DARK < 0.80 * 0.7,
+      `the untoed curve grades the darkest ground ×${(bare(DARK) / DARK).toFixed(3)}, which is inside `
+      + 'the bound above — there is nothing left for the toe to fix and the bound proves nothing');
+    const wasBand = tone(band);
+    assert(Math.abs(wasBand[2] / wasBand[0] - band[2] / band[0]) > 0.2,
+      'the untoed curve preserves a dark band\'s ratios, so the hue assertion above is vacuous');
+
+    return `knee ${u.uKnee.value}: the darkest ground on the roster grades `
+      + `×${(apply(DARK) / DARK).toFixed(3)} (untoed ×${(bare(DARK) / DARK).toFixed(3)}), `
+      + `0 of 255 code values crushed to black (untoed ${wasCrushed}), a dark band's hue exact `
+      + `(untoed B/R ${(wasBand[2] / wasBand[0]).toFixed(2)} against ${(band[2] / band[0]).toFixed(2)}), `
+      + `${201 - Math.ceil(u.uKnee.value * 200)} samples above the knee bit-identical`;
   });
 
   check('grade: shadows and highlights are separated by colour, not only by value', () => {

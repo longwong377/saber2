@@ -150,6 +150,100 @@ export function run({ check, assert, near }) {
    * ending on a straight line where it crossed the world, and that line is at
    * its most visible over exactly the flat colour fields this renderer draws.
    */
+  check('smoke: a column dissolves into the level\'s OWN sky, not into Geonosis\'', async () => {
+    /**
+     * A SMOKE COLUMN IS NOT LIT — `Smoke.js` says why in its header — so the
+     * only thing that makes one END rather than stop is that its top has
+     * become the colour of the haze behind it. `tip` is that colour, and
+     * Geonosis authored it as `0xd0a473`, which is `LEVELS.geonosis
+     * .atmosphere.fogColor` written a second time.
+     *
+     * IT WENT WRONG WHEN THE MODE PUT THIS SMOKE ON SEVEN GROUNDS. THE LINE
+     * rolls its theatre off the run seed and `Front.marchFront` raises the
+     * marching front's columns on whatever it lands on; the only level in the
+     * game that publishes `world.smokeAir` is Geonosis, so the fallback — a
+     * third copy of the same five numbers, in `Front.js` — was handing every
+     * other ground Geonosis' dust:
+     *
+     *     level      its own fog     the tip it was given
+     *     alpine       #b6cbee            #d0a473
+     *     wood         #1a231b            #d0a473
+     *     drifts       #cdc6b8            #d0a473
+     *     colosseum    #c8c4b8            #d0a473
+     *     mustafar     #584038            #d0a473
+     *     scoria       #6b3a2a            #d0a473
+     *
+     * and a wind of `[0.94, 0.34]` (20°) on a ground whose own dunes are combed
+     * along `[0.62, −0.78]` (−51°), so the columns leaned 71° off the way that
+     * level's snow, grass and dust were all blowing.
+     *
+     * WHAT IS MEASURED IS THE MESH AND NOT THE RECORD. `addSmokeColumns` bakes
+     * the tip into the vertex colours of the top ring and the lean into where
+     * that ring sits over the base, so this reads the geometry the game draws
+     * rather than the table it was drawn from — a record that agreed and a mesh
+     * that did not is exactly the failure this clause is for.
+     */
+    const { addSmokeColumns } = await import('../../src/world/Smoke.js');
+    const { LEVELS, LEVEL_ORDER } = await import('../../src/game/Levels.js');
+    const { TERRAIN_PRESETS } = await import('../../src/world/Terrain.js');
+    const lines = [];
+    const geo = new THREE.Color(LEVELS.geonosis.atmosphere.fogColor);
+    for (const key of LEVEL_ORDER) {
+      const L = LEVELS[key];
+      const preset = TERRAIN_PRESETS[L.terrain];
+      assert(preset, `${key} names a terrain preset that does not exist`);
+      /* A GROUND AT ZERO, not the level's real one: what is measured is the
+       * tip colour and the lean, and both are relative to the column's own
+       * base. Building seven real Terrains to place one column each would be
+       * seven heightfields for a number that does not depend on them. */
+      const world = { scene: new THREE.Scene(), statics: [],
+        terrain: { preset, height: () => 0 }, level: L };
+      const mesh = addSmokeColumns(world, [{ x: 0, z: 0, height: 60, seed: 5 }]);
+      assert(mesh, `${key}: no column built`);
+      const pos = mesh.geometry.attributes.position;
+      const col = mesh.geometry.attributes.color;
+      const SIDES = 7;
+      const rings = pos.count / SIDES;
+      /* THE TOP RING IS THE TIP EXACTLY: `shade = body.lerp(tip, t^0.7)` and
+       * the last station is t = 1. Anything else means the ramp lost its end. */
+      const want = new THREE.Color(L.atmosphere.fogColor);
+      let dr = 0;
+      let cx = 0, cz = 0;
+      for (let s = 0; s < SIDES; s++) {
+        const i = (rings - 1) * SIDES + s;
+        dr = Math.max(dr, Math.abs(col.getX(i) - want.r), Math.abs(col.getY(i) - want.g),
+          Math.abs(col.getZ(i) - want.b));
+        cx += pos.getX(i); cz += pos.getZ(i);
+      }
+      cx /= SIDES; cz /= SIDES;
+      const top0 = (rings - 1) * SIDES;
+      const got = new THREE.Color(col.getX(top0), col.getY(top0), col.getZ(top0));
+      assert(dr < 0.004,
+        `${key}'s column tips to #${got.getHexString()} against its own fog #${want.getHexString()}`);
+      /* AND IT LEANS THE LEVEL'S OWN WAY. The top ring's centre is the base
+       * plus `wind · drift`, wobbled; 12° of tolerance covers the wobble and
+       * is nowhere near the 71° the Geonosis literal was worth on alpine. */
+      const w = preset.wind || [1, 0];
+      const off = Math.atan2(cz, cx), want2 = Math.atan2(w[1], w[0]);
+      let d = off - want2;
+      while (d > Math.PI) d -= Math.PI * 2;
+      while (d < -Math.PI) d += Math.PI * 2;
+      assert(Math.abs(d) < 0.21,
+        `${key}'s smoke leans ${(off * 180 / Math.PI).toFixed(0)}° and its ground is combed `
+        + `along ${(want2 * 180 / Math.PI).toFixed(0)}°`);
+      lines.push(`${key} #${want.getHexString()} @${(want2 * 180 / Math.PI) | 0}°`);
+      mesh.geometry.dispose();
+    }
+    /* AND THE LEVELS ARE NOT ALL ONE LEVEL. Six of the seven tipping to the
+     * seventh's fog is precisely the defect, and every per-level assertion
+     * above would still pass if every level's fog were the same colour. */
+    const tips = new Set(LEVEL_ORDER.map((k) => LEVELS[k].atmosphere.fogColor));
+    assert(tips.size >= 6, `${tips.size} distinct fog colours over ${LEVEL_ORDER.length} levels`);
+    assert(LEVEL_ORDER.filter((k) => new THREE.Color(LEVELS[k].atmosphere.fogColor).getHex() === geo.getHex()).length === 1,
+      'more than one level tips to Geonosis\' dust');
+    return lines.join('; ');
+  });
+
   check('particles: a sprite fades where it meets the world instead of ending on a line', async () => {
     const S = await import('../../src/world/SoftDepth.js');
     const { addSmokeColumns } = await import('../../src/world/Smoke.js');

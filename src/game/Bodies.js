@@ -3505,6 +3505,382 @@ function beardParts(s, hg, B) {
   return { parts, strands };
 }
 
+/* ── hoods ───────────────────────────────────────────────────────────── */
+
+/**
+ * HOODS, WHICH THIS GAME DID NOT HAVE.
+ *
+ * The player's note, in their own words: *"I want hoods, wearable hoods that
+ * go over your head, a few different kinds, they should look really cool"* —
+ * and before this there were exactly two hoods in the build, neither of them
+ * wearable by a player: the Sentinel's cowl thirty lines below and the
+ * acolyte's, and both were an inline sphere segment with a torus on it, typed
+ * out twice. `src/game/Cloth.js` names the gap itself, in the long note over
+ * WARDROBE: "AND THE ONE THING THIS FILE CANNOT FAKE AT ALL: a HOOD… the
+ * machinery is all here but the anchor belongs to whoever owns the head."
+ * This is that anchor.
+ *
+ * ── WHY IT IS RIGID GEOMETRY ON A BONE, AND NOT CLOTH ────────────────────
+ *
+ * A cape is a sheet pinned along nine points of the shoulders and it may hang
+ * wherever gravity sends it. A hood is pinned in a RING around a skull it is
+ * never allowed to intersect, and the skull is the one collider on the figure
+ * that the cloth solver has no hull for. Simulating one would need a head
+ * collider, a closed tube whose top is sewn shut, and a solve every frame for
+ * a garment whose whole visible motion is "it stays on the head" — so it is
+ * a Kit, merged, one draw call, exactly like the Temple Guard's helm.
+ *
+ * ── AND WHY IT HANGS OFF THE HEAD BONE AND NOTHING ELSE ──────────────────
+ *
+ * Enemy.js states the rule for the health bar and it is the same rule here:
+ * "Actor.addBone() re-homes exactly the children of a bone object" and
+ * `Actor.goRagdoll` re-homes them onto that bone's holder, so anything
+ * parented to `rig.root` is orphaned the moment a body falls. A hood on
+ * `rig.root` would stay standing in the air over a corpse, and when the neck
+ * is cut, `Actor.cut` walks the subtree from the cut bone and hands the head
+ * — with every direct child of it — to the DetachedPiece. A hood on the head
+ * bone therefore rolls across the floor with the head it was on, for free,
+ * and `Player._applyViewMode` hides it in first person for free as well: that
+ * function traverses the NECK, which reaches every mesh under the head.
+ * Neither behaviour is code below; both are consequences of the parent, which
+ * is why the parent is the first thing tools/checks/hoods.mjs measures.
+ *
+ * ── THE SHELLS ARE LINED, AND THAT IS THE WHOLE LOOK ─────────────────────
+ *
+ * The two hoods that existed were single-sided sphere segments, so the inside
+ * of the cowl was not drawn at all and a face under one sat against whatever
+ * was behind the head. What makes a hood read as a hood — in every reference
+ * in assets/reference — is that the face is in a DARK RECESS. So each shell
+ * carries a second copy of itself at 92-95% of its size with the winding and
+ * the normals reversed and its vertex colours knocked down to 0.34-0.46, which
+ * is the same channel `shadeAO` uses for every crease on the body. It costs no
+ * material, no second draw call and no shader: it is one merged geometry with
+ * a dark half. Measured on the Jedi cowl, mean vertex luminance 1.000 outside
+ * and 0.420 inside — a full stop and a quarter of drop across the rim.
+ *
+ * A lining is also what lets the cloth stay SINGLE-SIDED. `THREE.DoubleSide`
+ * on an open shell doubles the shadow-map cost of the largest thing on the
+ * head and lights its interior with an outward normal, which is why the
+ * acolyte's cowl has always looked like a plastic scoop from underneath.
+ *
+ * ── WHAT IS NOT DONE, AND WHY ────────────────────────────────────────────
+ *
+ * A hood does not hide the hair under it. The hair CUT and the BEARD are
+ * merged into one geometry by `assemble(parts, 'hair')` before either reaches
+ * a mesh, so "hide the hair" is currently the same statement as "shave the
+ * beard", and splitting that merge to gain it would cost a draw call on every
+ * head in the game to fix a topknot. Every shell below clears the hair mass a
+ * cut actually presents — measured across the eight styles, x ±0.135 (mane),
+ * z -0.122 and y 0.205 (temple/long/mane) in the head bone's own frame — so
+ * the only styles that break the surface are `topknot` (0.240) and `tail`
+ * (0.248), which are knots ON TOP of the crown. That is a shipped property of
+ * the Sentinel's cowl too, not a regression, and a tail hanging out of a hood
+ * is what half the references show anyway.
+ */
+
+/**
+ * FOUR HOODS, AND THE ABSENCE OF ONE.
+ *
+ * Every field is in the HEAD BONE's own frame and is multiplied by the head's
+ * authored scale (`HS` in buildJedi — the head is authored at its own scale so
+ * a small-folk figure can be three and a half heads tall rather than a human
+ * shrunk). The frame, measured on the shipped human head:
+ *
+ *     the skull      x ±0.075   y -0.034 … 0.197   z -0.118 … 0.101
+ *     the hair mass  x ±0.135   y  0.205 max       z -0.122
+ *     the shoulder   y -0.100                    (clavicle 0.475, head 0.575)
+ *
+ * so a shell has to reach past 0.135 across, past 0.205 up and past -0.122
+ * back to cover a head with hair on it, and a fall that stops at y -0.100 is
+ * resting on the shoulder rather than through it.
+ *
+ * `shell` is a sphere SEGMENT and its opening has to land on the face. Three
+ * puts phi = 0 at -X and phi = π/2 at +Z, so a shell of angular length L is
+ * centred on +Z when it starts at `1.5π - L/2` — which is where the shipped
+ * cowl's 0.80π comes from, and it is computed below rather than typed so a cut
+ * cannot be authored with its opening over one ear.
+ *
+ * The four are chosen so that NO TWO CHANGE THE SAME PART OF THE OUTLINE,
+ * which is the same rule JEDI_RANKS is built on and the reason the roster's
+ * four Jedi stopped measuring 0.939 against each other:
+ *
+ *   cowl    round, open, soft. The shipped Sentinel cowl to the millimetre.
+ *   sith    tight to the skull, a 68° slot instead of a 108° opening, a
+ *           standing collar OUTSIDE the shell and a peak over the crown.
+ *   wrap    not a cowl at all — a closed cap on the brow under a cord, with
+ *           two falls down the sides of the face and a flared nape drape.
+ *           The only one of the four with cloth beside the jaw.
+ *   cloak   the biggest thing anyone wears on a head here: 40.7 cm front to
+ *           back against the Jedi cowl's 28.0 and a bare skull's 21.9, with a
+ *           heavy rolled rim, a peak gathered at the back and a drape across
+ *           the shoulders.
+ */
+export const HOOD_CUTS = [
+  {
+    id: 'none', name: 'No hood',
+    blurb: 'Hood down. Nothing over the head at all — which is what every Jedi in this game wore until now.',
+    none: true,
+  },
+  {
+    id: 'cowl', name: 'Jedi Cowl',
+    /* THE SHIPPED SENTINEL COWL, TO THE MILLIMETRE. Every number in this row
+     * is read straight off the inline cowl that used to live in `headKit`
+     * below — r 0.150, phi 0.80π for 1.40π, theta 0.70π, scale 1.02/1.12/1.16,
+     * up 0.050 and back 0.026, with a 0.118 × 0.019 torus at 0.098/0.022 rolled
+     * -0.34 — because `JEDI_RANKS.sentinel` now names this cut instead of
+     * carrying its own copy of the geometry, and a rank that measured 0.883
+     * flank IoU against the Knight must not move by so much as a vertex when a
+     * player-facing wardrobe piece is added underneath it. The lining is the
+     * one thing that is new, and it is inside the shell. */
+    blurb: 'The order\'s own: deep, round, and open enough that your face is still a face inside it.',
+    shell: { r: 0.150, w: 16, h: 12, open: 0.60, theta: 0.70,
+             sx: 1.02, sy: 1.12, sz: 1.16, y: 0.050, z: -0.026, line: 0.93, dark: 0.42 },
+    rim: { r: 0.118, tube: 0.019, seg: 5, ring: 16, y: 0.098, z: 0.022, tilt: -0.34 },
+  },
+  {
+    id: 'sith', name: 'Sith Cowl',
+    blurb: 'Tight to the skull, a slot for a face, and a collar standing at the nape. Nothing of you shows.',
+    /* The opening is 0.38π — 68°, against the Jedi cowl's 108° — and the shell
+     * runs 0.84π of theta, which is 151° from the crown and puts its bottom
+     * edge at y -0.108, level with the shoulder. Narrow AND long: this is the
+     * only cut whose cloth reaches the collarbone at the sides. */
+    shell: { r: 0.138, w: 16, h: 12, open: 0.38, theta: 0.84,
+             sx: 1.02, sy: 1.24, sz: 1.12, y: 0.042, z: -0.030, line: 0.94, dark: 0.34 },
+    /* A collar is only a collar if it stands OUTSIDE the thing it collars. The
+     * shell's own half-width at y = -0.056 is 0.116, so an arc whose inner
+     * wall is 0.126 clears the cowl and reads as a second layer rather than as
+     * a ring buried in it — the same mistake the acolyte's plastron was
+     * measured making against its own mantle.
+     *
+     * AN ARC AND NOT A CLOSED BAND, which the first cut of it was. A full
+     * revolution at this radius passes 60 mm in FRONT of the chin: a ring
+     * across the mouth of the one hood whose whole point is that a slot of
+     * face shows through it. 4.2 rad about the back leaves 120 degrees open at
+     * the throat, which is where a standing collar opens. */
+    collar: { r0: 0.126, r1: 0.146, h: 0.105, arc: 4.2, thick: 0.024, seg: 12,
+              y: -0.056, squash: 0.94 },
+    peak: { w: 0.052, h: 0.155, d: 0.062, r: 0.014, y: 0.176, z: -0.106, tilt: 0.55 },
+    folds: { n: 3, len: 0.150, r0: 0.019, r1: 0.007, at: 0.118, y: 0.150, spread: 1.5 },
+  },
+  {
+    id: 'wrap', name: 'Desert Wrap',
+    blurb: 'A cloth cap bound with a cord, two falls beside the face and a drape down the nape. For a sun you fight under.',
+    /* NOT A COWL. `open: 0` makes the shell a closed cap — a full revolution —
+     * and `theta: 0.42` stops it at 75.6° from the crown, which lands its
+     * bottom edge at y 0.097: on the brow ridge (0.099-0.107), a centimetre
+     * above the eyes. A keffiyeh covers the forehead and nothing else of the
+     * face, and that one number is the whole difference between this and a
+     * diving helmet — measured at 0.44 it reached y 0.087 and took 9.8% of the
+     * eye band with it, which is the check below going red for a hood you
+     * could not see out of. */
+    shell: { r: 0.134, w: 16, h: 10, open: 0, theta: 0.42,
+             sx: 1.06, sy: 1.17, sz: 1.14, y: 0.058, z: -0.010, line: 0.95, dark: 0.46 },
+    /* The agal. It sits at y 0.126 where the cap's own half-width is 0.128, so
+     * a ring at 0.136 stands 8 mm proud of the cloth it is binding.
+     *
+     * `tilt` is π/2 and not a few hundredths, and that is the difference
+     * between a cord bound round a head and a halo standing over it:
+     * THREE.TorusGeometry is authored in the XY PLANE, so an untilted one is a
+     * ring you look THROUGH along Z. The face rims below want exactly that and
+     * leave `tilt` near zero; a headband has to be laid flat. Measured before
+     * the quarter turn went in, this cut stood 0.274 above the head bone
+     * against a cap that tops out at 0.215 — six centimetres of cord in the
+     * air over the crown. */
+    cord: { r: 0.136, tube: 0.0125, seg: 4, ring: 16, y: 0.126, z: -0.008, tilt: 1.49 },
+    falls: { w: 0.058, h: 0.235, d: 0.032, r: 0.014, x: 0.112, y: -0.014, z: -0.014,
+             pitch: 0.06, yaw: 0.20, roll: 0.09 },
+    nape: { r0: 0.150, r1: 0.132, h: 0.230, arc: 2.7, thick: 0.016, seg: 8, y: -0.128 },
+  },
+  {
+    id: 'cloak', name: 'Cloak Hood',
+    blurb: 'The travelling hood: heavy, deep, gathered at the back and falling across the shoulders. You are a shape in it.',
+    /* The largest thing on any head in this game. sz 1.30 against the cowl's
+     * 1.16 is what makes it 40.7 cm front to back — the face sits well back
+     * inside the opening instead of filling it, which is the entire reason a
+     * travelling hood reads as ominous and a Jedi cowl does not. */
+    shell: { r: 0.170, w: 16, h: 12, open: 0.66, theta: 0.68,
+             sx: 1.05, sy: 1.13, sz: 1.30, y: 0.052, z: -0.052, line: 0.92, dark: 0.30 },
+    rim: { r: 0.140, tube: 0.027, seg: 6, ring: 18, y: 0.082, z: 0.034, tilt: -0.42 },
+    /* The point of the hood, folded back rather than standing up. A +Y limb
+     * rotated by a NEGATIVE angle about X goes back (0, cos a, sin a), so the
+     * tip lands at y 0.096 and z -0.280 — against the shell's own back wall at
+     * -0.273, which is where a gathered fold belongs. Positive was tried and
+     * put the fold out through the face. */
+    peak: { len: 0.165, r0: 0.056, r1: 0.014, seg: 6, y: 0.165, z: -0.130, tilt: -2.0 },
+    folds: { n: 3, len: 0.165, r0: 0.022, r1: 0.008, at: 0.140, y: 0.140, spread: 1.7 },
+    nape: { r0: 0.176, r1: 0.158, h: 0.150, arc: 2.9, thick: 0.020, seg: 9, y: -0.120 },
+  },
+];
+
+const HOOD_BY_ID = new Map(HOOD_CUTS.map((h) => [h.id, h]));
+/**
+ * The hood cut with this id, or null. Same contract as `robeCut`, `capeCut`
+ * and `sashCut` in Cloth.js: an id nothing recognises is a null and never a
+ * plausible default, because a wardrobe that answers an unknown id with the
+ * shipped piece is HANDOFF §2.3's missing-thing-answered-with-a-default.
+ */
+export function hoodCut(id) { return HOOD_BY_ID.get(id) || null; }
+
+/**
+ * A copy of an open shell turned inside out: reversed winding, flipped
+ * normals, and its vertex colours knocked down to `dark`.
+ *
+ * Scaled about the GEOMETRY's own origin, which is why every shell above is
+ * authored centred on zero and placed by the Kit rather than translated into
+ * position first — a lining shrunk toward the head bone's origin instead of
+ * toward the shell's centre pulls away from the rim at the top and punches
+ * through it at the bottom.
+ */
+function liningGeo(g, k, dark) {
+  const l = g.clone();
+  l.scale(k, k, k);
+  const n = l.attributes.normal;
+  if (n) for (let i = 0; i < n.count; i++) n.setXYZ(i, -n.getX(i), -n.getY(i), -n.getZ(i));
+  const idx = l.index;
+  if (idx) for (let i = 0; i < idx.count; i += 3) {
+    const a = idx.getX(i); idx.setX(i, idx.getX(i + 2)); idx.setX(i + 2, a);
+  }
+  white(l);
+  const c = l.attributes.color;
+  for (let i = 0; i < c.count; i++) c.setXYZ(i, dark, dark, dark);
+  return l;
+}
+
+/** The sphere segment of a shell, centred on the origin and on the face. */
+function hoodShell(S, s) {
+  const len = Math.PI * (2 - S.open);
+  // centred on +Z: three puts phi = 0 at -X, so a run of `len` is centred on
+  // the face when it begins at 1.5π - len/2. Typed, this is the 0.80π that
+  // both shipped cowls carry and neither explains in the same words.
+  const g = new THREE.SphereGeometry(S.r * s, S.w, S.h,
+    S.open > 0 ? 1.5 * Math.PI - len / 2 : 0, S.open > 0 ? len : Math.PI * 2,
+    0, Math.PI * S.theta);
+  g.scale(S.sx, S.sy, S.sz);
+  return g;
+}
+
+/**
+ * PUT A HOOD ON A HEAD — the only function in the game that builds one.
+ *
+ * `headObj` is the head BONE's object (see the note at the top of this
+ * section), `mat` the cloth it is cut from, `s` the head's authored scale and
+ * `id` a row of HOOD_CUTS. Idempotent: whatever hood is already on this head
+ * comes off first, geometry disposed, so the wardrobe seam in ui/Menu.js can
+ * call it on every change without leaking a merged shell per pick.
+ *
+ * Returns the one mesh it made, or null for `none` and for an unknown id.
+ * ONE mesh: every piece goes through a single Kit bucket, so a hood with a
+ * shell, a lining, a rim, a peak, three gathered folds and a nape drape in it
+ * is one merged geometry and one draw call — which is the budget stated in
+ * tools/checks/hoods.mjs and enforced there.
+ */
+export function hoodOn(headObj, mat, s, id) {
+  if (!headObj) return null;
+  for (let i = headObj.children.length - 1; i >= 0; i--) {
+    const c = headObj.children[i];
+    if (c.isMesh && c.userData.hood) { headObj.remove(c); c.geometry.dispose(); }
+  }
+  const H = hoodCut(id);
+  if (!H || H.none) return null;
+  const k = new Kit();
+
+  if (H.shell) {
+    const S = H.shell;
+    const g = hoodShell(S, s);
+    if (S.line) k.add(mat, liningGeo(g, S.line, S.dark ?? 0.42), [0, S.y * s, S.z * s]);
+    k.add(mat, g, [0, S.y * s, S.z * s]);
+  }
+  // The rolled edge of the opening — what stops a shell reading as something
+  // you could see the inside of. It is also the piece that hides the seam
+  // where the shell and its lining both end.
+  if (H.rim) {
+    const R = H.rim;
+    k.add(mat, new THREE.TorusGeometry(R.r * s, R.tube * s, R.seg, R.ring),
+      [0, R.y * s, R.z * s], [R.tilt, 0, 0]);
+  }
+  if (H.cord) {
+    const C = H.cord;
+    k.add(mat, new THREE.TorusGeometry(C.r * s, C.tube * s, C.seg, C.ring),
+      [0, C.y * s, C.z * s], [C.tilt, 0, 0]);
+  }
+  if (H.peak) {
+    const P = H.peak;
+    // two shapes of peak: a slab standing off the crown (the Sith cowl's
+    // point) and a tapered limb folded back down it (the cloak's gathered
+    // fold). Which one a cut wants is which fields it declares.
+    if (P.len != null) {
+      k.add(mat, limbGeo(P.len * s, P.r0 * s, P.r1 * s, P.seg, true,
+        { rings: 3, bulge: 0.24, bulgeAt: 0.35, capN: 2 }),
+        [0, P.y * s, P.z * s], [P.tilt, 0, 0]);
+    } else {
+      k.add(mat, plateGeo(P.w * s, P.h * s, P.d * s, P.r * s, 1),
+        [0, P.y * s, P.z * s], [P.tilt, 0, 0]);
+    }
+  }
+  if (H.collar) {
+    const C = H.collar;
+    const g = arcGeo(C.r0 * s, C.r1 * s, C.h * s, C.arc, C.thick * s, C.seg);
+    g.rotateY(Math.PI);                       // the opening goes at the throat
+    k.add(mat, g, [0, C.y * s, 0], null, [1, 1, C.squash]);
+  }
+  // Gathered rolls where the cloth bunches at the nape. Same construction as
+  // the acolyte's, which is the one thing on that head that stops its cowl
+  // reading as a moulded plastic shell.
+  if (H.folds) {
+    const F = H.folds;
+    k.row(F.n, (i, t) => {
+      const a = (t - 0.5) * F.spread + Math.PI;
+      k.add(mat, limbGeo(F.len * s, F.r0 * s, F.r1 * s, 5, true, { rings: 3, bulge: 0.2, capN: 2 }),
+        [Math.sin(a) * F.at * s, F.y * s, Math.cos(a) * F.at * s], [-2.6, a, 0]);
+    });
+  }
+  // The drape down the back. arcGeo faces +Z at φ = 0 and spans y ∈ [0, h],
+  // so a nape fall is the same arc yawed by π — and its radii run WIDER at
+  // the bottom than the top, because cloth hanging off a head flares.
+  if (H.nape) {
+    const N = H.nape;
+    const g = arcGeo(N.r0 * s, N.r1 * s, N.h * s, N.arc, N.thick * s, N.seg);
+    g.rotateY(Math.PI);
+    k.add(mat, g, [0, N.y * s, 0]);
+  }
+  // Two falls beside the face, one each side. `pair` authors both rather than
+  // mirroring by scale, which would invert the winding of every triangle.
+  if (H.falls) {
+    const F = H.falls;
+    k.pair((sx) => {
+      k.add(mat, plateGeo(F.w * s, F.h * s, F.d * s, F.r * s, 2),
+        [sx * F.x * s, F.y * s, F.z * s], [F.pitch, -sx * F.yaw, sx * F.roll]);
+    });
+  }
+
+  const [m] = k.bake(headObj);
+  if (!m) return null;
+  m.userData.hood = H.id;
+  /* KEPT AT RANGE, for the reason the acolyte's cowl is: `Enemy._applyLod`
+   * culls every mesh that is neither a bone primary nor tagged here, and a
+   * hood is the single largest thing on a head. Untagged, a hooded figure is a
+   * bare 12 cm ball past thirty metres — the same ball everybody else wears. */
+  return markSilhouette(m);
+}
+
+/**
+ * The wardrobe seam's entry point: put `id` on a body that is already built.
+ *
+ * Takes what `buildJedi` returned rather than a rig, because the two things it
+ * needs beyond the rig — the cloth to cut the hood from and the scale the HEAD
+ * was authored at — are both on that object and neither can be recovered from
+ * the rig (`rig.scale` is the BODY's scale, and they differ by a factor of
+ * 1.85 on the small-folk row). Returns the mesh, or null.
+ */
+export function attachHood(built, id) {
+  const rig = built && built.rig;
+  const head = rig && rig.get && rig.get('head');
+  if (!head || !head.obj) return null;
+  const mat = built.palette && (built.palette.over || built.palette.outer);
+  if (!mat) return null;
+  return hoodOn(head.obj, mat, built.headScale ?? rig.scale ?? 1, id);
+}
+
 /* ── Jedi ────────────────────────────────────────────────────────────── */
 
 /**
@@ -3540,7 +3916,13 @@ function beardParts(s, hg, B) {
  */
 export const JEDI_RANKS = {
   knight:   { hem: 0.74 },
-  sentinel: { hood: true, hem: 1.32 },
+  /* `hood` names a row of HOOD_CUTS rather than being a boolean, and `'cowl'`
+   * IS the cowl this rank has always worn — every number of it moved into that
+   * row unchanged when hoods became a thing a player can pick. See the note
+   * over HOOD_CUTS: the geometry is identical, and what is new is the dark
+   * lining inside the shell and the fact that the whole thing is now one
+   * merged mesh instead of two. */
+  sentinel: { hood: 'cowl', hem: 1.32 },
   guardian: { helm: true, pauldron: true, hem: 1.06 },
   /* The Master is WIDE AT THE TOP and ordinary below, which is the opposite of
    * the Sentinel — hooded, narrow, and cloth to the ankle. Two robed figures
@@ -4106,23 +4488,35 @@ export function buildJedi(opts = {}) {
      * furniture, because a hood goes over both and a helm replaces neither.
      */
     headKit(headObj, s) {
-      if (RANK.hood) {
-        /* The cowl. Three's sphere puts phi = 0 at -X, so the shell starts at
-         * 0.80π for the 72° opening to land on the FACE rather than over one
-         * ear — the same construction the acolyte's uses, and deliberately so:
-         * these two are the roster's hooded bodies and they should be read
-         * against each other by colour and by what is under the hood, not by
-         * two different ideas of what a hood is. */
-        const cowl = new THREE.SphereGeometry(0.150 * s, 16, 12,
-          Math.PI * 0.80, Math.PI * 1.40, 0, Math.PI * 0.70);
-        cowl.scale(1.02, 1.12, 1.16);
-        cowl.translate(0, 0.050 * s, -0.026 * s);
-        markSilhouette(mesh(cowl, outer, headObj));
-        // the rim of the opening, thickened so it reads as cloth rather than
-        // as a shell you can see the inside of
-        markSilhouette(mesh(new THREE.TorusGeometry(0.118 * s, 0.019 * s, 5, 16), outer, headObj,
-          [0, 0.098 * s, 0.022 * s], [-0.34, 0, 0]));
-      }
+      /**
+       * THE HOOD, and it is no longer typed here.
+       *
+       * This used to be an inline sphere segment and a torus — the second copy
+       * of a construction the acolyte's head also carries, which is exactly
+       * §2.3's hand-maintained table beside its twin, and it was one of only
+       * two hoods in a game whose player had asked for wearable ones. Both the
+       * rank's cowl and the wardrobe's four cuts come out of `hoodOn` now, and
+       * `JEDI_RANKS.sentinel` names the row rather than restating the shape.
+       *
+       * `HS` and not `s`: the head is authored at its own scale (see `headGeo`
+       * above), and `s` is the BODY's. They are the same number for every
+       * human-framed row and differ by 1.85 on the small-folk one, where this
+       * line used to build a hood 40% of a head 74% the size of a human's —
+       * a cowl that ended half way up the skull it was on.
+       *
+       * `opts.hood` is what a PLAYER chose (ui/Menu.js writes it into
+       * `settings.wardrobe.hood` and Player.js passes it here); `RANK.hood` is
+       * what the roster's Sentinel wears. The player's answer wins, and the
+       * default of both is no hood at all — so `buildJedi()` with no arguments
+       * emits exactly the geometry it always did.
+       *
+       * The cloth is `over`, the darkest of the five layers the robe palette
+       * ladders into, because a hood is part of the over-robe and not a piece
+       * of its own: `tintWardrobe` dyes `palette.over` with the over-robe's
+       * tone, so a player who dyes their tabard black gets a black hood with
+       * it and no seventh material is allocated on any figure.
+       */
+      hoodOn(headObj, over, HS, opts.hood ?? RANK.hood ?? 'none');
       if (RANK.helm) {
         /* The Temple Guard's helm: a smooth mask with no face on it at all and
          * a vertical crest running front to back over the crown. It is the
@@ -4655,6 +5049,18 @@ export function buildJedi(opts = {}) {
             * that can wear all eight styles and defaults to none.
             */
            sheet: G,
+           /**
+            * THE SCALE THE HEAD WAS AUTHORED AT, which is not `rig.scale`.
+            *
+            * `rig.scale` is the BODY's — `S` — and everything on the head is
+            * built at `HS`, which is 1.85 times larger on the small-folk row
+            * and identical everywhere else (see the note over `HS`). Anything
+            * that wants to put a second thing on this head after the fact —
+            * the wardrobe seam's `attachHood`, and nothing else today — has to
+            * ask, because the difference is invisible on every other species
+            * and catastrophic on that one.
+            */
+           headScale: HS,
            palette: { robe, tunic, outer, over, sleeve, trim, leather, skin } };
 }
 
@@ -6433,10 +6839,42 @@ export function buildDroideka(opts = {}) {
     arms.push({ arm, muzzle, side: sx });
   }
 
-  // deflector shield bubble
-  const shieldGeo = new THREE.SphereGeometry(1.15 * S, 24, 18);
-  const shieldMat = new THREE.ShaderMaterial({
-    uniforms: { uColor: { value: new THREE.Color(0x66ddff) }, uTime: { value: 0 }, uPower: { value: 0 } },
+  // deflector shield bubble — the same one the player's Force barrier uses
+  const { mesh: shield, mat: shieldMat } = buildShieldBubble({ radius: 1.15 * S });
+  shield.position.y = 0.75 * S;
+  group.add(shield);
+
+  return { group, core, headG, legs, arms, shield, shieldMat, palette: { shell, dark, scorch, eye }, scale: S };
+}
+
+/**
+ * A DEFLECTOR BUBBLE — one implementation, two owners.
+ *
+ * It was written inline inside `buildDroideka` and it is lifted out here
+ * because the player has one now: "did you already add the force shield/bubble
+ * in the game? i'd already asked for it but I could have missed it." They had
+ * not missed it. It was not there, and the shader that draws exactly this
+ * thing had been sitting in a droid's constructor the whole time.
+ *
+ * Two owners with one shader is the point. A player who has learned to read a
+ * droideka's bubble — the fresnel rim that brightens where you are looking
+ * through it edge-on, the hex weave, the slow vertical ripple — reads their own
+ * the same way, and a change to how a deflector looks is one edit rather than
+ * two that drift.
+ *
+ * `uPower` is the only thing a caller animates: 0 is down, 1 is up, and every
+ * term in the fragment is multiplied by it, so a shield fading in fades in
+ * whole rather than appearing at full strength and then growing.
+ */
+export function buildShieldBubble(opts = {}) {
+  const radius = opts.radius ?? 1.15;
+  const geo = new THREE.SphereGeometry(radius, opts.segments ?? 24, opts.rings ?? 18);
+  const mat = new THREE.ShaderMaterial({
+    uniforms: {
+      uColor: { value: new THREE.Color(opts.color ?? 0x66ddff) },
+      uTime: { value: 0 },
+      uPower: { value: 0 },
+    },
     vertexShader: `varying vec3 vN; varying vec3 vV; varying vec3 vP;
       void main(){ vec4 mv = modelViewMatrix*vec4(position,1.); vN = normalize(normalMatrix*normal);
         vV = normalize(-mv.xyz); vP = position; gl_Position = projectionMatrix*mv; }`,
@@ -6451,12 +6889,14 @@ export function buildDroideka(opts = {}) {
       }`,
     transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
   });
-  const shield = new THREE.Mesh(shieldGeo, shieldMat);
-  shield.position.y = 0.75 * S;
-  shield.visible = false;
-  group.add(shield);
-
-  return { group, core, headG, legs, arms, shield, shieldMat, palette: { shell, dark, scorch, eye }, scale: S };
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.visible = false;
+  /* NOT INKED. `Ink.js` hides anything transparent for its prepass and shows it
+   * again; a bubble drawn into the normal buffer would put a hard outline round
+   * the player's own head. See `cutsItsOwnSilhouette`. */
+  mat.userData.saberNoInk = true;
+  mesh.frustumCulled = false;
+  return { mesh, mat };
 }
 
 /* ── spider walker (mini-boss) ───────────────────────────────────────── */
@@ -7477,6 +7917,232 @@ export const BODYGUARD_KITS = {
  * and `Actor.goRagdoll` re-homes it — the same path every rivet and armour
  * plate in this file already travels.
  */
+/**
+ * THE GEONOSIAN WARRIOR — the first body in this game with wings on it.
+ *
+ * Built off `assets/reference/units/creatures/Geonosian*.png`, the plates
+ * `src/world/Props.js` already names for the arena's crowd, and the one
+ * dimension the reference actually states: **1.75 m**, the Geonosian average
+ * height. `scale` is the claim and `tools/checks/flight.mjs` is what turns it
+ * into a measurement — see FLIGHT_CANON in src/game/Flight.js, which is where
+ * the figure lives, for the same reason GIANT_CANON is not in giants.mjs.
+ *
+ * ── WHAT MAKES IT NOT A TROOPER WITH A DIFFERENT HAT ────────────────────
+ *
+ * Four things, and each of them is a number on this page rather than a note:
+ *
+ *   THE FRAME     `legLen: 1.10`, `armLen: 1.12` and a chest radius of 0.098
+ *                 against a clone's 0.155. A Geonosian is 1.75 m of which
+ *                 most is limb: the silhouette is a narrow trunk slung
+ *                 between long thin legs, which is the opposite proportion to
+ *                 every other biped on the roster.
+ *   THE STOOP     `pitch` leans the whole trunk forward. A winged insect does
+ *                 not stand upright; it hangs off its own thorax. This is the
+ *                 one part of the outline that reads at forty metres with the
+ *                 wings furled.
+ *   THE HEAD      an elongated skull with a bony crest running back off it,
+ *                 two large lenses and a pair of mandibles. It is the head
+ *                 the reference is entirely about and it is `headGeo`, so it
+ *                 REPLACES the default ball rather than hiding inside one.
+ *   THE WINGS     two bones a side, dressed here, and the only meshes in the
+ *                 game hanging off a `wing` role. They are marked
+ *                 `silhouette` because a Geonosian at thirty metres with its
+ *                 wings culled is a thin man, and the wings are the whole
+ *                 reason you know what you are looking at.
+ *
+ * ── THE MEMBRANE IS TWO TRIANGLES OF CHITIN AND NOT A CLOTH SIM ────────
+ *
+ * `Cloth.js` costs what `cloth-cost` measures, and a swarm is the wrong place
+ * to spend it: the flight model already moves these wings sixty times a
+ * second (src/game/Flight.js beats them off the body's own climb rate), so
+ * what a sim would add is drape on a surface that is under tension whenever
+ * it matters. Rigid panels on a moving bone, at two draw calls a body.
+ */
+export function buildGeonosian(opts = {}) {
+  const S = opts.scale ?? 0.97;
+  /* Long limbs on a short trunk. `legLen`/`armLen` are the only two knobs the
+   * skeleton has for proportion and both are pushed the same way, which is
+   * what makes the trunk read as small without any bone being shortened. */
+  const rig = new Rig(humanoidSkeleton(S, { armLen: 1.12, legLen: 1.10, wings: true }), { scale: S });
+
+  const chitin = chitinMat(opts.color ?? 0x8a6f4e, 0.52);
+  const dark = chitinMat(0x4e3d2a, 0.40);
+  const membrane = chitinMat(0x6f5636, 0.30);
+  const lens = glassMat(0x14100c, 0.10);
+  const tooth = boneMat(0xd8c9a4, 0.36);
+
+  /**
+   * THE SKULL. A long braincase raked back over a short snout, a crest that
+   * carries on past the back of the head, and a jaw hung under it. Authored as
+   * one geometry so the whole head is one draw call at every range.
+   */
+  const headShell = (s) => assemble([
+    // braincase: an egg on its side, tipped back
+    [(() => { const g = new THREE.SphereGeometry(0.062 * s, 10, 8); g.scale(0.86, 1.02, 1.34); return g; })(),
+      [0, 0.100 * s, -0.020 * s]],
+    // the crest, running back and up off the crown — the read from the side
+    [plateGeo(0.026 * s, 0.150 * s, 0.100 * s, 0.008 * s, 1), [0, 0.150 * s, -0.078 * s], [-0.62, 0, 0]],
+    // brow shelf over the lenses
+    [plateGeo(0.104 * s, 0.030 * s, 0.062 * s, 0.008 * s, 1), [0, 0.128 * s, 0.030 * s], [0.24, 0, 0]],
+    // snout and the jaw under it
+    [limbGeo(0.098 * s, 0.040 * s, 0.026 * s, 8, true, { rings: 3, bulge: 0.05, bulgeAt: 0.2, capN: 2 }),
+      [0, 0.086 * s, 0.024 * s], [1.42, 0, 0]],
+    [plateGeo(0.052 * s, 0.060 * s, 0.048 * s, 0.010 * s, 1), [0, 0.052 * s, 0.048 * s], [0.34, 0, 0]],
+    // the neck's own collar ring
+    [bandGeo(0.026 * s, 0.038 * s, 0.028 * s, 0.042 * s, 0.030 * s, 10), [0, -0.008 * s, 0]],
+  ], 'head');
+
+  dressHumanoid(rig, {
+    scale: S,
+    body: chitin, arm: chitin, leg: chitin, hand: dark, boot: dark, head: chitin,
+    /* No deltoid. An insect's shoulder is a socket in a plate, not a muscle,
+     * and the swell would put a bicep on a body that has none. */
+    deltoid: false,
+    sections: false,
+    /**
+     * THE PROPORTIONS, AND THE ONE THAT DOES THE WORK IS `chestR`.
+     *
+     * 0.098 against the clone's 0.155 and the B2's 0.19. Everything else
+     * follows from it — a body this narrow needs thin arms and a small head or
+     * it reads as a child rather than as an insect.
+     */
+    parts: {
+      chestR: 0.098, shoulderR: 0.082, hipR: 0.086, waistR: 0.070,
+      armR: 0.030, clavR: 0.040, thighR: 0.048, neckR: 0.034,
+      torsoDepth: 0.82, shoulderDome: 0.30, headR: 0.070,
+    },
+    seg: { torso: 10, arm: 8, leg: 8, clav: 6, neck: 8 },
+    limbOpts: {
+      arm: { rings: 3, bulge: 0.05, bulgeAt: 0.28, capN: 2 },
+      fore: { rings: 3, bulge: 0.06, bulgeAt: 0.20, capN: 2 },
+      thigh: { rings: 3, bulge: 0.07, bulgeAt: 0.26, capN: 2 },
+      shin: { rings: 3, bulge: 0.04, bulgeAt: 0.14, capN: 2 },
+    },
+    headGeo: headShell,
+    handGeo: (side, s) => droidHandGeo(side, s, { curl: 0.72 }),
+    feet: { w: 0.060, len: 0.150, h: 0.052 },
+
+    buildHead(headObj, s, hg) {
+      const k = new Kit();
+      /* The two lenses, seated on the shell the shell decides. `onSurface`
+       * with the braincase's own centre means they sit ON the skull at
+       * whatever angle the skull happens to have, rather than at two
+       * coordinates that were right for the sphere before it was scaled. */
+      const core = new THREE.Vector3(0, 0.100 * s, -0.020 * s);
+      const d = new THREE.Vector3();
+      k.pair((sx) => {
+        d.set(sx * 0.62, 0.34, 0.71).normalize();
+        k.aim(lens, (() => { const g = new THREE.SphereGeometry(0.026 * s, 8, 6); g.scale(1, 0.72, 1); return g; })(),
+          onSurface(hg, d, -0.004 * s, core), d);
+        // the mandible: a curved tooth hung off the jaw, pointing in
+        k.add(tooth, clawGeo(0.058 * s, 0.011 * s, 0.003 * s, sx * 0.9, 5, 4),
+          [sx * 0.030 * s, 0.048 * s, 0.062 * s], [0.6, 0, sx * -0.5]);
+      });
+      // the crest's ridge line, and the two horn stubs at its root
+      k.add(dark, plateGeo(0.010 * s, 0.140 * s, 0.026 * s, 0.003 * s, 1), [0, 0.156 * s, -0.082 * s], [-0.62, 0, 0]);
+      k.pair((sx) => k.add(dark, plateGeo(0.014 * s, 0.044 * s, 0.020 * s, 0.005 * s, 1),
+        [sx * 0.032 * s, 0.148 * s, -0.040 * s], [-0.5, 0, sx * 0.3]));
+      /* THE CREST SURVIVES THE CULL AND THE LENSES DO NOT, which is a draw-call
+       * decision and not a taste one. `_applyLod` keeps one primary per bone
+       * plus anything tagged `silhouette`, and `characters.mjs` caps a humanoid
+       * at 32 kept meshes because twenty of them can be on screen at once — a
+       * swarm unit is exactly the wrong body to spend that on. Marking
+       * everything here measured 34. The crest is the outline; a 2.6 cm lens
+       * and a mandible are not. */
+      for (const m of k.bake(headObj)) { if (m.material === dark) markSilhouette(m); }
+    },
+
+    dress(r, s) {
+      /* ── the thorax: a hard dorsal shell with the wing roots in it ── */
+      const chest = r.get('chest');
+      if (chest) {
+        const k = new Kit();
+        // dorsal carapace, three overlapping plates down the back
+        k.row(3, (i, t) => k.add(dark,
+          plateGeo((0.118 - i * 0.016) * s, 0.070 * s, 0.052 * s, 0.010 * s, 1),
+          [0, (0.030 + t * 0.150) * s, -0.052 * s], [0.16, 0, 0]));
+        // a thin sternum keel
+        k.add(chitin, plateGeo(0.070 * s, 0.190 * s, 0.036 * s, 0.010 * s, 1), [0, 0.088 * s, 0.048 * s]);
+        // the two wing sockets, where the spars actually leave the body
+        k.pair((sx) => k.add(dark, new THREE.CylinderGeometry(0.024 * s, 0.030 * s, 0.026 * s, 8),
+          [sx * 0.050 * s, 0.148 * s, -0.058 * s], [1.2, 0, sx * 0.4]));
+        /* The carapace and the wing sockets are shape; the sternum keel is a
+         * panel line on the front. Same argument as the head above. */
+        for (const m of k.bake(chest.obj)) { if (m.material === dark) markSilhouette(m); }
+      }
+
+      /* ── the abdomen ── */
+      const hips = r.get('hips');
+      if (hips) {
+        const k = new Kit();
+        k.row(3, (i, t) => k.add(chitin,
+          plateGeo((0.096 - i * 0.010) * s, 0.052 * s, (0.086 - i * 0.008) * s, 0.014 * s, 1),
+          [0, (0.010 - t * 0.090) * s, -0.026 * s], [-0.20, 0, 0]));
+        k.bake(hips.obj);
+      }
+
+      /**
+       * ── THE WINGS ──────────────────────────────────────────────────
+       *
+       * Four bones, dressed by hand rather than by `dressHumanoid` — that
+       * function knows the humanoid's fifteen bone names and nothing else, and
+       * a wing is not one of them.
+       *
+       * `primary`, `radius` and `parts` are set the way `addLimb` sets them,
+       * because they are not decoration: `Enemy.capsules` builds the blade's
+       * contact set off `bone.parts` and `bone.radius`, so a wing with meshes
+       * and no radius is a wing the blade passes through.
+       */
+      for (const side of ['L', 'R']) {
+        const sx = side === 'L' ? 1 : -1;
+        for (const [name, w0, w1, len] of [
+          ['wing' + side, 0.20, 0.26, 0.40],
+          ['wingTip' + side, 0.26, 0.13, 0.34],
+        ]) {
+          const b = r.get(name);
+          if (!b) continue;
+          const k = new Kit();
+          /* The membrane: one panel along the bone, widening away from the
+           * body on the inner pair and tapering to a point on the outer. Two
+           * millimetres thick at 1:1 — it is a film with veins in it. */
+          k.add(membrane, plateGeo(w1 * s, b.length, 0.004 * s, 0.004 * s, 1),
+            [sx * (w1 - w0) * 0.30 * s, b.length * 0.5, 0]);
+          // the leading spar, which is the edge the eye actually follows
+          k.add(dark, limbGeo(b.length, 0.011 * s, 0.007 * s, 5, true, { rings: 2, capN: 1 }),
+            [sx * w0 * 0.42 * s, 0, 0.004 * s]);
+          // two veins across the film
+          k.row(2, (i, t) => k.add(dark,
+            plateGeo(w1 * 0.92 * s, 0.005 * s, 0.005 * s, 0.002 * s, 1),
+            [sx * (w1 - w0) * 0.30 * s, (0.26 + t * 0.46) * b.length, 0.001 * s], [0, 0, sx * 0.22]));
+          const made = k.bake(b.obj);
+          for (const m of made) { b.parts.push(m); markSilhouette(m); }
+          b.primary = made[0] || null;
+          b.radius = Math.max(b.radius, w1 * 0.5 * s);
+        }
+      }
+    },
+  });
+
+  /* The trunk's forward lean, applied to the REST POSE rather than to the
+   * group: `rig.pose` is what the animator blends toward, so leaning the group
+   * would lean the feet and the aim with it. */
+  for (const n of ['spine', 'chest']) {
+    const b = rig.get(n);
+    if (!b) continue;
+    b.restQuat.multiply(_geoLean);
+    b.obj.quaternion.copy(b.restQuat);
+    rig.pose[n].copy(b.restQuat);
+  }
+
+  return {
+    rig, group: rig.root, scale: S,
+    palette: { chitin, dark, membrane, lens, tooth },
+    /** Which bones hold this body up in the air. Read by src/game/Flight.js. */
+    wings: ['wingL', 'wingTipL', 'wingR', 'wingTipR'],
+  };
+}
+const _geoLean = new THREE.Quaternion().setFromEuler(new THREE.Euler(0.13, 0, 0));
+
 export function buildBodyguard(opts = {}) {
   /** See BODYGUARD_KITS — `banner` may also be passed directly. */
   const K = { ...(BODYGUARD_KITS[opts.kit] || BODYGUARD_KITS.chassis), ...opts };
@@ -7590,6 +8256,29 @@ export function buildBlaster(kind = 'e5') {
     k.add(dark, plateGeo(0.010, 0.026, 0.014, 0.003, 1), [0, 0.056, 0.40]);
     k.add(glow, new THREE.CylinderGeometry(0.013, 0.016, 0.04, 8), [0, 0.030, 0.425], [1.5708, 0, 0]);
     g.userData.muzzle = new THREE.Vector3(0, 0.030, 0.45);
+  } else if (kind === 'sonic') {
+    /**
+     * THE GEONOSIAN SONIC BLASTER — a horn, not a barrel.
+     *
+     * It is a third silhouette rather than an `e5` repaint because the whole
+     * point of the weapon is that it does not look like a rifle: the reference
+     * is a stubby body with a wide flared emitter bell on the front and a
+     * spherical sonic charge slung underneath. At the range these are met from
+     * (see `preferred`) the bell is the only part of the gun the eye resolves,
+     * and it is the part an E-5 does not have.
+     */
+    k.add(body, plateGeo(0.052, 0.058, 0.20, 0.010, 1), [0, 0, 0.02]);
+    // the bell: two rings opening out to a 9 cm mouth
+    k.add(body, new THREE.CylinderGeometry(0.030, 0.020, 0.07, 10), [0, 0.012, 0.15], [1.5708, 0, 0]);
+    k.add(body, new THREE.CylinderGeometry(0.046, 0.030, 0.06, 12), [0, 0.012, 0.21], [1.5708, 0, 0]);
+    // the charge sphere under the receiver, and the yoke holding it
+    k.add(dark, new THREE.SphereGeometry(0.030, 8, 6), [0, -0.048, 0.02]);
+    k.add(dark, plateGeo(0.018, 0.040, 0.020, 0.005, 1), [0, -0.022, 0.02]);
+    // pistol grip and a short shoulder brace
+    k.add(dark, plateGeo(0.024, 0.090, 0.038, 0.008, 1), [0, -0.070, -0.06], [0.26, 0, 0]);
+    k.add(dark, plateGeo(0.026, 0.044, 0.10, 0.008, 1), [0, -0.010, -0.14]);
+    k.add(glow, new THREE.CylinderGeometry(0.034, 0.040, 0.02, 12), [0, 0.012, 0.243], [1.5708, 0, 0]);
+    g.userData.muzzle = new THREE.Vector3(0, 0.012, 0.26);
   } else {
     // heavy repeater: three barrels in a shroud, drum magazine, carry handle
     k.add(body, plateGeo(0.070, 0.088, 0.44, 0.014, 1), [0, 0, 0.10]);
@@ -7673,6 +8362,12 @@ export const BODY_KITS = {
   master: { rank: 'master' },
   /* the separatist chassis — see B1_KITS */
   b1: { kit: 'line' },
+  /* FLAGSHIP §6's third body class, on the B1 chassis and the B1 kit. The
+   * conscript differs from a B1 in its NUMBERS and its paint, not in what it
+   * carries — see `ARCHETYPES.conscript`, which passes the colours through to
+   * `buildB1` — so the row exists to say "line kit, deliberately", which is
+   * what this table is for. */
+  conscript: { kit: 'line' },
   rocket: { kit: 'rocket' },
   bx: { kit: 'commando' },
   dummy: { kit: 'target' },
@@ -7683,6 +8378,14 @@ export const BODY_KITS = {
   b2: {},
   magna: { kit: 'guard' },
   bodyguard: { kit: 'general' },
+  /* THE ARENA'S OWN SPECIES. One chassis and one rung, like the B2 above: a
+   * Geonosian warrior is a caste rather than a kit, and there is nothing for a
+   * second row to say. It is here rather than absent because absent is exactly
+   * what `characters.mjs` forbids — "a humanoid added to the roster with no row
+   * in BODY_KITS looks exactly like an archetype that deliberately wears
+   * nothing, and the last time that happened three archetypes went a whole
+   * session without a body of their own." */
+  geonosian: {},
 };
 
 /** What an archetype wears, or null if it is not a body this file dresses. */

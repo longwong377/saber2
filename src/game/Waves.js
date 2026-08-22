@@ -54,7 +54,7 @@ import { ArrivalDirector, seedArrivals } from './Arrivals.js';
 /* The one table in the game that says which side a body fights for. It imports
  * nothing, deliberately — see its header — so this edge costs no cycle and no
  * canvas. */
-import { FACTIONS, factionOf } from './Databank.js';
+import { FACTIONS, factionOf, armyForOrder, opposingArmy } from './Databank.js';
 import { makeRng, clamp, lerp, TAU } from '../engine/MathUtil.js';
 
 const rng = makeRng((Math.random() * 1e9) | 0);
@@ -113,12 +113,43 @@ export const MODES = {
    * draft: `World._earnInsight` hangs off the wave-clear signal in every mode,
    * so the tree is the Trial's whole progression and always has been.
    */
+  /**
+   * TWO MODES ON ONE AXIS, AND THE CARDS HAVE TO SAY WHICH AXIS.
+   *
+   * The player, having played both: "explain the difference between trail of
+   * waves and path of the blade". That is a menu defect and not a memory
+   * lapse — the two blurbs were written years apart and against different
+   * questions, so neither mentioned the other and neither named the thing that
+   * separates them. "Endless escalation" and "waves, boons and a run that ends
+   * when you do" describe the same evening.
+   *
+   * They differ in ONE thing: WHERE YOUR POWER COMES FROM. Path of the Blade
+   * deals you a boon every DRAFT_EVERY waves and you keep it for the run; the
+   * Trial deals none at all and hands you the Holocron instead, which is
+   * permanent and is the same tree in every mode. Everything else about them —
+   * the ladder, the composer, the bosses — is the same code with the same
+   * numbers, and `budgetFor` even reads `this.drafts` so the ramp itself is
+   * derived from that one difference rather than tuned twice.
+   *
+   * So each card now names the axis and the other mode's answer to it. The
+   * cadences are typed rather than interpolated — `DRAFT_EVERY` and `TRIAL`
+   * are declared further down this file and reading them here would be a
+   * temporal-dead-zone crash on import — and `tools/checks/claims.mjs` holds
+   * both numbers to the constants instead, which is what that suite is for: a
+   * blurb with a figure in it is a claim, and a claim nothing checks is a
+   * sentence that drifts one tuning pass later.
+   */
   waves: {
     name: 'Trial of Waves',
-    blurb: 'Endless escalation, and no cards to soften it. The Force sets the terms of every second wave; '
-      + 'what you build, you build in the Holocron.',
+    blurb: 'The same waves with NO boons: nothing is drafted and nothing softens the ramp. Your '
+      + 'power comes from the Holocron, which is permanent — and the Force renames the terms of '
+      + 'every 2nd wave from wave 4.',
   },
-  roguelite: { name: 'Path of the Blade', blurb: 'Waves, boons and a run that ends when you do.' },
+  roguelite: {
+    name: 'Path of the Blade',
+    blurb: 'One life and one build: a boon drafted every 2nd wave, kept until you die. The run '
+      + 'makes you stronger; the Trial next door does not.',
+  },
   /**
    * THE BLURB IS A CLAIM, AND IT USED TO BE THE ONLY TRUE THING HERE.
    *
@@ -292,6 +323,157 @@ export const MODES = {
      * it. Prose is for the player; this is for the code.
      */
     level: 'geonosis',
+    /** Command walks the five areas end to end. See `MODES.theline.crossing`
+     *  for why this is a field and not `mode === 'command'` in World.js. */
+    crossing: true,
+  },
+  /**
+   * THE LINE — the flagship mode, and the one whose subject is NOT you.
+   *
+   * `FLAGSHIP.md` §1, in its own words: "You are one Jedi in somebody else's
+   * war… The war is won and lost by the army. Your job is not to kill
+   * everything — it is to be the reason the line is still standing when it
+   * takes the ridge."
+   *
+   * ── WHAT MAKES IT A MODE RATHER THAN A SECOND COMMAND ────────────────
+   *
+   * Command and this share a director, a roster, five ranks, permadeath, the
+   * muster and the marching front, and that sharing is deliberate — §14's
+   * closing line prices the mode at "~1,100 lines of spine against ~12,000
+   * lines of existing machinery", and a mode that reimplemented the machinery
+   * would be the 12,000 written twice. What separates them is ONE RULE, and it
+   * is the rule the whole design document is an argument for:
+   *
+   *   COMMAND IS WON BY TAKING THE GROUND. `_endCampaign` fires `won: true`
+   *   the moment the last area is behind you, and it does not look at who is
+   *   left. A crossing finished with every name on the fallen list is a
+   *   victory there, and it reads as one.
+   *
+   *   THE LINE IS WON BY THE LINE. `holdTheLine` inverts it: the run is won
+   *   only if there are men still standing at the end of it, and a roster
+   *   emptied mid-crossing ENDS THE RUN — as a loss, with the player alive and
+   *   the field cleared and the ridge one area away. §2: "a run that kills
+   *   three hundred droids and loses the squad is a loss." That sentence is
+   *   either a field something reads or it is a slogan, and it was a slogan.
+   *
+   * Everything else the mode is — the seeded length, the deploy card, the
+   * front that moves between engagements, the quiet muster — Command already
+   * had, because those rungs were built against this document over the four
+   * sessions before it. This entry is what makes them a sitting with a verdict
+   * on it rather than a set of features.
+   *
+   * ── WHY IT DECLARES `crossing` RATHER THAN BEING NAMED IN World ───────
+   *
+   * `World.loadLevel` read `mode === 'command' || battles` — a mode-name
+   * literal in the one file whose own notes complain about mode-name literals
+   * three times on the same page. `crossing: true` is the field that line
+   * actually wanted: "this mode walks one ground from one end to the other",
+   * which is true of Command and of this and of nothing else. The day a fourth
+   * crossing is authored it lights itself.
+   */
+  theline: {
+    name: 'The Line',
+    /* No figure in it, on purpose. The length is a seed roll — `SESSION_PLANS`
+     * runs a Raid at two engagements to a Grind at five — so any number here
+     * would be a claim `claims.mjs` could only hold by pinning the mode to one
+     * of the three plans, which is the thing the roll exists to prevent. What
+     * IS claimed is the verdict, and `theline.mjs` holds the mode to it. */
+    blurb: 'You are one Jedi in somebody else\'s war. One ground, one sitting, a squad with names on '
+      + 'it — and the run is won only if they are still standing at the end. Kill everything and lose '
+      + 'them and you have lost.',
+    /**
+     * THE GROUND IS THE SEED'S, NOT YOURS AND NOT THE MODE'S — §5 and §13.5.
+     *
+     * §5: "One sitting = one deployment = one seed = one ground." §13.5 is the
+     * half that makes it structural rather than flavour: "no room's deletion
+     * deletes the mode — every level in `LEVEL_ORDER` is a legal seed. That is
+     * exactly what killed the Descent." The Descent was four authored rooms,
+     * three of which the player named as the worst in the game, so deleting
+     * those rooms deleted the mode. Here the roster of grounds is the content
+     * and no single one is load-bearing.
+     *
+     * NOT `level: 'geonosis'`, which is what Command declares and what this
+     * mode was first written with. Pinning it would have been the Descent's
+     * mistake in miniature — one ground, and the mode is as good as that
+     * ground is — and it would have thrown away the one thing that makes the
+     * deploy card worth reading: §5's 0:00 beat is "the seed, the ground, and
+     * your ten names, readable before you land", and a ground that is always
+     * the same is not news.
+     *
+     * MEASURED FIRST, because the claim is checkable and §13.5 asserts it
+     * without evidence. All seven grounds in `LEVEL_ORDER` were booted in this
+     * mode: every one declares both armies in its pool, deploys a full roster
+     * of ten troopers, and composes a live wave — 32 to 37 hostiles standing
+     * twenty seconds in on every ground. `theline.mjs` holds it, so a ground
+     * that stops being a legal seed fails rather than silently narrowing the
+     * mode.
+     *
+     * `fixedTheatre` still greys the column, because the column is still not
+     * the player's — what changed is WHO it belongs to. `seedsGround` is the
+     * machine-readable half, read by `Levels.theatresFor` and `theatreFor`.
+     */
+    fixedTheatre: 'The Line does not let you pick the ground: one sitting is one seed, and the seed names the ground you land on. It is on the deploy card before you drop.',
+    seedsGround: true,
+    /**
+     * …AND THE SHAPE OF THAT GROUND IS THE SEED'S TOO — §12.
+     *
+     * `seedsGround` above says WHICH of the seven authored theatres you land
+     * on. This says the heightfield you land on is generated around a front for
+     * this run: `src/world/Battlefield.js` draws a reason from a table of five,
+     * lays a bezier front edge to edge from six seeded numbers, and returns a
+     * height closure in which the high ground FLANKS the line and never sits on
+     * it, with exactly one chokepoint and a ridge field running along the
+     * advance. Measured across five reasons and two seeds: nearest high ground
+     * 63–166 m from the line against standoffs of 38–58 m, zero exceptions.
+     *
+     * TWO FIELDS AND NOT ONE, because they are two decisions and a mode may
+     * want either without the other. A mode could roll its theatre and keep
+     * every authored contour; a mode could generate ground on a theatre the
+     * player picked. Folding them into one field would make the second
+     * impossible to express and the first impossible to turn off.
+     *
+     * It is a LAYER over the rolled theatre, never a theatre of its own — the
+     * pool, the dressing, the arrivals, the sky and the whole palette are the
+     * authored level's (§12.5, "do not generate the palette"), and only the
+     * height is replaced. That is what keeps §13.5 true: nothing generated is
+     * reachable except through a room that exists, so deleting a room still
+     * costs the mode exactly that room's draw and no more.
+     */
+    generatedGround: true,
+    /** One ground walked end to end — see the note above, and `World.loadLevel`. */
+    crossing: true,
+    /**
+     * THE INVERSION, as a field. `CommandDirector` reads exactly this and
+     * nothing else to tell the two modes apart: `_endCampaign` computes `won`
+     * off the survivors instead of asserting it, and `_checkLine` ends a run
+     * whose roster has emptied. Named for what it does rather than for the
+     * mode, so a second mode that wants the rule takes the field and not a
+     * branch on a string.
+     */
+    holdTheLine: true,
+    /**
+     * …AND THE GROUND IS TAKEN BY THE LINE, WHICH IS THE OTHER HALF OF IT.
+     *
+     * §6, verbatim: "the objective advances at the pace of the slowest friendly
+     * inside 14 m. You can sprint 200 m into their rear; the line does not come
+     * with you, and you arrive alone on an empty bar. **Killing stays fast and
+     * fun and advances nothing.**"
+     *
+     * That last sentence was never true. `payWave` took an area on
+     * `areaWaves >= area.waves` — a count of cleared waves — so killing
+     * everything alone two hundred metres ahead of your men took the ground,
+     * and every mechanism built to make a Jedi worth something to his line
+     * measured as not paying. `CommandDirector.lineIsUp` carries the argument
+     * at length; the short version is that four local goods failed because the
+     * player is the one body on the field that does not stay local, and a fifth
+     * would have failed the same way. What was missing was not a reward for
+     * standing still — it is that standing with the line was not how the run
+     * advanced.
+     *
+     * Separate from `holdTheLine` because they are two rules: that one is how a
+     * run is SCORED, this is how it ADVANCES, and a mode could want either.
+     */
+    lineAdvances: true,
   },
   /**
    * SKIRMISH — the one run in this game that can be WON, anywhere.
@@ -552,7 +734,9 @@ export function sandboxConfig(settings) {
  * `World.beginSkirmish`. `MODES.command.level` already lives with the same
  * split for the same reason.
  *
- * `engagements` — how many waves the battle is. 1 is a single stand-up fight;
+ * `engagements` — how many ENGAGEMENTS the battle is (each one `waves` cleared
+ *   waves — the two together are the length of the mode). 1 is a single
+ *   stand-up fight;
  *   the ceiling is 9 because past that a "self-contained battle" is an endless
  *   mode with a stopping rule bolted on, which is the thing this mode exists
  *   instead of. Three is the default because three grounds is enough for the
@@ -563,6 +747,12 @@ export function sandboxConfig(settings) {
  *   `MAX_STRENGTH` ceiling, which are the numbers the muster is actually built
  *   around. The default is 0, meaning "whatever the campaign opens with", so a
  *   battle nobody sized fields the line Command gives them.
+ *
+ * `waves` — how many cleared waves make ONE engagement, so `engagements` ×
+ *   `waves` is how long the whole battle is. See `SKIRMISH.waves` for why it is
+ *   a pick and not a constant; `DEFAULT_SETTINGS.skirmishWaves` and the Deploy
+ *   panel's second slider are the half of that which was missing for the life
+ *   of the mode.
  *
  * `pressure` — which rung of Command's own advance this battle is fought at,
  *   as an index into `AREAS`. That table already carries a budget multiplier, a
@@ -579,6 +769,33 @@ export function sandboxConfig(settings) {
  */
 export const SKIRMISH = {
   engagements: { min: 1, max: 9, def: 3 },
+  /**
+   * HOW MANY WAVES MAKE ONE ENGAGEMENT — and the default is 3 because 1 was a
+   * bug the player found in ten seconds.
+   *
+   * `World._skirmishCleared` is hung off the wave-clear ledger, so an
+   * engagement was exactly one cleared wave. Wave 1 of the escalation is ONE
+   * body. The player: "in skirmish mode I'll start the map will immediately say
+   * cleared and we leave like there were never any enemies." Driven in
+   * `tools/_stall.mjs --mode skirmish`: engagement 1 closed at t=6.0 s with a
+   * single hostile ever composed, and the transport was called on it.
+   *
+   * An engagement is a BATTLE FOR A PIECE OF GROUND, which is three waves of
+   * escalation at minimum — the same shape `AREAS` uses for a Command area,
+   * whose shortest is 3. It is a pick rather than a constant so a player who
+   * wants a long grind on one map can have one.
+   */
+  waves: { min: 1, max: 8, def: 3 },
+  /**
+   * WHERE THE ESCALATION OPENS, per step of pressure.
+   *
+   * The second half of the same defect. `pressure` moved the muster shelf and
+   * the budget curve's `areaIndex` and left the WAVE NUMBER at 1, so the
+   * heaviest skirmish in the game still opened on the one-droid wave. Two waves
+   * of escalation per step of pressure means pressure 4 opens at wave 9, which
+   * is where that budget belongs.
+   */
+  pressureWaves: 2,
 };
 
 /**
@@ -620,6 +837,9 @@ export function skirmishConfig(picks) {
      * to want — a player learning one map, or measuring one — so it is a pick
      * and not a law, but the answer to an absent one is yes. */
     rotate: p.rotate !== false,
+    /* See SKIRMISH.waves. An engagement is a battle, not a wave. */
+    waves: clamp(Math.round(n(p.waves, SKIRMISH.waves.def)),
+      SKIRMISH.waves.min, SKIRMISH.waves.max),
   };
 }
 
@@ -634,6 +854,14 @@ export function skirmishConfig(picks) {
  */
 export function holdFire(e) {
   if (!e) return;
+  /* THE BODY OWNS IT NOW — `Enemy.stopFiring`. This name stays because it is
+   * what the order wheel, the arrival walk-in and the training slider call, and
+   * because Enemy.js cannot import this file (the edge runs the other way), so
+   * a body that needs to stop shooting from inside its own update reaches its
+   * own method and everything out here reaches this one. Two callers, one
+   * implementation. The fallback is for the stand-in objects the checks hold
+   * up, which have the fields and not the class. */
+  if (e.stopFiring) { e.stopFiring(); return; }
   e.burstLeft = 0;
   e.burstTimer = 0;
   if (!(e.attackTimer > 0.5)) e.attackTimer = 0.5;
@@ -808,6 +1036,48 @@ export const ROUT_PER_FRAME = 8;
 /** Where the body count stops being the escalation. See `bodyCap`. */
 export const BODY_MAX = 42;
 export const BODY_KNEE = 18;
+/**
+ * THE FEWEST BODIES A WAVE IS ALLOWED TO BE.
+ *
+ * `bodyCap` is the ceiling; this is the floor, and until it existed there was
+ * none. Measured through the shipped composer, opening wave of THE LINE on
+ * every ground in `LEVEL_ORDER` at one seed, all seven handed the same budget
+ * of 8:
+ *
+ *     scoria      2 bodies   1×b1 + 1×sentinel(threat 7)
+ *     colosseum   2 bodies   1×stalker(7) + 1×b1
+ *     mustafar / wood / drifts / alpine   8 bodies, all b1
+ *     geonosis   49 bodies  (42 of them the levy — Levy.js, not this)
+ *
+ * The five-body spread is not five different pools being generous or thin. It
+ * is ONE rule: the fill draws uniformly from everything it can afford, so a
+ * pool holding a seven-threat body in its opening set spends seven eighths of
+ * the wave on one of them, and what the player meets is a stalker and a droid.
+ * A mode about a LINE cannot open against two bodies, and no mode's first wave
+ * should be a single elite — the player has met no ordinary body yet to read it
+ * against.
+ *
+ * ── A CEILING ON ONE BODY, DERIVED FROM THE FLOOR RATHER THAN TYPED ────────
+ *
+ * The rule is stated as the count, because the count is the thing that was
+ * wrong; the ceiling `_composeUnder` actually applies is `budget / WAVE_FLOOR`,
+ * which IS the floor rearranged — a wave that may not spend more than a third
+ * of itself on any one body can always buy three. One number, one statement,
+ * and the arithmetic that connects them written once at the call site.
+ *
+ * THREE AND NOT FOUR, and the difference is where it stops binding. Every
+ * ordinary archetype is threat 16 or under, so a third binds up to a budget of
+ * 48 and a quarter up to 64 — and the crossing's deepest wave is 56. At a
+ * quarter the Core Ship's last wave could not field the heaviest thing on the
+ * roster at all, which is a difficulty change wearing a body-count fix's coat.
+ * At a third the rule is what it says it is: it shapes the SHALLOW waves, where
+ * one expensive draw is most of the budget, and is inert everywhere else.
+ *
+ * It is a FLOOR AND NOT A GUARANTEE. `_composeUnder` keeps every fallback it
+ * had — nothing affordable at all still buys the cheapest body in the narrowed
+ * roster, because "a filter never empties the field" outranks this.
+ */
+export const WAVE_FLOOR = 3;
 /**
  * What share of the budget ADDED past the knee may go on more bodies.
  *
@@ -1846,7 +2116,49 @@ export class WaveDirector {
    * That is the same law `_shapeUnder` states about conditions — "a condition
    * never empties the field" — and it is what makes a stall impossible.
    */
+  /**
+   * THE ARMY THE PLAYER IS LEADING, or null when nothing says.
+   *
+   * Read off the settings through `armyForOrder`, which is the single statement
+   * of that mapping — `Command.sideForOrder` reads the same one. A Grey leads
+   * neither and gets null, and every caller below treats null as "no rule",
+   * which is exactly what a Grey should get: everybody's war is their business.
+   */
+  myArmy() {
+    return armyForOrder(this._order ?? this.world?.settings?.order ?? null);
+  }
+
+  /**
+   * WHO IS ON THE OTHER SIDE OF THIS WAVE, and it is never you.
+   *
+   * The player: "when you're playing as the republic you shouldnt be fighting
+   * against things that are canonically on your side, that goes for single npcs
+   * too." Measured before this: SEVEN OF SEVEN shipped levels fielded bodies
+   * against the side they belong to — a Sith met B1s, B2s and droidekas on
+   * every ground in the game.
+   *
+   * This replaces an ALTERNATION. The old rule made each wave one army's push
+   * and swapped sides every wave, so that "you meet both inside any two waves"
+   * was a property rather than a probability — a good rule, written before the
+   * player's own army existed on the field. Its premise is gone: on a level
+   * with two armies one of them is now YOURS, so the wave that used to be the
+   * other half of the alternation is a wave of your own men marching at you.
+   * What survives is the good half — a wave is one army's push, which is what
+   * makes a firing line read as a firing line — with the side no longer drawn
+   * but simply the one you are not on.
+   */
+  enemyArmy() {
+    return opposingArmy(this.myArmy());
+  }
+
   sideFor(wave, open = null) {
+    /* THE ENEMY'S ARMY OUTRANKS THE LEVEL'S OWN QUESTION. `levelArmies` says
+     * which armies this GROUND has; when the player leads one of them there is
+     * nothing left to decide, and this holds on every level rather than only
+     * the ones that declare two — see `unlockedAt`, which is where the six
+     * levels that declare none get the same rule. */
+    const foe = this.enemyArmy();
+    if (foe) return foe;
     const armies = this.levelArmies();
     if (armies.length < 2) return null;
     /* The class that filters the pool is the class that declines this — see
@@ -1864,15 +2176,68 @@ export class WaveDirector {
   /** Is this body allowed on the field this wave, given whose push it is? */
   _sideAllows(type, wave) {
     const side = this.sideFor(wave);
-    return !side || factionOf(type) === side;
+    if (!side) return true;
+    const f = factionOf(type);
+    /* Its own side's, or nobody's — see `unlockedAt` for why the second clause
+     * is not a loophole: the Jedi and the menagerie are in neither army, and a
+     * rule that only admitted the enemy's roster would delete both. */
+    return f === side || !FACTIONS[f]?.army;
   }
 
   unlockedAt(wave) {
     const open = this._openTypes(wave);
     const side = this.sideFor(wave, open);
     if (!side) return open;
-    const mine = open.filter((t) => factionOf(t) === side);
-    return mine.length ? mine : open;
+    let mine = open.filter((t) => factionOf(t) === side);
+    /**
+     * …AND EVERYTHING THAT IS NOBODY'S FIGHTS ANYWAY.
+     *
+     * `factionOf` puts a body in one of four camps and only two of them are
+     * armies: `order` (the Jedi themselves) and `wild` (the Colosseum's
+     * menagerie) belong to neither. Filtering to one army's roster dropped both
+     * — which on the Colosseum, a level whose entire premise is exotic
+     * creatures, is the beast that took twenty waves to appear once being
+     * removed altogether, and on any level it is a Sith who can no longer be
+     * sent a Jedi.
+     *
+     * So the rule is stated as it is meant: nothing of YOUR OWN army, rather
+     * than only the enemy's.
+     */
+    const mine2 = open.filter((t) => {
+      const f = factionOf(t);
+      return f === side || !FACTIONS[f]?.army;
+    });
+    mine = mine2.length ? mine2 : mine;
+    if (mine.length) return mine;
+    /**
+     * A FILTER NEVER EMPTIES THE FIELD — the same law `_shapeUnder` states
+     * about conditions — BUT IT MUST NOT FALL BACK ONTO YOUR OWN MEN, which is
+     * what the first version of this did and it produced the defect in its
+     * purest form. Measured: on Geonosis at wave 1 the ladder has opened
+     * exactly one rung, `b1`, so a Sith's filter emptied and the fallback
+     * handed back the unfiltered set — the player's own battle droids charging
+     * the player, on the opening wave of the mode's own ground.
+     *
+     * So the fallback WIDENS THE DEPTH rather than dropping the rule: the whole
+     * pool is searched for anything that is not yours, and the lightest of
+     * those by threat is fielded. A body arriving a wave or two before the
+     * ladder meant it is a smaller wrong than an army fighting itself, and it
+     * is bounded by the pool the level authored.
+     *
+     * Only a level whose ENTIRE pool is the player's own army reaches the last
+     * line, and that is an authoring error rather than a runtime one — the
+     * check names it, and there is no such level today.
+     */
+    const anywhere = this.pool.filter((t) => {
+      const f = factionOf(t);
+      return f === side || !FACTIONS[f]?.army;
+    });
+    if (anywhere.length) {
+      const light = [...new Set(anywhere)]
+        .sort((a, b) => (ARCHETYPES[a]?.threat ?? 9) - (ARCHETYPES[b]?.threat ?? 9));
+      return [light[0]];
+    }
+    return open;
   }
 
   /** Every pool member this depth has earned, both armies and all. */
@@ -2726,6 +3091,11 @@ export class WaveDirector {
     // Charged up front and out of the same budget the bodies are bought with,
     // exactly as `_promote` charges a modifier. See CONDITIONS.
     let budget = this.budgetFor(w) - this.conditionCost(w, keys);
+    /* WHAT ONE BODY OF THE FILL MAY COST, off the wave's own budget before the
+     * set-piece and the head are reserved out of it — both of those ARE single
+     * expensive bodies on purpose, and charging them against a rule written to
+     * stop accidental ones would delete them. See WAVE_FLOOR. */
+    const ceiling = budget / WAVE_FLOOR;
     const queue = [];
 
     if (this.isBossWave(w)) {
@@ -2798,8 +3168,18 @@ export class WaveDirector {
        * exact `<=` on an accumulated float is a coin toss, not a rule. */
       const EPS = 1e-9;
       const affordable = shape.types.filter((t) => (ARCHETYPES[t]?.threat ?? Infinity) <= budget + EPS);
+      /* …AND NO ONE BODY TAKES MORE THAN ITS SHARE. See WAVE_FLOOR: the fill
+       * drew uniformly from everything it could afford, so an opening wave with
+       * a seven-threat body in its unlocked set spent seven of its eight on one
+       * of them and the player met a stalker and a droid. `ceiling` is the
+       * floor rearranged, and it is taken off the wave's OWN budget rather than
+       * off `budget`, which is a running subtraction — a share of what is left
+       * would shrink with every body bought and make the last pick of a wave
+       * the most constrained instead of the least. */
+      const spread = affordable.filter((t) => ARCHETYPES[t].threat <= ceiling + EPS);
       let t;
-      if (affordable.length) t = this._pickType(affordable, w, bigLeft);
+      if (spread.length) t = this._pickType(spread, w, bigLeft);
+      else if (affordable.length) t = this._pickType(affordable, w, bigLeft);
       else if (queue.length) break;
       else {
         t = shape.types.slice()
@@ -3119,7 +3499,15 @@ export class WaveDirector {
   _sandboxType(cfg) {
     if (cfg.type !== 'mixed') return cfg.type;
     if (!this.pool.length) return 'b1';
-    return this.pool[Math.floor(rng() * this.pool.length)];
+    /**
+     * AND NOT ONE OF YOUR OWN. This is the last door into the field — every
+     * other path composes through `unlockedAt`, and this one is the fallback
+     * draw — so a body of the player's own army reaching it would be a clone
+     * trooper charging a Jedi with everything else on the level filtered.
+     */
+    const ok = this.pool.filter((t) => this._sideAllows(t, this.wave));
+    const from = ok.length ? ok : this.pool;
+    return from[Math.floor(rng() * from.length)];
   }
 
   /**
@@ -4116,10 +4504,37 @@ function riposteEdge() {
   boonFactor(this, 'cutPower', 'counterstroke', k);
 }
 
-/** Wellspring — the extra share of the Force's own regeneration. */
+/**
+ * Wellspring — the extra share of the Force's own regeneration.
+ *
+ * IT IS AN EXTRA SHARE OF `Player._regen`'S RATE AND IT HAS TO KEEP `_regen`'S
+ * RULE, which it did not. The base 7.5 a second is paused while a channel is
+ * holding the bar open — the barrier and Force sense — and that pause is not
+ * decoration: `_regen`'s own note records a raised barrier running a NET GAIN
+ * of 2.82 Force a second before it existed, and says why a power that refills
+ * the bar it is draining has no decision in it. This tick wrote to the same
+ * pool from outside and asked nothing. Measured on a real World, net Force per
+ * second with a barrier up and nothing shooting at it:
+ *
+ *     no cards                        −4.25/s
+ *     Wellspring                      −0.18/s   96% of the price cancelled
+ *     Wellspring + Attunement ×4      +6.15/s   a barrier that pays to hold
+ *     Attunement of the Force ×8      +6.26/s
+ *
+ * Worse than the number the rule was written to delete, and the same stack puts
+ * a held Force Sense — 22 a second, the most expensive hold on the wheel — at
+ * +0.03/s. Both cards are `stack: Infinity` epics offered on every set-piece.
+ *
+ * `Player.forceChannelling` is the gate, asked rather than restated: a second
+ * copy of `senseActive || shield.up` here is how the two came apart in the
+ * first place, and it would come apart again the day a third channel is added.
+ * A player with no such getter — the stand-ins some checks hold up — is not
+ * channelling anything, so the tick runs as it always did.
+ */
 function wellspringFlow(dt) {
   const extra = (this.boonMods.forceRegen ?? 1) - 1;
   if (extra <= 0 || typeof this.force !== 'number') return;
+  if (this.forceChannelling) return;
   this.force = Math.min(this.maxForce ?? this.force, this.force + 7.5 * extra * dt);
 }
 
@@ -4265,14 +4680,32 @@ function wardGuard(amount) {
   return amount * Math.max(WARD_FLOOR, this.boonMods.ward ?? 1);
 }
 
-/** Bastion — a guard that pays for itself. See the honesty note under BOONS. */
+/**
+ * Bastion — a guard that pays for itself. See the honesty note under BOONS.
+ *
+ * ── IT REFUNDS WHAT WAS SPENT, NOT A NUMBER THAT HAS TO MATCH IT ────────
+ *
+ * This counted DEFLECTS and handed back a flat 4 for each, because a block
+ * cost a flat 4 and nothing else cost anything. FLAGSHIP §6 gave every rung of
+ * the ladder its own price (`Combat.GUARD_COST`: 1.2 / 0.4 / 0 / 0), and the
+ * moment it did, a flat 4 per bolt turned aside stopped being a refund and
+ * became a stamina GENERATOR — three and a bit points of profit on every
+ * BLOCK and four on every PERFECT, which costs nothing to begin with.
+ *
+ * `Player.guardSpent` is the cumulative stamina the guard has actually paid,
+ * written where the charge is made. Refunding its own delta makes the card's
+ * claim exactly true at every rung, for every future price, without this
+ * function ever naming a cost — which is the twin this repository keeps
+ * deleting (HANDOFF §2.3). `guardRefund` is therefore a SHARE now, and 1 is
+ * "costs you nothing".
+ */
 function bastionGuardRefund() {
-  const back = this.boonMods.guardRefund ?? 0;
-  const n = this.deflects || 0;
-  const prev = this._bastionDeflects ?? n;
-  this._bastionDeflects = n;
-  if (back <= 0 || n <= prev || typeof this.stamina !== 'number') return;
-  this.stamina = Math.min(this.maxStamina ?? this.stamina, this.stamina + back * (n - prev));
+  const share = this.boonMods.guardRefund ?? 0;
+  const n = this.guardSpent || 0;
+  const prev = this._bastionSpent ?? n;
+  this._bastionSpent = n;
+  if (share <= 0 || n <= prev || typeof this.stamina !== 'number') return;
+  this.stamina = Math.min(this.maxStamina ?? this.stamina, this.stamina + share * (n - prev));
 }
 
 /** Tempest — Flow is the fuel, so the deeper it runs the less the Force costs. */
@@ -5312,7 +5745,11 @@ export const BOONS = [
     text: 'Everything you turn aside comes back twice as hard, and turning it aside costs you nothing.',
     apply(p) {
       p.boonMods.deflectDamage *= 2.0;
-      p.boonMods.guardRefund = 4;
+      /* A SHARE OF WHAT THE GUARD SPENT, not a flat number per bolt — see
+       * `bastionGuardRefund`, which is where the flat 4 stopped being a refund
+       * the moment §6 gave each rung its own price. 1 is the card's own word:
+       * "turning it aside costs you nothing". */
+      p.boonMods.guardRefund = 1;
       boonTick(p, 'bastion', bastionGuardRefund);
     },
   },

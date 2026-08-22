@@ -466,6 +466,9 @@ export async function run({ check, assert }) {
       _creditDeflect: World.prototype._creditDeflect,
       _onBoltDeflect: World.prototype._onBoltDeflect,
       _bladeEntries: World.prototype._bladeEntries,
+      // `_bladeEntries` reaches `this._screenFor` for every lit blade — borrow
+      // the one and you have borrowed the other. See pvp.mjs's note.
+      _screenFor: World.prototype._screenFor,
       events,
     };
     return w;

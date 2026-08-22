@@ -24,6 +24,7 @@ import { readFile, readdir } from 'node:fs/promises';
 import { Player } from '../../src/game/Player.js';
 import { LAYER } from '../../src/physics/RapierWorld.js';
 import { lines } from './_source.mjs';
+import { clocked } from './_shared.mjs';
 
 /** Every .js under src/, as [relative path, text]. */
 async function sources() {
@@ -51,6 +52,9 @@ function body(opts = {}) {
 }
 
 export async function run({ check, assert }) {
+  /* This file builds enemies, so it draws from the shared rng stream; take the
+   * pair for the whole file rather than seeding each body by hand. */
+  check = await clocked(check);
   check('grip: a prop an author marked ungrippable cannot be gripped', () => {
     const me = { body: {} };
     const g = (b) => Player.prototype._grippableBody.call(me, b);
@@ -116,5 +120,171 @@ export async function run({ check, assert }) {
         `${field} is written ${writes} times and read nowhere — it does nothing`);
     }
     return rows.join(', ');
+  });
+
+  /* ────────────────────────────────────────────────────────────────────
+   * THE OPEN WINDOW — FLAGSHIP §7's third verb, and what bounds it
+   * ──────────────────────────────────────────────────────────────────── */
+
+  await check('grip: a shove hard enough to leave its feet leaves it on the ground, and a body on the ground is open', async () => {
+    /**
+     * ── THE DEFECT, WHICH WAS A COMMENT THAT NOTHING IMPLEMENTED ──────────
+     *
+     * `Enemy.applyKnockback` carried `// hit hard enough to leave its feet`
+     * over `this.stun(1.2, impulse, 1.4)`. A stun is a body STANDING STILL —
+     * so an eleven-metre Force wave at impulse 34 threw a dozen droids and
+     * every one of them landed upright, froze for 1.2 s and walked on. This
+     * suite's own opening paragraph names that shape: code that reads
+     * correctly and is silently inert.
+     *
+     * ── WHY IT IS THE THING THAT BOUNDED §7's THIRD VERB ─────────────────
+     *
+     * "OPEN — the Force is a multiplier on other people's guns." `openness()`
+     * pays it, and measured on a real Command battle with a Jedi gripping
+     * continuously it reached 0.5-1.2% of enemy body-seconds. The bar was
+     * already fully committed — 503 Force spent in 82 game-seconds against an
+     * income of 7.5/s — so the answer was never "spend more"; it was that a
+     * point of Force bought 0.05 open body-seconds. The grip is one body at a
+     * time and the choke kills it in four and a half seconds.
+     *
+     * A shove is three to eight bodies for one press, and a body on the floor
+     * is limp for its flight plus `GET_UP` plus `recover`'s beat — about three
+     * times a stun. Same Force, same button, an order of magnitude more of the
+     * thing §7 is about.
+     *
+     * ── WHAT THIS CHECK BINDS, ON A REAL WORLD ───────────────────────────
+     *
+     * Three facts, because any one of them alone is inert:
+     *
+     *   1. the shove puts the body down (`knockFlat`),
+     *   2. a body that is down is OPEN — `openness()` above 1 for the whole
+     *      window and not merely for the 1.2 s stun inside it,
+     *   3. and that opening is paid to SOMEBODY ELSE'S GUN, through the
+     *      shipped `World._boltHitTest` rather than through a second copy of
+     *      the damage rule.
+     *
+     * `World.js` and `Combat.js` are imported INSIDE the body — HANDOFF §2.1:
+     * a static edge from a check to the engine graph links before the loader
+     * hook is in, and patches the wrong copy of three.
+     */
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const { openness } = await import('../../src/game/Combat.js');
+    const { world } = await H.bootWorld({
+      level: 'colosseum', settings: { mode: 'waves', quality: 'low', instantSpawn: true },
+    });
+    const input = H.idleInput();
+    const step = () => world.update(1 / 60, input);
+    for (let i = 0; i < 10; i++) step();
+
+    /* TWO BODIES AND ONE BOLT EACH, for the reason `force.mjs` gives at the
+     * same fixture: this bolt is worth more than a B1's whole health, so a
+     * body shot twice is a corpse the second time and `openState` answers
+     * null for a corpse. */
+    const shoot = (e) => {
+      const before = e.hp;
+      /**
+       * THROUGH THE BODY'S OWN CAPSULE, not through `position + 0.9`.
+       *
+       * A felled body is lying down, and a bolt aimed at where a standing
+       * chest would be goes over it — measured, 0.00 hp, which would have made
+       * this check report the multiplier as broken when what had moved was the
+       * target. That is a real finding about the verb and it is recorded in
+       * NEXT.md as one; it is not what this check is for. Both arms are shot
+       * through the fattest capsule the body actually presents, so the only
+       * thing that differs between them is the open state.
+       */
+      const caps = e.capsules().filter((c) => !c.shield);
+      const fat = caps.reduce((a, c) => (c.r > a.r ? c : a), caps[0]);
+      const mid = fat.p0.clone().lerp(fat.p1, 0.5);
+      world._boltHitTest({ damage: 6, owner: null, team: 0, color: { getHex: () => 0 } },
+        mid.clone().add(new THREE.Vector3(0, 0, -6)), mid.clone().add(new THREE.Vector3(0, 0, 6)));
+      return before - e.hp;
+    };
+
+    const a = world.spawnEnemy('b1', new THREE.Vector3(0, 0, -8));
+    const b = world.spawnEnemy('b1', new THREE.Vector3(4, 0, -8));
+    assert(a && b, 'setup: two droids did not spawn');
+    for (let i = 0; i < 6; i++) step();
+
+    /* THE REFERENCE IS TAKEN BEFORE THE SHOT AND NOT AFTER IT. A bolt landing
+     * on a droid can stagger it, so `openness(a)` a frame later is a fact
+     * about the bolt rather than about the body it is the control for. */
+    assert(openness(a) === 1 && openness(b) === 1,
+      'a droid standing on its own two feet already reports an opening');
+    const standing = shoot(a);
+    assert(standing > 0, 'the bolt missed a standing droid — the instrument is wrong, not the game');
+
+    /* THE SHOVE ITSELF, through the one door every Force power comes through.
+     * Impulse 26 is `forcePush`'s own, so this is the shipped blow rather than
+     * a number chosen to pass. */
+    b.applyKnockback(new THREE.Vector3(0, 0.6, 1).normalize().multiplyScalar(26), 0, null, false);
+    /**
+     * ONE STEP, BECAUSE THE FALL IS TAKEN IN `_move` AND NOT INSIDE THE BLOW.
+     *
+     * `knockFlat` records the fall and `_takeFall` takes it on the body's next
+     * step — deliberately, and the note over it says why: going limp inside
+     * `applyKnockback` put nineteen fresh dynamic bodies into `world.physics`
+     * in the middle of the sweep that felled the body, and `forcePush` then
+     * shoved every one of them again as loose furniture. It is the same frame
+     * in play (players step before enemies), so this is one `update`, not a
+     * delay a player could see.
+     */
+    step();
+    assert(!!b.actor?.ragdolled,
+      'a droid shoved at impulse 26 is still on its feet — the comment says it leaves them');
+    const flatOpen = openness(b);
+    assert(flatOpen > 1, `a droid on the ground reports openness ${flatOpen.toFixed(2)}x`);
+
+    /* AND THE LINE'S GUNS ARE PAID IT. Same bolt, same body plan, one
+     * standing and one down. */
+    const down = shoot(b);
+    assert(Math.abs(down / standing - flatOpen) < 0.3,
+      `a shoved droid took ${(down / standing).toFixed(2)}x the bolt a standing one took, against `
+      + `the ${flatOpen.toFixed(2)}x its open state is worth`);
+
+    /**
+     * ── THE WINDOW IS LONGER THAN THE STUN, WHICH IS THE WHOLE POINT ─────
+     *
+     * `applyKnockback` stuns for 1.2 s. If the opening ended there this change
+     * would be worth nothing: what buys the extra is the body lying still for
+     * `GET_UP` and then paying `recover`'s beat on top. So the window is
+     * measured rather than asserted from the constants — stepped until
+     * `openness` comes back to 1 — and it has to outlast the stun by enough to
+     * be the reason anybody pressed the button.
+     */
+    let open = 0;
+    for (let i = 0; i < 60 * 12 && openness(b) > 1; i++) { step(); open += 1 / 60; }
+    assert(open > 1.2 * 1.6,
+      `a shoved droid is open for ${open.toFixed(2)} s against the 1.20 s its stun alone would buy`);
+    assert(open < 11,
+      `a shoved droid is open for ${open.toFixed(2)} s — it never got up, which is a floor and not a window`);
+    assert(!b.dead && !b.actor?.ragdolled,
+      'the shoved droid never came back off the floor');
+
+    /**
+     * ── AND A SHOVE FROM YOUR OWN SIDE DOES NOT FELL YOU ─────────────────
+     *
+     * `Player._shockwave` iterates `ctx.enemies` with no team test — a Force
+     * wave is physics and does not aim — and in Command your own line stands
+     * in `world.enemies`. Without the clause this asserts, a panic button
+     * pressed every few seconds would put your own rank on the floor for five
+     * seconds at a time, which is the mode's whole objective inverted. The
+     * 1.2 s stun still reaches them; only the knockdown is filtered.
+     */
+    assert(a.team === b.team, 'setup: the two droids are not on the same side');
+    const c = world.spawnEnemy('b1', new THREE.Vector3(-4, 0, -8));
+    assert(c, 'setup: the third droid did not spawn');
+    for (let i = 0; i < 6; i++) step();
+    c.applyKnockback(new THREE.Vector3(0, 0.6, 1).normalize().multiplyScalar(26), 0, a, false);
+    step();
+    assert(!c.actor?.ragdolled,
+      'a shove from a body on its own side put it on the floor — every Force wave would fell your line');
+    assert(c.stunTimer > 0, 'a shove from its own side stopped reaching it at all');
+
+    world.unload();
+    return `standing ${standing.toFixed(1)} hp, down ${down.toFixed(1)} hp — `
+      + `${(down / standing).toFixed(2)}x against a stated ${flatOpen.toFixed(2)}x, `
+      + `open for ${open.toFixed(2)} s against a 1.20 s stun`;
   });
 }

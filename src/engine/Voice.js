@@ -368,6 +368,277 @@ export const PLAYER_LINES = LINE_KINDS.filter(k => !ENEMY_LINES.includes(k));
 export const EACH_LINES = LINE_KINDS.filter((k) => !!LINES[k].each);
 export const CHORUS_LINES = ENEMY_LINES.filter((k) => !LINES[k].each);
 
+/* ── what the player says when a POWER goes off ───────────────────────── */
+
+/**
+ * A POOL OF LINES PER FORCE POWER — player note, 21 Aug, in full:
+ *
+ *   "the character should say something everytime he uses a particular force
+ *    ability, perhaps he says the name of the attack, or maybe there's a pool
+ *    of 3-4 things you can say for every force ability so it doesnt get stale
+ *    and you hear the same thing over and over? i like the robotic voice sound
+ *    things you do I never use the version where the computer says the actual
+ *    words"
+ *
+ * The last clause is the whole brief. There are two ways this game says a line
+ * — the wordless larynx above, and `speechMode: 'spoken'`, which hands the text
+ * to the browser's own `speechSynthesis` — and the player uses the FIRST one
+ * and has never used the second. So "he says the name of the attack" cannot be
+ * built as a table of words with a contour bolted on afterwards: whatever a
+ * Force line is, it has to be legible through an oscillator, two formant
+ * filters and a breath of noise, at 116 Hz, saying nothing at all.
+ *
+ * WHAT A LINE IS HERE, THEN. The same thing every other line in this file is:
+ * a sequence of syllable centres. What a listener reads off one is the
+ * DIRECTION it moves, the NUMBER of beats, how LONG it takes and where the
+ * emphasis sits — and those four survive the throat, the distance and the
+ * fight, which is the argument the note over LINES already makes for `flung`
+ * and `cheer`. The power is the rhythm; the variant is the melody over it.
+ *
+ * TWO SYLLABLES IS THE FLOOR, and that is a fact about the synthesiser rather
+ * than a preference. `syllable()` glides every syllable from `f0·(1−0.6·bend)`
+ * to `f0·(1+0.4·bend)` — always up, always by the SPEAKER's bend and never by
+ * the line's — so a one-syllable contour has no shape at all: it can only be
+ * higher, longer or louder than another one-syllable contour. `LINES.effort`
+ * is one syllable and is exactly that, a grunt. A power that had to be told
+ * apart from ten other powers needs a contour, so nothing below is shorter
+ * than two beats.
+ *
+ * HOW THE ELEVEN ARE KEPT APART, and it is measured rather than asserted —
+ * tools/checks/force-voice.mjs renders every one of these through the same
+ * offline synthesiser tools/checks/voices.mjs measures the five larynxes with,
+ * and reads four numbers off the SAMPLES: length, pitch centre, the ratio of
+ * the last beat's pitch to the first (which is the direction), and where the
+ * energy sits in the line (which is the emphasis). Every pair inside a pool
+ * has to be separated on one of those by a margin a listener could name, and
+ * so does every pair of powers. The bar is 18%, because `utterance()` already
+ * dithers every line it builds by ±5.5% in pitch and ±7% in pace and anything
+ * under about 15% is a difference the game's own jitter erases. Measured on
+ * the table below: the weakest pair inside a pool is compel.1/compel.3 at 24%
+ * and the weakest pair of powers is pull/stasis at 23%, and both hold in all
+ * five larynxes — 208 Hz triangle at cadence 0.72 included, since a contour is
+ * a set of ratios and the pitch and the pace divide out.
+ *
+ * `words` is the same line said in words, for the mode the player does not
+ * use, and it sits ON the contour rather than in a second table beside it —
+ * see HANDOFF §2.3, and see SPOKEN_LINES in src/engine/Audio.js, which is that
+ * second table for the announcer's own vocabulary and is the shape this
+ * deliberately does not repeat. `wordsFor` falls through to it.
+ *
+ * THE IDS ARE DERIVED FROM THE KEY, below, and are not typed here: `push.2` is
+ * the second entry under `push` by construction, so a pool cannot be reordered
+ * into a lie.
+ */
+export const FORCE_LINES = {
+  /**
+   * PUSH — the shove. Two beats, FAST and FALLING, and the loudest short line
+   * in the table. It is the power the player presses most, so it gets four.
+   */
+  push: [
+    /* the bark — high, clipped, the weight on the first beat */
+    { gain: 0.88, words: 'Back!', syll: [[1.34, 0.24, 1.0], [0.90, 0.30, 0.72]] },
+    /* the heave — a whole fifth lower, slower, the weight on the second */
+    { gain: 0.88, words: 'Move.', syll: [[1.02, 0.46, 0.78], [0.72, 0.62, 1.0]] },
+    /* the flick — the smallest thing in the pool, narrow and quiet */
+    { gain: 0.74, words: 'Off.', syll: [[1.22, 0.20, 1.0], [1.06, 0.18, 0.55]] },
+    /* the shout down — the widest fall of the four, and the longest tail */
+    { gain: 0.92, words: 'Get away from me.', syll: [[1.18, 0.36, 0.85], [0.66, 0.86, 1.0]] },
+  ],
+  /**
+   * PULL — the opposite gesture and the opposite contour: it RISES, and the
+   * weight is on the last beat, because the line arrives when the thing does.
+   */
+  pull: [
+    { gain: 0.84, words: 'Come here.', syll: [[0.82, 0.32, 0.62], [1.24, 0.66, 1.0]] },
+    { gain: 0.84, words: 'To me.', syll: [[0.96, 0.20, 0.7], [1.16, 0.34, 1.0]] },
+    { gain: 0.80, words: 'Closer.', syll: [[0.74, 0.58, 0.65], [1.08, 1.05, 1.0]] },
+    { gain: 0.86, words: 'Give it to me.', syll: [[0.90, 0.30, 0.7], [1.42, 0.30, 1.0]] },
+  ],
+  /**
+   * GRIP — a STRAIN and not a shout. Low, slow, level: the two beats sit
+   * almost on the same note, which is what holding something heavy sounds
+   * like, and it is the only place in this table where the pitch barely moves.
+   */
+  grip: [
+    { gain: 0.70, words: 'Hold still.', syll: [[0.80, 0.92, 0.9], [0.74, 1.00, 1.0]] },
+    { gain: 0.66, words: 'Steady.', syll: [[0.90, 0.62, 1.0], [0.86, 0.70, 0.8]] },
+    { gain: 0.72, words: 'You are mine.', syll: [[0.70, 1.20, 0.85], [0.78, 1.30, 1.0]] },
+  ],
+  /**
+   * THROW — the shortest lines in the game. A blade leaving the hand is one
+   * gesture and it is over; anything longer than a quarter of a second would
+   * still be being said while the saber was across the field.
+   */
+  throw: [
+    { gain: 0.80, words: 'Take it.', syll: [[1.12, 0.22, 1.0], [0.98, 0.24, 0.6]] },
+    { gain: 0.80, words: 'Catch.', syll: [[0.92, 0.34, 0.7], [1.14, 0.30, 1.0]] },
+    { gain: 0.76, words: 'Now.', syll: [[1.30, 0.16, 1.0], [1.16, 0.16, 0.65]] },
+  ],
+  /**
+   * SENSE — the one power that is not aimed at anybody, so it is the one line
+   * that is not addressed to anybody: high, quiet, slow, and gently rising.
+   * At 0.5 gain it is the softest thing the player's throat does.
+   */
+  sense: [
+    { gain: 0.50, words: 'Show me.', syll: [[1.04, 0.88, 0.55], [1.18, 1.10, 0.7]] },
+    { gain: 0.48, words: 'I see you.', syll: [[1.26, 1.60, 0.75], [1.10, 0.70, 0.5]] },
+    { gain: 0.52, words: 'Slow.', syll: [[0.94, 0.55, 0.6], [1.12, 0.48, 0.7]] },
+  ],
+  /**
+   * LIGHTNING — three beats, climbing, hard. It is the only player line that
+   * goes UP three times, which is why it does not need to be loud to be
+   * unmistakable: nothing else in the table has that shape.
+   */
+  lightning: [
+    { gain: 0.90, words: 'Burn.', syll: [[0.96, 0.34, 0.72], [1.10, 0.30, 0.86], [1.30, 0.66, 1.0]] },
+    { gain: 0.90, words: 'Feel it.', syll: [[0.86, 0.24, 0.7], [1.04, 0.24, 0.85], [1.20, 0.34, 1.0]] },
+    { gain: 0.94, words: 'Enough of you.', syll: [[1.02, 0.50, 0.8], [1.14, 0.44, 0.9], [1.42, 1.05, 1.0]] },
+    { gain: 0.86, words: 'Down.', syll: [[1.16, 0.20, 1.0], [1.28, 0.18, 0.8], [1.40, 0.16, 0.6]] },
+  ],
+  /**
+   * STASIS — a word said and then CUT OFF. The first beat is held and the
+   * second is the shortest in the table, which is the sound of a sentence
+   * stopping rather than ending, and stopping is the entire power.
+   */
+  stasis: [
+    { gain: 0.86, words: 'Stop.', syll: [[1.00, 0.72, 1.0], [1.24, 0.18, 0.8]] },
+    { gain: 0.86, words: 'Hold.', syll: [[0.88, 1.10, 1.0], [1.04, 0.20, 0.7]] },
+    { gain: 0.82, words: 'Still.', syll: [[1.14, 0.50, 1.0], [1.30, 0.16, 0.85]] },
+  ],
+  /**
+   * HEAL — the only line in this table that FALLS all the way and takes its
+   * time doing it. Three beats, each longer than the last, each lower, and
+   * soft: a body letting go rather than a body doing something.
+   */
+  heal: [
+    { gain: 0.58, words: 'Steady now.', syll: [[1.06, 0.75, 0.8], [0.94, 0.92, 0.7], [0.82, 1.25, 0.55]] },
+    { gain: 0.54, words: 'Breathe.', syll: [[0.96, 0.55, 0.75], [0.88, 0.70, 0.65], [0.78, 0.95, 0.5]] },
+    { gain: 0.60, words: 'Stay with me.', syll: [[1.20, 1.10, 0.9], [1.02, 1.30, 0.6], [0.84, 1.70, 0.45]] },
+  ],
+  /**
+   * SHIELD — the only line the player says that is not aimed at an enemy at
+   * all: it is said to the people BEHIND them. So it is the one contour in the
+   * table that does not move — the beats sit on the same note — and it is the
+   * LONGEST two-beat line the game has, because a barrier is a thing you hold
+   * rather than a thing you do. `grip` is the other level contour and it is a
+   * strain a fifth lower and half the length; the two are told apart on pitch
+   * centre and on duration rather than on shape, which is why both numbers are
+   * pushed rather than one.
+   */
+  shield: [
+    /* the call back — level, weight on the held second beat */
+    { gain: 0.78, words: 'Behind me.', syll: [[1.10, 0.62, 0.7], [1.08, 1.05, 1.0]] },
+    /* the refusal — three beats that settle rather than climb, the longest */
+    { gain: 0.82, words: 'Nothing gets through.', syll: [[1.22, 0.66, 0.8], [1.16, 0.72, 0.9], [1.08, 2.10, 1.0]] },
+    /* the brace — the only one of the four that leans on its FIRST beat */
+    { gain: 0.86, words: 'Not through this.', syll: [[1.34, 1.30, 1.0], [1.30, 0.95, 0.72]] },
+    /* the order — lowest of the four and the longest tail in it */
+    { gain: 0.80, words: 'Stand fast.', syll: [[0.88, 0.75, 0.85], [0.86, 1.85, 1.0]] },
+  ],
+  /**
+   * COMPEL — low, level and QUIET, and quiet is the point: this is the one
+   * power that is done to a mind rather than to a body, and a shout is the
+   * wrong register for it. It shares `grip`'s flatness and sits a third under
+   * it, over three beats rather than two.
+   */
+  compel: [
+    { gain: 0.52, words: 'Turn.', syll: [[0.86, 0.60, 0.7], [0.88, 0.55, 0.78], [0.78, 0.98, 0.6]] },
+    { gain: 0.50, words: 'You will help me.', syll: [[0.74, 0.86, 0.65], [0.76, 0.78, 0.7], [0.70, 1.30, 0.55]] },
+    { gain: 0.54, words: 'Look at them.', syll: [[0.94, 0.44, 0.72], [0.90, 0.50, 0.8], [0.84, 0.70, 0.6]] },
+  ],
+  /**
+   * REND — the widest interval in the game. It starts above everything else
+   * the player says and is WRENCHED down almost an octave in one step, over a
+   * long second beat: a thing coming apart, said as a pitch.
+   */
+  rend: [
+    { gain: 0.92, words: 'Come apart.', syll: [[1.38, 0.28, 1.0], [0.70, 0.98, 0.9]] },
+    { gain: 0.92, words: 'Piece by piece.', syll: [[1.26, 0.44, 0.9], [0.64, 1.30, 1.0]] },
+    { gain: 0.88, words: 'Break.', syll: [[1.44, 0.20, 1.0], [0.78, 0.62, 0.8]] },
+  ],
+  /**
+   * UNLEASH — four beats, the longest and loudest line the player has, and the
+   * only one that climbs and then HOLDS. It is the 52-Force panic button, it is
+   * the one power whose own note calls for "you like yell really loud", and it
+   * is the only place in this table where the last syllable outlasts the whole
+   * of the rest of the line.
+   */
+  unleash: [
+    { gain: 1.0, words: 'Get back!', syll: [[0.88, 0.40, 0.7], [1.00, 0.36, 0.85], [1.14, 0.40, 0.95], [1.30, 1.15, 1.0]] },
+    { gain: 1.0, words: 'All of you!', syll: [[1.06, 0.30, 0.75], [1.18, 0.28, 0.88], [1.30, 0.30, 0.95], [1.46, 0.85, 1.0]] },
+    { gain: 1.0, words: 'Away from me!', syll: [[0.78, 0.55, 0.7], [0.92, 0.48, 0.82], [1.06, 0.52, 0.92], [1.22, 1.55, 1.0]] },
+    { gain: 1.0, words: 'Enough!', syll: [[1.44, 0.60, 1.0], [1.08, 0.20, 0.65], [1.22, 0.22, 0.8], [1.38, 0.40, 0.9]] },
+  ],
+};
+
+/**
+ * The flat registry, derived. `push.2` is the second entry under `push`
+ * BECAUSE it is the second entry under `push` — the id is built from the key
+ * it is filed under and the position it holds, so there is no second place a
+ * pool's names are written and no way to reorder one into a lie.
+ */
+const FORCE_CONTOURS = new Map();
+export const FORCE_POWERS = Object.keys(FORCE_LINES);
+export const FORCE_LINE_IDS = [];
+for (const power of FORCE_POWERS) {
+  FORCE_LINES[power].forEach((c, i) => {
+    c.id = `${power}.${i + 1}`;
+    FORCE_CONTOURS.set(c.id, c);
+    FORCE_LINE_IDS.push(c.id);
+  });
+}
+
+/** Every line a power can say, as ids. Empty for a power with no pool. */
+export function forcePool(power) { return (FORCE_LINES[power] || []).map(c => c.id); }
+
+/**
+ * THE ONE LOOKUP, for both tables.
+ *
+ * `utterance()` used to index `LINES` directly and fall back to `LINES.effort`,
+ * which is right for the game — a trigger must never throw mid-fight — and is
+ * exactly why the Force pools could not simply be added to `LINES`: every
+ * contour in that table is on the emote wheel by construction (`PLAYER_LINES`
+ * is `LINE_KINDS` minus the room's own calls, and tools/checks/spectacle.mjs
+ * asserts the wheel covers it exactly), and thirty-seven Force lines are not
+ * thirty-seven emotes. So they are a second table with one reader, and this is
+ * it. `null` rather than a default, so a caller that wants to KNOW can ask.
+ */
+export function contourFor(kind) { return LINES[kind] || FORCE_CONTOURS.get(kind) || null; }
+
+/** Is this a contour anything in the project can actually say? */
+export function hasLine(kind) { return !!contourFor(kind); }
+
+/**
+ * THE NEXT LINE THIS POWER SAYS, AND IT IS NEVER THE ONE IT JUST SAID.
+ *
+ * "so it doesnt get stale and you hear the same thing over and over" is the
+ * requirement, and a plain random draw does not meet it: with a pool of three,
+ * a fair die repeats itself back-to-back on a third of all casts, and the
+ * back-to-back repeat is precisely the event a listener hears as "it said the
+ * same thing again". Drawing uniformly from the OTHER n−1 costs nothing, makes
+ * the immediate repeat impossible rather than unlikely, and leaves the
+ * long-run distribution flat.
+ *
+ * PURE, and the memory belongs to the caller (`AudioEngine.forceLine`). A
+ * module-level `last` here would be a second piece of mutable state for
+ * tools/checks/_shared.mjs to put back between suites, and this file has none
+ * — it is five numbers and a table, and it is the only file in the audio
+ * chain that a check can reason about without building anything.
+ *
+ * `roll` is a 0..1 draw. It is an ARGUMENT rather than a call to Math.random
+ * for the same reason `utterance`'s `vary` is: a stream inside a function is a
+ * stream nothing can seed, and every measurement taken through it moves
+ * between runs.
+ */
+export function nextForceLine(power, last = '', roll = 0) {
+  const pool = FORCE_LINES[power];
+  if (!pool || !pool.length) return '';
+  if (pool.length === 1) return pool[0].id;
+  const others = pool.filter(c => c.id !== last);
+  const r = Number.isFinite(roll) ? Math.min(0.999999, Math.max(0, roll)) : 0;
+  return others[Math.floor(r * others.length)].id;
+}
+
 /** Seconds one syllable of length 1.0 lasts at cadence 1. */
 const SYLL_BASE = 0.30;
 /** Silence between syllables, before cadence. */
@@ -384,7 +655,12 @@ const SYLL_GAP = 0.055;
  * @returns {{kind:string, dur:number, grains:Array}}
  */
 export function utterance(spec, kind = 'effort', vary = 0.5) {
-  const L = LINES[kind] || LINES.effort;
+  /* BOTH TABLES, through one lookup. `contourFor` answers out of LINES and out
+   * of the Force pools, and the fall back to `effort` is unchanged: a trigger
+   * naming a contour that has been renamed must never be able to throw in the
+   * middle of a fight. See `contourFor` for why the Force lines are a second
+   * table rather than more rows of the first. */
+  const L = contourFor(kind) || LINES.effort;
   const v = Math.min(1, Math.max(0, num(vary, 0.5)));
   const drift = 1 + (v - 0.5) * 0.11;              // ±5.5% pitch
   const pace = num(spec.cadence, 1) * (1 + (v - 0.5) * 0.14);

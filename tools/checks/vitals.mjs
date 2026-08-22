@@ -45,7 +45,19 @@ function victim(hp = 100) {
     world: { training: false, engine: { hurt() {} } },
     flow: 1, combo: 3, staggerTimer: 0, hitFlash: 0, force: 100,
     camera: { addShake() {} }, chest: { x: 0, y: 0, z: 0 },
+    /* THE BARRIER, DOWN. `Player.damage` asks it whether the blow is being
+     * blunted before anything else happens, so a stand-in without the state
+     * throws on the first hit. Shape from the constructor in Player.js; see
+     * `SHIELD` there. */
+    shield: { up: false, t: 0, power: 0, stopped: 0, lastHit: -99 },
     resistForce: Player.prototype.resistForce,
+    /* …and the disarm, for the same reason. `damage` asks whether this blow
+     * knocks the weapon out of the hand; the real method is borrowed rather
+     * than stubbed out, so a stand-in cannot answer a question the shipped one
+     * would answer differently. It needs stamina and a throw state to read. */
+    _maybeDisarm: Player.prototype._maybeDisarm,
+    stamina: 100, maxStamina: 100, saberDown: false, throwState: 'held',
+    aimDir: { x: 0, y: 0, z: -1 }, velocity: { x: 0, y: 0, z: 0 },
     died: false, die() { this.died = true; },
   };
 }

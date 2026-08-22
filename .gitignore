@@ -14,3 +14,13 @@ node_modules
 # The single-file build. `node tools/pack.mjs` writes it; it is 12 MB of
 # base64 and is regenerated on demand, so it is an output and not a source.
 borz-play.html
+.art/
+.flagship/
+scratchpad/
+.line/
+.audit/
+.horde/
+tools/_scratch/
+# One-off debug scripts a lane writes to print one thing and throws away.
+# Four have been created and one kept; gitignore does not touch the tracked one.
+tools/_dbg*.mjs

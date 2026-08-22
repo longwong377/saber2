@@ -447,6 +447,111 @@ export async function run({ check, assert }) {
       + `${bolt.damage.toFixed(2)} over eight exchanges, ceiling ${ceiling.toFixed(2)}`;
   });
 
+  check('deflect: a bolt sent home costs the rank more, and all of the extra is the ledger', async () => {
+    /**
+     * FLAGSHIP §7's SECOND VERB, PRICED ON A RANK RATHER THAN ON A PAIR.
+     *
+     *   "TURN — a returned bolt that kills its firer counts on THEIR morale
+     *    ledger. Every bolt sent home deletes a rifle and breaks a nerve."
+     *
+     * `tools/checks/break.mjs` already proves the shipped bolt path reaches
+     * `turnedHome` at all, with one victim and one witness. What it cannot see
+     * is the thing a battle measurement turned up and this check exists to
+     * separate: driven through a Geonosis Command wave, a turned kill costs the
+     * horde **0.495** of nerve against **0.058** for an ordinary bolt kill —
+     * 8.5x, where the two table entries are only 4x apart.
+     *
+     * There are two explanations for that gap and they call for opposite
+     * responses. Either the return is billing MORE PER WITNESS than it should —
+     * a defect, two terms compounding somewhere — or a returned bolt simply
+     * kills where the bodies are crowded, because it is thrown from a blade
+     * standing in the middle of a rank, and the extra is the SEE radius finding
+     * more men. The second is the design working.
+     *
+     * So: the same rank, the same body, the same place, killed twice. What is
+     * asserted is that the CROWD is identical between the two arms and the cost
+     * is not — which leaves the ledger as the only difference, and hands the
+     * battle number its explanation instead of a second reading of it.
+     */
+    const H = await import('./_coop.mjs');
+    const { nerveOf } = await import('../../src/game/Nerve.js');
+    const { NERVE } = await import('../../src/game/Nerve.js');
+
+    /** One rank, one death, and what it cost every man who could see it. */
+    const kill = async (sentHome) => {
+      const { world } = await H.bootWorld({
+        level: 'colosseum', settings: { mode: 'waves', quality: 'low', instantSpawn: true },
+      });
+      const input = H.idleInput();
+      for (let i = 0; i < 8; i++) world.update(1 / 60, input);
+      const g = (x, z) => world.terrain.height(x, z);
+      /* A RANK ABREAST at the game's own spacing, close enough that every man
+       * is inside `NERVE.SEE` of the one that falls — the placement uses the
+       * radius, the assertions below do not. */
+      const rank = [];
+      for (let i = 0; i < 7; i++) {
+        const x = -7.2 + i * 2.4;
+        const e = world.spawnEnemy('b1', new THREE.Vector3(x, g(x, -10), -10));
+        if (e) rank.push(e);
+      }
+      assert(rank.length === 7, `only ${rank.length} of the rank stood up`);
+      /* TWO FRAMES, so every rig is posed off its own solve: a bolt driven at a
+       * body that has never been stepped passes through the bind pose sitting
+       * at the origin. break.mjs pays the same two frames for the same reason. */
+      world.update(1 / 60, input); world.update(1 / 60, input);
+      const victim = rank[3];
+      victim.hp = 1;
+      const before = rank.map((e) => nerveOf(e));
+
+      const bolt = world.bolts.fire(
+        new THREE.Vector3(victim.position.x, victim.position.y + 1.0, -16),
+        new THREE.Vector3(0, 0, 1), { speed: 90, team: 0, damage: 60, owner: world.player });
+      assert(bolt, 'no bolt came out of the pool');
+      if (sentHome) { bolt.deflected = true; bolt.deflector = world.player; }
+      bolt.owner = world.player; bolt.team = 0;
+      for (let i = 0; i < 240 && !victim.dead; i++) {
+        world._boltHitTest(bolt, bolt.pos.clone(), bolt.pos.clone().add(new THREE.Vector3(0, 0, 0.25)));
+        bolt.pos.z += 0.25;
+        if (bolt.pos.z > -4) break;
+      }
+      assert(victim.dead, `the ${sentHome ? 'returned' : 'ordinary'} bolt did not kill the body it was aimed at`);
+      let cost = 0, moved = 0;
+      rank.forEach((e, i) => {
+        if (e === victim) return;
+        const d = before[i] - nerveOf(e);
+        cost += d;
+        if (d > 1e-9) moved++;
+      });
+      world.unload?.();
+      return { cost, moved };
+    };
+
+    const plain = await kill(false);
+    const home = await kill(true);
+
+    assert(plain.moved >= 4,
+      `an ordinary death in a rank of seven moved ${plain.moved} nerves — the rank is not standing `
+      + 'close enough together for this comparison to be about the ledger');
+    assert(home.moved === plain.moved,
+      `the returned bolt reached ${home.moved} men and the ordinary one ${plain.moved} — the two arms `
+      + 'are not the same crowd, so the cost difference below is geometry and not the ledger');
+    assert(home.cost > plain.cost,
+      `a bolt sent home cost the rank ${home.cost.toFixed(3)} against ${plain.cost.toFixed(3)} for an `
+      + 'ordinary kill — TURN is not reaching the ledger through the shipped bolt path');
+    /* ON TOP OF THE ORDINARY KNOCK AND NOT INSTEAD OF IT: the extra is one
+     * TURNED per man who could see it, so it scales with the crowd rather than
+     * replacing what the crowd already paid. Derived from the count this run
+     * MEASURED, so a change to the radius or to the spacing cannot make it
+     * pass by accident. */
+    const extra = (home.cost - plain.cost) / plain.moved;
+    assert(Math.abs(extra - Math.abs(NERVE.TURNED)) < 1e-6,
+      `the extra came to ${extra.toFixed(4)} a man against NERVE.TURNED's ${Math.abs(NERVE.TURNED)} — `
+      + 'the two terms are replacing each other, or one of them is being paid twice');
+    return `${plain.moved} men saw it fall · ordinary -${plain.cost.toFixed(3)}, `
+      + `sent home -${home.cost.toFixed(3)} (${(home.cost / plain.cost).toFixed(1)}x, `
+      + `${extra.toFixed(3)} a man on top)`;
+  });
+
   check('deflect: the return is never aimed at your own side', async () => {
     /**
      * The blade's target list goes through `bladeTargets` → `canHarm`. The

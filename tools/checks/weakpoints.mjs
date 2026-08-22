@@ -115,12 +115,20 @@ function capsOf(type) {
    * axial": an AAT's prow and stern are `hull` — non-axial, and no more a limb
    * than its turret is. */
   const plated = new Set();
+  /* …AND WHICH BONES CARRY A SPOT SOMEBODY STATED OUT LOUD. `bone.weak` is
+   * where `weakSpot` puts a declaration, and it is the other half of the
+   * question "where could this gap have come from" — the AAT's intakes, the
+   * Juggernaut's ten axle housings and the NR-N99's two drive sprockets are all
+   * declared rather than derived, because none of them is a plate's leftover
+   * and there is no plate to strap to a wheel. */
+  const declared = new Set();
   for (const b of (e.rig?.list ?? [])) {
     roles.set(b.name, b.role);
     if (b.plateFrom !== undefined) plated.add(b.name);
+    if (b.weak && b.weak.length) declared.add(b.name);
   }
   e.dispose?.();
-  const v = { caps: out, roles, plated, A: ARCHETYPES[type] };
+  const v = { caps: out, roles, plated, declared, A: ARCHETYPES[type] };
   _caps.set(type, v);
   return v;
 }
@@ -479,14 +487,43 @@ export async function run({ check, assert }) {
          * a reason to get behind the thing, and the row below asserts exactly
          * that of every axial gap on every body.
          */
+        /**
+         * ── AND A LIMB GAP MAY BE DECLARED RATHER THAN DERIVED, WHICH THE
+         *    `else` ARM USED TO CALL A DEFECT ──────────────────────────────
+         *
+         * The reasoning above is about the DERIVATION — no plate, nothing for
+         * `weakSpotsOf` to leave uncovered, so a limb gap on an unplated body
+         * meant the plate span had been lost. That was true while the only
+         * bodies with limbs were bodies with limb plates on them, and the
+         * giants broke it in a way that is correct rather than accidental:
+         *
+         *   the HAVw A6's ten road wheels are `leg` bones with a tyre at the
+         *     tip and bare axle between, and there is no plate to strap to a
+         *     wheel. The axle housing is declared on the line that positions
+         *     the tyre;
+         *   the NR-N99 runs on ONE tread, and its two drive sprockets are
+         *     declared off the same z the sprocket groups are placed at.
+         *
+         * Both are the AAT's argument moved onto a limb: a soft place a builder
+         * states out loud, out of the numbers that place the geometry, so the
+         * capsule cannot drift from the mesh. What the arm has to ask is
+         * therefore whether every limb gap is ACCOUNTED FOR — by a plate on
+         * that bone, or by a declaration on it — and not whether a plate
+         * exists somewhere on the body. `bone.weak` is where a declaration
+         * lands, and `probe.declared` is read off it rather than off a list of
+         * machine names.
+         */
         const plated = [...probe.plated].filter((n) => !AXIAL_ROLES.includes(probe.roles.get(n)));
         if (plated.length) {
           assert(limbGap,
             `${type} carries a limb plate on ${plated.join(', ')} and not one of its ${gaps.length} `
             + 'gaps is on a limb — the derivation found nothing and a declared trunk gap is '
             + 'carrying the whole feature');
+        } else if (limbGap) {
+          assert(probe.declared.has(limbGap.covers),
+            `${type} has a gap on limb '${limbGap.covers}' with neither a plate nor a declaration `
+            + 'on that bone — the derivation has lost a plate span');
         } else {
-          assert(!limbGap, `${type} has no limb plate anywhere and yet a gap on a limb`);
           assert(axialGap, `${type} has ${gaps.length} gaps and none of them anywhere`);
         }
         for (const g of gaps) {
@@ -566,20 +603,44 @@ export async function run({ check, assert }) {
           }
           const open = e._guardOpen();
           const still = e.dead ? 'dead' : cut(e, capNamed(e, plate.name));
-          return { still, spent, open, dead: e.dead };
+          return { still, spent, open, dead: e.dead, floored: !!(e.toppled && e.legsLost) };
         });
         assert(after.spent === 0,
           `${type}: the gap pass spent ${after.spent} of the guard — a pass the guard never `
           + 'touched must not cost it anything, or the spatial opening is quietly buying the '
           + 'temporal one');
-        assert(after.dead || !after.open,
+        /**
+         * ── AND A BODY ON THE GROUND IS NOT "IN AN OPENING" ────────────────
+         *
+         * Both clauses below ask whether the guard closes again once the
+         * sever's own stagger has run out, and both were written against
+         * bodies that get back up. Two machines on the roster do not, by
+         * design: `toppleAt` is 1 for the Octuptarra magna tri-droid — the
+         * reference is explicit that one damaged leg puts the whole droid over
+         * — and 1 for the NR-N99, which runs on a single tread. `Enemy.recover`
+         * says the rest in as many words: "a walker losing its legs is NOT
+         * recoverable", so `toppled && legsLost` is permanent and
+         * `_guardOpen()` is true forever after.
+         *
+         * That is not the failure these clauses are for. The failure they are
+         * for is a WEAK POINT that leaves the guard open behind it — a place on
+         * the body turning into a state the player can bank. A tripod lying on
+         * its side has not banked a state, it has lost the argument: the pass
+         * took the thing it was standing on, which is the counter-play its own
+         * databank page names. `floored` is that outcome, and it is read off
+         * the two fields the game sets rather than off a list of machine names,
+         * so the next body that goes down on one leg is covered the day it is
+         * written.
+         */
+        assert(after.dead || after.floored || !after.open,
           `${type}: the body never came out of the opening the sever gave it in 4 s`);
-        assert(after.dead || after.still === 'turned',
+        assert(after.dead || after.floored || after.still === 'turned',
           `${type}: with the sever's own stagger run out, a plate pass still landed — the weak `
           + 'point has left the guard open behind it. A weak point is a place, not a state.');
 
         rows.push(`${type} plate=turned gap=${b === 'turned' ? 'TURNED' : 'lands'}`
-          + (axialGap ? ` trunk=turned` : '') + ` winded=lands`);
+          + (axialGap ? ` trunk=turned` : '') + ` winded=lands`
+          + (after.floored ? ' (and the sever floored it for good)' : ''));
       }
       assert(rows.length >= 6, `only ${rows.length} bodies had a gap to compose with`);
       return rows.join(' · ');

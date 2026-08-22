@@ -518,8 +518,8 @@ export async function run({ check, assert }) {
       const yaw0 = p.camera.yaw;
       axis.x = ax; axis.y = ay;
       hit.add('attackSpin');
-      let turned = 0, prev = p.camera.yaw;
-      for (let i = 0; i < 46; i++) {
+      let turned = 0, body = 0, thrust = 0, prev = p.camera.yaw;
+      for (let i = 0; i < 60; i++) {
         ctx.time = w.time = (30 + i) / 60;
         p.update(1 / 60, ctx);
         hit.clear();
@@ -528,10 +528,15 @@ export async function run({ check, assert }) {
         while (d > Math.PI) d -= Math.PI * 2;
         while (d < -Math.PI) d += Math.PI * 2;
         turned += Math.abs(d); prev = p.camera.yaw;
+        /* THE BODY'S OWN TURN, which is the thing the move is now made of —
+         * see SPIN's note. `bodyYaw` is written every frame of the cut and
+         * `spinYaw` is `viewShare` of it. */
+        body += Math.abs(p.control.bodyYaw || 0);
+        thrust = Math.max(thrust, p.control.thrust * p.control.thrustGain);
       }
       const go = p.position.clone().sub(from);
       axis.x = 0; axis.y = 0;
-      return { dist: Math.hypot(go.x, go.z), bearing: Math.atan2(go.x, go.z), turned, yaw0 };
+      return { dist: Math.hypot(go.x, go.z), bearing: Math.atan2(go.x, go.z), turned, body, thrust, yaw0 };
     };
 
     /* The heading `_move` builds W from: `fwd = -(sin yaw, 0, cos yaw)`, so a
@@ -551,8 +556,33 @@ export async function run({ check, assert }) {
     const left = spin(-1, 0);
     const turnedBack = spin(0, 1, [0, -1], 12);
 
-    assert(fwd.turned > 6.0,
-      `the spin only turned the view ${fwd.turned.toFixed(2)} rad — this check cannot be measuring a spin`);
+    /**
+     * THE BODY TURNS AND THE VIEW MOSTLY DOES NOT — which is the reversal at
+     * the heart of what this move became, and the reason this assertion is not
+     * the one it used to be.
+     *
+     * It used to read `fwd.turned > 6.0`: a full revolution OF THE CAMERA, and
+     * that was the property the old spin was built to have. The player's verdict
+     * on it: "the spin attack just moves your camera and is mostly ineffective
+     * in battle". Spending the whole revolution on the view is what made a
+     * quarter of a second of play a look at the sky and then the floor, and
+     * what made the move impossible to aim.
+     *
+     * So the property is now stated against the BODY, which is what actually
+     * spins, and the view is held BELOW it. A check that kept demanding six
+     * radians of camera would be demanding the defect back.
+     */
+    assert(fwd.body > 10.0,
+      `the body only turned ${fwd.body.toFixed(2)} rad — this check cannot be measuring a spin`);
+    assert(fwd.turned < fwd.body * 0.6,
+      `the view took ${(fwd.turned / Math.max(1e-6, fwd.body) * 100).toFixed(0)}% of the body's turn — `
+      + 'that is the "just moves your camera" the move was rebuilt to stop being');
+    /* AND THE BLADE IS OUT IN FRONT while it runs, which is the STAB half of
+     * the merge: "you hold the saber out in front of you and spin like a
+     * missile". A drill with the blade at the hip is the windmill again. */
+    assert(fwd.thrust > 0.8,
+      `the blade reached ${fwd.thrust.toFixed(2)} of extension during the spin — it is supposed to be held `
+      + 'out in front for the whole move');
     assert(still.dist < 0.35,
       `a spin with no direction held carried the player ${still.dist.toFixed(2)} m — it is supposed to pivot`);
     assert(fwd.dist > 1.6,

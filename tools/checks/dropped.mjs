@@ -287,4 +287,125 @@ export async function run({ check, assert, THREE: T }) {
     }
     return rows.join(', ');
   });
+
+  check('dropped: a duellist who dies leaves their blade on the ground, not in the air', async () => {
+    /**
+     * THE PLAYER, ON THE LAST BUILD: "when lightsaber having enemies died their
+     * sabers would stay suspended on and in the air, they should fall to the
+     * ground their user is dead, sometimes retracting automatically, sometimes
+     * staying on and on the floor."
+     *
+     * What shipped answered the first half and threw the object away: `die()`
+     * called `retract()` and then hid the hilt on a 900 ms `setTimeout`. So a
+     * Jedi's weapon — the one thing on a battlefield a player would cross it
+     * for, and the subject of note 61's "drop and pick up sabers, including a
+     * friend's" — evaporated on the frame its owner fell. `Enemy.cut` had
+     * reached for `dropSaber` when an arm came off since the day it was
+     * written; a DEATH never did.
+     *
+     * Measured as the two things the player asked for: the hilt is a real
+     * object lying on the ground afterwards, and it is not hanging where the
+     * hand was.
+     */
+    const H = await import('./_coop.mjs');
+    const T = await import('three');
+    const { enemyRng } = await import('../../src/game/Enemy.js');
+    enemyRng.seed(11);
+    const { world } = await H.bootWorld({
+      level: 'colosseum', settings: { mode: 'waves', quality: 'low', instantSpawn: true },
+    });
+    const input = H.idleInput();
+    const p = world.player;
+    const at = new T.Vector3(p.position.x + 4, p.position.y, p.position.z - 5);
+    const foe = world.spawnEnemy('acolyte', at);
+    assert(foe?.saber, 'the acolyte spawned without a sabre, so this measures nothing');
+    for (let i = 0; i < 60; i++) world.update(1 / 60, input);
+    const before = world.props.filter((x) => x.saber).length;
+    /* LIMP FIRST, which is the case the player saw: `Enemy._pose` returns early
+     * on a ragdoll, so the hilt keeps whatever pose it had when the body went
+     * limp — a duellist thrown or blasted dies with its arm wherever the throw
+     * left it. */
+    foe.actor.goRagdoll(new T.Vector3(0, 6, 0), new T.Vector3(2, 0, 1));
+    for (let i = 0; i < 20; i++) world.update(1 / 60, input);
+    const held = foe.saber.root.getWorldPosition(new T.Vector3()).y;
+    foe.die(foe.position.clone(), null, 'probe');
+    for (let i = 0; i < 60 * 8; i++) world.update(1 / 60, input);
+
+    const hilts = world.props.filter((x) => x.saber && !x.dead);
+    assert(hilts.length === before + 1,
+      `${hilts.length - before} hilts were left behind by a dead duellist — the weapon is supposed to `
+      + 'survive its owner, and note 61 is about picking one up');
+    const hilt = hilts[hilts.length - 1];
+    const ground = world.terrain.height(hilt.body.position.x, hilt.body.position.z);
+    assert(hilt.body.position.y - ground < 0.6,
+      `the hilt came to rest ${(hilt.body.position.y - ground).toFixed(2)} m off the ground — it was `
+      + `held at ${held.toFixed(2)} m, and hanging there is the player's own report`);
+    /* AND THE BODY'S OWN SABRE IS GONE, or there are two of them: one on the
+     * floor and one welded to a corpse's hand. */
+    assert(!foe.saber.root.visible, 'the corpse is still holding a copy of the sabre it just dropped');
+    return `hilt held at ${held.toFixed(2)} m, on the floor at `
+      + `${(hilt.body.position.y - ground).toFixed(2)} m above ground, ${hilts.length} on the field`;
+  });
+
+  check('dropped: some blades stay burning on the floor and some go out', async () => {
+    /**
+     * THE OTHER HALF OF THE SAME SENTENCE — "sometimes retracting
+     * automatically, sometimes staying on and on the floor" — and it is worth
+     * more than either rule alone: a field after a duel with a couple of blades
+     * still burning on it and the rest gone dark is a field you look at.
+     *
+     * Measured over enough deaths that a fair coin would be very unlikely to
+     * come up all one way, and asserted as BOTH outcomes occurring rather than
+     * as a rate, because the rate is `DEAD_BLADE_LIT`'s business and a check
+     * that restates a constant is a check that fails when it is tuned.
+     */
+    const H = await import('./_coop.mjs');
+    const T = await import('three');
+    const { enemyRng } = await import('../../src/game/Enemy.js');
+    enemyRng.seed(5);
+    const { world } = await H.bootWorld({
+      level: 'colosseum', settings: { mode: 'waves', quality: 'low', instantSpawn: true },
+    });
+    const input = H.idleInput();
+    const p = world.player;
+    let lit = 0, dark = 0;
+    for (let i = 0; i < 16; i++) {
+      const at = new T.Vector3(p.position.x + 6 + i * 2, p.position.y, p.position.z - 9);
+      const foe = world.spawnEnemy('acolyte', at);
+      if (!foe) continue;
+      for (let f = 0; f < 6; f++) world.update(1 / 60, input);
+      const n = world.props.length;
+      foe.die(foe.position.clone(), null, 'probe');
+      const made = world.props.slice(n).find((x) => x.saber);
+      if (!made) continue;
+      if (made.saberLit) lit++; else dark++;
+    }
+    assert(lit + dark >= 12, `only ${lit + dark} of 16 deaths produced a hilt at all`);
+    assert(lit > 0, `${lit + dark} blades hit the floor and not one of them was still burning`);
+    assert(dark > 0, `all ${lit + dark} blades stayed lit — half the point is that most of them go out`);
+    return `${lit} still burning, ${dark} out, of ${lit + dark}`;
+  });
+
+  check('dropped: a vibrosword does not leave a plasma blade on the ground', async () => {
+    /* A physical weapon has no blade to leave on, and `dropSaber` is handed the
+     * style precisely so a dead commando does not light up the field. This is
+     * the same separation `weapons.mjs` holds for a living body. */
+    const { dropSaber } = await import('../../src/game/Dropped.js');
+    const T = await import('three');
+    const H = await import('./_coop.mjs');
+    const { world } = await H.bootWorld({
+      level: 'colosseum', settings: { mode: 'waves', quality: 'low', instantSpawn: true },
+    });
+    const plasma = dropSaber(world, { position: new T.Vector3(0, 2, 0), colorIndex: 0, lit: true });
+    const vibro = dropSaber(world, {
+      position: new T.Vector3(2, 2, 0), colorIndex: 0, lit: true, weaponStyle: 'vibro',
+    });
+    assert(plasma?.saberLit, 'a lit plasma hilt did not get a blade');
+    assert(!vibro?.saberLit, 'a vibrosword on the ground is glowing');
+    const count = (prop) => { let n = 0; prop.mesh.traverse((o) => { if (o.isMesh) n++; }); return n; };
+    assert(count(plasma) > count(vibro),
+      `a lit hilt draws ${count(plasma)} meshes and an unlit one ${count(vibro)} — the blade is not `
+      + 'actually being built');
+    return `plasma ${count(plasma)} meshes lit, vibro ${count(vibro)} dark`;
+  });
 }

@@ -1,0 +1,150 @@
+{
+  "step": 3,
+  "seed": 7,
+  "quality": "medium",
+  "settle": 4,
+  "viewport": [
+    1280,
+    720
+  ],
+  "eye": {
+    "back": 16,
+    "side": -13,
+    "height": 4.6,
+    "low": 2.1
+  },
+  "roster": {
+    "spawned": 40,
+    "onField": 40,
+    "line": 18,
+    "guns": 3,
+    "marks": 2,
+    "runners": 2,
+    "far": 14,
+    "officer": true,
+    "origin": {
+      "x": 0,
+      "z": 26
+    }
+  },
+  "beats": [
+    {
+      "at": 2,
+      "file": "step3-a-form-up",
+      "name": "FORM UP",
+      "reads": "Two ranks of nine at a 1.9 m interval, an officer three metres behind the centre, three support guns on the right and two marksmen detached left. It must read as a LINE and not as a crowd, and the thing that makes it one is that the intervals are regular and the two ranks are offset rather than aligned.",
+      "standing": 40,
+      "fallen": [],
+      "steps": 60,
+      "shots": 0,
+      "boltsInAir": 0,
+      "misfires": []
+    },
+    {
+      "at": 11,
+      "file": "step3-b-advance",
+      "name": "ADVANCE",
+      "reads": "The line is walking on one bearing at one pace, still dressed, mid-stride. Every man of the line must be at roughly the same point in the gait cycle and at the same Z: a line arrives together or it is a crowd. The two runners are the exception and are visibly out of step, which is what stops it reading as a machine.",
+      "standing": 40,
+      "fallen": [],
+      "steps": 270,
+      "shots": 0,
+      "boltsInAir": 0,
+      "misfires": []
+    },
+    {
+      "at": 21,
+      "file": "step3-c-halt-kneel",
+      "name": "HALT AND KNEEL",
+      "reads": "The front rank is down on one knee (crouch 1.0), the rear rank is standing, and the officer is standing behind both. THREE HEIGHTS IN ONE SILHOUETTE. This is the single strongest signal in the set and it is one float per body in the shipped rig — FLAGSHIP §10's \"a kneeling firing line is one float\", tested.",
+      "standing": 40,
+      "fallen": [],
+      "steps": 300,
+      "shots": 0,
+      "boltsInAir": 0,
+      "misfires": []
+    },
+    {
+      "at": 27,
+      "file": "step3-d-volley",
+      "name": "VOLLEY",
+      "reads": "Muzzle flashes down the kneeling rank, every barrel on ONE bearing, bolts in the air toward the far line. A volley whose bearings disagree reads as panic; this must read as a firing line that was given an order.",
+      "standing": 40,
+      "fallen": [],
+      "steps": 180,
+      "shots": 125,
+      "boltsInAir": 38,
+      "misfires": []
+    },
+    {
+      "at": 27.4,
+      "file": "step3-e-volley-eye-level",
+      "name": "VOLLEY, FROM A STANDING MAN'S EYES",
+      "reads": "The same second from 2.1 m instead of 6.4 m. FLAGSHIP §4 claims that at eye height on a plain both armies compress into a band at the horizon. This plate is that claim, tested against the puppet line: if the far line is unreadable here and legible in the plate above, the flagship needs its camera off the ground.",
+      "standing": 40,
+      "fallen": [],
+      "steps": 12,
+      "shots": 134,
+      "boltsInAir": 37,
+      "misfires": []
+    },
+    {
+      "at": 34,
+      "file": "step3-f-a-man-goes-down",
+      "name": "A MAN GOES DOWN",
+      "reads": "One body of the front rank is a ragdoll on the ground where he was kneeling; the rest of the rank is still firing and has not moved. The hole in the rank must be legible AS a hole — that is what makes a casualty an event rather than a body that stopped existing.",
+      "standing": 39,
+      "fallen": [
+        "a trooper"
+      ],
+      "steps": 198,
+      "shots": 361,
+      "boltsInAir": 26,
+      "misfires": []
+    },
+    {
+      "at": 42,
+      "file": "step3-g-take-cover",
+      "name": "TAKE COVER",
+      "reads": "The line has broken toward the nearest cover and gone low; the support guns have NOT moved and are still firing. Cover is a position before it is a pose, so the plate has to show bodies at different places as well as different heights.",
+      "standing": 39,
+      "fallen": [
+        "a trooper"
+      ],
+      "steps": 240,
+      "shots": 636,
+      "boltsInAir": 31,
+      "misfires": []
+    },
+    {
+      "at": 52,
+      "file": "step3-h-fall-back",
+      "name": "FALL BACK",
+      "reads": "The line is walking BACKWARD — travelling away from the far line while still facing it. This is the posture the whole taxonomy stands on: the same movement animated facing the direction of travel is a rout, which is a different event. The support guns are the last bodies still forward.",
+      "standing": 39,
+      "fallen": [
+        "a trooper"
+      ],
+      "steps": 300,
+      "shots": 782,
+      "boltsInAir": 0,
+      "misfires": []
+    },
+    {
+      "at": 58,
+      "file": "step3-i-dress-the-line",
+      "name": "DRESS THE LINE",
+      "reads": "The survivors have re-formed on the officer, one man short, at the same interval. It must read as the SAME line, reduced. If it does, the nine postures in this file's header are the whole list.",
+      "standing": 39,
+      "fallen": [
+        "a trooper"
+      ],
+      "steps": 180,
+      "shots": 782,
+      "boltsInAir": 0,
+      "misfires": []
+    }
+  ],
+  "played": 60,
+  "errors": []
+}

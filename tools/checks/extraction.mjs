@@ -62,18 +62,38 @@ function until(world, input, seconds, done, each = null) {
 }
 
 /** A commander who actually walks to the ramp, at an ordinary pace. */
+/**
+ * A COMMANDER WHO WALKS ABOARD — and it walks INTO THE BAY, not to a point
+ * beside the hull.
+ *
+ * That change is the check-side half of the player's note: "you don't even walk
+ * into the ship you touch it and teleport in I guess?". `BOARD_RADIUS` used to
+ * be a 3.2 m sphere at the ramp's foot and anything inside it was snapped into
+ * a seat, so a drive that stopped AT the ship boarded it. `_inBay` is a box the
+ * ship publishes, so the only way to be aboard is to be inside — and the walk
+ * has to climb the ramp to get there, tracking the deck height as it goes,
+ * exactly as a real one does.
+ */
 function walkToRamp(world) {
   const X = world.extraction;
-  if (!X || X.phase !== 'boarding' || !X.group || !world.player) return;
-  const r = X._ramp().clone();
+  if (!X || !X.group || !world.player) return;
+  if (X.phase !== 'boarding' && X.phase !== 'opening') return;
   const p = world.player.position;
-  const dx = r.x - p.x, dz = r.z - p.z;
+  /* Aim at the ramp's foot until we are behind the ship, then at the middle of
+   * the bay — which is the two-leg path the troopers take. */
+  const foot = X._ramp().clone();
+  const inside = X._bayPoint().clone();
+  const dFoot = Math.hypot(foot.x - p.x, foot.z - p.z);
+  const to = dFoot > 1.6 ? foot : inside;
+  const dx = to.x - p.x, dz = to.z - p.z;
   const d = Math.hypot(dx, dz);
   if (d < 1e-3) return;
   const step = Math.min(d, 4.6 / 60);
   p.x += dx / d * step;
   p.z += dz / d * step;
-  if (world.terrain) p.y = world.terrain.height(p.x, p.z);
+  const deck = X._deckHeight(p);
+  if (deck !== null) p.y += (deck - p.y) * 0.35;
+  else if (world.terrain) p.y = world.terrain.height(p.x, p.z);
 }
 
 export async function run({ check, assert }) {
@@ -241,11 +261,30 @@ export async function run({ check, assert }) {
     const t = until(world, input, 90, (w, tt) => !w.extraction.active && tt > 1, walkToRamp);
     const log = world.extraction.log;
     const order = log.filter(e => X.PHASES.includes(e.phase)).map(e => e.phase);
-    for (const want of ['aftermath', 'called', 'inbound', 'boarding', 'liftoff', 'transit', 'descent', 'unload', 'done']) {
+    /* ELEVEN BEATS NOW, AND TWO OF THEM HAPPEN TWICE. The player asked for the
+     * ramp and the doors by name — "the transports land, you see a large ramp
+     * come out, then the side doors slide open, the troops file in… then you
+     * land, and can only disembark when the ramp comes back out, then the ramp
+     * retracts once the troops are out, the side doors close, then the ships
+     * leave" — so `opening` and `sealing` run on BOTH legs, which is what makes
+     * "you cannot get out before the ramp is down" a phase rather than a hope.
+     * They are named for what they do rather than for where they happen, and
+     * `director.leg` is what says which side of the journey a given one is. */
+    const seq = ['aftermath', 'called', 'inbound', 'opening', 'boarding', 'sealing',
+      'liftoff', 'transit', 'descent', 'opening', 'unload', 'sealing', 'done'];
+    for (const want of new Set(seq)) {
       assert(order.includes(want), `the '${want}' phase never happened — got ${order.join(' → ')}`);
     }
-    const seq = ['aftermath', 'called', 'inbound', 'boarding', 'liftoff', 'transit', 'descent', 'unload', 'done'];
     assert(order.join(',') === seq.join(','), `phases out of order: ${order.join(' → ')}`);
+    /* AND THE RAMP IS DOWN BEFORE ANYBODY USES IT, on both legs — the property
+     * the two new phases exist for, stated as an ordering rather than as their
+     * presence. */
+    assert(order.indexOf('opening') < order.indexOf('boarding'),
+      'boarding began before the ramp came out');
+    assert(order.lastIndexOf('opening') < order.indexOf('unload'),
+      'the bay unloaded before the ramp came back out — "you can only disembark when the ramp comes back out"');
+    assert(order.indexOf('sealing') < order.indexOf('liftoff'),
+      'the ship lifted with the bay still open');
     const swap = log.find(e => e.phase === 'swap');
     const transit = log.find(e => e.phase === 'transit');
     const descent = log.find(e => e.phase === 'descent');
@@ -381,8 +420,14 @@ export async function run({ check, assert }) {
     const waited = lift.at - board.at;
     assert(waited >= X.LAST_CALL,
       `the ship left after ${waited.toFixed(1)} s of waiting, before its own last call at ${X.LAST_CALL} s`);
-    assert(waited <= X.LAST_CALL + X.PULL + 0.5,
-      `the ship waited ${waited.toFixed(1)} s — the haul is not bounded`);
+    /* THE BOUND CARRIES THE SEAL NOW. An idle commander holds the ship twice:
+     * `LAST_CALL` for the walk they never took, then `BLADE_WAIT` for the blade
+     * they never put away — and the seal itself is `HATCH` of travel. Every one
+     * of those is a bounded number and this is their sum, so a stall stays a
+     * pause and cannot become a hang. */
+    const bound = X.LAST_CALL + X.PULL + X.BLADE_WAIT + X.HATCH + 0.6;
+    assert(waited <= bound,
+      `the ship waited ${waited.toFixed(1)} s against a bound of ${bound.toFixed(1)} — the haul is not bounded`);
     return `an idle commander is hauled aboard after ${waited.toFixed(1)} s and the mode never stalls`;
   });
 
@@ -417,5 +462,282 @@ export async function run({ check, assert }) {
       + `(${(X.SWAP_AT + X.VEIL_HOLD).toFixed(1)}s) — a skipped journey would show the rebuild`);
     const line = full.map(r => `${r.phase} ${r.at.toFixed(1)}–${r.until.toFixed(1)}`).join(' · ');
     return `${total.toFixed(1)} s full, ${X.extractionSeconds({ skip: true }).toFixed(1)} s skipped — ${line}`;
+  });
+
+  /* ══ E — what the player found by riding in it ══════════════════════ */
+
+  check('transport: you WALK aboard — nothing is ever teleported into the bay', async () => {
+    /**
+     * THE PLAYER: "you don't even walk into the ship you touch it and teleport
+     * in I guess? you need to do a lot better."
+     *
+     * They were describing two separate jumps and this measures both.
+     *
+     *   THE ADMISSION was `BOARD_RADIUS = 3.2` — a sphere at the ramp's foot,
+     *     outside the hull. Anything inside it was aboard, so you never entered
+     *     the ship, you brushed a bubble beside it. It is `_inBay` now: a box
+     *     the ship itself publishes.
+     *   THE SEAT was a fixed local offset the body SNAPPED to. `_seat` takes
+     *     where the body already is, in the ship's frame, and eases it to the
+     *     seat over SETTLE seconds.
+     *
+     * Stated as the property that covers both and cannot be satisfied by
+     * either old path: NO BODY MOVES MORE THAN A WALKING PACE IN ONE FRAME,
+     * from the moment the ramp comes out to the moment the bay is sealed.
+     */
+    const { world, input } = await boot('skirmish', 'colosseum');
+    const X = await import('../../src/game/Extraction.js');
+    world._groundPending = 'drifts';
+    const watched = new Map();
+    let worst = 0, who = '', worstPhase = '';
+    const jumps = [];
+    until(world, input, 90, (w, tt) => !w.extraction.active && tt > 1, (w) => {
+      walkToRamp(w);
+      const x = w.extraction;
+      if (!x?.active) return;
+      const phase = x.phase;
+      const watching = phase === 'opening' || phase === 'boarding' || phase === 'sealing';
+      /* THE HISTORY IS DROPPED BETWEEN WATCHED PHASES, and without this the
+       * check manufactures its own defect (HANDOFF §2.4). `opening`/`boarding`/
+       * `sealing` run on BOTH legs with a whole flight and a level change in
+       * between, so a body's last watched position is on the OLD GROUND and the
+       * first frame of the inbound `sealing` reads as a nine-metre jump that
+       * nothing in the game did. */
+      if (!watching) { watched.clear(); return; }
+      const bodies = [...w.players, ...w.enemies.filter((e) => !e.dead && e.team === w.partyTeam)];
+      for (const b of bodies) {
+        if (!b) continue;
+        const prev = watched.get(b);
+        watched.set(b, b.position.clone());
+        if (!prev || !watching) continue;
+        /* A RIDING BODY MOVES WITH THE SHIP, so its world delta is the ship's.
+         * The property is about bodies under their own power, which is every
+         * body on the ground and the ones easing to a seat in the ship's own
+         * frame — both of which `_flyPassengers` leaves stationary in world
+         * terms while the ship is parked. */
+        const d = prev.distanceTo(b.position);
+        if (d > worst) { worst = d; who = b.name || b.type || 'body'; worstPhase = phase; }
+        if (d > 0.35) jumps.push(`${b.name || b.type} ${d.toFixed(2)} m in ${phase}`);
+      }
+    });
+    assert(world.levelKey === 'drifts', `the journey did not finish — still on ${world.levelKey}`);
+    /* 0.35 m IN ONE FRAME is 21 m/s at 60 Hz, which is three times a sprint and
+     * two orders below the three-metre snap the old seat performed. The bound
+     * is a pace and not an epsilon because bodies are also being pushed apart
+     * by the crowd solver while they queue. */
+    assert(!jumps.length,
+      `${jumps.length} body-frames jumped further than a walking pace: ${jumps.slice(0, 4).join('; ')}`);
+    assert(X.BOARD_RADIUS < 2.5,
+      `BOARD_RADIUS is ${X.BOARD_RADIUS} — a door's width, not a bubble you brush`);
+    return `worst single frame ${worst.toFixed(3)} m (${who}, ${worstPhase || 'n/a'}) — nothing snapped`;
+  });
+
+  check('transport: it flies nose-first, and it does not fly through the ground', async () => {
+    /**
+     * TWO OF THE PLAYER'S NOTES, and both were true of every flight.
+     *
+     * "they fly backwards a lot" — every phase set the heading to
+     * `padYaw + PI/2 + PI`, a constant off the bearing the PAD was picked on,
+     * and then moved the hull along `-(cos padYaw, sin padYaw)`. Those are 180°
+     * apart: the ship climbed out and cruised to the next planet tail first.
+     *
+     * "Also the ships fly straight through mountains a lot" — the paths are
+     * lerps between two points chosen for their ground-level geometry and
+     * nothing ever asked what was between them.
+     *
+     * Measured on the real flight, every frame the ship is moving: the angle
+     * between the nose and the velocity, and the height of the hull over the
+     * terrain under it.
+     */
+    const { world, input } = await boot('skirmish', 'colosseum');
+    const X = await import('../../src/game/Extraction.js');
+    world._groundPending = 'drifts';
+    let prev = null, prevPhase = null, worstAngle = 0, backwards = 0, moving = 0;
+    let lowest = Infinity, buried = 0;
+    until(world, input, 90, (w, tt) => !w.extraction.active && tt > 1, (w) => {
+      walkToRamp(w);
+      const x = w.extraction;
+      if (!x?.active || !x.group) { prev = null; return; }
+      const g = x.group;
+      const p = g.position.clone();
+      /* A PHASE BOUNDARY MAY PLACE THE HULL and a placement is not a course.
+       * `_approach` puts the ship 150 m from where the cruise ended, and the
+       * one frame across that jump has a "velocity" of a hundred metres in a
+       * direction the ship never flew. The director resets its own heading
+       * history at exactly the same points (see `_makeShip` and `_approach`),
+       * so this is the check agreeing with the thing it measures rather than
+       * excusing it. */
+      if (x.phase !== prevPhase) { prevPhase = x.phase; prev = p; return; }
+      if (prev) {
+        const vx = p.x - prev.x, vz = p.z - prev.z;
+        const sp = Math.hypot(vx, vz);
+        /* Only while it is actually travelling — a parked ship has no heading
+         * to be wrong about, and the flare has the nose deliberately up. */
+        if (sp > 0.08) {
+          moving++;
+          const nose = Math.atan2(Math.sin(g.rotation.y + Math.PI), Math.cos(g.rotation.y + Math.PI));
+          const course = Math.atan2(vx, vz);
+          let d = Math.abs(((nose - course + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
+          worstAngle = Math.max(worstAngle, d);
+          if (d > Math.PI / 2) backwards++;
+        }
+      }
+      prev = p;
+      /* NEAR ITS OWN PAD THE SHIP IS SUPPOSED TO BE LOW — it is landing on it,
+       * parked on it, or leaving it, and `down` is deliberately 1.15 m off the
+       * deck. `CLEARANCE` is about the ground BETWEEN two pads, which is where
+       * the mountain the player flew through was. 60 m is past the flare and
+       * past the climb-out at both ends. */
+      if (w.terrain && (!x.down || p.distanceTo(x.down) > 60)) {
+        const over = p.y - w.terrain.height(p.x, p.z);
+        lowest = Math.min(lowest, over);
+        if (over < X.CLEARANCE * 0.4) buried++;
+      }
+    });
+    assert(world.levelKey === 'drifts', `the journey did not finish — still on ${world.levelKey}`);
+    assert(moving > 60, `only ${moving} moving frames — the flight is too short to measure`);
+    assert(!backwards,
+      `${backwards} of ${moving} moving frames had the nose more than 90° off the course — that is "they `
+      + 'fly backwards a lot", and it is what `_face` exists to stop');
+    assert(!buried,
+      `${buried} frames en route put the hull within ${(X.CLEARANCE * 0.4).toFixed(0)} m of the terrain `
+      + `under it (lowest ${lowest.toFixed(1)} m) — the ship is flying through the ground`);
+    assert(X.CLEARANCE >= 10, `CLEARANCE is ${X.CLEARANCE} m, which is inside the hull`);
+    return `${moving} moving frames, worst nose-to-course ${(worstAngle * 180 / Math.PI).toFixed(0)}°, `
+      + `lowest ${lowest.toFixed(0)} m over the ground`;
+  });
+
+  check('transport: the bay has an inside, a ramp, two doors and two pilots', async () => {
+    /**
+     * "the transports are closed at the sides, you can't see yourself or your
+     * troops it's completely blocked… You should be able to see the pilots too."
+     *
+     * The old hull could not answer that: `buildGunship`'s troop bay is a 10 cm
+     * dark PLATE between two rails, with no aperture and no volume. This holds
+     * the replacement to having the four things the note asks for, and holds
+     * the bay to being big enough to stand up in — because a bay with 1.1 m of
+     * head clearance is a bay whose "you can either sit or stand" is a lie.
+     */
+    const THREE = await import('three');
+    const { buildTransport } = await import('../../src/game/Vehicles.js');
+    const g = buildTransport();
+    const u = g.userData;
+    assert(u.ramp, 'the transport has no ramp');
+    assert(u.doorL && u.doorR, 'the transport has fewer than two doors');
+    assert(g.getObjectByName('pilotL') && g.getObjectByName('pilotR'), 'nobody is flying it');
+    assert(u.engines.length >= 4, `${u.engines.length} engine anchor(s) — the nacelles carry four nozzles`);
+    const bay = u.bay;
+    assert(bay, 'the transport publishes no bay, so Extraction has nothing to seat anybody in');
+    assert(bay.roof - bay.floor >= 1.9,
+      `the bay is ${(bay.roof - bay.floor).toFixed(2)} m from deck to roof — a trooper cannot stand up in it`);
+    assert(bay.halfW * 2 >= 2.2, `the bay is ${(bay.halfW * 2).toFixed(2)} m wide`);
+    assert(u.seats.length >= 8, `${u.seats.length} places in the bay`);
+    assert(u.seats.some((x) => x.sit) && u.seats.some((x) => !x.sit),
+      'every place in the bay is the same kind — "you can either sit or stand"');
+    /* THE DOORS AND THE RAMP MOVE. They are separate groups precisely so they
+     * can, and a hull that merged them back in would pass every assertion above
+     * and be the closed box the player complained about. */
+    const closed = new THREE.Box3().setFromObject(g).clone();
+    u.ramp.rotation.x = 0.6;
+    u.doorL.position.z = 2.0;
+    u.doorR.position.z = 2.0;
+    g.updateMatrixWorld(true);
+    const open = new THREE.Box3().setFromObject(g);
+    assert(!open.equals(closed), 'moving the ramp and the doors changed nothing — they are baked into the hull');
+    return `bay ${(bay.halfW * 2).toFixed(1)} x ${(bay.roof - bay.floor).toFixed(1)} m, `
+      + `${u.seats.filter((x) => x.sit).length} seated + ${u.seats.filter((x) => !x.sit).length} standing, `
+      + `${u.engines.length} nozzles, ramp and 2 doors that move`;
+  });
+
+  check('insertion: every map opens in a transport, coming down from orbit', async () => {
+    /**
+     * THE PLAYER, TWICE: "You don't start any matches coming in on a transport
+     * ship with your troops, I already told you that you should never just
+     * appear, ON ANY MAP… you look behind the ship flying through space and you
+     * see the capitol ship getting smaller and smaller and the planet getting
+     * larger and larger as you enter the atmosphere and land on your
+     * battlefield. Every mode/map should start like this."
+     *
+     * The extraction answered the journey BETWEEN two grounds. Every mode still
+     * OPENED with the commander standing on the spawn point with the level
+     * already built around them, which is the thing the note is about.
+     *
+     * Four properties, and each is one clause of the note:
+     *   you start ABOARD, not on the ground;
+     *   the capital ship is astern and it RECEDES;
+     *   the atmosphere arrives — the stars go out and the altitude comes off;
+     *   and you end up on the ground the level chose, off a ramp, with your
+     *   line beside you.
+     */
+    const { world, input } = await boot('skirmish', 'geonosis');
+    const X = await import('../../src/game/Extraction.js');
+    const flew = world.extraction.beginInsertion({ name: 'Geonosis' });
+    assert(flew, 'beginInsertion declined on a world that has a player, terrain and no instantSpawn');
+    assert(world.player.riding, 'the commander did not start aboard');
+    /* ONE FRAME FIRST. `riding` is set by `beginInsertion` and the body is
+     * carried to its seat by `_flyPassengers`, which runs inside `World.update`
+     * at the top of the NEXT frame — so reading the position here reads the
+     * spawn point and calls a working sequence broken. The director is right
+     * and the check was early. */
+    world.update(1 / 60, input);
+    const start = world.player.position.clone();
+    const up = start.y - world.terrain.height(start.x, start.z);
+    assert(up > 1000, `the commander opened ${up.toFixed(0)} m up — this is supposed to be orbit`);
+    let capNear = 0, capFar = 0, starsLit = 0, starsOut = 0;
+    const phases = [];
+    until(world, input, 120, (w, tt) => !w.extraction.active && tt > 1, (w) => {
+      const x = w.extraction;
+      if (!x?.active) return;
+      if (phases[phases.length - 1] !== x.phase) phases.push(x.phase);
+      if (x._capital) {
+        const d = x._capital.position.length();
+        if (!capNear) capNear = d;
+        capFar = d;
+      }
+      if (x._stars) (x._stars.material.opacity > 0.5 ? starsLit++ : starsOut++);
+    });
+    assert(phases[0] === 'orbit' && phases[1] === 'entry',
+      `the opening went ${phases.slice(0, 3).join(' → ')} — orbit then entry is the sequence`);
+    assert(phases.includes('opening') && phases.includes('unload'),
+      `no ramp on the far end: ${phases.join(' → ')}`);
+    assert(capFar > capNear * 4,
+      `the capital ship went from ${capNear.toFixed(0)} to ${capFar.toFixed(0)} — "smaller and smaller" `
+      + 'is the shot, and that is not a recession');
+    assert(starsLit > 30 && starsOut > 30,
+      `stars lit on ${starsLit} frames and out on ${starsOut} — the atmosphere has to arrive`);
+    assert(!world.player.riding, 'the commander is still in the bay after the sequence finished');
+    const end = world.player.position;
+    assert(Math.abs(end.y - world.terrain.height(end.x, end.z)) < 2.5,
+      'the commander did not end up standing on the ground');
+    const line = world.enemies.filter((e) => !e.dead && e.team === world.partyTeam).length;
+    assert(line >= 6, `${line} of the line made it onto the ground`);
+    return `${phases.join(' → ')} · capital ${capNear.toFixed(0)}→${capFar.toFixed(0)} m · ${line} of yours on the sand`;
+  });
+
+  check('insertion: it can be skipped, and it still lands you off a ramp', async () => {
+    /**
+     * THE COST OF MEANING IT. "Every mode/map should start like this" is 34 s
+     * of every deploy, and a player restarting a run for the fifth time is
+     * entitled to get on with it. The same key that skips the cruise skips the
+     * orbit — and what it skips is the WAITING, not the arrival: the ship still
+     * flies its descent, still puts its ramp out, and you still walk off it.
+     */
+    const { world, input } = await boot('skirmish', 'geonosis');
+    world.extraction.beginInsertion({});
+    /* Holding the jump key from the first frame, which is the honest shape of
+     * an impatient player. The 1.5 s guard is what stops a keypress left over
+     * from the menu eating the opening. */
+    const held = { ...input, act: (a) => a === 'jump' };
+    let sawOrbit = 0;
+    const t = until(world, held, 120, (w, tt) => !w.extraction.active && tt > 1, (w) => {
+      if (w.extraction?.phase === 'orbit') sawOrbit++;
+    });
+    const log = world.extraction.log.map((e) => e.phase);
+    assert(sawOrbit > 60, 'the orbit was skipped before the player could see it');
+    assert(log.includes('descent') && log.includes('opening') && log.includes('unload'),
+      `a skipped insertion still has to land: ${log.join(' → ')}`);
+    assert(!world.player.riding, 'the commander is still aboard');
+    assert(t < 30, `a skipped insertion took ${t.toFixed(0)} s`);
+    return `skipped in ${t.toFixed(1)} s, still ${log.join(' → ')}`;
   });
 }

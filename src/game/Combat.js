@@ -12,6 +12,10 @@ import * as THREE from 'three';
 import { segmentSegment } from '../physics/Physics.js';
 import { clamp, lerp, smoothstep } from '../engine/MathUtil.js';
 import { segmentCapsule } from './Bolts.js';
+/* MORALE is a leaf table (it imports nothing at all — see its own header), so
+ * this edge cannot be part of a cycle. SCREEN.reach reads `MORALE.NEAR` rather
+ * than repeating it: one radius for "this Jedi is with these men". */
+import { MORALE } from './Morale.js';
 
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _v4 = new THREE.Vector3(), _v5 = new THREE.Vector3(), _v6 = new THREE.Vector3();
@@ -523,9 +527,28 @@ export const OPEN_STATES = [
   { key: 'yanked', label: 'PULLED', colour: '#a9ffd0',
     mul: OPEN_YANK, bigShare: 0.25, test: (e) => e.yankT > 0,
     why: 'dragged off balance — cut now and the pull was one move' },
+  /**
+   * …AND `ragdolled` IS THE THIRD CAUSE OF THE SAME CONDITION, which this row
+   * did not test and which is the largest of the three.
+   *
+   * `toppled` is a walker whose legs went. `stunTimer` is a body standing
+   * still. Neither of them is a body LYING IN THE SAND, and that is the state
+   * a dropped grip, a hurled body and a Force wave all leave behind: `gripped`
+   * false, `toppled` false, `stunTimer` zero, and the whole of `GET_UP` (1.35 s
+   * of lying still) before `recover` fires and stuns it for its 1.1 s beat. For
+   * that window a limp body was priced at 1.00x — the same as one standing in
+   * cover shooting back — while the blade above pays 1.5x for the stun that
+   * follows it.
+   *
+   * That is one condition written down three times and the list was short by
+   * the biggest term. It is also why FLAGSHIP §7's third verb could not reach
+   * a battle: every ROUTE the Force has to putting bodies on the ground ends
+   * in a ragdoll, and the multiplier stopped at the door.
+   */
   { key: 'downed', label: 'DOWNED', colour: '#ffd88a',
-    mul: OPEN_DOWN, bigShare: 1, test: (e) => !!e.toppled || e.stunTimer > 0,
-    why: 'toppled or stunned, and not turning with the blade' },
+    mul: OPEN_DOWN, bigShare: 1,
+    test: (e) => !!e.toppled || e.stunTimer > 0 || !!e.actor?.ragdolled,
+    why: 'toppled, stunned or limp in the sand, and not turning with the blade' },
 ];
 
 /** Which open state a body is in right now, or null. The shared row, not a copy. */
@@ -876,6 +899,11 @@ export function captureSnapshot(bolt, saber, hit) {
     point: new THREE.Vector3().copy(hit.point),
     caught: hit.auto === true || driven,
     auto: hit.auto === true,
+    /* HOW FAR FROM THE CHEST THE SCREEN TOOK IT, in metres, or 0 for every
+     * contact that is not a screen. It is a DISTANCE and not a flag because
+     * the price is a distance (see SCREEN) — a flag would need the geometry
+     * fetched again at billing time, off a body that has moved since. */
+    screen: hit.screen > 0 ? hit.screen : 0,
   };
 }
 
@@ -908,6 +936,214 @@ export function gradeDeflection(bolt, saber, hit, ctx) {
  * forgets a row here is caught by `GRADE_DAMAGE.length === GRADE_NAME.length`.
  */
 export const GRADE_DAMAGE = [1.0, 1.0, 1.5, 2.5];
+
+/**
+ * WHAT ANSWERING A BOLT COSTS THE GUARD — FLAGSHIP §6, and it is the answer to
+ * Jedi-versus-infantry.
+ *
+ * ── THE PROBLEM, MEASURED BEFORE ANY OF THIS EXISTED ────────────────────
+ *
+ * One B1 does 2.17 dps to a moving player: forty-six seconds to kill you.
+ * Wave 20 does 353.8 raw dps: 0.28 seconds. There is no middle, and deflection
+ * is a PERCENTAGE, so it scales the problem instead of solving it — a wall of
+ * fire that 90% deflection turns into a survivable trickle at twenty rifles is
+ * still lethal at two hundred, and the tuning knob has no setting that makes
+ * both interesting.
+ *
+ * So a bolt does not cost the HEALTH. It costs the GUARD.
+ *
+ *   BLOCK    1.2 stamina   the blade was nearly still; you got it in the way
+ *   DEFLECT  0.4           the blade was driven at it
+ *   RETURN   0             you met it properly
+ *   PERFECT  0
+ *
+ * Twenty B1s fire about 18 bolts a second. At 1.2 that is 21.6 stamina/s
+ * against a 16/s regen and a 100 pool — underwater in roughly twelve seconds,
+ * and at zero stamina there is no dash (18), no dive (18) and no sprint. The
+ * crowd does not kill you; it nails your feet to the floor, and then the B2s
+ * do. VOLUME OF FIRE BECOMES TERRAIN: a beaten zone is a place you cannot
+ * stand, which is what a battlefield is.
+ *
+ * Every rung of the ladder is fully answerable by skill — a PERFECT costs
+ * nothing at all, so a good player is never suppressed by fire they can meet —
+ * and it is legible, because the bar it spends is already on the screen.
+ *
+ * ── WHY THE REGEN IS NOT PAUSED, WHICH IS THE WHOLE ARITHMETIC ──────────
+ *
+ * `Player`'s dash, dive and sprint all set `staminaHold`, so the bar stops
+ * refilling for 0.6 s after they are spent. Answering a bolt deliberately does
+ * NOT: the design above is a drain of 21.6/s racing a regen of 16/s, and a
+ * guard cost that also switched the regen off would be 21.6 against nothing —
+ * a bar that empties in under five seconds and can never come back while
+ * anybody is shooting. The margin between the two rates IS the mechanic, and
+ * pausing the regen deletes it.
+ *
+ * ── AND THE FOURTH ROW IS NOT STAMINA AT ALL ────────────────────────────
+ *
+ * A bolt that arrives inside the auto-guard cone off a parked blade was
+ * answered by the SYSTEM and not by the player — `CATCH.autoGuard` exists so
+ * the follow-up shots of a burst you already answered do not kill you while
+ * your wrist is committed. It was free. Free is what makes a stream of fire
+ * answerable by one good deflect and then nothing, which is the failure
+ * `CATCH.autoGuard`'s own comment says the cone must not become.
+ *
+ * It costs FORCE instead of stamina, and that is a different sentence rather
+ * than a smaller number: the cone is the Force keeping you alive while your
+ * hands are busy, so it spends the pool that every other version of that
+ * sentence spends. It also means the two bars drain in different fights — a
+ * player meeting fire head-on spends stamina, a player working through it with
+ * their back half-turned spends Force — and a player with neither left is a
+ * player who has to leave.
+ *
+ * `unanswered` is charged only when the blade was NOT driven at the bolt
+ * (`snap.driven`), so a player who turned and met a bolt the cone happened to
+ * cover pays the ordinary grade for it and not both.
+ */
+export const GUARD_COST = {
+  /** Stamina, indexed by GRADE. Parallel to GRADE_DAMAGE and GRADE_NAME. */
+  stamina: [1.2, 0.4, 0, 0],
+  /** Force, for a bolt the auto-guard cone answered off a blade you did not drive. */
+  unanswered: 0.5,
+};
+
+/**
+ * ── THE SCREEN: THE OTHER HALF OF §6, AND THE ANSWER TO §7's FAILURE ─────
+ *
+ * Everything above prices a bolt that was coming for YOU. `NEXT.md` measures
+ * what that is worth to the line and the answer is nothing: five seeds, four
+ * arms, the outcome IDENTICAL in all of them — same three waves, same area,
+ * the same 37 enemies dead — while a Jedi standing in the formation makes the
+ * fight half again as long and gets seven of your men killed. The fourth arm
+ * settles what the seven are: a Jedi holding station a HUNDRED METRES OFF
+ * costs the line the same 6.33 men, so it is not presence that kills them, it
+ * is a player existing on the field for the horde to walk toward. Standing
+ * with your own line was, on those numbers, strictly worse than fighting away
+ * from it.
+ *
+ * A Jedi in a rank could answer exactly one bolt in the whole battle: the one
+ * aimed at his own chest. The men either side of him were on their own.
+ * **That is the defect.** It is what a Jedi in a line is FOR, it is the picture
+ * every frame of the reference material is made of, and nothing in the tree
+ * implemented it.
+ *
+ * So: a bolt on its way into one of your own men, crossing the ground you are
+ * standing on, inside the arc you can bring a blade through, is a bolt you can
+ * take. FLAGSHIP §8 already has the playstyle — the Sentinel, "guard + bond,
+ * 5-25 m, spends the guard flick, job: TURN" — and this is the mechanic that
+ * playstyle was a description of.
+ *
+ * ── WHY IT IS NOT AN AURA, WHICH IS THE ONE THING IT MUST NOT BE ────────
+ *
+ * Four gates, and a bolt has to pass all four:
+ *
+ *   · it must actually be about to hit one of your men. A bolt that would have
+ *     missed him is not screened, so the mechanic never touches fire that was
+ *     never going to cost anything. This is measured against the body's own
+ *     bolt bound — the same sphere `World._boltHitTest` rejects on — and not
+ *     against a radius round a name.
+ *   · it must cross ground you are standing on, inside `reach`.
+ *   · it must arrive inside the arc a guard covers. You cannot bring a guard
+ *     behind you, and you cannot screen behind you either.
+ *   · YOU MUST BE ABLE TO PAY FOR IT, and the price is by the metre.
+ *
+ * ── THE PRICE IS PER METRE, AND IT IS DERIVED ───────────────────────────
+ *
+ * `GUARD_COST.unanswered` already prices one bolt the Force answered for you
+ * off a blade you never drove, at the auto-guard's own radius of
+ * `CATCH.autoRadius`. A screened bolt is the same event further out — the
+ * Force reaching for something your hands cannot get to — so it is the same
+ * price BY THE METRE and not a new number:
+ *
+ *     perMetre = GUARD_COST.unanswered / CATCH.autoRadius = 0.4 Force / m
+ *
+ * That is the whole economy, and three things fall out of it that a flat price
+ * would not have given:
+ *
+ *   · The man at your shoulder is nearly free and the man at fourteen metres
+ *     costs 5.6. Standing WITH your line is cheaper than gesturing at it from
+ *     the flank, which is precisely the behaviour §7 wants and the `far` arm
+ *     proves the game did not previously reward.
+ *   · Your reach is bought, not granted. `screenReach` is this formula solved
+ *     the other way: the screen is exactly as wide as the Force in the bar,
+ *     capped at `SCREEN.reach`, so it COLLAPSES TOWARD YOU as the bar empties
+ *     and comes back as it refills. Nothing new is on the HUD; the Force bar
+ *     that was already there is the readout.
+ *   · Volume of fire is still terrain. At a 7.5/s regen a player can hold a
+ *     screen over about 1.3 bolts a second at the rim and six at his shoulder,
+ *     and a heavier beaten zone than that empties the bar and shrinks the
+ *     screen to nothing — the same sentence §6 makes about stamina, in the
+ *     other bar.
+ *
+ * ── AND THE REACH IS `MORALE.NEAR`, WHICH IS NOT A NEW NUMBER EITHER ────
+ *
+ * The game already owns a radius for "this Jedi is with these men": it is what
+ * `MORALE.JEDI_NEAR` pays out to and what `CommandDirector` measures presence
+ * on. A screen with its own radius would be the twin this repository keeps
+ * deleting (HANDOFF §2.3) — two numbers for one fact, drifting apart the first
+ * time either is tuned. If a man is near enough for your presence to steady
+ * him, he is near enough for you to take a bolt for him.
+ */
+export const SCREEN = {
+  /** The furthest a full bar can cover, in metres. One radius, not two. */
+  reach: MORALE.NEAR,
+  /** Force per metre of reach, derived above rather than chosen. */
+  perMetre: GUARD_COST.unanswered / CATCH.autoRadius,
+  /**
+   * HOW WIDE OF THE MAN A BOLT MAY BE AND STILL COUNT AS ON ITS WAY INTO HIM.
+   *
+   * Zero: the test is against the body's own measured bolt bound and nothing
+   * is added to it. A margin here would be the aura the gates above exist to
+   * prevent — every near miss in the battle would become a bolt you "saved"
+   * somebody from, and the mechanic would pay for fire that was never going to
+   * land. The bound is already generous in the honest direction: it wraps what
+   * the body actually presents, so a bolt inside it would have hit a bone or
+   * grazed one.
+   */
+  margin: 0,
+};
+
+/** What one screened bolt costs, in Force, taken `dist` metres from the chest. */
+export function screenForce(dist) { return Math.max(0, dist) * SCREEN.perMetre; }
+
+/**
+ * …AND THE SAME RULE READ THE OTHER WAY: how far out this much Force can cover.
+ *
+ * The inverse of `screenForce` and deliberately written as one, so the reach a
+ * player is granted and the price they are charged cannot disagree. A screen
+ * wider than the bar can pay for would refuse bolts at the moment of billing
+ * instead — a rule that fires in one place and is enforced in another, which
+ * is HANDOFF §2.4's defect with the two halves swapped.
+ */
+export function screenReach(force, cap = SCREEN.reach) {
+  return Math.min(cap, Math.max(0, force || 0) / SCREEN.perMetre);
+}
+
+/**
+ * What one bolt costs a fighter, given the grade it was answered at and the
+ * contact that produced it.
+ *
+ * ONE FUNCTION SO THERE IS ONE RULE. The block path and the catch-and-throw
+ * path bill at different moments in the frame — a caught bolt is graded up to
+ * 250 ms after it landed — and two call sites reading the table separately is
+ * two places for a fifth grade or a changed row to be missed.
+ *
+ * @param grade  a value of GRADE
+ * @param snap   the frozen contact (`captureSnapshot`), or null
+ * @returns { stamina, force }
+ */
+export function guardCost(grade, snap = null) {
+  /* A SCREENED BOLT IS PAID FOR IN FORCE AND IN NOTHING ELSE, and that is the
+   * same sentence the `unanswered` row makes rather than a second one: your
+   * blade never met this bolt, the Force did, so the Force pays. Charging the
+   * stamina rung as well would bill one event twice and would make the reach
+   * scale with the wrong bar — a player screening a rank would run out of dash
+   * rather than out of Force, and the readout on the screen would be the one
+   * that is not moving. First, because it is the more specific claim: a
+   * screened bolt can also be one the cone happened to cover. */
+  if (snap && snap.screen > 0) return { stamina: 0, force: screenForce(snap.screen) };
+  if (snap && snap.auto === true && !snap.driven) return { stamina: 0, force: GUARD_COST.unanswered };
+  return { stamina: GUARD_COST.stamina[grade] ?? 0, force: 0 };
+}
 
 export function gradeCaught(snap, ctx) {
   const { bladeT, bladeSpeed, closing, boltDir } = snap;
@@ -1027,12 +1263,41 @@ export function gradeCaught(snap, ctx) {
   return { grade, dir: out, damageMul, target, bladeSpeed, normal: _v4.clone(), bladeT };
 }
 
+/**
+ * WHERE A BODY IS AIMED AT. One reader, for every shooter in the game.
+ *
+ * It lives here because this is the file that already had to answer the
+ * question — `pickReturnTarget` below has asked it since a returned bolt first
+ * needed somewhere to go — and because it is a leaf: THREE, Physics, MathUtil,
+ * Bolts and Morale, none of which reaches back to a shooter.
+ *
+ * `aimPoint` first, because a body that publishes one is a body that has an
+ * opinion about its own centre of mass: `Enemy` walks its rig for a torso bone
+ * and falls back to `chest`, `Player` and a remote player answer with their own
+ * `chest` field, and a driven vehicle answers with the point its gun is laid
+ * on. `chest` second, so that a duck-typed target — the object `Driving.fire`
+ * hands the machine, the fixtures in half the checks — is read the same way.
+ * `position` last, and it is now only ever reached by something with no body
+ * at all: it is at the FEET, and aiming there is the defect this function was
+ * written to end.
+ *
+ * NO DEFAULT `out`. Two shooters resolving their aim in one expression through
+ * a module-scope scratch is the aliasing bug this repository has already paid
+ * for once in `World._bolt4`; the caller owns the vector.
+ */
+export function aimAt(body, out) {
+  if (!body) return null;
+  if (body.aimPoint) return body.aimPoint(out);
+  if (body.chest) return out.copy(body.chest);
+  return body.position ? out.copy(body.position) : null;
+}
+
 /** Nearest valid enemy inside the aim cone. */
 export function pickReturnTarget(origin, aimDir, candidates, cone = 0.42) {
   let best = null, bestScore = -1;
   for (const c of candidates) {
     if (!c || c.dead) continue;
-    const p = c.aimPoint ? c.aimPoint(_v6) : (c.position ? _v6.copy(c.position) : null);
+    const p = aimAt(c, _v6);
     if (!p) continue;
     _v1.subVectors(p, origin);
     const dist = _v1.length();

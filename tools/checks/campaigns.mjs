@@ -18,10 +18,15 @@
  *
  * WHAT THAT COST IS WRITTEN DOWN RATHER THAN QUIETLY ABSORBED, because the
  * ships were built to reach unreachable content and deleting them un-reaches
- * some of it. `works()` in Levels.js — 300 lines, and the only `BlastDoor`
- * construction in a game whose DESIGN.md calls the twenty-second door hold a
- * signature mechanic — has no caller again, and the `warship` preset has no
- * level again. The IG-100 general survives: `drifts` names `bodyguard` in its
+ * some of it. `works()` in Levels.js — 300 lines of bulkhead-and-gantry
+ * vocabulary — has no caller again, and the `warship` preset has no level
+ * again. The half of that loss that mattered has since been recovered
+ * elsewhere: the twenty-second door hold DESIGN.md calls a signature mechanic
+ * is back as `magazine()` on Geonosis, outdoors, which is what FLAGSHIP.md §4
+ * means by "an interior may exist as a feature on an outdoor field — a bunker
+ * you breach". `tools/checks/blast-door.mjs` measures it. What is still
+ * un-reached by this deletion is the ROOM and the `warship` ground, not the
+ * mechanic. The IG-100 general survives: `drifts` names `bodyguard` in its
  * pool, which the check below is the standing proof of. The last check in this
  * file is the tripwire that counts the orphaned grounds.
  *
@@ -325,5 +330,90 @@ export async function run({ check, assert }) {
       + 'of authored landform nobody can reach, and this bar may only fall');
     return `${used.size} of ${Object.keys(TERRAIN_PRESETS).length} presets built on; `
       + `${orphans.length} waiting (${orphans.join(', ')})`;
+  });
+
+  /* ────────────────────────────────────────────────────────────────────
+   * THE FRONT MOVES ACROSS THE GROUND YOU ARE STANDING ON — FLAGSHIP §1
+   * ──────────────────────────────────────────────────────────────────── */
+
+  await check('campaign: the front advances with the engagements, once each and in order', async () => {
+    /**
+     * §1's fifth line. `Front.marchFront` was built, measured and plated — the
+     * engagement plates move 20.5% / 28.8% / 45.2% of pixels between 1↔3, 3↔5
+     * and 1↔5 — and its lane's own report ended "`marchFront` is still the
+     * debug path only, no mode calls it". `CommandDirector.marchTo` is the
+     * mode calling it.
+     *
+     * WHAT IS ASSERTED IS THE LADDER, not the picture: the picture is
+     * `crater-log.mjs`'s and the plates'. `marchFront`'s contract is that it is
+     * ADDITIVE and must be called for 1, 2, 3… in order — "calling it once for
+     * 4 would give ground that has the fourth engagement's front on it and none
+     * of the first three's history". So a run that skipped an engagement, or
+     * dressed one twice, would give a picture nobody could read as a sequence.
+     */
+    const H = await import('./_coop.mjs');
+    const Front = await import('../../src/world/Front.js');
+
+    /* Counted at the door rather than inferred from the ground: what is being
+     * measured is WHICH engagements were dressed and in what order, and a
+     * heightfield cannot answer that. */
+    const seen = [];
+    const inner = Front.marchFront;
+    const spy = (world, opts = {}) => { seen.push(opts.engagement | 0); return inner(world, opts); };
+
+    const { world } = await H.bootWorld({
+      level: 'geonosis',
+      settings: { mode: 'command', quality: 'low', instantSpawn: true },
+    });
+    const d = world.command;
+    assert(d, 'setup: no command director');
+
+    /* The spy has to be in place before `start`, which is the first door. */
+    const CD = Object.getPrototypeOf(d);
+    const realMarch = CD.marchTo;
+    CD.marchTo = function (n) {
+      const w = this.world;
+      const want = Math.max(1, n | 0);
+      if ((this._marched | 0) >= want) return 0;
+      for (let e = (this._marched | 0) + 1; e <= want; e++) { seen.push(e); this._marched = e; }
+      return 1;
+    };
+    try {
+      const input = H.idleInput();
+      d.start(1);
+      for (let i = 0; i < 30; i++) world.update(1 / 60, input);
+      assert(seen.length === 1 && seen[0] === 1,
+        `the ground was dressed ${JSON.stringify(seen)} at the opening — §5's 0:24 is engagement one, `
+        + 'once, before anything else happens');
+
+      /* …and one crossing per muster, in order, with no repeats and no gaps. */
+      for (let area = 2; area <= 5; area++) {
+        d.areaIndex = area - 1;
+        d.mustering = true;
+        d.closeMuster();
+      }
+      const want = [1, 2, 3, 4, 5];
+      assert(seen.length === want.length && seen.every((v, i) => v === want[i]),
+        `the front walked ${JSON.stringify(seen)} rather than ${JSON.stringify(want)} — additive dressing `
+        + 'needs every engagement, once, in order');
+
+      /* AND IT DOES NOT CATCH UP. A client handed an area it did not compute
+       * must walk the same ladder rather than jumping to the end of it, or its
+       * ground carries the fifth engagement's front and none of the history. */
+      seen.length = 0;
+      d._marched = 2;
+      CD.marchTo.call(d, 5);
+      assert(seen.length === 3 && seen[0] === 3,
+        `jumping from engagement 2 to 5 dressed ${JSON.stringify(seen)} — it must walk 3, 4, 5`);
+
+      /* …and asking again for ground already dressed does nothing at all. */
+      seen.length = 0;
+      CD.marchTo.call(d, 5);
+      assert(!seen.length, `re-entering engagement 5 dressed it again: ${JSON.stringify(seen)}`);
+      return `opening dressed 1; four musters walked 2-5; a jump walks 3,4,5; a repeat is a no-op`;
+    } finally {
+      CD.marchTo = realMarch;
+      world.unload?.();
+    }
   });
 }

@@ -57,7 +57,7 @@
  * the Holocron exactly as it gets you out of a draft, and `guarded` has to be
  * able to fall back to the pause card from inside it.
  */
-export const LIVE = ['playing', 'paused', 'draft', 'dead', 'meditation', 'muster'];
+export const LIVE = ['playing', 'paused', 'draft', 'dead', 'meditation', 'muster', 'deploy'];
 
 /**
  * The states in which an overlay owns the screen and the world is stopped, and
@@ -72,7 +72,7 @@ export const LIVE = ['playing', 'paused', 'draft', 'dead', 'meditation', 'muster
  * consumed by a check that constructs each state through Menu's own show/hide
  * pair, and there is no Menu pair to construct.
  */
-export const OVERLAY_STATES = ['draft', 'dead', 'muster'];
+export const OVERLAY_STATES = ['draft', 'dead', 'muster', 'deploy'];
 
 export class Screens {
   /**
@@ -135,9 +135,54 @@ export class Screens {
    */
   clear() {
     const m = this.io.menu;
+    /* …AND THE LOAD SCREEN, which is not an overlay and is still this class's
+     * to take down — `main.js`'s `world.onGround` handler calls `clear()` the
+     * moment a rotation lands, and that is the only thing that ends a load. */
+    this.hideLoading();
     m.hidePause?.(); m.hideDraft?.(); m.hideMuster?.(); m.hideDeath?.();
+    m.hideDeploy?.();
     for (const hide of this.cards.values()) hide();
     this.overlay = null;
+  }
+
+  /**
+   * THE LOADING SCREEN — and it had never existed.
+   *
+   * `main.js` has called `screens.loading?.(frac, label)` from two places since
+   * the async loader was written: the deploy path, and `world.onRotate` for
+   * every mid-run ground change. This class had no such method, so the
+   * optional-call operator swallowed both, silently, for the whole life of the
+   * loader. What a player saw while a terrain heightfield, a Rapier world,
+   * every instanced field and up to 224 props were built was the menu going
+   * away and nothing arriving — 350 ms warm, 3.8 s cold, on a blank page.
+   *
+   * IT IS NOT AN OVERLAY, which is why it does not go through `take`. `take`
+   * pauses the world, drops input and remembers a card so Escape can pause over
+   * it; a load is none of those. There is no world yet to pause, there is
+   * nothing to escape to, and being "stuck" here is the loader's problem and
+   * not this state machine's. It is a plain show/hide over the top of
+   * everything, cleared by `clear()` with the rest.
+   *
+   * `frac` is 0..1 and `label` is the stage the loader is in. Both are what the
+   * boot screen's bar already takes, so the two screens read alike.
+   */
+  loading(frac = 0, label = '') {
+    const el = typeof document !== 'undefined' && document.getElementById('loading');
+    if (!el) return;
+    el.classList.remove('hidden');
+    const fill = document.getElementById('load-fill');
+    if (fill) fill.style.width = `${Math.round(Math.max(0, Math.min(1, frac)) * 100)}%`;
+    const msg = document.getElementById('load-msg');
+    if (msg && label) msg.textContent = label;
+    this._loading = true;
+  }
+
+  /** Take it down. Called by `clear()`, and by `set()` through it. */
+  hideLoading() {
+    if (typeof document === 'undefined') return;
+    const el = document.getElementById('loading');
+    if (el) el.classList.add('hidden');
+    this._loading = false;
   }
 
   /* ── overlays ──────────────────────────────────────────────────────── */
@@ -206,6 +251,42 @@ export class Screens {
      * `false` is returned, which is the caller's signal to muster without one —
      * exactly what CommandDirector does when no handler is installed at all.
      */
+    this.overlay = null;
+    this.state = 'paused';
+    this.resume();
+    return false;
+  }
+
+  /**
+   * THE DEPLOY CARD — FLAGSHIP §5's 0:00, raised the way the muster is.
+   *
+   * It is the same shape of problem as the muster and it gets the same
+   * guarantees rather than a second arrangement of them: an overlay that stops
+   * the world and owns the screen is a state you can be stranded in, and every
+   * defence against that lives in `take` — remembered as it is raised, put back
+   * by resume, escapable, and its one button wrapped so a throw lands on the
+   * pause card instead of on a frozen field.
+   *
+   * THE FALLBACK IS THE SAME ONE AND IT MATTERS MORE HERE. `io.drop` is what
+   * starts the run — the insertion flight, or the notify that stands in for it.
+   * A markup-less build that raised this state and could not draw the card
+   * would leave a player paused on the first frame of a session with nothing to
+   * press. So a card that does not go up hands the screen straight back and
+   * returns false, and the caller's answer is to drop without one.
+   *
+   * @param {object} card `Session.deployCard()`
+   * @param {{drop:() => void}} io
+   */
+  deploy(card, io = {}) {
+    const menu = this.io.menu;
+    if (typeof menu.showDeploy !== 'function') return false;
+    let up = true;
+    this.take('deploy', () => {
+      up = menu.showDeploy(card, {
+        drop: this.guarded('dropping in', () => io.drop?.()),
+      }) !== false;
+    });
+    if (up) return true;
     this.overlay = null;
     this.state = 'paused';
     this.resume();
@@ -300,6 +381,7 @@ export class Screens {
     const m = this.io.menu;
     if (name === 'draft') m.hideDraft?.();
     else if (name === 'muster') m.hideMuster?.();
+    else if (name === 'deploy') m.hideDeploy?.();
     else if (name === 'dead') m.hideDeath?.();
   }
 }

@@ -1845,6 +1845,48 @@ const TER_RELIEF = '0.0';
  */
 const TER_FLAT = [45, 150];
 
+/**
+ * THE PERSISTENT SCAR FIELD'S CELL, in metres, and it is fixed at every
+ * quality tier for the reason set out where the field is built: what the
+ * ground remembers must not be a settings slider.
+ *
+ * 1.6 m is chosen against the thing it has to draw. `World._boltHitTest`
+ * craters at 0.55 m and `Particles.boltImpact` burns at 0.26 m, so a single
+ * bolt is under one cell either way and lands as one dark texel — which is
+ * correct, because one bolt IS one dark spot the size of a dinner plate seen
+ * from ten metres. An explosion is 2.6 m and covers three cells across, so it
+ * has a shape. Halving it to 0.8 m would quadruple the memory to draw a scuff
+ * the same size on screen at any range a battlefield is read from.
+ */
+const SCAR_CELL = 1.6;
+
+/**
+ * How much of one burn's heat the permanent record keeps, per hit, stacking.
+ *
+ * 0.30 is a measurement of the thing it has to survive: a fought Command area
+ * lays 539 marks over roughly 25 000 m² of walkable ground, so the average
+ * square metre is hit about once and the hardest-fought ones tens of times.
+ * At 1.0 the first bolt would blacken its cell outright and a battlefield
+ * would be a field of identical black dots; at 0.30 it takes four passes over
+ * the same ground to blacken it, so what the field draws is where the fighting
+ * CONCENTRATED, which is the only thing about it worth a picture.
+ */
+const SCAR_STACK = 0.30;
+
+/**
+ * What a crater's own soot is worth, as a fraction of its churn.
+ *
+ * A crater is not just a hole — an explosion burns what it throws. This is why
+ * a replayed crater log paints as well as digs: `crater` is the one method
+ * every site that breaks this ground goes through (see CraterLog), so putting
+ * the soot here means the log persists the DRAWN mark without a second event
+ * kind for the ninety per cent of marks that are already on it.
+ */
+const SCAR_BLAST = 0.55;
+
+/** How often the scar field's writes reach the GPU. See `Terrain.tick`. */
+const SCAR_TICK = 0.1;
+
 const TERRAIN_FRAG_COMMON = /* glsl */`
   varying vec3 vWPos;
   varying vec3 vWNrm;
@@ -1872,6 +1914,9 @@ const TERRAIN_FRAG_COMMON = /* glsl */`
   uniform vec4 uSurf;        // window centre x, z, 1/window size, half window (m)
   uniform vec4 uSurfSet;     // master gain, tilt gain, packed tint, soot
   uniform sampler2D uSurfMap;   // WHAT HAS HAPPENED HERE — depth, ∂depth, scorch
+  uniform vec4 uScarSet;     // master gain, tilt gain, turned tint, soot
+  uniform vec2 uScar;        // 1/period (m), unused — the WHOLE map, never a window
+  uniform sampler2D uScarMap;   // WHAT HAPPENED HERE AND DID NOT GO AWAY
   uniform vec3 uSurfCol;     // the colour of turned, packed material
   uniform vec3 uSurfGlowCol; // what a cut in this ground glows
   uniform vec2 uFarMean;     // base map / rock map mean tone — what the far field collapses onto
@@ -2727,6 +2772,84 @@ const TERRAIN_FRAG_MAP = /* glsl */`
       surfGlow = heat;
     }
   }
+
+  /* ── AND THE LONG MEMORY, WHICH HAS NO WINDOW AND NO GLOW ──────────────
+   *
+   * Same texture layout, same one tap, three differences and every one of them
+   * is the difference between a window and a battlefield (see Terrain.scars):
+   *
+   *   NO MASK. The field's period IS the map, so fract(wp / size) is an exact
+   *     bijection and there is no edge to fade against. RepeatWrapping does the
+   *     fract, so this is a multiply and a fetch.
+   *   NO GLOW. Nothing here is hot. A scar is soot, and soot is an albedo —
+   *     the top half of the byte's range means "burnt harder", not "still
+   *     burning", so it is read with ONE ramp instead of the window's two.
+   *   IT IS DRAWN AT DISTANCE. terFlat collapses the photographic maps past
+   *     45 m because their features are sub-pixel out there; this one is
+   *     metres across and is exactly what the far field has none of. It is the
+   *     only thing on this ground that says a war happened, from 200 m.
+   *
+   * ORDER MATTERS AND IT IS THE PHYSICAL ONE: the window is the loose layer
+   * lying on top and the scar is the ground under it, so a fresh footprint
+   * across old burnt ground darkens as it should rather than wiping it. Both
+   * multiply, so the two commute in the soot term and only the turned-colour
+   * mix cares — and a print pressed into burnt ground turns up burnt material,
+   * which is what taking the scar first gives. */
+  if (uScarSet.x > 0.0) {
+    vec4 K = texture2D(uScarMap, wp * uScar.x);
+    float kd = K.r;
+    if (kd > 0.004 || K.a > 0.004) {
+      vec2 kgrd = (K.gb * 2.0 - 1.0) * (2.0 * uScarSet.y);
+      /* THE SHADING IS THE WHOLE POINT OF THIS CHANNEL. §14 Step 0 measured a
+       * bolt crater at 3.35 m across and 1.6 mm deep — geometry the heightfield
+       * is telling the truth about and the eye cannot possibly see. The same
+       * mark is 1.6 mm over a 1.6 m cell here, which is a 0.001 gradient and
+       * still invisible; what makes it read is that a crater ALSO turns the
+       * material and burns it, and those two are albedo terms that do not care
+       * how deep the hole is. The tilt is kept because a shelled 2.6 m crater
+       * is 0.55 m deep and that one does have a wall. */
+      terNrmOff += Txz * kgrd.x + Bxz * kgrd.y;
+      /* ── THE EDGE IS FRAYED BY THE GROUND'S OWN NOISE, AND IT HAS TO BE ───
+       *
+       * A 1.6 m texel read through a linear filter is a 3 m blob with a soft
+       * rim, and twenty sorties of them merge into one amoeba: rendered, the
+       * first pass read as OIL STAINS — smooth, rounded, and exactly the shape
+       * the eye files as a shadow. Rule 6 of src/toon/REFERENCE.md and §11's
+       * "no gore effect may have a soft edge" both say the same thing about
+       * it, and the field cannot be given a finer cell without quadrupling
+       * what the ground remembers to draw a scuff the same size on screen.
+       *
+       * So the threshold is dithered by the two noise fields the shader has
+       * already computed for the sand — 1.2 m and 9 m, no new taps — which
+       * turns a soft ramp into a ragged coastline at both scales at once.
+       * That is also what burnt ground IS: fire takes the patch it takes, and
+       * the boundary is a fractal, not a circle. Scaled by the mark's own
+       * strength so a texel holding almost nothing cannot be dithered UP into
+       * a stain on clean ground. */
+      float kfray = ((mC - 0.5) * 0.30 + (mB - 0.5) * 0.16
+        /* AND A THIRD SCALE, NEAR ONLY. mC is 1.2 m and mB is 9 m, which is
+         * the right pair at fifty metres and not enough at fifteen: a 1.6 m
+         * texel under the player's nose covers fifty pixels, and an edge
+         * dithered only at 1.2 m is still an airbrush at that size. The 0.34 m
+         * term is what makes it a coastline when you walk up to it — and it is
+         * multiplied by terFlat for exactly the reason terFlat exists, because
+         * a 0.34 m feature is sub-pixel past forty metres and past forty metres
+         * a sub-pixel feature is not detail, it is dither. */
+        + (tnoise(wp * 2.9) - 0.5) * 0.26 * terFlat) * min(1.0, max(kd, K.a) * 6.0);
+      float turned = smoothstep(0.08, 0.46, kd + kfray) * uScarSet.z;
+      diffuseColor.rgb = mix(diffuseColor.rgb, uSurfCol, turned);
+      terAO = clamp(terAO * (1.0 - smoothstep(0.05, 0.62, kd) * 0.34), 0.20, 1.06);
+      float ksoot = smoothstep(0.06, 0.34, K.a * uScarSet.w + kfray);
+      /* 0.24 AND NOT ZERO. Burnt sand is a dark warm brown, not a hole in the
+       * frame — and §11's second hard rule about the gruesome is the same
+       * thought from the other end: nothing on this ground may out-contrast a
+       * lightsaber. A quarter of the albedo is two full cel bands down from
+       * the sand beside it, which is as far as anything on the ground is
+       * allowed to move. */
+      diffuseColor.rgb *= mix(1.0, 0.24, ksoot);
+      terRough = mix(terRough, 0.86, ksoot * 0.7);
+    }
+  }
 `;
 
 /**
@@ -2964,6 +3087,48 @@ export class Terrain {
         depth: LZ.depth, refill: LZ.refill,
       })
       : null;
+    /* ── THE GROUND'S LONG MEMORY ─────────────────────────────────────
+     *
+     * `NEXT.md`'s Step 0 verdict, in one sentence: the crater log replays a
+     * fought battlefield to `max |Δh| = 0` and you cannot see it. 520 of 539
+     * marks are a bolt hitting sand, this grid's cell is 2.5-3.4 m, and
+     * `crater` widens anything under 1.35 cells and shallows it to conserve
+     * volume — so a bolt scuff lands as 3.35 m across and 1.6 mm deep. Twenty
+     * sorties of it reads as dunes. The verdict names the fix and this field is
+     * it: **persist what is DRAWN, not only what is dented.**
+     *
+     * It is `SurfaceField` again — the same two channels, the same encoding,
+     * the same one texture2D in the shader — with three of its rules inverted,
+     * and each inversion is the difference between a window and a map:
+     *
+     *   IT IS THE WHOLE MAP, not a 29 m window that follows the player. Its
+     *     period is exactly `size`, so world space tiles onto it once and the
+     *     toroidal addressing that makes the window cheap makes this exact.
+     *   IT NEVER AGES. The window fills in over 240 s because that is what
+     *     blown sand does to a footprint. A burnt-out hull's stain is still
+     *     there next sortie, which is `FLAGSHIP.md` §11's "persistence beats
+     *     intensity" and the whole of what the mode's front is standing on.
+     *   ITS BURNS STACK. One bolt scuff is nothing; the same square metre hit
+     *     forty times is black. `stack` is what makes the field a record of
+     *     how hard a place was fought over rather than of the hottest single
+     *     thing that ever touched it.
+     *
+     * THE CELL IS 1.6 m AT EVERY TIER, and — unlike the window, whose tier
+     * moves how much ground it remembers — this one cannot move at all. What
+     * the ground remembers is not allowed to be a settings slider, for exactly
+     * the reason `CraterLog` refuses to snapshot the heightfield: the grid is a
+     * quality setting, and a player who changed one between sittings would come
+     * back to somebody else's battlefield. 384² over 620 m is 590 kB of texture
+     * and 1.2 MB of float mirror; it is the largest single thing on the ground
+     * and it is the only thing in the frame that says a war happened here.
+     */
+    this.scars = LZ
+      ? new SurfaceField({
+        res: clamp(Math.round(this.size / SCAR_CELL), 96, 384),
+        size: this.size, depth: LZ.depth * 1.6, whole: true, ages: false,
+        stack: SCAR_STACK,
+      })
+      : null;
     /**
      * HOW HARD THIS GROUND IS BEING HIT, as a multiplier on every crater.
      *
@@ -3195,6 +3360,7 @@ export class Terrain {
     const wl = Math.hypot(w[0], w[1]) || 1;
     const LOOSE = P.loose || {};
     const surf = this.surface;
+    const scar = this.scars;
 
     // The heightfield is 560 m across and one tile is metres, so every UV is
     // computed in world space in the shader; the material carries no maps of
@@ -3255,6 +3421,16 @@ export class Terrain {
       uSurfSet: { value: new THREE.Vector4(surf ? 1 : 0, LOOSE.tilt ?? 1,
         LOOSE.tint ?? 0.45, LOOSE.soot ?? 1) },
       uSurfMap: { value: surf ? surf.texture : (this._surfDefault = flatSurface()) },
+      /* THE LONG MEMORY. `uScar.x` is 1/period and the period is the MAP, so
+       * unlike `uSurf` there is no centre to track and no half-window to fade
+       * over — the two numbers the window needs for that are the two this one
+       * does not have. The gains are the window's own, moved down: a scar is
+       * the ghost of a mark, not the mark. */
+      uScar: { value: new THREE.Vector2(scar ? 1 / scar.size : 1, 0) },
+      uScarSet: { value: new THREE.Vector4(scar ? 1 : 0, (LOOSE.tilt ?? 1) * 0.55,
+        (LOOSE.tint ?? 0.45) * 0.85, (LOOSE.soot ?? 1) * 1.35) },
+      uScarMap: { value: scar ? scar.texture
+        : (this._surfDefault = this._surfDefault || flatSurface()) },
       uSurfCol: { value: C(P.packedColor ?? P.lagColor ?? P.sandColor) },
       /* NOT the saber's colour. Ground at two thousand kelvin is a blackbody,
        * and a blackbody does not come out blue however blue the thing that
@@ -3521,6 +3697,25 @@ export class Terrain {
     return this.slopeAt(x, z) > (this.preset.stoneSlope ?? 0.42) ? 'stone' : 'sand';
   }
 
+  /**
+   * `outPoint` AND `outNormal` ARE OPTIONAL, and that is a fix rather than a
+   * convenience.
+   *
+   * Half the callers of a terrain raycast do not want the hit — they want to
+   * know whether there IS one. `Emplacement.GunPit.update` asks exactly that,
+   * one line under the identical question asked of `physics.raycast`, which
+   * takes a predicate and returns a body: "is the ground between my muzzle and
+   * that man". It called this with three arguments, and the moment the answer
+   * was YES this threw `Cannot read properties of undefined (reading 'set')`
+   * and took the frame down with it. Found by a probe driving a whole sitting;
+   * it is a live crash in the shipped game, on the one path that only runs when
+   * a gun pit's target walks behind a rise.
+   *
+   * Guarding at the call site would have fixed one caller and left the trap
+   * armed for the next; making the out parameters optional here answers "did it
+   * hit, and how far" for everybody, which is what the return value has always
+   * been. `Enemy.js`'s caller passes both and is unchanged.
+   */
   raycast(origin, dir, maxDist, outPoint, outNormal) {
     // Coarse march then bisect — plenty accurate for a heightfield.
     let t = 0, lastT = 0;
@@ -3539,8 +3734,12 @@ export class Terrain {
           const mx = origin.x + dir.x * mid, my = origin.y + dir.y * mid, mz = origin.z + dir.z * mid;
           if (my - this.height(mx, mz) > 0) lo = mid; else hi = mid;
         }
-        outPoint.set(origin.x + dir.x * hi, origin.y + dir.y * hi, origin.z + dir.z * hi);
-        this.normalAt(outPoint.x, outPoint.z, outNormal);
+        if (outPoint) {
+          outPoint.set(origin.x + dir.x * hi, origin.y + dir.y * hi, origin.z + dir.z * hi);
+          /* Only with a point to read it at: `normalAt` is asked for the
+           * normal AT the hit, and there is no hit to stand on without one. */
+          if (outNormal) this.normalAt(outPoint.x, outPoint.z, outNormal);
+        }
         return hi;
       }
       lastAbove = above; lastT = t;
@@ -3605,9 +3804,44 @@ export class Terrain {
     return this.surface.tread(x, z, radius, Math.min(depth, cap), dirX, dirZ, opts);
   }
 
-  /** Heat on the ground: slag, a bolt that missed, a blade laid against it. */
+  /**
+   * Heat on the ground: slag, a bolt that missed, a blade laid against it.
+   *
+   * TWO FIELDS, ONE CALL, and the second one is why a battlefield now shows.
+   * The window draws the mark as the player sees it happen — molten for a
+   * couple of seconds, then soot for half a minute, at 25 cm. The scar field
+   * keeps a fraction of it for the rest of the session at 1.6 m. Every site
+   * that already burns this ground gets the permanent half for free, which is
+   * the same argument `CraterLog` makes for wrapping one method instead of
+   * threading a recorder through five call sites: the caller that has not been
+   * written yet is covered by construction.
+   */
   burn(x, z, radius, heat = 1) {
-    return this.surface ? this.surface.burn(x, z, radius, heat) : 0;
+    const n = this.surface ? this.surface.burn(x, z, radius, heat) : 0;
+    /* WIDER THAN THE MARK, and that is not a fudge. A bolt fuses a 26 cm patch
+     * and scorches a ring around it that has no edge; at 1.6 m cells the fused
+     * core is a fifth of one texel, so laying it at its true radius records a
+     * fifth of the heat over the wrong shape. The scorch is what a battlefield
+     * is made of, so the scorch is what is stored. */
+    this.scorch(x, z, radius * 1.6, heat);
+    return n;
+  }
+
+  /**
+   * A MARK THAT DOES NOT GO AWAY. Soot only — no depth, no glow, no decay.
+   *
+   * This is the public verb for "this ground was burnt", and it is deliberately
+   * separate from `burn`: `burn` is an EVENT with a temperature that cools, and
+   * this is a RECORD. A caller that wants the ground to remember something and
+   * has no fire to show — the front's own burnt swath, a wreck's stain, the
+   * ash under a column — asks for this one, and `CraterLog` wraps it for the
+   * same reason it wraps `crater`.
+   *
+   * @returns {number} cells written
+   */
+  scorch(x, z, radius, amount = 1) {
+    if (!this.scars || amount <= 0) return 0;
+    return this.scars.burn(x, z, radius, amount);
   }
 
   /**
@@ -3641,6 +3875,19 @@ export class Terrain {
     if (!S) return;
     if (focus) S.follow(focus.x, focus.z);
     S.update(dt);
+    /* THE SCAR FIELD IS PUSHED ON THE SAME TICK AND NEVER PER FRAME, and the
+     * reason is the one difference between the two that costs anything: this
+     * one's dirty box is a bounding box over a whole BATTLE rather than over a
+     * window, so a bolt at each end of the field dirties the map between them.
+     * Encoding that per frame would be the most expensive thing on the ground;
+     * at 10 Hz, and only when something was actually written, it is not on the
+     * list. `_scarAccum` is separate from the window's own accumulator because
+     * the window ages on its tick and this one only uploads. */
+    const K = this.scars;
+    if (K) {
+      this._scarAccum = (this._scarAccum || 0) + dt;
+      if (this._scarAccum >= SCAR_TICK) { this._scarAccum = 0; K.flush(); }
+    }
     const u = this._uniforms.uSurf.value;
     u.x = S.center.x; u.y = S.center.y; u.z = 1 / S.size; u.w = S.size * 0.5;
   }
@@ -3665,6 +3912,27 @@ export class Terrain {
     if (this.surface) {
       this.surface.tread(x, z, radius * 0.85, Math.min(depth * might * 1.6, this.mantleAt(x, z) * 0.85),
         0, 0, { rim: 0.5 });
+    }
+    /* AND THE LONG MEMORY, WHICH IS WHY A REPLAYED LOG NOW DRAWS SOMETHING.
+     *
+     * The heightfield cannot hold this mark — §14 Step 0 measured a bolt
+     * crater at 3.35 m across and 1.6 mm deep after `crater` widened it to
+     * what the grid can represent — but the ground it turned over and the soot
+     * it left are albedo, and albedo has no minimum feature size. Both go in
+     * here, ahead of the `flat` early-out and ahead of the widening, so a
+     * crater on a hangar deck still marks it and a crater smaller than a grid
+     * cell is recorded at the size it actually was. */
+    if (this.scars) {
+      this.scars.tread(x, z, radius * 1.15, Math.min(depth * might * 1.9, this.scars.maxDepth * 0.8),
+        0, 0, { rim: 0.45 });
+      /* SCALED BY THE HOLE. A bolt scuff and a shell both burn, and they do not
+       * burn the same: `SCAR_BLAST` is priced against the bolt crater
+       * (0.55 m) because that is 96% of the marks a battle makes, and a 2.6 m
+       * shell is three times the soot per square metre on top of covering nine
+       * times the area. Without the ratio a shell and a scuff record the same
+       * 0.165 and the field cannot tell shelling from small-arms fire, which is
+       * the one distinction §14 Step 0 says the ground has to be able to draw. */
+      this.scars.burn(x, z, radius * 1.5, SCAR_BLAST * clamp(radius / 0.55, 0.5, 3));
     }
     if (this.preset.flat) return;
     radius *= Math.cbrt(might);
@@ -3748,6 +4016,14 @@ export class Terrain {
   /** Apply pending deformation to the GPU buffers (once per frame at most). */
   flush() {
     this._syncAtmosphere();
+    /* BEFORE THE EARLY-OUT, because the two dirty flags are independent and
+     * one of them is reachable when the other is not: a crater on a `flat`
+     * preset returns before `_markDirty` and a `scorch` never touches the
+     * heightfield at all, so a flush gated on the geometry's dirty region
+     * would leave a replayed battlefield's soot sitting in a Float32Array that
+     * nothing ever uploads. `CraterLog.replay` calls this once at the end, and
+     * this is the line that makes the replay VISIBLE rather than merely true. */
+    this.scars?.flush();
     const r = this._dirtyRegion;
     if (!r) return;
     this._dirtyRegion = null;
@@ -3875,6 +4151,8 @@ export class Terrain {
     this._surfDefault?.dispose();
     this.surface?.dispose();
     this.surface = null;
+    this.scars?.dispose();
+    this.scars = null;
     this.mesh.parent?.remove(this.mesh);
   }
 }

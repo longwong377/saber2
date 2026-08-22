@@ -52,7 +52,14 @@ function stubWorld() {
   };
 }
 
-function stubInput() {
+/**
+ * `oneHand` HOLDS THE ONE-HAND KEY. There is no other way to ask for one hand:
+ * `Player.handsOnHilt` reads the body, and `grip2` is what a player presses.
+ * The `fpHands` option that used to stand in for it is gone, and it was never
+ * the same thing — it moved the ARMS and left the blade on `GRIPS.two`, so
+ * every bench that reached for it measured a guard nobody can hold.
+ */
+function stubInput(oneHand = false) {
   const keys = new Set();
   return {
     keys, buttons: [false, false, false],
@@ -62,7 +69,9 @@ function stubInput() {
       out.y = (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0);
       return out;
     },
-    act: (id) => (id === 'blade' ? true : id === 'sprint' ? keys.has('ShiftLeft') : false),
+    act: (id) => (id === 'blade' ? true
+      : id === 'grip2' ? oneHand
+        : id === 'sprint' ? keys.has('ShiftLeft') : false),
     actHit: () => false,
   };
 }
@@ -601,43 +610,115 @@ export async function run({ check, assert }) {
     //     minimal swing onto the bone     9912         (degenerate at a 176° wrist)
     //     aimY on the rest frame's X      5496         (degenerate on some frames)
     //
-    // THE WRIST IS STILL 140 DEGREES FROM REST, and that is the other half. It
-    // is not roll any more, it is BEND: the angle between the forearm's
-    // direction — which solveIK picks purely from where the grip POINT is — and
-    // the hilt's axis. No amount of forearm twist can change it. Fixing it means
-    // the CONTROLLER placing the hands where a wrist could actually hold that
-    // blade, which is a change to SaberController's guard model, not to the rig.
-    // 80 degrees of bend and 30 of roll is what a wrist does; this still is not
-    // that, and the ceiling below carries the number forward until it is.
-    const world = stubWorld();
-    const p = new Player(world, { isLocal: true });
-    const input = stubInput();
-    const ctx = { input, terrain: null, physics: null, particles: null,
-      camera: world.engine.camera, time: 0, groundColor: 0 };
-    p.saber.ignite(); p.saber.ignition = 1;
-    input.buttons[0] = true;
-    let worstWrist = 0, worstFore = 0;
-    let prev = null;
-    const qf = new THREE.Quaternion();
-    for (let i = 0; i < 260; i++) {
-      ctx.time = world.time = i / 60;
-      input.mouse.dx = Math.cos(i / 22) * -34;
-      input.mouse.dy = Math.sin(i / 22) * -22;
-      p.update(1 / 60, ctx);
-      if (i < 90) continue;
-      const b = p.rig.get('handR');
-      worstWrist = Math.max(worstWrist, b.obj.quaternion.angleTo(b.restQuat));
-      p.rig.worldQuat('foreR', qf);
-      if (prev) worstFore = Math.max(worstFore, qf.angleTo(prev));
-      prev = qf.clone();
-    }
+    // THE BEND IS THE OTHER HALF AND IT IS NOW MOSTLY FIXED — by the ELBOW, of
+    // all things, which is not where either this note or `_rollForearm`'s
+    // expected to find it. Both said the cure had to be the CONTROLLER putting
+    // the hands somewhere a wrist could hold that blade. It was not: once the
+    // shoulder and the wrist are both fixed by the hilt, a two-bone solve still
+    // has exactly ONE free parameter — the elbow's swivel about the line
+    // between them — and the pole that chose it was built entirely out of where
+    // the hand sits relative to the CHEST, with nothing in it about the wrist.
+    // `Player._wristPole` bends that pole toward the elbow a straight wrist
+    // implies, capped by `ELBOW.swivel` and rate-limited by `ELBOW.rate`, and
+    // both of those numbers are the output of `tools/_wristsweep.mjs`:
+    //
+    //                          worst         median       forearm
+    //     third, two hands  114.4 → 89.4   83.6 → 36.7   2487 → 2476 deg/s
+    //     third, one hand   107.8 → 79.0   62.8 → 14.7   1221 → 1112
+    //     first, two hands  131.1 → 115.1  88.6 → 65.8   1099 → 1605
+    //     first, one hand   112.0 → 102.3  83.4 → 76.7   2747 → 2429
+    //
+    // Nothing the player has approved moves: the hand does not move, the hilt
+    // does not move and the blade's envelope does not move. Only the elbow
+    // does, and it moves to where a real elbow goes, since in a real arm the
+    // elbow's swivel IS driven by the hand's orientation.
+    //
+    // WHAT IS LEFT IS GEOMETRY AND IS MEASURED AS SUCH. `handPoseOnHilt` pins
+    // the hand's long axis exactly perpendicular to the blade — 90.0 degrees on
+    // every frame of every bench — so the smallest wrist ANY elbow can reach is
+    // |90 - theta|, theta being the angle between the forearm and the blade.
+    // The worst frame here is theta = 3.1 degrees: the guard lying along the
+    // arm, which is a thrust, and no hammer grip points down its own forearm.
+    // So 89.4 is that frame's floor and not slack. A real wrist reaches about
+    // 80 degrees of flexion and 70 of extension and WORKS in half of that; the
+    // median is inside the working arc now and the worst is at the anatomical
+    // end of the range. The ceiling below is ratcheted to it.
+    //
+    // The attractive wrong answer — that the tunnel a fist makes is oblique, so
+    // tilting GRIP_BORE's axis 25-35 degrees would move the floor — is refuted
+    // by `tools/_bore.mjs` against buildHand's own fingers: 2.9 degrees.
+    //
+    // ── AND IT IS RATCHETED ON FOUR ARMS, NOT ONE ─────────────────────────
+    //
+    // This bench ran one condition — third person, both hands — for its whole
+    // life, and the other three were not merely unratcheted, they were
+    // unreachable: the only way anything asked for one hand was an `fpHands`
+    // option that moved the arms and left the blade's grip model alone. So the
+    // first time a bench actually held the one-hand key, first person read
+    // 167.6° and 3002°/s, both past the bounds below, and had been shipping
+    // that way. `FP_TUNE.roll` is a pair now (see Player.js) and the four
+    // conditions come out:
+    //
+    //                              worst   median   forearm °/s
+    //     third person, two hands   89.4    36.7      2476
+    //     third person, one hand    79.0    14.7      1112
+    //     first person, two hands  115.1    65.8      1605
+    //     first person, one hand   102.3    76.7      2429
+    //
+    // The bounds are each condition's own measurement with the margin this
+    // check has always carried — about 6% on the wrist (95 against 89.4) and
+    // 9% on the forearm (2700 against 2476) — rather than one number that
+    // would be slack for two of the four and unreachable for the others.
+    // FIRST PERSON IS THE WORST ARM IN THE TABLE and that is geometry rather
+    // than a defect left standing: the hilt is held out in the eyeline, the arm
+    // is nearly straight, and a straight arm's elbow swivel cone collapses, so
+    // `_wristPole` has almost nothing to bend. One hand is the strongest lever
+    // available on it and it is worth 115.1 → 102.3 on the worst frame while
+    // the MEDIAN goes the other way, 65.8 → 76.7. It does not close the gap.
     const D = 180 / Math.PI;
-    assert(worstWrist * D < 145,
-      `the wrist reaches ${(worstWrist * D).toFixed(1)}° from rest — worse than the 140.0° the solved grip achieves`);
-    assert(worstFore * D * 60 < 2700,
-      `the forearm turns at ${(worstFore * D * 60).toFixed(0)}°/s — worse than the 2548°/s the solved grip achieves`);
-    return `wrist reaches ${(worstWrist * D).toFixed(1)}° from rest, down from 179.7 — the BEND is still unfixed, `
-      + `see SaberController; forearm peaks at ${(worstFore * D * 60).toFixed(0)}°/s, down from 7052`;
+    const rows = [];
+    for (const [name, firstPerson, oneHand, wristMax, foreMax] of [
+      ['third person, two hands', false, false, 95, 2700],
+      ['third person, one hand', false, true, 84, 1250],
+      ['first person, two hands', true, false, 122, 1800],
+      ['first person, one hand', true, true, 109, 2700],
+    ]) {
+      const world = stubWorld();
+      const p = new Player(world, { isLocal: true });
+      if (firstPerson) { p.camera.firstPerson = true; p._applyViewMode(); }
+      const input = stubInput(oneHand);
+      const ctx = { input, terrain: null, physics: null, particles: null,
+        camera: world.engine.camera, time: 0, groundColor: 0 };
+      p.saber.ignite(); p.saber.ignition = 1;
+      input.buttons[0] = true;
+      let worstWrist = 0, worstFore = 0, hands = 0;
+      let prev = null;
+      const qf = new THREE.Quaternion();
+      for (let i = 0; i < 260; i++) {
+        ctx.time = world.time = i / 60;
+        input.mouse.dx = Math.cos(i / 22) * -34;
+        input.mouse.dy = Math.sin(i / 22) * -22;
+        p.update(1 / 60, ctx);
+        if (i < 90) continue;
+        hands = Math.max(hands, p.handsOnHilt());
+        const b = p.rig.get('handR');
+        worstWrist = Math.max(worstWrist, b.obj.quaternion.angleTo(b.restQuat));
+        p.rig.worldQuat('foreR', qf);
+        if (prev) worstFore = Math.max(worstFore, qf.angleTo(prev));
+        prev = qf.clone();
+      }
+      // …and the run says which arm it measured, or a column can quietly be
+      // the wrong one — the whole reason the one-handed grip went unmeasured.
+      assert(hands === (oneHand ? 1 : 2),
+        `${name}: the bench meant ${oneHand ? 1 : 2} hands on the hilt and the body read ${hands}`);
+      assert(worstWrist * D < wristMax,
+        `${name}: the wrist reaches ${(worstWrist * D).toFixed(1)}° from rest against a ${wristMax}° bound — `
+        + 'past what a wrist can do at all');
+      assert(worstFore * D * 60 < foreMax,
+        `${name}: the forearm turns at ${(worstFore * D * 60).toFixed(0)}°/s against a ${foreMax}°/s bound`);
+      rows.push(`${name} ${(worstWrist * D).toFixed(1)}° / ${(worstFore * D * 60).toFixed(0)}°/s`);
+    }
+    return `${rows.join(', ')} — the first was 179.7° and 7052°/s`;
   });
 
   /* ══════════════════════════════════════════════════════════════════ */

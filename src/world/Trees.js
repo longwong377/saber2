@@ -85,6 +85,49 @@ const F = {
 };
 export const STANDING = 0, FALLING = 1, DOWN = 2;
 
+/**
+ * THE TRUNK'S OWN SHAPE, as two numbers the colliders share with the drawing.
+ *
+ * `TAPER` is the radius at the top as a fraction of the butt, and it is the
+ * same 0.52 `taperedGeo` is called with in `plant()` — one number for what a
+ * trunk looks like and what it feels like, rather than a copy in each.
+ *
+ * `SQUARE_FIT` is why a box round a round trunk is not the trunk's radius: a
+ * square whose half-width is r circumscribes the circle by 41% at the corners,
+ * so a player brushing past the corner of a box catches on nothing. 0.82 is
+ * what `_standBox` has always used and its note is the long form.
+ */
+/**
+ * HOW MUCH OF A TRUNK HAS TO BE LEFT BEFORE THE STUMP IS AN OBSTACLE, in
+ * metres. Below this it is a kerb: `STEP_UP` is 0.45, so anything under about
+ * half a metre is something a body walks over without noticing and a collider
+ * there would be a trip hazard nobody can see. Above it, it is a post — and a
+ * cut taken high up a big trunk can legally leave twenty-three metres of one.
+ */
+const STUMP_SOLID = 0.55;
+
+const TAPER = 0.52;
+const SQUARE_FIT = 0.82;
+
+/**
+ * HOW HIGH A FELLED TRUNK YOU CAN CLIMB OVER, in metres — and the whole of
+ * the second half of the invisible-wall report.
+ *
+ * Measured on the wood's own 1,800 trees: butt radius p50 0.27 m, p90 0.45,
+ * max 0.63 — so a felled trunk stands 0.55 m off the ground at the median and
+ * 1.26 at the very largest. `STEP_UP` is 0.45. HALF THE TIMBER IN THIS WOOD IS
+ * A WALL BY TEN CENTIMETRES, and the player's own reading of that is the right
+ * one: you cut trees down and the ground fills with barriers you cannot see a
+ * reason for.
+ *
+ * 1.35 clears every tree the generator can make, with room for one lying on a
+ * rise. It is not a general climb: it rides on the LOG boxes only, so nothing
+ * about a wall, a crate or a standing trunk changes — and `Player._collide`
+ * takes it at a bounded rate rather than in one frame, so it reads as
+ * clambering over a log rather than as being teleported on top of one.
+ */
+export const CLIMB_LOG = 1.35;
+
 /** Gravity, as the falling-chimney model uses it. */
 const G = 9.81;
 /** How far past horizontal a trunk swings before it is called down. */
@@ -265,6 +308,14 @@ export class Forest {
     this.down = new Set();
     /** Down trees that have become real liftable objects: index → { prop, box }. */
     this.real = new Map();
+    /**
+     * Down trees that are IN the hill rather than lying on it, and so are
+     * never handed to the solver. See `_realise`: the fall is a hinge that
+     * does not know about the ground, and a dynamic body born inside a
+     * heightfield is the one thing Rapier cannot resolve. A tree's down pose
+     * does not change again once it has landed, so this is decided once.
+     */
+    this._sunk = new Set();
     /** Standing trunks that currently have a collider: index → static box. */
     this.live = new Map();
     /** Standing trunks by grid cell, so the ring is a lookup and not a scan. */
@@ -438,7 +489,22 @@ export class Forest {
     return (Math.floor(x / CELL) + 4096) * 8192 + (Math.floor(z / CELL) + 4096);
   }
 
-  /** Standing trees within `r` of (x, z), into `out`. */
+  /**
+   * Standing trees within `r` of (x, z) — AND THE STUMPS OF FELLED ONES.
+   *
+   * `NEXT.md` had the second half written down as an open item: "A stump gets a
+   * drawn instance and never a collider, so a lopped tree can leave a 20 m spar
+   * you walk through." Measured on the wood before this line existed: a 25.1 m
+   * trunk cut at 23.1 m — `fell` clamps the cut at 92% of the height, so that
+   * is a legal and ordinary cut — left a 23.1 m spar drawn, standing, and
+   * completely intangible. The player walked from three metres short of it to
+   * 14.4 m past its axis without touching anything.
+   *
+   * The cause is one word: this gathered `STATE !== STANDING` and returned, and
+   * a felled tree is `DOWN` from the moment it starts to topple — including the
+   * part of it that never went anywhere. `STUMP_SOLID` is the height at which
+   * what is left is an obstacle rather than a kerb.
+   */
   _gatherRing(x, z, r, out) {
     const D = this.data;
     const i0 = Math.floor((x - r) / CELL), i1 = Math.floor((x + r) / CELL);
@@ -450,7 +516,8 @@ export class Forest {
         if (!cell) continue;
         for (const i of cell) {
           const k = i * F.N;
-          if (D[k + F.STATE] !== STANDING) continue;
+          const standing = D[k + F.STATE] === STANDING;
+          if (!standing && !(D[k + F.STATE] === DOWN && D[k + F.CUT] >= STUMP_SOLID)) continue;
           const dx = D[k + F.X] - x, dz = D[k + F.Z] - z;
           if (dx * dx + dz * dz <= r2) out.add(i);
         }
@@ -463,16 +530,27 @@ export class Forest {
     const D = this.data, k = i * F.N;
     const phys = this.world.physics;
     if (!phys || !phys.addStaticBox) return null;
-    const hh = Math.min(D[k + F.H], COLLIDER_H) * 0.5;
+    /* A FELLED TREE'S BOX IS ITS STUMP, not its old height: the trunk above the
+     * cut is lying somewhere else and has colliders of its own (`_layLog`).
+     * See `_gatherRing` for the 23.1 m spar that made this necessary. */
+    const stump = D[k + F.STATE] !== STANDING;
+    const tall = stump ? D[k + F.CUT] : Math.min(D[k + F.H], COLLIDER_H);
+    const hh = tall * 0.5;
     /* 0.82 of the butt radius, not 1.0: the drawn trunk is a six-sided lathe
      * tapering to 0.52 r at the top, and a square whose half-width is the butt
      * radius circumscribes it by 41% at the corners — which is the difference
      * between a trunk you brush past and one you catch on nothing. */
-    const w = Math.max(0.12, D[k + F.R] * 0.82);
+    const w = Math.max(0.12, D[k + F.R] * SQUARE_FIT);
     return phys.addStaticBox(
       new THREE.Vector3(D[k + F.X], D[k + F.Y] + hh, D[k + F.Z]),
       new THREE.Vector3(w, hh, w), undefined,
-      { friction: 0.9, userData: { tree: i, forest: this } });
+      /* A SHORT STUMP IS SOMETHING YOU STEP OVER, on the same rule a felled log
+       * carries — see CLIMB_LOG and `Support.js`. A tall one is a post and gets
+       * no `climb`, because clambering up a twenty-metre spar is not a thing a
+       * man does by walking into it. */
+      { friction: 0.9,
+        userData: { tree: i, forest: this, stump,
+          climb: stump && tall <= CLIMB_LOG ? CLIMB_LOG : undefined } });
   }
 
   /** Bring the live set into line with where the bodies are. */
@@ -490,7 +568,13 @@ export class Forest {
       }
     }
     for (const [i, box] of this.live) {
-      if (want.has(i)) continue;
+      /* A TREE THAT HAS BEEN FELLED SINCE ITS BOX WAS BUILT NEEDS A NEW ONE.
+       * The box is the whole trunk while it stands and the stump once it is
+       * down — see `_standBox` — and `want` holds the index in both cases, so
+       * without this test the collider a tree had while standing survives the
+       * felling and the invisible wall is back, twenty-five metres of it. */
+      const stump = this.data[i * F.N + F.STATE] !== STANDING;
+      if (want.has(i) && !!box.userData?.stump === stump) continue;
       phys.removeStaticBox(box);
       this.live.delete(i);
     }
@@ -573,12 +657,46 @@ export class Forest {
     const boxes = [];
     let runFrom = -1;
     const mid = new THREE.Vector3();
+    /**
+     * THE COLLIDER IS THE SHAPE OF THE WOOD, and it was not.
+     *
+     * `new Vector3(r, r, span/2)` is a square-section beam of the BUTT radius
+     * running the whole length of a trunk that is drawn as a six-sided lathe
+     * tapering to 0.52 r — so the box was too big at both ends of that
+     * sentence. At the tip it is 1.9× the drawn wood, and at every point along
+     * it the square circumscribes the round section by 41% at the corners.
+     * `_standBox` had already worked this out for the standing trunks and took
+     * 0.82 of the radius for exactly this reason; the log did not get the same
+     * treatment, so a felled tree claimed a corridor of ground half a metre
+     * wider than the log you can see lying in it, along twelve to twenty-six
+     * metres, and every one of those metres is the player's own sentence: "the
+     * forest map still has a shit ton of invisible walls blocking you, I think
+     * maybe only when you cut trees down".
+     *
+     * Each RUN takes the radius at its own midpoint, so the collider narrows
+     * with the trunk instead of carrying the butt all the way to the top.
+     */
+    const radiusAt = (t) => r * (1 - t * (1 - TAPER)) * SQUARE_FIT;
     const lay = (t0, t1) => {
       const span = (t1 - t0) * len;
       if (span < 0.4) return;                    // shorter than the log is thick
       mid.lerpVectors(a, b, (t0 + t1) * 0.5);
-      const box = phys.addStaticBox(mid.clone(), new THREE.Vector3(r, r, span * 0.5), q,
-        { friction: 0.86, userData: { log: i, forest: this } });
+      const rr = radiusAt((t0 + t1) * 0.5);
+      const box = phys.addStaticBox(mid.clone(), new THREE.Vector3(rr, rr, span * 0.5), q,
+        { friction: 0.86,
+          /**
+           * …AND A LOG IS SOMETHING YOU CLIMB OVER. See CLIMB_LOG.
+           *
+           * The other half of the same report, and the half the numbers make
+           * unarguable: `STEP_UP` is 0.45 m and the MEDIAN tree in this wood is
+           * 0.27 m in the radius, so the median felled trunk stands 0.55 m off
+           * the ground and every movement solver in the game calls it a wall by
+           * ten centimetres. Fell forty trees and the ground you are fighting
+           * on is fenced by knee-high timber you cannot cross — invisible in
+           * the sense that matters, which is that you cannot see any reason for
+           * it. `Support.js` reads this number per box.
+           */
+          userData: { log: i, forest: this, climb: CLIMB_LOG } });
       if (box) boxes.push(box);
     };
     for (let s = 0; s < n; s++) {
@@ -588,7 +706,7 @@ export class Forest {
         mid.lerpVectors(a, b, (t0 + t1) * 0.5);
         // the TOP of the log against the ground: buried is buried, and a trunk
         // half in the mud is still something you climb over.
-        showing = mid.y + r > T.height(mid.x, mid.z) + 0.05;
+        showing = mid.y + radiusAt((t0 + t1) * 0.5) > T.height(mid.x, mid.z) + 0.05;
       }
       if (showing && runFrom < 0) runFrom = t0;
       if (!showing && runFrom >= 0) { lay(runFrom, t0); runFrom = -1; }
@@ -647,7 +765,7 @@ export class Forest {
     // second and the answer is forty indices out of eighteen hundred.
     for (const i of this.down) {
       if (this.real.size >= LIFT_CAP) break;
-      if (this.real.has(i)) continue;
+      if (this.real.has(i) || this._sunk.has(i)) continue;
       const k = i * F.N;
       for (const p of players) {
         const dx = p.position.x - D[k + F.X], dz = p.position.z - D[k + F.Z];
@@ -664,6 +782,66 @@ export class Forest {
     this.hinge(i, _v1);
     this.tip(i, _v2);
     const mid = _v3.copy(_v1).add(_v2).multiplyScalar(0.5).clone();
+    /**
+     * ── A LOG MAY NOT BE HANDED TO THE SOLVER INSIDE THE HILL ───────────
+     *
+     * The fall is a hinge and it does not know about the ground. `update`
+     * integrates θ̈ = 3g/2L·sin θ to horizontal about a pivot at the CUT FACE,
+     * so a trunk comes to rest at the height of its own stump however the
+     * ground runs away underneath it. `_layLog`'s note has the consequence
+     * already measured — "34 of the 83 had some part of themselves buried and
+     * one was 90% of the way into a hillside, 13.2 m under at the deep end" —
+     * and takes the right precaution for a STATIC box: it lays none along the
+     * stretches that are buried.
+     *
+     * A Prop is not a static box. This method built a DYNAMIC body at exactly
+     * that pose — `centre: true` tells `seatOnGround` to leave the position
+     * alone and the line under the constructor copies `mid` back over it — so
+     * a trunk lying in a bank was a rigid body born inside a heightfield.
+     * Rapier pushes a shallow one out and cannot resolve a deep one at all.
+     * NEXT.md's open finding is the two ends of that: "four had surfaces under
+     * the terrain and one had fallen to −179 m", and −179 is one metre off
+     * `RapierWorld.killY`. Measured on the wood with `tools/_logsink.mjs`,
+     * forty trees felled round a standing player: one of the nine logs
+     * realised was born 0.63 m inside the ground and sank a further 0.56 m
+     * rather than being pushed out of it.
+     *
+     * A log that reaches the kill plane is the expensive end. It is removed
+     * from the physics world and keeps its Prop and its mesh; it is 180 m from
+     * `home`, so `_syncLogs` marks it `moved` and then reads its x/z off the
+     * body — which have barely changed — so it is never far enough away to be
+     * released either. The tree is gone from the wood for the rest of the
+     * level, its instance collapsed to zero scale by the lines below, and one
+     * of the nine `LIFT_CAP` slots is gone with it.
+     *
+     * So the body is born ON the ground: lifted by the deepest its own
+     * underside goes below the terrain along its length, after which it falls
+     * the last few centimetres and lies on the slope, which is what a felled
+     * tree does. `CLIMB_LOG` bounds the lift because that is the height at
+     * which this file already says a log stops being something a body steps
+     * over — a trunk deeper than that is not lying on the hill, it is in it,
+     * and there is nothing there to pick up. Those stay pictures, with
+     * `_layLog`'s partial colliders, which were always right about them.
+     *
+     * AND THE LIFT IS KEPT. `_release` writes a `moved` log's pose back into
+     * the record, so the correction survives the player walking away instead
+     * of the log sinking back into the bank the moment it stops being real.
+     * Without that the same trunk pops up and down every time you cross its
+     * ring.
+     */
+    let lifted = 0;
+    if (this.world.terrain) {
+      const T = this.world.terrain;
+      const probe = new THREE.Vector3();
+      const SAMPLES = 8;
+      for (let s = 0; s <= SAMPLES; s++) {
+        probe.lerpVectors(_v1, _v2, s / SAMPLES);
+        const under = T.height(probe.x, probe.z) - (probe.y - r);
+        if (under > lifted) lifted = under;
+      }
+      if (lifted > CLIMB_LOG) { this._sunk.add(i); return; }
+      if (lifted > 0.02) mid.y += lifted; else lifted = 0;
+    }
     /* The log's own geometry, at its own size — the instanced trunk is a unit
      * rod scaled per instance, and a Prop needs a mesh of its own. Six sides
      * and two rings, exactly as the instance is, so the object the player picks
@@ -699,6 +877,12 @@ export class Forest {
     });
     prop.body.position.copy(mid);
     prop.body.quaternion.copy(quat);
+    /* A LOG YOU CAN GET ONTO, AND IT IS THE SAME LOG EITHER WAY. The static box
+     * this prop replaces carries `climb: CLIMB_LOG` (see `_liftLog` and the
+     * note over the constant); without the same tag here, a trunk was climbable
+     * at twenty metres and a wall at ten — which is the invisible wall the
+     * player reported twice, wearing a distance. `topOfProps` reads it. */
+    prop.body.userData.climb = CLIMB_LOG;
     // the instanced copy steps aside, and so does the static box under it
     _s.setScalar(0);
     this.trunkMesh.setMatrixAt(i, _m.compose(mid, quat, _s));
@@ -708,7 +892,11 @@ export class Forest {
     this._liftLog(i);
     /* NOT registered here: `Prop` puts itself in `world.props` from its own
      * constructor now, and a second push is a second copy. */
-    this.real.set(i, { prop, moved: false, home: mid.clone() });
+    /* `moved` when it was lifted, so `_release` writes the corrected pose back
+     * into the record rather than putting the log back in the bank. `home` is
+     * the LIFTED position, so the lift itself cannot latch the displacement
+     * test in `_syncLogs`. */
+    this.real.set(i, { prop, moved: lifted > 0, home: mid.clone() });
   }
 
   /** Put log `i` back into the instance buffers. */

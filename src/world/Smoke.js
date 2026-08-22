@@ -44,6 +44,27 @@ import { makeRng, clamp, lerp, TAU } from '../engine/MathUtil.js';
 import { makeSoft } from './SoftDepth.js';
 
 /**
+ * HOW MANY STEPS A COLUMN'S DENSITY IS ALLOWED, and it is `FLAGSHIP.md` §11's
+ * third named art defect turned into one number.
+ *
+ * *"Quantise the smoke. `Smoke.js` uses a soft vertex-alpha gradient — the one
+ * un-cel thing in the frame. At 7 columns you get away with it; at 20 it
+ * dominates the sky."* Confirmed live: the marching front puts nine to ten
+ * columns up by engagement five, and `NEXT.md`'s Step 1 verdict is that
+ * engagement 3 reads as "a pale haze at 100 m" — which is what a smooth alpha
+ * ramp under a bright haze IS. A ramp has no edge, and a shape with no edge
+ * cannot be told from the air it is standing in.
+ *
+ * Five, not four: a column's whole content is its density falling off with
+ * height, so it needs one more step than a blend weight does before the tube
+ * reads as a stack of discs. The base of a column is 0.62 alpha (see the ring
+ * loop below), so five nodes put its steps at 0.6, 0.4, 0.2 and 0 — four
+ * visible plateaus up the height of the tube, and the last node IS zero, which
+ * is what lets a column end rather than fade for ever.
+ */
+const SMOKE_BANDS = 5.0;
+
+/**
  * The one material, shared by every column on every level.
  *
  * Lazy and cached for the same reason `propMaterials()` is: `World.unload`
@@ -74,6 +95,56 @@ function smokeMaterial() {
    * rather than the puff's default because these are the biggest volumes in
    * the game and a fade shorter than the tube is wide reads as a bevel. */
   makeSoft(_mat, 1.6);
+  /* ── AND IT IS BANDED, WHICH IS THE ONLY UN-CEL THING LEFT IN THE FRAME ──
+   *
+   * `makeSoft` OWNS `onBeforeCompile` — it assigns it outright rather than
+   * chaining — so this wraps the hook it installed instead of replacing it.
+   * Overwriting it would silently delete the soft-depth fade and put a hard
+   * intersection curve back across the base of every column, which is the one
+   * part of a column a player can walk up to.
+   *
+   * The band is applied to the ALPHA and not to the colour, and that is the
+   * whole point: a column's shape IS its density. Banding its colour would
+   * posterise a gradient that is already three shades wide; banding its alpha
+   * turns a soft airbrushed cone into a stack of flat discs with a drawn edge
+   * between them, which is what every reference plate of this battle has and
+   * what the frame's ink line is drawn in the language of.
+   *
+   * `saberCelQuant` and NOT `saberCelBand1`, and the difference is fatal here.
+   * `saberCelBand1` takes the plateau CENTRE, so it never returns 0 — a fully
+   * transparent tip would come back at 0.5/n = 10% opaque, which is a veil
+   * over the whole sky, and `makeSoft`'s ground fade could never reach zero
+   * either. `saberCelQuant` snaps to the nearest NODE: 0 stays 0, 1 stays 1,
+   * and what lies between arrives as n flat regions with a drawn boundary.
+   * Cel.js's own note beside the pair says exactly this about masks, and an
+   * alpha is a mask.
+   *
+   * The cache key has to change with it. `makeSoft` pins `customProgramCacheKey`
+   * at the constant 'softDepth', and three caches compiled programs on that
+   * key — so a second material wearing the same key would be handed this
+   * shader, or this one handed the plain soft shader, depending on which
+   * compiled first.
+   */
+  const soft = _mat.onBeforeCompile;
+  _mat.onBeforeCompile = (shader, renderer) => {
+    soft(shader, renderer);
+    shader.uniforms.uSmokeBands = { value: SMOKE_BANDS };
+    /* `saberCelQuant` IS ALREADY IN SCOPE and must not be pasted in again.
+     * `installCelShading` appends CEL_BAND_GLSL to three's `<common>` chunk
+     * (Cel.js: `C.common += CEL_COMMON`), which every standard material's
+     * fragment shader includes — so a second copy here is a duplicate function
+     * definition and the column would not compile at all. SkyDome and the sky
+     * dome in Engine.js do paste it, and the reason is written where they do:
+     * three's Sky addon includes only the tone-mapping chunks. This is a
+     * MeshBasicMaterial and it includes the lot. */
+    shader.fragmentShader = 'uniform float uSmokeBands;\n'
+      + shader.fragmentShader.replace(
+        '#include <fog_fragment>',
+        '  gl_FragColor.a = saberCelQuant( clamp( gl_FragColor.a, 0.0, 1.0 ), uSmokeBands );\n'
+        + '  #include <fog_fragment>');
+  };
+  _mat.customProgramCacheKey = () => 'softDepth+smokeBands';
+  _mat.needsUpdate = true;
   return _mat;
 }
 
@@ -97,6 +168,67 @@ const RINGS = 14;
 const SIDES = 7;
 
 /**
+ * ── THE AIR A COLUMN STANDS IN, DERIVED FROM THE LEVEL THAT OWNS IT ─────
+ *
+ * `tip` is the one field of this record that a wrong answer SHOWS. A column is
+ * not lit (see the material note above) — it is read as a silhouette against
+ * the sky — so what makes it end rather than stop is that its top has become
+ * the colour of the haze behind it. Geonosis authored `tip: 0xd0a473` and its
+ * own `atmosphere.fogColor` is `0xd0a473`: the same number, hand-copied, which is
+ * HANDOFF §2.3 sitting quietly inside a colour.
+ *
+ * THE COPY WENT WRONG THE DAY THE MODE PUT THIS SMOKE ON SEVEN GROUNDS.
+ * `Front.marchFront` raises the marching front's columns for THE LINE, and the
+ * only level in the game that publishes `world.smokeAir` is Geonosis — so on
+ * the other six the fallback was a literal copy of Geonosis' record:
+ *
+ *     level      its own fog     the tip it was given
+ *     alpine       #b6cbee            #d0a473
+ *     wood         #1a231b            #d0a473
+ *     drifts       #cdc6b8            #d0a473
+ *     colosseum    #c8c4b8            #d0a473
+ *     mustafar     #584038            #d0a473
+ *     scoria       #6b3a2a            #d0a473
+ *
+ * A sandy Geonosian dust tip on a pale blue alpine sky, and on a wood whose
+ * air is nearly black. The wind was Geonosis' too — `[0.94, 0.34]`, 20° — so
+ * on alpine (`[0.62, −0.78]`, −51°) every column leaned 71° off the way that
+ * level's own snow, grass and dust were blowing.
+ *
+ * So the record is DERIVED and not authored, from the two things the level has
+ * already said: its terrain preset's `wind` (the same vector the dunes are
+ * combed along) and its `sky.fogColor`. Geonosis' hand table is reproduced
+ * term for term by this function, which is the test that it is the same
+ * knowledge and not a second one.
+ *
+ * `color` and the two shape numbers are NOT derived, and that is deliberate:
+ * soot is soot, and a burning hull leans and widens the same way on snow as on
+ * dust. Only what the level's own air decides comes off the level.
+ */
+/** What is burning, at the foot of the column. Geonosis' authored value. */
+const SOOT = 0x33261f;
+/** How far downwind the top is, as a fraction of height, and how wide the top
+ *  gets. Both Geonosis' authored values, and both properties of a plume. */
+const LEAN = 0.55;
+const SPREAD = 0.22;
+export function smokeAir(world) {
+  /* `atmosphere`, not `sky` — the level's block is called `atmosphere` and
+   * `sky` is a name nothing in `LEVELS` carries. The first draft of this read
+   * `level.sky.fogColor`, which is `undefined` on all seven and would have
+   * shipped every column tipping to the fallback: a derivation off a field
+   * name nobody checked is the same defect as the literal it replaced. */
+  const sky = world?.level?.atmosphere || {};
+  const preset = world?.terrain?.preset || {};
+  return {
+    wind: preset.wind || [0.94, 0.34],
+    color: SOOT,
+    tip: sky.fogColor ?? 0xd0a473,
+    lean: LEAN,
+    spread: SPREAD,
+  };
+}
+
+/**
  * BUILD THE SMOKE FOR A WHOLE LEVEL, AS ONE MESH.
  *
  * @param world   needs `scene`, `statics` and (for grounding) `terrain`
@@ -111,13 +243,18 @@ const SIDES = 7;
  */
 export function addSmokeColumns(world, columns, opts = {}) {
   if (!world?.scene || !columns?.length) return null;
-  const wind = opts.wind || [0.94, 0.34];
+  /* THE DEFAULTS ARE `smokeAir`'s, not a third set of numbers. This function
+   * used to carry its own — `0x3a2b23` body and `0xb8875a` tip, neither of
+   * them equal to the level record beside it — so a caller that passed nothing
+   * got a column that agreed with no level in the game. */
+  const air = smokeAir(world);
+  const wind = opts.wind || air.wind;
   const wl = Math.hypot(wind[0], wind[1]) || 1;
   const wx = wind[0] / wl, wz = wind[1] / wl;
-  const body = new THREE.Color(opts.color ?? 0x3a2b23);
-  const tip = new THREE.Color(opts.tip ?? 0xb8875a);
-  const lean = opts.lean ?? 0.55;
-  const spread = opts.spread ?? 0.22;
+  const body = new THREE.Color(opts.color ?? air.color);
+  const tip = new THREE.Color(opts.tip ?? air.tip);
+  const lean = opts.lean ?? air.lean;
+  const spread = opts.spread ?? air.spread;
 
   const pos = [], col = [], idx = [];
   let base = 0;

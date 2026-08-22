@@ -726,4 +726,83 @@ export async function run({ check, assert }) {
       + `attacks ${b.attackOver.join('+')}/${b.attackStab.join('+')}; `
       + `main.js claims ${[...raw].join(',') || 'nothing'} raw, no overlap`;
   });
+
+  check('feel: every attack the game has makes a sound, and nothing else does', async () => {
+    /**
+     * `NEXT.md` carried the consequence for a whole session without the fix:
+     * "The overhead attack has never made a swing sound. It peaks at 10.8 m/s
+     * against an 11 m/s whoosh threshold. One number."
+     *
+     * The heaviest-looking attack in the game — the one the player singled out
+     * as the one that feels real, "a lot better, like good job, it feels real"
+     * — was the only one that swung in silence, and the reason is worth more
+     * than the number: the threshold's own comment said it separated a SWING
+     * from a WALK, and `swingSpeed` already has the carrier's velocity taken
+     * out of it, so walking reads 0.03 m/s and the bar was never doing that
+     * job at all. It was the fastest attack of the day minus a little.
+     *
+     * This drives the real controller and asserts the property rather than the
+     * number: every attack the game has is over the bar, and a body walking or
+     * running with its blade out is under it.
+     */
+    const H = await import('./_coop.mjs');
+    const { world } = await H.bootWorld({
+      level: 'colosseum', settings: { mode: 'waves', quality: 'low', instantSpawn: true },
+    });
+    const p = world.player;
+    const base = H.idleInput();
+    const peak = (drive, frames) => {
+      p.stamina = p.maxStamina; p.force = p.maxForce;
+      for (const k in p.cooldowns) p.cooldowns[k] = 0;
+      let top = 0;
+      for (let i = 0; i < frames; i++) {
+        world.update(1 / 60, drive(i));
+        top = Math.max(top, p.saber.swingSpeed);
+      }
+      for (let i = 0; i < 40; i++) world.update(1 / 60, base);      // settle
+      return top;
+    };
+    /* THE ACTION NAMES ARE `SaberController`'s OWN: `thrust` is the left
+     * button, `attackOver` the overhead, `attackSpin` the drill. */
+    const press = (name, held) => (i) => ({
+      ...base,
+      act: (a) => a === name && i < held,
+      actHit: (a) => a === name && i === 0,
+      actDown: (a) => a === name && i < held,
+      mouse: { ...base.mouse, left: false, right: false },
+    });
+    const move = (run) => () => ({
+      ...base,
+      moveAxis: (o) => { if (o) { o.x = 0; o.y = -1; return o; } return { x: 0, y: -1 }; },
+      act: (a) => run && a === 'sprint',
+    });
+    for (let i = 0; i < 60; i++) world.update(1 / 60, base);
+    p.saber.ignite?.();
+    for (let i = 0; i < 30; i++) world.update(1 / 60, base);
+
+    const carried = Math.max(peak(move(false), 120), peak(move(true), 120));
+    const attacks = {
+      'left click': peak(press('thrust', 6), 120),
+      overhead: peak(press('attackOver', 4), 150),
+      'overhead held': peak(press('attackOver', 70), 190),
+      spin: peak(press('attackSpin', 6), 150),
+    };
+    /* THE BAR ITSELF IS READ OFF THE SOURCE, because a check that typed its own
+     * copy would be the hand-maintained twin HANDOFF §2.3 is about — and this
+     * is exactly the shape that let 11 sit there against a 10.8 attack. */
+    const { readFile } = await import('node:fs/promises');
+    const src = await readFile(new URL('../../src/game/Player.js', import.meta.url), 'utf8');
+    const m = /const SWING_WHOOSH = ([\d.]+);/.exec(src);
+    assert(m, 'the whoosh threshold is not a named constant any more, so nothing can hold it to this');
+    const bar = parseFloat(m[1]);
+    const silent = Object.entries(attacks).filter(([, v]) => v <= bar).map(([k, v]) => `${k} ${v.toFixed(2)}`);
+    assert(silent.length === 0,
+      `${silent.join(', ')} — at or under the ${bar} m/s whoosh threshold, so ${silent.length > 1 ? 'they swing' : 'it swings'} `
+      + 'in silence. That is the defect NEXT.md recorded about the overhead for a whole session');
+    assert(carried < bar * 0.5,
+      `carrying the blade at a run reads ${carried.toFixed(2)} m/s against a ${bar} m/s bar — the `
+      + 'threshold is close enough to ordinary movement to whoosh at a jog');
+    return Object.entries(attacks).map(([k, v]) => `${k} ${v.toFixed(1)}`).join(' · ')
+      + ` vs carried ${carried.toFixed(2)}, bar ${bar}`;
+  });
 }

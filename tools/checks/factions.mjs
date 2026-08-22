@@ -445,4 +445,109 @@ export async function run({ check, assert }) {
       ? `${rows.length} level(s) still field both armies in one wave and declare no split: ${rows.join(', ')}`
       : 'no level fields both armies in one wave';
   });
+
+  check('factions: you never fight your own army, on any ground, under any order', async () => {
+    /**
+     * THE PLAYER, HAVING PLAYED IT: "Ive noticed that many times when as a sith
+     * i'll be fighting against mechs that are associated with the separtists
+     * which doesnt' make sense, make sure that doesn't happen and also the other
+     * way around too like when you're playing as the republic you shouldnt be
+     * fighting against things that are canonically on your side, that goes for
+     * single npcs too."
+     *
+     * MEASURED BEFORE THE FIX, by walking every shipped level's pool against
+     * `Command.ARMIES`' own muster ladders: SEVEN OF SEVEN grounds fielded
+     * bodies against the side they belong to. A Sith met B1s, B2s and droidekas
+     * everywhere; a Jedi met clone troopers and marksmen. The faction data was
+     * complete and correct in `Databank.FACTIONS` the whole time — nothing
+     * asked it whose side the PLAYER was on.
+     *
+     * This drives the shipped composer rather than reading the tables: twenty
+     * waves of `unlockedAt` on three grounds under each of the three orders,
+     * which is the same door `_compose` draws through.
+     */
+    const H = await import('./_coop.mjs');
+    const { factionOf, FACTIONS, armyForOrder } = await import('../../src/game/Databank.js');
+    const { enemyRng } = await import('../../src/game/Enemy.js');
+    const rows = [];
+    for (const order of ['jedi', 'sith', 'grey']) {
+      const mine = armyForOrder(order);
+      const met = new Set();
+      for (const level of ['geonosis', 'colosseum', 'wood']) {
+        enemyRng.seed(17);
+        const { world } = await H.bootWorld({
+          level, settings: { mode: 'waves', quality: 'low', instantSpawn: true, order },
+        });
+        for (let w = 1; w <= 20; w++) for (const t of world.director.unlockedAt(w)) met.add(t);
+        world.unload?.();
+      }
+      const own = [...met].filter((t) => factionOf(t) === mine);
+      assert(own.length === 0,
+        `a ${order} player is sent ${own.join(', ')} — their own ${FACTIONS[mine]?.short} hardware`);
+      /* AND THE FIELD IS NOT EMPTY, which is the other half: a rule that
+       * removes half the roster and leaves nothing is a stall, and this file's
+       * own `_shapeUnder` law says a filter never empties the field. */
+      assert(met.size >= 8,
+        `a ${order} player meets only ${met.size} kinds of body across three levels and twenty waves`);
+      rows.push(`${order}:${met.size}`);
+    }
+    return `types met — ${rows.join(' ')}, none of them the player's own`;
+  });
+
+  check('factions: the beasts and the Jedi belong to nobody, so everybody still meets them', async () => {
+    /**
+     * THE LOOPHOLE THAT IS NOT ONE. `factionOf` sorts a body into four camps and
+     * only two are armies: `order` is the Jedi themselves and `wild` is the
+     * Colosseum's menagerie. A rule written as "only the enemy's roster" would
+     * delete both — which on the Colosseum, a level whose entire premise is
+     * exotic creatures, means removing the creatures, and everywhere it means a
+     * Sith who can never be sent a Jedi.
+     *
+     * So the rule is "nothing of your OWN army", and this is the check that
+     * keeps it stated that way.
+     */
+    const H = await import('./_coop.mjs');
+    const { factionOf, FACTIONS } = await import('../../src/game/Databank.js');
+    const { enemyRng } = await import('../../src/game/Enemy.js');
+    enemyRng.seed(23);
+    const { world } = await H.bootWorld({
+      level: 'colosseum', settings: { mode: 'waves', quality: 'low', instantSpawn: true, order: 'sith' },
+    });
+    const met = new Set();
+    for (let w = 1; w <= 30; w++) for (const t of world.director.unlockedAt(w)) met.add(t);
+    const unaligned = [...met].filter((t) => !FACTIONS[factionOf(t)]?.army);
+    assert(unaligned.length > 0,
+      `a Sith on the Colosseum meets ${[...met].join(', ')} — not one of them unaligned, so the `
+      + 'menagerie and the Jedi have been filtered out with the enemy army');
+    return `${unaligned.length} unaligned kinds still reachable: ${unaligned.join(', ')}`;
+  });
+
+  check('factions: no level is authored entirely out of one side\'s own hardware', async () => {
+    /**
+     * THE AUTHORING ERROR THE FALLBACK CANNOT FIX. `unlockedAt` widens the depth
+     * rather than breaking the rule when a filter empties — it searches the
+     * whole pool for anything that is not yours and fields the lightest — but a
+     * level whose ENTIRE pool is one army has nothing for that search to find,
+     * and the player leading that army would be sent their own men.
+     *
+     * There is no such level today and this is what says so if one is written.
+     */
+    const { LEVELS, LEVEL_ORDER } = await import('../../src/game/Levels.js');
+    const { factionOf, FACTIONS, ARMY_SIDES } = await import('../../src/game/Databank.js');
+    const armies = Object.keys(FACTIONS).filter((k) => FACTIONS[k].army);
+    const bad = [];
+    for (const key of LEVEL_ORDER) {
+      const pool = LEVELS[key]?.pool;
+      if (!pool) continue;
+      for (const side of armies) {
+        const others = pool.filter((t) => {
+          const f = factionOf(t);
+          return f !== side || !FACTIONS[f]?.army;
+        });
+        if (!others.length) bad.push(`${key} is entirely ${side}`);
+      }
+    }
+    assert(bad.length === 0, bad.join('; '));
+    return `${LEVEL_ORDER.filter((k) => LEVELS[k]?.pool).length} pools, each with somebody for both sides to fight`;
+  });
 }

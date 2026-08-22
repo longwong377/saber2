@@ -97,7 +97,17 @@ import { clamp, lerp, makeRng, TAU } from '../engine/MathUtil.js';
  * — `World._endMeeting` — was the only one that could say so out loud. Same
  * direction as MathUtil above: game reaches into engine, never the reverse. */
 import { audio } from '../engine/Audio.js';
-import { nudgeFromSwing, bladeClear, SWING_REACH } from './Spawn.js';
+import { nudgeFromSwing, bladeClear, placementClear, SWING_REACH } from './Spawn.js';
+import { MORALE } from './Morale.js';
+import { applyLevy } from './Levy.js';
+import { shakeNerve } from './Nerve.js';
+import { findCasualty, startDrag } from './Reactions.js';
+import { marchFront } from '../world/Front.js';
+/* THE SHAPE OF ONE SITTING — how long it is and which ground it crosses.
+ * A leaf: Session.js imports nothing from here, which is what lets the
+ * constructor below call into it. See its header. */
+import { rollSession, planStages, interludeBeats, DEFAULT_PLAN } from './Session.js';
+import { armyForOrder, factionOf } from './Databank.js';
 
 /**
  * The stream every roll in this mode comes off.
@@ -210,6 +220,10 @@ export const COMMAND_UNITS = {
     speed: 5.0, toughness: TOUGHNESS.plastoid, ranged: true, weapon: 'dc15',
     fireRate: 0.95, burst: 3, burstGap: 0.09, spread: 0.035, damage: 15,
     preferred: [4, 11], boltColor: BOLT_COLORS.blue, score: 900, threat: 6,
+    /* AN ARC THROWS ONE AND LANDS IT. `threat: 6` divides the scatter hardest
+     * of anything on either roster, which is the whole content of "he is
+     * better at it" — see `Enemy._maybeGrenade`. */
+    grenades: true,
     hipHeight: 0.95, unlockAt: 7,
   },
 
@@ -285,6 +299,12 @@ export const COMMAND_UNITS = {
      * `tools/checks/cloth-cost.mjs` sizes the whole column on how many bodies
      * wear it. It caught these two at 5 of 27 against a budget of 3. */
     cape: false,
+    /* A VIBROSWORD, and this row is where the note above `bx` stops being an
+     * admission and becomes the thing that ships. `weaponStyle: 'vibro'` draws
+     * ground alloy instead of plasma, posts no light, plays no hum and lays no
+     * trail; `saber: true` above it still routes the body through DuelBrain,
+     * which is what a BX is for. See Saber._buildPhysicalBlade. */
+    weaponStyle: 'vibro', bladeLength: 0.98,
     saberColor: 5, hilt: 'Sentinel', form: 'juyo',
     damage: 23, preferred: [1.6, 3.4], score: 900, threat: 6,
     hipHeight: 0.96, unlockAt: 7,
@@ -307,6 +327,10 @@ export const COMMAND_UNITS = {
      * is a tabard hanging off the chassis, not a simulated garment, and the
      * Foundry's IG general already declines one for the same reason. */
     cape: false,
+    /* AN ELECTROSTAFF — double-ended, dark shaft, the charge only at the two
+     * claws. It is the weapon the label has always named and the one thing an
+     * IG-100 is recognised by; a violet plasma blade was neither. */
+    weaponStyle: 'staff', bladeLength: 1.05,
     saberColor: 5, hilt: 'Sentinel', form: 'djemSo',
     damage: 28, preferred: [1.8, 3.6], score: 1400, threat: 7,
     hipHeight: 1.05, unlockAt: 9, commandAura: 'leader',
@@ -364,8 +388,10 @@ export const ARMIES = {
   republic: {
     id: 'republic',
     name: 'The Republic',
-    /* A Jedi leads clones. The order IS the faction — see `sideForOrder`. */
-    order: 'jedi',
+    /* A Jedi leads clones — and WHICH order leads which army is declared in
+     * `Databank.FACTIONS` rather than here, because `Waves.js` has to ask the
+     * same question and cannot import this file (Command imports Waves). See
+     * `sideForOrder` below, which reads it from there. */
     leader: 'Jedi General',
     /* What the muster calls one of your people, and what a squad is called. */
     unit: 'trooper',
@@ -394,7 +420,6 @@ export const ARMIES = {
   separatist: {
     id: 'separatist',
     name: 'The Confederacy',
-    order: 'sith',
     leader: 'Dark Lord',
     unit: 'droid',
     squadWord: 'Unit',
@@ -411,18 +436,106 @@ export const ARMIES = {
 export const ARMY_IDS = Object.keys(ARMIES);
 
 /**
- * Which army a player of this order leads.
+ * HOW MANY RUNGS A PLAYER MAY POINT AT, and it is the SHORTER ladder's length.
  *
- * DERIVED FROM `Order.js`, not asked as a second question. The player already
- * chooses Jedi / Sith / Grey in the forge, that choice already costs them
- * something real, and asking again on the deploy screen would let them be a
- * Jedi at the head of a droid army — which is not a build, it is a bug wearing
- * a menu. A Grey has no army of their own and is given the Republic's, because
- * somebody has to be at the head of the column; the mode says so on the card.
+ * The contingent's composition is chosen before the army is known — the setting
+ * is a slider on the options screen and the army follows the player's order, or
+ * the ground, or their own answer (see `armyToLead`). So a rung is picked by
+ * INDEX and the index has to be valid in whichever ladder it lands in. Both
+ * ladders are seven long today and their totals are held close on purpose (83
+ * against 75 points, 0.53 threat per point against 0.54), but nothing forces
+ * them to stay the same length, and the day one grows an eighth rung a player
+ * who had picked it would silently get the top of the other army's ladder
+ * instead. The minimum is the honest ceiling.
+ */
+export const LADDER_RUNGS = Math.min(...ARMY_IDS.map((id) => ARMIES[id].tiers.length));
+
+/**
+ * The rung index that means "no single rung — spend the purse on a mixed line".
+ * Below zero rather than past the top so that the slider's travel reads as a
+ * ladder with one extra notch at the bottom: mixed, then line, then upward.
+ */
+export const CONTINGENT_MIXED = -1;
+
+/**
+ * WHOSE MEN THESE ARE.
+ *
+ * ── THE DEFECT, AND IT IS ONE THE AUDIT NAMED RATHER THAN THE PLAYER ──
+ *
+ * A contingent is allied troops dropped into a mode that never had any, on any
+ * of the seven grounds. Measured before this, on all seven, under all three
+ * orders: a Jedi got a Republic clone platoon on the Ember Shelf, in the Wood,
+ * on the Drifts and in the Colosseum; a Sith got a droid platoon on the same
+ * seven; a GREY got the Republic on all seven, because the line below used to
+ * read `armyForOrder(orderId) || 'republic'` and the `|| 'republic'` was the
+ * whole of the answer for a commander who leads neither army. Twenty-one worlds,
+ * one question asked, and the ground never got to say anything.
+ *
+ * ── "LET THE LEVEL SAY" WAS THE OBVIOUS FIX AND THE DATA REFUSES IT ──
+ *
+ * `muster.mjs`'s own header proposed it: "allies drawn from the LEVEL's own pool
+ * would fit the ground". So the pools were counted. Every one of the seven
+ * shipped levels names bodies from BOTH armies in its pool — scoria 6
+ * Confederate and 2 Republic, mustafar 7 and 2, colosseum 3 and 1 under six
+ * beasts, wood 6 and 2, drifts 7 and 2, alpine 4 and 2, geonosis 13 and 9 — so
+ * the pool cannot answer "whose troops garrison this place", only "what fights
+ * here". And `level.armies`, the field that IS a declaration, is authored on
+ * ONE ground out of seven. A rule that answers for 14% of the game and silently
+ * falls through to the order for the rest is the defect with a branch on it,
+ * not a fix.
+ *
+ * ── SO: THE ORDER IS THE DEFAULT, THE PLAYER HAS THE LAST WORD, AND THE
+ *    GROUND DECIDES FOR THE COMMANDER WHO BELONGS TO NEITHER SIDE ──
+ *
+ * Three clauses, in this order, and each one is answering a different reader:
+ *
+ * 1. A CHOICE, if the player made one — and this is a CONTINGENT'S privilege
+ *    only. The note that used to stand here is right about the campaign: "a
+ *    Jedi at the head of a droid army is not a build, it is a bug wearing a
+ *    menu", and Command, a skirmish and a campaign never pass a choice in (see
+ *    the constructor: `this.campaign ? null : cfg.allyArmy`). Their army IS the
+ *    mode's fiction. A contingent is not that fiction and its own card says so
+ *    — "It is not a campaign — there are no areas, no muster screen and no
+ *    victory card" — it is troops the player asked for, in a mode that never
+ *    had any, on ground that has no opinion. Who they are is the same kind of
+ *    choice as how many of them there are, and that has been a slider since the
+ *    feature shipped.
+ *
+ * 2. THE ORDER, which is what everybody who does not touch the control gets,
+ *    unchanged, on every ground. `armyForOrder` stays the one statement of the
+ *    mapping — see its note in Databank.js and the seven-of-seven measurement
+ *    that put it there.
+ *
+ * 3. THE GROUND, for a Grey, who leads neither and was handed the Republic by
+ *    a hard-coded string. This is the one place a level's own declaration can
+ *    decide something a person has not already decided, so it is the one place
+ *    it is asked. Geonosis declares `['republic', 'separatist']` and a Grey
+ *    lands with the Republic there — the same answer as before, arrived at by
+ *    reading the level instead of by typing it — and the day a second ground
+ *    declares its garrison the other way round, a Grey's contingent follows it
+ *    with no further edit. `'republic'` survives as the floor for the six
+ *    grounds that declare nothing, because somebody has to be at the head of
+ *    the column.
+ */
+export function armyToLead(orderId, opts = {}) {
+  const chosen = opts.choice;
+  if (chosen && ARMIES[chosen]) return ARMIES[chosen];
+  const own = armyForOrder(orderId);
+  if (own) return ARMIES[own];
+  const ground = Array.isArray(opts.ground) ? opts.ground.filter((id) => ARMIES[id]) : [];
+  return ARMIES[ground[0] || 'republic'];
+}
+
+/**
+ * Which army a player of this order leads, with nothing else consulted.
+ *
+ * The three-clause rule above with both of its optional clauses left out, kept
+ * as a name because eleven callers and a dozen checks ask exactly this question
+ * — and kept as a DELEGATION rather than a second copy of the lookup, which is
+ * the twin this repository has now paid for nine times (§2.3).
  */
 export function sideForOrder(orderId) {
-  const found = ARMY_IDS.find((k) => ARMIES[k].order === orderId);
-  return ARMIES[found || 'republic'];
+  return armyToLead(orderId);
 }
 
 /** The army opposing this one. Two of them, so this cannot be a lookup table. */
@@ -641,6 +754,15 @@ function designate(army, taken) {
  * tactic it delivers, and the numbers now mean something in a roster where one
  * body's reach is six times another's.
  */
+/**
+ * How far ahead of the commander `rank` stands, in metres. Derived rather than
+ * chosen — see the note on `FORMATIONS.rank`: it is the largest stand that
+ * keeps every man of a ten-man rank inside `MORALE.NEAR` (14 m), which caps it
+ * at 8.9, and at 8.6 the whole rank is 42.9° off the camera against a
+ * half-frame of 45.7°.
+ */
+export const RANK_STAND = 8.6;
+
 export const FORMATIONS = {
   circle: {
     id: 'circle', name: 'Circle', key: 'Digit6',
@@ -685,6 +807,124 @@ export const FORMATIONS = {
       // which is what a line does rather than leaving a gap where you stand.
       const off = i - (n - 1) / 2;
       return out.set(off * 2.4, 0, (k % 2) * -1.8);
+    },
+  },
+  /**
+   * RANK AHEAD — the order the mode this game is named for could not give.
+   *
+   * ── WHAT THE FIRST PLATES OF THE LINE SHOWED ────────────────────────────
+   *
+   * The roster panel reading TEN STANDING over empty ground with not one
+   * trooper in shot. Measured against the RENDERER'S OWN frustum
+   * (`tools/_linelook.mjs`) on the first stepped frame after Drop, seed 5,
+   * geonosis: all ten alive, 4.0–8.4 m away, LOD 0, rigs parented, none merged
+   * and none cohorted — and every one of them between 83° and 180° off the
+   * camera's centre line. **Zero in frame.** Nothing is missing and nothing is
+   * culled. They are behind you.
+   *
+   * That is `DEFAULT_FORMATION` doing exactly what its blurb says. `behind`
+   * seats every man at `z = -(3.0 + rank·2.2)`; the formation's frame is the
+   * commander's held BODY heading, not the aim; and `Player` opens its rig at
+   * `yaw = Math.PI` with nothing on the solo path writing it again. So at 0:00
+   * the arc the column occupies is the arc the camera does not cover. Half the
+   * horizontal frame is 45.7° at the shipped `fov: 60` on 16:9.
+   *
+   * ── AND NO SHIPPED ORDER FIXED IT, WHICH WAS MEASURED RATHER THAN ASSUMED
+   *
+   * Every formation in this table, one world, the wave emptied so the shape is
+   * the only variable, six game-seconds to walk to the new slots. |bearing|
+   * off the camera's centre line, ten men:
+   *
+   *     circle    19–179°       behind*  125–179°      front     6–74°
+   *     line       2–146°       cover     56–179°      charge   64–147°
+   *     holdfire  61–138°
+   *
+   * `line` is the closest in spirit and wraps to 146°, because "one rank
+   * EITHER SIDE of you" is 21.6 m of frontage centred ON the commander. `front`
+   * reads, and its premise is the opposite of this mode's: "a screen in front
+   * of you, they take it first" is the men shielding the Jedi, and §1 of
+   * FLAGSHIP.md is "your job is to be the reason the line is still standing".
+   *
+   * ── SO: THE SAME RANK, MOVED BODILY FORWARD ─────────────────────────────
+   *
+   * `line`'s 2.4 m spacing, standing `STAND` metres ahead, with the commander
+   * behind its centre. Two numbers decide `STAND` and they pull opposite ways:
+   *
+   *   IT MUST FIT THE FRAME. Ten men at 2.4 m is 21.6 m of frontage, so the
+   *     outermost man is 10.8 m across. The camera sits `distance` 3.05 m
+   *     behind the player, so the bearing that matters is atan(10.8 / (STAND +
+   *     3.05)) and it has to stay under 45.7°.
+   *   AS MANY MEN AS POSSIBLE INSIDE `MORALE.NEAR`. 14 m, and it is what
+   *     `JEDI_NEAR` pays through — a rank whose ends are outside it is a rank
+   *     the Jedi is only half standing with. hypot(10.8, STAND) ≤ 14 gives
+   *     STAND ≤ 8.9 for the slot, and the slot is not where a man ends up.
+   *
+   * 8.6 is the answer, and the SLOT arithmetic says 42.9° from the camera and
+   * 13.8 m to the furthest man. MEASURED on the ground rather than trusted —
+   * `tools/_linelook.mjs`, seed 5, ten seconds after the drop — the rank comes
+   * out at 11.1–15.6 m and −60°…+41°, **ten of ten inside the renderer's own
+   * frustum** against zero for the column. So the framing claim holds with room
+   * and the morale claim holds for eight of the ten: `_clearBlade`, the terrain
+   * and the walk itself move a man off his slot by a metre or two, and the ends
+   * of the rank sit just outside 14 m. Stating it that way round rather than
+   * quoting the slot, because the slot is not where anybody stands.
+   *
+   * The second squad stands 1.6 m nearer so two squads are not one machined
+   * row, which is the same argument `line`'s own stagger makes.
+   *
+   * A roster grown to `MAX_STRENGTH` is 55 m of frontage and ±72°, which is a
+   * real line seen from the middle of it and not a defect: the order says one
+   * rank, and one rank of 24 men is that wide.
+   *
+   * `Semicolon` AND NOT THE NEXT KEY ALONG THE RUN, because there is no next
+   * key along the run. `holdfire`'s own note is the record: the orders are
+   * Digit6…Minus and Equal "so the seven are one unbroken run under the left
+   * hand", and the eighth has nowhere on that row to go — `BracketLeft` is
+   * `lessonBack`, `BracketRight` and `Backslash` are taken, and Digit1–Digit5
+   * are not the order row's. `;` is free, it is under the right hand, and the
+   * cost is stated rather than hidden: this is the order a run OPENS on and the
+   * least likely of the eight to be re-given mid-fight. `registerOrders` deals
+   * everything else off this row — the options screen, the pad slot, the label
+   * — so nothing below this line is typed twice.
+   *
+   * ── WHAT IT COSTS THE LINE, WHICH IS THE QUESTION THAT DECIDES IT ──────
+   *
+   * A rank standing 8.6 m in FRONT of the commander is a rank eating fire the
+   * column was not in the path of, and attrition was tuned to its target the
+   * commit before this one. Measured rather than argued: `tools/_linehold.mjs`,
+   * mode `theline`, geonosis, engagement 1, the IDLE arm, six seeds, both arms
+   * from FRESH PROCESSES on trees identical but for this table (HANDOFF §2.5b).
+   *
+   *     seed        1    2    3    5    7   11     mean   cleared
+   *     behind      6    0    5    0    7    0      3.0     3 of 6
+   *     rank        0    0    6    0    5    2      2.2     3 of 6
+   *     Δ          -6    0   +1    0   -2   +2     -0.8
+   *
+   * **−0.8 of ten, standard error 1.17 — unmeasured.** §2.5b prices five seeds
+   * at a standard error near 1.3 on a ten-man roster and says to treat anything
+   * under about 1.5 men as unmeasured; this is under it, both arms clear the
+   * same three engagements of six, and the two distributions have the same
+   * shape. It is not evidence that the shape is free and it is not evidence
+   * that it costs the target. Six seeds is what the box would give; twenty
+   * would carry about 0.65 and is what settling it needs.
+   *
+   * `leash: 1.5` — and it is NOT `line`'s 1.35, for a reason that is a rule
+   * rather than a taste. `command: the leashes spread across the table` wants
+   * distinct leashes on at least 80% of the formations, so an eighth entry
+   * repeating an existing number takes the spread from 6-of-7 to 6-of-8 and
+   * fails a check that is measuring something real. 1.5 is also the honest
+   * number for the shape: a rank told to hold ground ahead of you engages what
+   * its weapons reach and half again, and does not go and get it.
+   */
+  rank: {
+    id: 'rank', name: 'Rank ahead', key: 'Semicolon',
+    blurb: 'One rank across your front. You stand behind the line you are holding up.',
+    leash: 1.5, advance: true, fire: 1,
+    slot(i, n, k, out) {
+      /* Centred on the commander ACROSS and ahead of them along, so an odd
+       * roster puts one more man on the left exactly as `line` does. */
+      const off = i - (n - 1) / 2;
+      return out.set(off * 2.4, 0, RANK_STAND - (k % 2) * 1.6);
     },
   },
   cover: {
@@ -787,6 +1027,22 @@ export const DEFAULT_FORMATION = 'behind';
  * for the measurement that put it here.
  */
 export const MEETING_FORMATION = 'charge';
+
+/**
+ * …AND THE ONE THE CROSSING OPENS ON, which is a third question again.
+ *
+ * `behind` is right for a campaign in the abstract and wrong for the opening
+ * frame of the mode that is NAMED after its line: measured against the
+ * renderer's frustum, it puts 0 of 10 troopers on screen at the moment the
+ * player first sees the game. See `FORMATIONS.rank` for the plates, the sweep
+ * of every other order, and the arithmetic that picked the stand.
+ *
+ * It is the OPENING and not an override — see `_openOnRank`, which gives it
+ * only when the player has not already ordered something of their own, and
+ * gives it through `order()` so the planting, the log entry and the HUD
+ * indicator all happen the way they do for a key press.
+ */
+export const CROSSING_FORMATION = 'rank';
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  The commander's own Force — what a Jedi does for an ARMY              */
@@ -1012,6 +1268,26 @@ const BLADE_ROOM = 3.0;
  */
 const REAR_FAN = 4.19;
 
+/**
+ * HOW FAR A REFUSED DEPLOYMENT LOOKS NEXT, and how many times.
+ *
+ * 2.6 m is one clone trooper's step-and-a-bit and it is a little more than the
+ * gap between the shipped ring's own radii (4 → 6.2 → 8.4 is 2.2 apart),
+ * rounded up so that a retry clears the object that refused the first try
+ * rather than sliding along its face. Six tries puts the last ring at
+ * 8.4 + 5 × 2.6 = 21.4 m, and that ceiling is not a taste: `command.mjs`
+ * asserts the furthest trooper of a deployment lands inside 30 m of the
+ * commander, because a line set down at the far edge of the spawn ring has not
+ * reinforced you, it has started them on a walk.
+ *
+ * Six is also enough. Measured across the seven grounds, 5.0% of placements
+ * were on ground `spawnClear` refuses; a retry at a re-jittered angle and a
+ * wider radius is a nearly independent draw, so six of them leave a residue far
+ * below the rate at which any of this is visible. See `_standingRoom`.
+ */
+const DEPLOY_WIDEN = 2.6;
+const DEPLOY_TRIES = 6;
+
 /** How far a trooper taking cover will go looking for something to get behind. */
 const COVER_HUNT = 16;
 
@@ -1230,80 +1506,27 @@ export const AREAS = [
 /*  Morale, and who is in charge of whom                                  */
 /* ══════════════════════════════════════════════════════════════════════ */
 
+/** How long before the same soldier will go back for somebody again, in
+ *  seconds. Long, because a rifleman who spends the battle carrying people is
+ *  a rifleman who is not shooting, and the point of the behaviour is that it
+ *  costs the line something. */
+const DRAG_AGAIN = 26;
+
 /**
- * WHAT MOVES A SQUAD'S NERVE, per event or per second.
+ * THE TABLE ITSELF MOVED TO A LEAF — src/game/Morale.js — and is re-exported
+ * here so every existing importer is untouched.
  *
- * "Troops perform better when you're winning or aligned with their side.
- * Heavy losses, Dark-side excess, or abandoning them tanks morale — they can
- * break, refuse orders, or even turn on you."
- *
- * Every entry is an event the player can see happening and can choose to
- * cause or prevent, which is the whole test a morale term has to pass: a
- * number that moves for reasons the player cannot observe is a random number
- * generator wearing a name.
- *
- * The two `_NEAR` terms are what make a commander's PRESENCE worth something
- * mechanically, and they are deliberately the largest per-second terms in the
- * table: standing with your line is the cheapest thing a Jedi can do for it
- * and it should be worth doing.
+ * It had to: `Enemy.aimQuality` reads `MORALE.PRESENCE_CAP` to anchor its own
+ * curve on the point a line actually rests at, and this file already imports
+ * Enemy.js at its top. Enemy → Command is a cycle, and a constant read through
+ * one is a constant that is `undefined` on the frame the module happens to
+ * evaluate in the wrong order. Same argument, same shape and the same last
+ * clause as `POWER_COST` living in Powers.js rather than in Player.js: one
+ * table, one owner, and the owner is a leaf.
  */
-export const MORALE = {
-  /** A squadmate goes down in front of them. */
-  COMRADE_FELL: -0.16,
-  /** …and their squad leader is worth more than a squadmate. */
-  LEADER_FELL: -0.26,
-  /** Somebody in the squad kills something. */
-  SQUAD_KILL: 0.045,
-  /** The wave is cleared. Everyone gets it. */
-  WAVE_CLEAR: 0.34,
-  /** An area is held. */
-  AREA_HELD: 0.5,
-  /** Their own health, per second, below a third. */
-  WOUNDED: -0.10,
-  /** Per second within `NEAR` of a living commander who is on their side. */
-  LEADER_NEAR: 0.055,
-  /** …and of the Jedi themselves, which is worth more. */
-  JEDI_NEAR: 0.085,
-  /** Per second with no friendly commander and no Jedi inside `NEAR`. */
-  ALONE: -0.022,
-  /** The Jedi used a Force power ON one of their own. Per use. */
-  BETRAYED: -0.20,
-  /** …and empowering one instead. Per use. */
-  INSPIRED: 0.16,
-  /** A commander reached into their nerve through the Force. Per use, and it
-   *  is the one entry in this table an ENEMY commander causes. See `castForce`. */
-  SHAKEN: -0.22,
-  /** How close counts as near, in metres. */
-  NEAR: 14,
-  /** Below this a body breaks: it stops holding formation and falls back. */
-  BREAK: 0.24,
-  /** Below this it will not take an order at all. */
-  REFUSE: 0.10,
-  /** How fast a broken body recovers its nerve once it is out of contact. */
-  RALLY_PER_S: 0.05,
-  /**
-   * WHAT SHARE OF A SQUAD HAS TO BREAK BEFORE THE REST GO WITH THEM.
-   *
-   * "they should fall back when a position is lost." Breaking is a MAN's
-   * decision and the file already had it — below `BREAK` he stops holding
-   * formation and runs to you. A position is a SQUAD's, and a squad does not
-   * lose one man at a time: the two riflemen still steady when three of their
-   * five have broken are not holding a position, they are the last two people
-   * standing on a piece of ground nobody else is on.
-   *
-   * A half rather than a third or a whole, and the reason is that it has to
-   * be a number the player can see coming. `census` and the roster feed both
-   * show the squad, so "half of them are running" is a state you can read off
-   * the screen and answer — which is the test every other number in this
-   * table had to pass. At a third a squad withdraws while most of it is still
-   * fighting; at a whole the rule never fires, because the last steady man in
-   * a squad of five is precisely the one standing next to a commander whose
-   * presence is holding him up.
-   *
-   * Strictly greater, so a two-man squad with one broken man is not a rout.
-   */
-  ROUT: 0.5,
-};
+export { MORALE };
+
+
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  One soldier                                                           */
@@ -1570,6 +1793,40 @@ export function commandConfig(settings) {
      * `campaign` lead an army whatever this says: their army is the mode.
      */
     contingent: clamp(Math.round(Number(s.allies) || 0), 0, MAX_STRENGTH),
+    /**
+     * WHAT THE CONTINGENT IS MADE OF, as an index into the army's own ladder.
+     *
+     * The audit's first gap, verbatim: "the player cannot compose the
+     * contingent. It is `opening` bodies of the cheapest rung and nothing
+     * else." Measured on `waves`/`scoria` with eight allies asked, before this:
+     * `{"trooper":8}` — eight of one type, every run, on every ground, in every
+     * mode, and `musterOffer()` came back offering `trooper@5 heavy@6` with a
+     * purse of 0 while `recruit('arc')` answered "ARC Trooper is not available
+     * until area 3 of the advance" on a world that has no areas at all.
+     *
+     * AN INDEX AND NOT A TYPE NAME, because the ladder the index lands in is
+     * not known when the choice is made: `trooper` is meaningless to a Sith and
+     * `b1` to a Jedi, and a setting that stores one of them would be wrong for
+     * half the players the moment they changed order. Index 2 is "the third
+     * rung of whichever ladder I end up leading" — a marksman either way — and
+     * `LADDER_RUNGS` is the ceiling that keeps it valid in both.
+     *
+     * `CONTINGENT_MIXED` (−1) is a real answer and not an absence: it spends
+     * the purse the way `autoMuster` does, line first and then the heaviest
+     * thing left affordable. The DEFAULT is 0, the cheapest rung, because 0 is
+     * exactly what shipped — a player who never finds this control gets the
+     * platoon they already had, body for body.
+     */
+    unit: clamp(Math.round(Number(s.allyUnit) || 0), CONTINGENT_MIXED, LADDER_RUNGS - 1),
+    /**
+     * WHOSE MEN, and `null` means "the one my order leads" — see `armyToLead`
+     * for the three-clause rule and for why a campaign is never allowed to ask
+     * this question. Stored as an index into `ARMY_IDS` for the reason `unit`
+     * above is an index: the alternative is a second copy of the two army ids
+     * living in a save file, and `factions.mjs` already asserts that those two
+     * words are the same word in all three places they appear.
+     */
+    allyArmy: ARMY_IDS[Math.round(Number(s.allyArmy))] ?? null,
   };
 }
 
@@ -1591,6 +1848,37 @@ export function commandConfig(settings) {
  * thirty-wave run does not end with the player alone.
  */
 export const CONTINGENT_WAVES_PER_BODY = 2;
+
+/**
+ * WHAT ONE MUSTER POINT OF ARMY IS WORTH AS A MULTIPLIER ON THE WAVE.
+ *
+ * 0.011, and it is 0.055 ÷ 5 rather than a number somebody liked: `allyScale`
+ * charged 0.055 for a BODY and a line trooper costs 5 points, so pricing the
+ * army in the currency it was bought in leaves the Republic's ladder exactly
+ * where it was — ten troopers 1.55×, a full twenty-four 2.32×, to the decimal —
+ * and fixes two things a head count could not.
+ *
+ * ONE: composition would otherwise be free power. The moment the muster shelf
+ * opens to a contingent (`unlockAt`), fifty points buys one AT-TE and three
+ * troopers instead of ten troopers, and a head count prices those four bodies
+ * at 1.22× against the platoon's 1.55× — a heavier army meeting a smaller wave,
+ * which is the exploit that would have arrived with the feature. In points both
+ * come to 47-50 and both meet the same fight. COMPOSITION CHANGES THE SHAPE OF
+ * THE BATTLE AND NOT ITS DIFFICULTY, which is the property that makes the
+ * choice interesting instead of optimal.
+ *
+ * TWO: the Confederacy was overcharged. Ten B1s are threat 10 against ten clone
+ * troopers' threat 20, and the old rule priced both at 1.55×; in points they
+ * are 30 against 50, so a droid platoon now meets 1.33×. The `ARMIES` note is
+ * explicit that the two ladders' TOTALS are held close and their per-body
+ * hardware deliberately is not — this is the reader that was contradicting it.
+ *
+ * The +1-per-body inside `musterCost` carries `allyScale`'s own argument for
+ * free: two cheap bodies cost more than one twice as good, because they split
+ * the horde's attention — the same claim `WaveDirector.partySize` makes about a
+ * second player and prices at 0.72.
+ */
+export const ALLY_POINT = 0.011;
 
 /**
  * HOW FAR APART TWO ARMIES START, in metres.
@@ -1975,7 +2263,31 @@ export class Commander {
     this.side = opts.side ?? 0;
     this.army = opts.army || ARMIES.republic;
     this.foe = enemyOf(this.army);
-    this.roster = new CommandRoster(this.army);
+    /**
+     * ONE ROSTER, FOUR SQUADS — FLAGSHIP §9, and this line used to be `new
+     * CommandRoster(this.army)` with no way to say otherwise.
+     *
+     * A roster per commander is four private armies, and driving it produced
+     * both of the defects §9 names. The first is the one that matters in the
+     * mode whose whole subject is names you recognise: `CommandRoster.taken` is
+     * the set that makes `designate` unique, it is PER ROSTER, and four of them
+     * mint out of one seeded stream — so two commanders on the same side field
+     * two men with the same designation and the roll you are asked to care
+     * about has a duplicate in it.
+     *
+     * The fix is not a smarter `designate`, it is one roster: the director owns
+     * one per SIDE and army (`_rosterFor`) and hands it in here. Uniqueness
+     * stops being a property somebody has to maintain and becomes a fact about
+     * there being one set. The shared purse §9 asks for — "a Heavy for your
+     * squad or an ARC for mine" — is the same object being shared, not a second
+     * feature; and a departing player's men have somewhere to go, because they
+     * were never his in the first place.
+     *
+     * `null` means "your own", which is every Commander built loose in a check
+     * and every opposed commander in a meeting — two armies facing each other
+     * are two rosters and must be.
+     */
+    this.roster = opts.roster || new CommandRoster(this.army);
     this.formation = FORMATIONS[opts.formation] ? opts.formation : DEFAULT_FORMATION;
     /** The frame a non-advancing formation was planted in. See `_anchorFor`. */
     this._planted = null;
@@ -2003,10 +2315,12 @@ export class Commander {
 
   get world() { return this.director?.world ?? null; }
   get name() { return this.player?.name ?? this.army.leader; }
-  /** Everything of this commander's still on its feet, the bodies alone. */
+  /** Everything of this commander's still on its feet, the bodies alone.
+   *  THE SQUADS THIS ONE LEADS, not the whole roster: with one roster shared
+   *  between four players, `roster.living` is everybody's line. */
   get standing() {
     let n = 0;
-    for (const t of this.roster.living) if (t.body && !t.body.dead) n++;
+    for (const t of (this.director?.led(this) ?? this.roster.living)) if (t.body && !t.body.dead) n++;
     return n;
   }
 }
@@ -2076,15 +2390,6 @@ export class CommandDirector extends WaveDirector {
      * commander is added by `enlist` below when a session has one — that is the
      * whole of "two sides command two different armies".
      */
-    this.commanders = [new Commander(this, {
-      player: world?.player ?? null,
-      side: opts.side ?? world?.partyTeam ?? 0,
-      army: opts.army || sideForOrder(world?.settings?.order ?? world?.player?.order ?? 'jedi'),
-      formation: cfg.formation,
-    })];
-    this.teamDamage = cfg.teamDamage;
-    /** Two commanders on one field, rather than one against the composer. */
-    this.versus = !!cfg.versus;
     /**
      * WHETHER THIS DIRECTOR RUNS THE FIVE-AREA CROSSING ABOVE THE WAVE.
      *
@@ -2092,17 +2397,138 @@ export class CommandDirector extends WaveDirector {
      * campaign — and false for a CONTINGENT, which is the same roster, the same
      * ranks, the same permadeath and the same orders dropped into a mode that
      * has its own escalation and its own ending already. See `commandConfig`'s
-     * `contingent` and the four readers below: `payWave`, `budgetFor`,
-     * `heavyBias` and `_musterOpening`. Nothing else in this class knows.
+     * `contingent` and the readers below: `payWave`, `budgetFor`, `heavyBias`,
+     * `unlockAt` and `_musterOpening`. Nothing else in this class knows.
      *
      * It is a FIELD and not a mode-name test for the reason `MODES.skirmish`'s
      * `battles` is one: `waves`, `roguelite`, `duel` and `sandbox` can all
      * carry a contingent today and the next mode will too.
+     *
+     * READ BEFORE THE COMMANDERS ARE BUILT, and that is not a tidy-up: the army
+     * a commander is handed depends on it. A campaign's army is its fiction and
+     * is never the player's to override; a contingent's is. See `armyToLead`.
      */
     this.campaign = opts.campaign ?? true;
+    /**
+     * IS THIS RUN THE CROSSING — the thing §5 calls a session.
+     *
+     * Three modes build this director and only one of them is a sitting that
+     * walks across one ground: Command. A skirmish and a campaign lead the same
+     * army with the same ranks and the same permadeath, and both of them use
+     * `AREAS` as a PRESSURE DIAL rather than as a route — `World.beginSkirmish`
+     * writes `d.areaIndex = sk.pressure` and never advances it, and a campaign
+     * is one battle per ground with its own ending. A length rolled over their
+     * heads would re-point the dial: at pressure 2 under a two-stage plan the
+     * budget curve, the heavy bias and the muster shelf would all read the
+     * FIFTH area's numbers, which is a difficulty change nobody asked for.
+     *
+     * `MODES[...].battles` is the field that already draws exactly this line —
+     * "a bounded battle with an army under you", set on `skirmish` and
+     * `campaign` and absent from `command` — and `World.beginSkirmish` and
+     * `main.js` both branch on it already. Asked rather than restated, for the
+     * reason its own note gives: a list of mode names here is the twin defect.
+     */
+    this.crossing = this.campaign && !MODES[this.mode]?.battles;
+    /**
+     * HOW LONG THIS SITTING IS, AND IT IS A ROLL OFF THE SEED — FLAGSHIP §5.
+     *
+     * "Length is itself a seed roll: Raid (2 engagements, 10–15 min) · Push
+     * (3, 18–25) · Grind (5, 30–45)." The mode promised 20–40 minutes and had
+     * one length in it — five areas, 30–45 on its own — so it could only ever
+     * deliver the top of its own range.
+     *
+     * `stages` is the route, not a second copy of the ground: every record in
+     * it is one of `AREAS`, chosen by `planStages`, first and last always
+     * included. Everything downstream reads `this.stages` instead of the
+     * literal, so `lastArea` is still "the end of the list" and `_endCampaign`
+     * is still one door.
+     *
+     * A run with no seed is a Grind, which is the five areas unchanged — see
+     * `rollSession`. That is every headless check that builds a director by
+     * hand, and it is why this is not a behaviour change anywhere except in
+     * the one mode that states a seed.
+     */
+    this.plan = this.crossing ? rollSession(this.seed) : DEFAULT_PLAN;
+    this.stages = this.crossing ? planStages(this.plan, AREAS) : AREAS;
+    /**
+     * WHETHER THE LINE IS THE WIN CONDITION — `MODES.theline.holdTheLine`.
+     *
+     * FLAGSHIP §2, which is the whole design in one sentence: "a run that
+     * kills three hundred droids and loses the squad is a loss." Nothing read
+     * that. `_endCampaign` asserted `won: true` off having reached the last
+     * area and never looked at the roster, so the mode whose subject is an
+     * army scored a crossing finished alone as a victory — and there was no
+     * path at all by which a wiped roster ended anything, because the run ends
+     * on `_checkWipe`, which counts PLAYERS. A Jedi standing over ten graves
+     * kept fighting, took the ridge, and got the same card as a Jedi who
+     * brought their men home.
+     *
+     * Two lines follow from it and both are below: `_checkLine` ends a run
+     * whose army is gone, and `_endCampaign` computes its verdict instead of
+     * declaring it. It is read off the mode's own field rather than off the
+     * mode's name, so Command keeps the ground-is-the-win rule it shipped with
+     * and a second mode that wants this one takes the field.
+     */
+    this.holdTheLine = !!MODES[this.mode]?.holdTheLine;
+    /**
+     * WHETHER THE GROUND IS TAKEN BY THE LINE OR BY THE KILL COUNT — see
+     * `lineIsUp`, which is where the whole argument is.
+     *
+     * A second field rather than reading `holdTheLine`, because they are two
+     * different rules and a mode may want either: one is about how a run is
+     * SCORED and the other about how it ADVANCES. Command declares neither and
+     * is untouched by both.
+     */
+    this.lineAdvances = !!MODES[this.mode]?.lineAdvances;
+    /**
+     * THE ROSTERS THIS DIRECTOR KEEPS — one per side-and-army. See `_rosterFor`
+     * and `Commander.roster`.
+     * @type {Map<string, CommandRoster>}
+     */
+    this._rosters = new Map();
+    /**
+     * SIDES WHOSE COMMANDER HAS LEFT THE SESSION. See `dismissCommander` and
+     * the note in `census` — a beaten side and a side that was never there are
+     * different states to `DuelMatch`, and only one of them ends the round.
+     * @type {Set<number>}
+     */
+    this._departed = new Set();
+    const side0 = opts.side ?? world?.partyTeam ?? 0;
+    /* THE CHOICE IS PASSED ONLY BY A CONTINGENT. `cfg.allyArmy` is the
+     * player's answer off the options screen and `null` is "no answer";
+     * handing a campaign `null` is what keeps `sideForOrder`'s veto intact in
+     * the three modes whose whole subject is that war. The GROUND is passed
+     * always, because it only ever decides for a commander whose order leads
+     * neither army — see the third clause of `armyToLead`. */
+    const army0 = opts.army || armyToLead(world?.settings?.order ?? world?.player?.order ?? 'jedi', {
+      choice: this.campaign ? null : cfg.allyArmy,
+      ground: world?.level?.armies,
+    });
+    this.commanders = [new Commander(this, {
+      player: world?.player ?? null,
+      side: side0,
+      army: army0,
+      roster: this._rosterFor(side0, army0),
+      formation: cfg.formation,
+    })];
+    this.teamDamage = cfg.teamDamage;
+    /** Two commanders on one field, rather than one against the composer. */
+    this.versus = !!cfg.versus;
     /** How many bodies the opening muster enlists. A campaign opens with
      *  `OPENING_STRENGTH`; a contingent opens with what the player asked for. */
     this.opening = clamp(opts.strength ?? OPENING_STRENGTH, 1, MAX_STRENGTH);
+    /**
+     * WHICH RUNG THE CONTINGENT IS BUILT ON, or `CONTINGENT_MIXED`.
+     *
+     * A campaign is pinned to rung 0 whatever the options screen says, and that
+     * is `_musterOpening`'s oldest sentence rather than a new restriction:
+     * "the roster screen at the top of a campaign should be ten identical
+     * strangers, so that the three names in it four areas later are something
+     * the player earned". The campaign composes its army at the muster screen,
+     * between areas, out of a purse an area paid — that IS its composition, and
+     * a slider that pre-composed it would take the mode's own decision away.
+     */
+    this.unit = this.campaign ? 0 : (opts.unit ?? cfg.unit);
     this.areaIndex = 0;
     this.areaWaves = 0;
     /** Raised once, when the last area is behind you. See `_endCampaign`. */
@@ -2113,6 +2539,24 @@ export class CommandDirector extends WaveDirector {
     this._inbound = new Set();
     /** Every promotion, death and order — the campaign's own log. */
     this.log = [];
+    /**
+     * WHERE THIS ENGAGEMENT'S ENTRIES START — one integer, and it is the whole
+     * of the state the interlude adds.
+     *
+     * §5's quiet between engagements has to be REAL: "points in, bodies out,
+     * the roll of who lived, who was promoted, and who is on the fallen list."
+     * Every one of those is already written to `this.log` as it happens, by the
+     * code that makes it happen — `fell` by `_deathOf`, `promote` by
+     * `_promoteTrooper`, `steps-up` when a squad loses its sergeant. So the
+     * interlude reads the ledger rather than keeping a second tally beside it,
+     * and the only thing it needs is a mark for where the last one ended.
+     * Moved by `start` and by `closeMuster`, which are the two doors into an
+     * engagement. See `Session.interludeBeats`.
+     */
+    this._logAt = 0;
+    /** The beats of the muster that is open, or null. Published on the offer so
+     *  a peer's screen tells the same story as the host's. */
+    this._interlude = null;
     this.onRoster = null;         // (summary) => void      — the HUD's feed
     this.onMuster = null;         // (offer) => void        — the between-areas screen
     /**
@@ -2154,11 +2598,137 @@ export class CommandDirector extends WaveDirector {
   set formation(id) { this.commander.formation = id; }
 
   /**
-   * A SECOND PERSON WITH A SECOND ARMY.
+   * ONE ROSTER PER SIDE-AND-ARMY — FLAGSHIP §9's headline, as one lookup.
    *
-   * The one call that turns a campaign into a meeting. Idempotent per player,
+   * "Four players take four squads out of one roster of up to 24."
+   *
+   * The key is the pair and not either half of it. SIDE alone would put two
+   * armies on one roll the day a mode fields allies of different factions;
+   * ARMY alone would merge the two ends of a meeting, which is the one case
+   * that must stay two rolls — a Republic line and a Confederate one are not
+   * one another's reinforcements and their purses are not one purse.
+   *
+   * WHAT IT FIXES BY CONSTRUCTION, rather than by care:
+   *
+   *   THE DUPLICATE NAME. `designate` loops against `roster.taken` and the
+   *     promise it is keeping is "every ally has a unique name you can see".
+   *     With a Set per commander the promise held inside each army and not
+   *     across the side, so two commanders drew the same `CT-8479` out of the
+   *     one seeded stream. There is one Set now, so there is nothing to keep
+   *     in step.
+   *   THE PURSE. `roster.points` is one number, so "a Heavy for your squad or
+   *     an ARC for mine" is a conversation at every muster instead of two
+   *     people shopping in separate shops.
+   *   THE ORPHAN. A commander who leaves has no army of his own to strand —
+   *     see `dismissCommander`.
+   */
+  _rosterFor(side, army) {
+    const key = `${side | 0}|${army?.id ?? 'none'}`;
+    let r = this._rosters.get(key);
+    if (!r) { r = new CommandRoster(army); this._rosters.set(key, r); }
+    return r;
+  }
+
+  /** The commanders sharing one roster, in the order they joined it. */
+  peersOn(roster) { return this.commanders.filter((c) => c.roster === roster); }
+
+  /**
+   * THE SQUADS ONE COMMANDER LEADS — the "four squads" half of §9.
+   *
+   * `CommandRoster.squads()` already slices the living list into fives and
+   * `SQUAD` is already the unit; all this adds is WHO EACH SLICE ANSWERS TO.
+   * Dealt round-robin rather than in blocks, and that is the property that
+   * matters under permadeath: `squads()` is derived from the living list every
+   * call, so as men fall the slices reshape and a round-robin deal keeps every
+   * commander holding roughly the same share of what is left. A block deal
+   * would empty the last commander first and then hand them nothing.
+   *
+   * IDENTICAL TO `roster.squads()` WHENEVER ONE COMMANDER HOLDS THE ROSTER —
+   * which is every campaign, every skirmish, every contingent and both ends of
+   * a two-player meeting. Nothing that existed before co-op changes shape.
+   */
+  squadsOf(c) {
+    const all = c.roster.squads();
+    const peers = this.peersOn(c.roster);
+    if (peers.length <= 1) return all;
+    const mine = Math.max(0, peers.indexOf(c));
+    return all.filter((_, i) => i % peers.length === mine);
+  }
+
+  /** Everything this commander leads, flat — his squads' troopers in order. */
+  led(c) {
+    if (!c) return [];
+    const peers = this.peersOn(c.roster);
+    if (peers.length <= 1) return c.roster.living;
+    const out = [];
+    for (const sq of this.squadsOf(c)) for (const t of sq) out.push(t);
+    return out;
+  }
+
+  /**
+   * A COMMANDER HAS LEFT THE SESSION — §9's second defect, and it was live.
+   *
+   * "`peer-left` removes the RemoteAvatar and nothing removes its `Commander`,
+   * so its army goes on being steered off a disposed body."
+   *
+   * `main.js` disposes the avatar and splices it out of `world.players`, and
+   * the Commander went on sitting in `this.commanders`: `_troops` solved a
+   * formation in its frame every frame, `_trackLeader` measured the pace of a
+   * body nothing updates any more, and ten men held a slot relative to a
+   * corpse of a drawing. `census` had a guard against the one visible
+   * consequence — a departed general's army could WIN the match — and that
+   * guard is the shape of the bug rather than the fix.
+   *
+   * WHAT HAPPENS TO THE MEN IS THE WHOLE QUESTION, and one roster answers it:
+   *
+   *   IF SOMEBODY IS STILL ON THAT ROSTER, nothing happens to them at all.
+   *     `squadsOf` re-deals on the next call, so the squads the departed player
+   *     was leading are held by the players who are left, on the frame after
+   *     the tab closed. That is co-op's answer and it needs no code here.
+   *   IF NOBODY IS, the army has no commander. It is recalled — taken off the
+   *     field the way an area boundary takes it off — rather than left
+   *     wandering, and the SIDE IS REMEMBERED as departed so `census` can go on
+   *     reporting it at zero. That distinction is `census`' own and it is
+   *     load-bearing: a side that has been beaten ends a round and a side that
+   *     was never there does not.
+   *
+   * NEVER THE LOCAL COMMANDER. `commanders[0]` is the person holding the mouse
+   * on this machine and every reader that predates two armies forwards to it;
+   * removing it would leave `this.roster` undefined for the whole front end.
+   *
+   * @returns the Commander that was dismissed, or null.
+   */
+  dismissCommander(player) {
+    if (!player) return null;
+    const i = this.commanders.findIndex((c) => c.player === player);
+    if (i <= 0) return null;
+    const c = this.commanders[i];
+    this.commanders.splice(i, 1);
+    c.player = null;
+    const peers = this.peersOn(c.roster);
+    if (!peers.length) {
+      /* Nobody left to lead them. Off the field through the one door that
+       * takes an army off it, and the side stays in the census at zero. */
+      this._departed.add(c.side);
+      this.recall(c);
+    } else {
+      /* THE BODIES CHANGE HANDS. `e.cmdr` is what `commanderOf` answers with —
+       * a death routes through it to find the roll the name is on — so a body
+       * still pointing at a dismissed Commander would report its casualty to
+       * an object nothing else can reach. The record's new commander is
+       * whichever peer `squadsOf` has just dealt it to. */
+      this._reseat(c.roster);
+    }
+    return c;
+  }
+
+  /**
+   * A SECOND PERSON WITH AN ARMY.
+   *
+   * The one call that turns a campaign into a meeting — and, since §9, the one
+   * call that seats a second player on the SAME side. Idempotent per player,
    * because a session announces its roster more than once and two Commanders
-   * for one body would be two rosters deploying into the same slots.
+   * for one body would be two commanders deploying into the same slots.
    */
   enlistCommander(opts = {}) {
     const found = opts.player && this.commanders.find((c) => c.player === opts.player);
@@ -2195,12 +2765,89 @@ export class CommandDirector extends WaveDirector {
     if (meeting && this.commander.formation === DEFAULT_FORMATION) {
       this.order(MEETING_FORMATION, this.commander);
     }
-    const c = new Commander(this, { formation: this.commander.formation, ...opts });
+    /**
+     * THE ROSTER IS THE DIRECTOR'S, NOT THE COMMANDER'S — §9.
+     *
+     * Looked up by side and army, so a second commander on the SAME side joins
+     * the roll that is already there and one on the other side gets his own.
+     * The side and the army have to be known HERE rather than assigned after
+     * the fact, which is what `formUp` used to do: it built the commander with
+     * the defaults, `_musterOpening` enlisted ten Republic troopers into a
+     * Republic roster, and only then was `c.army` reassigned to the
+     * Confederacy — so the second army of every meeting was ten clone troopers
+     * wearing the other side's name. See `formUp`, which passes both now.
+     */
+    const side = opts.side ?? this.commander.side;
+    const army = opts.army || this.commander.army;
+    const roster = opts.roster || this._rosterFor(side, army);
+    const c = new Commander(this, { formation: this.commander.formation, ...opts, side, army, roster });
     this.commanders.push(c);
-    // The same ten strangers everybody starts with. Through the same call, so
-    // there is no second idea anywhere of what an opening army is.
-    if (opts.muster !== false) this._musterOpening(c);
+    /**
+     * The same ten strangers everybody starts with. Through the same call, so
+     * there is no second idea anywhere of what an opening army is.
+     *
+     * ONLY IF THE ROLL IS EMPTY. Four players on one side share ONE roster of
+     * up to 24 and take a squad each — mustering ten more for every joiner
+     * would be four private armies again, with the shared purse spent four
+     * times over and `MAX_STRENGTH` reached by the third player.
+     */
+    if (opts.muster !== false && !roster.all.length) this._musterOpening(c);
+    else if (opts.muster !== false) this._musterJoin(c);
+    else if (!c.lineup) c.lineup = this.commander.lineup;
+    /* THE BODIES ALREADY ON THE FIELD CHANGE HANDS. A player joining a line
+     * that is already standing takes squads that already have bodies in them,
+     * and `e.cmdr` — what `commanderOf` answers with — was stamped at enlist
+     * time. Re-dealt here rather than every frame: `_troops` re-solves the
+     * indices off `squadsOf` sixty times a second and does not read this. */
+    this._reseat(roster);
     return c;
+  }
+
+  /**
+   * A PLAYER JOINS A LINE THAT IS ALREADY STANDING — one squad more.
+   *
+   * §9: "Four players take four squads out of one roster of up to 24." The two
+   * ends of that sentence are `SQUAD` and `MAX_STRENGTH`, both of which already
+   * exist, and the rule between them is the only thing this adds: **the line
+   * opens at `OPENING_STRENGTH` and grows by one squad for every commander
+   * beyond the first.** One player marches in with ten (two squads); a fourth
+   * arrives to twenty-five asked for and twenty-four allowed, which is the cap
+   * §9 quotes and `recruit`'s own refusal rather than a second bound written
+   * here.
+   *
+   * The alternatives were both worse and both were tried. Mustering NOTHING
+   * for a joiner splits ten men four ways and hands the third and fourth
+   * players nothing at all — measured on a 2v2, 5/5/5/5 bodies where the mode
+   * fields ten a side. Mustering a full opening EACH is four private armies
+   * again, which is the arrangement §9 exists to delete.
+   *
+   * FREE, like the opening ten, and for the same reason: `_musterOpening`'s own
+   * note says the roll at the top of a campaign is "ten identical strangers"
+   * handed to you rather than bought, because the composition is what the purse
+   * between areas is FOR. A player joining is more strangers, not a purchase —
+   * and charging the shared purse for them would take the first muster's
+   * decision away from everybody at the table.
+   *
+   * Through `roster.enlist`, which is where a designation comes from, so the
+   * new squad is named out of the same `taken` set as the rest of the roll.
+   */
+  _musterJoin(c) {
+    const cheapest = c.army.tiers[0].type;
+    let n = 0;
+    for (let i = 0; i < SQUAD && c.roster.strength < MAX_STRENGTH; i++) {
+      c.roster.enlist(cheapest, { joined: this.areaNumber });
+      n++;
+    }
+    /* The SHAPE the line is kept at — `_reinforce` reads it to decide what a
+     * replacement should be. It is the roster's, so it grows with the roster. */
+    c.lineup = c.roster.living.map((t) => t.type);
+    for (const p of this.peersOn(c.roster)) p.lineup = c.lineup;
+    return n;
+  }
+
+  /** Point every body on a roster at whichever peer `squadsOf` now deals it to. */
+  _reseat(roster) {
+    for (const p of this.peersOn(roster)) for (const t of this.led(p)) if (t.body) t.body.cmdr = p;
   }
 
   /** Whoever commands this body — its own commander, or mine if it has none. */
@@ -2208,9 +2855,25 @@ export class CommandDirector extends WaveDirector {
 
   /* ── the campaign ──────────────────────────────────────────────────── */
 
-  get area() { return AREAS[Math.min(this.areaIndex, AREAS.length - 1)]; }
+  get area() { return this.stages[Math.min(this.areaIndex, this.stages.length - 1)]; }
   get areaNumber() { return this.areaIndex + 1; }
-  get lastArea() { return this.areaIndex >= AREAS.length - 1; }
+  get lastArea() { return this.areaIndex >= this.stages.length - 1; }
+
+  /**
+   * WHICH RUNG OF THE FULL LADDER THE GROUND YOU ARE STANDING ON IS.
+   *
+   * `areaNumber` is how many engagements in you are and `rung.at` is a position
+   * in `AREAS` — the same number for a Grind and two different numbers for
+   * anything shorter. A Raid crosses the landing zone and the Core Ship, so its
+   * second engagement is `areaNumber` 2 and ladder rung 5: gating the shelf on
+   * the count would sell you a marksman on the ground the walkers are on, which
+   * is the off-by-one AREAS' own note describes arriving from the other side.
+   *
+   * The GROUND earns the rung, not the counter. Identical to `areaNumber`
+   * whenever `stages` is `AREAS`, which is a Grind, a skirmish, a campaign and
+   * a contingent — every caller that existed before the length was rolled.
+   */
+  get areaRung() { const i = AREAS.indexOf(this.area); return i < 0 ? this.areaNumber : i + 1; }
 
   /**
    * HOW MUCH GROUND IS BEHIND YOU — the "Areas taken" row of the victory card.
@@ -2233,14 +2896,68 @@ export class CommandDirector extends WaveDirector {
    * meet both. In Command you are one of them, so the fill is filtered to the
    * other — and this is the ONLY override of the composer in the whole mode.
    *
-   * Filtered off `ARMIES[...].tiers` rather than a second list, so a rung added
-   * to the ladder appears in the enemy's fill on the same line it appears in
-   * your muster. That is the hand-maintained-twin defect this repository has
-   * been bitten by eight times, and the fix is always this one.
+   * ── AND IT IS FILTERED BY FACTION, NOT BY THE MUSTER LADDER ──────────────
+   *
+   * It used to be `new Set(this.army.tiers.map(t => t.type))` — the seven rungs
+   * you can BUY — which is a different set from the bodies that belong to your
+   * side, and the difference is exactly the bug the player reported in note 1.2
+   * ("when you're playing as the republic you shouldnt be fighting against
+   * things that are canonically on your side"). `Waves.sideFor` is the base
+   * class's answer to that and this class declines it (see `sideFor` directly
+   * below), so on a contingent world the ladder filter was the ONLY thing
+   * standing between the player and their own hardware.
+   *
+   * Measured through the shipped `unlockedAt`, twenty waves on each of the
+   * seven grounds, before this line changed:
+   *
+   *     allies 0 · jedi   0 own-army bodies fielded against you   (19 kinds)
+   *     allies 0 · sith   0                                       (15 kinds)
+   *     allies 6 · jedi   0                                       (19 kinds)
+   *     allies 6 · sith  10 — acolyte on five grounds, walker on
+   *                          three, dwarfspider and hailfire on
+   *                          Geonosis                             (19 kinds)
+   *
+   * Turning allies on is what broke it: a Sith with a contingent met their own
+   * Confederacy on six of seven grounds, and the same player with the same
+   * order and the slider at zero met none of it. `acolyte`, `walker`,
+   * `dwarfspider` and `hailfire` are Confederate bodies that are not rungs of
+   * the muster ladder, so the ladder filter could not see them. The Republic
+   * escaped only by luck of authoring — its two pool bodies on those levels
+   * happen to be `trooper` and `heavy`, which ARE rungs.
+   *
+   * `factionOf` is the same one statement `Waves.unlockedAt` and
+   * `Databank.armyForOrder` read, so a body's side is declared once and the
+   * enemy fill follows it — which is what the note above was reaching for when
+   * it said the fix is always this one. It is stricter than the old rule in
+   * every case (a rung is a body of its faction), so nothing that was filtered
+   * before is admitted now.
+   *
+   * A FILTER NEVER EMPTIES THE FIELD — `Waves._shapeUnder`'s law — AND IT MUST
+   * NOT FALL BACK ONTO YOUR OWN MEN, which is `Waves.unlockedAt`'s own second
+   * clause and is exactly the mistake the first cut of this made. Measured: a
+   * Jedi leading a Confederate contingent on the Wood, where the ladder has
+   * opened one rung at wave 1, filtered to nothing and the fallback handed back
+   * the unfiltered set — the player's own battle droids charging the player, on
+   * the opening wave.
+   *
+   * So the fallback WIDENS THE DEPTH rather than dropping the rule, in the same
+   * words and for the same reason the base class states them: the whole pool is
+   * searched for anything that is not yours and the lightest of those by threat
+   * is fielded. A body arriving a wave or two before the ladder meant it is a
+   * smaller wrong than an army fighting itself, and it is bounded by the pool
+   * the level authored. Only a level whose ENTIRE pool is one army reaches the
+   * last line, which is an authoring error rather than a runtime one, and
+   * `factions.mjs` asserts there is no such level.
    */
   unlockedAt(wave) {
-    const mine = new Set(this.army.tiers.map((t) => t.type));
-    return super.unlockedAt(wave).filter((t) => !mine.has(t));
+    const mine = this.army.id;
+    const open = super.unlockedAt(wave);
+    const theirs = open.filter((t) => factionOf(t) !== mine);
+    if (theirs.length) return theirs;
+    const anywhere = [...new Set(this.pool.filter((t) => factionOf(t) !== mine))];
+    if (!anywhere.length) return open;
+    anywhere.sort((a, b) => (ARCHETYPES[a]?.threat ?? 9) - (ARCHETYPES[b]?.threat ?? 9));
+    return [anywhere[0]];
   }
 
   /**
@@ -2287,24 +3004,113 @@ export class CommandDirector extends WaveDirector {
      * that army came from, which is the whole reason allies do not trivialise
      * a mode that never had them. */
     const area = this.campaign ? this.area.budget : 1;
-    return Math.floor(super.budgetFor(wave) * area * this.allyScale());
+    return Math.floor(super.budgetFor(this.rampWave(wave)) * area * this.allyScale());
+  }
+
+  /**
+   * ══ WHICH WAVE OF THE ADVANCE THIS IS, AND IT IS NOT THE RUN'S COUNTER ══
+   *
+   * **A fresh ten-man line was wiped out in one wave at engagement 3.** 0 of 10
+   * on five seeds and on twenty, in about 110 seconds, before and after every
+   * attrition constant this mode has been tuned with — and tuning engagement 1
+   * cannot reach it, because what is wrong is not a constant. It is this line.
+   *
+   * `WaveDirector.budgetFor` is `4 + 2.6w + 0.65 · w^1.62`, and `w` was the
+   * RUN's wave counter. That curve is the roguelite's, and it is honest there
+   * for a stated reason: the Trial of Waves drafts a card every other wave, so
+   * a player at wave 8 is a different player from the one at wave 1 and the
+   * wave has to grow with them. **A crossing drafts nothing.** Its army grows
+   * by `AREAS[*].muster` — eleven points, then fourteen, then seventeen: two
+   * or three bodies an area against a ceiling of `MAX_STRENGTH` — and its
+   * player grows not at all.
+   *
+   * So the two curves were multiplied. Measured on the shipped numbers with a
+   * full ten-man line standing (`allyScale` 1.55):
+   *
+   *     area 1, wave 1     base 7.25 × 0.75 × 1.55 =   8
+   *     area 3, wave 8     base 43.7 × 1.10 × 1.55 =  74
+   *     area 5, wave 21    base 148.8 × 1.45 × 1.55 = 334
+   *
+   * **Forty-two times the opening wave, against the same ten men.** That is
+   * also what `tools/_linewave.mjs` was reading from the other end when it
+   * timed an opening wave at 81 s and wave 8 at 606 — one lever, seen twice
+   * (NEXT.md: "both are driven by the same quantity, how many bodies a late
+   * wave puts on the field").
+   *
+   * ── THE RAMP IS THE ADVANCE'S, SO THE COUNTER IS THE ADVANCE'S ──────────
+   *
+   * An area is an engagement: a fresh line forms up, fights its three to five
+   * waves and musters. So the wave curve runs WITHIN the area — a stage builds
+   * from its first wave to its last — and the escalation BETWEEN areas is the
+   * two dials `AREAS` already declares for it, `budget` (0.75 → 1.45) and
+   * `heavy` (0.0 → 0.45), plus the areas getting longer (3, 4, 4, 5, 5). The
+   * same shipped numbers under this rule:
+   *
+   *     area 1, wave 3 of 3      18        area 3, wave 4 of 4      35
+   *     area 2, wave 4 of 4      30        area 5, wave 5 of 5      58
+   *
+   * — a sawtooth that resets a little lower and climbs a little higher every
+   * area, which is what a five-engagement advance is, against a monotone climb
+   * to 334 that only ever described a Jedi holding twenty boon cards.
+   *
+   * `AREAS[*].budget`'s own note calls itself "a multiplier on the ordinary
+   * wave budget… the escalation curve in Waves.js is tuned for a lone Jedi",
+   * which is the correction it was written as. This makes it the ramp instead,
+   * and that is the point: TWO AUTHORITIES FOR ONE QUANTITY is HANDOFF §2.3,
+   * and here the two were not merely disagreeing, they were multiplying.
+   *
+   * DERIVED FROM THE PLAN AND NOT FROM `areaWaves`, which is the counter that
+   * would have been easy and wrong. `budgetFor` is asked about waves that are
+   * not the one being fought — `bodyLimit` asks it about `BODY_KNEE`,
+   * `conditionCost` about the wave it is pricing — so an answer that ignored
+   * its argument would make those two comparisons identities. This walks the
+   * same sum `payWave` walks one clear at a time, so a plan with fewer stages
+   * (`planStages` runs a Raid at two and a Grind at five) maps correctly and
+   * no second table exists to drift.
+   *
+   * A CONTINGENT IS UNCHANGED. It has no areas — `payWave` says so at length —
+   * so `stages` is not its ledger and the run's own counter is the only ramp it
+   * has. `theline` and `command` are the crossings.
+   */
+  rampWave(wave) {
+    if (!this.campaign) return wave;
+    let w = Math.max(1, Math.round(wave));
+    for (const st of this.stages) {
+      if (w <= st.waves) return w;
+      w -= st.waves;
+    }
+    /* Past the last stage. A crossing normally ends there, but an area whose
+     * line is not up does not clear (`_awaitLine`), so the last stage is
+     * allowed to keep climbing rather than wrapping back to its first wave. */
+    return w + this.stages[this.stages.length - 1].waves;
   }
 
   /**
    * WHAT AN ARMY IS WORTH AS A MULTIPLIER ON THE WAVE.
    *
-   * 0.055 per living body, which puts ten troopers at 1.55× and a full roster of
-   * twenty-four at 2.3×. Derived rather than felt: a line trooper is threat 2
-   * against a wave-10 budget of 61, so ten of them are worth about a third of
-   * the wave on paper — and they are worth more than that in practice because
-   * they split the horde's attention, which is the same argument
-   * `WaveDirector.partySize` makes about a second player and prices at 0.72.
+   * `ALLY_POINT` per muster point of living army, which puts ten clone troopers
+   * at 1.55× and a full Republic roster of twenty-four at 2.32×. Derived rather
+   * than felt: a line trooper is threat 2 against a wave-10 budget of 61, so ten
+   * of them are worth about a third of the wave on paper — and they are worth
+   * more than that in practice because they split the horde's attention.
+   *
+   * IN MUSTER POINTS AND NOT IN BODIES, and the two lines above are unchanged
+   * numbers arrived at a different way. See `ALLY_POINT` for the derivation
+   * (0.055 a body ÷ the 5 points a line trooper costs) and for the two things a
+   * head count got wrong the moment the muster shelf opened to a contingent: a
+   * composed army would have bought heavier bodies and a SMALLER wave, and a
+   * droid platoon was priced as though a B1 were a clone trooper.
+   *
+   * Per LIVING body rather than per record, which is what `strength` already
+   * meant: a line that has lost two men is charged for the eight standing.
    *
    * Capped at 2.6 for the reason `HEAVY_CAP` is capped: past that the wave stops
    * being a fight and becomes a frame-rate question.
    */
   allyScale() {
-    return Math.min(2.6, 1 + this.roster.strength * 0.055);
+    let points = 0;
+    for (const t of this.roster.living) points += musterCost(t.type);
+    return Math.min(2.6, 1 + points * ALLY_POINT);
   }
 
   /** How hard this area leans on the heavy end, on top of the depth's own lean. */
@@ -2312,25 +3118,151 @@ export class CommandDirector extends WaveDirector {
     return clamp(super.heavyBias(wave) + (this.campaign ? this.area.heavy : 0), 0, 1.3);
   }
 
+  /**
+   * …AND THE LEVY GOES IN BEHIND EVERY ONE OF THEM. FLAGSHIP §6.
+   *
+   * "Forty conscripts that pay nothing are weather." The rule, the argument for
+   * why the levy is free of the threat budget, and the pace correction that
+   * keeps the paying bodies arriving at the rate the composer meant, are all in
+   * src/game/Levy.js — a leaf, for the reason `MORALE` is one: `_composeUnder`
+   * is the base director's arithmetic and this class has no business restating
+   * any of it.
+   *
+   * IT WRAPS `_composeUnder` AND NOT `_compose`, which is the whole of why this
+   * is two lines. `_compose` re-composes in a loop, reading `left` to decide
+   * whether the wave can afford another condition; a levy applied once at the
+   * end of `_compose` would be applied to the last recomposition only, and a
+   * levy that charged the budget would change how many conditions a wave buys.
+   * Applied here it rides every recomposition and moves neither number.
+   */
+  _composeUnder(wave, keys) {
+    return applyLevy(super._composeUnder(wave, keys), this, wave);
+  }
+
   /* ── the muster ────────────────────────────────────────────────────── */
 
   /**
-   * THE ARMY YOU START WITH.
+   * THE ARMY YOU START WITH — and it is two different questions now.
    *
-   * Ten bodies in two squads, all of them rung 1, all of them nameless numbers.
-   * That is deliberate: the roster screen at the top of a campaign should be ten
-   * identical strangers, so that the three names in it four areas later are
-   * something the player earned rather than something the mode handed them.
+   * A CAMPAIGN opens with ten bodies in two squads, all of them rung 1, all of
+   * them nameless numbers. That is deliberate: the roster screen at the top of
+   * a campaign should be ten identical strangers, so that the three names in it
+   * four areas later are something the player earned rather than something the
+   * mode handed them. The campaign composes its army at the muster screen,
+   * between areas, out of a purse an area paid — that IS its composition, and
+   * it is why the branch below is a contingent's alone.
+   *
+   * A CONTINGENT opens with a purse and the shape the player asked for. See
+   * the note on the branch.
    */
   _musterOpening(c = this.commander) {
-    const first = c.army.tiers[0].type;
-    /* `this.opening` and not `OPENING_STRENGTH`: a campaign's opening IS the
-     * constant and says so in the constructor, and a contingent is whatever
-     * number the player set. One loop, one authority. */
-    for (let i = 0; i < this.opening; i++) c.roster.enlist(first);
-    /* A contingent has no muster screen to spend an opening purse on, and a
-     * purse it cannot spend would be a number on a HUD that means nothing. */
-    c.roster.points = this.campaign ? AREAS[0].muster : 0;
+    const tiers = c.army.tiers;
+    const cheapest = tiers[0].type;
+    if (this.campaign) {
+      /* `this.opening` and not `OPENING_STRENGTH`: a campaign's opening IS the
+       * constant and says so in the constructor. One loop, one authority. */
+      for (let i = 0; i < this.opening; i++) c.roster.enlist(cheapest);
+      c.roster.points = this.stages[0].muster;
+      c.lineup = c.roster.living.map((t) => t.type);
+      return;
+    }
+    /**
+     * ── A CONTINGENT IS A PURSE, AND THE PLAYER SAYS WHAT IT BUYS ──────────
+     *
+     * The audit's first gap: "you cannot compose the contingent — it is
+     * `opening` bodies of the cheapest rung." Driven on `waves`/`scoria` with
+     * eight allies asked, this method used to produce `{"trooper": 8}` and a
+     * purse of zero, with the other six rungs of the ladder gated behind an
+     * area a contingent will never reach.
+     *
+     * THE BUDGET IS WHAT THE SLIDER ALREADY MEANT, PRICED. `opening ×
+     * musterCost(cheapest)` — eight allies is forty Republic points, which is
+     * to the point exactly what eight clone troopers cost. So the number on the
+     * control keeps its old meaning for anybody who never touches the new one
+     * (`unit` defaults to rung 0 and buys the same eight bodies), and gains a
+     * second one for anybody who does: eight allies is also two ARC troopers
+     * and three of the line, or one AT-TE and a man to walk beside it. The
+     * exchange rate is `musterCost`, which is the game's own single currency
+     * for "how much fight is this", so a heavier contingent is a SMALLER one
+     * and `allyScale` charges the same wave for either — see `ALLY_POINT`.
+     *
+     * `recruit` is the one door, exactly as it is for the campaign's muster
+     * screen and for `reinforce`: it prices, it guards, it enlists and it logs.
+     * A second spend written here would be the twin this file has already
+     * deleted eight of. `_bulk` suppresses the per-purchase network publish for
+     * the same reason `autoMuster` does — there is nobody to tell yet.
+     */
+    c.roster.points = this.opening * musterCost(cheapest);
+    const want = this.unit >= 0 ? tiers[Math.min(this.unit, tiers.length - 1)] : null;
+    this._bulk = true;
+    try {
+      if (want && c.roster.points < want.cost) {
+        /**
+         * A REQUEST THAT CANNOT BE MET SAYS SO. The player asked for a
+         * contingent of AT-TEs and set the size to one, which is 5 points
+         * against 32: there is a right answer (the line) and there is no
+         * honest way to hand it over in silence. Same law as `reinforce`'s NO
+         * REINFORCEMENTS and `deploy`'s NO GROUND below — the three places
+         * this mode can fail to give the player what they asked for are the
+         * three places it says so out loud.
+         */
+        this.refused = `${ARCHETYPES[want.type]?.label ?? want.type} costs ${want.cost} points and `
+          + `${this.opening} ${c.army.unit}${this.opening === 1 ? '' : 's'} buys ${c.roster.points}`;
+        this.world?.notify?.('CONTINGENT UNCHANGED', this.refused);
+      } else if (want) {
+        while (this.recruit(want.type, c));
+      }
+      /**
+       * THEN THE LINE, AND THEN THE BEST THING LEFT ON THE SHELF — which is
+       * `autoMuster`'s two-phase spend, reached through the same
+       * `_bestAffordable` it uses, because "spend a purse sensibly" is one
+       * question and this file is not going to answer it twice.
+       *
+       * For a CHOSEN rung these two loops are what stops the remainder being
+       * thrown away, and the machine is where it shows: ten Republic allies is
+       * 50 points, one AT-TE is 32, and the 18 left over buy three clone
+       * troopers to walk beside it. Without them the player would have asked
+       * for ten men and been handed one walker and a dead 18 points.
+       *
+       * For `CONTINGENT_MIXED` they ARE the composition — half the purse on the
+       * line, the rest on the heaviest rungs it will carry — measured, that is
+       * five clone troopers, an officer and a jet trooper for 47 of 50 points
+       * at ten Republic allies, and five B1s and a MagnaGuard for 29 of 30 at
+       * ten Confederate ones.
+       */
+      const line = want ? this.opening : Math.max(1, Math.floor(this.opening / 2));
+      for (let i = 0; i < line && this.recruit(cheapest, c); i++);
+      for (let guard = 0; guard < MAX_STRENGTH; guard++) {
+        const best = this._bestAffordable(c);
+        if (!best || !this.recruit(best, c)) break;
+      }
+    } finally { this._bulk = false; }
+    /**
+     * THE SHAPE THE REPLACEMENTS PUT BACK. `_reinforce` used to refill toward a
+     * body COUNT, which was the same thing as the shape while every body was a
+     * clone trooper and stops being it the moment a contingent is composed: a
+     * fallen ARC would have been replaced by a trooper, and a line of four ARCs
+     * would have drifted into a line of eight troopers over a long run without
+     * anything anywhere reporting it. The roll the opening muster actually
+     * bought is what a replacement is measured against.
+     */
+    c.lineup = c.roster.living.map((t) => t.type);
+  }
+
+  /**
+   * THE MOST EXPENSIVE RUNG THIS PURSE CAN STILL AFFORD, or null.
+   *
+   * Off `musterOffer` rather than off `army.tiers`, which is what makes it one
+   * answer and not two: the offer is where `unlockAt`, the price, the purse and
+   * the `MAX_STRENGTH` ceiling are already combined into `afford`, and a
+   * second walk of the ladder here would be a second opinion about what is for
+   * sale. Used by the opening muster above and by `autoMuster` below.
+   */
+  _bestAffordable(c = this.commander) {
+    const units = this.musterOffer(c).units.filter((u) => u.afford);
+    if (!units.length) return null;
+    units.sort((a, b) => b.cost - a.cost);
+    return units[0].type;
   }
 
   /**
@@ -2341,6 +3273,35 @@ export class CommandDirector extends WaveDirector {
    * number the screen actually wants — the interesting question at a muster is
    * never "what exists", it is "should this be my third heavy or my first ARC".
    */
+  /**
+   * WHEN A RUNG COMES ON SALE, and there is now one statement of it.
+   *
+   * `rung.at` is an AREA number — 1 for the line and the heavy, 2 for the
+   * marksman and the jet, 3 for the ARC and the officer, 4 for the machine —
+   * and it is a good ladder for the thing it was written for: a five-area
+   * crossing where the back half of the advance is what a walker is FOR.
+   *
+   * A CONTINGENT HAS NO AREAS. `areaNumber` is 1 for the whole of a run that
+   * never advances one, so five of the seven rungs were unreachable forever,
+   * and the refusal a player actually met was `recruit`'s: "ARC Trooper is not
+   * available until area 3 of the advance", in the Trial of Waves, which has no
+   * advance. That is the audit's first gap in one sentence — the shelf that
+   * sells the other six is gated on an area a contingent does not have.
+   *
+   * So the gate is stated once, here, and it is a different question in the two
+   * modes: a campaign EARNS a rung by crossing ground, and a contingent BUYS
+   * one out of a purse the player already paid for with the size of their own
+   * line. The purse is the only gate a contingent needs — see `ALLY_POINT` for
+   * why a heavier body has to be a smaller army rather than a stronger one.
+   *
+   * Both readers call it. It used to be written twice, as a filter in
+   * `musterOffer` and as a guard in `recruit`, which is the shape §2.3 keeps
+   * catching: two copies of a rule that can only ever drift apart.
+   */
+  unlockAt(rung) {
+    return this.campaign ? rung.at : 1;
+  }
+
   musterOffer(c = this.commander) {
     /**
      * A SHELL SAYS WHAT IT WAS TOLD, VERBATIM — the same rule `readout` states,
@@ -2365,14 +3326,23 @@ export class CommandDirector extends WaveDirector {
       area: this.areaNumber,
       areaName: A.name,
       brief: A.brief,
-      next: AREAS[Math.min(this.areaIndex + 1, AREAS.length - 1)],
+      next: this.stages[Math.min(this.areaIndex + 1, this.stages.length - 1)],
       points: c.roster.points,
       strength: c.roster.strength,
       max: MAX_STRENGTH,
       roster: c.roster.summary(),
+      /* THE QUIET, and it crosses the wire with the rest of the offer for the
+       * reason the note above gives: a peer that assembled its own beats out
+       * of a log it does not keep would tell a different story about the same
+       * engagement. Same object every call — `recruit` re-reads the offer after
+       * every purchase, and a reveal that restarted itself each time you bought
+       * a trooper would never finish. */
+      interlude: this._interlude,
       units: c.army.tiers
-        // The AREA NUMBER, not a second column beside it. See AREAS.
-        .filter((t) => t.at <= this.areaNumber)
+        // The AREA NUMBER, not a second column beside it. See AREAS — and see
+        // `unlockAt`, which is where a contingent's answer to the same question
+        // lives, because a mode with no areas cannot wait for the third one.
+        .filter((t) => this.unlockAt(t) <= this.areaRung)
         .map((t) => ({
           type: t.type, cost: t.cost,
           label: ARCHETYPES[t.type]?.label ?? t.type,
@@ -2413,7 +3383,7 @@ export class CommandDirector extends WaveDirector {
     const rung = c.army.tiers.find((t) => t.type === type);
     this.refused = null;
     if (!rung) { this.refused = `${type} is not one of ${c.army.name}'s units`; return null; }
-    if (rung.at > this.areaNumber) { this.refused = `${ARCHETYPES[type]?.label ?? type} is not available until area ${rung.at} of the advance`; return null; }
+    if (this.unlockAt(rung) > this.areaRung) { this.refused = `${ARCHETYPES[type]?.label ?? type} is not available until area ${rung.at} of the advance`; return null; }
     if (c.roster.points < rung.cost) { this.refused = `${rung.cost} points needed, you have ${c.roster.points}`; return null; }
     if (c.roster.strength >= MAX_STRENGTH) { this.refused = `you cannot field more than ${MAX_STRENGTH}`; return null; }
     c.roster.points -= rung.cost;
@@ -2468,11 +3438,11 @@ export class CommandDirector extends WaveDirector {
     try {
       for (let i = 0; i < want; i++) if (this.recruit(cheapest, c)) bought++;
       // Then the best thing on the shelf, until nothing on it is affordable.
+      // Through `_bestAffordable`, which is the same walk the opening muster
+      // makes and was written out twice until a contingent needed it too.
       for (let guard = 0; guard < 40; guard++) {
-        const affordable = this.musterOffer(c).units.filter((u) => u.afford);
-        if (!affordable.length) break;
-        affordable.sort((a, b) => b.cost - a.cost);
-        if (!this.recruit(affordable[0].type, c)) break;
+        const best = this._bestAffordable(c);
+        if (!best || !this.recruit(best, c)) break;
         bought++;
       }
     } finally { this._bulk = false; }
@@ -2508,7 +3478,12 @@ export class CommandDirector extends WaveDirector {
      * is every campaign caller and is unchanged by this.
      */
     const anchor = c.anchor || c.player?.position || w.player?.position || _v1.set(0, 0, 0);
-    const live = c.roster.living;
+    /* THE SQUADS THIS COMMANDER LEADS, not the whole roll. One roster shared
+     * by four players would otherwise have the first commander put all twenty
+     * bodies down around themselves and the other three find nothing missing.
+     * Identical to `roster.living` for a single commander, which is every
+     * campaign and both ends of a meeting. See `led`. */
+    const live = this.led(c);
     /**
      * AND THEY COME IN ON SHIPS, which the mode's own first brief has always
      * claimed and the code never did: "The gunships put you down in the open."
@@ -2560,10 +3535,21 @@ export class CommandDirector extends WaveDirector {
      * breaking it was not the one the player was looking at.
      */
     const air = opts.byShip && this.arrivals?.enabled ? this.arrivals : null;
-    let n = 0;
+    let n = 0, unplaced = 0;
     for (let i = 0; i < live.length; i++) {
       const t = live[i];
       if (t.body && !t.body.dead) continue;
+      /* ALREADY ON A SHIP. `deploy` is called from three places and one of
+       * them — `start`, whose guard is "does any living record lack a body" —
+       * would otherwise re-order the whole army every frame of the four
+       * seconds a gunship spends in the air, and land ten copies of it. A
+       * record in the air has no body and is not missing one.
+       *
+       * ASKED BEFORE THE GROUND SEARCH RATHER THAN AFTER IT, which is where it
+       * used to sit: a record in the air would otherwise pay for up to six
+       * `placementClear` sweeps of the collider list, every frame of its own
+       * flight, to answer a question that was already no. */
+      if (this._inbound.has(t)) continue;
       /**
        * BEHIND YOU AND BESIDE YOU, NEVER IN FRONT OF YOU.
        *
@@ -2601,28 +3587,10 @@ export class CommandDirector extends WaveDirector {
        */
       const face = c.player && c.player.isLocal && c.player.alive !== false ? c.player : null;
       const spread = live.length > 1 ? (i / (live.length - 1) - 0.5) : 0;
-      const a = face
-        ? (face.facing ?? 0) + Math.PI + spread * REAR_FAN + (rng() - 0.5) * 0.22
-        : (i / Math.max(1, live.length)) * TAU + rng() * 0.4;
-      const r = 4 + (i % 3) * 2.2;
-      _v2.set(anchor.x + Math.sin(a) * r, 0, anchor.z + Math.cos(a) * r);
-      nudgeFromSwing(w, _v2);
-      if (w.terrain) {
-        // Never off the edge of the world: a trooper deployed outside the
-        // heightfield is exactly the unreachable body the wave watchdog exists
-        // to catch, and putting one there on purpose is worse than catching it.
-        if (!w.terrain.inBounds(_v2.x, _v2.z, 8)) _v2.set(anchor.x, 0, anchor.z);
-        _v2.y = w.terrain.height(_v2.x, _v2.z);
-      }
+      if (!this._standingRoom(w, anchor, face, i, live.length, spread, _v2)) { unplaced++; continue; }
       /* THE COMMANDER'S SIDE, not the world's one constant. `world.partyTeam`
        * is the LOCAL player's side and there is one of it; a second army on it
        * would be an ally of the first, which is the whole question. */
-      /* ALREADY ON A SHIP. `deploy` is called from three places and one of
-       * them — `start`, whose guard is "does any living record lack a body" —
-       * would otherwise re-order the whole army every frame of the four
-       * seconds a gunship spends in the air, and land ten copies of it. A
-       * record in the air has no body and is not missing one. */
-      if (this._inbound.has(t)) continue;
       const enlist = (e) => {
         this._inbound.delete(t);
         enlistBody(e, t, { team: c.side, teamDamage: this.teamDamage, director: this, cmdr: c });
@@ -2634,12 +3602,129 @@ export class CommandDirector extends WaveDirector {
         this._inbound.add(t); n++; continue;
       }
       const e = w.spawnEnemy(t.type, _v2);
-      if (!e) continue;
+      if (!e) { unplaced++; continue; }
       enlist(e);
       n++;
     }
+    /**
+     * ── AND IF THE GROUND WOULD NOT TAKE THEM, IT SAYS SO ─────────────────
+     *
+     * The audit's third gap, and the reason it is worth a paragraph is that it
+     * was a SILENT one: the loop above ended `if (!e) continue;` and a record
+     * that could not be put down simply stayed bodyless while the roster panel
+     * went on printing its name. `reinforce` has said NO REINFORCEMENTS out
+     * loud since it was written, for the same reason `Player._refuse` exists —
+     * the caller has already spent something to get here — and a deployment
+     * that quietly delivers six of ten men is the same failure with nobody
+     * paying attention to it.
+     *
+     * Local commander only, exactly as `reinforce` does it: a peer's army
+     * failing to find ground is not this player's banner to lose.
+     *
+     * `undeployed` is left on the director rather than being only a banner,
+     * because a banner is not something a check or a HUD can read. It is the
+     * count from the LAST call, which is what "could the army be put down where
+     * it is standing now" means.
+     */
+    this.undeployed = unplaced;
+    if (unplaced && c === this.commander) {
+      this.world?.notify?.('NO GROUND FOR THE LINE',
+        `${unplaced} of ${live.length} could not be set down — move off the wall`);
+    }
     this._announceRoster();
+    /* THE WITNESS THAT AN ARMY EXISTED. `_checkLine` needs to tell "the roster
+     * has been wiped out" from "the roster has not landed yet", and both read
+     * `strength === 0`. A count of bodies actually put on the ground is the
+     * honest difference; a timer or a frame count is a guess about how long a
+     * gunship takes. Here rather than in `deployAll`, because four of the five
+     * callers in this file call `deploy` directly. */
+    if (n > 0) this._landed = true;
     return n;
+  }
+
+  /**
+   * WHERE ONE BODY CAN ACTUALLY STAND — writes into `out` and returns whether
+   * it found anywhere.
+   *
+   * ── THE DEFECT, MEASURED ──────────────────────────────────────────────
+   *
+   * `deploy` fanned the roster onto a fixed three-radius ring — 4, 6.2 and 8.4
+   * m behind the commander — and tested exactly two things about the result:
+   * that it was inside the heightfield, and that it was not in the arc the
+   * player's blade sweeps. It never asked the question the rest of the game
+   * asks about every body it places, which is `spawnClear`: is this point
+   * inside a collider, or under the level's own water?
+   *
+   * Driven over the seven shipped grounds, a 24-body contingent deployed from
+   * eight anchors on each, 1,344 placements, every body's chest point tested
+   * against the level's enabled static boxes and water sheet:
+   *
+   *     scoria     16 / 192   8.3%
+   *     mustafar   13 / 192   6.8%
+   *     colosseum  16 / 192   8.3%
+   *     wood       14 / 192   7.3%      ← the ankle-deep channels
+   *     drifts      1 / 192   0.5%
+   *     alpine      6 / 192   3.1%
+   *     geonosis    1 / 192   0.5%
+   *                67 / 1344  5.0%
+   *
+   * One trooper in twenty arrived inside a rock, a wall, a wreck or a stream.
+   * `Spawn.js`'s own header records the same class of bug being found in
+   * `World.pickSpawn` and `Arrivals._sitePoint` and fixed in both; the muster
+   * was the third caller and it was missed.
+   *
+   * ── WHAT THE AUDIT SAID, AND WHY IT IS WORTH CORRECTING IN PLACE ───────
+   *
+   * `muster.mjs`'s header states this gap as "on small ground `deploy` silently
+   * drops men… four allies asked put TWO on the field" on the Colosseum. Driven
+   * again, that is not what happens: `deploy()` returns 4, four bodies stand
+   * up, and by twenty-two seconds two of them are dead — killed by the duel's
+   * acolyte, with `roster.fallen` naming both. The count was read off a live
+   * fight and attributed to placement. It is HANDOFF §2.4 arriving from the
+   * other side: the diagnosis named a real number and the wrong mechanism, and
+   * the real mechanism — a placement predicate that was never called — is
+   * quieter and worse, because a body inside a wall is not a body you can see
+   * is missing.
+   *
+   * ── THE SEARCH ────────────────────────────────────────────────────────
+   *
+   * The first try is the shipped ring, angle for angle, so the nineteen bodies
+   * in twenty that were already standing on good ground do not move by a
+   * centimetre and consume exactly one draw from `rng` as they always did. Only
+   * a rejected point pays for a retry, and a retry widens: `DEPLOY_WIDEN` a
+   * ring at a time, with the angle re-jittered inside the same rear fan, so a
+   * line pressed against a wall walks out into the open rather than around the
+   * commander's front. `DEPLOY_TRIES` at `DEPLOY_WIDEN` puts the last ring at
+   * 21.4 m, which is inside the 30 m `command.mjs` holds a deployment to.
+   *
+   * `placementClear` is both halves at once — `spawnClear` and `bladeClear` —
+   * because "is this somewhere a body can arrive" already has two clauses and
+   * this caller needs both. `nudgeFromSwing` still runs first and is still
+   * unconditional: it is the reflection that cannot fail, and testing after it
+   * is what makes the blade clause a check rather than a hope.
+   */
+  _standingRoom(w, anchor, face, i, count, spread, out) {
+    for (let k = 0; k < DEPLOY_TRIES; k++) {
+      const a = face
+        ? (face.facing ?? 0) + Math.PI + spread * REAR_FAN
+          + (rng() - 0.5) * (k ? REAR_FAN * 0.5 : 0.22)
+        : (i / Math.max(1, count)) * TAU + rng() * (k ? 1.4 : 0.4);
+      const r = 4 + (i % 3) * 2.2 + k * DEPLOY_WIDEN;
+      out.set(anchor.x + Math.sin(a) * r, 0, anchor.z + Math.cos(a) * r);
+      nudgeFromSwing(w, out);
+      if (w.terrain) {
+        // Never off the edge of the world: a trooper deployed outside the
+        // heightfield is exactly the unreachable body the wave watchdog exists
+        // to catch, and putting one there on purpose is worse than catching it.
+        // A rejection now, rather than the anchor itself: falling back to the
+        // commander's own feet put the whole line inside one another on a
+        // ground whose edge the ring had reached.
+        if (!w.terrain.inBounds(out.x, out.z, 8)) continue;
+        out.y = w.terrain.height(out.x, out.z);
+      }
+      if (placementClear(w, out.x, out.y, out.z)) return true;
+    }
+    return false;
   }
 
   /** Every commander's army onto the field at once. Returns the total. */
@@ -2796,7 +3881,7 @@ export class CommandDirector extends WaveDirector {
     // A new order is a new choice of cover. See `_coverSite`.
     this._coverEpoch = (this._coverEpoch | 0) + 1;
     this.log.push({ t: 'order', formation: id, area: this.areaNumber, wave: this.wave });
-    if (c === this.commander) this.onOrder?.(F, c.roster.squads().length);
+    if (c === this.commander) this.onOrder?.(F, this.squadsOf(c).length);
     return true;
   }
 
@@ -3131,7 +4216,15 @@ export class CommandDirector extends WaveDirector {
       /* …and where the body is somebody's soldier rather than the composer's,
        * the same event goes on the record through the one door that writes
        * morale. `commanderOf` answers for whichever army it belongs to. */
+      /* …AND WHERE THERE IS NO RECORD, THE BODY'S OWN LEDGER. The note above
+       * used to end "in a campaign there is none and the three above are the
+       * entire effect", which is FLAGSHIP §7's complaint about this verb
+       * stated by the verb itself: DREAD could not break a horde because a
+       * horde had no nerve. It has one now (src/game/Nerve.js) and `shakeNerve`
+       * writes it — leaving a body WITH a record to `shake` above, which is
+       * still the one door that writes a name on a roll. */
       if (e.trooper) this.shake(e.trooper, 'SHAKEN', this.commanderOf(e));
+      else shakeNerve(e, MORALE.SHAKEN);
     }
     return n;
   }
@@ -3186,8 +4279,102 @@ export class CommandDirector extends WaveDirector {
      * stepping the turn in here would multiply the slew rate by the size of
      * the army, and a twelve-man line would track the commander twelve times
      * faster than a four-man one. */
+    /**
+     * …AND THE POSITION IS THE LINE'S, NOT THE PLAYER'S — FLAGSHIP §6.
+     *
+     *   "The objective advances at the pace of the slowest friendly inside
+     *    14 m. You can sprint 200 m into their rear; the line does not come
+     *    with you, and you arrive alone on an empty bar. Killing stays fast and
+     *    fun and advances nothing. Measured, and nobody designed it: walking
+     *    35 m forward drags the whole formation with you and costs 4 of 10
+     *    men."
+     *
+     * `outPos.copy(p.position)` above is that accident, in one line: the frame
+     * every slot is solved in WAS the player, live, at whatever pace the player
+     * chose, so a Jedi at a sprint handed twelve men a destination they could
+     * not reach and they strung out behind it in the open, one at a time, until
+     * four of them were dead. Nobody designed that; it fell out of a
+     * dereference.
+     *
+     * `_paceAnchor` is the same point with a speed limit on it, stepped once a
+     * frame in `_advanceAnchor` at `advancePace(c)` metres a second. It is a
+     * RULE now: your line moves at the pace of its slowest man, the objective
+     * moves with your line, and outrunning both is a thing you may do and gain
+     * nothing by.
+     */
     if (c._heldYaw === null || c._heldYaw === undefined) c._heldYaw = headingOf(p);
+    if (c._paceAnchor) outPos.copy(c._paceAnchor);
     return { pos: outPos.clone(), yaw: c._heldYaw };
+  }
+
+  /**
+   * HOW FAST THIS COMMANDER'S LINE MAY ADVANCE, in metres a second.
+   *
+   * The slowest LIVING friendly inside `MORALE.NEAR` of the commander, which is
+   * the same radius presence pays through — deliberately, because it is the
+   * same claim from two sides: a man close enough for your presence to steady
+   * him is a man close enough to be part of your advance.
+   *
+   * `e.speed` and not the body's measured velocity. A man who has stopped to
+   * shoot has a velocity of zero and has not stopped being able to walk, so
+   * pacing an advance on observed speed would freeze the line every time it
+   * fired. This is a CAPABILITY: a heavy gunner's 3.0 against an ARC's 4.6, as
+   * the rank multipliers left them.
+   *
+   * TWO DEGENERATE CASES, and each is a decision:
+   *
+   *   NOBODY LEFT ALIVE — the line does not exist, so nothing paces the
+   *     objective and it keeps up with the player. A rule that froze a lone
+   *     survivor in place would be punishing them for the deaths.
+   *   NOBODY INSIDE THE RADIUS — zero. This is the whole of §6: you have
+   *     outrun your line and the advance stops until you are back among them.
+   *     It cannot deadlock, because the anchor stops where the men are, so
+   *     walking back toward them is always available and always restarts it.
+   */
+  advancePace(c = this.commander) {
+    const p = c?.player;
+    if (!p || !p.position) return Infinity;
+    const living = c.roster?.living || [];
+    const r2 = MORALE.NEAR * MORALE.NEAR;
+    let slowest = Infinity, anyAlive = false;
+    for (const t of living) {
+      const e = t.body;
+      if (!e || e.dead) continue;
+      anyAlive = true;
+      if (dist2(e.position, p.position) > r2) continue;
+      const v = e.speed || 0;
+      if (v < slowest) slowest = v;
+    }
+    if (!anyAlive) return Infinity;
+    return slowest === Infinity ? 0 : slowest;
+  }
+
+  /**
+   * Step one commander's formation anchor toward them, at `advancePace`.
+   *
+   * ONCE A FRAME PER COMMANDER, beside `_slewFrame`, and for the identical
+   * reason its own note gives: `_frame` is a pure reader called once per
+   * trooper per frame, so stepping the chase in there would multiply the pace
+   * by the size of the army and a twelve-man line would advance twelve times
+   * faster than a four-man one.
+   */
+  _advanceAnchor(c, dt) {
+    const p = c?.player;
+    if (!p || !p.position) return;
+    if (!c._paceAnchor) { c._paceAnchor = p.position.clone(); return; }
+    /* The height is the player's outright. Only x and z are paced: a formation
+     * anchor is a place on the ground, and `slotFor` re-solves the standing
+     * height off the terrain anyway. Lagging the y would put the whole line
+     * underground on a slope. */
+    c._paceAnchor.y = p.position.y;
+    const dx = p.position.x - c._paceAnchor.x, dz = p.position.z - c._paceAnchor.z;
+    const d = Math.hypot(dx, dz);
+    if (d < 1e-4) return;
+    const step = this.advancePace(c) * dt;
+    if (!(step > 0)) return;
+    if (step >= d) { c._paceAnchor.x = p.position.x; c._paceAnchor.z = p.position.z; return; }
+    c._paceAnchor.x += dx / d * step;
+    c._paceAnchor.z += dz / d * step;
   }
 
   /**
@@ -3619,6 +4806,22 @@ export class CommandDirector extends WaveDirector {
    */
   steer(e, dt) {
     if (!e.trooper) return;
+    /**
+     * A MAN DEALING WITH A GRENADE IS NOT HOLDING A FORMATION.
+     *
+     * `Enemy.update` runs `stepReaction` before the brain and this is the other
+     * half of the same rule: everything below writes `wish`, `speed` and
+     * `crouch` from the slot he is supposed to be standing in, and a body that
+     * has just thrown itself flat would be walked back into the line while it
+     * lay there. One frame of that is a man sliding along the ground; a second
+     * of it is the reaction not existing at all.
+     *
+     * See src/game/Reactions.js. Dragging a casualty comes through here too —
+     * that one is not an emergency, it is a job, and a squad that keeps
+     * dressing the line while a man is being pulled out of it is the picture
+     * the player asked us to replace.
+     */
+    if (e.reaction) return;
     const c = this.commanderOf(e);
     /**
      * A BROKEN MAN DOES NOT HOLD THE LINE — the first of morale's two
@@ -3688,6 +4891,39 @@ export class CommandDirector extends WaveDirector {
        * behind something instead, and stays low while it is there. */
       this._goToGround(e, dt, c, false);
       return;
+    }
+    /**
+     * A MAN DOWN IN FRONT OF HIM — "or dragging their friends to safety".
+     *
+     * Below the two break branches on purpose: a soldier who has lost his nerve
+     * is not the one who goes back for somebody, and a squad in rout is not
+     * dragging anybody anywhere. Above the formation for the same reason a
+     * grenade is: this is a job that takes him out of the line, and a line that
+     * kept dressing itself around him would make it invisible.
+     *
+     * A casualty here is a body that is LIMP AND ALIVE — the state
+     * `Enemy._tickGetUp` stands up after a second and a third of lying still,
+     * which is what a man who has been blasted, shoved or thrown spends that
+     * second in. Until now every soldier beside him carried on shooting past
+     * him. `beingDragged` on the casualty is the claim, so ten men do not all
+     * grab the same one.
+     *
+     * ONE AT A TIME AND NOT EVERYBODY: `_dragCd` keeps a squad from emptying
+     * itself into a rescue, and the nerve gate means the man who goes is a man
+     * the player could have picked out from his nameplate. Both are the same
+     * shape as the smother gate in Reactions.js and for the same reason.
+     */
+    e._dragCd = Math.max(0, (e._dragCd ?? 0) - dt);
+    if (!e.reaction && e._dragCd <= 0 && t.morale > MORALE.BREAK + 0.12) {
+      const hurt = findCasualty(e, this.world?._frameCtx);
+      if (hurt && startDrag(e, hurt, this.world?._frameCtx)) {
+        e._dragCd = DRAG_AGAIN;
+        this.world?.notifyFloating?.(e.position, 'MAN DOWN', 0x9bb862);
+        return;
+      }
+      /* A refused attempt still costs him the look, or every frame is a scan
+       * of the whole field. */
+      if (!hurt) e._dragCd = 0.8;
     }
     const F = FORMATIONS[c.formation] || FORMATIONS[DEFAULT_FORMATION];
     /* A live target it is allowed to engage buys it the whole leash; otherwise
@@ -4117,6 +5353,9 @@ export class CommandDirector extends WaveDirector {
    * player is crossing.
    */
   start(wave = 1) {
+    /* THE FIRST ENGAGEMENT'S LEDGER OPENS HERE — the other door into one, the
+     * first time round. `closeMuster` is the door for every area after it. */
+    this._logAt = this.log.length;
     /**
      * A MEETING HAS NO WAVE TO COMPOSE, and that is the whole of what versus
      * changes about this class.
@@ -4142,6 +5381,12 @@ export class CommandDirector extends WaveDirector {
       return;
     }
     super.start(wave);
+    /* AND THE LINE IS IN FRONT OF YOU BEFORE A BODY IS PLACED. Before
+     * `deploy()`, not after: the slots are solved from the formation, so an
+     * order given afterwards would place ten men in column and walk them round
+     * over the next few seconds — and the frame this is about is the first
+     * one. See `_openOnRank`. */
+    this._openOnRank();
     /* NO SHIP HERE, AND THAT IS NOT AN OVERSIGHT — see `deploy`'s own note.
      * `start` is the battle OPENING: either the level has just loaded, or
      * `_afterRotate` has just run inside an extraction flight and the commander
@@ -4151,6 +5396,38 @@ export class CommandDirector extends WaveDirector {
      * the ramp with you, so a gunship queued for them would be a second
      * aircraft delivering passengers who are already aboard the first. */
     if (this.roster.living.some((t) => (!t.body || t.body.dead) && !this._inbound.has(t))) this.deploy();
+    /* AND THE GROUND SHOWS ENGAGEMENT ONE. §5's 0:24 — "you can see the front"
+     * — is a fact about the ground the moment the camera opens, not something
+     * that appears after the first muster. See `marchTo`. */
+    this.marchTo(this.areaNumber);
+  }
+
+  /**
+   * THE CROSSING OPENS ON A RANK, NOT A COLUMN.
+   *
+   * `CROSSING_FORMATION` carries the argument and `FORMATIONS.rank` carries the
+   * measurements. This is the wiring, and every clause in it is deliberate:
+   *
+   *   OFF THE MODE'S OWN FIELD, not its name. `holdTheLine` is what separates
+   *     this mode from Command, and it is already the field `_endCampaign` and
+   *     `_checkLine` read. A campaign, a skirmish and a contingent keep the
+   *     column they were designed around.
+   *   AT THE OPENING ONLY. `start` runs at the top of every engagement, and a
+   *     clause that fired at each of them would take the order back off a
+   *     player who had chosen the column on purpose in area 3.
+   *   ONLY IF NOTHING HAS BEEN ORDERED. `DEFAULT_FORMATION` is the untouched
+   *     state; anything else is a decision somebody made.
+   *   THROUGH `order()`. Exactly as `enlistCommander`'s meeting clause does,
+   *     and for the same reason: the planting, the log entry and the HUD
+   *     indicator all happen the way they do for a key press. An assignment to
+   *     `commander.formation` would move the men and tell nobody.
+   */
+  _openOnRank() {
+    if (!this.holdTheLine || this.areaNumber !== 1) return false;
+    const c = this.commander;
+    if (!c || c.formation !== DEFAULT_FORMATION || !FORMATIONS[CROSSING_FORMATION]) return false;
+    this.order(CROSSING_FORMATION, c);
+    return true;
   }
 
   /**
@@ -4177,7 +5454,26 @@ export class CommandDirector extends WaveDirector {
     const half = VERSUS_SEPARATION / 2;
     const n = Math.max(this.commanders.length, sides.length, players.length);
     for (let i = 0; i < n; i++) {
-      const c = this.commanders[i] || this.enlistCommander({ player: players[i] ?? null });
+      /**
+       * THE SIDE AND THE ARMY GO IN, RATHER THAN BEING PAINTED ON AFTERWARDS.
+       *
+       * This used to be `enlistCommander({ player })` followed by three
+       * assignments, and the ordering was a real defect rather than an
+       * untidiness: `enlistCommander` musters the opening ten, so the second
+       * commander of every meeting enlisted ten of the FIRST army's bodies —
+       * `army.tiers[0].type` is `trooper` for the Republic and `b1` for the
+       * Confederacy — and was then relabelled. Driven on a real meeting: both
+       * armies fielded `Clone Trooper` and both rolls read `CT-####`.
+       *
+       * It also has to be this way round now that the roster is looked up by
+       * side and army (§9): a commander whose army is assigned after the fact
+       * is a commander holding the wrong roster.
+       */
+      const c = this.commanders[i] || this.enlistCommander({
+        player: players[i] ?? null,
+        side: sides[i],
+        army: (armies && armies[i]) || undefined,
+      });
       if (players[i]) c.player = players[i];
       if (sides[i] !== undefined) c.side = sides[i];
       if (armies && armies[i]) {
@@ -4224,6 +5520,12 @@ export class CommandDirector extends WaveDirector {
      * `payWave` returns, so a director that was not told it had finished would
      * start wave 22 five and a half seconds after the campaign ended. */
     if (this.done) return;
+    if (this._checkLine()) return;
+    /* THE GROUND IS TAKEN THE MOMENT THE LINE ARRIVES, and not at the next
+     * wave — `payWave` is the only other caller of `_areaClear` and it does not
+     * run again until a wave is composed and cleared, so without this the
+     * player would stand on won ground waiting for a fight that is over. */
+    if (this.awaitingLine && this.lineIsUp()) { this.awaitingLine = false; this._areaClear(); return; }
     this._updateClosing(ctx);
     /* A meeting has no queue, no arrivals and no wave to clear — see `start`.
      * The army half of the frame is identical, which is the point: two players'
@@ -4279,12 +5581,20 @@ export class CommandDirector extends WaveDirector {
      * ends the round.
      */
     const present = this.world?.players;
+    /* A SIDE WHOSE COMMANDER HAS GONE IS STILL A SIDE, AT ZERO. The paragraph
+     * above is why, and `dismissCommander` is what fills this set — the
+     * Commander itself is gone from the list, which is the whole point, so the
+     * side it held has to be remembered somewhere else or it stops existing. */
+    for (const s of this._departed) { standing[s] = standing[s] || 0; health[s] = health[s] || 0; }
     for (const c of this.commanders) {
       const s = c.side;
       standing[s] = standing[s] || 0;
       health[s] = health[s] || 0;
       if (c.player && Array.isArray(present) && !present.includes(c.player)) continue;
-      for (const t of c.roster.living) {
+      /* THIS COMMANDER'S OWN SQUADS. With one roster shared by four players
+       * `roster.living` is everybody's line, so counting it per commander
+       * would report a side of ten as a side of forty. See `led`. */
+      for (const t of this.led(c)) {
         const b = t.body;
         if (!b || b.dead) continue;
         standing[s]++;
@@ -4373,7 +5683,7 @@ export class CommandDirector extends WaveDirector {
    */
   _morale(dt, c) {
     const jedi = c.player;
-    const squads = c.roster.squads();
+    const squads = this.squadsOf(c);
     for (const squad of squads) {
       const lead = this.leaderOf(squad);
       let living = 0, broke = 0;
@@ -4384,20 +5694,53 @@ export class CommandDirector extends WaveDirector {
         if (e && !e.dead) {
           /* PRESENCE. The Jedi is worth more than a sergeant, and a body with
            * neither in reach is a body on its own. */
-          let near = false;
-          if (jedi?.position && dist2(e.position, jedi.position) < MORALE.NEAR * MORALE.NEAR) {
-            d += MORALE.JEDI_NEAR; near = true;
+          /* HOW MUCH OF A PRESENCE TERM A MAN AT `d²` GETS — full at the
+           * shoulder, `MORALE.EDGE` at the rim, nothing beyond it. See `EDGE`:
+           * this was a step, and a step has one value where the channel needs
+           * a range. */
+          const share = (d2) => {
+            if (d2 >= MORALE.NEAR * MORALE.NEAR) return 0;
+            const k = Math.sqrt(d2) / MORALE.NEAR;
+            return 1 - (1 - MORALE.EDGE) * k;
+          };
+          let near = false, presence = 0;
+          if (jedi?.position) {
+            const w = share(dist2(e.position, jedi.position));
+            if (w > 0) { presence += MORALE.JEDI_NEAR * w; near = true; }
           }
-          if (lead && lead !== t && lead.body && !lead.body.dead
-            && dist2(e.position, lead.body.position) < MORALE.NEAR * MORALE.NEAR) {
-            d += MORALE.LEADER_NEAR; near = true;
+          if (lead && lead !== t && lead.body && !lead.body.dead) {
+            const w = share(dist2(e.position, lead.body.position));
+            if (w > 0) { presence += MORALE.LEADER_NEAR * w; near = true; }
           }
+          /* AND THEY EASE OFF AT THE CEILING — see `MORALE.PRESENCE_CAP` for
+           * the 1.000 this is here to unpin. A taper and not a switch, because
+           * a term that turns off on one frame reads as the number twitching;
+           * the band is the same idiom `_move`'s grade falloff uses. */
+          if (presence > 0) {
+            const over = (t.morale - (MORALE.PRESENCE_CAP - MORALE.PRESENCE_BAND))
+              / MORALE.PRESENCE_BAND;
+            presence *= 1 - clamp(over, 0, 1);
+          }
+          d += presence;
           if (!near) d += MORALE.ALONE;
           if (e.maxHp && e.hp < e.maxHp * 0.34) d += MORALE.WOUNDED;
         } else {
           // between areas, or waiting on a gunship: nerve comes back
           d += MORALE.RALLY_PER_S;
         }
+        /**
+         * ELATION WEARS OFF — above the cap only, and at a FLAT rate.
+         *
+         * The first version scaled the settle by how far over the ceiling the
+         * record was, which is zero exactly AT the ceiling — so there was no
+         * restoring force at the one point that matters and the equilibrium
+         * sat a hair above it (measured: 0.843 against a 0.84 cap, which is
+         * 1.9% of a comrade falling still eaten by the clamp). Flat, the
+         * settle and the presence taper meet at the cap: presence has reached
+         * zero, the settle switches off, and a line resting beside its Jedi
+         * sits exactly on the ceiling with a full knock of room above it.
+         */
+        if (t.morale > MORALE.PRESENCE_CAP) d -= MORALE.SETTLE;
         t.morale = clamp(t.morale + d * dt, 0, 1);
         /* THE ONE THING A BODY READS OFF ITS RECORD EVERY FRAME. `_pace` is
          * how much of its own speed a shaken body uses and `aimQuality`
@@ -4452,7 +5795,9 @@ export class CommandDirector extends WaveDirector {
   shake(who, key, c = this.commander) {
     const amount = MORALE[key];
     if (amount === undefined) return 0;
-    const list = who ? (Array.isArray(who) ? who : [who]) : c.roster.living;
+    /* "the whole army" is THIS COMMANDER'S — one roster shared by four players
+     * would otherwise be shaken once per player for one wave cleared. */
+    const list = who ? (Array.isArray(who) ? who : [who]) : this.led(c);
     let n = 0;
     for (const t of list) {
       if (!t || !t.alive) continue;
@@ -4497,15 +5842,23 @@ export class CommandDirector extends WaveDirector {
      * have the second one solving its slots against the first one's count. */
     for (const c of this.commanders) {
       this._slewFrame(c, dt);
+      this._advanceAnchor(c, dt);
       this._morale(dt, c);
       /* The commander's own Force, one clock per verb per army. Here rather
        * than in `update` because this is the loop that already runs once a
        * frame for every commander in the world, meeting or campaign. */
       if (c._castCd) for (const k in c._castCd) if (c._castCd[k] > 0) c._castCd[k] = Math.max(0, c._castCd[k] - dt);
       const F = FORMATIONS[c.formation] || FORMATIONS[DEFAULT_FORMATION];
-      const squads = c.roster.squads();
+      /* THIS COMMANDER'S SQUADS AND THIS COMMANDER'S COUNT. `slot(i, n, k)` is
+       * solved in ONE commander's frame — `i` is a position in the line they
+       * are leading and `n` is how long that line is — so with a roster shared
+       * between four players both have to be the share, not the whole. Four
+       * players each solving a twenty-man circle would put every man in four
+       * different places and hand the frame to whichever loop ran last. */
+      const squads = this.squadsOf(c);
       let i = 0;
-      const n = c.roster.strength;
+      let n = 0;
+      for (const sq of squads) n += sq.length;
       for (let k = 0; k < squads.length; k++) {
         /**
          * WHAT THE MAN IN CHARGE IS FIGHTING — read once per squad, not once
@@ -4663,8 +6016,119 @@ export class CommandDirector extends WaveDirector {
      * contingent's, and neither mode runs the other's.
      */
     if (!this.campaign) { this._reinforce(); return fresh; }
-    if (this.areaWaves >= this.area.waves) this._areaClear();
+    /* THE GROUND IS TAKEN BY THE LINE, NOT BY THE KILL COUNT — see
+     * `lineIsUp` and `MODES.theline.lineAdvances`. In Command this is `true`
+     * every time and the line below is the sentence it always was. */
+    if (this.areaWaves >= this.area.waves) {
+      /**
+       * AN ARMY THAT NO LONGER EXISTS DID NOT TAKE THIS GROUND.
+       *
+       * `lineIsUp` answers TRUE for an empty roster, and it has to: a rule that
+       * waited for a line that cannot come is a rule that hangs the run. But
+       * `payWave` calls `_areaClear` synchronously, and `_checkLine` — the door
+       * that ends a run whose army is gone — does not get its frame until the
+       * next `update`. So the last wave paid by a dead line logged an `area`
+       * record on the way out, and `areasTaken` reads that log: the defeat card
+       * would credit the player with ground their army was not alive to hold.
+       *
+       * Doing nothing here is right rather than lazy. The run is over, the very
+       * next frame ends it, and the only question was whether it ends with an
+       * honest ledger.
+       */
+      if (this.holdTheLine && this._landed && this.roster.strength === 0) {
+        /* over — `_checkLine` ends it next frame */
+      } else if (this.lineIsUp()) this._areaClear();
+      else this._awaitLine();
+    }
     return fresh;
+  }
+
+  /**
+   * IS THE LINE UP? — and this method is the answer to `FLAGSHIP.md` §7's
+   * central claim, which was measured FALSE and stayed false through four
+   * attempts to fix it somewhere else.
+   *
+   * ── WHAT WAS ACTUALLY WRONG ──────────────────────────────────────────
+   *
+   * §1: "your job is not to kill everything — it is to be the reason the line
+   * is still standing when it takes the ridge." §6 says how that is supposed to
+   * hold: "the objective advances at the pace of the slowest friendly inside
+   * 14 m. You can sprint 200 m into their rear; the line does not come with
+   * you… **Killing stays fast and fun and advances nothing.**"
+   *
+   * That last sentence was never implemented. `payWave` took the ground when
+   * `areaWaves >= area.waves` — a count of cleared waves, and nothing else.
+   * So killing everything, alone, two hundred metres in front of your men,
+   * TOOK THE AREA. `advancePace` was built and is correct and moves the
+   * formation anchor at the slowest man's speed, but the anchor decided where
+   * the line stood, not whether the run advanced.
+   *
+   * Four mechanisms were built to make a Jedi worth something to his line —
+   * presence as a morale term, `openness` as a multiplier on other people's
+   * guns, a bolt screen for the man beside you, and the attrition tuning — and
+   * every one of them measured as not paying. The diagnosis in `NEXT.md` is
+   * that each was a local good handed to the one body on the field that does
+   * not stay local: measured, the line holds together to about seven metres and
+   * **the player is the one who leaves**, up to 26 m ahead of his own men.
+   *
+   * A fifth local good would have failed the same way. What was missing is not
+   * a reward for standing still; it is that **standing with the line was not
+   * how the run advanced**. Killing was.
+   *
+   * ── THE RULE ─────────────────────────────────────────────────────────
+   *
+   * A quorum of the living inside `MORALE.NEAR` — the same radius presence,
+   * the pace rule and the nerve ledger already use, so a player learns one
+   * distance and not four. Half, because a line that has lost men is still a
+   * line and a rule that wanted all of them would make one straggler a wall.
+   *
+   * It needs no new number, no new HUD element and no new verb. It makes every
+   * one of those four mechanisms pay at once, because each of them keeps men
+   * alive and near you and that is now the thing that advances the run.
+   *
+   * NOT a timer, and not a walk-back penalty: both punish the player for
+   * having left. This does not punish anything. It declines to advance until
+   * the army that is supposed to be taking this ground is standing on it,
+   * which is what "the line takes the ridge" means.
+   */
+  /* AND NOT AGAINST THE FRONT, which is the obvious-looking alternative and is
+   * refuted by measurement — see the note over `Front.engagementFront`. The
+   * line stands 165–200 m behind the engagement's front on every seed, because
+   * the front is the war closing `FRONT_STEP` at a time and not the ground this
+   * squad is standing on. A quorum inside `MORALE.NEAR` of it is unreachable at
+   * every engagement a sitting contains, so that rule would never take an area
+   * at all. */
+  lineIsUp(c = this.commander) {
+    if (!this.lineAdvances) return true;
+    const p = c?.player;
+    /* No body to measure from — a headless director, or a commander who has
+     * fallen — cannot hold the ground open. `census`'s note argues the same
+     * for orders: losing your general costs you your orders, not the battle. */
+    if (!p || !p.position) return true;
+    const living = (c?.roster?.living) || [];
+    let alive = 0, near = 0;
+    const r2 = MORALE.NEAR * MORALE.NEAR;
+    for (const t of living) {
+      const e = t.body;
+      if (!e || e.dead) continue;
+      alive++;
+      if (dist2(e.position, p.position) <= r2) near++;
+    }
+    /* An army that no longer exists cannot come up, and a run that waited for
+     * it would hang instead of ending. `_checkLine` is the door for that. */
+    if (!alive) return true;
+    return near * 2 >= alive;
+  }
+
+  /**
+   * The ground is won and the line is not on it yet. Said once, and then the
+   * frame keeps asking — see `update`.
+   */
+  _awaitLine() {
+    if (this.awaitingLine) return;
+    this.awaitingLine = true;
+    this.world?.notify?.('THE LINE IS COMING UP',
+      'the ground is not yours until your men are standing on it');
   }
 
   /**
@@ -4689,21 +6153,65 @@ export class CommandDirector extends WaveDirector {
   _reinforce() {
     let any = false;
     for (const c of this.commanders) {
-      const cheapest = c.army.tiers[0].type;
+      /**
+       * WHAT IS MISSING FROM THE LINE, BY TYPE — not how many bodies short it
+       * is.
+       *
+       * This used to be `c.roster.strength < this.opening` and a `recruit` of
+       * the cheapest rung, which was the same statement as long as every
+       * contingent was ten identical clone troopers. The moment the player can
+       * compose one it stops being: a line of four ARC troopers that loses one
+       * would have been refilled with a clone trooper — and then, over a long
+       * run, refilled again and again until four ARCs had become eight troopers
+       * with nothing anywhere reporting the drift. The opening muster records
+       * what it bought (`c.lineup`) and a replacement is measured against that
+       * roll, so a fallen ARC is replaced by an ARC at an ARC's price or not at
+       * all.
+       *
+       * A multiset difference and not a per-slot one: the roster is a bag of
+       * records, the man who died is gone for good and the record with his
+       * kills on it stays on the fallen list, so what a replacement restores is
+       * the SHAPE and never the man.
+       */
+      const short = new Map();
+      for (const type of (c.lineup || [])) short.set(type, (short.get(type) || 0) + 1);
+      for (const t of c.roster.living) {
+        const n = short.get(t.type);
+        if (n) short.set(t.type, n - 1);
+      }
+      /* THE CHEAPEST HOLE FIRST, so a line missing a trooper and an ARC gets
+       * the trooper back first: a body on the field beats a better body in
+       * eleven waves' time, and the purse below is paid against whatever is
+       * being waited for. */
+      const wanted = [...short.entries()].filter(([, n]) => n > 0)
+        .map(([type]) => type).sort((a, b) => musterCost(a) - musterCost(b));
       /* PAID ONLY WHILE THE LINE IS SHORT, and that is not a saving. A purse
        * that accrues through a full roster is a purse that buys the NEXT
        * casualty back on the frame it happens — measured, sixty clears at full
        * strength banked thirty points and two men lost were replaced before
        * either body hit the ground, which is the opposite of "they permanently
        * die unless they are replaced". You are paid for the replacements you
-       * need, when you need them. */
-      if (c.roster.strength < this.opening) {
-        c.roster.points += musterCost(cheapest) / CONTINGENT_WAVES_PER_BODY;
+       * need, when you need them.
+       *
+       * AND AT THE PRICE OF THE BODY YOU ARE WAITING FOR. The rate is stated as
+       * a number of cleared WAVES (`CONTINGENT_WAVES_PER_BODY`) and turned into
+       * points by dividing that body's own `musterCost`, so a clone trooper is
+       * still two clears and an ARC is five — the same cadence per point of
+       * army, applied to whatever the player chose to field. A flat
+       * cheapest-rung accrual would have made a composed line cheaper to
+       * rebuild than it was to raise. */
+      if (wanted.length) {
+        c.roster.points += musterCost(wanted[0]) / CONTINGENT_WAVES_PER_BODY;
       }
       /* `recruit` is the one door — it prices, it enlists, it publishes, and it
        * refuses a roster already at `MAX_STRENGTH`. The extra ceiling here is
-       * the player's own number, which is smaller. */
-      while (c.roster.strength < this.opening && this.recruit(cheapest, c)) any = true;
+       * the player's own line, which is smaller. */
+      for (const type of wanted) {
+        while ((short.get(type) || 0) > 0 && this.recruit(type, c)) {
+          short.set(type, short.get(type) - 1);
+          any = true;
+        }
+      }
     }
     /* …AND THEY COME IN ON A SHIP. `deploy`'s note says `byShip` is for the
      * moment an army ARRIVES, and a replacement walking out of a gunship in the
@@ -4723,6 +6231,7 @@ export class CommandDirector extends WaveDirector {
    */
   _areaClear() {
     if (this.done) return;
+    this.awaitingLine = false;
     for (const t of this.roster.living) {
       t.areas++;
       const p = t.award(2);
@@ -4731,6 +6240,9 @@ export class CommandDirector extends WaveDirector {
     // Holding a whole area is the biggest thing that happens to a line's nerve.
     for (const c of this.commanders) this.shake(null, 'AREA_HELD', c);
     this.roster.points += this.area.muster;
+    /* HOLDING GROUND IS WHAT EARNS A FLEET'S ATTENTION. The largest single
+     * credit on the table — see SUPPORT_EARN. */
+    this.world?.support?.credit('area');
     this.log.push({ t: 'area', area: this.areaNumber, name: this.area.name,
                     strength: this.roster.strength, fallen: this.roster.fallen.length });
 
@@ -4743,8 +6255,27 @@ export class CommandDirector extends WaveDirector {
     // of the next area — the gunships, which is what the first area's brief
     // says happens. See `recall`.
     this.recall();
+    /**
+     * THE INTERLUDE, BUILT BEFORE THE OFFER IT RIDES ON.
+     *
+     * Everything it reports has already happened by this line: the xp and the
+     * promotions above, the casualties during the fight, the points the ground
+     * paid. It is read off `this.log` from the mark `closeMuster` left, so
+     * there is no second ledger to disagree with the roll — see `_logAt`.
+     *
+     * `held` is the stage just taken, which is `areaIndex - 1` now that the
+     * index has moved on. `got` is what that ground paid, off the same record
+     * the credit above came from, rather than a difference of two purses:
+     * `recruit` can also move `points`, and a muster that opened mid-purchase
+     * would otherwise report the wrong number.
+     */
+    const held = this.stages[this.areaIndex - 1];
+    this._interlude = interludeBeats(this.log, this._logAt, held, {
+      got: held.muster, points: this.roster.points,
+      strength: this.roster.strength, max: MAX_STRENGTH,
+    });
     const offer = this.musterOffer();
-    this.world?.notify?.(`${AREAS[this.areaIndex - 1].name.toUpperCase()} — HELD`,
+    this.world?.notify?.(`${this.stages[this.areaIndex - 1].name.toUpperCase()} — HELD`,
       `${this.roster.points} reinforcement points · ${this.roster.strength} standing`);
     /* …AND ON EVERY OTHER MACHINE IN THE SESSION. `onMuster` raises the card on
      * the machine holding the army; this raises it on the machines that are not,
@@ -4801,7 +6332,28 @@ export class CommandDirector extends WaveDirector {
     this.active = false;
     this.areaWaves = 0;
     const strength = this.roster.strength, all = this.roster.all.length;
-    this.log.push({ t: 'won', area: this.areaNumber, strength, fallen: this.roster.fallen.length });
+    /**
+     * THE VERDICT IS COMPUTED, NOT ASSERTED — see `holdTheLine`.
+     *
+     * In Command this is `true` and the line below is the sentence it always
+     * was: the ground is the win, and reaching the far end of it wins. In THE
+     * LINE the ridge is not the win — the men on it are — so a crossing
+     * completed with nobody left is logged and scored as a loss, and the run
+     * ends the same way it ends when the army is wiped mid-crossing.
+     *
+     * `strength > 0` and not a threshold. A rule that wanted six of ten home
+     * would need a number nothing in the design states, and the design does
+     * state this one: §1's job is "to be the reason the line is still standing
+     * when it takes the ridge", and a line with a man in it is standing.
+     */
+    const won = !this.holdTheLine || strength > 0;
+    /* WHY, and not only WHETHER. A crossing walked end to end and lost anyway
+     * is a different sentence from a Jedi killed on wave three, and `main.js`
+     * has exactly one field to tell them apart with — see `ended` there. */
+    const ended = won ? null : 'line';
+    this.log.push({ t: won ? 'won' : 'lost', area: this.areaNumber, strength,
+                    fallen: this.roster.fallen.length,
+                    ...(won ? {} : { why: 'the line did not survive the crossing' }) });
     // The survivors walk off the field. Every record is kept — the roster IS the
     // summary, and the fallen are most of what it is worth reading.
     this.recall();
@@ -4825,7 +6377,7 @@ export class CommandDirector extends WaveDirector {
      * from a file that is holding the level, and World reads the ground off the
      * ground. Same words today; right words the day Command's ground moves.
      */
-    w._announceBattle(true);
+    w._announceBattle(won);
     w.over = true;
     /**
      * THROUGH `World.runStats()` — the third assembly of one object, deleted.
@@ -4841,7 +6393,51 @@ export class CommandDirector extends WaveDirector {
      * was printed on the mode that names its dead. `this.wave` is what
      * `runStats` reads off `world.director.wave`, which is this director.
      */
-    w.onGameOver?.(w.runStats({ won: true }));
+    w.onGameOver?.(w.runStats({ won, ended }));
+    return true;
+  }
+
+  /**
+   * THE RUN ENDS WHEN THE ARMY DOES — `MODES.theline.holdTheLine`.
+   *
+   * The only ending this director had was `_endCampaign`, reached by clearing
+   * the last area, and the only other ending in the game is `World._checkWipe`,
+   * which asks whether every PLAYER is down. Neither of them can see an army
+   * that has ceased to exist. So in the mode whose entire subject is a roster,
+   * losing the roster was not an event: the muster after it deployed nobody,
+   * the next area opened with a Jedi alone against a composed wave, and the run
+   * went on until the Jedi died or the ridge was taken.
+   *
+   * WHY IT IS GATED ON HAVING DEPLOYED. `strength` is zero before the first
+   * gunship lifts — the roster is enlisted and the men are not on the field —
+   * so an ungated test ends the run on frame one of every session. `_landed`
+   * is raised by the first deployment rather than by a timer, because the
+   * question this asks is "did an army that existed stop existing", and the
+   * only honest witness to the first half of that is the deployment itself.
+   *
+   * NOT `_endCampaign`. That method is the end of a CROSSING and logs the area
+   * it finished on, awards the muster, promotes the living and recalls the
+   * survivors — every one of which is a lie about a run that ended because
+   * there are no survivors. This is a second door, and it is the second door
+   * on purpose: two endings that mean different things should not share one.
+   */
+  _checkLine() {
+    if (!this.holdTheLine || this.done || !this._landed) return false;
+    if (this.roster.strength > 0) return false;
+    /* A muster is the one state where an empty field is correct: the army is
+     * off the ground being paid for and re-deployed, and `closeMuster` is what
+     * puts it back. Ending here would end every Raid at its first interlude. */
+    if (this.mustering) return false;
+    this.done = true;
+    this.active = false;
+    this.areaWaves = 0;
+    this.log.push({ t: 'lost', area: this.areaNumber, strength: 0,
+                    fallen: this.roster.fallen.length, why: 'the line was wiped out' });
+    const w = this.world;
+    if (!w) return true;
+    w._announceBattle(false);
+    w.over = true;
+    w.onGameOver?.(w.runStats({ won: false, ended: 'line' }));
     return true;
   }
 
@@ -4855,9 +6451,23 @@ export class CommandDirector extends WaveDirector {
      * that cannot leave a client playing an area the host has not begun. */
     if (this._netShell) return this.world?.requestMuster?.(null, true) ?? false;
     this.mustering = false;
-    // THE GUNSHIPS, which is what the mode's first brief has always said
-    // happens and what the code never did. See `deploy`.
-    this.deploy(this.commander, { byShip: true });
+    /* A NEW ENGAGEMENT STARTS HERE, so the ledger's mark moves and the story
+     * just told is forgotten. Both in one place because they are one fact:
+     * everything after this line belongs to the next interlude. */
+    this._logAt = this.log.length;
+    this._interlude = null;
+    /* THE GUNSHIPS, which is what the mode's first brief has always said
+     * happens and what the code never did. See `deploy`.
+     *
+     * EVERY COMMANDER, not only mine: with one roster and four players the
+     * next area opens with three quarters of the line still in the sky. This
+     * is `deployAll` and not a second loop over `commanders`, and it is
+     * identical for the one-commander campaign it was written for. */
+    this.deployAll({ byShip: true });
+    /* AND THE FRONT HAS MOVED. This is the one frame in a run where the ground
+     * changes under a player who is standing on it, which is §1's fifth line
+     * and the mode's one-way visible variable. See `marchTo`. */
+    this.marchTo(this.areaNumber);
     /* The card comes down on every OTHER machine too, and this is the half a
      * client cannot do for itself: the host's player pressing Done is the only
      * thing that ends the muster, so a peer sitting on an open card would sit
@@ -4866,6 +6476,122 @@ export class CommandDirector extends WaveDirector {
     this.world?.notify?.(this.area.name.toUpperCase(), this.area.brief);
     this.intermission = 4.0;
     return true;
+  }
+
+  /**
+   * THE FRONT MOVES ACROSS THE GROUND YOU ARE STANDING ON.
+   *
+   * `FLAGSHIP.md` §1's fifth line, and until this method existed the ground
+   * did not know a campaign was happening on it. `Front.marchFront` was built,
+   * measured and plated — the engagement plates go 20.5% / 28.8% / 45.2% of
+   * pixels moved between 1↔3, 3↔5 and 1↔5 — and its own lane's report ended
+   * "`marchFront` is still the debug path only — no mode calls it". This is the
+   * mode calling it.
+   *
+   * ── ADDITIVE, AND CALLED FOR EVERY ENGAGEMENT IN ORDER ──────────────────
+   *
+   * `marchFront`'s contract says so in its own header: "calling this for 1, 2,
+   * 3… in order is what a session does; calling it once for 4 would give
+   * ground that has the fourth engagement's front on it and none of the first
+   * three's history". So this is called once per engagement and never
+   * catches up — `_marched` is the high-water mark, and a client that receives
+   * an area change it did not compute walks the same ladder rather than
+   * jumping to the end of it.
+   *
+   * ── WHY THE HOST ONLY, AND WHY IT IS STILL RIGHT ON A CLIENT ────────────
+   *
+   * The dressing is a pure function of the seed and the engagement number.
+   * Both ends compute the same ground from the same two numbers without a byte
+   * crossing the wire — which is the same argument `CraterLog` makes for
+   * replaying a log rather than shipping a heightfield, and the reason a front
+   * is affordable in co-op at all.
+   *
+   * ── AND THE LEVEL OWNS ITS OWN AIR ─────────────────────────────────────
+   *
+   * `world.smokeAir` is published by the level beside its own
+   * `addSmokeColumns` call, so the columns this raises dissolve into the same
+   * fog the level's do. A second copy of those five numbers here is HANDOFF
+   * §2.3 with a rendering change behind it.
+   */
+  marchTo(n) {
+    const w = this.world;
+    if (!w?.terrain || w.frontOff) return 0;
+    const want = Math.max(1, n | 0);
+    if ((this._marched | 0) >= want) return 0;
+    let did = 0;
+    for (let e = (this._marched | 0) + 1; e <= want; e++) {
+      try {
+        const out = marchFront(w, {
+          engagement: e,
+          /**
+           * THE HULLS — the one mark of the five the mode never laid, and then
+           * laid on exactly one ground.
+           *
+           * `Front.marchFront` grows wreck clusters only when it is handed the
+           * function that builds them, and this caller never passed it: the
+           * barrage, the burn, the smoke and the fallen all landed and the
+           * hulls did not. §12.4 names them specifically — "wrecks belong on
+           * the fighting line" — and prices them as the biggest line item on
+           * Geonosis at 112 of 225 draw calls, so they are the mark that
+           * carries the picture rather than a garnish.
+           *
+           * IT WAS THEN PASSED AND WAS STILL NULL ON SIX GROUNDS OF SEVEN.
+           * `world.strewWrecks` was published by Geonosis' own `dress` and by
+           * nothing else, and THE LINE rolls its theatre off the run seed — so
+           * "the mode lays hulls now" was a sentence about one seventh of the
+           * mode's rolls. `Levels.beginDressing` publishes it for every ground
+           * now, the same door the water hazard is attached through and for the
+           * same reason; that note carries the per-level draw-call price.
+           *
+           * READ OFF THE WORLD, and that is not laziness — it is the only
+           * direction that does not close a cycle. `Front.js` is a leaf and
+           * cannot import `Levels.js`; and THIS file cannot either, because
+           * `Levels.js` imports `COMMAND_UNITS` from here. A static import in
+           * either direction is the initialisation cycle that threw
+           * `Cannot access 'COMMAND_UNITS' before initialization` for every
+           * entry point reaching Command.js first, earlier in this same
+           * session.
+           */
+          strewWrecks: w.strewWrecks ?? null,
+          /* The DEPLOYMENT seed, not the wave's: one ground, one sitting, one
+           * seed — §5. `runSeed` is what the deploy card printed. */
+          seed: w.runSeed ?? w.settings?.seed ?? 1,
+          log: w.craterLog ?? null,
+          air: w.smokeAir ?? null,
+        });
+        did += (out?.barrage | 0) + (out?.smoke | 0) + (out?.wrecks | 0);
+      } catch (err) {
+        /* A DRESSING THAT THREW MUST NOT TAKE THE ENGAGEMENT WITH IT. This runs
+         * on the frame a muster closes and the next area opens; a level with no
+         * terrain features to site a wreck on is a worse picture, not a broken
+         * run.
+         *
+         * ── ONCE PER PROCESS WAS TOO QUIET, AND IT COST A WHOLE FRONT ──────
+         *
+         * This used to warn behind a static `_warnedMarch` flag: the FIRST
+         * failure in the process printed and every one after it was silent.
+         * Measured on `runrules.mjs`, whose rule-drive builds a real
+         * `CommandDirector` on a hand-made world with no `statics` list: nine
+         * modes × every rule, each losing its front on every engagement, and
+         * the whole of it was one line about `push` from inside `Smoke.js`. A
+         * guard that logs once and continues is how a mode silently loses its
+         * front — which is the thing this system exists to make visible.
+         *
+         * So: one line per ENGAGEMENT, and a count on the director, because a
+         * console line is not something a check can assert on and this is the
+         * one failure in the mode with no other symptom. `marchFront` names the
+         * missing field at its own door now, so the line says what to fix. */
+        this.marchFailures = (this.marchFailures | 0) + 1;
+        (this.marchErrors ||= []).push(`engagement ${e}: ${err.message}`);
+        console.error(`marchFront failed for engagement ${e}: ${err.message}`);
+      }
+      /* ADVANCED EVEN ON A FAILURE, deliberately: `_marched` is a high-water
+       * mark and not a success count, so a ground that cannot be dressed does
+       * not re-throw once a frame for the rest of the run. `marchFailures` is
+       * what says it happened. */
+      this._marched = e;
+    }
+    return did;
   }
 
   /**
@@ -4916,7 +6642,7 @@ export class CommandDirector extends WaveDirector {
       foe: c.foe.name,
       foeId: c.foe.id,
       area: this.areaNumber,
-      areas: AREAS.length,
+      areas: this.stages.length,
       areaName: this.area.name,
       waveInArea: this.areaWaves,
       areaWaves: this.area.waves,
@@ -4931,7 +6657,7 @@ export class CommandDirector extends WaveDirector {
        * caller deriving a number this object already had everything for, and it
        * is unanswerable on a machine whose roster is a wire record rather than a
        * list of Troopers. Derived here, once, from the same roll. */
-      squads: c.roster.squads().length,
+      squads: this.squadsOf(c).length,
       /**
        * THE COMMANDER'S OWN FORCE, in the same object as everything else the
        * outside is allowed to know — plain data, no functions and no live
@@ -5019,7 +6745,7 @@ export class CommandDirector extends WaveDirector {
     this._netShell = true;
     const was = this._netReadout?.formation;
     this._netReadout = r;
-    this.areaIndex = clamp((r.area | 0) - 1, 0, AREAS.length - 1);
+    this.areaIndex = clamp((r.area | 0) - 1, 0, this.stages.length - 1);
     this.areaWaves = r.waveInArea | 0;
     if (FORMATIONS[r.formation]) this.formation = r.formation;
     if (r.holding !== undefined) this.commander.holding = !!r.holding;

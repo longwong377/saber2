@@ -43,6 +43,7 @@
 import * as THREE from 'three';
 import { rapier } from './Rapier.js';
 import { LAYER, LOOSE_MASK, boxSpheres, capsuleSpheres } from './Physics.js';
+import { BoxIndex } from './BoxIndex.js';
 
 export { LAYER, LOOSE_MASK, boxSpheres, capsuleSpheres };
 
@@ -914,6 +915,24 @@ export class RapierWorld {
      * walk directly — see addStaticBox.
      */
     this.staticBoxes = [];
+    /**
+     * WHAT CHANGED IN `staticBoxes`, AS A NUMBER RATHER THAN AS A LENGTH.
+     *
+     * Every consumer of the array that wants to cache anything about it needs
+     * to know when it has moved, and `length` cannot say: a `removeStaticBox`
+     * and an `addStaticBox` in one frame — a door that swings, a wall that
+     * breaks into chunks — leaves the length identical and the contents
+     * different. §2.3's "a missing thing answered with a plausible default"
+     * wearing its cache hat. Bumped by add, remove and clear, and by nothing
+     * else, because nothing else changes which records are in the array.
+     */
+    this.boxVersion = 0;
+    /**
+     * The broad phase over it. Built lazily on the first query and rebuilt only
+     * when `boxVersion` moves; see src/physics/BoxIndex.js for the correctness
+     * argument, which is the reason that file is longer than this line.
+     */
+    this.boxIndex = new BoxIndex();
 
     this._terrain = null;
     this._hf = null;                 // heightfield collider
@@ -1013,11 +1032,39 @@ export class RapierWorld {
 
   /* ── bodies ──────────────────────────────────────────────────────── */
 
+  /**
+   * …AND A BODY THAT IS IN THE WORLD IS NOT DEAD.
+   *
+   * `remove` sets `body.dead = true` and this never cleared it, so the flag
+   * meant "has been removed at least once" rather than "is not simulated" —
+   * and every reader believes the second sentence. A body can come back:
+   * `Enemy._tickGetUp` takes the walking capsule out when a droid is knocked
+   * flat (`bodyRemoved = true`) and calls `add` again when it stands up.
+   *
+   * Measured with `tools/_deadflag.mjs`, one B1, knocked down and recovered:
+   *
+   *     standing   dead=false  inWorld=true   forceSeen=true
+   *     knocked    dead=true   inWorld=false
+   *     back up    dead=true   inWorld=true   forceSeen=FALSE
+   *
+   * `Player._grippableBody` opens `if (!b || b === this.body || b.dead) return
+   * false`, and `_forceSeen` is what the aim ray asks. So a droid the player
+   * had already put on its back could never be gripped, pulled or thrown
+   * again: the ray passed straight through it to whatever stood behind, for
+   * the rest of that body's life. Every enemy in the game becomes one of these
+   * the first time a push lands.
+   *
+   * One line, and it belongs here rather than at the call site — `add` is the
+   * only place that knows the body is now simulated, and a caller that has to
+   * remember to clear a flag the world set is the same defect waiting for the
+   * next caller.
+   */
   add(body) {
     if (this.dead) { if (body) body.dead = true; return body; }
     if (!body.isRapier) throw new Error('RapierWorld.add: not a Rapier body — pass a `shape:`.');
     if (this.bodies.length >= this.maxBodies) this._cullOldestDebris();
     this.bodies.push(body);
+    body.dead = false;
     body._bind(this);
     return body;
   }
@@ -1254,7 +1301,8 @@ export class RapierWorld {
       friction: opts.friction ?? 0.7,
       restitution: opts.restitution ?? 0.02,
       userData: opts.userData || {},
-      disabled: false,
+      /* `disabled` is installed as a property below, once the collider exists —
+       * it has to be able to reach it. */
       onContact: opts.onContact || null,
     };
     const desc = R.ColliderDesc.cuboid(Math.max(1e-3, halfExtents.x), Math.max(1e-3, halfExtents.y), Math.max(1e-3, halfExtents.z))
@@ -1264,16 +1312,65 @@ export class RapierWorld {
       .setRestitution(rec.restitution)
       .setCollisionGroups(collisionGroups(LAYER.WORLD, LAYER.ALL));
     rec.collider = this.world.createCollider(desc);
+    /**
+     * `disabled` IS A PROPERTY NOW, BECAUSE AS A FIELD IT WAS A LIE.
+     *
+     * Six hand-rolled queries honour it — `Support.supportHeight` and
+     * `ceilingHeight`, `Player._gatherNear` and `_collide`, and both of
+     * `Enemy`'s sweeps — and Rapier honoured none of it: `createCollider`
+     * leaves a live cuboid in the solver whatever this field says. So a box
+     * switched off was passable to the player and to every droid, and solid to
+     * everything that goes through the solver.
+     *
+     * MEASURED by the lane that found it, on a breached blast door — a 0.8 m
+     * crate shoved at 9 m/s from 0.90 m out: with the flag alone it ends
+     * 0.92 m in front of the doorway and never moves; with the collider gone
+     * it ends 1.28 m inside. That is the player's own "there are invisible
+     * walls or objects for example on geonosis that block you", and it was
+     * reachable by any future caller who trusted the field.
+     *
+     * That lane fixed its own call site by removing the collider outright,
+     * which is right for a door that is GONE. This is the other half: a caller
+     * who wants the box back — a shield that drops, a bridge that swings —
+     * writes the flag and Rapier now agrees with the six readers above.
+     * `setEnabled` is the vendored engine's own verb for exactly this and
+     * costs nothing while nobody writes the flag.
+     */
+    let off = false;
+    Object.defineProperty(rec, 'disabled', {
+      enumerable: true,
+      get() { return off; },
+      set(v) {
+        const want = !!v;
+        if (want === off) return;
+        off = want;
+        try { rec.collider?.setEnabled?.(!want); } catch { /* a collider already removed */ }
+      },
+    });
     this._byCollider.set(rec.collider.handle, { box: rec });
     // One array, shared with the sphere solver, so a ragdoll still piles up
     // against architecture and removeStaticBox still reaches both.
     this.staticBoxes.push(rec);
+    this.boxVersion++;
     return rec;
+  }
+
+  /**
+   * Every static box whose own circle could reach within `reach` of (x, z),
+   * appended to `out`. A SUPERSET — the caller keeps its own distance test.
+   *
+   * This is the one place `staticBoxes` is meant to be searched from. Sweeping
+   * the array by hand still works and still gives the same answer; it costs
+   * O(every box in the level) per body per frame, which is what the three notes
+   * quoted in BoxIndex.js are each a local workaround for.
+   */
+  nearBoxes(x, z, reach, out) {
+    return this.boxIndex.query(this.staticBoxes, this.boxVersion, x, z, reach, out);
   }
 
   removeStaticBox(box) {
     const i = this.staticBoxes.indexOf(box);
-    if (i >= 0) this.staticBoxes.splice(i, 1);
+    if (i >= 0) { this.staticBoxes.splice(i, 1); this.boxVersion++; }
     if (box && box.collider) {
       this._byCollider.delete(box.collider.handle);
       this.world.removeCollider(box.collider, false);
@@ -1498,6 +1595,8 @@ export class RapierWorld {
     this.bodies.length = 0;
     this.joints.length = 0;
     this.staticBoxes.length = 0;
+    this.boxVersion++;
+    this.boxIndex.reset();
     this._byCollider.clear();
     this._hf = null;
     this._hfSeq = -1;

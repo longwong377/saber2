@@ -3,7 +3,7 @@
  *
  * A leaf module on purpose: it imports nothing, so both the thing that SPENDS
  * the Force (src/game/Player.js) and the thing that DRAWS the price
- * (src/ui/HUD.js) can read the same nine numbers without an import cycle.
+ * (src/ui/HUD.js) can read the same twelve numbers without an import cycle.
  * HUD → Player → Menu → HUD is a real cycle in this tree, and a table that has
  * to live on one side of it is a table that gets copied to the other.
  *
@@ -14,12 +14,20 @@
  * and matching it against the copy, which holds only for as long as the regex
  * still recognises the shape of the line it is looking for.
  *
- * Every one of the nine goes through `Player._spend`/`_canSpend`, so the Force
- * Drain slider and the `forceCost` boons apply to all of them and to the same
- * degree. Three used not to — `throwOrRecall` and `toggleSense` compared raw
- * force against a literal, and `forceLightning` applied the boon multiplier by
- * hand but not the drain — which meant Force Drain at 0, the setting whose own
- * label reads "unlimited Force", freed six powers and kept charging for three.
+ * Every one of the twelve goes through `Player._spend`/`_canSpend`, so the
+ * Force Drain slider and the `forceCost` boons apply to all of them and to the
+ * same degree. Three used not to — `throwOrRecall` and `toggleSense` compared
+ * raw force against a literal, and `forceLightning` applied the boon multiplier
+ * by hand but not the drain — which meant Force Drain at 0, the setting whose
+ * own label reads "unlimited Force", freed six powers and kept charging for
+ * three.
+ *
+ * THAT SENTENCE WAS TRUE OF THE ONE-SHOTS AND NOT OF THE HOLDS, which is where
+ * it went on being wrong for another round: five of these powers are channels
+ * that bill per frame — the barrier, the grip, the stasis field, the lightning
+ * and the mend all through `_spend` — and Force Sense's hold was `this.force -=
+ * 22 * dt`, outside the gate entirely. See `SENSE_DRAIN` at the foot of this
+ * file for what that measured. The claim above now holds for the holds too.
  */
 
 export const POWER_COST = {
@@ -45,6 +53,23 @@ export const POWER_COST = {
    * which is what makes it a decision rather than a rotation.
    */
   unleash: 52,
+  /**
+   * THE BARRIER, and it is priced as a THRESHOLD rather than as a cost.
+   *
+   * The player asked for this and then asked again, and the honest answer the
+   * second time was that it had never been built: "did you already add the
+   * force shield/bubble in the game? i'd already asked for it but I could have
+   * missed it." They had not missed it.
+   *
+   * 18 is deliberately cheap to RAISE — cheaper than a push — because a shield
+   * you cannot afford to put up in the moment you need it is a shield that is
+   * never used. What it costs is the HOLDING (see `SHIELD_HOLD`) and, most of
+   * all, what it stops: every bolt that dies on it is paid for out of the same
+   * pool, so a firing line drains you at the rate it is shooting. That is the
+   * decision the power is made of — a barrier is not a wall, it is a bank
+   * balance between you and the volley.
+   */
+  shield: 18,
 };
 
 /**
@@ -64,3 +89,31 @@ export const POWER_COST = {
  * commit, or its slot will lie in the same way.
  */
 export const POWER_BOON = { lightning: 'lightning', compel: 'compel' };
+
+/**
+ * WHAT FORCE SENSE COSTS TO KEEP OPEN, a second.
+ *
+ * It is here, beside the twelve one-shot prices, and not typed into
+ * `Player._regen`, because it was a bare `22` in one place and prose about a
+ * `22` in two others: `HUD.MINIMAP`'s note on the linger ("drains 22 Force a
+ * second") and the Codex row that teaches the power. That is §2.3's signature
+ * defect with a number small enough to look harmless.
+ *
+ * IT IS ALSO THE ONE PRICE IN THIS FILE THAT USED NOT TO BE ONE. The header
+ * above says every power goes through `_spend`/`_canSpend`, so the Force Drain
+ * slider and the `forceCost` boons reach all of them to the same degree —
+ * and Sense's hold was `this.force -= 22 * dt` in `_regen`, which is none of
+ * that. Measured on a real World, holding Sense from a full bar:
+ *
+ *     Force Drain 1 (default)          125 → 47.4, shut itself off at 5.67 s
+ *     Force Drain 0 ("unlimited")      125 → 47.4, shut itself off at 5.67 s
+ *     forceCost 0.05 (Tempest, flow 1) 125 → 47.4, shut itself off at 5.67 s
+ *
+ * Three economies, one number: the setting whose own label in index.html reads
+ * "Drain at 0 is unlimited Force" freed eleven powers and went on charging for
+ * the twelfth, and the boon that makes every power cost a twentieth did
+ * nothing at all here. `_spend(SENSE_DRAIN * dt, true)` is the whole fix —
+ * `partial` because it is a per-frame hold and a hold takes what is left and
+ * stops, which is the same shape the lightning channel and the barrier use.
+ */
+export const SENSE_DRAIN = 22;

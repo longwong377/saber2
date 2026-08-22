@@ -10,6 +10,7 @@ import { clamp, lerp } from '../engine/MathUtil.js';
 import { Announcer } from './Announcer.js';
 import { Presence } from '../engine/Presence.js';
 import { keyLabel, walkScale, ORDER_ACTIONS, codesFor } from '../engine/Bindings.js';
+import { drivableNear, whyNotDrive, crewOf } from '../game/Driving.js';
 /**
  * The two lookup tables the roster panel draws WITH, never a copy of them.
  *
@@ -23,6 +24,7 @@ import { keyLabel, walkScale, ORDER_ACTIONS, codesFor } from '../engine/Bindings
 import { RANKS, ARMIES, ORDERS } from '../game/Command.js';
 import { DIR_GLYPH, callPhrase } from '../game/Stratagems.js';
 import { POWER_COST, POWER_BOON } from '../game/Powers.js';
+import { supportCost } from '../game/Stratagems.js';
 // The words a slot is about to say, and whether this browser can say them
 // at all. Audio.js owns both the table and the speaking; the wheel prints.
 import { wordsFor, canSpeakWords } from '../engine/Audio.js';
@@ -151,6 +153,9 @@ export const POWERS = [
   ['push', 'push'], ['pull', 'pull'], ['grip', 'grip'], ['throw', 'throw'],
   ['sense', 'sense'], ['lightning', 'lightning'], ['stasis', 'stasis'],
   ['heal', 'heal'], ['compel', 'compel'], ['rend', 'rend'],
+  /* The barrier — the twelfth, and it went in with its slot rather than after
+     an audit found it drawn nowhere, which is what happened to rend. */
+  ['shield', 'shield'],
   /* Unleash — the 360° repulse. This LIST is what builds the slots; `_power`
    * only repaints one that already exists, so adding a price and a `_power`
    * call without a row here draws nothing and prices eleven against ten
@@ -199,6 +204,9 @@ const POWER_ICONS = {
   compel: '<svg viewBox="0 0 24 24"><path d="M6 9h9a4 4 0 0 1 0 8H9"/><path d="M12 14l-3 3 3 3"/></svg>',
   // A chassis coming apart: a core with four plates pulling off it.
   rend:   '<svg viewBox="0 0 24 24"><rect x="10" y="10" width="4" height="4"/><path d="M8 8L4 4M16 8l4-4M8 16l-4 4M16 16l4 4"/></svg>',
+  /* A dome over a figure: the one power in the row that is drawn around the
+     player rather than thrown away from them. */
+  shield: '<svg viewBox="0 0 24 24"><path d="M4 15a8 8 0 0 1 16 0"/><path d="M12 11v6M9.5 17h5"/></svg>',
   /* A ring with arrows leaving it in every direction: the icon has to say
      "outward, all of it" at 21 px, which is the one thing that separates this
      from push in the row. */
@@ -235,13 +243,21 @@ const POWER_ICONS = {
  * it ends. See Minimap.update.
  *
  * 3.5 s, and the number is the pulse's whole design. Force sense is a TOGGLE
- * (Player.toggleSense) that costs POWER_COST.sense to switch on, drains 22
- * Force a second while it is held open and blocks regeneration entirely — so a
- * player who wants a map has two ways to pay for it: hold the power open and
- * watch the pool drain, or tap it on and off for a snapshot that costs the
- * activation and nothing more. The linger is what makes the second one a real
- * choice: at 3.5 s a tap is worth about one exchange, which is long enough to
- * find the body behind you and far too short to fight with the map up.
+ * (Player.toggleSense) that needs POWER_COST.sense in the bar to switch on and
+ * then charges `SENSE_DRAIN` a second while it is held open, blocking
+ * regeneration entirely — so a player who wants a map has two ways to pay for
+ * it: hold the power open and watch the pool drain, or tap it on and off for a
+ * snapshot. The linger is what makes the second one a real choice: at 3.5 s a
+ * tap is worth about one exchange, which is long enough to find the body behind
+ * you and far too short to fight with the map up.
+ *
+ * TWO WORDS OF THAT WERE WRONG AND BOTH MATTERED. It said sense "costs
+ * POWER_COST.sense to switch on", and it does not — the 25 is a THRESHOLD, read
+ * through `_canSpend`, and `toggleSense` takes nothing out of the bar (its own
+ * note says so); a tap therefore costs the linger and literally nothing else.
+ * And it wrote the per-second drain as a bare 22, which is the hand-maintained
+ * twin of a number that lived nowhere: it is `SENSE_DRAIN` in
+ * src/game/Powers.js now, beside the twelve one-shot prices, because it is one.
  */
 export const MINIMAP = { range: 42, hz: 20, size: 132, linger: 3.5 };
 
@@ -960,10 +976,14 @@ export class HUD {
       combo: root.getElementById('hud-combo'),
       score: root.getElementById('hud-score'),
       targetOpen: root.getElementById('target-open'),
+      mendCue: root.getElementById('mend-cue'),
       center: root.getElementById('hud-center-msg'),
+      drivePrompt: root.getElementById('drive-prompt'),
       hitmarks: root.getElementById('hitmarks'),
       troopnames: root.getElementById('troopnames'),
       stratagem: root.getElementById('stratagem'),
+      support: root.getElementById('bar-support'),
+      supportNum: root.getElementById('bar-support-num'),
       killfeed: root.getElementById('killfeed'),
       coach: root.getElementById('coach'),
       coachTitle: root.getElementById('coach-title'),
@@ -975,6 +995,9 @@ export class HUD {
       lockFill: root.getElementById('lock-fill'),
       why: root.getElementById('deflect-why'),
       boss: root.getElementById('bossbar'),
+      bossForceTrack: root.getElementById('boss-force-track'),
+      bossForce: root.getElementById('boss-force'),
+      bossCast: root.getElementById('boss-cast'),
       bossLabel: root.getElementById('boss-label'),
       bossPhase: root.getElementById('boss-phase'),
       bossFill: root.getElementById('boss-fill'),
@@ -1137,7 +1160,13 @@ export class HUD {
     this._stratKey = key;
     this._stratOpen = true;
     host.classList.remove('hidden');
-    const force = player.force ?? 0;
+    /* AFFORDABILITY IS ASKED OF THE SUPPLY LINE, not of the Force pool. A
+     * panel that greyed a row against `player.force` after the price moved to
+     * war support would light calls you cannot make and grey ones you can —
+     * which is the exact defect `Powers.js`'s own header records the HUD having
+     * had once already, from its private copy of the price table. */
+    const support = player.world?.support;
+    const purse = support ? support.value : (player.force ?? 0);
     /**
      * THE SECOND PHASE HAS ITS OWN PANEL, because it is a different question.
      *
@@ -1163,9 +1192,28 @@ export class HUD {
      * one is the instruction. That is what turns the panel from a reference
      * you have to find your place in into a script you are reading aloud.
      */
-    host.innerHTML = rows.map((r) => {
+    /**
+     * TEN ROWS AT MOST, AND THE REST AS A COUNT.
+     *
+     * The table was seven rows and is eighteen, and the panel opens with the
+     * whole of it before a single letter has been entered. Eighteen rows at
+     * this size is 430 px of list down the left of the screen while somebody
+     * is shooting at you — which is not a reference, it is a wall — and the
+     * first letter cuts it to about five anyway, so the long list is only ever
+     * on screen at the one moment the player has not yet chosen anything.
+     *
+     * Ten, in the table's own order, which is the release ladder: the calls
+     * you have had since the first minute are at the top and the ones you
+     * earned are under them. The tail is a COUNT and not a scroll, because a
+     * panel you have to scroll while holding a key with the same hand you
+     * spell with is a panel nobody reads.
+     */
+    const SHOWN = 10;
+    const spill = rows.length - SHOWN;
+    host.innerHTML = rows.slice(0, SHOWN).map((r) => {
       const cd = Math.ceil(S.cooldowns[r.id] ?? 0);
-      const off = cd > 0 || force < r.cost;
+      const price = support ? supportCost(r) : r.cost;
+      const off = cd > 0 || purse < price;
       /* ARROWS, not the letters. A code is made of DIRECTIONS and W is only
        * what one happens to be bound to on a keyboard — see DIR_GLYPH.
        *
@@ -1182,7 +1230,7 @@ export class HUD {
         const cls = i < S.entry.length ? ' on' : (lead && i === S.entry.length ? ' next' : '');
         return `<i class="sg-d${cls}">${DIR_GLYPH[c] || c}</i>`;
       }).join('');
-      const note = cd > 0 ? `${cd}s` : `${r.cost}`;
+      const note = cd > 0 ? `${cd}s` : `${price}`;
       const words = lead
         ? `<div class="sg-words">${phrase.map((w, i) => {
           const cls = i < S.entry.length ? 'on' : (i === S.entry.length ? 'next' : '');
@@ -1191,6 +1239,35 @@ export class HUD {
       return `<div class="sg-row${off ? ' off' : ''}"><span class="sg-code">${code}</span>`
         + `<b>${r.name}</b><span class="sg-cost">${note}</span></div>${words}`;
     }).join('') || '<div class="sg-row off"><b>no such call</b></div>';
+    if (spill > 0) {
+      host.innerHTML += `<div class="sg-row off"><b>+${spill} more — keep spelling</b></div>`;
+    }
+    /**
+     * WHAT THE FLEET HAS NOT RELEASED YET, as one line under the list.
+     *
+     * The heavier calls are held until the side has earned them (see
+     * `RELEASE` in src/game/Stratagems.js), and a locked call is ABSENT from
+     * this panel rather than greyed in it — a code that can be spelled and
+     * then refuses is a menu item that lies, which is the rule the
+     * command-only calls already follow. That leaves the player with no way to
+     * know the ladder exists between the notice that announces a rung and the
+     * next time they open the Codex, so the panel carries the next rung: what
+     * it is and how much more war effort it wants.
+     *
+     * It reads `Stratagems.locked`, which is the one derivation of that list —
+     * a second filter here would be the private duplicate this file's own
+     * price note is about.
+     */
+    const locked = S.locked ? S.locked(ctx) : [];
+    if (locked.length && support) {
+      const next = locked[0];
+      const want = Math.max(0, Math.ceil((next.earn ?? 0) - (support.effort ?? 0)));
+      const also = locked.filter(r => (r.earn ?? 0) === (next.earn ?? 0)).length - 1;
+      const el = document.createElement('div');
+      el.className = 'sg-said sg-locked';
+      el.textContent = `held: ${next.name}${also > 0 ? ` +${also}` : ''} — ${want} more war effort`;
+      host.appendChild(el);
+    }
     /* WHAT THE LAST ENTRY DID, under the list. The panel says what you CAN
      * still spell; this says what happened to the thing you just spelled — a
      * call made and how long until it lands, a refusal and why. Without it a
@@ -1353,6 +1430,67 @@ export class HUD {
    * formation change) and a device the HUD had forgotten would silently
    * repaint half the screen back to keyboard letters.
    */
+  /** The key the player would actually press to mend, from the live bindings. */
+  _mendKeyLabel() {
+    const b = this._bindings;
+    if (!b) return 'HEAL';
+    const dev = this._pad && this._pad.device === 'pad' ? 'pad' : 'key';
+    return keyLabel(codesFor(b, 'heal', dev)[0], (this._pad && this._pad.family) || 'xbox') || 'HEAL';
+  }
+
+  /**
+   * THE BOARD PROMPT — *"drive the vehicles it makes sense to drive"*, and the
+   * half of that sentence this method is for is "it makes sense".
+   *
+   * A PERSISTENT LINE AND NOT A NOTICE CARD, because what it says is a fact
+   * about where you are standing rather than an event: a card that faded after
+   * two seconds would leave a player next to a tank with nothing on screen and
+   * no way to find out whether they may have it.
+   *
+   * AND IT PRINTS THE REFUSAL TOO. `Driving.drivableNear` deliberately does not
+   * filter out the machines it will then refuse, so this can say WHICH of them
+   * it is — a hailfire is a droid and there is nobody in it to displace, and an
+   * enemy tank with its crew alive has to be put under a quarter first. Being
+   * told that is the difference between a rule and a bug, and it is the same
+   * argument `Player._refuse` makes for every Force key.
+   *
+   * The key name comes off the live bindings, never typed — see the note over
+   * `setBindings`, and tools/checks/controls.mjs, which fails any surface that
+   * types one.
+   */
+  _drivePrompt(world, player) {
+    const el = this.el.drivePrompt;
+    if (!el) return;
+    let text = '', bad = false;
+    if (player.driving) {
+      const v = player.driving.vehicle;
+      const hull = Math.max(0, Math.round((v.hp / Math.max(1, v.maxHp)) * 100));
+      text = `<b>${this._chip('drive')}</b> climb down · ${esc(v.A?.label ?? 'machine')} · hull ${hull}%`;
+    } else {
+      const near = drivableNear(world, player);
+      if (near) {
+        const why = whyNotDrive(world, player, near);
+        bad = !!why;
+        text = why
+          ? `${esc(near.A?.label ?? 'it')} — ${esc(why)}`
+          : `<b>${this._chip('drive')}</b> take the controls · `
+            + `${esc(near.A?.label ?? 'machine')}, ${crewOf(near.type)} crew`;
+      }
+    }
+    el.classList.toggle('on', !!text);
+    el.classList.toggle('no', bad);
+    if (text !== this._driveText) { el.innerHTML = text; this._driveText = text; }
+  }
+
+  /** One binding, as the player's own device names it. */
+  _chip(id) {
+    const b = this._bindings;
+    if (!b) return String(id).toUpperCase();
+    const dev = this._pad && this._pad.device === 'pad' ? 'pad' : 'key';
+    return keyLabel(codesFor(b, id, dev)[0], (this._pad && this._pad.family) || 'xbox')
+      || String(id).toUpperCase();
+  }
+
   setBindings(bindings, pad = this._pad) {
     this._bindings = bindings;
     this._pad = pad || null;
@@ -1603,6 +1741,29 @@ export class HUD {
     el.stam.style.transform = `scaleX(${clamp(stam, 0, 1)})`;
     el.stam.parentElement.classList.toggle('low', stam < 0.25);
     this._num(el.stamNum, player.stamina);
+    /**
+     * WAR SUPPORT — the side's, not yours. See src/game/Support.js.
+     *
+     * `?.` on every reach because a check drives `HUD.update` against a stub
+     * world, and because the bar has to be honest about a world that has no
+     * supply line rather than drawing a full one: it hides.
+     */
+    const sup = world?.support;
+    if (el.support) {
+      const line = el.support.parentElement?.parentElement;
+      if (!sup) { if (line) line.classList.add('hidden'); }
+      else {
+        if (line) line.classList.remove('hidden');
+        el.support.style.transform = `scaleX(${clamp(sup.frac, 0, 1)})`;
+        /* THE ONE STATE A LEVEL CANNOT SHOW. While the ships are turning round
+         * the bar is not merely low, it is not filling — and a player watching
+         * a bar that has stopped moving needs to be told that is the rule and
+         * not a bug. */
+        el.support.parentElement.classList.toggle('rearm', sup.rearming);
+        el.support.parentElement.classList.toggle('low', sup.frac < 0.2);
+        this._num(el.supportNum, sup.value);
+      }
+    }
 
     // ── flow
     el.flowFill.style.width = `${clamp(player.flow, 0, 1) * 100}%`;
@@ -1690,8 +1851,15 @@ export class HUD {
      * hud-events counts the wheel against POWER_COST so a new price without a
      * new slot fails rather than shipping quiet. */
     this._power('unleash', cd.unleash, this._afford(player, 'unleash'));
+    /* The barrier is the only slot whose "on" state costs money every frame it
+     * stays on, so the lit border is the readout that matters most in the row:
+     * it is what tells the player the bar is draining. `up` and not `power`,
+     * because `power` is the visual ease and lingers for a third of a second
+     * after the barrier is down. */
+    this._power('shield', cd.shield, this._afford(player, 'shield'), !!player.shield?.up);
 
     // ── reticle & blade cursor
+    this._drivePrompt(world, player);
     const firstPerson = !!player.camera.firstPerson;
     /* THE SAME MISSING FILTER, AND IT PINNED THE WARNING ON FOR ALL OF COMMAND.
      * Every formation parks your squads inside 5 m by construction: measured on
@@ -1730,6 +1898,29 @@ export class HUD {
      * unambiguously talking about; otherwise the nearest open body inside the
      * reach a cut could plausibly follow a pull with.
      */
+    /**
+     * …AND THE ONE YOU CAN HELP.
+     *
+     * The player: "remind me how to heal allies". The reminder is worth
+     * nothing on a card in a menu — it is worth something while you are
+     * looking at a bleeding trooper, which is the only moment the question
+     * gets asked. `Player._mendTarget` is the authority on who that is, so
+     * this draws what the power would actually do rather than a second opinion
+     * about who is in range (HANDOFF §2.4).
+     */
+    if (el.mendCue) {
+      const t = player.healTarget || player._mendTarget?.({ enemies: world.enemies });
+      const key = t ? `${t.hp < t.maxHp * 0.35 ? 2 : 1}${player.healing != null ? 'h' : ''}` : null;
+      if (t && this._mendKey !== key) {
+        this._mendKey = key;
+        el.mendCue.firstChild.textContent = player.healing != null ? 'MENDING' : 'WOUNDED ALLY';
+        el.mendCue.lastChild.textContent = player.healing != null ? 'HOLD STILL' : `${this._mendKeyLabel()} TO MEND`;
+        el.mendCue.classList.remove('hidden');
+      } else if (!t && this._mendKey !== null) {
+        this._mendKey = null;
+        el.mendCue.classList.add('hidden');
+      }
+    }
     if (el.targetOpen) {
       let best = null, bestState = null, bestD = Infinity;
       for (const e of world.enemies) {
@@ -1795,14 +1986,55 @@ export class HUD {
      * given `A.big` was picked by this loop and named on the bar. */
     let boss = null;
     for (const e of world.enemies) {
-      if (!isHostile(world, e) || !e.A.boss && !e.A.big) continue;
-      if (!boss || e.position.distanceToSquared(player.position) < boss.position.distanceToSquared(player.position)) boss = e;
+      if (!isHostile(world, e)) continue;
+      /* …AND A FORCE USER IS A BOSS FOR THE PURPOSES OF THIS BAR.
+       *
+       * The player: "I still don't know how to counter or fight against other
+       * force users… I'm just being manipulated and thrown around like a
+       * ragdoll being unable to do anything." Every counter this game has is
+       * timed against something the enemy is doing — a pool that empties, a
+       * 0.45 s telegraph, a cast that breaks when you hit it hard enough — and
+       * a duellist that was not `boss` or `big` put none of it on screen. A
+       * Sith acolyte throwing you across a room was, from the player's side, a
+       * body with no state at all.
+       *
+       * Nearest-first, and a real boss outranks a duellist at the same range,
+       * so walking into a set-piece still shows you the set-piece. */
+      const isCaster = e.forceMax > 0 && (e.A.powers?.length > 0);
+      if (!e.A.boss && !e.A.big && !isCaster) continue;
+      if (!boss) { boss = e; continue; }
+      const rank = (x) => (x.A.boss || x.A.big ? 0 : 1);
+      const dNew = e.position.distanceToSquared(player.position);
+      const dOld = boss.position.distanceToSquared(player.position);
+      if (rank(e) < rank(boss) || (rank(e) === rank(boss) && dNew < dOld)) boss = e;
     }
     if (boss) {
       el.boss.classList.remove('hidden');
       el.bossLabel.textContent = boss.A.label;
       el.bossPhase.textContent = boss.bossPhase ? `PHASE ${boss.bossPhase}` : '';
       el.bossFill.style.transform = `scaleX(${clamp(boss.hp / boss.maxHp, 0, 1)})`;
+      /* THE RESERVE, and the point of drawing it is that it EMPTIES: a body
+       * with nothing left in the bar cannot push, cannot pull and cannot
+       * lightning you, and that is the moment to close. */
+      const pool = boss.forceMax > 0;
+      if (el.bossForceTrack) el.bossForceTrack.classList.toggle('hidden', !pool);
+      if (pool && el.bossForce) {
+        el.bossForce.style.transform = `scaleX(${clamp(boss.force / boss.forceMax, 0, 1)})`;
+      }
+      /* AND THE TELEGRAPH IN WORDS. `_castTimer` is the 0.45 s wind-up and
+       * `casting` is a power already running; both are windows the player can
+       * act inside, and neither had any presence on screen. */
+      if (el.bossCast) {
+        const key = boss.casting || (boss._castTimer > 0 ? boss._castKey : null);
+        if (key && this._bossCast !== key) {
+          this._bossCast = key;
+          el.bossCast.textContent = `${key} — BREAK IT`;
+          el.bossCast.classList.remove('hidden');
+        } else if (!key && this._bossCast !== null) {
+          this._bossCast = null;
+          el.bossCast.classList.add('hidden');
+        }
+      }
     } else el.boss.classList.add('hidden');
 
     // ── blade lock: a bar that runs out from the centre either way
@@ -2058,15 +2290,18 @@ export class HUD {
    *
    * So the gate asks the player's own economy: `_canSpend` is the single
    * function Player uses to decide, and it reads drain and the boon multiplier
-   * live. Three powers do NOT go through it in Player and are marked here
-   * accordingly, because the HUD's job is to state the game that exists rather
-   * than the one it would prefer: `throwOrRecall` and `toggleSense` compare raw
-   * force against a literal and so ignore drain entirely, and `forceLightning`
-   * applies the boon multiplier by
-   * hand but not the drain. Those three are a real inconsistency in Player's
-   * Force economy and are worth fixing THERE; until they are, this wheel tells
-   * the truth about them. See tools/checks/hud-events.mjs, which pins every
-   * number below to the line of Player.js it came from.
+   * live.
+   *
+   * A PARAGRAPH USED TO STAND HERE saying that three powers bypassed that gate
+   * in Player — `throwOrRecall` and `toggleSense` comparing raw force against a
+   * literal, `forceLightning` applying the boon multiplier by hand but not the
+   * drain — and that "until they are fixed, this wheel tells the truth about
+   * them". They were fixed, in Player, and the paragraph stayed: it was
+   * contradicted by the four lines under it, which route every slot through
+   * `_canSpend` and say so. A comment that describes a game two rounds old is
+   * worse than none, because the next reader believes it and writes the
+   * exception back in. See tools/checks/hud-events.mjs, which pins every number
+   * below to the line of Player.js it came from.
    */
   _afford(player, key) {
     const cost = POWER_COST[key];

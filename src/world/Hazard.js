@@ -125,6 +125,32 @@ export class Hazard {
    * water and costs one comparison.
    */
   _touch(b, bite, dt) {
+    /**
+     * ── A BODY THIS MACHINE DOES NOT OWN IS BURNED BY THE MACHINE THAT DOES ──
+     *
+     * The sheet is built by the LEVEL, so every machine in a session has one
+     * and every one of them was running it over every body on the field. That
+     * is the class `World._boltHurt` is about, in a second subsystem: a thing
+     * simulated identically on both machines and then reconciled by difference.
+     *
+     * Measured on a real pair on mustafar, one body standing in the lava for
+     * two seconds: **the host burned it 14.0 hp, the client's mirror burned it
+     * 14.0 hp of its own, and `_reconcileClaims` sent all 14.0 back up the wire
+     * as a claim.** The body took double. The player half runs the other way
+     * and is the same defect: the host burns its `RemoteAvatar` of a guest and
+     * `_tellHit` posts the number over `hit`, while that guest's own sheet is
+     * burning their real Player at the same time.
+     *
+     * Two positive tests rather than a `netMode` branch: `isRemote` is a
+     * player belonging to somebody else's machine and `netDriven` is a body
+     * belonging to the host, and neither is ever set on a single-machine
+     * world — so nothing outside a session changes by a line.
+     *
+     * The wade shove goes with the burn, and deliberately: both of these bodies
+     * have their position written from the wire every packet, so a shove
+     * applied here is overwritten before it is drawn.
+     */
+    if (b.isRemote || b.netDriven) return;
     const depth = this.level - b.position.y;
     if (depth <= 0) return;
 

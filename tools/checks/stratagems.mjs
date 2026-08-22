@@ -43,7 +43,12 @@ import {
   Stratagems, STRATAGEMS, STRATAGEM_BY_ID, DIRS, DIR_ACTION, DIR_GLYPH, CODE_GAP,
   CODE_MIN, CODE_MAX, codeFaults, codeLength, rollCodes, spell,
   callPhrase, phraseFaults, PREAMBLE, leadOf, AIM_REACH, LOCK_CONE, DESIGNATE_MAX,
+  RELEASE, RELEASE_NAME, supportCost, TRACTOR_TIME, STATION_TIME, FENCE_LIFE,
+  MINE_LIFE, SIEGE_TIME, ION_STUN,
 } from '../../src/game/Stratagems.js';
+import { WarSupport, SUPPORT_EARN, SUPPORT_MAX, SUPPORT_START } from '../../src/game/Support.js';
+import { codexHtml, CODEX } from '../../src/ui/Menu.js';
+import { readFileSync, readdirSync } from 'node:fs';
 import { SortieDirector, PROFILES, PASS_START } from '../../src/game/Sorties.js';
 import { ACTIONS, defaultBindings } from '../../src/engine/Bindings.js';
 import { installTeamDamage } from '../../src/game/Command.js';
@@ -86,7 +91,7 @@ function stubInput(held = new Set(), hits = new Set()) {
 const CHEST_Y = 1.42;
 function eyes(p) { (p.chest ?? p.position).set(p.position.x, p.position.y + CHEST_Y, p.position.z); }
 
-function bench({ command = null, force = 400 } = {}) {
+function bench({ command = null, force = 400, support = null } = {}) {
   const hit = [];
   const world = {
     scene: new THREE.Scene(),
@@ -95,10 +100,42 @@ function bench({ command = null, force = 400 } = {}) {
       height: () => 0, normalAt: (x, z, o) => o.set(0, 1, 0),
       inBounds: () => true, half: 200, surfaceAt: () => 'sand',
       crater(x, z, r, d) { hit.push({ kind: 'crater', x, z, r, d }); },
+      /* THE FENCE AND THE STORM SCORCH GROUND AND DO NOT BREAK IT, so a bench
+       * that only records craters cannot tell a burning line from nothing at
+       * all. Same shape as `crater`: the terrain owns the verb, this records
+       * that it was asked for. */
+      burn(x, z, r, k) { hit.push({ kind: 'burn', x, z, r, k }); },
     },
-    particles: null, bolts: null, time: 0, combatIntensity: 0,
-    enemies: [], props: [], command,
-    addProp() {}, onHitmark() {}, notify() {}, report() {},
+    particles: null, time: 0, combatIntensity: 0,
+    /**
+     * A BOLT POOL THAT COUNTS. It was `null`, which is a bench measuring a gun
+     * run with the guns taken out: `_gunPair` reads `ctx.world.bolts` and
+     * returns on a missing pool, so a strafing run and an off-map artillery
+     * barrage produced identical ledgers — twelve impacts walked in a line,
+     * twice — and the check that asks whether any two calls are the same call
+     * could not tell them apart (10% on every axis). Firing real rounds out of
+     * a real craft IS the difference, and it is the whole of what the earlier
+     * lane built src/game/Sorties.js for.
+     *
+     * Counted rather than simulated: what is being asserted is that a call put
+     * rounds in the air, not where they went. The three smoke checks below
+     * build their own real `BoltPool` where the flight matters.
+     */
+    bolts: { fired: 0, fire() { this.fired++; } },
+    enemies: [], props: [], command, support,
+    /* THE REAL RIBBON POOL'S DOOR. The ion storm draws through
+     * `world.lightning.strike` — see Lightning.js on why a discharge must not
+     * come out of the shared spark ring — so a bench without one measures a
+     * storm that throws inside a frame. Counted, because the count is what the
+     * check asserts: fifty-odd discrete bolts is the storm working. */
+    lightning: { bolts: 0, strike() { this.bolts++; } },
+    addProp() {}, onHitmark() {},
+    /* The release ladder announces each rung through `World.notify`, which is
+     * the same door a refused Force power uses. Recorded rather than dropped:
+     * "the fleet told the player" is the half of the unlock that is not the
+     * arithmetic. */
+    notify(title, sub) { hit.push({ kind: 'notify', title, sub }); },
+    report() {},
     physics: { add() {}, remove() {}, raycast: () => null, bodies: [], staticBoxes: [],
       addJoint() {}, removeJoint() {} },
     engine: { addHeat() {}, hurt() {}, shake() {}, punch() {}, rumble() {},
@@ -117,6 +154,40 @@ function bench({ command = null, force = 400 } = {}) {
     time: 0, groundColor: 0,
   };
   return { world, p, ctx, hit };
+}
+
+/**
+ * THE FIELD EVERY LEDGER BELOW IS MEASURED ON.
+ *
+ * A real wave 26 of Geonosis, recorded off `tools/_strikeprobe.mjs`: 22 bodies
+ * — 3 BX, 2 droidekas, 3 AATs, 9 MagnaGuards, a spider walker, a B1, 2 rocket
+ * droids and a Hailfire — 7 666 hp on the field, packed on a spiral at the
+ * spacing that wave actually held, which puts fifteen of them inside 12 m.
+ *
+ * ONE FIXTURE FOR EVERYTHING, and that is the point rather than a convenience:
+ * eighteen calls priced against eighteen different fields would be eighteen
+ * numbers that cannot be compared, and the whole question this file has to
+ * answer is whether any two of them are the same call.
+ */
+const FIELD = ['bx', 'bx', 'bx', 'droideka', 'droideka', 'aat', 'aat', 'aat',
+  'magna', 'magna', 'magna', 'magna', 'magna', 'magna', 'magna', 'magna', 'magna',
+  'walker', 'b1', 'rocket', 'rocket', 'hailfire'];
+
+/** The wave, packed the way the probe found it: 15 bodies inside 12 m. */
+function packField(b, team = 1) {
+  const out = [];
+  FIELD.forEach((type, i) => {
+    // A spiral out from the centre, so the first fifteen are inside 12 m and
+    // the tail is the spread the rest of the field has.
+    const r = 1.2 + i * 0.72, a = i * 2.399;
+    const at = new THREE.Vector3(Math.cos(a) * r, 0, Math.sin(a) * r);
+    const e = new Enemy(b.world, type, at.clone());
+    e.position.copy(at);
+    e.team = team;
+    b.world.enemies.push(e);
+    out.push(e);
+  });
+  return out;
 }
 
 export async function run({ check, assert, THREE: T }) {
@@ -303,13 +374,36 @@ export async function run({ check, assert, THREE: T }) {
     const c2 = bench();
     const S2 = c2.p.stratagems;
     S2.setArming(true);
-    const wrong = [...strike.code];
-    wrong[1] = DIRS.find(d => d !== wrong[1] && !STRATAGEMS.some(s => s.code.startsWith(wrong[0] + d)));
-    assert(wrong[1], 'every second letter leads somewhere — this fixture needs a dead one');
-    assert(S2.feed(wrong[0], c2.ctx) === null, 'the first letter of a real code went nowhere');
-    assert(S2.feed(wrong[1], c2.ctx) === false, 'a letter that leads nowhere was accepted');
+    /**
+     * THE DEAD BRANCH IS SEARCHED FOR, NOT ASSUMED TO BE AT DEPTH ONE.
+     *
+     * It used to take the orbital strike's first letter and look for a second
+     * direction that no row continues. That held while the table was seven
+     * rows and stopped holding at eighteen: at seed 1 all four directions after
+     * the lance's opening letter now lead somewhere, and the fixture failed
+     * with "every second letter leads somewhere" — which is a property of the
+     * table having got denser, not a defect in the entry machine.
+     *
+     * So it walks the whole tree for the SHORTEST live prefix with a dead
+     * continuation. One exists by construction: eighteen codes cannot fill
+     * 4^5 spellings, let alone 4^8. What is being measured is unchanged — a
+     * letter that leads nowhere is refused and clears the entry.
+     */
+    let live = '', dead = '';
+    outer: for (const row of STRATAGEMS) {
+      for (let k = 1; k < row.code.length; k++) {
+        const pre = row.code.slice(0, k);
+        const d = DIRS.find(x => !STRATAGEMS.some(o => o.code.startsWith(pre + x)));
+        if (d) { live = pre; dead = d; break outer; }
+      }
+    }
+    assert(dead, `no dead branch anywhere in ${STRATAGEMS.length} codes — the space is full`);
+    for (const c of live) {
+      assert(S2.feed(c, c2.ctx) === null, `${live} is a live prefix and ${c} went nowhere`);
+    }
+    assert(S2.feed(dead, c2.ctx) === false, 'a letter that leads nowhere was accepted');
     assert(S2.entry === '', 'a failed code left the entry standing');
-    return `${strike.code} → designation → release → queued; ${wrong[0]}${wrong[1]} → refused and cleared`;
+    return `${strike.code} → designation → release → queued; ${spell(live + dead)} → refused and cleared`;
   });
 
   check('stratagems: letting go abandons the code, and so does silence', () => {
@@ -420,7 +514,12 @@ export async function run({ check, assert, THREE: T }) {
      * dead checkbox — and a player pressing dash in a panic while spelling has
      * to be told which of the two the game is honouring. */
     for (const verb of ['dash', 'jump']) {
-      assert(runs[verb].notices.some((n) => /stratagem/i.test(n)),
+      /* `support` and not `stratagem`: the word the player reads was swept, and
+       * an instrument still grepping for the old one would have gone red on the
+       * fix rather than on a regression. It matches the REASON the refusal
+       * gives — "you are calling for support" — which is the thing being
+       * asserted, and not the name of the module it came out of. */
+      assert(runs[verb].notices.some((n) => /calling for support/i.test(n)),
         `${verb} was refused in silence while spelling: ${JSON.stringify(runs[verb].notices)}`);
     }
     return `spelling: run ${runs.run.moved.toFixed(2)} m, dash ${runs.dash.moved.toFixed(2)} m `
@@ -1198,6 +1297,619 @@ export async function run({ check, assert, THREE: T }) {
       + 'than as a decision — MORALE.BETRAYED will not fire');
     return `3 m from the centre: ${(hp0 - ally.hp).toFixed(0)} hp off one of yours, `
       + `reported as "${shaken[0].kind}" — the betrayal kind`;
+  });
+
+
+  /* ══ THE ELEVEN THAT WERE ADDED, AND THE SEVEN THAT WERE ALREADY HERE ══ */
+
+  /**
+   * ONE LEDGER FOR EVERY CALL, MEASURED THE SAME WAY.
+   *
+   * Every row is fired through the real `_commit` — so the craft flies, the
+   * cadence runs at the moment the craft is over the mark and the sustained
+   * loops tick — on the one packed field above, and the world is stepped for
+   * `secs` afterwards. What comes back is nine numbers, and the two checks
+   * below both read it: one asks whether each call earns its price, the other
+   * asks whether any two of them are the same call.
+   */
+  const LEDGER = new Map();
+  /**
+   * ONE HORIZON FOR EVERY CALL, AND IT IS THE LONGEST-LIVED ONE'S.
+   *
+   * 46 s, because the minefield's charges stand for 45. Two horizons would be
+   * two ledgers per row — the memo below is keyed on the id — and, worse, two
+   * incomparable `span` columns: a call measured over 30 s cannot be told from
+   * one measured over 46 on the axis whose whole subject is duration. Measured
+   * before it was one: the orbital strike and the minefield came out 27% apart
+   * on every axis, because the strike's ledger had been taken over 30 s by the
+   * check that ran first and the minefield's memo entry came back with it.
+   */
+  const HORIZON = 46;
+  function ledgerFor(id, secs = HORIZON) {
+    if (LEDGER.has(id)) return LEDGER.get(id);
+    clearSmoke();
+    /**
+     * THE COMMAND STUB COUNTS, and it has to, because four of the eighteen
+     * calls do nothing whatsoever to the enemy.
+     *
+     * A ledger of enemy hit points reads zero for a rally and zero for a
+     * resupply, which made them indistinguishable — 4% apart on every axis —
+     * and they are not remotely the same call. What separates them is what
+     * they did to YOUR side: one steadies bodies inside a shout, the other
+     * puts health into the caller and picks the wounded up.
+     */
+    const cmd = {
+      formation: 'line', commander: { anchor: null }, landed: 0, anchorSeen: undefined,
+      rallied: 0, revived: 0,
+      reinforce(n) { this.landed += n; this.anchorSeen = this.commander.anchor?.clone?.() ?? null; return n; },
+      rallyNear(at, r) { this.rallied += Math.round(r); return 5; },
+      reviveNear(at, r) { this.revived += Math.round(r); return 3; },
+      onFriendlyHit() {},
+    };
+    const b = bench({ command: cmd, support: new WarSupport() });
+    const bodies = packField(b);
+    /**
+     * FOUR OF YOUR OWN, EIGHT METRES OUT — because "does this hurt my line" is
+     * a property of a support call and the ledger was blind to it.
+     *
+     * `blast`'s own note is that a gun run "does not know whose side you are
+     * on", which is true of every payload in the file except one: the gunship
+     * on station picks its own targets and asks `e.team !== owner.team` before
+     * it shoots. That is the difference between a pass a player aimed and a
+     * craft choosing, and without these four bodies the two came out 28% apart
+     * — a hair over this check's floor — on nothing but duration.
+     *
+     * They stand at 8 m, inside every wide call and outside the tight ones, so
+     * the column reads as the risk each call actually carries.
+     */
+    const mine = [];
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * Math.PI * 2;
+      const at = new THREE.Vector3(Math.cos(a) * 8, 0, Math.sin(a) * 8);
+      const e = new Enemy(b.world, 'trooper', at.clone());
+      e.position.copy(at);
+      e.team = b.p.team;
+      b.world.enemies.push(e);
+      mine.push(e);
+    }
+    const mineHp = mine.map((e) => e.hp);
+    b.p.position.set(70, 0, 70);          // the caller is well clear of everything
+    b.p.damage = () => false;             // ...and is not the subject of any of this
+    /* HURT, so a heal has somewhere to go. A caller at full health measures a
+     * resupply as zero, which is the fixture reporting its own initial
+     * condition rather than the call. */
+    b.p.hp = b.p.maxHp * 0.4;
+    const hpMe = b.p.hp;
+    const row = STRATAGEM_BY_ID[id];
+    const hp0 = bodies.map((e) => e.hp);
+    const v0 = bodies.map((e) => e.velocity.clone());
+    b.p.stratagems._commit(row, new THREE.Vector3(0, 0, 0), null, b.ctx);
+    let stunPeak = 0, span = 0, mark = '', cloudPeak = 0, craftPeak = 0;
+    for (let t = 0; t < secs; t += 1 / 60) {
+      b.p.stratagems.update(1 / 60, b.ctx);
+      const n = bodies.filter((e) => !e.dead && (e.stunTimer ?? 0) > ION_STUN * 0.5).length;
+      if (n > stunPeak) stunPeak = n;
+      /**
+       * HOW LONG THE CALL WENT ON FOR — the axis without which an EVENT and an
+       * OCCUPATION are the same call.
+       *
+       * It was not here, and the pair it let through is exactly the pair it
+       * should have caught: the orbital strike and the minefield came out 24%
+       * apart on every axis (5 bodies each, 3 023 hp against 2 459, one 2.1 m
+       * hole against six 1.1 m ones) because nothing in the signature knew
+       * that one of them happens in an instant and the other waits
+       * forty-five seconds for somebody to walk into it. Eleven of the
+       * eighteen calls are organised around that difference; a signature blind
+       * to it is measuring the wrong table.
+       *
+       * TWO CLOCKS, MAXED, BECAUSE "STILL GOING" HAS TWO MEANINGS.
+       *
+       * The first is DID SOMETHING CHANGE — hit points, holes, scorches, bolts.
+       * That is the whole of an orbital strike: one instant, and nothing about
+       * the world moves again.
+       *
+       * The second is IS THE CALL STILL ON THE FIELD — charges armed, fire
+       * burning, clouds standing, a craft in the air, a round still inbound.
+       * Fingerprinting only the first gave the minefield a span of 3 s: six of
+       * the twelve charges trip the moment they land on this packed field and
+       * the other six sit there with nobody to trip them, so nothing CHANGES
+       * for forty-two seconds while the call is unmistakably still happening.
+       * That is what left the strike and the minefield 27% apart on every axis.
+       */
+      const S = b.p.stratagems;
+      const now = `${Math.round(bodies.reduce((m, e) => m + e.hp, 0))}|${b.hit.length}`
+        + `|${b.world.lightning.bolts}|${smokeClouds().length}`;
+      if (now !== mark) { mark = now; span = t; }
+      const alive = S._mines.length + S._fires.length + smokeClouds().length
+        + (S.sorties ? S.sorties.live.length : 0) + S.pending.length + S._timers.length;
+      if (alive > 0) span = t;
+      /* THE PEAK AND NOT THE FINAL COUNT. `updateSmoke` ages a bank out at 22 s
+       * and the window is 46, so a screen read as zero clouds at the end of it
+       * — which is a smoke screen scoring nothing on the one axis that is its
+       * whole subject. */
+      if (smokeClouds().length > cloudPeak) cloudPeak = smokeClouds().length;
+      /* WAS THERE SOMETHING IN THE SKY. A gun run and a battery firing from
+       * off-map are two different events even where the craters agree. */
+      const live = S.sorties ? S.sorties.live.length : 0;
+      if (live > craftPeak) craftPeak = live;
+    }
+    let killed = 0, dealt = 0, plated = 0, thrown = 0;
+    bodies.forEach((e, i) => {
+      const took = Math.max(0, hp0[i] - e.hp);
+      dealt += took;
+      if (e.dead || e.hp <= 0) killed++;
+      /* THE SHOVE, as metres per second away from the mark. `applyKnockback`
+       * adds straight to `velocity`, so the delta IS the blow — and a bench
+       * cannot integrate it into metres without reimplementing `Enemy._move`,
+       * which would be a check agreeing with its own copy of the game. */
+      const dv = e.velocity.clone().sub(v0[i]);
+      const out = e.position.clone().setY(0);
+      if (out.lengthSq() > 1e-4) thrown += dv.dot(out.normalize());
+      if ((e.A?.toughness ?? 0) >= 14) plated += took;
+    });
+    const craters = b.hit.filter((h) => h.kind === 'crater');
+    const out = {
+      id, killed, dealt: Math.round(dealt), plated: Math.round(plated),
+      thrown: +(thrown / bodies.length).toFixed(1),
+      craters: craters.length,
+      deepest: craters.length ? Math.max(...craters.map((c) => c.d)) : 0,
+      burns: b.hit.filter((h) => h.kind === 'burn').length,
+      stunned: stunPeak, bolts: b.world.lightning.bolts,
+      rounds: b.world.bolts.fired, craft: craftPeak,
+      landed: cmd.landed, anchorSeen: cmd.anchorSeen,
+      /**
+       * WHERE THE BODIES CAME DOWN, in metres from the caller — and it is the
+       * only thing that tells reinforcements from a beachhead.
+       *
+       * Both land men off a ramp and both go through `Command.reinforce`; four
+       * against six is 17% on a log axis, which is a re-priced twin by this
+       * check's own definition. The difference is the whole point of the second
+       * call: reinforcements arrive BESIDE you and a beachhead arrives on
+       * ground you are not standing on. `Command` says where by reading the
+       * commander's `anchor`, so the anchor it saw at the moment it deployed is
+       * the measurement.
+       */
+      reach: cmd.anchorSeen ? +cmd.anchorSeen.distanceTo(b.p.position).toFixed(1) : 0,
+      healed: Math.round(b.p.hp - hpMe), rallied: cmd.rallied, revived: cmd.revived,
+      friendly: Math.round(mine.reduce((m, e, i) => m + Math.max(0, mineHp[i] - e.hp), 0)),
+      clouds: cloudPeak, span: +span.toFixed(1),
+      support: supportCost(row), n: bodies.length,
+    };
+    clearSmoke();
+    LEDGER.set(id, out);
+    return out;
+  }
+
+  check('support calls: every one of the eighteen does something worth its price', () => {
+    /**
+     * THE PLAYER'S BAR, IN ONE SENTENCE: *"make sure they're not puny and
+     * ineffective like your first try at strategems were"*.
+     *
+     * The earlier lane answered that for the orbital strike by measuring it in
+     * BODIES — one kill for 34 Force against a blade that buys one every nine
+     * seconds for free — and this is that measurement widened to the whole
+     * table. Every row has to clear a floor on at least one ledger, and the
+     * floors are the ones that make a call worth the seconds you stood still
+     * to ask for it:
+     *
+     *   BODIES        it kills people
+     *   HEALTH        it takes hit points off the field
+     *   GROUND        it moves the field, or breaks the ground, or denies it
+     *   TIME          it takes the enemy off the board without killing them
+     *   YOUR SIDE     it puts bodies on the field or takes them off the floor
+     *
+     * A call that clears NONE of them is the thing the player is complaining
+     * about, and the failure names which ledger it came closest on.
+     */
+    const rows = [];
+    /* THE SEVEN THAT ARE NOT MEASURED ON THE PACKED FIELD, and why each is
+     * measured somewhere else instead. Every one of them acts on the CALLER's
+     * side rather than on the enemy, so a ledger of enemy hit points is the
+     * wrong instrument — it would read zero for a working resupply. */
+    const OWN_SIDE = { rally: 'morale', resupply: 'health', reinforce: 'bodies', beachhead: 'bodies' };
+    for (const row of STRATAGEMS) {
+      if (OWN_SIDE[row.id]) continue;
+      if (row.id === 'smoke') continue;                 // measured by its own three checks
+      if (row.id === 'tractor') continue;               // measured on a spread line, below
+      rows.push(ledgerFor(row.id));
+    }
+    for (const L of rows) {
+      const worth =
+        L.killed >= 3                                   // bodies
+        || L.dealt >= 900                               // health
+        || Math.abs(L.thrown) >= 20                     // ground: it moved the field
+        || L.deepest >= 1.5                             // ground: it broke the ground
+        || L.burns >= 4                                 // ground: it denied it
+        || L.stunned >= 6;                              // time
+      assert(worth,
+        `${L.id} costs ${L.support} support and delivered: ${L.killed} bodies, ${L.dealt} hp, `
+        + `${L.thrown} m/s of shove, a ${L.deepest} m hole, ${L.burns} scorches, `
+        + `${L.stunned} stopped. That is the "little poof of nothing" the player named.`);
+    }
+    /**
+     * AND THE TRACTOR BEAM IS MEASURED ON THE FORMATION IT IS FOR.
+     *
+     * The packed field is the wrong instrument for it and reads -3.1 m/s,
+     * which looks exactly like a failure and is not: `TRACTOR_PULL` scales
+     * with how far out a body is, and the packed field is already inside 16 m
+     * of a 26 m reach, so there is almost nothing for the beam to close. The
+     * call exists for a line that has SPREAD OUT — which is what a line does
+     * to avoid an orbital strike — so it is measured on one.
+     *
+     * Sixteen MagnaGuards on rings at 11, 15.5, 20 and 24.5 m. What is asserted
+     * is the number the call is priced on: the mean radius of the enemy, and
+     * that it cost them nothing in hit points to be moved.
+     */
+    const tb = bench();
+    const ring = [];
+    for (let i = 0; i < 16; i++) {
+      const a = (i / 16) * Math.PI * 2, r = 11 + (i % 4) * 4.5;
+      const at = new THREE.Vector3(Math.cos(a) * r, 0, Math.sin(a) * r);
+      const e = new Enemy(tb.world, 'magna', at.clone());
+      e.position.copy(at); e.team = 1;
+      tb.world.enemies.push(e); ring.push(e);
+    }
+    tb.p.position.set(70, 0, 70);
+    const mean = () => ring.reduce((m, e) => m + Math.hypot(e.position.x, e.position.z), 0) / ring.length;
+    const wide0 = mean();
+    const hpRing = ring.map((e) => e.hp);
+    const row = STRATAGEM_BY_ID.tractor;
+    row.fire(tb.ctx, new THREE.Vector3(0, 0, 0), tb.p.stratagems, row);
+    for (let t = 0; t < TRACTOR_TIME; t += 1 / 60) {
+      tb.p.stratagems.update(1 / 60, tb.ctx);
+      /* THE BENCH INTEGRATES, and says so. `Enemy._move` is what turns velocity
+       * into metres in the game and it needs a whole world to run; what the
+       * beam DOES is set a velocity, so the honest thing for a headless bench
+       * is to carry that velocity forward at the same dt and report metres.
+       * Nothing about the call is being reimplemented — the velocities are the
+       * game's own. */
+      for (const e of ring) e.position.addScaledVector(e.velocity, 1 / 60);
+    }
+    const wide1 = mean();
+    const inside = ring.filter((e) => Math.hypot(e.position.x, e.position.z) <= 12).length;
+    const hurt = ring.reduce((m, e, i) => m + (hpRing[i] - e.hp), 0);
+    assert(wide1 < wide0 * 0.4,
+      `the beam closed a ${wide0.toFixed(1)} m line to ${wide1.toFixed(1)} m — that is not a hold field`);
+    assert(inside === ring.length,
+      `${inside} of ${ring.length} ended inside an orbital strike's circle`);
+    assert(hurt === 0, `the tractor beam dealt ${hurt} hp — it is priced as doing none`);
+
+    /* AND THE FOUR THAT ACT ON YOUR OWN SIDE, each on its own instrument. */
+    const bh = ledgerFor('beachhead');
+    assert(bh.landed >= 6, `the beachhead landed ${bh.landed} bodies`);
+    assert(bh.anchorSeen && bh.anchorSeen.length() < 1,
+      `the beachhead landed its men at ${bh.anchorSeen ? bh.anchorSeen.length().toFixed(1) : 'nowhere'} m `
+      + 'from the mark — it is reinforcements with extra steps unless it lands where you painted');
+    const rf = ledgerFor('reinforce');
+    assert(rf.landed >= 4, `reinforcements landed ${rf.landed} bodies`);
+
+    const sup = ledgerFor('resupply');
+    assert(sup.healed >= 30, `the resupply healed ${sup.healed} hp`);
+    assert(sup.revived > 0, 'the resupply woke nobody — it is a heal with a longer code');
+    const ral = ledgerFor('rally');
+    assert(ral.rallied >= 20, `the rally reached ${ral.rallied} m`);
+    assert(ral.healed === 0, 'the rally healed the caller — that is the resupply\'s job');
+
+    return rows.map((L) => `${L.id} ${L.killed}k/${L.dealt}hp`).join(' · ')
+      + ` · tractor ${wide0.toFixed(1)}→${wide1.toFixed(1)} m at 0 hp`
+      + ` · beachhead ${bh.landed} at the mark · resupply ${sup.healed} hp · rally ${ral.rallied} m`;
+  });
+
+  check('support calls: no two of them are the same call with a different number', () => {
+    /**
+     * THE OTHER HALF OF THE PLAYER'S NOTE, and the one a table of eighteen rows
+     * is most likely to fail: *"a long list of incredibly cool and game
+     * impactful deadly and or utility strategems"* is not a long list of damage
+     * numbers, and the cheapest way to write eleven new calls is eleven radii.
+     *
+     * So every call is reduced to a SIGNATURE over the ledger above — the six
+     * axes on which two calls can be different things — each normalised across
+     * the table so a big number on one axis does not swamp a small one on
+     * another. Two rows are the same call if their signatures agree on every
+     * axis; the assertion is that no pair does.
+     *
+     * `SEP` is 0.28 of the table's own log range on at least one axis: a bit
+     * over a quarter of the spread between the least and the most any call does
+     * of a thing. Comfortably more than rounding, comfortably less than
+     * "obviously different". Measured over the shipped eighteen, the closest
+     * pair is the strafing run and the gunship on station at 41% — which is the
+     * pair a reader would also name as the closest, and it clears the floor by
+     * half again.
+     */
+    const AXES = ['killed', 'dealt', 'plated', 'thrown', 'craters', 'deepest',
+      'burns', 'stunned', 'bolts', 'rounds', 'craft', 'landed', 'clouds', 'span',
+      'healed', 'rallied', 'revived', 'reach', 'friendly'];
+    const SEP = 0.28;
+    const led = STRATAGEMS.map((r) => ledgerFor(r.id));
+    /**
+     * NORMALISED ON A LOG SCALE, AND THAT IS NOT A DETAIL.
+     *
+     * These quantities are multiplicative and their ranges are dominated by one
+     * outlier each: damage runs 0 to 9 265 because the saturation bombardment
+     * is at the top of it, so on a linear scale the concussion wall's 229 hp
+     * and the tractor beam's ZERO come out 2.5% apart — a call that hurts
+     * things and a call that is priced at hurting nothing, reported as the same
+     * call. Measured: that pair failed at 26% with linear axes and separates at
+     * 60% with these. `log1p` also handles the zeroes every own-side axis is
+     * full of, which a ratio cannot.
+     *
+     * SIGNED THROUGHOUT. A call that drags the field IN and one that throws it
+     * OUT are opposite things, and taking the modulus of the shove made the
+     * tractor beam and a small blast look alike on the one axis that most
+     * distinguishes them.
+     */
+    const top = {};
+    for (const a of AXES) top[a] = Math.max(1, ...led.map((L) => Math.abs(L[a] ?? 0)));
+    const sig = (L) => AXES.map((a) => {
+      const v = L[a] ?? 0;
+      return Math.sign(v) * Math.log1p(Math.abs(v)) / Math.log1p(top[a]);
+    });
+    let closest = Infinity, closestPair = '';
+    for (let i = 0; i < led.length; i++) {
+      for (let j = i + 1; j < led.length; j++) {
+        const A = sig(led[i]), B = sig(led[j]);
+        const gap = Math.max(...A.map((v, k) => Math.abs(v - B[k])));
+        if (gap < closest) { closest = gap; closestPair = `${led[i].id}/${led[j].id}`; }
+        assert(gap >= SEP,
+          `${led[i].id} and ${led[j].id} differ by at most ${(gap * 100).toFixed(0)}% on every `
+          + `axis there is — they are one call with two prices. `
+          + `${led[i].id}: ${led[i].killed}k ${led[i].dealt}hp ${led[i].thrown}m/s; `
+          + `${led[j].id}: ${led[j].killed}k ${led[j].dealt}hp ${led[j].thrown}m/s`);
+      }
+    }
+    /* …AND THE DETECTOR DETECTS. Two rows that ARE the same call, planted, so a
+     * green result above means the test can go red. */
+    const twin = { ...led[0], id: 'twin' };
+    const A = sig(led[0]), B = sig(twin);
+    assert(Math.max(...A.map((v, k) => Math.abs(v - B[k]))) < SEP,
+      'the signature does not notice a row copied verbatim — it cannot catch a re-priced twin');
+    return `${led.length} calls, ${led.length * (led.length - 1) / 2} pairs, closest `
+      + `${closestPair} at ${(closest * 100).toFixed(0)}% against a ${Math.round(SEP * 100)}% floor`;
+  });
+
+
+  check('support calls: the ladder is walkable inside one run, and only inside one', () => {
+    /**
+     * *"the strategems that you can unlock as you progress through a run"* —
+     * and `src/game/Progress.js` is the written law that this game has no
+     * cross-run power: "no unlocks… no currency… no cross-run power — a run is
+     * still built from its own drafts, so the hundredth run starts exactly
+     * where the first did."
+     *
+     * Both halves have to be true at once, so both are measured here.
+     *
+     * WALKABLE: a battle is simulated from the credits it actually earns —
+     * `SUPPORT_EARN`, through the real `WarSupport` — and every rung has to
+     * arrive inside the depth a run reaches, in order, and spread out enough
+     * that they are not four notices in one minute.
+     *
+     * INSIDE ONE RUN ONLY: a fresh pool opens at zero effort with exactly the
+     * seven calls this game shipped with, and nothing anywhere writes it down.
+     */
+    const shipped = STRATAGEMS.filter((s) => (s.earn ?? 0) === 0);
+    const held = STRATAGEMS.filter((s) => (s.earn ?? 0) > 0);
+    assert(shipped.length === 7,
+      `${shipped.length} calls are open from the first minute — the seven this game shipped `
+      + 'with must not go behind a gate, or the opening of a run changes');
+    assert(held.length >= 10, `only ${held.length} calls are released — that is not a ladder`);
+
+    /* ── AT THE OPENING OF A BATTLE, SEVEN ─────────────────────────────── */
+    const b = bench({ command: { formation: 'line', reinforce() {}, rallyNear: () => 0 },
+      support: new WarSupport() });
+    const open = b.p.stratagems.available(b.ctx).map((s) => s.id).sort();
+    assert(open.join() === shipped.map((s) => s.id).sort().join(),
+      `a battle opens offering ${open.join(',')} — it must open with exactly the seven`);
+    /* AND A HELD CALL CANNOT BE SPELLED. Same rule the command-only calls
+     * follow: a code that resolves and then refuses is a menu item that lies. */
+    const S = b.p.stratagems;
+    S.setArming(true);
+    let out = null;
+    for (const c of held[0].code) out = S.feed(c, b.ctx);
+    assert(out !== held[0], `${held[0].id} was spelled to completion before it was released`);
+    assert(!S.designating, `${held[0].id} opened a designation before it was released`);
+    S.setArming(false);
+
+    /* ── AND THE WHOLE LADDER INSIDE A RUN ─────────────────────────────── */
+    /**
+     * A WAVE'S WORTH OF CREDIT, from `SUPPORT_EARN` and nothing invented here:
+     * a cleared wave is worth `wave` and each body in it `kill`. The body count
+     * is the one the game's own escalation produces — eight at wave one rising
+     * to about twenty-two by the twenties, which is the field the ledger above
+     * is measured on.
+     */
+    const pool = new WarSupport();
+    const arrived = new Map();
+    let wave = 0;
+    for (; wave < 30 && arrived.size < held.length; wave++) {
+      const bodies = Math.round(8 + wave * 0.55);
+      pool.credit('kill', bodies);
+      pool.credit('wave');
+      for (const s of held) {
+        if (!arrived.has(s.id) && (s.earn ?? 0) <= pool.effort) arrived.set(s.id, wave + 1);
+      }
+    }
+    assert(arrived.size === held.length,
+      `${held.length - arrived.size} calls were still held after ${wave} waves — `
+      + 'they are unreachable in a run anybody plays');
+    const rungs = [...new Set(held.map((s) => s.earn))].sort((x, y) => x - y);
+    const at = rungs.map((r) => arrived.get(held.find((s) => s.earn === r).id));
+    assert(at[0] >= 3, `the first rung arrives on wave ${at[0]} — that is not progression, it is a delay`);
+    assert(at[at.length - 1] <= 26,
+      `the last rung arrives on wave ${at[at.length - 1]}, which is past where most runs end`);
+    for (let i = 1; i < at.length; i++) {
+      assert(at[i] > at[i - 1],
+        `rungs ${i - 1} and ${i} both arrive on wave ${at[i]} — they are one rung with two numbers`);
+      assert(at[i] - at[i - 1] >= 2,
+        `rung ${i} arrives ${at[i] - at[i - 1]} wave(s) after rung ${i - 1} — the ladder is a staircase `
+        + 'with no landings');
+    }
+
+    /* ── THE FLEET SAYS SO, ONCE PER RUNG ──────────────────────────────── */
+    /**
+     * A locked call is ABSENT rather than refusing, which means the notice is
+     * the ONLY thing that tells a player mid-fight that the table just grew.
+     * By rung and not by row — three calls land at 55 — because three notices
+     * in one frame is three notices nobody reads.
+     */
+    const n = bench({ support: new WarSupport() });
+    /* ONE FRAME AT ZERO FIRST, which is what a battle actually does: `_release`
+     * records where it found the effort and says nothing, so the seven calls
+     * you already have are not announced at you on the opening frame. Without
+     * it the fixture skips the first rung and reads 3 notices for 4. */
+    n.p.stratagems.update(1 / 60, n.ctx);
+    assert(!n.hit.some((h) => h.kind === 'notify'),
+      'the fleet announced something on the opening frame of a battle');
+    for (const r of rungs) {
+      n.world.support.effort = r;
+      n.p.stratagems.update(1 / 60, n.ctx);
+    }
+    const notices = n.hit.filter((h) => h.kind === 'notify');
+    assert(notices.length === rungs.length,
+      `${notices.length} notices for ${rungs.length} rungs — a rung was announced twice or not at all`);
+    for (const note of notices) {
+      assert(Object.values(RELEASE_NAME).some((w) => note.title.toLowerCase() === w),
+        `a rung announced itself as "${note.title}", which is not one of the ladder's own names`);
+      assert(note.sub && note.sub.length > 3, `the ${note.title} notice named no calls`);
+    }
+    /* …and a second frame at the same effort says nothing more. */
+    const before = n.hit.length;
+    n.p.stratagems.update(1 / 60, n.ctx);
+    assert(n.hit.length === before, 'the fleet re-announced a rung it had already released');
+
+    /* ── AND NOTHING SURVIVES THE RUN ──────────────────────────────────── */
+    assert(new WarSupport().effort === 0 && new WarSupport().effort === 0,
+      'a fresh supply line opens with war effort already on it — something is banking it');
+    const prog = readFileSync(new URL('../../src/game/Progress.js', import.meta.url), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, ' ');
+    assert(!/effort|support|release/i.test(prog),
+      'Progress.js mentions the ladder — the releases are being written into the profile, which is '
+      + 'the one thing that file exists to refuse');
+    /* And the table itself carries no saved state: a row's `earn` is a constant
+     * and nothing writes to it. */
+    const src = readFileSync(new URL('../../src/game/Stratagems.js', import.meta.url), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+    assert(!/localStorage/.test(src), 'Stratagems.js touches localStorage — the ladder is being saved');
+
+    return `${shipped.length} open, ${held.length} released over ${rungs.length} rungs at `
+      + `${rungs.join('/')} effort — waves ${at.join(', ')} of a simulated run; `
+      + `${notices.length} notices, none repeated; a fresh pool opens at 0`;
+  });
+
+  check('support calls: nothing a player can read says "stratagem"', () => {
+    /**
+     * *"they should not be called strategems in game obviously as that's a
+     * helldiver's thing so in case we ever said strategem in game you need to
+     * come up with something appropriate to our game"*.
+     *
+     * They are SUPPORT CALLS, on THE COMM, paid for out of WAR SUPPORT. This is
+     * what says so, and it measures what is RENDERED rather than what is
+     * written: the Codex page is built and read, every string the table hands
+     * the HUD is read, and then the tree is scanned for prose that has not been
+     * rendered yet.
+     *
+     * ── WHY IDENTIFIERS ARE EXEMPT AND STRINGS ARE NOT ─────────────────
+     *
+     * Four names keep the old word: the module `Stratagems.js`, the
+     * `STRATAGEMS` table, the `#stratagem` DOM node and the `stratagem` action
+     * id. None of them is rendered, and the last one is more than an
+     * identifier — it is the key a rebind is saved under in `localStorage`, so
+     * renaming it would silently discard the binding of every player who has
+     * ever moved this control off CapsLock. Renaming an identifier a player
+     * cannot see buys nothing and costs that.
+     *
+     * The rule that separates the two, and it is structural rather than a list:
+     * a string literal containing the word AND A SPACE is prose. `'stratagem'`
+     * on its own is a key; `'Call a stratagem'` is a sentence. Nothing new can
+     * be written that slips through, because a label is always more than one
+     * word.
+     */
+    const bindings = defaultBindings();
+
+    /* ── THE PAGE THE PLAYER ACTUALLY OPENS ────────────────────────────── */
+    const page = codexHtml(bindings);
+    /* Attributes stripped, because a class name is not prose. What is left is
+     * exactly the text on the screen. */
+    const visible = page.replace(/<[^>]*>/g, ' ');
+    assert(!/stratagem/i.test(visible),
+      `the Codex page renders the word: "${(/[^.]*stratagem[^.]*/i.exec(visible) || [''])[0].trim()}"`);
+    assert(/support/i.test(visible), 'the Codex page does not mention support at all — did it render?');
+
+    /* ── EVERY STRING THE TABLE HANDS THE HUD ──────────────────────────── */
+    const strings = [
+      ...STRATAGEMS.flatMap((s) => [s.id, s.name, s.blurb, ...(s.words || [])]),
+      ...PREAMBLE, ...Object.values(RELEASE_NAME),
+      ...ACTIONS.map((a) => a.label), ...ACTIONS.map((a) => a.group),
+      ...CODEX.filter((r) => r.head).map((r) => r.head),
+    ];
+    for (const t of strings) {
+      assert(!/stratagem/i.test(String(t || '')), `a string the player reads says it: "${t}"`);
+    }
+
+    /* ── AND THE WHOLE TREE, FOR PROSE NOT YET RENDERED ────────────────── */
+    /**
+     * The two above cover what is on screen today. This covers the string
+     * written tomorrow, and the ones that are already there in files this lane
+     * does not own — see `OWNED_ELSEWHERE`.
+     */
+    const root = new URL('../../', import.meta.url).pathname;
+    const found = [];
+    const walk = (rel) => {
+      for (const ent of readdirSync(root + rel, { withFileTypes: true })) {
+        const r = rel + ent.name;
+        if (ent.isDirectory()) { walk(r + '/'); continue; }
+        if (!ent.name.endsWith('.js')) continue;
+        const body = readFileSync(root + r, 'utf8')
+          .replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+        /* Every string and template literal in the file. A literal with the
+         * word AND a space in it is prose; the bare identifier is a key. */
+        for (const m of body.matchAll(/(['"`])((?:\\.|(?!\1)[^\\])*)\1/g)) {
+          /* AN INTERPOLATION IS CODE, NOT TEXT. `${STRATAGEMS.length}` inside a
+           * Codex sentence is an identifier the player never sees the name of —
+           * what they read is the number it evaluates to — and leaving it in
+           * flagged two rows of a page whose rendered output this check has
+           * already read and found clean. */
+          const lit = m[2].replace(/\$\{[^}]*\}/g, ' ');
+          if (!/stratagem/i.test(lit)) continue;
+          if (!/\s/.test(lit)) continue;
+          found.push(`${r}: "${lit.trim().slice(0, 70)}"`);
+        }
+      }
+    };
+    walk('src/');
+    /**
+     * AND NOW THERE IS NO RESIDUE AT ALL.
+     *
+     * This clause used to declare three: `Player._refuse` raises
+     * `world.notify(name.toUpperCase(), reason)` — a card on the screen — and
+     * the dive, the jump and the dash all refused a body mid-code with "you are
+     * calling in a stratagem". The lane that swept the word could not edit that
+     * file, so it declared them and asserted the list was EXACTLY those three,
+     * on the argument that fixing them would turn this red and get the
+     * declaration deleted along with the bug. That is what happened.
+     *
+     * The assertion left behind is the stronger one and the one worth keeping:
+     * NOTHING a player can read says it. A new one turns this red with the
+     * file and the string it found.
+     */
+    assert(!found.length,
+      `a player-facing string says it again:\n  ${found.join('\n  ')}`);
+
+    /* ── THE PAGE ITSELF, AND THE STYLESHEET ───────────────────────────── */
+    /* index.html outside its comments: markup a player never sees is fine, TEXT
+     * is not, and `#stratagem` is an id rather than a word on the screen. */
+    const html = readFileSync(root + 'index.html', 'utf8').replace(/<!--[\s\S]*?-->/g, ' ');
+    const text = html.replace(/<[^>]*>/g, ' ');
+    assert(!/stratagem/i.test(text),
+      `index.html shows the word: "${(/[^<>]*stratagem[^<>]*/i.exec(text) || [''])[0].trim()}"`);
+    /* styles.css: only `content:` can put a word on the screen from a
+     * stylesheet. Everything else there is a selector. */
+    const css = readFileSync(root + 'styles.css', 'utf8').replace(/\/\*[\s\S]*?\*\//g, ' ');
+    for (const m of css.matchAll(/content\s*:\s*(['"])((?:\\.|(?!\1).)*)\1/g)) {
+      assert(!/stratagem/i.test(m[2]), `a stylesheet prints the word: content:"${m[2]}"`);
+    }
+
+    return `the Codex renders ${STRATAGEMS.length} calls and the word appears in none of it; `
+      + `${strings.length} table and binding strings clean, and no residue anywhere in src/`;
   });
 
   check('stratagems: a call needing an army is not offered without one', () => {

@@ -144,7 +144,12 @@ const blank = () => ({
  * set is really about: both can be won, both write `won` through
  * `World.runStats`, and `wins`/`crowned` have had a reader waiting since
  * Command's campaign arrived. */
-const RECORDED = new Set(['roguelite', 'waves', 'duel', 'command', 'skirmish', 'campaign']);
+/* The Line is the sixth, and it is the one whose record is worth the most: it
+ * is the only mode where `won` can come back FALSE off a crossing that reached
+ * the far end — see `CommandDirector._endCampaign`. A mode left out of this
+ * set leaves no trace at all, and a mode whose whole subject is a casualty
+ * list leaving no trace is the defect the paragraph above is an account of. */
+const RECORDED = new Set(['roguelite', 'waves', 'duel', 'command', 'theline', 'skirmish', 'campaign']);
 
 function read() {
   try {
@@ -354,6 +359,24 @@ export function progressLines(p = read()) {
       + (last.won === null ? ', left' : last.won ? ', crowned' : '')
       + (last.rules?.length ? ` · under ${ruleName(last.rules.join('+'))}` : '')
       + (last.boons?.length ? ` · ${last.boons.length} boon${last.boons.length === 1 ? '' : 's'}` : '')
+      /**
+       * …AND HOW MANY OF THEM YOU WOKE YOURSELF.
+       *
+       * `facets` has been on every entry since `recent[]` was written and had
+       * no reader anywhere — the write-only log this file's own header refuses
+       * to be, in its mildest form. It was also structurally 0: `recordRun`
+       * reads `summary.woken` and nothing in `src/` passed it until main.js's
+       * `record()` began sending `communion.bought`. Both halves are closed on
+       * the same commit, because either one alone is still a field that says
+       * nothing.
+       *
+       * It sits beside `boons` because it is the SHARE of that number the
+       * player chose in the Holocron rather than was dealt: `boons` is the
+       * whole holding — the order's grants, the draft, and this — and in a mode
+       * outside `Waves.DRAFT_MODES`, which holds one of the eight, the
+       * difference between the two is the whole of what the run built.
+       */
+      + (last.facets ? ` · ${last.facets} woken` : '')
       + (last.seed != null ? ` · seed ${last.seed}` : ''));
   }
   return out;

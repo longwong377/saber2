@@ -440,10 +440,36 @@ export async function run({ check, assert }) {
     const fastest = Object.entries(ARCHETYPES)
       .filter(([k, A]) => k !== 'stalker' && (A.speed ?? 0) >= ARCHETYPES.stalker.speed).map(([k]) => k);
     if (fastest.length) wrong.push(`the nexu's page claims nothing is close and ${fastest.join(', ')} match its pace`);
-    /* The AT-TE's shell: its page calls it the heaviest single hit in the game. */
-    const heavier = Object.entries(ARCHETYPES)
-      .filter(([k, A]) => k !== 'atte' && (A.damage ?? 0) > ARCHETYPES.atte.damage).map(([k]) => k);
-    if (heavier.length) wrong.push(`the AT-TE's page claims the heaviest hit and ${heavier.join(', ')} hit harder`);
+    /**
+     * THE HEAVIEST SINGLE HIT — and WHOSE page says so is now read off the
+     * table instead of being the string 'atte'.
+     *
+     * It was hard-coded, and it went stale the moment a heavier gun arrived:
+     * the SPHA's shell is 96 against the AT-TE's 58, so a clause pinned to one
+     * key failed on a page that had stopped making the claim. That is HANDOFF
+     * §2.3 inside the file whose whole subject is §2.3 — a body name kept by
+     * hand beside the table that could have answered it.
+     *
+     * The question the clause is actually asking is "does the body whose page
+     * claims the heaviest hit have it", so it finds the claimant by its own
+     * words and then checks the arithmetic. Both directions: a page that claims
+     * it and does not have it is wrong, and a table where nobody claims it is a
+     * clause that has quietly stopped testing anything.
+     */
+    const CLAIM = /heaviest single hit/;
+    const claimants = Object.keys(DATABANK).filter((k) => CLAIM.test(DATABANK[k].text));
+    if (claimants.length !== 1) {
+      wrong.push(`${claimants.length} pages claim the heaviest single hit in the game `
+        + `(${claimants.join(', ') || 'none'}) — the clause needs exactly one`);
+    } else {
+      const [top] = claimants;
+      const heavier = Object.entries(ARCHETYPES)
+        .filter(([k, A]) => k !== top && (A.damage ?? 0) > (ARCHETYPES[top]?.damage ?? 0)).map(([k]) => k);
+      if (heavier.length) {
+        wrong.push(`${top}'s page claims the heaviest hit at ${ARCHETYPES[top]?.damage} and `
+          + `${heavier.join(', ')} hit harder`);
+      }
+    }
     /* The rancor's bulk: its page calls it the heaviest body in the arena. */
     const arena = [...new Set(LEVELS.colosseum.pool)];
     const bigger = arena.filter((k) => k !== 'brute' && (ARCHETYPES[k]?.hp ?? 0) > ARCHETYPES.brute.hp);

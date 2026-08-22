@@ -32,9 +32,9 @@ Playable two ways:
 | Smoke | **11/11 clean** on a quiet box. Its timeouts are wall-clock, so on a loaded one the last four fail and mean nothing — §2.6 |
 | Packed | `node tools/pack.mjs out.html` — 79 modules, 12.8 MB, boots from `file://`, and `tools/checks/packed.mjs` proves it every run |
 | Levels | **7** — `scoria, mustafar, colosseum, wood, drifts, alpine, geonosis`. The Boarding Bay and the Providence were deleted on the player's word — "I just tried the boarding bay and the providence and hated them… just remove them. your outside work is much better" |
-| Modes | **8** — `waves, roguelite, duel, sandbox, training, command, skirmish, campaign` |
+| Modes | **9** — `waves, roguelite, duel, sandbox, training, command, theline, skirmish, campaign` |
 | Campaigns | **1** — `petranaki`, two missions. `boarding` went with its two grounds; both its missions were the ship levels |
-| Archetypes | **31**, and `src/game/Levels.js` must be imported to see 16 of them |
+| Archetypes | **37**, and `src/game/Levels.js` must be imported to see most of them |
 
 Those four rows are a hand copy of what `node --import ./tools/register.mjs
 tools/state.mjs` prints, and they read **10** and **6** through a whole session
@@ -42,6 +42,14 @@ that deleted three levels and added two modes and two campaigns — §2.3, playi
 out in the one file that tells the next reader what is here. Run the tool
 rather than believing the table; it also warns when a level exists and is not
 in `LEVEL_ORDER`, which is a level nobody can reach except by typing its key.
+
+**AND IT HAD DRIFTED AGAIN BY TWO ROWS**, which is what a paragraph saying "run
+the tool rather than believing the table" is for. The Modes row read **8** and
+omitted THE LINE — the flagship mode, the one `FLAGSHIP.md` is entirely about —
+and Archetypes read **31** against 37. Both were caught by running `state.mjs`
+during a mode audit whose brief had been written off this table and therefore
+said "the eight modes". A stale row here does not merely mislead a reader; it
+sets the scope of the next session's work.
 
 Run things this way and no other way:
 
@@ -101,6 +109,40 @@ survived only because it was already on `origin`.
   Anything worth keeping goes in a commit.
 
 ### 2.2b Parallel agents share ONE working tree — git verbs that take the whole tree are loaded guns
+
+> **AND AN EXPLICIT PATH IS NOT ENOUGH WHEN TWO LANES ARE IN THE SAME FILE.**
+> The rule below — name your paths — assumes the partition holds. It stops
+> holding the moment two lanes both have edits in one file, because `git add
+> <path>` stages **the file**, not your hunks: the first lane to commit takes
+> the other's half-finished work with it, under its own message.
+>
+> Measured tonight: a co-op lane's changes to `World.js` and `Emplacement.js`
+> were swept into two commits by peers who had named those exact paths, and
+> **those commits describe a fraction of their own diff**. Nothing was lost and
+> nothing was corrupted — what was lost was the record, which on this project is
+> most of the value.
+>
+> So the partition has to be at the FILE, not at the feature. If two lanes
+> genuinely need the same file, one of them takes it and the other sends a patch
+> or waits; and if you commit a file you share, read `git diff --cached` before
+> you write the message and say in it what is not yours.
+>
+> **AND THE INDEX IS SHARED EVEN WHEN THE FILES ARE NOT.** The paragraph above
+> is about two lanes in one file; this is the same hazard with no shared file in
+> it at all. A lane staged four files nobody else was touching —
+> `main.js`, `Waves.js`, `Progress.js`, `Support.js` — read `git diff --cached`
+> to confirm the hunks were its own, and then spent ninety seconds inspecting a
+> fifth file before committing. In that window a peer ran its own
+> `git add <its paths> && git commit`, and **the peer's commit carried all four**,
+> because a commit takes the whole index and not the paths you added last.
+> `git commit -- <paths>` afterwards answered *"no changes added to commit"*, and
+> `git diff HEAD` for those files was empty: the work was already in somebody
+> else's commit. Nothing was lost; the record was, again.
+>
+> The rule that follows is one line and it is cheap: **stage and commit in ONE
+> command.** `git add <paths> && git commit -m … -- <paths>` leaves no window.
+> Never stage and then go and look at something.
+
 
 Five agents were run in parallel on this branch, each owning a disjoint set of
 files. That partitioning is sound for *editing* — two agents never touched the
@@ -171,6 +213,18 @@ refrain from one convenient command.
   is the signal, and it is exactly what a path-scoped `git add` is prone to
   missing.
 
+**IT HAPPENED A THIRD TIME, IN THE NARROW CASE, AND THE NARROW CASE IS STILL
+NOT AN EXCEPTION.** A lane ran `git checkout HEAD -- tools/_linehold.mjs` to
+drop one experimental hunk from a file it had created and committed thirty
+seconds earlier. `git status` afterwards showed only an untracked peer file, so
+nothing was lost and nothing could have been — the path was unambiguously its
+own. It reported the breach itself, unprompted, at the top of its own report.
+That is the behaviour to want and the ban still holds as written: the reason it
+is a ban and not a guideline is that "I am sure this path is mine" is exactly
+what the agent that took 1,825 lines also believed. The safe version of the
+same intent is `git show HEAD:<path> > <path>`, which is a read and cannot
+reach a path you did not name.
+
 **AND `git commit --amend` IS A TREE-WIDE VERB TOO** — the third round found
 this one, and it is the subtlest of the three because the lane did everything
 right. It ran a path-scoped `git add`, checked `git diff --cached --stat`, saw
@@ -225,6 +279,81 @@ retreating run opened with eight enemies alive, which a fresh wave cannot do.
 **Four of one day's apparent game defects were harnesses lying.** Two-copies-of-
 three, the draft cadence, the smoke probes, and this. Budget for it.
 
+### 2.5c A SCRIPTED PLAYER THAT IS NOT TICKED IS A STATUE, and nothing says so
+
+`tools/_flagship.mjs` exports `dutyInput(world)`, a scripted player. **Its
+entire body is `input.tick(dt)`** — that is where it reads the field, points the
+move axis, presses the swing and holds station on the line. `world.update` does
+NOT call it. **There is no `input.tick` call anywhere in `src/`** — grep it. The
+only caller is `_flagship.mjs`'s own `drive`, one line above its step, and
+`drive` and `dutyInput` are exported separately.
+
+So a bench that writes its own loop gets an unkillable **statue standing on the
+deploy mark with the guard up**, and every number it takes is a number about a
+sitting nobody would play. It fails silently and it fails plausibly: the world
+runs, the army fights, the waves clear, and the figures look like figures.
+
+**Four benches in three lanes had it on the same afternoon** — `_linehold`,
+`_lineform`, `_linewave`, `_linelength` — and it cost at least three published
+results, including "a Push's floor is 45.7 minutes", the number a whole
+work-stream was named after.
+
+**It was reported fixed at the root and it was not.** That claim was relayed
+onward and believed. The rule until somebody actually fixes it:
+
+```js
+input.tick?.(STEP);        // BEFORE the step, every frame
+world.update(STEP, input);
+```
+
+If you are writing a bench, grep your own loop for `tick` before you trust a
+single number out of it. If you would rather fix the class than the instance:
+the contract lives in `drive` and the thing that needs it is what `dutyInput`
+returns, so make them inseparable — a script that cannot be driven un-ticked.
+
+---
+
+### 2.5b THREE module-level streams, and until recently only two could be pinned
+
+The most expensive version of §2.5 this repository has produced, because the
+harness was not lying — it was answering a question nobody had asked it.
+
+`enemyRng.seed(n)` (Enemy.js) and `seedWaves(n)` (Waves.js) have existed for a
+long time. `World.js` held a third, `const rng = makeRng(moduleSeed(2))`, drawn
+by `pickSpawn`, `spawnDebris`, the dressing and a dozen per-frame callers — and
+it had **no reseeder**, so a bench could pin two of three and believe it had
+pinned the world. It is `seedWorld(n)` now; `makeRng` already carried the
+method, so the fix was an export and a name.
+
+What the gap cost, on one number — survivors of a ten-man line at the end of one
+engagement of the flagship mode:
+
+- Two arms differing **only in the mode string** read **5.4 and 3.0 of ten** on
+  the same director and the same change. A crossing rolls a session plan
+  (`rollSession`) and Command does not; that one extra draw moves everything
+  after it. A whole tuning conclusion was drawn from the gap and was wrong.
+- **Four consecutive readings of ONE build by one check spanned 1.3 to 6.0**,
+  on nothing but where the eleven checks above it had left the stream.
+
+Three rules follow, and they are written into `tools/_linehold.mjs`'s header
+where the next person will meet them:
+
+- **Both arms from FRESH PROCESSES**, one invocation each, same seed list. Two
+  arms inside one process are not comparable — the second starts wherever the
+  first stopped.
+- **Never compare across mode strings.** Compare theline against theline.
+- **Pin anything else that is a roll**, e.g. `LEVELS[*].battlefield`, which
+  raises a generated heightfield per seed under a level's own dressing.
+
+**AND SOME OF THESE QUANTITIES ARE CHAOTIC, NOT MERELY NOISY**, which is the
+part that survives even a perfectly pinned harness. Two arms differing only in
+one bolt's damage — 10 against 5 — took the same seed from **5 survivors to 1**
+and the next seed from **1 to 5**. A perturbation of a few hit points diverges a
+three-wave engagement inside seconds, so a per-seed pair means nothing and only
+a mean over many seeds does: five seeds carry a standard error near 1.3 on a
+ten-man roster, twenty carry about 0.65. Treat any difference under about 1.5
+men at five seeds as **unmeasured**, and size the sample before the lever.
+
 ### 2.6 Frames are not seconds — there is no GPU here
 
 Everything renders through swiftshader on the CPU. Measured on an **empty**
@@ -237,6 +366,158 @@ both directions at once. Use `window.__play(gameSeconds, …)`, not a frame coun
 
 Timing checks (`prefracture`, `frame-budget`) will blow if anything else is
 using the CPU. Don't run the suite next to a browser.
+
+### 2.6b …AND TWELVE LANES ON ONE BOX IS "ANYTHING ELSE"
+
+The line above says "don't run the suite next to a browser". The version of it
+that actually bites now is worse, because it is invisible: with a dozen agent
+lanes on this one container, each running its own bench, **`uptime` reported a
+load average of 44 across 24 node processes.** Every millisecond any of them
+measured in that window was fiction, and a full gate under it went red on
+`cloth: 19 enemies' garments cost 6.43 ms` — a check that passes alone.
+
+Two rules, and the second is the one people skip:
+
+1. **Before you quote a millisecond, run `uptime` and `ps -eo args | grep -c
+   "^node --import"`.** Put the number in the report next to the measurement.
+   A timing taken at load 44 is not a slow result, it is no result.
+2. **A red timing check in a shared-box gate is a LEAD, not a fact.** Reproduce
+   it alone before you spend an hour on it — and reproduce it alone before you
+   "fix" it by raising the budget, which is how a real regression gets papered
+   over by a number somebody widened to match a contended run.
+
+The same applies to any bench with a wall-clock term in it. Counts, hit rates
+and hp are safe under load; seconds are not.
+
+### 2.6d THE GATE NO LONGER FINISHES ON A BUSY BOX, AND FOUR SUITES ARE MOST OF IT
+
+Three separate lanes failed to complete a full `verify.mjs` in one session —
+one capped at 25 minutes having reached 14 of ~111 suites, one still on its
+tenth after 95 minutes, one killed at ~50 minutes. That is not three unlucky
+runs; it is the gate having grown past what a contended box can carry, and the
+consequence is worse than slowness: **a gate nobody can finish is a gate whose
+reds nobody triages**, so every lane falls back to running the six suites it
+happens to have touched.
+
+Wall-clock from one such run (inflated by contention — see 2.6b — but the
+RANKING is stable, and the ranking is the point):
+
+    frontdoor.mjs      1961 s   for ONE check
+    extraction.mjs     1135 s
+    footwork.mjs        843 s
+    command.mjs         659 s
+    levels-quality      567 s
+    command-pvp         555 s
+
+Two rules follow.
+
+1. **Before adding a check that drives a whole sitting, price it.** `theline.19`
+   already made this argument for itself — it caps its drive at the deploy
+   card's own top *"which is what makes this affordable to run"* — and it is the
+   right instinct applied to one check while the file around it grew. A drive
+   that cannot state a bound on its own length does not belong in the gate; put
+   it in `tools/` as a bench and cite the bench from a cheap check.
+2. **Do not start a gate you are not going to read.** An orphaned `verify.mjs`
+   ran for 2 h 48 m in this session against a build that was 36 commits stale by
+   the time it was noticed — node caches modules at import, so a long gate
+   measures the tree as it was when it STARTED. It was burning a core the live
+   lanes needed and its output would have been fiction if it had ever finished.
+   Check `ps -eo etime,args | grep [v]erify.mjs` before launching one, and kill
+   any gate older than the last batch of commits it was meant to cover.
+
+### 2.6c …AND YOU CAN MEASURE A MILLISECOND ON A LOADED BOX AFTER ALL
+
+The two rules above are right and they stop one step short. "Do not quote the
+number" leaves every timing check in the gate red whenever a peer lane is
+working, which is most of the time, and a check that is red for a reason nobody
+can act on is a check nobody reads. It also leaves the actual question
+unanswered: if a wall-clock millisecond here is worthless, **what is the frame
+made of?**
+
+`performance.now()` keeps running while this process is off a core.
+`process.cpuUsage()` does not. Measured on this box with eleven peer node
+processes live, one fixed 200 000-iteration arithmetic loop, alternate samples:
+
+```
+wall ms  0.441  0.456  0.431  0.471  28.551  0.457  0.416  …  24.881
+cpu  ms  0.441  0.453  0.428  0.467   0.559  0.454  0.416  …   0.443
+```
+
+The wall column says the work got sixty times more expensive. It did not. The
+residual on the CPU column — 0.44 → 0.56 on the worst sample, about 25% — is
+cache pressure from the other tenants, and that is the honest error bar left.
+
+- **`tools/checks/_cpuclock.mjs`** is the helper: `cpuMs()`, a `window_()` that
+  hands back `{cpu, wall, contention}`, and `loadPhrase()` so a check prints the
+  load beside its own figure as §2.6b asks. `cloth-cost` uses it, which is why
+  the `6.43 ms` failure cannot come back: at load 59.8 with the box running
+  8.20× it reads 4.26 ms of CPU against a 6.0 ceiling.
+- **`tools/_ledger.mjs`** is the per-subsystem frame ledger built on the same
+  clock. Two `cpuUsage()` reads a frame give the frame's true cost;
+  `hrtime.bigint()` splits it between subsystems as a SHARE, because
+  `cpuUsage()` is 3.7 µs a call and there are ~220 per-body calls a frame. Rows
+  are exclusive of their children and `residual` is printed, so the ledger
+  cannot quietly stop adding up.
+
+```bash
+node --import ./tools/register.mjs tools/_ledger.mjs \
+  [--seed 7] [--level geonosis] [--mode theline] [--quality high] \
+  [--warm 45] [--frames 300] [--json out.json] [--prof out.cpuprofile]
+node --import ./tools/register.mjs tools/_ledger.mjs --top out.cpuprofile
+```
+
+`--prof` profiles the MEASURED frames only, never the warm-up — a deploy's
+first second builds colliders and bakes merged skins, and a profile containing
+it names the loader. `--top` reads the result by self time. §2.7b's lesson
+applies every time: a profile named `_gatherNear` and `_encodeCell` in one pass.
+
+**What it said, geonosis · seed 7 · `theline` · `high` · 300 frames after a 45 s
+warm-up, at load 45 on 4 cores — 38 hostiles against a ten-man roster, which is
+what the mode actually fields:**
+
+| subsystem | ms CPU/frame | share |
+|---|---|---|
+| physics | 13.81 | 47.0% |
+| animation | 6.61 | 22.5% |
+| enemy other | 3.52 | 12.0% |
+| enemy think | 1.14 | 3.9% |
+| player | 0.95 | 3.2% |
+| terrain | 0.87 | 3.0% |
+| residual | 0.82 | 2.8% |
+| bolts | 0.56 | 1.9% |
+| cloth | 0.46 | 1.6% |
+| director, blades, particles, corpses, vfx | under 0.2 each | |
+| **FRAME** | **29.35** | |
+
+*frame wall 185.9 ms · frame CPU 29.4 ms · **contention ×6.33***
+
+So the `cloth: 19 enemies' garments cost 6.43 ms` that §2.6b is about was the
+box: cloth is **1.6%** of the frame in the mode the game is played in, and the
+enemies on that ground wear no garments at all — the 0.46 ms is the PLAYER's
+four. Three things came out of going and looking, all in
+`tools/checks/frame-ledger.mjs`:
+
+- **`physics` was the dead.** 386 rigid bodies, 383 awake, 269 ragdoll joints
+  against 40 living enemies; 15 of 21 corpses had never settled and the oldest
+  had been down 33.7 s. `Corpses`' settle test asked whether the FASTEST of a
+  ragdoll's nineteen bones was under 5 cm/s, and a corpse lying in the sand
+  reads 0.20-0.28 there for ever. It is a displacement test now, plus a cap.
+  Measured A/B, one seed, same load: physics 13.05 → 8.88 ms, frame 29.11 →
+  26.50.
+- **`physics.staticBoxes` was swept linearly, once per body per frame.**
+  `src/physics/BoxIndex.js`. A gather looks at 2.6 box records against 135.1.
+- **The ground's memory published the whole texture every frame.** One union
+  dirty rectangle over marks that are far apart is the whole 192² field.
+  21 094 cells a publish → 263, bytes identical.
+
+**Still open, and named because the ledger prices them:** `animation` is 6.6 ms
+over ~40 bodies and the LOD split says 1.5-2.5 ms of it is spent on bodies at
+lod 2 and beyond — `Cohorts.js`'s header says "what is dropped is the gait" and
+only the DRAWING of it is; `updateMatrixWorld` is still 8.5% of the frame,
+almost all of it `Rig.updateMatrices()` forcing a full-tree walk twice per
+animator update and twice more in `_poseArms`; and `SurfaceField.update` still
+re-encodes all 36 864 cells at 10 Hz after ageing them, which is now the larger
+half of the terrain row.
 
 > **SOLVED, AND THE HYPOTHESIS BELOW IS REFUTED BY MEASUREMENT — see §2.7b.**
 > The roster's growth to 31 archetypes is **not** why `cloth-cost` never
@@ -581,6 +862,52 @@ touched, including what I did not know I was touching".
 
 ---
 
+### 2.11 ONE rng STREAM, ONE PROCESS — a fixture owns its draws only if nothing else draws
+
+`rng` in `Enemy.js` **is** `enemyRng` (Enemy.js:59-60). It is one stream for the
+whole process, not one per World. So a fixture that does
+
+```js
+enemyRng.seed(4711);
+for (…) world.spawnEnemy('acolyte', …);
+```
+
+owns its fight **only if nothing else spawns a body between those two lines**.
+Anything that does — another fixture in the same file, a module-scope IIFE that
+has not finished, a peer suite in the same process — shifts every draw the
+fixture takes by N, where N is however many the other party used.
+
+This is not theoretical and it is not a slow leak. `cloth-cost.mjs` spent three
+sessions being diagnosed as "two Worlds alive at once" and serialised twice, and
+the real chain was:
+
+> twenty identical acolytes spawned on one frame run one brain in lockstep →
+> nineteen of them force-push inside a single frame → the ring is symmetric so
+> the horizontals cancel exactly and the lifts add → `applyKnockback` did
+> `velocity.add(impulse)` with no bound → the player left at 190 m/s and topped
+> out at **718 m** → the camera follows the player, so every garment fell
+> outside the 30 m cloth cut and the suite timed an empty field.
+
+**One draw is the whole knife-edge.** Measured by drawing N times by hand before
+the fixture: N=0 floor, N=1 **612 m**, N=2 floor, N=5 **722 m**. Which is why it
+looked like an ordering problem and why it came back every time the roster grew
+by one archetype — this session it was the droideka's `walkPhase`, one `rng()`
+call added to fix NaN legs.
+
+Two things follow, and the second is the important one:
+
+- **A check that seeds a shared stream must own the process at that moment.**
+  If you cannot guarantee that, do not seed — measure something that does not
+  depend on the draw.
+- **A harness symptom that survives three "fixes" is a game defect wearing a
+  harness costume.** The launch was real: any crowd that pushes together could
+  do it to a player, and nothing in the game bounded it. The fix is in
+  `Enemy.js`'s `addShove` — the shoves that land in one frame carry a body no
+  faster than the hardest single one of them — and a single shove is
+  arithmetically identical to what it replaced.
+
+---
+
 ### 2.10 A gate run inside a `git worktree` has no `node_modules`
 
 Two suites drive a real browser — `front-screen`'s layout check and
@@ -845,16 +1172,64 @@ with TWO hands ends at −0.74. Both fists are under a hilt held in the eyeline,
 so the two wrists are 7° apart round the shaft, and the palms can only come
 round together as the wrists separate — swept, `pair` 0.05→3.2 takes the wrists
 7°→152° apart and the palms −0.74→+0.22, but by 3.2 the fists are level with
-the hilt instead of under it and the framing checks §6.0 names go red. **That is
-a second, independent confirmation of §6.0's conclusion that first person should
-be ONE-handed**, which is what `fpHands` already defaults to. The two-handed
-first-person option cannot be made anatomically clean while both fists stay
-under the shaft, and nobody has yet asked whether it should exist.
+the hilt instead of under it and the framing checks §6.0 names go red.
+
+That used to read "a second, independent confirmation that first person should
+be ONE-handed". **It is not, and the argument was the one the player threw out**
+— see §6.0. −0.74 is what a two-handed grip in your own eyeline COSTS, not an
+argument for taking a hand off a hilt the player is holding with two. It is
+still open on its own terms and it is still the shipped default's number.
 
 Check: `tools/checks/viewmodel.mjs`, "arms: two hands on one hilt hold it the
 SAME way round" — proven to fail on `968b575` and pass here.
 
-### 6.0 The first-person grip is OVER-CONSTRAINED — and this is the live one
+### 6.0 The first-person grip is OVER-CONSTRAINED — **CLOSED, AND THE ANSWER WAS NOT THE ONE BELOW**
+
+> **THE QUESTION WAS WRONG AND THE PLAYER SAID SO.** The section below ends
+> "the way out is ONE HAND on the hilt in first person… that is a decision
+> about what a first-person grip IS. Ask before doing it." It was asked, as a
+> choice between a one-handed grip and a two-handed one, and the answer was:
+>
+> > *"Why the fuck would it be either or, both should be modeled and reflect
+> > how many hands you're holding it with"*
+>
+> **The grip is not a property of the camera.** `Player.handsOnHilt()` is the
+> one reader now — 0, 1 or 2, from `saberDown`, `driving`, `throwState`,
+> `control.grip` and `gesture.kind` — the poser calls it and restates none of
+> it, and the `fpHands` card row on the Interface panel is gone with its
+> markup and its entry in the menu's read map.
+>
+> **What that costs is the number this section is named for, and it is paid
+> knowingly.** At half a metre from the lens one fist leaves 32% of the shaft
+> behind a glove and two leave 65% — measured, at three pitches, in
+> `first-person: how many hands are on the hilt is what you SEE`. 65% is
+> close to what two closed hands on a 25 cm hilt CAN leave: the two bores sit
+> 65 mm apart on the shaft and a fist is 108 mm across, so 74% is the ceiling
+> and the pose is 9 points under it. The clear view is one keypress away, on
+> the key that means the same thing everywhere else in the game.
+>
+> **Two of the three constraints this section called unsatisfiable together
+> are discharged rather than traded.** The near plane is no longer one of
+> them: on the finished anchor (rise 0.32) the nearest arm joint is
+> `shoulderL` at 115 mm against the 100 the deltoid needs, in every condition
+> — idle, walking, looking up and down, one hand and two. The sweep that found
+> "nothing satisfies both" was run at rise 0.26 with the grip still being
+> chosen; the anchor moved afterwards and nobody re-ran it.
+>
+> **AND THE ONE-HANDED GRIP HAD NEVER BEEN MEASURED AT ALL.** No bench in this
+> repo had ever pressed the one-hand key — every one of them reached for
+> `fpHands`, which moved the ARMS and left the blade on `GRIPS.two`, a state a
+> player cannot enter. The state a player CAN enter read wrist 167.6° and
+> forearm 3002 °/s in first person, past both of the ratchet's bounds, and had
+> been shipping that way: `FP_TUNE.roll`'s 60° was swept on the state the
+> option produced. The roll is a pair now, 60° for two hands and 30° for one,
+> and the four arms come out 89.4 / 79.0 / 115.1 / 102.3 degrees worst.
+>
+> The rest of the section is left exactly as it was. Every measurement in it is
+> still true and it is the best record of how the wrong question was arrived
+> at.
+
+
 
 Third report of "the first person hand/hilt looks like jumbled garbage", and
 the first one with a number against it. `tools/_fpgeom.mjs` (new) projects
@@ -982,6 +1357,36 @@ Sentinel 4.3 → 0.44 hp/s, which reads exactly like a body that had stopped
 fighting. All four are variadic now. **`Command.js:1251` has the same defect
 against `Enemy.damage` and is still open** — that file belonged to another lane.
 Grep `\.damage = (` before changing that signature again.
+
+### 6.1e THE BOND CURRENT PAYS HALF IN EVERY MODE THAT FIELDS AN ARMY — open
+
+Measured off the shipped code, not driven: `localAllies(p)` in `Waves.js` is
+`p.world.players` filtered on `q.boonMods`, and **a Command / skirmish /
+campaign / Line trooper is an `Enemy` in `world.enemies`**, not a player. So the
+whole bond current — Communion, Suffusion, The Vow, The Unifying Force and
+Attunement of the Bond, five of the lattice's forty-six facets — falls to its
+solo half in the five modes that field an army and in any mode at all once the
+contingent slider leaves zero.
+
+Each card has an honest solo fallback and none of them is dead, so this is not
+`claims.mjs`'s question ("does the card move a real Player") and that suite is
+right to be green. It is the other one: *is there a situation that makes this
+worth taking*, and the answer is "co-op", in a game whose army modes put ten to
+twenty-four named people inside `BOND.range` of you for the whole run.
+
+What it would cost, and why it was left:
+
+- `bondGive` writes `q._bondIn` and calls `q.heal?.()`; `bondReceive` spends it
+  through `boonFactor`, which needs `boonMods`. **`Enemy` has neither** — no
+  `heal`, no `boonMods` — so this is a change to `Enemy.js` and not to the
+  cards.
+- It would land a SECOND presence term on the line, on top of
+  `MORALE.JEDI_NEAR`, which is the live Morale/Nerve lane's whole subject.
+  Two mechanisms paying for "the Jedi is standing with us" is the shape
+  `CommandDirector.lineIsUp` spends a page arguing against.
+
+So: worth doing, worth doing *with* the morale lane rather than beside it, and
+the measurement above is the part that would otherwise have to be taken again.
 
 ### 6.1b Diagnosed, scoped, not yet built
 
@@ -1322,6 +1727,136 @@ bite in opposite directions: cutting a sun to soften a shadow drops the cloud
 deck under its own sky (`sky.mjs` calls that smoke), and raising the ambient to
 compensate walks into `lighting.mjs`'s cast-shadow floor. That is how a
 one-level tuning pass becomes a four-suite bisect.
+
+---
+
+## 6.3b A GUARD WHOSE WRITER WAS NEVER WRITTEN — and three more of the same shape
+
+The physics/bodies/lifecycle audit. Everything here was green in every suite
+that mentions it, and every one of them is a system holding an object the game
+had already torn down. The instrument is `tools/_bodyaudit.mjs`: one World, a
+scripted Jedi that actually clears the room, and a full census — the scene
+graph, **Rapier's own counters rather than our mirrors of them**, every
+collection a body can be parked in, non-finite transforms, and bodies at rest
+under the ground — every sixty game-seconds for fifteen minutes.
+
+**A check that reads a guard is not a check that the guard is written.**
+`Corpses.update` opens `if (!e || e.disposed || !e.dead)`. `Enemy.dispose`
+never wrote `disposed`; only `Player` did. `World.restartWave`'s own note says
+in as many words "Both halves are fixed, because either alone leaves the other
+reader wrong" — **one half was fixed**, and `grep -rn '\.disposed' src/` was
+enough to see it. What that cost is not the wave reset the note was about, it
+is ordinary play: `Enemy.update` ends `return this.dying < 40`, so `World`
+tears every corpse down forty seconds after it falls and the ledger held it
+regardless.
+
+    t=120s   20 corpses,  7 already disposed
+    t=240s   20 corpses, 17 already disposed
+    t=420s   20 corpses, 20 already disposed — and it never moves again
+
+Seven minutes in, every slot of a twenty-corpse budget is a body that no longer
+exists, `live.length > budget` is false forever, and **the field a player fights
+on keeps no dead at all** — which is the exact complaint the budget was built
+to answer. Twenty whole Enemy graphs ride behind them until the level unloads.
+
+**Two callers below one early return.** `applyBodyLod` is called from
+`Enemy._applyLod` and from `Enemy.update`, and BOTH sit under `update`'s
+`if (this.dead) … return this.dying < 40`. Both LOD rungs already say a corpse
+is not theirs (`applyCohort`'s `fit` is `lod >= 3 && !owner.dead && !ragdolled`)
+and neither was ever asked again. Measured with `tools/_cohortleak.mjs`, twelve
+B1s stood past `L3_AT` (137.8 m) and killed where they stood: six were still
+cohort MEMBERS forty-five seconds after being disposed, still drawn as standing
+soldiers by the shared InstancedMesh with their ragdolls invisible underneath,
+and the slot never came back — `c.high` climbs with every distant kill and
+`_grow` doubles the instance buffer to hold ghosts.
+
+**A flag that means one thing to its writer and another to its five readers.**
+`RapierWorld.remove` sets `body.dead = true` and `add` never cleared it, so it
+meant "has been removed at least once". A body can come back:
+`Enemy._tickGetUp` takes the walking capsule out when a droid is knocked flat
+and calls `add` again when it stands up. `tools/_deadflag.mjs`, one B1:
+
+    standing   dead=false  inWorld=true   forceSeen=true
+    knocked    dead=true   inWorld=false
+    back up    dead=true   inWorld=true   forceSeen=FALSE
+
+`Player._grippableBody` refuses anything with `b.dead`. **Every enemy in the
+game became ungrippable the first time a push put it on its back** — the aim
+ray passed straight through it to whatever stood behind, for the rest of that
+body's life. `Physics.js` has the identical shape and is deliberately left
+alone: its own header says nothing there runs in a player's frame.
+
+**And one producer with no consumer.** A dropped hilt is an ordinary `Prop`
+with no lifetime; `ageDropped` only ever advanced `dropAge`. `_hiltpile.mjs`,
+eight duellists killed five times over: 8 → 40 hilts, 196 → 983 meshes, one per
+saber-carrying kill forever. A hilt is 24.6 meshes because it is nineteen to
+thirty-six machined pieces, so forty of them is 983 draw calls of hardware in
+the sand against the 520 `world-immersion` holds a whole LEVEL to.
+
+**THE PROTECTION ON A BUDGET LIKE THAT IS A RELATIONSHIP, NOT A RADIUS**, and
+two drafts got it wrong before the measurement said so. A fight happens AROUND
+the player, so every hilt on the field is inside any distance floor worth
+having: at 14 m and again at 4 m the cull refused every candidate and the pile
+still grew five a wave. What is protected now is a hilt in a hand or in the
+Force, one a local player put down themselves, and one dropped inside
+`PICKUP_DELAY`; everything else is ranked exactly as `Corpses.worth` ranks the
+dead, and what fades is what is behind you at thirty metres.
+
+All five are bound by `tools/checks/undertaker.mjs` (7 checks). Two things it
+had to learn the hard way and the next bench will too:
+
+- **`dying` does not advance at one second per second.** `World` scales `dt`
+  for hitstop and kill-time, so 42 s of stepping put `dying` at 37 and the
+  first draft of the corpse check failed on a build where the fix worked.
+  Drive until the thing has happened, with a cap — not for a fixed wall of
+  frames. Same shape as §2.6, one clock further in.
+- **`_flagship.mjs`'s `dutyInput` is not a room-clearer.** It holds station on
+  its line and meets only what comes inside `ENGAGE` (14 m), because it is
+  measuring a formation. Driven with it, the 900 s audit stalled at t=420 with
+  one B2 standing 34 m out shooting into a raised guard, and the last 480
+  game-seconds were a still frame. `_bodyaudit` carries its own `hunterInput`.
+
+**AND THE ONE NEXT.md HAD OPEN, which is the same shape a fifth time.** "A
+felled trunk that has settled BELOW the ground it fell on. Of nine trunks
+realised in the wood, four had surfaces under the terrain and one had fallen to
+−179 m." −179 is one metre off `RapierWorld.killY`, and the cause is upstream of
+the solver rather than in it: the fall is a hinge that does not know about the
+ground. `Forest.update` integrates θ̈ = 3g/2L·sin θ to horizontal about a pivot
+at the CUT FACE, so a trunk rests at the height of its own stump however the
+ground runs away underneath it — `_layLog`'s own note has that measured already
+("34 of the 83 had some part of themselves buried… 13.2 m under at the deep
+end") and takes the right precaution for a STATIC box, laying none along the
+buried stretches.
+
+**A Prop is not a static box.** `_realise` built a DYNAMIC body at exactly that
+pose, so a trunk lying in a bank was a rigid body born inside a heightfield —
+the one state Rapier has no correct answer for. Measured with
+`tools/_logsweep.mjs`, twelve stops across the wood, fourteen trees felled at
+each: **9 of 21 realised logs were born with their underside below the terrain**,
+deepest 1.53 m, p90 0.75. Afterwards, same sweep: **1 of 19, deepest 0.09 m**,
+which is the seat's own eight-sample granularity.
+
+The kill-plane end is permanent and worth knowing about on its own: a log that
+reaches −180 is removed from the physics world and KEEPS its Prop and its mesh;
+it is 180 m from `home`, so `_syncLogs` marks it `moved` and then reads its x/z
+off the body — barely changed — so it is never far enough away to be released
+either. The tree is gone from the wood for the rest of the level, its instance
+collapsed to zero scale, and one of the nine `LIFT_CAP` slots gone with it.
+
+**What is left, and why.** `Prop.destroy` frees materials only where the prop
+says `ownsMaterials` (today: a dropped hilt, whose five metals `buildHiltGroup`
+machines per hilt). Every other prop kind draws from shared tables and freeing
+one of those takes the paint off everything still standing — the same
+"corrupting something another system still holds" `_cullOldestDebris` refuses
+to commit. Whether any of those tables are per-prop after all is unmeasured.
+`Player.dispose` still does not dispose `p.injury`, which owns two materials;
+that is ~2 per respawn and it is not what any of the numbers above are about.
+And a log that is born ON the ground can still SETTLE a little into it — the
+first draft of the wood check asserted the resting place and read 0.72 m and
+0.32 m on two of nine after fourteen seconds. The check asserts the BIRTH
+instead, deliberately: where a log ends up once it has been dropped, shoved or
+rolled down a bank is the solver's business, and a check that pinned it would
+be pinning a scene rather than holding a rule.
 
 ---
 

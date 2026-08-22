@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0a0b14">
-<title>Battlefront Borz</title>
+<title>Battlefield Borz</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='14' y='2' width='4' height='20' rx='2' fill='%2348d8ff'/><rect x='13' y='21' width='6' height='9' rx='1.5' fill='%23888'/></svg>">
 <link rel="stylesheet" href="./styles.css">
 <!-- THE TITLE SCREEN'S BACKDROP, STARTED EARLY AND CHEAPLY.
@@ -45,13 +45,13 @@
 <canvas id="view"></canvas>
 
 <!-- ══════════════════ THE WORDMARK ══════════════════════════════════════
-     DRAWN, NOT SET. The old title was `ui-sans-serif` at weight 800 with a
-     cyan block behind the second word — which is to say it was whatever font
-     the player's OS happened to hand it, and it read as a web page's <h1>
-     rather than as the front of this game. It is now GEOMETRY: a stencil
-     alphabet on a 100-unit cap height, ten glyphs, drawn to the same four laws
-     styles.css states for every box in the interface — inked, flat, stamped,
-     and cut on the diagonal.
+     DRAWN, NOT SET, AND NOT BY HAND EITHER. The player supplied a logo and
+     said of the one that shipped here: "I hate your version." The one that
+     shipped read BATTLEFRONT and was a stencil alphabet with a hard offset
+     stamp. The supplied mark is a different object — heavy angular black caps
+     with every terminal cut on a diagonal, two hairline coral rules broken by
+     tech furniture, and BORZ under it BRUSH-PAINTED with a long sweep off the
+     Z and a target reticle inside the O.
 
      There is no font file and no @font-face, and that is not an aesthetic
      preference: `tools/checks/packed.mjs` boots the single-file build from
@@ -60,26 +60,44 @@
      asset but one licensed MP3 is generated in code survives for the same
      reason it survives for the title plate.
 
-     ONE COPY OF THE GEOMETRY, USED THREE TIMES. `#wm-body` is the letterforms;
-     `#wm-mark` stacks two <use>s of it — the hard offset stamp (law 3) and the
-     inked face — and the boot screen and the menu each <use> that. A second
-     copy of 2 KB of path data pasted into the two screens is HANDOFF §2.3
-     waiting to happen, so the colours are passed in as custom properties,
-     which inherit into a <use> shadow tree, instead of being baked per copy. -->
-<svg class="wm-src" width="0" height="0" aria-hidden="true" focusable="false"><defs>
-<g id="wm-body" fill="var(--wm-a)">
-<g><path fill-rule="evenodd" d="M0 0H52L66 14V34L56 44L66 54V86L52 100H0ZM24 18H44L48 22V34L44 38H24ZM24 60H46L50 64V78L46 82H24ZM0 16H24V26H0ZM0 58H24V68H0Z"/><path fill-rule="evenodd" transform="translate(80 0)" d="M0 100L26 0H46L72 100H50L45 78H27L22 100ZM31 58H41L36 34ZM26 60H46V70H26Z"/><path fill-rule="evenodd" transform="translate(166 0)" d="M0 0H62V22H43V100H19V22H0ZM19 16H43V26H19Z"/><path fill-rule="evenodd" transform="translate(242 0)" d="M0 0H62V22H43V100H19V22H0ZM19 16H43V26H19Z"/><path fill-rule="evenodd" transform="translate(318 0)" d="M0 0H24V78H56V100H0ZM0 68H24V78H0Z"/><path fill-rule="evenodd" transform="translate(388 0)" d="M0 0H58V22H24V39H50V61H24V78H58V100H0ZM0 28H24V38H0ZM0 66H24V76H0Z"/><path fill-rule="evenodd" transform="translate(460 0)" d="M0 0H56V22H24V41H50V63H24V100H0ZM0 28H24V38H0ZM0 70H24V80H0Z"/><path fill-rule="evenodd" transform="translate(530 0)" d="M0 0H52L66 14V38L54 50L68 100H44L34 56H24V100H0ZM24 18H44L48 22V34L44 38H24ZM0 16H24V26H0ZM45 72H56V82H45Z"/><path fill-rule="evenodd" transform="translate(612 0)" d="M14 0H54L68 14V86L54 100H14L0 86V14ZM22 22V78H46V22ZM26 2H42V18H26ZM26 82H42V98H26Z"/><path fill-rule="evenodd" transform="translate(694 0)" d="M0 0H24L46 52V0H70V100H46L24 48V100H0ZM0 10H24V20H0ZM46 80H70V90H46Z"/><path fill-rule="evenodd" transform="translate(778 0)" d="M0 0H62V22H43V100H19V22H0ZM19 16H43V26H19Z"/></g>
-<g fill="var(--wm-b)" transform="translate(886 0)"><path fill-rule="evenodd" d="M0 0H52L66 14V34L56 44L66 54V86L52 100H0ZM24 18H44L48 22V34L44 38H24ZM24 60H46L50 64V78L46 82H24ZM0 16H24V26H0ZM0 58H24V68H0Z"/><path fill-rule="evenodd" transform="translate(80 0)" d="M14 0H54L68 14V86L54 100H14L0 86V14ZM22 22V78H46V22ZM26 2H42V18H26ZM26 82H42V98H26Z"/><path fill-rule="evenodd" transform="translate(162 0)" d="M0 0H52L66 14V38L54 50L68 100H44L34 56H24V100H0ZM24 18H44L48 22V34L44 38H24ZM0 16H24V26H0ZM45 72H56V82H45Z"/><path fill-rule="evenodd" transform="translate(244 0)" d="M0 0H62V20L28 78H62V100H0V80L34 22H0ZM24 2H38V18H24ZM24 82H38V98H24Z"/></g>
-<rect x="0" y="-24" width="1192" height="9" fill="var(--wm-b)"/>
-<rect x="0" y="115" width="1192" height="9" fill="var(--wm-b)"/>
-</g>
-<g id="wm-mark">
-  <use href="#wm-body" transform="translate(11 11)" opacity=".9"
-       style="--wm-a:var(--stroke);--wm-b:var(--stroke)"/>
-  <use href="#wm-body" stroke="var(--stroke)" stroke-width="11" stroke-linejoin="miter"
-       paint-order="stroke fill" style="--wm-a:var(--ink);--wm-b:var(--accent-warm)"/>
-</g>
-</defs></svg>
+     EVERYTHING BETWEEN THE TWO MARKERS BELOW IS OUTPUT. `tools/wordmark.mjs`
+     is the authority: the caps are an eleven-glyph alphabet sharing one shear
+     rule, and the coral word is brush strokes whose whole character is a
+     seeded per-vertex wobble. Both are DERIVED — move `SHEAR` or the seed and
+     every glyph moves together. Path data hand-edited here is HANDOFF §2.3's
+     defect, a hand-maintained artefact beside the thing that describes it, so
+     re-run the generator instead:
+
+         node tools/wordmark.mjs                        # rewrite this block
+         node tools/wordmark.mjs --preview /tmp/wm.html # look at it first
+
+     ONE COPY OF THE GEOMETRY, USED TWICE. `#wm-body` is the mark; `#wm-mark`
+     wraps it, and the boot screen and the menu each <use> that. The three
+     colours arrive as custom properties, which inherit into a <use> shadow
+     tree: `--wm-a` the caps, `--wm-b` the coral, and `--wm-knock` whatever is
+     BEHIND the mark, which is what the reticle's disc and split are cut out
+     to. That last one is why the mark can sit on the dark boot screen and on
+     the lit title plate without a second copy. -->
+<!-- THE MARK IS THE PLAYER'S OWN FILE NOW, and the geometry that was here is
+     gone rather than left orphaned.
+
+     `tools/wordmark.mjs` generated a recreation of the supplied logo — an
+     eleven-glyph angular alphabet and a seeded brush word — because the upload
+     could not be found on this machine. It could: it was committed to a
+     DIFFERENT branch, `claude/battlefront-borz-improvements-1g2xei`, as
+     `assets/reference/ui/Battlefield Borz official logo.png`, and a search of
+     the local clone and the default branch missed it.
+
+     So the page loads the real mark. `tools/uiart.mjs` is what prepares it:
+     the white page it is drawn on is unpremultiplied to straight alpha — exact
+     for both inks and for every anti-aliased edge — then trimmed to the ink and
+     written as WebP. The generator stays in tools/ as the fallback if the file
+     is ever lost, and its <defs> are deleted from here because an unused 4.5 KB
+     of path data is the thing that gets re-attached by accident.
+
+     THREE SCREENS SHARE THE ONE FILE — boot, menu and loading — which is the
+     same "one copy, used three times" the geometry had, arrived at by the
+     browser cache instead of by a <use>. -->
 
 
 <!-- ══════════════════════ BOOT ══════════════════════ -->
@@ -109,18 +127,18 @@
     <!-- THE SKY IS BANDED, NOT GRADED. A cel sky is a stack of flat fields
          with hard edges between them; a three-stop gradient is what this
          screen already had and what the player called bare. -->
-    <rect width="1600" height="900" fill="#241c3c"/>
-    <rect y="118" width="1600" height="900" fill="#3a2447"/>
-    <rect y="236" width="1600" height="900" fill="#5c2f47"/>
-    <rect y="344" width="1600" height="900" fill="#8c4340"/>
-    <rect y="438" width="1600" height="900" fill="#b85a35"/>
-    <rect y="506" width="1600" height="900" fill="#d97b34"/>
+    <rect width="1600" height="900" fill="#f7eedc"/>
+    <rect y="118" width="1600" height="900" fill="#f3e3c6"/>
+    <rect y="236" width="1600" height="900" fill="#eed3aa"/>
+    <rect y="344" width="1600" height="900" fill="#e5bd8d"/>
+    <rect y="438" width="1600" height="900" fill="#d8a274"/>
+    <rect y="506" width="1600" height="900" fill="#c9865c"/>
     <!-- high cloud, flat bars, cut on the same diagonal the interface cuts on -->
-    <path fill="#3f2a4e" d="M0 96h430l-38 34H0ZM614 150h486l-40 34H614ZM1180 74h420v34h-458Z"/>
-    <path fill="#6b3550" d="M84 262h520l-44 30H84ZM980 300h620v30H944Z"/>
+    <path fill="#ecdcc0" d="M0 96h430l-38 34H0ZM614 150h486l-40 34H614ZM1180 74h420v34h-458Z"/>
+    <path fill="#e2c9a4" d="M84 262h520l-44 30H84ZM980 300h620v30H944Z"/>
     <!-- the sun, and the only lit thing on the screen -->
-    <circle cx="1178" cy="556" r="164" fill="#ffb020" opacity=".14"/>
-    <circle cx="1178" cy="556" r="96" fill="#ffb020"/>
+    <circle cx="1178" cy="556" r="164" fill="#f6d9a4" opacity=".45"/>
+    <circle cx="1178" cy="556" r="96" fill="#f2c98d"/>
     <!-- Gunships, small and far off, because this is a FRONT and not a vista.
          One silhouette, three sizes: a <use> rather than three copies of the
          same path, for the reason the wordmark is one copy of its geometry. -->
@@ -130,31 +148,31 @@
       <path d="M30 0 38 -15 47 -15 43 0Z"/>
       <path d="M62 0 70 -13 78 -13 74 0Z"/>
     </g></defs>
-    <use href="#boot-ship" fill="#241631" transform="translate(268 196) rotate(-4) scale(1.5)"/>
-    <use href="#boot-ship" fill="#2c1c39" transform="translate(864 150) rotate(-2) scale(.95)"/>
-    <use href="#boot-ship" fill="#2c1c39" transform="translate(1316 238) rotate(3) scale(.7)"/>
+    <use href="#boot-ship" fill="#8d6159" transform="translate(268 196) rotate(-4) scale(1.5)"/>
+    <use href="#boot-ship" fill="#9a7168" transform="translate(864 150) rotate(-2) scale(.95)"/>
+    <use href="#boot-ship" fill="#9a7168" transform="translate(1316 238) rotate(3) scale(.7)"/>
     <!-- dust, laid flat across the light -->
-    <rect y="470" width="1600" height="12" fill="#f0b878" opacity=".26"/>
-    <rect y="500" width="1600" height="6" fill="#f0b878" opacity=".20"/>
+    <rect y="470" width="1600" height="12" fill="#fbf2e2" opacity=".46"/>
+    <rect y="500" width="1600" height="6" fill="#fbf2e2" opacity=".34"/>
     <!-- the far needles, hazed back toward the sky -->
     <!-- Some of these are in the middle third on purpose. A 360 px frame sees
          only the centre 300 units of this viewBox — `slice` crops the width —
          so a composition with everything at the edges is a bare screen on a
          phone, which is the state this was drawn to fix. They sit BELOW the
          wordmark's band at every wider viewport. -->
-    <path fill="#8a5240" d="M120 570 148 372 178 570ZM212 570 236 456 258 570ZM330 570 356 300 388 570ZM402 570 420 470 440 570ZM1276 570 1302 330 1334 570ZM1362 570 1382 452 1404 570ZM1440 570 1462 392 1488 570ZM700 570 716 486 732 570ZM620 570 640 440 662 570ZM800 570 818 496 836 570ZM880 570 902 424 926 570Z"/>
+    <path fill="#b87d55" d="M120 570 148 372 178 570ZM212 570 236 456 258 570ZM330 570 356 300 388 570ZM402 570 420 470 440 570ZM1276 570 1302 330 1334 570ZM1362 570 1382 452 1404 570ZM1440 570 1462 392 1488 570ZM700 570 716 486 732 570ZM620 570 640 440 662 570ZM800 570 818 496 836 570ZM880 570 902 424 926 570Z"/>
     <!-- the middle ground -->
-    <path fill="#4a2a3c" stroke="#05060c" stroke-width="5" stroke-linejoin="miter"
+    <path fill="#c07f56" stroke="#4d220f" stroke-width="5" stroke-linejoin="miter"
           d="M-5 646 120 570 262 600 424 546 604 594 782 550 982 598 1180 560 1362 600 1605 550 1605 905 -5 905Z"/>
     <!-- the near spires, ink-outlined, held to the edges so the name has the middle -->
-    <path fill="#1c1226" stroke="#05060c" stroke-width="6" stroke-linejoin="miter"
+    <path fill="#a4653f" stroke="#4d220f" stroke-width="6" stroke-linejoin="miter"
           d="M40 905 112 336 192 905ZM1478 905 1540 272 1610 905Z"/>
     <!-- the ground you are about to stand on -->
-    <path fill="#181020" stroke="#05060c" stroke-width="6" stroke-linejoin="miter"
+    <path fill="#8e5232" stroke="#4d220f" stroke-width="6" stroke-linejoin="miter"
           d="M-5 748 200 710 432 736 700 696 950 726 1220 688 1450 720 1605 700 1605 905 -5 905Z"/>
     <!-- THE SINK. Same job as `.menu-bg`'s flat field: the type is painted
          straight onto this and nothing else stands between them. -->
-    <rect width="1600" height="900" fill="#0a0b14" opacity=".44"/>
+    <rect width="1600" height="900" fill="#f6ecda" opacity=".20"/>
   </svg>
   <div class="boot-inner">
     <!-- THE SABER GLYPH IS GONE FROM HERE TOO. It was removed from the menu's
@@ -164,9 +182,37 @@
          `ignite` keyframe are deleted from styles.css rather than left
          orphaned: an unused selector is the thing that gets re-attached by
          accident. -->
-    <div class="logo"><h1 class="wm"><svg class="wordmark" viewBox="-14 -40 1220 180" role="img" aria-label="Battlefront Borz"><use href="#wm-mark"/></svg></h1></div>
+    <div class="logo"><h1 class="wm"><img class="wordmark" src="./assets/menu/logo.webp" width="1729" height="470" alt="Battlefield Borz" decoding="async"></h1></div>
     <div class="boot-bar"><i id="boot-fill"></i></div>
     <div id="boot-msg" class="boot-msg">forging blade…</div>
+  </div>
+</div>
+
+<!-- ══════════════════════ LOADING ══════════════════════
+     THE SCREEN THAT WAS NEVER THERE. `main.js` has called
+     `screens.loading?.(frac, label)` from two places since the async loader was
+     written — the deploy path and every mid-run ground change — and `Screens`
+     has never had a `loading` method, so the optional-call operator swallowed
+     both. What a player saw while a terrain heightfield, a Rapier world, every
+     instanced field and up to 224 props were built was the menu going away and
+     nothing arriving: 350 ms warm, 3.8 s cold, on a blank page.
+
+     It carries the SAME plate the menu does, which is the player's instruction
+     — "it will be the background for any non-in game menu or screen" — and it
+     costs nothing extra to do so: `.menu-bg`'s file is already fetched and
+     decoded by the time anybody can press Deploy, so this is a second element
+     naming a warm cache entry rather than a second download. The boot screen is
+     the one screen that may NOT do this, and index.html says why above it.
+
+     The wordmark rides above the bar because this screen is on for seconds and
+     is the last thing between the menu and the game — it is a title card, not a
+     spinner. -->
+<div id="loading" class="screen hidden">
+  <div class="menu-bg"></div>
+  <div class="load-wrap">
+    <div class="logo small"><h1 class="wm"><img class="wordmark" src="./assets/menu/logo.webp" width="1729" height="470" alt="Battlefield Borz" decoding="async"></h1></div>
+    <div class="boot-bar"><i id="load-fill"></i></div>
+    <div id="load-msg" class="boot-msg">making planetfall…</div>
   </div>
 </div>
 
@@ -179,7 +225,7 @@
            all removed on instruction: the glyph was a remnant of the previous
            UI, the tagline described the game in a menu that is already the
            game, and the byline is gone outright. What is left is the name. -->
-      <div class="logo small"><h1 class="wm"><svg class="wordmark" viewBox="-14 -40 1220 180" role="img" aria-label="Battlefront Borz"><use href="#wm-mark"/></svg></h1></div>
+      <div class="logo small"><h1 class="wm"><img class="wordmark" src="./assets/menu/logo.webp" width="1729" height="470" alt="Battlefield Borz" decoding="async"></h1></div>
       <!-- EMPTY, AND EMPTY IS ITS RESTING STATE. This carried
            `Progress.progressLines()` — runs, kills, deepest wave, facets
            reached, boons crowned — under the title of the game, and it was
@@ -335,6 +381,12 @@
         <h3 id="h-cape" style="margin-top:22px">Cape</h3>
         <div id="cape-list" class="cards small"></div>
         <div id="cape-tone-list" class="swatches tone"></div>
+        <h3 id="h-hood" style="margin-top:22px">Hood</h3>
+        <div id="hood-list" class="cards small"></div>
+        <!-- No tone row of its own: a hood is part of the OVER-ROBE and is cut
+             from the same cloth (palette.over), so it takes the Over-robe tone
+             below and dyeing that dyes both. -->
+        <p class="hint">Cut from the over-robe, so it takes the <b>Over-robe</b> tone below.</p>
         <h3 id="h-tabard" style="margin-top:22px">Over-robe</h3>
         <div id="tabard-list" class="cards small"></div>
         <div id="tabard-tone-list" class="swatches tone"></div>
@@ -418,8 +470,6 @@
         <label class="slider">Field of view <input type="range" id="opt-fov" min="50" max="85" step="1" value="60"><b></b></label>
         <label class="check"><input type="checkbox" id="opt-invert"> Invert blade Y</label>
         <label class="check"><input type="checkbox" id="opt-firstperson"> Start in first person</label>
-        <h3 style="margin-top:22px">Hands in first person</h3>
-        <div id="opt-fphands" class="difflist"></div>
         <label class="check"><input type="checkbox" id="opt-bladehold"> Blade holds position</label>
         <p class="hint">Held, the blade stays where your last flick left it instead of easing back to the
           ready guard. The controller has always been able to do this and nothing could ask it to.</p>
@@ -470,6 +520,7 @@
              is the whole difference between the two — see Levels.CAMPAIGNS. -->
         <h3 style="margin-top:22px">The battle</h3>
         <label class="slider">Engagements <input type="range" id="opt-sk-engagements" min="1" max="9" step="1" value="3"><b></b></label>
+        <label class="slider">Waves per engagement <input type="range" id="opt-sk-waves" min="1" max="8" step="1" value="3"><b></b></label>
         <label class="slider">Your line <input type="range" id="opt-sk-strength" min="10" max="24" step="1" value="10"><b></b></label>
         <label class="slider">Pressure <input type="range" id="opt-sk-pressure" min="0" max="4" step="1" value="0"><b></b></label>
         <label class="check"><input type="checkbox" id="opt-sk-rotate" checked> Change ground between engagements</label>
@@ -478,7 +529,10 @@
           number walks the same grounds. Pressure is which rung of the Geonosis advance the fight is held
           at: it moves the enemy's budget, how heavy they come and what your muster can buy. Your line starts
           at the ten the campaign opens with, because that is the smallest army the muster knows how to
-          raise — the slider cannot offer a number the battle would refuse.</p>
+          raise — the slider cannot offer a number the battle would refuse. An engagement is a battle for
+          one piece of ground and takes as many cleared waves as you say, so the two top sliders together
+          are how long the whole thing is: three and three is the shipped nine-wave battle, nine and eight
+          is a seventy-two-wave grind over nine rounds of ground.</p>
         <h3 id="h-standing-order" style="margin-top:22px">Standing order</h3>
         <div id="command-list" class="difflist"></div>
         <p class="hint">The formation your squads form up in at the start of every area. You can change
@@ -536,7 +590,15 @@
           scales what survives it.</p>
         <h3 style="margin-top:22px">Audio</h3>
         <label class="slider">Master <input type="range" id="opt-vol" min="0" max="1" step="0.02" value="0.8"><b></b></label>
-        <label class="slider">Music <input type="range" id="opt-music" min="0" max="1" step="0.02" value="0.45"><b></b></label>
+        <!-- step 0.01 AND NOT 0.02, because the default is 0.45 and 0.45 is not
+             on a 0.02 grid that starts at 0. A browser snaps a range input to
+             its own step, so the thumb sat at 0.46 while the number beside it —
+             which _slider prints from the SETTING, not from the input — read
+             45%: the one row in the menu where the control and its own label
+             disagreed, measured across all 32 sliders on the shipped page. The
+             first nudge right then went 0.45 → 0.48 and 46% could not be
+             reached from the default at all. -->
+        <label class="slider">Music <input type="range" id="opt-music" min="0" max="1" step="0.01" value="0.45"><b></b></label>
         <!-- The `max` is written by Menu._buildOptions from MUSIC_TRACKS.length,
              not typed here: a number in this attribute is a second copy of how
              many tracks there are, and the first thing it does when a score is
@@ -553,9 +615,18 @@
           speech synthesiser saying the same lines the larynx says wordlessly, which is real words at
           no download on a game that ships no audio but the score.</p>
         <label class="check"><input type="checkbox" id="opt-voicelines" checked> Your own voice</label>
+        <!-- Its own box rather than a clause of the one above: that one is the
+             grunts and quips a body makes about the fight it is in, this one is
+             twelve bound keys — one per entry in POWER_COST, which is what
+             tools/checks/force-voice.mjs derives its pool census from rather
+             than from a number typed here. See forceVoice in
+             Menu.DEFAULT_SETTINGS. -->
+        <label class="check"><input type="checkbox" id="opt-forcevoice" checked> Force powers speak</label>
         <label class="check"><input type="checkbox" id="opt-enemyvoices" checked> Enemy voices</label>
         <label class="check"><input type="checkbox" id="opt-enemybody" checked> Enemy footfall, servos &amp; breath</label>
-        <p class="hint">Nothing here is a recording. Every voice is built from an oscillator, two formant
+        <p class="hint">Every Force power has three or four lines of its own and never says the same
+          one twice running &mdash; a shove falls, a pull rises, a rend is wrenched down almost an octave.
+          Nothing here is a recording. Every voice is built from an oscillator, two formant
           filters and a breath of noise at the moment it is needed — which is why they can be told apart
           by measuring them, and why turning the last box off is worth a few frames on a slow machine.</p>
       </div>
@@ -588,7 +659,18 @@
              Menu._buildTroopNames off one table, so a fourth mode is one row. -->
         <h3 style="margin-top:20px;font-size:11px">Names over your troops</h3>
         <div id="opt-troopnames" class="difflist"></div>
-        <p class="hint">Command mode only. Rank, name, health and nerve, over the head of the man
+        <!-- IT SAID "Command mode only" AND THAT STOPPED BEING TRUE the day
+             `allies` was added. `HUD._nameplates` draws whenever `world.command`
+             exists, and `World.loadLevel` builds a CommandDirector for every
+             crossing AND for any mode at all with a contingent in it
+             (`leadsArmy = campaign || contingent > 0`) — so the plates were
+             already live in Waves, Roguelite, Duel, Sandbox, Skirmish and
+             Campaign the moment the Allied-troops slider left zero, and the
+             one line of prose that could have told a player so said the
+             opposite. Named after the CONDITION, not a mode list, because that
+             is what the reader tests. -->
+        <p class="hint">Wherever you have troops — the crossings, and any mode at all once
+          <b>Allied troops</b> above is off zero. Rank, name, health and nerve, over the head of the man
           carrying them.</p>
         <label class="check"><input type="checkbox" id="opt-minimap-sense" checked> Read the map with the Force</label>
         <p class="hint">On, the map is what <b>Force sense</b> shows you: hold the power open and it stays
@@ -745,6 +827,16 @@
          the colours and the multipliers; the HUD only draws them. -->
     <div id="target-open" class="targetopen hidden"><b></b><i></i></div>
     <!--
+      THE WOUNDED MAN UNDER YOUR RETICLE.
+
+      The player asked, in as many words, "remind me how to heal allies" — so
+      the reminder belongs where the question is asked, which is while looking
+      at a hurt trooper, not on a controls card in a menu. Same column, same
+      type as the open-state readout above it: this corner is already where the
+      HUD says what the thing you are aiming at is worth.
+    -->
+    <div id="mend-cue" class="targetopen mend hidden"><b></b><i></i></div>
+    <!--
       EVENT FEED — killstreaks, deflection runs, a boss arriving.
 
       Inside .hud-tr on purpose, under the score and the combo counter, in the
@@ -825,6 +917,27 @@
         <div class="bar-cap"><label>Stamina</label><b id="bar-stam-num">100</b></div>
         <div class="bar st"><i id="bar-stam"></i></div>
       </div>
+      <!--
+        WAR SUPPORT — what a support call costs, and it is not the Force.
+
+        "strategems should not cost force how does that even fucking make
+         sense? maybe there's a bar and it shows the level of outside support
+         and resources that have built up… when you use them it depletes your
+         side's support resources so like carriers rearming, etc."
+
+        This is that bar. It is fourth rather than second because the first
+        three are YOURS — vitality, Force, stamina, all facts about your body —
+        and this one is a fact about the fleet: `.barline.side` marks that, and
+        the rule in styles.css gives it a rule above it so the eye reads the
+        break rather than a fourth of the same thing.
+
+        `.rearm` is set by HUD.update while the ships are turning round, which
+        is the one state the bar has that a level alone cannot show.
+      -->
+      <div class="barline side">
+        <div class="bar-cap"><label>Support</label><b id="bar-support-num">55</b></div>
+        <div class="bar sp"><i id="bar-support"></i></div>
+      </div>
     </div>
     <div id="boon-strip" class="boons"></div>
   </div>
@@ -871,6 +984,23 @@
   <div id="bossbar" class="bossbar hidden">
     <div class="boss-name"><b id="boss-label">—</b><em id="boss-phase"></em></div>
     <div class="boss-track"><i id="boss-fill"></i></div>
+    <!--
+      THE FORCE THIS ONE HAS LEFT, and it is the whole of the player's note.
+
+      "I still don't know how to counter or fight against other force users
+       when they are using their force powers against me like I'm just being
+       manipulated and thrown around like a ragdoll being unable to do
+       anything"
+
+      Everything a player needs in order to fight one is already in the
+      simulation — a pool that empties, a price per verb, a cooldown, a 0.45 s
+      telegraph, and a cast that breaks when you hit hard enough — and NONE of
+      it was on screen. A resource the enemy spends and you cannot see is not a
+      resource you can play against; it is weather. This track is shown only
+      for a body that actually has a pool, so it never appears over a droid.
+    -->
+    <div class="boss-track force hidden" id="boss-force-track"><i id="boss-force"></i></div>
+    <div class="boss-cast hidden" id="boss-cast"></div>
   </div>
 
   <div id="coach" class="coach hidden">
@@ -893,6 +1023,13 @@
 
   <div id="deflect-why" class="deflectwhy"></div>
 
+  <!-- TAKING THE CONTROLS. A persistent prompt rather than a notice card,
+       because "you may board this" is a STATE of where you are standing and
+       not an event: a card that faded after two seconds would leave a player
+       standing next to a tank with nothing on screen. Painted by HUD.js from
+       `Driving.drivableNear`, and it carries the refusal as well as the offer
+       — being told the hailfire is a droid is the whole of the rule. -->
+  <div id="drive-prompt" class="driveprompt"></div>
   <div id="hud-center-msg" class="centermsg"></div>
   <div id="hitmarks"></div>
   <!-- NAMEPLATES OVER YOUR OWN TROOPS. Empty markup for the same reason every
@@ -905,7 +1042,9 @@
        HUD._stratagemPanel from the STRATAGEMS table itself, so a call
        authored in src/game/Stratagems.js is on this panel the same day and
        there is nothing here to fall out of step with it. Empty and hidden
-       until the stratagem key goes down. -->
+       until the comm key goes down. (The node id is still `stratagem`: it is
+       an identifier nobody renders, and it is what HUD.js and styles.css both
+       key off.) -->
   <div id="stratagem" class="hidden"></div>
   <div id="dmg-vignette"></div>
   <div id="flow-vignette"></div>
@@ -945,6 +1084,50 @@
   </div>
 </div>
 
+<!-- ══ THE DEPLOY CARD ══
+     FLAGSHIP §5, 0:00: "the seed, the ground, and your ten names, readable
+     before you land." It is the first thing a session shows and the last thing
+     between the player and the gunship — `main.js` raises it after the world is
+     built and the army is mustered, and pressing Drop is what starts the flight
+     in.
+
+     THE NAMES ARE THE POINT. §3's fourth convergence is that the roll is the
+     mode's second one-way variable: it only ever shrinks, and a list that only
+     shrinks has to have been read once at full length or a casualty has nothing
+     to be measured against. Everything else on this card is context for that
+     column.
+
+     Every string is written by Menu.showDeployCard out of `Session.deployCard`.
+     The classes are the muster's on purpose — same field, same stamp, same
+     two-column body — because this is the same screen at the other end of the
+     run and one owner for that look is one place to change it. -->
+<div id="deploy-card" class="screen hidden">
+  <div class="muster-wrap deploy-wrap">
+    <p class="muster-held" id="deploy-plan">—</p>
+    <h2 id="deploy-ground">Deployment</h2>
+    <p class="hint" id="deploy-blurb"></p>
+    <div class="muster-body">
+      <div class="muster-shop">
+        <h3 id="deploy-stage-head">Where you land</h3>
+        <p class="hint deploy-brief" id="deploy-stage"></p>
+        <ol id="deploy-stages" class="deploy-stages"></ol>
+        <p class="hint deploy-host" id="deploy-host"></p>
+      </div>
+      <div class="muster-roll">
+        <h3 id="deploy-roll-head">The roll</h3>
+        <div id="deploy-list" class="rp-list muster-list"></div>
+      </div>
+    </div>
+    <div class="muster-foot">
+      <div class="muster-tally">
+        <div><span>Seed</span><b id="deploy-seed">—</b></div>
+        <div><span>Standing</span><b id="deploy-strength">0</b></div>
+      </div>
+      <button id="btn-deploy-drop" class="primary">Drop</button>
+    </div>
+  </div>
+</div>
+
 <!-- ══ THE MUSTER ══
      Between two areas of the Geonosis advance you are handed reinforcement
      points and a shelf of units to spend them on. `CommandDirector.musterOffer()`
@@ -965,7 +1148,15 @@
     <p class="hint" id="muster-brief"></p>
     <div class="muster-body">
       <div class="muster-shop">
-        <h3>Reinforcements</h3>
+        <h3 id="muster-shop-head">Reinforcements</h3>
+        <!-- THE INTERLUDE. §5: "this quiet is where the run becomes a story. It
+             must be real and it must have no input." The beats are read off the
+             director's own ledger by `Session.interludeBeats` and land one at a
+             time; until the last one has, `.muster-units` carries `.waiting`
+             and Advance is disabled, so the shop is on screen and inert. It is
+             the same card because the report and the decision are about the
+             same ten people. -->
+        <ol id="muster-interlude" class="muster-interlude hidden"></ol>
         <div id="muster-units" class="muster-units"></div>
         <p class="hint muster-refused" id="muster-refused"></p>
       </div>
@@ -1014,6 +1205,38 @@
     <button id="btn-restart" class="secondary">Restart wave</button>
     <button id="btn-quit" class="ghost">Abandon run</button>
     <button id="btn-perfcopy" class="ghost">Copy frame report</button>
+    <!-- THE SETTINGS, MID-RUN, and it is the same argument the key table
+         directly below already won: "the list was one #bind-list in the
+         Options panel, which behind a run means Abandon Run, rebind, deploy
+         again."
+         Every other control on the Options screen was still in exactly that
+         position — the whole of Fidelity, Sound, Camera and Interface reachable
+         only by ending the run — while four separate comments in Menu.js and
+         main.js described settings as taking effect "from the pause card", a
+         card that had no settings on it at all. Volume, field of view, blade
+         sensitivity, inverted Y and camera shake are the ones a player
+         discovers are wrong in the first thirty seconds of a fight and can now
+         answer without losing it.
+
+         THE ROWS ARE SLOTS, NOT COPIES. The markup below declares an id, a
+         kind and an order and NOTHING ELSE — no label, no min, no max, no
+         step. Menu._buildPauseOptions fills every one of those off the Options
+         control the row mirrors, so there is no second copy of a number or a
+         word here to drift out of step with the screen it came from (HANDOFF
+         §2.3), and a row whose twin is missing is hidden rather than shown
+         empty. _slider/_check then keep both handles on one setting in step. -->
+    <button id="btn-pause-opts" class="ghost" aria-expanded="false" aria-controls="pause-opts-box">Settings</button>
+    <div id="pause-opts-box" class="pause-binds hidden">
+      <p class="hint">The ones that bite on the very next frame. The rest are on the Options screen.</p>
+      <div id="pause-opts-list">
+        <label class="slider" data-twin="opt-vol"><span></span><input type="range" id="opt-pause-vol"><b></b></label>
+        <label class="slider" data-twin="opt-music"><span></span><input type="range" id="opt-pause-music"><b></b></label>
+        <label class="slider" data-twin="opt-fov"><span></span><input type="range" id="opt-pause-fov"><b></b></label>
+        <label class="slider" data-twin="opt-sens"><span></span><input type="range" id="opt-pause-sens"><b></b></label>
+        <label class="check" data-twin="opt-invert"><input type="checkbox" id="opt-pause-invert"><span></span></label>
+        <label class="check" data-twin="opt-shake"><input type="checkbox" id="opt-pause-shake"><span></span></label>
+      </div>
+    </div>
     <!-- KEY BINDINGS, MID-RUN. The list itself is filled by
          Menu._buildBindings, which paints every host it finds rather than
          keeping a second copy of the table for this card: same rows, same
@@ -1090,7 +1313,14 @@
         <i id="med-purse"></i></div>
     </header>
     <div class="med-body">
-      <svg id="med-field" viewBox="0 0 1000 720" preserveAspectRatio="xMidYMid meet" aria-label="the Holocron"></svg>
+      <!-- A DIV AND NOT AN <svg>. It was a 1000x720 viewBox holding a node
+           graph; the graph is gone (see SkillTree._draw — the player asked for
+           the star chart to be deleted three times) and what stands here is six
+           plates of rungs, which is rows in columns and therefore the box
+           model's job. An HTML child appended to an <svg> is created in the SVG
+           namespace and renders as nothing at all, which is exactly what the
+           first attempt at this did. -->
+      <div id="med-field" role="group" aria-label="the Holocron"></div>
       <aside class="med-side">
         <div id="med-detail" class="med-detail"></div>
         <button id="btn-med-buy" class="primary" disabled>Commune</button>

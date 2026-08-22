@@ -37,6 +37,11 @@ function fakeMenu() {
      * a place in OVERLAY_STATES rather than in the `card()` registry. */
     showMuster: () => { up.add('muster'); m.shown.push('muster'); },
     hideMuster: () => up.delete('muster'),
+    /* The deploy card. Same shape again — a Menu show/hide pair taken down by
+     * `clear()` and `_hide()` by name — which is what earns it a place in
+     * OVERLAY_STATES beside the muster rather than in the `card()` registry. */
+    showDeploy: () => { up.add('deploy'); m.shown.push('deploy'); },
+    hideDeploy: () => up.delete('deploy'),
     showDeath: () => { up.add('death'); m.shown.push('death'); },
     hideDeath: () => up.delete('death'),
   };
@@ -67,6 +72,12 @@ function enter(b, state) {
   // method is that main.js cannot raise this overlay any other way.
   if (state === 'muster') { enter(b, 'playing'); b.s.muster({ area: 1 }, {}); return; }
   if (state === 'dead') { enter(b, 'playing'); b.s.take('dead', () => b.menu.showDeath()); return; }
+  /* THE DEPLOY CARD — FLAGSHIP §5's 0:00, raised through `Screens.deploy` and
+   * not through `take()`, for the same reason the muster is: the point of that
+   * method is that main.js cannot raise the overlay any other way, and this one
+   * stops the world on the first frame of a session. A state you can only be
+   * put into wrongly is a state nothing has proved you can get out of. */
+  if (state === 'deploy') { enter(b, 'playing'); b.s.deploy({ seed: 1, roll: [] }, {}); return; }
   b.s.state = state;
 }
 

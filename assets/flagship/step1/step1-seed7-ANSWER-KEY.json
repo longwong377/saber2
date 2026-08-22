@@ -1,0 +1,26 @@
+{
+  "note": "ANSWER KEY for FLAGSHIP.md §14 Step 1 — do not show this to the person being asked to order the plates.",
+  "seed": 7,
+  "order": [
+    {
+      "plate": "plate-alpha.png",
+      "engagement": 1,
+      "frontDistanceM": 180
+    },
+    {
+      "plate": "plate-charlie.png",
+      "engagement": 3,
+      "frontDistanceM": 100
+    },
+    {
+      "plate": "plate-bravo.png",
+      "engagement": 5,
+      "frontDistanceM": 20
+    }
+  ],
+  "correctSequence": [
+    "plate-alpha.png",
+    "plate-charlie.png",
+    "plate-bravo.png"
+  ]
+}
