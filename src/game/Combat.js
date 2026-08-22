@@ -527,9 +527,28 @@ export const OPEN_STATES = [
   { key: 'yanked', label: 'PULLED', colour: '#a9ffd0',
     mul: OPEN_YANK, bigShare: 0.25, test: (e) => e.yankT > 0,
     why: 'dragged off balance — cut now and the pull was one move' },
+  /**
+   * …AND `ragdolled` IS THE THIRD CAUSE OF THE SAME CONDITION, which this row
+   * did not test and which is the largest of the three.
+   *
+   * `toppled` is a walker whose legs went. `stunTimer` is a body standing
+   * still. Neither of them is a body LYING IN THE SAND, and that is the state
+   * a dropped grip, a hurled body and a Force wave all leave behind: `gripped`
+   * false, `toppled` false, `stunTimer` zero, and the whole of `GET_UP` (1.35 s
+   * of lying still) before `recover` fires and stuns it for its 1.1 s beat. For
+   * that window a limp body was priced at 1.00x — the same as one standing in
+   * cover shooting back — while the blade above pays 1.5x for the stun that
+   * follows it.
+   *
+   * That is one condition written down three times and the list was short by
+   * the biggest term. It is also why FLAGSHIP §7's third verb could not reach
+   * a battle: every ROUTE the Force has to putting bodies on the ground ends
+   * in a ragdoll, and the multiplier stopped at the door.
+   */
   { key: 'downed', label: 'DOWNED', colour: '#ffd88a',
-    mul: OPEN_DOWN, bigShare: 1, test: (e) => !!e.toppled || e.stunTimer > 0,
-    why: 'toppled or stunned, and not turning with the blade' },
+    mul: OPEN_DOWN, bigShare: 1,
+    test: (e) => !!e.toppled || e.stunTimer > 0 || !!e.actor?.ragdolled,
+    why: 'toppled, stunned or limp in the sand, and not turning with the blade' },
 ];
 
 /** Which open state a body is in right now, or null. The shared row, not a copy. */

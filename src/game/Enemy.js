@@ -2347,6 +2347,8 @@ export class Enemy {
     this.world = world;
     this.team = 1;
     this.dead = false;
+    /** Torn down. Read by `Corpses.update`; written only by `dispose()`. */
+    this.disposed = false;
     this.dying = 0;
     /**
      * Can the Force take hold of this at all?
@@ -3906,6 +3908,78 @@ export class Enemy {
   }
 
   /**
+   * SHOVED OFF ITS FEET — and until this existed the comment in
+   * `applyKnockback` was the only place it happened.
+   *
+   * ── THE LINE THAT SAID IT AND DID NOT DO IT ────────────────────────────
+   *
+   * `applyKnockback` has carried `// hit hard enough to leave its feet` over
+   * `this.stun(1.2, impulse, 1.4)` for as long as the shove contest has
+   * existed. A stun is a body STANDING STILL. So an eleven-metre Force wave at
+   * impulse 34 threw a dozen droids through the air and every one of them
+   * landed upright, frozen for 1.2 s, and then walked on — which is the
+   * repository's signature defect (a label nothing implements) applied to the
+   * most cinematic thing in the game.
+   *
+   * ── WHY IT IS THE ONE CHANGE THAT MOVES FLAGSHIP §7's THIRD VERB ───────
+   *
+   * §7 says "the Force is a multiplier on other people's guns", and
+   * `openness()` pays that multiplier — 3.0x held, 2.0x yanked, 1.5x downed.
+   * Measured on a real Command battle with a Jedi gripping continuously it
+   * reached **0.5-1.0% of enemy body-seconds**, and the reason is arithmetic
+   * rather than tuning: twenty-six hostile bodies stand on that field, one
+   * pair of hands holds ONE of them, and the choke kills it in four and a half
+   * seconds. The bar is already fully committed — 657 Force spent in 82 game-
+   * seconds against an income of 7.5/s — so the verb cannot be bought more of.
+   * What can move is the EXCHANGE RATE, and the numbers say where:
+   *
+   *     grip     10 Force + the hold drain, 1 body,  ~4.5 s   0.05 open-s/Force
+   *     push     20 Force,        ~3 bodies, 1.2 s of stun    0.18
+   *     push     20 Force,        ~3 bodies, ~3.5 s on the floor
+   *     unleash  52 Force,       ~8 bodies, 1.6 s of stun     0.25
+   *     unleash  52 Force,       ~8 bodies, ~3.5 s on the floor
+   *
+   * A body on the floor is limp for its flight, then `GET_UP` (1.35 s of lying
+   * still), then `recover`'s 1.1 s beat — three times the window a stun opens,
+   * over three to eight bodies at once instead of one. That is the same Force,
+   * spent the same way, buying an order of magnitude more of the thing §7 is
+   * about. It is not a new power, not an aura, and not a local good: what it
+   * buys is paid to whoever is shooting the body, from wherever they stand.
+   *
+   * ── WHAT IT WILL AND WILL NOT PUT DOWN ─────────────────────────────────
+   *
+   * Exactly the population `applyKnockback` already stuns — past impulse 12,
+   * never a boss — MINUS anything `big`. A shove that staggers a spider droid
+   * does not put it on its back, for the same reason `openMul` pays a big body
+   * a quarter of the held bonus: "grab the boss" is not a fight.
+   *
+   * A body already limp, held, or in stasis is left alone: `goRagdoll` on a
+   * ragdoll is a second set of holders, and re-ragdolling a body somebody is
+   * carrying takes it out of their hands.
+   *
+   * The physics capsule goes with it, exactly as in `topple()` above — a body
+   * walking with no collider is the bug from the other side, and `recover()`
+   * is the one place that puts it back.
+   */
+  knockFlat(impulse) {
+    if (this.dead || this.gripped || this.stasisHeld || this.beingDragged) return false;
+    if (this.A.boss || this.A.big) return false;
+    if (!this.actor || this.actor.ragdolled) return false;
+    /* THE SHOVE IS THE LAUNCH. `addShove` has already put the impulse into
+     * `velocity` this frame, so handing the ragdoll the body's own velocity
+     * sends it the way it was thrown rather than dropping it where it stood —
+     * which is the difference between a body flung off its feet and one that
+     * sat down. */
+    this.actor.goRagdoll(this.velocity.clone(),
+      _v1.set((rng() - .5) * 5, (rng() - .5) * 3, (rng() - .5) * 5));
+    if (!this.bodyRemoved) {
+      this.world.physics.remove(this.body);
+      this.bodyRemoved = true;
+    }
+    return true;
+  }
+
+  /**
    * GET UP — the other half of `Actor.recover`, and the whole of note #6.
    *
    * A living body that has been ragdolled (gripped and released, thrown,
@@ -4370,6 +4444,9 @@ export class Enemy {
     if (!gentle && impulse && impulse.length() > 12 && this.actor && !this.A.boss) {
       // hit hard enough to leave its feet — and the impulse IS the direction
       this.stun(1.2, impulse, 1.4);
+      /* …AND THE COMMENT ABOVE WAS THE WHOLE OF IT. See `knockFlat`: the line
+       * said the body leaves its feet and the code left it standing. */
+      this.knockFlat(impulse);
     }
     // "I want to hear the enemies scream as they get force thrown" — the throw
     // is the impulse, so the trigger belongs exactly here rather than in
@@ -4589,6 +4666,39 @@ export class Enemy {
       this.group = null;
     }
     if (!this.bodyRemoved) { this.world.physics.remove(this.body); this.bodyRemoved = true; }
+    /**
+     * ── THE FAR RUNGS HAVE TO GIVE THE BODY BACK, AND `update` CAN NO LONGER
+     *    ASK THEM TO ─────────────────────────────────────────────────────
+     *
+     * `applyBodyLod` is called from exactly two places, `_applyLod` and
+     * `update`, and BOTH of them sit below `update`'s `if (this.dead) … return
+     * this.dying < 40`. So the last word either rung hears about a body is the
+     * one it heard while the body was alive.
+     *
+     * Both rungs already say a corpse is not theirs — `applyCohort`'s `fit` is
+     * `lod >= 3 && !owner.dead && !owner.actor?.ragdolled`, and
+     * `applyMergedSkin`'s `want` carries the same ragdoll clause — and neither
+     * was ever asked again. What that costs, measured with
+     * `tools/_cohortleak.mjs` on geonosis, twelve B1s stood at 163 m (L3_AT is
+     * 137.8) and killed where they stood:
+     *
+     *     all 12 dead        members=9  deadMembers=6  instances=9
+     *     45 s later         members=6  deadMembers=6  instances=6   ← disposed
+     *
+     * Six bodies that no longer exist, still members of a cohort, still drawn
+     * as STANDING SOLDIERS by a shared InstancedMesh at the spot they fell —
+     * while their ragdolls lay invisible underneath, because `darken()` had
+     * hidden every mesh they own. And the slot is never handed back: `leave`
+     * is the only thing that pushes to `c.free`, so `c.high` climbs with every
+     * distant kill and `_grow` doubles the instance buffer to hold ghosts.
+     *
+     * One call, here, once the ragdoll exists so both rungs see `ragdolled`
+     * and refuse: the cohort releases the slot, `undarken` gives the body its
+     * own meshes back, and the merged skin puts the originals back on. The
+     * guard is the same one `update` uses, so a body that was never past 62 m
+     * pays nothing.
+     */
+    if (this._l2 || this._l2Wait || this._l3 || this._l3Wait) applyBodyLod(this, this.lod ?? 0);
     audio.thud(this.position, 1);
   }
 
@@ -4932,8 +5042,27 @@ export class Enemy {
       this.wish = null;
       return;
     }
-    if (this.stunTimer > 0 || this.toppled) {
+    /**
+     * …AND A BODY LYING IN THE SAND IS NOT SHOOTING EITHER.
+     *
+     * `ragdolled` belongs on this line for the same reason it belongs in
+     * `OPEN_STATES` (see Combat.js): limp is the third cause of the condition
+     * the other two name, and it is the one the list kept missing. A dropped
+     * grip leaves a body with `stunTimer` at zero and `toppled` false for the
+     * whole of `GET_UP`, and this brain went on aiming and firing through it —
+     * from `this.position`, which `_move`'s LIMP branch parks on the ragdoll's
+     * centre, so the bolts came out of a chest lying face down.
+     *
+     * Latent before `knockFlat` and not after it: a shove now leaves bodies
+     * limp for about three seconds against a 1.2 s stun, so the window this
+     * closes went from a rounding error to most of it.
+     */
+    if (this.stunTimer > 0 || this.toppled || this.actor?.ragdolled) {
       this.wish = null;
+      /* Nothing limp keeps a trigger held down. `stopFiring` is the body's own
+       * door — the same one the reaction path above uses for "a man on his
+       * face is not shooting". */
+      if (this.actor?.ragdolled) this.stopFiring();
       // A beaten guard has to TRAVEL while the body is reeling. The brain is
       // otherwise frozen for the length of the stun, so the blade would sit
       // exactly where it was parried and only fly wide afterwards — the
@@ -7479,7 +7608,60 @@ export class Enemy {
     }
   }
 
+  /**
+   * ── TERMINAL, AND IT HAS TO SAY SO ────────────────────────────────────
+   *
+   * `this.disposed` is not decoration and it is not new: `Corpses.update`
+   * guards every entry on `!e.disposed`, and `World.restartWave`'s own note
+   * says so in as many words — "The ledger has an escape hatch for exactly
+   * this and it was dead code: `Corpses.update` guards on `e.disposed`, and
+   * `Enemy.dispose` never wrote it — only `Player` does. Both halves are
+   * fixed, because either alone leaves the other reader wrong." **ONE HALF
+   * WAS FIXED.** `grep -rn '\.disposed' src/` found the reader in Corpses.js,
+   * the writer in Player.js, and nothing here.
+   *
+   * What the missing line costs, and it is not the wave reset the note was
+   * about — it is ORDINARY PLAY. `update` returns `this.dying < 40`, so
+   * `World.update` disposes every corpse forty seconds after it fell and
+   * splices it out of `world.enemies`. The ledger holds it regardless: `dead`
+   * is still true and `disposed` was undefined, so the entry is immortal.
+   * Measured on colosseum/waves, one scripted Jedi, 900 game-seconds:
+   *
+   *     t=120s   20 corpses,  7 ghosts
+   *     t=240s   20 corpses, 17 ghosts
+   *     t=420s   20 corpses, 20 GHOSTS   — and it never moves again
+   *
+   * Seven minutes in, EVERY slot of a twenty-corpse budget is a body that has
+   * already been torn down. `live.length > this.budget` is then false forever,
+   * so nothing sinks, and each new corpse arrives into a ledger that is
+   * already full: the field a player fights on keeps no dead at all, which is
+   * the exact complaint the budget was built to answer ("bodies vanishing
+   * under your blade" — see Corpses.js's own note on RECENCY). Twenty whole
+   * Enemy graphs — rig, actor, bodies map, saber, garments — are retained
+   * behind them until the level unloads, and every one is `worth()`-ranked
+   * against real corpses on every frame.
+   *
+   * IDEMPOTENT, TOO, because the sink path ends in `e.dispose?.()` and a ghost
+   * that got there had already been disposed once. Everything below either
+   * nulls what it frees or is safe twice, but "safe by inspection at eleven
+   * call sites" is not a contract — this is.
+   */
   dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    /* …and the grind ledger, which is keyed on this body's id and nothing
+     * else. `BladeContactSolver` holds `progress`, `touched` and `cooldown`
+     * for every capsule a blade has ever grazed, and only a COMPLETED cut
+     * clears them (World._applyBladeEvent) — so every bone the player started
+     * on and did not finish is a key that outlives the body. `Waves`'s room
+     * cull already calls this on a body it retires; a body that dies does not
+     * go through that path. */
+    this.world?.bladeSolver?.clearTarget?.(this.id);
+    /* …and the cohort's instance slot, for a body torn down WITHOUT dying —
+     * `World.restartWave` and `Waves`'s room cull both dispose living bodies,
+     * and neither goes through `die()`. `leave` is a no-op on a body that was
+     * never in one. */
+    if (this._l3) this.world?.cohorts?.leave?.(this);
     // Modifier fittings first. The bone-parented ones (plates, core, standard)
     // are freed by the rig's own traverse — they are children of bones — so
     // only the scene-parented ones and the cloned materials are ours to undo.

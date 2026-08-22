@@ -52,6 +52,14 @@ const SECS = Number(flag('secs', '46'));
 const W = Number(flag('width', '1280'));
 const H = Number(flag('height', '720'));
 const TAG = flag('tag', `seed${SEED}`);
+/* The shipped `opt-instant-spawn` checkbox, ticked the way a player ticks it.
+ * It makes `Extraction.beginInsertion` decline (Extraction.js:423), so the run
+ * opens standing on the ground instead of 2 400 m over it. Thirty game-seconds
+ * of insertion is three hundred rendered frames here, which is the difference
+ * between a probe that finishes and one that does not — and the flight itself
+ * is what `frontdoor.mjs` already asserts, so this arm spends its frames on the
+ * thing nothing has ever looked at. */
+const INSTANT = argv.includes('--instant');
 const OUT = join(ROOT, '.line', TAG);
 const log = (...a) => console.log(`[${((Date.now() - T0) / 1000).toFixed(0)}s]`, ...a);
 const T0 = Date.now();
@@ -141,11 +149,24 @@ try {
   });
   log('mode cards:', JSON.stringify(record.modeCards));
 
+  if (INSTANT) {
+    await page.click('.tab[data-tab="opts"]');
+    const box = page.locator('#opt-instant-spawn');
+    await box.scrollIntoViewIfNeeded();
+    await box.check({ timeout: 400000 });
+    await page.click('.tab[data-tab="play"]');
+    log('instant spawn ticked in Options');
+  }
   const card = page.locator('#mode-list .diff', { hasText: 'The Line' }).first();
   record.cardCount = await card.count();
   if (!record.cardCount) throw new Error('there is no card called The Line in the Mode list');
   await card.scrollIntoViewIfNeeded();
-  await card.click({ timeout: 20000 });
+  /* NO 20-SECOND CEILING ON A CLICK EITHER. Playwright waits for an element to
+   * be "stable" across two animation frames before it presses it, and two frames
+   * here is over a minute — the first run reported `locator.click: Timeout
+   * 20000ms exceeded` on a card that is perfectly clickable. Same trap as the
+   * screenshot above, one library call further down. */
+  await card.click({ timeout: 400000 });
   log('clicked The Line');
   /* The seed box, typed as a player types it. */
   await page.fill('#opt-seed', SEED);
@@ -263,6 +284,107 @@ try {
     log(`beat ${target}s:`, JSON.stringify({ ...r, ...state }));
     await shot(`05-t${String(target).padStart(2, '0')}`);
   }
+
+  /* ── THE SURVEY. Where is the front, and can the player see it?
+   *
+   * The geometry is asked of `Front.engagementFront` — the shipped function
+   * `marchTo` itself dresses off — and never restated here (HANDOFF §2.4). The
+   * page can `import()` it because the server is serving the same tree.
+   *
+   * The camera is turned by writing `player.camera.yaw`, which is the field the
+   * mouse writes; the rig reads it every frame off input deltas, so with no
+   * input it holds. */
+  record.survey = await page.evaluate(async () => {
+    const S = window.SABER, w = S.world, cmd = w.command;
+    const F = await import('/src/world/Front.js');
+    const P = await import('/src/world/Props.js');
+    const hull = P.propMaterials().hull;
+    const front = F.engagementFront(w, cmd?.areaNumber ?? 1);
+    const p = w.player.position;
+    /* Which side of the line is the PLAYER on, and how far — through the
+     * shipped reader rather than a second copy of the half-plane test. */
+    const line = F.frontLine(front);
+    const me = line.side ? line.side(p.x, p.z) : null;
+    const wrecks = w.statics.filter((m) => m.material === hull);
+    const near = (o) => Math.hypot(o.position.x - p.x, o.position.z - p.z);
+    /* The bearing from the player to the front, so the shots below can look at
+     * it: the camera yaw that faces +dir is atan2(dx, dz)-flavoured — taken off
+     * the rig's own convention by asking what it currently looks at. */
+    return {
+      front: { bearing: front.bearing, distance: front.distance,
+        offset: front.offset ?? null, engagement: front.engagement ?? null,
+        dir: front.dir ? { x: +front.dir.x.toFixed(3), z: +front.dir.z.toFixed(3) } : null },
+      player: { x: +p.x.toFixed(1), z: +p.z.toFixed(1), y: +p.y.toFixed(1),
+        yaw: +(w.player.camera?.yaw ?? 0).toFixed(3), side: me },
+      battlefield: w.battlefield ? { reason: w.battlefield.reason,
+        choke: { x: +w.battlefield.choke.x.toFixed(1), z: +w.battlefield.choke.z.toFixed(1) },
+        bearing: +w.battlefield.bearing.toFixed(3),
+        distance: +w.battlefield.distance.toFixed(1) } : null,
+      strewWrecks: typeof w.strewWrecks,
+      smokeAir: !!w.smokeAir,
+      wreckPieces: wrecks.length,
+      wreckNearest: wrecks.length ? +Math.min(...wrecks.map(near)).toFixed(1) : null,
+      wreckFarthest: wrecks.length ? +Math.max(...wrecks.map(near)).toFixed(1) : null,
+      /* A hull whose lowest corner is under the terrain at its own centre is a
+       * wreck buried in the ground — the class of defect no headless check can
+       * see and the reason this probe exists. */
+      wreckSunk: wrecks.filter((m) => {
+        const g = w.terrain.height(m.position.x, m.position.z);
+        return m.position.y + 0.5 < g;
+      }).length,
+      statics: w.statics.length,
+      craters: w.craterLog?.marks?.length ?? w.craterLog?.log?.length ?? null,
+    };
+  });
+  log('survey:', JSON.stringify(record.survey));
+
+  /* Look at the front, then sweep the horizon: four bearings, so a front dressed
+   * BEHIND the player is visible as such rather than inferred from a number. */
+  const sweep = await page.evaluate(({ }) => {
+    const w = window.SABER.world;
+    return { yaw0: w.player.camera.yaw };
+  }, {});
+  record.sweepFrom = sweep;
+  for (const [name, turn] of [['front', 0], ['right', Math.PI / 2],
+    ['back', Math.PI], ['left', -Math.PI / 2]]) {
+    await page.evaluate(async ([t]) => {
+      const w = window.SABER.world;
+      const F = await import('/src/world/Front.js');
+      const front = F.engagementFront(w, w.command?.areaNumber ?? 1);
+      /* FACE THE FRONT. The rig's yaw is a rotation about +Y applied to a
+       * forward of -Z, so the yaw that looks along (dx, dz) is atan2(dx, -dz)
+       * — taken from `CameraRig`'s own basis rather than guessed: `syncAim`
+       * builds the aim from Euler(pitch, yaw, 0, 'YXZ'). */
+      const dx = front.dir.x, dz = front.dir.z;
+      w.player.camera.yaw = Math.atan2(dx, -dz) + t;
+      w.player.camera.pitch = -0.08;
+      await window.__frame();
+    }, [turn]);
+    await shot(`06-look-${name}`);
+  }
+
+  /* ── FRAME COST, with the levy on the field. Draw calls and triangles are
+   * machine-independent; the millisecond is not, and the box's own load is
+   * recorded beside it so the number can be read honestly. */
+  record.cost = await page.evaluate(async () => {
+    const S = window.SABER, w = S.world;
+    const t = [];
+    for (let i = 0; i < 6; i++) {
+      const a = performance.now();
+      await window.__frame();
+      t.push(+(performance.now() - a).toFixed(0));
+    }
+    t.sort((x, y) => x - y);
+    return { ms: t, median: t[t.length >> 1],
+      draws: S.engine.renderer.info.render.calls,
+      tris: S.engine.renderer.info.render.triangles,
+      programs: S.engine.renderer.info.programs?.length ?? null,
+      geometries: S.engine.renderer.info.memory.geometries,
+      textures: S.engine.renderer.info.memory.textures,
+      bodies: w.enemies.length, alive: w.enemies.filter((e) => !e.dead).length,
+      quality: w.settings?.quality ?? null };
+  });
+  log('cost:', JSON.stringify(record.cost));
 
   await writeFile(join(OUT, 'record.json'), JSON.stringify({ ...record, errs, shots }, null, 2));
   log('errors:', errs.length, errs.slice(0, 8));
