@@ -735,6 +735,94 @@ is a design decision and it is left for the player to make.
 body lands 4.1% of the time against 4.8% for one aimed at a closed body (3 of
 74 against 16 of 331, seed 3). Holding a body does not measurably hide it.
 
+### The window IS widened — and what bounds OPEN is the REACH, not the window
+
+> The section above ends "making OPEN a battle-scale verb means widening the
+> WINDOW". It was widened, by a factor of two, and the measurement that came
+> with it says the window was never the ceiling.
+
+**The cause was a comment that nothing implemented.** Two lines, each inert
+without the other:
+
+- `Enemy.applyKnockback` has carried `// hit hard enough to leave its feet`
+  over `this.stun(1.2, impulse, 1.4)` for as long as the shove contest has
+  existed. **A stun is a body standing still.** An eleven-metre Force wave at
+  impulse 34 threw a dozen droids through the air and every one of them landed
+  upright, froze for 1.2 s and walked on.
+- `OPEN_STATES.downed` tested `toppled || stunTimer > 0`. Neither of those is a
+  body **lying in the sand**, which is what a dropped grip, a hurled body and a
+  Force wave all leave behind: `gripped` false, `toppled` false, `stunTimer`
+  zero for the whole of `GET_UP`. Measured on the baseline arm, **1.35% of
+  enemy body-seconds were limp and in no open state at all** — a body on the
+  floor priced exactly like one in cover shooting back.
+
+`Enemy.knockFlat` is the first, `ragdolled` in `downed`'s test is the second,
+and `Enemy._think` takes the same clause from the other side: a limp body went
+on aiming and firing from a chest lying face down, which is a rounding error at
+a 1.2 s stun and is not at a five-second one. A shove from a body on your OWN
+side still only stuns — `Player._shockwave` iterates `ctx.enemies` with no team
+test, so without that clause the panic button would fell your own rank.
+
+Bound by `grip.mjs` on a real World, through the shipped `_boltHitTest`, and
+proven to fail on the build it replaces (*"a droid shoved at impulse 26 is
+still on its feet"*): **standing 11.4 hp, down 17.1 hp — 1.50× against a stated
+1.50×, and open for 5.17 s against the 1.20 s the stun alone would buy.**
+
+**Before and after.** Two worktrees off the same commit differing only in those
+three sites, `tools/_openwin.mjs`, one Command engagement on Geonosis at
+`knight`, `_flagship.mjs`'s scripted Jedi gripping continuously — the arm the
+0.51% was taken on. Four paired seeds, ± is the standard error of the mean:
+
+| share of enemy body-seconds | before | after | |
+|---|---|---|---|
+| all open states | 1.455% ±0.167 | **2.932% ±0.313** | ×2.02 |
+| `held` | 1.053% | 1.258% | ×1.19 |
+| `downed` | 0.402% | **1.674%** | ×4.17 |
+| limp and in NO open state | 1.345% | 0.000% | the hole, closed |
+| open body-seconds per point of Force | 0.0435 | **0.0863** | ×1.99 |
+
+`yanked` is 0.000% in both arms because the scripted Jedi does not pull — see
+`dutyInput`'s own note. **The extra damage the multiplier buys on landed bolts
+is UNMEASURED at this sample**: 7.3% ±2.7 before against 4.2% ±1.7 after, on
+about 110 landed bolts a run. Do not quote it either way without twenty seeds.
+
+**And here is where it stops.** `tools/_openreach.mjs` counts the share of enemy
+body-seconds spent inside each Force reach band at all — the arithmetic ceiling
+on the verb whatever mechanism is wired to it, because a body forty metres away
+cannot be opened by anything. Three seeds, same fight, shipped Force Power:
+
+| | reach | share of enemy body-seconds inside it |
+|---|---|---|
+| `forcePush` | 9 m cone | 2.09% |
+| `forceUnleash` | 11 m, every direction | 3.43% |
+| `forcePull` | 17 m cone | 6.97% |
+| the grip | `forceReach`, ~18 m | **7.41%** |
+
+**A flawless verb — every body inside the Jedi's longest reach open for every
+second it is in there, at no cost — reaches seven per cent of the battle.** The
+one power that opens a CROWD rather than a body tops out at 3.4%. The bar was
+never the binding constraint either: the baseline arm already spends its whole
+income (814 Force in a 108-second engagement against a 7.5/s regen), which is
+why the lever that moved was the exchange rate and not the spend. What bounds
+OPEN is that the horde is twenty-four bodies spread over a battlefield and the
+Force reaches eighteen metres of it. The Force Power slider at its top takes the
+ceiling to 17.1% (seed 3) and no further — √power on a radius, against a field
+that does not shrink.
+
+So the honest reading: **the change is real and the verb still cannot carry §7's
+sentence.** It sits at about 40% of its own geometric ceiling now instead of
+20%, and that ceiling is single digits.
+
+**What should replace it, on these numbers.** Every remaining lever inside the
+current design makes the ARM longer, and the arm is bounded by √power. What is
+wanted is an opening that TRAVELS — and there is exactly one thing on this
+battlefield whose radius is the formation rather than the Jedi's reach: **the
+rank's nerve.** A body that is shaken does not brace; a rank that has broken is
+open. Hanging `openness` off `Nerve` rather than off posture would give the
+multiplier the only carrier in the game that reaches past eighteen metres, and
+it composes with §7's FIRST verb instead of competing with it for the same bar.
+That is BREAK's territory and is deliberately not built here.
+
 ### A real defect found on the way: a held body reported a dead stop
 
 `Enemy._move` has two branches for a ragdolled body and they gave opposite
@@ -1355,8 +1443,11 @@ ridge" — measured, and false. It has now survived every attempt to make it tru
 - **presence** as a morale term: a Jedi a hundred metres away costs the line the
   same men as a Jedi standing in it, so presence is not the mechanism;
 - **OPEN**, the Force as a multiplier on other people's guns: the line already
-  aims 9× its fair share at a body you are holding, and the verb still reaches
-  0.5% of enemy-seconds;
+  aims 9× its fair share at a body you are holding, and the verb reaches
+  1.5% of enemy-seconds — **2.9% since a shove was made to put bodies on the
+  floor**, against an arithmetic ceiling of 7.4% set by how much of the horde
+  is inside the Force's reach at all. See "The window IS widened" above: it is
+  twice the verb it was and still single digits;
 - **the SCREEN**, taking bolts aimed at the man beside you: 0 of 30
   casualty-bolts landed on a man inside both its reach and its arc;
 - **the attrition tuning above**: no lever on the threat ledger moves it, and
