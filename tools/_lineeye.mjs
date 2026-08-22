@@ -93,7 +93,13 @@ const shot = async (name) => {
 
 /* A frame, or an error — never a wait with no bound (smoke.mjs's argument). */
 await page.addInitScript(() => {
-  window.__frame = (ms = 60000) => new Promise((res, rej) => {
+  /* FIVE MINUTES, and that is not a wall-clock budget dressed as a ceiling —
+   * it is the only bound that keeps a stopped render loop from hanging the
+   * probe for ever. The first run of this arm died at `no animation frame in
+   * 60000 ms` on a game that was drawing perfectly: one frame of the flagship
+   * mode with the levy on the field, at 1280x720 through swiftshader, on a box
+   * carrying a load average of 40 from a dozen other lanes. HANDOFF §2.6. */
+  window.__frame = (ms = 300000) => new Promise((res, rej) => {
     const t = setTimeout(() => rej(new Error(`no animation frame in ${ms} ms`)), ms);
     requestAnimationFrame(() => { clearTimeout(t); res(); });
   });
@@ -240,51 +246,6 @@ try {
   log('after drop:', JSON.stringify(record.afterDrop));
   await shot('04-dropped');
 
-  /* ── THE FLIGHT AND THE FIGHT, in game-seconds. */
-  record.beats = [];
-  const beats = [6, 12, 20, 28, 34, 40, SECS].filter((s, i, a) => s <= SECS && a.indexOf(s) === i);
-  let done = 0;
-  for (const target of beats) {
-    const chunk = target - done;
-    if (chunk <= 0) continue;
-    const r = await page.evaluate((s) => window.__play(s), chunk);
-    done = target;
-    const state = await page.evaluate(() => {
-      const S = window.SABER, w = S?.world, cmd = w?.command;
-      const scene = S?.engine?.scene;
-      let fallen = 0, smoke = 0;
-      scene?.traverse?.((o) => {
-        if (o.name === 'fallen') fallen += (o.count ?? 0);
-        if (o.name === 'smoke-columns') smoke++;
-      });
-      return {
-        t: +(w?.time ?? 0).toFixed(1), phase: w?.extraction?.phase ?? null,
-        flying: !!w?.extraction?.active,
-        py: +(w?.player?.position?.y ?? 0).toFixed(1),
-        enemies: w?.enemies?.length ?? -1,
-        alive: w?.enemies?.filter?.((e) => !e.dead).length ?? -1,
-        friends: w?.enemies?.filter?.((e) => !e.dead && e.team === w.player?.team).length ?? -1,
-        area: cmd?.area ?? null, marched: cmd?._marched ?? null,
-        living: cmd?.roster?.living?.length ?? null,
-        strength: cmd?.roster?.strength ?? null,
-        draws: S?.engine?.renderer?.info?.render?.calls ?? 0,
-        tris: S?.engine?.renderer?.info?.render?.triangles ?? 0,
-        statics: w?.physics?.staticBoxes?.length ?? -1,
-        props: w?.props?.length ?? -1,
-        fallenInstances: fallen, smokeMeshes: smoke,
-        namePlates: document.getElementById('troopnames')?.children?.length ?? -1,
-        nameText: [...(document.getElementById('troopnames')?.children ?? [])]
-          .slice(0, 4).map((n) => n.textContent.replace(/\s+/g, ' ').trim()),
-        rosterHidden: document.getElementById('roster')?.classList.contains('hidden') ?? null,
-        rosterRows: document.querySelectorAll('#rp-list .rp-row, #rp-list > *').length,
-        rosterStrength: document.getElementById('rp-strength')?.textContent ?? null,
-      };
-    });
-    record.beats.push({ target, ...r, ...state });
-    log(`beat ${target}s:`, JSON.stringify({ ...r, ...state }));
-    await shot(`05-t${String(target).padStart(2, '0')}`);
-  }
-
   /* ── THE SURVEY. Where is the front, and can the player see it?
    *
    * The geometry is asked of `Front.engagementFront` — the shipped function
@@ -320,6 +281,18 @@ try {
         choke: { x: +w.battlefield.choke.x.toFixed(1), z: +w.battlefield.choke.z.toFixed(1) },
         bearing: +w.battlefield.bearing.toFixed(3),
         distance: +w.battlefield.distance.toFixed(1) } : null,
+      /* WHERE THE PLAYER IS LOOKING, against where the front is. The rig's
+       * yaw is a rotation about +Y on a forward of -Z (`CameraRig.syncAim`
+       * builds the aim from Euler(pitch, yaw, 0, 'YXZ')), so the yaw that faces
+       * the advance is atan2(dir.x, -dir.z) and the difference is how far the
+       * player has to turn to see the one-way visible variable. */
+      offBy: (() => {
+        const want = Math.atan2(front.dir.x, -front.dir.z);
+        let d = (w.player.camera?.yaw ?? 0) - want;
+        while (d > Math.PI) d -= 2 * Math.PI;
+        while (d < -Math.PI) d += 2 * Math.PI;
+        return +(d * 180 / Math.PI).toFixed(0);
+      })(),
       strewWrecks: typeof w.strewWrecks,
       smokeAir: !!w.smokeAir,
       wreckPieces: wrecks.length,
@@ -385,6 +358,51 @@ try {
       quality: w.settings?.quality ?? null };
   });
   log('cost:', JSON.stringify(record.cost));
+
+  /* ── THE FLIGHT AND THE FIGHT, in game-seconds. */
+  record.beats = [];
+  const beats = [6, 12, 20, 28, 34, 40, SECS].filter((s, i, a) => s <= SECS && a.indexOf(s) === i);
+  let done = 0;
+  for (const target of beats) {
+    const chunk = target - done;
+    if (chunk <= 0) continue;
+    const r = await page.evaluate((s) => window.__play(s), chunk);
+    done = target;
+    const state = await page.evaluate(() => {
+      const S = window.SABER, w = S?.world, cmd = w?.command;
+      const scene = S?.engine?.scene;
+      let fallen = 0, smoke = 0;
+      scene?.traverse?.((o) => {
+        if (o.name === 'fallen') fallen += (o.count ?? 0);
+        if (o.name === 'smoke-columns') smoke++;
+      });
+      return {
+        t: +(w?.time ?? 0).toFixed(1), phase: w?.extraction?.phase ?? null,
+        flying: !!w?.extraction?.active,
+        py: +(w?.player?.position?.y ?? 0).toFixed(1),
+        enemies: w?.enemies?.length ?? -1,
+        alive: w?.enemies?.filter?.((e) => !e.dead).length ?? -1,
+        friends: w?.enemies?.filter?.((e) => !e.dead && e.team === w.player?.team).length ?? -1,
+        area: cmd?.area ?? null, marched: cmd?._marched ?? null,
+        living: cmd?.roster?.living?.length ?? null,
+        strength: cmd?.roster?.strength ?? null,
+        draws: S?.engine?.renderer?.info?.render?.calls ?? 0,
+        tris: S?.engine?.renderer?.info?.render?.triangles ?? 0,
+        statics: w?.physics?.staticBoxes?.length ?? -1,
+        props: w?.props?.length ?? -1,
+        fallenInstances: fallen, smokeMeshes: smoke,
+        namePlates: document.getElementById('troopnames')?.children?.length ?? -1,
+        nameText: [...(document.getElementById('troopnames')?.children ?? [])]
+          .slice(0, 4).map((n) => n.textContent.replace(/\s+/g, ' ').trim()),
+        rosterHidden: document.getElementById('roster')?.classList.contains('hidden') ?? null,
+        rosterRows: document.querySelectorAll('#rp-list .rp-row, #rp-list > *').length,
+        rosterStrength: document.getElementById('rp-strength')?.textContent ?? null,
+      };
+    });
+    record.beats.push({ target, ...r, ...state });
+    log(`beat ${target}s:`, JSON.stringify({ ...r, ...state }));
+    await shot(`05-t${String(target).padStart(2, '0')}`);
+  }
 
   await writeFile(join(OUT, 'record.json'), JSON.stringify({ ...record, errs, shots }, null, 2));
   log('errors:', errs.length, errs.slice(0, 8));

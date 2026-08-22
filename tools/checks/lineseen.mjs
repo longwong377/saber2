@@ -58,9 +58,21 @@ import { createServer } from 'node:http';
 import { handler } from '../serve.mjs';
 import { clocked } from './_shared.mjs';
 
-/** Frames, not milliseconds — with one frame priced at the §2.6 figure. */
-const FRAME_MS = 15000;
-const act = { timeout: FRAME_MS * 8 };
+/**
+ * ONE FRAME, PRICED HONESTLY, AND EVERY CEILING IN THIS FILE IS A MULTIPLE OF
+ * IT.
+ *
+ * §2.6 measures one frame on an EMPTY field at 4 151 ms. This mode's field is
+ * not empty — the levy is forty extra bodies on top of a composed wave — and
+ * the probe this check grew out of took OVER SIXTY SECONDS a frame at 1280x720
+ * while a dozen other lanes held the box at a load average of 40. So the number
+ * here is the worst frame that has actually been seen and not the typical one:
+ * a ceiling exists to stop a stopped render loop hanging for ever, and any
+ * ceiling tight enough to also measure the box is a check that fails for the
+ * wrong reason.
+ */
+const FRAME_MS = 90000;
+const act = { timeout: FRAME_MS * 6 };
 
 /** The sizes the front screen has ever been measured at, plus the default. */
 const SIZES = [[1280, 720], [1366, 768], [1920, 1080]];
@@ -78,7 +90,7 @@ async function open(size = SIZES[0]) {
   page.on('pageerror', (e) => errs.push(String(e.message || e)));
   page.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()); });
   await page.addInitScript(() => {
-    window.__frame = (ms = 120000) => new Promise((res, rej) => {
+    window.__frame = (ms = 300000) => new Promise((res, rej) => {
       const t = setTimeout(() => rej(new Error('the render loop has stopped')), ms);
       requestAnimationFrame(() => { clearTimeout(t); res(); });
     });
@@ -130,18 +142,27 @@ export async function run({ check, assert }) {
              * Ignite button's gradient is revealed and unclickable, which is
              * the defect index.html's own note measured at 0.00 hit rate. */
             let hit = 0, n = 0;
+            const on = (x, y) => {
+              const el = document.elementFromPoint(x, y);
+              return !!(el && (el === card || card.contains(el)));
+            };
             for (let iy = 1; iy <= 3; iy++) {
               for (let ix = 1; ix <= 5; ix++) {
                 n++;
-                const el = document.elementFromPoint(
-                  cr.left + (cr.width * ix) / 6, cr.top + (cr.height * iy) / 4);
-                if (el && (el === card || card.contains(el))) hit++;
+                if (on(cr.left + (cr.width * ix) / 6, cr.top + (cr.height * iy) / 4)) hit++;
               }
             }
+            /* THE CENTRE IS THE BAR, and the grid is the reading beside it. A
+             * card whose top rows sit under the sticky section heading is still
+             * a card the mouse can press — the heading is 24 px and scrolls
+             * with nothing. What is NOT acceptable is a card whose middle is
+             * covered, which is what a button painted over a scroller does and
+             * what index.html's own note measured at 0.00. */
+            const centre = on(cr.left + cr.width / 2, cr.top + cr.height / 2);
             rows.push({ key, name: card.querySelector('b')?.textContent ?? key,
               inBand: cr.top >= br.top - 0.5 && cr.bottom <= br.bottom - FADE + 0.5,
               top: Math.round(cr.top - br.top), bottom: Math.round(cr.bottom - br.top),
-              hit: +(hit / n).toFixed(2) });
+              centre, hit: +(hit / n).toFixed(2) });
           }
           menu.selectMode(was);
           return { band: Math.round(box.clientHeight), content: Math.round(box.scrollHeight),
@@ -158,7 +179,7 @@ export async function run({ check, assert }) {
           `${s.w}x${s.h}: choosing ${off.map((r) => r.name).join(', ')} leaves the card `
           + `outside the ${s.band} px column (${off.map((r) => `${r.top}..${r.bottom}`).join(', ')}) `
           + '— the mode you are about to deploy into is off the list you are reading');
-        const cold = s.rows.filter((r) => r.hit < 1);
+        const cold = s.rows.filter((r) => !r.centre);
         assert(cold.length === 0,
           `${s.w}x${s.h}: ${cold.map((r) => `${r.name} ${Math.round(r.hit * 100)}%`).join(', ')} `
           + '— revealed and not clickable, which is what a button painted over a scroller does');
@@ -276,7 +297,17 @@ export async function run({ check, assert }) {
           if (o.name === 'fallen') { fallen += o.count ?? 0; fallenMeshes++; }
           if (o.name === 'smoke-columns') smoke++;
         });
+        /* THE HULLS, AND WHICH OF THEM ARE THE FRONT'S.
+         *
+         * `LEVELS.geonosis.dress` strews fourteen clusters of its own at any
+         * bearing out to 235 m, so a bare count of hull pieces would pass on a
+         * ground whose front laid NONE — the false pass that matters, because
+         * `CommandDirector.marchTo` passes `w.strewWrecks ?? null` and only
+         * that one level publishes the builder. `marchFront` sites its hulls
+         * within 40 m of a point ON the line (`line.place(u, 0)`, rmax 40), so
+         * distance from the front is what separates the two populations. */
         const wrecks = w.statics.filter((m) => m.material === hull);
+        const onLine = wrecks.filter((m) => Math.abs(line.side(m.position.x, m.position.z).d) <= 45);
         const sunk = wrecks.filter((m) => m.position.y + 0.5 < w.terrain.height(m.position.x, m.position.z));
         return {
           paused: !!w.paused, cardUp: !document.getElementById('deploy-card').classList.contains('hidden'),
@@ -286,7 +317,7 @@ export async function run({ check, assert }) {
           front: { distance: +front.distance.toFixed(1), bearing: +front.bearing.toFixed(3) },
           me: +line.side(p.x, p.z).d.toFixed(1),
           fallen, fallenMeshes, smoke,
-          wrecks: wrecks.length, sunk: sunk.length,
+          wrecks: wrecks.length, onLine: onLine.length, sunk: sunk.length,
           strewWrecks: typeof w.strewWrecks,
           draws: S.engine.renderer.info.render.calls,
           tris: S.engine.renderer.info.render.triangles,
@@ -314,17 +345,26 @@ export async function run({ check, assert }) {
       assert(ground.smoke > 0, 'no smoke columns on the burnt side');
       assert(ground.sunk === 0,
         `${ground.sunk} of ${ground.wrecks} hull pieces are under the terrain they stand on`);
-      assert(ground.wrecks > 0,
-        `the front laid no hulls (world.strewWrecks is ${ground.strewWrecks}) — §12.4 says `
-        + '"wrecks belong on the fighting line" and CommandDirector.marchTo passes '
-        + '`w.strewWrecks ?? null`, which only LEVELS.geonosis publishes');
+      /* THE PRECONDITION, ASSERTED SEPARATELY FROM THE RESULT, because the two
+       * fail for different reasons and one of them is a whole class: a ground
+       * that does not publish the builder lays no hulls and says nothing —
+       * HANDOFF §2.3's missing thing answered with a plausible default, spelled
+       * `w.strewWrecks ?? null`. */
+      assert(ground.strewWrecks === 'function',
+        `${W.levelKey} does not publish strewWrecks, so CommandDirector.marchTo passed null and `
+        + 'the front laid no hulls at all — §12.4 says "wrecks belong on the fighting line" and '
+        + 'prices them as the biggest draw-call item on this ground');
+      assert(ground.onLine > 0,
+        `${ground.wrecks} hull pieces on this ground and none of them within 45 m of the front `
+        + '— the level dressed itself and the engagement dressed nothing');
       assert(ground.draws > 200, `${ground.draws} draw calls on a deployed field`);
       assert(errs.length === 0, `the page threw: ${errs.slice(0, 4).join(' · ')}`);
 
       return `seed ${SEED} → ${W.level} (${W.generated}, ${W.battlefield}), plan ${shown.plan}, `
         + `${shown.names.length} names on the card; front at ${ground.front.distance} m, player `
         + `${ground.me} m off it; ${ground.fallen} fallen in ${ground.fallenMeshes} draws, `
-        + `${ground.smoke} smoke, ${ground.wrecks} hull pieces (${ground.sunk} sunk); `
+        + `${ground.smoke} smoke, ${ground.onLine} of ${ground.wrecks} hull pieces on the line `
+        + `(${ground.sunk} sunk); `
         + `${ground.draws} draws / ${(ground.tris / 1e6).toFixed(2)} M tris over ${ground.bodies} bodies`;
     } finally { await close(); }
   });
