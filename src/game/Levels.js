@@ -53,7 +53,7 @@ import { GEONOSIAN_UNITS, attachFlight } from './Flight.js';
 import { emplaceGun } from './Emplacement.js';
 import { attachForest } from '../world/Trees.js';
 import { attachHazard } from '../world/Hazard.js';
-import { addSmokeColumns, smokeSites } from '../world/Smoke.js';
+import { addSmokeColumns, smokeSites, smokeAir } from '../world/Smoke.js';
 /**
  * COMMAND'S SEVEN BODIES, registered from here for exactly the reason the
  * general's set-piece at the foot of this file is: "a level and the set-piece it
@@ -4547,12 +4547,17 @@ LEVELS.geonosis = {
      * sand and the shadows. The tip colour is the fog's, so a column dissolves
      * into the haze at its top rather than ending in mid-air.
      *
-     * THE AIR IS PUBLISHED, not typed twice. `Front.marchFront` raises columns
-     * of its own for every engagement after the first — its note says "the
-     * caller owns its level's air" — and a second copy of these five numbers
-     * beside this one is HANDOFF §2.3 with a rendering change behind it: the
-     * day somebody warms the tip here, the front's columns would go on
-     * dissolving into last week's fog. One table, on the world, read by both. */
+     * THE AIR IS DERIVED, not typed at all. This line used to publish five
+     * literals — `{ wind: [0.94, 0.34], color: 0x33261f, tip: 0xd0a473, lean:
+     * 0.55, spread: 0.22 }` — and two of them were copies of numbers already
+     * in this file: `wind` is `TERRAIN_PRESETS.geonosis.wind` and `tip` is this
+     * level's own `atmosphere.fogColor`. `Front.marchFront` then carried a THIRD copy
+     * as its fallback, so every other ground THE LINE rolls was given
+     * Geonosis' dust tip over its own sky. `Smoke.smokeAir(world)` derives the
+     * record from the terrain preset and the level's fog and reproduces this
+     * table term for term; `vfx.mjs`'s "a column dissolves into the level's OWN
+     * sky" asserts it off the built MESH — the vertex colours of the top ring
+     * and where that ring sits over the base — on every level. */
     /* THE HULL BUILDER, published beside the air for the same reason: a level
      * says what its ground can do, and `Front.marchFront` grows wreck clusters
      * only when it is handed the function that builds them. `CommandDirector
@@ -4563,7 +4568,7 @@ LEVELS.geonosis = {
      * imports `COMMAND_UNITS` from `Command.js` and the reverse edge is the
      * initialisation cycle this session already tripped once. */
     world.strewWrecks = strewWrecks;
-    world.smokeAir = { wind: [0.94, 0.34], color: 0x33261f, tip: 0xd0a473, lean: 0.55, spread: 0.22 };
+    world.smokeAir = smokeAir(world);
     addSmokeColumns(world, smokeSites(rng, 7, { rmin: 62, rmax: 244, phase: 1.1 }), world.smokeAir);
 
     /* Cover, such as it is. A deflation plain has boulder fields and low

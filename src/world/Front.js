@@ -71,7 +71,7 @@
 
 import * as THREE from 'three';
 import { makeRng, TAU } from '../engine/MathUtil.js';
-import { addSmokeColumns, smokeSites } from './Smoke.js';
+import { addSmokeColumns, smokeSites, smokeAir } from './Smoke.js';
 import { addFallen } from './Fallen.js';
 /* THE ONE READER. `Battlefield.js` owns the front's geometry — it is where the
  * bezier is flattened into an arc-length table — so "which side of the front is
@@ -415,9 +415,14 @@ export function marchFront(world, opts = {}) {
   const sites = smokeSites(rng, opts.columns ?? 24, { rmin, rmax: rmin + 130, phase: 1.1 + n })
     .filter((s) => burnt(front, s.x, s.z));
   if (sites.length) {
-    addSmokeColumns(world, sites, opts.air || {
-      wind: [0.94, 0.34], color: 0x33261f, tip: 0xd0a473, lean: 0.55, spread: 0.22,
-    });
+    /* THE LEVEL'S AIR, DERIVED, AND NOT A COPY OF GEONOSIS'. The literal that
+     * stood here was Geonosis' `world.smokeAir` written out a second time, and
+     * Geonosis is the ONLY level that publishes one — so every other ground
+     * THE LINE rolls got a sandy dust tip (`0xd0a473`) and a 20° wind. On
+     * alpine that is a `#b6cbee` sky with `#d0a473` smoke in it, leaning 71°
+     * off the way that level's own snow blows. `Smoke.smokeAir` derives both
+     * from what the level has already said; see its note. */
+    addSmokeColumns(world, sites, opts.air || smokeAir(world));
     out.smoke = sites.length;
   }
 

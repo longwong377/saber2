@@ -168,6 +168,67 @@ const RINGS = 14;
 const SIDES = 7;
 
 /**
+ * ── THE AIR A COLUMN STANDS IN, DERIVED FROM THE LEVEL THAT OWNS IT ─────
+ *
+ * `tip` is the one field of this record that a wrong answer SHOWS. A column is
+ * not lit (see the material note above) — it is read as a silhouette against
+ * the sky — so what makes it end rather than stop is that its top has become
+ * the colour of the haze behind it. Geonosis authored `tip: 0xd0a473` and its
+ * own `atmosphere.fogColor` is `0xd0a473`: the same number, hand-copied, which is
+ * HANDOFF §2.3 sitting quietly inside a colour.
+ *
+ * THE COPY WENT WRONG THE DAY THE MODE PUT THIS SMOKE ON SEVEN GROUNDS.
+ * `Front.marchFront` raises the marching front's columns for THE LINE, and the
+ * only level in the game that publishes `world.smokeAir` is Geonosis — so on
+ * the other six the fallback was a literal copy of Geonosis' record:
+ *
+ *     level      its own fog     the tip it was given
+ *     alpine       #b6cbee            #d0a473
+ *     wood         #1a231b            #d0a473
+ *     drifts       #cdc6b8            #d0a473
+ *     colosseum    #c8c4b8            #d0a473
+ *     mustafar     #584038            #d0a473
+ *     scoria       #6b3a2a            #d0a473
+ *
+ * A sandy Geonosian dust tip on a pale blue alpine sky, and on a wood whose
+ * air is nearly black. The wind was Geonosis' too — `[0.94, 0.34]`, 20° — so
+ * on alpine (`[0.62, −0.78]`, −51°) every column leaned 71° off the way that
+ * level's own snow, grass and dust were blowing.
+ *
+ * So the record is DERIVED and not authored, from the two things the level has
+ * already said: its terrain preset's `wind` (the same vector the dunes are
+ * combed along) and its `sky.fogColor`. Geonosis' hand table is reproduced
+ * term for term by this function, which is the test that it is the same
+ * knowledge and not a second one.
+ *
+ * `color` and the two shape numbers are NOT derived, and that is deliberate:
+ * soot is soot, and a burning hull leans and widens the same way on snow as on
+ * dust. Only what the level's own air decides comes off the level.
+ */
+/** What is burning, at the foot of the column. Geonosis' authored value. */
+const SOOT = 0x33261f;
+/** How far downwind the top is, as a fraction of height, and how wide the top
+ *  gets. Both Geonosis' authored values, and both properties of a plume. */
+const LEAN = 0.55;
+const SPREAD = 0.22;
+export function smokeAir(world) {
+  /* `atmosphere`, not `sky` — the level's block is called `atmosphere` and
+   * `sky` is a name nothing in `LEVELS` carries. The first draft of this read
+   * `level.sky.fogColor`, which is `undefined` on all seven and would have
+   * shipped every column tipping to the fallback: a derivation off a field
+   * name nobody checked is the same defect as the literal it replaced. */
+  const sky = world?.level?.atmosphere || {};
+  const preset = world?.terrain?.preset || {};
+  return {
+    wind: preset.wind || [0.94, 0.34],
+    color: SOOT,
+    tip: sky.fogColor ?? 0xd0a473,
+    lean: LEAN,
+    spread: SPREAD,
+  };
+}
+
+/**
  * BUILD THE SMOKE FOR A WHOLE LEVEL, AS ONE MESH.
  *
  * @param world   needs `scene`, `statics` and (for grounding) `terrain`
@@ -182,13 +243,18 @@ const SIDES = 7;
  */
 export function addSmokeColumns(world, columns, opts = {}) {
   if (!world?.scene || !columns?.length) return null;
-  const wind = opts.wind || [0.94, 0.34];
+  /* THE DEFAULTS ARE `smokeAir`'s, not a third set of numbers. This function
+   * used to carry its own — `0x3a2b23` body and `0xb8875a` tip, neither of
+   * them equal to the level record beside it — so a caller that passed nothing
+   * got a column that agreed with no level in the game. */
+  const air = smokeAir(world);
+  const wind = opts.wind || air.wind;
   const wl = Math.hypot(wind[0], wind[1]) || 1;
   const wx = wind[0] / wl, wz = wind[1] / wl;
-  const body = new THREE.Color(opts.color ?? 0x3a2b23);
-  const tip = new THREE.Color(opts.tip ?? 0xb8875a);
-  const lean = opts.lean ?? 0.55;
-  const spread = opts.spread ?? 0.22;
+  const body = new THREE.Color(opts.color ?? air.color);
+  const tip = new THREE.Color(opts.tip ?? air.tip);
+  const lean = opts.lean ?? air.lean;
+  const spread = opts.spread ?? air.spread;
 
   const pos = [], col = [], idx = [];
   let base = 0;
