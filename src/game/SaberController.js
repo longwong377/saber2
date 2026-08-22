@@ -540,7 +540,41 @@ export const SLASH = {
  */
 export const HEAVY = {
   wind: 0.10, cut: 0.125, dur: 0.50,
-  rise: 1.00, drop: 1.00, lift: 0.44, fall: 0.52,
+  /**
+   * …AND IT COMES DOWN THROUGH A MAN, which the shipped pair did not.
+   *
+   * `lift 0.44 → fall 0.52` was the arc this attack was authored with, and it
+   * is the exact defect SLASH's own note above measured and fixed on the light
+   * cut ONE PRESS EARLIER in the same sequence: the ready guard points the
+   * blade UP, so a stroke carried near the middle of the guard box passes over
+   * a standing man's head. The light cut was moved to `-0.70 → 0.80` for that
+   * reason and the third press of the same combination kept the old band —
+   * HIGHER, in fact, than the `0.16 → 0.30` that note calls "over their heads".
+   *
+   * Measured on `tools/checks/animation.mjs`'s own ring of eighteen bodies
+   * (0.9–1.7 m torsos at 1.4 m), the lowest the tip reaches through the whole
+   * attack, and how many of the nine in front one pass crosses:
+   *
+   *     lift/fall     tap: low  front   charged: low  front   tap tip
+   *     0.44 / 0.52       1.62   4/9           1.38   3/9      19.3 m/s
+   *     0.30 / 0.75       1.18   5/9           0.87   3/9      22.0
+   *     0.24 / 0.88       0.87   5/9           0.53   3/9      23.6
+   *     0.00 / 1.00       0.51   6/9          -0.31   5/9      24.5
+   *
+   * The light cut on the same bench bottoms at 1.19 m and `animation.mjs`
+   * holds it under 1.55; the heavy was at 1.62, so the payoff of the sequence
+   * failed the bound its own first two presses pass. And against a REAL
+   * acolyte's capsules in a real World, one tapped heavy at seven ranges from
+   * 1.0 m to 2.2 m: the light cut reached the body at six of them, the heavy
+   * at two, missing the whole 1.6–2.2 m band a duellist stands in by 7–25 cm.
+   *
+   * `0.30 / 0.75` puts the tip where the light cut already puts it and keeps
+   * everything that makes this the heavy: `lift` is still ABOVE the ready
+   * guard, so the chamber is genuinely overhead — the tip stands at 2.20 m
+   * while the button is down — and the stroke still travels 2.0 units across
+   * against 1.05 down, which is a diagonal that means it rather than a chop.
+   */
+  rise: 1.00, drop: 1.00, lift: 0.30, fall: 0.75,
   hold: 0.16, full: 0.80, cutScale: 0.55, rec: 1.7, reach: 0.52, drain: 0.20,
 };
 
@@ -1453,12 +1487,21 @@ export class SaberController {
          * at 1.55 m and the tip at 2.19 m, so a sweep that leaves `gy` alone
          * passes entirely above a standing man. That is exactly what the old
          * spin did — driven into a ring of eighteen bodies at 1.4 m it crossed
-         * ONE, the one it was already resting on. Dropping the guard to −0.42
-         * through the cut puts the tip at about chest height for the whole
-         * revolution, which is where the bodies are.
+         * ONE, the one it was already resting on.
          *
-         * It is still a LATERAL sweep and the numbers keep it one: 0.5 units of
-         * drop against 2.0 units across.
+         * `SPIN.level` is what levels it. THE NUMBER IN THIS PARAGRAPH USED TO
+         * BE −0.42 AND THE CONSTANT HAS BEEN 0.06 SINCE THE MOVE BECAME A
+         * DRILL (3051e3f): the windmill needed the guard dropped nearly to the
+         * floor because the blade was orbiting a hip, and a drill holds it out
+         * in front where a small level offset is enough. Measured on the
+         * shipped move, driven through a real Player: the blade's LOWEST point
+         * runs 1.38–1.44 m over the player's feet through the revolution —
+         * chest height on a 1.7 m body — and one pass crosses 18 of the 18
+         * bodies standing round it. The claim the old number was making is
+         * still true; the number making it is this one.
+         *
+         * It is still a LATERAL sweep and the numbers keep it one: 0.14 units
+         * of drop against 2.0 units across.
          */
         this._spY = (clamp(-T.level, -GY_MIN, GY_MAX) - this.gy) * this.spin;
         /**
@@ -1581,8 +1624,6 @@ export class SaberController {
         this._slY = clamp(ty, -GY_MIN, GY_MAX) - this.gy;
       }
     } else this.slash = 0;
-
-    this.gx += this._swX + this._slX; this.gy += this._swY + this._slY + this._spY;
 
     // gesture signal
     const gspeed = Math.hypot(dx, dy) / Math.max(dt, 1e-4);
@@ -1737,6 +1778,44 @@ export class SaberController {
       this.thrust = Math.max(this.thrust, this._spinThrust);
       this.thrustGain = Math.max(this.thrustGain, SPIN.reach);
     }
+
+    /**
+     * ── PUT THE ATTACK OFFSETS BACK ON, and this is the LAST thing the frame
+     * does with the guard.
+     *
+     * It used to sit above the sequence block, which is one line short of the
+     * heavy's chamber and is therefore one line short of correct: the chamber
+     * writes `_slX`/`_slY` (the pose the blade is held in while the third press
+     * is down) and it writes them BELOW the old position of this line. So the
+     * chamber offset was never added — and the removal at the top of the NEXT
+     * frame subtracted it anyway.
+     *
+     * That is not "the pose does nothing". It is a POSITIVE FEEDBACK LOOP. With
+     * the chamber settled, `_slX = clamp(±1) - gx`, and subtracting that gives
+     * `gx' = 2·gx ∓ 1` — the guard doubles every frame, and the recentre's own
+     * 15%/frame pull leaves a net 1.7x. Measured through the real Player, one
+     * press held:
+     *
+     *     0.26 s   |gx| 7.7e5        (the travel box is 1.0)
+     *     1.01 s        4.2e26
+     *     5.00 s        1.0e137
+     *
+     * `guardDir` takes sin/cos of that, so for as long as the heavy is
+     * chambered the blade points somewhere different and meaningless every
+     * frame, and `slashArc`/`slashAcross` hand the same magnitudes to
+     * `Player._attackDrive`, which drives the trunk with them: at 0.9 s of hold
+     * the blade tip reads 7.6e22 m above the player's feet at 2.0e25 m/s. The
+     * third press of the game's own advertised sequence — "two light attacks
+     * and then a heavy slash you can hold" — destroys the weapon.
+     *
+     * Every reader of the base guard between the removal at the top of this
+     * function and here wants the guard WITHOUT the attack offsets on it (that
+     * is what the removal is for), and both the slash envelope and the chamber
+     * interpolate FROM the live guard, so both must be read before this runs.
+     * One line, at the bottom, after every writer.
+     */
+    this.gx += this._swX + this._slX;
+    this.gy += this._swY + this._slY + this._spY;
 
     return cam;
   }

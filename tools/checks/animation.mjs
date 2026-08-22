@@ -126,7 +126,19 @@ function relYaw(q, facing, e) {
  * static edge from a check into the Player/World/Engine graph links against
  * the other copy of three, and that failure REPORTS rather than crashing.
  */
-export async function driveAttack(action, frames = 70) {
+/**
+ * @param action  the bound action to press, or null for an idle baseline
+ * @param frames  how long to watch
+ * @param opts.hold   how many frames to HOLD the button down for. 1 is a tap,
+ *                    which is what every caller before the sequence existed
+ *                    wanted; the heavy is the one attack whose whole shape is
+ *                    a hold, so it needs this and nothing else does.
+ * @param opts.combo  where in `SLASH.chain`'s sequence the press lands. 1 puts
+ *                    the next left-button press on the THIRD step — the held
+ *                    heavy — without driving two live cuts through the ring
+ *                    first, which would score their hits against this one.
+ */
+export async function driveAttack(action, frames = 70, { hold = 1, combo = 0 } = {}) {
   const { Player } = await import('../../src/game/Player.js');
 const stubWorld = () => ({
   scene: new THREE.Scene(),
@@ -158,8 +170,15 @@ const stubWorld = () => ({
   // the player drifting.
   const rel = (b) => p.rig.worldPos(b, V3()).sub(p.position);
   const shoulder = () => p.rig.tipPos('clavR', V3()).sub(p.position);
-  if (action) hit.add(action);
+  if (combo) { p.control.comboStep = combo; p.control.comboTimer = 1; }
+  const held = new Set();
+  input.act = (id) => held.has(id);
+  if (action) { hit.add(action); held.add(action); }
   const hand = [], joint = [], spine = [], clav = [];
+  /* How high the tip stands while the heavy is CHAMBERED — the state between
+   * the third press and letting go of it, which has no clock and therefore no
+   * other way to be seen. */
+  let chamberTip = -9, chamberFrames = 0;
   /**
    * A CROWD, AS EIGHTEEN CAPSULES ON A RING — the only honest way to ask
    * whether an attack is "effective for slashing down hordes", which is the
@@ -191,6 +210,11 @@ const stubWorld = () => ({
     ctx.time = world.time = (120 + i) / 60;
     p.update(1 / 60, ctx);
     hit.clear();
+    if (i >= hold - 1) held.clear();
+    if (p.control.heavyArmed) {
+      chamberFrames++;
+      chamberTip = Math.max(chamberTip, p.saber.pointAt(1, V3()).y - p.position.y);
+    }
     hand.push(rel('handR')); joint.push(shoulder());
     spine.push(p.rig.get('spine').obj.quaternion.clone());
     clav.push(p.rig.get('clavR').obj.quaternion.clone());
@@ -235,6 +259,7 @@ const stubWorld = () => ({
     /* THE BLADE'S OWN SIDE OF THE STORY. The body half above was already
      * healthy on the left button — it is these that were not. */
     tip, contact, yaw: yawTurned, body: bodyTurned, lowest,
+    chamberTip, chamberFrames,
     across: gxHi - gxLo, up: gyHi - gyLo,
     ring: RING.filter((c) => c.hit).length,
     front: RING.filter((c) => c.hit && (c.a <= 4 || c.a >= 14)).length,
@@ -702,6 +727,82 @@ export function run({ check, assert, near, THREE: T }) {
   /* ══════════════════════════════════════════════════════════════════ */
   /*  An attack is a body, not an elbow — player note 23               */
   /* ══════════════════════════════════════════════════════════════════ */
+
+  check('attack: the THIRD press comes down through a man, and holds a real chamber', async () => {
+    /**
+     * THE PAYOFF OF THE SEQUENCE, AND THE ONE PRESS OF IT NOTHING MEASURED.
+     *
+     *   "obviously pressing it closely in succession will do like an attack
+     *    sequence of some sort, maybe like three clicks will be two light
+     *    attacks and then a heavy slash you can hold and release for more
+     *    power idk"
+     *
+     * `tools/checks/directional.mjs` drives the sequence's STATE MACHINE — the
+     * step counter, the chamber, the release, the window closing — and that is
+     * all anything drove. Nothing had ever asked where the third press puts the
+     * blade, and the answer was: over their heads.
+     *
+     * `HEAVY.lift/fall` was `0.44 → 0.52`, which is the arc SLASH's own note
+     * measured and abandoned ONE PRESS EARLIER in the same combination: the
+     * ready guard points the blade up, so a stroke carried near the middle of
+     * the guard box passes above a standing man. Measured on this bench, the
+     * lowest the TIP reaches through the whole attack:
+     *
+     *     light cut (presses 1 and 2)   1.19 m      ← bounded below at 1.55
+     *     heavy      0.44 / 0.52        1.62 m      ← nothing bounded it
+     *     heavy      0.30 / 0.75        1.18 m
+     *
+     * and against a real acolyte's capsules in a real World, one tapped heavy
+     * at seven ranges from 1.0 m to 2.2 m reached the body at two of them
+     * against the light cut's six.
+     *
+     * So the heavy is held to the SAME FLOOR as the light cut it is the third
+     * press of — not to a number of its own, because the thing being asserted
+     * is that they land on the same bodies.
+     *
+     * AND THE CHAMBER IS A REAL POSE. The state between the third press and
+     * letting go has no clock on it, so the only way to see it is to look at
+     * the blade: it must be genuinely up, and it must still be up several
+     * seconds later. That second half is the bind for a defect that was not a
+     * pose problem at all — see the guard-box clause in
+     * tools/checks/sequence.mjs, which drives it through a real World.
+     */
+    const { HEAVY, GX_MAX, GY_MAX } = await import('../../src/game/SaberController.js');
+    const light = await driveAttack('thrust');
+    const tap = await driveAttack('thrust', 120, { hold: 2, combo: 1 });
+    const charged = await driveAttack('thrust', 200, { hold: 70, combo: 1 });
+
+    assert(tap.chamberFrames > 0 && charged.chamberFrames > 40,
+      `the third press chambered for ${tap.chamberFrames} and ${charged.chamberFrames} frames — the bench `
+      + 'is not reaching the held heavy at all, so nothing below means anything');
+    assert(charged.chamberTip > 2.0,
+      `the blade stood at ${charged.chamberTip.toFixed(2)} m while the heavy was chambered — a chamber the `
+      + 'player cannot see is not a wind-up, it is a pause');
+    assert(tap.lowest < light.lowest + 0.05,
+      `the heavy's tip bottoms at ${tap.lowest.toFixed(2)} m against the light cut's ${light.lowest.toFixed(2)} — `
+      + 'the third press of the sequence passes over the bodies the first two go through');
+    assert(charged.lowest < light.lowest + 0.05,
+      `a CHARGED heavy bottoms at ${charged.lowest.toFixed(2)} m against the light cut's `
+      + `${light.lowest.toFixed(2)} — the more you commit, the further over their heads it goes`);
+    /* IT IS STILL A LATERAL CUT AND NOT A CHOP: the whole guard box across,
+     * against a descent of well under it. `HEAVY.rise/drop` is the width and
+     * this reads what the guard actually travelled, after the clamp. */
+    assert(tap.across > GX_MAX * 1.8,
+      `the heavy travelled ${tap.across.toFixed(2)} units across a ${(GX_MAX * 2).toFixed(1)}-unit guard box`);
+    assert(tap.across > tap.up * 1.6,
+      `the heavy moved ${tap.across.toFixed(2)} across and ${tap.up.toFixed(2)} down — that is a chop, and `
+      + 'the heavy is the lateral cut with a different envelope');
+    /* AND IT IS THE HEAVIEST OF THE THREE. Damage in this game is blade speed;
+     * a third press slower than the first two is a sequence with no payoff. */
+    assert(tap.tip > light.tip && charged.tip > tap.tip,
+      `light ${light.tip.toFixed(1)} → heavy ${tap.tip.toFixed(1)} → charged ${charged.tip.toFixed(1)} m/s — `
+      + 'the sequence does not get heavier as it goes');
+    assert(HEAVY.lift < GY_MAX && HEAVY.lift > 0,
+      `HEAVY.lift is ${HEAVY.lift} — the chamber has to be ABOVE the ready guard to read as one`);
+    return `light ${light.lowest.toFixed(2)} m / ${light.tip.toFixed(1)} m/s; heavy ${tap.lowest.toFixed(2)} m / `
+      + `${tap.tip.toFixed(1)} m/s; charged ${charged.lowest.toFixed(2)} m / ${charged.tip.toFixed(1)} m/s; `
+      + `chamber holds the tip at ${charged.chamberTip.toFixed(2)} m for ${charged.chamberFrames} frames`;
+  });
 
   check('attack: the left button CUTS, and the spin turns the whole body through a crowd', async () => {
     /**
