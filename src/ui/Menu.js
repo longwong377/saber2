@@ -5194,7 +5194,7 @@ export class Menu {
     if (!box) return;
     const apply = (on) => {
       const cap = on ? BLADE_MAX : BLADE_CAP;
-      for (const input of this._bound.get('bladeLength')?.inputs || []) input.max = String(cap);
+      for (const input of this._bound.get('bladeLength')?.inputs || []) input.setAttribute('max', String(cap));
       if (this.s.bladeLength > cap) this._set('bladeLength', cap);
       else this._set('bladeLength', this.s.bladeLength, true);   // re-sync the labels
     };
@@ -5694,12 +5694,55 @@ export class Menu {
     });
   }
 
-  /** Move the focus one control. `dir` is up/down/left/right. */
+  /**
+   * Move the focus one control. `dir` is up/down/left/right.
+   *
+   * …EXCEPT ON A SLIDER, WHERE LEFT AND RIGHT ARE THE SLIDER.
+   *
+   * `padNav` moved the focus and did nothing else, so on a controller a range
+   * input was a row you could land on and not a control: 39 sliders in the
+   * shipped front end — master volume, music, field of view, blade
+   * sensitivity, the reticle, the whole of Fidelity — could be focused and
+   * could not be moved by any button on the pad. A pad raises no DOM events
+   * and there is no arrow key behind it for the browser's own range handling
+   * to answer, which is the same gap `_padFocusable` exists to close one step
+   * earlier: the check above this one already says "a player who cannot press
+   * Deploy still cannot play", and this is the half of it that is about
+   * changing a number rather than pressing a button.
+   *
+   * It moves the input and raises `input`, which is EXACTLY what a drag does
+   * and is the only path that works for every slider on the page: `_slider`
+   * hangs a listener there, and so does `_sheetSlider`, whose two controls
+   * (Muscle, Years) write into the character sheet rather than into a
+   * top-level setting and are in no bound table to look up. Writing the
+   * setting here instead would be a second path for a slider to be moved
+   * along, and it would have moved 37 of 39 of them (HANDOFF §2.4).
+   */
   padNav(dir) {
     const host = this._padHost();
     const list = this._padFocusable(host);
     if (!list.length) return false;
     const back = dir === 'up' || dir === 'left';
+    const on = document.activeElement;
+    if ((dir === 'left' || dir === 'right') && list.includes(on)
+        && (on.getAttribute?.('type') || on.type) === 'range') {
+      const step = parseFloat(on.getAttribute('step')) || 1;
+      const min = parseFloat(on.getAttribute('min'));
+      const max = parseFloat(on.getAttribute('max'));
+      const now = parseFloat(on.value);
+      if ([step, min, max, now].every(Number.isFinite)) {
+        // Rounded to the step's own decimals: 0.7 + 0.05 is 0.7500000000000001
+        // in binary, and that number reaches the blob and the label.
+        const raw = now + (dir === 'right' ? step : -step);
+        const dp = (String(step).split('.')[1] || '').length;
+        const want = Math.min(max, Math.max(min, Number(raw.toFixed(dp))));
+        if (want === now) return false;      // already at the stop
+        on.value = String(want);
+        on.dispatchEvent(new Event('input', { bubbles: true }));
+        audio.ui('hover');
+        return true;
+      }
+    }
     const at = list.indexOf(document.activeElement);
     // Nothing focused yet — the first press lands on the first control rather
     // than on the second, which is what "press down to start reading a list"
@@ -5886,7 +5929,12 @@ export class Menu {
      * declaration is a TDZ throw that takes the whole front end down — which
      * is exactly what it did, on every check in tools/checks/menu.mjs at once.
      */
-    const cap = (id, n) => { const el = document.getElementById(id); if (el) el.max = String(n - 1); };
+    /* setAttribute, not `el.max =`. A browser reflects the property back onto
+     * the attribute and the two agree; nothing else does, and `_range` — the
+     * other place a ceiling is written — has always used setAttribute. One
+     * convention, so a reader that asks for the attribute gets the real
+     * ceiling wherever it is asked. */
+    const cap = (id, n) => { document.getElementById(id)?.setAttribute('max', String(n - 1)); };
     this._buildDeflectModes();
     this._buildHolocronModes();
     this._buildBindings();

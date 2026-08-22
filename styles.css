@@ -1656,6 +1656,34 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
 .pause-binds .bindlist{max-height:38vh}
 .pause-binds .hint{margin-bottom:10px}
 .pause-binds .secondary{margin-top:12px;width:100%}
+/* …AND THE CARD ITSELF CANNOT GROW PAST THE SCREEN.
+   `.screen` centres its child with `align-items:center`, which clips an
+   over-tall child at BOTH ends and leaves nothing to scroll — the top simply
+   goes above the window and stays there. Measured in Chromium, card height and
+   the top of #btn-resume, with the disclosures shut, with each open, and with
+   both:
+
+     1920x1080   521 px / 424 · 765 / 302 · 1064 / 153 · 1308 / 31
+     1366x768    521 / 268 · 767 / 145 · 947 / 55 · 1194 / -68
+     1280x720    521 / 244 · 767 / 121 · 929 / 40 · 1176 / -83
+
+   The third column is the KEY TABLE ALONE and it is the shipped card: at 1366
+   it already began 82 px above the top of the window, so the heading and the
+   top of the stats could not be read, and the hint line under the card was off
+   the bottom at every size once anything was open. The fourth is both boxes,
+   where Resume — the button the card exists for — leaves the screen entirely.
+
+   So the card scrolls. The width is widened by exactly the padding it gains,
+   because `box-sizing:border-box` would otherwise take those 20 px out of the
+   buttons; the padding is there because `overflow-y:auto` forces the other
+   axis to a scrollport too, and every button on this card carries a 5 px stamp
+   and lifts 2 px more under the pointer. Scoped to #pause: the scoreboard uses
+   the same class and is a held key, not a card you reach for. */
+#pause .pause-wrap{max-height:92vh;overflow-y:auto;overflow-x:hidden;
+  width:min(420px,92vw);padding:0 10px 10px;
+  scrollbar-width:thin;scrollbar-color:var(--panel-hi) transparent}
+#pause .pause-wrap::-webkit-scrollbar{width:8px}
+#pause .pause-wrap::-webkit-scrollbar-thumb{background:var(--panel-hi);border:2px solid var(--stroke)}
 
 /* Focus: the Force bar burns while time is bent */
 .bar.fc.focus i{background:var(--accent-warm);

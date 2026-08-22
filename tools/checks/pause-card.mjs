@@ -337,6 +337,115 @@ export async function run({ check, assert }) {
     } finally { b.close(); }
   });
 
+  check('pause: a pad can move a slider, not just land on one', () => {
+    /**
+     * `padNav` moved the focus and did nothing else, so on a controller every
+     * range input in the game was a row you could land on and not a control.
+     * A pad raises no DOM events and there is no arrow key behind it for the
+     * browser's own range handling to answer — the same gap `_padFocusable`
+     * closes one step earlier for buttons.
+     *
+     * Driven through the real method, on a real Menu, and asserted on the
+     * SETTING: "the slider moved" is a fact about the game, not about focus.
+     */
+    const b = menuOn();
+    try {
+      const moved = [];
+      const stuck = [];
+      /* Every slider on the two screens a pad walks, not a hand-picked one:
+       * the front screen is where a pad player sets the game up, and the pause
+       * card is where they fix it. One at a time, because `_padHost` answers
+       * with the topmost card and a control on the screen behind it is
+       * correctly out of reach. */
+      for (const host of ['menu', 'pause']) {
+        if (host === 'menu') { b.menu.hidePause(); b.menu.showMenu(); } else {
+          b.menu.showPause([['Wave', 1]]);
+          // The settings are behind a disclosure, exactly as the key table is.
+          b.doc.getElementById('btn-pause-opts').dispatchEvent({ type: 'click' });
+        }
+        const el = b.doc.getElementById(host);
+        assert(b.menu._padHost() === el, `the pad is walking #${b.menu._padHost()?.id} and not #${host}`);
+        for (const input of b.menu._padFocusable(el)) {
+          if ((input.getAttribute('type') || input.type) !== 'range') continue;
+          const min = parseFloat(input.getAttribute('min'));
+          const max = parseFloat(input.getAttribute('max'));
+          const step = parseFloat(input.getAttribute('step')) || 1;
+          /* Parked one step off the floor so both directions have somewhere to
+           * go — a slider already at its stop legitimately refuses. Set the
+           * way a drag sets it, because that is the seam being tested. */
+          input.value = String(Math.min(max, min + step));
+          input.dispatchEvent({ type: 'input' });
+          input.focus();
+          /* THE SETTINGS BLOB, not one named key: `_sheetSlider`'s two write
+           * into the character sheet rather than into a top-level setting, and
+           * a check that could only read a top-level key would report the two
+           * sliders it cannot see as the two the pad cannot move. */
+          const before = parseFloat(input.value), blob = JSON.stringify(b.settings);
+          b.menu.padNav('right');
+          const after = parseFloat(input.value), moved2 = JSON.stringify(b.settings) !== blob;
+          b.menu.padNav('left');
+          const back = parseFloat(input.value);
+          if (!(after > before)) { stuck.push(`${input.id} did not move right`); continue; }
+          if (!moved2) { stuck.push(`${input.id} moved and wrote nothing`); continue; }
+          if (back !== before) { stuck.push(`${input.id} did not come back left`); continue; }
+          moved.push(input.id);
+        }
+      }
+      assert(moved.length >= 25, `only ${moved.length} sliders were reached from a pad`);
+      assert(!stuck.length, `sliders a pad cannot move: ${stuck.join(', ')}`);
+      /* AND UP/DOWN STILL WALKS PAST ONE, or the slider becomes a trap of its
+       * own: left and right are the number, up and down are the list. */
+      const first = b.doc.getElementById('opt-sens');
+      first.focus();
+      b.menu.padNav('down');
+      assert(b.doc.activeElement !== first, 'down did not leave the slider');
+      return `${moved.length} sliders move on a pad, both ways, and up still walks past them`;
+    } finally { b.close(); }
+  });
+
+  check('pause: the card cannot grow past the screen it is centred on', async () => {
+    /**
+     * `.screen` centres its child with `align-items:center`, which clips an
+     * over-tall child at BOTH ends and gives the player nothing to scroll.
+     * Measured in Chromium — card height and the top of #btn-resume, shut /
+     * settings open / key table open / both:
+     *
+     *   1920x1080  521 px / 424 · 765 / 302 · 1064 / 153 · 1308 / 31
+     *   1366x768   521 / 268 · 767 / 145 · 947 / 55 · 1194 / −68
+     *   1280x720   521 / 244 · 767 / 121 · 929 / 40 · 1176 / −83
+     *
+     * The third column is the KEY TABLE ALONE and it is what shipped: at 1366
+     * the card already began 82 px above the window. The fourth is both boxes,
+     * where Resume leaves the screen.
+     *
+     * This is a claim about the CASCADE and there is no layout engine here, so
+     * it is checked the way front-screen.mjs checks its two geometric claims:
+     * against the stylesheet, by the rule that has to exist for the numbers
+     * above to be answered.
+     */
+    const css = await read('styles.css');
+    const rule = /#pause \.pause-wrap\{([^}]*)\}/.exec(css);
+    assert(rule, 'nothing in styles.css bounds the height of the pause card');
+    const body = rule[1];
+    assert(/max-height:\s*\d+vh/.test(body), `#pause .pause-wrap has no max-height: ${body}`);
+    assert(/overflow-y:\s*auto/.test(body), `#pause .pause-wrap does not scroll: ${body}`);
+    /* The padding is not decoration: `overflow-y:auto` makes the other axis a
+     * scrollport too, and every button on this card carries a 5 px stamp and
+     * lifts 2 px more under the pointer. And the width has to grow by exactly
+     * that padding, because `box-sizing:border-box` would otherwise take it
+     * out of the buttons. */
+    const pad = /padding:\s*0\s+(\d+)px/.exec(body);
+    const wide = /width:\s*min\((\d+)px/.exec(body);
+    assert(pad && wide, `#pause .pause-wrap needs a padding and a width: ${body}`);
+    const base = /\.pause-wrap,\.death-wrap\{width:min\((\d+)px/.exec(css);
+    assert(base, 'the shared pause/death width rule is gone');
+    assert(Number(wide[1]) === Number(base[1]) + 2 * Number(pad[1]),
+      `the card is ${wide[1]} px wide with ${pad[1]} px of padding against a content width of `
+      + `${base[1]} — the padding is coming out of the buttons`);
+    return `max-height ${/max-height:\s*(\d+vh)/.exec(body)[1]}, scrolls, `
+      + `${wide[1]} px wide for ${base[1]} px of content`;
+  });
+
   /* ══════════════════════════════════════════════════════════════════
    *  3. A SLIDER CAN SIT WHERE ITS OWN DEFAULT IS
    * ══════════════════════════════════════════════════════════════════ */

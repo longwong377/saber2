@@ -166,7 +166,24 @@ class Element {
       toString: () => el.className,
     };
   }
-  get tabIndex() { return this.attrs.has('tabindex') ? Number(this.attrs.get('tabindex')) : -1; }
+  /**
+   * −1 EXCEPT WHERE A BROWSER SAYS 0, and the exception is the whole point.
+   *
+   * `tabIndex` answered −1 for every element with no `tabindex` attribute,
+   * which is right for a `<div>` and WRONG for a form control: a browser gives
+   * `<input>`, `<button>`, `<select>`, `<textarea>` and `<a href>` a default of
+   * 0 because they are focusable without being asked. `Menu._padFocusable`
+   * filters on exactly this — `if (el.disabled || el.tabIndex < 0) return
+   * false` — so on this page every slider and every checkbox in the game
+   * dropped out of the pad's walk, and a check driving a controller measured
+   * an empty list and could not tell that from a controller that cannot reach
+   * them. Measured: #menu came back 453 controls and 0 of its 33 sliders.
+   */
+  get tabIndex() {
+    if (this.attrs.has('tabindex')) return Number(this.attrs.get('tabindex'));
+    if (this.localName === 'a') return this.attrs.has('href') ? 0 : -1;
+    return ['input', 'button', 'select', 'textarea'].includes(this.localName) ? 0 : -1;
+  }
   set tabIndex(v) { this.setAttribute('tabindex', String(v)); }
   get title() { return this.attrs.get('title') || ''; }
   set title(v) { this.setAttribute('title', v); }

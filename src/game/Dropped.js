@@ -346,13 +346,21 @@ function claimed(world, prop) {
   return false;
 }
 
-/** Fade every material a hilt owns. `k` runs 1 → 0. */
+/**
+ * Fade every material a hilt owns. `k` runs 1 → 0, and 1 puts it back.
+ *
+ * `transparent` is remembered rather than left on, unlike `Corpses.fade` —
+ * because a hilt CAN be rescued (see `ageDropped`) and a machined metal
+ * cylinder left in the transparent pass sorts against its own blade glow. A
+ * corpse has no rescue path and so has no reason to carry the flag.
+ */
 function fadeHilt(prop, k) {
   prop.mesh?.traverse?.((o) => {
     if (!o.isMesh || !o.material) return;
     for (const m of (Array.isArray(o.material) ? o.material : [o.material])) {
       if (!m) continue;
-      if (!m.transparent) m.transparent = true;
+      if (m.userData.hiltOpaque === undefined) m.userData.hiltOpaque = !m.transparent;
+      m.transparent = k >= 1 ? !m.userData.hiltOpaque : true;
       m.opacity = k;
     }
   });
