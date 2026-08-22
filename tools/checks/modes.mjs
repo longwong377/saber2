@@ -218,6 +218,47 @@ export function run({ check, assert }) {
     return `two facets bought through the ledger → handed 2, store communed 2, entry facets 2, both printed`;
   });
 
+  check('modes: every mode whose run TAKES something has a word for what it took', async () => {
+    /**
+     * `World._taken()` answers "how much of the run is behind you" with ONE
+     * number and four meanings, and `main.js`'s `TAKEN` map is the five labels
+     * that name it — "Missions taken", "Engagements won", "Areas taken",
+     * "Ground taken", "Forms faced". A hand-written map of mode names beside
+     * the method that decides them is HANDOFF §2.3's shape, and it is wearing
+     * §2.3's close relative on top: the reader is `TAKEN[mode] ?? 'Ground
+     * taken'`, so a ninth mode does not get a missing label, it gets a plausible
+     * wrong one. That is exactly how `stats.areas ?? 5` printed "Areas taken 5"
+     * on every won run in the game for the life of the death card.
+     *
+     * WHICH MODES OWE A LABEL IS DERIVED, off the same three fields `_taken`
+     * branches on: `battles` (a campaign or a skirmish), `crossing` (Command or
+     * The Line) and `ladder` (the duel). A mode that takes nothing owes nothing
+     * and is not asked.
+     */
+    const { MODES } = await import('../../src/game/Waves.js');
+    const src = await read('src/main.js');
+    const m = /const TAKEN = \{([\s\S]*?)\};/.exec(src);
+    assert(m, 'src/main.js no longer declares the TAKEN label map — this check describes a file that is gone');
+    const labelled = new Set([...m[1].matchAll(/(\w+):\s*'/g)].map((x) => x[1]));
+    const owes = Object.entries(MODES)
+      .filter(([, M]) => M.battles || M.crossing || M.ladder)
+      .map(([k]) => k);
+    assert(owes.length >= 5, `${owes.length} modes take something — the fields this is derived from have moved`);
+    for (const k of owes) {
+      assert(labelled.has(k),
+        `${MODES[k].name} reports a count off World._taken() and main.js has no label for it, so the `
+        + `card falls through to the default and prints somebody else's noun`);
+    }
+    /* …AND NOTHING ELSE IS IN THE MAP. A label for a mode that takes nothing is
+     * a row that can never be printed, which is the write-only half of the same
+     * defect. */
+    for (const k of labelled) {
+      assert(owes.includes(k),
+        `main.js labels '${k}' in TAKEN and that mode takes nothing — the row is unreachable`);
+    }
+    return `${owes.length} modes take something, all named: ${owes.join(', ')}`;
+  });
+
   check('modes: a count a mode\'s card states out loud is a count the code holds', async () => {
     /**
      * `claims.mjs` holds the training card's "ten lessons" and the duel card's
