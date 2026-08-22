@@ -102,6 +102,89 @@ export const NERVE = {
    */
   TURNED: -0.165,
   /**
+   * …AND HIS OWN SHOT CAME BACK OUT OF THE AIR. FLAGSHIP §7's BREAK verb, and
+   * it is the term that carries it, because the two below could not.
+   *
+   * ── WHY THE PROXIMITY TERMS CANNOT REACH, MEASURED ──────────────────────
+   *
+   * `BLADE` and `COMRADE_FELL` are the same shape: how many bodies are near a
+   * point — the blade, or the corpse. Two Geonosis Command battles, 120 game-
+   * seconds each, the flagship script holding station in its own line with the
+   * blade lit (`tools/_nervewhy.mjs`), 185 hostile bodies between them:
+   *
+   *     bodies inside BLADE_REACH of the Jedi, at any instant   0.4
+   *     of a 32-second life, seconds spent inside it            0.44   (1.4%)
+   *     bodies that EVER enter it                               25%
+   *     longest single visit by any body in either battle       3.7 s   (4.8 s)
+   *     …against the 11.5 s `BLADE` needs to break one
+   *     witnesses inside `SEE` of a body going down             1.1
+   *     own side seen to fall, per body, over its whole life    0.68
+   *
+   * So the death channel's whole budget is 0.68 x 0.055 = 0.037 against the
+   * 0.76 a break costs — twenty times short WITH THE RALLY TURNED OFF — and
+   * the blade channel's is 0.05. Neither is a tuning problem. Widening the
+   * radius does not fix it either: at 30 m, which is the whole engagement, the
+   * mean body still only accumulates 4.5 seconds of dwell.
+   *
+   * AND THE UPPER BOUND SAYS THE SAME THING. Put the Jedi bodily on the
+   * centroid of the living horde every frame, blade lit, kept alive — nobody
+   * could play it, and it is the design sentence with the walking removed —
+   * and the share of hostile body-seconds broken is 2.82% and 0.12%. On the
+   * second seed the horde stands in a RING at 11-14 m and `BLADE_REACH` sees
+   * 0.06 seconds per body in two minutes.
+   *
+   * ── AND THE REASON IS IN ANOTHER TABLE ──────────────────────────────────
+   *
+   * `BLADE_REACH` is 6.5 m and it was derived off `MORALE.NEAR` — the radius
+   * for "this Jedi is with these men". It was never compared against the
+   * number that decides where the OTHER army stands: `ARCHETYPES[*].preferred`,
+   * whose inner edge is 7 m for a B1, 6 for a B2, 8 for a commando, 9 for a
+   * rocket droid, 12 for a super commando and 22 for a sniper — and `_move`
+   * walks a body OUTWARD when it is nearer than that. A ranged body inside
+   * 6.5 m of its target is a body its own steering is evacuating. The term is
+   * defined on a ring the horde is built to stay out of.
+   *
+   * ── SO THE VERB CHANGES SHAPE, AND THIS IS THE SHAPE ────────────────────
+   *
+   * The horde does not stand near you. It SHOOTS at you, from 7 to 42 m, which
+   * is exactly where every one of those bands puts it. A bolt answered is
+   * therefore the one event that is abundant, is caused by the player, is
+   * aimed, and happens where the horde actually is:
+   *
+   *   IT COSTS THE PLAYER. Every answer is billed on `Combat.GUARD_COST`'s
+   *     ladder — 1.2 stamina for a block, 0.4 for a deflect, 0.5 Force for one
+   *     the auto-guard cone took off a blade you did not drive — which is the
+   *     bar FLAGSHIP §8 says the Vanguard rests on. And the bolt has to be
+   *     coming at YOU: to break a formation you have to make it shoot at you,
+   *     and `NEXT.md` measures what a Jedi drawing the horde's attention costs
+   *     his own line.
+   *   IT IS NOT AN AURA. It is not a radius at all. Two bodies shoulder to
+   *     shoulder, one firing at the Jedi and one at the line, get completely
+   *     different numbers, and a body that stops shooting stops paying — which
+   *     is the same body the verb has just persuaded to stop shooting.
+   *   IT DOES NOT STOP PAYING WHEN THE PLAYER MOVES, which is what killed the
+   *     four local goods before it. It follows the bolts.
+   *
+   * WHERE THE NUMBER COMES FROM: `ANSWERED_TO_BREAK` below, and the constant
+   * is derived off it so a tuning pass cannot move one and leave the other.
+   */
+  ANSWERED: 0,                                  // …assigned below, off ANSWERED_TO_BREAK
+  /**
+   * HOW MANY OF A BODY'S OWN BOLTS HAVE TO COME BACK BEFORE IT BREAKS.
+   *
+   * SIX, and it is two full bursts of the commonest gun on the field — a B1
+   * fires `burst: 3` every `fireRate: 1.5` s — so it is about three seconds of
+   * an exchange in which nothing the body does works. Not one burst, which
+   * would break a rank in a second and a half and make the blade unnecessary;
+   * not a magazine, which no body in this game lives long enough to empty.
+   *
+   * The ordering it has to keep, and the check holds it: an answered bolt is
+   * worth MORE than the man beside you falling — it is happening to you, not
+   * near you — and LESS than a bolt sent home that kills, which is TURN and is
+   * the rarest thing a player can do.
+   */
+  ANSWERED_TO_BREAK: 6,
+  /**
    * A LIT HOSTILE BLADE, INSIDE `BLADE_REACH`, PER SECOND.
    *
    * §7's "walk into the front of a formation" as a rate. It is the term that
@@ -143,6 +226,15 @@ export const NERVE = {
    */
   START: 1,
 };
+
+/**
+ * SIX ANSWERED BOLTS BREAKS A MAN — derived, so it cannot be typed into a lie
+ * by a tuning pass that moves one of the two and forgets the other.
+ *
+ * `1 - MORALE.BREAK` is what a break costs from full nerve; six is the count
+ * above. Negative because everything in this table is something taken.
+ */
+NERVE.ANSWERED = -(1 - MORALE.BREAK) / NERVE.ANSWERED_TO_BREAK;
 
 /** The nerve this body has, wherever it is kept. 1 for anything not in a fight. */
 export function nerveOf(e) {
@@ -221,6 +313,28 @@ export function witnessDeath(bodies, fallen) { return spread(bodies, fallen, NER
 export function turnedHome(bodies, fallen) { return spread(bodies, fallen, NERVE.TURNED); }
 
 /**
+ * A BOLT THIS BODY FIRED CAME BACK OUT OF THE AIR. FLAGSHIP §7's BREAK verb.
+ *
+ * ON THE MAN WHOSE SHOT IT WAS AND ON NOBODY ELSE, which is the whole reason
+ * this term reaches where `BLADE` and `COMRADE_FELL` cannot: it is not a
+ * radius, so it does not care where the player is standing, only what the
+ * player answered. Two bodies shoulder to shoulder, one shooting at the Jedi
+ * and one at the line, are billed completely differently.
+ *
+ * ONE DOOR: `World._onBoltDeflect`, which is where every bolt any blade in the
+ * game turns aside arrives, player or enemy duellist, blade or guard zone or
+ * screen. A second call site would be a second answer to how frightened a man
+ * is, which is the twin `shakeNerve`'s own note is about.
+ *
+ * A BOLT PULLED OUT OF THE AIR BY STASIS IS NOT BILLED, and that is a decision
+ * rather than an omission: `Player._launchStasisItem` is the Consul's verb and
+ * it is priced in Force, not on the guard ladder. BREAK is what the blade does.
+ *
+ * @returns true if this call wrote the firer's own ledger.
+ */
+export function boltAnswered(firer) { return shakeNerve(firer, NERVE.ANSWERED); }
+
+/**
  * WHAT A SHAKEN GUN IS WORTH, as a multiplier on its own spread.
  *
  * The curve is `Enemy.aimQuality`'s morale term with one difference that
@@ -258,6 +372,18 @@ export function nerveAim(e) {
 export function nerveTick(bodies, blades, dt) {
   if (!bodies || !(dt > 0)) return 0;
   const r2 = NERVE.BLADE_REACH * NERVE.BLADE_REACH;
+  /**
+   * ── IS ANYBODY RUNNING YET? ─────────────────────────────────────────────
+   *
+   * The rout pass below is the only O(n²) thing in this file, and this is what
+   * keeps it off the frame of every wave in the shipped game: until the player
+   * has broken somebody there is nothing to catch, so the census is not taken
+   * at all. It is the same property the whole table has — inert until a blade
+   * arrives — expressed as a cost rather than as a number.
+   */
+  let anyBroken = false;
+  for (const e of bodies) if (e && !e.dead && nerveBroken(e)) { anyBroken = true; break; }
+  const see2 = NERVE.SEE * NERVE.SEE;
   let shaken = 0;
   for (const e of bodies) {
     if (!e || e.dead || e.trooper) continue;
@@ -271,6 +397,52 @@ export function nerveTick(bodies, blades, dt) {
      * number the verb is tuned on. Measured by `tools/checks/break.mjs`, which
      * derives the expected time from the table rather than restating it. */
     let d = NERVE.RALLY_PER_S;
+    /**
+     * ── …UNLESS THE RANK AROUND HIM IS COMING APART ────────────────────────
+     *
+     * THE CARRIER WHOSE RADIUS IS THE FORMATION, and it is the half of this
+     * verb that lets one man the player broke reach men the player never got
+     * near. Everything else in this table is billed at a point the player
+     * chose — the blade's reach, the corpse, the bolt he answered — and the
+     * measurements over that table (see `ANSWERED`) all say the same thing: a
+     * mechanism whose payout is proportional to how much of the horde is near
+     * the Jedi pays out to about half a body. The rank is not near the Jedi.
+     * The rank is near ITSELF.
+     *
+     * `MORALE.ROUT` AND NOT A THRESHOLD OF ITS OWN. It is the same sentence
+     * the roster already makes — "what share of a squad has to break before
+     * the rest go with them", a half, chosen so a player can see it coming —
+     * asked of the men a horde body can actually see, because a horde has no
+     * squads to ask it of. Strictly greater, exactly as `ROUT` is, so one
+     * broken man beside one steady one is not a rout.
+     *
+     * AND THE RATE IS THE RALLY'S OWN, WITH THE SIGN TURNED OVER. No new
+     * constant, and the sentence is the exact inverse of the one the rally
+     * already makes: out of contact a man's nerve comes back at
+     * `RALLY_PER_S`; in a rank that is running it goes the other way at the
+     * same rate. From full nerve that is 15.2 s — slower than a lit blade in
+     * his face, which is right, because this is what he can see happening to
+     * other people.
+     *
+     * IT CANNOT RUN AWAY FROM ONE BREAK. A body needs MORE THAN HALF of the
+     * men it can see to be running already, so the player has to buy the
+     * first half at the ordinary price and the rank carries it from there —
+     * and the moment the player stops, the broken men rally out of contact,
+     * the share falls back under a half and the chain stops. That is a
+     * formation coming apart rather than an army evaporating, which is the
+     * distinction the whole of this table is written around.
+     */
+    if (anyBroken) {
+      let seen = 0, running = 0;
+      for (const o of bodies) {
+        if (!o || o === e || o.dead || o.team !== e.team) continue;
+        const dx = o.position.x - e.position.x, dz = o.position.z - e.position.z;
+        if (dx * dx + dz * dz > see2) continue;
+        seen++;
+        if (nerveBroken(o)) running++;
+      }
+      if (running > MORALE.ROUT * seen && seen > 0) d = -NERVE.RALLY_PER_S;
+    }
     for (const b of blades) {
       if (!b || b.team === e.team) continue;
       const dx = e.position.x - b.position.x, dz = e.position.z - b.position.z;

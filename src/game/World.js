@@ -31,7 +31,7 @@ import { Enemy, ARCHETYPES, applyModifier, ENEMY_POWERS, FORCE_KINDS, IMPULSE_AS
 import { WaveDirector, RankSet, boonTick, boonGuard, bondReceive, bondGuardIn, bondGive, BOND, boonById, MODES,
   skirmishConfig, SKIRMISH } from './Waves.js';
 import { Communion, FACETS, insightRate } from './LivingForce.js';
-import { nerveTick, witnessDeath, turnedHome, shakeNerve, nerveOf, NERVE } from './Nerve.js';
+import { nerveTick, witnessDeath, turnedHome, shakeNerve, nerveOf, boltAnswered, NERVE } from './Nerve.js';
 /**
  * What "open" is worth, in Insight — and it was a quarter of what it promised.
  *
@@ -210,6 +210,7 @@ function nextFrame() {
   return Promise.resolve();
 }
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
+const _blastAt = new THREE.Vector3();
 const _v4 = new THREE.Vector3(), _v5 = new THREE.Vector3();
 /** Wire precision. Centimetres for positions, milli-units for directions. */
 const r2 = (v) => Math.round(v * 100) / 100;
@@ -2690,11 +2691,42 @@ export class World {
     return entry;
   }
 
-  onExplosion(centre, size = 1) {
+  /**
+   * A BLAST IS A THING THAT HAPPENS, so it goes on the wire like the grenade
+   * and the bolt do — see `_recordNades`, which makes the whole argument.
+   *
+   * `GrenadeField.throw` could be wrapped because every grenade in the game
+   * goes through it. This is the same seam for a blast: an exploding barrel
+   * (`Prop.shatter`), a droideka's death (`Enemy.js`) and every structure
+   * charge all reach the world through this one method, and a client that
+   * never hears it sees a barrel vanish in silence, takes damage from nowhere,
+   * and stands on ground with no crater in it while the host's has one.
+   *
+   * `ghost` is the client's copy and it is a PICTURE, for the reason
+   * `_spawnNetNades` states: the host has already billed the damage and it
+   * arrives as hp in the next snapshot, so a client that also billed it would
+   * kill the same droid twice on its own screen and then be corrected.
+   *
+   * It is forced on for anything a CLIENT raises locally, too. A client can
+   * cut an explosive barrel open itself, and before this it applied a full
+   * 55-damage sphere to bodies it does not own — the host disagreed a frame
+   * later and the correction looked like a droid teleporting back to its feet.
+   * The host is the only node that bills; every other copy is a picture.
+   *
+   * What a ghost still does: particles, sound, the flash, the screen shake,
+   * the crater, the shove on loose physics bodies, and (through Destruction's
+   * wrapper) the structural damage — none of which is in the snapshot, and all
+   * of which the client must produce for itself or not have at all.
+   */
+  onExplosion(centre, size = 1, opts = {}) {
+    const ghost = !!opts.ghost || this.netMode === 'client';
+    if (!ghost && this.netMode === 'host' && this._netBlasts) {
+      this._netBlasts.push([r2(centre.x), r2(centre.y), r2(centre.z), r2(size)]);
+    }
     this.particles?.explosion(centre, size);
     audio.explosion(centre, size);
     const radius = 5.5 * size, force = 24 * size, damage = 55 * size;
-    for (const e of this.enemies) {
+    for (const e of ghost ? [] : this.enemies) {
       if (e.dead) continue;
       const d = e.position.distanceTo(centre);
       if (d > radius) continue;
@@ -2707,7 +2739,10 @@ export class World {
       const d = p.position.distanceTo(centre);
       if (d > radius) continue;
       const k = 1 - d / radius;
-      p.damage(damage * 0.4 * k, centre, null, 'explosion');
+      /* The shove, the shake and the crater are the client's to draw; the
+       * damage is the host's to bill and arrives as a `hit`. See the note
+       * over this method. */
+      if (!ghost) p.damage(damage * 0.4 * k, centre, null, 'explosion');
       _v1.subVectors(p.position, centre).setY(0.6).normalize().multiplyScalar(force * 0.35 * k);
       p.velocity.add(_v1);
       /* `?.` — see the note over `_applyBladeEvent`. A RemoteAvatar is in
@@ -4241,6 +4276,14 @@ export class World {
      */
     const side = asTeam(owner.team);
     /**
+     * …AND THE MAN WHOSE SHOT IT WAS. FLAGSHIP §7's BREAK verb, billed at the
+     * one door every turned bolt in the game passes through — see
+     * `Nerve.boltAnswered`, which owns the amount, the routing and the reason.
+     * A player is not a body with a ledger, so the deflector's own side is
+     * asked first and `this.players` filters the other end.
+     */
+    if (bolt.team !== side && !this.players.includes(bolt.owner)) boltAnswered(bolt.owner);
+    /**
      * ── AND THE ONE THING THAT IS ALLOWED TO BE OURS ALREADY: A STRAY ──────
      *
      * The screen answers a bolt on its way into one of YOUR OWN MEN, and
@@ -5033,6 +5076,7 @@ export class World {
     this._netFires = [];
     /* …and the grenades, on the same wire and for the same reason. */
     this._netNades = [];
+    this._netBlasts = [];
     this._netWave = { w: this.director?.wave ?? 1, act: 0, started: false };
     if (mode === 'host') { this._recordFires(); this._recordNades(); }
     if (mode === 'client') this._netDirector();
@@ -5111,6 +5155,23 @@ export class World {
       const [x, y, z, tx, ty, tz, team, fuse] = n;
       _v1.set(x, y, z); _v2.set(tx, ty, tz);
       this.grenades.throw(_v1, _v2, { team, fuse, ghost: true });
+    }
+  }
+
+  /** …and the client's copy of a blast, for the reason `_spawnNetNades` gives. */
+  _spawnNetBlasts(blasts) {
+    if (!blasts || !blasts.length) return;
+    for (const b of blasts) {
+      const [x, y, z, size] = b;
+      /* Through `this.onExplosion` and NOT the World method by name, because
+       * Destruction replaces the property with a wrapper at load and the
+       * structural half of the blast lives in that wrapper. A client that
+       * called the raw method would draw the fireball and leave the wall
+       * standing. */
+      /* NOT a shared scratch vector: `onExplosion` writes `_v1` in its own
+       * body loop, and passing `_v1` in as `centre` means every body after the
+       * first is shoved away from a point that has already been overwritten. */
+      this.onExplosion(_blastAt.set(x, y, z), size, { ghost: true });
     }
   }
 
@@ -6025,6 +6086,7 @@ export class World {
     }
     this._spawnNetBolts(msg.bf);
     this._spawnNetNades(msg.gn);
+    this._spawnNetBlasts(msg.ex);
     /**
      * AN ID THE HOST HAS STOPPED SENDING IS GONE, dead or not.
      *
