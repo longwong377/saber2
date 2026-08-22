@@ -145,9 +145,54 @@ import { aimAt } from './Combat.js';
  * for are the two that move this number at all. No single figure in them
  * should be quoted.
  *
- * `every` 14.0 s — the cadence is what turns damage into a RATE, and the rate is
- *   what the choice is made of. IT WAS 3.4, THEN 7.0, AND BOTH READINGS THAT
- *   SET IT COULD NOT SEE AN ENGAGEMENT END.
+ * `every` 34.0 s — the cadence is what turns damage into a RATE, and the rate is
+ *   what the choice is made of. IT WAS 3.4, THEN 7.0, THEN 14.0 — AND EVERY ONE
+ *   OF THOSE WAS SET AGAINST A GUN THAT WAS SHOOTING INTO THE DIRT.
+ *
+ *   ── THE DIAL DID NOT MOVE; THE BUG IT WAS TUNED AROUND DID ───────────────
+ *
+ *   `_fire` read `_v.copy(t.position); _v.y += (t.chestY ?? 1.1)`, and `chestY`
+ *   is an ABSOLUTE world height — `position.y + 1.15 * bodyScale` — so it
+ *   counted the ground under the man twice. The muster formation on this ground
+ *   stands at −0.84 m, so the gun was laying every round 0.80 m under the chest
+ *   it was aiming at. The line-of-sight test above traced to the same wrong
+ *   point, so it also declined shots it could have taken. Measured on
+ *   `tools/_gunpit.mjs` — one gun, a formed-up line, nothing else on the field,
+ *   600 s, the same seeds either side of the fix:
+ *
+ *       aim         0.80 m under the chest        →   0.25 m
+ *       rounds      15 and 57 over ten minutes    →   27 and 93
+ *       delivered   0.33-0.50 men a minute        →   0.64-0.74
+ *       names       2 of 10                       →   5 of 10
+ *
+ *   So the correct aim roughly DOUBLED what this gun delivers, and 14.0 was the
+ *   number chosen for a gun delivering half of that. 34.0 is 14.0 re-paid at
+ *   the corrected rate. It is one number and it is a decision, so here is what
+ *   it costs both ends:
+ *
+ *     THE LINE pays about a name and a half to an emplacement it never
+ *       answers, over an engagement, instead of the 3.8 the corrected aim was
+ *       charging at 14.0. Measured: an engagement fought with no Jedi at all
+ *       reads 1.65 of ten survivors with the gun at 14.0 and about 5 of ten
+ *       with it at 34.0 and the conscript's round at 2.0 — which is the target
+ *       the player set, and it is not met at any setting of this dial alone.
+ *     §7 keeps a verb. The gun still delivers a quarter to a third of a name a
+ *       minute of its own fire and still takes four of ten names over ten
+ *       minutes of it, so BREACH removes something real; what it no longer does
+ *       is decide the engagement on its own for a player who never finds it.
+ *       `tools/checks/breach.mjs` holds it on a RATE now rather than on
+ *       `lost >= 1`, which is the other half of the same decision.
+ *
+ *   AND THE CADENCE IS NOT THE WHOLE STORY ON THIS GROUND, which is worth
+ *   knowing before anybody turns it again: `update` decrements `_timer` every
+ *   frame and returns WITHOUT resetting it when the line-of-sight raycasts
+ *   refuse, so the gun fires the instant it can see. Measured, it gets 8-9
+ *   bursts away in ten minutes at 14.0 against a theoretical 43, so for much of
+ *   an engagement LINE OF SIGHT and not `every` is what is limiting it. Turning
+ *   this dial past the point where sight is the binding constraint buys nothing.
+ *
+ *   THE OLD NOTE, kept because its measurements are sound and only their
+ *   subject was a gun firing low:
  *
  *   Every earlier tally of this gun stopped on a poll for `director.mustering`,
  *   and that flag is true for less than one frame: `_areaClear` ends with "no
@@ -235,7 +280,7 @@ import { aimAt } from './Combat.js';
  *   trebles the rounds without moving what a single round is worth.
  */
 export const GUN = {
-  damage: 30, every: 14.0, reach: 120, spread: 0.028, speed: 118, warmup: 2.2,
+  damage: 30, every: 34.0, reach: 120, spread: 0.028, speed: 118, warmup: 2.2,
   burst: 3, burstGap: 0.14,
 };
 

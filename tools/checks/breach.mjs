@@ -39,10 +39,18 @@ import * as THREE from 'three';
 import { GUN } from '../../src/game/Emplacement.js';
 import { clocked } from './_shared.mjs';
 
-/** How long the isolated arm below watches the gun. Long enough that the
- *  cadence gets several bursts off at any setting this dial is likely to take,
- *  and stated once so the rate and the message cannot disagree. */
-const SECONDS = 90;
+/**
+ * How long the isolated arm below watches the gun.
+ *
+ * NINETY SECONDS WAS THE WHOLE OF WHY THAT ARM FLAKED. At `GUN.every` it gets
+ * two or three bursts away in ninety seconds, and at the dispersion the gun
+ * carries over the 69 m to the muster ground that is one name or none on a
+ * coin — which is what `lost >= 1` was reading. Four minutes is several times
+ * the cadence at any setting this dial is likely to take, so the quantity below
+ * is a sum of a dozen or more draws rather than one. Stated once, so the rate
+ * and the message cannot disagree.
+ */
+const SECONDS = 240;
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 /** Face a world direction. The same conversion `blast-door.mjs` measured off
@@ -273,12 +281,25 @@ export async function run({ check, assert }) {
      * the only thing shooting and `theline.12` owns how much the LINE may lose.
      */
     const perMin = live.gun.hp / (SECONDS / 60);
-    assert(perMin >= live.manHp,
+    /**
+     * ONE NAME'S WORTH OF HEALTH OVER THE WHOLE WINDOW, and the unit is a body
+     * of this line rather than a number typed here.
+     *
+     * `GUN.every`'s note carries the price this gun is set to: about a quarter
+     * to a third of a name a minute of its own fire, which over four minutes is
+     * a name or more. `tools/_gunpit.mjs` reads it at 0.6 men a minute over ten
+     * minutes on this ground, so the bar sits at roughly half of what the dial
+     * delivers and has a dozen or more hits behind it — which is the whole
+     * difference from `lost >= 1`. It is a floor under "this gun is a price at
+     * all", not a statement of the price; the price itself is `GUN.every`'s to
+     * argue and `theline.12`'s to bound from the other side.
+     */
+    assert(live.gun.hp >= live.manHp,
       `${live.shots} rounds over ${SECONDS} s put ${live.gun.hits} hits and `
       + `${live.gun.hp.toFixed(0)} hp into a formed-up line with nothing else on the field — `
-      + `${perMin.toFixed(0)} hp a minute against a body that carries ${live.manHp}. The gun is `
-      + 'priced at about one name a minute of its own fire (see GUN.every); below that it is an '
-      + 'errand, and §7 asks for a verb.');
+      + `${perMin.toFixed(0)} hp a minute, and one body of this line carries ${live.manHp}. A gun `
+      + 'that is not worth a single name over four minutes of its own fire is scenery with a sound '
+      + 'effect, and §7 asks for a verb.');
     return `${SECONDS} s of one emplacement against a formed-up line, nothing else on the field: `
       + `${live.shots} rounds in bursts of ${GUN.burst}, ${live.gun.hits} hits, `
       + `${live.gun.hp.toFixed(0)} hp — ${(perMin / live.manHp).toFixed(2)} men a minute of its own `

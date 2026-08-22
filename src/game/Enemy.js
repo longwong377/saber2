@@ -804,7 +804,30 @@ export const ARCHETYPES = {
      * for are the two that move this number at all. No single figure in them
      * should be quoted.
      *
-     * `damage` 5, HALVED — AND THE HALVING IS ABOUT THE LINE, NOT ABOUT YOU.
+     * `damage` 2, HALVED AND HALVED AGAIN — AND IT IS ABOUT THE LINE, NOT
+     * ABOUT YOU.
+     *
+     * ── THE SECOND HALVING IS THE CHEST'S BILL ────────────────────────────
+     *
+     * `Enemy._shoot` led its aim on `target.chest ?? target.position`, and only
+     * `Player` had a `chest`, so until this session every round the levy fired
+     * at one of your named men was aimed at his BOOTS. The 5 above was chosen
+     * against that. With the aim corrected, forty free rifles land on forty
+     * chests, and the arithmetic is the same argument arriving twice as hard.
+     *
+     * MEASURED, twenty seeds an arm, fresh processes at an identical phase, the
+     * only difference being the aim: an engagement fought with no Jedi on the
+     * field went from **5.10 of ten survivors to 1.65**, and hostile fire into
+     * the line from 1.18 to 1.71 hp a second. Six seeds apiece on this one
+     * constant, everything else held: the round at 5 leaves 1.17 of ten
+     * standing, at 2.5 it leaves 2.50, at 2.0 it leaves 2.83, and taking it to
+     * zero leaves 3.50 — so the levy alone is worth about 2.3 of the eight and
+     * a half names an engagement was costing. 2 is the setting that, beside the
+     * emplacement's own re-paid cadence, lands the engagement on the target the
+     * player set.
+     *
+     * The old argument is unchanged and is below; it is only that the number it
+     * argued for was measured against a levy that could not hit anybody.
      *
      * FLAGSHIP §6 prices this gun at "1.4 dps AGAINST A MOVING PLAYER" — a
      * player with a guard, a dash and a dive — and src/game/Levy.js says what
@@ -840,7 +863,7 @@ export const ARCHETYPES = {
      * the wrong shape for weather twice over: fewer bolts is less suppression
      * and a bigger round is more killing.
      */
-    damage: 5,
+    damage: 2,
     preferred: [7, 15], boltColor: BOLT_COLORS.red,
     /** THE FIELD THE WHOLE CLASS IS. See the note above and `World.paysOut`. */
     score: 0, threat: 0.5,
@@ -4816,6 +4839,22 @@ export class Enemy {
   }
 
   update(dt, ctx) {
+    /**
+     * A BODY SOMEBODY ELSE HAS ALREADY TORN DOWN IS NOT SOMETHING TO STEP.
+     *
+     * There are two owners of a corpse and they do not talk to each other:
+     * `Corpses` retires one by worth and calls `dispose()` on it, and THIS
+     * method's own `return this.dying < 40` is what takes it out of
+     * `world.enemies`. So a corpse the ledger spent at four seconds was still
+     * stepped for another thirty-six — `actor.update` syncing bones that had
+     * been removed from the physics world onto holders that had been removed
+     * from the scene, and `saber.setHiltPose` posing a disposed blade.
+     *
+     * Returning false is the sentence `World.update` already knows how to
+     * read: it disposes (a no-op now — see `dispose`) and splices, on the very
+     * next frame.
+     */
+    if (this.disposed) return false;
     // A new frame: whatever short list of static boxes we hold was built
     // before destruction had its turn, so the first query of the frame
     // rebuilds it. See NEAR_REACH.
