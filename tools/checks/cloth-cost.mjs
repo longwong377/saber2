@@ -34,6 +34,17 @@
  * The timing is held to a band wide enough to survive a contended box and
  * narrow enough to catch a 4x claim.
  *
+ * …AND THE SPREAD IN THAT PARAGRAPH WAS THE CLOCK, NOT THE BOX. 1.9 against
+ * 3.3 for one fight, and later `6.43 ms` in a full gate at a load average of
+ * 44, are three readings of the same unchanged garments taken with
+ * `performance.now()`, which goes on running while this process is off the
+ * core. The solve is timed on `process.cpuUsage()` now — see
+ * tools/checks/_cpuclock.mjs, which measures the difference: one fixed
+ * arithmetic loop, 0.44 ms of CPU and 28.55 ms of wall in the same sample. The
+ * band stays a band because cache pressure from other tenants is real and
+ * moves a CPU reading by about a quarter; what it no longer has to absorb is a
+ * factor of six that was never about cloth.
+ *
  * The second check is the one the old note got wrong in the other direction:
  * `low` does not hand back the player's garments, because `Player.update` calls
  * `skirt.update` and `cloak.update` with no `clothOn` test at all. What the
@@ -42,6 +53,7 @@
  */
 
 import { snapshotShared, restoreShared } from './_shared.mjs';
+import { cpuMs, loadPhrase } from './_cpuclock.mjs';
 
 function stubEngine(THREE) {
   const scene = new THREE.Scene();
@@ -372,8 +384,30 @@ export async function run({ check, assert, THREE }) {
     const input = idleInput();
     for (let f = 0; f < 90; f++) world.update(1 / 60, input);
 
-    // Wrap the SHIPPED solver on the SHIPPED instances, so what is timed is
-    // what the frame actually runs.
+    /**
+     * Wrap the SHIPPED solver on the SHIPPED instances, so what is timed is
+     * what the frame actually runs — AND TIME IT ON THE CPU CLOCK.
+     *
+     * This used to be `performance.now()`, and that is what made the check
+     * unreadable in a full gate: it reported `19 enemies' garments cost 6.43 ms
+     * a frame` at a load average of 44, against a band whose own comment says
+     * the same fight reads 1.9 ms on a quiet box and 3.3 on a loaded one. None
+     * of those three numbers is about the garments. `performance.now()` keeps
+     * running while this process is off the core, so on a shared box it
+     * measures the OTHER TENANTS — measured here, one fixed arithmetic loop
+     * read 0.44 ms of CPU and 28.55 ms of wall in the same sample.
+     *
+     * `process.cpuUsage()` counts only the time this process was on a core, so
+     * the reading is the garments' own cost with the box divided out. See
+     * tools/checks/_cpuclock.mjs for the measurement that establishes it. The
+     * remaining error is cache pressure from the other tenants — about 25% at
+     * the worst sample — which is why the band below is still a band.
+     *
+     * The wall clock is kept alongside, because the RATIO of the two is the
+     * thing §2.6b asks every timing check to print: it says how busy the box
+     * was while this ran, in the check's own message, so the number can never
+     * be read out of context later.
+     */
     let solve = 0, refresh = 0;
     const patched = [];
     for (const e of world.enemies) {
@@ -381,15 +415,17 @@ export async function run({ check, assert, THREE }) {
         const c = e[key];
         if (!c || !c.update) continue;
         const u = c.update.bind(c), rc = c.refreshColliders ? c.refreshColliders.bind(c) : null;
-        c.update = (...a) => { const t = performance.now(); const r = u(...a); solve += performance.now() - t; return r; };
-        if (rc) c.refreshColliders = (...a) => { const t = performance.now(); const r = rc(...a); refresh += performance.now() - t; return r; };
+        c.update = (...a) => { const t = cpuMs(); const r = u(...a); solve += cpuMs() - t; return r; };
+        if (rc) c.refreshColliders = (...a) => { const t = cpuMs(); const r = rc(...a); refresh += cpuMs() - t; return r; };
         patched.push(c);
       }
     }
 
     const FRAMES = 400;
     solve = 0; refresh = 0;
+    const wall0 = performance.now(); const cpu0 = cpuMs();
     for (let f = 0; f < FRAMES; f++) world.update(1 / 60, input);
+    const wallAll = performance.now() - wall0, cpuAll = cpuMs() - cpu0;
     const alive = world.enemies.filter((e) => !e.dead);
     const on = alive.filter((e) => e.clothOn).length;
     /* WHY none, when it is none — the two ways this fixture can stop measuring
@@ -400,7 +436,10 @@ export async function run({ check, assert, THREE }) {
     const out = { solveMs: solve / FRAMES, refreshMs: refresh / FRAMES,
       on, alive: alive.length, spawned: world.enemies.length,
       nearest: near.length ? near[0] : Infinity, cut: world.clothCut,
-      patched: patched.length, FRAMES, audit };
+      patched: patched.length, FRAMES, audit,
+      contention: cpuAll > 0 ? wallAll / cpuAll : 1,
+      frameCpuMs: cpuAll / FRAMES, frameWallMs: wallAll / FRAMES,
+      load: await loadPhrase() };
     world.unload();
     world.dispose?.();
     return out;
@@ -408,14 +447,27 @@ export async function run({ check, assert, THREE }) {
 
   check('cloth: 20 enemies of garments cost about two milliseconds, not seven and a half', async () => {
     /**
-     * The band is wide on purpose. This box has three other agents on it and
-     * the same fight measured 1.9 ms on a quiet one and 3.3 ms on a loaded one;
-     * what must never come back is the claim that this is half a frame, so the
-     * ceiling is set where a 7.5 ms figure would fail and ordinary contention
-     * would not.
+     * The band is wide on purpose, and it is a band of CPU MILLISECONDS now.
+     *
+     * It used to be wall clock, and the wall clock is what put this check red
+     * in a full gate at `19 enemies' garments cost 6.43 ms a frame` — a run in
+     * which the box carried twelve agent lanes and a load average of 44. The
+     * garments had not changed. The comment that used to stand here recorded
+     * the same thing as a puzzle to be widened around: "the same fight measured
+     * 1.9 ms on a quiet box and 3.3 ms on a loaded one". Three readings of one
+     * fight spanning 3.4x is not a band that needs widening, it is a clock that
+     * needs replacing, and `_cpuclock.mjs` has the measurement.
+     *
+     * What survives the change is the reason the ceiling is where it is: what
+     * must never come back is the claim that this population is half a frame.
+     * 6 ms is set where a 7.5 ms figure fails and where the cache pressure a
+     * shared box still imposes on a CPU reading — about 25% at its worst — does
+     * not. The contention factor is printed either way, so a reading taken on a
+     * busy box says so in its own message.
      */
     try {
-      const { solveMs, refreshMs, on, alive, spawned, nearest, cut, patched, FRAMES } = await timed;
+      const { solveMs, refreshMs, on, alive, spawned, nearest, cut, patched, FRAMES,
+        contention, frameCpuMs, frameWallMs, load } = await timed;
       assert(patched >= 10, `only ${patched} enemy garments were found to time`);
       const total = solveMs + refreshMs;
       assert(on >= 10,
@@ -423,12 +475,16 @@ export async function run({ check, assert, THREE }) {
         + `${alive} of ${spawned} still alive, nearest ${nearest === Infinity ? 'n/a' : nearest.toFixed(1)} m `
         + `against a cut of ${cut} m`);
       assert(total < 6.0,
-        `${on} enemies' garments cost ${total.toFixed(2)} ms a frame. Engine.js was sized on 7.5 ms for `
-        + 'this population; if that is true again the tier decision needs re-deriving, and if it is '
-        + 'not, this check has stopped measuring the right thing');
+        `${on} enemies' garments cost ${total.toFixed(2)} ms of CPU a frame (${load}, box contention `
+        + `x${contention.toFixed(2)}). Engine.js was sized on 7.5 ms for this population; if that is true `
+        + 'again the tier decision needs re-deriving, and if it is not, this check has stopped measuring '
+        + 'the right thing. This is CPU time, not wall — a busy box cannot inflate it, so re-running it '
+        + 'alone will not make it go away');
       assert(total > 0.05, `the garment solve measured ${total.toFixed(3)} ms — nothing is being timed`);
       return `${on} enemy capes: solve ${solveMs.toFixed(2)} ms + collider refresh ${refreshMs.toFixed(2)} ms `
-        + `= ${total.toFixed(2)} ms a frame over ${FRAMES} frames, against the 7.5 ms the column was sized on`;
+        + `= ${total.toFixed(2)} ms of CPU a frame over ${FRAMES} frames, against the 7.5 ms the column was `
+        + `sized on. The whole fixture frame is ${frameCpuMs.toFixed(2)} ms CPU / ${frameWallMs.toFixed(2)} ms `
+        + `wall — contention x${contention.toFixed(2)}, ${load}`;
     } finally { restoreShared(shared); }
   });
 

@@ -60,6 +60,18 @@ import { clamp } from '../engine/MathUtil.js';
 
 /** Texels across the window. 192 at 48 m is a 25 cm cell — a boot print. */
 export const SURFACE_RES = 192;
+
+/**
+ * How many dirty rectangles the field tracks before it starts folding them.
+ *
+ * Eight is chosen against the thing that dirties this field: bodies. A fight
+ * has one cluster of boots around the player, one or two around each knot of
+ * the line, and the odd bolt scuff — a handful of places, not forty. Past that
+ * the merge cost below is quadratic in the list length, so the list must stay
+ * short; eight keeps `_touch` under a hundred comparisons in the worst case
+ * while still separating the far side of a battlefield from the near one.
+ */
+const DIRTY_MAX = 8;
 /** Metres across the window. Beyond it the ground forgets. */
 export const SURFACE_SIZE = 48;
 /** The ageing tick. Decay and upload happen at this rate, never per frame. */
@@ -136,7 +148,9 @@ export class SurfaceField {
     this.center = new THREE.Vector2(0, 0);
     this._ci = 0; this._cj = 0;
     this._accum = 0;
-    this._dirty = null;      // {i0,j0,i1,j1} in unwrapped cell coordinates
+    /** Rectangles of cells awaiting re-encode, in unwrapped cell coordinates.
+     *  A SHORT LIST and not one union box — see `_touch`. */
+    this._dirty = [];
     this._live = 0;          // cells still holding anything
     this.marks = 0;          // every stamp that landed, for the checks
   }
@@ -160,13 +174,78 @@ export class SurfaceField {
     return Math.max(Math.abs(x - this.center.x), Math.abs(z - this.center.y)) <= half;
   }
 
+  /**
+   * Remember that a rectangle of cells has changed and must be re-encoded.
+   *
+   * ── ONE UNION RECTANGLE WAS A WHOLE-TEXTURE UPLOAD ─────────────────────
+   *
+   * This kept a single bounding box and grew it to contain every mark in the
+   * frame. Two footprints at opposite corners of the field therefore dirtied
+   * everything between them, and a battlefield has forty pairs of boots on it:
+   * the box is the whole texture within a second of a fight starting, so
+   * `_encode` re-encoded all 192x192 = 36 864 cells EVERY FRAME to publish
+   * about a hundred that had actually moved.
+   *
+   * Measured with a CPU profile of a real `theline` engagement on geonosis
+   * (tools/_ledger.mjs --prof): `_encodeCell` was 7.03% of the frame's self
+   * time, second only to Rapier's own step and to `updateMatrixWorld`. It is
+   * not that the encode is slow — it is four array writes — it is that it was
+   * being asked for three hundred times more of them than the marks needed.
+   *
+   * ── A SHORT LIST, MERGED BY COST ───────────────────────────────────────
+   *
+   * Up to `DIRTY_MAX` rectangles. A new one joins whichever existing rectangle
+   * it costs the least to widen, and only if that cost is small relative to
+   * what it would add on its own — so a trail of overlapping bootprints stays
+   * one rectangle and a boot on the far side of the map opens a second. When
+   * the list is full the two cheapest to merge are merged, which bounds the
+   * bookkeeping at a fixed and tiny number whatever the field is doing.
+   *
+   * The set of cells encoded is a SUPERSET of the cells that changed, exactly
+   * as it was before — every rectangle is still a rectangle and every touch is
+   * still inside one. Nothing about what reaches the texture changes; only how
+   * much ground is walked to put it there. `tools/checks/frame-ledger.mjs`
+   * asserts the encoded bytes are identical to the single-rectangle build's.
+   */
   _touch(i0, j0, i1, j1) {
-    const d = this._dirty;
-    if (!d) this._dirty = { i0, j0, i1, j1 };
-    else {
-      if (i0 < d.i0) d.i0 = i0; if (j0 < d.j0) d.j0 = j0;
-      if (i1 > d.i1) d.i1 = i1; if (j1 > d.j1) d.j1 = j1;
+    const list = this._dirty;
+    const area = (r) => (r.i1 - r.i0 + 1) * (r.j1 - r.j0 + 1);
+    const own = (i1 - i0 + 1) * (j1 - j0 + 1);
+    let best = -1, bestCost = Infinity;
+    for (let k = 0; k < list.length; k++) {
+      const r = list[k];
+      const u = (Math.max(r.i1, i1) - Math.min(r.i0, i0) + 1)
+        * (Math.max(r.j1, j1) - Math.min(r.j0, j0) + 1);
+      const cost = u - area(r);
+      if (cost < bestCost) { bestCost = cost; best = k; }
     }
+    /* Join when widening costs no more than the new rectangle would cost
+     * standing alone — i.e. when the two are near enough that a rectangle over
+     * both is not much bigger than the two apart. A trail of prints merges; a
+     * print fifty metres away does not. */
+    if (best >= 0 && bestCost <= own) {
+      const r = list[best];
+      if (i0 < r.i0) r.i0 = i0; if (j0 < r.j0) r.j0 = j0;
+      if (i1 > r.i1) r.i1 = i1; if (j1 > r.j1) r.j1 = j1;
+      return;
+    }
+    list.push({ i0, j0, i1, j1 });
+    if (list.length <= DIRTY_MAX) return;
+    /* Full: fold the two that cost the least to put together. */
+    let a = 0, b = 1, cheapest = Infinity;
+    for (let x = 0; x < list.length; x++) {
+      for (let y = x + 1; y < list.length; y++) {
+        const p = list[x], q = list[y];
+        const u = (Math.max(p.i1, q.i1) - Math.min(p.i0, q.i0) + 1)
+          * (Math.max(p.j1, q.j1) - Math.min(p.j0, q.j0) + 1);
+        const c = u - area(p) - area(q);
+        if (c < cheapest) { cheapest = c; a = x; b = y; }
+      }
+    }
+    const p = list[a], q = list[b];
+    p.i0 = Math.min(p.i0, q.i0); p.j0 = Math.min(p.j0, q.j0);
+    p.i1 = Math.max(p.i1, q.i1); p.j1 = Math.max(p.j1, q.j1);
+    list.splice(b, 1);
   }
 
   /* ── the window follows the player ─────────────────────────────────── */
@@ -193,7 +272,7 @@ export class SurfaceField {
       for (let o = 0; o < this.data.length; o += 4) {
         this.data[o] = 0; this.data[o + 1] = 128; this.data[o + 2] = 128; this.data[o + 3] = 0;
       }
-      this._dirty = null;
+      this._dirty.length = 0;
       this.texture.needsUpdate = true;
     } else {
       const half = (N / 2) | 0;
@@ -395,7 +474,7 @@ export class SurfaceField {
    * A field with nothing in it does neither.
    */
   update(dt) {
-    if (this._dirty) this._encode();
+    if (this._dirty.length) this._encode();
     if (!this.ages || this._live === 0) return;
     this._accum += dt;
     if (this._accum < SURFACE_TICK) return;
@@ -414,7 +493,7 @@ export class SurfaceField {
    * overlapping ground for one frame's worth of visible result (the same
    * measurement `CraterLog.replay` makes about `Terrain.flush`).
    */
-  flush() { if (this._dirty) this._encode(); }
+  flush() { if (this._dirty.length) this._encode(); }
 
   _age(dt) {
     /* THE FILL-IN IS NOT ONE EXPONENTIAL. A pure `v *= exp(-dt/tau)` never
@@ -456,17 +535,20 @@ export class SurfaceField {
 
   /** Re-encode one rectangle of cells, expanded by the gradient's own stencil. */
   _encode() {
-    const d = this._dirty;
-    this._dirty = null;
-    if (!d) return;
-    for (let j = d.j0; j <= d.j1; j++) for (let i = d.i0; i <= d.i1; i++) this._encodeCell(i, j);
+    const list = this._dirty;
+    if (!list.length) return;
+    for (let r = 0; r < list.length; r++) {
+      const d = list[r];
+      for (let j = d.j0; j <= d.j1; j++) for (let i = d.i0; i <= d.i1; i++) this._encodeCell(i, j);
+    }
+    list.length = 0;
     this.texture.needsUpdate = true;
   }
 
   _encodeAll() {
     const N = this.res;
     for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) this._encodeCell(i, j);
-    this._dirty = null;
+    this._dirty.length = 0;
     this.texture.needsUpdate = true;
   }
 
