@@ -1428,25 +1428,28 @@ kills slower, so a played sitting is longer than these and nobody has measured
 by how much. And `theline.19` binds the Raid only, because it is the only plan
 cheap enough to sit in a gate; a Grind is 21 waves and half an hour of game time.
 
-### Two live defects the attrition work found and did not fix
+### Two live defects the attrition work found — BOTH CLOSED, and the first one was the largest single thing wrong with the combat model
 
-**Every bolt fired at one of your men is aimed at his FEET.** `Enemy._shoot`
-leads on `target.chest ?? target.position`, and **only `Player` has a `chest`** —
-every other body in the game falls through to `position`, which is at the feet.
-It surfaced because a "men crouch under fire" lever measured *worse than
-nothing* (0.6 survivors against 1.8): crouching pulls a man toward the aim point.
+**Every bolt fired at one of your men was aimed at his FEET — FIXED.**
+`Enemy._shoot` led on `target.chest ?? target.position`, and **only `Player`
+had a `chest`**; every other body in the game fell through to `position`, which
+is at the feet. It surfaced because a "men crouch under fire" lever measured
+*worse than nothing* (0.6 survivors against 1.8): crouching pulls a man toward
+the aim point.
 
-It is deliberately unfixed, and the reason is the size of it: giving `Enemy` a
-chest would roughly double every line's lethality overnight, on both sides, in
-every mode, and none of the tuning anywhere in this document was measured
-against that. It is the largest single unclaimed change in the combat model and
-it should be taken on its own, with the whole balance pass in front of it.
+It was left unfixed on the grounds that it would roughly double every line's
+lethality overnight, on both sides, in every mode. **It does, and the direction
+is not the one that sentence implies.** See "The chest, priced" at the foot of
+this file: twenty seeds an arm, the only difference the aim, an engagement
+fought with no Jedi went from **5.10 of ten survivors to 1.65** — because the
+horde outnumbers the line, so doubling both sides' fire favours the bigger side.
 
-**Engagement 3 wipes a fresh ten-man line in one wave**, before the attrition
-tuning and after it: 0 of 10 on five seeds, at about 100 s. Tuning engagement 1
-does not reach it. That is the mode's economy rather than a constant — the
-muster's replacement rate against a wave budget that keeps climbing — and it is
-the next thing between the mode and a run somebody can finish.
+**Engagement 3 wiped a fresh ten-man line in one wave — FIXED, and it was not a
+constant.** 0 of 10 on twenty seeds at about 110 s. `budgetFor` was charging a
+crossing TWO escalations: the roguelite's `w^1.62` on the run's wave counter,
+which is honest in a mode that drafts a card every other wave, AND
+`AREAS[*].budget`, which is the crossing's own ramp. See "Engagement 3 was two
+escalations multiplied" below.
 
 ### And a process note, because it is the second time
 
@@ -1619,3 +1622,212 @@ before it failed. That bench was pinned to a commit that predates the chest fix
 and the wave-ramp fix, both of which change whether a line survives an
 engagement at all — so **it has to be re-run against the settled tree, and until
 it is, this rule is built and engaging and unproven.**
+
+## THE CHEST, PRICED — and the attrition target, met
+
+*Everything in this section is a controlled reading: fresh processes per arm,
+one invocation each, the same twenty seeds, all three module streams pinned per
+run, and both arms taken from **pinned detached `git worktree`s** so that four
+lanes committing into one tree could not get inside the comparison. The
+instrument is `tools/_lethality.mjs` — `tools/_linehold.mjs`'s engagement with
+`tools/_linetoll.mjs`'s damage ledger wrapped round it. The arm is NO PLAYER AT
+ALL, engagement 1, `theline` on geonosis.*
+
+### 1. What the chest was worth, both ways
+
+`Enemy._shoot` led its aim on `target.chest ?? target.position` and only
+`Player` had a `chest`. Every bolt fired at one of your named men — and every
+bolt they fired back, because your line are `Enemy` instances shooting through
+the same method — was led onto the FEET. So were the telegraph, the
+line-of-sight test, the off blade, the laser, the rifle pose and both turret
+head-tracks.
+
+| twenty seeds, the only difference being the aim | survivors of ten | hp/s into the line | hp/s the line puts back | s a wave | reached a muster |
+|---|---|---|---|---|---|
+| aimed at the feet | **5.10** (sd 2.45) | 1.18 | 1.14 | 69 | **19 of 20** |
+| aimed at the chest | **1.65** (sd 2.56) | 1.71 | 3.20 | 66 | **12 of 20** |
+
+−3.45 men, se 0.79, z 4.4. **The asymmetry is the finding.** The line's own
+output nearly TRIPLED (1.14 → 3.20 hp/s) while the fire coming at it rose by
+45%, and the line still lost three and a half more men. The horde outnumbers
+the line, so doubling both sides' accuracy favours the bigger side — the same
+shape Lanchester's square law has. Nothing about "it roughly doubles lethality
+on both sides" predicts the direction; only the measurement does.
+
+The clock barely moved (69 s a wave → 66 s), so this is not a length lever.
+
+**Three more instances of the same defect, all found by looking for the first:**
+
+- `aimPoint` answered from the WORLD ORIGIN on the frame a body spawns.
+  `Rig.worldPos` reads a bone's `matrixWorld`, which is the identity until
+  something poses it, and a `group`'s position is (0,0,0) until `_pose` puts it
+  on the body. Measured by the new roster-wide check in `stature.mjs`: a
+  droideka handed a stand at (63.5, 7.3, −48.8) answered **80.3 m away**. Both
+  branches are guarded now. `Player._enemyPoint` existed only to dodge that
+  hazard, and dodged it by keeping a THIRD opinion of where a chest is —
+  `1.12 · A.scale`, which is exactly the `A.scale`-instead-of-`bodyScale` bug
+  `chestY`'s own comment records.
+- **The emplacement was firing into the dirt at the line's boots.** `_fire` read
+  `_v.copy(t.position); _v.y += (t.chestY ?? 1.1)` — and `chestY` is an
+  ABSOLUTE world height, so it counted the ground twice. The muster formation
+  stands at −0.84 m on this ground, so every round went 0.80 m low. Same
+  arithmetic, same file, twice; and its sight test traced to the same wrong
+  point, so it also declined shots it could have taken.
+- `Driving.seat` and `Driving.aimPoint` had it too, so a tank parked up a slope
+  seated its driver in the air.
+
+`Combat.aimAt(body, out)` is the one reader now and every aiming site in the
+game calls it. `theline.14` drives the shipped `_shoot` sixty rounds a side and
+asserts the MEDIAN crossing height against the body's own `chestY` — a height
+rather than a hit rate, because a hit rate folds in the dispersion, the lead,
+the range model and the terrain and names none of them.
+
+### 2. The attrition target, met — and the muster rate is still the better statistic
+
+The chest fix made every constant in this document stale. Re-baselined and
+re-tuned on the two sources of fire the wave's threat budget never pays for,
+which are still the only two levers that move this number:
+
+| engagement 1, no Jedi, twenty seeds | survivors of ten | reached a muster |
+|---|---|---|
+| before the chest (the tree as it stood) | 5.10 (sd 2.45) | 19 of 20 |
+| after the chest, constants untouched | **1.65** (sd 2.56) | 12 of 20 |
+| after the chest, `GUN.every` 34.0 and the conscript's round 2 | **4.93** (sd 2.95, n=14) | **13 of 14** |
+
+The last row is fourteen seeds and not twenty — the box was carrying two full
+gates and fifteen other jobs and the run did not finish; it is flagged rather
+than rounded up. At n=14 the standard error is 0.79.
+
+**The muster rate is the sentence to read, as it was last time.** 12 of 20
+against 13 of 14 is the difference between a mode with a between-areas beat and
+a mode without one, and it is a proportion, so it does not inherit the survivor
+mean's variance.
+
+**How the levers were located, six seeds an arm** (against a baseline of 1.17 on
+the same six):
+
+| arm | survivors |
+|---|---|
+| the emplacement and the levy both taken off the field | **7.33** |
+| the conscript's round at 0, the gun live | 3.50 |
+| the conscript's round at 2.0 | 2.83 |
+| `GUN.every` doubled to 28, the round untouched | 2.50 |
+| the conscript's round at 2.5 | 2.50 |
+
+The shares are additive and they add up: the gun is worth **3.8** of the eight
+and a half names an engagement was costing and the levy **2.3**, and the
+ordinary wave — everything the threat budget does pay for — is the remaining
+2.7. **A ceiling of 7.33 is what the two off-ledger levers can reach between
+them**, so the target is inside them and no third lever was needed.
+
+### 3. Engagement 3 was two escalations multiplied
+
+**0 of 10 on twenty of twenty seeds, at about 110 s, with 4.72 hp/s coming into
+the line.** Not a constant, and tuning engagement 1 could never have reached it.
+
+`WaveDirector.budgetFor` is `4 + 2.6w + 0.65·w^1.62` on the RUN's wave counter.
+That curve is the roguelite's and it is honest there — the Trial of Waves
+drafts a card every other wave, so the player at wave 8 is a different player.
+**A crossing drafts nothing.** Its army grows by `AREAS[*].muster`, two or three
+bodies an area against a ceiling, and its player not at all. On top of that
+curve the crossing then applied `AREAS[*].budget`, which is its own ramp. The
+seeded three-stage plan on seed 4, old → new:
+
+    area 1   w1 8→8    w2 12→12   w3 17→17
+    area 2   w4 34→11  w5 42→18   w6 52→25   w7 63→34
+    area 3   w8 96→15  w9 112→24  w10 128→33  w11 143→44  w12 159→56
+
+**Engagement 3 opened on a wave of 96 against a wave-1 opening of 8** — twelve
+times, with the same ten men. `CommandDirector.rampWave` runs the wave curve
+WITHIN an area and lets `AREAS[*].budget` and `AREAS[*].heavy` carry the
+escalation between them: a sawtooth that resets a little lower and climbs a
+little higher every area, which is what a five-engagement advance is.
+
+It is derived from the plan and not read off `areaWaves`, because `budgetFor` is
+asked about waves that are not the one being fought (`bodyLimit` about
+`BODY_KNEE`, `conditionCost` about the wave it is pricing) and an answer that
+ignored its argument would make those comparisons identities.
+
+Measured, engagement 3, a fresh ten-man line, no Jedi:
+
+| | survivors | reached a muster | how long |
+|---|---|---|---|
+| chest fixed, ramp not | 0.00 of 20 seeds | 0 of 20 | one wave, ~110 s |
+| chest and ramp | 1.38 (n=13) | 3 of 13 | three or four waves, 177-286 s |
+
+**It is an engagement now rather than an execution** — the area is fought
+through instead of ending in its first wave — and it is still the hardest thing
+in the mode. The tuned build's engagement-3 arm had not finished when this was
+written; see below.
+
+### 4. The dial: `GUN.every` 34.0, and what it costs both ends
+
+`breach.mjs` and the attrition target pull the same constant from opposite ends,
+so here is the decision and its price.
+
+**The dial did not move; the bug it was tuned around did.** 3.4, then 7.0, then
+14.0 were all chosen against a gun laying its rounds 0.80 m under the chest.
+`tools/_gunpit.mjs` — one gun, a formed-up line, nothing else on the field, ten
+minutes, the same seeds either side of the aim fix:
+
+    aim         0.80 m under the chest      →  0.25 m
+    rounds      15 and 57 over ten minutes  →  27 and 93
+    delivered   0.33-0.50 men a minute      →  0.64-0.74
+    names       2 of 10                     →  5 of 10
+
+- **The line** pays about a name and a half to an emplacement it never answers,
+  instead of the 3.8 the corrected aim was charging at 14.0.
+- **§7 keeps a verb.** `breach.mjs`'s isolated arm still reads **1.51 men a
+  minute of the gun's own fire and four of ten names in four minutes** at 34.0,
+  so BREACH removes something real.
+
+**And the obvious arithmetic about this dial is wrong, which is worth knowing
+before anybody turns it again.** Halving the cadence does not halve what an
+isolated gun delivers: 0.64 and 0.74 men a minute at 14.0 against 0.62, 0.86 and
+0.12 at 34.0 on the same seeds. Two things sit in front of the timer. `update`
+decrements `_timer` every frame and returns WITHOUT resetting it when the sight
+raycasts refuse, so the gun fires the instant it can see and sight is often what
+is limiting it. And **a man being shot at goes to ground, so a faster gun
+suppresses its own targets** — 93 rounds for 6 hits at 14.0 against 48 rounds
+for 8 at 34.0 on one seed. What the cadence sets is what a whole ENGAGEMENT
+costs, where the line is in the open and the gun has continuous sight of it.
+
+### 5. `lost >= 1` is gone, and so are its two twins
+
+Three thresholds in this tree were asking yes/no questions of quantities with
+distributions, and all three had already failed on a draw:
+
+- `breach.mjs`'s **`lost >= 1`** on the isolated arm. At `GUN.spread` over 69 m
+  the gun needs two hits on the same trooper to take a name, so that arm scored
+  1 or 0 on a dispersion roll. It is a RATE now — hits and hit points billed to
+  the pit through `bolt.owner`, over a window taken from 90 s to 240 s so the
+  sum has a dozen draws behind it — against one name's worth of health in the
+  health a body of this line actually carries.
+- `breach.mjs`'s **`paidAtThePlate > 0`**, one check down, on a count of NAMES
+  over a twenty-second window. It went red the moment the line stopped dying so
+  fast. It is hit points into the line now, which accumulate off every bolt that
+  lands rather than off the last one.
+- `balance.mjs`'s **`rows[0].line > 0.02`** — a floor on the CLUMSIEST rung of
+  the skill ladder, which is the one rung of three that sits against zero by
+  construction. Four runs of that check on two pinned trees, two of them the
+  SAME tree, read 0.138, 0.181, 0.000 and 0.091 at that rung against a bar of
+  0.02. The SPAN of the ladder over the same four runs reads 0.518, 0.522, 0.528
+  and 0.497 — a spread of 0.03 where the endpoint spans 0.18 — and the span is
+  also what the assertion is really about. It was reported as a red from the
+  chest work and it is not one; the model is expectation-only off `ARCHETYPES`
+  and `MODEL`, and the same tree produced 0.000 and 0.091 on consecutive runs.
+
+The rule the three of them make: **where a check in this game can be built on a
+rate or a count rather than on a threshold, it must be** — and the tell that it
+must is that the quantity's own spread reaches the bar.
+
+### 6. Still open after this
+
+- **The tuned engagement-3 arm.** Twenty seeds were launched and three had
+  landed. Engagement 3 is fought through now rather than lost in one wave, and
+  whether a line holds it is not yet a number anybody has.
+- **`GUN.every` is a weak dial on its own ground** — see §4. If the emplacement
+  ever needs to be worth materially more or less than it is, the honest lever is
+  its arc and its sight, not its timer.
+- **The reference arm is still a line with no Jedi in it.** Nothing in this
+  session touched FLAGSHIP §7's central claim; the chest fix moves both arms.
