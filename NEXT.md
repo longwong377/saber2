@@ -842,6 +842,29 @@ So the honest reading: **the change is real and the verb still cannot carry §7'
 sentence.** It sits at about 40% of its own geometric ceiling now instead of
 20%, and that ceiling is single digits.
 
+**AND IT COST CO-OP SOMETHING, WHICH IS WORTH ITS OWN PARAGRAPH.** `coop.mjs`
+went red on two checks the moment bodies started falling: a guest's shove
+travelled **4.13 m on the host and 18.64 m on the guest**. Two causes, and the
+first is a defect in single player too — `knockFlat` called `goRagdoll` inside
+`applyKnockback`, which put nineteen fresh dynamic bodies into `world.physics`
+**in the middle of the sweep that felled the body**, and `forcePush` answers the
+bodies first and then walks `ctx.physics.bodies` to shove loose furniture. The
+same press hit the same body twice, once as a body and then once per bone. The
+host never saw it because it receives a peer's shove as an `imp` claim, which is
+`applyKnockback` alone with no furniture sweep behind it. The fall is recorded
+now and taken in `_move`, after the sweep.
+
+The second cause cannot be fixed that way and is the interesting one:
+**`goRagdoll` builds its bodies out of `bone.obj.matrixWorld` — the pose the
+body is standing in** — and two machines run independent gait clocks for the
+same trooper. Same position, same velocity, same impulse, different limbs, two
+chaotic solves. So a fall is taken only where the body lives: never on a
+`netDriven` mirror, never from a shove that arrived as a claim. **In co-op a
+guest's push rocks a body where the host's fells it, so OPEN is weaker off-host.**
+Closing that needs the FALL on the wire as an event — `World.onExplosion`'s "the
+client draws it and the host bills it" — with the guest's ragdoll pinned to the
+host's position rather than free. That is a protocol change and it is not done.
+
 **What should replace it, on these numbers.** Every remaining lever inside the
 current design makes the ARM longer, and the arm is bounded by √power. What is
 wanted is an opening that TRAVELS — and there is exactly one thing on this
