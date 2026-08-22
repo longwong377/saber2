@@ -1344,5 +1344,75 @@ export async function run({ check, assert }) {
       + `card saying ${lo}-${hi} · engagements ${per || '—'} min · ended ${over.won ? 'WON' : 'lost'}`;
   });
 
+  check('theline.20 the seed cannot roll the mode onto a ground the mode does not apply to', async () => {
+    /**
+     * ══ TWO FLAGS, TWO READERS, AND THEY DID NOT AGREE ══
+     *
+     * `MODES.theline` declares `seedsGround` (the seed picks the theatre) and
+     * `generatedGround` (§12 lays a battlefield around a bezier front on it).
+     * Those were read by two different pieces of code that disagreed about the
+     * pool: `Levels.theatreFor` rolled all SEVEN authored theatres, while
+     * `World._groundKeyFor` installs the `front:<terrain>` preset only where
+     * `LEVELS[x].battlefield` is true — and the colosseum states false on
+     * purpose, because its cavea IS its heightfield and a generated one deletes
+     * the building.
+     *
+     * So about one sitting in seven landed on a ground the mode's whole spatial
+     * design had never been applied to: no front, no high ground flanking the
+     * line, no chokepoint. Nothing failed. The room was simply the room, and the
+     * mode quietly was not itself.
+     *
+     * This is the scoria row again wearing a different theatre, and the fix is
+     * the same shape both times: not a second list of "grounds that work", but
+     * ONE fact — `battlefield` — asked by both the roll and the installer.
+     *
+     * ── WHY IT DRIVES THE ROLL AND NOT THE FLAG ────────────────────────────
+     *
+     * Asserting `LEVELS.colosseum.battlefield === false` would bind the room's
+     * own decision, which is not the defect and is a decision the room is
+     * entitled to change. The defect is the DISAGREEMENT, so what is bound is
+     * that every ground the seed can hand this mode is a ground the installer
+     * will act on — stated over enough seeds that a rare draw cannot hide.
+     */
+    const { theatreFor, LEVELS } = await import('../../src/game/Levels.js');
+    const { MODES } = await import('../../src/game/Waves.js');
+    assert(MODES.theline?.seedsGround && MODES.theline?.generatedGround,
+      'the mode no longer both seeds and generates its ground — this check is about the pair');
+
+    const seen = new Map();
+    for (let seed = 1; seed <= 400; seed++) {
+      const g = theatreFor('theline', null, seed);
+      seen.set(g, (seen.get(g) || 0) + 1);
+    }
+    const bad = [...seen.keys()].filter((k) => !LEVELS[k]?.battlefield);
+    assert(!bad.length,
+      `the seed rolls THE LINE onto ${bad.map((k) => `${k} (${seen.get(k)} of 400 seeds)`).join(', ')}, `
+      + 'which declares no battlefield — so _groundKeyFor installs nothing and those sittings have no '
+      + 'front, no flanking high ground and no chokepoint, in a mode whose ground is its design');
+
+    /* AND THE POOL IS NOT ONE ROOM. A filter that emptied the field and fell
+     * back to a single ground would satisfy the bar above perfectly and would
+     * be a worse mode than the one it replaced — §13.5, "no room's deletion
+     * deletes the mode", read from the other end. */
+    const carriers = Object.keys(LEVELS).filter((k) => LEVELS[k]?.battlefield);
+    assert(seen.size >= Math.min(4, carriers.length),
+      `the seed only ever produced ${seen.size} ground(s) (${[...seen.keys()].join(', ')}) out of `
+      + `${carriers.length} that can carry one — the roll has collapsed`);
+
+    /* …and the installer really does act on one of them, rather than the flag
+     * merely being present. A world, built the way `main.js` builds one. */
+    const ground = theatreFor('theline', null, 7);
+    const { world } = await lineWorld({ seed: 7, level: ground, start: false });
+    const key = world.terrain?.presetKey ?? world._groundKey ?? null;
+    const generated = typeof key === 'string' && key.startsWith('front:');
+    world.unload();
+    assert(generated || key === null,
+      `seed 7 rolled ${ground} and the world stands on '${key}' rather than a generated front`);
+
+    return `400 seeds → ${seen.size} grounds (${[...seen.keys()].sort().join(', ')}), `
+      + `all declaring battlefield; ${carriers.length} of ${Object.keys(LEVELS).length} rooms can carry one; `
+      + `seed 7 → ${ground} on '${key ?? 'authored'}'`;
+  });
+
   return;
 }
