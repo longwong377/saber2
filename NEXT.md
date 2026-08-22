@@ -1714,6 +1714,61 @@ The rule engages harder on the tuned build: **`rule=ON standOff=0` took 6 of 6
 areas, mean 282 s, a mean of 14 s waiting.** And every row still reads
 **`line 0/10`**.
 
+### THE OPENING WAVE IS A WALL ON GRANDMASTER, and the two fixes are each other's defect
+
+`balance: a melee opener gets to attack — wave 1 is not free` is red at **67 of
+96** against a bar of 72, and it is not the flake it was first called: pinned
+worktrees read **89/96 before the chest fix, 92/96 with it, 67/96 at HEAD**. A
+23-run move is not the documented ±2.
+
+It arrived with `37cd62d`, which added `WAVE_FLOOR = 3` — *no body of the fill
+may cost more than `budget / WAVE_FLOOR`, so a wave can always buy three of
+them*. Measured through the shipped composer, the roguelite's opening wave on
+the colosseum, 24 seeds a tier:
+
+| ceiling | bodies in wave 1 | padawan | knight | master | grandmaster |
+|---|---|---|---|---|---|
+| **on** (shipped) | 7 | 24/24 | 24/24 | 19/24 | **0/24** |
+| **off** | 3 | 24/24 | 24/24 | 23/24 | **16/24** |
+
+**A player who picks the hardest difficulty dies on wave one, every time, with
+nothing to spend and no boon to spend it on.** The ceiling converts three mixed
+bodies into seven of the cheapest, because forcing every pick under a third of
+the purse means the purse buys as many of the cheapest body as it holds.
+
+And the ceiling cannot simply come off, because the wave it was written for is
+real. The same composer, THE LINE's opening wave, one seed, every ground, with
+the ceiling **off**:
+
+    scoria      2 bodies   jedi, b1
+    every other 7-8 bodies b1 …
+
+Scoria's pool carries a `jedi`, and at a budget of 7 that body eats the wave —
+which is the defect `37cd62d` names in its own message, *"the player met a
+stalker and a droid"*. So a wave of seven and a wave of two are the same defect
+seen from opposite ends, and the ceiling trades one for the other.
+
+**What was tried and does not work.** The obvious reconciliation — compose
+naturally, and recompose with the ceiling only if the wave came out under the
+floor — was implemented and measured, and it changed nothing while appearing to
+change everything: the second `_composeUnder` call *draws from the shared rng*,
+so it shifts every subsequent draw in the run and the arms are no longer
+comparable. Any fix here has to decide the ceiling **before** composing, without
+a second pass. That is the constraint the next attempt should start from.
+
+Not fixed. It is one difficulty tier of one mode and the shipped composer is
+left as it stands rather than traded for the other defect on a coin flip.
+
+### The front's smoke does not reach the plate
+
+`lineseen.2` reads **one** smoke column mesh where it wants two — the level lays
+one of its own, so the engagement raised none on the burnt side. It sits with
+two findings already recorded above: the front opens 163–204 m out and is past
+where Geonosis' own fog and `INK.edgeFade` resolve anything, and engagement 1's
+smoke ring is 180–310 m, which the world lane measured as past where wood and
+scoria resolve at all. The smoke is being raised into a band the player cannot
+see through. The fix is the march schedule's distances, not the smoke.
+
 ### THE DEPLOY CARD KEEPS ITS PROMISE, ON ALL THREE PLANS
 
 `theline.19` drives a **Raid** to its verdict, because a Raid is the only plan
