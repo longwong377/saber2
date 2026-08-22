@@ -1223,17 +1223,18 @@ push 10,472–10,984 · grind 17,022–19,324.
 process each, both sides of the player's army held on their feet so every figure
 is a FLOOR and a played sitting cannot be shorter:
 
-    raid  seed 11    8 waves   10.4 min of closed waves   card 10-15   ended WON
+    raid  seed 11    8 waves   FLOOR 11.6 min   card 10-15   ended WON
     push  seed  1   12 waves   15.3 min of closed waves   card 18-25   ended WON
 
-Both totals are SHORT BY ONE WAVE and the omission is the bench's, now fixed:
-the drive leaves on `over`, which is raised by the wave that wins the crossing,
-so that wave never saw a wave-number change and its seconds were dropped. The
-raid's foundry waves ran 70 / 89 / 71 / 99 s, so the honest floors are about
-**12½ and 17½ minutes** against cards of 10-15 and 18-25. A Grind has not been
-clocked end to end — 21 waves is half an hour of game time and this box was
-carrying five other lanes — but its composed bulk is **1.67× a Push's**, which
-puts its floor near the bottom of its own 30-45.
+The Raid's figure is `theline.19`'s, which times the whole drive and is
+therefore the honest one. The Push's is a sum of closed wave rows and is SHORT
+BY ONE WAVE — the bench left on `over`, which is raised by the wave that wins
+the crossing, so that wave never saw a wave-number change and its seconds were
+dropped (fixed). Its neighbours ran 89 and 110 s, so a Push floors near
+**17½ minutes** against 18-25. A Grind has not been clocked end to end — 21
+waves is half an hour of game time and this box was carrying five other lanes —
+but its first seven waves are 3,842 hp in 636 s and its composed bulk is
+**1.67× a Push's**, which puts its floor in the middle thirties against 30-45.
 
 **The three levers that were NOT taken, and why each was worse.**
 

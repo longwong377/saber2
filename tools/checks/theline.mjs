@@ -1232,6 +1232,14 @@ export async function run({ check, assert }) {
      * direction. Half the bottom of the band, because the gap between a floor
      * and a played sitting is real and nobody has measured it.
      *
+     * MEASURED MARGIN, so the next person knows how much room there is: this
+     * seed reads **11.6 min against a deadline of 15** — 23%. That is not a
+     * lot, and the quantity is chaotic rather than merely noisy (HANDOFF
+     * §2.5b), so a single red here is worth re-running before it is believed.
+     * A red that repeats is the mode having drifted long again, and the two
+     * places to look are the two that made it fit: `CommandDirector.rampWave`
+     * and `Waves.WAVE_FLOOR`.
+     *
      * ── AND THE SEED IS NAMED ───────────────────────────────────────────────
      *
      * `rollSession` decides the plan, so a seed that is not a Raid drives a
@@ -1243,6 +1251,15 @@ export async function run({ check, assert }) {
     const { dutyInput } = await import('../_flagship.mjs');
     const SEED = 11;
     const { world, d } = await lineWorld({ seed: SEED });
+    /* THE MUSTER HAS TO BE HELD OPEN TO BE SEEN AT ALL — `theline.12`'s fixture
+     * note, and the engagement breakdown below is why it matters here.
+     * `_areaClear` ends with "no screen wired: muster for the player and press
+     * on", which is `autoMuster()` then `closeMuster()` inside ONE `payWave`
+     * call, so `mustering` is true for less than a frame and a poll for it
+     * never fires. A no-op `onMuster` is what a player's screen is to the
+     * director; the drive closes it on the very next frame, so the sitting's
+     * clock is unmoved. */
+    d.onMuster = () => {};
     const raid = SESSION_PLANS.find((p) => p.id === 'raid');
     assert(d.plan.id === raid.id,
       `seed ${SEED} no longer rolls a Raid — it rolls a ${d.plan.id}, so this is timing the wrong `
@@ -1292,8 +1309,10 @@ export async function run({ check, assert }) {
       `a ${raid.name} floors at only ${mins.toFixed(1)} min against a card promising ${lo}-${hi}. `
       + 'A sitting this far under its own floor has had the fight made trivial rather than the '
       + 'length fixed, and the card is then overpromising in the other direction.');
-    return `${raid.name} seed ${SEED}: ${waves} waves, floor ${mins.toFixed(1)} min against a card `
-      + `saying ${lo}-${hi} · engagements ${per || '—'} min · ended ${over.won ? 'WON' : 'lost'}`;
+    /* THE WAVE THE CROSSING IS WON ON IS A WAVE. `waves` counts wave-number
+     * changes and the last wave never has one — the run ends inside it. */
+    return `${raid.name} seed ${SEED}: ${waves + 1} waves, floor ${mins.toFixed(1)} min against a `
+      + `card saying ${lo}-${hi} · engagements ${per || '—'} min · ended ${over.won ? 'WON' : 'lost'}`;
   });
 
   return;
