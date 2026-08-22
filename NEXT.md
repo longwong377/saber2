@@ -1714,6 +1714,32 @@ The rule engages harder on the tuned build: **`rule=ON standOff=0` took 6 of 6
 areas, mean 282 s, a mean of 14 s waiting.** And every row still reads
 **`line 0/10`**.
 
+### THE DEPLOY CARD KEEPS ITS PROMISE, ON ALL THREE PLANS
+
+`theline.19` drives a **Raid** to its verdict, because a Raid is the only plan
+cheap enough to sit in a gate — and `SESSION_PLANS` weights raid/push/grind
+1/2/1, with `DEFAULT_PLAN` (every seedless run, and the card in the first-look
+plates) being the **Grind**. So the one plan that was checked was the one a
+quarter of sittings get, and the Push — half of them — carried a projected floor
+of **45.7 minutes against a card saying 18–25** before `rampWave` was fixed.
+
+`tools/_planlength.mjs` fights the other two to a verdict. Same drive as the
+check, lifted out of the gate so it can be afforded, capped at 3× the band's top
+so a run that overruns reports *by how much* rather than only that it did:
+
+| plan | card | floors | worst | verdict |
+|---|---|---|---|---|
+| Push | 18–25 min | 12.9 / 15.3 / 16.8 | 16.8 | 3 of 3 inside |
+| Grind | 30–45 min | 23.7 / 28.9 | 28.9 | 2 of 2 inside |
+
+Both armies are held on their feet, so these are FLOORS — the fastest this build
+can clear those waves, and a played sitting cannot be shorter. Every seed lands
+under the top of its own card with room, and the 45.7-minute Push is gone.
+
+The floors sit under the bottom of each band rather than inside it, which is the
+correct shape for a lower bound and not a second defect: the gap between a floor
+and a sitting somebody plays is exactly what the immortality removes.
+
 ### RETRACTED: the target is NOT on the wrong unit, and the instrument was
 
 **This section previously said the flagship mode could not be won.** It said six
