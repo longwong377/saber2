@@ -345,7 +345,7 @@ try {
   /* ── FRAME COST, with the levy on the field. Draw calls and triangles are
    * machine-independent; the millisecond is not, and the box's own load is
    * recorded beside it so the number can be read honestly. */
-  record.cost = await page.evaluate(async () => {
+  const costRead = async () => page.evaluate(async () => {
     const S = window.SABER, w = S.world;
     const t = [];
     for (let i = 0; i < 6; i++) {
@@ -363,6 +363,7 @@ try {
       bodies: w.enemies.length, alive: w.enemies.filter((e) => !e.dead).length,
       quality: w.settings?.quality ?? null };
   });
+  record.cost = await costRead();
   log('cost:', JSON.stringify(record.cost));
 
   /* ── THE FLIGHT AND THE FIGHT, in game-seconds. */
@@ -409,6 +410,17 @@ try {
     log(`beat ${target}s:`, JSON.stringify({ ...r, ...state }));
     await shot(`05-t${String(target).padStart(2, '0')}`);
   }
+
+  /* …AND AGAIN WITH THE WAVE ON THE FIELD. The first reading is taken on the
+   * frame after Drop, which is 17 bodies: the ten of your line and whatever the
+   * queue has released in half a second. Measured headlessly on this seed the
+   * queue fills to **49 hostiles by t=10 s** — the 40-strong levy and nine
+   * paying bodies — so the frame the levy costs is a different frame entirely,
+   * and the two readings side by side are what §10 and `frame-budget.mjs` want.
+   * Draw calls and triangles are the machine-independent half; the millisecond
+   * is not and is reported beside the box's own load. */
+  record.costLate = await costRead();
+  log('cost late:', JSON.stringify(record.costLate));
 
   await writeFile(join(OUT, 'record.json'), JSON.stringify({ ...record, errs, shots }, null, 2));
   log('errors:', errs.length, errs.slice(0, 8));
