@@ -1301,6 +1301,22 @@ const GRENADE_SPREAD = 5.2;
  *  again, in seconds. See the note in `_maybeGrenade` and the 167x it is
  *  there to stop. */
 const GRENADE_LOOK = 0.25;
+/**
+ * …AND THE RIFLE HAS THE SAME LOOK, ten lines from the grenade's inside the
+ * same method. See the note in `_rangedBrain`: a body whose sight is blocked
+ * re-asked the whole query — a physics raycast, a terrain raycast and a smoke
+ * integral — on EVERY FRAME, because nothing on the refusing path moves a
+ * timer. Measured, one B1 in band with the answer held at no: **0.973 sight
+ * tests per body-frame, 29.2 per body-second**, against the 0.006 per frame the
+ * grenade path settled at once it paid for its own look.
+ *
+ * SHORTER THAN `GRENADE_LOOK` BECAUSE IT IS A DIFFERENT DECISION. A grenade
+ * takes 2.6 s to matter, so a quarter of a second either way is nothing; a
+ * rifle answers a sliver of sight opening, and the delay is a beat the player
+ * feels as the wave being slow off the mark. 0.12 s is under a human reaction
+ * time and takes the query to about four a second on a blocked body.
+ */
+const SIGHT_LOOK = 0.12;
 
 /** How often a dead duellist's blade is still burning when it hits the floor.
  *  See `die` — the player asked for both, and two in five is enough of one to
@@ -5529,6 +5545,11 @@ export class Enemy {
     }
 
     this.attackTimer -= dt;
+    /* The look's own clock — see SIGHT_LOOK. Decremented beside `attackTimer`
+     * rather than at the test, so it keeps running through a burst and a body
+     * that finishes one is not made to wait again for permission it already
+     * had. */
+    this.sightCd = Math.max(0, (this.sightCd || 0) - dt);
     // A rallied shooter reloads faster; the leader's ring is what tells you so.
     const rally = this.rallyTimer > 0 ? RALLY.rate : 1;
     if (this.burstLeft > 0) {
@@ -5548,7 +5569,30 @@ export class Enemy {
      * clause above has stopped it moving and rescinding permission mid-charge
      * would leave the gun cycling silently forever. */
     if (A.plant && this.aimCharge <= 0 && (this.plantTimer || 0) < A.plant) return;
-    if (this.attackTimer <= 0 && dist < (A.preferred[1] + 12) && this._hasLineOfSight(ctx)) {
+    if (this.attackTimer <= 0 && dist < (A.preferred[1] + 12)) {
+      /**
+       * HE LOOKED, AND THE ANSWER WAS NO — AND THAT HAS TO COST HIM THE LOOK.
+       *
+       * This is the same sentence `_maybeGrenade` writes ten lines up, about
+       * the same query, in the same method, and the rifle did not have it.
+       * `attackTimer` at or below zero is "ready to fire", not "asked", and
+       * nothing on the refusing path moved it — so a body whose sight was
+       * blocked re-took the whole query every frame for as long as it stood in
+       * its band. That is a physics raycast, a terrain raycast and a smoke
+       * integral, and it is the one query in this class that costs real work.
+       *
+       * Measured, one B1 in band with the answer held at no: 0.973 sight tests
+       * per body-frame — 29.2 a second, against the ~4 a second this leaves —
+       * and a level made of rooms is a level where a good share of the wave is
+       * in that state at any moment.
+       *
+       * It is also the better behaviour, which is why the cost is worth
+       * naming rather than hiding: a body does not snap-fire on the frame a
+       * sliver of sight opens. `SIGHT_LOOK` is under a human reaction time so
+       * nothing about a firefight reads differently.
+       */
+      if (this.sightCd > 0) return;
+      if (!this._hasLineOfSight(ctx)) { this.sightCd = SIGHT_LOOK; return; }
       if (A.telegraph) {
         if (this.aimCharge <= 0) {
           this.aimCharge = A.telegraph;

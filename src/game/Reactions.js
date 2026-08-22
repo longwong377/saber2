@@ -74,6 +74,16 @@
 import * as THREE from 'three';
 import { clamp, damp } from '../engine/MathUtil.js';
 import { audio } from '../engine/Audio.js';
+/**
+ * THE LEDGER, AND IT IS THE SAME ONE THE REST OF THE GAME READS.
+ *
+ * `Nerve.nerveOf` routes: a body with a `Trooper` record answers with the
+ * record's morale, a body without one answers with `Enemy.nerve` — the number
+ * `nerveTick` drives down while a lit blade stands in the rank and
+ * `witnessDeath` knocks every time something falls beside it. `Nerve.js` is a
+ * leaf (MathUtil and Morale, nothing else), so this import cannot cycle.
+ */
+import { nerveOf as ledgerNerve } from './Nerve.js';
 
 /**
  * HOW LONG A GRENADE BURNS, in seconds.
@@ -435,16 +445,52 @@ export class GrenadeField {
  * screen: the nameplate draws his nerve bar and his rank chip. So the man who
  * throws himself on a grenade is a man the player could have picked out
  * beforehand, which is the difference between a character and a coin toss.
- * Bodies with no record — the horde — answer with their archetype's threat
- * rating, so a B1 dives and a commando considers the other options.
+ * Bodies with no record — the horde — answer with their archetype's TEMPER, a
+ * B1 being a B1 and an ARC being an ARC, scaled by whatever nerve that body has
+ * left.
+ *
+ * ── IT WAS `nerveOf`, AND THERE WERE TWO OF THOSE ────────────────────────
+ *
+ * `Nerve.nerveOf` and this one were two exported functions with one name
+ * answering one question two different ways, which is HANDOFF §2.3's signature
+ * defect with the twin sitting in a different file. This one is `braveryOf`
+ * now: bravery is a TEMPERAMENT crossed with a state, and the state is the
+ * ledger. Nothing outside this file imported the old name.
+ *
+ * ── AND THE HORDE'S HALF WAS A CONSTANT ──────────────────────────────────
+ *
+ * The header of this file says the choice between the four answers is "made
+ * out of state this game already keeps rather than out of a die roll … how
+ * much NERVE the man has". For a body with a record that was true. For the
+ * horde — which is every body in waves, roguelite, campaign and skirmish — it
+ * read `(threat - 1) / 6` and NOTHING ELSE: a per-archetype constant fixed at
+ * spawn, so a droid that had watched half its rank cut down in front of it was
+ * exactly as willing to lie on a grenade as one that had just walked in.
+ *
+ * `Enemy.nerve` is a real number that a real thing moves — `nerveTick` pays
+ * -0.115/s for a lit hostile blade inside `BLADE_REACH` and `witnessDeath`
+ * -0.055 for every body that falls within `SEE` — and it is read by
+ * `Enemy._think`'s break clause and by `nerveAim`. This chooser, the one place
+ * in the game where nerve decides an ACT rather than a wobble, was the reader
+ * that did not have it.
+ *
+ * AT FULL NERVE AND OUTSIDE A LEADER'S RING THIS IS THE OLD NUMBER EXACTLY —
+ * `NERVE.START` is 1 and the product is the identity — so nothing in the
+ * shipped game moves until the player has done something to the body, which is
+ * the same argument `NERVE.START`'s own note makes.
+ *
+ * The rally term is in both branches now for the same reason it was in one: a
+ * `leader` elite writes `rallyTimer` onto every body inside its ring, horde or
+ * roster, and a man being led is a man who will try something.
  */
-export function nerveOf(body) {
+export function braveryOf(body) {
   const t = body.trooper;
   if (t) {
     const rank = (t.rank ?? 0) / 4;
     return clamp((t.morale ?? 0.6) * 0.72 + rank * 0.28 + (body.rallyTimer > 0 ? 0.1 : 0), 0, 1);
   }
-  return clamp(((body.A?.threat ?? 2) - 1) / 6, 0, 1);
+  const temper = clamp(((body.A?.threat ?? 2) - 1) / 6, 0, 1);
+  return clamp(temper * clamp(ledgerNerve(body), 0, 1) + (body.rallyTimer > 0 ? 0.1 : 0), 0, 1);
 }
 
 /** Friends of this body inside a radius — who a smother would be saving. */
@@ -502,7 +548,7 @@ export function chooseReaction(body, g, ctx) {
    * waiting costs nothing that was reachable.
    */
   if (!g.grounded && g.left > 0.9) return null;
-  const nerve = nerveOf(body);
+  const nerve = braveryOf(body);
   const left = g.left;
 
   /**
@@ -631,7 +677,7 @@ export function stepReaction(body, dt, ctx) {
     /* HE IS NOT A MARKSMAN, and this is the second half of "sometimes killing
      * themselves": a hurried throw scatters, and a scatter that lands short is
      * a grenade back among his own feet. */
-    const err = (1 - nerveOf(body)) * 5.5;
+    const err = (1 - braveryOf(body)) * 5.5;
     to.x += (jitterOf(body) - 0.5) * err;
     to.z += (jitterOf(body) * 1.7 % 1 - 0.5) * err;
     _v1.copy(body.position);
@@ -858,7 +904,12 @@ export function senseDanger(body, dt, ctx) {
     body._dangerT = 0;
     /* HIS OWN REACTION TIME, and a shout takes most of it off everybody
      * else's. `_heard` is stamped by the shouter below. */
-    const shaken = (body.trooper?.morale ?? 1) < 0.4;
+    /* …AND `shaken` IS THE LEDGER TOO. `body.trooper?.morale ?? 1` answered a
+     * flat 1 for every body in the horde, so `LAG.shaken` — "a frightened man
+     * freezes first", the slowest of the three reaction times — could only ever
+     * be paid by a named trooper in Command. Every droid in the game reacted at
+     * a steady soldier's pace whatever had just happened to it. One reader. */
+    const shaken = ledgerNerve(body) < 0.4;
     const heard = body._heardAt !== undefined && (ctx?.time ?? 0) - body._heardAt < 1.2;
     body._lag = (heard ? LAG.heard : (shaken ? LAG.shaken : LAG.base))
       + jitterOf(body) * LAG.jitter;
