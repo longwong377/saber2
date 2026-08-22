@@ -389,6 +389,100 @@ Two rules, and the second is the one people skip:
 The same applies to any bench with a wall-clock term in it. Counts, hit rates
 and hp are safe under load; seconds are not.
 
+### 2.6c …AND YOU CAN MEASURE A MILLISECOND ON A LOADED BOX AFTER ALL
+
+The two rules above are right and they stop one step short. "Do not quote the
+number" leaves every timing check in the gate red whenever a peer lane is
+working, which is most of the time, and a check that is red for a reason nobody
+can act on is a check nobody reads. It also leaves the actual question
+unanswered: if a wall-clock millisecond here is worthless, **what is the frame
+made of?**
+
+`performance.now()` keeps running while this process is off a core.
+`process.cpuUsage()` does not. Measured on this box with eleven peer node
+processes live, one fixed 200 000-iteration arithmetic loop, alternate samples:
+
+```
+wall ms  0.441  0.456  0.431  0.471  28.551  0.457  0.416  …  24.881
+cpu  ms  0.441  0.453  0.428  0.467   0.559  0.454  0.416  …   0.443
+```
+
+The wall column says the work got sixty times more expensive. It did not. The
+residual on the CPU column — 0.44 → 0.56 on the worst sample, about 25% — is
+cache pressure from the other tenants, and that is the honest error bar left.
+
+- **`tools/checks/_cpuclock.mjs`** is the helper: `cpuMs()`, a `window_()` that
+  hands back `{cpu, wall, contention}`, and `loadPhrase()` so a check prints the
+  load beside its own figure as §2.6b asks. `cloth-cost` uses it, which is why
+  the `6.43 ms` failure cannot come back: at load 59.8 with the box running
+  8.20× it reads 4.26 ms of CPU against a 6.0 ceiling.
+- **`tools/_ledger.mjs`** is the per-subsystem frame ledger built on the same
+  clock. Two `cpuUsage()` reads a frame give the frame's true cost;
+  `hrtime.bigint()` splits it between subsystems as a SHARE, because
+  `cpuUsage()` is 3.7 µs a call and there are ~220 per-body calls a frame. Rows
+  are exclusive of their children and `residual` is printed, so the ledger
+  cannot quietly stop adding up.
+
+```bash
+node --import ./tools/register.mjs tools/_ledger.mjs \
+  [--seed 7] [--level geonosis] [--mode theline] [--quality high] \
+  [--warm 45] [--frames 300] [--json out.json] [--prof out.cpuprofile]
+node --import ./tools/register.mjs tools/_ledger.mjs --top out.cpuprofile
+```
+
+`--prof` profiles the MEASURED frames only, never the warm-up — a deploy's
+first second builds colliders and bakes merged skins, and a profile containing
+it names the loader. `--top` reads the result by self time. §2.7b's lesson
+applies every time: a profile named `_gatherNear` and `_encodeCell` in one pass.
+
+**What it said, geonosis · seed 7 · `theline` · `high` · 300 frames after a 45 s
+warm-up, at load 45 on 4 cores — 38 hostiles against a ten-man roster, which is
+what the mode actually fields:**
+
+| subsystem | ms CPU/frame | share |
+|---|---|---|
+| physics | 13.81 | 47.0% |
+| animation | 6.61 | 22.5% |
+| enemy other | 3.52 | 12.0% |
+| enemy think | 1.14 | 3.9% |
+| player | 0.95 | 3.2% |
+| terrain | 0.87 | 3.0% |
+| residual | 0.82 | 2.8% |
+| bolts | 0.56 | 1.9% |
+| cloth | 0.46 | 1.6% |
+| director, blades, particles, corpses, vfx | under 0.2 each | |
+| **FRAME** | **29.35** | |
+
+*frame wall 185.9 ms · frame CPU 29.4 ms · **contention ×6.33***
+
+So the `cloth: 19 enemies' garments cost 6.43 ms` that §2.6b is about was the
+box: cloth is **1.6%** of the frame in the mode the game is played in, and the
+enemies on that ground wear no garments at all — the 0.46 ms is the PLAYER's
+four. Three things came out of going and looking, all in
+`tools/checks/frame-ledger.mjs`:
+
+- **`physics` was the dead.** 386 rigid bodies, 383 awake, 269 ragdoll joints
+  against 40 living enemies; 15 of 21 corpses had never settled and the oldest
+  had been down 33.7 s. `Corpses`' settle test asked whether the FASTEST of a
+  ragdoll's nineteen bones was under 5 cm/s, and a corpse lying in the sand
+  reads 0.20-0.28 there for ever. It is a displacement test now, plus a cap.
+  Measured A/B, one seed, same load: physics 13.05 → 8.88 ms, frame 29.11 →
+  26.50.
+- **`physics.staticBoxes` was swept linearly, once per body per frame.**
+  `src/physics/BoxIndex.js`. A gather looks at 2.6 box records against 135.1.
+- **The ground's memory published the whole texture every frame.** One union
+  dirty rectangle over marks that are far apart is the whole 192² field.
+  21 094 cells a publish → 263, bytes identical.
+
+**Still open, and named because the ledger prices them:** `animation` is 6.6 ms
+over ~40 bodies and the LOD split says 1.5-2.5 ms of it is spent on bodies at
+lod 2 and beyond — `Cohorts.js`'s header says "what is dropped is the gait" and
+only the DRAWING of it is; `updateMatrixWorld` is still 8.5% of the frame,
+almost all of it `Rig.updateMatrices()` forcing a full-tree walk twice per
+animator update and twice more in `_poseArms`; and `SurfaceField.update` still
+re-encodes all 36 864 cells at 10 Hz after ageing them, which is now the larger
+half of the terrain row.
+
 > **SOLVED, AND THE HYPOTHESIS BELOW IS REFUTED BY MEASUREMENT — see §2.7b.**
 > The roster's growth to 31 archetypes is **not** why `cloth-cost` never
 > finished: the whole 31-archetype census World builds, spawns and steps in
