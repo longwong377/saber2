@@ -183,7 +183,20 @@ export async function run({ check, assert }) {
      * null for a corpse. */
     const shoot = (e) => {
       const before = e.hp;
-      const mid = e.position.clone().setY(e.position.y + 0.9);
+      /**
+       * THROUGH THE BODY'S OWN CAPSULE, not through `position + 0.9`.
+       *
+       * A felled body is lying down, and a bolt aimed at where a standing
+       * chest would be goes over it — measured, 0.00 hp, which would have made
+       * this check report the multiplier as broken when what had moved was the
+       * target. That is a real finding about the verb and it is recorded in
+       * NEXT.md as one; it is not what this check is for. Both arms are shot
+       * through the fattest capsule the body actually presents, so the only
+       * thing that differs between them is the open state.
+       */
+      const caps = e.capsules().filter((c) => !c.shield);
+      const fat = caps.reduce((a, c) => (c.r > a.r ? c : a), caps[0]);
+      const mid = fat.p0.clone().lerp(fat.p1, 0.5);
       world._boltHitTest({ damage: 6, owner: null, team: 0, color: { getHex: () => 0 } },
         mid.clone().add(new THREE.Vector3(0, 0, -6)), mid.clone().add(new THREE.Vector3(0, 0, 6)));
       return before - e.hp;
@@ -206,6 +219,18 @@ export async function run({ check, assert }) {
      * Impulse 26 is `forcePush`'s own, so this is the shipped blow rather than
      * a number chosen to pass. */
     b.applyKnockback(new THREE.Vector3(0, 0.6, 1).normalize().multiplyScalar(26), 0, null, false);
+    /**
+     * ONE STEP, BECAUSE THE FALL IS TAKEN IN `_move` AND NOT INSIDE THE BLOW.
+     *
+     * `knockFlat` records the fall and `_takeFall` takes it on the body's next
+     * step — deliberately, and the note over it says why: going limp inside
+     * `applyKnockback` put nineteen fresh dynamic bodies into `world.physics`
+     * in the middle of the sweep that felled the body, and `forcePush` then
+     * shoved every one of them again as loose furniture. It is the same frame
+     * in play (players step before enemies), so this is one `update`, not a
+     * delay a player could see.
+     */
+    step();
     assert(!!b.actor?.ragdolled,
       'a droid shoved at impulse 26 is still on its feet — the comment says it leaves them');
     const flatOpen = openness(b);
@@ -252,6 +277,7 @@ export async function run({ check, assert }) {
     assert(c, 'setup: the third droid did not spawn');
     for (let i = 0; i < 6; i++) step();
     c.applyKnockback(new THREE.Vector3(0, 0.6, 1).normalize().multiplyScalar(26), 0, a, false);
+    step();
     assert(!c.actor?.ragdolled,
       'a shove from a body on its own side put it on the floor — every Force wave would fell your line');
     assert(c.stunTimer > 0, 'a shove from its own side stopped reaching it at all');

@@ -150,6 +150,15 @@ const CAP_BITE = 1.12;
 const NEAR_REACH = 2.6;
 
 /**
+ * The broad phase's answer, borrowed for the length of one gather.
+ *
+ * Module scope and not per-body: `_gatherNear` fills it, sweeps it and is done
+ * with it inside one call, so one array serves every body on the field and the
+ * per-frame allocation it replaces was one array per body per gather.
+ */
+const _nearScratch = [];
+
+/**
  * Slow the part of a desired velocity that points AWAY from `toTarget`, leaving
  * everything across that line alone. Exported because it is a numeric law and
  * numeric laws in this codebase get measured, not eyeballed: a sidestep must
@@ -3095,6 +3104,53 @@ export class Enemy {
      * guard's first run, answering 80.3 m away from a body it had been handed. */
     const reach = 3 * this.bodyScale + 1;
     const onBody = () => out.distanceToSquared(this.position) <= reach * reach;
+    /**
+     * ── AND A BODY LYING IN THE SAND IS AIMED AT WHERE IT IS LYING ────────
+     *
+     * `aimAt` is the ONE reader every shooter in this game resolves its aim
+     * through — the rifle, the telegraphed line, the sight test, the rifle
+     * pose, both turret head-tracks — and it asks this method first. The rig
+     * branch below is deliberately switched off while the body is limp (a
+     * ragdolled rig's bones are driven by the solver and were not trusted
+     * here), and what it fell through to is `chest`: `position.y + 1.15 ·
+     * bodyScale`. While a body is limp `_move` writes `position` from the
+     * RAGDOLL'S OWN CENTRE, so `chest` is a metre and a bit of empty air
+     * directly above a man on the floor.
+     *
+     * MEASURED — `tools/_prone.mjs`, eight B1s in a ring at 12 m on one B1,
+     * 60 game-seconds an arm, everything else held identical:
+     *
+     *     standing   453 shots   131 hits   28.9%    aim 0.66 m BELOW the top
+     *     limp       477 shots    10 hits    2.1%    aim 0.92 m ABOVE the top
+     *
+     * A fourteenfold collapse, and the geometry says why rather than the rate:
+     * the point every gun on the field was laying on sat 0.92 m over the
+     * highest thing the body actually presents to a bolt. A felled enemy was
+     * very nearly immune to gunfire.
+     *
+     * That is the exact opposite of what the design says a downed body is
+     * worth. `Combat.OPEN_STATES` prices `downed` — "toppled, stunned or limp
+     * in the sand" — at ×1.5 on every bolt that lands, and FLAGSHIP §7's third
+     * verb is "the Force is a multiplier on other people's guns". The
+     * multiplier was being applied to a stream of bolts that had been aimed
+     * into the air above the target. It went unseen until `knockFlat` started
+     * FELLING bodies instead of stunning them upright, which turned a rare
+     * state into a common one and made the OPEN lane's landed-damage share
+     * move the wrong way (8.2% → 3.7%).
+     *
+     * A prone body is still a smaller target and still harder to hit — that is
+     * honest, it is 0.3 m of silhouette against 1.7 — but it is now shot AT.
+     *
+     * `Actor.centre` is the same answer `_move`'s LIMP branch and `capsules()`
+     * already use for a limp body, so this adds no second opinion about where
+     * a ragdoll is; it stops this method being the one reader that had none.
+     * `onBody` still guards it, so an actor whose bodies have not been placed
+     * yet falls through to the chain below exactly as before.
+     */
+    if (this.actor?.ragdolled) {
+      this.actor.centre(out);
+      if (onBody()) return out;
+    }
     if (this.rig && !this.actor?.ragdolled) {
       for (const name of ['chest', 'body', 'spine', 'hips']) {
         if (!this.rig.get(name)) continue;
@@ -4004,13 +4060,93 @@ export class Enemy {
      * that shoves your men and one that fells them.
      */
     if (source && source.team !== undefined && source.team === this.team) return false;
+    /**
+     * ── AND A FALL BELONGS TO THE MACHINE THAT OWNS THE BODY ─────────────
+     *
+     * TWO RAGDOLLS CANNOT AGREE, and it is not a tuning problem. `goRagdoll`
+     * builds its bodies out of `bone.obj.matrixWorld` — THE POSE THE BODY IS
+     * STANDING IN at the instant it goes limp — and a host and a guest run
+     * independent gait clocks for the same trooper. Same position, same
+     * velocity, same impulse, different arms and legs, and from there two
+     * chaotic solves go their own ways. Measured on a host/client pair off one
+     * push: **4.13 m of flight on the host against 10.06 m on the guest**, with
+     * the guest's copy still in the air at 2.3 m while the host's was down and
+     * sliding. `coop.mjs` calls that "the two machines are simulating different
+     * blows", and it is right.
+     *
+     * So a fall is taken only where the body lives:
+     *
+     *   `netDriven` — a guest's mirror never fells itself. Its position is the
+     *   host's, damped in by `World._stepNetEnemies`, and a local ragdoll would
+     *   be a second simulation fighting that stream.
+     *   `source.isRemote` — a shove that arrived as an `imp` claim is a blow
+     *   the thrower is already drawing on their own machine. The host bills it
+     *   in full (the impulse, the damage, the 1.2 s stun, the scream); it does
+     *   not also fell, because the guest could not follow that fall.
+     *
+     * WHAT IT COSTS, stated rather than hidden: in co-op a guest's push rocks a
+     * body where the host's fells it, so §7's OPEN verb is weaker for everyone
+     * who is not hosting. Closing that needs the FALL on the wire as an event —
+     * `World.onExplosion`'s "the client draws it and the host bills it" — plus
+     * a guest's ragdoll pinned to the host's position rather than free. That is
+     * a protocol change and it is written up in NEXT.md rather than smuggled in
+     * behind a physics fix.
+     */
+    if (this.netDriven || source?.isRemote) return false;
+    /**
+     * ── AND IT GOES LIMP ON THE NEXT STEP, NOT INSIDE THE BLOW ────────────
+     *
+     * This called `goRagdoll` here, and that put nineteen fresh dynamic bodies
+     * into `world.physics` IN THE MIDDLE OF THE SWEEP THAT FELLED IT.
+     * `Player.forcePush` and `_shockwave` both answer the bodies first and then
+     * walk `ctx.physics.bodies` to shove loose furniture — so the same press
+     * hit the same body twice: once as a body, then once per bone, at
+     * `mass * 15 * k * P` each.
+     *
+     * Measured on a host/client pair, one push, the same 15.98 impulse landing
+     * at both ends: the chest launched at **15.86 m/s on the host and 26.64 on
+     * the guest**, and the guest's copy climbed instead of falling and never
+     * decelerated — 18.16 m of flight against the host's 4.17 m. The two ends
+     * differed because the host receives the shove as an `imp` claim, which is
+     * `applyKnockback` ALONE with no furniture sweep behind it, while the guest
+     * ran the whole power locally. Two checks in `coop.mjs` caught it.
+     *
+     * So the fall is RECORDED here and taken in `_move`, which is the one
+     * function both machines run for this body — `Enemy.update` on the owner
+     * and `World._stepNetEnemies` on a guest inside its authority window. By
+     * then the sweep is over and there is nothing loose to double-bill.
+     *
+     * THE TUMBLE IS THE BLOW, NOT A DIE ROLL. `topple()` spins its ragdoll out
+     * of `rng()`, which is right for a machine whose legs went and wrong here:
+     * `rng()` is a module stream, so a host and a guest launching the same body
+     * off the same impulse drew DIFFERENT spins and two chaotic solves went
+     * their own ways. Crossing the impulse with the vertical gives a tumble
+     * about the axis the shove actually turns the body around, and it is the
+     * same on every machine that saw the same blow.
+     */
+    this._flatten = (this._flatten || new THREE.Vector3()).copy(impulse);
+    return true;
+  }
+
+  /**
+   * Take the fall `knockFlat` recorded, once the blow that caused it is over.
+   * Called from `_move` on every machine that steps this body.
+   */
+  _takeFall() {
+    const launch = this._flatten;
+    this._flatten = null;
+    if (!launch) return false;
+    if (this.dead || this.gripped || this.stasisHeld) return false;
+    if (!this.actor || this.actor.ragdolled) return false;
     /* THE SHOVE IS THE LAUNCH. `addShove` has already put the impulse into
-     * `velocity` this frame, so handing the ragdoll the body's own velocity
-     * sends it the way it was thrown rather than dropping it where it stood —
-     * which is the difference between a body flung off its feet and one that
-     * sat down. */
-    this.actor.goRagdoll(this.velocity.clone(),
-      _v1.set((rng() - .5) * 5, (rng() - .5) * 3, (rng() - .5) * 5));
+     * `velocity`, so handing the ragdoll the body's own velocity sends it the
+     * way it was thrown rather than dropping it where it stood. */
+    _v1.crossVectors(launch, UP);
+    const spin = _v1.lengthSq() > 1e-6 ? _v1.normalize().multiplyScalar(2.4) : _v1.set(0, 0, 0);
+    this.actor.goRagdoll(this.velocity.clone(), spin);
+    /* The physics capsule goes with it, exactly as in `topple()` — a body
+     * walking with no collider is the bug from the other side, and `recover()`
+     * is the one place that puts it back. */
     if (!this.bodyRemoved) {
       this.world.physics.remove(this.body);
       this.bodyRemoved = true;
@@ -4811,7 +4947,11 @@ export class Enemy {
     // The corpse's own centre if it has fallen, its torso if it has not — and
     // never a bone name this chassis might not have, which is what aimPoint's
     // fallback chain is for.
-    const point = (this.actor?.ragdolled ? this.actor.centre(_v1) : this.aimPoint(_v1)).clone();
+    /* `aimPoint` KNOWS ABOUT RAGDOLLS NOW — see the note there. This line used
+     * to carry its own `actor?.ragdolled ? actor.centre(…)` clause, which is
+     * the same rule written down twice and was the only call site that had it
+     * right. One reader. */
+    const point = this.aimPoint(_v1).clone();
     this.world.particles?.explosion(point, 1.6);
     this.world.onExplosion?.(point, 1.4);
     audio.explosion(point, 1.3);
@@ -5289,12 +5429,43 @@ export class Enemy {
      * `_maybeGrenade`. */
     if (A.grenades) this._maybeGrenade(dt, ctx, dist);
 
+    /**
+     * ── THE GENERATOR CYCLES BACK UP, AND IT COULD NOT ────────────────────
+     *
+     * `dropShield`'s own comment states the rule this block is supposed to
+     * carry: "A droideka's own generator cycles back up; an elite's bubble does
+     * not." It sets `deployTimer = 4.5` to say how long that takes — and it
+     * also sets `shieldHp = 0`, which this line then tested. `shieldHp > 0` is
+     * false for ever after a drop, so the branch was unreachable from the only
+     * state that leads to it, the 4.5 was a tuning constant nothing consumed,
+     * and a droideka that lost its bubble once was a 170 hp body for the rest
+     * of its life.
+     *
+     * Measured before the fix — one droideka, shield dropped at t=2 s, 30 s of
+     * world: `deployTimer` counted 4.5 → 0 by t=8 s and then sat at 0 for
+     * twenty-two seconds with `shieldUp` false and `shieldHp` 0. The timer ran,
+     * expired, and nothing was waiting on it.
+     *
+     * `shieldMax` is the right question — "does this chassis have a generator"
+     * — and it is written once, by `_build`, and never zeroed. The 4.5 s is
+     * what makes the droideka a body you have to keep pressure on rather than
+     * one you chip once: break the bubble and you have four and a half seconds
+     * before it is back, which is the counter-play the archetype was authored
+     * around and is also why a blade (which the bubble does not stop —
+     * `damage` only spends it on `kind !== 'melee'`) is the answer to one.
+     *
+     * THE ELITE'S BUBBLE IS STILL A ONE-SHOT, and now by construction rather
+     * than by the `Infinity` in `dropShield`: `MODIFIERS.shielded.allow`
+     * refuses any archetype that already declares `A.shield`, so a promoted
+     * body never enters this block at all. The `Infinity` stays as the belt to
+     * that brace.
+     */
     if (A.shield) {
       this.deployTimer = Math.max(0, this.deployTimer - dt);
-      const wantShield = dist < 22 && this.deployTimer <= 0 && this.shieldHp > 0;
+      const wantShield = dist < 22 && this.deployTimer <= 0 && this.shieldMax > 0;
       if (wantShield && !this.shieldUp && this.stateTime > 1.2) {
         this.shieldUp = true;
-        this.built.shield.visible = true;
+        if (this.built?.shield) this.built.shield.visible = true;
         this.shieldHp = this.shieldMax;
         audio.tone({ freq: 220, freqEnd: 700, dur: 0.5, gain: 0.16, type: 'sine', pos: this.position });
       }
@@ -6590,10 +6761,35 @@ export class Enemy {
     this._nearStale = false;
     this._nearAt.copy(p);
     near.length = 0;
-    const boxes = physics.staticBoxes;
     const reach = this.radius + NEAR_REACH;
-    for (let i = 0; i < boxes.length; i++) {
-      const box = boxes[i];
+    /**
+     * THROUGH THE BROAD PHASE, AND THE TEST BELOW IS UNCHANGED.
+     *
+     * This loop used to run over `physics.staticBoxes` in full — every box in
+     * the level, once per body, every frame. The note over NEAR_REACH already
+     * measured what that costs and what it grows to (241 boxes on the temple,
+     * 377 after four minutes of fighting in it, 7.63 us per extra box per
+     * frame), and Trees.js measured the same curve from the other end: 76
+     * boxes 3.18 ms/frame, 1800 boxes 14.09.
+     *
+     * `nearBoxes` answers with a SUPERSET of the array — see the correctness
+     * argument in src/physics/BoxIndex.js — so the distance test that follows
+     * is the same test on a shorter list and the short list that comes out is
+     * identical. `tools/checks/frame-budget.mjs` asserts that identity against
+     * the exhaustive sweep on every level rather than taking it on trust, and
+     * counts the box records touched, which is the machine-independent half of
+     * what this is worth.
+     *
+     * The fallback is the old loop, so a physics world without an index — the
+     * hand-built stubs several checks stand bodies on — behaves exactly as it
+     * did.
+     */
+    _nearScratch.length = 0;
+    const cand = physics.nearBoxes
+      ? physics.nearBoxes(p.x, p.z, reach, _nearScratch)
+      : physics.staticBoxes;
+    for (let i = 0; i < cand.length; i++) {
+      const box = cand[i];
       if (box.disabled) continue;
       const dx = box.center.x - p.x, dz = box.center.z - p.z;
       const rr = box.radius + reach;
@@ -6629,6 +6825,11 @@ export class Enemy {
   _move(dt, ctx) {
     const terrain = ctx.terrain;
     const A = this.A;
+
+    /* THE FALL `knockFlat` RECORDED, taken here because this is the one step
+     * both machines run for this body and because the sweep that caused it is
+     * over by now. See knockFlat. */
+    if (this._flatten) this._takeFall();
 
     if (this.gripped && this.liftTarget) {
       /**
