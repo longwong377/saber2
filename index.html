@@ -532,7 +532,7 @@
           raise — the slider cannot offer a number the battle would refuse. An engagement is a battle for
           one piece of ground and takes as many cleared waves as you say, so the two top sliders together
           are how long the whole thing is: three and three is the shipped nine-wave battle, nine and eight
-          is a seventy-two-wave grind on nine grounds.</p>
+          is a seventy-two-wave grind over nine rounds of ground.</p>
         <h3 id="h-standing-order" style="margin-top:22px">Standing order</h3>
         <div id="command-list" class="difflist"></div>
         <p class="hint">The formation your squads form up in at the start of every area. You can change
@@ -1205,21 +1205,10 @@
     <button id="btn-restart" class="secondary">Restart wave</button>
     <button id="btn-quit" class="ghost">Abandon run</button>
     <button id="btn-perfcopy" class="ghost">Copy frame report</button>
-    <!-- KEY BINDINGS, MID-RUN. The list itself is filled by
-         Menu._buildBindings, which paints every host it finds rather than
-         keeping a second copy of the table for this card: same rows, same
-         rebind listener, same conflict resolver, same live `bindings` object,
-         so a key changed here is changed in Options too. Folded away by
-         default — see the note in _buildBindings. -->
-    <button id="btn-pause-bind" class="ghost" aria-expanded="false" aria-controls="pause-bind-box">Key bindings</button>
-    <div id="pause-bind-box" class="pause-binds hidden">
-      <p class="hint">Click a key to rebind. Mouse buttons and the wheel work too. Right-click a key to clear it.</p>
-      <div id="pause-bind-list" class="bindlist"></div>
-      <button id="btn-pause-bind-reset" class="secondary">Reset to defaults</button>
-    </div>
-    <!-- THE SETTINGS, MID-RUN, and it is the same argument the key table two
-         lines up already won: "the list was one #bind-list in the Options
-         panel, which behind a run means Abandon Run, rebind, deploy again."
+    <!-- THE SETTINGS, MID-RUN, and it is the same argument the key table
+         directly below already won: "the list was one #bind-list in the
+         Options panel, which behind a run means Abandon Run, rebind, deploy
+         again."
          Every other control on the Options screen was still in exactly that
          position — the whole of Fidelity, Sound, Camera and Interface reachable
          only by ending the run — while four separate comments in Menu.js and
@@ -1247,6 +1236,18 @@
         <label class="check" data-twin="opt-invert"><input type="checkbox" id="opt-pause-invert"><span></span></label>
         <label class="check" data-twin="opt-shake"><input type="checkbox" id="opt-pause-shake"><span></span></label>
       </div>
+    </div>
+    <!-- KEY BINDINGS, MID-RUN. The list itself is filled by
+         Menu._buildBindings, which paints every host it finds rather than
+         keeping a second copy of the table for this card: same rows, same
+         rebind listener, same conflict resolver, same live `bindings` object,
+         so a key changed here is changed in Options too. Folded away by
+         default — see the note in _buildBindings. -->
+    <button id="btn-pause-bind" class="ghost" aria-expanded="false" aria-controls="pause-bind-box">Key bindings</button>
+    <div id="pause-bind-box" class="pause-binds hidden">
+      <p class="hint">Click a key to rebind. Mouse buttons and the wheel work too. Right-click a key to clear it.</p>
+      <div id="pause-bind-list" class="bindlist"></div>
+      <button id="btn-pause-bind-reset" class="secondary">Reset to defaults</button>
     </div>
     <!-- Filled by Menu._buildKeyLegends. V and Tab are the `view` and
          `scoreboard` actions and are rebindable; Esc is not in ACTIONS at all
