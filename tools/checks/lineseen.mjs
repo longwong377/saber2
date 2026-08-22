@@ -173,7 +173,14 @@ export async function run({ check, assert }) {
              * what index.html's own note measured at 0.00. */
             const centre = on(cr.left + cr.width / 2, cr.top + cr.height / 2);
             rows.push({ key, name: card.querySelector('b')?.textContent ?? key,
-              inBand: cr.top >= br.top - 0.5 && cr.bottom <= br.bottom - FADE + 0.5,
+              /* THE FADE IS ONLY THERE WHEN IT IS PAINTED. `styles.css` puts
+               * the bottom gradient on `.more` alone, and `.more` is off once
+               * the column is scrolled to its end — so the LAST card in the
+               * list is fully legible and subtracting the fade from it asks for
+               * 26 px of clearance that nothing is covering. Read per row,
+               * because each row is measured at its own scroll position. */
+              inBand: cr.top >= br.top - 0.5
+                && cr.bottom <= br.bottom - (col.classList.contains('more') ? FADE : 0) + 0.5,
               top: Math.round(cr.top - br.top), bottom: Math.round(cr.bottom - br.top),
               centre, hit: +(hit / n).toFixed(2) });
           }

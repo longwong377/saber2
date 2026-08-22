@@ -3355,6 +3355,17 @@ export class Menu {
     const above = (br.top + SCROLL_FADE) - cr.top;
     if (below > 0) box.scrollTop += below;
     else if (above > 0) box.scrollTop -= above;
+    /**
+     * …AND THE FADE HAS TO BE TOLD, because it is what this method scrolls
+     * AROUND. The bottom gradient is painted by `.more` alone
+     * (`styles.css`: `.col.narrow.pinned.more>.col-scroll`), and `.more` is
+     * written by `_syncScrollHints` off the scroll position — which this method
+     * has just moved. Scrolling without saying so leaves the last card in the
+     * list sitting under a gradient that should no longer be there: at the
+     * bottom of the column there is nothing more to reveal, so there is nothing
+     * to fade. `lineseen.1` measured it on the last card of the mode list.
+     */
+    this._syncScrollHints?.();
   }
 
   /** Whatever the panel on screen needs measured once it has a box. */
