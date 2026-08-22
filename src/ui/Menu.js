@@ -573,7 +573,7 @@ export const DEFAULT_SETTINGS = {
    */
   pvp: false,
   /**
-   * THE BATTLE, AS FOUR PICKS. Read by `main.js`'s deploy, normalised by
+   * THE BATTLE, AS FIVE PICKS. Read by `main.js`'s deploy, normalised by
    * `Waves.skirmishConfig` and handed to `World.beginSkirmish` as a PLAN —
    * which is why they are picks and not a settings blob the mode reads for
    * itself.
@@ -591,6 +591,23 @@ export const DEFAULT_SETTINGS = {
    * ladder somebody has already tuned instead of growing a second one.
    */
   skirmishEngagements: SKIRMISH.engagements.def,
+  /**
+   * HOW MANY CLEARED WAVES MAKE ONE ENGAGEMENT — and it was the fifth pick of
+   * "THE BATTLE, AS FOUR PICKS".
+   *
+   * `Waves.skirmishConfig` has clamped five fields since the day an engagement
+   * stopped being one wave, and `SKIRMISH.waves`' own note says why the fifth
+   * is a pick and not a constant: "so a player who wants a long grind on one
+   * map can have one". Four of the five reached the Deploy panel. Measured,
+   * `settings.skirmishWaves` did not exist and `main.js` passed four keys, so
+   * `skirmishConfig` defaulted `waves` to 3 on every battle ever fought and the
+   * range 1..8 was unreachable — a skirmish was nine waves long, always.
+   *
+   * That is the whole LENGTH of the mode: engagements × waves. With the dial
+   * missing the player owned one factor of it and the other was a constant
+   * wearing a clamp, so "as long as you say" was a third of true.
+   */
+  skirmishWaves: SKIRMISH.waves.def,
   skirmishStrength: OPENING_STRENGTH,
   skirmishPressure: 0,
   skirmishRotate: true,
@@ -924,6 +941,7 @@ export const SETTING_READERS = {
    * and `world.rules` is the only place the answer lives — see `canHarm`. */
   pvp:             ['game/World.js', 'this.rules = pvpRules(settings)'],
   skirmishEngagements: ['main.js', 'engagements: settings.skirmishEngagements'],
+  skirmishWaves:   ['main.js', 'waves: settings.skirmishWaves'],
   skirmishStrength: ['main.js', 'strength: settings.skirmishStrength'],
   skirmishPressure: ['main.js', 'pressure: settings.skirmishPressure'],
   skirmishRotate:  ['main.js', 'rotate: settings.skirmishRotate'],
@@ -3561,6 +3579,26 @@ export class Menu {
     if (name) el.setAttribute('aria-label', name);
     const fire = (e) => { e?.preventDefault?.(); onActivate(e); };
     el.addEventListener('click', fire);
+    /**
+     * …AND IT ANSWERS THE POINTER ARRIVING, ONCE.
+     *
+     * Four call sites wrote `card.addEventListener('mouseenter', () =>
+     * audio.ui('hover'))` on the line above their `_activate` — the theatre
+     * cards, the run rules, the boon draft and the muster shelf — and
+     * twenty-three did not. Measured on the shipped page by patching
+     * `audio.ui` and moving the pointer onto every control in the menu: 24 of
+     * 140 answered a hover and 116 did not, and the split ran THROUGH single
+     * screens rather than between them — on the Deploy panel the seven theatre
+     * cards and the seven rules blipped while the four difficulties and the
+     * nine modes directly under them were silent.
+     *
+     * The rule is not "cards blip"; it is "a thing you can activate says so",
+     * and this helper is the one place that knows which elements those are. So
+     * it goes here, and the four hand-written copies come out — a card that
+     * kept its own would now blip twice, which is the other half of the same
+     * defect.
+     */
+    el.addEventListener('mouseenter', () => audio.ui('hover'));
     el.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar' || e.code === 'Space') fire(e);
     });
@@ -3629,7 +3667,6 @@ export class Menu {
         this._syncRules();
         saveSettings(this.s);
       });
-      card.addEventListener('mouseenter', () => audio.ui('hover'));
       this.el.levels.appendChild(card);
     }
     this._syncTheatre();
@@ -3756,7 +3793,6 @@ export class Menu {
         saveSettings(this.s);
         this._syncRules();
       });
-      d.addEventListener('mouseenter', () => audio.ui('hover'));
       this._ruleCards.set(key, d);
       host.appendChild(d);
     }
@@ -4218,6 +4254,23 @@ export class Menu {
     this.s[key] = value;
     if (entry) {
       for (const input of entry.inputs) {
+        /**
+         * A BOX IS NOT A NUMBER, and this branch is what lets one setting carry
+         * two boxes.
+         *
+         * `input.value` on a checkbox is the string "on"; `parseFloat` of it is
+         * NaN, NaN !== anything, so the line below would write `false` into the
+         * VALUE attribute of every checkbox on every call and never touch
+         * `checked` — the one field that decides what the player sees. The
+         * sliders have carried two hosts since the pause card grew its training
+         * numbers (`opt-sandbox-count` / `opt-pause-count` are one setting); the
+         * boxes could not, and that is exactly what a second copy of "Invert
+         * blade Y" on the pause card needs.
+         */
+        if (input.type === 'checkbox') {
+          if (input.checked !== !!value) input.checked = !!value;
+          continue;
+        }
         if (parseFloat(input.value) !== value) input.value = value;
         const label = input.parentElement?.querySelector('b');
         if (label) label.textContent = entry.fmt ? entry.fmt(value) : Number(value).toFixed(2);
@@ -4254,15 +4307,45 @@ export class Menu {
     if (row) row.classList.toggle('overruled', !tier);
   }
 
+  /**
+   * A CHECKBOX, WITH THE TWO THINGS `_slider` HAS HAD ALL ALONG.
+   *
+   * 1. IT IS IN THE BOUND TABLE, so one setting can carry more than one box.
+   *    The sliders have been able to do this since the pause card grew its
+   *    training numbers — `opt-sandbox-count` and `opt-pause-count` are two
+   *    handles on `sandboxCount` and `_set` moves both — and the boxes could
+   *    not, so a second copy of a tick on the pause card would have shown the
+   *    player one answer on one screen and the other answer on the other.
+   * 2. IT MAKES A SOUND. Measured on the shipped page by patching `audio.ui`
+   *    and driving every control in the menu: 116 cards, swatches and tabs
+   *    answered a click and 21 of the 23 checkboxes answered nothing at all.
+   *    The two that did — the training leash and the Focus leash — were the
+   *    proof that the silence was an oversight and not a taste: both had
+   *    `() => audio.ui('click')` hand-written as their onChange, which is a
+   *    side effect standing in for a missing default. The blip goes on the
+   *    funnel instead, exactly as the shake and hitstop gates went on theirs,
+   *    and the hand-written pair comes back out so nothing plays twice.
+   *
+   * `onChange` still fires only on a PLAYER's change, never on the first paint
+   * — the opposite of `_slider`, deliberately: a slider's first paint is what
+   * pushes the stored volume into the mixer, and a box's would fire hooks for
+   * a change nobody made.
+   */
   _check(id, key, onChange) {
     const input = document.getElementById(id);
     if (!input) return;
+    const entry = this._bound.get(key) || { inputs: [], fmt: null, onChange };
+    if (onChange && !entry.onChange) entry.onChange = onChange;
+    if (!entry.inputs.includes(input)) entry.inputs.push(input);
+    this._bound.set(key, entry);
     input.checked = !!this.s[key];
-    input.addEventListener('change', () => {
-      this.s[key] = input.checked;
-      saveSettings(this.s);
-      onChange?.(input.checked);
-    });
+    if (!input.dataset.checkBound) {
+      input.dataset.checkBound = '1';
+      input.addEventListener('change', () => {
+        audio.ui('click');
+        this._set(key, input.checked);
+      });
+    }
   }
 
   _startPreview() {
@@ -5111,7 +5194,7 @@ export class Menu {
     // puts it in the bound table that controls.mjs reads — a hand-wired box
     // has to be excused by name in PICKED, and an excuse is a thing that can
     // be granted to something that does not deserve one.
-    this._check('opt-unlimited-focus', 'unlimitedFocus', () => audio.ui('click'));
+    this._check('opt-unlimited-focus', 'unlimitedFocus');
     this._applyBladeCeiling = apply;
   }
 
@@ -5911,9 +5994,17 @@ export class Menu {
      * numbers, offered rather than refused. */
     this._range('opt-sk-engagements', SKIRMISH.engagements.min, SKIRMISH.engagements.max, 1,
       'skirmishEngagements');
+    this._range('opt-sk-waves', SKIRMISH.waves.min, SKIRMISH.waves.max, 1, 'skirmishWaves');
     this._range('opt-sk-strength', OPENING_STRENGTH, MAX_STRENGTH, 1, 'skirmishStrength');
     this._range('opt-sk-pressure', 0, AREAS.length - 1, 1, 'skirmishPressure');
     this._slider('opt-sk-engagements', 'skirmishEngagements', v => `${Math.round(v)}`);
+    /* NOT A PRODUCT IN EITHER LABEL, though the product is what the player
+     * wants: `_set` re-renders only the inputs bound to the key it was handed,
+     * so a formatter reading the OTHER slider's value would go stale the moment
+     * that one moved and would be right again only after this one did. The
+     * product is in the hint beside them, which is prose and never stale. */
+    this._slider('opt-sk-waves', 'skirmishWaves',
+      v => `${Math.round(v)} cleared wave${Math.round(v) === 1 ? '' : 's'} each`);
     this._slider('opt-sk-strength', 'skirmishStrength',
       v => `${Math.round(v)} of ${MAX_STRENGTH}`
         + (Math.round(v) <= OPENING_STRENGTH ? " — the muster's own line" : ''));
@@ -6361,7 +6452,6 @@ export class Menu {
       card.className = b.attune ? 'dc att' : 'dc';
       card.innerHTML = `<div class="ic">${b.icon}</div><b>${b.name}</b><span>${b.text}</span>`
         + `<em>${b.tag}<kbd class="dck">${idx + 1}</kbd></em>`;
-      card.addEventListener('mouseenter', () => audio.ui('hover'));
       this._activate(card, () => take(b), `${b.name} — ${b.text}`);
       card.addEventListener('keydown', (e) => {
         const i = cards.indexOf(card);
@@ -6473,7 +6563,6 @@ export class Menu {
             + `<span class="cost">${u.cost} points · threat ${u.threat}</span>`
             + `<span class="have">You field ${u.have}</span>`;
           if (u.afford) {
-            card.addEventListener('mouseenter', () => audio.ui('hover'));
             this._activate(card, () => buy(u.type), `${u.label} — ${u.cost} points`);
           }
           el.units.appendChild(card);
@@ -6704,6 +6793,101 @@ export class Menu {
   hideDeploy() { document.getElementById('deploy-card')?.classList.add('hidden'); }
 
   /**
+   * THE SETTINGS THE RUN CAN REACH — and until this existed there were none.
+   *
+   * THE HOLE. `#pause` carried Resume, Restart wave, Abandon run, Copy frame
+   * report and the key table, and NOTHING ELSE. Every other control the game
+   * has — master volume, music, field of view, blade sensitivity, inverted Y,
+   * camera shake, cinematic slow-motion, the reticle, the minimap, the whole
+   * of Fidelity — lived on the Options tab of the front screen, and the only
+   * route to the front screen mid-run is `btn-quit`, which is `quitToMenu()`,
+   * which calls `world.dispose()`. So the price of turning the music down was
+   * the run.
+   *
+   * WHAT MAKES IT A DEFECT AND NOT A CHOICE is that four separate comments in
+   * this file and in main.js already said the opposite, in those words:
+   *
+   *   applyFeelSettings — "so a box ticked on the pause screen bites on the
+   *     very next explosion with no redeploy"
+   *   SETTING_READERS.rumble — "so a pad that is too strong is turned down
+   *     mid-fight from the pause card"
+   *   the reticle sliders — "these three controls are reachable from the pause
+   *     card, where the HUD's frame loop is not running"
+   *   _buildPauseTraining, directly below — "'Live' is worth nothing if the
+   *     only copy of the control is behind Abandon Run"
+   *
+   * Four claims about a card with no settings on it. The last of them is the
+   * precedent this method follows, and so is `_buildBindings`, which fixed
+   * exactly this shape for the key table and left every other control in it.
+   *
+   * WHICH ONES. The settings whose readers take effect on the NEXT FRAME with
+   * no redeploy — that is the whole test, and it is why the tier, the
+   * resolution, the grass and the body cap are not here: they are read when a
+   * level loads or a buffer is built, and a control that answers "next time"
+   * on a card you opened mid-fight is the lie this method is removing, not a
+   * second helping of it.
+   *
+   * NOTHING IS TYPED TWICE. Each row is built from the Options control it
+   * MIRRORS — its label, its min, its max, its step — so the pause copy cannot
+   * disagree with the screen it came from, and a row whose twin is missing is
+   * not built at all rather than being built wrong (HANDOFF §2.3). The two
+   * handles then share one entry in `_bound`, so `_set` moves both: a slider
+   * dragged here is already dragged in Options when the run ends.
+   */
+  _buildPauseOptions() {
+    if (this._pauseOpts !== undefined) return this._pauseOpts;
+    const box = document.getElementById('pause-opts-box');
+    const list = document.getElementById('pause-opts-list');
+    if (!box || !list) { this._pauseOpts = null; return null; }
+    list.innerHTML = '';
+
+    /**
+     * One Options control, repeated. Everything except the two ids is read off
+     * the twin: the words in front of it, and — for a slider — the three
+     * numbers that decide what it can say.
+     */
+    const mirror = (twinId, id) => {
+      const twin = document.getElementById(twinId);
+      const row = twin?.closest?.('label');
+      if (!twin || !row) return false;
+      const words = [...row.childNodes].filter((n) => n.nodeType === 3)
+        .map((n) => n.textContent.trim()).filter(Boolean).join(' ');
+      const copy = document.createElement('label');
+      const box2 = (twin.getAttribute('type') || twin.type) === 'checkbox';
+      copy.className = box2 ? 'check' : 'slider';
+      copy.innerHTML = box2
+        ? `<input type="checkbox" id="${id}"> ${escKey(words)}`
+        : `${escKey(words)} <input type="range" id="${id}" min="${twin.getAttribute('min')}"`
+          + ` max="${twin.getAttribute('max')}" step="${twin.getAttribute('step')}"><b></b>`;
+      list.appendChild(copy);
+      return true;
+    };
+
+    /* The ids are literals on both sides on purpose: `controls.mjs` reads this
+     * file for `id="opt-…"` and for `_slider('opt-…', '…'`, and a control
+     * assembled out of variables would be invisible to the check that exists to
+     * catch a control bound to nothing. */
+    if (mirror('opt-vol', 'opt-pause-vol')) this._slider('opt-pause-vol', 'volume');
+    if (mirror('opt-music', 'opt-pause-music')) this._slider('opt-pause-music', 'music');
+    if (mirror('opt-fov', 'opt-pause-fov')) this._slider('opt-pause-fov', 'fov');
+    if (mirror('opt-sens', 'opt-pause-sens')) this._slider('opt-pause-sens', 'sensitivity');
+    if (mirror('opt-invert', 'opt-pause-invert')) this._check('opt-pause-invert', 'invertY');
+    if (mirror('opt-shake', 'opt-pause-shake')) this._check('opt-pause-shake', 'shake');
+
+    const toggle = document.getElementById('btn-pause-opts');
+    if (toggle && !toggle._wired) {
+      toggle._wired = true;
+      toggle.addEventListener('click', () => {
+        audio.ui('click');
+        const open = box.classList.toggle('hidden');
+        toggle.setAttribute('aria-expanded', open ? 'false' : 'true');
+      });
+    }
+    this._pauseOpts = box;
+    return box;
+  }
+
+  /**
    * The two sandbox numbers, repeated where you can actually reach them.
    *
    * "Live" is worth nothing if the only copy of the control is behind Abandon
@@ -6785,10 +6969,15 @@ export class Menu {
       if (this._pauseType) this._pauseType.value = sandboxConfig(this.s).type;
     }
     // The key table folds itself away between pauses — see _buildBindings.
-    const binds = document.getElementById('pause-bind-box');
-    const toggle = document.getElementById('btn-pause-bind');
-    if (binds) binds.classList.add('hidden');
-    if (toggle) toggle.setAttribute('aria-expanded', 'false');
+    // So does the settings box, for the same reason and by the same rule: a
+    // card that remembers being open hides Resume behind a list you opened
+    // once, twenty minutes ago.
+    this._buildPauseOptions();
+    for (const [btn, panel] of [['btn-pause-bind', 'pause-bind-box'],
+      ['btn-pause-opts', 'pause-opts-box']]) {
+      document.getElementById(panel)?.classList.add('hidden');
+      document.getElementById(btn)?.setAttribute('aria-expanded', 'false');
+    }
     this.el.pause.classList.remove('hidden');
   }
   hidePause() { this.el.pause.classList.add('hidden'); }

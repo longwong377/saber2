@@ -1206,6 +1206,27 @@
       <div id="pause-bind-list" class="bindlist"></div>
       <button id="btn-pause-bind-reset" class="secondary">Reset to defaults</button>
     </div>
+    <!-- THE SETTINGS, MID-RUN, and it is the same argument the key table two
+         lines up already won: "the list was one #bind-list in the Options
+         panel, which behind a run means Abandon Run, rebind, deploy again."
+         Every other control on the Options screen was still in exactly that
+         position — the whole of Fidelity, Sound, Camera and Interface reachable
+         only by ending the run — while four separate comments in Menu.js and
+         main.js described settings as taking effect "from the pause card", a
+         card that had no settings on it at all. Volume, field of view, blade
+         sensitivity, inverted Y and camera shake are the ones a player
+         discovers are wrong in the first thirty seconds of a fight and can now
+         answer without losing it.
+
+         The rows are BUILT, not typed: Menu._buildPauseOptions copies each
+         one's label, range and step off the Options control it mirrors, so
+         there is no second copy of a number here to drift (HANDOFF §2.3), and
+         _slider/_check keep both handles on one setting in step. -->
+    <button id="btn-pause-opts" class="ghost" aria-expanded="false" aria-controls="pause-opts-box">Settings</button>
+    <div id="pause-opts-box" class="pause-binds hidden">
+      <p class="hint">The ones that bite on the very next frame. The rest are on the Options screen.</p>
+      <div id="pause-opts-list"></div>
+    </div>
     <!-- Filled by Menu._buildKeyLegends. V and Tab are the `view` and
          `scoreboard` actions and are rebindable; Esc is not in ACTIONS at all
          (main.js pauses off a raw keydown so it survives a broken binding), so
