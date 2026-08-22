@@ -1414,5 +1414,90 @@ export async function run({ check, assert }) {
       + `seed 7 → ${ground} on '${key ?? 'authored'}'`;
   });
 
+  check('theline.21 the line you are told to hold is in the frame you are looking at', async () => {
+    /**
+     * THE ONE THING EVERY OTHER CHECK IN THIS FILE COULD NOT SEE.
+     *
+     * The first plates ever taken of this mode — `assets/flagship/
+     * theline-first-look/` — show the roster panel reading TEN STANDING over
+     * empty ground with not one trooper in shot. Nothing was missing and
+     * nothing was culled: measured against the renderer's own frustum, all ten
+     * were alive, 4.0–8.4 m away, LOD 0, rigs parented, none merged and none
+     * cohorted — and every one of them 83°–180° off the camera's centre line.
+     *
+     * `DEFAULT_FORMATION` is `behind`, doing exactly what its blurb says, and
+     * `Player` opens its rig at `yaw = Math.PI` with nothing on the solo path
+     * writing it again. Half the horizontal frame is 45.7° at the shipped
+     * `fov: 60` on 16:9, so the arc the column occupies is the arc the camera
+     * does not cover. §13 makes the name list the mode's second spine — "it
+     * only shrinks, it is on the HUD every second" — and a panel counting ten
+     * men nobody can see is that spine with nothing under it.
+     *
+     * ── WHY THE FRUSTUM AND NOT A CONE ──────────────────────────────────
+     *
+     * `stubEngine` builds a real `THREE.PerspectiveCamera(60, 16/9)` and
+     * `CameraRig.update` writes it every frame from inside `Player.update`, so
+     * this asks the question the renderer asks. Two traps, both of which this
+     * check reported the wrong answer through first and both of which are in
+     * `tools/_linelook.mjs`'s header: step once before asking, or the rig has
+     * not written the camera; and hand the frustum a POSITION, because
+     * `intersectsSphere` rejects on `distance < -radius`, which is FALSE for
+     * NaN, so a body handed in whole is never rejected at all.
+     *
+     * ── WHY TEN SECONDS AND NOT THE FIRST FRAME ─────────────────────────
+     *
+     * Because the first frame cannot be fixed by a formation and it is honest
+     * to say so: `deploy()` places bodies on an arrival ring rather than at
+     * their formation slots, so no order changes where they stand until they
+     * have walked. Measured on seed 5, in frame:
+     *
+     *     t=0.03   t=2    t=4    t=6    t=10   t=30
+     *      0/10     —      —      —      0/8    1/7      behind
+     *      0/10    6/10   9/10   9/10   10/10    —       rank
+     *
+     * Ten seconds is where the shape has finished forming and the wave is on
+     * the field (49 hostiles by then on this ground), which is the first moment
+     * the question "can I see my line" is about the line and not about a walk.
+     *
+     * THE BAR IS A SHARE OF THE LIVING and not a count, because men die: at
+     * thirty seconds the column is down to seven and this is a check about
+     * where they are, not how many are left.
+     */
+    const THREE = await import('three');
+    const { world, d, input } = await lineWorld({ seed: 5, level: 'geonosis' });
+    try {
+      const cam = world.engine.camera;
+      const frustum = new THREE.Frustum(), m4 = new THREE.Matrix4();
+      const sphere = new THREE.Sphere(new THREE.Vector3(), 1.0);
+      const inView = (b) => {
+        cam.updateMatrixWorld(true);
+        cam.updateProjectionMatrix();
+        frustum.setFromProjectionMatrix(m4.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse));
+        /* Chest height and a metre of man: a body on the bottom edge of the
+         * frame is on screen. */
+        sphere.center.set(b.position.x, b.position.y + 0.9, b.position.z);
+        return frustum.intersectsSphere(sphere);
+      };
+      drive(world, 10, input);
+      const live = d.roster.living.map((t) => t.body).filter((b) => b && !b.dead);
+      assert(live.length >= 5, `only ${live.length} of the line were standing ten seconds in`);
+      const seen = live.filter(inView).length;
+      const me = world.player.position;
+      const yaw = world.player.camera.yaw;
+      const fx = -Math.sin(yaw), fz = -Math.cos(yaw);
+      const off = live.map((b) => {
+        const dx = b.position.x - me.x, dz = b.position.z - me.z;
+        return Math.abs(Math.atan2(dx * fz - dz * fx, dx * fx + dz * fz) * 180 / Math.PI);
+      }).sort((a, b) => a - b);
+      assert(seen >= Math.ceil(live.length * 0.7),
+        `${seen} of ${live.length} of your line are inside the camera's frustum ten seconds after `
+        + `the drop — |bearing| off centre ${off[0].toFixed(0)}–${off[off.length - 1].toFixed(0)}°. `
+        + 'The roster panel is counting men the player cannot see, which is §13\'s second spine '
+        + 'with nothing under it. See FORMATIONS.rank and assets/flagship/theline-first-look/.');
+      return `${seen} of ${live.length} in the renderer's own frustum at t=10 s, `
+        + `|bearing| ${off[0].toFixed(0)}–${off[off.length - 1].toFixed(0)}° off centre`;
+    } finally { world.unload(); }
+  });
+
   return;
 }
