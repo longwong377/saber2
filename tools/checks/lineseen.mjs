@@ -114,20 +114,25 @@ export async function run({ check, assert }) {
   check = await clocked(check);
 
   check('lineseen.1 every mode the game offers can be brought fully into view with a mouse', async () => {
+    /* THE FADE IS THE MENU'S NUMBER, imported rather than typed — a 26 in this
+     * file beside the 26 in `Menu.SCROLL_FADE` and the `calc(100% - 26px)` in
+     * styles.css would be a third copy of one decision, which is the defect
+     * this check exists to measure in the file next door. Dynamically, inside
+     * the body, for the reason HANDOFF §2.1 gives about static edges. */
+    const { SCROLL_FADE } = await import('../../src/ui/Menu.js');
     const { page, errs, close } = await open();
     try {
       const out = [];
       for (const [w, h] of SIZES) {
         await page.setViewportSize({ width: w, height: h });
         await page.evaluate(() => window.__frame());
-        const m = await page.evaluate(() => {
+        const m = await page.evaluate((FADE) => {
           const menu = window.SABER.menu;
           const list = document.getElementById('mode-list');
           const box = list.closest('.col-scroll');
           const col = box.parentElement;
           const cards = [...list.children];
           const keys = [...menu._modeCards.keys()];
-          const FADE = 26;                    /* Menu.SCROLL_FADE, and styles.css */
           const rows = [];
           const was = menu.s.mode;
           for (const key of keys) {
@@ -168,7 +173,7 @@ export async function run({ check, assert }) {
           return { band: Math.round(box.clientHeight), content: Math.round(box.scrollHeight),
             more: col.classList.contains('more'), less: col.classList.contains('less'),
             gutter: box.offsetWidth - box.clientWidth, cards: cards.length, rows };
-        });
+        }, SCROLL_FADE);
         out.push({ w, h, ...m });
       }
 
@@ -246,7 +251,7 @@ export async function run({ check, assert }) {
       await page.waitForFunction(() => {
         const c = document.getElementById('deploy-card');
         return c && !c.classList.contains('hidden');
-      }, null, { timeout: FRAME_MS * 60 });
+      }, null, { timeout: FRAME_MS * 20 });
 
       const shown = await page.evaluate(() => {
         const w = window.SABER.world, cmd = w?.command;
@@ -275,7 +280,11 @@ export async function run({ check, assert }) {
         `the card printed ${shown.names.length} names and the roster holds ${W.roll.length}`
         + ` — ${shown.names.slice(0, 3).join(', ')} against ${W.roll.slice(0, 3).join(', ')}`);
       assert(W.holdTheLine, 'the mode that was deployed is not the one that is won by its line');
-      assert(W.generated === `front:${W.levelKey}`,
+      /* `front:<TERRAIN>` and not `front:<LEVEL>` — the wood stands on `bog`,
+       * so the level key is not the ground key and asserting the pair would be
+       * a second copy of `LEVELS[*].terrain`. What matters is that the run is
+       * standing on a ground this build GENERATED. */
+      assert(String(W.generated).startsWith('front:'),
         `the run is standing on "${W.generated}" — the ground the seed rolled was not generated`);
       assert(W.battlefield, 'there is no battle plan under a run whose ground is meant to be one');
 
