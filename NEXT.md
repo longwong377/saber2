@@ -1224,17 +1224,23 @@ process each, both sides of the player's army held on their feet so every figure
 is a FLOOR and a played sitting cannot be shorter:
 
     raid  seed 11    8 waves   FLOOR 11.6 min   card 10-15   ended WON
-    push  seed  1   12 waves   15.3 min of closed waves   card 18-25   ended WON
+    push  seed  1   12 waves         15.3 min   card 18-25   ended WON
+    grind seed  2   21 waves   FLOOR 28.6 min   card 30-45   ended WON
 
-The Raid's figure is `theline.19`'s, which times the whole drive and is
-therefore the honest one. The Push's is a sum of closed wave rows and is SHORT
-BY ONE WAVE — the bench left on `over`, which is raised by the wave that wins
-the crossing, so that wave never saw a wave-number change and its seconds were
-dropped (fixed). Its neighbours ran 89 and 110 s, so a Push floors near
-**17½ minutes** against 18-25. A Grind has not been clocked end to end — 21
-waves is half an hour of game time and this box was carrying five other lanes —
-but its first seven waves are 3,842 hp in 636 s and its composed bulk is
-**1.67× a Push's**, which puts its floor in the middle thirties against 30-45.
+**All three are inside the band their own card prints, and every one of them is
+a floor**, which is where a floor belongs: a played sitting is longer than an
+unkillable one, so the Push's and the Grind's sitting a little under their
+bottoms is the right side to be on.
+
+The Raid's figure is `theline.19`'s, which times the whole drive. The Push's is
+a sum of closed wave rows taken before the bench was fixed and is SHORT BY ONE
+WAVE — the drive left on `over`, which is raised by the wave that wins the
+crossing, so that wave never saw a wave-number change and its seconds were
+dropped. Its neighbours ran 89 and 110 s, so a Push floors near **17½ minutes**.
+
+The wave table of that Grind is the shape the whole exercise was for: 38 to
+133 seconds a wave over the entire crossing, against 81 s at the front and
+606 s at the back before any of this.
 
 **The three levers that were NOT taken, and why each was worse.**
 
