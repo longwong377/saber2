@@ -32,9 +32,9 @@ Playable two ways:
 | Smoke | **11/11 clean** on a quiet box. Its timeouts are wall-clock, so on a loaded one the last four fail and mean nothing — §2.6 |
 | Packed | `node tools/pack.mjs out.html` — 79 modules, 12.8 MB, boots from `file://`, and `tools/checks/packed.mjs` proves it every run |
 | Levels | **7** — `scoria, mustafar, colosseum, wood, drifts, alpine, geonosis`. The Boarding Bay and the Providence were deleted on the player's word — "I just tried the boarding bay and the providence and hated them… just remove them. your outside work is much better" |
-| Modes | **8** — `waves, roguelite, duel, sandbox, training, command, skirmish, campaign` |
+| Modes | **9** — `waves, roguelite, duel, sandbox, training, command, theline, skirmish, campaign` |
 | Campaigns | **1** — `petranaki`, two missions. `boarding` went with its two grounds; both its missions were the ship levels |
-| Archetypes | **31**, and `src/game/Levels.js` must be imported to see 16 of them |
+| Archetypes | **37**, and `src/game/Levels.js` must be imported to see most of them |
 
 Those four rows are a hand copy of what `node --import ./tools/register.mjs
 tools/state.mjs` prints, and they read **10** and **6** through a whole session
@@ -42,6 +42,14 @@ that deleted three levels and added two modes and two campaigns — §2.3, playi
 out in the one file that tells the next reader what is here. Run the tool
 rather than believing the table; it also warns when a level exists and is not
 in `LEVEL_ORDER`, which is a level nobody can reach except by typing its key.
+
+**AND IT HAD DRIFTED AGAIN BY TWO ROWS**, which is what a paragraph saying "run
+the tool rather than believing the table" is for. The Modes row read **8** and
+omitted THE LINE — the flagship mode, the one `FLAGSHIP.md` is entirely about —
+and Archetypes read **31** against 37. Both were caught by running `state.mjs`
+during a mode audit whose brief had been written off this table and therefore
+said "the eight modes". A stale row here does not merely mislead a reader; it
+sets the scope of the next session's work.
 
 Run things this way and no other way:
 
