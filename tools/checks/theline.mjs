@@ -1257,8 +1257,9 @@ export async function run({ check, assert }) {
      * on", which is `autoMuster()` then `closeMuster()` inside ONE `payWave`
      * call, so `mustering` is true for less than a frame and a poll for it
      * never fires. A no-op `onMuster` is what a player's screen is to the
-     * director; the drive closes it on the very next frame, so the sitting's
-     * clock is unmoved. */
+     * director; the drive musters and closes it on the very next frame — BOTH
+     * calls, in `_areaClear`'s own order — so the sitting's clock is unmoved
+     * and the line still grows the way a played run's does. */
     d.onMuster = () => {};
     const raid = SESSION_PLANS.find((p) => p.id === 'raid');
     assert(d.plan.id === raid.id,
@@ -1289,10 +1290,13 @@ export async function run({ check, assert }) {
         if (world.player) world.player.hp = world.player.maxHp;
         for (const tr of d.roster.all) if (tr.alive && tr.body && !tr.body.dead) tr.body.hp = tr.body.maxHp;
         world.update(STEP, input); t += STEP;
-        /* The muster is a screen this check does not have, and a crossing that
-         * stops at one is a crossing that never ends. `_areaClear`'s own
-         * fallback does the same thing when nothing is wired. */
-        if (d.mustering) { marks.push(t); d.closeMuster(); }
+        /* THE SAME TWO CALLS `_areaClear` MAKES WHEN NOTHING IS WIRED, in the
+         * same order: "muster for the player and press on". `autoMuster` is
+         * the load-bearing half — with `onMuster` set, `_areaClear` hands the
+         * offer to the screen and spends NOTHING, so a drive that only closed
+         * the card would walk into the last engagement with the line it landed
+         * with and time a sitting nobody plays. */
+        if (d.mustering) { marks.push(t); d.autoMuster(); d.closeMuster(); }
         if (d.wave !== wave) { waves++; wave = d.wave; }
       }
     } finally { world.unload(); }
