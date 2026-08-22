@@ -733,6 +733,13 @@ export class EmoteWheel extends RadialWheel {
  * wrong blurb on it. HOLD is appended because it is a toggle rather than a
  * formation and lives beside them rather than among them.
  */
+/** 1st, 2nd, 3rd… for a squad number the player is reading off a wheel. */
+function ordinal(n) {
+  const t = n % 100;
+  if (t >= 11 && t <= 13) return `${n}th`;
+  return `${n}${['th', 'st', 'nd', 'rd'][n % 10] || 'th'}`;
+}
+
 export class OrderWheel extends RadialWheel {
   constructor(host, formations) {
     const items = Object.values(formations || {}).map((F) => ({
@@ -740,6 +747,32 @@ export class OrderWheel extends RadialWheel {
     }));
     items.push({ id: 'hold', name: 'Hold ground', kind: 'hold',
       blurb: 'Stay where you are put. They still turn and fight.' });
+    /**
+     * WHO THE NEXT ORDER IS FOR, AND WHO STANDS ALONE — both on the wheel, and
+     * neither costing a binding.
+     *
+     * "I should be able to order separate squads or all squads at once
+     * depending on my choosing", and "you should be able to take an npc out of
+     * their squad… but you should be able to reverse it and put them back".
+     *
+     * A dedicated key for each was the obvious answer and it is the wrong one
+     * twice over. The number of squads is a function of how many men are alive
+     * — five with a full roster, two after a bad area — so a `squad1..squad5`
+     * table is mostly dead rows and has nothing for the sixth squad a
+     * reinforcement opens. And KeyK/KeyL are the last two unbound letters in
+     * the table, which `controls.mjs` requires as spares for the rebinder to
+     * settle a clash with; taking them fails the gate, correctly.
+     *
+     * The wheel already exists, is already the place orders come from, and
+     * already prints a live caption — so TARGET cycles which squad the next
+     * order is for and DETACH pulls the nearest man out of his line. Both read
+     * their current state back through `captionFor`, which is the part a bare
+     * keybinding could never have done.
+     */
+    items.push({ id: 'squad', name: 'Target', kind: 'squad',
+      blurb: 'Choose which squad your next order is for.' });
+    items.push({ id: 'detach', name: 'Detach', kind: 'detach',
+      blurb: 'Pull the nearest trooper out of his squad, or send him back.' });
     super(host, { items, action: 'orderwheel', cls: 'em ow' });
     this.director = null;
   }
@@ -747,6 +780,22 @@ export class OrderWheel extends RadialWheel {
   /** The live caption: the current order and the hold state are both readable. */
   captionFor(item) {
     const d = this.director;
+    if (item.kind === 'squad') {
+      if (!d) return item.blurb;
+      const n = d.squadsOf?.(d.commander)?.length ?? 0;
+      if (n <= 1) return 'One squad. Everything you order goes to it.';
+      const sel = d.selectedSquad;
+      return sel == null
+        ? `All ${n} squads. Choose this to pick one.`
+        : `${ordinal(sel + 1)} Squad only. Choose this again to step on.`;
+    }
+    if (item.kind === 'detach') {
+      const t = d?.nearestTrooper?.();
+      if (!t) return 'Nobody of yours is near enough.';
+      return t.detached
+        ? `${t.designation} is on his own — send him back to his squad.`
+        : `Pull ${t.designation} out of the line to take his own orders.`;
+    }
     if (item.kind === 'hold' && d) {
       return d.commander?.holding
         ? 'Holding. Choose this again to bring them with you.'
@@ -2167,7 +2216,12 @@ export class HUD {
       const o = this.orders.update(input, this);
       if (o) {
         if (o.kind === 'hold') world.command.hold?.();
-        else world.command.order?.(o.id);
+        else if (o.kind === 'squad') world.command.cycleSquad?.();
+        else if (o.kind === 'detach') world.command.detachNearest?.();
+        /* …AND THE ORDER CARRIES ITS TARGET. `selectedSquad` is null unless the
+         * player has chosen one on this same wheel, and null is the whole army
+         * — which is the behaviour every existing caller had and keeps. */
+        else world.command.order?.(o.id, null, world.command.selectedSquad);
       }
     } else if (this.orders) {
       this.orders.close();

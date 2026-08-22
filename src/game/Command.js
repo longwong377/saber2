@@ -1556,6 +1556,16 @@ export class Trooper {
     this.type = type;
     this.designation = name;
     this.nickname = null;
+    /**
+     * WHICH SQUAD THIS MAN IS IN, and it is a fact about him rather than about
+     * where he sits in an array. `CommandRoster.squads()` groups by this; see
+     * the long note there for why the old positional slice made per-squad
+     * orders impossible. Null until `assignSquads` deals it, which happens
+     * lazily the first time anybody asks for the squads.
+     */
+    this.squad = opts.squad ?? null;
+    /** …and whether he has been pulled out of it to take his own orders. */
+    this.detached = false;
     this.xp = opts.xp ?? 0;
     this.kills = 0;
     this.wounds = 0;              // times brought below a quarter and survived
@@ -1675,10 +1685,91 @@ export class CommandRoster {
    * number involved.
    */
   squads(size = SQUAD) {
-    const out = [];
+    /**
+     * ── GROUPED BY A STABLE ASSIGNMENT, NOT SLICED BY POSITION ────────────
+     *
+     * This used to be `live.slice(i, i + size)` — squads derived from wherever
+     * a man happened to sit in the living list. That survives permadeath very
+     * gracefully and makes per-squad ORDERS impossible, because "2nd Squad" was
+     * not a thing that existed between one frame and the next: one casualty
+     * anywhere in the roster re-dealt every man into a different squad. Asked
+     * for: "are we able to separately order squads? Sometimes it'll say 2
+     * squads but they get ordered as one… I should be able to order separate
+     * squads or all squads at once depending on my choosing."
+     *
+     * So the assignment is a FIELD, handed out at enlistment and never moved,
+     * and this groups the LIVING by it. The graceful half is kept exactly:
+     * nothing is stored per squad, so losing four of five men leaves no squad
+     * object with a ghost in it — it leaves a squad of one, which is what a
+     * squad of one actually is and what the roll should say.
+     *
+     * `size` still means what it meant. It is the size `assignSquads` deals to,
+     * and it is passed through so a caller asking for a different grouping gets
+     * one rather than being quietly ignored.
+     */
     const live = this.living;
-    for (let i = 0; i < live.length; i += size) out.push(live.slice(i, i + size));
-    return out;
+    for (const t of live) if (t.squad == null) this.assignSquads(size);
+    const by = new Map();
+    for (const t of live) {
+      // A man pulled out of the line answers only to himself — see `detach`.
+      const key = t.detached ? `solo:${t.id}` : `sq:${t.squad}`;
+      if (!by.has(key)) by.set(key, []);
+      by.get(key).push(t);
+    }
+    // Numbered squads first and in order, then the detached, so "1st, 2nd,
+    // then the men you pulled out" is the order the HUD walks.
+    const keys = [...by.keys()].sort((a, b) => {
+      const A = a.startsWith('sq:'), B = b.startsWith('sq:');
+      if (A !== B) return A ? -1 : 1;
+      return A ? (+a.slice(3)) - (+b.slice(3)) : a.localeCompare(b);
+    });
+    return keys.map((k) => by.get(k));
+  }
+
+  /**
+   * Deal every unassigned living man a squad number, filling existing squads
+   * that are under strength before opening a new one.
+   *
+   * Called lazily from `squads()` and directly by the muster, so a
+   * reinforcement joins the thinnest squad rather than always starting a new
+   * one — which is what keeps a roster of 24 from ending up as eight squads of
+   * three after a bad area.
+   */
+  assignSquads(size = SQUAD) {
+    const counts = new Map();
+    for (const t of this.all) {
+      if (!t.alive || t.squad == null) continue;
+      counts.set(t.squad, (counts.get(t.squad) || 0) + 1);
+    }
+    for (const t of this.all) {
+      if (!t.alive || t.squad != null) continue;
+      let pick = 0;
+      for (let n = 0; ; n++) {
+        if ((counts.get(n) || 0) < size) { pick = n; break; }
+      }
+      t.squad = pick;
+      counts.set(pick, (counts.get(pick) || 0) + 1);
+    }
+    return this;
+  }
+
+  /**
+   * Pull one man out of his squad, or put him back.
+   *
+   * "You should be able to take an npc out of their squad and individually
+   * assign them things — maybe you single out one dude to follow you — but you
+   * should be able to reverse it and put them back in with their squads."
+   *
+   * `detached` rather than clearing `squad`, so putting him back is one flag
+   * and he returns to the squad he came from rather than to whichever one has
+   * room at the time. A detached man is his own group in `squads()`, which is
+   * what makes him separately orderable without any new machinery.
+   */
+  detach(t, on = true) {
+    if (!t || !t.alive) return false;
+    if (!!t.detached === !!on) return false;
+    t.detached = !!on;
+    return true;
   }
 
   /** Kill a record. Idempotent, because a body can be reported dead twice. */
@@ -2572,6 +2663,8 @@ export class CommandDirector extends WaveDirector {
      */
     this.onMusterClose = null;    // () => void
     this.onOrder = null;          // (formation, squads) => void
+    /** Which squad the next order is for; null is the whole army. See cycleSquad. */
+    this.selectedSquad = null;
     /* Its own stream off the run's number, exactly as the four in Waves.js. */
     if (this.seed !== null) seedCommand(this.seed ^ 0x6f4a1b3d);
 
@@ -2653,6 +2746,70 @@ export class CommandDirector extends WaveDirector {
     if (peers.length <= 1) return all;
     const mine = Math.max(0, peers.indexOf(c));
     return all.filter((_, i) => i % peers.length === mine);
+  }
+
+  /**
+   * WHICH SQUAD THE NEXT ORDER IS FOR — null means the whole army.
+   *
+   * Cycled from the order wheel's TARGET slot. Walks 1st, 2nd, … and then back
+   * to all, and clamps itself the moment the squad it named stops existing:
+   * casualties merge the line, so a player who selected 4th Squad and then lost
+   * it must not be left issuing orders into a number nobody answers to.
+   */
+  cycleSquad(cmdr = null) {
+    const c = cmdr || this.commander;
+    const n = this.squadsOf(c).length;
+    if (n <= 1) { this.selectedSquad = null; return null; }
+    const cur = this.selectedSquad;
+    this.selectedSquad = cur == null ? 0 : (cur + 1 >= n ? null : cur + 1);
+    return this.selectedSquad;
+  }
+
+  /** The living trooper of yours standing closest to the commander's body. */
+  nearestTrooper(cmdr = null) {
+    const c = cmdr || this.commander;
+    const from = this.world?.player?.position;
+    if (!from) return null;
+    let best = null, bestD = Infinity;
+    for (const t of this.led(c)) {
+      const b = t.body;
+      if (!b || b.dead || !b.position) continue;
+      const d = b.position.distanceToSquared(from);
+      if (d < bestD) { bestD = d; best = t; }
+    }
+    return best;
+  }
+
+  /**
+   * Pull the nearest man out of his squad, or send him back. Toggling, so the
+   * same slot on the wheel is both halves of the request — "you should be able
+   * to reverse it and put them back in with their squads".
+   */
+  detachNearest(cmdr = null) {
+    const c = cmdr || this.commander;
+    const t = this.nearestTrooper(c);
+    if (!t) return null;
+    const on = !t.detached;
+    if (!c.roster?.detach?.(t, on)) return null;
+    /* The selection is an INDEX into a list this has just reshaped, so it
+     * cannot be trusted across the change. Back to the whole army, which is the
+     * one target that is always valid. */
+    this.selectedSquad = null;
+    this.world?.notify?.(on ? 'DETACHED' : 'BACK IN LINE',
+      on ? `${t.designation} takes his own orders` : `${t.designation} rejoins his squad`);
+    return t;
+  }
+
+  /**
+   * The formation a given squad is actually under.
+   *
+   * One reader, so a squad's own order and the army's cannot be answered
+   * differently in two places. `key` is the squad's index in `squadsOf`, which
+   * is what the HUD numbers and what `order(id, cmdr, key)` is given.
+   */
+  formationFor(c, key = null) {
+    const own = key != null && c?.squadOrders?.get(String(key));
+    return own || c?.formation || DEFAULT_FORMATION;
   }
 
   /** Everything this commander leads, flat — his squads' troopers in order. */
@@ -3821,7 +3978,7 @@ export class CommandDirector extends WaveDirector {
    * holds until the next one, which is how an order works and also the only
    * design that survives the player being busy with a lightsaber.
    */
-  order(id, cmdr = null) {
+  order(id, cmdr = null, squad = null) {
     /**
      * THREE KINDS OF ORDER THROUGH ONE DOOR, and the door is not widened by
      * restating what each kind is anywhere else.
@@ -3872,7 +4029,27 @@ export class CommandDirector extends WaveDirector {
      */
     if (this._netShell) return this.world?.requestOrder?.(id) ?? false;
     const c = cmdr || this.commander;
-    c.formation = id;
+    /**
+     * ── ONE SQUAD, OR ALL OF THEM ────────────────────────────────────────
+     *
+     * `formation` was a property of the COMMANDER and nothing else, so every
+     * squad he led always did the same thing and the count in `onOrder(F, n)`
+     * was only ever how many squads were about to do it together. The player
+     * spotted it exactly: "sometimes it'll say 2 squads but they get ordered as
+     * one."
+     *
+     * `squad` names one to move; null moves the army, which is the old
+     * behaviour and stays the default so every existing caller — the wheel,
+     * the key bindings, the net shell — keeps working untouched. A per-squad
+     * order is remembered in `c.squadOrders` and read by `_formationFor`; an
+     * army-wide order CLEARS those, because "everyone form wedge" has to mean
+     * everyone and not "everyone who has not been told otherwise". */
+    if (squad != null) {
+      (c.squadOrders || (c.squadOrders = new Map())).set(String(squad), id);
+    } else {
+      c.squadOrders?.clear();
+      c.formation = id;
+    }
     // A formation that does not advance is planted where the commander was
     // STANDING when the order was given — see `_anchorFor`. So is one the
     // commander has told to HOLD, which is the same mechanism as a decision
@@ -4415,7 +4592,10 @@ export class CommandDirector extends WaveDirector {
      * person who deployed it — which is what makes two lines face each other
      * instead of both forming up on whoever is holding the mouse. */
     const cmdr = this.commanderOf(e);
-    const F = FORMATIONS[cmdr.formation] || FORMATIONS[DEFAULT_FORMATION];
+    /* The squad's OWN order if it has been given one, else the army's. See
+     * `formationFor` and the note in `order`. `cmdSquad` is the index into
+     * `squadsOf`, refreshed once a frame in the same loop that stamps it. */
+    const F = FORMATIONS[this.formationFor(cmdr, e.cmdSquad)] || FORMATIONS[DEFAULT_FORMATION];
     const idx = e.cmdIndex | 0, n = e.cmdCount || 1, k = e.cmdSquad | 0;
     if (!F.slot(idx, n, k, out)) return null;
     const A = this._anchorFor(F, cmdr);
@@ -4581,7 +4761,10 @@ export class CommandDirector extends WaveDirector {
    * @param finished  below `REFUSE` — he is not coming back on his own.
    */
   _goToGround(e, dt, c, finished) {
-    const F = FORMATIONS[c.formation] || FORMATIONS[DEFAULT_FORMATION];
+    /* The squad's OWN order if it has been given one, else the army's. See
+     * `formationFor` and the note in `order`. `cmdSquad` is the index into
+     * `squadsOf`, refreshed once a frame in the same loop that stamps it. */
+    const F = FORMATIONS[this.formationFor(c, e?.cmdSquad)] || FORMATIONS[DEFAULT_FORMATION];
     const A = this._anchorFor(F, c);
     const T = this._threatBearing(A);
     /* He watches the thing he is frightened of. `Enemy._move` turns a body to
@@ -4925,7 +5108,8 @@ export class CommandDirector extends WaveDirector {
        * of the whole field. */
       if (!hurt) e._dragCd = 0.8;
     }
-    const F = FORMATIONS[c.formation] || FORMATIONS[DEFAULT_FORMATION];
+    /* The squad's own order if it has one — see `formationFor`. */
+    const F = FORMATIONS[this.formationFor(c, e?.cmdSquad)] || FORMATIONS[DEFAULT_FORMATION];
     /* A live target it is allowed to engage buys it the whole leash; otherwise
      * it owes the mark. `e.target` is what `_think` set THIS frame off
      * `pickTarget`, which for a trooper is `targetFor` below — so the two
@@ -5025,7 +5209,11 @@ export class CommandDirector extends WaveDirector {
      * outrunning an ARC, and for the two seconds of a sprint to cover that
      * distinction is not the thing being protected.
      */
-    const F = FORMATIONS[c.formation] || FORMATIONS[DEFAULT_FORMATION];
+    /* The squad's own order if it has one — see `formationFor`. A squad told to
+     * advance while the rest of the line holds must carry that formation's
+     * urgency, or it walks at the army's pace to a place the army is not
+     * going. */
+    const F = FORMATIONS[this.formationFor(c, e?.cmdSquad)] || FORMATIONS[DEFAULT_FORMATION];
     const urge = F.urgency ?? 1;
     return Math.min(own * CATCH_UP * urge, Math.max(own, want * urge));
   }

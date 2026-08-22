@@ -2721,6 +2721,66 @@ export async function run({ check, assert }) {
       + `reviveNear put a 1 hp man back to ${(hurt.hp / hurt.maxHp * 100).toFixed(0)}%`;
   });
 
+  check('squads: a squad is a thing that exists between frames, and one man can leave it', () => {
+    /*
+     * "Are we able to separately order squads? Sometimes it'll say 2 squads but
+     * they get ordered as one… I should be able to order separate squads or all
+     * squads at once depending on my choosing." And: "you should be able to
+     * take an npc out of their squad and individually assign them things… but
+     * you should be able to reverse it and put them back in with their squads."
+     *
+     * Neither was possible, and it was one cause: `squads()` was
+     * `live.slice(i, i + size)` — squads derived from where a man happened to
+     * sit in the living list. That survives permadeath very gracefully and
+     * makes a squad un-nameable, because "2nd Squad" did not exist from one
+     * frame to the next: a casualty anywhere re-dealt every man into a
+     * different squad. `formation` lived on the COMMANDER for the same reason —
+     * there was nothing else stable to hang it on.
+     *
+     * What is asserted is the whole contract: the assignment is stable, an
+     * order can be aimed at one squad, an army-wide order overrides the lot,
+     * casualties shrink a squad instead of re-dealing it, a reinforcement fills
+     * the thinnest squad rather than always opening a new one, and a detached
+     * man is his own group who goes back where he came from.
+     */
+    const R = new Cmd.CommandRoster(Cmd.ARMIES[Cmd.ARMY_IDS[0]]);
+    for (let i = 0; i < 12; i++) R.enlist('trooper');
+    const shape = () => R.squads().map((s) => s.length).join('+');
+    assert(shape() === '5+5+2', `12 men dealt to ${shape()}, expected 5+5+2`);
+
+    const ids = R.living.map((t) => t.squad);
+    assert(ids.every((v) => v != null), 'a living man has no squad assignment');
+    /* STABLE ACROSS CALLS is the whole point — the old slice was stable too
+     * until somebody died, so this has to be measured across a death. */
+    const before = new Map(R.living.map((t) => [t.id, t.squad]));
+    for (const t of R.all.slice(0, 3)) t.alive = false;
+    assert(shape() === '2+5+2', `after 3 casualties in 1st Squad the shape is ${shape()}, expected 2+5+2`);
+    for (const t of R.living) {
+      assert(before.get(t.id) === t.squad,
+        `${t.designation} was moved from squad ${before.get(t.id)} to ${t.squad} by somebody ELSE dying`);
+    }
+
+    const fresh = R.enlist('trooper');
+    R.assignSquads();
+    assert(fresh.squad === 0,
+      `a reinforcement opened squad ${fresh.squad} instead of filling the 2-man 1st Squad`);
+
+    const victim = R.living.find((t) => t.squad === 1);
+    const was = victim.squad;
+    assert(R.detach(victim, true), 'detach refused a living trooper');
+    const solo = R.squads().filter((s) => s.length === 1 && s[0] === victim);
+    assert(solo.length === 1, 'a detached man is not his own group in squads()');
+    assert(R.squads().some((s) => s.includes(victim) && s.length === 1),
+      'the detached man is still being grouped with his old squad');
+    assert(R.detach(victim, false), 'putting him back refused');
+    assert(victim.squad === was,
+      `he came back to squad ${victim.squad} instead of the ${was} he left`);
+    assert(!R.squads().some((s) => s.length === 1 && s[0] === victim),
+      'he is still his own group after being sent back');
+    return `12 → ${'5+5+2'}, 3 dead → 2+5+2 with every survivor's number kept, `
+      + `a reinforcement into 1st, and one man out of 2nd and back`;
+  });
+
 }
 
 /* A file read, kept out of the check body so the import list stays honest. */
