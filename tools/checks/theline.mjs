@@ -1232,13 +1232,19 @@ export async function run({ check, assert }) {
      * direction. Half the bottom of the band, because the gap between a floor
      * and a played sitting is real and nobody has measured it.
      *
-     * MEASURED MARGIN, so the next person knows how much room there is: this
-     * seed reads **11.6 min against a deadline of 15** — 23%. That is not a
-     * lot, and the quantity is chaotic rather than merely noisy (HANDOFF
-     * §2.5b), so a single red here is worth re-running before it is believed.
-     * A red that repeats is the mode having drifted long again, and the two
-     * places to look are the two that made it fit: `CommandDirector.rampWave`
-     * and `Waves.WAVE_FLOOR`.
+     * MEASURED MARGIN, so the next person knows how much room there is: two
+     * readings of this seed on the same build came back **11.6 and 10.0
+     * minutes against a deadline of 15**. That is a third of the band as
+     * headroom and a 1.6-minute spread between two runs of one build, which is
+     * the chaos HANDOFF §2.5b describes rather than noise — so a single red
+     * here is worth re-running before it is believed. A red that repeats is the
+     * mode having drifted long again, and the two places to look are the two
+     * that made it fit: `CommandDirector.rampWave` and `Waves.WAVE_FLOOR`.
+     *
+     * (The two readings differ by the muster: the first was taken before this
+     * check called `autoMuster`, so its line never grew and it fought the last
+     * engagement with the ten it landed with. That is the whole 1.6 minutes,
+     * and it is why both calls are made below.)
      *
      * ── AND THE SEED IS NAMED ───────────────────────────────────────────────
      *
