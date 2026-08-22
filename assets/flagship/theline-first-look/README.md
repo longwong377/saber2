@@ -27,7 +27,10 @@ best-dressed, not its typical.
 | `02-the-line-picked.png` | The Line selected. The Theatre column greys and prints the mode's own sentence; the seed box holds 5. |
 | `03-deploy-card.png` | FLAGSHIP §5's 0:00, and it is all there: `GRIND · 5 ENGAGEMENTS · 30–45 MIN`, `GEONOSIS`, the five stages, the ten names, `SEED 5`, `STANDING 10`. |
 | `04-first-frame-on-the-ground.png` | the first frame after Drop. The HUD is right and the roster panel carries all ten names. **The frame contains none of the mode's content**: no trooper (0 of 10 are inside it — they stand 83–179° off centre at 4–8.4 m), no burn band, no smoke, no wrecks, no fallen. The front is 171 m away and **151° behind the camera**. |
-| `05-look-front.png` … `08-look-left.png` | *(pending — the horizon sweep, four quarters from the same spot with the camera turned through `Front.frontCamera`, so where the mode's content is standing is a picture rather than a number. The run that takes them is queued behind a box carrying a load average of 60; the numbers below are what they will show.)* |
+| `05-look-front.png` | the same instant, the camera turned to face the front through `Front.frontCamera` and nothing else moved. **Five clone troopers in white armour at 5–15 m, a nameplate over the one under the reticle, and a hull on the sand behind them.** The line was never missing. |
+| `06-look-right.png` | a quarter turn on. More of the line, and the level's own spires. |
+| `07-look-back.png` | the opposite quarter. Empty sand, rocks, distant mesas — and this is the quarter the opening camera is pointed at. |
+| `08-look-left.png` | the fourth. One trooper behind the roster panel, and sand. |
 
 ## the one number the plates are about
 
@@ -81,3 +84,22 @@ The mode's entire named army is in the half of the world the camera does not
 cover, on the frame the player first sees it — and the front is in that half
 too. The "49 remaining" on the wave counter is the QUEUE, not the field: the
 queue drains to 49 standing by t = 10 s.
+
+## what the four quarters do NOT contain
+
+No burn band, no smoke column, no prone figure and no crater reads in any of the
+four — **including the one facing the front**. The marks are there and were
+counted on the same build: engagement 1 lays 110 fallen in 2 draw calls, one
+smoke-column mesh, 13 hull pieces and a 520 m × 39 m scorched swath, and none of
+it is sunk. They are 171 m away, which is where the schedule puts engagement
+one, and at that range this ground's own air has taken most of them:
+
+    THREE.FogExp2 at geonosis' fogDensity 0.0060
+        90 m   25% fogged      171 m   65% fogged      240 m   87% fogged
+       131 m   46% fogged      200 m   76% fogged      310 m   97% fogged
+
+`INK.edgeFade` is `[55, 130]`, so past 130 m nothing carries an outline either —
+and the front does not come inside either number until engagement 3, when the
+schedule has closed it to 91 m. The one mark that reads at engagement 1 is the
+one §12.4 moved onto the line for exactly this reason: the hulls, visible in
+`05-look-front.png` at 50–100 m.
