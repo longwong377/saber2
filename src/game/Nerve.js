@@ -29,8 +29,18 @@
  * inside an army — a mate goes down, a wave is cleared, an area is held, your
  * commander is beside you — and every entry is an event the player CAUSES for
  * their own side. `NERVE` below is the other half: what one hostile Jedi does
- * to a body that has never met one. Two tables because they are two subjects,
- * and the four terms here are the four things §7 says the verb is made of.
+ * to a body that has never met one. Two tables because they are two subjects.
+ *
+ * ── AND THE VERB CHANGED SHAPE ONCE IT WAS MEASURED ─────────────────────
+ *
+ * The first cut of this table had four terms and three of them were the same
+ * shape: how many bodies are near a point — the blade, the corpse. Driven
+ * through real battles that read 0.00% of hostile body-seconds broken, because
+ * the horde puts 0.4 bodies inside a blade's reach, 1.1 witnesses beside a
+ * death, and ONE of its own side inside `SEE` of any given body. The horde is
+ * not a formation. `ANSWERED` is the term that replaced the shape: the bolt is
+ * the only thing that reliably connects a Jedi to a body that is standing
+ * thirty metres away, and it is the player's to answer or not.
  *
  * ── WHY IT IS A LEAF MODULE ─────────────────────────────────────────────
  *
@@ -382,7 +392,7 @@ export function nerveTick(bodies, blades, dt) {
    * arrives — expressed as a cost rather than as a number.
    */
   let anyBroken = false;
-  for (const e of bodies) if (e && !e.dead && nerveBroken(e)) { anyBroken = true; break; }
+  for (const e of bodies) if (e && !e.dead && !e.trooper && nerveBroken(e)) { anyBroken = true; break; }
   const see2 = NERVE.SEE * NERVE.SEE;
   let shaken = 0;
   for (const e of bodies) {
@@ -435,7 +445,13 @@ export function nerveTick(bodies, blades, dt) {
     if (anyBroken) {
       let seen = 0, running = 0;
       for (const o of bodies) {
-        if (!o || o === e || o.dead || o.team !== e.team) continue;
+        /* BODIES WITH A RECORD ARE NOT IN THIS CENSUS, on either end of it.
+         * `CommandDirector._morale` runs `MORALE.ROUT` over its own SQUADS —
+         * the same sentence, asked of the unit a roster actually has — and two
+         * loops answering one rule for one body is the twin this repository
+         * keeps deleting. A horde has no squads, so this asks it of the men a
+         * body can see; a roster has them, so it asks it of the squad. */
+        if (!o || o === e || o.dead || o.trooper || o.team !== e.team) continue;
         const dx = o.position.x - e.position.x, dz = o.position.z - e.position.z;
         if (dx * dx + dz * dz > see2) continue;
         seen++;
