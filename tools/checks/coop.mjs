@@ -452,6 +452,217 @@ export async function run({ check, assert }) {
     return line;
   });
 
+  /**
+   * A SHARED HELPER FOR THE THREE STRUCTURAL CHECKS BELOW, and it is here
+   * rather than in each of them because a level is fifty pieces and the
+   * question every one of them asks is the same: which pieces are no longer
+   * standing.
+   */
+  const standing = (m) => m.structures.map((s) => s.state === 'intact');
+
+  check('co-op: a wall the host brings down is a wall the guest can be shot through', async () => {
+    /**
+     * NOTHING IN src/world/Destruction.js HAD EVER ASKED `netMode`, and the
+     * whole destructible world was therefore host-only. A blast was on the
+     * wire (`ex`, the check above) and a blast is one of five ways to break
+     * stone; the other four — a blade's cut, a Force cone, a heavy body
+     * arriving, and a blade GRINDING until the piece fails — were not.
+     *
+     * Measured on this harness before the fix, colosseum, 49 destructible
+     * pieces a side: the host cut, pushed, rammed and blew its way through the
+     * level and finished with 11 pieces down. The guest had 3, and those 3 were
+     * exactly the ones a blast caused. EIGHT walls the host had demolished were
+     * still standing on the joining player's screen — cover to hide behind that
+     * is not there, and enemies shooting through stone the guest can see.
+     *
+     * The three arms below are the three seams that were silent. The fourth,
+     * the blast, is the check above and is deliberately not repeated here:
+     * what this one has to hold is that the OTHER ways of breaking a building
+     * cross, and an arm that was already crossing would carry it on its own.
+     */
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const { host, client, pump } = await H.bootPair({ level: 'colosseum' });
+    const hd = host.destruction, cd = client.destruction;
+    assert(hd && cd, 'setup: the level has no destructible world on one of the two machines');
+    assert(hd.structures.length === cd.structures.length,
+      `setup: ${hd.structures.length} pieces on the host against ${cd.structures.length} on the guest`);
+
+    const targets = hd.structures.filter((s) => s.profile.hpPerM2 !== Infinity).slice(0, 9);
+    assert(targets.length >= 6, `setup: only ${targets.length} breakable pieces to aim at`);
+    const norm = new THREE.Vector3(1, 0, 0);
+    const imp = new THREE.Vector3(0, -1, 0).multiplyScalar(30);
+
+    /* THE BLADE, through the door the solver uses — `DestructionProxy.cut` is
+     * what `World._applyBladeEvent` reaches when the thing the blade is in is
+     * a wall, so this is a real swing and not a hand-written call. */
+    for (const s of targets.slice(0, 3)) {
+      for (let k = 0; k < 6; k++) hd.proxy.cut(s.centre.clone(), norm, imp);
+    }
+    /* THE FORCE, through the door `Player.forcePush` uses. */
+    for (const s of targets.slice(3, 6)) {
+      const o = s.centre.clone().add(new THREE.Vector3(0, 0, -8));
+      hd.forceBlast(o, new THREE.Vector3().subVectors(s.centre, o).normalize(), 14, 3);
+      hd.forceBlast(o, new THREE.Vector3().subVectors(s.centre, o).normalize(), 14, 3);
+    }
+    /* SOMETHING HEAVY ARRIVING, through `_impactScan`'s poll — a thrown body,
+     * a rolling barrel, a chunk of somebody else's wall. */
+    for (const s of targets.slice(6, 9)) {
+      const b = { id: 91000 + Math.round(s.centre.x * 7 + s.centre.z), static: false,
+        invMass: 1 / 400, mass: 400, boundingRadius: 0.9,
+        position: s.centre.clone(), velocity: new THREE.Vector3(0, 0, 18), userData: {} };
+      host.physics.bodies.push(b);
+      for (let k = 0; k < 3; k++) { hd._impactCd.clear(); hd._impactScan(1 / 60); }
+      host.physics.bodies.pop();
+    }
+
+    for (let f = 0; f < 40; f++) pump(1 / 60);
+
+    const h = standing(hd), c = standing(cd);
+    const down = h.reduce((n, up) => n + (up ? 0 : 1), 0);
+    assert(down >= 5, `setup: the host only brought ${down} pieces down — nothing to compare`);
+    const missed = h.map((up, i) => (!up && c[i] ? i : -1)).filter((i) => i >= 0);
+    assert(!missed.length,
+      `${missed.length} of ${down} pieces the host demolished are still standing on the joining `
+      + `player's screen (registry ${missed.slice(0, 6).join(', ')}${missed.length > 6 ? '…' : ''}) `
+      + '— they are taking cover behind rubble');
+
+    /* AND IT DOES NOT ECHO, for the reason the blast check gives: a replayed
+     * picture put back on the wire is a client replicating somebody else's
+     * demolition as its own the moment it is ever promoted to host. */
+    assert(!(client._netRubble || []).length,
+      'the guest recorded the demolition it was told about — a replayed picture is being replicated');
+
+    const line = `host ${down} pieces down → guest ${c.reduce((n, up) => n + (up ? 0 : 1), 0)}, 0 left standing`;
+    host.unload(); client.unload();
+    return line;
+  });
+
+  check('co-op: a guest\'s own blade does not demolish a building the host still has standing', async () => {
+    /**
+     * THE OTHER HALF OF THE SAME RULE, and the half that is easy to leave open.
+     *
+     * Replicating the host's demolition is not enough on its own: a client that
+     * goes on breaking stone locally holds a level nobody else is fighting in,
+     * and it double-bills every REPLICATED break on top. Measured before the
+     * fix: the guest's blade took three pieces down on the guest's screen and
+     * zero on the host's, and the guest's copy of a blast that was already on
+     * the wire billed its own stone a second time.
+     *
+     * So `Destruction._netAllows` closes every door on a client except the
+     * replay — the same rule `World.onExplosion` states for a blast and
+     * `Reactions.LiveGrenade` for a grenade. The host bills; every other copy
+     * is a picture.
+     */
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const { host, client, pump } = await H.bootPair({ level: 'colosseum' });
+    const hd = host.destruction, cd = client.destruction;
+    const norm = new THREE.Vector3(1, 0, 0);
+    const imp = new THREE.Vector3(0, -1, 0).multiplyScalar(30);
+    const targets = cd.structures.filter((s) => s.profile.hpPerM2 !== Infinity).slice(0, 4);
+    assert(targets.length >= 3, `setup: only ${targets.length} breakable pieces on the guest`);
+
+    /* Every way a guest can reach architecture, all three from the guest's own
+     * machine: the blade, the Force cone, and a blast the guest raised itself
+     * (a barrel it cut open — `onExplosion` forces `ghost` on a client, and the
+     * structural half used to run anyway). */
+    for (const s of targets) {
+      for (let k = 0; k < 8; k++) cd.proxy.cut(s.centre.clone(), norm, imp);
+      const o = s.centre.clone().add(new THREE.Vector3(0, 0, -7));
+      cd.forceBlast(o, new THREE.Vector3().subVectors(s.centre, o).normalize(), 14, 3);
+      client.onExplosion(s.centre.clone(), 2.4);
+    }
+    for (let f = 0; f < 40; f++) pump(1 / 60);
+
+    const hDown = standing(hd).filter((up) => !up).length;
+    const cDown = standing(cd).filter((up) => !up).length;
+    assert(cDown === 0 && hDown === 0,
+      `the guest brought ${cDown} pieces down on its own screen and the host still has `
+      + `${hDown} of them standing — two machines are fighting in two different levels`);
+    assert(!(client._netRubble || []).length,
+      'the guest queued its own demolition for the wire, which only a host may do');
+
+    const line = `guest swung, pushed and blew up ${targets.length} pieces: 0 down there, 0 down on the host`;
+    host.unload(); client.unload();
+    return line;
+  });
+
+  check('co-op: taking the controls off-host is refused, not a frozen player in a runaway tank', async () => {
+    /**
+     * `src/game/Driving.js` never asked `netMode` either, and off-host the
+     * result was not a desync — it was a SOFT LOCK. Measured on this harness
+     * before the refusal existed, a guest boarding an AT-TE:
+     *
+     *   · `Crew` retracts and hides the blade, and `Player.update` hands every
+     *     frame to `Crew.update` from then on;
+     *   · `Enemy.update` takes its `netDriven` branch BEFORE its `driven` one
+     *     on a client, so the hull is still being written by the host's
+     *     snapshot: the throttle reached nothing, and `Crew.ride` — which is
+     *     called from the `driven` branch — never ran, so the driver was never
+     *     seated;
+     *   · six seconds at full throttle: the guest's body moved **0.00 m** and
+     *     finished **3.58 m** from a hull it was supposed to be sitting on,
+     *     with no blade;
+     *   · and the host was never told, so its copy of the machine kept the
+     *     horde's team and its brain and went on shooting at the player who
+     *     was notionally driving it.
+     *
+     * Replicating the seat is a real feature and is not this pass. What this
+     * check holds is that the game stops offering a control that cannot work,
+     * and says so out loud rather than by silence — which is the rule every
+     * other refusal in Driving.js already follows.
+     */
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const { whyNotDrive } = await import('../../src/game/Driving.js');
+    const { host, client, pump } = await H.bootPair({ level: 'colosseum' });
+    const at = new THREE.Vector3(0, 0, 14);
+    const tank = host.spawnEnemy('atte', at.clone());
+    assert(tank, 'setup: no crewed machine on the field');
+    for (let f = 0; f < 30; f++) pump(1 / 60);
+    const theirs = client.enemies.find((e) => e.id === tank.id);
+    assert(theirs, 'setup: the machine never reached the joining player at all');
+
+    /* Both players standing on the hull, both machines on the party's side, so
+     * the ONLY thing that can separate the two answers is which end of the wire
+     * is asking. */
+    tank.team = host.player.team;
+    theirs.team = client.player.team;
+    host.player.position.copy(tank.position);
+    client.player.position.copy(theirs.position);
+
+    assert(whyNotDrive(host, host.player, tank) === null,
+      'the HOST cannot take the controls of its own machine either — the refusal is too wide');
+    const why = whyNotDrive(client, client.player, theirs);
+    assert(typeof why === 'string' && why.length > 8,
+      'a joining player is allowed to take the controls of a body the host owns — '
+      + 'the throttle reaches nothing, the seat is never taken and the key has to be pressed twice to get out');
+
+    const ctx = { input: H.idleInput(), players: client.players, enemies: client.enemies };
+    const took = client.player.takeControls(ctx);
+    assert(!took && !client.player.driving,
+      'takeControls seated the guest anyway — `driving` is set and every later frame belongs to a Crew '
+      + 'that cannot move the hull');
+
+    /* …and the player is still a player: not frozen, and still holding a
+     * blade. Both are things `Crew`'s constructor takes away. */
+    const p0 = client.player.position.clone();
+    const walk = { ...H.idleInput(), moveAxis: (o) => { if (o) { o.x = 0; o.y = 1; return o; } return { x: 0, y: 1 }; } };
+    for (let f = 0; f < 60; f++) client.update(1 / 60, walk);
+    const moved = client.player.position.distanceTo(p0);
+    assert(moved > 0.5,
+      `the guest moved ${moved.toFixed(2)} m in a second of holding forward — they are standing in a tank they `
+      + 'do not have');
+    assert(client.player.saber?.root?.visible !== false,
+      'the guest\'s blade was hung on their belt by a boarding that was refused — `Crew` retracts and '
+      + 'hides it in its constructor, so a Crew was built after all');
+
+    const line = `guest refused: "${why}"; walked ${moved.toFixed(2)} m, blade still in hand`;
+    host.unload(); client.unload();
+    return line;
+  });
+
   check('co-op: an elite arrives on a joining player\'s screen wearing its tells', async () => {
     /**
      * EVERY ELITE IN THE GAME WAS A PLAIN BODY OFF-HOST.

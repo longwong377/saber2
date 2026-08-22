@@ -66,6 +66,8 @@ import { audio } from '../engine/Audio.js';
 
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _v4 = new THREE.Vector3();
+/** Replay's own three, for the reason `Destruction.netReplay` gives. */
+const _netA = new THREE.Vector3(), _netB = new THREE.Vector3(), _netC = new THREE.Vector3();
 const _q1 = new THREE.Quaternion();
 const _box = new THREE.Box3();
 const _boxA = new THREE.Box3(), _boxB = new THREE.Box3(), _cellBox = new THREE.Box3();
@@ -84,6 +86,22 @@ const IDENT = new THREE.Quaternion();
  * the float, and half the kerfs on a column leaked.
  */
 const KERF = 0.04;
+
+/** The two kinds of structural event on the wire. See Destruction.netReplay. */
+const NET_SPHERE = 0, NET_CUT = 1;
+/** Most structural events one snapshot will carry. See `_netRecord`. */
+const NET_RUBBLE_MAX = 48;
+/**
+ * What a structural event is worth on the wire, to two and three decimals.
+ *
+ * Named `nr2`/`nr3` and not `r2`/`r3` — Net.js's names for the same rounding —
+ * because `r2` is already a LOCAL in three functions in this file, one of them
+ * `damageSphere` itself, where `const r2 = radius * radius` is declared below
+ * the recorder. A call to `r2(...)` above it is not a shadowed helper, it is a
+ * temporal-dead-zone throw on the frame a wall breaks.
+ */
+const nr2 = (v) => Math.round(v * 100) / 100;
+const nr3 = (v) => Math.round(v * 1000) / 1000;
 
 let _structId = 1;
 
@@ -1229,6 +1247,16 @@ class Chunk {
 export class Structure {
   constructor(manager, spec) {
     this.id = 's' + (_structId++);
+    /**
+     * ITS NAME ON THE WIRE — `Destruction.register` assigns it, and a piece
+     * that was never registered keeps -1 rather than `undefined`.
+     *
+     * `tools/checks/prefracture-budget.mjs` builds a `Structure` by hand
+     * without a registry, and `undefined` would reach `_netRecord` as an event
+     * naming no piece. -1 indexes nothing on either end and is dropped by
+     * `netReplay`'s finiteness guard's neighbour, the array lookup.
+     */
+    this.netIndex = -1;
     this.manager = manager;
     this.world = manager.world;
     this.kind = spec.kind || 'piece';
@@ -1716,8 +1744,16 @@ export class Structure {
   damageSphere(centre, radius, amount, dir = null) {
     if (this.state === 'gone' || this.profile.hpPerM2 === Infinity) return false;
     if (!(amount > 0)) return false;
+    /* THE HOST IS THE ONLY MACHINE THAT BREAKS ANYTHING, and this is one of
+     * the two doors that does. See Destruction's REPLICATION block. */
+    if (!this.manager._netAllows()) return false;
     this.prefracture();
     if (!this.chunks) return false;
+    this.manager._netRecord(dir
+      ? [this.netIndex, NET_SPHERE, nr2(centre.x), nr2(centre.y), nr2(centre.z),
+        nr2(radius), nr2(amount), nr3(dir.x), nr3(dir.y), nr3(dir.z)]
+      : [this.netIndex, NET_SPHERE, nr2(centre.x), nr2(centre.y), nr2(centre.z),
+        nr2(radius), nr2(amount)]);
     this.hp -= amount;
     this.stress = clamp(1 - this.hp / Math.max(1e-3, this.maxHp), 0, 1);
 
@@ -1774,8 +1810,14 @@ export class Structure {
    */
   cutBy(point, normal, impulse, chunk = null) {
     if (this.state === 'gone') return false;
+    /* …and this is the other one. */
+    if (!this.manager._netAllows()) return false;
     this.prefracture();
     if (!this.chunks || !this.chunks.length) return false;
+    this.manager._netRecord([this.netIndex, NET_CUT,
+      nr2(point.x), nr2(point.y), nr2(point.z),
+      nr3(normal.x), nr3(normal.y), nr3(normal.z),
+      nr2(impulse?.x || 0), nr2(impulse?.y || 0), nr2(impulse?.z || 0)]);
     if (this.state === 'intact') this.convert();
     // a real vector, not module scratch: this call reaches deep enough that
     // shared temporaries get clobbered under it
@@ -2083,6 +2125,14 @@ export class Structure {
    */
   wear(work, point) {
     if (this.state === 'gone' || this.profile.hpPerM2 === Infinity) return false;
+    /* GATED AND NOT RECORDED. A grinding blade calls this every frame, which is
+     * sixty events a second for a wall that has not come apart yet — and it
+     * does not need to cross, because everything it accumulates is spent in one
+     * `damageSphere` at the moment the piece fails, and THAT crosses. What the
+     * gate is for is the other end: a guest whose blade wore its own copy of
+     * the host's stone would hold a weaker building than the host does, and the
+     * next event the host sent would break it further than the host's. */
+    if (!this.manager._netAllows()) return false;
     this.hp -= work;
     this.stress = clamp(1 - this.hp / Math.max(1e-3, this.maxHp), 0, 1);
     if (this.hp > 0) return false;
@@ -2508,9 +2558,15 @@ export class Destruction {
        * networked blast bill damage on the client after all. */
       const wrapped = (centre, size = 1, ...rest) => {
         prev.call(world, centre, size, ...rest);
-        /* The structural half runs on BOTH ends: no wall is in the snapshot,
-         * so a client that skipped this would keep standing behind cover the
-         * host had already blown apart. */
+        /* The structural half is called on BOTH ends and only DOES anything on
+         * one of them. It used to do the work on both, with the note "no wall
+         * is in the snapshot, so a client that skipped this would keep standing
+         * behind cover the host had already blown apart" — true when it was
+         * written and no longer true: every break is on the wire now (see the
+         * REPLICATION block below), so a client that also billed the blast
+         * locally would take the same wall down twice. `_netAllows` is what
+         * stops it, one door further in, where every other way of breaking
+         * stone is stopped too. */
         this.explosion(centre, size);
       };
       wrapped.__destruction = true;
@@ -2525,6 +2581,11 @@ export class Destruction {
     if (!spec || !spec.profile) return null;
     const s = new Structure(this, spec);
     if (!(s.radius > 0.15)) return null;
+    /* ITS NAME ON THE WIRE, assigned here because this is the one place a
+     * piece enters the world and the registry is append-only — a piece that
+     * has been demolished stays in the array as `gone`, so an index never
+     * means a different building later in the run than it did at load. */
+    s.netIndex = this.structures.length;
     this.structures.push(s);
     this._linked = false;
     return s;
@@ -2558,6 +2619,140 @@ export class Destruction {
         this.structures[j].carries.push(this.structures[i]);
       }
     }
+  }
+
+  /* ── REPLICATION ───────────────────────────────────────────────────── */
+
+  /**
+   * A WALL COMING DOWN IS A THING THAT HAPPENS, so it goes on the wire like
+   * the bolt, the grenade and the blast do — `World._recordNades` makes the
+   * whole argument and this is that argument applied to architecture.
+   *
+   * Nothing in this file had ever asked `netMode`. Measured on two real Worlds
+   * over the pair harness (`tools/_netrubble.mjs`, colosseum, 49 destructible
+   * pieces a side): after the host had cut, pushed, rammed and blown its way
+   * through the level, **11 pieces were down on the host and 3 on the joining
+   * player's screen** — and the 3 were exactly the ones a blast happened to
+   * cause, because a blast was already replicated and nothing else was. Eight
+   * of eleven walls the host had demolished were still standing on the guest's
+   * machine: cover to take that is not there, a doorway that is open on one
+   * screen and bricked up on the other, and enemies shooting through stone the
+   * guest can see.
+   *
+   * ── WHAT CROSSES, AND WHY IT IS THE EVENT AND NOT THE RUBBLE ──────────
+   *
+   * Not the chunks. A colosseum piece fractures into two dozen cells with a
+   * position, an orientation and a velocity each, and streaming those is both
+   * enormous and pointless — because the two ends can DERIVE them. The cell
+   * pattern is seeded off the piece's own `seed` (`stepPrefracture`, not off
+   * any shared stream), the level's dressing is deterministic (measured: the
+   * same 49 pieces at the same centres regardless of how far the module rng
+   * has advanced), and `settleSupport`'s cascade is a function of the graph.
+   * So both machines already hold the same building, and the same input to it
+   * produces the same collapse. What has to cross is the INPUT.
+   *
+   * There are exactly two inputs. `Structure.damageSphere` and
+   * `Structure.cutBy` are the only two methods in this file that take a piece
+   * apart, and everything else lands in one of them: an explosion and the
+   * Force cone through `Destruction.damageSphere`/`forceBlast`, a heavy body
+   * arriving through `_impactScan`, a blade's cut event through
+   * `DestructionProxy.cut`, and a blade GRINDING through `wear`, which spends
+   * its accumulated work as a `damageSphere` at the moment the piece fails.
+   * That is the same "record at the one seam every caller passes through"
+   * argument `_recordFires` makes at `BoltPool.fire`, and it has the same
+   * payoff: a kind of demolition written next month is replicated the day it
+   * is written rather than the day somebody remembers this method exists.
+   *
+   * ── AND THE PIECE IS NAMED BY INDEX ──────────────────────────────────
+   *
+   * A blast is a point in space and is replayed as one; a structure is a
+   * REGISTRY ENTRY and naming it by position would mean re-deriving on the
+   * client which piece the host meant, at a tolerance nobody can pick. The
+   * registry is append-only and both ends build it from the same level in the
+   * same order, so the index is exact and costs one number.
+   *
+   * ── AND A CLIENT BREAKS NOTHING OF ITS OWN ───────────────────────────
+   *
+   * `_netAllows` is the other half and it is the half that keeps the host the
+   * only authority. Before it, a guest's own blade demolished its own copy of
+   * a building the host still had standing — measured, +3 pieces down on the
+   * guest's screen and +0 on the host's — and the guest's copy of a REPLICATED
+   * blast billed the stone a second time on top of the events replayed here.
+   * Every break on a client is now a replay and nothing else, which is the
+   * rule `World.onExplosion` states for the blast and `Reactions.LiveGrenade`
+   * for the grenade: the host bills, every other copy is a picture.
+   *
+   * What that costs, stated plainly because it is a real cost: a guest's blade
+   * does not carve architecture until the host says so, and today the host is
+   * never told — a guest's blade contact against this world is local and there
+   * is no claim for it the way there is for a hit on an enemy. The guest still
+   * gets the dust, the kerf mark and the shake (`_readBladeWork` draws those
+   * whatever `wear` returns); what they do not get is a pillar that falls when
+   * the host's pillar has not. A rubble claim over `World._claim` is the fix
+   * for that and is not in this pass.
+   */
+  _netAllows() {
+    return this._netReplaying || this.world?.netMode !== 'client';
+  }
+
+  /** One structural event, for whoever is joined to this host. */
+  _netRecord(ev) {
+    if (this._netReplaying) return;
+    const w = this.world;
+    if (!w || w.netMode !== 'host') return;
+    const q = w._netRubble;
+    /* A budget rather than a promise. One frame of a level coming down can
+     * raise a hundred of these and a snapshot is not the place for them; the
+     * cells the surplus would have moved are already the least visible ones,
+     * and a bounded queue cannot make a packet nobody can send. */
+    if (!q || q.length >= NET_RUBBLE_MAX) return;
+    q.push(ev);
+  }
+
+  /**
+   * …AND THE CLIENT'S COPY, replayed through the same two doors the host used.
+   *
+   * `_netReplaying` is what makes it a picture rather than an echo: it opens
+   * `_netAllows` for the length of the replay and closes `_netRecord`, so a
+   * client that is later promoted to host does not put somebody else's
+   * demolition back on the wire as its own.
+   */
+  netReplay(list) {
+    if (!list || !list.length || !this.structures.length) return 0;
+    const was = this._netReplaying;
+    this._netReplaying = true;
+    let n = 0;
+    try {
+      for (const ev of list) {
+        /* Finite or nothing. Nothing on this channel is peer-authored today —
+         * a snapshot comes from the host — but `NaN` reaching `hp -= amount`
+         * is permanent and there is no `applyClaim.asDamage` one layer down to
+         * catch it the way there is for a hit on a body.
+         *
+         * NOT the module scratch vectors either, and that is not fussiness:
+         * `damageSphere` writes `_v1` in its own cell loop, so handing it `_v1`
+         * as the centre means every cell after the first is measured against a
+         * point that has already been overwritten. `World._spawnNetBlasts`
+         * carries the same note over the same mistake. */
+        if (!Array.isArray(ev) || ev.length < 7 || !ev.every(Number.isFinite)) continue;
+        const s = this.structures[ev[0]];
+        if (!s) continue;
+        if (ev[1] === NET_CUT) {
+          if (ev.length < 11) continue;
+          _netA.set(ev[2], ev[3], ev[4]);
+          _netB.set(ev[5], ev[6], ev[7]);
+          if (_netB.lengthSq() < 1e-9) continue;
+          _netC.set(ev[8], ev[9], ev[10]);
+          if (s.cutBy(_netA, _netB, _netC)) n++;
+        } else {
+          _netA.set(ev[2], ev[3], ev[4]);
+          const dir = ev.length >= 10 && (ev[7] || ev[8] || ev[9])
+            ? _netB.set(ev[7], ev[8], ev[9]) : null;
+          if (s.damageSphere(_netA, ev[5], ev[6], dir)) n++;
+        }
+      }
+    } finally { this._netReplaying = was; }
+    return n;
   }
 
   /* ── damage entry points ───────────────────────────────────────────── */

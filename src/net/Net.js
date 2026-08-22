@@ -1250,6 +1250,25 @@ export function packSnapshot(world) {
   /* …and the blasts, for the reason the grenades are here: a fireball, a bang,
    * a shove and a crater are things that HAPPEN. See `World.onExplosion`. */
   const blasts = world._netBlasts || [];
+  /* …and the architecture, for the reason the blasts are here and one class
+   * bigger. A wall is not a state either — it is a wall until the frame it
+   * stops being one — and there is no arrangement of position and hp fields
+   * that contains a colonnade coming down. Measured before this field existed,
+   * over two real Worlds on the colosseum: the host cut, pushed, rammed and
+   * blew its way through the level and finished with 11 pieces down; the
+   * joining player had 3, and those 3 were the ones a blast happened to cause,
+   * because `ex` above was already crossing and nothing else was. Eight walls
+   * the host had demolished were still standing on the guest's screen.
+   *
+   * What crosses is the EVENT and not the rubble — the piece by its registry
+   * index, and either the sphere that damaged it or the plane the blade cut it
+   * on. Both machines already hold the same building (the cell pattern is
+   * seeded off each piece's own seed and the dressing is deterministic), so
+   * the same input produces the same collapse and the cells themselves never
+   * have to travel. See `World._recordNades` for the argument and
+   * src/world/Destruction.js's REPLICATION block for why those two events are
+   * the whole set. */
+  const rubble = world._netRubble || [];
   const snap = {
     t: 'snapshot',
     /**
@@ -1276,6 +1295,7 @@ export function packSnapshot(world) {
     bf: fires.slice(),
     gn: nades.slice(),
     ex: blasts.slice(),
+    rb: rubble.slice(),
     w: world.director.wave,
     act: world.director.active ? 1 : 0,
     rem: world.director.remaining,
@@ -1289,6 +1309,7 @@ export function packSnapshot(world) {
   fires.length = 0;
   nades.length = 0;
   blasts.length = 0;
+  rubble.length = 0;
   return snap;
 }
 

@@ -109,6 +109,36 @@ export function isCrewed(enemy) { return !!enemy && crewOf(enemy.type) > 0; }
  */
 export function whyNotDrive(world, player, enemy) {
   if (!enemy || enemy.dead) return 'there is nothing there to take';
+  /**
+   * NOT FROM A JOINING PLAYER'S SEAT, AND THE REFUSAL IS THE FIX.
+   *
+   * Nothing in this file asked `netMode`, and taking the controls off-host was
+   * not a desync — it was a soft-lock, measured on two real Worlds over the
+   * pair harness (`tools/_netrubble.mjs`):
+   *
+   *   · the guest boards, `Crew` retracts and hides the blade, and
+   *     `Player.update` hands every frame to `Crew.update` from then on;
+   *   · `Enemy.update` takes the `netDriven` branch BEFORE the `driven` one on
+   *     a client, so the machine is still being written by the host's snapshot
+   *     — the guest's throttle and steering reach nothing, and `Crew.ride`,
+   *     which is called from the `driven` branch, never runs;
+   *   · so the driver is never seated. Measured over six seconds at full
+   *     throttle: the guest's body moved **0.00 m**, ended **3.58 m** from a
+   *     hull it was supposed to be sitting on, and had no blade;
+   *   · and the host was never told, so its copy stayed on the horde's team
+   *     with its brain running and went on shooting at the player sitting in
+   *     it. Only pressing the key a second time got them out.
+   *
+   * Replicating the seat is a real feature — a claim carrying the driver's
+   * throttle, steering and gun heading, and the host driving the machine with
+   * it — and it is not this pass. What IS this pass is that the game stops
+   * offering a control that cannot work: `HUD` prints this string over the
+   * machine and `Player.takeControls` refuses with it, which is the same way
+   * every other refusal in this file reaches the player.
+   */
+  if (world?.netMode === 'client') {
+    return 'the controls answer to whoever is hosting — you cannot take them from here';
+  }
   if (!isCrewed(enemy)) {
     return `${enemy.A?.label ?? 'it'} is a droid — the brain is the machine, and there is no seat in it`;
   }

@@ -5077,6 +5077,14 @@ export class World {
     /* …and the grenades, on the same wire and for the same reason. */
     this._netNades = [];
     this._netBlasts = [];
+    /* …and the architecture. A wall coming down is a thing that HAPPENS too,
+     * and it was the last big class of them that was not on the wire: measured
+     * over the pair harness, 8 of 11 pieces the host demolished were still
+     * standing on the joining player's screen. Filled by
+     * `Destruction._netRecord`, drained by `packSnapshot`, replayed by
+     * `_spawnNetRubble`. The whole argument is in src/world/Destruction.js's
+     * REPLICATION block. */
+    this._netRubble = [];
     this._netWave = { w: this.director?.wave ?? 1, act: 0, started: false };
     if (mode === 'host') { this._recordFires(); this._recordNades(); }
     if (mode === 'client') this._netDirector();
@@ -5165,14 +5173,34 @@ export class World {
       const [x, y, z, size] = b;
       /* Through `this.onExplosion` and NOT the World method by name, because
        * Destruction replaces the property with a wrapper at load and the
-       * structural half of the blast lives in that wrapper. A client that
-       * called the raw method would draw the fireball and leave the wall
-       * standing. */
+       * structural half of the blast lives in that wrapper.
+       *
+       * That wrapper now REFUSES on a client — every break arrives on `rb`
+       * instead, `_spawnNetRubble` below — and this call still has to go
+       * through it, because a wrapper that is asked and declines is the only
+       * shape that keeps one door for the whole thing. See Destruction's
+       * `_netAllows`. */
       /* NOT a shared scratch vector: `onExplosion` writes `_v1` in its own
        * body loop, and passing `_v1` in as `centre` means every body after the
        * first is shoved away from a point that has already been overwritten. */
       this.onExplosion(_blastAt.set(x, y, z), size, { ghost: true });
     }
+  }
+
+  /**
+   * …AND THE CLIENT'S COPY OF A BUILDING COMING DOWN, for the reason
+   * `_spawnNetNades` gives about the grenade: the host has already decided
+   * what fell, and a client that decided for itself would be holding a
+   * different level from the one everybody else is fighting in.
+   *
+   * The whole of the replay is in src/world/Destruction.js — one call rather
+   * than a loop here, because which piece an event names and what it does to
+   * it is that file's business and not this one's, and a second copy of the
+   * decoding beside the encoder is this repository's signature defect.
+   */
+  _spawnNetRubble(list) {
+    if (!list || !list.length) return 0;
+    return this.destruction?.netReplay?.(list) ?? 0;
   }
 
   _recordFires() {
@@ -6087,6 +6115,7 @@ export class World {
     this._spawnNetBolts(msg.bf);
     this._spawnNetNades(msg.gn);
     this._spawnNetBlasts(msg.ex);
+    this._spawnNetRubble(msg.rb);
     /**
      * AN ID THE HOST HAS STOPPED SENDING IS GONE, dead or not.
      *
