@@ -243,13 +243,21 @@ const POWER_ICONS = {
  * it ends. See Minimap.update.
  *
  * 3.5 s, and the number is the pulse's whole design. Force sense is a TOGGLE
- * (Player.toggleSense) that costs POWER_COST.sense to switch on, drains 22
- * Force a second while it is held open and blocks regeneration entirely — so a
- * player who wants a map has two ways to pay for it: hold the power open and
- * watch the pool drain, or tap it on and off for a snapshot that costs the
- * activation and nothing more. The linger is what makes the second one a real
- * choice: at 3.5 s a tap is worth about one exchange, which is long enough to
- * find the body behind you and far too short to fight with the map up.
+ * (Player.toggleSense) that needs POWER_COST.sense in the bar to switch on and
+ * then charges `SENSE_DRAIN` a second while it is held open, blocking
+ * regeneration entirely — so a player who wants a map has two ways to pay for
+ * it: hold the power open and watch the pool drain, or tap it on and off for a
+ * snapshot. The linger is what makes the second one a real choice: at 3.5 s a
+ * tap is worth about one exchange, which is long enough to find the body behind
+ * you and far too short to fight with the map up.
+ *
+ * TWO WORDS OF THAT WERE WRONG AND BOTH MATTERED. It said sense "costs
+ * POWER_COST.sense to switch on", and it does not — the 25 is a THRESHOLD, read
+ * through `_canSpend`, and `toggleSense` takes nothing out of the bar (its own
+ * note says so); a tap therefore costs the linger and literally nothing else.
+ * And it wrote the per-second drain as a bare 22, which is the hand-maintained
+ * twin of a number that lived nowhere: it is `SENSE_DRAIN` in
+ * src/game/Powers.js now, beside the twelve one-shot prices, because it is one.
  */
 export const MINIMAP = { range: 42, hz: 20, size: 132, linger: 3.5 };
 
@@ -2282,15 +2290,18 @@ export class HUD {
    *
    * So the gate asks the player's own economy: `_canSpend` is the single
    * function Player uses to decide, and it reads drain and the boon multiplier
-   * live. Three powers do NOT go through it in Player and are marked here
-   * accordingly, because the HUD's job is to state the game that exists rather
-   * than the one it would prefer: `throwOrRecall` and `toggleSense` compare raw
-   * force against a literal and so ignore drain entirely, and `forceLightning`
-   * applies the boon multiplier by
-   * hand but not the drain. Those three are a real inconsistency in Player's
-   * Force economy and are worth fixing THERE; until they are, this wheel tells
-   * the truth about them. See tools/checks/hud-events.mjs, which pins every
-   * number below to the line of Player.js it came from.
+   * live.
+   *
+   * A PARAGRAPH USED TO STAND HERE saying that three powers bypassed that gate
+   * in Player — `throwOrRecall` and `toggleSense` comparing raw force against a
+   * literal, `forceLightning` applying the boon multiplier by hand but not the
+   * drain — and that "until they are fixed, this wheel tells the truth about
+   * them". They were fixed, in Player, and the paragraph stayed: it was
+   * contradicted by the four lines under it, which route every slot through
+   * `_canSpend` and say so. A comment that describes a game two rounds old is
+   * worse than none, because the next reader believes it and writes the
+   * exception back in. See tools/checks/hud-events.mjs, which pins every number
+   * below to the line of Player.js it came from.
    */
   _afford(player, key) {
     const cost = POWER_COST[key];
