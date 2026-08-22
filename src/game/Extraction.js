@@ -1420,7 +1420,37 @@ export class ExtractionDirector {
       /* The rig was posed from `position` earlier in the frame, so moving the
        * body without carrying the same delta into the root leaves the mesh a
        * frame behind — Riders.js's note, and the same 10 cm of slide. */
-      if (b.rig?.root) b.rig.root.position.set(
+      /**
+       * ── AND NOT FOR A PLAYER, WHOSE ROOT IS NOT WHERE THE BODY IS ────────
+       *
+       * This is right for an Enemy: `Enemy` writes `root.position.copy(this.position)`
+       * every frame, so its root IS the body and carrying the ride's delta into
+       * it keeps the mesh with the seat.
+       *
+       * A Player's root is the opposite. It is permanently an identity at the
+       * origin, because the animator writes the pelvis in WORLD coordinates
+       * onto a bone beneath it — the same convention that put the merged skin's
+       * frustum bound at the origin. So this line added the ride's delta to a
+       * transform that was already carrying the whole body, applying it TWICE
+       * to the drawn figure while the saber, posed straight into world space
+       * from `control.handPos`, stayed at 1x. Measured on a geonosis insertion:
+       * hands at exactly double the body's world position, and a root that
+       * never returned to zero — landed at (0.9, 0.2, 0.2). Hand-to-hilt gap at
+       * rest: 0.087 m with no insertion, 0.463 m after one.
+       *
+       * That is the whole of "when I get off a transport my lightsaber won't be
+       * connected to my hands". And the reason a dash or a jump fixes it
+       * PERMANENTLY is that `Player._spinBody`'s terminal branch is the only
+       * code in the game that writes `root.position.set(0,0,0)` — it runs when
+       * an airborne flip completes, and one flip zeroes the root for good.
+       *
+       * `rootCarries` is the test, not `isLocal` or a class check: any body
+       * whose animator owns its root is excluded, so a remote player and a
+       * mounted rider answer the same way. Riders.js carries a byte-identical
+       * copy of these three lines and the same fix.
+       */
+      const rootCarries = !!b.rig?.root && b.isLocal === undefined;
+      if (rootCarries) b.rig.root.position.set(
         b.rig.root.position.x + dx, b.rig.root.position.y + dy, b.rig.root.position.z + dz);
       else if (b.group) b.group.position.set(
         b.group.position.x + dx, b.group.position.y + dy, b.group.position.z + dz);
@@ -1670,6 +1700,20 @@ export class ExtractionDirector {
     const w = this.world;
     b.riding = null;
     b._extracting = null;
+    /* AND THE ROOT GOES BACK TO ZERO ON THE WAY OUT.
+     *
+     * `_flyPassengers` no longer writes a player's root at all, so in the
+     * ordinary case there is nothing here to undo. This is the belt: any
+     * residue from a mid-flight rotate, a mount handoff or a future rider path
+     * is cleared at the one door every passenger leaves by, rather than waiting
+     * for the airborne flip in `Player._spinBody` — which is the only other
+     * code in the game that zeroes it, and which a player who never dashes
+     * never reaches. A body whose root DOES carry it is left alone; its root is
+     * re-copied from `position` on its own next frame. */
+    if (b.rig?.root && b.isLocal !== undefined) {
+      b.rig.root.position.set(0, 0, 0);
+      b.rig.root.quaternion.identity();
+    }
     if (b.speed === 0 && b._footSpeed) b.speed = b._footSpeed;
     if (i === 0) {
       _v3.copy(ramp);

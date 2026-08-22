@@ -162,7 +162,16 @@ class RiderPack {
        * the mesh one frame behind — 10 cm at a charging mount's 6 m/s, which
        * reads as the rider sliding on the back. Carrying the same delta into
        * the rig root closes it. */
-      if (r.rig?.root) r.rig.root.position.set(
+      /* …FOR A BODY WHOSE ROOT CARRIES IT, WHICH A PLAYER'S DOES NOT. The same
+       * three lines in `Extraction._flyPassengers` had this defect and its note
+       * is the long one: an Enemy writes `root.position.copy(this.position)`
+       * every frame so its root IS the body, while a Player's root is a
+       * permanent identity at the origin with the pelvis written in WORLD space
+       * onto a bone beneath it. Adding the delta there applies it twice to the
+       * drawn figure and leaves the saber — posed straight into world space —
+       * a metre out of the hands. `isLocal === undefined` is this codebase's
+       * test for "is an Enemy", the same one the facing line below uses. */
+      if (r.rig?.root && r.isLocal === undefined) r.rig.root.position.set(
         r.rig.root.position.x + dx, r.rig.root.position.y + dy, r.rig.root.position.z + dz);
       else if (r.group) r.group.position.set(
         r.group.position.x + dx, r.group.position.y + dy, r.group.position.z + dz);

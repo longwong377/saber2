@@ -231,6 +231,16 @@ export const ZONE_POSE = {
  * short of the opposite zone, so no tier ever forgives a guard held the wrong
  * way round. See zoneTolerance() in Combat.js.
  */
+/**
+ * How far the wrist may roll from level, and how fast it unwinds when you stop
+ * asking. See the note in `applyInput` — this is the reticle-drift fix, and the
+ * two halves answer different halves of it: the LIMIT stops an accumulator that
+ * had no bound at all, and the HOME rate stops a single accident from lasting
+ * the rest of the match.
+ */
+export const ROLL_LIMIT = Math.PI;
+export const ROLL_HOME = 0.55;
+
 export const GUARD = {
   radius: 1.4,
   centre: 20 * Math.PI / 180,
@@ -1305,6 +1315,48 @@ export class SaberController {
     if (input.act('rollR')) rollInput += 1;
     this.rollVel = damp(this.rollVel, rollInput * 5.4, 14, dt);
     this.roll += this.rollVel * dt;
+    /**
+     * ── AND IT IS BOUNDED, AND IT COMES BACK ────────────────────────────
+     *
+     * `roll` was an unbounded accumulator with no return to centre, reset only
+     * in `reset()`. `gx`/`gy` recentre toward `readyX`/`readyY` every frame;
+     * this did not. And it is not merely the blade's spin — `guardWorld` is
+     * rotated about the blade axis by `roll` before `screenGuard` projects it,
+     * and the HUD writes the blade cursor's transform from exactly that point.
+     *
+     * So a stray brush of Q or E — the two keys immediately either side of W,
+     * both bound `hold: true` — permanently moved the on-screen guard, and
+     * repeated brushes moved it further with no limit at all. Reported as "over
+     * the course of a game my reticle will move for some reason permanently…
+     * maybe it's a button I'm pressing by mistake". It was.
+     *
+     * ROLL_LIMIT is a half-turn each way, which is every plane the wrist can
+     * actually cut on — past that a blade is only back where it started, so the
+     * clamp costs the player nothing and stops the accumulation dead.
+     *
+     * ROLL_HOME is the other half, and it is deliberately slow. Rolling the
+     * wrist is a real technique the README teaches, so it must not be snatched
+     * back while it is being used: the return only runs when nothing is asking
+     * for roll, and at 0.55 rad/s it takes a couple of seconds to unwind a
+     * quarter turn. Long enough to hold a plane through an exchange, short
+     * enough that an accident does not outlive the fight it happened in.
+     * `holdPosition` — "Blade holds position" in Options — turns it off, which
+     * is exactly what that setting already promises about the guard.
+     */
+    this.roll = clamp(this.roll, -ROLL_LIMIT, ROLL_LIMIT);
+    /* NOT WHILE A FLOURISH IS RUNNING, and not while the blade is spinning.
+     * The twirl takes the wrist somewhere and puts it back — `catch.mjs`'s
+     * "any real intent cancels it, and it leaves no residue" holds the restored
+     * value to the exact radian it started at — so an unwind ticking underneath
+     * it would eat the difference and turn a cancelled flourish into a slow
+     * theft of the player's chosen plane. The roll a player is HOLDING is a
+     * stance; only the roll nobody is using comes home. */
+    const rollBusy = this.flourishT >= 0 || this.spinning || this.thrustT >= 0;
+    if (!rollInput && !rollBusy && !this.holdPosition && this.roll !== 0) {
+      const back = ROLL_HOME * dt;
+      this.roll = Math.abs(this.roll) <= back ? 0
+        : this.roll - Math.sign(this.roll) * back;
+    }
 
     // ── LATERAL GUARD. Held, not toggled: a guard stance is a thing you stand
     // in. Which side leads comes from where the guard already is, so one binding

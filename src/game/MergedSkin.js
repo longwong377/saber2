@@ -385,6 +385,9 @@ export function buildMergedSkin(rig, opts = {}) {
 
   const skeleton = new THREE.Skeleton(bones);
   const meshes = [];
+  /* The widest bake in this rig, carried out so `applyMergedSkin` can size the
+   * per-frame world bound without re-walking the skeleton. */
+  let bakedRadius = 0;
   /* `sources[i]` is what `meshes[i]` was baked from, IN THE ORDER IT WAS BAKED.
    * Kept because "the merged skin is the same body" is only checkable
    * vertex-for-vertex if the correspondence survives the bake — a bounding box
@@ -407,7 +410,11 @@ export function buildMergedSkin(rig, opts = {}) {
     mesh.castShadow = false;
     mesh.receiveShadow = baked.shadow;
     // …and the frustum bound is the skeleton's, not one pose's. See boneReach.
+    /* Centred at the origin here because the rig root IS the origin at bake
+     * time; `applyMergedSkin` moves it onto the body every frame, and the note
+     * over that loop is the one to read before touching this line. */
     mesh.boundingSphere = new THREE.Sphere(new THREE.Vector3(), baked.radius);
+    bakedRadius = Math.max(bakedRadius, baked.radius);
     mesh.visible = false;
     root.add(mesh);
     mesh.updateMatrixWorld(true);
@@ -416,7 +423,7 @@ export function buildMergedSkin(rig, opts = {}) {
     sources.push(bin.entries.map((e) => e.mesh));
   }
 
-  return { meshes, sources, replaced, refused, skeleton,
+  return { meshes, sources, replaced, refused, skeleton, radius: bakedRadius,
     from: replaced.length, to: meshes.length, visible };
 }
 
@@ -466,6 +473,17 @@ function mayBake(owner) {
  * Returns true when the merged skin is what is drawing. `Enemy._applyLod` is
  * the only caller and owns the LOD comparison; this owns everything else.
  */
+/**
+ * How far up a standing body's own origin the frustum bound is centred, and how
+ * much slack it carries. `owner.position` is at the feet; a figure is about two
+ * metres tall, so the middle of it is a metre up. The slack is the difference
+ * between a bound that is a little loose (a few pixels of culling precision)
+ * and one that is a little tight (the whole body disappears) — see the note in
+ * `applyMergedSkin`.
+ */
+const BOUND_LIFT = 1.0;
+const BOUND_SLACK = 1.0;
+
 export function applyMergedSkin(owner, lod) {
   const rig = owner.rig;
   if (!rig) return false;
@@ -513,6 +531,54 @@ export function applyMergedSkin(owner, lod) {
     for (const m of L.skin.meshes) m.visible = true;
     L.on = true;
     L.stale = fresh;
+  }
+  /**
+   * ── AND THE FRUSTUM BOUND HAS TO FOLLOW THE BODY, or the body is INVISIBLE ──
+   *
+   * This is the whole of the "my troops are invisible" bug, and it is a culling
+   * bug rather than a drawing one — which is why every audit in the tree missed
+   * it. `Enemy._auditVisible` and `_anyVisibleMesh` ask whether `mesh.visible`
+   * is true, and it is; the scene graph is right, the skin is bound, the
+   * material is fine. three.js simply never submits the draw.
+   *
+   * The rig root is PERMANENTLY an identity transform at the world origin —
+   * `BipedAnimator` writes the pelvis in WORLD coordinates onto a bone beneath
+   * it, which is this codebase's convention everywhere. So a merged
+   * `SkinnedMesh` parented to that root has an identity `matrixWorld`, and the
+   * bounding sphere handed to it at bake time was centred on `(0,0,0)` with a
+   * body-sized radius of about 1.28 m. The vertices are eighty metres away; the
+   * sphere is at the origin. `Frustum.intersectsObject` culls it, correctly,
+   * every frame the camera is not looking at the middle of the map.
+   *
+   * Measured with the shipped `vendor/three`, a body 80 m out:
+   *
+   *     skinIntersects = false      primIntersects = true
+   *
+   * The band is exactly 62 m (L2_LOD) to 137.8 m (L3_AT). Under 62 m the body
+   * draws its own bone meshes; past 137.8 m the L3 cohort sets
+   * `frustumCulled = false` on purpose and it reappears. In between — which is
+   * where a line of your own men stands and where enemies almost never are —
+   * it draws nothing at all.
+   *
+   * So the sphere is moved onto the body every frame. `owner.position` is the
+   * body's world place and the mesh's matrix is identity, so a local sphere IS
+   * a world sphere here and no transform is involved. The centre is lifted a
+   * metre to the middle of a standing figure and the radius carries a metre of
+   * slack, because a bound that is slightly generous costs a few pixels of
+   * culling precision while one that is slightly tight costs the whole body.
+   *
+   * Cohorts.js solves the same problem by refusing to cull at all; that is
+   * right for an InstancedMesh holding eighty bodies at once and wrong here,
+   * where there is one mesh per body and the culling is worth keeping.
+   */
+  const p = owner.position;
+  if (p) {
+    for (const m of L.skin.meshes) {
+      const b = m.boundingSphere;
+      if (!b) continue;
+      b.center.set(p.x, p.y + BOUND_LIFT, p.z);
+      if (b.radius < L.skin.radius + BOUND_SLACK) b.radius = L.skin.radius + BOUND_SLACK;
+    }
   }
   return true;
 }

@@ -3869,7 +3869,19 @@ export class WaveDirector {
   _retire(e, r, why) {
     if (e.dead) return false;
     e.dead = true;
-    e.dying = 0;
+    /* `1e6`, NOT `0` — the same ceiling `CommandDirector.recall` uses, and for
+     * the reason its own note gives twenty lines of: a body retired this way
+     * is never ragdolled, never loses its capsule and is never handed to
+     * `Corpses`, and `Enemy.update`'s dead branch POSES NOTHING. So `dying:0`
+     * left a soldier standing frozen in a walk pose, untouchable by anything
+     * the player can do to it, until `World.update` disposed it at `dying >=
+     * 40` — forty seconds of scenery per routed man, dozens at a time.
+     * Reported as exactly that: "a lot of enemies would be dead technically
+     * but their corpses would be standing and frozen, immaterial, and there
+     * would be many like that across the battlefield." The ceiling makes the
+     * body leave on the next frame, through the door every other body leaves
+     * by. */
+    e.dying = 1e6;
     r.t = 0;
     this.world?.onEnemyKilled?.(e, null, 'retire');
     (this.rescues || (this.rescues = [])).push({ what: 'retire', why, type: e.type, wave: this.wave });
@@ -3963,7 +3975,8 @@ export class WaveDirector {
       if (n >= ROUT_PER_FRAME) break;
       if (!this.blocksWaveEnd(e)) continue;
       e.dead = true;
-      e.dying = 0;
+      /* 1e6 — see `_retire` above, and CommandDirector.recall's note. */
+      e.dying = 1e6;
       this.world?.onEnemyKilled?.(e, null, 'rout');
       n++;
     }

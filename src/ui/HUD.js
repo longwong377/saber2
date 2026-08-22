@@ -1988,6 +1988,22 @@ export class HUD {
       const heat = clamp(player.saber.tipSpeed / 26, 0, 1);
       el.cursor.style.opacity = (0.25 + heat * 0.75).toFixed(2);
       el.cursor.firstElementChild.style.transform = `scale(${(0.7 + heat * 0.75).toFixed(2)})`;
+    } else if (el.cursor && el.cursor.style.transform) {
+      /* AND IT GOES BACK TO CENTRE WHEN NOBODY IS DRIVING IT.
+       *
+       * The transform above is written only while `_grip` is live, and the ring
+       * is HIDDEN only in third person — so any first-person frame without a
+       * grip left the last transform in place, and it sat there. Nothing reset
+       * it on respawn, on a level change or on putting the blade away, so what
+       * the player saw was a second reticle stuck off to one side: "over the
+       * course of a game my reticle will move for some reason permanently…
+       * you realise later that it's moved from your right to your left."
+       *
+       * `#blade-cursor` is centred by CSS, so clearing the inline transform IS
+       * returning it to centre. Guarded on the string being non-empty because
+       * this runs every frame and an unconditional style write on an untouched
+       * element is a layout invalidation for nothing. */
+      el.cursor.style.transform = '';
     }
 
     // ── boss bar: whichever boss is alive and nearest

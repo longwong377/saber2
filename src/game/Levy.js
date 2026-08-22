@@ -436,7 +436,19 @@ class LevyPack {
     for (const e of levy) {
       if (n >= ROUT_PER_FRAME) break;
       e.dead = true;
-      e.dying = 0;
+      /* `1e6`, NOT `0` — the same ceiling `CommandDirector.recall` uses, and for
+       * the reason its own note gives twenty lines of: a body retired this way
+       * is never ragdolled, never loses its capsule and is never handed to
+       * `Corpses`, and `Enemy.update`'s dead branch POSES NOTHING. So `dying:0`
+       * left a soldier standing frozen in a walk pose, untouchable by anything
+       * the player can do to it, until `World.update` disposed it at `dying >=
+       * 40` — forty seconds of scenery per routed man, dozens at a time.
+       * Reported as exactly that: "a lot of enemies would be dead technically
+       * but their corpses would be standing and frozen, immaterial, and there
+       * would be many like that across the battlefield." The ceiling makes the
+       * body leave on the next frame, through the door every other body leaves
+       * by. */
+      e.dying = 1e6;
       /* Null source, exactly as `_rout` and `_retire` do it: nobody killed
        * these and nobody is credited with them. `paysOut` is false for a
        * conscript anyway, so this cannot pay — the null is there so that the

@@ -1536,4 +1536,94 @@ export async function run({ check, assert }) {
     return `LOD 0/1 off, LOD 2 merged, LOD 3 instanced; a cut ${arm.name} gave both rungs back on `
       + `an ordinary frame that never entered _applyLod, and the body draws its own ${drawn} meshes again`;
   });
+  check('L2: a merged body is CULLED BY ITS OWN BOUND, not by the world origin', async () => {
+    /*
+     * THE "MY TROOPS ARE INVISIBLE" BUG, and it is a culling bug rather than a
+     * drawing one — which is exactly why nothing caught it. `_auditVisible` and
+     * `_anyVisibleMesh` ask whether `mesh.visible` is true, and it always was.
+     * The scene graph was right, the skin was bound, the material was fine, and
+     * three simply never submitted the draw.
+     *
+     * The rig root is permanently identity at the world origin (the animator
+     * writes the pelvis in WORLD space onto a bone beneath it), so a merged
+     * SkinnedMesh parented to it has an identity matrixWorld — and its bake-time
+     * bounding sphere was centred on (0,0,0) with a body-sized radius while the
+     * vertices were eighty metres away. Every body between L2_LOD (62 m) and
+     * L3_AT (137.8 m) vanished unless the camera happened to be looking at the
+     * middle of the map. Past 137.8 m the cohort sets frustumCulled=false and
+     * the body came back, which is why it read as a band rather than as "far
+     * away things are gone".
+     *
+     * Measured 300 m off the origin so the origin is nowhere near the frustum —
+     * that is the whole point, and a body tested AT the origin passes either
+     * way. Both directions are asserted: the bound must follow the body, and it
+     * must still cull when the camera turns round, or the fix is just
+     * frustumCulled=false wearing a disguise.
+     */
+    const { initPhysics } = await import('../../src/physics/Rapier.js');
+    await initPhysics();
+    const { RapierWorld } = await import('../../src/physics/RapierWorld.js');
+    const Foe = await import('../../src/game/Enemy.js');
+    const { applyMergedSkin } = await import('../../src/game/MergedSkin.js');
+    await import('../../src/game/Levels.js');
+
+    const physics = new RapierWorld({ gravity: -24, iterations: 4, maxBodies: 64 });
+    const terrain = { height: () => 0, normalAt: (x, z, o) => o.set(0, 1, 0), raycast: () => null,
+      size: 400, half: 200, inBounds: () => true, surfaceAt: () => 'sand',
+      crater() {}, flush() {}, slopeAt: () => 0 };
+    physics.terrain = terrain;
+    const nothing = { sandPuff() {}, sparkBurst() {}, cutFlare() {}, slag() {}, plasma: { spawn() {} } };
+    const world = { scene: new THREE.Scene(), physics, terrain, statics: [], settings: { fov: 60 },
+      players: [], enemies: [], props: [], particles: nothing, time: 0, groundColor: 0xcfae82,
+      bolts: { fire() {} }, engine: { flash() {}, camera: new THREE.PerspectiveCamera() },
+      report() {}, notify() {}, notifyFloating() {}, addHitstop() {} };
+    Foe.enemyRng.seed(20260821);
+
+    const BX = 300, BZ = -80;                    // in the L2 band, far from the origin
+    const cam = new THREE.PerspectiveCamera(70, 16 / 9, 0.1, 900);
+    const frustum = new THREE.Frustum(), mm = new THREE.Matrix4();
+    const aim = (z) => {
+      cam.position.set(BX, 1.6, 0); cam.lookAt(BX, 1.6, z); cam.updateMatrixWorld(true);
+      mm.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
+      frustum.setFromProjectionMatrix(mm);
+    };
+
+    let tested = 0, seen = 0, hidden = 0, atOrigin = 0, bodies = 0;
+    for (const type of ['trooper', 'b1', 'b2', 'conscript', 'sentinel', 'acolyte']) {
+      if (!Foe.ARCHETYPES[type]) continue;
+      const e = new Foe.Enemy(world, type, new THREE.Vector3(BX, 0, BZ));
+      if (!e.rig) continue;
+      e._applyLod(1);
+      e.position.set(BX, 0, BZ);
+      e.rig.root.updateMatrixWorld(true);
+      applyMergedSkin(e, 2);                     // the bake (one body a frame)
+      applyMergedSkin(e, 2);                     // …and the per-frame bound
+      const L = e._l2;
+      if (!L?.skin?.meshes?.length || !L.on) continue;
+      bodies++;
+      for (const m of L.skin.meshes) m.updateMatrixWorld(true);
+
+      aim(-100);
+      // what the original code did, restored afterwards
+      const keep = L.skin.meshes.map((m) => m.boundingSphere.center.clone());
+      for (const m of L.skin.meshes) m.boundingSphere.center.set(0, 0, 0);
+      atOrigin += L.skin.meshes.filter((m) => frustum.intersectsObject(m)).length;
+      L.skin.meshes.forEach((m, i) => m.boundingSphere.center.copy(keep[i]));
+
+      tested += L.skin.meshes.length;
+      seen += L.skin.meshes.filter((m) => frustum.intersectsObject(m)).length;
+      aim(100);
+      hidden += L.skin.meshes.filter((m) => frustum.intersectsObject(m)).length;
+    }
+    assert(bodies > 0, 'no archetype merged at all — the bake budget or the L2 band moved');
+    assert(seen === tested,
+      `${tested - seen} of ${tested} merged meshes were culled while the camera was pointed straight at them `
+      + '— the bound is not following the body, which is the invisible-troops bug');
+    assert(hidden === 0,
+      `${hidden} of ${tested} merged meshes still drew with the camera turned away — the bound is not culling `
+      + 'anything, which is frustumCulled=false in disguise');
+    return `${tested} merged meshes over ${bodies} bodies: origin-centred ${atOrigin}/${tested} drawn, `
+      + `body-centred ${seen}/${tested}, and ${hidden}/${tested} with the camera turned round`;
+  });
+
 }
