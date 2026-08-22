@@ -47,8 +47,29 @@ for (const seed of seeds) {
      * and the pull's range both ride it as √power, so the ceiling below is not
      * a constant of the game — it is a function of a setting the player
      * already owns. `--power 4` is the top of the slider. */
+    /**
+     * `runSeed`, NOT `settings.seed` — AND THE SEED LIST WAS DECORATIVE UNTIL
+     * THIS LINE.
+     *
+     * `settings.seed` has exactly two readers in the tree (`main.js`, which
+     * assigns `world.runSeed` from it, and a display field in Command.js).
+     * `bootWorld` sets `world.runSeed` only from its OWN `runSeed` argument,
+     * and `CommandDirector` takes `opts.seed ?? world?.runSeed ?? null` — so a
+     * probe that passed the seed in `settings` and nowhere else booted a world
+     * with `runSeed` undefined and `director.seed` NULL, which is the branch
+     * that never calls `seedWaves`, `enemyRng.seed`, `duelRng.seed` or
+     * `seedArrivals`. Every run was a fresh `Math.random()` fight and the
+     * `--seeds` flag named nothing.
+     *
+     * Measured before this line, one quantity, seed 3 quoted three times:
+     * the share of enemy body-seconds inside the grip's reach read **11.18%,
+     * 14.52% and 23.85%** on the same tree at the same slider setting. That
+     * spread is the whole of the difference two published ceiling figures were
+     * being asked to explain.
+     */
     settings: { mode: 'command', level: 'geonosis', order: 'jedi', seed, difficulty: 'knight',
       forcePower: Number(flag('power', '1')) },
+    runSeed: seed,
   });
   world.director.start(1);
   const input = dutyInput(world);

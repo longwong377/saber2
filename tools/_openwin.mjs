@@ -25,6 +25,12 @@
  *   pull    never grips. Pulls whenever anything is in the cone and unleashes
  *           when a crowd is inside its radius. The two things in the kit that
  *           open MORE THAN ONE body per press.
+ *   wave    never grips and never pulls. Spends the entire bar on `unleash`,
+ *           the one power in the game that reaches a CROWD — 11 m, every
+ *           direction, 52 Force, a 9 s cooldown. At an income of 7.5/s that
+ *           is very nearly all of it: about one cast per cooldown and nothing
+ *           else affordable in between, which is the point of pricing it as
+ *           the panic button.
  *   press   both, with the grip taking whatever the other two leave.
  *
  * All three are CEILINGS rather than playstyles: a player who spends every
@@ -78,7 +84,28 @@ const CAP = 220;
 async function commandWorld(seed) {
   const { world } = await bootWorld({
     level: 'geonosis',
+    /**
+     * `runSeed`, NOT `settings.seed` — AND THE SEED LIST WAS DECORATIVE UNTIL
+     * THIS LINE.
+     *
+     * `settings.seed` has exactly two readers in the tree (`main.js`, which
+     * assigns `world.runSeed` from it, and a display field in Command.js).
+     * `bootWorld` sets `world.runSeed` only from its OWN `runSeed` argument,
+     * and `CommandDirector` takes `opts.seed ?? world?.runSeed ?? null` — so a
+     * probe that passed the seed in `settings` and nowhere else booted a world
+     * with `runSeed` undefined and `director.seed` NULL, which is the branch
+     * that never calls `seedWaves`, `enemyRng.seed`, `duelRng.seed` or
+     * `seedArrivals`. Every run was a fresh `Math.random()` fight and the
+     * `--seeds` flag named nothing.
+     *
+     * Measured before this line, one quantity, seed 3 quoted three times:
+     * the share of enemy body-seconds inside the grip's reach read **11.18%,
+     * 14.52% and 23.85%** on the same tree at the same slider setting. That
+     * spread is the whole of the difference two published ceiling figures were
+     * being asked to explain.
+     */
     settings: { mode: 'command', level: 'geonosis', order: 'jedi', seed, difficulty: 'knight' },
+    runSeed: seed,
   });
   world.director.start(1);
   return world;
@@ -116,6 +143,24 @@ function fitArm(arm, world, input) {
     if (!p || !p.alive) return;
     const holding = !!(p.gripEnemy && !p.gripEnemy.dead);
     if (holding) tally.heldSeconds += dt;
+
+    if (arm === 'wave') {
+      /* THE ONE POWER THAT REACHES A CROWD, and nothing else. `_canSpend` and
+       * `cooldowns.unleash` are the shipped gates, so the cadence this arm
+       * runs at is the one the price and the cooldown allow and not one this
+       * file chose. Three bodies inside the radius, because `forceUnleash`
+       * spends whether or not it finds anybody and an arm that paid for empty
+       * casts would be measuring the script's footwork. */
+      if (p.cooldowns.unleash <= 0 && p._canSpend(52)) {
+        let n = 0;
+        for (const e of world.enemies) {
+          if (e.dead || e.team === p.team) continue;
+          if (e.position.distanceTo(p.position) <= 11) n++;
+        }
+        if (n >= 3) { want.add('unleash'); tally.unleashes++; }
+      }
+      return;
+    }
 
     if (arm === 'press' || arm === 'pull') {
       /* THE PULL FIRST, because it is the only thing in the kit that opens
