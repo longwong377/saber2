@@ -258,19 +258,22 @@ try {
   record.survey = await page.evaluate(async () => {
     const S = window.SABER, w = S.world, cmd = w.command;
     const F = await import('/src/world/Front.js');
+    /* `frontLine` LIVES IN Battlefield.js AND IS NOT RE-EXPORTED BY Front.js —
+     * Front re-exports the four schedule constants and nothing else, so
+     * `F.frontLine` is undefined and the whole survey dies with "frontLine is
+     * not a function". Found headlessly before it cost a second browser run;
+     * `Front.burnt` is the same reader wearing a boolean. */
+    const B = await import('/src/world/Battlefield.js');
     const P = await import('/src/world/Props.js');
     const hull = P.propMaterials().hull;
     const front = F.engagementFront(w, cmd?.areaNumber ?? 1);
     const p = w.player.position;
     /* Which side of the line is the PLAYER on, and how far — through the
      * shipped reader rather than a second copy of the half-plane test. */
-    const line = F.frontLine(front);
+    const line = B.frontLine(front);
     const me = line.side ? line.side(p.x, p.z) : null;
     const wrecks = w.statics.filter((m) => m.material === hull);
     const near = (o) => Math.hypot(o.position.x - p.x, o.position.z - p.z);
-    /* The bearing from the player to the front, so the shots below can look at
-     * it: the camera yaw that faces +dir is atan2(dx, dz)-flavoured — taken off
-     * the rig's own convention by asking what it currently looks at. */
     return {
       front: { bearing: front.bearing, distance: front.distance,
         offset: front.offset ?? null, engagement: front.engagement ?? null,

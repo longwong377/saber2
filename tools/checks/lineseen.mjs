@@ -305,10 +305,15 @@ export async function run({ check, assert }) {
          * ones, counted as frames for §2.6's reason. */
         for (let i = 0; i < 2; i++) await window.__frame();
         const F = await import('/src/world/Front.js');
+        /* `frontLine` is Battlefield.js's and Front.js does not re-export it —
+         * it re-exports the four schedule constants and nothing else. Reaching
+         * for `F.frontLine` throws "frontLine is not a function" and takes the
+         * whole check with it. */
+        const B = await import('/src/world/Battlefield.js');
         const P = await import('/src/world/Props.js');
         const hull = P.propMaterials().hull;
         const front = F.engagementFront(w, w.command?.areaNumber ?? 1);
-        const line = F.frontLine(front);
+        const line = B.frontLine(front);
         const p = w.player.position;
         let fallen = 0, fallenMeshes = 0, smoke = 0;
         S.engine.scene.traverse((o) => {
