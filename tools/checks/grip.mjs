@@ -233,8 +233,25 @@ export async function run({ check, assert }) {
     assert(!b.dead && !b.actor?.ragdolled,
       'the shoved droid never came back off the floor');
 
-    /* AND NOTHING LIMP KEEPS SHOOTING. A brain that went on aiming from a
-     * chest lying face down is the same omission read from the other side. */
+    /**
+     * ── AND A SHOVE FROM YOUR OWN SIDE DOES NOT FELL YOU ─────────────────
+     *
+     * `Player._shockwave` iterates `ctx.enemies` with no team test — a Force
+     * wave is physics and does not aim — and in Command your own line stands
+     * in `world.enemies`. Without the clause this asserts, a panic button
+     * pressed every few seconds would put your own rank on the floor for five
+     * seconds at a time, which is the mode's whole objective inverted. The
+     * 1.2 s stun still reaches them; only the knockdown is filtered.
+     */
+    assert(a.team === b.team, 'setup: the two droids are not on the same side');
+    const c = world.spawnEnemy('b1', new THREE.Vector3(-4, 0, -8));
+    assert(c, 'setup: the third droid did not spawn');
+    for (let i = 0; i < 6; i++) step();
+    c.applyKnockback(new THREE.Vector3(0, 0.6, 1).normalize().multiplyScalar(26), 0, a, false);
+    assert(!c.actor?.ragdolled,
+      'a shove from a body on its own side put it on the floor — every Force wave would fell your line');
+    assert(c.stunTimer > 0, 'a shove from its own side stopped reaching it at all');
+
     world.unload();
     return `standing ${standing.toFixed(1)} hp, down ${down.toFixed(1)} hp — `
       + `${(down / standing).toFixed(2)}x against a stated ${flatOpen.toFixed(2)}x, `

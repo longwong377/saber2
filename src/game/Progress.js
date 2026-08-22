@@ -359,6 +359,24 @@ export function progressLines(p = read()) {
       + (last.won === null ? ', left' : last.won ? ', crowned' : '')
       + (last.rules?.length ? ` · under ${ruleName(last.rules.join('+'))}` : '')
       + (last.boons?.length ? ` · ${last.boons.length} boon${last.boons.length === 1 ? '' : 's'}` : '')
+      /**
+       * …AND HOW MANY OF THEM YOU WOKE YOURSELF.
+       *
+       * `facets` has been on every entry since `recent[]` was written and had
+       * no reader anywhere — the write-only log this file's own header refuses
+       * to be, in its mildest form. It was also structurally 0: `recordRun`
+       * reads `summary.woken` and nothing in `src/` passed it until main.js's
+       * `record()` began sending `communion.bought`. Both halves are closed on
+       * the same commit, because either one alone is still a field that says
+       * nothing.
+       *
+       * It sits beside `boons` because it is the SHARE of that number the
+       * player chose in the Holocron rather than was dealt: `boons` is the
+       * whole holding — the order's grants, the draft, and this — and in the
+       * four modes that draft nothing the difference between the two is the
+       * whole of what the run built.
+       */
+      + (last.facets ? ` · ${last.facets} woken` : '')
       + (last.seed != null ? ` · seed ${last.seed}` : ''));
   }
   return out;

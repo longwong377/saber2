@@ -3961,10 +3961,26 @@ export class Enemy {
    * walking with no collider is the bug from the other side, and `recover()`
    * is the one place that puts it back.
    */
-  knockFlat(impulse) {
+  knockFlat(impulse, source) {
     if (this.dead || this.gripped || this.stasisHeld || this.beingDragged) return false;
     if (this.A.boss || this.A.big) return false;
     if (!this.actor || this.actor.ragdolled) return false;
+    /**
+     * A SHOVE FROM YOUR OWN SIDE ROCKS YOU AND DOES NOT PUT YOU DOWN.
+     *
+     * `Player._shockwave` iterates `ctx.enemies` with NO team test — a Force
+     * wave is physics and does not aim, which is right and is why `unleash`'s
+     * knockback reaches your own rank while the stagger loop beside it filters
+     * through `_foes`. In Command your line stands in `world.enemies` on your
+     * team, so without this clause a panic button pressed every few seconds
+     * would put your own men on the floor for five seconds at a time — and the
+     * mode is about the line still being on its feet when it takes the ridge.
+     *
+     * The existing 1.2 s stun still reaches them, unchanged. This is about the
+     * DIFFERENCE the knockdown adds, and it is the difference between a shove
+     * that shoves your men and one that fells them.
+     */
+    if (source && source.team !== undefined && source.team === this.team) return false;
     /* THE SHOVE IS THE LAUNCH. `addShove` has already put the impulse into
      * `velocity` this frame, so handing the ragdoll the body's own velocity
      * sends it the way it was thrown rather than dropping it where it stood —
@@ -4446,7 +4462,7 @@ export class Enemy {
       this.stun(1.2, impulse, 1.4);
       /* …AND THE COMMENT ABOVE WAS THE WHOLE OF IT. See `knockFlat`: the line
        * said the body leaves its feet and the code left it standing. */
-      this.knockFlat(impulse);
+      this.knockFlat(impulse, source);
     }
     // "I want to hear the enemies scream as they get force thrown" — the throw
     // is the impulse, so the trigger belongs exactly here rather than in

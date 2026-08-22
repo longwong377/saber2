@@ -135,9 +135,27 @@ export class WarSupport {
     this.value = clamp(opts.start ?? SUPPORT_START, 0, this.max);
     /** Seconds of rearm still owed before the trickle resumes. */
     this.rearm = 0;
-    /** For the HUD: what the last spend was and how long ago. */
-    this.lastSpend = 0;
-    this.lastAt = -99;
+    /**
+     * THE TWO FIELDS THAT SAID THEY WERE FOR THE HUD AND WERE FOR NOBODY.
+     *
+     * `lastSpend` and `lastAt` were written by every `spend()` under the
+     * comment "For the HUD: what the last spend was and how long ago", and
+     * `readout()` — the method whose own comment is "Everything the HUD needs,
+     * in one object" — does not carry either. `tools/deadfields.mjs` names them
+     * both: written in `src/`, read in neither `src/` nor `tools/`.
+     *
+     * That is `AudioEngine.musicMissing` again, which is the case that tool was
+     * built for: a field a comment says a screen reads, that no screen reads.
+     * The cost is not the two writes, it is that the next person to want "how
+     * long since the last call" builds on a number that has never reached
+     * anybody. What the HUD actually draws the rearm from is `rearm` and
+     * `rearming`, which `readout()` does carry.
+     *
+     * They are gone rather than published, because the readout already answers
+     * the question they claim to: `rearm` IS how long ago the last spend was,
+     * measured in the units the bar cares about, and `REARM * (cost / max)` is
+     * where the size of that spend went.
+     */
     this.t = 0;
     /** Total credited and spent this battle, which the readout uses. */
     this.earned = 0;
@@ -191,8 +209,6 @@ export class WarSupport {
     if (!this.canAfford(cost)) return false;
     this.value -= cost;
     this.spent += cost;
-    this.lastSpend = cost;
-    this.lastAt = this.t;
     /* THE REARM IS PROPORTIONAL. See REARM: a big call takes the supply line
      * out for longer, and it is ADDED rather than assigned so two calls in
      * quick succession genuinely compound. */

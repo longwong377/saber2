@@ -680,6 +680,12 @@ async function deploy() {
     else if (settings.mode === 'skirmish') {
       world.beginSkirmish({
         engagements: settings.skirmishEngagements,
+        /* THE FIFTH PICK, and it was the missing one. `skirmishConfig` has
+         * clamped `waves` since an engagement stopped being one cleared wave;
+         * nothing passed it, so every skirmish ever fought took
+         * `SKIRMISH.waves.def` and the mode's length was one slider instead of
+         * two. See `DEFAULT_SETTINGS.skirmishWaves`. */
+        waves: settings.skirmishWaves,
         strength: settings.skirmishStrength,
         pressure: settings.skirmishPressure,
         rotate: settings.skirmishRotate,
@@ -1167,6 +1173,27 @@ function record(stats = null) {
     won: stats?.won ?? (world.over ? false : null),
     mode: sessionOr('mode'),
     boons: [...(world.takenBoons || [])],
+    /**
+     * WHAT THE RUN WOKE IN THE HOLOCRON — and it was the third field
+     * `recordRun` had always read and nothing had ever passed.
+     *
+     * `Progress.recordRun` does two things with `summary.woken`: it adds its
+     * LENGTH to `p.communed` ("facets woken by communion, all-time"), which
+     * `progressLines` prints as ", N woken in communion", and it stores the
+     * same length on the run's own entry as `facets`. Neither could ever be
+     * anything but zero: `World.runStats()` does not report it and this call
+     * did not add it, so the clause never printed for any player who has ever
+     * run this game, and every one of the forty entries in `recent[]` recorded
+     * `facets: 0` on a run that may have bought six.
+     *
+     * `communion.bought` is the list — the ids woken with Insight, in order,
+     * which is exactly "facets woken by communion" and is NOT `takenBoons`:
+     * that set is fed by the order's grants and by the draft as well, and it is
+     * already carried above as `boons`. The two answer different questions and
+     * the record wants both. `seed` above is the same defect one field along,
+     * fixed one commit earlier.
+     */
+    woken: [...(world.communion?.bought || [])],
     identity: { order: settings.order, species: settings.species },
     /**
      * …AND WHAT THE RUN WAS ACTUALLY FOUGHT UNDER.

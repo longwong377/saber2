@@ -520,6 +520,7 @@
              is the whole difference between the two — see Levels.CAMPAIGNS. -->
         <h3 style="margin-top:22px">The battle</h3>
         <label class="slider">Engagements <input type="range" id="opt-sk-engagements" min="1" max="9" step="1" value="3"><b></b></label>
+        <label class="slider">Waves per engagement <input type="range" id="opt-sk-waves" min="1" max="8" step="1" value="3"><b></b></label>
         <label class="slider">Your line <input type="range" id="opt-sk-strength" min="10" max="24" step="1" value="10"><b></b></label>
         <label class="slider">Pressure <input type="range" id="opt-sk-pressure" min="0" max="4" step="1" value="0"><b></b></label>
         <label class="check"><input type="checkbox" id="opt-sk-rotate" checked> Change ground between engagements</label>
@@ -528,7 +529,10 @@
           number walks the same grounds. Pressure is which rung of the Geonosis advance the fight is held
           at: it moves the enemy's budget, how heavy they come and what your muster can buy. Your line starts
           at the ten the campaign opens with, because that is the smallest army the muster knows how to
-          raise — the slider cannot offer a number the battle would refuse.</p>
+          raise — the slider cannot offer a number the battle would refuse. An engagement is a battle for
+          one piece of ground and takes as many cleared waves as you say, so the two top sliders together
+          are how long the whole thing is: three and three is the shipped nine-wave battle, nine and eight
+          is a seventy-two-wave grind on nine grounds.</p>
         <h3 id="h-standing-order" style="margin-top:22px">Standing order</h3>
         <div id="command-list" class="difflist"></div>
         <p class="hint">The formation your squads form up in at the start of every area. You can change
@@ -644,7 +648,18 @@
              Menu._buildTroopNames off one table, so a fourth mode is one row. -->
         <h3 style="margin-top:20px;font-size:11px">Names over your troops</h3>
         <div id="opt-troopnames" class="difflist"></div>
-        <p class="hint">Command mode only. Rank, name, health and nerve, over the head of the man
+        <!-- IT SAID "Command mode only" AND THAT STOPPED BEING TRUE the day
+             `allies` was added. `HUD._nameplates` draws whenever `world.command`
+             exists, and `World.loadLevel` builds a CommandDirector for every
+             crossing AND for any mode at all with a contingent in it
+             (`leadsArmy = campaign || contingent > 0`) — so the plates were
+             already live in Waves, Roguelite, Duel, Sandbox, Skirmish and
+             Campaign the moment the Allied-troops slider left zero, and the
+             one line of prose that could have told a player so said the
+             opposite. Named after the CONDITION, not a mode list, because that
+             is what the reader tests. -->
+        <p class="hint">Wherever you have troops — the crossings, and any mode at all once
+          <b>Allied troops</b> above is off zero. Rank, name, health and nerve, over the head of the man
           carrying them.</p>
         <label class="check"><input type="checkbox" id="opt-minimap-sense" checked> Read the map with the Force</label>
         <p class="hint">On, the map is what <b>Force sense</b> shows you: hold the power open and it stays

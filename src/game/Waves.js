@@ -734,7 +734,9 @@ export function sandboxConfig(settings) {
  * `World.beginSkirmish`. `MODES.command.level` already lives with the same
  * split for the same reason.
  *
- * `engagements` — how many waves the battle is. 1 is a single stand-up fight;
+ * `engagements` — how many ENGAGEMENTS the battle is (each one `waves` cleared
+ *   waves — the two together are the length of the mode). 1 is a single
+ *   stand-up fight;
  *   the ceiling is 9 because past that a "self-contained battle" is an endless
  *   mode with a stopping rule bolted on, which is the thing this mode exists
  *   instead of. Three is the default because three grounds is enough for the
@@ -745,6 +747,12 @@ export function sandboxConfig(settings) {
  *   `MAX_STRENGTH` ceiling, which are the numbers the muster is actually built
  *   around. The default is 0, meaning "whatever the campaign opens with", so a
  *   battle nobody sized fields the line Command gives them.
+ *
+ * `waves` — how many cleared waves make ONE engagement, so `engagements` ×
+ *   `waves` is how long the whole battle is. See `SKIRMISH.waves` for why it is
+ *   a pick and not a constant; `DEFAULT_SETTINGS.skirmishWaves` and the Deploy
+ *   panel's second slider are the half of that which was missing for the life
+ *   of the mode.
  *
  * `pressure` — which rung of Command's own advance this battle is fought at,
  *   as an index into `AREAS`. That table already carries a budget multiplier, a
