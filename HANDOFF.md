@@ -1198,6 +1198,36 @@ fighting. All four are variadic now. **`Command.js:1251` has the same defect
 against `Enemy.damage` and is still open** — that file belonged to another lane.
 Grep `\.damage = (` before changing that signature again.
 
+### 6.1e THE BOND CURRENT PAYS HALF IN EVERY MODE THAT FIELDS AN ARMY — open
+
+Measured off the shipped code, not driven: `localAllies(p)` in `Waves.js` is
+`p.world.players` filtered on `q.boonMods`, and **a Command / skirmish /
+campaign / Line trooper is an `Enemy` in `world.enemies`**, not a player. So the
+whole bond current — Communion, Suffusion, The Vow, The Unifying Force and
+Attunement of the Bond, five of the lattice's forty-six facets — falls to its
+solo half in the five modes that field an army and in any mode at all once the
+contingent slider leaves zero.
+
+Each card has an honest solo fallback and none of them is dead, so this is not
+`claims.mjs`'s question ("does the card move a real Player") and that suite is
+right to be green. It is the other one: *is there a situation that makes this
+worth taking*, and the answer is "co-op", in a game whose army modes put ten to
+twenty-four named people inside `BOND.range` of you for the whole run.
+
+What it would cost, and why it was left:
+
+- `bondGive` writes `q._bondIn` and calls `q.heal?.()`; `bondReceive` spends it
+  through `boonFactor`, which needs `boonMods`. **`Enemy` has neither** — no
+  `heal`, no `boonMods` — so this is a change to `Enemy.js` and not to the
+  cards.
+- It would land a SECOND presence term on the line, on top of
+  `MORALE.JEDI_NEAR`, which is the live Morale/Nerve lane's whole subject.
+  Two mechanisms paying for "the Jedi is standing with us" is the shape
+  `CommandDirector.lineIsUp` spends a page arguing against.
+
+So: worth doing, worth doing *with* the morale lane rather than beside it, and
+the measurement above is the part that would otherwise have to be taken again.
+
 ### 6.1b Diagnosed, scoped, not yet built
 
 **`cel: a shadow is READABLE` — CLOSED, 24/24, and it was TWO failures wearing
