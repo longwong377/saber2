@@ -372,9 +372,9 @@ export function progressLines(p = read()) {
        *
        * It sits beside `boons` because it is the SHARE of that number the
        * player chose in the Holocron rather than was dealt: `boons` is the
-       * whole holding — the order's grants, the draft, and this — and in the
-       * four modes that draft nothing the difference between the two is the
-       * whole of what the run built.
+       * whole holding — the order's grants, the draft, and this — and in a mode
+       * outside `Waves.DRAFT_MODES`, which holds one of the eight, the
+       * difference between the two is the whole of what the run built.
        */
       + (last.facets ? ` · ${last.facets} woken` : '')
       + (last.seed != null ? ` · seed ${last.seed}` : ''));
