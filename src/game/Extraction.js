@@ -101,6 +101,10 @@ import { audio } from '../engine/Audio.js';
 import { spawnClear, bladeClear, nudgeFromSwing } from './Spawn.js';
 import { transportModel, capitalModel } from './Arrivals.js';
 import { armyForOrder } from './Databank.js';
+/* The mode table, for one field: `insertion`. Waves.js imports Arrivals and
+ * Databank as this file does and imports nothing from here, so the edge is
+ * one-way and costs no cycle — `tools/checks/wiring.mjs` walks the graph. */
+import { MODES } from './Waves.js';
 
 const rng = makeRng(48221);
 export function seedExtraction(seed) { rng.seed(seed); }
@@ -250,6 +254,26 @@ export const ENTRY = 6.5;
 /** And the fall from the top of the atmosphere to the flare, which is longer
  *  than an extraction's descent because it starts eight times higher. */
 export const FALL = 9.0;
+
+/**
+ * HOW LONG THE SHIP THAT JUST DROPPED YOU TAKES TO GET OUT OF SIGHT.
+ *
+ * The inbound leg used to end at `_teardown`, which is `parent.remove(g)` — so
+ * the transport you had just walked out of BLINKED OUT OF EXISTENCE behind you,
+ * on every level, in every mode. The mid-battle reinforcement dropships have
+ * always flown away properly (`Arrivals._updateDropship` lerps them to an exit
+ * 70 m out and 46 m up before removing them), which is exactly why this read as
+ * a bug rather than as a convention: the same fiction behaved two ways.
+ *
+ * It cannot be another PHASE, and that is the whole design of it. `World`
+ * gates the wave director on `!extraction.active` (World.js:3301) and `active`
+ * is `phase !== 'done'`, so a departure phase would hold the horde off for as
+ * long as the ship took to climb — a hidden five-second peace at the start of
+ * every battle. So the ship is HANDED OFF instead: ownership of the group moves
+ * to `_departing`, `_finish` runs on the same frame it always did, the fight
+ * starts on time, and the transport climbs out on its own as set dressing.
+ */
+export const DEPART = 5.5;
 
 /** The cruise, and the shortest a skipped cruise can be. */
 export const TRANSIT = 11.0;
@@ -421,6 +445,11 @@ export class ExtractionDirector {
     const w = this.world;
     if (this.active) return false;
     if (!w || w.settings?.instantSpawn) return false;
+    /* THE MODE GETS A SAY, and the mode table is where it says it. A room you
+     * are practising in is not a place you are flown to — `MODES.training` and
+     * `MODES.sandbox` set `insertion: false` and carry the argument. Absent
+     * means true, so every fighting mode keeps the flight without listing it. */
+    if (MODES[w.settings?.mode]?.insertion === false) return false;
     if (w.netMode === 'client') return false;
     if (!w.player || !w.player.alive) return false;
     if (!w.terrain) return false;
@@ -581,6 +610,10 @@ export class ExtractionDirector {
   /* ── the frame ────────────────────────────────────────────────────── */
 
   update(dt, ctx) {
+    /* The ship you have already left, still climbing. It is deliberately
+     * OUTSIDE the `active` guard below: `_departing` only ever exists once the
+     * phase is `done`, which is the point — see DEPART. */
+    if (this._departing && dt > 0) this._flyAwayStep(dt);
     if (!this.active) return;
     /* THE RUN ENDED UNDER THE FLIGHT. `over` is the one flag that stops the
      * wave director, releases the pointer and raises the card, and a commander
@@ -999,7 +1032,23 @@ export class ExtractionDirector {
     const w = this.world;
     const p = w.player;
     this._thrust = 0.14;
-    const lit = SEAL_NEEDS_BLADE_DOWN && !!p?.alive && !!p?.saber?.lit && !p.saber.physical;
+    /* ── AND IT IS ASKED ON THE WAY OUT ONLY ──────────────────────────
+     *
+     * `_sealing` runs on BOTH legs, and on the way IN it is the beat that
+     * closes the ramp AFTER the player has already walked off it. The gate
+     * below never asked which leg it was on — only "is the blade lit" — so
+     * every insertion in the game ended the same way: you step off the ramp
+     * onto the battlefield, ignite, and the ship you have just left demands
+     * you put it away, holds the phase for BLADE_WAIT seconds, then retracts
+     * your blade for you and says THE CREW DID IT FOR YOU. On a battlefield.
+     * With the enemy already shooting.
+     *
+     * The rule this implements is about close quarters INSIDE the bay — ten
+     * bodies in 2.4 m of hull with a live plasma blade among them — which is
+     * a fact about boarding and nothing whatever about disembarking. So it is
+     * asked on the outbound leg, where the player is actually aboard. */
+    const lit = SEAL_NEEDS_BLADE_DOWN && this.leg === 'out'
+      && !!p?.alive && !!p?.saber?.lit && !p.saber.physical;
     /* THE WAIT HAS ITS OWN CLOCK, and that is not a detail. The first version
      * held the phase by winding `this.t` back a frame at a time — which meant
      * `t` never grew, so the `t < LAST_CALL` that was supposed to end the wait
@@ -1025,7 +1074,7 @@ export class ExtractionDirector {
     this._hatch(1 - this.t / HATCH);
     if (this.t < HATCH) return;
     this._hatch(0);
-    if (this.leg === 'in') { this._finish(); return; }
+    if (this.leg === 'in') { this._handOffDeparture(); this._finish(); return; }
     this._enter('liftoff');
     this._closeUp();
   }
@@ -1659,6 +1708,63 @@ export class ExtractionDirector {
     this.onPhase?.('done', this);
   }
 
+  /**
+   * GIVE THE SHIP AWAY BEFORE `_finish` CAN DELETE IT.
+   *
+   * `_teardown` removes and disposes whatever is still hanging off `this`, so
+   * everything the climb needs has to be off `this` before it runs — the group,
+   * the downwash quad and the engine flares. After this call the director owns
+   * no ship at all, which is what lets `active` go false on schedule.
+   */
+  _handOffDeparture() {
+    const g = this.group;
+    if (!g) return;
+    this._departing = {
+      group: g,
+      wash: this._wash,
+      fires: this._fires || [],
+      t: 0,
+      from: g.position.clone(),
+      yaw: this.padYaw ?? 0,
+      pitch: g.rotation.x,
+    };
+    this.group = null;
+    this._wash = null;
+    this._fires = null;
+    this._model = null;
+  }
+
+  /** One frame of that climb. Pure set dressing — it touches nothing but itself. */
+  _flyAwayStep(dt) {
+    const d = this._departing;
+    d.t += dt;
+    const k = clamp(d.t / DEPART, 0, 1);
+    // Quadratic, like `_liftoff`: a transport does not leave at a constant rate,
+    // it leans on the throttle and goes. 210 m out and 240 m up is past both the
+    // 130 m ink range and every level's fog, so it is gone rather than shrinking.
+    const e = k * k;
+    const fwd = _v1.set(Math.cos(d.yaw), 0, Math.sin(d.yaw)).multiplyScalar(-lerp(0, 210, e));
+    d.group.position.set(d.from.x + fwd.x, d.from.y + lerp(0, 240, e), d.from.z + fwd.z);
+    // Nose up into the climb and level off again as it goes.
+    d.group.rotation.x = d.pitch - 0.18 * Math.sin(k * Math.PI);
+    const flare = (1 - k * 0.3) * (1 + Math.sin(d.t * 31) * 0.14);
+    for (const f of d.fires) {
+      f.visible = true;
+      f.scale.set(0.9 + flare * 0.3, 0.6 + flare * 2.6, 0.9 + flare * 0.3);
+    }
+    if (d.wash) d.wash.material.opacity = (1 - k) * 0.11;
+    if (k >= 1) this._endDeparture();
+  }
+
+  /** Take the departed ship out of the scene, whenever that is decided. */
+  _endDeparture() {
+    const d = this._departing;
+    if (!d) return;
+    d.group.parent?.remove(d.group);
+    d.wash?.material.dispose();
+    this._departing = null;
+  }
+
   _teardown() {
     const g = this.group;
     if (g) {
@@ -1680,6 +1786,11 @@ export class ExtractionDirector {
 
   /** A level change or a run ending under a flight: put everybody down. */
   clear() {
+    /* ABOVE the `active` guard, because a departing ship is BY DEFINITION not
+     * active — that is the whole trick in `_handOffDeparture`. A level change
+     * under a climb-out would otherwise leave the transport parented to a scene
+     * nobody disposes. */
+    this._endDeparture();
     if (!this.active) return;
     const w = this.world;
     for (const p of w.players || []) if (p?.riding) { p.riding = null; p._extracting = null; }

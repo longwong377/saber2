@@ -1769,7 +1769,17 @@ export class HUD {
     el.flowFill.style.width = `${clamp(player.flow, 0, 1) * 100}%`;
     el.flow.classList.toggle('max', player.flow > 0.92);
     el.flowVig.style.opacity = (player.flow * 0.55).toFixed(3);
-    el.dmgVig.style.opacity = clamp(1 - hp * 1.6, 0, 0.75).toFixed(3);
+    /* NOT IN FIRST PERSON. `#dmg-vignette` is a full-screen centred radial that
+     * goes red toward all four corners, and in first person there is no body
+     * between you and it — you are inside the head it is meant to be describing,
+     * so it reads as blood ON THE CAMERA. It is worst at the lower right, which
+     * is only where the HUD is emptiest and the band is unobstructed.
+     * It is also the one red thing in a game whose own rule is that a lightsaber
+     * does not bleed anything (DESIGN §3). Third person keeps it: there the
+     * frame is a shot of your character and the vignette is the frame, not the
+     * eye. */
+    el.dmgVig.style.opacity =
+      (player.camera?.firstPerson ? 0 : clamp(1 - hp * 1.6, 0, 0.75)).toFixed(3);
 
     // ── combo / score
     if (player.combo > 1) {

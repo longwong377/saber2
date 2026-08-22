@@ -225,6 +225,23 @@ export const MODES = {
      * branch above `_compose`, so there is no wave for a rule to condition —
      * the room is whatever the dials say. See `MODES.duel.fixedRules`. */
     fixedRules: 'Not in the sandbox: the field is whatever you dialled in, and no wave is composed to carry a rule.',
+    /**
+     * THE ROOM IS NOT A PLACE YOU ARE FLOWN TO.
+     *
+     * `Extraction.beginInsertion` runs on every mode that does not decline it,
+     * so the dojo and the sandbox opened with a 28-second orbital descent —
+     * capital ship, atmosphere entry, the lot — to reach a practice room with
+     * three remotes in it. A player who wants to try a grip for ten seconds sat
+     * through the whole insertion first, and the only opt-out was
+     * `settings.instantSpawn`, a checkbox that defaults to off and that nothing
+     * in either mode sets.
+     *
+     * A flag on the mode row rather than a `mode === 'training'` test in
+     * Extraction, because that is how `battles`, `picksCampaign` and `ladder`
+     * are already answered: the table is the one place that knows what a mode
+     * is. Absent means true — every fighting mode keeps the flight.
+     */
+    insertion: false,
   },
   /**
    * TRAINING WAS PINNED TO ONE ROOM.
@@ -259,6 +276,9 @@ export const MODES = {
      * holding a WaveDirector can see that, which is why the check that pins
      * this field builds each mode's OWN director. See `MODES.duel.fixedRules`. */
     fixedRules: 'Not in Training: the lessons are run by the dojo, which composes no waves for a rule to change.',
+    /* NO FLIGHT IN HERE EITHER — see `insertion` on `MODES.sandbox` above. Ten
+     * lessons that cannot kill you do not open with an orbital drop. */
+    insertion: false,
   },
   /**
    * COMMAND — the one mode where you are not alone.
