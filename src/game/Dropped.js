@@ -141,6 +141,10 @@ export function dropSaber(world, opts = {}) {
   prop.bladeColor = crystal.hex;
   if (opts.lit) igniteHilt(prop, true);
 
+  /* Its five metals are its own — `buildHiltGroup` machines a fresh set per
+   * hilt from the weapon's tuning — so this hilt may free them when it goes.
+   * See `Prop.destroy`, which will not touch a material without being told. */
+  prop.ownsMaterials = true;
   prop.saber = { colorIndex, hiltStyle: opts.hiltStyle, order: opts.order ?? null };
   prop.droppedBy = opts.owner ?? null;
   prop.dropAge = 0;
@@ -264,8 +268,142 @@ export function hiltBlade(prop, base, tip) {
   return tip;
 }
 
-/** Age every dropped hilt, so the delay above means something. */
+/**
+ * ══ HOW MANY HILTS THE FLOOR KEEPS ═══════════════════════════════════════
+ *
+ * Nothing bounded this, and the note over `dropSaber` says what the design
+ * wanted: "a field after a duel has a couple of blades still burning on it and
+ * the rest gone dark, so walking up to one is a decision rather than a
+ * formality." A couple. Measured with `tools/_hiltpile.mjs` — eight acolytes
+ * killed five times over, forty-five seconds apart so every corpse has been
+ * cleaned up before the next wave:
+ *
+ *     wave 1   8 hilts    196 meshes    71 rigid bodies
+ *     wave 3  24 hilts    590 meshes    87
+ *     wave 5  40 hilts    983 meshes   103
+ *
+ * Exactly one per saber-carrying kill, forever: `Prop` has no lifetime and
+ * `ageDropped` only ever added to `dropAge`. A hilt is 24.6 meshes — it is
+ * nineteen to thirty-six machined pieces, which is the whole reason it looks
+ * like a weapon — so forty of them is 983 draw calls of hardware lying in the
+ * sand, against the 520 `world-immersion` holds a whole LEVEL to. That is
+ * player note #15's "really really laggy" arriving from the one direction
+ * `Corpses` does not cover.
+ *
+ * ── THE BUDGET, DERIVED FROM THE CORPSE ONE ──────────────────────────────
+ *
+ * A corpse is 81 meshes (Corpses.js measured it); a hilt is 24.6, so a hilt is
+ * a third of a corpse. `CORPSE_BUDGET.high` is 20 bodies ≈ 1620 meshes, and
+ * these numbers are a tenth of that spend at every tier — 10 hilts at `high`
+ * is 246 meshes, which is a scatter of weapons a player can walk between and
+ * not a scrapyard. The tiers rise for the same reason the corpse tiers do and
+ * `low` keeps four, because a duel that leaves nothing behind is worse than a
+ * duel that leaves too much.
+ */
+export const HILT_BUDGET = { low: 4, medium: 6, high: 10, ultra: 14 };
+
+/**
+ * How long a spent hilt takes to go, and what may never be spent.
+ *
+ * The failure to avoid is the one `Corpses.worth` names from the other end —
+ * "bodies vanishing under your blade". A hilt is worse: it is an object the
+ * player may be walking toward in order to pick it up.
+ *
+ * A DISTANCE FLOOR IS THE WRONG GUARANTEE, and the first draft of this used
+ * one (14 m, then 4). Measured with `tools/_hiltpile.mjs`: a fight happens
+ * AROUND the player — eight acolytes charge a standing Jedi and die inside two
+ * metres of it — so every hilt on the field is inside any floor worth having,
+ * and the budget grew by five a wave with the cull refusing every candidate. A
+ * floor big enough to be a safeguard is big enough to be an exemption.
+ *
+ * So the protection is by RELATIONSHIP rather than by radius, which is what a
+ * player actually has with a hilt:
+ *
+ *   · one in a hand or in the Force (`claimed`), including one in flight;
+ *   · one a LOCAL PLAYER put down themselves — `dropSaber` records the owner,
+ *     and `Player._dropSaber` passes `owner: this`. That is the case the
+ *     radius was really for: you drop your weapon to fight bare-handed, walk
+ *     eight metres, and it must be where you left it;
+ *   · one put down inside `PICKUP_DELAY`, mid-swap.
+ *
+ * Everything else is ranked, exactly as `Corpses` ranks the dead, and the
+ * nearest and freshest are the last to go — so the ones that fade are the ones
+ * behind you at thirty metres. And it FADES rather than popping, which is
+ * `Corpses`' SINK step doing the same job for the same reason. A hilt's
+ * materials are its own (`buildHiltGroup` builds them per hilt), so this
+ * cannot reach anything another object is drawing with.
+ */
+const HILT_SINK = 1.0;
+
+/** Is anybody holding this hilt, or is it a local player's own weapon? */
+function claimed(world, prop) {
+  for (const p of (world.players || [])) {
+    if (!p) continue;
+    if (p.gripBody && p.gripBody.userData?.prop === prop) return true;
+    for (const h of (p.hurled || [])) if (h && h.thing === prop) return true;
+    if (prop.droppedBy === p && p.isLocal !== false && p.alive !== false) return true;
+  }
+  return false;
+}
+
+/** Fade every material a hilt owns. `k` runs 1 → 0. */
+function fadeHilt(prop, k) {
+  prop.mesh?.traverse?.((o) => {
+    if (!o.isMesh || !o.material) return;
+    for (const m of (Array.isArray(o.material) ? o.material : [o.material])) {
+      if (!m) continue;
+      if (!m.transparent) m.transparent = true;
+      m.opacity = k;
+    }
+  });
+}
+
+/**
+ * Age every dropped hilt — so the pickup delay means something — and spend the
+ * ones past the budget.
+ *
+ * Ranked as `Corpses.worth` ranks the dead, and for the same reasons: NEARNESS
+ * as `1/(1+d)` so there is no radius at which hilts pop, and RECENCY so the
+ * weapon of the duellist you just cut down outranks one you walked past two
+ * rooms ago. Nearness is to the NEAREST player rather than to the local one,
+ * because in co-op a hilt your partner is standing over is one somebody can
+ * see.
+ */
 export function ageDropped(world, dt) {
   if (!world || !world.props) return;
-  for (const p of world.props) if (p.saber && p.dropAge !== undefined) p.dropAge += dt;
+  const hilts = [];
+  for (const p of world.props) {
+    if (!p.saber || p.dropAge === undefined) continue;
+    p.dropAge += dt;
+    hilts.push(p);
+  }
+  if (!hilts.length) return;
+
+  /* Whatever is already going, first — and it may be rescued: a hilt somebody
+   * takes hold of stops sinking and comes back to full. */
+  const live = [];
+  for (const p of hilts) {
+    if (!(p._sink > 0)) { live.push(p); continue; }
+    if (claimed(world, p)) { p._sink = 0; fadeHilt(p, 1); live.push(p); continue; }
+    p._sink -= dt;
+    if (p._sink <= 0) { p.destroy(); continue; }
+    fadeHilt(p, p._sink / HILT_SINK);
+  }
+
+  const budget = HILT_BUDGET[world.settings?.quality] ?? HILT_BUDGET.high;
+  if (live.length <= budget) return;
+
+  const eyes = (world.players || []).map((p) => p && p.position).filter(Boolean);
+  const rank = [];
+  for (const p of live) {
+    if (p.dropAge < PICKUP_DELAY || claimed(world, p)) continue;
+    const q = p.body?.position || p.mesh?.position;
+    if (!q) continue;
+    let d = 60;
+    for (const e of eyes) d = Math.min(d, Math.hypot(q.x - e.x, q.z - e.z));
+    rank.push({ p, worth: (1 / (1 + d * 0.08)) * (1 / (1 + p.dropAge * 0.05)) });
+  }
+  rank.sort((a, b) => a.worth - b.worth);
+  const spend = Math.min(rank.length, live.length - budget);
+  for (let i = 0; i < spend; i++) rank[i].p._sink = HILT_SINK;
 }

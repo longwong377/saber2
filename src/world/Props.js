@@ -1802,6 +1802,28 @@ export class Prop {
      * thirty-six separate pieces — so this threw outright on one and silently
      * leaked the children of every group-shaped prop that ever came through. */
     if (disposeGeo) this.mesh.traverse((o) => o.geometry?.dispose?.());
+    /**
+     * …AND THE MATERIALS, BUT ONLY WHERE THIS PROP OWNS THEM.
+     *
+     * Geometry is safe to free unconditionally — a prop's mesh is built for it
+     * — and a material is NOT: most of the catalogue draws from shared tables,
+     * and freeing one of those takes the paint off every other prop in the
+     * level that is still standing. That is exactly the "enforced by corrupting
+     * something another system still holds" failure `RapierWorld`'s debris
+     * budget refuses to commit, one file over.
+     *
+     * So the flag is set by the builder that KNOWS. `Dropped.dropSaber` is the
+     * one today: `buildHiltGroup` machines five fresh `MeshStandardMaterial`s
+     * per hilt from the weapon's own metals, so a hilt that goes takes exactly
+     * its own five with it. Everything else keeps the old behaviour and the
+     * shared tables are untouched.
+     */
+    if (disposeGeo && this.ownsMaterials) {
+      this.mesh.traverse((o) => {
+        if (!o.material) return;
+        for (const m of (Array.isArray(o.material) ? o.material : [o.material])) m?.dispose?.();
+      });
+    }
     const i = this.world.props.indexOf(this);
     if (i >= 0) this.world.props.splice(i, 1);
   }
