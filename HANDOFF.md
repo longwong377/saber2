@@ -237,6 +237,40 @@ retreating run opened with eight enemies alive, which a fresh wave cannot do.
 **Four of one day's apparent game defects were harnesses lying.** Two-copies-of-
 three, the draft cadence, the smoke probes, and this. Budget for it.
 
+### 2.5c A SCRIPTED PLAYER THAT IS NOT TICKED IS A STATUE, and nothing says so
+
+`tools/_flagship.mjs` exports `dutyInput(world)`, a scripted player. **Its
+entire body is `input.tick(dt)`** — that is where it reads the field, points the
+move axis, presses the swing and holds station on the line. `world.update` does
+NOT call it. **There is no `input.tick` call anywhere in `src/`** — grep it. The
+only caller is `_flagship.mjs`'s own `drive`, one line above its step, and
+`drive` and `dutyInput` are exported separately.
+
+So a bench that writes its own loop gets an unkillable **statue standing on the
+deploy mark with the guard up**, and every number it takes is a number about a
+sitting nobody would play. It fails silently and it fails plausibly: the world
+runs, the army fights, the waves clear, and the figures look like figures.
+
+**Four benches in three lanes had it on the same afternoon** — `_linehold`,
+`_lineform`, `_linewave`, `_linelength` — and it cost at least three published
+results, including "a Push's floor is 45.7 minutes", the number a whole
+work-stream was named after.
+
+**It was reported fixed at the root and it was not.** That claim was relayed
+onward and believed. The rule until somebody actually fixes it:
+
+```js
+input.tick?.(STEP);        // BEFORE the step, every frame
+world.update(STEP, input);
+```
+
+If you are writing a bench, grep your own loop for `tick` before you trust a
+single number out of it. If you would rather fix the class than the instance:
+the contract lives in `drive` and the thing that needs it is what `dutyInput`
+returns, so make them inseparable — a script that cannot be driven un-ticked.
+
+---
+
 ### 2.5b THREE module-level streams, and until recently only two could be pinned
 
 The most expensive version of §2.5 this repository has produced, because the
