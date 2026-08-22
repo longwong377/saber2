@@ -43,7 +43,12 @@ const rows = [];
 for (const seed of seeds) {
   const { world } = await bootWorld({
     level: 'geonosis',
-    settings: { mode: 'command', level: 'geonosis', order: 'jedi', seed, difficulty: 'knight' },
+    /* THE FORCE POWER SLIDER IS IN THIS MEASUREMENT ON PURPOSE. `forceReach`
+     * and the pull's range both ride it as √power, so the ceiling below is not
+     * a constant of the game — it is a function of a setting the player
+     * already owns. `--power 4` is the top of the slider. */
+    settings: { mode: 'command', level: 'geonosis', order: 'jedi', seed, difficulty: 'knight',
+      forcePower: Number(flag('power', '1')) },
   });
   world.director.start(1);
   const input = dutyInput(world);
@@ -51,11 +56,25 @@ for (const seed of seeds) {
   /* THE BANDS, off the game's own numbers. `forceReach` is a live property of
    * the player (it rides the Force Power slider), so it is read here rather
    * than assumed. */
+  /**
+   * EVERY RADIUS OFF THE GAME'S OWN EXPRESSION — HANDOFF §2.4.
+   *
+   * The first version of this list carried `push 9` as a literal, taken from a
+   * sentence in `forceUnleash`'s header ("Push reaches 9 m in a cone"). The
+   * shipped line is `const range = 13 * Math.sqrt(P)` in `Player.forcePush`,
+   * so the probe under-counted the push band by four metres at the default
+   * slider and by eight at the top — an instrument restating a rule and
+   * disagreeing with it, which is the one thing this repository has a section
+   * about. `UNLEASH.radius` is passed to `_shockwave` with NO `P` term, so
+   * that band genuinely does not ride the slider and is the only one here that
+   * does not.
+   */
+  const P = Math.sqrt(p.forceScale);
   const bands = [
-    ['unleash 11 m', UNLEASH.radius],
-    ['push 9 m', 9],
-    ['pull 17 m', 17 * Math.sqrt(p.forceScale)],
-    ['grip reach', p.forceReach],
+    ['push', 13 * P],              // Player.forcePush: `13 * Math.sqrt(P)`
+    ['unleash', UNLEASH.radius],   // Player.forceUnleash: no P term — a constant
+    ['pull', 17 * P],              // Player.forcePull: `17 * Math.sqrt(P)`
+    ['grip reach', p.forceReach],  // Player.forceReach: `18 * Math.sqrt(P)`
   ];
   const inBand = bands.map(() => 0);
   let enemySeconds = 0, bodies = 0, frames = 0;
@@ -88,12 +107,25 @@ for (const seed of seeds) {
     reach: Object.fromEntries(bands.map(([k, r]) => [k, +r.toFixed(1)])),
   };
   rows.push(row);
-  console.log(`  seed ${seed}  ${row.gameSeconds}s  ${row.liveBodies} live hostiles  `
-    + Object.entries(row.bands).map(([k, v]) => `${k} ${(v * 100).toFixed(2)}%`).join('  '));
+  console.log(`  seed ${seed}  power ${Number(flag('power', '1'))}  ${row.gameSeconds}s  `
+    + `${row.liveBodies} live hostiles  `
+    + Object.entries(row.bands).map(([k, v]) =>
+        `${k}@${row.reach[k]}m ${(v * 100).toFixed(2)}%`).join('  '));
   world.unload?.();
 }
 const mean = (f) => rows.reduce((a, r) => a + f(r), 0) / Math.max(1, rows.length);
 console.log(`\n  n=${rows.length}  mean live hostiles ${mean((r) => r.liveBodies).toFixed(1)}`);
+console.log(`  mean game-seconds ${mean((r) => r.gameSeconds).toFixed(1)}`);
 for (const k of Object.keys(rows[0]?.bands || {})) {
-  console.log(`    ${k.padEnd(14)} ${(mean((r) => r.bands[k]) * 100).toFixed(2)}% of enemy body-seconds`);
+  /* THE RADIUS IS PRINTED BESIDE THE SHARE because two of these four bands
+   * RIDE THE FORCE POWER SLIDER and two do not: `forceReach` is
+   * `18 * sqrt(forcePower)` and the pull is `17 * sqrt(forcePower)`, while
+   * `UNLEASH.radius` and the push's 9 m are constants. A ceiling quoted
+   * without the radius it was taken at cannot be compared with another one. */
+  const sd = rows.length > 1
+    ? Math.sqrt(rows.reduce((a, r) => a + (r.bands[k] - mean((x) => x.bands[k])) ** 2, 0) / (rows.length - 1))
+    : 0;
+  console.log(`    ${k.padEnd(14)} r ${rows[0].reach[k].toFixed(1)} m   `
+    + `${(mean((r) => r.bands[k]) * 100).toFixed(2)}% of enemy body-seconds`
+    + (rows.length > 1 ? `  ±${(sd * 100 / Math.sqrt(rows.length)).toFixed(2)}` : ''));
 }
