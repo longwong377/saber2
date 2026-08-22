@@ -1701,14 +1701,53 @@ DIRECTOR so the mode string and therefore the rng stream stay identical (§2.5b)
 The rule-on arm spends **a mean of 51 s an engagement with the ground won and
 unclaimed**.
 
-**Not proven: that it changes how the mode is played.** Every run of that arm
-also read `line 0/10` — the roster was dead before the area closed, and
-`lineIsUp` steps aside for a dead army rather than hang the run. So on that
-build the rule was mostly bypassed, for exactly the reason the four mechanisms
-before it failed. That bench was pinned to a commit that predates the chest fix
-and the wave-ramp fix, both of which change whether a line survives an
-engagement at all — so **it has to be re-run against the settled tree, and until
-it is, this rule is built and engaging and unproven.**
+**Not proven: that it changes how the mode is played — and the re-run found
+something that outranks the question.** Every run of that arm read `line 0/10`:
+the roster was dead before the area closed, and `lineIsUp` steps aside for a
+dead army rather than hang the run, so the rule was mostly bypassed. That bench
+was pinned to a commit predating the chest fix and the wave-ramp fix, so it was
+re-run against the settled tree — a fresh detached worktree at **`40f0f09`**,
+`GUN.every: 34.0` verified inside it, all four arms from that one build, n=6 a
+seed list.
+
+The rule engages harder on the tuned build: **`rule=ON standOff=0` took 6 of 6
+areas, mean 282 s, a mean of 14 s waiting.** And every row still reads
+**`line 0/10`**.
+
+### THE TARGET IS SET ON THE WRONG UNIT, and that is the finding
+
+`AREAS[0]` — The Landing Zone — is **three waves**, and the ladder is 3/4/4/5/5.
+`muster` (11, 14, 17, 26, 30) is paid at `_areaClear`, which is *after* an area
+falls, so during area 1 the line is never replenished: ten men, three waves,
+nothing added.
+
+The attrition target — the player's own words, *"about half the line"* — was
+taken against an **engagement**, and "The chest, priced" below measures 4.93
+survivors of ten at engagement 1. Half a line per wave compounded across three
+waves is 87–97% of the line per area, which is not a number anybody chose. So:
+
+    six of six seeds take the first area with 0 of 10 men standing,
+    and `holdTheLine` scores an emptied roster as a LOSS.
+
+The mode's first milestone and the mode's loss condition arrive together. On
+this arm — a scripted Jedi standing in his own line — the crossing cannot be
+won, and the reason is not a constant that is 20% out; it is that the unit the
+target was set on is not the unit the ending reads.
+
+Three things to settle before anything is tuned, and they are with the lane that
+owns `_lethality`:
+
+1. What the survivor figure should be **per area** to leave a line standing at
+   the muster, and what per-wave number that implies.
+2. The same reading taken **per area with the Jedi on the field**, which is the
+   unit `_checkLine` actually reads, rather than per engagement with no player.
+3. Whether the muster ladder is meant to be the thing that carries a line across
+   a crossing — and if so, whether paying it only *after* an area is the defect,
+   rather than the wave budget.
+
+Until those are answered, `lineAdvances` is **built, engaging on 6 of 6, and
+unproven** — because a rule about waiting for the line to come up cannot be
+judged in runs where there is no line left to wait for.
 
 ## THE CHEST, PRICED — and the attrition target, met
 
