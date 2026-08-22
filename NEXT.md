@@ -815,32 +815,60 @@ Neither has been measured. `tools/_openwin.mjs` already counts shots aimed and
 bolts landed per state; the discriminating number is the hit rate against a
 `downed` body versus a standing one, which nothing has taken.
 
-**And here is where it stops.** `tools/_openreach.mjs` counts the share of enemy
-body-seconds spent inside each Force reach band at all — the arithmetic ceiling
-on the verb whatever mechanism is wired to it, because a body forty metres away
-cannot be opened by anything. Three seeds, same fight, shipped Force Power:
+**And here is where it stops — WITH A CORRECTION THAT MATTERS, BELOW THE
+TABLE.** `tools/_openreach.mjs` counts the share of enemy body-seconds spent
+inside each Force reach band at all — the arithmetic ceiling on the verb
+whatever mechanism is wired to it, because a body forty metres away cannot be
+opened by anything. The first reading, which was published and is now withdrawn:
 
 | | reach | share of enemy body-seconds inside it |
 |---|---|---|
 | `forcePush` | 9 m cone | 2.09% |
 | `forceUnleash` | 11 m, every direction | 3.43% |
 | `forcePull` | 17 m cone | 6.97% |
-| the grip | `forceReach`, ~18 m | **7.41%** |
+| the grip | `forceReach`, ~18 m | ~~**7.41%**~~ |
 
-**A flawless verb — every body inside the Jedi's longest reach open for every
-second it is in there, at no cost — reaches seven per cent of the battle.** The
-one power that opens a CROWD rather than a body tops out at 3.4%. The bar was
-never the binding constraint either: the baseline arm already spends its whole
-income (814 Force in a 108-second engagement against a 7.5/s regen), which is
-why the lever that moved was the exchange rate and not the spend. What bounds
-OPEN is that the horde is twenty-four bodies spread over a battlefield and the
-Force reaches eighteen metres of it. The Force Power slider at its top takes the
-ceiling to 17.1% (seed 3) and no further — √power on a radius, against a field
-that does not shrink.
+> **THAT TABLE IS WITHDRAWN, AND THE INSTRUMENT IS WHY — TWICE OVER.**
+>
+> **The seed list was decorative.** `settings.seed` has exactly two readers in
+> the tree: `main.js`, which assigns `world.runSeed` from it, and a display
+> field in `Command.js`. `checks/_coop.mjs`'s `bootWorld` sets `world.runSeed`
+> only from its OWN `runSeed` argument, and `CommandDirector` takes
+> `opts.seed ?? world?.runSeed ?? null` — so a probe that passed the seed in
+> `settings` and nowhere else booted `director.seed = null`, the branch that
+> never calls `seedWaves`, `enemyRng.seed`, `duelRng.seed` or `seedArrivals`.
+> Proven directly: `settings.seed` alone gives `director.seed = null`;
+> `runSeed` passed gives `3`. **Every run was a fresh `Math.random()` fight and
+> `--seeds` named nothing.** On one tree at one slider setting, "seed 3" read
+> **11.18%, 14.52% and 23.85%** for the grip band across three runs — a spread
+> wider than the whole effect the table was being asked to carry.
+>
+> **And the push row was 9 m because a COMMENT said 9 m.** `forceUnleash`'s
+> header reads "Push reaches 9 m in a cone"; the shipped line is
+> `13 * Math.sqrt(P)`. HANDOFF §2.4, in my own instrument.
+>
+> Both are fixed (`runSeed: seed`, every radius off the game's own expression),
+> and the re-taken numbers are below. The same fault is in `_openwin.mjs`, so
+> the before/after table above is **five unseeded runs an arm, not five paired
+> seeds** — an unpaired difference of means, 1.392 ±0.144 against 2.887 ±0.246,
+> which is 5.2 σ and survives the correction. The word "paired" does not.
 
-So the honest reading: **the change is real and the verb still cannot carry §7's
-sentence.** It sits at about 40% of its own geometric ceiling now instead of
-20%, and that ceiling is single digits.
+**The shape of the answer is unchanged and its SIZE is not.** The ceiling is a
+function of the Force Power slider by construction — `forceReach` is
+`18 * sqrt(forcePower)`, the pull is `17 * sqrt(...)`, the push `13 * sqrt(...)`
+— so it is something the player buys rather than a property of the fight, and
+only `UNLEASH.radius` (11 m, handed to `_shockwave` with no `P` term) stands
+still. At the bottom of the slider the Jedi's own reach is 9 m, SHORTER than
+unleash's, so down there the ceiling is not even his. The bar was
+never the binding constraint: the baseline arm already spends its whole income
+(814 Force in a 108-second engagement against a 7.5/s regen), which is why the
+lever that moved was the exchange rate and not the spend. What bounds OPEN is
+that the horde is twenty-odd bodies spread over a battlefield and the Force
+reaches a radius the slider sets.
+
+So the honest reading: **the change is real, and how much room is left above it
+is a slider setting rather than one number.** The seeded figures are in the
+table below.
 
 **AND IT COST CO-OP SOMETHING, WHICH IS WORTH ITS OWN PARAGRAPH.** `coop.mjs`
 went red on two checks the moment bodies started falling: a guest's shove
