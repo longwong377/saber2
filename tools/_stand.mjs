@@ -50,7 +50,24 @@ for (const seed of SEEDS) {
     if (d.log.some((r) => r.t === 'area')) took = t;
     if (world.over) break;
   }
-  const up = d.roster.living.filter((x) => x.body && !x.body.dead).length;
+  /**
+   * THE ROSTER, NOT THE BODIES — and counting the bodies made this bench report
+   * that the flagship mode cannot be won.
+   *
+   * This line was `d.roster.living.filter((x) => x.body && !x.body.dead)`, and
+   * it printed `line 0/10` on every run of every arm. It was believed, written
+   * up as "six of six seeds take the first area with nobody standing", and it
+   * is an artefact: an area ENDS by clearing the field, so at the instant the
+   * `area` row is logged the surviving troopers have had their bodies torn down
+   * and not yet rebuilt for the next one. Measured at that exact moment on
+   * seed 1: **`roster.strength` 11, `living` 11, living-with-a-body 0.**
+   *
+   * `tools/_muster.mjs` reads `roster.strength` at the same boundary and gets
+   * the true picture — area 1 ends with 4-8 of ten and the muster carries it to
+   * 8-11. A record is the man; a body is where he happens to be standing, and
+   * between areas he is not standing anywhere.
+   */
+  const up = d.roster.strength;
   rows.push({ seed, took, up, n0, waited });
   console.log(`  seed ${seed}  ${took === null ? 'NOT TAKEN' : took.toFixed(0) + 's'}`
     + `  line ${up}/${n0}  waited ${waited.toFixed(0)}s`);

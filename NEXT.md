@@ -1714,40 +1714,57 @@ The rule engages harder on the tuned build: **`rule=ON standOff=0` took 6 of 6
 areas, mean 282 s, a mean of 14 s waiting.** And every row still reads
 **`line 0/10`**.
 
-### THE TARGET IS SET ON THE WRONG UNIT, and that is the finding
+### RETRACTED: the target is NOT on the wrong unit, and the instrument was
 
-`AREAS[0]` — The Landing Zone — is **three waves**, and the ladder is 3/4/4/5/5.
-`muster` (11, 14, 17, 26, 30) is paid at `_areaClear`, which is *after* an area
-falls, so during area 1 the line is never replenished: ten men, three waves,
-nothing added.
+**This section previously said the flagship mode could not be won.** It said six
+of six seeds took area 1 with nobody standing, that the mode's first milestone
+and its loss condition arrived together, and that the attrition target had been
+set on the wrong unit. **All of that was one wrong line in a bench**, and it is
+recorded here rather than deleted because it was believed for an hour and acted
+on.
 
-The attrition target — the player's own words, *"about half the line"* — was
-taken against an **engagement**, and "The chest, priced" below measures 4.93
-survivors of ten at engagement 1. Half a line per wave compounded across three
-waves is 87–97% of the line per area, which is not a number anybody chose. So:
+`tools/_stand.mjs` counted the line as
+`roster.living.filter((x) => x.body && !x.body.dead)` — living records that also
+have a live BODY. An area ends by clearing the field, so at the instant the
+`area` row is logged the survivors have had their bodies torn down and not yet
+rebuilt for the next one. Measured at that exact moment on seed 1:
 
-    six of six seeds take the first area with 0 of 10 men standing,
-    and `holdTheLine` scores an emptied roster as a LOSS.
+    roster.strength 11 · living 11 · living with a body 0
 
-The mode's first milestone and the mode's loss condition arrive together. On
-this arm — a scripted Jedi standing in his own line — the crossing cannot be
-won, and the reason is not a constant that is 20% out; it is that the unit the
-target was set on is not the unit the ending reads.
+Eleven men, none of them standing anywhere, because between areas nobody is
+standing anywhere. The bench now reads `roster.strength`, which is the man
+rather than the place he happens to be.
 
-Three things to settle before anything is tuned, and they are with the lane that
-owns `_lethality`:
+### WHAT IS ACTUALLY TRUE, from `tools/_muster.mjs` — and §7's claim now HOLDS
 
-1. What the survivor figure should be **per area** to leave a line standing at
-   the muster, and what per-wave number that implies.
-2. The same reading taken **per area with the Jedi on the field**, which is the
-   unit `_checkLine` actually reads, rather than per engagement with no player.
-3. Whether the muster ladder is meant to be the thing that carries a line across
-   a crossing — and if so, whether paying it only *after* an area is the defect,
-   rather than the wave budget.
+The muster is measured on both sides of the boundary, three seeds, area 1 of a
+crossing on geonosis:
 
-Until those are answered, `lineAdvances` is **built, engaging on 6 of 6, and
-unproven** — because a rule about waiting for the line to come up cannot be
-judged in runs where there is no line left to wait for.
+| arm | standing when area 1 falls | after the muster | net on the area |
+|---|---|---|---|
+| **no player at all** | 2–3 of ten | 6–7 | −3 to −4 |
+| **a Jedi on the field** | **4–8 of ten** | **8–11** | **−2 to +1** |
+
+Three things follow, and the second is the headline of the whole project.
+
+1. **The muster carries the line.** A purse of 22 points buys three or four men
+   at five apiece, which is the right order against a loss of three or four. The
+   crossing's attrition curve is a real curve and not a cliff.
+2. **A Jedi on the field is worth four to five men an area.** FLAGSHIP §7's
+   central claim — *"be the reason the line is still standing"* — has been
+   measured false in five previous readings and is **true on this build**. It
+   was not any one mechanism that turned it: the chest fix roughly tripled the
+   line's own output, the emplacement stopped firing into the dirt at its boots,
+   a felled body stopped being bulletproof, and the wave budget stopped charging
+   a crossing two escalations at once. On two of three seeds the line ends area 1
+   **stronger than it landed**.
+3. **The mode is winnable**, and the target stated per engagement was never the
+   problem.
+
+The lesson for the next instrument is `HANDOFF` §2.3 wearing new clothes: a
+record is not a body. Anything that counts an army has to say which of the two
+it means, and a count that reads zero on every run of every arm is a bench
+reporting on itself.
 
 ## THE CHEST, PRICED — and the attrition target, met
 
