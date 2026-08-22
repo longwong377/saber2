@@ -118,6 +118,22 @@ survived only because it was already on `origin`.
 > genuinely need the same file, one of them takes it and the other sends a patch
 > or waits; and if you commit a file you share, read `git diff --cached` before
 > you write the message and say in it what is not yours.
+>
+> **AND THE INDEX IS SHARED EVEN WHEN THE FILES ARE NOT.** The paragraph above
+> is about two lanes in one file; this is the same hazard with no shared file in
+> it at all. A lane staged four files nobody else was touching —
+> `main.js`, `Waves.js`, `Progress.js`, `Support.js` — read `git diff --cached`
+> to confirm the hunks were its own, and then spent ninety seconds inspecting a
+> fifth file before committing. In that window a peer ran its own
+> `git add <its paths> && git commit`, and **the peer's commit carried all four**,
+> because a commit takes the whole index and not the paths you added last.
+> `git commit -- <paths>` afterwards answered *"no changes added to commit"*, and
+> `git diff HEAD` for those files was empty: the work was already in somebody
+> else's commit. Nothing was lost; the record was, again.
+>
+> The rule that follows is one line and it is cheap: **stage and commit in ONE
+> command.** `git add <paths> && git commit -m … -- <paths>` leaves no window.
+> Never stage and then go and look at something.
 
 
 Five agents were run in parallel on this branch, each owning a disjoint set of
