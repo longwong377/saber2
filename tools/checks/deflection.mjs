@@ -180,6 +180,100 @@ export async function run({ check, assert }) {
     return `caught on frame ${hit.frame} at blade t=${hit.bladeT.toFixed(2)}`;
   });
 
+  /* ── …and the case the two above between them still missed ─────────── */
+
+  /**
+   * THE BLADE'S OWN SPEED, WHICH NOTHING HERE WAS VARYING.
+   *
+   * `the window does not collapse as bolts get faster` and `a 30 Hz frame does
+   * not let bolts through` both hold the blade STILL and move the bolt, so
+   * they measure the BOLT's sweep. `a blade swung across the bolt` moves the
+   * hilt 60 cm sideways, which carries base and tip the same distance. None of
+   * the three moves the blade the way a player does — about the wrist, where
+   * the tip covers many times what the emitter does — so the blade's own
+   * sampling was never under test and a fixed slice count sat in
+   * `intersectBladeSweep` long after the same defect was fixed on the body
+   * path.
+   *
+   * Rotate the guard through `deg` in one frame and walk a bolt line across
+   * the arc the tip actually swept. Anything on that arc was crossed by the
+   * blade during the frame and must be caught.
+   */
+  const arcCapture = (deg, dt) => {
+    const s = blade();
+    const pos = new THREE.Vector3(0, 1.35, 0);
+    const half = deg * Math.PI / 360;
+    const axis = new THREE.Vector3(0, 0, 1);
+    s.valid = false;
+    s.setHiltPose(pos, new THREE.Quaternion().setFromAxisAngle(axis, -half));
+    s.update(dt, 0);
+    s.setHiltPose(pos, new THREE.Quaternion().setFromAxisAngle(axis, half));
+    s.update(dt, dt);
+    let caught = 0, n = 0;
+    const mid = new THREE.Vector3(), from = new THREE.Vector3(), to = new THREE.Vector3();
+    // The ends are left out: at u=0 and u=1 the bolt is tangent to the arc and
+    // whether it is caught is a coin toss about the capture radius, not a
+    // statement about sampling.
+    for (let u = 0.05; u <= 0.95; u += 0.005) {
+      mid.lerpVectors(s.prevTip, s.tip, u);
+      from.copy(mid).z += 1.0;
+      to.copy(mid).z -= 1.0;
+      n++;
+      if (intersectBladeSweep(from, to, s, null)) caught++;
+    }
+    const travel = Math.max(s.base.distanceTo(s.prevBase), s.tip.distanceTo(s.prevTip));
+    return { rate: caught / n, travel, caught, n };
+  };
+
+  check('block: a fast blade does not sweep PAST the bolt', () => {
+    // 46 deg in a 60 Hz frame is 13.4 rad/s at the wrist and 1.02 m at the tip
+    // — a hard flick, well inside the 42 rad/s cap the controller allows.
+    const r = arcCapture(46, 1 / 60);
+    // Measured against the fixed four poses this replaced: 131 of 180, so 27 %
+    // of a real flick's arc passed through the blade untouched.
+    assert(r.rate >= 0.99,
+      `${r.n - r.caught} of ${r.n} points on a ${r.travel.toFixed(2)} m tip sweep were not caught `
+      + `(${(r.rate * 100).toFixed(0)} %) — the blade is being sampled, not swept`);
+    return `${r.caught}/${r.n} across a ${r.travel.toFixed(2)} m tip sweep`;
+  });
+
+  check('block: a swung blade catches the same at 30 Hz as at 60 Hz', () => {
+    // Same angular velocity, twice the frame: the tip covers twice the ground,
+    // which is exactly the condition a fixed slice count cannot survive. The
+    // old code read 103 of 180 here against 180 of 180 at half the step.
+    const a = arcCapture(46, 1 / 60);
+    const b = arcCapture(92, 1 / 30);
+    assert(b.rate >= a.rate * 0.99,
+      `30 Hz caught ${(b.rate * 100).toFixed(0)} % of a ${b.travel.toFixed(2)} m sweep against `
+      + `${(a.rate * 100).toFixed(0)} % of ${a.travel.toFixed(2)} m at 60 Hz — slow machines lose contacts`);
+    return `60 Hz ${(a.rate * 100).toFixed(0)} %, 30 Hz ${(b.rate * 100).toFixed(0)} %`;
+  });
+
+  check('block: a caught contact still reports WHERE on the blade it landed', () => {
+    // The grade ladder is built on `bladeT` — RETURN needs the tip third and
+    // SPEED_GRADE.returnBladeT reads it. A contact recovered by finer sampling
+    // is worth nothing if it comes back with the wrong fraction, so the arc is
+    // walked again and the reported t is checked against where the bolt
+    // actually crossed. Near the tip of the sweep the answer must be near 1.
+    const s = blade();
+    const pos = new THREE.Vector3(0, 1.35, 0);
+    const axis = new THREE.Vector3(0, 0, 1);
+    s.valid = false;
+    s.setHiltPose(pos, new THREE.Quaternion().setFromAxisAngle(axis, -23 * Math.PI / 180));
+    s.update(1 / 60, 0);
+    s.setHiltPose(pos, new THREE.Quaternion().setFromAxisAngle(axis, 23 * Math.PI / 180));
+    s.update(1 / 60, 1 / 60);
+    const mid = new THREE.Vector3().lerpVectors(s.prevTip, s.tip, 0.5);
+    const hit = intersectBladeSweep(
+      mid.clone().add(new THREE.Vector3(0, 0, 1)),
+      mid.clone().add(new THREE.Vector3(0, 0, -1)), s, null);
+    assert(hit, 'the middle of the tip arc was not caught at all');
+    assert(hit.bladeT > 0.42,
+      `a bolt met at the tip of the sweep reported t=${hit.bladeT.toFixed(2)} — under `
+      + `SPEED_GRADE.returnBladeT, so a fast tip would be paid as a body hit`);
+    return `tip contact reports t=${hit.bladeT.toFixed(2)}`;
+  });
+
   /* ── and must not catch what it has no business catching ───────────── */
 
   check('block: the blade does not catch bolts it never came near', () => {

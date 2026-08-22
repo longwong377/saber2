@@ -252,6 +252,40 @@ export const SPEED_GRADE = {
 };
 
 /**
+ * THE AIM CONE — the other half of the note on `SPEED_GRADE.returnBladeT`.
+ *
+ * That field was named because two unrelated gates in `gradeCaught` both read
+ * 0.42. Naming one of them left the other a bare literal in four places
+ * (`gradeCaught`, `pickReturnTarget`'s default, Player's boon defaults, and
+ * the step in Waves that raises it) — the same drift with one fewer place to
+ * notice it.
+ *
+ * It is SLACK FROM A PERFECT DOT, not an angle and not a scale.
+ * `pickReturnTarget` keeps a candidate on `dot >= 1 - cone`, so 0.42 is a
+ * 54.6° half-angle and the 0.80 ceiling a boon can climb to is 78.5°. That is
+ * what `Order.js` means by "returnCone is a cosine, not a scale": a boon that
+ * multiplied it would be scaling a cosine and the card would not mean what it
+ * says.
+ */
+export const RETURN_CONE = 0.42;
+
+/**
+ * …and the cone the PHYSICAL and SWEEP models check a finished bolt against.
+ *
+ * NOT the same quantity as RETURN_CONE, and it must never be wired to it.
+ * RETURN_CONE is ASSIST: it searches near your crosshair for a victim and
+ * bends the bolt onto them. This is VERIFICATION: the direction has already
+ * been decided by the blade, and this only asks whether it happens to be going
+ * at somebody. 0.06 of slack is a 19.9° half-angle against that one's 54.6°.
+ *
+ * Reading `ctx.returnCone` here instead would put a 54.6–78.5° assist cone
+ * into the two models whose entire claim is that they have none — see the note
+ * over the reticle-only promotion in `gradeCaught`. It reads like a missed
+ * wiring and it is the opposite.
+ */
+export const AIM_TRUE_CONE = 0.06;
+
+/**
  * Did this contact earn a PERFECT on the blade alone?
  *
  * One function because there were two copies of the condition — the reticle
@@ -1147,7 +1181,12 @@ export function guardCost(grade, snap = null) {
 
 export function gradeCaught(snap, ctx) {
   const { bladeT, bladeSpeed, closing, boltDir } = snap;
-  const _v4 = snap.normal;
+  /* NAMED, and not `_v4`, which is what this was. Every `_vN` in this file is
+   * a shared module scratch that any callee may overwrite; a local binding
+   * wearing one of their names is legal, reads at the return site as "clone
+   * the scratch", and would alias for real the day anything here reached for
+   * the actual `_v4`. It is the surface normal of the contact — say so. */
+  const hitNormal = snap.normal;
   // The parry's two rungs. Entering a guard zone inside PARRY_GRADE.window of
   // the bolt arriving earns the RETURN a fast tip earns; inside the tighter
   // `perfect` half it earns the PERFECT. Nothing else about the ladder moves —
@@ -1180,7 +1219,7 @@ export function gradeCaught(snap, ctx) {
   // pointed the blade at them, not because the game looked for one.
   if ((mode === 'reticle' || thrown) && grade === GRADE.DEFLECT && ctx.candidates
       && (thrown || parry || (bladeSpeed > SPEED_GRADE.return && tipZone))) {
-    target = pickReturnTarget(ctx.aimOrigin, ctx.aimDir, ctx.candidates, ctx.returnCone ?? 0.42);
+    target = pickReturnTarget(ctx.aimOrigin, ctx.aimDir, ctx.candidates, ctx.returnCone ?? RETURN_CONE);
     if (target && (parry || (bladeSpeed > SPEED_GRADE.return && tipZone))) grade = GRADE.RETURN;
   }
   if (grade === GRADE.RETURN && (sharp || bySpeed(bladeSpeed, closing, bladeT))) {
@@ -1189,7 +1228,7 @@ export function gradeCaught(snap, ctx) {
 
   // ── outgoing direction: three models, chosen by ctx.aimMode
   const out = new THREE.Vector3();
-  const mirror = _a.copy(boltDir).reflect(_v4).normalize();
+  const mirror = _a.copy(boltDir).reflect(hitNormal).normalize();
 
   if (thrown) {
     // CAUGHT — held on the blade, then thrown. The camera has been yours for
@@ -1252,7 +1291,7 @@ export function gradeCaught(snap, ctx) {
   // check whether the bolt we just produced is actually going to reach one —
   // earning the same RETURN credit by aim rather than by assist.
   if (mode !== 'reticle' && !thrown && grade === GRADE.DEFLECT && ctx.candidates) {
-    const hitting = pickReturnTarget(snap.point, out, ctx.candidates, 0.06);
+    const hitting = pickReturnTarget(snap.point, out, ctx.candidates, AIM_TRUE_CONE);
     if (hitting) {
       target = hitting;
       grade = bySpeed(bladeSpeed, closing, bladeT) ? GRADE.PERFECT : GRADE.RETURN;
@@ -1260,7 +1299,7 @@ export function gradeCaught(snap, ctx) {
   }
 
   const damageMul = GRADE_DAMAGE[grade];
-  return { grade, dir: out, damageMul, target, bladeSpeed, normal: _v4.clone(), bladeT };
+  return { grade, dir: out, damageMul, target, bladeSpeed, normal: hitNormal.clone(), bladeT };
 }
 
 /**
@@ -1293,7 +1332,7 @@ export function aimAt(body, out) {
 }
 
 /** Nearest valid enemy inside the aim cone. */
-export function pickReturnTarget(origin, aimDir, candidates, cone = 0.42) {
+export function pickReturnTarget(origin, aimDir, candidates, cone = RETURN_CONE) {
   let best = null, bestScore = -1;
   for (const c of candidates) {
     if (!c || c.dead) continue;

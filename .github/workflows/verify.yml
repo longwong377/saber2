@@ -1,0 +1,52 @@
+# Runs the mechanical contract on every push.
+#
+# WHY THIS EXISTS. Until now nothing in CI ran the suite at all — `pages.yml`
+# deploys the site and checks for dangling symlinks, and that was the whole of
+# it. Every gate number in the docs is hand-typed from a hand-run, and the full
+# gate is 150 suites and between eleven minutes and never on the boxes that
+# host it (HANDOFF §2.6d), so in practice it is run rarely and triaged rarely.
+# `determinism.mjs` names what that costs in its own header: order-dependence
+# "is the mechanism by which a fixed cone survived several rounds of being
+# fixed". A fixed slice count in `intersectBladeSweep` survived the same way.
+#
+# So this runs the FAST TIER — the blade, the bolt, the cut, the guard, and the
+# tables that move them, in about a minute. It is not the gate and does not
+# claim to be; `tools/tiers.mjs` says exactly what it leaves out. The full run
+# stays a deliberate pre-release act.
+name: verify (fast tier)
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # A second push to the same branch makes the first run's answer worthless.
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fast:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # No install step, deliberately. three and rapier are vendored and the
+      # harness maps the bare specifiers onto vendor/ through
+      # tools/register.mjs. An `npm ci` here would put a SECOND copy of three
+      # in node_modules, which is the trap HANDOFF §2.1 is about: the run does
+      # not crash, it reports, and the failures are fiction.
+      - name: Refuse a node_modules copy of three
+        run: |
+          if [ -d node_modules/three ]; then
+            echo "::error::node_modules/three exists — see HANDOFF.md 2.1"; exit 1
+          fi
+      - name: Mechanical contract
+        run: npm run verify:fast

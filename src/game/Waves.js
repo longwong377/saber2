@@ -56,6 +56,11 @@ import { ArrivalDirector, seedArrivals } from './Arrivals.js';
  * canvas. */
 import { FACTIONS, factionOf, armyForOrder, opposingArmy } from './Databank.js';
 import { makeRng, clamp, lerp, TAU } from '../engine/MathUtil.js';
+/* Soresu's card is a step ON a Combat constant, so it reads that constant
+ * rather than restating it — the whole point of the note over `apply` below.
+ * Combat imports THREE, Physics, MathUtil, Bolts and Morale and none of them
+ * reaches back here, so this edge is a leaf edge and costs no cycle. */
+import { RETURN_CONE } from './Combat.js';
 
 const rng = makeRng((Math.random() * 1e9) | 0);
 
@@ -5332,21 +5337,28 @@ export const BOONS = [
     /* "DEFLECTION IS FORGIVEN FURTHER ALONG THE BLADE" described a different
      * mechanic from the one this card moves, and the two share a literal, which
      * is almost certainly how it happened. `gradeCaught` gates a RETURN on
-     * `bladeT > RETURN_ZONE` — where along the blade the bolt landed — and on
-     * `pickReturnTarget(..., ctx.returnCone ?? 0.42)`, which is how far OFF
-     * YOUR SIGHTLINE the game will look for something to send it to. Both
-     * numbers were 0.42. This card moves the second one and nothing anywhere
-     * moves the first, so a rank of Soresu forgave your AIM, never your contact
-     * point. Measured: the cone opens from ±54.5° to ±65.2° at rank 1; the
-     * blade-position gate is identical at every rank of every card in the game.
-     * Combat.RETURN_ZONE now has its own name so the coincidence cannot
-     * mislead the next reader. */
+     * `bladeT > SPEED_GRADE.returnBladeT` — where along the blade the bolt
+     * landed — and on `pickReturnTarget(..., ctx.returnCone ?? RETURN_CONE)`,
+     * which is how far OFF YOUR SIGHTLINE the game will look for something to
+     * send it to. Both numbers were 0.42. This card moves the second one and
+     * nothing anywhere moves the first, so a rank of Soresu forgave your AIM,
+     * never your contact point. Measured: the cone opens from ±54.5° to ±65.2°
+     * at rank 1; the blade-position gate is identical at every rank of every
+     * card in the game.
+     *
+     * BOTH have names now, and this comment named the wrong one for as long as
+     * they did not. It said "Combat.RETURN_ZONE now has its own name", and no
+     * `RETURN_ZONE` has ever existed anywhere in the tree — the constant
+     * shipped as `SPEED_GRADE.returnBladeT`, and the sentence announcing the
+     * fix was the one thing that never got it. A name in prose is checked by
+     * nothing, which is the whole argument for importing the number below
+     * instead of writing it again. */
     text: 'A wider guard. A returned bolt finds its mark further off your sightline, and your reserves run deeper.',
     // The cone GROWS by rank instead of being set to a constant, or rank 2
     // would silently be half a card. Capped, because a return cone wide enough
     // to contain everything on screen is an auto-aim, not a guard.
     apply(p, s = 1) {
-      p.boonMods.returnCone = Math.min(0.80, (p.boonMods.returnCone ?? 0.42) + 0.16 * s);
+      p.boonMods.returnCone = Math.min(0.80, (p.boonMods.returnCone ?? RETURN_CONE) + 0.16 * s);
       p.control.deadzone = 0.30;
       p.maxStamina += 25 * s; p.stamina = p.maxStamina;
     },

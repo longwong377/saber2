@@ -124,14 +124,22 @@ share the terrain and the architecture, so a corpse still lands on the ground.
 **Force.** Jump, push, pull, grip-and-hurl, saber throw and recall, and time
 dilation — all of them physics verbs rather than damage buttons.
 
-**Enemies.** B1s, super battle droids, clone troopers, marksmen with a telegraphed
-beam, droidekas that deploy a bolt-proof shield you have to walk a slow blade
-through, duellist acolytes that feint and chamber, spider walkers that topple when
-you take their legs, and an acklay. All of them cut anywhere.
+**Enemies.** 37 archetypes — B1s, super battle droids, clone troopers, marksmen
+with a telegraphed beam, droidekas that deploy a bolt-proof shield you have to
+walk a slow blade through, duellist acolytes that feint and chamber, spider
+walkers that topple when you take their legs, walkers, tanks and an acklay. All
+of them cut anywhere.
 
-**Runs.** Four theatres, four difficulties (Grandmaster has zero assist), a wave
-director that spends a threat budget rather than reading a script, and sixteen
-boons drafted three at a time.
+**Runs.** Seven theatres, nine modes and four difficulties (Grandmaster has zero
+assist), a wave director that spends a threat budget rather than reading a
+script, and boons drafted three at a time. The modes are `waves`, `roguelite`,
+`duel`, `sandbox`, `training`, `command`, `theline`, `skirmish` and `campaign`;
+one campaign, Petranaki, runs two missions.
+
+> Those counts drift, because they are hand-copied and the game keeps moving.
+> `node --import ./tools/register.mjs tools/state.mjs` prints them from the
+> code, and it also warns when a level exists that nothing can reach. Believe
+> the tool, not this paragraph.
 
 **Co-op.** Peer-to-peer. One player hosts, the rest join with a code. The host
 simulates the horde; each player's blade is resolved on their own machine,
@@ -152,18 +160,33 @@ connected to the weapon because it is, structurally, downstream of it.
 
 ## Development
 
-```
-node tools/verify.mjs     # 34 headless checks of the mechanics — no GPU needed
-node tools/smoke.mjs --shots   # boots the real game in Chromium, screenshots it
-node tools/serve.mjs      # play it
+```bash
+npm run verify:fast       # the mechanical contract — 17 suites, ~55 s, no GPU
+npm run verify            # everything — 146 suites, and it takes as long as it takes
+npm run smoke             # boots the real game in Chromium, screenshots it
+npm start                 # play it
 ```
 
-`verify.mjs` is the one that matters. It asserts things like *a fast sweep across
-a forearm severs it at the crossing point*, *a motionless blade does not*, *a
-still blade blocks while a fast tip returns*, and *a ragdoll settles instead of
-exploding*. It found five real bugs during development, including a left-handed
-basis in the bone-aiming maths that was silently mirroring every joint in the
-game, and a sign error that made every ball joint fly apart.
+> Run the suite through **npm**, never as plain `node tools/verify.mjs`. The
+> script passes a loader that maps the bare specifier `three` onto the vendored
+> copy the browser actually loads. Without it Node resolves `three` out of
+> `node_modules`, puts two copies of the engine in one process, and the run does
+> not crash — it *reports*, and the failures are fiction. Both harnesses now
+> refuse to start that way. See [HANDOFF.md](HANDOFF.md) §2.1.
+
+`verify` is the one that matters. It asserts things like *a fast sweep across a
+forearm severs it at the crossing point*, *a motionless blade does not*, *a still
+blade blocks while a fast tip returns*, and *a ragdoll settles instead of
+exploding*. It has found real bugs repeatedly — a left-handed basis in the
+bone-aiming maths that was silently mirroring every joint in the game, a sign
+error that made every ball joint fly apart, and a fixed sample count that let a
+fast blade sweep past a bolt on slow machines.
+
+The full run is long enough that it is a deliberate act rather than a habit,
+which is why there are two tiers. `verify:fast` is the blade, the bolt, the cut,
+the guard and the tables that move them; it runs on every push
+(`.github/workflows/verify.yml`). It is **not** the gate, and
+[`tools/tiers.mjs`](tools/tiers.mjs) says exactly what it leaves out.
 
 Layout:
 

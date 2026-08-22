@@ -3791,6 +3791,33 @@ check('destruction: an explosion takes a bite out of a wall without levelling it
     files = (await readdir(dir)).filter(f => f.endsWith('.mjs') && !f.startsWith('_')).sort();
   } catch {}
   /**
+   * SABER_CHECK_TIER=fast RUNS THE MECHANICAL CONTRACT AND NOTHING ELSE.
+   *
+   * `npm run verify:fast`. What is in the tier and what is pointedly not lives
+   * in `tools/tiers.mjs` with the argument for having it at all; the rule here
+   * is only that the list must resolve. A name in `FAST` with no file behind it
+   * FAILS THE RUN rather than quietly narrowing it, because a tier that shrinks
+   * when a suite is renamed reads on the terminal exactly like a tier that
+   * passed — the same defect as a suite exporting no `run()` and being counted
+   * as a green 0/0, which this harness already refuses further down.
+   */
+  const tier = process.env.SABER_CHECK_TIER;
+  if (tier === 'fast') {
+    const { FAST } = await import('./tiers.mjs');
+    const have = new Set(files);
+    const missing = FAST.filter(n => !have.has(`${n}.mjs`));
+    if (missing.length) {
+      console.error(`\n  tiers.mjs names ${missing.length} suite(s) that do not exist: ${missing.join(', ')}`);
+      console.error('  Fix the list or the filename — a tier that silently shrinks is not a gate.\n');
+      process.exit(2);
+    }
+    const want = new Set(FAST.map(n => `${n}.mjs`));
+    files = files.filter(f => want.has(f));
+  } else if (tier) {
+    console.error(`\n  SABER_CHECK_TIER=${tier} is not a tier. The only one is "fast".\n`);
+    process.exit(2);
+  }
+  /**
    * SABER_CHECK_ORDER=reverse RUNS THE SAME SUITES BACKWARDS.
    *
    * WHY IT EXISTS. Several things the game keeps at module scope survive
@@ -3930,4 +3957,26 @@ for (const [mark, name, detail] of results) {
   console.log(`${colour}${mark}\x1b[0m ${name.padEnd(w)}  \x1b[2m${detail}\x1b[0m`);
 }
 console.log(`\n${pass} passed, ${fail} failed\n`);
+
+/**
+ * THE FAST TIER REPORTS ITS OWN WALL CLOCK, AND DOES NOT FAIL ON IT.
+ *
+ * The tier is only worth having while it stays quick enough that people run it
+ * on a push, so the budget has to be visible or it will erode one 8-second
+ * suite at a time. But a wall-clock BAR would be the smoke test's mistake
+ * repeated: HANDOFF §2.6 records that smoke's timeouts are wall-clock, so on a
+ * loaded box its last four checks fail and mean nothing. A CI runner is a
+ * loaded box. So this prints, and the exit code stays a statement about the
+ * checks.
+ */
+if (process.env.SABER_CHECK_TIER === 'fast') {
+  const { FAST_BUDGET, FAST } = await import('./tiers.mjs');
+  const secs = process.uptime();
+  const over = secs > FAST_BUDGET;
+  const note = over
+    ? `\x1b[33mover the ${FAST_BUDGET}s budget — either the box is loaded or the tier has grown\x1b[0m`
+    : `\x1b[2mwithin the ${FAST_BUDGET}s budget\x1b[0m`;
+  console.log(`fast tier: ${FAST.length} suites in ${secs.toFixed(1)}s, ${note}`);
+  console.log('\x1b[2mthis is the mechanical contract only — not the gate. See tools/tiers.mjs.\x1b[0m\n');
+}
 process.exit(fail ? 1 : 0);

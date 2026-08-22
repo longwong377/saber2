@@ -504,9 +504,54 @@ const _a1 = new THREE.Vector3(), _b1 = new THREE.Vector3();
  */
 export function intersectBladeSweep(from, to, saber, outPoint) {
   const r = 0.075 + saber.coreWidth * 0.05;
-  // The blade moved from (prevBase→prevTip) to (base→tip). Sample the sweep at
-  // a few slices so a fast blade is a surface, not a line.
-  const SLICES = 3;
+  /**
+   * THE SLICE COUNT IS THE BLADE'S TRAVEL, NOT A CONSTANT — and it was a
+   * constant here long after the same defect was fixed on the body-contact
+   * path. `BladeContactSolver.solve` carries the note: fixed sampling dropped
+   * severance from 100 % to 38 % between 240 Hz and 10 Hz. This is that bug
+   * with a bolt in it, and it survived because the ordinary guards below
+   * answer most of what it drops, so it never read as a whiffed block.
+   *
+   * Four fixed poses put the tip samples `travel / 3` apart while each covers
+   * only ±r, so a gap opens the moment `travel / 3 > 2r`. With L = 1.15 m and
+   * r ≈ 0.076 m that is w > 23.9 rad/s at 60 Hz and w > 12.0 rad/s at 30 Hz,
+   * against an angular cap of 42 (SaberController). Measured gap at the tip:
+   *
+   *   120 Hz   none at any speed the cap allows
+   *    60 Hz   0.115 m at w = 42
+   *    30 Hz   0.166 m at w = 25,  0.384 m at w = 42
+   *
+   * What that costs is not usually the block. It is the GRADE: a bolt the
+   * sweep drops falls to the zone test below, which answers it off
+   * `zone.parry` instead of off tip speed — so a player who earned a RETURN
+   * with a fast tip is quietly paid a DEFLECT, and only on slow machines.
+   * Free Blade and Hold-to-Blade have no zone to fall to and lose the contact
+   * outright.
+   *
+   * Spacing is half the capture radius, floored at the old 3 so nothing about
+   * a slow blade moves, and capped at 64 to bound the worst frame.
+   */
+  const travel = Math.max(
+    saber.base.distanceTo(saber.prevBase),
+    saber.tip.distanceTo(saber.prevTip),
+  );
+  /* AND THE BROAD PHASE IS WHAT PAYS FOR IT. Every bolt in the air was already
+   * tested against every blade four times a frame with no reject in front of
+   * it. The displacement along the blade is affine in t, so no point on it
+   * moves further than `travel`: a bolt further than r + travel from the START
+   * pose cannot be reached before the end of the frame. A bolt nowhere near
+   * the fight now costs one test rather than four, which is where the finer
+   * sampling on the few bolts that ARE near the blade comes from. Measured on
+   * a 0.4 rad flick with 8 bolts on the blade and 120 in the air elsewhere:
+   *
+   *   near the blade    183 -> 757 ns/bolt     (the finer sampling)
+   *   nowhere near it   155 ->  46 ns/bolt     (the reject)
+   *   the frame        20.06 -> 11.55 us
+   *
+   * so the correctness came with 42 % off the frame rather than a bill. */
+  const reach = r + travel;
+  if (segmentSegment(from, to, saber.prevBase, saber.prevTip, _a1, _b1).distSq > reach * reach) return null;
+  const SLICES = clamp(Math.ceil(travel / Math.max(1e-3, r * 0.5)), 3, 64);
   let best = null;
   for (let i = 0; i <= SLICES; i++) {
     const k = i / SLICES;

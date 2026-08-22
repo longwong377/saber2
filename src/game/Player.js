@@ -22,7 +22,7 @@ import { Body, LAYER, capsuleSpheres, capsule } from '../physics/RapierWorld.js'
 import { supportHeight, topOfProps, ceilingHeight, STEP_UP, GROUND_SNAP, CLIMB_RATE } from '../physics/Support.js';
 import { walkScale } from '../engine/Bindings.js';
 import { RankSet, rankScale } from './Waves.js';
-import { parryScale, TOUGHNESS, impactDamage } from './Combat.js';
+import { parryScale, TOUGHNESS, impactDamage, RETURN_CONE } from './Combat.js';
 /* THE OTHER HALF OF THE FORCE CONTEST, IMPORTED RATHER THAN RE-DERIVED. The
  * three constants that decide what a point of pool buys live over
  * `forceResistance` in Enemy.js, and one contest read out of two rulebooks is
@@ -2580,7 +2580,7 @@ export class DuelMatch {
 export function defaultBoonMods() {
   return {
     deflectDamage: 1, cutPower: 1, forceCost: 1, staminaRegen: 1, moveSpeed: 1,
-    jumpPower: 1, flowGain: 1, returnCone: 0.42, healOnKill: 0, lightning: false,
+    jumpPower: 1, flowGain: 1, returnCone: RETURN_CONE, healOnKill: 0, lightning: false,
     repulse: false, throwPierce: false, doubleJump: false, lifesteal: 0,
     /** Swings per second, as a multiplier on OVERHEAD.cooldown. See Cadence. */
     attackRate: 1,
