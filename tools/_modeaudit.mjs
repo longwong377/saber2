@@ -151,62 +151,101 @@ if (CMD === 'drive') {
  */
 if (CMD === 'support') {
   const { WarSupport } = await import('../src/game/Support.js');
-  const { RELEASE, RELEASE_NAME, STRATAGEMS } = await import('../src/game/Stratagems.js');
-  const { SKIRMISH, skirmishConfig } = await import('../src/game/Waves.js');
+  const { RELEASE_NAME, STRATAGEMS } = await import('../src/game/Stratagems.js');
+  const { SKIRMISH } = await import('../src/game/Waves.js');
   const { AREAS } = await import('../src/game/Command.js');
   const { CAMPAIGNS } = await import('../src/game/Levels.js');
+  const { ARCHETYPES, paysOut } = await import('../src/game/Enemy.js');
   const rungs = [...new Set(STRATAGEMS.map(s => s.earn ?? 0))].sort((a, b) => a - b);
 
-  /** Compose `n` waves through one mode's own director and return body counts. */
-  async function bodies(mode, level, waves, area = 0, from = 1) {
+  /**
+   * WHAT A COMPOSED WAVE IS ACTUALLY WORTH TO THE SUPPLY LINE — and the first
+   * version of this probe restated the rule instead of calling it (§2.4).
+   *
+   * `World` credits `support.credit('kill')` BELOW an early return on
+   * `paysOut(A)`, so a body with `score: 0` credits nothing. `Levy.js` appends
+   * forty conscripts to a Command wave and every one of them is `score: 0` —
+   * measured, Command's area-1 wave 1 composes 49 bodies against a budget of 8,
+   * and 40 of them are the levy. Counting the queue's LENGTH therefore read
+   * Command's crossing as 1089 paying kills when it is a fraction of that, and
+   * reported the whole support ladder open by wave 9 of 21. `paysOut` is the
+   * shipped question and it is asked here.
+   */
+  const paying = (queue) => queue.reduce((n, e) => n + (paysOut(ARCHETYPES[spawnType(e)]) ? 1 : 0), 0);
+
+  /**
+   * THE LINE HAS TO BE STANDING BEFORE THE WAVE IS PRICED.
+   *
+   * `CommandDirector` prices a wave against the army in it — a ten-man line
+   * buys a bigger fight, which is the muster's whole point — so composing off a
+   * director nobody mustered measures a solo horde and calls it a battle.
+   * Measured: a shipped skirmish composed that way credits 115 of war effort
+   * over nine waves and the same nine waves with the line raised credit far
+   * more. So every plan below opens through the SHIPPED door
+   * (`beginSkirmish` / `director.start`) and then walks the waves the way a
+   * clear walks them, `start(wave + 1)`.
+   */
+  async function walk(mode, level, opener, legs) {
     enemyRng.seed(SEED); seedWaves(SEED, 0);
-    const { world } = await H.bootWorld({ level, spawn: false,
+    const { world } = await H.bootWorld({ level, runSeed: SEED,
       settings: { quality: 'low', difficulty: 'knight', mode, level } });
     const d = world.director;
-    const out = [];
-    for (let i = 0; i < waves; i++) {
-      if ('areaIndex' in d) d.areaIndex = area;
-      d.start(from + i);
-      out.push(d.spawnQueue.length);
+    opener(world, d);
+    const pool = new WarSupport();
+    const reached = new Map();
+    let wave = 0, bodies = 0, all = 0;
+    const note = (w) => { for (const r of rungs) if (!reached.has(r) && r <= pool.effort) reached.set(r, w); };
+    for (const leg of legs) {
+      if (leg.area != null && 'areaIndex' in d) d.areaIndex = leg.area;
+      for (let i = 0; i < leg.waves; i++) {
+        if (wave) d.start(d.wave + 1);
+        wave++;
+        const pays = paying(d.spawnQueue);
+        bodies += pays;
+        all += d.spawnQueue.length;
+        pool.credit('kill', pays);
+        pool.credit('wave');
+        note(wave);
+      }
+      if (leg.holds) { pool.credit('area'); note(wave); }
     }
+    const strength = world.command?.roster?.strength ?? 0;
     world.dispose?.();
-    return out;
+    return { pool, reached, wave, bodies, all, strength };
   }
 
   const plans = [];
-  const cfg = skirmishConfig(null);
-  plans.push({ mode: 'skirmish', note: `${cfg.engagements}x${cfg.waves} (shipped default)`,
-    legs: Array.from({ length: cfg.engagements }, () => ({ area: cfg.pressure, waves: cfg.waves })) });
-  plans.push({ mode: 'skirmish', note: `${SKIRMISH.engagements.max}x${SKIRMISH.waves.max} (longest the panel offers)`,
-    legs: Array.from({ length: SKIRMISH.engagements.max }, () => ({ area: 0, waves: SKIRMISH.waves.max })) });
+  plans.push({ mode: 'skirmish', level: LEVEL, note: `${SKIRMISH.engagements.def}x${SKIRMISH.waves.def} (shipped default)`,
+    opener: (w) => w.beginSkirmish({ engagements: SKIRMISH.engagements.def, waves: SKIRMISH.waves.def, pressure: 0 }),
+    legs: Array.from({ length: SKIRMISH.engagements.def }, () => ({ waves: SKIRMISH.waves.def })) });
+  /* WHAT THE PANEL COULD ASK FOR BEFORE THE `waves` DIAL EXISTED: nine
+   * engagements of the default three. The arm is kept because it is the
+   * before-and-after of that fix on this axis. */
+  plans.push({ mode: 'skirmish', level: LEVEL, note: `${SKIRMISH.engagements.max}x${SKIRMISH.waves.def} (longest before the waves dial)`,
+    opener: (w) => w.beginSkirmish({ engagements: SKIRMISH.engagements.max, waves: SKIRMISH.waves.def, pressure: 0 }),
+    legs: Array.from({ length: SKIRMISH.engagements.max }, () => ({ waves: SKIRMISH.waves.def })) });
+  plans.push({ mode: 'skirmish', level: LEVEL, note: `${SKIRMISH.engagements.max}x${SKIRMISH.waves.max} (longest offered)`,
+    opener: (w) => w.beginSkirmish({ engagements: SKIRMISH.engagements.max, waves: SKIRMISH.waves.max, pressure: 0 }),
+    legs: Array.from({ length: SKIRMISH.engagements.max }, () => ({ waves: SKIRMISH.waves.max })) });
   {
-    const legs = [];
-    for (const m of CAMPAIGNS.petranaki.missions) {
-      for (let i = 0; i < m.engagements; i++) legs.push({ area: m.pressure, waves: 3, level: m.level });
-    }
-    plans.push({ mode: 'campaign', note: 'The Execution, as authored', legs });
+    const m0 = CAMPAIGNS.petranaki.missions[0];
+    plans.push({ mode: 'campaign', level: m0.level, note: 'The Execution, mission 1 as authored',
+      opener: (w) => w.beginSkirmish({ ...m0, rotate: false }),
+      legs: Array.from({ length: m0.engagements }, () => ({ waves: SKIRMISH.waves.def, area: m0.pressure })) });
   }
-  plans.push({ mode: 'command', note: `${AREAS.length} areas, as authored`,
-    legs: AREAS.map((a, i) => ({ area: i, waves: a.waves, area_: true })) });
+  plans.push({ mode: 'command', level: 'geonosis', note: `${AREAS.length} areas, as authored`,
+    opener: (w, d) => d.start(1),
+    legs: AREAS.map((a, i) => ({ waves: a.waves, area: i, holds: true })) });
 
+  const only = flag('only', null);
   for (const p of plans) {
-    const pool = new WarSupport();
-    let wave = 0, reached = new Map();
-    for (const leg of p.legs) {
-      const lvl = leg.level || (MODES[p.mode].level || LEVEL);
-      const ns = await bodies(p.mode, lvl, leg.waves, leg.area, wave + 1);
-      for (const n of ns) {
-        wave++;
-        pool.credit('kill', n);
-        pool.credit('wave');
-        for (const r of rungs) if (!reached.has(r) && r <= pool.effort) reached.set(r, wave);
-      }
-      if (leg.area_) pool.credit('area');
-      for (const r of rungs) if (!reached.has(r) && r <= pool.effort) reached.set(r, wave);
-    }
-    const got = rungs.map(r => `${RELEASE_NAME[r] ?? r}@${reached.has(r) ? 'w' + reached.get(r) : '—'}`);
-    const open = STRATAGEMS.filter(s => (s.earn ?? 0) <= pool.effort).length;
-    console.log(`${p.mode.padEnd(9)} ${p.note.padEnd(34)} ${wave} waves, effort ${pool.effort.toFixed(0)}`
-      + ` → ${open}/${STRATAGEMS.length} calls · ${got.join(' ')}`);
+    if (only && !p.note.includes(only) && p.mode !== only) continue;
+    let r;
+    try { r = await walk(p.mode, p.level, p.opener, p.legs); }
+    catch (e) { console.log(`${p.mode} ${p.note}: ERROR ${e.message}`); continue; }
+    const got = rungs.map(x => `${RELEASE_NAME[x] ?? x}@${r.reached.has(x) ? 'w' + r.reached.get(x) : '\u2014'}`);
+    const open = STRATAGEMS.filter(s => (s.earn ?? 0) <= r.pool.effort).length;
+    console.log(`${p.mode.padEnd(9)} ${p.note.padEnd(34)} line ${String(r.strength).padStart(2)} · ${r.wave} waves,`
+      + ` ${r.bodies} paying of ${r.all} bodies, effort ${r.pool.effort.toFixed(0)} → ${open}/${STRATAGEMS.length} calls · ${got.join(' ')}`);
   }
 }
