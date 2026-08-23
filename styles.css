@@ -1661,6 +1661,10 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
    line in the report that is good news, and colouring it would make it an event. */
 .muster-interlude li.b-none b{color:var(--ink)}
 .muster-interlude li.b-promote b,.muster-interlude li.b-steps-up b{color:var(--accent)}
+/* A squad the general handed off. The warm accent rather than the cool one: a
+   promotion is something the army did and this is something the PLAYER did, and
+   the header — the only other beat about a decision — already wears it. */
+.muster-interlude li.b-delegate b{color:var(--accent-warm)}
 @keyframes beatIn{from{opacity:0;transform:translateX(-10px)}to{opacity:1;transform:none}}
 /* Inert while the report is running. `pointer-events:none` is the half that
    makes "no input" true; the dimming is the half that says so. */

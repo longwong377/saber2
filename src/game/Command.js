@@ -4255,9 +4255,40 @@ export class CommandDirector extends WaveDirector {
      * army-wide order CLEARS those, because "everyone form wedge" has to mean
      * everyone and not "everyone who has not been told otherwise". */
     if (squad != null) {
-      (c.squadOrders || (c.squadOrders = new Map())).set(String(squad), id);
+      const key = String(squad);
+      (c.squadOrders || (c.squadOrders = new Map())).set(key, id);
+      /**
+       * ── AND THE SQUAD IS GIVEN ITS OWN GROUND, WHICH IS THE DELEGATION ──
+       *
+       * `c._planted` is ONE frame per commander. So a squad told to hold a
+       * ridge was planted on wherever the GENERAL happened to be standing when
+       * the order left his mouth, and a second squad told to hold a gate
+       * overwrote the first's ground with the general's position again. Two
+       * squads could be given two orders and never two places, which is the
+       * whole of what "delegation" has to mean and the reason PLAN.md §6 puts
+       * this ahead of density: a command interface that cannot put a squad
+       * somewhere is a command interface that does not scale past one line
+       * around one body.
+       *
+       * The ground is taken from the SQUAD and not from the commander — the
+       * centroid of its living men, facing where its leader is facing. That is
+       * the sentence a player means by "hold here": here is where THEY are, not
+       * where I am, and it is what lets the general give the order and walk
+       * away, which is the only test of a standing order that matters.
+       *
+       * An ADVANCING order clears it, for the same reason `c._planted` is
+       * nulled below: a squad told to charge is not holding anything, and a
+       * stale plant would quietly re-anchor it the next time the army held.
+       */
+      const sp = (c.squadPlanted || (c.squadPlanted = new Map()));
+      if (!F.advance || c.holding) sp.set(key, this._squadFrame(c, squad));
+      else sp.delete(key);
     } else {
       c.squadOrders?.clear();
+      /* An army-wide order takes every squad's private ground back with its
+       * private order, for the reason the clause above gives about `squadOrders`
+       * itself: "everyone form wedge" has to mean everyone. */
+      c.squadPlanted?.clear();
       c.formation = id;
     }
     // A formation that does not advance is planted where the commander was
@@ -4269,6 +4300,31 @@ export class CommandDirector extends WaveDirector {
     this._coverEpoch = (this._coverEpoch | 0) + 1;
     this.log.push({ t: 'order', formation: id, area: this.areaNumber, wave: this.wave });
     if (c === this.commander) this.onOrder?.(F, this.squadsOf(c).length);
+    /**
+     * AND A STANDING ORDER IS SAID IN THE NAME OF THE MAN WHO NOW HAS IT.
+     *
+     * A squad given its own ground is a squad the general is no longer
+     * responsible for, and the only thing that makes that legible is knowing
+     * WHO is responsible instead. `leaderOf` is derived from rank, so this is
+     * the same man `onDeath` announces the succession of — one sergeant, named
+     * the same way in both places, which is what turns a roster row into
+     * somebody the player recognises when he is the one still standing.
+     *
+     * Only for the player's own commander and only for a squad that was
+     * actually given ground: an advancing order is not a standing one, and
+     * saying so would make the announcement noise on every wheel press.
+     */
+    if (c === this.commander && squad != null && c.squadPlanted?.has(String(squad))) {
+      const men = this.squadsOf(c)[Number(squad) | 0] || [];
+      const lead = this.leaderOf(men);
+      const n = men.filter((t) => t.alive !== false).length;
+      if (lead) {
+        this.world?.notify?.(`${lead.rankRec.title.toUpperCase()} ${lead.name} HAS THE GROUND`,
+          `${F.name.toLowerCase()} — ${n} ${n === 1 ? 'man' : 'men'}, and they stay there without you`);
+      }
+      this.log.push({ t: 'delegate', formation: id, squad: Number(squad) | 0,
+                      name: lead?.name || null, n, area: this.areaNumber, wave: this.wave });
+    }
     return true;
   }
 
@@ -4302,6 +4358,29 @@ export class CommandDirector extends WaveDirector {
     c.holding = want;
     const F = FORMATIONS[c.formation] || FORMATIONS[DEFAULT_FORMATION];
     c._planted = (F.advance && !want) ? null : this._frame(c, new THREE.Vector3());
+    /**
+     * ON ME MEANS ON ME, INCLUDING THE SQUADS THAT WERE ONLY STANDING STILL
+     * BECAUSE THE ARMY WAS.
+     *
+     * A squad carrying an ADVANCING order sits still while the army holds —
+     * `_anchorFor` reads the hold before it reads the order — and it is
+     * planted at the moment the hold lands so it holds where it is rather than
+     * teleporting to wherever the general was. Releasing the hold has to give
+     * that ground back, or the release is a lie for exactly the squads that
+     * were told to move.
+     *
+     * A squad whose OWN order does not advance keeps its ground through both,
+     * which is the point of having given it one: "hold the gate" outlives "on
+     * me". Letting go of that ground is a second order to that squad.
+     */
+    for (const [k, id] of (c.squadOrders || [])) {
+      const SF = FORMATIONS[id];
+      if (!SF) continue;
+      const sp = (c.squadPlanted || (c.squadPlanted = new Map()));
+      if (!SF.advance) continue;
+      if (want) sp.set(k, this._squadFrame(c, k));
+      else sp.delete(k);
+    }
     this.log.push({ t: 'hold', on: want, area: this.areaNumber, wave: this.wave });
     if (c === this.commander) {
       this.world?.notify?.(want ? 'HOLD THIS GROUND' : 'ON ME',
@@ -4780,15 +4859,58 @@ export class CommandDirector extends WaveDirector {
   }
 
   /** The frame a formation is measured in — live, or frozen if it was planted. */
-  _anchorFor(F, c = this.commander) {
+  _anchorFor(F, c = this.commander, squad = null) {
     /* `c.holding` is the HOLD toggle and it applies to whatever formation is
      * up, which is what was asked for: "there should be an option where you
      * can tell your troops to get into a certain formation and hold it and
      * stay there regardless of where you are". `cover`'s `advance: false` is
      * the same mechanism authored into one order; this is the same mechanism
      * as a decision the player makes. */
+    /**
+     * THE SQUAD'S OWN GROUND FIRST, IF IT HAS BEEN GIVEN ONE.
+     *
+     * This is where delegation actually happens: a squad with a planted frame
+     * of its own solves its shape around THAT, so the general can be anywhere
+     * on the field — or dead — and the squad is still standing where it was
+     * put. Without this line, `order(id, cmdr, squad)` was three separate
+     * squads all forming up on one body, which is one line wearing three names.
+     */
+    if (squad != null) {
+      const own = c.squadPlanted?.get(String(squad));
+      if (own && (!F.advance || c.holding)) return own;
+    }
     if ((!F.advance || c.holding) && c._planted) return c._planted;
     return this._frame(c, _v1);
+  }
+
+  /**
+   * A SQUAD'S OWN FRAME: where its men are, facing where its leader faces.
+   *
+   * Not the commander's position, which is the whole point — see the note in
+   * `order`. Not the LEADER's position either, and that is the subtler half: a
+   * shape solved around the sergeant's body puts the sergeant's own slot at an
+   * offset from himself, so he walks, so the frame walks, so he walks again. A
+   * centroid is fixed under the shape it anchors.
+   *
+   * The yaw is the leader's held heading, because a squad faces where the man
+   * in charge of it is facing and there is nothing else on a squad that means
+   * "forward". A squad with nobody left to lead it falls back to the
+   * commander's frame, which is the old behaviour and the right one: an empty
+   * squad has no ground to hold.
+   */
+  _squadFrame(c, squad, out = new THREE.Vector3()) {
+    const men = this.squadsOf(c)[Number(squad) | 0] || [];
+    let n = 0, x = 0, z = 0;
+    for (const t of men) {
+      const e = t.body;
+      if (!e || e.dead) continue;
+      x += e.position.x; z += e.position.z; n++;
+    }
+    if (!n) return this._frame(c, out);
+    const lead = this.leaderOf(men);
+    const yaw = lead?.body ? (lead.body.facing ?? 0) : (c._heldYaw ?? c.facing ?? 0);
+    out.set(x / n, 0, z / n);
+    return { pos: out.clone(), yaw };
   }
 
   /**
@@ -4808,7 +4930,7 @@ export class CommandDirector extends WaveDirector {
     const F = FORMATIONS[this.formationFor(cmdr, e.cmdSquad)] || FORMATIONS[DEFAULT_FORMATION];
     const idx = e.cmdIndex | 0, n = e.cmdCount || 1, k = e.cmdSquad | 0;
     if (!F.slot(idx, n, k, out)) return null;
-    const A = this._anchorFor(F, cmdr);
+    const A = this._anchorFor(F, cmdr, e.cmdSquad);
     // Rotate the formation-local slot into the commander's frame. +Z is forward.
     const s = Math.sin(A.yaw), c = Math.cos(A.yaw);
     const x = out.x * c + out.z * s;
@@ -6711,11 +6833,37 @@ export class CommandDirector extends WaveDirector {
     const living = (c?.roster?.living) || [];
     let alive = 0, near = 0;
     const r2 = MORALE.NEAR * MORALE.NEAR;
+    /**
+     * ── NEAR WHAT HE WAS TOLD TO BE NEAR, NOT NEAR YOU ──────────────────
+     *
+     * This measured every living man against `c.player.position`, full stop.
+     * That is the right rule for an army that forms up on its general and the
+     * WRONG one the moment a general can put a squad somewhere: a squad
+     * ordered to hold a gate two hundred metres away was, by this test,
+     * scattered — so a player who used delegation lost the quorum, could not
+     * take ground, and was taught by the game not to delegate. PLAN.md §6 puts
+     * the generalisation ahead of density for exactly this reason: "without
+     * this the quorum breaks the moment density arrives".
+     *
+     * So the quorum is "half the living are where they were told to be". For
+     * most men that is still the general's body, because that is where an
+     * un-delegated squad forms. For a squad holding its own ground it is that
+     * ground. The rule is unchanged in every run that never gives a squad an
+     * order of its own, which is every run played before this line existed.
+     *
+     * `MORALE.NEAR` is the radius in both cases, deliberately: it is the same
+     * claim from both sides, the distance presence steadies a man at and the
+     * distance a man counts as being with his line at, and splitting it into
+     * two numbers would be two answers to one question (HANDOFF §2.3).
+     */
+    const sp = c.squadPlanted;
     for (const t of living) {
       const e = t.body;
       if (!e || e.dead) continue;
       alive++;
-      if (dist2(e.position, p.position) <= r2) near++;
+      const own = sp?.get(String(e.cmdSquad | 0));
+      const at = own ? own.pos : p.position;
+      if (dist2(e.position, at) <= r2) near++;
     }
     /* An army that no longer exists cannot come up, and a run that waited for
      * it would hang instead of ending. `_checkLine` is the door for that. */

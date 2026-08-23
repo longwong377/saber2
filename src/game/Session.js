@@ -311,6 +311,14 @@ export const INTERLUDE = Object.freeze({
   /** A promotion, and the man who took a dead sergeant's squad. */
   promote: 1.15,
   stepsUp: 1.15,
+  /**
+   * A SQUAD THE GENERAL HANDED TO SOMEBODY AND WALKED AWAY FROM.
+   *
+   * Shorter than a promotion because there may be several in one engagement and
+   * because it is a thing the player DID rather than a thing that happened to
+   * him — the report's job here is to say it back, not to dwell on it.
+   */
+  delegate: 0.95,
   /** Points in, bodies standing. The last two beats before the shelf lights. */
   tally: 1.4,
   /** Total seconds, clamped. See the note above. */
@@ -335,6 +343,14 @@ export const INTERLUDE = Object.freeze({
  * @param {object} area    the stage record just held.
  * @param {object} tally   `{ points, got, strength, max }`.
  */
+/** 0 -> "1st", 1 -> "2nd" — a squad's name when nobody is left to name it after. */
+function ordinal(i) {
+  const n = (i | 0) + 1;
+  const t = n % 100;
+  if (t >= 11 && t <= 13) return `${n}th`;
+  return `${n}${['th', 'st', 'nd', 'rd'][n % 10] || 'th'}`;
+}
+
 export function interludeBeats(log, since, area, tally = {}) {
   const slice = (Array.isArray(log) ? log : []).slice(Math.max(0, since | 0));
   const beats = [];
@@ -362,6 +378,21 @@ export function interludeBeats(log, since, area, tally = {}) {
   }
   for (const e of slice.filter((x) => x.t === 'promote')) {
     at('promote', e.name, `promoted — ${e.rank}`, INTERLUDE.promote);
+  }
+  /**
+   * WHAT YOU GAVE AWAY, said back to you.
+   *
+   * A standing order is the one thing in this mode that happens while the
+   * player is looking somewhere else, so it is the one thing the report can
+   * tell him he did not see. Deduplicated by squad and only the LAST order each
+   * squad was given: a player who moves 2nd Squad three times gave 2nd Squad
+   * one job, and three beats about it would read as three squads.
+   */
+  const held = new Map();
+  for (const e of slice.filter((x) => x.t === 'delegate')) held.set(e.squad | 0, e);
+  for (const e of held.values()) {
+    at('delegate', e.name || `${ordinal(e.squad | 0)} Squad`,
+      `held the ground on their own — ${e.n} ${e.n === 1 ? 'man' : 'men'}`, INTERLUDE.delegate);
   }
 
   at('tally', `+${tally.got | 0} reinforcement points`, `${tally.points | 0} in hand`, INTERLUDE.tally);

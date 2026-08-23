@@ -100,6 +100,32 @@ const dirFor = (opts = {}) => {
   return { w, d };
 };
 
+/**
+ * A DEPLOYED ARMY WITH A BODY TO COMMAND IT, AND ITS SQUAD NUMBERS STAMPED.
+ *
+ * Three things the delegation checks all need and none of which `dirFor` does:
+ *
+ *   A PLAYER. `_frame` reads `c.player.position`, and the stub has only
+ *     `players` — without this every frame falls back to the anchor and a check
+ *     about where a squad forms measures a formation nobody is standing in.
+ *   BODIES. `deploy()` builds one per living record.
+ *   ONE TICK. `cmdSquad`, `cmdIndex` and `cmdCount` are written by `_troops`,
+ *     so a slot solved cold is every trooper's slot zero — and `slotFor` and
+ *     `lineGathered` both read `cmdSquad` to find which squad's ground a man
+ *     belongs to. A check run without this tick would put the whole army in
+ *     squad 0 and pass for the wrong reason.
+ */
+function delegated(opts = {}) {
+  const { w, d } = dirFor(opts);
+  const me = { position: V(0, 0, 0), aimDir: V(0, 0, 1), facing: 0, alive: true, team: TEAM.PARTY };
+  w.players.push(me);
+  w.player = me;
+  d.commander.player = me;
+  d.deploy();
+  d._troops(1 / 30, {});
+  return { w, d };
+}
+
 /* ── the real thing ──────────────────────────────────────────────────── */
 
 /**
@@ -2719,6 +2745,126 @@ export async function run({ check, assert }) {
       `reviveNear healed to ${(hurt.hp / hurt.maxHp * 100).toFixed(0)}% — a support pod undid the firefight`);
     return `rallyNear ${d.roster.strength} standing, reinforce refused an empty purse and landed 4 on a full one, `
       + `reviveNear put a 1 hp man back to ${(hurt.hp / hurt.maxHp * 100).toFixed(0)}%`;
+  });
+
+  /**
+   * ── DELEGATION, AND THE THREE THINGS IT HAS TO BE ────────────────────
+   *
+   * `order(id, cmdr, squad)` has been able to give one squad its own formation
+   * since the per-squad slice landed. What it could not do was give it its own
+   * PLACE: `c._planted` is one frame per commander, so two squads told to hold
+   * two things were both planted on whichever body the general was standing in
+   * at the time, and a squad ordered to a gate re-formed around the player the
+   * moment he walked off. Three squads, three orders, one line.
+   *
+   * PLAN.md §6 puts this ahead of density — "without this the quorum breaks the
+   * moment density arrives" — so these are the three sentences that have to be
+   * true for the word to mean anything, and each is a separate check because
+   * each can become false on its own:
+   *
+   *   1. TWO SQUADS CAN HOLD TWO PLACES. The plants are distinct and neither is
+   *      the general's.
+   *   2. THE GENERAL CAN WALK AWAY. Two hundred metres, and the squad is still
+   *      standing on its ground rather than following him.
+   *   3. THE QUORUM COUNTS THEM. A man where he was told to be is with his
+   *      line, or the game punishes the player for using the interface it just
+   *      gave him.
+   */
+  check('squads: two squads can be given two pieces of ground, and neither is yours', () => {
+    const { w, d } = delegated();
+    const c = d.commander;
+    const squads = d.squadsOf(c);
+    assert(squads.length >= 2, `the deployed army made ${squads.length} squads — nothing to delegate`);
+    /* Move the squads apart BEFORE ordering them, because the ground each is
+     * given is the ground its own men are standing on — see `_squadFrame`. Left
+     * stacked at deploy, two distinct plants would be two distinct names for one
+     * spot and this check would pass on nothing. */
+    for (const t of squads[0]) if (t.body) t.body.position.set(-60, 0, 0);
+    for (const t of squads[1]) if (t.body) t.body.position.set(60, 0, 0);
+    w.player.position.set(0, 0, 0);
+
+    d.order('cover', c, 0);
+    d.order('cover', c, 1);
+    const a = c.squadPlanted?.get('0'), b = c.squadPlanted?.get('1');
+    assert(a && b, `only ${[a, b].filter(Boolean).length} of 2 squads were given ground`);
+    const apart = Math.hypot(a.pos.x - b.pos.x, a.pos.z - b.pos.z);
+    assert(apart > 80,
+      `the two squads were planted ${apart.toFixed(1)} m apart — they were told to hold two `
+      + 'different things and were both put in one place, which is the defect this exists to stop');
+    const fromPlayer = Math.hypot(a.pos.x, a.pos.z);
+    assert(fromPlayer > 40,
+      `1st squad's ground is ${fromPlayer.toFixed(1)} m from the general — it was planted on him `
+      + 'rather than on itself, so the order named a squad and moved the army');
+    return `1st at ${a.pos.x.toFixed(0)},${a.pos.z.toFixed(0)} · 2nd at ${b.pos.x.toFixed(0)},`
+      + `${b.pos.z.toFixed(0)} — ${apart.toFixed(0)} m apart, ${fromPlayer.toFixed(0)} m off the general`;
+  });
+
+  check('squads: …and the general can walk away from the ground he gave them', () => {
+    const { w, d } = delegated();
+    const c = d.commander;
+    const squads = d.squadsOf(c);
+    for (const t of squads[0]) if (t.body) t.body.position.set(-60, 0, 0);
+    w.player.position.set(0, 0, 0);
+    d.order('cover', c, 0);
+
+    const one = squads[0].find((t) => t.body)?.body;
+    const other = squads[1].find((t) => t.body)?.body;
+    assert(one && other, 'no bodies to measure');
+    const slot = (e) => d.slotFor(e, new THREE.Vector3()).clone();
+    const sprint = (z) => { w.player.position.set(0, 0, z); c._paceAnchor = null; c._heldYaw = 0; };
+
+    const before = slot(one);
+    sprint(200);                        // the general runs two hundred metres
+    const drift = before.distanceTo(slot(one));
+    assert(drift < 5,
+      `the general walked 200 m and 1st squad's slot moved ${drift.toFixed(1)} m with him — the `
+      + 'standing order is not standing, so "hold this and I will go" is not a sentence this game '
+      + 'can say');
+
+    /* THE CONTROL, and without it the assertion above proves nothing: a squad
+     * with no order of its own must still come when the general moves. */
+    sprint(0);
+    const u0 = slot(other);
+    sprint(200);
+    const follow = u0.distanceTo(slot(other));
+    assert(follow > 100,
+      `an UNDELEGATED squad's slot moved only ${follow.toFixed(1)} m when the general moved 200 — `
+      + 'the control arm is broken, so the first assertion proves nothing');
+    return `the ordered squad drifted ${drift.toFixed(1)} m over a 200 m sprint; the squad with no `
+      + `order of its own came ${follow.toFixed(0)} m`;
+  });
+
+  check('squads: a man standing where he was told to stand is with his line', () => {
+    const { w, d } = delegated();
+    const c = d.commander;
+    d.lineAdvances = true;
+    const squads = d.squadsOf(c);
+    w.player.position.set(0, 0, 0);
+    for (const s of squads) for (const t of s) if (t.body) t.body.position.set(0, 0, 2);
+    assert(d.lineGathered(c), 'the whole army standing on the general did not read as gathered');
+
+    /* Two squads are sent out — 1st to a gate 120 m east, 2nd to a ridge 120 m
+     * west — and only 1ST is given an order to be there. Two, because the
+     * quorum is HALF the living and one squad of a three-squad army does not
+     * move it; the second squad is what makes the unordered reading fall, and
+     * it stays unordered so that what comes back is the ordered squad alone.
+     *
+     * Under the old rule this is most of the army "scattered" and the ground
+     * stops being creditable — the game punishing the player for delegating. */
+    for (const t of squads[0]) if (t.body) t.body.position.set(120, 0, 0);
+    for (const t of squads[1]) if (t.body) t.body.position.set(-120, 0, 0);
+    const beforeOrder = d.lineGathered(c);
+    d.order('cover', c, 0);
+    const afterOrder = d.lineGathered(c);
+    assert(!beforeOrder,
+      'most of the army 120 m away with NO order read as gathered — the quorum is not measuring '
+      + 'anything and the assertion below cannot mean anything');
+    assert(afterOrder,
+      'a squad standing exactly on the ground it was ordered to hold still did not count toward '
+      + 'the quorum — so using delegation costs you the ability to take ground, and the mode '
+      + 'teaches the player not to use it');
+    return `${squads[0].length + squads[1].length} of ${d.roster.living.length} men sent 120 m out `
+      + `and the line is down; the ${squads[0].length} of them ORDERED to that ground bring it back up`;
   });
 
   check('squads: a squad is a thing that exists between frames, and one man can leave it', () => {
