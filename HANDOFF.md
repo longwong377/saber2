@@ -26,9 +26,46 @@ Playable two ways:
 
 ## 1. State
 
+> **SESSION OF 2026-08-23 — WHAT LANDED, IN ONE PLACE.** Branch
+> `claude/game-feedback-opinions-sfr9v7`, seven commits, all green.
+>
+> **The frame.** 158 bodies on the `front` layout went **50.10 ms → 19.99 ms**
+> and **120 bodies now cost 16.60 ms against a 16.67 ms budget** — PLAN.md
+> §4.3's kill criterion ("the battle needs 120 simultaneous fully-simulated
+> bodies with two real armies") is MET, where the session opened with the ladder
+> going over budget between 40 and 80. Four things did it, in order of size:
+> the gait's closing full-tree matrix walk became lazy past LOD 1 (3.74 ms, the
+> largest single line in the game); the gait's *first* full-tree walk became
+> `Rig.freshPos` on the one bone it served (visits per body 251 → 181);
+> `Enemy._move` stopped sweeping every static box in the level per body per
+> frame (10.12 → 3.13 ms); and `World.pickTarget`'s O(bodies²) became
+> `src/game/ArmyIndex.js`. **Read that file's note before touching any of it** —
+> the textbook ring-walk grid was measurably SLOWER than the sweep it replaced,
+> because two armies land 120 m apart and a ring walk degenerates on empty
+> ground.
+>
+> **M5 reported and the gate is open.** PLAN.md §2 carries the table. The rule
+> costs a player who leaves 34.1% of their ground and one who stays 8.2%.
+> `lineIsUp` is not inert; §4 is licensed.
+>
+> **Three items of PLAN.md §6's chain are built:** squad delegation
+> (`c.squadPlanted`, and the quorum counts a man near *where he was told to be*),
+> capability objectives (`src/game/Objectives.js`, crewed by whoever stands on
+> them — so delegation is the interface and there is no new verb), and
+> downed-not-dead with an after-action record. All three are welded to the
+> keystone by the same clause: a man on a gun and a man on the ground are ALIVE
+> and are not NEAR, so both are bought with the currency movement is bought with.
+>
+> **Still owed**, in PLAN.md §6's order: §1's checkable order, §4.7 (Dig In,
+> finite cover, weather, graves — and `src/world/CraterLog.js` is written and
+> nothing constructs one), §4.6 variance, §4.5's second human, §4.3 density and
+> the animated instanced rung. Plus §4.2's four-armed acceptance, which is the
+> only thing in what landed that is asserted structurally and not yet measured
+> as a difference in play.
+
 | | |
 |---|---|
-| Suite | **1517 passed, 0 failed** — 111 suites, 18.7 min of suite time, from a clean worktree on a quiet box. Earlier the same day it was 1438/59; §6.4 says what each of those was, because how they were found is the part worth keeping. There are **148** suites in `tools/checks/` as of this row, which is the drift §2.3 is about — run `ls tools/checks/*.mjs \| grep -v /_ \| wc -l` rather than believing it |
+| Suite | **1517 passed, 0 failed** — 111 suites, 18.7 min of suite time, from a clean worktree on a quiet box. Earlier the same day it was 1438/59; §6.4 says what each of those was, because how they were found is the part worth keeping. There are **150** suites in `tools/checks/` as of this row, which is the drift §2.3 is about — run `ls tools/checks/*.mjs \| grep -v /_ \| wc -l` rather than believing it |
 | Fast tier | **363 passed, 0 failed — 17 suites in ~80 s**, `npm run verify:fast`. The mechanical contract only: the blade, the bolt, the cut, the guard, and the tables that move them. `tools/tiers.mjs` names what it leaves out (`footwork` 52.9 s, `powers` 18.2 s, `force` 19.3 s, every browser suite, every level/wave/net/UI suite). **It going green is not the gate going green.** It exists because §2.6d is real: a gate nobody can finish is a gate whose reds nobody triages, and `.github/workflows/verify.yml` now runs this one on every push — the first thing in this repo's CI that has ever run a check |
 | Smoke | **11/11 clean** on a quiet box. Its timeouts are wall-clock, so on a loaded one the last four fail and mean nothing — §2.6 |
 | Packed | `node tools/pack.mjs out.html` — 79 modules, 12.8 MB, boots from `file://`, and `tools/checks/packed.mjs` proves it every run |
