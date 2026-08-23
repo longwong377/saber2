@@ -343,6 +343,17 @@ export const INTERLUDE = Object.freeze({
  * @param {object} area    the stage record just held.
  * @param {object} tally   `{ points, got, strength, max }`.
  */
+/**
+ * A BEARING IN DEGREES, AS A THING A PLAYER CAN PICTURE.
+ *
+ * Eight points and not sixteen: the report is read once, at speed, and the
+ * difference between "east" and "east-north-east" is not a difference anybody
+ * acts on. See the `fell` beat.
+ */
+const POINTS = ['north', 'north-east', 'east', 'south-east',
+                'south', 'south-west', 'west', 'north-west'];
+function compass(deg) { return POINTS[Math.round(((deg % 360) + 360) % 360 / 45) % 8]; }
+
 /** 0 -> "1st", 1 -> "2nd" — a squad's name when nobody is left to name it after. */
 function ordinal(i) {
   const n = (i | 0) + 1;
@@ -365,6 +376,24 @@ export function interludeBeats(log, since, area, tally = {}) {
     const bits = [];
     if (e.rank) bits.push(e.rank);
     if (e.unit) bits.push(e.unit);
+    /**
+     * …AND HOW HE DIED, WHICH IS THE HALF THE REPORT WAS MISSING.
+     *
+     * PLAN.md §4.9: "who killed whom, from what direction, at what minute. No
+     * death is mysterious, so no death is the AI's fault."
+     *
+     * The bearing is turned into a COMPASS POINT rather than printed in
+     * degrees. "137°" is a number a player has to convert; "from the south-east"
+     * is a thing he can picture, and picturing it is the whole purpose — a
+     * report exists so a death can be argued with.
+     *
+     * Every clause is conditional on the log actually knowing it. A death with
+     * no source (a fall, a bleed-out with nothing near) says only when, which
+     * is honest; making one up would be exactly the mystery this removes.
+     */
+    if (e.killer) bits.push(`by ${e.killer}`);
+    if (e.bearing != null) bits.push(`from the ${compass(e.bearing)}`);
+    if (e.at != null) bits.push(`at ${Math.floor(e.at / 60)}:${String(Math.floor(e.at % 60)).padStart(2, '0')}`);
     at('fell', e.name, bits.join(' · '), INTERLUDE.fell);
   }
   /* A CLEAN ENGAGEMENT IS STILL A BEAT, AND IT IS NOT A CASUALTY. Its own kind

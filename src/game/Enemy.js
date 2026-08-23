@@ -1395,6 +1395,36 @@ const DEAD_BLADE_LIT = 0.4;
 const GET_UP = 1.35;
 
 /**
+ * ── THE BLEED-OUT WINDOW, AND THE FOUR NUMBERS IN IT — PLAN.md §4.9 ──────
+ *
+ * DOWN_BLEED    seconds a man on the ground has with nothing near him. Long
+ *               enough to cross a field for him under fire; short enough that
+ *               "I will get to him after this" is a real gamble. It is about
+ *               the same as the blast door's measured 18.8 s breach, and for
+ *               the same reason: both are "the fight goes on while you do this".
+ * DOWN_FINISH   how close a hostile has to be to be standing over him.
+ * FINISH_RATE   how much faster the clock runs when one is. Six times, so a man
+ *               left in the middle of their line has about three seconds — an
+ *               INSTANT kill would make the window worthless the moment
+ *               anything was near, and a rate makes clearing the ground round
+ *               him the thing that buys the time.
+ * DOWN_HELP     how close one of yours has to be to hold the clock and start
+ *               bringing him round. Inside a body length: this is kneeling next
+ *               to him, not walking past.
+ * DOWN_REVIVE   body-seconds of that to get him up. Two men halve it, which is
+ *               the whole reason a squad is a squad.
+ * DOWN_UP_HP    what he stands up with. A quarter, so a man you saved is a man
+ *               you will have to save again — the recovery is a reprieve and
+ *               never a heal.
+ */
+export const DOWN_BLEED = 20;
+export const DOWN_FINISH = 6;
+export const FINISH_RATE = 6;
+export const DOWN_HELP = 2.2;
+export const DOWN_REVIVE = 3.5;
+export const DOWN_UP_HP = 0.25;
+
+/**
  * HOW LONG A HOLD SURVIVES ITS HOLDER — the lease on `gripped`.
  *
  * "troops go completely invisible a lot like I see their names above their
@@ -4890,8 +4920,155 @@ export class Enemy {
     this.world.particles?.sparkBurst(this.aimPoint(_v1), null, 30, { speed: 12, color: 0x88ffcc });
   }
 
+  /**
+   * ── DOWNED, NOT DEAD ──────────────────────────────────────────────────
+   *
+   * PLAN.md §4.9. A named man does not stop existing the instant his hp reaches
+   * zero: he goes down, he bleeds, and the last word on his death belongs to
+   * somebody — an enemy who reaches him, a comrade who does not, or the clock.
+   *
+   * WHO GETS IT, and the three conditions are each a decision:
+   *
+   *   A ROSTER RECORD. Only named men. A B1 that bled out would be forty
+   *     ragdolls a wave nobody has any reason to go back for, and the whole
+   *     content of the mechanic is that the body on the ground is somebody.
+   *   THE MODE ASKS FOR IT. `MODES[..].downed`, so a mode that has not thought
+   *     about recovering wounded does not silently acquire a bleed-out window.
+   *   AND NOT TWICE. A man already down who is finished IS dead — otherwise the
+   *     enemy standing over him could never end it and the window would be a
+   *     second health bar.
+   *
+   * A DISMEMBERED MAN IS DEAD. There is no window for a body that has been cut
+   * in half, and pretending otherwise would put a bleeding torso on the ground
+   * for a squadmate to run to.
+   */
+  _mayGoDown(kind) {
+    if (this.downed || !this.trooper || this.trooper.alive === false) return false;
+    if (!this.world?.director?.downedMen) return false;
+    if (kind === 'sever' || kind === 'cleave' || this.actor?.severedCount > 0) return false;
+    return true;
+  }
+
+  /**
+   * HE IS ON THE GROUND AND HE IS STILL ONE OF YOURS.
+   *
+   * Ragdolled and alive, which is precisely the state `Reactions.findCasualty`
+   * already hunts for — so the men who drag comrades to safety pick him up with
+   * no new behaviour written, and PLAN.md's own line about it comes true:
+   * "`Command.js` already has troopers dragging comrades to safety; this is
+   * what makes that behaviour matter."
+   *
+   * `hp` is set to a hair above zero rather than to zero: every damage path in
+   * this class tests `hp <= 0` to decide whether to call `die`, and a man
+   * sitting exactly on the boundary would be re-killed by the next stray bolt
+   * in the volley that dropped him, which is not a window.
+   */
+  _goDown(point, source, kind) {
+    this.downed = true;
+    this.bleed = DOWN_BLEED;
+    this.hp = 0.01;
+    this.wish = null;
+    this.target = null;
+    this.stunTimer = Math.max(this.stunTimer, 0.5);
+    if (this.actor && !this.actor.ragdolled) this.actor.goRagdoll(this.velocity, point || null);
+    this.cry?.('scream', 3.0);
+    const c = this.world?.command;
+    if (c && this.trooper) {
+      c.log.push({ t: 'down', name: this.trooper.name, unit: this.trooper.label,
+                   rank: this.trooper.rankRec.short, area: c.areaNumber, wave: c.wave });
+      if (this.team === c.commander?.side) {
+        this.world?.notify?.(`${this.trooper.name} IS DOWN`,
+          `${DOWN_BLEED | 0} seconds — get to them, or drag them out`);
+      }
+    }
+    void source; void kind;
+  }
+
+  /**
+   * THE CLOCK ON A MAN ON THE GROUND, and the two ways it stops.
+   *
+   * IT RUNS FASTER WITH SOMETHING STANDING OVER HIM. "An enemy reaching the
+   * body finishes it" — as a rate rather than as an instant kill, because an
+   * instant one makes the window worthless the moment anything is nearby and a
+   * rate makes clearing the ground around him the thing that buys time. Inside
+   * `DOWN_FINISH` metres of a living hostile the clock runs at `FINISH_RATE`,
+   * so a man abandoned in the middle of their line has about three seconds and
+   * one dragged clear has the full window.
+   *
+   * AND A COMRADE STOPS IT. Any living body of his own side inside
+   * `DOWN_HELP` metres holds the clock and, held long enough, puts him back on
+   * his feet at a fraction of his health. Any body: PLAN.md says "a medic or
+   * your Heal", and a line with no medic in it must not be a line whose wounded
+   * are all dead — what a specialist would buy is speed, and that is a rung on
+   * the ladder rather than a gate on the mechanic.
+   */
+  _tickDown(dt) {
+    if (!this.downed || this.dead) return;
+    const list = this.world?.enemies || [];
+    let foe = false, help = 0;
+    const fin2 = DOWN_FINISH * DOWN_FINISH, help2 = DOWN_HELP * DOWN_HELP;
+    for (const o of list) {
+      if (o === this || o.dead || o.downed || o.team == null) continue;
+      const d2 = o.position.distanceToSquared(this.position);
+      if (o.team === this.team) { if (d2 <= help2) help++; }
+      else if (d2 <= fin2) foe = true;
+    }
+    for (const p of (this.world?.players || [])) {
+      if (!p || p.alive === false || p.team !== this.team || !p.position) continue;
+      if (p.position.distanceToSquared(this.position) <= help2) help++;
+    }
+    if (help > 0) {
+      this._downHelp = (this._downHelp || 0) + dt * help;
+      if (this._downHelp >= DOWN_REVIVE) { this._getUpFromDown(); return; }
+      return;
+    }
+    this._downHelp = 0;
+    this.bleed -= dt * (foe ? FINISH_RATE : 1);
+    if (this.bleed <= 0) {
+      /**
+       * AND `downed` IS CLEARED AFTER `die`, NOT BEFORE — which cost a check to
+       * find and is the only subtle line in this method.
+       *
+       * Clearing it first was meant to stop `die` offering the window a second
+       * time. It does the opposite: `_mayGoDown`'s FIRST clause is `if
+       * (this.downed) return false`, so a man whose flag had just been cleared
+       * was a man eligible for a fresh window — he went down again, `bleed`
+       * reset to the full twenty, and nothing on the field could ever finish
+       * him. Measured before this: 21 s of a 20 s window left him at 19 s
+       * remaining, which is a bleed-out clock that counts UP.
+       *
+       * So the flag stays up through the call, which is exactly what makes the
+       * refusal fire, and comes down after — because a corpse that is still
+       * flagged down would go on being excluded from the quorum.
+       */
+      this.die(null, foe ? 'finished' : 'bled', 'bleed');
+      this.downed = false;
+    }
+  }
+
+  /** He is up, and he is not the man he was. */
+  _getUpFromDown() {
+    this.downed = false;
+    this.bleed = 0;
+    this._downHelp = 0;
+    this.hp = Math.max(1, (this.maxHp || 100) * DOWN_UP_HP);
+    this.beingDragged = null;
+    if (this.actor?.ragdolled) this.recover();
+    const c = this.world?.command;
+    if (c && this.trooper) {
+      c.log.push({ t: 'saved', name: this.trooper.name, area: c.areaNumber, wave: c.wave });
+      if (this.team === c.commander?.side) {
+        this.world?.notify?.(`${this.trooper.name} IS UP`, 'back on their feet, and not for long');
+      }
+    }
+  }
+
   die(point, source, kind) {
     if (this.dead) return;
+    /* THE WINDOW, and it is the first thing in the method for the same reason
+     * `onEnemyKilled` is the second: everything below this line is a body
+     * becoming a corpse, and a man who is going down is not doing that yet. */
+    if (this._mayGoDown(kind)) { this._goDown(point, source, kind); return; }
     this.dead = true;
     this.dying = 0;
     this.world.onEnemyKilled?.(this, source, kind);
@@ -5223,6 +5400,11 @@ export class Enemy {
     // A living body that is limp and still puts itself back together. See
     // `_tickGetUp`; before this, nothing in the game ever un-ragdolled.
     this._tickGetUp(dt);
+    /* …AND A MAN ON THE GROUND IS ON A CLOCK. See `_tickDown`. Beside
+     * `_tickGetUp` and not inside it: getting up from a shove and being brought
+     * round from a bleed-out are two different events with two different
+     * timers, and folding them would make every knockdown a casualty. */
+    if (this.downed) this._tickDown(dt);
     // …and a living body draws something. See `_auditVisible`.
     this._auditVisible(dt);
     this.stunTimer = Math.max(0, this.stunTimer - dt);
@@ -5425,6 +5607,11 @@ export class Enemy {
   }
 
   _think(dt, ctx) {
+    /* A MAN ON THE GROUND IS NOT FIGHTING. `_move`'s LIMP branch already stops
+     * him walking, and this is the other half: without it a downed trooper went
+     * on picking targets and firing from inside a ragdoll, which is the bug
+     * that would have made the bleed-out window a prone-stance buff. */
+    if (this.downed) { this.wish = null; this.target = null; return; }
     const A = this.A;
     // A compelled unit's target REPLACES the world's pick. `_shoot`, the cover
     // logic and the melee brain all read `this.target`, so one substitution
@@ -7507,6 +7694,40 @@ export class Enemy {
 
     // static geometry
     this._pushOutOfBoxes(ctx);
+    /**
+     * ── AND THE SHIELD, WHICH IS A WALL FOR ONE ARMY AND A GATE FOR THE OTHER
+     *
+     * PLAN.md §4.2: "Held: one approach uncrossable until it is down. Lost: an
+     * approach you cannot use."
+     *
+     * A CIRCLE AND NOT A COLLIDER, deliberately. A static box would be a wall
+     * for everybody, and the whole content of that table row is that the same
+     * wall is not: the side holding the pylons walks through their own screen,
+     * and the side that does not, cannot. There is no way to say that with
+     * geometry, so it is said here, where a body already knows whose it is.
+     *
+     * The push is the same shape as the box sweep's — out along the radius, by
+     * the overlap — so a body pressed against it slides along it exactly the
+     * way it slides along a face, and `_wallN` makes the navigation term
+     * upstream treat it as a wall. It is not a shove: a body that walks into
+     * it stops, and one already inside when the shield comes up is put outside
+     * by the shortest way, which is the same rule `_pushOutOfBoxes` uses for a
+     * body inside a box.
+     */
+    const wall = this.world?.objectives?.wallAgainst?.(this.team);
+    if (wall) {
+      const dx = this.position.x - wall.position.x, dz = this.position.z - wall.position.z;
+      const d2 = dx * dx + dz * dz;
+      const r = wall.radius;
+      if (d2 < r * r) {
+        const d = Math.sqrt(d2) || 1e-4;
+        const nx = dx / d, nz = dz / d;
+        this.position.x = wall.position.x + nx * r;
+        this.position.z = wall.position.z + nz * r;
+        this._wallN.x += nx; this._wallN.z += nz;
+        this._wallT = 0.3;
+      }
+    }
 
     // face the target while fighting, face travel otherwise
     let want = this.facing;

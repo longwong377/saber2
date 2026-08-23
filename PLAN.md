@@ -263,6 +263,32 @@ its mortality up front and rules out all three before reporting anything.
 *Kills:* if standing with the line and fighting ahead of it produce the same run,
 `lineIsUp` is inert and §1 needs a different keystone.
 
+> **M5 REPORTED. THE GATE IS OPEN.** `tools/_m5.mjs --seeds 3 --minutes 5`,
+> 2081 s of CPU, four cells:
+>
+> | station | rule | areas/min | kills | living | fallen | waiting(s) |
+> |---|---|---|---|---|---|---|
+> | near | on | 0.158 | 37.7 | 4.0 | 8.7 | 6.4 |
+> | near | off | 0.172 | 19.7 | 5.7 | 7.0 | 0.0 |
+> | far | on | 0.149 | 52.0 | 4.0 | 8.7 | 29.1 |
+> | far | off | 0.227 | 56.0 | 5.3 | 8.7 | 0.0 |
+>
+> **The rule costs a player who LEAVES 34.1% of their ground and a player who
+> STAYS 8.2%** — a four-fold separation, in the direction and of the shape M5
+> was written to require: "the far pair differ and the near pair do not by
+> much." The `waiting` column is the same finding measured directly and not
+> derived: the run spent 29.1 s refusing to credit ground to a Jedi who left,
+> against 6.4 s for one who stayed, and 0.0 in both `off` arms by construction.
+> The far/off arm is also the only cell that took a whole area in every seed,
+> which is the sentence FLAGSHIP §6 asks for — *"killing stays fast and fun and
+> advances nothing"* — with the rule turned off so that it does advance
+> something.
+>
+> `lineIsUp` is not inert. §4 is licensed. The one caution worth keeping beside
+> the number: `areas` spread 0–1 over five minutes, so areas/min is coarse and
+> the confirming arm is a longer, wider run rather than a tighter reading of
+> this one.
+
 **M4 — the browser frame.** There is no draw-call instrument. The diagnostic is
 low FPS *with* low GPU usage (draw calls / JS) versus high GPU time (skinning,
 shadows, overdraw). Until this exists, no rendering decision is licensed.
@@ -628,7 +654,9 @@ This is a graph.
 ```
 NOW — measurements
   M1  twenty-seed reference arm ........... running · licenses everything
-  M5  does lineIsUp change play? ......... GATE ON ALL OF §4 · nothing builds first
+  M5  does lineIsUp change play? ......... REPORTED — see §2. 34.1% of a
+      leaving player's ground against 8.2% of a staying one. The gate is
+      open and the chain below is licensed.
   M2  teamDamage bound (1 hour)
   M3  density: LEVY_STRENGTH + drop the cross-army gate
   M4  browser frame instrument ............ gate on every rendering decision
@@ -644,10 +672,15 @@ NOW — building, licensed by measurements already taken
   B5  four open playtest defects
 
 AFTER M5 — the chain, in dependency order
-  1  §4.4 squad delegation + sergeants ..... lineIsUp generalises to squads;
-     without this the quorum breaks the moment density arrives, so it
-     precedes §4.3 rather than following it
-  2  §4.2 capability objectives ............ four-armed acceptance
+  1  §4.4 squad delegation + sergeants ..... BUILT. `c.squadPlanted` gives each
+     squad its own ground; `_anchorFor` solves the shape around it; the quorum
+     counts a man near WHERE HE WAS TOLD TO BE. Three checks in command.mjs.
+  2  §4.2 capability objectives ............ BUILT. src/game/Objectives.js, six
+     sites, crewed by whoever stands on them — so the interface is (1)'s
+     delegation and there is no new verb. The weld holds: a crewed gun's men
+     are out of the quorum, asserted A/B on the same men in the same places.
+     Still owed: the four-armed acceptance (does the Jedi arm beat the
+     no-player arm MORE with a Battery on the field?).
   3  §4.9 downed-not-dead + after-action ... the quorum's other half
   4  §4.4 company + Company screen ......... needs B4, 1 and 3
   5  §1 the order you can check ............ needs 2 (Spire), 3 (AAR), 4 (cards)

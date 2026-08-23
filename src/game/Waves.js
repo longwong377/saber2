@@ -468,6 +468,38 @@ export const MODES = {
     /** One ground walked end to end — see the note above, and `World.loadLevel`. */
     crossing: true,
     /**
+     * SIX THINGS ON THE FIELD YOUR MEN CAN HOLD AND YOU CANNOT — PLAN.md §4.2.
+     *
+     * Declared here rather than tested for by name in `World.loadLevel`, for
+     * the reason every other flag on this record is: a mode is what it declares
+     * and a `mode === 'theline'` in the world would be the mode's design living
+     * somewhere the mode cannot see.
+     *
+     * The Line and not Command, deliberately. §4.2's whole content is that an
+     * objective is bought out of the QUORUM — men on a gun are men not standing
+     * with the line — and Command does not run the quorum (`lineAdvances` is
+     * this mode's alone, and `theline.mjs` asserts Command does not set it). In
+     * Command the six would pay their effects for free, which is the version of
+     * this section PLAN.md says "reads identically with `lineIsUp` deleted".
+     */
+    objectives: true,
+    /**
+     * A NAMED MAN GOES DOWN BEFORE HE DIES — PLAN.md §4.9.
+     *
+     * "A bleed-out window; an enemy reaching the body finishes it; a medic or
+     * your Heal saves him. The interruption that makes you break off a duel,
+     * and it means the last word on every death is the player's."
+     *
+     * And the clause that decides whether the section is a feature or the game:
+     * a downed man does NOT count toward the quorum. So the bleed-out window
+     * and the advance rule are in direct tension — to take ground you must
+     * physically recover your wounded, under fire, while the thing that wounded
+     * them is still there. That is why this is declared on The Line and not on
+     * Command: without a quorum there is nothing for it to be in tension with,
+     * and it would be a free second health bar on every trooper.
+     */
+    downed: true,
+    /**
      * THE INVERSION, as a field. `CommandDirector` reads exactly this and
      * nothing else to tell the two modes apart: `_endCampaign` computes `won`
      * off the survivors instead of asserting it, and `_checkLine` ends a run

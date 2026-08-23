@@ -173,6 +173,7 @@ function bladeEnvFor(a = {}) {
 import { AREAS, ARMY_IDS, CommandDirector, COMMAND_POWER_RULES, MAX_STRENGTH, OPENING_STRENGTH,
   assignArmies, commandConfig } from './Command.js';
 import { ArmyIndex } from './ArmyIndex.js';
+import { ObjectiveField } from './Objectives.js';
 import { Corpses, CORPSE_BUDGET } from './Corpses.js';
 import { BladeLock } from './Duel.js';
 import { FocusSystem } from './Focus.js';
@@ -393,7 +394,13 @@ export class World {
     this.armyIndex = new ArmyIndex();
     /** Who `_hostilePred` is answering for. See `pickTarget`. */
     this._hostileTo = null;
-    this._hostilePred = (e) => e !== this._hostileTo && !e.dead
+    /* `!e.downed` — a man on the ground is not what anybody is shooting at.
+     * PLAN.md §4.9 has an enemy who REACHES the body finish it, and that is a
+     * proximity rule (`Enemy._tickDown`), not a targeting one: a line that
+     * preferred casualties to the men still firing at it would walk past the
+     * fight to execute the wounded, which is neither what soldiers do nor what
+     * makes recovering them a decision. */
+    this._hostilePred = (e) => e !== this._hostileTo && !e.dead && !e.downed
       && e.team !== this._hostileTo.team;
     this.props = [];
     this.doors = [];
@@ -984,6 +991,28 @@ export class World {
     /** The army, or null. Read by the HUD, the summary and the checks. */
     this.command = leadsArmy ? this.director : null;
     /**
+     * THE THINGS ON THE FIELD YOUR MEN CAN HOLD AND YOU CANNOT — PLAN.md §4.2.
+     *
+     * Gated on the mode declaring `objectives`, and only where there is an army
+     * to crew them: "a gun without a crew is scenery", so a mode with no named
+     * men has nothing to put on a battery and installing one would be six props
+     * nobody can touch. The axis is the generated front's advance bearing when
+     * there is one, so the sites are laid between the two armies rather than
+     * off to a side neither was going.
+     *
+     * `myTeam` is the player's, which is the only thing on this object that is
+     * about a point of view: it decides which ring is blue and whether a notice
+     * reads TAKEN or LOST.
+     */
+    this.objectives?.dispose?.();
+    this.objectives = null;
+    if (leadsArmy && MODES[mode]?.objectives) {
+      this.objectives = new ObjectiveField(this, { myTeam: this.player?.team ?? 0 });
+      const bearing = this.battlefield?.bearing ?? 0;
+      const rng = makeRng(((this.runSeed | 0) ^ 0x0b1ec7) >>> 0);
+      this.objectives.place({ count: 4, axis: bearing, rng: () => rng() });
+    }
+    /**
      * THE BATTLE, or null — and it is CARRIED, never rebuilt.
      *
      * `rotateTo` re-enters this whole list of stages for every engagement, so a
@@ -1458,6 +1487,11 @@ export class World {
     this.timeScale = 1;
     for (const e of this.enemies) e.dispose();
     this.enemies.length = 0;
+    /* The installations go with the level. They are scene-graph groups with
+     * geometry on them, and the field is rebuilt by the next `loadLevel` —
+     * leaving them would be six masts standing on the next ground. */
+    this.objectives?.dispose?.();
+    this.objectives = null;
     /* The corpse ledger holds references to bodies that have just been
      * disposed. `clear()` and not `dispose()`: the ledger itself outlives the
      * level exactly as the World does, and what must not survive is its
@@ -2880,7 +2914,9 @@ export class World {
     const out = (this._foes ||= []);
     out.length = 0;
     for (const e of this.enemies) {
-      if (e === who || e.dead || e.team === who.team) continue;
+      /* `downed` for the reason `_hostilePred` gives: a man on the ground is
+       * finished by being reached, not by being aimed at. */
+      if (e === who || e.dead || e.downed || e.team === who.team) continue;
       out.push(e);
     }
     for (const p of this.players) {
@@ -3446,6 +3482,18 @@ export class World {
      * the frame of staleness this ordering buys.
      */
     this.armyIndex.sync(this.enemies);
+    /**
+     * WHO IS STANDING ON WHAT — before the bodies are stepped, because the
+     * quorum reads it.
+     *
+     * `CommandDirector.lineGathered` asks `objectives.crewIds()` for the men who
+     * are on a gun and therefore not with the line (PLAN.md §4.2's welding
+     * clause). That question is asked inside the army's own update, which runs
+     * below this line, so the set has to be current before it does — a frame of
+     * lag here is a frame in which a squad that just took a battery still counts
+     * toward the advance, which is the one thing this must not do.
+     */
+    this.objectives?.update(dt, ctx);
 
     /**
      * BEFORE EVERYTHING, because a passenger's seat has to be written before

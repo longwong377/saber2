@@ -1916,6 +1916,21 @@ export class CommandRoster {
   }
 }
 
+/**
+ * WHAT TO CALL WHOEVER DID IT, for the after-action report.
+ *
+ * A name where the thing has one — a named man on the other roll, an archetype
+ * otherwise — and null where there is nothing to name. Not a reference: see the
+ * note at the `fell` record for why the log must not hold a body.
+ */
+export function killerName(source) {
+  if (!source) return null;
+  if (typeof source === 'string') return source;
+  if (source.trooper?.name) return source.trooper.name;
+  if (source.isPlayer || source.aimDir) return 'you';
+  return source.A?.name || source.type || null;
+}
+
 /** How many bodies are one squad. Five is a fireteam and it fits one screen. */
 export const SQUAD = 5;
 /** The most bodies the mode will ever field for you at once. See `_muster`. */
@@ -2715,6 +2730,10 @@ export class CommandDirector extends WaveDirector {
      * is untouched by both.
      */
     this.lineAdvances = !!MODES[this.mode]?.lineAdvances;
+    /* A NAMED MAN GOES DOWN BEFORE HE DIES — see `MODES.theline.downed` and
+     * `Enemy._mayGoDown`. Read off the mode here, once, so `Enemy` asks the
+     * director rather than reaching through it into the mode table. */
+    this.downedMen = !!MODES[this.mode]?.downed;
     /**
      * THE ROSTERS THIS DIRECTOR KEEPS — one per side-and-army. See `_rosterFor`
      * and `Commander.roster`.
@@ -4807,6 +4826,12 @@ export class CommandDirector extends WaveDirector {
       const e = t.body;
       if (!e || e.dead) continue;
       anyAlive = true;
+      /* A MAN ON THE GROUND DOES NOT PACE THE ADVANCE, he stops it — and he
+       * stops it through the quorum (`lineGathered` does not count him) rather
+       * than through this. Pacing an advance on a casualty's walking speed
+       * would be an advance that carried on at a bleeding man's pace, which is
+       * the one reading of §4.9 that makes recovering him optional. */
+      if (e.downed) continue;
       if (dist2(e.position, p.position) > r2) continue;
       const v = e.speed || 0;
       if (v < slowest) slowest = v;
@@ -5704,8 +5729,33 @@ export class CommandDirector extends WaveDirector {
       const squad = this.squadOf(t, c);
       const wasLeader = this.leaderOf(squad) === t;
       if (c.roster.fall(t, this.areaNumber)) {
+        /**
+         * ── WHO KILLED HIM, FROM WHERE, AND WHEN — PLAN.md §4.9 ────────────
+         *
+         * "The after-action report — who killed whom, from what direction, at
+         * what minute. No death is mysterious, so no death is the AI's fault."
+         *
+         * That is a property of the RECORD, not of a screen: a report can only
+         * say what the log knows, and this log knew a name and an area number.
+         * So the three facts are written where the death happens, in the units
+         * the report will read them in — the killer's own name where there is
+         * one, the bearing in degrees from the man to whatever killed him, and
+         * the minute of the run.
+         *
+         * `killer` is a NAME and not a reference: the log outlives the body,
+         * and holding an Enemy in it would keep a whole rig and ragdoll alive
+         * for the length of the run. A death with no source (a fall, a bleed-
+         * out with nothing near) records null and the report says so, which is
+         * the honest answer and not a mystery.
+         */
+        const from = source?.position || source?.body?.position || null;
+        const bearing = from && e?.position
+          ? Math.round((Math.atan2(from.x - e.position.x, from.z - e.position.z) * 180 / Math.PI + 360)) % 360
+          : null;
         this.log.push({ t: 'fell', name: t.name, unit: t.label, rank: t.rankRec.short,
-                        area: this.areaNumber, wave: this.wave, xp: t.xp, kills: t.kills });
+                        area: this.areaNumber, wave: this.wave, xp: t.xp, kills: t.kills,
+                        killer: killerName(source), bearing,
+                        at: Math.round((this.world?.time || 0) * 10) / 10 });
         this.world?.notify?.(`${t.rankRec.title.toUpperCase()} DOWN`,
           `${t.name} — ${t.kills} kill${t.kills === 1 ? '' : 's'}, ${c.roster.strength} still standing`);
         this.shake(squad, wasLeader ? 'LEADER_FELL' : 'COMRADE_FELL', c);
@@ -6857,14 +6907,46 @@ export class CommandDirector extends WaveDirector {
      * two numbers would be two answers to one question (HANDOFF §2.3).
      */
     const sp = c.squadPlanted;
+    /**
+     * ── AND A MAN ON A GUN IS NOT WITH HIS LINE ────────────────────────
+     *
+     * PLAN.md §4.2's welding clause, and the reason that section does not read
+     * identically with `lineIsUp` deleted: "crewing a gun takes those men OUT
+     * OF THE QUORUM… every objective you hold is ground you cannot advance
+     * onto, because the men holding it are not standing with the line."
+     *
+     * He is still counted ALIVE — he is one of yours and losing him is losing
+     * him — and he is not counted NEAR. So an objective is bought with exactly
+     * the currency movement is bought with, and the decision every minute is
+     * which of the two you need. A field with no objectives on it (every mode
+     * but this one, and this one before a site is placed) has an empty set here
+     * and the rule is the one it always was.
+     */
+    const crew = this.world?.objectives?.crewIds?.();
+    let manned = 0, down = 0;
     for (const t of living) {
       const e = t.body;
       if (!e || e.dead) continue;
       alive++;
+      if (crew && crew.has(e.id)) { manned++; continue; }
+      /**
+       * …AND NEITHER IS A MAN ON THE GROUND — PLAN.md §4.9's second clause.
+       *
+       * "If a bleeding man still counted, dragging would be optional and the
+       * bleed-out window would be decoration. He does not count — so the quorum
+       * rule and the bleed-out window are in direct tension, and that tension
+       * is the game: to advance you must physically recover your wounded, under
+       * fire, while the thing that wounded them is still there."
+       *
+       * He is still ALIVE, exactly as a man on a gun is: losing him is losing
+       * him, and the roster has not written him off. What he is not is standing.
+       */
+      if (e.downed) { down++; continue; }
       const own = sp?.get(String(e.cmdSquad | 0));
       const at = own ? own.pos : p.position;
       if (dist2(e.position, at) <= r2) near++;
     }
+    void manned; void down;
     /* An army that no longer exists cannot come up, and a run that waited for
      * it would hang instead of ending. `_checkLine` is the door for that. */
     if (!alive) return true;
@@ -6958,6 +7040,37 @@ export class CommandDirector extends WaveDirector {
        * rebuild than it was to raise. */
       if (wanted.length) {
         c.roster.points += musterCost(wanted[0]) / CONTINGENT_WAVES_PER_BODY;
+      }
+      /**
+       * ── AND THE FOUNDRY MAKES ONE OF THEM HEAVY — PLAN.md §4.2.
+       *
+       * "Held: your replacements come up heavy. Lost: theirs do."
+       *
+       * ONE OF THEM, not all of them, and the cheapest hole is the one that is
+       * upgraded — which is the same argument the ordering above makes. A
+       * foundry that turned every replacement into an ARC would make the
+       * objective a difficulty switch; one that sends up a better man than the
+       * one you were owed, once a muster, is a reason to hold a building.
+       *
+       * The upgrade is one rung along this army's OWN ladder, so it is priced
+       * by `musterCost` like everything else and neither army gets a body the
+       * other cannot answer. A hole already at the top of the ladder is left
+       * alone: there is nothing above an ARC to send.
+       */
+      if (wanted.length && this.world?.objectives?.heavyReplacements?.(c.side ?? 0)) {
+        const tiers = (ARMIES[c.army]?.tiers || []).map((r) => r.type);
+        const i = tiers.indexOf(wanted[0]);
+        const up = i >= 0 && i + 1 < tiers.length ? tiers[i + 1] : null;
+        if (up && (short.get(wanted[0]) || 0) > 0) {
+          short.set(wanted[0], short.get(wanted[0]) - 1);
+          short.set(up, (short.get(up) || 0) + 1);
+          c.roster.points += musterCost(up) - musterCost(wanted[0]);
+          wanted.unshift(up);
+          this.log.push({ t: 'foundry', from: tiers[i], to: up, area: this.areaNumber, wave: this.wave });
+          if (c === this.commander) {
+            this.world?.notify?.('THE FOUNDRY', `the next one up is a ${ARCHETYPES[up]?.name || up}`);
+          }
+        }
       }
       /* `recruit` is the one door — it prices, it enlists, it publishes, and it
        * refuses a roster already at `MAX_STRENGTH`. The extra ceiling here is

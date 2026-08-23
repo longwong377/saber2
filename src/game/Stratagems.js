@@ -130,6 +130,30 @@ export const CODE_GAP = 1.6;
  * line-of-sight test — a beam cannot reach ground it did not fly over.
  */
 export const AIM_REACH = 90;
+
+/**
+ * HOW FAR ONE OF YOUR OWN MEN CAN SEE, in metres — PLAN.md §4.2's last clause.
+ *
+ * "Off-map power is gated on vision — the aim point must be inside territory
+ * someone can see, which makes the spotter a man worth protecting."
+ *
+ * Without this, an orbital lance is a thing you may put anywhere inside 90 m of
+ * your own eyes, which means the only requirement for artillery is that you
+ * personally walk within ninety metres of the target — and the line has nothing
+ * to do with it. With it, the forward trooper who can see the ridge is the
+ * reason you can shell the ridge, and killing him is how the other side turns
+ * your artillery off.
+ *
+ * 70 m rather than the aim reach, deliberately: a spotter has to be FORWARD of
+ * you for the gate to bite, and a radius equal to the reach would make any man
+ * standing beside you sufficient for anything you could already mark.
+ *
+ * THE PLAYER IS A SPOTTER TOO. He has eyes and he is on the field; the gate is
+ * about territory, not about rank, and a Jedi alone on a field with no army is
+ * a mode this must not break. What the gate costs him is the far half of his
+ * own reach — 70 of 90 m — unless somebody is out there.
+ */
+export const SPOTTER_SIGHT = 70;
 /**
  * HOW LONG THE BEAM MAY BE HELD before it sends itself.
  *
@@ -1356,8 +1380,53 @@ export class Stratagems {
    * applied, and a caller that did its own arithmetic would be a stratagem
    * that ignored both.
    */
+  /**
+   * CAN ANYBODY ON YOUR SIDE SEE THIS PIECE OF GROUND?
+   *
+   * The Spire answers yes to everything — that is what the objective pays for,
+   * and it is the one row of §4.2's table whose effect is the removal of a
+   * restriction rather than the addition of a thing. Otherwise it is your own
+   * living bodies and yourself, at `SPOTTER_SIGHT`.
+   *
+   * A world with no army and no objectives answers yes at the player's own
+   * sight radius and nothing else changes, which is every mode but The Line.
+   */
+  _visible(site) {
+    const p = this.owner;
+    const w = p?.world;
+    const team = p?.team ?? 0;
+    if (w?.objectives?.seesAll?.(team)) return true;
+    const r2 = SPOTTER_SIGHT * SPOTTER_SIGHT;
+    if (p?.position && p.position.distanceToSquared(site) <= r2) return true;
+    for (const e of (w?.enemies || [])) {
+      if (!e || e.dead || e.team !== team) continue;
+      if (e.position.distanceToSquared(site) <= r2) return true;
+    }
+    for (const q of (w?.players || [])) {
+      if (!q || q === p || q.alive === false || q.team !== team) continue;
+      if (q.position && q.position.distanceToSquared(site) <= r2) return true;
+    }
+    return false;
+  }
+
   _commit(s, site, lock, ctx) {
     const p = this.owner;
+    /**
+     * NOTHING IS CALLED ONTO GROUND NOBODY CAN SEE. See `_visible`.
+     *
+     * Refused at the COMMIT and not at the open, deliberately: the call has
+     * already been spelled out loud and paid for by then, so refusing here
+     * costs the player the support and the cooldown. That is the same trade the
+     * designation phase's own note argues — "a player who then declines to
+     * place it has still spent it, which is what stops the designation being a
+     * free look at the field" — and refusing at the open would instead be a
+     * free probe of where your own vision reaches.
+     */
+    if (!this._visible(site)) {
+      this._say(`${s.name}: nobody can see that ground`);
+      audio.ui('bad');
+      return;
+    }
     const lead = leadOf(s);
     /* THE MARK IS PART OF THE MECHANIC and not decoration. A call with a lead
      * that landed with no warning would be a delayed instant-kill; a ring on
@@ -1608,8 +1677,24 @@ export class Stratagems {
      * object that is stepped every frame and already knows the table. */
     this._release(ctx);
     if (this.sorties) this.sorties.update(dt, ctx);
+    /**
+     * …AT WHATEVER RATE THE RELAY SAYS. PLAN.md §4.2: holding it halves your
+     * cooldowns, losing it to them doubles yours.
+     *
+     * A RATE ON THE TICK and not a multiplier on `s.cooldown` where it is set,
+     * which is the difference between "your next call comes back faster" and
+     * "your calls come back faster". The second is what taking a relay in the
+     * middle of a fight is supposed to feel like: the twenty-two seconds you are
+     * already waiting on becomes eleven, not twenty-two again.
+     *
+     * `coolRate` answers 1 when there is no relay on the field, no objectives at
+     * all, or nobody holding it — which is every mode but The Line, so this line
+     * is a multiply by one everywhere it was not designed for.
+     */
+    const rate = this.owner?.world?.objectives?.coolRate?.(this.owner?.team ?? 0) ?? 1;
+    const cdt = dt * rate;
     for (const id in this.cooldowns) {
-      if (this.cooldowns[id] > 0) this.cooldowns[id] = Math.max(0, this.cooldowns[id] - dt);
+      if (this.cooldowns[id] > 0) this.cooldowns[id] = Math.max(0, this.cooldowns[id] - cdt);
     }
     if (this.saidT > 0) this.saidT = Math.max(0, this.saidT - dt);
     if (this.entry) {
