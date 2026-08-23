@@ -1847,14 +1847,47 @@ let _transportTemplate = null;
 function transportMaterials() {
   if (_transportM) return _transportM;
   return (_transportM = {
-    shell: armorMat(0xcfc7b0, 0.08, 0.6, 0.8),
-    mark: armorMat(0x7b2f2c, 0.06, 0.62, 1.0),
-    dark: metalMat(0x34363a, 0.5, 0.9, 2.0),
-    deck: metalMat(0x4a4d52, 0.42, 0.85, 2.4),
+    /* THE HULL IS COOLER AND DARKER THAN THE GROUND IT LANDS ON, and that is
+     * the whole of why it stopped reading as planks.
+     *
+     * `shell` was 0xcfc7b0 — a light warm grey, which is a perfectly good
+     * gunship colour and is also almost exactly Geonosis' sand under Geonosis'
+     * orange key. Every large plate on the ship landed within a few points of
+     * the ground behind it and of every other plate, so a thirty-nine piece
+     * hull collapsed into one tan mass: "it looks like planks of wood, like the
+     * entire model is two shapes."
+     *
+     * Pulled down and cooled to 0x9aa0a0. The warm light still warms it — it is
+     * the same light — but it now sits BELOW and BESIDE the sand instead of on
+     * top of it, so the silhouette separates from the ground and the panels
+     * separate from each other. `panel` is the second tone that large surfaces
+     * alternate with, because two greys a step apart is what stops a wall being
+     * a plank far more cheaply than any amount of extra geometry. */
+    /* ══ THE TILING IS THE "PLANKS OF WOOD" ═══════════════════════════════
+     *
+     * `armorMat`'s fourth argument is the scuff tiling, and its own comment
+     * says "machinery wants it fine". This hull had the COARSEST numbers in the
+     * file — 0.8 on the shell against 2.4 on a droid's joints — which stretches
+     * one span of the scuff-and-marbling map across a whole 5 m plate. At forty
+     * metres that is a nice weathered panel. At ONE metre, which is where the
+     * player's face is for the twenty-eight seconds of an insertion, it is a
+     * big soft swirling grain: plywood. "It looks like planks of wood."
+     *
+     * This is the only vehicle in the game routinely seen from inside, so it
+     * wants the finest tiling rather than the coarsest. Raised until the scuff
+     * reads as a fleck in the paint at arm's length instead of as a knot in a
+     * board. Nothing about the geometry, the colour or the cost changes — the
+     * maps are the same maps, and `armorMaps` caches per repeat value.
+     */
+    shell: armorMat(0x9aa0a0, 0.10, 0.58, 5.2),
+    panel: armorMat(0x7f8688, 0.12, 0.54, 5.8),
+    mark: armorMat(0x8c3129, 0.06, 0.62, 6.0),
+    dark: metalMat(0x2b2d31, 0.5, 0.9, 5.4),
+    deck: metalMat(0x44474c, 0.42, 0.85, 6.2),
     glass: glassMat(0x1b2a30, 0.12),
-    belly: armorMat(0x6e714a, 0.05, 0.72, 1.4),
-    cloth: armorMat(0x2c2f36, 0.04, 0.8, 1.0),
-    skin: armorMat(0xb98d6a, 0.03, 0.85, 1.0),
+    belly: armorMat(0x6e714a, 0.05, 0.72, 4.8),
+    cloth: armorMat(0x2c2f36, 0.04, 0.8, 6.0),
+    skin: armorMat(0xb98d6a, 0.03, 0.85, 5.0),
     /* THE BAY LIGHTING, and it is the reason the interior stopped reading as
      * planks. A troop bay is a windowless box that the player now spends
      * twenty-eight seconds inside, and every surface in it was taking the
@@ -1917,7 +1950,7 @@ export function buildRepublicTransport(opts = {}) {
   const kf = new Kit();
   // floor and roof of the bay
   kf.add(M.deck, plateGeo(2.72 * S, 0.22 * S, 5.10 * S, 0.06 * S, 1), [0, (BAY.floor - 0.11) * S, 0.85 * S]);
-  kf.add(M.shell, plateGeo(2.86 * S, 0.24 * S, 5.10 * S, 0.08 * S, 1), [0, (BAY.roof + 0.12) * S, 0.85 * S]);
+  kf.add(M.panel, plateGeo(2.86 * S, 0.24 * S, 5.10 * S, 0.08 * S, 1), [0, (BAY.roof + 0.12) * S, 0.85 * S]);
   // the two side walls, ABOVE and BELOW the door aperture only — the aperture
   // itself is empty, which is the entire point of this ship
   kf.pair((sx) => {
@@ -1933,7 +1966,7 @@ export function buildRepublicTransport(opts = {}) {
   // aft bulkhead above the ramp opening, so the bay is not a tube
   kf.add(M.shell, plateGeo(2.60 * S, 0.70 * S, 0.20 * S, 0.05 * S, 1), [0, 0.80 * S, 3.36 * S]);
   // the nose: a raked wedge forward of the bay, with the cockpit floor in it
-  kf.add(M.shell, plateGeo(2.46 * S, 1.86 * S, 1.90 * S, 0.30 * S, 2), [0, 0.02 * S, -2.60 * S]);
+  kf.add(M.panel, plateGeo(2.46 * S, 1.86 * S, 1.90 * S, 0.30 * S, 2), [0, 0.02 * S, -2.60 * S]);
   kf.add(M.shell, plateGeo(2.00 * S, 1.34 * S, 1.60 * S, 0.34 * S, 2), [0, -0.18 * S, -4.02 * S], [0.14, 0, 0]);
   kf.add(M.shell, plateGeo(1.40 * S, 0.78 * S, 1.30 * S, 0.30 * S, 2), [0, -0.42 * S, -5.02 * S], [0.24, 0, 0]);
   kf.add(M.belly, plateGeo(2.56 * S, 0.40 * S, 7.60 * S, 0.22 * S, 1), [0, -1.22 * S, -0.20 * S]);
@@ -1946,6 +1979,50 @@ export function buildRepublicTransport(opts = {}) {
   kf.pair((sx) => kf.add(M.shell, plateGeo(0.86 * S, 0.11 * S, 0.62 * S, 0.05 * S, 1),
     [sx * 0.62 * S, 1.50 * S, 3.36 * S], [0, 0, sx * 0.34]));
   kf.add(M.mark, plateGeo(0.34 * S, 0.06 * S, 4.60 * S, 0.02 * S, 1), [0, (BAY.roof + 0.25) * S, 0.85 * S]);
+
+  /* ══ RELIEF, which is what the word "planks" was actually about ════════
+   *
+   * The bay is furnished and the ship is armed, and from outside she was still
+   * a shoebox: the roof is one flat rectangle 5 m long, the sides are flat, the
+   * wings are flat, and a big unbroken plate lit by one key is a plank at any
+   * resolution and in any colour. The interior work does nothing for this,
+   * because none of it is on the outside.
+   *
+   * What follows is all surface: strakes, seams, blisters and lips. Not one
+   * piece of it changes the silhouette or the collision, and that is the point
+   * — the shapes were right, they had nothing ON them. Every piece is a plate
+   * of a few centimetres standing off a surface, which is the cheapest thing
+   * there is and the only thing that gives a flat panel a scale and an edge for
+   * the light to catch.
+   */
+
+  // THE ROOF: two strakes running the length, cross seams between them, and a
+  // raised spine down the middle that the tail fin grows out of.
+  kf.pair((sx) => {
+    kf.add(M.panel, plateGeo(0.52 * S, 0.07 * S, 4.70 * S, 0.02 * S, 1), [sx * 0.86 * S, (BAY.roof + 0.27) * S, 0.85 * S]);
+    kf.add(M.dark, plateGeo(0.08 * S, 0.05 * S, 4.70 * S, 0.01 * S, 1), [sx * 1.16 * S, (BAY.roof + 0.26) * S, 0.85 * S]);
+  });
+  kf.row(6, (i, t) => {
+    kf.add(M.dark, plateGeo(2.60 * S, 0.04 * S, 0.06 * S, 0.01 * S, 1), [0, (BAY.roof + 0.26) * S, (-1.30 + t * 4.30) * S]);
+  });
+  kf.add(M.panel, plateGeo(0.40 * S, 0.16 * S, 3.20 * S, 0.05 * S, 1), [0, (BAY.roof + 0.30) * S, 1.70 * S]);
+
+  // THE FLANKS: a belt line above the door rail, a row of louvres over the
+  // nacelle root where the heat comes out, and two blisters on the nose cheek.
+  kf.pair((sx) => {
+    kf.add(M.dark, plateGeo(0.06 * S, 0.13 * S, 4.90 * S, 0.02 * S, 1), [sx * 1.38 * S, 0.62 * S, 0.85 * S]);
+    kf.row(5, (i, t) => {
+      kf.add(M.dark, plateGeo(0.05 * S, 0.22 * S, 0.09 * S, 0.01 * S, 1), [sx * 1.36 * S, -0.55 * S, (1.90 + t * 1.10) * S]);
+    });
+    kf.add(M.panel, plateGeo(0.10 * S, 0.34 * S, 0.72 * S, 0.06 * S, 2), [sx * 1.16 * S, 0.20 * S, -2.55 * S]);
+    kf.add(M.dark, new THREE.SphereGeometry(0.14 * S, 8, 6), [sx * 0.92 * S, 0.62 * S, -3.30 * S]);
+    // the belly chine, which is what stops the underside being one slab
+    kf.add(M.belly, plateGeo(0.16 * S, 0.14 * S, 6.40 * S, 0.04 * S, 1), [sx * 1.16 * S, -1.16 * S, -0.20 * S]);
+  });
+  // and the panel seams across the belly
+  kf.row(5, (i, t) => {
+    kf.add(M.dark, plateGeo(2.30 * S, 0.04 * S, 0.06 * S, 0.01 * S, 1), [0, -1.40 * S, (-2.80 + t * 4.60) * S]);
+  });
   kf.bake(g, { silhouette: true });
 
   /* ── the bay's furniture: benches down each side and grab rails ─────── */
@@ -2051,7 +2128,7 @@ export function buildRepublicTransport(opts = {}) {
 
   /* AND THE FRONT OF THE BAY IS A WALL WITH A DOOR IN IT, not an opening onto
    * the cockpit. It is what makes the bay a room. */
-  ki.add(M.shell, plateGeo(2.44 * S, 2.05 * S, 0.14 * S, 0.04 * S, 1), [0, 0.06 * S, -1.66 * S]);
+  ki.add(M.panel, plateGeo(2.44 * S, 2.05 * S, 0.14 * S, 0.04 * S, 1), [0, 0.06 * S, -1.66 * S]);
   ki.pair((sx) => ki.add(M.dark, plateGeo(0.34 * S, 1.42 * S, 0.17 * S, 0.03 * S, 1), [sx * 0.62 * S, -0.22 * S, -1.66 * S]));
   ki.add(M.dark, plateGeo(1.58 * S, 0.12 * S, 0.17 * S, 0.03 * S, 1), [0, 0.52 * S, -1.66 * S]);
   ki.add(M.lamp, plateGeo(0.10 * S, 0.10 * S, 0.03 * S, 0.01 * S, 1), [0.42 * S, 0.66 * S, -1.58 * S]);
@@ -2157,11 +2234,31 @@ export function buildRepublicTransport(opts = {}) {
       [sx * 2.66 * S, 0.26 * S, 1.50 * S], [0, sx * -0.30, sx * -0.12]);
     kw.add(M.mark, plateGeo(2.70 * S, 0.05 * S, 0.34 * S, 0.02 * S, 1),
       [sx * 2.62 * S, 0.39 * S, 1.20 * S], [0, sx * -0.30, sx * -0.12]);
+    /* THE WING WAS A PLANK, literally — one 3.3 x 0.24 x 1.7 plate. A leading
+     * edge in a darker tone, a rib along it, a pylon where it meets the hull
+     * and a light at the tip: four pieces that cost nothing and stop it being
+     * a board bolted to a box. */
+    kw.add(M.dark, plateGeo(3.30 * S, 0.10 * S, 0.22 * S, 0.04 * S, 1),
+      [sx * 2.66 * S, 0.26 * S, 0.72 * S], [0, sx * -0.30, sx * -0.12]);
+    kw.add(M.panel, plateGeo(0.26 * S, 0.16 * S, 1.30 * S, 0.04 * S, 1),
+      [sx * 1.60 * S, 0.24 * S, 1.42 * S], [0, sx * -0.30, sx * -0.12]);
+    kw.add(M.dark, plateGeo(0.13 * S, 0.13 * S, 1.50 * S, 0.03 * S, 1),
+      [sx * 3.36 * S, 0.30 * S, 1.46 * S], [0, sx * -0.30, sx * -0.12]);
+    kw.add(M.mark, plateGeo(0.16 * S, 0.08 * S, 0.16 * S, 0.02 * S, 1),
+      [sx * 4.10 * S, 0.34 * S, 1.66 * S], [0, sx * -0.30, sx * -0.12]);
     // the nacelle: a housing with an intake at the front and two nozzles aft
     kw.add(M.shell, new THREE.CylinderGeometry(0.36 * S, 0.42 * S, 2.10 * S, 10),
       [sx * 3.00 * S, 0.14 * S, 1.70 * S], [1.5708, 0, 0]);
     kw.add(M.dark, new THREE.CylinderGeometry(0.33 * S, 0.33 * S, 0.26 * S, 10),
       [sx * 3.00 * S, 0.14 * S, 0.62 * S], [1.5708, 0, 0]);
+    // the intake lip, three cooling bands and the pylon that carries it
+    kw.add(M.panel, new THREE.TorusGeometry(0.37 * S, 0.045 * S, 6, 12),
+      [sx * 3.00 * S, 0.14 * S, 0.58 * S], [0, 0, 0]);
+    for (let i = 0; i < 3; i++) {
+      kw.add(M.dark, new THREE.TorusGeometry(0.395 * S, 0.028 * S, 5, 12),
+        [sx * 3.00 * S, 0.14 * S, (1.55 + i * 0.34) * S], [0, 0, 0]);
+    }
+    kw.add(M.panel, plateGeo(0.14 * S, 0.42 * S, 0.80 * S, 0.04 * S, 1), [sx * 3.00 * S, 0.52 * S, 1.70 * S]);
     for (const oy of [0.19, -0.19]) {
       kw.add(M.dark, new THREE.CylinderGeometry(0.20 * S, 0.24 * S, 0.40 * S, 8),
         [sx * 3.00 * S, (0.14 + oy) * S, 2.74 * S], [1.5708, 0, 0]);
@@ -2379,12 +2476,23 @@ function droidTransportMaterials() {
      * cold blue-grey shell under them. The Republic hull is bone with maroon
      * flashes; nothing here shares a swatch with it, which matters at the one
      * range this ship is mostly seen at, which is inside it. */
-    shell: armorMat(0x78827f, 0.09, 0.58, 0.9),
-    mark: armorMat(0xb9a077, 0.06, 0.64, 1.1),
-    dark: metalMat(0x2b2e31, 0.5, 0.9, 2.0),
-    deck: metalMat(0x3f4347, 0.44, 0.86, 2.4),
+    /* The same tiling correction as the Republic hull — see the note there. A
+     * hold is a room the player stands in, so its paint is read at arm's
+     * length. */
+    shell: armorMat(0x78827f, 0.09, 0.58, 5.2),
+    /* The second tone the large plates alternate onto — see the note on the
+     * Republic hull's `panel`. Two greys a step apart break a wall into panels
+     * for nothing, and this hull has the same acreage of flat plate to break. */
+    panel: armorMat(0x616b69, 0.11, 0.55, 5.8),
+    mark: armorMat(0xb9a077, 0.06, 0.64, 6.0),
+    dark: metalMat(0x2b2e31, 0.5, 0.9, 5.4),
+    deck: metalMat(0x3f4347, 0.44, 0.86, 6.2),
+    /* COLD, where the Republic's bay light is warm. A Confederacy hold is lit
+     * by whatever the droids need to see by, which is not comfort. */
+    lamp: emissiveMat(0x9fd0e0, 1.3),
+    greeble: metalMat(0x4d5450, 0.55, 0.72, 2.0),
     glass: glassMat(0x0f1a1e, 0.10),
-    belly: armorMat(0x4c5450, 0.05, 0.74, 1.4),
+    belly: armorMat(0x4c5450, 0.05, 0.74, 4.8),
     droid: metalMat(0x9a8560, 0.46, 0.88, 2.2),
     eye: emissiveMat(0xd83a2a, 2.6),
   });
@@ -2535,6 +2643,103 @@ export function buildDroidTransport(opts = {}) {
     });
   });
   kb.bake(g);
+
+  /* ══ THE HOLD, AND IT IS NOT A TROOP BAY ══════════════════════════════
+   *
+   * Same job as the Republic block — the player rides in here and a flat plate
+   * a metre from the eye is a plank whatever it is painted — and deliberately
+   * NOT the same room. A Confederacy hold is a rack: the stick that rides in it
+   * folds up and hangs, so the walls carry cradles and charging spines rather
+   * than webbing and harnesses, the light is cold rather than warm, and nothing
+   * in here was built for a body that gets tired.
+   */
+  const ki = new Kit();
+
+  /* FRAMES, and they are angular where the Republic's are square — the whole
+   * Separatist silhouette language is the chamfer. */
+  ki.row(5, (i, t) => {
+    const z = (-1.30 + t * 4.20) * S;
+    ki.add(M.dark, plateGeo(2.42 * S, 0.14 * S, 0.16 * S, 0.05 * S, 2), [0, (BAY.roof - 0.06) * S, z]);
+    ki.pair((sx) => {
+      ki.add(M.dark, plateGeo(0.13 * S, 2.00 * S, 0.16 * S, 0.05 * S, 2), [sx * 1.20 * S, 0.04 * S, z]);
+      ki.add(M.dark, plateGeo(0.12 * S, 0.30 * S, 0.30 * S, 0.03 * S, 2),
+        [sx * 1.18 * S, (BAY.roof - 0.24) * S, z], [0, 0, sx * 0.62]);
+    });
+  });
+
+  /* THE LIGHT: one cold strip down the spine, not two down the sides. */
+  ki.add(M.dark, plateGeo(0.34 * S, 0.10 * S, 4.30 * S, 0.02 * S, 1), [0, (BAY.roof - 0.02) * S, 0.72 * S]);
+  ki.add(M.lamp, plateGeo(0.22 * S, 0.05 * S, 4.10 * S, 0.01 * S, 1), [0, (BAY.roof - 0.09) * S, 0.72 * S]);
+
+  /* THE RACKS. Six cradles a side, each a spine, a shoulder hook and a charging
+   * contact — this is where a folded B1 hangs, and it is the one thing in the
+   * ship that says what it carries. */
+  ki.pair((sx) => {
+    ki.add(M.greeble, new THREE.CylinderGeometry(0.05 * S, 0.05 * S, 4.30 * S, 6),
+      [sx * 1.10 * S, 0.52 * S, 0.72 * S], [1.5708, 0, 0]);
+    ki.row(6, (i, t) => {
+      const z = (-1.15 + t * 3.75) * S;
+      ki.add(M.dark, plateGeo(0.16 * S, 0.44 * S, 0.09 * S, 0.02 * S, 1), [sx * 1.12 * S, 0.30 * S, z]);
+      ki.add(M.mark, plateGeo(0.20 * S, 0.07 * S, 0.07 * S, 0.01 * S, 1), [sx * 1.06 * S, 0.10 * S, z]);
+      ki.add(M.lamp, plateGeo(0.05 * S, 0.05 * S, 0.03 * S, 0.005 * S, 1), [sx * 1.02 * S, 0.52 * S, z]);
+    });
+  });
+
+  /* WALL PLANT: a power spine, a cell rack and a coolant bottle. */
+  ki.pair((sx) => {
+    ki.add(M.greeble, plateGeo(0.15 * S, 0.40 * S, 0.60 * S, 0.04 * S, 2), [sx * 1.14 * S, -0.10 * S, -1.15 * S]);
+    ki.add(M.mark, plateGeo(0.05 * S, 0.12 * S, 0.20 * S, 0.01 * S, 1), [sx * 1.22 * S, 0.02 * S, -1.15 * S]);
+    ki.add(M.greeble, new THREE.CylinderGeometry(0.10 * S, 0.10 * S, 0.46 * S, 8),
+      [sx * 1.10 * S, -0.10 * S, 2.70 * S], [0, 0, 1.5708]);
+  });
+
+  /* THE DECK: rails the racks run on rather than tread plate, because nothing
+   * in this hold walks to its place. */
+  ki.pair((sx) => ki.add(M.dark, plateGeo(0.09 * S, 0.05 * S, 4.30 * S, 0.01 * S, 1),
+    [sx * 0.70 * S, (BAY.floor + 0.03) * S, 0.72 * S]));
+  ki.row(7, (i, t) => {
+    ki.add(M.dark, plateGeo(1.50 * S, 0.02 * S, 0.06 * S, 0.005 * S, 1),
+      [0, (BAY.floor + 0.02) * S, (-1.15 + t * 3.9) * S]);
+  });
+
+  /* …AND THE FORWARD BULKHEAD, with the droid brain's housing set into it
+   * where the Republic hull has a door to a cockpit somebody sits in. */
+  ki.add(M.panel, plateGeo(2.40 * S, 2.05 * S, 0.14 * S, 0.05 * S, 2), [0, 0.04 * S, -1.72 * S]);
+  ki.add(M.greeble, plateGeo(0.80 * S, 0.86 * S, 0.18 * S, 0.06 * S, 2), [0, 0.10 * S, -1.64 * S]);
+  ki.row(3, (i, t) => {
+    ki.add(M.lamp, plateGeo(0.07 * S, 0.07 * S, 0.03 * S, 0.005 * S, 1), [(-0.22 + t * 0.44) * S, 0.34 * S, -1.55 * S]);
+  });
+  ki.bake(g);
+
+  /* ══ AND SHE IS ARMED, on the same argument as the Republic hull ═══════
+   * There was not one gun on either ship. A chin turret, a pintle at each door
+   * and a rocket pod at each root — the same four positions, in the
+   * Confederacy's own shapes: hexagonal housings and paired thin barrels. */
+  const kg = new Kit();
+  const turret = new THREE.Group();
+  turret.name = 'chinTurret';
+  turret.position.set(0, -1.24 * S, -3.20 * S);
+  {
+    const kt = new Kit();
+    kt.add(M.dark, new THREE.CylinderGeometry(0.34 * S, 0.34 * S, 0.34 * S, 6), [0, 0, 0], [1.5708, 0, 0]);
+    kt.add(M.mark, plateGeo(0.46 * S, 0.26 * S, 0.30 * S, 0.05 * S, 2), [0, -0.08 * S, -0.14 * S]);
+    kt.pair((sx) => kt.add(M.dark, new THREE.CylinderGeometry(0.045 * S, 0.05 * S, 1.20 * S, 6),
+      [sx * 0.13 * S, -0.08 * S, -0.74 * S], [1.5708, 0, 0]));
+    kt.bake(turret);
+  }
+  g.add(turret);
+  kg.pair((sx) => {
+    kg.add(M.dark, new THREE.CylinderGeometry(0.05 * S, 0.05 * S, 0.60 * S, 6), [sx * 1.06 * S, -0.60 * S, 0.20 * S]);
+    kg.add(M.greeble, plateGeo(0.20 * S, 0.18 * S, 0.38 * S, 0.04 * S, 2), [sx * 1.06 * S, -0.28 * S, 0.20 * S]);
+    kg.add(M.dark, new THREE.CylinderGeometry(0.05 * S, 0.065 * S, 0.94 * S, 6),
+      [sx * 1.28 * S, -0.26 * S, 0.20 * S], [0, 0, sx * -1.4]);
+    kg.add(M.shell, plateGeo(0.52 * S, 0.42 * S, 1.16 * S, 0.10 * S, 2), [sx * 1.82 * S, 0.08 * S, 1.20 * S]);
+    kg.row(4, (i, t) => {
+      kg.add(M.dark, new THREE.CylinderGeometry(0.055 * S, 0.055 * S, 0.10 * S, 6),
+        [sx * 1.82 * S, (0.22 - t * 0.30) * S, 0.58 * S], [1.5708, 0, 0]);
+    });
+  });
+  kg.bake(g, { silhouette: true });
 
   /* ── the ramp: the stern hatchway, its own group, hinged at the floor lip ─
    * THE LEAF IS 2.58 m, WHICH IS THE REPUBLIC HULL'S LEAF TO THE CENTIMETRE,
