@@ -6141,24 +6141,43 @@ export function buildTrooper(opts = {}) {
            * two cones below are separate meshes instead of being baked into
            * the kit with everything else: a merged nozzle cannot be lit.
            */
-          // spine block between the bells, and a pair of engine bodies
-          kp.add(plate, plateGeo(0.190 * s, 0.250 * s, 0.110 * s, 0.020 * s, 2), [0, 0.092 * s, -0.170 * s]);
-          kp.add(accent, plateGeo(0.052 * s, 0.150 * s, 0.020 * s, 0.006 * s, 1), [0, 0.100 * s, -0.222 * s]);
+          /* ── BIGGER, AND IN THE ARMOUR'S OWN COLOUR ──────────────────────
+           *
+           * The pack was here all along and the report kept saying it was not:
+           * "I still don't see their jet packs or thrusters." Rendered on its
+           * own it turns out to be true enough — a 19 x 25 cm block with two
+           * dark-grey cans on a body wearing a BLACK undersuit, so the whole
+           * assembly was gear-coloured hardware against a gear-coloured back at
+           * whatever range a jet trooper is actually seen from. It read as
+           * webbing.
+           *
+           * A jump pack is the biggest thing a man wears and it is the reason
+           * he is in the air, so it is a third larger, it stands further off
+           * the spine, and the cans are `plate` — the white armour — with the
+           * dark `gear` kept for the shrouding and the bells. Two tones on a
+           * pack is what makes it a pack rather than a lump. */
+          kp.add(plate, plateGeo(0.250 * s, 0.320 * s, 0.140 * s, 0.024 * s, 2), [0, 0.086 * s, -0.196 * s]);
+          kp.add(gear, plateGeo(0.210 * s, 0.070 * s, 0.120 * s, 0.014 * s, 1), [0, -0.070 * s, -0.198 * s]);
+          kp.add(accent, plateGeo(0.060 * s, 0.190 * s, 0.020 * s, 0.006 * s, 1), [0, 0.100 * s, -0.268 * s]);
+          // the shoulder yoke that carries it, so it is strapped ON rather than
+          // stuck to the back
+          kp.pair((sx) => kp.add(gear, plateGeo(0.048 * s, 0.150 * s, 0.056 * s, 0.010 * s, 1),
+            [sx * 0.108 * s, 0.150 * s, -0.130 * s], [0.34, 0, 0]));
           kp.pair((sx) => {
             // the engine can: a fat cylinder standing proud of the block
-            kp.add(gear, new THREE.CylinderGeometry(0.050 * s, 0.056 * s, 0.190 * s, 10),
-              [sx * 0.086 * s, 0.036 * s, -0.192 * s], [0.24, 0, sx * 0.12]);
+            kp.add(plate, new THREE.CylinderGeometry(0.062 * s, 0.070 * s, 0.230 * s, 10),
+              [sx * 0.100 * s, 0.030 * s, -0.226 * s], [0.24, 0, sx * 0.12]);
             // an intake scoop at the top of it
-            kp.add(plate, new THREE.CylinderGeometry(0.058 * s, 0.046 * s, 0.046 * s, 10),
-              [sx * 0.086 * s, 0.134 * s, -0.204 * s], [0.24, 0, sx * 0.12]);
+            kp.add(gear, new THREE.CylinderGeometry(0.072 * s, 0.058 * s, 0.052 * s, 10),
+              [sx * 0.100 * s, 0.152 * s, -0.240 * s], [0.24, 0, sx * 0.12]);
             // heat shrouding: three rings down the can
             for (let i = 0; i < 3; i++) {
-              kp.add(gear, bandGeo(0.050 * s, 0.062 * s, 0.050 * s, 0.062 * s, 0.012 * s, 10),
-                [sx * 0.086 * s, (0.004 - i * 0.046) * s, (-0.192 - i * 0.011) * s], [0.24, 0, sx * 0.12]);
+              kp.add(gear, bandGeo(0.062 * s, 0.076 * s, 0.062 * s, 0.076 * s, 0.014 * s, 10),
+                [sx * 0.100 * s, (0.000 - i * 0.054) * s, (-0.226 - i * 0.013) * s], [0.24, 0, sx * 0.12]);
             }
             // and the bell it fires out of, angled down and outward
-            kp.add(gear, new THREE.CylinderGeometry(0.038 * s, 0.058 * s, 0.070 * s, 10),
-              [sx * 0.090 * s, -0.078 * s, -0.216 * s], [0.24, 0, sx * 0.12]);
+            kp.add(gear, new THREE.CylinderGeometry(0.046 * s, 0.072 * s, 0.084 * s, 10),
+              [sx * 0.100 * s, -0.096 * s, -0.252 * s], [0.24, 0, sx * 0.12]);
           });
         } else if (K.pack === 'scout') {
           // a flat scout pack with a folded bipod down it — narrow, so the
@@ -6208,16 +6227,42 @@ export function buildTrooper(opts = {}) {
          * — a flame that occludes what is behind it is a solid object.
          */
         if (jet) {
+          /* VERTEX COLOURS ALONG THE PLUME, and this is what stopped it looking
+           * like a paper cone. A flat additive cone in one colour is a flat
+           * additive cone: uniform from the bell to the tip, hard-edged, and
+           * exactly as bright where it leaves the nozzle as where it dies. Real
+           * thrust is white-hot at the throat, blue through the body, and gone
+           * at the end — so the colour and the ALPHA both ramp down the length,
+           * and the taper does the rest. Baked into the geometry rather than
+           * done in a shader because it is two cones per trooper and the flame
+           * material is shared by every jet body in the level. */
           const flame = new THREE.MeshBasicMaterial({
-            color: 0x9fd0ff, transparent: true, opacity: 0.85, depthWrite: false,
-            blending: THREE.AdditiveBlending, side: THREE.DoubleSide, toneMapped: false,
+            color: 0xffffff, vertexColors: true, transparent: true, opacity: 0.9,
+            depthWrite: false, blending: THREE.AdditiveBlending,
+            side: THREE.DoubleSide, toneMapped: false,
           });
           rig.jets = [];
           for (const sx of [1, -1]) {
-            const geo = new THREE.ConeGeometry(0.046 * s, 0.34 * s, 8, 1, true);
+            const geo = new THREE.ConeGeometry(0.052 * s, 0.34 * s, 8, 1, true);
             geo.translate(0, -0.17 * s, 0);
+            {
+              // y runs 0 at the throat to -0.34s at the tip
+              const pos = geo.attributes.position;
+              const col = new Float32Array(pos.count * 3);
+              const HOT = [1.0, 0.98, 0.94], MID = [0.55, 0.78, 1.0];
+              for (let v = 0; v < pos.count; v++) {
+                const t = clamp(-pos.getY(v) / (0.34 * s), 0, 1);
+                // white throat → blue body → nothing, with the fade weighted
+                // late so the plume has a body rather than a gradient
+                const f = (1 - t) ** 1.6;
+                col[v * 3] = (HOT[0] * (1 - t) + MID[0] * t) * f;
+                col[v * 3 + 1] = (HOT[1] * (1 - t) + MID[1] * t) * f;
+                col[v * 3 + 2] = (HOT[2] * (1 - t) + MID[2] * t) * f;
+              }
+              geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+            }
             const m = new THREE.Mesh(geo, flame);
-            m.position.set(sx * 0.090 * s, -0.118 * s, -0.226 * s);
+            m.position.set(sx * 0.100 * s, -0.140 * s, -0.262 * s);
             m.rotation.set(0.24, 0, sx * 0.12);
             m.scale.set(1, 0.001, 1);
             m.castShadow = false; m.receiveShadow = false;

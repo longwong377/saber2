@@ -183,6 +183,8 @@ const _v7 = new THREE.Vector3();
 /** The object a rig's pose hangs off, or null. Used only by the hover lean. */
 function rigRootOf(e) { return e.rig?.root || null; }
 const _q1 = new THREE.Quaternion(), _q2 = new THREE.Quaternion();
+/* Scratch for the jet flight pose — see `_poseJetLegs`. */
+const _eu = new THREE.Euler();
 const _m1 = new THREE.Matrix4();
 /**
  * How far the wrist has to pitch DOWN for the bore to land on the aim.
@@ -4564,6 +4566,55 @@ export class Enemy {
    *
    * @param power 0..1.6 — how hard the engines are working right now.
    */
+  /**
+   * A MAN HANGING FROM A PACK, from the waist down.
+   *
+   * Nobody flies with their legs walking. Under a jump pack the legs trail —
+   * thighs swept back from the hips, knees broken, toes pointed — and they
+   * swing forward to take the landing as the body slows. Two poses and a blend
+   * between them off the horizontal speed, which is the same number the lean
+   * is derived from, so the whole body reads as one attitude.
+   *
+   * Written straight onto the bones AFTER `animator.update`, because the
+   * animator is solving a gait against ground 1.35 m below and will keep doing
+   * so — this is the override, not a negotiation with it. Every rotation is
+   * relative to the bone's own `restQuat`, so it composes with a rig of any
+   * scale and leaves a body that stops floating exactly where it was.
+   */
+  _poseJetLegs(dt) {
+    const rig = this.rig;
+    if (!rig) return;
+    const sp = Math.hypot(this.velocity.x, this.velocity.z);
+    // 0 hovering, 1 at a cruise — how far back the legs are swept.
+    const run = clamp(sp / 5.5, 0, 1);
+    this._jetTuck = damp(this._jetTuck ?? 0, run, 5, dt);
+    const k = this._jetTuck;
+    /* Hover: knees a little bent, feet under the man, as if standing on air —
+     * which is what a pack rider holding station actually looks like.
+     * Cruise: thighs back, knees folded, toes trailing. */
+    const thigh = lerp(-0.22, -0.62, k);
+    const shin = lerp(0.34, 1.05, k);
+    const foot = lerp(0.10, 0.42, k);
+    const bend = (name, x, z = 0) => {
+      const b = rig.get?.(name);
+      if (!b?.obj || !b.restQuat) return;
+      /* PRE-multiplied, not post. `restQuat` already turns the bone down its
+       * own axis, so composing after it rotates in the BONE's frame and a
+       * "swing the thigh back" comes out as a twist about the leg. Applying the
+       * swing in the PARENT's frame — q · rest — is the one that means what it
+       * says, and it is the same order `_wristPole` uses on the arms. */
+      _q1.setFromEuler(_eu.set(x, 0, z));
+      b.obj.quaternion.copy(_q1).multiply(b.restQuat);
+    };
+    // a little asymmetry, so the two legs are not one leg drawn twice
+    for (const [sfx, sgn] of [['L', 1], ['R', -1]]) {
+      const w = 1 + sgn * 0.10 * Math.sin(this.hoverPhase * 0.8);
+      bend(`thigh${sfx}`, thigh * w, sgn * 0.05 * k);
+      bend(`shin${sfx}`, shin * w);
+      bend(`foot${sfx}`, foot * w);
+    }
+  }
+
   _jetFx(dt, ctx, power) {
     const jets = this.rig?.jets;
     if (!jets || !jets.length) return;
@@ -4597,6 +4648,30 @@ export class Enemy {
           drag: 1.6, gravity: 0.4, color: 0x9aa6b4, alpha: 0.16 });
         P.plasma?.spawn?.(_v6, _v7, { life: 0.14, size: 0.10 + this._jetShow * 0.10,
           drag: 2.2, gravity: 0, color: 0x9fd0ff, alpha: 0.5 });
+      }
+    }
+    /* ── AND THE GROUND KNOWS HE IS THERE ──────────────────────────────
+     *
+     * Two exhausts pointed at the deck from a metre and a bit up move sand,
+     * and the absence of that is a large part of why a hovering man reads as
+     * levitating rather than as thrusting: the world under him was completely
+     * indifferent to him. A body that disturbs the ground it is over is being
+     * held UP by something.
+     *
+     * Only close to the deck, and it falls off with height — at cruise there is
+     * nothing under him to move. `groundColor` is the level's own, so this is
+     * sand on the dunes and ash on the shelf without anything being told which
+     * it is. */
+    if (P && this.world?.terrain) {
+      const gh = this.world.terrain.height(this.position.x, this.position.z);
+      const air = this.position.y - gh;
+      const wash = clamp(1 - air / 3.4, 0, 1) * clamp(this._jetShow, 0, 1);
+      this._washPuff = (this._washPuff || 0) - dt * (1 + wash * 30);
+      if (wash > 0.05 && this._washPuff <= 0) {
+        this._washPuff = 1;
+        const a = rng() * TAU, r = 0.25 + rng() * 0.7;
+        _v6.set(this.position.x + Math.cos(a) * r, gh + 0.05, this.position.z + Math.sin(a) * r);
+        P.sandPuff?.(_v6.clone(), 0.35 + wash * 0.6, gh, this.world.groundColor);
       }
     }
     /* AND IT IS AUDIBLE. `audio.jet` is a positional loop that follows the
@@ -7214,7 +7289,20 @@ export class Enemy {
       /* THE ENGINES ANSWER WHAT THE BODY IS DOING, which is the whole read.
        * Climbing hard is a long white plume; holding station is a pilot
        * flame. `_jetFx` also owns the noise. */
-      this._jetFx(dt, ctx, clamp(0.22 + Math.max(0, this.velocity.y) * 0.42 + sp * 0.05, 0, 1.6));
+      /* THE FLOOR IS THE WHOLE OF "I STILL DON'T SEE THEIR THRUSTERS".
+       *
+       * This was 0.22 at hover, and 0.22 is what the flame length and the
+       * opacity are both scaled by: a 34 cm cone drawn at 0.22 of its length is
+       * a 7 cm tongue at 42 % alpha, behind a body, at whatever range a jet
+       * trooper is usually seen. It was on the whole time and it was never
+       * visible, which is indistinguishable from not being there.
+       *
+       * 0.62 holding station, because a man is being held against gravity and
+       * that is not a pilot light — the engines are doing real work every
+       * second he is up there. Climb and speed still add on top, so a trooper
+       * boosting up over cover still shows the long white plume the flame was
+       * built for; the difference is that the hover now shows something too. */
+      this._jetFx(dt, ctx, clamp(0.62 + Math.max(0, this.velocity.y) * 0.42 + sp * 0.06, 0, 1.6));
       this._syncBody();
       return;
     }
@@ -7490,6 +7578,18 @@ export class Enemy {
        * same order — and nothing else in the frame moves.
        */
       if (A.float && rigRootOf(this)) {
+        /* THE LEGS, WHICH WERE STILL WALKING TO WORK.
+         *
+         * The animator is handed `grounded: false` and a `groundAt` probe, and
+         * it does the honest thing with them — it solves a gait against a floor
+         * that is 1.35 m below the body. So a hovering trooper hangs there with
+         * his legs reaching down for a surface he is nowhere near, cycling
+         * slowly. "Their bodies look really weird in the air" is that: not a
+         * missing pose, a GROUND pose running in mid-air.
+         *
+         * Applied after the animator for the same reason the lean is — this is
+         * an attitude, not a gait, and it has to win. */
+        this._poseJetLegs(dt);
         const root = rigRootOf(this);
         root.rotation.x = this.jetLean ?? 0;
         root.rotation.z = this.jetRoll ?? 0;
