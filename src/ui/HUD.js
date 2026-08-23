@@ -1093,6 +1093,13 @@ export class HUD {
       /* The standing order — see _missionPanel. Six nodes and no markup that
        * says anything: the grid, the clock, the estimate, the reading, the
        * verdict and the key. */
+      /* The front, and the four nodes that draw it. See _frontBar. */
+      front: root.getElementById('hud-front'),
+      frMark: root.getElementById('fr-mark'),
+      frHeld: root.getElementById('fr-held'),
+      frMine: root.getElementById('fr-mine'),
+      frTheirs: root.getElementById('fr-theirs'),
+      frState: root.getElementById('fr-state'),
       mission: root.getElementById('firemission'),
       fmGrid: root.getElementById('fm-grid'),
       fmClock: root.getElementById('fm-clock'),
@@ -1413,6 +1420,56 @@ export class HUD {
    * a second for a clock that ticks in whole seconds is a HUD that costs frames
    * for nothing.
    */
+  /**
+   * THE FRONT — PLAN.md §1's "two lines make the front", drawn.
+   *
+   * `CommandDirector.front` is a scalar in [-1, +1] and it is the whole state
+   * of a meeting: 0 is the middle of the field, +1 is your own baseline, and a
+   * side wins by driving it to the other's. Nothing in the tree read it. The
+   * mode's own sentence — "the front moves because a general left his line at
+   * the wrong moment" — is unlearnable if the moment is invisible, so this is
+   * the readout that makes the rule teachable: it moves while your line is
+   * gathered AND past it, and it stops the instant you outrun them.
+   *
+   * THE SIGN IS THE PLAYER'S, not the field's. `front` is written in absolute
+   * terms (side 0 drives it to -1), and a bar that ran the wrong way for
+   * whichever commander is on side 1 would be a HUD that lies to half a
+   * meeting. Everything below is in "ground you have taken", so the two
+   * players see mirror images of one battle and both of them see the truth.
+   */
+  _frontBar(world) {
+    const host = this.el.front;
+    if (!host) return;
+    const d = world?.command;
+    if (!d?.versus || d.front === undefined) {
+      if (this._frKey !== '') { host.classList.add('hidden'); this._frKey = ''; }
+      return;
+    }
+    const mine = world.player?.team ?? 0;
+    /* +1 is side 0's baseline, so a commander on side 1 reads the negative. */
+    const won = (mine === 0 ? d.front : -d.front) ?? 0;
+    const pct = clamp(won, -1, 1) * 50;
+    const cs = d.commanders || [];
+    const nameOf = (side) => cs.find((c) => c.side === side)?.army?.name || (side === mine ? 'YOURS' : 'THEIRS');
+    const state = Math.abs(won) < 0.02 ? 'contested' : won > 0 ? 'you are pushing' : 'you are giving ground';
+    const key = `${Math.round(pct * 2)}|${state}|${nameOf(mine)}|${nameOf(1 - mine)}`;
+    if (key === this._frKey) return;
+    this._frKey = key;
+    host.classList.remove('hidden');
+    host.classList.toggle('theirs', won < 0);
+    host.classList.toggle('pushing', won > 0.02);
+    host.classList.toggle('losing', won < -0.02);
+    this.el.frMark.style.left = `${50 + pct}%`;
+    /* The fill runs FROM the middle TO the mark, either way, so the shape says
+     * how much ground has changed hands rather than where a marker happens to
+     * be sitting. */
+    this.el.frHeld.style.left = `${50 + Math.min(0, pct)}%`;
+    this.el.frHeld.style.width = `${Math.abs(pct)}%`;
+    this.el.frMine.textContent = nameOf(mine);
+    this.el.frTheirs.textContent = nameOf(1 - mine);
+    this.el.frState.textContent = state;
+  }
+
   _missionPanel(world) {
     const host = this.el.mission;
     if (!host) return;
@@ -2305,6 +2362,9 @@ export class HUD {
     this._stratagemPanel(player);
     /* The standing order, above it in the same column. */
     this._missionPanel(world);
+    /* …and the front, under the wave. Both are readouts of a mode rather than
+     * of a body, so both are written once a frame from the director. */
+    this._frontBar(world);
 
     /**
      * ── the room, and what it has to say about itself

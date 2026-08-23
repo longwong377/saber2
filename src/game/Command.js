@@ -6687,6 +6687,7 @@ export class CommandDirector extends WaveDirector {
        * players each solving a twenty-man circle would put every man in four
        * different places and hand the frame to whichever loop ran last. */
       const squads = this.squadsOf(c);
+      this._gravesFelt(dt, c);
       let i = 0;
       let n = 0;
       for (const sq of squads) n += sq.length;
@@ -6761,6 +6762,49 @@ export class CommandDirector extends WaveDirector {
           this._clearBlade(e, c, dt);
         }
       }
+    }
+  }
+
+  /**
+   * THEY ARE WALKING PAST THEIR OWN DEAD — PLAN.md §4.8's third bullet.
+   *
+   * "A marker where each man of the company fell, on that ground, in later
+   * runs, with the surviving squad's morale reacting when they walk past it."
+   * `src/world/Graves.js` is the first half and this is the second: the ground
+   * remembering and the men minding are one mechanism, which is what that
+   * bullet means by "one system with §4.7's ground memory, not two".
+   *
+   * ── ONE MAN A FRAME, AND THAT IS THE WHOLE COST ────────────────────────
+   *
+   * Every living body against every marker is 24 × 64 distance tests a frame in
+   * a mode whose frame budget PLAN.md §4.3 is entirely about. So this walks
+   * ONE man per commander per frame, round-robin: at 30 Hz a twelve-man line is
+   * sampled two and a half times a second, which is four times finer than the
+   * cooldown the reaction is rate-limited by. A man cannot walk past a grave
+   * without being asked, and nothing is asked twice.
+   */
+  _gravesFelt(dt, c) {
+    const graves = this.world?.graves?.entries;
+    if (!graves?.length) return;
+    const living = c?.roster?.living || [];
+    if (!living.length) return;
+    const k = (c._graveCursor = ((c._graveCursor | 0) + 1) % living.length);
+    const t = living[k];
+    const e = t?.body;
+    if (!e || e.dead || e.downed) return;
+    t._graveT = Math.max(0, (t._graveT || 0) - dt * living.length);
+    if (t._graveT > 0) return;
+    const r2 = MORALE.GRAVE_FELT * MORALE.GRAVE_FELT;
+    for (const g of graves) {
+      const dx = g.x - e.position.x, dz = g.z - e.position.z;
+      if (dx * dx + dz * dz > r2) continue;
+      /* HIS OWN, and never his own marker: a man cannot walk past the place he
+       * himself fell, but a roster that reuses a name across a campaign could
+       * hand him one. The name is the only identity a grave keeps. */
+      if (g.name === t.name) continue;
+      t._graveT = MORALE.GRAVE_COOLDOWN;
+      this.shake(t, 'PASSED_GRAVE', c);
+      return;
     }
   }
 

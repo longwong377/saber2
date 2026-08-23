@@ -1304,6 +1304,20 @@ export function packSnapshot(world) {
     // "next wave in 0" for the whole 5.5 s between waves and never printed
     // "attune" during a draft it was simultaneously being offered.
     ic: r2(world.director.intermission || 0),
+    /**
+     * WHERE THE FRONT IS — PLAN.md §4.5's kill criterion, in one field.
+     *
+     * "If two commanders cannot be kept in agreement on `lineIsUp`, the mode's
+     * win condition desyncs and it needs a host authority." It has one:
+     * `CommandDirector._front` runs inside the director's own update, a
+     * client's director is a shell that never steps, and the scalar it moves is
+     * the whole state of a meeting — so the honest answer is not to make both
+     * machines compute it but to send the number the host computed.
+     *
+     * `undefined` in every mode that is not a meeting, and `r2` because a front
+     * is drawn as a bar and two decimal places is a fifth of a pixel on it.
+     */
+    fr: world.command?.versus ? r2(world.command.front ?? 0) : undefined,
     sc: Math.round(world.score),
   };
   fires.length = 0;

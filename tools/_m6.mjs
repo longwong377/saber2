@@ -49,11 +49,22 @@
  *
  * ── WHAT IS MEASURED ──────────────────────────────────────────────────────
  *
- * `areasTaken` per game-minute, because taking ground is what the mode is, and
- * beside it the kills and the roster so a run that killed more and advanced
- * less is visible as exactly that. No bar is applied: whether an interaction of
- * a given size is "it pays" is a judgement, and the point of the numbers is to
- * make it against them rather than against a reading of the source.
+ * HOW LONG THE LINE LASTS, in game-seconds, is the headline — and it is not the
+ * first thing this instrument measured. `areasTaken` per minute is the mode's
+ * own scoring and it is too coarse at this horizon: measured, four arms at four
+ * minutes, three of the four took ZERO ground and every arm lost its whole
+ * roster. A metric that reads 0.000 in three cells cannot carry an interaction.
+ *
+ * What every arm does do is DIE, at a rate the arms differ in, so the run's
+ * length is the finest thing available at a price that can be paid — a ten-man
+ * line with no muster behind it is spent in three to four minutes, which is the
+ * mode's real difficulty and is also why `theline.19` holds the army immortal
+ * to time a sitting at all. `wave`, the kills and the roster are printed beside
+ * it, and the ground is still printed because when it moves it is the answer.
+ *
+ * No bar is applied: whether an interaction of a given size is "it pays" is a
+ * judgement, and the point of the numbers is to make it against them rather
+ * than against a reading of the source.
  */
 
 import './dom-shim.mjs';
@@ -85,7 +96,7 @@ const { Objective } = await import('../src/game/Objectives.js');
  * 14 — and near enough that the men are in the battle rather than sightseeing.
  * The same number in all four arms.
  */
-const POST = 34;
+const POST = 18;
 
 async function arm({ seed, jedi, battery }) {
   const { world } = await bootWorld({
@@ -176,13 +187,14 @@ const perMin = (a) => mean(a, 'areas') / (mean(a, 'played') / 60 || 1);
 console.log('\n  M6 — does the Battery make the Jedi worth more? (PLAN.md §4.2)');
 console.log(`  ${SEEDS} seeds × ${MINUTES} min × 4 cells · ${((cpu.user + cpu.system) / 1e6).toFixed(0)} s CPU `
   + `at load ${loadavg()[0].toFixed(2)}\n`);
-console.log('  jedi  battery  areas/min    kills   living  fallen  payouts  wave');
+console.log('  jedi  battery   survived  areas/min    kills   living  fallen  payouts  wave');
 const T = {};
 for (const jedi of [true, false]) {
   for (const battery of [true, false]) {
     const a = cell(jedi, battery);
-    T[`${jedi}/${battery}`] = perMin(a);
-    console.log(`  ${String(jedi).padEnd(5)} ${String(battery).padEnd(8)} ${perMin(a).toFixed(3).padStart(9)} `
+    T[`${jedi}/${battery}`] = mean(a, 'played');
+    console.log(`  ${String(jedi).padEnd(5)} ${String(battery).padEnd(8)} ${mean(a, 'played').toFixed(1).padStart(9)} `
+      + `${perMin(a).toFixed(3).padStart(10)} `
       + `${mean(a, 'kills').toFixed(1).padStart(8)} ${mean(a, 'living').toFixed(1).padStart(8)} `
       + `${mean(a, 'fallen').toFixed(1).padStart(7)} ${mean(a, 'payouts').toFixed(1).padStart(8)} `
       + `${mean(a, 'wave').toFixed(1).padStart(5)}`);
@@ -191,9 +203,9 @@ for (const jedi of [true, false]) {
 
 const withGun = T['true/true'] - T['false/true'];
 const without = T['true/false'] - T['false/false'];
-console.log(`\n  what a Jedi is worth WITH a battery on the field: ${withGun.toFixed(3)} areas/min`);
-console.log(`  …and WITHOUT one:                                 ${without.toFixed(3)} areas/min`);
-console.log(`  the interaction §4.2 asks for:                     ${(withGun - without).toFixed(3)}`);
+console.log(`\n  what a Jedi is worth WITH a battery on the field: ${withGun.toFixed(1)} s of run`);
+console.log(`  …and WITHOUT one:                                 ${without.toFixed(1)} s`);
+console.log(`  the interaction §4.2 asks for:                     ${(withGun - without).toFixed(1)} s`);
 console.log('\n  Positive is the section paying: the men on the gun are out of the quorum, so the');
 console.log('  line holding it is the weaker line, and the Jedi is what makes up the difference.');
 console.log('  No bar is applied — §4.2\'s own words are "if not, it is decoration".\n');

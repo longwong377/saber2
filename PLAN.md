@@ -695,10 +695,51 @@ AFTER M5 — the chain, in dependency order
      on your own men (120 hp against 42) and `killerName` names them: every
      man they kill enters the after-action report as "by your own fire
      mission".
-  6  §4.7 Dig In, finite cover, weather, graves
-  7  §4.6 variance ......................... two facets must move the quorum
-  8  §4.5 co-op and versus ................. B0 already built the mode; this
-     is the second human in it
+  6  §4.7 Dig In, finite cover, weather, graves ... BUILT, all four.
+     DIG IN is `FORMATIONS.digin` and `CommandDirector._digTick`: a squad
+     turns its own planted ground into a position in 22 s with its hands
+     full (a digging squad holds its fire), cut through `Terrain.crater`
+     so `CraterLog` carries it into the next engagement. Measured on a
+     real world at the shipped LOW tier, twelve rays from a shooter's
+     muzzle to a chest — flat 0/12 blocked, one shell crater 2/12, a dug
+     position 12/12. The defilade is SYMMETRIC and that is the trade: a
+     chest and a muzzle are 2 cm apart on every body in this game.
+     FINITE COVER was already true and nobody had measured it: a real
+     sitting stood 54 props at deploy and 49 six minutes later, off 137
+     hits nobody aimed at cover.
+     GRAVES are `src/world/Graves.js` — a named man leaves his rifle in
+     the dirt where he fell, for the run, two draw calls for all of them.
+     WEATHER was the expensive error in this section. "Entirely unbuilt,
+     five systems" is wrong: `Scenery.js` ships a full `Weather` and all
+     seven grounds author a squall. What was missing was that nothing
+     ever asked whether you could see through it. One number now — what
+     the storm ADDS to the level's own fog — reaches the model that
+     already decides what a shooter can see, and at each ground's own
+     peak a rifle's sight falls to 19–34 m.
+  7  §4.6 variance ......................... SIX RULE FACETS BUILT, and two
+     of them move the quorum, which is what this item was gated on.
+     Skirmish Order takes the ground on a THIRD of the living and halves
+     the muster; Triage counts a man on the ground while somebody is
+     standing over him. Beside them: Stand Fast (a rout becomes a place),
+     Field Engineering (§4.7's positions in half the time), Storm Sense
+     (the one thing allowed to break the sight model's symmetry) and
+     Salvage (§4.6's own example — breaking cover pays Insight). Each is
+     measured A/B on the same bodies in the same places in
+     `tools/checks/variance.mjs`. STILL OWED from this section: the
+     holocron offering three of the legal facets rather than all of them,
+     the branching route, player-authored difficulty, composition
+     constraints, and the modifier caps.
+  8  §4.5 co-op and versus ................. THE SECOND HUMAN IS IN IT, and
+     was before this line was written: `seatAlly`, `beginVersus`,
+     `formUp`, four commanders as two sides, orders, musters and purses
+     across the wire, all held by `command-pvp.mjs`. What was owed was
+     this section's own KILL — "if two commanders cannot be kept in
+     agreement on `lineIsUp`, the mode's win condition desyncs and it
+     needs a host authority". It has one: `_front` runs in the director's
+     own update and a client's director is a shell that never steps. The
+     scalar is on the wire now (`packSnapshot.fr`), so both machines read
+     the number the host computed — and it is DRAWN, which it never was:
+     the whole state of a meeting was a field nothing in the tree read.
   9  §4.3 density → animate the instanced rung → per-object ink prepass
      ....................................... needs M3, M4, B1, and 1
 ```

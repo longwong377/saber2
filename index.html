@@ -819,6 +819,27 @@
          write `{n, w}`, and a branch with no number ("attune", "free
          practice") leaves the b empty and the word carries the line. -->
     <div id="hud-remaining" class="wave-sub"><b id="hud-left"></b><span id="hud-left-word"></span></div>
+    <!--
+      THE FRONT — the whole state of a meeting, and until now it was a number
+      one object held and nothing drew.
+
+      `CommandDirector.front` is a scalar in [-1, +1]: 0 is the middle of the
+      field, +1 is your own baseline and -1 is theirs, and a side wins by
+      driving it to the other's. It moves only while a commander's line is
+      GATHERED and PAST it — which is the whole design of the mode ("the front
+      moves because a general left his line at the wrong moment") — and a
+      player could not see it move at all. It is drawn here, under the wave,
+      because it is the one number in that mode that is worth more than the
+      wave index.
+
+      Everything in it is written by HUD._frontBar off the director; the two
+      army names come off the commanders' own armies, and the bar is hidden in
+      every mode that is not a meeting.
+    -->
+    <div id="hud-front" class="fr hidden" aria-hidden="true">
+      <div class="fr-track"><i id="fr-mark"></i><u id="fr-held"></u></div>
+      <div class="fr-caps"><span id="fr-mine">—</span><em id="fr-state"></em><span id="fr-theirs">—</span></div>
+    </div>
   </div>
 
   <div class="hud-tr">

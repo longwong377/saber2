@@ -46,6 +46,23 @@ export const MORALE = {
   AREA_HELD: 0.5,
   /** Their own health, per second, below a third. */
   WOUNDED: -0.10,
+  /**
+   * THEY WALKED PAST ONE OF THEIR OWN GRAVES — PLAN.md §4.8's third bullet,
+   * whose second half is "with the surviving squad's morale reacting when they
+   * walk past it".
+   *
+   * `src/world/Graves.js` puts a rifle in the ground where each named man fell
+   * and keeps it there for the run, so a line that fights back over ground it
+   * took an hour ago walks through its own casualty list. This is what that
+   * costs the men who are still standing.
+   *
+   * SMALL, and deliberately a fifth of `COMRADE_FELL`: the death itself is the
+   * event and this is the memory of it. Rate-limited per man (see
+   * `GRAVE_COOLDOWN`) so a squad ordered to hold a position among six markers
+   * is shaken by the ground once rather than six times a second, which would
+   * turn a hard-won piece of ground into a rout on its own.
+   */
+  PASSED_GRAVE: -0.03,
   /** Per second within `NEAR` of a living commander who is on their side. */
   LEADER_NEAR: 0.055,
   /** …and of the Jedi themselves, which is worth more. */
@@ -151,6 +168,17 @@ export const MORALE = {
   BREAK: 0.24,
   /** Below this it will not take an order at all. */
   REFUSE: 0.10,
+  /**
+   * HOW OFTEN ONE MAN CAN BE MOVED BY THE GROUND, in seconds. See
+   * `PASSED_GRAVE`.
+   *
+   * Twenty, which is about a third of the time it takes a shaken man to climb
+   * back to steady, so walking a line across a battlefield full of its own
+   * dead is a real drag on it and standing still in one is not a spiral.
+   */
+  GRAVE_COOLDOWN: 20,
+  /** How close a man has to pass one to feel it, in metres. */
+  GRAVE_FELT: 5,
   /** How fast a broken body recovers its nerve once it is out of contact. */
   RALLY_PER_S: 0.05,
   /**

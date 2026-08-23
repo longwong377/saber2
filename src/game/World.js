@@ -6665,6 +6665,11 @@ export class World {
     this.director.active = !!msg.act;
     this.director._netRemaining = msg.rem;
     this.director.intermission = msg.ic ?? 0;
+    /* THE FRONT IS THE HOST'S — see `packSnapshot`'s `fr`. A client's director
+     * never runs `_front`, so without this line the bar every player in a
+     * meeting is reading would sit at the middle of the field for the whole
+     * battle on every machine but one. */
+    if (msg.fr !== undefined && this.command) this.command.front = msg.fr;
     this.score = msg.sc;
     this._netWaveEdge(msg);
   }

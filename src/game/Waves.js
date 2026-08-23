@@ -34,16 +34,18 @@
  *               before wave ~92. They are also a choice made before Ignite now,
  *               in force from wave 1 and never charged. See the RUN RULES block.
  *
- * And the player grows with it: forty boons drafted every second wave, weighted
+ * And the player grows with it: forty-six boons drafted every second wave, weighted
  * by rarity that moves with depth, with six masteries gated on already having
  * committed to an axis. `budgetFor`'s one constant is derived from that draft
  * rate, because the two are one decision.
  *
  * (Those two counts said "twenty-nine" and "five" for a long time while the
- * table grew to forty and six. A count written in prose beside a list is the
- * same defect as a card that promises what it does not do, and it is the one
- * this codebase keeps having — so tools/checks/claims.mjs now reads these two
- * sentences and counts the arrays, and they cannot drift apart again.)
+ * table grew to forty and six, and the first said "forty" for as long as it
+ * took PLAN.md §4.6's six rule facets to land. A count written in prose beside
+ * a list is the same defect as a card that promises what it does not do, and it
+ * is the one this codebase keeps having — so tools/checks/claims.mjs reads
+ * these two sentences and counts the arrays, and the drift is caught in the
+ * same session that causes it rather than in a reader's memory.)
  */
 
 import * as THREE from 'three';

@@ -716,11 +716,27 @@ export async function run({ check, assert }) {
       eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14,
       fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20,
       thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90 };
+    /**
+     * A COUNT WRITTEN AS PROSE, INCLUDING A HYPHENATED ONE.
+     *
+     * `(\w+)` cannot see a hyphen, so "forty-six boons drafted" was read as
+     * SIX and the check failed claiming the header said 6 where the table held
+     * 46 — a red about the code, caused by the instrument being unable to read
+     * the most natural way to write any number past twenty. Every count in this
+     * game's prose is going to be hyphenated sooner or later, so the pattern
+     * takes the tens-and-units form and sums it.
+     */
     const num = (text, after) => {
-      const m = new RegExp(`(\\w+)\\s+${after}`, 'i').exec(text);
+      const m = new RegExp(`([\\w-]+)\\s+${after}`, 'i').exec(text);
       if (!m) return null;
       const w = m[1].toLowerCase();
-      return WORDS[w] ?? (/^\d+$/.test(w) ? +w : null);
+      if (/^\d+$/.test(w)) return +w;
+      if (WORDS[w] !== undefined) return WORDS[w];
+      const parts = w.split('-');
+      if (parts.length === 2 && WORDS[parts[0]] !== undefined && WORDS[parts[1]] !== undefined) {
+        return WORDS[parts[0]] + WORDS[parts[1]];
+      }
+      return null;
     };
     const rows = [];
     const claims = [
