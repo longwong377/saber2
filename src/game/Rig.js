@@ -415,6 +415,24 @@ export class Rig {
     return out.setFromMatrixPosition(b.obj.matrixWorld);
   }
 
+  /**
+   * The same, but pulling this bone's own ancestry first — the reader's version
+   * of the argument `solveIK` already makes.
+   *
+   * `worldPos` reads a matrix somebody else was supposed to have refreshed, so
+   * a caller that has just written the hips and wants a thigh has to make the
+   * whole tree current before it can ask. That is the walk this exists to stop
+   * paying for: `updateWorldMatrix(true, false)` recomposes the chain from the
+   * root down to this one bone and nothing below it, which is the ancestry the
+   * answer actually depends on.
+   */
+  freshPos(name, out = new THREE.Vector3()) {
+    const b = this.bones.get(name);
+    if (!b) return out.set(0, 0, 0);
+    b.obj.updateWorldMatrix(true, false);
+    return out.setFromMatrixPosition(b.obj.matrixWorld);
+  }
+
   /** World position of the far end of a bone. */
   tipPos(name, out = new THREE.Vector3()) {
     const b = this.bones.get(name);
@@ -1722,7 +1740,35 @@ export class BipedAnimator {
           -chestRoll * 0.8 - pelvisList * 0.25, 'XYZ')));
     }
 
-    rig.updateMatrices();
+    /**
+     * ── THE WALK THAT IS NOT HERE ─────────────────────────────────────
+     *
+     * This was `rig.updateMatrices()`, and it was a third of the frame's
+     * entire matrix work: a forced `updateMatrixWorld` on the rig root, which
+     * re-multiplies every one of the ~66 objects a body owns — both arms, the
+     * head, the weapon, every cloth anchor — twice per solved body per frame,
+     * because the gait ends with the same call thirty lines down.
+     *
+     * The note over `solveIK` already made this argument for the IK's three
+     * sites and left the gait's two standing. Between here and the closing
+     * walk NOTHING reads a descendant that is not refreshed on its own way in:
+     * `solveIK` pulls its own ancestry, `aimBoneWorld` goes through
+     * `getWorldQuaternion` which pulls its own, and the single remaining reader
+     * — the hip position the knee pole is anchored to — now asks `freshPos`,
+     * which pulls the chain down to that one bone.
+     *
+     * MEASURED as node VISITS, the same instrument and the same discipline as
+     * the `solveIK` note. `tools/_framecost.mjs`'s CENSUS moment, which fixes
+     * the population at 12 hand-placed bodies and the player so the number is
+     * comparable between runs:
+     *
+     *     3257 visits/frame from 58 calls   ->   2357 from 45
+     *     251 per body                      ->   181
+     *
+     * The pose is unchanged — the closing walk below still makes the whole tree
+     * current for everything downstream, so no consumer ever sees a stale
+     * matrix. What is gone is making it current TWICE.
+     */
 
     /* ── legs ─────────────────────────────────────────────────────────── */
     for (let i = 0; i < 2; i++) {
@@ -1749,7 +1795,7 @@ export class BipedAnimator {
       // Anchored to the HIP rather than to the foot: a knee belongs under the
       // joint it hangs from whatever the foot below it is doing, which also
       // keeps the pole sane when the foot is out at the end of a long stride.
-      rig.worldPos(upper, _b4);
+      rig.freshPos(upper, _b4);
       _b6.addScaledVector(left,
         -_b3.subVectors(_b6, _b4).dot(left) - f.side * this.kneeIn);
       const ankle = _b7.copy(f.pos).addScaledVector(f.normal, this.ankleY);

@@ -274,10 +274,17 @@ export async function run({ check, assert }) {
      *
      * THE BOUND IS A RATIO to the body's own graph, not a number of visits.
      * A Jedi is 84 objects and an AT-TE is many more, and "how many times
-     * over did we walk this thing" is the question in both cases. Anything
-     * at or above 3x is a pose that has walked the body three times to move
-     * it once, which is what the shipped code did (4.36x) before `solveIK`
-     * stopped forcing its DESCENDANTS.
+     * over did we walk this thing" is the question in both cases.
+     *
+     * The floor is 1.00x — one walk, which is what a pose has to do — and that
+     * is now where it sits, so the bound is 1.6 rather than the 3 it was.
+     * Anything above means a second full walk has come back:
+     *
+     *     4.36x   shipped, before `solveIK` stopped forcing its DESCENDANTS
+     *     2.00x   after that: the gait made the whole tree current twice, once
+     *             before the legs and once after
+     *     1.00x   after the first of those became `freshPos` on the one bone
+     *             it existed to serve — see the note in `BipedAnimator.update`
      */
     const { Rig, BipedAnimator } = await import('../../src/game/Rig.js');
     const { buildJedi } = await import('../../src/game/Bodies.js');
@@ -331,16 +338,17 @@ export async function run({ check, assert }) {
     assert(nodes > 40, `the test rig is only ${nodes} objects — nothing was built`);
     assert(per > 1, 'no matrix work was counted at all, so this measured nothing');
     const ratio = per / nodes;
-    assert(ratio < 3,
+    assert(ratio < 1.6,
       `one walking body re-poses itself ${ratio.toFixed(2)}x its own graph every frame — `
       + `${per.toFixed(0)} matrix node-visits over ${nodes} objects, from ${callsPer.toFixed(0)} calls. `
       + 'A forced updateMatrixWorld walks DOWN, so calling it on a bone re-multiplies every object '
       + 'below that bone; on a hips bone that is the whole skeleton and everything it wears. What a '
       + 'solve needs is its ANCESTORS — updateWorldMatrix(true, false). This measured 4.36x before '
-      + 'Rig.solveIK stopped forcing its descendants and 2.00x after; a number back over 3 means '
-      + 'something has started forcing a subtree again.');
+      + 'Rig.solveIK stopped forcing its descendants, 2.00x after, and 1.00x once the gait stopped '
+      + 'making the whole tree current twice; a number back over 1.6 means a second full walk has '
+      + 'come back.');
     return `${per.toFixed(0)} matrix node-visits a frame over a ${nodes}-object rig = `
-      + `${ratio.toFixed(2)}x, from ${callsPer.toFixed(0)} calls (was 4.36x from 26)`;
+      + `${ratio.toFixed(2)}x, from ${callsPer.toFixed(0)} calls (was 4.36x from 26, then 2.00x)`;
   });
 
   /* ══════════════════════════════════════════════════════════════════════ */
