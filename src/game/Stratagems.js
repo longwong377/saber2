@@ -2251,7 +2251,32 @@ export class Stratagems {
     /* AND THE PLAYER'S OWN MACHINES TOO — a droid on your side is a droid.
      * There is nothing to special-case: the loop above is the enemy list, which
      * in Command mode is where your own line lives. */
-    this._say(hit ? `${hit} disabled` : 'nothing to disable');
+
+    /* ── AND THE EMPLACEMENT'S DEFLECTOR, WHICH IS NOT A BODY ────────────
+     *
+     * The gun pit is a PROP, not an Enemy — deliberately, so that no bolt, no
+     * ally's rifle and no other call can touch it — and its shield is the one
+     * thing on the field a blade cannot open. This is the call that opens it,
+     * and it is this call rather than any other because an ion pulse's whole
+     * subject is machinery: the row above it stops every machine inside
+     * twenty-two metres for seven seconds, and a shield generator is a machine.
+     *
+     * Duck-typed on `ionize` rather than on a class or a `kind` string, for
+     * HANDOFF 2.4's reason: the next thing somebody puts a field on answers the
+     * same message and needs no line here. Radius is measured to the prop's
+     * own position, so a pulse called at the foot of the tower reaches it. */
+    let warded = 0;
+    const props = ctx?.props || ctx?.world?.props || this.owner?.world?.props;
+    if (props) {
+      for (const p of props) {
+        if (!p || typeof p.ionize !== 'function') continue;
+        const at = p.muzzle || p.position || p.mesh?.position;
+        if (at && at.distanceToSquared(site) > radius * radius) continue;
+        if (p.ionize()) warded++;
+      }
+    }
+    this._say(hit ? `${hit} disabled${warded ? ', shield down' : ''}`
+      : (warded ? 'shield down' : 'nothing to disable'));
     const P = ctx?.particles;
     if (!P) return { hit, dealt };
     /* THE RING, in the pool the lightning uses rather than the spark ring —
@@ -2271,7 +2296,7 @@ export class Stratagems {
         L.strike(_v2.copy(site).setY(site.y + 26), _v1, { power: 1.3, life: 0.22, chaos: 1.4 });
       }
     }
-    return { hit, dealt };
+    return { hit, dealt, warded };
   }
 
   /**

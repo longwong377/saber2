@@ -105,7 +105,7 @@ import { audio } from '../engine/Audio.js';
  * would put this file straight back on that list, and it would do it in the
  * one check whose subject is how many men a gun takes off a roster.
  */
-import { rand } from '../engine/MathUtil.js';
+import { rand, clamp } from '../engine/MathUtil.js';
 /* WHERE A BODY IS AIMED AT — one reader for the whole game, in the leaf module
  * that already owned "which point on this thing does a bolt go to". Combat.js
  * imports THREE, Physics, MathUtil, Bolts and Morale and nothing that reaches
@@ -295,8 +295,46 @@ export const GUN = {
   burst: 3, burstGap: 0.14,
 };
 
+/**
+ * THE BASTION, and every number here is a metre off a man 1.78 m tall.
+ *
+ * "It needs to be truly menacing and huge and difficult to destroy, perhaps
+ * even needing a stratagem to destroy — you had made a couple of boxes with a
+ * little satellite dish at the bottom of a mountain."
+ *
+ * That was fair. The casemate before this was 3.0 m across its face and 2.0 m
+ * tall — chest-high on a standing man, with a 2.7 m tube on it. It could not
+ * be menacing at that size whatever detail went on it, because the eye reads
+ * threat off how much of the sky a thing takes up before it reads anything
+ * else.
+ *
+ * IT GROWS UP RATHER THAN SIDEWAYS, and that is forced rather than chosen. The
+ * revetment it stands in is 17.5 m of face carrying three doors on 1.9 m piers
+ * (`magazine` in Levels.js), and a bastion wide enough to be huge would swallow
+ * the two doors either side of it. So the middle bay becomes a TOWER: 8.4 m
+ * across — the bay and its two piers — 11.6 m to the top of the roof slab, and
+ * 5.4 m of it standing proud of the 5.0 m deck. Against a man at the foot of it
+ * that is six and a half times his height, and he has to walk under the muzzle
+ * to reach the door.
+ *
+ * `trunnionY`/`trunnionZ` are where the gun pivots in the bastion's own frame,
+ * measured from the door's centre; the tube is `barrel` long and comes out
+ * through an embrasure `slotW` across, which is what the shield has to cover.
+ */
+export const BASTION = {
+  w: 8.4, h: 11.6, d: 4.6,
+  trunnionY: 4.30, trunnionZ: 1.15,
+  barrel: 9.0, bore: 0.56,
+  slotW: 5.6, slotH: 1.70,
+  /** Seconds an ion pulse holds the deflector down. Long enough to cross the
+   *  76.7 m from the muster ground and still have the twenty seconds of blade
+   *  the breach costs, and not much longer. */
+  ionDown: 34,
+};
+
 const _v = new THREE.Vector3();
 const _d = new THREE.Vector3();
+const _q = new THREE.Quaternion();
 const _up = new THREE.Vector3(0, 1, 0);
 
 /**
@@ -376,13 +414,60 @@ export class GunPit {
      * it. 0.95 m puts the muzzle 0.2 m clear of the outside face.
      */
     const n = _d.set(0, 0, 1).applyQuaternion(door.mesh.quaternion).normalize();
-    this.muzzle = door.mesh.position.clone()
-      .addScaledVector(n, 0.95)
-      .add(_v.set(0, door.height * 0.5 + 0.8, 0));
     this.facing = n.clone();
 
+    /* ── THE BASTION DOES NOT TRAVERSE. ONLY THE GUN DOES. ──────────────
+     *
+     * `update` used to swing `this.group` — the whole object — to face the
+     * target, and the whole object included the casemate. So the concrete
+     * rotated: an eleven-metre armoured tower turning on the spot to follow a
+     * trooper walking across the plain. Nobody caught it because the pit was
+     * three boxes and a cylinder and a box rotating about its own centre reads
+     * as a box.
+     *
+     * Two frames now. `group` is fixed, planted on the door's own face and
+     * oriented by the door's own quaternion; `turret` is a child of it holding
+     * the mantlet, the tube and the coils, and that is what tracks. `muzzle` is
+     * therefore derived from the turret every frame rather than being a
+     * constant, because it moves when the gun lays. */
     this.group = new THREE.Group();
+    this.group.position.copy(door.mesh.position);
+    this.group.quaternion.copy(door.mesh.quaternion);
+    this.turret = new THREE.Group();
+    /** Where the trunnions are, in the bastion's own frame. */
+    /* MEASURED FROM THE DOOR'S SILL, which is the same datum the geometry uses.
+     * `+height * 0.5` was the first cut and it put the trunnions 3.4 m — one
+     * whole door — above the embrasure they fire through, so the tube came out
+     * of a port of its own high on the face while the slot and its shield sat
+     * empty underneath. A gun and its own embrasure disagreeing by the height
+     * of the doorway is the kind of thing a render catches in a second and a
+     * check never would. */
+    this.pivot = new THREE.Vector3(0, -door.height * 0.5 + BASTION.trunnionY, BASTION.trunnionZ);
+    this.turret.position.copy(this.pivot);
+    this.group.add(this.turret);
+
+    /** THE SHIELD, and it is the whole of "difficult to destroy".
+     *
+     * Up: the plate behind it cannot be burned — `BlastDoor.burn` refuses on
+     * `warded` — so a blade on the door does nothing at all and the gun goes on
+     * firing. It is not a health bar and it cannot be worn down; there is no
+     * amount of blade that opens a warded door.
+     *
+     * Down: `ionize` collapses it for `BASTION.ionDown` seconds and the breach
+     * is live. Nothing else in the game drops it — not the blade, not a bolt,
+     * not the Force — so the answer to this position is a CALL, and the call is
+     * the ion pulse, which is the one stratagem whose whole subject is
+     * machinery. That makes the emplacement the first thing on the field that
+     * needs two of the player's systems in the right order rather than one of
+     * them for longer. */
+    this.warded = true;
+    this._down = 0;
+    this._shieldT = 0;
+
     this._build();
+    this.turret.updateMatrixWorld(true);
+    this.muzzle = new THREE.Vector3();
+    this._readMuzzle();
     world.scene?.add(this.group);
     this.mesh = this.group;
 
@@ -391,79 +476,197 @@ export class GunPit {
   }
 
   /**
-   * The mantlet and the barrel. Two boxes and a cylinder, three meshes, off the
-   * shared prop materials so it bins with the rest of the revetment — a gun
-   * that cost a new material would cost a draw call on a level whose dressing
-   * budget is already the thing `world-immersion` bounds.
+   * THE BASTION, THE DEFLECTOR AND THE GUN.
+   *
+   * All of it off `propMaterials()` — duracrete, dark steel and the two glows
+   * the revetment already pays for — so an eleven-metre tower costs no new
+   * material and no new draw-call bin on a level whose dressing budget
+   * `world-immersion` bounds.
+   *
+   * Everything is added to `group` EXCEPT the tube and what moves with it,
+   * which go on `turret`. See the note in the constructor: the concrete used to
+   * rotate.
    */
   _build() {
     const M = propMaterials();
+    const B = BASTION;
     const g = this.group;
-    g.position.copy(this.muzzle);
-    g.quaternion.setFromUnitVectors(_v.set(0, 0, 1), this.facing);
-
-    const CRETE = M.duracreteDark || M.hull;
-    const STEEL = M.darkSteel || M.hull;
-    const add = (geo, mat, x, y, z, rx = 0, ry = 0, rz = 0, shadow = true) => {
+    const CRETE = M.duracrete || M.hull;
+    const STEEL = M.darkSteel || M.steel || M.hull;
+    const GLOW = M.glowRed || M.emissive;
+    const LAMP = M.glowAmber || M.emissive;
+    const add = (geo, mat, x, y, z, rx = 0, ry = 0, rz = 0, parent = g, shadow = true) => {
       const m = new THREE.Mesh(geo, mat);
       m.position.set(x, y, z);
       m.rotation.set(rx, ry, rz);
       m.castShadow = shadow;
       m.receiveShadow = true;
-      g.add(m);
+      parent.add(m);
       return m;
     };
+    const box = (w, h, d) => new THREE.BoxGeometry(w, h, d);
+    // y is measured from the DOOR's centre, so the sill of the door is at
+    // -h/2 and the deck of the revetment is 3.3 m above it.
+    const sill = -this.door.height * 0.5;
 
-    /* ── THE FACE ──────────────────────────────────────────────────────
-     * A casemate is a sloped slab with a slot cut in it, and the slope is the
-     * whole of why it looks like armour rather than like a wall: a face raked
-     * back throws a shot up and over instead of taking it square. Two plates
-     * meeting at the embrasure do that with boxes, which is what keeps this in
-     * the revetment's own material bin. */
-    add(new THREE.BoxGeometry(3.0, 1.15, 0.5), CRETE, 0, 0.86, -0.30, -0.34);
-    add(new THREE.BoxGeometry(3.0, 0.9, 0.5), CRETE, 0, -0.72, -0.26, 0.28);
-
-    /* ── THE EMBRASURE ─────────────────────────────────────────────────
-     * Lintel, sill and two jambs. The slot between them is the thing the gun
-     * fires through, and framing it is what turns a hole into a firing port —
-     * without these four the face reads as a slab with a gap in it, which is
-     * what "just some concrete squares" was describing. */
-    add(new THREE.BoxGeometry(3.1, 0.30, 0.78), CRETE, 0, 0.36, -0.05);
-    add(new THREE.BoxGeometry(3.1, 0.26, 0.78), CRETE, 0, -0.34, -0.05);
+    /* ── THE MASS ───────────────────────────────────────────────────────
+     * One block from the sill to the roof, standing proud of the deck, plus
+     * two buttresses that carry it back into the hill. A tower with no
+     * buttress reads as a slab someone stood up; the batter on them is what
+     * says the load goes somewhere. */
+    add(box(B.w, B.h, B.d), CRETE, 0, sill + B.h * 0.5, B.d * 0.5 - 0.5);
     for (const sx of [-1, 1]) {
-      add(new THREE.BoxGeometry(0.62, 0.72, 0.80), CRETE, sx * 1.24, 0.02, -0.04);
-      // …and the shoulder each jamb carries back into the hill.
-      add(new THREE.BoxGeometry(0.5, 1.9, 1.5), CRETE, sx * 1.5, -0.1, -1.0, 0, 0, sx * 0.06);
+      add(box(1.5, B.h * 0.74, 3.4), CRETE, sx * (B.w * 0.5 - 0.2), sill + B.h * 0.36, -1.1, 0, 0, sx * 0.075);
+      // the shoulder each buttress throws forward at deck height
+      add(box(1.9, 1.5, 2.6), CRETE, sx * (B.w * 0.5 - 0.5), sill + 4.0, B.d * 0.5 + 0.6, 0.10, 0, sx * 0.04);
     }
 
-    /* THE BOLT HEADS. Six along the lintel — the one detail that gives a flat
-     * cast face a scale to be read against, and six cylinders of eight segments
-     * is nothing at all. */
-    const bolt = new THREE.CylinderGeometry(0.055, 0.055, 0.08, 8);
-    for (let i = 0; i < 6; i++) {
-      add(bolt, STEEL, -1.05 + i * 0.42, 0.36, 0.34, Math.PI / 2, 0, 0, false);
+    /* ── THE GLACIS ─────────────────────────────────────────────────────
+     * Two plates raked back to meet at the embrasure, which is the whole of
+     * why a casemate reads as armour and not as a wall: a sloped face throws a
+     * shot up and over instead of taking it square. The lower one is the
+     * steeper of the two, as it is on anything built to be shot at from the
+     * ground. */
+    const slotY = sill + B.trunnionY;
+    add(box(B.w - 0.5, 4.2, 1.1), CRETE, 0, slotY + 2.30, B.d - 0.35, -0.40);
+    add(box(B.w - 0.5, 3.6, 1.1), CRETE, 0, slotY - 2.05, B.d - 0.20, 0.52);
+
+    /* ── THE EMBRASURE ──────────────────────────────────────────────────
+     * Lintel, sill and two jambs, and the slot between them set BACK 0.9 m
+     * into the face so the gun looks out of a shadow. A slot flush with the
+     * armour is a letterbox; a recessed one is a firing port, and the reveal
+     * is what makes the difference at any distance. */
+    add(box(B.slotW + 2.2, 1.05, 1.5), CRETE, 0, slotY + B.slotH * 0.5 + 0.5, B.d + 0.15, -0.13);
+    add(box(B.slotW + 2.2, 0.85, 1.5), CRETE, 0, slotY - B.slotH * 0.5 - 0.42, B.d + 0.20, 0.16);
+    for (const sx of [-1, 1]) {
+      add(box(1.35, B.slotH + 1.9, 1.5), CRETE, sx * (B.slotW * 0.5 + 0.65), slotY, B.d + 0.15);
+      // the rebate inside the reveal, which is what gives the slot a depth
+      add(box(0.35, B.slotH, 1.0), STEEL, sx * (B.slotW * 0.5 - 0.1), slotY, B.d - 0.55);
+    }
+    add(box(B.slotW, B.slotH, 0.5), STEEL, 0, slotY, B.d - 0.95, 0, 0, 0, g, false);
+
+    /* ── THE ROOF ───────────────────────────────────────────────────────
+     * A slab with an overhanging lip. The lip is 40 cm and it is the single
+     * cheapest thing on this model: a top edge with a shadow under it reads as
+     * a finished building and a bare corner reads as a box. */
+    add(box(B.w + 0.9, 0.75, B.d + 1.1), CRETE, 0, sill + B.h + 0.3, B.d * 0.5 - 0.4);
+    add(box(B.w + 1.5, 0.30, B.d + 1.7), CRETE, 0, sill + B.h + 0.78, B.d * 0.5 - 0.4);
+    // the rangefinder mast and its head, off the roof at one shoulder
+    add(new THREE.CylinderGeometry(0.11, 0.14, 2.6, 8), STEEL, -B.w * 0.34, sill + B.h + 2.2, 0.4);
+    add(box(1.15, 0.42, 0.5), STEEL, -B.w * 0.34, sill + B.h + 3.4, 0.4, 0.18);
+    add(box(0.26, 0.14, 0.10), LAMP, -B.w * 0.34, sill + B.h + 3.4, 0.68, 0.18, 0, 0, g, false);
+
+    /* ── THE RELIEF ─────────────────────────────────────────────────────
+     * Bolt courses, cable runs, heat louvres and two hazard strobes. None of
+     * it changes the silhouette; all of it gives eleven metres of flat cast
+     * concrete a scale to be read against, which is what a face this size
+     * needs more than a small one does. */
+    const bolt = new THREE.CylinderGeometry(0.085, 0.085, 0.10, 8);
+    for (let i = 0; i < 11; i++) {
+      const x = -B.w * 0.42 + i * (B.w * 0.84 / 10);
+      add(bolt, STEEL, x, slotY + B.slotH * 0.5 + 0.5, B.d + 0.9, Math.PI / 2, 0, 0, g, false);
+      add(bolt, STEEL, x, sill + B.h - 0.55, B.d + 0.02, Math.PI / 2, 0, 0, g, false);
+    }
+    for (const sx of [-1, 1]) {
+      // the cable run up the flank into the roof
+      add(box(0.24, B.h * 0.62, 0.24), STEEL, sx * (B.w * 0.5 + 0.06), sill + B.h * 0.44, B.d * 0.5 + 0.5);
+      // heat louvres over the chamber, six a side
+      for (let i = 0; i < 6; i++) {
+        add(box(1.5, 0.13, 0.26), STEEL, sx * 2.1, slotY + 3.2 + i * 0.30, B.d + 0.34, -0.34, 0, 0, g, false);
+      }
+      // and the hazard strobe on the shoulder
+      add(new THREE.CylinderGeometry(0.17, 0.2, 0.34, 8), STEEL, sx * (B.w * 0.5 - 0.55), sill + B.h + 0.9, B.d * 0.5);
+      add(new THREE.SphereGeometry(0.15, 8, 6), GLOW, sx * (B.w * 0.5 - 0.55), sill + B.h + 1.12, B.d * 0.5, 0, 0, 0, g, false);
     }
 
-    /* ── THE GUN ───────────────────────────────────────────────────────
-     * A mantlet that moves with the barrel, a jacketed tube, trunnions it
-     * pivots on and a muzzle brake. The old gun was one plain cylinder, which
-     * is a pipe sticking out of a wall; what makes a barrel read as a barrel is
-     * that its diameter CHANGES along its length and that it is obviously held
-     * by something.
+    /* ── THE DEFLECTOR ──────────────────────────────────────────────────
+     * A shell of energy across the whole face, not a pane over the slot: the
+     * player has to be able to see at a glance that the position is shut, from
+     * the muster ground, and a 5 m pane on an 8 m tower cannot say that.
      *
-     * `this.barrel` still names the tube, because `_fire` reads it for the
-     * muzzle flash and the recoil, and `this.mantlet` is new so the recoil can
-     * take the shield with it rather than sliding the tube out of its own
-     * mounting. */
-    this.mantlet = add(new THREE.SphereGeometry(0.62, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.62),
-      STEEL, 0, 0.02, 0.10, -Math.PI / 2);
-    this.barrel = add(new THREE.CylinderGeometry(0.115, 0.15, 2.7, 10), STEEL, 0, 0.02, 1.05, Math.PI / 2);
-    // the jacket over the chamber end, and the brake at the business end
-    add(new THREE.CylinderGeometry(0.19, 0.19, 0.62, 10), STEEL, 0, 0.02, 0.42, Math.PI / 2);
-    add(new THREE.CylinderGeometry(0.17, 0.14, 0.34, 10), STEEL, 0, 0.02, 2.24, Math.PI / 2);
+     * Two surfaces on purpose — an outer skin and an inner one at 94% — because
+     * a single transparent sheet in a cel render is a flat wash. Two of them
+     * give the edge a rim where the shell turns away, which is the one place a
+     * field reads as curved rather than as a decal. `_shieldT` drives both.
+     */
+    /* A SHALLOW CAP AND NOT A BUBBLE. The first cut was a hemisphere of 5.5 m
+     * standing off the face, which enclosed the tower, the ground in front of
+     * it and the man walking up to it — and at 26% opacity it tinted all three
+     * a flat blue-grey, so the whole emplacement read as a concrete slab
+     * behind a shower screen. A field is a SURFACE the shot stops on: a
+     * shallow curve, bright at the edge where it turns away, and thin enough
+     * that the armour behind it is still armour.
+     *
+     * AND IT IS IN THE EMBRASURE, not across the whole tower. Face-wide was
+     * tried next and washed eleven metres of armour to a flat pale grey — the
+     * thing the player is supposed to find menacing, behind a screen. A field
+     * across the SLOT says the same thing about the position being shut, in
+     * the one place the eye is already going, and leaves the armour reading as
+     * armour. */
+    const shellGeo = new THREE.SphereGeometry(1, 20, 10, 0, Math.PI * 2, 0, Math.PI * 0.42);
+    this.shield = new THREE.Group();
+    this.shield.position.set(0, slotY, B.d - 0.55);
+    this.shield.rotation.x = Math.PI / 2;
+    this.shield.scale.set(B.slotW * 0.62, 1.15, B.slotH * 0.82);
+    g.add(this.shield);
+    /* NOT ADDITIVE. Additive over a sunlit concrete face, through the tone
+     * curve, is white — the field came out as a pale letterbox in the slot and
+     * read as frosted glass. A transparent standard material keeps its own
+     * colour and stays inside the cel model with everything else, which is the
+     * house rule for anything that is not a hand-written effect shader. */
+    const skin = (r, op) => new THREE.MeshStandardMaterial({
+      color: 0x04121c, emissive: 0x2ea8ff, emissiveIntensity: r, roughness: 1, metalness: 0,
+      transparent: true, opacity: op, side: THREE.DoubleSide, depthWrite: false,
+    });
+    this._shieldMats = [skin(1.4, 0.46), skin(2.4, 0.30)];
+    this.shield.add(new THREE.Mesh(shellGeo, this._shieldMats[0]));
+    const inner = new THREE.Mesh(shellGeo, this._shieldMats[1]);
+    inner.scale.setScalar(0.94);
+    this.shield.add(inner);
+    for (const m of this.shield.children) { m.castShadow = false; m.receiveShadow = false; }
+    // the two projector horns it is thrown from, which are what tell the
+    // player where the field comes from and therefore that it has a source
     for (const sx of [-1, 1]) {
-      add(new THREE.CylinderGeometry(0.07, 0.07, 0.30, 8), STEEL, sx * 0.5, 0.02, 0.30, 0, 0, Math.PI / 2);
+      add(new THREE.CylinderGeometry(0.20, 0.34, 1.5, 8), STEEL, sx * (B.w * 0.5 - 0.7), slotY - 1.5, B.d + 0.7, 0.5, 0, sx * 0.3);
+      add(new THREE.SphereGeometry(0.24, 8, 6), GLOW, sx * (B.w * 0.5 - 0.86), slotY - 0.9, B.d + 1.15, 0, 0, 0, g, false);
     }
+
+    /* ── THE GUN ────────────────────────────────────────────────────────
+     * Nine metres of tube on trunnions, and what makes it read as a gun rather
+     * than as a pipe is that its diameter CHANGES along its length and that
+     * something is visibly holding it: a mantlet that moves with it, a jacket
+     * over the chamber, a brake at the business end and two recuperators over
+     * the top. All on `turret`, so they lay and the building does not.
+     */
+    const t = this.turret;
+    this.mantlet = add(new THREE.SphereGeometry(1.55, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.6),
+      STEEL, 0, 0, 0.20, -Math.PI / 2, 0, 0, t);
+    this.barrel = add(new THREE.CylinderGeometry(B.bore * 0.78, B.bore, B.barrel, 12),
+      STEEL, 0, 0, B.barrel * 0.5, Math.PI / 2, 0, 0, t);
+    add(new THREE.CylinderGeometry(B.bore * 1.5, B.bore * 1.5, 2.3, 12), STEEL, 0, 0, 1.25, Math.PI / 2, 0, 0, t);
+    add(new THREE.CylinderGeometry(B.bore * 1.35, B.bore * 1.05, 1.15, 12), STEEL, 0, 0, B.barrel - 0.5, Math.PI / 2, 0, 0, t);
+    // the brake's own vents, which is the detail that says muzzle
+    for (const sx of [-1, 1]) {
+      add(box(0.16, 0.5, 0.7), STEEL, sx * B.bore * 1.3, 0, B.barrel - 0.75, 0, 0, 0, t, false);
+    }
+    for (const sx of [-1, 1]) {
+      // recuperator over the tube, and the trunnion it all pivots on
+      add(new THREE.CylinderGeometry(0.19, 0.19, 2.2, 8), STEEL, sx * 0.62, 0.62, 1.5, Math.PI / 2, 0, 0, t);
+      add(new THREE.CylinderGeometry(0.26, 0.26, 0.7, 10), STEEL, sx * 1.45, 0, 0.1, 0, 0, Math.PI / 2, t);
+      /* THE CHARGE COILS, and they are the tell. `_fire` brightens them and
+       * `update` lets them fall back, so the gun visibly loads before it
+       * speaks — a fixed gun with no wind-up is a gun that kills your line
+       * out of a clear sky. */
+      const coil = add(new THREE.TorusGeometry(B.bore * 1.62, 0.09, 6, 14), GLOW,
+        0, 0, 0.9 + sx * 0.55 + 0.55, 0, 0, 0, t, false);
+      (this._coils ||= []).push(coil);
+    }
+  }
+
+  /** Where the tube ends, in the world, as of this frame's lay. */
+  _readMuzzle() {
+    this.turret.updateMatrixWorld(true);
+    this.muzzle.set(0, 0, BASTION.barrel + 0.35).applyMatrix4(this.turret.matrixWorld);
   }
 
   /* Nothing on this object is a target. Every one of these is the answer the
@@ -477,6 +680,10 @@ export class GunPit {
   silence() {
     if (this.taken) return;
     this.taken = true;
+    this.warded = false;
+    this._down = 0;
+    if (this.door) this.door.warded = false;
+    if (this.shield) this.shield.visible = false;
     this.target = null;
     this.world?.notify?.('THE GUN IS OURS', 'the emplacement is silent');
   }
@@ -501,8 +708,70 @@ export class GunPit {
     return best;
   }
 
+  /**
+   * AN ION PULSE COLLAPSES THE DEFLECTOR. Nothing else does.
+   *
+   * Called by `Stratagems.ionPulse`, which sweeps the prop list for anything
+   * that answers to this — the same call that stops every machine inside
+   * twenty-two metres, on the one position where stopping the machine is the
+   * point. A blade cannot do it, a bolt cannot, and neither can the Force: a
+   * shield that anything could take down would make the second stage optional,
+   * and an optional stage is the errand this whole emplacement exists to stop
+   * being.
+   */
+  ionize(seconds = BASTION.ionDown) {
+    if (this.taken || this.dead) return false;
+    const was = this.warded;
+    this._down = Math.max(this._down, seconds);
+    this.warded = false;
+    if (was) {
+      this.world?.notify?.('THE SHIELD IS DOWN', `${Math.round(seconds)} seconds — get a blade on that door`);
+      audio.explosion?.(this.muzzle, 1.4);
+    }
+    return true;
+  }
+
+  /** The deflector, the coils, and the one flag the door reads. */
+  _wards(dt) {
+    if (this._down > 0) {
+      this._down -= dt;
+      if (this._down <= 0) {
+        this._down = 0;
+        if (!this.taken) {
+          this.warded = true;
+          this.world?.notify?.('THE SHIELD IS BACK', 'the emplacement is sealed again');
+        }
+      }
+    }
+    /* THE DOOR READS ONE FLAG AND IT IS THIS ONE. `BlastDoor.burn` refuses
+     * while `warded`, so the twenty seconds of blade cannot even begin until
+     * the field is down — which is what makes the ion pulse the first stage of
+     * a two-stage answer rather than a convenience. */
+    const shut = this.warded && !this.taken;
+    if (this.door) this.door.warded = shut;
+    this._shieldT += dt;
+    if (this.shield) {
+      this.shield.visible = shut;
+      if (shut) {
+        /* A field that sat at one brightness would be a painted dome. It
+         * breathes, and it breathes SLOWLY — a fast flicker reads as damage
+         * and this thing is not damaged, it is holding. */
+        const b = 1 + Math.sin(this._shieldT * 1.7) * 0.22;
+        this._shieldMats[0].emissiveIntensity = 1.4 * b;
+        this._shieldMats[1].emissiveIntensity = 2.4 * b;
+      }
+    }
+    // the charge coils fall back between rounds; `_fire` puts them up
+    if (this._coils) {
+      this._glow = Math.max(0, (this._glow ?? 0) - dt * 1.6);
+      for (const c of this._coils) c.material.emissiveIntensity = 1.2 + this._glow * 5.0;
+    }
+  }
+
   update(dt) {
-    if (!(dt > 0) || this.taken || this.dead) return;
+    if (!(dt > 0) || this.dead) return;
+    this._wards(dt);
+    if (this.taken) return;
     /* NO ARMY, NO GUN. `world.command` is the director when the mode leads one
      * — Command, a skirmish, a campaign or a contingent — and it is null in
      * every other mode. The emplacement is FLAGSHIP §7's verb and §7's verb
@@ -519,12 +788,26 @@ export class GunPit {
 
     /* The barrel tracks whether or not it is about to fire. A gun that only
      * moved on the frame it shot would read as a decal three seconds out of
-     * every four. */
+     * every four.
+     *
+     * THE TURRET LAYS AND THE BUILDING DOES NOT — see the constructor. The aim
+     * is a WORLD direction and the turret is a child of a rotated group, so it
+     * is taken into the bastion's own frame first; rotating a child by a world
+     * vector is the bug where a gun on a wall facing south tracks correctly
+     * only when the wall faces north. */
     _d.subVectors(t.position, this.muzzle);
     if (_d.lengthSq() > 1e-4) {
+      _d.normalize().applyQuaternion(_q.copy(this.group.quaternion).invert());
+      /* Clamped to the arc the embrasure actually gives it. A casemate gun has
+       * about 30 degrees of traverse and it is why a casemate has flanks worth
+       * walking round to; one that could swing 180 degrees would be a turret
+       * with a wall in front of it. */
+      _d.y = clamp(_d.y, -0.42, 0.42);
+      if (_d.z < 0.30) { _d.z = 0.30; }
       _d.normalize();
-      this.group.quaternion.setFromUnitVectors(_v.set(0, 0, 1), _d);
+      this.turret.quaternion.setFromUnitVectors(_v.set(0, 0, 1), _d);
     }
+    this._readMuzzle();
 
     /* MID-BURST, and the burst finishes on the target it was laid on. A gun
      * that re-acquired between rounds would walk its own three across two
@@ -632,6 +915,7 @@ export class GunPit {
       owner: this, team: this.team, big: true, length: 2.4, radius: 0.1,
     });
     this.shots++;
+    this._glow = 1;                 // the charge coils, read down by `_wards`
     audio.blaster?.(this.muzzle, true);
     this.world.particles?.plasma?.spawn(this.muzzle, _v.set(0, 0, 0), {
       life: 0.09, size: 0.9, drag: 1, gravity: 0, color: 0xff3020, alpha: 1 });

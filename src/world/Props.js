@@ -2403,6 +2403,18 @@ export class BlastDoor {
     this.opened = false;
     this.onBreach = opts.onBreach || null;
     /**
+     * WARDED — a plate a blade cannot start on.
+     *
+     * Set by whatever stands in front of this door and cleared by whatever
+     * takes that thing down; `GunPit` in src/game/Emplacement.js is the one
+     * writer today and its deflector is the one thing that sets it. It is NOT
+     * armour and NOT a second health bar: `burn` refuses outright while it is
+     * true, so no amount of blade opens a warded door and the answer is
+     * elsewhere on the field. A door nobody has warded is every door that has
+     * ever been in this game, which is why it defaults false.
+     */
+    this.warded = false;
+    /**
      * HOW MUCH OF THE PLATE HAS TO BE MELTED THROUGH BEFORE THE SLUG DROPS —
      * AND IT WAS AN OPTION NOTHING COULD SET.
      *
@@ -2599,6 +2611,11 @@ export class BlastDoor {
   /** Burn the kerf where the blade is touching. Returns true when breached. */
   burn(worldPoint, power, dt) {
     if (this.opened) return false;
+    /* Nothing starts while the plate is warded — see the field's own note. The
+     * refusal is here, at the top of the one method that removes metal, rather
+     * than at each of `burn`'s callers, because a gate a caller can forget to
+     * ask about is a gate. */
+    if (this.warded) return false;
     this._inv.copy(this.mesh.matrixWorld).invert();
     _v1.copy(worldPoint).applyMatrix4(this._inv);
     const u = (_v1.x / this.width + 0.5);

@@ -217,6 +217,16 @@ function rearm(world, door) {
   door.kerfData.fill(0);
   door.cutArea = 0;
   door.opened = false;
+  /* AND THE WARD OFF, because this suite is about the PLATE.
+   *
+   * The middle door of the shipped magazine has a gun pit behind it, and that
+   * pit's deflector holds `door.warded` true — `BlastDoor.burn` refuses
+   * outright while it is, so a blade on that plate does nothing at all. That
+   * is the emplacement's rule and it is measured where it belongs, in
+   * `breach.mjs`. Here it would only mean this suite silently stopped
+   * measuring the melt rate on one of its three doors, which is the failure
+   * `rearm` exists to prevent for `opened` and `cutArea` already. */
+  door.warded = false;
 }
 
 /**

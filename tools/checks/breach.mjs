@@ -309,6 +309,73 @@ export async function run({ check, assert }) {
 
   /* ── 3. the twenty seconds, and what the line pays for them ───────── */
 
+  acheck('breach: the shield is the gate, and only a call opens it', async () => {
+    /**
+     * THE POSITION IS TWO STAGES NOW, and this is the measurement of the first
+     * one.
+     *
+     * The player, on the version before it: "if you're going to do it needs to
+     * be truly menacing and huge and difficult to destroy, perhaps even needing
+     * a stratagem to destroy". The tower answers the first two clauses in
+     * geometry; this is the third. A deflector covers the embrasure, it holds
+     * `door.warded`, and `BlastDoor.burn` refuses outright while that is true —
+     * so the twenty seconds of blade cannot BEGIN until the field is down, and
+     * nothing the player carries takes it down. The ion pulse does, because an
+     * ion pulse's whole subject is machinery.
+     *
+     * WHAT WOULD BE THE DEFECT, and it is the reason this is a check rather
+     * than a comment: a ward that merely SLOWED the blade. Then the second
+     * stage would be optional, the call would be a convenience, and the
+     * position would be back to being the errand the whole emplacement exists
+     * to stop being. So the assertion is not "slower" — it is that thirty
+     * seconds of the identical drive that opens an unwarded plate in about
+     * twenty burns EXACTLY NOTHING.
+     */
+    const { world } = await field({ scheme: 'free' });
+    const pit = world.gunPits[0], door = pit.door;
+    assert(pit && door, 'the level hung no emplacement to measure');
+    assert(door.warded === true,
+      'the emplacement door is not warded at all — the shield is not holding the plate');
+
+    const p = world.player, C = p.control;
+    p.saber.ignite(); p.saber.ignition = 1;
+    const out = outOf(door);
+    const yaw = facing(-out.x, -out.z);
+    const stand = door.mesh.position.clone().addScaledVector(out, 0.95);
+    stand.y = world.terrain.height(stand.x, stand.z);
+    const input = idle();
+    const drive = (secs) => {
+      let t = 0;
+      for (let f = 0; f < Math.round(secs * 60); f++) {
+        p.position.copy(stand); p.velocity.set(0, 0, 0);
+        p.hp = p.maxHp; p.alive = true;
+        p.camera.yaw = yaw; p.camera.pitch = 0;
+        const th = t * 0.8, gain = C.sensitivity * C.bladeGain, R = 0.70;
+        input.mouse.dx = (Math.cos(th) * R - C.gx) / gain;
+        input.mouse.dy = -(Math.sin(th) * R - C.gy) / gain * (C.maxPitch / C.maxYaw);
+        world.update(1 / 60, input);
+        t += 1 / 60;
+        if (door.opened) break;
+      }
+      return t;
+    };
+
+    const warded = drive(30);
+    assert(!door.opened, `the warded door opened after ${warded.toFixed(1)} s of blade`);
+    assert(door.cutArea === 0,
+      `${door.cutArea} of the plate was burned through a live deflector — the ward is a slow-down `
+      + 'and not a gate, so the call it is supposed to demand is optional');
+
+    /* …AND THE CALL OPENS IT. Same drive, same plate, one ion pulse between. */
+    const ok = pit.ionize();
+    assert(ok && door.warded === false, 'an ion pulse did not drop the deflector');
+    const open = drive(110);
+    assert(door.opened,
+      `with the shield down, ${open.toFixed(1)} s of the identical drive burned `
+      + `${door.cutArea} texels and still never opened it`);
+    return `30 s through the field burned 0; ${open.toFixed(1)} s after the pulse opened it`;
+  });
+
   acheck('breach: twenty seconds at the plate, and what the line pays for them', async () => {
     /**
      * §7's sentence has four clauses and three of them are measurable here:
@@ -414,6 +481,16 @@ export async function run({ check, assert }) {
       const paid = LINE;
       let t = 0;
       if (breaches) {
+        /* THE SHIELD COMES DOWN FIRST, AND THAT IS THE POSITION'S NEW SHAPE.
+         *
+         * The emplacement's deflector holds `door.warded`, and a warded plate
+         * refuses to burn at all — so the answer to this gun is two stages: a
+         * call that collapses the field, then the blade. `ionize` is the exact
+         * entry point `Stratagems.ionPulse` uses, called here rather than
+         * routed through a stratagem because this check is measuring the BLADE
+         * phase and a support economy is a second variable. The check below
+         * this one is the one that measures the ward itself. */
+        pit.ionize();
         const out = outOf(door);
         const yaw = facing(-out.x, -out.z);
         const stand = door.mesh.position.clone().addScaledVector(out, 0.95);
