@@ -9,7 +9,10 @@
 
 import * as THREE from 'three';
 import { RapierWorld, Body, LAYER, LOOSE_MASK, box, ball, hullFromGeometry, boxFromObject } from '../physics/RapierWorld.js';
-import { Terrain } from '../world/Terrain.js';
+import { Terrain, TERRAIN_PRESETS } from '../world/Terrain.js';
+/* The cel band the ground sits in, for the contact marks' own contrast — see
+ * the note beside `contacts.setGround` in `loadLevel`. One function, no table. */
+import { celTone } from '../toon/Cel.js';
 /* §12's generated ground. A leaf over Terrain.js — it borrows an authored
  * preset and replaces one field — so importing it here closes no cycle. */
 import { battlefieldGround, installGround, removeGround } from '../world/Battlefield.js';
@@ -182,6 +185,8 @@ import { TokenPool } from './Tokens.js';
 import { ContactShadows } from '../world/Contact.js';
 /** Scratch for the contact-mark pass; one array, refilled, never grown. */
 const _contactList = [];
+/** Scratch for the one ground-colour read in `loadLevel`. */
+const _groundCol = new THREE.Color();
 import { ExtractionDirector, WITHDRAW_HOLD } from './Extraction.js';
 
 /* Random per session, FIXED under the gate — see `moduleSeed`. The salt keeps
@@ -768,6 +773,30 @@ export class World {
     this.bolts.onImpact = (b, res) => this._onBoltImpact(b, res);
 
     this.engine.applyAtmosphere(L.atmosphere);
+    /**
+     * …AND THE CONTACT MARKS ARE TOLD WHAT GROUND THEY ARE DRAWN ON.
+     *
+     * `Contact.farAlphaFor` solves the mark's darkness against the ground's
+     * own value so it holds a stated contrast on a pale salt pan and on a mid
+     * sand alike — see its note for the seven measured ratios that made a
+     * fixed 0.5 the wrong number. This is the one place both the level record
+     * and the pool are in hand.
+     *
+     * THE VALUE ON SCREEN, NOT THE AUTHORED ALBEDO. The eye compares the mark
+     * against the lit ground, and flat ground sits in the cel LIT band by
+     * construction (`CEL.terminatorRel` is placed relative to the light's own
+     * horizontal response for exactly that reason), so the band the ground is
+     * in is `celTone(sin e, sin e)` at the level's own sun elevation.
+     * `Rec.709` because that is the luminance a silhouette is read by.
+     */
+    const gc = TERRAIN_PRESETS[this._groundKeyFor(L)]?.sandColor;
+    if (gc != null && this.contacts) {
+      const e = (L.atmosphere?.elevation ?? 22) * Math.PI / 180;
+      const key = Math.sin(e);
+      _groundCol.set(gc);
+      const lum = 0.2126 * _groundCol.r + 0.7152 * _groundCol.g + 0.0722 * _groundCol.b;
+      this.contacts.setGround(lum * celTone(key, key));
+    }
     /* AND THE BLADE IS TOLD WHAT AIR IT IS BEING SWUNG IN.
      *
      * `Saber.setEnvironment` lifts the two OUTER lobes on a bright or hazy

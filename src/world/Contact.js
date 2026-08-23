@@ -52,9 +52,88 @@ import { noInk } from '../toon/Ink.js';
 export const BASE_R = 0.42;
 /** The smallest the mark may be on screen, in pixels of a 1080-tall frame. */
 export const MIN_PX = 5.0;
-/** How dark, at the near end and the far end. Far is darker: it has less help. */
+/** How dark, at the near end. Near, the ink and a real shadow are still there. */
 export const NEAR_A = 0.34;
+/**
+ * …AND HOW DARK AT THE FAR END, WHICH IS NOT A CONSTANT ANY MORE.
+ *
+ * `FAR_A = 0.5` was a fixed fraction of whatever it was drawn on, and a
+ * fraction of a dark ground is nothing. Measured across the seven theatres, on
+ * the ground value each one authors, the mark's own contrast against it:
+ *
+ *     alpine 1.69:1   colosseum 1.54:1   drifts 1.49:1   geonosis 1.39:1
+ *     scoria 1.14:1   wood 1.14:1        mustafar 1.08:1
+ *
+ * — so on the three dark grounds the one thing carrying a body past 130 m,
+ * where the outline has gone and the cascade stopped 70 m earlier, was
+ * invisible. It is the second half of the finding this file opens with, and
+ * the disc alone never discharged it.
+ *
+ * SO THE MARK AIMS AT A CONTRAST AND SOLVES FOR ITS OWN ALPHA. `TARGET` is
+ * that contrast, in the WCAG sense — `(hi + 0.05) / (lo + 0.05)` on relative
+ * luminance, which is the ratio that actually predicts whether two flat fields
+ * can be told apart. `farAlphaFor` inverts it against the ground the level
+ * authored, so a pale salt pan gets a much darker mark than a mid sand and a
+ * lava field is not asked for one it cannot have.
+ *
+ * 2.0 rather than WCAG's 3.0 for large text: this is a hard-edged SHAPE with a
+ * known silhouette under a figure the eye is already tracking, not a glyph to
+ * be resolved cold, and 3.0 on the pale grounds asks for an alpha above 0.95 —
+ * a black hole under every man on the field.
+ *
+ * AND WHERE IT CANNOT BE REACHED, IT IS NOT FAKED. On Mustafar the ground is
+ * 0.009 and no disc, at any alpha, is 2:1 darker than that — the arithmetic
+ * runs out at 1.18:1 with the mark at pure black. `MAX_A` is where it stops.
+ * That is not a hole: on exactly those grounds the BODY carries itself, at
+ * 3.18:1 to 6.92:1, because a pale figure on dark ground is the easiest thing
+ * in this game to see. `cel.mjs` asserts the pair — every level, every army,
+ * the best of the body's two bands and the mark clears 2:1 — which is the
+ * honest statement of the design and would go red the day either half moved.
+ */
+export const TARGET = 2.0;
+/**
+ * The darkest the mark may be drawn.
+ *
+ * 0.96 and not a round 0.9, and the difference is one case: a Confederate droid
+ * on Geonosis, which is the flagship mode's own army on the flagship mode's own
+ * ground. Tan plastoid on red sand is the same value by design — it is what the
+ * source material looks like — so the body cannot carry itself there and the
+ * mark is the only road left. At 0.9 the mark reads 1.75:1 against that sand;
+ * at 0.96 it reads 1.85:1, and the arithmetic ceiling with a PURE BLACK disc is
+ * 1.92:1. So this is most of the way to what the ground can physically give,
+ * chosen for that reason rather than for looking like a sensible number.
+ *
+ * It binds only on the dark grounds. `farAlphaFor` solves to 0.65–0.80 on the
+ * four that can carry `TARGET`, so nothing pale ever gets a mark this heavy.
+ */
+export const MAX_A = 0.96;
+/** Kept as the floor the solve starts from, and what a level with no authored
+ *  ground value falls back to. It is the old constant and the old behaviour. */
 export const FAR_A = 0.5;
+
+/**
+ * The far-end alpha that puts the mark `TARGET` away from this ground.
+ *
+ * @param groundLum  the ground's RELATIVE LUMINANCE where the mark is drawn —
+ *                   the level's own authored base colour through the cel band,
+ *                   which is what `World.loadLevel` hands over. Null or
+ *                   nonsense falls back to `FAR_A`, which is what every level
+ *                   had before this existed.
+ *
+ * A multiplied mark lands at `g·(1−a)`, so
+ *
+ *     (g + 0.05) / (g·(1−a) + 0.05) = TARGET
+ *
+ * solves to the line below. Clamped at both ends: never lighter than the old
+ * constant, because that was already right on the mid grounds, and never
+ * darker than `MAX_A`.
+ */
+export function farAlphaFor(groundLum) {
+  const g = Number(groundLum);
+  if (!(g > 1e-6)) return FAR_A;
+  const want = ((g + 0.05) / TARGET - 0.05) / g;
+  return Math.min(MAX_A, Math.max(FAR_A, 1 - want));
+}
 /** Past this, a body is dressing rather than a contact — see `Cohorts.L3_AT`. */
 export const REACH = 260;
 /** How many marks one pool may draw. Past this the nearest win. */
@@ -63,6 +142,8 @@ export const CAP = 512;
 export class ContactShadows {
   constructor(scene, opts = {}) {
     this.cap = opts.cap ?? CAP;
+    /** The far-end alpha, solved against this level's ground. See `setGround`. */
+    this.farA = FAR_A;
     const g = new THREE.CircleGeometry(1, 12);
     g.rotateX(-Math.PI / 2);
     /* Unlit and depth-written-off: this is a mark ON the ground, not an object
@@ -128,7 +209,7 @@ export class ContactShadows {
       /* Darker with distance: near, the real shadow and the ink are still doing
        * work and this only has to help; far, it is the only thing there. */
       const k = Math.min(1, d / 90);
-      const a = NEAR_A + (FAR_A - NEAR_A) * k;
+      const a = NEAR_A + (this.farA - NEAR_A) * k;
       this._c.setScalar(1 - a);                     // multiplied into the ground below
       mesh.setColorAt(n, this._c);
       n++;
@@ -139,6 +220,19 @@ export class ContactShadows {
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     }
     return n;
+  }
+
+  /**
+   * Tell the pool what it is being drawn on.
+   *
+   * Called once per level load with the ground's relative luminance THROUGH
+   * THE CEL BAND — the value on screen, not the authored albedo, because that
+   * is the number the eye compares the mark against. `World.loadLevel` derives
+   * it; nothing here reads a level table, so this file stays a leaf.
+   */
+  setGround(groundLum) {
+    this.farA = farAlphaFor(groundLum);
+    return this.farA;
   }
 
   dispose() {

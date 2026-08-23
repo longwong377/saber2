@@ -289,6 +289,116 @@ export function run({ check, assert, near }) {
       + `(${px(far, INK.edgeFade[1]).toFixed(1)} px, floor ${MIN_PX}) · alpha ${alphaAt(8).toFixed(2)}→${alphaAt(120).toFixed(2)} · not inked`;
   });
 
+  check('cel: a body has value separation from every ground the game fields it on', async () => {
+    /**
+     * THE OTHER HALF OF THE FINDING ABOVE, and the disc alone did not
+     * discharge it. "Characters have no value separation from the ground."
+     *
+     * `Contact.js` anchored a figure and its four properties are asserted in
+     * the clause above; what none of them measured is the quantity the finding
+     * is actually about, which is CONTRAST — how far a body's value, or the
+     * mark's, is from the value of the ground it is standing on.
+     *
+     * Measured across the seven theatres and both armies, on the ground colour
+     * each level authors and the sun elevation it authors with, with the mark
+     * at its old fixed `FAR_A = 0.5`:
+     *
+     *     the mark   alpine 1.69  colosseum 1.54  drifts 1.49  geonosis 1.39
+     *                scoria 1.14  wood 1.14       mustafar 1.08
+     *     the worst BEST-of-three: a Confederate droid on The Shifting Waste
+     *     at 1.49:1 — lit 1.46, dark 1.47, mark 1.49. All three roads shut.
+     *
+     * A fraction of a dark ground is nothing, which is why the mark's darkness
+     * is now solved against the ground rather than fixed (`farAlphaFor`).
+     *
+     * THE BAR HAS TWO CLAUSES AND THE SECOND IS THE STRICT ONE. `TARGET` is
+     * unreachable on some grounds as pure arithmetic — on Geonosis a mark at
+     * alpha 1.0 is 1.92:1 and there is nothing darker than black — so a single
+     * bar would either be gamed down to what Geonosis can do or would fail for
+     * ever. So: every pair clears `FLOOR`, and every pair whose ground CAN
+     * carry `TARGET` reaches it. A change that made a reachable one slip fails
+     * on the second clause; a change that made an unreachable one worse fails
+     * on the first.
+     *
+     * WCAG's ratio and not a difference of luminances, because that is the
+     * function that predicts whether two flat fields can be told apart — and
+     * flat fields are what this game is made of. `FLOOR` is under WCAG's 3.0
+     * for large text on purpose: this is a hard-edged shape with a known
+     * silhouette under a figure the eye is already tracking, not a glyph read
+     * cold, and 3.0 on the pale grounds asks for a black hole under every man.
+     */
+    const C = await import('../../src/world/Contact.js');
+    const T = await import('../../src/world/Terrain.js');
+    const { LEVELS } = await import('../../src/game/Levels.js');
+    const { ARMIES } = await import('../../src/game/Command.js');
+    const { celTone } = await import('../../src/toon/Cel.js');
+
+    /** Rec.709 relative luminance — what a silhouette is read by. */
+    const lum = (hex) => { const c = new THREE.Color(hex); return 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b; };
+    const ratio = (a, b) => { const [hi, lo] = a > b ? [a, b] : [b, a]; return (hi + 0.05) / (lo + 0.05); };
+    const FLOOR = 1.7;
+
+    const rows = [];
+    for (const [key, L] of Object.entries(LEVELS)) {
+      const P = T.TERRAIN_PRESETS[L.terrain];
+      assert(P, `${key} names a terrain preset (${L.terrain}) that does not exist`);
+      /* FLAT GROUND SITS IN THE LIT BAND BY CONSTRUCTION — `CEL.terminatorRel`
+       * is placed relative to the light's own horizontal response for exactly
+       * that reason, and its note is the argument. So the ground's value on
+       * screen is its albedo through `celTone(sin e, sin e)`. */
+      const e = (L.atmosphere?.elevation ?? 22) * Math.PI / 180;
+      const k = Math.sin(e);
+      const g = lum(P.sandColor) * celTone(k, k);
+      const alpha = C.farAlphaFor(g);
+      const mark = ratio(g * (1 - alpha), g);
+      /* WHAT THE MARK COULD DO AT ITS BLACKEST, so "unreachable" is a fact
+       * about the ground and not about `MAX_A`. */
+      const ceiling = ratio(0, g);
+      for (const [aid, A] of Object.entries(ARMIES)) {
+        const p = lum(A.plate);
+        /* A STANDING FIGURE HAS BOTH BANDS ON IT. Its front face is roughly
+         * vertical, so its N·L runs from cos(e) on the side facing the sun to
+         * 0 on the side away — one of those two is what the eye picks it out
+         * by, and it only needs one. */
+        const litSide = ratio(p * celTone(Math.cos(e), k), g);
+        const darkSide = ratio(p * celTone(0, k), g);
+        rows.push({ key, aid, g, alpha, mark, ceiling, litSide, darkSide,
+          best: Math.max(litSide, darkSide, mark) });
+      }
+    }
+
+    const under = rows.filter((r) => r.best < FLOOR - 1e-9);
+    assert(!under.length,
+      `no road to separation on: ${under.map((r) => `${r.aid} on ${r.key} `
+        + `(lit ${r.litSide.toFixed(2)}, dark ${r.darkSide.toFixed(2)}, mark ${r.mark.toFixed(2)})`)
+        .join('; ')} — a body there is a smudge of the ground's own value`);
+
+    /* …AND WHERE THE GROUND CAN CARRY IT, THE MARK ACTUALLY DOES. */
+    const reachable = rows.filter((r) => r.ceiling >= C.TARGET - 1e-9);
+    assert(reachable.length, 'no ground in the game can carry the target — TARGET is unreachable everywhere');
+    const slipped = reachable.filter((r) => r.mark < C.TARGET - 1e-6);
+    assert(!slipped.length,
+      `the mark falls short on ground that can carry it: ${slipped.map((r) =>
+        `${r.key} ${r.mark.toFixed(2)} against a ${r.ceiling.toFixed(2)} ceiling`).join('; ')}`);
+
+    /* AND THE SOLVE IS A SOLVE. A `farAlphaFor` that answered a constant would
+     * satisfy everything above on the levels that happen to suit it. */
+    const alphas = new Set(rows.map((r) => r.alpha.toFixed(3)));
+    assert(alphas.size >= 3,
+      `${alphas.size} distinct far-alphas across seven grounds — the darkness is not being solved `
+      + 'against the ground, it is a constant wearing a function');
+    assert(C.farAlphaFor(null) === C.FAR_A && C.farAlphaFor(0) === C.FAR_A,
+      'a level with no ground value does not fall back to the constant it always had');
+
+    const worst = rows.reduce((a, b) => (b.best < a.best ? b : a));
+    const capped = rows.filter((r) => r.ceiling < C.TARGET);
+    return `${rows.length} level×army pairs, worst best-of-three ${worst.best.toFixed(2)}:1 `
+      + `(${worst.aid} on ${worst.key}) against a ${FLOOR} floor · mark solved to `
+      + `${alphas.size} distinct alphas, ${reachable.length} pairs at ${C.TARGET}:1 · `
+      + `${capped.length} on ground too dark to carry it `
+      + `(${[...new Set(capped.map((r) => r.key))].join(', ')}), where the body reads instead`;
+  });
+
   check('cel: a lit surface has TWO tones and the boundary between them is crisp', () => {
     /* Rule 1 of src/toon/REFERENCE.md, as a number. The reference frames'
      * surfaces are "a lit colour and a shadow colour meeting on a hard edge",
