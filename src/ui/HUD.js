@@ -1046,6 +1046,16 @@ export class HUD {
       hitmarks: root.getElementById('hitmarks'),
       troopnames: root.getElementById('troopnames'),
       stratagem: root.getElementById('stratagem'),
+      /* The standing order — see _missionPanel. Six nodes and no markup that
+       * says anything: the grid, the clock, the estimate, the reading, the
+       * verdict and the key. */
+      mission: root.getElementById('firemission'),
+      fmGrid: root.getElementById('fm-grid'),
+      fmClock: root.getElementById('fm-clock'),
+      fmTold: root.getElementById('fm-told'),
+      fmRead: root.getElementById('fm-read-fill'),
+      fmVerdict: root.getElementById('fm-verdict'),
+      fmFoot: root.getElementById('fm-foot'),
       support: root.getElementById('bar-support'),
       supportNum: root.getElementById('bar-support-num'),
       killfeed: root.getElementById('killfeed'),
@@ -1343,6 +1353,60 @@ export class HUD {
       el.textContent = said;
       host.appendChild(el);
     }
+  }
+
+  /**
+   * THE STANDING ORDER, AND WHAT YOU ARE ALLOWED TO KNOW ABOUT IT.
+   *
+   * PLAN.md §1: "Force sense shows what is inside it, including friendly IFF…
+   * Sometimes your own men are in it and the game never says so." This panel
+   * is where that sentence is kept or broken, so it reads `readout()` and
+   * nothing else — `FireMission.readout` answers null for the counts until the
+   * reading is finished, which means a bug in this method cannot leak what the
+   * player has not earned. The panel cannot know more than the Jedi does.
+   *
+   * Keyed like the stratagem panel: a HUD that rewrites five nodes sixty times
+   * a second for a clock that ticks in whole seconds is a HUD that costs frames
+   * for nothing.
+   */
+  _missionPanel(world) {
+    const host = this.el.mission;
+    if (!host) return;
+    const r = world?.fireMissions?.readout?.();
+    if (!r || r.state !== 'standing') {
+      if (this._fmKey !== '') { host.classList.add('hidden'); this._fmKey = ''; }
+      return;
+    }
+    const own = r.verified && r.friendlies > 0;
+    const secs = Math.ceil(r.left);
+    const key = `${r.grid}|${secs}|${Math.round(r.read * 20)}|${r.verified ? r.hostiles : 'x'}`
+      + `|${own ? r.names.join(',') + r.friendlies : ''}|${r.prize}`;
+    if (key === this._fmKey) return;
+    this._fmKey = key;
+    host.classList.remove('hidden');
+    host.classList.toggle('late', secs <= 10);
+    host.classList.toggle('read', r.verified);
+    host.classList.toggle('own', own);
+    this.el.fmGrid.textContent = `Fire mission — grid ${r.grid}`;
+    this.el.fmClock.textContent = `${secs}s`;
+    this.el.fmTold.textContent = `${r.told} hostile${r.told === 1 ? '' : 's'}, estimated`;
+    this.el.fmRead.style.width = `${Math.round(r.read * 100)}%`;
+    /**
+     * THE THREE THINGS THIS LINE MAY SAY, and the first one is the design.
+     *
+     * UNVERIFIED does not hedge and does not hint. It says what the player has
+     * — an estimate somebody else made, at a time nobody told him — and the
+     * only way past it is to go and stand near the mark. A line that read
+     * "possible friendlies" would be the game quietly doing the checking, and
+     * then there is nothing to check.
+     */
+    this.el.fmVerdict.textContent = !r.verified
+      ? 'Unverified — their estimate, at a time nobody told you'
+      : own
+        ? `${r.friendlies} OF YOURS INSIDE IT — ${r.names.join(', ')}`
+        : `Read: ${r.hostiles} hostile${r.hostiles === 1 ? '' : 's'}, none of yours`;
+    this.el.fmFoot.innerHTML = `<kbd>${escKey(this._chip('authorise'))}</kbd> clear to fire`
+      + `<b>+${r.prize}</b>`;
   }
 
   _nameplates(world, player, camera) {
@@ -2195,6 +2259,8 @@ export class HUD {
 
     // ── the support calls, while one is being spelled. See `_stratagemPanel`.
     this._stratagemPanel(player);
+    /* The standing order, above it in the same column. */
+    this._missionPanel(world);
 
     /**
      * ── the room, and what it has to say about itself

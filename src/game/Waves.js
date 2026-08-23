@@ -484,6 +484,24 @@ export const MODES = {
      */
     objectives: true,
     /**
+     * HIGH COMMAND CUTS AN ORDER AND IT IS ON YOUR WORD — PLAN.md §1's
+     * "the thesis, as one keypress".
+     *
+     * An artillery ellipse on ground ahead of your line, an estimate of what is
+     * standing on it, and a window. Obeying is one keypress and it pays; going
+     * out to read it costs twelve seconds forward of your own men, and it is
+     * the only way to learn whether any of them are inside it.
+     *
+     * ON THE LINE AND NOWHERE ELSE, for the same reason `objectives` is. Every
+     * way of checking an order is billed through the quorum or through the men:
+     * walk out at your line's pace and all ten come into the ellipse with you,
+     * outrun them and the advance stops for the twelve seconds you are away,
+     * plant them first and you pay neither. Delete the quorum — which is what
+     * every other mode is — and all three collapse into "walk over and look",
+     * which is free. See `src/game/FireMission.js`.
+     */
+    fireMissions: true,
+    /**
      * A NAMED MAN GOES DOWN BEFORE HE DIES — PLAN.md §4.9.
      *
      * "A bleed-out window; an enemy reaching the body finishes it; a medic or

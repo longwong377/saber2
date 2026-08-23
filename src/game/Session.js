@@ -319,6 +319,16 @@ export const INTERLUDE = Object.freeze({
    * him — the report's job here is to say it back, not to dwell on it.
    */
   delegate: 0.95,
+  /**
+   * AN ORDER FROM ABOVE, AND WHAT THE PLAYER DID WITH IT.
+   *
+   * As long as a casualty when it caught your own men and as short as a
+   * delegation when it did not — the beat is written once and the LENGTH is
+   * what says which, because a report that spends the same second and a half
+   * on "you cleared a grid with nobody in it" as on "you cleared a grid with
+   * three of yours in it" is a report that has no opinion.
+   */
+  mission: 1.5,
   /** Points in, bodies standing. The last two beats before the shelf lights. */
   tally: 1.4,
   /** Total seconds, clamped. See the note above. */
@@ -365,7 +375,7 @@ function ordinal(i) {
 export function interludeBeats(log, since, area, tally = {}) {
   const slice = (Array.isArray(log) ? log : []).slice(Math.max(0, since | 0));
   const beats = [];
-  const at = (kind, text, sub, hold) => beats.push({ kind, text, sub: sub || '', hold });
+  const at = (kind, text, sub, hold, own) => beats.push({ kind, text, sub: sub || '', hold, own: !!own });
 
   at('head', `${(area?.name || 'The ground').toUpperCase()} — HELD`, area?.brief || '', INTERLUDE.head);
 
@@ -417,6 +427,35 @@ export function interludeBeats(log, since, area, tally = {}) {
    * squad was given: a player who moves 2nd Squad three times gave 2nd Squad
    * one job, and three beats about it would read as three squads.
    */
+  /**
+   * WHAT HIGH COMMAND ASKED FOR AND WHAT YOU SAID — PLAN.md §1.
+   *
+   * ABOVE the delegations and below the dead, deliberately: the names come
+   * first because they are what the report is for, and this beat is the line
+   * that JOINS them to a decision. A player reading "CT-4460 — by your own fire
+   * mission" three beats above "GRID F42 — CLEARED, unverified" has been told
+   * exactly what happened and by whom, which is §4.9's whole claim ("no death
+   * is mysterious, so no death is the AI's fault") applied to the one death in
+   * this game that is nobody's fault but the player's.
+   *
+   * The sub-line never editorialises. It says what was in the mark and whether
+   * the player had looked, and the two together are the judgement.
+   */
+  for (const e of slice.filter((x) => x.t === 'mission')) {
+    if (e.lapsed) {
+      at('mission', `GRID ${e.grid} — WAVED OFF`,
+        `${e.told} hostile${e.told === 1 ? '' : 's'} estimated · you let the window close`,
+        INTERLUDE.mission);
+      continue;
+    }
+    const bits = [e.verified ? 'you read it first' : 'fired on their estimate'];
+    if (e.friendlies > 0) {
+      bits.push(`${e.friendlies} of yours ${e.friendlies === 1 ? 'was' : 'were'} inside it`);
+      if (e.names?.length) bits.push(e.names.join(', '));
+    } else bits.push(`${e.hostiles | 0} hostile${(e.hostiles | 0) === 1 ? '' : 's'}, none of yours`);
+    at('mission', `GRID ${e.grid} — CLEARED`, bits.join(' · '), INTERLUDE.mission,
+      e.friendlies > 0);
+  }
   const held = new Map();
   for (const e of slice.filter((x) => x.t === 'delegate')) held.set(e.squad | 0, e);
   for (const e of held.values()) {

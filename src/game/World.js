@@ -174,6 +174,7 @@ import { AREAS, ARMY_IDS, CommandDirector, COMMAND_POWER_RULES, MAX_STRENGTH, OP
   assignArmies, commandConfig } from './Command.js';
 import { ArmyIndex } from './ArmyIndex.js';
 import { ObjectiveField } from './Objectives.js';
+import { FireMissionDirector } from './FireMission.js';
 import { Corpses, CORPSE_BUDGET } from './Corpses.js';
 import { BladeLock } from './Duel.js';
 import { FocusSystem } from './Focus.js';
@@ -1013,6 +1014,36 @@ export class World {
       this.objectives.place({ count: 4, axis: bearing, rng: () => rng() });
     }
     /**
+     * THE ORDER YOU CAN CHECK — PLAN.md §1, and it is gated the same way.
+     *
+     * A mode with no army has nobody to be in the ellipse and no quorum for
+     * walking out to read it to cost anything, so the flag and the army are
+     * both required — the same pair `objectives` above is built on.
+     *
+     * SEEDED OFF THE RUN, so the same sitting cuts the same orders in the same
+     * order: the cadence and the pattern of shells are the run's, exactly as
+     * the field of installations is, and a battlefield that reshuffles between
+     * reloads is one nobody can learn from.
+     */
+    this.fireMissions?.dispose?.();
+    this.fireMissions = null;
+    if (leadsArmy && MODES[mode]?.fireMissions) {
+      this.fireMissions = new FireMissionDirector(this, {
+        myTeam: this.player?.team ?? 0,
+        seed: ((this.runSeed | 0) ^ 0x1e11e) >>> 0,
+      });
+      /**
+       * …AND IT IS WHERE THE OTHER SIDE'S BATTERY FIRES FROM.
+       *
+       * `Objectives._pay` has called `world.onObjectiveFire` since the day the
+       * six sites landed and nothing has ever installed it, so the Battery's
+       * "lost: it fires for them" row cost the player exactly nothing. The
+       * shells are laid by the one thing on this world that already knows how
+       * to lay shells; see `FireMissionDirector.theirBarrage`.
+       */
+      this.onObjectiveFire = (site, ctx) => this.fireMissions?.theirBarrage?.(ctx);
+    } else this.onObjectiveFire = null;
+    /**
      * THE BATTLE, or null — and it is CARRIED, never rebuilt.
      *
      * `rotateTo` re-enters this whole list of stages for every engagement, so a
@@ -1492,6 +1523,10 @@ export class World {
      * leaving them would be six masts standing on the next ground. */
     this.objectives?.dispose?.();
     this.objectives = null;
+    /* The standing order goes with the ground it was laid on, and so does the
+     * ring drawn for it. */
+    this.fireMissions?.dispose?.();
+    this.fireMissions = null;
     /* The corpse ledger holds references to bodies that have just been
      * disposed. `clear()` and not `dispose()`: the ledger itself outlives the
      * level exactly as the World does, and what must not survive is its
@@ -3494,6 +3529,12 @@ export class World {
      * toward the advance, which is the one thing this must not do.
      */
     this.objectives?.update(dt, ctx);
+    /* The standing order, its reading and its shells. After the objectives
+     * because a battery that changed hands this frame is what asks for the
+     * other side's barrage, and before the bodies because the shells that land
+     * this frame have to be resolved against the positions the reading was
+     * taken from. */
+    this.fireMissions?.update(dt, ctx);
 
     /**
      * BEFORE EVERYTHING, because a passenger's seat has to be written before

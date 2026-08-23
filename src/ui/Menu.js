@@ -7380,12 +7380,15 @@ export class Menu {
     for (const b of beats) {
       this._interludeTimers.push(at(() => {
         const li = document.createElement('li');
-        li.className = `b-${b.kind}`;
+        li.className = `b-${b.kind}${b.own ? ' own' : ''}`;
         li.innerHTML = `<b>${escKey(b.text)}</b><span>${escKey(b.sub)}</span>`;
         list.appendChild(li);
         /* A casualty is the only thing on this screen that makes a noise. The
          * rest is read, which is what a report is. */
-        if (b.kind === 'fell') audio.ui('bad');
+        /* …and a fire mission that caught your own line is a casualty beat with
+         * a grid reference on it, so it makes the same noise. `own` is set by
+         * the report off the log, never inferred from the words. */
+        if (b.kind === 'fell' || b.own) audio.ui('bad');
       }, Math.round(b.at * 1000)));
     }
     /* THE SHELF LIGHTS AFTER THE LAST BEAT, not with it: the point of the beat

@@ -1165,6 +1165,46 @@ button{font-family:inherit}
   font:var(--mono);font-size:9px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
 .rp-foot b{margin-left:auto;color:var(--accent-warm)}
 
+/* THE STANDING ORDER. Same four laws as every other surface in this HUD —
+   panel field, ink outline, hard stamp shadow, cut corner — and the same
+   column as the roster, so the two can never be drawn through each other.
+
+   THE COLOUR IS THE READOUT. Amber while the order is unverified (which is
+   what High Command told you and nothing more), the accent once it has been
+   read and the ground is clear, and danger red once it has been read and your
+   own men are standing in it. That last state is the only place in the game
+   that says so and it exists only because the player went and looked — so it
+   is the loudest thing this panel can draw. */
+.fm{width:248px;margin-bottom:18px;border:2px solid var(--stroke);background:var(--panel);
+  clip-path:var(--cut-sm);box-shadow:var(--stamp);text-shadow:none}
+.fm.hidden{display:none}
+.fm-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;
+  padding:7px 11px 6px;background:var(--panel-2);border-bottom:2px solid var(--stroke);
+  font:var(--mono);font-size:9px;font-weight:800;letter-spacing:.22em;text-transform:uppercase;color:var(--ink)}
+.fm-head b{flex:none;color:var(--accent-warm);font-variant-numeric:tabular-nums;letter-spacing:.1em}
+/* The last ten seconds. The ring on the ground pulses at the same moment and
+   for the same reason: a window that closes while you are looking somewhere
+   else is a refusal you did not choose. */
+.fm.late .fm-head b{color:var(--danger);animation:fmPulse .7s steps(2,end) infinite}
+@keyframes fmPulse{50%{opacity:.35}}
+.fm-told{padding:8px 11px 6px;font:var(--display);font-size:12.5px;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--ink)}
+/* THE READING, AS A BAR. Twelve seconds on foot and four with the Force, and
+   the only honest way to draw "how much longer do I have to stand here". */
+.fm-read{height:5px;margin:0 11px 8px;background:var(--void);border:2px solid var(--stroke)}
+.fm-read i{display:block;height:100%;width:0;background:var(--accent-warm)}
+.fm.read .fm-read i{background:var(--accent)}
+.fm.own .fm-read i{background:var(--danger)}
+.fm-verdict{padding:0 11px 8px;font:var(--mono);font-size:10px;letter-spacing:.06em;color:var(--dim)}
+.fm.read .fm-verdict{color:var(--ink)}
+.fm.own .fm-verdict{color:var(--danger);font-weight:800}
+.fm-foot{display:flex;align-items:baseline;gap:8px;padding:6px 11px 7px;
+  border-top:2px solid var(--stroke);background:var(--panel-2);
+  font:var(--mono);font-size:9px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
+.fm-foot b{margin-left:auto;color:var(--accent-warm);font-variant-numeric:tabular-nums}
+.fm-foot kbd{padding:1px 5px;border:2px solid var(--stroke);border-bottom-width:3px;
+  background:var(--void);font:var(--mono);font-size:9px;font-weight:800;color:var(--ink)}
+
 .hud-bl{position:absolute;left:32px;bottom:28px;animation:riseIn .4s both}
 .bars{display:flex;flex-direction:column;gap:14px}
 /* THE CAPTION LIVES OUTSIDE THE SOCKET, and that is the whole of the fix.
@@ -1665,6 +1705,12 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
    promotion is something the army did and this is something the PLAYER did, and
    the header — the only other beat about a decision — already wears it. */
 .muster-interlude li.b-delegate b{color:var(--accent-warm)}
+/* AN ORDER FROM ABOVE. Warm accent like the delegation, because it is the other
+   beat about a thing the player decided — and the danger red when the mark had
+   his own men in it, because at that point it is a casualty beat wearing a grid
+   reference. `b-mission own` is set by the report, not guessed from the text. */
+.muster-interlude li.b-mission b{color:var(--accent-warm)}
+.muster-interlude li.b-mission.own b{color:var(--danger)}
 @keyframes beatIn{from{opacity:0;transform:translateX(-10px)}to{opacity:1;transform:none}}
 /* Inert while the report is running. `pointer-events:none` is the half that
    makes "no input" true; the dimming is the half that says so. */

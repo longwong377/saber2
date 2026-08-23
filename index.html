@@ -892,6 +892,28 @@
          bottom-anchored, so the panel opening pushes the stack upward and never
          moves the roll under it. Same rule the event feed and the kill feed
          already follow on the right (see .hud-tr above). -->
+    <!--
+      THE STANDING ORDER — PLAN.md §1's "the order you can check".
+
+      High Command's fire mission, its clock, and what you know about the
+      ground it is laid on. The last line is the whole design: until you have
+      gone out and read the ellipse it says only what High Command estimated,
+      and it never volunteers that your own men are inside it. Everything in
+      here is written by HUD._missionPanel off `FireMissionDirector.readout()`;
+      there is no grid, count or key typed in this markup — the key comes from
+      the live bindings, because it is rebindable.
+
+      IN THE .hud-bl COLUMN and above the support panel, for the reason the
+      roster and the stratagem list are: boxes in a column cannot overlap at
+      any viewport, boxes pinned to a corner eventually do.
+    -->
+    <div id="firemission" class="fm hidden" aria-hidden="true">
+      <div class="fm-head"><span id="fm-grid">—</span><b id="fm-clock"></b></div>
+      <div class="fm-told" id="fm-told"></div>
+      <div class="fm-read"><i id="fm-read-fill"></i></div>
+      <div class="fm-verdict" id="fm-verdict"></div>
+      <div class="fm-foot" id="fm-foot"></div>
+    </div>
     <div id="stratagem" class="hidden"></div>
     <!--
       YOUR ARMY, WHICH THE GAME HAS ALWAYS HAD AND NEVER SHOWN.

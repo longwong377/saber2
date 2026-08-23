@@ -2003,6 +2003,28 @@ function orderKeys() {
 }
 
 /**
+ * CLEARED TO FIRE — the one keypress PLAN.md §1 is about.
+ *
+ * Beside the order keys and not inside them: those are orders you give your own
+ * men and this is an order somebody else gave you, and the two lists must not
+ * share a loop that breaks after the first hit — a formation change and an
+ * authorisation are not competing for the same frame.
+ *
+ * Everything it can refuse — no order standing, one already fired, no army —
+ * is refused inside `FireMissionDirector.authorise`, which returns false and
+ * says nothing. The HUD panel is what tells the player there is an order to
+ * answer; a key that shouted "no fire mission" every time it was pressed would
+ * be a key that punishes learning where it is.
+ */
+function missionKey() {
+  if (screens.state !== 'playing') return;
+  const fm = world?.fireMissions;
+  if (!fm) return;
+  if (!input.actHit('authorise')) return;
+  fm.authorise(world._frameCtx || {});
+}
+
+/**
  * The coach panel's key legend, from the bindings rather than from the markup.
  *
  * index.html shipped `N next / B back / R etry with Y` baked in, which was
@@ -2152,6 +2174,7 @@ function frame(now) {
     && input.act('scoreboard'));
   lessonKeys();
   orderKeys();
+  missionKey();
   communeTick(dt);
   setCommuneEntry(screens.state === 'menu' && !tree.open);
 
