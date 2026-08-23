@@ -2037,7 +2037,7 @@ export class HUD {
       const heat = clamp(player.saber.tipSpeed / 26, 0, 1);
       el.cursor.style.opacity = (0.25 + heat * 0.75).toFixed(2);
       el.cursor.firstElementChild.style.transform = `scale(${(0.7 + heat * 0.75).toFixed(2)})`;
-    } else if (el.cursor && el.cursor.style.transform) {
+    } else if (firstPerson && el.cursor && el.cursor.style.transform) {
       /* AND IT GOES BACK TO CENTRE WHEN NOBODY IS DRIVING IT.
        *
        * The transform above is written only while `_grip` is live, and the ring
@@ -2051,7 +2051,16 @@ export class HUD {
        * `#blade-cursor` is centred by CSS, so clearing the inline transform IS
        * returning it to centre. Guarded on the string being non-empty because
        * this runs every frame and an unconditional style write on an untouched
-       * element is a layout invalidation for nothing. */
+       * element is a layout invalidation for nothing.
+       *
+       * AND ON `firstPerson`, which the first cut of this left off. The branch
+       * then ran in THIRD person too, where the rule above is that the HUD
+       * touches this node's transform not at all — hidden by a class is one CSS
+       * edit away from being a ring on the blade again, so the guard is that
+       * nothing writes the position, not that something writes it to zero.
+       * There is nothing to clean up there in any case: the node is display:none
+       * and the next first-person frame either rewrites the transform from a
+       * live grip or lands here and clears it. */
       el.cursor.style.transform = '';
     }
 

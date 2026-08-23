@@ -7869,14 +7869,23 @@ export class Player {
     /* ── the damage ──────────────────────────────────────────────────── */
     ch.tick -= dt;
     if (ch.tick > 0) return;
+    /* AND A FRONT STILL CROSSING DOES NOT SPEND THE TICK.
+     *
+     * `forceLightning` opens the channel with `_lightningTick(ctx, 0)` so the
+     * first jolt is on the press. With a travelling front and dt = 0 that frame
+     * has reach 0 and cannot have arrived — correct, it has not left the hand
+     * yet — but it was still consuming the tick on its way out, so the opening
+     * jolt was cancelled AND the next one was pushed a full 0.22 s beyond the
+     * flight time. Measured on two players 0.75 m apart: 7 damage on the press
+     * before, and none at all in a whole second after.
+     *
+     * Held at zero rather than reset, so the clock is armed the moment the
+     * front lands: press, 16 ms of flight at 120 m/s across a metre, jolt. The
+     * travel is real and it is not a delay you can feel — which is the whole of
+     * "it needs travel time obviously (but small)". */
+    if (!arrived) { ch.tick = 0; return; }
     ch.tick = LIGHTNING_TICK;
     if (!struck) return;
-    /* AND THE DAMAGE WAITS FOR THE FRONT. Without this the arc would be drawn
-     * crossing the gap while the victim was already taking the jolt, which is
-     * a hitscan with an animation in front of it — the exact thing the note
-     * asked to be rid of. The tick clock is not rewound, so a channel held on
-     * one body settles into its ordinary rhythm after the first arrival. */
-    if (!arrived) return;
     const scale = LIGHTNING_TICK / 0.55;      // per-tick share of a full jolt
     const hit = new Set();
     let from = target, node = struck, power = 1;

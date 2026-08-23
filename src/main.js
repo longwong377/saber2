@@ -1996,9 +1996,14 @@ const armScore = () => {
   audio.init();
   audio.playMusic(TRACKS, { loop: true });
 };
+/* AND IT DOES NOT CALL playMusic AGAIN. `_startMusic` binds its own retry to
+ * pointerdown/keydown when the autoplay gate refuses the first `play()`, so a
+ * second start here is a second element and a second stream — two copies of a
+ * 49-minute score running over each other, which is what music.mjs's "it starts
+ * on the gesture that unlocks the context, ONCE" is counting. This handler had
+ * one job the moment `armScore` moved to module load: unlock the context. */
 const startScore = () => {
   audio.init(); audio.resume();
-  audio.playMusic(TRACKS, { loop: true });
 };
 armScore();
 window.addEventListener('pointerdown', startScore, true);

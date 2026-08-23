@@ -902,15 +902,28 @@ export class AudioEngine {
        * you click a button — it needs to play as early as you can".
        *
        * `main.js` now arms the score at module load instead of on the gesture,
-       * so with 'auto' the file is already buffering while the player is
-       * reading the menu and `play()` has something to play the instant the
-       * autoplay gate lifts. The bytes are the same bytes either way — this
-       * only moves WHEN they are asked for.
+       * so the element exists and the connection is warm while the player is
+       * reading the menu, and `play()` has somewhere to start the instant the
+       * autoplay gate lifts.
        *
-       * It is still not a fetch nobody asked for: `_applyTrack` refuses to
-       * build this element at all while the Music slider is at 0, so a player
-       * who does not want the score never pays for it. */
-      el.preload = 'auto';
+       * 'metadata' AND NOT 'auto', and the difference is 28 MB. 'auto' asks the
+       * browser for the WHOLE file up front — 29,400,953 bytes, the largest
+       * thing in the repository by two orders of magnitude — before a note has
+       * been heard, and it was set here in the belief that a score cannot start
+       * early unless it has already arrived. It can: `play()` on a streaming
+       * element starts as soon as the first buffer lands, which for an MP3 is a
+       * fraction of a second, and the rest arrives behind the playhead. So the
+       * early start survives and the download does not.
+       *
+       * The check that holds this reads the source AND the element (see
+       * tools/checks/music.mjs, "the score is STREAMED, never decoded into
+       * memory"), because the value is one word and the cost is a quarter of a
+       * gigabyte across ten players.
+       *
+       * It is also not a fetch nobody asked for: `_applyTrack` refuses to build
+       * this element at all while the Music slider is at 0, so a player who does
+       * not want the score never pays for it. */
+      el.preload = 'metadata';
       el.crossOrigin = 'anonymous';
       // The element's own volume stays at 1: the musicBus is the only place
       // loudness is decided, or the slider and the element would fight and the
