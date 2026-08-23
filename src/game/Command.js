@@ -117,7 +117,22 @@ import { armyForOrder, factionOf } from './Databank.js';
  * number, so a Geonosis campaign is a shareable seed and the same seed musters
  * the same twelve men with the same twelve names.
  */
-const rng = makeRng(0x5EED0C7);
+/**
+ * EXPORTED, LIKE `enemyRng` AND `duelRng`, AND FOR THE SAME REASON.
+ *
+ * `tools/checks/_shared.mjs` restores every module-scope stream a suite is
+ * about to move, and it can only restore what it can name. This one was not on
+ * its list, so a suite's checks each left the phase wherever they finished and
+ * the next boot mustered a different roster: `theline.21` reported "8 of 9" on
+ * one run of its own suite and "9 of 10" on the next, and `theline.16` — whose
+ * whole subject is whether a quorum of the living is near the commander —
+ * passed three of three ALONE and failed inside the suite. Nothing was wrong
+ * with the rule; the two runs had different armies.
+ *
+ * The name is what makes it fixable. `clocked` reseeds it now.
+ */
+export const commandRng = makeRng(0x5EED0C7);
+const rng = commandRng;
 export function seedCommand(seed) {
   const s = (Math.imul((seed | 0) ^ 0x2545F491, 0x9E3779B1) >>> 0) || 1;
   rng.seed(s);

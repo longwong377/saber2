@@ -97,6 +97,21 @@ function walkToRamp(world) {
 }
 
 export async function run({ check, assert }) {
+  /**
+   * THE PAIR, FOR THE WHOLE FILE, and `determinism.mjs` named this one:
+   * "1 suites drive a World's frames without restoring the module clocks
+   * (extraction.mjs) — each one shifts the wind clock and both random streams
+   * for every suite that follows it."
+   *
+   * That is what this file does more than any other in the tree. Every clause
+   * below drives a real World through a whole insertion or a whole extraction
+   * — twenty to fifty game-seconds apiece, several of them across a level
+   * change — so the streams it leaves behind are further from where it found
+   * them than anything else in the suite. It also serialises, which a file
+   * whose checks each boot two worlds wants anyway.
+   */
+  const { clocked } = await import('./_shared.mjs');
+  check = await clocked(check);
 
   /* ══ A — the swing arc ═════════════════════════════════════════════ */
 

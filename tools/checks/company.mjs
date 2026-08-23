@@ -35,6 +35,7 @@
 
 import { readFile } from 'node:fs/promises';
 import { makeDocument } from './_page.mjs';
+import { clocked } from './_shared.mjs';
 import {
   ARMY_IDS, ARMIES, CommandRoster, rankFor, OPENING_STRENGTH, RANKS, MARKS, markById,
 } from '../../src/game/Command.js';
@@ -67,6 +68,22 @@ function freshRoll(n, army = ARMIES.republic) {
 }
 
 export async function run({ check, assert }) {
+  /**
+   * THE PAIR, FOR THE WHOLE FILE. `determinism.mjs` names this file outright —
+   * it builds enemies (the mark clause puts two troopers through the real
+   * `enlistBody`) and drives a World's frames, and a suite that does either
+   * without handing the module clocks back shifts the wind clock and every
+   * random stream for every suite after it.
+   *
+   * It also SERIALISES, which this file needed for its own reasons before
+   * `determinism.mjs` asked: `verify.mjs` starts every async body at once, and
+   * the company store is a single localStorage key while `doc.install()` swaps
+   * a global document. The first cut of this file had a check whose whole
+   * subject is an empty roll reading a roll of five men. `withCleanStore` is
+   * still synchronous underneath — belt and braces, and its note says why —
+   * but the lock is what makes it true rather than lucky.
+   */
+  check = await clocked(check);
   /**
    * READ ONCE, UP FRONT, so that every DOM clause below can be SYNCHRONOUS.
    *

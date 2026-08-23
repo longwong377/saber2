@@ -86,6 +86,17 @@
  * audio singleton above: naming the key means the NEXT thing a screen persists
  * is uncovered on the day it is written.
  *
+ * ── AND THE MUSTER'S STREAM, added after it cost a suite a whole afternoon.
+ * `Command.js`'s `rng` draws every designation, every earned nickname and every
+ * replacement, and it was module scope with no name anything outside the file
+ * could reach. A suite left its phase wherever the last check finished, so the
+ * next boot mustered a different army: `theline.16` — whose subject is a quorum
+ * of the LIVING near their commander — passed three of three in isolation and
+ * failed inside its own suite, and `theline.21` reported a roster of nine on one
+ * run and ten on the next. It is `commandRng` now, for the same reason
+ * `enemyRng` and `duelRng` are named: the boundary can only restore what it can
+ * reach.
+ *
  * ── WHAT IS STILL NOT COVERED, and it is not an oversight in each case:
  * Scenery.js's own `rng` (module scope, private, drives every scatter), the
  * wave stream (`seedWaves` is a suite's own call, because the seed is part of
@@ -103,6 +114,14 @@ export async function snapshotShared() {
   const { wind } = await import('../../src/world/Scenery.js');
   const { enemyRng } = await import('../../src/game/Enemy.js');
   const { duelRng } = await import('../../src/game/Duel.js');
+  /* THE MUSTER'S OWN STREAM, and it was the one missing. `Command.js` draws
+   * every designation, every nickname and every replacement from it, and a
+   * suite that left its phase where the last check finished mustered a
+   * different army on the next boot — measured in `theline.mjs`, whose
+   * `theline.16` passed three of three alone and failed inside its own suite
+   * with "the area was taken with the whole line four times NEAR away". The
+   * rule was never wrong; the two runs had different armies. */
+  const { commandRng } = await import('../../src/game/Command.js');
   const { audio } = await import('../../src/engine/Audio.js');
   return {
     wind,
@@ -113,6 +132,7 @@ export async function snapshotShared() {
     air: { heading: wind.baseHeading, strength: wind.strength, gustiness: wind.gustiness, wander: wind.wander },
     enemyRng,
     duelRng,
+    commandRng,
     audio,
     /* Every own property, by name at no point. */
     sound: { ...audio },
@@ -148,6 +168,7 @@ export function restoreShared(snap) {
   w._refresh();                             // heading and dir are derived from all five
   snap.enemyRng.seed(4711);                 // src/game/Enemy.js:41
   snap.duelRng.seed(8123);                  // src/game/Duel.js:33
+  snap.commandRng.seed(0x5EED0C7);          // src/game/Command.js, `commandRng`
   for (const k of Object.keys(snap.audio)) if (!(k in snap.sound)) delete snap.audio[k];
   Object.assign(snap.audio, snap.sound);
   if (snap.store) {
