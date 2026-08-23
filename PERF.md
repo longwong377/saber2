@@ -1,82 +1,61 @@
-# What the engine actually costs, measured 2026-08-23
+# What the engine actually costs
 
-Headless (no GPU), geonosis, quality low, bodies ringed round a fighting player.
-`tools/register.mjs` loader, 120 measured frames after 40 warm.
+**Superseded.** The numbers that were here were taken headless, at quality
+`low`, in wall-clock, with no load average recorded, in `waves` — a mode where
+the O(bodies²) cross-army pass at `World.js:2743` does not run — and by a
+harness that was never committed. They reported 198 µs a body and a ceiling of
+63, and a scale plan was written on them.
 
-## The ceiling today
+`tools/scale.mjs` is the committed replacement and it measures CPU time at
+quality `high` in `command`, which is a mode with two armies in it. Run it:
 
-    bodies   ms/frame   marginal us/body
-         0       4.20    (world overhead: terrain, grass, physics, player)
-        15       6.65    443
-        30       9.33    311
-        60      12.05    201
-       120      23.78    198
-       232      50.20    216
+    node --import ./tools/register.mjs tools/scale.mjs
 
-Marginal cost is **~198 us/body** and LINEAR — no O(n^2) anywhere in the sim.
+## What it says
 
-At a 16.7 ms frame with 4.2 ms of world overhead:
-**(16.7 - 4.2) / 0.198 = 63 fully-simulated bodies.** In a browser, with the
-render pass on top, fewer. `WaveDirector.maxAlive` is 26, which is consistent.
+    scale — command · geonosis · quality high · 120 frames after 60 warm
+    loadavg 0.3 0.1 0.1 on 4 cores
 
-## Distance does almost nothing
+      19 alive     15.98 ms CPU
+      36 alive     18.82 ms CPU
+      64 alive     26.53 ms CPU
 
-Same 90 bodies, ringed at three radii:
+    fixed overhead 10.98 ms · marginal 238 µs/body
+    ceiling at a 16.7 ms frame, SIMULATION ONLY: 23 bodies
+    marginal at the bottom 167 µs · at the top 275 µs · bend x1.65
+      <-- NOT LINEAR; the straight-line ceiling above is optimistic
 
-    12 m    198 us/body
-    90 m    192 us/body
-    200 m   178 us/body
+Three findings, and the third is the one that matters.
 
-**10% off at 200 m.** There is effectively no behaviour LOD: a body across the
-map costs what a body in your face costs. This is the finding the whole scale
-problem turns on.
+**The fixed overhead is 10.98 ms, not 4.2.** Two thirds of a 16.7 ms frame is
+gone before a single soldier is placed. That is quality `high` against the old
+figure's `low`, and it is the tier a player uses.
 
-## Where the 198 us goes (118 bodies)
+**The marginal cost is 238 µs, not 198**, and the ceiling on simulation alone is
+**23 bodies** — against `Levy` making `alive` **66** in the flagship modes.
 
-    Enemy.update      126 us/body   62%
-      _pose            81 us/body   40%   <-- skeletal animation
-      _move            27 us/body   13%
-      _think           12 us/body    6%   <-- the actual AI
-      _shoot            0 us/body    0%
-      _syncBody         1 us/body    0%
-    physics.step       38 us/body   19%
-    World's own loops  ~40 us/body  ~20%  (blade resolution, targeting, plates)
+**It is not linear, and the old claim that it was is an artefact of the mode it
+was measured in.** 167 µs at the bottom of the sweep and 275 µs at the top, a
+bend of ×1.65 across a 3× population. `World.js:2743` is O(bodies²) and gated on
+`this.command`, so a benchmark run in `waves` never executes it. The plan built
+on that benchmark called the simulation linear and derived a ceiling from a
+slope that does not exist.
 
-**The AI is 12 us. The animation is 81.** The thing that makes a body a soldier
-is 6% of its cost; the thing that makes it a *puppet* is 40%.
+**So the flagship mode is already over frame budget on simulation alone.** 64
+bodies cost 26.53 ms CPU against a 16.67 ms frame, before rendering, before the
+ink prepass, before three shadow cascades. This is a live defect, not a scaling
+question, and it outranks everything in the plan.
 
-## What that implies
+## What this file does not measure
 
-A body that is posed cheaply or not at all, and carries no rigid body, costs
-roughly `12 + 27 + a share of the world loops` ~= 40-55 us. That is a **4x
-multiplier on the population** before a single rendering trick is applied:
-~230 simulated instead of ~63. Gate the World-side per-enemy loops too and it
-goes further.
-
-So the two-tier design is not a nice-to-have. It is the only road to the
-battle the brief describes, and the measurement says which tier boundary
-matters: **pose and physics, not AI.**
+The render pass. There is no GPU here, so nothing about draw calls, skinning or
+shadow cost is knowable from it. `tools/checks/frame-ledger.mjs` splits the same
+frame by subsystem — physics 47%, animation 22.5% — and the draw-call budget
+needs a browser instrument that does not exist yet.
 
 ## Content already built and barely used
 
-- 16 archetypes: b1, b2, conscript, trooper, sniper, acolyte, jedi, sentinel,
-  guardian, master, droideka, walker, remote, dummy, sparring, beast
-- 20+ vehicles: AAT, AT-TE, Hailfire, Juggernaut, SPHA-T, snail tank, tri-droid,
-  dwarf spider, gunships (both sides), transports (both sides), capital ships
-- 7 levels, 9 modes, a stratagem table, emplacements, blast doors, breaching
-
-## And the cheap tier pays — measured, not calculated
-
-Same 119 bodies, same fight, with pieces taken away:
-
-    full body                155 us/body    ceiling  80
-    no _pose                  60 us/body    ceiling 207
-    no _pose, no rigid body   53 us/body    ceiling 233
-
-**Dropping the skeleton alone nearly triples the population.** `_think` still
-runs at 12 us, so a cheap body is still a soldier with a brain, a target and a
-morale value — it just is not a puppet and does not collide.
-
-So: ~50 full bodies near the player + ~250 cheap ones = **300 fighting units**,
-every one of them with real AI. Gate the World-side per-enemy loops on the same
-boundary and it goes further still.
+37 archetypes (`node tools/state.mjs`, not `Object.keys(ARCHETYPES)` — that
+reader answers 16 and the roster is more than twice that). 20+ vehicles: AAT,
+AT-TE, Hailfire, Juggernaut, SPHA-T, snail tank, tri-droid, dwarf spider,
+gunships and transports for both sides, capital ships. 7 levels, 9 modes.
