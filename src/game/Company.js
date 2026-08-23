@@ -65,17 +65,6 @@ export const KEY = 'saber.company.v1';
  */
 export const CAP = 60;
 
-/**
- * How many runs a man may be absent before he is struck off.
- *
- * A company you stopped playing four months ago should still be there — that is
- * the point of a save file. But a man left on the roll of an army you have not
- * fielded since is not a veteran, he is a leak, and `CAP` is a hard ceiling
- * that a leak eventually fills. `null` disables it; it is null today and the
- * field exists so that a future muster screen has somewhere to say so.
- */
-export const STALE_AFTER = null;
-
 /** What one man carries across a session. Nothing derived is stored. */
 const MAN_FIELDS = [
   'id', 'army', 'type', 'designation', 'nickname', 'squad',
