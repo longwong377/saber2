@@ -1330,6 +1330,22 @@ export class World {
      * and stood on stock geonosis. See `_groundKeyFor`, which takes the same
      * precaution from the other end for a world that never unloaded. */
     this._dropGeneratedGround();
+    /**
+     * AND THE SHIP GOES, UNLESS IT IS THE ONE CARRYING US.
+     *
+     * The extraction's group is parented to `scene` rather than to `statics` so
+     * that this method CANNOT take it — which is correct while a transport is
+     * flying the party from one ground to the next, and wrong every other time
+     * a level changes. Everything else took the exemption too: an insertion
+     * interrupted by a rotate, a run left mid-flight, a mode change under a
+     * descent. Measured across one ground change: 44 meshes — hull, capital
+     * ship, both pilots, both doors, the ramp — left in the scene with no
+     * physics and no owner, and drawn on top of every level loaded after it.
+     * That is the superimposed geometry, and it is not the level's at all.
+     *
+     * `carryingBetweenGrounds` is the one case the exemption was written for.
+     */
+    if (!this.extraction?.carryingBetweenGrounds) this.extraction?.clear();
     // The level's wind and drone are level state; without this they kept
     // playing under the main menu after quitting.
     audio.setAmbience?.({ wind: 0, drone: 0 });

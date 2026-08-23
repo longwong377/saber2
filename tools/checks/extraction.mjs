@@ -808,4 +808,67 @@ export async function run({ check, assert }) {
     return `${allies} allies + the commander, worst drawn offset ${worst.toFixed(2)} m, all ${roots.length} roots at zero`;
   });
 
+  check('ground change: a flight nobody is riding does not follow you to the next level', async () => {
+    /*
+     * "In command mode I spawned into a map where the colosseum was
+     * superimposed onto the geonosis map and had no physics, it was see
+     * through… actually now there's a bug where the colosseum is superimposed
+     * onto every map."
+     *
+     * It is not the colosseum, and it is not any level's geometry. The
+     * extraction's ship is parented to `scene` rather than to `statics`
+     * SPECIFICALLY so that `World.unload` cannot take it — which is right while
+     * a transport is flying the party from one ground to the next, and wrong
+     * every other time a level changes. Every other reason took the exemption
+     * too: an insertion interrupted by a rotate, a run left mid-flight, a mode
+     * change under a descent.
+     *
+     * Measured in a real browser across one rotate, before the fix: 46 meshes
+     * from the old level still in the scene, 44 of them the ship — hull,
+     * capital, both pilots, both doors, ramp — with no physics and no owner,
+     * drawn over every level loaded afterwards. Exactly the described symptom.
+     *
+     * Both halves are asserted, because the fix is a discriminator and a
+     * discriminator can be wrong in two directions: a stranded flight must be
+     * cleared, and a flight that IS carrying the party across the swap must
+     * survive it, or the extraction deletes the transport the player is
+     * standing in.
+     */
+    const { world, input } = await boot('skirmish', 'colosseum');
+    assert(world.extraction.beginInsertion({ name: 'Colosseum' }), 'beginInsertion declined');
+    for (let i = 0; i < 12; i++) world.update(1 / 60, input);
+    assert(world.extraction.active, 'the insertion ended before the rotate could interrupt it');
+    assert(!world.extraction.carryingBetweenGrounds,
+      'an INSERTION claims to be carrying the party between grounds — it starts over the ground it lands on');
+
+    const shipsIn = (w) => {
+      let n = 0;
+      w.scene.traverse((o) => { if (o.name === 'extraction') n++; });
+      return n;
+    };
+    assert(shipsIn(world) === 1, `expected one ship in the scene during the flight, found ${shipsIn(world)}`);
+
+    world.rotateTo('geonosis');
+    for (let i = 0; i < 4; i++) world.update(1 / 60, input);
+    assert(shipsIn(world) === 0,
+      `the transport survived a ground change nobody was riding it through — ${shipsIn(world)} ship(s) left in the `
+      + 'scene, with no physics and no owner, on top of the new level');
+
+    /* …AND THE OTHER DIRECTION. A real extraction lifts off one ground, the
+     * world changes underneath it in `transit`, and it descends onto another.
+     * Deleting the ship there would put the player in mid-air. */
+    const X = await import('../../src/game/Extraction.js');
+    const e = world.extraction;
+    for (const phase of ['liftoff', 'transit', 'descent']) {
+      e.phase = phase; e.leg = 'out';
+      assert(e.carryingBetweenGrounds,
+        `an outbound flight in '${phase}' does not claim to be carrying the party — unload would delete it`);
+      e.leg = 'in';
+      assert(!e.carryingBetweenGrounds, `an INBOUND flight in '${phase}' claims to be crossing grounds`);
+    }
+    e.phase = 'done';
+    assert(X.PHASES.includes('transit'), 'the phase names moved; this check names three of them');
+    return 'a stranded insertion is cleared on the ground change; an outbound liftoff/transit/descent survives it';
+  });
+
 }

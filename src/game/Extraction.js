@@ -398,6 +398,31 @@ export class ExtractionDirector {
   }
 
   get active() { return this.phase !== 'done'; }
+
+  /**
+   * IS THIS FLIGHT THE ONE CARRYING THE PARTY BETWEEN TWO GROUNDS?
+   *
+   * `World.unload` cannot reach the ship — it is parented to `scene` rather
+   * than to `statics` precisely so a ground swap cannot delete the transport
+   * the player is riding IN. That is right for exactly one case and was applied
+   * to all of them, so any OTHER reason a level changed left the whole ship in
+   * the scene for the rest of the session: hull, capital, both pilots, both
+   * doors and the ramp. Measured across one rotate — 44 meshes, no physics, no
+   * owner, drawn over every level loaded afterwards. That is the report about
+   * geometry from one map being superimposed on the next.
+   *
+   * The discriminator is the LEG. An extraction (leg 'out') genuinely spans the
+   * swap: it lifts off one ground, the world changes underneath it during
+   * `transit`, and it descends onto another. An INSERTION (leg 'in') never
+   * does — it starts in orbit over the ground it is going to land on — so a
+   * level change under one is a stranded flight by definition. The airborne
+   * phases are named rather than inferred, because a ship on the pad with its
+   * ramp down is not carrying anybody anywhere whatever leg it is on.
+   */
+  get carryingBetweenGrounds() {
+    return this.active && this.leg === 'out'
+      && (this.phase === 'liftoff' || this.phase === 'transit' || this.phase === 'descent');
+  }
   /** True while the ship is holding people off the ground. */
   get aboard() { return this.phase === 'liftoff' || this.phase === 'transit' || this.phase === 'descent'; }
   /** What the sequence did, beat by beat, in seconds. The check reads it. */
