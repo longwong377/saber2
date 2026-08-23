@@ -1,252 +1,413 @@
-# THE LINE — corrected after audit
+# THE LINE — the next phase
 
-The first version of this document was sent back. It was built on four claims
-that are false against this repository, and a hostile audit found all of them.
-This version states what was wrong, then plans the work that the measurements
-actually support.
+Third draft. The first two were sent back by audit and both failed the same way:
+they reasoned from numbers in `NEXT.md` without reading to the last word written
+about those numbers. Draft 1 built on a null result. Draft 2 built on the
+retraction's *premise* and missed the retraction. This draft is written against
+the current frontier and cites the section that settles each claim.
 
----
-
-## 0. What the audit killed
-
-**1. The core loop was already measured, and it pays nothing.** `NEXT.md` §Step 2
-is a seeded four-arm test on this branch. Fifteen of fifteen rows, every seed:
-same waves cleared, same area taken, same enemies killed, with or without a Jedi
-on the field. What changes is that **seven of your men die who would otherwise
-have lived**, and a Jedi a hundred metres away costs the line exactly as many as
-one standing in it — 6.33 against 6.33. The Jedi's kills *substitute* for the
-line's rather than adding to them.
-
-The old plan's centrepiece was presence: raise morale where you stand, sprint
-between collapsing lanes, a propagating aura, a co-op mode built on lanes
-degrading without a Force user in them. **It stretched a loop measured at zero
-effect over 14 m across three 120 m lanes on a 500 m field**, and contained no
-test for the thing that had already failed. I had not read `NEXT.md`.
-
-**2. The measurements were the wrong measurements.** `PERF.md` was taken headless
-at quality **low** with no render pass. `tools/checks/frame-ledger.mjs` measures
-the same thing at quality high with `process.cpuUsage()`: **29.35 ms CPU for ~48
-bodies**, of which physics is 13.8 ms. My curve says ~11 ms for that population.
-**The two disagree by 2.7× and the plan cited only the cheaper one.** The harness
-was never committed, so the numbers could not be re-run — failing the plan's own
-guardrail on the numbers that set its budget.
-
-**3. Two rendering rungs already ship, and the plan proposed to rebuild them with
-a technique this codebase documents as incompatible.** `MergedSkin.js` (L2) and
-`Cohorts.js` (L3) are shipped and measured: **168 bodies at 27 draw calls.**
-And `Cohorts.js` already wrote down why a vertex-shader walk cannot work here —
-`Ink.js:554` sets `scene.overrideMaterial`, so a body animated in its own vertex
-shader **would have its outline drawn at the un-walked pose**. Cohorts escapes
-this by living past 137.8 m where no outline is drawn. My Tier 2 began at 60 m,
-squarely inside the ink band.
-
-**4. The problem statement was stale and the capability audit was wrong.**
-`maxAlive` is not 26 in the flagship modes — `Levy.js` is live and makes it
-**66**. There are **37** archetypes, not the 16 I counted from the wrong reader.
-`theline` already exists as a mode, with `Battlefield.js` generating ground
-around a bezier front and `Front.js` drawing it. `Morale.js` and `Nerve.js` are a
-shipped two-branch morale model; the plan specified a third without mentioning
-either.
-
-Also correct and accepted: the simulation is **not** linear in the mode this plan
-needs (`World.js:2743` is an O(bodies²) cross-army pass, gated on mode, and my
-benchmark ran in the configuration where it does not execute); 100 draw calls is
-not a budget when an empty field costs 801; and the tier populations exceeded the
-plan's own millisecond ceiling by 2.7×.
-
-**Verdict accepted.** The rest of this document is the shorter, honest plan.
+**The rule that both drafts lacked, and the most important line in this
+document: a number from the working log is not usable until you have found the
+last thing written about it.** `NEXT.md` is 2115 lines and carries its
+retractions inline.
 
 ---
 
-## 1. The real problem, which the repo already isolated
+## 0. What is actually true, as of the tuned build
 
-Three measurements from `NEXT.md`, in order:
+**The game's central claim is TRUE for the first time.** `FLAGSHIP.md` §1 — "your
+job is not to kill everything, it is to be the reason the line is still standing
+when it takes the ridge" — measured false through five readings and holds on this
+build (`NEXT.md` §"WHAT IS ACTUALLY TRUE, from `tools/_muster.mjs`"):
 
-**The fire that kills your men is your own.** One Command battle, every hit on a
-friendly body counted at `World._boltHitTest` with the owner's team read off the
-bolt:
+| arm | standing when area 1 falls | after the muster | net on the area |
+|---|---|---|---|
+| no player at all | 2–3 of ten | 6–7 | −3 to −4 |
+| **a Jedi on the field** | **4–8 of ten** | 8–11 | **−2 to +1** |
 
-    47 hits · 569.8 damage · every one fired by the player's OWN team
-    0 hostile bolts reached a trooper at all
+> "**A Jedi on the field is worth four to five men an area.** … On two of three
+> seeds the line ends area 1 **stronger than it landed**. … **The mode is
+> winnable.**"
 
-Taken three times on three builds — 47 / 30 / 22 hits, **always 100% own-team.**
+And the mechanism is in the columns beside it: with the Jedi present, fire
+arriving on the line **halves** — 0.94–1.72 hp/s down to 0.43–0.97. *He is
+removing bodies before they fire.*
 
-**The men who die are not near the Jedi.** Of 30 casualty-bolts, 3 had the victim
-inside `MORALE.NEAR`, 2 inside a guard's arc, and **zero inside both.** Victim
-distances run 11 m to 58 m.
+**The keystone is built.** `MODES.theline.lineAdvances` / `CommandDirector.
+lineIsUp` (`NEXT.md` §"§7's central claim, answered — the ground is taken by the
+LINE"): an area does not close until half the living are inside `MORALE.NEAR`.
 
-**Because the line is not with him.** The share of living men within 14 m of the
-Jedi is **19.7%**, and the median man goes 12.6 → 16.1 → 17.4 → 23.3 → 31.2 →
-45.7 m over the first thirty seconds. *The Jedi holds station on the centroid of
-his own roster and the roster walks away from itself.*
+> "It is not a reward for standing still and it does not punish having left. It
+> declines to advance until the army that is supposed to be taking this ground is
+> standing on it… **It makes all four of the failed mechanisms pay at once
+> without changing any of them**, because each keeps men alive and near you and
+> that is now what advances the run."
 
-`NEXT.md` names the open question and it is the right one:
+**What is retracted, and what both earlier drafts wrongly used:**
 
-> **"The thing to answer next is not 'what should a Jedi do for the line', it is
-> 'why is the line thirty metres wide'."**
+| Retracted claim | The last word |
+|---|---|
+| "the line comes apart to thirty metres wide" (19.7% inside NEAR) | §"RESOLVED: the line does not come apart — it falls behind". Both benches ran an **unticked input script** — a statue on the deploy mark. Re-taken: **37.1% inside NEAR, band width mean 6.9 m.** "The line holds together to within about seven metres — **it is the PLAYER who leaves.**" |
+| "100% of friendly casualties are own-team bolts" | `_boltHitTest`'s early-out was fixed, so hostile bolts reach troops "**for the first time**… before that the line was immortal to gunfire and every number about it was fiction." Current: **bolt 99.3%, friendly fire 0.7%** |
+| "the Jedi is worth nothing / his kills substitute" | Superseded by the table above |
+| "the sim is linear at 198 µs/body, ceiling 63" | `tools/scale.mjs`, committed, quality high, in `command`: **fixed overhead 10.98 ms, marginal 238 µs, ceiling 23 — and a bend of ×1.65.** Not linear; `World.js:2743` is O(bodies²) and gated on mode, so the old bench never ran it |
 
-### The answer this plan proposes
+**And one live defect that outranks the plan.** 64 bodies cost **26.53 ms CPU
+against a 16.67 ms frame**, before rendering. `Levy` makes `alive` 66 in the
+flagship modes. The flagship mode is already over budget on simulation alone.
 
-**Because nothing holds it together, and a dispersed rank shoots itself.**
-
-That single fact reframes the whole design. Everything the old plan wanted —
-a front that moves, a general who matters, a battle with shape — is downstream of
-a line that stays a line. And it explains every failed mechanic in the log:
-presence, OPEN, SCREEN and BREAK all pay out inside a radius, and four fifths of
-the line is never in any radius.
-
-So the work is not to make presence worth more. It is to **make the line
-cohere**, and then re-take the measurement.
-
----
-
-## 2. Act I — three experiments, on the population that already exists
-
-No new architecture. No tiers, no worker, no VAT, no influence field. The
-existing ~66-body Command population, the existing four-arm Dead Jedi instrument,
-and three changes measured against it.
-
-**If none of these moves the `fallen` column, none of the rest of this document
-is worth building, and we will know in weeks rather than in years.**
-
-### E1 — Hold fire through your own line
-
-100% of friendly casualties are own-team bolts. A rank firing into a melee fires
-through its own men, and nothing stops it.
-
-The change: a trooper does not take a shot whose line passes within a body's
-width of a friendly, and `Waves.holdFire` already exists as the door. An explicit
-**Hold Fire** order gives the player the same lever deliberately.
-
-*Acceptance: own-team casualty bolts fall by ≥ 70% across five seeds, and the
-`fallen` column moves against the four-arm table.*
-
-This is the cheapest change in the document and the measurement says it should be
-worth almost all seven men.
-
-### E2 — Cohesion: why the line is thirty metres wide
-
-Men leave formation to chase targets and never re-form. The measurement to take
-first is *why*: whether it is the target selection, the formation slot being
-advisory, or the advance outrunning it.
-
-The change follows the measurement. Candidates, in the order the data will
-probably rank them: a formation slot that is a real attractor rather than a
-suggestion; an engagement leash so a man does not walk 30 m to a target; squad
-cohesion as a morale term, so a scattered squad is a nervous one.
-
-*Acceptance: share of living men within `MORALE.NEAR` rises from 19.7% to ≥ 50%,
-and the median man's 30-second dispersion falls from 45.7 m to under 20 m.*
-
-### E3 — Crewed capability: a payout the Jedi cannot substitute for
-
-The Dead Jedi finding is that the Jedi's kills *substitute* for his men's. So
-every mechanic that pays in kills is dead on arrival. **A gun only a trooper can
-crew pays in a currency the Jedi structurally cannot provide.**
-
-One capability objective on the field — the Battery, a SPHA-T that fires where
-you designate and needs a squad assigned to work. Lose the crew and it stops,
-whoever is standing beside it.
-
-All four blind researchers converged on this independently, and it is the only
-mechanic in the old plan that answers the measured failure. It was scheduled in
-Phase 4, behind everything. It is first now.
-
-*Acceptance: the player's men are worth keeping alive for a reason the
-instrument can see — a run with the Battery crewed differs measurably in enemies
-killed from one where the crew died.*
-
-### Also in Act I, because they are cheap and unambiguous
-
-- **Attack tokens** (`Game AI Pro`, "Beyond the Kung-Fu Circle"). There is no
-  crowd-attack limiter anywhere in `src/`. A Jedi in forty bodies should face
-  three or four live attacks, not forty. Cheap, well-documented, and it fixes a
-  legibility problem that gets worse with any density increase.
-- **Pooled ragdolls and instanced corpses.** `frame-ledger.mjs` measured physics
-  at **47% of a real frame**, driven by "288 rigid bodies of which 287 awake, 180
-  ragdoll joints, against 39 living enemies" — corpses. This is worth more than
-  the Rapier version bump the old plan ranked above it.
-- **Fix extraction boarding** (0–2 of 10 men reach the ramp). It gates company
-  persistence, and it is the same problem class — many capsules converging on one
-  goal — that any crowd work would hit at scale.
-- **Commit the perf harness**, re-taken at quality high, with `cpuUsage`, with
-  load average recorded per HANDOFF §2.6b, and with the cross-army loop enabled.
+**What already ships and both drafts failed to name:** `Cohorts.js` — **168
+bodies at 27 draw calls** past 137.8 m. `MergedSkin.js` at ~4.6 calls/body.
+`Levy.js`, forty free bodies off the threat budget. `Battlefield.js`, ground
+generated around a seeded bezier front. `Front.js`, that front drawn, with a
+measured ordering test. `Fallen.js`, 520 prone figures at two draw calls.
+`Extraction.js`, nine phases. `Morale.js`/`Nerve.js`. 37 archetypes, 20 vehicles,
+7 grounds, 9 modes.
 
 ---
 
-## 3. Act II — only if Act I pays
+## 1. The design, in one paragraph
 
-Written short deliberately. Detail here before Act I reports is detail spent on a
-hypothesis.
+**`lineIsUp` is the keystone, and the whole game is built on it.** The ground is
+taken by the line standing on it, not by the Jedi killing everything two hundred
+metres ahead. That one rule converts every other system from a bonus into a
+requirement: keeping men alive matters because live men take ground; being near
+them matters because near men take ground; a gun that needs a crew matters
+because the crew are men who must be alive and near. The Jedi's job stops being
+damage and becomes **making it possible for the line to arrive** — and that is a
+job no volume of rifle fire can substitute for, which is exactly what five
+previous readings proved was needed.
 
-**If cohesion and hold-fire move the `fallen` column**, then a line that holds is
-a line worth commanding, and the following become worth their cost, in this
-order:
-
-1. **The vulnerability map.** `tension − |A − B|` over a coarse influence grid —
-   two subtractions, and a *computed* answer to "where am I needed" instead of an
-   authored one. It survives even if nothing else in the old §4 does.
-2. **The rest of the capability objectives** — Relay, Pad, Spire, Foundry,
-   Shield — with off-map power gated on a spotter's line of sight, and vehicles
-   costing bodies out of the line.
-3. **Reconcile the two front models.** `theline` + `Battlefield.js` + `Front.js`
-   already draw a marching front. An influence contour is a *second* front model
-   beside a shipped one with an acceptance test. One of them dies; that is a
-   decision, not an implementation.
-4. **The company**, gated on extraction working.
-5. **Scale**, and only then. Using `MergedSkin`/`Cohorts` — the shipped ladder —
-   with the real problem named in `Cohorts.js` itself: *"every instance of one
-   cohort wears one pose."* Animating the instanced rung is a smaller, better-
-   defined job than a VAT renderer, and it must solve the ink prepass first.
-
-**The requested battle** — dozens of Force users, hundreds of troops, transports,
-a front that moves — sits at the end of that chain, not the start. The old plan
-put it first and priced it at nine tidy phases; the audit priced it at 2.5–4
-years for one engineer, and that estimate is more honest than mine was.
+Everything below is that sentence, extended until it is a game.
 
 ---
 
-## 4. Guardrails, revised
+## 2. Running now — the measurements that gate building
 
-The old set was fine except that the plan broke three of them. The additions:
+**M1 — the twenty-seed reference arm.** *Running as this is written.*
+`NEXT.md` asks for it by name: "Six seeds is not a result — the spread is 0 to 8
+— but it is the first time the sign has been positive, and **it is now worth
+twenty seeds from somebody.**" `tools/_linehold.mjs theline 1..20`, all three
+arms, fresh process each (HANDOFF §2.5b).
+*Kills:* if the sign does not hold at n=20, §1 is false and this document is
+void. *Licenses:* everything.
 
-1. **Read the measurement log before proposing a mechanic.** `NEXT.md`,
-   `HANDOFF.md`, `BACKLOG.md` and `FLAGSHIP.md` record four mechanics already
-   built, measured and found not to pay. A fifth proposed without reading them is
-   a fifth that will not pay either.
-2. **Never quote a millisecond from quality low, headless, without the load
-   average, or from an uncommitted harness.** All four applied to the last set.
-3. **Check the roster with `tools/state.mjs`, not by guessing a reader.** The
-   count was wrong by more than half and it set the scope of the plan.
-4. **Before proposing a system, grep for it.** `Cohorts`, `MergedSkin`, `Levy`,
-   `Battlefield`, `Front`, `Morale`, `Nerve` and `theline` all existed and none
-   were named.
-5. **Price a check before adding it.** The old Phase 2 acceptance — 24 seeded
-   twenty-minute battles — is roughly six hours of wall clock for one suite,
-   against a gate that already takes 18.7 minutes.
-6. **An acceptance number that tests legibility is not a test of whether the
-   mechanic pays.** Both are needed, and the second is the one that matters.
+**M2 — the teamDamage bound, one hour.** `teamDamage` is already a slider
+(`TEAM_DAMAGE_DEFAULT = 0.35`). Run the instrument at `teamDamage: 0` and the
+entire ceiling of any friendly-fire work is known with no code written. Draft 2
+proposed weeks of hold-fire work without taking this bound.
+
+**M3 — density, two constants and one conditional.** Raise `LEVY_STRENGTH`; drop
+the `if (this.command)` gate at `World.js:2761` on one level so two armies
+actually fight each other; run `tools/scale.mjs` and the instrument. This is the
+cheapest possible answer to "is density the variable the brief hinges on", and it
+also gives the first honest reading of the O(bodies²) pass at real population.
+
+**M4 — the browser frame.** There is no draw-call instrument. The diagnostic is
+low FPS *with* low GPU usage (draw calls / JS) versus high GPU time (skinning,
+shadows, overdraw). Until this exists, no rendering decision is licensed.
 
 ---
 
-## 5. What survives from the first draft
+## 3. Building now — licensed by measurements already taken
 
-Kept, because the audit endorsed them and they are cheap:
+These do not wait on M1–M4. Each names what already licenses it.
 
-- **Capability objectives**, promoted from Phase 4 to first.
-- **Attack tokens**, absent from the codebase and correct.
-- **The vulnerability map**, two subtractions for a computed answer.
-- **Pooled ragdolls and instanced corpses**, which the frame ledger already
-  argues for.
-- **The pose/think split as a finding** — `_think` 12 µs against `_pose` 81 µs is
-  the right boundary, once it is re-measured honestly.
+**B1 — the frame, which is over budget.** *Licensed by `scale.mjs` and
+`frame-ledger.mjs`.* Physics is 47% of the frame and the population making it so
+is **the dead**: 288 rigid bodies, 287 awake, 180 ragdoll joints, against 39
+living enemies. Pool the ragdolls; retire settled corpses to the instanced
+`Fallen` mesh that already exists. This roughly doubles the live budget before
+any other work, and it is the precondition for every scale ambition below.
 
-Dropped:
+**B2 — attack tokens.** *Licensed by absence:* no crowd-attack limiter exists in
+`src/`. Sum of active attack weights against a target may not exceed its
+capacity; FIFO queue; cooldown multiplier. A Jedi in forty bodies faces three or
+four live attacks instead of forty. Cheap, well-documented, and legibility only
+gets worse as density rises.
 
-- The three-tier rearchitecture, until something needs it.
-- VAT, in favour of animating the shipped instanced rung.
-- The simulation worker. `Net.js` already states the constraint: *"the blade
-  cannot tolerate a single frame of interpolation."*
-- A third morale model.
-- A second front model, until §3.3 decides which one lives.
-- Every acceptance test that cannot finish inside the gate.
+**B3 — scale that costs no draw calls.** *Licensed by nothing needing
+measurement.* A three-layer distance audio bed (weapons at near/mid/far, mixed by
+distance) is the single biggest perceived-scale win available and this engine
+synthesises every sound already. Plus `Fallen` fields on the horizon,
+atmospheric perspective tuned per ground so the far plane reads as far, and
+foreground silhouettes that parallax faster than the field. This is "truly
+immense sense of scale" for weeks of work and zero frame cost, and draft 2
+deleted it for no reason.
+
+**B4 — extraction boarding**, currently 0–2 of ten men reaching the ramp. It
+gates the company, and it is the same problem class as any crowd convergence.
+
+**B5 — the four open playtest defects**, which the developer has already seen:
+enemies illegible at range; characters with no value separation or contact
+shadow; Command discarding the chosen theatre; the camera inside tree trunks.
+
+---
+
+## 4. The game, designed in full
+
+Written now rather than after M1, because measurement gates *building* and not
+*designing*, and because "I don't want to go back and add anything" is
+incompatible with a five-bullet promise. Each system names its **licence** (the
+measurement that permits it) and its **kill** (what would prove it wrong).
+
+### 4.1 A reason to stand, and a reason to leave
+
+`lineIsUp` gives the reason to stand. The design needs the countervailing pull or
+there is no decision — and `NEXT.md` names the open one: *"whether the mode gives
+a player any reason to stand still, and today it does not: killing is fast,
+killing is where the targets are."*
+
+So the tension is explicit: **the line takes ground; the Jedi takes
+opportunities.** Everything the Jedi can do that the line cannot is time-limited
+and elsewhere — a gun to spike, a door to cut, a walker to bring down, a flank to
+break. Leaving is correct, *and* the ground does not close while you are away.
+That is a real decision every ninety seconds and it needs no new mechanic to
+exist; it needs the opportunities to be worth the walk.
+
+*Licence:* `lineIsUp` is built and engages (6/6 areas, 14 s mean waiting).
+*Kill:* if M1 shows the Jedi is worth nothing, the tension has no stakes.
+
+### 4.2 Capability objectives — the currency the Jedi cannot provide
+
+The set, all buildable from shipped content:
+
+| Objective | Held | Lost |
+|---|---|---|
+| **Battery** (SPHA-T) | Artillery where you designate. **Needs a crew** | It fires for them |
+| **Relay** | Stratagem cooldowns halved | Long clock |
+| **Pad** | Gunship passes | Their gunship, on you |
+| **Spire** | Vision: true front and their order of battle | You fight blind |
+| **Foundry** | Reinforcement waves bring a heavy | Theirs do |
+| **Shield** | One approach uncrossable until it is down | An approach you cannot use |
+
+**A gun without a crew is scenery.** This is the mechanism that makes specific
+named men load-bearing — the Jedi cannot crew a battery and fight at once. All
+four blind researchers converged on it independently.
+
+**Off-map power is gated on vision** — the aim point must be inside territory
+someone can see, which makes the spotter a man worth protecting.
+
+*Licence:* the substitution problem is real even on the tuned build (his output
+is 5.9–10.1 hp/s against the line's 2.5–5.2 — he still does most of the killing).
+*Kill:* four-armed test — does the Jedi arm beat the no-player arm *more* with the
+Battery on the field than without? If not, it is decoration.
+
+### 4.3 The battle the brief asked for
+
+Two sets of transports, both armies meeting, a front that moves, reinforcements,
+mechs, creatures, air, squads meeting squads, generals riding to where it breaks.
+
+**The route to it is density, not architecture** — M3 is two constants. The
+ladder to render it already ships: `Cohorts` at 168-for-27 past 137.8 m,
+`MergedSkin` nearer. The one missing piece is named in `Cohorts.js` itself:
+*"every instance of one cohort wears one pose."* **Animating the instanced rung
+is one system, not three**, and it must solve the ink prepass first — `Ink.js:554`
+sets `scene.overrideMaterial`, so a body animated in its own vertex shader is
+outlined in its bind pose. The honest fix is per-object prepass materials, which
+also unblocks every future shader effect.
+
+**The front already exists.** `Battlefield.js` generates ground around a seeded
+bezier front; `Front.js` draws it with craters, smoke and wrecks. Do not build a
+second front model. Extend this one.
+
+**Dozens of Force users, honestly:** heroes rotate off by themselves if health
+drains and only kills restore it, so dozens exist in the transports and four to
+six per side are hot at any moment. A duel claims physical space — an exclusion
+radius troop AI will not path into — and pays out as a morale swing on both
+retinues, which is how twenty of them stay legible.
+
+*Licence:* M3 for density, M4 for the frame. *Kill:* if M3 shows the O(bodies²)
+pass makes two real armies unaffordable at any interesting count, the battle is
+scoped to what the budget carries and the rest is horizon dressing.
+
+### 4.4 The company — and it must work on a losing run
+
+The developer's own diagnosis: *"you're either dying or quitting 99% of the
+time."* So persistence gated on victory is persistence that never happens.
+
+**Extraction is callable at any moment.** The transport has N seats; boarding
+takes time under fire; men left behind are **MIA, not KIA** — recoverable next
+run or lost for good. Every run becomes *which men do I spend this window on*,
+and the layer functions on the runs that actually happen.
+
+**The Company screen:** the roll (crest, serial, nickname, kills, runs survived),
+the memorial (every man lost and the ground he fell on), and a per-man card with
+his history and two things you may change — his kit, from `COMMAND_UNITS`, and
+his appearance.
+
+**Rank changes what a man can be ordered to do, never his health bar.** A
+Sergeant accepts a standing order; a Corporal does not. Purchasable stats break
+wave tuning permanently.
+
+**Armour paint is permission you grant** (canon: Jedi Generals *allowed* the
+clones to paint; unpainted rookies are shinies). Free consequence: you read your
+army's veterancy across a battlefield at a glance and watch it get younger over a
+losing campaign, with no UI.
+
+**Nicknames are earned from a logged event** and the card prints the sentence
+that earned it.
+
+*Licence:* `Command.js` ships designations, five ranks, promotions and nicknames;
+`Progress.js` ships the localStorage record; `Extraction.js` ships nine phases.
+**The wire between them does not exist.** *Kill:* B4 — if boarding cannot be
+fixed, the gate does not exist and persistence has to be gated some other way.
+
+### 4.5 Co-op and versus, first class
+
+**Two generals is the path to X-vs-X, and X starts at 2.** `Net.js` already runs
+a second commander with an army; `assignArmies` already exists and already has a
+documented defect (it ignores the peer's chosen side).
+
+A Sith general who is *also* directing a line, who leaves his line for exactly
+the reasons you leave yours, makes the battle turn on **who was somewhere else at
+the wrong moment.** One extra `Player`-class body; no rendering work.
+
+**And it is the co-op mode for the same code.** Your friend is the second general
+on your side, or the one opposite. Two generals cover more of the field than one
+can — which is genuinely better with friends rather than a scaling multiplier.
+
+*Licence:* `Net.js` is divergence-tolerant by design (host reconciles by hp
+delta, not trajectory). *Kill:* if two commanders cannot be kept in agreement on
+`lineIsUp`, the mode's win condition desyncs and it needs a host authority.
+
+### 4.6 Variance — and it costs no new content
+
+Licensed by nothing needing measurement, and it is the developer's most repeated
+request:
+
+- **The holocron offers three of the currently-legal facets, not all 46.** Same
+  46 nodes, same adjacency; only the *offer* changes. A solved build order
+  becomes a found one.
+- **Eight facets that change rules rather than numbers.** *Push ragdolls allies
+  too. The saber absorbs instead of deflecting. Shattering a prop refunds
+  Insight.*
+- **A branching route** over the five Command areas that already exist, with
+  partial information: you see the ground, the weather and the garrison weight,
+  not the contents.
+- **Player-authored difficulty** driving Insight income — pick which axes get
+  harder, get paid for it. Not Easy/Normal/Hard.
+- **Composition constraints**, not just budget size: *armour column* (40% must be
+  vehicles), *mono-kin*, *bladed*, *droid host* (no dismemberment, no morale, but
+  `rend` is devastating), *beast drive*.
+- **Modifiers with caps**: at most two, at most one beneficial, one guaranteed
+  clean battle per rotation, pairwise blacklist. **A modifier that only
+  multiplies enemy health is not content; one that removes or delays a verb is.**
+
+Seven grounds × `Battlefield.js`'s seeded fronts × 37 archetypes × the above.
+
+### 4.7 The battlefield changes, and you change it
+
+*Licence:* the crater persistence verdict **turned over for the drawn channel** —
+`Terrain.scars`, 13.2% of pixels wide-shot and **33.4% at eye height over twenty
+sorties**. The *geometry* claim stayed dead: "cratered coverage stops growing by
+sortie 10 and walkability has moved 0.2 points by sortie 20."
+
+So: **the ground remembers visually, and `Dig In` is what makes it cover.** A
+sapper turning a crater into a real position is the only thing that produces
+defilade, because artillery measurably does not. And it is the necessary
+companion — *Fracture* (2008) made terrain deformation its whole pitch and failed
+because the AI ignored the ground the player sculpted.
+
+**Cover is finite.** Pre-fractured props degrade over a long battle, so a late
+act is more lethal than an early one with no number changing.
+
+**Weather disables one verb and enables another** (`Hazard.js` ships): sandstorm
+kills ranged fire both ways and leaves Force sense working, so you become your
+army's eyes; blizzard costs sightlines but carries sound; ash grounds air and
+speeds fire; rain conducts lightning between men in contact. **No dark maps** —
+the player owns the canvas and a gamma slider defeats darkness; use fog and dust,
+which are in-world occluders.
+
+### 4.8 The unprecedented ones, kept
+
+Draft 2 dropped these silently. They are the answer to "genuinely innovative",
+each researched as having no shipped precedent:
+
+- **Contested telekinesis.** Two Force users gripping one rigid body as a shared
+  constraint, both spending pool, the object shuddering between them. Break his
+  guard and the resistance cap collapses from a half to a third — *already in the
+  code* — and it becomes a projectile with his name on it. In Psi-Ops, Half-Life
+  2, The Force Unleashed and Control, exactly one entity owns an object.
+- **The order you can check.** High Command designates an artillery ellipse.
+  Force sense shows what is inside it, including friendly IFF. Obeying is faster
+  and rewarded; verifying costs twelve seconds under fire. Sometimes your own men
+  are in it and the game never says so. Refuse and your stratagem budget is cut.
+  The Umbara arc has **zero adaptations in any game.**
+- **Squadmates grab the man you are gripping.** One joint, one break force: a
+  gripped body reaches for the nearest collider and a squadmate grabs *him*. Grip
+  one, drag two, the contest resolving against combined mass.
+- **Graves at true coordinates.** A marker where each man of the company fell, on
+  that ground, in later runs, with the surviving squad's morale reacting.
+
+### 4.9 Making real-time permadeath survivable
+
+**Downed, not dead** — a bleed-out window; an enemy reaching the body finishes
+it; a medic or your Heal saves him. The interruption that makes you break off a
+duel, and it means the last word on every death is the player's.
+
+**The after-action report** — who killed whom, from what direction, at what
+minute. No death is mysterious, so no death is the AI's fault. It is also the
+ending beat every session needs.
+
+---
+
+## 5. The decision that is the developer's, and the log says so
+
+> "The decision that is still nobody's to take unilaterally: **how much of a
+> ten-man roster one engagement should cost.** It is load-bearing now (The Line
+> loses the run on a wipe) and **it belongs to the player**, not to a constant in
+> the composer."
+
+Currently an engagement costs roughly three to four men of ten without a Jedi,
+and two to none with one. **This sets whether the game is a grinder or a
+campaign, and it needs an answer before §4.4's persistence is tuned.**
+
+---
+
+## 6. Order
+
+```
+now ───┬── M1 twenty seeds (running)      ─┐
+       ├── M2 teamDamage bound (1 hour)    │ gate on §4.1, §4.2
+       ├── M3 density, 2 constants         ─┤ gate on §4.3
+       ├── M4 browser frame instrument     ─┘
+       │
+       ├── B1 pooled ragdolls / corpses   → precondition for all scale
+       ├── B2 attack tokens
+       ├── B3 audio bed, horizon, haze    → "immense scale", no frame cost
+       ├── B4 extraction boarding         → gate on §4.4
+       └── B5 four playtest defects
+
+then ──┬── §4.2 capability objectives      (four-armed acceptance)
+       ├── §4.4 company + Company screen   (after B4)
+       ├── §4.6 variance                   (no gate)
+       ├── §4.5 two generals → co-op/versus
+       ├── §4.7 Dig In, finite cover, weather
+       ├── §4.8 the unprecedented four
+       └── §4.3 density + animate the instanced rung + ink prepass
+```
+
+---
+
+## 7. Guardrails
+
+1. **A number from the log is unusable until you have found the last thing
+   written about it.** Both earlier drafts failed exactly here. Cite the section
+   that settles it, or you have not read it.
+2. **Every element must change a decision, and its check must demonstrate the
+   decision changing** — not that the feature exists.
+3. **An acceptance that tests legibility is not a test of whether it pays.** Both
+   are needed; the second is the one that matters. Four arms, not two.
+4. **Never quote a millisecond** from quality low, headless, in wall clock,
+   without the load average, from a mode that skips the cross-army pass, or from
+   an uncommitted harness. All six applied to draft 1.
+5. **Check the roster with `tools/state.mjs`**, not by guessing a reader.
+6. **Grep before proposing.** `Cohorts`, `MergedSkin`, `Levy`, `Battlefield`,
+   `Front`, `Morale`, `Nerve`, `theline` and `Hazard` all shipped unnamed.
+7. **Price a check before adding it.** The gate is already 18.7 minutes.
+8. **Tick the input script.** HANDOFF §2.5c exists because a bench that steps
+   without ticking drives a statue — and that fault produced the number draft 2
+   was built on.
+9. **No number typed twice.**
+10. **Nothing lands red.**
