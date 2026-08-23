@@ -583,6 +583,45 @@ export const RANKS = [
   { title: 'Commander',  short: 'CMD', xp: 36, color: 0xe8b028, hp: 1.78, dmg: 1.34, speed: 1.10 },
 ];
 
+/**
+ * THE PERSONAL MARKINGS A PLAYER MAY PAINT ON ONE OF THEIR OWN.
+ *
+ * "Maybe you can even customise certain parts of their appearance … kind of
+ *  like keeping track of companions/pets."
+ *
+ * COSMETIC, AND THAT WORD IS DOING REAL WORK HERE. Not one of these changes a
+ * number: `enlistBody` applies the rank multipliers off `RANKS` and then paints
+ * this on top, and `Company.js`'s header refuses cross-run power for the same
+ * reason `Progress.js` refuses currency. What a mark buys is the ability to
+ * pick one man out of a line of ten at forty metres, which is the whole of what
+ * a player wants from it and is worth having on its own.
+ *
+ * IT IS NOT THE RANK COLOUR AND IT DOES NOT SIT WHERE THE RANK COLOUR SITS.
+ * `repaint` bolts the rank onto the head crest and both pauldrons and that
+ * language has to stay unambiguous — a player reads the line's shape off it.
+ * `markUp` puts the personal flash on the SHINS, low and on the outside, where
+ * nothing else in this game paints.
+ *
+ * Deliberately few, deliberately far apart in hue, and every one of them chosen
+ * to be legible against BOTH armies' plate — bone white for the Republic and
+ * the Confederacy's dull metal — under this game's flat outdoor light.
+ */
+export const MARKS = [
+  { id: 'none',   name: 'None',    color: null },
+  { id: 'blood',  name: 'Blood',   color: 0xb4382c },
+  { id: 'sky',    name: 'Sky',     color: 0x3a86c8 },
+  { id: 'jungle', name: 'Jungle',  color: 0x3f8f4a },
+  { id: 'sun',    name: 'Sun',     color: 0xe8b028 },
+  { id: 'ash',    name: 'Ash',     color: 0x8e8e96 },
+  { id: 'plum',   name: 'Plum',    color: 0x7a4a9c },
+  { id: 'rust',   name: 'Rust',    color: 0xc0682a },
+  { id: 'ice',    name: 'Ice',     color: 0x9fd8e6 },
+];
+/** A mark id, made safe. Anything unknown is no mark, which is the default. */
+export function markById(id) {
+  return MARKS.find((m) => m.id === id) || MARKS[0];
+}
+
 /** The rank index this much experience has earned. */
 export function rankFor(xp) {
   let r = 0;
@@ -1597,8 +1636,21 @@ export class Trooper {
   get label() { return ARCHETYPES[this.type]?.label ?? this.type; }
 
   /** What the roster screen prints. Designation always; nickname when earned. */
+  /**
+   * What the roster screen prints. Designation always; the name he answers to
+   * when he has one.
+   *
+   * THE PLAYER'S CALLSIGN OUTRANKS THE EARNED NICKNAME, and that is the point
+   * of letting them type one. `_earnNickname` draws from a table and the draw
+   * is the game's; a callsign is the player saying "this is the one who has
+   * been covering my left since Geonosis", which is the whole of what the
+   * Company tab is for. The earned nickname is not deleted by it — it is still
+   * on the record and the tab still shows it — so clearing the callsign gives
+   * him his old name back rather than nothing.
+   */
   get name() {
-    return this.nickname ? `${this.designation} "${this.nickname}"` : this.designation;
+    const called = this.look?.callsign || this.nickname;
+    return called ? `${this.designation} "${called}"` : this.designation;
   }
 
   /**
@@ -2174,6 +2226,8 @@ const _hide = new THREE.Vector3();
  * metres rather than a shape at two.
  */
 const CREST_GEO = new THREE.BoxGeometry(0.026, 0.052, 0.150);
+/** A man's own stripe — see `MARKS`. Wider than it is tall, and shallow. */
+const MARK_GEO = new THREE.BoxGeometry(0.030, 0.110, 0.075);
 const BELL_GEO = (() => {
   const g = new THREE.SphereGeometry(0.088, 8, 4, 0, TAU, 0, Math.PI * 0.42);
   g.scale(1.15, 0.8, 1.05);
@@ -2245,6 +2299,16 @@ export function enlistBody(e, trooper, opts = {}) {
   if (R.color != null && opts.director) {
     e.rankColor = R.color;
     opts.director.repaint(e, R.color);
+  }
+  /* …AND THE MARK THE PLAYER PAINTED ON HIM, on the same line and for the same
+   * reason: a campaign rebuilds every body at every area boundary, so a mark
+   * applied only at the moment it was chosen would last exactly one area. See
+   * `MARKS` for why it is a second material low on the legs and not a recolour
+   * of the rank. */
+  const mark = markById(trooper.look?.mark)?.color;
+  if (mark != null && opts.director) {
+    e.markColor = mark;
+    opts.director.markUp(e, mark);
   }
 
   installCommand(e);
@@ -5618,6 +5682,75 @@ export class CommandDirector extends WaveDirector {
         e.group.add(m);
         meshes.push(m);
         on++;
+      }
+    }
+    return on > 0;
+  }
+
+  /**
+   * A MAN'S OWN MARK, painted low where nothing else is.
+   *
+   * See `MARKS` for what this is and what it deliberately is not. The one thing
+   * worth restating at the call site: it is a SECOND material and a second pair
+   * of meshes, never a recolour of `_cmdPaint`. A mark that overwrote the rank
+   * paint would make a Captain the player had marked blue read as a Sergeant at
+   * every distance the rank is legible at, and the rank is the more important
+   * of the two sentences.
+   *
+   * Both meshes go on `_modMeshes`/`_modMaterials`, which is what the body's
+   * own teardown walks — a mark that outlived its Enemy would be a leak of one
+   * material and two meshes per man per area boundary.
+   */
+  markUp(e, color) {
+    if (!e || color == null) return false;
+    if (e._cmdMark) { e._cmdMark.color.setHex(color); e._cmdMark.emissive?.setHex(color); return true; }
+    const rig = e.rig;
+    const S = e.A?.scale ?? 1;
+    /* The same 0.22 the rank paint carries, and for the same reason its note
+     * gives: a matte chip in shadow reads as dirt at ninety metres in this
+     * game's flat light. It is legibility and not a light source. */
+    const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0.15 });
+    mat.emissive = new THREE.Color(color);
+    mat.emissiveIntensity = 0.22;
+    e._cmdMark = mat;
+    (e._modMaterials || (e._modMaterials = [])).push(mat);
+    const meshes = e._modMeshes || (e._modMeshes = []);
+    let on = 0;
+    const band = (boneName, side) => {
+      const b = rig?.get?.(boneName);
+      if (!b) return;
+      const m = new THREE.Mesh(MARK_GEO, mat);
+      m.scale.setScalar(S);
+      /* Half way down the bone and proud of its outside face — a stripe you
+       * can see from the side and from behind, which is where a commander sees
+       * their own line from. POSITIVE y, because a bone's local +y runs ALONG
+       * it toward its child (`rest: [0,-1,…]` is the world-space rest
+       * direction, not the local axis) — the same sign `repaint` uses to put a
+       * pauldron above the clavicle. Negative here would bury both stripes in
+       * the thighs. */
+      m.position.set(side * 0.055 * S, 0.5 * (b.length || 0.4), 0);
+      m.castShadow = false;
+      b.obj.add(m);
+      meshes.push(m);
+      on++;
+    };
+    band('shinL', -1);
+    band('shinR', 1);
+    if (!on) {
+      /* Nothing with shins on it — a droideka, a walker. The mark goes on the
+       * chest instead rather than being silently dropped: a man the player
+       * marked and cannot find is the defect this feature exists to fix. */
+      const b = rig?.get?.('chest');
+      if (b) {
+        const m = new THREE.Mesh(MARK_GEO, mat);
+        m.scale.setScalar(S * 1.4);
+        m.position.set(0, 0.1, 0.09 * S);
+        b.obj.add(m); meshes.push(m); on++;
+      } else if (e.group) {
+        const m = new THREE.Mesh(MARK_GEO, mat);
+        m.scale.setScalar(S * 2.2);
+        m.position.set(0, 0.55 * S, 0);
+        e.group.add(m); meshes.push(m); on++;
       }
     }
     return on > 0;

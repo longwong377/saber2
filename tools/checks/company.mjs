@@ -33,16 +33,29 @@
  * about.
  */
 
-import { ARMY_IDS, ARMIES, CommandRoster, rankFor, OPENING_STRENGTH } from '../../src/game/Command.js';
+import { readFile } from 'node:fs/promises';
+import { makeDocument } from './_page.mjs';
+import {
+  ARMY_IDS, ARMIES, CommandRoster, rankFor, OPENING_STRENGTH, RANKS, MARKS, markById,
+} from '../../src/game/Command.js';
 import * as Company from '../../src/game/Company.js';
 
 const KEY = 'saber.company.v1';
 
-/** Run `fn` against an empty store and put the player's own roll back after. */
-async function withCleanStore(fn) {
+/**
+ * Run `fn` against an empty store and put the player's own roll back after.
+ *
+ * SYNCHRONOUS, AND THAT IS LOAD-BEARING. `verify.mjs`'s `check` starts an async
+ * body immediately and settles them all at the end, so two async checks in one
+ * file run CONCURRENTLY — and the company store is a single localStorage key.
+ * An async wrapper would restore whatever the OTHER check had just written, and
+ * every clause here would be reading a roll it did not build. A sync body
+ * cannot interleave, so it cannot.
+ */
+function withCleanStore(fn) {
   const had = localStorage.getItem(KEY);
   localStorage.removeItem(KEY);
-  try { return await fn(); }
+  try { return fn(); }
   finally { if (had == null) localStorage.removeItem(KEY); else localStorage.setItem(KEY, had); }
 }
 
@@ -53,9 +66,24 @@ function freshRoll(n, army = ARMIES.republic) {
   return r;
 }
 
-export function run({ check, assert }) {
-  check('company: a withdrawal keeps who got aboard and nobody else', async () => {
-    return await withCleanStore(() => {
+export async function run({ check, assert }) {
+  /**
+   * READ ONCE, UP FRONT, so that every DOM clause below can be SYNCHRONOUS.
+   *
+   * `verify.mjs`'s `check` starts an async body immediately and settles them
+   * all at the end — so two async checks in one file run CONCURRENTLY. Both of
+   * the things a menu clause needs are global and shared: `doc.install()`
+   * swaps `globalThis.document`, and the company store is one localStorage key.
+   * An async DOM clause therefore reads whichever page and whichever roll the
+   * other one happened to leave installed, which is exactly what the first cut
+   * of this file did — a roll of five men on a check whose whole subject is an
+   * empty one.
+   *
+   * Sync bodies cannot interleave, so they cannot. `run` is async so the read
+   * can happen before the first `check` is registered; nothing below awaits.
+   */
+  const INDEX_HTML = await readFile(new URL('../../index.html', import.meta.url), 'utf8');
+  check('company: a withdrawal keeps who got aboard and nobody else', () => withCleanStore(() => {
       const r = freshRoll(10);
       /* Nine walk up the ramp. The tenth is `left`, which is the whole
        * sentence: `LAST_CALL` ran out while he was still crossing. */
@@ -80,11 +108,9 @@ export function run({ check, assert }) {
       assert(back.men.length === 9, `${back.men.length} men after reading the store back`);
       assert(back.lost === 1, `${back.lost} lost after reading the store back`);
       return `9 of 10 home, 1 struck off, ${back.men.length} on the roll next time`;
-    });
-  });
+  }));
 
-  check('company: a wipe takes the whole roll, and there is no branch that softens it', async () => {
-    return await withCleanStore(() => {
+  check('company: a wipe takes the whole roll, and there is no branch that softens it', () => withCleanStore(() => {
       const r = freshRoll(10);
       Company.keep(r.all, { army: 'republic', deployed: r.all, ground: 'geonosis' });
       assert(Company.load('republic').men.length === 10, 'the first run did not bank');
@@ -102,11 +128,9 @@ export function run({ check, assert }) {
         `a wipe counted as withdrawal number ${c.runs} — runs is withdrawals SURVIVED`);
       assert(Company.load('republic').men.length === 0, 'the wipe did not reach the store');
       return `10 out, 0 back, ${c.lost} lost, roll empty, still ${c.runs} withdrawal on the record`;
-    });
-  });
+  }));
 
-  check('company: a roll it never fielded is not executed', async () => {
-    return await withCleanStore(() => {
+  check('company: a roll it never fielded is not executed', () => withCleanStore(() => {
       const r = freshRoll(6);
       Company.keep(r.all, { army: 'republic', deployed: r.all, ground: 'geonosis' });
       /**
@@ -121,11 +145,9 @@ export function run({ check, assert }) {
         `an empty manifest with no roll behind it wiped ${6 - c.men.length} men off the company`);
       assert(c.lost === 0, `${c.lost} counted lost by a run this company was never in`);
       return '6 men survived a call that named no deployment';
-    });
-  });
+  }));
 
-  check('company: ten out and ten back is ten, not twenty', async () => {
-    return await withCleanStore(() => {
+  check('company: ten out and ten back is ten, not twenty', () => withCleanStore(() => {
       const r = freshRoll(10);
       Company.keep(r.all, { army: 'republic', deployed: r.all, ground: 'geonosis' });
 
@@ -145,8 +167,7 @@ export function run({ check, assert }) {
       assert(c.men.every((m) => m.runs === 2),
         'a man who has now survived two withdrawals does not say so on his own record');
       return `two runs, ${c.men.length} men, ${names.size} names, every one of them on his second`;
-    });
-  });
+  }));
 
   check('company: what comes back is rank, not headcount', async () => {
     /**
@@ -194,8 +215,7 @@ export function run({ check, assert }) {
       + `${came.length} of them men who had served before`;
   });
 
-  check('company: one roll per army, and a droid is not folded into the clones', async () => {
-    return await withCleanStore(() => {
+  check('company: one roll per army, and a droid is not folded into the clones', () => withCleanStore(() => {
       const clones = freshRoll(4, ARMIES.republic);
       const droids = freshRoll(4, ARMIES[ARMY_IDS[1]] || ARMIES.republic);
       /* Both manifests handed to the REPUBLIC's roll. The droids must be
@@ -221,11 +241,9 @@ export function run({ check, assert }) {
         assert(Company.load(other).men.length === 3, 'the second army\'s roll did not survive');
       }
       return `republic 4 · ${other || 'no second army'} ${other ? 3 : 0} · no name on both`;
-    });
-  });
+  }));
 
-  check('company: a man carries his rank, his kills and his name across the gap', async () => {
-    return await withCleanStore(() => {
+  check('company: a man carries his rank, his kills and his name across the gap', () => withCleanStore(() => {
       const r = freshRoll(3);
       const [a] = r.all;
       /* Promoted through the real ladder, so the rank being carried is one the
@@ -264,11 +282,9 @@ export function run({ check, assert }) {
         'a man came off the ship still broken — see enlistRecord');
       return `${him.name}, ${him.rankRec.title}, ${him.kills} down, ${him.wounds} wounds, `
         + `${him.areas} grounds — all of it across the gap`;
-    });
-  });
+  }));
 
-  check('company: a corrupt save is a fresh start and never a crash', async () => {
-    return await withCleanStore(() => {
+  check('company: a corrupt save is a fresh start and never a crash', () => withCleanStore(() => {
       /* `Progress.js`'s rule, and the reason for it is the same: a player who
        * cannot open the game because a number they never saw is a string has
        * lost more than a roster. Every one of these is a shape a store can
@@ -291,11 +307,9 @@ export function run({ check, assert }) {
         }
       }
       return `${bad.length} malformed stores, ${bad.length} clean reads`;
-    });
-  });
+  }));
 
-  check('company: the roll is capped, and it fields its best', async () => {
-    return await withCleanStore(() => {
+  check('company: the roll is capped, and it fields its best', () => withCleanStore(() => {
       /* A CAP IS NOT BALANCE, IT IS HONESTY — `Company.CAP`'s own note. A roll
        * that grew without bound would after twenty withdrawals be a phone book
        * describing men the game can never field again. */
@@ -324,8 +338,7 @@ export function run({ check, assert }) {
       }
       return `${Company.CAP + 15} kept as ${c.men.length} · fielded ${picked.length}, `
         + `led by ${senior.designation} at rank ${rankFor(senior.xp)}`;
-    });
-  });
+  }));
 
   check('company: the purse shrinks by what the veterans already filled', async () => {
     /**
@@ -358,5 +371,325 @@ export function run({ check, assert }) {
     const served = roll.all.filter((t) => stored.has(t.designation)).length;
     assert(served > 0, 'no veteran reached a contingent that was handed six');
     return `contingent ${plain} either way · ${served} of them men who had served before`;
+  });
+
+  /* ══════════════════════════════════════════════════════════════════ */
+  /*  The tab                                                           */
+  /* ══════════════════════════════════════════════════════════════════ */
+
+  /**
+   * A REAL MENU ON A REAL PAGE, exactly as databank.mjs and menu.mjs build one.
+   * Nothing here constructs markup or asserts against a copy of the expected
+   * text: the page is rendered from `Company.dossier` and the clauses compare
+   * it against that same table, so a page that stopped saying something goes
+   * red rather than a check that was updated to agree with it.
+   */
+  const { Menu, DEFAULT_SETTINGS } = await import('../../src/ui/Menu.js');
+  const menuOn = () => {
+    const doc = makeDocument(INDEX_HTML);
+    const restore = doc.install();
+    try {
+      const menu = new Menu(structuredClone(DEFAULT_SETTINGS), {});
+      return { menu, doc, close: restore };
+    } catch (e) { restore(); throw e; }
+  };
+
+  check('company: the tab exists, and it lists the men who are actually on the roll', () => withCleanStore(() => {
+      const r = freshRoll(7);
+      const [star] = r.all;
+      star.award(24);
+      star.kills = 9;
+      Company.keep(r.all, { army: 'republic', deployed: r.all, ground: 'geonosis' });
+
+      const { doc, close } = menuOn();
+      try {
+        const tab = [...doc.querySelectorAll('.menu-tabs .tab')].find((t) => t.dataset.tab === 'company');
+        assert(tab, 'there is no Company tab in the bar');
+        assert(doc.querySelector('[data-panel="company"]'), 'the Company tab has no panel');
+
+        const list = doc.getElementById('company-list');
+        assert(list, 'the roll column is missing');
+        const rows = [...list.querySelectorAll('.diff')].filter((d) => !d.dataset.man.endsWith('-fallen'));
+        assert(rows.length === 7,
+          `${rows.length} rows on the roll against seven men — the page is not reading the store`);
+        /* THE ORDER IS `fieldable`'s, and the promoted man is first. A page
+         * that listed them in enlistment order would bench a Captain behind
+         * four recruits on screen exactly as the muster would on the field. */
+        assert(rows[0].dataset.man === `republic/${star.designation}`,
+          `the roll opens on ${rows[0].dataset.man} and the senior man is ${star.designation}`);
+        const txt = rows[0].textContent.replace(/\s+/g, ' ');
+        assert(txt.includes(star.designation), `the first row does not name him: "${txt}"`);
+        assert(txt.includes(RANKS[rankFor(star.xp)].title),
+          `the first row does not print his rank "${RANKS[rankFor(star.xp)].title}": "${txt}"`);
+        assert(/9 down/.test(txt), `the first row does not print his nine kills: "${txt}"`);
+        return `Company tab present · ${rows.length} rows · led by ${star.designation}, `
+          + `${RANKS[rankFor(star.xp)].title}`;
+      } finally { close(); }
+  }));
+
+  check('company: a man\'s page prints every line of his record and types none of them', () => withCleanStore(() => {
+      const r = freshRoll(3);
+      const [him] = r.all;
+      him.award(24); him.kills = 11; him.wounds = 2; him.areas = 4;
+      Company.keep(r.all, { army: 'republic', deployed: r.all, ground: 'geonosis' });
+
+      const { menu, doc, close } = menuOn();
+      try {
+        menu._showCompany(`republic/${him.designation}`);
+        const page = doc.getElementById('company-page').textContent.replace(/\s+/g, ' ');
+        /* EVERY ROW `dossier` PRODUCES, compared against `dossier` itself. A
+         * check with its own list of expected labels would be the
+         * hand-maintained twin this codebase has deleted nine of. */
+        const stored = Company.load('republic').men.find((m) => m.designation === him.designation);
+        const rows = Company.dossier(stored, 'republic');
+        assert(rows.length >= 6, `dossier produced only ${rows.length} rows`);
+        const absent = rows.filter(([k, v]) => !page.includes(k) || !page.includes(String(v)));
+        assert(!absent.length,
+          `the page does not print: ${absent.map(([k, v]) => `${k}=${v}`).join(', ')}`);
+        assert(page.includes(him.designation), 'the page does not name him');
+        /* AND THE RANK'S OWN NUMBERS, which are the answer to "what does
+         * Captain buy" and the reason this page does not sell upgrades. */
+        const R = RANKS[rankFor(him.xp)];
+        assert(page.includes(`${Math.round((R.hp - 1) * 100)}% health`),
+          `the page never says what the rank buys: "${page.slice(0, 240)}"`);
+        /* HIS HISTORY, written by the run and not by the page. */
+        assert(stored.story.length, 'a man with 11 kills and 2 wounds gained no line of history');
+        for (const line of stored.story) {
+          assert(page.includes(line), `the page does not print his line "${line}"`);
+        }
+        return `${rows.length} dossier rows and ${stored.story.length} history line(s), all on the page`;
+      } finally { close(); }
+  }));
+
+  check('company: the page can name him and paint him, and can change nothing else', () => withCleanStore(() => {
+      const r = freshRoll(2);
+      const [him] = r.all;
+      him.award(24); him.kills = 5;
+      Company.keep(r.all, { army: 'republic', deployed: r.all, ground: 'geonosis' });
+      const before = Company.load('republic').men.find((m) => m.designation === him.designation);
+
+      const { menu, doc, close } = menuOn();
+      try {
+        menu._showCompany(`republic/${him.designation}`);
+        const field = doc.getElementById('company-callsign');
+        const save = doc.getElementById('company-callsign-save');
+        assert(field && save, 'the callsign control is not on the page');
+        field.value = 'Ladder';
+        save.click();
+
+        const named = Company.load('republic').men.find((m) => m.designation === him.designation);
+        assert(named.look?.callsign === 'Ladder', `the callsign stored as ${named.look?.callsign}`);
+        assert(Company.nameOf(named).includes('"Ladder"'),
+          `he is called ${Company.nameOf(named)} — the callsign does not reach the name`);
+        /* THE EARNED NICKNAME SURVIVES IT, which is what makes clearing the
+         * callsign give him his old name back rather than nothing. */
+        assert(named.nickname === before.nickname,
+          `naming him overwrote the nickname he earned ("${before.nickname}" → "${named.nickname}")`);
+
+        /* A MARK, through the swatch the page renders. */
+        const mark = MARKS.find((m) => m.color != null);
+        menu._showCompany(`republic/${him.designation}`);
+        const sw = doc.querySelector(`.company-marks .swatch[data-mark="${mark.id}"]`);
+        assert(sw, `the palette has no swatch for ${mark.id}`);
+        sw.click();
+        const painted = Company.load('republic').men.find((m) => m.designation === him.designation);
+        assert(painted.look?.mark === mark.id, `the mark stored as ${painted.look?.mark}`);
+        assert(markById(painted.look.mark).color === mark.color, 'the stored mark is not that colour');
+
+        /**
+         * AND NOTHING THE GAME OWNS MOVED. This is the assertion the whole
+         * page is held to: rank, kills, wounds, grounds and runs are written
+         * by a run, and a roster screen that could edit them would be a cheat
+         * panel with a casualty list on it. Compared field by field against
+         * the record as it stood before either write.
+         */
+        for (const k of ['xp', 'kills', 'wounds', 'areas', 'runs', 'type', 'designation']) {
+          assert(painted[k] === before[k],
+            `editing his appearance changed ${k}: ${before[k]} → ${painted[k]}`);
+        }
+
+        /* CLEARING IT GIVES HIM HIS EARNED NAME BACK. */
+        menu._showCompany(`republic/${him.designation}`);
+        doc.getElementById('company-callsign').value = '   ';
+        doc.getElementById('company-callsign-save').click();
+        const cleared = Company.load('republic').men.find((m) => m.designation === him.designation);
+        assert(!cleared.look?.callsign, `a blank callsign stored as "${cleared.look?.callsign}"`);
+        assert(Company.nameOf(cleared) === Company.nameOf(before),
+          `cleared he is "${Company.nameOf(cleared)}" and he started as "${Company.nameOf(before)}"`);
+        return `named "Ladder", painted ${mark.name}, cleared back to ${Company.nameOf(cleared)}; `
+          + '7 game-owned fields unmoved';
+      } finally { close(); }
+  }));
+
+  check('company: the page sells nothing — there is no cross-run currency anywhere in it', async () => {
+    /**
+     * THE PROMISE, GUARDED AT THE SOURCE.
+     *
+     * "Upgrade certain things in their stats" was asked for and is deliberately
+     * not built: there already is a way to make a man better and it is the rank
+     * ladder, which he earns by fighting. A second way — points spent on a menu
+     * between runs — is a cross-run currency that buys power, which
+     * `Progress.js` and `Company.js` both refuse at the top of their own files.
+     *
+     * So this reads the two files and requires that the ONE door the tab writes
+     * through is still the one that takes a mark and a name. It is a source
+     * check because that is where the defect would appear: a `spend`, a
+     * `points`, an `upgrade` on the company record would pass every behavioural
+     * clause in this file on the day it was added and every one of them for
+     * ever after.
+     */
+    const src = (p) => readFile(new URL('../../src/' + p, import.meta.url), 'utf8');
+    const co = await src('game/Company.js');
+    const menu = await src('ui/Menu.js');
+    /* Comments stripped: the notes in both files argue about currency at
+     * length, and a check that could not tell an argument from an
+     * implementation would make explaining the decision impossible. */
+    const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    const code = strip(co);
+    for (const word of ['points', 'currency', 'purchase', 'upgrade', 'unlock', 'buy']) {
+      assert(!new RegExp(`\\b${word}\\b`, 'i').test(code),
+        `Company.js has grown a "${word}" — the roll has become a currency`);
+    }
+    /* `dress` is the one writer the tab reaches, and it takes two fields. */
+    const writers = [...strip(menu).matchAll(/companyDress\s*\(([^)]*)\)/g)].map((m) => m[1]);
+    assert(writers.length, 'the Company tab no longer writes through Company.dress');
+    const dressBody = /export function dress\([^)]*\)\s*\{([\s\S]*?)\n\}/.exec(code)?.[1] || '';
+    assert(dressBody, 'Company.dress is gone');
+    const fields = [...dressBody.matchAll(/'(\w+)' in look/g)].map((m) => m[1]).sort();
+    assert(fields.join(',') === 'callsign,mark',
+      `Company.dress writes ${fields.join(', ') || 'nothing'} — it may write a mark and a name, `
+      + 'and a roster screen that can edit anything else is a cheat panel');
+    return `dress writes ${fields.join(' + ')} and nothing else; no currency word in Company.js`;
+  });
+
+  check('company: an empty roll explains itself instead of showing an empty column', () => withCleanStore(() => {
+      const { doc, close } = menuOn();
+      try {
+        const list = doc.getElementById('company-list');
+        const rows = [...list.querySelectorAll('.diff')];
+        assert(!rows.length, `${rows.length} men on a roll nobody has ever filled`);
+        const txt = list.textContent.replace(/\s+/g, ' ');
+        /**
+         * A PAGE THAT SHOWED NOTHING TO A PLAYER WHO HAS NOT WITHDRAWN YET
+         * would never explain itself, and this is the one mechanism in the
+         * game whose whole subject is a decision the player has to know exists
+         * before they can make it. Every army has to say so, not just the
+         * first — a player leading droids is the same player.
+         */
+        for (const id of ARMY_IDS) {
+          const army = ARMIES[id];
+          assert(txt.includes(army.short || army.name),
+            `${id} is not on the roll column at all`);
+        }
+        assert(/extraction/i.test(txt),
+          `the empty roll does not say how one starts: "${txt}"`);
+        const page = doc.getElementById('company-page').textContent.replace(/\s+/g, ' ');
+        assert(/0 .*on the roll/i.test(page) || page.includes('0'),
+          'the index page does not count an empty roll');
+        return `${ARMY_IDS.length} armies listed, each saying how a roll starts`;
+      } finally { close(); }
+  }));
+
+  check('company: the casualty list is on the page, and it is the men who did not come back', () => withCleanStore(() => {
+      const r = freshRoll(6);
+      const dead = r.all.slice(4);
+      for (const t of dead) t.award(10);
+      Company.keep(r.all.slice(0, 4), {
+        army: 'republic', deployed: r.all, left: dead, ground: 'geonosis',
+      });
+
+      const { menu, doc, close } = menuOn();
+      try {
+        const row = doc.querySelector('[data-man="republic/-fallen"]');
+        assert(row, 'a company with two dead men has no casualty row on the roll');
+        menu._showCompany('republic/-fallen');
+        const page = doc.getElementById('company-page').textContent.replace(/\s+/g, ' ');
+        for (const t of dead) {
+          assert(page.includes(t.designation), `${t.designation} fell and is on no list: "${page}"`);
+        }
+        for (const t of r.all.slice(0, 4)) {
+          assert(!page.includes(t.designation),
+            `${t.designation} came home and is on the casualty list`);
+        }
+        assert(page.includes('geonosis'), 'the casualty list does not say where they fell');
+        return `2 named on the fallen page, 4 survivors off it`;
+      } finally { close(); }
+  }));
+
+  check('company: a mark is paint on a body and moves no number', async () => {
+    /**
+     * The other half of "the page sells nothing", measured on real bodies
+     * rather than in the source: two identical troopers put through the real
+     * `enlistBody`, one of them marked, and every number the fight reads
+     * compared.
+     *
+     * A REAL WORLD, because `Enemy` takes one — `_build` reaches
+     * `world.scene` and `world.physics` — and a scene handed in its place
+     * fails in the constructor. The one thing stubbed is the DIRECTOR, and it
+     * is stubbed to COUNT rather than to no-op: "it painted nothing" must not
+     * be able to pass as "it painted the same".
+     */
+    const THREE = await import('three');
+    const { bootWorld } = await import('./_coop.mjs');
+    const { enlistBody, Trooper, MARKS: M } = await import('../../src/game/Command.js');
+    const { Enemy } = await import('../../src/game/Enemy.js');
+    const { world } = await bootWorld({ settings: { quality: 'low' } });
+    const mark = M.find((k) => k.color != null);
+
+    let n = 0;
+    const make = (look) => {
+      const t = new Trooper(ARMIES.republic, 'trooper', `CT-000${++n}`, {});
+      t.look = look;
+      const e = new Enemy(world, 'trooper', new THREE.Vector3(n * 4, 0, 0));
+      /* THE RATIO, NOT THE VALUE. `Enemy` jitters a body's pace and health per
+       * spawn — two fresh troopers are not numerically identical and never
+       * were — so comparing the absolute numbers would measure the roll of the
+       * dice. What has to be equal is what ENLISTING did to them, which is the
+       * rank multiplier and nothing else. */
+      const was = { maxHp: e.maxHp, attackDamage: e.attackDamage, speed: e.speed };
+      const painted = [];
+      const director = {
+        repaint: (b, c) => { painted.push(['rank', c]); return true; },
+        markUp: (b, c) => { painted.push(['mark', c]); return true; },
+      };
+      enlistBody(e, t, { director, team: 0 });
+      return { e, painted, gain: {
+        maxHp: e.maxHp / was.maxHp,
+        attackDamage: e.attackDamage / was.attackDamage,
+        speed: e.speed / was.speed,
+        full: e.hp === e.maxHp,
+      } };
+    };
+
+    const plain = make(null);
+    const marked = make({ mark: mark.id });
+    for (const k of ['maxHp', 'attackDamage', 'speed']) {
+      assert(Math.abs(plain.gain[k] - marked.gain[k]) < 1e-9,
+        `enlisting multiplied a marked trooper's ${k} by ${marked.gain[k]} and an unmarked `
+        + `one's by ${plain.gain[k]}`);
+    }
+    assert(plain.gain.full && marked.gain.full, 'a body came off the muster short of full health');
+    assert(!plain.painted.some(([w]) => w === 'mark'), 'an unmarked man was painted a mark');
+    assert(marked.painted.some(([w, c]) => w === 'mark' && c === mark.color),
+      `a man marked ${mark.id} was painted ${JSON.stringify(marked.painted)}`);
+
+    /* AND IT REALLY REACHES THE BODY. The stub above proves `enlistBody` asks;
+     * this proves the director can answer, through the shipped method, on a
+     * real rig — the meshes and the material land on `_modMeshes` and
+     * `_modMaterials`, which is what the body's own teardown walks. */
+    const real = new Enemy(world, 'trooper', new THREE.Vector3(40, 0, 0));
+    const before = (real._modMeshes || []).length;
+    const { CommandDirector } = await import('../../src/game/Command.js');
+    const painted = CommandDirector.prototype.markUp.call({}, real, mark.color);
+    assert(painted, 'markUp painted nothing on a real trooper rig');
+    assert((real._modMeshes || []).length > before,
+      'markUp made no meshes, so nothing would be drawn and nothing would be freed');
+    assert(real._cmdMark && real._cmdMark.color.getHex() === mark.color,
+      'the mark material is not the colour that was asked for');
+    /* …and it is a SECOND material, never a recolour of the rank paint: a
+     * marked Captain must still read as a Captain at every distance. */
+    assert(real._cmdMark !== real._cmdPaint, 'the mark and the rank paint are the same material');
+    return `${mark.name} painted on ${(real._modMeshes || []).length - before} mesh(es); `
+      + `enlisting gained x${plain.gain.maxHp.toFixed(2)} health either way; rank paint untouched`;
   });
 }

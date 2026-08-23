@@ -65,7 +65,37 @@ class Element {
     this.childNodes = [];
     this.parentNode = null;
     this.style = { setProperty(k, v) { this[k] = v; }, removeProperty(k) { delete this[k]; } };
-    this.dataset = {};
+    /**
+     * A LIVE VIEW OVER THE data-* ATTRIBUTES, and it was a plain object.
+     *
+     * In a browser `dataset` IS the attributes — `el.dataset.panel = 'company'`
+     * puts `data-panel="company"` on the element and a `[data-panel="company"]`
+     * selector finds it. Here it was a bare `{}` that `setAttribute` happened
+     * to also write into, so the traffic ran one way only: markup parsed from
+     * index.html could be selected on, and anything a builder created in JS
+     * could not. Every dynamically built panel in this game is built that way
+     * — `Menu._buildDatabank` and `_buildCompany` both do `panel.dataset.panel
+     * = ...` — so a check that asked for one by attribute got null and the only
+     * honest reading of that was "the tab has no panel".
+     *
+     * A Proxy over `attrs` makes the two the same thing in both directions,
+     * which is what the DOM does. Reads answer from the attribute map, writes
+     * land in it, and `delete` removes the attribute — so `hasAttribute`,
+     * `getAttribute`, `outerHTML` and the selector engine all agree with it
+     * without any of them being taught about `dataset`.
+     */
+    const kebab = (k) => 'data-' + String(k).replace(/[A-Z]/g, (c) => '-' + c.toLowerCase());
+    const attrs = this.attrs;
+    this.dataset = new Proxy({}, {
+      get: (_, k) => (typeof k === 'string' ? attrs.get(kebab(k)) : undefined),
+      set: (_, k, v) => { attrs.set(kebab(k), String(v)); return true; },
+      has: (_, k) => typeof k === 'string' && attrs.has(kebab(k)),
+      deleteProperty: (_, k) => { attrs.delete(kebab(k)); return true; },
+      ownKeys: () => [...attrs.keys()].filter((n) => n.startsWith('data-'))
+        .map((n) => n.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase())),
+      getOwnPropertyDescriptor: (_, k) => (typeof k === 'string' && attrs.has(kebab(k))
+        ? { value: attrs.get(kebab(k)), enumerable: true, configurable: true } : undefined),
+    });
     this._listeners = new Map();
     if (this.localName === 'input' || this.localName === 'textarea') {
       this.value = '';
@@ -124,9 +154,9 @@ class Element {
   setAttribute(name, value) {
     const n = String(name).toLowerCase();
     this.attrs.set(n, String(value));
-    if (n.startsWith('data-')) {
-      this.dataset[n.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = String(value);
-    }
+    /* No `dataset` write here any more: it IS `attrs` now — see the Proxy in
+     * the constructor. The line that used to be here was the one-way half of
+     * the traffic and its absence is the fix. */
     if (n === 'value' && 'value' in this) this.value = String(value);
     if (n === 'checked') this.checked = true;
     if (n === 'disabled') this.disabled = true;

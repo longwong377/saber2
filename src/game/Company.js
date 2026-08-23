@@ -48,7 +48,7 @@
  * the one being written.
  */
 
-import { ARMIES, ARMY_IDS, RANKS, rankFor } from './Command.js';
+import { ARMIES, ARMY_IDS, RANKS, rankFor, MARKS, markById } from './Command.js';
 
 /** Where it lives. Versioned like every other store in the tree. */
 export const KEY = 'saber.company.v1';
@@ -416,6 +416,121 @@ export function fieldable(company, n = Infinity) {
     || ((b.kills | 0) - (a.kills | 0)));
   return Number.isFinite(n) ? men.slice(0, Math.max(0, n | 0)) : men;
 }
+
+/* ── what the player may change about a man ──────────────────────────── */
+
+/**
+ * HOW LONG A CALLSIGN MAY BE, in characters.
+ *
+ * 14, and it is a layout number rather than a taste one: `Trooper.name` renders
+ * as `CT-1500 "Ladder"` and the roster column, the casualty list, the HUD's
+ * squad rows and the muster card all print that string in a fixed-width slot.
+ * A player who types thirty characters does not get a long name, they get a
+ * name that is cut off somewhere different on each of the four screens.
+ */
+export const CALLSIGN_MAX = 14;
+
+/**
+ * A callsign, made safe for a screen and for a save file.
+ *
+ * Trimmed, collapsed, capped, and stripped of the three characters that would
+ * end up in `innerHTML` — the roster renders through the menu's own `escKey`,
+ * but a name that has to be escaped correctly by every one of five call sites
+ * is a name that will be printed raw by one of them. It is cheaper to refuse
+ * the characters than to be right five times.
+ *
+ * An empty result is `null` and not `''`: null is "he answers to his earned
+ * nickname", which is a different state from "the player named him nothing".
+ */
+export function cleanCallsign(s) {
+  const t = String(s ?? '').replace(/[<>&"'`\\]/g, '').replace(/\s+/g, ' ').trim();
+  return t ? t.slice(0, CALLSIGN_MAX) : null;
+}
+
+/**
+ * WRITE ONE MAN'S APPEARANCE BACK TO THE ROLL.
+ *
+ * The one door the Company tab changes anything through, and it is deliberately
+ * the only one: everything else on a record — rank, kills, wounds, grounds,
+ * runs — is written by the game, from a run, and a screen that could edit those
+ * would make the whole roster a cheat panel. This writes a mark and a name and
+ * nothing that any part of the fight reads.
+ *
+ * @param army  which roll he is on.
+ * @param key   his designation, which is unique across a roll by construction
+ *              (`designate` loops and `enlistRecord` refuses a duplicate).
+ * @param look  `{ mark, callsign }`; either may be omitted to leave it alone,
+ *              and either may be explicitly null to clear it.
+ * @returns the written company, or the unchanged one if there is no such man.
+ */
+export function dress(army, key, look = {}) {
+  const c = load(army);
+  const m = c.men.find((x) => x.designation === key);
+  if (!m) return c;
+  const next = { ...(m.look || {}) };
+  if ('mark' in look) {
+    /* Validated against the palette rather than stored as typed: a mark id
+     * from an older build is a colour this one does not have, and a body that
+     * silently painted nothing would be a player's choice quietly deleted. */
+    const mk = markById(look.mark);
+    if (mk.color == null) delete next.mark; else next.mark = mk.id;
+  }
+  if ('callsign' in look) {
+    const cs = cleanCallsign(look.callsign);
+    if (cs) next.callsign = cs; else delete next.callsign;
+  }
+  m.look = Object.keys(next).length ? next : null;
+  return save(c);
+}
+
+/** What a man is called on a screen — the same rule `Trooper.name` uses. */
+export function nameOf(m) {
+  if (!m) return '';
+  const called = m.look?.callsign || m.nickname;
+  return called ? `${m.designation} "${called}"` : m.designation;
+}
+
+/**
+ * EVERY LINE OF ONE MAN'S RECORD, as label/value pairs a screen renders.
+ *
+ * Built here rather than in Menu.js for the reason every other derived list in
+ * this codebase is: the tab is one renderer of it and `tools/checks/company.mjs`
+ * is another, and a page whose contents are assembled inside a DOM method can
+ * only be tested by parsing HTML. Everything is DERIVED — there is no second
+ * table of rank titles, archetype labels or army words anywhere in the UI.
+ */
+export function dossier(m, army = null) {
+  if (!m) return [];
+  const A = ARMIES[m.army] || (army && ARMIES[army]) || null;
+  const R = RANKS[rankFor(m.xp | 0)];
+  const rows = [
+    ['Rank', `${R.title} (${R.short})`],
+    ['Role', m.type],
+    ['Service', `${m.runs | 0} withdrawal${(m.runs | 0) === 1 ? '' : 's'}`],
+    ['Kills', `${m.kills | 0}`],
+    ['Wounds', `${m.wounds | 0}`],
+    ['Grounds held', `${m.areas | 0}`],
+  ];
+  /* THE RANK'S OWN NUMBERS, because "Captain" is a word until somebody says
+   * what it buys — and they are read off `RANKS` so a tuned ladder retunes the
+   * page. Rung 0 has all three at 1.00 and prints nothing rather than three
+   * lines of "no change", which is the honest way to say a Trooper is the
+   * baseline. */
+  if (R.hp !== 1 || R.dmg !== 1 || R.speed !== 1) {
+    rows.push(['What the rank buys',
+      `${Math.round((R.hp - 1) * 100)}% health · ${Math.round((R.dmg - 1) * 100)}% damage · `
+      + `${Math.round((R.speed - 1) * 100)}% pace`]);
+  }
+  if (m.since) rows.push(['Since', m.since]);
+  if (m.nickname) rows.push(['Earned', `"${m.nickname}"`]);
+  if (A) rows.push(['Army', A.name]);
+  const mk = markById(m.look?.mark);
+  if (mk.color != null) rows.push(['Mark', mk.name]);
+  return rows;
+}
+
+/** The marks a screen may offer. Named here so the tab holds no second table. */
+export { MARKS };
 
 /** One line per company for a screen that lists them: what this roll is. */
 export function companyLines(c) {

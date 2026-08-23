@@ -23,6 +23,15 @@ import { ROBE_CUTS, attachCloak, attachSkirt, attachLekku,
 import { applyInjury } from '../game/Injury.js';
 import { LEVELS, LEVEL_ORDER, theatresFor } from '../game/Levels.js';
 import { WITHDRAW_HOLD, LAST_CALL } from '../game/Extraction.js';
+/* THE COMPANY TAB'S WHOLE SOURCE OF TRUTH. Named imports rather than a
+ * namespace so a rename in Company.js fails here at parse rather than at the
+ * first click, and aliased because `load`, `save`, `dress` and `nameOf` are
+ * words this file already uses for other things. */
+import {
+  loadAll as companyLoadAll, fieldable as companyFieldable, dossier as companyDossier,
+  dress as companyDress, nameOf as companyNameOf, companyLines,
+  CALLSIGN_MAX as companyCallsignMax,
+} from '../game/Company.js';
 // The Descent's ladder, named on the Deploy panel because the mode picks its
 // own places and the Theatre column has no say in it — see _syncTheatre.
 // The rest of this import is the DEFLECTION LADDER, and it is here because the
@@ -156,7 +165,7 @@ import { ACTIONS, MOUSE, WHEEL, keyLabel, loadBindings, saveBindings, defaultBin
  * the set the block below has to count. */
 import { AREAS, ARMIES, ARMY_IDS, FORMATIONS, COMMAND_FORCE, ORDERS as COMMAND_ORDERS,
          MAX_STRENGTH, OPENING_STRENGTH, TEAM_DAMAGE_DEFAULT, DEFAULT_FORMATION,
-         LADDER_RUNGS, CONTINGENT_MIXED } from '../game/Command.js';
+         LADDER_RUNGS, CONTINGENT_MIXED, RANKS, rankFor, MARKS, markById } from '../game/Command.js';
 // THE DATABANK. `ARCHETYPES` is the roster — the page list is enumerated off it
 // and never typed — and Databank.js carries the one thing a roster cannot hold:
 // which side a body fights for, what it is carrying, and who it is.
@@ -3211,6 +3220,13 @@ export class Menu {
     // kind of bug this codebase specialises in.
     this._bound = new Map();
     this._buildTraining();          // must exist before the tab wiring runs
+    /* BEFORE the Databank, because both insert themselves into the tab bar
+     * relative to a tab that is already there and the Company goes in front of
+     * Co-op while the Databank goes in front of the Codex. Two independent
+     * anchors, so the order of these two calls does not actually decide the bar
+     * — but a reader should not have to work that out, and the call order
+     * matching the bar order is one less thing to be wrong about. */
+    this._buildCompany();
     this._buildDatabank();          // …and so must this, for the same reason
     this._buildTabs();
     this._buildLevels();
@@ -5320,6 +5336,297 @@ export class Menu {
    * It has to exist before `_buildTabs` runs — that is what collects `.tab` and
    * `.panel` — hence the call order in the constructor.
    */
+  /* ══════════════════════════════════════════════════════════════════ */
+  /*  The Company                                                       */
+  /* ══════════════════════════════════════════════════════════════════ */
+
+  /**
+   * THE ROLL, AND IT IS A PAGE ABOUT PEOPLE.
+   *
+   * "If we did this you would have to add to the UI an area where you see your
+   *  troops — their names, attributes, history, characteristics, etc. Maybe you
+   *  can even customise certain parts of their appearance or upgrade certain
+   *  things in their stats. This can be a whole new minigame, kind of like
+   *  keeping track of companions/pets."
+   *
+   * Everything on this page is DERIVED. There is no second table of rank
+   * titles, army names, archetype labels or mark colours anywhere in this file:
+   * `Company.dossier` builds the rows, `Company.MARKS` is the palette, and the
+   * page is a renderer. That is not tidiness — it is the reason
+   * `tools/checks/company.mjs` can hold the page to its contents without
+   * parsing HTML, and the reason a tuned rank ladder retunes the page.
+   *
+   * WHAT THIS SCREEN MAY CHANGE, AND WHAT IT MAY NOT. A mark and a callsign,
+   * and nothing else. Rank, kills, wounds, grounds and runs are written by the
+   * game, from a run, and a roster screen that could edit them would be a cheat
+   * panel with a casualty list on it. `Company.dress` is the one door and it
+   * takes those two fields alone.
+   *
+   * …AND THE STAT UPGRADES WERE ASKED FOR AND ARE NOT HERE, which is a decision
+   * and not an omission. There already is a way to make a man better and it is
+   * the rank ladder: he fights, he earns it, and `enlistBody` multiplies his
+   * health, his damage and his pace by what he earned. A second way — points
+   * spent on a menu between runs — would be a cross-run currency that buys
+   * power, which is the one thing `Progress.js` and `Company.js` both refuse at
+   * the top of their own files, and `company.mjs` fails the day one appears.
+   * So the page SHOWS what the rank bought, in the same three numbers, rather
+   * than selling them. The minigame is keeping them alive.
+   */
+  _buildCompany() {
+    const tabs = document.querySelector('.menu-tabs');
+    const wrap = document.querySelector('.menu-wrap');
+    if (!tabs || !wrap) return;                       // stripped DOM (tests)
+
+    const tab = document.createElement('button');
+    tab.className = 'tab';
+    tab.dataset.tab = 'company';
+    tab.textContent = 'Company';
+    /* AFTER THE JEDI AND BEFORE CO-OP, which is the order of the three things
+     * a player owns: the one they are, the ones who follow them, and the ones
+     * they play with. Behind the reference pages is where `_buildTraining`'s
+     * own note says nobody looks. */
+    const coop = [...tabs.children].find((t) => t.dataset.tab === 'coop');
+    tabs.insertBefore(tab, coop || null);
+
+    const panel = document.createElement('section');
+    panel.className = 'panel';
+    panel.dataset.panel = 'company';
+    panel.innerHTML = `
+      <div class="col narrow company-roll">
+        <h3>The roll</h3>
+        <div id="company-list"></div>
+      </div>
+      <div class="col wide company-page" id="company-page"></div>`;
+    const foot = wrap.querySelector('.menu-foot');
+    wrap.insertBefore(panel, foot || null);
+
+    this._companyKey = null;
+    this._buildCompanyList();
+    this._showCompany(null);
+  }
+
+  /** Which army's roll the page is showing. Every one of them, in order. */
+  _companyRolls() {
+    return companyLoadAll();
+  }
+
+  /**
+   * The roll column: every army you have a company on, and every man on it.
+   *
+   * AN ARMY WITH NO ROLL IS STILL LISTED, with the sentence that says how one
+   * starts. A page that showed nothing to a player who has not withdrawn yet
+   * would be a page that never explains itself — and this is the one mechanism
+   * in the game whose whole subject is a decision the player has to know exists
+   * before they can make it.
+   */
+  _buildCompanyList() {
+    const host = document.getElementById('company-list');
+    if (!host) return;
+    host.innerHTML = '';
+    for (const c of this._companyRolls()) {
+      const army = ARMIES[c.army];
+      const head = document.createElement('h4');
+      head.className = 'codex-head databank-army';
+      head.textContent = army?.short || army?.name || c.army;
+      host.appendChild(head);
+
+      const list = document.createElement('div');
+      list.className = 'difflist';
+      const men = companyFieldable(c);
+      if (!men.length) {
+        const empty = document.createElement('p');
+        empty.className = 'hint';
+        empty.textContent = c.lost
+          ? `${c.lost} lost, nobody left. Lead another and call the ship in time.`
+          : 'No roll yet. Call for extraction and everyone who reaches the ramp is here next run.';
+        list.appendChild(empty);
+      }
+      for (const m of men) {
+        const R = RANKS[rankFor(m.xp | 0)];
+        const d = document.createElement('div');
+        d.className = 'diff';
+        d.dataset.man = `${c.army}/${m.designation}`;
+        /* THE DOT CARRIES THE RANK, which is the same colour `repaint` paints
+         * on the body — one statement of what a Sergeant looks like, read off
+         * `RANKS` in both places. Rung 0 has no colour and gets the list's own
+         * default, exactly as a fresh trooper wears no paint. */
+        const dot = R.color == null ? '' : ` style="background:#${R.color.toString(16).padStart(6, '0')}"`;
+        const mark = markById(m.look?.mark);
+        const flash = mark.color == null ? ''
+          : `<em class="company-mark" style="background:#${mark.color.toString(16).padStart(6, '0')}"
+               title="${escKey(mark.name)}"></em>`;
+        d.innerHTML = `<i class="dot"${dot}></i><div class="txt">`
+          + `<b>${escKey(companyNameOf(m))}${flash}</b>`
+          + `<span>${escKey(R.title)} · ${m.runs | 0} run${(m.runs | 0) === 1 ? '' : 's'} · `
+          + `${m.kills | 0} down</span></div>`;
+        this._activate(d, () => {
+          audio.ui('click');
+          this._showCompany(d.dataset.man);
+        }, companyNameOf(m));
+        list.appendChild(d);
+      }
+      host.appendChild(list);
+
+      /* THE CASUALTY LIST IS A ROW ON THE ROLL, not a separate page, because
+       * that is what it is: the men who were on this list and are not any
+       * more. `CommandRoster`'s own note makes the argument — "a list you can
+       * only read the survivors off does not make you careful". */
+      if (c.fallen?.length) {
+        const d = document.createElement('div');
+        d.className = 'diff company-fallen-row';
+        d.dataset.man = `${c.army}/-fallen`;
+        d.innerHTML = `<i class="dot"></i><div class="txt"><b>The fallen</b>`
+          + `<span>${c.lost | 0} lost, ${c.fallen.length} of them named</span></div>`;
+        this._activate(d, () => { audio.ui('click'); this._showCompany(d.dataset.man); },
+          `The fallen of ${army?.name || c.army}`);
+        host.appendChild(d);
+      }
+    }
+  }
+
+  /**
+   * One man's page, the casualty list, or the standing instruction.
+   *
+   * `key` is `army/designation` and is validated against the roll rather than
+   * trusted: it is held across a re-render, and a man who died between the
+   * click and the redraw would otherwise open the page on a blank column. The
+   * same reason `_showDatabank` validates its own.
+   */
+  _showCompany(key) {
+    const host = document.getElementById('company-page');
+    if (!host) return;
+    const list = document.getElementById('company-list');
+    const [armyId, who] = String(key ?? '').split('/');
+    const rolls = this._companyRolls();
+    const roll = rolls.find((c) => c.army === armyId) || null;
+    const man = roll && who && who !== '-fallen'
+      ? roll.men.find((m) => m.designation === who) || null : null;
+    const fallen = !!roll && who === '-fallen';
+    this._companyKey = man ? `${roll.army}/${man.designation}` : (fallen ? key : null);
+
+    if (list) {
+      for (const d of list.querySelectorAll('.diff')) {
+        d.classList.toggle('sel', d.dataset.man === this._companyKey);
+      }
+    }
+
+    if (fallen) { host.innerHTML = this._companyFallenHtml(roll); return; }
+    if (!man) { host.innerHTML = this._companyIndexHtml(rolls); return; }
+    host.innerHTML = this._companyManHtml(roll, man);
+    this._wireCompanyEdits(roll, man);
+  }
+
+  /** The page a player sees before they have picked anybody. */
+  _companyIndexHtml(rolls) {
+    const total = rolls.reduce((a, c) => a + c.men.length, 0);
+    const lost = rolls.reduce((a, c) => a + (c.lost | 0), 0);
+    const runs = rolls.reduce((a, c) => a + (c.runs | 0), 0);
+    /* Every number counted, none typed — the defect `_showDatabank`'s own note
+     * records having had for about an hour. */
+    return `<h3>The company</h3>
+      <p class="hint">These are the men who got out. Everyone who walks up the ramp
+        before it closes is here next run, with the rank he earned, the name he was
+        given and everything he has done. Everyone who does not is not.</p>
+      <p class="hint"><b>${total}</b> on the roll · <b>${lost}</b> lost ·
+        <b>${runs}</b> withdrawal${runs === 1 ? '' : 's'} survived</p>
+      <p class="hint">You can give a man a callsign and paint him a mark. You cannot
+        buy him anything: what makes a soldier better in this game is living through
+        another one, and the ladder pays that out on its own. Keeping him alive is
+        the whole of it.</p>
+      ${rolls.map((c) => `<p class="hint">${companyLines(c).map(escKey).join(' — ')}</p>`).join('')}`;
+  }
+
+  /** The men who did not come back, most recent first. */
+  _companyFallenHtml(roll) {
+    const army = ARMIES[roll.army];
+    return `<h3>The fallen</h3>
+      <p class="databank-army-line">${escKey(army?.name || roll.army)}</p>
+      <p class="hint">${roll.lost | 0} ${escKey(army?.unit || 'trooper')}s have not come home.
+        The ${roll.fallen.length} most recent are named here; the rest are on no list
+        anywhere, which is what permanent means.</p>
+      <div class="company-fallen">
+        ${roll.fallen.map((f) => {
+          const R = RANKS[Math.max(0, Math.min(RANKS.length - 1, f.rank | 0))];
+          const called = f.nickname ? `${f.designation} "${f.nickname}"` : f.designation;
+          return `<div><b>${escKey(called)}</b><span>${escKey(R.title)} · ${f.kills | 0} down · `
+            + `${f.runs | 0} run${(f.runs | 0) === 1 ? '' : 's'}`
+            + `${f.where ? ` · ${escKey(f.where)}` : ''}</span></div>`;
+        }).join('')}
+      </div>`;
+  }
+
+  /** One man: what he is, what he has done, and the two things you may change. */
+  _companyManHtml(roll, m) {
+    const rows = companyDossier(m, roll.army);
+    const mark = markById(m.look?.mark);
+    return `
+      <h3 class="databank-name">${escKey(companyNameOf(m))}</h3>
+      <p class="databank-army-line">${escKey(ARMIES[roll.army]?.name || roll.army)}</p>
+      <div class="databank-stats company-stats">
+        ${rows.map(([k, v]) => `<div><b>${escKey(k)}</b><span>${escKey(v)}</span></div>`).join('')}
+      </div>
+      <h4 class="codex-head">What he has done</h4>
+      ${m.story?.length
+        ? `<div class="company-story">${m.story.map((line) =>
+            `<p>${escKey(line)}</p>`).join('')}</div>`
+        : '<p class="hint">Nothing yet. A run where he took no wounds and killed nobody '
+          + 'writes no line — eight entries of the same ground is not a history.</p>'}
+      <h4 class="codex-head">Callsign</h4>
+      <p class="hint">What you call him. Up to ${companyCallsignMax} characters; clear it and
+        he answers to ${m.nickname ? `the name he earned, "${escKey(m.nickname)}"` : 'his number'}
+        again.</p>
+      <div class="company-callsign">
+        <input id="company-callsign" type="text" maxlength="${companyCallsignMax}"
+          value="${escKey(m.look?.callsign || '')}"
+          placeholder="${escKey(m.nickname || m.designation)}">
+        <button class="secondary" id="company-callsign-save">Set</button>
+      </div>
+      <h4 class="codex-head">Mark</h4>
+      <p class="hint">A stripe on his shins, so you can find him in a line of ten at
+        forty metres. It changes nothing else — the rank paint on his shoulders is the
+        game's and stays the game's.</p>
+      <div class="swatches company-marks">
+        ${MARKS.map((k) => `<i class="swatch${k.id === mark.id ? ' sel' : ''}"
+            data-mark="${escKey(k.id)}" title="${escKey(k.name)}"
+            style="background:${k.color == null ? 'transparent' : `#${k.color.toString(16).padStart(6, '0')}`};
+                   ${k.color == null ? 'border-style:dashed' : ''}"></i>`).join('')}
+      </div>`;
+  }
+
+  /**
+   * The two controls on a man's page, wired to the one door that writes.
+   *
+   * RE-RENDERED AFTER EVERY WRITE, and through the same two methods the tab was
+   * built with. A page that patched its own DOM in place would drift from the
+   * store the first time a write was refused — `Company.dress` validates a mark
+   * against the palette and a callsign against `cleanCallsign`, and both can
+   * legitimately answer something other than what was typed.
+   */
+  _wireCompanyEdits(roll, m) {
+    const key = `${roll.army}/${m.designation}`;
+    const write = (look) => {
+      companyDress(roll.army, m.designation, look);
+      this._buildCompanyList();
+      this._showCompany(key);
+    };
+    const field = document.getElementById('company-callsign');
+    const save = document.getElementById('company-callsign-save');
+    if (save && field) {
+      this._activate(save, () => { audio.ui('click'); write({ callsign: field.value }); }, 'Set callsign');
+      /* ENTER IS THE OBVIOUS KEY IN A ONE-FIELD FORM and there is no form here
+       * to submit — the menu is one page and a real `<form>` would navigate. */
+      field.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        write({ callsign: field.value });
+      });
+    }
+    for (const sw of document.querySelectorAll('.company-marks .swatch')) {
+      this._activate(sw, () => { audio.ui('click'); write({ mark: sw.dataset.mark }); },
+        markById(sw.dataset.mark).name);
+    }
+  }
+
   _buildDatabank() {
     const tabs = document.querySelector('.menu-tabs');
     const wrap = document.querySelector('.menu-wrap');
