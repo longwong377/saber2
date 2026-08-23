@@ -646,7 +646,10 @@ export async function run({ check, assert }) {
     const away = MORALE.NEAR * 4;
     const living = d.roster.living.filter((t) => t.body && !t.body.dead);
     assert(living.length >= 4, `only ${living.length} of the line were standing to move`);
-    for (const t of living) t.body.position.x += away;
+    /* The commander's own station, so the hold below is against a fixed point
+     * rather than against wherever each man happened to start. */
+    const p0 = { x: world.player.position.x, z: world.player.position.z };
+    for (const t of living) t.body.position.x = p0.x + away;
     assert(!d.lineIsUp(), 'the line reads as up with every man four times NEAR away');
 
     /* The ground is won: the waves are met and every hostile is dead. */
@@ -654,7 +657,33 @@ export async function run({ check, assert }) {
     for (const e of world.enemies) if (!e.dead && e.team !== 0) { e.hp = 0; e.dead = true; }
     const taken = () => d.log.some((r) => r.t === 'area');
     d.payWave(d.wave + 1);
-    for (let i = 0; i < Math.round(6 / STEP) && !taken(); i++) world.update(STEP, input);
+    /**
+     * HELD OUT, EVERY FRAME, and the note twenty lines below is why this had
+     * to change: "the world ran six seconds between the two writes and a
+     * trooper has a brain, so the men had walked." That was written about the
+     * RESTORE and it is just as true here — a line displaced once and then
+     * left alone for six seconds is a line walking home at `followSpeed`, and
+     * whether it gets half of itself back inside `MORALE.NEAR` before the
+     * clock runs out is a fact about the catch-up pace and the roster size,
+     * not about the rule.
+     *
+     * It made this arm a RACE, and the race was close enough to be decided by
+     * how many men were alive: green at nine, red at ten, in the same suite on
+     * the same commit — the arm reported "killing still advances the run"
+     * about a rule that had refused correctly and then been satisfied
+     * correctly four seconds later. Which is the OTHER arm's assertion, made
+     * by accident.
+     *
+     * So the men are put back out on every frame. What is left under test is
+     * exactly the sentence in the title: with the line not up, the ground is
+     * not taken, for as long as the line is not up. The arm below then lets
+     * them arrive and requires the opposite, which is where the walking home
+     * belongs.
+     */
+    for (let i = 0; i < Math.round(6 / STEP) && !taken(); i++) {
+      for (const t of living) if (t.body && !t.body.dead) t.body.position.x = p0.x + away;
+      world.update(STEP, input);
+    }
     assert(!taken(),
       'the area was taken with the whole line four times NEAR away — killing still advances the run');
     assert(d.awaitingLine, 'the run is not waiting for the line, it simply did not clear');

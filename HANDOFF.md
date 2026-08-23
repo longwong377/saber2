@@ -28,8 +28,8 @@ Playable two ways:
 
 | | |
 |---|---|
-| Suite | **1517 passed, 0 failed** — 111 suites, 18.7 min of suite time, from a clean worktree on a quiet box. Earlier the same day it was 1438/59; §6.4 says what each of those was, because how they were found is the part worth keeping. There are **146** suites in `tools/checks/` as of this row, which is the drift §2.3 is about — run `ls tools/checks/*.mjs \| grep -v /_ \| wc -l` rather than believing it |
-| Fast tier | **362 passed, 0 failed — 17 suites in 53.1 s**, `npm run verify:fast`. The mechanical contract only: the blade, the bolt, the cut, the guard, and the tables that move them. `tools/tiers.mjs` names what it leaves out (`footwork` 52.9 s, `powers` 18.2 s, `force` 19.3 s, every browser suite, every level/wave/net/UI suite). **It going green is not the gate going green.** It exists because §2.6d is real: a gate nobody can finish is a gate whose reds nobody triages, and `.github/workflows/verify.yml` now runs this one on every push — the first thing in this repo's CI that has ever run a check |
+| Suite | **1517 passed, 0 failed** — 111 suites, 18.7 min of suite time, from a clean worktree on a quiet box. Earlier the same day it was 1438/59; §6.4 says what each of those was, because how they were found is the part worth keeping. There are **155** suites in `tools/checks/` as of this row, which is the drift §2.3 is about — run `ls tools/checks/*.mjs \| grep -v /_ \| wc -l` rather than believing it |
+| Fast tier | **363 passed, 0 failed — 17 suites in ~80 s**, `npm run verify:fast`. The mechanical contract only: the blade, the bolt, the cut, the guard, and the tables that move them. `tools/tiers.mjs` names what it leaves out (`footwork` 52.9 s, `powers` 18.2 s, `force` 19.3 s, every browser suite, every level/wave/net/UI suite). **It going green is not the gate going green.** It exists because §2.6d is real: a gate nobody can finish is a gate whose reds nobody triages, and `.github/workflows/verify.yml` now runs this one on every push — the first thing in this repo's CI that has ever run a check |
 | Smoke | **11/11 clean** on a quiet box. Its timeouts are wall-clock, so on a loaded one the last four fail and mean nothing — §2.6 |
 | Packed | `node tools/pack.mjs out.html` — 79 modules, 12.8 MB, boots from `file://`, and `tools/checks/packed.mjs` proves it every run |
 | Levels | **7** — `scoria, mustafar, colosseum, wood, drifts, alpine, geonosis`. The Boarding Bay and the Providence were deleted on the player's word — "I just tried the boarding bay and the providence and hated them… just remove them. your outside work is much better" |
@@ -55,12 +55,14 @@ sets the scope of the next session's work.
 Run things this way and no other way:
 
 ```bash
-npm run verify:fast                              # the mechanical contract — 17 suites, 362 checks, ~55 s
+npm run verify:fast                              # the mechanical contract — 17 suites, 363 checks, ~80 s
 npm run verify                                   # the gate — ~1268 checks, ~11 min
 SABER_CHECK_ORDER=reverse npm run verify         # same suites backwards — §6.4
 node --import ./tools/register.mjs tools/_one.mjs <suite>
 node --import ./tools/register.mjs tools/_seq.mjs <suite> <suite>   # §6.4's missing tool
 node --import ./tools/register.mjs tools/trace.mjs --waves 20 --level colosseum
+node --import ./tools/register.mjs tools/playthrough.mjs --minutes 20   # a run, played
+node --import ./tools/register.mjs tools/_m5.mjs --seeds 6 --minutes 6  # PLAN.md's M5
 node --import ./tools/register.mjs tools/combat-trace.mjs --waves 8
 node tools/smoke.mjs --shots                     # real browser, real render
 ```
@@ -933,11 +935,31 @@ environment difference that produces a confident wrong answer.
 |---|---|---|
 | `verify.mjs` | is it **correct** | whether it is tuned or fun |
 | `balance.mjs` | is it **tuned** | anything a player presses |
-| `trace.mjs` | what a run **contains** | combat |
+| `trace.mjs` | what a run **contains** | combat, and anything a player presses |
+| `playthrough.mjs` | what **happens, in order**, over twenty minutes | anything one scripted Vanguard does not do |
 | `combat-trace.mjs` | what a fight **contains** | anything past a stationary floor |
 | `smoke.mjs` | does the real page **boot and render** | mechanics |
 | `pack.mjs` | does the whole game **run with no server** | anything a check already covers |
 | `checks/packed.mjs` | does the packed page **boot from `file://`** | how it plays once it has |
+
+**`playthrough.mjs` closes the one gap the other six share: none of them
+plays.** A check drives twenty seconds because that is what a PROPERTY needs;
+`trace.mjs` and `balance.mjs` both say outright that they never press a button.
+So a curve that only bends after minute ten is invisible to every row above it,
+and every finding about pacing this project has had came from a person playing.
+It drives the repository's one scripted Jedi (`dutyInput`, imported rather than
+written twice) over a real horizon and prints a timeline, a casualty list by
+name, and every announcement with the clock on it. It also borrows `trace.mjs`'s
+rule whole: **an instrument with an opinion is a check with a hand-written bar**,
+so it scores nothing.
+
+Read its `remaining`, `delivered` and `rescues` columns before reading anything
+else on a quiet stretch. A wave holding open on a body the player cannot reach,
+a delivery that never finished, and a run quietly over all look identical in a
+body count, and those three are what tell them apart — `delivered: n` in
+particular disables the stall watchdog entirely (`Waves.js` gates the whole of
+it on `blocking = this.delivered`), so it is the one field that can report a
+stuck run.
 
 **`pack.mjs` is how this got play-tested at all.** Browsers refuse ES modules
 from `file://`, so playing the game needed a web server and therefore nobody had
