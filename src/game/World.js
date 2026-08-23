@@ -179,6 +179,9 @@ import { QUALITY } from '../engine/Engine.js';
 import { clamp, lerp, damp, dampVec, makeRng, moduleSeed, TAU } from '../engine/MathUtil.js';
 import { audio, PRIO } from '../engine/Audio.js';
 import { TokenPool } from './Tokens.js';
+import { ContactShadows } from '../world/Contact.js';
+/** Scratch for the contact-mark pass; one array, refilled, never grown. */
+const _contactList = [];
 import { ExtractionDirector } from './Extraction.js';
 
 /* Random per session, FIXED under the gate — see `moduleSeed`. The salt keeps
@@ -505,6 +508,10 @@ export class World {
      * world rather than on the player because a meeting has two commanders and
      * an ally can be mobbed too: the ring is keyed by TARGET. */
     this.tokens = new TokenPool();
+    /* THE DARK UNDER A MAN'S FEET — see `src/world/Contact.js`. Built here and
+     * not in `loadLevel` because it survives a ground change: it holds no level
+     * geometry, only a pool of marks it rewrites every frame. */
+    this.contacts = new ContactShadows(this.scene);
   }
 
   /* ── level lifecycle ─────────────────────────────────────────────── */
@@ -3355,6 +3362,15 @@ export class World {
      */
     this.extraction?.update(dt, ctx);
     this.tokens.update(dt);
+    /* Every living body that is not riding, plus the players. Rewritten whole
+     * each frame — see the note on `update`. */
+    if (this.contacts && camera) {
+      _contactList.length = 0;
+      for (const e of this.enemies) if (!e.dead) _contactList.push(e);
+      for (const p of this.players) if (p && p.alive !== false) _contactList.push(p);
+      this.contacts.update(_contactList, camera, this.terrain,
+        this.engine?.renderer?.domElement?.height || 1080);
+    }
     this._withdrawTick(dt, ctx);
 
     // 0 — the catch window, BEFORE the players read input. That order is the
@@ -7170,6 +7186,7 @@ export class World {
     /* Terminal, and RapierWorld owns what that means — see its dispose(),
      * which frees the Rapier world instead of allocating a fresh one nobody
      * will ever step, and refuses anything that binds in afterwards. */
+    this.contacts?.dispose();
     this.physics?.dispose();
   }
 }

@@ -538,6 +538,15 @@ export async function run({ check, assert }) {
       assert(!world.manifest.includes(stranded.trooper),
         'a man 160 m from the pad is on the passenger list');
     }
+    /* AND THE MEN WHO COULD REACH IT DID. This is the assertion the feature is
+     * for and it was absent while the feature did not work: driven on the
+     * drifts, the colosseum and alpine the manifest is 10 of 10, and on
+     * geonosis — whose spawn ring is 58-96 m against everybody else's 26-60 —
+     * it is 6. So the bound is "most of a line that is with you", not "all of
+     * any line anywhere", and the one ground that misses it misses it for a
+     * reason a player can see: his men were further away when he called. */
+    assert(world.manifest.length >= Math.min(4, mine.length),
+      `${world.manifest.length} of ${mine.length} reached the ramp — the ship is leaving without the line again`);
     const lift = world.extraction.log.find((e) => e.phase === 'liftoff');
     assert(lift, 'the run ended without the ship ever lifting off');
     assert(!world.extraction.log.some((e) => e.phase === 'transit' || e.phase === 'swap'),

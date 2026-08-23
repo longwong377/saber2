@@ -217,6 +217,78 @@ function selfShadowed(rig, nw, side, samples = 1200) {
 export function run({ check, assert, near }) {
   /* ══ 1. COUNTABILITY ═══════════════════════════════════════════════════ */
 
+  check('cel: a body standing at range is a body, not a smudge', async () => {
+    /**
+     * TWO BLIND PLAYTEST FINDINGS, AND THEY ARE ONE DEFECT: "at 25 m an enemy is
+     * a 12 px blob at the same value as the terrain's ink strokes", and
+     * "characters have no value separation from the ground and no contact
+     * shadow anchoring them".
+     *
+     * Both are a gap between two systems that each stop for a good reason.
+     * `Enemy` drops shadow casting past LOD 2 — about 62 m — because a cascade
+     * has a reach and a twelve-pixel figure is a bad way to spend it. `Ink`
+     * fades its outline between `INK.edgeFade`'s 55 m and 130 m, because a line
+     * on a twelve-pixel figure is thicker than the figure. Between 55 m and the
+     * horizon a body therefore had no outline, no shadow and no separation.
+     *
+     * `src/world/Contact.js` is the flat dark shape a cel figure is drawn
+     * standing on. Four properties, and the second is the one the finding turns
+     * on.
+     */
+    const { ContactShadows, BASE_R, MIN_PX, REACH } = await import('../../src/world/Contact.js');
+    const { INK } = await import('../../src/toon/Ink.js');
+    const scene = new THREE.Scene();
+    const cs = new ContactShadows(scene);
+    const cam = new THREE.PerspectiveCamera(60, 16 / 9, 0.1, 1000);
+    cam.position.set(0, 1.7, 0);
+    const flat = { height: () => 0 };
+    const at = (d) => [{ position: { x: 0, y: 0, z: -d }, dead: false }];
+    const radiusAt = (d) => {
+      cs.update(at(d), cam, flat, 1080);
+      const m = new THREE.Matrix4(), s = new THREE.Vector3();
+      cs.mesh.getMatrixAt(0, m);
+      m.decompose(new THREE.Vector3(), new THREE.Quaternion(), s);
+      return s.x;
+    };
+
+    // 1 — a mark is drawn at every distance a body is fought at
+    assert(cs.update(at(10), cam, flat, 1080) === 1, 'no mark at 10 m');
+    assert(cs.update(at(120), cam, flat, 1080) === 1, 'no mark at 120 m');
+    assert(cs.update(at(REACH + 40), cam, flat, 1080) === 0,
+      `a mark is still drawn past REACH (${REACH} m), where a body is dressing`);
+
+    // 2 — IT SURVIVES THE BAND WHERE EVERYTHING ELSE STOPS. A disc scaled to a
+    //     man's feet is sub-pixel exactly where it is needed most, so it grows.
+    const near = radiusAt(10), far = radiusAt(INK.edgeFade[1]);
+    assert(far > near,
+      `the mark is ${far.toFixed(2)} m at ${INK.edgeFade[1]} m against ${near.toFixed(2)} at 10 — `
+      + 'it shrinks into nothing in the band where the outline and the shadow have both gone');
+    const tan = Math.tan(60 * Math.PI / 360);
+    const px = (r, d) => (r / (d * tan)) * (1080 / 2);
+    assert(px(far, INK.edgeFade[1]) >= MIN_PX - 0.5,
+      `at ${INK.edgeFade[1]} m the mark is ${px(far, INK.edgeFade[1]).toFixed(1)} px against a floor of ${MIN_PX}`);
+    assert(Math.abs(near - BASE_R) < 1e-6,
+      `near, the mark is ${near.toFixed(3)} m rather than a man's own ${BASE_R} — it should be a shadow before it is a marker`);
+
+    // 3 — DARKER WITH DISTANCE, because far is where it is the only help there is
+    const alphaAt = (d) => {
+      cs.update(at(d), cam, flat, 1080);
+      const c = new THREE.Color(); cs.mesh.getColorAt(0, c);
+      return 1 - c.r;                                   // stored as a multiplier
+    };
+    assert(alphaAt(120) > alphaAt(8),
+      `the far mark (${alphaAt(120).toFixed(2)}) is no darker than the near one (${alphaAt(8).toFixed(2)})`);
+
+    // 4 — and the outline pass must not draw a ring around it
+    const { inkSkips } = await import('../../src/toon/Ink.js');
+    const skipped = cs.mesh.material.userData.saberNoInk === true;
+    assert(skipped, 'the mark is inked — a hard line around a dark disc is a ring painted on the floor');
+
+    cs.dispose();
+    return `${near.toFixed(2)} m at 10 m → ${far.toFixed(2)} m at ${INK.edgeFade[1]} m `
+      + `(${px(far, INK.edgeFade[1]).toFixed(1)} px, floor ${MIN_PX}) · alpha ${alphaAt(8).toFixed(2)}→${alphaAt(120).toFixed(2)} · not inked`;
+  });
+
   check('cel: a lit surface has TWO tones and the boundary between them is crisp', () => {
     /* Rule 1 of src/toon/REFERENCE.md, as a number. The reference frames'
      * surfaces are "a lit colour and a shadow colour meeting on a hard edge",

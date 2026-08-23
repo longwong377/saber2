@@ -640,6 +640,7 @@ export class ExtractionDirector {
     this._log.length = 0;
     this.withdrawing = false;
     this._takenSlots = new Set();
+    this._walkSlots = new Set();
     this._doorTaken = false;
     this._enter('aftermath');
     return true;
@@ -697,6 +698,7 @@ export class ExtractionDirector {
     this._lzPoint = null;
     this._seated.length = 0;
     this._takenSlots = new Set();
+    this._walkSlots = new Set();
     this._doorTaken = false;
     this._log.length = 0;
     this._enter('called');
@@ -1509,8 +1511,41 @@ export class ExtractionDirector {
         else e._extracting = 'left';
         continue;
       }
+      /* ══ HIS OWN SEAT, NOT THE MIDDLE OF THE BAY ═══════════════════════
+       *
+       * Every man in the queue was steered at `_bayPoint()` — one point, the
+       * centre of the hold — so ten bodies converged on one square metre and the
+       * character controller resolved them into a jam. Measured on the drifts,
+       * open ground, no wall to blame: the queue closed from 11.2 m to 4.4 m
+       * across the whole twenty-two seconds the ramp was held, a rate of 0.34
+       * m/s out of a 4.2 m/s walk, and NOBODY BOARDED. It reads as men shuffling
+       * politely into each other, because that is exactly what it is.
+       *
+       * `_seat` already knows how to hand out distinct slots. Reserving one per
+       * man on the way in and walking him to HIS slot turns one heap into ten
+       * destinations that happen to be inside the same hull — which is what a
+       * stick filing aboard actually looks like. */
+      /* ══ A MAN'S PLACE IN THE QUEUE IS DECIDED ONCE ════════════════════
+       *
+       * The role below was recomputed every frame from `i`, the man's index in
+       * a list that SHRINKS as the men ahead of him board — so his target
+       * flipped between "stand in line behind the ship" and "climb the ramp"
+       * several times a second, and the queue spot itself moved every time the
+       * index did. Measured on the drifts with everything else correct — speed
+       * 4.08, no stun, no knock, grounded, a clean unit wish — the man's own
+       * wish wandered (0.68,0.73) → (0.99,−0.17) → (0.37,0.93) and his net
+       * travel was 0.008–0.037 m a frame against a 4.2 m/s walk. He was not
+       * blocked and he was not jammed. He was turning round.
+       *
+       * So the role is decided once and only ever upgraded. `_boardPos` is his
+       * queue place, taken from the index he had when he joined and kept, and
+       * `climb` is a one-way door: a man who has been told to board is never
+       * told to go and stand in line again. */
+      if (e._boardPos === undefined) e._boardPos = i;
       let target;
       const dRamp = Math.hypot(ramp.x - e.position.x, ramp.z - e.position.z);
+      if (e._boardRole !== 'climb'
+          && (i < 4 || dRamp < BOARD_RADIUS * 2.2)) e._boardRole = 'climb';
       /* FOUR ABREAST, NOT TWO. The queue was two-wide against a bay that seats
        * ten and a ramp the ship holds for `LAST_CALL` — which is fine when the
        * field is clear and the men are already standing on the pad, and is the
@@ -1518,14 +1553,15 @@ export class ExtractionDirector {
        * with a wave still on the ground. Measured on a driven withdrawal from
        * 20 m: 2 of 10 aboard at two abreast. The seats are the real cap and
        * they are checked above. */
-      if (i < 4 || dRamp < BOARD_RADIUS * 2.2) {
-        /* At the front of the queue, or already at the foot: climb. The target
-         * is the middle of the bay, so the walk goes UP the ramp rather than
-         * at the lip of it. */
-        target = this._bayPoint(_v1);
+      if (e._boardRole === 'climb') {
+        /* At the front of the queue, or already at the foot: climb — to his own
+         * place, so ten men do not walk at one point. `_reserve` hands out the
+         * same slots `_seat` does and remembers them, so the walk and the sit
+         * agree about where he is going. */
+        target = this._reserve(e, seats, _v1) || this._bayPoint(_v1);
       } else {
         /* Further back: stand in line behind the ramp, on the centreline. */
-        _v1.set(0, -1.15, (this._model?.userData?.bay?.back ?? 3.3) + 4.0 + i * 1.5);
+        _v1.set(0, -1.15, (this._model?.userData?.bay?.back ?? 3.3) + 4.0 + e._boardPos * 1.5);
         g.localToWorld(_v1);
         if (w.terrain) _v1.y = w.terrain.height(_v1.x, _v1.z);
         target = _v1;
@@ -1538,8 +1574,28 @@ export class ExtractionDirector {
       e.wish.set(nx, 0, nz);
       if (!e.toTarget) e.toTarget = new THREE.Vector3();
       e.toTarget.set(nx, 0, nz);
+      /* ══ THE WALK IS KINEMATIC, AND THE CONTROLLER IS TOLD TO STOP ═════
+       *
+       * This wrote `wish` for `Enemy._move` to walk on AND advanced the position
+       * itself. The two fought and the controller won: measured on the drifts
+       * with every other cause ruled out — speed 4.08, no stun, no knock,
+       * grounded, a clean unit wish, the role frozen and a seat reserved per man
+       * — the queue closed 11.2 m to 4.4 m over the whole twenty-two seconds the
+       * ramp was held, three separate fixes changing the figures by nothing at
+       * all. A push of 0.07 m a frame was arriving as 0.008.
+       *
+       * A body walking up a ramp into a hull is the one case in this game where
+       * a character controller has nothing to contribute: there is no terrain to
+       * slide on, no separation worth solving, and a queue of ten men whose
+       * mutual avoidance is exactly what stops them boarding. So the boarding
+       * walk is kinematic — this method owns the position, `velocity` is zeroed
+       * so `_move` has nothing to integrate, and `wish` is cleared so its
+       * steering has nothing to steer. The legs still cycle: `toTarget` is what
+       * the animator reads for heading, and it is still written above. */
       const push = Math.min(d, 4.2 * dt);
       e.position.x += nx * push; e.position.z += nz * push;
+      e.wish = null;
+      e.velocity?.set?.(0, 0, 0);
       /* ON THE RAMP THE FLOOR IS THE RAMP. Clamping to terrain height all the
        * way in is what made a trooper walk THROUGH the ramp and pop up inside
        * the hull — the ship's floor is a metre off the sand. Inside the ship's
@@ -1556,6 +1612,37 @@ export class ExtractionDirector {
       e.position.y = damp(e.position.y, floor, 8, dt);
       e._syncBody?.();
     }
+  }
+
+  /**
+   * THE SLOT THIS MAN IS WALKING TO, in world space, reserved once and kept.
+   *
+   * `_seat` picks a slot at the moment a body arrives; this picks the same kind
+   * of slot at the moment it sets off, so the queue has ten destinations rather
+   * than one. Reserved rather than recomputed because a target that moves
+   * between frames is a body that oscillates — the same reason `_walkTroops`
+   * sorts its queue once and then keeps the order.
+   *
+   * Falls back to null when the ship has no published seats, which is the case
+   * `_seat`'s own else-branch already covers by laying bodies out in rows.
+   */
+  _reserve(body, seats, out) {
+    if (!seats || !seats.length || !this.group) return null;
+    if (body._seatSlot === undefined) {
+      const taken = this._walkSlots || (this._walkSlots = new Set());
+      /* Benches first and standing places after, which is the order a real
+       * stick fills and the same order `_seat` uses for everybody who is not
+       * the commander. */
+      const order = [...seats.filter((x) => x.sit), ...seats.filter((x) => !x.sit)];
+      const free = order.find((x) => !taken.has(x));
+      if (!free) return null;
+      taken.add(free);
+      body._seatSlot = free;
+    }
+    const slot = body._seatSlot;
+    out.set(slot.x, slot.y, slot.z);
+    this.group.localToWorld(out);
+    return out;
   }
 
   /**
