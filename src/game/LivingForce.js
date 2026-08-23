@@ -87,6 +87,9 @@
 
 import { BOONS, ATTUNEMENTS, RARITY, maxRank, rankOf, boonById, axisCountOf,
   RAMP_CARDS_EVERY, BOSS_EVERY } from './Waves.js';
+/* The offer is dealt from a seeded stream — see `OFFER`. MathUtil is a leaf and
+ * this is the only thing this file takes from it. */
+import { makeRng } from '../engine/MathUtil.js';
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  Insight — what a run earns and what a facet costs                     */
@@ -497,7 +500,44 @@ export const LOCKED = {
   insight: 'not enough Insight',
   gated: 'the discipline is not yet earned',
   depth: 'not this early in a run',
+  offer: 'the Force is not showing you this one',
 };
+
+/**
+ * HOW MANY OF THE LEGAL FACETS THE HOLOCRON IS SHOWING — PLAN.md §4.6's first
+ * bullet.
+ *
+ *     The holocron offers three of the currently-legal facets, not all 46.
+ *     Same 46 nodes, same adjacency; only the OFFER changes. A solved build
+ *     order becomes a found one.
+ *
+ * ══════════════════════════════════════════════════════════════════════════
+ *  WHY AN OFFER AND NOT A SHUFFLE OF THE TREE
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * The lattice is the same lattice in every run — the same six currents, the
+ * same joins, the same prices — because that is what a player LEARNS, and a
+ * graph that reshuffled would be a graph nobody could plan in. What changes is
+ * which of the legal moves is available this minute. So the second run of a
+ * player who has solved "Vitality, then Celerity, then Momentum" is not that
+ * run again: the same three cards are still the right ones and the Force is
+ * showing him a different three, and the decision becomes what to do with what
+ * he is offered rather than what he decided before he landed.
+ *
+ * THREE, and it is the draft's own number: `drawBoons` offers three cards on an
+ * ordinary wave, so a player already knows what three choices look like and the
+ * two systems do not disagree about how wide a decision is.
+ *
+ * ── AND IT RE-ROLLS ON A PURCHASE, NOT ON A CLOCK ──────────────────────────
+ *
+ * The offer is a pure function of the run's seed and how much has been bought,
+ * so it is the same offer every time the Holocron is opened until something is
+ * taken — a player who closes the screen to think has not lost the hand. It is
+ * also derived rather than stored, which is what keeps it correct across a
+ * level change: `snapshot` carries the seed and the count, and the offer falls
+ * out of them on the far side.
+ */
+export const OFFER = 3;
 
 /**
  * The Insight a run holds, and the facets it has woken with it.
@@ -515,6 +555,13 @@ export class Communion {
     /** Facet ids woken with Insight, in order. Its LENGTH is the price escalator. */
     this.bought = Array.isArray(o.bought) ? o.bought.slice() : [];
     this.earned = Math.max(0, o.earned ?? this.insight);
+    /**
+     * THE RUN'S OWN NUMBER, and what makes an offer a fact about a sitting
+     * rather than about a process. `World` hands it `runSeed`; a ledger built
+     * with none takes 0, which is a perfectly good stated seed and is what
+     * every check and every headless bench gets unless it says otherwise.
+     */
+    this.seed = (o.seed | 0) >>> 0;
   }
 
   /**
@@ -557,6 +604,11 @@ export class Communion {
     if (wave < (b.minWave ?? 1)) return LOCKED.depth;
     if (b.requires && !b.requires(taken)) return LOCKED.gated;
     if (!this.reachable(id, taken)) return LOCKED.reach;
+    /* …AND IT HAS TO BE ONE OF THE THREE ON THE TABLE — PLAN.md §4.6's first
+     * bullet. Last of the structural clauses and ahead of the price, because
+     * "not on the table" is a different sentence from "you cannot afford it"
+     * and the screen prints whichever one is true. */
+    if (!this.offerNow(taken, wave).includes(id)) return LOCKED.offer;
     if (this.insight < this.costOf(id, taken)) return LOCKED.insight;
     return null;
   }
@@ -574,6 +626,45 @@ export class Communion {
     if (rankOf(taken, id) > 0) return true;
     for (const n of NEIGHBOURS.get(id) || []) if (rankOf(taken, n) > 0) return true;
     return false;
+  }
+
+  /**
+   * WHICH OF THE LEGAL FACETS THE FORCE IS SHOWING — see `OFFER`.
+   *
+   * "Currently legal" is everything that passes every rule EXCEPT the offer
+   * itself and the price: a facet you cannot afford is still one of the three
+   * you are being shown, because "save for it" is a decision and "it is not on
+   * the table" is not. Sorted before the deal so the answer cannot depend on
+   * the order `FACETS` happens to be written in, and dealt from a seeded stream
+   * of the run's number and the purchase count — so the same run offers the
+   * same hand until something is taken, and closing the screen to think costs
+   * nothing.
+   *
+   * A run with fewer than `OFFER` legal facets is offered all of them, which is
+   * the opening of every run: the six attunements are roots and nothing else is
+   * reachable until one of them is woken.
+   */
+  offerNow(taken, wave = 1) {
+    const legal = [];
+    for (const s of FACETS) {
+      const b = boonById(s.id);
+      if (!b) continue;
+      if (rankOf(taken, s.id) >= maxRank(b)) continue;
+      if (wave < (b.minWave ?? 1)) continue;
+      if (b.requires && !b.requires(taken)) continue;
+      if (!this.reachable(s.id, taken)) continue;
+      legal.push(s.id);
+    }
+    if (legal.length <= OFFER) return legal;
+    legal.sort();
+    const rng = makeRng((Math.imul(this.seed ^ 0x9E3779B9, 0x85EBCA6B)
+      ^ Math.imul(this.bought.length + 1, 0x27D4EB2F)) >>> 0 || 1);
+    const out = [];
+    const pool = legal.slice();
+    for (let i = 0; i < OFFER && pool.length; i++) {
+      out.push(pool.splice(Math.floor(rng() * pool.length) % pool.length, 1)[0]);
+    }
+    return out;
   }
 
   canBuy(id, taken, wave = 1) { return this.reasonLocked(id, taken, wave) === null; }
@@ -596,7 +687,13 @@ export class Communion {
   }
 
   /** What a save/restore across a level change has to carry. See Run.js. */
-  snapshot() { return { insight: this.insight, bought: this.bought.slice(), earned: this.earned }; }
+  snapshot() {
+    return { insight: this.insight, bought: this.bought.slice(), earned: this.earned,
+             /* The offer is DERIVED from these two, so carrying the seed is
+              * what makes the hand on the far side of a ground change the same
+              * hand — see `offerNow`. */
+             seed: this.seed };
+  }
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */

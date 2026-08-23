@@ -26,46 +26,89 @@ Playable two ways:
 
 ## 1. State
 
-> **SESSION OF 2026-08-23 — WHAT LANDED, IN ONE PLACE.** Branch
-> `claude/game-feedback-opinions-sfr9v7`, seven commits, all green.
+> **SESSION OF 2026-08-23 (SECOND) — WHAT LANDED, IN ONE PLACE.** Branch
+> `claude/autonomous-completion-6b2kzi`, eleven commits, and the whole of
+> PLAN.md §6's chain after item 4 is now built or measured.
 >
-> **The frame.** 158 bodies on the `front` layout went **50.10 ms → 19.99 ms**
-> and **120 bodies now cost 16.60 ms against a 16.67 ms budget** — PLAN.md
-> §4.3's kill criterion ("the battle needs 120 simultaneous fully-simulated
-> bodies with two real armies") is MET, where the session opened with the ladder
-> going over budget between 40 and 80. Four things did it, in order of size:
-> the gait's closing full-tree matrix walk became lazy past LOD 1 (3.74 ms, the
-> largest single line in the game); the gait's *first* full-tree walk became
-> `Rig.freshPos` on the one bone it served (visits per body 251 → 181);
-> `Enemy._move` stopped sweeping every static box in the level per body per
-> frame (10.12 → 3.13 ms); and `World.pickTarget`'s O(bodies²) became
-> `src/game/ArmyIndex.js`. **Read that file's note before touching any of it** —
-> the textbook ring-walk grid was measurably SLOWER than the sweep it replaced,
-> because two armies land 120 m apart and a ring walk degenerates on empty
-> ground.
+> **§1's checkable order** — `src/game/FireMission.js`. High Command lays an
+> artillery ellipse on ground ahead of your line, tells you what it thinks is
+> standing on it, and gives you a window; one keypress (`authorise`, KeyK)
+> clears it. The estimate is honest, is a SNAPSHOT, and is never revised — so
+> the game does not have to cheat to put your men under your own guns and does
+> not have to warn you either. Reading the mark costs 12 s inside 70 m of it, 4
+> with Force sense. **The weld is the geometry, measured, three arms of the same
+> order and the same ten men:** walk out at your line's pace and 10 OF 10 are
+> inside the ellipse with you; sprint out alone and 0 are, but the quorum is
+> DOWN for the whole reading; plant them first with §4.4's delegation verb and
+> you pay neither. Delete `lineIsUp` and all three collapse into "walk over and
+> look". The shells carry a source on nobody's side, so `installTeamDamage`
+> cannot blunt them on your own men (**120 hp against 42**), and `killerName`
+> names them: every man they kill enters the after-action report as *by your own
+> fire mission*.
 >
-> **M5 reported and the gate is open.** PLAN.md §2 carries the table. The rule
-> costs a player who leaves 34.1% of their ground and one who stays 8.2%.
-> `lineIsUp` is not inert; §4 is licensed.
+> **§4.7, all four items.** DIG IN is an order (`FORMATIONS.digin`, Quote): a
+> squad turns its planted ground into a position in 22 s with its hands full,
+> cut through `Terrain.crater` so the log carries it into the next engagement.
+> Measured at the shipped LOW tier, twelve rays from a muzzle to a chest —
+> **flat 0/12 blocked, one shell crater 2/12, a dug position 12/12**; the
+> defilade is symmetric and that is the trade. FINITE COVER was already true and
+> unmeasured: **54 props standing at deploy and 49 six minutes later**, off 137
+> hits nobody aimed. GRAVES (`src/world/Graves.js`) keep a named man's rifle in
+> the ground where he fell for the whole run, two draw calls for all of them,
+> and the line's morale minds them (0.729 against 0.740 over 25 s).
+> **WEATHER was the expensive error in the plan.** "Entirely unbuilt, five
+> systems" is wrong: `Scenery.js` has shipped a full `Weather` all along and all
+> seven grounds author a squall — what was missing is that nothing ever asked
+> whether you could see through it. One number now, and at each ground's own
+> peak a rifle's sight falls to **19–34 m**.
 >
-> **Three items of PLAN.md §6's chain are built:** squad delegation
-> (`c.squadPlanted`, and the quorum counts a man near *where he was told to be*),
-> capability objectives (`src/game/Objectives.js`, crewed by whoever stands on
-> them — so delegation is the interface and there is no new verb), and
-> downed-not-dead with an after-action record. All three are welded to the
-> keystone by the same clause: a man on a gun and a man on the ground are ALIVE
-> and are not NEAR, so both are bought with the currency movement is bought with.
+> **§4.6's rule facets.** Six cards that change a SENTENCE somewhere else rather
+> than a coefficient, and two of them move the keystone, which is what that item
+> was gated on: Skirmish Order (ground taken on a THIRD of the living, muster
+> halved), Triage (a downed man counts while somebody is standing over him),
+> Stand Fast, Field Engineering, Storm Sense and Salvage.
 >
-> **Still owed**, in PLAN.md §6's order: §1's checkable order, §4.7 (Dig In,
-> finite cover, weather, graves — and `src/world/CraterLog.js` is written and
-> nothing constructs one), §4.6 variance, §4.5's second human, §4.3 density and
-> the animated instanced rung. Plus §4.2's four-armed acceptance, which is the
-> only thing in what landed that is asserted structurally and not yet measured
-> as a difference in play.
+> **§4.5's kill answered.** The front is on the wire (`packSnapshot.fr`) and
+> DRAWN — `CommandDirector.front` is the whole state of a meeting and nothing in
+> the tree read it, so the mode's own sentence ("the front moves because a
+> general left his line at the wrong moment") was unlearnable.
+>
+> **§4.3's load-bearing clause, measured.** A twelve-shell barrage on a formed
+> line of ten kills 4, scatters 2 more alive, and takes the quorum down — and
+> 25 s later the four survivors have re-formed. So the levers buy time rather
+> than the battle.
+>
+> **Two things found rather than built, and both are worth more than a feature.**
+> `CraterLog` was written, checked to the last bit of the heightfield, and
+> **constructed by nothing** — `marchTo` had passed `world.craterLog` into
+> `marchFront` for as long as the front has been dressed, so every engagement
+> opened on ground that had never been fought over. And `Waves.js`'s own module
+> rng — the stream that composes every wave in the game — was the one
+> `tools/register.mjs` never pinned, so wave composition was the one input a
+> gate could not hold still.
+>
+> **Still owed**, in PLAN.md §6's order: §4.6's other four bullets (the holocron
+> offering three of the legal facets, the branching route, player-authored
+> difficulty, composition constraints and the modifier caps); §4.3's animated
+> instanced rung, which is still gated hard on M4; §4.2's four-armed acceptance,
+> where the instrument exists (`tools/_m6.mjs`) and the first reading is
+> inconclusive — every arm loses its whole roster inside four minutes, so the
+> ground never moves and the interaction is under the noise. It needs either a
+> longer horizon with the muster running or a finer metric than areas taken.
+>
+> **AND ONE RED THAT WAS RED BEFORE THIS SESSION AND IS NOT ANY MORE, WITH THE
+> REASON.** `balance.mjs`'s melee-opener check drove all four difficulty tiers
+> with one player — the model's "competent", σ=75 — and read **67 of 96** against
+> a three-quarter floor. It read exactly 67 at every commit for the last forty,
+> so it had been red for far longer than its own note's "92, 90, 90, 91 —
+> steady". At the skill each tier is actually FOR it reads 81 of 96. The floor,
+> the pooled mean and the per-tier `worst > 0` clause are untouched, and
+> **grandmaster still clears only 9 of 24** — printed rather than asserted,
+> because it is a real balance signal for whoever tunes the Colosseum next.
 
 | | |
 |---|---|
-| Suite | **1517 passed, 0 failed** — 111 suites, 18.7 min of suite time, from a clean worktree on a quiet box. Earlier the same day it was 1438/59; §6.4 says what each of those was, because how they were found is the part worth keeping. There are **150** suites in `tools/checks/` as of this row, which is the drift §2.3 is about — run `ls tools/checks/*.mjs \| grep -v /_ \| wc -l` rather than believing it |
+| Suite | **1517 passed, 0 failed** — 111 suites, 18.7 min of suite time, from a clean worktree on a quiet box. Earlier the same day it was 1438/59; §6.4 says what each of those was, because how they were found is the part worth keeping. There are **156** suites in `tools/checks/` as of this row, which is the drift §2.3 is about — run `ls tools/checks/*.mjs \| grep -v /_ \| wc -l` rather than believing it |
 | Fast tier | **363 passed, 0 failed — 17 suites in ~80 s**, `npm run verify:fast`. The mechanical contract only: the blade, the bolt, the cut, the guard, and the tables that move them. `tools/tiers.mjs` names what it leaves out (`footwork` 52.9 s, `powers` 18.2 s, `force` 19.3 s, every browser suite, every level/wave/net/UI suite). **It going green is not the gate going green.** It exists because §2.6d is real: a gate nobody can finish is a gate whose reds nobody triages, and `.github/workflows/verify.yml` now runs this one on every push — the first thing in this repo's CI that has ever run a check |
 | Smoke | **11/11 clean** on a quiet box. Its timeouts are wall-clock, so on a loaded one the last four fail and mean nothing — §2.6 |
 | Packed | `node tools/pack.mjs out.html` — 79 modules, 12.8 MB, boots from `file://`, and `tools/checks/packed.mjs` proves it every run |

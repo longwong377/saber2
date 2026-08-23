@@ -437,7 +437,7 @@ export class World {
      * the mode is about ends up being farmed instead of played, and there is
      * nothing here to farm. A set-piece pays more because a set-piece cost more.
      */
-    this.communion = new Communion();
+    this.communion = new Communion({ seed: this.runSeed | 0 });
 
     this.timeScale = 1;
     this.focus = new FocusSystem();
@@ -671,7 +671,11 @@ export class World {
     // `runCarry` reads `insight`/`bought`/`earned` off here and `applyCarry`
     // rebuilds the Communion from them, which is the same shape the deleted Run
     // used and the same three fields `Communion`'s own constructor takes.
-    this.communion = new Communion({});
+    /* SEEDED WITH THE RUN, because the Holocron's offer is a fact about this
+     * sitting — see `LivingForce.OFFER`. `runSeed` is written onto the World by
+     * main.js before the level loads, which is the same door the wave stream and
+     * the objective field read it through. */
+    this.communion = new Communion({ seed: this.runSeed | 0 });
     // LEVEL_ORDER[0] rather than a name: a named fallback is how a deleted
     // level stays load-bearing after it is gone. See Levels.js's alias block.
     //
@@ -1767,6 +1771,11 @@ export class World {
         insight: this.communion?.insight ?? 0,
         bought: [...(this.communion?.bought ?? [])],
         earned: this.communion?.earned ?? 0,
+        /* AND THE SEED, because the Holocron's offer is derived from it and
+         * from the purchase count — a carry that dropped it would deal the
+         * player a different three on the far side of every ground change,
+         * which is the one thing an offer must not do. See LivingForce.OFFER. */
+        seed: this.communion?.seed ?? 0,
       },
       score: this.score,
       wave: this.director?.wave ?? 0,
@@ -1824,7 +1833,7 @@ export class World {
    */
   applyCarry(carry) {
     if (!carry) return null;
-    this.communion = new Communion(carry.communion || {});
+    this.communion = new Communion({ seed: this.runSeed | 0, ...(carry.communion || {}) });
     this.score = carry.score || 0;
     for (const id of carry.boons || []) {
       const boon = boonById(id);
