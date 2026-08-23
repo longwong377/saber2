@@ -2278,6 +2278,23 @@ export function attachHoodDrape(scene, rig, opts = {}) {
   const S = opts.scale ?? 1;
   const cols = opts.cols ?? D.cols ?? 9;
   const arc = D.arc ?? 2.5, R = D.r ?? 0.15;
+  /* THE CLOTH IS CUT FROM THE HOOD'S OWN BOLT, and it is cloned here rather
+   * than by the caller. Two reasons, and the second is the one that bites:
+   *
+   * SIDE. The material handed in is the hood shell's — a Kit bucket's, shared
+   * with every other mesh in that bake, and single-sided. A zero-thickness
+   * sheet wearing it is invisible from behind, which for a fall down the nape
+   * is the only side anybody sees it from; and flipping `side` on the shared
+   * instance would turn the whole body double-sided instead.
+   *
+   * OWNERSHIP. `Cloak` keeps `_sharedMat` for a material it did not make and
+   * never disposes one, which is right for a material the caller still owns
+   * and a leak for a clone nobody else holds. Cloning HERE means the drape is
+   * the only owner and `dispose()` is complete — one material per hooded body
+   * otherwise, for the life of the process.
+   */
+  const mat = opts.material ? opts.material.clone() : null;
+  if (mat) mat.side = THREE.DoubleSide;
   const drape = new Cloak(scene, {
     cols,
     rows: opts.rows ?? D.rows ?? 6,
@@ -2286,7 +2303,7 @@ export function attachHoodDrape(scene, rig, opts = {}) {
     width: R * arc * S,
     length: (D.length ?? 0.32) * S,
     color: opts.color ?? 0x5a4530,
-    material: opts.material,
+    material: mat,
     gravity: opts.gravity ?? -13,
     /* HEAVIER AND STIFFER THAN A CAPE, both on purpose. A hood's fall is a
      * doubled hem of the same bolt the cape is cut from, it is a third the
@@ -2328,7 +2345,7 @@ export function attachHoodDrape(scene, rig, opts = {}) {
       out.set(Math.sin(a) * R * S, (D.y ?? -0.14) * S, Math.cos(a) * R * S).applyMatrix4(_m);
     },
   });
-  drape._sharedMat = !!opts.material;
+  drape._sharedMat = false;   // it is this drape's clone; see above
 
   /* WHAT IT LANDS ON, AND WHY THE LADDER TAPERS.
    *

@@ -3016,7 +3016,9 @@ export class Enemy {
       const HD = hoodMesh && hoodCut(hoodMesh.userData.hood)?.drape;
       if (HD) {
         this.hoodDrape = attachHoodDrape(this.world.scene, this.rig, {
-          // the HEAD's scale, not the body's — see Player._makeCloak
+          // the HEAD's scale, not the body's — see Player._makeCloak. The
+          // material is the hood shell's own and is cloned and turned
+          // double-sided by attachHoodDrape, which owns the copy.
           scale: built.headScale ?? this.bodyScale,
           material: hoodMesh.material,
           drape: HD,

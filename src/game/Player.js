@@ -3052,14 +3052,14 @@ export class Player {
      * garment. */
     const HD = hoodCut(this.hood)?.drape;
     if (HD) {
-      const hmat = (this.palette.over || this.palette.outer).clone();
-      hmat.side = THREE.DoubleSide;
       /* THE HEAD'S SCALE AND NOT THE BODY'S — `hoodOn` builds the shell at
        * `built.headScale`, and the two differ by 1.85 on the small-folk row.
        * A fall pinned at the body's scale starts half way up a shell built at
        * the head's. */
       this.hoodDrape = attachHoodDrape(this.world.scene, this.rig, {
-        scale: this.built?.headScale ?? S, material: hmat, drape: HD,
+        // the hood's own bolt; attachHoodDrape clones it and owns the copy
+        scale: this.built?.headScale ?? S,
+        material: this.palette.over || this.palette.outer, drape: HD,
       });
     }
   }
