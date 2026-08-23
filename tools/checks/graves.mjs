@@ -168,4 +168,105 @@ export async function run({ check, assert }) {
     return `${g.rank} ${g.name} is standing where he fell; a duel has no field at all`;
   });
 
+  check('graves: the line minds its own dead, and only so often', async () => {
+    /**
+     * PLAN.md §4.8's third bullet, second half: "a marker where each man of the
+     * company fell, on that ground, in later runs, **with the surviving squad's
+     * morale reacting when they walk past it**". The ground remembering and the
+     * men minding are one mechanism — that bullet's own words are "one system
+     * with §4.7's ground memory, not two" — so this is measured on the real
+     * director, with the real grave field under it.
+     *
+     * TWO ARMS RATHER THAN A BEFORE AND AFTER, because morale is a live
+     * quantity: `_morale` runs every frame and a line standing 280 m from its
+     * general is drifting down on its own the whole time. The control is the
+     * same fixture with no markers on the ground, stepped for the same seconds.
+     */
+    const { MORALE } = await import('../../src/game/Morale.js');
+    const bare = await armedLine();
+    const dug = await armedLine();
+    /* One of their own went down on the ground both lines are standing on. */
+    dug.world.graves = new GraveField();
+    dug.world.graves.mark(man('CT-9001', 200, 200));
+
+    const step = (a, secs) => { for (let i = 0; i < secs * 30; i++) a.d._troops(1 / 30, {}); };
+    step(bare, 25); step(dug, 25);
+    const meanOf = (a) => a.men.reduce((x, t) => x + t.morale, 0) / a.men.length;
+    const flat = meanOf(bare), among = meanOf(dug);
+    assert(among < flat - 1e-6,
+      `a line standing among its own graves reads ${among.toFixed(3)} and the same line on clean `
+      + `ground reads ${flat.toFixed(3)} — the marker is a decal if walking past it is free`);
+    const drop = flat - among;
+    assert(drop <= Math.abs(MORALE.PASSED_GRAVE) * 1.05,
+      `the ground took ${drop.toFixed(3)} off a line in five seconds against a table entry of `
+      + `${Math.abs(MORALE.PASSED_GRAVE)} — a squad ordered to hold a position among its own `
+      + 'markers would rout on the ground alone');
+
+    /* …AND ONLY SO OFTEN. Half a cooldown later, nothing more has been taken. */
+    const held = meanOf(dug);
+    step(bare, MORALE.GRAVE_COOLDOWN * 0.4); step(dug, MORALE.GRAVE_COOLDOWN * 0.4);
+    const still = flat - meanOf(bare) + meanOf(dug);
+    void still;
+    assert(meanOf(dug) - meanOf(bare) >= (held - flat) - 1e-6,
+      `the gap widened inside the ${MORALE.GRAVE_COOLDOWN}s cooldown — the ground is being felt `
+      + 'again before a man has had time to walk out of it');
+
+    /* AND A MAN IS NOT HAUNTED BY HIS OWN MARKER. */
+    const own = await armedLine();
+    own.world.graves = new GraveField();
+    own.world.graves.mark(man(own.men[0].name, 200, 200));
+    const control = await armedLine();
+    step(own, 5); step(control, 5);
+    assert(Math.abs(own.men[0].morale - control.men[0].morale) < 1e-9,
+      'a man was shaken by a grave carrying his own name — the name is the only identity a marker '
+      + 'keeps, so it is the only thing that can say the grave is his');
+    return `clean ground ${flat.toFixed(3)} · among their own ${among.toFixed(3)} `
+      + `(−${drop.toFixed(3)}, once every ${MORALE.GRAVE_COOLDOWN}s)`;
+  });
+
+}
+
+/* ── the fixture ──────────────────────────────────────────────────────── */
+
+/**
+ * A REAL `CommandDirector` OVER STUB BODIES, standing well away from anything.
+ *
+ * Same shape `objectives.mjs` and `dig-in.mjs` use. The men are put 280 m from
+ * their general so nothing but the ground can move their nerve — `_morale`
+ * pays `LEADER_NEAR` inside 14 m, and a line in its general's pocket sits at
+ * the ceiling where nothing is measurable (see MORALE's own note on
+ * saturation).
+ */
+async function armedLine() {
+  const Cmd = await import('../../src/game/Command.js');
+  const { LEVELS } = await import('../../src/game/Levels.js');
+  const world = {
+    scene: new THREE.Scene(), settings: {}, level: LEVELS.geonosis, run: null,
+    takenBoons: new Set(), statics: [], props: [], doors: [], report() {}, notify() {},
+    difficulty: null, hpScale: 1, dmgScale: 1, players: [], enemies: [], time: 0,
+    physics: { staticBoxes: [], bodies: [], add() {}, remove() {}, raycast: () => null,
+      addStaticBox() { return null; }, removeStaticBox() {} },
+    terrain: { height: () => 0, normalAt: (x, z, o) => o.set(0, 1, 0), raycast: () => null,
+      size: 400, half: 200, surfaceAt: () => 'sand', crater() {}, flush() {}, slopeAt: () => 0,
+      inBounds: () => true },
+  };
+  let n = 0;
+  world.spawnEnemy = (type, pos) => {
+    const e = { id: 'b' + (++n), team: 0, dead: false, downed: false, position: pos.clone(),
+      A: {}, type, world, speed: 4, hp: 100, maxHp: 100, velocity: new THREE.Vector3(),
+      facing: 0, wish: null, toTarget: null, _wallN: new THREE.Vector3(), _wallT: 0, _stuckT: 0,
+      _prevPos: new THREE.Vector3(), attackDamage: 0, mod: null, rig: null, group: null,
+      burstLeft: 0, burstTimer: 0, attackTimer: 0, aimCharge: 0,
+      _move() {}, _syncBody() {}, damage(v) { this.hp -= v; return this.hp <= 0; } };
+    world.enemies.push(e);
+    return e;
+  };
+  const d = new Cmd.CommandDirector(world, { pool: LEVELS.geonosis.pool });
+  const me = { position: V(0, 0, 0), aimDir: V(0, 0, 1), facing: 0, alive: true, team: 0 };
+  world.players.push(me); world.player = me; d.commander.player = me;
+  d.deploy();
+  d._troops(1 / 30, {});
+  const men = d.roster.living;
+  for (const t of men) { if (t.body) t.body.position.set(200, 0, 200); t.morale = 1; }
+  return { world, d, men };
 }
