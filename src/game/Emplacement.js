@@ -402,20 +402,68 @@ export class GunPit {
     g.position.copy(this.muzzle);
     g.quaternion.setFromUnitVectors(_v.set(0, 0, 1), this.facing);
 
-    const mantlet = new THREE.Mesh(new THREE.BoxGeometry(2.2, 1.1, 0.45), M.hull);
-    mantlet.position.set(0, 0, -0.2);
-    mantlet.castShadow = true;
-    g.add(mantlet);
+    const CRETE = M.duracreteDark || M.hull;
+    const STEEL = M.darkSteel || M.hull;
+    const add = (geo, mat, x, y, z, rx = 0, ry = 0, rz = 0, shadow = true) => {
+      const m = new THREE.Mesh(geo, mat);
+      m.position.set(x, y, z);
+      m.rotation.set(rx, ry, rz);
+      m.castShadow = shadow;
+      m.receiveShadow = true;
+      g.add(m);
+      return m;
+    };
 
-    const cheek = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.28, 0.7), M.duracreteDark || M.hull);
-    cheek.position.set(0, 0.68, -0.15);
-    g.add(cheek);
+    /* ── THE FACE ──────────────────────────────────────────────────────
+     * A casemate is a sloped slab with a slot cut in it, and the slope is the
+     * whole of why it looks like armour rather than like a wall: a face raked
+     * back throws a shot up and over instead of taking it square. Two plates
+     * meeting at the embrasure do that with boxes, which is what keeps this in
+     * the revetment's own material bin. */
+    add(new THREE.BoxGeometry(3.0, 1.15, 0.5), CRETE, 0, 0.86, -0.30, -0.34);
+    add(new THREE.BoxGeometry(3.0, 0.9, 0.5), CRETE, 0, -0.72, -0.26, 0.28);
 
-    this.barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.16, 2.6, 8), M.darkSteel || M.hull);
-    this.barrel.rotation.x = Math.PI / 2;
-    this.barrel.position.set(0, 0, 0.9);
-    this.barrel.castShadow = true;
-    g.add(this.barrel);
+    /* ── THE EMBRASURE ─────────────────────────────────────────────────
+     * Lintel, sill and two jambs. The slot between them is the thing the gun
+     * fires through, and framing it is what turns a hole into a firing port —
+     * without these four the face reads as a slab with a gap in it, which is
+     * what "just some concrete squares" was describing. */
+    add(new THREE.BoxGeometry(3.1, 0.30, 0.78), CRETE, 0, 0.36, -0.05);
+    add(new THREE.BoxGeometry(3.1, 0.26, 0.78), CRETE, 0, -0.34, -0.05);
+    for (const sx of [-1, 1]) {
+      add(new THREE.BoxGeometry(0.62, 0.72, 0.80), CRETE, sx * 1.24, 0.02, -0.04);
+      // …and the shoulder each jamb carries back into the hill.
+      add(new THREE.BoxGeometry(0.5, 1.9, 1.5), CRETE, sx * 1.5, -0.1, -1.0, 0, 0, sx * 0.06);
+    }
+
+    /* THE BOLT HEADS. Six along the lintel — the one detail that gives a flat
+     * cast face a scale to be read against, and six cylinders of eight segments
+     * is nothing at all. */
+    const bolt = new THREE.CylinderGeometry(0.055, 0.055, 0.08, 8);
+    for (let i = 0; i < 6; i++) {
+      add(bolt, STEEL, -1.05 + i * 0.42, 0.36, 0.34, Math.PI / 2, 0, 0, false);
+    }
+
+    /* ── THE GUN ───────────────────────────────────────────────────────
+     * A mantlet that moves with the barrel, a jacketed tube, trunnions it
+     * pivots on and a muzzle brake. The old gun was one plain cylinder, which
+     * is a pipe sticking out of a wall; what makes a barrel read as a barrel is
+     * that its diameter CHANGES along its length and that it is obviously held
+     * by something.
+     *
+     * `this.barrel` still names the tube, because `_fire` reads it for the
+     * muzzle flash and the recoil, and `this.mantlet` is new so the recoil can
+     * take the shield with it rather than sliding the tube out of its own
+     * mounting. */
+    this.mantlet = add(new THREE.SphereGeometry(0.62, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.62),
+      STEEL, 0, 0.02, 0.10, -Math.PI / 2);
+    this.barrel = add(new THREE.CylinderGeometry(0.115, 0.15, 2.7, 10), STEEL, 0, 0.02, 1.05, Math.PI / 2);
+    // the jacket over the chamber end, and the brake at the business end
+    add(new THREE.CylinderGeometry(0.19, 0.19, 0.62, 10), STEEL, 0, 0.02, 0.42, Math.PI / 2);
+    add(new THREE.CylinderGeometry(0.17, 0.14, 0.34, 10), STEEL, 0, 0.02, 2.24, Math.PI / 2);
+    for (const sx of [-1, 1]) {
+      add(new THREE.CylinderGeometry(0.07, 0.07, 0.30, 8), STEEL, sx * 0.5, 0.02, 0.30, 0, 0, Math.PI / 2);
+    }
   }
 
   /* Nothing on this object is a target. Every one of these is the answer the

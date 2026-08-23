@@ -779,6 +779,13 @@ export class ExtractionDirector {
     const k = clamp(this.t / ORBIT, 0, 1);
     // Vacuum: no air, no sky, and far enough to hold the capital ship.
     this._setSpace(0);
+    /* AND THE SHIP IS SEALED. `_hatch` was driven by `_opening`, `_unload` and
+     * `_sealing` — the three phases that happen on the ground — and by nothing
+     * on the way down, so the ramp and both side doors sat at whatever state
+     * the model was built in for the whole descent. "Why would the side doors
+     * be open in space?" They would not. A transport crosses vacuum shut. */
+    this._hatch(0);
+
     /* A slow drift and a slow roll — a ship under way, not a ship parked. The
      * numbers are small because the frame of reference is the bay the player is
      * standing in, and a bay that pitches is a bay you fall out of. */
@@ -825,6 +832,13 @@ export class ExtractionDirector {
      * shield lights on — so the sky, the haze and the view distance all come
      * back together as one event rather than as three switches. */
     this._setSpace(k);
+    /* AND THE SHIP IS SEALED. `_hatch` was driven by `_opening`, `_unload` and
+     * `_sealing` — the three phases that happen on the ground — and by nothing
+     * on the way down, so the ramp and both side doors sat at whatever state
+     * the model was built in for the whole descent. "Why would the side doors
+     * be open in space?" They would not. A transport crosses vacuum shut. */
+    this._hatch(0);
+
     this._thrust = 0.35 + k * 0.55;
     const away = _v1.set(Math.cos(this.padYaw), 0, Math.sin(this.padYaw));
     /* Down and forward: the altitude comes off fast and the ship closes on the
@@ -1780,6 +1794,9 @@ export class ExtractionDirector {
   _descent(dt, ctx) {
     const g = this.group;
     this._thrust = 0.55;
+    /* Still shut. `_opening` is the phase that opens her, on the pad, and the
+     * fall is not it — see the note in `_orbit`. */
+    this._hatch(0);
     /* `_descentDur` is the insertion's, and it is longer: that fall starts at
      * a thousand metres where an extraction's starts at ninety-six. Unset for
      * every other flight, which is what `?? DESCENT` says. */
