@@ -27,6 +27,7 @@ import { readFile } from 'node:fs/promises';
 import { CameraRig } from '../../src/game/Player.js';
 import { World } from '../../src/game/World.js';
 import { FocusSystem } from '../../src/game/Focus.js';
+import { ArmyIndex } from '../../src/game/ArmyIndex.js';
 import { BladeContactSolver, TOUGHNESS } from '../../src/game/Combat.js';
 import { Saber } from '../../src/game/Saber.js';
 import { Player } from '../../src/game/Player.js';
@@ -171,6 +172,12 @@ function clockWorld(settings) {
      * the world it is borrowing `update` from. `World.update` calls it
      * unguarded, on purpose: a real World always has one. */
     tokens: new TokenPool(),
+    /* THE BODY BROAD PHASE, and a real one for the same reason `tokens` is real
+     * one line up: `World.update` syncs it unguarded because a real World always
+     * has one, and a stub with an empty `sync` would mean this file quietly
+     * stopped stepping a subsystem the world it borrows `update` from steps.
+     * Over an empty enemy list it is one `Map.clear` a frame. */
+    armyIndex: new ArmyIndex(),
     engine: {
       camera: new THREE.PerspectiveCamera(), sun: { color: 0 }, hemi: { color: 0 },
       fitShadows() {}, setRadial() {}, setFocus() {}, flash() {},
