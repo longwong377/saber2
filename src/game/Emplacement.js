@@ -733,6 +733,15 @@ export class GunPit {
     const was = this.warded;
     this._down = Math.max(this._down, seconds);
     this.warded = false;
+    /* AND THE DOOR IS TOLD HERE TOO, for the constructor's reason at the other
+     * end of the same flag: `_wards` syncs it from the world's tick, so between
+     * the pulse landing and the next frame the plate still read as warded. A
+     * player who called the strike and ran does not notice a sixteenth of a
+     * second; anything that asks the question in the same breath as the call
+     * does, and the gate check is one of those. The flag is written wherever
+     * the state changes, and `_wards` is the thing that keeps it true rather
+     * than the thing that makes it so. */
+    if (this.door) this.door.warded = false;
     if (was) {
       this.world?.notify?.('THE SHIELD IS DOWN', `${Math.round(seconds)} seconds — get a blade on that door`);
       audio.explosion?.(this.muzzle, 1.4);
