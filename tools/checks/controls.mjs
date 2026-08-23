@@ -23,7 +23,7 @@
  */
 
 import * as THREE from 'three';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { CameraRig } from '../../src/game/Player.js';
 import { World } from '../../src/game/World.js';
 import { FocusSystem } from '../../src/game/Focus.js';
@@ -1631,15 +1631,32 @@ export async function run({ check, assert }) {
       return p;
     };
 
-    // Sources, minus the BOONS table itself: a boon that "reads" its own flag
-    // only where it writes it is exactly the bug being fenced off here.
+    /**
+     * EVERY SOURCE FILE, minus the BOONS table itself: a boon that "reads" its
+     * own flag only where it writes it is exactly the bug being fenced off
+     * here, and that exclusion is the whole point of the word "elsewhere".
+     *
+     * The five files this used to name by hand were the five that happened to
+     * read a boon when it was written, and a hand-written list of readers goes
+     * stale the first time a boon is answered somewhere new — which it did:
+     * the six the line modes shipped are read in `Command.js` and `Enemy.js`,
+     * and this check called all six a lie. Walking `src/` cannot go stale, and
+     * it is strictly stronger: every file the old list named is still in it.
+     */
     const waves = await readFile(src('game/Waves.js'), 'utf8');
+    const walk = async (dir) => {
+      const out = [];
+      for (const ent of await readdir(dir, { withFileTypes: true })) {
+        const at = new URL(ent.name + (ent.isDirectory() ? '/' : ''), dir);
+        if (ent.isDirectory()) out.push(...await walk(at));
+        else if (ent.name.endsWith('.js') && ent.name !== 'Waves.js') out.push(at);
+      }
+      return out;
+    };
+    const files = await walk(src(''));
     const elsewhere = [
       waves.slice(0, waves.indexOf('export const BOONS = [')),
-      await readFile(src('game/Player.js'), 'utf8'),
-      await readFile(src('game/World.js'), 'utf8'),
-      await readFile(src('game/Duel.js'), 'utf8'),
-      await readFile(src('ui/HUD.js'), 'utf8'),
+      ...await Promise.all(files.map((f) => readFile(f, 'utf8'))),
     ].join('\n');
 
     /**
