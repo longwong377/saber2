@@ -410,7 +410,8 @@ export async function run({ check, assert }) {
     assert(mean <= 0.55,
       `mean overlap ${mean.toFixed(3)} across flank, plan and head-on — distinct from one angle is not distinct`);
     assert(Math.min(...Object.values(v)) <= 0.45,
-      'no single view separates the two hulls by more than half — there is no angle from which they read apart');
+      'no single view separates the two hulls by more than half — there is no angle from which they read '
+      + `apart (${Object.entries(v).map(([k, x]) => `${k} ${x.toFixed(3)}`).join(', ')})`);
     return Object.entries(v).map(([k, x]) => `${k} ${x.toFixed(3)}`).join(' · ') + ` · mean ${mean.toFixed(3)}`;
   });
 

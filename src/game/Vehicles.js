@@ -374,6 +374,71 @@ function bladePlateGeo(len, w0, w1, thick) {
   ]);
 }
 
+/**
+ * LOFT A SLAB — rescale a rounded plate along one of its own axes so it is a
+ * different shape at one end than at the other.
+ *
+ * THIS IS THE ANSWER TO "IT LOOKS LIKE PLANKS OF WOOD", second half. The first
+ * half was the texture tiling; this is the geometry. `plateGeo` is the only
+ * shape most of this file is built from and it makes exactly one thing: a box
+ * with rounded corners, constant section end to end. Thirty-nine boxes with
+ * constant section are still boxes — a wing with the same chord and the same
+ * thickness at the tip as at the root IS a plank, in the strict sense, and no
+ * amount of panel line on it will say otherwise. What a wing has instead is
+ * taper, and taper is a lofted section, which is one loop over the vertices.
+ *
+ * `axis` is the axis to run along, `dir` says which end is t = 1 (so a paired
+ * part can taper outboard on both sides without mirroring geometry), and
+ * `f(t)` returns the scale of the OTHER two axes at that station plus any
+ * offset — `{ a, b, da, db }`, where a/b are the two axes in x,y,z order
+ * skipping `axis`.
+ *
+ * THE SLAB HAS TO BE SEGMENTED ALONG `axis` or this does nothing visible. A
+ * `plateGeo(w, h, d, r, 1)` has vertices only at its two ends, so every one of
+ * them lands at t = 0 or t = 1 and the whole plate is scaled uniformly by one
+ * of the two — measured on the first wing, which came out simply smaller. Pass
+ * seg 3 or more.
+ */
+function loftGeo(g, len, axis, dir, f) {
+  const p = g.attributes.position;
+  const at = axis === 'x' ? 0 : axis === 'y' ? 1 : 2;
+  const v = [0, 0, 0];
+  for (let i = 0; i < p.count; i++) {
+    v[0] = p.getX(i); v[1] = p.getY(i); v[2] = p.getZ(i);
+    const t = clamp((dir * v[at]) / len + 0.5, 0, 1);
+    const s = f(t);
+    const [ia, ib] = at === 0 ? [1, 2] : at === 1 ? [0, 2] : [0, 1];
+    v[ia] = v[ia] * (s.a ?? 1) + (s.da ?? 0);
+    v[ib] = v[ib] * (s.b ?? 1) + (s.db ?? 0);
+    p.setXYZ(i, v[0], v[1], v[2]);
+  }
+  g.computeVertexNormals();
+  return g;
+}
+
+/**
+ * A WING, and not a board bolted to a box.
+ *
+ * `span` across, `chord` fore-and-aft at the root and `thick` at the root,
+ * tapering to `tip` of the chord and `tipThick` of the thickness by the tip,
+ * with the TRAILING edge held straight — which is what makes the leading edge
+ * sweep, and a swept leading edge is most of what the eye reads as a wing.
+ * `dir` is +1 or -1 for which way is outboard, so `Kit.pair` can author both
+ * sides without mirroring a winding.
+ *
+ * Returns the plate; `wingEdge` below returns the line its leading edge now
+ * runs along, because a leading-edge strip laid straight across a tapered wing
+ * hangs off the front of it at the tip.
+ */
+function wingGeo(span, chord, thick, dir, { tip = 0.46, tipThick = 0.42, seg = 5 } = {}) {
+  const k = 1 - tip;
+  return loftGeo(plateGeo(span, thick, chord, thick * 0.42, seg), span, 'x', dir,
+    (t) => ({ a: 1 + (tipThick - 1) * t, b: 1 - k * t, db: (chord / 2) * k * t }));
+}
+
+/** How far aft the leading edge of such a wing has moved by the tip. */
+function wingSweep(chord, tip = 0.46) { return chord * (1 - tip); }
+
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  Skeletons                                                             */
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -1948,9 +2013,21 @@ export function buildRepublicTransport(opts = {}) {
 
   /* ── hull: a boxy fuselage around the bay, with a raked nose ────────── */
   const kf = new Kit();
-  // floor and roof of the bay
-  kf.add(M.deck, plateGeo(2.72 * S, 0.22 * S, 5.10 * S, 0.06 * S, 1), [0, (BAY.floor - 0.11) * S, 0.85 * S]);
-  kf.add(M.panel, plateGeo(2.86 * S, 0.24 * S, 5.10 * S, 0.08 * S, 1), [0, (BAY.roof + 0.12) * S, 0.85 * S]);
+  /* THE PLAN-FORM, which is the other half of "the entire model is two shapes".
+   * Both of these were constant-section slabs 5.1 m long, so from above the
+   * ship was a rectangle and from the side her top and bottom lines were dead
+   * straight rules — the two things that say BOX louder than any texture. They
+   * are lofted now: 14% narrower at each end than amidships for the roof, and
+   * a belly that rises into a boat tail aft and a chin forward. The bay itself
+   * does not move, because every one of these tapers happens outside the
+   * 4.9 m the seats and the door aperture live in. */
+  const waist = (k, pow = 1.6, droop = 0) =>
+    (t) => ({ a: 1 - k * Math.abs(2 * t - 1) ** pow,
+              db: -droop * clamp((0.26 - t) / 0.26, 0, 1) ** 1.4 * S });
+  kf.add(M.deck, loftGeo(plateGeo(2.72 * S, 0.22 * S, 5.10 * S, 0.06 * S, 5), 5.10 * S, 'z', 1, waist(0.10)),
+    [0, (BAY.floor - 0.11) * S, 0.85 * S]);
+  kf.add(M.panel, loftGeo(plateGeo(2.86 * S, 0.24 * S, 5.10 * S, 0.08 * S, 5), 5.10 * S, 'z', 1, waist(0.14, 1.6, 0.20)),
+    [0, (BAY.roof + 0.12) * S, 0.85 * S]);
   // the two side walls, ABOVE and BELOW the door aperture only — the aperture
   // itself is empty, which is the entire point of this ship
   kf.pair((sx) => {
@@ -1965,11 +2042,30 @@ export function buildRepublicTransport(opts = {}) {
   });
   // aft bulkhead above the ramp opening, so the bay is not a tube
   kf.add(M.shell, plateGeo(2.60 * S, 0.70 * S, 0.20 * S, 0.05 * S, 1), [0, 0.80 * S, 3.36 * S]);
-  // the nose: a raked wedge forward of the bay, with the cockpit floor in it
-  kf.add(M.panel, plateGeo(2.46 * S, 1.86 * S, 1.90 * S, 0.30 * S, 2), [0, 0.02 * S, -2.60 * S]);
-  kf.add(M.shell, plateGeo(2.00 * S, 1.34 * S, 1.60 * S, 0.34 * S, 2), [0, -0.18 * S, -4.02 * S], [0.14, 0, 0]);
-  kf.add(M.shell, plateGeo(1.40 * S, 0.78 * S, 1.30 * S, 0.30 * S, 2), [0, -0.42 * S, -5.02 * S], [0.24, 0, 0]);
-  kf.add(M.belly, plateGeo(2.56 * S, 0.40 * S, 7.60 * S, 0.22 * S, 1), [0, -1.22 * S, -0.20 * S]);
+  /* THE NOSE, and it is a CHISEL now rather than three rounded bricks in a
+   * row. Each of the three lofts down toward the front in both width and
+   * height, so the ship's top line falls and her plan narrows into a point
+   * instead of ending in a lump the size of the bay. The stack was already
+   * stepped down and rotated and it still read as a brick, because a step is
+   * not a rake: every station of it had the same section as the last. */
+  const rake = (w, h, dy = 0) => (t) => ({ a: 1 - (1 - w) * (1 - t), b: 1 - (1 - h) * (1 - t),
+                                           db: -dy * (1 - t) * S });
+  kf.add(M.panel, loftGeo(plateGeo(2.46 * S, 1.86 * S, 1.90 * S, 0.30 * S, 4), 1.90 * S, 'z', 1,
+    rake(0.88, 0.80, 0.10)), [0, 0.02 * S, -2.60 * S]);
+  kf.add(M.shell, loftGeo(plateGeo(2.00 * S, 1.34 * S, 1.60 * S, 0.34 * S, 4), 1.60 * S, 'z', 1,
+    rake(0.80, 0.70, 0.08)), [0, -0.18 * S, -4.02 * S], [0.14, 0, 0]);
+  kf.add(M.shell, loftGeo(plateGeo(1.40 * S, 0.78 * S, 1.30 * S, 0.30 * S, 4), 1.30 * S, 'z', 1,
+    rake(0.52, 0.44)), [0, -0.42 * S, -5.02 * S], [0.24, 0, 0]);
+  /* THE BOAT TAIL. The underside was one 7.6 m slab, so the ship's bottom line
+   * ran level from the nose to the ramp and she sat in the air like a crate on
+   * a shelf. Lofted, she has a chin forward and lifts 34 cm over the last
+   * third — the line that says which end goes first, from any angle, with no
+   * detail on it at all. */
+  kf.add(M.belly, loftGeo(plateGeo(2.56 * S, 0.40 * S, 7.60 * S, 0.22 * S, 7), 7.60 * S, 'z', 1,
+    (t) => ({ a: 1 - 0.26 * clamp((t - 0.62) / 0.38, 0, 1) ** 1.3 - 0.18 * clamp((0.24 - t) / 0.24, 0, 1) ** 1.3,
+              db: (0.34 * clamp((t - 0.62) / 0.38, 0, 1) ** 1.5
+                 + 0.16 * clamp((0.24 - t) / 0.24, 0, 1) ** 1.5) * S })),
+    [0, -1.22 * S, -0.20 * S]);
   /* THE TAIL. A dorsal fin and two canted stabilisers off the aft roof — the
    * one thing that stops a boxy hull with a hole in its side reading as a van,
    * and the shape the eye uses to tell which way the ship is pointing at four
@@ -2161,6 +2257,19 @@ export function buildRepublicTransport(opts = {}) {
   }
   g.add(turret);
   kg.pair((sx) => {
+    /* THE CHEEK BALL TURRETS, one each side of the nose — the reference's most
+     * recognisable gun and the last thing this hull was missing. They are also
+     * 1.1 m2 of frontal area at |x| 1.4-2.2, which is outside anything the
+     * Confederacy hull has at that height: measured, they are what took the
+     * head-on overlap of the two ships from 0.451 to under the 0.45 bar the
+     * suite holds them to. A gun that earns its place twice. */
+    kg.add(M.dark, new THREE.SphereGeometry(0.40 * S, 10, 8), [sx * 1.80 * S, 0.28 * S, -2.30 * S]);
+    kg.add(M.greeble, plateGeo(0.34 * S, 0.30 * S, 0.44 * S, 0.05 * S, 1), [sx * 1.86 * S, 0.22 * S, -2.62 * S]);
+    kg.add(M.panel, plateGeo(0.20 * S, 0.42 * S, 0.62 * S, 0.05 * S, 1), [sx * 1.50 * S, 0.36 * S, -2.20 * S]);
+    for (const oy of [0.10, -0.10]) {
+      kg.add(M.dark, new THREE.CylinderGeometry(0.05 * S, 0.058 * S, 1.00 * S, 6),
+        [sx * 1.80 * S, (0.26 + oy) * S, -3.10 * S], [1.5708, 0, 0]);
+    }
     // the door pintle: a post, a cradle and a short heavy barrel
     kg.add(M.dark, new THREE.CylinderGeometry(0.05 * S, 0.05 * S, 0.62 * S, 6), [sx * 1.08 * S, -0.62 * S, 0.30 * S]);
     kg.add(M.greeble, plateGeo(0.22 * S, 0.18 * S, 0.40 * S, 0.03 * S, 1), [sx * 1.08 * S, -0.28 * S, 0.30 * S]);
@@ -2225,43 +2334,81 @@ export function buildRepublicTransport(opts = {}) {
   /* ── wings, gear and the four engines ──────────────────────────────── */
   const kw = new Kit();
   kw.pair((sx) => {
-    /* SWEPT BACK, and the sign of that rotation is the whole of it: +y on the
-      * +x side carries the outboard edge FORWARD, which put the wing over the
-      * nose and hid the cockpit. Negative sweeps it aft, off the bay's door
-      * aperture, which is the one part of this ship that must never be
-      * occluded. */
-    kw.add(M.shell, plateGeo(3.30 * S, 0.24 * S, 1.70 * S, 0.10 * S, 1),
-      [sx * 2.66 * S, 0.26 * S, 1.50 * S], [0, sx * -0.30, sx * -0.12]);
-    kw.add(M.mark, plateGeo(2.70 * S, 0.05 * S, 0.34 * S, 0.02 * S, 1),
-      [sx * 2.62 * S, 0.39 * S, 1.20 * S], [0, sx * -0.30, sx * -0.12]);
-    /* THE WING WAS A PLANK, literally — one 3.3 x 0.24 x 1.7 plate. A leading
-     * edge in a darker tone, a rib along it, a pylon where it meets the hull
-     * and a light at the tip: four pieces that cost nothing and stop it being
-     * a board bolted to a box. */
-    kw.add(M.dark, plateGeo(3.30 * S, 0.10 * S, 0.22 * S, 0.04 * S, 1),
-      [sx * 2.66 * S, 0.26 * S, 0.72 * S], [0, sx * -0.30, sx * -0.12]);
-    kw.add(M.panel, plateGeo(0.26 * S, 0.16 * S, 1.30 * S, 0.04 * S, 1),
-      [sx * 1.60 * S, 0.24 * S, 1.42 * S], [0, sx * -0.30, sx * -0.12]);
-    kw.add(M.dark, plateGeo(0.13 * S, 0.13 * S, 1.50 * S, 0.03 * S, 1),
-      [sx * 3.36 * S, 0.30 * S, 1.46 * S], [0, sx * -0.30, sx * -0.12]);
-    kw.add(M.mark, plateGeo(0.16 * S, 0.08 * S, 0.16 * S, 0.02 * S, 1),
-      [sx * 4.10 * S, 0.34 * S, 1.66 * S], [0, sx * -0.30, sx * -0.12]);
-    // the nacelle: a housing with an intake at the front and two nozzles aft
-    kw.add(M.shell, new THREE.CylinderGeometry(0.36 * S, 0.42 * S, 2.10 * S, 10),
-      [sx * 3.00 * S, 0.14 * S, 1.70 * S], [1.5708, 0, 0]);
-    kw.add(M.dark, new THREE.CylinderGeometry(0.33 * S, 0.33 * S, 0.26 * S, 10),
-      [sx * 3.00 * S, 0.14 * S, 0.62 * S], [1.5708, 0, 0]);
+    /* THE WING WAS A PLANK — literally one 3.3 x 0.24 x 1.7 plate, constant
+     * chord and constant thickness from root to tip, carried out flat. Panel
+     * lines went on it first and did nothing, because the problem was never
+     * the surface: a board is a board in silhouette. Three things fix it, and
+     * all three are the reference's own:
+     *
+     *   TAPER — 46% of the root chord and 42% of the root thickness by the
+     *   tip, with the TRAILING edge held straight so the leading edge sweeps.
+     *   `wingGeo` is the whole of that.
+     *
+     *   ANHEDRAL — 0.50 rad, so the wing falls away from the shoulder and the
+     *   tip sits 0.98 m below its root. Flat, it was a horizontal board at the
+     *   same height as the Confederacy hull's elytra root, and the two ships
+     *   measured 0.484 of one union head-on against a 0.45 bar.
+     *
+     *   ENGINES SLUNG UNDER IT on a pylon, at y -0.50, instead of buried in it
+     *   at wing height. Same measurement: that one move is worth 0.016 of the
+     *   head-on overlap, because it is 1.5 m2 of nacelle in a band of the
+     *   frontal view the other hull has nothing in.
+     *
+     * The yaw stays negative, and the note it was written with stands: +y on
+     * the +x side carries the outboard edge FORWARD, over the nose and across
+     * the cockpit. Negative sweeps it aft.
+     */
+    const WCH = 1.70, WSP = 4.10, WSW = wingSweep(WCH);
+    const WROOT = [sx * 3.02 * S, 0.62 * S, 1.50 * S];
+    const wr = [0, sx * -0.30, sx * -0.50];
+    /* EVERYTHING ON THE WING IS PLACED IN THE WING'S OWN FRAME. `Kit.add`
+     * rotates a part about its own origin and then translates, so a fitting
+     * given a world position does NOT follow the wing when the wing is yawed
+     * and rolled — it stays where it was written and the wing swings out from
+     * under it. Measured on the first cut of this: the tip light sat 1.0 m
+     * above the tip and 0.3 m outboard of it, a red speck alone in the sky,
+     * and the outboard fence was in the air beside the wing. `onWing` takes
+     * (span, up, chord) in wing coordinates and returns the world point. */
+    const _wq = new THREE.Quaternion().setFromEuler(new THREE.Euler(wr[0], wr[1], wr[2], 'XYZ'));
+    const onWing = (u, v, w) => {
+      const q = new THREE.Vector3(sx * u * S, v * S, w * S).applyQuaternion(_wq);
+      return [WROOT[0] + q.x, WROOT[1] + q.y, WROOT[2] + q.z];
+    };
+    kw.add(M.shell, wingGeo(WSP * S, WCH * S, 0.34 * S, sx), WROOT, wr);
+    kw.add(M.mark, loftGeo(plateGeo(3.40 * S, 0.05 * S, 0.34 * S, 0.02 * S, 5), 3.40 * S, 'x', sx,
+      (t) => ({ b: 1 - 0.3 * t, db: 0.72 * WSW * S * t })), onWing(0, 0.16, -0.30), wr);
+    /* The leading-edge strip follows the edge it is on. Laid straight across a
+     * tapered wing it hangs a metre off the front of the tip in mid-air —
+     * which is what the first cut of this did, and it looked like a snapped
+     * aerial. */
+    kw.add(M.dark, loftGeo(plateGeo(WSP * S, 0.10 * S, 0.22 * S, 0.04 * S, 5), WSP * S, 'x', sx,
+      (t) => ({ a: 1 - 0.5 * t, b: 1 - 0.35 * t, db: WSW * S * t })), onWing(0, 0, -0.78), wr);
+    // the root pylon, the outboard fence and the tip light
+    kw.add(M.panel, plateGeo(0.30 * S, 0.20 * S, 1.30 * S, 0.04 * S, 1), onWing(-1.46, -0.02, -0.08), wr);
+    kw.add(M.dark, plateGeo(0.13 * S, 0.16 * S, 1.05 * S, 0.03 * S, 1),
+      onWing(1.20, 0.06, WSW * 0.40), wr);
+    kw.add(M.mark, plateGeo(0.16 * S, 0.09 * S, 0.16 * S, 0.02 * S, 1),
+      onWing(1.98, 0.01, WSW * 0.56), wr);
+    /* THE NACELLE, hung level under the wing rather than rolled with it — an
+     * engine that pointed 0.50 rad off the line of flight would be a thrust
+     * vector 29 degrees out, and the exhaust cones Extraction parents to the
+     * anchors below would splay with it. */
+    kw.add(M.shell, new THREE.CylinderGeometry(0.44 * S, 0.50 * S, 2.30 * S, 10),
+      [sx * 3.62 * S, -0.66 * S, 1.70 * S], [1.5708, 0, 0]);
+    kw.add(M.dark, new THREE.CylinderGeometry(0.40 * S, 0.40 * S, 0.28 * S, 10),
+      [sx * 3.62 * S, -0.66 * S, 0.52 * S], [1.5708, 0, 0]);
     // the intake lip, three cooling bands and the pylon that carries it
-    kw.add(M.panel, new THREE.TorusGeometry(0.37 * S, 0.045 * S, 6, 12),
-      [sx * 3.00 * S, 0.14 * S, 0.58 * S], [0, 0, 0]);
+    kw.add(M.panel, new THREE.TorusGeometry(0.45 * S, 0.050 * S, 6, 12),
+      [sx * 3.62 * S, -0.66 * S, 0.48 * S], [0, 0, 0]);
     for (let i = 0; i < 3; i++) {
-      kw.add(M.dark, new THREE.TorusGeometry(0.395 * S, 0.028 * S, 5, 12),
-        [sx * 3.00 * S, 0.14 * S, (1.55 + i * 0.34) * S], [0, 0, 0]);
+      kw.add(M.dark, new THREE.TorusGeometry(0.475 * S, 0.030 * S, 5, 12),
+        [sx * 3.62 * S, -0.66 * S, (1.55 + i * 0.34) * S], [0, 0, 0]);
     }
-    kw.add(M.panel, plateGeo(0.14 * S, 0.42 * S, 0.80 * S, 0.04 * S, 1), [sx * 3.00 * S, 0.52 * S, 1.70 * S]);
-    for (const oy of [0.19, -0.19]) {
-      kw.add(M.dark, new THREE.CylinderGeometry(0.20 * S, 0.24 * S, 0.40 * S, 8),
-        [sx * 3.00 * S, (0.14 + oy) * S, 2.74 * S], [1.5708, 0, 0]);
+    kw.add(M.panel, loftGeo(plateGeo(0.20 * S, 1.30 * S, 0.94 * S, 0.05 * S, 4), 1.30 * S, 'y', 1,
+      (t) => ({ b: 1 - 0.34 * (1 - t) })), [sx * 3.52 * S, -0.06 * S, 1.66 * S]);
+    for (const oy of [0.22, -0.22]) {
+      kw.add(M.dark, new THREE.CylinderGeometry(0.23 * S, 0.27 * S, 0.42 * S, 8),
+        [sx * 3.62 * S, (-0.66 + oy) * S, 2.86 * S], [1.5708, 0, 0]);
     }
     // landing gear, down: a leg and a pad
     for (const gz of [-2.6, 2.4]) {
@@ -2274,10 +2421,10 @@ export function buildRepublicTransport(opts = {}) {
   /* ── the engine anchors the director hangs its flares on ───────────── */
   const engines = [];
   for (const sx of [1, -1]) {
-    for (const oy of [0.19, -0.19]) {
+    for (const oy of [0.22, -0.22]) {
       const e = new THREE.Object3D();
       e.name = `engine${sx > 0 ? 'L' : 'R'}${oy > 0 ? 'U' : 'D'}`;
-      e.position.set(sx * 3.00 * S, (0.14 + oy) * S, 3.02 * S);
+      e.position.set(sx * 3.62 * S, (-0.66 + oy) * S, 3.14 * S);
       g.add(e);
       engines.push(e);
     }
@@ -2566,17 +2713,31 @@ export function buildDroidTransport(opts = {}) {
    * flat roof. Five is the fewest that reads as a curve at the range the ship
    * is seen from outside; the crown plate carries the fin. */
   const kf = new Kit();
+  /* AND EVERY PLATE OF IT TAPERS. Five curved plates in a constant section for
+   * six metres are still an extrusion, and an extrusion in silhouette is the
+   * box this hull was written to not be. Each shell plate narrows toward both
+   * ends and TUCKS IN over the last third — `db` is along the plate's own
+   * normal, so a negative one pulls it toward the centreline whatever angle of
+   * the arch it sits at, and the carapace closes over the tail instead of
+   * stopping square. */
   const ARCH = [-1.10, -0.55, 0, 0.55, 1.10];
+  const aft = (t, at = 0.64) => clamp((t - at) / (1 - at), 0, 1);
   for (const a of ARCH) {
-    kf.add(M.shell, plateGeo(0.88 * S, 0.19 * S, 6.10 * S, 0.07 * S, 1),
+    kf.add(M.shell, loftGeo(plateGeo(0.88 * S, 0.19 * S, 6.10 * S, 0.07 * S, 6), 6.10 * S, 'z', 1,
+      (t) => ({ a: 1 - 0.16 * Math.abs(2 * t - 1) ** 1.6, db: -0.30 * aft(t) ** 1.4 * S })),
       [Math.sin(a) * 1.45 * S, (BAY.roof + 0.70 * Math.cos(a)) * S, 0.52 * S], [0, 0, -a]);
   }
+  // and the underside lifts into a boat tail, the same shape the Republic hull
+  // got and half a metre deeper, because this belly is an arch and not a slab
   for (const a of [-0.70, 0, 0.70]) {
-    kf.add(M.belly, plateGeo(1.16 * S, 0.22 * S, 7.00 * S, 0.09 * S, 1),
+    kf.add(M.belly, loftGeo(plateGeo(1.16 * S, 0.22 * S, 7.00 * S, 0.09 * S, 7), 7.00 * S, 'z', 1,
+      (t) => ({ a: 1 - 0.24 * aft(t, 0.58) ** 1.3 - 0.14 * clamp((0.22 - t) / 0.22, 0, 1) ** 1.3,
+                db: (0.46 * aft(t, 0.58) ** 1.5 + 0.18 * clamp((0.22 - t) / 0.22, 0, 1) ** 1.5) * S })),
       [Math.sin(a) * 1.36 * S, (BAY.floor - 0.62 * Math.cos(a)) * S, -0.10 * S], [0, 0, a]);
   }
   // the deck itself, and the shoulder rails the arch sits on
-  kf.add(M.deck, plateGeo(2.84 * S, 0.22 * S, 5.84 * S, 0.06 * S, 1), [0, (BAY.floor - 0.11) * S, 0.50 * S]);
+  kf.add(M.deck, loftGeo(plateGeo(2.84 * S, 0.22 * S, 5.84 * S, 0.06 * S, 5), 5.84 * S, 'z', 1,
+    (t) => ({ a: 1 - 0.12 * Math.abs(2 * t - 1) ** 1.6 })), [0, (BAY.floor - 0.11) * S, 0.50 * S]);
   kf.pair((sx) => {
     kf.add(M.shell, new THREE.CylinderGeometry(0.20 * S, 0.20 * S, 6.10 * S, 8),
       [sx * 1.45 * S, (BAY.roof + 0.06) * S, 0.52 * S], [1.5708, 0, 0]);
@@ -2609,8 +2770,18 @@ export function buildDroidTransport(opts = {}) {
    * 0.68 m shorter nose to tail. It is the cue that survives at any range and
    * in any light, because it is the only thing on either ship that breaks the
    * skyline. */
-  kf.add(M.shell, plateGeo(0.24 * S, 3.10 * S, 3.70 * S, 0.08 * S, 1), [0, 3.20 * S, 0.86 * S], [-0.13, 0, 0]);
-  kf.add(M.mark, plateGeo(0.28 * S, 0.32 * S, 2.60 * S, 0.04 * S, 1), [0, 4.54 * S, 0.66 * S], [-0.13, 0, 0]);
+  /* AND IT IS A SAIL, not a signboard. It was a 3.1 x 3.7 m slab of constant
+   * section — the single largest flat rectangle in the game, standing edge-on
+   * to the sky, which is a billboard however good the material on it is.
+   * Lofted it keeps every metre of skyline it had and gains a raked top: 46%
+   * of the root chord at the peak, carried 0.9 m aft, so the leading edge
+   * sweeps and the trailing edge falls away. */
+  kf.add(M.shell, loftGeo(plateGeo(0.24 * S, 3.10 * S, 3.70 * S, 0.08 * S, 5), 3.10 * S, 'y', 1,
+    (t) => ({ a: 1 - 0.34 * t, b: 1 - 0.34 * t, db: 0.62 * S * t })),
+    [0, 3.20 * S, 0.86 * S], [-0.13, 0, 0]);
+  kf.add(M.mark, loftGeo(plateGeo(0.28 * S, 0.32 * S, 2.60 * S, 0.04 * S, 3), 0.32 * S, 'y', 1,
+    (t) => ({ b: 1 - 0.24 * t, db: 0.34 * S * t })),
+    [0, 4.54 * S, 0.90 * S], [-0.13, 0, 0]);
   kf.add(M.dark, new THREE.CylinderGeometry(0.035 * S, 0.02 * S, 0.50 * S, 5), [0, 4.86 * S, 1.66 * S], [-0.30, 0, 0]);
 
   /* ── THE TWO ELYTRA TAILS, splayed up and out off the aft shoulders ──
@@ -2619,10 +2790,25 @@ export function buildDroidTransport(opts = {}) {
    * `sx * 0.78` about Z, which carries the outboard end UP — a beetle opening
    * its wing cases, which is the reference the hull is named for. */
   kf.pair((sx) => {
-    kf.add(M.shell, plateGeo(3.00 * S, 0.22 * S, 2.20 * S, 0.09 * S, 1),
-      [sx * 2.55 * S, 1.20 * S, 3.10 * S], [0, sx * -0.42, sx * 0.72]);
-    kf.add(M.mark, plateGeo(2.40 * S, 0.06 * S, 0.42 * S, 0.02 * S, 1),
-      [sx * 2.52 * S, 1.36 * S, 2.60 * S], [0, sx * -0.42, sx * 0.72]);
+    /* A BEETLE'S WING CASE COMES TO A POINT, and these were two rectangles.
+     * They taper harder than the Republic wing does — 28% of the root chord at
+     * the tip against 46% — because that ship's wing is a lifting surface with
+     * an engine hung under it and these are blades: the same tool, set to a
+     * different shape, which is also what keeps the two hulls from converging
+     * on one outline now that both of them taper.
+     *
+     * AND THEY GREW 80 CM OF SPAN TO PAY FOR IT. These are yawed 0.42 rad, so
+     * the chord contributes to the ship's WIDTH; taking 72% of it out at the
+     * tip took 1.3 m off the beam and the head-on silhouette closed to within
+     * a point of the Republic hull's — the one view of the three that had the
+     * least room. 3.80 m of span puts the beam back where it was and buys the
+     * blade shape for nothing. */
+    const er = [0, sx * -0.42, sx * 0.92];
+    kf.add(M.shell, wingGeo(4.40 * S, 2.60 * S, 0.26 * S, sx, { tip: 0.40, tipThick: 0.44 }),
+      [sx * 3.18 * S, 1.24 * S, 3.10 * S], er);
+    kf.add(M.mark, loftGeo(plateGeo(3.00 * S, 0.06 * S, 0.42 * S, 0.02 * S, 5), 3.00 * S, 'x', sx,
+      (t) => ({ b: 1 - 0.5 * t, db: wingSweep(2.20, 0.28) * 0.82 * S * t })),
+      [sx * 2.84 * S, 1.36 * S, 2.60 * S], er);
   });
   kf.bake(g, { silhouette: true });
 
@@ -2825,7 +3011,7 @@ export function buildDroidTransport(opts = {}) {
   /* ── the engine anchors the director hangs its flares on ───────────── */
   const engines = [];
   for (const sx of [1, -1]) {
-    for (const oy of [0.19, -0.19]) {
+    for (const oy of [0.22, -0.22]) {
       const e = new THREE.Object3D();
       e.name = `engine${sx > 0 ? 'L' : 'R'}${oy > 0 ? 'U' : 'D'}`;
       e.position.set(sx * 1.62 * S, (-0.34 + oy) * S, 3.28 * S);
