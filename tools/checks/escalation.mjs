@@ -855,6 +855,22 @@ export async function run({ check, assert }) {
         Waves.seedWaves(500 + i, 0);
         for (const e of d._composeUnder(w, [key]).queue) { all++; if (isElite(e)) elite++; }
       }
+      /**
+       * HOW MANY KINDS THE NARROWED ROSTER STILL OFFERS — asked of the shape,
+       * not of what one seed spawned.
+       *
+       * `silence`'s own note is the reason a two-kind floor exists at all: "a
+       * one-type gate turned NO GUNS into six identical acolytes". But that is
+       * a claim about the ROSTER the gate leaves, and the FILL is a separate
+       * machine that converges on the heaviest body it can afford when the
+       * roster is small — measured on the Colosseum at depth, NO GUNS offers
+       * five kinds and fields exactly one (seven brutes), and so does BEAST
+       * DRIVE. Asserting on what was fielded would hold a new condition to a
+       * bar a shipped one fails, and would be measuring `_upgrade` rather than
+       * the gate. The convergence is real and it is noted here rather than
+       * asserted, because it is the composer's and it predates all of this.
+       */
+      const roster = new Set(shape.types);
       switch (key) {
         case 'silence':
           assert(!ranged.length, `NO GUNS fielded ${ranged.join(', ')}, which shoot`);
@@ -911,6 +927,78 @@ export async function run({ check, assert }) {
           assert(!shape.allowed.includes('leader'),
             'the fill can still promote its own leaders, so the wave has more than one head');
           break;
+        /* ── PLAN.md §4.6's composition constraints ────────────────────
+         * Each narrows the ROSTER rather than the wave's shape, so what each
+         * of these asserts is the same thing in a different currency: what
+         * came, and nothing else came. */
+        case 'armour': {
+          const soft = [...seen].filter((t) => (ARCHETYPES[t].toughness ?? 0) < TOUGHNESS.armour);
+          assert(!soft.length, `ARMOUR COLUMN fielded ${soft.join(', ')}, which are not plated`);
+          assert(roster.size >= 2,
+            `ARMOUR COLUMN leaves a roster of one (${[...roster][0]}) — a wave asked a different `
+            + "question still has to be a wave, which is NO GUNS' own lesson");
+          break;
+        }
+        case 'monokin': {
+          /**
+           * ONE wave is one material — which is what `seen` reads, because
+           * every one of the twelve compositions above is at the same depth
+           * and the kin is keyed on the depth.
+           */
+          const kinds = new Set([...seen].map((t) => ARCHETYPES[t].toughness));
+          assert(kinds.size === 1,
+            `ONE MATERIAL fielded ${kinds.size} materials in one wave: ${[...seen].join(', ')}`);
+          assert(roster.size >= 2,
+            `ONE MATERIAL leaves a roster of one (${[...roster][0]}) — one KIN is not one `
+            + 'archetype, and that is the monotony NO GUNS was measured into avoiding');
+          /* …AND THE NEXT ONE IS A DIFFERENT MATERIAL, which is the half of
+           * the card that makes it a rotation rather than a permanent
+           * narrowing. Composed at the neighbouring depth on the same seed, so
+           * the only thing that differs is the wave number the hook reads. */
+          const at = (ww) => {
+            const got = new Set();
+            for (let i = 0; i < 4; i++) {
+              Waves.seedWaves(500 + i, 0);
+              for (const e of d._composeUnder(ww, [key]).queue) {
+                got.add(ARCHETYPES[Waves.spawnType(e)].toughness);
+              }
+            }
+            return [...got];
+          };
+          const here = at(w), next = at(w + 1);
+          assert(here.length === 1 && next.length === 1,
+            `a single wave carried ${here.length}/${next.length} materials`);
+          assert(here[0] !== next[0],
+            `waves ${w} and ${w + 1} are both material ${here[0]} — "never the same kind twice `
+            + 'running" is what the card says, and the rotation is not turning');
+          break;
+        }
+        case 'host': {
+          const notDroid = [...seen].filter((t) => ARCHETYPES[t].toughness !== TOUGHNESS.droid);
+          assert(!notDroid.length, `DROID HOST fielded ${notDroid.join(', ')}, which are not droids`);
+          /* AND IT IS A HORDE. The card says "there is a great deal of it", and
+           * the mechanism is the budget: the same threat spent on the cheapest
+           * bodies the ground stations arrives as more of them. Asserted
+           * against the ordinary wave at the same depth, not against a number. */
+          let plainBodies = 0;
+          for (let i = 0; i < n; i++) {
+            Waves.seedWaves(500 + i, 0);
+            plainBodies += d._composeUnder(w, []).queue.length;
+          }
+          plainBodies /= n;
+          assert(bodies > plainBodies,
+            `DROID HOST fields ${bodies.toFixed(1)} bodies against an ordinary wave's `
+            + `${plainBodies.toFixed(1)} — the card promises a great deal of it`);
+          break;
+        }
+        case 'beasts': {
+          assert(!ranged.length, `BEAST DRIVE fielded ${ranged.join(', ')}, which shoot`);
+          const bladed = [...seen].filter((t) => ARCHETYPES[t].saber);
+          assert(!bladed.length, `BEAST DRIVE fielded ${bladed.join(', ')}, which carry a blade`);
+          assert(roster.size >= 2,
+            `BEAST DRIVE leaves a roster of one (${[...roster][0]}) — see NO GUNS on one-type gates`);
+          break;
+        }
         default:
           throw new Error(`condition "${key}" has no behavioural check — add one`);
       }

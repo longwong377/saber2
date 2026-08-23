@@ -62,7 +62,7 @@ import { makeRng, moduleSeed, clamp, lerp, TAU } from '../engine/MathUtil.js';
  * rather than restating it — the whole point of the note over `apply` below.
  * Combat imports THREE, Physics, MathUtil, Bolts and Morale and none of them
  * reaches back here, so this edge is a leaf edge and costs no cycle. */
-import { RETURN_CONE } from './Combat.js';
+import { RETURN_CONE, TOUGHNESS } from './Combat.js';
 
 /**
  * THE WAVE STREAM, AND IT WAS THE ONE MODULE RNG LEFT OUT OF THE PIN.
@@ -1548,6 +1548,33 @@ export function hazardPay(keys) {
  * lacks rather than restating the predicate, and `escalation.mjs` holds every
  * `needs` to having one.
  */
+
+/** The materials present in a roster, as `toughness` values, commonest first
+ *  and only those with two or more archetypes behind them — see ONE MATERIAL's
+ *  note for why one is not enough. Sorted by the VALUE so the rotation is the
+ *  same order on every machine and under every pool ordering. */
+function kinsIn(list) {
+  const by = new Map();
+  /* DISTINCT ARCHETYPES, and the `new Set` is the whole of it: a pool is a
+   * WEIGHTED list — scoria names `b1` twice so a B1 is drawn twice as often —
+   * so counting entries reads one archetype as two kinds and the rotation
+   * lands on a material with a single body in it. Measured before the Set was
+   * here: wave 31 on scoria composed b1 and nothing else. */
+  for (const t of new Set(list || [])) {
+    const k = ARCHETYPES[t]?.toughness;
+    if (k == null) continue;
+    by.set(k, (by.get(k) || 0) + 1);
+  }
+  return [...by.entries()].filter(([, n]) => n >= 2).map(([k]) => k).sort((a, b) => a - b);
+}
+
+/** Melee flesh that carries no blade — the beasts, derived off the two fields
+ *  that already separate them from the duellists rather than a sixth tag. */
+function isBeast(t) {
+  const a = ARCHETYPES[t];
+  return !!a && !!a.melee && !a.saber && a.toughness === TOUGHNESS.flesh;
+}
+
 export const CONDITIONS = {
   /**
    * The wave has a head. Kill it and the rest break.
@@ -1716,6 +1743,139 @@ export const CONDITIONS = {
     needs: (types, d) => d.modifiersAt(d.wave).length >= 2,
     unmet: 'too shallow for two kinds of champion',
   },
+  /**
+   * ══════════════════════════════════════════════════════════════════════
+   *  COMPOSITION CONSTRAINTS — PLAN.md §4.6, and they cost no new content
+   * ══════════════════════════════════════════════════════════════════════
+   *
+   * §4.6 asks for "**Composition constraints**, not just budget size: *armour
+   * column* (40% must be vehicles), *mono-kin*, *bladed*, *droid host* (no
+   * dismemberment, no morale, but `rend` is devastating), *beast drive*."
+   *
+   * Five named, and what shipped is four of them — because the roster answers
+   * the question and the answers are not the same:
+   *
+   *   *bladed*   is already here, under another name. `silence` (NO GUNS)
+   *              narrows to `!ranged`, which IS the bladed roster. A second
+   *              card for the same filter is the duplication §2.3 is about.
+   *   *mono-kin* ONE MATERIAL, below. `ARCHETYPES[*].toughness` is the game's
+   *              own material classification and has been all along — flesh,
+   *              plastoid, droid, armour, heavy — so this is derived and not a
+   *              new field on thirty-seven records.
+   *   *armour column* ARMOUR COLUMN, below, and it is a FILTER rather than
+   *              §4.6's "40% must be vehicles". A floor is a reservation in
+   *              `_composeUnder` beside the head and the set-piece, which is
+   *              surgery on the most balance-sensitive function in the file;
+   *              the filter is the same claim made harder — everything that
+   *              comes is armoured — through the hook that already exists.
+   *   *droid host* and *beast drive* are real and they are THEATRE rules:
+   *              measured over the seven shipped pools, only geonosis stations
+   *              more than one droid archetype and only the Colosseum stations
+   *              beasts at all. That is what `needs`/`unmet` are for, and it is
+   *              the honest shape — a rule the ground cannot field is greyed
+   *              with the reason rather than quietly composing a monotony.
+   *
+   * ── AND THE TWO-KIND FLOOR IS NO GUNS' LESSON, APPLIED ────────────────────
+   *
+   * Every `needs` below demands TWO archetypes and not one, for the reason
+   * `silence` states in its own words: "kamino's only melee archetype is the
+   * acolyte, so a one-type gate turned NO GUNS into six identical acolytes on
+   * that level. A wave asked a different question still has to be a wave."
+   */
+
+  /**
+   * Everything that comes at you is armoured.
+   *
+   * `toughness` is the axis a saber player's whole defensive kit is priced
+   * against, and armour is where the cheap answers stop: a returned bolt does
+   * little, a cut costs a full commitment, and `heavy` at 14 is a different
+   * verb entirely. A wave with no plastoid and no droid chaff in it is a wave
+   * with nothing in it you can clear on the way past.
+   */
+  armour: {
+    label: 'ARMOUR COLUMN',
+    ruleOnly: true,
+    tell: 'nothing soft is coming. Every body in it is plated, and some of it drives.',
+    since: 20, worth: 0.26,
+    types: (list) => list.filter((t) => (ARCHETYPES[t]?.toughness ?? 0) >= TOUGHNESS.armour),
+    needs: (types) => new Set(types.filter((t) => (ARCHETYPES[t]?.toughness ?? 0) >= TOUGHNESS.armour)).size >= 2,
+    unmet: 'nothing this ground stations is plated heavily enough to make a column',
+  },
+
+  /**
+   * Every wave is cut from one material, and it is a different one each wave.
+   *
+   * NOT one archetype — one KIN, which is `toughness`, and the difference is
+   * the whole design: a plastoid wave is riflemen and officers and a jetpack,
+   * eight kinds of body that all answer to the same cut; an armour wave is
+   * four kinds that do not. So the wave still has shape, and what is taken away
+   * is the thing every other wave in this game gives you for free — a mixed
+   * field where the answer that works on one body works on some of the others
+   * and not the rest.
+   *
+   * THE KIN IS KEYED ON THE WAVE and not drawn from the stream. `_compose`
+   * calls `_composeUnder` up to `CONDITION_MAX` times as it tops the condition
+   * set up, and a hook that drew would answer differently on each pass — the
+   * shape would be composed against one material and priced against another.
+   * A rotation is deterministic under re-entry, replays under a seed, and is
+   * the only shape here that says "and it changes" without a second stream.
+   */
+  monokin: {
+    label: 'ONE MATERIAL',
+    ruleOnly: true,
+    tell: 'each wave is cut from one kind of body, and never the same kind twice running.',
+    since: 21, worth: 0.10,
+    types: (list, d, wave) => {
+      const kins = kinsIn(list);
+      if (kins.length < 2) return list;
+      const kin = kins[Math.max(0, (wave | 0) - 1) % kins.length];
+      return list.filter((t) => ARCHETYPES[t]?.toughness === kin);
+    },
+    needs: (types) => kinsIn(types).length >= 2,
+    unmet: 'this ground fields only one material in any quantity',
+  },
+
+  /**
+   * A droid host, and §4.6's parenthesis is a description of what droids
+   * ALREADY are here rather than three systems to build: `TOUGHNESS.droid`
+   * bodies have no morale to break and `rend` is what opens them.
+   *
+   * What the rule does is spend the wave's whole budget on the cheapest bodies
+   * the ground stations, which is a HORDE — the same threat arriving as three
+   * times the count. Only geonosis stations more than one droid archetype, and
+   * everywhere else this is greyed with its reason.
+   */
+  host: {
+    label: 'DROID HOST',
+    ruleOnly: true,
+    tell: 'nothing in it can be frightened, and there is a great deal of it.',
+    since: 22, worth: 0.12,
+    excludes: ['armour'],
+    types: (list) => list.filter((t) => ARCHETYPES[t]?.toughness === TOUGHNESS.droid),
+    needs: (types) => new Set(types.filter((t) => ARCHETYPES[t]?.toughness === TOUGHNESS.droid)).size >= 2,
+    unmet: 'this ground stations fewer than two kinds of droid',
+  },
+
+  /**
+   * A beast drive — flesh that closes, and nothing that carries a blade.
+   *
+   * Derived rather than declared: a beast is the melee flesh that is not a
+   * sabre user, which is exactly the Colosseum's five and nothing anywhere
+   * else. The fight it makes is the one `silence` makes without the duellists
+   * in it — no bolts to turn AND no blades to bind, so the whole of the
+   * defensive kit is footwork and the crowd.
+   */
+  beasts: {
+    label: 'BEAST DRIVE',
+    ruleOnly: true,
+    tell: 'no guns, no blades, and none of it stops.',
+    since: 23, worth: 0.16,
+    excludes: ['armour', 'host', 'fusillade'],
+    types: (list) => list.filter(isBeast),
+    needs: (types) => new Set(types.filter(isBeast)).size >= 2,
+    unmet: 'nothing on this ground runs at you on four legs',
+  },
+
 };
 
 export const CONDITION_KEYS = Object.keys(CONDITIONS);
@@ -2964,7 +3124,7 @@ export class WaveDirector {
    * fields until it has spent it, and from wave 15 the heavies come promoted —
    * a champion, not merely another walker.
    */
-  _setPiece(wave, budget, allowed) {
+  _setPiece(wave, budget, allowed, roster = null) {
     const out = [];
     let spend = budget * BOSS_SHARE;
     // The old gates, kept: an acklay at wave 5 is not a set-piece, it is the
@@ -2996,8 +3156,31 @@ export class WaveDirector {
      * AT-TE in front of a player who is commanding the Republic, because
      * `_setPiece` is not filtered by side in Command mode; that is Command's
      * lane and it is written up in the handover. */
+    /**
+     * …AND IT IS THE WAVE'S OWN ROSTER, not the level's.
+     *
+     * `roster` is `shape.types` — what the conditions in force have narrowed
+     * the pool down to — and reading `this.pool` instead was a hole that every
+     * roster-narrowing condition fell through at a boss wave. Measured: ARMOUR
+     * COLUMN at wave 30 fielded an acolyte and a master, because the ladder
+     * asked the LEVEL what it stations and the level stations duellists. NO
+     * GUNS and NOTHING WITHIN REACH had the same hole and passed on luck —
+     * SET_PIECE's bodies happen to be melee, so the first was never violated
+     * and the second's depth is not a boss wave.
+     *
+     * A set-piece is "the body the wave is named after", so a wave that has
+     * been told what it is made of has to name one of those. When the
+     * narrowing leaves no rung, the behaviour is the one this method already
+     * has and documents two paragraphs up: no rung to climb, and the whole
+     * set-piece share is spent on the fill instead.
+     *
+     * `roster` defaults to null and falls back to the pool, so every caller
+     * that asks this question without a condition set — three of them, all in
+     * the checks — is byte-identical.
+     */
+    const from = roster && roster.length ? roster : this.pool;
     const ladder = SET_PIECE.filter(s => (bottom || wave >= s.from)
-      && this.pool.includes(s.type) && this._sideAllows(s.type, wave))
+      && from.includes(s.type) && this._sideAllows(s.type, wave))
       .map(s => s.type);
     if (!ladder.length) return out;
     /* ONE OF EACH RUNG, heaviest first — not N copies of the heaviest. Two
@@ -3185,6 +3368,24 @@ export class WaveDirector {
     const options = this.conditionsAt(wave).filter((k) => {
       if (held.has(k)) return false;
       const C = CONDITIONS[k];
+      /**
+       * A COMPOSITION CONSTRAINT IS NEVER DEALT — it is only ever authored.
+       *
+       * PLAN.md §4.6's constraints (ARMOUR COLUMN, ONE MATERIAL, DROID HOST,
+       * BEAST DRIVE) narrow the ROSTER rather than the wave's shape, and a
+       * roster narrowing dealt at depth is what strands a budget: measured on
+       * the shipped pools, the two narrowings that ARE dealt already push the
+       * Colosseum to 51-59% unspent at wave 100, and four more compounded it
+       * until the body cap stopped binding at all and `_upgrade` was handed
+       * nothing to spend. That is a real cost and it is the composer's, not
+       * the player's.
+       *
+       * As a RULE the same narrowing is fine, because the player chose it and
+       * the fallback in `_shapeUnder` still refuses to empty the field. So the
+       * flag says which side of that line an entry is on, and the composer's
+       * own statistics are the ones it had before these were authored.
+       */
+      if (C.ruleOnly) return false;
       // WHAT THE SURPLUS CAN ACTUALLY BUY. Without this the loop would draw a
       // condition, find it unaffordable and stop — measured, that left 22% of
       // wave 140's budget stranded because the one option left was the most
@@ -3272,7 +3473,7 @@ export class WaveDirector {
     const queue = [];
 
     if (this.isBossWave(w)) {
-      for (const entry of this._setPiece(w, budget, shape.allowed)) {
+      for (const entry of this._setPiece(w, budget, shape.allowed, shape.types)) {
         queue.push(entry);
         budget -= spawnCost(entry);
       }
