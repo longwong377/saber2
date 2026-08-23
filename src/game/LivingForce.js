@@ -187,9 +187,21 @@ export const TRIAL_INSIGHT_PER_WAVE = (() => {
  * `drafts` is `WaveDirector.drafts` — the shipped statement of which modes hand
  * out cards — called rather than restated, so a mode added to `DRAFT_MODES`
  * changes both channels at once.
+ *
+ * `hazard` is `WaveDirector.hazard`, and it is PLAN.md §4.6's player-authored
+ * difficulty arriving on the one line that decides what a wave is worth. It
+ * multiplies BOTH channels, because a set-piece under a run rule is the same
+ * multiple of a wave that a set-piece without one is — see `hazardPay` in
+ * Waves.js for why the multiplier is the director's own `worth` and not a
+ * second table. Defaulted to 1, so a run under no rules is byte-identical.
+ *
+ * The product is DELIBERATELY NOT ROUNDED here. A rate of 1.08/wave rounded at
+ * this line is 1/wave and A HEAD TO CUT OFF pays nothing at all; the rounding
+ * belongs where the purse is credited, and `Communion.earn` carries the
+ * fraction across waves so the ledger stays in whole Insight without losing it.
  */
-export function insightRate(drafts = true) {
-  const per = drafts ? INSIGHT_PER_WAVE : TRIAL_INSIGHT_PER_WAVE;
+export function insightRate(drafts = true, hazard = 1) {
+  const per = (drafts ? INSIGHT_PER_WAVE : TRIAL_INSIGHT_PER_WAVE) * (hazard > 0 ? hazard : 1);
   return { per, boss: per * (INSIGHT_BOSS_BONUS / INSIGHT_PER_WAVE) };
 }
 
@@ -562,6 +574,9 @@ export class Communion {
      * every check and every headless bench gets unless it says otherwise.
      */
     this.seed = (o.seed | 0) >>> 0;
+    /** The fraction of an Insight owed but not yet whole — see `earn`. Carried
+     *  on the snapshot so a rejoining peer is not paid the remainder twice. */
+    this._carry = Number.isFinite(o.carry) ? o.carry : 0;
   }
 
   /**
@@ -573,7 +588,26 @@ export class Communion {
    */
   earn(wave, boss = false, rate = null) {
     const r = rate || insightRate(true);
-    const n = r.per + (boss ? r.boss : 0);
+    const raw = r.per + (boss ? r.boss : 0);
+    /**
+     * A WHOLE PURSE OVER A FRACTIONAL RATE.
+     *
+     * Every rate this ledger was built on is an integer, and every price in
+     * `COST` is one, so `insight` has always been a whole number and three
+     * screens print it as one. `hazardPay` makes the rate fractional — a run
+     * under A HEAD TO CUT OFF is paid 1.08 a wave — and there are only two
+     * ways to spend that: round each payout, which pays exactly nothing for
+     * any rule worth less than half a wave, or carry the remainder.
+     *
+     * It carries. `_carry` is the fraction owed, `insight` and `earned` move
+     * only in whole units, and over a run the player is paid the exact rate:
+     * 40 waves at 1.08 is 43 Insight and not 40. Byte-identical when the rate
+     * is an integer, which is every existing caller — the carry stays at 0 and
+     * `n === raw`.
+     */
+    this._carry += raw;
+    const n = Math.floor(this._carry + 1e-9);
+    this._carry -= n;
     this.insight += n;
     this.earned += n;
     return n;
@@ -688,7 +722,7 @@ export class Communion {
 
   /** What a save/restore across a level change has to carry. See Run.js. */
   snapshot() {
-    return { insight: this.insight, bought: this.bought.slice(), earned: this.earned,
+    return { insight: this.insight, carry: this._carry, bought: this.bought.slice(), earned: this.earned,
              /* The offer is DERIVED from these two, so carrying the seed is
               * what makes the hand on the far side of a ground change the same
               * hand — see `offerNow`. */

@@ -5583,8 +5583,20 @@ export class World {
      * is the shipped statement of which modes hand out cards, called here rather
      * than restated as a mode name.
      */
+    /**
+     * …AND AT THE RATE THE RUN'S OWN TERMS PAY — PLAN.md §4.6.
+     *
+     * `director.hazard` is `1 + Σ worth` over the rules the player authored on
+     * the Deploy panel, which is the same share `conditionCost` charges the
+     * director for dealing one and deliberately does not charge for a rule. So
+     * a wave under DELUGE is 30% more fight and pays 30% more Insight, and the
+     * exchange rate cannot drift from the price because it IS the price.
+     *
+     * `?? 1` and not a mode test: `DojoDirector` has no rules and no hazard,
+     * and a run under no rules multiplies by one.
+     */
     const gained = this.communion.earn(wave, !!this.director?.isBossWave?.(wave),
-      insightRate(this.director?.drafts !== false));
+      insightRate(this.director?.drafts !== false, this.director?.hazard ?? 1));
     this.onInsight?.(gained, this.communion);
   }
 

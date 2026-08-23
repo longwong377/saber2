@@ -40,6 +40,7 @@ import { QUALITY } from '../../src/engine/Engine.js';
 import { MODES, WaveDirector, BOSS_EVERY, CONDITION_KEYS, SKIRMISH } from '../../src/game/Waves.js';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
 import { WITHDRAW_HOLD, LAST_CALL } from '../../src/game/Extraction.js';
+import { READ_SECONDS, SENSE_RATE } from '../../src/game/FireMission.js';
 /* The Codex's teaching half is generated off these, and the check reads the
  * same tables rather than a transcription of what they said on the day. */
 import { DIFFICULTY, GRADE_NAME, SPEED_GRADE, PARRY_GRADE, parryScale, CATCH } from '../../src/game/Combat.js';
@@ -972,6 +973,15 @@ export async function run({ check, assert }) {
        * tune either and the row retunes, and a typed one still has nowhere to
        * hide. */
       `${WITHDRAW_HOLD}`, `${Math.round(LAST_CALL)}`,
+      /* THE FIRE MISSION'S TWO, and they are the same case as the withdrawal's.
+       * The Codex row for AUTHORISE prints what reading a mark costs — on foot
+       * and under Force sense — and both come off `FireMission.js` at the row
+       * (`READ_SECONDS`, and it divided by `SENSE_RATE`). Neither is scaled by
+       * difficulty. This set is the half of the contract that lives out here:
+       * a row derived from a table nothing in this file reads is indistinguish-
+       * able from a typed one, which is why the 4 was flagged while the 12
+       * beside it happened to collide with a Force order's timer and was not. */
+      `${READ_SECONDS}`, `${(READ_SECONDS / SENSE_RATE).toFixed(0)}`,
     ]);
     const stray = times.map(m => m[1]).filter(v => !derivable.has(v));
     assert(!stray.length,

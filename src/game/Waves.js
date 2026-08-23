@@ -1450,6 +1450,65 @@ export const TRIAL = { from: 4, every: 2 };
 export const CONDITION_MAX = 4;
 
 /**
+ * HOW MANY OF THEM THE PLAYER MAY AUTHOR — and it is not `CONDITION_MAX`.
+ *
+ * PLAN.md §4.6: "**Modifiers with caps**: at most two, at most one beneficial,
+ * one guaranteed clean battle per rotation, pairwise blacklist."
+ *
+ * The two numbers were one number, and they are answers to different questions.
+ * `CONDITION_MAX` is what the COMPOSER can carry — a wave-shape number, derived
+ * above from the stranding measurements at waves 100/140/200, and it still is.
+ * This is what the PANEL will sell you, and it is a design number about the
+ * shape of a choice: with seven rules on the screen and a cap of four you tick
+ * four and stop reading; with a cap of two you have to decide which axis of the
+ * run you actually want moved. That is the whole content of the bullet — a
+ * checklist becomes a wager.
+ *
+ * The wave can still reach `CONDITION_MAX`: `_compose` unions the rules in and
+ * `_pickCondition` deals the rest, which is exactly what it did before anybody
+ * could author one.
+ *
+ * AND "AT MOST ONE BENEFICIAL" IS NOT IMPLEMENTED, deliberately. Every entry in
+ * `CONDITIONS` is a handicap — there is no beneficial rule for the clause to
+ * cap, so writing it would be a branch no input can take, and PLAN §7's own
+ * guardrail is that an element has to change a decision. The day a beneficial
+ * rule is authored the clause becomes real and belongs here.
+ */
+export const RULE_MAX = 2;
+
+/**
+ * WHAT A RUN FOUGHT UNDER RULES IS PAID — PLAN.md §4.6's player-authored
+ * difficulty, and the exchange rate is one the director already publishes.
+ *
+ * "**Player-authored difficulty** driving Insight income — pick which axes get
+ * harder, get paid for it. Not Easy/Normal/Hard."
+ *
+ * The rate is NOT a new number. `conditionCost` charges a dealt condition
+ * `worth · budget` and skips a rule — that one line, and the paragraph over it,
+ * are the game's own statement of what a rule is worth: a wave carrying it is
+ * `worth` more fight than the same wave without it, and the player pays that
+ * difference in blood instead of in budget. So the Insight a wave pays is
+ * multiplied by exactly the same share:
+ *
+ *     hazardPay(rules)  =  1 + Σ CONDITIONS[k].worth
+ *
+ * A HEAD TO CUT OFF is worth 8% and pays 8%; a DELUGE is worth 30% and pays
+ * 30%. Two rules at the cap top out at 1.48x. Nothing is typed twice, and the
+ * day a condition is repriced the payout moves with it — which is the property
+ * that makes this a rate rather than a table of bribes.
+ *
+ * It is not a meta-progression either, for the reason the rules note gives at
+ * length: Insight is earned inside a run and dies with it (LivingForce.js's
+ * own head says so), so what this buys is a deeper build in a harder run, and
+ * nothing at all in the next one.
+ */
+export function hazardPay(keys) {
+  let s = 1;
+  for (const k of keys || []) s += (CONDITIONS[k]?.worth ?? 0);
+  return s;
+}
+
+/**
  * Every condition, and what each one costs.
  *
  * `worth` is the share of the wave's budget the condition is charged. They are
@@ -3054,7 +3113,7 @@ export class WaveDirector {
     const out = [];
     for (const k of keys || []) {
       if (!CONDITIONS[k] || out.includes(k)) continue;
-      if (out.length >= CONDITION_MAX) break;
+      if (out.length >= RULE_MAX) break;
       if (this.ruleVeto(k)) continue;
       if (out.some((h) => rulesConflict(h, k))) continue;
       out.push(k);
@@ -3079,6 +3138,16 @@ export class WaveDirector {
   }
 
   set rules(v) { this._rules = Array.isArray(v) ? v.slice() : []; }
+
+  /**
+   * WHAT THIS RUN'S OWN TERMS PAY — see `hazardPay`.
+   *
+   * A getter over `this.rules` rather than a field, for the same reason the
+   * pair above is a pair: the panel writes the rule set and the payout has to
+   * move with it, and a number cached at construction would pay the run for
+   * terms it is not being fought under.
+   */
+  get hazard() { return hazardPay(this.rules); }
 
   /** What the Deploy panel prints, and what `Progress.byRule` is keyed on. */
   get ruleLabel() {

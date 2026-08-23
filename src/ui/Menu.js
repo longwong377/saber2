@@ -58,7 +58,7 @@ import { FOCUS } from '../game/Focus.js';
 import { LESSONS } from '../game/Dojo.js';
 import { MODES, sandboxUnits, SANDBOX_MAX_ENEMIES, sandboxConfig, SKIRMISH,
          DRAFT_EVERY, BOSS_EVERY, boonById,
-         CONDITIONS, CONDITION_KEYS, CONDITION_MAX, WaveDirector } from '../game/Waves.js';
+         CONDITIONS, CONDITION_KEYS, RULE_MAX, hazardPay, WaveDirector } from '../game/Waves.js';
 /**
  * WHAT EVERY FORCE POWER COSTS — and the Codex prints it because this table
  * exists precisely so that two surfaces can read one price list.
@@ -4145,7 +4145,7 @@ export class Menu {
         if (held.has(key)) held.delete(key); else held.add(key);
         // Through the director, so what is stored is what the run will honour:
         // the order the player picked in, minus anything the theatre vetoes,
-        // minus anything an earlier pick excludes, capped at CONDITION_MAX.
+        // minus anything an earlier pick excludes, capped at RULE_MAX.
         const wanted = CONDITION_KEYS.filter((k) => held.has(k));
         this.s.rules = this._ruleDirector().legalRuleSet(wanted);
         saveSettings(this.s);
@@ -4221,13 +4221,13 @@ export class Menu {
       const veto = d.ruleVeto(key);
       const clash = !on && [...held].find((h) => CONDITIONS[h]?.excludes?.includes(key)
         || C.excludes?.includes(h));
-      const full = !on && held.size >= CONDITION_MAX;
+      const full = !on && held.size >= RULE_MAX;
       // The mode's refusal comes FIRST: a rule this run will never read is not
       // usefully described as clashing with another one it will also not read.
       const why = inert ? inert
         : veto ? `${LEVELS[this.s.level]?.name ?? 'this theatre'}: ${veto}`
         : clash ? `cannot be held with ${CONDITIONS[clash].label}`
-        : full ? `${CONDITION_MAX} rules is the most a wave can carry`
+        : full ? `${RULE_MAX} is the most you may author — drop one to pick this`
         : null;
       card.classList.toggle('sel', on);
       card.classList.toggle('barred', !!why);
@@ -4236,9 +4236,24 @@ export class Menu {
       card.setAttribute('aria-pressed', on ? 'true' : 'false');
       card.querySelector('.txt span').textContent = why || C.tell;
     }
+    /**
+     * WHAT THE WAGER PAYS, on the line that used to say only what it cost.
+     *
+     * PLAN.md §4.6 asks for "player-authored difficulty driving Insight income
+     * — pick which axes get harder, get paid for it", and the panel is where
+     * that has to be legible: a handicap with no printed return is a punishment
+     * screen. `hazardPay` is the run's own rate (see Waves.js) and it is asked
+     * rather than restated, so a repriced condition moves this number too.
+     *
+     * The old clause stays, because it is the other half of the same sentence:
+     * a rule buys you the full wave AND the strangeness, and now it buys you a
+     * deeper Holocron for surviving it.
+     */
     if (this.el.ruleSeed) {
+      const pay = Math.round((hazardPay(this.s.rules) - 1) * 100);
       this.el.ruleSeed.textContent = held.size
-        ? `${held.size} of ${CONDITION_MAX} · no rule is charged against the wave's budget`
+        ? `${held.size} of ${RULE_MAX} · +${pay}% Insight a wave · no rule is charged `
+          + "against the wave's budget"
         : '';
     }
   }
