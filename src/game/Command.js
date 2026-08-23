@@ -1006,6 +1006,73 @@ export const FORMATIONS = {
      * a good name. */
     seeksCover: true,
   },
+  /**
+   * DIG IN — PLAN.md §4.7, and it is the only thing in this game that makes
+   * cover where there was none.
+   *
+   * *"The ground remembers visually, and `Dig In` is what makes it cover. A
+   * sapper turning a crater into a real position is the only thing that
+   * produces defilade, because artillery measurably does not."*
+   *
+   * Both halves of that are MEASURED, on a real world at the shipped low
+   * quality tier, with the real body heights (`aimAt` reads a chest at 1.17 m;
+   * the median of 666 bolts fired in a live fight leaves the muzzle at 1.15 m).
+   * Twelve rays — three ranges by four bearings — from a shooter's muzzle to
+   * the chest of a man standing on the spot:
+   *
+   *     flat ground                         0 of 12 blocked
+   *     a shell crater (2.6 m, 0.22 deep)   2 of 12
+   *     a dug position (this row's numbers) 12 of 12
+   *
+   * That is the section's own claim, in one table: shelling the ground does
+   * not make cover, and digging it does.
+   *
+   * ── AND THE DEFILADE IS SYMMETRIC, WHICH IS THE WHOLE TRADE ────────────
+   *
+   * The same twelve rays fired OUT of the position are blocked 11 of 12. That
+   * is not a defect to be tuned away: a chest and a muzzle are within two
+   * centimetres of each other on every body in this game, so a berm that stops
+   * a bolt coming in stops the one going out, and any parapet that did not
+   * would be a wall a player could shoot through. **A position is for holding
+   * ground, not for winning a firefight.** A dug-in squad stops trading fire
+   * at range and becomes very hard to kill until somebody closes — and what
+   * closes is what the Jedi is for. Stated here because a player will find it
+   * in about ninety seconds and has to be able to tell it from a bug.
+   *
+   * ── WHAT IT COSTS ──────────────────────────────────────────────────────
+   *
+   * `DIG_SECONDS` with their hands full: a digging squad holds its fire, on
+   * ground it cannot leave, while the battle goes on around it. That is the
+   * price, and it is why this is an order and not a passive.
+   */
+  digin: {
+    /* QUOTE, and it is the last key in the orders' own cluster rather than a
+     * free letter: the digit row from 6 to 0, Minus, Equal and Semicolon are
+     * the eight orders already, Semicolon's neighbour is where a ninth goes,
+     * and there is no free letter left on the board at all (KeyK went to the
+     * fire mission). Nothing types it here — `registerOrders` deals it into
+     * ACTIONS off this row, and `controls.mjs` re-derives the pair. */
+    id: 'digin', name: 'Dig in', key: 'Quote',
+    blurb: 'Turn this ground into a position. Their hands are full while they work, and then it is cover.',
+    /* `leash: 1.05` — as tight as the rules allow with the width of his own
+     * parapet added. `leashFor` floors every order at the body's own band
+     * (×1.0), because "do not chase" is a legal order and "do not shoot" is
+     * not; a man in a position is the least mobile body on the field, so it is
+     * the floor plus a twentieth — 0.95 m at a trooper's 19 m band, which is
+     * about the thickness of the berm he is standing behind, so he may always
+     * engage something that has climbed onto his own lip. */
+    leash: 1.05, advance: false, fire: 1, digs: true,
+    slot(i, n, k, out) {
+      /* INSIDE THE SCRAPE. The men have to end up under the berm they are
+       * throwing up or the position protects nothing, so the shape is a tight
+       * ring well inside `DIG_R` rather than the loose scatter TAKE COVER
+       * uses — that one is looking for something to get behind and this one is
+       * making the thing. Deterministic in `i`, for the same reason. */
+      const a = (i * 2.399963) % TAU;
+      const r = 1.8 + (i % 3) * 1.4;
+      return out.set(Math.sin(a) * r, 0, Math.cos(a) * r);
+    },
+  },
   charge: {
     id: 'charge', name: 'Charge', key: 'Minus',
     blurb: 'Break formation. Find something and kill it.',
@@ -1930,6 +1997,49 @@ export function killerName(source) {
   if (source.isPlayer || source.aimDir) return 'you';
   return source.A?.name || source.type || null;
 }
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  Digging in — PLAN.md §4.7                                             */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * HOW LONG A SQUAD TAKES TO MAKE A POSITION, in seconds of at least
+ * `DIG_CREW` men standing on the ground they were given.
+ *
+ * Twenty-two, which is one wave's worth of shooting given up. It has to be
+ * long enough that digging is a decision about the next two minutes rather
+ * than a thing you do on the way past, and short enough that a player who
+ * chooses it gets to see it finish inside the engagement he chose it in. It is
+ * the same order as the blast door's measured 18.8 s breach and the objective
+ * take timer's 12 s, deliberately: this game's "hold a thing while the fight
+ * goes on around you" beats are all one length.
+ */
+export const DIG_SECONDS = 22;
+
+/** How many living men it takes to be digging at all. Two is a working party. */
+export const DIG_CREW = 2;
+
+/**
+ * THE POSITION, in metres — and every one of these is a measurement rather
+ * than a taste.
+ *
+ * The heightfield's cell is 3.39 m at the shipped LOW tier and 2.48 m at high,
+ * and `Terrain.crater` widens anything under 1.35 cells to what the grid can
+ * represent — so a foxhole is not a thing this engine can hold, and a SQUAD
+ * POSITION is. At 8 m the scrape is two and a half cells across at the coarsest
+ * tier, which is the smallest earthwork the ground can actually carry.
+ *
+ * The depth and the rim were swept against the twelve-ray test in the `digin`
+ * row's own note: at 0.7/1.6 the position blocked 10 of 12, at 0.9/1.6 it
+ * blocks 12 of 12, and it is the second one because a position that is cover
+ * from three bearings of four is a position a player cannot trust. Measured
+ * profile at low quality: a floor 0.83 m below the ground it was cut into and a
+ * berm 0.76 m above it, at 0.9 of the radius.
+ */
+export const DIG_R = 8, DIG_DEPTH = 0.9, DIG_RIM = 1.6;
+
+/** How far from the middle a man counts as working on it. */
+export const DIG_WORK_R = DIG_R + 2;
 
 /** How many bodies are one squad. Five is a fireteam and it fits one screen. */
 export const SQUAD = 5;
@@ -4302,12 +4412,19 @@ export class CommandDirector extends WaveDirector {
       const sp = (c.squadPlanted || (c.squadPlanted = new Map()));
       if (!F.advance || c.holding) sp.set(key, this._squadFrame(c, squad));
       else sp.delete(key);
+      /* A NEW ORDER ABANDONS A HALF-DUG POSITION. The hole in the ground is
+       * permanent once it is finished — it is terrain — but the work is not
+       * banked: a squad pulled off a scrape and sent back to it starts again,
+       * which is what stops "dig in, charge, dig in" being a way to have the
+       * position without ever standing still for it. See `_digTick`. */
+      c.digs?.delete(key);
     } else {
       c.squadOrders?.clear();
       /* An army-wide order takes every squad's private ground back with its
        * private order, for the reason the clause above gives about `squadOrders`
        * itself: "everyone form wedge" has to mean everyone. */
       c.squadPlanted?.clear();
+      c.digs?.clear();
       c.formation = id;
     }
     // A formation that does not advance is planted where the commander was
@@ -6554,6 +6671,16 @@ export class CommandDirector extends WaveDirector {
          * one frame of latency on a decision that is re-made sixty times a
          * second. It is not worth it and it would be the slower answer.
          */
+        /* THE SQUAD'S OWN ORDER, and the fire gate reads it now.
+         *
+         * `F` above is the ARMY's formation, and it was what decided whether a
+         * body held its fire — so a single squad told to HOLD FIRE went on
+         * shooting, because the army had not been. `formationFor` is the one
+         * derivation of "what is this squad under" and `slotFor` has always
+         * used it; this is the same question asked in the one other place that
+         * was answering it with the army's answer. */
+        const Fk = FORMATIONS[this.formationFor(c, k)] || F;
+        const digging = Fk.digs ? this._digTick(dt, c, k, squads[k]) : false;
         const lead = this.leaderOf(squads[k]);
         const focus = (lead && lead.body && !lead.body.dead) ? lead.body.target : null;
         /* …AND THE LEADER DOES NOT FOLLOW HIMSELF. Stamping the focus on every
@@ -6586,7 +6713,12 @@ export class CommandDirector extends WaveDirector {
            * failure that note was written for — a driven run stuck from t≈711 s
            * to t=3535 s with two bodies alive and no way out but Abandon —
            * except that this time the army would be standing next to them. */
-          if (F.fire <= 0 && !this._closing) holdFire(e);
+          /* …AND A MAN WITH A SHOVEL IN HIS HANDS IS NOT SHOOTING. That is the
+           * whole price of a position (PLAN.md §4.7): a squad gives up its
+           * fire for `DIG_SECONDS` on ground it has already been told it
+           * cannot leave. It lifts the moment the position is finished, and
+           * `_closing` lifts it early for the reason it lifts every order. */
+          if ((Fk.fire <= 0 || digging) && !this._closing) holdFire(e);
           this._clearBlade(e, c, dt);
         }
       }
@@ -6594,10 +6726,80 @@ export class CommandDirector extends WaveDirector {
   }
 
   /**
+   * ONE SQUAD, ONE POSITION — PLAN.md §4.7's Dig In.
+   *
+   * @returns whether these men currently have their hands full, which is what
+   *          the fire gate above reads.
+   *
+   * ── WHY THE STATE IS PER SQUAD AND NOT PER MAN ─────────────────────────
+   *
+   * The engine's heightfield cell is 2.5–3.4 m, so five individual scrapes are
+   * five craters the ground cannot tell apart — see `DIG_R`. What a squad digs
+   * is ONE position, and that is also the right unit for the design: the
+   * delegation that shipped for §4.4 gives a squad its own ground, and this is
+   * what a squad does with ground it has been given.
+   *
+   * ── AND IT IS DUG THROUGH THE ONE DOOR THAT BREAKS GROUND ──────────────
+   *
+   * `Terrain.crater` with a deep bowl and a heavy rim, which is exactly what a
+   * scrape and its spoil are. Nothing here reaches into the heightfield: the
+   * crater is the game's only verb for moving earth, `CraterLog` wraps it, and
+   * so a position dug in engagement two is still there in engagement three
+   * without this file knowing that persistence exists. It costs one call.
+   *
+   * The soot the crater lays with it is honest rather than unfortunate — the
+   * ground has been turned over, and a fresh earthwork on a dust plain reads
+   * dark. What says "position" rather than "shell hole" is the shape: a berm
+   * 0.76 m proud of the ground all the way round, which no shell in this game
+   * can make.
+   */
+  _digTick(dt, c, k, squad) {
+    const key = String(k);
+    const digs = (c.digs || (c.digs = new Map()));
+    let rec = digs.get(key);
+    /* WHERE THEY WERE TOLD TO STAND, which is the squad's own planted ground
+     * when it has one and the army's frozen frame otherwise. Taken ONCE, at
+     * the first tick: a position that followed the anchor would be a hole that
+     * moved while it was being dug. */
+    if (!rec) {
+      const A = this._anchorFor(FORMATIONS.digin, c, k);
+      if (!A?.pos) return false;
+      rec = { x: A.pos.x, z: A.pos.z, t: 0, done: false };
+      digs.set(key, rec);
+    }
+    if (rec.done) return false;
+    /* WHO IS ACTUALLY ON IT. A man running back to the position is not digging
+     * it, and a man on the ground is not either — the same clause that keeps a
+     * casualty out of the quorum keeps him off the shovel. */
+    let crew = 0;
+    for (const t of squad) {
+      const e = t.body;
+      if (!e || e.dead || e.downed) continue;
+      const dx = e.position.x - rec.x, dz = e.position.z - rec.z;
+      if (dx * dx + dz * dz <= DIG_WORK_R * DIG_WORK_R) crew++;
+    }
+    if (crew < DIG_CREW) return false;
+    rec.t += dt;
+    if (rec.t < DIG_SECONDS) return true;
+    rec.done = true;
+    this.digs = (this.digs | 0) + 1;
+    const T = this.world?.terrain;
+    if (T?.crater) T.crater(rec.x, rec.z, DIG_R, DIG_DEPTH, DIG_RIM);
+    this.log.push({ t: 'dug', squad: k, area: this.areaNumber, wave: this.wave,
+                    at: Math.round((this.world?.time || 0) * 10) / 10 });
+    if (c === this.commander) {
+      const lead = this.leaderOf(squad);
+      this.world?.notify?.(`${lead ? lead.name : `${k + 1} SQUAD`} — DUG IN`,
+        'the ground is a position now, and it is cover from anything at range');
+    }
+    return false;
+  }
+
+  /**
    * GET OUT OF THE WAY OF THE BLADE.
    *
    * "in too many of the troop formations the troops are totally in the way of
-   * your saber like they don't avoid it at all and crowd you."
+   * your saber like they don't avoid it at all and crowd you.""
    *
    * Nothing in the formation solver knew the commander was holding a weapon.
    * The slots are all clear of one — `circle`'s inner rank is at 4.2 m against
