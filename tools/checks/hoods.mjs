@@ -95,6 +95,7 @@
 import * as THREE from 'three';
 import { buildJedi, HOOD_CUTS, hoodCut, attachHood, surfacePoint,
          JEDI_RANKS } from '../../src/game/Bodies.js';
+import { attachHoodDrape } from '../../src/game/Cloth.js';
 import { WARDROBE, wardrobeOf } from '../../src/game/Cloth.js';
 import { DEFAULT_SETTINGS, applyWardrobe } from '../../src/ui/Menu.js';
 import { Player } from '../../src/game/Player.js';
@@ -482,6 +483,126 @@ export async function run({ check, assert }) {
   /* ══════════════════════════════════════════════════════════════════ */
   /*  the three ways a body stops being a body                          */
   /* ══════════════════════════════════════════════════════════════════ */
+
+  /* ══════════════════════════════════════════════════════════════════ */
+  /*  and the half of it that geometry cannot reach                     */
+  /* ══════════════════════════════════════════════════════════════════ */
+
+  check('hoods: the fall off a hood is CLOTH, and it hangs where the hood ends', () => {
+    /* "The hoods don't really look like hoods and ACT AS CLOTH."
+     *
+     * The shells above answer the first clause. This is the second: every cut
+     * that declares a `drape` gets a simulated sheet pinned in an arc round the
+     * back of the head bone — see `attachHoodDrape` in Cloth.js — and what is
+     * measured here is that it settles where a hood's fall settles instead of
+     * where a bug puts it. Two failures this catches and an eye does not:
+     *
+     *   IT IS CUT TO THE WRONG LENGTH BY THE FLARE. `Cloak`'s layout fans
+     *   outward as it drops, so the rest length sampled between two rows is the
+     *   DIAGONAL, not the vertical step. At the cape's flare of 0.85 a fall
+     *   authored 0.085 m long came out 0.259 — three times its own stated
+     *   length and reading as a second cape — and it is not stretch, so no
+     *   stiffness setting touches it.
+     *
+     *   IT IS STRETCHED BY THE COLLIDERS. A hood's hem is at the neck, which is
+     *   INSIDE the shoulders, so a cape's collider table swallows the pin ring
+     *   whole; the row below the pins is shoved to the sphere's surface every
+     *   frame while a 2 cm link says it cannot go there. Both come out as one
+     *   number — the fall is longer than it was cut — so that is the number.
+     */
+    const rows = [];
+    for (const h of WORN) {
+      if (!h.drape) continue;
+      const built = buildJedi({ scale: 1, hood: h.id, face: { hair: 'temple' } });
+      built.rig.updateMatrices();
+      const scene = new THREE.Scene();
+      scene.add(built.rig.root);
+      const d = attachHoodDrape(scene, built.rig, {
+        scale: built.headScale ?? built.rig.scale ?? 1, drape: h.drape,
+      });
+      assert(d, `${h.id} declares a drape and attachHoodDrape built nothing from it`);
+      const wind = new THREE.Vector3();
+      for (let i = 0; i < 240; i++) { built.rig.updateMatrices(); d.update(1 / 60, d.refreshColliders(), wind); }
+
+      // …it is not stretched. Every link against the length it was cut at.
+      let worst = 0;
+      for (const l of d.links) {
+        const a = l.a * 3, b = l.b * 3;
+        const len = Math.hypot(d.pos[a] - d.pos[b], d.pos[a + 1] - d.pos[b + 1], d.pos[a + 2] - d.pos[b + 2]);
+        if (l.rest > 1e-6) worst = Math.max(worst, len / l.rest);
+      }
+      assert(worst < 1.35,
+        `${h.id}'s fall has a link ${((worst - 1) * 100).toFixed(0)}% longer than it was cut — `
+        + 'the colliders are pushing a row the pins are holding');
+
+      // …and it hangs BELOW the hem it is pinned at and above the belt
+      const head = built.rig.get('head'), hips = built.rig.get('hips');
+      const hy = new THREE.Vector3(), by = new THREE.Vector3();
+      head.obj.getWorldPosition(hy); hips.obj.getWorldPosition(by);
+      let lo = Infinity, hi = -Infinity;
+      for (let i = 1; i < d.pos.length; i += 3) { if (d.pos[i] < lo) lo = d.pos[i]; if (d.pos[i] > hi) hi = d.pos[i]; }
+      assert(hi < hy.y, `${h.id}'s fall reaches ${(hi - hy.y).toFixed(3)} m ABOVE the head bone — it is over the crown`);
+      assert(lo > by.y + 0.08,
+        `${h.id}'s fall reaches y ${lo.toFixed(3)} against a belt at ${by.y.toFixed(3)} — that is a cape, not a hood`);
+      rows.push(`${h.id} ${(hi - lo).toFixed(2)}m, worst link ${worst.toFixed(2)}x`);
+      scene.remove(built.rig.root);
+    }
+    assert(rows.length >= 3, `only ${rows.length} cut(s) have a fall on them`);
+    return `hangs and stretch: ${rows.join(' · ')}`;
+  });
+
+  check('hoods: and the fall MOVES on the head that is wearing it', () => {
+    /* THE WHOLE POINT, and the one thing a rigid hood cannot do however well it
+     * is shaped: "more like putting on a solid capsule". A mesh welded to the
+     * head bone travels 0.000 mm in that bone's own frame however hard the
+     * figure turns — which is exactly the measurement Cloth.js makes against
+     * the rigid skirt it replaced. So this is that measurement, on the hood:
+     * turn the head through 0.9 rad and back, and ask how far the cloth has
+     * moved RELATIVE TO THE HEAD. The rigid nape arc 3 cm above it is the
+     * control and it is welded, so its answer is zero by construction.
+     */
+    const rows = [];
+    for (const h of WORN) {
+      if (!h.drape) continue;
+      const built = buildJedi({ scale: 1, hood: h.id, face: { hair: 'temple' } });
+      built.rig.updateMatrices();
+      const scene = new THREE.Scene();
+      scene.add(built.rig.root);
+      const d = attachHoodDrape(scene, built.rig, {
+        scale: built.headScale ?? built.rig.scale ?? 1, drape: h.drape,
+      });
+      const head = built.rig.get('head');
+      const wind = new THREE.Vector3(), q = new THREE.Quaternion(), e = new THREE.Euler();
+      const turn = (yaw) => {
+        head.obj.quaternion.copy(head.restQuat).multiply(q.setFromEuler(e.set(0, yaw, 0, 'YXZ')));
+        built.rig.updateMatrices();
+      };
+      turn(0);
+      for (let i = 0; i < 200; i++) d.update(1 / 60, d.refreshColliders(), wind);
+      // where every particle sits in the HEAD's own frame, at rest
+      const inv = new THREE.Matrix4().copy(head.obj.matrixWorld).invert();
+      const v = new THREE.Vector3(), rest = [];
+      for (let i = 0; i < d.pos.length; i += 3) {
+        rest.push(v.set(d.pos[i], d.pos[i + 1], d.pos[i + 2]).applyMatrix4(inv).clone());
+      }
+      let worst = 0;
+      for (let f = 0; f < 26; f++) {
+        turn(Math.sin(f / 26 * Math.PI * 2) * 0.9);
+        d.update(1 / 60, d.refreshColliders(), wind);
+        inv.copy(head.obj.matrixWorld).invert();
+        for (let i = 0, k = 0; i < d.pos.length; i += 3, k++) {
+          const m = v.set(d.pos[i], d.pos[i + 1], d.pos[i + 2]).applyMatrix4(inv).distanceTo(rest[k]);
+          if (m > worst) worst = m;
+        }
+      }
+      assert(worst > 0.02,
+        `${h.id}'s fall moved ${(worst * 1000).toFixed(1)} mm in the head's own frame through a `
+        + '0.9 rad turn — it is welded to the skull, which is the complaint');
+      rows.push(`${h.id} ${(worst * 1000).toFixed(0)} mm`);
+      scene.remove(built.rig.root);
+    }
+    return `travel in the head's own frame over one turn: ${rows.join(', ')} (a rigid hood is 0)`;
+  });
 
   check('hoods: first person leaves nothing of one in the frame', () => {
     /* `Player._applyViewMode` hides the head by traversing the NECK — "the head

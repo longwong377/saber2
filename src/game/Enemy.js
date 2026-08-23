@@ -12,13 +12,14 @@ import { Actor } from './Ragdoll.js';
 import { Rig, BipedAnimator, aimY } from './Rig.js';
 import { applyBodyLod, undarken, L3_AT } from './Cohorts.js';
 import { buildB1, buildB2, buildTrooper, buildAcolyte, buildDroideka, buildWalker, buildBeast, buildBlaster, plateGeo,
-  buildJedi, bodyOptsFor, weakSpotsOf, coverSpotOf, SPECIES, HAIR_STYLES, BEARD_STYLES, ROBE_COLORS } from './Bodies.js';
+  buildJedi, bodyOptsFor, weakSpotsOf, coverSpotOf, SPECIES, HAIR_STYLES, BEARD_STYLES, ROBE_COLORS,
+  hoodCut } from './Bodies.js';
 import { Saber } from './Saber.js';
 import { dropSaber } from './Dropped.js';
 import { DuelBrain, Telegraph, FORMS, FORM_KEYS, TIER, ATTACKS, ATTACK_KEYS,
   DUEL_PHASES, guardQuat } from './Duel.js';
 import { buildRemote } from './Dojo.js';
-import { attachCloak, attachSkirt } from './Cloth.js';
+import { attachCloak, attachSkirt, attachHoodDrape } from './Cloth.js';
 import { LAYER, Body, capsuleSpheres, capsule } from '../physics/RapierWorld.js';
 import { supportHeight, STEP_UP, GROUND_SNAP, CLIMB_RATE } from '../physics/Support.js';
 import { TOUGHNESS, thinner, bladesTouching, aimAt } from './Combat.js';
@@ -3005,6 +3006,22 @@ export class Enemy {
         });
         if (this.cloak) this.cloak.outer = this.skirt;
       }
+      /* AND THE HOOD'S FALL, for whatever this body has on its head. Read off
+       * the mesh `hoodOn` left rather than off a table: the Sentinel gets its
+       * cowl from `JEDI_RANKS`, the acolyte from its own build, and neither
+       * hands an id back here. The drape is gated by `clothOn` with the cape
+       * below, so a hooded figure at range costs nothing. */
+      const hoodMesh = built.rig?.get('head')?.obj?.children
+        ?.find((c) => c.isMesh && c.userData.hood);
+      const HD = hoodMesh && hoodCut(hoodMesh.userData.hood)?.drape;
+      if (HD) {
+        this.hoodDrape = attachHoodDrape(this.world.scene, this.rig, {
+          // the HEAD's scale, not the body's — see Player._makeCloak
+          scale: built.headScale ?? this.bodyScale,
+          material: hoodMesh.material,
+          drape: HD,
+        });
+      }
     }
     if (A.shield) {
       this.shieldUp = false;
@@ -4886,6 +4903,7 @@ export class Enemy {
      */
     audio.jet?.(this.position, 0, this.id);
     if (this.cloak) { this.cloak.dispose(); this.cloak = null; }
+    if (this.hoodDrape) { this.hoodDrape.dispose(); this.hoodDrape = null; }
     if (this.skirt) { this.skirt.dispose(); this.skirt = null; }
     if (this.saber) {
       /**
@@ -7770,6 +7788,18 @@ export class Enemy {
         this.cloak.setVisible(true);
         this.cloak.update(dt, this.cloak.refreshColliders(), _v3);
       }
+    }
+    // the hood's fall, on the same cut and the same wind as the cape
+    if (this.hoodDrape) {
+      if (!this.clothOn) this.hoodDrape.setVisible(false);
+      else {
+        if (this._hoodWasOn === false && this.hoodDrape.initialised) this.hoodDrape.reset();
+        this._hoodWasOn = true;
+        this.hoodDrape.setVisible(true);
+        _v3.copy(this.velocity).multiplyScalar(-0.8).setY(0);
+        this.hoodDrape.update(dt, this.hoodDrape.refreshColliders(), _v3);
+      }
+      if (!this.clothOn) this._hoodWasOn = false;
     }
   }
 

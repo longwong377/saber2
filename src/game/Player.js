@@ -12,12 +12,12 @@ import { Saber, SABER_COLORS } from './Saber.js';
 import { SaberController, THRUST_STANDING_SPEED, SPIN } from './SaberController.js';
 import { buildJedi, buildShieldBubble } from './Bodies.js';
 import { SKIN_TONES, HAIR_COLORS } from '../ui/Menu.js';
-import { speciesOf } from './Bodies.js';
+import { speciesOf, hoodCut } from './Bodies.js';
 import { Rig, BipedAnimator, aimY, limbScale } from './Rig.js';
 import { dropSaber, hiltWithinReach, hiltDistanceSq, igniteHilt, hiltBlade,
          ageDropped } from './Dropped.js';
 import { Crew, drivableNear, whyNotDrive, crewOf } from './Driving.js';
-import { attachCloak, attachSkirt } from './Cloth.js';
+import { attachCloak, attachSkirt, attachHoodDrape } from './Cloth.js';
 import { Body, LAYER, capsuleSpheres, capsule } from '../physics/RapierWorld.js';
 import { supportHeight, topOfProps, ceilingHeight, STEP_UP, GROUND_SNAP, CLIMB_RATE } from '../physics/Support.js';
 import { walkScale } from '../engine/Bindings.js';
@@ -3000,6 +3000,7 @@ export class Player {
   _makeCloak() {
     this.cloak?.dispose();
     this.skirt?.dispose(); this.skirt = null;
+    this.hoodDrape?.dispose(); this.hoodDrape = null;
     const mat = this.palette.outer.clone();
     mat.side = THREE.DoubleSide;
     /**
@@ -3043,6 +3044,23 @@ export class Player {
       // off a standing figure. Now the skirt can move, so the cape follows the
       // real thing: live proxy in, table out.
       this.cloak.outer = this.skirt;
+    }
+    /* AND THE HOOD'S FALL, if the hood being worn has one. The shell stays
+     * rigid on the head bone — see `hoodOn` — and this is the cloth hanging off
+     * its hem, which is the half of "act as cloth" that no amount of shaping a
+     * mesh can buy. Built from the same bolt as the cape so the two read as one
+     * garment. */
+    const HD = hoodCut(this.hood)?.drape;
+    if (HD) {
+      const hmat = (this.palette.over || this.palette.outer).clone();
+      hmat.side = THREE.DoubleSide;
+      /* THE HEAD'S SCALE AND NOT THE BODY'S — `hoodOn` builds the shell at
+       * `built.headScale`, and the two differ by 1.85 on the small-folk row.
+       * A fall pinned at the body's scale starts half way up a shell built at
+       * the head's. */
+      this.hoodDrape = attachHoodDrape(this.world.scene, this.rig, {
+        scale: this.built?.headScale ?? S, material: hmat, drape: HD,
+      });
     }
   }
 
@@ -5032,6 +5050,7 @@ export class Player {
     _q2.copy(this._flipQ).invert().premultiply(_q1);
     this._flipQ.copy(_q1);
     this.cloak?.carry(_q2, pivot);
+    this.hoodDrape?.carry(_q2, pivot);
     this.skirt?.carry(_q2, pivot);
 
     if (this.flipT <= 0) {
@@ -5803,11 +5822,12 @@ export class Player {
     }
     rig.updateMatrices();
 
-    // the cloak hangs off the finished pose, and feels the wind and the run
+    // the cloak hangs off the finished pose, and feels the wind and the run —
+    // computed outside the branch because the hood's fall below reads it too
+    _v1.set(0, 0, 0).addScaledVector(this.velocity, -0.85);
+    _v1.x += Math.sin(ctx.time * 0.7) * 1.1;
+    _v1.z += Math.cos(ctx.time * 0.53) * 1.1;
     if (this.cloak) {
-      _v1.set(0, 0, 0).addScaledVector(this.velocity, -0.85);
-      _v1.x += Math.sin(ctx.time * 0.7) * 1.1;
-      _v1.z += Math.cos(ctx.time * 0.53) * 1.1;
       // SKIRT FIRST: the cape's collider proxy is the skirt's own particles, so
       // stepping the cape first would have it dodging where the skirt was last
       // frame.
@@ -5840,6 +5860,18 @@ export class Player {
       }
       this.cloak.update(dt, this.cloak.refreshColliders(), _v1);
       this.cloak.setVisible(!this.camera.firstPerson, false);
+    }
+    /* THE HOOD'S FALL, on the same finished pose and the same wind. Hidden in
+     * first person for the cape's reason and not the head's: it hangs behind
+     * the shoulders where this camera cannot see it, so simulating it there is
+     * paying for nothing. `_applyViewMode` already hides the rigid shell by
+     * traversing the neck; this is not under that bone, so it needs its own. */
+    if (this.hoodDrape) {
+      if (this.camera.firstPerson) this.hoodDrape.setVisible(false);
+      else {
+        this.hoodDrape.setVisible(true);
+        this.hoodDrape.update(dt, this.hoodDrape.refreshColliders(), _v1);
+      }
     }
   }
 
@@ -9502,6 +9534,7 @@ export class Player {
     this.saber.retract();
     this.hum.retract();
     this.cloak?.dispose(); this.cloak = null;
+    this.hoodDrape?.dispose(); this.hoodDrape = null;
     this.skirt?.dispose(); this.skirt = null;
     this.world.onPlayerDeath?.(this, source);
     /**
@@ -9737,6 +9770,7 @@ export class Player {
     this.hurled.length = 0;
     this.hum.dispose();
     this.cloak?.dispose(); this.cloak = null;
+    this.hoodDrape?.dispose(); this.hoodDrape = null;
     /**
      * THE SKIRT TOO, and it was the only garment this line forgot.
      *

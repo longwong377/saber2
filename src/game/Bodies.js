@@ -3682,6 +3682,13 @@ export const HOOD_CUTS = [
      * has read that way the whole time and the first cut of this one had the
      * two the wrong way round, which is a funnel gripping the neck. */
     nape: { r0: 0.152, r1: 0.134, h: 0.098, arc: 2.4, thick: 0.018, seg: 9, y: -0.148 },
+    /* AND THE CLOTH BELOW IT MOVES. See `attachHoodDrape` in Cloth.js: the
+     * rigid `nape` above is the hood's stiff rolled hem, and this is the loose
+     * fall hanging off it — a simulated sheet pinned in an arc round the back
+     * of the head bone, which swings when you turn and settles on the
+     * shoulders when you stop. `arc` and `r` place its pin ring at the hem the
+     * shell actually ends on, so the two read as one garment. */
+    drape: { r: 0.150, y: -0.150, arc: 2.5, length: 0.115, cols: 9, rows: 5 },
   },
   {
     id: 'sith', name: 'Sith Cowl',
@@ -3754,6 +3761,8 @@ export const HOOD_CUTS = [
     falls: { w: 0.058, h: 0.235, d: 0.032, r: 0.014, x: 0.112, y: -0.014, z: -0.014,
              pitch: 0.06, yaw: 0.20, roll: 0.09 },
     nape: { r0: 0.150, r1: 0.132, h: 0.230, arc: 2.7, thick: 0.016, seg: 8, y: -0.128 },
+    // a keffiyeh's tail: narrow, and it hangs the longest of the four
+    drape: { r: 0.148, y: -0.130, arc: 2.4, length: 0.215, cols: 9, rows: 7 },
   },
   {
     id: 'cloak', name: 'Cloak Hood',
@@ -3778,6 +3787,8 @@ export const HOOD_CUTS = [
      * put the fold out through the face. */
     peak: { len: 0.165, r0: 0.056, r1: 0.014, seg: 6, y: 0.165, z: -0.130, tilt: -2.0 },
     nape: { r0: 0.176, r1: 0.158, h: 0.150, arc: 2.9, thick: 0.020, seg: 9, y: -0.120 },
+    // the heaviest fall of the four, because this is the heaviest hood
+    drape: { r: 0.172, y: -0.122, arc: 2.9, length: 0.170, cols: 11, rows: 6 },
   },
 ];
 

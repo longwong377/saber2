@@ -2245,6 +2245,129 @@ export function attachCloak(scene, rig, opts = {}) {
 }
 
 /**
+ * THE HOOD'S FALL — the answer to the half of the hood note that geometry
+ * cannot reach.
+ *
+ * "The hoods don't really look like hoods and ACT AS CLOTH."
+ *
+ * The shells in Bodies.js now look like cloth: faceted, gathered, tapered,
+ * leaning. They still do not act like it, because they are rigid meshes welded
+ * to the head bone, and a hood that cannot move relative to the skull is a
+ * helmet the moment the figure turns. This is the moving half.
+ *
+ * WHAT IT IS AND WHAT IT DELIBERATELY IS NOT. The note over WARDROBE above says
+ * a full hood is "a second, smaller sheet pinned in a RING round the neck, and
+ * it needs the head bone and a collision hull for the skull". That is still
+ * true and this is not that: the shell stays rigid, and what becomes cloth is
+ * the FALL — the run of fabric hanging off the hood's hem, down the nape and
+ * onto the shoulders. It is pinned in an ARC and not a ring, so it never has
+ * to wrap the skull, and the skull hull is therefore not needed. It is also
+ * where the eye reads a hood as fabric from behind and from three-quarters:
+ * the crown barely moves on a real garment; the fall swings.
+ *
+ * The rigid `nape` arc on each cut stays, and is now the hood's stiff rolled
+ * hem — the drape's pin ring sits at the same radius and height, so the two
+ * read as one garment rather than as a sheet stapled under a shell.
+ *
+ * @param opts.drape  a HOOD_CUTS row's `drape` — { r, y, arc, length, cols, rows }
+ */
+export function attachHoodDrape(scene, rig, opts = {}) {
+  const D = opts.drape;
+  const head = rig.get('head');
+  if (!D || !head) return null;
+  const S = opts.scale ?? 1;
+  const cols = opts.cols ?? D.cols ?? 9;
+  const arc = D.arc ?? 2.5, R = D.r ?? 0.15;
+  const drape = new Cloak(scene, {
+    cols,
+    rows: opts.rows ?? D.rows ?? 6,
+    // the pin ring's own developed length, so the rest lengths match the arc
+    // the anchors actually lay the top row out on
+    width: R * arc * S,
+    length: (D.length ?? 0.32) * S,
+    color: opts.color ?? 0x5a4530,
+    material: opts.material,
+    gravity: opts.gravity ?? -13,
+    /* HEAVIER AND STIFFER THAN A CAPE, both on purpose. A hood's fall is a
+     * doubled hem of the same bolt the cape is cut from, it is a third the
+     * length, and it is anchored on a bone that whips: the head yaws faster
+     * than any other part of a fighter. At the cape's 0.10 across-bend it
+     * cracked like a flag on every turn. */
+    bend: opts.bend ?? 0.24,
+    bendDown: opts.bendDown ?? 0.62,
+    /* A SHORT SHEET SAGS PROPORTIONALLY MORE, because the solve is iterative
+     * and every pin is at one end of it: at the cape's four iterations and
+     * 0.82 structural this sat around 1.35x on its worst link. 0.90 and six
+     * iterations hold it near 1.2, and the last of it does not come out with
+     * more iterations because it is not convergence — it is the shoulder caps
+     * pushing on a row the pins are holding, which is a standoff and not an
+     * error. Eight iterations were measured and bought 0.01. */
+    stiffness: opts.stiffness ?? 0.90,
+    iterations: opts.iterations ?? 6,
+    /* FLARE IS WHY A SHORT FALL WAS NOT SHORT. The cape's layout fans outward
+     * as it drops, so at flare 1 the outer columns move a full extra half-span
+     * sideways over the same drop — which makes the DIAGONAL between two rows,
+     * and therefore the rest length sampled off it, two and a half times the
+     * vertical step. A 0.085 m fall came out 0.259 m long and looked like a
+     * second cape. It is not stretch and no stiffness touches it: the cloth
+     * really was cut that big. 0.28 is a hood's own flare — enough that the
+     * hem is wider than the pin ring, which is what stops it reading as a
+     * tube round the neck. */
+    flare: opts.flare ?? 0.28,
+    fullness: opts.fullness ?? 0.92,
+    jitter: opts.jitter ?? 0.05,
+    foldAO: opts.foldAO ?? 0.30,
+    seed: opts.seed,
+    anchorFn: (c, n, out) => {
+      const t = n === 1 ? 0.5 : c / (n - 1);
+      // centred on the BACK of the head: three puts phi = 0 at -X and the
+      // hood's opening on +Z, so the fall's midpoint is at pi — the same
+      // convention `hoodOn` lays its own nape arc out on.
+      const a = Math.PI + (t - 0.5) * arc;
+      _m.copy(head.obj.matrixWorld);
+      out.set(Math.sin(a) * R * S, (D.y ?? -0.14) * S, Math.cos(a) * R * S).applyMatrix4(_m);
+    },
+  });
+  drape._sharedMat = !!opts.material;
+
+  /* WHAT IT LANDS ON, AND WHY THE LADDER TAPERS.
+   *
+   * A hood's hem is at the NECK, and the neck is inside the shoulders: on the
+   * shipped figure the pin ring sits at y 0.425 and 0.15 m out from the head's
+   * axis, while the chest is 0.21 m of bone with a torso radius around 0.20.
+   * So a cape's collider table — one fat sphere per bone — swallows the pin
+   * ring whole. Pinned particles are exempt from collision, but the row 2 cm
+   * below them is not: it gets shoved out to the sphere's surface every frame
+   * while a 2 cm link says it must stay beside a pin that cannot move, the
+   * solve loses, and the sheet stretches. Measured: a 0.085 m fall hung
+   * 0.245 m, three times its own rest length, and no amount of `stiffness`
+   * touched it because the fight was not with gravity.
+   *
+   * So the torso is a LADDER that narrows as it rises — 0.168 at the sternum,
+   * 0.105 at the neck root — sized so every sphere clears the pin ring and the
+   * row under it. The two clavicles are the shoulder caps the fall lands on,
+   * and there is no head sphere at all: the rigid shell is already between the
+   * cloth and the skull.
+   */
+  const bones = [['neck', 0.075, 0.50], ['chest', 0.105, 0.95], ['chest', 0.132, 0.75],
+                 ['chest', 0.145, 0.50], ['chest', 0.168, 0.22],
+                 ['clavL', 0.082, 0.55], ['clavR', 0.082, 0.55]];
+  drape.refreshColliders = () => {
+    const out = drape.colliders;
+    out.length = 0;
+    for (const [name, r, t] of bones) {
+      const b = rig.get(name);
+      if (!b || b.severed) continue;
+      b.obj.updateMatrixWorld(false);
+      _v3.set(0, b.length * t, 0).applyMatrix4(b.obj.matrixWorld);
+      out.push({ c: _v3.clone(), r: r * S });
+    }
+    return out;
+  };
+  return drape;
+}
+
+/**
  * THE SKIRT. A closed tube of cloth on a waistband ring round the hips.
  *
  * The cape was the only simulated garment on the figure, and that is precisely
