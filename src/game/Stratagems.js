@@ -73,7 +73,7 @@ import { SUPPORT_MAX, DEAREST_SHARE } from './Support.js';
  *  and the check counts them, and two numbers for one payload is §2.3. */
 export const SMOKE_CANS = 6;
 import { clamp } from '../engine/MathUtil.js';
-import { addSmoke, updateSmoke, clearSmoke } from './Smoke.js';
+import { addSmoke, updateSmoke, clearSmoke, clearAir } from './Smoke.js';
 import { SortieDirector } from './Sorties.js';
 import { TOUGHNESS } from './Combat.js';
 
@@ -1049,6 +1049,11 @@ export class Stratagems {
      * per level, which makes this the honest place rather than a hook the
      * teardown has to remember. */
     clearSmoke();
+    /* …and the weather with it: `Scenery._applyWeather` writes the air every
+     * frame while a level is up, and a world torn down between two of those
+     * frames would leave the last storm's air standing over the next level's
+     * ground. One call, so a teardown cannot half-do it. */
+    clearAir();
     /* AND A NEW RUN GETS NEW CODES, off the run's own seed so a replayed seed
      * replays its codes and a co-op guest spells what the host spells. Falls
      * back to a fixed deal where there is no run — the character creator and
@@ -1808,6 +1813,11 @@ export class Stratagems {
     this._mining = false;
     this.sorties?.clear();
     clearSmoke();
+    /* …and the weather with it: `Scenery._applyWeather` writes the air every
+     * frame while a level is up, and a world torn down between two of those
+     * frames would leave the last storm's air standing over the next level's
+     * ground. One call, so a teardown cannot half-do it. */
+    clearAir();
   }
 
   /* ── the effects, and every one of them is somebody else's verb ────── */

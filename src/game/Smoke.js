@@ -109,6 +109,89 @@ export function clearSmoke() { clouds.length = 0; }
 export function smokeClouds() { return clouds; }
 
 /**
+ * HOW MUCH THE WEATHER IS WORTH, as optical depth per metre of air.
+ *
+ * ══════════════════════════════════════════════════════════════════════════
+ *  THE STORM WAS ALREADY BUILT AND NOBODY COULD SEE IT
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * PLAN.md §4.7 prices weather as "entirely unbuilt, five systems each of which
+ * rewrites sight tests on both sides". Half of that is wrong and it is the
+ * expensive half: `src/world/Scenery.js` ships a full `Weather` — squalls on a
+ * period, an asymmetric envelope, a gust front that sweeps across the field, a
+ * fog gain, a wind gain, a sun loss, a GLSL twin for the wall — and every one
+ * of the seven grounds authors one (peaks 0.52 to 1.0). What was missing was
+ * not the storm. It was that **nothing in the game ever asked whether you could
+ * see through it**: the frame went brown, the visibility number went from 198 m
+ * to 43 m, and every rifle on the field went on acquiring targets at ninety
+ * metres as if the air were clear.
+ *
+ * So this is the whole of weather-as-a-rule: ONE number, written by the storm
+ * that already exists, read by the model that already decides what a shooter
+ * can see and what a bolt is worth when it arrives. There is no `Weather.js`
+ * and there must not be one — a second storm beside the drawn one is two
+ * answers to "how bad is it out there".
+ *
+ * ══════════════════════════════════════════════════════════════════════════
+ *  WHY IT IS THE ADDED DENSITY AND NOT THE FOG
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * Every level authors a base fog for how it LOOKS — 0.0035 to 0.0050, a
+ * half-light range of 170 to 240 m — and gating sight on that would silently
+ * re-tune every archetype's band on every ground for the sake of a feature
+ * about weather. So what bites is only what the SQUALL adds. In calm air the
+ * term is zero and nothing anywhere behaves differently from the day before
+ * this existed; at the peak of the dune sea's front it is 0.025, which is the
+ * whole difference between a clear day and a brown-out.
+ *
+ * ══════════════════════════════════════════════════════════════════════════
+ *  AND A MAN IS HARDER TO PICK OUT THAN A HILLSIDE
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * `Weather.visibility` is a half-light distance: how far a SURFACE keeps half
+ * its light. That is a fact about a hillside filling the frame, and spotting a
+ * man-sized target in blowing dust is a contrast problem that goes first —
+ * which is why every real visibility standard quotes a different range for a
+ * light, a landmark and a person. `SPOT_HARDER` is that ratio and it is the
+ * one number this file invents: at 3, the peak of the dune sea's squall takes
+ * a shooter's acquisition from ninety metres to about twenty, which is
+ * PLAN.md's "kills ranged fire both ways" and is what the drawn frame at that
+ * moment looks like it should do.
+ */
+export const SPOT_HARDER = 3;
+
+/**
+ * The live air, in optical depth per metre. Written once a frame by
+ * `Scenery._applyWeather` — the one place that already knows both the fog the
+ * level authored and the fog the storm is running — and zero everywhere else,
+ * including every mode, level and check that never builds scenery.
+ */
+let air = 0;
+
+/**
+ * SET THE AIR. `extraDensity` is the exp2 fog density the squall has ADDED to
+ * what the level authored.
+ *
+ * The conversion is one line and it is a change of curve, deliberately: the
+ * renderer's fog is quadratic in distance (`1 - exp(-(dL)²)`) and this model is
+ * Beer–Lambert, linear in depth, because a bolt accumulates depth frame by
+ * frame along its own path and only a linear model sums (see `Bolts`' own note
+ * on exactly that). The two curves are pinned to the same half-light distance —
+ * `sqrt(ln2)/d` — and then divided by `SPOT_HARDER`, so the number this file
+ * publishes is "how far a MAN stays visible in the air the frame is drawing".
+ */
+export function setAir(extraDensity) {
+  const d = Math.max(0, extraDensity || 0);
+  air = d > 0 ? Math.LN2 / (Math.sqrt(Math.LN2) / d / SPOT_HARDER) : 0;
+}
+
+/** What the air is worth per metre right now. 0 in calm air and in every mode. */
+export function airDepth() { return air; }
+
+/** Nothing outlives a level, and neither does the weather. See `clearSmoke`. */
+export function clearAir() { air = 0; }
+
+/**
  * OPTICAL DEPTH ALONG A SEGMENT — the one question every reader asks.
  *
  * Closed form per cloud: substitute the parametrised segment into the sphere
@@ -119,12 +202,16 @@ export function smokeClouds() { return clouds; }
  * one length check.
  */
 export function depthAlong(from, to) {
-  if (!clouds.length) return 0;
+  if (!clouds.length && air <= 0) return 0;
   const dx = to.x - from.x, dy = to.y - from.y, dz = to.z - from.z;
   const len2 = dx * dx + dy * dy + dz * dz;
   if (len2 < 1e-9) return 0;
   const len = Math.sqrt(len2);
-  let depth = 0;
+  /* THE WEATHER IS A CLOUD WITH NO EDGES. It is added here rather than in the
+   * two readers because there is exactly one model of "what got through" in
+   * this game and a shooter deciding whether it can see and a bolt deciding
+   * what it is worth have to be answering out of it. See `setAir`. */
+  let depth = air * len;
   for (let i = 0; i < clouds.length; i++) {
     const c = clouds[i];
     const d = densityOf(c);
