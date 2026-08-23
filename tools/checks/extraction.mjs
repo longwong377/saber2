@@ -926,4 +926,50 @@ export async function run({ check, assert }) {
     return `orbit: far ${far0} → ${Math.round(6000)}+ m and haze off; on the ground: far ${far0}, haze restored`;
   });
 
+  check('insertion: your own blade does not kill the stick riding with you', async () => {
+    /*
+     * A REGRESSION I CAUSED, AND THE FIX IS NOT WHERE I FIRST PUT THE BUG.
+     *
+     * `SEAL_NEEDS_BLADE_DOWN` made you put the blade away before the doors
+     * closed, and its subject is close quarters: a 2.4 m bay, ten bodies, one
+     * plasma blade. I narrowed it to the outbound leg because on the way IN it
+     * was firing after the player had walked off the ramp and confiscating the
+     * blade on a battlefield — right about the message, wrong about the hazard.
+     * The hazard is being ABOARD, not which way the ship is pointing.
+     *
+     * It stayed hidden until the passengers started being drawn where they
+     * actually sit: while their capsules were a body-length out of place the
+     * blade could not reach them. With both fixed, up to four of ten troopers
+     * were cut to death during the descent, by the player's own blade, before
+     * the ramp had opened — `transports.mjs` read "10 rode, 6 on the sand".
+     *
+     * So the guard lives where the harm is decided rather than in a notice:
+     * while you are riding, the men riding with you are not targets. The check
+     * flies a real insertion with the blade LIT the whole way, because that is
+     * the case that was killing them.
+     */
+    const { world, input } = await boot('skirmish', 'geonosis');
+    assert(world.extraction.beginInsertion({ name: 'Geonosis' }), 'beginInsertion declined');
+    const allies = world.enemies.filter((e) => e.team === world.partyTeam);
+    assert(allies.length >= 6, `only ${allies.length} allies aboard — too few to measure a bay hazard`);
+    const hp0 = allies.map((e) => e.hp);
+
+    let t = 0;
+    for (let i = 0; i < 60 * 90; i++) {
+      // the blade stays lit for the whole flight, which is the player's own
+      // default and was the case that killed them
+      world.player.saber?.ignite?.();
+      world.update(1 / 60, input);
+      t += 1 / 60;
+      if (!world.extraction.active && t > 1) break;
+    }
+    const dead = allies.filter((e) => e.dead).length;
+    const hurt = allies.filter((e, i) => e.hp < hp0[i] - 0.5).length;
+    assert(dead === 0,
+      `${dead} of ${allies.length} of your own men were killed during the flight with your blade lit — `
+      + 'the bay is 2.4 m wide and the blade solver does not care whose side they are on');
+    assert(hurt === 0, `${hurt} of ${allies.length} took damage from inside the bay`);
+    return `${allies.length} aboard, blade lit for the whole ${t.toFixed(0)} s flight, none hurt`;
+  });
+
 }

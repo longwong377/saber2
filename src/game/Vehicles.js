@@ -1855,6 +1855,20 @@ function transportMaterials() {
     belly: armorMat(0x6e714a, 0.05, 0.72, 1.4),
     cloth: armorMat(0x2c2f36, 0.04, 0.8, 1.0),
     skin: armorMat(0xb98d6a, 0.03, 0.85, 1.0),
+    /* THE BAY LIGHTING, and it is the reason the interior stopped reading as
+     * planks. A troop bay is a windowless box that the player now spends
+     * twenty-eight seconds inside, and every surface in it was taking the
+     * LEVEL's key light — one warm direction, no shadow terms, no local
+     * source — so shell, deck, dark and mark all landed within a few points of
+     * the same sand tone and the whole hull flattened into one colour. Two
+     * strips of emissive down the roof give the box its own light and, with it,
+     * its own shading: a lit ceiling, walls that fall away from it, a floor in
+     * shadow. */
+    lamp: emissiveMat(0xffd9a0, 1.5),
+    /* …and the panel a rack or a conduit is made of: darker than the shell,
+     * warmer than the frame, so greebles read AS greebles rather than as more
+     * wall. */
+    greeble: metalMat(0x5b5348, 0.55, 0.7, 2.0),
   });
 }
 let _transportM = null;
@@ -1949,6 +1963,140 @@ export function buildRepublicTransport(opts = {}) {
     });
   });
   kb.bake(g);
+
+  /* ══ THE BAY YOU ACTUALLY SIT IN ═══════════════════════════════════════
+   *
+   * "It looks like planks of wood, like the entire model is two shapes."
+   *
+   * The hull above is not two shapes — it is thirty-nine — but nearly all of
+   * them are large flat plates, and a big flat plate lit by one distant key is
+   * a plank whatever it is made of. The player rides in here for twenty-eight
+   * seconds with their face a metre from these surfaces, so this is the part of
+   * the ship that has to hold up close, and everything below is chosen for what
+   * it does at arm's length: something to catch a highlight, something to cast
+   * a small shadow, and something to give the eye a scale.
+   */
+  const ki = new Kit();
+
+  /* FRAMES. Five hoops over the bay, each a header and two posts. A tube with
+   * ribs in it reads as a fuselage; a tube without them reads as a corridor. */
+  ki.row(5, (i, t) => {
+    const z = (-1.15 + t * 4.15) * S;
+    ki.add(M.dark, plateGeo(2.46 * S, 0.13 * S, 0.15 * S, 0.03 * S, 1), [0, (BAY.roof - 0.05) * S, z]);
+    ki.pair((sx) => {
+      ki.add(M.dark, plateGeo(0.12 * S, 2.00 * S, 0.15 * S, 0.03 * S, 1), [sx * 1.22 * S, 0.06 * S, z]);
+      // the gusset where a post meets its header — small, and it is the thing
+      // that makes the join look built rather than butted.
+      ki.add(M.dark, plateGeo(0.11 * S, 0.26 * S, 0.26 * S, 0.02 * S, 1),
+        [sx * 1.20 * S, (BAY.roof - 0.22) * S, z], [0, 0, sx * 0.5]);
+    });
+  });
+
+  /* THE LIGHT. Two recessed strips either side of the spine, and a housing
+   * around each so the source has a body instead of being a glowing rectangle
+   * floating under the roof. */
+  ki.pair((sx) => {
+    ki.add(M.dark, plateGeo(0.30 * S, 0.10 * S, 4.20 * S, 0.02 * S, 1),
+      [sx * 0.42 * S, (BAY.roof - 0.02) * S, 0.90 * S]);
+    ki.add(M.lamp, plateGeo(0.20 * S, 0.05 * S, 4.00 * S, 0.01 * S, 1),
+      [sx * 0.42 * S, (BAY.roof - 0.09) * S, 0.90 * S]);
+  });
+
+  /* WHAT LIVES ON THE WALLS. A conduit run at head height, avionics boxes, a
+   * rack of spare cells and a fire bottle — four different silhouettes, which
+   * is four more than a flat panel has. */
+  ki.pair((sx) => {
+    ki.add(M.greeble, new THREE.CylinderGeometry(0.055 * S, 0.055 * S, 4.30 * S, 6),
+      [sx * 1.14 * S, 0.62 * S, 0.90 * S], [1.5708, 0, 0]);
+    ki.row(4, (i, t) => {
+      ki.add(M.dark, plateGeo(0.09 * S, 0.13 * S, 0.13 * S, 0.02 * S, 1),
+        [sx * 1.14 * S, 0.62 * S, (-0.95 + t * 3.7) * S]);
+    });
+    ki.add(M.greeble, plateGeo(0.16 * S, 0.34 * S, 0.52 * S, 0.03 * S, 1), [sx * 1.16 * S, 0.24 * S, -1.05 * S]);
+    ki.add(M.mark, plateGeo(0.05 * S, 0.10 * S, 0.16 * S, 0.01 * S, 1), [sx * 1.24 * S, 0.32 * S, -1.05 * S]);
+    ki.add(M.greeble, plateGeo(0.14 * S, 0.26 * S, 0.30 * S, 0.03 * S, 1), [sx * 1.17 * S, 0.30 * S, 2.55 * S]);
+    ki.add(M.mark, new THREE.CylinderGeometry(0.09 * S, 0.09 * S, 0.42 * S, 8),
+      [sx * 1.12 * S, -0.05 * S, 2.95 * S], [0, 0, 1.5708]);
+  });
+
+  /* THE SEATS, which were a bench plate and a back plate. Six positions, each
+   * with its own pan, backrest and headrest, because a continuous slab tells
+   * you nothing about where a man sits and six separated ones tell you
+   * everything — including that the bay holds six. */
+  ki.pair((sx) => {
+    ki.row(3, (i, t) => {
+      const z = (-0.55 + t * 2.9) * S;
+      ki.add(M.cloth, plateGeo(0.46 * S, 0.09 * S, 0.52 * S, 0.03 * S, 1), [sx * 0.88 * S, -0.42 * S, z]);
+      ki.add(M.cloth, plateGeo(0.08 * S, 0.56 * S, 0.50 * S, 0.03 * S, 1), [sx * 1.12 * S, -0.13 * S, z]);
+      ki.add(M.dark, plateGeo(0.07 * S, 0.16 * S, 0.30 * S, 0.02 * S, 1), [sx * 1.10 * S, 0.22 * S, z]);
+      // the harness, hanging where a man's shoulders would take it
+      ki.add(M.cloth, plateGeo(0.03 * S, 0.44 * S, 0.05 * S, 0.005 * S, 1),
+        [sx * 1.02 * S, -0.05 * S, z - 0.14 * S], [0.2, 0, sx * 0.12]);
+      ki.add(M.cloth, plateGeo(0.03 * S, 0.44 * S, 0.05 * S, 0.005 * S, 1),
+        [sx * 1.02 * S, -0.05 * S, z + 0.14 * S], [-0.2, 0, sx * 0.12]);
+    });
+  });
+
+  /* THE FLOOR. Tread strips down the centre line and tie-down rings — the
+   * deck was one plate, and a deck with nothing on it is the surface the eye
+   * calls a plank first. */
+  ki.row(9, (i, t) => {
+    ki.add(M.dark, plateGeo(1.30 * S, 0.02 * S, 0.07 * S, 0.005 * S, 1),
+      [0, (BAY.floor + 0.02) * S, (-1.15 + t * 4.15) * S]);
+  });
+  ki.pair((sx) => ki.row(4, (i, t) => {
+    ki.add(M.dark, new THREE.TorusGeometry(0.055 * S, 0.016 * S, 5, 8),
+      [sx * 0.62 * S, (BAY.floor + 0.03) * S, (-0.85 + t * 3.5) * S], [1.5708, 0, 0]);
+  }));
+
+  /* AND THE FRONT OF THE BAY IS A WALL WITH A DOOR IN IT, not an opening onto
+   * the cockpit. It is what makes the bay a room. */
+  ki.add(M.shell, plateGeo(2.44 * S, 2.05 * S, 0.14 * S, 0.04 * S, 1), [0, 0.06 * S, -1.66 * S]);
+  ki.pair((sx) => ki.add(M.dark, plateGeo(0.34 * S, 1.42 * S, 0.17 * S, 0.03 * S, 1), [sx * 0.62 * S, -0.22 * S, -1.66 * S]));
+  ki.add(M.dark, plateGeo(1.58 * S, 0.12 * S, 0.17 * S, 0.03 * S, 1), [0, 0.52 * S, -1.66 * S]);
+  ki.add(M.lamp, plateGeo(0.10 * S, 0.10 * S, 0.03 * S, 0.01 * S, 1), [0.42 * S, 0.66 * S, -1.58 * S]);
+  ki.bake(g);
+
+  /* ══ AND SHE IS ARMED ══════════════════════════════════════════════════
+   *
+   * There was not one gun on this ship. Grepped across the whole builder:
+   * no turret, no cannon, no missile, nothing — on a craft whose entire job is
+   * to fly ten men into a battle and come back for them. "Functional
+   * transports with exteriors/interiors/pilots/weapons systems" named it, and
+   * this was the flatly missing one.
+   *
+   * A chin turret under the nose, a pintle at each door aperture where a
+   * crewman would stand, and a rocket pod at each wing root. The turret is
+   * given a name so a director can traverse it later; nothing does yet, and
+   * that is a hook rather than a promise.
+   */
+  const kg = new Kit();
+  const turret = new THREE.Group();
+  turret.name = 'chinTurret';
+  turret.position.set(0, -1.28 * S, -3.30 * S);
+  {
+    const kt = new Kit();
+    kt.add(M.dark, new THREE.SphereGeometry(0.34 * S, 10, 8), [0, 0, 0]);
+    kt.add(M.greeble, plateGeo(0.52 * S, 0.30 * S, 0.34 * S, 0.05 * S, 1), [0, -0.10 * S, -0.16 * S]);
+    kt.pair((sx) => kt.add(M.dark, new THREE.CylinderGeometry(0.055 * S, 0.065 * S, 1.15 * S, 8),
+      [sx * 0.15 * S, -0.10 * S, -0.72 * S], [1.5708, 0, 0]));
+    kt.bake(turret);
+  }
+  g.add(turret);
+  kg.pair((sx) => {
+    // the door pintle: a post, a cradle and a short heavy barrel
+    kg.add(M.dark, new THREE.CylinderGeometry(0.05 * S, 0.05 * S, 0.62 * S, 6), [sx * 1.08 * S, -0.62 * S, 0.30 * S]);
+    kg.add(M.greeble, plateGeo(0.22 * S, 0.18 * S, 0.40 * S, 0.03 * S, 1), [sx * 1.08 * S, -0.28 * S, 0.30 * S]);
+    kg.add(M.dark, new THREE.CylinderGeometry(0.06 * S, 0.075 * S, 0.92 * S, 8),
+      [sx * 1.30 * S, -0.26 * S, 0.30 * S], [0, 0, sx * -1.4]);
+    // the rocket pod at the wing root, and the tubes in its face
+    kg.add(M.shell, plateGeo(0.54 * S, 0.44 * S, 1.20 * S, 0.08 * S, 1), [sx * 1.86 * S, 0.10 * S, 1.30 * S]);
+    kg.row(3, (i, t) => {
+      kg.add(M.dark, new THREE.CylinderGeometry(0.07 * S, 0.07 * S, 0.10 * S, 6),
+        [sx * 1.86 * S, (0.24 - t * 0.28) * S, 0.66 * S], [1.5708, 0, 0]);
+    });
+  });
+  kg.bake(g, { silhouette: true });
 
   /* ── the ramp. Its own group, hinged at the aft lip of the floor ───── */
   const ramp = new THREE.Group();

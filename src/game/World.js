@@ -3754,6 +3754,31 @@ export class World {
       for (const e of this.enemies) {
         if (e.dead && !e.actor?.ragdolled) continue;
         if (e.position.distanceToSquared(bladeMid) > 36) continue;
+        /**
+         * NOT THE MEN SHARING YOUR SEAT ROW.
+         *
+         * A troop bay is 2.4 m wide with ten bodies in it and a plasma blade
+         * among them, and the blade solver does not care that they are on your
+         * side — it resolves a swept quad against whatever capsules are within
+         * six metres. The extraction has always known this: `SEAL_NEEDS_BLADE_DOWN`
+         * is the rule that made you put the blade away before the doors closed,
+         * and its whole subject is close quarters inside the hull.
+         *
+         * I narrowed that rule to the OUTBOUND leg earlier in this branch,
+         * because on the way in it was firing after the player had already
+         * walked off the ramp and confiscating the blade on a battlefield. That
+         * was right about the message and wrong about the hazard: the hazard is
+         * being ABOARD, not which direction the ship is going. Measured after
+         * the passengers started being drawn where they actually sit — up to
+         * four of ten troopers cut to death during the descent, by the player's
+         * own blade, before the ramp had opened.
+         *
+         * So the guard moves to where the harm is decided rather than to a
+         * notice: while you are riding, the men riding with you are not targets.
+         * Everything else still is — a duellist who boards is not `riding`, and
+         * the moment you step off the ramp neither are they.
+         */
+        if (p.riding && e.riding) continue;
         targets.push({ id: e.id, capsules: e.capsules(), enemy: e, dead: false });
       }
       for (const pr of this.props) {
