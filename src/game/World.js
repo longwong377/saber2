@@ -175,6 +175,7 @@ import { AREAS, ARMY_IDS, CommandDirector, COMMAND_POWER_RULES, MAX_STRENGTH, OP
 import { ArmyIndex } from './ArmyIndex.js';
 import { ObjectiveField } from './Objectives.js';
 import { FireMissionDirector } from './FireMission.js';
+import { CraterLog, SESSION_MEMORY } from '../world/CraterLog.js';
 import { Corpses, CORPSE_BUDGET } from './Corpses.js';
 import { BladeLock } from './Duel.js';
 import { FocusSystem } from './Focus.js';
@@ -1025,6 +1026,38 @@ export class World {
      * the field of installations is, and a battlefield that reshuffles between
      * reloads is one nobody can learn from.
      */
+    /**
+     * THE GROUND REMEMBERS — PLAN.md §4.7, and it was one dangling wire.
+     *
+     * `CommandDirector.marchTo` has passed `w.craterLog` into `marchFront` for
+     * as long as the front has been dressed, `src/world/CraterLog.js` is
+     * written and checked to the last bit of the heightfield, and **nothing in
+     * the tree has ever constructed one** — so every engagement of every run
+     * opened on ground that had never been fought over, while the code that
+     * would have carried it sat complete on both sides of the gap.
+     *
+     * A RUN FACT, exactly as `runSeed` and the skirmish plan are. The World
+     * outlives `loadLevel` and the terrain does not, so the log is made once
+     * and RE-ATTACHED to each new ground: what it records is a battle, and a
+     * battle is longer than a heightfield. `attach` is idempotent per terrain
+     * and `replay` now refuses a second pass over the same ground, which is
+     * what makes it safe for `marchTo` to hand it over once per engagement.
+     *
+     * TRIMMED AT THE DOOR, because a log that grows without bound eventually
+     * replays a lunar surface (FLAGSHIP §4, and `SESSION_MEMORY` carries the
+     * arithmetic).
+     *
+     * Gated on leading an army for the reason CraterLog's own header gives:
+     * "recording is a property of the SESSION and not of the ground — a
+     * sandbox, a duel and a training ground all build a Terrain and none of
+     * them has anything to remember."
+     */
+    if (leadsArmy && !this.frontOff) {
+      this.craterLog = (this.craterLog || new CraterLog()).trim(SESSION_MEMORY).attach(this.terrain);
+    } else {
+      this.craterLog?.detach();
+      this.craterLog = null;
+    }
     this.fireMissions?.dispose?.();
     this.fireMissions = null;
     if (leadsArmy && MODES[mode]?.fireMissions) {
@@ -1573,6 +1606,11 @@ export class World {
     this.grass?.dispose(); this.grass = null;
     this.water?.dispose(); this.water = null;
     this.atmosphere?.dispose(); this.atmosphere = null;
+    /* THE RECORDER COMES OFF THE GROUND BEFORE THE GROUND GOES, and the log
+     * itself survives: it is the run's memory of the battle, and the next
+     * `loadLevel` re-attaches it to the ground it replays onto. Detaching is
+     * what stops the wrapper holding a disposed terrain alive. */
+    this.craterLog?.detach();
     this.terrain?.dispose(); this.terrain = null;
     this.physics.clear();
     this.physics.terrain = null;

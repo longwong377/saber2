@@ -683,7 +683,18 @@ AFTER M5 — the chain, in dependency order
      no-player arm MORE with a Battery on the field?).
   3  §4.9 downed-not-dead + after-action ... the quorum's other half
   4  §4.4 company + Company screen ......... needs B4, 1 and 3
-  5  §1 the order you can check ............ needs 2 (Spire), 3 (AAR), 4 (cards)
+  5  §1 the order you can check ............ BUILT. src/game/FireMission.js.
+     High Command lays an ellipse, an honest estimate that is never revised,
+     and a window; one keypress clears it. Reading it costs 12 s inside 70 m
+     of the mark (4 s with Force sense), and the weld is the geometry rather
+     than a clause — measured, three arms, same order and same ten men: walk
+     out at your line's pace and 10 OF 10 are inside the ellipse; sprint out
+     alone and none are, but the quorum is DOWN for the whole reading; plant
+     them first with §4.4's delegation verb and you pay neither. The shells
+     carry a source on nobody's side, so `installTeamDamage` cannot blunt them
+     on your own men (120 hp against 42) and `killerName` names them: every
+     man they kill enters the after-action report as "by your own fire
+     mission".
   6  §4.7 Dig In, finite cover, weather, graves
   7  §4.6 variance ......................... two facets must move the quorum
   8  §4.5 co-op and versus ................. B0 already built the mode; this

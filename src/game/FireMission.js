@@ -664,23 +664,75 @@ export class FireMissionDirector {
    *
    * `Objectives._pay` calls `world.onObjectiveFire` when a battery the other
    * side holds comes round on its clock, and `World` wires that here because
-   * this file is where a fire mission already knows how to be laid. The aim
-   * point is your line's own centroid: a battery in their hands is shooting at
-   * your men, which is the only reading of that table row that costs you what
-   * losing it is supposed to cost.
+   * this file is where a fire mission already knows how to be laid.
+   *
+   * ══════════════════════════════════════════════════════════════════════
+   *  AND A BATTERY DOES NOT FIRE ON ITS OWN LINE
+   * ══════════════════════════════════════════════════════════════════════
+   *
+   * The first version aimed at your line's centroid, full stop, and that is
+   * where your line is IN CONTACT — so their own guns walked eighteen shells
+   * through their own assault every twenty-six seconds and cleared the waves
+   * for you. Measured on the flagship's own timing drive (theline.19, seed 11,
+   * both armies held unkillable on the player's side): a Raid that floors at
+   * 10.0–11.6 minutes floored at **4.9**, which is the mode's whole length
+   * halved by a feature meant to threaten the player.
+   *
+   * So the aim point is the densest knot of your men with NO hostile inside
+   * the pattern's own reach, and if there is no such knot the guns stay
+   * silent. That is not a special case bolted on to fix a number — it is what
+   * a battery does, and it turns into a rule the player can use: **stay in
+   * contact and their artillery cannot touch you.** The men it can reach are
+   * your reserve, your crews and the squad you planted on a gun two hundred
+   * metres from the fighting, which is exactly the half of your army the rest
+   * of this mode rewards you for putting somewhere.
    */
   theirBarrage() {
-    const men = this._line();
-    if (!men.length) return false;
-    let x = 0, z = 0;
-    for (const e of men) { x += e.position.x; z += e.position.z; }
-    const centre = new THREE.Vector3(x / men.length, 0, z / men.length);
-    centre.y = this.world?.terrain?.height ? this.world.terrain.height(centre.x, centre.z) : 0;
-    const from = this.world?.player?.position || centre;
-    const m = new FireMission(centre, Math.atan2(centre.x - from.x, centre.z - from.z));
+    const spot = this._clearOfTheirOwn();
+    if (!spot) return false;
+    const from = this.world?.player?.position || spot;
+    const m = new FireMission(spot, Math.atan2(spot.x - from.x, spot.z - from.z));
     this._release(m);
-    this.world?.notify?.('INCOMING', 'their battery is firing on your line');
+    this.world?.notify?.('INCOMING', 'their battery is firing on your rear');
     return true;
+  }
+
+  /**
+   * THE KNOT OF YOUR MEN THEIR GUNS CAN ACTUALLY SHOOT AT, or null.
+   *
+   * Densest first, and a candidate is disqualified by a single hostile inside
+   * `ELLIPSE_A` of it — the longest half-axis the pattern has, so the guard is
+   * the pattern's own worst case rather than a second number. A circle and not
+   * the ellipse itself because the ellipse is not oriented until a candidate is
+   * chosen, and a battery that has to think about it does not fire.
+   */
+  _clearOfTheirOwn() {
+    const mine = this._line();
+    if (!mine.length) return null;
+    const theirs = [];
+    for (const e of (this.world?.enemies || [])) {
+      if (!e || e.dead || e.team == null || e.team === this.myTeam) continue;
+      theirs.push(e);
+    }
+    let best = null, bestN = -1;
+    for (const a of mine) {
+      let clear = true;
+      for (const h of theirs) {
+        if (Math.hypot(h.position.x - a.position.x, h.position.z - a.position.z) <= ELLIPSE_A) {
+          clear = false; break;
+        }
+      }
+      if (!clear) continue;
+      let n = 0;
+      for (const b of mine) {
+        if (Math.hypot(b.position.x - a.position.x, b.position.z - a.position.z) <= ELLIPSE_B) n++;
+      }
+      if (n > bestN) { bestN = n; best = a; }
+    }
+    if (!best) return null;
+    const centre = new THREE.Vector3(best.position.x, 0, best.position.z);
+    centre.y = this.world?.terrain?.height ? this.world.terrain.height(centre.x, centre.z) : 0;
+    return centre;
   }
 
   /** Every living body of your side — which in this mode is the line. */

@@ -347,19 +347,53 @@ export async function run({ check, assert }) {
     return `${a} at (112,218), the same at (132,238), different at (332,218)`;
   });
 
-  check('fire mission: their battery reaches the line through the door nobody had installed', () => {
+  check('fire mission: their battery reaches your rear, and never fires on its own line', () => {
     const w = stubWorld();
     const d = new FireMissionDirector(w, { myTeam: 0 });
+    /* Your reserve, out of contact. */
     for (let i = 0; i < 6; i++) w.enemies.push(body(0, 40 + i, 60, `CT-${1400 + i}`));
     assert(d.theirBarrage(), 'a battery in their hands could not reach your line at all');
     drive(d, 6);
     assert(w.shells.length === SHELLS, `their barrage put ${w.shells.length} shells down`);
     const cx = w.shells.reduce((a, s) => a + s.at.x, 0) / w.shells.length;
     const cz = w.shells.reduce((a, s) => a + s.at.z, 0) / w.shells.length;
-    assert(Math.hypot(cx - 42.5, cz - 60) < ELLIPSE_A,
-      `their barrage landed at (${cx.toFixed(0)},${cz.toFixed(0)}) against a line at (42,60) — the `
-      + 'Battery\'s "lost: it fires for them" row is what this is for');
-    return `${SHELLS} shells on the line's own centroid, ${Math.hypot(cx - 42.5, cz - 60).toFixed(1)} m off it`;
+    const off = Math.hypot(cx - 42.5, cz - 60);
+    assert(off < ELLIPSE_A,
+      `their barrage landed at (${cx.toFixed(0)},${cz.toFixed(0)}) against a reserve at (42,60) — `
+      + 'the Battery\'s "lost: it fires for them" row is what this is for');
+
+    /**
+     * …AND NOW THEIR OWN ASSAULT IS STANDING IN IT.
+     *
+     * The first version of this aimed at the line's centroid full stop, so
+     * their guns walked eighteen shells through their own attack every clock
+     * and cleared the waves for the player: theline.19's Raid floor went from
+     * 10.0–11.6 minutes to 4.9. A battery does not fire on its own line, and
+     * the rule that falls out of it is one a player can use.
+     */
+    const contact = stubWorld();
+    const dc = new FireMissionDirector(contact, { myTeam: 0 });
+    for (let i = 0; i < 6; i++) contact.enemies.push(body(0, 40 + i, 60, `CT-${1500 + i}`));
+    for (let i = 0; i < 4; i++) contact.enemies.push(body(1, 44 + i, 66));
+    assert(!dc.theirBarrage(),
+      'their battery fired on a piece of ground their own assault was standing on — that is not a '
+      + 'threat to the player, it is free artillery support for him');
+    assert(contact.shells.length === 0, `${contact.shells.length} shells landed on a refused shoot`);
+
+    /* And a line that is half in contact still has a rear to be shelled. */
+    const split = stubWorld();
+    const ds = new FireMissionDirector(split, { myTeam: 0 });
+    for (let i = 0; i < 4; i++) split.enemies.push(body(0, i, 0, `CT-${1600 + i}`));      // in contact
+    for (let i = 0; i < 4; i++) split.enemies.push(body(1, i, 6));
+    for (let i = 0; i < 3; i++) split.enemies.push(body(0, 200 + i, 0, `CT-${1700 + i}`)); // the rear
+    assert(ds.theirBarrage(), 'a line with a rear out of contact was not shelled at all');
+    drive(ds, 6);
+    const sx = ds.mission ? 0 : split.shells.reduce((a, s) => a + s.at.x, 0) / split.shells.length;
+    assert(sx > 150,
+      `the shells landed at x≈${sx.toFixed(0)} — on the half of the line that is in contact rather `
+      + 'than the half that is not');
+    return `reserve at (42,60): ${SHELLS} shells ${off.toFixed(1)} m off it · in contact: no shoot · `
+      + `half in contact: shelled at x≈${sx.toFixed(0)}`;
   });
 
   /* ══════════════════════════════════════════════════════════════════════ */

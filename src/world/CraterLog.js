@@ -194,6 +194,23 @@ export class CraterLog {
    */
   replay(terrain) {
     if (!terrain?.crater) return { craters: 0, ms: 0 };
+    /**
+     * ONCE PER GROUND, AND THIS IS NOT A CONVENIENCE.
+     *
+     * `CommandDirector.marchTo` walks engagements 1…n and dresses each one, and
+     * every one of those calls is handed `world.craterLog` — so the first
+     * caller to carry a log across a ground change would have replayed it
+     * ONCE PER ENGAGEMENT onto the same fresh terrain: three engagements in and
+     * every hole is three times as deep, on a curve nobody would look for
+     * because each individual crater is the right size. It is the same defect
+     * `attach` refuses twice-wrapping for, one layer out.
+     *
+     * The mark is the LOG, not a boolean, so a second log — a co-op guest's, a
+     * campaign's saved one — still lays itself onto ground another has already
+     * played onto, which is a different question and a legitimate one.
+     */
+    if (terrain._craterLogPlayed === this) return { craters: 0, burns: 0, ms: 0, skipped: true };
+    terrain._craterLogPlayed = this;
     const t0 = performance.now();
     /* Through the UNWRAPPED method when this log is the one recording on this
      * terrain, or a replay would append every crater it replays to the log it
@@ -270,6 +287,23 @@ export class CraterLog {
       b.slice(0, b.length - (b.length % BURN_FIELDS)));
   }
 }
+
+/**
+ * HOW MUCH OF A SITTING'S GROUND IS WORTH CARRYING, in craters.
+ *
+ * FLAGSHIP §4's saturation finding is the whole of this number: "cratered
+ * coverage stops growing by sortie 10 and walkability has moved 0.2 points by
+ * sortie 20". The ground stops being able to say anything new long before the
+ * log stops growing, and the log is not free to replay — measured in this
+ * file's own note, 322 craters replay in 41 ms with one flush, so an untrimmed
+ * five-engagement sitting would spend about a third of a second re-digging
+ * ground the player cannot tell from the trimmed version.
+ *
+ * 900 is roughly two full battles of the 500-crater fixture, which is the
+ * horizon over which a player can still SEE the difference between ground
+ * that has been fought over and ground that has not.
+ */
+export const SESSION_MEMORY = 900;
 
 /** Fields per crater, exported so a check cannot hold a second copy of 6. */
 export const CRATER_FIELDS = FIELDS;
