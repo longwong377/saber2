@@ -3604,14 +3604,15 @@ function beardParts(s, hg, B) {
  * which is the same rule JEDI_RANKS is built on and the reason the roster's
  * four Jedi stopped measuring 0.939 against each other:
  *
- *   cowl    round, open, soft. The shipped Sentinel cowl to the millimetre.
+ *   cowl    round, open, soft — seven broad gathers, a flare onto the
+ *           shoulders and a drape at the nape. The Sentinel wears it.
  *   sith    tight to the skull, a 68° slot instead of a 108° opening, a
  *           standing collar OUTSIDE the shell and a peak over the crown.
  *   wrap    not a cowl at all — a closed cap on the brow under a cord, with
  *           two falls down the sides of the face and a flared nape drape.
  *           The only one of the four with cloth beside the jaw.
- *   cloak   the biggest thing anyone wears on a head here: 40.7 cm front to
- *           back against the Jedi cowl's 28.0 and a bare skull's 21.9, with a
+ *   cloak   the biggest thing anyone wears on a head here: 48.3 cm front to
+ *           back against the Jedi cowl's 35.1 and a bare skull's 21.9, with a
  *           heavy rolled rim, a peak gathered at the back and a drape across
  *           the shoulders.
  */
@@ -3623,44 +3624,107 @@ export const HOOD_CUTS = [
   },
   {
     id: 'cowl', name: 'Jedi Cowl',
-    /* THE SHIPPED SENTINEL COWL, TO THE MILLIMETRE. Every number in this row
-     * is read straight off the inline cowl that used to live in `headKit`
-     * below — r 0.150, phi 0.80π for 1.40π, theta 0.70π, scale 1.02/1.12/1.16,
-     * up 0.050 and back 0.026, with a 0.118 × 0.019 torus at 0.098/0.022 rolled
-     * -0.34 — because `JEDI_RANKS.sentinel` now names this cut instead of
-     * carrying its own copy of the geometry, and a rank that measured 0.883
-     * flank IoU against the Knight must not move by so much as a vertex when a
-     * player-facing wardrobe piece is added underneath it. The lining is the
-     * one thing that is new, and it is inside the shell. */
+    /* WHERE THIS ROW CAME FROM. It began as the inline cowl that used to live
+     * in `headKit` below, copied out to the millimetre so that
+     * `JEDI_RANKS.sentinel` could name a wardrobe cut instead of carrying its
+     * own copy of the geometry. It has since been rebuilt as cloth (see
+     * below), which moves the Sentinel with it — deliberately, and the rank
+     * still wears exactly what the wardrobe hands a player, which is the
+     * property hoods.mjs pins at 100.0% identical outline. */
     blurb: 'The order\'s own: deep, round, and open enough that your face is still a face inside it.',
-    shell: { r: 0.150, w: 16, h: 12, open: 0.60, theta: 0.70,
-             sx: 1.02, sy: 1.12, sz: 1.16, y: 0.050, z: -0.026, line: 0.93, dark: 0.42 },
-    rim: { r: 0.118, tube: 0.019, seg: 5, ring: 16, y: 0.098, z: 0.022, tilt: -0.34 },
+    /* ── AND IT IS NO LONGER A SHELL AND A RIM ─────────────────────────
+     *
+     * "The hoods don't really look like hoods and act as cloth — more like
+     * putting on a solid capsule or astronaut helmet. I'm not choosing helmets
+     * here."
+     *
+     * Fair, and the table said why: this cut declared a `shell` and a `rim`
+     * and nothing else, so the most-worn hood in the game was a scaled sphere
+     * segment with a torus at its mouth. A smooth ellipsoid that hugs the
+     * skull IS a helmet — that is what a helmet is — and no amount of cloth
+     * colour changes it. The assembler has carried `folds`, `peak`, `nape` and
+     * `falls` the whole time and this row asked for none of them.
+     *
+     * WHAT DID NOT WORK, because five rounds of it were rendered and looked
+     * at: laying `folds`, a `peak` and `falls` on top of the shell. Those are
+     * straight limbs and flat plates over a curved surface, so at a radius
+     * that clears the cloth they stand off it in open air — five tapered
+     * spikes, a dorsal fin and two boards by the cheeks — and at a radius that
+     * touches it they are swallowed within three centimetres and the dome
+     * comes back exactly as smooth as before. There is no radius in between.
+     *
+     * What works is changing the SHELL, because the shell is the silhouette:
+     *
+     *   facet   flat-shaded, so it is panels meeting at creases instead of a
+     *           polished revolve. The single biggest change of the four.
+     *   flute   seven gathers modulating the vertex radius — ridges that are
+     *           part of the surface and therefore stay on it at every height
+     *           and from behind, which is the view a hood cannot hide in.
+     *   taper   wider at the hem than at the crown. A sphere is neither.
+     *   lean    the crown pushed back, because the cloth is anchored at the
+     *           shoulders and the head has walked forward out of it.
+     *
+     * plus the `nape` drape, which is what stops it at the shoulders rather
+     * than at the jaw. Measured after: 80.0% of the cranium under cloth, 0.0%
+     * of the eye band, and 83.0% outline agreement with its nearest neighbour
+     * against a 85% bar.
+     */
+    facet: true,
+    shell: { r: 0.153, w: 28, h: 10, open: 0.60, theta: 0.80,
+             sx: 0.93, sy: 1.05, sz: 1.10, taper: 0.13, lean: 0.044,
+             flute: 7, fluteAmp: 0.270,
+             y: 0.042, z: -0.020, line: 0.93, dark: 0.42 },
+    rim: { r: 0.114, tube: 0.020, seg: 5, ring: 12, y: 0.086, z: 0.024, tilt: -0.34 },
+    /* AND IT FALLS ONTO THE SHOULDERS. A hood that stops at the jaw line is a
+     * cap. `r0` is the BOTTOM of an arcGeo and `r1` the top (see its cross
+     * section: `corner[k][1]` is the height fraction and the radius lerps on
+     * it), so cloth that flares as it hangs is r0 > r1 — the cloak's drape
+     * has read that way the whole time and the first cut of this one had the
+     * two the wrong way round, which is a funnel gripping the neck. */
+    nape: { r0: 0.152, r1: 0.134, h: 0.098, arc: 2.4, thick: 0.018, seg: 9, y: -0.148 },
   },
   {
     id: 'sith', name: 'Sith Cowl',
     blurb: 'Tight to the skull, a slot for a face, and a collar standing at the nape. Nothing of you shows.',
     /* The opening is 0.38π — 68°, against the Jedi cowl's 108° — and the shell
      * runs 0.84π of theta, which is 151° from the crown and puts its bottom
-     * edge at y -0.108, level with the shoulder. Narrow AND long: this is the
-     * only cut whose cloth reaches the collarbone at the sides. */
-    shell: { r: 0.138, w: 16, h: 12, open: 0.38, theta: 0.84,
-             sx: 1.02, sy: 1.24, sz: 1.12, y: 0.042, z: -0.030, line: 0.94, dark: 0.34 },
-    /* A collar is only a collar if it stands OUTSIDE the thing it collars. The
-     * shell's own half-width at y = -0.056 is 0.116, so an arc whose inner
-     * wall is 0.126 clears the cowl and reads as a second layer rather than as
-     * a ring buried in it — the same mistake the acolyte's plastron was
-     * measured making against its own mantle.
+     * edge level with the shoulder. Narrow AND long: this is the only cut
+     * whose cloth reaches the collarbone at the sides.
+     *
+     * It takes the same four moves as the Jedi cowl and takes them the other
+     * way, which is what keeps the two apart: FINELY fluted (8 narrow gathers
+     * against the cowl's 7 broad ones), barely tapered and barely leaning, so
+     * it stays tight to the skull and reads as cloth stretched over a head
+     * rather than cloth hanging off one. The base scales come down as the
+     * gathers go on, because a flute only ever pushes OUT. */
+    facet: true,
+    shell: { r: 0.138, w: 26, h: 11, open: 0.38, theta: 0.84,
+             sx: 0.98, sy: 1.21, sz: 1.07, taper: 0.07, lean: 0.022,
+             flute: 8, fluteAmp: 0.150,
+             y: 0.042, z: -0.030, line: 0.94, dark: 0.34 },
+    /* A collar is only a collar if it stands OUTSIDE the thing it collars, and
+     * the shell grew gathers under it, so the radii went up with them: an arc
+     * buried in the cloth it is supposed to be a second layer of is the same
+     * mistake the acolyte's plastron was measured making against its mantle.
      *
      * AN ARC AND NOT A CLOSED BAND, which the first cut of it was. A full
      * revolution at this radius passes 60 mm in FRONT of the chin: a ring
      * across the mouth of the one hood whose whole point is that a slot of
-     * face shows through it. 4.2 rad about the back leaves 120 degrees open at
-     * the throat, which is where a standing collar opens. */
-    collar: { r0: 0.126, r1: 0.146, h: 0.105, arc: 4.2, thick: 0.024, seg: 12,
-              y: -0.056, squash: 0.94 },
-    peak: { w: 0.052, h: 0.155, d: 0.062, r: 0.014, y: 0.176, z: -0.106, tilt: 0.55 },
-    folds: { n: 3, len: 0.150, r0: 0.019, r1: 0.007, at: 0.118, y: 0.150, spread: 1.5 },
+     * face shows through it.
+     *
+     * AND 2.7 RAD AND NOT 4.2. The wide arc left its two square end faces 60
+     * degrees off the face — on the cheekbone, where from the front they read
+     * as a pair of flat boards bolted to the jaw. 2.7 puts them a full 100
+     * degrees round, behind the ear line where a standing collar is actually
+     * seamed, and the band drops 18 mm so its top edge stops crossing the
+     * cheek at all. */
+    collar: { r0: 0.138, r1: 0.156, h: 0.092, arc: 2.7, thick: 0.024, seg: 12,
+              y: -0.074, squash: 0.94 },
+    /* The gathered point, and it is a POINT now. At 0.155 tall standing off a
+     * smooth shell it was a dorsal fin — the single thing that made this cut
+     * read as a helmet with a crest rather than as a hood. Half the height,
+     * laid back along the crown, and the gathers in the shell carry the rest. */
+    peak: { w: 0.044, h: 0.086, d: 0.050, r: 0.012, y: 0.168, z: -0.118, tilt: 0.86 },
   },
   {
     id: 'wrap', name: 'Desert Wrap',
@@ -3694,12 +3758,18 @@ export const HOOD_CUTS = [
   {
     id: 'cloak', name: 'Cloak Hood',
     blurb: 'The travelling hood: heavy, deep, gathered at the back and falling across the shoulders. You are a shape in it.',
-    /* The largest thing on any head in this game. sz 1.30 against the cowl's
-     * 1.16 is what makes it 40.7 cm front to back — the face sits well back
-     * inside the opening instead of filling it, which is the entire reason a
-     * travelling hood reads as ominous and a Jedi cowl does not. */
-    shell: { r: 0.170, w: 16, h: 12, open: 0.66, theta: 0.68,
-             sx: 1.05, sy: 1.13, sz: 1.30, y: 0.052, z: -0.052, line: 0.92, dark: 0.30 },
+    /* The largest thing on any head in this game: 48.3 cm front to back
+     * against the Jedi cowl's 35.1 — the face sits well back inside the
+     * opening instead of filling it, which is the entire reason a travelling
+     * hood reads as ominous and a Jedi cowl does not. Same four moves as the
+     * other two shells and the heaviest settings of the three: six wide
+     * gathers, the deepest taper and the strongest lean, because this is the
+     * one cut that is supposed to look like a weight of cloth. */
+    facet: true,
+    shell: { r: 0.170, w: 26, h: 11, open: 0.66, theta: 0.68,
+             sx: 0.99, sy: 1.08, sz: 1.24, taper: 0.16, lean: 0.058,
+             flute: 6, fluteAmp: 0.260,
+             y: 0.052, z: -0.052, line: 0.92, dark: 0.30 },
     rim: { r: 0.140, tube: 0.027, seg: 6, ring: 18, y: 0.082, z: 0.034, tilt: -0.42 },
     /* The point of the hood, folded back rather than standing up. A +Y limb
      * rotated by a NEGATIVE angle about X goes back (0, cos a, sin a), so the
@@ -3707,7 +3777,6 @@ export const HOOD_CUTS = [
      * -0.273, which is where a gathered fold belongs. Positive was tried and
      * put the fold out through the face. */
     peak: { len: 0.165, r0: 0.056, r1: 0.014, seg: 6, y: 0.165, z: -0.130, tilt: -2.0 },
-    folds: { n: 3, len: 0.165, r0: 0.022, r1: 0.008, at: 0.140, y: 0.140, spread: 1.7 },
     nape: { r0: 0.176, r1: 0.158, h: 0.150, arc: 2.9, thick: 0.020, seg: 9, y: -0.120 },
   },
 ];
@@ -3746,6 +3815,28 @@ function liningGeo(g, k, dark) {
   return l;
 }
 
+/**
+ * FLAT-SHADE A GEOMETRY — split its vertices and give every triangle the one
+ * normal of its own plane.
+ *
+ * This is the difference between a hood and a helmet, and it is not a small
+ * one. A sphere segment with smooth normals is a polished shell no matter how
+ * coarse it is; the same segment shaded flat is a run of panels meeting at
+ * hard creases, which is what cloth pulled over a head does. Four limbs laid
+ * on top of a smooth ellipsoid do not change that read — measured, they came
+ * back as nubs on an egg — because the eye takes the silhouette and the
+ * highlight, and a smooth revolve gives it one of each.
+ *
+ * Costs vertices (nothing is shared any more) but not draw calls: the Kit
+ * merges the result into the same single bucket as everything else on the
+ * head, which is the budget hoods are held to.
+ */
+function facet(g) {
+  const f = g.index ? g.toNonIndexed() : g;
+  f.computeVertexNormals();
+  return f;
+}
+
 /** The sphere segment of a shell, centred on the origin and on the face. */
 function hoodShell(S, s) {
   const len = Math.PI * (2 - S.open);
@@ -3756,6 +3847,63 @@ function hoodShell(S, s) {
     S.open > 0 ? 1.5 * Math.PI - len / 2 : 0, S.open > 0 ? len : Math.PI * 2,
     0, Math.PI * S.theta);
   g.scale(S.sx, S.sy, S.sz);
+  /* AND THEN IT STOPS BEING A SPHERE, which is the whole complaint.
+   *
+   * `sx/sy/sz` can only make an ellipsoid, and an ellipsoid over a head is a
+   * helmet — the sphere was measured with five folds, a seam and a drape on it
+   * and still came back a polished egg, because none of those change the
+   * outline and the outline was a circle. Cloth pulled over a head is none of
+   * the things a sphere is: it is WIDER at the bottom than at the crown, where
+   * it hangs away from the jaw, and it LEANS BACK, because it is anchored at
+   * the shoulders and the head has walked forward out of it.
+   *
+   * `taper` is how much wider the bottom edge is than the crown, `lean` how
+   * far back the crown is pushed in metres, both applied on the vertex after
+   * the scale. Absent, the shell is exactly the ellipsoid it always was.
+   */
+  if (S.taper || S.lean || S.flute) {
+    const p = g.attributes.position;
+    // over the shell's OWN y span, which is not the sphere's: `theta` stops the
+    // segment part-way down, so `r * sy` is the crown and the bottom edge is
+    // wherever that cut lands. Normalising on the radius instead put the widest
+    // part 58% past the bottom edge and made a lampshade the shoulders were
+    // inside of.
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 0; i < p.count; i++) { const y = p.getY(i); if (y < lo) lo = y; if (y > hi) hi = y; }
+    const span = Math.max(1e-4, hi - lo);
+    /* AND `flute` IS THE GATHER, which is the piece four rounds of laying
+     * tapered rolls on top of the shell could not buy.
+     *
+     * A roll is a straight limb and the shell is curved, so a roll long enough
+     * to read dives inside the cloth within three centimetres of its base —
+     * measured five times, at five radii, and the dome came back smooth every
+     * time. A flute is not laid on the surface, it IS the surface: the vertex
+     * radius is modulated by `cos(n·phi)`, so the shell gains `n` ridges that
+     * run its whole length, stay exactly on it at every height, and hold up
+     * from behind, which is the one view a hood cannot hide in.
+     *
+     * Phase-locked to the back (`phi - PI`) so a ridge lands on the centre
+     * seam rather than a valley, and the amplitude eases off over the last
+     * fifth toward the hem, because cloth gathered at the crown opens out as
+     * it falls.
+     *
+     * IT ONLY EVER PUSHES OUT. A gather is slack cloth standing off the head,
+     * so the term is `(1 + cos)/2` and not `cos`: a signed ripple pulls the
+     * valleys INSIDE the base radius, and the base radius is what clears the
+     * skull. Measured signed at amplitude 0.135, the cowl left 23.8% of the
+     * cranium bare through its own troughs — a hood you can see the head
+     * through, which is the check hoods.mjs opens with.
+     */
+    const fn = S.flute || 0, fa = S.fluteAmp || 0;
+    for (let i = 0; i < p.count; i++) {
+      const y = p.getY(i), t = (hi - y) / span;      // 0 at the crown, 1 at the hem
+      let w = 1 + (S.taper || 0) * t;
+      if (fn) w *= 1 + fa * 0.5 * (1 + Math.cos(fn * (Math.atan2(p.getX(i), p.getZ(i)) - Math.PI)))
+                       * (1 - 0.55 * clamp((t - 0.8) / 0.2, 0, 1));
+      p.setXYZ(i, p.getX(i) * w, y, p.getZ(i) * w - (S.lean || 0) * s * (1 - t));
+    }
+    g.computeVertexNormals();
+  }
   return g;
 }
 
@@ -3786,7 +3934,10 @@ export function hoodOn(headObj, mat, s, id) {
 
   if (H.shell) {
     const S = H.shell;
-    const g = hoodShell(S, s);
+    let g = hoodShell(S, s);
+    // The lining is taken off the SMOOTH shell, before any faceting: it is
+    // the inside surface, nobody sees its silhouette, and `liningGeo` reverses
+    // winding through the index buffer that faceting throws away.
     if (S.line) k.add(mat, liningGeo(g, S.line, S.dark ?? 0.42), [0, S.y * s, S.z * s]);
     k.add(mat, g, [0, S.y * s, S.z * s]);
   }
@@ -3828,10 +3979,18 @@ export function hoodOn(headObj, mat, s, id) {
   // reading as a moulded plastic shell.
   if (H.folds) {
     const F = H.folds;
+    /* `ax`/`az` STRETCH THE RING THE FOLDS SIT ON, and a cut wants them the
+     * moment its shell is not round in plan. `at` alone lays the folds on a
+     * CIRCLE; a shell with sx 1.08 and sz 1.22 is an ellipse 1.7 cm wider
+     * front-to-back than side-to-side, so one radius either buries the folds
+     * at the back or floats them at the sides — the cowl was measured doing
+     * both at once. Default 1, so every cut authored before this reads
+     * exactly as it did. */
+    const ax = F.ax ?? 1, az = F.az ?? 1, fz = (F.z ?? 0) * s;
     k.row(F.n, (i, t) => {
       const a = (t - 0.5) * F.spread + Math.PI;
       k.add(mat, limbGeo(F.len * s, F.r0 * s, F.r1 * s, 5, true, { rings: 3, bulge: 0.2, capN: 2 }),
-        [Math.sin(a) * F.at * s, F.y * s, Math.cos(a) * F.at * s], [-2.6, a, 0]);
+        [Math.sin(a) * F.at * ax * s, F.y * s, Math.cos(a) * F.at * az * s + fz], [-2.6, a, 0]);
     });
   }
   // The drape down the back. arcGeo faces +Z at φ = 0 and spans y ∈ [0, h],
@@ -3855,6 +4014,14 @@ export function hoodOn(headObj, mat, s, id) {
 
   const [m] = k.bake(headObj);
   if (!m) return null;
+  /* FLAT-SHADE THE WHOLE HOOD, not the shell alone. The rim is the piece the
+   * player looks straight at and a smooth torus is a porthole; the peak and
+   * the folds want the same hard creases the panels have or they read as
+   * plumbing laid over cloth. Done after the bake so it is one pass over one
+   * merged buffer — and the lining comes out right for free, because
+   * `computeVertexNormals` reads winding and the lining's is already reversed,
+   * so its normals land pointing inward exactly as `liningGeo` left them. */
+  if (H.facet) m.geometry = facet(m.geometry);
   m.userData.hood = H.id;
   /* KEPT AT RANGE, for the reason the acolyte's cowl is: `Enemy._applyLod`
    * culls every mesh that is neither a bone primary nor tagged here, and a
