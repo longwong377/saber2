@@ -954,31 +954,66 @@ export async function run({ check, assert }) {
     assert(allies.length >= 6, `only ${allies.length} allies aboard — too few to measure a bay hazard`);
     const hp0 = allies.map((e) => e.hp);
 
+    /**
+     * ── AND IT IS ATTRIBUTED, BECAUSE "SOMEBODY GOT HURT" IS NOT THIS RULE ──
+     *
+     * The first cut of this counted hit points and nothing else, and it flaked:
+     * green four runs in five, then red at "1 of 10", then red again at "1 of
+     * 10 KILLED" after the count had been narrowed. Ten seeds run in isolation
+     * came back 0 and 0 with no `damage()` call on an ally at all, so the
+     * trigger was never the bay — it is that this is a 90-second window in a
+     * live skirmish and the wave director puts hostiles on the ground under a
+     * descending ship. A droid shooting a trooper through an open door is not
+     * the defect this check is named after, and a check that cannot tell the
+     * two apart reports the wrong one at random.
+     *
+     * So the ledger is on the SOURCE. `damage` is the one door harm goes
+     * through for a body, and it carries who dealt it; anything billed to the
+     * player is this rule's business and anything else is the battle. The
+     * wrapper goes on before the flight and comes off after it, in a `finally`,
+     * because a prototype left patched is the next suite's ghost.
+     */
+    const { Enemy: EN } = await import('../../src/game/Enemy.js');
+    const real = EN.prototype.damage;
+    const mine = [];
+    EN.prototype.damage = function (amount, point, source, kind, ...rest) {
+      const before = this.hp;
+      const out = real.call(this, amount, point, source, kind, ...rest);
+      if (allies.includes(this) && (source === world.player || source?.owner === world.player)) {
+        mine.push(`${this.name || this.type} -${Math.max(0, before - this.hp).toFixed(1)}`
+          + ` (${kind || 'blade'})`);
+      }
+      return out;
+    };
+
     let t = 0;
-    for (let i = 0; i < 60 * 90; i++) {
-      // the blade stays lit for the whole flight, which is the player's own
-      // default and was the case that killed them
-      world.player.saber?.ignite?.();
-      world.update(1 / 60, input);
-      t += 1 / 60;
-      if (!world.extraction.active && t > 1) break;
-    }
+    try {
+      for (let i = 0; i < 60 * 90; i++) {
+        // the blade stays lit for the whole flight, which is the player's own
+        // default and was the case that killed them
+        world.player.saber?.ignite?.();
+        world.update(1 / 60, input);
+        t += 1 / 60;
+        if (!world.extraction.active && t > 1) break;
+      }
+    } finally { EN.prototype.damage = real; }
+
+    /* THE RULE, and it is the whole of it: nothing the commander did reached
+     * his own stick. Not "nobody was hurt" — men are shot at on the way in and
+     * that is the mode working. */
+    assert(mine.length === 0,
+      `the commander's own blade billed ${mine.length} hit(s) to the men riding with him: `
+      + `${mine.slice(0, 4).join(', ')}`);
+    /* …and the ship is still not a meat grinder. A wave that killed the whole
+     * stick in the bay would pass the clause above and be a different defect,
+     * so the gross figure stays as a witness with a band on it rather than a
+     * zero. */
     const dead = allies.filter((e) => e.dead).length;
-    const hurt = allies.filter((e, i) => e.hp < hp0[i] - 0.5).length;
-    /* WHO, AND BY HOW MUCH. "1 of 10 took damage" is a count with no lead in
-     * it: the same sentence is a blade through one man and a metre of fall on
-     * landing, and telling them apart cost a whole run of the suite. The names
-     * and the deltas are free here and they are the first thing anybody
-     * reading a red asks for. */
-    const bill = allies.map((e, i) => [e.name || e.type, hp0[i] - e.hp])
-      .filter(([, d]) => d > 0.5)
-      .map(([n, d]) => `${n} -${d.toFixed(1)}`).join(', ');
-    assert(dead === 0,
-      `${dead} of ${allies.length} of your own men were killed during the flight with your blade lit — `
-      + 'the bay is 2.4 m wide and the blade solver does not care whose side they are on');
-    assert(hurt === 0,
-      `${hurt} of ${allies.length} took damage from inside the bay (${bill})`);
-    return `${allies.length} aboard, blade lit for the whole ${t.toFixed(0)} s flight, none hurt`;
+    assert(dead <= 1,
+      `${dead} of ${allies.length} of your own men died during the 90 s flight — none of it billed `
+      + 'to the player, so this is the wave director putting a firefight under a descending ship');
+    return `${allies.length} aboard, blade lit for the whole ${t.toFixed(0)} s flight, `
+      + `0 hit points billed to the commander (${dead} lost to the battle)`;
   });
 
 }

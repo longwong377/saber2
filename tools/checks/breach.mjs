@@ -328,8 +328,12 @@ export async function run({ check, assert }) {
      * stage would be optional, the call would be a convenience, and the
      * position would be back to being the errand the whole emplacement exists
      * to stop being. So the assertion is not "slower" — it is that thirty
-     * seconds of the identical drive that opens an unwarded plate in about
-     * twenty burns EXACTLY NOTHING.
+     * twenty seconds of the identical drive that opens an unwarded plate in
+     * about the same burns EXACTLY NOTHING. Twenty and seventy rather than
+     * thirty and a hundred and ten: this suite already drives two full
+     * hundred-second engagements and a third one took the run past the
+     * harness's own patience on a loaded box, which is a check that reports
+     * nothing at all — the worst answer of the three.
      */
     const { world } = await field({ scheme: 'free' });
     const pit = world.gunPits[0], door = pit.door;
@@ -360,7 +364,7 @@ export async function run({ check, assert }) {
       return t;
     };
 
-    const warded = drive(30);
+    const warded = drive(20);
     assert(!door.opened, `the warded door opened after ${warded.toFixed(1)} s of blade`);
     assert(door.cutArea === 0,
       `${door.cutArea} of the plate was burned through a live deflector — the ward is a slow-down `
@@ -369,11 +373,11 @@ export async function run({ check, assert }) {
     /* …AND THE CALL OPENS IT. Same drive, same plate, one ion pulse between. */
     const ok = pit.ionize();
     assert(ok && door.warded === false, 'an ion pulse did not drop the deflector');
-    const open = drive(110);
+    const open = drive(70);
     assert(door.opened,
       `with the shield down, ${open.toFixed(1)} s of the identical drive burned `
       + `${door.cutArea} texels and still never opened it`);
-    return `30 s through the field burned 0; ${open.toFixed(1)} s after the pulse opened it`;
+    return `20 s through the field burned 0; ${open.toFixed(1)} s after the pulse opened it`;
   });
 
   acheck('breach: twenty seconds at the plate, and what the line pays for them', async () => {

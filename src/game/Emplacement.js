@@ -463,6 +463,15 @@ export class GunPit {
     this.warded = true;
     this._down = 0;
     this._shieldT = 0;
+    /* AND THE DOOR IS TOLD NOW, not on the first frame of `update`.
+     *
+     * `_wards` is what keeps the flag in step, and it runs from the world's own
+     * tick — so between the level building this pit and the first frame being
+     * stepped, the plate was UNWARDED. Anything that reads the position as it
+     * is built therefore saw an open door, which is what the gate check caught
+     * on its very first assertion. A position is shut from the moment it
+     * exists; it does not need a frame to decide. */
+    door.warded = true;
 
     this._build();
     this.turret.updateMatrixWorld(true);
