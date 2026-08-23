@@ -66,8 +66,27 @@ const LEVEL = flag('level', 'geonosis');
 const MODE = flag('mode', 'command');
 const QUALITY = flag('quality', 'high');
 const COUNTS = flag('counts', '20,40,80,160').split(',').map(Number);
-const WARM = parseInt(flag('warm', '90'), 10);
+/* TWENTY SECONDS, AND THE OLD NINETY FRAMES WAS THE LARGEST ERROR THIS FILE
+ * EVER MADE. A level's dressing is 52 dynamic prop bodies that fall, roll and
+ * settle when the ground loads. Measured on geonosis with ZERO soldiers on the
+ * field, the frame decays as they come to rest:
+ *
+ *     t=2s   8.420 ms · 30 awake      t=10s  3.315 ms · 7 awake
+ *     t=4s   5.147 ms · 20 awake      t=14s  3.195 ms · 5 awake
+ *     t=6s   4.393 ms · 13 awake      t=20s  2.497 ms · 3 awake
+ *
+ * At ninety frames — a second and a half — this file was sampling the steepest
+ * part of that curve and calling it the cost of the world. It reported an empty
+ * world at 5.74 ms and a floor of 34% of the frame; the settled figure is 2.5 ms
+ * and still falling. Every per-body number it has ever printed carried a share
+ * of somebody else's crates coming to rest.
+ *
+ * 1200 frames. It costs twenty seconds a row and it is the difference between a
+ * measurement and a transient. */
+const WARM = parseInt(flag('warm', '1200'), 10);
 const FRAMES = parseInt(flag('frames', '200'), 10);
+/** Frames after the bodies land: long enough for gait, short enough to keep them. */
+const SETTLE = parseInt(flag('settle', '60'), 10);
 
 const H = await import('./checks/_coop.mjs');
 const { Enemy, ARCHETYPES, enemyRng } = await import('../src/game/Enemy.js');
@@ -91,6 +110,15 @@ async function measure(n) {
   const p = world.player;
   if (!p) throw new Error('no player');
 
+  /* SETTLE THE GROUND BEFORE THE SOLDIERS ARRIVE, and this ordering is the
+   * whole method. The dressing needs twenty seconds to come to rest and the
+   * bodies cannot survive twenty seconds of fighting each other — warming them
+   * together measured eleven survivors of a requested forty-eight. So the world
+   * settles empty, the bodies are placed into a quiet world, and the reading is
+   * taken after a short second warm that is long enough to reach steady gait
+   * and short enough that the population is still the population. */
+  for (let i = 0; i < WARM; i++) world.update(1 / 60, input);
+
   /* HALF AND HALF, AND BOTH SIDES REAL. The point of running in `command` is
    * the cross-army pass, and it only costs anything if there is another army
    * for it to walk. A ring of hostiles around one player is the configuration
@@ -110,7 +138,7 @@ async function measure(n) {
     made++;
   }
 
-  for (let i = 0; i < WARM; i++) world.update(1 / 60, input);
+  for (let i = 0; i < SETTLE; i++) world.update(1 / 60, input);
   const alive = world.enemies.filter((e) => !e.dead).length;
 
   const c0 = cpuMs(), w0 = Date.now();
