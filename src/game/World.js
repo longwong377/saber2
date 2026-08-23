@@ -333,10 +333,26 @@ const NET_GRIP_LEASE = 0.6;
 export { WITHDRAW_HOLD } from './Extraction.js';
 
 export class World {
-  constructor(engine, settings) {
+  /**
+   * @param run  WHAT THIS RUN IS, as opposed to what the PLAYER PREFERS.
+   *
+   * A third bag, and it is a scope and not a convenience. `settings` is a blob
+   * that is saved, loaded, spread over by a host's session, held to a default
+   * apiece and audited by four checks in `controls.mjs` — one of which exists
+   * precisely to catch "a setting that is read by shipped code and declared
+   * nowhere", because such a key needs no default, no control and no reader
+   * declaration and nothing anywhere complains. A saved COMPANY is not a
+   * preference by any of those tests: it has no control, it must never ride a
+   * host's session blob into somebody else's save, and a default for it is
+   * meaningless. So it comes in here instead, where `runSeed` and the rest of
+   * what makes one run this run already live.
+   */
+  constructor(engine, settings, run = null) {
     this.engine = engine;
     this.scene = engine.scene;
     this.settings = settings;
+    /** Run-scoped inputs — see the parameter's note. Never persisted. */
+    this.run = run || {};
     this.physics = new RapierWorld({ gravity: -24, iterations: 4, maxBodies: settings.maxBodies ?? 1100 });
 
     this.players = [];
@@ -911,7 +927,20 @@ export class World {
     const leadsArmy = campaign || contingent > 0;
     this.director = leadsArmy
       ? new CommandDirector(this, { pool: L.pool, campaign,
-          strength: contingent || OPENING_STRENGTH })
+          strength: contingent || OPENING_STRENGTH,
+          /**
+           * THE COMPANY, IF THE PLAYER HAS ONE — and it arrives on `settings`
+           * rather than being read here.
+           *
+           * `Company.js` is a localStorage module and this file has never been
+           * one: `Progress.js` keeps the same split, with `main.js` owning the
+           * store and the game owning the game. So whoever built this World
+           * hands `Company.fieldable(load(army), n)` to the constructor's `run`
+           * bag and the director enlists what it is handed. A check hands it
+           * six veterans with no browser in the room; a headless bench that
+           * passes nothing gets the fresh muster it always got.
+           */
+          veterans: this.run.veterans || null })
       : new WaveDirector(this, { mode, pool: L.pool });
     /** The army, or null. Read by the HUD, the summary and the checks. */
     this.command = leadsArmy ? this.director : null;

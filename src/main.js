@@ -18,7 +18,7 @@ import { Menu, loadSettings, saveSettings, applyFeelSettings, VICTORY_TITLE,
   LINE_LOST_TITLE } from './ui/Menu.js';
 import { Net, RemoteAvatar, packLook, sessionPart } from './net/Net.js';
 import { boonById, drawBoons, BOSS_EVERY, MODES } from './game/Waves.js';
-import { theatreFor } from './game/Levels.js';
+import { theatreFor, LEVELS } from './game/Levels.js';
 /* THE SHAPE OF ONE SITTING — FLAGSHIP §5. A leaf that imports nothing of the
  * game's, so the deploy card can be assembled here without this file reaching
  * into the director for anything but the record it already publishes. */
@@ -26,6 +26,12 @@ import { deployCard } from './game/Session.js';
 // No `FORMATIONS` import any more: the orders reach this file as ordinary
 // bindings through `ORDER_ACTIONS` below, which is the point of the seam.
 import { recordRun, loadProgress } from './game/Progress.js';
+/* THE COMPANY. Loaded here and folded here, for the same split `Progress.js`
+ * keeps: this file owns localStorage and the game owns the game. `World` is
+ * handed a plain list of records on its settings blob and hands back a
+ * manifest; neither it nor Command.js knows a store exists. */
+import * as Company from './game/Company.js';
+import { armyToLead, commandConfig, OPENING_STRENGTH } from './game/Command.js';
 import { keyLabel, ORDER_ACTIONS, codesFor } from './engine/Bindings.js';
 import { guardZoneOf } from './game/Bolts.js';
 import { clamp } from './engine/MathUtil.js';
@@ -95,6 +101,53 @@ let session = null;
 const sessionOr = (key) => (session && session[key] !== undefined ? session[key] : settings[key]);
 /** The settings a world is built from: the player's, with the host's overrides. */
 const worldSettings = () => (session ? { ...settings, ...session } : settings);
+
+/**
+ * THE MEN THIS RUN IS FIELDING FROM A PREVIOUS ONE, or null.
+ *
+ * Resolved here rather than in `World` because it is a question about the
+ * SAVE FILE — which army's roll, and how many of it — and `World.js` has never
+ * been a localStorage module. `Company.fieldable` sorts by rank, then service,
+ * then kills, so a roll that outgrew the deployment fields its veterans rather
+ * than whoever was enlisted first.
+ *
+ * NULL IN A SESSION, AND THAT IS NOT A LIMITATION BEING APOLOGISED FOR. In
+ * co-op the HOST's army is the one on the field — `command/net: the joining
+ * player fights the host's army, not one it invented` is a check about exactly
+ * that — so a client that folded its own veterans in would be adding names the
+ * host has never heard of to a roster the host is authoritative for. A meeting
+ * is the same argument from the other side: `beginVersus` deals an army per
+ * commander out of `assignArmies`, and whose company that is, is a question
+ * nobody has asked yet.
+ *
+ * The size is the same number the muster would have spent: a campaign's
+ * `OPENING_STRENGTH` or the contingent the slider asked for. Handing over more
+ * than that would put men on the roll the deployment cannot field, and
+ * `_musterVeterans` would drop them silently.
+ */
+function veteransToField(levelKey = null) {
+  if (session) return null;
+  const mode = settings.mode;
+  const campaign = !!MODES[mode]?.picksCampaign;
+  const cfg = commandConfig(settings);
+  const contingent = campaign ? 0 : cfg.contingent;
+  if (!campaign && !(contingent > 0)) return null;
+  /* THE SAME THREE-CLAUSE RESOLUTION THE DIRECTOR MAKES, called and not
+   * restated: the choice only for a contingent (a campaign passes null, which
+   * is what keeps `sideForOrder`'s veto intact), and the ground always,
+   * because it only ever decides for a commander whose order leads neither
+   * army. Getting a different answer here to the one the muster makes would
+   * hand a Republic roll to a Separatist roster, and `_musterVeterans` would
+   * drop every man of it in silence. */
+  const army = armyToLead(settings.order, {
+    choice: campaign ? null : cfg.allyArmy,
+    ground: LEVELS[levelKey]?.armies,
+  })?.id;
+  if (!army) return null;
+  const want = campaign ? OPENING_STRENGTH : contingent;
+  const men = Company.fieldable(Company.load(army), want);
+  return men.length ? men : null;
+}
 
 /** A name from the wire, on its way into innerHTML. */
 const escName = (s) => String(s == null ? '' : s).replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
@@ -312,7 +365,7 @@ async function buildWorld(levelKey, onProgress = null, runSeed = null) {
 
   // The player's settings, with whatever the host of this session decided
   // laid over them — and never the other way round. See `session` above.
-  world = new World(engine, worldSettings());
+  world = new World(engine, worldSettings(), { veterans: veteransToField(levelKey) });
   /**
    * THE RUN'S NUMBER, BEFORE ANYTHING READS IT.
    *
@@ -1036,6 +1089,8 @@ function quitToMenu() {
   // An abandoned session still happened. Recording it is what stops "deepest
   // reached" from quietly meaning "deepest you happened to die on".
   record();
+  // And walking out is not a withdrawal — see `bank`. The men are gone.
+  bank();
   if (world) { world.dispose(); world = null; }
   menu.showMenu();
   screens.set('menu');
@@ -1144,6 +1199,56 @@ function cardAfter(ms, what, show) {
  * `bestScore`, `bestTier` and the by-order/species/mode maps. Hence a record
  * line reading "2 runs" beside "roguelite 1".
  */
+/**
+ * FOLD THE RUN INTO THE COMPANY — the other half of `record`, and the one that
+ * costs something.
+ *
+ * `Progress.recordRun` writes a history. This writes a ROSTER, and the
+ * difference is that a bad run subtracts from it. `world.manifest` is the men
+ * who reached the ramp before it closed; everybody who went out and is not on
+ * it is dead, permanently, and `Company.keep` is where that is enforced.
+ *
+ * ONCE PER WORLD, and off its own flag rather than `_recorded`. The two are
+ * called from the same two places today — `gameOver` and `quitToMenu` — and
+ * the day one of them stops being, a shared flag would silently stop the other
+ * as well. `record`'s own note is an account of what one missing guard cost.
+ *
+ * A RUN WITH NO ARMY IN IT DOES NOTHING HERE. Waves without a contingent, the
+ * duel, the dojo, the sandbox: `world.command` is null in all of them and
+ * there is no roll to fold. Co-op and meetings are excluded on the same
+ * grounds `veteransToField` refuses to load one — the host's army is the one
+ * on the field, and whose company a meeting's second army is has not been
+ * asked yet.
+ *
+ * AND QUITTING IS NOT A WITHDRAWAL. `quitToMenu` calls this with no stats, and
+ * a player who walks out mid-run has not got anybody home: `ended` is absent,
+ * the manifest is empty, and the whole roll is struck off exactly as a wipe
+ * would strike it. That is the point of the mechanism the withdrawal exists
+ * for — there is a door, it is held for a second and a half, and closing the
+ * tab is not it.
+ */
+function bank(stats = null) {
+  if (!world || world._banked) return;
+  const d = world.command;
+  if (!d || d.versus || session) return;
+  world._banked = true;
+  const roster = d.roster;
+  if (!roster) return;
+  const manifest = Array.isArray(world.manifest) ? world.manifest : [];
+  Company.keep(manifest, {
+    army: d.commander?.army?.id ?? roster.army?.id ?? roster.army,
+    /* WHO WENT OUT. Without this `Company.keep` has no way to tell a man who
+     * died on this run from a man who was never on it, and its own note says
+     * it will not execute a roll it cannot prove was fielded. `all` and not
+     * `living`: a name that fell in area two went out just as much as the one
+     * who reached the ship. */
+    deployed: roster.all,
+    left: roster.all.filter((t) => !manifest.includes(t)),
+    ground: world.levelKey ?? null,
+    ended: stats?.ended ?? (world.over ? 'wiped' : 'quit'),
+  });
+}
+
 function record(stats = null) {
   if (!world) return;
   if (world._recorded) return;
@@ -1222,6 +1327,8 @@ function gameOver(stats) {
   // would not know you had ever played. This is a record, not a currency:
   // nothing here unlocks anything (see Progress.js).
   record(stats);
+  // …and the roll, which is the half of a finished run that can go DOWN.
+  bank(stats);
   // Remembered rather than shown and forgotten: 2.6 seconds is a long time for
   // the only exit from a state to be in flight, and if the call throws the
   // player is watching their own corpse with nothing on screen. Escape puts it

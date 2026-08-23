@@ -240,7 +240,7 @@ async function defaultLevel() {
  * gets and what every one of those streams already treats as "nobody has stated
  * a number".
  */
-export async function bootWorld({ level = null, settings = {}, spawn = true, runSeed = null } = {}) {
+export async function bootWorld({ level = null, settings = {}, spawn = true, runSeed = null, run = null } = {}) {
   level = level || await defaultLevel();
   const { World } = await import('../../src/game/World.js');
   const { DEFAULT_SETTINGS } = await import('../../src/ui/Menu.js');
@@ -249,7 +249,15 @@ export async function bootWorld({ level = null, settings = {}, spawn = true, run
   await initPhysics();
   const engine = await stubEngine();
   const s = { ...DEFAULT_SETTINGS, quality: 'low', ...settings };
-  const world = new World(engine, s);
+  /* THE RUN-SCOPED BAG, and `settings.veterans` is honoured as a shorthand for
+   * it. A saved company is not a preference — see World's constructor note —
+   * so it does not belong in the settings blob, and `controls.mjs` goes red if
+   * anything in src/ reads it from there. A check that finds it easier to say
+   * `settings: { veterans }` still gets what it meant. */
+  const runBag = { ...(run || {}) };
+  if (s.veterans && !runBag.veterans) runBag.veterans = s.veterans;
+  delete s.veterans;
+  const world = new World(engine, s, runBag);
   world.difficulty = DIFFICULTY[s.difficulty] || DIFFICULTY.knight;
   /* `Number(null)` IS 0 AND `Number.isFinite(0)` IS TRUE, which is the whole
    * reason this reads the value before it converts it: the finite test alone

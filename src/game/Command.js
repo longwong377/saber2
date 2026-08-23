@@ -1676,6 +1676,58 @@ export class CommandRoster {
   }
 
   /**
+   * ENLIST A MAN WHO HAS SERVED BEFORE — the one door a saved roll comes back
+   * through, and the reason it is here rather than in Company.js.
+   *
+   * `Trooper` has four getters every screen and half the fight read (`rank`,
+   * `rankRec`, `label`, `name`), so a stored record cannot simply be pushed
+   * onto `all`: a plain object with the right fields answers `undefined` to all
+   * four. It has to go through the constructor, and the constructor lives in
+   * this file — which Company.js imports and which must not import Company.js
+   * back. So the field copy is written ONCE, here, and Company.js re-exports
+   * it. A second copy over there is the twin this codebase has removed eight
+   * of.
+   *
+   * THE DESIGNATION IS CLAIMED, which is what makes a mixed roll safe: a
+   * company of six veterans and four fresh bodies draws the four through
+   * `designate` against a `taken` set that already holds the six, so nothing
+   * new can collide with a name the player has been reading for nine runs.
+   * A record whose designation is already on this roll is refused rather than
+   * renamed — two men with one name is worse than one man missing, and the
+   * caller is a muster that can simply enlist somebody else.
+   *
+   * WHAT IS DELIBERATELY NOT CARRIED: `broken`, `rout` and `detached`. All
+   * three are about a fight that is over. A man who walked up the ramp shaken
+   * walks off the next one steady, and that is the one place the persistence
+   * layer is allowed to be kind — stated here rather than left as an omission
+   * somebody later reads as an oversight.
+   */
+  enlistRecord(m) {
+    if (!m || typeof m.type !== 'string' || typeof m.designation !== 'string') return null;
+    if (this.taken.has(m.designation)) return null;
+    this.taken.add(m.designation);
+    const army = ARMIES[m.army] || ARMIES[this.army?.id] || this.army;
+    const t = new Trooper(army && army.id ? army : { id: m.army }, m.type, m.designation, {
+      id: m.id ?? undefined, roster: this, squad: Number.isInteger(m.squad) ? m.squad : null,
+      xp: Math.max(0, m.xp | 0),
+      morale: Math.min(1, Math.max(0, Number.isFinite(m.morale) ? m.morale : 0.72)),
+      joined: Math.max(1, m.joined | 0),
+    });
+    t.nickname = typeof m.nickname === 'string' ? m.nickname : null;
+    t.kills = Math.max(0, m.kills | 0);
+    t.wounds = Math.max(0, m.wounds | 0);
+    t.areas = Math.max(0, m.areas | 0);
+    /* The three fields that only exist for a man who has been kept. They are
+     * read by the Company tab and by nothing that fights. */
+    t.runs = Math.max(0, m.runs | 0);
+    t.since = typeof m.since === 'string' ? m.since : null;
+    t.story = Array.isArray(m.story) ? m.story.slice() : [];
+    t.look = m.look && typeof m.look === 'object' ? { ...m.look } : null;
+    this.all.push(t);
+    return t;
+  }
+
+  /**
    * The squads, as arrays of living troopers.
    *
    * Derived from the living list every time rather than stored, and that is the
@@ -2622,6 +2674,13 @@ export class CommandDirector extends WaveDirector {
      *  `OPENING_STRENGTH`; a contingent opens with what the player asked for. */
     this.opening = clamp(opts.strength ?? OPENING_STRENGTH, 1, MAX_STRENGTH);
     /**
+     * THE SAVED ROLL THIS RUN IS FIELDING, or null. Stored records, not
+     * `Trooper`s — `_musterVeterans` puts them back on the roster through
+     * `enlistRecord`, which is the one door. Injected rather than read, so
+     * nothing in this file touches localStorage; see the note there.
+     */
+    this.veterans = Array.isArray(opts.veterans) ? opts.veterans : null;
+    /**
      * WHICH RUNG THE CONTINGENT IS BUILT ON, or `CONTINGENT_MIXED`.
      *
      * A campaign is pinned to rung 0 whatever the options screen says, and that
@@ -3325,13 +3384,61 @@ export class CommandDirector extends WaveDirector {
    * A CONTINGENT opens with a purse and the shape the player asked for. See
    * the note on the branch.
    */
+  /**
+   * THE MEN WHO CAME BACK LAST TIME, PUT BACK ON THE ROLL.
+   *
+   * `this.veterans` is a list of stored records — `Company.fieldable()`'s
+   * output — handed in by whoever built this director. It is INJECTED and
+   * never read from storage here, for the same split `Progress.js` keeps:
+   * `main.js` owns localStorage, the game owns the game, and a check can hand
+   * this director six veterans without a browser anywhere in the room.
+   *
+   * @returns how many were enlisted, which the caller subtracts from both the
+   *          body count and the purse.
+   *
+   * BOUNDED BY `opening`, and that bound is the design. A company of forty men
+   * does not deploy forty into a contingent the player set to ten; it deploys
+   * its ten best (`Company.fieldable` sorts by rank, then service, then kills)
+   * and the rest wait. The alternative — a roll that grows the army it fields —
+   * is cross-run power, which the persistence layer's own note refuses.
+   *
+   * A RECORD THIS ROLL ALREADY HOLDS IS SKIPPED SILENTLY. `enlistRecord`
+   * refuses a duplicate designation and returns null, and a muster that
+   * counted the null would deploy one man short for a reason nobody could see.
+   */
+  _musterVeterans(c = this.commander) {
+    const list = this.veterans;
+    if (!Array.isArray(list) || !list.length || !c?.roster) return 0;
+    const army = c.army?.id;
+    let n = 0;
+    for (const m of list) {
+      if (n >= this.opening) break;
+      /* ONE ROLL PER ARMY. A droid who served under a Jedi general is not a
+       * thing this game says, and the two sides draw designations from
+       * different tables — so a record from the other army is dropped here
+       * rather than renamed into this one. */
+      if (m?.army && army && m.army !== army) continue;
+      if (c.roster.enlistRecord(m)) n++;
+    }
+    if (n) {
+      this.log?.push?.({ t: 'veterans', n });
+      this.world?.notify?.('THE COMPANY IS BACK',
+        `${n} ${c.army?.unit ?? 'trooper'}${n === 1 ? '' : 's'} who have done this before`);
+    }
+    return n;
+  }
+
   _musterOpening(c = this.commander) {
     const tiers = c.army.tiers;
     const cheapest = tiers[0].type;
+    /* THE MEN WHO CAME BACK LAST TIME GO OUT FIRST. See `_musterVeterans`. */
+    const vets = this._musterVeterans(c);
     if (this.campaign) {
       /* `this.opening` and not `OPENING_STRENGTH`: a campaign's opening IS the
-       * constant and says so in the constructor. One loop, one authority. */
-      for (let i = 0; i < this.opening; i++) c.roster.enlist(cheapest);
+       * constant and says so in the constructor. One loop, one authority.
+       * `vets` are already on the roll and are part of that count — a company
+       * of ten deploys ten, not twenty. */
+      for (let i = vets; i < this.opening; i++) c.roster.enlist(cheapest);
       c.roster.points = this.stages[0].muster;
       c.lineup = c.roster.living.map((t) => t.type);
       return;
@@ -3362,7 +3469,17 @@ export class CommandDirector extends WaveDirector {
      * deleted eight of. `_bulk` suppresses the per-purchase network publish for
      * the same reason `autoMuster` does — there is nobody to tell yet.
      */
-    c.roster.points = this.opening * musterCost(cheapest);
+    /**
+     * THE PURSE IS WHAT THE VETERANS DID NOT ALREADY FILL.
+     *
+     * `opening × musterCost(cheapest)` is the slider's meaning priced, and a
+     * company that fielded six of the ten has already spent six of those men.
+     * Paying the full purse on top of them would make a veteran roll a bigger
+     * army rather than a better one — which is the "cross-run power" that
+     * `Company.js`'s own note refuses at the top of its file. What a returning
+     * company buys is rank, not headcount.
+     */
+    c.roster.points = Math.max(0, this.opening - vets) * musterCost(cheapest);
     const want = this.unit >= 0 ? tiers[Math.min(this.unit, tiers.length - 1)] : null;
     this._bulk = true;
     try {
@@ -3400,7 +3517,8 @@ export class CommandDirector extends WaveDirector {
        * at ten Republic allies, and five B1s and a MagnaGuard for 29 of 30 at
        * ten Confederate ones.
        */
-      const line = want ? this.opening : Math.max(1, Math.floor(this.opening / 2));
+      const room = Math.max(0, this.opening - vets);
+      const line = want ? room : Math.max(room ? 1 : 0, Math.floor(room / 2));
       for (let i = 0; i < line && this.recruit(cheapest, c); i++);
       for (let guard = 0; guard < MAX_STRENGTH; guard++) {
         const best = this._bestAffordable(c);
