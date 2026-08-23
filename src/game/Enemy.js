@@ -3328,6 +3328,12 @@ export class Enemy {
     const out = this._caps;
     out.length = 0;
     if (this.dead && !this.actor?.ragdolled) return out;
+    /* THE BONES BEFORE THE CAPSULES ROUND THEM. The posed branch below reads
+     * `b.obj.matrixWorld` through a NON-forced `updateMatrixWorld(false)`,
+     * which refreshes that node against a parent that may be a pose behind —
+     * and past LOD 1 the gait now defers its walk (see `Rig.updateMatrices`).
+     * A hit box built on a stale ancestor is a body you can shoot through. */
+    this.rig?.ensureMatrices?.();
 
     // An elite deflector is a sphere around the whole body, so it is in front of
     // every bone and the blade meets it first — which is the point. `takeCut`
@@ -6057,6 +6063,11 @@ export class Enemy {
   }
 
   _muzzleWorld(out) {
+    /* The weapon hangs off a hand bone, and the `weapon.matrixWorld` branch
+     * below reads it bare. Every other branch here goes through
+     * `getWorldPosition`, which pulls its own ancestry; this one does not, and
+     * past LOD 1 the gait defers its walk. */
+    this.rig?.ensureMatrices?.();
     if (this.built?.muzzles?.length) {
       // a remote fires from whichever emitter is facing the student
       const m = this.built.muzzles[(this._armToggle = ((this._armToggle || 0) + 1) % this.built.muzzles.length)];
@@ -7798,6 +7809,14 @@ export class Enemy {
          */
         grounded: this.grounded, groundAt, crouch: clamp(this.crouch || 0, 0, 1),
         accelForward: clamp(this.velocity.length() / 5, 0, 1),
+        /* NOBODY IS GOING TO READ THIS BODY'S BONES THIS FRAME. Past LOD 1 the
+         * body draws through `MergedSkin`, whose per-frame work reads
+         * `position` alone, and `_poseArms` below returns early — so the gait's
+         * closing walk of all 66 objects was arithmetic the renderer was about
+         * to redo. See the note over `Rig.updateMatrices`: the walk is deferred
+         * and not dropped, so anything that does turn up still gets a current
+         * answer, once. */
+        deferMatrices: this.lod > 1,
       });
       this._poseArms(adt, ctx);
       }

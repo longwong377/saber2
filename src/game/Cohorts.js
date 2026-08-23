@@ -191,7 +191,12 @@ export class CohortField {
 
     const skin = e._l2?.skin || buildMergedSkin(e.rig);
     if (!skin) { this.cohorts.set(key, null); this.refused.set('nothing to merge', (this.refused.get('nothing to merge') || 0) + 1); return null; }
-    e.rig.root.updateMatrixWorld(true);
+    /* AND THE BONES ARE WALKED FIRST, unconditionally. `freezeSkin` bakes the
+     * pose out of `bone.matrixWorld`, and past LOD 1 the gait defers its walk
+     * (see the note over `Rig.updateMatrices`) — a cohort baked from unwalked
+     * bones would wear whatever pose the body was in the last time somebody
+     * asked, frozen for as long as that cohort lives. */
+    e.rig.updateMatrices();
     for (const m of skin.meshes) m.updateMatrixWorld(true);
 
     const parts = freezeSkin(skin, e.position, e.facing);

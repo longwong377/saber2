@@ -412,6 +412,7 @@ export class Rig {
   worldPos(name, out = new THREE.Vector3()) {
     const b = this.bones.get(name);
     if (!b) return out.set(0, 0, 0);
+    this.ensureMatrices();
     return out.setFromMatrixPosition(b.obj.matrixWorld);
   }
 
@@ -437,12 +438,18 @@ export class Rig {
   tipPos(name, out = new THREE.Vector3()) {
     const b = this.bones.get(name);
     if (!b) return out.set(0, 0, 0);
+    this.ensureMatrices();
     return out.set(0, b.length * b.cutT, 0).applyMatrix4(b.obj.matrixWorld);
   }
 
   worldQuat(name, out = new THREE.Quaternion()) {
     const b = this.bones.get(name);
     if (!b) return out.identity();
+    /* `getWorldQuaternion` pulls its own ancestry, so this one is already
+     * right without the walk — the `ensure` is here so that the three readers
+     * this class offers behave alike and a caller does not have to know which
+     * of them happens to be self-sufficient. */
+    this.ensureMatrices();
     b.obj.getWorldQuaternion(out);
     return out;
   }
@@ -456,7 +463,42 @@ export class Rig {
     b.obj.quaternion.copy(_q2.invert()).multiply(_q1);
   }
 
-  updateMatrices() { this.root.updateMatrixWorld(true); }
+  /**
+   * ── THE WALK, AND WHO IS ALLOWED NOT TO DO IT ─────────────────────────
+   *
+   * `root.updateMatrixWorld(true)` re-multiplies every one of the ~66-84
+   * objects a body owns. A V8 profile of the frame at 120 bodies put the
+   * gait's single closing call at 3.74 ms — 17% of the frame, the largest
+   * single line in the game and larger than physics.
+   *
+   * MOST OF THAT WORK REACHES NOBODY. Past 62 m a body draws through
+   * `MergedSkin`, whose per-frame work reads `owner.position` and nothing
+   * else; the skinning matrices the renderer needs come out of the renderer's
+   * OWN `scene.updateMatrixWorld()`, which runs whether or not this one did,
+   * because `updateMatrix` marks every auto-updating node dirty again. And
+   * `Enemy._poseArms` — the one thing that reliably reads a bone the frame it
+   * is posed — returns early past LOD 1. So for the 136 bodies of 159 that a
+   * battlefield puts past 62 m, this walk was work done twice and read once.
+   *
+   * So it is LAZY rather than skipped, which is the difference between a
+   * saving and a bug. `touch` records that somebody has posed this rig;
+   * `ensure` walks if and only if a reader has turned up since. A body nobody
+   * asks about pays nothing and the renderer does the arithmetic once; a body
+   * something reads pays exactly one walk, which is what it paid before.
+   *
+   * The readers are covered by construction and not by enumeration: `worldPos`,
+   * `tipPos` and `worldQuat` — every bare `matrixWorld` read this class offers
+   * — ensure first. A caller reaching past them into `obj.matrixWorld` is the
+   * one shape this cannot cover, and there are three in the tree; each calls
+   * `ensure` itself and says so.
+   */
+  updateMatrices() { this.root.updateMatrixWorld(true); this._mtxStale = false; }
+
+  /** Somebody posed this rig; the world matrices are behind the local ones. */
+  touchMatrices() { this._mtxStale = true; }
+
+  /** Walk, but only if a pose has happened since the last one. */
+  ensureMatrices() { if (this._mtxStale) this.updateMatrices(); }
 
   /* ── two-bone IK ───────────────────────────────────────────────────── */
 
@@ -1817,7 +1859,11 @@ export class BipedAnimator {
         rig.aimBoneWorld(foot, _b5, f.normal);
       }
     }
-    rig.updateMatrices();
+    /* Deferred rather than done when the caller says nothing will read it —
+     * see the note over `Rig.updateMatrices`. `Enemy` sets this past LOD 1,
+     * where the body draws through a merged skin and the renderer's own walk
+     * is the only consumer of these matrices. */
+    if (p.deferMatrices) rig.touchMatrices(); else rig.updateMatrices();
   }
 
   /**
