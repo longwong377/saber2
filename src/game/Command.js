@@ -6358,7 +6358,7 @@ export class CommandDirector extends WaveDirector {
         z += b.position.z; n++;
       }
       if (!n) continue;                       // an army that does not exist takes nothing
-      if (!this.lineIsUp(c)) continue;        // …and neither does one that is scattered
+      if (!this.lineGathered(c)) continue;    // …and neither does one that is scattered
       const centroid = z / n;
       /* Is his line past the line he is moving? `front` is in field units, so
        * it is scaled to metres against the separation the meeting deploys at. */
@@ -6382,8 +6382,27 @@ export class CommandDirector extends WaveDirector {
     }
   }
 
-  lineIsUp(c = this.commander) {
-    if (!this.lineAdvances) return true;
+  /**
+   * IS THIS COMMANDER'S LINE GATHERED ON HIM? Half the living inside
+   * `MORALE.NEAR`, and no mode gate on it at all.
+   *
+   * SPLIT OUT OF `lineIsUp`, AND THAT SPLIT IS A BUG FIX. `lineIsUp` opens
+   * with `if (!this.lineAdvances) return true`, which is right for what it is
+   * asked — whether the ground the CAMPAIGN is taking may be credited, a
+   * question only The Line asks. `_front` was calling the same method for a
+   * different question, and Command deliberately does not set `lineAdvances`
+   * (`theline.mjs` asserts it does not, so that a rule written for one mode
+   * cannot change a mode people have already played). So in every meeting
+   * that has ever run, this returned true for both commanders and the
+   * gathered clause was dead: a scattered army strung out down the field
+   * pushed the front exactly as hard as a formed-up one, and the two pushes
+   * cancelled. The front never moved and the mode could only end on a wipe.
+   *
+   * One quantity, one owner (HANDOFF 2.3): the quorum lives here, `lineIsUp`
+   * is that quorum behind the campaign's gate, and `_front` asks for the
+   * quorum because the quorum is what it means.
+   */
+  lineGathered(c = this.commander) {
     const p = c?.player;
     /* No body to measure from — a headless director, or a commander who has
      * fallen — cannot hold the ground open. `census`'s note argues the same
@@ -6402,6 +6421,11 @@ export class CommandDirector extends WaveDirector {
      * it would hang instead of ending. `_checkLine` is the door for that. */
     if (!alive) return true;
     return near * 2 >= alive;
+  }
+
+  lineIsUp(c = this.commander) {
+    if (!this.lineAdvances) return true;
+    return this.lineGathered(c);
   }
 
   /**

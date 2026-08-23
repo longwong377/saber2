@@ -277,9 +277,34 @@ export function run({ check, assert }) {
      * a way for this to fail for a reason it is not about.
      */
     const { host } = await commandPair({ host: { commandVersus: true }, start: false });
+    /**
+     * TWO COMMANDERS, THROUGH THE DOOR A SECOND ONE REALLY ARRIVES BY.
+     *
+     * `commandPair` leaves a meeting unstarted, which is right for the six
+     * other versus checks and useless here: a front is a quantity between two
+     * armies, and `beginVersus` builds one commander per LIVING PLAYER — so a
+     * host standing alone gets one, and the whole subject of this check is
+     * missing. Seating a second `CommandDirector.commanders` entry by hand
+     * would be a fixture inventing the thing under test.
+     *
+     * So the opponent's body arrives first and `beginVersus` is asked
+     * afterwards, which is the real order: its own note says it "is idempotent
+     * and runs again when that body appears, which is where the match is
+     * really made", and main.js calls it on every roster change for exactly
+     * this reason. What comes out is a meeting the game built — two sides from
+     * `assignSides`, an army each, and a `DuelMatch` over both.
+     */
+    const { RemoteAvatar } = await import('../../src/net/Net.js');
+    const rival = new RemoteAvatar(host, { id: 'RIVAL', name: 'BRAVO' });
+    (host.remotes || (host.remotes = new Map())).set(rival.id, rival);
+    host.players.push(rival);
+    host.beginVersus();
+
     const d = host.command;
     assert(d && d.versus, 'no meeting director');
     assert(d.commanders.length >= 2, `a meeting with ${d.commanders.length} commander(s)`);
+    assert(d.commanders[0].side !== d.commanders[1].side,
+      `both commanders came out on side ${d.commanders[0].side} — assignSides did not split them`);
 
     const half = 60;                                   // VERSUS_SEPARATION / 2
     /* Put each commander's living men where the arm wants them. `lineIsUp` is

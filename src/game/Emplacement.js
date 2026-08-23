@@ -672,9 +672,33 @@ export class GunPit {
     }
   }
 
-  /** Where the tube ends, in the world, as of this frame's lay. */
+  /**
+   * Where the tube ends, IN THE WORLD, as of this frame's lay.
+   *
+   * `updateMatrixWorld(true)` was the wrong door and it put the muzzle in the
+   * wrong place by sixty-seven metres. That call refreshes this node and
+   * everything UNDER it and then composes against `this.parent.matrixWorld`
+   * exactly as it finds it — so it is only correct when somebody else has
+   * already brought the ancestors up to date. In the browser the renderer does
+   * that once a frame, after `update`, which is why this read right there and
+   * hid; headless nothing ever calls `scene.updateMatrixWorld`, so the whole
+   * chain above the turret stayed identity and the muzzle came back as a bare
+   * local offset.
+   *
+   * Measured on a Command boot of Geonosis: the bastion's group stands at
+   * (15.8, 1.5, 75.7) and the muzzle read (8.9, 3.3, 4.0) — 10 m from the
+   * muster ground rather than 77. A gun sized to take about one name per
+   * minute at 69 m was standing inside the line, and its opening burst of
+   * three killed three of the ten men before the player could take a step. It
+   * is also why `pit.shots` in any headless bench was the count of a gun in a
+   * place the level never put it.
+   *
+   * `updateWorldMatrix(true, false)` is the one that walks UP: ancestors
+   * first, then this node, and no descendants, which is exactly what a single
+   * point on the end of the tube needs.
+   */
   _readMuzzle() {
-    this.turret.updateMatrixWorld(true);
+    this.turret.updateWorldMatrix(true, false);
     this.muzzle.set(0, 0, BASTION.barrel + 0.35).applyMatrix4(this.turret.matrixWorld);
   }
 
