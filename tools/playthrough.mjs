@@ -65,6 +65,10 @@ const arg = (name, def = null) => {
     ? process.argv[i + 1] : (i >= 0 ? true : def);
 };
 const JSON_OUT = process.argv.includes('--json');
+/** Run the same seed N times and report the spread. See `REPEAT`'s note. */
+const REPEAT = Number(arg('repeat', 1));
+/** Leave the machine in the measurement. See `pin` below. */
+const LIVE = process.argv.includes('--live');
 
 const MODE = String(arg('mode', 'command'));
 const LEVEL = arg('level', null);
@@ -85,198 +89,261 @@ const { dutyInput } = await import('./_flagship.mjs');
 const { MODES } = await import('../src/game/Waves.js');
 const { theatreFor, LEVELS } = await import('../src/game/Levels.js');
 
-const level = LEVEL || theatreFor(MODE, null, SEED);
-const settings = {
-  mode: MODE, level, order: ORDER, seed: SEED, difficulty: DIFFICULTY,
-  /* THE FLIGHT IS SKIPPED, and it is the one thing this instrument declines to
-   * play. `Extraction.beginInsertion` is thirty game-seconds of a transport
-   * coming down with nothing on the field — `frontdoor.mjs` and
-   * `extraction.mjs` already measure it end to end, and thirty seconds of an
-   * empty sky at the top of every run would be a twentieth of the horizon
-   * spent on a cutscene two suites already own. */
-  instantSpawn: true,
-  quality: 'low',
-};
-
-const { world } = await bootWorld({ level, settings });
-
-/* THE MODE'S OWN OPENING, through the same branch main.js takes. A meeting
- * hands out sides and starts itself; a campaign begins a campaign; everything
- * else starts a wave. Copied in shape, not in words — see main.js's `deploy`. */
-if (world.command?.versus) world.beginVersus();
-else if (MODES[MODE]?.picksCampaign) world.beginCampaign();
-else world.director.start(1);
-
-const input = dutyInput(world);
-
-/* ── what a reading is ─────────────────────────────────────────────────── */
-
-const roster = () => world.command?.roster ?? null;
-const p = () => world.player;
-
 /**
- * ONE ROW OF THE TIMELINE.
+ * ONE RUN, START TO FINISH.
  *
- * Everything is read off the world; nothing is derived twice and nothing is
- * modelled. A field that the mode does not have reads null rather than 0 —
- * `Waves` has no roster and a duel has no areas, and a zero there would be a
- * statement about the mode that is not true.
+ * A function rather than a script body because of `--repeat`, and `--repeat`
+ * exists because a run of this game is a SAMPLE and not the seed's history.
+ * Two invocations of the identical command line produced different runs — one
+ * reported the field frozen at wave 10 for six minutes and the next reached
+ * wave 13 with no pause at all — and an instrument for long-horizon review
+ * whose runs do not repeat cannot support a finding, because there is no way
+ * to tell a defect from a roll.
+ *
+ * Some of that is now pinned (see `pin`), and what remains is measured rather
+ * than apologised for: `--repeat N` drives the same seed N times and prints
+ * the spread, which is the honest form of "this is roughly what happens".
  */
-const reading = (t) => {
-  const r = roster();
-  const pl = p();
-  const alive = world.enemies.filter((e) => !e.dead);
-  return {
-    t: +t.toFixed(1),
-    wave: world.director?.wave ?? null,
-    /* WHAT IS ON THE FIELD, split the way the fight splits: yours and theirs.
-     * `enlistBody` puts your named troopers in `world.enemies` on the party's
-     * team, so a bare count of `enemies` is the sum of two armies. */
-    hostile: alive.filter((e) => e.team !== world.partyTeam).length,
-    friendly: alive.filter((e) => e.team === world.partyTeam).length,
-    /* THE PLAYER, as the four bars a player watches. */
-    hp: pl ? +(pl.hp ?? 0).toFixed(1) : null,
-    force: pl ? +(pl.force ?? 0).toFixed(1) : null,
-    stamina: pl ? +(pl.stamina ?? 0).toFixed(1) : null,
-    alive: pl ? pl.alive !== false : null,
-    kills: world.players.reduce((a, q) => a + (q.kills || 0), 0),
-    score: world.score | 0,
-    /* THE ROSTER, which is the mode's one-way variable: it only ever shrinks
-     * within a run, so a timeline of it IS the story of the run. */
-    living: r ? r.living.length : null,
-    fallen: r ? r.fallen.length : null,
-    /* …AND HOW STEADY THEY ARE. The mean of the record's own morale, and how
-     * many are past MORALE.BREAK. A line that is holding and a line that is
-     * about to run look identical in a body count. */
-    morale: r && r.living.length
-      ? +(r.living.reduce((a, x) => a + (x.morale ?? 0), 0) / r.living.length).toFixed(3) : null,
-    broken: r ? r.living.filter((x) => x.broken).length : null,
-    /**
-     * THE DIRECTOR'S OWN COUNTERS, and the first run without them cost an
-     * afternoon.
-     *
-     * The timeline showed six minutes of "one hostile, no roster, no
-     * announcements, nothing happening" and there is no way to read that. A
-     * wave holding open on one body the player cannot reach, a delivery that
-     * never finished, and a run quietly over all look identical in a body
-     * count. These three say which:
-     *
-     *   `remaining`  what the wave still owes. Frozen beside a frozen
-     *                `hostile` is a wave holding open.
-     *   `delivered`  whether every body of the wave has arrived. FALSE here
-     *                disables the stall watchdog entirely (`Waves.js`'s
-     *                `blocking`), so a stuck delivery is a stuck RUN and this
-     *                is the one field that says so.
-     *   `rescues`    how many bodies the watchdog has had to relocate. It is
-     *                cumulative, so the SLOPE is the reading: 61 over fifteen
-     *                minutes is bodies routinely failing to reach the fight.
-     */
-    remaining: world.director?.remaining ?? null,
-    delivered: world.director?.delivered ?? null,
-    rescues: (world.director?.rescues || []).length,
-    /* THE GROUND. `areasTaken` for a campaign, `front` for a meeting. */
-    areas: world.command?.areasTaken ?? null,
-    front: world.command?.front != null ? +world.command.front.toFixed(3) : null,
-    /* AND WHAT THE FRAME IS COSTING. `renderer.info` is a stub headless, so
-     * these are the counts the world itself keeps. */
-    bodies: world.physics?.stats?.bodies ?? null,
-    props: world.props?.length ?? null,
+async function runOnce(run) {
+  const level = LEVEL || theatreFor(MODE, null, SEED);
+  const settings = {
+    mode: MODE, level, order: ORDER, seed: SEED, difficulty: DIFFICULTY,
+    /* THE FLIGHT IS SKIPPED, and it is the one thing this instrument declines to
+     * play. `Extraction.beginInsertion` is thirty game-seconds of a transport
+     * coming down with nothing on the field — `frontdoor.mjs` and
+     * `extraction.mjs` already measure it end to end, and thirty seconds of an
+     * empty sky at the top of every run would be a twentieth of the horizon
+     * spent on a cutscene two suites already own. */
+    instantSpawn: true,
+    quality: 'low',
   };
-};
 
-/* ── the events ────────────────────────────────────────────────────────── */
+  /**
+   * `runSeed` AND NOT ONLY `settings.seed`, and the two runs that taught it.
+   *
+   * `settings.seed` is what the player types into the box; `world.runSeed` is
+   * what the DIRECTORS read — `seedCommand`, `seedWaves`, `seedArrivals` and the
+   * theatre roll all take the run's number from there, and `bootWorld` only
+   * writes it when it is handed one. Without it every stream in the run starts
+   * from its module's own constant, so `--seed 7` named the ground and nothing
+   * else, and two runs of the identical command line produced different
+   * histories: one reported the field frozen at wave 10 for six minutes and the
+   * next reached wave 13 with no pause at all. An instrument for long-horizon
+   * review whose runs do not repeat cannot report a finding, because there is no
+   * way to tell a defect from a roll.
+   */
+  const { world } = await bootWorld({ level, settings, runSeed: SEED });
 
-/**
- * EVERYTHING THE GAME SAID, WITH THE CLOCK ON IT.
- *
- * `World.notify` is the one door every announcement in the game goes through —
- * a wave, a casualty, a promotion, a stratagem released, the ship called — so
- * hooking it is hooking the whole of what a player is told. It is also the one
- * place this file could accidentally change the run, so the original is called
- * and its return handed straight back.
- */
-const events = [];
-const rawNotify = world.notify.bind(world);
-world.notify = (title, sub, kind) => {
-  events.push({ t: +world.time.toFixed(1), title: String(title ?? ''), sub: String(sub ?? ''), kind: kind ?? 'flavour' });
-  return rawNotify(title, sub, kind);
-};
+  /* THE MODE'S OWN OPENING, through the same branch main.js takes. A meeting
+   * hands out sides and starts itself; a campaign begins a campaign; everything
+   * else starts a wave. Copied in shape, not in words — see main.js's `deploy`. */
+  /**
+   * THE MACHINE, TAKEN OUT OF THE MEASUREMENT.
+   *
+   * `Destruction._prepare` does as much pre-fracture as fits in
+   * `prepareBudgetMs` of REAL TIME per frame, so how many of a level's
+   * structures have their cells built by frame N is a fact about the box — and
+   * a structure's cells are what it publishes to the blade, so the frame one
+   * finishes is the frame the blade's contact set changes shape and the rest
+   * of the run lands elsewhere. `tools/checks/blast-door.mjs` isolated exactly
+   * this and its note carries the measurement: the same drive is bit-identical
+   * across processes with the budget pinned, and reads the same numbers a
+   * machine fast enough to finish in one frame was already getting. Its note
+   * also records that nothing else in `world.update` branches on real time.
+   *
+   * `--live` puts it back for anybody who wants the box in the number.
+   */
+  if (!LIVE && world.destruction) world.destruction.prepareBudgetMs = Infinity;
 
-/** …and the ending, whichever door it comes through. */
-let ended = null;
-world.onGameOver = (stats) => { if (!ended) ended = { t: +world.time.toFixed(1), ...stats }; };
+  if (world.command?.versus) world.beginVersus();
+  else if (MODES[MODE]?.picksCampaign) world.beginCampaign();
+  else world.director.start(1);
 
-/* ── the drive ─────────────────────────────────────────────────────────── */
+  const input = dutyInput(world);
 
-const rows = [];
-const frames = Math.round(MINUTES * 60 / STEP);
-const t0 = process.cpuUsage();
-let stepped = 0, next = 0;
-/** The worst single frame, in CPU microseconds, and when it happened. */
-let worstFrame = { us: 0, t: 0 };
+  /* ── what a reading is ─────────────────────────────────────────────────── */
 
-for (let i = 0; i < frames; i++) {
-  const f0 = process.cpuUsage();
-  input.tick?.(STEP);
-  world.update(STEP, input);
-  const f = process.cpuUsage(f0);
-  const us = f.user + f.system;
-  /* NOT THE FIRST SECOND. Measured at 225 ms against a 24 ms median: the
-   * opening frames pay for every lazily built thing the world puts off until
-   * something asks — the first rig, the first pool, the first shader compile —
-   * and a "worst frame" that is always frame 1 is a number about module
-   * initialisation rather than about play. `scale.mjs` settles its ground for
-   * the same reason and its note carries the measurement. */
-  if (world.time > 1 && us > worstFrame.us) worstFrame = { us, t: +world.time.toFixed(1) };
-  stepped++;
-  if (world.time >= next) { rows.push(reading(world.time)); next += SAMPLE; }
-  /* THE RUN ENDING IS THE END OF THE RUN. Driving past `over` is driving a
-   * corpse — every director returns early on it — and the frames would be
-   * counted into the cost as though they were play. */
-  if (ended || world.over) break;
+  const roster = () => world.command?.roster ?? null;
+  const p = () => world.player;
+
+  /**
+   * ONE ROW OF THE TIMELINE.
+   *
+   * Everything is read off the world; nothing is derived twice and nothing is
+   * modelled. A field that the mode does not have reads null rather than 0 —
+   * `Waves` has no roster and a duel has no areas, and a zero there would be a
+   * statement about the mode that is not true.
+   */
+  const reading = (t) => {
+    const r = roster();
+    const pl = p();
+    const alive = world.enemies.filter((e) => !e.dead);
+    return {
+      t: +t.toFixed(1),
+      wave: world.director?.wave ?? null,
+      /* WHAT IS ON THE FIELD, split the way the fight splits: yours and theirs.
+       * `enlistBody` puts your named troopers in `world.enemies` on the party's
+       * team, so a bare count of `enemies` is the sum of two armies. */
+      hostile: alive.filter((e) => e.team !== world.partyTeam).length,
+      friendly: alive.filter((e) => e.team === world.partyTeam).length,
+      /* THE PLAYER, as the four bars a player watches. */
+      hp: pl ? +(pl.hp ?? 0).toFixed(1) : null,
+      force: pl ? +(pl.force ?? 0).toFixed(1) : null,
+      stamina: pl ? +(pl.stamina ?? 0).toFixed(1) : null,
+      alive: pl ? pl.alive !== false : null,
+      kills: world.players.reduce((a, q) => a + (q.kills || 0), 0),
+      score: world.score | 0,
+      /* THE ROSTER, which is the mode's one-way variable: it only ever shrinks
+       * within a run, so a timeline of it IS the story of the run. */
+      living: r ? r.living.length : null,
+      fallen: r ? r.fallen.length : null,
+      /* …AND HOW STEADY THEY ARE. The mean of the record's own morale, and how
+       * many are past MORALE.BREAK. A line that is holding and a line that is
+       * about to run look identical in a body count. */
+      morale: r && r.living.length
+        ? +(r.living.reduce((a, x) => a + (x.morale ?? 0), 0) / r.living.length).toFixed(3) : null,
+      broken: r ? r.living.filter((x) => x.broken).length : null,
+      /**
+       * THE DIRECTOR'S OWN COUNTERS, and the first run without them cost an
+       * afternoon.
+       *
+       * The timeline showed six minutes of "one hostile, no roster, no
+       * announcements, nothing happening" and there is no way to read that. A
+       * wave holding open on one body the player cannot reach, a delivery that
+       * never finished, and a run quietly over all look identical in a body
+       * count. These three say which:
+       *
+       *   `remaining`  what the wave still owes. Frozen beside a frozen
+       *                `hostile` is a wave holding open.
+       *   `delivered`  whether every body of the wave has arrived. FALSE here
+       *                disables the stall watchdog entirely (`Waves.js`'s
+       *                `blocking`), so a stuck delivery is a stuck RUN and this
+       *                is the one field that says so.
+       *   `rescues`    how many bodies the watchdog has had to relocate. It is
+       *                cumulative, so the SLOPE is the reading: 61 over fifteen
+       *                minutes is bodies routinely failing to reach the fight.
+       */
+      remaining: world.director?.remaining ?? null,
+      delivered: world.director?.delivered ?? null,
+      rescues: (world.director?.rescues || []).length,
+      /* THE GROUND. `areasTaken` for a campaign, `front` for a meeting. */
+      areas: world.command?.areasTaken ?? null,
+      front: world.command?.front != null ? +world.command.front.toFixed(3) : null,
+      /* AND WHAT THE FRAME IS COSTING. `renderer.info` is a stub headless, so
+       * these are the counts the world itself keeps. */
+      bodies: world.physics?.stats?.bodies ?? null,
+      props: world.props?.length ?? null,
+    };
+  };
+
+  /* ── the events ────────────────────────────────────────────────────────── */
+
+  /**
+   * EVERYTHING THE GAME SAID, WITH THE CLOCK ON IT.
+   *
+   * `World.notify` is the one door every announcement in the game goes through —
+   * a wave, a casualty, a promotion, a stratagem released, the ship called — so
+   * hooking it is hooking the whole of what a player is told. It is also the one
+   * place this file could accidentally change the run, so the original is called
+   * and its return handed straight back.
+   */
+  const events = [];
+  const rawNotify = world.notify.bind(world);
+  world.notify = (title, sub, kind) => {
+    events.push({ t: +world.time.toFixed(1), title: String(title ?? ''), sub: String(sub ?? ''), kind: kind ?? 'flavour' });
+    return rawNotify(title, sub, kind);
+  };
+
+  /** …and the ending, whichever door it comes through. */
+  let ended = null;
+  world.onGameOver = (stats) => { if (!ended) ended = { t: +world.time.toFixed(1), ...stats }; };
+
+  /* ── the drive ─────────────────────────────────────────────────────────── */
+
+  const rows = [];
+  const frames = Math.round(MINUTES * 60 / STEP);
+  const t0 = process.cpuUsage();
+  let stepped = 0, next = 0;
+  /** The worst single frame, in CPU microseconds, and when it happened. */
+  let worstFrame = { us: 0, t: 0 };
+
+  for (let i = 0; i < frames; i++) {
+    const f0 = process.cpuUsage();
+    input.tick?.(STEP);
+    world.update(STEP, input);
+    const f = process.cpuUsage(f0);
+    const us = f.user + f.system;
+    /* NOT THE FIRST SECOND. Measured at 225 ms against a 24 ms median: the
+     * opening frames pay for every lazily built thing the world puts off until
+     * something asks — the first rig, the first pool, the first shader compile —
+     * and a "worst frame" that is always frame 1 is a number about module
+     * initialisation rather than about play. `scale.mjs` settles its ground for
+     * the same reason and its note carries the measurement. */
+    if (world.time > 1 && us > worstFrame.us) worstFrame = { us, t: +world.time.toFixed(1) };
+    stepped++;
+    if (world.time >= next) { rows.push(reading(world.time)); next += SAMPLE; }
+    /* THE RUN ENDING IS THE END OF THE RUN. Driving past `over` is driving a
+     * corpse — every director returns early on it — and the frames would be
+     * counted into the cost as though they were play. */
+    if (ended || world.over) break;
+  }
+  const cpu = process.cpuUsage(t0);
+  rows.push(reading(world.time));
+
+  /* ── the report ────────────────────────────────────────────────────────── */
+
+  const r = roster();
+  const played = world.time;
+  const report = {
+    mode: MODE, level, levelName: LEVELS[level]?.name ?? level,
+    seed: SEED, order: ORDER, difficulty: DIFFICULTY,
+    askedMinutes: MINUTES,
+    playedSeconds: +played.toFixed(1),
+    playedMinutes: +(played / 60).toFixed(2),
+    frames: stepped,
+    /* How much of the drive the world did not advance for — the hitstop, as a
+     * percentage. One statement of "the run was in slow motion for this long". */
+    dilated: +(100 * Math.max(0, 1 - played / (stepped * STEP))).toFixed(1),
+    /* THE COST OF PLAYING IT, in the units HANDOFF §2.6b asks for. */
+    cpuMs: +((cpu.user + cpu.system) / 1000).toFixed(0),
+    msPerFrame: +((cpu.user + cpu.system) / 1000 / Math.max(1, stepped)).toFixed(3),
+    worstFrameMs: +(worstFrame.us / 1000).toFixed(2),
+    worstFrameAt: worstFrame.t,
+    load1: +loadavg()[0].toFixed(2),
+    ended: ended ? { at: ended.t, why: ended.ended ?? (ended.won === true ? 'won' : ended.won === false ? 'lost' : 'unknown'),
+      won: ended.won ?? null, wave: ended.wave ?? null, kills: ended.kills ?? null } : null,
+    finalWave: world.director?.wave ?? null,
+    kills: world.players.reduce((a, q) => a + (q.kills || 0), 0),
+    roster: r ? {
+      enlisted: r.all.length, living: r.living.length, fallen: r.fallen.length,
+      /* THE NAMES, because §13 makes the name list the mode's fallback spine and
+       * a count of the dead is not the same object as a list of who they were. */
+      dead: r.fallen.map((x) => ({ name: x.name, type: x.type, kills: x.kills | 0, areas: x.areas | 0 })),
+    } : null,
+    /* THE SCRIPT'S OWN TALLY, so a reader can tell a quiet run from a run the
+     * script never fought. `dutyInput` counts its swings, its pushes and the
+     * times it put the Jedi back on its feet. */
+    script: input.tally ? { ...input.tally, t: +(input.tally.t ?? 0).toFixed(1) } : null,
+    timeline: rows,
+    events,
+  };
+
+
+  return report;
 }
-const cpu = process.cpuUsage(t0);
-rows.push(reading(world.time));
 
-/* ── the report ────────────────────────────────────────────────────────── */
+const runs = [];
+for (let i = 0; i < Math.max(1, REPEAT); i++) {
+  runs.push(await runOnce(i));
+  if (REPEAT > 1) process.stderr.write('.');
+}
+if (REPEAT > 1) process.stderr.write('\n');
+const report = runs[0];
 
-const r = roster();
-const played = world.time;
-const report = {
-  mode: MODE, level, levelName: LEVELS[level]?.name ?? level,
-  seed: SEED, order: ORDER, difficulty: DIFFICULTY,
-  askedMinutes: MINUTES,
-  playedSeconds: +played.toFixed(1),
-  playedMinutes: +(played / 60).toFixed(2),
-  frames: stepped,
-  /* How much of the drive the world did not advance for — the hitstop, as a
-   * percentage. One statement of "the run was in slow motion for this long". */
-  dilated: +(100 * Math.max(0, 1 - played / (stepped * STEP))).toFixed(1),
-  /* THE COST OF PLAYING IT, in the units HANDOFF §2.6b asks for. */
-  cpuMs: +((cpu.user + cpu.system) / 1000).toFixed(0),
-  msPerFrame: +((cpu.user + cpu.system) / 1000 / Math.max(1, stepped)).toFixed(3),
-  worstFrameMs: +(worstFrame.us / 1000).toFixed(2),
-  worstFrameAt: worstFrame.t,
-  load1: +loadavg()[0].toFixed(2),
-  ended: ended ? { at: ended.t, why: ended.ended ?? (ended.won === true ? 'won' : ended.won === false ? 'lost' : 'unknown'),
-    won: ended.won ?? null, wave: ended.wave ?? null, kills: ended.kills ?? null } : null,
-  finalWave: world.director?.wave ?? null,
-  kills: world.players.reduce((a, q) => a + (q.kills || 0), 0),
-  roster: r ? {
-    enlisted: r.all.length, living: r.living.length, fallen: r.fallen.length,
-    /* THE NAMES, because §13 makes the name list the mode's fallback spine and
-     * a count of the dead is not the same object as a list of who they were. */
-    dead: r.fallen.map((x) => ({ name: x.name, type: x.type, kills: x.kills | 0, areas: x.areas | 0 })),
-  } : null,
-  /* THE SCRIPT'S OWN TALLY, so a reader can tell a quiet run from a run the
-   * script never fought. `dutyInput` counts its swings, its pushes and the
-   * times it put the Jedi back on its feet. */
-  script: input.tally ? { ...input.tally, t: +(input.tally.t ?? 0).toFixed(1) } : null,
-  timeline: rows,
-  events,
-};
-
-if (JSON_OUT) { console.log(JSON.stringify(report, null, 2)); process.exit(0); }
+if (JSON_OUT) {
+  console.log(JSON.stringify(REPEAT > 1 ? { runs } : report, null, 2));
+  process.exit(0);
+}
 
 /* ── printed ───────────────────────────────────────────────────────────── */
 
@@ -299,7 +366,7 @@ if (report.ended) {
 }
 
 console.log('\n   t(s)  wave  left  dlv  resc  them   you   hp  force  stam  living fallen morale brk  areas  front  kills');
-for (const x of rows) {
+for (const x of report.timeline) {
   console.log(`  ${pad(x.t, 5)} ${pad(x.wave, 5)} ${pad(x.remaining, 5)} `
     + `${pad(x.delivered === null ? '·' : (x.delivered ? 'y' : 'n'), 4)} ${pad(x.rescues, 5)} `
     + `${pad(x.hostile, 5)} ${pad(x.friendly, 5)} `
@@ -329,6 +396,7 @@ if (report.script) {
  * with a count beside it, and a title that only ever happened once prints as
  * itself. The full list is in `--json`.
  */
+const events = report.events;
 console.log(`\n  ${events.length} announcements, ${new Set(events.map((e) => e.title)).size} distinct:`);
 const seen = new Map();
 for (const e of events) {
@@ -338,5 +406,42 @@ for (const e of events) {
 for (const [title, v] of [...seen.entries()].sort((a, b) => a[1].first.t - b[1].first.t)) {
   console.log(`    ${pad(v.first.t, 6)}s  ${title}${v.n > 1 ? ` ×${v.n}` : ''}`
     + (v.first.sub ? ` — ${v.first.sub}` : ''));
+}
+
+/**
+ * THE SPREAD, WHICH IS THE HONEST FORM OF "THIS IS WHAT HAPPENS".
+ *
+ * A run of this game is a sample. `settings.seed` and `world.runSeed` pin the
+ * ground, the muster, the wave composition and the arrivals, and the fight on
+ * top of them still diverges: `Bolts.gradeCaught` draws from `Math.random`
+ * nine times on purpose — Bolts.js:260 argues the case, "without touching the
+ * shared RNG, which the wave director's reproducibility depends on" — and
+ * every deflection a guard holds is one of those draws deciding where a bolt
+ * goes and therefore who dies.
+ *
+ * So the divergence is designed, and the answer is not to pretend one run is
+ * the seed's history. `--repeat N` drives the same seed N times and prints
+ * what moved. `scale.mjs` gained the same flag for the same reason and its
+ * note carries the argument: a single reading of a stochastic system is a
+ * number you cannot use.
+ */
+if (REPEAT > 1) {
+  const spread = (k, f = (r) => r[k]) => {
+    const v = runs.map(f).filter((x) => Number.isFinite(x));
+    if (!v.length) return '·';
+    const lo = Math.min(...v), hi = Math.max(...v);
+    const mean = v.reduce((a, b) => a + b, 0) / v.length;
+    return lo === hi ? `${lo}` : `${lo}–${hi} (mean ${mean.toFixed(1)})`;
+  };
+  console.log(`\n  ${runs.length} runs of seed ${SEED}, and what moved between them:`);
+  console.log(`    wave reached    ${spread('finalWave')}`);
+  console.log(`    kills           ${spread('kills')}`);
+  console.log(`    fallen          ${spread(null, (r) => r.roster?.fallen)}`);
+  console.log(`    still standing  ${spread(null, (r) => r.roster?.living)}`);
+  console.log(`    ground taken    ${spread(null, (r) => r.timeline.at(-1)?.areas)}`);
+  console.log(`    rescues         ${spread(null, (r) => r.timeline.at(-1)?.rescues)}`);
+  console.log(`    ended           ${runs.filter((r) => r.ended).length} of ${runs.length}`);
+  console.log('\n  The ground, the muster and the wave composition are the seed\'s and repeat.');
+  console.log('  The fight on top of them does not: see the note above this block.');
 }
 console.log('');
