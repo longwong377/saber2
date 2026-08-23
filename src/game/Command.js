@@ -2041,6 +2041,17 @@ export const DIG_R = 8, DIG_DEPTH = 0.9, DIG_RIM = 1.6;
 /** How far from the middle a man counts as working on it. */
 export const DIG_WORK_R = DIG_R + 2;
 
+/**
+ * HOW CLOSE A LIVING MAN HAS TO BE TO COUNT AS STANDING OVER A CASUALTY, in
+ * metres — PLAN.md §4.6's Triage.
+ *
+ * Three, which is inside a body's own footprint plus a step: it has to mean
+ * "he is with him", not "he is in the same field". `MORALE.NEAR` is 14 and
+ * would have made every casualty inside a formed-up squad count, which is the
+ * card paying for nothing.
+ */
+export const TRIAGE_REACH = 3;
+
 /** How many bodies are one squad. Five is a fireteam and it fits one screen. */
 export const SQUAD = 5;
 /** The most bodies the mode will ever field for you at once. See `_muster`. */
@@ -5520,6 +5531,18 @@ export class CommandDirector extends WaveDirector {
      */
     if (t.broken || t.rout) {
       /**
+       * …AND SOME ARMIES DO NOT RUN — PLAN.md §4.6's Stand Fast.
+       *
+       * A rout is a DESTINATION below — the man walks back to his general — and
+       * this makes it a place instead: he goes to ground where he is standing.
+       * Better and worse at once, which is the card: he keeps the ground he was
+       * given and stays inside the quorum, and he does it lying in the open
+       * with whatever broke him still there. `_goToGround` is the same call the
+       * refusing branch below already makes, so this adds no behaviour — it
+       * changes which of two shipped ones a broken man gets.
+       */
+      if (this.world?.player?.boonMods?.standfast) { this._goToGround(e, dt, c, true); return; }
+      /**
        * FINISHED IS NOT STOPPED. This line used to be
        * `if (t.morale < MORALE.REFUSE) return;`, and with `targetFor`
        * refusing on the same test it left a man below `REFUSE` inert:
@@ -6795,7 +6818,10 @@ export class CommandDirector extends WaveDirector {
       if (dx * dx + dz * dz <= DIG_WORK_R * DIG_WORK_R) crew++;
     }
     if (crew < DIG_CREW) return false;
-    rec.t += dt;
+    /* AND SOME LINES KNOW HOW TO USE A SHOVEL — PLAN.md §4.6's Field
+     * Engineering, which is a rule about what your ARMY can do rather than a
+     * number on the player. */
+    rec.t += dt * clamp(this.world?.player?.boonMods?.digRate ?? 1, 0.25, 4);
     if (rec.t < DIG_SECONDS) return true;
     rec.done = true;
     this.digs = (this.digs | 0) + 1;
@@ -7159,7 +7185,22 @@ export class CommandDirector extends WaveDirector {
        * He is still ALIVE, exactly as a man on a gun is: losing him is losing
        * him, and the roster has not written him off. What he is not is standing.
        */
-      if (e.downed) { down++; continue; }
+      /**
+       * …UNLESS SOMEBODY IS STANDING OVER HIM — PLAN.md §4.6's Triage, and it
+       * is one of the two facets that section requires to move the KEYSTONE.
+       *
+       * The rule above is what makes the bleed-out window cost something; this
+       * card changes which way the tension pulls, so a player who takes it
+       * spends men on holding casualties rather than on holding ground. The
+       * medic is any living man of the same side inside `TRIAGE_REACH` — a
+       * body, not a role, because this game has no medics and inventing one
+       * would be a second system to make a card true.
+       */
+      if (e.downed) {
+        down++;
+        if (this.world?.player?.boonMods?.triage && this._overHim(e, living)) near++;
+        continue;
+      }
       const own = sp?.get(String(e.cmdSquad | 0));
       const at = own ? own.pos : p.position;
       if (dist2(e.position, at) <= r2) near++;
@@ -7168,7 +7209,36 @@ export class CommandDirector extends WaveDirector {
     /* An army that no longer exists cannot come up, and a run that waited for
      * it would hang instead of ending. `_checkLine` is the door for that. */
     if (!alive) return true;
-    return near * 2 >= alive;
+    /**
+     * HALF, UNLESS A FACET SAYS OTHERWISE — PLAN.md §4.6's Skirmish Order.
+     *
+     * The share is the keystone itself, so this is the one line in the game a
+     * card is allowed to move: at a third the ground comes faster and the
+     * muster that pays for the men who took it is halved (`_areaClear`). It is
+     * read off the player rather than off a director flag because it is the
+     * PLAYER's build, and a run with no player at all — a headless bench, a
+     * client — reads the shipped half.
+     */
+    const share = clamp(this.world?.player?.boonMods?.quorumShare ?? 0.5, 0.2, 1);
+    return near >= alive * share;
+  }
+
+  /**
+   * IS SOMEBODY STANDING OVER THIS MAN? See the Triage clause in
+   * `lineGathered`.
+   *
+   * Any living body on his own side inside `TRIAGE_REACH`, and never himself.
+   * A downed man beside another downed man is two casualties, not a casualty
+   * and a medic.
+   */
+  _overHim(e, living) {
+    const r2 = TRIAGE_REACH * TRIAGE_REACH;
+    for (const t of living) {
+      const o = t.body;
+      if (!o || o === e || o.dead || o.downed) continue;
+      if (dist2(o.position, e.position) <= r2) return true;
+    }
+    return false;
   }
 
   lineIsUp(c = this.commander) {
@@ -7326,7 +7396,11 @@ export class CommandDirector extends WaveDirector {
     }
     // Holding a whole area is the biggest thing that happens to a line's nerve.
     for (const c of this.commanders) this.shake(null, 'AREA_HELD', c);
-    this.roster.points += this.area.muster;
+    /* THE PURSE, SCALED BY WHATEVER RULE THE RUN IS UNDER — PLAN.md §4.6.
+     * Skirmish Order is the only thing that moves it: taking ground with a
+     * third of your men costs you half the men you are paid for taking it
+     * with, which is what makes that card a decision rather than a discount. */
+    this.roster.points += this.area.muster * (this.world?.player?.boonMods?.musterShare ?? 1);
     /* HOLDING GROUND IS WHAT EARNS A FLEET'S ATTENTION. The largest single
      * credit on the table — see SUPPORT_EARN. */
     this.world?.support?.credit('area');

@@ -2699,6 +2699,52 @@ export function defaultBoonMods() {
     ward: 1,
     /** Domination. Force compel refuses by name without it — see forceCompel. */
     compel: false,
+    /* ══════════════════════════════════════════════════════════════════
+     *  THE RULES, AS OPPOSED TO THE NUMBERS — PLAN.md §4.6
+     * ══════════════════════════════════════════════════════════════════
+     *
+     * "Eight facets that change RULES rather than numbers… At least two of the
+     * eight must change the QUORUM. Variance that cannot touch the keystone is
+     * variance in a side pocket, and this is the difference between melded and
+     * parallel."
+     *
+     * Every field below is a rule somebody else's system asks about, and every
+     * one has its reader named beside it, because a card that promises a rule
+     * nothing reads is the one defect this codebase keeps removing. They are
+     * declared here rather than kept on the instance for the reason this
+     * table's own header gives: `defaultBoonMods` is the closed contract, and
+     * a key that is not in it is a key nothing can iterate or serialise. */
+
+    /**
+     * WHAT SHARE OF THE LIVING HAS TO BE STANDING WITH THE LINE for the ground
+     * to be taken. `CommandDirector.lineGathered` is the reader, and it is the
+     * keystone itself — half is the shipped rule and a third is Skirmish Order.
+     */
+    quorumShare: 0.5,
+    /** …AND WHAT THAT COSTS: the muster's purse, scaled. Read by `_areaClear`. */
+    musterShare: 1,
+    /**
+     * DOES A MAN ON THE GROUND STILL COUNT while somebody is standing over
+     * him? `lineGathered` again — §4.9's bleed-out window and the quorum are in
+     * direct tension by design, and Triage is the facet that changes which way
+     * that tension pulls.
+     */
+    triage: false,
+    /** How fast a squad turns ground into a position. Read by `_digTick`. */
+    digRate: 1,
+    /**
+     * WHAT SHARE OF THE WEATHER YOUR OWN LINE HAS TO SEE THROUGH. 1 is the
+     * storm as it stands; Storm Sense halves it for your side only. Read by
+     * `Enemy._hasLineOfSight`, which is the one place that asks.
+     */
+    stormEyes: 1,
+    /** Does breaking cover pay Insight? Read by `World.onPropBroken`. */
+    salvage: false,
+    /**
+     * DOES A BROKEN MAN GO TO GROUND WHERE HE STANDS instead of walking home?
+     * Read by `CommandDirector.steer`, which is where a rout is a destination.
+     */
+    standfast: false,
   };
 }
 

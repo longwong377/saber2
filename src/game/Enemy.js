@@ -24,7 +24,7 @@ import { attachCloak, attachSkirt, attachHoodDrape } from './Cloth.js';
 import { LAYER, Body, capsuleSpheres, capsule } from '../physics/RapierWorld.js';
 import { supportHeight, STEP_UP, GROUND_SNAP, CLIMB_RATE } from '../physics/Support.js';
 import { TOUGHNESS, thinner, bladesTouching, aimAt } from './Combat.js';
-import { seeThrough } from './Smoke.js';
+import { seeThrough, depthAlong } from './Smoke.js';
 import { segmentSegment } from '../physics/Physics.js';
 import { BOLT_COLORS } from './Bolts.js';
 /* The one weather every system reads — see its own note in Scenery.js. Used by
@@ -6245,7 +6245,23 @@ export class Enemy {
      * instances too. Your own line cannot shoot through your own smoke either,
      * which is what makes laying one a decision.
      */
-    if (seeThrough(from, at) < SMOKE_SEE) return false;
+    /**
+     * …AND ONE SIDE MAY SEE FURTHER THAN THE OTHER — PLAN.md §4.6's Storm
+     * Sense, and it is the only thing in the game that breaks this model's
+     * symmetry.
+     *
+     * `Smoke.js` cannot know who fired and must not: that is what makes a
+     * smoke screen a decision rather than a free win. What a Force user can do
+     * is TELL HIS OWN LINE where to shoot, so the asymmetry lives here, on the
+     * body doing the looking, and only for bodies on the player's own side.
+     * `stormEyes` is 1 for everybody in every run that has not taken the card,
+     * so the shipped behaviour is `depth * 1` and unchanged.
+     */
+    const p = this.world?.player;
+    const eyes = (p && p.team === this.team) ? (p.boonMods?.stormEyes ?? 1) : 1;
+    const see = eyes === 1 ? seeThrough(from, at)
+      : Math.exp(-depthAlong(from, at) * eyes);
+    if (see < SMOKE_SEE) return false;
     return true;
   }
 

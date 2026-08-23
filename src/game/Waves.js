@@ -5875,6 +5875,99 @@ export const BOONS = [
       boonTick(p, 'undying', undyingMend);
     },
   },
+  /* ══════════════════════════════════════════════════════════════════════
+   *  THE RULES, AS OPPOSED TO THE NUMBERS — PLAN.md §4.6
+   * ══════════════════════════════════════════════════════════════════════
+   *
+   * "Eight facets that change RULES rather than numbers… At least two of the
+   * eight must change the QUORUM. Variance that cannot touch the keystone is
+   * variance in a side pocket, and this is the difference between melded and
+   * parallel."
+   *
+   * Six of them, and the first two are the keystone ones. Every card below
+   * changes a SENTENCE somewhere else in the game rather than a coefficient in
+   * `boonMods`, which is what makes them different in kind from the forty
+   * above: none of them makes you hit harder, and every one of them makes a
+   * rule read differently. The fields they write are declared in
+   * `Player.defaultBoonMods` with their readers named beside them, and
+   * `tools/checks/variance.mjs` measures each rule changing, A/B, on the same
+   * bodies in the same places.
+   *
+   * TWO OF THEM ARE STRICTLY WORSE IF YOU PLAY THE WAY THE GAME TAUGHT YOU,
+   * which is the point of a facet that changes a rule: Skirmish Order halves
+   * the muster, and Stand Fast leaves a broken man in the open. A card that is
+   * always correct is a number wearing a rule's clothes.
+   */
+  {
+    id: 'skirmish', icon: '⌁', name: 'Skirmish Order', tag: 'The Line',
+    rarity: 'rare', axes: ['bond'],
+    /* THE KEYSTONE, MOVED. `lineIsUp` is half the living inside MORALE.NEAR of
+     * where they were told to stand; this makes it a third — and takes half
+     * the reinforcement purse for it, so a player who takes it is buying
+     * ground with bodies he will not get back. It is the one card in the game
+     * that changes what "the ground is yours" means. */
+    text: 'Spread out. The ground counts as taken with a third of your men on it — and the '
+      + 'replacements you are paid for holding it are halved.',
+    apply(p) { p.boonMods.quorumShare = 1 / 3; p.boonMods.musterShare = 0.5; },
+  },
+  {
+    id: 'triage', icon: '✚', name: 'Triage', tag: 'The Line',
+    rarity: 'rare', axes: ['bond'],
+    /* THE OTHER HALF OF §4.9's TENSION. A downed man does not count toward the
+     * quorum — that is the clause that makes the bleed-out window cost
+     * something — and this changes it to "unless somebody is standing over
+     * him", which turns dragging a casualty out of a duty into a decision
+     * about who you can spare. */
+    text: 'A man on the ground still counts, as long as somebody living is standing over him.',
+    apply(p) { p.boonMods.triage = true; },
+  },
+  {
+    id: 'standfast', icon: '⚑', name: 'Stand Fast', tag: 'Nerve',
+    rarity: 'rare', axes: ['bond'],
+    /* A ROUT IS A DESTINATION in this game — a broken man walks back to his
+     * general. This makes it a PLACE instead: he goes to ground where he is.
+     * Which is better and worse at once, and that is the card: he keeps the
+     * ground he was holding and stays in the quorum, and he does it lying in
+     * the open with whatever broke him still there. */
+    text: 'Nobody runs. A man who breaks goes to ground where he stands, and holds what he was given.',
+    apply(p) { p.boonMods.standfast = true; },
+  },
+  {
+    id: 'sapper', icon: '⛏', name: 'Field Engineering', tag: 'Ground',
+    rarity: 'common', axes: ['body'], stack: 2,
+    /* PLAN.md §4.7's Dig In, at double speed — a rule about what your ARMY can
+     * do rather than about what you can. It stacks twice because the thing it
+     * scales is a clock and halving it once is already most of the value. */
+    text: 'Your squads know how to use a shovel. A position goes up in half the time.',
+    apply(p, s = 1) { p.boonMods.digRate = (p.boonMods.digRate ?? 1) * grow(2, s); },
+  },
+  {
+    id: 'stormsense', icon: '🌪', name: 'Storm Sense', tag: 'Sight',
+    rarity: 'rare', axes: ['force'],
+    /* THE WEATHER, ONE-SIDED. A squall blinds both armies (see Smoke.js's own
+     * note on why the model cannot know who fired) — and this is the one thing
+     * in the game that breaks that symmetry, because a Force user standing
+     * with his line can tell them where to shoot. It is worth nothing in clear
+     * air, which is what makes it a card you take for a ground rather than a
+     * card you always take. */
+    text: 'You feel what you cannot see, and they fire on what you feel. Your line sees twice as '
+      + 'far through a storm as anything shooting at it.',
+    apply(p) { p.boonMods.stormEyes = 0.5; },
+  },
+  {
+    id: 'salvage', icon: '⚙', name: 'Salvage', tag: 'Insight',
+    rarity: 'common', axes: ['dark'],
+    /* PLAN.md's own example — "shattering a prop refunds Insight" — and it is
+     * a rule change because it pays a currency for an act that has never paid
+     * anything. It is also the one card that argues with §4.7's other half:
+     * cover is finite, and this makes breaking it worth doing. */
+    text: 'Nothing is wasted. Everything you break gives something back — and the field has only '
+      + 'so much in it.',
+    /* ONE RANK. What it changes is a rule — whether an act pays at all — and a
+     * second rank could only ever be a number on top of it, which is the thing
+     * this block of cards is not. */
+    apply(p) { p.boonMods.salvage = true; },
+  },
   {
     id: 'unity', icon: '♾', name: 'The Unifying Force', tag: 'Mastery of Communion',
     rarity: 'epic', minWave: MASTERY_AT, axes: ['bond'], requires: mastery('bond'),

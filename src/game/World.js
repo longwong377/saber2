@@ -34,6 +34,19 @@ import { Enemy, ARCHETYPES, applyModifier, ENEMY_POWERS, FORCE_KINDS, IMPULSE_AS
 import { WaveDirector, RankSet, boonTick, boonGuard, bondReceive, bondGuardIn, bondGive, BOND, boonById, MODES,
   skirmishConfig, SKIRMISH } from './Waves.js';
 import { Communion, FACETS, insightRate } from './LivingForce.js';
+/**
+ * WHAT ONE BROKEN THING IS WORTH IN INSIGHT — PLAN.md §4.6's Salvage.
+ *
+ * One. `INSIGHT_PER_WAVE` is 1 and a wave is minutes of fighting, so a level's
+ * fifty breakable props are worth about fifty waves of Insight to a player who
+ * goes and breaks every one of them — which sounds enormous until you price
+ * what it costs: `COST` runs 4 to 9 with a step of 2 per facet already woken,
+ * so a run that spent every prop on the lattice would buy about six more
+ * facets and would have spent the whole battle hitting scenery instead of the
+ * army that is taking its ground. The card pays for a way of playing rather
+ * than for a chore, and the ceiling is the field.
+ */
+const SALVAGE_INSIGHT = 1;
 import { nerveTick, witnessDeath, turnedHome, shakeNerve, nerveOf, boltAnswered, NERVE } from './Nerve.js';
 /**
  * What "open" is worth, in Insight — and it was a quarter of what it promised.
@@ -5306,6 +5319,27 @@ export class World {
   }
 
   /* ── callbacks ───────────────────────────────────────────────────── */
+
+  /**
+   * SOMETHING BREAKABLE CAME APART — PLAN.md §4.6's Salvage, and the only
+   * reader of `Props.shatter`'s new door.
+   *
+   * "Shattering a prop refunds Insight" is one of that section's own three
+   * examples of a facet that changes a RULE rather than a number: an act that
+   * has never paid anything starts paying a currency. It is self-limiting
+   * without a cooldown or a cap, and deliberately — a level ships about fifty
+   * breakable things (measured: 54 on geonosis) and every one of them pays
+   * once, so the ceiling is the field itself. It also argues with §4.7's other
+   * half in the right direction: cover is finite, and this makes spending it a
+   * choice rather than an accident.
+   */
+  onPropBroken() {
+    if (!this.player?.boonMods?.salvage || !this.communion) return 0;
+    this.communion.insight += SALVAGE_INSIGHT;
+    this.communion.earned += SALVAGE_INSIGHT;
+    this.salvaged = (this.salvaged | 0) + 1;
+    return SALVAGE_INSIGHT;
+  }
 
   onEnemyKilled(enemy, source, kind) {
     const A = enemy.A;

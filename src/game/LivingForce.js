@@ -325,8 +325,10 @@ export const FACETS = [
     jedi: 'Mastery — Bastion', sith: 'Mastery — The Iron Wall' },
 
   /* ── The Force ─────────────────────────────────────────────────────── */
-  { id: 'attune-force', axis: 'force', to: ['wellspring', 'ataru', 'tutaminis'],
+  { id: 'attune-force', axis: 'force', to: ['wellspring', 'ataru', 'tutaminis', 'stormsense'],
     jedi: 'Attunement of the Force', sith: 'Attunement of Power' },
+  { id: 'stormsense', axis: 'force', to: [],
+    jedi: 'Storm Sense', sith: 'Eyes in the Murk' },
   { id: 'wellspring', axis: 'force', to: ['conduit'],
     jedi: 'Wellspring', sith: 'The Deep Well' },
   { id: 'ataru', axis: 'force', to: ['repulse'],
@@ -349,8 +351,10 @@ export const FACETS = [
     jedi: 'Vitality', sith: 'Spite' },
   { id: 'celerity', axis: 'body', to: ['momentum'],
     jedi: 'Celerity', sith: 'The Quickening' },
-  { id: 'meditation', axis: 'body', to: ['undying'],
+  { id: 'meditation', axis: 'body', to: ['undying', 'sapper'],
     jedi: 'Meditation', sith: 'Discipline of Pain' },
+  { id: 'sapper', axis: 'body', to: [],
+    jedi: 'Field Engineering', sith: 'Labour of the Weak' },
   { id: 'secondwind', axis: 'body', to: ['undying'],
     jedi: 'Second Wind', sith: 'Refusal' },
   { id: 'momentum', axis: 'body', to: [],
@@ -365,18 +369,30 @@ export const FACETS = [
    * exactly on the "never runs out" bar rather than comfortably past it. */
   { id: 'attune-bond', axis: 'bond', to: ['communion'],
     jedi: 'Attunement of the Bond', sith: 'Attunement of the Pact' },
-  { id: 'communion', axis: 'bond', to: ['suffusion', 'vow'],
+  { id: 'communion', axis: 'bond', to: ['suffusion', 'vow', 'skirmish', 'triage'],
     jedi: 'Battle Meditation', sith: 'Dominion' },
+  /* ── PLAN.md §4.6's two, and they are here because this is the current
+   * about the men beside you. Both change the KEYSTONE — `lineGathered` —
+   * which is the whole reason the section asks for at least two: "variance
+   * that cannot touch the keystone is variance in a side pocket". */
+  { id: 'skirmish', axis: 'bond', to: ['unity'],
+    jedi: 'Skirmish Order', sith: 'Loose Rein' },
+  { id: 'triage', axis: 'bond', to: ['unity'],
+    jedi: 'Triage', sith: 'Blood Debt' },
   { id: 'suffusion', axis: 'bond', to: ['unity'],
     jedi: 'Force Suffusion', sith: 'Siphoned Vitality' },
-  { id: 'vow', axis: 'bond', to: ['unity'],
+  { id: 'vow', axis: 'bond', to: ['unity', 'standfast'],
     jedi: "Guardian's Vow", sith: 'Blood Pact' },
+  { id: 'standfast', axis: 'bond', to: [],
+    jedi: 'Stand Fast', sith: 'None May Leave' },
   { id: 'unity', axis: 'bond', to: [],
     jedi: 'Mastery — The Unifying Force', sith: 'Mastery — The Rule of Two' },
 
   /* ── The Dark ──────────────────────────────────────────────────────── */
-  { id: 'attune-dark', axis: 'dark', to: ['lifesteal', 'juyo', 'lightning'],
+  { id: 'attune-dark', axis: 'dark', to: ['lifesteal', 'juyo', 'lightning', 'salvage'],
     jedi: 'Attunement of the Shadow', sith: 'Attunement of the Dark' },
+  { id: 'salvage', axis: 'dark', to: [],
+    jedi: 'Salvage', sith: "The Scavenger's Right" },
   { id: 'lifesteal', axis: 'dark', to: ['execute'],
     jedi: 'Sustenance', sith: 'Dark Sustenance' },
   { id: 'juyo', axis: 'dark', to: ['fury'],
