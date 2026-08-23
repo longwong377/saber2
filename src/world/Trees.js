@@ -256,6 +256,44 @@ const CELL = 12;
 /** How often the ring is rebuilt. At a 4.6 m/s walk that is 1.2 m of travel. */
 const SYNC = 0.25;
 
+/**
+ * THE TRUNK IN YOUR EYE, and why the boom cannot be the thing that fixes it.
+ *
+ * The report is "the camera goes inside the tree trunks". It does, and the
+ * numbers say the camera is not the part that is wrong. Driven for ninety
+ * seconds through the stand, with the boom's clearance probe already widened
+ * from one ray to five: the near plane was inside drawn wood on 146 of 5,400
+ * frames, and in EVERY one of them the boom had already been pulled to its
+ * floor — 0.55 m, the nearest a third-person camera may sit before it is
+ * inside the player's own head. The failing shape is always the same one: the
+ * player is standing within a metre of a trunk, and there is no point 0.55 m
+ * behind their head that is more than a hand's width from bark. No pull-in
+ * distance solves that, because the distance is not the free variable.
+ *
+ * So the wood gets out of the way instead of the camera. A trunk whose axis
+ * passes within `EYE_CLEAR` of the camera is drawn THINNER — its radial scale
+ * falls to zero as the camera reaches the axis — and the shaft closes back to
+ * full size as you step off it. It is the near-plane radius that sets the
+ * number: at 60 degrees vertical and a 0.15 m near plane on a 16:9 frame the
+ * far corner of the near rectangle sits 0.232 m out, and anything inside that
+ * is already being cut in half by the clip plane. `EYE_LEAD` is one frame of a
+ * sprint on top, because the forest updates after the camera has moved.
+ *
+ * IT IS THE PICTURE THAT MOVES, NOT THE WOOD. The collider is untouched, the
+ * blade capsules are untouched, and the falling-trunk sweep is untouched — a
+ * trunk you cannot see at 20 cm is one you can still walk into, cut, and be
+ * killed by. The alternative, hiding the instance outright, was rejected for
+ * the pop: at this range the trunk is most of the screen, and a whole tree
+ * blinking out is a worse artefact than the one being fixed.
+ */
+export const EYE_CLEAR = 0.232;
+/** One frame of a sprint, since the forest updates after the camera moves. */
+const EYE_LEAD = 0.12;
+/** Below this the shaft is not worth a matrix write; it is already a hair. */
+const EYE_MIN = 0.04;
+/** A cap on the measured lead, so one teleport does not thin half the wood. */
+const EYE_LEAD_MAX = 0.9;
+
 let _id = 1;
 
 export class Forest {
@@ -322,6 +360,9 @@ export class Forest {
     this._cells = new Map();
     this._want = new Set();
     this._sync = 0;
+    /** Trunks currently thinned out of the camera's eye: index → radial scale. */
+    this._eye = new Map();
+    this._eyeWant = new Set();
 
     /* The duck-typed prop's body. This rides in `world.props` exactly as
      * `DestructionProxy` does, which is how it gets a per-frame `update`, a
@@ -963,7 +1004,13 @@ export class Forest {
     _q.setFromUnitVectors(UP, AXIS);
     // the unit geometry stands on its own origin, so the instance is placed at
     // the hinge and scaled to the surviving length
-    _s.set(r, len, r);
+    //
+    // The RADIAL scale carries EYE_CLEAR's thinning — read here rather than
+    // applied at the call sites because the fall animation and the cut both
+    // rewrite this matrix, and a trunk that came back to full width for one
+    // frame in the middle of falling past your head is the artefact twice.
+    const rf = this._eye.get(i) ?? 1;
+    _s.set(r * rf, len, r * rf);
     this.trunkMesh.setMatrixAt(i, _m.compose(_p, _q, _s));
   }
 
@@ -1198,6 +1245,12 @@ export class Forest {
     // nothing falling in it is the case where standing trees have to be solid.
     this._sync -= dt;
     if (this._sync <= 0) { this._sync = SYNC; this._syncColliders(); }
+    /* EVERY frame, not on SYNC's quarter-second: a quarter of a second is
+     * more than a metre of walking, and the whole margin this works inside is
+     * 0.35 m. It is a lookup in the grid and a segment distance for what it
+     * finds — three or four trees at the very most, since the query radius is
+     * under a metre. */
+    this._clearEye();
     if (!this.active.length) return;
 
     const D = this.data;
@@ -1232,6 +1285,110 @@ export class Forest {
       this.trunkMesh.instanceMatrix.needsUpdate = true;
       this.crownMesh.instanceMatrix.needsUpdate = true;
     }
+  }
+
+  /**
+   * Thin any trunk the camera is standing in. See EYE_CLEAR for the finding.
+   *
+   * The query radius is the widest trunk in the wood plus the clearance, which
+   * is why this can afford to run every frame: `_gatherRing` is a grid lookup,
+   * and at 0.9 m it returns nothing at all on the overwhelming majority of
+   * frames. `_eyeWant` is carried as a field rather than allocated so a pass
+   * that finds nothing costs no garbage.
+   */
+  _clearEye() {
+    const cam = this.world?.engine?.camera;
+    const eye = cam?.position;
+    if (!eye) { if (this._eye.size) this._releaseEye(); return; }
+    /* THE LEAD IS MEASURED, NOT GUESSED. This pass runs inside the forest's
+     * `update`, and whether that is before or after the camera rig has moved
+     * is an ordering fact about World.update rather than a promise anyone
+     * made — so the margin carries how far the eye actually travelled last
+     * frame, capped so that one teleport (a level change, a respawn) does not
+     * thin half the wood for a frame. A camera standing still pays nothing. */
+    let lead = EYE_LEAD;
+    if (this._eyeAt) {
+      lead = Math.min(EYE_LEAD_MAX, Math.max(EYE_LEAD, this._eyeAt.distanceTo(eye)));
+      this._eyeAt.copy(eye);
+    } else {
+      this._eyeAt = eye.clone();
+    }
+    const want = this._eyeWant;
+    want.clear();
+    /* The ring is gathered on the BUTT radius plus clearance because that is
+     * the widest a trunk is anywhere along itself — a taper only ever makes
+     * the true test pass more easily, so this over-gathers and never misses. */
+    this._gatherRing(eye.x, eye.z, this._eyeReach(), want);
+    /* AND THE ONES THE GRID CANNOT ANSWER FOR. `_gatherRing` indexes a tree by
+     * its BUTT and skips anything mid-fall, which is right for a ring round a
+     * walking body and wrong here twice over: a falling trunk is not in the
+     * index at all, and a felled one lies up to twenty-six metres from the
+     * stump the index has it filed under. Both lists are short — `active` is
+     * what is in the air this instant, and `down` is what this player has
+     * personally cut — so they are tested outright. Measured, a trunk mid-fall
+     * was 8 of the 146 clipping frames; the picture that comes down on your
+     * head is the one you are most likely to be looking straight at. */
+    for (const i of this.active) want.add(i);
+    for (const i of this.down) if (!this.real.has(i)) want.add(i);
+    let write = false;
+    for (const i of want) {
+      const k = i * F.N;
+      const r = this.data[k + F.R];
+      const a = this.hinge(i, _v2), b = this.tip(i, _v3);
+      const d = pointSegDist(eye.x, eye.y, eye.z, a, b, _hit);
+      /* The radius the LATHE is drawn at where the camera is beside it, not
+       * the butt: a tapering trunk is 0.52 r at the top and thinning it as if
+       * it were full width up there would pinch a shaft the camera was never
+       * near. `_hit.t` is where along the trunk the nearest point fell and is
+       * exactly the lathe's own parameter. */
+      const rr = r * (1 - _hit.t * (1 - TAPER));
+      const clear = rr + EYE_CLEAR + lead;
+      /* Zero at the axis, one at the point the camera is clear of the wood.
+       * Linear on purpose: it is the DISTANCE that has to come out right, and
+       * any curve here would either leave the shaft fat while the near plane
+       * was already through it or pinch it early for no reason. */
+      const f = d >= clear ? 1 : Math.max(0, (d - EYE_CLEAR - lead) / Math.max(0.01, rr));
+      const scale = f >= 1 ? 1 : (f < EYE_MIN ? 0 : f);
+      /* FULL WIDTH IS AN ABSENCE, not an entry. A trunk that has come back to
+       * 1 is dropped from the map rather than stored at 1, so `_eye.size` is
+       * the count of trunks actually being thinned and the sweep below has
+       * only the ones it can still reach to walk. Storing 1 was the whole of
+       * a bug where a felled trunk — always a candidate, because `down` is
+       * tested outright — never left the map once it had entered it. */
+      const had = this._eye.get(i);
+      if (scale >= 1) { if (had === undefined) continue; this._eye.delete(i); }
+      else { if (had === scale) continue; this._eye.set(i, scale); }
+      this._writeTrunk(i);
+      write = true;
+    }
+    /* AND BACK TO FULL WIDTH THE MOMENT YOU STEP OFF IT — for anything that
+     * fell out of `want` entirely, which the loop above never sees. Without
+     * this a trunk thinned once stays a stick for the rest of the level:
+     * `_writeTrunk` is only called again when the tree is cut or is falling,
+     * and most of them never are. */
+    for (const i of this._eye.keys()) {
+      if (want.has(i)) continue;
+      this._eye.delete(i);
+      this._writeTrunk(i);
+      write = true;
+    }
+    if (write) this.trunkMesh.instanceMatrix.needsUpdate = true;
+  }
+
+  /** How far out the eye pass has to look: the widest trunk, plus clearance. */
+  _eyeReach() {
+    if (this._reach === undefined) {
+      let r = 0;
+      for (let k = F.R; k < this.data.length; k += F.N) if (this.data[k] > r) r = this.data[k];
+      this._reach = r;
+    }
+    return this._reach + EYE_CLEAR + EYE_LEAD_MAX;
+  }
+
+  /** Put every thinned trunk back, for a teardown or a camera that vanished. */
+  _releaseEye() {
+    for (const i of this._eye.keys()) { this._eye.delete(i); this._writeTrunk(i); }
+    this.trunkMesh.instanceMatrix.needsUpdate = true;
   }
 
   /**

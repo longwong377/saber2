@@ -33,7 +33,7 @@
 import * as THREE from 'three';
 import { Terrain } from '../../src/world/Terrain.js';
 import { LEVELS } from '../../src/game/Levels.js';
-import { Forest, attachForest, STANDING, FALLING, DOWN } from '../../src/world/Trees.js';
+import { Forest, attachForest, STANDING, FALLING, DOWN, EYE_CLEAR } from '../../src/world/Trees.js';
 import { propMaterials } from '../../src/world/Props.js';
 import { TAU } from '../../src/engine/MathUtil.js';
 import { clocked } from './_shared.mjs';
@@ -997,5 +997,144 @@ export async function run({ check, assert }) {
 
     return `flat 0.60 · along 0.60 · past the end none · leaning ${top.toFixed(2)} · `
       + `crate 0.900 unchanged · deck 0.250 unchanged · over CLIMB_LOG still a wall`;
+  });
+
+  check('wood: the camera never has bark inside its near plane', async () => {
+    /**
+     * "The camera goes inside the tree trunks on the wood map."
+     *
+     * It did, and the interesting part is where it did NOT come from. The
+     * boom's clearance probe was widened from one ray to five — the near plane
+     * is a rectangle 0.31 m wide and a single axis ray says nothing about a
+     * trunk standing beside it — and the number did not move at all. Driven
+     * ninety seconds through the stand: 146 of 5,400 frames had drawn wood
+     * inside the near plane, 30 had the camera's own point inside a trunk at
+     * up to 0.182 m, and in EVERY one of them the boom had already been pulled
+     * to its 0.55 m floor. The player was standing within a metre of a trunk
+     * and there was no point behind their head that was clear of it. No
+     * pull-in distance solves that, because the distance is not free.
+     *
+     * So `EYE_CLEAR` moves the wood instead: a trunk whose axis comes within
+     * the near plane's corner radius is drawn thinner, to nothing at the axis,
+     * and closes back up as you step off it. The collider does not move — the
+     * trunk you cannot see is still one you walk into and can be killed by —
+     * which is why this measures the DRAWN radius and not the box.
+     *
+     * The assertion is the invariant and not the count: no drawn bark inside
+     * 0.232 m of the eye, on any frame, ever. A count would pass on a build
+     * that had merely got luckier about where it walked.
+     */
+    const { bootWorld } = await import('./_coop.mjs');
+    const { world } = await bootWorld({
+      level: 'wood', settings: { mode: 'waves', quality: 'low', instantSpawn: true },
+    });
+    const f = world.forest;
+    assert(f && f.data && f.data.length, 'the wood booted with no forest in it');
+
+    /* A PLAYER WHO IS ACTUALLY WALKING. See HANDOFF 2.5c: a bench that steps
+     * the world without ticking an input script is driving a statue, and a
+     * statue never gets near a trunk. The axis wanders and the mouse turns, so
+     * the boom sweeps through the stand rather than trailing behind one line. */
+    const axis = { x: 0, y: 1 };
+    const input = {
+      keys: new Set(), buttons: [false, false, false],
+      mouse: { dx: 0, dy: 0, wheel: 0, left: false, right: false },
+      delta: { x: 0, y: 0 }, accel: { x: 0, y: 0 }, bindings: null,
+      moveAxis: (o) => { if (o) { o.x = axis.x; o.y = axis.y; return o; } return { ...axis }; },
+      act: () => false, actHit: () => false, actDown: () => false, end() {},
+    };
+
+    /**
+     * THE NEAR PLANE THIS IS DEFENDING IS THE SHIPPED ONE, NOT THIS BOOT'S.
+     *
+     * `_coop.mjs` stands its stub camera up at a 0.045 m near plane against
+     * Engine.js's 0.15, which makes the headless corner 0.070 m — a third of
+     * the real one. Reading the live camera here would let a build that
+     * cleared 7 cm pass a test named for a game that needs 23, so the numbers
+     * come from `src/engine/Engine.js:1939` (60 degrees vertical, 0.15 m) at a
+     * 16:9 frame, and the live camera is only used to catch the case where the
+     * boot is somehow WIDER than that.
+     */
+    const SHIP_NEAR = 0.15, SHIP_FOV = 60 * Math.PI / 180, SHIP_ASPECT = 16 / 9;
+    const shh = SHIP_NEAR * Math.tan(SHIP_FOV / 2);
+    let CORNER = Math.hypot(SHIP_NEAR, shh, shh * SHIP_ASPECT);
+    const cam = world.engine?.camera;
+    if (cam?.near > 0 && cam.fov > 0) {
+      const hh = cam.near * Math.tan((cam.fov * Math.PI / 180) / 2);
+      const hw = hh * (cam.aspect > 0.2 ? cam.aspect : SHIP_ASPECT);
+      CORNER = Math.max(CORNER, Math.hypot(cam.near, hh, hw));
+    }
+    /* AND THE CONSTANT HAS TO COVER IT. `EYE_CLEAR` is what Trees.js actually
+     * thins against; if it ever falls under the frustum it is defending, every
+     * assertion below still passes and the trunk is still cut open. */
+    assert(EYE_CLEAR >= CORNER - 1e-6,
+      `EYE_CLEAR is ${EYE_CLEAR} m and the near plane's corner is ${CORNER.toFixed(3)} m — `
+      + 'the thinning stops short of the plane that does the clipping');
+
+    const TAPER_DRAWN = 0.52;                       // Trees.js TAPER, as drawn
+    const a = new THREE.Vector3(), b = new THREE.Vector3();
+    const ab = new THREE.Vector3(), ac = new THREE.Vector3();
+    const rig = world.player.camera;
+    const D = f.data, N = 15, iR = 4, iX = 0, iZ = 1, iH = 3;
+    const n = D.length / N;
+
+    let frames = 0, worstGap = Infinity, worstAt = -1, worstFrame = -1;
+    let thinFrames = 0, mostThin = 0;
+    for (let i = 0; i < 60 * 45; i++) {
+      const t = i / 60;
+      axis.x = Math.sin(t * 0.31); axis.y = Math.cos(t * 0.17);
+      input.mouse.dx = 2.4;
+      world.update(1 / 60, input);
+      input.mouse.dx = 0;
+      frames++;
+      if (f._eye.size) { thinFrames++; mostThin = Math.max(mostThin, f._eye.size); }
+      const c = rig.pos;
+      for (let idx = 0; idx < n; idx++) {
+        const k = idx * N, rB = D[k + iR];
+        const bx = c.x - D[k + iX], bz = c.z - D[k + iZ];
+        const reach = D[k + iH] + rB + 1;
+        if (bx * bx + bz * bz > reach * reach) continue;   // cannot be near, in any pose
+        /* A TRUNK THINNED TO NOTHING IS NOT WOOD. Its instance is still drawn,
+         * at zero radial scale, so every triangle in it has zero area — there
+         * is nothing on the screen to be inside of, and counting the distance
+         * to its axis would fail a build for geometry it does not have. */
+        const sc = f._eye.get(idx) ?? 1;
+        if (sc <= 0) continue;
+        f.hinge(idx, a); f.tip(idx, b);
+        ab.subVectors(b, a); ac.subVectors(c, a);
+        const L2 = ab.lengthSq(); if (L2 < 1e-6) continue;
+        const u = Math.min(1, Math.max(0, ac.dot(ab) / L2));
+        const d = ac.addScaledVector(ab, -u).length();
+        const gap = d - rB * (1 - u * (1 - TAPER_DRAWN)) * sc;
+        if (gap < worstGap) { worstGap = gap; worstAt = idx; worstFrame = i; }
+      }
+    }
+
+    assert(frames === 60 * 45, `the drive stopped early at ${frames} frames`);
+    assert(Number.isFinite(worstGap), 'the drive never came near a trunk — it is not measuring the wood');
+    assert(worstGap >= 0,
+      `the camera was INSIDE drawn bark by ${(-worstGap).toFixed(3)} m on frame ${worstFrame} `
+      + `(tree #${worstAt}) — EYE_CLEAR is not thinning the trunk it is standing in`);
+    assert(worstGap >= CORNER,
+      `drawn bark came within ${worstGap.toFixed(3)} m of the eye on frame ${worstFrame} `
+      + `(tree #${worstAt}); the near plane's corner is ${CORNER.toFixed(3)} m, so it was cut open`);
+
+    /* AND IT IS NOT PASSING BY DOING NOTHING. A build that thinned every trunk
+     * in the wood would satisfy every assertion above and would be a bare
+     * hillside. The pass has to be rare and narrow: a handful of trunks, on a
+     * small minority of frames. */
+    assert(thinFrames > 0,
+      'no trunk was thinned in forty-five seconds of walking a dense wood — either the drive '
+      + 'never got close to one or the pass is not running');
+    assert(thinFrames < frames * 0.25,
+      `${thinFrames} of ${frames} frames had a trunk thinned — that is the wood getting out of `
+      + 'the way rather than one trunk doing it');
+    assert(mostThin <= 8,
+      `${mostThin} trunks were thinned at once; the query is under a metre wide and should never `
+      + 'reach that many');
+
+    return `${frames} frames · closest drawn bark ${worstGap.toFixed(3)} m vs a ${CORNER.toFixed(3)} m `
+      + `near corner · thinned on ${thinFrames} frames (${(thinFrames / frames * 100).toFixed(1)}%), `
+      + `at most ${mostThin} at once`;
   });
 }

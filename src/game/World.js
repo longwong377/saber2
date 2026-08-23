@@ -2206,7 +2206,14 @@ export class World {
    * which is why this cannot be spammed during the opening flight.
    */
   _withdrawTick(dt, ctx) {
-    const held = this.canWithdraw && !!ctx?.input?.act?.('withdraw');
+    /* `.act('withdraw')` and not `.act?.('withdraw')`, and the difference is
+     * not style. `controls.mjs` finds the reader of every registered action by
+     * scanning src/ for `.act(` with a literal id — an optional CALL is
+     * invisible to it, so the hold key read through `?.()` was reported as
+     * "bound, listed and handled by nobody", which is exactly the class of
+     * defect that check exists to catch. The guard moves onto the function. */
+    const input = ctx?.input;
+    const held = this.canWithdraw && !!(input?.act && input.act('withdraw'));
     if (!held) { this.withdrawHold = 0; return; }
     this.withdrawHold = Math.min(1, (this.withdrawHold || 0) + dt / WITHDRAW_HOLD);
     if (this.withdrawHold < 1) return;

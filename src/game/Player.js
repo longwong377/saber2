@@ -1624,7 +1624,56 @@ const _m7 = new THREE.Vector3();
  * them — and the probe is a raycast, so a shared temp aliased into a physics
  * call is a bug that only shows up against geometry.
  */
-const _c1 = new THREE.Vector3(), _c2 = new THREE.Vector3();
+const _c1 = new THREE.Vector3(), _c2 = new THREE.Vector3(), _c3 = new THREE.Vector3();
+const _c4 = new THREE.Vector3();
+
+/**
+ * WHAT THE BOOM HAS TO KEEP CLEAR, AND WHY ONE RAY DOES NOT DO IT.
+ *
+ * The near plane is a rectangle, not a point. At 60 degrees vertical and
+ * 0.15 m it is 0.17 m tall and 0.31 m wide on a 16:9 frame, so its far CORNER
+ * sits 0.232 m out from the camera along the diagonal. A single ray down the
+ * boom's axis reports what the boom passes THROUGH and says nothing about a
+ * trunk standing beside it — and beside it is exactly where a trunk fills the
+ * screen with bark, because the corner reaches it first.
+ *
+ * Measured on The Drowned Wood, a player walked through the stand for ninety
+ * seconds with the boom sweeping: the axis ray alone left the near plane
+ * inside a DRAWN trunk on 159 of 5,400 frames (2.9%, one frame in thirty-four)
+ * and the camera's own point inside one on 33 (0.6%), worst penetration
+ * 0.182 m. That is the bug, and it is not a tuning number: no pull-back
+ * distance fixes a probe that never saw the trunk.
+ *
+ * So the boom casts a FAN — the axis plus the four near-plane corners, all
+ * parallel — and takes the nearest of the five. That is a box sweep at the
+ * resolution the geometry needs: the thinnest trunk in the wood is 0.38 m
+ * through (`Levels.js` plants radius 0.16 + t*0.46) and the widest gap between
+ * adjacent rays is 0.31 m, so nothing that fits between them is wide enough to
+ * hide.
+ *
+ * `BOOM_SKIN` is the second half, and it is about the COLLIDER rather than the
+ * camera. `Trees.js` inscribes a trunk's box at 0.82 of the butt radius
+ * (`SQUARE_FIT`, so a body brushing the corner of a square catches on
+ * nothing), which leaves up to 0.18 r of drawn bark outside the thing the ray
+ * can hit — 0.11 m on the widest trunk in the wood. The skin pays for that and
+ * for the same slack in every other inscribed prop.
+ *
+ * The two together come to 0.35 m against the 0.34 m this used to subtract
+ * blind, which is why nothing outside the wood moves: the old number was very
+ * nearly right for a probe that could see, and wrong only about how much the
+ * probe could see.
+ */
+const BOOM_SKIN = 0.12;
+/** Fallback frame shape when the camera has not been sized yet (headless). */
+const BOOM_ASPECT = 16 / 9;
+/** How much reach the cast is given past where the camera wants to sit. */
+const BOOM_LOOKAHEAD = 0.08;
+/** Nearest the boom may be pulled before it gives up and sits in the head. */
+const BOOM_FLOOR = 0.55;
+/** The four corners of the near plane, as (right, up) signs. */
+const BOOM_FAN = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
+/** What the boom is allowed to be stopped by. Hoisted: five casts a frame. */
+const BOOM_SOLID = (b) => b.static || b.layer === LAYER.PROP;
 
 export class CameraRig {
   constructor(camera) {
@@ -1633,6 +1682,8 @@ export class CameraRig {
     this.pitch = -0.06;
     this.distance = 3.05;
     this.targetDistance = 3.05;
+    /** Where the boom ENDED UP last frame — see the write in `update`. */
+    this.boom = 3.05;
     this.height = 1.52;
     this.shoulder = 0.46;
     this.firstPerson = false;
@@ -1969,12 +2020,42 @@ export class CameraRig {
         * clamp(this.distance / Math.max(this.targetDistance, 0.6), 0.3, 1);
       anchor.addScaledVector(right, side);
       let dist = this.distance;
-      // pull in when the camera would clip geometry
+      // pull in when the camera would clip geometry — see BOOM_SKIN for why
+      // this is a fan of five rays and not the one it used to be
       if (ctx.physics) {
         const back = _v4.copy(fwd).negate();
-        const hit = ctx.physics.raycast(anchor, back, dist + 0.42,
-          (b) => b.static || b.layer === LAYER.PROP);
-        if (hit && hit.distance < dist + 0.42) dist = Math.max(0.55, hit.distance - 0.34);
+        const cam = this.camera;
+        const hh = (cam?.near ?? 0.15) * Math.tan(((cam?.fov ?? 60) * Math.PI / 180) / 2);
+        const hw = hh * (cam?.aspect > 0.2 ? cam.aspect : BOOM_ASPECT);
+        const corner = Math.hypot(cam?.near ?? 0.15, hh, hw);
+        const margin = corner + BOOM_SKIN;
+        const reach = dist + margin + BOOM_LOOKAHEAD;
+        /* THE FRAME'S OWN UP, not the world's. The near plane tilts with the
+         * pitch, so a fan spread along world up under-covers the sides of a
+         * steeply angled boom and over-covers its top and bottom. right x fwd
+         * is the camera's up for this basis and costs one cross product. */
+        const up = _c4.crossVectors(right, fwd).normalize();
+        let near = reach;
+        const axisHit = ctx.physics.raycast(anchor, back, reach, BOOM_SOLID);
+        if (axisHit) near = Math.min(near, axisHit.distance);
+        for (const [sr, su] of BOOM_FAN) {
+          /* THE CORNER RAYS RUN FROM THE ANCHOR'S OWN CORNERS, offset by the
+           * same amount the camera's near plane is wide. Offsetting only the
+           * far end would tilt them, and a tilted ray reports a distance along
+           * itself rather than along the boom — the pull-in would then be off
+           * by the cosine and would grow with the offset. Parallel keeps the
+           * five distances comparable, which is the whole point of taking a
+           * minimum over them. */
+          const o = _c3.copy(anchor).addScaledVector(right, sr * hw).addScaledVector(up, su * hh);
+          const h = ctx.physics.raycast(o, back, near, BOOM_SOLID);
+          if (h && h.distance < near) near = h.distance;
+        }
+        if (near < reach) dist = Math.max(BOOM_FLOOR, near - margin);
+        /* WHAT THE BOOM ACTUALLY CAME OUT AT, published for the probes.
+         * `this.distance` is what the boom WANTS and is never written here, so
+         * anything reading it to ask "how far back is the camera" gets the
+         * answer for an empty field. */
+        this.boom = dist;
       }
       if (ctx.terrain) {
         const p = _v5.copy(anchor).addScaledVector(fwd, -dist);
