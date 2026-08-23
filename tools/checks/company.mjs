@@ -616,6 +616,60 @@ export async function run({ check, assert }) {
       } finally { close(); }
   }));
 
+  check('company: the roll is re-read every time the menu comes back', () => withCleanStore(() => {
+    /**
+     * THE ONE PAGE IN THIS MENU THAT A RUN CHANGES.
+     *
+     * `_buildCompany` runs once, at construction. Every other tab is a
+     * function of the settings and the shipped tables, so building it once is
+     * right; this one is a function of a save file that a run just rewrote —
+     * men die, men are promoted, a withdrawal writes the whole list. Built
+     * once and never refreshed, the tab shows the roll as it stood when the
+     * page was created, which for any session that has played anything is a
+     * list of the dead standing.
+     *
+     * Driven the way it actually happens: open the menu, play (which here is
+     * writing the store, because what the run does to it is the only part the
+     * page can see), and come back through `showMenu` — which is the one
+     * moment all three doors back to this screen share.
+     */
+    const { menu, doc, close } = menuOn();
+    try {
+      const before = [...doc.getElementById('company-list').querySelectorAll('.diff')];
+      assert(!before.length, `${before.length} men on the roll before anything was played`);
+
+      const r = freshRoll(5);
+      const kept = r.all.slice(0, 3);
+      Company.keep(kept, { army: 'republic', deployed: r.all, left: r.all.slice(3), ground: 'geonosis' });
+
+      menu.showMenu();
+      const rows = [...doc.getElementById('company-list').querySelectorAll('.diff')]
+        .filter((d) => !d.dataset.man.endsWith('-fallen'));
+      assert(rows.length === 3,
+        `${rows.length} men on the roll after a run that brought three home — the tab is stale`);
+      const named = rows.map((d) => d.textContent).join(' ');
+      for (const t of kept) {
+        assert(named.includes(t.designation), `${t.designation} came home and is not on the tab`);
+      }
+      /* AND THE PAGE IS BACK ON THE INDEX. The man who was open may be on the
+       * casualty list now — `_showCompany` validates its key for that reason
+       * — and the index is the sentence that says what the page is for. */
+      assert(menu._companyKey === null,
+        `the page came back on ${menu._companyKey} rather than on the index`);
+
+      /* …AND A SECOND RUN THAT KILLS THEM IS READ TOO, which is the direction
+       * that actually hurts: a tab that only ever GREW would pass everything
+       * above and still show a dead man standing. */
+      const out = Company.fieldable(Company.load('republic'), 3);
+      Company.keep([], { army: 'republic', deployed: out, ground: 'drifts' });
+      menu.showMenu();
+      const after = [...doc.getElementById('company-list').querySelectorAll('.diff')]
+        .filter((d) => !d.dataset.man.endsWith('-fallen'));
+      assert(!after.length, `${after.length} men still standing on a roll that was wiped`);
+      return '0 → 3 after a withdrawal → 0 after a wipe, on the index each time';
+    } finally { close(); }
+  }));
+
   check('company: a mark is paint on a body and moves no number', async () => {
     /**
      * The other half of "the page sells nothing", measured on real bodies

@@ -3290,6 +3290,29 @@ export class Menu {
      */
     const note = document.getElementById('menu-record');
     if (note) note.textContent = '';
+    /**
+     * …AND THE ROLL IS RE-READ, because a run just happened to it.
+     *
+     * `_buildCompany` runs once, at construction, and the Company tab is the
+     * one page in this menu whose contents a RUN changes: men die, men are
+     * promoted, and a withdrawal writes the whole list. Built once and never
+     * refreshed, the tab would show the roll as it stood when the tab was
+     * opened, which for a session that has played anything is a list of the
+     * dead standing.
+     *
+     * Here rather than in `main.js`'s `quitToMenu`, because there are three
+     * doors back to this screen — quitting, the death card's second button and
+     * the victory card's — and the screen coming back is the one moment all
+     * three share. Same argument as the notice above.
+     *
+     * The page is reset to the index rather than kept on whoever was selected:
+     * the man who was open may be on the casualty list now, and `_showCompany`
+     * validates its key for exactly that reason. Opening on the index is also
+     * the position `_showDatabank`'s own note takes and for the same reason —
+     * the index is the sentence that says what the page is for.
+     */
+    this._buildCompanyList?.();
+    this._showCompany?.(null);
     // The panel had no layout while the screen was hidden, so this is the first
     // frame on which "how much is below the fold" has an answer.
     this._onPanelShown();
