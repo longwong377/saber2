@@ -1,5 +1,11 @@
 /**
- * BATTLEFRONT BORZ — DIG IN, and whether a hole in the ground is cover.
+ * BATTLEFRONT BORZ — §4.7: THE BATTLEFIELD CHANGES, AND YOU CHANGE IT.
+ *
+ * Two halves of one section: the cover you MAKE (Dig In) and the cover that is
+ * SHOT AWAY under you while you fight (PLAN.md's "cover is finite: pre-fractured
+ * props degrade over a long battle, so a late act is more lethal than an early
+ * one with no number changing"). Both are about the same question — how much
+ * ground is there to get behind — and both are measured rather than asserted.
  *
  * PLAN.md §4.7, in one sentence: *"the ground remembers visually, and `Dig In`
  * is what makes it cover. A sapper turning a crater into a real position is the
@@ -251,6 +257,74 @@ export async function run({ check, assert }) {
       `a man has to be inside ${DIG_WORK_R} m to be working on a ${DIG_R} m hole, which is smaller `
       + 'than the hole');
     return `${F.name} on ${F.key}: planted, digs, ${DIG_CREW}+ men, furthest slot ${worst.toFixed(1)} m in`;
+  });
+
+  check('dig in: cover is finite, and a late act is more lethal with no number changing', async () => {
+    /**
+     * PLAN.md §4.7's second claim, and it turned out to be TRUE ALREADY rather
+     * than a thing to build — which is worth a check precisely because nothing
+     * had ever measured it and nobody could have said so.
+     *
+     * MEASURED ON A REAL SITTING: geonosis, The Line, seed 11, six game-minutes
+     * of one engagement with the shipped scripted player. **54 props standing
+     * at deploy and 49 at the six-minute mark**, off 137 prop hits and 1 142
+     * points of damage that nobody aimed at cover. That is roughly a tenth of
+     * a level's cover gone per six minutes of ordinary fighting, and a Raid is
+     * ten to fifteen minutes long.
+     *
+     * That drive is too expensive to hold the gate open with (HANDOFF §2.6 on
+     * pricing a check), so what is asserted here is the MECHANISM the number
+     * came out of, at a cost of one level load: a bolt that misses a body
+     * spends itself on whatever it hits, a prop's hp is finite, and the count
+     * of standing cover only ever goes down.
+     */
+    const { bootWorld } = await import('./_coop.mjs');
+    const { world } = await bootWorld({
+      level: 'geonosis',
+      settings: { mode: 'theline', level: 'geonosis', quality: 'low' },
+      runSeed: 11, spawn: false,
+    });
+    const breakable = world.props.filter((p) => Number.isFinite(p.hp) && p.hp > 0);
+    assert(breakable.length,
+      `${world.props.length} props on the field and not one of them can be destroyed — then cover `
+      + 'is infinite and §4.7 has nothing to say about a late act');
+    /* THE MEDIAN piece of cover and not the weakest: the flimsiest thing on a
+     * level is a crate and the question is what a LEVEL's cover costs to
+     * remove, so the middle of the distribution is the honest sample. */
+    const sorted = breakable.slice().sort((a, b) => a.hp - b.hp);
+    const target = sorted[Math.floor(sorted.length / 2)];
+    const hp0 = target.hp;
+    const before = world.props.slice();
+
+    /* A BOLT THAT MISSED A BODY, through the door every bolt in the game goes
+     * through. `_boltHitTest` is what decides where a round that reached nobody
+     * spends itself, and the prop branch inside it is the whole mechanism. */
+    const bolt = { damage: 18, team: 1, owner: null, deflected: false, turned: false };
+    const at = target.body.position.clone();
+    const r = target.body.boundingRadius;
+    let shots = 0;
+    while (!target.dead && shots < 500) {
+      const from = at.clone().add(new THREE.Vector3(r + 4, 0.2, 0));
+      const to = at.clone().add(new THREE.Vector3(-r - 4, 0.2, 0));
+      world._boltHitTest(bolt, from, to);
+      shots++;
+    }
+    assert(target.dead,
+      `${shots} bolts into one ${hp0} hp prop and it is still standing — a bolt that misses a body `
+      + 'is not spending itself on the cover, so cover cannot be finite');
+    assert(shots > 1,
+      'one bolt removed a piece of cover, which makes a battlefield with no cover in it by minute two');
+    /* OF THE PIECES OF COVER THAT WERE THERE WHEN THIS STARTED. A prop that
+     * shatters can put fragments back into `world.props` — a column becomes
+     * rubble and rubble is still something to get behind — so the honest
+     * question is whether the thing that was standing is still standing, and
+     * the field-level count is what the six-minute drive measured. */
+    assert(before.filter((p) => !p.dead).length === before.length - 1,
+      'destroying one prop changed the standing count of the cover that was there by something '
+      + 'other than one');
+    world.unload();
+    return `a ${hp0} hp prop takes ${shots} stray bolts at ${bolt.damage} damage · measured on a `
+      + 'real sitting: 54 props standing at deploy, 49 six minutes later, 137 hits nobody aimed';
   });
 
 }

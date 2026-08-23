@@ -176,6 +176,7 @@ import { ArmyIndex } from './ArmyIndex.js';
 import { ObjectiveField } from './Objectives.js';
 import { FireMissionDirector } from './FireMission.js';
 import { CraterLog, SESSION_MEMORY } from '../world/CraterLog.js';
+import { GraveField } from '../world/Graves.js';
 import { Corpses, CORPSE_BUDGET } from './Corpses.js';
 import { BladeLock } from './Duel.js';
 import { FocusSystem } from './Focus.js';
@@ -1058,6 +1059,21 @@ export class World {
       this.craterLog?.detach();
       this.craterLog = null;
     }
+    /**
+     * …AND THE GROUND KEEPS YOUR DEAD — PLAN.md §4.7's last item.
+     *
+     * The same shape as the crater log one line up and for the same reason: the
+     * RECORD is the run's and the drawing is the scene's, so a marker stands on
+     * the same coordinates in engagement three that it was planted on in
+     * engagement one. Gated on leading an army because a grave is a NAME off a
+     * roll, and a mode with no roll has no names to lose.
+     */
+    if (leadsArmy) {
+      this.graves = (this.graves || new GraveField()).attach(this.scene, this.terrain);
+    } else {
+      this.graves?.detach();
+      this.graves = null;
+    }
     this.fireMissions?.dispose?.();
     this.fireMissions = null;
     if (leadsArmy && MODES[mode]?.fireMissions) {
@@ -1560,6 +1576,9 @@ export class World {
      * ring drawn for it. */
     this.fireMissions?.dispose?.();
     this.fireMissions = null;
+    /* The markers come out of the scene and the names stay on the record —
+     * `detach`, never `dispose`. See GraveField. */
+    this.graves?.detach();
     /* The corpse ledger holds references to bodies that have just been
      * disposed. `clear()` and not `dispose()`: the ledger itself outlives the
      * level exactly as the World does, and what must not survive is its
@@ -3573,6 +3592,14 @@ export class World {
      * this frame have to be resolved against the positions the reading was
      * taken from. */
     this.fireMissions?.update(dt, ctx);
+    /* AND THE ONE YOU ARE STANDING OVER SAYS WHO HE WAS, once ever. The field
+     * owns the "once" (`seen` is on the record, so it survives a ground
+     * change); this owns the words, because `notify` is the World's door. */
+    const grave = this.graves?.update(dt, this.player);
+    if (grave) {
+      this.notify(`${grave.rank ? `${grave.rank} ` : ''}${grave.name}`.toUpperCase(),
+        GraveField.epitaph(grave));
+    }
 
     /**
      * BEFORE EVERYTHING, because a passenger's seat has to be written before

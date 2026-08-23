@@ -5873,6 +5873,22 @@ export class CommandDirector extends WaveDirector {
                         area: this.areaNumber, wave: this.wave, xp: t.xp, kills: t.kills,
                         killer: killerName(source), bearing,
                         at: Math.round((this.world?.time || 0) * 10) / 10 });
+        /**
+         * …AND THE GROUND KEEPS HIM — PLAN.md §4.7.
+         *
+         * The same three facts the log just took, standing on the spot he took
+         * them on: `src/world/Graves.js` holds the record and draws a rifle in
+         * the dirt for it, and a player who fights back over this ground in the
+         * next engagement walks through his own casualty list. Off the same
+         * `fell` values rather than re-derived, so the marker and the report
+         * can never say two different things.
+         */
+        this.world?.graves?.mark?.({
+          name: t.name, rank: t.rankRec.short, unit: t.label,
+          killer: killerName(source),
+          at: Math.round((this.world?.time || 0) * 10) / 10,
+          x: e.position.x, y: e.position.y, z: e.position.z,
+        });
         this.world?.notify?.(`${t.rankRec.title.toUpperCase()} DOWN`,
           `${t.name} — ${t.kills} kill${t.kills === 1 ? '' : 's'}, ${c.roster.strength} still standing`);
         this.shake(squad, wasLeader ? 'LEADER_FELL' : 'COMRADE_FELL', c);
