@@ -178,6 +178,7 @@ import { packAvatar, packMatch, packSnapshot, sessionPart } from '../net/Net.js'
 import { QUALITY } from '../engine/Engine.js';
 import { clamp, lerp, damp, dampVec, makeRng, moduleSeed, TAU } from '../engine/MathUtil.js';
 import { audio, PRIO } from '../engine/Audio.js';
+import { TokenPool } from './Tokens.js';
 import { ExtractionDirector } from './Extraction.js';
 
 /* Random per session, FIXED under the gate — see `moduleSeed`. The salt keeps
@@ -500,6 +501,10 @@ export class World {
      */
     this.support = new WarSupport();
     this.extraction = new ExtractionDirector(this);
+    /* WHO MAY BE SWINGING AT YOU AT ONCE — see `src/game/Tokens.js`. Held on the
+     * world rather than on the player because a meeting has two commanders and
+     * an ally can be mobbed too: the ring is keyed by TARGET. */
+    this.tokens = new TokenPool();
   }
 
   /* ── level lifecycle ─────────────────────────────────────────────── */
@@ -3281,6 +3286,10 @@ export class World {
       input, dt, time: this.time, camera,
       physics: this.physics, terrain: this.terrain, particles: this.particles,
       bolts: this.bolts, enemies: this.enemies, players: this.players,
+      /* Who may be swinging at a given body at once — see `src/game/Tokens.js`.
+       * `world` rides along because `capacityFor` reads the roster around the
+       * target, and a body's own `this.world` is the same object. */
+      tokens: this.tokens, world: this,
       groundColor: this.groundColor,
       /**
        * WHAT THE PLAYER'S FORCE POWERS MAY REACH — player note #29, in one field.
@@ -3345,6 +3354,7 @@ export class World {
      * on the new ground.
      */
     this.extraction?.update(dt, ctx);
+    this.tokens.update(dt);
     this._withdrawTick(dt, ctx);
 
     // 0 — the catch window, BEFORE the players read input. That order is the

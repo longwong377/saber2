@@ -338,6 +338,70 @@ export async function run({ check, assert }) {
 
   /* ══ the geometry: which way does a duellist hold its blade? ════════ */
 
+  check('the ring: forty men surround you and four of them are swinging', async () => {
+    /**
+     * A JEDI IN A CROWD FACED THE WHOLE CROWD, and every body added made it
+     * worse. Forty attackers inside reach is not difficulty — it is a guard
+     * direction that means nothing because there are attacks from every
+     * direction at once, and a fight decided by how many bodies happened to be
+     * standing near you.
+     *
+     * `src/game/Tokens.js` is `Game AI Pro`'s battle circle: a weight per
+     * attacker, a capacity per target, and a queue. The bodies outside it do not
+     * stop existing — they walk, they shoot, they are still cut — they hold at
+     * `HOLD_RING` and wait, which is what the player sees.
+     *
+     * Asserted here on the pool itself rather than through forty driven bodies,
+     * because the claim is about arithmetic and a driven crowd would measure the
+     * steering as well. The steering is asserted separately by the spacing note
+     * in `Enemy._move`.
+     */
+    const T = await import('../../src/game/Tokens.js');
+    const pool = new T.TokenPool();
+    const near = (n) => Array.from({ length: n }, (_, i) => ({ team: 1, dead: false,
+      position: { x: i * 0.5, z: 0 } }));
+
+    // a commander standing in his own line — three friends near him
+    const held = { team: 0, position: { x: 0, z: 0 } };
+    const withLine = { enemies: near(6).map((e) => ({ ...e, team: 0 })) };
+    let admitted = 0;
+    const mob = Array.from({ length: 40 }, (_, i) => ({ id: i }));
+    for (const b of mob) if (pool.request(held, b, T.WEIGHT.saber, withLine)) admitted++;
+    assert(admitted === 3,
+      `${admitted} of forty sabers admitted against a base capacity of ${T.BASE_CAPACITY}`);
+    assert(pool.load(held) <= T.BASE_CAPACITY,
+      `the ring is carrying ${pool.load(held)} against a capacity of ${T.BASE_CAPACITY}`);
+
+    // ASKING TWICE MUST NOT COST TWICE — a brain asks every frame it is attacking
+    const first = mob[0];
+    assert(pool.request(held, first, T.WEIGHT.saber, withLine), 'a holder was refused its own token');
+    assert(pool.load(held) <= T.BASE_CAPACITY, 're-asking charged the ring a second time');
+
+    // AND LEAVING YOUR LINE IS FELT HERE FIRST. Isolated, the crowd closes.
+    const alone = new T.TokenPool();
+    const lone = { team: 0, position: { x: 0, z: 0 } };
+    let aloneAdmitted = 0;
+    for (const b of mob) if (alone.request(lone, b, T.WEIGHT.saber, { enemies: [] })) aloneAdmitted++;
+    assert(aloneAdmitted > admitted,
+      `a commander alone in the open was mobbed by ${aloneAdmitted}, the same as one standing in his line`);
+
+    // A RELEASED TOKEN DOES NOT COME BACK INSTANTLY, or attacks chain.
+    pool.release(held, first);
+    assert(!pool.request(held, first, T.WEIGHT.saber, withLine),
+      'a body re-took its token on the frame it gave it up — attacks chain back to back');
+    pool.update(T.TOKEN_COOLDOWN + 0.01);
+    assert(pool.request(held, first, T.WEIGHT.saber, withLine),
+      `a token was still spent after ${T.TOKEN_COOLDOWN}s of cooldown`);
+
+    // and a dead attacker does not hold a place in the ring
+    const ghost = mob[1];
+    pool.request(held, ghost, T.WEIGHT.saber, withLine);
+    ghost.dead = true;
+    pool.update(1 / 60);
+    assert(!pool.holds(held, ghost), 'a dead body is still holding a place in the ring');
+    return `in the line ${admitted} of 40 · alone ${aloneAdmitted} · re-ask free · ${T.TOKEN_COOLDOWN}s cooldown · dead released`;
+  });
+
   check('duel: guard space and a body\'s heading agree about which way is forward', () => {
     // THE UNIT LAW, and the one line that was wrong. A body facing yaw looks
     // along (sin yaw, 0, cos yaw); guard space is −Z forward. The conversion

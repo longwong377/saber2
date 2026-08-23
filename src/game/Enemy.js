@@ -15,6 +15,7 @@ import { buildB1, buildB2, buildTrooper, buildAcolyte, buildDroideka, buildWalke
   buildJedi, bodyOptsFor, weakSpotsOf, coverSpotOf, SPECIES, HAIR_STYLES, BEARD_STYLES, ROBE_COLORS,
   hoodCut } from './Bodies.js';
 import { Saber } from './Saber.js';
+import { WEIGHT as TOKEN_WEIGHT } from './Tokens.js';
 import { dropSaber } from './Dropped.js';
 import { DuelBrain, Telegraph, FORMS, FORM_KEYS, TIER, ATTACKS, ATTACK_KEYS,
   DUEL_PHASES, guardQuat } from './Duel.js';
@@ -1286,6 +1287,14 @@ const SUSTAIN_TICK = 0.20;
  * a Force user has to quote the real numbers or it is a hand-written twin of
  * this table (HANDOFF §2.3), and the one thing worse than a player who does not
  * know the counter is a player taught a counter the game no longer has. */
+/**
+ * WHERE A BODY WITH NO TOKEN STANDS: the near and far edge of the band it holds
+ * while it waits. 3.4-4.6 m is outside every form's own spacing (the widest is
+ * Ataru's 3.6) and inside the distance at which a body reads as having left the
+ * fight, so the ring looks like men waiting their turn rather than men retreating.
+ */
+export const HOLD_RING = [3.4, 4.6];
+
 export const RESIST_PER_FORCE = 1.4;
 export const RESIST_CAP = 0.55;
 export const RESIST_BEATEN = 0.35;
@@ -5461,8 +5470,38 @@ export class Enemy {
      *
      * Scaled by the body, so a big duellist keeps its reach.
      */
-    const spacing = A.melee ? this.duel?.form?.spacing : null;
+    let spacing = A.melee ? this.duel?.form?.spacing : null;
     const sc = A.scale ?? 1;
+
+    /* ══ THE RING — and everything outside it is waiting its turn ══════════
+     *
+     * `src/game/Tokens.js` holds one ledger of who may be committed against a
+     * target at once. A body that asks and is refused does not stop existing:
+     * it keeps walking, keeps firing if it has a rifle, and is still cut by a
+     * sweep. What it does is HOLD OUT — its spacing band is pushed out to
+     * `HOLD_RING`, so it circles at the edge of the fight instead of pressing
+     * into a scrum of forty.
+     *
+     * That is the battle circle, and it is the whole of what the player sees:
+     * surrounded by forty, facing four, with the other thirty-six visibly there
+     * and visibly waiting. A guard direction means something again, because
+     * there are few enough attacks to point it at.
+     *
+     * The token is released the moment this body is no longer in its band, so a
+     * duellist who breaks off hands his place to somebody in the ring rather
+     * than holding it while he walks away. */
+    if (spacing && this.target && ctx?.tokens) {
+      const w = this.target.saber || this.target.isLocal !== undefined ? TOKEN_WEIGHT.saber : TOKEN_WEIGHT.brute;
+      const mine = A.melee && this.saber ? TOKEN_WEIGHT.saber : TOKEN_WEIGHT.brute;
+      const inBand = dist <= spacing[1] * sc + 0.6;
+      if (inBand) {
+        if (!ctx.tokens.request(this.target, this, mine, ctx.world || this.world)) {
+          spacing = HOLD_RING;
+        }
+      } else if (ctx.tokens.holds(this.target, this)) {
+        ctx.tokens.release(this.target, this);
+      }
+    }
 
     /* `mobile` is authored on Ataru alone — the acrobatic form — and had no
      * reader anywhere in the tree either. It changes line about twice as
