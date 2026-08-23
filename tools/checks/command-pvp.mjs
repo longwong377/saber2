@@ -257,6 +257,90 @@ export function run({ check, assert }) {
   /*  Phase B — co-op: two players, one side, one army                  */
   /* ══════════════════════════════════════════════════════════════════ */
 
+  check('meeting: the front moves, and only for a line that is gathered AND forward', async () => {
+    /**
+     * THE FRONT IS THE MODE, AND UNTIL NOW `versus` RETURNED BEFORE IT.
+     * `CommandDirector.update` reads `if (this.versus) { this._troops(); return; }`
+     * — so a meeting ran two armies at each other and never asked who was
+     * taking the ground. It was a deathmatch with a roster.
+     *
+     * `lineIsUp(c)` has always taken a commander and nothing ever passed one.
+     * `_front` asks it of both, and this asserts the two clauses that make the
+     * answer a battle rather than a race:
+     *
+     *   A SCATTERED ARMY TAKES NOTHING, however far forward it is.
+     *   AN ARMY STANDING ON GROUND IT HOLDS TAKES NOTHING either — the quorum
+     *     has to be PAST the front, or holding would read as advancing.
+     *
+     * Driven on the director directly rather than through a session: the rule
+     * is about two rosters and a scalar, and a wire between them would only add
+     * a way for this to fail for a reason it is not about.
+     */
+    const { host } = await commandPair({ host: { commandVersus: true }, start: false });
+    const d = host.command;
+    assert(d && d.versus, 'no meeting director');
+    assert(d.commanders.length >= 2, `a meeting with ${d.commanders.length} commander(s)`);
+
+    const half = 60;                                   // VERSUS_SEPARATION / 2
+    /* Put each commander's living men where the arm wants them. `lineIsUp` is
+     * a quorum inside MORALE.NEAR of the commander, so moving the commander and
+     * his men together is what makes a line "up". */
+    const place = (c, z, gathered) => {
+      const men = c.roster.living.filter((t) => t.body && !t.body.dead);
+      if (c.player) c.player.position.set(0, 0, z);
+      men.forEach((t, i) => {
+        // gathered: all inside NEAR of him. scattered: strung out down the field.
+        t.body.position.set(gathered ? (i % 4) * 1.5 - 2 : 0, 0, gathered ? z + (i % 3) : z + 20 + i * 9);
+      });
+      return men.length;
+    };
+    const A = d.commanders[0], B = d.commanders[1];
+    const step = (n) => { for (let i = 0; i < n; i++) d._front(1 / 30); };
+
+    // 1 — A gathered and forward, B scattered: the front moves A's way (toward -1)
+    d.front = 0;
+    place(A, -20, true);
+    place(B, 40, false);
+    step(60);
+    const afterA = d.front;
+    assert(afterA < -0.01,
+      `A was gathered and forward against a scattered B and the front read ${afterA.toFixed(3)}`);
+
+    // 2 — both gathered and forward: a contested front holds
+    d.front = 0;
+    place(A, -20, true);
+    place(B, 20, true);
+    step(60);
+    assert(Math.abs(d.front) < 1e-6,
+      `both lines up and forward and the front still moved to ${d.front.toFixed(3)} — a contested front must hold`);
+
+    // 3 — A gathered but BEHIND the front: holding is not advancing
+    d.front = -0.8;                                    // deep in B's ground already
+    place(A, 40, true);                                // and A's line is back at home
+    place(B, 50, false);
+    const was = d.front;
+    step(60);
+    assert(Math.abs(d.front - was) < 1e-6,
+      `a line standing on ground it already holds advanced the front ${was.toFixed(3)} → ${d.front.toFixed(3)}`);
+
+    // 4 — the baseline ends it, through the one door that ends a meeting
+    let ended = null;
+    host._endMeeting = (w) => { ended = w; };
+    d.done = false;
+    d.front = -0.99;
+    place(A, -80, true);
+    place(B, 40, false);
+    step(120);
+    assert(ended !== null, `the front reached ${d.front.toFixed(2)} and no meeting ended`);
+    /* SIDE 0 DRIVES THE FRONT TOWARD −1, so a front at −1 is side 0 standing on
+     * side 1's baseline and side 0 is the winner. Written out because the sign
+     * caught the first draft of this check rather than the code: a reader who
+     * reasons from "−1 is side 1's end of the field" gets it backwards. */
+    assert(ended === A.side,
+      `side ${ended} was credited with a front side ${A.side} drove to the far baseline`);
+    return `scattered B → front ${afterA.toFixed(2)} · both up → held · behind → held · baseline ended it for side ${ended}`;
+  });
+
   check('command/net: a co-op partner cannot shoot your army', async () => {
     /**
      * THE ONE-FIELD DEFECT, DRIVEN ON A REAL PAIR.

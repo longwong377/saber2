@@ -1986,6 +1986,19 @@ export const ALLY_POINT = 0.011;
 export const VERSUS_SEPARATION = 120;
 
 /**
+ * HOW FAST THE FRONT MOVES when one side is gathered and forward and the other
+ * is not, as a fraction of half the field a second. See `CommandDirector._front`.
+ *
+ * 0.035 puts an unopposed push from the middle to a baseline in **29 seconds**,
+ * and across the whole field in 57. That is slow enough that a lapse costs
+ * ground rather than the battle — you can leave your line for fifteen seconds,
+ * come back, and win the ground again — and fast enough that a side which has
+ * genuinely broken the other is not made to grind. It is the one number that
+ * sets how long a meeting lasts, so it is here and not inside the method.
+ */
+export const FRONT_PUSH = 0.035;
+
+/**
  * HOW FAR APART TWO ALLIED COMMANDERS STAND ON THE SAME END OF THE FIELD.
  *
  * Only reached in a 2v2 and above, and DERIVED from the deployment ring rather
@@ -5717,8 +5730,10 @@ export class CommandDirector extends WaveDirector {
     this._updateClosing(ctx);
     /* A meeting has no queue, no arrivals and no wave to clear — see `start`.
      * The army half of the frame is identical, which is the point: two players'
-     * lines are steered by the same code one player's is. */
-    if (this.versus) { this._troops(dt, ctx); return; }
+     * lines are steered by the same code one player's is.
+     *
+     * …AND IT HAS A FRONT NOW. See `_front`. */
+    if (this.versus) { this._front(dt); this._troops(dt, ctx); return; }
     if (this.mustering) { this.arrivals.update(dt, ctx); this._troops(dt, ctx); return; }
     super.update(dt, ctx);
     this._troops(dt, ctx);
@@ -6286,6 +6301,87 @@ export class CommandDirector extends WaveDirector {
    * squad is standing on. A quorum inside `MORALE.NEAR` of it is unreachable at
    * every engagement a sitting contains, so that rule would never take an area
    * at all. */
+  /**
+   * ══ THE FRONT — two lines, one piece of ground, and it moves ═══════════
+   *
+   * `lineIsUp` decides whether ONE commander's army is standing on the ground
+   * it is taking. It has always taken a commander argument and nothing ever
+   * passed one. A meeting has two commanders, and asking the same question of
+   * both of them is the whole of a moving front.
+   *
+   * The state is one scalar, `front`, in [-1, +1]: 0 is the middle of the
+   * field, +1 is side 0's own baseline and -1 is side 1's. A side wins by
+   * driving it to the other's baseline.
+   *
+   * ── WHY THE RULE IS "UP AND FORWARD" AND NOT "UP" ─────────────────────
+   *
+   * A commander pushes when two things are true at once, and the second is
+   * what makes this a battle rather than a race:
+   *
+   *   HIS LINE IS UP. `lineIsUp(c)` — half his living men inside `MORALE.NEAR`
+   *     of him. This is the same quorum the crossing uses, so a player learns
+   *     one rule and not two, and it is the reason a general who has run out
+   *     ahead of his own army moves nothing.
+   *   HIS LINE IS PAST THE FRONT. The centroid of his living men has to be on
+   *     the far side of the line he is trying to move. A quorum standing on
+   *     ground it already holds is holding, not advancing.
+   *
+   * So the front moves toward whichever side is BOTH gathered and forward, at
+   * `FRONT_PUSH` of the field a second, and it stalls when both sides are or
+   * neither is. That produces the push and the counter-push out of one number
+   * without a script: you take ground while your men are with you, and you give
+   * it back the moment you leave them to go and fight somewhere interesting.
+   *
+   * IT MOVES AT THE SLOWER OF THE TWO, deliberately. Subtracting one side's
+   * push from the other's would let a broken army still slow a good one merely
+   * by existing; taking the difference of two booleans means a contested front
+   * simply stops, which is what a stalemate looks like and what the men on it
+   * are for.
+   */
+  _front(dt) {
+    if (!this.versus) return;
+    const cs = this.commanders || [];
+    if (cs.length < 2) return;
+    if (this.front === undefined) this.front = 0;
+
+    const half = VERSUS_SEPARATION / 2;
+    let push = 0;
+    for (const c of cs) {
+      /* `sign` is the direction this commander pushes the front: side 0 drives
+       * it toward -1 (into side 1's ground) and side 1 toward +1. */
+      const sign = c.side === 0 ? -1 : 1;
+      const men = c.roster?.living || [];
+      let n = 0, z = 0;
+      for (const t of men) {
+        const b = t.body;
+        if (!b || b.dead) continue;
+        z += b.position.z; n++;
+      }
+      if (!n) continue;                       // an army that does not exist takes nothing
+      if (!this.lineIsUp(c)) continue;        // …and neither does one that is scattered
+      const centroid = z / n;
+      /* Is his line past the line he is moving? `front` is in field units, so
+       * it is scaled to metres against the separation the meeting deploys at. */
+      const frontZ = this.front * half;
+      const ahead = sign < 0 ? centroid < frontZ : centroid > frontZ;
+      if (ahead) push += sign;
+    }
+
+    /* Both pushing, or neither: the front holds. That is a contested front and
+     * it is the state this mode should spend most of its time in. */
+    if (push === 0) return;
+    this.front = clamp(this.front + Math.sign(push) * FRONT_PUSH * dt, -1, 1);
+
+    if (Math.abs(this.front) >= 1 && !this.done) {
+      /* The front reached a baseline. The side that drove it there holds the
+       * field, and `World._endMeeting` is the one door that ends a meeting —
+       * the same one a wipe reaches, so a win and a wipe end the same way. */
+      const winner = this.front > 0 ? 1 : 0;
+      this.done = true;
+      this.world?._endMeeting?.(winner);
+    }
+  }
+
   lineIsUp(c = this.commander) {
     if (!this.lineAdvances) return true;
     const p = c?.player;
