@@ -7495,49 +7495,7 @@ export class Enemy {
     }
 
     // static geometry
-    for (const box of ctx.physics.staticBoxes) {
-      if (box.disabled) continue;
-      _v1.set(this.position.x, this.position.y + 0.9, this.position.z);
-      if (_v1.distanceToSquared(box.center) > (box.radius + 1.6) ** 2) continue;
-      _v2.subVectors(_v1, box.center).applyQuaternion(box.invQuat);
-      const h = box.halfExtents;
-      _v3.set(clamp(_v2.x, -h.x, h.x), clamp(_v2.y, -h.y, h.y), clamp(_v2.z, -h.z, h.z));
-      _v4.subVectors(_v2, _v3);
-      let d2 = _v4.lengthSq();
-      const r = this.radius;
-      if (d2 > r * r) continue;
-      /**
-       * A BODY STRICTLY INSIDE THE BOX WAS NEVER PUSHED OUT.
-       *
-       * `_v3` is the chest point clamped into the box, so when the chest is
-       * inside, `_v3 === _v2` and the separation vector is exactly zero — and
-       * the guard here read `|| d2 < 1e-8) continue`. The one case that most
-       * needs resolving was the one case skipped, so an enemy that got a
-       * shoulder inside a wall stayed inside it for the rest of the fight.
-       * Player._collide has had the answer for as long as it has existed:
-       * leave by the SHALLOWEST face, which is the shortest way out and the
-       * only choice that cannot push a body through the far side.
-       */
-      if (d2 < 1e-8) {
-        const px = h.x - Math.abs(_v2.x), py = h.y - Math.abs(_v2.y), pz = h.z - Math.abs(_v2.z);
-        if (px <= py && px <= pz) _v4.set(Math.sign(_v2.x) || 1, 0, 0);
-        else if (py <= pz) _v4.set(0, Math.sign(_v2.y) || 1, 0);
-        else _v4.set(0, 0, Math.sign(_v2.z) || 1);
-        d2 = 1e-4;
-      }
-      const d = Math.sqrt(d2);
-      _v4.multiplyScalar(1 / d).applyQuaternion(box.quat);
-      // an upward face is floor, and the support query above owns floors
-      if (_v4.y > 0.5) continue;
-      _v4.y = 0;
-      if (_v4.lengthSq() < 1e-6) continue;
-      _v4.normalize();
-      this.position.addScaledVector(_v4, r - d);
-      // …and remember which way out it was, so next frame's wish can go ALONG
-      // the face rather than back into it. See _wallN in the constructor.
-      this._wallN.add(_v4);
-      this._wallT = 0.3;
-    }
+    this._pushOutOfBoxes(ctx);
 
     // face the target while fighting, face travel otherwise
     let want = this.facing;
@@ -7592,6 +7550,91 @@ export class Enemy {
     this.facing += d * Math.min(1, dt * (this.A.turnRate ?? (this.A.big ? 3.2 : 8)));
 
     this._syncBody();
+  }
+
+  /**
+   * PUSHED OUT OF WHATEVER IT WALKED INTO — off the short list, not off the
+   * whole level.
+   *
+   * This sweep was the last hand-rolled walk of `physics.staticBoxes` left in
+   * a per-body per-frame path, and it is the expensive kind: no early exit, one
+   * `Vector3.set` and one `distanceToSquared` for every box in the level for
+   * every body on the field. Measured on Geonosis that is 228 boxes, and the
+   * array GROWS as the level is fought in — the note over `_gatherNear` counts
+   * a temple going 241 to 377 in four minutes. At 158 bodies it is 36,024
+   * distance tests a frame to resolve, typically, nothing.
+   *
+   * `_gatherNear` has already run this frame (see `_move`), and its list holds
+   * every box whose circle reaches within `radius + NEAR_REACH` of `_nearAt`.
+   * This test wants every box within `radius' + 1.6` of the CHEST in three
+   * dimensions, and an XZ distance is never longer than a 3D one, so every box
+   * this loop could use is in that list provided the body has not walked more
+   * than `NEAR_REACH - 1.6` from where the list was gathered. That margin is
+   * checked rather than assumed, and a body outside it pays for the full sweep
+   * exactly the way `_groundAt` does.
+   *
+   * `_v1` is hoisted out of the loop. It is the chest point, which is constant
+   * across the sweep EXCEPT when a push moves the body — so it is re-read after
+   * a push and nowhere else, rather than rebuilt 228 times to hold the same
+   * three numbers.
+   */
+  _pushOutOfBoxes(ctx) {
+    const physics = ctx.physics;
+    if (!physics) return;
+    let boxes = this._nearBoxes;
+    const dx = this.position.x - this._nearAt.x, dz = this.position.z - this._nearAt.z;
+    const margin = NEAR_REACH - 1.6;
+    if (!boxes || this._nearStale || dx * dx + dz * dz > margin * margin) {
+      boxes = physics.staticBoxes;
+      this._nearMisses++;
+    }
+    if (!boxes || !boxes.length) return;
+    _v1.set(this.position.x, this.position.y + 0.9, this.position.z);
+    for (let i = 0; i < boxes.length; i++) {
+      const box = boxes[i];
+      if (box.disabled) continue;
+      const rr = box.radius + 1.6;
+      if (_v1.distanceToSquared(box.center) > rr * rr) continue;
+      _v2.subVectors(_v1, box.center).applyQuaternion(box.invQuat);
+      const h = box.halfExtents;
+      _v3.set(clamp(_v2.x, -h.x, h.x), clamp(_v2.y, -h.y, h.y), clamp(_v2.z, -h.z, h.z));
+      _v4.subVectors(_v2, _v3);
+      let d2 = _v4.lengthSq();
+      const r = this.radius;
+      if (d2 > r * r) continue;
+      /**
+       * A BODY STRICTLY INSIDE THE BOX WAS NEVER PUSHED OUT.
+       *
+       * `_v3` is the chest point clamped into the box, so when the chest is
+       * inside, `_v3 === _v2` and the separation vector is exactly zero — and
+       * the guard here read `|| d2 < 1e-8) continue`. The one case that most
+       * needs resolving was the one case skipped, so an enemy that got a
+       * shoulder inside a wall stayed inside it for the rest of the fight.
+       * Player._collide has had the answer for as long as it has existed:
+       * leave by the SHALLOWEST face, which is the shortest way out and the
+       * only choice that cannot push a body through the far side.
+       */
+      if (d2 < 1e-8) {
+        const px = h.x - Math.abs(_v2.x), py = h.y - Math.abs(_v2.y), pz = h.z - Math.abs(_v2.z);
+        if (px <= py && px <= pz) _v4.set(Math.sign(_v2.x) || 1, 0, 0);
+        else if (py <= pz) _v4.set(0, Math.sign(_v2.y) || 1, 0);
+        else _v4.set(0, 0, Math.sign(_v2.z) || 1);
+        d2 = 1e-4;
+      }
+      const d = Math.sqrt(d2);
+      _v4.multiplyScalar(1 / d).applyQuaternion(box.quat);
+      // an upward face is floor, and the support query above owns floors
+      if (_v4.y > 0.5) continue;
+      _v4.y = 0;
+      if (_v4.lengthSq() < 1e-6) continue;
+      _v4.normalize();
+      this.position.addScaledVector(_v4, r - d);
+      // …and remember which way out it was, so next frame's wish can go ALONG
+      // the face rather than back into it. See _wallN in the constructor.
+      this._wallN.add(_v4);
+      this._wallT = 0.3;
+      _v1.set(this.position.x, this.position.y + 0.9, this.position.z);
+    }
   }
 
   _syncBody() {

@@ -67,10 +67,17 @@ for (let i = 0; i < 60; i++) world.update(1 / 60, input);
 /* Wrap, don't sample. The cost of `cpuUsage()` is ~3.7 µs a call, so this is
  * only honest on subsystems called once a frame — which is what these are. */
 const acc = {};
-const wrap = (label, obj, key) => {
+/* WHOSE ROW IS WHOSE, STATED AND NOT INDENTED. The tree used to be encoded in
+ * leading spaces on the label, and the printer read `startsWith('    ')` as
+ * "inside _pose" — which was already a lie about `pickTarget` (it is inside
+ * `_think`) and became a second one the moment `_move` grew a child. A parent
+ * is a fact about the call graph, so it is passed in. */
+const parent = {};
+const wrap = (label, obj, key, under = null) => {
   if (!obj || typeof obj[key] !== 'function') return;
   const orig = obj[key];
   acc[label] = 0;
+  parent[label] = under;
   obj[key] = function (...a) {
     const t = cpuMs();
     try { return orig.apply(this, a); } finally { acc[label] += cpuMs() - t; }
@@ -93,9 +100,9 @@ const P = (await import('../src/game/Player.js')).Player;
 wrap('player', P.prototype, 'update');
 const E = (await import('../src/game/Enemy.js')).Enemy;
 wrap('enemies', E.prototype, 'update');
-wrap('  _pose', E.prototype, '_pose');
-wrap('  _think', E.prototype, '_think');
-wrap('  _move', E.prototype, '_move');
+wrap('_pose', E.prototype, '_pose', 'enemies');
+wrap('_think', E.prototype, '_think', 'enemies');
+wrap('_move', E.prototype, '_move', 'enemies');
 /* INSIDE `_pose`, because at a battlefield's distances it is 44% of the frame
  * and "the animation is expensive" is not something you can act on. Four
  * terms, and each has a different answer if it is the one:
@@ -105,10 +112,21 @@ wrap('  _move', E.prototype, '_move');
  *   `ground`  the per-foot terrain height lookups
  * Nested one level further, so the sum still belongs to `_pose`. */
 const BA = (await import('../src/game/Rig.js')).BipedAnimator;
-wrap('    anim', BA?.prototype, 'update');
-wrap('    arms', E.prototype, '_poseArms');
-wrap('    near', E.prototype, '_gatherNear');
-wrap('    ground', E.prototype, '_groundAt');
+wrap('anim', BA?.prototype, 'update', '_pose');
+wrap('arms', E.prototype, '_poseArms', '_pose');
+/* `_gatherNear` and `_groundAt` are called by BOTH `_pose` and `_move`, so
+ * these two rows are the only ones in the table whose parent is a convenience
+ * rather than a fact. They are filed under `_pose` because that is where the
+ * eleven-queries-a-gait cost is; `_move` asks once. */
+wrap('near', E.prototype, '_gatherNear', '_pose');
+wrap('ground', E.prototype, '_groundAt', '_pose');
+/* AND THE ONE INSIDE `_think`, which is the only O(bodies²) term in the frame:
+ * every body walks every other body looking for the nearest hostile, so the
+ * cost is a square and the row above it is a line. */
+wrap('boxes', E.prototype, '_pushOutOfBoxes', '_move');
+const W = (await import('../src/game/World.js')).World;
+wrap('pickTarget', W.prototype, 'pickTarget', '_think');
+wrap('hostilesFor', W.prototype, '_hostilesFor', '_think');
 
 const t0 = cpuMs();
 for (let i = 0; i < FRAMES; i++) world.update(1 / 60, input);
@@ -118,44 +136,36 @@ const alive = world.enemies.filter((e) => !e.dead).length;
 console.log(`\n  floor — ${MODE} · ${LEVEL} · quality high · ${flag('layout', 'ring')} layout `
   + `· ${alive} bodies · ${FRAMES} frames`);
 console.log(`  loadavg ${loadavg().map((x) => x.toFixed(1)).join(' ')} on ${cpus().length} cores\n`);
-/* Sorted by cost, EXCEPT that a nested row follows its parent — a `_pose`
- * that outweighs `physics.step` would otherwise be printed above the row it is
- * a part of, which reads as two independent costs. */
-const all = Object.entries(acc).map(([k, v]) => ({ k, ms: v / FRAMES })).filter((r) => r.ms > 0.005);
-const rows = [];
-for (const r of all.filter((x) => !x.k.startsWith(' ')).sort((a, b) => b.ms - a.ms)) {
-  rows.push(r);
-  if (r.k === 'enemies') {
-    for (const n1 of all.filter((x) => x.k.startsWith('  ') && !x.k.startsWith('    '))
-      .sort((a, b) => b.ms - a.ms)) {
-      rows.push(n1);
-      if (n1.k.trim() === '_pose') {
-        rows.push(...all.filter((x) => x.k.startsWith('    ')).sort((a, b) => b.ms - a.ms));
-      }
-    }
-  }
-}
 /**
+ * Sorted by cost, EXCEPT that a child follows its parent — a `_pose` that
+ * outweighs `physics.step` would otherwise be printed above the row it is a
+ * part of, which reads as two independent costs.
+ *
  * A NESTED ROW IS NOT A TERM OF THE SUM, and this printed a residual of
- * −17.3 ms until it was.
- *
- * `_pose`, `_think` and `_move` are called BY `Enemy.update`, and `enemies`
- * wraps `Enemy.update` — so every microsecond in the three of them is already
- * inside the one above. Adding all four gave a `named` total larger than the
- * frame and a negative residual, which is not a small reporting slip: the
- * residual is the number that says how much of the frame this instrument
- * cannot see, and a negative one says the instrument is lying about the part
- * it claims it can.
- *
- * The two-space prefix is what marks a row as nested. It was already there for
- * the reader; it is load-bearing now.
+ * −17.3 ms until it was. `_pose`, `_think` and `_move` are called BY
+ * `Enemy.update`, and `enemies` wraps `Enemy.update` — so every microsecond in
+ * the three of them is already inside the one above. Adding all four gave a
+ * `named` total larger than the frame and a negative residual, which is not a
+ * small reporting slip: the residual is the number that says how much of the
+ * frame this instrument cannot see, and a negative one says the instrument is
+ * lying about the part it claims it can. Only roots are summed.
  */
+const all = Object.entries(acc).map(([k, v]) => ({ k, ms: v / FRAMES, up: parent[k] || null }))
+  .filter((r) => r.ms > 0.005);
+const kids = (name) => all.filter((r) => r.up === name).sort((a, b) => b.ms - a.ms);
+const rows = [];
+const emit = (r, depth) => {
+  rows.push({ ...r, depth });
+  for (const c of kids(r.k)) emit(c, depth + 1);
+};
+for (const r of kids(null)) emit(r, 0);
+
 let named = 0;
 for (const r of rows) {
-  const nested = r.k.startsWith(' ');
-  if (!nested) named += r.ms;
-  console.log(`  ${r.k.padEnd(14)} ${r.ms.toFixed(3).padStart(7)} ms  ${(r.ms / total * 100).toFixed(1).padStart(5)}%`
-    + (r.k.startsWith('    ') ? '  (inside _pose)' : nested ? '  (inside enemies)' : ''));
+  if (r.depth === 0) named += r.ms;
+  console.log(`  ${(' '.repeat(r.depth * 2) + r.k).padEnd(16)} ${r.ms.toFixed(3).padStart(7)} ms  `
+    + `${(r.ms / total * 100).toFixed(1).padStart(5)}%`
+    + (r.up ? `  (inside ${r.up})` : ''));
 }
-console.log(`  ${'residual'.padEnd(14)} ${(total - named).toFixed(3).padStart(7)} ms  ${((total - named) / total * 100).toFixed(1).padStart(5)}%`);
-console.log(`  ${'FRAME'.padEnd(14)} ${total.toFixed(3).padStart(7)} ms  (${(total / 16.67 * 100).toFixed(0)}% of a 16.67 ms budget)\n`);
+console.log(`  ${'residual'.padEnd(16)} ${(total - named).toFixed(3).padStart(7)} ms  ${((total - named) / total * 100).toFixed(1).padStart(5)}%`);
+console.log(`  ${'FRAME'.padEnd(16)} ${total.toFixed(3).padStart(7)} ms  (${(total / 16.67 * 100).toFixed(0)}% of a 16.67 ms budget)\n`);
