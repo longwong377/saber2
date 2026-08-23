@@ -39,6 +39,7 @@ import { FOCUS } from '../../src/game/Focus.js';
 import { QUALITY } from '../../src/engine/Engine.js';
 import { MODES, WaveDirector, BOSS_EVERY, CONDITION_KEYS, SKIRMISH } from '../../src/game/Waves.js';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
+import { WITHDRAW_HOLD, LAST_CALL } from '../../src/game/Extraction.js';
 /* The Codex's teaching half is generated off these, and the check reads the
  * same tables rather than a transcription of what they said on the day. */
 import { DIFFICULTY, GRADE_NAME, SPEED_GRADE, PARRY_GRADE, parryScale, CATCH } from '../../src/game/Combat.js';
@@ -964,6 +965,13 @@ export async function run({ check, assert }) {
       `${Math.round(CATCH.hold * 1000)}`, `${CATCH.maxOpen.toFixed(2)}`,
       `${CATCH.autoGuard.toFixed(2)}`, `${CODE_GAP}`,
       ...Object.values(COMMAND_FORCE).flatMap(P => [`${P.seconds}`, `${P.cd}`]),
+      /* THE WITHDRAWAL'S TWO. Neither is scaled by difficulty — the ship holds
+       * its ramp for the same time on every tier, which is what makes them
+       * safe on a page that has no difficulty to read. They come off
+       * Extraction.js for the same reason everything else in this set does:
+       * tune either and the row retunes, and a typed one still has nowhere to
+       * hide. */
+      `${WITHDRAW_HOLD}`, `${Math.round(LAST_CALL)}`,
     ]);
     const stray = times.map(m => m[1]).filter(v => !derivable.has(v));
     assert(!stray.length,

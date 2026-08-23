@@ -182,7 +182,7 @@ import { TokenPool } from './Tokens.js';
 import { ContactShadows } from '../world/Contact.js';
 /** Scratch for the contact-mark pass; one array, refilled, never grown. */
 const _contactList = [];
-import { ExtractionDirector } from './Extraction.js';
+import { ExtractionDirector, WITHDRAW_HOLD } from './Extraction.js';
 
 /* Random per session, FIXED under the gate — see `moduleSeed`. The salt keeps
  * this stream from being the same sequence as MathUtil's `rand`. */
@@ -325,15 +325,12 @@ const ARMY_INTERVAL = 0.5;
 const NET_GRIP_LEASE = 0.6;
 
 /**
- * HOW LONG THE EXTRACTION KEY IS HELD BEFORE THE SHIP IS CALLED, in seconds.
- *
- * 1.5 is long enough that no bounce of the key reaches it and short enough
- * that it is not a chore under fire. It is also, deliberately, long enough to
- * be a beat: you stop swinging for a second and a half to ask, and that pause
- * is the decision. Exported because `HUD` fills a ring against the same number
- * and `tools/checks/extraction.mjs` reads it rather than restating it.
+ * Re-exported, not restated: the number is Extraction.js's, and its note there
+ * says why it had to live in the file the Codex can also see. `HUD` fills its
+ * ring against it and `tools/checks/extraction.mjs` reads it, both through
+ * here, so neither had to move.
  */
-export const WITHDRAW_HOLD = 1.5;
+export { WITHDRAW_HOLD } from './Extraction.js';
 
 export class World {
   constructor(engine, settings) {

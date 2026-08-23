@@ -30,6 +30,7 @@ import { FocusSystem } from '../../src/game/Focus.js';
 import { BladeContactSolver, TOUGHNESS } from '../../src/game/Combat.js';
 import { Saber } from '../../src/game/Saber.js';
 import { Player } from '../../src/game/Player.js';
+import { TokenPool } from '../../src/game/Tokens.js';
 import { DEFAULT_SETTINGS, SETTING_READERS, applyFeelSettings, CODEX, SCHEMES, codexHtml, pauseHintsHtml,
   keyChips } from '../../src/ui/Menu.js';
 import { BOONS, CLEAVE, cleavingThrow } from '../../src/game/Waves.js';
@@ -163,6 +164,13 @@ function clockWorld(settings) {
     particles: { update() {} },
     bolts: { update() {}, threatsNear: () => [] },
     director: { update() {} },
+    /* THE REAL POOL, not a stub with an empty `update`. It is eleven lines of
+     * bookkeeping over an empty roster here and it costs this fixture nothing,
+     * and a fake one would mean this file quietly stopped stepping a subsystem
+     * that `World.update` steps — which is how a hand-built world drifts from
+     * the world it is borrowing `update` from. `World.update` calls it
+     * unguarded, on purpose: a real World always has one. */
+    tokens: new TokenPool(),
     engine: {
       camera: new THREE.PerspectiveCamera(), sun: { color: 0 }, hemi: { color: 0 },
       fitShadows() {}, setRadial() {}, setFocus() {}, flash() {},
@@ -177,6 +185,13 @@ function clockWorld(settings) {
     // `_bladeEntries` reaches `this._screenFor` for every lit blade — borrow
     // the one and you have borrowed the other. See pvp.mjs's note.
     _screenFor: World.prototype._screenFor,
+    /* The extraction key's hold timer. `World.update` counts it off every
+     * frame, so a world that borrows `update` has to carry it or the frame
+     * throws — and a stub that answered `canWithdraw` true would call a ship
+     * in the middle of a timing trace. `canWithdraw` is false here because
+     * there is no player, which is the honest reason and not a switch. */
+    _withdrawTick: World.prototype._withdrawTick,
+    withdrawHold: 0,
   };
   applyFeelSettings(w, settings);
   return w;
@@ -912,17 +927,32 @@ export async function run({ check, assert }) {
      * its own — the check failed reporting "Mouse2 still answers to
      * thrust+unleash", which is a defect in the test data and not in the
      * resolver. Two keys that nothing in `defaultBindings()` claims, picked
-     * off the real table, cannot go stale that way. */
+     * off the real table, cannot go stale that way.
+     *
+     * AND THEY ARE NOT LOOKED FOR AMONG THE LETTERS ANY MORE. There are 26 of
+     * those and 46 actions, and the day `withdraw` took KeyL exactly one was
+     * left — so this went red saying the fixture had no spares, which is true
+     * and is a fact about the keyboard rather than about the resolver. The
+     * pool is now everything a real profile can hold and a shipped default
+     * does not reach for: the letters first, so the failure message still
+     * reads like a keyboard, then the digits and the high function keys.
+     * `resolveConflicts` does not care what a code spells. */
     const spares = () => {
       const b = defaultBindings();
       const used = new Set(Object.values(b).flat());
+      const pool = [
+        ...[...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'].map(c => `Key${c}`),
+        ...[...'0123456789'].map(d => `Digit${d}`),
+        ...Array.from({ length: 12 }, (_, i) => `F${13 + i}`),
+      ];
       const free = [];
-      for (const c of 'ABCDEFGHIJKLMNOPQRSTUVWXYZ') {
-        if (!used.has(`Key${c}`)) free.push(`Key${c}`);
+      for (const c of pool) {
+        if (!used.has(c)) free.push(c);
         if (free.length === 2) break;
       }
       assert(free.length === 2,
-        'the bindings table has no two unbound letters left — this fixture needs spares to give up');
+        'the bindings table has no two unbound keys left in the letters, the digits or F13-F24 '
+        + '— this fixture needs spares to give up');
       return free;
     };
 

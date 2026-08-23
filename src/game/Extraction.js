@@ -198,6 +198,22 @@ export const LAST_CALL = 22.0;
 /** And how long the haul takes. A slide at walking pace, not a jump cut. */
 export const PULL = 1.6;
 
+/**
+ * HOW LONG THE EXTRACTION KEY IS HELD BEFORE THE SHIP IS CALLED, in seconds.
+ *
+ * 1.5 is long enough that no bounce of the key reaches it and short enough
+ * that it is not a chore under fire. It is also, deliberately, long enough to
+ * be a beat: you stop swinging for a second and a half to ask, and that pause
+ * is the decision.
+ *
+ * IT LIVES HERE AND NOT IN World.js, though `_withdrawTick` is what counts it
+ * off. The Codex has to print how long the key is held, and the Codex is in
+ * Menu.js, which cannot reach World.js — the world imports the menu's colour
+ * tables, not the other way about. Extraction.js is the file the withdrawal
+ * belongs to and the one both of them can already see.
+ */
+export const WITHDRAW_HOLD = 1.5;
+
 /** How long a body takes to walk from where it stepped aboard to its seat.
  *  See `_flyPassengers`: this is the difference between taking a seat and
  *  being snapped into one. */

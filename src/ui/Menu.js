@@ -22,6 +22,7 @@ import { ROBE_CUTS, attachCloak, attachSkirt, attachLekku,
          garmentTone } from '../game/Cloth.js';
 import { applyInjury } from '../game/Injury.js';
 import { LEVELS, LEVEL_ORDER, theatresFor } from '../game/Levels.js';
+import { WITHDRAW_HOLD, LAST_CALL } from '../game/Extraction.js';
 // The Descent's ladder, named on the Deploy panel because the mode picks its
 // own places and the Theatre column has no say in it — see _syncTheatre.
 // The rest of this import is the DEFLECTION LADDER, and it is here because the
@@ -1765,6 +1766,28 @@ export const CODEX = [
       + (P.arc ? `, within &plusmn;${Math.round(P.arc * 180 / Math.PI)}&deg; of where you face` : '')
       + `, lasts ${P.seconds}&nbsp;s, and will not come again for ${P.cd}&nbsp;s.`,
   })),
+
+  /**
+   * THE ONE ENDING YOU CHOOSE, AND THE ONLY REASON THE COMPANY EXISTS.
+   *
+   * Every other way a run ends happens TO the player: they die, or the last
+   * wave clears. A roster that is only ever wiped is a save file that always
+   * reads zero, so the men can only carry over if there is a way to LEAVE with
+   * them — and a way to leave is a control, which means it belongs on the page
+   * a player reads rather than in a patch note.
+   *
+   * Both numbers are derived. The hold is Extraction.js's `WITHDRAW_HOLD` and
+   * the ramp time is its `LAST_CALL`; the sentence about who gets left behind
+   * is the actual rule `_leaveTheRest` enforces, and if either number is tuned
+   * this row retunes with it.
+   */
+  { keys: ['withdraw'], hold: true,
+    text: () => `Call for extraction. Hold it for ${WITHDRAW_HOLD}&nbsp;s — a press cannot do `
+      + 'this, and the pause is the point: you stop fighting to ask. The ship comes down and '
+      + `holds its ramp for ${Math.round(LAST_CALL)}&nbsp;s. <b>Everyone who walks up it comes `
+      + 'home and everyone who does not is left on the ground</b>, so calling early keeps men '
+      + 'you have not earned anything with and calling late is how a company dies one street '
+      + 'from the door. Leaving with eight is a result. Quitting is not.' },
 
   /**
    * THE SUPPORT CALLS, GENERATED — the same argument as the orders above, and
