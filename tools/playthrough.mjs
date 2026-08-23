@@ -151,6 +151,29 @@ const reading = (t) => {
     morale: r && r.living.length
       ? +(r.living.reduce((a, x) => a + (x.morale ?? 0), 0) / r.living.length).toFixed(3) : null,
     broken: r ? r.living.filter((x) => x.broken).length : null,
+    /**
+     * THE DIRECTOR'S OWN COUNTERS, and the first run without them cost an
+     * afternoon.
+     *
+     * The timeline showed six minutes of "one hostile, no roster, no
+     * announcements, nothing happening" and there is no way to read that. A
+     * wave holding open on one body the player cannot reach, a delivery that
+     * never finished, and a run quietly over all look identical in a body
+     * count. These three say which:
+     *
+     *   `remaining`  what the wave still owes. Frozen beside a frozen
+     *                `hostile` is a wave holding open.
+     *   `delivered`  whether every body of the wave has arrived. FALSE here
+     *                disables the stall watchdog entirely (`Waves.js`'s
+     *                `blocking`), so a stuck delivery is a stuck RUN and this
+     *                is the one field that says so.
+     *   `rescues`    how many bodies the watchdog has had to relocate. It is
+     *                cumulative, so the SLOPE is the reading: 61 over fifteen
+     *                minutes is bodies routinely failing to reach the fight.
+     */
+    remaining: world.director?.remaining ?? null,
+    delivered: world.director?.delivered ?? null,
+    rescues: (world.director?.rescues || []).length,
     /* THE GROUND. `areasTaken` for a campaign, `front` for a meeting. */
     areas: world.command?.areasTaken ?? null,
     front: world.command?.front != null ? +world.command.front.toFixed(3) : null,
@@ -275,9 +298,11 @@ if (report.ended) {
   console.log(`  still running at ${report.playedSeconds}s — the horizon ran out before the run did`);
 }
 
-console.log('\n   t(s)  wave  them   you   hp  force  stam  living fallen morale brk  areas  front  kills');
+console.log('\n   t(s)  wave  left  dlv  resc  them   you   hp  force  stam  living fallen morale brk  areas  front  kills');
 for (const x of rows) {
-  console.log(`  ${pad(x.t, 5)} ${pad(x.wave, 5)} ${pad(x.hostile, 5)} ${pad(x.friendly, 5)} `
+  console.log(`  ${pad(x.t, 5)} ${pad(x.wave, 5)} ${pad(x.remaining, 5)} `
+    + `${pad(x.delivered === null ? '·' : (x.delivered ? 'y' : 'n'), 4)} ${pad(x.rescues, 5)} `
+    + `${pad(x.hostile, 5)} ${pad(x.friendly, 5)} `
     + `${pad(x.hp, 4)} ${pad(x.force, 6)} ${pad(x.stamina, 5)} ${pad(x.living, 6)} ${pad(x.fallen, 6)} `
     + `${pad(x.morale, 6)} ${pad(x.broken, 3)} ${pad(x.areas, 6)} ${pad(x.front, 6)} ${pad(x.kills, 6)}`);
 }
