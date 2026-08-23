@@ -99,6 +99,10 @@ const load = () => loadavg().map((x) => x.toFixed(1)).join(' ');
  * cheapest possible population and not the one the game composes. */
 const KINDS = ['b1', 'b1', 'b2', 'trooper', 'conscript', 'sniper'];
 
+import { layoutNamed } from './_layouts.mjs';
+
+const LAYOUT = layoutNamed(flag('layout', 'ring'));
+
 async function measure(n) {
   enemyRng.seed(20260823);
   const { world } = await H.bootWorld({
@@ -125,10 +129,7 @@ async function measure(n) {
    * that made the old benchmark look linear. */
   let made = 0;
   for (let i = 0; i < n; i++) {
-    const a = (i / n) * Math.PI * 2;
-    const r = 14 + (i % 9) * 4;
-    const x = p.position.x + Math.cos(a) * r;
-    const z = p.position.z + Math.sin(a) * r;
+    const { x, z } = LAYOUT(p, i, n);
     const key = KINDS[i % KINDS.length];
     if (!ARCHETYPES[key]) continue;
     const y = world.terrain ? world.terrain.height(x, z) : 0;
@@ -150,7 +151,8 @@ async function measure(n) {
   return { made, alive, cpu, wall, contention: wall / Math.max(cpu, 1e-6) };
 }
 
-console.log(`\n  scale — ${MODE} · ${LEVEL} · quality ${QUALITY} · ${FRAMES} frames after ${WARM} warm`);
+console.log(`\n  scale — ${MODE} · ${LEVEL} · quality ${QUALITY} · ${flag('layout', 'ring')} layout `
+  + `· ${FRAMES} frames after ${WARM} warm`);
 console.log(`  loadavg ${load()} on ${cpus().length} cores\n`);
 
 const REPEAT = parseInt(flag('repeat', '3'), 10);

@@ -31,6 +31,8 @@ const LEVEL = flag('level', 'geonosis');
 const MODE = flag('mode', 'command');
 const BODIES = parseInt(flag('bodies', '0'), 10);
 const FRAMES = parseInt(flag('frames', '240'), 10);
+const { layoutNamed } = await import('./_layouts.mjs');
+const LAYOUT = layoutNamed(flag('layout', 'ring'));
 
 const H = await import('./checks/_coop.mjs');
 const { Enemy, ARCHETYPES, enemyRng } = await import('../src/game/Enemy.js');
@@ -48,8 +50,12 @@ for (let i = 0; i < parseInt(flag('warm', '1200'), 10); i++) world.update(1 / 60
 if (BODIES) {
   const p = world.player, kinds = ['b1', 'b1', 'b2', 'trooper'];
   for (let i = 0; i < BODIES; i++) {
-    const a = (i / BODIES) * Math.PI * 2, r = 14 + (i % 9) * 4;
-    const x = p.position.x + Math.cos(a) * r, z = p.position.z + Math.sin(a) * r;
+    /* THE SAME PLACEMENT `scale.mjs` USES, from the one module that states it.
+     * A body's cost depends on where it stands — the ladder reads 30 m, 62 m
+     * and 137.8 m — so two instruments that place bodies differently are
+     * profiling two different games, and this file's whole job is to explain
+     * the other one's numbers. */
+    const { x, z } = LAYOUT(p, i, BODIES);
     const e = new Enemy(world, kinds[i % kinds.length],
       new THREE.Vector3(x, world.terrain.height(x, z), z));
     e.team = i % 2 ? p.team : (p.team === 0 ? 1 : 0);
@@ -90,20 +96,66 @@ wrap('enemies', E.prototype, 'update');
 wrap('  _pose', E.prototype, '_pose');
 wrap('  _think', E.prototype, '_think');
 wrap('  _move', E.prototype, '_move');
+/* INSIDE `_pose`, because at a battlefield's distances it is 44% of the frame
+ * and "the animation is expensive" is not something you can act on. Four
+ * terms, and each has a different answer if it is the one:
+ *   `anim`    the skeletal solve itself — a rate cut is the lever
+ *   `arms`    the IK that puts two hands on a weapon — a few pixels at 100 m
+ *   `near`    the prop list a foot might stand on
+ *   `ground`  the per-foot terrain height lookups
+ * Nested one level further, so the sum still belongs to `_pose`. */
+const BA = (await import('../src/game/Rig.js')).BipedAnimator;
+wrap('    anim', BA?.prototype, 'update');
+wrap('    arms', E.prototype, '_poseArms');
+wrap('    near', E.prototype, '_gatherNear');
+wrap('    ground', E.prototype, '_groundAt');
 
 const t0 = cpuMs();
 for (let i = 0; i < FRAMES; i++) world.update(1 / 60, input);
 const total = (cpuMs() - t0) / FRAMES;
 
 const alive = world.enemies.filter((e) => !e.dead).length;
-console.log(`\n  floor — ${MODE} · ${LEVEL} · quality high · ${alive} bodies · ${FRAMES} frames`);
+console.log(`\n  floor — ${MODE} · ${LEVEL} · quality high · ${flag('layout', 'ring')} layout `
+  + `· ${alive} bodies · ${FRAMES} frames`);
 console.log(`  loadavg ${loadavg().map((x) => x.toFixed(1)).join(' ')} on ${cpus().length} cores\n`);
-const rows = Object.entries(acc).map(([k, v]) => ({ k, ms: v / FRAMES }))
-  .sort((a, b) => b.ms - a.ms).filter((r) => r.ms > 0.005);
+/* Sorted by cost, EXCEPT that a nested row follows its parent — a `_pose`
+ * that outweighs `physics.step` would otherwise be printed above the row it is
+ * a part of, which reads as two independent costs. */
+const all = Object.entries(acc).map(([k, v]) => ({ k, ms: v / FRAMES })).filter((r) => r.ms > 0.005);
+const rows = [];
+for (const r of all.filter((x) => !x.k.startsWith(' ')).sort((a, b) => b.ms - a.ms)) {
+  rows.push(r);
+  if (r.k === 'enemies') {
+    for (const n1 of all.filter((x) => x.k.startsWith('  ') && !x.k.startsWith('    '))
+      .sort((a, b) => b.ms - a.ms)) {
+      rows.push(n1);
+      if (n1.k.trim() === '_pose') {
+        rows.push(...all.filter((x) => x.k.startsWith('    ')).sort((a, b) => b.ms - a.ms));
+      }
+    }
+  }
+}
+/**
+ * A NESTED ROW IS NOT A TERM OF THE SUM, and this printed a residual of
+ * −17.3 ms until it was.
+ *
+ * `_pose`, `_think` and `_move` are called BY `Enemy.update`, and `enemies`
+ * wraps `Enemy.update` — so every microsecond in the three of them is already
+ * inside the one above. Adding all four gave a `named` total larger than the
+ * frame and a negative residual, which is not a small reporting slip: the
+ * residual is the number that says how much of the frame this instrument
+ * cannot see, and a negative one says the instrument is lying about the part
+ * it claims it can.
+ *
+ * The two-space prefix is what marks a row as nested. It was already there for
+ * the reader; it is load-bearing now.
+ */
 let named = 0;
 for (const r of rows) {
-  named += r.ms;
-  console.log(`  ${r.k.padEnd(14)} ${r.ms.toFixed(3).padStart(7)} ms  ${(r.ms / total * 100).toFixed(1).padStart(5)}%`);
+  const nested = r.k.startsWith(' ');
+  if (!nested) named += r.ms;
+  console.log(`  ${r.k.padEnd(14)} ${r.ms.toFixed(3).padStart(7)} ms  ${(r.ms / total * 100).toFixed(1).padStart(5)}%`
+    + (r.k.startsWith('    ') ? '  (inside _pose)' : nested ? '  (inside enemies)' : ''));
 }
 console.log(`  ${'residual'.padEnd(14)} ${(total - named).toFixed(3).padStart(7)} ms  ${((total - named) / total * 100).toFixed(1).padStart(5)}%`);
 console.log(`  ${'FRAME'.padEnd(14)} ${total.toFixed(3).padStart(7)} ms  (${(total / 16.67 * 100).toFixed(0)}% of a 16.67 ms budget)\n`);

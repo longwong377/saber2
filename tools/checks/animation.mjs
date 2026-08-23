@@ -272,6 +272,218 @@ export function run({ check, assert, near, THREE: T }) {
 
   /* ── rule 1: a planted foot does not move ───────────────────────────── */
 
+  check('gait: a distant body is solved less often and still walks at the same pace', async () => {
+    /**
+     * THE TWO PROPERTIES THAT MAKE A RATE CUT LEGITIMATE, and neither is
+     * "it is faster".
+     *
+     * `Enemy.ANIM_STEP` stops solving a biped every frame past 62 m, because
+     * `tools/floor.mjs --layout front` measured `BipedAnimator.update` at
+     * 27.4 ms of a 61.7 ms frame across 158 bodies — 173 µs a body, paid in
+     * full on a man fifteen pixels tall. That is a real saving and it is also
+     * the shape of a hundred bugs, so the two things it must not do are pinned
+     * here:
+     *
+     *   THE NEAR BODY IS UNTOUCHED. Tier 0 and tier 1 are `0` in the table and
+     *     a body inside 62 m must solve on every single frame — it still casts
+     *     a shadow and the ink still draws it at full strength, and a foot
+     *     sliding under a hard black outline is the one place this would be
+     *     seen.
+     *   THE FAR BODY DOES NOT SLOW DOWN. The animator integrates its own clock
+     *     off the `dt` it is handed, so the accumulated lag is what gets
+     *     passed and the cycle advances by exactly what the skipped frames
+     *     would have advanced it. A gait that ran at a third speed past 62 m
+     *     would be a marching army that moves its legs like a dream sequence.
+     *
+     * Driven on real bodies in a real World rather than on the table, because
+     * the table is not the behaviour: `_pose` reads `this.lod`, which
+     * `Enemy.update` writes from the camera every frame.
+     */
+    const { ANIM_STEP } = await import('../../src/game/Enemy.js');
+    assert(ANIM_STEP[0] === 0 && ANIM_STEP[1] === 0,
+      `the two near tiers are rate-limited (${ANIM_STEP[0]}, ${ANIM_STEP[1]}) — inside 62 m a body `
+      + 'casts a shadow and carries a full-strength outline, and a sliding foot under a hard line '
+      + 'is exactly where this is seen');
+    assert(ANIM_STEP[2] > 0 && ANIM_STEP[3] >= ANIM_STEP[2],
+      `the far tiers read ${ANIM_STEP[2]} and ${ANIM_STEP[3]} — the cut has to grow with distance `
+      + 'or it is not a level of detail');
+    /* AND UNDER THE CLAMP, which is the whole reason a rate cut can be trusted
+     * to keep the pace. `BipedAnimator.update` clamps the dt it integrates so
+     * a dropped frame cannot teleport a foot; a step above it has its surplus
+     * discarded and the gait runs SLOW. Measured at 1/6 s: 48% behind. */
+    const { MAX_DT } = await import('../../src/game/Rig.js');
+    const over = ANIM_STEP.filter((x) => x > MAX_DT);
+    assert(!over.length,
+      `ANIM_STEP holds ${over.join(', ')} against BipedAnimator's ${MAX_DT} s clamp — the surplus `
+      + 'is discarded inside the animator and the gait runs slow, not coarse');
+
+    const { bootWorld, idleInput } = await import('./_coop.mjs');
+    const { Enemy } = await import('../../src/game/Enemy.js');
+    const { world } = await bootWorld({ settings: { quality: 'low' } });
+    const input = idleInput();
+    for (let i = 0; i < 10; i++) world.update(1 / 60, input);
+    const from = world.player.position;
+
+    /**
+     * `_pose` IS DRIVEN DIRECTLY, AND THE FIRST VERSION OF THIS CHECK WAS NOT.
+     *
+     * Two bodies were stood at 12 m and 180 m and the whole world was stepped.
+     * That measured the wrong thing twice over: the near one had a target and
+     * charged it while the far one had nothing to walk toward, so their gaits
+     * were different because their ERRANDS were, and the check reported a 65%
+     * gap that had nothing to do with the solve rate. A rate cut's property is
+     * "the same body, the same velocity, the same seconds, fewer solves", and
+     * the only way to say that is to hold everything but the rate.
+     *
+     * So: one archetype, one velocity written every frame, one `dt`, and the
+     * tier set by hand — `_pose` reads `this.lod`, which `Enemy.update` would
+     * otherwise recompute from the camera and take out of this check's hands.
+     */
+    const ctx = { physics: world.physics, terrain: world.terrain, camera: world.engine.camera,
+      time: 0, dt: 1 / 60 };
+    const make = (lod) => {
+      const x = from.x + lod * 3, z = from.z - 8;
+      const e = new Enemy(world, 'trooper', new T.Vector3(x, world.terrain?.height(x, z) ?? 0, z));
+      e.lod = lod;
+      e.grounded = true;
+      return e;
+    };
+    const near = make(0);
+    const far = make(2);
+
+    /**
+     * WHAT THE ANIMATOR INTEGRATED, and it is the exact invariant.
+     *
+     * The stride count is a second-order reading: `freq` is re-derived on
+     * every solve out of the foot plant, so a body sampled every fifth frame
+     * lands on slightly different values of it and finishes about a tenth of a
+     * stride out over three seconds. That is the coarseness working as
+     * intended and it is not a rate error.
+     *
+     * The rate error, when there is one, is exact and shows up here: the
+     * animator clamps the dt it will integrate at `MAX_DT`, so a step above
+     * that has its surplus DISCARDED. Summing what each body actually
+     * integrated turns "the gait looks slow" into arithmetic — measured at a
+     * step of 1/6 s, a distant body integrated **1.600 seconds of the same
+     * 3.000** and finished 39% behind.
+     */
+    let nearSolves = 0, farSolves = 0;
+    const took = new Map([[near, 0], [far, 0]]);
+    const A = Object.getPrototypeOf(near.animator);
+    const orig = A.update;
+    A.update = function (dt, p) {
+      if (this === near.animator) { nearSolves++; took.set(near, took.get(near) + Math.min(dt, MAX_DT)); }
+      if (this === far.animator) { farSolves++; took.set(far, took.get(far) + Math.min(dt, MAX_DT)); }
+      return orig.call(this, dt, p);
+    };
+    const FRAMES = 180, DT = 1 / 60;
+    /**
+     * STRIDES, ACCUMULATED — because `phase` WRAPS and the first version of
+     * this check compared two fractions.
+     *
+     * `BipedAnimator` advances `this.phase = (this.phase + freq * dt) % 1`, so
+     * it is where the body is WITHIN a stride and never how many it has taken.
+     * Comparing 0.398 against 0.296 and calling it a 26% error is comparing
+     * the minute hands of two clocks and concluding one of them is slow. The
+     * cumulative count is the quantity a rate cut could actually corrupt, and
+     * it is recovered the only way it can be: by watching for the wrap.
+     */
+    const strides = new Map([[near, 0], [far, 0]]);
+    const lastPhase = new Map([[near, near.animator.phase], [far, far.animator.phase]]);
+    const tally = (e) => {
+      const now = e.animator.phase;
+      const was = lastPhase.get(e);
+      strides.set(e, strides.get(e) + (now < was ? now + 1 - was : now - was));
+      lastPhase.set(e, now);
+    };
+    /**
+     * AND THE TALLY STARTS AFTER THE GAIT HAS STARTED.
+     *
+     * `BipedAnimator` has one deliberate discontinuity: on the frame a body
+     * begins to move it SETS `phase` outright — "starting to walk should start
+     * on the foot a person would start on, not wherever the frozen phase left
+     * off". That is a jump, and a wrap detector cannot tell a jump from
+     * progress, so it books the whole thing as stride. Counted from frame
+     * zero the far body read 6.296 against 5.398 and the difference was almost
+     * entirely that one reset.
+     *
+     * Half a second of settling puts both bodies past it. The exact clause
+     * above needs no such window — integrated seconds are integrated seconds.
+     */
+    const SETTLE = 30;
+    try {
+      for (let i = 0; i < FRAMES; i++) {
+        if (i === SETTLE) for (const e of [near, far]) { lastPhase.set(e, e.animator.phase); strides.set(e, 0); }
+        for (const e of [near, far]) {
+          /* THE SAME WALK, WRITTEN EVERY FRAME. `_pose` reads `velocity` and
+           * `grounded`; nothing else in this loop touches either, so the two
+           * bodies are doing the identical thing at different rates. */
+          e.velocity.set(0, 0, 1.9);
+          e.grounded = true;
+          e.position.z += 1.9 * DT;
+          e._pose(DT, ctx);
+          tally(e);
+        }
+      }
+    } finally { A.update = orig; }
+
+    assert(nearSolves === FRAMES,
+      `the near body solved ${nearSolves} times in ${FRAMES} frames — LOD 0 must be every one`);
+    assert(farSolves < FRAMES * 0.5,
+      `the far body solved ${farSolves} of ${FRAMES} frames; ANIM_STEP[2] asks for about `
+      + `${Math.round(FRAMES * DT / ANIM_STEP[2])}`);
+    assert(farSolves > 0, 'the far body never solved at all — that is a frozen man, not a cheap one');
+
+    /* …AND THE CYCLE ADVANCED BY THE SAME AMOUNT. `phase` is the animator's own
+     * clock, in strides, and it is the quantity a rate cut would corrupt. */
+    /* THE EXACT ONE FIRST. Both bodies lived the same number of seconds, so
+     * both animators must have integrated the same number of seconds. */
+    const elapsed = FRAMES * DT;
+    for (const [name, e] of [['near', near], ['far', far]]) {
+      const got = took.get(e);
+      assert(Math.abs(got - elapsed) < 1e-6,
+        `the ${name} body's animator integrated ${got.toFixed(3)} s of the ${elapsed.toFixed(3)} s `
+        + `it lived — ${got < elapsed ? 'the surplus is being discarded by MAX_DT and its gait runs '
+          + 'slow' : 'it is being handed time that did not pass'}`);
+    }
+
+    const np = strides.get(near), fp = strides.get(far);
+    assert(np > 0.2,
+      `the near body took ${np.toFixed(3)} strides in ${((FRAMES - SETTLE) * DT).toFixed(1)} s — `
+      + 'it is not walking');
+    /* …AND THE STRIDE COUNT AS A SANITY BAND, at 15% rather than a tight
+     * figure: `freq` is re-derived from the foot plant on every solve, so a
+     * body sampled five times less often lands on slightly different values of
+     * it. Measured at the shipped step, 4.775 strides against 4.369 — a tenth
+     * of a stride over three seconds, at a distance where a man is twenty
+     * pixels tall. A real rate error reads 39% and trips the exact clause
+     * above before it ever reaches this one. */
+    const drift = Math.abs(fp - np) / Math.max(0.001, Math.abs(np));
+    assert(drift < 0.15,
+      `the far body's gait ran ${(drift * 100).toFixed(0)}% off the near one's over ${FRAMES} frames `
+      + `(${fp.toFixed(3)} strides against ${np.toFixed(3)}) — a rate cut must not change the pace`);
+
+    /* AND THE DRAWN BODY TRAVELLED WITH IT. `_carryPose` is the half that is
+     * not optional: the animator is the only thing that places a rigged body,
+     * so a skipped solve without it is a man standing still while his
+     * `position` walks away. Both hips must have moved by the distance both
+     * bodies moved. */
+    const travelled = 1.9 * FRAMES * DT;
+    for (const [name, e] of [['near', near], ['far', far]]) {
+      const hips = e.rig?.hipsBone?.obj;
+      assert(hips, `${name} has no hips to read`);
+      const gap = Math.abs(hips.position.z - e.position.z);
+      assert(gap < 1.0,
+        `the ${name} body walked ${travelled.toFixed(1)} m and its drawn hips are ${gap.toFixed(2)} m `
+        + 'from where it is — the pose is not being carried between solves');
+    }
+
+    return `LOD 0 solved ${nearSolves}/${FRAMES}, LOD 2 solved ${farSolves}/${FRAMES} `
+      + `(${(FRAMES / Math.max(1, farSolves)).toFixed(1)}× cheaper) · gait ${np.toFixed(2)} vs `
+      + `${fp.toFixed(2)} strides, ${(drift * 100).toFixed(1)}% apart · both integrated `
+      + `${took.get(far).toFixed(3)} s of ${(FRAMES * DT).toFixed(3)} · both carried to within 1 m`;
+  });
+
   check('gait: a planted foot does not move — not one millimetre, on any terrain', () => {
     // The single loudest thing wrong with the old solver. Stance did
     // `dampVec(f.planted, neutralStance, 4.5, dt)` — it dragged the contact

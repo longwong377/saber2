@@ -856,6 +856,32 @@ const LIFT = [0.040, 0.030, 0.038, 0.20];
 const pitchStrikeAt = (runness) => lerp(PITCH_STRIKE[0], PITCH_STRIKE[1], runness);
 const pitchOffAt = (runness) => lerp(PITCH_OFF[0], PITCH_OFF[1], runness);
 
+/**
+ * THE LARGEST `dt` A GAIT WILL INTEGRATE, in seconds.
+ *
+ * A dropped frame or a returning tab must not teleport a foot across the
+ * level, so `update` clamps — and for eight months that clamp had exactly one
+ * caller, at 1/60, and could not bite.
+ *
+ * IT HAS A SECOND CALLER NOW AND THE CLAMP IS A CONTRACT. `Enemy.ANIM_STEP`
+ * solves a distant body every Nth frame and hands over the ACCUMULATED lag, on
+ * the reasoning that the animator integrates its own clock so three frames
+ * arriving as one call of 3·dt advance the cycle by what three calls would
+ * have. That reasoning is only true below this number. Above it the surplus is
+ * silently discarded and the gait runs slow, and the arithmetic is exact:
+ * driven at a step of 1/6 s over three seconds, a distant body's animator was
+ * handed 18 calls of 0.1667 s and **integrated 1.600 s of the 3.000 it lived**,
+ * because every one of them was clipped to this constant. It finished 2.671
+ * strides against a near body's 4.369 — 39% behind, an army moving its legs
+ * like a dream sequence. At the shipped 1/12 s the same drive integrates
+ * 3.000 s of 3.000 and finishes 4.775 against 4.369.
+ *
+ * So it is exported, and `animation.mjs` holds every entry of `ANIM_STEP` to
+ * being under it. A future tuner who reaches for a bigger saving gets a red
+ * check rather than a slow-motion war.
+ */
+export const MAX_DT = 0.1;
+
 export class BipedAnimator {
   constructor(rig, opts = {}) {
     this.rig = rig;
@@ -1176,7 +1202,7 @@ export class BipedAnimator {
     const rig = this.rig, s = this.scale;
     // A dropped frame or a returning tab must not teleport a foot across the
     // level: every integrator below is driven by dt.
-    dt = clamp(dt, 0, 0.1);
+    dt = clamp(dt, 0, MAX_DT);
     const groundAt = p.groundAt || (() => 0);
     const speed = Math.hypot(p.velocity.x, p.velocity.z);
     const crouch = clamp(p.crouch || 0, 0, 1);

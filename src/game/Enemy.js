@@ -1293,6 +1293,46 @@ const SUSTAIN_TICK = 0.20;
  * Ataru's 3.6) and inside the distance at which a body reads as having left the
  * fight, so the ring looks like men waiting their turn rather than men retreating.
  */
+/**
+ * HOW OFTEN A BODY'S SKELETON IS SOLVED, in seconds, by LOD tier.
+ *
+ * `0` is "every frame" and is what the two near tiers keep. The far two are
+ * where the 173 µs of biped solve stops being able to reach the screen: at
+ * LOD 2 (62–137.8 m) a man is 20–35 px tall, at LOD 3 (past 137.8 m) he is a
+ * cohort instance under fifteen. A knee travelling half a pixel between two
+ * frames is a solve nobody can see.
+ *
+ * Measured with `tools/floor.mjs --layout front`, which is the layout that
+ * puts bodies where a battle puts them rather than in a ring inside 46 m:
+ * `BipedAnimator.update` was 27.4 ms of a 61.7 ms frame at 158 bodies.
+ *
+ * THE NUMBERS ARE THE STRIDE AND NOT A ROUND FRACTION. A walk cycle is about
+ * a second, so 1/12 s at LOD 2 is twelve poses a stride — more than a hand
+ * animator would draw — and 1/6 s at LOD 3 is six, which is a 1940s cartoon
+ * walk and is being drawn at fifteen pixels.
+ *
+ * LOD 1 stays at every frame on purpose. It reaches to 62 m, which is where
+ * `Enemy` still casts a shadow and where the ink still draws a full-strength
+ * outline; a foot that slides under a body with a hard black line round it is
+ * the one place this would be seen.
+ */
+export const ANIM_STEP = [0, 0, 1 / 12, 1 / 12];
+
+/* AND EVERY ENTRY IS UNDER `BipedAnimator.MAX_DT`, WHICH IS NOT A STYLE RULE.
+ *
+ * The animator clamps the `dt` it integrates so a dropped frame cannot
+ * teleport a foot, and a step above that clamp has its surplus silently
+ * thrown away — the gait then runs SLOW rather than coarse. The first cut of
+ * this table read `1/6` at LOD 3, and driven for three seconds a distant body
+ * INTEGRATED 1.600 s of them — every call clipped — finishing 2.671 strides
+ * against a near body's 4.369, 39% behind. Both far tiers sit at 1/12 s now
+ * (twelve poses a stride, more than a hand animator would draw), where the
+ * same drive integrates 3.000 s of 3.000, and `animation.mjs` holds the table
+ * under the clamp and asserts the INTEGRATED SECONDS rather than the stride
+ * count: the stride count is second-order, because `freq` is re-derived from
+ * the foot plant on every solve and a body sampled five times less often
+ * lands on slightly different values of it (4.775 against 4.369, 9%). */
+
 export const HOLD_RING = [3.4, 4.6];
 
 export const RESIST_PER_FORCE = 1.4;
@@ -7561,6 +7601,54 @@ export class Enemy {
 
   /* ── pose ────────────────────────────────────────────────────────── */
 
+  /**
+   * CARRY THE DRAWN BODY TO WHERE THE BODY IS, WITHOUT SOLVING THE GAIT.
+   *
+   * The half of the rate cut that is not optional. `BipedAnimator.update`
+   * writes `hips.position.set(hipX, hipY, hipZ)` off `p.position`, and that is
+   * the ONLY thing in the frame that places a rigged body — so a skipped solve
+   * is not a body holding a pose, it is a body standing still while its
+   * `position` walks away from it. Measured the obvious way, by skipping
+   * without this: the drawn man stays where he was at the last solve and the
+   * things that read `position` — the blade, the bolts, the formation — talk
+   * about a place he visibly is not. That is the defect `_syncBody`'s own note
+   * is about, arriving from a new direction.
+   *
+   * So the displacement since the last solve is added to the hips. The gait is
+   * frozen for those two or five frames and the body travels; what that looks
+   * like is a foot that slides, which is the standard cost of an animation
+   * rate cut and is why `ANIM_STEP` leaves the near tiers at zero.
+   *
+   * `_poseAt` is the anchor and it is written by BOTH paths — here and on the
+   * frame the solve runs — because a delta measured from a stale anchor is the
+   * same displacement counted twice.
+   */
+  _carryPose() {
+    const hips = this.rig?.hipsBone?.obj;
+    if (!hips) return;
+    const was = this._poseAt || (this._poseAt = this.position.clone());
+    hips.position.x += this.position.x - was.x;
+    hips.position.y += this.position.y - was.y;
+    hips.position.z += this.position.z - was.z;
+    was.copy(this.position);
+  }
+
+  /**
+   * WHERE THIS BODY SITS IN ITS TIER'S CYCLE, so that a tier does not step as
+   * one animal.
+   *
+   * Every body at LOD 2 solving on the same frame turns 9 ms a frame into
+   * 27 ms every third frame — the same total work, arriving as a stutter, and
+   * a per-frame budget cares about the peak and not the mean. `id` is a
+   * monotonic counter (`Enemy._n`), so consecutive spawns land on consecutive
+   * phases and a wave that arrives together is spread across the cycle by
+   * construction. The 0.997 is to stop the very first solve landing exactly on
+   * the boundary for the body whose phase is a whole step.
+   */
+  _animPhase() {
+    return ((this.id | 0) % 13) / 13 * 0.997 * (ANIM_STEP[3] || 0.1);
+  }
+
   _pose(dt, ctx) {
     const A = this.A;
     if (this.actor?.ragdolled) return;
@@ -7581,12 +7669,78 @@ export class Enemy {
     if (this.stasisHeld) return;
 
     if (this.animator) {
+      /**
+       * ══ THE SKELETAL SOLVE IS THE FRAME, AND IT WAS RUN AT FULL RATE ON A
+       *    MAN FIFTEEN PIXELS TALL ══════════════════════════════════════════
+       *
+       * `tools/floor.mjs`, 158 bodies laid out as two lines across a
+       * battlefield rather than in a ring round the camera:
+       *
+       *     enemies       53.0 ms   86.0%
+       *       _pose       30.0 ms   48.6%
+       *         anim      27.4 ms   44.4%   <- BipedAnimator.update
+       *         ground     2.3 ms    3.7%
+       *         arms       1.3 ms    2.1%
+       *         near       1.2 ms    1.9%
+       *       _move       10.8 ms   17.5%
+       *       _think       7.9 ms   12.8%
+       *     physics.step   4.2 ms    6.8%
+       *     FRAME         61.7 ms  (370% of a 16.67 ms budget)
+       *
+       * One term is the wall: 173 µs of biped solve per body per frame, paid
+       * in full at every distance the game draws a body at. At 100 m a man is
+       * about fifteen pixels tall and his knee travels well under a pixel
+       * between two frames, so three quarters of that work cannot reach the
+       * screen at all.
+       *
+       * ── WHY IT IS A RATE AND NOT A SIMPLIFICATION ────────────────────────
+       *
+       * The two obvious cheaper poses are both wrong here. A reduced skeleton
+       * changes the silhouette, and the silhouette is what `MergedSkin.js` and
+       * the ink prepass are built to preserve to the triangle — "there is no
+       * simplification, no decimation and no re-authoring; nothing was thrown
+       * away, so nothing can be missing". And freezing a distant body is what
+       * `Fallen.js` is for; a standing man who has stopped moving his legs
+       * reads as a bug at any distance.
+       *
+       * A RATE keeps the same solve and the same silhouette and samples the
+       * gait more coarsely, which is exactly the axis distance buys.
+       *
+       * ── THE GAIT DOES NOT SLOW DOWN ──────────────────────────────────────
+       *
+       * `BipedAnimator.update` integrates its own clock from the `dt` it is
+       * handed, so the accumulated lag is what gets passed — three frames of
+       * dt arriving as one call of 3·dt advances the cycle by exactly what
+       * three calls would have. A body four hundred metres out walks at the
+       * pace it walks at; it is only drawn at fewer points along the stride.
+       *
+       * ── AND THE PHASE IS STAGGERED, OR THE SAVING IS A STUTTER ───────────
+       *
+       * Every body in a tier stepping on the same frame turns 9 ms a frame
+       * into 27 ms every third frame, which is worse than what it replaces:
+       * the budget is a per-frame budget. `id` is the stagger and it is free
+       * and deterministic — see `_animPhase`.
+       */
+      const step = ANIM_STEP[this.lod | 0] ?? 0;
+      this._animLag = (this._animLag ?? this._animPhase()) + dt;
+      const due = step <= 0 || this._animLag >= step;
+      const adt = due ? this._animLag : 0;
+      if (due) {
+        this._animLag = 0;
+        /* THE ANCHOR MOVES ON A SOLVE TOO. `_carryPose` adds the displacement
+         * since `_poseAt`, and the solve places the hips off `position`
+         * outright — so an anchor left behind here would have the next skipped
+         * frame add a displacement the solve had already applied. */
+        (this._poseAt || (this._poseAt = this.position.clone())).copy(this.position);
+      } else this._carryPose();
+      if (due) {
+
       // the feet stand where the body stands — see src/physics/Support.js, and
       // NEAR_REACH for why this is a short list rather than the whole level
       this._gatherNear(ctx);
       const groundAt = (x, z) => this._groundAt(ctx, x, z);
       this.animator.setFacing(this.facing);
-      this.animator.update(dt, {
+      this.animator.update(adt, {
         position: this.position, facing: this.facing, velocity: this.velocity,
         /**
          * AND THE CROUCH IS NO LONGER A HARD ZERO.
@@ -7602,7 +7756,8 @@ export class Enemy {
         grounded: this.grounded, groundAt, crouch: clamp(this.crouch || 0, 0, 1),
         accelForward: clamp(this.velocity.length() / 5, 0, 1),
       });
-      this._poseArms(dt, ctx);
+      this._poseArms(adt, ctx);
+      }
       /**
        * AND A MAN UNDER THRUST IS TILTED. Note #33's first clause.
        *
