@@ -225,7 +225,20 @@ function rearm(world, door) {
    * is the emplacement's rule and it is measured where it belongs, in
    * `breach.mjs`. Here it would only mean this suite silently stopped
    * measuring the melt rate on one of its three doors, which is the failure
-   * `rearm` exists to prevent for `opened` and `cutArea` already. */
+   * `rearm` exists to prevent for `opened` and `cutArea` already.
+   *
+   * AND WRITING THE FLAG IS NOT TAKING IT OFF, which is what this line used to
+   * do and why the middle door burned exactly zero texels of the 515 a breach
+   * needs. `GunPit._wards` runs from the world's own tick and ends with
+   * `door.warded = this.warded && !this.taken` — so a flag cleared before the
+   * loop is back on the first frame of it, every frame, forever. The pit is
+   * the owner of that state and `silence()` is the door in it: the position is
+   * taken, `taken` latches, and the plate is unwarded for good. Which is also
+   * the only shape of this that could be right — a fixture that could unward a
+   * door by assignment would be measuring a plate the game never presents. */
+  for (const pit of world.gunPits || []) {
+    if (pit && !pit.dead && pit.door === door) pit.silence();
+  }
   door.warded = false;
 }
 
