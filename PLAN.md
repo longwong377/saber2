@@ -33,15 +33,30 @@ And the mechanism is in the columns beside it: with the Jedi present, fire
 arriving on the line **halves** — 0.94–1.72 hp/s down to 0.43–0.97. *He is
 removing bodies before they fire.*
 
-**The keystone is built.** `MODES.theline.lineAdvances` / `CommandDirector.
-lineIsUp` (`NEXT.md` §"§7's central claim, answered — the ground is taken by the
-LINE"): an area does not close until half the living are inside `MORALE.NEAR`.
+**The keystone is built — and it is NOT PROVEN.** `MODES.theline.lineAdvances`
+/ `CommandDirector.lineIsUp`: an area does not close until half the living are
+inside `MORALE.NEAR`.
 
 > "It is not a reward for standing still and it does not punish having left. It
 > declines to advance until the army that is supposed to be taking this ground is
 > standing on it… **It makes all four of the failed mechanisms pay at once
 > without changing any of them**, because each keeps men alive and near you and
 > that is now what advances the run."
+
+**And the very next paragraph, which draft 3 quoted around:**
+
+> "**Not proven: that it changes how the mode is played** — and the re-run found
+> something that outranks the question. Every run of that arm read `line 0/10`:
+> the roster was dead before the area closed, and `lineIsUp` steps aside for a
+> dead army rather than hang the run, **so the rule was mostly bypassed.** …The
+> rule engages harder on the tuned build: `rule=ON standOff=0` took 6 of 6
+> areas, mean 282 s, a mean of 14 s waiting. **And every row still reads
+> `line 0/10`.**"
+
+So the load-bearing claim of this document is the one claim with no experiment
+behind it. That is guardrail 1 satisfied on citation and violated on substance —
+the last word was found and the top half of it was quoted. **M5 exists because of
+it, and nothing in §4 may be built before M5 reports.**
 
 **What is retracted, and what both earlier drafts wrongly used:**
 
@@ -66,19 +81,108 @@ measured ordering test. `Fallen.js`, 520 prone figures at two draw calls.
 
 ---
 
-## 1. The design, in one paragraph
+## 1. The design
 
-**`lineIsUp` is the keystone, and the whole game is built on it.** The ground is
-taken by the line standing on it, not by the Jedi killing everything two hundred
-metres ahead. That one rule converts every other system from a bonus into a
-requirement: keeping men alive matters because live men take ground; being near
-them matters because near men take ground; a gun that needs a crew matters
-because the crew are men who must be alive and near. The Jedi's job stops being
-damage and becomes **making it possible for the line to arrive** — and that is a
-job no volume of rifle fire can substitute for, which is exactly what five
-previous readings proved was needed.
+### The keystone
 
-Everything below is that sentence, extended until it is a game.
+**`lineIsUp` is the keystone.** The ground is taken by the line standing on it,
+not by the Jedi killing everything two hundred metres ahead. That one rule
+converts every other system from a bonus into a requirement: keeping men alive
+matters because live men take ground; being near them matters because near men
+take ground; a gun that needs a crew matters because the crew are men who must be
+alive and near. The Jedi's job stops being damage and becomes **making it
+possible for the line to arrive** — a job no volume of rifle fire can substitute
+for, which is exactly what five previous readings proved was needed.
+
+And it is, as far as six research passes could establish, **without precedent**:
+*the run does not advance until half your living men are inside the radius your
+morale system already uses, in a real-time game with a demigod protagonist and
+permadeath.* Escort missions gate on one NPC. Total War has zones of control.
+Nothing does this. It is not a mechanism in this design — it is the pitch.
+
+### TWO lines make the front, and it is one deleted line of code
+
+This is the largest thing the brief asked for and it is nearly free.
+
+`CommandDirector.lineIsUp(c = this.commander)` **already takes a commander
+argument.** `formUp` already fields two commanders with two armies at
+`VERSUS_SEPARATION = 120` m. `MODES[s.mode].meeting` and `commandVersus` already
+exist. And `Command.js:5721` reads:
+
+```js
+if (this.versus) { this._troops(dt, ctx); return; }
+```
+
+**Versus returns early and never runs the area or advance logic at all.** It is a
+two-army deathmatch, not a battle. Delete that early return, run areas for both
+sides, and ask `lineIsUp(a)` and `lineIsUp(b)`:
+
+- Ground between the two lines is claimed by whichever commander has his line up
+  on it.
+- **The front moves because a general left his line at the wrong moment** —
+  which is the measured behaviour the log spent five readings establishing ("the
+  player is the one who leaves"), converted from an embarrassment into the win
+  condition.
+- **Reinforcements at certain moments** becomes: both sides draw from a visible
+  pool and choose when to spend it. The front pushes back because one pool
+  empties. That is a scalar per side and a commitment UI; `Waves.js` already
+  composes to a threat budget and `Arrivals.js` already lands the gunships.
+- **"Generals coming in and out where they're needed"** stops being flavour. It
+  is the only way to move the front.
+- Co-op and versus are the same code.
+
+That delivers the frontline push-and-pull, the meeting engagement, the reason the
+enemy general matters, versus, co-op, and the tug-of-war shape of the whole
+battle — from a function that is already parameterised and a mode that already
+exists. **It is a smaller change than M3 and it is the largest single thing
+missing from the brief, so it is in the `now` column.**
+
+### Command scales by delegation, or it does not scale
+
+Seven formation orders solved around your body is the right interface for ten
+men. It is not an interface for three hundred, and no amount of density work
+makes it one. *Dozens of Force users leading hundreds of troops* is a **command**
+problem before it is a rendering problem.
+
+The verb that scales exists in fragments already: `squads()`, `order(id, cmdr,
+squad)`, five ranks, and §4.4's own rule that a Sergeant accepts a standing order
+and a Corporal does not. Finish it: **you give a squad's sergeant a piece of
+ground and a standing order, and his rank decides how well he holds it
+unsupervised.**
+
+Four things fall out, and the third is load-bearing:
+
+1. The Company screen stops being a scrapbook. You are not collecting men, you
+   are collecting **officers** — and losing a Sergeant costs you a squad you can
+   no longer aim.
+2. Rank becomes the progression the brief asked for, with no stat inflation,
+   which §4.4 already forbids.
+3. **`lineIsUp` generalises.** A *squad* is up when it is near its sergeant; the
+   army is up when its squads are. Without this the quorum breaks the moment
+   density arrives — a collision between §4.3 and the keystone that draft 3 did
+   not notice.
+4. Refusal (Close Combat's anxiety index) lands on squads rather than
+   individuals, where it is legible and where a player will accept it.
+
+### The thesis, as one keypress
+
+*Save your men or lead them to their deaths* is the brief's own sentence, and
+**the order you can check** is it as a mechanic. High Command designates an
+artillery ellipse. Force sense shows what is inside it, including friendly IFF.
+Obeying is faster and rewarded; verifying costs twelve seconds under fire.
+Sometimes your own men are in it and the game never says so.
+
+It is the most composed idea in this document, which is why it is here and not
+filed under curiosities: it needs `lineIsUp` (your men are in the ellipse
+*because* the rule keeps them near you), permadeath, the Company screen (the men
+you killed have cards), §4.2's Spire (vision gating is the same mechanism), and
+§4.9's after-action report — which names you as the killer. The Umbara arc has
+**zero adaptations in any game**.
+
+### The test to apply to every system below
+
+**Delete `lineIsUp` — does this section change?** If not, it is not melded yet.
+Draft 3 asserted the melding; this is how to check it.
 
 ---
 
@@ -102,6 +206,18 @@ the `if (this.command)` gate at `World.js:2761` on one level so two armies
 actually fight each other; run `tools/scale.mjs` and the instrument. This is the
 cheapest possible answer to "is density the variable the brief hinges on", and it
 also gives the first honest reading of the O(bodies²) pass at real population.
+
+**M5 — does `lineIsUp` change how the mode is played?** The gate on everything
+in §4, and the measurement draft 3 did not have. Two player scripts (fights near
+the line / fights ahead of it) × the rule on and off, toggled on the DIRECTOR so
+the mode string and the rng stream stay identical (HANDOFF §2.5b). Read **bodies
+standing**, not the `line` column — that column read `0/10` on every run of every
+arm because the roster is torn down between areas, and a bench reporting zero on
+all four arms is a bench reporting on itself. The arms must run on a build where
+the roster survives the area, or the rule is bypassed and the test measures
+nothing.
+*Kills:* if standing with the line and fighting ahead of it produce the same run,
+`lineIsUp` is inert and §1 needs a different keystone.
 
 **M4 — the browser frame.** There is no draw-call instrument. The diagnostic is
 low FPS *with* low GPU usage (draw calls / JS) versus high GPU time (skinning,
@@ -217,9 +333,13 @@ six per side are hot at any moment. A duel claims physical space — an exclusio
 radius troop AI will not path into — and pays out as a morale swing on both
 retinues, which is how twenty of them stay legible.
 
-*Licence:* M3 for density, M4 for the frame. *Kill:* if M3 shows the O(bodies²)
-pass makes two real armies unaffordable at any interesting count, the battle is
-scoped to what the budget carries and the rest is horizon dressing.
+*Licence:* M3 for density, M4 for the frame. *Kill, written before M3 reports so
+that it can actually fail:* **the battle needs 120 simultaneous fully-simulated
+bodies with two real armies fighting each other.** Below that it is not the
+battle in the brief and calling the shortfall atmosphere would be this document
+pre-authorising itself not to deliver its centrepiece. If M3 says 120 is
+unreachable, the honest answer is that the frame must be fixed first (B1, and
+the O(bodies²) pass indexed) — not that the battle shrinks.
 
 ### 4.4 The company — and it must work on a losing run
 
@@ -281,7 +401,10 @@ request:
   becomes a found one.
 - **Eight facets that change rules rather than numbers.** *Push ragdolls allies
   too. The saber absorbs instead of deflecting. Shattering a prop refunds
-  Insight.*
+  Insight.* **At least two of the eight must change the QUORUM** — *advance on a
+  third of the living, but the muster is halved; a downed man counts if a medic
+  is on him.* Variance that cannot touch the keystone is variance in a side
+  pocket, and this is the difference between melded and parallel.
 - **A branching route** over the five Command areas that already exist, with
   partial information: you see the ground, the weather and the garrison weight,
   not the contents.
@@ -319,32 +442,44 @@ speeds fire; rain conducts lightning between men in contact. **No dark maps** �
 the player owns the canvas and a gamma slider defeats darkness; use fog and dust,
 which are in-world occluders.
 
-### 4.8 The unprecedented ones, kept
+### 4.8 The rest of the unprecedented set
 
-Draft 2 dropped these silently. They are the answer to "genuinely innovative",
-each researched as having no shipped precedent:
+`lineIsUp`, the two-line front and the order you can check are in §1 because they
+are the design rather than additions to it. These three are the remainder, each
+researched as having no shipped precedent. The last is honestly bolted on — it is
+cheap, it is good, and it does not compose with anything; that is stated rather
+than dressed up:
 
 - **Contested telekinesis.** Two Force users gripping one rigid body as a shared
   constraint, both spending pool, the object shuddering between them. Break his
   guard and the resistance cap collapses from a half to a third — *already in the
   code* — and it becomes a projectile with his name on it. In Psi-Ops, Half-Life
   2, The Force Unleashed and Control, exactly one entity owns an object.
-- **The order you can check.** High Command designates an artillery ellipse.
-  Force sense shows what is inside it, including friendly IFF. Obeying is faster
-  and rewarded; verifying costs twelve seconds under fire. Sometimes your own men
-  are in it and the game never says so. Refuse and your stratagem budget is cut.
-  The Umbara arc has **zero adaptations in any game.**
 - **Squadmates grab the man you are gripping.** One joint, one break force: a
   gripped body reaches for the nearest collider and a squadmate grabs *him*. Grip
   one, drag two, the contest resolving against combined mass.
-- **Graves at true coordinates.** A marker where each man of the company fell, on
-  that ground, in later runs, with the surviving squad's morale reacting.
+- **Graves at true coordinates**, and this is **one system with §4.7's ground
+  memory, not two.** `Terrain.scars` already persists visually across sorties —
+  33.4% of pixels at eye height over twenty. The ground remembering *and* the
+  dead being on it is a single mechanism: a marker where each man of the company
+  fell, on that ground, in later runs, with the surviving squad's morale
+  reacting when they walk past it. Nobody has persisted the geography of your own
+  losses.
 
 ### 4.9 Making real-time permadeath survivable
 
 **Downed, not dead** — a bleed-out window; an enemy reaching the body finishes
 it; a medic or your Heal saves him. The interruption that makes you break off a
 duel, and it means the last word on every death is the player's.
+
+**And a downed man does NOT count toward the quorum.** This is a decision, it is
+free to take, and it decides whether this section is a feature or the game. If a
+bleeding man still counted, dragging would be optional and the bleed-out window
+would be decoration. He does not count — so the quorum rule and the bleed-out
+window are in direct tension, **and that tension is the game**: to advance you
+must physically recover your wounded, under fire, while the thing that wounded
+them is still there. `Command.js` already has troopers dragging comrades to
+safety; this is what makes that behaviour matter.
 
 **The after-action report** — who killed whom, from what direction, at what
 minute. No death is mysterious, so no death is the AI's fault. It is also the
@@ -367,26 +502,45 @@ campaign, and it needs an answer before §4.4's persistence is tuned.**
 
 ## 6. Order
 
-```
-now ───┬── M1 twenty seeds (running)      ─┐
-       ├── M2 teamDamage bound (1 hour)    │ gate on §4.1, §4.2
-       ├── M3 density, 2 constants         ─┤ gate on §4.3
-       ├── M4 browser frame instrument     ─┘
-       │
-       ├── B1 pooled ragdolls / corpses   → precondition for all scale
-       ├── B2 attack tokens
-       ├── B3 audio bed, horizon, haze    → "immense scale", no frame cost
-       ├── B4 extraction boarding         → gate on §4.4
-       └── B5 four playtest defects
+Draft 3's `then` bucket was seven parallel workstreams with no dependencies drawn
+between them, which is where comprehensiveness goes to be indefinitely partial.
+This is a graph.
 
-then ──┬── §4.2 capability objectives      (four-armed acceptance)
-       ├── §4.4 company + Company screen   (after B4)
-       ├── §4.6 variance                   (no gate)
-       ├── §4.5 two generals → co-op/versus
-       ├── §4.7 Dig In, finite cover, weather
-       ├── §4.8 the unprecedented four
-       └── §4.3 density + animate the instanced rung + ink prepass
 ```
+NOW — measurements
+  M1  twenty-seed reference arm ........... running · licenses everything
+  M5  does lineIsUp change play? ......... GATE ON ALL OF §4 · nothing builds first
+  M2  teamDamage bound (1 hour)
+  M3  density: LEVY_STRENGTH + drop the cross-army gate
+  M4  browser frame instrument ............ gate on every rendering decision
+
+NOW — building, licensed by measurements already taken
+  B0  TWO LINES MAKE THE FRONT ............ delete Command.js:5721's early
+      return, run areas for both sides, lineIsUp(a) vs lineIsUp(b).
+      The largest missing piece of the brief, and smaller than M3.
+  B1  pooled ragdolls, instanced corpses .. precondition for ALL scale
+  B2  attack tokens
+  B3  audio distance bed, horizon, haze ... scale at zero frame cost
+  B4  extraction boarding ................. gate on the company
+  B5  four open playtest defects
+
+AFTER M5 — the chain, in dependency order
+  1  §4.4 squad delegation + sergeants ..... lineIsUp generalises to squads;
+     without this the quorum breaks the moment density arrives, so it
+     precedes §4.3 rather than following it
+  2  §4.2 capability objectives ............ four-armed acceptance
+  3  §4.9 downed-not-dead + after-action ... the quorum's other half
+  4  §4.4 company + Company screen ......... needs B4, 1 and 3
+  5  §1 the order you can check ............ needs 2 (Spire), 3 (AAR), 4 (cards)
+  6  §4.7 Dig In, finite cover, weather, graves
+  7  §4.6 variance ......................... two facets must move the quorum
+  8  §4.5 co-op and versus ................. B0 already built the mode; this
+     is the second human in it
+  9  §4.3 density → animate the instanced rung → per-object ink prepass
+     ....................................... needs M3, M4, B1, and 1
+```
+
+**Nothing after M5 starts before M5 reports.** That is the gate draft 3 lacked.
 
 ---
 
