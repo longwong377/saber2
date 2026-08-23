@@ -431,6 +431,120 @@ export async function run({ check, assert }) {
     return `an idle commander is hauled aboard after ${waited.toFixed(1)} s and the mode never stalls`;
   });
 
+  /* ══ D — the withdrawal ════════════════════════════════════════════ */
+
+  check('withdrawal: the ship is asked for by holding, and a bounce cannot ask', async () => {
+    /**
+     * THIS IS THE ONE ENDING THE PLAYER CHOOSES, and there is no undo on it.
+     * Every other way a run stops happens TO you — you die, or you clear the
+     * last wave. `withdraw` ends it on purpose and takes home whoever reached
+     * the ramp, which is the whole reason a company can persist between runs
+     * at all: a roster that is only ever wiped is a save file that reads zero.
+     *
+     * So it is HELD, and this asserts the three properties that makes it have:
+     * a tap does nothing, letting go throws the progress away, and the hold is
+     * the number `WITHDRAW_HOLD` names rather than one written here.
+     */
+    const { world, input } = await boot('skirmish', 'colosseum');
+    const W = await import('../../src/game/World.js');
+    let holding = false;
+    input.act = (id) => (id === 'withdraw' ? holding : false);
+
+    // a tap: two frames, then let go
+    holding = true;
+    world.update(1 / 60, input); world.update(1 / 60, input);
+    const afterTap = world.withdrawHold;
+    holding = false;
+    world.update(1 / 60, input);
+    assert(world.withdrawHold === 0,
+      `letting go left ${world.withdrawHold.toFixed(2)} of the hold banked — a run can be ended in two taps`);
+    assert(!world.extraction.active, 'a two-frame tap called the ship');
+
+    // most of the way, then let go
+    holding = true;
+    until(world, input, W.WITHDRAW_HOLD * 0.8, () => false);
+    const nearly = world.withdrawHold;
+    assert(nearly > 0.6 && nearly < 1,
+      `${(W.WITHDRAW_HOLD * 0.8).toFixed(2)} s of a ${W.WITHDRAW_HOLD} s hold read ${nearly.toFixed(2)}`);
+    assert(!world.extraction.active, 'the ship was called before the hold was finished');
+    holding = false;
+    world.update(1 / 60, input);
+    assert(world.withdrawHold === 0, 'the hold survived a release');
+
+    // and the whole way
+    holding = true;
+    const t = until(world, input, W.WITHDRAW_HOLD + 0.5, (w) => w.extraction.active);
+    assert(world.extraction.active, `held for ${t.toFixed(2)} s and no ship was called`);
+    assert(t >= W.WITHDRAW_HOLD - 0.05,
+      `the ship came at ${t.toFixed(2)} s against a stated hold of ${W.WITHDRAW_HOLD} s`);
+
+    /* AND IT OPENS ON THE CALL, NOT ON THE AFTERMATH. `AFTERMATH` is five
+     * seconds of standing in a quiet field working out that you won. Nobody
+     * withdrawing has won anything and people are still shooting. */
+    const first = world.extraction.log[0];
+    assert(first.phase === 'called',
+      `a withdrawal opened on "${first.phase}" — the five-second aftermath is for a field you cleared`);
+    assert(world.extraction.withdrawing, 'the sequence does not know it is a withdrawal');
+    return `tap 0.00 · ${(W.WITHDRAW_HOLD * 0.8).toFixed(1)}s → ${nearly.toFixed(2)} released to 0 · called at ${t.toFixed(2)}s, on "${first.phase}"`;
+  });
+
+  check('withdrawal: the run ends on the climb, and the manifest is who got aboard', async () => {
+    /**
+     * THE MEN ON THE SHIP ARE THE OUTCOME. A withdrawal has no next ground —
+     * `nextKey` is null, so `transit` and the rotate it carries are never
+     * reached and the liftoff IS the ending. What it hands out is the passenger
+     * list, and the layer that persists the company keeps that and nothing
+     * else.
+     *
+     * A MAN LEFT BEHIND IS NOT A MAN KILLED, and this is the assertion that
+     * matters most. He is simply not on the manifest. Writing a death for him
+     * would put him on the memorial roll beside men who actually fell, which is
+     * a different fact about a different afternoon.
+     */
+    const { world, input } = await boot('skirmish', 'colosseum');
+    const was = world.levelKey;
+    let holding = true;
+    input.act = (id) => (id === 'withdraw' ? holding : false);
+    let ended = null;
+    world.onGameOver = (st) => { ended = st; };
+
+    until(world, input, 4, (w) => w.extraction.active);
+    holding = false;
+
+    /* ONE MAN SENT TO THE FAR END OF THE FIELD, and he is the control. He
+     * cannot reach the ramp inside `LAST_CALL` from there, so if the manifest
+     * counts him the manifest is counting the roster rather than the ship. */
+    const team = world.player.team;
+    const mine = world.enemies.filter((e) => !e.dead && e.team === team);
+    const stranded = mine[mine.length - 1] || null;
+    if (stranded) {
+      stranded.position.set(160, world.terrain.height(160, 160), 160);
+      stranded._syncBody?.();
+    }
+
+    const t = until(world, input, 140, (w) => w.over, walkToRamp);
+    assert(world.over, `the withdrawal never ended the run — ${t.toFixed(0)} s, phase "${world.extraction.phase}"`);
+    assert(world.levelKey === was,
+      `a withdrawal rotated the ground to ${world.levelKey} — it has no next ground to go to`);
+    assert(ended, 'the run ended and nothing was told');
+    assert(ended.ended === 'withdrew',
+      `the card was told the run ended as "${ended.ended}"`);
+    assert(Array.isArray(world.manifest), 'no manifest was written');
+    assert(ended.extracted === world.manifest.length,
+      `the card says ${ended.extracted} extracted against a manifest of ${world.manifest.length}`);
+    if (stranded) {
+      assert(!stranded.dead,
+        'the man who could not reach the ramp was marked DEAD — he was left behind, which is not the same thing');
+      assert(!world.manifest.includes(stranded.trooper),
+        'a man 160 m from the pad is on the passenger list');
+    }
+    const lift = world.extraction.log.find((e) => e.phase === 'liftoff');
+    assert(lift, 'the run ended without the ship ever lifting off');
+    assert(!world.extraction.log.some((e) => e.phase === 'transit' || e.phase === 'swap'),
+      'a withdrawal flew a cruise and asked for a ground swap');
+    return `${t.toFixed(0)} s · ${ended.extracted} aboard, ${ended.leftBehind} left · ended "${ended.ended}" on ${world.levelKey}, no swap`;
+  });
+
   check('extraction: instantSpawn is the one opt-out, and it restores the old door', async () => {
     /* The same single reader `Waves.instantSpawn` gives. A second setting
      * meaning "I want things to simply appear" is the hand-maintained twin

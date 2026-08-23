@@ -405,6 +405,8 @@ export class ExtractionDirector {
     this._rotated = false;
     this._rotateAsked = false;
     this._skip = false;
+    /** True while this sequence is a player-called withdrawal — see `withdraw`. */
+    this.withdrawing = false;
     this._seated = [];
     this._pull = null;
     this._log = [];
@@ -510,6 +512,7 @@ export class ExtractionDirector {
     this._doorTaken = false;
     this.leg = 'in';
     this._insertion = true;
+    this.withdrawing = false;
 
     /* THE LZ IS WHERE THE LEVEL PUTS YOU. `_lzPoint` is read by `_approach`,
      * and taking it now — before anybody is lifted into a bay two kilometres up
@@ -635,8 +638,75 @@ export class ExtractionDirector {
     this._lzPoint = null;
     this._seated.length = 0;
     this._log.length = 0;
+    this.withdrawing = false;
+    this._takenSlots = new Set();
+    this._doorTaken = false;
     this._enter('aftermath');
     return true;
+  }
+
+  /**
+   * ══ THE WITHDRAWAL — you call it, and the fight does not stop ═══════════
+   *
+   * Everything above answers "the ground is clear, take us to the next one".
+   * This answers the other question, and until now the game had no way to ask
+   * it: **get us out, now, with whoever can reach the ramp.**
+   *
+   * It is the same nine phases and the same ship. Three things differ, and each
+   * of them is the point:
+   *
+   *   THERE IS NO AFTERMATH. `AFTERMATH` is five seconds of standing in a quiet
+   *     field working out that you won. A withdrawal is called while people are
+   *     shooting at you, so the sequence opens on `called` — the marker goes
+   *     down the instant you ask for it.
+   *
+   *   THERE IS NO NEXT GROUND. `nextKey` is null, so `transit` and the rotate
+   *     it carries are not reached: the run ENDS on the climb. That is what
+   *     makes the call a decision rather than a convenience — you are not
+   *     moving to the next area, you are going home with what you have.
+   *
+   *   WHO IS ABOARD IS THE OUTCOME. `_seated` is the men who walked up the ramp
+   *     in the `LAST_CALL` seconds the ship holds it. Everybody else is left on
+   *     the ground, and with the company persisting between runs that is the
+   *     whole cost of calling late — or of calling at all with the line still
+   *     out at the far end of the field.
+   *
+   * THE PRICE IS TIME, AND IT IS ALREADY IN THE TABLE ABOVE. `CALL` + `INBOUND`
+   * is 7.4 seconds before the gear is down and `LAST_CALL` is 22 more on the
+   * ramp — half a minute of holding one patch of ground, in a fight you were
+   * losing badly enough to call. Nothing here needed a new number.
+   *
+   * @returns true when the withdrawal is now running.
+   */
+  withdraw() {
+    const w = this.world;
+    if (this.active) return false;
+    if (!w || !w.terrain) return false;
+    if (w.over) return false;
+    if (w.netMode === 'client') return false;
+    if (!w.player || !w.player.alive) return false;
+    this.nextKey = null;
+    this.withdrawing = true;
+    this.t = 0;
+    this.total = 0;
+    this._rotated = false;
+    this._rotateAsked = false;
+    this._skip = false;
+    this._pull = null;
+    this._said = false;
+    this._lzPoint = null;
+    this._seated.length = 0;
+    this._takenSlots = new Set();
+    this._doorTaken = false;
+    this._log.length = 0;
+    this._enter('called');
+    this._call();
+    return true;
+  }
+
+  /** The roster records of the men who are on the ship — the passenger list. */
+  get manifest() {
+    return this._seated.map((b) => b.trooper).filter(Boolean);
   }
 
   _enter(phase) {
@@ -1299,6 +1369,30 @@ export class ExtractionDirector {
       if (k >= 1) this._pull = null;
       return;
     }
+    /* ══ THE SHIP WAITS FOR THE LINE, and until a withdrawal existed nothing
+     * noticed that it did not.
+     *
+     * `waiting` above is COMMANDERS only, so the seal fired the moment the
+     * player was in the bay. On an area transition that is invisible: the men
+     * left standing on the sand are rebuilt on the far side by the rotate, so
+     * they arrive whatever the ship did. The one existing check that walks the
+     * line aboard passes because its commander is IDLE and gets hauled at
+     * `LAST_CALL`, which happens to give the queue twenty-two seconds.
+     *
+     * A withdrawal has no far side. Measured the first time one was driven with
+     * a commander who walked briskly to his own ramp: **0 aboard, 10 left** at
+     * 23 s — the ship sealed nine seconds after it landed, with the whole line
+     * still walking. The feature is "take home whoever reached the ramp" and it
+     * was taking home nobody, every time, unless you dawdled.
+     *
+     * So on a withdrawal the ramp is held for its own `LAST_CALL` while any of
+     * your men are still coming, and they are LEFT rather than hauled — the
+     * haul is an anti-stall for the commander, and hauling a trooper from the
+     * far end of the field would make the whole decision free. Gated on
+     * `withdrawing` so the transition's timing, which four checks measure, does
+     * not move. */
+    if (this.withdrawing && this.t < LAST_CALL && this._strandedCount() > 0) return;
+    if (this.withdrawing && this.t >= LAST_CALL) this._leaveTheRest();
     if (!waiting.length) { this._enter('sealing'); return; }
     if (this.t >= LAST_CALL) {
       /* LAST CALL, and it is a HAUL and not a placement. The only way this file
@@ -1310,6 +1404,35 @@ export class ExtractionDirector {
       for (const p of waiting) from.set(p, p.position.clone());
       this._pull = { t: 0, who: waiting.slice(), from };
     }
+  }
+
+  /** How many of your men are still on the ground and still trying to board. */
+  _strandedCount() {
+    const w = this.world;
+    const team = w.player?.team;
+    if (team === undefined || !w.enemies) return 0;
+    let n = 0;
+    for (const e of w.enemies) {
+      if (e.dead || e.team !== team) continue;
+      if (e._extracting === 'aboard' || e._extracting === 'left') continue;
+      n++;
+    }
+    return n;
+  }
+
+  /** Last call is over: whoever is not on the ship is not coming. */
+  _leaveTheRest() {
+    const w = this.world;
+    const team = w.player?.team;
+    if (team === undefined || !w.enemies) return;
+    let n = 0;
+    for (const e of w.enemies) {
+      if (e.dead || e.team !== team) continue;
+      if (e._extracting === 'aboard' || e._extracting === 'left') continue;
+      e._extracting = 'left';
+      n++;
+    }
+    if (n) w.notify?.('THE RAMP IS UP', n === 1 ? 'One man left on the ground' : `${n} men left on the ground`);
   }
 
   /**
@@ -1344,7 +1467,28 @@ export class ExtractionDirector {
     const seats = this._model?.userData?.seats;
     const mine = [];
     for (const e of w.enemies) {
-      if (e.dead || e.team !== team || e._extracting) continue;
+      if (e.dead || e.team !== team) continue;
+      if (e._extracting === 'aboard' || e._extracting === 'left') continue;
+      /* ══ A MAN WALKING TO A RAMP IS NOT FIGHTING, and until a withdrawal
+       * existed nothing had to say so.
+       *
+       * `Enemy._think` writes `wish` every frame off `ctx.pickTarget`. This
+       * method writes `wish` too, one frame earlier — `extraction.update` runs
+       * at the top of `World.update` — so on any ground with a live enemy on it
+       * the brain simply overwrote the walk. On an area transition the field is
+       * clear by definition and there is no target to overwrite it with, which
+       * is why ten men board there and why this was invisible for as long as
+       * the only extraction was the one after a win.
+       *
+       * Measured on the first driven withdrawal: the queue closed 20.2 m to
+       * 12.1 m in twenty seconds — 0.4 m/s out of a 4.2 m/s walk — and 2 of 10
+       * made the ramp before the ship sealed. The other eight were walking on
+       * the spot against their own brains.
+       *
+       * `'boarding'` is the claim, and `Enemy.update` reads it the way it reads
+       * a reaction: no `_think`, no firing, and `_move` left to carry whatever
+       * `wish` this method put there. */
+      e._extracting = 'boarding';
       mine.push(e);
     }
     /* THE QUEUE'S ORDER IS BY DISTANCE, once, and then it is kept — a queue
@@ -1367,7 +1511,14 @@ export class ExtractionDirector {
       }
       let target;
       const dRamp = Math.hypot(ramp.x - e.position.x, ramp.z - e.position.z);
-      if (i < 2 || dRamp < BOARD_RADIUS * 2.2) {
+      /* FOUR ABREAST, NOT TWO. The queue was two-wide against a bay that seats
+       * ten and a ramp the ship holds for `LAST_CALL` — which is fine when the
+       * field is clear and the men are already standing on the pad, and is the
+       * difference between eight men and none when they are twenty metres out
+       * with a wave still on the ground. Measured on a driven withdrawal from
+       * 20 m: 2 of 10 aboard at two abreast. The seats are the real cap and
+       * they are checked above. */
+      if (i < 4 || dRamp < BOARD_RADIUS * 2.2) {
         /* At the front of the queue, or already at the foot: climb. The target
          * is the middle of the bay, so the walk goes UP the ramp rather than
          * at the lip of it. */
@@ -1640,7 +1791,29 @@ export class ExtractionDirector {
     this._face(dt);
     g.rotation.x = -0.14 * k;
     this._wake(dt, ctx, 1 - k);
-    if (k >= 1) { this._enter('transit'); this._cruise0 = g.position.clone(); }
+    if (k >= 1) {
+      /* A WITHDRAWAL HAS NOWHERE TO CRUISE TO. `transit` exists to carry the
+       * party from one ground to another and its whole content is the rotate;
+       * a run that is ending has no next ground, so the climb IS the ending.
+       * The ship is handed to `_departing` first so it keeps climbing behind
+       * the card rather than vanishing at the moment the run closes. */
+      if (this.withdrawing) { this._withdrew(); return; }
+      this._enter('transit'); this._cruise0 = g.position.clone();
+    }
+  }
+
+  /**
+   * THE RUN ENDS ON THE CLIMB, and the manifest is the outcome.
+   *
+   * Read the passenger list BEFORE `_finish`, which tears the ship down and
+   * with it every seat on it. `World._endWithdrawal` owns what the list means —
+   * this file's job is to say who was on board when the gear came up.
+   */
+  _withdrew() {
+    const kept = this.manifest;
+    this._handOffDeparture();
+    this._finish();
+    this.world?._endWithdrawal?.(kept);
   }
 
   /* ── 6. the journey ───────────────────────────────────────────────── */

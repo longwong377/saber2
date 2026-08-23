@@ -320,6 +320,17 @@ const ARMY_INTERVAL = 0.5;
  */
 const NET_GRIP_LEASE = 0.6;
 
+/**
+ * HOW LONG THE EXTRACTION KEY IS HELD BEFORE THE SHIP IS CALLED, in seconds.
+ *
+ * 1.5 is long enough that no bounce of the key reaches it and short enough
+ * that it is not a chore under fire. It is also, deliberately, long enough to
+ * be a beat: you stop swinging for a second and a half to ask, and that pause
+ * is the decision. Exported because `HUD` fills a ring against the same number
+ * and `tools/checks/extraction.mjs` reads it rather than restating it.
+ */
+export const WITHDRAW_HOLD = 1.5;
+
 export class World {
   constructor(engine, settings) {
     this.engine = engine;
@@ -396,6 +407,10 @@ export class World {
     this.running = false;
     /** The run has ended. Everything still steps; the director does not. */
     this.over = false;
+    /** How far through the extraction hold the player is, in [0,1]. The HUD's ring. */
+    this.withdrawHold = 0;
+    /** Who was on the ship when a withdrawal ended the run. Null until then. */
+    this.manifest = null;
 
     this.difficulty = DIFFICULTY[settings.difficulty] || DIFFICULTY.knight;
     // `this.hpScale = 1` and `this.dmgScale = 1` used to sit here. Enemy reads
@@ -2155,6 +2170,80 @@ export class World {
   }
 
   /**
+   * ══ CALLING FOR EXTRACTION, AND WHY IT IS A HOLD ═══════════════════════
+   *
+   * Every other ending in this game happens TO you: you die, or you clear the
+   * last wave. This is the one you choose, and it is the reason the company
+   * can persist at all — a roster that is only ever wiped is a save file that
+   * always reads zero. Leaving with eight men is a result. Quitting is not.
+   *
+   * IT IS HELD FOR `WITHDRAW_HOLD` SECONDS AND NOT PRESSED. A press ends the
+   * run, and there is no undo; a key next to the movement cluster that ends a
+   * forty-minute run on one bounce is not a control, it is a hazard. The hold
+   * also does a second job, which is that it cannot be done while you are
+   * busy — you have to stop swinging for a second and a half to ask, which is
+   * itself the decision being made.
+   *
+   * THE TIMER RESETS ON RELEASE and is reported to the HUD every frame as
+   * `withdrawHold` in [0,1], so the ring the player watches fill is the same
+   * number this method is counting. One quantity, one owner (HANDOFF 2.3).
+   *
+   * FOUR REFUSALS, and each one is a case where the call cannot mean anything:
+   * a run already over, a client (the host owns the ship), a dead commander,
+   * and a sequence already running — including the insertion you arrived on,
+   * which is why this cannot be spammed during the opening flight.
+   */
+  _withdrawTick(dt, ctx) {
+    const held = this.canWithdraw && !!ctx?.input?.act?.('withdraw');
+    if (!held) { this.withdrawHold = 0; return; }
+    this.withdrawHold = Math.min(1, (this.withdrawHold || 0) + dt / WITHDRAW_HOLD);
+    if (this.withdrawHold < 1) return;
+    this.withdrawHold = 0;
+    this.withdraw();
+  }
+
+  /** Whether asking to leave could do anything right now. The HUD reads it. */
+  get canWithdraw() {
+    return !!(this.player && this.player.alive && !this.over
+      && this.netMode !== 'client' && !this.extraction?.active);
+  }
+
+  /** Ask for the ship. Public because the HUD's own button and a check both use it. */
+  withdraw() {
+    if (!this.canWithdraw) return false;
+    if (!this.extraction?.withdraw()) return false;
+    this.notify('WITHDRAWING', 'Get to the ramp', 'alarm');
+    return true;
+  }
+
+  /**
+   * THE SHIP IS CLIMBING AND THE RUN IS OVER.
+   *
+   * `kept` is the passenger list — the roster records of the men who walked up
+   * the ramp inside the `LAST_CALL` the ship held it. Everybody else is still
+   * on the ground, and the whole cost of calling late is in the difference
+   * between those two numbers.
+   *
+   * NOBODY IS KILLED HERE. A man left behind is not marked dead — he is simply
+   * not on the manifest, and the layer that persists the company keeps what is
+   * on the manifest and nothing else. Writing a death for him would put him on
+   * the memorial roll beside men who actually fell, which is a different fact.
+   */
+  _endWithdrawal(kept) {
+    if (this.over) return;
+    this.over = true;
+    const roster = this.command?.roster;
+    const total = roster ? roster.living.length : null;
+    const n = kept ? kept.length : 0;
+    if (this.command) this.command.done = true;
+    this.manifest = kept || [];
+    this.notify('CLEAR OF THE GROUND',
+      total === null ? 'The ship is away'
+        : (n === total ? `All ${n} aboard` : `${n} of ${total} aboard`));
+    this.onGameOver?.(this.runStats({ won: null, ended: 'withdrew', extracted: n, leftBehind: total === null ? null : total - n }));
+  }
+
+  /**
    * A BOUNDED BATTLE ENDED, AND THIS IS THE ONLY PLACE THAT SAYS SO.
    *
    * Two endings, one sentence. `_endSkirmish` is reached by clearing the last
@@ -2486,6 +2575,13 @@ export class World {
        * for the four endings that have no such reason: you died, or you won.
        */
       ended: (extra && 'ended' in extra) ? (extra.ended ?? null) : null,
+      /* THE WITHDRAWAL'S TWO NUMBERS, reported by every ending rather than only
+       * by the one that has them, for the reason `ended` states above: a field
+       * that exists on one ending is a card asking for something most endings
+       * do not send. Null is the honest answer everywhere else — you did not
+       * leave, so nobody was left. */
+      extracted: (extra && 'extracted' in extra) ? (extra.extracted ?? null) : null,
+      leftBehind: (extra && 'leftBehind' in extra) ? (extra.leftBehind ?? null) : null,
     };
   }
 
@@ -3249,6 +3345,7 @@ export class World {
      * on the new ground.
      */
     this.extraction?.update(dt, ctx);
+    this._withdrawTick(dt, ctx);
 
     // 0 — the catch window, BEFORE the players read input. That order is the
     // feature: control.catchHold has to be true when applyInput runs or the

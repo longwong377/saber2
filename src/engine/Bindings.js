@@ -444,6 +444,21 @@ export const ACTIONS = [
    * and nothing renders it. `tools/checks/stratagems.mjs` scans every string a
    * player can read for the word and names the four identifiers that keep it. */
   { id: 'stratagem',  group: 'Command',   label: 'Call for support', keys: ['CapsLock'],   hold: true, pad: 'PadBack+PadUp' },
+  /* L FOR LEAVE, AND IT IS HELD RATHER THAN PRESSED.
+   *
+   * `World.withdraw` ends the run: the ship comes down, holds its ramp for
+   * `LAST_CALL`, and takes home whoever walked up it. That is the most
+   * expensive thing on this table and the only one a misfire cannot be undone
+   * from, so it is not a press. `World` holds it for `WITHDRAW_HOLD` seconds
+   * with the HUD filling a ring the whole time — see the note there — which is
+   * why the entry here is an ordinary key and not `hold: true`: `hold` in this
+   * table means "held while the other hand spells something", which is a wheel
+   * modifier, and this is a commitment timer. Two different things that would
+   * otherwise share a word.
+   *
+   * L is out of the movement cluster, out of the Force row, and free on both
+   * halves of the keyboard's reach — nothing wants it mid-swing. */
+  { id: 'withdraw',   group: 'Command',   label: 'Call for extraction (hold)', keys: ['KeyL'], pad: 'PadBack+PadStart' },
   // P for photo. This one may live under the right hand precisely BECAUSE it
   // is a press and not a hold: you take the mouse off the game the moment it
   // is on, and everything you do afterwards is flown with the movement keys.

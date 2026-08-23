@@ -5303,7 +5303,15 @@ export class Enemy {
     }
     senseDanger(this, dt, ctx);
     const reacting = stepReaction(this, dt, ctx);
-    if (!reacting) {
+    /* A MAN WALKING TO A RAMP IS NOT FIGHTING. `Extraction._walkTroops` stamps
+     * `'boarding'` on the men it is steering and writes their `wish` itself; the
+     * brain would overwrite that on the same frame, which is exactly what it did
+     * — see the note on `_walkTroops` for the 0.4 m/s of a 4.2 m/s walk that
+     * measured. Read here rather than in `_move` so that `stopFiring` lands too:
+     * a man queueing for a transport under fire is queueing, not shooting. */
+    if (this._extracting === 'boarding') {
+      this.stopFiring();
+    } else if (!reacting) {
       this._think(dt, ctx);
     } else {
       /* A reaction drives `wish`, `speed` and `crouch` itself and must not be
