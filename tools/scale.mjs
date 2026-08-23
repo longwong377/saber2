@@ -125,38 +125,73 @@ async function measure(n) {
 console.log(`\n  scale — ${MODE} · ${LEVEL} · quality ${QUALITY} · ${FRAMES} frames after ${WARM} warm`);
 console.log(`  loadavg ${load()} on ${cpus().length} cores\n`);
 
+const REPEAT = parseInt(flag('repeat', '3'), 10);
+
+/* THE ZERO ROW IS NOT OPTIONAL, and leaving it out is how the last version of
+ * this file reported a "fixed overhead" that was an artefact of its own count
+ * list. An empty world costs what it costs; measure it rather than extrapolating
+ * back to it from a curve that is concave at the bottom. */
+const SWEEP = [0, ...COUNTS];
+
 const rows = [];
-for (const n of COUNTS) {
-  const r = await measure(n);
-  rows.push({ n: r.alive, ...r });
-  console.log(`  ${String(r.alive).padStart(4)} alive   ${r.cpu.toFixed(2).padStart(7)} ms CPU`
-    + `   ${r.wall.toFixed(1).padStart(7)} ms wall   contention x${r.contention.toFixed(2)}`);
+for (const n of SWEEP) {
+  const takes = [];
+  for (let r = 0; r < REPEAT; r++) takes.push(await measure(n));
+  const cpu = takes.map((t) => t.cpu).sort((a, b) => a - b);
+  const mid = cpu[Math.floor(cpu.length / 2)];
+  const lo = cpu[0], hi = cpu[cpu.length - 1];
+  const alive = Math.round(takes.reduce((a, t) => a + t.alive, 0) / takes.length);
+  rows.push({ n: alive, cpu: mid, lo, hi });
+  const spread = mid > 0 ? ((hi - lo) / mid * 100) : 0;
+  console.log(`  ${String(alive).padStart(4)} alive   ${mid.toFixed(2).padStart(7)} ms CPU`
+    + `   [${lo.toFixed(2)}–${hi.toFixed(2)}]   spread ${spread.toFixed(0)}%`
+    + (spread > 25 ? '   <-- noisy' : ''));
 }
 
-/* THE MARGINAL COST IS A SLOPE, NOT A DIVISION. Dividing a frame by its body
- * count charges every body a share of the world's fixed overhead — terrain,
- * grass, the player, the physics step's own floor — and reports a per-body cost
- * that falls as the population rises, which is an artefact and not a finding.
- * Least squares over the whole sweep instead. */
-if (rows.length >= 2) {
-  const N = rows.length;
-  const sx = rows.reduce((a, r) => a + r.n, 0);
-  const sy = rows.reduce((a, r) => a + r.cpu, 0);
-  const sxx = rows.reduce((a, r) => a + r.n * r.n, 0);
-  const sxy = rows.reduce((a, r) => a + r.n * r.cpu, 0);
-  const slope = (N * sxy - sx * sy) / (N * sxx - sx * sx);
-  const base = (sy - slope * sx) / N;
-  console.log(`\n  fixed overhead ${base.toFixed(2)} ms · marginal ${(slope * 1000).toFixed(0)} µs/body`);
-  const room = 16.7 - base;
-  console.log(`  ceiling at a 16.7 ms frame, SIMULATION ONLY: ${Math.floor(room / slope)} bodies`);
-  /* Curvature, because the cross-army pass is quadratic and a straight line
-   * through a curve reports a slope nobody's frame will see. If the last gap
-   * is meaningfully steeper than the first, say so rather than averaging it
-   * away. */
-  const first = (rows[1].cpu - rows[0].cpu) / Math.max(1, rows[1].n - rows[0].n);
-  const last = (rows[N - 1].cpu - rows[N - 2].cpu) / Math.max(1, rows[N - 1].n - rows[N - 2].n);
-  const bend = last / Math.max(first, 1e-9);
-  console.log(`  marginal at the bottom ${(first * 1000).toFixed(0)} µs · at the top ${(last * 1000).toFixed(0)} µs · bend x${bend.toFixed(2)}`
-    + (bend > 1.4 ? '   <-- NOT LINEAR; the straight-line ceiling above is optimistic' : ''));
+/* ══ WHAT THIS FILE WILL AND WILL NOT CONCLUDE ═══════════════════════════
+ *
+ * The version before this one fitted a straight line to the sweep and printed a
+ * fixed overhead, a marginal cost, a ceiling and a BEND. Re-run on a quiet box
+ * it read a bend of 1.65, then 4.15, then 2.51, then 0.09 — four runs of one
+ * tool on one tree. Every headline moved 40-150% and the ceiling additionally
+ * depended on which `--counts` were passed.
+ *
+ * Two faults, and the second is the instructive one. The sweep is NOISY, which
+ * `--repeat` answers. And the curve is the wrong SHAPE for a line: concave at
+ * the bottom (the first few bodies are dear, because they wake systems the
+ * empty world does not run) and convex at the top (the cross-army pass is
+ * quadratic). A straight line through that reports two numbers that are both
+ * artefacts of the count list, which is the same fault the note above rejects
+ * `frame/bodies` for.
+ *
+ * So this prints the measured rows and the two conclusions the rows actually
+ * support — the floor, and where the frame budget is crossed — and it refuses
+ * to name a bend from fewer than three gaps.
+ */
+const floor = rows[0];
+console.log(`\n  EMPTY WORLD ${floor.cpu.toFixed(2)} ms CPU — `
+  + `${(floor.cpu / 16.67 * 100).toFixed(0)}% of a 16.67 ms frame with no soldier in it`);
+
+const over = rows.find((r) => r.cpu > 16.67);
+if (over) {
+  const under = rows[rows.indexOf(over) - 1];
+  console.log(`  OVER BUDGET between ${under ? under.n : 0} and ${over.n} bodies`
+    + ` (${under ? under.cpu.toFixed(2) : '—'} → ${over.cpu.toFixed(2)} ms against 16.67)`);
+} else {
+  console.log(`  under 16.67 ms at every count measured (max ${rows[rows.length - 1].n})`);
+}
+
+const gaps = [];
+for (let i = 1; i < rows.length; i++) {
+  const dn = rows[i].n - rows[i - 1].n;
+  if (dn > 0) gaps.push({ at: rows[i].n, us: (rows[i].cpu - rows[i - 1].cpu) / dn * 1000 });
+}
+console.log('  marginal by gap: ' + gaps.map((g) => `${g.us.toFixed(0)}µs@${g.at}`).join('  '));
+if (gaps.length >= 3) {
+  const a = gaps[0].us, z = gaps[gaps.length - 1].us;
+  console.log(`  shape: ${a.toFixed(0)} µs at the bottom → ${z.toFixed(0)} µs at the top`
+    + (z > a * 1.4 ? '   STEEPENING — superlinear, and a straight-line ceiling would flatter it' : ''));
+} else {
+  console.log('  shape: not stated — fewer than three gaps, and a bend from two points is not a bend');
 }
 console.log('');
