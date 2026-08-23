@@ -1041,7 +1041,7 @@ export class World {
        * shells are laid by the one thing on this world that already knows how
        * to lay shells; see `FireMissionDirector.theirBarrage`.
        */
-      this.onObjectiveFire = (site, ctx) => this.fireMissions?.theirBarrage?.(ctx);
+      this.onObjectiveFire = () => this.fireMissions?.theirBarrage?.();
     } else this.onObjectiveFire = null;
     /**
      * THE BATTLE, or null — and it is CARRIED, never rebuilt.

@@ -269,6 +269,36 @@ function targetsWorld(count, spacing = 4, cuts = [], toughness = null) {
 }
 
 /** The bodies as the blade solver wants them, rebuilt each frame. */
+/**
+ * CODES NOTHING IS BOUND TO — for every fixture that needs a key to rebind ONTO.
+ *
+ * Two fixtures below wrote `[...'A'..'Z'].find(unbound)` and got `undefined`
+ * the day the table took the last free letter (KeyK, to `authorise`). An
+ * undefined key does not throw: it is saved into a blob, loaded back, compared
+ * against the key the player "chose", and the check fails claiming the
+ * rebinder threw a deliberate rebind away — a red about the code, caused by
+ * the fixture running out of keyboard.
+ *
+ * Same three tiers `spares()` inside the settling check already uses, and for
+ * the same reason: letters first so a failure message still reads like a
+ * keyboard, then the digits, then F13–F24, which is where the room actually
+ * is. A caller that cannot get what it asked for is told so by name.
+ */
+function freeCodes(n = 1) {
+  const used = new Set(Object.values(defaultBindings()).flat());
+  const pool = [
+    ...[...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'].map(c => `Key${c}`),
+    ...[...'0123456789'].map(d => `Digit${d}`),
+    ...Array.from({ length: 12 }, (_, i) => `F${13 + i}`),
+  ];
+  const free = pool.filter(c => !used.has(c)).slice(0, n);
+  if (free.length < n) {
+    throw new Error(`the bindings table has no ${n} unbound codes left in the letters, the digits `
+      + 'or F13-F24 — this fixture needs one to rebind onto');
+  }
+  return free;
+}
+
 function solverTargets(w) {
   return w.enemies.filter(e => !e.dead).map(e => ({ id: e.id, capsules: e.capsules(), enemy: e, dead: false }));
 }
@@ -1067,8 +1097,7 @@ export async function run({ check, assert }) {
       // settling must not be a second Reset to defaults
       store.clear();
       const chosen = structuredClone(def);
-      const free = [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'].map(c => `Key${c}`)
-        .find(k => !Object.values(def).flat().includes(k));
+      const [free] = freeCodes(1);
       chosen.jump = [free];
       store.set('saber.bindings.v2', JSON.stringify(chosen));
       assert(loadBindings().jump[0] === free, 'settling threw away a deliberate rebind');
@@ -1097,8 +1126,7 @@ export async function run({ check, assert }) {
     };
     try {
       const def = defaultBindings();
-      const free = [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'].map(c => `Key${c}`)
-        .find(k => !Object.values(def).flat().includes(k));
+      const [free] = freeCodes(1);
       // the v1 scheme, built by INVERTING today's pair rather than by typing
       // two codes that would go stale the next time the mouse moves
       const v1 = structuredClone(def);

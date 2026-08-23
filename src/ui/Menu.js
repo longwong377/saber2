@@ -23,6 +23,10 @@ import { ROBE_CUTS, attachCloak, attachSkirt, attachLekku,
 import { applyInjury } from '../game/Injury.js';
 import { LEVELS, LEVEL_ORDER, theatresFor } from '../game/Levels.js';
 import { WITHDRAW_HOLD, LAST_CALL } from '../game/Extraction.js';
+/* The three numbers the fire-mission row prints. Derived rather than typed,
+ * exactly as the extraction row above derives its hold and its ramp: tune the
+ * reading and the Codex retunes with it. */
+import { READ_REACH, READ_SECONDS, SENSE_RATE } from '../game/FireMission.js';
 /* THE COMPANY TAB'S WHOLE SOURCE OF TRUTH. Named imports rather than a
  * namespace so a rename in Company.js fails here at parse rather than at the
  * first click, and aliased because `load`, `save`, `dress` and `nameOf` are
@@ -1797,6 +1801,29 @@ export const CODEX = [
       + 'home and everyone who does not is left on the ground</b>, so calling early keeps men '
       + 'you have not earned anything with and calling late is how a company dies one street '
       + 'from the door. Leaving with eight is a result. Quitting is not.' },
+
+  /**
+   * THE ORDER THAT COMES THE OTHER WAY — PLAN.md §1, and it is the one control
+   * on this page that is not a thing you do to the world.
+   *
+   * It has to be here for the reason `withdraw` above does: a verb a player
+   * cannot find is a verb that does not exist, and this one arrives on a clock
+   * with a panel already asking for an answer. What the row must NOT do is tell
+   * him what the right answer is — the whole design is that the estimate is
+   * honest, stale, and only checkable by going out and standing near the mark.
+   * So it prints the three costs and leaves the decision alone.
+   *
+   * Both numbers are derived, from `FireMission.js`'s own constants.
+   */
+  { keys: ['authorise'],
+    text: k => 'High Command lays a fire mission on ground ahead of your line and tells you what '
+      + 'they think is standing on it. Press this and the shells come down — one keypress, and '
+      + `the sooner you answer the more war support it pays. THE ESTIMATE IS NOT REVISED: it was `
+      + 'true when the order was cut and the battle has moved since. To learn what is actually '
+      + `in the mark, get within ${READ_REACH}&nbsp;m of it and stay there — ${READ_SECONDS}&nbsp;s `
+      + `on foot, ${(READ_SECONDS / SENSE_RATE).toFixed(0)}&nbsp;s holding ${k('sense')}. Your line `
+      + 'follows you out there at its own pace unless you plant it first. Let the window close and '
+      + 'the guns are laid on somebody else, and the fleet remembers.' },
 
   /**
    * THE SUPPORT CALLS, GENERATED — the same argument as the orders above, and

@@ -552,7 +552,7 @@ export class FireMissionDirector {
    * press. Obeying is FAST, which is the half of the sentence that makes the
    * other half cost something.
    */
-  authorise(ctx = {}) {
+  authorise() {
     const m = this.mission;
     if (!m || m.state !== STANDING) return false;
     /* THE GROUND AS IT IS AT THE MOMENT YOU SAY YES — not as it was read, and
@@ -563,7 +563,7 @@ export class FireMissionDirector {
                  verified: m.verified };
     m.state = FIRED;
     this.fired++;
-    this._release(m, ctx);
+    this._release(m);
     const pay = this._prize(m);
     this.world?.support?.credit?.(pay);
     this.trust = clamp(this.trust + TRUST_GAIN, TRUST_MIN, 1);
@@ -617,7 +617,7 @@ export class FireMissionDirector {
    * (HANDOFF §2.3). What this file owns is the pattern; what the blast does
    * when it lands belongs to the system that already owns it.
    */
-  _release(m, ctx) {
+  _release(m) {
     const rng = this.rng;
     for (let i = 0; i < SHELLS; i++) {
       const r = Math.sqrt(rng());
@@ -626,7 +626,7 @@ export class FireMissionDirector {
       const c = Math.cos(m.bearing), s = Math.sin(m.bearing);
       const at = new THREE.Vector3(
         m.centre.x + u * s + v * c, m.centre.y, m.centre.z + u * c - v * s);
-      this._shells.push({ t: (i / SHELLS) * SHELL_SPREAD, at, ctx });
+      this._shells.push({ t: (i / SHELLS) * SHELL_SPREAD, at });
     }
   }
 
@@ -636,7 +636,12 @@ export class FireMissionDirector {
     for (const sh of this._shells) {
       sh.t -= dt;
       if (sh.t > 0) { live.push(sh); continue; }
-      this._impact(sh.at, sh.ctx || ctx);
+      /* RESOLVED AGAINST THE FRAME IT LANDS IN, not the one it was released
+       * in. A shell is three seconds in the air and the field moves under it;
+       * `World._frameCtx` is rebuilt every frame and carries the enemies, the
+       * terrain and the physics as they are NOW, which is the only honest
+       * thing for a blast to ask. */
+      this._impact(sh.at, ctx);
     }
     this._shells = live;
   }
@@ -664,7 +669,7 @@ export class FireMissionDirector {
    * your men, which is the only reading of that table row that costs you what
    * losing it is supposed to cost.
    */
-  theirBarrage(ctx = {}) {
+  theirBarrage() {
     const men = this._line();
     if (!men.length) return false;
     let x = 0, z = 0;
@@ -673,7 +678,7 @@ export class FireMissionDirector {
     centre.y = this.world?.terrain?.height ? this.world.terrain.height(centre.x, centre.z) : 0;
     const from = this.world?.player?.position || centre;
     const m = new FireMission(centre, Math.atan2(centre.x - from.x, centre.z - from.z));
-    this._release(m, ctx);
+    this._release(m);
     this.world?.notify?.('INCOMING', 'their battery is firing on your line');
     return true;
   }

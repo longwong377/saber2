@@ -184,7 +184,7 @@ export async function run({ check, assert }) {
     const now = stubWorld();
     const dNow = new FireMissionDirector(now, { myTeam: 0 });
     const mNow = laid(dNow, now);
-    dNow.authorise({});
+    dNow.authorise();
     const early = now.support.got;
     assert(mNow.state === FIRED, 'authorising did not fire the order');
     assert(Math.abs(early - PRIZE) < 0.01, `an immediate yes paid ${early.toFixed(1)} of ${PRIZE}`);
@@ -193,7 +193,7 @@ export async function run({ check, assert }) {
     const dLate = new FireMissionDirector(late, { myTeam: 0 });
     laid(dLate, late);
     drive(dLate, READ_SECONDS);
-    dLate.authorise({});
+    dLate.authorise();
     const checked = late.support.got;
     assert(checked < early,
       `a yes after the ${READ_SECONDS}s reading paid ${checked.toFixed(1)} against ${early.toFixed(1)} `
@@ -215,7 +215,7 @@ export async function run({ check, assert }) {
     assert(m2, 'no second order after a refusal');
     drive(dGone, WINDOW + 1);
     const m3 = dGone.issue({ centre: V(0, 0, 100), bearing: 0 });
-    dGone.authorise({});
+    dGone.authorise();
     const afterTwo = gone.support.got;
     assert(afterTwo < early * 0.75,
       `after two refusals an immediate yes still paid ${afterTwo.toFixed(1)} of ${early.toFixed(1)} `
@@ -230,7 +230,7 @@ export async function run({ check, assert }) {
     const w = stubWorld();
     const d = new FireMissionDirector(w, { myTeam: 0 });
     const m = laid(d, w);
-    d.authorise({});
+    d.authorise();
     drive(d, 6);
     assert(w.shells.length === SHELLS,
       `${w.shells.length} shells landed against ${SHELLS} in the pattern`);
@@ -288,7 +288,7 @@ export async function run({ check, assert }) {
       const w = stubWorld();
       const d = new FireMissionDirector(w, { myTeam: 0, seed: 4242 });
       d.issue({ centre: V(0, 0, 100), bearing: 0.6 });
-      d.authorise({});
+      d.authorise();
       drive(d, 6);
       return w.shells.map((s) => `${s.at.x.toFixed(3)},${s.at.z.toFixed(3)}`).join('|');
     };
@@ -307,7 +307,7 @@ export async function run({ check, assert }) {
     for (let i = 0; i < 4; i++) w.enemies.push(body(1, 6, 104 + i));
     const m = laid(d, w);
     for (let i = 0; i < 2; i++) w.enemies.push(body(0, i * 2, 98, `CT-${1300 + i}`));
-    d.authorise({});
+    d.authorise();
     const e = w.command.log.find((x) => x.t === 'mission');
     assert(e, 'authorising wrote nothing to the log the after-action report reads');
     assert(e.friendlies === 2 && !e.verified,
@@ -328,7 +328,7 @@ export async function run({ check, assert }) {
     for (let i = 0; i < 4; i++) w2.enemies.push(body(1, 6, 104 + i));
     laid(d2, w2);
     drive(d2, READ_SECONDS + 0.5);
-    d2.authorise({});
+    d2.authorise();
     const b2 = interludeBeats([...w2.command.log], 0, { name: 'A ridge' }, {})
       .beats.find((b) => b.kind === 'mission');
     assert(/read it first/.test(b2.sub) && !b2.own,
@@ -351,7 +351,7 @@ export async function run({ check, assert }) {
     const w = stubWorld();
     const d = new FireMissionDirector(w, { myTeam: 0 });
     for (let i = 0; i < 6; i++) w.enemies.push(body(0, 40 + i, 60, `CT-${1400 + i}`));
-    assert(d.theirBarrage({}), 'a battery in their hands could not reach your line at all');
+    assert(d.theirBarrage(), 'a battery in their hands could not reach your line at all');
     drive(d, 6);
     assert(w.shells.length === SHELLS, `their barrage put ${w.shells.length} shells down`);
     const cx = w.shells.reduce((a, s) => a + s.at.x, 0) / w.shells.length;
@@ -530,7 +530,7 @@ export async function run({ check, assert }) {
          * actually costs. */
         if (m.read > 0 && m.read < 1 && !d.lineGathered(d.commander)) gatheredWhileReading = false;
       }
-      fm.authorise({});
+      fm.authorise();
       const men = d.roster.living.map((t) => t.body).filter((b) => b && !b.dead);
       return { m, caught: m.caught.friendlies, men: men.length, read: m.read,
                gathered: gatheredWhileReading };

@@ -273,6 +273,10 @@ export const MINIMAP_COLORS = {
   boss: '#ffb64a',
   ally: '#5dffa8',
   edge: 'rgba(255,107,116,.45)',
+  /* The standing fire mission's ground. The same amber the ring on the field is
+   * drawn in while it is unverified (`FireMission.js`'s MARK_COLOUR.standing),
+   * so the shape on the disc and the shape on the ground read as one thing. */
+  mark: '#ffb648',
 };
 
 /**
@@ -402,6 +406,25 @@ export class Minimap {
     const cos = Math.cos(yaw), sin = Math.sin(yaw);
     const px = num(player.position?.x, 0), pz = num(player.position?.z, 0);
 
+    /**
+     * WORLD → DISC, and it is one closure because there are two readers now.
+     *
+     * `plot` fills a blip; the standing order's mark is an OUTLINE at the same
+     * place, and a second copy of this arithmetic is the kind of twin that goes
+     * quietly wrong on one of its two callers the next time a sign is fixed.
+     * The sign work is measured at five yaws in tools/checks/spectacle.mjs.
+     */
+    const project = (x, z, out) => {
+      const dx = x - px, dz = z - pz;
+      let sx = dx * cos - dz * sin;
+      let sy = dx * sin + dz * cos;
+      const d = Math.hypot(sx, sy);
+      const scale = d > 1e-4 ? Math.min(d, MINIMAP.range) / d * (rim / MINIMAP.range) : 0;
+      out.x = R + sx * scale; out.y = R + sy * scale; out.edge = d > MINIMAP.range;
+      return out;
+    };
+    const _at = { x: 0, y: 0, edge: false };
+
     // The blip loop, twice over one shared body. Nothing is allocated in here.
     const plot = (x, z, colour, size) => {
       const dx = x - px, dz = z - pz;
@@ -450,6 +473,27 @@ export class Minimap {
     for (const r of world?.remotes?.values?.() || []) {
       if (!r || !r.position) continue;
       plot(r.position.x, r.position.z, MINIMAP_COLORS.ally, 2.6);
+    }
+
+    /**
+     * THE STANDING ORDER'S MARK — PLAN.md §1.
+     *
+     * An outline and not a blip, because it is a piece of GROUND and not a
+     * body, and it is the one thing on this disc the player is being asked a
+     * question about. It says WHERE and nothing else: no count, no IFF, and no
+     * hint about what is standing on it — the map is drawn by Force sense and
+     * the whole design is that sense has to be spent NEAR the mark to learn
+     * that. A ring here that changed colour when your men walked in would hand
+     * the player the answer from two hundred metres away.
+     */
+    const mark = world?.fireMissions?.mission;
+    if (mark && mark.state === 'standing') {
+      project(mark.centre.x, mark.centre.z, _at);
+      g.beginPath();
+      g.arc(_at.x, _at.y, _at.edge ? 3.2 : 5.4, 0, 6.2832);
+      g.strokeStyle = MINIMAP_COLORS.mark;
+      g.lineWidth = 2;
+      g.stroke();
     }
 
     // …and you, pointing up the screen, because heading-up means you always do.

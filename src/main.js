@@ -2021,7 +2021,7 @@ function missionKey() {
   const fm = world?.fireMissions;
   if (!fm) return;
   if (!input.actHit('authorise')) return;
-  fm.authorise(world._frameCtx || {});
+  fm.authorise();
 }
 
 /**
