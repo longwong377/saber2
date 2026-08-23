@@ -7119,6 +7119,17 @@ export class CommandDirector extends WaveDirector {
           air: w.smokeAir ?? null,
         });
         did += (out?.barrage | 0) + (out?.smoke | 0) + (out?.wrecks | 0);
+        /* WHAT THE LAST MARCH ACTUALLY LAID, published on the director.
+         *
+         * `marchFailures` and `marchErrors` are already here because "a console
+         * line is not something a check can assert on"; the same argument
+         * applies to a march that SUCCEEDED and laid nothing. A front that came
+         * up with no smoke on it is not an error and throws nothing, and the
+         * only symptom is a mesh count in a browser probe that can say "there
+         * is one column" and nothing about which half of the picture is
+         * missing. This is the counts, per engagement, in the order they were
+         * marched. */
+        (this.marched ||= []).push({ e, ...out });
       } catch (err) {
         /* A DRESSING THAT THREW MUST NOT TAKE THE ENGAGEMENT WITH IT. This runs
          * on the frame a muster closes and the next area opens; a level with no

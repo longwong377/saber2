@@ -37,7 +37,7 @@ import { ACTIONS, ACTION_IDS, defaultBindings, conflicts, findConflicts, keyLabe
 import { Input } from '../../src/engine/Input.js';
 import { LINES, LINE_KINDS, PLAYER_LINES, ENEMY_LINES, voiceAt } from '../../src/engine/Voice.js';
 import { Announcer, STREAKS, RETURNS, CHAMBERS, QUIP_GAP } from '../../src/ui/Announcer.js';
-import { HUD, Minimap, EmoteWheel, OrderWheel, FreeCam, EMOTES, MINIMAP, MINIMAP_COLORS,
+import { HUD, Minimap, EmoteWheel, OrderWheel, WHEEL_EXTRAS, FreeCam, EMOTES, MINIMAP, MINIMAP_COLORS,
   emoteAngle, emoteAt, EMOTE_DEADZONE, FREECAM } from '../../src/ui/HUD.js';
 import { DEFAULT_SETTINGS, SETTING_READERS, CODEX, codexHtml,
   applyGait, tapFrame, applyFeelSettings } from '../../src/ui/Menu.js';
@@ -1170,26 +1170,49 @@ export async function run({ check, assert }) {
     const made = [];
     const realCreate = globalThis.document.createElement.bind(globalThis.document);
     const w = new OrderWheel(el, fake);
-    assert(w.items.length === 3,
-      `the wheel holds ${w.items.length} slots for two formations — it should be those two plus HOLD`);
+    /**
+     * THE COUNT IS DERIVED, and it was `3` typed in.
+     *
+     * That was true when HOLD was the only slot the wheel always carried, and
+     * it went stale the day TARGET and DETACH arrived — a red check reporting
+     * "5 slots for two formations, it should be those two plus HOLD" about a
+     * wheel that was working exactly as intended. `WHEEL_EXTRAS` is the table
+     * the wheel builds those slots from, so the arithmetic here cannot drift
+     * from it again, and a fourth fixed slot is still a red check until
+     * somebody has looked at what six slots do to the geometry.
+     */
+    const want = Object.keys(fake).length + WHEEL_EXTRAS.length;
+    assert(w.items.length === want,
+      `the wheel holds ${w.items.length} slots for ${Object.keys(fake).length} formations — it `
+      + `should be those plus ${WHEEL_EXTRAS.length} fixed `
+      + `(${WHEEL_EXTRAS.map((x) => x.id).join(', ')})`);
     assert(w.items[0].id === 'alpha' && w.items[1].id === 'beta',
       'the wheel is not built from the formations it was handed');
-    assert(w.items[2].kind === 'hold', 'the wheel has no HOLD slot');
-    assert(w.slots.length === 3, `${w.slots.length} slot nodes for 3 items`);
+    /* …AND THEY ARE THE TABLE'S, IN THE TABLE'S ORDER. A wheel that built the
+     * right NUMBER of fixed slots out of its own literals would pass the count
+     * above and be the copied table this check exists to prevent. */
+    for (let i = 0; i < WHEEL_EXTRAS.length; i++) {
+      const got = w.items[Object.keys(fake).length + i];
+      assert(got.kind === WHEEL_EXTRAS[i].kind && got.id === WHEEL_EXTRAS[i].id,
+        `fixed slot ${i} is ${got.id}/${got.kind} and the table says `
+        + `${WHEEL_EXTRAS[i].id}/${WHEEL_EXTRAS[i].kind}`);
+    }
+    assert(w.slots.length === want, `${w.slots.length} slot nodes for ${want} items`);
     /* The slots are placed from the SAME function the hit test reads back, at
      * the wheel's own length — so a three-slot wheel is thirds and an
      * eight-slot one is eighths, and neither has a transform typed anywhere. */
-    for (let i = 0; i < 3; i++) {
-      const a = emoteAngle(i, 3);
-      const want = `${(50 + Math.cos(a) * 37).toFixed(3)}%`;
-      assert(w.slots[i].style.left === want,
-        `slot ${i} sits at ${w.slots[i].style.left} and the hit test says ${want}`);
-      assert(emoteAt(Math.cos(a) * 80, Math.sin(a) * 80, 3) === i,
-        `pushing at slot ${i} picks ${emoteAt(Math.cos(a) * 80, Math.sin(a) * 80, 3)}`);
+    for (let i = 0; i < want; i++) {
+      const a = emoteAngle(i, want);
+      const at = `${(50 + Math.cos(a) * 37).toFixed(3)}%`;
+      assert(w.slots[i].style.left === at,
+        `slot ${i} sits at ${w.slots[i].style.left} and the hit test says ${at}`);
+      assert(emoteAt(Math.cos(a) * 80, Math.sin(a) * 80, want) === i,
+        `pushing at slot ${i} picks ${emoteAt(Math.cos(a) * 80, Math.sin(a) * 80, want)}`);
     }
     void realCreate; void made;
     return `order wheel on ${b.orderwheel.join('/')}, ${w.items.length} slots derived from `
-      + `${Object.keys(fake).length} formations plus hold, geometry shared with the emote wheel`;
+      + `${Object.keys(fake).length} formations plus ${WHEEL_EXTRAS.length} fixed `
+      + `(${WHEEL_EXTRAS.map((x) => x.id).join(', ')}), geometry shared with the emote wheel`;
   });
 
 }

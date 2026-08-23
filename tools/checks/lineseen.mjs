@@ -247,7 +247,16 @@ export async function run({ check, assert }) {
      * insertion is three hundred rendered frames here — `frontdoor.mjs` already
      * asserts the flight happens, and this check's frames belong to the ground.
      */
-    const SEED = '5';                     /* rolls geonosis — see Session.rollGround */
+    /* SEED 5 ROLLS MUSTAFAR. The comment here read "rolls geonosis" and had
+     * been wrong for as long as the pool it draws from has had its
+     * `battlefield` filter — `theatreFor('theline', null, 5)` is the one
+     * statement of it and it answers `mustafar`. The seed is not chosen for
+     * the ground: every clause below is about what the MODE lays on whatever
+     * ground it rolled, which is the whole subject of a mode that seeds its
+     * own theatre. Written down rather than corrected to a geonosis seed for
+     * that reason — a check pinned to one ground would stop being about the
+     * roll. */
+    const SEED = '5';                     /* rolls mustafar — see Levels.theatreFor */
     const { page, errs, close } = await open();
     try {
       /* Instant arrivals, then the mode, then the seed: the order a player
@@ -364,6 +373,16 @@ export async function run({ check, assert }) {
             return Math.round(d * 180 / Math.PI);
           })(),
           fallen, fallenMeshes, smoke,
+          /* WHICH HALF OF THE PICTURE IS MISSING, when one of them is.
+           * `CommandDirector.marched` is the counts each engagement laid;
+           * without it a red smoke bar says "there is one column" and nothing
+           * about whether the level or the front is the one that raised none.
+           * Same argument as `marchFailures`, which is already published for
+           * the case where the dressing threw. */
+          marched: (w.command?.marched || []).map((m) =>
+            `e${m.e}: barrage ${m.barrage} smoke ${m.smoke} wrecks ${m.wrecks} fallen ${m.fallen}`),
+          marchFailures: w.command?.marchFailures | 0,
+          marchErrors: (w.command?.marchErrors || []).slice(0, 3),
           wrecks: wrecks.length, onLine: onLine.length, sunk: sunk.length,
           strewWrecks: typeof w.strewWrecks,
           draws: S.engine.renderer.info.render.calls,
@@ -389,16 +408,43 @@ export async function run({ check, assert }) {
         + 'every mark the engagement laid is behind the player');
       assert(ground.fallen > 0 && ground.fallenMeshes > 0,
         'no prone figures on the line — §12.4\'s "the dead mark the front" drew nothing');
-      /* TWO, AND THE SECOND ONE IS THE ENGAGEMENT'S. `addSmokeColumns` makes
-       * one mesh per call: `LEVELS.geonosis.dress` calls it once and
-       * `marchFront` calls it once more for the burnt side, so a bar of one
-       * would pass on a front that raised nothing at all. Counted before and
-       * after `director.start(1)` on a real World at this seed: the level lays
-       * 1 mesh / 0 fallen / 55 hull pieces, and the engagement adds 1 mesh,
-       * 110 fallen in 2 draws and 13 hull pieces. */
-      assert(ground.smoke >= 2,
-        `${ground.smoke} smoke column mesh(es) — the level lays one of its own, so fewer than two `
-        + 'means the engagement raised none on the burnt side');
+      /**
+       * THE ENGAGEMENT'S OWN COLUMNS, ASSERTED ON THE ENGAGEMENT'S OWN COUNT.
+       *
+       * This was `smoke >= 2`, and the reasoning behind it was: `addSmokeColumns`
+       * makes one mesh per call, `LEVELS.geonosis.dress` calls it once and
+       * `marchFront` calls it once more, so a bar of one would pass on a front
+       * that raised nothing. Both halves of that were true and the premise
+       * under them was not. THE LINE rolls its theatre off the run seed, and
+       * seed 5 does not roll Geonosis — it rolls Mustafar. Geonosis is the ONLY
+       * level whose `dress` lays ambient columns, so on the other six the level
+       * contributes zero and a correct front scored 1 against a bar of 2.
+       *
+       * It is not fixed by dressing six more grounds with ambient smoke. A bog
+       * does not have seven columns standing in it because nobody has fought
+       * there yet, and the mark under test here is the FRONT's — the burnt side
+       * of a line that has just been crossed.
+       *
+       * So the bar is what `marchFront` reports it laid, which is the quantity
+       * this check is really about, plus a mesh in the scene to prove the
+       * report reached the world. `marched` is published by
+       * `CommandDirector.marchTo` for exactly this: a march that succeeds and
+       * lays nothing throws nothing, and a bare mesh count cannot say which
+       * half of the picture is missing.
+       */
+      assert(!ground.marchFailures,
+        `${ground.marchFailures} engagement(s) lost their dressing: ${ground.marchErrors.join('; ')}`);
+      assert(ground.marched.length,
+        'no engagement was marched at all — the front laid nothing on the ground');
+      const laid = ground.marched.map((m) => +(/smoke (\d+)/.exec(m)?.[1] ?? 0));
+      assert(laid.every((n) => n > 0),
+        `an engagement raised no smoke on the burnt side [${ground.marched.join(' | ')}] — `
+        + '`smokeSites` spreads over a ring and the clean-side sites are dropped, so a zero '
+        + 'here is a filter that dropped all of them');
+      assert(ground.smoke >= 1,
+        `${ground.smoke} smoke column mesh(es) in the scene against `
+        + `${laid.reduce((a, b) => a + b, 0)} column(s) the march says it laid — the report `
+        + 'did not reach the world');
       assert(ground.sunk === 0,
         `${ground.sunk} of ${ground.wrecks} hull pieces are under the terrain they stand on`);
       /* THE PRECONDITION, ASSERTED SEPARATELY FROM THE RESULT, because the two

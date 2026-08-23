@@ -740,39 +740,52 @@ function ordinal(n) {
   return `${n}${['th', 'st', 'nd', 'rd'][n % 10] || 'th'}`;
 }
 
+/**
+ * THE SLOTS THE WHEEL ALWAYS CARRIES, whatever formations it is handed.
+ *
+ * WHO THE NEXT ORDER IS FOR, AND WHO STANDS ALONE — both on the wheel, and
+ * neither costing a binding.
+ *
+ * "I should be able to order separate squads or all squads at once depending on
+ * my choosing", and "you should be able to take an npc out of their squad… but
+ * you should be able to reverse it and put them back".
+ *
+ * A dedicated key for each was the obvious answer and it is the wrong one twice
+ * over. The number of squads is a function of how many men are alive — five
+ * with a full roster, two after a bad area — so a `squad1..squad5` table is
+ * mostly dead rows and has nothing for the sixth squad a reinforcement opens.
+ * And KeyK/KeyL were the last two unbound letters in the table, which
+ * `controls.mjs` requires as spares for the rebinder to settle a clash with;
+ * taking them fails the gate, correctly.
+ *
+ * The wheel already exists, is already the place orders come from, and already
+ * prints a live caption — so TARGET cycles which squad the next order is for
+ * and DETACH pulls the nearest man out of his line. Both read their current
+ * state back through `captionFor`, which is the part a bare keybinding could
+ * never have done.
+ *
+ * EXPORTED AND ITERATED RATHER THAN PUSHED ONE BY ONE, because
+ * `spectacle.mjs` asserts the wheel's slot count against the formations it was
+ * handed and had `+ 1` written into it — true when HOLD was the only fixed
+ * slot and stale the moment these two arrived. A count read off this table
+ * cannot go stale, and a fifth fixed slot is a red check until somebody looks
+ * at the geometry.
+ */
+export const WHEEL_EXTRAS = [
+  { id: 'hold', name: 'Hold ground', kind: 'hold',
+    blurb: 'Stay where you are put. They still turn and fight.' },
+  { id: 'squad', name: 'Target', kind: 'squad',
+    blurb: 'Choose which squad your next order is for.' },
+  { id: 'detach', name: 'Detach', kind: 'detach',
+    blurb: 'Pull the nearest trooper out of his squad, or send him back.' },
+];
+
 export class OrderWheel extends RadialWheel {
   constructor(host, formations) {
     const items = Object.values(formations || {}).map((F) => ({
       id: F.id, name: F.name, blurb: F.blurb, kind: 'form',
     }));
-    items.push({ id: 'hold', name: 'Hold ground', kind: 'hold',
-      blurb: 'Stay where you are put. They still turn and fight.' });
-    /**
-     * WHO THE NEXT ORDER IS FOR, AND WHO STANDS ALONE — both on the wheel, and
-     * neither costing a binding.
-     *
-     * "I should be able to order separate squads or all squads at once
-     * depending on my choosing", and "you should be able to take an npc out of
-     * their squad… but you should be able to reverse it and put them back".
-     *
-     * A dedicated key for each was the obvious answer and it is the wrong one
-     * twice over. The number of squads is a function of how many men are alive
-     * — five with a full roster, two after a bad area — so a `squad1..squad5`
-     * table is mostly dead rows and has nothing for the sixth squad a
-     * reinforcement opens. And KeyK/KeyL are the last two unbound letters in
-     * the table, which `controls.mjs` requires as spares for the rebinder to
-     * settle a clash with; taking them fails the gate, correctly.
-     *
-     * The wheel already exists, is already the place orders come from, and
-     * already prints a live caption — so TARGET cycles which squad the next
-     * order is for and DETACH pulls the nearest man out of his line. Both read
-     * their current state back through `captionFor`, which is the part a bare
-     * keybinding could never have done.
-     */
-    items.push({ id: 'squad', name: 'Target', kind: 'squad',
-      blurb: 'Choose which squad your next order is for.' });
-    items.push({ id: 'detach', name: 'Detach', kind: 'detach',
-      blurb: 'Pull the nearest trooper out of his squad, or send him back.' });
+    for (const x of WHEEL_EXTRAS) items.push({ ...x });
     super(host, { items, action: 'orderwheel', cls: 'em ow' });
     this.director = null;
   }
