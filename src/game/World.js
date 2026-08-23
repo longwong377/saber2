@@ -172,6 +172,7 @@ function bladeEnvFor(a = {}) {
 }
 import { AREAS, ARMY_IDS, CommandDirector, COMMAND_POWER_RULES, MAX_STRENGTH, OPENING_STRENGTH,
   assignArmies, commandConfig } from './Command.js';
+import { ArmyIndex } from './ArmyIndex.js';
 import { Corpses, CORPSE_BUDGET } from './Corpses.js';
 import { BladeLock } from './Duel.js';
 import { FocusSystem } from './Focus.js';
@@ -385,6 +386,15 @@ export class World {
      */
     this.partyTeam = TEAM.PARTY;
     this.enemies = [];
+    /* THE BROAD PHASE FOR THE BODY LIST, rebuilt once a frame in `update`.
+     * `pickTarget`'s own note has said "this is O(bodies²) per frame" for as
+     * long as the cross-army pass has existed; src/game/ArmyIndex.js is the
+     * structure that stops it being true. */
+    this.armyIndex = new ArmyIndex();
+    /** Who `_hostilePred` is answering for. See `pickTarget`. */
+    this._hostileTo = null;
+    this._hostilePred = (e) => e !== this._hostileTo && !e.dead
+      && e.team !== this._hostileTo.team;
     this.props = [];
     this.doors = [];
     this.debris = [];
@@ -2802,7 +2812,16 @@ export class World {
    */
   pickTarget(enemy) {
     if (enemy?.trooper && this.command) {
-      return this.command.targetFor(enemy, this._hostilesFor(enemy));
+      /* THE INDEX RATHER THAN THE WHOLE OPPOSED ARMY. `_hostilesFor` builds a
+       * list of every hostile on the field, once per trooper per frame, so that
+       * `targetFor` can reject almost all of it against a leash of thirty
+       * metres — the second of the two squares this file used to run. The
+       * director asks the index for what is inside its own leash when it has
+       * one, and reaches back through `world._hostilesFor` only when it does
+       * not — a CHARGE order has no leash. `null` and not the list itself: the
+       * list is the cost, so building it eagerly and then not using it would
+       * leave the square exactly where it was. */
+      return this.command.targetFor(enemy, null, this.armyIndex);
     }
     let best = null, bestD = Infinity;
     /* `hostileTo` rather than every player: in a duel the horde is on nobody's
@@ -2833,11 +2852,19 @@ export class World {
      * changes: this is O(bodies²) per frame and it is only affordable because
      * `_hostilesFor` is the path Command actually takes. */
     if (this.command) {
-      for (const e of this.enemies) {
-        if (e === enemy || e.dead || e.team === enemy.team) continue;
-        const d = e.position.distanceToSquared(enemy.position);
-        if (d < bestD) { bestD = d; best = e; }
-      }
+      /* …THROUGH THE BROAD PHASE, and the predicate is the old loop's three
+       * `continue`s verbatim. `bestD` is carried in as the seed: a body that
+       * has already found a player two metres away wants only something closer,
+       * and a seeded nearest search finishes inside its first ring. See
+       * src/game/ArmyIndex.js. */
+      const p = enemy.position;
+      /* The predicate is a field and not a fresh arrow: this runs once per body
+       * per frame, so a closure written here is one allocation per body per
+       * frame for a function whose body never changes. `_hostilePred` reads the
+       * asker off `_hostileTo`, which is set immediately before the call. */
+      this._hostileTo = enemy;
+      const found = this.armyIndex.nearest(p.x, p.y, p.z, this._hostilePred, bestD);
+      if (found) best = found;
     }
     return best;
   }
@@ -3408,6 +3435,17 @@ export class World {
      * rebuilt, because two ctx objects in one frame is two answers to "who is
      * on the field". */
     this._frameCtx = ctx;
+
+    /**
+     * THE BODY BROAD PHASE, REBUILT — here, and not later.
+     *
+     * Everything that asks "what is nearest" runs inside the enemy loop below,
+     * so the index has to be built before the first body is stepped. It is one
+     * linear pass over `enemies` and it replaces two O(bodies²) sweeps; see
+     * src/game/ArmyIndex.js for the bound that makes the answer exact and for
+     * the frame of staleness this ordering buys.
+     */
+    this.armyIndex.sync(this.enemies);
 
     /**
      * BEFORE EVERYTHING, because a passenger's seat has to be written before

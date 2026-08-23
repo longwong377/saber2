@@ -5448,7 +5448,7 @@ export class CommandDirector extends WaveDirector {
    * something: `Enemy._think` sets `wish = null` on a null target, and `steer`
    * then supplies the walk home. Nothing has to be told to stop fighting.
    */
-  targetFor(e, candidates) {
+  targetFor(e, candidates, index = null) {
     const F = FORMATIONS[this.commanderOf(e).formation] || FORMATIONS[DEFAULT_FORMATION];
     /* MORALE'S SECOND CONSEQUENCE. A body that has given up does not pick a
      * target, which is the same door `Enemy._think` already reads — it sets
@@ -5459,6 +5459,40 @@ export class CommandDirector extends WaveDirector {
     const ax = slot ? slot.x : e.position.x;
     const az = slot ? slot.z : e.position.z;
     const leash2 = leash === Infinity ? Infinity : leash * leash;
+    /**
+     * WHAT IS EVEN WORTH TESTING — a disc round the slot, and not the army.
+     *
+     * Every line below this rejects a candidate that is farther from the slot
+     * than the leash, and a leash is 14–34 m on a field two kilometres across.
+     * So the list handed in was, in a real Command wave, forty droids of which
+     * three could possibly survive the first `continue` — built fresh once per
+     * trooper per frame, which is the second of the two squares `World.
+     * pickTarget`'s note counts.
+     *
+     * The index answers the same question by cells. It returns a SUPERSET of
+     * the disc, so nothing below changes: the leash test is still the only
+     * thing that decides membership, and it is now being asked of a handful of
+     * bodies instead of an army.
+     *
+     * Two cases keep the old path, and both are the honest answer rather than a
+     * fallback: an Infinity leash is a CHARGE order, which really does mean
+     * "anything on the field", and no index at all is a hand-built fixture —
+     * several checks call this with an array of two.
+     *
+     * The PLAYERS are appended by hand. The index holds `world.enemies`, and a
+     * trooper in a versus meeting is opposed to a person as much as to a droid;
+     * there are at most four of them, so a loop is cheaper than a second index.
+     */
+    if (!candidates) {
+      if (index && leash2 !== Infinity) {
+        const near = (this._targetScratch ||= []);
+        near.length = 0;
+        index.within(ax, az, leash, near);
+        const ps = this.world?.players;
+        if (ps) for (let i = 0; i < ps.length; i++) near.push(ps[i]);
+        candidates = near;
+      } else candidates = this.world?._hostilesFor?.(e) || [];
+    }
     /**
      * THE SQUAD SHOOTS AT WHAT ITS LEADER IS SHOOTING AT — the third rule, and
      * it is a PREFERENCE inside the other two rather than a rule beside them.

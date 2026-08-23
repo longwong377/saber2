@@ -162,7 +162,7 @@ connected to the weapon because it is, structurally, downstream of it.
 
 ```bash
 npm run verify:fast       # the mechanical contract — 17 suites, ~80 s, no GPU
-npm run verify            # everything — 155 suites, and it takes as long as it takes
+npm run verify            # everything — 148 suites, and it takes as long as it takes
 npm run smoke             # boots the real game in Chromium, screenshots it
 npm start                 # play it
 ```
@@ -189,7 +189,7 @@ the guard and the tables that move them; it runs on every push
 [`tools/tiers.mjs`](tools/tiers.mjs) says exactly what it leaves out.
 
 Every check drives about twenty seconds, because that is what a PROPERTY needs
-and because 155 suites of five minutes is a gate nobody can afford to run. So
+and because 148 suites of five minutes is a gate nobody can afford to run. So
 there are three instruments beside it that ask questions a property cannot, and
 none of them asserts anything:
 

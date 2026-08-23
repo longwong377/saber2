@@ -318,7 +318,12 @@ export function run({ check, assert, near, THREE: T }) {
       + 'is discarded inside the animator and the gait runs slow, not coarse');
 
     const { bootWorld, idleInput } = await import('./_coop.mjs');
-    const { Enemy } = await import('../../src/game/Enemy.js');
+    const { Enemy, enemyRng } = await import('../../src/game/Enemy.js');
+    /* SEEDED, because `Enemy` jitters pace and health per spawn off this stream
+     * and the two bodies below are compared to each other. Unseeded they come
+     * off whatever the suite before this one left in it — determinism.mjs's
+     * whole subject, and this file was its one offender. */
+    enemyRng.seed(20260823);
     const { world } = await bootWorld({ settings: { quality: 'low' } });
     const input = idleInput();
     for (let i = 0; i < 10; i++) world.update(1 / 60, input);
