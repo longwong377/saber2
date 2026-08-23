@@ -793,6 +793,75 @@ export async function run({ check, assert }) {
     } finally { restore(); }
   });
 
+  check('hud: the number you act on is the big one', async () => {
+    /**
+     * The corner used to set the WAVE INDEX at 38 px of white with a four-way
+     * ink outline and a cyan glow, and the count of things still shooting at
+     * you at 10.5 px of --dim underneath it. That is the wrong way round. The
+     * wave index changes a handful of times an engagement and nothing a player
+     * does turns on it; the hostile count decides push or hold, and at 1 it
+     * says the wave is about to break.
+     *
+     * Two halves, because either alone can be undone without the other going
+     * red. The TYPE half reads both sizes out of the stylesheet and asserts the
+     * count is the larger. The CONTENT half drives the real HUD through all
+     * five branches and asserts the figure lands in its own element rather than
+     * being concatenated back into one string — a hierarchy needs two elements
+     * to be a hierarchy, and the previous line had one.
+     */
+    const css = await readFile(new URL('../../styles.css', import.meta.url), 'utf8');
+    const size = (sel, re) => {
+      let rule = null;
+      for (const m of css.matchAll(new RegExp(re.source, 'g'))) {
+        if (/font-size:\s*[0-9.]+px/.test(m[1])) { rule = m; break; }
+      }
+      assert(rule, `${sel} declares no font-size in styles.css`);
+      return parseFloat(rule[1].match(/font-size:\s*([0-9.]+)px/)[1]);
+    };
+    const waveNum = size('.wave-big b', /\.wave-big b\s*\{([^}]*)\}/);
+    const leftNum = size('.wave-sub b', /\.wave-sub b\s*\{([^}]*)\}/);
+    assert(leftNum > waveNum * 1.5,
+      `the wave index is ${waveNum}px and the hostile count ${leftNum}px — the figure a player `
+      + 'acts on has to carry the emphasis, not the chapter number above it');
+
+    const { hud, doc, restore } = hudOnPage(INDEX);
+    try {
+      const world = stubWorld({ ...DEFAULT_SETTINGS });
+      world.director.wave = 4;
+      const p = player();
+      const cam = new THREE.PerspectiveCamera();
+      const n = () => doc.getElementById('hud-left').textContent.trim();
+      const w = () => doc.getElementById('hud-left-word').textContent.trim();
+      const seen = [];
+      const drive = (fn) => { fn(); hud.update(1 / 60, world, p, cam); seen.push(`${n() || '—'} / ${w()}`); };
+
+      world.director.active = true;
+      drive(() => {});
+      const fighting = n();
+      assert(/^[0-9]+$/.test(fighting),
+        `mid-wave the figure reads "${fighting}" — the count is not landing in its own element`);
+      assert(!/[0-9]/.test(w()), `the word carries a digit too: "${w()}"`);
+
+      drive(() => { world.director.active = false; world.director.intermission = 7.2; });
+      assert(n() === '8' && /next wave/i.test(w()), `between waves: "${n()} ${w()}"`);
+
+      drive(() => { world.director.intermission = 1000; });
+      assert(n() === '' && /attune/i.test(w()),
+        `attunement has no figure, so the b must be empty and the word carry the line: "${n()} ${w()}"`);
+
+      drive(() => { world.training = true; world.director.state = () => ({ need: 4, progress: 2 }); });
+      assert(n() === '2' && w() === 'of 4', `a lesson reads "${n()} ${w()}"`);
+
+      drive(() => { world.director.state = () => ({ need: Infinity, progress: 9 }); });
+      assert(n() === '' && /free practice/i.test(w()), `free practice reads "${n()} ${w()}"`);
+
+      // and the empty-figure branches do not collapse the corner to caption type
+      assert(/\.wave-sub:has\(b:empty\) span\s*\{[^}]*font-size:/.test(css),
+        'with no figure the line drops to 10.5px and the corner appears to empty out');
+      return `count ${leftNum}px over a ${waveNum}px wave index · ${seen.join(' · ')}`;
+    } finally { restore(); }
+  });
+
   check('hud: what the blade is being paid extra for is on the screen', () => {
     /**
      * `Combat.openness()` pays a cut 3× through a body you are holding, 2×
@@ -1038,6 +1107,109 @@ export async function run({ check, assert }) {
       return 'one price table, no bare literal left in Player; drain 0 frees all nine, and '
         + 'half-price boons and the lightning attunement both reach the wheel';
     } finally { restore(); }
+  });
+
+  check('hud: a full bar still has a socket around it', async () => {
+    /**
+     * WHY VITALITY WAS INVISIBLE, and it is a geometry answer to what looks
+     * like a colour question.
+     *
+     * Reported as "the vitality bar reads as an empty outlined rectangle at
+     * 100 HP". It was full. `--accent` is HOT METAL and four of the seven
+     * grounds are orange, so measured on real deploys at 1100x620 the fill sat
+     * at 1.05:1 against Geonosis, 1.15:1 against the Drifts and 1.32:1 against
+     * the Colosseum — an accessibility floor for a graphical object is 3:1.
+     *
+     * Recolouring cannot fix it: the seven levels span orange sand, tan dust,
+     * red lava, dark canopy, white snow and grey stone, and no one hue clears
+     * 3:1 against all of them. What does is the SOCKET — `--void` behind the
+     * fill — and the socket only shows when the bar is not full, because the
+     * fill was `inset:0`. At `inset:2px` it shows as a dark border inside the
+     * stroke at every level including 100%, so the bar is 4 px of near-black
+     * against whatever it stands on. Measured after: frame against world
+     * 3.72:1 geonosis, 4.48:1 drifts, 5.18:1 colosseum, and the fill 3.90:1
+     * against its own frame.
+     *
+     * The check is on the inset because that is the property that carries it. A
+     * fill that goes back to filling its own socket edge-to-edge is the bug
+     * returning, whatever colour it is by then.
+     */
+    const css = await readFile(new URL('../../styles.css', import.meta.url), 'utf8');
+    for (const sel of ['.bar i', '.bar u']) {
+      const rule = css.match(new RegExp(sel.replace(/[.]/g, '\\.').replace(' ', '\\s+') + '\\s*\\{([^}]*)\\}'));
+      assert(rule, `${sel} has no rule`);
+      const m = rule[1].match(/inset:\s*([0-9.]+)px/);
+      assert(m && parseFloat(m[1]) >= 2,
+        `${sel} is "${(rule[1].match(/inset:[^;]*/) || ['inset missing'])[0]}" — a fill flush with its own `
+        + 'socket leaves a full bar with no dark edge, and on four orange levels that is an invisible bar');
+      assert(!/width:\s*100%/.test(rule[1]),
+        `${sel} still sets width:100%, which cancels the inset on the right-hand edge`);
+    }
+    const bar = css.match(/\.bar\s*\{([^}]*)\}/);
+    assert(/background:\s*var\(--void\)/.test(bar[1]), '.bar lost the dark socket the inset exposes');
+    assert(/box-shadow:/.test(bar[1]), '.bar lost the hard shadow that lifts its outer edge off the world');
+    return 'fills inset 2px inside a --void socket, so a full bar keeps a 4px dark frame on every ground';
+  });
+
+  check('hud: the kneel prompt clears the ability wheel at every window', async () => {
+    /**
+     * REPORTED FROM A SCREENSHOT as the tooltip reading "Hold L Ctrl to" and
+     * stopping there — the one piece of in-play instruction the game gives,
+     * apparently truncated. It was not truncated. The rest of the sentence was
+     * behind the ability bar.
+     *
+     * It is the same defect `#hud-perf` above has, and the same one
+     * `.commune-entry` had on the menu: a CENTRED box and a RIGHT-ANCHORED one
+     * are measured from different origins, so whether they collide depends on
+     * the window. Measured against the real page before the fix, overlapping
+     * client-rect area: 1100x620 6670 px², 1280x720 1820 px², 1366x768 485 px²,
+     * and 0 px² only at 1920x1080 — so it was broken on every common laptop and
+     * correct on the one screen a developer is most likely to be using.
+     *
+     * Horizontal separation cannot fix it: the prompt is 361 px wide and
+     * centred, so anything reaching in from the right hits it. So the rule is
+     * vertical, and this check DERIVES the clearance rather than restating it —
+     * the wheel's own top edge is `.hud-br`'s bottom plus two rows of `.pw`
+     * plus a `.powers` gap, all read out of the stylesheet here. Make the icons
+     * bigger, or move the column, and this goes red until the prompt is moved
+     * with them.
+     */
+    const css = await readFile(new URL('../../styles.css', import.meta.url), 'utf8');
+    /* THE RULE THAT DECLARES THE PROPERTY, and not the first one whose selector
+     * happens to contain the name. `.pw` appears in a shared five-selector
+     * notch rule 700 lines before its own, so a first-match regex read
+     * `--notch-fill` and reported that the icon has no height. Scanned in order
+     * for the first rule that actually carries what is being asked for. */
+    const px = (name, re, prop) => {
+      let rule = null;
+      for (const m of css.matchAll(new RegExp(re.source, 'g'))) {
+        if (new RegExp(prop + ':\\s*[0-9.]+px').test(m[1])) { rule = m; break; }
+      }
+      assert(rule, `${name} has no rule in styles.css declaring ${prop}`);
+      const m = rule[1].match(new RegExp(prop + ':\\s*([0-9.]+)px'));
+      assert(m, `${name} declares no ${prop} in px`);
+      return parseFloat(m[1]);
+    };
+    const colBottom = px('.hud-br', /\.hud-br\s*\{([^}]*)\}/, 'bottom');
+    const iconH = px('.pw', /\.pw\s*\{([^}]*)\}/, 'height');
+    const gap = px('.powers', /\.powers\s*\{([^}]*)\}/, 'gap');
+    const wheelTop = colBottom + iconH * 2 + gap;
+
+    const rule = css.match(/#commune\s*\{([^}]*)\}/);
+    assert(rule, '#commune has no rule');
+    const bottom = rule[1].match(/bottom:\s*([^;]+);/);
+    assert(bottom, '#commune declares no bottom');
+    const floor = bottom[1].match(/max\(\s*([0-9.]+)px/);
+    assert(floor,
+      `#commune sits at "${bottom[1].trim()}" — a bare percentage is measured from the window and `
+      + 'the wheel it has to clear is measured from the corner, which is the whole defect. It needs '
+      + 'a px FLOOR: max(Npx, …)');
+    assert(parseFloat(floor[1]) >= wheelTop + 12,
+      `#commune's floor is ${floor[1]}px against an ability wheel whose top edge is at `
+      + `${wheelTop}px (${colBottom} + 2 x ${iconH} + ${gap}) — the prompt is under the bar again`);
+    assert(/white-space:\s*nowrap/.test(rule[1]),
+      '#commune can wrap to a second line, which reaches back down into the wheel');
+    return `prompt floor ${floor[1]}px clears a wheel topping out at ${wheelTop}px, and cannot wrap`;
   });
 
   check('hud: the frame counter cannot paint over the flow meter', async () => {

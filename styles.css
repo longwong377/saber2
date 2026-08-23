@@ -395,8 +395,21 @@ b{font-weight:800}
 .panel{display:none;flex:1;gap:24px;padding:22px;overflow:hidden;
   background:#231a14;border:2px solid var(--stroke);box-shadow:var(--stamp-lg)}
 .panel.active{display:flex;animation:stampIn .3s cubic-bezier(.22,1,.36,1) both}
-.col{flex:1;min-width:0;overflow-y:auto;overflow-x:hidden;padding-right:8px;scrollbar-width:thin;
-  scrollbar-color:var(--panel-hi) transparent;
+/* AND THE SCROLLBAR IS RESERVED AND OPAQUE, for the reason spelled out on
+   `.col.narrow.pinned>.col-scroll` below — which is where that was fixed, and
+   only there. Measured on the shipped page at 1100x620, every tab: fifteen of
+   the menu's seventeen scrollers reported `offsetWidth - clientWidth === 0`.
+   The Codex column holds 4310 px of text in a 355 px window and the Options
+   column 4582 px — 92% of each below the fold, behind an overlay scrollbar
+   with a TRANSPARENT track, over a dark panel, at 0.16 alpha. Every tab in the
+   menu therefore looked to an outside reader like a page that had been cut off
+   rather than one that scrolls, which is exactly how it was reported.
+   `scrollbar-gutter:stable` reserves the track whether or not the platform
+   would draw one, and the track is `--void` so the chip has something to be a
+   chip against. */
+.col{flex:1;min-width:0;overflow-y:auto;overflow-x:hidden;padding-right:8px;
+  scrollbar-gutter:stable;scrollbar-width:thin;
+  scrollbar-color:var(--panel-hi) var(--void);
   /* A column scrolls, so its last line is reachable — but with nothing after it
      the cut lands flush on the panel border and reads as truncated rather than
      as scrollable. On the options screen that made the fidelity note end
@@ -407,7 +420,7 @@ b{font-weight:800}
      name. Scroll room does the same job in the style — the last line can always
      be brought clear of the edge. */
   padding-bottom:18px}
-.col::-webkit-scrollbar{width:8px}
+.col::-webkit-scrollbar{width:8px;background:var(--void)}
 .col::-webkit-scrollbar-thumb{background:var(--panel-hi);border:2px solid var(--stroke)}
 .col.narrow{flex:0 0 300px;display:flex;flex-direction:column}
 /* ── a narrow column whose button is PINNED out of the scroll ──────────
@@ -1002,13 +1015,31 @@ button{font-family:inherit}
   font-weight:800;letter-spacing:.2em;text-transform:uppercase;color:var(--stroke);
   background:var(--ink);padding:3px 10px 4px;clip-path:var(--cut-sm);text-shadow:none}
 .wave-line em{font-style:normal;color:#6b4a12}
-.wave-big{font-size:11px;font-weight:800;letter-spacing:.28em;color:var(--ink);margin-top:7px;
+/* THE HIERARCHY WAS UPSIDE DOWN, AND IT WAS THE ONE ON SCREEN ALL FIGHT.
+   The wave index had 38 px of white with a 4-way ink outline and a cyan glow;
+   the number of things still shooting at you had 10.5 px of --dim underneath
+   it. The wave index is a chapter number — it changes a handful of times an
+   engagement and nothing you do turns on it. The hostile count is the only
+   figure in the corner you act on: it decides push or hold, and at 1 it
+   decides whether the wave is about to break. So they swap. The wave keeps a
+   line, in caption type; the count takes the 38 px and the outline. */
+.wave-big{font-size:10px;font-weight:800;letter-spacing:.26em;color:var(--dim);margin-top:7px;
   text-transform:uppercase}
-.wave-big b{font-size:38px;font-weight:800;letter-spacing:-.01em;color:#fff;margin-left:8px;
-  font-variant-numeric:tabular-nums;
+.wave-big b{font-size:15px;font-weight:800;letter-spacing:.02em;color:var(--ink);margin-left:7px;
+  font-variant-numeric:tabular-nums}
+.wave-sub{font:var(--mono);font-size:10.5px;font-weight:700;letter-spacing:.14em;color:var(--dim);
+  margin-top:1px;display:flex;align-items:flex-end;gap:8px;text-transform:uppercase}
+.wave-sub b{font:var(--ui);font-size:38px;font-weight:800;letter-spacing:-.01em;color:#fff;
+  line-height:.92;font-variant-numeric:tabular-nums;
   text-shadow:2px 0 var(--stroke),-2px 0 var(--stroke),0 2px var(--stroke),0 -2px var(--stroke),
     0 0 26px rgba(72,216,255,.5)}
-.wave-sub{font:var(--mono);font-size:10.5px;font-weight:700;letter-spacing:.14em;color:var(--dim);margin-top:3px}
+.wave-sub b:empty{display:none}
+.wave-sub span{max-width:9ch;line-height:1.15;padding-bottom:5px}
+/* Two branches have no figure at all — 'attune' between waves, 'free practice'
+   in an endless lesson. With the b gone the line would collapse from 38 px to
+   10.5 and the corner would appear to empty out, so the word takes over the
+   emphasis rather than the space simply closing. */
+.wave-sub:has(b:empty) span{font-size:17px;max-width:none;color:var(--ink);padding-bottom:0;letter-spacing:.1em}
 
 .hud-tr{position:absolute;right:32px;top:26px;text-align:right;animation:riseIn .4s both}
 /* A METER IS A VESSEL: an inked socket with a lit bar in it. 3 px of unbordered
@@ -1151,13 +1182,58 @@ button{font-family:inherit}
    sideways every time you are hit. */
 .bar-cap b{color:var(--ink);font-variant-numeric:tabular-nums;letter-spacing:.1em}
 .barline:has(.low) .bar-cap label,.barline:has(.low) .bar-cap b{color:var(--danger)}
+/* THE SOCKET HAS TO SHOW WHEN THE BAR IS FULL, and that is the whole of why
+   vitality was invisible.
+
+   Reported as "the vitality bar reads as an empty outlined rectangle at
+   100 HP". It was not empty — it was full, and `--accent` is HOT METAL, the
+   same orange as four of the seven grounds. Measured on real deploys at
+   1100x620, fill against the world immediately around it: geonosis 1.05:1,
+   drifts 1.15:1, colosseum 1.32:1, against an accessibility floor of 3:1 for a
+   graphical object. Force reads because violet is off-palette and Support
+   reads because brass is; vitality is the one bar whose colour the game also
+   paints its deserts with.
+
+   Recolouring it cannot fix it. Seven levels span orange sand, tan dust, red
+   lava, dark green canopy, white snow and grey stone; there is no single hue
+   that clears 3:1 against all of them, and picking one that clears the deserts
+   loses the snow.
+
+   So the fix is not the fill, it is the FRAME. `inset:2px` on the fill leaves
+   the void socket showing as a 2 px dark border INSIDE the 2 px stroke, at
+   every fill level including full — so the bar keeps a dark edge whatever it
+   is standing on, and the object reads even where its own colour does not.
+
+   AND THE RIM IS TWO TONES, because one is not enough either. A near-black
+   frame answers the four bright grounds and dies on the three dark ones —
+   measured, frame against world: geonosis 3.72:1, drifts 4.48:1, colosseum
+   5.18:1, alpine 4.19:1, then wood 1.69:1, scoria 1.19:1 and mustafar 1.05:1.
+   There is no single value that clears 3:1 against both snow and lava. So the
+   shadow stack is a dark ring with a pale one outside it: on a bright ground
+   the dark ring separates, on a dark ground the pale one does, and the bar has
+   an edge on all seven without any of them being re-lit.
+
+   AND BOTH RINGS ARE OPAQUE, which is the third measurement rather than the
+   second. At .5 and .42 alpha they blended toward whatever they were over, so
+   on the ONE ground that is neither bright nor dark — alpine's mid-grey snow
+   at (132,131,134) — the dark ring sampled (72,72,74) and the pale one
+   (127,127,131), and the best of the two was 1.70:1. A rim that takes the
+   colour of the thing it is supposed to separate from is not a rim.
+
+   Measured opaque, 2 px each, on all seven grounds — the worst level is the
+   wood at 3.95:1 and the rest run 4.43 to 7.99. The dark ring carries the four
+   bright grounds (geonosis 4.43, colosseum 6.17, drifts 5.33, alpine's mid-grey
+   snow 4.99); the pale one carries the three dark ones (mustafar 7.14, scoria
+   7.99, wood 3.95). One ring each was 1 px, which is under the width a sampler
+   can find and under the width an eye reads as an edge. */
 .bar{position:relative;width:236px;height:13px;background:var(--void);border:2px solid var(--stroke);
+  box-shadow:0 0 0 2px #12100c,0 0 0 4px rgba(238,229,212,.92),0 3px 0 rgba(0,0,0,.5);
   overflow:hidden}
-.bar i{position:absolute;inset:0;width:100%;transform-origin:left;transition:transform .12s linear}
+.bar i{position:absolute;inset:2px;width:auto;transform-origin:left;transition:transform .12s linear}
 /* The CHASE bar — what you just lost, draining a beat behind the real one.
    Under the fill rather than behind the whole box, so it reads inside the
    same socket instead of as a second bar. */
-.bar u{position:absolute;inset:0;width:100%;transform-origin:left;background:var(--danger);
+.bar u{position:absolute;inset:2px;width:auto;transform-origin:left;background:var(--danger);
   transition:transform .5s .25s cubic-bezier(.22,1,.36,1);opacity:.55}
 .bar.hp i{background:var(--accent);box-shadow:0 0 12px rgba(72,216,255,.55)}
 .bar.fc{width:190px}
@@ -1281,6 +1357,33 @@ button{font-family:inherit}
   transition:opacity .3s;pointer-events:none;white-space:normal;
   max-width:min(760px,calc(100vw - 32px))}
 .centermsg.on{opacity:1}
+/* ── THREE TIERS, AND ONLY ONE OF THEM OWNS THE MIDDLE ────────────────────
+   Both outside reviews found this independently: a greeting, a boss arriving
+   and "CHECK YOUR FIRE — CT-2042 IS ONE OF YOURS" were the same size, weight,
+   colour and position, so the player learns to read none of them. What
+   separates them here is PLACE first and colour second, because place is what
+   survives being read out of the corner of an eye.
+
+   flavour — where you are, what wave cleared, a lesson learned. Down at 70%,
+     under the fight, at a third the type. It may be missed and nothing is
+     lost, which is the definition of the tier.
+   threat  — something on the field is hurting you or your line. Keeps the
+     upper third and takes the ember edge, so it reads as a warning without
+     being an emergency.
+   alarm   — YOU are doing the damage. The only tier that earns the middle of
+     the screen, and it is the only one with a rule on it in `HUD.message`
+     shortening how long it stays. */
+.centermsg.flavour{top:70%}
+.centermsg.flavour b{font-size:clamp(13px,2.1vw,19px);letter-spacing:.14em;
+  text-shadow:2px 0 var(--stroke),-2px 0 var(--stroke),0 2px var(--stroke),0 -2px var(--stroke)}
+.centermsg.flavour span{margin-top:6px;font-size:9px;background:var(--panel-2);color:var(--ink)}
+.centermsg.threat b{text-shadow:3px 0 var(--stroke),-3px 0 var(--stroke),0 3px var(--stroke),
+  0 -3px var(--stroke),0 0 40px rgba(210,69,44,.75);color:#ffd9c8}
+.centermsg.threat span{background:var(--danger);color:#1a0d08}
+.centermsg.alarm{top:38%}
+.centermsg.alarm b{color:#fff;text-shadow:3px 0 var(--danger),-3px 0 var(--danger),
+  0 3px var(--danger),0 -3px var(--danger),0 0 52px rgba(210,69,44,.95)}
+.centermsg.alarm span{background:var(--danger);color:#fff}
 .centermsg b{display:block;font-size:clamp(20px,4.6vw,38px);overflow-wrap:break-word;font-weight:800;letter-spacing:.06em;text-transform:uppercase;
   text-shadow:3px 0 var(--stroke),-3px 0 var(--stroke),0 3px var(--stroke),0 -3px var(--stroke),
     0 0 44px rgba(72,216,255,.7)}
@@ -1520,7 +1623,7 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
 .muster-list{max-height:min(46vh,420px);overflow-y:auto;border:2px solid var(--stroke);
   background:var(--panel);clip-path:var(--cut-sm);padding:4px 0 6px;
   -webkit-mask-image:none;mask-image:none;scrollbar-width:thin;
-  scrollbar-color:var(--panel-hi) transparent}
+  scrollbar-color:var(--panel-hi) var(--void)}
 .muster-list::-webkit-scrollbar{width:8px}
 .muster-list::-webkit-scrollbar-thumb{background:var(--panel-hi);border:2px solid var(--stroke)}
 .muster-foot{display:flex;align-items:center;gap:22px;margin-top:20px;padding-top:14px;
@@ -1607,7 +1710,10 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
   0 -2px var(--stroke),0 0 44px rgba(255,85,64,.6)}
 
 @media (max-width:820px){
-  .panel{flex-direction:column;overflow-y:auto}
+  /* The whole panel becomes the scroller on a narrow frame, so it takes the
+     reserved track too — see the note on `.col`. */
+  .panel{flex-direction:column;overflow-y:auto;
+    scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:var(--panel-hi) var(--void)}
   .col.narrow{flex:none}
   .hud-tl,.hud-tr{top:16px}.hud-tl{left:16px}.hud-tr{right:16px}
   .hud-bl{left:16px;bottom:18px}.hud-br{right:16px;bottom:18px}
@@ -1677,7 +1783,21 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
   transition:transform .18s cubic-bezier(.22,1,.36,1)}
 
 /* ── key bindings ────────────────────────────────────────────────────── */
-.bindlist{display:flex;flex-direction:column;gap:2px;max-height:330px;overflow-y:auto;padding-right:6px}
+.bindlist{display:flex;flex-direction:column;gap:2px;max-height:330px;overflow-y:auto;padding-right:6px;
+  scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:var(--panel-hi) var(--void)}
+.bindlist::-webkit-scrollbar{width:8px;background:var(--void)}
+.bindlist::-webkit-scrollbar-thumb{background:var(--panel-hi);border:2px solid var(--stroke)}
+/* THE SAME TRACK EVERYWHERE ELSE THAT SCROLLS. Same defect, same fix — a
+   scroller whose bar has no reserved width is a scroller a player has no
+   reason to believe in. The databank's two panes and the muster's shelves are
+   the deepest of them. */
+.muster-units,.muster-list,#pause .pause-wrap,#med-field,.med-detail{
+  scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:var(--panel-hi) var(--void)}
+.muster-units::-webkit-scrollbar,.muster-list::-webkit-scrollbar,#pause .pause-wrap::-webkit-scrollbar,
+#med-field::-webkit-scrollbar,.med-detail::-webkit-scrollbar{width:8px;background:var(--void)}
+.muster-units::-webkit-scrollbar-thumb,.muster-list::-webkit-scrollbar-thumb,
+#pause .pause-wrap::-webkit-scrollbar-thumb,#med-field::-webkit-scrollbar-thumb,
+.med-detail::-webkit-scrollbar-thumb{background:var(--panel-hi);border:2px solid var(--stroke)}
 .bindlist .grp{font:var(--mono);font-size:9px;letter-spacing:.26em;text-transform:uppercase;
   color:var(--dimmer);margin:12px 0 4px}
 .bindlist .grp:first-child{margin-top:0}
@@ -1729,7 +1849,7 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
    the same class and is a held key, not a card you reach for. */
 #pause .pause-wrap{max-height:92vh;overflow-y:auto;overflow-x:hidden;
   width:min(420px,92vw);padding:0 10px 10px;
-  scrollbar-width:thin;scrollbar-color:var(--panel-hi) transparent}
+  scrollbar-width:thin;scrollbar-color:var(--panel-hi) var(--void)}
 #pause .pause-wrap::-webkit-scrollbar{width:8px}
 #pause .pause-wrap::-webkit-scrollbar-thumb{background:var(--panel-hi);border:2px solid var(--stroke)}
 
@@ -1770,9 +1890,12 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
 
 /* The forge is now a character creator and does not fit a screen; the preview
    beside it must not scroll away with it. */
-.panel .col.scroll{overflow-y:auto;padding-right:10px}
-.panel .col.scroll::-webkit-scrollbar{width:6px}
-.panel .col.scroll::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px}
+.panel .col.scroll{overflow-y:auto;padding-right:10px;scrollbar-gutter:stable}
+/* The 6 px rounded --line sliver was the odd one out — every other scroller in
+   the interface is an 8 px panel-hi chip inside 2 px of ink, and this one was
+   drawn in the language of a web page. */
+.panel .col.scroll::-webkit-scrollbar{width:8px;background:var(--void)}
+.panel .col.scroll::-webkit-scrollbar-thumb{background:var(--panel-hi);border:2px solid var(--stroke);border-radius:0}
 
 /* ══════════════════════════════════════════════════════════════════════
    THE MEDITATION — the Holocron.
@@ -1835,7 +1958,7 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
   grid-template-columns:repeat(auto-fit,minmax(238px,1fr));
   border:2px solid var(--stroke);clip-path:var(--cut);
   background:linear-gradient(170deg,rgba(58,44,34,.62),rgba(21,11,6,.82) 72%);
-  scrollbar-width:thin;scrollbar-color:var(--panel-hi) transparent}
+  scrollbar-width:thin;scrollbar-color:var(--panel-hi) var(--void)}
 .hol-plate{border:2px solid var(--stroke);background:var(--panel);clip-path:var(--cut);
   box-shadow:var(--stamp);padding:9px 9px 10px;min-width:0}
 .hol-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
@@ -1914,7 +2037,28 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
 /* ── the kneel ────────────────────────────────────────────────────────
    A prompt, not a button: it appears when a communion is actually possible
    (still, grounded, nothing near you) and fills while the key is held. */
-#commune{position:fixed;left:50%;bottom:16%;transform:translateX(-50%);z-index:8;
+/* THE KNEEL PROMPT, AND IT WAS UNDER THE POWER WHEEL.
+   Reported from a screenshot as the tooltip reading "Hold L Ctrl to" and
+   stopping — the rest of the sentence was behind the ability bar, which is why
+   the one piece of in-play instruction the game gives looked truncated.
+
+   It is the same disease `.commune-entry` above was cured of, one screen along:
+   a CENTRED element and a RIGHT-ANCHORED one measured from different origins,
+   so whether they collide depends on the window. `.powers` is
+   `max-width:min(566px,100vw-48px)` anchored right, so on anything under about
+   1500 px it reaches past the middle of the screen. Measured against the real
+   page, overlapping client-rect area: 1100x620 6670 px², 1280x720 1820 px²,
+   1366x768 485 px², and 0 px² only at 1920x1080.
+
+   Horizontal separation cannot fix it — the prompt is 361 px wide and centred,
+   so anything reaching in from the right collides — so the fix is vertical and
+   it is a FLOOR rather than a percentage. The wheel's own top edge is
+   bottom:30px plus two 46px rows and a 6px gap = 128px; `max(150px, 16%)`
+   clears that at every size and keeps the original proportional placement on
+   the screens where it was already clear. `white-space:nowrap` is the belt: a
+   prompt that wrapped to two lines would reach down into the wheel again. */
+#commune{position:fixed;left:50%;bottom:max(150px, 16%);transform:translateX(-50%);z-index:8;
+  white-space:nowrap;
   display:flex;align-items:center;gap:10px;padding:8px 15px 9px 11px;
   font:var(--mono);font-weight:700;letter-spacing:.06em;color:var(--ink);
   background:var(--panel);border:2px solid var(--stroke);clip-path:var(--cut-sm);

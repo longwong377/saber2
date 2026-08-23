@@ -492,8 +492,8 @@
         <label class="check"><input type="checkbox" id="opt-invert"> Invert blade Y</label>
         <label class="check"><input type="checkbox" id="opt-firstperson"> Start in first person</label>
         <label class="check"><input type="checkbox" id="opt-bladehold"> Blade holds position</label>
-        <p class="hint">Held, the blade stays where your last flick left it instead of easing back to the
-          ready guard. The controller has always been able to do this and nothing could ask it to.</p>
+        <p class="hint">On, the blade stays where your last flick left it. Off, it eases back to the ready
+          guard between swings.</p>
         <h3 style="margin-top:22px">Deflection aiming</h3>
         <div id="opt-deflect" class="difflist"></div>
         <h3 style="margin-top:22px">The Force</h3>
@@ -502,41 +502,30 @@
         <p class="hint">Drain at 0 is unlimited Force. Power scales reach, lift and impulse together.</p>
         <h3 style="margin-top:22px">The Holocron</h3>
         <div id="opt-holocron" class="difflist"></div>
-        <p class="hint">Earned is the game: Insight is a run currency, you kneel to spend it, and nothing
-          carries over. The other two are for looking at what is in here — a whole run can end without
-          ever meeting Force lightning or Compel, and a power nobody can reach is a power nobody can tell
-          you is broken.</p>
+        <p class="hint">How much of the lattice you can reach. <b>Earned</b> is the run currency: you kneel
+          at a holocron and spend Insight, and nothing carries to the next run. <b>Open</b> starts every deploy
+          with a deep purse; prices still climb. <b>Everything woken</b> hands you every facet before the first
+          wave. Changing this takes effect on your next deploy, not this one.</p>
         <!-- YOUR ARMY. Both of these had a reader in game/Command.js and no
              control anywhere, which is how they escaped both dead-control
              checks: those iterate DEFAULT_SETTINGS, and neither key was in it. -->
         <h3 style="margin-top:22px">Your army</h3>
         <label class="slider">Team damage <input type="range" id="opt-teamdamage" min="0" max="1" step="0.05" value="0.35"><b></b></label>
-        <p class="hint">How much of <b>your own</b> damage reaches your own troops. The physics is never
-          scaled — a push throws your sergeant exactly as far as it throws a B1, a grip lifts him, and
-          the blade goes through him whatever this says. What this scales is the damage that lands.
-          At 0 you can ragdoll the whole line into the air and lose nobody; at 100% a careless sweep
-          costs you a name off the roster.</p>
+        <p class="hint">How much of your own damage reaches your own troops. At 0 a sweep through the line
+          hurts nobody; at 100% it can cost you a name off the roster. It scales damage only — a push still
+          throws your sergeant as far as it throws a B1, and a grip still lifts him.</p>
         <label class="slider">Allied troops <input type="range" id="opt-allies" min="0" max="24" step="1" value="0"><b></b></label>
-        <p class="hint">"I should be able to choose to spawn in allied troops on <b>any map in any mode</b>
-          if I so wish." Allies used to be a property of the mode — the roster, the ranks, the permadeath,
-          the morale and the seven formations were reachable from Command, Skirmish and Campaign and from
-          nowhere else, on one planet. This brings a <b>contingent</b> into any other mode, on any ground:
-          the same named troopers, the same orders on the same keys, the same gone-for-good when they fall.
-          It is not a campaign — there are no areas, no muster screen and no victory card, and the mode you
-          picked still ends the way it always did. The wave is composed against the army standing in it, so
-          ten men buy you a bigger fight rather than an easier one, and losses are made good slowly: one
-          replacement every two waves you clear, never past the number you set here. <b>0 is off</b>, and
-          Command, Skirmish and Campaign ignore this entirely — their army is the mode.</p>
+        <p class="hint">How many named troopers deploy with you, in any mode on any ground. They carry ranks
+          and serials, take the seven formation orders on the order keys, and stay dead when they fall. Waves
+          are composed against the army standing in them, so more men mean a bigger fight, not an easier one;
+          losses are replaced one man every two waves cleared, never above the number set here. <b>0 is off.</b>
+          Command, Skirmish and Campaign ignore this — their army comes with the mode.</p>
         <label class="check"><input type="checkbox" id="opt-command-versus"> Meet another commander</label>
-        <p class="hint"><b>Command only</b> — a meeting needs a second commander and no other mode has
-          one, so this is ignored in Skirmish and Campaign rather than leaving them with nobody to
-          fight. Needs a <b>session</b>, and it changes what Command is. Instead of your army
-          against a composed horde across five areas, it is <b>one battle against another player's
-          army</b> — two rosters, two armies, deployed a hundred and twenty metres apart on the plain
-          and walking toward each other. Two Jedi do not both get the Republic; whoever joined first
-          keeps the army their order names and the other takes the opposing one. Permadeath is the
-          same, which is the point: the field belongs to whichever side still has somebody standing,
-          and every name you lose taking it is gone.</p>
+        <p class="hint"><b>Command only, and needs a session.</b> On, Command becomes one battle against
+          another player's army instead of five areas against a composed horde: two rosters deployed 120&nbsp;m
+          apart and walking toward each other. Whoever joined the session first keeps the army their order
+          names; the other takes the opposing one. Permadeath still applies — the field goes to whichever
+          side still has somebody standing. Skirmish and Campaign ignore this.</p>
         <!-- THE BATTLE. Skirmish only; Campaign authors its own missions, which
              is the whole difference between the two — see Levels.CAMPAIGNS. -->
         <h3 style="margin-top:22px">The battle</h3>
@@ -545,15 +534,12 @@
         <label class="slider">Your line <input type="range" id="opt-sk-strength" min="10" max="24" step="1" value="10"><b></b></label>
         <label class="slider">Pressure <input type="range" id="opt-sk-pressure" min="0" max="4" step="1" value="0"><b></b></label>
         <label class="check"><input type="checkbox" id="opt-sk-rotate" checked> Change ground between engagements</label>
-        <p class="hint"><b>Skirmish</b> is one battle with an ending, fought over changing ground — as many
-          engagements as you say, on a different theatre each time, drawn from the run's seed so the same
-          number walks the same grounds. Pressure is which rung of the Geonosis advance the fight is held
-          at: it moves the enemy's budget, how heavy they come and what your muster can buy. Your line starts
-          at the ten the campaign opens with, because that is the smallest army the muster knows how to
-          raise — the slider cannot offer a number the battle would refuse. An engagement is a battle for
-          one piece of ground and takes as many cleared waves as you say, so the two top sliders together
-          are how long the whole thing is: three and three is the shipped nine-wave battle, nine and eight
-          is a seventy-two-wave grind over nine rounds of ground.</p>
+        <p class="hint"><b>Skirmish only.</b> An engagement is one piece of ground, cleared over the number
+          of waves set here, so the top two sliders multiply into the length of the whole battle: 3 and 3 is
+          the default nine waves, 9 and 8 is seventy-two. <b>Your line</b> is how many men you muster with.
+          <b>Pressure</b> is which rung of the Geonosis advance the fight is held at — it raises the enemy's
+          budget and how heavy they come, and changes what your muster can buy. With the last box ticked each
+          engagement is fought on a different theatre, drawn from the run's seed.</p>
         <h3 id="h-standing-order" style="margin-top:22px">Standing order</h3>
         <div id="command-list" class="difflist"></div>
         <p class="hint">The formation your squads form up in at the start of every area. You can change
@@ -590,25 +576,21 @@
           battlefield behind it or a clean floor.</p>
         <label class="check"><input type="checkbox" id="opt-instant-spawn"> Instant arrivals</label>
         <p class="hint">Off, reinforcements are flown, walked or dropped in and you can see them coming.
-          On, they simply appear — cheaper, and the honest choice on a machine that cannot afford the
-          craft.</p>
+          On, they appear where they are needed, which costs far less to draw.</p>
         <label class="check"><input type="checkbox" id="opt-showperf"> Frame counter &amp; adapter</label>
-        <p class="hint">Frame time, 1% low and draw calls in the corner of the HUD — and the graphics
-          adapter and build id in the footer of this screen. Off by default because they are
-          instruments: a title screen that opens with a driver string is a bug report.</p>
+        <p class="hint">On, frame time, 1% low and draw calls sit in the corner of the HUD, and the graphics
+          adapter and build id appear in the footer of this screen.</p>
         <label class="check"><input type="checkbox" id="opt-grain" checked> Film grain</label>
         <label class="check"><input type="checkbox" id="opt-injury" checked> Injuries show on the body</label>
         <label class="check"><input type="checkbox" id="opt-shake" checked> Camera shake</label>
         <label class="check"><input type="checkbox" id="opt-slowmo" checked> Cinematic slow-motion</label>
         <label class="check"><input type="checkbox" id="opt-letterbox" checked> Letterbox bars</label>
         <label class="check"><input type="checkbox" id="opt-deathdrain" checked> Colour drains when you fall</label>
-        <p class="hint">Both are separate from Camera shake on purpose: with motion feedback off they are
-          the only thing on screen that tells you a boss has arrived, or that you died.</p>
+        <p class="hint"><b>Letterbox bars</b> close in when a boss arrives. <b>Colour drains</b> when you
+          fall. Both work with Camera shake off, and are the only signal for either event if it is.</p>
         <label class="slider">Controller rumble <input type="range" id="opt-rumble" min="0" max="1" step="0.05" value="1"><b></b></label>
-        <p class="hint">A kill, a blow taken and a deflection each drive the pad. A slider rather than a
-          box because rumble is the one piece of feedback here with a physical strength — 0 is silent
-          and 1 is what the game was tuned to give. Camera shake off silences the pad as well; this
-          scales what survives it.</p>
+        <p class="hint">How hard the pad kicks on a kill, a blow taken and a deflection. 0 is silent, 1 is
+          full strength. Camera shake off silences the pad too; this scales whatever is left.</p>
         <h3 style="margin-top:22px">Audio</h3>
         <label class="slider">Master <input type="range" id="opt-vol" min="0" max="1" step="0.02" value="0.8"><b></b></label>
         <!-- step 0.01 AND NOT 0.02, because the default is 0.45 and 0.45 is not
@@ -632,9 +614,9 @@
              speechSynthesis rather than offering a control that does nothing. -->
         <h3 style="margin-top:22px">Voice lines</h3>
         <div id="opt-speech" class="difflist"></div>
-        <p class="hint">Nothing here is a recording either way: <b>Spoken</b> is your browser's own
-          speech synthesiser saying the same lines the larynx says wordlessly, which is real words at
-          no download on a game that ships no audio but the score.</p>
+        <p class="hint"><b>Synthesised</b> is a wordless voice built in the browser. <b>Spoken</b> is your
+          browser's speech synthesiser saying the same lines in words. <b>Both</b> plays them together.
+          Neither is a recording, and neither downloads anything.</p>
         <label class="check"><input type="checkbox" id="opt-voicelines" checked> Your own voice</label>
         <!-- Its own box rather than a clause of the one above: that one is the
              grunts and quips a body makes about the fight it is in, this one is
@@ -645,11 +627,10 @@
         <label class="check"><input type="checkbox" id="opt-forcevoice" checked> Force powers speak</label>
         <label class="check"><input type="checkbox" id="opt-enemyvoices" checked> Enemy voices</label>
         <label class="check"><input type="checkbox" id="opt-enemybody" checked> Enemy footfall, servos &amp; breath</label>
-        <p class="hint">Every Force power has three or four lines of its own and never says the same
-          one twice running &mdash; a shove falls, a pull rises, a rend is wrenched down almost an octave.
-          Nothing here is a recording. Every voice is built from an oscillator, two formant
-          filters and a breath of noise at the moment it is needed — which is why they can be told apart
-          by measuring them, and why turning the last box off is worth a few frames on a slow machine.</p>
+        <p class="hint">Every Force power has three or four lines of its own and never repeats one twice
+          running — a shove falls, a pull rises, a rend is wrenched down almost an octave. Every voice is
+          built in the browser as it is needed rather than played back, so the last box is worth a few frames
+          on a slow machine.</p>
       </div>
 
       <div class="col">
@@ -666,16 +647,15 @@
         <label class="slider">Size <input type="range" id="opt-ret-size" min="0.5" max="2.2" step="0.05" value="1"><b></b></label>
         <label class="slider wide">Colour <input type="range" id="opt-ret-color" min="0" max="7" step="1" value="0"><b></b></label>
         <div class="ret-preview"><svg id="ret-demo" viewBox="0 0 100 100" aria-hidden="true"></svg></div>
-        <p class="hint">It still turns red when something is close enough to kill you — a colour that could
-          hide that would be a customisation which removes information.</p>
+        <p class="hint">Whatever colour you pick, it still turns red when something is close enough to kill
+          you.</p>
 
         <h3 style="margin-top:24px">Interface</h3>
         <label class="check"><input type="checkbox" id="opt-popups" checked> Event popups</label>
         <p class="hint">Killstreaks, deflection runs and a boss arriving, in the score column of the HUD.</p>
         <label class="check"><input type="checkbox" id="opt-minimap" checked> Minimap</label>
         <p class="hint">Contacts around you, heading-up, out to 42&nbsp;m — bosses warm, allies green, and
-          anything further away pinned to the rim so you still know it is there. Off, it costs nothing at
-          all rather than being drawn invisible.</p>
+          anything further away pinned to the rim. Off, it is not drawn at all.</p>
         <!-- WHOSE NAME YOU SEE, and when. Note #16. The list is built by
              Menu._buildTroopNames off one table, so a fourth mode is one row. -->
         <h3 style="margin-top:20px;font-size:11px">Names over your troops</h3>
@@ -694,10 +674,9 @@
           <b>Allied troops</b> above is off zero. Rank, name, health and nerve, over the head of the man
           carrying them.</p>
         <label class="check"><input type="checkbox" id="opt-minimap-sense" checked> Read the map with the Force</label>
-        <p class="hint">On, the map is what <b>Force sense</b> shows you: hold the power open and it stays
-          lit while the pool drains, or tap it for a reading that fades over a few seconds. It costs what
-          the power costs and not a Force more. Off, it is simply always there — which is what it was, and
-          is the answer if managing a power mid-fight is not something you want to do.</p>
+        <p class="hint">On, the map only lights when you use <b>Force sense</b>: hold the power and it stays
+          lit while the pool drains, or tap it for a reading that fades over a few seconds. It costs what the
+          power costs and no more. Off, the map is always there and costs nothing.</p>
       </div>
     </section>
 
@@ -823,7 +802,17 @@
          is how it came to be written in one direction only — one Training
          deploy renamed this counter LESSON for the rest of the session. -->
     <div class="wave-big"><span id="hud-wave-word">WAVE</span> <b id="hud-wave">1</b></div>
-    <div id="hud-remaining" class="wave-sub"></div>
+    <!-- THE BIG NUMBER IS THE ONE YOU ACT ON.
+         The wave index was 38 px of white with an ink outline and the count of
+         things still trying to kill you was 10.5 px of --dim under it. Those
+         are the wrong way round: the wave index changes five times in a fight
+         and tells you nothing you can act on, and the count is the whole
+         question of whether to push or hold. So the count is the figure now
+         and the wave is its caption. Split into a number and a word because a
+         hierarchy needs two elements to be a hierarchy — the branches below
+         write `{n, w}`, and a branch with no number ("attune", "free
+         practice") leaves the b empty and the word carries the line. -->
+    <div id="hud-remaining" class="wave-sub"><b id="hud-left"></b><span id="hud-left-word"></span></div>
   </div>
 
   <div class="hud-tr">

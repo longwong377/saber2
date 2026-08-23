@@ -5527,7 +5527,7 @@ export class CommandDirector extends WaveDirector {
     this._ffT = (this._ffT || 0);
     if (this._ffT > 0) return;
     this._ffT = 6;
-    this.world?.notify?.('CHECK YOUR FIRE', `${e.trooper.name} is one of yours`);
+    this.world?.notify?.('CHECK YOUR FIRE', `${e.trooper.name} is one of yours`, 'alarm');
   }
 
   _announceRoster() { this.onRoster?.(this.roster.summary()); }

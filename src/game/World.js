@@ -953,7 +953,7 @@ export class World {
      * `unlockAt: 1`.
      */
     this.director.onWaveStart = (w, n) => {
-      this.notify(`WAVE ${w}`, `${n} contacts inbound`);
+      this.notify(`WAVE ${w}`, `${n} contacts inbound`, 'threat');
       audio.ui('wave');
       audio.setMusicState({ wave: w, active: true, boss: !!this.director.isBossWave?.(w) });
     };
@@ -2554,7 +2554,7 @@ export class World {
      * kick is now on the world's clock too.
      */
     if (e.A?.boss && this.player?.isLocal && !this._bossFrame) {
-      this.notify(String(e.A.label || 'A CHALLENGER').toUpperCase(), 'it has come for you');
+      this.notify(String(e.A.label || 'A CHALLENGER').toUpperCase(), 'it has come for you', 'threat');
       this._bossFrame = 2.6;
       this.engine?.setBars?.(0.075);
       if (this.feelOn?.('shake') !== false) {
@@ -2985,8 +2985,27 @@ export class World {
   /** Anything a lesson might be watching for. Free outside the dojo. */
   report(ev) { if (this.director && this.director.report) this.director.report(ev); }
 
-  notify(title, sub) {
-    this.onNotify?.(title, sub);
+  /**
+   * THE BANNER, AND WHICH OF THREE IT IS.
+   *
+   * `kind` was not here, and everything the game says used one voice: a
+   * greeting, a boss arriving and "CHECK YOUR FIRE — CT-2042 IS ONE OF YOURS"
+   * were the same size, the same weight, the same colour and the same place.
+   * Two outside reviewers found that independently and both drew the same
+   * conclusion, which is the one that matters: a player who cannot tell a
+   * pleasantry from an alarm learns to read neither.
+   *
+   *   'flavour'  where you are, what wave it is, a lesson learned. Out of the
+   *              sightline, small, and it may be missed with nothing lost.
+   *   'threat'   something on the field is now hurting you or your line.
+   *   'alarm'    YOU are doing the damage. The one tier that earns the middle
+   *              of the screen.
+   *
+   * Absent, it is `flavour` — because most of these are, and because a caller
+   * that has not thought about it is not making a claim on the player's
+   * attention. */
+  notify(title, sub, kind = 'flavour') {
+    this.onNotify?.(title, sub, kind);
   }
 
   update(rawDt, input) {

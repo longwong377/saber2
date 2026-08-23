@@ -1009,6 +1009,8 @@ export class HUD {
       level: root.getElementById('hud-level'),
       diff: root.getElementById('hud-diff'),
       remaining: root.getElementById('hud-remaining'),
+      left: root.getElementById('hud-left'),
+      leftWord: root.getElementById('hud-left-word'),
       hp: root.getElementById('bar-hp'),
       hpGhost: root.getElementById('bar-hp-ghost'),
       force: root.getElementById('bar-force'),
@@ -1861,15 +1863,32 @@ export class HUD {
      */
     el.wave.textContent = world.director.wave;
     if (el.waveWord) el.waveWord.textContent = world.training ? 'LESSON' : 'WAVE';
+    /* ── the figure and the word under it ─────────────────────────────
+     *
+     * One line used to carry both ("7 remaining") in one 10.5 px string, under
+     * a 38 px wave index. The figure a player reads while deciding whether to
+     * push is how many are left, so it is the big one now and the wave index
+     * is the caption above it — see the note in index.html.
+     *
+     * Two elements, not one string, because that is what a hierarchy needs.
+     * The `n` may be empty ('attune', 'free practice'): the word then carries
+     * the whole line, and `.wave-sub:has(b:empty)` lifts it back up to where
+     * the figure would have sat so the corner does not shift.
+     */
+    let n = '', w = '';
     if (world.training) {
       const st = world.director.state();
-      el.remaining.textContent = st.need === Infinity ? 'free practice' : `${st.progress} of ${st.need}`;
+      if (st.need === Infinity) w = 'free practice';
+      else { n = st.progress; w = `of ${st.need}`; }
+    } else if (world.director.active) {
+      n = hostilesLeft(world); w = n === 1 ? 'hostile left' : 'hostiles left';
+    } else if (world.director.intermission > 900) {
+      w = 'attune';
     } else {
-      const remaining = hostilesLeft(world);
-      el.remaining.textContent = world.director.active
-        ? `${remaining} remaining`
-        : (world.director.intermission > 900 ? 'attune' : `next wave in ${Math.ceil(world.director.intermission)}`);
+      n = Math.ceil(world.director.intermission); w = 'to next wave';
     }
+    if (el.left) { el.left.textContent = n === '' ? '' : String(n); el.leftWord.textContent = w; }
+    else el.remaining.textContent = n === '' ? w : `${n} ${w}`;
 
     // ── powers
     //
@@ -2445,10 +2464,18 @@ export class HUD {
    * `<img src="/nope" onerror=…>` parsed into the live DOM with its handler
    * attached and the browser went and fetched the URL.
    */
-  message(title, sub, duration = 2.4) {
-    this.el.center.innerHTML = `<b>${esc(title)}</b>${sub ? `<span>${esc(sub)}</span>` : ''}`;
-    this.el.center.classList.add('on');
-    this.centerTimer = duration;
+  message(title, sub, duration, kind = 'flavour') {
+    /* THREE TIERS, ONE ELEMENT. The class is what the stylesheet reads; the
+     * DURATION is part of the tier too, because an alarm that hangs for the
+     * same 2.4 s as a level name is an alarm you scroll past. See World.notify
+     * for what each tier means. */
+    const k = kind === 'alarm' || kind === 'threat' ? kind : 'flavour';
+    const el = this.el.center;
+    el.classList.remove('flavour', 'threat', 'alarm');
+    el.classList.add(k);
+    el.innerHTML = `<b>${esc(title)}</b>${sub ? `<span>${esc(sub)}</span>` : ''}`;
+    el.classList.add('on');
+    this.centerTimer = duration ?? (k === 'alarm' ? 1.8 : k === 'threat' ? 2.6 : 2.4);
   }
 
   floating(worldPos, text, color = '#fff') {

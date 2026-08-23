@@ -757,7 +757,7 @@ export class GunPit {
         this._down = 0;
         if (!this.taken) {
           this.warded = true;
-          this.world?.notify?.('THE SHIELD IS BACK', 'the emplacement is sealed again');
+          this.world?.notify?.('THE SHIELD IS BACK', 'the emplacement is sealed again', 'threat');
         }
       }
     }
@@ -894,7 +894,7 @@ export class GunPit {
      */
     if (!this._told) {
       this._told = true;
-      this.world?.notify?.('EMPLACED GUN', 'the revetment is firing on your line');
+      this.world?.notify?.('EMPLACED GUN', 'the revetment is firing on your line', 'threat');
     }
     if (this.world.netMode === 'client') return;
     /* Aim at the chest and lead the target, exactly as `Enemy._shoot` does:

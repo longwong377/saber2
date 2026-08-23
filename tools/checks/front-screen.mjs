@@ -288,6 +288,52 @@ export async function run({ check, assert }) {
     } finally { close(); }
   });
 
+  check('menu: every scroller reserves a track, so a cut page reads as a scrolling one', () => {
+    /**
+     * MEASURED IN CHROMIUM AT 1100x620, EVERY TAB: fifteen of the menu's
+     * seventeen scrollers reported `offsetWidth - clientWidth === 0`. The Codex
+     * held 4310 px of text in a 355 px window and Options 4582 px — 92% of each
+     * below the fold behind an overlay scrollbar with a TRANSPARENT track, over
+     * a dark panel, at 0.16 alpha of white. Two outside readers, given the game
+     * and no notes, both reported the same thing: every tab in the menu looks
+     * like a page that has been cut off.
+     *
+     * This had already been diagnosed and fixed ONCE, on
+     * `.col.narrow.pinned>.col-scroll`, and the fix never left that selector —
+     * which is why this check is written against the whole stylesheet rather
+     * than against the four scrollers that were on screen when it was written.
+     * Every rule that turns scrolling on has to reserve the track, and no rule
+     * anywhere may paint that track transparent again.
+     */
+    const bald = CSS.replace(/\/\*[\s\S]*?\*\//g, '');   // a comment holds braces
+    const scrollers = [];
+    for (const m of bald.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      if (!/overflow(-y)?:\s*(auto|scroll)/.test(m[2])) continue;
+      scrollers.push({ sel: m[1].trim().split('\n').pop().trim(), body: m[2] });
+    }
+    assert(scrollers.length >= 10, `only ${scrollers.length} scrolling rules found — the scan is wrong`);
+
+    /* The reservation may be stated on the scrolling rule itself or on a
+     * grouped one — `.muster-units,.muster-list,#pause .pause-wrap,…` is one
+     * rule for five scrollers and is the right way to write it — so the test is
+     * membership in the set of selectors SOME rule reserves a track for. */
+    const reserved = new Set();
+    for (const m of bald.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      if (!/scrollbar-gutter:\s*stable/.test(m[2])) continue;
+      for (const one of m[1].split(',')) reserved.add(one.trim().split('\n').pop().trim());
+    }
+    const bare = scrollers.filter((s) => !reserved.has(s.sel)).map((s) => s.sel);
+    assert(!bare.length,
+      `${bare.length} scrolling rule(s) reserve no track, so a full column reads as a cut one: `
+      + bare.join(', '));
+
+    const seeThrough = [...CSS.matchAll(/scrollbar-color:\s*[^;]*transparent[^;]*;/g)].map((m) => m[0]);
+    assert(!seeThrough.length,
+      'a scrollbar track painted transparent over a dark panel is a scrollbar nobody can see: '
+      + seeThrough.join(' '));
+    return `${scrollers.length} scrolling rules, every one with a reserved track, none transparent`;
+  });
+
   check('deploy: the mode you are about to deploy into is scrolled into view, clear of the fade', () => {
     const { menu, doc, close } = menuOn();
     try {

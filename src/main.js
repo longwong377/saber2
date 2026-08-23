@@ -347,7 +347,7 @@ async function buildWorld(levelKey, onProgress = null, runSeed = null) {
   world.difficulty = DIFFICULTY[settings.difficulty] || DIFFICULTY.knight;
   if (session?.difficulty) world.difficulty = DIFFICULTY[session.difficulty] || world.difficulty;
 
-  world.onNotify = (t, s) => hud.message(t, s);
+  world.onNotify = (t, s, kind) => hud.message(t, s, undefined, kind);
   world.onFloating = (p, text, color) => hud.floating(p, text, color);
   world.onHitmark = (p, kind, bone) => hud.hitmark(p, kind, bone);
   /**
