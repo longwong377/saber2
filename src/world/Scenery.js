@@ -4945,6 +4945,19 @@ export class Atmosphere {
     this._gustBase = wind.gustiness;
     this._fog = scene.fog || null;
     this._fogBase = this._fog ? this._fog.density : 0;
+    /**
+     * A SCALE ON THE LEVEL'S OWN HAZE, for anything that legitimately takes the
+     * air away — which today is one thing: the insertion, in orbit, where there
+     * is no atmosphere to be hazy.
+     *
+     * It has to live HERE rather than in the caller because this class rewrites
+     * `fog.density` from `_fogBase` every frame; the extraction's own write
+     * landed earlier in the frame and was overwritten before it was ever
+     * rendered, which is why 2400 m up still looked like a dust storm. Scaling
+     * the BASE means the weather goes on doing its own arithmetic on top,
+     * correctly, all the way down through the entry.
+     */
+    this.fogScale = 1;
     this._sunBase = this.sun ? this.sun.intensity : 0;
     this._sunTint = this.sun ? this.sun.color.clone() : null;
     this._hemiBase = this.hemi ? this.hemi.intensity : 0;
@@ -5009,8 +5022,9 @@ export class Atmosphere {
     // running in. Weather may only ever ADD to what the level authored — and
     // Terrain's indoor test now depends on exactly that being true.
     if (this._fog) {
-      this._fog.density = Math.max(this._fogBase,
-        Math.min(FOG_STORM_LIMIT, this._fogBase * (1 + W.fogGain * I)));
+      const base = this._fogBase * (this.fogScale ?? 1);
+      this._fog.density = Math.max(base,
+        Math.min(FOG_STORM_LIMIT, base * (1 + W.fogGain * I)));
     }
     // ── light. A dust storm is not a dimmer, it is a converter: it takes the
     // sun's beam apart and hands it back as sky. Direct falls, fill rises, and
@@ -5072,7 +5086,7 @@ export class Atmosphere {
     // Put back everything the weather borrowed. The next level re-authors all
     // of it anyway, but the main menu runs on whatever the last frame left
     // behind, and a menu lit by the tail of a dust storm is a bug report.
-    if (this._fog) this._fog.density = this._fogBase;
+    if (this._fog) this._fog.density = this._fogBase * (this.fogScale ?? 1);
     if (this.sun) {
       this.sun.intensity = this._sunBase;
       if (this._sunTint) this.sun.color.copy(this._sunTint);

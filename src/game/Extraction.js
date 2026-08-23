@@ -275,6 +275,20 @@ export const FALL = 9.0;
  */
 export const DEPART = 5.5;
 
+/**
+ * How far the camera can see while the ship is outside the atmosphere, and what
+ * it sees when there is nothing there.
+ *
+ * The capital ship recedes to CAPITAL_FAR (5200 m), so the far plane has to
+ * clear that with room to spare or the shot the whole sequence exists for is
+ * clipped away — see `_setSpace`. Nothing else is drawn out there: the level's
+ * geometry is 2400 m below and its own fog is off, so a far plane this large
+ * costs depth precision and no fill.
+ */
+export const SPACE_FAR = 24000;
+/** Not black — the darkest the game's own palette goes, so space belongs to it. */
+export const SPACE_BG = new THREE.Color(0x05060b);
+
 /** The cruise, and the shortest a skipped cruise can be. */
 export const TRANSIT = 11.0;
 export const TRANSIT_MIN = 4.6;
@@ -680,11 +694,91 @@ export class ExtractionDirector {
    * scene: the world under the ship IS the battlefield, so "the planet getting
    * larger and larger" is the descent, not an effect.
    */
+  /**
+   * ══ MAKE ORBIT LOOK LIKE ORBIT ═════════════════════════════════════════
+   *
+   * The whole sequence has existed and been correct for a while — 2400 m up,
+   * the capital receding from 520 m to 5200, stars on, an atmosphere entry with
+   * a heat glow — and none of it could be SEEN. Reported as "you start in the
+   * atmosphere and never are in space or see your capital ship getting smaller
+   * in the distance", and a screenshot of the real game at 2400 m shows exactly
+   * that: a bright daytime sky with cloud decks, no stars readable against it,
+   * no capital ship and no planet.
+   *
+   * Three things were in the way, none of them the flight:
+   *
+   *   THE FAR PLANE is the quality tier's `viewDist` — 380/520/700/900 m — and
+   *     nothing ever raised it. The capital ship spends its whole recession
+   *     between 520 m and 5200 m, so it was clipped for all but the first
+   *     instant of the shot that is the entire point of the sequence.
+   *
+   *   THE FOG is the level's own, and at geonosis' 0.0060 (0.0097 with the
+   *     weather gain on it) the air is opaque long before 700 m. Space has no
+   *     air in it.
+   *
+   *   THE SKY is the level's Preetham dome with a two-layer cloud deck, drawn
+   *     at full brightness whatever altitude the camera is at. 900 stars behind
+   *     a lit daytime sky are 900 invisible stars.
+   *
+   * So the three are taken for the two phases that are supposed to be outside
+   * the atmosphere, and handed back on the way down. `k` is 0 in vacuum and 1
+   * in air, so `_entry` can simply pour it back in as the ship falls and the
+   * sky, the haze and the range all arrive together.
+   */
+  _setSpace(k) {
+    const eng = this.world?.engine;
+    if (!eng) return;
+    const cam = eng.camera;
+    const scene = eng.scene;
+    if (this._sky0 === undefined) {
+      // Taken once, on the way out, so a rotate or a skip cannot restore a
+      // value this method wrote to itself.
+      this._sky0 = {
+        far: cam?.far ?? 700,
+        fog: scene?.fog ? scene.fog.density : null,
+        sky: eng.sky?.visible ?? true,
+        dome: eng.skyDome?.mesh?.visible ?? eng.skyDome?.visible ?? true,
+        bg: scene?.background ?? null,
+      };
+    }
+    const S = this._sky0;
+    const air = clamp(k, 0, 1);
+    if (cam) {
+      // Far enough to hold the capital at its 5200 m station, with room over it.
+      const far = lerp(SPACE_FAR, S.far, air * air);
+      if (Math.abs(cam.far - far) > 1) { cam.far = far; cam.updateProjectionMatrix(); }
+    }
+    /* Through `Atmosphere.fogScale`, not by writing `fog.density` here: that
+     * class rewrites the density from its own base every frame and runs after
+     * this one, so a direct write was overwritten before it was ever rendered.
+     * Scaling the base leaves the weather's own arithmetic intact on the way
+     * down. */
+    const atmo = this.world?.atmosphere;
+    if (atmo) atmo.fogScale = air * air;
+    if (scene?.fog && S.fog !== null && !atmo) scene.fog.density = S.fog * air * air;
+    // The sky and its clouds come back in the second half of the entry, which
+    // is where the atmosphere is thick enough to be a sky at all.
+    const lit = air > 0.45;
+    if (eng.sky) eng.sky.visible = S.sky && lit;
+    const dome = eng.skyDome?.mesh || eng.skyDome;
+    if (dome && 'visible' in dome) dome.visible = S.dome && lit;
+    if (scene) scene.background = lit ? S.bg : SPACE_BG;
+  }
+
+  /** Give the level its own air back, whatever happened to the flight. */
+  _restoreSpace() {
+    if (this._sky0 === undefined) return;
+    this._setSpace(1);
+    this._sky0 = undefined;
+  }
+
   _orbit(dt, ctx) {
     const g = this.group;
     if (!g) { this._enter('entry'); return; }
     this._thrust = 0.22;
     const k = clamp(this.t / ORBIT, 0, 1);
+    // Vacuum: no air, no sky, and far enough to hold the capital ship.
+    this._setSpace(0);
     /* A slow drift and a slow roll — a ship under way, not a ship parked. The
      * numbers are small because the frame of reference is the bay the player is
      * standing in, and a bay that pitches is a bay you fall out of. */
@@ -727,6 +821,10 @@ export class ExtractionDirector {
     const g = this.group;
     if (!g) { this._toFall(); return; }
     const k = clamp(this.t / ENTRY, 0, 1);
+    /* THE AIR ARRIVES, and it is the same `k` the stars fade and the heat
+     * shield lights on — so the sky, the haze and the view distance all come
+     * back together as one event rather than as three switches. */
+    this._setSpace(k);
     this._thrust = 0.35 + k * 0.55;
     const away = _v1.set(Math.cos(this.padYaw), 0, Math.sin(this.padYaw));
     /* Down and forward: the altitude comes off fast and the ship closes on the
@@ -757,6 +855,10 @@ export class ExtractionDirector {
 
   /** Hand the burn over to the ordinary descent, from wherever it ended. */
   _toFall() {
+    /* Whichever way we left orbit — the clock, a skip, or a lost ship — the
+     * level gets its own sky, haze and view distance back here. `_setSpace`
+     * took them; nothing else may be left holding them. */
+    this._restoreSpace();
     const g = this.group;
     if (this._stars) { this._stars.visible = false; }
     if (this._capital) { this._capital.visible = false; }
@@ -1789,6 +1891,7 @@ export class ExtractionDirector {
   /* ── the end ──────────────────────────────────────────────────────── */
 
   _finish() {
+    this._restoreSpace();
     this._log.push({ phase: 'done', at: +this.total.toFixed(3) });
     this.phase = 'done';
     this._setVeil(0);
@@ -1874,6 +1977,7 @@ export class ExtractionDirector {
 
   /** A level change or a run ending under a flight: put everybody down. */
   clear() {
+    this._restoreSpace();
     /* ABOVE the `active` guard, because a departing ship is BY DEFINITION not
      * active — that is the whole trick in `_handOffDeparture`. A level change
      * under a climb-out would otherwise leave the transport parented to a scene

@@ -871,4 +871,59 @@ export async function run({ check, assert }) {
     return 'a stranded insertion is cleared on the ground change; an outbound liftoff/transit/descent survives it';
   });
 
+  check('insertion: orbit is actually OUTSIDE the atmosphere, and the air comes back', async () => {
+    /*
+     * "You look behind the ship flying through space and you see the capital
+     * ship getting smaller and smaller and the planet getting larger… right now
+     * you start in the atmosphere and never are in space."
+     *
+     * The flight itself was right and had been for a while — 2400 m up, the
+     * capital receding 520 → 5200 m, stars on, a heat-shield glow on entry.
+     * None of it could be SEEN, and a screenshot of the real game at 2400 m
+     * showed why: a lit daytime sky with cloud decks, no stars readable against
+     * it, no capital ship, no planet.
+     *
+     * Three things, none of them the flight. The far plane is the quality
+     * tier's viewDist — 380/520/700/900 m — so the capital spent its whole
+     * recession clipped. The fog is the level's own, opaque long before 700 m.
+     * And the sky dome is drawn at full brightness whatever altitude the camera
+     * is at, so 900 stars sat behind a lit sky.
+     *
+     * What is asserted is that orbit is vacuum and that the level gets its air
+     * back — both halves, because a sequence that takes the sky away and does
+     * not hand it back is a worse bug than the one being fixed.
+     */
+    const { world, input } = await boot('skirmish', 'geonosis');
+    const eng = world.engine;
+    const far0 = eng.camera.far;
+    const fog0 = eng.scene.fog ? eng.scene.fog.density : null;
+    assert(world.extraction.beginInsertion({ name: 'Geonosis' }), 'beginInsertion declined');
+
+    for (let i = 0; i < 10; i++) world.update(1 / 60, input);
+    assert(world.extraction.phase === 'orbit', `expected orbit, got ${world.extraction.phase}`);
+    assert(eng.camera.far > 6000,
+      `the far plane is ${eng.camera.far} m in orbit — CAPITAL_FAR is 5200 m, so the ship the whole shot is `
+      + 'about is clipped');
+    if (fog0 !== null) {
+      assert(eng.scene.fog.density < fog0 * 0.05,
+        `there is haze in orbit — density ${eng.scene.fog.density} against the level's ${fog0}`);
+    }
+
+    /* …AND IT ALL COMES BACK. Driven to the ground rather than restored by
+     * hand, because the restore has four doors — the clock, a skip, a lost ship
+     * and a level change — and a check that calls one of them proves nothing
+     * about the other three. */
+    until(world, input, 60, (w) => !w.extraction.active);
+    assert(!world.extraction.active, 'the insertion never finished');
+    assert(Math.abs(eng.camera.far - far0) < 1,
+      `the far plane was left at ${eng.camera.far} instead of the level's ${far0}`);
+    if (fog0 !== null) {
+      assert(Math.abs(eng.scene.fog.density - fog0) < fog0 * 0.02,
+        `the haze came back as ${eng.scene.fog.density} instead of ${fog0}`);
+    }
+    assert((world.atmosphere?.fogScale ?? 1) === 1,
+      `Atmosphere.fogScale was left at ${world.atmosphere?.fogScale} — the weather is scaling a level that landed`);
+    return `orbit: far ${far0} → ${Math.round(6000)}+ m and haze off; on the ground: far ${far0}, haze restored`;
+  });
+
 }
