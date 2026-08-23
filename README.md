@@ -161,8 +161,8 @@ connected to the weapon because it is, structurally, downstream of it.
 ## Development
 
 ```bash
-npm run verify:fast       # the mechanical contract — 17 suites, ~55 s, no GPU
-npm run verify            # everything — 146 suites, and it takes as long as it takes
+npm run verify:fast       # the mechanical contract — 17 suites, ~80 s, no GPU
+npm run verify            # everything — 155 suites, and it takes as long as it takes
 npm run smoke             # boots the real game in Chromium, screenshots it
 npm start                 # play it
 ```
@@ -187,6 +187,24 @@ which is why there are two tiers. `verify:fast` is the blade, the bolt, the cut,
 the guard and the tables that move them; it runs on every push
 (`.github/workflows/verify.yml`). It is **not** the gate, and
 [`tools/tiers.mjs`](tools/tiers.mjs) says exactly what it leaves out.
+
+Every check drives about twenty seconds, because that is what a PROPERTY needs
+and because 155 suites of five minutes is a gate nobody can afford to run. So
+there are three instruments beside it that ask questions a property cannot, and
+none of them asserts anything:
+
+```bash
+node --import ./tools/register.mjs tools/trace.mjs        # what a run CONTAINS
+node --import ./tools/register.mjs tools/balance.mjs      # is it TUNED
+node --import ./tools/register.mjs tools/playthrough.mjs  # what HAPPENS, in order
+```
+
+`trace.mjs` reads the shipped tables and the shipped composer; `balance.mjs`
+models an abstract player; `playthrough.mjs` drives a real one over twenty
+minutes and prints a timeline, a casualty list by name and every announcement
+with the clock on it. All three refuse to score — the moment an instrument has
+an opinion it is a check with a hand-written bar, which is a shape this project
+keeps deleting.
 
 Layout:
 

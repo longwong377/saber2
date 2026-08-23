@@ -229,6 +229,37 @@ shipped code, and they are here so they are not lost.
 
 ---
 
+## §9 — The company, and what it cost to make one possible
+
+The player's question is the whole section: *"What would be the point in
+persisting the company? Aren't you assuming that I win every run? In reality
+you're either dying or quitting 99% of the time, so isn't the whole company
+dying anyway? Unless you have a way to retreat and recall/save your men instead
+of quitting outright."*
+
+A roster that carries over only when you win is a roster that never carries
+over. So the withdrawal came first and the save file second, and every row
+below exists because of that order.
+
+| # | Item | Found by | State |
+|---|---|---|---|
+| 9.1 | **Call for extraction mid-run.** The one ending the player CHOOSES. Held for `WITHDRAW_HOLD` and not pressed — a key next to the movement cluster that ends a forty-minute run on one bounce is a hazard, not a control — and the hold is itself the decision: you stop swinging for a second and a half to ask | the player | ✅ `World.withdraw`, the ship down for `LAST_CALL`, and a manifest of who reached the ramp. Boarding was 0–2 of 10 before the walk was made kinematic; **10/10 on drifts, colosseum and alpine, 6/10 on geonosis**. `extraction.mjs` |
+| 9.2 | **The extraction key was a control nobody could find.** Bound, on a pad, read through `.act?.()` — invisible to `controls.mjs`'s reader scan, so the key that ends a run reported as "handled by nobody" — and in no Codex row, so the one ending you choose was documented nowhere a player reads | `controls.mjs` | ✅ a Codex row with both numbers derived from `Extraction.js`, and `WITHDRAW_HOLD` moved there so Menu.js can reach it |
+| 9.3 | **Persist the company between runs.** `src/game/Company.js`, `saber.company.v1`, one roll per army. Not a currency and not an unlock, on the terms `Progress.js` sets out: nothing gates a mode, a level, a crystal or an order, and the hundredth run starts on the ground the first one did | the player | ✅ and the promise is enforced twice — `_musterVeterans` is bounded by `opening`, and the purse SHRINKS by what the veterans filled. What a returning company buys is rank, not headcount |
+| 9.4 | **And it costs.** Every man on the roll and not on the manifest is dead, unconditionally. A wipe takes everything. Quitting is not a withdrawal — `bank()` fires from `quitToMenu` with no manifest and the roll goes with it | 9.3 | ✅ ten checks in `company.mjs`, every one of them on the price rather than the feature |
+| 9.5 | **The Company tab.** *"An area where you see your troops — their names, attributes, history, characteristics… maybe you can even customise certain parts of their appearance or upgrade certain things in their stats"* | the player | ✅ names, the full dossier derived from `Company.dossier`, what each run wrote into a man's history, a callsign and a mark. **The stat upgrades were asked for and are deliberately not built** — see 9.6 |
+| 9.6 | **A menu that sells stats is a cross-run currency.** There already is a way to make a man better and it is the rank ladder, which he earns by fighting; a second way bought between runs is the one thing `Progress.js` and `Company.js` both refuse at the top of their own files | this session | ✅ decided, not deferred. The page SHOWS what the rank bought — the same three multipliers `enlistBody` applies — rather than selling them, and `company.mjs` reads Company.js for a currency word and pins `dress` to writing a mark and a name. The minigame is keeping them alive |
+
+## §10 — Found by building §9, and none of it was on a list
+
+| # | Item | Found by | State |
+|---|---|---|---|
+| 10.1 | **The emplaced gun was standing inside your own line.** `GunPit._readMuzzle` called `updateMatrixWorld(true)`, which refreshes this node and everything under it and composes against `parent.matrixWorld` as it finds it. The browser's renderer happens to leave that fresh once a frame; headless nothing ever calls `scene.updateMatrixWorld`, so the muzzle read a bare local offset. The bastion stands at (15.8, 1.5, 75.7) and the muzzle read (8.9, 3.3, 4.0) — **10 m from the muster ground rather than 77**, and its opening burst of three killed three of the ten men before the player could take a step | `command-pvp.mjs` | ✅ `updateWorldMatrix(true, false)` walks UP instead. Muzzle now 61 m off the line; five 90-second runs read 45 rounds, 15 hits, 9 names — **1.20 names a minute of fire** against `GUN`'s own design figure of about one. Every headless bench of this level up to now was reading a gun in a place the level never put it |
+| 10.2 | **The meeting's front never moved.** `_front` asked `lineIsUp(c)`, whose first line is `if (!this.lineAdvances) return true` — right for the question `lineIsUp` is really for, and Command deliberately does not set that flag. So both commanders answered true, a scattered army pushed the front exactly as hard as a formed-up one, the two cancelled, and the mode could only end on a wipe | `command-pvp.mjs` | ✅ the quorum is `lineGathered(c)` with no mode gate; `lineIsUp` is that quorum behind the campaign's gate |
+| 10.3 | **The camera goes inside the tree trunks on the wood map.** Widening the boom's clearance probe from one ray to five moved the number by nothing: in every failing frame the boom had already been pulled to its 0.55 m floor, because the player was standing within a metre of a trunk and there was no point behind their head that was clear of it. **No pull-in distance solves that** | the player | ✅ the wood moves instead. A trunk whose axis comes within the near plane's corner radius is drawn thinner and closes back as you step off it; the collider, the blade capsules and the falling-trunk sweep are untouched. 146 clipping frames of 5,400 → 0, thinning live on 6.2% and never more than five trunks, 20 µs a frame at load 0.60 |
+| 10.4 | **A contact mark that is a fraction of a dark ground is nothing.** The disc anchored a figure and four properties were asserted about its size and reach; none measured CONTRAST. On the seven theatres the mark read 1.08:1 to 1.69:1 against the ground, and the worst best-of-three road to separation was a Confederate droid on The Shifting Waste at **1.49:1** — lit 1.46, dark 1.47, mark 1.49, all three shut at once | this session | ✅ the mark solves for its own alpha against the ground the level authored. Worst best-of-three now 1.85:1; six pairs at 2:1; the eight on ground too dark to carry a mark are the ones where the body reads at 2.4–5.7:1 on its own |
+| 10.5 | **Nothing in this repository plays.** 1,140 checks drive twenty seconds because that is what a property needs; `trace.mjs` and `balance.mjs` both say outright that they never press a button. So a curve that only bends after minute ten is invisible to every instrument, and every pacing finding this project has had came from a human playing | this session | ✅ `tools/playthrough.mjs` drives the repository's one scripted Jedi over a real horizon and reports a timeline, a casualty list by name, and every announcement with the clock on it. It borrows `trace.mjs`'s discipline whole: nothing in it has an opinion |
+
 ## §7 — Standing rules that outrank any item here
 
 - **No completely indoor levels, ever** (`FLAGSHIP.md` §4). An interior may be a
