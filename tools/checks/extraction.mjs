@@ -965,10 +965,19 @@ export async function run({ check, assert }) {
     }
     const dead = allies.filter((e) => e.dead).length;
     const hurt = allies.filter((e, i) => e.hp < hp0[i] - 0.5).length;
+    /* WHO, AND BY HOW MUCH. "1 of 10 took damage" is a count with no lead in
+     * it: the same sentence is a blade through one man and a metre of fall on
+     * landing, and telling them apart cost a whole run of the suite. The names
+     * and the deltas are free here and they are the first thing anybody
+     * reading a red asks for. */
+    const bill = allies.map((e, i) => [e.name || e.type, hp0[i] - e.hp])
+      .filter(([, d]) => d > 0.5)
+      .map(([n, d]) => `${n} -${d.toFixed(1)}`).join(', ');
     assert(dead === 0,
       `${dead} of ${allies.length} of your own men were killed during the flight with your blade lit — `
       + 'the bay is 2.4 m wide and the blade solver does not care whose side they are on');
-    assert(hurt === 0, `${hurt} of ${allies.length} took damage from inside the bay`);
+    assert(hurt === 0,
+      `${hurt} of ${allies.length} took damage from inside the bay (${bill})`);
     return `${allies.length} aboard, blade lit for the whole ${t.toFixed(0)} s flight, none hurt`;
   });
 

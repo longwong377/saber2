@@ -25,7 +25,7 @@ import { BladeContactSolver, captureSnapshot, gradeCaught, resolveBladeClash, GR
  * game/ at all, so this edge cannot close a cycle — and the alternative was a
  * second copy of the shoulder line, which is the twin §2.3 keeps deleting. */
 import { GUARD } from './SaberController.js';
-import { assignSides, DuelMatch, Player, asTeam, bladeTargets, canHarm, hostileTo, pvpRules, sideTeam, TEAM } from './Player.js';
+import { assignSides, DuelMatch, Player, asTeam, bladeTargets, canHarm, hostileTo, pvpRules, sideTeam, teamOf, TEAM } from './Player.js';
 import { ageDropped } from './Dropped.js';
 import { Enemy, ARCHETYPES, applyModifier, ENEMY_POWERS, FORCE_KINDS, IMPULSE_AS_HP, paysOut } from './Enemy.js';
 import { WaveDirector, RankSet, boonTick, boonGuard, bondReceive, bondGuardIn, bondGive, BOND, boonById, MODES,
@@ -3774,11 +3774,29 @@ export class World {
          * own blade, before the ramp had opened.
          *
          * So the guard moves to where the harm is decided rather than to a
-         * notice: while you are riding, the men riding with you are not targets.
-         * Everything else still is — a duellist who boards is not `riding`, and
-         * the moment you step off the ramp neither are they.
+         * notice: while you are riding, your own side is not a target.
+         * Everything else still is — a duellist who boards is fair game the
+         * whole way down — and the guard ends the moment you step off the ramp,
+         * which is also the moment you can see what you are swinging at.
+         *
+         * AND IT IS YOUR SIDE, NOT "ALSO RIDING", which the first cut of it
+         * was. `Extraction._release` clears `riding` one man at a time as the
+         * stick files off the ramp, so the first trooper out stops being a
+         * rider while the commander is still aboard with a lit blade a metre
+         * behind him — and for that window he is an ordinary target standing in
+         * a doorway. It failed the way a window fails: `insertion: your own
+         * blade does not kill the stick riding with you` came back red once in
+         * five runs at 1 of 10 hurt, green the other four, which is worse than
+         * a red — the version of this check that said "10 of 10 survive" had
+         * simply been lucky. `nudgeFromSwing` already pushes a released man off
+         * the blade at that instant and is why it is one in five rather than
+         * five in five; it is a mitigation and this is the rule.
+         *
+         * Not routed through `canHarm`: that answers to `friendlyFire`, and a
+         * mode with friendly fire on still must not let you take your own stick
+         * apart inside a 2.4 m bay they cannot leave.
          */
-        if (p.riding && e.riding) continue;
+        if (p.riding && (e.riding || teamOf(e) === teamOf(p))) continue;
         targets.push({ id: e.id, capsules: e.capsules(), enemy: e, dead: false });
       }
       for (const pr of this.props) {
