@@ -55,14 +55,41 @@ import { ArrivalDirector, seedArrivals } from './Arrivals.js';
  * nothing, deliberately — see its header — so this edge costs no cycle and no
  * canvas. */
 import { FACTIONS, factionOf, armyForOrder, opposingArmy } from './Databank.js';
-import { makeRng, clamp, lerp, TAU } from '../engine/MathUtil.js';
+import { makeRng, moduleSeed, clamp, lerp, TAU } from '../engine/MathUtil.js';
 /* Soresu's card is a step ON a Combat constant, so it reads that constant
  * rather than restating it — the whole point of the note over `apply` below.
  * Combat imports THREE, Physics, MathUtil, Bolts and Morale and none of them
  * reaches back here, so this edge is a leaf edge and costs no cycle. */
 import { RETURN_CONE } from './Combat.js';
 
-const rng = makeRng((Math.random() * 1e9) | 0);
+/**
+ * THE WAVE STREAM, AND IT WAS THE ONE MODULE RNG LEFT OUT OF THE PIN.
+ *
+ * `tools/register.mjs` exists because "two module-level random streams — `rand`
+ * in MathUtil.js and `rng` in World.js — are seeded once at import and were
+ * seeded from `Math.random()`, which is right in a browser and ruinous in a
+ * gate: every process started a different stream, so a check that touched
+ * either gave a different answer each run". This was the third such stream and
+ * it kept its `Math.random()`, so WAVE COMPOSITION was the one thing a gate
+ * could not hold still — and it is the input almost every balance measurement
+ * in the tree is taken over.
+ *
+ * MEASURED, and it is the reason this line changed: `tools/checks/balance.mjs`
+ * pins `Math.random` around its own import of this file to get a reproducible
+ * standalone run, and its own note says "under verify.mjs the module is already
+ * loaded and this does nothing — which is why nothing in
+ * tools/checks/balance.mjs may depend on a specific composition". Something did
+ * anyway. Its melee-opener check records "pooled across five runs: 92, 90, 90,
+ * 91 of 96 against a floor of 72 — steady", and on the deck balance.mjs's own
+ * pin deals it reads **67 of 96** — the same 67 at every commit for the last
+ * forty, because that deck is a fixed one. Two pins, two decks, one check, and
+ * the number it reports depends on which module imported this file first.
+ *
+ * `moduleSeed` is the same door MathUtil's `rand` uses: pinned under the
+ * loader, `Math.random()` in a browser, and `SABER_SEED` in the environment to
+ * re-roll deliberately. The salt is 3 because 1 and 2 are taken.
+ */
+const rng = makeRng(moduleSeed(3));
 
 /**
  * Put the wave stream on a stated number.
