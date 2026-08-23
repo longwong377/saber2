@@ -679,8 +679,13 @@ AFTER M5 — the chain, in dependency order
      sites, crewed by whoever stands on them — so the interface is (1)'s
      delegation and there is no new verb. The weld holds: a crewed gun's men
      are out of the quorum, asserted A/B on the same men in the same places.
-     Still owed: the four-armed acceptance (does the Jedi arm beat the
-     no-player arm MORE with a Battery on the field?).
+     AND THE FOUR-ARMED ACCEPTANCE HAS REPORTED — `tools/_m6.mjs`, four
+     seeds × five minutes × four arms, the same squad posted on the same
+     ground in every arm so the only thing that differs is whether that
+     ground is a gun. **A Jedi is worth 82.1 s of run with a battery on
+     the field and 0.1 s without one** (225.4 s against 143.3 with;
+     177.8 against 177.8 without). This section's own kill was "if not,
+     it is decoration".
   3  §4.9 downed-not-dead + after-action ... the quorum's other half
   4  §4.4 company + Company screen ......... needs B4, 1 and 3
   5  §1 the order you can check ............ BUILT. src/game/FireMission.js.

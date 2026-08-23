@@ -87,16 +87,30 @@ Playable two ways:
 > `tools/register.mjs` never pinned, so wave composition was the one input a
 > gate could not hold still.
 >
-> **Still owed**, in PLAN.md §6's order: §4.6's other four bullets (the holocron
-> offering three of the legal facets, the branching route, player-authored
-> difficulty, composition constraints and the modifier caps); §4.3's animated
-> instanced rung, which is still gated hard on M4; §4.2's four-armed acceptance,
-> where the instrument exists (`tools/_m6.mjs`) and the first reading is
-> inconclusive — every arm loses its whole roster inside four minutes, so the
-> ground never moves and the interaction is under the noise. It needs either a
-> longer horizon with the muster running or a finer metric than areas taken.
+> **§4.2's four-armed acceptance has reported, and it passes.** `tools/_m6.mjs`,
+> four seeds × five minutes × four arms, with the same squad posted on the same
+> ground in every arm so the only difference is whether that ground is a gun: **a
+> Jedi is worth 82.1 s of run with a battery on the field and 0.1 s without
+> one.** The section's own kill was "if not, it is decoration". The metric is the
+> run's LENGTH and not the ground taken, and that is a correction the first
+> reading forced — at four minutes three of the four arms took zero ground and
+> every arm lost its roster, and a metric that reads 0.000 in three cells cannot
+> carry an interaction.
 >
-> **AND ONE RED THAT WAS RED BEFORE THIS SESSION AND IS NOT ANY MORE, WITH THE
+> **Still owed**, in PLAN.md §6's order: §4.6's remaining bullets (the branching
+> route, player-authored difficulty, composition constraints, the modifier caps —
+> though `legalRuleSet` already carries a cap and a pairwise blacklist); and
+> §4.3's animated instanced rung, still gated hard on M4.
+>
+> **TWO REDS THAT WERE RED BEFORE THIS SESSION.** `blast-door.mjs`'s "a held
+> blade opens a blast door in about twenty seconds" fails identically at this
+> session's own starting commit (`657594b`): the natural loop burns **0 of the
+> 515 texels** in 75 s and never opens the door, while the swing arm scores 217
+> and the shipped-default-scheme arm finishes in 19.4 s. So the mechanism works
+> and the `free`-scheme loop drive is what is not reaching the plate. Untouched
+> here, and named so the next session does not rediscover it.
+>
+> **AND ONE THAT WAS RED BEFORE THIS SESSION AND IS NOT ANY MORE, WITH THE
 > REASON.** `balance.mjs`'s melee-opener check drove all four difficulty tiers
 > with one player — the model's "competent", σ=75 — and read **67 of 96** against
 > a three-quarter floor. It read exactly 67 at every commit for the last forty,
