@@ -732,22 +732,26 @@ NOW — measurements
       then does not fight it. That is the mode's own thesis about presence,
       and it is much sharper than anyone had written down.
 
-      **AND A JEDI WHO ONLY FIGHTS IS A NET NEGATIVE.** 4.7 against 6.7: the
-      line does BETTER with nobody there than with a blade on the field.
-      Before that is read as a balance defect, read what the arm is:
-      `dutyInput` is "a SCRIPT, not a person" in its own words, and it "walks
-      at the nearest enemy" — which is precisely the behaviour **M5 measured as
-      the bad one** (34.1% of a leaving player's ground against 8.2% of a
-      staying one). So BLADE is a player who fights and never commands, and the
-      mode is telling us that such a player is worse than absent. That is
-      arguably §1 working exactly as written — "your job is not to kill
-      everything" — but it is not proven, because:
+      **AND A JEDI WHO FIGHTS FROM HIS LINE IS STILL A NET NEGATIVE.** 4.7
+      against 6.7: the line does BETTER with nobody there than with a blade on
+      the field. This was first written up here as "a Jedi who ONLY FIGHTS",
+      on the reading that `dutyInput` chases the nearest enemy and is therefore
+      M5's bad player — **and that was wrong about the code.** The script holds
+      station on the line's own CENTROID and leaves it only for something
+      inside `ENGAGE`, and only while he is inside an 18 m `LEASH`; its own
+      note says it holds station there "so when the formation advances the
+      Jedi advances with it and `MORALE.JEDI_NEAR` keeps paying". So BLADE
+      already IS a Jedi who stays with his men and fights from among them, and
+      the result is sharper than the softer reading allowed.
 
-      **THE FOURTH ARM DOES NOT EXIST.** Nothing measures a Jedi who STAYS WITH
-      HIS LINE and fights from it. Until it does, the claim "a good player
-      beats 6.7" is untested, and the honest statement is that every scripted
-      way of being on this field is worse than not being on it. That arm is the
-      most valuable measurement left in this document.
+      **WHAT IT DOES NOT YET SAY IS WHY**, and `_flagship.mjs` has carried the
+      argument since it was written: nothing in these three arms tells "a Jedi
+      COSTS the line men" apart from "a Jedi drags the fight out, and the men
+      standing near him are standing in fire that was aimed at him". The
+      control that separates them is `standOff` — the same script, the same
+      guard, the same keep-alive, holding station a hundred metres off. It
+      existed and had never been driven; `_linehold.mjs` could not reach it.
+      It can now (`far`), and that reading is the next line of this entry.
   M2  teamDamage bound ................... ANSWERED, and this document quotes
       the answer four hundred lines above the question — §2's dealer census
       reads "bolt 99.3%, friendly fire 0.7%". 0.7% IS the ceiling on any

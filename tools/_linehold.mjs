@@ -18,7 +18,13 @@
  *          reading is about the line and not about the script dying. He is
  *          still a body the levy walks at — that is not "no help", which is
  *          exactly why NONE is measured beside him.
- *   BLADE  `dutyInput` from tools/_flagship.mjs — walks at the nearest enemy,
+ *   FAR    the same script holding station STAND_OFF metres off the line —
+ *          alive, armed, fighting what reaches him, and not among the men. It
+ *          is the CONTROL: it separates "a Jedi costs the line men" from "the
+ *          men near him are standing in fire that was aimed at him".
+ *   BLADE  `dutyInput` from tools/_flagship.mjs — holds station on the line's
+ *          own centroid and leaves it only for something close, and only while
+ *          he is inside an 18 m leash. He walks at the nearest enemy,
  *          swings, holds the guard, holds station on the line's centroid.
  *          The floor of what a present Jedi is worth; a person is worth more.
  *
@@ -56,7 +62,7 @@
  */
 import './dom-shim.mjs';
 const H = await import('./checks/_coop.mjs');
-const { dutyInput } = await import('./_flagship.mjs');
+const { dutyInput, STAND_OFF } = await import('./_flagship.mjs');
 const { enemyRng } = await import('../src/game/Enemy.js');
 const { seedWaves } = await import('../src/game/Waves.js');
 const { seedWorld } = await import('../src/game/World.js');
@@ -158,7 +164,27 @@ async function run(arm, seed) {
   }
   d.start(w0);
   const n0 = d.roster.all.length;
-  const input = arm === 'blade' ? dutyInput(world) : H.idleInput();
+  /**
+   * FAR IS THE CONTROL THE FIRST THREE ARMS DO NOT HAVE, and without it this
+   * instrument cannot say what its own headline means.
+   *
+   * BLADE is not a Jedi chasing across the map — `dutyInput` holds station on
+   * the line's CENTROID and only leaves it for something inside `ENGAGE` while
+   * he is still inside an 18 m `LEASH`. So a blade arm that leaves the line
+   * worse off than an empty field has two readings and the three arms cannot
+   * tell them apart: **a Jedi COSTS the line men**, or **a Jedi drags the fight
+   * out and the men standing near him are standing in fire that was aimed at
+   * him**.
+   *
+   * FAR is the same script, the same guard, the same keep-alive, holding
+   * station `STAND_OFF` metres away — alive, armed, fighting whatever reaches
+   * him, and not in the line. If the line still loses its men, presence is not
+   * what is killing them. `_flagship.mjs` has carried this arm and its whole
+   * argument since it was written; nothing had ever driven it.
+   */
+  const input = arm === 'blade' ? dutyInput(world)
+    : arm === 'far' ? dutyInput(world, { standOff: STAND_OFF })
+    : H.idleInput();
   let t = 0, ended = 'cap';
   tNow = 0;
   for (let i = 0; i < CAP / STEP; i++) {

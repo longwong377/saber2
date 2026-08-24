@@ -161,15 +161,18 @@ Playable two ways:
 >   cheaper than asked**: it costs 3.3. An idle Jedi is not "a corpse with a
 >   delay", he is a catastrophe (1.0 against an empty field's 6.7, 17 wipes in
 >   20) because he pulls a wave onto a line and does not fight it. **And a Jedi
->   who only fights leaves the line WORSE than no Jedi at all.** Before reading
->   that as a defect: `dutyInput` is "a SCRIPT, not a person" that walks at the
->   nearest enemy, which is exactly what M5 measured as the bad behaviour
->   (34.1% of a leaving player's ground against 8.2% of a staying one). So the
->   mode may be saying precisely what §1 says. **It is not proven, because the
->   fourth arm does not exist** — nothing measures a Jedi who stays WITH his
->   line and fights from it. That arm is now the most valuable measurement left,
->   and until it runs the honest statement is that every scripted way of being
->   on this field is worse than not being on it.
+>   who FIGHTS FROM HIS LINE leaves it WORSE than no Jedi at all.** That was
+>   first written up here as "a Jedi who only fights", on the reading that
+>   `dutyInput` chases the nearest enemy — **wrong about the code**: it holds
+>   station on the line's own centroid and leaves it only for something close,
+>   and only inside an 18 m leash, precisely so `MORALE.JEDI_NEAR` keeps
+>   paying. So the blade arm already IS a Jedi among his men, and the result is
+>   sharper than the softer reading allowed. What it does not yet say is WHY —
+>   "a Jedi costs the line men" and "a Jedi drags the fight out and the men near
+>   him stand in fire aimed at him" are indistinguishable from three arms. The
+>   control that separates them is `standOff`, which `_flagship.mjs` has carried
+>   with its whole argument since it was written and which nothing had ever
+>   driven; `_linehold.mjs` reaches it now as the `far` arm.
 > · **M7** is STRUCK, because `tools/scale.mjs` withdrew the number it chased.
 >
 > **§4.3's animated instanced rung IS BUILT**, and it was never "gated hard on
