@@ -3749,6 +3749,13 @@ export class World {
       if (!e.update(dt, ctx)) { e.dispose(); this.enemies.splice(i, 1); }
     }
 
+    /* …and ONE cohort re-reads ONE slot of its gait palette. Here rather than
+     * inside the loop above: every body has just posed and placed itself, so
+     * this is the freshest rig in the frame, and the cost is the same one
+     * capture whether the field holds forty bodies or four hundred — which is
+     * the property the whole rung is. See src/game/Cohorts.js `step`. */
+    this.cohorts?.step();
+
     // …and the hilts lying about age, so one just dropped cannot be picked
     // straight back up before the player has seen it leave their hand.
     ageDropped(this, dt);

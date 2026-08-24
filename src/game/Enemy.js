@@ -152,6 +152,24 @@ const CAP_BITE = 1.12;
 const NEAR_REACH = 2.6;
 
 /**
+ * HOW MUCH TANGENT A WALL SLIDE HAS TO LEAVE BEFORE ITS DIRECTION MEANS
+ * ANYTHING, as a fraction of a unit wish.
+ *
+ * The slide in `_move` strips the into-the-face component off the wish; what is
+ * left is a difference of two nearly equal vectors, and while a body is pressed
+ * square into something it is dust whose SIGN is noise. This is the bar below
+ * which the leftover is not asked which way it points.
+ *
+ * SAME BAR, DIFFERENT QUANTITY. It lived inline as `wish.lengthSq() < 0.04` —
+ * the length of the WHOLE slid wish — and it now measures the leftover ALONG
+ * the face, which is the only part of it that carries a direction. 0.2 is that
+ * squared length's own root, so the bar has not moved: a wish about eleven
+ * degrees off square. It decides one thing (`meant` below, asked twice), so it
+ * is written once.
+ */
+const SLIDE_TANGENT = 0.2;
+
+/**
  * The broad phase's answer, borrowed for the length of one gather.
  *
  * Module scope and not per-body: `_gatherNear` fills it, sweeps it and is done
@@ -2666,6 +2684,11 @@ export class Enemy {
      */
     this._wallN = new THREE.Vector3();
     this._wallT = 0;
+    /** Which way along the current face this body decided to go: +1, -1, or 0
+     *  for "no contact, nothing decided". Taken once per contact and held for
+     *  its length — see the note in `_move`, where taking it every frame is
+     *  what left men standing against rocks for the whole of a 35 m march. */
+    this._wallSide = 0;
     this._stuckT = 0;
     this._prevPos = new THREE.Vector3();
     /** Time left on a Leader's aura. Refreshed by whoever is leading. */
@@ -7533,9 +7556,12 @@ export class Enemy {
        * a spire on the way back to its commander stood motionless for 6.6 s
        * with `wish` at (-0.00, 0.00) and `_wallT` alight the whole time.
        *
-       * The lateral is captured BEFORE the slide, and used as the wish outright
-       * when the slide leaves nothing behind — which is the sentence the slide's
-       * own note already makes: along the face, not into it.
+       * The answer is the face itself — along it, not into it — and WHICH WAY
+       * along it is latched for the length of the contact rather than solved
+       * again every frame off a residual that is dust. See `_wallSide` in the
+       * slide below; `_v7` survives here as the COMMIT term's lateral and as
+       * the latch's tie-break, which are the two decisions `strafeDir` still
+       * owns.
        */
       _v7.set(-this.wish.z, 0, this.wish.x).multiplyScalar(this.strafeDir || 1);
       if (this._wallT > 0 && this._wallN.lengthSq() > 1e-6) {
@@ -7543,8 +7569,73 @@ export class Enemy {
         if (_v6.lengthSq() > 1e-6) {
           _v6.normalize();
           const into = this.wish.dot(_v6);
-          if (into < 0) this.wish.addScaledVector(_v6, -into);
-          if (this.wish.lengthSq() < 0.04 && _v7.lengthSq() > 1e-6) this.wish.copy(_v7);
+          if (into < 0) {
+            this.wish.addScaledVector(_v6, -into);
+            /**
+             * …AND WHICH WAY ALONG THE FACE IS ONE DECISION PER CONTACT, WHICH
+             * IS THE WHOLE OF THIS BLOCK AND WAS THE WHOLE OF WHAT WAS WRONG.
+             *
+             * Everything above is a per-frame function of the wish, and while a
+             * body is pressed into a face the wish is very nearly the face's
+             * own normal — so the leftover tangent is a DIFFERENCE OF TWO
+             * NEARLY EQUAL VECTORS, small enough to sit right on
+             * `SLIDE_TANGENT`, the cut this block switches at. So the body took
+             * the residual on one frame and the `_v7` fallback on the next —
+             * and `_v7` is a perpendicular of the WISH carrying `strafeDir`'s
+             * sign, which lies along the same face but nothing ever made it lie
+             * along it the same WAY. The two answers are opposite and the body
+             * alternates between them.
+             *
+             * MEASURED, one body on the shipped Geonosis rock centred at
+             * (-1.78, 4.23), ordered to a slot 40 m beyond it from where the
+             * march left CT-3208 (see `roundTheRock` in `movement.mjs`): over
+             * nine seconds the slid wish's sign ALONG THE FACE flipped
+             * FIFTY-TWO times — about every fifth frame — and the body finished
+             * 0.26 m from where it started, at (-2.34, 2.22). On the whole army:
+             * four men over six ordered 35 m walks, each standing 4.3-6.5 s
+             * inside a metre, all four against this same rock, all four reading
+             * 0.7-6.0 m/s while they did it.
+             *
+             * AND IT DOES NOT NEED A TURNED FACE, ONLY TWO FACES. Two copies of
+             * that rock set at right angles held both `strafeDir` arms in the
+             * vertex for a full twenty seconds; latched, both are out in 4.8 s.
+             * That is `outOfCorner` in `movement.mjs`, and it is why the latch
+             * is not the trap it looks like: the per-frame side was.
+             *
+             * AND THE COMMIT TERM BELOW CANNOT SAVE THEM, WHICH IS WHY IT LASTS
+             * FOREVER. The flip-flop covers 0.036 m a frame against its
+             * `speed * dt * 0.3` bar of 0.040, so `_stuckT` creeps up and does
+             * cross 0.5 — it peaked at 0.60 s — but the two long strides the
+             * swing then buys are enough to reset the clock under the bar, and
+             * the body drops straight back into the alternation. A stuck-timer
+             * cannot break a deadlock that is itself moving.
+             *
+             * So the side is LATCHED. `_wallSide` is taken once, when a contact
+             * begins — off the residual when the residual is long enough to
+             * mean something, off `strafeDir` when it is not — and held until
+             * the contact lapses (`_wallT`, cleared below with `_wallN`). A body
+             * that has started round a rock goes on round it. Over six arms of
+             * that 35 m walk: 4 of 54 men wedged before, 0 of 54 after; the
+             * furthest living man from the formation anchor fell from 34.8-35.8
+             * m to 12.0-14.2. On the fixture, 52 sign flips became 2, 0.036 m
+             * a frame became 0.130, and 0.26 m of net ground became 32.9.
+             *
+             * IT ONLY BITES WHILE THE WISH POINTS INTO THE FACE — this is
+             * inside the `into < 0` branch — so a body that wants to leave the
+             * wall leaves it, and the latch is gone 0.3 s after it last touched
+             * anything. `_v7` is left alone for the COMMIT term, which is a
+             * DIFFERENT decision on a different clock and is `strafeDir`'s to
+             * make.
+             */
+            const tx = -_v6.z, tz = _v6.x;          // the face itself, in XZ
+            const along = this.wish.x * tx + this.wish.z * tz;
+            const meant = Math.abs(along) > SLIDE_TANGENT;
+            if (!this._wallSide) this._wallSide = meant ? Math.sign(along) : (this.strafeDir || 1);
+            /* Off the latched side, or too short to steer on: take the face. */
+            if (!meant || along * this._wallSide < 0) {
+              this.wish.set(tx, 0, tz).multiplyScalar(this._wallSide);
+            }
+          }
         }
       }
       if (this._stuckT > 0.5) this.wish.addScaledVector(_v7, 1.0);
@@ -7572,7 +7663,7 @@ export class Enemy {
      * covered, because velocity can be healthy while the collision loop puts
      * the body straight back where it was. */
     this._wallT -= dt;
-    if (this._wallT <= 0) this._wallN.set(0, 0, 0);
+    if (this._wallT <= 0) { this._wallN.set(0, 0, 0); this._wallSide = 0; }
     if (canMove && this.wish && this.wish.lengthSq() > 0.25) {
       const moved = Math.hypot(this.position.x - this._prevPos.x, this.position.z - this._prevPos.z);
       if (moved < this.speed * dt * 0.3) this._stuckT += dt;
