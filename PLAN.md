@@ -881,8 +881,11 @@ shipped systems as unbuilt. Each has been corrected in place.
   · **A SCREEN for the after-action report.** The record is complete — every
     entry carries `killerName`, a bearing and a minute — and nothing draws it
     end to end.
-  · **The Company tab cannot change a man's kit** out of `COMMAND_UNITS`, which
-    is the one part of §4.4's card still owed.
+  · The Company tab's refusal to change a man's kit is **a decision, not an
+    omission** — `Menu.js` argues it where it makes it ("a roster screen that
+    could edit them would be a cheat panel with a casualty list on it"), the
+    alternative it names is the rank ladder he can EARN, and `company.mjs` fails
+    the day a fourth editable field appears. Struck from this list.
   · **The muster card cannot promote a survivor or bank the purse** — it offers
     replacements and §4.6's road, and those two options are what is left of that
     bullet.

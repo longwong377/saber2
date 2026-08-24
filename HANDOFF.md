@@ -146,8 +146,12 @@ Playable two ways:
 >   exists in `src/`; this is the largest unbuilt design left in the document.
 > · **A screen for the after-action report.** The record is complete — every entry
 >   carries `killerName`, a bearing and a minute — and nothing draws it.
-> · **The Company tab cannot change a man's kit**, and **the muster card cannot
->   promote a survivor or bank the purse**.
+> · The Company tab's refusal to change a man's kit is a DECISION and not an
+>   omission — `Menu.js` argues it where it makes it, names the rank ladder as
+>   the way to make a man better, and `company.mjs` fails the day a fourth
+>   editable field appears. The muster card promotes a survivor now
+>   (`commend`, priced at `muster / XP_PER_AREA`), and banking always worked:
+>   closing without spending keeps the purse.
 > · **M1** is unrun and licenses nothing; **M7** should be STRUCK, because
 >   `tools/scale.mjs` withdrew the number it was written to chase.
 >
