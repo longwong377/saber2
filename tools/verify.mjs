@@ -119,15 +119,41 @@ function check(name, fn) {
       results.push(slot);
       pending.push(detail.then(
         (d) => { pass++; slot[2] = d === undefined ? '' : String(d); },
-        (e) => { fail++; slot[0] = '✗'; slot[2] = e.message; }));
+        (e) => { fail++; slot[0] = '✗'; slot[2] = why(e); }));
       return;
     }
     pass++;
     results.push(['✓', name, detail === undefined ? '' : String(detail)]);
   } catch (e) {
     fail++;
-    results.push(['✗', name, e.message]);
+    results.push(['✗', name, why(e)]);
   }
+}
+/**
+ * WHAT A FAILING CHECK SAYS — AND, WHEN IT CRASHED, WHERE.
+ *
+ * An assertion carries its own sentence and wants nothing added to it. A CRASH
+ * does not, and this table is the only place a full run ever prints one:
+ * `theline.16` went red under the gate with `Cannot read properties of null
+ * (reading 'position')` and no file, no line and no clue which of the four
+ * dereferences in that check body it was. `tools/_seq.mjs` prints four frames
+ * and `_one` is a cheap re-run, but neither reproduces a crash that turns on a
+ * module stream's PHASE rather than on the suite order — so the one report
+ * that can see such a thing at all was the one saying least about it. Naming
+ * that line took two fifty-minute gate runs that did not reproduce it and a
+ * hand-built fixture that did.
+ *
+ * Only for the three error types that mean "the code went wrong" rather than
+ * "the game is wrong": an `assert` throws a plain `Error`, and appending a
+ * frame to a sentence somebody wrote on purpose would be noise on every red in
+ * the file. One frame — the first that names a source line — because the rest
+ * of a stack under `Promise.all` is the harness.
+ */
+function why(e) {
+  const m = e && e.message ? e.message : String(e);
+  if (!(e instanceof TypeError || e instanceof ReferenceError || e instanceof RangeError)) return m;
+  const frame = String((e && e.stack) || '').split('\n').find((l) => /\.m?js:\d+/.test(l));
+  return frame ? `${m}  ← ${frame.trim().replace(/^at\s+/, '')}` : m;
 }
 function assert(cond, msg) { if (!cond) throw new Error(msg); }
 function near(a, b, tol, msg) { if (Math.abs(a - b) > tol) throw new Error(`${msg}: ${a} vs ${b} (±${tol})`); }
