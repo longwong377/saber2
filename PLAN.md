@@ -831,11 +831,33 @@ AFTER M5 — the chain, in dependency order
      its ladder from the LEVEL's pool rather than the wave's narrowed
      roster, so a boss wave under ARMOUR COLUMN fielded an acolyte and a
      master; NO GUNS had the same hole and passed on luck.
-     STILL OWED from this section: the branching route, and §4.6's
-     "40% must be vehicles" as a genuine FLOOR — which is a reservation in
-     `_composeUnder` beside the head and the set-piece, and is the one
-     part of this section that is composer surgery rather than a hook that
-     already exists.
+     THE BRANCHING ROUTE IS BUILT. `stages` keeps the length the seed
+     rolled and the player picks which grounds fill it: at each boundary
+     the legal window is one rung past the ground just held, up to the
+     last rung that still leaves room for the slots after it, so the
+     route is always forward, always ends on the Core Ship, and always
+     runs the promised number of engagements. What is shown is the
+     ground, its waves and a garrison BAND — `garrisonBand` ranks
+     `budget × (1 + heavy)` against every area's rather than thresholding
+     it, so a retune re-deals the words with no second table. What is
+     hidden is the composition, and the check asserts the offer's exact
+     key set to keep it that way. Measured, one Push seed forked two
+     ways: ground, rung, muster (17 against 26), band and total payout
+     all move; the engagement count and both ends do not.
+     Three limits, stated rather than papered over. **Only a Push forks,
+     and only once** — pinned ends plus strictly increasing rungs means a
+     fork also needs a non-end slot, and a Grind is five over five while
+     a Raid is two ends. That is arithmetic; the lever for more is a
+     sixth ground. **Per-area weather does not exist** and was left out
+     rather than faked: `Scenery`'s squall is configured once per LEVEL
+     and a crossing is one level, so both candidates would carry the
+     identical weather, which is an element that changes no decision.
+     **A branch moves the run's total wave count** by one on a Push, and
+     nothing asserts on that sum.
+     STILL OWED from this section: only §4.6's "40% must be vehicles" as
+     a genuine FLOOR — a reservation in `_composeUnder` beside the head
+     and the set-piece, and the one part of this section that is composer
+     surgery rather than a hook that already exists.
   8  §4.5 co-op and versus ................. THE SECOND HUMAN IS IN IT, and
      was before this line was written: `seatAlly`, `beginVersus`,
      `formUp`, four commanders as two sides, orders, musters and purses

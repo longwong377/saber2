@@ -157,8 +157,28 @@ export async function run({ check, assert }) {
     const { readFile } = await import('node:fs/promises');
     const src = (p) => new URL('../../src/' + p, import.meta.url);
     const enemy = await readFile(src('game/Enemy.js'), 'utf8');
-    assert(/seeThrough\(from, at\) < SMOKE_SEE/.test(enemy),
-      'the one place that asks whether a body can see its target no longer reads the sight model');
+    /**
+     * THE THRESHOLD IS STILL THERE, AND THAT IS ALL THIS LINE ASKS.
+     *
+     * It used to match the call VERBATIM — `seeThrough(from, at) < SMOKE_SEE` —
+     * and that went red the day §4.6's Storm Sense was authored, because the
+     * card's whole content is that the player's own side reads the same air at
+     * a different rate, so the site became a pick between `seeThrough` and an
+     * `exp(-depth * eyes)`. Nothing was wrong: a grep for one spelling of a
+     * line fails on the first refactor that touches it, and it fails LOUDLY,
+     * claiming the sight model has been disconnected when it has not.
+     *
+     * So what is asserted here is only the pair that cannot be spelled around —
+     * the sight model is read in this file, and it is compared against
+     * `SMOKE_SEE` — and the PROOF is the two live bodies below, which drive the
+     * shipped `_hasLineOfSight` through the shipped air and cannot be satisfied
+     * by any amount of text. A behavioural arm is what a structural one was
+     * standing in for; it is present, so the stand-in can stop guessing at
+     * syntax.
+     */
+    assert(/seeThrough\(|depthAlong\(/.test(enemy) && /< SMOKE_SEE/.test(enemy),
+      'Enemy.js no longer reads the sight model against SMOKE_SEE — the one place that asks '
+      + 'whether a body can see its target has been disconnected from the air');
     const hud = await readFile(src('ui/HUD.js'), 'utf8');
     assert(!/seeThrough|depthAlong/.test(hud),
       'the HUD reads the sight model — the map rides Force sense, and a storm that blinded the map '

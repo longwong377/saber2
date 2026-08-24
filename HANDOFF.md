@@ -167,7 +167,21 @@ Playable two ways:
 > all six a lie. It walks `src/` now, still minus the BOONS table itself, which
 > is the whole point of the word "elsewhere".
 >
-> **ONE RED IS OPEN AND IT IS AN ORDER DEFECT, ISOLATED TO ONE SENTENCE.**
+> **THE BROWSER SUITES CANNOT RUN IN A CONTAINER WITH NO `node_modules`, AND
+> THIS REPO HAS NONE.** `tools/three-resolver.mjs` maps `three`,
+> `three/addons/*` and `rapier`; everything else falls through to Node's own
+> resolution, and `vendor/` holds only `peerjs`, `rapier` and `three`. So
+> `import('playwright-core')` is `ERR_MODULE_NOT_FOUND` and `frontdoor`,
+> `front-screen`, `lineseen`, `packed` and one check in `lighting` fail here for
+> that reason and no other — six of the thirteen reds in a full gate on this
+> box. A copy of the package does exist at
+> `/opt/node22/lib/node_modules/playwright/node_modules/playwright-core` and the
+> Chromium binaries are at `/opt/pw-browsers/`, but the global tree is not on
+> this project's resolution path, so the bare specifier cannot reach it. Nothing
+> in the tree is wrong; the box is.
+>
+> **THE OLD ORDER-DEFECT NOTE, KEPT BECAUSE THE ANSWER IS WORTH MORE THAN THE
+> BUG.**
 > `breach.mjs`'s "the shield is the gate" passes when its suite runs FIRST in a
 > process and fails when anything at all ran before it — measured three ways:
 > alone 5/5 (25.0 s after the pulse opens the plate, 96.5% of frames in
