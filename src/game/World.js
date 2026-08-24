@@ -2794,6 +2794,34 @@ export class World {
        * "Troops lost" leaves the card in the modes that have no troops. */
       fallen: d?.roster?.fallen?.length ?? null,
       /**
+       * …AND THE NAMES, WHICH THE COUNT ABOVE HAS NEVER CARRIED — PLAN §4.9.
+       *
+       * "The after-action report — who killed whom, from what direction, at
+       * what minute. No death is mysterious, so no death is the AI's fault."
+       *
+       * The RECORD for that has been complete for some time: `_deathOf` writes
+       * the killer's name, the bearing in degrees and the minute of the run
+       * onto every `fell` entry, and `interludeBeats` renders them between
+       * engagements. What no ending has ever carried is the WHOLE RUN'S list.
+       * A player who finishes a crossing is told a number — "Troops lost 6" —
+       * over the one mode whose entire subject is named people dying for good,
+       * and the six names, each with the thing that killed it, exist in
+       * `d.log` and are thrown away with the director.
+       *
+       * So the roll is reported here with the count, off the same log the
+       * interlude reads, in the order the men fell. It is the ENTRIES and not
+       * a rendering of them: `main.js` decides what a card says and this
+       * decides what is true, which is the same split `taken` is built on.
+       *
+       * Null — not `[]` — where there is no army, for `ended`'s stated reason:
+       * a key that is present and null lets a check ask "did this ending send
+       * the field", and an empty array would mean "an army that lost nobody".
+       */
+      roll: d?.log ? d.log.filter((e) => e.t === 'fell').map((e) => ({
+        name: e.name, rank: e.rank, unit: e.unit, area: e.area, wave: e.wave,
+        killer: e.killer ?? null, bearing: e.bearing ?? null, at: e.at ?? null,
+      })) : null,
+      /**
        * HOW a run ended, where "you died" is not the answer — see `main.js`'s
        * `gameOver`, which picks a third card off it.
        *

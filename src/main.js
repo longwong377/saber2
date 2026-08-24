@@ -1416,8 +1416,20 @@ function gameOver(stats) {
       ['Perfect returns', stats.perfects],
       ['Limbs taken', stats.limbs],
     ];
+  /* AND THE ROLL — PLAN §4.9. `stats.roll` is the run's fallen in the order they
+   * fell, reported by `World.runStats()` beside the COUNT the card has always
+   * printed; null in every mode with no army, and the card leaves the block off
+   * rather than drawing a heading over nothing. Passed straight through, for
+   * `runStats`' own stated reason: this decides what a card SAYS and that
+   * decides what is true.
+   *
+   * NO `?? null` ON IT, and `skirmish.mjs` is right to forbid one: `?? 5` on an
+   * absent field is what printed "Areas taken 5" on every won run ever played.
+   * `runStats` reports `roll` on EVERY ending — null where there is no army —
+   * which is exactly why it lives there and not in `extra`, so there is nothing
+   * for a default to cover. */
   const card = () => menu.showDeath(rows,
-    won ? VICTORY_TITLE : (lostLine ? LINE_LOST_TITLE : undefined));
+    won ? VICTORY_TITLE : (lostLine ? LINE_LOST_TITLE : undefined), stats.roll);
   // Remembered before it is shown: 2.6 seconds is a long time for the only exit
   // from a state to be in flight, and a throw in there used to leave the player
   // watching their own corpse with nothing on screen. Escape asks for it again.

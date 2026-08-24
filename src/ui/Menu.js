@@ -56,6 +56,7 @@ import { FOCUS } from '../game/Focus.js';
 // list it starts. MODES.training's own blurb says "the eleven lessons" and it
 // is the same eleven.
 import { LESSONS } from '../game/Dojo.js';
+import { fellLine } from '../game/Session.js';
 import { MODES, sandboxUnits, SANDBOX_MAX_ENEMIES, sandboxConfig, SKIRMISH,
          DRAFT_EVERY, BOSS_EVERY, boonById,
          CONDITIONS, CONDITION_KEYS, RULE_MAX, hazardPay, WaveDirector } from '../game/Waves.js';
@@ -3232,6 +3233,7 @@ export class Menu {
       death: document.getElementById('death'),
       deathStats: document.getElementById('death-stats'),
       deathTitle: document.getElementById('death-title'),
+      deathRoll: document.getElementById('death-roll'),
       netStatus: document.getElementById('net-status'),
       netCode: document.getElementById('net-code'),
       netRoster: document.getElementById('net-roster'),
@@ -7819,9 +7821,47 @@ export class Menu {
    * the player had just lost. The seed used to live in index.html, which is
    * why nothing here felt responsible for putting it back.
    */
-  showDeath(stats, title) {
+  /**
+   * @param {Array} stats  the label/value rows `main.js` assembled
+   * @param {string} [title]
+   * @param {Array|null} [roll] `World.runStats().roll` — the run's fallen, in
+   *        the order they fell. Null in every mode that has no army.
+   */
+  showDeath(stats, title, roll = null) {
     this.el.deathTitle.textContent = title || DEATH_TITLE;
     this.el.deathStats.innerHTML = stats.map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('');
+    /**
+     * THE ROLL, AND IT IS THE NAMES AND NOT THE NUMBER — PLAN.md §4.9.
+     *
+     * The card has always been able to say "Troops lost 6" and never who they
+     * were, on the one mode whose entire subject is named people dying for
+     * good. The six names, each with the thing that killed it, the quarter it
+     * came from and the minute, have been in the director's log the whole time
+     * and were thrown away with the director.
+     *
+     * `fellLine` is the SAME renderer the muster interlude uses between
+     * engagements, imported rather than repeated: two renderings of one record
+     * would eventually disagree about a man, and a report that contradicts
+     * itself is worse than no report because the player cannot tell which half
+     * to argue with.
+     *
+     * NOTHING IS INVENTED. A run with no army sends `null` and the block stays
+     * hidden; an army that lost nobody sends `[]` and gets the line that says
+     * so, which is a different and true statement. That distinction is why
+     * `runStats` reports null rather than an empty array — the same reason
+     * `taken` does, and the reason the card no longer prints "Areas taken 5".
+     */
+    const host = this.el.deathRoll;
+    if (host) {
+      const rows = Array.isArray(roll) ? roll : null;
+      host.classList.toggle('hidden', !rows);
+      if (rows) {
+        host.innerHTML = rows.length
+          ? `<h3>The roll</h3>${rows.map((e) => `<div class="rl"><b>${e.name}</b>`
+            + `<span>${fellLine(e)}</span></div>`).join('')}`
+          : '<h3>The roll</h3><div class="rl none">Everyone who landed came home</div>';
+      }
+    }
     this.el.death.classList.remove('hidden');
   }
   hideDeath() { this.el.death.classList.add('hidden'); }

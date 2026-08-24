@@ -1457,6 +1457,98 @@ export async function run({ check, assert }) {
     } finally { close(); }
   });
 
+  check('menu: the death card names the fallen, and never a man the log does not know', async () => {
+    /**
+     * PLAN.md §4.9's after-action report, at the end of the run.
+     *
+     *     "The after-action report — who killed whom, from what direction, at
+     *      what minute. No death is mysterious, so no death is the AI's fault."
+     *
+     * The RECORD has been complete for a while — `_deathOf` writes the killer's
+     * name, the bearing and the minute onto every `fell` entry, and the muster
+     * interlude renders them between engagements. What no ending carried was
+     * the WHOLE RUN'S list, so a player who finished a crossing was told
+     * "Troops lost 6" over the one mode whose subject is named people dying for
+     * good, and the six names went out with the director.
+     *
+     * ── WHAT THIS ASSERTS, AND WHY IT IS NOT "THE NAMES APPEAR" ─────────────
+     *
+     * The defect this card has a history of is INVENTION, not omission:
+     * `World.runStats`' own note records that two rows were fabricated for
+     * years — `stats.areas ?? 5` printed "Areas taken 5" on every won run ever
+     * played, a literal with no subject. So the bar here is in both directions.
+     * Every man in the roll must be named, and NOTHING may be said about a man
+     * that his record does not know: a death with no source says only when.
+     *
+     * And the two renderings must agree. `fellLine` is shared with
+     * `interludeBeats` deliberately — two renderings of one record would
+     * eventually disagree about a man, and a report that contradicts itself is
+     * worse than no report because the player cannot tell which half to argue
+     * with. This drives BOTH and requires the same sentence out of each.
+     */
+    const { menu, doc, close } = menuOn();
+    try {
+      const { fellLine, interludeBeats } = await import('../../src/game/Session.js');
+      const host = doc.getElementById('death-roll');
+      assert(host, 'index.html has no #death-roll for the card to write');
+
+      /* A MODE WITH NO ARMY SENDS NULL AND GETS NOTHING — the distinction
+       * `runStats` reports null rather than [] for. A heading over nothing is a
+       * screen that looks like it failed. */
+      menu.showDeath([['Waves', '9']], undefined, null);
+      assert(host.classList.contains('hidden'),
+        'a run with no army drew a roll — null means "this mode has no company", not "nobody died"');
+
+      /* …AND AN ARMY THAT LOST NOBODY IS A DIFFERENT AND TRUE STATEMENT. */
+      menu.showDeath([['Ground taken', '5']], undefined, []);
+      assert(!host.classList.contains('hidden') && /came home/.test(host.textContent),
+        `an army that lost nobody got "${host.textContent.slice(0, 60)}" — [] is not null`);
+
+      /* THE REAL SHAPE, off the fields `_deathOf` writes. The third man is the
+       * load-bearing one: no killer and no bearing, which is what a fall or a
+       * bleed-out with nothing near records. */
+      const roll = [
+        { name: 'CT-1109', rank: 'CPL', unit: 'Trooper', area: 2, wave: 3,
+          killer: 'a B2 super battle droid', bearing: 137, at: 154.3 },
+        { name: 'CT-4471', rank: 'PVT', unit: 'Marksman', area: 3, wave: 5,
+          killer: 'a walker', bearing: 4, at: 402.0 },
+        { name: 'CT-7688', rank: 'SGT', unit: 'Trooper', area: 3, wave: 6,
+          killer: null, bearing: null, at: 455.9 },
+      ];
+      menu.showDeath([['Ground taken', '4'], ['Troops lost', '3']], undefined, roll);
+      const text = host.textContent;
+      assert(!host.classList.contains('hidden'), 'the roll stayed hidden with three names in it');
+      for (const e of roll) {
+        assert(text.includes(e.name), `${e.name} fell and is not on the roll`);
+        assert(text.includes(fellLine(e)),
+          `${e.name}'s line reads something other than "${fellLine(e)}" — the card and the `
+          + 'interlude have stopped saying the same sentence about one man');
+      }
+      /* NOTHING INVENTED. The man with no source may not acquire one, and the
+       * card may not put a compass point on a bearing that is null — which is
+       * the "?? 5" defect wearing a different costume. */
+      const third = text.slice(text.indexOf('CT-7688'));
+      assert(!/\bby\b|from the/.test(third),
+        `a death with no source was given one: "${third.slice(0, 80)}"`);
+      assert(third.includes('at 7:35'),
+        'the minute is the one thing that death DOES know and it is not on the card');
+
+      /* AND THE COUNT AND THE NAMES CANNOT DISAGREE — the row above the roll is
+       * `runStats().fallen` and the roll is `runStats().roll`, off the same log. */
+      const beats = interludeBeats(
+        roll.map((e) => ({ t: 'fell', ...e })), 0, { name: 'The Spire Approach', brief: '' }, {});
+      const fromInterlude = beats.beats.filter((b) => b.kind === 'fell').map((b) => b.sub);
+      assert(fromInterlude.length === roll.length,
+        `the interlude rendered ${fromInterlude.length} of ${roll.length} deaths`);
+      for (let i = 0; i < roll.length; i++) {
+        assert(fromInterlude[i] === fellLine(roll[i]),
+          `the interlude says "${fromInterlude[i]}" and the card says "${fellLine(roll[i])}"`);
+      }
+      return `3 named, 1 of them with no source and no direction invented for it; `
+        + 'the card and the interlude say the same sentence for all three; null hides, [] speaks';
+    } finally { close(); }
+  });
+
   check('menu: a session can be left, and a client is not offered the host\'s button', () => {
     /**
      * TWO BUTTONS WRONG IN OPPOSITE DIRECTIONS.

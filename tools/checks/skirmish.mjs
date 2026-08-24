@@ -427,12 +427,21 @@ export async function run({ check, assert }) {
      * The reason a skirmish COMPOSES its opposing force instead of mustering a
      * mirror army: every hook in `CONDITIONS` is a composition hook (`types`,
      * `allow`, `capScale`, `heavyScale`, `eliteScale`, `aliveScale`, `pace`,
-     * `bearing`, `head`), so a mode with no composed wave — Command's meeting —
-     * can honour none of them. This asserts that the mode a player picks a rule
-     * on is a mode the rule reaches.
+     * `bearing`, `head`, `floor`), so a mode with no composed wave — Command's
+     * meeting — can honour none of them. This asserts that the mode a player
+     * picks a rule on is a mode the rule reaches.
+     *
+     * `floor` IS THE LIST'S NEWEST MEMBER AND ITS ABSENCE WAS A REAL RED.
+     * ARMOUR COLUMN was a `types` filter and became a reservation in
+     * `_composeUnder` — PLAN §4.6's "40% must be vehicles" — the day the filter
+     * was measured to field no vehicle at all on four of the seven theatres. A
+     * hook list written out by hand goes stale the first time the composer
+     * grows one, and this one did, loudly and correctly: the assertion below
+     * says the premise needs rewriting, and it did.
      */
     const { CONDITIONS, CONDITION_KEYS } = await import('../../src/game/Waves.js');
-    const hooks = ['types', 'allow', 'capScale', 'heavyScale', 'eliteScale', 'aliveScale', 'pace', 'bearing', 'head'];
+    const hooks = ['types', 'allow', 'capScale', 'heavyScale', 'eliteScale', 'aliveScale', 'pace',
+                   'bearing', 'head', 'floor'];
     for (const k of CONDITION_KEYS) {
       assert(hooks.some((h) => CONDITIONS[k][h] !== undefined),
         `${k} declares no composition hook — this check's premise needs rewriting`);

@@ -1345,6 +1345,13 @@
   <div class="death-wrap">
     <h2 id="death-title">You are one with the Force</h2>
     <div id="death-stats" class="death-stats"></div>
+    <!-- THE ROLL — PLAN §4.9's after-action report, over the whole run.
+         Empty markup for the reason every other list in this file is empty: the
+         names come off `World.runStats().roll`, which comes off the director's
+         own log, and a second copy of a casualty list typed here could disagree
+         with the one the interlude already prints. Hidden until there is a roll
+         to draw: a heading over nothing reads as a screen that failed. -->
+    <div id="death-roll" class="death-roll hidden"></div>
     <button id="btn-retry" class="primary">Rise again</button>
     <button id="btn-menu" class="ghost">Return to the Temple</button>
   </div>

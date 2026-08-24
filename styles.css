@@ -2338,3 +2338,24 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
 .company-marks .swatch:hover{transform:translate(-1px,-1px)}
 .company-marks .swatch.sel{outline:2px solid var(--accent);outline-offset:3px;
   transform:translate(-2px,-2px);box-shadow:var(--stamp-lg)}
+
+
+/* ── THE ROLL ON THE DEATH CARD — PLAN §4.9's after-action report ──────────
+ *
+ * A LIST AND NOT A TABLE. The stat rows above it are label/value pairs because
+ * each is one number; a casualty is a NAME with a sentence after it, and giving
+ * it a second column would set the names in a narrow gutter and wrap every
+ * sentence twice. It scrolls rather than growing the card: a crossing that
+ * loses its whole company has ten of these and the two buttons under it are the
+ * only exits from this screen — a list that pushed them off the bottom would
+ * strand a player on their own casualty list. */
+.death-roll { margin: 14px 0 4px; max-height: 34vh; overflow-y: auto; text-align: left; }
+.death-roll h3 { margin: 0 0 6px; font-size: 12px; letter-spacing: .14em;
+  text-transform: uppercase; opacity: .6; font-weight: 600; }
+.death-roll .rl { display: flex; flex-direction: column; gap: 1px;
+  padding: 5px 0; border-top: 1px solid rgba(255,255,255,.07); }
+.death-roll .rl b { font-size: 13px; letter-spacing: .02em; }
+/* The sentence is the quiet half: the NAME is what a player scans for, and a
+ * killer and a bearing set at the same weight would turn ten rows into a wall. */
+.death-roll .rl span { font-size: 11px; opacity: .58; }
+.death-roll .rl.none { opacity: .55; font-size: 12px; }
