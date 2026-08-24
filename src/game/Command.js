@@ -1623,6 +1623,64 @@ export const AREAS = [
 ];
 
 
+/**
+ * HOW HEAVY THE GARRISON ON A GROUND IS, SAID IN WORDS — PLAN.md §4.6.
+ *
+ * "A branching route over the five Command areas that already exist, with
+ * partial information: you see the ground, the weather and the garrison weight,
+ * not the contents." The last clause is the whole point of this function: the
+ * fork has to be answerable and it must not be SOLVABLE. `budget` and `heavy`
+ * printed raw would be solvable — 1.10/0.35 against 1.25/0.30 is arithmetic,
+ * and a player with a wiki would take the same road every time. A band is the
+ * same fact at the resolution a commander actually has before they land.
+ *
+ * ONE READING OUT OF BOTH DIALS, because they are one quantity seen twice:
+ * `budget` is the size of the wave's threat purse and `heavy` is the share of
+ * that purse spent at the heavy end, so `budget × (1 + heavy)` is "the purse,
+ * weighted by how much of it arrives as weight". It introduces no constant —
+ * that is the only reason it is written this way rather than as a sum with two
+ * coefficients somebody would have to defend. Monotone on the shipped table:
+ *
+ *     landing 0.75 · plain 1.09 · hailfire 1.49 · spires 1.63 · foundry 2.10
+ *
+ * and the two that matter are hailfire and spires, because they are the two
+ * grounds the one real fork in the mode chooses between (see `routeChoices`).
+ * They are 9% apart and they land in different bands, which is the property
+ * §7's guardrail asks for: an element that reads the same for both candidates
+ * changes no decision and should not be on the card.
+ *
+ * THE BAND IS A RANK, NOT A THRESHOLD. Nothing here is compared against a
+ * number: an area's position in the sorted column of every area's weight is
+ * mapped onto this vocabulary. Add a sixth area, or re-tune `budget`, and the
+ * words re-deal themselves — there is no second table to keep in step, which
+ * is HANDOFF §2.3 and the same argument `AREAS`' own note makes about `tier`.
+ */
+export const GARRISON_BANDS = [
+  'a screen', 'a line', 'a heavy line', 'a massed line', 'everything they have left',
+];
+
+/** `budget × (1 + heavy)`. See `GARRISON_BANDS`; not exported, because a
+ *  caller that wanted the scalar would be a caller printing the numbers. */
+const garrisonWeight = (a) => (a?.budget || 0) * (1 + (a?.heavy || 0));
+
+/**
+ * The band a ground falls in, out of every ground the mode has.
+ *
+ * Ranked by COUNTING the areas lighter than this one rather than by
+ * `indexOf`, so a record that is not one of `AREAS` — a stage list a check
+ * drove in, a sixth area added later — still lands somewhere honest instead of
+ * falling off the end.
+ */
+export function garrisonBand(area) {
+  const w = garrisonWeight(area);
+  const all = [...new Set(AREAS.map(garrisonWeight))].sort((x, y) => x - y);
+  if (all.length < 2) return GARRISON_BANDS[0];
+  const rank = all.filter((v) => v < w).length;
+  const i = Math.round((rank / (all.length - 1)) * (GARRISON_BANDS.length - 1));
+  return GARRISON_BANDS[Math.max(0, Math.min(GARRISON_BANDS.length - 1, i))];
+}
+
+
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  Morale, and who is in charge of whom                                  */
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -2939,6 +2997,20 @@ export class CommandDirector extends WaveDirector {
     /** The beats of the muster that is open, or null. Published on the offer so
      *  a peer's screen tells the same story as the host's. */
     this._interlude = null;
+    /**
+     * THE FORK THAT IS OPEN, FROZEN THE MOMENT THE MUSTER OPENS.
+     *
+     * `routeChoices()` derives the pair off `stages`, and `takeRoute` REWRITES
+     * `stages` — so a fork re-derived on every read would deal a different
+     * alternative the instant the player took one. (Take the spires over the
+     * hailfire line on a Push and the freshly-derived pair becomes spires vs
+     * the open plain; the card would swap a button under the cursor.) So it is
+     * dealt once, in `_areaClear`, held here for as long as the card is up, and
+     * dropped by `closeMuster` — exactly the lifetime `_interlude` has, for
+     * exactly the reason its own note gives about being the same object every
+     * call. Empty array when this boundary has no fork; null between musters.
+     */
+    this._fork = null;
     this.onRoster = null;         // (summary) => void      — the HUD's feed
     this.onMuster = null;         // (offer) => void        — the between-areas screen
     /**
@@ -3809,6 +3881,175 @@ export class CommandDirector extends WaveDirector {
     return this.campaign ? rung.at : 1;
   }
 
+  /**
+   * ══ THE BRANCHING ROUTE — PLAN.md §4.6, and what it can and cannot be ══
+   *
+   * "A branching route over the five Command areas that already exist, with
+   * partial information: you see the ground, the weather and the garrison
+   * weight, not the contents."
+   *
+   * THE LENGTH IS NOT NEGOTIABLE. `SESSION_PLANS` prints a duration on the
+   * deploy card at 0:00 — "3 engagements · 18–25 min" — and that card is the
+   * one promise the mode makes before a player commits a sitting to it. So a
+   * fork changes WHICH ground fills a slot and never HOW MANY slots there are:
+   * `stages.length` is fixed at the constructor and every branch taken here
+   * writes a route of exactly the same length. What a player trades is the
+   * ground, not the evening.
+   *
+   * TWO CLAUSES CARRY OVER FROM `planStages` UNCHANGED, and they are what make
+   * the route a route rather than a shuffle:
+   *
+   *   IT ONLY GOES FORWARD. Every stage is a strictly higher rung of `AREAS`
+   *     than the one before it. `areaRung` gates the muster shelf on the
+   *     ground you are standing on, so a route that doubled back would take
+   *     the ARC off the shelf between two areas.
+   *   IT ENDS ON THE LAST GROUND. §5's "the last stage is always the last" —
+   *     a crossing that stopped at the spires would end on somebody else's
+   *     brief and call it a victory, and `lastArea` would stop being "the end
+   *     of the list".
+   *
+   * ── SO MOST PLANS HAVE NO FORK, AND THAT IS ARITHMETIC ──────────────────
+   *
+   * With the ends pinned and the rungs strictly increasing, the slack in a
+   * route of `n` stages over `AREAS.length` grounds is `AREAS.length - n`:
+   *
+   *   A GRIND is five stages over five rungs. Every slot is spoken for, there
+   *     is no fork anywhere in it, and that is CORRECT rather than a gap —
+   *     the Grind's own blurb is "the whole crossing", and a whole crossing
+   *     with a ground left out would be a different promise.
+   *   A RAID is two stages, and both of them are ends. Also no fork.
+   *   A PUSH is three: the landing, ONE FREE SLOT, the Core Ship. That slot
+   *     has three legal grounds (rungs 2, 3, 4) and it is the only real
+   *     branch the mode has. It is also the plan half of all seeds draw.
+   *
+   * ── WHY TWO CANDIDATES AND NOT THREE ────────────────────────────────────
+   *
+   * The planned ground is always the first, because it is the answer with no
+   * screen wired: `_areaClear` opens a muster, `autoMuster` spends the purse
+   * and `closeMuster` advances onto `stages[areaIndex]` without this method
+   * ever being asked. Every headless check, every mode that is not a crossing
+   * and every run on a front end that has no fork on its card takes the route
+   * `planStages` dealt, byte for byte.
+   *
+   * The second is the legal ground whose MUSTER is furthest from the planned
+   * one's, and the reason is the guardrail rather than taste: a fork between
+   * two grounds three reinforcement points apart is a fork below the noise of
+   * one casualty, which is an element that changes no decision. On the shipped
+   * table the Push's planned middle is the Hailfire Line at 17 and the far
+   * candidate is the Spire Approach at 26 — half again the purse, a heavier
+   * garrison, a fifth wave to survive, and the rung-4 shelf one engagement
+   * early. That is a decision.
+   *
+   * ── AND THE TAIL IS NEVER UNDECIDED ─────────────────────────────────────
+   *
+   * `stages` always holds a COMPLETE route — the one the run takes if the
+   * player presses Advance and chooses nothing. That matters because
+   * `rampWave` walks `stages` to place a wave inside its area and `budgetFor`
+   * asks it about waves that have not been fought (`bodyLimit` asks about
+   * `BODY_KNEE`), so a route with a hole in it would price the present off a
+   * future that does not exist yet. Stages BEHIND `areaIndex` are never
+   * rewritten, so nothing already fought is re-priced.
+   *
+   * A branch does move the run's total WAVE count — a Push is 3+4+5 = 12
+   * through the hailfire line and 3+5+5 = 13 through the spires. Nothing
+   * asserts on that sum and nothing should: what the deploy card promises is
+   * a count of ENGAGEMENTS and a band of minutes, and `AREAS` has run 3/4/4/5/5
+   * since it was written precisely so that a later area is a longer one. The
+   * extra wave is the price on the ticket, not a drift in it.
+   *
+   * @returns {object[]} the candidate `AREAS` records, planned first, or `[]`
+   *          when this boundary has no slack.
+   */
+  routeChoices() {
+    /* `AREAS` IS A PRESSURE DIAL IN THE OTHER TWO MODES and not a route at all
+     * — `World.beginSkirmish` writes `areaIndex = sk.pressure` and never
+     * advances it. Branching a dial would move the budget curve, the heavy bias
+     * and the shelf together, which is a difficulty change nobody asked for.
+     * Same field `this.stages` is guarded by in the constructor, asked once. */
+    if (!this.crossing) return [];
+    const i = this.areaIndex;
+    /* The landing is where you come down and the last ground is where it ends;
+     * neither is anybody's to choose. Both are `planStages`' clauses, restated
+     * as bounds rather than re-derived. */
+    if (i <= 0 || i >= this.stages.length - 1) return [];
+    const from = AREAS.indexOf(this.stages[i - 1]);
+    const planned = AREAS.indexOf(this.stages[i]);
+    if (from < 0 || planned < 0) return [];
+    /* How many grounds still have to fit after this one, the last of which is
+     * `AREAS`' last. So the highest rung this slot may take is the one that
+     * still leaves a distinct rung for each of them. */
+    const tail = this.stages.length - 1 - i;
+    const lo = from + 1, hi = AREAS.length - 1 - tail;
+    if (hi <= lo || planned < lo || planned > hi) return [];
+    let alt = -1, far = -1;
+    for (let k = lo; k <= hi; k++) {
+      if (k === planned) continue;
+      const d = Math.abs(AREAS[k].muster - AREAS[planned].muster);
+      /* Ties go to the heavier ground: a fork whose two roads pay the same is
+       * a fork about what you will meet, and the heavier one is the one with
+       * something to meet. Unreachable on the shipped table — `muster` is
+       * strictly increasing — and written so that it stays answerable if it
+       * stops being. */
+      if (d > far || (d === far && k > alt)) { far = d; alt = k; }
+    }
+    return alt < 0 ? [] : [AREAS[planned], AREAS[alt]];
+  }
+
+  /**
+   * TAKE ONE OF THEM, AND KEEP THE ROUTE A ROUTE.
+   *
+   * The tail is not patched, it is RE-PLANNED, through `planStages` itself over
+   * the grounds that are still ahead. That is the whole of why this is four
+   * lines: `planStages` already knows that a route starts where it starts, ends
+   * on the last ground and spreads whatever is between evenly, and a second
+   * implementation of those three clauses here is the hand-maintained twin this
+   * repository has paid for eight times (HANDOFF §2.3). Taking the PLANNED
+   * ground therefore reproduces the existing tail exactly, which is what makes
+   * "choose nothing" and "choose the default" the same run.
+   *
+   * A COMMANDER WHO IS NOT HOLDING THE ARMY CAN ONLY ASK, the same shape
+   * `recruit` and `closeMuster` have and for the same reason: the route is a
+   * fact about the run, one machine owns the run, and a client that rewrote its
+   * own `stages` would fight a different crossing from the one the host is
+   * composing waves for. Nothing is written locally; the host's answer arrives
+   * as the next offer.
+   *
+   * @param {string} id the `AREAS` id of the ground to take.
+   * @returns {boolean} whether the route actually moved.
+   */
+  takeRoute(id) {
+    /* `refused` is the one field the muster screen prints a sentence out of,
+     * and it is cleared on the way in for the reason `recruit` clears it: a
+     * road taken after a purchase was refused must not leave the price of a
+     * body on the screen as though it were an answer about the ground. */
+    this.refused = null;
+    if (this._netShell) return this.world?.requestRoute?.(id) ?? false;
+    /* Only while the card is up. The fork is a muster's decision — outside one
+     * there is no `_fork`, and a route rewritten mid-area would move the ground
+     * under a line already standing on it. */
+    if (!this.mustering || !this._fork?.length) { this.refused = 'there is no road to choose here'; return false; }
+    const pick = this._fork.find((a) => a.id === id);
+    if (!pick) { this.refused = `${id} is not one of the roads on offer`; return false; }
+    /* The road you are already on. Refused because the route did not MOVE, and
+     * silently because it is not a refusal a player needs told about — it is
+     * the answer "yes, that is where you are going". */
+    if (pick === this.stages[this.areaIndex]) return false;
+    const i = this.areaIndex;
+    const rest = planStages({ engagements: this.stages.length - i }, AREAS.slice(AREAS.indexOf(pick)));
+    /* THE LENGTH IS THE PROMISE. `routeChoices` only offers grounds that leave
+     * room for the tail, so this cannot fail — and it is checked rather than
+     * trusted, because the one failure mode of this whole feature is a card
+     * that said three engagements and delivered two. */
+    if (rest.length !== this.stages.length - i) { this.refused = `${pick.name} leaves no room for the rest of the crossing`; return false; }
+    this.stages = [...this.stages.slice(0, i), ...rest];
+    /* THE OFFER MOVED, so every screen showing it is now wrong — the brief, the
+     * band, the muster the next ground pays. Published here for the reason
+     * `recruit` publishes: this is the one place a route changes, and a publish
+     * per caller is a chance to forget one. */
+    this.world?.publishMuster?.();
+    return true;
+  }
+
   musterOffer(c = this.commander) {
     /**
      * A SHELL SAYS WHAT IT WAS TOLD, VERBATIM — the same rule `readout` states,
@@ -3833,7 +4074,87 @@ export class CommandDirector extends WaveDirector {
       area: this.areaNumber,
       areaName: A.name,
       brief: A.brief,
+      /**
+       * THE GROUND JUST TAKEN — and it was missing, which cost the card its
+       * header.
+       *
+       * `_areaClear` advances `areaIndex` BEFORE it builds this offer, so `A`
+       * is the ground you are walking INTO and every field above it says so.
+       * The muster screen had nothing else to reach for and stamped
+       * `"${areaName} — held"` across the top of itself: on a Push it announced
+       * that the Hailfire Line had been held at the moment the player finished
+       * the landing zone and was being offered the road to it. The interlude
+       * running three centimetres below said `THE LANDING ZONE — HELD`, off
+       * `Session.interludeBeats`, which is handed the right record — so the two
+       * halves of one card named two different grounds as the one just taken.
+       *
+       * Same record `_areaClear` hands the interlude, read the same way, so the
+       * stamp and the report cannot drift. Null outside a muster, which is
+       * every other caller of this method (`_bestAffordable`, the opening) and
+       * is the honest answer there: nothing has been held yet.
+       */
+      held: this.areaIndex > 0 ? this.stages[this.areaIndex - 1] : null,
+      /** …and the ground after the one you are walking into, which is what
+       *  makes a fork readable: both roads rejoin here. Clamped to the last
+       *  stage, so it is never undefined on the final approach. */
       next: this.stages[Math.min(this.areaIndex + 1, this.stages.length - 1)],
+      /**
+       * THE FORK, AND WHAT IT IS ALLOWED TO SAY — PLAN.md §4.6's "partial
+       * information: you see the ground, the weather and the garrison weight,
+       * NOT THE CONTENTS."
+       *
+       * Four readings per candidate and every one of them is a property of the
+       * GROUND rather than of the wave that will be composed on it:
+       *
+       *   the ground     `name` and `brief`, the same two strings the deploy
+       *                  card and the muster's own header already print, so no
+       *                  third description of a place can drift from them.
+       *   the rung       where it sits on the `AREAS` ladder, which is the
+       *                  number `areaRung` gates the shelf on — taking the
+       *                  higher road opens the rung-4 bodies an engagement
+       *                  early, and that is the sharpest consequence on the
+       *                  card.
+       *   how long       `waves`. An engagement is 3 to 5 waves and the whole
+       *                  of what a longer one costs is attrition against the
+       *                  same ten men.
+       *   what it pays   `muster`, in points and not in a band, deliberately:
+       *                  it is the currency the decision trades in, the purse
+       *                  is printed two rows below it in the same units, and a
+       *                  band there would make the comparison unaskable.
+       *   the weight     `garrisonBand`, which is `budget` and `heavy` at the
+       *                  resolution a briefing has. See `GARRISON_BANDS`.
+       *
+       * WHAT IS NOT HERE IS THE CONTENTS: no `budget`, no `heavy`, no
+       * archetype and no condition. `_compose` deals those when the area
+       * starts, off a budget that also depends on how many men are standing by
+       * then — so they are not merely withheld, they do not exist yet.
+       *
+       * AND THERE IS NO WEATHER ON IT, WHICH IS THE HONEST ANSWER RATHER THAN
+       * AN OMISSION. §4.6 asks for one and PLAN.md §4.7 answers it in the same
+       * document: "There is no `Weather.js`… **Weather is entirely unbuilt**."
+       * What exists is `Scenery.weather`, ONE squall scheduler configured once
+       * per LEVEL out of `level.dust.weather` — and a crossing is one level for
+       * its whole length (§3's first convergence, one ground), so every
+       * candidate on this card would carry the same squall, the same period and
+       * the same peak. §7's guardrail is that an element has to change a
+       * decision; a column that is identical on both roads changes none, and
+       * printing it would only teach the player that the fork has a dial in it
+       * that does nothing. `waves` is the true thing in its place: it is
+       * per-ground, it differs between the two candidates the Push actually
+       * offers (4 against 5), and it is what the player is really asking when
+       * they ask about the sky.
+       */
+      route: (this._fork || []).map((a) => ({
+        id: a.id, name: a.name, brief: a.brief,
+        rung: AREAS.indexOf(a) + 1,
+        waves: a.waves,
+        muster: a.muster,
+        garrison: garrisonBand(a),
+        /** Which road the run is on right now — the planned one until the
+         *  player moves it. The card draws the selection off this rather than
+         *  keeping its own, for the reason it keeps no copy of the points. */
+        taken: a === this.stages[this.areaIndex],
+      })),
       points: c.roster.points,
       strength: c.roster.strength,
       max: MAX_STRENGTH,
@@ -7479,6 +7800,11 @@ export class CommandDirector extends WaveDirector {
       got: held.muster, points: this.roster.points,
       strength: this.roster.strength, max: MAX_STRENGTH,
     });
+    /* AND THE FORK, DEALT ONCE — before the offer, because the offer carries it.
+     * `routeChoices` reads `stages` and `takeRoute` rewrites `stages`, so this
+     * is the only moment at which the pair is the pair the player was first
+     * shown. See `_fork`. */
+    this._fork = this.routeChoices();
     const offer = this.musterOffer();
     this.world?.notify?.(`${this.stages[this.areaIndex - 1].name.toUpperCase()} — HELD`,
       `${this.roster.points} reinforcement points · ${this.roster.strength} standing`);
@@ -7661,6 +7987,10 @@ export class CommandDirector extends WaveDirector {
      * everything after this line belongs to the next interlude. */
     this._logAt = this.log.length;
     this._interlude = null;
+    /* The road is taken. Dropping it here rather than in `_areaClear` is what
+     * makes `takeRoute` refuse outside a muster instead of quietly moving the
+     * ground under a line that is already standing on it. */
+    this._fork = null;
     /* THE GUNSHIPS, which is what the mode's first brief has always said
      * happens and what the code never did. See `deploy`.
      *

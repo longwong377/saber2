@@ -7250,6 +7250,7 @@ export class Menu {
       held: document.getElementById('muster-held'),
       title: document.getElementById('muster-title'),
       brief: document.getElementById('muster-brief'),
+      route: document.getElementById('muster-route'),
       units: document.getElementById('muster-units'),
       refused: document.getElementById('muster-refused'),
       rollHead: document.getElementById('muster-roll-head'),
@@ -7276,12 +7277,27 @@ export class Menu {
     const draw = (o) => {
       if (!o) return;
       this._muster = o;
-      // The area just HELD, and the one being walked into. Both are the
-      // director's own strings — the brief that names the ground is what makes
-      // the next four minutes legible, and it is already written.
-      if (el.held) el.held.textContent = `${o.areaName} — held`;
-      if (el.title) el.title.textContent = o.next ? o.next.name : 'The advance is over';
-      if (el.brief) el.brief.textContent = o.next ? o.next.brief : '';
+      /**
+       * THE AREA JUST HELD, AND THE ONE BEING WALKED INTO — and until `held`
+       * existed on the offer this card named the wrong ground for both.
+       *
+       * `musterOffer` is built AFTER `_areaClear` has advanced the index, so
+       * `areaName` is where you are going and `next` is the ground beyond it.
+       * The stamp read `areaName` and the title read `next`, which put the
+       * whole header one engagement into the future: on a Push the card
+       * announced "The Hailfire Line — held" over a title of "The Core Ship"
+       * at the moment the player had just finished the LANDING ZONE — while
+       * the interlude directly beneath it, which is handed the right record,
+       * said "THE LANDING ZONE — HELD". One card, two answers.
+       *
+       * Both are the director's own strings and neither is derived here. The
+       * fallback on `held` is for the callers that have not held anything —
+       * the opening muster and every fixture written before the field existed.
+       */
+      if (el.held) el.held.textContent = `${(o.held && o.held.name) || o.areaName} — held`;
+      if (el.title) el.title.textContent = o.areaName || 'The advance is over';
+      if (el.brief) el.brief.textContent = o.brief || '';
+      if (el.route) drawRoute(o);
       if (el.points) el.points.textContent = String(o.points | 0);
       if (el.strength) el.strength.textContent = `${o.strength | 0}/${o.max | 0}`;
       if (el.rollHead) {
@@ -7309,6 +7325,54 @@ export class Menu {
       }
     };
 
+    /**
+     * THE FORK — PLAN.md §4.6's branching route, drawn and not decided.
+     *
+     * Two roads over the same run: `CommandDirector.routeChoices` has already
+     * worked out which grounds are legal here and `musterOffer` has already
+     * reduced each of them to the five things a player is allowed to know
+     * before they land — the ground, where it sits on the ladder, how many
+     * waves it is, what it pays, and a BAND for how heavy the garrison is.
+     * Nothing on this screen computes any of that, for the reason nothing here
+     * computes the points: a card that worked out its own weights would be a
+     * second opinion about a ground the director is composing waves for.
+     *
+     * ABSENT ON MOST RUNS, and that is arithmetic rather than a bug. A route
+     * keeps the length the seed rolled and its two ends are pinned, so a Grind
+     * (five stages over five grounds) and a Raid (two, both ends) have no slack
+     * anywhere in them and `route` comes back empty. The block hides itself
+     * rather than printing a fork with one road in it.
+     */
+    const drawRoute = (o) => {
+      const roads = (o && o.route) || [];
+      el.route.innerHTML = '';
+      el.route.classList.toggle('hidden', roads.length < 2);
+      if (roads.length < 2) return;
+      const head = document.createElement('p');
+      head.className = 'muster-route-head';
+      /* WHERE BOTH ROADS GO is the half that makes a fork answerable rather
+       * than a coin toss: the run is the same length either way and rejoins on
+       * the same ground, so what is being traded is the ground and not the
+       * evening. `next` is the director's, not a sentence assembled here. */
+      head.textContent = o.next ? `Your road — both rejoin at ${o.next.name}`
+                                : 'Your road';
+      el.route.appendChild(head);
+      for (const r of roads) {
+        const card = document.createElement('div');
+        card.className = r.taken ? 'rd on' : 'rd';
+        card.innerHTML = `<b>${escKey(r.name)}</b>`
+          + `<span class="rd-brief">${escKey(r.brief)}</span>`
+          + `<span class="rd-facts">${r.muster} points · ${r.waves} waves · rung ${r.rung}</span>`
+          + `<span class="rd-weight">Garrison: ${escKey(r.garrison)}</span>`;
+        /* Only the road you are NOT on is a control. Pressing the one you are
+         * already taking is a no-op the director would refuse anyway, and a
+         * button that does nothing is worse than no button. */
+        if (!r.taken) this._activate(card, () => road(r.id),
+          `${r.name} — ${r.garrison}, ${r.muster} points, ${r.waves} waves`);
+        el.route.appendChild(card);
+      }
+    };
+
     const buy = (type) => {
       // The quiet takes no input. See `_runInterlude`.
       if (this._interludeLive) { audio.ui('bad'); return; }
@@ -7316,6 +7380,19 @@ export class Menu {
       if (el.refused) el.refused.textContent = res?.refused || '';
       audio.ui(res?.refused ? 'bad' : 'click');
       draw(res?.offer || this._muster);
+    };
+
+    /* Taking a road is the same shape as buying a body and goes through the
+     * same door: ask the director, print whatever it refuses, redraw from the
+     * offer it hands back. The screen keeps no copy of the route for the same
+     * reason it keeps no copy of the points. */
+    const road = (id) => {
+      if (this._interludeLive) { audio.ui('bad'); return; }
+      const res = this._musterIo?.route?.(id);
+      if (!res) return;
+      if (el.refused) el.refused.textContent = res.refused || '';
+      audio.ui(res.refused ? 'bad' : 'good');
+      draw(res.offer || this._muster);
     };
 
     if (el.refused) el.refused.textContent = '';
@@ -7393,18 +7470,24 @@ export class Menu {
    */
   _runInterlude(el, res, schedule = null) {
     this._clearInterlude();
-    const list = el.interlude, shop = el.units, go = el.done;
+    /* THE FORK IS UNDER THE SAME GATE AS THE SHELF. Choosing a road is an
+     * input, and "it must have no input" does not have an exception for the
+     * decision that happens to be interesting. Same class, same flag, same
+     * moment it lifts. */
+    const list = el.interlude, go = el.done;
+    const gated = [el.units, el.route].filter(Boolean);
+    const wait = (on) => gated.forEach((n) => n.classList.toggle('waiting', on));
     if (!list) return 0;
     list.innerHTML = '';
     const beats = res?.beats || [];
     if (!beats.length) {
       list.classList.add('hidden');
-      shop?.classList.remove('waiting');
+      wait(false);
       if (go) go.disabled = false;
       return 0;
     }
     list.classList.remove('hidden');
-    shop?.classList.add('waiting');
+    wait(true);
     if (go) go.disabled = true;
     /**
      * THE GATE IS IN THE CODE, NOT ONLY IN THE STYLESHEET.
@@ -7438,7 +7521,7 @@ export class Menu {
      * would take the eye off the name. */
     this._interludeTimers.push(at(() => {
       this._interludeLive = false;
-      shop?.classList.remove('waiting');
+      wait(false);
       if (go) { go.disabled = false; go.focus?.(); }
     }, Math.round(res.seconds * 1000)));
     return beats.length;

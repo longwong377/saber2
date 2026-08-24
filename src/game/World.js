@@ -6346,6 +6346,30 @@ export class World {
   }
 
   /**
+   * …AND A JOINING COMMANDER CHOSE A ROAD.
+   *
+   * The third thing a peer can say on the muster wire, beside a unit and the
+   * word done, and the same one-field message for the same reason: what crosses
+   * is the GROUND'S ID and nothing else. A route is a fact about the run — the
+   * host composes every wave of the next area off `stages` — so a client that
+   * rewrote its own copy would be looking at a brief for ground the host is not
+   * taking it to. `CommandDirector.takeRoute` runs on the machine holding the
+   * army, against the fork that machine dealt, and the answer comes back as the
+   * next offer like every other muster answer.
+   *
+   * NOT GUARDED HERE, exactly as `applyMuster` does not re-check affordability:
+   * `takeRoute` already refuses an id that is not on the open fork, a fork that
+   * is not open, and a tail that would not fit. A second copy of those three
+   * tests on this side is how the two come to disagree about where the run is
+   * going.
+   */
+  requestRoute(id) {
+    if (this.netMode !== 'client' || !this.net?.connected) return false;
+    this.net.toHost({ t: 'muster', r: id });
+    return true;
+  }
+
+  /**
    * THE MUSTER, IN WHICHEVER DIRECTION THIS MACHINE IS FACING.
    *
    * One message type, one handler, and the branch is `netMode` — which is total
@@ -6377,6 +6401,18 @@ export class World {
     if (!d.mustering) return false;
     const c = this.commanderFor(peerId);
     if (msg.done) return d.closeMuster();
+    /* THE ROAD, AND ANY COMMANDER SHARING THE PURSE MAY PICK IT — the same rule
+     * `recruit` is under one line down, and it is one rule rather than two on
+     * purpose: in co-op there is one army, one purse and one crossing, so a
+     * route only one player could steer would be a decision the others watch.
+     * `takeRoute` publishes the new offer to everybody when it lands; a refusal
+     * is nobody else's business and goes back to the peer that asked, with the
+     * offer they still have. */
+    if (msg.r !== undefined) {
+      if (d.takeRoute(msg.r)) return true;
+      this.net?.toPeer?.(peerId, { t: 'muster', o: d.musterOffer(c), no: d.refused });
+      return false;
+    }
     /* `recruit` publishes the new offer to everyone sharing this purse when it
      * succeeds — the host's own screen buys through the same line. A REFUSAL
      * publishes nothing and is nobody else's business, so it goes back to the

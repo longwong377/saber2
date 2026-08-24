@@ -225,7 +225,7 @@ export class Screens {
    * the caller cannot forget to.
    *
    * @param {object} offer `CommandDirector.musterOffer()`
-   * @param {{recruit:(t:string)=>object, done:()=>void}} io
+   * @param {{recruit:(t:string)=>object, route:(id:string)=>object, done:()=>void}} io
    */
   muster(offer, io = {}) {
     const menu = this.io.menu;
@@ -234,6 +234,12 @@ export class Screens {
     this.take('muster', () => {
       up = menu.showMuster(offer, {
         recruit: this.guarded('recruiting', (type) => io.recruit?.(type)),
+        /* THE ROAD — PLAN.md §4.6's fork, forwarded rather than dropped. This
+         * object is rebuilt here rather than passed through, which is the whole
+         * point of `guarded` and also its one hazard: a callback the caller
+         * supplies and this method does not name is a callback the screen never
+         * sees, and a fork whose buttons do nothing is worse than no fork. */
+        route: this.guarded('choosing a road', (id) => io.route?.(id)),
         done: this.guarded('closing the muster', () => io.done?.()),
       }) !== false;
     });

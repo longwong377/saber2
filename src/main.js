@@ -574,6 +574,17 @@ async function buildWorld(levelKey, onProgress = null, runSeed = null) {
           d.recruit(type);
           return { offer: d.musterOffer(), refused: d.refused };
         },
+        /* THE ROAD — PLAN.md §4.6's branching route, through the identical
+         * door and for the identical reason. `takeRoute` re-plans the tail so
+         * the run stays the length the deploy card promised, and the screen
+         * asks for the offer again rather than editing its own copy of it: the
+         * ground you are walking into, what it pays and how heavy it is all
+         * move together, and a card that patched one of them would print a
+         * garrison band beside the wrong brief. */
+        route: (id) => {
+          d.takeRoute(id);
+          return { offer: d.musterOffer(), refused: d.refused };
+        },
         done: () => {
           /* The overlay is forgotten FIRST — `resume()` would otherwise put the
            * muster the player has just finished straight back on the screen.
