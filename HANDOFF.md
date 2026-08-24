@@ -167,6 +167,19 @@ Playable two ways:
 > all six a lie. It walks `src/` now, still minus the BOONS table itself, which
 > is the whole point of the word "elsewhere".
 >
+> **A GATE CANNOT SEE A CHECK FILE YOU EDIT WHILE IT IS RUNNING, AND THIS COST
+> AN HOUR TWICE.** `determinism.mjs`'s "every suite file in `tools/checks/`
+> exports a `run()`" IMPORTS every file to ask the question, and it runs early
+> (alphabetically, at about suite 20). Node caches a module for the life of the
+> process. So every suite file is already loaded before a full gate has fought
+> its way to the letter f, and any edit after that point is invisible to that
+> run — the gate goes on measuring the version it read at suite 20 and reports
+> failures that no longer exist. Measured: `suppression.mjs` was fixed, passed
+> `_one suppression` and `_seq determinism suppression` 6/6, and the gate that
+> was running at the time still printed its old numbers to the decimal.
+> **Edit check files between gates, never during one**, and when a gate's red
+> disagrees with a fresh `_one`, believe the `_one`.
+>
 > **TWO THINGS FOUND WHILE FIXING A CHECK, NEITHER FIXED, BOTH WORTH MORE THAN
 > THE CHECK.** `suppression.mjs` drives ten troopers up a Geonosis slope, and in
 > every one of the eight arms measured a man ends the walk **stuck on the
