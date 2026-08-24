@@ -677,8 +677,15 @@ NOW — measurements
       §2's own conclusion. §2 says "leave the gate alone" and `World.js`'s
       cross-army pass carries that decision in writing; `tools/scale.mjs` has
       since run the ladder in the two-army front layout to 160 bodies, 120 of
-      them at 16.60 ms. What is left is raising `LEVY_STRENGTH` (still 40),
-      and the gate stays by decision rather than by omission.
+      them at 16.60 ms. AND `LEVY_STRENGTH` IS ALSO ALREADY DECIDED, against
+      raising it, in `Levy.js`'s own note and with the arithmetic beside it:
+      a levy's cost is linear in bodies at every rung of the ladder — no levy
+      is 18 bodies and 767 body draw calls, levy 40 is 64 bodies and 1 415,
+      which is 14 calls a body against the 45 a contact body costs because
+      most of the mass is still crossing at L1 and L2 — so eighty is 2 830
+      calls at the same peak and there is nothing in the ladder that bends.
+      Both halves of this entry are decisions with numbers under them, not
+      omissions, which is why the label read as work and was not.
   M4  browser frame instrument ........... BUILT AND NOW READ.
       `src/engine/Profiler.js` reports frame, our own JS, REAL GPU time through
       `EXT_disjoint_timer_query_webgl2`, p99 and the 1% low; it is always-on,
