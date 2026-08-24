@@ -49,12 +49,24 @@
 import * as THREE from 'three';
 import { GUARD_COST, GRADE, GRADE_NAME, GRADE_DAMAGE, guardCost, CATCH } from '../../src/game/Combat.js';
 import { DIVE_STAMINA } from '../../src/game/Player.js';
-import { clocked } from './_shared.mjs';
+import { clocked, snapshotShared, restoreShared } from './_shared.mjs';
 
 /** The regen a player in combat gets back, read off Player's own `_regen`. */
 const REGEN = 16;
 
 export async function run({ check, assert }) {
+  /**
+   * THE SAME PHASE `clocked` PUTS BACK, REACHABLE FROM INSIDE ONE BODY.
+   *
+   * `clocked` restores the module-scope streams before a check body and after
+   * it — that is the boundary BETWEEN checks. The pace check below is an A/B
+   * INSIDE one body: it boots two Worlds back to back and compares them, and
+   * there is no such boundary between the two boots. So the second one drew
+   * from streams the first had already advanced and mustered a different army.
+   * Its own note says why that is fatal; holding the suite's quiescent phase
+   * here is what lets it re-seat both arms onto the same deal.
+   */
+  const phase = await snapshotShared();
   check = await clocked(check);
 
   /* ══════════════════════════════════════════════════════════════════ */
@@ -267,11 +279,43 @@ export async function run({ check, assert }) {
      * and the other has it stubbed to `Infinity`, which IS the old behaviour
      * exactly — an unlimited chase is a chase that arrives every frame. So the
      * two arms differ by one number and nothing else.
+     *
+     * ── AND THEY DID NOT, WHICH COST THIS CHECK A GATE ──────────────────
+     *
+     * "The same seed" is a statement about `settings.seed`, and the muster is
+     * not built out of it. `Command.js`'s `commandRng` deals every designation
+     * and `Enemy.js`'s `enemyRng` deals the ±10% speed jitter every body is
+     * built with, both at module scope, and `clocked` puts them back BETWEEN
+     * checks — not between two boots inside one. So arm 1 got the seeded army
+     * and arm 2 got whatever phase arm 1 left, and the arms differed by an
+     * army as well as by the number under test:
+     *
+     *     arm 1   CT-1500 CT-2794 CT-5111 …   slowest 3.93 m/s
+     *     arm 2   CT-7688 CT-4443 CT-1109 …   slowest 3.83 m/s
+     *
+     * That is not a small difference in a derived number. `strung` came out at
+     * whatever the arm that booted FIRST read, and the second arm read about
+     * 14 m whatever it was — measured on this tree, off identical code, the
+     * only difference being which arm ran first:
+     *
+     *     paced first     paced 34.9 m   ·  unpaced 14.2 m   → the bound below FAILS
+     *     unpaced first   unpaced 37.1 m ·  paced   14.1 m   → it passes
+     *
+     * The reading was a fact about the process, not about the pace anchor.
+     *
+     * `restoreShared` at the top of each arm is the fix, and it is the same
+     * call `clocked` makes: both arms now muster the identical army and the
+     * sentence above is true. Re-measured with it in, both orders, paced
+     * against unpaced: 34.9 against 40.3 and 35.7 against 37.1 — the paced
+     * line is the tighter one either way round.
      */
     const { bootWorld } = await import('./_coop.mjs');
     const { MORALE } = await import('../../src/game/Morale.js');
 
     const walk = async (unlimited) => {
+      /* THE DEAL, NOT JUST THE SEED. See the note above: without this the two
+       * arms are two different armies and the comparison is meaningless. */
+      restoreShared(phase);
       const { world } = await bootWorld({
         level: 'geonosis',
         settings: { mode: 'command', level: 'geonosis', order: 'jedi', seed: 7, difficulty: 'knight' },
@@ -360,7 +404,10 @@ export async function run({ check, assert }) {
     assert(paced.strung <= old.strung + 1,
       `the line ended ${paced.strung} m strung out with the rule and ${old.strung} m without it — `
       + 'pacing the anchor has made the formation MORE dispersed, which is the opposite of §6');
-    /* AND THE RULE'S OWN TWO EDGES, asked of the function rather than the walk. */
+    /* AND THE RULE'S OWN TWO EDGES, asked of the function rather than the walk.
+     * Re-seated for the same reason the two arms are: this is the third boot in
+     * one body, and it reads the roster's own slowest speed. */
+    restoreShared(phase);
     const { world } = await bootWorld({
       level: 'geonosis',
       settings: { mode: 'command', level: 'geonosis', order: 'jedi', seed: 7 },

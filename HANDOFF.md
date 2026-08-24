@@ -167,6 +167,18 @@ Playable two ways:
 > all six a lie. It walks `src/` now, still minus the BOONS table itself, which
 > is the whole point of the word "elsewhere".
 >
+> **TWO THINGS FOUND WHILE FIXING A CHECK, NEITHER FIXED, BOTH WORTH MORE THAN
+> THE CHECK.** `suppression.mjs` drives ten troopers up a Geonosis slope, and in
+> every one of the eight arms measured a man ends the walk **stuck on the
+> geometry** — CT-3208 sat at (-2.3, 2.2) for 210 frames with a velocity of 1-4
+> m/s and did not move. He is the ENTIRE 35-40 m reading that suite reports: the
+> MEDIAN distance from the anchor is 9.8 m in all eight. So `strung`, being a
+> max, answers "did anyone jam on a rock" rather than "how spread is the line",
+> and the rock is a real navigation defect on a shipped ground. Second: that
+> fixture's note says it measures the WALK, and it does not — emptying
+> `spawnQueue` leaves the emplaced gun firing, and it kills 2 of 10 within 26
+> frames with no hostile body anywhere on the field.
+>
 > **THE BROWSER SUITES CANNOT RUN IN A CONTAINER WITH NO `node_modules`, AND
 > THIS REPO HAS NONE.** `tools/three-resolver.mjs` maps `three`,
 > `three/addons/*` and `rapier`; everything else falls through to Node's own
