@@ -30,7 +30,7 @@ import { BladeContactSolver, captureSnapshot, gradeCaught, resolveBladeClash, GR
 import { GUARD } from './SaberController.js';
 import { assignSides, DuelMatch, Player, asTeam, bladeTargets, canHarm, hostileTo, pvpRules, sideTeam, teamOf, TEAM } from './Player.js';
 import { ageDropped } from './Dropped.js';
-import { Enemy, ARCHETYPES, applyModifier, ENEMY_POWERS, FORCE_KINDS, gripClaim, gripRelease,
+import { Enemy, ARCHETYPES, applyModifier, ENEMY_POWERS, FORCE_KINDS, gripClaim, gripRelease, heldMass,
          IMPULSE_AS_HP, paysOut } from './Enemy.js';
 import { WaveDirector, RankSet, boonTick, boonGuard, bondReceive, bondGuardIn, bondGive, BOND, boonById, MODES,
   skirmishConfig, SKIRMISH } from './Waves.js';
@@ -7053,7 +7053,30 @@ export class World {
        */
       const p = this.player;
       const mine = p && (p.gripEnemy === e);
-      const m = e.A ? e.A.mass : 80;
+      /**
+       * ── AND WHAT A GRAB DOES TO THIS NUMBER, SAID PLAINLY ───────────────
+       *
+       * `heldMass` is the man plus any squadmate hanging off him (PLAN §4.8's
+       * second bullet). The grab is decided in `Enemy.update`, which a client's
+       * copy of an enemy never reaches — it returns at `netDriven` several
+       * screens earlier — so the grab exists on the HOST and nowhere else.
+       *
+       * That is the right side for it to be on, because `applyClaim`'s own note
+       * says the host is where a contest is settled; but it is not free, and
+       * the cost is this: a GUEST gripping a man the host has a grab on quotes
+       * a `w` built on the man alone, and prices its own hold, heft and cap
+       * gate on the man alone too. The error is bounded by `HOLD_COST.person
+       * .rise × grabMass / cap` — the whole of what the mass term can move —
+       * and it is second-order in the contest itself, because that term is
+       * common to both hands and cancels out of the ratio between them (see
+       * `Player._gripPull`). Nothing is stranded and no position diverges: the
+       * host still resolves and still ships the resolution in the snapshot.
+       *
+       * The exact fix is one bit in `packSnapshot`'s enemy row saying whether
+       * this body is grabbed, and it is deliberately not taken here: that row
+       * is positional and every reader of it is a wire format change.
+       */
+      const m = heldMass(e);
       this._claim({ t: 'claim', k: 'grip', id: e.id, g: 1,
         p: [r2(lift.x), r2(lift.y), r2(lift.z)],
         w: mine ? r2(p._gripPull(m, true)) : 0,

@@ -28,7 +28,7 @@ import { parryScale, TOUGHNESS, impactDamage, RETURN_CONE } from './Combat.js';
  * `forceResistance` in Enemy.js, and one contest read out of two rulebooks is
  * exactly the drift `Powers.js` exists to have ended (HANDOFF §2.3/§2.4).
  * Enemy.js imports nothing from this file, so the edge is one-way. */
-import { forceResistance, gripClaim, gripHolders, gripRelease, gripSeize, IMPULSE_AS_HP,
+import { forceResistance, gripClaim, gripHolders, gripRelease, gripSeize, heldMass, IMPULSE_AS_HP,
          limitBackpedal, addShove, newShoveFrame } from './Enemy.js';
 import { POWER_COST, SENSE_DRAIN } from './Powers.js';
 /* FLAGSHIP §7's BREAK verb, and both are leaves — see the header of each. */
@@ -6845,7 +6845,7 @@ export class Player {
       const e = hit.body.userData.enemy;
       // The crosshair was ON it, so it is the answer whether or not the answer
       // is yes — see `_forceSeen`.
-      return e ? { enemy: e, mass: e.A ? e.A.mass : 80, distance: hit.distance,
+      return e ? { enemy: e, mass: heldMass(e), distance: hit.distance,
                    immovable: e.grippable === false }
                : { body: hit.body, mass: hit.body.mass, distance: hit.distance };
     }
@@ -6885,7 +6885,7 @@ export class Player {
     }
     for (const e of ctx.enemies || []) {
       if (e.dead) continue;
-      consider(e, this._enemyPoint(e, _g2), e.A ? e.A.mass : 80, true, e.grippable === false);
+      consider(e, this._enemyPoint(e, _g2), heldMass(e), true, e.grippable === false);
     }
     return best || refuse;
   }
@@ -7266,7 +7266,11 @@ export class Player {
    */
   _hurlBody(ctx, e, at) {
     const P = this.forceScale;
-    const m = e.A ? e.A.mass : 80;
+    /* THE PAIR, IF THERE IS A PAIR. A man thrown with his mate still on him is
+     * the heavier of the two throws and the speed law already knows what to do
+     * about that — see `heldMass`. `releaseHold` one line down ends the grip,
+     * and `stepGrab` lets go of a man the Force no longer has. */
+    const m = heldMass(e);
     // Whichever hold had it, it does not have it any more. Both are cleared
     // because the volley throws bodies the FIELD held while the grip may hold
     // one of its own, and a body must not leave with a mark still on it.
@@ -7438,8 +7442,7 @@ export class Player {
       _g1.copy(e.position).setY(e.position.y + (e.A && e.A.big ? 1.4 : 0.9));
       if (_g1.distanceToSquared(pos) > r * r) continue;
       cd.set(e.id, 0.55);
-      const mass = this.gripBody ? Math.max(1, this.gripBody.mass)
-        : (held?.A ? held.A.mass : 80);
+      const mass = this.gripBody ? Math.max(1, this.gripBody.mass) : heldMass(held);
       const dmg = impactDamage(mass, speed, { k: 0.00004, floor: 3, cap: 18 });
       _g2.copy(vel).multiplyScalar(1 / Math.max(1e-3, speed));
       e.applyKnockback(_g2.clone().multiplyScalar(clamp(speed * 0.62, 5, 17)).setY(2.6), dmg, this);
@@ -7684,7 +7687,35 @@ export class Player {
       }
     } else if (this.gripEnemy) {
       const e = this.gripEnemy;
-      const m = e.A ? e.A.mass : 80;
+      /**
+       * WHAT YOU ARE LIFTING, WHICH IS NOT ALWAYS ONE MAN — PLAN §4.8's second
+       * bullet. `heldMass` is him plus whatever squadmate has hold of him, and
+       * it is the ONLY thing this bullet changes on this side of the seam:
+       * everything below reads `m` exactly as it did and every one of them now
+       * answers a different question because the number did.
+       *
+       *   the gate below  a pair heavier than your cap is pulled out of your
+       *                   hands, where the man alone was not
+       *   `_holdRate`     the pair costs more Force per second than the man
+       *   `_heft`         and moves more sluggishly at the end of your arm
+       *   `_gripPull`     and weighs more in the two-Force-user contest, where
+       *                   it cancels out of the ratio and reaches the shares
+       *                   only through `forceResistance`'s pool arm — which is
+       *                   what `_gripPull`'s own note predicts a heavy thing
+       *                   does: it drives BOTH bars down and the emptier one
+       *                   slips first.
+       */
+      const m = heldMass(e);
+      /* AND BEING OUTWEIGHED IS AN ANSWER, NOT A SILENCE. This branch could
+       * only ever fire on a cap that had changed underneath a hold; now the
+       * MASS changes underneath it, and a body that leaves your hands the
+       * instant his mate takes hold of him with nothing on screen reads as the
+       * grip breaking. Same sentence `TOO HEAVY` already says at the pick,
+       * through the same `_liftRefusal`, because it is the same fact. */
+      if (!e.dead && m > cap) {
+        this.lastGripRefusal = { ...this._liftRefusal({ mass: m, enemy: e }) };
+        this.world?.notify?.('TOO HEAVY', this.lastGripRefusal.why);
+      }
       if (e.dead || m > cap) { this.releaseGrip(); return; }
       /* SAY IT AGAIN, EVERY FRAME. This line is the whole of the lease: while
        * it runs the body stays held, and the frame it stops running for any

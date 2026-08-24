@@ -874,10 +874,14 @@ shipped systems as unbuilt. Each has been corrected in place.
   · **B1b** — ragdoll pooling, and retiring a settled corpse into `Fallen`,
     which `Front.js` is still the only importer of. Not a precondition for
     anything any more.
-  · **§4.8's first two bullets** — contested telekinesis, and squadmates
-    grabbing the man you have gripped. No shared-constraint grip contest and no
-    grab joint exists anywhere in `src/`; this is the largest genuinely unbuilt
-    design in the document.
+  · ~~**§4.8's first two bullets**~~ — **both are built.** The contest is
+    `gripClaim`/`gripRelease`/`gripSeize` in Enemy.js, resolved by
+    `forceResistance` itself so there is no second rulebook; the grab is
+    `Reactions.reachForHelp`/`stepGrab`, one joint driven at `DRAG.haul` from
+    `DRAG.reach` away with a break force of `DRAG.haul × DRAG.reach`, and one
+    combined mass — `Enemy.heldMass` — that the cap gate, `_heft`, `_holdRate`
+    and the throw all already read. `tools/checks/grip.mjs` holds both.
+    Struck from this list.
   · **A SCREEN for the after-action report.** The record is complete — every
     entry carries `killerName`, a bearing and a minute — and nothing draws it
     end to end.

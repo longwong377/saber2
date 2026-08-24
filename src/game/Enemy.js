@@ -41,8 +41,16 @@ import { POWER_COST } from './Powers.js';
  * commander's decision and `CommandDirector.steer` is where it is taken. They
  * were on this line for a while and called by nothing in the file, which is the
  * dead field this session put back on the clone trooper for the opposite
- * reason — see `_maybeGrenade`. */
-import { senseDanger, stepReaction, GRENADE } from './Reactions.js';
+ * reason — see `_maybeGrenade`.
+ *
+ * `reachForHelp` IS, and the difference is whose decision it is. Going back for
+ * a man who is down is a thing a commander orders and a line can be ordered not
+ * to do; a man being lifted off the ground in front of you is not an order, it
+ * is a body reaching for whatever is nearest — PLAN §4.8's own sentence — and
+ * it has to happen in a wave, a duel and a colosseum, none of which has a
+ * CommandDirector in them at all. So it is asked here, once per body the Force
+ * is actually holding, and never for anybody else. */
+import { senseDanger, stepReaction, reachForHelp, GRENADE } from './Reactions.js';
 import { audio } from '../engine/Audio.js';
 
 /**
@@ -1703,6 +1711,26 @@ export function gripHolders(thing, time = 0) {
 }
 
 /**
+ * WHAT THE FORCE IS ACTUALLY LIFTING — the man, plus anybody hanging off him.
+ *
+ * PLAN §4.8's second bullet ends *"the contest resolving against combined
+ * mass"*, and this is the whole of "combined": one number, in kilograms, that
+ * every place already asking what a body weighs now asks instead. There is no
+ * second rule anywhere for a grabbed man — `Player.liftCapacity`'s `m > cap`
+ * gate, `_heft`, `_holdRate`, `_gripPull` and the throw's speed law all read
+ * this and go on doing exactly what they did.
+ *
+ * A FUNCTION AND NOT A GETTER because the readers are not all handed real
+ * `Enemy`s: `_sweepHeld`, `_pickGripTarget` and `World._netGripSync` all
+ * already carried the `e.A ? e.A.mass : 80` fallback for the stand-ins the
+ * checks hold up, and four copies of that fallback is exactly the drift this
+ * replaces.
+ */
+export function heldMass(e) {
+  return (e?.A?.mass ?? 80) + (e?.grabLoad || 0);
+}
+
+/**
  * STATE ONE GRIPPER'S PULL AND GET BACK WHERE THE THING ACTUALLY GOES.
  *
  * @param thing   the held body — an `Enemy` or a physics `Body`, either.
@@ -2832,6 +2860,23 @@ export class Enemy {
     /** Seconds of hold left before the lease lapses. See GRIP_LEASE. */
     this.gripLease = 0;
     this.liftTarget = null;
+    /**
+     * HOW HARD WHATEVER HAS HOLD OF THIS BODY IS PULLING, in `Ragdoll.suspend`'s
+     * own units, or 0 for "whatever suspend's default is" — which is the Force.
+     * A pair of arms is the other holder and pulls at `DRAG.haul`. See `hold`.
+     */
+    this.holdStrength = 0;
+    /**
+     * THE SQUADMATE WHO HAS HOLD OF HIM, his claim's lease, and what he weighs.
+     * PLAN §4.8's second bullet; the whole of the behaviour is in
+     * `Reactions.reachForHelp`. Three fields for the same reason `beingDragged`
+     * and `dragLease` are two: the claim stops a second man grabbing (ONE
+     * joint), the lease means a grabber who is shot stops counting without
+     * anybody having to say so, and the load is the number `heldMass` reads.
+     */
+    this.grabbedBy = null;
+    this.grabLease = 0;
+    this.grabLoad = 0;
     /**
      * ARRESTED BY A FORCE STOP — the field has this body, and this is the only
      * thing on the class that says so.
@@ -4638,9 +4683,17 @@ export class Enemy {
    * net path claims at the snapshot tick) is not fighting one that renews
    * every frame.
    */
-  hold(seconds = GRIP_LEASE) {
+  hold(seconds = GRIP_LEASE, strength = 0) {
     this.gripped = true;
     this.gripLease = Math.max(this.gripLease, seconds);
+    /* `Math.max` FOR THE SAME REASON THE LEASE USES IT, one line up. Two
+     * holders must not weaken each other, and the two this game has pull at
+     * very different rates — the Force at `Ragdoll.suspend`'s own default and a
+     * squadmate's arms at `DRAG.haul`. Whoever is pulling hardest is what the
+     * body follows, which is the answer that does not depend on which of them
+     * ran later in the frame. 0 means "the default", so a caller that has no
+     * opinion cannot accidentally out-vote one that has. */
+    this.holdStrength = Math.max(this.holdStrength || 0, strength);
   }
 
   /** Let go, from either end. Idempotent, and it is the only way out. */
@@ -4648,6 +4701,7 @@ export class Enemy {
     if (!this.gripped && !this.liftTarget) return false;
     this.gripped = false;
     this.gripLease = 0;
+    this.holdStrength = 0;
     this.liftTarget = null;
     this.chokeT = 0;
     return true;
@@ -4792,6 +4846,15 @@ export class Enemy {
     if (this.beingDragged) {
       this.dragLease = (this.dragLease ?? 0) - dt;
       if (this.dragLease <= 0) { this.beingDragged = null; this.dragLease = 0; }
+    }
+    /* AND THE SAME RULE AGAIN FOR THE MAN HANGING OFF HIM. `Reactions.stepGrab`
+     * renews this every frame; it lapses here the moment he stops — shot,
+     * torn off, or replaced by a grenade landing next to him. `grabLoad` goes
+     * with it and not a frame later, because it is a weight on somebody else's
+     * Force and a stale one would be a man being billed for a corpse. */
+    if (this.grabbedBy) {
+      this.grabLease = (this.grabLease ?? 0) - dt;
+      if (this.grabLease <= 0) { this.grabbedBy = null; this.grabLease = 0; this.grabLoad = 0; }
     }
     if (this.dead || !this.actor?.ragdolled) { this._recoverAt = 0; return; }
     if (this.gripped || (this.toppled && this.legsLost)) { this._recoverAt = 0; return; }
@@ -5817,6 +5880,12 @@ export class Enemy {
       return true;
     }
     senseDanger(this, dt, ctx);
+    /* …AND A MAN BEING LIFTED OFF THE GROUND REACHES FOR WHATEVER IS NEAREST.
+     * PLAN §4.8's second bullet, and it is one pass over the roster per body
+     * the Force is actually holding — nothing at all in a frame with no grip in
+     * it. Before `stepReaction` so the squadmate it recruits starts his own
+     * reaction on the frame he is asked rather than the frame after. */
+    if (this.gripped) reachForHelp(this, ctx);
     const reacting = stepReaction(this, dt, ctx);
     /* A MAN WALKING TO A RAMP IS NOT FIGHTING. `Extraction._walkTroops` stamps
      * `'boarding'` on the men it is steering and writes their `wish` itself; the
@@ -7646,7 +7715,10 @@ export class Enemy {
        */
       if (this.actor && !this.dead) {
         if (!this.actor.ragdolled) this.actor.goRagdoll(this.velocity, null);
-        if (this.actor.suspend?.(this.liftTarget, dt)) {
+        /* AT WHATEVER HAS HOLD OF IT PULLS WITH — the Force at `suspend`'s own
+         * default, a squadmate's arms at `DRAG.haul`. `undefined` rather than a
+         * number so the default lives in exactly one place. See `hold`. */
+        if (this.actor.suspend?.(this.liftTarget, dt, this.holdStrength || undefined)) {
           /**
            * …AND HOW FAST IT IS BEING DRAGGED. This branch answered `0, 0, 0`.
            *

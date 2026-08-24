@@ -36,7 +36,8 @@
 import { readFile, readdir } from 'node:fs/promises';
 import * as THREE from 'three';
 import { Player } from '../../src/game/Player.js';
-import { RESIST_CAP, RESIST_BEATEN, RESIST_PER_FORCE, gripHolders } from '../../src/game/Enemy.js';
+import { RESIST_CAP, RESIST_BEATEN, RESIST_PER_FORCE, gripHolders, heldMass } from '../../src/game/Enemy.js';
+import { GRAB_BREAK } from '../../src/game/Reactions.js';
 import { initPhysics } from '../../src/physics/Rapier.js';
 import { RapierWorld, Body as RBody, LAYER, box as boxShape } from '../../src/physics/RapierWorld.js';
 import { BoltPool } from '../../src/game/Bolts.js';
@@ -64,6 +65,10 @@ const SHARE_LEVEL = KEPT / (KEPT + KEPT);
 const SHARE_WON = KEPT_BEATEN / (KEPT_BEATEN + KEPT);
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
+/* Scratch for the grab fixture's aim, and the clamp `Math.asin` needs on a
+ * component that floating point can push a hair past 1. */
+const _gv = new THREE.Vector3();
+const clamp01 = (v) => (v < -1 ? -1 : v > 1 ? 1 : v);
 const flatGround = () => ({
   height: () => 0, normalAt: (x, z, o) => o.set(0, 1, 0), raycast: () => null,
   size: 400, half: 200, inBounds: () => true, surfaceAt: () => 'sand', crater() {}, flush() {},
@@ -234,7 +239,11 @@ export async function run({ check, assert }) {
     // inert is silent — rather than every property in the codebase, because the
     // broad sweep is all false positives and a check nobody trusts gets deleted.
     const files = await sources();
-    const WATCH = ['grippable', 'lastGripRefusal', 'invincible', 'explosive'];
+    /* `grabLoad` and `holdStrength` are §4.8's second bullet's two new fields and
+     * they are on this list for the reason the list exists: both are written by
+     * one file and read by another, which is exactly the shape that goes inert
+     * without anybody noticing. */
+    const WATCH = ['grippable', 'lastGripRefusal', 'invincible', 'explosive', 'grabLoad', 'holdStrength'];
     const rows = [];
     for (const field of WATCH) {
       let writes = 0, reads = 0;
@@ -648,6 +657,348 @@ export async function run({ check, assert }) {
     assert(gripHolders(B.crate, B.w.time) === 0, 'the ledger still holds a claim nobody is making');
     B.dispose();
     return 'first hand off: still held, share 1.000; last hand off: gravity back, ledger empty';
+  });
+
+
+  /* ────────────────────────────────────────────────────────────────────
+   * A SQUADMATE GRABS THE MAN YOU ARE GRIPPING — PLAN §4.8, second bullet
+   *
+   * The first bullet's four checks above are two Players and a crate, because
+   * what is under test there is arithmetic. This one cannot be: a grab is a
+   * ragdoll suspended off another ragdoll, inside a joint solve, under a
+   * reaction the enemy brain has to choose — so every one of these runs on a
+   * real World with two real droids and the shipped `world.update`, and the
+   * only thing done by hand is taking the grip itself (the pick casts a ray at
+   * a crosshair; what is under test is what happens after somebody has hold).
+   *
+   * `bench` above is not reused for the same reason `coop.mjs` exists: a
+   * fixture that could not ragdoll could not fail the way this feature fails.
+   * ──────────────────────────────────────────────────────────────────── */
+
+  /**
+   * TWO DROIDS ON ONE SIDE, A GRIP ON ONE OF THEM, AND A STEERABLE HOLD POINT.
+   *
+   * The hold point is steered through the CAMERA's own yaw and pitch rather
+   * than by writing `aimDir`, because `Player.update` recomputes `aimDir` from
+   * the camera every frame (see `camera.aimDirection`) and a fixture that wrote
+   * the aim directly would be measuring a field the shipped path overwrites
+   * before it reads it — which is a check that passes against code that does
+   * nothing.
+   *
+   * `hold.z` is the axis everything below drags along, and the two droids stand
+   * apart on X: a tow along the line between them cannot tell a man being
+   * dragged from a man being run over, and the first version of this fixture
+   * reported 0.05 m of tow for exactly that reason.
+   */
+  async function field({ forcePower = 1, apart = 1.6 } = {}) {
+    const H = await import('./_coop.mjs');
+    const { world } = await H.bootWorld({
+      level: 'colosseum',
+      settings: { mode: 'waves', quality: 'low', instantSpawn: true, forcePower },
+    });
+    const input = H.idleInput();
+    const step = () => world.update(1 / 60, input);
+    for (let i = 0; i < 12; i++) step();
+    const p = world.players[0] || world.player;
+    const base = p.position.clone();
+    const a = world.spawnEnemy('b1', new THREE.Vector3(base.x, 0, base.z - 7));
+    const b = world.spawnEnemy('b1', new THREE.Vector3(base.x + apart, 0, base.z - 7));
+    for (let i = 0; i < 6; i++) step();
+    const hold = new THREE.Vector3(base.x, 1.0, base.z - 7);
+    const aim = () => {
+      _gv.copy(hold).sub(p.camera.pos);
+      const dist = _gv.length();
+      _gv.multiplyScalar(1 / Math.max(dist, 1e-6));
+      p.camera.pitch = Math.asin(clamp01(_gv.y));
+      p.camera.yaw = Math.atan2(-_gv.x, -_gv.z);
+      p.camera.syncAim();
+      p.gripDistance = dist;
+    };
+    const take = () => { p.gripEnemy = a; a.hold(); p._liftPoint.copy(a.position); aim(); };
+    const drag = (secs, vz = 0) => {
+      for (let i = 0; i < Math.round(secs * 60); i++) { hold.z += vz / 60; aim(); step(); }
+    };
+    /**
+     * WHAT THE HOLD WAS BILLED, TAKEN AT `_spend` ITSELF.
+     *
+     * Not `force` before minus `force` after: the pool REGENERATES while it is
+     * being spent, so that difference is the net of two rates and a ratio taken
+     * on it is not a ratio of prices. `_spend` is the one door every price in
+     * this game goes through (Powers.js's header says so and the whole Force
+     * economy depends on it), so wrapping it for a window is the gross bill
+     * with nothing else in it. `_holdT` is sampled with it because the wear
+     * term rides on that clock and is the control this measurement needs.
+     */
+    const bill = (secs) => {
+      const t0 = p._holdT || 0;
+      let sum = 0;
+      const real = Player.prototype._spend;
+      p._spend = function (amount, partial) {
+        const ok = real.call(this, amount, partial);
+        if (ok) sum += amount;
+        return ok;
+      };
+      drag(secs);
+      delete p._spend;
+      return { rate: sum / secs, wear: 1 + 0.75 * Math.min(1, ((t0 + (p._holdT || 0)) / 2) / 6) };
+    };
+    return { world, p, a, b, hold, take, drag, bill, step, base,
+      done: () => world.unload() };
+  }
+
+  await check('grip: a squadmate takes hold of the man you are lifting, and you are then lifting two', async () => {
+    /**
+     * ── THE BULLET'S FIRST HALF, AND IT IS A BILL ───────────────────────
+     *
+     * *"Grip one, drag two, the contest resolving against combined mass."*
+     *
+     * `Enemy.heldMass` is the whole of "combined" — the man plus whatever is
+     * hanging off him — and the claim being tested is that it reaches the
+     * player through the numbers that were already there rather than through a
+     * rule written for grabs. So what is measured is the SHIPPED BILL: the
+     * Force `_updateGrip` actually took out of the pool, per second, with a man
+     * on him and without.
+     *
+     * THE SECOND WINDOW IS THE LIGHTER ONE, AND THAT IS THE POINT. A hold gets
+     * more expensive the longer it runs — `wear` climbs from 1.00 to 1.75 over
+     * six seconds and never resets inside a hold — so the later window is
+     * strictly disadvantaged. If the grabbed window still costs more, the extra
+     * cannot be time: it is the second man. A ratio measured the other way
+     * round would have had wear on its side and proved nothing.
+     */
+    const F = await field();
+    F.take();
+    /* HE IS ALREADY WITHIN ARM'S REACH, so the grab is immediate — the run-in
+     * has a check of its own below. */
+    F.drag(0.5);
+    const held = F.bill(0.7);
+    const mass = heldMass(F.a);
+    assert(F.a.grabbedBy === F.b, 'nobody took hold of a man being lifted off the ground');
+    assert(mass === (F.a.A.mass + F.b.A.mass),
+      `the Force is lifting ${mass} kg against the ${F.a.A.mass}+${F.b.A.mass} two droids weigh`);
+    /* AND HE IS OUT OF THE FIGHT FOR IT. A grab that cost the man nothing would
+     * be free for the line and the player would have no reason to prefer any
+     * other target — this is the same price `stepDrag` charges a man who goes
+     * back for a casualty, taken through the same `gripped`/`liftTarget` pair
+     * every held body in the game already uses. */
+    assert(F.b.gripped && !!F.b.liftTarget && F.b.actor?.ragdolled,
+      'the man doing the grabbing never left his feet');
+    assert(F.b.reaction?.kind === 'grab', 'his brain is still running a formation');
+
+    /**
+     * NOW SHOOT HIM OFF, and it is a bullet rather than a yank because the yank
+     * would move the hold point — `far` is a term in the same bill and a
+     * control that changed the geometry as well as the load would be measuring
+     * two things. The break force has its own check below.
+     *
+     * The 0.7 s that follows is longer than `DRAG_LEASE` on purpose: a grabber
+     * who is killed does not tidy up after himself, his CLAIM LAPSES, and the
+     * load stays on the Force until it does. That is the same lease
+     * `beingDragged` runs on and it is asserted here rather than assumed.
+     */
+    F.b.damage(F.b.maxHp * 3, F.b.position, null, 'check');
+    F.drag(0.7);
+    assert(!F.a.grabbedBy && F.a.grabLoad === 0 && heldMass(F.a) === F.a.A.mass,
+      'the load stayed on the Force after the man carrying it was killed');
+    const alone = F.bill(0.7);
+
+    /**
+     * ── THE ONE THING BETWEEN THE TWO WINDOWS THAT IS NOT THE SECOND MAN ──
+     *
+     * `wear` climbs from 1.00 to 1.75 over six seconds inside a hold and never
+     * resets, and the two windows are 1.4 s apart — which is worth almost
+     * exactly what the second droid is worth. Measured with the raw rates:
+     * 17.46 Force/s grabbed against 17.50 alone, and the whole of that dead
+     * heat was wear cancelling the mass. A "it costs more" written on the raw
+     * numbers would have been a coin toss dressed as a measurement.
+     *
+     * So the wear term is DIVIDED BACK OUT, using the shipped law rather than a
+     * fitted one, and what is left of each window is `_holdRate × far ÷ √P`
+     * with `far` and `P` identical between them by construction — the geometry
+     * is untouched and the mate was shot rather than yanked off precisely so it
+     * would be. The remaining ratio can only be the mass, and the assertion
+     * says which mass: `_holdRate(104)/_holdRate(52)`, off the two archetype
+     * masses and the cap, with no number typed here.
+     */
+    const massRatio = F.p._holdRate(mass, true) / F.p._holdRate(F.a.A.mass, true);
+    const heldNorm = held.rate / held.wear, aloneNorm = alone.rate / alone.wear;
+    assert(heldNorm > aloneNorm,
+      `a hold with two men on it cost ${heldNorm.toFixed(2)} Force/s against ${aloneNorm.toFixed(2)} for one`);
+    assert(Math.abs(heldNorm / aloneNorm - massRatio) < 0.03,
+      `the bill went up by \u00d7${(heldNorm / aloneNorm).toFixed(3)} against the \u00d7${massRatio.toFixed(3)} `
+      + '`_holdRate` says the second droid is worth');
+
+    F.done();
+    return `heldMass ${mass} kg (${F.a.A.mass}+${F.b.A.mass}); ${heldNorm.toFixed(2)} Force/s with him on against `
+      + `${aloneNorm.toFixed(2)} without, wear divided out — \u00d7${(heldNorm / aloneNorm).toFixed(3)} `
+      + `against _holdRate's \u00d7${massRatio.toFixed(3)}`;
+  });
+
+  await check('grip: one break force — drag the pair slowly and you drag two men, drag them fast and the grab is torn off', async () => {
+    /**
+     * ── THE BULLET'S OTHER HALF ─────────────────────────────────────────
+     *
+     * *"One joint, one break force."* `GRAB_BREAK` is `DRAG.haul × DRAG.reach`
+     * — `Ragdoll.suspend` drives a chest at `(target − chest) × strength`, so a
+     * pair of arms anchored a reach away can never command more than that, and
+     * a link driven toward a point receding at `v` settles at an over-stretch
+     * of `v / DRAG.haul`. Both rungs below are stated as fractions of it and
+     * neither is a speed chosen to pass.
+     *
+     * THE TOW IS THE HALF THAT IS EASY TO LOSE. A grab that never moved the
+     * grabber would be a mass penalty with a man standing next to it, so the
+     * slow rung asserts he COVERED GROUND — this is the "drag two" in the
+     * bullet, and it is the thing a player sees.
+     */
+    const F = await field();
+    F.take();
+    F.drag(0.8);
+    assert(F.a.grabbedBy === F.b, 'setup: nobody grabbed him');
+    const z0 = F.b.position.z, za = F.a.position.z;
+    F.drag(1.5, -GRAB_BREAK * 0.45);
+    const towed = Math.abs(F.b.position.z - z0), led = Math.abs(F.a.position.z - za);
+    assert(F.a.grabbedBy === F.b,
+      `a tow at ${(GRAB_BREAK * 0.45).toFixed(2)} m/s tore a joint rated at ${GRAB_BREAK.toFixed(2)}`);
+    assert(towed > 0.5,
+      `the man you are gripping travelled ${led.toFixed(2)} m and the man holding him travelled ${towed.toFixed(2)} — `
+      + 'he is a weight, not a second body being dragged');
+
+    /* AND OVER THE RATING IT LETS GO. Same joint, same pair, same second — the
+     * only thing that changed is how hard the far end is being pulled. */
+    F.drag(1.0, -GRAB_BREAK * 2.2);
+    assert(!F.a.grabbedBy && F.b.grabWhy === 'torn',
+      `dragging at ${(GRAB_BREAK * 2.2).toFixed(2)} m/s did not break a joint rated at ${GRAB_BREAK.toFixed(2)} `
+      + `(it ended as "${F.b.grabWhy}")`);
+    /* THE GRIP SURVIVES THE BREAK, which is what makes this a decision rather
+     * than a way of losing your hold: you yank his mate off him and you still
+     * have him. */
+    assert(F.p.gripEnemy === F.a && F.a.gripped,
+      'tearing the second man off dropped the first one too');
+    assert(F.a.grabLoad === 0 && !F.b.gripped,
+      'the man who let go is still hanging off him');
+    F.done();
+    return `rated ${GRAB_BREAK.toFixed(2)} m/s; at ${(GRAB_BREAK * 0.45).toFixed(2)} he held on and was towed `
+      + `${towed.toFixed(2)} m behind a ${led.toFixed(2)} m drag; at ${(GRAB_BREAK * 2.2).toFixed(2)} he was torn off`;
+  });
+
+  await check('grip: a pair heavier than your cap is pulled out of your hands, and it says so', async () => {
+    /**
+     * THE DECISION THE COMBINED MASS IS FOR, and it is the same `m > cap` gate
+     * a lift has always been refused by — reached now by the LOAD changing
+     * under a hold rather than by the slider changing under one.
+     *
+     * Force Power 0.5 puts the cap at 78 kg, between one droid (52) and two
+     * (104), which is the whole of the fixture: nothing here is tuned, the two
+     * masses are the archetype's and the cap is `LIFT_AT_ONE × P^1.5`.
+     *
+     * AND IT IS NOT A SILENT DROP. A body leaving your hands the instant
+     * somebody grabs it, with nothing on screen, reads as the grip breaking —
+     * which is exactly the complaint `TOO HEAVY` was written to answer, so it
+     * is the same sentence, through the same `_liftRefusal`, carrying the same
+     * two numbers.
+     */
+    /* `apart: 14` is BEYOND `DRAG.look`, so the control window is a man who has
+     * not even noticed rather than a man on his way — a claim is made the frame
+     * he notices and the load only lands when he arrives, and a control that
+     * confused the two would be measuring the run-in. */
+    const F = await field({ forcePower: 0.5, apart: 14 });
+    const cap = F.p.liftCapacity;
+    assert(F.a.A.mass < cap && F.a.A.mass + F.b.A.mass > cap,
+      `the fixture is not on the boundary: ${F.a.A.mass}/${F.a.A.mass + F.b.A.mass} kg against a ${cap.toFixed(1)} kg cap`);
+    const said = [];
+    F.world.notify = (t, d) => said.push(`${t} — ${d}`);
+    F.take();
+    F.drag(1.0);
+    assert(F.p.gripEnemy === F.a && F.a.grabLoad === 0,
+      'the control failed: one droid at half Force Power is already too heavy, or somebody reached him');
+    /* HIS MATE ARRIVES. Placed rather than walked, because what is under test
+     * is the gate and not the pathing — the run-in is the height check below. */
+    F.b.position.set(F.a.position.x + 1.2, 0, F.a.position.z);
+    F.drag(0.5);
+    assert(!F.p.gripEnemy, 'the two of them together were still liftable at half the cap');
+    assert(F.p.lastGripRefusal && Math.round(F.p.lastGripRefusal.mass) === F.a.A.mass + F.b.A.mass,
+      `the refusal recorded ${F.p.lastGripRefusal?.mass} kg, not the pair's ${F.a.A.mass + F.b.A.mass}`);
+    assert(said.length === 1 && /TOO HEAVY/.test(said[0]),
+      `losing the pair said ${said.length} things: ${said.join(' | ')}`);
+    assert(/\d+ kg/.test(said[0]) && /Force Power/i.test(said[0]),
+      `the message carries no mass and no lever: ${said[0]}`);
+    F.done();
+    return `cap ${cap.toFixed(1)} kg: one droid (${F.a.A.mass}) held, the pair (${F.a.A.mass + F.b.A.mass}) refused — "${said[0]}"`;
+  });
+
+  await check('grip: lift him over their heads and nobody can get hold of him', async () => {
+    /**
+     * THE FREE COUNTER-PLAY, and the reason the grab is a decision on the
+     * player's side too. A man can only take hold of what he can reach:
+     * `reachForHelp` refuses a body more than `DRAG.reach` above his own feet,
+     * and `stepGrab` re-reads that while he is still running in, so a body
+     * lifted away from him mid-approach is a body he never gets to.
+     *
+     * Same scene, same two droids, same key — the only thing that differs
+     * between the two halves is where the player is pointing. That is what
+     * makes it counter-play rather than a range limit.
+     *
+     * `apart: 6` so he has to RUN, which is also the only place `stepGrab`'s
+     * approach branch is exercised.
+     */
+    const F = await field({ apart: 6 });
+    F.hold.y = 2.8;
+    F.take();
+    F.drag(1.6);
+    assert(F.a.position.y > 2, `setup: the body only reached y ${F.a.position.y.toFixed(2)}`);
+    assert(!F.a.grabbedBy && F.b.grabWhy === 'high',
+      `a droid held ${F.a.position.y.toFixed(2)} m up was grabbed anyway (${F.b.grabWhy})`);
+    assert(!F.b.reaction, 'he is still running at a body he cannot reach');
+    /* AND THE SAME MAN, THE SAME SECOND, WITH THE BODY BROUGHT DOWN. */
+    F.hold.y = 1.0;
+    F.drag(1.6);
+    assert(F.a.gripped, 'the control failed: the hold ended before the second half');
+    assert(F.a.grabbedBy === F.b,
+      `brought back down to y ${F.a.position.y.toFixed(2)} he still went ungrabbed`);
+    F.done();
+    return 'held at 2.8 m: refused as out of reach; brought down to 1.0 m: grabbed by the same man';
+  });
+
+  await check('grip: a throw takes the man and leaves the one holding him', async () => {
+    /**
+     * THE COMPOSITION, and it is written here because it is the one place a
+     * grab could have needed a line inside `hurlGripped` and does not.
+     *
+     * A grab is a grab on a man THE FORCE HAS HOLD OF: `stepGrab` ends the
+     * moment `gripped` goes false, and `_hurlBody` clears it on the frame it
+     * throws. So the throw needs no clause about grabs, the mate is not thrown
+     * with him, and the load comes off the Force at the same instant the man
+     * does. The one thing the grab DOES reach is the throw's speed law, which
+     * reads `heldMass` — two men leave slower than one, out of `lerp(1.2, 0.5,
+     * m/cap)` and not out of anything written for this.
+     */
+    const F = await field();
+    F.take();
+    F.drag(0.8);
+    assert(F.a.grabbedBy === F.b, 'setup: nobody grabbed him');
+    const az = F.a.position.clone(), bz = F.b.position.clone();
+    const ctx = F.world._frameCtx;
+    F.p.hurlGripped(ctx);
+    /* `_hurlBody`'s own `stun(0.9, dir, 1.3)` is the signature of a throw having
+     * landed on this body, and it is read here rather than the distance he
+     * covered: `_aimTarget` answers the nearest body in the aim cone, which
+     * with the crosshair on the man you are holding is HIM — so the shipped
+     * throw sends a gripped droid up his own axis rather than downrange. That
+     * is a real quirk of the aim pick, it is not this bullet's, and what
+     * matters here is which of the two men the throw took. */
+    const threw = F.a.stunTimer;
+    assert(!F.p.gripEnemy && !F.a.gripped, 'the throw did not let go of him');
+    F.drag(0.5);
+    assert(!F.a.grabbedBy && F.a.grabLoad === 0 && F.b.grabWhy === 'free',
+      `the grab outlived the grip it was a grab on (${F.b.grabWhy})`);
+    assert(!F.b.gripped, 'the man who was holding him is still being held by nothing');
+    const flew = F.a.position.distanceTo(az), stayed = F.b.position.distanceTo(bz);
+    assert(threw > 0, 'the thrown man was never stunned in the direction he went — no throw landed on him');
+    assert(flew > stayed * 2,
+      `the throw moved the man ${flew.toFixed(2)} m and the man holding him ${stayed.toFixed(2)} m`);
+    F.done();
+    return `thrown (stun ${threw.toFixed(2)} s, ${flew.toFixed(2)} m) while the man who had hold of him moved `
+      + `${stayed.toFixed(2)} m and was let go as "free"`;
   });
 
 }

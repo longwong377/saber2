@@ -716,6 +716,10 @@ export function stepReaction(body, dt, ctx) {
   }
 
   if (R.kind === 'drag') return stepDrag(body, dt, ctx, R);
+  /* THE SAME ACT POINTED THE OTHER WAY — see `stepGrab`. A drag is a man
+   * taking his mate somewhere; a grab is a man refusing to let his mate be
+   * taken. Same fistful of collar, same two numbers. */
+  if (R.kind === 'grab') return stepGrab(body, R);
 
   body.reaction = null;
   return false;
@@ -874,6 +878,199 @@ function stepDrag(body, dt, ctx, R) {
     }
     c.actor?.centre?.(c.position);
   }
+  return true;
+}
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════
+ *  A SQUADMATE GRABS THE MAN YOU ARE GRIPPING — PLAN §4.8, second bullet
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * *"One joint, one break force: a gripped body reaches for the nearest collider
+ * and a squadmate grabs him. Grip one, drag two, the contest resolving against
+ * combined mass."*
+ *
+ * ── IT IS THE DRAG, TURNED ROUND, AND THAT IS WHY IT IS HERE ─────────────
+ *
+ * `stepDrag` above is already a man with a fistful of another man's collar,
+ * hauling him through `Ragdoll.suspend` at `DRAG.haul` from `DRAG.reach` away,
+ * with a `DRAG_LEASE` claim so ten men cannot grab one. Every one of those is
+ * exactly what this needs: the ONLY difference is which end is going somewhere.
+ * A drag is a man taking his mate out of the beaten zone; a grab is the same
+ * man refusing to let the Force take his mate anywhere. Written as a second
+ * file's worth of reach, strength and claim it would be four numbers to retune
+ * twice; written here it is the same four.
+ *
+ * ── THE JOINT, AND WHY IT IS `Enemy.hold` ───────────────────────────────
+ *
+ * A man hanging off a body that is three metres in the air is a body being
+ * held aloft by something, and this game already has exactly one statement of
+ * that: `gripped` + `liftTarget`, which ragdolls him, suspends him by the
+ * chest, follows his position off the ragdoll's own centre, reports his real
+ * velocity, keeps his brain out of the frame and stops him shooting. So the
+ * grabber is HELD — by the man he has hold of rather than by the Force — and
+ * not one line of movement code is written here. `hold`'s second argument is
+ * the whole difference between the two holders: the Force drives at
+ * `Ragdoll.suspend`'s own 12 and a pair of arms drives at `DRAG.haul` = 4.2.
+ *
+ * ── ONE BREAK FORCE, READ OFF THOSE TWO NUMBERS ─────────────────────────
+ *
+ * `suspend` commands the chest at `(target − chest) × strength` and the target
+ * is anchored `DRAG.reach` from the man he is holding, so an arm at full
+ * stretch can never command more than `DRAG.haul × DRAG.reach` = 5.88 m/s.
+ * That is the break force, in the units the solver actually works in, and it
+ * is `GRAB_BREAK` below. The load on the joint is `DRAG.haul × over`, where
+ * `over` is how far past its own length the link has been pulled — so the link
+ * is over its limit exactly when `over > DRAG.reach`, and a link driven toward
+ * a point receding at `v` settles at `over = v / DRAG.haul`. Put together:
+ *
+ *     drag the pair slower than GRAB_BREAK and he holds on — you drag two men
+ *     drag the pair faster  than GRAB_BREAK and the joint is torn off him
+ *
+ * THE MASS CANCELS, and it should: an inextensible link transmits whatever it
+ * takes, so what decides a break is how fast the far end is going and not how
+ * heavy either man is. The WEIGHT decides the other half of this bullet, and
+ * it decides it somewhere else entirely — `Enemy.heldMass` against
+ * `Player.liftCapacity`, `_heft` and `_holdRate`. Two halves, two rules, and
+ * neither of them typed twice.
+ *
+ * ── AND THE OTHER WAY OUT IS FREE ───────────────────────────────────────
+ *
+ * A man can only take hold of what he can reach: `reachForHelp` refuses a body
+ * more than `DRAG.reach` above his own feet. So lifting the man you have
+ * gripped over his squad's heads is counter-play that costs nothing but the
+ * decision to do it — which is the same shape as breaking a guard in the first
+ * bullet, and it is why neither of these is a delay dressed as a choice.
+ */
+
+/**
+ * The fastest a pair of arms can follow, in m/s, and the one threshold this
+ * whole behaviour has. Derived, not chosen — see the block above.
+ */
+export const GRAB_BREAK = DRAG.haul * DRAG.reach;
+
+/**
+ * A GRIPPED BODY REACHES FOR THE NEAREST COLLIDER — the bullet's own sentence,
+ * and the reason the scan lives on the man being lifted rather than on every
+ * soldier on the field.
+ *
+ * Called from `Enemy.update` only while `gripped`, so the cost is one pass over
+ * the roster per body the Force is actually holding — at most a handful, and
+ * nothing at all in the overwhelming majority of frames. The mirror image
+ * (every soldier asking every frame whether anybody nearby is being lifted) is
+ * the same answer at N times the price.
+ *
+ * The gates are all somebody being able to DO it, rather than a die roll:
+ *
+ *   · his own team, and he is on his feet, and his hands are free (no reaction
+ *     of his own, not held, not being dragged, not down);
+ *   · the man is within `DRAG.reach` OF THE GROUND HE IS STANDING ON. Lift him
+ *     higher and there is nothing to grab. That is the free counter-play;
+ *   · nobody has him already — `grabbedBy` is the claim, and ONE joint is what
+ *     the bullet asks for.
+ *
+ * A man torn off is ragdolled by the break, so `!ragdolled` is his own cooldown
+ * and there is no second clock: he is out of the running until he has stood
+ * back up, which `Enemy._tickGetUp` already takes `GET_UP` seconds over.
+ */
+export function reachForHelp(held, ctx) {
+  if (!held || held.dead || held.grabbedBy || held.noReact) return null;
+  const list = ctx?.enemies || held.world?.enemies || [];
+  let best = null, bestD = DRAG.look * DRAG.look;
+  for (const o of list) {
+    if (o === held || o.dead || o.team !== held.team || o.noReact) continue;
+    if (o.reaction || o.gripped || o.beingDragged || o.downed) continue;
+    if (!o.actor || o.actor.ragdolled) continue;
+    /* A SQUADMATE, WHICH IS A MAN. Three exclusions and none of them is a new
+     * flag: `grippable === false` is the archetype's own "this is terrain that
+     * shoots, not a body" (see Vehicles.js and `Player._liftRefusal`), `driven`
+     * is a man already at the controls of one, and `A.big` is the same
+     * not-man-sized flag the choke halves its rate for. A hailfire droid
+     * reaching out to steady a battle droid is the hand-written-table defect
+     * wearing a reaction. */
+    if (o.grippable === false || o.driven || o.A?.big) continue;
+    /* OUT OF REACH IS OUT OF REACH. Measured off his feet, because that is
+     * what he is standing on and what he would have to jump from. */
+    if (held.position.y - o.position.y > DRAG.reach) continue;
+    const d = o.position.distanceToSquared(held.position);
+    if (d < bestD) { bestD = d; best = o; }
+  }
+  return best && startGrab(best, held) ? best : null;
+}
+
+/**
+ * ONE JOINT AND ONE CLAIM. `grabbedBy` is to a grab what `beingDragged` is to a
+ * drag and it lapses the same way, in `Enemy._tickGetUp`, off `grabLease` —
+ * because a claim only ever cleared by the code path that ends cleanly is a
+ * claim that leaks the first time the man holding it is shot.
+ */
+export function startGrab(body, held) {
+  if (!body || !held || held.grabbedBy || body.reaction) return false;
+  held.grabbedBy = body;
+  held.grabLease = DRAG_LEASE;
+  body.reaction = { kind: 'grab', t: 0, held, on: false };
+  return true;
+}
+
+function stepGrab(body, R) {
+  const c = R.held;
+  const stop = (why) => {
+    if (c && c.grabbedBy === body) { c.grabbedBy = null; c.grabLease = 0; c.grabLoad = 0; }
+    /* HIS OWN HOLD GOES WITH IT, and it goes here rather than being left to
+     * lapse: `grabLease` is half a second, and half a second of a man hanging
+     * in the air off a body he is no longer holding is the same stranded body
+     * `GRIP_LEASE`'s own note exists about. He is limp when he lets go, so he
+     * falls, and `_tickGetUp` stands him up on the clock it already runs. */
+    if (R.on) body.releaseHold();
+    body.reaction = null;
+    body.grabWhy = why;
+    return false;
+  };
+  if (!c || c.dead || body.dead) return stop('lost');
+  /* A GRAB IS A GRAB ON A MAN THE FORCE HAS HOLD OF. Released, thrown or
+   * choked to death, the grip ends and so does this — which is also what makes
+   * `hurlGripped` and `releaseGrip` need no line of their own here. */
+  if (!c.gripped) return stop('free');
+  c.grabbedBy = body;
+  c.grabLease = DRAG_LEASE;
+
+  const to = _v1.subVectors(body.position, c.position);
+  const gap = to.length();
+
+  /* HE HAS TO GET HIS HANDS ON HIM FIRST — `stepDrag`'s own approach branch,
+   * and the same 0.4 m of slack over the reach so a man at the edge of it is
+   * not switching between walking and hauling every other frame. The height
+   * gate is re-read here and not only at the claim: a body lifted away while
+   * he is still running at it is a body he never reaches. */
+  if (!R.on) {
+    if (c.position.y - body.position.y > DRAG.reach) return stop('high');
+    if (gap > DRAG.reach + 0.4) {
+      if (!body.wish) body.wish = new THREE.Vector3();
+      body.wish.subVectors(c.position, body.position).setY(0).normalize();
+      return true;
+    }
+    R.on = true;
+  }
+
+  /* ONE BREAK FORCE. `DRAG.haul × over` is what the link is being asked to
+   * pull with; `GRAB_BREAK` is the most an arm at full stretch can ever pull
+   * with. Over it, his fingers come off. See the block above for why the two
+   * masses are absent from both sides of this line. */
+  const over = gap - DRAG.reach;
+  if (DRAG.haul * over > GRAB_BREAK) return stop('torn');
+
+  /* THE JOINT ITSELF: he hangs `DRAG.reach` from the man he is holding, in
+   * whatever direction he already is, driven at a man's strength rather than
+   * the Force's. Everything that moves him is `Enemy._move`'s held branch. */
+  if (gap > 1e-4) to.multiplyScalar(1 / gap); else to.set(0, -1, 0);
+  body.hold(DRAG_LEASE, DRAG.haul);
+  body.liftTarget = (R.at ||= new THREE.Vector3())
+    .copy(c.position).addScaledVector(to, DRAG.reach);
+  /* AND WHAT HE WEIGHS IS NOW ON THE FORCE. Written every frame and lapsed
+   * with the claim, so a grabber who is shot stops being a load on the man he
+   * was holding without anybody having to remember to say so. See
+   * `Enemy.heldMass`, which is the only thing that reads it. */
+  c.grabLoad = body.A?.mass ?? 80;
   return true;
 }
 
