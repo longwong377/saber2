@@ -338,23 +338,89 @@ export async function run({ check, assert }) {
       while (d.roster.all.length < MAX_STRENGTH) d.roster.enlist(cheapest);
       d.start(1);
       /* Long enough for every one-shot event a winning line collects — a wave
-       * cleared is +0.34 and an area held +0.5 — to have landed and settled.
-       * Before the cap and the settle, this window is exactly what pinned it. */
-      for (let i = 0; i < 70 * 30; i++) world.update(DT, input);
+       * cleared is +0.34 and an area held +0.5 — to have landed. Before the
+       * cap and the settle, this window is exactly what pinned it. Whether the
+       * LAST of them has drained by the final frame is a different question,
+       * and it is the one the note below is about. */
+      /**
+       * ── AND THE NUMBER IS READ OVER A WINDOW, NOT OFF ONE FRAME ─────────
+       *
+       * This used to read `t.morale` on the last frame of the seventy seconds
+       * and assert `top <= PRESENCE_CAP` with no margin at all. That is not a
+       * measurement of the channel; it is a measurement of WHEN the last wave
+       * cleared, because a record above the cap is exactly what the design
+       * asks for: `WAVE_CLEAR` is +0.34, the clamp carries it to 1.000, and
+       * `SETTLE` walks it back at 0.05/s — up to 3.2 s over which the top of a
+       * winning line legitimately reads above 0.84. The old assertion forbade
+       * the transient `MORALE.SETTLE`'s own note promises.
+       *
+       * Measured on this fixture, the last 30 s of the window: the top of the
+       * line sits at 0.8400 on 800 of 900 frames and ramps down from 0.9983 on
+       * the other 100. Frame 2100 — the one this check read — landed 2.7 s
+       * into one of those ramps, at 0.8650. It passed alone and failed in the
+       * gate for no reason to do with morale: the wave clock moves with the
+       * module-scope streams `restoreShared` cannot reach (MathUtil's `rand`,
+       * World's `rng`, Scenery's own `rng`), so what ran before this suite
+       * decides which side of a ramp frame 2100 falls on. Two arms in one
+       * process, same seed, nothing changed but the streams' phase: the
+       * instantaneous top read 0.8650 and 0.8400, and the resting level below
+       * read 0.8400 in both.
+       *
+       * So the quantity is the level a man RESTS at — his median over the last
+       * `REST` seconds, which is where he is on the frames he is not coming
+       * down off a win. `REST` is four times the longest a full-scale elation
+       * takes to drain, `(1 - PRESENCE_CAP) / SETTLE`, so one whole excursion
+       * is a third of the window and cannot move a median. Two of them inside
+       * one window still can, and that is a finding rather than a flake: it is
+       * elation arriving faster than the settle takes it back, which is the
+       * ratchet this cap exists to break.
+       *
+       * Nothing about the claim is softer for it, and `parked` below is a
+       * clause the one-frame read could not make at all: every man has to come
+       * back to the ceiling inside the window, which is the whole of "the top
+       * is no longer a place a record can park".
+       */
+      const REST = 4 * (1 - MORALE.PRESENCE_CAP) / MORALE.SETTLE;   // 12.8 s
+      const FRAMES = 70 * 30, restFrom = FRAMES - Math.round(REST * 30);
+      const seen = new Map();
+      for (let i = 0; i < FRAMES; i++) {
+        world.update(DT, input);
+        if (i < restFrom) continue;
+        for (const t of d.roster.living) {
+          let a = seen.get(t); if (!a) seen.set(t, a = []);
+          a.push(t.morale);
+        }
+      }
       const living = d.roster.living.filter(t => t.alive);
       assert(living.length >= 4, `only ${living.length} men left to read`);
-      const m = living.map(t => t.morale);
+      /* What one man read over the window, in order — `seen` is keyed on the
+       * RECORD for the reason `_morale` writes it there: the body is disposed
+       * between areas and the record is the thing that crosses. */
+      const readings = (t) => seen.get(t) || [t.morale];
+      const restingOf = (t) => {
+        const a = readings(t).slice().sort((x, y) => x - y);
+        return a[a.length >> 1];
+      };
+      const m = living.map(restingOf);
       const top = Math.max(...m);
       const mean = m.reduce((a, b) => a + b, 0) / m.length;
       const pinned = m.filter(v => v >= 0.999).length;
 
       assert(!pinned,
-        `${pinned} of ${m.length} records sit at 1.000 — a saturated channel carries no `
+        `${pinned} of ${m.length} records rest at 1.000 — a saturated channel carries no `
         + 'information, and every reader of morale (_pace, aimQuality, broken) is reading it');
+      /* AND EVERY EXCURSION CAME BACK. A man who never touches the ceiling
+       * across four full settle times is parked above it, whatever his median
+       * says — that is the ratchet, and it is the one thing a single frame
+       * could not tell you. */
+      const parked = living.filter(t => Math.min(...readings(t)) > MORALE.PRESENCE_CAP + 1e-9).length;
+      assert(!parked,
+        `${parked} of ${m.length} records never came back to the ${MORALE.PRESENCE_CAP} ceiling `
+        + `across ${REST.toFixed(1)}s — elation is arriving faster than SETTLE takes it back`);
       /* AND THE ROOM IS REAL: a comrade falling is the largest single knock in
        * the table, and it has to be able to land on the steadiest man there. */
       assert(top + Math.abs(MORALE.COMRADE_FELL) <= 1.0 + 1e-9,
-        `the steadiest man is at ${top.toFixed(3)}, so a comrade falling (${MORALE.COMRADE_FELL}) `
+        `the steadiest man rests at ${top.toFixed(3)}, so a comrade falling (${MORALE.COMRADE_FELL}) `
         + 'would be partly absorbed by the clamp rather than felt');
       assert(top <= MORALE.PRESENCE_CAP + 0.02,
         `morale settled at ${top.toFixed(3)} against a ${MORALE.PRESENCE_CAP} ceiling — `
@@ -366,8 +432,8 @@ export async function run({ check, assert }) {
       assert(mean > MORALE.BREAK,
         `the whole line averages ${mean.toFixed(3)}, under BREAK ${MORALE.BREAK} — `
         + 'unsaturating the top must not empty the bottom');
-      return `${m.length} living: mean ${mean.toFixed(2)}, top ${top.toFixed(2)}, `
-        + `cap ${MORALE.PRESENCE_CAP}, 0 pinned`;
+      return `${m.length} living, resting over ${REST.toFixed(1)}s: mean ${mean.toFixed(2)}, `
+        + `top ${top.toFixed(2)}, cap ${MORALE.PRESENCE_CAP}, 0 pinned, 0 parked`;
     } finally { world.dispose?.(); }
   });
 
