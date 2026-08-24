@@ -206,6 +206,16 @@ Playable two ways:
 > **Edit check files between gates, never during one**, and when a gate's red
 > disagrees with a fresh `_one`, believe the `_one`.
 >
+> **AND WITH THE ASSERTION IN, SMOKE IS NOW RED ON A REAL DEFECT.** One bolt at
+> the player from 7 m, in the shipped page, comes back `{fired: 1, deflects: 0,
+> hpLost: 0, invuln: 0}` — not felt, not turned, and no i-frame to explain it.
+> **The identical shot lands 4.25 hp headless** on a real World through the same
+> `bolts.fire` and the same `_boltHitTest`. So there is a browser-vs-fixture gap
+> in bolt-versus-player hit detection, which is precisely what this probe exists
+> to find and could not report while `step()` failed only on exceptions. `npm run
+> smoke` is not part of `npm run verify`, so the gate is unaffected; this red is
+> TRUE and is left standing rather than hidden. Under investigation.
+>
 > **THE SMOKE PROBE'S ZEROS WERE A SIMULTANEOUS VOLLEY MEETING AN I-FRAME.**
 > `Player.damage` opens `this.invuln = 0.18` on every hit and `_boltHitTest`
 > skips a player with `invuln > 0`; `World.update` clamps `dt` to 1/24, so that
