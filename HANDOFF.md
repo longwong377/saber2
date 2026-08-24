@@ -128,7 +128,19 @@ Playable two ways:
 > **Still owed**, in PLAN.md §6's order: §4.6's branching route and its "40% must
 > be vehicles" as a genuine FLOOR (a reservation in `_composeUnder`, the one part
 > of that section that is composer surgery rather than a hook that exists); and
-> §4.3's animated instanced rung, still gated hard on M4.
+> §4.3's animated instanced rung, which is NOT "gated hard on M4" and has not
+> been for some time — `src/engine/Profiler.js` is the browser frame instrument,
+> always on, reporting real GPU time through `EXT_disjoint_timer_query_webgl2`
+> beside the JS and the 1% low. What that rung waits on is a READER: nothing in
+> `tools/` starts a browser, plays for two minutes and prints the split.
+>
+> **AND SEVEN OF THE NINE ENTRIES IN PLAN §6's NOW LISTS WERE STALE OR WRONG**,
+> which is the defect that made §4.7 claim weather was unbuilt on a tree that had
+> shipped it. B0, B2, B4 and all four of B5 are built; M2's answer is quoted in
+> PLAN itself four hundred lines above the question; M3's one-liner contradicted
+> §2's own conclusion; M4 is the profiler. The block is rewritten with the
+> evidence. The two genuinely unbuilt things left in it are M4's reader and B3's
+> three-layer distance audio bed.
 >
 > **THE RED THAT WAS RED BEFORE THIS SESSION IS GREEN, AND IT WAS THE FIXTURE.**
 > `blast-door.mjs`'s "a held blade opens a blast door in about twenty seconds"

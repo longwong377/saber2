@@ -442,9 +442,13 @@ put both commanders under the same rule; this is what that produces at scale.
 *Route to it:* density is M3 — one constant. The rendering ladder ships
 (`Cohorts` 168-at-27 past 137.8 m, `MergedSkin` nearer); the missing piece is
 named in `Cohorts.js` itself — *"every instance of one cohort wears one pose"* —
-and animating that rung **is gated hard on M4**, because the honest ink fix is
+and animating that rung **was gated hard on M4**, because the honest ink fix is
 per-object prepass materials and the prepass is already 118 of the meadow's 214
-draws. Do not touch it before the browser instrument exists.
+draws. THE INSTRUMENT EXISTS — `src/engine/Profiler.js` reports frame, JS and
+real GPU time with p99 and the 1% low, always on. What it has never had is a
+reader: nothing pulls those numbers out of a browser and prints them, so the
+first move on this rung is a two-minute run in real Chromium that reports the
+split, and the second is the pose.
 
 **The front already exists.** `Battlefield.js` generates ground around a seeded
 bezier front; `Front.js` draws it. Do not build a second front model.
@@ -653,23 +657,73 @@ This is a graph.
 
 ```
 NOW — measurements
-  M1  twenty-seed reference arm ........... running · licenses everything
   M5  does lineIsUp change play? ......... REPORTED — see §2. 34.1% of a
       leaving player's ground against 8.2% of a staying one. The gate is
       open and the chain below is licensed.
-  M2  teamDamage bound (1 hour)
-  M3  density: LEVY_STRENGTH + drop the cross-army gate
-  M4  browser frame instrument ............ gate on every rendering decision
+  M1  twenty-seed reference arm ........... STILL UNRUN, and it no longer
+      licenses anything: the deepest reading anywhere is six seeds, and the
+      whole chain below was licensed by M5 and then built.
+  M2  teamDamage bound ................... ANSWERED, and this document quotes
+      the answer four hundred lines above the question — §2's dealer census
+      reads "bolt 99.3%, friendly fire 0.7%". 0.7% IS the ceiling on any
+      friendly-fire work, and `command.mjs` already drives `teamDamage: 0`
+      and asserts it is exactly nothing.
+  M3  density ............................ RUN, and the one-liner contradicted
+      §2's own conclusion. §2 says "leave the gate alone" and `World.js`'s
+      cross-army pass carries that decision in writing; `tools/scale.mjs` has
+      since run the ladder in the two-army front layout to 160 bodies, 120 of
+      them at 16.60 ms. What is left is raising `LEVY_STRENGTH` (still 40),
+      and the gate stays by decision rather than by omission.
+  M4  browser frame instrument ........... BUILT, and it is the whole thing
+      the label asks for: `src/engine/Profiler.js` reports frame, our own JS,
+      REAL GPU time through `EXT_disjoint_timer_query_webgl2`, p99 and the 1%
+      low; it is always-on, `Engine` constructs it, the HUD reads it and
+      `tools/checks/profiler.mjs` holds it. WHAT IS MISSING IS A READER: no
+      harness pulls those numbers out of a real browser, so the instrument
+      exists and nothing automated reports it. `PERF.md`'s "a browser
+      instrument that does not exist yet" is stale by a whole file.
 
 NOW — building, licensed by measurements already taken
-  B0  TWO LINES MAKE THE FRONT ............ delete Command.js:5721's early
-      return, run areas for both sides, lineIsUp(a) vs lineIsUp(b).
-      The largest missing piece of the brief, and smaller than M3.
-  B1  pooled ragdolls, instanced corpses .. precondition for ALL scale
-  B2  attack tokens
-  B3  audio distance bed, horizon, haze ... scale at zero frame cost
-  B4  extraction boarding ................. gate on the company
-  B5  four open playtest defects
+  B0  TWO LINES MAKE THE FRONT ............ BUILT. `CommandDirector._front`
+      reads BOTH commanders, gates each on `lineGathered(c)` — which is the
+      split that fixed the real bug, since `lineIsUp` opens with a clause that
+      answered true for both sides and made the gathered test dead — pushes a
+      shared `front` scalar, and ends the meeting through `World._endMeeting`
+      at a baseline. The scalar is on the wire and drawn (see 8 below).
+  B1  pooled ragdolls, instanced corpses .. PARTLY, and no longer a
+      precondition for anything: `ArmyIndex` is the broad phase and
+      `Corpses.js` bounds settle, cap and budget, which is why 120 bodies fit
+      a 16.60 ms frame. What is left is ragdoll POOLING, and retiring a
+      settled corpse into `Fallen` — which `Front.js` is still the only
+      importer of, so no corpse has ever been retired into it.
+  B2  attack tokens ...................... BUILT. `src/game/Tokens.js`, a
+      `TokenPool` on the World, consumed by `Enemy`.
+  B3  audio distance bed, horizon, haze ... PARTLY. The two visual thirds
+      ship — `Scenery.Haze` and the 170/250/340 m parallaxing bands, and
+      `Battlefield.addFallen`'s horizon dead. THE AUDIO THIRD DOES NOT EXIST:
+      `Audio.js`'s only bed is the ambience drone, and there is no near/mid/far
+      weapons layer mixed by distance anywhere. It is the one wholly unbuilt
+      feature in either list, and it is still scale at zero frame cost.
+  B4  extraction boarding ................. BUILT and measured. The "0-2 of ten
+      men reaching the ramp" in this line is the PROBLEM STATEMENT, kept in
+      `Extraction.js` beside the three fixes for it; the manifest is 10 of 10
+      on the drifts, the Colosseum and alpine, and 6 on geonosis, whose spawn
+      ring is 58-96 m against everybody else's 26-60. `Company.js` already
+      consumes it, so the gate this was supposed to open is wired.
+  B5  four open playtest defects .......... ALL FOUR FIXED, each with a check.
+      Illegibility at range and the missing value separation are one file,
+      `src/world/Contact.js`, held by `cel.mjs`; Command's theatre is declared
+      (`fixedTheatre`) and honoured; the camera in trunks is `Trees.js`'s
+      `EYE_CLEAR`, which thins the drawn trunk and leaves the collider alone.
+
+**SEVEN OF THE NINE ENTRIES ABOVE WERE STALE OR WRONG**, and that is the same
+defect §4.7 carried when it called weather "entirely unbuilt, five systems" on a
+tree that had shipped a full `Weather` and seven authored squalls. A plan is
+read to set the scope of a session; an entry that describes work already done
+buys a session of rediscovery, and one that describes the code wrongly buys
+worse. The two that are genuinely unbuilt are **M4's reader** and **B3's audio
+bed** — and M4 being built is what unblocks 9 below, which HANDOFF has been
+carrying as "gated hard on M4" since before the profiler existed.
 
 AFTER M5 — the chain, in dependency order
   1  §4.4 squad delegation + sergeants ..... BUILT. `c.squadPlanted` gives each
@@ -784,7 +838,12 @@ AFTER M5 — the chain, in dependency order
      the number the host computed — and it is DRAWN, which it never was:
      the whole state of a meeting was a field nothing in the tree read.
   9  §4.3 density → animate the instanced rung → per-object ink prepass
-     ....................................... needs M3, M4, B1, and 1
+     ....................................... M3, M4 and B1 are no longer the
+     blockers they were written as — the ladder ran to 160 bodies, the
+     profiler ships, and the index and corpse budget landed. What this rung
+     needs first is a READER on the profiler: a two-minute run in real
+     Chromium that prints frame / JS / GPU / 1% low, so the per-object prepass
+     is decided against a measured split rather than against a draw count.
 ```
 
 **Nothing after M5 starts before M5 reports.** That is the gate draft 3 lacked.

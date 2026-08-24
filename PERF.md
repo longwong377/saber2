@@ -50,8 +50,16 @@ question, and it outranks everything in the plan.
 
 The render pass. There is no GPU here, so nothing about draw calls, skinning or
 shadow cost is knowable from it. `tools/checks/frame-ledger.mjs` splits the same
-frame by subsystem — physics 47%, animation 22.5% — and the draw-call budget
-needs a browser instrument that does not exist yet.
+frame by subsystem — physics 47%, animation 22.5%.
+
+The browser instrument this file used to say "does not exist yet" DOES exist:
+`src/engine/Profiler.js` reports the frame, our own JS, real GPU time through
+`EXT_disjoint_timer_query_webgl2`, p99 and the 1% low, it is always-on, `Engine`
+constructs it and the HUD reads it. What is still missing is a READER — nothing
+in `tools/` starts a real browser, plays for two minutes and prints the split —
+so the numbers exist on the player's screen and have never once reached a
+document. That, and not the instrument, is what the rendering decisions in
+PLAN §4.3 are actually waiting on.
 
 ## Content already built and barely used
 
