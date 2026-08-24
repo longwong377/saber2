@@ -1477,6 +1477,32 @@ export const CONDITION_MAX = 4;
 export const RULE_MAX = 2;
 
 /**
+ * WHAT SHARE OF AN ARMOUR COLUMN IS THE ARMOUR — PLAN.md §4.6's own number,
+ * and it is written down exactly once: "**Composition constraints**, not just
+ * budget size: *armour column* (40% must be vehicles)".
+ *
+ * ── AND IT IS A SHARE OF THREAT, NOT OF BODIES ───────────────────────────
+ *
+ * The two readings are not close and the arithmetic picks between them. Threat
+ * is what `_composeUnder` actually holds — a floor is a RESERVATION, the same
+ * shape as the set-piece and the head, and both of those are reservations of
+ * budget. Count cannot be reserved: `heavyLimit` clamps the enormous bodies at
+ * `HEAVY_CAP` = 10 because a walker is 66 meshes, so "40% of the bodies" on a
+ * wave-100 field of ninety is thirty-six walkers against a renderer that will
+ * hold ten. Measured, the largest count share any theatre can reach is 43% at
+ * wave 40 and 11% at wave 100 — a count floor would be a promise the frame
+ * rate forbids at every depth a player fights at.
+ *
+ * In threat the same ceiling is still there and it still binds at depth (see
+ * the reservation in `_composeUnder`), but it binds LATE instead of always,
+ * and where it binds the wave is already carrying every enormous body it is
+ * allowed. That is the honest version of the promise: as much of this wave is
+ * armour as the screen can hold, and at least two fifths of it wherever that
+ * is possible at all.
+ */
+export const ARMOUR_SHARE = 0.40;
+
+/**
  * WHAT A RUN FOUGHT UNDER RULES IS PAID — PLAN.md §4.6's player-authored
  * difficulty, and the exchange rate is one the director already publishes.
  *
@@ -1530,6 +1556,10 @@ export function hazardPay(keys) {
  *   `paceScale`    multiplies the gap between spawns.
  *   `bearing`      the whole wave arrives from one quarter of the compass.
  *   `head`         one body is the wave's leader and killing it ends the wave.
+ *   `floor`        the least share of the wave's THREAT that must be spent on
+ *                  enormous bodies, reserved before the fill. The only hook
+ *                  here that adds to a wave instead of narrowing it — see
+ *                  ARMOUR COLUMN, and the reservation in `_composeUnder`.
  *   `excludes`     the other conditions this one may never be held with. Read
  *                  in `_pickCondition` and in `legalRuleSet`, both directions —
  *                  declaring it on one of a pair is enough.
@@ -1762,12 +1792,17 @@ export const CONDITIONS = {
    *              own material classification and has been all along — flesh,
    *              plastoid, droid, armour, heavy — so this is derived and not a
    *              new field on thirty-seven records.
-   *   *armour column* ARMOUR COLUMN, below, and it is a FILTER rather than
-   *              §4.6's "40% must be vehicles". A floor is a reservation in
-   *              `_composeUnder` beside the head and the set-piece, which is
-   *              surgery on the most balance-sensitive function in the file;
-   *              the filter is the same claim made harder — everything that
-   *              comes is armoured — through the hook that already exists.
+   *   *armour column* ARMOUR COLUMN, below, and it is the one of the five that
+   *              is NOT a roster narrowing: §4.6 says "40% must be vehicles",
+   *              which is a floor and not a filter. It shipped as a filter
+   *              first — everything plated — because that was the hook that
+   *              already existed, and the measurement killed it: on four of
+   *              the seven theatres the plated roster is `b2` and `droideka`
+   *              and the card fielded 0% enormous bodies at every depth. So
+   *              this one IS the reservation in `_composeUnder` beside the
+   *              head and the set-piece, which is composer surgery, and it is
+   *              the only entry in this table that makes a wave heavier
+   *              rather than narrower.
    *   *droid host* and *beast drive* are real and they are THEATRE rules:
    *              measured over the seven shipped pools, only geonosis stations
    *              more than one droid archetype and only the Colosseum stations
@@ -1784,22 +1819,58 @@ export const CONDITIONS = {
    */
 
   /**
-   * Everything that comes at you is armoured.
+   * Two fifths of the wave is the enormous, and the rest is its escort.
    *
-   * `toughness` is the axis a saber player's whole defensive kit is priced
-   * against, and armour is where the cheap answers stop: a returned bolt does
-   * little, a cut costs a full commitment, and `heavy` at 14 is a different
-   * verb entirely. A wave with no plastoid and no droid chaff in it is a wave
-   * with nothing in it you can clear on the way past.
+   * THE ONE CONDITION IN THE TABLE THAT IS NOT A NARROWING. Every other entry
+   * here answers the question "what may come?"; this one answers "how much of
+   * what comes must be armour?", and that is `ARMOUR_SHARE` of the wave's
+   * budget reserved before the fill — see the reservation in `_composeUnder`,
+   * which is the only place a `floor` is read.
+   *
+   * ── IT WAS A FILTER, AND THE FILTER WAS FIELDING NO VEHICLES ──────────────
+   *
+   * It shipped as `toughness >= TOUGHNESS.armour` — "everything that comes is
+   * plated" — which is a stronger claim than §4.6's and, measured, a weaker
+   * wave. Plated is not enormous: on four of the seven theatres the whole
+   * plated roster is `b2` and `droideka`, so ARMOUR COLUMN composed a wave of
+   * chaff and its own tell — "some of it drives" — was false. Measured heavy
+   * share of the wave's threat UNDER THE FILTER: 0% on scoria, on the
+   * Colosseum, on the wood and on the alpine, at every depth from 1 to 100. A card that deletes the soft half of a roster and then fields the
+   * cheapest droid in the game is not the armour column §4.6 asked for.
+   *
+   * So the filter is gone and the floor is the whole of it. The wave is MIXED
+   * — that is the point of a floor and the difference from THE HEAVY GUARD,
+   * which keeps the heavies and one escort archetype and shrinks the wave to
+   * pay for it. Here the wave is the wave it would have been, with two fifths
+   * of its weight spent on the bodies you cannot clear on the way past.
+   *
+   * `needs` asks for ONE enormous archetype and not two, and that is not a
+   * relaxation of the two-kind law the block above states. That law is about
+   * FILTERS: a filter that leaves one archetype makes every body on the field
+   * identical, which is the monotony NO GUNS was measured into avoiding. A
+   * floor leaves the rest of the roster alone, so a ground with one heavy
+   * composes a mixed wave with a spine of that one heavy — which is what THE
+   * HEAVY GUARD's own `needs` has always asked for, in the same words.
+   *
+   * PRICED DOWN FROM 0.26, and the payout moves with it: `armour` is
+   * `ruleOnly`, so `conditionCost` never charges it a wave's budget and its
+   * `worth` reaches exactly one consumer — `hazardPay`, the Insight a run
+   * under its own terms is paid. A run under ARMOUR COLUMN now earns 1.16×
+   * rather than 1.26×, about 8% less, and that is the correct direction: the
+   * card no longer deletes half the roster, and on four theatres what it used
+   * to delete it to was droidekas. It sits under the two half-roster deletions
+   * (NO GUNS and NOTHING WITHIN REACH, 0.18) because it deletes nothing, and
+   * under THE HEAVY GUARD (0.22) because that one does this to the whole wave
+   * and doubles the heavy limit besides.
    */
   armour: {
     label: 'ARMOUR COLUMN',
     ruleOnly: true,
-    tell: 'nothing soft is coming. Every body in it is plated, and some of it drives.',
-    since: 20, worth: 0.26,
-    types: (list) => list.filter((t) => (ARCHETYPES[t]?.toughness ?? 0) >= TOUGHNESS.armour),
-    needs: (types) => new Set(types.filter((t) => (ARCHETYPES[t]?.toughness ?? 0) >= TOUGHNESS.armour)).size >= 2,
-    unmet: 'nothing this ground stations is plated heavily enough to make a column',
+    tell: 'two in every five of it is enormous. The rest is only what walks beside them.',
+    since: 20, worth: 0.16,
+    floor: ARMOUR_SHARE,
+    needs: (types) => types.some((t) => isHeavy(t)),
+    unmet: 'nothing this ground stations is big enough to make a column',
   },
 
   /**
@@ -3371,14 +3442,24 @@ export class WaveDirector {
       /**
        * A COMPOSITION CONSTRAINT IS NEVER DEALT — it is only ever authored.
        *
-       * PLAN.md §4.6's constraints (ARMOUR COLUMN, ONE MATERIAL, DROID HOST,
-       * BEAST DRIVE) narrow the ROSTER rather than the wave's shape, and a
-       * roster narrowing dealt at depth is what strands a budget: measured on
-       * the shipped pools, the two narrowings that ARE dealt already push the
+       * Three of PLAN.md §4.6's constraints (ONE MATERIAL, DROID HOST, BEAST
+       * DRIVE) narrow the ROSTER rather than the wave's shape, and a roster
+       * narrowing dealt at depth is what strands a budget: measured on the
+       * shipped pools, the two narrowings that ARE dealt already push the
        * Colosseum to 51-59% unspent at wave 100, and four more compounded it
        * until the body cap stopped binding at all and `_upgrade` was handed
        * nothing to spend. That is a real cost and it is the composer's, not
        * the player's.
+       *
+       * ARMOUR COLUMN IS THE FOURTH AND IT IS NOT A NARROWING — it is a floor
+       * — and it stays on this side of the line for its own reason rather
+       * than by inheritance. A dealt condition is CHARGED `worth · budget`,
+       * and the floor's own measurement is that past about wave 45 the wave
+       * is already carrying every enormous body `HEAVY_CAP` allows: 16-42% of
+       * the wave's threat at wave 70 with or without the rule. Dealt there it
+       * would take a sixth of the budget away and hand back a wave it had
+       * already composed — a condition that charges for nothing is the
+       * stranding this note is about, arrived at from the other direction.
        *
        * As a RULE the same narrowing is fine, because the player chose it and
        * the fallback in `_shapeUnder` still refuses to empty the field. So the
@@ -3415,7 +3496,7 @@ export class WaveDirector {
     let types = this.unlockedAt(wave);
     let allowed = this.modifiersAt(wave);
     let heavy = this.heavyLimit(wave);
-    let capScale = 1;
+    let capScale = 1, floor = 0;
     let chance = this.eliteChance(wave), alive = this.maxAlive, pace = 1;
     for (const c of cs) {
       if (c.types) {
@@ -3426,6 +3507,13 @@ export class WaveDirector {
       }
       if (c.allow) allowed = c.allow(allowed, this, wave);
       capScale = capScale * (c.capScale ?? 1);
+      /* THE HIGHEST FLOOR, NEVER THE SUM. Only one entry declares one today,
+       * but `_compose` unions up to `CONDITION_MAX` of these together and two
+       * floors added would reserve a wave that has nothing left to be mixed
+       * with — which is the filter this floor replaced, arrived at by
+       * accident. A floor is a least share, so the greatest of them IS the
+       * least share both of them ask for. */
+      floor = Math.max(floor, c.floor ?? 0);
       heavy = heavy * (c.heavyScale ?? 1);
       chance = chance * (c.eliteScale ?? 1);
       alive = alive * (c.aliveScale ?? 1);
@@ -3444,6 +3532,7 @@ export class WaveDirector {
       alive: Math.max(4, Math.round(alive)), pace,
       bearing: cs.some((c) => c.bearing),
       head: cs.some((c) => c.head),
+      floor,
     };
   }
 
@@ -3470,6 +3559,9 @@ export class WaveDirector {
      * expensive bodies on purpose, and charging them against a rule written to
      * stop accidental ones would delete them. See WAVE_FLOOR. */
     const ceiling = budget / WAVE_FLOOR;
+    /* …and the same figure kept whole, because the FLOOR below is a share of
+     * the wave rather than a share of what is left of it. See the reservation. */
+    const total = budget;
     const queue = [];
 
     if (this.isBossWave(w)) {
@@ -3508,6 +3600,97 @@ export class WaveDirector {
       }
     }
 
+    /* EPS because `budget` is a running subtraction of fractional threats:
+     * measured on the Drowned Wood at wave 10, a wave with exactly 1.0 left
+     * and a B1 costing exactly 1 held 0.9999999999999964 and refused it. An
+     * exact `<=` on an accumulated float is a coin toss, not a rule. */
+    const EPS = 1e-9;
+
+    /**
+     * THE ARMOUR IS RESERVED BEFORE THE FILL, FOR THE HEAD'S OWN REASON.
+     *
+     * PLAN.md §4.6: "*armour column* (40% must be vehicles)". A floor is the
+     * third reservation in this function and it is the same shape as the two
+     * above it — a share of the wave taken out of the budget before `_upgrade`
+     * gets to spend the budget down to nothing. Bought afterwards it could
+     * never be afforded, which is exactly what twelve leaderless vanguard
+     * waves proved about the head.
+     *
+     * WHAT IS ALREADY ENORMOUS COUNTS. The set-piece is a boss and a heavy
+     * head is a heavy body, so the debt is stated against the wave's OWN
+     * budget and credited with what those two already put on the field —
+     * otherwise a boss wave under this rule would buy its 40% twice and the
+     * fill would inherit a wave with no fill left in it.
+     *
+     * NOT CHARGED AGAINST `ceiling`, for the reason written over `ceiling`:
+     * the set-piece and the head are deliberate single expensive bodies and
+     * `WAVE_FLOOR` exists to stop ACCIDENTAL ones. So is this.
+     *
+     * ── THE THREE WAYS IT STOPS SHORT, AND ALL THREE ARE HONEST ─────────────
+     *
+     * `HEAVY_CAP` — the wave already carries every enormous body the renderer
+     *   will hold. This is what binds at depth: the budget curve is
+     *   exponential and ten heavies are linear, so past about wave 45 the
+     *   reachable share falls through 40% no matter what is reserved.
+     *   Measured under the rule on the four theatres that can field it: 42-63%
+     *   at wave 30, 16-42% at wave 70, 5-13% at wave 140 — and at the limit in
+     *   every one of those compositions, with the plain composer already
+     *   there, so the floor asks for nothing it is not already getting.
+     * `budget` — nothing enormous is affordable. Wave 1's budget is 7 and the
+     *   cheapest heavy in the game is 7, so the shallow waves reserve one body
+     *   or none. It never overspends to reach the share: the wave that cannot
+     *   afford armour is an ordinary wave, not an overdrawn one.
+     * `shape.types` — the narrowed roster has no heavy in it at all, which is
+     *   the same answer `needs` gives a theatre that stations none, arrived at
+     *   from the other side when another condition narrows it away.
+     *
+     * In none of the three does it empty or overfill the field: it only ever
+     * ADDS bodies it can pay for, so the fallback in `_shapeUnder` and the one
+     * documented overspend in the fill are both untouched.
+     */
+    if (shape.floor > 0) {
+      let owed = total * shape.floor
+        - queue.reduce((a, e) => a + (isHeavy(spawnType(e)) ? spawnCost(e) : 0), 0);
+      /**
+       * IT SPENDS AGAINST THE RENDERER'S ALLOWANCE, NOT THE DIFFICULTY CURVE'S
+       * — AND THEN THE WAVE'S LIMIT BECOMES WHAT IT SPENT.
+       *
+       * `heavyLimit` is a difficulty number that rises with the budget, and at
+       * the depths a run is actually played it is the thing that makes 40%
+       * unmeetable: measured on mustafar at wave 20 it allows three walkers,
+       * which is 22% of the wave however much budget is reserved, so the card
+       * announced two in five and delivered 28%. `HEAVY_CAP` is the other
+       * limit and it is not a difficulty number at all — a walker is 66 meshes
+       * — so it is the one the floor is held to and the one nothing here may
+       * move.
+       *
+       * Raising the SHAPE's limit for everything instead was tried and is the
+       * wrong shape: `_upgrade` trades light bodies for the heaviest that fits
+       * until `bigLeft` runs out, so a lifted ceiling was filled by the
+       * upgrade pass rather than by the floor and the wave came out 85%
+       * enormous on the Colosseum at wave 20 — which is not a floor, it is THE
+       * HEAVY GUARD with a different card on it. So the allowance is spent
+       * HERE, and `shape.heavy` is then raised to exactly what was spent: the
+       * fill and `_upgrade` both read it, both see nothing left, and the wave
+       * carries the armour its own rule bought and not one body more.
+       */
+      const room = Math.max(shape.heavy, Math.round(HEAVY_CAP * this.partyScale()));
+      let fguard = 0;
+      while (owed > 0 && queue.length < shape.cap && fguard++ < 40) {
+        const big = queue.filter((e) => isHeavy(spawnType(e))).length;
+        if (big >= room) break;
+        const can = shape.types.filter((t) => isHeavy(t)
+          && (ARCHETYPES[t]?.threat ?? Infinity) <= budget + EPS);
+        if (!can.length) break;
+        const t = this._pickType(can, w, room - big);
+        if (!t) break;
+        queue.push(t);
+        budget -= ARCHETYPES[t].threat;
+        owed -= ARCHETYPES[t].threat;
+      }
+      shape.heavy = Math.max(shape.heavy, queue.filter((e) => isHeavy(spawnType(e))).length);
+    }
+
     let guard = 0;
     while (budget > 0 && queue.length < shape.cap && guard++ < 400) {
       const bigLeft = shape.heavy - queue.filter(e => isHeavy(spawnType(e))).length;
@@ -3536,11 +3719,6 @@ export class WaveDirector {
        * of luck; taking the cheapest makes it the smallest it can possibly be,
        * which is the only honest amount to be over by.
        */
-      /* EPS because `budget` is a running subtraction of fractional threats:
-       * measured on the Drowned Wood at wave 10, a wave with exactly 1.0 left
-       * and a B1 costing exactly 1 held 0.9999999999999964 and refused it. An
-       * exact `<=` on an accumulated float is a coin toss, not a rule. */
-      const EPS = 1e-9;
       const affordable = shape.types.filter((t) => (ARCHETYPES[t]?.threat ?? Infinity) <= budget + EPS);
       /* …AND NO ONE BODY TAKES MORE THAN ITS SHARE. See WAVE_FLOOR: the fill
        * drew uniformly from everything it could afford, so an opening wave with

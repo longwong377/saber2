@@ -932,11 +932,93 @@ export async function run({ check, assert }) {
          * of these asserts is the same thing in a different currency: what
          * came, and nothing else came. */
         case 'armour': {
-          const soft = [...seen].filter((t) => (ARCHETYPES[t].toughness ?? 0) < TOUGHNESS.armour);
-          assert(!soft.length, `ARMOUR COLUMN fielded ${soft.join(', ')}, which are not plated`);
-          assert(roster.size >= 2,
-            `ARMOUR COLUMN leaves a roster of one (${[...roster][0]}) — a wave asked a different `
-            + "question still has to be a wave, which is NO GUNS' own lesson");
+          /**
+           * THE ONE CARD HERE THAT IS A FLOOR AND NOT A FILTER, so what is
+           * asserted is a SHARE and not a roster: PLAN.md §4.6, "*armour
+           * column* (40% must be vehicles)". `ARMOUR_SHARE` is read off the
+           * source rather than typed, so repricing the promise moves the bar.
+           *
+           * Measured in THREAT, which is the currency the reservation is made
+           * in — see ARMOUR_SHARE for why a count floor is a promise the frame
+           * rate forbids at every depth.
+           *
+           * TWO PROPERTIES, AND THE SECOND IS THE ONE §7 ASKS FOR: the floor
+           * must hold, and it must be seen to MOVE a wave that would not
+           * otherwise have been armoured — the same seeds, the same depth,
+           * with the rule and without it.
+           *
+           * ── AND THE FLOOR IS ALLOWED TO STOP SHORT IN EXACTLY TWO WAYS ─────
+           *
+           * Both are the wave being honest rather than the rule failing, and
+           * both are asserted as alternatives rather than excused:
+           *
+           *   THE WAVE IS ALREADY AT ITS HEAVY LIMIT. Ten enormous bodies is
+           *   `HEAVY_CAP` and a walker is 66 meshes, while the budget curve is
+           *   exponential — so past about wave 45 no reservation can reach 40%
+           *   and the wave is carrying every heavy it may. Measured on the
+           *   four theatres that can field the rule: 42-63% at wave 30, 16-42%
+           *   at wave 70, 5-13% at wave 140, and AT THE LIMIT in every one of
+           *   those compositions.
+           *
+           *   THERE IS NOTHING ENORMOUS TO BUY. Wave 5 on mustafar has not
+           *   unlocked the walker, so the rule composes the wave it would
+           *   otherwise have had — which is what `_shapeUnder`'s fallback says
+           *   about every other condition in this table.
+           */
+          const SHARE = Waves.ARMOUR_SHARE;
+          assert(SHARE > 0 && SHARE < 1, `ARMOUR_SHARE is ${SHARE}, which is not a share`);
+          const sweep = (dd, ww, ks) => {
+            let heavy = 0, all = 0, short = 0, moved = 0;
+            for (let i = 0; i < n; i++) {
+              Waves.seedWaves(500 + i, 0);
+              const o = dd._composeUnder(ww, ks);
+              let h = 0, a = 0, big = 0;
+              for (const e of o.queue) {
+                const c = Waves.spawnCost(e); a += c;
+                if (Waves.isHeavy(Waves.spawnType(e))) { h += c; big++; }
+              }
+              heavy += h; all += a; moved++;
+              /* Per COMPOSITION and not against the mean, because "the wave is
+               * at its limit" is a property of one wave and an average of
+               * limits is a wave nobody fights. */
+              const saturated = big >= o.shape.heavy;
+              const barren = !o.shape.types.some((t) => Waves.isHeavy(t));
+              if (h < SHARE * a - 1e-9 && !saturated && !barren) short++;
+            }
+            return { share: heavy / Math.max(1e-9, all), short, n: moved };
+          };
+          let lifts = 0;
+          for (const home of homes) {
+            const dd = new Waves.WaveDirector(tableWorld(),
+              { mode: 'roguelite', pool: LEVELS[home].pool });
+            for (const ww of [5, 15, 30, 70]) {
+              const on = sweep(dd, ww, [key]), off = sweep(dd, ww, []);
+              assert(!on.short,
+                `ARMOUR COLUMN on ${home} at wave ${ww}: ${on.short} of ${on.n} waves came in under `
+                + `${(SHARE * 100).toFixed(0)}% enormous by threat with the heavy allowance still `
+                + 'unspent — the floor stopped short of its own promise');
+              assert(on.share >= off.share - 1e-9,
+                `ARMOUR COLUMN on ${home} at wave ${ww} fields ${(on.share * 100).toFixed(0)}% armour `
+                + `against ${(off.share * 100).toFixed(0)}% on the same seeds with no rule at all — `
+                + 'a floor that lowers the floor');
+              if (ww === 15) {
+                /* THE DEPTH WHERE THE DECISION IS VISIBLE, and it is asserted on
+                 * EVERY theatre rather than on one lucky one. Shallower than
+                 * this the ladder has not opened a heavy on two of the four;
+                 * deeper, the frame-rate ceiling has already bound and the
+                 * plain wave is carrying the same armour the rule would buy —
+                 * which is the floor being satisfied, not the floor doing
+                 * nothing, and the assertion above is what holds it. */
+                assert(on.share > off.share + 0.05,
+                  `ARMOUR COLUMN on ${home} at wave 15 moved the armour share from `
+                  + `${(off.share * 100).toFixed(0)}% to only ${(on.share * 100).toFixed(0)}% — `
+                  + 'the rule is a banner over the wave the player would have had anyway');
+                lifts++;
+              }
+            }
+          }
+          assert(lifts === homes.length,
+            `the floor was demonstrated on ${lifts} of ${homes.length} theatres that can field it`);
           break;
         }
         case 'monokin': {

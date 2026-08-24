@@ -52,14 +52,40 @@ The render pass. There is no GPU here, so nothing about draw calls, skinning or
 shadow cost is knowable from it. `tools/checks/frame-ledger.mjs` splits the same
 frame by subsystem — physics 47%, animation 22.5%.
 
-The browser instrument this file used to say "does not exist yet" DOES exist:
-`src/engine/Profiler.js` reports the frame, our own JS, real GPU time through
-`EXT_disjoint_timer_query_webgl2`, p99 and the 1% low, it is always-on, `Engine`
-constructs it and the HUD reads it. What is still missing is a READER — nothing
-in `tools/` starts a real browser, plays for two minutes and prints the split —
-so the numbers exist on the player's screen and have never once reached a
-document. That, and not the instrument, is what the rendering decisions in
-PLAN §4.3 are actually waiting on.
+The browser instrument this file used to say "does not exist yet" DOES exist,
+and it is now read. `src/engine/Profiler.js` reports the frame, our own JS, real
+GPU time through `EXT_disjoint_timer_query_webgl2`, p99 and the 1% low, always
+on; `tools/_frame.mjs` boots the shipped page in Chromium, deploys, plays and
+prints the split:
+
+    node tools/_frame.mjs [--level geonosis] [--mode theline] [--quality high]
+
+## What the browser says, on a box with no GPU in it
+
+    theline · geonosis · quality high · 768x432 drawing buffer
+    ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero)), SwiftShader driver)
+
+      rung              alive   draws   ktris   median ms   JS med   GPU med
+      as deployed          12    2413    1968        3417     45.9    3397.7
+      +40 bodies           51    4843    2586        3567    103.2    3478.7
+
+**The GPU timer query resolves here.** ANGLE-on-SwiftShader answers
+`EXT_disjoint_timer_query_webgl2` on every frame, which is the finding that
+matters most: PLAN §4.3's "is it GPU-bound or JS-bound" is answerable by tool
+now, on this box and on a player's.
+
+**The frame is 93–99% draw and 1.3–3.0% our own JS.** That is a real reading of
+this machine and it is a software rasteriser being a software rasteriser — it
+does not license a claim about a player's graphics card. What transfers is the
+counts: twelve living men on geonosis cost ~2400 draw calls and ~1.9 M submitted
+triangles a frame at quality `high`, and forty more men add ~2430 calls and
+~618k triangles.
+
+**The milliseconds are only sometimes measurable here.** At load 5 on four cores
+the population step resolved at +400 ms (10 ms a body); at load 8 the same step
+was inside the tool's own noise band and it said so rather than printing it.
+`_cpuclock.mjs`'s rule, one layer out: quote the number with the load or do not
+quote it.
 
 ## Content already built and barely used
 

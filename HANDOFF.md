@@ -125,9 +125,16 @@ Playable two ways:
 > and a master — NO GUNS has had the same hole and passed on luck, because
 > `SET_PIECE`'s bodies happen to be melee.
 >
-> **Still owed**, in PLAN.md §6's order: §4.6's branching route and its "40% must
-> be vehicles" as a genuine FLOOR (a reservation in `_composeUnder`, the one part
-> of that section that is composer surgery rather than a hook that exists); and
+> **And ARMOUR COLUMN is now the FLOOR** §4.6 asked for rather than a filter:
+> `ARMOUR_SHARE` (0.40, written once) reserved in `_composeUnder` beside the head
+> and the set-piece. In THREAT, not count — `HEAVY_CAP` is ten bodies, so a count
+> floor is a promise the frame rate forbids. The filter had to go because it was
+> fielding no vehicles at all: on four of seven theatres the plated roster is
+> `b2` and `droideka`. Measured, heavy share without → with: 24→42% and 25→50% at
+> wave 15, unchanged at wave 70 where the wave is already at its heavy limit.
+> Repriced 0.26 → 0.16, so the `hazardPay` payout moved with it.
+>
+> **Still owed**, in PLAN.md §6's order: §4.6's branching route; and
 > §4.3's animated instanced rung, which is NOT "gated hard on M4" and has not
 > been for some time — `src/engine/Profiler.js` is the browser frame instrument,
 > always on, reporting real GPU time through `EXT_disjoint_timer_query_webgl2`

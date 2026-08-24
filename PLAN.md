@@ -444,11 +444,16 @@ put both commanders under the same rule; this is what that produces at scale.
 named in `Cohorts.js` itself — *"every instance of one cohort wears one pose"* —
 and animating that rung **was gated hard on M4**, because the honest ink fix is
 per-object prepass materials and the prepass is already 118 of the meadow's 214
-draws. THE INSTRUMENT EXISTS — `src/engine/Profiler.js` reports frame, JS and
-real GPU time with p99 and the 1% low, always on. What it has never had is a
-reader: nothing pulls those numbers out of a browser and prints them, so the
-first move on this rung is a two-minute run in real Chromium that reports the
-split, and the second is the pose.
+draws. THE INSTRUMENT EXISTS AND IS NOW READ — `src/engine/Profiler.js` reports
+frame, JS and real GPU time with p99 and the 1% low, always on, and
+`tools/_frame.mjs` pulls it out of a real Chromium and prints the split. The
+first move on this rung has been taken: the frame here is 93–99% draw and 1.3–3%
+our JS, and the reader carries an A/B/A rung that switches `OutlinePass.prepass`
+off and back on to price the second rasterisation directly. On THIS box that
+bracket lands inside its own noise band — a 2.5–3.8 s software frame cannot
+resolve a 12% effect — so the prepass has a tool and still has no price, and
+getting one means running `tools/_frame.mjs` where there is a GPU. The pose is
+the second move and is not blocked on it.
 
 **The front already exists.** `Battlefield.js` generates ground around a seeded
 bezier front; `Front.js` draws it. Do not build a second front model.
@@ -674,14 +679,25 @@ NOW — measurements
       since run the ladder in the two-army front layout to 160 bodies, 120 of
       them at 16.60 ms. What is left is raising `LEVY_STRENGTH` (still 40),
       and the gate stays by decision rather than by omission.
-  M4  browser frame instrument ........... BUILT, and it is the whole thing
-      the label asks for: `src/engine/Profiler.js` reports frame, our own JS,
-      REAL GPU time through `EXT_disjoint_timer_query_webgl2`, p99 and the 1%
-      low; it is always-on, `Engine` constructs it, the HUD reads it and
-      `tools/checks/profiler.mjs` holds it. WHAT IS MISSING IS A READER: no
-      harness pulls those numbers out of a real browser, so the instrument
-      exists and nothing automated reports it. `PERF.md`'s "a browser
-      instrument that does not exist yet" is stale by a whole file.
+  M4  browser frame instrument ........... BUILT AND NOW READ.
+      `src/engine/Profiler.js` reports frame, our own JS, REAL GPU time through
+      `EXT_disjoint_timer_query_webgl2`, p99 and the 1% low; it is always-on,
+      `Engine` constructs it, the HUD reads it and `tools/checks/profiler.mjs`
+      holds it. The reader it never had is `tools/_frame.mjs`: boots the shipped
+      page in Chromium, deploys into `theline` on geonosis, plays a stated
+      number of frames and prints the split, on a ladder of rungs that share one
+      boot. FIRST RESULT, and the one that unblocks 9 below: THE TIMER QUERY
+      RESOLVES here — ANGLE on SwiftShader-Vulkan answers it on every frame — so
+      §4.3's "GPU-bound or JS-bound" is answerable by tool rather than by
+      argument, on this box and on any player's. What it answers HERE is that
+      our JS is 1.3–3.0% of the frame and the draw is 93–99% of it, at 2.5–3.8 s
+      a frame, which is a software rasteriser being a software rasteriser: the
+      SHARE is a real reading of this machine and is not a prediction of anyone
+      else's. The counts are: 12 living men on geonosis draw ~2400 calls and
+      ~1.9 M triangles a frame at quality high, and 40 more men add ~2430 calls
+      and ~618k triangles. The millisecond deltas resolved at load 5 on four
+      cores (+400 ms for those 40 men, 10 ms a body) and did NOT at load 8; the
+      tool prints its own noise band and says which.
 
 NOW — building, licensed by measurements already taken
   B0  TWO LINES MAKE THE FRONT ............ BUILT. `CommandDirector._front`
@@ -854,10 +870,28 @@ AFTER M5 — the chain, in dependency order
      identical weather, which is an element that changes no decision.
      **A branch moves the run's total wave count** by one on a Push, and
      nothing asserts on that sum.
-     STILL OWED from this section: only §4.6's "40% must be vehicles" as
-     a genuine FLOOR — a reservation in `_composeUnder` beside the head
-     and the set-piece, and the one part of this section that is composer
-     surgery rather than a hook that already exists.
+     AND THE FLOOR IS BUILT, which was the last of it. ARMOUR COLUMN was
+     a FILTER — everything plated — and the measurement killed it: on four
+     of the seven theatres the whole plated roster is `b2` and `droideka`,
+     so the card fielded 0% enormous bodies at every depth while its own
+     tell said "some of it drives". It is now `ARMOUR_SHARE`, one named
+     constant carrying §4.6's own 40%, reserved in `_composeUnder` beside
+     the head and the set-piece and for the head's own reason: `_upgrade`
+     spends the budget to nothing, so armour bought after the fill can
+     never be afforded. **Measured in THREAT and not in count** — count
+     cannot be reserved, because `HEAVY_CAP` is ten bodies and 40% of a
+     wave-100 field of ninety is thirty-six walkers. Measured across the
+     four theatres that can field it, heavy share of the wave without the
+     floor → with it: **24→42% and 25→50% at wave 15, 27→43% and 52→63%
+     at wave 30**, and unchanged at wave 70 — where the frame-rate ceiling
+     has already bound and the plain wave is carrying the same armour the
+     rule would buy. Three theatres lose the card (`needs` now asks for
+     something enormous rather than something plated, and scoria, the wood
+     and the alpine station nothing enormous at all) and the four that keep
+     it get a column that actually has vehicles in it. Repriced 0.26 → 0.16, and
+     because `worth` is also the Insight rate the payout moved with it:
+     1.26x → 1.16x, which is the direction a card that no longer deletes
+     half the roster should move.
   8  §4.5 co-op and versus ................. THE SECOND HUMAN IS IN IT, and
      was before this line was written: `seatAlly`, `beginVersus`,
      `formUp`, four commanders as two sides, orders, musters and purses
@@ -872,10 +906,12 @@ AFTER M5 — the chain, in dependency order
   9  §4.3 density → animate the instanced rung → per-object ink prepass
      ....................................... M3, M4 and B1 are no longer the
      blockers they were written as — the ladder ran to 160 bodies, the
-     profiler ships, and the index and corpse budget landed. What this rung
-     needs first is a READER on the profiler: a two-minute run in real
-     Chromium that prints frame / JS / GPU / 1% low, so the per-object prepass
-     is decided against a measured split rather than against a draw count.
+     profiler ships, and the index and corpse budget landed. The reader this
+     rung was waiting on is `tools/_frame.mjs`, and it has run: the timer query
+     resolves, the frame here is 93–99% draw against 1.3–3% our JS, and the
+     prepass A/B/A is inside the noise of a software rasteriser. The per-object
+     prepass is now a decision waiting on one run on real hardware rather than
+     on a tool that does not exist.
 ```
 
 **Nothing after M5 starts before M5 reports.** That is the gate draft 3 lacked.
