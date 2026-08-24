@@ -155,10 +155,20 @@ Playable two ways:
 > · **M1** is unrun and licenses nothing; **M7** should be STRUCK, because
 >   `tools/scale.mjs` withdrew the number it was written to chase.
 >
-> **§4.3's animated instanced rung is NOT "gated hard on M4"** and has not been
-> for some time: `src/engine/Profiler.js` is the browser frame instrument, always
-> on, reporting real GPU time through `EXT_disjoint_timer_query_webgl2` beside
-> the JS and the 1% low — and `tools/_frame.mjs` is now the reader it lacked.
+> **§4.3's animated instanced rung IS BUILT**, and it was never "gated hard on
+> M4": `src/engine/Profiler.js` has been the browser frame instrument all along,
+> reporting real GPU time through `EXT_disjoint_timer_query_webgl2`, and
+> `tools/_frame.mjs` is the reader it lacked. The crowd walks now — a
+> per-instance palette index, twelve poses in a DataTexture, one float beside
+> each matrix — and **168 bodies past 137.8 m are still 39 draw calls and
+> 969 520 triangles, bit for bit**. The vertex shader the file used to refuse is
+> allowed because the numbers permit it: the ink prepass reaches 127.2 m at
+> worst, `L3_AT` is 137.8, and the worst palette slot moves a vertex 0.19 m into
+> that gap — asserted as a PAIR so moving `INK.edgeFade` fails the gate.
+> WHAT IS LEFT of that rung is the per-object ink prepass, and it is a decision
+> waiting on one run of `tools/_frame.mjs` **on real hardware**: a 2.5–3.8 s
+> software frame cannot resolve a 12% effect, and the A/B/A bracket is what
+> establishes that rather than printing the drift as a finding.
 >
 > **AND SEVEN OF THE NINE ENTRIES IN PLAN §6's NOW LISTS WERE STALE OR WRONG**,
 > which is the defect that made §4.7 claim weather was unbuilt on a tree that had

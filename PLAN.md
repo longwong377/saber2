@@ -1052,14 +1052,30 @@ AFTER M5 — the chain, in dependency order
      the number the host computed — and it is DRAWN, which it never was:
      the whole state of a meeting was a field nothing in the tree read.
   9  §4.3 density → animate the instanced rung → per-object ink prepass
-     ....................................... M3, M4 and B1 are no longer the
-     blockers they were written as — the ladder ran to 160 bodies, the
-     profiler ships, and the index and corpse budget landed. The reader this
-     rung was waiting on is `tools/_frame.mjs`, and it has run: the timer query
-     resolves, the frame here is 93–99% draw against 1.3–3% our JS, and the
-     prepass A/B/A is inside the noise of a software rasteriser. The per-object
-     prepass is now a decision waiting on one run on real hardware rather than
-     on a tool that does not exist.
+     ....................................... THE RUNG IS ANIMATED. M3, M4 and
+     B1 were never the blockers they were written as — the ladder ran to 160
+     bodies, the profiler ships, `tools/_frame.mjs` reads it, and the index and
+     corpse budget landed. `Cohorts.js`'s own "every instance of one cohort
+     wears one pose" is answered by a per-instance PALETTE INDEX: twelve slots
+     of rigid 4×4s in a DataTexture, one float per instance beside the matrix,
+     three fetches in the vertex shader — viable only because `MergedSkin`
+     gives every vertex exactly one bone at weight 1.0, so a pose is
+     bones-many matrices and not a vertex field. **The count did not move**:
+     168 bodies past 137.8 m are 39 draw calls, 168 instances and 969 520
+     triangles before and after, bit for bit, and the palette fills 48 of 48
+     slots with 18 distinct poses over 24 instances. The two alternatives
+     delete the rung and were priced: a baked cohort per pose is twelve times
+     the bins (42 bodies → 456 calls against the merge's 196), and per-object
+     CPU skinning counts bodies again.
+     THE INK OBJECTION WAS SETTLED BY MEASUREMENT. This file refused a vertex
+     shader because the prepass uses `scene.overrideMaterial` and a cohort
+     would be outlined un-walked; the prepass's furthest reach over every level
+     and tier is 127.2 m, `L3_AT` is 137.8, and the worst palette slot moves a
+     vertex 0.19 m into that 10.6 m gap. The check asserts the PAIR, so moving
+     `INK.edgeFade` fails the gate rather than quietly outlining a statue.
+     STILL OPEN: the per-object ink prepass itself, which is a decision waiting
+     on one run of `tools/_frame.mjs` on real hardware — a 2.5–3.8 s software
+     frame cannot resolve a 12% effect, and the A/B/A bracket is what says so.
 ```
 
 **Nothing after M5 starts before M5 reports.** That is the gate draft 3 lacked.
